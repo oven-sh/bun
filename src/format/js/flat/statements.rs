@@ -39,7 +39,7 @@ impl<'a> Line<'_, 'a> {
                 if expression.tag() == ExprTag::String {
                     return Err(Refused);
                 }
-                self.last_expr(expression, Place::Other)?;
+                self.last_expr_of_statement(expression, true)?;
             }
             StmtKind::Var(declarations) => {
                 let declarator = declarations.first().ok_or(Refused)?;
@@ -68,7 +68,7 @@ impl<'a> Line<'_, 'a> {
                         self.token(" = ")?;
                         // A pattern breaks together with what it's assigned.
                         match declarator.pat().tag() {
-                            PatTag::Ident => self.last_assigned(init)?,
+                            PatTag::Ident => self.last_assigned_or_plain(init)?,
                             _ => self.assigned_to_pattern(init)?,
                         }
                     }
@@ -79,12 +79,12 @@ impl<'a> Line<'_, 'a> {
                 self.token("return")?;
                 if let Some(argument) = argument {
                     self.byte(b' ')?;
-                    self.last_expr(argument, Place::Other)?;
+                    self.last_expr_of_statement(argument, false)?;
                 }
             }
             StmtKind::Throw(argument) => {
                 self.token("throw ")?;
-                self.last_expr(argument, Place::Other)?;
+                self.last_expr_of_statement(argument, false)?;
             }
             StmtKind::Break(_) | StmtKind::Continue(_) => {
                 self.token(match statement.tag() {

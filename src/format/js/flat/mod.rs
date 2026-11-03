@@ -38,6 +38,7 @@ mod forced;
 mod functions;
 mod holes;
 mod jsx;
+mod plain;
 mod signatures;
 mod statements;
 mod suffixes;

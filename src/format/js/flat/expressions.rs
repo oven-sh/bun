@@ -287,6 +287,9 @@ impl<'a> Line<'_, 'a> {
     }
 
     pub(super) fn expr(&mut self, e: Expr<'a>, place: Place) -> Written {
+        if let Some(written) = self.plain_expr(e, place) {
+            return written;
+        }
         let tag = e.tag();
         match tag {
             ExprTag::Ident => {

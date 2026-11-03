@@ -37,6 +37,7 @@ mod name;
 mod node;
 mod pat;
 mod reach;
+mod plain;
 mod stmt;
 mod ty;
 pub mod walk;

@@ -472,6 +472,12 @@ describe("Markdown", () => {
     "**a\u2028** b and **\u2029a** b and **\u00a0a** and **中文**中文 and 中文**中文**\n",
     "**a\u00a0** b** and **a \u3000** b** and **\u2003a** b and **a\u200b** b** and **a\ufeff** b** and **a \u0085** b**\n",
     "e\n*http://a\n\ne\n*a*\n\ne\n**a**\n\ne\n* a\n",
+    // HTML and code that nothing ends, in a list, take the line break with them if a container follows.
+    "- <!--\n> a\n",
+    "- <!--\n# a\n",
+    "- <!--\n\n> a\n",
+    "- ```\n> a\n",
+    "1. - <?\n> a\n\n> b\n",
     // Code spans.
     "`a` and `` a`b `` and `` `a` `` and ` a ` and `  ` and ` a` and ``a`` and `a\nb` and `not closed\n",
     "`a {{ b` }} *c* `d` and {{ a ` b }} *c* ` d\n",

@@ -507,9 +507,11 @@ impl<'t> Reader<'t> {
 
     /// `start` is the start of a line with which a block starts that's in no container. Returns where the last of the
     /// lines ends that the parser can skip, if there are any, and adds them to what was found. `is_after_container`
-    /// means a list can be open, of which the line can be the next item.
+    /// means a list can be open, of which the line can be the next item, and that code or HTML in it that nothing ended
+    /// ends in another place if the line starts a container.
     pub(crate) fn lines_at(&mut self, start: usize, is_after_container: bool) -> Option<usize> {
-        if is_after_container && matches!(self.byte(start), b'-' | b'*' | b'+' | b'0'..=b'9') {
+        if is_after_container && matches!(self.byte(start), b'-' | b'*' | b'+' | b'0'..=b'9' | b'>')
+        {
             return None;
         }
         if let Some(&lines) = self.memory.found.get(self.asked_for) {

@@ -1121,8 +1121,12 @@ JSCommonJSModule* JSCommonJSModule::create(
     out->hasEvaluated = hasEvaluated;
     if (parent && parent.isCell()) {
         if (auto* parentModule = dynamicDowncast<JSCommonJSModule>(parent)) {
-            out->setModuleGraph(vm, parentModule->moduleGraph());
-            out->m_parent = JSC::Weak<JSCommonJSModule>(parentModule);
+            JSModuleGraph* graph = parentModule->moduleGraph();
+            out->setModuleGraph(vm, graph);
+            if (graph && parentModule->m_standsInForParent)
+                out->m_overriddenParent.set(vm, out, parentModule->m_overriddenParent.get());
+            else
+                out->m_parent = JSC::Weak<JSCommonJSModule>(parentModule);
         } else {
             out->m_overriddenParent.set(vm, out, parent);
         }

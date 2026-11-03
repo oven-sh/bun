@@ -1730,15 +1730,35 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
           return made.exports;
         };
         // A parent that is no module object. The file is then in the cache of the context, where a require() finds it.
+        // Its module.parent is that parent, and so is the parent that a replaced Module._resolveFilename is called with.
         export const viaLoad = () => {
           const require = createRequire(import.meta.url);
-          const loaded = [
-            Module._load(import.meta.dir + "/loaded-for-nobody.cjs"),
-            Module._load(import.meta.dir + "/loaded-for-null.cjs", null),
-            Module._load("./loaded-for-an-object.cjs", { filename: import.meta.filename }),
-          ];
-          const cached = ["nobody", "null", "an-object"].map(name => import.meta.dir + "/loaded-for-" + name + ".cjs" in require.cache);
-          return [...new Set(loaded)].join() + (cached.every(Boolean) ? ", cached there" : ", not cached there");
+          const files = ["nobody", "null", "an-object"].map(file => require.resolve("./loaded-for-" + file + ".cjs"));
+          const anObject = { filename: import.meta.filename };
+          const name = parent => (parent === anObject ? "the object" : String(parent));
+          const resolvedFor = [];
+          const resolveFilename = Module._resolveFilename;
+          Module._resolveFilename = function (request, parent, ...rest) {
+            resolvedFor.push(name(parent));
+            return resolveFilename.call(this, request, parent, ...rest);
+          };
+          let loaded;
+          try {
+            loaded = [
+              Module._load(files[0]),
+              Module._load(files[1], null),
+              Module._load("./loaded-for-an-object.cjs", anObject),
+            ];
+          } finally {
+            Module._resolveFilename = resolveFilename;
+          }
+          const modules = files.map(file => require.cache[file]);
+          return {
+            loaded: [...new Set(loaded)].join(),
+            cached: modules.every(Boolean),
+            parents: modules.map(module => name(module?.parent)),
+            resolvedFor,
+          };
         };
       `,
       "main.mjs": `
@@ -1755,13 +1775,24 @@ describe("Bun.ModuleGraph — an error belongs to the context it happens in, wha
       `,
     });
     const { stdout, exitCode } = await runBun(["main.mjs"], { cwd: String(d) });
+    const threeParents = ["undefined", "null", "the object"];
     expect(JSON.parse(stdout)).toEqual({
       "createRequire, inside run()": "the graph's",
       "createRequire, called by the host": "the host's",
       "new Module, inside run()": "the graph's",
       "new Module, called by the host": "the host's",
-      "Module._load, inside run()": "the graph's, cached there",
-      "Module._load, called by the host": "the host's, cached there",
+      "Module._load, inside run()": {
+        loaded: "the graph's",
+        cached: true,
+        parents: threeParents,
+        resolvedFor: threeParents,
+      },
+      "Module._load, called by the host": {
+        loaded: "the host's",
+        cached: true,
+        parents: threeParents,
+        resolvedFor: threeParents,
+      },
     });
     expect(exitCode).toBe(0);
   });

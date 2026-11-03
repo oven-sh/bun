@@ -1656,12 +1656,13 @@ describe.concurrent("bun test --isolate=modules", () => {
         const path = require.resolve("./loaded.cjs");
         const forNull = Module._load(path, null);
         const forAnObject = Module._load("./loaded.cjs", { filename: __filename });
-        console.log(JSON.stringify([path in Module._cache, require(path) === forNull, forAnObject === forNull]));
+        const parentIsNull = Module._cache[path].parent === null;
+        console.log(JSON.stringify([path in Module._cache, require(path) === forNull, forAnObject === forNull, parentIsNull]));
       });
     `;
     const files = { "loaded.cjs": `module.exports = {};`, "a.test.js": file, "b.test.js": file };
     const lines = (await passes(files, 2)).split("\n").filter(line => line.startsWith("["));
-    expect(lines).toEqual(Array(2).fill(JSON.stringify([true, true, true])));
+    expect(lines).toEqual(Array(2).fill(JSON.stringify([true, true, true, true])));
   });
 
   test("process.mainModule is the running file's module", async () => {

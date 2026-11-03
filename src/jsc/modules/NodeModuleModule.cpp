@@ -799,8 +799,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * lexicalGlobalObject, 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue parent = callFrame->argument(1);
-    // The require of a parent that is no module object loads into the cache of the host. In a Bun.ModuleGraph
-    // a module object of the graph stands in for such a parent, as one does for createRequire().
+    // A load made in a Bun.ModuleGraph's context is that graph's: require() takes the graph from `this`, so a module object of the graph stands in for any other parent.
     if (!dynamicDowncast<Bun::JSCommonJSModule>(parent)) {
         if (auto* graph = Bun::currentModuleGraph(globalObject)) {
             JSValue filename = jsUndefined();
@@ -809,7 +808,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * lexicalGlobalObject, 
                 RETURN_IF_EXCEPTION(scope, {});
             }
             JSString* id = filename.isString() ? asString(filename) : jsString(vm, String("."_s));
-            parent = Bun::JSCommonJSModule::create(vm, globalObject->CommonJSModuleObjectStructure(), id, filename, jsEmptyString(vm), SourceCode(), graph);
+            auto* standIn = Bun::JSCommonJSModule::create(vm, globalObject->CommonJSModuleObjectStructure(), id, filename, jsEmptyString(vm), SourceCode(), graph);
+            standIn->m_overriddenParent.set(vm, standIn, parent);
+            standIn->m_standsInForParent = true;
+            parent = standIn;
         }
     }
 

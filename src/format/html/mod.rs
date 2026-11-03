@@ -152,11 +152,14 @@ fn without_front_matter(text: &[u8]) -> (Cow<'_, [u8]>, Option<usize>) {
 /// inserted if requested. Also returns whether only a range of it is formatted. Returns `None` if the text stays as it
 /// is, because of a pragma or because the range is empty.
 fn prepared_text<'t>(text: &'t [u8], options: &FormatOptions) -> Option<(Cow<'t, [u8]>, bool)> {
+    let original = text;
     let first = if text.starts_with(BOM) { BOM.len() } else { 0 };
     let Offsets { start, end, .. } = Offsets::new(text, first, options);
-    let [start, end] =
-        [start, end].map(|offset| normalized_len(text.get(first..offset).unwrap_or_default()));
     let text = bun_core::strings::crlf_as_lf(&text[first..]);
+    let [start, end] = [start, end].map(|offset| match &text {
+        Cow::Borrowed(_) => original.get(first..offset).map_or(0, |before| before.len()),
+        Cow::Owned(_) => normalized_len(original.get(first..offset).unwrap_or_default()),
+    });
     let has_format_pragma = (options.require_pragma || options.insert_pragma)
         && has_pragma(&text, [b"format", b"prettier"]);
     if (start >= end && !text.is_empty())
@@ -346,13 +349,14 @@ pub(crate) fn write_document(
         indent_level,
         None,
         Flavor::Prettier,
+        None,
         f,
     )
     .map(|summary| summary.top_level_count)
 }
 
 /// Like `write_document`. `cursor_offset` is the cursor's offset in `text`, and `script_flavor` is the flavor that
-/// scripts are formatted in.
+/// scripts are formatted in. `found` is what `Runs::whole` has left.
 #[allow(clippy::too_many_arguments)]
 fn write_document_with_cursor(
     text: &[u8],
@@ -363,10 +367,14 @@ fn write_document_with_cursor(
     indent_level: Option<u32>,
     cursor_offset: Option<u32>,
     script_flavor: Flavor,
+    found: Option<(runs::Runs, Vec<u8>)>,
     f: &mut Formatter<'_>,
 ) -> Result<DocumentSummary, FormatError> {
     let (content, front_matter_len) = without_front_matter(text);
     let mut tree = ast::Tree::default();
+    if let Some((runs, printed)) = found {
+        (tree.runs, tree.printed) = (Some(runs), printed);
+    }
     // Only where lines start at a known column, and nobody asks where a node has gone.
     let reads_runs = !is_embedded && indent_level == Some(0) && cursor_offset.is_none();
     // Vue compiles nothing under `v-pre`.
@@ -583,6 +591,25 @@ pub fn format_with(
         true => options.flavor,
         false => Flavor::Prettier,
     };
+    // A text that is one run from its start to its end needs no tree and no document.
+    let mut found = None;
+    if parser == Parser::Html
+        && !is_range
+        && cursor_offset.is_none()
+        && without_front_matter(&text).1.is_none()
+        && let Some(settings) = runs::Settings::new(parser, options)
+    {
+        let (mut runs, mut printed) = (runs::Runs::new(settings), Vec::new());
+        if let Some((span, is_in_text)) = runs.whole(&text, &mut printed)
+            && options.line_ending.resolve(original) == crate::options::LineEnding::Lf
+        {
+            let from = if is_in_text { &text[..] } else { &printed[..] };
+            out.extend_from_slice(&from[span.start as usize..span.end as usize]);
+            out.push(b'\n');
+            return Ok(None);
+        }
+        found = Some((runs, printed));
+    }
     let mut options = FormatOptions {
         line_ending: options.line_ending.resolve(original),
         is_in_html_file: path.ends_with(b".html") || path.ends_with(b".htm"),
@@ -605,6 +632,7 @@ pub fn format_with(
                 Some(0),
                 cursor_offset,
                 script_flavor,
+                found.take(),
                 f,
             )
             .map(|summary| {

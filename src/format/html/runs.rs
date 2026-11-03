@@ -205,6 +205,9 @@ struct Element<'a> {
     must_be_empty: bool,
 }
 
+/// Wider than any line, and small enough to add to.
+const TOO_WIDE: usize = usize::MAX / 8;
+
 /// How the value of an attribute is printed.
 enum Printed {
     AsWritten,
@@ -237,6 +240,8 @@ struct Words {
     is_wide: bool,
     /// One blank is between two words.
     has_single_blanks: bool,
+    /// The text is written as `fill` lays it out in lines with the indentation of the level it is at.
+    is_filled: bool,
 }
 
 /// What is printed. What is written is compared with what comes next in the source, and is only copied once the two
@@ -388,6 +393,29 @@ const IS_PLAIN_IN_VALUE: [bool; 256] = {
     plain
 };
 
+/// True if `line` is words of plain characters (`PLAIN_TEXT_KINDS`) with one blank between them. Without a table and
+/// without a way out of the loops, so that the compiler looks at many bytes at a time.
+fn is_plain_line(line: &[u8]) -> bool {
+    let is_odd = |byte: u8| {
+        (byte.wrapping_sub(b' ') >= 0x5F)
+            | (byte == b'<')
+            | (byte == b'&')
+            | (byte == b'@')
+            | (byte == b'\\')
+            | (byte == b'{')
+            | (byte == b'}')
+    };
+    let (Some(b'!'..), Some(b'!'..)) = (line.first(), line.last()) else {
+        return false;
+    };
+    let has_odd = |bytes: &[u8]| bytes.iter().fold(false, |odd, &byte| odd | is_odd(byte));
+    let (blocks, rest) = line.as_chunks::<32>();
+    let has_two_blanks = (line.iter().zip(&line[1..])).fold(false, |twice, (&byte, &next)| {
+        twice | ((byte == b' ') & (next == b' '))
+    });
+    !has_two_blanks && !blocks.iter().any(|block| has_odd(block)) && !has_odd(rest)
+}
+
 /// True if `IS_PLAIN_IN_VALUE` is true for every byte of `value`, which has no `"` in it. Without a table and without a
 /// way out of the loops, so that the compiler looks at many bytes at a time.
 fn is_all_plain_in_value(value: &[u8]) -> bool {
@@ -404,6 +432,11 @@ fn is_all_plain_in_value(value: &[u8]) -> bool {
     blocks.iter().all(|block| is_plain(block)) && is_plain(rest)
 }
 
+/// True if the first child of the root can be the first of a run: white space in front of it would be a text.
+pub(crate) fn starts_at_start_of_line(text: &[u8]) -> bool {
+    !matches!(text.first(), None | Some(b' ' | b'\t' | b'\n'))
+}
+
 /// The runs of a text, and the buffers to find them with.
 pub(crate) struct Runs {
     settings: Settings,
@@ -412,7 +445,9 @@ pub(crate) struct Runs {
     /// The index in `found` of the first one that the lexer has not come by.
     next: usize,
     /// Up to here the text has been looked at: no run starts here or before that is not in `found`.
-    pub(crate) scanned_to: usize,
+    scanned_to: usize,
+    /// Nothing has been looked at.
+    is_new: bool,
     levels: Vec<Level>,
     /// Where the attributes of a start tag start and end.
     attributes: Vec<(usize, usize)>,
@@ -425,9 +460,38 @@ impl Runs {
             found: Vec::new(),
             next: 0,
             scanned_to: 0,
+            is_new: true,
             levels: Vec::new(),
             attributes: Vec::new(),
         }
+    }
+
+    /// True if the text has been looked at from `at` on.
+    pub(crate) fn has_scanned(&self, at: usize) -> bool {
+        !self.is_new && at <= self.scanned_to
+    }
+
+    /// Reads `text` from its start on, as the lexer would ask it to. If all of it is one run, returns where what is printed
+    /// for it is, without the last line break, and whether that is in `text` rather than in `printed`. If not, what has
+    /// been found is kept for the lexer, together with `printed`.
+    pub(crate) fn whole(&mut self, text: &[u8], printed: &mut Vec<u8>) -> Option<(Span, bool)> {
+        if !starts_at_start_of_line(text) {
+            return None;
+        }
+        let root = Parent {
+            level: 0,
+            element: None,
+            is_in_svg: false,
+            has_children: false,
+        };
+        self.scan(text, 0, root, printed);
+        let &[ready] = &self.found[..] else {
+            return None;
+        };
+        let is_whole = ready.name_end == 0
+            && !ready.has_broken_void_tag
+            && text.get(ready.span.end as usize..)?.trim_ascii().is_empty();
+        is_whole.then_some((ready.printed, ready.is_printed_as_written))
     }
 
     /// Returns the run that starts at `at`, if one has been found.
@@ -449,6 +513,7 @@ impl Runs {
         printed: &mut Vec<u8>,
     ) {
         self.levels.clear();
+        self.is_new = false;
         let definition = (parent.element).map_or(&data::DEFAULT_TAG_DEFINITION, |it| it.1);
         let printed_so_far = printed.len();
         let first = (start, printed_so_far);
@@ -545,7 +610,7 @@ struct Scanner<'s, 'a> {
     /// The last text that has been looked at.
     measured: Option<Words>,
     /// What has been written is of no use. Something nested `n` deep is indented by `n * n` blanks, which the printer
-    /// knows how to deal with.
+    /// knows how to deal with. And it says when something is nested too deeply for it.
     is_indented_too_far: bool,
 }
 
@@ -626,7 +691,9 @@ impl<'a> Scanner<'_, 'a> {
             true => data::tag_definition(&name.to_ascii_lowercase()),
             false => data::tag_definition(name),
         };
-        if definition.content_type == ContentType::RawText {
+        if definition.content_type == ContentType::RawText
+            && (name != b"script" || self.settings.parser != Parser::Html)
+        {
             return None;
         }
         let must_be_empty = definition.content_type != ContentType::ParsableData
@@ -695,7 +762,7 @@ impl<'a> Scanner<'_, 'a> {
             true => (b'\t', level),
             false => (b' ', level * self.settings.indent_width),
         };
-        if count > 1024 {
+        if count > 1024 || level > 128 {
             self.is_indented_too_far = true;
             return;
         }
@@ -870,29 +937,61 @@ impl<'a> Scanner<'_, 'a> {
             // White space alone counts in some elements.
             let is_empty = first == open_end
                 || (!must_be_empty && (display.is_block_like() || display == Display::InlineBlock));
-            if !is_empty || !self.ends_line(end) {
+            if (!is_empty && (must_be_empty || display != Display::Inline)) || !self.ends_line(end)
+            {
                 return Item::No;
             }
-            self.put_whole_tag(
-                start,
-                to,
-                has_attributes && width + 1 + name.len() + 3 > room,
-            );
+            let rest = usize::from(!is_empty) + name.len() + 3;
+            // `forceNotToBreakAttrContent`
+            let is_script_from_elsewhere = name == b"script"
+                && matches!(self.attributes[..], [(from, to)] if matches!(
+                    self.text.get(from..to),
+                    Some([b's', b'r', b'c'] | [b's', b'r', b'c', b'=', ..])
+                ));
+            if is_empty || width + 1 + rest <= room {
+                let is_broken =
+                    has_attributes && width + 1 + rest > room && !is_script_from_elsewhere;
+                self.put_whole_tag(start, to, is_broken);
+                if !is_empty {
+                    self.out.push(b' ');
+                }
+            } else {
+                self.put_whole_tag(start, to, has_attributes && width + 1 > room);
+                self.put_line(level);
+            }
             self.put_end_tag(name);
             return Item::Ends(end);
         }
         if must_be_empty {
-            return Item::No;
+            // `<title>` with plain words in it, all on one line.
+            let words = (self.text.get(open_end..))
+                .filter(|_| name == b"title")
+                .and_then(|rest| rest.get(..bun_core::strings::index_of_char_usize(rest, b'<')?))
+                .filter(|words| is_plain_line(words));
+            let Some((words, end)) =
+                words.and_then(|it| Some((it, self.end_tag(open_end + it.len(), name)?)))
+            else {
+                return Item::No;
+            };
+            if width + 1 + words.len() + name.len() + 3 > room || !self.ends_line(end) {
+                return Item::No;
+            }
+            self.put_whole_tag(start, to, false);
+            self.out.source(open_end, open_end + words.len());
+            self.put_end_tag(name);
+            self.ends_in_text = true;
+            return Item::Ends(end);
         }
         if self.at(first) != b'<' {
-            match self.words(first) {
+            match self.words(first, self.siblings.level + 1) {
                 Some(words) => {
                     if let Some(end) = self.end_tag(words.close, name) {
                         return self
                             .element_with_words(start, element, width, open_end, words, end);
                     }
                 }
-                None if line_breaks == 0 && self.reads_interpolations() => {}
+                None if self.reads_interpolations()
+                    && (line_breaks == 0 || self.text.get(first..first + 2) == Some(b"{{")) => {}
                 None => return Item::No,
             }
         }
@@ -939,8 +1038,11 @@ impl<'a> Scanner<'_, 'a> {
                 _ => {}
             }
             let (end, attribute_width) = self.attribute(name, attribute)?;
+            if attribute_width == TOO_WIDE && !can_span_lines {
+                return None;
+            }
             self.attributes.push((attribute, end));
-            (at, width) = (end, width + 1 + attribute_width);
+            (at, width) = (end, (width + 1 + attribute_width).min(TOO_WIDE));
         }
     }
 
@@ -1276,7 +1378,7 @@ impl<'a> Scanner<'_, 'a> {
     }
 
     /// The attribute that starts at `from`, if it is `name` or `name="value"` and is printed like that. Returns where it
-    /// ends and how wide it is.
+    /// ends and how wide it is: `TOO_WIDE` with a line break in it, which breaks the tag like a line that is too long.
     fn attribute(&self, element: &[u8], from: usize) -> Option<(usize, usize)> {
         let rest = self.text.get(from..)?;
         let mut seen = 0;
@@ -1317,6 +1419,7 @@ impl<'a> Scanner<'_, 'a> {
         let value_start = at + 2;
         let mut end = value_start;
         let (mut has_braces, mut is_wide, mut has_reference) = (false, false, false);
+        let mut has_line_break = false;
         let mut rest = value_and_rest;
         // Most values are plain from one quote to the other, and some are long.
         let quote = bun_core::strings::index_of_char_usize(rest, b'"')?;
@@ -1333,6 +1436,11 @@ impl<'a> Scanner<'_, 'a> {
                     end = self.odd_in_text(end, &mut has_braces, &mut is_wide)? + 1;
                     rest = self.text.get(end..)?;
                 }
+                b'\n' => {
+                    has_line_break = true;
+                    end += 1;
+                    rest = &rest[plain + 1..];
+                }
                 _ => return None,
             }
         }
@@ -1345,9 +1453,10 @@ impl<'a> Scanner<'_, 'a> {
             return None;
         }
         end += 1;
-        let width = match is_wide {
-            true => at + 3 - from + crate::ir::width::string_width(value) as usize,
-            false => end - from,
+        let width = match (has_line_break, is_wide) {
+            (true, _) => TOO_WIDE,
+            (false, true) => at + 3 - from + crate::ir::width::string_width(value) as usize,
+            (false, false) => end - from,
         };
         if self.settings.formats_embedded {
             match self.how_value_is_printed(element, name, value, has_braces) {
@@ -1355,7 +1464,8 @@ impl<'a> Scanner<'_, 'a> {
                 // On a line of its own it is a level further in than the tag. Where the tag is on one line, so is all
                 // of it.
                 Printed::AsWrittenOnOneLine
-                    if (self.siblings.level + 1) * self.settings.indent_width + width
+                    if ((self.siblings.level + 1) * self.settings.indent_width)
+                        .saturating_add(width)
                         <= self.settings.line_width => {}
                 _ => return None,
             }
@@ -1382,6 +1492,7 @@ impl<'a> Scanner<'_, 'a> {
                 value[0] != b' '
                     && value[value.len() - 1] != b' '
                     && !bun_core::strings::contains(value, b"  ")
+                    && !bun_core::strings::contains_char(value, b'\n')
             }
             b"style" => {
                 return match canonical::is_style(value) {
@@ -1484,8 +1595,65 @@ impl<'a> Scanner<'_, 'a> {
         }
     }
 
-    /// The text that starts with a word at `start`.
-    fn words(&mut self, start: usize) -> Option<Words> {
+    /// The text that starts at `start`, whose first line is `first_len` plain bytes, if it is written as `fill` lays it out
+    /// at `level`, and a tag follows it on a line of its own.
+    fn filled_words(&self, start: usize, first_len: usize, level: usize) -> Option<Words> {
+        let (indentation, width) = match self.settings.uses_tabs {
+            true => (b'\t', level),
+            false => (b' ', level * self.settings.indent_width),
+        };
+        let room = (self.settings.line_width).checked_sub(level * self.settings.indent_width)?;
+        let is_indentation = |from: usize| {
+            (self.text.get(from..from + width + 1)).is_some_and(|it| {
+                it[0] == b'\n'
+                    && it[1..]
+                        .iter()
+                        .fold(true, |all, &byte| all & (byte == indentation))
+            })
+        };
+        if !is_indentation(start.checked_sub(width + 1)?) {
+            return None;
+        }
+        let (mut line_end, mut line_len, mut total) = (start + first_len, first_len, first_len);
+        loop {
+            if line_len > room {
+                return None;
+            }
+            let blanks = (self.text.get(line_end + 1..)?.iter())
+                .position(|&byte| byte != indentation)
+                .unwrap_or(0);
+            let line_start = line_end + 1 + blanks;
+            if self.at(line_start) == b'<' {
+                return self.ends_text(line_start).then_some(Words {
+                    start,
+                    end: line_end,
+                    close: line_start,
+                    width: total,
+                    is_wide: false,
+                    has_single_blanks: false,
+                    is_filled: true,
+                });
+            }
+            if blanks != width {
+                return None;
+            }
+            let rest = self.text.get(line_start..)?;
+            let line = &rest[..bun_core::strings::index_of_char_usize(rest, b'\n')?];
+            // The first word has not fitted on the line before.
+            let first_word = line
+                .iter()
+                .position(|&byte| byte == b' ')
+                .unwrap_or(line.len());
+            if line_len + 1 + first_word <= room || !is_plain_line(line) {
+                return None;
+            }
+            (line_end, line_len) = (line_start + line.len(), line.len());
+            total += 1 + line_len;
+        }
+    }
+
+    /// The text that starts with a word at `start`, at `level`.
+    fn words(&mut self, start: usize, level: usize) -> Option<Words> {
         if let Some(words) = self.measured.filter(|it| it.start == start) {
             return Some(words);
         }
@@ -1511,7 +1679,16 @@ impl<'a> Scanner<'_, 'a> {
                 width: end - start,
                 is_wide: false,
                 has_single_blanks: true,
+                is_filled: false,
             };
+            self.measured = Some(words);
+            return Some(words);
+        }
+        if self.at(start + plain) == b'\n'
+            && twice == 0
+            && self.at(start + plain - 1) != b' '
+            && let Some(words) = self.filled_words(start, plain, level)
+        {
             self.measured = Some(words);
             return Some(words);
         }
@@ -1557,6 +1734,7 @@ impl<'a> Scanner<'_, 'a> {
             has_single_blanks: bytes + count - 1 == end - start
                 && (odd_space == 0
                     || !(self.text.get(start..end)?.iter()).any(|it| matches!(it, b'\t' | b'\n'))),
+            is_filled: false,
         };
         if is_wide {
             // Each word is a string of its own to Prettier.
@@ -1581,7 +1759,11 @@ impl<'a> Scanner<'_, 'a> {
         prefix: usize,
         suffix: usize,
     ) {
-        if line_width == usize::MAX && words.has_single_blanks {
+        let is_as_written = match line_width == usize::MAX {
+            true => words.has_single_blanks,
+            false => words.is_filled && prefix == 0 && suffix == 0,
+        };
+        if is_as_written {
             return self.out.source(words.start, words.end);
         }
         let text = self.text;
@@ -1621,7 +1803,7 @@ impl<'a> Scanner<'_, 'a> {
 
     /// The text that starts at `start`, on a new line, if a tag or the end of the source follows it on another line.
     fn text_on_lines(&mut self, start: usize) -> Item {
-        let Some(words) = self.words(start) else {
+        let Some(words) = self.words(start, self.siblings.level) else {
             return Item::No;
         };
         if !self.ends_line(words.end) {
@@ -1638,7 +1820,20 @@ impl<'a> Scanner<'_, 'a> {
     /// `display: block`, `[if IE]` and so on.
     fn comment(&mut self, start: usize) -> Item {
         let Some(rest) = (self.text.get(start..)).and_then(|it| it.strip_prefix(b"<!--")) else {
-            return Item::No;
+            // In small letters it is printed as it is written in any file.
+            const DOCTYPE: &[u8] = b"<!doctype html>";
+            let end = start + DOCTYPE.len();
+            return match self.text.get(start..end) == Some(DOCTYPE)
+                && self.siblings.level == 0
+                && self.ends_line(end)
+            {
+                true => {
+                    self.out.source(start, end);
+                    self.ends_in_text = false;
+                    Item::Ends(end)
+                }
+                false => Item::No,
+            };
         };
         let first = rest.iter().find(|byte| !matches!(byte, 9..=13 | b' '));
         if matches!(first, None | Some(b'p' | b'd' | b'[' | b'<' | 128..)) {

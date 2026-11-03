@@ -808,7 +808,8 @@ pub(crate) fn parse<'a>(
         }
     };
     let get_tag_content_type: GetTagContentType<'_> = &get_tag_content_type;
-    let runs = options.runs.filter(|_| start == 0).map(Runs::new);
+    let runs = (options.runs.filter(|_| start == 0))
+        .map(|settings| tree.runs.take().unwrap_or_else(|| Runs::new(settings)));
     let mut lexer = Tokenizer::new(text, start, get_tag_content_type, options.lexer, runs);
     // A node is typically about thirty bytes.
     tree.nodes.reserve(text.len().saturating_sub(start) / 32);

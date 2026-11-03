@@ -273,6 +273,8 @@ pub(crate) struct Tree<'a> {
     pub(crate) start_tag_comments: Vec<StartTagComment<'a>>,
     /// What is printed for the nodes of `Kind::Ready`.
     pub(crate) printed: Vec<u8>,
+    /// What has been found out about the text before it is parsed, for the lexer.
+    pub(crate) runs: Option<super::runs::Runs>,
     pub(crate) root: Id,
 }
 

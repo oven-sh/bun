@@ -1147,6 +1147,8 @@ async function bothWays(files: Record<string, string>, options: string[]) {
 describe("HTML", () => {
   const line = (indentation: number, text: string) => " ".repeat(indentation) + text + "\n";
   const words = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore";
+  // With four blanks in front of it, `tempor` does not fit behind it.
+  const full = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod";
   const attributes = 'class="one two three" id="an-identifier" data-something="a value with words" hidden';
   // Children on lines of their own are read from the bytes.
   const inputs: string[] = [
@@ -1204,6 +1206,29 @@ describe("HTML", () => {
     "<div>\n  <b></b>\n</p>\n",
     "<div>\n  <p>a</p\n  >\n</div\n>\n",
     "---\na: b\n---\n\n<div>\n  <p>a</p>\n</div>\n",
+    "+++\na = 1\n+++\n\n<div>\n  <p>a</p>\n</div>\n",
+    "---\n<p>a</p>\n",
+    "+++\n<p>a</p>\n",
+    // A text that is written as it is printed, and nearly so.
+    `<div>\n  <p>\n    ${full}\n    tempor incididunt\n  </p>\n  ${full}\n  tempor incididunt\n  <b></b>\n</div>\n`,
+    `<div>\n  <p>\n    ${full}\n    tempor ${full}\n    tempor\n  </p>\n  <span>\n    ${full}\n    tempor\n  </span>\n</div>\n`,
+    `<div>\n  <p>\n    ${full}\n    a tempor\n  </p>\n  <p>\n    ${full} tempor\n    incididunt\n  </p>\n  <p>\n    ${full}\n\n    tempor\n  </p>\n</div>\n`,
+    `<div>\n  <p>\n    ${full}\n   tempor\n  </p>\n  <p>\n    ${full}\n     tempor\n  </p>\n  <p>\n    ${full}\n\ttempor\n  </p>\n</div>\n`,
+    `<div>\n  <p>\n    ${full}\n    tempor  ut\n  </p>\n  <p>\n    ${full}\n    tempor \n  </p>\n  <p>\n    ${full}\n    tempor &amp; é {{ a }}\n  </p>\n</div>\n`,
+    `<div>\n  <p>\n    ${full}\n    tempor <b>a</b>\n  </p>\n  <p>\n    ${full}\n    tempor\n    <b>a</b>\n  </p>\n  <p>\n    ${full}\n    tempor</p>\n</div>\n`,
+    `<div>\n  <p>\n    ${full}\n    tempor\n`,
+    // What is in a `<head>`.
+    `<!doctype html>\n<html>\n  <head>\n    <title>a b</title>\n    <script src="c"></script>\n  </head>\n</html>\n`,
+    `<!DOCTYPE html>\n<html>\n  <head>\n    <title> a b </title>\n    <script src="c" defer></script>\n  </head>\n</html>\n`,
+    `<!doctype  html>\n<div>\n  <!doctype html>\n  <title>a  b</title>\n  <title>a &amp; b</title>\n  <title>a <b>c</b></title>\n  <title>{{ a }}</title>\n  <title></title>\n</div>\n`,
+    `<div>\n  <title>${full} ${full}</title>\n  <script src="${full} ${full}"></script>\n  <script src></script>\n  <script src="a"> </script>\n  <script src="a" />\n  <script ${attributes}></script>\n  <script>\n  </script>\n</div>\n`,
+    `<svg>\n  <title>a</title>\n  <script href="b"></script>\n</svg>\n`,
+    // White space alone.
+    `<div>\n  <a> </a>\n  <a>\n  </a>\n  <a ${attributes}> </a>\n  <a ${attributes}>\n  </a>\n  <p> </p>\n  <button> </button>\n  <a-very-long-name-that-takes-room-and-more-room-and-more-room-and-more-room> </a-very-long-name-that-takes-room-and-more-room-and-more-room-and-more-room>\n</div>\n`,
+    // A line break in a value.
+    `<div>\n  <p a="b\nc">d</p>\n  <img a="b\n  c" />\n  <p a="b\n">\n    <b>e</b>\n  </p>\n  <p class="b\nc"></p>\n  <p style="b:\nc"></p>\n  <a b="c\nd">e</a>\n  <p>f <a b="c\nd">e</a></p>\n  <p a="b\tc"></p>\n  <p a="b \n c" d="e\n\nf" g></p>\n</div>\n`,
+    // Deeper than what is read from the bytes goes.
+    "<div>\n".repeat(200) + "<p>a</p>\n" + "</div>\n".repeat(200),
     "﻿<div>\n  <p>a</p>\n</div>\n",
     "<div>\r\n  <p>a</p>\r\n</div>\r\n",
     "<div>\n  <p>a</p>\n</div>",

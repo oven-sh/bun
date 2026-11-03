@@ -602,7 +602,7 @@ impl<'a> Tokenizer<'a, '_> {
     /// True if a child starts at the cursor that may be the first of a run that has not been looked for.
     pub(crate) fn may_start_run(&self) -> bool {
         self.is_at_start_of_line
-            && (self.runs.as_ref()).is_some_and(|runs| self.pos > runs.scanned_to || self.pos == 0)
+            && (self.runs.as_ref()).is_some_and(|runs| !runs.has_scanned(self.pos))
             && !self.peek_str(b"</")
     }
 
@@ -1434,7 +1434,7 @@ impl<'a, 'f> Tokenizer<'a, 'f> {
             is_stuck: false,
             is_done: false,
             is_at_start_of_line: runs.is_some()
-                && !matches!(text.get(start), Some(b' ' | b'\t' | b'\n')),
+                && super::runs::starts_at_start_of_line(text.get(start..).unwrap_or_default()),
             runs,
             get_tag_content_type,
             options,

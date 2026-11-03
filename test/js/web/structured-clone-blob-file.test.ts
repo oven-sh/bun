@@ -678,6 +678,43 @@ describe("structuredClone with Blob and File", () => {
       });
     });
 
+    // The field has 64 bits on Windows, and `Bun.file(fd)` makes only some of their values.
+    describe.skipIf(!isWindows)("crafted File blob fd (windows)", () => {
+      const fdSentinel = 0x7e7d7c7b;
+      const fdImage = Buffer.from(new Uint8Array(serialize(Bun.file(fdSentinel))));
+      const fdNeedle = Buffer.alloc(4);
+      fdNeedle.writeInt32LE(fdSentinel);
+      const fdFieldIndex = fdImage.indexOf(fdNeedle);
+      if (fdFieldIndex < 0) throw new Error("could not locate fd field in serialized file blob");
+
+      function craftFd(low: number, high?: number) {
+        const out = Buffer.from(fdImage);
+        out.writeUInt32LE(low, fdFieldIndex);
+        if (high !== undefined) out.writeUInt32LE(high, fdFieldIndex + 4);
+        return out;
+      }
+      const highOfSentinel = () => fdImage.readUInt32LE(fdFieldIndex + 4);
+
+      test.each([
+        ["fd = -1", () => craftFd(0xffffffff)],
+        ["fd = i32::MIN", () => craftFd(0x80000000)],
+        ["a bit above the descriptor", () => craftFd(7, highOfSentinel() + 1)],
+        ["every bit", () => craftFd(0xffffffff, 0xffffffff)],
+        ["only the low half", () => craftFd(fdSentinel, 0)],
+        ["no bit", () => craftFd(0, 0)],
+      ])("%s is rejected at deserialize", (_name, craft) => {
+        expect(() => deserialize(craft())).toThrow("Unable to deserialize data.");
+        expect(() => v8.deserialize(craft())).toThrow("Unable to deserialize data.");
+      });
+
+      test("fd >= 0 still deserializes", () => {
+        for (const fd of [0, 1, fdSentinel, 0x7fffffff]) {
+          expect(deserialize(craftFd(fd))).toBeInstanceOf(Blob);
+          expect(v8.deserialize(craftFd(fd))).toBeInstanceOf(Blob);
+        }
+      });
+    });
+
     test("crafted NaN lastModified deserializes to a number, never a forged JSValue", async () => {
       // `File`/`Blob` store `lastModified` as a raw f64 on the wire. A crafted
       // payload can plant any NaN bit pattern there; JSVALUE64 boxing is only

@@ -3577,6 +3577,11 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                     if fd.0 < 0 {
                         return Err(crate::Error::InvalidValue);
                     }
+                    #[cfg(windows)]
+                    if !matches!(fd.decode_windows(), bun_sys::fd::DecodeWindows::Crt(crt @ 0..) if Fd::from_crt(crt) == fd)
+                    {
+                        return Err(crate::Error::InvalidValue);
+                    }
                     let mut path_or_fd = PathOrFileDescriptor::Fd(fd);
                     break 'file Blob::new(Blob::find_or_create_file_from_path(
                         &mut path_or_fd,

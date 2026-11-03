@@ -737,17 +737,18 @@ impl<'a> Scanner<'_, 'a> {
         }
     }
 
-    /// True if nothing but blanks and tabs is between `index` and the end of its line.
+    /// True if nothing but blanks and tabs is between `index` and the end of its line, or of the text.
     #[inline]
     fn ends_line(&self, mut index: usize) -> bool {
         let len = (!self.marks.blanks.window(index)).trailing_zeros() as usize;
         if len <= WINDOW {
-            return self.marks.line_feeds.window(index) & low_bits(len) != 0;
+            return self.marks.line_feeds.window(index) & low_bits(len) != 0
+                || index + len >= self.text.len();
         }
         while matches!(self.at(index), b' ' | b'\t') {
             index += 1;
         }
-        self.at(index) == b'\n'
+        self.at(index) == b'\n' || index >= self.text.len()
     }
 
     /// If the end tag of `name` is at `index`, returns where it ends. `key` is `data::key_of_name(name)`.
@@ -992,6 +993,16 @@ impl<'a> Scanner<'_, 'a> {
             }
         };
         self.settle(is_sole_text, parent);
+        // Without a line break behind it, the last child of the text has no say about the line break in front of it. Its
+        // sibling has, if that is between two line breaks.
+        let last = self.siblings.last.at;
+        if last != 0 && self.skip_space(last) == (self.text.len(), 0) {
+            let is_first = self.siblings.previous.at == 0;
+            let is_alone = start == 0 && self.siblings.count == 1;
+            if !is_alone && (is_first || (start == 0 && self.siblings.count == 2)) {
+                self.siblings.remove_last();
+            }
+        }
         // At the start of the text there is no line break in front of the first child. Whether one is printed behind it
         // is up to the next one then.
         if start == 0 {

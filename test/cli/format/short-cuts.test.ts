@@ -1997,6 +1997,11 @@ describe.skipIf(!hasFlag)("HTML", () => {
     // A comment whose end is where an end tag would be: below the root, in front of a sibling, as the last child.
     "<!--\n  a\n-->\n<p>b</p>\n<!--\n  c\n-->\n",
     "<div>\n  <!--\n    a\n-->\n  <p>b</p>\n</div>\n<p>\n  <!--\n    a\n-->\n  <div>b</div>\n",
+    // Without a line break behind it, the last child has no say about the line break in front of it.
+    "<a>x</a>\n<b>y</b>",
+    "<a>x</a>\n<b>y</b>\n<i>z</i>",
+    "<a>x <u>y</u></a>\n<i>z</i>",
+    "<div>\n  <p>a</p>\n</div>\n<i>z</i>  ",
   ];
   const files = Object.fromEntries(inputs.map((input, index) => [`${index}.html`, input]));
 

@@ -4067,12 +4067,19 @@ mod windows_impl {
         sys_uv::symlink_uv(target, link, 0)
     }
     pub fn readlink(path: &ZStr, buf: &mut [u8]) -> Maybe<usize> {
-        let err = match sys_uv::readlink(path, buf) {
-            Ok(target) => return Ok(target.len()),
+        with_long_path_retry(path, |path| {
+            sys_uv::readlink(path, buf).map(|target| target.len())
+        })
+    }
+    /// Runs `call` with `path`. libuv passes the path to Windows unchanged, and a path of 260 characters or more only works with the `\\?\` prefix, so an ENOENT for a long drive-absolute path is tried once more with it.
+    pub(crate) fn with_long_path_retry<T>(
+        path: &ZStr,
+        mut call: impl FnMut(&ZStr) -> Maybe<T>,
+    ) -> Maybe<T> {
+        let err = match call(path) {
+            Ok(value) => return Ok(value),
             Err(err) => err,
         };
-        // libuv passes the path to Windows unchanged, and a path of 260 characters or more only
-        // works with the `\\?\` prefix, so retry with it.
         let bytes = path.as_bytes();
         if err.get_errno() != E::ENOENT
             || bytes.len() < 248
@@ -4091,7 +4098,7 @@ mod windows_impl {
         );
         let len = 4 + normalized.len();
         long[len] = 0;
-        sys_uv::readlink(ZStr::from_buf(&long[..], len), buf).map(|target| target.len())
+        call(ZStr::from_buf(&long[..], len))
     }
     pub fn fchmod(fd: Fd, mode: Mode) -> Maybe<()> {
         sys_uv::fchmod(fd, mode)
@@ -9067,7 +9074,11 @@ pub fn stat_force_sync(path: &ZStr) -> Maybe<PosixStat> {
     if SUPPORTS_STATX_ON_LINUX.load(core::sync::atomic::Ordering::Relaxed) {
         return statx_force_sync(path, STATX_MASK_FOR_STATS);
     }
-    stat(path).map(|stat| PosixStat::init(&stat))
+    #[cfg(windows)]
+    let result = with_long_path_retry(path, stat);
+    #[cfg(not(windows))]
+    let result = stat(path);
+    result.map(|stat| PosixStat::init(&stat))
 }
 
 /// Whether the file system of `path` stamps a change with this machine's clock. False for a network mount and for a type not listed.

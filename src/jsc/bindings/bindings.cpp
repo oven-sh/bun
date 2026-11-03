@@ -351,6 +351,61 @@ bool readFlagsAndProcessPromise(JSValue& instanceValue, ExpectFlags& flags, JSGl
     return false;
 }
 
+// PASS when each element of the sample is deep-equal to an element of the other array.
+static ALWAYS_INLINE AsymmetricMatcherResult arrayContainsEach(JSGlobalObject* globalObject, ThrowScope& throwScope, JSObject* expectedArray, unsigned expectedLength, JSObject* otherArray, unsigned otherLength)
+{
+    // A empty array is all array's subset
+    if (expectedLength == 0) {
+        return AsymmetricMatcherResult::PASS;
+    }
+
+    // O(m*n) but works for now
+    for (unsigned m = 0; m < expectedLength; m++) {
+        JSValue expectedValue = expectedArray->getIndex(globalObject, m);
+        RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
+        bool found = false;
+
+        for (unsigned n = 0; n < otherLength; n++) {
+            JSValue otherValue = otherArray->getIndex(globalObject, n);
+            RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
+            Vector<std::pair<JSValue, JSValue>, 16> stack;
+            MarkedArgumentBuffer gcBuffer;
+            bool foundNow = Bun__deepEquals<false, true, false>(globalObject, expectedValue, otherValue, gcBuffer, stack, throwScope, true);
+            RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
+            if (foundNow) {
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            return AsymmetricMatcherResult::FAIL;
+        }
+    }
+
+    return AsymmetricMatcherResult::PASS;
+}
+
+// For expect.arrayContaining(): a Proxy of an array is an array, as the sample and as the value.
+static NEVER_INLINE AsymmetricMatcherResult proxiedArrayContains(JSGlobalObject* globalObject, ThrowScope& scope, JSValue expectedValue, JSValue otherValue)
+{
+    bool expectedIsArray = isArray(globalObject, expectedValue);
+    RETURN_IF_EXCEPTION(scope, AsymmetricMatcherResult::FAIL);
+    bool otherIsArray = expectedIsArray && isArray(globalObject, otherValue);
+    RETURN_IF_EXCEPTION(scope, AsymmetricMatcherResult::FAIL);
+    if (!otherIsArray)
+        return AsymmetricMatcherResult::FAIL;
+
+    JSObject* expectedArray = asObject(expectedValue);
+    JSObject* otherArray = asObject(otherValue);
+    constexpr uint64_t maxLength = std::numeric_limits<unsigned>::max();
+    uint64_t expectedLength = JSC::toLength(globalObject, expectedArray);
+    RETURN_IF_EXCEPTION(scope, AsymmetricMatcherResult::FAIL);
+    uint64_t otherLength = JSC::toLength(globalObject, otherArray);
+    RETURN_IF_EXCEPTION(scope, AsymmetricMatcherResult::FAIL);
+    return arrayContainsEach(globalObject, scope, expectedArray, static_cast<unsigned>(std::min(expectedLength, maxLength)), otherArray, static_cast<unsigned>(std::min(otherLength, maxLength)));
+}
+
 AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* globalObject, JSValue matcherProp, JSValue otherProp, ThrowScope& throwScope, ExpectFlags& flags)
 {
     using namespace Bun::Bindgen::Generated;
@@ -512,45 +567,17 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         JSValue expectedArrayValue = expectArrayContaining->m_arrayValue.get();
 
         // Note: isArray() accepts Proxy->Array, but jsDynamicCast returns null for Proxy.
-        JSArray* expectedArray = dynamicDowncast<JSArray>(expectedArrayValue);
-        JSArray* otherArray = dynamicDowncast<JSArray>(otherProp);
-        if (expectedArray && otherArray) {
-            unsigned expectedLength = expectedArray->length();
-            unsigned otherLength = otherArray->length();
-
-            // A empty array is all array's subset
-            if (expectedLength == 0) {
-                return AsymmetricMatcherResult::PASS;
+        if (JSArray* expectedArray = dynamicDowncast<JSArray>(expectedArrayValue)) [[likely]] {
+            if (JSArray* otherArray = dynamicDowncast<JSArray>(otherProp)) {
+                return arrayContainsEach(globalObject, throwScope, expectedArray, expectedArray->length(), otherArray, otherArray->length());
             }
-
-            // O(m*n) but works for now
-            for (unsigned m = 0; m < expectedLength; m++) {
-                JSValue expectedValue = expectedArray->getIndex(globalObject, m);
-                RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
-                bool found = false;
-
-                for (unsigned n = 0; n < otherLength; n++) {
-                    JSValue otherValue = otherArray->getIndex(globalObject, n);
-                    RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
-                    Vector<std::pair<JSValue, JSValue>, 16> stack;
-                    MarkedArgumentBuffer gcBuffer;
-                    bool foundNow = Bun__deepEquals<false, true, false>(globalObject, expectedValue, otherValue, gcBuffer, stack, throwScope, true);
-                    RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
-                    if (foundNow) {
-                        found = true;
-                        break;
-                    }
-                }
-
-                if (!found) {
-                    return AsymmetricMatcherResult::FAIL;
-                }
+            // Only a Proxy can be an array without being a JSArray.
+            if (!dynamicDowncast<ProxyObject>(otherProp)) [[likely]] {
+                return AsymmetricMatcherResult::FAIL;
             }
-
-            return AsymmetricMatcherResult::PASS;
         }
 
-        return AsymmetricMatcherResult::FAIL;
+        return proxiedArrayContains(globalObject, throwScope, expectedArrayValue, otherProp);
     } else if (auto* expectObjectContaining = dynamicDowncast<JSExpectObjectContaining>(matcherPropCell)) {
         if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;

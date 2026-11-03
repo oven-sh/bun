@@ -959,7 +959,7 @@ describe("expect()", () => {
     });
 
     // A read of `length` or of an element of a Proxy of an array runs a trap, and the trap can throw.
-    test("toMatchObject checks the exception of each read of a Proxy of an array", async () => {
+    test("toMatchObject and expect.arrayContaining check the exception of each read of a Proxy of an array", async () => {
       const { bunEnv, bunExe } = require("harness");
       const src = `
         const { expect } = require("bun:test");
@@ -974,12 +974,16 @@ describe("expect()", () => {
             try { expect(a).toMatchObject(b); } catch {}
             try { Bun.deepMatch(a, b); } catch {}
             try { expect(a).toEqual(expect.objectContaining(b)); } catch {}
+            try { expect(a).toEqual(expect.arrayContaining(b)); } catch {}
+            try { expect({ x: a }).toMatchObject({ x: expect.not.arrayContaining(b) }); } catch {}
           }
         }
         const late = Proxy.revocable([1], {});
         const received = expect(late.proxy);
+        const matcher = expect.arrayContaining(late.proxy);
         late.revoke();
         try { received.toMatchObject([1]); } catch {}
+        try { expect([1]).toEqual(matcher); } catch {}
         console.log("ok");
       `;
       await using proc = Bun.spawn({
@@ -5305,6 +5309,105 @@ describe("expect()", () => {
         expect(expect.not.arrayContaining("foo")).toEqual([]);
       }).toThrow(/*"You must provide an array to ArrayNotContaining, not 'string'."*/);
     });
+
+    test("ArrayContaining takes a Proxy of an array as an array", () => {
+      const P = (/** @type {any[]} */ target, /** @type {ProxyHandler<any>} */ handler = {}) =>
+        new Proxy(target, handler);
+      // as the value, as the sample, and as both
+      expect(P([1, 2])).toEqual(expect.arrayContaining([1]));
+      expect([1, 2]).toEqual(expect.arrayContaining(P([1])));
+      expect(P([1, 2])).toEqual(expect.arrayContaining(P([1])));
+      expect(P([1, 2])).toEqual(expect.arrayContaining([]));
+      expect(P([{ a: 1 }, { b: 2 }])).toEqual(expect.arrayContaining([{ b: 2 }]));
+      expect(P([1, 2])).not.toEqual(expect.arrayContaining([3]));
+      expect([1, 2]).not.toEqual(expect.arrayContaining(P([3])));
+      // nested in a pattern, and for the argument of a call
+      expect({ x: P([1, 2]) }).toMatchObject({ x: expect.arrayContaining([1]) });
+      expect({ x: P([1, 2]) }).not.toMatchObject({ x: expect.arrayContaining([3]) });
+      const fn = jest.fn();
+      fn(P([1, 2]));
+      expect(fn).toHaveBeenCalledWith(expect.arrayContaining([1]));
+      // the `get` trap decides what an element is
+      const served = P([1], { get: (target, key, receiver) => (key === "0" ? 9 : Reflect.get(target, key, receiver)) });
+      expect(served).toEqual(expect.arrayContaining([9]));
+      expect(served).not.toEqual(expect.arrayContaining([1]));
+      // the sample is read when it is matched
+      const sample = [1];
+      const matcher = expect.arrayContaining(P(sample));
+      sample.push(3);
+      expect([1, 2]).not.toEqual(matcher);
+      expect([1, 2, 3]).toEqual(matcher);
+      // a served length of 2 ** 32 does not wrap to 0
+      const long = P([1], {
+        get: (target, key, receiver) => (key === "length" ? 2 ** 32 : Reflect.get(target, key, receiver)),
+      });
+      expect(long).toEqual(expect.arrayContaining([1]));
+      expect([]).not.toEqual(expect.arrayContaining(long));
+      // a Proxy of an object is not an array, and a revoked Proxy throws
+      const notArray = () => ANY(new Proxy({ 0: 1, length: 1 }, {}));
+      expect(notArray()).not.toEqual(expect.arrayContaining([1]));
+      expect(() => expect([1]).toEqual(expect.arrayContaining(notArray()))).toThrow();
+      expect(() => expect([1]).toEqual(expect.not.arrayContaining(notArray()))).toThrow();
+      const revoked = () => {
+        const { proxy, revoke } = Proxy.revocable([1], {});
+        revoke();
+        return proxy;
+      };
+      expect(() => expect([1]).toEqual(expect.arrayContaining(revoked()))).toThrow(TypeError);
+      expect(() => expect(revoked()).toEqual(expect.arrayContaining([1]))).toThrow(TypeError);
+    });
+
+    test("ArrayNotContaining takes a Proxy of an array as an array", () => {
+      const P = (/** @type {any[]} */ target) => new Proxy(target, {});
+      expect(P([1, 2])).not.toEqual(expect.not.arrayContaining([1]));
+      expect(P([1, 2])).toEqual(expect.not.arrayContaining([3]));
+      expect([1, 2]).not.toEqual(expect.not.arrayContaining(P([1])));
+      expect([1, 2]).toEqual(expect.not.arrayContaining(P([3])));
+      expect({ x: P([1, 2]) }).not.toMatchObject({ x: expect.not.arrayContaining([1]) });
+      // a trap that throws ends the assertion with its error, and so does a revoked Proxy
+      for (const key of ["length", "0"]) {
+        const throws = () =>
+          new Proxy([1], {
+            get(target, property, receiver) {
+              if (property === key) throw new RangeError(key);
+              return Reflect.get(target, property, receiver);
+            },
+          });
+        expect(() => expect(throws()).toEqual(expect.not.arrayContaining([2]))).toThrow(RangeError);
+        expect(() => expect([1]).toEqual(expect.not.arrayContaining(throws()))).toThrow(RangeError);
+        expect(() => expect({ x: throws() }).toMatchObject({ x: expect.not.arrayContaining([2]) })).toThrow(RangeError);
+      }
+      const { proxy, revoke } = Proxy.revocable([1], {});
+      revoke();
+      expect(() => expect(proxy).toEqual(expect.not.arrayContaining([1]))).toThrow(TypeError);
+    });
+
+    if (isBun) {
+      test("ArrayContaining reads `length` once and each element when it needs it", () => {
+        /** @type {string[]} */
+        const reads = [];
+        const spy = new Proxy([1, 2, 3], {
+          get(target, key, receiver) {
+            reads.push(String(key));
+            return Reflect.get(target, key, receiver);
+          },
+        });
+        const matcher = expect.arrayContaining(spy);
+        expect(reads).toEqual([]);
+        expect([3, 1, 2]).toEqual(matcher);
+        expect(reads).toEqual(["length", "0", "1", "2"]);
+      });
+
+      test("ArrayContaining checks that its sample is an array when it is made", () => {
+        const notArray = ANY(new Proxy({ 0: 1, length: 1 }, {}));
+        expect(() => expect.arrayContaining(notArray)).toThrow("Expected a array");
+        expect(() => expect.not.arrayContaining(notArray)).toThrow("Expected a array");
+        const { proxy, revoke } = Proxy.revocable([1], {});
+        revoke();
+        expect(() => expect.arrayContaining(proxy)).toThrow(TypeError);
+        expect(() => expect.not.arrayContaining(proxy)).toThrow(TypeError);
+      });
+    }
 
     test("ObjectContaining matches", () => {
       // we differ in jest on these cases: bun will fail matching non-object expected values, while jest doesn't

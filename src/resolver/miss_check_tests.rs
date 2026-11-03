@@ -1028,7 +1028,7 @@ fn only_the_last_run_of_a_lookup_asks_the_package_manager() {
             .resolve_and_auto_install(&dir, nowhere, stmt, allowed);
         assert!(matches!(missing, ResultUnion::Failure(_)));
         assert_eq!(counts(), (asked + 1, ran_again + 2));
-        // The first pass of a caller's sequence asks nothing. The rerun of its second pass asks.
+        // The first pass of a caller's sequence asks nothing. Its second pass asks.
         let missing = made.resolver.with_miss_recheck(
             |resolver, how| resolver.resolve_and_auto_install_as(&dir, nowhere, stmt, allowed, how),
             |found| matches!(found, ResultUnion::NotFound),
@@ -1088,8 +1088,11 @@ fn the_second_pass_of_a_sequence_finds_what_was_made_after_the_miss() {
             from_either(&mut made.resolver, dirs, b"./late.js"),
             (None, 2)
         );
+        // The second pass counts as one lookup run again, and both of its lookups asked at its one generation.
         let after_the_miss = ran_again();
-        assert!(after_the_miss > before);
+        assert_eq!(after_the_miss, before + 1);
+        let asked = dirs.map(|dir| listing(dir, 0).expect("a directory").stamp);
+        assert!(asked[0] != 0 && asked[0] == asked[1]);
         made.write("lib/late.js", "");
         let late = Some(made.path("lib/late.js"));
         // The caches say that it is not there: a resolver that trusts them runs one pass.
@@ -1098,6 +1101,13 @@ fn the_second_pass_of_a_sequence_finds_what_was_made_after_the_miss() {
         assert_eq!(
             from_either(&mut made.resolver, dirs, b"./late.js"),
             (late.clone(), 2)
+        );
+        assert_eq!(ran_again(), after_the_miss + 1);
+        // What the pass found is made ready at its generation too: the slot of the directory has the stamp of its listing.
+        let lib = made.info(0, "lib").expect("a directory");
+        assert_eq!(
+            Some(stamp_of(lib)),
+            listing(dirs[1], 0).map(|listing| listing.stamp)
         );
         // The caches have it now: one pass for either resolver.
         assert_eq!(
@@ -1241,14 +1251,27 @@ fn a_sequence_that_misses_runs_once_more_unless_its_resolver_trusts_cached_misse
         (passes, found)
     };
     let once = vec![AfterMiss::TrustCache];
-    let again = vec![AfterMiss::TrustCache, AfterMiss::Recheck];
     let mut resolver = resolver();
+    let ran_again = || counters().0;
+    let before = ran_again();
     assert!(passes_of(&mut resolver, 1) == (once.clone(), true));
-    assert!(passes_of(&mut resolver, 2) == (again.clone(), true));
-    assert!(passes_of(&mut resolver, 3) == (again, false));
+    assert_eq!(ran_again(), before);
+    // The second pass gets one generation, newer than each one before it, and counts as one lookup run again.
+    let mut newest = next_generation();
+    for (found_in, finds) in [(2, true), (3, false)] {
+        let (passes, found) = passes_of(&mut resolver, found_in);
+        let [AfterMiss::TrustCache, AfterMiss::CheckedPass(asked)] = passes[..] else {
+            panic!("a pass that trusts the caches, then one that checks");
+        };
+        assert!(found == finds && asked > newest && asked < next_generation());
+        assert!(!resolver.reruns_after_miss(AfterMiss::CheckedPass(asked)));
+        newest = asked;
+    }
+    assert_eq!(ran_again(), before + 2);
     resolver.trust_cached_misses();
     assert!(passes_of(&mut resolver, 1) == (once.clone(), true));
     assert!(passes_of(&mut resolver, 2) == (once, false));
+    assert_eq!(ran_again(), before + 2);
 }
 
 #[test]

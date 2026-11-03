@@ -596,6 +596,8 @@ pub enum AfterMiss {
     Recheck,
     /// Return the miss.
     TrustCache,
+    /// The second pass of `Resolver::with_miss_recheck`: ask at this generation, and return the miss.
+    CheckedPass(Generation),
 }
 
 /// `bun:internal-for-testing`: what the caches did so far, and one point where a test holds a thread.
@@ -1767,9 +1769,14 @@ impl<'a> Resolver<'a> {
         }
 
         let marks = (self.log_mark(), self.esm_failure);
+        // A pass that checks asks at its own generation, and any other lookup at the one of its resolver.
+        let generation = match how {
+            AfterMiss::CheckedPass(of_pass) => of_pass,
+            AfterMiss::Recheck | AfterMiss::TrustCache => self.generation,
+        };
         // Set for what an executable compiled in place holds at the path.
         let mut is_at_source_path = false;
-        let mut tmp = DirInfo::dispatch_asker!(self.generation, |asker| self.lookup_sequence(
+        let mut tmp = DirInfo::dispatch_asker!(generation, |asker| self.lookup_sequence(
             asker,
             (source_dir_normalized, import_path),
             (kind, global_cache),
@@ -1781,7 +1788,7 @@ impl<'a> Resolver<'a> {
             return tmp;
         }
         // The generation of the run that answers: what the rerun finds is finalized by the asker of the rerun.
-        let mut answered_at = self.generation;
+        let mut answered_at = generation;
         if matches!(tmp, ResultUnion::NotFound) && self.reruns_after_miss(how) {
             (tmp, is_at_source_path, answered_at) = self.rerun_after_miss(
                 marks,
@@ -2264,7 +2271,7 @@ impl<'a> Resolver<'a> {
         (again, is_at_source_path, asker.0)
     }
 
-    /// For a caller's own lookups that fall back one to the next, each made with the `AfterMiss` that `sequence` gets. One pass takes every miss as it is. If `missed` says that all of it missed, one more pass checks every miss, unless the resolver trusts cached misses.
+    /// For a caller's own lookups that fall back one to the next, each made with the `AfterMiss` that `sequence` gets. One pass takes every miss as it is. If `missed` says that all of it missed, one more pass asks at one new generation, unless the resolver trusts cached misses.
     pub fn with_miss_recheck<T>(
         &mut self,
         mut sequence: impl FnMut(&mut Self, AfterMiss) -> T,
@@ -2279,7 +2286,7 @@ impl<'a> Resolver<'a> {
         self.recheck_sequence(marks, sequence, missed)
     }
 
-    /// The pass of `with_miss_recheck` that a sequence which finds its module never runs.
+    /// The pass of `with_miss_recheck` that a sequence which finds its module never runs. Its lookups ask at one new generation, and count as one lookup run again.
     #[cold]
     #[inline(never)]
     fn recheck_sequence<T>(
@@ -2288,17 +2295,20 @@ impl<'a> Resolver<'a> {
         mut sequence: impl FnMut(&mut Self, AfterMiss) -> T,
         missed: impl Fn(&T) -> bool,
     ) -> T {
+        test_hooks::hold_before_rerun();
+        let generation = bun_core::next_generation();
+        test_hooks::count_rerun();
         let mut earlier_msgs: Vec<bun_ast::Msg> = Vec::new();
         self.take_log(log_mark, &mut earlier_msgs);
         self.esm_failure = esm_failure;
-        let result = sequence(self, AfterMiss::Recheck);
+        let result = sequence(self, AfterMiss::CheckedPass(generation));
         if !earlier_msgs.is_empty() && missed(&result) {
             self.put_back_log(log_mark.0, earlier_msgs);
         }
         result
     }
 
-    /// Whether a lookup made with `how` runs once more after a miss. Never in a resolver that trusts cached misses.
+    /// Whether a lookup made with `how` runs once more after a miss. Never in a resolver that trusts cached misses, and never in a pass that checks.
     #[inline]
     fn reruns_after_miss(&self, how: AfterMiss) -> bool {
         how == AfterMiss::Recheck && !self.trusts_cached_misses

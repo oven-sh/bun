@@ -91,10 +91,12 @@ pub fn parser_for_path(path: &[u8]) -> Option<Parser> {
         (b".mjml", Parser::Mjml),
         (b".vue", Parser::Vue),
     ];
-    let lower = path.to_ascii_lowercase();
     EXTENSIONS
         .iter()
-        .find(|(extension, _)| lower.ends_with(extension))
+        .find(|(extension, _)| {
+            (path.len().checked_sub(extension.len()))
+                .is_some_and(|at| path[at..].eq_ignore_ascii_case(extension))
+        })
         .map(|(_, parser)| *parser)
 }
 

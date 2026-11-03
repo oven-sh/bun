@@ -1853,7 +1853,7 @@ impl Run<'_> {
             prettier::Prettier::new(self.environment, options, size, pool.threads())
         });
 
-        let threads = pool.threads_for(files::time_to_format(work.iter().map(|it| it.1.size)));
+        let threads = files::threads_to_format(&pool, work.iter().map(|it| it.1.size));
         let workers: Vec<Guarded<Option<Box<Worker>>>> =
             (0..threads.max(1)).map(|_| Default::default()).collect();
         let names: Vec<Session> = (0..threads.max(1)).map(|_| Session::new()).collect();

@@ -881,6 +881,15 @@ fn search(
 /// About what it takes to look at an argument and then to format the file that it names, however short, in nanoseconds.
 const TIME_FOR_AN_ARGUMENT: u64 = 5_000 + TIME_FOR_ANY_FILE;
 
+/// How many threads pay to format files of these sizes.
+pub(crate) fn threads_to_format(pool: &Pool, sizes: impl Iterator<Item = u64> + Clone) -> usize {
+    pool.threads_for_parts(
+        time_to_format(sizes.clone()),
+        sizes.clone().count(),
+        time_to_format(sizes.max().into_iter()),
+    )
+}
+
 /// How many threads pay if each of `count` arguments names a file of a few kilobytes.
 pub(crate) fn threads_for_arguments(pool: &Pool, count: usize) -> usize {
     pool.threads_for(100_000u64.saturating_mul(count as u64))
@@ -924,12 +933,11 @@ pub(crate) fn expand(
     };
     let looked_up = pool.map(patterns.len(), TIME_FOR_AN_ARGUMENT, &look_up);
     // The threads start while the rest of this function finds out what else there is to know about the files.
-    pool.call_up(pool.threads_for(time_to_format(looked_up.iter().filter_map(
-        |it| match it.2 {
-            Some(Some((fs::LinkKind::File, size, _))) => Some(size),
-            _ => None,
-        },
-    ))));
+    let sizes = looked_up.iter().filter_map(|it| match it.2 {
+        Some(Some((fs::LinkKind::File, size, _))) => Some(size),
+        _ => None,
+    });
+    pool.call_up(threads_to_format(pool, sizes));
     entries.reserve(looked_up.len());
     for (raw_argument, (pattern, path, found)) in patterns.iter().zip(looked_up) {
         let Some(found) = found else {

@@ -319,16 +319,27 @@ impl Pool {
     }
 
     /// How many threads to do work on that takes one thread `nanoseconds`: as many as somebody asked for, else as many
-    /// as pay. A thread takes time to start, touches memory of its own, which the system takes back page by page when
-    /// the process ends, and shares a core with another one on most machines. So the time that a run takes has a
-    /// minimum where the number of threads is in proportion to the square root of the work.
+    /// as pay. A thread takes time to start and touches memory of its own, which the system takes back page by page when
+    /// the process ends. The more threads there are, the longer each waits for the system to hand out a page, and the
+    /// more of them share a core. Measured from 16 files to 12,000, the time that a run takes has its minimum where the
+    /// number of threads is five times the cube root of the milliseconds, and changes little around it.
     pub(crate) fn threads_for(&self, nanoseconds: u64) -> usize {
         match self.is_chosen {
             true => self.threads,
             false => {
                 let milliseconds = nanoseconds as f64 / 1e6;
-                ((1.5 * milliseconds.sqrt()) as usize).clamp(1, self.threads.max(1))
+                ((5.0 * milliseconds.cbrt()) as usize).clamp(1, self.threads.max(1))
             }
+        }
+    }
+
+    /// [`Pool::threads_for`] work in `count` parts, each for one thread, of which the longest takes `longest`. The work
+    /// takes that long at least, so there's no use for more threads than do the rest in that time.
+    pub(crate) fn threads_for_parts(&self, nanoseconds: u64, count: usize, longest: u64) -> usize {
+        let threads = self.threads_for(nanoseconds).min(count);
+        match self.is_chosen {
+            true => threads,
+            false => threads.min(nanoseconds.div_ceil(longest.max(1)) as usize),
         }
     }
 

@@ -249,11 +249,10 @@ impl fmt::Display for Integrity {
         })?;
 
         // consistentcy with yarn.lock
-        f.write_str(match bytes.len() % 3 {
-            1 => "==",
-            2 => "=",
-            _ => "",
-        })
+        match self.tag {
+            Tag::SHA1 => f.write_str("="),
+            _ => f.write_str("=="),
+        }
     }
 }
 

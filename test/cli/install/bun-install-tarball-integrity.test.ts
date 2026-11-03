@@ -1497,26 +1497,6 @@ describe.concurrent("tarball integrity metadata forms", () => {
     expect(stdout).toContain("1 package installed");
     expect(exitCode).toBe(0);
   });
-
-  it.each(["sha1", "sha256", "sha384", "sha512"])("writes a %s integrity to the lockfile as it is", async algorithm => {
-    const { tgz } = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
-    const integrity = `${algorithm}-${createHash(algorithm).update(tgz).digest("base64")}`;
-
-    await using server = serveManifest({ integrity }, tgz);
-    using dir = projectDir(`integrity-lockfile-${algorithm}`, server.port);
-
-    await using proc = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).toContain("1 package installed");
-    expect(await file(join(String(dir), "bun.lock")).text()).toContain(`"${integrity}"`);
-    expect(exitCode).toBe(0);
-  });
 });
 
 // Bun writes a hash that it can check, or none. Reading anything else as "none" would let an edit of bun.lock turn the

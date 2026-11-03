@@ -2219,7 +2219,8 @@ impl<'t> Reader<'t> {
                 && cells.chunks_exact(widths.len()).all(|row| {
                     row.iter().zip(columns()).all(|(cell, (&width, &align))| {
                         let (pipe, next_pipe) = cell.pipes;
-                        next_pipe == pipe + width + 3
+                        // Columns are counted, and a character can have more bytes than columns.
+                        next_pipe + cell.width == pipe + width + 3 + (cell.end - cell.start)
                             && (cell.start == cell.end
                                 || cell.start == pipe + 2 + padding_before(cell, width, align))
                     }) && row.last().is_some_and(|last| {

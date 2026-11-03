@@ -525,6 +525,8 @@ describe("Markdown", () => {
     "| a |\n|-|\n| *b* |\n| a  b |\n| a\\|b |\n| a\\\\|b |\n| <br> |\n| <a b=\"|\"> |\n| {{ c }} |\n| {{ c | d }} |\n| `a|b` |\n| [a](b) |\n| \ta |\n",
     "| a |\n|-|\n| b |\n{{ c }}\n\n| a |\n|-|\n  \ntext\n",
     "|||||\n|-|-|-|-|\n|||||\n",
+    // As many bytes as an aligned table has, and fewer columns.
+    "| b       |\n| ------- |\n| \u2014     |\n| default |\n\n| b       |\n| ------- |\n| \u2014       |\n| default |\n\n| \u4e2d\u6587 |\n| ---- |\n| a    |\n\n| \u4e2d\u6587 |\n| ------ |\n| a      |\n",
   ];
   expectSame("a.md", texts, markdownOptions);
 });

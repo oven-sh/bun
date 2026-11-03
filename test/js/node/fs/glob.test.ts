@@ -2,6 +2,7 @@
  * @note `fs.glob` et. al. are powered by {@link Bun.Glob}, which is extensively
  * tested elsewhere. These tests check API compatibility with Node.js.
  */
+import { exposedInternals } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import {
   bunEnv,
@@ -16,7 +17,7 @@ import {
   type DirectoryTree,
 } from "harness";
 import fs from "node:fs";
-import { join, parse, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 
 let tmp: string;
 beforeAll(() => {
@@ -625,6 +626,247 @@ describe("maxDepth", () => {
       cannotPassTheParent: fromAllThree([]),
       everywhere: fromAllThree(["../root/d1/f.txt", "../root/f.txt", "../top.txt"]),
     });
+  });
+
+  // What the limiter asked path.relative() about during a walk.
+  type Asked = "no path" | "no path below cwd" | "a path below cwd";
+  type Walked = {
+    matches: ReturnType<typeof fromAllThree>;
+    asked: Record<"globSync" | "glob" | "promises.glob", Asked>;
+  };
+
+  /**
+   * Runs each walk in one child process that counts the calls of path.relative(). Only the limiter calls it, and the
+   * module of the limiter loads at the first walk with `maxDepth`, so a count that is in place before that walk sees
+   * every call. Node.js's test-fs-glob.mjs replaces fs functions in a child process in the same way.
+   */
+  async function walkInAChild(cwd: string, rows: (readonly [pattern: string | string[], maxDepth: number])[]) {
+    const source = `
+      const path = require("node:path");
+      const fs = require("node:fs");
+      const cwd = ${JSON.stringify(cwd)};
+      const below = (path.resolve(cwd) + path.sep).toLowerCase();
+      const isBelow = p => String(p).toLowerCase().startsWith(below);
+      const { relative } = path;
+      let calls = 0;
+      let callsBelow = 0;
+      path.relative = function (from, to) {
+        calls++;
+        if (isBelow(from) || isBelow(to)) callsBelow++;
+        return relative.apply(this, arguments);
+      };
+      const walks = {
+        globSync: async (pattern, options) => fs.globSync(pattern, options),
+        glob: (pattern, options) =>
+          new Promise((resolve, reject) => fs.glob(pattern, options, (err, paths) => (err ? reject(err) : resolve(paths)))),
+        "promises.glob": (pattern, options) => Array.fromAsync(fs.promises.glob(pattern, options)),
+      };
+      (async () => {
+        const report = {};
+        for (const [pattern, maxDepth] of ${JSON.stringify(rows)}) {
+          const matches = {};
+          const asked = {};
+          for (const [name, walk] of Object.entries(walks)) {
+            calls = callsBelow = 0;
+            matches[name] = (await walk(pattern, { cwd, maxDepth })).map(match => match.replaceAll(path.sep, "/")).sort();
+            asked[name] = callsBelow > 0 ? "a path below cwd" : calls > 0 ? "no path below cwd" : "no path";
+          }
+          report[JSON.stringify(pattern) + " at " + maxDepth] = { matches, asked };
+        }
+        console.log(JSON.stringify(report));
+      })();
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", source], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // With no report, stderr says why.
+    return exitCode === 0 && stdout ? (JSON.parse(stdout) as Record<string, Walked>) : { stderr, exitCode };
+  }
+  const walked = (matches: string[], asked: Asked): Walked => ({
+    matches: fromAllThree(matches),
+    asked: { globSync: asked, glob: asked, "promises.glob": asked },
+  });
+
+  // The text of a path says its depth when the path cannot leave cwd, and then the limiter does not ask node:path. The
+  // other patterns show that the count sees the limiter: a walk from the root of the volume asks path.relative() about
+  // the directories above cwd, and a path with ".." needs it.
+  it("does not ask path.relative() about a path below cwd", async () => {
+    using dir = tempDir("fs-glob-max-depth", { "top.txt": "", root: tree, sibling: { "s.txt": "" } });
+    const cwd = join(String(dir), "root");
+    const root = cwd.replaceAll(sep, "/");
+    // "../root" is cwd, so its depth allows the walk to read it, and a name in it is then within the limit with no
+    // question. Windows and macOS do not take that from a path with "..": there a name can be cwd in another case, and
+    // Node.js asks the file system about it.
+    const aNameInTheDirectory: Asked = isWindows || isMacOS ? "a path below cwd" : "no path below cwd";
+    const rows: [pattern: string | string[], expected: string[], asked: Asked][] = [
+      ["**/*.txt", ["d1/f.txt", "f.txt"], "no path"],
+      ["**", [".", "d1", "d1/d2", "d1/f.txt", "f.txt"], "no path"],
+      ["d1/d2/f.txt", [], "no path"],
+      [["d1/**", "*"], ["d1", "d1/d2", "d1/f.txt", "f.txt"], "no path"],
+      [`${root}/**/*.txt`, [`${root}/d1/f.txt`, `${root}/f.txt`], "no path below cwd"],
+      [`${root}/d1/*`, [`${root}/d1/d2`, `${root}/d1/f.txt`], "no path below cwd"],
+      ["../root/**/*.txt", ["../root/d1/f.txt", "../root/f.txt"], "a path below cwd"],
+      ["../root/*.txt", ["../root/f.txt"], aNameInTheDirectory],
+    ];
+    const report = await walkInAChild(
+      cwd,
+      rows.map(([pattern]) => [pattern, 2] as const),
+    );
+    expect(report).toEqual(
+      Object.fromEntries(
+        rows.map(([pattern, expected, asked]) => [`${JSON.stringify(pattern)} at 2`, walked(expected, asked)]),
+      ),
+    );
+  });
+
+  // Each name here is like "." or "..", needs more than one byte for a character, or is one of many, and it is at the
+  // limit and one level past it. The lists are those of Node.js v26.12.1.
+  describe("the depth of a name below cwd", () => {
+    const names: DirectoryTree = {
+      "..a": { "f.txt": "" },
+      ".h": { "f.txt": "" },
+      "a b": { "f.txt": "" },
+      "ø": { "f.txt": "" },
+      "日本": { "f.txt": "", "語": { "f.txt": "" } },
+      a: { a: { a: { a: { a: { a: { a: { a: { a: { "f.txt": "" } } } } } } } } },
+      // Windows has none of these names: it drops a last ".", ":" names a drive or a stream, and "\\" is a separator.
+      ...(isWindows ? {} : { "...": { "f.txt": "" }, "x:y": { "f.txt": "" }, "back\\slash": { "f.txt": "" } }),
+    };
+    type Row = [pattern: string, maxDepth: number, expected: string[], asked?: Asked];
+    const rows: Row[] = [
+      ["{..a,.h}/f.txt", 2, ["..a/f.txt", ".h/f.txt"]],
+      ["{..a,.h}/f.txt", 1, []],
+      ["{..a,.h}/**", 1, ["..a", ".h"]],
+      ["{ø,a b}/f.txt", 2, ["a b/f.txt", "ø/f.txt"]],
+      ["{ø,a b}/f.txt", 1, []],
+      ["日本/**", 2, ["日本", "日本/f.txt", "日本/語"]],
+      ["日本/*/f.txt", 3, ["日本/語/f.txt"]],
+      ["日本/*/f.txt", 2, []],
+      ["a/**/f.txt", 10, ["a/a/a/a/a/a/a/a/a/f.txt"]],
+      ["a/**/f.txt", 9, []],
+      ["a/a/../../ø/f.txt", 2, ["ø/f.txt"]],
+      ["a/a/../../ø/f.txt", 1, []],
+      // "**/.." gives cwd, which is "." at depth 0, and the directory above it, which is ".." at depth 1.
+      ["**/..", 1, [".", ".."], "no path below cwd"],
+      ["**/..", 0, []],
+      ...((isWindows
+        ? []
+        : [
+            [".../f.txt", 2, [".../f.txt"]],
+            [".../f.txt", 1, []],
+            [".../**", 1, ["..."]],
+            ["x*/f.txt", 2, ["x:y/f.txt"]],
+            ["x*/f.txt", 1, []],
+            ["x:y", 1, ["x:y"]],
+            ["x:y", 0, []],
+            ["back*/f.txt", 2, ["back\\slash/f.txt"]],
+            ["back*/f.txt", 1, []],
+          ]) as Row[]),
+    ];
+
+    let report: Awaited<ReturnType<typeof walkInAChild>>;
+    beforeAll(async () => {
+      using dir = tempDir("fs-glob-max-depth", names);
+      report = await walkInAChild(
+        String(dir),
+        rows.map(([pattern, maxDepth]) => [pattern, maxDepth] as const),
+      );
+    });
+
+    it.each(rows)("%j at %d", (pattern, maxDepth, expected, asked = "no path") => {
+      // With no row, the report is the stderr of the child.
+      expect(report[`${JSON.stringify(pattern)} at ${maxDepth}`] ?? report).toEqual(walked(expected, asked));
+    });
+  });
+
+  // The limiter answers from the text of a path when it can. An answer from the text has to be the one that
+  // path.resolve() and path.relative() give, which is the rule of Node.js, for each shape of path on each platform.
+  it("gives the depth that path.resolve() and path.relative() give", async () => {
+    const { DepthLimiter } = exposedInternals["internal/fs/glob-depth-limiter"];
+    using dir = tempDir("fs-glob-max-depth", { Top: { root: { a: {} } } });
+    // The spelling of the file system: Windows and macOS ask it whether a path in another spelling is the root.
+    const root = join(fs.realpathSync.native(String(dir)), "Top", "root");
+    const depthOf = (path: string) => {
+      const fromRoot = relative(root, resolve(root, path));
+      return fromRoot === "" ? 0 : isAbsolute(fromRoot) ? Infinity : fromRoot.split(sep).length;
+    };
+    const isAboveRoot = (path: string) => {
+      const rootFromPath = relative(resolve(root, path), root);
+      return (
+        rootFromPath !== "" &&
+        !isAbsolute(rootFromPath) &&
+        rootFromPath !== ".." &&
+        !rootFromPath.startsWith(`..${sep}`)
+      );
+    };
+
+    const segments = ["a", "b", ".", "..", "", "...", "..a", ".h", "x:y", "C:", "ø", "日本"];
+    const seps = isWindows ? ["\\", "/"] : ["/"];
+    const relativePaths = new Set<string>();
+    for (const s of seps) {
+      for (const a of segments) {
+        for (const path of [a, s + a, a + s]) relativePaths.add(path);
+        for (const b of segments) {
+          relativePaths.add(a + s + b);
+          if (["a", ".", "..", "", "x:y"].includes(a)) relativePaths.add(a + s + b + s + "a").add(a + s + b + s + "..");
+        }
+      }
+    }
+    const back = join("..", basename(root));
+    const paths = [
+      root,
+      root + sep,
+      `${root}x`,
+      `${root}x${sep}a`,
+      dirname(root),
+      parse(root).root,
+      "..",
+      `..${sep}`,
+      back,
+    ];
+    for (const path of relativePaths) {
+      // As it is, below the root as it is spelled, and below the root by way of the directory above it.
+      paths.push(path, root + sep + path, back + sep + path);
+    }
+
+    const mismatches: unknown[] = [];
+    let questions = 0;
+    const check = (question: string, path: string, maxDepth: number, actual: unknown, expected: boolean) => {
+      questions++;
+      if (actual !== expected) mismatches.push({ question, path, maxDepth, actual, expected });
+    };
+    for (let i = 0; i < paths.length; i++) {
+      const path = paths[i];
+      const depth = depthOf(path);
+      const maxDepth = 1 + (i % 2);
+      // One limiter per question: no answer comes from what another question left behind.
+      const limiter = () => new DepthLimiter(root, maxDepth);
+      check("includes", path, maxDepth, limiter().includes(path), depth <= maxDepth);
+      check("canTraverse", path, maxDepth, limiter().canTraverse(path, false), depth < maxDepth);
+      const absolute = isAboveRoot(path) || depth < maxDepth;
+      check("canTraverse, absolute pattern", path, maxDepth, limiter().canTraverse(path, true), absolute);
+      const now = limiter();
+      check("includesNow", path, maxDepth, now.includesNow(path) ?? (await now.includesAsync(path)), depth <= maxDepth);
+      check("includesAsync", path, maxDepth, await limiter().includesAsync(path), depth <= maxDepth);
+      check("canTraverseAsync", path, maxDepth, await limiter().canTraverseAsync(path, true), absolute);
+      // The walker asks about a directory and then about the names in it.
+      const opened = limiter();
+      opened.canTraverse(path, i % 4 < 2);
+      const openedAsync = limiter();
+      await openedAsync.canTraverseAsync(path, i % 4 < 2);
+      for (const name of ["a", "..", `a${sep}b`]) {
+        const child = path + sep + name;
+        const included = depthOf(child) <= maxDepth;
+        check("includes, after canTraverse", child, maxDepth, opened.includes(child), included);
+        const includedNow = openedAsync.includesNow(child) ?? (await openedAsync.includesAsync(child));
+        check("includesNow, after canTraverseAsync", child, maxDepth, includedNow, included);
+      }
+    }
+    // 837 paths, and 1,629 on Windows, where "/" is a separator too.
+    expect({
+      mismatches: mismatches.slice(0, 20),
+      questionsPerPath: questions / paths.length,
+      paths: paths.length > 800,
+    }).toEqual({ mismatches: [], questionsPerPath: 12, paths: true });
   });
 
   // The depth of a path through a link is the depth of the path, not the depth of the target of the link.

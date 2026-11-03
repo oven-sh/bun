@@ -645,6 +645,11 @@ export const exposedInternals = {
       getValidStdio: nodeGetValidStdio,
     });
   },
+  // The DepthLimiter of fs.glob's `maxDepth`. A getter: fs.glob loads the module at its first walk with `maxDepth`, and
+  // a test counts the node:path calls that the module makes from that load on.
+  get "internal/fs/glob-depth-limiter"() {
+    return require("internal/fs/glob-depth-limiter");
+  },
   "internal/fs/utils": {
     // Both are the REAL parsers the fs entry points use (FileSystemFlags::from_js
     // and args::Rm::from_js), not JS reimplementations -- vendored tests assert

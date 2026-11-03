@@ -1008,6 +1008,28 @@ describe.concurrent("bun fmt", () => {
     expect(checked.exitCode).toBe(0);
   });
 
+  test.each([
+    [
+      [],
+      `"plain"|'with "double"'|"with 'single'"|"with 'single'"|"plain"|"both ' and \\""|"é"|"tab\\there"|"tab\there"|"\\\\"|""`,
+    ],
+    [
+      ["--single-quote"],
+      `'plain'|'with "double"'|"with 'single'"|"with 'single'"|'plain'|'both \\' and "'|'é'|'tab\\there'|'tab\there'|'\\\\'|''`,
+    ],
+  ])("gives a string the quotes that need the fewest escapes: %j", async (flags, strings) => {
+    const written = `'plain'|'with "double"'|'with \\'single\\''|"with 'single'"|"plain"|'both \\' and "'|'é'|'tab\\there'|'tab\there'|'\\\\'|''`;
+    const text = `call(${written.split("|").join(", ")}, /* comment */ a);\n`;
+    const result = await format({ "a.js": text }, flags, { reads: ["a.js"] });
+    expect(result.files).toEqual({
+      "a.js": `call(\n${strings
+        .split("|")
+        .map(string => `  ${string},\n`)
+        .join("")}  /* comment */ a,\n);\n`,
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
   test("treats a vertical tab next to a comment as whitespace", async () => {
     const text = "function a(b\v/* c */) {}\nfunction d(/* e */\vf) {}\nconst g = /* h */\vi;\n";
     const result = await format({ "a.js": text }, [], { reads: ["a.js"] });

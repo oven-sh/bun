@@ -543,6 +543,7 @@ describe("MDX", () => {
     `<A>\n  ${"word ".repeat(15)}word\n  ${"word ".repeat(3)}word\n</A>\n\n<A>\n  ${"word ".repeat(14)}word\n  ${"word ".repeat(3)}word\n</A>\n\n<A>${"word ".repeat(14)}word</A>\n\n<A>${"word ".repeat(15)}word</A>\n\n<A b="${"c".repeat(90)}">\n  d\n</A>\n`,
     "a <b>c</b> d <br/> e < f <= g <A b=\"*c*\" /> *h*\n\na {b} c {{ d }} e {% f %} g { h } i {/* j */}\n",
     "_a_ and *a* and _two words_ and a_b and a_b_ c and _a and snake_case `a_` and __a__\n\n**a** and **a b** and ** a** and **a **  and **a*b** and **`a*b`** and **a_b** and **[a](b)** and ***a***\n",
+    "**a **: b\n\n**a & ** b\n\n**a\u00a0** b\n\n- **a **: b\n\n**a\u00e9** b\n\n| **a ** |\n| - |\n",
     "[a](b) and [a](b \"c\") and [a] and [a][b] and ![a](b) and [`a`](b) and [a](é) and [a\\]](b) and a] b\n\n[a](b)\n\n[a]: b\n",
     "a\\*b and a\\_b and a\\#b and a $b$ c and ~a~ and ~~a~~ and http://a.b and www.a.b and a@b.c\n",
     "**Note**: a\n\n🟢 a\n\n\u00a0a\n\n\ufeffa\n\n135 rules.\n\n1. a\n\n1.5 b\n\na\n**b**\n\na\n🟢 b\n\na\n1 b\n\na\u00a0\n",

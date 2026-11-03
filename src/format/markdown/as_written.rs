@@ -1937,7 +1937,11 @@ impl<'t> Reader<'t> {
                     }
                     let line = text.get(start..self.line_end(start).min(text.len()))?;
                     let end = start + bun_core::strings::index_of_char_usize(line, b'*')?;
-                    if byte(end + 1) != b'*' || byte(end + 2) == b'*' {
+                    // After white space, in whatever encoding, they end nothing.
+                    if byte(end + 1) != b'*'
+                        || byte(end + 2) == b'*'
+                        || !byte(end - 1).is_ascii_graphic()
+                    {
                         return None;
                     }
                     let (_, stop) = self.mdx_content::<CELL>(start, end, true, leaf)?;

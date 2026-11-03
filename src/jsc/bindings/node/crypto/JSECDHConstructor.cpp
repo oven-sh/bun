@@ -106,6 +106,8 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalO
     RETURN_IF_EXCEPTION(scope, {});
 
     auto buffer = keyView->span();
+    if (buffer.size() > INT32_MAX) [[unlikely]]
+        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "key is too big"_s);
     if (buffer.empty())
         return JSValue::encode(jsEmptyString(vm));
 

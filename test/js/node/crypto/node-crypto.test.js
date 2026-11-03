@@ -1195,6 +1195,13 @@ it("a 2 GiB buffer argument throws ERR_OUT_OF_RANGE", async () => {
     record("publicEncrypt oaepLabel", () =>
       crypto.publicEncrypt({ key: publicKey, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepLabel: big }, Buffer.alloc(16)),
     );
+    const ecdh = crypto.createECDH("prime256v1");
+    ecdh.generateKeys();
+    record("ecdh.setPrivateKey", () => ecdh.setPrivateKey(big));
+    record("ecdh.setPrivateKey ArrayBuffer", () => ecdh.setPrivateKey(big.buffer));
+    record("ecdh.computeSecret", () => ecdh.computeSecret(big));
+    record("ECDH.convertKey", () => crypto.ECDH.convertKey(big, "prime256v1"));
+    record("ECDH.convertKey unknown curve", () => crypto.ECDH.convertKey(big, "not-a-curve"));
     console.log(JSON.stringify(results));
   `;
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
@@ -1213,6 +1220,11 @@ it("a 2 GiB buffer argument throws ERR_OUT_OF_RANGE", async () => {
       "sign data": "ERR_OUT_OF_RANGE: data is too big",
       "verify signature": "ERR_OUT_OF_RANGE: signature is too big",
       "publicEncrypt oaepLabel": "ERR_OUT_OF_RANGE: oaepLabel is too big",
+      "ecdh.setPrivateKey": "ERR_OUT_OF_RANGE: key is too big",
+      "ecdh.setPrivateKey ArrayBuffer": "ERR_OUT_OF_RANGE: key is too big",
+      "ecdh.computeSecret": "ERR_OUT_OF_RANGE: buffer is too big",
+      "ECDH.convertKey": "ERR_OUT_OF_RANGE: key is too big",
+      "ECDH.convertKey unknown curve": "ERR_OUT_OF_RANGE: key is too big",
     });
   }
   expect(exitCode).toBe(0);

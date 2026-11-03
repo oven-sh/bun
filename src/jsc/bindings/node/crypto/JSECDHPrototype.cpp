@@ -94,6 +94,12 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncComputeSecret, (JSC::JSGlobalObject * gl
         return Bun::ERR::CRYPTO_INVALID_KEYPAIR(scope, globalObject);
     }
 
+    // Node checks the size after the key pair: https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_ec.cc#L181-L184
+    auto keySpan = keyBuffer->span();
+    if (keySpan.size() > INT32_MAX) [[unlikely]] {
+        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "buffer is too big"_s);
+    }
+
     // Create an EC_POINT from the buffer
     auto pubPoint = ncrypto::ECPointPointer::New(ecdh->m_group);
     if (!pubPoint) {
@@ -101,7 +107,6 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncComputeSecret, (JSC::JSGlobalObject * gl
     }
 
     // Set the point from the buffer
-    auto keySpan = keyBuffer->span();
     ncrypto::Buffer<const unsigned char> buffer {
         .data = static_cast<const unsigned char*>(keySpan.data()),
         .len = keySpan.size()
@@ -279,10 +284,14 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncSetPrivateKey, (JSC::JSGlobalObject * gl
         return {};
     }
 
+    auto keySpan = bufferValue->span();
+    if (keySpan.size() > INT32_MAX) [[unlikely]] {
+        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "key is too big"_s);
+    }
+
     ncrypto::ClearErrorOnReturn clearErrorOnReturn;
 
     // Create a BN from the buffer
-    auto keySpan = bufferValue->span();
     ncrypto::BignumPointer privateKey(static_cast<const unsigned char*>(keySpan.data()), keySpan.size());
     if (!privateKey) {
         throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to convert Buffer to BN"_s);

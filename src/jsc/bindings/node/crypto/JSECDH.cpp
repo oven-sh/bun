@@ -73,7 +73,7 @@ EncodedJSValue JSECDH::getPublicKey(JSGlobalObject* globalObject, ThrowScope& sc
     // Calculate the length needed for the result
     size_t bufLen = EC_POINT_point2oct(group, pubKey, form, nullptr, 0, nullptr);
     if (bufLen == 0) {
-        throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to determine size for public key encoding"_s);
+        throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to get public key length"_s);
         return {};
     }
 

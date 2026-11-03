@@ -246,11 +246,11 @@ test("ECDH.convertKey - throws on invalid input", () => {
   }).toThrow("Invalid ECDH format: invalid-format");
 });
 
-// Node's code: https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_ec.cc#L371-L373
-test("ECDH.convertKey - throws ERR_CRYPTO_OPERATION_FAILED for a name that is not a curve", () => {
+// Node's code: https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_ec.cc#L389-L391
+test("ECDH.convertKey - throws ERR_CRYPTO_OPERATION_FAILED for an object name that is not a curve", () => {
   const publicKey = createECDH("prime256v1").generateKeys();
 
-  // "SHA256" is the short name of an OpenSSL object, so the name lookup succeeds. It is not a curve.
+  // OpenSSL and BoringSSL both have an object with the short name "SHA256", so the name lookup succeeds.
   expect(() => ECDH.convertKey(publicKey, "SHA256")).toThrow(
     expect.objectContaining({
       name: "Error",
@@ -288,10 +288,26 @@ test("ECDH - computeSecret throws when only a public key is set (no private key)
   expect(carolSecret.toString("hex")).toBe(aliceSecret.toString("hex"));
 });
 
+// BoringSSL cannot encode the hybrid point format. Node's test expects this error from a Node built on BoringSSL:
+// https://github.com/nodejs/node/blob/acbc3ff133318aa2e19a57da6e8a4ae32aeec4e0/test/parallel/test-crypto-dh-curves.js#L109-L113
+test("ECDH - the hybrid point format throws Node's error", () => {
+  const noHybrid = expect.objectContaining({
+    name: "Error",
+    code: "ERR_CRYPTO_OPERATION_FAILED",
+    message: "Failed to get public key length",
+  });
+
+  const ecdh = createECDH("prime256v1");
+  const publicKey = ecdh.generateKeys();
+  expect(() => ecdh.getPublicKey(null, "hybrid")).toThrow(noHybrid);
+  expect(() => createECDH("prime256v1").generateKeys(null, "hybrid")).toThrow(noHybrid);
+  expect(() => ECDH.convertKey(publicKey, "prime256v1", undefined, undefined, "hybrid")).toThrow(noHybrid);
+});
+
 // @types/node does not declare setPublicKey(), which Node deprecates (DEP0031).
 type ECDHWithSetPublicKey = ECDH & { setPublicKey(key: Buffer | string, encoding?: BufferEncoding): ECDH };
 
-// Node's code: https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_ec.cc#L216-L218 and #L237-L239
+// Node's code: https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_ec.cc#L219-L221 and #L240-L242
 test("ECDH - the key getters throw ERR_CRYPTO_OPERATION_FAILED before a key exists", () => {
   const noPublicKey = expect.objectContaining({
     name: "Error",
@@ -317,11 +333,11 @@ test("ECDH - the key getters throw ERR_CRYPTO_OPERATION_FAILED before a key exis
   expect(() => ecdh.getPrivateKey()).toThrow(noPrivateKey);
 });
 
-// Node's wrappers read the key first: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/crypto/diffiehellman.js#L167-L227
+// Node's wrappers read the key first: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/diffiehellman.js#L171-L231
 test.each(["computeSecret", "setPublicKey", "setPrivateKey"])(
   "ECDH - %s() without a key throws ERR_INVALID_ARG_TYPE",
   method => {
-    // The object has no key pair. Like Node, computeSecret() rejects its argument before it checks the key pair.
+    // The object has no key pair. Like Node, computeSecret() reports the missing argument first.
     const ecdh = createECDH("prime256v1") as any;
 
     expect(() => ecdh[method]()).toThrow(
@@ -341,7 +357,7 @@ const secp256k1Point =
   "04672a31bfc59d3f04548ec9b7daeeba2f61814e8ccc40448045007f5479f693a3" +
   "2e02c7f93d13dc2732b760ca377a5897b9dd41a1c1b29dc0442fdce6d0a04d1d";
 
-// Node's text: https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_ec.cc#L322-L325
+// Node's text: https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_ec.cc#L325-L329
 test.each([
   ["bytes that are not a point", (ecdh: ECDHWithSetPublicKey) => ecdh.setPublicKey(Buffer.from("abcd"))],
   ["a hex string that is not a point", (ecdh: ECDHWithSetPublicKey) => ecdh.setPublicKey("abcd", "hex")],
@@ -378,10 +394,11 @@ test.each([
 const prime256v1Order = "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551";
 const prime256v1OrderMinusOne = "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632550";
 
-// BN_bin2bn accepts at most INT_MAX / (4 * 64) words of 8 bytes. BoringSSL and OpenSSL have the same limit.
+// A BIGNUM holds at most INT_MAX / (4 * 64) words of 8 bytes. OpenSSL skips leading zero bytes before that check and
+// BoringSSL does not, so the long keys below start with 0xff.
 const maxBignumBytes = Math.floor(0x7fffffff / (4 * 64)) * 8;
 
-// Node's text ends with a period: https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_ec.cc#L272-L275
+// Node's text ends with a period: https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_ec.cc#L275-L278
 test.each([
   ["an empty buffer", (ecdh: ECDH) => ecdh.setPrivateKey(Buffer.alloc(0))],
   ["zero", (ecdh: ECDH) => ecdh.setPrivateKey(Buffer.alloc(32))],
@@ -408,7 +425,7 @@ test.each([
   expect(ecdh.getPublicKey()).toEqual(publicKey);
 });
 
-// Node's text: https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_ec.cc#L266-L270
+// Node's text: https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_ec.cc#L269-L273
 test("ECDH - setPrivateKey rejects a value too long for a BIGNUM with Node's error", () => {
   const ecdh = createECDH("prime256v1");
   ecdh.generateKeys();

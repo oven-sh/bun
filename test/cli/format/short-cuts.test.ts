@@ -2727,6 +2727,9 @@ describe("code in Markdown and MDX", () => {
       `<A>\n  ${"a".repeat(60)} <code>bbbbbb</code> c\n</A>\n\n<A>\n  ${"a".repeat(60)} <code>bbbbbbb</code> c\n</A>\n\n<A>\n  ${"a".repeat(61)}(<code>bbbbbb</code>) c\n</A>\n\n<A>\n  ${"a".repeat(64)} <code>b</code>, c\n</A>\n\n<A>\n  ${"a".repeat(65)} <code>b</code>, c\n</A>\n`,
       '<A><code>b</code></A>\n\n<A>b <code>c</code></A>\n\n<A>\n  <code>b</code>   c\n</A>\n\n<A>\n  b\n  <code>c</code>\n</A>\n\n<A>\n  <code>b</code>\n  c\n</A>\n\n<A>\n  <code>b</code><code>c</code>\n</A>\n\n<A>\n  <code>b</code> <code>c</code>\n</A>\n\n<A>\n  b{" "}\n  <code>c</code>\n</A>\n',
       `<A>\n  b <code>${"c".repeat(90)}</code> d\n</A>\n\n<A>\n  b <code> c</code> <code>d </code> <code>e  f</code> <code></code> <code g="h" i>j</code> <code>k<b>l</b></code> <br />\n</A>\n`,
+      // `{" "}` in the text is a blank that stays.
+      `<A>\n  ${"word ".repeat(13)}as <code>b:</code>;{" "}\n  <code>--c=D</code> targets <code>e.F</code>\n</A>\n\n<A>\n  a{" "}\n  <code>b</code>\n</A>\n\n<A>a{" "}b</A>\n\n<A>\n  a {" "} b{' '}c {" "}{" "} d\n</A>\n\n<A>\n  ${"a".repeat(40)}{" "}${"b".repeat(40)}\n</A>\n`,
+      '<A>{" "}a   b</A>\n\n<A>a   b{" "}</A>\n\n<A>\n  {" "}\n  a   b\n</A>\n\n<A>\n  a   b{" "}\n</A>\n\n<A>{" "}</A>\n\n<A>\n  a{"  "}b   c\n</A>\n\n<A>\n  a{ " " }b   c\n</A>\n\n<A>\n  a{""}b   c\n</A>\n',
       // Words that aren't ASCII are as wide as the printer says.
       `<A>\n  ${"\u4e2d".repeat(19)} ${"\u6587".repeat(19)} c   d\n</A>\n\n<A>\n  ${"\u4e2d".repeat(19)} ${"\u6587".repeat(20)} c   d\n</A>\n\n<A>\n  ${"\u00e9".repeat(38)} ${"\u00e9".repeat(39)} c   d\n</A>\n\n<A>\n  \u26a1\ufe0f **a** \u2014 b   c\u2026\n</A>\n`,
       "<A>\n  \u200b\n</A>\n\n<A>\n  \u3000\n</A>\n\n<A>\n  \ufeff\n</A>\n\n<A>\n  \u2028\n</A>\n\n<A>\n  a\u00a0b   c\n</A>\n\n<A>\n  \u0301   a\u0301\n</A>\n\n<A>\n  \u0085   a\n</A>\n",

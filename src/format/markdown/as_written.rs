@@ -1318,7 +1318,8 @@ impl<'t> Reader<'t> {
     /// - White space between a tag of the element and what is in it means nothing if it has a line break in it. Without
     ///   one it's `{" "}` on a line of its own, which isn't written here.
     /// - Next to a small element, a line can be broken where there is no white space. White space without a line break is
-    ///   `{" "}` where the line is broken. With a line break it means nothing, which few mean to write: not read.
+    ///   `{" "}` where the line is broken, and so is `{" "}`. With a line break it means nothing, which few mean to write:
+    ///   not read.
     fn write_jsx_words(&mut self, start: usize, end: usize) -> Option<()> {
         let layout = self.jsx_layout()?;
         let tag = self.jsx_opening_tag_as_printed(start, end, &layout)?;
@@ -1371,15 +1372,21 @@ impl<'t> Reader<'t> {
             items.push((at, item_end, width, separator));
             flat += separator.width() + width;
             has_element |= is_element;
-            let next = white_end(item_end);
+            let mut next = white_end(item_end);
+            // A blank that stays, whatever white space is around it.
+            let mut has_space = false;
+            while matches!(text.get(next..next + 5), Some(b"{\" \"}" | b"{' '}")) {
+                (has_space, next) = (true, white_end(next + 5));
+            }
             if byte(next) == b'<' && byte(next + 1) == b'/' {
-                if next > item_end && !has_line_break(item_end, next) {
+                if has_space || (next > item_end && !has_line_break(item_end, next)) {
                     return None;
                 }
                 break next;
             }
             let is_next_to_element = is_element || byte(next) == b'<';
             separator = match next > item_end {
+                true if has_space => JsxSeparator::Space,
                 true if !is_next_to_element => JsxSeparator::Line,
                 true if has_line_break(item_end, next) => return None,
                 true => JsxSeparator::Space,

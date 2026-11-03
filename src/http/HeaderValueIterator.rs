@@ -43,6 +43,12 @@ pub fn upgrade_header_is_not_h2(value: &[u8]) -> bool {
         .any(|token| !strings::eql_any_case_insensitive_ascii(token, &[b"h2", b"h2c"]))
 }
 
+/// True if a comma-separated header value contains `token` (case-insensitive).
+pub fn header_has_token(value: &[u8], token: &[u8]) -> bool {
+    HeaderValueIterator::init(value)
+        .any(|item| strings::eql_case_insensitive_ascii_check_length(item, token))
+}
+
 /// RFC 9112 §6.1: `chunked`, if present, must be the final coding. Called once per field line.
 pub fn fold_transfer_encoding(value: &[u8], coding: &mut Encoding) -> crate::Result<()> {
     for token in HeaderValueIterator::init(value) {

@@ -81,13 +81,13 @@ describe("single-chunk stream consumers return a fresh buffer", () => {
       const out = await consume(one(src));
       expect(out.buffer).not.toBe(src);
       expect(out.byteLength).toBe(0);
-      expect(out.buffer.detached).toBe(false);
+      expect((out.buffer as ArrayBuffer).detached).toBe(false);
     });
 
     test("transferring the result does not detach the producer", async () => {
       const src = new Uint8Array([1, 2, 3]);
       const out = await consume(one(src));
-      structuredClone(out.buffer, { transfer: [out.buffer] });
+      structuredClone(out.buffer, { transfer: [out.buffer as ArrayBuffer] });
       expect(src.byteLength).toBe(3);
       expect([...src]).toEqual([1, 2, 3]);
     });
@@ -209,12 +209,12 @@ describe("ByteBlobLoader", () => {
         if (blob.size > 0) {
           // Don't waste microticks on this.
           if (result instanceof Promise) {
-            expect(Bun.peek.status(result)).toBe("fulfilled");
+            expect(Bun.peek.status<unknown>(result)).toBe("fulfilled");
           }
         }
 
         const awaited = await result;
-        expect(awaited).toEqual(await new Response(blob)[name]());
+        expect(awaited).toEqual((await new Response(blob)[name]()) as typeof awaited);
       });
     });
   });

@@ -126,8 +126,8 @@ extern "C" void Bun__closeNodeSqliteDatabasesOfGraphContext(ScriptExecutionConte
 
 void ScriptExecutionContext::closeSQLiteDatabases()
 {
-    Bun__closeSQLiteDatabasesOfGraphContext(m_identifier);
-    Bun__closeNodeSqliteDatabasesOfGraphContext(m_identifier);
+    JSC::callRemovable<Bun::Feature::Sqlite, JSC::RemovedFeatureStub::ReturnDefault, Bun__closeSQLiteDatabasesOfGraphContext>(m_identifier);
+    JSC::callRemovable<Bun::Feature::Sqlite, JSC::RemovedFeatureStub::ReturnDefault, Bun__closeNodeSqliteDatabasesOfGraphContext>(m_identifier);
 }
 
 ScriptExecutionContextIdentifier ScriptExecutionContext::ownerOfSQLiteDatabase(JSC::JSGlobalObject* globalObject)
@@ -321,6 +321,8 @@ bool ScriptExecutionContext::isJSExecutionForbidden()
     // A Bun.ModuleGraph that was disposed hears nothing more: no listener, callback or message
     // of its context is called, as none is once the VM was asked to stop.
     if (m_parent && m_isStopped)
+        return true;
+    if (auto* globalObject = realm().m_globalObject; globalObject && Bun::isRetiredTestIsolationRealm(globalObject))
         return true;
     JSC::VM* vm = realm().m_vm;
     return !vm || WebCore::clientData(*vm)->isStoppingOrStopped(*vm);

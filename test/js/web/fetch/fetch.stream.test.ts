@@ -58,9 +58,9 @@ describe.concurrent("fetch() with streaming", () => {
         });
 
         const reader = res.body?.getReader();
-        let results = [];
+        let results: any[] = [];
         while (true) {
-          const { done, data } = await reader?.read();
+          const { done, data } = (await reader?.read()) as any;
           if (data) results.push(data);
           if (done) break;
         }
@@ -243,6 +243,7 @@ describe.concurrent("fetch() with streaming", () => {
         expect(true).toBe(true);
       } finally {
         server?.closeAllConnections();
+        server?.close();
       }
     });
   }
@@ -285,11 +286,11 @@ describe.concurrent("fetch() with streaming", () => {
       gcTick(false);
       const reader = await getReader();
       gcTick(false);
-      var chunks = [];
+      var chunks: Uint8Array[] = [];
       while (true) {
         gcTick(false);
 
-        const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
+        const { done, value } = (await reader?.read()) as Bun.ReadableStreamDefaultReadResult<any>;
         if (value) {
           chunks.push(value);
         }
@@ -354,7 +355,7 @@ describe.concurrent("fetch() with streaming", () => {
       while (true) {
         gcTick(false);
 
-        const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
+        const { done, value } = (await reader?.read()) as Bun.ReadableStreamDefaultReadResult<any>;
         if (value) {
           size += value.length;
         }
@@ -413,7 +414,7 @@ describe.concurrent("fetch() with streaming", () => {
         let buffer = Buffer.alloc(0);
         let parts = 0;
         while (true) {
-          const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
+          const { done, value } = (await reader?.read()) as Bun.ReadableStreamDefaultReadResult<any>;
           if (value) {
             buffer = Buffer.concat([buffer, value]);
             parts++;
@@ -482,7 +483,7 @@ describe.concurrent("fetch() with streaming", () => {
 
       let result = "";
       while (true) {
-        const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
+        const { done, value } = (await reader?.read()) as Bun.ReadableStreamDefaultReadResult<any>;
         if (value) {
           result += value;
         }
@@ -519,7 +520,7 @@ describe.concurrent("fetch() with streaming", () => {
 
       let buffer = Buffer.alloc(0);
       while (true) {
-        const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
+        const { done, value } = (await reader?.read()) as Bun.ReadableStreamDefaultReadResult<any>;
         if (value) {
           buffer = Buffer.concat([buffer, value]);
         }
@@ -594,7 +595,7 @@ describe.concurrent("fetch() with streaming", () => {
       while (true) {
         gcTick(false);
 
-        const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
+        const { done, value } = (await reader?.read()) as Bun.ReadableStreamDefaultReadResult<any>;
         if (value) {
           buffer = Buffer.concat([buffer, value]);
           parts++;
@@ -657,7 +658,7 @@ describe.concurrent("fetch() with streaming", () => {
           const reader = res.body?.getReader();
           let buffer = Buffer.alloc(0);
           while (true) {
-            const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
+            const { done, value } = (await reader?.read()) as Bun.ReadableStreamDefaultReadResult<any>;
             if (value) {
               buffer = Buffer.concat([buffer, value]);
             }
@@ -683,7 +684,7 @@ describe.concurrent("fetch() with streaming", () => {
     { headers: { "Content-Encoding": "zstd" }, compression: "zstd" },
   ] as const;
 
-  function compress(compression, data: Uint8Array) {
+  function compress(compression, data: Uint8Array<ArrayBuffer>) {
     switch (compression) {
       case "gzip-libdeflate":
       case "gzip":
@@ -716,7 +717,7 @@ describe.concurrent("fetch() with streaming", () => {
     }
   }
 
-  for (const { headers, compression, skip } of types) {
+  for (const { headers, compression, skip } of types as readonly ((typeof types)[number] & { skip?: boolean })[]) {
     const test = skip ? it.skip : it;
 
     test(`with invalid utf8 with ${compression} compression`, async () => {
@@ -764,7 +765,7 @@ describe.concurrent("fetch() with streaming", () => {
       while (true) {
         gcTick(false);
 
-        const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
+        const { done, value } = (await reader?.read()) as Bun.ReadableStreamDefaultReadResult<any>;
         if (value) {
           buffer = Buffer.concat([buffer, value]);
         }
@@ -817,7 +818,7 @@ describe.concurrent("fetch() with streaming", () => {
       while (true) {
         gcTick(false);
 
-        const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
+        const { done, value } = (await reader?.read()) as Bun.ReadableStreamDefaultReadResult<any>;
         if (value) {
           buffer = Buffer.concat([buffer, value]);
           parts++;
@@ -883,7 +884,7 @@ describe.concurrent("fetch() with streaming", () => {
       while (true) {
         gcTick(false);
 
-        const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
+        const { done, value } = (await reader?.read()) as Bun.ReadableStreamDefaultReadResult<any>;
         if (value) {
           buffer = Buffer.concat([buffer, value]);
         }
@@ -927,7 +928,7 @@ describe.concurrent("fetch() with streaming", () => {
       while (true) {
         gcTick(false);
 
-        const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
+        const { done, value } = (await reader?.read()) as Bun.ReadableStreamDefaultReadResult<any>;
         if (value) {
           buffer = Buffer.concat([buffer, value]);
           parts++;
@@ -1005,7 +1006,7 @@ describe.concurrent("fetch() with streaming", () => {
       while (true) {
         gcTick(false);
 
-        const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
+        const { done, value } = (await reader?.read()) as Bun.ReadableStreamDefaultReadResult<any>;
         if (value) {
           chunks.push(value);
 
@@ -1095,7 +1096,7 @@ describe.concurrent("fetch() with streaming", () => {
       while (true) {
         gcTick(false);
 
-        const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
+        const { done, value } = (await reader?.read()) as Bun.ReadableStreamDefaultReadResult<any>;
         if (value) {
           buffer = Buffer.concat([buffer, value]);
         }
@@ -1168,7 +1169,7 @@ describe.concurrent("fetch() with streaming", () => {
         while (true) {
           gcTick(false);
 
-          const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
+          const { done, value } = (await reader?.read()) as Bun.ReadableStreamDefaultReadResult<any>;
           if (value) {
             buffer = Buffer.concat([buffer, value]);
           }
@@ -1249,7 +1250,7 @@ describe.concurrent("fetch() with streaming", () => {
             while (true) {
               gcTick(false);
               const read_promise = reader?.read();
-              const { done, value } = (await read_promise) as ReadableStreamDefaultReadResult<any>;
+              const { done, value } = (await read_promise) as Bun.ReadableStreamDefaultReadResult<any>;
 
               if (value) {
                 buffer = Buffer.concat([buffer, value]);
@@ -1265,13 +1266,13 @@ describe.concurrent("fetch() with streaming", () => {
           } catch (err) {
             expect(err).toBeInstanceOf(TypeError);
             if (compression === "br") {
-              expect((err as Error).code).toBe("BrotliDecompressionError");
+              expect((err as any).code).toBe("BrotliDecompressionError");
             } else if (compression === "deflate-libdeflate") {
-              expect((err as Error).code).toBe("ZlibError");
+              expect((err as any).code).toBe("ZlibError");
             } else if (compression === "zstd") {
-              expect((err as Error).code).toBe("ZstdDecompressionError");
+              expect((err as any).code).toBe("ZstdDecompressionError");
             } else {
-              expect((err as Error).code).toBe("ZlibError");
+              expect((err as any).code).toBe("ZlibError");
             }
           }
         }
@@ -1348,7 +1349,7 @@ describe.concurrent("fetch() with streaming", () => {
           const read_promise = reader?.read();
           socket?.end();
           socket = null;
-          const { done, value } = (await read_promise) as ReadableStreamDefaultReadResult<any>;
+          const { done, value } = (await read_promise) as Bun.ReadableStreamDefaultReadResult<any>;
 
           if (value) {
             buffer = Buffer.concat([buffer, value]);
@@ -1363,7 +1364,7 @@ describe.concurrent("fetch() with streaming", () => {
         expect(buffer.toString("utf8")).toBe("unreachable");
       } catch (err) {
         expect(err).toBeInstanceOf(TypeError);
-        expect((err as Error).code).toBe("ECONNRESET");
+        expect((err as any).code).toBe("ECONNRESET");
       }
     });
   }
@@ -1413,7 +1414,7 @@ describe.concurrent("fetch() with streaming", () => {
     const reader = response.body!.getReader();
 
     // Read the data - this should not hang
-    const result = (await reader.read()) as ReadableStreamDefaultReadResult<any>;
+    const result = (await reader.read()) as Bun.ReadableStreamDefaultReadResult<any>;
 
     // Verify we got the data without hanging
     expect(result.done).toBe(false);
@@ -1466,6 +1467,42 @@ test.concurrent(
     expect(exitCode).toBe(0);
   },
 );
+
+// A native body stream counts the bytes a reader already took as a consumed prefix of its
+// buffer. Every path that dropped the buffer used to keep that index, so the next `drain()`
+// read the prefix out of a buffer that was no longer there and aborted the process with
+// `panic: range end index 262144 out of range for slice of length 0`. One fixture per route:
+// node:stream taking the native source over, and the stream's own pull loop after the body
+// failed.
+test.concurrent("node:stream reading a started native body stream gets its tail instead of crashing", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "bytestream-partial-read-fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toBe("ok\n");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("a body that fails after a partial read rejects the next read instead of crashing", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "bytestream-partial-read-error-fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toBe("ok\n");
+  expect(exitCode).toBe(0);
+});
 
 // https://github.com/oven-sh/bun/issues/41439
 // A flushed zstd chunk that decodes to more than 4096 bytes must reach the

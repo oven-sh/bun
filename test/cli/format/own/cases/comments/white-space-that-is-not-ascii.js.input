@@ -1,0 +1,7 @@
+const qux = function() {
+    return 1; /*a*/
+}
+foo; // b
+bar( /* c */ a);
+let x = // d
+  1;

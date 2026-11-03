@@ -1,0 +1,313 @@
+------------------
+{ printWidth: 80 }
+------------------
+const x0 =
+  foo({ a: 1,   b: 2 }) && // prettier-ignore
+  bar;
+
+const x1 =
+  foo({ a: 1,   b: 2 }) || // prettier-ignore
+  bar;
+
+const x2 =
+  foo({ a: 1,   b: 2 }) ?? // prettier-ignore
+  bar;
+
+const x3 =
+  foo({ a: 1,   b: 2 }) + // prettier-ignore
+  bar;
+
+const x4 =
+  foo({ a: 1,   b: 2 }) - // prettier-ignore
+  bar;
+
+const x5 =
+  foo({ a: 1,   b: 2 }) * // prettier-ignore
+  bar;
+
+const x6 =
+  foo({ a: 1,   b: 2 }) / // prettier-ignore
+  bar;
+
+const x7 =
+  foo({ a: 1,   b: 2 }) % // prettier-ignore
+  bar;
+
+const x8 =
+  foo({ a: 1,   b: 2 }) ** // prettier-ignore
+  bar;
+
+const x9 =
+  foo({ a: 1,   b: 2 }) | // prettier-ignore
+  bar;
+
+const x10 =
+  foo({ a: 1,   b: 2 }) & // prettier-ignore
+  bar;
+
+const x11 =
+  foo({ a: 1,   b: 2 }) ^ // prettier-ignore
+  bar;
+
+const x12 =
+  foo({ a: 1,   b: 2 }) << // prettier-ignore
+  bar;
+
+const x13 =
+  foo({ a: 1,   b: 2 }) >> // prettier-ignore
+  bar;
+
+const x14 =
+  foo({ a: 1,   b: 2 }) >>> // prettier-ignore
+  bar;
+
+const x15 =
+  foo({ a: 1,   b: 2 }) < // prettier-ignore
+  bar;
+
+const x16 =
+  foo({ a: 1,   b: 2 }) > // prettier-ignore
+  bar;
+
+const x17 =
+  foo({ a: 1,   b: 2 }) <= // prettier-ignore
+  bar;
+
+const x18 =
+  foo({ a: 1,   b: 2 }) >= // prettier-ignore
+  bar;
+
+const x19 =
+  foo({ a: 1,   b: 2 }) == // prettier-ignore
+  bar;
+
+const x20 =
+  foo({ a: 1,   b: 2 }) != // prettier-ignore
+  bar;
+
+const x21 =
+  foo({ a: 1,   b: 2 }) === // prettier-ignore
+  bar;
+
+const x22 =
+  foo({ a: 1,   b: 2 }) !== // prettier-ignore
+  bar;
+
+const x23 =
+  foo({ a: 1,   b: 2 }) instanceof // prettier-ignore
+  bar;
+
+const x24 =
+  foo({ a: 1,   b: 2 }) in // prettier-ignore
+  bar;
+
+const x25 = foo({ a: 1,   b: 2 }) /* prettier-ignore */ && bar;
+
+const x26 =
+  a   +   b && // prettier-ignore
+  bar;
+
+const x27 =
+  foo({ a: 1,   b: 2 }) && // prettier-ignore
+  bar({ a: 1, b: 2 }) && // prettier-ignore
+  baz;
+
+const x28 =
+  foo({ a: 1, b: 2 }) && // foo
+  bar;
+
+const x29 =
+  foo({ a: 1, b: 2 }) &&
+  // prettier-ignore
+  bar({ a: 1,   b: 2 });
+
+if (
+  foo({ a: 1,   b: 2 }) && // prettier-ignore
+  bar
+) {
+}
+
+const x32 = foo({ a: 1,   b: 2 }) /* prettier-ignore */ && bar;
+
+const x33 = foo({ a: 1,   b: 2 }) /* prettier-ignore */ + bar;
+
+const x34 = foo({ a: 1, b: 2 }) && /* prettier-ignore */ bar({ a: 1,   b: 2 });
+
+const x35 = foo({ a: 1, b: 2 }) && /* prettier-ignore */ bar({ a: 1,   b: 2 });
+
+const x36 =
+  foo({ a: 1, b: 2 }) && /* prettier-ignore */ /* x */ bar({ a: 1,   b: 2 });
+
+const x37 =
+  foo({ a: 1, b: 2 }) && /* x */ /* prettier-ignore */ bar({ a: 1,   b: 2 });
+
+const x38 =
+  foo({ a: 1,   b: 2 }) /* prettier-ignore */ /* x */ && bar({ a: 1, b: 2 });
+
+const x39 =
+  foo({ a: 1,   b: 2 }) /* prettier-ignore */ && // x
+  bar({ a: 1, b: 2 });
+
+const x40 =
+  foo({ a: 1, b: 2 }) &&
+  /* x */ // prettier-ignore
+  bar({ a: 1,   b: 2 });
+
+const x41 =
+  foo({ a: 1, b: 2 }) && /* x */ /* prettier-ignore */ bar({ a: 1,   b: 2 });
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const x0 =
+  foo({ a: 1,   b: 2 }) && // prettier-ignore
+  bar;
+
+const x1 =
+  foo({ a: 1,   b: 2 }) || // prettier-ignore
+  bar;
+
+const x2 =
+  foo({ a: 1,   b: 2 }) ?? // prettier-ignore
+  bar;
+
+const x3 =
+  foo({ a: 1,   b: 2 }) + // prettier-ignore
+  bar;
+
+const x4 =
+  foo({ a: 1,   b: 2 }) - // prettier-ignore
+  bar;
+
+const x5 =
+  foo({ a: 1,   b: 2 }) * // prettier-ignore
+  bar;
+
+const x6 =
+  foo({ a: 1,   b: 2 }) / // prettier-ignore
+  bar;
+
+const x7 =
+  foo({ a: 1,   b: 2 }) % // prettier-ignore
+  bar;
+
+const x8 =
+  foo({ a: 1,   b: 2 }) ** // prettier-ignore
+  bar;
+
+const x9 =
+  foo({ a: 1,   b: 2 }) | // prettier-ignore
+  bar;
+
+const x10 =
+  foo({ a: 1,   b: 2 }) & // prettier-ignore
+  bar;
+
+const x11 =
+  foo({ a: 1,   b: 2 }) ^ // prettier-ignore
+  bar;
+
+const x12 =
+  foo({ a: 1,   b: 2 }) << // prettier-ignore
+  bar;
+
+const x13 =
+  foo({ a: 1,   b: 2 }) >> // prettier-ignore
+  bar;
+
+const x14 =
+  foo({ a: 1,   b: 2 }) >>> // prettier-ignore
+  bar;
+
+const x15 =
+  foo({ a: 1,   b: 2 }) < // prettier-ignore
+  bar;
+
+const x16 =
+  foo({ a: 1,   b: 2 }) > // prettier-ignore
+  bar;
+
+const x17 =
+  foo({ a: 1,   b: 2 }) <= // prettier-ignore
+  bar;
+
+const x18 =
+  foo({ a: 1,   b: 2 }) >= // prettier-ignore
+  bar;
+
+const x19 =
+  foo({ a: 1,   b: 2 }) == // prettier-ignore
+  bar;
+
+const x20 =
+  foo({ a: 1,   b: 2 }) != // prettier-ignore
+  bar;
+
+const x21 =
+  foo({ a: 1,   b: 2 }) === // prettier-ignore
+  bar;
+
+const x22 =
+  foo({ a: 1,   b: 2 }) !== // prettier-ignore
+  bar;
+
+const x23 =
+  foo({ a: 1,   b: 2 }) instanceof // prettier-ignore
+  bar;
+
+const x24 =
+  foo({ a: 1,   b: 2 }) in // prettier-ignore
+  bar;
+
+const x25 = foo({ a: 1,   b: 2 }) /* prettier-ignore */ && bar;
+
+const x26 =
+  a   +   b && // prettier-ignore
+  bar;
+
+const x27 =
+  foo({ a: 1,   b: 2 }) && // prettier-ignore
+  bar({ a: 1, b: 2 }) && // prettier-ignore
+  baz;
+
+const x28 =
+  foo({ a: 1, b: 2 }) && // foo
+  bar;
+
+const x29 =
+  foo({ a: 1, b: 2 }) &&
+  // prettier-ignore
+  bar({ a: 1,   b: 2 });
+
+if (
+  foo({ a: 1,   b: 2 }) && // prettier-ignore
+  bar
+) {
+}
+
+const x32 = foo({ a: 1,   b: 2 }) /* prettier-ignore */ && bar;
+
+const x33 = foo({ a: 1,   b: 2 }) /* prettier-ignore */ + bar;
+
+const x34 = foo({ a: 1, b: 2 }) && /* prettier-ignore */ bar({ a: 1,   b: 2 });
+
+const x35 = foo({ a: 1, b: 2 }) && /* prettier-ignore */ bar({ a: 1,   b: 2 });
+
+const x36 = foo({ a: 1, b: 2 }) && /* prettier-ignore */ /* x */ bar({ a: 1,   b: 2 });
+
+const x37 = foo({ a: 1, b: 2 }) && /* x */ /* prettier-ignore */ bar({ a: 1,   b: 2 });
+
+const x38 = foo({ a: 1,   b: 2 }) /* prettier-ignore */ /* x */ && bar({ a: 1, b: 2 });
+
+const x39 =
+  foo({ a: 1,   b: 2 }) /* prettier-ignore */ && // x
+  bar({ a: 1, b: 2 });
+
+const x40 =
+  foo({ a: 1, b: 2 }) &&
+  /* x */ // prettier-ignore
+  bar({ a: 1,   b: 2 });
+
+const x41 = foo({ a: 1, b: 2 }) && /* x */ /* prettier-ignore */ bar({ a: 1,   b: 2 });
+
+===================== End =====================

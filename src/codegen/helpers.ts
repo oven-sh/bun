@@ -51,6 +51,14 @@ export function sourceStamp(sources: Iterable<string>): number {
   return hash.digest().readUInt32BE(0);
 }
 
+/**
+ * Hashes the WebKit version and private names that a bun must share to compile the builtins section.
+ * Never returns 0, which means the section has no stamp.
+ */
+export function engineStamp(webkitVersion: string, privateNames: Iterable<string>): number {
+  return sourceStamp([webkitVersion, ...[...privateNames].sort()].map(part => part + "\n")) || 1;
+}
+
 export function writeIfNotChanged(file: string, contents: string) {
   if (Array.isArray(contents)) contents = contents.join("");
   contents = contents.replaceAll("\r\n", "\n").trim() + "\n";
@@ -62,12 +70,16 @@ export function writeIfNotChanged(file: string, contents: string) {
     }
   } catch (e) {}
 
+  // Through a rename, so a reader never sees half a file: the build directories of two profiles both write the
+  // declarations in build/types, and tsc or an editor may be reading them.
+  const temporary = `${file}.${process.pid}.tmp`;
   try {
-    fs.writeFileSync(file, contents);
+    fs.writeFileSync(temporary, contents);
   } catch (error) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, contents);
+    fs.writeFileSync(temporary, contents);
   }
+  fs.renameSync(temporary, file);
 
   if (fs.readFileSync(file, "utf8") !== contents) {
     throw new Error(`Failed to write file ${file}`);

@@ -1,0 +1,26 @@
+# OPTIONS: exclude=EvaluatedText
+# RUN: valueflow-results
+# CHECK: unseen-code EvaluatesText f0:v9 NodeModulePrototype_compile
+# CHECK: unseen-code RunsUnseenCode f0:v7 NodeVMBindingModule
+# CHECK: unseen-code RunsUnseenCode f0:v3 NodeVMBindingScript
+# CHECK: unseen-code RunsUnseenCode f0:v5 NodeVMBindingCompileFunction
+# RUN(EVAL): valueflow-results
+# EVAL-NOT: unseen-code {{*}} f0:v11
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Builtin builtin=NodeVMBindingScript
+    v3 = Construct v2, -, v1
+    v4 = Builtin builtin=NodeVMBindingCompileFunction
+    v5 = Call v4, -, v1
+    v6 = Builtin builtin=NodeVMBindingModule
+    v7 = Construct v6, -, v1
+    v8 = Builtin builtin=NodeModulePrototype_compile
+    v9 = Call v8, v0, v1, v1
+    v10 = Builtin builtin=Eval
+    v11 = Call v10, -, v1
+    Return
+}

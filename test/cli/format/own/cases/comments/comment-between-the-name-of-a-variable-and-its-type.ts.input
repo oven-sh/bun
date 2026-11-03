@@ -1,0 +1,7 @@
+const a// c
+: T = () => {
+  b()
+}
+const d /* c */: T = 1;
+const e // c
+: T = 1;

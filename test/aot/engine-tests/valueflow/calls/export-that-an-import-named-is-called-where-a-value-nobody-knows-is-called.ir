@@ -1,0 +1,36 @@
+# import { run } from "node:vm"; taken = input(run); taken("1")
+# As export-that-the-program-named-is-called-where-a-value-nobody-knows-is-called.ir, with the export named by an import.
+# RUN: valueflow-solve calls
+# CHECK: f0 v5 -> unknown
+# CHECK: f2 v2 -> Eval
+# RUN(UNSEEN): valueflow-solve unseen
+# UNSEEN: unseen EvaluatesText Eval f2:v2
+# UNSEEN: unseen-code yes
+
+variable g0 name="run" module=m1 declared={type=anything}
+module m0 path="/app/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="node:vm" displayPath="node:vm" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeVm body=f1 syntheticExports=[{name="run" variable=g0 isKnownMember=true}]
+entry module=m0
+layout L0 name="Exports" fields=[{key="run" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="input" [isFreeName]
+    v3 = Call v2, -, v0
+    v4 = String string="1"
+    v5 = Call v3, -, v4
+    Return
+}
+function f1 name="vm" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+function f2 name="run" module=m1 role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Eval
+    v2 = Call v1, -, v0
+    Return v2
+}

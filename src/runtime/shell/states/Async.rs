@@ -9,7 +9,7 @@ use crate::shell::states::r#if::If;
 use crate::shell::states::pipeline::Pipeline;
 use crate::shell::yield_::Yield;
 
-pub struct Async {
+pub(crate) struct Async {
     pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Expr>,
     pub(crate) io: IO,
@@ -158,16 +158,14 @@ impl Async {
             EventLoopHandle::Js { owner } => {
                 owner.enqueue_task_after_yield(bun_jsc::Task::init(task))
             }
-            EventLoopHandle::Mini(mut mini) => {
+            EventLoopHandle::Mini(mini) => {
                 // The payload embeds only the JS-arm `ConcurrentTask`, so the
                 // mini arm heap-allocates an auto-deinit wrapper per bounce.
                 let any = bun_jsc::AnyTaskWithExtraContext::AnyTaskWithExtraContext::from_callback_auto_deinit(
                     task,
                     run_from_main_thread_mini,
                 );
-                // SAFETY: the shell's own mini loop, on its thread.
-                unsafe { mini.get_mut() }
-                    .enqueue_task_concurrent(core::ptr::NonNull::new(any).expect("heap task"));
+                mini.enqueue_task_concurrent(core::ptr::NonNull::new(any).expect("heap task"));
             }
         }
     }

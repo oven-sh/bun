@@ -18,7 +18,7 @@ Object.defineProperty(renderToReadableStreamBrowser, "name", {
   value: "server.browser",
 });
 
-const renderToReadableStreamBun = ReactDOM.renderToReadableStreamBun || {};
+const renderToReadableStreamBun = (ReactDOM as any).renderToReadableStreamBun || {};
 if (typeof renderToReadableStreamBun !== "function" && parseInt(ReactDOM.version.split(".")[0], 10) > 18) {
   if (!import.meta.resolveSync("react-dom/server").includes(".bun.")) {
     throw new Error(
@@ -263,13 +263,13 @@ describe("ReactDOM", () => {
                 server?.stop(true);
               }
             })();
-            await expectMaxObjectTypeCount(expect, "ReadableHTTPResponseSinkController", 2);
+            await expectMaxObjectTypeCount(expect, "ReadableSinkController", 2);
           });
           const count = 4;
           it(`http server, ${count} requests`, async () => {
             var remain = count;
             await (async () => {
-              let server!: Server;
+              let server!: Server<undefined>;
               try {
                 server = serve({
                   port: 0,
@@ -293,7 +293,7 @@ describe("ReactDOM", () => {
               }
             })();
             expect(remain).toBe(-1);
-            await expectMaxObjectTypeCount(expect, "ReadableHTTPResponseSinkController", 3);
+            await expectMaxObjectTypeCount(expect, "ReadableSinkController", 3);
           });
         },
       );
@@ -305,7 +305,7 @@ describe("ReactDOM", () => {
   // churning through dozens of serve/stop cycles.
   for (let renderToReadableStream of [renderToReadableStreamBun, renderToReadableStreamBrowser]) {
     describe.skipIf(typeof renderToReadableStream !== "function")(`h3 ${renderToReadableStream.name}`, () => {
-      let server: Server;
+      let server: Server<undefined>;
       const init = { protocol: "http3", tls: { rejectUnauthorized: false } } as const;
       const cases = fixtures.map(([s, e]) => [s, e] as const);
       it("(setup)", () => {
@@ -338,7 +338,7 @@ describe("ReactDOM", () => {
       }
       it("(teardown)", async () => {
         void server?.stop(true);
-        await expectMaxObjectTypeCount(expect, "ReadableHTTPSResponseSinkController", 3);
+        await expectMaxObjectTypeCount(expect, "ReadableSinkController", 3);
       });
     });
   }

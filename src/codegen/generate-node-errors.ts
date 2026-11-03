@@ -3,9 +3,10 @@ import path from "node:path";
 import NodeErrors from "../jsc/bindings/ErrorCode.ts";
 import { writeIfNotChanged } from "./helpers.ts";
 const outputDir = process.argv[2];
+const typesDir = process.argv[3];
 
-if (!outputDir) {
-  throw new Error("Missing output directory");
+if (!outputDir || !typesDir) {
+  throw new Error("Usage: generate-node-errors.ts <output directory> <types directory>");
 }
 
 const extra_count = NodeErrors.map(x => x.slice(3))
@@ -148,5 +149,5 @@ declare function $${code}(message: string): ${namedError};\n`;
 
 writeIfNotChanged(path.join(outputDir, "ErrorCode+List.h"), enumHeader);
 writeIfNotChanged(path.join(outputDir, "ErrorCode+Data.h"), listHeader);
-writeIfNotChanged(path.join(outputDir, "ErrorCode.d.ts"), dts);
+writeIfNotChanged(path.join(typesDir, "ErrorCode.d.ts"), dts);
 writeIfNotChanged(path.join(outputDir, "ErrorCode.generated.rs"), rustSource);

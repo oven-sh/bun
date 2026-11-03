@@ -1,0 +1,34 @@
+# class Body { constructor() { this.hits = 0 } }; body = new Body; new NativeZlib(1); somebody = new Proxy({}, {}); somebody.onerror = body; return body.hits
+# An instance of a class that has a setter under the name may exist, and the unknown object may be that instance: the setter of that class runs. Those of the other classes still wait.
+# RUN: valueflow-solve used
+# CHECK-NOT: NativeBrotliPrototypeOnerror
+# CHECK: NativeZlibPrototypeOnerror
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Body" constructor=f1 fields=[{key="hits" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Empty"
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Construct v2
+    v4 = Builtin builtin=NativeZlib
+    v5 = Integer integer=1
+    v6 = Construct v4, -, v5
+    v7 = NewObject layout=L1
+    v8 = NewObject layout=L1
+    v9 = Builtin builtin=Proxy
+    v10 = Construct v9, -, v7, v8
+    PropSet v10, v3 key="onerror"
+    v12 = PropGet v3 key="hits"
+    Return v12
+}
+function f1 name="Body" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = Integer integer=0
+    v3 = NewObject v1, v2 layout=L0 fields=[0]
+    Return v3
+}

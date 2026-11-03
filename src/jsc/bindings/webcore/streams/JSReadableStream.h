@@ -73,7 +73,7 @@ public:
     // can legitimately BE `undefined`).
     JSC::WriteBarrier<JSC::Unknown> m_storedError;
     // [[controller]] — the subsystem's ONE mandatory ERASED back-pointer: a spec controller,
-    // a JSDirectStreamController, or a generated JSReadable*Controller JSSink cell. Raw
+    // a JSDirectStreamController, or a JSReadableSinkController. Raw
     // jsCast/jsDynamicCast on this slot is BANNED; dispatch on m_controllerKind through the
     // total switch.
     JSC::WriteBarrier<JSC::JSObject> m_controller;
@@ -112,6 +112,9 @@ public:
         // fall back to a reader that sees decoded strings. ReadableStreamTag__tagged
         // reads the raw slot, so the fetch/server push-side is unaffected.
         if (m_nativeTextMode)
+            return {};
+        // The native source of an errored stream only knows that it ended; the stored error is here.
+        if (m_state == ReadableStreamState::Errored)
             return {};
         return m_nativePtr.get(); // may be empty
     }

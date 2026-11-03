@@ -21,6 +21,7 @@ pub const BODY_HIGH_WATER_MARK: usize = 256 * 1024;
 /// moves `Paused -> Flowing` and schedules a resume. The transport applies `Paused` after the
 /// next read. Two terminal states: `BufferAll` (a consumer wants the whole body) and
 /// `Abandoned` (nothing will read it; the transport is being shut down, drop what arrives).
+/// `Unclaimed`: `Flowing` before a consumer attaches. See `Signals::hold_for_consumer`.
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum BodyReceiveMode {
@@ -28,6 +29,7 @@ pub enum BodyReceiveMode {
     Paused = 1,
     BufferAll = 2,
     Abandoned = 3,
+    Unclaimed = 4,
 }
 
 impl BodyReceiveMode {
@@ -37,6 +39,7 @@ impl BodyReceiveMode {
             1 => Self::Paused,
             2 => Self::BufferAll,
             3 => Self::Abandoned,
+            4 => Self::Unclaimed,
             _ => Self::Flowing,
         }
     }
@@ -85,7 +88,7 @@ impl Signals {
             .is_some_and(|a| a.load(Ordering::Acquire) == BodyReceiveMode::Paused as u8)
     }
 
-    /// `Flowing` or `Paused`: a consumer takes the body piece by piece.
+    /// `Flowing`, `Paused` or `Unclaimed`: a consumer takes the body piece by piece.
     #[inline]
     pub(crate) fn is_demand_driven(self) -> bool {
         self.body_receive_mode
@@ -93,8 +96,24 @@ impl Signals {
             .is_some_and(|a| {
                 matches!(
                     BodyReceiveMode::from_u8(a.load(Ordering::Acquire)),
-                    BodyReceiveMode::Flowing | BodyReceiveMode::Paused
+                    BodyReceiveMode::Flowing | BodyReceiveMode::Paused | BodyReceiveMode::Unclaimed
                 )
+            })
+    }
+
+    /// `Unclaimed -> Paused`: a whole body waits for the consumer, which resumes the transport.
+    #[inline]
+    pub(crate) fn hold_for_consumer(self) -> bool {
+        self.body_receive_mode
+            .map(bun_ptr::BackRef::from)
+            .is_some_and(|a| {
+                a.compare_exchange(
+                    BodyReceiveMode::Unclaimed as u8,
+                    BodyReceiveMode::Paused as u8,
+                    Ordering::AcqRel,
+                    Ordering::Relaxed,
+                )
+                .is_ok()
             })
     }
 }
@@ -120,6 +139,14 @@ impl Default for Store {
 }
 
 impl Store {
+    /// For a body whose consumer attaches after the response head arrives: `Unclaimed`.
+    pub fn unclaimed() -> Self {
+        Self {
+            body_receive_mode: AtomicU8::new(BodyReceiveMode::Unclaimed as u8),
+            ..Self::default()
+        }
+    }
+
     pub fn to(&mut self) -> Signals {
         Signals {
             header_progress: Some(NonNull::from(&self.header_progress)),
@@ -149,10 +176,32 @@ impl Store {
             .is_ok()
     }
 
-    /// `Flowing -> Paused`. No-op in the other states.
+    /// `Flowing` or `Unclaimed -> Paused`. No-op in the other states.
     #[inline]
     pub fn pause_receive(&self) {
-        let _ = self.try_transition_receive_mode(BodyReceiveMode::Flowing, BodyReceiveMode::Paused);
+        let _ = self
+            .body_receive_mode
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |mode| {
+                matches!(
+                    BodyReceiveMode::from_u8(mode),
+                    BodyReceiveMode::Flowing | BodyReceiveMode::Unclaimed
+                )
+                .then_some(BodyReceiveMode::Paused as u8)
+            });
+    }
+
+    /// A streaming consumer attached: `Unclaimed` or `Paused -> Flowing`. The caller resumes.
+    #[inline]
+    pub fn receive_on_demand(&self) {
+        let _ = self
+            .body_receive_mode
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |mode| {
+                matches!(
+                    BodyReceiveMode::from_u8(mode),
+                    BodyReceiveMode::Unclaimed | BodyReceiveMode::Paused
+                )
+                .then_some(BodyReceiveMode::Flowing as u8)
+            });
     }
 
     /// `Paused -> Flowing`. Returns whether it was paused, i.e. whether the caller has to

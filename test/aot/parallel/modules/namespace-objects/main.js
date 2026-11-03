@@ -1,0 +1,2 @@
+// Module namespace objects: keys and their order, Symbol.toStringTag, `export * as`, a module's own namespace, the names `export *` takes from CommonJS modules (not a clash, not `default`), a `then` export under import(), one object per module, and the stores, deletions and definitions that must fail. The program is main.mjs: the runner only takes a main.js as the entry point of a folder.
+import "./main.mjs";

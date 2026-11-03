@@ -1,0 +1,22 @@
+{
+  "_id": "bundled-shadow-peer-leaf",
+  "name": "bundled-shadow-peer-leaf",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "bundled-shadow-peer-leaf",
+      "version": "1.0.0",
+      "dependencies": {
+        "bundled-shadow-shared": "2.0.0"
+      },
+      "_id": "bundled-shadow-peer-leaf@1.0.0",
+      "dist": {
+        "integrity": "sha512-cqixyTfl9uvul3XQXjIPUW07Sbfh8ueHWgS7hMcE8EtbFCZABZhpgoGE+NLav9EzAtTuwFMr2JV/LjnwhZHQrA==",
+        "shasum": "37e2dbd482682fc7a7a5729a3cfd616bea0ba8ee",
+        "tarball": "http://localhost:4873/bundled-shadow-peer-leaf/-/bundled-shadow-peer-leaf-1.0.0.tgz"
+      }
+    }
+  }
+}

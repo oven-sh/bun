@@ -8,7 +8,7 @@ use crate::shell::states::base::Base;
 use crate::shell::states::expansion::Expansion;
 use crate::shell::yield_::Yield;
 
-pub struct CondExpr {
+pub(crate) struct CondExpr {
     pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::CondExpr>,
     pub(crate) io: IO,
@@ -65,7 +65,7 @@ impl CondExpr {
                     if (idx as usize) >= n.args.len() {
                         return Self::command_impl_start(interp, this, n.op);
                     }
-                    let atom: *const ast::Atom = n.args.get_const(idx as usize);
+                    let atom = n.args.get_const(idx as usize);
                     let child = Expansion::init(interp, shell, atom, this, false);
                     return Expansion::start(interp, child);
                 }

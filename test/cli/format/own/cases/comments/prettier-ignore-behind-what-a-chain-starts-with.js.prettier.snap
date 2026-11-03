@@ -1,0 +1,91 @@
+------------------
+{ printWidth: 80 }
+------------------
+const x0 = (a   +   b) // prettier-ignore
+  .foo(1, 2);
+
+const x1 = (a   +   b) /* prettier-ignore */
+  .foo(1, 2);
+
+const x2 = (a   +   b) // prettier-ignore
+  .foo(1, 2)
+  .bar(3, 4)
+  .baz(5, 6);
+
+async function f3() {
+  const x3 = (await   y) // prettier-ignore
+    .foo();
+}
+
+const x4 = (a   ?   b : c) // prettier-ignore
+  .foo();
+
+const x5 = (a   ,   b) // prettier-ignore
+  .foo();
+
+const x6 = (a?.b) // prettier-ignore
+  .c();
+
+({ a:   1 }) // prettier-ignore
+  .foo();
+
+const x8 = function () {} // prettier-ignore
+  .call();
+
+const x9 = foo({ a: 1,   b: 2 }) // prettier-ignore
+  .bar();
+
+const x10 = foo // prettier-ignore
+  .bar(3, 4);
+
+f(
+  (a   +   b) // prettier-ignore
+    .foo(1, 2),
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const x0 = (a   +   b) // prettier-ignore
+  .foo(1, 2);
+
+const x1 = (a   +   b) /* prettier-ignore */
+  .foo(1, 2);
+
+const x2 = (a   +   b) // prettier-ignore
+  .foo(1, 2)
+  .bar(3, 4)
+  .baz(5, 6);
+
+async function f3() {
+  const x3 = (await   y) // prettier-ignore
+    .foo();
+}
+
+const x4 = (a   ?   b : c) // prettier-ignore
+  .foo();
+
+const x5 = (a   ,   b) // prettier-ignore
+  .foo();
+
+const x6 = (a?.b) // prettier-ignore
+  .c();
+
+({ a:   1 }) // prettier-ignore
+  .foo();
+
+const x8 = function () {} // prettier-ignore
+  .call();
+
+const x9 = foo({ a: 1,   b: 2 }) // prettier-ignore
+  .bar();
+
+const x10 = foo // prettier-ignore
+  .bar(3, 4);
+
+f(
+  (a   +   b) // prettier-ignore
+    .foo(1, 2),
+);
+
+===================== End =====================

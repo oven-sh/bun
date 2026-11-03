@@ -1,0 +1,46 @@
+# process._fatalException = replacement; Object.getPrototypeOf(process).throwDeprecation = flag
+# const above = Object.create(null); above.noDeprecation = other; Object.setPrototypeOf(Object.getPrototypeOf(process), above)
+# Native code asks whether process._fatalException can be called and whether the other two are true. It neither calls nor keeps what it finds, on `process`, on the native prototype or above that
+# LIBRARY: own
+# RUN: valueflow-why escaped=f1 escaped=f2 escaped=f3 escaped-builtin=Process
+# CHECK: escaped=f1
+# CHECK-NEXT: not held
+# CHECK-NEXT: escaped=f2
+# CHECK-NEXT: not held
+# CHECK-NEXT: escaped=f3
+# CHECK-NEXT: not held
+# CHECK-NEXT: escaped-builtin=Process
+# CHECK-NEXT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = NewClosure function=f1
+    PropSet v0, v1 key="_fatalException" mode=Strict
+    v3 = Builtin builtin=EventEmitterPrototype
+    v4 = NewClosure function=f2
+    PropSet v3, v4 key="throwDeprecation" mode=Strict
+    v6 = Builtin builtin=Object
+    v7 = Builtin builtin=ObjectCreate
+    v8 = Null
+    v9 = Call v7, v6, v8
+    v10 = NewClosure function=f3
+    PropSet v9, v10 key="noDeprecation" mode=Strict
+    v12 = Builtin builtin=ObjectSetPrototypeOf
+    v13 = Call v12, v6, v3, v9
+    Return
+}
+function f1 name="replacement" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="flag" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="other" results=[{type=anything}] {
+  b0():
+    Return
+}

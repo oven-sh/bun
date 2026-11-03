@@ -13,7 +13,7 @@ use crate::shell::states::r#if::If;
 use crate::shell::states::subshell::Subshell;
 use crate::shell::yield_::Yield;
 
-pub struct Pipeline {
+pub(crate) struct Pipeline {
     pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Pipeline>,
     pub(crate) io: IO,
@@ -23,12 +23,12 @@ pub struct Pipeline {
     pub(crate) state: PipelineState,
 }
 
-pub enum CmdOrResult {
+pub(crate) enum CmdOrResult {
     Cmd(NodeId),
     Result(ExitCode),
 }
 
-pub enum PipelineState {
+pub(crate) enum PipelineState {
     /// `idx` is the next `cmds[]` slot to start.
     StartingCmds {
         idx: u32,
@@ -178,7 +178,6 @@ impl Pipeline {
             }
         }
 
-        let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
         let mut cmds: Vec<CmdOrResult> = Vec::with_capacity(cmd_count);
         for item in items {
             if matches!(item, ast::PipelineItem::Assigns(_)) {
@@ -193,7 +192,7 @@ impl Pipeline {
                     me.io.stdin.clone()
                 } else {
                     let r = IOReader::init(pipes[cmd_idx - 1][0], evtloop);
-                    r.set_interp(interp_ptr);
+                    r.set_interp(interp);
                     InKind::Fd(r)
                 };
                 let stdout = if cmd_idx == cmd_count - 1 {
@@ -210,7 +209,7 @@ impl Pipeline {
                         },
                         evtloop,
                     );
-                    w.set_interp(interp_ptr);
+                    w.set_interp(interp);
                     OutKind::Fd(crate::shell::io::OutFd {
                         writer: w,
                         captured: None,
@@ -285,7 +284,7 @@ impl Pipeline {
         let mut buf = Vec::new();
         let _ = buf.write_fmt(args);
         let stderr_fd = match &interp.as_pipeline(this).io.stderr {
-            OutKind::Fd(fd) => Some((std::sync::Arc::clone(&fd.writer), fd.captured)),
+            OutKind::Fd(fd) => Some((std::rc::Rc::clone(&fd.writer), fd.captured)),
             OutKind::Pipe | OutKind::Ignore => None,
         };
         if let Some((writer, captured)) = stderr_fd {

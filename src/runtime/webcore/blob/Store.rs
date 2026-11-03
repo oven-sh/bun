@@ -29,7 +29,7 @@ use super::SizeType;
 // Re-export the canonical data types from `bun_jsc`.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use bun_jsc::webcore_types::store::{
+pub(crate) use bun_jsc::webcore_types::store::{
     Bytes, Data, DataTag, File, IsAllAscii, S3, SerializeTag, Store,
 };
 
@@ -39,7 +39,7 @@ pub use bun_jsc::webcore_types::store::{
 // `init`/…) live on the `bun_jsc` types directly.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub trait StoreExt {
+pub(crate) trait StoreExt {
     fn to_any_blob(&mut self) -> Option<super::Any>;
     fn init_s3(
         pathlike: PathLike<'static>,
@@ -61,34 +61,35 @@ pub trait StoreExt {
     fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), crate::Error>;
 }
 
-pub trait S3Ext {
+pub(crate) trait S3Ext {
     fn get_credentials_with_options(
         &self,
         options: Option<JSValue>,
         global_object: &JSGlobalObject,
     ) -> JsResult<S3CredentialsWithOptions>;
     /// `store` is the heap `Store` that owns `self` (`self == &store.data.S3`).
+    /// It's an owned ref because reading the options runs user JS, which can detach the store from its Blob.
     fn unlink(
         &self,
-        store: &RefPtr<Store>,
+        store: RefPtr<Store>,
         cx: &bun_jsc::JsThread<'_>,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue>;
     /// See `unlink`.
     fn list_objects(
         &self,
-        store: &RefPtr<Store>,
+        store: RefPtr<Store>,
         cx: &bun_jsc::JsThread<'_>,
         list_options: JSValue,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue>;
 }
 
-pub trait FileExt {
+pub(crate) trait FileExt {
     fn unlink(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue>;
 }
 
-pub trait BytesExt {
+pub(crate) trait BytesExt {
     #[cfg(unix)]
     fn init_mmap(slice: &'static mut [u8]) -> Bytes
     where
@@ -230,6 +231,7 @@ impl FileExt for File {
                     &binding,
                     node_fs::args::Unlink::owned(path_like.slice().to_vec()),
                     cx.vm().as_mut(),
+                    None,
                 ))
             }
             PathOrFileDescriptor::Fd(_) => Ok(JSPromise::resolved_promise_value(
@@ -269,7 +271,7 @@ impl S3Ext for S3 {
 
     fn unlink(
         &self,
-        store: &RefPtr<Store>,
+        store: RefPtr<Store>,
         cx: &bun_jsc::JsThread<'_>,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue> {
@@ -323,7 +325,7 @@ impl S3Ext for S3 {
             Wrapper::resolve,
             bun_core::heap::into_raw(Wrapper::new(Wrapper {
                 promise,
-                store: store.clone(),
+                store,
                 global: bun_ptr::BackRef::new(cx.global()),
             }))
             .cast::<c_void>(),
@@ -335,7 +337,7 @@ impl S3Ext for S3 {
 
     fn list_objects(
         &self,
-        store: &RefPtr<Store>,
+        store: RefPtr<Store>,
         cx: &bun_jsc::JsThread<'_>,
         list_options: JSValue,
         extra_options: Option<JSValue>,
@@ -406,7 +408,7 @@ impl S3Ext for S3 {
         // `Drop` after the async callback.
         let wrapper = bun_core::heap::into_raw(Box::new(Wrapper {
             promise,
-            store: store.clone(),
+            store,
             resolved_list_options: options,
             global: bun_ptr::BackRef::new(cx.global()),
         }));

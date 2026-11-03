@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 function testPBKDF2_(password, salt, iterations, keylen, expected) {
   async function runPBKDF2(password, salt, iterations, keylen, hash) {
     const syncResult = crypto.pbkdf2Sync(password, salt, iterations, keylen, hash);
-    const { promise, resolve } = Promise.withResolvers();
+    const { promise, resolve } = Promise.withResolvers<[Error | null, Buffer]>();
 
     crypto.pbkdf2(password, salt, iterations, keylen, hash, (err, result) => {
       resolve([err, result]);
@@ -24,7 +24,7 @@ function testPBKDF2_(password, salt, iterations, keylen, expected) {
   return runPBKDF2(password, salt, iterations, keylen, "sha256");
 }
 
-function testPBKDF2(password, salt, iterations, keylen, expected, encoding = "latin1") {
+function testPBKDF2(password, salt, iterations, keylen, expected, encoding: BufferEncoding = "latin1") {
   test(Buffer.from(expected, encoding).toString("hex"), async () => {
     return testPBKDF2_(password, salt, iterations, keylen, Buffer.from(expected, encoding));
   });
@@ -90,7 +90,7 @@ describe("keylen is the length of the derived key", () => {
     expect(sync.length).toBe(keylen);
     expect(sync).toStrictEqual(expected);
 
-    const { promise, resolve } = Promise.withResolvers();
+    const { promise, resolve } = Promise.withResolvers<{ err: Error | null; key: Buffer }>();
     crypto.pbkdf2("passwd", "salt", 1, keylen, "sha256", (err, key) => resolve({ err, key }));
     const { err, key } = await promise;
     expect(err).toBeNull();
@@ -129,17 +129,17 @@ describe("invalid inputs", () => {
       });
       expect(() => {
         crypto.pbkdf2("password", "salt", 1, input, "sha256", outer);
-      }).toThrow(`The value of "keylen" is out of range. It must be >= 0 and <= 2147483647. Received ${input}`);
+      }).toThrow(`The value of "keylen" is out of range. It must be >= 0 && <= 2147483647. Received ${input}`);
       expect(outer).not.toHaveBeenCalled();
     });
   });
 
   test("digest", () => {
     const err = new Error('Unsupported algorithm "md55"');
-    err.code = "ERR_CRYPTO_INVALID_DIGEST";
-    let thrown: Error;
+    (err as any).code = "ERR_CRYPTO_INVALID_DIGEST";
+    let thrown: NodeJS.ErrnoException;
     try {
-      crypto.pbkdf2("password", "salt", 1, 1, "md55");
+      crypto.pbkdf2("password", "salt", 1, 1, "md55", () => {});
       expect.unreachable();
     } catch (e) {
       thrown = e as Error;
@@ -196,7 +196,7 @@ describe("invalid inputs", () => {
 });
 
 test("keylen=0 fails async via callback", async () => {
-  const { promise, resolve } = Promise.withResolvers();
+  const { promise, resolve } = Promise.withResolvers<{ err: Error; key: undefined }>();
   let threwSync = false;
   try {
     crypto.pbkdf2("p", "s", 1, 0, "sha256", (err, key) => resolve({ err, key }));
@@ -210,10 +210,15 @@ test("keylen=0 fails async via callback", async () => {
   expect(err.message).toBe("PBKDF2 derivation failed");
 });
 
-[-1, 2147483648, 4294967296, 2 ** 52].forEach(input => {
+[
+  [-1, "-1"],
+  [2147483648, "2147483648"],
+  [4294967296, "4294967296"],
+  [2 ** 52, "4_503_599_627_370_496"],
+].forEach(([input, received]) => {
   test(`${input} keylen`, () => {
     expect(() => crypto.pbkdf2("password", "salt", 1, input, "sha256")).toThrow(
-      `The value of "keylen" is out of range. It must be >= 0 and <= 2147483647. Received ${input}`,
+      `The value of "keylen" is out of range. It must be >= 0 && <= 2147483647. Received ${received}`,
     );
   });
 });
@@ -265,6 +270,53 @@ test("pbkdf2 keeps the callback alive across GC until the job completes", async 
   await promise;
   expect(results.filter(r => r === expected)).toHaveLength(count);
   expect(results.filter(r => r === "PBKDF2 derivation failed")).toHaveLength(count);
+});
+
+test("pbkdf2 copies password and salt before it returns", async () => {
+  const password = Buffer.alloc(4096, "p");
+  const salt = Buffer.alloc(16, "s");
+  const expected = crypto.pbkdf2Sync(password, salt, 1, 32, "sha256").toString("hex");
+  const results: string[] = [];
+  for (let i = 0; i < 20; i++) {
+    password.fill("p");
+    salt.fill("s");
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    crypto.pbkdf2(password, salt, 1, 32, "sha256", (err, key) => (err ? reject(err) : resolve(key.toString("hex"))));
+    password.fill(0);
+    salt.fill(0);
+    results.push(await promise);
+  }
+  expect(results).toEqual(Array(20).fill(expected));
+});
+
+test("pbkdf2 doesn't read a resizable ArrayBuffer that shrinks after the call", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const crypto = require("crypto");
+        const expected = crypto.pbkdf2Sync(Buffer.alloc(65536, 0x41), "salt", 1, 32, "sha256").toString("hex");
+        let wrong = 0;
+        for (let i = 0; i < 20; i++) {
+          const ab = new ArrayBuffer(65536, { maxByteLength: 1 << 20 });
+          new Uint8Array(ab).fill(0x41);
+          const { promise, resolve, reject } = Promise.withResolvers();
+          crypto.pbkdf2(new Uint8Array(ab), "salt", 1, 32, "sha256", (err, key) => (err ? reject(err) : resolve(key.toString("hex"))));
+          ab.resize(0);
+          if ((await promise) !== expected) wrong++;
+        }
+        console.log("wrong:", wrong);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("wrong: 0\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 test("pbkdf2 works with util.promisify", async () => {
@@ -321,4 +373,45 @@ test("a throw inside the pbkdf2 callback is an uncaughtException, not an unhandl
   expect(stdout).toBe("callback: null 6f4ad8c78ec365c0\nuncaughtException: boom\n");
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
+});
+
+test("pbkdf2 takes a proxy of a function as its callback", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers<Buffer>();
+  crypto.pbkdf2("p", "s", 1, 4, "sha1", new Proxy((err, key) => (err ? reject(err) : resolve(key)), {}));
+  expect(await promise).toStrictEqual(crypto.pbkdf2Sync("p", "s", 1, 4, "sha1"));
+});
+
+test("pbkdf2 reports its arguments as Node does", () => {
+  expect(() => crypto.pbkdf2("p", "s", 1, 1, "md55")).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "callback" argument must be of type function. Received undefined',
+    }),
+  );
+  expect(() => crypto.pbkdf2("p", "s", 1, 1, "md55", 5)).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "callback" argument must be of type function. Received type number (5)',
+    }),
+  );
+  expect(() => crypto.pbkdf2("p", "s", 1, 1, 5)).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "digest" argument must be of type string. Received type number (5)',
+    }),
+  );
+  expect(() => crypto.pbkdf2("p", "s", 1, 1)).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "digest" argument must be of type string. Received undefined',
+    }),
+  );
+  for (const [name, args] of [
+    ["password", [5, "s"]],
+    ["salt", ["p", 5]],
+  ] as const) {
+    expect(() => crypto.pbkdf2Sync(...args, 1, 1, "sha1")).toThrow(
+      `The "${name}" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView. Received type number (5)`,
+    );
+  }
 });

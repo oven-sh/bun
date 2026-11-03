@@ -1,0 +1,65 @@
+------------------
+{ printWidth: 80 }
+------------------
+- [ ] the text is on the next line
+
+- [ ] blanks behind the marker
+
+- [x]
+
+- [ ]
+
+  a paragraph of its own: no task
+
+- [ ] [a]: /not-a-definition
+      b
+
+- [x] [a]: /u
+
+  behind a definition
+
+- [x] a heading, so no task
+  ---
+
+1.  [ ] a lazy line
+
+- [x] on the line after the marker
+
+- [x] a capital
+- [ ] a tab
+- [ ] two blanks
+- [ ] **strong** first
+
+-------------------
+{ printWidth: 100 }
+-------------------
+- [ ] the text is on the next line
+
+- [ ] blanks behind the marker
+
+- [x]
+
+- [ ]
+
+  a paragraph of its own: no task
+
+- [ ] [a]: /not-a-definition
+      b
+
+- [x] [a]: /u
+
+  behind a definition
+
+- [x] a heading, so no task
+  ---
+
+1.  [ ] a lazy line
+
+- [x] on the line after the marker
+
+- [x] a capital
+- [ ] a tab
+- [ ] two blanks
+- [ ] **strong** first
+
+===================== End =====================

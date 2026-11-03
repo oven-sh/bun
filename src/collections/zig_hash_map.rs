@@ -665,10 +665,6 @@ impl<'a, K, V, C> OccupiedEntry<'a, K, V, C> {
         &self.map.slots[self.idx].as_ref().unwrap().1
     }
     #[inline]
-    pub fn get_mut(&mut self) -> &mut V {
-        &mut self.map.slots[self.idx].as_mut().unwrap().1
-    }
-    #[inline]
     pub fn into_mut(self) -> &'a mut V {
         &mut self.map.slots[self.idx].as_mut().unwrap().1
     }

@@ -1697,7 +1697,7 @@ impl ProvenanceKey<'_> {
 
 /// Flags that `getUnionTypeEx`, `getIntersectionTypeEx` and `createTypeReferenceEx` set on a type only when they create
 /// it, so the first request for the type decides them. A record is created with them already set
-/// (`Types::as_first_request`).
+/// (`Types::as_first_request`). `FROM_TYPE_NODE` is also set later (`Types::mark_from_type_node`): which task requests a published type first depends on timing.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct FirstRequest(u8);
 
@@ -2260,7 +2260,16 @@ impl Destination<'_> {
 /// All task-local records: atoms, lists of index components, mappers, signatures, types. A field of
 /// `Task`. No other task sees it. A record that the task publishes is created in the shared store
 /// instead, and these are dropped with the task.
+// The fields are laid out as declared: small ones that most accesses touch first, where x86-64 reaches them with a
+// one-byte offset.
+#[repr(C)]
 pub struct OwnStore<'s> {
+    types: Own<'s, TypeRecord<'s>>,
+    /// The files that the task has visited and that nothing imports, indexed by `FileId`. No other
+    /// task can reference a node or a symbol of such a file. If it's empty, nothing is bound.
+    unimported_files: Bits,
+    /// Files the task has visited, indexed by `FileId`.
+    visited_files: Bits,
     /// Arena of the thread that runs the task. Records and their lists are allocated from it, and
     /// the lists may be published.
     arena: &'s Arena,
@@ -2268,26 +2277,20 @@ pub struct OwnStore<'s> {
     components: Own<'s, List<'s, IndexComponent>>,
     mappers: Own<'s, MapperRecord<'s>>,
     sigs: Own<'s, SigData<'s>>,
-    types: Own<'s, TypeRecord<'s>>,
-    /// The files that the task has visited and that nothing imports, indexed by `FileId`. No other
-    /// task can reference a node or a symbol of such a file. If it's empty, nothing is bound.
-    unimported_files: Bits,
+    summaries: TaskRecords<'s, Summary>,
+    /// Ids the task has reserved but not used yet, by pool (`ID_POOLS`). Only used with
+    /// `Sharing::Publishes`.
+    ids: [Cell<Placeholders<'s>>; ID_POOLS],
+    /// By kind, the records this task published that reference a node or symbol in one of `visited_files`, directly or
+    /// through another record. Indexed by id.
+    of_visited_files: [RefCell<Bits>; 5],
+    /// Number of ids the task has used for published records, by kind.
+    published: [Cell<u32>; 5],
+    sharing: Sharing,
     /// See `Types::is_unresolved_name`.
     has_unresolved_names: Cell<bool>,
     /// See `Types::as_first_request`.
     first_request: Cell<FirstRequest>,
-    sharing: Sharing,
-    /// Ids the task has reserved but not used yet, by pool (`ID_POOLS`). Only used with
-    /// `Sharing::Publishes`.
-    ids: [Cell<Placeholders<'s>>; ID_POOLS],
-    /// Number of ids the task has used for published records, by kind.
-    published: [Cell<u32>; 5],
-    /// Files the task has visited, indexed by `FileId`.
-    visited_files: Bits,
-    /// By kind, the records this task published that reference a node or symbol in one of `visited_files`, directly or
-    /// through another record. Indexed by id.
-    of_visited_files: [RefCell<Bits>; 5],
-    summaries: TaskRecords<'s, Summary>,
 }
 
 impl<'s> OwnStore<'s> {
@@ -3803,6 +3806,33 @@ impl<'p, 's> Types<'p, 's> {
         self.rank(a).height.cmp(&self.rank(b).height)
     }
 
+    /// True if the key of `whole` mentions `part`, directly or through the types in it. tsgo creates a type after every
+    /// type it's built from, so `part` has the lower id there. Only types higher than `part` can mention it, and the
+    /// others aren't entered.
+    pub fn is_built_from(&self, whole: TypeId, part: TypeId) -> bool {
+        let floor = self.rank(part).height;
+        let mut entered: SmallVec<[TypeId; 16]> = SmallVec::new();
+        let mut waiting: SmallVec<[TypeId; 16]> = SmallVec::new();
+        waiting.push(whole);
+        while let Some(next) = waiting.pop() {
+            let mut mentioned = Mentioned {
+                types: *self,
+                found: SmallVec::new(),
+            };
+            visit_type_as_content(&self.record(next).created, &mut mentioned);
+            for id in mentioned.found {
+                if id == part {
+                    return true;
+                }
+                if self.rank(id).height > floor && !entered.contains(&id) {
+                    entered.push(id);
+                    waiting.push(id);
+                }
+            }
+        }
+        false
+    }
+
     #[inline]
     fn rank(&self, id: TypeId) -> Rank {
         match self.own.summaries.get_layered(id.0).rank() {
@@ -4059,15 +4089,17 @@ impl<'p, 's> Types<'p, 's> {
 
     /// `ObjectFlagsFromTypeNode`: `id` is the type of a type node. `first_new_type_id` was taken
     /// before the node was resolved. `createTypeReferenceEx` sets the flags only on a type that it
-    /// creates, so a type that an instantiation created earlier is unchanged.
+    /// creates, so a task-local type that an instantiation created earlier is unchanged; a bound or a published type gets the flag all the same.
     pub fn mark_from_type_node(&self, id: TypeId, first_new_type_id: NewTypes) {
-        if id.0 & LOCAL == 0 {
-            return;
-        }
-        // Unlike in tsgo, a bound type gets the flag even if an instantiation created it earlier.
-        if self.is_new_since(id, first_new_type_id) || self.own.types.is_bound(id.0 & !LOCAL) {
-            let record = self.record(id);
-            record.is_from_type_node.store(true, Ordering::Relaxed);
+        if id.0 & LOCAL == 0
+            || self.is_new_since(id, first_new_type_id)
+            || self.own.types.is_bound(id.0 & !LOCAL)
+        {
+            let flag = &self.record(id).is_from_type_node;
+            // A store would take the record's cache line away from the threads that read it.
+            if !flag.load(Ordering::Relaxed) {
+                flag.store(true, Ordering::Relaxed);
+            }
         }
     }
 
@@ -5073,7 +5105,7 @@ impl Visitor for MentionsOwn {
 struct ContentHash(u64);
 
 #[inline]
-fn fold(a: u64, b: u64) -> u64 {
+pub(crate) fn fold(a: u64, b: u64) -> u64 {
     let product = u128::from(a) * u128::from(b);
     product as u64 ^ (product >> 64) as u64
 }
@@ -5158,6 +5190,38 @@ fn visit_type_as_content<V: Hashing>(created: &OwnedTypeKey, content: &mut V) {
         is_array_pattern.visit(content);
         has_other_instantiation.visit(content);
     }
+}
+
+/// Collects the types a key mentions, directly or through a mapper, a signature or a component list.
+struct Mentioned<'p, 's> {
+    types: Types<'p, 's>,
+    found: SmallVec<[TypeId; 8]>,
+}
+
+impl Hashing for Mentioned<'_, '_> {
+    fn unordered<T: Follow>(&mut self, items: &[T]) {
+        for item in items {
+            item.visit(self);
+        }
+    }
+}
+
+impl Visitor for Mentioned<'_, '_> {
+    fn atom(&mut self, _: Atom) {}
+    fn components(&mut self, id: ComponentsId) {
+        self.types.components(id).visit(self);
+    }
+    fn mapper(&mut self, id: MapperId) {
+        self.unordered(self.types.mapping(id));
+    }
+    fn sig(&mut self, id: SigId) {
+        self.types.sig(id).visit(self);
+    }
+    fn ty(&mut self, id: TypeId) {
+        self.found.push(id);
+    }
+    fn file(&mut self, _: FileId) {}
+    fn plain<T: Hash + ?Sized>(&mut self, _: &T) {}
 }
 
 /// Computes a `Rank`.
@@ -5860,5 +5924,28 @@ mod tests {
         let first = create();
         assert!(!first.is_local());
         assert_eq!(create(), first);
+    }
+
+    #[test]
+    fn type_node_marks_type_that_another_task_created() {
+        let session = Session::new();
+        let store = sharing_store(&session, Interner::new_in(&session));
+        let (file, id) = (FileId(2), crate::bind::SymbolId(7));
+        let key = || TypeKey::Ref {
+            target: Sym { file, id },
+            args: &[TypeId::STRING],
+        };
+        let instantiating = own_store(&session, &store, Sharing::Publishes);
+        let instantiated = Types::new(&store, &instantiating).intern_key(key());
+        assert!(!instantiated.is_local());
+        let own = own_store(&session, &store, Sharing::Publishes);
+        let types = Types::new(&store, &own);
+        assert!(!types.is_from_type_node(instantiated));
+        let first_new_type_id = types.first_new_type_id();
+        let named =
+            types.as_first_request(FirstRequest::FROM_TYPE_NODE, || types.intern_key(key()));
+        types.mark_from_type_node(named, first_new_type_id);
+        assert_eq!(named, instantiated);
+        assert!(types.is_from_type_node(named));
     }
 }

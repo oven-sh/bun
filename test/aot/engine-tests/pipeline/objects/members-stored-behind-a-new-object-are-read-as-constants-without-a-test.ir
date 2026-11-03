@@ -1,0 +1,442 @@
+# What tsc 3.9 to 4.x prints for an exported enum into a CommonJS file. Nobody sees the object before the function has filled it, so each member is read as its constant
+# without a look at the object: the cases of the switch compare with 0, 1, 2 and so on, which B3 makes a table of.
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: pipeline Select
+# CHECK-LABEL: name="step"
+# CHECK-NOT: HasBirthFieldsFilled
+# CHECK-NOT: GetSlot
+# CHECK-NOT: GetModuleVariable
+# CHECK: [[zero]]: 0 = Integer
+# CHECK-NEXT: = StrictEq [[state]], [[zero]] form=Integers
+# CHECK: = StrictEq [[state]], {{*}} form=Integers
+# CHECK: = StrictEq [[state]], {{*}} form=Integers
+# CHECK-LABEL: function
+# -- source: main.cjs
+# exports.State = void 0;
+# var State;
+# (function (State) {
+#   State[State["S0"] = 0] = "S0";
+#   State[State["S1"] = 1] = "S1";
+#   State[State["S2"] = 2] = "S2";
+#   State[State["S3"] = 3] = "S3";
+#   State[State["S4"] = 4] = "S4";
+#   State[State["S5"] = 5] = "S5";
+#   State[State["S6"] = 6] = "S6";
+#   State[State["S7"] = 7] = "S7";
+#   State[State["S8"] = 8] = "S8";
+#   State[State["S9"] = 9] = "S9";
+# })(State = exports.State || (exports.State = {}));
+# function step(state, bit) {
+#   switch (state) {
+#     case State.S0: return bit ? State.S1 : State.S1;
+#     case State.S1: return bit ? State.S8 : State.S2;
+#     case State.S2: return bit ? State.S5 : State.S3;
+#     case State.S3: return bit ? State.S2 : State.S4;
+#     case State.S4: return bit ? State.S9 : State.S5;
+#     case State.S5: return bit ? State.S6 : State.S6;
+#     case State.S6: return bit ? State.S3 : State.S7;
+#     case State.S7: return bit ? State.S0 : State.S8;
+#     case State.S8: return bit ? State.S7 : State.S9;
+#     case State.S9: return bit ? State.S4 : State.S0;
+#   }
+#   return -1;
+# }
+# let state = State.S0;
+# for (let i = 0; i < 100; i++) state = step(state, i & 1);
+# console.log(state);
+# -- end of source
+
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+entry module=m0
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 fields=[{key="State" declared={type=anything}}] ownFieldCount=1
+layout L2 module=m0 position=430
+data d0 root=Object{layout=L2} module=m0
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewObject layout=L1 @0
+    v1 = FinishObject v0 @0
+    PutModuleVariable v1 variable=g0 @0
+    v3 = Undefined @0
+    v4 = NewObject -, v3 layout=L0 fields=[0] @0
+    v5 = NewClosure v4 function=f1 @0
+    v6 = Convert v5 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v7 = GetModuleVariable variable=g0 @0
+    v8 = Convert v7 declared={type=L1 flags=[IsExpected]} @0
+    v9 = Undefined @16
+    PropSet v8, v9 key="State" mode=Sloppy @0
+    v11 = NewClosure function=f2 @36
+    v12 = GetModuleVariable variable=g0 @396
+    v13 = Convert v12 declared={type=L1 flags=[IsExpected]} @396
+    v14 = PropGet v13 key="State" @396
+    v15 = ToBoolean v14 @396
+    Branch v15 -> taken b2(| 0), notTaken b3(| 0) @396
+  b2(v16):
+    Jump -> next b5(v16) @396
+  b3(v17):
+    Jump -> next b4() @396
+  b4():
+    v18 = GetModuleVariable variable=g0 @414
+    v19 = Convert v18 declared={type=L1 flags=[IsExpected]} @414
+    v20 = Data data=d0 @430
+    PropSet v19, v20 key="State" mode=Sloppy @414
+    Jump -> next b5(v20) @414
+  b5(v22):
+    v23 = Convert v22 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @388
+    PutEnvironmentField v4, v23 layout=L0 @388
+    v25 = Call v11, -, v22 @379
+    v26 = GetEnvironmentField v4 layout=L0 @1044
+    v27 = PropGet v26 key="S0" @1044
+    v28 = Integer @1067
+    v29 = Convert v28 declared={type=i32 flags=[IsExpected]} @1067
+    Jump -> next b6(v27, v29) @1063
+  b6(v30, v31):
+    LoopHint @1063
+    v33 = Integer integer=100 @1074
+    v34 = Less v31, v33 @1070
+    Branch v34 -> taken b7(| 0), notTaken b10(| 0) @1070
+  b7(v35):
+    Jump -> next b8() @1070
+  b8():
+    v36 = Integer integer=1 @1108
+    v37 = BitAnd v35, v36 @1104
+    v38 = Call v6, -, v30, v37 calleeName="step" @1092
+    v39 = Convert v38 declared={type=number flags=[IsExpected]} @1092
+    Jump -> next b9() @1084
+  b9():
+    v40 = Increment v35 @1092
+    v41 = Convert v40 declared={type=i32 flags=[IsExpected]} @1079
+    Jump -> next b6(v39, v41) @1079
+  b10(v42):
+    Jump -> next b11() @1070
+  b11():
+    v43 = Builtin builtin=GlobalThis @1112
+    v44 = PropGet v43 key="console" [isFreeName] @1112
+    v45 = Convert v44 declared={type=builtin(Console) flags=[IsExpected]} @1112
+    v46 = PropGet v45 key="log" @1112
+    v47 = Convert v46 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @1112
+    v48 = Call v47, v45, v30 calleeKey="log" calleeName="console.log" @1120
+    v49 = Undefined @1112
+    Return v49 @1112
+}
+function f1 name="step" module=m0 position=436 flags=[IsSloppy, HasExplicitName] length=2 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0, v1: anything, v2: anything):
+    Jump -> next b1() @436
+  b1():
+    v3 = GetEnvironmentField v0 layout=L0 @492
+    v4 = PropGet v3 key="S0" @492
+    v5 = StrictEq v1, v4 @492
+    Branch v5 -> taken b2(| 0), notTaken b9(| 0) @492
+  b2(v6):
+    Jump -> next b3() @492
+  b3():
+    v7 = Convert v2 declared={type=number flags=[IsExpected]} @509
+    v8 = ToBoolean v7 @509
+    Branch v8 -> taken b4(| 0), notTaken b6(| 0) @509
+  b4(v9):
+    Jump -> next b5() @509
+  b5():
+    v10 = GetEnvironmentField v0 layout=L0 @515
+    v11 = PropGet v10 key="S1" @515
+    Jump -> next b8(v11) @515
+  b6(v12):
+    Jump -> next b7() @509
+  b7():
+    v13 = GetEnvironmentField v0 layout=L0 @526
+    v14 = PropGet v13 key="S1" @526
+    Jump -> next b8(v14) @526
+  b8(v15):
+    v16 = Convert v15 declared={type=number flags=[IsExpected]} @526
+    Return v16 @526
+  b9(v17):
+    v18 = GetEnvironmentField v0 layout=L0 @545
+    v19 = PropGet v18 key="S1" @545
+    v20 = StrictEq v17, v19 @545
+    Branch v20 -> taken b10(| 0), notTaken b17(| 0) @545
+  b10(v21):
+    Jump -> next b11() @545
+  b11():
+    v22 = Convert v2 declared={type=number flags=[IsExpected]} @562
+    v23 = ToBoolean v22 @562
+    Branch v23 -> taken b12(| 0), notTaken b14(| 0) @562
+  b12(v24):
+    Jump -> next b13() @562
+  b13():
+    v25 = GetEnvironmentField v0 layout=L0 @568
+    v26 = PropGet v25 key="S8" @568
+    Jump -> next b16(v26) @568
+  b14(v27):
+    Jump -> next b15() @562
+  b15():
+    v28 = GetEnvironmentField v0 layout=L0 @579
+    v29 = PropGet v28 key="S2" @579
+    Jump -> next b16(v29) @579
+  b16(v30):
+    v31 = Convert v30 declared={type=number flags=[IsExpected]} @579
+    Return v31 @579
+  b17(v32):
+    v33 = GetEnvironmentField v0 layout=L0 @598
+    v34 = PropGet v33 key="S2" @598
+    v35 = StrictEq v32, v34 @598
+    Branch v35 -> taken b18(| 0), notTaken b25(| 0) @598
+  b18(v36):
+    Jump -> next b19() @598
+  b19():
+    v37 = Convert v2 declared={type=number flags=[IsExpected]} @615
+    v38 = ToBoolean v37 @615
+    Branch v38 -> taken b20(| 0), notTaken b22(| 0) @615
+  b20(v39):
+    Jump -> next b21() @615
+  b21():
+    v40 = GetEnvironmentField v0 layout=L0 @621
+    v41 = PropGet v40 key="S5" @621
+    Jump -> next b24(v41) @621
+  b22(v42):
+    Jump -> next b23() @615
+  b23():
+    v43 = GetEnvironmentField v0 layout=L0 @632
+    v44 = PropGet v43 key="S3" @632
+    Jump -> next b24(v44) @632
+  b24(v45):
+    v46 = Convert v45 declared={type=number flags=[IsExpected]} @632
+    Return v46 @632
+  b25(v47):
+    v48 = GetEnvironmentField v0 layout=L0 @651
+    v49 = PropGet v48 key="S3" @651
+    v50 = StrictEq v47, v49 @651
+    Branch v50 -> taken b26(| 0), notTaken b33(| 0) @651
+  b26(v51):
+    Jump -> next b27() @651
+  b27():
+    v52 = Convert v2 declared={type=number flags=[IsExpected]} @668
+    v53 = ToBoolean v52 @668
+    Branch v53 -> taken b28(| 0), notTaken b30(| 0) @668
+  b28(v54):
+    Jump -> next b29() @668
+  b29():
+    v55 = GetEnvironmentField v0 layout=L0 @674
+    v56 = PropGet v55 key="S2" @674
+    Jump -> next b32(v56) @674
+  b30(v57):
+    Jump -> next b31() @668
+  b31():
+    v58 = GetEnvironmentField v0 layout=L0 @685
+    v59 = PropGet v58 key="S4" @685
+    Jump -> next b32(v59) @685
+  b32(v60):
+    v61 = Convert v60 declared={type=number flags=[IsExpected]} @685
+    Return v61 @685
+  b33(v62):
+    v63 = GetEnvironmentField v0 layout=L0 @704
+    v64 = PropGet v63 key="S4" @704
+    v65 = StrictEq v62, v64 @704
+    Branch v65 -> taken b34(| 0), notTaken b41(| 0) @704
+  b34(v66):
+    Jump -> next b35() @704
+  b35():
+    v67 = Convert v2 declared={type=number flags=[IsExpected]} @721
+    v68 = ToBoolean v67 @721
+    Branch v68 -> taken b36(| 0), notTaken b38(| 0) @721
+  b36(v69):
+    Jump -> next b37() @721
+  b37():
+    v70 = GetEnvironmentField v0 layout=L0 @727
+    v71 = PropGet v70 key="S9" @727
+    Jump -> next b40(v71) @727
+  b38(v72):
+    Jump -> next b39() @721
+  b39():
+    v73 = GetEnvironmentField v0 layout=L0 @738
+    v74 = PropGet v73 key="S5" @738
+    Jump -> next b40(v74) @738
+  b40(v75):
+    v76 = Convert v75 declared={type=number flags=[IsExpected]} @738
+    Return v76 @738
+  b41(v77):
+    v78 = GetEnvironmentField v0 layout=L0 @757
+    v79 = PropGet v78 key="S5" @757
+    v80 = StrictEq v77, v79 @757
+    Branch v80 -> taken b42(| 0), notTaken b49(| 0) @757
+  b42(v81):
+    Jump -> next b43() @757
+  b43():
+    v82 = Convert v2 declared={type=number flags=[IsExpected]} @774
+    v83 = ToBoolean v82 @774
+    Branch v83 -> taken b44(| 0), notTaken b46(| 0) @774
+  b44(v84):
+    Jump -> next b45() @774
+  b45():
+    v85 = GetEnvironmentField v0 layout=L0 @780
+    v86 = PropGet v85 key="S6" @780
+    Jump -> next b48(v86) @780
+  b46(v87):
+    Jump -> next b47() @774
+  b47():
+    v88 = GetEnvironmentField v0 layout=L0 @791
+    v89 = PropGet v88 key="S6" @791
+    Jump -> next b48(v89) @791
+  b48(v90):
+    v91 = Convert v90 declared={type=number flags=[IsExpected]} @791
+    Return v91 @791
+  b49(v92):
+    v93 = GetEnvironmentField v0 layout=L0 @810
+    v94 = PropGet v93 key="S6" @810
+    v95 = StrictEq v92, v94 @810
+    Branch v95 -> taken b50(| 0), notTaken b57(| 0) @810
+  b50(v96):
+    Jump -> next b51() @810
+  b51():
+    v97 = Convert v2 declared={type=number flags=[IsExpected]} @827
+    v98 = ToBoolean v97 @827
+    Branch v98 -> taken b52(| 0), notTaken b54(| 0) @827
+  b52(v99):
+    Jump -> next b53() @827
+  b53():
+    v100 = GetEnvironmentField v0 layout=L0 @833
+    v101 = PropGet v100 key="S3" @833
+    Jump -> next b56(v101) @833
+  b54(v102):
+    Jump -> next b55() @827
+  b55():
+    v103 = GetEnvironmentField v0 layout=L0 @844
+    v104 = PropGet v103 key="S7" @844
+    Jump -> next b56(v104) @844
+  b56(v105):
+    v106 = Convert v105 declared={type=number flags=[IsExpected]} @844
+    Return v106 @844
+  b57(v107):
+    v108 = GetEnvironmentField v0 layout=L0 @863
+    v109 = PropGet v108 key="S7" @863
+    v110 = StrictEq v107, v109 @863
+    Branch v110 -> taken b58(| 0), notTaken b65(| 0) @863
+  b58(v111):
+    Jump -> next b59() @863
+  b59():
+    v112 = Convert v2 declared={type=number flags=[IsExpected]} @880
+    v113 = ToBoolean v112 @880
+    Branch v113 -> taken b60(| 0), notTaken b62(| 0) @880
+  b60(v114):
+    Jump -> next b61() @880
+  b61():
+    v115 = GetEnvironmentField v0 layout=L0 @886
+    v116 = PropGet v115 key="S0" @886
+    Jump -> next b64(v116) @886
+  b62(v117):
+    Jump -> next b63() @880
+  b63():
+    v118 = GetEnvironmentField v0 layout=L0 @897
+    v119 = PropGet v118 key="S8" @897
+    Jump -> next b64(v119) @897
+  b64(v120):
+    v121 = Convert v120 declared={type=number flags=[IsExpected]} @897
+    Return v121 @897
+  b65(v122):
+    v123 = GetEnvironmentField v0 layout=L0 @916
+    v124 = PropGet v123 key="S8" @916
+    v125 = StrictEq v122, v124 @916
+    Branch v125 -> taken b66(| 0), notTaken b73(| 0) @916
+  b66(v126):
+    Jump -> next b67() @916
+  b67():
+    v127 = Convert v2 declared={type=number flags=[IsExpected]} @933
+    v128 = ToBoolean v127 @933
+    Branch v128 -> taken b68(| 0), notTaken b70(| 0) @933
+  b68(v129):
+    Jump -> next b69() @933
+  b69():
+    v130 = GetEnvironmentField v0 layout=L0 @939
+    v131 = PropGet v130 key="S7" @939
+    Jump -> next b72(v131) @939
+  b70(v132):
+    Jump -> next b71() @933
+  b71():
+    v133 = GetEnvironmentField v0 layout=L0 @950
+    v134 = PropGet v133 key="S9" @950
+    Jump -> next b72(v134) @950
+  b72(v135):
+    v136 = Convert v135 declared={type=number flags=[IsExpected]} @950
+    Return v136 @950
+  b73(v137):
+    v138 = GetEnvironmentField v0 layout=L0 @969
+    v139 = PropGet v138 key="S9" @969
+    v140 = StrictEq v137, v139 @969
+    Branch v140 -> taken b74(| 0), notTaken b81(| 0) @969
+  b74(v141):
+    Jump -> next b75() @969
+  b75():
+    v142 = Convert v2 declared={type=number flags=[IsExpected]} @986
+    v143 = ToBoolean v142 @986
+    Branch v143 -> taken b76(| 0), notTaken b78(| 0) @986
+  b76(v144):
+    Jump -> next b77() @986
+  b77():
+    v145 = GetEnvironmentField v0 layout=L0 @992
+    v146 = PropGet v145 key="S4" @992
+    Jump -> next b80(v146) @992
+  b78(v147):
+    Jump -> next b79() @986
+  b79():
+    v148 = GetEnvironmentField v0 layout=L0 @1003
+    v149 = PropGet v148 key="S0" @1003
+    Jump -> next b80(v149) @1003
+  b80(v150):
+    v151 = Convert v150 declared={type=number flags=[IsExpected]} @1003
+    Return v151 @1003
+  b81(v152):
+    Jump -> next b82() @969
+  b82():
+    v153 = Integer integer=-1 @1026
+    v154 = Convert v153 declared={type=number flags=[IsExpected]} @1026
+    Return v154 @1026
+}
+function f2 module=m0 position=36 flags=[IsSloppy] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @36
+  b1():
+    v1 = Integer @77
+    PropSet v0, v1 key="S0" mode=Sloppy @63
+    v3 = String string="S0" @82
+    ElemSet v0, v1, v3 mode=Sloppy @57
+    v5 = Integer integer=1 @110
+    PropSet v0, v5 key="S1" mode=Sloppy @96
+    v7 = String string="S1" @115
+    ElemSet v0, v5, v7 mode=Sloppy @90
+    v9 = Integer integer=2 @143
+    PropSet v0, v9 key="S2" mode=Sloppy @129
+    v11 = String string="S2" @148
+    ElemSet v0, v9, v11 mode=Sloppy @123
+    v13 = Integer integer=3 @176
+    PropSet v0, v13 key="S3" mode=Sloppy @162
+    v15 = String string="S3" @181
+    ElemSet v0, v13, v15 mode=Sloppy @156
+    v17 = Integer integer=4 @209
+    PropSet v0, v17 key="S4" mode=Sloppy @195
+    v19 = String string="S4" @214
+    ElemSet v0, v17, v19 mode=Sloppy @189
+    v21 = Integer integer=5 @242
+    PropSet v0, v21 key="S5" mode=Sloppy @228
+    v23 = String string="S5" @247
+    ElemSet v0, v21, v23 mode=Sloppy @222
+    v25 = Integer integer=6 @275
+    PropSet v0, v25 key="S6" mode=Sloppy @261
+    v27 = String string="S6" @280
+    ElemSet v0, v25, v27 mode=Sloppy @255
+    v29 = Integer integer=7 @308
+    PropSet v0, v29 key="S7" mode=Sloppy @294
+    v31 = String string="S7" @313
+    ElemSet v0, v29, v31 mode=Sloppy @288
+    v33 = Integer integer=8 @341
+    PropSet v0, v33 key="S8" mode=Sloppy @327
+    v35 = String string="S8" @346
+    ElemSet v0, v33, v35 mode=Sloppy @321
+    v37 = Integer integer=9 @374
+    PropSet v0, v37 key="S9" mode=Sloppy @360
+    v39 = String string="S9" @379
+    ElemSet v0, v37, v39 mode=Sloppy @354
+    v41 = Undefined @354
+    Return v41 @354
+}

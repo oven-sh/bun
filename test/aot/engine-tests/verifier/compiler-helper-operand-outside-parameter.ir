@@ -1,0 +1,18 @@
+# A compiler helper has no form that takes any value. A pass that writes a call of one without a proof for each operand is named by the verifier after that pass.
+# FORM: Prepared optimizing
+# RUN: verify
+# DIAGNOSTIC: InvalidBuiltinCall 2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="badViewOfAnyType" parameters=[{type=string}, {type=anything}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=object}] {
+    v4 = CallBuiltin -, v0, v1, v2, v3 overload=CompilerHelpersTextEncoder_prototype_encodeInto_inRanges/0
+    Return v4
+}
+function f1 name="badTextOfAnyType" parameters=[{type=anything}, {type=Uint8Array}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=object}] {
+    v4 = CallBuiltin -, v0, v1, v2, v3 overload=CompilerHelpersTextEncoder_prototype_encodeInto_inRanges/0
+    Return v4
+}
+function f2 name="good" parameters=[{type=string}, {type=Uint8Array}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=object}] {
+    v4 = CallBuiltin -, v0, v1, v2, v3 overload=CompilerHelpersTextEncoder_prototype_encodeInto_inRanges/0
+    Return v4
+}

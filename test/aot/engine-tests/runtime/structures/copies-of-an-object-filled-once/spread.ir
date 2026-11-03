@@ -1,0 +1,105 @@
+# const defaults = Object.create(Object.prototype); defaults.a = 1; defaults.b = 2;
+# function withExtra(extra) { return { ...defaults, extra }; }
+# let sum = 0;
+# const turns = Number(env.TURNS);
+# for (let i = 0; i < turns; i++) { if (i === 1000) mark(); const made = withExtra(i & 7); sum += made.a + made.b + made.extra; }
+# report(sum);
+# FORM: AsRead
+# RUN: run-in-shell --aotCountsPath=/dev/null globalThis.env = {"TURNS": "2000"}; const structures = () => { let sum = 0; const lines = aotRuntimeCounters().split("\n"); for (let i = 0; i < lines.length; i++) { const words = lines[i].split(" "); if (words[0] === "made" && words[3].startsWith("Structure:")) sum += Number(words[4]); } return sum; }; let marked; globalThis.mark = () => { marked = structures(); }; globalThis.report = (...values) => { let text = ""; for (let i = 0; i < values.length; i++) text += (i ? " " : "") + values[i]; print(text); print(structures() - marked, "Structures made in the last 1,000 turns"); };
+# An ordinary object is given its names once and is then copied many times, and each copy is given one more name. The copies share their Structures.
+# CHECK: 13000
+# CHECK-NEXT: 0 Structures made in the last 1,000 turns
+# CHECK-NEXT: exited with 0
+
+module m0 path="spread.cjs" displayPath="spread.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+entry module=m0
+layout L0 module=m0
+layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=undefined|null|object|absent flags=[IsExpected]} flags=[IsImmutable]}] ownFieldCount=1
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewObject layout=L0
+    v1 = FinishObject v0
+    PutModuleVariable v1 variable=g0
+    v3 = NewObject layout=L1
+    v4 = NewClosure v3 function=f1
+    v5 = Convert v4 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = Builtin builtin=Object
+    v7 = Builtin builtin=ObjectCreate
+    v8 = Builtin builtin=ObjectPrototype
+    v9 = Call v7, v6, v8 calleeName="Object.create"
+    v10 = Convert v9 declared={type=undefined|null|object flags=[IsExpected]}
+    PutEnvironmentField v3, v10 layout=L1
+    v12 = Integer integer=1
+    PropSet v10, v12 key="a" mode=Sloppy
+    v14 = Integer integer=2
+    PropSet v10, v14 key="b" mode=Sloppy
+    v16 = Integer
+    v17 = Convert v16 declared={type=number flags=[IsExpected]}
+    v18 = Builtin builtin=Number
+    v19 = Builtin builtin=GlobalThis
+    v20 = PropGet v19 key="env" [isFreeName]
+    v21 = PropGet v20 key="TURNS"
+    v22 = Call v18, -, v21 calleeName="Number"
+    v23 = Convert v22 declared={type=number flags=[IsExpected]}
+    v24 = Integer
+    v25 = Convert v24 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b2(v17, v25)
+  b2(v26, v27):
+    LoopHint
+    v29 = Less v27, v23
+    Branch v29 -> taken b3(| 0, 1), notTaken b10(| 0, 1)
+  b3(v30, v31):
+    Jump -> next b4()
+  b4():
+    v32 = Integer integer=1000
+    v33 = StrictEq v30, v32
+    Branch v33 -> taken b5(| 0), notTaken b7(| 0)
+  b5(v34):
+    Jump -> next b6()
+  b6():
+    v35 = Builtin builtin=GlobalThis
+    v36 = PropGet v35 key="mark" [isFreeName]
+    v37 = Call v36 calleeName="mark"
+    Jump -> next b8(v34)
+  b7(v38):
+    Jump -> next b8(v38)
+  b8(v39):
+    v40 = Integer integer=7
+    v41 = BitAnd v39, v40
+    v42 = Call v5, -, v41 calleeName="withExtra"
+    v43 = Convert v42 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v44 = PropGet v43 key="a"
+    v45 = PropGet v43 key="b"
+    v46 = Add v44, v45
+    v47 = PropGet v43 key="extra"
+    v48 = Add v46, v47
+    v49 = Add v26, v48
+    v50 = Convert v49 declared={type=number flags=[IsExpected]}
+    Jump -> next b9()
+  b9():
+    v51 = Increment v39
+    v52 = Convert v51 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b2(v50, v52)
+  b10(v53, v54):
+    Jump -> next b11()
+  b11():
+    v55 = Builtin builtin=GlobalThis
+    v56 = PropGet v55 key="report" [isFreeName]
+    v57 = Call v56, -, v26 calleeName="report"
+    v58 = Undefined
+    Return v58
+}
+function f1 name="withExtra" module=m0 flags=[IsSloppy, HasExplicitName] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1, v1: anything):
+    Jump -> next b1()
+  b1():
+    v2 = GetEnvironmentField v0 layout=L1
+    v3 = CheckInitialized v2 name="defaults"
+    v4 = CopyObject v3
+    v5 = Convert v1 declared={type=number flags=[IsExpected]}
+    PropDefine v4, v5 key="extra"
+    Return v4
+}

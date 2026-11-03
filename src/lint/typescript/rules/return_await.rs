@@ -20,23 +20,23 @@ enum WhetherToAwait {
     NoAwait,
 }
 
-const DISALLOWED_PROMISE_AWAIT: Message = Message::new(
+const DISALLOWED_PROMISE_AWAIT: &Message = &Message::new(
     "disallowedPromiseAwait",
     "Returning an awaited promise is not allowed in this context.",
 );
-const DISALLOWED_PROMISE_AWAIT_SUGGESTION: Message = Message::new(
+const DISALLOWED_PROMISE_AWAIT_SUGGESTION: &Message = &Message::new(
     "disallowedPromiseAwaitSuggestion",
     "Remove `await` before the expression. Use caution as this may impact control flow.",
 );
-const NON_PROMISE_AWAIT: Message = Message::new(
+const NON_PROMISE_AWAIT: &Message = &Message::new(
     "nonPromiseAwait",
     "Returning an awaited value that is not a promise is not allowed.",
 );
-const REQUIRED_PROMISE_AWAIT: Message = Message::new(
+const REQUIRED_PROMISE_AWAIT: &Message = &Message::new(
     "requiredPromiseAwait",
     "Returning an awaited promise is required in this context.",
 );
-const REQUIRED_PROMISE_AWAIT_SUGGESTION: Message = Message::new(
+const REQUIRED_PROMISE_AWAIT_SUGGESTION: &Message = &Message::new(
     "requiredPromiseAwaitSuggestion",
     "Add `await` before the expression. Use caution as this may impact control flow.",
 );

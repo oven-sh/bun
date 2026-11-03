@@ -1,0 +1,45 @@
+import { test } from "bun:test";
+import * as helper from "./src/shared.js";
+import * as pkg from "pkg";
+const note = (...parts) => console.log("SEEN", ...parts);
+const places = { own: { things, make, is, state, storage }, helper, pkg };
+test("one of each thing in the realm", () => {
+  const mine = things();
+  for (const place of ["helper", "pkg"]) { const theirs = places[place].things(); note("things", place, Object.keys(mine).filter(name => mine[name] !== theirs[name]).join() || "all the same"); }
+});
+test("what one place makes is what another takes it for", () => {
+  for (const maker of Object.keys(places)) for (const judge of Object.keys(places)) note("made by", maker, "judged by", judge, Object.keys(make).filter(name => { try { return !places[judge].is[name](places[maker].make[name]()); } catch (error) { return true; } }).join() || "all");
+});
+test("what is stored for the call is seen everywhere", async () => {
+  for (const owner of Object.keys(places)) for (const reader of Object.keys(places)) {
+    note("store", owner, reader, places[owner].storage.run(owner + "'s", () => places[reader].state.storedOf(places[owner].storage)), await places[owner].storage.run("later", async () => { await null; await new Promise(done => setTimeout(done, 0)); return places[reader].state.storedOf(places[owner].storage); }), places[reader].state.runIn(places[owner].storage, 5, () => places[owner].state.stored()));
+  }
+});
+test("one queue of each kind", async () => {
+  const order = [];
+  for (const kind of ["timeout", "immediate", "resolved", "tick", "micro"]) for (const place of ["own", "helper", "pkg", "own", "pkg", "helper"]) places[place].state[kind](order, place);
+  await new Promise(done => setTimeout(done, 20));
+  note("order", order.join());
+});
+test("what one place sets the others see", () => {
+  for (const setter of Object.keys(places)) {
+    const number = Object.keys(places).indexOf(setter) + 20;
+    places[setter].state.setMaxListeners(number); places[setter].state.setEnv("SET_BY", setter); places[setter].state.setGlobal("setBy", setter);
+    for (const reader of Object.keys(places)) note("set by", setter, "read by", reader, places[reader].state.maxListeners(), places[reader].state.env("SET_BY"), places[reader].state.global("setBy"));
+  }
+  Error.stackTraceLimit = 3; for (const reader of Object.keys(places)) note("stack limit", reader, places[reader].state.stackLimit(), places[reader].state.framesOfNew()); Error.stackTraceLimit = 10;
+  Error.prepareStackTrace = (error, frames) => "prepared " + frames.length; for (const reader of Object.keys(places)) note("prepared", reader, places[reader].state.prepared().replace(/\d+/, "n")); Error.prepareStackTrace = undefined;
+  util.inspect.defaultOptions.depth = 0; for (const reader of Object.keys(places)) note("depth", reader, places[reader].state.inspectDepth()); util.inspect.defaultOptions.depth = 2;
+  class Shown { [util.inspect.custom]() { return "shown my way"; } } for (const reader of Object.keys(places)) note("custom", reader, places[reader].state.inspected(new Shown()), places[reader].state.inspected({ inner: new Shown() }));
+  Object.defineProperty(Object.prototype, "addedHere", { value: () => 1, configurable: true, writable: true }); for (const reader of Object.keys(places)) note("prototype", reader, places[reader].state.prototypeHas("addedHere")); delete Object.prototype.addedHere;
+  process.on("made-up", () => {}); for (const reader of Object.keys(places)) note("listeners", reader, places[reader].state.listeners("made-up"), places[reader].state.cwd(), places[reader].state.symbol("x") === Symbol.for("x"), places[reader].state.poolSize()); process.removeAllListeners("made-up");
+});
+test("an emitter and a stream go round", async () => {
+  for (const maker of Object.keys(places)) {
+    const emitter = places[maker].make.emitter(); const seen = [];
+    emitter.on("x", value => seen.push("own " + value)); helper.things().on.call(emitter, "x", value => seen.push("helper " + value)); pkg.things().on.call(emitter, "x", value => seen.push("pkg " + value));
+    note("emitted", maker, emitter.emit("x", 1), pkg.things().emit.call(emitter, "x", 2), seen.join(), emitter.listenerCount("x"));
+    const through = places[maker].make.through(); const chunks = []; through.on("data", chunk => chunks.push(String(chunk))); places[maker].make.readable().pipe(through); await events.once(through, "end"); note("piped", maker, chunks.join());
+    const all = []; for await (const chunk of places[maker].make.readable()) all.push(chunk); note("iterated", maker, all.join());
+  }
+});

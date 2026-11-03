@@ -44,6 +44,13 @@ pub struct ExternalSlice<T> {
     _marker: PhantomData<T>,
 }
 
+// SAFETY: two `u32`s, whatever `T` is.
+unsafe impl<T> bun_core::Zeroable for ExternalSlice<T> {}
+// SAFETY: two `u32`s, whatever `T` is.
+unsafe impl<T: 'static> bun_core::NoUninit for ExternalSlice<T> {}
+// SAFETY: two `u32`s, whatever `T` is.
+unsafe impl<T: 'static> bun_core::AnyBitPattern for ExternalSlice<T> {}
+
 // Manual impls: the `(off, len)` pair is unconditionally
 // copyable/comparable regardless of `Type`. `#[derive]` would add spurious
 // `T: Copy/Clone/Default/PartialEq` bounds via `PhantomData<T>`, breaking

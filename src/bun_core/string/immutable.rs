@@ -311,31 +311,6 @@ pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     highway::memmem(haystack, needle)
 }
 
-/// How the width-generic (`_t`) scanners below hand a `&[T]` to highway: as
-/// the 8- or 16-bit lanes the kernels take, or `Wide` for element types they
-/// don't, which keep a scalar arm. Safe via [`crate::cast_slice`]: `NoUninit` proves every byte of `T` is
-/// initialized; the `u16` view additionally requires `T`'s own alignment.
-enum Lanes<'a> {
-    U8(&'a [u8]),
-    U16(&'a [u16]),
-    Wide,
-}
-
-#[inline(always)]
-fn lanes<T: crate::NoUninit>(s: &[T]) -> Lanes<'_> {
-    match (core::mem::size_of::<T>(), core::mem::align_of::<T>()) {
-        (1, _) => Lanes::U8(crate::cast_slice::<T, u8>(s)),
-        (2, 2) => Lanes::U16(crate::cast_slice::<T, u16>(s)),
-        _ => Lanes::Wide,
-    }
-}
-
-/// `bun.reinterpretSlice` — `&[T]` → `&[u8]` byte view (any width).
-#[inline]
-fn reinterpret_to_u8<T: crate::NoUninit>(s: &[T]) -> &[u8] {
-    crate::cast_slice::<T, u8>(s)
-}
-
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Encoding {
     Ascii,
@@ -376,11 +351,10 @@ pub fn contains_char(self_: &[u8], char: u8) -> bool {
 
 /// `char` is an ASCII byte compared against each (possibly wider) element.
 #[inline]
-pub fn contains_char_t<T: crate::NoUninit + Eq + Into<u32>>(self_: &[T], char: u8) -> bool {
-    match lanes(self_) {
-        Lanes::U8(s) => contains_char(s, char),
-        Lanes::U16(s) => highway::memmem16(s, &[u16::from(char)]).is_some(),
-        Lanes::Wide => self_.iter().any(|c| (*c).into() == u32::from(char)),
+pub fn contains_char_t<T: PathByte>(self_: &[T], char: u8) -> bool {
+    match T::units(self_) {
+        CodeUnits::U8(s) => contains_char(s, char),
+        CodeUnits::U16(s) => highway::memmem16(s, &[u16::from(char)]).is_some(),
     }
 }
 
@@ -441,8 +415,8 @@ pub fn index_of_any16(self_: &[u16], chars: &[u16]) -> Option<usize> {
     index_of_any_t(self_, chars)
 }
 
-pub fn index_of_any_t<T: crate::NoUninit + Eq>(str: &[T], chars: &[T]) -> Option<usize> {
-    if let (Lanes::U8(s), Lanes::U8(c)) = (lanes(str), lanes(chars)) {
+pub fn index_of_any_t<T: PathByte>(str: &[T], chars: &[T]) -> Option<usize> {
+    if let (CodeUnits::U8(s), CodeUnits::U8(c)) = (T::units(str), T::units(chars)) {
         return index_of_any(s, c);
     }
     // No multi-needle highway kernel for u16; `chars` is a short constant set.
@@ -560,12 +534,8 @@ pub fn last_index_of_char(self_: &[u8], char: u8) -> Option<usize> {
 
 /// Width-generic [`last_index_of_char`].
 #[inline]
-pub fn last_index_of_char_t<T: crate::NoUninit + Eq>(self_: &[T], char: T) -> Option<usize> {
-    match (lanes(self_), lanes(core::slice::from_ref(&char))) {
-        (Lanes::U8(s), Lanes::U8(c)) => last_index_of_char(s, c[0]),
-        (Lanes::U16(s), Lanes::U16(c)) => highway::memrmem16(s, c),
-        _ => self_.iter().rposition(|c| *c == char),
-    }
+pub fn last_index_of_char_t<T: PathByte>(self_: &[T], char: T) -> Option<usize> {
+    T::last_index_of_unit(self_, char)
 }
 
 /// Start index of the last occurrence of `str`. Empty needle → `Some(len)`.
@@ -574,21 +544,10 @@ pub fn last_index_of(self_: &[u8], str: &[u8]) -> Option<usize> {
     highway::memrmem(self_, str)
 }
 
-/// Width-generic reverse substring search (last occurrence of `needle`).
-/// Empty needle → `Some(len)`.
-pub fn last_index_of_t<T: crate::NoUninit + Eq>(haystack: &[T], needle: &[T]) -> Option<usize> {
-    match (lanes(haystack), lanes(needle)) {
-        (Lanes::U8(h), Lanes::U8(n)) => last_index_of(h, n),
-        (Lanes::U16(h), Lanes::U16(n)) => highway::memrmem16(h, n),
-        _ => {
-            if needle.len() > haystack.len() {
-                return None;
-            }
-            (0..=haystack.len() - needle.len())
-                .rev()
-                .find(|&i| haystack[i..i + needle.len()] == *needle)
-        }
-    }
+/// [`last_index_of`] over UTF-16 code units.
+#[inline]
+pub fn last_index_of_utf16(haystack: &[u16], needle: &[u16]) -> Option<usize> {
+    highway::memrmem16(haystack, needle)
 }
 
 pub fn index_of(self_: &[u8], str: &[u8]) -> Option<usize> {
@@ -1162,11 +1121,11 @@ fn eql_comptime_check_len_with_known_type<T: crate::NoUninit + Eq, const CHECK_L
     a: &[T],
     b: &[T],
 ) -> bool {
-    if core::mem::size_of::<T>() != 1 {
-        return eql_comptime_check_len_u8(reinterpret_to_u8(a), reinterpret_to_u8(b), CHECK_LEN);
-    }
-    // T is u8-sized.
-    eql_comptime_check_len_u8(reinterpret_to_u8(a), reinterpret_to_u8(b), CHECK_LEN)
+    eql_comptime_check_len_u8(
+        crate::slice_as_bytes(a),
+        crate::slice_as_bytes(b),
+        CHECK_LEN,
+    )
 }
 
 /// Check if two strings are equal with one of the strings being a compile-time-known value
@@ -1209,7 +1168,7 @@ pub fn eql_case_insensitive_t<T: crate::NoUninit + Into<u32>>(a: &[T], b: &[u8])
         return false;
     }
     if core::mem::size_of::<T>() == 1 {
-        return eql_case_insensitive_ascii_ignore_length(reinterpret_to_u8(a), b);
+        return eql_case_insensitive_ascii_ignore_length(crate::slice_as_bytes(a), b);
     }
 
     debug_assert_eq!(a.len(), b.len());
@@ -1726,22 +1685,6 @@ pub fn trim_leading_char(slice: &[u8], char: u8) -> &[u8] {
     b""
 }
 
-/// Trim leading pattern of 2 bytes
-///
-/// e.g.
-/// `trim_leading_pattern2("abcdef", 'a', 'b') == "cdef"`
-pub fn trim_leading_pattern2(slice_: &[u8], byte1: u8, byte2: u8) -> &[u8] {
-    let mut slice = slice_;
-    while slice.len() >= 2 {
-        if slice[0] == byte1 && slice[1] == byte2 {
-            slice = &slice[2..];
-        } else {
-            break;
-        }
-    }
-    slice
-}
-
 /// prefix is of type &[u8] or &[u16]
 pub fn trim_prefix_comptime<'a, T: crate::NoUninit + Eq>(
     buffer: &'a [T],
@@ -2163,12 +2106,8 @@ impl core::fmt::Display for QuoteEscapeFormat<'_> {
 
 /// Width-generic [`index_of_char_usize`].
 #[inline]
-pub fn index_of_scalar<T: crate::NoUninit + Eq>(input: &[T], scalar: T) -> Option<usize> {
-    match (lanes(input), lanes(core::slice::from_ref(&scalar))) {
-        (Lanes::U8(s), Lanes::U8(c)) => index_of_char_usize(s, c[0]),
-        (Lanes::U16(s), Lanes::U16(c)) => highway::memmem16(s, c),
-        _ => input.iter().position(|c| *c == scalar),
-    }
+pub fn index_of_scalar<T: PathByte>(input: &[T], scalar: T) -> Option<usize> {
+    T::index_of_unit(input, scalar)
 }
 
 pub fn without_suffix_comptime<'a>(input: &'a [u8], suffix: &'static [u8]) -> &'a [u8] {
@@ -2464,7 +2403,7 @@ pub fn without_prefix<'a>(input: &'a [u8], prefix: &[u8]) -> &'a [u8] {
 // primitives that must live at tier-0 (`crate::strings_impl`) so `bun_paths`
 // itself can build on them.
 pub use crate::strings_impl::{
-    PathByte, basename, basename_posix, basename_windows,
+    CodeUnits, CodeUnitsMut, PathByte, basename, basename_posix, basename_windows,
     is_windows_absolute_path_missing_drive_letter, remove_leading_dot_slash,
     without_trailing_slash,
 };

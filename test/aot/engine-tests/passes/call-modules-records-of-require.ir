@@ -1,0 +1,49 @@
+# What is recorded of a `require` of an ES module is the mark that its namespace object shows from then on. Where the object is never made, or is only read by names that are spelled, and nobody spells the mark,
+# nothing is recorded. Where the object is handed on, somebody may look.
+# FORM: AsRead
+# RUN: pipeline CallModules
+# STATISTIC: ModulesWithoutState = 2
+# STATISTIC: RequireSitesBound = 2
+# STATISTIC: RequiresRecorded = 1
+
+variable g0 name="a" module=m1 declared={type=anything} initialization=Undefined
+variable g1 name="b" module=m2 declared={type=anything} initialization=Undefined
+module m0 path="/main.mjs" displayPath="main.mjs" body=f0 requests=[{target=m1 kind=Require completes=true}, {target=m2 kind=Require completes=true}]
+module m1 path="/read-by-name.mjs" displayPath="read-by-name.mjs" body=f1 exports=[{name="a" variable=g0}]
+module m2 path="/handed-on.mjs" displayPath="handed-on.mjs" body=f2 exports=[{name="b" variable=g1}]
+entry module=m0
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    RecordRequire module=m1 referrer=m0
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    v2 = GetModuleVariable variable=g0
+    RecordRequire module=m2 referrer=m0
+    EvaluateModule module=m2 referrer=m0 [isBare]
+    v5 = ModuleNamespace module=m2
+    v6 = Builtin builtin=ConsoleLog
+    v7 = Call v6, -, v2, v5
+    Return
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK-NOT: RecordRequire module=m1
+# CHECK: = CallDirect {{*}}function=f1
+# CHECK: RecordRequire module=m2 referrer=m0
+# CHECK-NEXT: = CallDirect {{*}}function=f2
+# CHECK-NOT: EvaluateModule
+function f1 name="readByName" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    v2 = Builtin builtin=ConsoleLog
+    v3 = Call v2, -, v0
+    Return
+}
+function f2 name="handedOn" module=m2 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    PutModuleVariable v0 variable=g1
+    v2 = Builtin builtin=ConsoleLog
+    v3 = Call v2, -, v0
+    Return
+}

@@ -6,16 +6,68 @@ const { isArrayBufferView, isUint8Array } = require("node:util/types");
 const ReflectOwnKeys = Reflect.ownKeys;
 const ArrayIsArray = Array.isArray;
 
-function Stream(opts) {
+declare global {
+  namespace $Node {
+    interface PipeOptions {
+      end?: boolean;
+    }
+
+    interface Stream extends EventEmitter {
+      /** The destination is whatever has `write()`, `end()` and emits: a `Writable`, a response of node:http, an old-style stream. */
+      pipe<T extends AnyStream>(destination: T, options?: PipeOptions): T;
+    }
+
+    /** A stream of the kind that came before `Readable`: whatever emits "data" and may know how to pause. */
+    interface LegacyReadable extends Stream {
+      readable?: boolean;
+      pause?(): unknown;
+      resume?(): unknown;
+    }
+
+    /** `require("node:stream")`. internal/stream.ts adds the members that other modules define. */
+    interface StreamConstructor {
+      new (options?: EventEmitterOptions): Stream;
+      (this: Stream, options?: EventEmitterOptions): void;
+      prototype: any;
+      Stream: StreamConstructor;
+      Readable: ReadableConstructor;
+      Writable: WritableConstructor;
+      Duplex: DuplexConstructor;
+      Transform: TransformConstructor;
+      PassThrough: PassThroughConstructor;
+      duplexPair: typeof import("internal/streams/duplexpair").default;
+      pipeline: typeof import("internal/streams/pipeline").default.pipeline;
+      finished: typeof import("internal/streams/end-of-stream").default;
+      /** The old name of `finished`, which node/stream.ts adds. */
+      eos?: typeof import("internal/streams/end-of-stream").default;
+      compose: typeof import("internal/streams/compose").default;
+      addAbortSignal: typeof import("internal/streams/add-abort-signal").default.addAbortSignal;
+      destroy: typeof import("internal/streams/destroy").default.destroyer;
+      setDefaultHighWaterMark: typeof import("internal/streams/state").default.setDefaultHighWaterMark;
+      getDefaultHighWaterMark: typeof import("internal/streams/state").default.getDefaultHighWaterMark;
+      isDestroyed: typeof import("internal/streams/utils").default.isDestroyed;
+      isDisturbed: typeof import("internal/streams/utils").default.isDisturbed;
+      isErrored: typeof import("internal/streams/utils").default.isErrored;
+      isReadable: typeof import("internal/streams/utils").default.isReadable;
+      isWritable: typeof import("internal/streams/utils").default.isWritable;
+      readonly promises: typeof import("internal/stream.promises").default;
+      _isArrayBufferView: typeof Stream._isArrayBufferView;
+      _isUint8Array: typeof Stream._isUint8Array;
+      _uint8ArrayToBuffer: typeof Stream._uint8ArrayToBuffer;
+    }
+  }
+}
+
+function Stream(this: $Node.Stream, opts?: $Node.EventEmitterOptions) {
   EE.$call(this, opts);
 }
 $toClass(Stream, "Stream", EE);
 
-Stream.prototype.pipe = function (dest, options) {
+Stream.prototype.pipe = function (this: $Node.LegacyReadable, dest: $Node.AnyStream, options?: $Node.PipeOptions) {
   const source = this;
 
-  function ondata(chunk) {
-    if (dest.writable && dest.write(chunk) === false && source.pause) {
+  function ondata(chunk: unknown) {
+    if (dest.writable && dest.write!(chunk) === false && source.pause) {
       source.pause();
     }
   }
@@ -42,7 +94,7 @@ Stream.prototype.pipe = function (dest, options) {
     if (didOnEnd) return;
     didOnEnd = true;
 
-    dest.end();
+    dest.end!();
   }
 
   function onclose() {
@@ -53,7 +105,7 @@ Stream.prototype.pipe = function (dest, options) {
   }
 
   // Don't leave dangling pipes when there are errors.
-  function onerror(er) {
+  function onerror(this: $Node.EventEmitter, er: unknown) {
     cleanup();
     if (this.listenerCount?.("error") === 0) {
       this.emit("error", er);
@@ -90,17 +142,20 @@ Stream.prototype.pipe = function (dest, options) {
   return dest;
 };
 
-Stream.prototype.eventNames = function eventNames() {
-  const names: PropertyKey[] = [];
-  for (const key of ReflectOwnKeys(this._events)) {
-    if (typeof this._events[key] === "function" || (ArrayIsArray(this._events[key]) && this._events[key].length > 0)) {
+Stream.prototype.eventNames = function eventNames(this: $Node.Stream) {
+  const names: $Node.EventName[] = [];
+  for (const key of ReflectOwnKeys(this._events!)) {
+    if (
+      typeof this._events![key] === "function" ||
+      (ArrayIsArray(this._events![key]) && this._events![key].length > 0)
+    ) {
       names.push(key);
     }
   }
   return names;
 };
 
-function prependListener(emitter, event, fn) {
+function prependListener(emitter: $Node.EventEmitter, event: $Node.EventName, fn: $Node.Listener) {
   // Sadly this is not cacheable as some libraries bundle their own
   // event emitter implementation with them.
   if (typeof emitter.prependListener === "function") return emitter.prependListener(event, fn);
@@ -109,7 +164,7 @@ function prependListener(emitter, event, fn) {
   // userland ones.  NEVER DO THIS. This is here only because this code needs
   // to continue to work with older versions of Node.js that do not include
   // the prependListener() method. The goal is to eventually remove this hack.
-  let events, existing;
+  let events: $Node.Events | undefined, existing: $Node.Listener | $Node.Listener[] | undefined;
   if (!(events = emitter._events) || !(existing = events[event])) emitter.on(event, fn);
   // A fresh array, not unshift(): node:events iterates stored arrays without
   // cloning, so a stored `_events` array must never be mutated in place.
@@ -124,23 +179,4 @@ Stream._uint8ArrayToBuffer = function _uint8ArrayToBuffer(chunk) {
   return new $Buffer(chunk.buffer, chunk.byteOffset, chunk.byteLength);
 };
 
-type NodeStream = typeof import("node:stream").Stream;
-
-interface StreamConstructor extends Omit<NodeStream, "Stream" | "pipeline" | "finished"> {
-  new (opts?: ConstructorParameters<NodeStream>[0]): import("node:stream").Stream;
-  Stream: StreamConstructor;
-  pipeline: typeof import("internal/streams/pipeline").default.pipeline;
-  finished: typeof import("internal/streams/end-of-stream").default;
-  eos?: typeof import("internal/streams/end-of-stream").default;
-  destroy: typeof import("internal/streams/destroy").default.destroyer;
-  isDestroyed: typeof import("internal/streams/utils").default.isDestroyed;
-  isDisturbed: typeof import("internal/streams/utils").default.isDisturbed;
-  _isArrayBufferView: typeof Stream._isArrayBufferView;
-  _isUint8Array: typeof Stream._isUint8Array;
-  _uint8ArrayToBuffer: typeof Stream._uint8ArrayToBuffer;
-}
-
-export default { Stream, prependListener } as unknown as {
-  Stream: StreamConstructor;
-  prependListener: typeof prependListener;
-};
+export default { Stream: Stream as $Node.StreamConstructor, prependListener };

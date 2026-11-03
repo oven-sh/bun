@@ -9,7 +9,7 @@ use bun_lint::utils::visible::is_visibly_dom_node;
 /// `.hasAttribute(…)`.
 pub struct PreferDomNodeDataset;
 
-const PREFER_DATASET: Message = Message::new("", "Prefer using `dataset` over `{{method_name}}`.");
+const PREFER_DATASET: &Message = &Message::new("", "Prefer using `dataset` over `{{method_name}}`.");
 
 const METHODS: [&str; 4] = ["setAttribute", "getAttribute", "removeAttribute", "hasAttribute"];
 

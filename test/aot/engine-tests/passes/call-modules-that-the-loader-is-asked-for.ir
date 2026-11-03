@@ -1,0 +1,69 @@
+# A constant name that is still handed to require() stays with the loader whole: what it answers for an ES module that is running hangs on whether a require() or an import has begun the evaluation,
+# which only the loader knows. A module that the loader enters evaluates what it imports by itself.
+# FORM: AsRead
+# RUN: pipeline CallModules
+# STATISTIC: ModulesWithState = 2
+
+variable g0 name="a" module=m1 declared={type=anything} initialization=Undefined
+variable g1 name="b" module=m2 declared={type=anything} initialization=Undefined
+variable g2 name="c" module=m3 declared={type=anything} initialization=Undefined
+module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/for-its-effect.js" displayPath="for-its-effect.js" body=f1 exports=[{name="a" variable=g0}]
+module m2 path="/for-its-answer.js" displayPath="for-its-answer.js" body=f2 requests=[{target=m3 completes=true}] exports=[{name="b" variable=g1}]
+module m3 path="/imported-and-required.js" displayPath="imported-and-required.js" body=f3 exports=[{name="c" variable=g2}]
+entry module=m0
+# CHECK: module m1 path="/for-its-effect.js" displayPath="for-its-effect.js" body=f1
+# CHECK: module m2 {{*}}flags=[EvaluatesItself] body=f2
+# CHECK: module m3 {{*}}flags=[EvaluatesItself] body=f3
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="./for-its-effect.js"
+    v1 = RequireModule module=m2 referrer=m0 specifier="./for-its-answer.js"
+    v2 = PropGet v1 key="b"
+    v3 = RequireModule module=m3 referrer=m0 specifier="./imported-and-required.js"
+    v4 = Builtin builtin=ConsoleLog
+    v5 = Call v4, -, v2
+    Return
+}
+# CHECK-LABEL: name="main"
+# CHECK-NOT: CallDirect
+# CHECK: = RequireModule module=m1
+# CHECK-NEXT: = RequireModule module=m2
+# CHECK-NOT: CallDirect
+# CHECK: = RequireModule module=m3
+# CHECK-NOT: CallDirect
+function f1 name="forItsEffect" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    v2 = Builtin builtin=ConsoleLog
+    v3 = Call v2, -, v0
+    Return
+}
+# The loader keeps the state of a module that nothing of the image calls and that imports nothing.
+# CHECK-LABEL: function f1 name="forItsEffect"
+# CHECK-NOT: BeginModuleEvaluation
+function f2 name="forItsAnswer" module=m2 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g2
+    PutModuleVariable v0 variable=g1
+    v2 = Builtin builtin=ConsoleLog
+    v3 = Call v2, -, v0
+    Return
+}
+# CHECK-LABEL: function f2 name="forItsAnswer"
+# CHECK: = BeginModuleEvaluation module=m2
+# CHECK-NOT: AbandonModuleEvaluation
+# CHECK: = CallDirect {{*}}function=f3
+function f3 name="importedAndRequired" module=m3 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=3
+    PutModuleVariable v0 variable=g2
+    v2 = Builtin builtin=ConsoleLog
+    v3 = Call v2, -, v0
+    Return
+}
+# CHECK-LABEL: function f3 name="importedAndRequired"
+# CHECK: = BeginModuleEvaluation module=m3
+# CHECK-NOT: AbandonModuleEvaluation

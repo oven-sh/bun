@@ -1,0 +1,214 @@
+# Names out of written lists are keys of reads, stores, definitions and calls; the lists are changed, shared, frozen, copied and emptied behind their birth.
+# FORM: AsRead
+# RUN: valueflow-apply
+
+module m0 path="names-out-of-written-lists-change-birth.js" displayPath="names-out-of-written-lists-change-birth.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Route" module=m0 position=946 constructor=f2 fields=[{key="counts" declared={type=undefined|null|L1 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 position=965 fields=[{key="get" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="head" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="post" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[0, 2, 1] ownFieldCount=3
+data d0 root=Array{contents=undefined|null|string elements=[String{value="get"}, String{value="post"}, String{value="head"}]} module=m0
+variable g0 name="Route" module=m0 declared={type=absent|f2 flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = Convert v4 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutModuleVariable v5 variable=g0
+    v7 = Integer
+    v8 = Call v1, -, v7 calleeName="read"
+    v9 = Integer
+    v10 = Call v1, -, v9 calleeName="read"
+    v11 = Data data=d0
+    v12 = Convert v11 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v13 = PropGet v12 key="forEach"
+    v14 = Convert v13 declared={type=undefined|null|function flags=[IsExpected]}
+    v15 = NewClosure function=f3
+    v16 = Call v14, v12, v15 calleeKey="forEach" calleeName="verbs.forEach"
+    v17 = Construct v5 calleeName="Route"
+    v18 = Convert v17 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v19 = PropGet v18 key="get"
+    v20 = Integer integer=1
+    v21 = Call v19, v18, v20 calleeKey="get" calleeName="route.get"
+    v22 = PropGet v21 key="post"
+    v23 = Integer integer=2
+    v24 = Call v22, v21, v23 calleeKey="post" calleeName="post"
+    v25 = PropGet v5 key="prototype"
+    v26 = Convert v25 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v27 = Integer
+    v28 = ElemGet v12, v27
+    v29 = Convert v28 declared={type=undefined|null|string flags=[IsExpected]}
+    v30 = NewClosure function=f4
+    ElemSet v26, v29, v30
+    Jump -> next b1()
+  b1() handler=b3():
+    Jump -> next b2()
+  b2():
+    Jump -> next b4()
+  b3() role=CatchHandler:
+    Jump -> next b4()
+  b4():
+    v32 = Undefined
+    Return v32
+}
+function f1 name="read" module=m0 position=237 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="Route" module=m0 position=946 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    Return v3
+}
+function f3 module=m0 position=1050 length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="Route"
+    v3 = PropGet v2 key="prototype"
+    v4 = Convert v3 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v5 = NewClosure v0 function=f5
+    ElemSet v4, v0, v5
+    v7 = Undefined
+    Return v7
+}
+function f4 module=m0 position=1419 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 module=m0 position=1094 flags=[HasThis] length=1 captures=[{type=undefined|null|string flags=[IsExpected]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|L0 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: anything, v2: anything):
+    v3 = ToPropertyKey v0
+    v4 = Convert v1 declared={type=undefined|null|L0 flags=[IsExpected]}
+    Return v4
+}
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f7]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0 Route f3
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f1 = NewClosure function=f1 allocationSite=0
+# CHECK-NEXT: v1: f2 = NewClosure function=f2 allocationSite=1
+# CHECK-NEXT: v2: f2 = NewClass v1 layout=L0
+# CHECK-NEXT: v3: f2 = FinishClass v2 layout=L0
+# CHECK-NEXT: PutModuleVariable v3 variable=g0
+# CHECK-NEXT: v5: 0 = Integer
+# CHECK-NEXT: v6: anything = Call v0, -, v5 calleeName="read" accessSite=0 callees=[f1]
+# CHECK-NEXT: v7: 0 = Integer
+# CHECK-NEXT: v8: anything = Call v0, -, v7 calleeName="read" accessSite=1 callees=[f1]
+# CHECK-NEXT: v9: Array<undefined|null|string> = Data data=d0 allocationSite=2
+# CHECK-NEXT: v29: Array<"get"|"head"|"post", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v9 provenType=Array<"get"|"head"|"post", proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v10: anything = PropGet v29 key="forEach" accessSite=2
+# CHECK-NEXT: v30: builtin(ArrayPrototypeForEach) = AssumeType v10 provenType=builtin(ArrayPrototypeForEach)
+# CHECK-NEXT: v11: builtin(ArrayPrototypeForEach) = Upcast v30 castType=anything
+# CHECK-NEXT: v31: builtin(ArrayPrototypeForEach) = AssumeType v11 provenType=builtin(ArrayPrototypeForEach)
+# CHECK-NEXT: v12: f3 = NewClosure function=f3 allocationSite=3
+# CHECK-NEXT: v13: anything = Call v31, v29, v12 calleeKey="forEach" calleeName="verbs.forEach" accessSite=3 callees=[builtin(ArrayPrototypeForEach)]
+# CHECK-NEXT: v14: anything ~ object = Construct v3 calleeName="Route" accessSite=4 callees=[f2]
+# CHECK-NEXT: v32: L0 = AssumeType v14 provenType=L0
+# CHECK-NEXT: v15: L0 = Upcast v32 castType=anything
+# CHECK-NEXT: v33: L0 = AssumeType v15 provenType=L0
+# CHECK-NEXT: v16: anything = PropGet v33 key="get" accessSite=5 receivers=[L0]
+# CHECK-NEXT: v34: undefined|f4|f9 = AssumeType v16 provenType=undefined|f4|f9
+# CHECK-NEXT: v17: 1 = Integer integer=1
+# CHECK-NEXT: v18: anything = Call v34, v33, v17 calleeKey="get" calleeName="route.get" accessSite=6 callees=[f4, f9]
+# CHECK-NEXT: v35: L0 = AssumeType v18 provenType=L0
+# CHECK-NEXT: v19: anything = PropGet v35 key="post" accessSite=7 receivers=[L0]
+# CHECK-NEXT: v36: undefined|f4|f10 = AssumeType v19 provenType=undefined|f4|f10
+# CHECK-NEXT: v20: 2 = Integer integer=2
+# CHECK-NEXT: v21: anything = Call v36, v35, v20 calleeKey="post" calleeName="post" accessSite=8 callees=[f4, f10]
+# CHECK-NEXT: v22: anything = PropGet v3 key="prototype" accessSite=9
+# CHECK-NEXT: v37: object = AssumeType v22 provenType=object
+# CHECK-NEXT: v23: object ~ L0 = Upcast v37 castType=anything
+# CHECK-NEXT: v38: object ~ L0 = AssumeType v23 provenType=object
+# CHECK-NEXT: v24: 0 = Integer
+# CHECK-NEXT: v25: undefined|"get"|"head"|"post" = ElemGet v29, v24 accessSite=10
+# CHECK-NEXT: v39: undefined|"get"|"head"|"post" = AssumeType v25 provenType=undefined|"get"|"head"|"post"
+# CHECK-NEXT: v26: f4 = NewClosure function=f4 allocationSite=4
+# CHECK-NEXT: ElemSet v38, v39, v26 accessSite=11
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b3():
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b3() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v28: undefined = Undefined
+# CHECK-NEXT: Return v28
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Route"
+# CHECK: module=m0 position=946 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v3: f2 = AssumeType v0 provenType=f2
+# CHECK-NEXT: v1: object = GetConstructPrototype v3 layout=L0
+# CHECK-NEXT: v2: L0 = NewObject v1 layout=L0 allocationSite=5 allocationClass=0
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+# CHECK-LABEL: function f3 module=
+# CHECK: m0 position=1050 length=1 thisType={type=anything} parameters=[{type=undefined|"get"|"head"|"post"}] results=[{type=undefined}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|"get"|"head"|"post"):
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v1: "get" = String string="get"
+# CHECK-NEXT: v2: boolean = StrictEq v0, v1
+# CHECK-NEXT: Branch v2 -> taken b2(| 0), notTaken b3(| 0)
+# CHECK-NEXT: b2(v3: "get"):
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b3(v4: undefined|"head"|"post"):
+# CHECK-NEXT: v5: "post" = String string="post"
+# CHECK-NEXT: v6: boolean = StrictEq v4, v5
+# CHECK-NEXT: Branch v6 -> taken b5(| 0), notTaken b6(| 0)
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v7: f2 = GetModuleVariable variable=g0
+# CHECK-NEXT: v8: f2 = CheckInitialized v7 name="Route"
+# CHECK-NEXT: v9: anything = PropGet v8 key="prototype" accessSite=12
+# CHECK-NEXT: v41: object = AssumeType v9 provenType=object
+# CHECK-NEXT: v10: object ~ L0 = Upcast v41 castType=anything
+# CHECK-NEXT: v42: object ~ L0 = AssumeType v10 provenType=object
+# CHECK-NEXT: v11: f9 = NewClosure v1 function=f9 allocationSite=6
+# CHECK-NEXT: ElemSet v42, v1, v11 accessSite=13
+# CHECK-NEXT: v13: undefined = Undefined
+# CHECK-NEXT: Return v13
+# CHECK-NEXT: b5(v14: "post"):
+# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: b6(v15: undefined|"head"):
+# CHECK-NEXT: v16: "head" = String string="head"
+# CHECK-NEXT: v17: boolean = StrictEq v15, v16
+# CHECK-NEXT: Branch v17 -> taken b8(| 0), notTaken b9(| 0)
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v18: f2 = GetModuleVariable variable=g0
+# CHECK-NEXT: v19: f2 = CheckInitialized v18 name="Route"
+# CHECK-NEXT: v20: anything = PropGet v19 key="prototype" accessSite=14
+# CHECK-NEXT: v43: object = AssumeType v20 provenType=object
+# CHECK-NEXT: v21: object ~ L0 = Upcast v43 castType=anything
+# CHECK-NEXT: v44: object ~ L0 = AssumeType v21 provenType=object
+# CHECK-NEXT: v22: f10 = NewClosure v5 function=f10 allocationSite=7
+# CHECK-NEXT: ElemSet v44, v5, v22 accessSite=15
+# CHECK-NEXT: v24: undefined = Undefined
+# CHECK-NEXT: Return v24
+# CHECK-NEXT: b8(v25: "head"):
+# CHECK-NEXT: Jump -> next b10()
+# CHECK-NEXT: b9(v26: undefined):
+# CHECK-NEXT: Jump -> next b11()
+# CHECK-NEXT: b10():
+# CHECK-NEXT: v27: f2 = GetModuleVariable variable=g0
+# CHECK-NEXT: v28: f2 = CheckInitialized v27 name="Route"
+# CHECK-NEXT: v29: anything = PropGet v28 key="prototype" accessSite=16
+# CHECK-NEXT: v45: object = AssumeType v29 provenType=object
+# CHECK-NEXT: v30: object ~ L0 = Upcast v45 castType=anything
+# CHECK-NEXT: v46: object ~ L0 = AssumeType v30 provenType=object
+# CHECK-NEXT: v31: f11 = NewClosure v16 function=f11 allocationSite=8
+# CHECK-NEXT: ElemSet v46, v16, v31 accessSite=17
+# CHECK-NEXT: v33: undefined = Undefined
+# CHECK-NEXT: Return v33
+# CHECK-NEXT: b11():
+# CHECK-NEXT: v34: f2 = GetModuleVariable variable=g0
+# CHECK-NEXT: v35: f2 = CheckInitialized v34 name="Route"
+# CHECK-NEXT: v36: anything = PropGet v35 key="prototype" accessSite=18
+# CHECK-NEXT: v47: object = AssumeType v36 provenType=object
+# CHECK-NEXT: v37: object ~ L0 = Upcast v47 castType=anything
+# CHECK-NEXT: v48: object ~ L0 = AssumeType v37 provenType=object
+# CHECK-NEXT: v38: f5 = NewClosure v26 function=f5 allocationSite=9
+# CHECK-NEXT: ElemSet v48, v26, v38 accessSite=19
+# CHECK-NEXT: v40: undefined = Undefined
+# CHECK-NEXT: Return v40
+# CHECK-NEXT: }

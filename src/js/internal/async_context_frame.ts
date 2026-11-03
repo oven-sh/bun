@@ -46,7 +46,7 @@ const AsyncContextFrame = {
    * already active (which includes the "no ALS in use anywhere" case where
    * both are undefined).
    */
-  run(frame, fn, thisArg?, ...args) {
+  run<R>(frame, fn: (...args: any[]) => R, thisArg?: unknown, ...args: unknown[]): R {
     const prev = $getInternalField($asyncContext, 0);
     if (frame === prev) return fn.$apply(thisArg, args);
     $putInternalField($asyncContext, 0, frame);

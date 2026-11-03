@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 /// Enforce that props are read-only.
 pub struct PreferReadOnlyProps;
 
-const READ_ONLY_PROP: Message = Message::new("readOnlyProp", "Prop '{{name}}' should be read-only.");
+const READ_ONLY_PROP: &Message = &Message::new("readOnlyProp", "Prop '{{name}}' should be read-only.");
 
 /// Upstream's `isReadonly`. Nothing is read-only without a type annotation.
 fn is_readonly(signature: Member<'_>) -> bool {

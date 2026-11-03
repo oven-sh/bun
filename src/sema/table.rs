@@ -770,7 +770,8 @@ impl<I: Id, V: Packed, A: Alloc> ById<I, V, Frozen, A> {
     /// Returns `None` for an id with `LOCAL`, because no entry is ever published for one.
     #[inline]
     pub fn get(&self, key: &I) -> Option<V> {
-        let raw = self.cells.existing(key.number())?.load();
+        // Another thread may have just allocated the cells for another id.
+        let raw = self.cells.existing_acquire(key.number())?.load();
         (raw != Default::default()).then(|| V::unpack(raw))
     }
 

@@ -36,7 +36,89 @@
 # (Verified still failing on every Linux lane, build 87834.)
 [ LINUX ] test/js/node/test/sequential/test-net-listen-shared-ports.js [ FAIL ] # SO_REUSEPORT shared-listener semantics on Linux
 
-# `bun lint` is a command in canary builds only (IS_ENABLED in
-# src/runtime/cli/lint_command.rs), so nothing in this directory can run on a
-# release build. Remove when a release has `bun lint`.
-[ STABLE ] test/cli/lint/ [ SKIP ] # a release build has no `bun lint`
+# Programs under test/aot/parallel that a build with a sanitizer, or one platform, leaves out.
+[ ASAN ] test/aot/parallel/builtin-modules/bun-ffi-sets-signal-s-default-action-c.ts [ SKIP ] # a sanitizer's run time defines signal() itself
+[ ASAN ] test/aot/parallel/builtin-subclasses/instanceof-catch-not-three-times-slow.js [ SKIP ] # a clock
+[ ASAN ] test/aot/parallel/calls/guard-held-across-call-that-is-taken-in.js [ SKIP ] # it counts what is still alive at the end, and there a stale copy of a pointer lies on the stack on some runs and not on others
+[ ASAN ] test/aot/parallel/calls/stack-overflow-rings-closed-values.ts [ SKIP ] # it says how deep each ring goes before the stack ends, and there the frames of native code are several times larger
+[ ASAN ] test/aot/parallel/classes-and-closures/functions-named-by-computed-keys-come-go.js [ SKIP ] # it judges by what the process holds, and the sanitizer keeps what was freed
+[ ASAN ] test/aot/parallel/classes-and-closures/large-names-given-functions-many-places.js [ SKIP ] # it judges by what the process holds, and the sanitizer keeps what was freed
+[ ASAN ] test/aot/parallel/classes/base-constructed-subclass-vs-keys-listed.js [ SKIP ] # a clock
+[ ASAN ] test/aot/parallel/classes/subclass-without-constructor-made-price.js [ SKIP ] # a clock
+[ ASAN ] test/aot/parallel/closed-world/stack-ends-middle-initializer.js [ SKIP ] # runs to the end of the stack thousands of times
+[ ASAN ] test/aot/parallel/commonjs/class-required-binding-holds-require/main.cjs [ SKIP ] # it compares two times of a release build
+[ ASAN ] test/aot/parallel/commonjs/class-required-file-asks-main-module/main.cjs [ SKIP ] # it compares two times of a release build
+[ ASAN ] test/aot/parallel/commonjs/class-required-file-asks-parent-not-five/main.cjs [ SKIP ] # it compares two times of a release build
+[ ASAN ] test/aot/parallel/commonjs/class-required-file-asks-type-parent/main.cjs [ SKIP ] # it compares two times of a release build
+[ ASAN ] test/aot/parallel/commonjs/class-required-file-compares-first-child/main.cjs [ SKIP ] # it compares two times of a release build
+[ ASAN ] test/aot/parallel/commonjs/class-required-file-compares-id-dot/main.cjs [ SKIP ] # it compares two times of a release build
+[ ASAN ] test/aot/parallel/commonjs/class-required-file-compares-main-module/main.cjs [ SKIP ] # it compares two times of a release build
+[ ASAN ] test/aot/parallel/commonjs/class-required-file-compares-main/main.cjs [ SKIP ] # it compares two times of a release build
+[ ASAN ] test/aot/parallel/commonjs/class-required-file-compares-parent-null/main.cjs [ SKIP ] # it compares two times of a release build
+[ ASAN ] test/aot/parallel/commonjs/class-required-file-counts-children-main/main.cjs [ SKIP ] # it compares two times of a release build
+[ ASAN ] test/aot/parallel/commonjs/class-required-file-counts-children/main.cjs [ SKIP ] # it compares two times of a release build
+[ ASAN ] test/aot/parallel/commonjs/class-required-file-reads-id-first-child/main.cjs [ SKIP ] # it compares two times of a release build
+[ ASAN ] test/aot/parallel/errors/traces-of-many-places-asked-round-round.js [ SKIP ] # TODO: with AddressSanitizer and assertions a frame of a built-in that is written in JavaScript has the position 1:11 in the executable, and its own (17:41) in plain Bun
+[ ASAN ] test/aot/parallel/errors/what-a-program-can-ask-about-a-stack.mjs [ SKIP ] # TODO: with AddressSanitizer and assertions a frame of a built-in that is written in JavaScript has the position 1:11 in the executable, and its own (17:41) in plain Bun
+[ ASAN ] test/aot/parallel/external-data/json-parse-type-argument-recursive.ts [ SKIP ] # 2,000 levels do not fit the larger stack frames, and the bound of one second is for builds without AddressSanitizer
+[ ASAN ] test/aot/parallel/external-data/json-parse-type-argument-texts-broken.ts [ SKIP ] # the bound of one second is for builds without AddressSanitizer
+[ ASAN ] test/aot/parallel/host-classes/class-private-methods-stands-host.js [ SKIP ] # TODO: a build with assertions stops in the interpreter, in set_private_brand: baseValue.isObject()
+[ ASAN ] test/aot/parallel/host-classes/process-env-read-fast-every-variable.js [ SKIP ] # a clock
+[ ASAN ] test/aot/parallel/language/code-nested-2500-levels-deep.js [ SKIP ] # 2,500 levels do not fit the larger stack frames of the compiler: the build says that the code is nested too deeply
+[ ASAN ] test/aot/parallel/language/conditional-of-10000-arms.js [ SKIP ] # 10,000 levels do not fit the larger stack frames of the compiler: the build says that the code is nested too deeply
+[ ASAN ] test/aot/parallel/layout-mismatches/options-left-empty-default-read-pace.ts [ SKIP ] # a clock
+[ ASAN ] test/aot/parallel/modules/reassigned-functions-in-cycles/main.js [ SKIP ] # with assertions on, plain Bun and `jsc -m` abort at the link of star-b.js: getModuleNamespace() asserts that a module named by `export * as` is linked, and across a cycle it is not yet
+[ ASAN ] test/aot/parallel/object-footprint/instances-constructed-in-a-loop.ts [ SKIP ] # the bound is for a build without the red zones and the shadow memory of AddressSanitizer
+[ ASAN ] test/aot/parallel/object-footprint/pool-keys-https-agent-many-certificates.js [ SKIP ] # the bound is for a build without the red zones and the shadow memory of AddressSanitizer
+[ ASAN ] test/aot/parallel/object-footprint/records-made-in-a-loop.ts [ SKIP ] # the bound is for a build without the red zones and the shadow memory of AddressSanitizer
+[ ASAN ] test/aot/parallel/strings/every-use-pattern-runtime-text-match.js [ SKIP ] # tens of seconds of turns of groups in a release build
+[ ASAN ] test/aot/parallel/strings/large-patterns-made-once-are-collected.js [ SKIP ] # the sanitizer keeps freed memory, so resident memory says nothing there
+[ ASAN ] test/aot/parallel/strings/pattern-made-runtime-match-same-alone.js [ SKIP ] # tens of seconds of turns of groups in a release build
+[ ASAN ] test/aot/parallel/strings/pattern-runtime-text-finds-match-fifty.js [ SKIP ] # tens of seconds of turns of groups in a release build
+[ ASAN ] test/aot/parallel/strings/pattern-runtime-text-gives-match-turn.js [ SKIP ] # tens of seconds of turns of groups in a release build
+[ ASAN ] test/aot/parallel/strings/pattern-runtime-text-goes-hundred.js [ SKIP ] # twenty seconds of steps back in a release build
+[ ASAN ] test/aot/parallel/strings/pattern-runtime-text-lookbehind-match.js [ SKIP ] # tens of seconds of turns of groups in a release build
+[ ASAN ] test/aot/parallel/strings/pattern-runtime-text-splits-subject.js [ SKIP ] # tens of seconds of turns of groups in a release build
+[ ASAN ] test/aot/parallel/strings/pattern-runtime-text-takes-nearly-all.js [ SKIP ] # seconds of turns of groups in a release build, and a clock
+[ ASAN ] test/aot/parallel/strings/search-unicode-mode-passes-ascii-many.ts [ SKIP ] # a clock
+[ ASAN ] test/aot/parallel/strings/searches-go-back-same-places-patterns.js [ SKIP ] # seconds of turns of groups in plain Bun
+[ ASAN ] test/aot/parallel/strings/searches-plain-bun-gives-answered.js [ SKIP ] # the clock says nothing there
+[ ASAN ] test/aot/parallel/strings/subject-without-text-every-match.ts [ SKIP ] # a clock
+[ ASAN ] test/aot/parallel/typed-objects/no-large-fixed-low-address-reservation.ts [ SKIP ] # the shadow memory of AddressSanitizer is a large unnamed mapping that begins below 2 GB
+[ ASAN ] test/aot/parallel/untyped-code/contents-survive-added-props-elements.js [ SKIP ] # it takes longer than the test has there
+[ ASAN ] test/aot/parallel/untyped-speed/accessors-defined-loop-names-not-five.js [ SKIP ] # it compares two times of a release build
+[ ASAN ] test/aot/parallel/untyped-speed/column-names-split-header-read-rows.js [ SKIP ] # a clock
+[ ASAN ] test/aot/parallel/untyped-speed/delete-name-new-literal-vs-store.js [ SKIP ] # a clock
+[ ASAN ] test/aot/parallel/untyped-speed/evaluated-text-reads-number-may.ts [ SKIP ] # a clock
+[ ASAN ] test/aot/parallel/untyped-speed/function-with-members-of-vs-method-class.js [ SKIP ] # it compares two times of a release build
+[ ASAN ] test/aot/parallel/untyped-speed/index-literal-with-numbers-keys-not-vs.js [ SKIP ] # it compares two times, which the sanitizer stretches unevenly
+[ ASAN ] test/aot/parallel/untyped-speed/keys-object-counted-no-more-twice-time.js [ SKIP ] # a clock
+[ ASAN ] test/aot/parallel/untyped-speed/listener-added-counted-removed-fast.js [ SKIP ] # a clock
+[ ASAN ] test/aot/parallel/untyped-speed/listener-added-counted-removed-vs-class.js [ SKIP ] # a clock
+[ ASAN ] test/aot/parallel/untyped-speed/literal-given-prototype-later-not-five.js [ SKIP ] # it compares two times of a release build
+[ ASAN ] test/aot/parallel/untyped-speed/loop-reads-key-not-third-slower-loop.js [ SKIP ] # a clock
+[ ASAN ] test/aot/parallel/untyped-speed/member-stored-constructor-fn-file-prints/main.js [ SKIP ] # it compares two times of a release build
+[ ASAN ] test/aot/parallel/untyped-speed/member-stored-constructor-fn-vs-static.js [ SKIP ] # it compares two times of a release build
+[ ASAN ] test/aot/parallel/untyped-speed/method-object-instances-put-vs-method.js [ SKIP ] # it compares two times of a release build
+[ ASAN ] test/aot/parallel/untyped-speed/method-stored-prototype-function-vs.cjs [ SKIP ] # it compares two times of a release build
+[ ASAN ] test/aot/parallel/untyped-speed/name-deleted-key-not-three-times-slowly.js [ SKIP ] # a clock
+[ ASAN ] test/aot/parallel/untyped-speed/name-function-holds-six-variables-vs.js [ SKIP ] # it compares two times, which the sanitizer stretches unevenly
+[ ASAN ] test/aot/parallel/untyped-speed/names-first-stored-instance-put-another.js [ SKIP ] # it compares two times of a release build
+[ ASAN ] test/aot/parallel/untyped-speed/names-read-hundred-times-new-shape-four.js [ SKIP ] # a clock
+[ ASAN ] test/aot/parallel/untyped-speed/new-object-every-4096-words-256-names.js [ SKIP ] # a clock
+[ ASAN ] test/aot/parallel/untyped-speed/object-constructed-filled-vs-empty.js [ SKIP ] # a clock
+[ ASAN ] test/aot/parallel/untyped-speed/object-created-literal-not-five-times.js [ SKIP ] # it compares two times of a release build
+[ ASAN ] test/aot/parallel/untyped-speed/object-put-together-object-assign-run.cjs [ SKIP ] # it compares two times of a release build
+[ ASAN ] test/aot/parallel/untyped-speed/object-together-object-assign-literal.cjs [ SKIP ] # it compares two times of a release build
+[ ASAN ] test/aot/parallel/untyped-speed/product-fields-merged-object-vs-literal.cjs [ SKIP ] # it compares two times of a release build
+[ ASAN ] test/aot/parallel/untyped-speed/read-proxy-made-elsewhere-vs-call-trap.js [ SKIP ] # it compares two times of a release build
+[ ASAN ] test/aot/parallel/untyped-speed/read-through-proxy-vs-call-of-its-trap.js [ SKIP ] # it compares two times of a release build
+[ ASAN ] test/aot/parallel/untyped-speed/strings-tagged-template-not-ten-times.js [ SKIP ] # a clock
+[ ASAN ] test/aot/parallel/untyped-speed/sum-field-literal-no-longer-fits-32-bits.cjs [ SKIP ] # it compares two times of a release build
+[ ASAN ] test/aot/parallel/untyped-speed/sum-field-set-constructor-no-longer-fits.cjs [ SKIP ] # it compares two times of a release build
+[ ASAN ] test/aot/parallel/untyped-speed/text-members-never-reads-not-twice-parse.js [ SKIP ] # a clock
+[ ASAN ] test/aot/parallel/untyped-speed/time-day-field-began-zero-not-ten-store.cjs [ SKIP ] # it compares two times of a release build
+[ ASAN ] test/aot/parallel/untyped-speed/words-counted-four-names-not-slower.js [ SKIP ] # a clock
+[ ASAN ] test/aot/parallel/untyped-speed/words-kept-split-counted-not-twice.js [ SKIP ] # a clock
+[ ASAN ] test/aot/parallel/workers/worker-that-parsed-a-text-ends/main.cjs [ SKIP ] # which of its two lines comes first goes by how long a worker takes to start, and there plain Bun needs over half a second
+[ WINDOWS ] test/aot/parallel/native-callbacks/exports-signal-listeners-get-name-number.ts [ FAIL ] # there is no SIGUSR2: process.kill throws, and the text printed for the uncaught error is another one in an executable

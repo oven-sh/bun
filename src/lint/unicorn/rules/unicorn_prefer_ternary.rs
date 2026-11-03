@@ -12,7 +12,7 @@ pub struct PreferTernary {
     only_single_line: bool,
 }
 
-const PREFER_TERNARY: Message = Message::new("", "Prefer ternary expressions over simple `if-else` statements.");
+const PREFER_TERNARY: &Message = &Message::new("", "Prefer ternary expressions over simple `if-else` statements.");
 
 impl Rule for PreferTernary {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-ternary", Kind::Suggestion);

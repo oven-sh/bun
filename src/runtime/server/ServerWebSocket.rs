@@ -1521,7 +1521,6 @@ fn call_corked(
     args: &[JSValue],
 ) -> JsResult<JSValue> {
     let mut result = Ok(JSValue::ZERO);
-    let mut call = || result = callback.call(global_object, this_value, args);
-    ws.cork(&mut call, |call| call());
+    ws.cork(|| result = callback.call(global_object, this_value, args));
     result
 }

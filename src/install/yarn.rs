@@ -574,12 +574,12 @@ fn bind_importer_dependencies(
     unlocked
 }
 
-pub(crate) fn migrate_yarn_lockfile<'a>(
-    this: &'a mut Lockfile,
+pub(crate) fn migrate_yarn_lockfile(
+    this: &mut Lockfile,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
     data: &[u8],
-) -> Result<LoadResult<'a>, Error> {
+) -> Result<LoadResult, Error> {
     // Yarn reads a file as v1 only when the marker is in the comment lines at its top.
     let is_berry = strings::contains(data, b"\n__metadata:") || data.starts_with(b"__metadata:");
     let has_v1_marker = match strings::index_of(data, b"# yarn lockfile v1") {
@@ -921,7 +921,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     )?;
 
     Ok(LoadResult::Ok(lockfile::LoadResultOk {
-        lockfile: this,
         migrated: lockfile::Migrated::Yarn,
         serializer_result: Default::default(),
         format: lockfile::LockfileFormat::Binary,

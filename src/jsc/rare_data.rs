@@ -127,7 +127,7 @@ impl Default for EntropyCache {
 }
 impl EntropyCache {
     pub(crate) const BUFFERED_UUIDS_COUNT: usize = 16;
-    pub const SIZE: usize = Self::BUFFERED_UUIDS_COUNT * 128;
+    pub(crate) const SIZE: usize = Self::BUFFERED_UUIDS_COUNT * 128;
 
     pub(crate) fn fill(&mut self) {
         bun_boringssl::rand_bytes(&mut self.cache);
@@ -194,8 +194,6 @@ impl CleanupHook {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct RareData {
-    pub(crate) boring_ssl_engine: Option<*mut boring::ENGINE>,
-
     /// Erased `*mut webcore::blob::Store` (intrusive-refcounted on the runtime
     /// side). Constructed via `__bun_stdio_blob_store_new`; high tier casts back.
     /// `mode` is cached so [`Bun__Process__getStdinFdType`] doesn't have to
@@ -286,7 +284,6 @@ pub(crate) type FilePollStore = Async::file_poll::Store;
 impl Default for RareData {
     fn default() -> Self {
         Self {
-            boring_ssl_engine: None,
             stderr_store: None,
             stderr_mode: 0,
             stdin_store: None,
@@ -787,18 +784,6 @@ impl RareData {
         self.libdeflate_decompressor.as_deref_mut()
     }
 
-    pub fn boring_engine(&mut self) -> *mut boring::ENGINE {
-        // The raw `ENGINE_new()` result is cached without a null check:
-        // `EVP_DigestInit_ex` tolerates a NULL engine, so OOM here degrades to
-        // "no engine" rather than crashing. Debug-assert to surface it without
-        // altering release behavior.
-        let ptr = *self
-            .boring_ssl_engine
-            .get_or_insert_with(|| boring::ENGINE_new());
-        debug_assert!(!ptr.is_null(), "ENGINE_new returned null");
-        ptr
-    }
-
     pub fn default_csrf_secret(&mut self) -> &[u8] {
         if self.default_csrf_secret.is_empty() {
             let mut secret = vec![0u8; 16].into_boxed_slice();
@@ -1111,11 +1096,6 @@ impl Drop for RareData {
         // s3_default_client / default_csrf_secret / cleanup_hooks / path_buf /
         // tls_default_ciphers:
         // all dropped automatically via field Drop.
-
-        if let Some(engine) = self.boring_ssl_engine.take() {
-            // SAFETY: engine was created by ENGINE_new.
-            unsafe { boring::ENGINE_free(engine) };
-        }
 
         self.default_client_ssl_ctx = None;
         // After the default-ctx free so the tombstone callback still finds a live

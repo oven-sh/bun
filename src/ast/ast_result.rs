@@ -104,6 +104,8 @@ pub struct Ast<'a> {
     pub import_meta_ref: Ref,
     /// HMR lowering: the body has imports only, and outside node_modules each export is a getter.
     pub hmr_stable_reexports: bool,
+    /// Output depends on more than the source text (macros, `import.meta.glob`), so don't cache it.
+    pub depends_on_more_than_source: bool,
 }
 
 // `parts`/`symbols`/`import_records` are now `ArenaVec`s and need an allocator,
@@ -150,6 +152,7 @@ impl<'a> Ast<'a> {
             has_import_meta: false,
             import_meta_ref: Ref::NONE,
             hmr_stable_reexports: false,
+            depends_on_more_than_source: false,
         }
     }
 }

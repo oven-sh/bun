@@ -605,7 +605,7 @@ const llvmPrograms = [
   ...["llvm-ar", "llvm-ranlib", "llvm-lib", "llvm-dlltool"],
   ...["llvm-objcopy", "llvm-strip", "llvm-install-name-tool", "llvm-bitcode-strip"],
   ...["llvm-nm", "llvm-readobj", "llvm-readelf", "llvm-objdump", "llvm-otool", "llvm-size", "llvm-strings"],
-  ...["llvm-cxxfilt", "llvm-symbolizer", "llvm-addr2line", "llvm-dwarfdump", "llvm-config"],
+  ...["llvm-cxxfilt", "llvm-undname", "llvm-symbolizer", "llvm-addr2line", "llvm-dwarfdump", "llvm-config"],
   ...["llvm-cov", "llvm-profdata"],
   // For macOS and Windows targets.
   ...["dsymutil", "llvm-lipo", "llvm-rc", "llvm-windres", "llvm-mt", "llvm-ml", "llvm-cvtres", "llvm-pdbutil"],
@@ -3061,7 +3061,7 @@ const fetchSshKeysProgram = [
 
 /** Every variable the template needs; scripts/ci-image.ts passes them all. */
 export const packerVariables = [
-  ...["client_id", "client_secret", "subscription_id", "tenant_id"],
+  ...["client_id", "client_jwt", "subscription_id", "tenant_id"],
   // The resource group the bake's VM is created in, and the gallery's.
   ...["resource_group", "gallery_resource_group", "gallery_name", "location"],
   ...["image_name", "bake_directory", "repo_commit"],
@@ -3111,10 +3111,10 @@ packer {
   }
 }
 
-${packerVariables.map(name => `variable "${name}" {\n  type      = string\n  sensitive = ${name === "client_secret"}\n}\n`).join("\n")}
+${packerVariables.map(name => `variable "${name}" {\n  type      = string\n  sensitive = ${name === "client_jwt"}\n}\n`).join("\n")}
 source "azure-arm" "image" {
   client_id       = var.client_id
-  client_secret   = var.client_secret
+  client_jwt      = var.client_jwt
   subscription_id = var.subscription_id
   tenant_id       = var.tenant_id
 

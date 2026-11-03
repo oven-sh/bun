@@ -319,7 +319,7 @@ impl PackageManager {
                     continue;
                 }
             };
-            let path = bun_resolver::fs::FileSystem::instance()
+            let path = bun_resolver::fs::FileSystem::get()
                 .dirname_store()
                 .append(&[package_dir, b"/", &folder, b"/package.json"].concat())?;
             let source = bun_ast::Source::init_path_string(path, &json[..]);

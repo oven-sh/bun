@@ -1,0 +1,57 @@
+# readline = require("node:readline"); keep(process.getBuiltinModule); callee = name ? third(second(first(process.getBuiltinModule))) : keep; callee(name)
+# The loader has come into unknown hands long before it arrives at the call, through three functions, and there it lies beside a value nobody knows. Beside the unknown object a set leaves out whatever has escaped, but not a built-in that lets in unseen code:
+# that one is followed from the read that names it to the call that applies it. So the call is an application of the loader whenever its rule looks, before the loader has escaped or behind that:
+# the rules wait here for later rounds as the switches say, and the image admits loads by name all the same.
+# OPTIONS: testing=DelayFlowRules,DelayOtherFlowRules
+# RUN: valueflow-solve unseen
+# CHECK: unseen LoadsModuleByName ProcessGetBuiltinModule f0:v14
+# CHECK: modules-by-name yes
+
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0
+module m1 path="node:readline" displayPath="node:readline" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeReadline body=f1
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="node:readline"
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="name" [isFreeName]
+    v3 = Builtin builtin=ProcessGetBuiltinModule
+    v4 = PropGet v1 key="keep" [isFreeName]
+    v5 = Call v4, -, v3
+    v6 = NewClosure function=f3
+    v7 = Call v6, -, v3
+    v8 = NewClosure function=f4
+    v9 = Call v8, -, v7
+    v10 = NewClosure function=f5
+    v11 = Call v10, -, v9
+    v12 = ToBoolean v2
+    Branch v12 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v11)
+  b2():
+    Jump -> next b3(v4)
+  b3(v13: anything):
+    v14 = Call v13, -, v2
+    Return
+}
+function f1 name="readline" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    Return v0
+}
+function f2 name="createInterface" module=m1 role=Library results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="first" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="second" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f5 name="third" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

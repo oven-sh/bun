@@ -5497,6 +5497,9 @@ impl<'a> Resolver<'a> {
                         slot.safe_path = entries.dir;
                         slot.fd = entries.fd;
                     }
+                    // A failure that another generation met is not the answer for this asker: the directory is opened below.
+                    Fs::file_system::real_fs::EntriesOption::Err(err)
+                        if generation != 0 && err.generation != generation => {}
                     Fs::file_system::real_fs::EntriesOption::Err(err) => {
                         debuglog!(
                             "Failed to load DirEntry {}  {} - {}",
@@ -5536,6 +5539,8 @@ impl<'a> Resolver<'a> {
                             slot.safe_path = entries.dir;
                             slot.fd = entries.fd;
                         }
+                        Fs::file_system::real_fs::EntriesOption::Err(err)
+                            if generation != 0 && err.generation != generation => {}
                         Fs::file_system::real_fs::EntriesOption::Err(err) => {
                             debuglog!(
                                 "Failed to load DirEntry {}  {} - {}",

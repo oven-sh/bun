@@ -366,6 +366,23 @@ pub mod dir_iterator {
         dirent::parse::<dirent::Native>(filled, index)
     }
 
+    /// The inode of the record at `index` if that record is `.`, which `dirent::parse` reports as skipped.
+    #[cfg(unix)]
+    #[inline]
+    fn dot_ino_at(buf: &AlignedBuf, index: usize, end_index: usize) -> Option<u64> {
+        if end_index > BUF_SIZE {
+            return None;
+        }
+        // SAFETY: the syscall filled `[0..end_index]`, and `end_index <= BUF_SIZE`.
+        let record = unsafe { buf.filled(end_index) }.get(index..)?;
+        let name = record.get(<dirent::Native as dirent::Layout>::D_NAME..)?;
+        if !matches!(*name, [b'.', 0, ..]) {
+            return None;
+        }
+        // `d_ino` is the first field of every layout. 0 marks a removed record on Darwin and FreeBSD.
+        Some(u64::from_ne_bytes(*record.first_chunk()?)).filter(|&ino| ino != 0)
+    }
+
     // ── Linux / Android ──────────────────────────────────────────────────
     // Same `getdents64(2)` walk for both — Android is the same kernel, and
     // `linux_syscall::getdents64` is a raw syscall (no libc wrapper involved).
@@ -374,6 +391,7 @@ pub mod dir_iterator {
         buf: AlignedBuf,
         index: usize,
         end_index: usize,
+        dot_ino: u64,
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     impl State {
@@ -383,6 +401,7 @@ pub mod dir_iterator {
                 buf: AlignedBuf::uninit(),
                 index: 0,
                 end_index: 0,
+                dot_ino: 0,
             }
         }
         fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
@@ -409,8 +428,15 @@ pub mod dir_iterator {
                 let Some(record) = record_at(&self.buf, self.index, self.end_index) else {
                     return dirent::end_walk(&mut self.end_index, Tag::getdents64);
                 };
+                let Some(entry) = record.entry else {
+                    // `self.index` is still at the skipped record.
+                    if let Some(ino) = dot_ino_at(&self.buf, self.index, self.end_index) {
+                        self.dot_ino = ino;
+                    }
+                    self.index = record.next;
+                    continue;
+                };
                 self.index = record.next;
-                let Some(entry) = record.entry else { continue };
 
                 return Ok(Some(IteratorResult {
                     name: Name::borrow(entry.name),
@@ -429,6 +455,7 @@ pub mod dir_iterator {
         index: usize,
         end_index: usize,
         received_eof: bool,
+        dot_ino: u64,
     }
     #[cfg(target_os = "macos")]
     impl State {
@@ -440,6 +467,7 @@ pub mod dir_iterator {
                 index: 0,
                 end_index: 0,
                 received_eof: false,
+                dot_ino: 0,
             }
         }
         fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
@@ -490,8 +518,15 @@ pub mod dir_iterator {
                 let Some(record) = record_at(&self.buf, self.index, self.end_index) else {
                     return dirent::end_walk(&mut self.end_index, Tag::getdirentries64);
                 };
+                let Some(entry) = record.entry else {
+                    // `self.index` is still at the skipped record.
+                    if let Some(ino) = dot_ino_at(&self.buf, self.index, self.end_index) {
+                        self.dot_ino = ino;
+                    }
+                    self.index = record.next;
+                    continue;
+                };
                 self.index = record.next;
-                let Some(entry) = record.entry else { continue };
 
                 return Ok(Some(IteratorResult {
                     name: Name::borrow(entry.name),
@@ -508,6 +543,7 @@ pub mod dir_iterator {
         buf: AlignedBuf,
         index: usize,
         end_index: usize,
+        dot_ino: u64,
     }
     #[cfg(target_os = "freebsd")]
     impl State {
@@ -517,6 +553,7 @@ pub mod dir_iterator {
                 buf: AlignedBuf::uninit(),
                 index: 0,
                 end_index: 0,
+                dot_ino: 0,
             }
         }
         fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
@@ -545,8 +582,15 @@ pub mod dir_iterator {
                 let Some(record) = record_at(&self.buf, self.index, self.end_index) else {
                     return dirent::end_walk(&mut self.end_index, Tag::getdents64);
                 };
+                let Some(entry) = record.entry else {
+                    // `self.index` is still at the skipped record.
+                    if let Some(ino) = dot_ino_at(&self.buf, self.index, self.end_index) {
+                        self.dot_ino = ino;
+                    }
+                    self.index = record.next;
+                    continue;
+                };
                 self.index = record.next;
-                let Some(entry) = record.entry else { continue };
 
                 return Ok(Some(IteratorResult {
                     name: Name::borrow(entry.name),
@@ -780,6 +824,18 @@ pub mod dir_iterator {
         #[inline]
         pub fn next(&mut self) -> Result<Option<IteratorResult>> {
             self.state.next(self.dir)
+        }
+        /// The inode the directory listed for `.`, itself. 0 until `next` has passed that record, and always on Windows.
+        #[inline]
+        pub fn dot_ino(&self) -> u64 {
+            #[cfg(not(windows))]
+            {
+                self.state.dot_ino
+            }
+            #[cfg(windows)]
+            {
+                0
+            }
         }
     }
 
@@ -8976,6 +9032,33 @@ pub fn get_fd_path_z<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'
 #[inline]
 pub fn iterate_dir(dir: Fd) -> dir_iterator::WrappedIterator {
     dir_iterator::iterate(dir)
+}
+
+/// Nanoseconds of the wall clock that stamps a file change, read without a syscall. 0 on Windows, where no listing has an inode of `.` to go with it.
+pub fn file_stamp_clock_ns() -> i64 {
+    #[cfg(unix)]
+    {
+        // The coarse clock is never ahead of the one an inode is stamped with, which the fine clock can be by a tick.
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+        const CLOCK: libc::clockid_t = libc::CLOCK_REALTIME_COARSE;
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
+        const CLOCK: libc::clockid_t = libc::CLOCK_REALTIME;
+        let mut now = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        // SAFETY: `now` is a valid out-param.
+        if unsafe { libc::clock_gettime(CLOCK, &raw mut now) } != 0 {
+            return 0;
+        }
+        (now.tv_sec as i64)
+            .saturating_mul(1_000_000_000)
+            .saturating_add(now.tv_nsec as i64)
+    }
+    #[cfg(not(unix))]
+    {
+        0
+    }
 }
 
 /// One stat by path, following links, that is not answered from a network file system's attribute cache on Linux.

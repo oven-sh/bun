@@ -17,6 +17,8 @@
 //! - `disabled`: `get-eslint-disabled-lines.ts`, `get-eslint-disabled-rules.ts`, `is-node-eslint-disabled.ts`
 //! - `fixes`: `get-node-range.ts`, `make-order-fixes.ts`, `make-comment-after-fixes.ts`,
 //!   `make-single-node-comment-after-fixes.ts`, `make-fixes.ts`, `range-to-diff.ts`
+//! - `object_types`: `rules/sort-object-types/sort-object-type-elements.ts` and its helpers, shared by
+//!   `sort-object-types` and `sort-interfaces`
 
 pub(crate) mod compare;
 pub(crate) mod configuration_if;
@@ -24,6 +26,7 @@ pub(crate) mod disabled;
 pub(crate) mod fixes;
 pub(crate) mod groups;
 pub(crate) mod newlines;
+pub(crate) mod object_types;
 pub(crate) mod options;
 pub(crate) mod partition;
 pub(crate) mod report;

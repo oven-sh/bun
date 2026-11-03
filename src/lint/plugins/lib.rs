@@ -145,6 +145,8 @@ bun_lint::rules! {
     oxc_number_arg_out_of_range::NumberArgOutOfRange,
     oxc_only_used_in_recursion::OnlyUsedInRecursion,
     oxc_uninvoked_array_callback::UninvokedArrayCallback,
+    perfectionist_sort_interfaces::SortInterfaces,
+    perfectionist_sort_object_types::SortObjectTypes,
     prettier_bun_format::Format,
     prettier_prettier::Format = prettier_bun_format<true>,
     promise_always_return::AlwaysReturn,

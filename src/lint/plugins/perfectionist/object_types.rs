@@ -229,6 +229,10 @@ pub(crate) fn sort_object_type_elements<'a, R>(
     let Some(config) = configurations.get(index) else {
         return;
     };
+    if let Some(error) = &config.error {
+        cx.throw(node, "Error", error.clone());
+        return;
+    }
     if !report::can_report_errors(config, false) {
         return;
     }

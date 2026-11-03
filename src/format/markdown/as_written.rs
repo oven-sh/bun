@@ -1583,6 +1583,8 @@ impl<'t> Reader<'t> {
         // After a `[` or a `![` that waits for its `]`.
         let (mut is_in_link, mut is_in_image) = (false, false);
         let mut image_text_start = 0;
+        // The `[` follows a `]`, so what is between the brackets can be a label.
+        let mut is_after_bracket = false;
         let end = loop {
             at = skip(at, stops_text);
             if at >= text.len() {
@@ -1768,6 +1770,7 @@ impl<'t> Reader<'t> {
                         return None;
                     } else {
                         is_in_link = true;
+                        is_after_bracket = before(at) == b']';
                     }
                 }
                 // Without a `[` it's text.
@@ -1783,6 +1786,10 @@ impl<'t> Reader<'t> {
                         return None;
                     }
                     let mut has_destination = byte(at + 1) == b'(';
+                    // `[a][b](c)` is a reference and text if `b` is defined, and text and a link if it isn't.
+                    if has_destination && !is_image && is_after_bracket {
+                        return None;
+                    }
                     let starts_liquid = has_destination && self.liquid_end(at + 2, CELL).is_some();
                     if starts_liquid {
                         // What starts first comes first. It's Liquid after `](` unless that is a link, with the Liquid

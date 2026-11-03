@@ -488,6 +488,8 @@ describe("Markdown", () => {
     "[b\\_c][] [b\\_c] [d&amp;e][] [d&amp;e] [a][b\\_c][b\\_c] **[a][d&amp;e]**\n\n| [a][d&amp;e] |\n| --- |\n\n[b\\_c]: u\n[d&amp;e]: u\n",
     "[a][b`c] ``d`` [a][b`c]\n\n[a][b<c] (*d*) e>\n\n[a][b{{c] (*d*) }}\n\n[b`c]: u\n[b<c]: u\n[b{{c]: u\n",
     "[a][b`c] ``d`` [a][b`c]\n\n[a][b<c] (*d*) e>\n\n[a][b{{c] (*d*) }}\n",
+    "[a][](*b*) and [a][c](*b*) and [a][c][d](*b*) and [a] [c](*b*)\n\n[a]: u\n[c]: u\n[d]: u\n",
+    "[a][](*b*) and [a][c](*b*) and [a][c][d](*b*) and [a](u)[c](*b*)\n",
     "![`[`](u) ![`]`](u) ![a `[` b](u) ![`[]`](u) ![<a b='['>](u) ![<a b=']'>](u) ![{{ [ }}](u) ![a\\]](u) ![\\[](u) [![`[`](u)](v) [`[`](u)\n",
     "\\[a] and \\[[a](b)] and \\[[a]] and a\\\nb and \\_a\\_ and a\\",
     "[a\nb](c) and [a](b\nc)\n\n[*a*]\n\n[*a*]: b\n",

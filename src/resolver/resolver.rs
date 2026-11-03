@@ -5123,6 +5123,10 @@ impl<'a> Resolver<'a> {
                 (None, None)
                     if parent_result.status == allocators::ItemStatus::NotFound
                         && self.not_found_still_holds(generation, parent_key) => {}
+                // Built below a directory whose listing failed: it stays for as long as that listing fails.
+                (None, None)
+                    if parent_result.status == allocators::ItemStatus::Unknown
+                        && self.listing_still_fails(generation, parent_key) => {}
                 _ => return SlotCheck::Changed,
             }
         }
@@ -5190,6 +5194,15 @@ impl<'a> Resolver<'a> {
             return SlotCheck::Changed;
         }
         SlotCheck::Holds
+    }
+
+    /// Whether the listing of `dir` fails for an asker of `generation`, which opens a directory whose failure another asker met. The caller holds the resolver mutex and not `entries_mutex`.
+    fn listing_still_fails(&self, generation: Generation, dir: &[u8]) -> bool {
+        let asker = DirInfo::Checked(generation);
+        // SAFETY: `rfs_ptr()` points at the process-global RealFS singleton.
+        let rfs = unsafe { &mut *self.rfs_ptr() };
+        let listed = rfs.read_directory_as(asker, dir, None, self.store_fd, &mut ());
+        matches!(listed, Ok(Fs::file_system::real_fs::EntriesOption::Err(_)))
     }
 
     /// Whether the listing gives other facts now than `dir_info_uncached` took from it. The caller holds `entries_mutex`.

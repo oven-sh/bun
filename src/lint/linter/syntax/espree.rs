@@ -393,12 +393,17 @@ impl Candidates {
         const fn kind(tag: ExprTag) -> u64 {
             1 << tag as u8
         }
-        // The kinds that the `match` below can say yes to, but for names.
+        // The kinds that the `match` below can say yes to.
         let private_names = match has_private_names {
             true => kind(ExprTag::Dot) | kind(ExprTag::PrivateIdentifier),
             false => kind(ExprTag::PrivateIdentifier),
         };
-        let kinds = kind(ExprTag::ImportCall)
+        let names = match has_keyword_names {
+            true => kind(ExprTag::Ident),
+            false => 0,
+        };
+        let kinds = names
+            | kind(ExprTag::ImportCall)
             | kind(ExprTag::Regex)
             | kind(ExprTag::Super)
             | kind(ExprTag::TaggedTemplate)
@@ -429,9 +434,7 @@ impl Candidates {
                 if let Some(slot) = picked.get_mut(count) {
                     *slot = i as u8;
                 }
-                let is_keyword = has_keyword_names
-                    & matches!(raw.kind, Kind::Ident(name) if name.is_keyword_identifier());
-                count += usize::from((kinds & kind(raw.kind.tag()) != 0) | is_keyword);
+                count += usize::from(kinds & kind(raw.kind.tag()) != 0);
             }
             let picked = picked;
             (0..count).filter_map(move |at| {

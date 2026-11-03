@@ -1577,6 +1577,7 @@ impl<'a> Package<'a> {
         }
     }
 
+    #[inline(always)]
     pub(crate) fn parse_version(specifier_after_name: &[u8]) -> Option<&[u8]> {
         if let Some(slash) = strings::index_of_char(specifier_after_name, b'/') {
             // "foo@/bar" is not a valid specifier\
@@ -1598,6 +1599,8 @@ impl<'a> Package<'a> {
         None
     }
 
+    // Inlined as when it had one caller: `load_node_modules` is compiled once for each asker.
+    #[inline(always)]
     pub(crate) fn parse(specifier: &'a [u8], subpath_buf: &'a mut [u8]) -> Option<Package<'a>> {
         if specifier.is_empty() {
             return None;

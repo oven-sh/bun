@@ -133,6 +133,16 @@ const STOPS_CODE: [bool; 256] = table(b"`|", true);
 /// In a link's destination without angle brackets: what ends it, and what makes the printer look at it.
 const STOPS_DESTINATION: [bool; 256] = table(b" ()\\&<|{", true);
 const STOPS_TITLE: [bool; 256] = table(b"\"'\\&|", true);
+/// In a label: what ends it, and what isn't printed as it's written.
+const STOPS_LABEL: [bool; 256] = {
+    let mut table = table(b"[]\\&", true);
+    let mut index = 128;
+    while index < 256 {
+        table[index] = true;
+        index += 1;
+    }
+    table
+};
 /// What a line of a paragraph can't start with: white space, and what could start another block or end this one.
 const STARTS_NO_TEXT: [bool; 256] = table(b" #>-+=~|", true);
 /// White space, and punctuation that's neither a marker nor part of an address.
@@ -1769,6 +1779,10 @@ impl<'t> Reader<'t> {
                         // A reference if the label is defined, or text: `[a]`, `[a][b]` and `[a][]` stay as they are.
                         // The label of an image is written anew, and `[a]:` can be a definition.
                         if is_image || byte(at + 1) == b':' {
+                            return None;
+                        }
+                        // In `[a][b]` so is the label of a link: without escapes, and with a space for white space.
+                        if byte(at + 1) == b'[' && byte(skip(at + 2, &STOPS_LABEL)) != b']' {
                             return None;
                         }
                         at += 1;

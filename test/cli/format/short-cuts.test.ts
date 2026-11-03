@@ -484,6 +484,8 @@ describe("Markdown", () => {
     // Links, images, references.
     "[a](b) [a](<b c>) [a](b \"c\") [a](b 'c') [a](b (c)) [a](b \"c'd\") [a]() [a](b(c)d) [a](b\\)c) [a](b&amp;c) [a](b&c)\n",
     "[a] [a][b] [a][] [a]: b [^a] [[a]] ![a](b) ![a] ![a][b] [![a](b)](c) [a [b](c)](d) a] b [c\n\n[a]: d\n",
+    "[a][b\\_c] [a][d&amp;e] [a][f\u00a0g] [a][\u3000h] [a][i\\(j] [a][k&l] [a][\u00e9]\n\n[b\\_c]: u\n[d&amp;e]: u\n[f\u00a0g]: u\n[\u3000h]: u\n[i\\(j]: u\n[k&l]: u\n[\u00e9]: u\n",
+    "[b\\_c][] [b\\_c] [d&amp;e][] [d&amp;e] [a][b\\_c][b\\_c] **[a][d&amp;e]**\n\n| [a][d&amp;e] |\n| --- |\n\n[b\\_c]: u\n[d&amp;e]: u\n",
     "\\[a] and \\[[a](b)] and \\[[a]] and a\\\nb and \\_a\\_ and a\\",
     "[a\nb](c) and [a](b\nc)\n\n[*a*]\n\n[*a*]: b\n",
     // Addresses.

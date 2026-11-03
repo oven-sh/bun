@@ -2200,11 +2200,7 @@ console.log("survived", require("./late.js"));`,
           `,
         },
         ["--require", "./preload.cjs", "./entry.cjs"],
-        [
-          "entry.cjs: require.main===module true | id .",
-          "entry.cjs: a tick runs",
-          "entry.cjs: after an await 42",
-        ],
+        ["entry.cjs: require.main===module true | id .", "entry.cjs: a tick runs", "entry.cjs: after an await 42"],
       ],
       // Bun runs the ticks of a preload before the entry module loads. Node runs the entry module first, and ends with other.cjs as process.mainModule.
       [

@@ -3533,9 +3533,7 @@ impl bun_io::Write for &ExpectedText<'_> {
 }
 
 impl ExpectedText<'_> {
-    /// The name an older Bun printed for the global of a `node:vm` context where that is not `name`, if the saved text
-    /// continues with it. 1.4.4 had the class `NodeVMGlobalProxy` for it. 1.4.0 to 1.4.3 did not take the name from a
-    /// prototype that a script set, as jsdom does for its window.
+    /// What Bun 1.4.0 to 1.4.4 named the global of a `node:vm` context where that is not `name`, if the saved text continues with it.
     #[cold]
     fn name_of_context_global(
         &self,
@@ -3553,9 +3551,10 @@ impl ExpectedText<'_> {
         }
         let rest = self.rest.get();
         if name.eq_ascii(b"JSGlobalProxy") {
+            // 1.4.4 had the class `NodeVMGlobalProxy` for it.
             return Ok(rest.starts_with(b"NodeVMGlobalProxy {}").then(|| bun_core::String::static_("NodeVMGlobalProxy")));
         }
-        // `name` is a `Symbol.toStringTag`. Every version printed the one that the global itself has.
+        // `name` is a `Symbol.toStringTag`. 1.4.0 to 1.4.3 printed one of the global itself, not one of a prototype that a script set.
         if !rest.starts_with(b"JSGlobalProxy {}")
             || jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__hasOwnToStringTag(global, value))?
         {

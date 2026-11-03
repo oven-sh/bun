@@ -1763,6 +1763,8 @@ describe.skipIf(!hasFlag)("Vue", () => {
     // In a `<foreignObject>`, which need not be in an `<svg>`, an `<svg>` and what is in it are inline.
     "<template>\n  <foreignObject>\n    <svg> </svg>\n  </foreignObject>\n</template>\n",
     "<template>\n  <svg>\n    <foreignObject>\n      <div>\n        <svg> </svg>\n        <svg>\n          <g> </g>\n        </svg>\n      </div>\n    </foreignObject>\n  </svg>\n</template>\n",
+    // What is in it is on the line of its last attribute.
+    `<template>\n  <xmp :a="b">${"x".repeat(60)} <b>c</b></xmp>\n</template>\n`,
   );
   const files = Object.fromEntries(inputs.map((input, index) => [`${index}.vue`, input]));
 

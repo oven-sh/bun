@@ -6,7 +6,7 @@ use super::js::{self, Hug, SourceType, Syntax};
 use super::map_strings::ends_with_line_suffix;
 use super::printer::Printer;
 use super::utilities::{
-    dedent_string, html_split, html_trim_preserve_indentation, is_script_like_tag,
+    dedent_string, html_split, html_trim_preserve_indentation, is_pre_like, is_script_like_tag,
     should_unquote_attribute_value, unescape_quote_entities,
 };
 use super::writer::Attempt;
@@ -558,8 +558,9 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
     /// at the current indentation, which has room for it.
     pub(crate) fn has_room_on_line_of_its_own(&self, element: Id, width: usize) -> bool {
         let format = self.options.format;
-        // The end of the tag can be on the line of the last attribute.
+        // The end of the tag can be on the line of the last attribute, and so can what is in a `<pre>`.
         let ends_on_line_of_its_own = !format.bracket_same_line.value()
+            && !is_pre_like(&self.tree[element])
             && !(self.tree[element].has(Flags::IS_SELF_CLOSING)
                 && self.tree.parent(element).is_some_and(|parent| {
                     self.tags()

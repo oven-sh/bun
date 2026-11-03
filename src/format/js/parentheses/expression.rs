@@ -670,44 +670,34 @@ pub(crate) fn left_edge_end<'a>(e: Expr<'a>, node: AstNodes<'a>) -> (Expr<'a>, A
 /// False only if [`is_name_that_may_need_parentheses`] is false for every name of `len` bytes that starts with `first`.
 #[inline]
 pub(crate) fn starts_like_name_that_may_need_parentheses(len: u32, first: Option<u8>) -> bool {
-    const fn letter(letter: u8) -> u32 {
-        1 << (letter - b'a')
-    }
-    /// The first letters of the names, by their length.
-    const FIRST_LETTERS: [u32; 10] = [
-        0,
-        0,
-        0,
-        letter(b'l'),
-        letter(b'h') | letter(b't'),
-        letter(b'a') | letter(b'u') | letter(b'y'),
-        letter(b'm'),
-        0,
-        0,
-        letter(b'c') | letter(b'i'),
-    ];
     match (FIRST_LETTERS.get(len as usize), first) {
         (Some(letters), Some(first @ b'a'..=b'z')) => letters >> (first - b'a') & 1 != 0,
         _ => false,
     }
 }
 
-#[inline]
-pub(crate) fn is_name_that_may_need_parentheses(name: &[u8]) -> bool {
-    matches!(
-        name,
-        b"async"
-            | b"let"
-            | b"await"
-            | b"interface"
-            | b"module"
-            | b"using"
-            | b"yield"
-            | b"component"
-            | b"hook"
-            | b"type"
-    )
+macro_rules! names_that_may_need_parentheses {
+    ($($name:literal)*) => {
+        #[inline]
+        pub(crate) fn is_name_that_may_need_parentheses(name: &[u8]) -> bool {
+            matches!(name, $($name)|*)
+        }
+
+        /// The first letters of the names, by their length. `format_expression` relies on 3 to 9 bytes.
+        const FIRST_LETTERS: [u32; 10] = {
+            let mut letters = [0; 10];
+            $(
+                assert!($name.len() >= 3);
+                letters[$name.len()] |= 1 << ($name[0] - b'a');
+            )*
+            letters
+        };
+    };
 }
+
+names_that_may_need_parentheses!(
+    b"async" b"let" b"await" b"interface" b"module" b"using" b"yield" b"component" b"hook" b"type"
+);
 
 /// Prettier's `shouldAddParenthesesToIdentifier`.
 fn identifier_needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {

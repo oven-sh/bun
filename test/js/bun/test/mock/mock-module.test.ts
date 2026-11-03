@@ -3520,6 +3520,22 @@ describe.concurrent("require() of an ES module that mock.module() has patched in
             expect(require("./again")).toBe(exports);
           });
         `,
+        "pending.ts": dep,
+        "pending.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          import "./pending";
+          test("not what an earlier mock patched in, while the patch of an async factory is pending", async () => {
+            mock.module("./pending", () => ({ a: "first" }));
+            let isPatched = false;
+            mock.module("./pending", async () => (await Promise.resolve(), { a: "second" })).then(() => (isPatched = true));
+            const seen = new Set();
+            for (let tick = 0; tick < 100 && !isPatched; tick++) {
+              seen.add(require("./pending").a);
+              await Promise.resolve();
+            }
+            expect([...seen]).toEqual(["real-a", "second"]);
+          });
+        `,
         "reset.test.ts": `
           import { expect, mock, test, vi } from "bun:test";
           import * as dep from "./dep";
@@ -3590,7 +3606,7 @@ describe.concurrent("require() of an ES module that mock.module() has patched in
           });
         `,
       },
-      11,
+      12,
       args,
     );
   });

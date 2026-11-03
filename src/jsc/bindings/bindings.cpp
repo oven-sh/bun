@@ -2448,6 +2448,17 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
     return std::nullopt;
 }
 
+// For the array gate of Bun__deepMatch. A Proxy of an array has no indexed storage: its length is the `length` that it serves.
+static NEVER_INLINE bool arrayLengthsMatchSlow(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* obj, JSObject* subsetObj)
+{
+    VM& vm = globalObject->vm();
+    JSValue objLength = obj->type() == ProxyObjectType ? obj->get(globalObject, vm.propertyNames->length) : jsNumber(obj->getArrayLength());
+    RETURN_IF_EXCEPTION(scope, false);
+    JSValue subsetLength = subsetObj->type() == ProxyObjectType ? subsetObj->get(globalObject, vm.propertyNames->length) : jsNumber(subsetObj->getArrayLength());
+    RETURN_IF_EXCEPTION(scope, false);
+    return JSValue::strictEqual(globalObject, objLength, subsetLength);
+}
+
 // The other combinations are instantiated by their uses in this file. This one is
 // only reached from `Bun.deepEquals(a, b, true, true)` in BunObject.cpp.
 template bool Bun__deepEquals<true, false, false, true>(JSC::JSGlobalObject*, JSValue, JSValue, MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>&, ThrowScope&, bool);
@@ -2512,8 +2523,20 @@ bool Bun__deepMatch(
     RETURN_IF_EXCEPTION(throwScope, false);
     if (subsetIsArray) {
         // An array pattern needs an array. An object pattern can be satisfied by one.
-        if (!objIsArray || obj->getArrayLength() != subsetObj->getArrayLength()) {
+        if (!objIsArray) {
             return false;
+        }
+        if (hasIndexedProperties(obj->indexingType()) && hasIndexedProperties(subsetObj->indexingType())) [[likely]] {
+            ASSERT(obj->type() != ProxyObjectType && subsetObj->type() != ProxyObjectType);
+            if (obj->getArrayLength() != subsetObj->getArrayLength()) {
+                return false;
+            }
+        } else {
+            bool sameLength = arrayLengthsMatchSlow(globalObject, throwScope, obj, subsetObj);
+            RETURN_IF_EXCEPTION(throwScope, false);
+            if (!sameLength) {
+                return false;
+            }
         }
         PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
         obj->getPropertyNames(globalObject, objProps, DontEnumPropertiesMode::Exclude);

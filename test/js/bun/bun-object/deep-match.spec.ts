@@ -191,6 +191,40 @@ describe("Bun.deepMatch", () => {
     ] as [any[], any[], boolean][])("Bun.deepMatch(%p, %p) === %p", (a, b, expected) => {
       expect(Bun.deepMatch(a, b)).toBe(expected);
     });
+
+    // https://github.com/oven-sh/bun/issues/9103
+    it("reads a Proxy of an array through the Proxy, as the subset and as the value", () => {
+      const P = <T extends object>(target: T) => new Proxy(target, {});
+      expect(Bun.deepMatch([{ a: 1 }], P([{ a: 1, b: 2 }]))).toBe(true);
+      expect(Bun.deepMatch(P([{ a: 1 }]), [{ a: 1, b: 2 }])).toBe(true);
+      expect(Bun.deepMatch(P([{ a: 1 }]), P([{ a: 1, b: 2 }]))).toBe(true);
+      expect(Bun.deepMatch({ list: [1, 2] }, { list: P([1, 2]), more: true })).toBe(true);
+      expect(Bun.deepMatch({ 0: 1 }, P([1]))).toBe(true);
+      expect(Bun.deepMatch([{ a: 1, b: 2 }], P([{ a: 1 }]))).toBe(false);
+      expect(Bun.deepMatch([1, 2], P([1, 2, 3]))).toBe(false);
+      expect(Bun.deepMatch(P([1, 2, 3]), [1, 2])).toBe(false);
+      expect(Bun.deepMatch(P([1, 2]), [1, 3])).toBe(false);
+      expect(Bun.deepMatch(P([1]), { 0: 1, length: 1 })).toBe(false);
+
+      // the `get` trap decides what the length is: this Proxy serves [1, <hole>]
+      const served = new Proxy([1], {
+        get: (target, key, receiver) => (key === "length" ? 2 : Reflect.get(target, key, receiver)),
+      });
+      const holed = () => Object.assign([1], { length: 2 });
+      expect(Bun.deepMatch(holed(), served)).toBe(true);
+      expect(Bun.deepMatch(served, holed())).toBe(true);
+      expect(Bun.deepMatch([1], served)).toBe(Bun.deepMatch([1], holed()));
+      expect(Bun.deepMatch(served, [1])).toBe(Bun.deepMatch(holed(), [1]));
+
+      const throws = new Proxy([1], {
+        get(target, key, receiver) {
+          if (key === "length") throw new RangeError("no length");
+          return Reflect.get(target, key, receiver);
+        },
+      });
+      expect(() => Bun.deepMatch(throws, [1])).toThrow(RangeError);
+      expect(() => Bun.deepMatch([1], throws)).toThrow(RangeError);
+    });
   });
 
   it("does not work on functions", () => {

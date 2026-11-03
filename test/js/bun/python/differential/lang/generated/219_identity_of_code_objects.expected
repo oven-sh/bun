@@ -1,0 +1,45 @@
+status: 0
+script: 5b5c2f3b2051a241
+source: f2583e630a9e0e70
+---
+f.__code__ is f.__code__ => True
+f() is f.__code__ => True
+id(f.__code__) == before => True
+ref() is f.__code__ => True
+table.get(f.__code__) => f
+len(table) => 1
+[r() is not None for r in refs] => [True, True, True]
+C().method() is refs[0]() => True
+C.static() is refs[1]() => True
+C().prop is refs[2]() => True
+outer().__code__ is first => True
+outer()() is first => True
+[c is first for c in outer.__code__.co_consts if isinstance(c, types.... => [True]
+len({id(l.__code__) for l in lambdas}) => 1
+lambdas[0]() is lambdas[2].__code__ => True
+g.gi_code is gen.__code__ => True
+g.gi_frame.f_code is gen.__code__ => True
+next(g) is gen.__code__ => True
+c.cr_code is coro.__code__ => True
+c.cr_frame.f_code is coro.__code__ => True
+True
+a.ag_code is agen.__code__ => True
+a.ag_frame.f_code is agen.__code__ => True
+e.__traceback__.tb_next.tb_frame.f_code is raises.__code__ => True
+e.__traceback__.tb_frame.f_code is sys._getframe().f_code => True
+True
+h.__code__ is k.__code__ => True
+h() => 2
+ns["x"].__code__ is ns["y"] => True
+[k is ns["y"] for k in code.co_consts if isinstance(k, types.CodeType)] => [True]
+copy is f.__code__ => False
+copy == f.__code__ => True
+replaced is f.__code__ => False
+replaced.co_name => other
+f.__code__.co_name => f
+True
+[None, None, None, None, None, None, None, None, None, None]
+f.__code__.co_code is f.__code__.co_code => True
+type(f.__code__.co_code).__name__ => bytes
+True [True]
+

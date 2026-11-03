@@ -684,6 +684,34 @@ raise SystemExit(7)
       });
     });
 
+    test("a virtual environment links to the python3 that made it", async () => {
+      const show = "import sys; print(sys.executable, sys._base_executable, sys.prefix)";
+      expect(
+        await python([
+          "-c",
+          `
+import os, subprocess, sys, venv
+print(sys.executable == sys._base_executable)
+venv.create("env", symlinks=True)
+print(os.readlink("env/bin/python3"))
+print([line for line in open("env/pyvenv.cfg") if line.startswith("home")])
+print(subprocess.run(["env/bin/python", "-c", ${JSON.stringify(show)}], capture_output=True, text=True).stdout)
+`,
+        ]),
+      ).toEqual({
+        stdout: lines(
+          "True",
+          "<bin>/python3",
+          "['home = <bin>\\n']",
+          // There is no <bin>/python.
+          "<dir>/env/bin/python <bin>/python3 <dir>/env",
+          "",
+        ),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     test("is found on PATH", async () => {
       using bin = tempDir("python-cli-path-bin", {});
       symlinkSync(bunExe(), join(String(bin), "python3"));

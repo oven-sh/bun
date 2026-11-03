@@ -1,0 +1,38 @@
+status: 0
+script: 385af228f6c2a29c
+---
+SIGILL True
+True True
+True
+True True
+SIGTRAP True
+True True
+True
+True True
+SIGABRT True
+True True
+True
+True True
+SIGBUS True
+True True
+True
+True True
+SIGFPE True
+True True
+True
+True True
+SIGSEGV True
+True True
+True
+True True
+SIGSYS True
+True True
+True
+True True
+SIGILL True b''
+SIGTRAP True b''
+SIGABRT True b''
+SIGBUS True b''
+SIGFPE True b''
+SIGSEGV True b''
+SIGSYS True b''

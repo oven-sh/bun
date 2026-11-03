@@ -88,11 +88,13 @@ static void preparePython()
             if (auto status = Python::readEnvironment(configuration))
                 _exit(*status);
         }
-        BunString link = Bun__Python__linkToSelf();
-        configuration.baseExecutable = link.transferToWTFString();
+        // Started as `python3`, the interpreter is the file of that name, which stays where it is: virtual environments link to it.
         configuration.executable = s_isPythonCommand ? findProgram(configuration.programName) : String();
-        if (configuration.executable.isEmpty())
+        if (configuration.executable.isEmpty()) {
+            BunString link = Bun__Python__linkToSelf();
+            configuration.baseExecutable = link.transferToWTFString();
             configuration.executable = configuration.baseExecutable;
+        }
         configuration.interactiveModule = "_bun_repl"_s;
         for (unsigned i = 0; i < 3; ++i)
             configuration.standardStreamWasClosed[i] = bun_is_stdio_null[i];

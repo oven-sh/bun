@@ -1,0 +1,26 @@
+status: 0
+script: ad42633bf291cf79
+source: fbf742a6278e6aa2
+---
+(1000, 'text', 2.5, b'bytes', 3j)
+same == code => True
+same.co_consts == code.co_consts => True
+(2000, 'other', 0.25, b'', 4j)
+f(2) => (2000, 'text', 2.5, b'bytes', 3j)
+types.FunctionType(changed, globals())(2) => (4000, 'other', 0.25, b'', 4j)
+changed == code => False
+code.co_consts => (1000, 'text', 2.5, b'bytes', 3j)
+g(3) => (6000, 'other', 0.25, b'', 4j)
+f(3) => (3000, 'text', 2.5, b'bytes', 3j)
+[True]
+outer() => first
+types.FunctionType(new, globals())() => second
+donor() => second
+True
+closes(2)() => 3
+types.FunctionType(new, globals())(2)() => 200
+list(gen()) => ['one thing', 12345]
+list(types.FunctionType(new, globals())()) => ['another', 54321]
+e [bad=1] => replace() argument 'co_consts' must be tuple, not int
+e [bad=list] => replace() argument 'co_consts' must be tuple, not list
+e [bad='x'] => replace() argument 'co_consts' must be tuple, not str

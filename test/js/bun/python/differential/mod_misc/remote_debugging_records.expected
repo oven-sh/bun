@@ -1,0 +1,17 @@
+status: 0
+script: d066a236104d69e3
+---
+_remote_debugging FrameInfo 4 ('filename', 'location', 'funcname', 'opcode') _remote_debugging.FrameInfo(filename=0, location=1, funcname=2, opcode=3) (0, 1, 2, 3)
+_remote_debugging LocationInfo 4 ('lineno', 'end_lineno', 'col_offset', 'end_col_offset') _remote_debugging.LocationInfo(lineno=0, end_lineno=1, col_offset=2, end_col_offset=3) (0, 1, 2, 3)
+_remote_debugging CoroInfo 2 ('call_stack', 'task_name') _remote_debugging.CoroInfo(call_stack=0, task_name=1) (0, 1)
+_remote_debugging TaskInfo 4 ('task_id', 'task_name', 'coroutine_stack', 'awaited_by') _remote_debugging.TaskInfo(task_id=0, task_name=1, coroutine_stack=2, awaited_by=3) (0, 1, 2, 3)
+_remote_debugging ThreadInfo 3 ('thread_id', 'status', 'frame_info') _remote_debugging.ThreadInfo(thread_id=0, status=1, frame_info=2) (0, 1, 2)
+_remote_debugging InterpreterInfo 2 ('interpreter_id', 'threads') _remote_debugging.InterpreterInfo(interpreter_id=0, threads=1) (0, 1)
+_remote_debugging AwaitedInfo 2 ('thread_id', 'awaited_by') _remote_debugging.AwaitedInfo(thread_id=0, awaited_by=1) (0, 1)
+_remote_debugging GCStatsInfo 10 ('gen', 'iid', 'ts_start', 'ts_stop', 'collections', 'collected', 'uncollectable', 'candidates', 'heap_size', 'duration') _remote_debugging.GCStatsInfo(gen=0, iid=1, ts_start=2, ts_stop=3, collections=4, collected=5, uncollectable=6, candidates=7, heap_size=8, duration=9) (0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
+[('THREAD_STATUS_GIL_REQUESTED', 8), ('THREAD_STATUS_HAS_EXCEPTION', 16), ('THREAD_STATUS_HAS_GIL', 1), ('THREAD_STATUS_MAIN_THREAD', 32), ('THREAD_STATUS_ON_CPU', 2), ('THREAD_STATUS_UNKNOWN', 4)]
+1
+True True []
+TypeError
+TypeError
+True

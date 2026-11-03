@@ -1,0 +1,24 @@
+status: 0
+script: d2a5be3d56728ca4
+---
+0 [('name', 'x'), ('offset', datetime.timedelta(seconds=3600))]
+1 [('name', 'x'), ('offset', datetime.timedelta(seconds=3600))]
+2 [('name', 'x'), ('offset', datetime.timedelta(seconds=3600))]
+3 [('name', 'x'), ('offset', datetime.timedelta(seconds=3600))]
+4 [('name', 'x'), ('offset', datetime.timedelta(seconds=3600))]
+5 [('name', 'x'), ('offset', datetime.timedelta(seconds=3600))]
+((<class '__main__.Zone'>,), {'name': 'x', 'offset': datetime.timedelta(seconds=3600)}, None, None)
+_reconstructor (<class '__main__.Zone'>, <class 'datetime.tzinfo'>)
+x 1:00:00
+1:00:00
+((<class '__main__.Slotted'>,), (None, {'a': 5}), None, None) 5
+((), {'a': 5}) ((), {'a': 5}) 6
+deque cannot pickle 'Sub' object
+Struct cannot pickle 'Sub' object
+count cannot pickle 'Sub' object
+BufferedRWPair cannot pickle 'Sub' object
+time cannot pickle 'Sub' object
+timedelta cannot pickle 'Sub' object
+bytearray cannot pickle 'Sub' object
+set cannot pickle 'Sub' object
+property cannot pickle 'Sub' object

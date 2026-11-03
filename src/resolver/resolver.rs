@@ -4954,13 +4954,6 @@ impl<'a> Resolver<'a> {
         let mut path_buf = ::bun_paths::path_buffer_pool::get();
         path_buf[..key.len()].copy_from_slice(key);
         let path = &path_buf[..key.len()];
-        let top_result = self.dir_cache_mut().get_or_put(path)?;
-        // A mark needs the listing of the parent only.
-        if top_result.status == allocators::ItemStatus::NotFound
-            && self.not_found_still_holds(generation, path)
-        {
-            return Ok(None);
-        }
         // The key length of each level to check, nearest first.
         let mut levels: bun_collections::smallvec::SmallVec<[u32; 32]> = Default::default();
         let mut level = path;
@@ -5016,6 +5009,7 @@ impl<'a> Resolver<'a> {
                 .dir_cache_mut()
                 .at_index(result.index)
                 .map(DirInfoRef::from_slot)),
+            // A mark is not answered before the walk above: a directory above it that is kept writes its config messages again there.
             allocators::ItemStatus::NotFound if self.not_found_still_holds(generation, path) => {
                 Ok(None)
             }
@@ -5141,7 +5135,7 @@ impl<'a> Resolver<'a> {
             let read: Option<&[u8]> = match slot.tsconfig_json() {
                 Some(tsconfig) => tsconfig.sources.first().map(|own| &own.path[..]),
                 None => (slot.rare.as_deref())
-                    .and_then(|rare| rare.unparsed_tsconfig.as_ref())
+                    .and_then(|rare| rare.unparsed_tsconfig.first())
                     .map(|own| &own.path[..]),
             };
             if let (Some(read), Some(listed)) = (read, listed)
@@ -5177,9 +5171,11 @@ impl<'a> Resolver<'a> {
         {
             return match slot.tsconfig_json() {
                 Some(tsconfig) => tsconfig.sources.iter().any(Self::config_source_changed),
-                None => rare
-                    .and_then(|rare| rare.unparsed_tsconfig.as_ref())
-                    .is_some_and(Self::config_source_changed),
+                None => rare.is_some_and(|rare| {
+                    rare.unparsed_tsconfig
+                        .iter()
+                        .any(Self::config_source_changed)
+                }),
             };
         }
         false
@@ -7478,13 +7474,13 @@ impl<'a> Resolver<'a> {
             })
     }
 
-    /// The configuration file at `tsconfigpath`, with what it inherits from those that it extends. `unparsed` gets the file with a hash of its bytes, when it gives nothing.
+    /// The configuration file at `tsconfigpath`, with what it inherits from those that it extends. When it gives nothing, `unparsed` gets each file that was read with a hash of its bytes, the one at `tsconfigpath` first.
     fn load_tsconfig(
         &mut self,
         _generation: Generation,
         tsconfigpath: &[u8],
         fd: FD,
-        unparsed: &mut Option<ConfigSource>,
+        unparsed: &mut Vec<ConfigSource>,
     ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
         let mut source_hash = None;
         let parsed_tsconfig: Option<*mut TSConfigJSON> =
@@ -7520,7 +7516,7 @@ impl<'a> Resolver<'a> {
         if let Some(tsconfig_json) = parsed_tsconfig {
             let mut sources = vec![ConfigSource::new(tsconfigpath, source_hash)];
             let mut parent_configs: BoundedArray<*mut TSConfigJSON, 64> = BoundedArray::default();
-            parent_configs.append(tsconfig_json)?;
+            parent_configs.append_assume_capacity(tsconfig_json);
             // `current`/`parent_config_ptr`/`merged_config` are heap TSConfigJSON
             // allocations from `parse_tsconfig` (heap::alloc); uniquely owned by
             // this extends-chain walk and freed via heap::take below. Hold as
@@ -7565,7 +7561,16 @@ impl<'a> Resolver<'a> {
                     }
                 };
                 if let Some(parent_config) = parent_config_maybe {
-                    parent_configs.append(parent_config)?;
+                    if let Err(too_long) = parent_configs.append(parent_config) {
+                        // A chain that goes in a circle read each of its files many times: one fact for each file.
+                        unparsed.clear();
+                        for source in sources {
+                            if !unparsed.iter().any(|read| read.path == source.path) {
+                                unparsed.push(source);
+                            }
+                        }
+                        return Err(too_long.into());
+                    }
                     current = bun_ptr::BackRef::from(
                         core::ptr::NonNull::new(parent_config).expect("heap alloc"),
                     );
@@ -7631,7 +7636,7 @@ impl<'a> Resolver<'a> {
             merged.sources = sources;
             return Ok(Some(merged));
         }
-        *unparsed = Some(ConfigSource::new(tsconfigpath, source_hash));
+        *unparsed = vec![ConfigSource::new(tsconfigpath, source_hash)];
         Ok(None)
     }
 
@@ -7659,7 +7664,7 @@ impl<'a> Resolver<'a> {
             {
                 path = joined.to_vec();
             }
-            let loaded = self.load_tsconfig(self.generation, &path, FD::INVALID, &mut None);
+            let loaded = self.load_tsconfig(self.generation, &path, FD::INVALID, &mut Vec::new());
             let loaded = loaded.ok().flatten();
             self.opts.tsconfig_override_json = Some(loaded.map(Arc::from));
         }

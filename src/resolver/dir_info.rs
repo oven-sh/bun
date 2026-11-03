@@ -217,8 +217,8 @@ pub struct DirInfo {
 pub(crate) struct RareFacts {
     /// `package.json` was listed as a file and gave no `PackageJSON`.
     pub(crate) unparsed_package_json: Option<ConfigSource>,
-    /// `tsconfig.json` or `jsconfig.json` was listed as a file and gave no `TSConfigJSON`.
-    pub(crate) unparsed_tsconfig: Option<ConfigSource>,
+    /// `tsconfig.json` or `jsconfig.json` was listed as a file and gave no `TSConfigJSON`: that file, then each other file that was read for it.
+    pub(crate) unparsed_tsconfig: Vec<ConfigSource>,
     /// A lookup that checks the slot and keeps it writes these again: the readers logged them only when they filled it.
     pub(crate) package_json_msgs: Vec<bun_ast::Msg>,
     pub(crate) tsconfig_msgs: Vec<bun_ast::Msg>,
@@ -229,7 +229,7 @@ pub(crate) struct RareFacts {
 impl RareFacts {
     pub(crate) fn is_empty(&self) -> bool {
         self.unparsed_package_json.is_none()
-            && self.unparsed_tsconfig.is_none()
+            && self.unparsed_tsconfig.is_empty()
             && self.package_json_msgs.is_empty()
             && self.tsconfig_msgs.is_empty()
             && self.package_id.is_none()

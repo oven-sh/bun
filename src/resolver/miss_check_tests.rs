@@ -762,6 +762,31 @@ fn a_config_that_does_not_parse_costs_no_slot_when_it_is_checked_again() {
 }
 
 #[test]
+fn a_tsconfig_that_extends_in_a_circle_is_read_again_once_the_circle_ends() {
+    with_project("extends-circle", |made| {
+        made.write("app/tsconfig.json", r#"{ "extends": "./base.json" }"#);
+        made.write("app/base.json", r#"{ "extends": "./tsconfig.json" }"#);
+        let dir = made.path("app");
+        // The asker that fills the slot is told that the chain has no end, and the slot stays.
+        made.resolver.generation = next_generation();
+        let filled = made.resolver.read_dir_info(&dir);
+        made.resolver.generation = 0;
+        assert!(filled.is_err());
+        let first = made.checked_info("app");
+        assert!(first.tsconfig_json().is_none());
+        let slots = DirInfo::slots_used();
+        for _ in 0..3 {
+            assert_eq!(slot(made.checked_info("app")), slot(first));
+        }
+        assert_eq!(DirInfo::slots_used(), slots);
+        // The chain ends in the file that is extended: `tsconfig.json` holds the bytes that it held.
+        made.write("app/base.json", "{}");
+        let ended = made.checked_info("app");
+        assert!(slot(ended) != slot(first) && ended.tsconfig_json().is_some());
+    });
+}
+
+#[test]
 fn a_directory_that_was_not_there_is_found_once_its_name_is_listed() {
     with_project("mark", |made| {
         made.mkdir("app");
@@ -793,6 +818,22 @@ fn a_directory_that_was_not_there_is_found_once_its_name_is_listed() {
         // The listing of `app` that this asker trusts lacks the name: the mark holds, though the directory is there now.
         assert!(made.info(own, "app/other").is_none());
         assert!(made.info(next_generation(), "app/other").is_some());
+    });
+}
+
+#[test]
+fn an_asker_that_a_mark_answers_is_told_what_a_config_above_the_mark_is_missing() {
+    with_project("mark-config", |made| {
+        made.write("app/package.json", r#"{ "name": "#);
+        // The asker that fills `app` marks the directory that is not below it.
+        assert!(made.info(next_generation(), "app/none").is_none());
+        assert_eq!(made.resolver.log_ref().errors, 1);
+        for _ in 0..3 {
+            made.resolver.log_mut().msgs.clear();
+            made.resolver.log_mut().errors = 0;
+            assert!(made.info(next_generation(), "app/none").is_none());
+            assert_eq!(made.resolver.log_ref().errors, 1);
+        }
     });
 }
 

@@ -247,6 +247,28 @@ export default b.declarations(
     writes: externalState,
     implementation: b.hostCall,
   }),
+  // It queues a task on the event loop that calls the function with the operand, in the async context of the call.
+  b.static(cpp("BunProcess.cpp", "jsFunctionQueueLoopTask"), {
+    args: { fn: b.callable, arg: b.any.optional },
+    returns: b.undefined,
+    capability: "heap",
+    uses: {
+      fn: [
+        b.retained,
+        b.called({
+          afterwards: "TouchesOnlyWhatRowNames",
+          times: "Later",
+          this: b.undefined,
+          args: [b.operand("arg")],
+          result: "Ignored",
+        }),
+      ],
+      arg: [b.retained],
+    },
+    reads: externalState,
+    writes: externalState,
+    implementation: b.hostCall,
+  }),
   b.static(cpp("JSEventTarget.cpp", "jsEventTargetGetEventListenersCount"), {
     ...operandCodeOnly,
     args: { target: b.any.optional, type: b.any.optional },

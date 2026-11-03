@@ -284,6 +284,7 @@ declare global {
       [kclosed]: boolean;
       [kended]: boolean;
       [kwriteCallback]: WriteCallback | null | undefined;
+      [kShutdownCallback]: WriteCallback | null;
       [kRejectedWrite]?: Error;
       [ksocket]: Socket | undefined;
       [kSyncWriteFd]?: number;
@@ -591,6 +592,8 @@ const doConnect: (handle: SocketHandle | null, options: NativeConnectOptions) =>
   "node_net_binding.bind.ts",
   "doConnect",
 );
+// Bound by the first end(): the loop-turn hop that completes the shutdown request.
+let queueLoopTask: ((fn: (self: $Node.Socket) => void, self: $Node.Socket) => void) | undefined;
 
 const addServerName = $bindgen("Listener.bind.ts", "addServerName") as (
   listener: ListenerHandle,
@@ -700,6 +703,8 @@ const kOnreadPendingEnd = Symbol("kOnreadPendingEnd");
 const kOnreadReadRequested = Symbol("kOnreadReadRequested");
 const kOnreadEmptyTail = Buffer.alloc(0);
 const kwriteCallback = Symbol("writeCallback");
+// The _final callback, from the shutdown in endNT until the loop turn that completes it.
+const kShutdownCallback = Symbol("kShutdownCallback");
 const kRejectedWrite = Symbol("kRejectedWrite");
 const kSocketClass = Symbol("kSocketClass");
 
@@ -794,8 +799,31 @@ function endNT(self: $Node.Socket, socket: SocketHandle | null, callback: WriteC
   // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L500
   // A TLS wrap made since _final attached this socket's handle, or left the fd to the raw half of `socket`.
   const current = self._handle;
-  (!socket || current?.[kAdoptedTLSRaw] ? current : socket)?.shutdown();
+  const handle = !socket || current?.[kAdoptedTLSRaw] ? current : socket;
+  // Destroyed since _final: node's shutdown() reports the closed handle and _final calls back at once.
+  if (!handle) return callback();
+  handle.shutdown();
+  // Node completes the shutdown request from libuv's pending phase, after this nextTick drain
+  // and its microtasks, and calls back from there (afterShutdown). Until then the socket is
+  // ended but not finished, so a write after the peer's FIN still reaches destroy(err) and
+  // emits 'error'.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L560-L566
+  self[kShutdownCallback] = callback;
+  (queueLoopTask ??= $newCppFunction("BunProcess.cpp", "jsFunctionQueueLoopTask", 2))(completeShutdownNT, self);
+}
+// Runs the parked _final callback once: from the loop task, or from _destroy() when the socket
+// closes first (libuv completes the request with ECANCELED ahead of the close callback).
+function completeShutdownNT(self: $Node.Socket) {
+  const callback = self[kShutdownCallback];
+  if (callback === null) return;
+  self[kShutdownCallback] = null;
   callback();
+}
+// The shutdown request of end() waits for its loop turn: this side sent its FIN and nothing is
+// left to write, as after 'finish'. A close that lands in that window reports nothing node's
+// stream would see (its read side stopped at EOF, and afterShutdown ignores the request's status).
+function shutdownQueued(self: $Node.Socket) {
+  return self[kShutdownCallback] !== null;
 }
 function emitCloseNT(self: $Node.Socket, hasError: boolean) {
   self.emit("close", hasError);
@@ -1051,7 +1079,7 @@ function onClientHandshake(
     // Only a chain that this client refuses goes on: it gets its X509 error below.
     if (code == null || !self._rejectUnauthorized) {
       // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1203-L1213
-      if (self.writableFinished) self.secureConnecting = false;
+      if (self.writableFinished || shutdownQueued(self)) self.secureConnecting = false;
       else onConnectEnd.$call(self);
       return;
     }
@@ -1410,7 +1438,7 @@ function SocketEmitEndNT(self: $Node.Socket, _err?: NativeSocketError) {
   // writableFinished (everything actually flushed) - NOT writableEnded (end()
   // merely called): a peer reset while queued data is still unflushed is the
   // peer aborting mid-transfer and must surface (test-net-error-twice).
-  const teardownNoise = self[kended] && self.writableFinished;
+  const teardownNoise = self[kended] && (self.writableFinished || shutdownQueued(self));
   // _hadError: the failure already reached JS through the error dispatch
   // (native on_error / a fatal write); node emits a socket error exactly
   // once, so the close that follows it is delivered plain.
@@ -1455,12 +1483,13 @@ function SocketEmitEndNT(self: $Node.Socket, _err?: NativeSocketError) {
   }
   if (!self[kended]) {
     finishSocketEnd(self);
-  } else if (_err && !self.destroyed && !(teardownNoise && !self.readableEnded)) {
+  } else if (_err && !self.destroyed && !(teardownNoise && !self.readableEnded) && !shutdownQueued(self)) {
     // An error excluded from the synthesis above (teardown noise, or no
     // listener attached): nothing more is coming, but the socket still has to
     // finish its lifecycle - close it quietly instead of leaving it open with
     // no further events. What a finished exchange left unread is still the
-    // reader's: its 'end' closes the socket.
+    // reader's: its 'end' closes the socket. A queued shutdown request closes
+    // it too: its completion emits 'finish', and the Duplex destroys after it.
     self.destroy();
   }
   // A write that was waiting on the native drain can never complete once the
@@ -2128,7 +2157,17 @@ const SocketHandlers2 = {
     // family-autoselection race and raw sockets handed off during a TLS
     // upgrade also report errors on close, and those must keep ending
     // cleanly.
-    if (!leftToTLSSocket && err && !self.destroyed && socket === self._handle && self.listenerCount("error") > 0) {
+    // After the peer's FIN (kended) the destroy followed end() at once before the shutdown request
+    // waited for its loop turn; a reset that lands in that window is teardown noise, as in SocketEmitEndNT.
+    const teardownNoise = self[kended] && shutdownQueued(self);
+    if (
+      !leftToTLSSocket &&
+      err &&
+      !self.destroyed &&
+      !teardownNoise &&
+      socket === self._handle &&
+      self.listenerCount("error") > 0
+    ) {
       // See SocketEmitEndNT.
       if (self.emit(kReadError, err)) return void self.destroy();
       // Same late-detach guard as SocketEmitEndNT: the listener seen at
@@ -2385,6 +2424,7 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
   this[kBytesWritten] = undefined;
   this[kclosed] = false;
   this[kended] = false;
+  this[kShutdownCallback] = null;
   this.connecting = false;
   this._host = undefined;
   this._port = undefined;
@@ -2862,6 +2902,10 @@ Socket.prototype._destroy = function _destroy(this: $Node.Socket, err: Error | n
 
   this.connecting = false;
   const upgraded = this[kupgraded];
+  // A shutdown request still queued completes now, as libuv cancels it ahead of the close.
+  // The destroyed stream emits no 'finish' for it, and a connect() that reuses this socket
+  // cannot receive it later.
+  completeShutdownNT(this);
 
   // Close an fd adopted for synchronous writes (node closes the wrapping
   // libuv handle here). Leave stdio fds 0-2 open: process.stdout/stderr and

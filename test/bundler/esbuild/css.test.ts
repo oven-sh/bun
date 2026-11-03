@@ -184,8 +184,8 @@ describe("bundler", () => {
       },
       out: `.m{color:green}.l{color:#00f}@unknown foo;.k{color:red}`,
     },
-    // In the next two cases the "@layer" statement prints after the inlined
-    // file. esbuild prints a "@layer" statement that precedes an "@import" first.
+    // A "@layer" statement ahead of the first "@import" prints once, ahead of
+    // the inlined file. A "@layer" statement after it stays in the importer.
     LayerThenUnknown: {
       files: {
         "/entry.css": /* css */ `
@@ -196,7 +196,7 @@ describe("bundler", () => {
         `,
         "/local.css": `.l { color: blue }`,
       },
-      out: `.l{color:#00f}@layer a,b;@unknown x;.k{color:red}`,
+      out: `@layer a,b;.l{color:#00f}@unknown x;.k{color:red}`,
     },
     UnknownThenLayer: {
       files: {
@@ -208,7 +208,21 @@ describe("bundler", () => {
         `,
         "/local.css": `.l { color: blue }`,
       },
-      out: `.l{color:#00f}@unknown x;@layer a,b;.k{color:red}`,
+      out: `@layer a,b;.l{color:#00f}@unknown x;.k{color:red}`,
+    },
+    LayersAroundUnknownAndImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer a;
+          @unknown x;
+          @layer b;
+          @import "./local.css";
+          @layer c;
+          .k { color: red }
+        `,
+        "/local.css": `.l { color: blue }`,
+      },
+      out: `@layer a,b;.l{color:#00f}@unknown x;@layer c;.k{color:red}`,
     },
     // A url() in the prelude of an unknown at-rule has an import record of its own.
     UnknownWithURL: {
@@ -526,10 +540,10 @@ describe("bundler", () => {
     },
   });
 
-  // Without bundling nothing inlines the file, so the "@import" rule stays.
+  // Without bundling nothing inlines the file, so each rule prints where the source has it.
   test("css @import after an unknown at-rule prints with --no-bundle", async () => {
     using dir = tempDir("css-import-after-unknown-no-bundle", {
-      "entry.css": `@tailwind base;\n@import "./local.css";\n.k { color: red }\n`,
+      "entry.css": `@layer a;\n@tailwind base;\n@import "./local.css";\n@layer b;\n.k { color: red }\n`,
       "local.css": `.l { color: blue }\n`,
     });
     await using proc = Bun.spawn({
@@ -545,7 +559,7 @@ describe("bundler", () => {
       log: stderr.split("\n").filter(line => /^(warn|error):/.test(line)),
       exitCode,
     }).toEqual({
-      stdout: `@tailwind base;@import "./local.css";.k{color:red}`,
+      stdout: `@layer a;@tailwind base;@import "./local.css";@layer b;.k{color:red}`,
       log: ["warn: invalid @ rule encountered: '@tailwind'"],
       exitCode: 0,
     });

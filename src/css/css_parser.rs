@@ -664,7 +664,14 @@ pub trait CustomAtRuleParser {
     ) -> CssResult<Self::AtRule>;
 
     /// Returns true when the rule got an import record and belongs in [`StyleSheet::imports`].
-    fn on_import_rule(this: &mut Self, import_rule: &mut ImportRule, start: u32, end: u32) -> bool;
+    /// `rules` is the top-level rule list so far.
+    fn on_import_rule(
+        this: &mut Self,
+        import_rule: &mut ImportRule,
+        rules: &mut CssRuleList<Self::AtRule>,
+        start: u32,
+        end: u32,
+    ) -> bool;
     fn on_layer_rule(this: &mut Self, layers: &SmallList<LayerName, 1>);
     fn enclosing_layer_length(this: &mut Self) -> u32;
     fn push_to_enclosing_layer(this: &mut Self, name: LayerName);
@@ -775,6 +782,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
     fn on_import_rule(
         this: &mut Self,
         import_rule: &mut ImportRule,
+        rules: &mut CssRuleList<Self::AtRule>,
         start_position: u32,
         end_position: u32,
     ) -> bool {
@@ -783,6 +791,10 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         }
         if this.layers_pre_import.is_none() {
             this.layers_pre_import = Some(core::mem::take(&mut this.layer_names));
+            // The bundler prints the statements so far from `layers_pre_import`.
+            rules
+                .v
+                .retain(|rule| !matches!(rule, CssRule::LayerStatement(_)));
         }
         // SAFETY: `import_records` shares raw-pointer provenance with
         // `Parser.import_records` (see field doc / `parse_bundler`). This hook
@@ -1336,6 +1348,7 @@ mod rule_parsers {
                     if AtRuleParserT::on_import_rule(
                         this.at_rule_parser,
                         &mut import_rule,
+                        this.rules,
                         u32::try_from(start.position).expect("int cast"),
                         u32::try_from(start.position + 1).expect("int cast"),
                     ) {
@@ -2364,7 +2377,8 @@ pub struct StyleSheet<AtRule> {
     /// [`ParserOptions::flags`] of the parse.
     pub flags: ParserFlags,
     pub layer_names: Vec<LayerName>,
-    /// The `@layer` statements ahead of the first `@import`. These names are not in `layer_names`.
+    /// The `@layer` statements ahead of the first `@import`. These names are not in `layer_names`,
+    /// and the statements are not in `rules`.
     pub layers_pre_import: Vec<LayerName>,
 
     /// Used when css modules is enabled. Maps `local name string` -> `Ref`.

@@ -2,8 +2,12 @@ import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import { release } from "node:os";
 import { join } from "node:path";
 import { WriteStream } from "node:tty";
+
+// Windows build number ("10.0.17763" is Server 2019, "10.0.26100" is 11 24H2).
+const windowsBuild = isWindows ? Number(release().split(".")[2]) : 0;
 
 /** Runs `script` on a console of its own until what it has printed, without line ends, matches `until`. */
 async function runOnConsole(
@@ -19,7 +23,8 @@ async function runOnConsole(
     ...size,
     data(terminal, chunk: Uint8Array) {
       buffer += decoder.decode(chunk, { stream: true });
-      const text = Bun.stripANSI(buffer).replace(/[\r\n]/g, "");
+      // An older console host draws a blank where the cursor is and steps back over it.
+      const text = Bun.stripANSI(buffer).replace(/[\r\n]| \x08/g, "");
       onText?.(text, terminal);
       const match = text.match(until);
       if (match) result.resolve(match);
@@ -595,17 +600,24 @@ describe.skipIf(!isWindows)("process.stdin on a console that reads lines", () =>
       setImmediate(() => process.stdout.write("HOST " + (host[0] & ~3n) + ";"));
     `;
     let output = "";
+    let ended = false;
     await using terminal = new Bun.Terminal({
       data(_, chunk: Uint8Array) {
-        if (output.includes(";")) return;
+        if (ended) return;
         output += Buffer.from(chunk).toString("latin1");
         const host = output.match(/HOST (\d+);/);
-        if (host) process.kill(Number(host[1]));
+        if (!host) return;
+        ended = true;
+        process.kill(Number(host[1]));
       },
     });
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, cwd: String(dir), terminal });
-    expect(await proc.exited).toBe(0);
+    // Ends a child that does not notice while the test can still report what it said.
+    const watchdog = setTimeout(() => proc.kill(), 20_000);
+    const exitCode = await proc.exited;
+    clearTimeout(watchdog);
     expect(fs.readFileSync(join(String(dir), "said.txt"), "utf8")).toBe("EPIPE\nclose\n");
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -869,9 +881,12 @@ describe("WriteStream.prototype", () => {
     expect(written).toBe("stream0;sync0;stream1;sync1;stream2;sync2;");
   });
 
-  test.skipIf(!isWindows)("a console gets a character whole that is written in pieces", async () => {
-    const [, ...seen] = await runOnConsole(
-      `
+  // The console host of Server 2019 passes a surrogate pair on to the terminal doubled or as U+FFFD.
+  test.skipIf(!isWindows).todoIf(windowsBuild < 20348)(
+    "a console gets a character whole that is written in pieces",
+    async () => {
+      const [, ...seen] = await runOnConsole(
+        `
         const fs = require("node:fs");
         const burger = Buffer.from("\u{1f354}");
         const write = bytes => new Promise(resolve => process.stdout.write(bytes, resolve));
@@ -891,18 +906,19 @@ describe("WriteStream.prototype", () => {
         await write(Buffer.concat([burger.subarray(0, 3), Buffer.from("z")]));
         await write("]END");
       `,
-      /A\[(.*)\]B\[(.*)\]C\[(.*)\]D\[(.*)\]E\[(.*)\]F\[(.*)\]END/,
-      { cols: 1000 },
-    );
-    expect(seen).toEqual([
-      "\u{1f354}",
-      "x\u{1f354}y",
-      "\u{1f354}",
-      Buffer.alloc(8190, "a").toString() + "\u{1f354}b",
-      "\ufffdz",
-      "\ufffdz",
-    ]);
-  });
+        /A\[(.*)\]B\[(.*)\]C\[(.*)\]D\[(.*)\]E\[(.*)\]F\[(.*)\]END/,
+        { cols: 1000 },
+      );
+      expect(seen).toEqual([
+        "\u{1f354}",
+        "x\u{1f354}y",
+        "\u{1f354}",
+        Buffer.alloc(8190, "a").toString() + "\u{1f354}b",
+        "\ufffdz",
+        "\ufffdz",
+      ]);
+    },
+  );
 
   test.skipIf(!isWindows)("a console has a size, whichever descriptor it is", async () => {
     const [, sizes] = await runOnConsole(

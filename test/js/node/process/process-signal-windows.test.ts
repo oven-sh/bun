@@ -4,9 +4,11 @@
 //   CTRL_CLOSE_EVENT → SIGHUP
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { bunEnv, bunExe, isWindows } from "harness";
+import { release } from "node:os";
+
+// Windows build number ("10.0.17763" is Server 2019, "10.0.26100" is 11 24H2).
+const windowsBuild = isWindows ? Number(release().split(".")[2]) : 0;
 
 // process.kill(pid, name) looks `name` up where process.on(name, fn) does.
 test.skipIf(!isWindows)("SIGHUP and SIGBREAK are recognised as signal names on Windows", async () => {
@@ -49,42 +51,39 @@ test.skipIf(!isWindows)("SIGHUP and SIGBREAK are recognised as signal names on W
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(!isWindows)("Ctrl+Break is SIGBREAK and the end of the console is SIGHUP", async () => {
-  using dir = tempDir("process-signal-windows", {});
+test.skipIf(!isWindows)("Ctrl+Break is SIGBREAK", async () => {
   const script = `
-    const fs = require("node:fs");
-    const say = line => fs.appendFileSync("said.txt", line + "\\n");
-    process.on("SIGBREAK", signal => {
-      say(signal);
-      process.stdout.write("BROKE;");
-    });
-    process.on("SIGHUP", signal => {
-      say(signal);
-      process.exit(9);
-    });
+    process.on("SIGBREAK", signal => process.exit(signal === "SIGBREAK" ? 9 : 1));
     setInterval(() => {}, 1 << 30);
     const CTRL_BREAK_EVENT = 1;
     require("bun:ffi")
       .dlopen("kernel32.dll", { GenerateConsoleCtrlEvent: { args: ["u32", "u32"], returns: "i32" } })
       .symbols.GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, 0);
   `;
-  const broke = Promise.withResolvers<void>();
+  await using terminal = new Bun.Terminal({ data() {} });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, terminal });
+  expect(await proc.exited).toBe(9);
+});
+
+// On Server 2019 a process hears nothing when the pseudoconsole it runs on is closed.
+test.skipIf(!isWindows).todoIf(windowsBuild < 20348)("the end of the console is SIGHUP", async () => {
+  const script = `
+    process.on("SIGHUP", signal => process.exit(signal === "SIGHUP" ? 9 : 1));
+    setInterval(() => {}, 1 << 30);
+    process.stdout.write("READY;");
+  `;
+  const ready = Promise.withResolvers<void>();
   let output = "";
   await using terminal = new Bun.Terminal({
     data(_, chunk: Uint8Array) {
       output += Buffer.from(chunk).toString("latin1");
-      if (output.includes("BROKE;")) broke.resolve();
+      if (output.includes("READY;")) ready.resolve();
     },
   });
-  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, cwd: String(dir), terminal });
-  proc.exited.then(code => broke.reject(new Error(`exited with code ${code}: ${JSON.stringify(output)}`)));
-  // Ends a child that a signal does not reach while the test can still report how far it got.
-  const watchdog = setTimeout(() => proc.kill(), 20_000);
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, terminal });
+  proc.exited.then(code => ready.reject(new Error(`exited with code ${code}: ${JSON.stringify(output)}`)));
 
-  await broke.promise;
+  await ready.promise;
   terminal.close();
-  const exitCode = await proc.exited;
-  clearTimeout(watchdog);
-  expect(readFileSync(join(String(dir), "said.txt"), "utf8")).toBe("SIGBREAK\nSIGHUP\n");
-  expect(exitCode).toBe(9);
+  expect(await proc.exited).toBe(9);
 });

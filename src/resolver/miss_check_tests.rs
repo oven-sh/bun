@@ -1,9 +1,12 @@
-//! The check after a miss (`Resolver::bust_touched_dirs`), with records built by hand and no second thread.
+//! What an asker of the directory caches trusts, and what a lookup does after a miss.
 
 #![allow(clippy::disallowed_methods)]
 
 use super::*;
+use ::bun_core::next_generation;
+use core::sync::atomic::Ordering;
 use std::os::unix::ffi::OsStrExt as _;
+use std::time::{Duration, Instant};
 
 /// `bun_install` defines it for Bun. No `package.json` of these tests has dependencies.
 #[unsafe(no_mangle)]
@@ -15,6 +18,38 @@ fn __bun_resolver_parse_dependency(
     _log: Option<&mut bun_ast::Log>,
 ) -> Option<Dependency::Version> {
     None
+}
+
+/// `bun_install` defines it for Bun. No lookup of these tests installs a package.
+#[unsafe(no_mangle)]
+fn __bun_resolver_init_package_manager(
+    _log: NonNull<bun_ast::Log>,
+    _install: Option<NonNull<bun_options_types::schema::api::BunInstall>>,
+    _env: NonNull<bun_dotenv::Loader>,
+    _prefer_offline: bool,
+    _importer_dir: &[u8],
+) -> crate::CrateResult<NonNull<dyn AutoInstaller>> {
+    Err(crate::Error::ModuleNotFound)
+}
+
+/// How many times the names of a listing were read again in place.
+fn version_of(entries: &Fs::file_system::DirEntry) -> u64 {
+    u64::from(entries.version)
+}
+
+/// The generation that a slot was filled at, or last checked at.
+fn stamp_of(info: DirInfoRef) -> Generation {
+    info.stamp.load(Ordering::Relaxed)
+}
+
+fn is_link(entry: &Fs::file_system::Entry) -> bool {
+    entry.is_link.load(Ordering::Relaxed)
+}
+
+/// Lookups run again, new listings and refills of the process so far.
+fn counters() -> (usize, usize, usize) {
+    let now = test_hooks::counters();
+    (now.lookups_run_again, now.new_listings, now.refills)
 }
 
 fn options() -> options::BundleOptions {
@@ -72,199 +107,11 @@ fn resolver() -> Resolver<'static> {
     Resolver::init1(log, file_system, options())
 }
 
-/// A new directory with `below` in it. Removed when the test ends.
-struct Directories {
-    top: Vec<u8>,
-    below: Vec<u8>,
-}
-
-impl Drop for Directories {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(std::ffi::OsStr::from_bytes(&self.top));
-    }
-}
-
-fn directories(name: &str, child: &str) -> Directories {
-    let unique_name = format!("bun-resolver-miss-check-{}-{name}", std::process::id());
-    let top = std::env::temp_dir().join(unique_name);
-    let _ = std::fs::remove_dir_all(&top);
-    std::fs::create_dir_all(top.join(child)).expect("directories");
-    let top = top.canonicalize().expect("directory");
-    let below = top.join(child);
-    Directories {
-        top: top.as_os_str().as_bytes().to_vec(),
-        below: below.as_os_str().as_bytes().to_vec(),
-    }
-}
-
 fn read(resolver: &mut Resolver<'_>, dir: &[u8]) -> DirInfoRef {
     resolver
         .read_dir_info(dir)
         .expect("readable")
         .expect("a directory")
-}
-
-fn touched(slot: DirInfoRef, uses: &[SlotUse]) -> TouchedDirs {
-    let mut touched = TouchedDirs::new();
-    for &slot_use in uses {
-        touched.push_slot(slot_use, slot);
-    }
-    touched
-}
-
-fn mapped(resolver: &mut Resolver<'_>, dir: &[u8]) -> Option<*const DirInfo::DirInfo> {
-    resolver.cached_dir_info(dir).map(DirInfoRef::as_ptr)
-}
-
-#[test]
-fn a_miss_that_read_the_mapped_slot_is_current() {
-    let mut resolver = resolver();
-    let made = directories("current", "src");
-    let dir = made.below.clone();
-    let slot = read(&mut resolver, &dir);
-    let touched = touched(slot, &[SlotUse::Read, SlotUse::SearchLevel]);
-    let mut reread = Vec::new();
-    assert!(!resolver.bust_touched_dirs(&touched, Some(&dir[..]), &mut reread));
-    assert_eq!(mapped(&mut resolver, &dir), Some(slot.as_ptr()));
-    assert!(reread.is_empty());
-}
-
-#[test]
-fn a_miss_that_read_a_dropped_slot_is_looked_up_again() {
-    let mut resolver = resolver();
-    let made = directories("dropped", "src");
-    let dir = made.below.clone();
-    let slot = read(&mut resolver, &dir);
-    assert!(resolver.bust_dir_cache(&dir));
-    let mut reread = Vec::new();
-    for floor in [None, Some(&dir[..])] {
-        let touched = touched(slot, &[SlotUse::Read]);
-        assert!(resolver.bust_touched_dirs(&touched, floor, &mut reread));
-    }
-    assert_eq!(mapped(&mut resolver, &dir), None);
-    assert!(reread.is_empty());
-}
-
-#[test]
-fn a_miss_that_read_a_replaced_slot_is_looked_up_again_and_the_new_slot_stays() {
-    let mut resolver = resolver();
-    let made = directories("replaced", "src");
-    let dir = made.below.clone();
-    let old = read(&mut resolver, &dir);
-    assert!(resolver.bust_dir_cache(&dir));
-    let new = read(&mut resolver, &dir);
-    assert_ne!(old.as_ptr(), new.as_ptr());
-    let mut reread = Vec::new();
-    let uses = [
-        SlotUse::Read,
-        SlotUse::SearchLevel,
-        SlotUse::NoNodeModules,
-        SlotUse::UnparsedPackageJson,
-    ];
-    for slot_use in uses {
-        for floor in [None, Some(&dir[..])] {
-            let touched = touched(old, &[slot_use]);
-            assert!(resolver.bust_touched_dirs(&touched, floor, &mut reread));
-            assert_eq!(mapped(&mut resolver, &dir), Some(new.as_ptr()));
-        }
-    }
-    assert!(reread.is_empty());
-}
-
-#[test]
-fn a_stale_slot_is_dropped_only_while_it_is_the_mapped_one() {
-    let mut resolver = resolver();
-    let made = directories("compare", "src");
-    let dir = made.below.clone();
-    let old = read(&mut resolver, &dir);
-    assert!(resolver.bust_dir_cache(&dir));
-    let new = read(&mut resolver, &dir);
-    let verdict = |slot| Verdict {
-        stale: false,
-        new_dirs: Vec::new(),
-        stale_listings: Vec::new(),
-        stale_slots: vec![(&dir[..], slot)],
-    };
-    let mut reread = Vec::new();
-    assert!(resolver.drop_stale_dirs(verdict(old), &[], &mut reread));
-    assert_eq!(mapped(&mut resolver, &dir), Some(new.as_ptr()));
-    assert!(reread.is_empty());
-    assert!(!resolver.dir_cache_mut().remove_if(&dir, old.as_ptr()));
-
-    assert!(resolver.drop_stale_dirs(verdict(new), &[], &mut reread));
-    assert_eq!(mapped(&mut resolver, &dir), None);
-    assert_eq!(reread, [bun_wyhash::hash(&dir)]);
-}
-
-#[test]
-fn a_directory_that_this_lookup_dropped_before_is_not_dropped_again() {
-    let mut resolver = resolver();
-    let made = directories("reread", "src");
-    let dir = made.below.clone();
-    let slot = read(&mut resolver, &dir);
-    let key = bun_wyhash::hash(&dir);
-    let mut reread = vec![key];
-    // It exists, and the replay found it out of the cache: another thread dropped it.
-    let verdict = Verdict {
-        stale: false,
-        new_dirs: vec![&dir[..]],
-        stale_listings: Vec::new(),
-        stale_slots: Vec::new(),
-    };
-    assert!(resolver.drop_stale_dirs(verdict, &[], &mut reread));
-    // Its listing differs from the disk: this lookup read it after its own drop.
-    let verdict = Verdict {
-        stale: false,
-        new_dirs: Vec::new(),
-        stale_listings: vec![&dir[..]],
-        stale_slots: Vec::new(),
-    };
-    assert!(!resolver.drop_stale_dirs(verdict, &[], &mut reread));
-    assert_eq!(mapped(&mut resolver, &dir), Some(slot.as_ptr()));
-    assert_eq!(reread, [key]);
-}
-
-#[test]
-fn directories_below_a_replaced_one_are_linked_again_in_one_check() {
-    let mut resolver = resolver();
-    let made = directories("relink", "a/b/c");
-    let (top, deepest) = (made.top.clone(), made.below.clone());
-    let slot = read(&mut resolver, &deepest);
-    let mut chain = vec![slot];
-    while chain.last().unwrap().abs_path.len() > top.len() + 1 {
-        chain.push(chain.last().unwrap().get_parent().expect("a parent"));
-    }
-    let top_slot = *chain.last().unwrap();
-    assert_eq!(
-        strings::without_trailing_slash_windows_path(top_slot.abs_path),
-        &top[..]
-    );
-    assert!(resolver.bust_dir_cache(&top));
-    let new_top = read(&mut resolver, &top);
-
-    // The walk read every level, the top one through the link of the level below it.
-    let mut touched = TouchedDirs::new();
-    for &level in &chain {
-        touched.push_slot(SlotUse::SearchLevel, level);
-    }
-    let mut reread = Vec::new();
-    assert!(resolver.bust_touched_dirs(&touched, None, &mut reread));
-    assert_eq!(mapped(&mut resolver, &top), Some(new_top.as_ptr()));
-    for level in &chain[..chain.len() - 1] {
-        let dir = strings::without_trailing_slash_windows_path(level.abs_path);
-        assert_eq!(mapped(&mut resolver, dir), None);
-    }
-    assert!(reread.is_empty());
-
-    // Read again, the chain ends at the new slot, and the next check finds nothing.
-    let slot = read(&mut resolver, &deepest);
-    let mut touched = TouchedDirs::new();
-    let mut level = Some(slot);
-    while let Some(read) = level.filter(|read| read.abs_path.len() > top.len()) {
-        touched.push_slot(SlotUse::SearchLevel, read);
-        level = read.get_parent();
-    }
-    assert!(!resolver.bust_touched_dirs(&touched, None, &mut reread));
 }
 
 #[test]

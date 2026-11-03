@@ -245,11 +245,7 @@ impl Entry {
                 self.need_stat.store(false, Ordering::Release);
             }
         }
-        let kind = self.cache().kind;
-        if crate::resolver::replaying() {
-            crate::resolver::record_entry_kind(self.dir, self.base(), kind);
-        }
-        kind
+        self.cache().kind
     }
 
     /// See [`Entry::kind`].
@@ -631,11 +627,7 @@ impl DirEntry {
         let mut scratch_lookup_buffer = bun_paths::path_buffer_pool::get();
 
         let query = strings::copy_lowercase_if_needed(query_, &mut scratch_lookup_buffer[..]);
-        let Some(&result_ptr) = self.data.get(query) else {
-            // Recorded only by the replay after a miss; see `Resolver::recheck_after_miss`.
-            crate::resolver::record_missing_entry(self.dir, query_);
-            return None;
-        };
+        let &result_ptr = self.data.get(query)?;
         Some(EntryLookup {
             entry: result_ptr,
             _marker: core::marker::PhantomData,

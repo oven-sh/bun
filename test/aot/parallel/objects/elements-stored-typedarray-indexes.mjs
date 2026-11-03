@@ -86,7 +86,7 @@ show("sealed, without elements", () => {
   return listKeys(sealed);
 });
 /* Output:
-sealed, an index past the end ["9","a"]
+sealed, an index past the end throws TypeError
 sealed, its own index ["9","a"]2.5
 sealed, a name throws TypeError
 store number 0 ["0"]

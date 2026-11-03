@@ -1,6 +1,6 @@
 // A module without a memory calls through its table with six arguments: a function of its own instance, and one of another instance.
 /// <reference path="../wasm-files.d.ts" />
-// Env: BUN_JSC_crashIfInterpreterIsUsed=1
+// Env of the executable: BUN_JSC_crashIfInterpreterIsUsed=1
 import modulePath from "./module.wasm";
 
 function outcomeOf(run: () => unknown): string {

@@ -567,6 +567,18 @@ describe("node-fetch fetch() subscribes to a stream body inside the call", () =>
     expect(seen.join("")).toBe("hello worldhello world");
   });
 
+  // The native fetch rejects a Request whose body stream was used by an earlier fetch() the same way.
+  test("a second fetch() of a Request with a stream body rejects", async () => {
+    using server = serveRequestBody();
+    const body = new stream.Readable({ read() {} });
+    const request = new Request(server.url, { method: "POST", body });
+    const first = fetch2(request);
+    body.push("hello world");
+    body.push(null);
+    expect(await (await first).text()).toBe("hello world");
+    expect(await fetch2(request).catch(e => e.message)).toBe("Body object should not be disturbed or locked");
+  });
+
   test("a setEncoding() body sends its bytes", async () => {
     using server = serveRequestBody();
     const body = new stream.Readable({ read() {} });
@@ -702,7 +714,8 @@ describe("node-fetch fetch() subscribes to a stream body inside the call", () =>
 
   test("the bytes read before the connection is ready stay within the high water mark", async () => {
     // A server that accepts but never answers the TLS handshake: the request never pulls its body.
-    const server = net.createServer(socket => socket.on("error", () => {}));
+    const sockets = [];
+    const server = net.createServer(socket => sockets.push(socket.on("error", () => {})));
     await once(server.listen(0, "127.0.0.1"), "listening");
     try {
       let reads = 0;
@@ -725,7 +738,9 @@ describe("node-fetch fetch() subscribes to a stream body inside the call", () =>
       expect(body.readableLength).toBe(body.readableHighWaterMark);
       expect(body.isPaused()).toBe(true);
     } finally {
+      for (const socket of sockets) socket.destroy();
       server.close();
+      await once(server, "close");
     }
   });
 });

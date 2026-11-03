@@ -33,6 +33,7 @@ const File: typeof globalThis.File = bindings[5];
 const nativeFetch = Bun.fetch;
 const JSONParse = JSON.parse;
 const StringPrototypeToUpperCase = String.prototype.toUpperCase;
+const BufferByteLength = Buffer.byteLength;
 
 // node-fetch extends from URLSearchParams in their implementation...
 // https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/headers.js#L44
@@ -83,7 +84,7 @@ function readableFromOldStyleStream(source: $Node.Stream) {
 
 // A setEncoding() source emits strings, which the default ByteLengthQueuingStrategy cannot size.
 function chunkByteLength(chunk: string | ArrayBufferView) {
-  return typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.byteLength;
+  return typeof chunk === "string" ? BufferByteLength(chunk) : chunk.byteLength;
 }
 
 function isNodeStream(body): body is $Node.Stream | $Node.Readable {
@@ -165,7 +166,8 @@ class Response extends WebResponse {
 var ResponsePrototype = Response.prototype;
 
 const kUrl = Symbol("kUrl");
-// The Node stream given as the body of a Request. fetch(request) subscribes to it, as node-fetch does.
+// The Node stream given as the body of a Request. fetch(request) subscribes to it, as node-fetch does, and
+// leaves null behind: the body is used.
 const kNodeBody = Symbol("kNodeBody");
 const ObjectHasOwn = Object.hasOwn;
 
@@ -182,7 +184,7 @@ function tlsFromAgent(agent, url) {
 
 class Request extends WebRequest {
   [kUrl]?: string;
-  [kNodeBody]?: $Node.Stream | $Node.Readable;
+  [kNodeBody]?: $Node.Stream | $Node.Readable | null;
 
   constructor(input, init) {
     // node-fetch is relaxed with the URL, for example, it allows "/" as a valid URL.
@@ -220,12 +222,19 @@ async function fetch(
 ) {
   // node-fetch pipes a stream body inside fetch(), before a later "data" listener can drain it.
   const initBody = init?.body;
-  const body = initBody !== undefined ? initBody : $isObject(url) ? url[kNodeBody] : undefined;
+  let body = initBody;
+  if (body === undefined && $isObject(url)) {
+    body = url[kNodeBody];
+    if (body === null) throw new TypeError("Body object should not be disturbed or locked");
+  }
   if (isNodeStream(body)) {
     // The native fetch rejects a GET or HEAD request (the default) with a body, so that stream stays untouched.
     let method = init?.method ?? ($isObject(url) ? url.method : undefined);
     method = method === undefined ? "GET" : StringPrototypeToUpperCase.$call(`${method}`);
-    if (method !== "GET" && method !== "HEAD") init = { ...init, body: webStreamFromNodeStream(body) };
+    if (method !== "GET" && method !== "HEAD") {
+      init = { ...init, body: webStreamFromNodeStream(body) };
+      if (initBody === undefined) url[kNodeBody] = null;
+    }
   }
   if (init && ObjectHasOwn(init, "agent") && (init as any).agent && (init as any).tls === undefined) {
     const tls = tlsFromAgent((init as any).agent, url);

@@ -1067,7 +1067,6 @@ describe("expect()", () => {
 
       // Jest 30 and Vitest 4 print the same, but for `[Function foo]` and `[Function anonymous]`.
       // They differ on a Date (`{}` and `Date {}`) and on a TypeError (`[TypeError: boom]` and `TypeError {`).
-      // For a Proxy of a Map or Set that has no trap, they throw the TypeError of `Map.prototype.entries()`.
       test("a Proxy as the object, array, function or error that its traps present", () => {
         class Foo {
           a = 1;
@@ -1095,9 +1094,9 @@ describe("expect()", () => {
           class: printed(new Proxy(Foo, {})),
           Date: printed(new Proxy(new Date(0), {})),
           Error: printed(new Proxy(new TypeError("boom"), {})),
-          "typed array": printed(new Proxy(new Uint8Array([1, 2]), {})),
-          Map: printed(new Proxy(new Map([["k", 1]]), {})),
-          Set: printed(new Proxy(new Set([1]), {})),
+          "typed array": printed(new Proxy(new Uint8Array([1, 2]), {}))
+            .split("\n")
+            .slice(-3),
         }).toEqual({
           bigint: '{\n  "a": 1n,\n}',
           array: "[\n  1,\n  2n,\n]",
@@ -1114,11 +1113,45 @@ describe("expect()", () => {
           class: "[class Foo]",
           Date: "Date {}",
           Error: "[TypeError: boom]",
-          "typed array": 'Uint8Array {\n  "0": 1,\n  "1": 2,\n}',
-          // The entries are not printed: `entries()` of the target does not accept the Proxy.
-          Map: "Map {}",
-          Set: "Set {}",
+          "typed array": ['  "0": 1,', '  "1": 2,', "}"],
         });
+      });
+
+      // No trap gives the entries of a Map or Set, so they come from the target.
+      // Jest 30 and Vitest 4 print them for Vue's `reactive(new Map())`, whose `get` trap wraps the methods.
+      // With no such trap they throw the TypeError of `Map.prototype.entries()`.
+      test("a Proxy of a Map or Set with the entries of its target", () => {
+        /** @type {ProxyHandler<any>} */
+        const wrapsMethods = {
+          get(target, key) {
+            const value = Reflect.get(target, key);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        };
+        const itself = new Map();
+        itself.set("self", new Proxy(itself, {}));
+        expect({
+          Map: printed(new Proxy(new Map([["k", 1]]), {})),
+          Set: printed(new Proxy(new Set([1]), {})),
+          "Map that holds itself": printed(itself.get("self")),
+        }).toEqual({
+          Map: 'Map {\n  "k" => 1,\n}',
+          Set: "Set {\n  1,\n}",
+          "Map that holds itself": 'Map {\n  "self" => [Circular],\n}',
+        });
+        for (const make of [
+          () => new Map([[{ key: 1n }, new Proxy([2n], {})]]),
+          () => new Set([{ item: 1n }, new Proxy({ a: 2n }, {})]),
+          () => new Map(),
+          () => new Set(),
+          () => new WeakMap(),
+          () => new WeakSet(),
+        ]) {
+          for (const handler of [{}, wrapsMethods]) {
+            expect(printed(new Proxy(make(), handler))).toBe(printed(make()));
+            expect(printed({ inside: new Proxy(new Proxy(make(), handler), {}) })).toBe(printed({ inside: make() }));
+          }
+        }
       });
 
       test("a Proxy that has no trap like its target", () => {
@@ -1136,9 +1169,17 @@ describe("expect()", () => {
             '  "missing": undefined,\n  "nan": NaN,\n  "zero": -0,\n}',
         );
         expect(text).toBe(printed(members()));
+        class Tagged {
+          a = 1;
+          get [Symbol.toStringTag]() {
+            return "Tag";
+          }
+        }
         // `JSON.stringify()` printed what `toJSON()` returns, and left out a Map, a Set and a RegExp.
         for (const make of [
           () => ({ a: 1, toJSON: () => "from toJSON()" }),
+          () => new Tagged(),
+          () => ({ a: 1, [Symbol.toStringTag]: "Tag" }),
           () => ({ map: new Map([["k", 1]]), set: new Set([1]), regexp: /x/g, error: new Error("e") }),
           () => [undefined, () => {}, Symbol.for("item"), NaN, -0, new Date(0)],
         ]) {
@@ -1234,7 +1275,7 @@ describe("expect()", () => {
       };
 
       test("a chain of Proxies that has no end, up to the limit of the message", () => {
-        const chain = { made: 0, limit: 100, long: "x".repeat(20_000) };
+        const chain = { made: 0, limit: 100, long: Buffer.alloc(20_000, "x").toString() };
         const lines = messageOf(() => expect({ endless: endless(chain) }).toEqual({ other: 1 }));
         expect(lines[0]).toBe("expect(received).toEqual(expected)");
         expect(lines.filter(line => line.includes('"next": ')).map(line => line.slice(1).trim())).toEqual([

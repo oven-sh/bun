@@ -905,14 +905,13 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         value: JSValue,
     ) -> JsResult<()> {
         let named = self.formatter.named(value);
-        // The name of a Proxy is the class name of its target, below. These reads would run its traps.
-        if named == value && !value.js_type().is_function() {
+        if !named.js_type().is_function() {
             let mut writer = WrappedWriter::new(self.writer);
-            let name_str = value.get_name_property(global_this)?;
+            let name_str = named.get_name_property(global_this)?;
             if !name_str.is_empty() && !name_str.eq_ascii(b"Object") {
                 writer.print(format_args!("{} ", name_str));
             } else {
-                let name_str = value
+                let name_str = named
                     .get_prototype(global_this)?
                     .get_name_property(global_this)?;
                 if !name_str.is_empty() && !name_str.eq_ascii(b"Object") {
@@ -2559,9 +2558,9 @@ impl<'a> Formatter<'a> {
     ) -> JsResult<()> {
         // `Tag::get` also classifies for the replay of older versions, so the tag changes here and not there.
         if self.like_older_bun.is_none() && (result.cell == JSType::ProxyObject || result.tag == Tag::JSON) {
-            let tag = self.tag_of_unclassified(result, value, global_this);
-            if tag != result.tag {
-                return self.format::<W, ENABLE_ANSI_COLORS>(TagResult { tag, cell: result.cell }, writer, value, global_this);
+            let (retagged, printed) = self.unclassified(result, value, global_this);
+            if retagged.tag != result.tag {
+                return self.format::<W, ENABLE_ANSI_COLORS>(retagged, writer, printed, global_this);
             }
         }
         // Vitest's `maxOutputLength`. A React fiber or `window` would print hundreds of megabytes.
@@ -2684,28 +2683,32 @@ impl<'a> Formatter<'a> {
         r
     }
 
-    /// The tag for a Proxy, and for a kind that `Tag::get` leaves to `JSON.stringify()`, which throws on a cycle or a BigInt.
+    /// The tag and the value to print for a Proxy, and for a kind that `Tag::get` leaves to `JSON.stringify()`, which throws on a cycle or a BigInt.
     #[cold]
     #[inline(never)]
-    fn tag_of_unclassified(&mut self, result: TagResult, value: JSValue, global: &JSGlobalObject) -> Tag {
+    fn unclassified(&mut self, result: TagResult, value: JSValue, global: &JSGlobalObject) -> (TagResult, JSValue) {
+        let tagged = |tag| (TagResult { tag, cell: result.cell }, value);
         if result.cell == JSType::ProxyObject {
             self.same_as_older_bun = false;
             let target = target_of_proxy(value);
             return if value.is_callable() {
-                if target.is_class(global) { Tag::Class } else { Tag::Function }
+                tagged(if target.is_class(global) { Tag::Class } else { Tag::Function })
             } else {
                 match target.js_type() {
-                    JSType::Array | JSType::DerivedArray => Tag::Array,
-                    JSType::ErrorInstance => Tag::Error,
-                    _ => Tag::Object,
+                    JSType::Array | JSType::DerivedArray => tagged(Tag::Array),
+                    JSType::ErrorInstance => tagged(Tag::Error),
+                    // No trap gives the entries of a Map or Set, so its printer gets the target.
+                    cell @ (JSType::Map | JSType::WeakMap) => (TagResult { tag: Tag::Map, cell }, target),
+                    cell @ (JSType::Set | JSType::WeakSet) => (TagResult { tag: Tag::Set, cell }, target),
+                    _ => tagged(Tag::Object),
                 }
             };
         }
         if !result.cell.is_object() || matches!(result.cell, JSType::JSDate | JSType::JSAsJSONType) {
-            return Tag::JSON;
+            return (result, value);
         }
         self.same_as_older_bun = false;
-        if result.cell.is_arguments() { Tag::Array } else { Tag::Object }
+        tagged(if result.cell.is_arguments() { Tag::Array } else { Tag::Object })
     }
 
     /// The value that a header names: the target of a Proxy, so no trap runs. Older versions printed `ProxyObject`.

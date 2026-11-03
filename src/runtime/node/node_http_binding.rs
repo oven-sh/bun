@@ -35,6 +35,11 @@ pub(crate) fn set_server_max_headers_count(server: BunServer<'_>, max_headers_co
         .set_max_headers_count(max_headers_count))
 }
 
+/// `http.Server#address()`: one `getsockname()` and a new object per call, as in Node.js.
+pub(crate) fn get_server_address(cx: &mut JsScope<'_>, server: BunServer<'_>) -> JsResult<JSValue> {
+    with_server!(server, |server| server.get_address(cx))
+}
+
 pub(crate) fn set_server_custom_options<'a>(
     cx: &mut JsScope<'a>,
     server: BunServer<'a>,

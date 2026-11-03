@@ -13,53 +13,14 @@
 use core::ffi::{c_int, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 
+use crate::sockaddr_storage;
 use crate::thunk;
 use crate::thunk::OpaqueHandle;
 use crate::us_socket_t;
-use bun_core::{BoundedArray, Fd};
+use bun_core::Fd;
 use bun_ptr::ThisPtr;
 
 // ─── Forward-declared opaques (cycle-break: were `bun_uws::*`, tier > 0) ───
-/// Remote socket address as returned by uWS. The IP text is copied into
-/// inline storage at construction.
-///
-/// Canonical definition moved down from `bun_uws`.
-/// Higher tiers (`bun_uws`, `bun_runtime`) re-export this as
-/// `pub use bun_uws_sys::SocketAddress;`.
-pub struct SocketAddress {
-    ip: BoundedArray<u8, 64>,
-    pub port: i32,
-    pub is_ipv6: bool,
-}
-
-impl SocketAddress {
-    pub(crate) fn new(ip: &[u8], port: i32, is_ipv6: bool) -> SocketAddress {
-        let ip = &ip[..ip.len().min(64)];
-        SocketAddress {
-            ip: BoundedArray::from_slice(ip).expect("clamped to capacity"),
-            port,
-            is_ipv6,
-        }
-    }
-
-    pub fn ip(&self) -> &[u8] {
-        self.ip.as_slice()
-    }
-
-    pub fn is_loopback(&self) -> bool {
-        let ip = self.ip();
-        // IPv4 loopback addresses
-        if ip.starts_with(b"127.") {
-            return true;
-        }
-        // IPv6 loopback addresses
-        if ip.starts_with(b"::ffff:127.") || ip == b"::1" || ip == b"0:0:0:0:0:0:0:1" {
-            return true;
-        }
-        false
-    }
-}
-
 bun_opaque::opaque_ffi! {
     /// Opaque uWS WebSocket socket handle (forward-decl; concrete type lives in `bun_uws`).
     pub struct Socket;
@@ -410,26 +371,10 @@ impl<const SSL: bool> Response<SSL> {
         }
     }
 
-    pub fn get_remote_socket_info(&mut self) -> Option<SocketAddress> {
-        let mut ip_ptr: *const u8 = core::ptr::null();
-        let mut port: i32 = 0;
-        let mut is_ipv6: bool = false;
-        // This function will fill in the slots and return len.
-        // if len is zero it will not fill in the slots so it is ub to
-        // return the struct in that case.
-        let ip_len =
-            c::uws_res_get_remote_address_info(self.as_raw(), &mut ip_ptr, &mut port, &mut is_ipv6);
-        if ip_len > 0 {
-            Some(SocketAddress::new(
-                // SAFETY: uws populated ip_ptr/ip_len with bytes valid until the next
-                // address lookup on this thread; copied before returning.
-                unsafe { bun_core::ffi::slice(ip_ptr, ip_len) },
-                port,
-                is_ipv6,
-            ))
-        } else {
-            None
-        }
+    /// `getpeername()` of the connection. `None` for a unix socket, and when the call fails.
+    pub fn remote_sockaddr(&mut self) -> Option<sockaddr_storage> {
+        // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
+        us_socket_t::opaque_ref(self.downcast_socket()).remote_sockaddr()
     }
 
     /// Register an on-writable callback.
@@ -811,8 +756,8 @@ impl AnyResponse {
         }
     }
 
-    pub fn get_remote_socket_info(self) -> Option<SocketAddress> {
-        any_dispatch!(self, |r| r.get_remote_socket_info())
+    pub fn remote_sockaddr(self) -> Option<sockaddr_storage> {
+        any_dispatch!(self, |r| r.remote_sockaddr())
     }
 
     pub fn flush_headers(self, flush_immediately: bool) {
@@ -1324,14 +1269,6 @@ pub mod c {
     unsafe extern "C" {
         pub(crate) safe fn uws_res_mark_fixed_length_file_body(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_state(ssl: c_int, res: &uws_res) -> State;
-        // Out-params are `&mut` (non-null, valid for write); the C shim only
-        // stores into them and returns a length — no read-through precondition.
-        pub(crate) safe fn uws_res_get_remote_address_info(
-            res: &mut uws_res,
-            dest: &mut *const u8,
-            port: &mut i32,
-            is_ipv6: &mut bool,
-        ) -> usize;
         pub(crate) safe fn uws_res_uncork(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_send_corked(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_send_when_complete(ssl: i32, res: &mut uws_res);

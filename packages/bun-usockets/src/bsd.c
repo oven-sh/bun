@@ -956,6 +956,16 @@ int bsd_remote_addr(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd_addr_t *addr) {
     return 0;
 }
 
+int bsd_local_sockaddr(LIBUS_SOCKET_DESCRIPTOR fd, struct sockaddr_storage *out) {
+    socklen_t len = sizeof(*out);
+    return getsockname(fd, (struct sockaddr *) out, &len) == 0 && (out->ss_family == AF_INET || out->ss_family == AF_INET6);
+}
+
+int bsd_remote_sockaddr(LIBUS_SOCKET_DESCRIPTOR fd, struct sockaddr_storage *out) {
+    socklen_t len = sizeof(*out);
+    return getpeername(fd, (struct sockaddr *) out, &len) == 0 && (out->ss_family == AF_INET || out->ss_family == AF_INET6);
+}
+
 char *bsd_addr_get_ip(struct bsd_addr_t *addr) {
     return addr->ip;
 }

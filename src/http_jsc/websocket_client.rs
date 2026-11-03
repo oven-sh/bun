@@ -10,7 +10,6 @@
 use core::cell::{Cell, RefCell};
 use core::ffi::{c_int, c_void};
 use core::mem::size_of;
-use core::net::IpAddr;
 
 use bun_boringssl::c::OwnedSslCtx;
 use bun_collections::LinearFifo;
@@ -1400,14 +1399,6 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.poll_ref.set(poll_ref);
     }
 
-    /// In tunnel mode this is the proxy's address.
-    pub(crate) fn remote_address(&self) -> Option<(IpAddr, u16)> {
-        match self.tunnel() {
-            Some(tunnel) => tunnel.remote_address(),
-            None => remote_address_of(self.tcp.get()),
-        }
-    }
-
     /// In tunnel mode this is the socket to the proxy. `None` on the stream transport.
     pub(crate) fn us_socket(&self) -> Option<*mut bun_uws_sys::us_socket_t> {
         match self.tunnel() {
@@ -1839,34 +1830,6 @@ impl<const SSL: bool> Drop for WebSocket<SSL> {
     }
 }
 
-/// `None` for a unix socket or a closed socket.
-pub(crate) fn remote_address_of<const SSL: bool>(socket: Socket<SSL>) -> Option<(IpAddr, u16)> {
-    let mut buf = [0u8; 64];
-    let bytes = socket.remote_address(&mut buf)?;
-    let ip = <[u8; 4]>::try_from(bytes)
-        .map(IpAddr::from)
-        .or_else(|_| <[u8; 16]>::try_from(bytes).map(IpAddr::from))
-        .ok()?;
-    Some((ip, socket.remote_port()?))
-}
-
-/// FFI form of [`WebSocket::remote_address`]. Returns false and leaves the out-params untouched
-/// when there's no address.
-fn write_remote_address(
-    remote: Option<(IpAddr, u16)>,
-    address: &mut BunString,
-    port: &mut u16,
-    is_ipv6: &mut bool,
-) -> bool {
-    let Some((ip, remote_port)) = remote else {
-        return false;
-    };
-    *address = BunString::create_format(format_args!("{ip}"));
-    *port = remote_port;
-    *is_ipv6 = ip.is_ipv6();
-    true
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // exportAll()
 // ──────────────────────────────────────────────────────────────────────────
@@ -1897,15 +1860,6 @@ pub fn bun__websocketclient__set_ref(
     keep_alive: bool,
 ) {
     this.set_ref(keep_alive)
-}
-// HOST_EXPORT(Bun__WebSocketClient__remoteAddress, c)
-pub fn bun__websocketclient__remote_address(
-    this: &crate::websocket_client::WebSocketClient,
-    address: &mut bun_core::String,
-    port: &mut u16,
-    is_ipv6: &mut bool,
-) -> bool {
-    write_remote_address(this.remote_address(), address, port, is_ipv6)
 }
 // HOST_EXPORT(Bun__WebSocketClient__usSocket, c)
 pub fn bun__websocketclient__us_socket(
@@ -2040,15 +1994,6 @@ pub fn bun__websocketclienttls__set_ref(
     keep_alive: bool,
 ) {
     this.set_ref(keep_alive)
-}
-// HOST_EXPORT(Bun__WebSocketClientTLS__remoteAddress, c)
-pub fn bun__websocketclienttls__remote_address(
-    this: &crate::websocket_client::WebSocketClientTLS,
-    address: &mut bun_core::String,
-    port: &mut u16,
-    is_ipv6: &mut bool,
-) -> bool {
-    write_remote_address(this.remote_address(), address, port, is_ipv6)
 }
 // HOST_EXPORT(Bun__WebSocketClientTLS__usSocket, c)
 pub fn bun__websocketclienttls__us_socket(

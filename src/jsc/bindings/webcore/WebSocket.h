@@ -205,16 +205,9 @@ public:
     bool resume();
     bool isPaused() const { return m_paused && canPause(); }
 
-    // setRef() and remoteAddress() back the `ws` module's `_socket`.
+    // setRef() backs the `ws` module's `_socket`.
     // Sets whether the connection keeps the process alive. An unref while CONNECTING is applied once connected.
     void setRef(bool);
-    struct RemoteAddress {
-        String address;
-        uint16_t port;
-        bool isIPv6;
-    };
-    // Returns nullopt if not connected or if connected over a unix socket. Behind a proxy, this is the proxy's address.
-    std::optional<RemoteAddress> remoteAddress() const;
     // createOverStream() only. Parses bytes read from the stream. Handlers run before this returns, so the span must stay valid throughout.
     void feed(std::span<const uint8_t>);
     // createOverStream() only. The stream was closed.

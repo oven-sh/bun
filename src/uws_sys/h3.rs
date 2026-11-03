@@ -5,8 +5,8 @@
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 
-use crate::SocketAddress;
 use crate::response::{State, WriteResult};
+use crate::sockaddr_storage;
 use crate::socket_context::BunSocketContextOptions;
 use crate::thunk;
 use crate::{AnyRequest, AnyResponse};
@@ -25,19 +25,10 @@ impl ListenSocket {
     pub fn get_local_port(&mut self) -> Option<u16> {
         u16::try_from(c::uws_h3_listen_socket_port(self)).ok()
     }
-    pub fn get_local_address<'a>(&mut self, buf: &'a mut [u8]) -> Option<&'a [u8]> {
-        // SAFETY: self is a live FFI handle; buf ptr/len valid for write
-        let n = unsafe {
-            c::uws_h3_listen_socket_local_address(
-                self,
-                buf.as_mut_ptr(),
-                c_int::try_from(buf.len()).expect("int cast"),
-            )
-        };
-        if n <= 0 {
-            return None;
-        }
-        Some(&buf[..usize::try_from(n).expect("int cast")])
+    /// The address that the listener is bound to.
+    pub fn local_sockaddr(&mut self) -> Option<sockaddr_storage> {
+        let mut addr: sockaddr_storage = bun_core::ffi::zeroed();
+        (c::uws_h3_listen_socket_local_sockaddr(self, &mut addr) != 0).then_some(addr)
     }
 }
 
@@ -184,18 +175,10 @@ impl Response {
     }
     pub(crate) fn uncork(&mut self) {}
     pub(crate) fn prepare_for_sendfile(&mut self) {}
-    pub(crate) fn get_remote_socket_info(&mut self) -> Option<SocketAddress> {
-        let mut port: i32 = 0;
-        let mut is_ipv6: bool = false;
-        let mut ip_ptr: *const u8 = ptr::null();
-        let len = c::uws_h3_res_get_remote_address_info(self, &mut ip_ptr, &mut port, &mut is_ipv6);
-        if len == 0 {
-            return None;
-        }
-        // SAFETY: uws returns a pointer+len pair valid until the next address lookup
-        // on this thread; copied before returning.
-        let ip = unsafe { bun_core::ffi::slice(ip_ptr, len) };
-        Some(SocketAddress::new(ip, port, is_ipv6))
+    /// The peer of the connection. An IPv4 peer of a dual-stack socket is `AF_INET`.
+    pub(crate) fn remote_sockaddr(&mut self) -> Option<sockaddr_storage> {
+        let mut addr: sockaddr_storage = bun_core::ffi::zeroed();
+        (c::uws_h3_res_get_remote_sockaddr(self, &mut addr) != 0).then_some(addr)
     }
     pub(crate) fn force_close(&mut self) {
         c::uws_h3_res_force_close(self)
@@ -695,10 +678,9 @@ mod c {
             ud: *mut c_void,
         );
         pub(super) safe fn uws_h3_listen_socket_port(ls: &mut ListenSocket) -> i32;
-        pub(super) fn uws_h3_listen_socket_local_address(
-            ls: *mut ListenSocket,
-            buf: *mut u8,
-            len: c_int,
+        pub(super) safe fn uws_h3_listen_socket_local_sockaddr(
+            ls: &mut ListenSocket,
+            out: &mut sockaddr_storage,
         ) -> c_int;
         pub(super) safe fn uws_h3_listen_socket_close(ls: &mut ListenSocket);
 
@@ -770,14 +752,10 @@ mod c {
             ud: *mut c_void,
             cb: unsafe extern "C" fn(*mut c_void),
         );
-        // Out-params are `&mut` (non-null, valid for write); the C shim only
-        // stores into them and returns a length — no read-through precondition.
-        pub(super) safe fn uws_h3_res_get_remote_address_info(
+        pub(super) safe fn uws_h3_res_get_remote_sockaddr(
             res: &mut Response,
-            ip: &mut *const u8,
-            port: &mut i32,
-            is_ipv6: &mut bool,
-        ) -> usize;
+            out: &mut sockaddr_storage,
+        ) -> c_int;
 
         pub(super) safe fn uws_h3_req_set_yield(req: &mut Request, y: bool);
         // Out-param `out` is `&mut *const u8` (non-null, valid for write); the C

@@ -4,7 +4,7 @@ mod claims;
 
 use super::*;
 use crate::util::SharedSort;
-pub use claims::{ClaimLens, Claims, try_bind_for_format_with};
+pub use claims::{ClaimLens, Claims, TypeParents, try_bind_for_format_with};
 
 fn refill<T: Copy>(list: &mut Vec<T>, len: usize, value: T) {
     list.clear();
@@ -40,6 +40,9 @@ struct Lists<'l> {
     class_scope: &'l mut [ScopeId],
     type_scope: &'l mut [ScopeId],
     type_param_scope: &'l mut [ScopeId],
+    /// With [`Claims`] only, whose lists these are.
+    type_parent: &'l mut [PackedTypeParent],
+    type_param_parent: &'l mut [PackedTypeParent],
     /// Lint only. `Bound::expr_kinds` starts as all `NOT_REACHED`, `Bound::expr_kind_counts` as all
     /// zeros.
     expr_kinds: &'l mut [u8],
@@ -131,6 +134,8 @@ fn lists_of(b: &mut BoundBuilder) -> Lists<'_> {
         class_scope: &mut b.class_scope,
         type_scope: &mut b.type_scope,
         type_param_scope: &mut b.type_param_scope,
+        type_parent: &mut [],
+        type_param_parent: &mut [],
         expr_kinds: &mut b.expr_kinds,
         expr_kind_counts: &mut b.expr_kind_counts,
         kind_counts: &mut b.kind_counts,
@@ -181,6 +186,8 @@ fn fill<S: Storage, const LINT: bool, const CLAIMED: bool>(
         class_scope,
         type_scope,
         type_param_scope,
+        type_parent,
+        type_param_parent,
         expr_kinds,
         expr_kind_counts,
         kind_counts,
@@ -200,23 +207,35 @@ fn fill<S: Storage, const LINT: bool, const CLAIMED: bool>(
             }
         };
     }
-    // Marks the types and the type parameters that `bind` reaches from a node.
+    // Marks the types and the type parameters that `bind` reaches from a node. With `CLAIMED`, the node after the `;` is
+    // noted as their parent.
     macro_rules! ty {
         ($($ty:expr),*) => {{ $(set!(type_scope[$ty] = REACHED);)* }};
+        ($($ty:expr),*; $parent:expr) => {{
+            $(
+                set!(type_scope[$ty] = REACHED);
+                if CLAIMED {
+                    set!(type_parent[$ty] = $parent);
+                }
+            )*
+        }};
     }
     macro_rules! tys {
-        ($list:expr) => {
+        ($list:expr $(; $parent:expr)?) => {
             for ty in f.ids($list) {
-                set!(type_scope[ty] = REACHED);
+                ty!(ty $(; $parent)?);
             }
         };
     }
     macro_rules! type_params {
-        ($params:expr) => {
+        ($params:expr; $parent:expr) => {
             for p in $params.iter() {
                 set!(type_param_scope[p] = REACHED);
+                if CLAIMED {
+                    set!(type_param_parent[p] = $parent);
+                }
                 if let Some(param) = f.type_params.get(p.idx()) {
-                    ty!(param.constraint, param.default);
+                    ty!(param.constraint, param.default; TypeParent::TypeParam(p));
                 }
             }
         };
@@ -418,7 +437,7 @@ fn fill<S: Storage, const LINT: bool, const CLAIMED: bool>(
             }
             TypeNodeKind::Mapped(mapped) => {
                 if let Some(mapped) = f.mapped.get(mapped.idx()) {
-                    type_params!(Span::<TypeParamId>::new(mapped.param.0, 1));
+                    type_params!(Span::<TypeParamId>::new(mapped.param.0, 1); TypeParent::Type(id));
                     ty!(mapped.name_ty, mapped.ty);
                     for m in mapped.members.iter() {
                         set!(member_owner[m] = MemberOwner::TypeLiteral(id));
@@ -473,13 +492,13 @@ fn fill<S: Storage, const LINT: bool, const CLAIMED: bool>(
         }
     }
     for alias in f.aliases.iter() {
-        type_params!(alias.type_params);
-        ty!(alias.ty);
+        type_params!(alias.type_params; TypeParent::Stmt(alias.stmt));
+        ty!(alias.ty; TypeParent::Stmt(alias.stmt));
     }
     for (i, interface) in f.interfaces.iter().enumerate() {
-        type_params!(interface.type_params);
-        tys!(interface.extends);
-        tys!(interface.other_heritage);
+        type_params!(interface.type_params; TypeParent::Stmt(interface.stmt));
+        tys!(interface.extends; TypeParent::Stmt(interface.stmt));
+        tys!(interface.other_heritage; TypeParent::Stmt(interface.stmt));
         for m in interface.members.iter() {
             set!(member_owner[m] = MemberOwner::Interface(InterfaceId(i as u32)));
         }
@@ -491,10 +510,10 @@ fn fill<S: Storage, const LINT: bool, const CLAIMED: bool>(
         for other in f.ids(class.other_extends) {
             set!(expr_parent[other] = Parent::ClassExtends(id));
         }
-        type_params!(class.type_params);
-        tys!(class.extends_args);
-        tys!(class.implements);
-        tys!(class.other_implements);
+        type_params!(class.type_params; TypeParent::Class(id));
+        tys!(class.extends_args; TypeParent::Class(id));
+        tys!(class.implements; TypeParent::Class(id));
+        tys!(class.other_implements; TypeParent::Class(id));
         for m in class.members.iter() {
             set!(member_owner[m] = MemberOwner::Class(id));
         }
@@ -509,7 +528,11 @@ fn fill<S: Storage, const LINT: bool, const CLAIMED: bool>(
         }
         set!(fns[member.func].owner = FnOwner::Member(id));
         set!(expr_parent[member.init] = Parent::MemberInit(id));
-        ty!(member.ty);
+        // The type of a method is the return type of its function.
+        match member.func.is_none() {
+            true => ty!(member.ty; TypeParent::Member(id)),
+            false => ty!(member.ty),
+        }
     }
     for &(id, modifiers) in f.modifiers_of_stmts.iter() {
         if !matches!(f.stmts.get(id.idx()), Some(s) if matches!(s.kind, StmtKind::Class(_))) {
@@ -642,8 +665,9 @@ fn fill<S: Storage, const LINT: bool, const CLAIMED: bool>(
     for (i, func) in f.fns.iter().enumerate() {
         let id = FnId(i as u32);
         set!(param_fn[func.this_param] = id);
-        type_params!(func.type_params);
-        ty!(func.ret, func.this_ty(f));
+        type_params!(func.type_params; TypeParent::Func(id));
+        ty!(func.ret; TypeParent::Func(id));
+        ty!(func.this_ty(f); TypeParent::Param(func.this_param));
         // Decorators on a class member's parameters are evaluated with the class.
         let class = match fns[i].owner {
             FnOwner::Member(m) => match member_owner.get(m.idx()) {
@@ -658,7 +682,7 @@ fn fill<S: Storage, const LINT: bool, const CLAIMED: bool>(
             };
             set!(param_fn[p] = id);
             set!(pat_parent[param.pat] = PatParent::Param(p));
-            ty!(param.ty);
+            ty!(param.ty; TypeParent::Param(p));
             set!(expr_parent[param.default] = Parent::ParamDefault(p));
             decorators!(
                 f.param_modifiers(p),
@@ -679,6 +703,11 @@ fn fill<S: Storage, const LINT: bool, const CLAIMED: bool>(
         }
     }
     fill_var_decls(&f.var_decls, expr_parent, pat_parent, type_scope);
+    if CLAIMED {
+        for (i, declaration) in f.var_decls.iter().enumerate() {
+            set!(type_parent[declaration.ty] = TypeParent::VarDecl(VarDeclId(i as u32)));
+        }
+    }
     for (i, pat) in f.pats.iter().enumerate() {
         let id = PatId(i as u32);
         if LINT {

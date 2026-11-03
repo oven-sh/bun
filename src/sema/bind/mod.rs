@@ -11,7 +11,9 @@ mod runtime;
 pub mod static_referent;
 
 pub use closed_module::specifiers_of_closed_module;
-pub use parents::{ClaimLens, Claims, bind_for_format_in, try_bind_for_format_with};
+pub use parents::{
+    ClaimLens, Claims, TypeParents, bind_for_format_in, try_bind_for_format_with,
+};
 pub use runtime::{
     AnnexBFunction, Binding, BindingInitializer, BindingKind, BindingStability, CodeUnit,
     CommonJsVariable, EarlyRedeclaration, EvalScope, FunctionFlags, ImplicitReference,
@@ -862,6 +864,9 @@ macro_rules! packed {
             }
 
             impl $packed {
+                /// The first variant.
+                pub const NONE: $packed = $packed(0);
+
                 #[inline]
                 pub fn get(self) -> $name {
                     let tag = self.0 & ((1 << TAG_BITS) - 1);
@@ -927,6 +932,27 @@ packed! {
         /// A decorator on a parameter of a class member.
         ParamDecorator(ParamId),
         Module(ModuleId),
+    }
+}
+
+packed! {
+    /// The direct parent of a type, a type parameter or an element of a tuple type.
+    TypeParent,
+    /// A `TypeParent` packed into 32 bits.
+    PackedTypeParent {
+        None,
+        File,
+        ;
+        Type(TypeNodeId),
+        TupleElem(TupleElemId),
+        TypeParam(TypeParamId),
+        Func(FnId),
+        Param(ParamId),
+        VarDecl(VarDeclId),
+        Member(MemberId),
+        Class(ClassId),
+        Stmt(StmtId),
+        Expr(ExprId),
     }
 }
 

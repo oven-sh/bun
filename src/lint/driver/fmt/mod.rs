@@ -389,7 +389,9 @@ fn with_file<R>(
             && let Summary::InPlace(hir, claims) = &mut summary
             && let Some(bound) = try_bind_for_format_with(&**hir, claims, &mut recycled)
         {
-            let file = File::new(path, &**hir, bound, atoms, language, None).with_text(text);
+            let mut file = File::new(path, &**hir, bound, atoms, language, None);
+            file.set_text(text);
+            file.set_type_parents(claims.type_parents());
             let program = how.verifies.then(|| Program::new(&**hir, text, atoms));
             return then(
                 &file,
@@ -629,10 +631,10 @@ fn parse_parts(text: &[u8], then: &mut dyn FnMut(ParsePart<'_>)) {
                 let Some(bound) = try_bind_for_format_with(&*hir, claims, &mut recycled) else {
                     return false;
                 };
-                then(
-                    &File::new(path, &*hir, bound, atoms, language, None).with_text(code),
-                    end,
-                );
+                let mut file = File::new(path, &*hir, bound, atoms, language, None);
+                file.set_text(code);
+                file.set_type_parents(claims.type_parents());
+                then(&file, end);
                 true
             },
         );

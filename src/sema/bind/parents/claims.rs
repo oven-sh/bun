@@ -26,15 +26,28 @@ pub struct ClaimLens {
     pub classes: u32,
     pub fns: u32,
     pub type_params: u32,
+    pub tuple_elems: u32,
 }
 
-/// See the [module](self). The lists are those of a [`BoundBuilder`] with the same names. Each is as long as it had to
-/// be so far: what is beyond its end is empty, like what nothing has claimed.
+/// The parent of each type, type parameter and element of a tuple type of a file, indexed like the file's lists. What
+/// has none, or is an argument of `import<T>()`, has `TypeParent::None` or `TypeParent::File`.
+#[derive(Copy, Clone)]
+pub struct TypeParents<'a> {
+    pub types: &'a [PackedTypeParent],
+    pub type_params: &'a [PackedTypeParent],
+    pub tuple_elems: &'a [PackedTypeParent],
+}
+
+/// See the [module](self). The lists are those of a [`BoundBuilder`] with the same names, and [`TypeParents`], which a
+/// `BoundBuilder` doesn't have. Each is as long as it had to be so far: what is beyond its end is empty, like what nothing
+/// has claimed.
 #[derive(Default)]
 pub struct Claims {
     expr_parent: Vec<PackedParent>,
     stmt_parent: Vec<PackedParent>,
-    type_scope: Vec<ScopeId>,
+    type_parent: Vec<PackedTypeParent>,
+    type_param_parent: Vec<PackedTypeParent>,
+    tuple_elem_parent: Vec<PackedTypeParent>,
     prop_owner: Vec<ExprId>,
     member_owner: Vec<MemberOwner>,
     var_stmt: Vec<StmtId>,
@@ -43,14 +56,16 @@ pub struct Claims {
     class_scope: Vec<ScopeId>,
     /// `FnInfo::owner`
     fn_owner: Vec<FnOwner>,
-    type_param_scope: Vec<ScopeId>,
     /// There is, or was, a `typeof` type.
     has_type_queries: bool,
     /// The nodes of the file are reported, and none of them needs the binder.
     is_complete: bool,
+    /// [`try_bind_for_format_with`] has completed [`Claims::type_parents`].
+    has_type_parents: bool,
 }
 
 const NO_CLASS_OWNER: ClassOwner = ClassOwner::Stmt(StmtId::NONE);
+const NO_TYPE_PARENT: PackedTypeParent = PackedTypeParent::NONE;
 
 /// `list[at] = value`, where `list` ends before `at`. There are `nodes` nodes, so an `at` beyond that is `NONE`.
 #[cold]
@@ -97,6 +112,7 @@ macro_rules! lists {
             $(self.$list.clear();)*
             self.has_type_queries = false;
             self.is_complete = reports;
+            self.has_type_parents = false;
         }
 
         fn truncate(&mut self, lens: &ClaimLens) {
@@ -109,7 +125,9 @@ impl Claims {
     lists! {
         expr_of: expr_parent[ExprId] = PackedParent, exprs, PackedParent::default();
         stmt_of: stmt_parent[StmtId] = PackedParent, stmts, PackedParent::default();
-        type_of: type_scope[TypeNodeId] = ScopeId, types, ScopeId::NONE;
+        type_of: type_parent[TypeNodeId] = PackedTypeParent, types, NO_TYPE_PARENT;
+        type_param_of: type_param_parent[TypeParamId] = PackedTypeParent, type_params, NO_TYPE_PARENT;
+        tuple_elem_of: tuple_elem_parent[TupleElemId] = PackedTypeParent, tuple_elems, NO_TYPE_PARENT;
         prop_of: prop_owner[PropId] = ExprId, props, ExprId::NONE;
         member_of: member_owner[MemberId] = MemberOwner, members, MemberOwner::None;
         var_decl_of: var_stmt[VarDeclId] = StmtId, var_decls, StmtId::NONE;
@@ -117,7 +135,15 @@ impl Claims {
         class_of: class_owner[ClassId] = ClassOwner, classes, NO_CLASS_OWNER;
         class_is: class_scope[ClassId] = ScopeId, classes, ScopeId::NONE;
         fn_of: fn_owner[FnId] = FnOwner, fns, FnOwner::None;
-        type_param_is: type_param_scope[TypeParamId] = ScopeId, type_params, ScopeId::NONE;
+    }
+
+    /// `None` until [`try_bind_for_format_with`] has used the claims, and if it couldn't.
+    pub fn type_parents(&self) -> Option<TypeParents<'_>> {
+        self.has_type_parents.then_some(TypeParents {
+            types: &self.type_parent,
+            type_params: &self.type_param_parent,
+            tuple_elems: &self.tuple_elem_parent,
+        })
     }
 
     /// Call after adding the expression `id` to `f`.
@@ -171,8 +197,8 @@ impl Claims {
     pub fn forget_last_type(&mut self, f: &FileBuilder) {
         if let Some((last, before)) = f.types.split_last() {
             let id = TypeNodeId(before.len() as u32);
-            if let Some(slot) = self.type_scope.get_mut(id.idx()) {
-                *slot = ScopeId::NONE;
+            if let Some(slot) = self.type_parent.get_mut(id.idx()) {
+                *slot = NO_TYPE_PARENT;
             }
             self.children_of_type::<true>(f, id, &last.kind);
         }
@@ -203,14 +229,14 @@ impl Claims {
     }
 
     #[inline(always)]
-    fn reach<const UNDO: bool>(&mut self, f: &FileBuilder, ty: TypeNodeId) {
-        self.type_of::<UNDO>(f, ty, REACHED);
-    }
-
-    #[inline(always)]
-    fn reach_all<const UNDO: bool>(&mut self, f: &FileBuilder, list: IdList<TypeNodeId>) {
+    fn types_of<const UNDO: bool>(
+        &mut self,
+        f: &FileBuilder,
+        list: IdList<TypeNodeId>,
+        parent: PackedTypeParent,
+    ) {
         for &ty in f.ids.get(list.range()).unwrap_or_default() {
-            self.reach::<UNDO>(f, TypeNodeId(ty));
+            self.type_of::<UNDO>(f, TypeNodeId(ty), parent);
         }
     }
 
@@ -252,6 +278,7 @@ impl Claims {
     #[inline(always)]
     fn children_of_expr<const UNDO: bool>(&mut self, f: &FileBuilder, id: ExprId, kind: &ExprKind) {
         let me: PackedParent = Parent::Expr(id).into();
+        let of_types: PackedTypeParent = TypeParent::Expr(id).into();
         macro_rules! operands {
             ($($operand:expr),*) => {{ $(self.expr_of::<UNDO>(f, $operand, me);)* }};
         }
@@ -280,7 +307,7 @@ impl Claims {
                         operands!(f.template_of(c));
                     }
                     self.exprs_of::<UNDO>(f, call.args, me);
-                    self.reach_all::<UNDO>(f, f.list_at(call.type_args));
+                    self.types_of::<UNDO>(f, f.list_at(call.type_args), of_types);
                 }
             }
             ExprKind::Template { exprs, .. } => self.exprs_of::<UNDO>(f, exprs, me),
@@ -288,7 +315,8 @@ impl Claims {
             ExprKind::ImportCall { args } => {
                 self.exprs_of::<UNDO>(f, args, me);
                 if !f.import_call_type_args.is_empty() {
-                    self.reach_all::<UNDO>(f, f.type_args_of_import_call(args));
+                    let type_args = f.type_args_of_import_call(args);
+                    self.types_of::<UNDO>(f, type_args, TypeParent::File.into());
                 }
             }
             ExprKind::Object(props) => self.props_of::<UNDO>(f, props, id),
@@ -311,16 +339,16 @@ impl Claims {
             | ExprKind::Yield { value: operand, .. } => operands!(operand),
             ExprKind::As { expr, ty } | ExprKind::Satisfies { expr, ty } => {
                 operands!(expr);
-                self.reach::<UNDO>(f, ty);
+                self.type_of::<UNDO>(f, ty, of_types);
             }
             ExprKind::Instantiation { expr, type_args } => {
                 operands!(expr);
-                self.reach_all::<UNDO>(f, f.list_at(type_args));
+                self.types_of::<UNDO>(f, f.list_at(type_args), of_types);
             }
             ExprKind::Jsx(jsx) => {
                 if let Some(jsx) = f.jsx.get(jsx.idx()) {
                     operands!(jsx.tag, jsx.close_tag);
-                    self.reach_all::<UNDO>(f, jsx.type_args);
+                    self.types_of::<UNDO>(f, jsx.type_args, of_types);
                     self.props_of::<UNDO>(f, jsx.attrs, id);
                     self.exprs_of::<UNDO>(f, jsx.children, me);
                 }
@@ -433,13 +461,14 @@ impl Claims {
         id: TypeNodeId,
         kind: &TypeNodeKind,
     ) {
+        let me: PackedTypeParent = TypeParent::Type(id).into();
         macro_rules! ty {
-            ($($ty:expr),*) => {{ $(self.reach::<UNDO>(f, $ty);)* }};
+            ($($ty:expr),*) => {{ $(self.type_of::<UNDO>(f, $ty, me);)* }};
         }
         match *kind {
             TypeNodeKind::Heritage { .. } => self.is_complete = false,
             TypeNodeKind::Typeof { expr, args, .. } => {
-                self.reach_all::<UNDO>(f, args);
+                self.types_of::<UNDO>(f, args, me);
                 self.expr_of::<UNDO>(f, expr, Parent::File.into());
                 self.has_type_queries = true;
             }
@@ -447,20 +476,22 @@ impl Claims {
             TypeNodeKind::Object(members) => self.members_of::<UNDO>(f, members, id),
             TypeNodeKind::Mapped(mapped) => {
                 if let Some(mapped) = f.mapped.get(mapped.idx()) {
-                    self.type_param_is::<UNDO>(f, mapped.param, REACHED);
+                    self.type_param_of::<UNDO>(f, mapped.param, me);
                     if let Some(param) = f.type_params.get(mapped.param.idx()) {
-                        ty!(param.constraint, param.default);
+                        let of_param = TypeParent::TypeParam(mapped.param).into();
+                        self.type_of::<UNDO>(f, param.constraint, of_param);
+                        self.type_of::<UNDO>(f, param.default, of_param);
                     }
                     ty!(mapped.name_ty, mapped.ty);
                     self.members_of::<UNDO>(f, mapped.members, id);
                 }
             }
             TypeNodeKind::Ref { args, .. } | TypeNodeKind::Import { args, .. } => {
-                self.reach_all::<UNDO>(f, args)
+                self.types_of::<UNDO>(f, args, me)
             }
             TypeNodeKind::Template { types, .. }
             | TypeNodeKind::Union(types)
-            | TypeNodeKind::Intersection(types) => self.reach_all::<UNDO>(f, types),
+            | TypeNodeKind::Intersection(types) => self.types_of::<UNDO>(f, types, me),
             TypeNodeKind::Array(operand)
             | TypeNodeKind::Keyof(operand)
             | TypeNodeKind::Readonly(operand)
@@ -469,11 +500,12 @@ impl Claims {
             | TypeNodeKind::Predicate { ty: operand, .. } => ty!(operand),
             TypeNodeKind::Tuple(elements) => {
                 for e in elements.iter() {
+                    self.tuple_elem_of::<UNDO>(f, e, me);
+                    // One of the two can contain the other, which it has claimed. The element is the parent of both.
                     if let Some(element) = f.tuple_elems.get(e.idx()) {
-                        ty!(match element.member_type {
-                            TupleMemberType::Optional => element.ty,
-                            _ => element.written,
-                        });
+                        let of_element = TypeParent::TupleElem(e).into();
+                        self.type_of::<UNDO>(f, element.ty, of_element);
+                        self.type_of::<UNDO>(f, element.written, of_element);
                     }
                 }
             }
@@ -485,11 +517,10 @@ impl Claims {
             } => ty!(check, extends, yes, no),
             TypeNodeKind::IndexedAccess { obj, index } => ty!(obj, index),
             TypeNodeKind::Infer(param) => {
-                self.type_param_is::<UNDO>(f, param, REACHED);
-                ty!(f
-                    .type_params
-                    .get(param.idx())
-                    .map_or(TypeNodeId::NONE, |it| it.constraint));
+                self.type_param_of::<UNDO>(f, param, me);
+                let constraint = f.type_params.get(param.idx()).map(|it| it.constraint);
+                let of_param = TypeParent::TypeParam(param).into();
+                self.type_of::<UNDO>(f, constraint.unwrap_or(TypeNodeId::NONE), of_param);
             }
             TypeNodeKind::Error
             | TypeNodeKind::Keyword(_)
@@ -514,15 +545,26 @@ impl Claims {
         hand_over! {
             expr_parent: exprs, PackedParent::default();
             stmt_parent: stmts, PackedParent::default();
-            type_scope: types, ScopeId::NONE;
             prop_owner: props, ExprId::NONE;
             member_owner: members, MemberOwner::None;
             var_stmt: var_decls, StmtId::NONE;
             case_stmt: cases, StmtId::NONE;
             class_owner: classes, NO_CLASS_OWNER;
             class_scope: classes, ScopeId::NONE;
-            type_param_scope: type_params, ScopeId::NONE;
         }
+        // These stay here. What has a parent is reached.
+        let scope_of = |parent: &PackedTypeParent| match *parent == NO_TYPE_PARENT {
+            true => ScopeId::NONE,
+            false => REACHED,
+        };
+        self.type_parent.resize(f.types.len(), NO_TYPE_PARENT);
+        self.type_param_parent
+            .resize(f.type_params.len(), NO_TYPE_PARENT);
+        self.tuple_elem_parent
+            .resize(f.tuple_elems.len(), NO_TYPE_PARENT);
+        b.type_scope.extend(self.type_parent.iter().map(scope_of));
+        b.type_param_scope
+            .extend(self.type_param_parent.iter().map(scope_of));
         refill(&mut b.fns, f.fns.len(), NO_FUNCTION);
         for (info, &owner) in b.fns.iter_mut().zip(&self.fn_owner) {
             info.owner = owner;
@@ -559,7 +601,14 @@ fn fill_in_rest(f: &FileBuilder, claims: &mut Claims, b: &mut BoundBuilder) -> b
     refill(&mut b.pat_parent, f.pats.len(), PatParent::None);
     refill(&mut b.param_fn, f.params.len(), FnId::NONE);
     refill(&mut b.enum_member_owner, f.enum_members.len(), EnumId::NONE);
-    fill::<Growable, false, true>(f, lists_of(b), claims.has_type_queries) && is_done(b)
+    let lists = Lists {
+        type_parent: &mut claims.type_parent,
+        type_param_parent: &mut claims.type_param_parent,
+        ..lists_of(b)
+    };
+    claims.has_type_parents =
+        fill::<Growable, false, true>(f, lists, claims.has_type_queries) && is_done(b);
+    claims.has_type_parents
 }
 
 #[cfg(debug_assertions)]

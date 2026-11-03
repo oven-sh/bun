@@ -5,7 +5,7 @@ use super::{
     Param, Pat, PatElem, PatProp, Prop, Stmt, StmtTag, TupleElem, TypeNode, TypeParam, VarDecl,
 };
 use crate::span::{Span, Spanned};
-use bun_sema::bind::{MemberOwner, Parent, PatParent};
+use bun_sema::bind::{MemberOwner, Parent, PatParent, TypeParent};
 use bun_sema::hir;
 
 /// Any node of a file.
@@ -303,6 +303,22 @@ impl<'a> Node<'a> {
         }
     }
 
+    fn from_type_parent(file: &'a File<'a>, parent: TypeParent) -> Node<'a> {
+        match parent {
+            TypeParent::None | TypeParent::File => Node::File(file),
+            TypeParent::Type(it) => Node::Type(TypeNode::new(file, it)),
+            TypeParent::TupleElem(it) => Node::TupleElem(TupleElem::new(file, it)),
+            TypeParent::TypeParam(it) => Node::TypeParam(TypeParam::new(file, it)),
+            TypeParent::Func(it) => Node::Func(Func::new(file, it)),
+            TypeParent::Param(it) => Node::Param(Param::new(file, it)),
+            TypeParent::VarDecl(it) => Node::VarDecl(VarDecl::new(file, it)),
+            TypeParent::Member(it) => Node::Member(Member::new(file, it)),
+            TypeParent::Class(it) => Node::Class(Class::new(file, it)),
+            TypeParent::Stmt(it) => Node::Stmt(Stmt::new(file, it)),
+            TypeParent::Expr(it) => Node::Expr(Expr::new(file, it)),
+        }
+    }
+
     pub(super) fn parent_of_other_node(self) -> Node<'a> {
         match self.file().hides_casts {
             true => self.parent_with_hidden_casts(),
@@ -385,6 +401,17 @@ impl<'a> Node<'a> {
         let file = self.file();
         let unpack =
             |parent: Option<&Packed>| parent.map_or(Node::File(file), |it| it.unpack(file));
+        if let Some(known) = &file.type_parents {
+            let parent = match self {
+                Node::Type(t) => known.types.get(t.id().idx()),
+                Node::TypeParam(p) => known.type_params.get(p.id().idx()),
+                Node::TupleElem(e) => known.tuple_elems.get(e.id().idx()),
+                _ => None,
+            };
+            if let Some(parent) = parent {
+                return Node::from_type_parent(file, parent.get());
+            }
+        }
         match self {
             Node::Type(t) => unpack(file.parents().types.get(t.id().idx())),
             Node::TypeParam(p) => unpack(file.parents().type_params.get(p.id().idx())),
@@ -901,6 +928,39 @@ impl File<'_> {
                     | hir::StmtKind::ForOf { .. },
             )
         )
+    }
+
+    /// [`File::type_parents`] are what [`Parents::new`] finds.
+    #[cfg(debug_assertions)]
+    pub(super) fn assert_type_parents_are_right(&self) {
+        let Some(known) = self.type_parents else {
+            return;
+        };
+        let found = Parents::new(self);
+        let lists = [
+            (known.types, &found.types),
+            (known.type_params, &found.type_params),
+            (known.tuple_elems, &found.tuple_elems),
+        ];
+        for (known, found) in lists {
+            assert_eq!(known.len(), found.len());
+            for (at, (known, found)) in known.iter().zip(found.iter()).enumerate() {
+                let (tag, id) = match known.get() {
+                    TypeParent::None | TypeParent::File => (Tag::File, 0),
+                    TypeParent::Type(it) => (Tag::Type, it.0),
+                    TypeParent::TupleElem(it) => (Tag::TupleElem, it.0),
+                    TypeParent::TypeParam(it) => (Tag::TypeParam, it.0),
+                    TypeParent::Func(it) => (Tag::Func, it.0),
+                    TypeParent::Param(it) => (Tag::Param, it.0),
+                    TypeParent::VarDecl(it) => (Tag::VarDecl, it.0),
+                    TypeParent::Member(it) => (Tag::Member, it.0),
+                    TypeParent::Class(it) => (Tag::Class, it.0),
+                    TypeParent::Stmt(it) => (Tag::Stmt, it.0),
+                    TypeParent::Expr(it) => (Tag::Expr, it.0),
+                };
+                assert_eq!(Packed { tag, id }, *found, "{at}");
+            }
+        }
     }
 
     #[inline]

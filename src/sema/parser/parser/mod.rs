@@ -1115,6 +1115,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                 classes: lens.classes,
                 fns: lens.fns,
                 type_params: lens.type_params,
+                tuple_elems: lens.tuple_elems,
             };
             self.claims.forget_since(&self.f, &lens);
         }

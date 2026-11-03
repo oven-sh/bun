@@ -20,6 +20,8 @@
 //!    ([`Width::Unknown`]). After what can't break and is too wide, nothing fits ([`Width::TooWide`]).
 //! 7. Where the right side of an assignment stays on the line of the operator only if it fits up to its first possible
 //!    line break, that much has to have been written here ([`Line::must_fit`]).
+//! 8. A first line that's too wide is too wide up to the first possible line break only if the line has been broken
+//!    there. What says where that is (`breaks_first_at_end_of_line`) takes nothing that its writer keeps on one line.
 
 use super::*;
 

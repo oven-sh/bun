@@ -36,7 +36,7 @@ macro_rules! write {
         $crate::ir::formatter::Format::fmt(&$crate::ir::macros::format_args!($($arg),+), $dst)
     };
     ($dst:expr, $arg:expr) => {
-        $crate::ir::formatter::Format::fmt(&$arg, $dst)
+        $crate::ir::formatter::Format::fmt(&$crate::ir::macros::argument!($arg), $dst)
     };
 }
 pub(crate) use write;

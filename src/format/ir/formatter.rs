@@ -702,7 +702,8 @@ impl<'a> Formatter<'a> {
         self.tracker.note(element, index, &mut self.storage);
     }
 
-    #[inline(always)]
+    /// Writes a keyword or punctuator that's only known at run time. A string literal in `write!` is a [`Literal`].
+    #[inline(never)]
     pub(crate) fn write_token(&mut self, text: &'static str) {
         match Token::new(text) {
             Some(token) => self.write_short_token(token),
@@ -1036,7 +1037,7 @@ impl<'a> Formatter<'a> {
 
     /// Starts content that isn't part of what's being written. Nothing gets moved. The content stays where it's
     /// written, after a [`FormatElement::Skip`] that tells readers of the pool to skip it.
-    #[inline]
+    #[inline(never)]
     pub(crate) fn start_capture(&mut self) -> usize {
         let slot = self.storage.pool.len();
         self.storage.pool.push(FormatElement::Skip(Skip::new(0)));
@@ -1045,6 +1046,7 @@ impl<'a> Formatter<'a> {
     }
 
     /// Ends the capture that returned `slot`.
+    #[inline(never)]
     pub(crate) fn end_capture(&mut self, slot: usize) -> Interned {
         let len = self.storage.pool.len().saturating_sub(slot + 1) as u32;
         let (_, flat, will_break) = self.tracker.end_skipped().unwrap_or_default();
@@ -1080,6 +1082,7 @@ impl<'a> Formatter<'a> {
     }
 
     /// Returns an element that represents everything written since `start_capture` returned `slot`.
+    #[inline(never)]
     fn end_intern(&mut self, slot: usize) -> Option<FormatElement> {
         if self.storage.pool.len() == slot + 2 {
             let only = self.storage.pool.pop();
@@ -1351,7 +1354,7 @@ impl<'a, T: Format<'a>> MemoizeFormat<'a> for T {}
 impl Formatter<'_> {
     /// Reserves a slot for a start tag when the content, which is written first, decides whether the tag is needed and
     /// what it is. Pass the returned index to [`Formatter::group_from`]. The content starts at the next index.
-    #[inline]
+    #[inline(never)]
     pub(crate) fn reserve_tag(&mut self) -> usize {
         let reserved = self.storage.pool.len();
         self.storage.pool.push(FormatElement::Nop);
@@ -1360,6 +1363,7 @@ impl Formatter<'_> {
     }
 
     /// Turns everything written since `reserved` was reserved into a group.
+    #[inline(never)]
     pub(crate) fn group_from(&mut self, reserved: usize, should_expand: bool) {
         let mode = if should_expand {
             GroupMode::Expand

@@ -55,7 +55,7 @@ test("fs.promises.writeFile async iterator throws on invalid input", async () =>
 
 // Issue #47817: a chunk that flushed the bytes buffered before it was counted
 // twice, and the file was resized to that sum, so it ended in zero bytes.
-test("fs.promises.writeFile with an iterable of chunks writes exactly the chunks", async () => {
+test.concurrent("fs.promises.writeFile with an iterable of chunks writes exactly the chunks", async () => {
   await using dir = tempDir("fs-promises-writeFile-async-iterator", {});
   const path = dir + "/out.bin";
   writeFileSync(path, Buffer.alloc(100_000, 7));
@@ -68,7 +68,7 @@ test("fs.promises.writeFile with an iterable of chunks writes exactly the chunks
   expect(bytes.equals(Buffer.concat(chunks))).toBe(true);
 });
 
-test("fs.promises.writeFile keeps the chunks written before the iterable throws", async () => {
+test.concurrent("fs.promises.writeFile keeps the chunks written before the iterable throws", async () => {
   await using dir = tempDir("fs-promises-writeFile-async-iterator", {});
   const path = dir + "/partial.bin";
   writeFileSync(path, Buffer.alloc(100_000, 7));
@@ -82,6 +82,27 @@ test("fs.promises.writeFile keeps the chunks written before the iterable throws"
       })(),
     ),
   ).rejects.toThrow("stop");
+
+  expect(await readFile(path)).toEqual(Buffer.alloc(10, 1));
+});
+
+test.concurrent("fs.promises.writeFile keeps the chunks written before an abort", async () => {
+  await using dir = tempDir("fs-promises-writeFile-async-iterator", {});
+  const path = dir + "/aborted.bin";
+  writeFileSync(path, Buffer.alloc(100_000, 7));
+  const ac = new AbortController();
+
+  await expect(
+    writeFile(
+      path,
+      (async function* () {
+        yield Buffer.alloc(10, 1);
+        ac.abort();
+        yield Buffer.alloc(10, 2);
+      })(),
+      { signal: ac.signal },
+    ),
+  ).rejects.toThrow(/abort/i);
 
   expect(await readFile(path)).toEqual(Buffer.alloc(10, 1));
 });

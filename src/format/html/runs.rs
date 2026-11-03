@@ -946,7 +946,8 @@ impl<'a> Scanner<'_, 'a> {
         };
         let definition = facts.definition;
         if definition.content_type == ContentType::RawText
-            && (name != b"script" || self.settings.parser != Parser::Html)
+            && (self.settings.parser != Parser::Html
+                || !(name == b"script" || (name == b"style" && !self.settings.formats_embedded)))
         {
             return None;
         }
@@ -956,7 +957,7 @@ impl<'a> Scanner<'_, 'a> {
         if parent_is_in_svg {
             // To the parser every element in the namespace is like any other. What is in `<text>` and in
             // `<foreignObject>` is not printed like the rest.
-            let is_plain = !must_be_empty
+            let is_plain = (!must_be_empty || name == b"title")
                 && !definition.is_void
                 && definition.implicit_namespace_prefix.is_none()
                 && !name.eq_ignore_ascii_case(b"foreignObject")
@@ -968,7 +969,7 @@ impl<'a> Scanner<'_, 'a> {
                 definition: &data::DEFAULT_TAG_DEFINITION,
                 display: Display::Block,
                 is_in_svg: true,
-                must_be_empty: false,
+                must_be_empty,
             });
         }
         if parent_definition.is_closed_by_child(name) {
@@ -1275,22 +1276,38 @@ impl<'a> Scanner<'_, 'a> {
             return Item::Ends(end);
         }
         if must_be_empty {
-            // `<title>` with plain words in it, all on one line.
-            let words = (self.text.get(open_end..))
-                .filter(|_| name == b"title")
-                .and_then(|rest| rest.get(..bun_core::strings::index_of_char_usize(rest, b'<')?))
-                .filter(|words| is_plain_line(words));
-            let Some((words, end)) =
-                words.and_then(|it| Some((it, self.end_tag(open_end + it.len(), name, key)?)))
+            if definition.content_type == ContentType::RawText {
+                return match self.settings.formats_embedded {
+                    true => Item::No,
+                    false => self.element_with_code(start, element, width, open_end),
+                };
+            }
+            // Plain words in it, all on one line with the tags.
+            let len = match name {
+                // The lexer looks for nothing but references and the end tag in these.
+                b"title" | b"textarea" => (self.text.get(open_end..))
+                    .and_then(|rest| {
+                        rest.get(..bun_core::strings::index_of_char_usize(rest, b'<')?)
+                    })
+                    .filter(|words| is_plain_line(words))
+                    .map(|words| words.len()),
+                b"pre" if first == open_end && self.at(first) != b'<' => (self
+                    .words(open_end, level + 1))
+                .filter(|it| it.has_single_blanks && it.end == it.close && !it.is_wide)
+                .map(|it| it.end - it.start),
+                _ => None,
+            };
+            let Some((len, end)) =
+                len.and_then(|len| Some((len, self.end_tag(open_end + len, name, key)?)))
             else {
                 return Item::No;
             };
-            if width + 1 + words.len() + name.len() + 3 > room || !self.ends_line(end) {
+            if width + 1 + len + name.len() + 3 > room || !self.ends_line(end) {
                 return Item::No;
             }
             self.put_whole_tag(start, to, false);
-            self.out.source(open_end, open_end + words.len());
-            self.put_end_tag_at(name, open_end + words.len(), end);
+            self.out.source(open_end, open_end + len);
+            self.put_end_tag_at(name, open_end + len, end);
             self.ends_in_text = true;
             return Item::Ends(end);
         }
@@ -1338,6 +1355,81 @@ impl<'a> Scanner<'_, 'a> {
         self.siblings = Siblings::new(level + 1, inner, (first, self.out.len()), 0);
         self.siblings.are_in_no_groups = breaks_its_content(name, display);
         Item::Open(first)
+    }
+
+    /// Where the end tag of the element `name` is, whose content is raw text from `from` on. `None` if it is not written
+    /// `</name>`.
+    fn end_of_raw_text(&self, from: usize, name: &[u8]) -> Option<usize> {
+        let mut at = from;
+        loop {
+            at = self.marks.tags.next(at);
+            let rest = self.text.get(at + 1..)?.strip_prefix(b"/");
+            if let Some(rest) = rest {
+                // The lexer takes white space and capital letters too.
+                let after = rest.trim_ascii_start();
+                if after.len() < rest.len() || matches!(rest.first(), None | Some(128..)) {
+                    return None;
+                }
+                if (rest.get(..name.len())).is_some_and(|it| it.eq_ignore_ascii_case(name)) {
+                    let is_plain = rest.starts_with(name) && rest.get(name.len()) == Some(&b'>');
+                    return is_plain.then_some(at);
+                }
+            }
+            at += 1;
+        }
+    }
+
+    /// A `<script>` or a `<style>` whose code is left alone: its lines get the indentation of the element. See
+    /// `element_with_words`.
+    fn element_with_code(
+        &mut self,
+        start: usize,
+        element: Element<'_>,
+        width: usize,
+        open_end: usize,
+    ) -> Item {
+        let Element { name, name_end, .. } = element;
+        let level = self.siblings.level;
+        let room = (self.settings.line_width).saturating_sub(level * self.settings.indent_width);
+        let Some(close) = self.end_of_raw_text(open_end, name) else {
+            return Item::No;
+        };
+        let end = close + name.len() + 3;
+        let text = self.text;
+        let all = text.get(open_end..close).unwrap_or_default();
+        let code = super::utilities::html_trim_preserve_indentation(all);
+        // What else is white space to some and not to others.
+        let is_odd = |byte: &u8| matches!(byte, 0..=8 | 11..=31 | 127);
+        if code.is_empty() || !self.ends_line(end) || all.iter().any(is_odd) {
+            return Item::No;
+        }
+        let dedent = super::utilities::min_indentation(code);
+        self.put_whole_tag(
+            start,
+            name_end,
+            !self.attributes.is_empty() && width + 1 > room,
+        );
+        // `code` ends where `all` does but for white space, so it starts here.
+        let mut at = open_end + (all.trim_ascii_end().len() - code.len());
+        for line in code.split(|byte| *byte == b'\n') {
+            let kept = line.get(dedent..).unwrap_or_default();
+            let kept_len = kept.len()
+                - (kept.iter().rev())
+                    .take_while(|byte| matches!(byte, b' ' | b'\t'))
+                    .count();
+            match kept_len {
+                0 => self.out.push(b'\n'),
+                _ => {
+                    self.put_line(level + 1);
+                    self.out.source(at + dedent, at + dedent + kept_len);
+                }
+            }
+            at += line.len() + 1;
+        }
+        self.put_line(level);
+        self.put_end_tag_at(name, close, end);
+        self.ends_in_text = true;
+        Item::Ends(end)
     }
 
     /// Reads the attributes of the element `name` from `at` on, behind the name, into `attributes`. `width` is how wide

@@ -2035,6 +2035,12 @@ describe.skipIf(!hasFlag)("HTML", () => {
     "\n<span>{{\\</span>\n<e>",
     // There are no references in it, and a `<` that starts no tag is text anywhere.
     '<div>\n  {{< placeholder width="200" height="250" background="#55595c" color="#eceeef" text="Thumbnail" >}}\n  <p>{{ a && b ? "c" : "d" }} e &amp; f < g</p>\n  {{ a \\}} &bogus; }} h\n  <b></b>\n</div>\n',
+    // Code that is left alone gets the indentation of its element.
+    "<div>\n<script>\n      a;\n\n        b;  \n\t\n</script>\n<style>\na {\n  b: c;\n}\n</style>\n<script>a</script>\n<script>\n  a\n</SCRIPT>\n</div>\n",
+    "<script>\n\n  a\n\tb\n</script>\n<style>a</style >\n<script>'</script>'</script>\n",
+    // Words in an element in which white space counts, on one line with its tags.
+    `<div>\n  <pre>a b</pre>\n  <pre>a\nb</pre>\n  <pre> a</pre>\n  <pre>{{ a }}</pre>\n  <pre>{{//</pre>\n  <textarea>a b</textarea>\n  <textarea>a  b</textarea>\n  <textarea a="b">${full} ${full}</textarea>\n</div>\n`,
+    "<svg>\n  <title>a b</title>\n  <title> a </title>\n  <g></g>\n</svg>\n",
     // A text over several lines in front of an element.
     `<p>\n  ${full}\n  tempor ${full}\n  tempor <b>a</b> ut\n</p>\n`,
   ];

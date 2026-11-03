@@ -566,14 +566,6 @@ impl CopyFile {
     /// `CopyFileW`. `false`: one side is an open file, which is read or written from where it stands.
     #[cfg(windows)]
     fn do_copy_by_path(&mut self) -> bun_sys::Result<bool> {
-        // This is for making it easier for us to test the other code path
-        if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_COPYFILEW
-            .get()
-            .unwrap_or(false)
-        {
-            return Ok(false);
-        }
-
         let destination_pathlike = &self.destination_file_store.pathlike;
         let (PathOrFileDescriptor::Path(destination_path), PathOrFileDescriptor::Path(source_path)) =
             (destination_pathlike, &self.source_file_store.pathlike)

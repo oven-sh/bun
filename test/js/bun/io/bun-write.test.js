@@ -22,7 +22,6 @@ import path, { join } from "path";
 import { asyncIterableBodyShapes, settled as settledBody } from "../../web/streams/async-iterable-body-shapes";
 
 let i = 0;
-const IS_COPYFILEW_DISABLED = process.platform === "win32" && process.env.BUN_FEATURE_FLAG_DISABLE_COPYFILEW === "1";
 
 (isWindows ? describe : describe.concurrent)("Bun.write", () => {
   it("Bun.write blob", async () => {
@@ -120,9 +119,7 @@ const IS_COPYFILEW_DISABLED = process.platform === "win32" && process.env.BUN_FE
       expect.unreachable();
     } catch (exception) {
       expect(exception.code).toBe("ENOENT");
-      if (!IS_COPYFILEW_DISABLED) {
-        expect(exception.path).toBe(dst.name);
-      }
+      expect(exception.path).toBe(dst.name);
     }
 
     const src = Bun.file(path.join(tmpbase, `test-bun-write-${Date.now()}.txt`));
@@ -134,9 +131,7 @@ const IS_COPYFILEW_DISABLED = process.platform === "win32" && process.env.BUN_FE
       await gcTick();
     } catch (exception) {
       expect(exception.code).toBe("ENOENT");
-      if (!IS_COPYFILEW_DISABLED) {
-        expect(exception.path).toBe(dst.name);
-      }
+      expect(exception.path).toBe(dst.name);
     } finally {
       fs.unlinkSync(src.name);
     }
@@ -166,7 +161,7 @@ const IS_COPYFILEW_DISABLED = process.platform === "win32" && process.env.BUN_FE
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect(stdout).toContain("CODE=ENOENT");
-        if (isWindows && !IS_COPYFILEW_DISABLED) {
+        if (isWindows) {
           expect(stdout).toContain("PATH_IS_SRC=true");
         }
         expect(stderr).toBe("");
@@ -1078,21 +1073,6 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     }
     expect(text).toBe("0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24\n25\n");
   }, 25000);
-
-  if (isWindows && !IS_COPYFILEW_DISABLED) {
-    it("Bun.write() without CopyFileW", async () => {
-      const { exited } = Bun.spawn({
-        cmd: [bunExe(), "test", import.meta.path],
-        env: {
-          ...bunEnv,
-          BUN_FEATURE_FLAG_DISABLE_COPYFILEW: "1",
-        },
-        stdio: ["inherit", "inherit", "inherit"],
-      });
-
-      expect(await exited).toBe(0);
-    }, 10000);
-  }
 
   it("BunFile.name survives multiple file.write() calls + GC", async () => {
     using dir = tempDir("bun-file-name-write-gc", {});

@@ -11,6 +11,7 @@ import {
   abs,
   list,
   map,
+  object,
   range,
   sorted,
   str,
@@ -22,17 +23,17 @@ import sys from "python:sys";
 import { makeClass, py, t } from "./helpers";
 
 /** A trivial range()-like object that has an insert() method. */
-const Range = makeClass("Range", [], {
+class Range extends object {
   __init__(start: number | bigint, stop: number | bigint) {
     this.start = start;
     this.stop = stop;
     this.last_insert = undefined;
-  },
+  }
 
   // An int is a number or, beyond 2**53, a BigInt, and JavaScript does not subtract one from the other.
   __len__() {
     return BigInt(this.stop) - BigInt(this.start);
-  },
+  }
 
   __getitem__(index: number | bigint) {
     let idx = BigInt(index);
@@ -40,12 +41,12 @@ const Range = makeClass("Range", [], {
     if (idx < 0) idx += n;
     if (idx >= n) throw new IndexError(idx);
     return BigInt(this.start) + idx;
-  },
+  }
 
   insert(idx: number | bigint, item: any) {
     this.last_insert = t(idx, item);
-  },
-});
+  }
+}
 
 describe("TestBisect", () => {
   const precomputedCases: [any, number[], number, number][] = [
@@ -266,14 +267,14 @@ describe("TestBisect", () => {
   });
 
   test("test_lt_returns_non_bool", () => {
-    const A = makeClass("A", [], {
+    class A extends object {
       __init__(val: number) {
         this.val = val;
-      },
+      }
       __lt__(other: any) {
         return this.val < other.val ? "nonempty" : "";
-      },
-    });
+      }
+    }
 
     const data = Array.from({ length: 100 }, (_, i) => A(i));
     const i1 = bisect.bisect_left(data, A(33));
@@ -283,17 +284,17 @@ describe("TestBisect", () => {
   });
 
   test("test_lt_returns_notimplemented", () => {
-    const A = makeClass("A", [], {
+    class A extends object {
       __init__(val: number) {
         this.val = val;
-      },
+      }
       __lt__() {
         return NotImplemented;
-      },
+      }
       __gt__(other: any) {
         return this.val > other.val;
-      },
-    });
+      }
+    }
 
     const data = Array.from({ length: 100 }, (_, i) => A(i));
     const i1 = bisect.bisect_left(data, A(40));
@@ -341,18 +342,18 @@ describe("TestInsort", () => {
 // ==============================================================================
 
 /** Dummy sequence class defining __len__ but not __getitem__. */
-const LenOnly = makeClass("LenOnly", [], {
+class LenOnly extends object {
   __len__() {
     return 10;
-  },
-});
+  }
+}
 
 /** Dummy sequence class defining __getitem__ but not __len__. */
-const GetOnly = makeClass("GetOnly", [], {
+class GetOnly extends object {
   __getitem__() {
     return 10;
-  },
-});
+  }
+}
 
 function raiseZeroDivisionError() {
   throw new ZeroDivisionError();

@@ -4,7 +4,7 @@
 // There each test is a coroutine that a loop of its own runs. Here it is an async function of JavaScript, the coroutines in it
 // are async functions too, and the loop is the one that Bun's event loop runs. What follows from that:
 //  - To call an `async def` gives JavaScript a promise, and the coroutine is under way as a task. `asyncio.create_task(q.get())`
-//    is `asyncio.ensure_future(q.get())` here, which gives a task that waits for that one, and cancels it if it is cancelled.
+//    gives a task that waits for that one, and cancels it if it is cancelled.
 //  - A step of an async function of JavaScript takes more turns of the loop than a step of a coroutine. Where a test there
 //    counts turns (`await asyncio.sleep(0)` twice), it waits here for what it is waiting for: until().
 //  - Nothing can cancel an async function of JavaScript. What is cancelled is the waiting for it.
@@ -30,7 +30,7 @@ import {
 } from "python:builtins";
 import { getitem } from "python:operator";
 import { GenericAlias } from "python:types";
-import { asyncWith, createTask, raises, raisesAsync, t } from "./helpers";
+import { asyncWith, raises, raisesAsync, t } from "./helpers";
 
 /** Lets the loop turn until the condition holds. */
 async function until(condition: () => boolean) {
@@ -88,7 +88,7 @@ describe("QueueBasicTests", () => {
       return true;
     }
 
-    const task = asyncio.ensure_future(putter());
+    const task = asyncio.create_task(putter());
     await settle();
 
     // The putter is blocked after putting two items.
@@ -141,7 +141,7 @@ describe("QueueGetTests", () => {
       return res;
     }
 
-    const queue_get_task = asyncio.ensure_future(queue_get());
+    const queue_get_task = asyncio.create_task(queue_get());
     await started.wait();
     expect(finished).toBe(false);
     loop.call_later(0.01, q.put_nowait, 1);
@@ -164,8 +164,8 @@ describe("QueueGetTests", () => {
   test("test_get_cancelled_race", async () => {
     const q = asyncio.Queue();
 
-    const t1 = asyncio.ensure_future(q.get());
-    const t2 = asyncio.ensure_future(q.get());
+    const t1 = asyncio.create_task(q.get());
+    const t2 = asyncio.create_task(q.get());
 
     await until(() => len(q._getters) == 2);
     t1.cancel();
@@ -197,8 +197,8 @@ describe("QueueGetTests", () => {
 
     const q = asyncio.Queue(1);
     await asyncWith(asyncio.TaskGroup(), async tg => {
-      createTask(tg, producer(q, producer_num_items));
-      createTask(tg, consumer(q, producer_num_items));
+      tg.create_task(producer(q, producer_num_items));
+      tg.create_task(consumer(q, producer_num_items));
     });
     expect(q.empty()).toBe(true);
   });
@@ -235,7 +235,7 @@ describe("QueuePutTests", () => {
 
     const loop = asyncio.get_running_loop();
     loop.call_later(0.01, q.get_nowait);
-    const queue_put_task = asyncio.ensure_future(queue_put());
+    const queue_put_task = asyncio.create_task(queue_put());
     await started.wait();
     expect(finished).toBe(false);
     await queue_put_task;
@@ -276,7 +276,7 @@ describe("QueuePutTests", () => {
       return true;
     }
 
-    const task = asyncio.ensure_future(queue_put());
+    const task = asyncio.create_task(queue_put());
 
     expect(await q.get()).toBe(1);
     await until(() => task.done());
@@ -334,7 +334,7 @@ describe.each([
     }
 
     await asyncWith(asyncio.TaskGroup(), async tg => {
-      const tasks = [createTask(tg, worker()), createTask(tg, worker())];
+      const tasks = [tg.create_task(worker()), tg.create_task(worker())];
 
       await q.join();
       expect(accumulator).toBe(sum(range(30)));
@@ -439,7 +439,8 @@ describe("TimeoutTests", () => {
   });
 
   test("test_foreign_exception_passed", async () => {
-    const cm = asyncio.timeout(0.01);
+    // there: 0.01
+    const cm = asyncio.timeout(10);
     await raisesAsync(KeyError, () =>
       asyncWith(cm, async () => {
         throw new KeyError();
@@ -453,7 +454,7 @@ describe("TimeoutTests", () => {
       await raisesAsync(TimeoutError, () => asyncWith(asyncio.timeout(0.001), () => asyncio.sleep(10)));
     }
 
-    const task = asyncio.ensure_future(outer());
+    const task = asyncio.create_task(outer());
     await task;
     expect(task.cancelled()).toBe(false);
     expect(task.done()).toBe(true);
@@ -492,13 +493,15 @@ describe("TimeoutTests", () => {
   });
 
   test("test_timeout_double_enter", async () => {
-    const cm = asyncio.timeout(0.01);
+    // there: 0.01
+    const cm = asyncio.timeout(10);
     await asyncWith(cm, async () => {});
     await raisesAsync(RuntimeError, () => asyncWith(cm, async () => {}), /has already been entered/);
   });
 
   test("test_timeout_finished", async () => {
-    const cm = asyncio.timeout(0.01);
+    // there: 0.01
+    const cm = asyncio.timeout(10);
     await asyncWith(cm, async () => {});
     raises(RuntimeError, () => cm.reschedule(0.02), /finished/);
   });
@@ -552,7 +555,7 @@ describe("between the languages", () => {
 
   test("a task for a coroutine that JavaScript has called cancels it", async () => {
     const event = asyncio.Event();
-    const task = asyncio.ensure_future(event.wait());
+    const task = asyncio.create_task(event.wait());
     await until(() => len(event._waiters) == 1);
     task.cancel();
     await raisesAsync(CancelledError, () => task);
@@ -602,11 +605,16 @@ describe("between the languages", () => {
     });
   });
 
-  test("create_task() wants a coroutine, which JavaScript cannot give it", async () => {
+  test("create_task() takes the promise that JavaScript has of a coroutine", async () => {
     const sleeping = asyncio.sleep(0, "slept");
     expect(sleeping).toBeInstanceOf(Promise);
-    raises(PyTypeError, () => asyncio.create_task(sleeping), /a coroutine was expected/);
-    expect(await createTask(asyncio, sleeping)).toBe("slept");
+    const task = asyncio.create_task(sleeping);
+    expect(task).toBeInstanceOf(asyncio.Task);
+    expect(await task).toBe("slept");
+    // A promise is a future to asyncio, which ensure_future() returns as it is.
+    expect(asyncio.isfuture(sleeping)).toBe(true);
+    expect(asyncio.ensure_future(sleeping)).toBe(sleeping);
+    raises(PyTypeError, () => asyncio.create_task(5), /a coroutine was expected/);
   });
 
   test("callbacks of the loop are functions of JavaScript", async () => {

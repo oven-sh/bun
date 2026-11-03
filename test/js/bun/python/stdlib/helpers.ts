@@ -3,19 +3,16 @@ import { expect } from "bun:test";
 import { bytes, dict, set, tuple } from "python:builtins";
 import helpers from "./helpers.py";
 
-/** `with manager as value: return body(value)` */
-export const with_: (manager: any, body: (value: any) => any) => any = helpers.with_;
-/** `async with manager as value: return await body(value)` */
-export const asyncWith: (manager: any, body: (value: any) => Promise<any>) => Promise<any> = helpers.async_with;
-/** `class name(*bases)`: the functions of `namespace` are its methods, and `this` in them is the instance. */
+export { asyncWith, method, with as with_ } from "bun:python";
+
+/**
+ * `class name(*bases)`: the functions of `namespace` are its methods, and `this` in them is the instance. For what
+ * `class name extends base` cannot say.
+ */
 export const makeClass: (name: string, bases: any[], namespace: Record<string, any>, keywords?: any) => any =
   helpers.make_class;
-/** A function of JavaScript for `property()`, `classmethod()` and the like: `this` is what Python passes first. */
-export const method: (body: (this: any, ...args: any[]) => any) => any = helpers.method;
 /** The warnings of the category that `body()` gave. */
 export const warns: (category: any, body: () => void) => any[] = helpers.warns;
-/** `owner.create_task(coroutine)`, for a promise: JavaScript never holds a coroutine. */
-export const createTask: (owner: any, awaitable: any, keywords?: any) => any = helpers.create_task;
 /** `function(*args, **kwargs)` */
 export const call: (callee: any, args?: any, kwargs?: any) => any = helpers.call;
 

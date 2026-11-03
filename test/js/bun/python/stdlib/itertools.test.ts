@@ -24,6 +24,7 @@ import {
   max,
   min,
   next,
+  object,
   pow,
   range,
   repr,
@@ -86,14 +87,14 @@ const isEven = (x: number) => x % 2 == 0;
 const tupleize = (...args: any[]) => t(...args);
 
 /** Class emulating an empty iterable. */
-const StopNow = makeClass("StopNow", [], {
+class StopNow extends object {
   __iter__() {
     return this;
-  },
+  }
   __next__() {
     throw new StopIteration();
-  },
-});
+  }
+}
 
 /** Convenience function for partially consuming a long of infinite iterable */
 const take = (n: number, seq: any) => list(islice(seq, n));
@@ -348,7 +349,7 @@ describe("TestBasicOps", () => {
     expect(r).toEqual([t(5, "a"), t(2, "r"), t(2, "b")]);
 
     // iter.__next__ failure
-    const ExpectedError = makeClass("ExpectedError", [Exception], {});
+    class ExpectedError extends Exception {}
     function* delayed_raise(n = 0) {
       for (let i = 0; i < n; i++) yield "yo";
       throw new ExpectedError();
@@ -362,11 +363,11 @@ describe("TestBasicOps", () => {
     expect(() => gulp(delayed_raise(1))).toThrow(ExpectedError);
 
     // __eq__ failure
-    const DummyCmp = makeClass("DummyCmp", [], {
+    class DummyCmp extends object {
       __eq__() {
         throw new ExpectedError();
-      },
-    });
+      }
+    }
     s = [DummyCmp(), DummyCmp(), undefined];
 
     // __eq__ failure on outer object
@@ -596,14 +597,14 @@ describe("TestBasicOps", () => {
 
     // Issue #30537: islice can accept integer-like objects as
     // arguments
-    const IntLike = makeClass("IntLike", [], {
+    class IntLike extends object {
       __init__(val: number) {
         this.val = val;
-      },
+      }
       __index__() {
         return this.val;
-      },
-    });
+      }
+    }
     expect(list(islice(range(100), IntLike(10)))).toEqual(list(range(10)));
     expect(list(islice(range(100), IntLike(10), IntLike(50)))).toEqual(list(range(10, 50)));
     expect(list(islice(range(100), IntLike(10), IntLike(50), IntLike(5)))).toEqual(list(range(10, 50, 5)));

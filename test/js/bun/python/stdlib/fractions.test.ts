@@ -22,6 +22,7 @@ import {
   int,
   list,
   map,
+  object,
   pow,
   repr,
   round,
@@ -39,14 +40,14 @@ import { makeClass, raises, t } from "./helpers";
 
 const _components = (r: any) => [r.numerator, r.denominator];
 
-const Ratio = makeClass("Ratio", [], {
+class Ratio extends object {
   __init__(ratio: any) {
     this._ratio = ratio;
-  },
+  }
   as_integer_ratio() {
     return this._ratio;
-  },
-});
+  }
+}
 
 /** Asserts that both the types and values are the same. */
 function assertTypedEquals(expected: any, actual: any) {

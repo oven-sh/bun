@@ -8,7 +8,18 @@
 import { kwargs } from "bun:python";
 import { describe, expect, test } from "bun:test";
 import annotationlib from "python:annotationlib";
-import { TypeError as PyTypeError, dict, float as pyfloat, int, len, repr, tuple, type, vars } from "python:builtins";
+import {
+  TypeError as PyTypeError,
+  dict,
+  float as pyfloat,
+  int,
+  len,
+  object,
+  repr,
+  tuple,
+  type,
+  vars,
+} from "python:builtins";
 import {
   FrozenInstanceError,
   InitVar,
@@ -68,8 +79,8 @@ describe("TestMakeDataclass", () => {
   });
 
   test("test_base", () => {
-    const Base1 = makeClass("Base1", [], {});
-    const Base2 = makeClass("Base2", [], {});
+    class Base1 extends object {}
+    class Base2 extends object {}
     const C = make_dataclass("C", [["x", int]], kwargs({ bases: t(Base1, Base2) }));
     const c = C(2);
     expect(c).toBeInstanceOf(C);
@@ -79,7 +90,7 @@ describe("TestMakeDataclass", () => {
 
   test("test_base_dataclass", () => {
     const Base1 = dataclassOf("Base1", { x: int });
-    const Base2 = makeClass("Base2", [], {});
+    class Base2 extends object {}
     const C = make_dataclass("C", [["y", int]], kwargs({ bases: t(Base1, Base2) }));
     raises(PyTypeError, () => C(2), /required positional/);
     const c = C(1, 2);
@@ -370,7 +381,7 @@ describe("between the languages", () => {
     expect(b.items).toEqual([]);
   });
 
-  test("a function of JavaScript in a class is not a method", () => {
+  test("a function of JavaScript in a class is a method", () => {
     const C = make_dataclass(
       "C",
       ["x"],
@@ -383,22 +394,20 @@ describe("between the languages", () => {
       }),
     );
     const c = C(1);
-    // Called by Python, neither `this` nor the first argument is the instance.
-    expect(methodcaller("plain", "a")(c)).toEqual([undefined, ["a"]]);
-    // Called by JavaScript, `this` is what is left of the dot, as for any function.
+    expect(methodcaller("plain", "a")(c)).toEqual([c, ["a"]]);
     expect(c.plain("a")[0]).toBe(c);
   });
 
-  test("a class of Python cannot be extended by `class`", () => {
-    expect(() => class extends Point {}).toThrow(TypeError);
-    // type() does it.
-    const Point3 = makeClass("Point3", [Point], {
+  test("a dataclass is extended by `class`", () => {
+    class Point3 extends Point {
       norm() {
         return Math.hypot(this.x, this.y);
-      },
-    });
-    expect(Point3(3, 4).norm()).toBe(5);
-    expect(Point3(3, 4)).toBeInstanceOf(Point);
+      }
+    }
+    expect(new Point3(3, 4).norm()).toBe(5);
+    expect(new Point3(3, 4)).toBeInstanceOf(Point);
+    expect(repr(new Point3(3, 4))).toBe("Point3(x=3, y=4)");
+    expect(asdict(Point3(3, 4))).toEqual(py({ x: 3, y: 4 }));
   });
 
   test("the module of a class", () => {

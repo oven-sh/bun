@@ -17,7 +17,7 @@ The standard library that is built into `bun` has no `test` package, so nothing 
 
 ## How Python is written in JavaScript
 
-`kwargs` and `float` are from `bun:python`; `t`, `b`, `py`, `call`, `with_`, `asyncWith`, `makeClass`, `method`, `createTask`,
+`kwargs`, `float`, `with` (here `with_`), `asyncWith` and `method` are from `bun:python`; `t`, `b`, `py`, `call`, `makeClass`,
 `raises`, `raisesAsync` and `warns` from `./helpers`.
 
 ### Calls
@@ -31,10 +31,12 @@ The standard library that is built into `bun` has no `test` package, so nothing 
 | `def f(*args, **kw)`     | `(...args) => ...`: the keywords, if any were given, are an object, the last argument |
 | `def f(a, *, key=None)`  | `(a, { key } = {}) => ...`                                                            |
 
-- A function written in Python drops what JavaScript passes beyond its parameters, so `array.map(f)` works. What takes `*args`
-  takes it all, and so do classes and functions written in C++: `array.map(str)` is `str(item, index, array)`, a `TypeError`.
-  Write `array.map(x => str(x))`.
+- A function of Python's drops what JavaScript passes beyond its parameters, so `array.map(f)` and `array.map(len)` work. What
+  takes `*args` takes it all, and so do classes: `array.map(str)` is `str(item, index, array)`, a `TypeError`. Write
+  `array.map(x => str(x))`. Where a test expects a `TypeError` for too many arguments, `call(f, [1, 2, 3])` calls from Python.
 - A function of JavaScript takes whatever Python passes it. Where a test expects a `TypeError` for too many arguments, there is none.
+- The object of keywords that Python hands a function of JavaScript is what `kwargs()` makes: passed on as the last argument
+  (`super(...args)`, `f(...args)`), it is the keywords again.
 - A method taken off its object stays bound: `const append = d.append`.
 
 ### Values
@@ -90,20 +92,31 @@ the types: `list.sort(a)`, `list.index(a, x)`, `str.partition(s, ",")`, `int.bit
 | `+a`                                | `pos(a)`: `+a` makes a number                                                                                     |
 | `a += b`                            | `a = iadd(a, b)`: `a += b` is `a = a + b`, which makes a new object and may not be defined                        |
 | `a is b`                            | `a === b`, `toBe`                                                                                                 |
-| `a == b`                            | `a == b` if one of them is an object of Python's; `eq(a, b)` for two lists                                        |
+| `a == b`                            | `a == b` if one of them is an object of Python's, `x == x` too; `eq(a, b)` for two lists                          |
 | `not x`, `if x:`                    | `!bool(x)`: every object is true to JavaScript, an empty dict too                                                 |
 | `with cm as v: ...`                 | `with_(cm, v => { ... })`                                                                                         |
 | `async with cm as v: ...`           | `await asyncWith(cm, async v => { ... })`                                                                         |
 | `for k, v in d.items():`            | `for (const [k, v] of d.items())`, or `of d`: a dict iterates as a `Map` does                                     |
 | `[f(x) for x in it]`                | `Array.from(it, f)`                                                                                               |
 | `yield`                             | `function*`: a generator of JavaScript is a generator to Python (`next`, `send`, `throw`, `close`)                |
-| `class C(Base): def m(self): ...`   | `makeClass("C", [Base], { m() { ... } })`: `this` is `self`. `class extends` is a `TypeError`.                    |
-| `namespace={"m": lambda self: ...}` | `py({ m: method(function () { ... }) })`: Python binds no function of JavaScript                                  |
+| `class C(Base): def m(self): ...`   | `class C extends Base { m() { ... } }`: `this` is `self`. `class C extends object` for `class C:`                 |
+| `class C(A, B, metaclass=M):`       | `makeClass("C", [A, B], { m() { ... } }, kwargs({ metaclass: M }))`                                               |
+| `super().m()`, `super().__init__()` | `super.m()`, `super.__init__()`                                                                                   |
+| `C.m = lambda self: ...`            | `C.m = function () { ... }`, with `this`, or `C.m = self => ...`                                                  |
+| `@staticmethod`, `@classmethod`     | `static m = staticmethod(() => ...)`; `static m() { ... }` is a classmethod, whose `this` is the class            |
+| `@property`                         | `get x() { ... }`, `set x(value) { ... }`                                                                         |
 | `@dataclass class C: x: int`        | `make_dataclass("C", [["x", int]])`                                                                               |
 | `raise E("x")`                      | `throw new E("x")`                                                                                                |
 | `try: ... except E as e:`           | `catch (e) { if (!(e instanceof E)) throw e; ... }`                                                               |
 | `f"{x!r}"`, `"%r" % x`              | `` `${repr(x)}` ``                                                                                                |
 | `eval(repr(x))`                     | `pyeval(repr(x), py({ deque }))`, with `import { eval as pyeval }`                                                |
+
+**Classes.** `class C extends Base`, where `Base` is a class of Python's, makes a class of Python's: the metaclass,
+`__init_subclass__` and `__set_name__` run, Python can derive from it, and special methods are written by their names
+(`__eq__(other) { ... }`, `__len__() { ... }`). Either write `__init__(a, b) { ... }`, as in Python, or a `constructor`, which is
+`__new__` and `__init__` in one: `super(...)` in it makes the instance. A function of JavaScript that Python finds in a class is
+bound like a function of Python's: one that has a `this` (`function`, a method) gets the instance as `this`, an arrow function as
+its first argument. `method(f)` says the former of any function.
 
 **Operators** on objects of Python's ask their classes: `Fraction(1, 2) + 1`, `date2 - date1`, `a < b`, `s1 | s2`, `-x`,
 `2 ** x`. On two arrays they are JavaScript's: `[1] + [2]` is `"12"`, `[10] < [9]` is true. Use `operator.add`, `operator.lt`.
@@ -183,21 +196,21 @@ JavaScript's. Anything awaitable (a `Future`, a `Task`) can be awaited. For what
 | Python                                                   | JavaScript                                                                |
 | -------------------------------------------------------- | ------------------------------------------------------------------------- |
 | `await coro()`, `await future`                           | the same                                                                  |
-| `t = asyncio.create_task(q.get())`                       | `t = asyncio.ensure_future(q.get())`                                      |
-| `tg.create_task(worker())`                               | `createTask(tg, worker())`                                                |
+| `t = asyncio.create_task(q.get())`                       | the same: what it gets is a promise                                       |
+| `tg.create_task(worker())`                               | the same                                                                  |
 | `await asyncio.wait_for(q.get(), 1)`, `gather(a(), b())` | the same, with promises of either language                                |
 | `async with asyncio.timeout(1): await f()`               | `await asyncWith(asyncio.timeout(1), () => f())`                          |
 | `with assertRaises(TimeoutError): await f()`             | `await raisesAsync(TimeoutError, () => f())`                              |
 | `await asyncio.sleep(0)`, to let a task take a step      | `await until(() => ...)`: a step of an async function takes several turns |
 
-- Because the call gives a promise, JavaScript never holds a coroutine, and `create_task()` refuses a promise.
+- Because the call gives a promise, JavaScript never holds a coroutine. A promise is a future to asyncio
+  (`isfuture()`, `ensure_future()` gives it back, `gather()`, `wait()`), and `create_task()` makes a task that awaits it.
 - The promise of a coroutine is awaited by Python as the task it is. So to cancel what waits for it cancels the coroutine:
-  `ensure_future(q.get()).cancel()`, `wait_for(q.get(), 1)`.
+  `create_task(q.get()).cancel()`, `wait_for(q.get(), 1)`.
 - Nothing cancels an async function of JavaScript. What is cancelled is the waiting for it, and it goes on. So the body of an
   `asyncWith(asyncio.timeout(...))` should return what it would await, not await it.
 - Behind the first `await` of an async function of JavaScript, `asyncio.current_task()` is `None`.
 
 ## What is in `helpers.py`
 
-A function there is something JavaScript has no way to say: `with`, `async with`, a class with methods, catching warnings,
-`f(**dict)`. That a few lines of Python beside the program can supply it, imported like any module, is an idiom too.
+A function there is something JavaScript has no way to say: a class with several bases, catching warnings, `f(**dict)`. That a few lines of Python beside the program can supply it, imported like any module, is an idiom too.

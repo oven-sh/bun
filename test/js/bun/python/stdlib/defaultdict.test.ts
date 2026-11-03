@@ -10,6 +10,7 @@ import {
   frozendict,
   int,
   list,
+  object,
   repr,
   setattr,
   str,
@@ -148,14 +149,14 @@ describe("TestDefaultDict", () => {
 
   test("test_recursive_repr", () => {
     // Issue2045: stack overflow when default_factory is a bound method
-    const sub = makeClass("sub", [defaultdict], {
+    class sub extends defaultdict {
       __init__() {
         setattr(this, "default_factory", this._factory);
-      },
+      }
       _factory() {
         return [];
-      },
-    });
+      }
+    }
     const dd = sub();
     expect(repr(dd)).toMatch(/sub\(<bound method .*sub\._factory of sub\(\.\.\., \{\}\)>, \{\}\)/);
   });
@@ -244,15 +245,15 @@ describe("TestDefaultDict", () => {
   test("test_repr_recursive_factory", () => {
     // gh-145492: defaultdict.__repr__ should not cause infinite recursion
     // when the factory's __repr__ calls repr() on the defaultdict.
-    const ProblematicFactory = makeClass("ProblematicFactory", [], {
+    class ProblematicFactory extends object {
       __call__() {
         return dict();
-      },
+      }
       __repr__() {
         repr(dd);
         return `ProblematicFactory for ${dd}`;
-      },
-    });
+      }
+    }
 
     const dd = defaultdict(ProblematicFactory());
     // Should not raise RecursionError

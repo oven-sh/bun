@@ -175,15 +175,15 @@ describe("TestReduce", () => {
   const add = (x: any, y: any) => x + y;
 
   test("test_reduce", () => {
-    const Squares = makeClass("Squares", [], {
+    class Squares extends object {
       __init__(max: number) {
         this.max = max;
         this.sofar = [];
-      },
+      }
 
       __len__() {
         return this.sofar.length;
-      },
+      }
 
       __getitem__(i: number) {
         if (!(0 <= i && i < this.max)) throw new IndexError();
@@ -193,8 +193,8 @@ describe("TestReduce", () => {
           n += 1;
         }
         return this.sofar[i];
-      },
-    });
+      }
+    }
     expect(reduce(add, ["a", "b", "c"], "")).toBe("abc");
     // Two arrays are not added by the + of JavaScript.
     expect(reduce(operator.add, [["a", "c"], [], ["d", "w"]], [])).toEqual(["a", "c", "d", "w"]);
@@ -215,21 +215,21 @@ describe("TestReduce", () => {
     expect(() => reduce(add, t())).toThrow(PyTypeError);
     expect(() => reduce(add, object())).toThrow(PyTypeError);
 
-    const TestFailingIter = makeClass("TestFailingIter", [], {
+    class TestFailingIter extends object {
       __iter__() {
         throw new RuntimeError();
-      },
-    });
+      }
+    }
     expect(() => reduce(add, TestFailingIter())).toThrow(RuntimeError);
 
     expect(reduce(add, [], undefined)).toBeUndefined();
     expect(reduce(add, [], 42)).toBe(42);
 
-    const BadSeq = makeClass("BadSeq", [], {
+    class BadSeq extends object {
       __getitem__() {
         throw new ValueError();
-      },
-    });
+      }
+    }
     expect(() => reduce(42, BadSeq())).toThrow(ValueError);
   });
 
@@ -242,15 +242,15 @@ describe("TestReduce", () => {
 
   // Test reduce()'s use of iterators.
   test("test_iterator_usage", () => {
-    const SequenceClass = makeClass("SequenceClass", [], {
+    class SequenceClass extends object {
       __init__(n: number) {
         this.n = n;
-      },
+      }
       __getitem__(i: number) {
         if (0 <= i && i < this.n) return i;
         throw new IndexError();
-      },
-    });
+      }
+    }
 
     const { add } = operator;
     expect(reduce(add, SequenceClass(5))).toBe(10);
@@ -306,10 +306,10 @@ describe("TestCmpToKey", () => {
     raises([PyTypeError, AttributeError], () => key(3) > 1); // rhs is not a K object
     raises([PyTypeError, AttributeError], () => 1 < key(3)); // lhs is not a K object
     expect(() => cmp_to_key()).toThrow(PyTypeError); // too few args
-    expect(() => cmp_to_key(cmp1, undefined)).toThrow(PyTypeError); // too many args
+    expect(() => call(cmp_to_key, [cmp1, undefined])).toThrow(PyTypeError); // too many args
     key = cmp_to_key(cmp1);
     expect(() => key()).toThrow(PyTypeError); // too few args
-    expect(() => key(undefined, undefined)).toThrow(PyTypeError); // too many args
+    expect(() => call(key, [undefined, undefined])).toThrow(PyTypeError); // too many args
   });
 
   test("test_bad_cmp", () => {
@@ -318,11 +318,11 @@ describe("TestCmpToKey", () => {
     });
     expect(() => key(3) > key(1)).toThrow(ZeroDivisionError);
 
-    const BadCmp = makeClass("BadCmp", [], {
+    class BadCmp extends object {
       __lt__() {
         throw new ZeroDivisionError();
-      },
-    });
+      }
+    }
     // There the function that returns a BadCmp() is defined and not used. With it, it is `<` that asks __lt__.
     expect(() => key(3) > key(1)).toThrow(ZeroDivisionError);
     const key2 = cmp_to_key(() => BadCmp());
@@ -527,7 +527,7 @@ describe("TestLRU", () => {
     expect(cached(t(false))).toBe("(0,)");
     expect(cached(t(float(0)))).toBe("(0,)");
 
-    const T = makeClass("T", [tuple], {});
+    class T extends tuple {}
 
     expect(cached(T(t(1)))).toBe("(1,)");
     expect(cached(T(t(true)))).toBe("(1,)");
@@ -590,9 +590,9 @@ describe("TestSingleDispatch", () => {
 
   test("test_mro", () => {
     const g = singledispatch(() => "base");
-    const A = makeClass("A", [], {});
-    const C = makeClass("C", [A], {});
-    const B = makeClass("B", [A], {});
+    class A extends object {}
+    class C extends A {}
+    class B extends A {}
     const D = makeClass("D", [C, B], {});
     g.register(A, () => "A");
     g.register(B, () => "B");

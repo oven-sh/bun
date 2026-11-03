@@ -19,6 +19,7 @@ import {
   ZeroDivisionError,
   getattr,
   len,
+  object,
   open,
   pow,
   print,
@@ -160,7 +161,7 @@ describe("ContextManagerTestCase", () => {
       yield;
     });
 
-    const StopIterationSubclass = makeClass("StopIterationSubclass", [StopIteration], {});
+    class StopIterationSubclass extends StopIteration {}
 
     for (const stop_exc of [StopIteration("spam"), StopIterationSubclass("spam")]) {
       expect(
@@ -187,11 +188,11 @@ describe("ContextManagerTestCase", () => {
 
 describe("ClosingTestCase", () => {
   const state: number[] = [];
-  const C = makeClass("C", [], {
+  class C extends object {
     close() {
       state.push(1);
-    },
-  });
+    }
+  }
 
   test("test_closing", () => {
     state.length = 0;
@@ -230,13 +231,13 @@ describe("ClosingTestCase", () => {
 
 describe("NullcontextTestCase", () => {
   test("test_nullcontext", () => {
-    const C = makeClass("C", [], {});
+    class C extends object {}
     const c = C();
     with_(nullcontext(c), c_in => {
       expect(c_in).toBe(c);
     });
-    const object = {};
-    expect(with_(nullcontext(object), value => value)).toBe(object);
+    const ofJavaScript = {};
+    expect(with_(nullcontext(ofJavaScript), value => value)).toBe(ofJavaScript);
   });
 });
 
@@ -322,17 +323,17 @@ describe("TestExitStack", () => {
       expect(exc).toBeUndefined();
       expect(exc_tb).toBeUndefined();
     };
-    const ExitCM = makeClass("ExitCM", [], {
+    class ExitCM extends object {
       __init__(check_exc: any) {
         this.check_exc = check_exc;
-      },
+      }
       __enter__() {
         throw new Error("Should not be called!");
-      },
+      }
       __exit__(...exc_details: any[]) {
         this.check_exc(...exc_details);
-      },
-    });
+      }
+    }
     with_(ExitStack(), stack => {
       stack.push(_expect_ok);
       expect(callbackAt(stack, -1)).toBe(_expect_ok);
@@ -354,14 +355,14 @@ describe("TestExitStack", () => {
 
   test("test_enter_context", () => {
     const result: number[] = [];
-    const TestCM = makeClass("TestCM", [], {
+    class TestCM extends object {
       __enter__() {
         result.push(1);
-      },
+      }
       __exit__() {
         result.push(3);
-      },
-    });
+      }
+    }
 
     const cm = TestCM();
     with_(ExitStack(), stack => {

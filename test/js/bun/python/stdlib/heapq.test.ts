@@ -18,6 +18,7 @@ import {
   len,
   list,
   map,
+  object,
   range,
   sorted,
   type,
@@ -366,7 +367,7 @@ describe("TestHeap", () => {
   });
 
   test("test_merge_stability", () => {
-    const Int = makeClass("Int", [int], {});
+    class Int extends int {}
     const inputs: any[][] = [[], [], [], []];
     // there: 20000
     for (let i = 0; i < 2000; i++) {
@@ -413,22 +414,22 @@ describe("TestHeap", () => {
       heapq.heapify(data);
       return times(data.length, () => heapq.heappop(data).x);
     };
-    const LT = makeClass("LT", [], {
+    class LT extends object {
       __init__(x: number) {
         this.x = x;
-      },
+      }
       __lt__(other: any) {
         return this.x > other.x;
-      },
-    });
-    const LE = makeClass("LE", [], {
+      }
+    }
+    class LE extends object {
       __init__(x: number) {
         this.x = x;
-      },
+      }
       __le__(other: any) {
         return this.x >= other.x;
-      },
-    });
+      }
+    }
     const data = times(100, () => random.random());
     const target = sorted(data, kwargs({ reverse: true }));
     expect(hsort(data, LT)).toEqual(target);
@@ -440,11 +441,11 @@ describe("TestHeap", () => {
 // ==============================================================================
 
 /** Dummy sequence class defining __len__ but not __getitem__. */
-const LenOnly = makeClass("LenOnly", [], {
+class LenOnly extends object {
   __len__() {
     return 10;
-  },
-});
+  }
+}
 
 function raiseZeroDivisionError() {
   throw new ZeroDivisionError();
@@ -479,15 +480,15 @@ function next(this: any) {
 }
 
 /** Sequence using __getitem__ */
-const G = makeClass("G", [], {
+class G extends object {
   __init__(seqn: any) {
     this.seqn = seqn;
-  },
+  }
   __getitem__(i: number) {
     // Not this.seqn[i]: past the end that is undefined in JavaScript, and the IndexError is what ends the iteration.
     return getitem(this.seqn, i);
-  },
-});
+  }
+}
 
 /** Sequence using iterator protocol */
 const I = makeClass("I", [], { __init__: init, __iter__: self, __next__: next });
@@ -528,16 +529,16 @@ const S = makeClass("S", [], {
 /** Test multiple tiers of iterators */
 const L = (seqn: any) => chain(map((x: any) => x, R(Ig(G(seqn)))));
 
-const SideEffectLT = makeClass("SideEffectLT", [], {
+class SideEffectLT extends object {
   __init__(value: number, heap: any[]) {
     this.value = value;
     this.heap = heap;
-  },
+  }
   __lt__(other: any) {
     this.heap.length = 0;
     return this.value < other.value;
-  },
-});
+  }
+}
 
 describe("TestErrorHandling", () => {
   test("test_non_sequence", () => {
@@ -625,12 +626,12 @@ describe("TestErrorHandling", () => {
     // See bpo-39421: Strong references need to be taken
     // when comparing objects as they can alter the heap
     const heap: any[] = [];
-    const EvilClass = makeClass("EvilClass", [int], {
+    class EvilClass extends int {
       __lt__() {
         heap.length = 0;
         return NotImplemented;
-      },
-    });
+      }
+    }
 
     heapq.heappush(heap, EvilClass(0));
     expect(() => heapq.heappushpop(heap, 1)).toThrow(IndexError);
@@ -639,18 +640,18 @@ describe("TestErrorHandling", () => {
   test("test_comparison_operator_modifying_heap_two_heaps", () => {
     let list1: any[] = [];
     let list2: any[] = [];
-    const h = makeClass("h", [int], {
+    class h extends int {
       __lt__() {
         list2.length = 0;
         return NotImplemented;
-      },
-    });
-    const g = makeClass("g", [int], {
+      }
+    }
+    class g extends int {
       __lt__() {
         list1.length = 0;
         return NotImplemented;
-      },
-    });
+      }
+    }
 
     heapq.heappush(list1, h(0));
     heapq.heappush(list2, g(0));

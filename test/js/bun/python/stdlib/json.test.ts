@@ -248,11 +248,11 @@ describe("TestDecode", () => {
 
   test("test_explicit_cls_skips_json_decoder_default", () => {
     let calls = 0;
-    const CustomDecoder = makeClass("CustomDecoder", [], {
+    class CustomDecoder extends object {
       decode() {
         calls++;
-      },
-    });
+      }
+    }
     loads("{}", kwargs({ cls: CustomDecoder }));
     expect(calls).toBe(1);
   });
@@ -376,20 +376,20 @@ describe("TestDump", () => {
   // Issue 24094
   test("test_encode_evil_dict", () => {
     const L: any[] = [];
-    const D = makeClass("D", [dict], {
+    class D extends dict {
       keys() {
         return L;
-      },
-    });
-    const X = makeClass("X", [], {
+      }
+    }
+    class X extends object {
       __hash__() {
         L.shift();
         return 1337;
-      },
+      }
       __lt__() {
         return 0;
-      },
-    });
+      }
+    }
     for (let i = 0; i < 1122; i++) L.push(X());
     const d = D();
     setitem(d, 1337, "true.dat");
@@ -398,8 +398,8 @@ describe("TestDump", () => {
 
   // gh-145244: UAF on borrowed key when default callback mutates dict
   test("test_default_clears_dict_key_uaf", () => {
-    const Evil = makeClass("Evil", [], {});
-    const AlsoEvil = makeClass("AlsoEvil", [], {});
+    class Evil extends object {}
+    class AlsoEvil extends object {}
     const target = dict([["A".repeat(100), Evil()]]);
     const evil_default = (obj: any) => {
       if (obj instanceof Evil) {
@@ -415,11 +415,11 @@ describe("TestDump", () => {
     // Don't call obj.__str__() on str subclasses
 
     // str subclass which returns a different string on str(obj)
-    const StrSubclass = makeClass("StrSubclass", [str], {
+    class StrSubclass extends str {
       __str__() {
         return "StrSubclass";
-      },
-    });
+      }
+    }
 
     let obj = StrSubclass("ascii");
     expect(dumps(obj)).toBe('"ascii"');
@@ -443,11 +443,11 @@ describe("TestDump", () => {
 
 describe("TestEncodeBasestringAscii", () => {
   // str subclass which returns a different string on str(obj)
-  const StrSubclass = makeClass("StrSubclass", [str], {
+  class StrSubclass extends str {
     __str__() {
       return "StrSubclass";
-    },
-  });
+    }
+  }
 
   const CASES = [
     [
@@ -1026,7 +1026,7 @@ describe("TestPass", () => {
 });
 
 describe("TestRecursion", () => {
-  const JSONTestObject = makeClass("JSONTestObject", [], {});
+  class JSONTestObject extends object {}
 
   test("test_listrecursion", () => {
     let x: any[] = [];
@@ -1108,12 +1108,12 @@ describe("TestRecursion", () => {
 
   test("test_endless_recursion", () => {
     // See issue gh-56260
-    const EndlessJSONEncoder = makeClass("EndlessJSONEncoder", [json.JSONEncoder], {
+    class EndlessJSONEncoder extends json.JSONEncoder {
       // If check_circular is False, this will keep adding another list.
       default(o: any) {
         return [o];
-      },
-    });
+      }
+    }
     expect(() =>
       infinite_recursion(1000, () => EndlessJSONEncoder(kwargs({ check_circular: false })).encode(complex(0, 5))),
     ).toThrow(RecursionError);

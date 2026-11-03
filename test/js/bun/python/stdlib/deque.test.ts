@@ -23,6 +23,7 @@ import {
   list,
   map,
   next,
+  object,
   range,
   repr,
   reversed,
@@ -36,7 +37,7 @@ import gc from "python:gc";
 import { add, contains, delitem, eq, ge, getitem, gt, iadd, imul, le, lt, ne, setitem } from "python:operator";
 import pickle from "python:pickle";
 import random from "python:random";
-import { makeClass, py, t } from "./helpers";
+import { call, makeClass, py, t } from "./helpers";
 
 // there: 100000
 const BIG = 2000;
@@ -46,22 +47,22 @@ function* fail() {
   yield 1;
 }
 
-const BadCmp = makeClass("BadCmp", [], {
+class BadCmp extends object {
   __eq__() {
     throw new RuntimeError();
-  },
-});
+  }
+}
 
-const MutateCmp = makeClass("MutateCmp", [], {
+class MutateCmp extends object {
   __init__(deque: any, result: boolean) {
     this.deque = deque;
     this.result = result;
-  },
+  }
   __eq__() {
     this.deque.clear();
     return this.result;
-  },
-});
+  }
+}
 
 const times = <T>(n: number, make: (i: number) => T): T[] => Array.from({ length: n }, (_, i) => make(i));
 
@@ -146,22 +147,24 @@ describe("TestBasic", () => {
       for (const letter of "abcdefghijklmnopqrstuvwxyz") expect(list.count(s, letter)).toBe(d.count(letter));
     }
     expect(() => d.count()).toThrow(PyTypeError); // too few args
-    expect(() => d.count(1, 2)).toThrow(PyTypeError); // too many args
-    const BadCompare = makeClass("BadCompare", [], {
+    expect(() => call(d.count, [1, 2])).toThrow(PyTypeError); // too many args
+    // JavaScript may pass a function more than it takes.
+    expect(d.count(1, 2)).toBe(0);
+    class BadCompare extends object {
       __eq__() {
         throw new ArithmeticError();
-      },
-    });
+      }
+    }
     d = deque([1, 2, BadCompare(), 3]);
     expect(() => d.count(2)).toThrow(ArithmeticError);
     d = deque([1, 2, 3]);
     expect(() => d.count(BadCompare())).toThrow(ArithmeticError);
-    const MutatingCompare = makeClass("MutatingCompare", [], {
+    class MutatingCompare extends object {
       __eq__() {
         this.d.pop();
         return true;
-      },
-    });
+      }
+    }
     const m = MutatingCompare();
     d = deque([1, 2, 3, m, 4, 5]);
     m.d = d;
@@ -222,12 +225,12 @@ describe("TestBasic", () => {
 
   test("test_contains_count_index_stop_crashes", () => {
     let d: any;
-    const A = makeClass("A", [], {
+    class A extends object {
       __eq__() {
         d.clear();
         return NotImplemented;
-      },
-    });
+      }
+    }
     d = deque([A(), A()]);
     expect(() => contains(d, 3)).toThrow(RuntimeError);
     d = deque([A(), A()]);
@@ -526,7 +529,7 @@ describe("TestBasic", () => {
       d.reverse();
       expect(list(d)).toEqual(data.slice(0, i));
     }
-    expect(() => d.reverse(1)).toThrow(PyTypeError); // Arity is zero
+    expect(() => call(d.reverse, [1])).toThrow(PyTypeError); // Arity is zero
   });
 
   test("test_rotate", () => {
@@ -577,7 +580,7 @@ describe("TestBasic", () => {
 
     expect(() => d.rotate("x")).toThrow(PyTypeError); // Wrong arg type
     expect(() => d.rotate(-0)).toThrow(PyTypeError);
-    expect(() => d.rotate(1, 10)).toThrow(PyTypeError); // Too many args
+    expect(() => call(d.rotate, [1, 10])).toThrow(PyTypeError); // Too many args
 
     d = deque();
     d.rotate(); // rotate an empty deque

@@ -26,6 +26,7 @@ pub(crate) mod groups;
 pub(crate) mod newlines;
 pub(crate) mod options;
 pub(crate) mod partition;
+pub(crate) mod report;
 pub(crate) mod sort;
 
 use bun_lint::prelude::*;

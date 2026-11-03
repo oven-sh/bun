@@ -1635,6 +1635,21 @@ console.log("survived", require("./late.js"));`,
           "wrapper.cjs: require.main===module true | process.mainModule wrapper.cjs",
         ],
       ],
+      [
+        "an ES module that is already loaded does not become a main module",
+        {
+          "wrapper.mjs": `
+            import Module from "node:module";
+            import path from "node:path";
+            import { isMain } from "./lib.mjs";
+            Module.runMain(path.resolve("lib.mjs"));
+            process.on("exit", () => console.log("lib.mjs:", "import.meta.main", isMain()));
+          `,
+          "lib.mjs": `export const isMain = () => import.meta.main;`,
+        },
+        ["wrapper.mjs"],
+        ["lib.mjs: import.meta.main false"],
+      ],
       // On main the loader of import() loads the module here, finds the require cache without it, and runs it again.
       [
         "a loaded module that is started, and that then leaves require.cache, does not run again",

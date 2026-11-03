@@ -1672,6 +1672,9 @@ bool loadMainModule(Zig::GlobalObject* globalObject, const WTF::String& key)
             cachedModule->load(vm, globalObject);
         RELEASE_AND_RETURN(throwScope, true);
     }
+    // The same for an ES module that the loader of import() has: the call does not make it a main module.
+    if (globalObject->moduleLoader()->registryEntry(JSC::Identifier::fromString(vm, key)))
+        return false;
 
     BunString specifier = Bun::toString(key);
     size_t query = key.find('?');

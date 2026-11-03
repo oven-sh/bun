@@ -528,9 +528,31 @@ fn format_block_in(
             sort_imports: sort_imports.filter(|it| it.applies_to_embedded_code()),
             ..options.clone()
         },
-        ..Resolved::default()
+        omits_final_newline: false,
+        has_unsupported_option: false,
+        formats_recoverable_errors: false,
+        depends_on_directory: false,
     };
-    let Ok((formatted, _)) = format(path, code, &resolved, names, scratch, false) else {
+    // The name only says which language it is.
+    let is_script = [
+        &b".js"[..],
+        b".jsx",
+        b".ts",
+        b".tsx",
+        b".mjs",
+        b".cjs",
+        b".mts",
+        b".cts",
+    ]
+    .iter()
+    .any(|extension| path.ends_with(extension))
+        && options.filepath.is_none()
+        && options.parser.is_none();
+    let formatted = match is_script && !matches!(code, [0xFF, 0xFE, ..] | [0xFE, 0xFF, ..]) {
+        true => format_script(path, path, code, &resolved, names, scratch, false),
+        false => format(path, code, &resolved, names, scratch, false),
+    };
+    let Ok((formatted, _)) = formatted else {
         return false;
     };
     out.extend_from_slice(&formatted);
@@ -838,6 +860,28 @@ fn format(
             return finish(done.map(|_| ()), out, "HTML").map(|(out, _)| (out, cursor));
         }
     }
+    format_script(
+        path,
+        name,
+        text,
+        resolved,
+        (atoms, memory),
+        scratch,
+        verifies,
+    )
+}
+
+/// [`format`] for JavaScript and TypeScript. `name` is the name of the file if `filepath` says so, else `path`.
+fn format_script(
+    path: &[u8],
+    name: &[u8],
+    text: &[u8],
+    resolved: &Resolved,
+    (atoms, memory): (&dyn Intern, &Session),
+    scratch: &mut Scratches,
+    verifies: bool,
+) -> Result<Formatted, Failure> {
+    let options = &resolved.options;
     let text = match bun_format::pragma::before_parsing(text, options) {
         BeforeParsing::LeaveUnchanged => return Ok((text.to_vec(), options.cursor_offset)),
         BeforeParsing::Format(text) => text,

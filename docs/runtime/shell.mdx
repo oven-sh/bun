@@ -462,7 +462,7 @@ console.log(result); // Blob(13) { size: 13, type: "text/plain" }
 For cross-platform compatibility, Bun Shell implements a set of builtin commands, in addition to reading commands from the `PATH` environment variable.
 
 - `cd`: change the working directory
-- `ls`: list files in a directory (supports `-l` for long listing format)
+- `ls`: list files in a directory (supports `-l` for long listing format). With several operands it lists the files first and then each directory, and sorts each of the two groups by name. `-U` keeps the order of the command line.
 - `rm`: remove files and directories
 - `echo`: print text
 - `pwd`: print the working directory

@@ -2041,6 +2041,11 @@ describe.skipIf(!hasFlag)("HTML", () => {
     // Words in an element in which white space counts, on one line with its tags.
     `<div>\n  <pre>a b</pre>\n  <pre>a\nb</pre>\n  <pre> a</pre>\n  <pre>{{ a }}</pre>\n  <pre>{{//</pre>\n  <textarea>a b</textarea>\n  <textarea>a  b</textarea>\n  <textarea a="b">${full} ${full}</textarea>\n</div>\n`,
     "<svg>\n  <title>a b</title>\n  <title> a </title>\n  <g></g>\n</svg>\n",
+    // The `;` at the end of a `style` is dropped, and a custom property is a property like another.
+    `<div>\n  <p style="width: 22%;">a</p>\n  <p style="width: 80%; height: 300px;" ${attributes}>a</p>\n  <p style="--bg-rgb: var(--bs-info-rgb)">a</p>\n  <p style="width: 22%;;">a</p>\n  <p style=";">a</p>\n  <p style="width: 22% ;">a</p>\n  <p>b <i style="width: 1px;">c</i></p>\n</div>\n`,
+    // What a comment starts with says whether somebody reads it.
+    "<div>\n  <!-- position: x -->\n  <p   a>b</p>\n  <!-- dropstart -->\n  <span>c</span>\n  <!-- 感谢 -->\n  <!-- prettier-ignore -->\n  <p   a>b</p>\n  <!--\vprettier-ignore -->\n  <p   a>b</p>\n</div>\n",
+    "<div>\n  <title>{{ a }} b</title>\n  <textarea>{{a}}</textarea>\n  <textarea>a &amp; b</textarea>\n</div>\n",
     // A text over several lines in front of an element.
     `<p>\n  ${full}\n  tempor ${full}\n  tempor <b>a</b> ut\n</p>\n`,
   ];
@@ -2213,6 +2218,7 @@ describe.skipIf(!hasFlag)("Vue", () => {
     "<template>\n  <p>a {{ b }} <i>c</i> dddddddddd eeeeeeeeee ffffffffff</p>\n  g <i>h</i> iiiiiiiiii jjjjjjjjjj kkkkkkkkkk\n  <p>l</p>\n</template>\n",
     // A `<` that starts no tag goes on with the text.
     "<template><h>\n}<code></code>\n>\n<",
+    "<template>\n  <title>{{a}}</title>\n  <textarea>{{a}}</textarea>\n</template>\n",
   );
   const files = Object.fromEntries(inputs.map((input, index) => [`${index}.vue`, input]));
 

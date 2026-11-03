@@ -249,7 +249,18 @@ enum Printed {
     AsWritten,
     /// It is code, which is laid out in another way if it does not fit on the line.
     AsWrittenOnOneLine,
+    /// The same without the `;` at its end.
+    WithoutSemicolonOnOneLine,
     Otherwise,
+}
+
+/// An attribute of a start tag.
+#[derive(Copy, Clone)]
+struct Attribute {
+    start: usize,
+    end: usize,
+    /// The `;` in front of the quote at its end is not printed.
+    drops_semicolon: bool,
 }
 
 /// What has been made of a child.
@@ -587,8 +598,7 @@ pub(crate) struct Runs {
     /// Nothing has been looked at.
     is_new: bool,
     levels: Vec<Level>,
-    /// Where the attributes of a start tag start and end.
-    attributes: Vec<(usize, usize)>,
+    attributes: Vec<Attribute>,
     pieces: Vec<Piece>,
     /// Of the text, once something has been looked at.
     marks: HtmlMarksBuffer,
@@ -783,7 +793,8 @@ struct Scanner<'s, 'a> {
     settings: Settings,
     /// The elements that are open in the run.
     levels: &'s mut Vec<Level>,
-    attributes: &'s mut Vec<(usize, usize)>,
+    /// Those of the start tag that has been read last.
+    attributes: &'s mut Vec<Attribute>,
     /// What `read_pieces` has read.
     pieces: &'s mut Vec<Piece>,
     /// How `pieces` are laid out in several lines is not known.
@@ -1257,8 +1268,8 @@ impl<'a> Scanner<'_, 'a> {
             let rest = usize::from(!is_empty) + name.len() + 3;
             // `forceNotToBreakAttrContent`
             let is_script_from_elsewhere = name == b"script"
-                && matches!(self.attributes[..], [(from, to)] if matches!(
-                    self.text.get(from..to),
+                && matches!(self.attributes[..], [it] if matches!(
+                    self.text.get(it.start..it.end),
                     Some([b's', b'r', b'c'] | [b's', b'r', b'c', b'=', ..])
                 ));
             if is_empty || width + 1 + rest <= room {
@@ -1289,7 +1300,16 @@ impl<'a> Scanner<'_, 'a> {
                     .and_then(|rest| {
                         rest.get(..bun_core::strings::index_of_char_usize(rest, b'<')?)
                     })
-                    .filter(|words| is_plain_line(words))
+                    .filter(|words| {
+                        let is_plain = |byte: &u8| {
+                            matches!(byte, b' '..=b'~') && !matches!(byte, b'&' | b'\\')
+                        };
+                        !matches!(words, [] | [b' ', ..] | [.., b' '])
+                            && words.iter().all(is_plain)
+                            && !bun_core::strings::contains(words, b"  ")
+                            && (self.has_plain_braces()
+                                || !bun_core::strings::contains_char(words, b'{'))
+                    })
                     .map(|words| words.len()),
                 b"pre" if first == open_end && self.at(first) != b'<' => (self
                     .words(open_end, level + 1))
@@ -1448,7 +1468,11 @@ impl<'a> Scanner<'_, 'a> {
             if self.at(at) == b' '
                 && let Some(end) = self.plain_attribute(name, at + 1)
             {
-                self.attributes.push((at + 1, end));
+                self.attributes.push(Attribute {
+                    start: at + 1,
+                    end,
+                    drops_semicolon: false,
+                });
                 (at, width) = (end, (width + end - at).min(TOO_WIDE));
                 continue;
             }
@@ -1464,12 +1488,17 @@ impl<'a> Scanner<'_, 'a> {
                 _ if attribute == at => return None,
                 _ => {}
             }
-            let (end, attribute_width) = self.attribute(name, attribute)?;
+            let (end, attribute_width, drops_semicolon) = self.attribute(name, attribute)?;
             if attribute_width == TOO_WIDE && !can_span_lines {
                 return None;
             }
-            self.has_single_blanks_in_tag &= attribute == at + 1 && self.at(at) == b' ';
-            self.attributes.push((attribute, end));
+            self.has_single_blanks_in_tag &=
+                attribute == at + 1 && self.at(at) == b' ' && !drops_semicolon;
+            self.attributes.push(Attribute {
+                start: attribute,
+                end,
+                drops_semicolon,
+            });
             (at, width) = (end, (width + 1 + attribute_width).min(TOO_WIDE));
         }
     }
@@ -1479,19 +1508,25 @@ impl<'a> Scanner<'_, 'a> {
     fn put_tag(&mut self, start: usize, name_end: usize, is_broken: bool) {
         let level = self.siblings.level;
         if !is_broken && self.has_single_blanks_in_tag {
-            let end = self.attributes.last().map_or(name_end, |it| it.1);
+            let end = self.attributes.last().map_or(name_end, |it| it.end);
             return self.out.source(start, end);
         }
         self.out.source(start, name_end);
         for index in 0..self.attributes.len() {
-            let Some(&(from, to)) = self.attributes.get(index) else {
+            let Some(&attribute) = self.attributes.get(index) else {
                 break;
             };
             match is_broken {
                 true => self.put_line(level + 1),
                 false => self.out.push(b' '),
             }
-            self.out.source(from, to);
+            match attribute.drops_semicolon {
+                true => {
+                    self.out.source(attribute.start, attribute.end - 2);
+                    self.out.push(b'"');
+                }
+                false => self.out.source(attribute.start, attribute.end),
+            }
         }
     }
 
@@ -2352,8 +2387,9 @@ impl<'a> Scanner<'_, 'a> {
     }
 
     /// The attribute that starts at `from`, if it is `name` or `name="value"` and is printed like that. Returns where it
-    /// ends and how wide it is: `TOO_WIDE` with a line break in it, which breaks the tag like a line that is too long.
-    fn attribute(&self, element: &[u8], from: usize) -> Option<(usize, usize)> {
+    /// ends, how wide it is, and whether the `;` at its end is dropped. It is `TOO_WIDE` with a line break in it, which
+    /// breaks the tag like a line that is too long.
+    fn attribute(&self, element: &[u8], from: usize) -> Option<(usize, usize, bool)> {
         let rest = self.text.get(from..)?;
         let mut seen = 0;
         let len = rest.iter().position(|byte| {
@@ -2385,7 +2421,7 @@ impl<'a> Scanner<'_, 'a> {
         }
         let at = from + len;
         let [b'=', quoted @ ..] = behind else {
-            return Some((at, len));
+            return Some((at, len, false));
         };
         let [b'"', value_and_rest @ ..] = quoted else {
             return None;
@@ -2451,10 +2487,17 @@ impl<'a> Scanner<'_, 'a> {
                     if ((self.siblings.level + 1) * self.settings.indent_width)
                         .saturating_add(width)
                         <= self.settings.line_width => {}
+                Printed::WithoutSemicolonOnOneLine
+                    if ((self.siblings.level + 1) * self.settings.indent_width)
+                        .saturating_add(width - 1)
+                        <= self.settings.line_width =>
+                {
+                    return Some((end, width - 1, true));
+                }
                 _ => return None,
             }
         }
-        Some((end, width))
+        Some((end, width, false))
     }
 
     /// What `embed` makes of the value of an attribute.
@@ -2480,9 +2523,12 @@ impl<'a> Scanner<'_, 'a> {
                         && !bun_core::strings::contains_char(value, b'\n')
             }
             b"style" => {
-                return match canonical::is_style(value) {
-                    true => Printed::AsWrittenOnOneLine,
-                    false => Printed::Otherwise,
+                return match value {
+                    _ if canonical::is_style(value) => Printed::AsWrittenOnOneLine,
+                    [rest @ .., b';'] if canonical::is_style(rest) => {
+                        Printed::WithoutSemicolonOnOneLine
+                    }
+                    _ => Printed::Otherwise,
                 };
             }
             b"allow" => element != b"iframe",
@@ -2901,8 +2947,15 @@ impl<'a> Scanner<'_, 'a> {
             self.ends_in_text = false;
             return Item::Ends(end);
         };
-        let first = rest.iter().find(|byte| !matches!(byte, 9..=13 | b' '));
-        if matches!(first, None | Some(b'p' | b'd' | b'[' | b'<' | 128..)) {
+        // White space that is not ASCII starts with one of these bytes.
+        let space = (rest.iter()).take_while(|byte| matches!(byte, 9..=13 | b' '));
+        let said = &rest[space.count()..];
+        if matches!(
+            said,
+            [] | [b'[' | b'<' | 0xC2 | 0xE1 | 0xE2 | 0xE3 | 0xEF, ..]
+        ) || said.starts_with(b"prettier-ignore")
+            || said.starts_with(b"display:")
+        {
             return Item::No;
         }
         let Some(len) = bun_core::strings::index_of(rest, b"-->") else {

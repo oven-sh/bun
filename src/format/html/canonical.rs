@@ -654,6 +654,10 @@ pub(crate) fn is_style(value: &[u8]) -> bool {
     let at = |index: usize| value.get(index).copied().unwrap_or(0);
     let mut end = 0;
     loop {
+        // `--a`
+        if at(end) == b'-' && at(end + 1) == b'-' {
+            end += 2;
+        }
         if !at(end).is_ascii_lowercase() {
             return false;
         }

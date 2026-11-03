@@ -2713,8 +2713,33 @@ describe("code in Markdown and MDX", () => {
     const texts = [
       "import  a from 'a'\n\nexport const b = `\n  c\n`\n\nexport const d = 1  \n\n<A b={`\n  c\n`} />\n\n<A>{`a\n  b  \nc`}</A>\n\n<A\n  a={1}\n/>\n",
       "- a\n\n  <A b={1}  />\n\nexport const a = ;\n\n<A b={} />\n",
+      // An element with nothing but words in it is written without JavaScript, whatever lines the words are on.
+      `<Note>\n  ${"word ".repeat(30)}word\n</Note>\n\n<Note>\n${"word\n".repeat(30)}</Note>\n\n<Note>${"word ".repeat(30)}word</Note>\n\n<Note>\n  a\n  b\n</Note>\n\n<Note>\n    a  b\tc\n  </Note>\n`,
+      // To the column.
+      `<A>\n  ${"a".repeat(38)} ${"b".repeat(39)} c\n</A>\n\n<A>\n  ${"a".repeat(38)} ${"b".repeat(40)} c\n</A>\n\n<A>${"a".repeat(73)}</A>\n\n<A>${"a".repeat(74)}</A>\n\n<A>\n  ${"a".repeat(100)} b\n</A>\n`,
+      // More than one attribute breaks it. A tag that doesn't fit is another matter.
+      `<A b="c" d>e</A>\n\n<A b="c" d>\n  e f\n</A>\n\n<A b="${"c".repeat(90)}">\n  d   e\n</A>\n\n<A b d="${"c".repeat(90)}">\n  d   e\n</A>\n\n<A b='c'>\n  d   e\n</A>\n`,
+      // White space next to a tag means something unless it has a line break in it.
+      "<A> b   c</A>\n\n<A>b   c </A>\n\n<A> b   c </A>\n\n<A>\tb   c\n</A>\n\n<A> \n b   c \n </A>\n",
+      // What isn't a word.
+      "<A>\n  b   {c}\n</A>\n\n<A>\n  b   }\n</A>\n\n<A>\n  b   >\n</A>\n\n<A>\n  b   <B />\n</A>\n\n<A>\n  b   é\n</A>\n\n<A>\n  b     c\n</A>\n\n<A>\n  b   &amp; & `c` **d** \"e\" 'f' \\\n</A>\n",
+      "<A>\n  b   c\n</B>\n\n<A>\n  b   c\n\n<A>\n  b   c\n</A> d\n\n<A>\n  b   c\n</A>\n<B />\n\n<fbt>\n  b   c\n</fbt>\n\n<pre>\n  b   c\n</pre>\n\n<A></A>\n\n<A>\n</A>\n",
+      "{/* prettier-ignore */}\n<A>\n  b   c\n</A>\n\n<A>\n  b   c\n</A>\n",
+      // Nothing is open that the first tag could close.
+      '</A>\n<A>\n\n  </A>\n  <A b="c">\n\n</A>   b\n\n</A><A>b   c</A>\n\n</$>\n\n</>\n\n</ A>\n',
     ];
-    expectSame("a.mdx", [...blocks, ...frontMatter, ...texts], markdownOptions);
+    expectSame(
+      "a.mdx",
+      [...blocks, ...frontMatter, ...texts],
+      [
+        ...markdownOptions,
+        ["--print-width=40"],
+        ["--print-width=30", "--use-tabs"],
+        ["--jsx-single-quote"],
+        ["--single-attribute-per-line"],
+        ["--bracket-same-line"],
+      ],
+    );
   });
 });
 

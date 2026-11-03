@@ -2109,6 +2109,16 @@ impl<'a> Printer<'a, '_> {
     fn print_embedded(&mut self, id: NodeId, node: &Node) -> Option<Doc<'a>> {
         if matches!(node.kind, Kind::Import | Kind::Export | Kind::Jsx) {
             let code = self.str(node.value);
+            // Nothing is open that it could close, so it can't be parsed.
+            if node.kind == Kind::Jsx
+                && !self.options.no_short_cuts
+                && matches!(
+                    code.trim_ascii_start(),
+                    [b'<', b'/', b'a'..=b'z' | b'A'..=b'Z', ..]
+                )
+            {
+                return None;
+            }
             let mut formatted = Vec::with_capacity(code.len() + code.len() / 8 + 16);
             let embedded = Embedded {
                 language: if node.kind == Kind::Jsx {

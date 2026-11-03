@@ -270,6 +270,15 @@ enum HtmlStart {
     Unknown,
 }
 
+/// See `Reader::jsx_layout`.
+struct JsxLayout {
+    print_width: usize,
+    tab_width: usize,
+    uses_tabs: bool,
+    /// `singleAttributePerLine`
+    is_one_per_line: bool,
+}
+
 /// An opening tag of JSX.
 struct JsxTag {
     end: usize,
@@ -1037,8 +1046,8 @@ impl<'t> Reader<'t> {
 
     /// For MDX: JSX that starts with the tag at `at`, ends before an empty line and is printed as it's written: because
     /// embedded code isn't formatted, because it's only a part of an element, which can't be parsed, or because that's how
-    /// it's formatted.
-    fn jsx(&self, at: usize) -> Option<usize> {
+    /// it's formatted. An element with nothing but words in it is written as it's formatted.
+    fn jsx(&mut self, at: usize) -> Option<usize> {
         let text = self.text;
         let is_closing = self.byte(at + 1) == b'/';
         let mut name_end = at + 1 + usize::from(is_closing);
@@ -1072,10 +1081,10 @@ impl<'t> Reader<'t> {
             && !is_closing
             && bun_core::strings::contains_char(jsx, b'/')
             && !self.is_formatted_jsx(at, at + len);
-        (!is_formatted
-            && !bun_core::strings::contains(jsx, b"<!--")
-            && bun_core::strings::trim_js_whitespace_end(jsx).len() == len)
-            .then_some(at + len)
+        (!bun_core::strings::contains(jsx, b"<!--")
+            && bun_core::strings::trim_js_whitespace_end(jsx).len() == len
+            && (!is_formatted || self.write_jsx_words(at, at + len).is_some()))
+        .then_some(at + len)
     }
 
     /// `<Name a="b" c>` or `<Name a="b" />` on one line, as it's printed.
@@ -1191,9 +1200,10 @@ impl<'t> Reader<'t> {
         self.is_jsx_as_printed(start, end).unwrap_or(false)
     }
 
-    fn is_jsx_as_printed(&self, start: usize, end: usize) -> Option<bool> {
-        // What is read has names, strings for attributes, and words. Every option is named, so that a new one is looked
-        // at: JavaScript doesn't get to see what is found to be formatted.
+    /// What the layout of an element depends on, if it has names, strings for attributes, and words. `None` with options
+    /// that make it depend on more.
+    fn jsx_layout(&self) -> Option<JsxLayout> {
+        // Every option is named, so that a new one is looked at: JavaScript doesn't get to see what is read here.
         let FormatOptions {
             line_width,
             indent_width,
@@ -1251,24 +1261,123 @@ impl<'t> Reader<'t> {
             sort_package_json: _,
             toml: _,
         } = self.options;
-        let print_width = line_width.value() as usize;
-        let tab_width = indent_width.value() as usize;
-        let uses_tabs = matches!(indent_style, crate::options::IndentStyle::Tab);
-        let is_one_per_line = *attribute_position == crate::options::AttributePosition::Multiline;
-        let byte = |at: usize| self.byte(at);
         if !jsx_quote_style.is_double()
             || tailwind.is_some()
             || *debug_comments != crate::options::DebugComments::Off
         {
             return None;
         }
+        Some(JsxLayout {
+            print_width: line_width.value() as usize,
+            tab_width: indent_width.value() as usize,
+            uses_tabs: matches!(indent_style, crate::options::IndentStyle::Tab),
+            is_one_per_line: *attribute_position == crate::options::AttributePosition::Multiline,
+        })
+    }
+
+    /// The opening tag at `start`, if it's on one line and that's how it's printed.
+    fn jsx_opening_tag_as_printed(
+        &self,
+        start: usize,
+        end: usize,
+        layout: &JsxLayout,
+    ) -> Option<JsxTag> {
         let tag = self.jsx_opening_tag(start, end)?;
-        let mut at = tag.end;
-        if (tag.attributes > 1 && is_one_per_line)
-            || (!tag.is_only_one_string && at - start > print_width)
-        {
+        let is_broken = (tag.attributes > 1 && layout.is_one_per_line)
+            || (!tag.is_only_one_string && tag.end - start > layout.print_width);
+        (!is_broken).then_some(tag)
+    }
+
+    /// Writes the text from `start` to `end` if it's one element with strings for attributes and nothing but words in it,
+    /// whatever the lines are that the words are on: see `is_formatted_jsx` for the layout. White space between a tag and
+    /// a word means nothing if it has a line break in it. Without one it's `{" "}`, which isn't written here.
+    fn write_jsx_words(&mut self, start: usize, end: usize) -> Option<()> {
+        let layout = self.jsx_layout()?;
+        let tag = self.jsx_opening_tag_as_printed(start, end, &layout)?;
+        if tag.is_self_closing {
             return None;
         }
+        let text = self.text;
+        let byte = |at: usize| text.get(at).copied().unwrap_or(0);
+        let white_end = |mut at: usize| {
+            while matches!(byte(at), b' ' | b'\t' | b'\n') {
+                at += 1;
+            }
+            at
+        };
+        let means_nothing = |from: usize, to: usize| {
+            from == to || bun_core::strings::contains_char(&text[from..to], b'\n')
+        };
+        let first = white_end(tag.end);
+        if !means_nothing(tag.end, first) {
+            return None;
+        }
+        // How wide it is on one line.
+        let (mut at, mut flat) = (first, tag.end - start);
+        let closing = loop {
+            let word = at;
+            while is_jsx_word_byte(byte(at)) {
+                at += 1;
+            }
+            if at == word {
+                return None;
+            }
+            flat += at - word + usize::from(word > first);
+            let next = white_end(at);
+            if byte(next) == b'<' {
+                if !means_nothing(at, next) {
+                    return None;
+                }
+                break next;
+            }
+            at = next;
+        };
+        if self.jsx_closing_tag(closing, tag.name)? != end {
+            return None;
+        }
+        let is_broken = tag.attributes > 1 || flat + (end - closing) > layout.print_width;
+        self.copy_up_to(tag.end);
+        let (mut at, mut column) = (first, layout.tab_width);
+        while at < closing {
+            let word = at;
+            while is_jsx_word_byte(byte(at)) {
+                at += 1;
+            }
+            let fits = column + 1 + (at - word) <= layout.print_width;
+            let out = &mut self.memory.rewritten;
+            if is_broken && (word == first || !fits) {
+                out.push(b'\n');
+                match layout.uses_tabs {
+                    true => out.push(b'\t'),
+                    false => out.resize(out.len() + layout.tab_width, b' '),
+                }
+                column = layout.tab_width;
+            } else if word > first {
+                out.push(b' ');
+                column += 1;
+            }
+            out.extend_from_slice(&text[word..at]);
+            column += at - word;
+            at = white_end(at);
+        }
+        if is_broken {
+            self.memory.rewritten.push(b'\n');
+        }
+        self.copied = Some(closing);
+        Some(())
+    }
+
+    fn is_jsx_as_printed(&self, start: usize, end: usize) -> Option<bool> {
+        let layout = self.jsx_layout()?;
+        let JsxLayout {
+            print_width,
+            tab_width,
+            uses_tabs,
+            ..
+        } = layout;
+        let byte = |at: usize| self.byte(at);
+        let tag = self.jsx_opening_tag_as_printed(start, end, &layout)?;
+        let mut at = tag.end;
         if tag.is_self_closing {
             return Some(at == end);
         }

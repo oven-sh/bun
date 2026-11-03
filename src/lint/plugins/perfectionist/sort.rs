@@ -207,34 +207,50 @@ struct CycleSearch<'n, 'a> {
 }
 
 impl CycleSearch<'_, '_> {
-    fn depth_first(&mut self, element: u32) {
-        let at = element as usize;
-        match self.state.get(at) {
-            Some(Visit::Visited) | None => return,
-            Some(Visit::Visiting) => {
-                if let Some(cycle_start) = self.path.iter().position(|&it| it == element) {
-                    for &on_cycle in &self.path[cycle_start..] {
-                        self.in_cycle[on_cycle as usize] = true;
-                    }
-                }
-                return;
-            }
-            Some(Visit::Unvisited) => {}
+    /// Upstream's recursive search with its own stack, so that a long chain of dependencies cannot exhaust the
+    /// thread's.
+    fn depth_first(&mut self, root: u32) {
+        if self.state.get(root as usize) != Some(&Visit::Unvisited) {
+            return;
         }
-        self.state[at] = Visit::Visiting;
-        let depth = self.path.len();
-        self.path.push(element);
         let (nodes, order) = (self.nodes, self.order);
-        for dependency in &nodes[at].dependencies {
+        self.state[root as usize] = Visit::Visiting;
+        self.path.push(root);
+        let mut stack: Vec<(u32, usize)> = vec![(root, 0)];
+        while let Some((element, next)) = stack.last_mut() {
+            let element = *element;
+            let at = element as usize;
+            let Some(dependency) = nodes[at].dependencies.get(*next) else {
+                stack.pop();
+                self.path.pop();
+                self.state[at] = Visit::Visited;
+                continue;
+            };
+            *next += 1;
             let dependency_element = order.iter().copied().find(|&other| {
                 other != element && nodes[other as usize].dependency_names.contains(dependency)
             });
-            if let Some(dependency_element) = dependency_element {
-                self.depth_first(dependency_element);
+            let Some(dependency_element) = dependency_element else {
+                continue;
+            };
+            match self.state.get(dependency_element as usize) {
+                Some(Visit::Visited) | None => {}
+                Some(Visit::Visiting) => {
+                    if let Some(cycle_start) =
+                        self.path.iter().position(|&it| it == dependency_element)
+                    {
+                        for &on_cycle in &self.path[cycle_start..] {
+                            self.in_cycle[on_cycle as usize] = true;
+                        }
+                    }
+                }
+                Some(Visit::Unvisited) => {
+                    self.state[dependency_element as usize] = Visit::Visiting;
+                    self.path.push(dependency_element);
+                    stack.push((dependency_element, 0));
+                }
             }
         }
-        self.path.truncate(depth);
-        self.state[at] = Visit::Visited;
     }
 }
 
@@ -272,29 +288,35 @@ struct DependencyWalk<'n, 'a> {
 }
 
 impl DependencyWalk<'_, '_> {
-    fn visit(&mut self, sorting_node: u32) {
-        let at = sorting_node as usize;
-        // Upstream returns only for a visited node. A node that is still being visited is reached again only
-        // through a cycle its cycle search missed (two nodes bind one name), where upstream overflows its stack.
-        if self.state.get(at).is_none_or(|it| *it != Visit::Unvisited) {
+    /// Upstream's recursive `visitNode` with its own stack. Upstream returns only for a visited node: one that is
+    /// still being visited is reached again only through a cycle its cycle search missed, where upstream overflows.
+    fn visit(&mut self, root: u32) {
+        if self.state.get(root as usize) != Some(&Visit::Unvisited) {
             return;
         }
-        self.state[at] = Visit::Visiting;
         let (nodes, order) = (self.nodes, self.order);
-        let node = &nodes[at];
-        for &dependent in order {
+        self.state[root as usize] = Visit::Visiting;
+        let mut stack: Vec<(u32, usize)> = vec![(root, 0)];
+        while let Some((sorting_node, next)) = stack.last_mut() {
+            let sorting_node = *sorting_node;
+            let Some(&dependent) = order.get(*next) else {
+                stack.pop();
+                self.state[sorting_node as usize] = Visit::Visited;
+                self.result.push(sorting_node);
+                continue;
+            };
+            *next += 1;
             let candidate = &nodes[dependent as usize];
             if self.in_cycle[dependent as usize]
                 || dependent == sorting_node
-                || !is_node_dependent_on_other_node(candidate, node)
+                || !is_node_dependent_on_other_node(candidate, &nodes[sorting_node as usize])
+                || (self.ignore_eslint_disabled && candidate.is_eslint_disabled)
+                || self.state.get(dependent as usize) != Some(&Visit::Unvisited)
             {
                 continue;
             }
-            if !self.ignore_eslint_disabled || !candidate.is_eslint_disabled {
-                self.visit(dependent);
-            }
+            self.state[dependent as usize] = Visit::Visiting;
+            stack.push((dependent, 0));
         }
-        self.state[at] = Visit::Visited;
-        self.result.push(sorting_node);
     }
 }

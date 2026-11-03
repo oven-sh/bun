@@ -336,7 +336,7 @@ impl DirInfo {
     /// (ARENA — process lifetime), so a `&'static` reborrow of the
     /// `&'static mut` returned by `entries_at_locked` is sound and needs no
     /// `unsafe` here. The `.data` map must only be probed/iterated while the
-    /// lock is held; use [`get_entry`](Self::get_entry) for one-shot lookups.
+    /// lock is held; use [`get_entry_as`](Self::get_entry_as) for one-shot lookups.
     pub fn get_entries_ref_locked(&self, generation: Generation) -> Option<&'static fs::DirEntry> {
         if generation == 0 {
             self.entries_ref_locked_as(Trusting)
@@ -365,19 +365,6 @@ impl DirInfo {
     /// is released can walk freed buckets. The returned lookup wraps a raw
     /// pointer into the process-lifetime `EntryStore`, which stays valid after
     /// the lock is dropped.
-    pub(crate) fn get_entry(
-        &self,
-        generation: Generation,
-        query: &[u8],
-    ) -> Option<fs::EntryLookup<'static>> {
-        if generation == 0 {
-            self.get_entry_as(Trusting, query)
-        } else {
-            self.get_entry_as(Checked(generation), query)
-        }
-    }
-
-    /// One name of the listing as `asker` may use it, in a single `entries_mutex` critical section.
     #[inline]
     pub(crate) fn get_entry_as<A: Asker>(
         &self,

@@ -923,7 +923,6 @@ pub mod fs {
     /// How [`RealFS::listing_locked`] reads a directory for one caller.
     #[derive(Clone, Copy)]
     pub(crate) struct ListingRead<'a> {
-        pub(crate) reader: ListingReader,
         pub(crate) handle: ListingHandle<'a>,
         /// Keep the handle in the listing.
         pub(crate) store_fd: bool,
@@ -1228,8 +1227,7 @@ pub mod fs {
                 )));
             }
 
-            let read = ListingRead {
-                reader: ListingReader::Lookup,
+            let read = || ListingRead {
                 handle: match maybe_handle {
                     Some(handle) => ListingHandle::Held(handle),
                     None => ListingHandle::Open(dir),
@@ -1243,7 +1241,7 @@ pub mod fs {
                 },
             };
             let slot = ListingSlot::Keyed(&mut cache_result);
-            match self.listing_locked(asker, slot, read, iterator)? {
+            match self.listing_locked(asker, slot, ListingReader::Lookup, read, iterator)? {
                 // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
                 Ok(slot) => Ok(unsafe { &mut *slot }),
                 Err(err) => self.read_directory_error(dir, err, asker.generation()),
@@ -1252,11 +1250,12 @@ pub mod fs {
 
         /// The slot whose listing `asker` may use: the cached one, the same one read again in place, or a new one. The inner error is a directory that could not be opened or read. Caller holds `entries_mutex`, so a refill happens under it.
         #[inline(always)]
-        pub(crate) fn listing_locked<A: crate::dir_info::Asker, I: DirEntryIterator>(
+        pub(crate) fn listing_locked<'r, A: crate::dir_info::Asker, I: DirEntryIterator>(
             &mut self,
             asker: A,
             slot: ListingSlot<'_>,
-            read: ListingRead<'_>,
+            reader: ListingReader,
+            read: impl FnOnce() -> ListingRead<'r>,
             iterator: &mut I,
         ) -> crate::CrateResult<core::result::Result<*mut EntriesOption, crate::Error>> {
             debug_assert!(
@@ -1284,7 +1283,7 @@ pub mod fs {
                     EntriesOption::Err(failed)
                         if A::CHECKS && failed.generation != asker.generation() => {}
                     // The `DirInfo` fill has the directory open, so an error that was cached no longer holds.
-                    EntriesOption::Err(_) if read.reader == ListingReader::DirInfoFill => {}
+                    EntriesOption::Err(_) if reader == ListingReader::DirInfoFill => {}
                     _ => return Ok(Ok(cached)),
                 }
             }
@@ -1294,7 +1293,7 @@ pub mod fs {
                 // A slot held by index keeps what it has: there is no key to map a new listing to.
                 (None, ListingSlot::Filled(filled)) => return Ok(Ok(filled)),
             };
-            self.read_listing_locked(asker.generation(), target, read, iterator)
+            self.read_listing_locked(asker.generation(), target, reader, read(), iterator)
         }
 
         /// What `listing_locked` does when the cache has no answer its asker may use: one stat keeps the listing of an unchanged directory, else open, read, store. Caller holds `entries_mutex`.
@@ -1303,6 +1302,7 @@ pub mod fs {
             &mut self,
             generation: Generation,
             target: ListingTarget<'_>,
+            reader: ListingReader,
             read: ListingRead<'_>,
             iterator: &mut I,
         ) -> crate::CrateResult<core::result::Result<*mut EntriesOption, crate::Error>> {
@@ -1312,7 +1312,6 @@ pub mod fs {
                 }
             }
             let ListingRead {
-                reader,
                 handle,
                 store_fd,
                 name,
@@ -1752,15 +1751,15 @@ pub mod fs {
                 // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
                 if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {
                     let dir = existing.dir;
-                    let read = ListingRead {
-                        reader: ListingReader::Lookup,
+                    let read = || ListingRead {
                         // `open_dir_for_iteration`, not `RealFS::open_dir`: the two diverge on POSIX.
                         handle: ListingHandle::OpenForIteration(dir),
                         store_fd: false,
                         name: dir,
                     };
                     let slot = ListingSlot::Filled(result_ptr);
-                    if let Ok(Err(err)) | Err(err) = self.listing_locked(asker, slot, read, &mut ())
+                    if let Ok(Err(err)) | Err(err) =
+                        self.listing_locked(asker, slot, ListingReader::Lookup, read, &mut ())
                     {
                         // SAFETY: see above.
                         if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {

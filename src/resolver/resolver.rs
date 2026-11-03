@@ -2057,7 +2057,7 @@ impl<'a> Resolver<'a> {
             // concurrent resolver at a newer generation rewrites this `DirEntry`'s
             // map in place under that lock. The entry pointer stays valid after
             // unlock (EntryStore-owned).
-            if let Some(query) = dir.get_entry(asker.generation(), name.filename) {
+            if let Some(query) = dir.get_entry_as(asker, name.filename) {
                 let symlink_path =
                     query
                         .entry()
@@ -4089,19 +4089,20 @@ impl<'a> Resolver<'a> {
             }
         };
 
-        let listing_read = Fs::ListingRead {
-            reader: Fs::ListingReader::DirInfoFill,
+        let store_fd = self.store_fd;
+        let listing_read = || Fs::ListingRead {
             handle: Fs::ListingHandle::Held(open_dir),
-            store_fd: self.store_fd,
+            store_fd,
             name: dir_path,
         };
         let listing_slot = Fs::ListingSlot::Keyed(&mut cached_dir_entry_result);
+        let fill = Fs::ListingReader::DirInfoFill;
         let listed = if generation == 0 {
             let asker = crate::dir_info::Trusting;
-            rfs!().listing_locked(asker, listing_slot, listing_read, &mut ())
+            rfs!().listing_locked(asker, listing_slot, fill, listing_read, &mut ())
         } else {
             let asker = crate::dir_info::Checked(generation);
-            rfs!().listing_locked(asker, listing_slot, listing_read, &mut ())
+            rfs!().listing_locked(asker, listing_slot, fill, listing_read, &mut ())
         };
         let dir_entries_option: *mut Fs::file_system::real_fs::EntriesOption = listed??;
 
@@ -4314,7 +4315,7 @@ impl<'a> Resolver<'a> {
                 let looked_up = {
                     let _entries_lock = self.rfs_ref().entries_mutex.lock_guard();
                     resolved_dir_info
-                        .get_entries_ref_locked(asker.generation())
+                        .entries_ref_locked_as(asker)
                         .map(|entries| (entries.get(base), entries.fd))
                 };
                 let Some((entry_lookup, dirname_fd)) = looked_up else {
@@ -4378,8 +4379,7 @@ impl<'a> Resolver<'a> {
                                 }
                                 let file_name = &mut buf[0..index.len() + ext.len()];
                                 file_name[index.len()..].copy_from_slice(ext);
-                                let index_query =
-                                    dir_info_ref.get_entry(asker.generation(), &file_name[..]);
+                                let index_query = dir_info_ref.get_entry_as(asker, &file_name[..]);
                                 if let Some(iq) = index_query {
                                     if iq.entry().kind_for(
                                         asker.generation(),
@@ -4474,7 +4474,7 @@ impl<'a> Resolver<'a> {
     /// `is_wildcard` enables the extensionless probe (oven-sh/bun#29679). The
     /// TypeScript rewrite (oven-sh/bun#10001) runs for every target, as in esbuild.
     ///
-    /// Each probe goes through [`DirInfo::get_entry`] so the map walk happens
+    /// Each probe goes through [`DirInfo::get_entry_as`] so the map walk happens
     /// under `entries_mutex`; `dirname_fd` was captured under the caller's
     /// critical section.
     fn probe_target_extensions<A: Asker>(
@@ -4498,9 +4498,7 @@ impl<'a> Resolver<'a> {
                 }
                 let file_name = &mut buf[0..base.len() + ext.len()];
                 file_name[base.len()..].copy_from_slice(ext);
-                if let Some(ext_query) =
-                    resolved_dir_info.get_entry(asker.generation(), &file_name[..])
-                {
+                if let Some(ext_query) = resolved_dir_info.get_entry_as(asker, &file_name[..]) {
                     if ext_query
                         .entry()
                         .kind_for(asker.generation(), self.rfs_ref(), self.store_fd)
@@ -4540,9 +4538,7 @@ impl<'a> Resolver<'a> {
                 for &replacement in ts_exts.iter() {
                     let file_name = &mut buf[0..segment.len() + replacement.len()];
                     file_name[segment.len()..].copy_from_slice(replacement);
-                    if let Some(ts_query) =
-                        resolved_dir_info.get_entry(asker.generation(), &file_name[..])
-                    {
+                    if let Some(ts_query) = resolved_dir_info.get_entry_as(asker, &file_name[..]) {
                         if ts_query.entry().kind_for(
                             asker.generation(),
                             self.rfs_ref(),
@@ -5689,20 +5685,21 @@ impl<'a> Resolver<'a> {
             let mut cached_dir_entry_result =
                 rfs!().entries.get_or_put(dir_path).expect("unreachable");
 
+            let store_fd = self.store_fd;
             // A permission-denied ancestor has no fd to enumerate: `open_dir` is not valid, and its listing stays empty.
-            let listing_read = Fs::ListingRead {
-                reader: Fs::ListingReader::DirInfoFill,
+            let listing_read = || Fs::ListingRead {
                 handle: Fs::ListingHandle::Held(open_dir),
-                store_fd: self.store_fd,
+                store_fd,
                 name: dir_path,
             };
             let listing_slot = Fs::ListingSlot::Keyed(&mut cached_dir_entry_result);
+            let fill = Fs::ListingReader::DirInfoFill;
             let listed = if generation == 0 {
                 let asker = crate::dir_info::Trusting;
-                rfs!().listing_locked(asker, listing_slot, listing_read, &mut ())
+                rfs!().listing_locked(asker, listing_slot, fill, listing_read, &mut ())
             } else {
                 let asker = crate::dir_info::Checked(generation);
-                rfs!().listing_locked(asker, listing_slot, listing_read, &mut ())
+                rfs!().listing_locked(asker, listing_slot, fill, listing_read, &mut ())
             };
             let dir_entries_option: *mut Fs::file_system::real_fs::EntriesOption = listed??;
 
@@ -6315,23 +6312,21 @@ impl<'a> Resolver<'a> {
         base[0..b"index".len()].copy_from_slice(b"index");
         base[b"index".len()..].copy_from_slice(ext);
 
-        // Lookup + listing fd in one critical section (see `DirInfo::get_entry`
+        // Lookup + listing fd in one critical section (see `DirInfo::get_entry_as`
         // for the rewrite this guards against); the fd gate matches
         // `DirInfo::get_file_descriptor`.
         let looked_up = {
             let _entries_lock = self.rfs_ref().entries_mutex.lock_guard();
-            dir_info
-                .get_entries_ref_locked(asker.generation())
-                .map(|entries| {
-                    (
-                        entries.get(&base[..]),
-                        if FeatureFlags::STORE_FILE_DESCRIPTORS {
-                            entries.fd
-                        } else {
-                            FD::INVALID
-                        },
-                    )
-                })
+            dir_info.entries_ref_locked_as(asker).map(|entries| {
+                (
+                    entries.get(&base[..]),
+                    if FeatureFlags::STORE_FILE_DESCRIPTORS {
+                        entries.fd
+                    } else {
+                        FD::INVALID
+                    },
+                )
+            })
         };
         if let Some((Some(lookup), dirname_fd)) = looked_up {
             if lookup
@@ -6795,11 +6790,12 @@ impl<'a> Resolver<'a> {
         // holder by ARENA invariant).
         // SAFETY: `rfs_ptr()` points at the process-global RealFS singleton.
         let dir_entry: bun_ptr::BackRef<Fs::file_system::real_fs::EntriesOption> =
-            match unsafe { &mut *self.rfs_ptr() }.read_directory(
+            match unsafe { &mut *self.rfs_ptr() }.read_directory_as(
+                asker,
                 dir_path,
                 None,
-                asker.generation(),
                 self.store_fd,
+                &mut (),
             ) {
                 Ok(e) => bun_ptr::BackRef::new(&*e),
                 Err(_) => dec_ret!(None),

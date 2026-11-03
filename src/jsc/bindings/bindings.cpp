@@ -6313,7 +6313,12 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
 
         JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
         bool hasProperty = object->getPropertySlot(globalObject, property, slot);
-        (void)scope.tryClearException();
+        if (scope.exception()) [[unlikely]] {
+            // A Proxy runs its trap, or the getter of its target, in the read above. bun:test fails the print with what a string key throws, as JSON.stringify() did.
+            if (callGetters && !property.isSymbol() && object->type() == JSC::ProxyObjectType)
+                return;
+            (void)scope.tryClearException();
+        }
         if (!hasProperty) {
             continue;
         }

@@ -24,9 +24,7 @@
 
 #include "JSJsonWebKey.h"
 
-#include "JSCryptoKeyUsage.h"
 #include "JSDOMConvertBoolean.h"
-#include "JSDOMConvertEnumeration.h"
 #include "JSDOMConvertSequences.h"
 #include "JSDOMConvertStrings.h"
 #include "JSDOMGlobalObject.h"
@@ -147,7 +145,7 @@ template<> JsonWebKey convertDictionary<JsonWebKey>(JSGlobalObject& lexicalGloba
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!key_opsValue.isUndefined()) {
-        result.key_ops = convert<IDLSequence<IDLEnumeration<CryptoKeyUsage>>>(lexicalGlobalObject, key_opsValue);
+        result.key_ops = convert<IDLSequence<IDLDOMString>>(lexicalGlobalObject, key_opsValue);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     JSValue ktyValue;
@@ -321,8 +319,8 @@ JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, J
         RETURN_IF_EXCEPTION(throwScope, {});
         Bun::putDirectNamed(vm, result, "k"_s, kValue);
     }
-    if (!IDLSequence<IDLEnumeration<CryptoKeyUsage>>::isNullValue(dictionary.key_ops)) {
-        auto key_opsValue = toJS<IDLSequence<IDLEnumeration<CryptoKeyUsage>>>(lexicalGlobalObject, globalObject, throwScope, IDLSequence<IDLEnumeration<CryptoKeyUsage>>::extractValueFromNullable(dictionary.key_ops));
+    if (!IDLSequence<IDLDOMString>::isNullValue(dictionary.key_ops)) {
+        auto key_opsValue = toJS<IDLSequence<IDLDOMString>>(lexicalGlobalObject, globalObject, throwScope, IDLSequence<IDLDOMString>::extractValueFromNullable(dictionary.key_ops));
         RETURN_IF_EXCEPTION(throwScope, {});
         Bun::putDirectNamed(vm, result, "key_ops"_s, key_opsValue);
     }

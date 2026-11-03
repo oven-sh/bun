@@ -55,9 +55,6 @@ template<> RsaOtherPrimesInfo convertDictionary<RsaOtherPrimesInfo>(JSGlobalObje
     if (!dValue.isUndefined()) {
         result.d = convert<IDLDOMString>(lexicalGlobalObject, dValue);
         RETURN_IF_EXCEPTION(throwScope, {});
-    } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "d"_s, "RsaOtherPrimesInfo"_s, "DOMString"_s);
-        return {};
     }
     JSValue rValue;
     if (isNullOrUndefined)
@@ -69,9 +66,6 @@ template<> RsaOtherPrimesInfo convertDictionary<RsaOtherPrimesInfo>(JSGlobalObje
     if (!rValue.isUndefined()) {
         result.r = convert<IDLDOMString>(lexicalGlobalObject, rValue);
         RETURN_IF_EXCEPTION(throwScope, {});
-    } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "r"_s, "RsaOtherPrimesInfo"_s, "DOMString"_s);
-        return {};
     }
     JSValue tValue;
     if (isNullOrUndefined)
@@ -83,9 +77,6 @@ template<> RsaOtherPrimesInfo convertDictionary<RsaOtherPrimesInfo>(JSGlobalObje
     if (!tValue.isUndefined()) {
         result.t = convert<IDLDOMString>(lexicalGlobalObject, tValue);
         RETURN_IF_EXCEPTION(throwScope, {});
-    } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "t"_s, "RsaOtherPrimesInfo"_s, "DOMString"_s);
-        return {};
     }
     return result;
 }

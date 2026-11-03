@@ -40,6 +40,7 @@
 #include "JSCryptoAlgorithmParameters.h"
 #include "JSCryptoKey.h"
 #include "JSCryptoKeyPair.h"
+#include "JSCryptoKeyUsage.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSDOMWrapper.h"
 #include "JSEcKeyParams.h"
@@ -589,8 +590,35 @@ static void rejectWithException(Ref<DeferredPromise>&& passedPromise, ExceptionC
 
 static void normalizeJsonWebKey(JsonWebKey& webKey)
 {
-    // Maybe we shouldn't silently bypass duplicated usages?
-    webKey.usages = webKey.key_ops ? SubtleCrypto::toCryptoKeyUsageBitmap(webKey.key_ops.value()) : 0;
+    webKey.usages = 0;
+    if (!webKey.key_ops)
+        return;
+    for (auto& op : *webKey.key_ops) {
+        if (auto usage = parseEnumerationFromString<CryptoKeyUsage>(op))
+            webKey.usages |= WebCore::toCryptoKeyUsageBitmap(*usage);
+    }
+}
+
+bool hasRepeatedJwkKeyOp(const Vector<String>& keyOps)
+{
+    HashSet<String> seenOps;
+    for (auto& op : keyOps) {
+        if (!seenOps.add(op).isNewEntry)
+            return true;
+    }
+    return false;
+}
+
+Vector<String> toJwkKeyOps(CryptoKeyUsageBitmap usages)
+{
+    Vector<String> keyOps;
+    keyOps.reserveInitialCapacity(std::popcount(static_cast<unsigned>(usages)));
+    // The binding enum order matches the bitmap bit order.
+    for (int bit = 0; usages >> bit; ++bit) {
+        if (usages & (1 << bit))
+            keyOps.append(convertEnumerationToString(static_cast<CryptoKeyUsage>(bit)));
+    }
+    return keyOps;
 }
 
 // FIXME: This returns an std::optional<KeyData> and takes a promise, rather than returning an
@@ -629,7 +657,7 @@ static std::optional<KeyData> toKeyData(SubtleCrypto::KeyFormat format, SubtleCr
             WTF::makeVisitor(
                 [](JsonWebKey& webKey) -> std::optional<KeyData> {
                     normalizeJsonWebKey(webKey);
-                    return KeyData { webKey };
+                    return KeyData { WTF::move(webKey) };
                 },
                 [&promise](auto&) -> std::optional<KeyData> {
                     promise->reject(Exception { TypeError });
@@ -1264,7 +1292,7 @@ void SubtleCrypto::importKey(JSC::JSGlobalObject& state, KeyFormat format, KeyDa
         return;
     }
 
-    auto keyData = *keyDataOrNull;
+    auto keyData = WTF::move(*keyDataOrNull);
     auto keyUsagesBitmap = toCryptoKeyUsageBitmap(keyUsages);
 
     if (!aliasImportKeyFormat(params->identifier, format, promise.get()))
@@ -1590,7 +1618,7 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
                     }
                     normalizeJsonWebKey(jwk);
 
-                    keyData = jwk;
+                    keyData = WTF::move(jwk);
                     break;
                 }
                 }

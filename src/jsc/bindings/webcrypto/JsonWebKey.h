@@ -27,6 +27,7 @@
 
 #include "CryptoKeyUsage.h"
 #include "RsaOtherPrimesInfo.h"
+#include <bit>
 #include <wtf/Vector.h>
 
 #if ENABLE(WEB_CRYPTO)
@@ -36,8 +37,9 @@ namespace WebCore {
 struct JsonWebKey {
     String kty;
     String use;
-    // FIXME: Consider merging key_ops and usages.
-    std::optional<Vector<CryptoKeyUsage>> key_ops;
+    // Any string is a valid entry (RFC 7517 section 4.3), so not WebKit's Vector<CryptoKeyUsage>.
+    std::optional<Vector<String>> key_ops;
+    // The key_ops entries that name a KeyUsage, set by normalizeJsonWebKey().
     CryptoKeyUsageBitmap usages;
     String alg;
 
@@ -61,27 +63,26 @@ struct JsonWebKey {
     String priv;
 };
 
+// The key_ops of an exported key: its usages, in KeyUsage order.
+Vector<String> toJwkKeyOps(CryptoKeyUsageBitmap);
+
+bool hasRepeatedJwkKeyOp(const Vector<String>&);
+
 // Node's validateKeyOps rejects a repeated key_ops entry for every algorithm
 // before the operations/usages mismatch check.
-inline bool hasDuplicateJwkKeyOps(const std::optional<Vector<CryptoKeyUsage>>& keyOps)
+inline bool hasDuplicateJwkKeyOps(const JsonWebKey& jwk)
 {
-    if (!keyOps)
+    if (!jwk.key_ops)
         return false;
-    CryptoKeyUsageBitmap seenOps = 0;
-    for (auto op : *keyOps) {
-        // The binding enum order matches the bitmap bit order.
-        CryptoKeyUsageBitmap bit = 1 << static_cast<int>(op);
-        if (seenOps & bit)
-            return true;
-        seenOps |= bit;
-    }
-    return false;
+    size_t distinctKeyUsageCount = std::popcount(static_cast<unsigned>(jwk.usages));
+    bool everyEntryIsADistinctKeyUsage = jwk.key_ops->size() == distinctKeyUsageCount;
+    return !everyEntryIsADistinctKeyUsage && hasRepeatedJwkKeyOp(*jwk.key_ops);
 }
 
 // Whether `key_ops`, if the key has any, is well formed and covers `usages`.
 inline bool jwkKeyOpsAllow(const JsonWebKey& jwk, CryptoKeyUsageBitmap usages)
 {
-    return !jwk.key_ops || (!hasDuplicateJwkKeyOps(jwk.key_ops) && (jwk.usages & usages) == usages);
+    return !jwk.key_ops || (!hasDuplicateJwkKeyOps(jwk) && (jwk.usages & usages) == usages);
 }
 
 } // namespace WebCore

@@ -71,6 +71,10 @@ using namespace JSC;
     macro(document) \
     macro(domain) \
     macro(drain) \
+    macro(duplexOnClose) \
+    macro(duplexOnData) \
+    macro(duplexOnEnd) \
+    macro(duplexOnWritable) \
     macro(encoding) \
     macro(end) \
     macro(env) \

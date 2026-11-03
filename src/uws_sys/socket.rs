@@ -243,6 +243,14 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     pub fn is_named_pipe(&self) -> bool {
         self.socket.is_named_pipe()
     }
+    /// The TLS engine over a JS stream, for a socket that runs over one.
+    #[inline]
+    pub fn upgraded_duplex(&self) -> Option<*mut UpgradedDuplex> {
+        match self.socket {
+            InternalSocket::UpgradedDuplex(d) => Some(d),
+            _ => None,
+        }
+    }
 
     // ── state queries ───────────────────────────────────────────────────────
 

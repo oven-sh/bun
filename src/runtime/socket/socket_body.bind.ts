@@ -19,6 +19,19 @@ const buffered = { ...js, args: { data: b.any, encoding: b.any } } as const;
 const bufferIfAny = { returns: b.any.returning("Buffer", "undefined"), ...js } as const;
 const objectIfAny = { returns: b.any.returning("object", "undefined"), ...js } as const;
 
+/** What a `Duplex` emits as `data`. What is not a buffer is reported to the socket's `error` handler, not thrown. */
+export const DuplexChunk = b.union({ none: b.null, bytes: b.bufferSource.allowShared, other: b.any });
+/**
+ * The `data`, `end`, `drain` and `close` of the `Duplex` a `TLSSocket` runs over, called by node:net's listeners.
+ * A listener holds the socket, so the GC frees the socket and its TLS engine together with the stream.
+ */
+const duplexListeners = {
+  duplexOnData: { args: { chunk: DuplexChunk }, capability: "js", privateSymbol: "duplexOnData" },
+  duplexOnEnd: { capability: "js", privateSymbol: "duplexOnEnd" },
+  duplexOnWritable: { capability: "js", privateSymbol: "duplexOnWritable" },
+  duplexOnClose: { capability: "js", privateSymbol: "duplexOnClose" },
+} as const;
+
 /** What `Bun.connect()` resolves to and the `open` handler of `Bun.listen()` takes. */
 function socket<SSL extends boolean>(ssl: SSL) {
   return b.class({
@@ -26,12 +39,8 @@ function socket<SSL extends boolean>(ssl: SSL) {
     refCounted: true,
     finalize: true,
     memoryCost: true,
-    /** `handlers` is shared with the listener and its other sockets. `duplex*` serve a `TLSSocket` over a `Duplex`. */
-    internalFields: [
-      "handlers",
-      "data",
-      ...(ssl ? ["duplexOrigin", "duplexOnData", "duplexOnEnd", "duplexOnWritable", "duplexOnClose"] : []),
-    ],
+    /** `handlers` is shared with the listener and its other sockets. `duplexOrigin` is the `Duplex` a `TLSSocket` runs over. */
+    internalFields: ["handlers", "data", ...(ssl ? ["duplexOrigin"] : [])],
     proto: {
       alpnProtocol: { ...js, getter: b.any.returning("string", "boolean") },
       authorized: { getter: b.bool, pure: true },
@@ -40,6 +49,7 @@ function socket<SSL extends boolean>(ssl: SSL) {
       close: { capability: "js" },
       data: { setter: true, internalField: "data" },
       disableRenegotiation: {},
+      ...(ssl ? duplexListeners : {}),
       end,
       exportKeyingMaterial: { ...bufferIfAny, args: { length: b.any, label: b.any, context: b.any } },
       fd: { getter: b.any.returning("number"), capability: "heap" },
@@ -126,8 +136,10 @@ export const DuplexTLSOptions = b.dictionary({
   tls: b.any.emptyStringAsNull,
   data: b.any,
 });
-/** Returns the `TLSSocket` and the listeners for the duplex's `data`, `end`, `drain` and `close`. */
-/** `data` of the options is `data` of the new socket. */
+/**
+ * Returns the `TLSSocket` that runs over `duplex`. The caller wires the duplex's `data`, `end`, `drain` and `close` to
+ * the socket's `duplexOn*`. `data` of the options is `data` of the new socket.
+ */
 export const upgradeDuplexToTLS = b.fn({
   ...js,
   args: { duplex: b.any, options: DuplexTLSOptions },

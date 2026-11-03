@@ -5,7 +5,7 @@ use core::ffi::{c_int, c_uint, c_void};
 use core::ptr::{self, NonNull};
 
 use crate::generated_bindgen::socket_body::{
-    AnySocket, BunSocket, DuplexTLSOptions, SocketHandle, js_TCPSocket, js_TLSSocket,
+    AnySocket, BunSocket, DuplexChunk, DuplexTLSOptions, SocketHandle, js_TCPSocket, js_TLSSocket,
 };
 use bun_core::EncodedSlice;
 use bun_io::KeepAlive;
@@ -1284,13 +1284,23 @@ impl<const SSL: bool> NewSocket<SSL> {
             let handlers = self.get_handlers();
             handlers.mark_active();
             self.update_flags(|f| f.insert(Flags::IS_ACTIVE));
-            // Keep the JS wrapper alive while the socket is active.
+            // Keep the JS wrapper alive while the socket is active: the event
+            // loop can deliver an event to it with no JS reference left.
             // `getThisValue` may not have been called yet (e.g. server-side
             // sockets without default data), in which case the ref is still
             // empty and there's nothing to upgrade.
+            //
+            // A TLS engine over a JS stream gets every event from that stream's
+            // listeners, which hold the wrapper. Once nothing in JS reaches it,
+            // nothing can ever reach it: leave it weak, like node's TLSWrap over
+            // a JSStream, so the GC collects it with its engine.
             if self.this_value.get().is_not_empty() {
-                self.this_value
-                    .with_mut(|r| r.upgrade(&handlers.global_object));
+                if self.socket.get().upgraded_duplex().is_some() {
+                    self.this_value.with_mut(|r| r.downgrade());
+                } else {
+                    self.this_value
+                        .with_mut(|r| r.upgrade(&handlers.global_object));
+                }
             }
         }
     }
@@ -4677,16 +4687,46 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
     unsafe { bun_jsc::AbortHandle::arm_owner(duplex_context, context) };
     DuplexUpgradeContext::start_tls(duplex_context_ref);
 
-    let array = JSValue::create_empty_array(global, 2)?;
-    array.put_index(global, 0, tls_js_value)?;
-    // data, end, drain and close events must be reported
-    array.put_index(
-        global,
-        1,
-        duplex_context_ref.upgrade.get_js_handlers(global)?,
-    )?;
+    Ok(tls_js_value)
+}
 
-    Ok(array)
+/// The events of the `Duplex` a `TLSSocket` runs over, from the listeners
+/// node:net puts on it. `socket` names the engine until the connection closes
+/// (`on_close` and `handle_connect_error` detach it before the context that
+/// owns the engine can be freed), so a late event does nothing.
+impl TLSSocket {
+    fn upgraded_duplex(&self) -> Option<&UpgradedDuplex> {
+        // SAFETY: the engine is `.upgrade` of the live `DuplexUpgradeContext`
+        // that `socket` was set from, the same allocation as the opaque handle.
+        self.socket
+            .get()
+            .upgraded_duplex()
+            .map(|d| unsafe { &*d.cast::<UpgradedDuplex>() })
+    }
+
+    pub(crate) fn duplex_on_data<'a>(&self, cx: &mut JsScope<'a>, chunk: DuplexChunk<'a>) {
+        if let Some(duplex) = self.upgraded_duplex() {
+            duplex.received_data(cx, chunk);
+        }
+    }
+
+    pub(crate) fn duplex_on_end(&self, _: &mut JsScope<'_>) {
+        if let Some(duplex) = self.upgraded_duplex() {
+            duplex.received_end();
+        }
+    }
+
+    pub(crate) fn duplex_on_writable(&self, _: &mut JsScope<'_>) {
+        if let Some(duplex) = self.upgraded_duplex() {
+            duplex.writable();
+        }
+    }
+
+    pub(crate) fn duplex_on_close(&self, _: &mut JsScope<'_>) {
+        if let Some(duplex) = self.upgraded_duplex() {
+            duplex.transport_closed();
+        }
+    }
 }
 
 pub(crate) fn is_named_pipe_socket(socket: SocketHandle<'_>) -> bool {

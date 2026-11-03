@@ -975,6 +975,38 @@ const files = {
         console.log("RM1 to RM4 lookups run again:", resolverCounters().lookupsRunAgain - ranAgain);
       },
 
+      async relink() {
+        // A link to a package is pointed at another version after a file of the package missed,
+        // as an install of that version does. The old retry kept the miss, and the version that
+        // the link named first. Now the run after the miss asks again where the link leads: it
+        // finds the file in the new version, where require() can load it, and the package is the
+        // new one from then on.
+        const load = (label, from, specifier) => {
+          try {
+            console.log(label, "OK", from(specifier).v);
+          } catch (e) {
+            console.log(label, "ERR", e.code);
+          }
+        };
+        for (const version of ["v1", "v2"]) {
+          const store = path.join("relink", "store", version);
+          write(path.join(store, "package.json"), JSON.stringify({ name: "pkg", main: "./index.js" }));
+          write(path.join(store, "index.js"), "");
+        }
+        write(path.join("relink", "store", "v2", "extra.js"), "module.exports = { v: 2 };");
+        fs.mkdirSync(path.join("relink", "node_modules"));
+        const link = path.join("relink", nm("pkg"));
+        fs.symlinkSync(path.resolve("relink", "store", "v1"), link, "junction");
+        const relink = requireFrom("relink");
+        res("RL1", () => relink.resolve("pkg"));
+        res("RL2", () => relink.resolve("pkg/extra.js"));
+        fs.renameSync(link, link + "-old");
+        fs.symlinkSync(path.resolve("relink", "store", "v2"), link, "junction");
+        res("RL3", () => relink.resolve("pkg/extra.js"));
+        load("RL4", relink, "pkg/extra.js");
+        res("RL5", () => relink.resolve("pkg"));
+      },
+
       async spelling() {
         // A name asked for in another case than it has on disk, and a name whose case changed on
         // disk. The old retry answered these as a new process does: it dropped the importer's
@@ -1514,6 +1546,21 @@ describe.concurrent("a failed resolution answers as a new process does", () => {
         "RM4 OK r2/node_modules/pkg/index.js",
         // The old retry answered the four lines above too. It has no such count.
         "RM1 to RM4 lookups run again: 4",
+      ].join("\n"),
+    });
+  });
+
+  test("a link to a package pointed at another version after a file of the package missed", async () => {
+    expect(await runGroup("relink")).toEqual({
+      exitCode: 0,
+      stderr: "",
+      stdout: [
+        "RL1 OK relink/store/v1/index.js",
+        "RL2 ERR MODULE_NOT_FOUND",
+        // The old retry answered MODULE_NOT_FOUND to the next two lines, and the first version to the last one.
+        "RL3 OK relink/store/v2/extra.js",
+        "RL4 OK 2",
+        "RL5 OK relink/store/v2/index.js",
       ].join("\n"),
     });
   });

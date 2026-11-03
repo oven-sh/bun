@@ -1101,8 +1101,8 @@ const files = {
       async macro() {
         // A module that import() loads is transpiled by a job of the thread pool, which works on
         // a copy of this thread's resolver. The job looks up the macro that the module imports:
-        // a file written after its directory was listed. Meanwhile this thread looks up entry
-        // points that are not there: the copy must not depend on what this thread is doing.
+        // a file written after its directory was listed. The job finds it while this thread
+        // looks up files that are not there: each of those lookups misses and runs again.
         const jobs = 8;
         const here = path.resolve("macro");
         for (let i = 0; i < jobs; i++) {
@@ -1114,21 +1114,20 @@ const files = {
           Bun.resolveSync("./macros" + i + "/other.ts", here);
         }
         for (let i = 0; i < jobs; i++) write(path.join(here, "macros" + i, "mac.ts"), "export function v() { return 42; }");
-        write(path.join(here, "entry.mjs"), "");
         const found = [];
         let missed = 0;
         for (let i = 0; i < jobs; i++) {
           found.push(import(path.join(here, "mods", "m" + i + ".ts")).then(module => module.x, error => error.message));
           for (let k = 0; k < 5; k++) {
             try {
-              new globalThis.Worker(path.join(here, "entry.mjs"), { preload: [path.join(here, "nope-" + i + "-" + k + ".ts")] });
+              Bun.resolveSync("./nope-" + i + "-" + k + ".ts", here);
             } catch {
               missed++;
             }
           }
         }
         console.log("what the macros of " + jobs + " jobs returned:", (await Promise.all(found)).join(" "));
-        console.log("entry points that this thread missed meanwhile:", missed);
+        console.log("lookups that this thread missed meanwhile:", missed);
       },
 
       async inflight() {
@@ -1593,7 +1592,7 @@ describe.concurrent("a failed resolution answers as a new process does", () => {
     expect({ lines, stderr, exitCode }).toEqual({
       lines: [
         "what the macros of 8 jobs returned: 42 42 42 42 42 42 42 42",
-        "entry points that this thread missed meanwhile: 40",
+        "lookups that this thread missed meanwhile: 40",
       ],
       stderr: "",
       exitCode: 0,

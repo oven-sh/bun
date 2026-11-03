@@ -1296,7 +1296,7 @@ function formatValue(ctx: Context, value, recurseTimes: number, typedArray?: boo
   // any proxy handlers.
   const proxy = getProxyDetails(value, !!ctx.showProxy);
   if (proxy !== undefined) {
-    if (proxy === null || proxy[0] === null) {
+    if (proxy === null || (ctx.showProxy && proxy[0] === null)) {
       return ctx.stylize("<Revoked Proxy>", "special");
     }
     if (ctx.showProxy) {
@@ -2234,12 +2234,13 @@ function formatNamespaceObject(keys: Key[], ctx: Context, value, recurseTimes: n
       const pos = StringPrototypeLastIndexOf.$call(output[i], " ");
       // We have to find the last whitespace and have to replace that value as
       // it will be visualized as a regular string.
+      let thrown: string | undefined;
+      try {
+        thrown = `${err == null ? err : (err as Error).message}`;
+      } catch {}
       output[i] =
         StringPrototypeSlice.$call(output[i], 0, pos + 1) +
-        ctx.stylize(
-          uninitialized ? "<uninitialized>" : `<Inspection threw (${(err as Error | undefined)?.message})>`,
-          "special",
-        );
+        ctx.stylize(uninitialized ? "<uninitialized>" : `<Inspection threw (${thrown})>`, "special");
     }
   }
   // Reset the keys to an empty array. This prevents duplicated inspection.
@@ -2700,7 +2701,12 @@ function hasBuiltInToString(value) {
     }
     hasOwnToString = returnFalse;
   } else if (ObjectPrototypeHasOwnProperty.$call(value, "toString")) {
-    return false;
+    // A mocked module reports the `toString` that the object of its factory inherits as its own. It is no export.
+    return (
+      (toString === ObjectPrototypeToString || toString === FunctionPrototypeToString) &&
+      isModuleNamespaceObject(value) &&
+      !ArrayPrototypeIncludes.$call(ObjectGetOwnPropertyNames(value), "toString")
+    );
   } else if (typeof value[SymbolToPrimitive] !== "function") {
     hasOwnToPrimitive = returnFalse;
   } else if (ObjectPrototypeHasOwnProperty.$call(value, SymbolToPrimitive)) {
@@ -2987,7 +2993,7 @@ function internalGetConstructorName(val): string {
   try {
     ctorName = val.constructor?.name;
   } catch {}
-  if (ctorName && !isModuleNamespaceObject(val)) return ctorName;
+  if (typeof ctorName === "string" && ctorName !== "" && !isModuleNamespaceObject(val)) return ctorName;
   const str = ObjectPrototypeToString.$call(val);
   const m = StringPrototypeMatch.$call(str, /^\[object ([^\]]+)\]/); // e.g. [object Boolean]
   return m ? m[1] : "Object";

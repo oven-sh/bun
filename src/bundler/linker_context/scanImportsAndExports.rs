@@ -1324,17 +1324,6 @@ pub(crate) fn scan_imports_and_exports(
                                 to_common_js_uses += 1;
                             }
                         }
-                    } else if kind == ImportKind::Stmt
-                        && export_kind == ExportsKind::EsmWithDynamicFallback
-                    {
-                        // A read of a run-time name gets its dependency from `ImportTrackerStatus::DynamicFallback`, not from here.
-                        this.graph.generate_symbol_import_and_use(
-                            source_index,
-                            part_index as u32,
-                            col_ref!(exports_refs)[other_id],
-                            1,
-                            Index::source(other_source_index),
-                        )?;
                     }
                 }
 
@@ -1343,6 +1332,14 @@ pub(crate) fn scan_imports_and_exports(
                 let mut re_export_uses: u32 = 0;
 
                 for import_record_index in col_ref!(export_star_import_records)[id].iter() {
+                    // Only the part that holds the statement prints it.
+                    if !col_ref!(parts_list)[id].as_slice()[part_index]
+                        .import_record_indices
+                        .slice()
+                        .contains(import_record_index)
+                    {
+                        continue;
+                    }
                     let (rec_source_index,) = {
                         let record = &col_ref!(import_records_list)[id].as_slice()
                             [*import_record_index as usize];

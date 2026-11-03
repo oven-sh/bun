@@ -1,5 +1,5 @@
 use crate::mal_prelude::*;
-use bun_ast::{ImportKind, ImportRecord, StmtData, StmtOrExpr};
+use bun_ast::{ExportsKind, ImportKind, ImportRecord, ImportRecordFlags, StmtData, StmtOrExpr};
 use bun_collections::{AutoBitSet, HashMap, StringHashMap, VecExt};
 
 use crate::linker_context::merge_small_chunks::part_has_no_side_effects;
@@ -407,7 +407,7 @@ impl WalkPlan {
     }
 }
 
-/// What the live parts do at load, and which parts name a binding of which.
+/// What the live parts do at load, and which parts read what which part writes.
 struct LoadTimeReads {
     /// Per file: the id of its part 0. The id of a part is that plus its index.
     first_part_id: Vec<u32>,
@@ -417,9 +417,23 @@ struct LoadTimeReads {
     /// `dependents[dependents_start[id]..dependents_start[id + 1]]`: the parts that name a binding of part `id`.
     dependents_start: Vec<u32>,
     dependents: Vec<u32>,
+    /// The live `export *` parts that print `__reExport(exports_file, ...)`, by file and part.
+    re_exports: Vec<ReExport>,
+    /// `(file, part id)`, by file: the part prints `exports_file.name` for a name that only `__reExport` gives.
+    run_time_reads: Vec<(IndexInt, u32)>,
     /// Scratch for `is_broken_by`. Per part of the chunk that is not hoisted: the index of its run.
     position: Vec<u32>,
     visited: Vec<bool>,
+}
+
+/// `__reExport(exports_file, from)` copies the names that `from` has when the part runs.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct ReExport {
+    file: IndexInt,
+    /// The id of the part.
+    part: u32,
+    /// The file of `from`. It has its names by then unless `__reExport` parts give them to it too.
+    from: IndexInt,
 }
 
 impl LoadTimeReads {
@@ -449,33 +463,68 @@ impl LoadTimeReads {
             }
         };
 
-        let exports_refs = c.graph.ast.items_exports_ref();
-        let symbols = &c.graph.symbols;
-        // Calls `each` with the id of a live part and the id of each part that it names a binding of.
-        let for_each_named_part = |each: &mut dyn FnMut(u32, u32)| {
-            for_each_live_part(&mut |file, id, part| {
-                for dependency in part.dependencies.iter() {
-                    let other = dependency.source_index.get() as usize;
-                    // A read of a run-time name (`exports_other.name`) keeps that file and names none of its bindings.
-                    if dependency.part_index == bun_ast::NAMESPACE_EXPORT_PART_INDEX
-                        && other != file
-                    {
-                        let exports_ref = symbols.follow(exports_refs[other]);
-                        let uses_object = part
-                            .symbol_uses
-                            .keys()
-                            .iter()
-                            .any(|&used| symbols.follow(used) == exports_ref);
-                        if !uses_object {
-                            continue;
-                        }
-                    }
-                    each(id, first_part_id[other] + dependency.part_index);
+        let mut re_exports: Vec<ReExport> = Vec::new();
+        let all_records = c.graph.ast.items_import_records();
+        let export_stars = c.graph.ast.items_export_star_import_records();
+        for source_index in c.graph.reachable_files.iter() {
+            let file = source_index.get() as usize;
+            let records = all_records[file].as_slice();
+            if !c.graph.files_live.is_set(file)
+                || css[file].is_some()
+                || !export_stars[file]
+                    .iter()
+                    .any(|&record| re_exports_at_run_time(&records[record as usize]))
+            {
+                continue;
+            }
+            for (part_index, part) in all_parts[file].as_slice().iter().enumerate() {
+                if !c.graph.parts_live[file].is_set(part_index) {
+                    continue;
                 }
-            });
-        };
+                for stmt in part.stmts.slice() {
+                    if let StmtData::SExportStar(star) = &stmt.data
+                        && star.alias.is_none()
+                        && re_exports_at_run_time(&records[star.import_record_index as usize])
+                    {
+                        re_exports.push(ReExport {
+                            file: file as IndexInt,
+                            part: first_part_id[file] + part_index as u32,
+                            from: records[star.import_record_index as usize]
+                                .source_index
+                                .value(),
+                        });
+                    }
+                }
+            }
+        }
+        re_exports.sort_unstable();
+
+        let exports_refs = c.graph.ast.items_exports_ref();
+        let exports_kinds = c.graph.ast.items_exports_kind();
+        let symbols = &c.graph.symbols;
+        // `dependency` of `part` is for a read of a run-time name (`exports_other.name`). It ends at the part that
+        // declares `exports_other` and calls none of the getters there. A part that uses `exports_other` as a value
+        // does name what the getters return.
+        let reads_run_time_name =
+            |file: usize, part: &bun_ast::Part, dependency: &bun_ast::Dependency| {
+                let other = dependency.source_index.get() as usize;
+                if dependency.part_index != bun_ast::NAMESPACE_EXPORT_PART_INDEX
+                    || other == file
+                    || exports_kinds[other] != ExportsKind::EsmWithDynamicFallback
+                {
+                    return false;
+                }
+                let exports_ref = symbols.follow(exports_refs[other]);
+                !part
+                    .symbol_uses
+                    .keys()
+                    .iter()
+                    .any(|&used| symbols.follow(used) == exports_ref)
+            };
 
         let mut effects = vec![LoadEffect::Hoisted; parts_len];
+        let mut dependents_start: Vec<u32> = vec![0; parts_len + 2];
+        let mut run_time_reads: Vec<(IndexInt, u32)> = Vec::new();
         for_each_live_part(&mut |file, id, part| {
             // A wrapped file runs when it is called, and a namespace object prints ahead of every file.
             if flags[file].wrap == Wrap::None
@@ -484,17 +533,31 @@ impl LoadTimeReads {
             {
                 effects[id as usize] = LoadEffect::of(part);
             }
+            for dependency in part.dependencies.iter() {
+                let other = dependency.source_index.get();
+                if reads_run_time_name(file, part, dependency) {
+                    run_time_reads.push((other, id));
+                } else {
+                    let to = first_part_id[other as usize] + dependency.part_index;
+                    dependents_start[to as usize + 2] += 1;
+                }
+            }
         });
-        let mut dependents_start: Vec<u32> = vec![0; parts_len + 2];
-        for_each_named_part(&mut |_, to| dependents_start[to as usize + 2] += 1);
         for i in 2..dependents_start.len() {
             dependents_start[i] += dependents_start[i - 1];
         }
         let mut dependents: Vec<u32> = vec![0; dependents_start[parts_len + 1] as usize];
-        for_each_named_part(&mut |id, to| {
-            dependents[dependents_start[to as usize + 1] as usize] = id;
-            dependents_start[to as usize + 1] += 1;
+        for_each_live_part(&mut |file, id, part| {
+            for dependency in part.dependencies.iter() {
+                if !reads_run_time_name(file, part, dependency) {
+                    let to = first_part_id[dependency.source_index.get() as usize]
+                        + dependency.part_index;
+                    dependents[dependents_start[to as usize + 1] as usize] = id;
+                    dependents_start[to as usize + 1] += 1;
+                }
+            }
         });
+        run_time_reads.sort_unstable();
 
         LoadTimeReads {
             first_part_id,
@@ -502,6 +565,8 @@ impl LoadTimeReads {
             effects,
             dependents_start,
             dependents,
+            re_exports,
+            run_time_reads,
             position: vec![u32::MAX; parts_len],
             visited: vec![false; parts_len],
         }
@@ -527,7 +592,8 @@ impl LoadTimeReads {
     }
 
     /// Some part of `runs` that evaluates code names, itself or through the functions that it names, a binding that a
-    /// later part of another file of `runs` gives its value.
+    /// later part of another file of `runs` gives its value. Or it prints `exports_file.name` for a run-time name, and
+    /// no `__reExport` part of `runs` has copied a name into `exports_file` by then.
     fn is_broken_by(&mut self, c: &LinkerContext, runs: &[PartRun]) -> bool {
         let mut position = core::mem::take(&mut self.position);
         let mut visited = core::mem::take(&mut self.visited);
@@ -535,32 +601,62 @@ impl LoadTimeReads {
             position[id as usize] = run_index;
             false
         });
-        // Last run first: the first search that comes to a function is the one from the latest binding that it leads to.
-        // `import` statements are hoisted, so a file that a part can name does not print between two parts of its file.
+        // `readers` read what a part of `file` in run `run_index` writes. Follows the functions among them to the
+        // parts that name those.
         let mut queue: Vec<u32> = Vec::new();
-        let is_broken = self.for_each_part_backward(c, runs, |run_index, written| {
-            queue.push(written);
-            while let Some(id) = queue.pop() {
-                let (start, end) = (
-                    self.dependents_start[id as usize] as usize,
-                    self.dependents_start[id as usize + 1] as usize,
-                );
-                for &dependent in &self.dependents[start..end] {
-                    if self.effects[dependent as usize] == LoadEffect::Evaluates {
-                        if position[dependent as usize] < run_index
-                            && self.file_of_part[dependent as usize]
-                                != self.file_of_part[written as usize]
-                        {
-                            return true;
+        let mut reads_early =
+            |visited: &mut [bool], readers: &[u32], run_index: u32, file: IndexInt| {
+                let mut readers = readers;
+                loop {
+                    for &reader in readers {
+                        if self.effects[reader as usize] == LoadEffect::Evaluates {
+                            if position[reader as usize] < run_index
+                                && self.file_of_part[reader as usize] != file
+                            {
+                                queue.clear();
+                                return true;
+                            }
+                        } else if !visited[reader as usize] {
+                            visited[reader as usize] = true;
+                            queue.push(reader);
                         }
-                    } else if !visited[dependent as usize] {
-                        visited[dependent as usize] = true;
-                        queue.push(dependent);
+                    }
+                    let Some(id) = queue.pop() else {
+                        return false;
+                    };
+                    readers = &self.dependents[self.dependents_start[id as usize] as usize
+                        ..self.dependents_start[id as usize + 1] as usize];
+                }
+            };
+        // Last run first: the first search that comes to a function is the one from the latest write that it leads to.
+        // `import` statements are hoisted, so a file that a part can name does not print between two parts of its file.
+        let mut is_broken = self.for_each_part_backward(c, runs, |run_index, written| {
+            reads_early(
+                &mut visited,
+                &self.dependents[self.dependents_start[written as usize] as usize
+                    ..self.dependents_start[written as usize + 1] as usize],
+                run_index,
+                self.file_of_part[written as usize],
+            )
+        });
+        if !is_broken && !self.run_time_reads.is_empty() {
+            visited.fill(false);
+            'files: for (file, run_index) in self.first_run_time_names(c, runs) {
+                let start = self
+                    .run_time_reads
+                    .partition_point(|&(other, _)| other < file);
+                for &(other, reader) in &self.run_time_reads[start..] {
+                    if other != file {
+                        break;
+                    }
+                    if reads_early(&mut visited, &[reader], run_index, file) {
+                        is_broken = true;
+                        break 'files;
                     }
                 }
             }
-            false
-        });
+        }
+        drop(reads_early);
         self.for_each_part_backward(c, runs, |_, id| {
             position[id as usize] = u32::MAX;
             false
@@ -569,6 +665,48 @@ impl LoadTimeReads {
         self.position = position;
         self.visited = visited;
         is_broken
+    }
+
+    /// Per file that prints a `__reExport(exports_file, ...)` in `runs`: the index of the run where `exports_file`
+    /// first has a run-time name, `u32::MAX` for never. The latest first.
+    fn first_run_time_names(&self, c: &LinkerContext, runs: &[PartRun]) -> Vec<(IndexInt, u32)> {
+        let flags = c.graph.meta.items_flags();
+        // A wrapped file runs when it is called.
+        let re_exports_in = |run: PartRun| {
+            let re_exports = if flags[run.source_index as usize].wrap == Wrap::None {
+                re_exports_of(&self.re_exports, run.source_index)
+            } else {
+                &[]
+            };
+            let first_part_id = self.first_part_id[run.source_index as usize];
+            re_exports.iter().filter(move |re_export| {
+                (run.begin..run.end).contains(&(re_export.part - first_part_id))
+            })
+        };
+        let mut first: Vec<(IndexInt, u32)> = Vec::new();
+        for &run in runs {
+            if re_exports_in(run).next().is_some()
+                && !first.iter().any(|&(file, _)| file == run.source_index)
+            {
+                first.push((run.source_index, u32::MAX));
+            }
+        }
+        for (run_index, &run) in runs.iter().enumerate() {
+            for re_export in re_exports_in(run) {
+                // A file that is not in `first` has its names before `runs`.
+                let has_names = first
+                    .iter()
+                    .all(|&(file, since)| file != re_export.from || since <= run_index as u32);
+                if has_names
+                    && let Some((_, since)) =
+                        first.iter_mut().find(|(file, _)| *file == run.source_index)
+                {
+                    *since = (*since).min(run_index as u32);
+                }
+            }
+        }
+        first.sort_unstable_by_key(|&(_, since)| core::cmp::Reverse(since));
+        first
     }
 }
 
@@ -619,6 +757,24 @@ impl LoadEffect {
         });
         effects.max().unwrap_or(LoadEffect::Hoisted)
     }
+}
+
+/// `convert_stmts_for_chunk` prints the `export *` of `record` as `__reExport(exports, ...)`.
+fn re_exports_at_run_time(record: &ImportRecord) -> bool {
+    record
+        .flags
+        .contains(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN)
+        && !record.flags.contains(ImportRecordFlags::IS_UNUSED)
+}
+
+/// The entries of `file` in `LoadTimeReads::re_exports`.
+fn re_exports_of(re_exports: &[ReExport], file: IndexInt) -> &[ReExport] {
+    let start = re_exports.partition_point(|re_export| re_export.file < file);
+    let len = re_exports[start..]
+        .iter()
+        .take_while(|re_export| re_export.file == file)
+        .count();
+    &re_exports[start..start + len]
 }
 
 #[derive(Clone, Copy)]

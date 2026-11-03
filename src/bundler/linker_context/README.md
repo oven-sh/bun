@@ -370,7 +370,7 @@ _What happens_:
 - Generates symbol import declarations for runtime helper functions (`__toESM`, `__toCommonJS`, etc.)
 - Creates entry point dependencies to ensure all exports are included
 - Sets up cross-chunk binding code for code splitting scenarios
-- Handles wrapper function dependencies and exports object dependencies
+- Makes the part that holds an import record depend on the wrapper of a wrapped file. It depends on a file's exports object only where the printed code names that object: `require()` and `import()` of an ESM-wrapped file, and the `export *` statement that prints `__reExport(exports_a, exports_b)`. A read of a run-time name gets that dependency in step 4
 - Lets an unwrapped file without side effects drop an `export *` of a lazily initialized ES module: the statement stays only if a binding is read through it (step 3), as `export { x } from` does
 
 _Runtime helper usage examples_:
@@ -770,7 +770,7 @@ The renamed symbols are then used during final code generation to produce output
 
 - Walks the import graph in evaluation order (`EntryWalk`): depth first along every `import` statement, also through files that tree shaking dropped, so a file prints after the files it imports
 - One walk per entry point, in parallel. A chunk has one owner: the entry point that loads first among the chunk's entry points (`load_rank`). `load_rank` and `EntryWalk` read the same edges (`for_each_edge`). The owner's walk places the files of the chunk, so no two walks write the same list. Without code splitting, each chunk is owned by its own entry point
-- On an import cycle, the owner's order can put a part that evaluates code at load ahead of a binding that it reads, itself or through the functions that it names (`LoadTimeReads`). A walk from the next entry point by rank whose order does not then lays out that chunk (`find_safe_walks`). The other chunks keep the layout of their owner. With no such entry point, so does this one. The read is judged by `part.dependencies`, per statement: `const f = () => x` is no read of `x` (`Expr::can_be_moved`), and `const o = { f: () => x }` is one
+- On an import cycle, the owner's order can put a part that evaluates code at load ahead of a binding that it reads, itself or through the functions that it names (`LoadTimeReads`). A walk from the next entry point by rank whose order does not then lays out that chunk (`find_safe_walks`). The other chunks keep the layout of their owner. With no such entry point, so does this one. The read is judged by `part.dependencies`, per statement: `const f = () => x` is no read of `x` (`Expr::can_be_moved`), and `const o = { f: () => x }` is one. A read of a run-time name (`exports_barrel.x`) is early when no `__reExport(exports_barrel, ...)` of the chunk has copied a name into the object by then
 - Places the parts of a file in runs: a part prints after the files it imports and before the files that the next part imports
 - Collects the live parts of each run into part ranges. The runtime and the wrapped files go first in the chunk, then the namespace objects: a namespace object exists before any file runs
 - Records the other chunks in the order a walk from the chunk's files reaches their first file with side effects (`reached_chunks_in_order`), which orders the chunk's cross-chunk `import` statements

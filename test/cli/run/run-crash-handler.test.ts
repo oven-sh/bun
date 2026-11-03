@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   bunEnv,
   bunExe,
+  isArm64,
   isASAN,
   isDebug,
   isGlibc,
@@ -12,7 +13,7 @@ import {
   mergeWindowEnvs,
   tempDir,
 } from "harness";
-import { rmSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
@@ -43,9 +44,9 @@ test.if(isDebug && isLinux && hasSymbolizer)(
     expect(exitCode).not.toBe(0);
 
     // The innermost frame of the trace must be the code that crashed (the
-    // js_panic test hook)...
+    // `panic` test hook)...
     const firstFrame = stdout.split("\n").find(line => line.trim().length > 0);
-    expect(firstFrame ?? "<no frames printed>").toContain("js_panic");
+    expect(firstFrame ?? "<no frames printed>").toContain("crash_handler_jsc::panic");
 
     // ...not the capture machinery. A mismatched trim anchor used to leave
     // `capture_stack_trace` → `crash_handler` → `panic_impl` as the innermost
@@ -54,6 +55,12 @@ test.if(isDebug && isLinux && hasSymbolizer)(
   },
   60_000, // symbolizing the debug binary takes several seconds
 );
+
+// Read as it is, a return address that -mbranch-protection=pac-ret signed is the address of nothing.
+const hasPointerAuthentication = isLinux && isArm64 && /\bpaca\b/.test(readFileSync("/proc/cpuinfo", "utf8"));
+test.if(hasPointerAuthentication)("a stack trace takes the signature off a return address", () => {
+  expect(crash_handler.stackTraceStartsAtSignedReturnAddress()).toBe(true);
+});
 
 // `crash()` resets fatal-signal dispositions to SIG_DFL before re-raising so
 // that JS-registered listeners (`process.on("SIGABRT")` etc., installed by

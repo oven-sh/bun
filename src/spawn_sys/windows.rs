@@ -804,8 +804,10 @@ impl Request<'_> {
         startup.lpAttributeList = attributes.as_mut_ptr();
 
         // A child inherits whether Ctrl+C is ignored (a process started detached ignores it), and its terminal's Ctrl+C is meant for it.
+        let changes_ctrl_c = self.pseudoconsole.map(|_| IGNORES_CTRL_C.write());
+        let _keeps_ctrl_c = changes_ctrl_c.is_none().then(|| IGNORES_CTRL_C.read());
         // SAFETY: the block and its parameters last as long as the process.
-        let ignores_ctrl_c = self.pseudoconsole.is_some()
+        let ignores_ctrl_c = changes_ctrl_c.is_some()
             && unsafe { (*(*peb()).ProcessParameters).ConsoleFlags } & 1 != 0;
         if ignores_ctrl_c {
             kernel32::SetConsoleCtrlHandler(None, FALSE);
@@ -866,6 +868,9 @@ impl Request<'_> {
         self.create(None)
     }
 }
+
+/// Stands for the attribute of this process that every thread's `CreateProcessW` hands down.
+static IGNORES_CTRL_C: bun_core::RwLock<()> = bun_core::RwLock::new(());
 
 /// `CreateProcessW` takes 32,767 units, the NUL included.
 const MAX_COMMAND_LINE: usize = 32_767;

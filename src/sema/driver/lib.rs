@@ -682,7 +682,8 @@ pub struct StandingThreads {
     is_dismissed: AtomicBool,
     /// Valid while `state` counts a thread: `for_each` returns when it counts none.
     region: std::sync::atomic::AtomicPtr<Region<'static>>,
-    /// `StandingThreads::IS_CLOSED`, plus `StandingThreads::ONE_THREAD` for each thread that is at work.
+    /// `StandingThreads::IS_CLOSED`, `StandingThreads::WAS_JOINED`, plus `StandingThreads::ONE_THREAD` for each thread
+    /// that is at work.
     state: AtomicU32,
     /// How many threads may be at work in the region.
     wanted: AtomicU32,
@@ -698,7 +699,10 @@ thread_local! {
 
 impl StandingThreads {
     const IS_CLOSED: u32 = 1;
-    const ONE_THREAD: u32 = 2;
+    /// A thread has been at work in the region. Without it, threads that join, do everything and leave while the
+    /// calling thread is about to wait for the 0 it has seen would leave it a 0 to wait for, after their wake-up call.
+    const WAS_JOINED: u32 = 2;
+    const ONE_THREAD: u32 = 4;
 
     pub fn new(name: &'static str) -> Arc<StandingThreads> {
         Arc::new(StandingThreads {
@@ -776,8 +780,9 @@ impl StandingThreads {
                 .try_update(Ordering::Acquire, Ordering::Relaxed, |state| {
                     let is_open = state & StandingThreads::IS_CLOSED == 0;
                     let wanted = self.wanted.load(Ordering::Relaxed);
-                    (is_open && state / StandingThreads::ONE_THREAD < wanted)
-                        .then_some(state + StandingThreads::ONE_THREAD)
+                    (is_open && state / StandingThreads::ONE_THREAD < wanted).then_some(
+                        (state + StandingThreads::ONE_THREAD) | StandingThreads::WAS_JOINED,
+                    )
                 });
             if joined.is_err() {
                 continue;
@@ -787,7 +792,7 @@ impl StandingThreads {
             let before = self
                 .state
                 .fetch_sub(StandingThreads::ONE_THREAD, Ordering::Release);
-            if before & !StandingThreads::IS_CLOSED == StandingThreads::ONE_THREAD {
+            if before / StandingThreads::ONE_THREAD == 1 {
                 bun_threading::Futex::wake(&self.state, 1);
             }
         }
@@ -835,7 +840,7 @@ impl StandingThreads {
         // Every run is claimed by this thread, or by one that `state` counts until it has finished it.
         loop {
             let state = self.state.load(Ordering::Acquire);
-            if state == 0 && region.runs_left() == 0 {
+            if state / StandingThreads::ONE_THREAD == 0 && region.runs_left() == 0 {
                 break;
             }
             bun_threading::Futex::wait_forever(&self.state, state);
@@ -845,7 +850,7 @@ impl StandingThreads {
             .fetch_or(StandingThreads::IS_CLOSED, Ordering::Relaxed);
         loop {
             let state = self.state.load(Ordering::Acquire);
-            if state == StandingThreads::IS_CLOSED {
+            if state / StandingThreads::ONE_THREAD == 0 {
                 break;
             }
             bun_threading::Futex::wait_forever(&self.state, state);

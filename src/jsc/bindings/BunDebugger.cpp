@@ -191,7 +191,6 @@ public:
 
     void disconnect()
     {
-        this->disconnectRequested = true;
         notifyPausedThread();
 
         switch (this->status) {
@@ -655,6 +654,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDisconnect, (JSC::JSGlobalObject * globalObje
     auto& connection = *jsConnection->connection();
 
     if (connection.status == ConnectionStatus::Connected || connection.status == ConnectionStatus::Pending) {
+        // Before the status, so that a thread that reads Disconnecting also reads the flag.
+        connection.disconnectRequested = true;
         connection.status = ConnectionStatus::Disconnecting;
         connection.jsBunDebuggerOnMessageFunction.clear();
         connection.disconnect();

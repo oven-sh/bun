@@ -733,7 +733,12 @@ pub fn write_node_inspector_line(line: &BunString) {
     #[cfg(not(windows))]
     {
         let bytes = line.to_owned_slice();
-        let written = bun_sys::write(bun_core::Fd::stderr(), &bytes).unwrap_or(0);
+        let written = match bun_sys::write(bun_core::Fd::stderr(), &bytes) {
+            Ok(written) => written,
+            Err(err) if err.is_retry() => 0,
+            // Node ignores a failed write of this line.
+            Err(_) => return,
+        };
         if written == bytes.len() {
             return;
         }
@@ -741,29 +746,9 @@ pub fn write_node_inspector_line(line: &BunString) {
         // SAFETY: the thread owns the bytes of the line and holds no state of a VM.
         let _ = std::thread::Builder::new()
             .name("InspectorLine".to_owned())
-            .spawn(move || write_when_stderr_has_room(&bytes[written..]));
-    }
-}
-
-#[cfg(not(windows))]
-fn write_when_stderr_has_room(mut rest: &[u8]) {
-    use bun_sys::posix::{POLL_OUT, PollFd, poll};
-    let fd = bun_core::Fd::stderr();
-    while !rest.is_empty() {
-        let mut fds = [PollFd {
-            fd: fd.native(),
-            events: POLL_OUT,
-            revents: 0,
-        }];
-        if poll(&mut fds, -1).is_err() {
-            return;
-        }
-        match bun_sys::write(fd, rest) {
-            Ok(written) => rest = &rest[written..],
-            Err(err) if err.is_retry() => {}
-            // Node ignores a failed write of this line.
-            Err(_) => return,
-        }
+            .spawn(move || {
+                let _ = bun_sys::write_all_to_stdio(bun_core::Fd::stderr(), &bytes[written..]);
+            });
     }
 }
 

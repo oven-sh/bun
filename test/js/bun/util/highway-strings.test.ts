@@ -603,6 +603,59 @@ describe("yamlMarks", () => {
   });
 });
 
+describe("htmlMarks", () => {
+  const isPrintable = (b: number) => b >= 0x20 && b <= 0x7e;
+  const isOneOf = (bytes: string) => (b: number) => bytes.includes(String.fromCharCode(b));
+  // One per bitmap, in the kernel's order.
+  const MARKS = [
+    (b: number) => (!isPrintable(b) && b !== 0x0a) || isOneOf("&\\")(b),
+    isOneOf(" \t\n"),
+    isOneOf("\n"),
+    isOneOf("<"),
+    isOneOf('"'),
+    isOneOf("{"),
+    (b: number) => !/[a-z0-9-]/.test(String.fromCharCode(b)),
+    (b: number) => !isPrintable(b) || isOneOf(" >/=<\"'")(b),
+  ];
+
+  function compareMarks(text: Uint8Array, at: string) {
+    const planeLen = Math.ceil(text.length / 64) * 8;
+    const expected = new Uint8Array(planeLen * 8);
+    MARKS.forEach((isMark, plane) => {
+      for (let i = 0; i < planeLen * 8; i++) {
+        // What is past the end of the text counts as NUL.
+        if (isMark(i < text.length ? text[i] : 0)) expected[plane * planeLen + (i >> 3)] |= 1 << (i & 7);
+      }
+    });
+    const out = new Uint8Array(planeLen * 8).fill(0xaa);
+    compare("htmlMarks", hw("htmlMarks", text, out), 0, at);
+    compare("htmlMarks", out.toHex(), expected.toHex(), at);
+  }
+
+  it("classifies every byte value in every lane", () => {
+    for (let shift = 0; shift < 64; shift++) {
+      compareMarks(
+        Uint8Array.from({ length: 256 + shift }, (_, i) => (i + 256 - shift) & 0xff),
+        `shift=${shift}`,
+      );
+    }
+  });
+
+  it("every length and alignment", () => {
+    for (const len of LENGTHS) {
+      for (const off of OFFSETS) {
+        for (const byte of [0x61, 0x20, 0x3c, 0x22, 0x7b, 0x0a, 0x00, 0xff]) {
+          compareMarks(new Uint8Array(len + off).fill(byte).subarray(off), `len=${len} off=${off} byte=${byte}`);
+        }
+      }
+    }
+  });
+
+  it("rejects a buffer that is too small", () => {
+    expect(() => hw("htmlMarks", new Uint8Array(65), new Uint8Array(8 * 8))).toThrow(RangeError);
+  });
+});
+
 describe("lineStarts", () => {
   function compareLineStarts(text: Uint8Array, at: string) {
     const expected: number[] = [];

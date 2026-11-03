@@ -890,6 +890,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         ConfigureEnvOptions {
             log_errors: true,
             store_root_fd: false,
+            check_bun_version: true,
         },
     )?;
     let cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir();

@@ -92,6 +92,10 @@ pub(crate) struct ConfigureEnvOptions {
     /// for callers that go on to read files through it, like `bunx` resolving
     /// a package's `bin`.
     pub(crate) store_root_fd: bool,
+    /// Warn when `packageManager` pins another bun version. `false` for a caller whose install
+    /// half checked the workspace root already (`bun pm pack`), and for `bunx`, which runs a
+    /// tool that need not be from the project.
+    pub(crate) check_bun_version: bool,
 }
 
 pub(crate) struct RunCommand;
@@ -772,7 +776,43 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             }
         }
 
+        // `--watch` starts the process again on every change. The first start checked.
+        if opts.check_bun_version && ctx.debug.hot_reload != cli::command::HotReload::Watch {
+            Self::check_bun_version(root_dir_info, ctx.debug.silent, env_loader)?;
+        }
+
         Ok((this_transpiler, root_dir_info))
+    }
+
+    /// The nearest package.json with `packageManager` in the working directory or an ancestor,
+    /// as corepack reads it. Every `DirInfo` up to the root is parsed with scripts already, so
+    /// this reads no file. A dependency's package.json is not the project's: a lifecycle script
+    /// runs in `node_modules/<dep>`, and its `bun run` must not report that package's pin.
+    fn check_bun_version(
+        root_dir_info: bun_resolver::DirInfoRef,
+        silent: bool,
+        env: &mut DotEnv::Loader,
+    ) -> crate::Result<()> {
+        if root_dir_info.is_inside_node_modules() {
+            return Ok(());
+        }
+        let mut dir_info = Some(root_dir_info);
+        while let Some(info) = dir_info {
+            if let Some(package_json) = info.enclosing_package_json
+                && let Some(package_manager) = package_json.package_manager()
+            {
+                if let Some(checked) = bun_semver::running_bun::check(
+                    package_json.source.path.text,
+                    package_manager,
+                    silent,
+                ) {
+                    env.map.put(b"BUN_INTERNAL_BUN_VERSION_CHECKED", checked)?;
+                }
+                return Ok(());
+            }
+            dir_info = info.get_parent();
+        }
+        Ok(())
     }
 
     /// Best-effort default-loader lookup by file extension. Thin forwarder to
@@ -2481,6 +2521,7 @@ impl RunCommand {
             ConfigureEnvOptions {
                 log_errors,
                 store_root_fd: false,
+                check_bun_version: true,
             },
         )?;
         bun_core::asan::register_root_region(

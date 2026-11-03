@@ -189,6 +189,11 @@ bun publish --cafile ./ca-cert.pem
   Skip lifecycle scripts during packing and publishing
 </ParamField>
 
+<ParamField path="--ignore-engines" type="boolean">
+  Do not warn when <code>packageManager</code> in package.json pins another bun version. Also set by
+  <code>BUN_CONFIG_IGNORE_ENGINES=1</code> in the environment
+</ParamField>
+
 <ParamField path="--trust" type="boolean">
   Add packages to trustedDependencies and run their scripts
 </ParamField>

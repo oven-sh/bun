@@ -138,6 +138,9 @@ const SHARED_TAIL_PARAMS: &[ParamType] = &[
         "--ignore-scripts                      Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies"
     ),
     clap::param!(
+        "--ignore-engines                      Do not warn when packageManager in package.json pins another bun version"
+    ),
+    clap::param!(
         "--trust                               Add to trustedDependencies in the project's package.json and install the package(s)"
     ),
     clap::param!("-g, --global                          Install globally"),
@@ -406,6 +409,8 @@ const FOREIGN_FLAGS: &[(&[u8], ForeignFlag)] = &[
     (b"--only=prod", AliasOf(b"--omit=dev")),
     (b"--only=production", AliasOf(b"--omit=dev")),
     (b"--production=true", AliasOf(b"--production")),
+    (b"--ignore-engines=true", AliasOf(b"--ignore-engines")),
+    (b"--ignore-engines=false", Satisfied),
     (b"--package-lock-only", AliasOf(b"--lockfile-only")),
     (b"--immutable", AliasOf(b"--frozen-lockfile")),
     (b"--shamefully-hoist", AliasOf(b"--linker=hoisted")),
@@ -425,10 +430,8 @@ const FOREIGN_FLAGS: &[(&[u8], ForeignFlag)] = &[
     (b"--fund=false", Satisfied),
     (b"--no-update-notifier", Satisfied),
     (b"--update-notifier=false", Satisfied),
-    // Bun only warns about conflicting peer dependencies, does not check `engines`, runs scripts as
-    // the current user, and never prompts.
+    // Bun only warns about conflicting peers, runs scripts as the current user, and never prompts.
     (b"--legacy-peer-deps", Satisfied),
-    (b"--ignore-engines", Satisfied),
     (b"--unsafe-perm", Satisfied),
     (b"--non-interactive", Satisfied),
     (b"--prefer-frozen-lockfile", Satisfied),
@@ -470,7 +473,7 @@ const IGNORED_FOREIGN_FLAGS: clap::IgnoredLongFlags = clap::IgnoredLongFlags {
     b"use-store-server", b"verify-store-integrity", b"workspace-root", b"workspaces-update", b"ws",
     b"yes",
     // These are in `FOREIGN_FLAGS` too, which doesn't match them if they have a value.
-    b"ignore-engines", b"ignore-optional", b"immutable", b"legacy-peer-deps", b"non-interactive",
+    b"ignore-optional", b"immutable", b"legacy-peer-deps", b"non-interactive",
     b"package-lock-only", b"prefer-frozen-lockfile", b"save-catalog", b"save-dev", b"save-exact",
     b"save-optional", b"save-peer", b"save-prod", b"shamefully-hoist", b"unsafe-perm",
     ],
@@ -832,6 +835,7 @@ pub struct CommandLineArguments {
     pub(crate) offline: bool,
     pub(crate) prefer_offline: bool,
     pub(crate) ignore_scripts: bool,
+    pub(crate) ignore_engines: bool,
     pub(crate) trusted: bool,
     pub(crate) no_summary: bool,
     pub(crate) latest: bool,
@@ -902,6 +906,9 @@ pub struct CommandLineArguments {
     pub diff_raw: bool,
     /// The subcommand only needs registry configuration; a missing package.json is not an error.
     pub no_project_ok: bool,
+    /// The command writes bun.lock or runs the project's scripts, in the running bun's format, so
+    /// `init` compares the bun version that `packageManager` pins with the running one.
+    pub checks_bun_version: bool,
     pub diff_unminify: bool,
     pub diff_minify: bool,
     pub diff_ignore_space: bool,
@@ -1586,6 +1593,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             Options::LogLevel::Default
         };
         cli.ignore_scripts = args.flag(b"--ignore-scripts");
+        cli.ignore_engines = args.flag(b"--ignore-engines");
         cli.trusted = args.flag(b"--trust");
         cli.no_summary = args.flag(b"--no-summary");
         cli.ca = args.options(b"--ca");
@@ -2032,6 +2040,8 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
                 [first, ..] => *first,
                 [] => b"",
             };
+            cli.checks_bun_version =
+                matches!(pm_command, b"migrate" | b"trust" | b"version" | b"pack");
             let flags_of: &[u8] = if pm_command == b"list" {
                 b"ls"
             } else {
@@ -2090,6 +2100,23 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         } else if subcommand == Subcommand::Info {
             cli.no_project_ok = true;
         }
+        cli.checks_bun_version = match subcommand {
+            Subcommand::Install
+            | Subcommand::Update
+            | Subcommand::Add
+            | Subcommand::Remove
+            | Subcommand::Patch
+            | Subcommand::PatchCommit
+            | Subcommand::Pack
+            | Subcommand::Publish
+            | Subcommand::Dedupe
+            | Subcommand::Prune => true,
+            // `bun link <package>` installs. A bare `bun link` registers the folder.
+            Subcommand::Link => cli.positionals.len() > 1,
+            Subcommand::Audit => cli.positionals.len() > 1 && cli.positionals[1] == b"fix",
+            Subcommand::Pm => cli.checks_bun_version,
+            Subcommand::Unlink | Subcommand::Outdated | Subcommand::Info | Subcommand::Why => false,
+        };
 
         // `bun pm why` and `bun why` options
         if matches!(subcommand, Subcommand::Pm | Subcommand::Why) {

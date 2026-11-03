@@ -197,7 +197,7 @@ impl DirInfo {
 
     /// Is this inside a "node_modules" directory?
     #[inline]
-    pub(crate) fn is_inside_node_modules(&self) -> bool {
+    pub fn is_inside_node_modules(&self) -> bool {
         self.flags.contains(Flags::InsideNodeModules)
     }
 
@@ -281,7 +281,7 @@ impl DirInfo {
     }
 
     #[inline]
-    pub(crate) fn get_parent(&self) -> Option<DirInfoRef> {
+    pub fn get_parent(&self) -> Option<DirInfoRef> {
         ref_at_index(self.parent)
     }
 

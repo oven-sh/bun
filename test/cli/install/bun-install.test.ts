@@ -16806,6 +16806,252 @@ describe.concurrent("a long flag the command does not have", () => {
   });
 });
 
+// The version that `packageManager: "bun@X.Y.Z"` pins is checked against the running bun.
+// `Bun.version` has a `-debug` suffix in a debug build, which the check leaves out.
+describe.concurrent("bun version check", () => {
+  const running = Bun.version.replace(/-.*$/, "");
+  // Paths are compared with forward slashes.
+  const warning = (dir: string, pin: string) =>
+    `warn: ${join(dir, "package.json").replaceAll("\\", "/")} pins bun@${pin}, running ${running}. Set BUN_CONFIG_IGNORE_ENGINES=1 to skip this check.\n`;
+  const count = (stderr: string) => stderr.split(" pins bun@").length - 1;
+  const project = (fields: Record<string, unknown>, dependencies?: Record<string, string>) =>
+    tempDir("install-bun-version", {
+      "package.json": JSON.stringify({ name: "foo", version: "0.0.1", ...fields, dependencies }),
+      "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+    });
+
+  it.each([
+    [["install"], { dep: "./dep" }],
+    [["install", "--dry-run"], { dep: "./dep" }],
+    [["install", "--lockfile-only"], { dep: "./dep" }],
+    [["install", "--production"], { dep: "./dep" }],
+    [["i", "./dep"], undefined],
+    [["add", "./dep"], undefined],
+    [["add", "--dry-run", "./dep"], undefined],
+    [["remove", "dep"], { dep: "./dep" }],
+  ])("bun %j warns once", async (cmd, dependencies) => {
+    using dir = project({ packageManager: "bun@0.0.1" }, dependencies);
+    const { stderr, exitCode } = await bunIn(String(dir), cmd);
+    expect(stderr.replaceAll("\\", "/")).toContain(warning(String(dir), "0.0.1"));
+    expect(count(stderr)).toBe(1);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  });
+
+  it.each([
+    [{ packageManager: "bun@0.0.1+sha256.abc" }, "0.0.1"],
+    [{ packageManager: "bun@0.0.1", engines: { bun: ">=1.0.0" } }, "0.0.1"],
+  ])("bun install with %j pins %s", async (fields, pin) => {
+    using dir = project(fields);
+    const { stderr, exitCode } = await bunIn(String(dir), ["install"]);
+    expect(stderr.replaceAll("\\", "/")).toContain(warning(String(dir), pin));
+    expect(count(stderr)).toBe(1);
+    expect(exitCode).toBe(0);
+  });
+
+  // Only an exact pin is checked: a range, a tag, a pre-release, another package manager, or `engines.bun`.
+  it.each([
+    [{ packageManager: `bun@${running}` }],
+    [{ packageManager: "bun@0.0.1-canary.1" }],
+    [{ packageManager: `bun@${running}+sha256.abc` }],
+    [{ packageManager: "bun@>=1.0.0" }],
+    [{ packageManager: "bun@^0.0.1" }],
+    [{ packageManager: "bun@0.0.x" }],
+    [{ packageManager: "bun@0.0" }],
+    [{ packageManager: "bun@latest" }],
+    [{ packageManager: "bun@canary" }],
+    [{ packageManager: "bun" }],
+    [{ packageManager: "npm@10.0.0" }],
+    [{ packageManager: "npm@10.0.0", engines: { bun: "0.0.1" } }],
+    [{ engines: { bun: "0.0.1" } }],
+    [{ packageManager: 1 }],
+  ])("bun install with %j is silent", async fields => {
+    using dir = project(fields);
+    const { stderr, exitCode } = await bunIn(String(dir), ["install"]);
+    expect(count(stderr)).toBe(0);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  });
+
+  it.each([
+    [["install", "--silent"], {}],
+    [["install", "--ignore-engines"], {}],
+    [["install", "--ignore-engines=true"], {}],
+    [["add", "--ignore-engines", "./dep"], {}],
+    [["install"], { BUN_CONFIG_IGNORE_ENGINES: "1" }],
+    [["install"], { BUN_CONFIG_IGNORE_ENGINES: "true" }],
+    // `bun pm pack` runs the pack scripts like `bun run` does. That half does not check again.
+    [["pm", "pack", "--silent"], {}],
+    [["pm", "pack", "--ignore-engines"], {}],
+    [["pm", "pack"], { BUN_CONFIG_IGNORE_ENGINES: "1" }],
+  ])("bun %j with %j is silent", async (cmd, extraEnv) => {
+    using dir = project({ packageManager: "bun@0.0.1" }, { dep: "./dep" });
+    const { stderr, exitCode } = await bunIn(String(dir), cmd, extraEnv);
+    expect(count(stderr)).toBe(0);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  });
+
+  it.each([
+    [["install", "--ignore-engines=false"], {}],
+    [["install"], { BUN_CONFIG_IGNORE_ENGINES: "0" }],
+  ])("bun %j with %j does not opt out", async (cmd, extraEnv) => {
+    using dir = project({ packageManager: "bun@0.0.1" });
+    const { stderr, exitCode } = await bunIn(String(dir), cmd, extraEnv);
+    expect(stderr.replaceAll("\\", "/")).toContain(warning(String(dir), "0.0.1"));
+    expect(count(stderr)).toBe(1);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  });
+
+  // Every command that writes bun.lock or runs the project's scripts warns once. A query does not.
+  it.each([
+    [["update"], 1],
+    [["dedupe"], 1],
+    [["prune"], 1],
+    [["audit", "fix"], 1],
+    [["pm", "pack"], 1],
+    [["pm", "pack", "--dry-run"], 1],
+    [["pm", "version"], 1],
+    [["audit"], 0],
+    [["outdated"], 0],
+    [["link"], 0],
+    [["unlink"], 0],
+    [["pm", "ls"], 0],
+    [["pm", "bin"], 0],
+    [["pm", "hash"], 0],
+    [["pm", "untrusted"], 0],
+    [["info", "dep"], 0],
+    [["why", "dep"], 0],
+  ])("bun %j warns %i times", async (cmd, times) => {
+    using dir = project({ packageManager: "bun@0.0.1" }, { dep: "./dep" });
+    expect((await bunIn(String(dir), ["install", "--ignore-engines"])).exitCode).toBe(0);
+    const { stderr, exitCode } = await bunIn(String(dir), cmd);
+    expect(count(stderr)).toBe(times);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  });
+
+  // These warn before they stop: no registry login, no dependency to trust, no linked package.
+  it.each([[["publish", "--dry-run"]], [["pm", "trust", "--all"]], [["link", "dep"]]])(
+    "bun %j warns once",
+    async cmd => {
+      using dir = project({ packageManager: "bun@0.0.1" }, { dep: "./dep" });
+      const { stderr, exitCode } = await bunIn(String(dir), cmd);
+      expect(stderr.replaceAll("\\", "/")).toStartWith(warning(String(dir), "0.0.1"));
+      expect(count(stderr)).toBe(1);
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  it("bun pm migrate warns once", async () => {
+    using dir = tempDir("install-bun-version-migrate", {
+      "package.json": JSON.stringify({ name: "foo", version: "0.0.1", packageManager: "bun@0.0.1" }),
+      "package-lock.json": JSON.stringify({ name: "foo", lockfileVersion: 3, packages: { "": { name: "foo" } } }),
+    });
+    const { stderr, exitCode } = await bunIn(String(dir), ["pm", "migrate"]);
+    expect(stderr.replaceAll("\\", "/")).toContain(warning(String(dir), "0.0.1"));
+    expect(count(stderr)).toBe(1);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  });
+
+  // The case the warning is for: a lockfile from a newer bun. It prints before the install fails.
+  it.each([[["install", "--frozen-lockfile"]], [["install", "--production"]]])(
+    "bun %j warns before it fails on a lockfile it cannot read",
+    async cmd => {
+      using dir = project({ packageManager: "bun@99.0.0" }, { dep: "./dep" });
+      await write(join(String(dir), "bun.lock"), JSON.stringify({ lockfileVersion: 99 }));
+      const { stderr, exitCode } = await bunIn(String(dir), cmd);
+      expect(stderr.replaceAll("\\", "/")).toContain(warning(String(dir), "99.0.0"));
+      expect(count(stderr)).toBe(1);
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  it("a lifecycle script that runs bun does not warn again", async () => {
+    using dir = tempDir("install-bun-version-nested", {
+      "package.json": JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        packageManager: "bun@0.0.1",
+        scripts: { postinstall: "bun run hi", hi: "echo hi" },
+      }),
+    });
+    const { stdout, stderr, exitCode } = await bunIn(String(dir), ["install"]);
+    expect(stderr.replaceAll("\\", "/")).toStartWith(warning(String(dir), "0.0.1"));
+    expect(count(stderr)).toBe(1);
+    expect(stdout).toContain("hi\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("the global directory's package.json is not a project", async () => {
+    using dir = tempDir("install-bun-version-global", {
+      "global/package.json": JSON.stringify({ name: "global", packageManager: "bun@0.0.1" }),
+    });
+    const env = { BUN_INSTALL_GLOBAL_DIR: join(String(dir), "global") };
+    const global = await bunIn(String(dir), ["update", "-g"], env);
+    expect(count(global.stderr)).toBe(0);
+    expect(global.exitCode).toBe(0);
+    const local = await bunIn(join(String(dir), "global"), ["update"], env);
+    expect(count(local.stderr)).toBe(1);
+    expect(local.exitCode).toBe(0);
+  });
+
+  it("an invalid package.json is reported once", async () => {
+    using dir = tempDir("install-bun-version-invalid", { "package.json": `{ "packageManager": "bun@0.0.1", ` });
+    const { stderr, exitCode } = await bunIn(String(dir), ["install"]);
+    expect(stderr.split("error: Expected string but found end of file").length - 1).toBe(1);
+    expect(count(stderr)).toBe(0);
+    expect(exitCode).toBe(1);
+  });
+
+  // An install reads the root of the workspace, wherever it runs from.
+  describe("in a workspace", () => {
+    const workspace = (root: Record<string, unknown>, member: Record<string, unknown>) =>
+      tempDir("install-bun-version-workspace", {
+        "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"], ...root }),
+        "packages/a/package.json": JSON.stringify({ name: "a", version: "1.0.0", ...member }),
+        "packages/b/package.json": JSON.stringify({ name: "b", version: "1.0.0" }),
+      });
+
+    it.each([
+      [["install"], "."],
+      [["install"], "packages/a"],
+      [["install", "--filter", "a"], "."],
+      [["add", "--filter", "a", "b@workspace:*"], "."],
+      [["add", "b@workspace:*"], "packages/a"],
+    ])("bun %j from %s warns once with the root's pin", async (cmd, cwd) => {
+      using dir = workspace({ packageManager: "bun@0.0.1" }, { packageManager: "bun@0.0.2" });
+      const { stderr, exitCode } = await bunIn(join(String(dir), cwd), cmd);
+      expect(stderr.replaceAll("\\", "/")).toContain(warning(String(dir), "0.0.1"));
+      expect(count(stderr)).toBe(1);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    });
+
+    it("is silent when only a member pins a version", async () => {
+      using dir = workspace({}, { packageManager: "bun@0.0.2" });
+      const { stderr, exitCode } = await bunIn(join(String(dir), "packages/a"), ["install"]);
+      expect(count(stderr)).toBe(0);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    });
+
+    // A package.json above the workspace root is not the project's, also for the pack scripts.
+    it.each([[["install"]], [["pm", "pack"]]])("bun %j ignores a pin above the root", async cmd => {
+      using dir = tempDir("install-bun-version-above", {
+        "package.json": JSON.stringify({ name: "outer", packageManager: "bun@0.0.1" }),
+        "app/package.json": JSON.stringify({ name: "app", version: "1.0.0" }),
+      });
+      const { stderr, exitCode } = await bunIn(join(String(dir), "app"), cmd);
+      expect(count(stderr)).toBe(0);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    });
+  });
+});
+
 // `bun --bun install` is a habit, not a typo. None of them takes a value, so none leaves one behind.
 describe.concurrent("the flags of the runtime that take no value", () => {
   // These have no help text.
@@ -16979,6 +17225,8 @@ describe.concurrent("the flags of npm, yarn and pnpm", () => {
     ["--update-notifier=false"],
     ["--legacy-peer-deps"],
     ["--ignore-engines"],
+    ["--ignore-engines=true"],
+    ["--ignore-engines=false"],
     ["--unsafe-perm"],
     ["--non-interactive"],
     ["--prefer-frozen-lockfile"],

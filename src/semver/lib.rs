@@ -7,9 +7,12 @@ pub use crate::version::VersionType;
 
 pub use crate::semver_query::Query;
 pub use crate::semver_range::Range;
+pub use crate::package_manager_spec::PackageManagerSpec;
 pub use crate::sliced_string::SlicedString;
 
 mod intersects;
+pub mod package_manager_spec;
+pub mod running_bun;
 #[path = "SemverQuery.rs"]
 pub mod semver_query;
 #[path = "SemverRange.rs"]

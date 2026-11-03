@@ -1122,9 +1122,14 @@ fn settings_of(value: &Json) -> Result<Object<'_>, Vec<u8>> {
         Json::Array(items) if !items.is_empty() => items.len(),
         _ => return Ok(Object::default()),
     };
-    let indices: Vec<String> = (0..index_count).map(|index| index.to_string()).collect();
-    let names: Vec<&[u8]> = indices.iter().map(String::as_bytes).collect();
-    Err(list_error(PREFIX, &names))
+    let mut error = PREFIX.as_bytes().to_vec();
+    for index in 0..index_count {
+        if index > 0 {
+            error.extend_from_slice(b", ");
+        }
+        error.extend_from_slice(index.to_string().as_bytes());
+    }
+    Err(error)
 }
 
 /// `validateSettingsValues`. `tsconfig` is the one allowed setting these rules have no default for, so it is not

@@ -756,6 +756,14 @@ export default [
       expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
     });
 
+    // The keys of a string are its indices, as `Object.keys("ab")` has them.
+    test("with settings that are a string", async () => {
+      const files = oneRule(rule, {}, { perfectionist: "ab" });
+      const { stdout, stderr, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
+      expect(stderr).toContain("error: Invalid Perfectionist setting(s): 0, 1\nOccurred while linting ");
+      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
+    });
+
     test("with a setting whose value is not allowed", async () => {
       const files = oneRule(rule, {}, { perfectionist: { type: "bad" } });
       const { stdout, stderr, exitCode } = await lint(files, ["-f", "json", "a.ts"]);

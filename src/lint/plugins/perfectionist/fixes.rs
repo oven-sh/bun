@@ -49,8 +49,9 @@ pub(crate) fn node_range<'a>(
 /// that end on the line right above the previous one. A comment on the same line as the token before it trails
 /// that token and is not above the node.
 ///
-/// A `partitionByComment` pattern that does not compile is not an error here: `shouldPartition` has tested every
-/// comment above every node before anything is sorted, and thrown if one reached that pattern.
+/// Upstream throws from the fixer when a `partitionByComment` pattern that `shouldPartition` never reached (it stops
+/// at the first match) does not compile. The fix closure has no `Cx` to throw with, so that pattern is treated as
+/// not matching here.
 fn highest_comment_start<'a>(
     file: &'a File<'a>,
     node: Span,
@@ -215,7 +216,7 @@ fn single_node_comment_after_fixes<'a>(
 }
 
 /// Upstream's `computeNodeToInsertAfter`.
-fn node_to_insert_after(file: &File<'_>, node: Span) -> Span {
+fn node_to_insert_after<'a>(file: &'a File<'a>, node: Span) -> Span {
     match file.token_after(node) {
         Some(token)
             if (token.is_punctuator(",") || token.is_punctuator(":"))

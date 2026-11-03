@@ -48,10 +48,10 @@ fn newlines_between_for_different_groups(
 
     let start = (group_index as usize).min(groups.len());
     let end = (next_group_index as usize + 1).min(groups.len());
-    let (mut max, mut has_ignore) = (None, false);
+    let (mut max, mut has_ignore): (Option<f64>, bool) = (None, false);
     let mut consider = |newlines: Newlines| match newlines {
         Newlines::Ignore => has_ignore = true,
-        Newlines::Count(count) => max = Some(max.map_or(count, f64::max)),
+        Newlines::Count(count) => max = Some(max.map_or(count, |current| current.max(count))),
     };
     let mut previous_is_group = false;
     for entry in groups.get(start..end).unwrap_or_default() {

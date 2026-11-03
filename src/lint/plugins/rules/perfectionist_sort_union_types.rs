@@ -109,6 +109,21 @@ fn node_name<'a>(file: &'a File<'a>, ty: TypeNode<'a>) -> &'a [u8] {
     }
 }
 
+/// `getNodeRange`'s `isParenthesized` step: the member widened to the one pair of parentheses directly around it,
+/// not to every pair like `TypeNode::outer_span`. For `B | ((A))` upstream moves `(A)` and leaves the outer pair.
+fn outer_span_once(file: &File<'_>, span: Span) -> Span {
+    let text = file.text();
+    let before = file.end_of_token_before(span.start) as usize;
+    if before == 0 || text.get(before - 1) != Some(&b'(') {
+        return span;
+    }
+    let after = skip_trivia(text, span.end);
+    if text.get(after as usize) != Some(&b')') {
+        return span;
+    }
+    Span::new(before as u32 - 1, after + 1)
+}
+
 impl SortUnionTypes {
     /// Upstream's `sortUnionType`, through `sortUnionOrIntersectionTypes`.
     fn sort_union_type<'a>(
@@ -177,7 +192,7 @@ impl SortUnionTypes {
             }
             nodes.push(SortingNode {
                 span,
-                outer_span: member.outer_span(),
+                outer_span: outer_span_once(file, span),
                 name: Cow::Borrowed(name),
                 value: b"",
                 size: range_to_diff(file, span),

@@ -310,6 +310,20 @@ fn parse_and_print<'o>(
         buffers,
     )
     .map_err(FormatError::SyntaxErrorAt)?;
+    // A style sheet that's one run is printed. This is what `Printer::print_root` does with it.
+    let root = &tree.nodes[0];
+    let of = |range| postcss::text_of_range(range, &blanked, &tree.extra);
+    if root.first_child == root.last_child
+        && let Some(run) = tree.nodes.get(root.first_child as usize)
+        && run.kind == postcss::Kind::Run
+        && bun_core::strings::trim_js_whitespace(of(root.after)).is_empty()
+        && sink.printed_lines(of(run.printed.text), run.printed.depth)
+    {
+        sink.hard_line();
+        let result = sink.result().map(|()| sink);
+        buffers.recycle(tree);
+        return result;
+    }
     if let Some(front_matter) = front_matter {
         let has_nodes = tree.nodes[0].first_child != 0;
         // Prettier's `printEmbedFrontMatter`.

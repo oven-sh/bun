@@ -18,12 +18,12 @@ use std::hash::Hasher;
 /// Forbid any invalid exports, i.e. re-export of the same name.
 pub struct Export;
 
-const NO_NAMED_EXPORTS: Message =
-    Message::new("", "No named exports found in module '{{module_name}}'.");
-const OXLINT_NO_NAMED_EXPORT: Message =
-    Message::new("", "No named exports found in module '{{module_name}}'");
-const MULTIPLE_DEFAULT_EXPORTS: Message = Message::new("", "Multiple default exports.");
-const MULTIPLE_EXPORTS: Message = Message::new("", "Multiple exports of name '{{name}}'.");
+const NO_NAMED_EXPORTS: &Message =
+    &Message::new("", "No named exports found in module '{{module_name}}'.");
+const OXLINT_NO_NAMED_EXPORT: &Message =
+    &Message::new("", "No named exports found in module '{{module_name}}'");
+const MULTIPLE_DEFAULT_EXPORTS: &Message = &Message::new("", "Multiple default exports.");
+const MULTIPLE_EXPORTS: &Message = &Message::new("", "Multiple exports of name '{{name}}'.");
 
 const DEFAULT: &[u8] = b"default";
 

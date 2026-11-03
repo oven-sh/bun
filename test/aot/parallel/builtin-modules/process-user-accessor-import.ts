@@ -1,4 +1,4 @@
-// Getters the program defines on process run while node:process loads through a computed specifier, not at the first read of the export. Bun's own getters are still read on demand. The last line differs from plain Bun (.expected.txt): it reads process.stdout off a module that is loaded under a computed name, such a load finds what is in the executable and keeps nothing, and nothing else in the program uses process.stdout: Object.defineProperty stores under its key and reads no member of process. The read answers the function that stands for a member that was left out.
+// Getters the program defines on process run while node:process loads through a computed specifier, not at the first read of the export. Bun's own getters are still read on demand. The last line reads process.stdout off a module that is loaded under a computed name. Such a load finds what is in the executable and keeps nothing, and nothing else in the program uses process.stdout: Object.defineProperty stores under its key and reads no member of process. The read answers the object that stands for a standard stream that was left out.
 // Alone: what it prints depends on what else the executable holds: which modules and members were compiled in, and whether anything evaluates text
 Object.defineProperty(process, "custom", {
   get() {
@@ -35,5 +35,5 @@ read bound
 loaded
 after 1 1
 after 2 3
-function string
+object string
 */

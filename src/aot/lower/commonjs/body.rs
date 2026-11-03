@@ -1,5 +1,6 @@
 use bun_sema::bind::{CodeUnit, CommonJsVariable, ScopeId};
 use bun_sema::hir::{FnBody, FnId};
+use bun_sema::util::SharedSort;
 use smallvec::SmallVec;
 
 use super::variables::{BodyForm, WRAPPER_PARAMETERS, emit_entry_value};
@@ -25,8 +26,10 @@ impl FileLowering<'_, '_, '_, '_> {
         let scope = module::file_scope(self);
         let own_module = ModuleRef::File(self.file);
         let mut lowering = FunctionLowering::begin(self, function);
+        lowering.note_first_load();
         let first_exports = lowering.emit_first_exports(own_module);
         lowering.enter_plain_file_scope(scope, first_exports);
+        lowering.emit_loads_of_jsx_modules();
         lowering.lower_file_statements();
         module::finish_body(lowering, Some(scope));
     }
@@ -37,6 +40,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let wrapped = self.declare_function(key, create_wrapped_header);
         let own_module = ModuleRef::File(self.file);
         let mut lowering = FunctionLowering::begin(self, function);
+        lowering.note_first_load();
         let first_exports = lowering.emit_first_exports(own_module);
         let first_exports = first_exports.unwrap_or_else(|| lowering.builder.undefined());
         let mut values: SmallVec<[ValueId; 5]> = SmallVec::new();
@@ -59,6 +63,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let scope = module::file_scope(self);
         let mut lowering = FunctionLowering::begin(self, function);
         lowering.enter_wrapped_file_scope(scope);
+        lowering.emit_loads_of_jsx_modules();
         lowering.lower_file_statements();
         module::finish_body(lowering, Some(scope));
     }
@@ -102,7 +107,7 @@ impl FileLowering<'_, '_, '_, '_> {
             };
             entry_values.push((BindingRef::Symbol(symbol), value));
         }
-        entry_values.sort_by_key(|entry| entry.0);
+        entry_values.shared_sort_by_key(|entry| entry.0);
         entry_values.dedup_by_key(|entry| entry.0);
         lowering.allocate_scope(scope, &entry_values);
         lowering.instantiate_functions(scope);

@@ -33,6 +33,7 @@ import { availableParallelism, tmpdir } from "node:os";
 import "../harness/without-installing-packages";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
+import { ownTemporaryFolder } from "../harness/temporary-folders";
 
 const [suite, root, ...rest] = process.argv.slice(2);
 const option = (name: string) => (rest.includes(name) ? rest[rest.indexOf(name) + 1] : undefined);
@@ -43,7 +44,7 @@ if ((suite !== "jsc" && suite !== "test262" && suite !== "node") || !root || !ex
 const only = option("--only") ? new RegExp(option("--only")!) : undefined;
 const jobs = Number(option("--jobs")) || availableParallelism();
 const flags = option("--flags")?.split(" ").filter(flag => flag) ?? [];
-const work = mkdtempSync(join(tmpdir(), "aot-other-suites-"));
+const work = ownTemporaryFolder(mkdtempSync(join(tmpdir(), "aot-other-suites-")));
 process.on("exit", () => rmSync(work, { recursive: true, force: true }));
 // The Bun under test may be replaced by a build while this runs.
 const bun = join(work, "bun");

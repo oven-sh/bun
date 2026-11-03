@@ -54,6 +54,23 @@ pub(super) struct NamesLookedUp {
     is_reader: FxHashSet<(u32, u32)>,
     replacements: FxHashMap<u32, u32>,
     file_count_of_replacements: usize,
+    /// The files that a test mocks. An importer reads what the mock stores, not what the file declares.
+    mocked: FxHashSet<u32>,
+    /// The variables of other files that a mocked file exports again. The mock is stored in them.
+    mocked_variables: FxHashSet<(u32, SymbolId)>,
+    /// A test mocks a file under a path that the build does not know.
+    mocks_any_file: bool,
+    /// For a path, the forms that statements ask for under a `type` other than "json": `CodeTarget::has_shared_type`.
+    forms_of_shared_types: FxHashMap<Vec<u8>, Vec<u32>>,
+    /// The forms of a path that has two. All the statements get the one that the loader comes to first, and which that is shows when every file is
+    /// there: `share_modules_among_types`. Until then nobody knows what a statement that names one of them reads.
+    forms_that_share_a_module: FxHashSet<u32>,
+}
+
+impl NamesLookedUp {
+    pub(super) fn mocks_any_file(&self) -> bool {
+        self.mocks_any_file
+    }
 }
 
 /// The `export *` statements of a file that pass names on, and behind which of them a name can be found.
@@ -74,6 +91,10 @@ impl Stars {
 struct Exports<'w, 's, 'r> {
     files: &'w [WalkedFile<'s, 'r>],
     replacements: &'w FxHashMap<u32, u32>,
+    mocked: &'w FxHashSet<u32>,
+    mocked_variables: &'w FxHashSet<(u32, SymbolId)>,
+    mocks_any_file: bool,
+    forms_that_share_a_module: &'w FxHashSet<u32>,
     resolved: FxHashMap<(u32, Atom), Option<Export>>,
     /// By file. Every thread computes the same value for a file.
     stars: &'w [OnceLock<Arc<Stars>>],
@@ -81,6 +102,28 @@ struct Exports<'w, 's, 'r> {
     first_targets_of_sites: RefCell<FxHashMap<u32, Vec<u32>>>,
     /// The files whose variables the names of the file in hand lead to.
     files_read: Vec<u32>,
+}
+
+impl<'w, 's, 'r> Exports<'w, 's, 'r> {
+    fn new(
+        files: &'w [WalkedFile<'s, 'r>],
+        looked_up: &'w NamesLookedUp,
+        stars: &'w [OnceLock<Arc<Stars>>],
+    ) -> Self {
+        Exports {
+            files,
+            replacements: &looked_up.replacements,
+            mocked: &looked_up.mocked,
+            mocked_variables: &looked_up.mocked_variables,
+            mocks_any_file: looked_up.mocks_any_file,
+            forms_that_share_a_module: &looked_up.forms_that_share_a_module,
+            resolved: FxHashMap::default(),
+            stars,
+            files_with_stars_in_progress: Vec::new(),
+            first_targets_of_sites: RefCell::default(),
+            files_read: Vec::new(),
+        }
+    }
 }
 
 impl<'s> Exports<'_, 's, '_> {
@@ -332,6 +375,35 @@ impl<'s> Exports<'_, 's, '_> {
         }
     }
 
+    fn is_mocked(&self, file: u32, symbol: SymbolId) -> bool {
+        self.mocks_any_file
+            || self.mocked.contains(&file)
+            || self.mocked_variables.contains(&(file, symbol))
+    }
+
+    /// `None`: the file exports names that the build does not see.
+    fn find_variables_exported_again(&mut self, file: u32) -> Option<Vec<(u32, SymbolId)>> {
+        let parsed = self.files[file as usize].parsed.as_ref();
+        let format = parsed.map(|it| it.code.analyzed.analysis.module_format);
+        if format != Some(ModuleFormat::Esm) {
+            return Some(Vec::new());
+        }
+        let names = self.names_found_in(file)?;
+        let exports = names.into_iter().map(|name| self.resolve(file, name));
+        Some(
+            exports
+                .filter_map(|export| match export {
+                    Export::Variable {
+                        file: origin,
+                        symbol,
+                        ..
+                    } if origin != file => Some((origin, symbol)),
+                    _ => None,
+                })
+                .collect(),
+        )
+    }
+
     fn find_constant(&mut self, file: u32, name: ImportedName) -> Option<ImportedConstant> {
         let site = ImportSiteKind::Import(name.import);
         let holder = match name.export.is_some() {
@@ -348,6 +420,10 @@ impl<'s> Exports<'_, 's, '_> {
             self.files_read.push(read);
         }
         let value = match read {
+            Export::Variable { file, symbol, .. } if self.is_mocked(file, symbol) => return None,
+            Export::Variable { file, .. } if self.forms_that_share_a_module.contains(&file) => {
+                return None;
+            }
             Export::Variable {
                 value: Some(value), ..
             } => value,
@@ -405,17 +481,141 @@ fn imported_names<'w>(file: &'w WalkedFile<'_, '_>) -> &'w [ImportedName] {
     }
 }
 
+fn mocks_unknown_path(file: &WalkedFile<'_, '_>) -> bool {
+    let Some(code) = file.parsed.as_ref().map(|it| &it.code) else {
+        return false;
+    };
+    let sites = code.analyzed.analysis.import_sites.iter();
+    let mut sites = sites.zip(code.resolutions.iter());
+    sites.any(|(site, resolution)| {
+        matches!(site.kind, ImportSiteKind::MockModule(_))
+            && matches!(resolution, SiteResolution::Computed(_))
+    })
+}
+
+fn find_mocked_files(exports: &Exports<'_, '_, '_>, files: &[u32]) -> Vec<u32> {
+    let mut mocked = Vec::new();
+    for &file in files {
+        let parsed = exports.files[file as usize].parsed.as_ref();
+        let sites = parsed.map_or(&[][..], |it| it.code.analyzed.analysis.import_sites);
+        let mocks = sites.iter().map(|site| site.kind);
+        let mocks = mocks.filter(|kind| matches!(kind, ImportSiteKind::MockModule(_)));
+        mocked.extend(mocks.filter_map(|kind| exports.target_of_site(file, kind).ok()));
+    }
+    mocked
+}
+
+/// `import text from "./a.txt" with { type: "text" }` loads a form of the file. The loader of `bun run` keeps it under the path of the file, where a mock finds it.
+fn find_forms_of_mocked_files(
+    files: &[WalkedFile<'_, '_>],
+    mocked_before: &FxHashSet<u32>,
+    mocked: &[u32],
+    parsed: &[u32],
+) -> Vec<u32> {
+    let path_of = |file: u32| files[file as usize].target.key.path;
+    let is_form = |&file: &u32| files[file as usize].target.has_loader_attribute;
+    let mut forms = Vec::new();
+    if !mocked.is_empty() {
+        let all_forms = (0..files.len() as u32).filter(is_form);
+        forms.extend(
+            all_forms.filter(|&form| mocked.iter().any(|&it| path_of(it) == path_of(form))),
+        );
+    }
+    let parsed_forms = parsed.iter().copied().filter(is_form);
+    forms.extend(
+        parsed_forms.filter(|&form| mocked_before.iter().any(|&it| path_of(it) == path_of(form))),
+    );
+    forms
+}
+
+/// `import a from "./a.json" with { type: "yaml" }` beside `import b from "./a.json" with { type: "text" }`, in one file or in two. Returns the forms
+/// that are found to share a module with another.
+fn find_forms_that_share_a_module(
+    files: &[WalkedFile<'_, '_>],
+    looked_up: &mut NamesLookedUp,
+    parsed: &[u32],
+) -> Vec<u32> {
+    let NamesLookedUp {
+        forms_of_shared_types,
+        forms_that_share_a_module,
+        ..
+    } = looked_up;
+    let mut found = Vec::new();
+    for &importer in parsed {
+        let importer = &files[importer as usize];
+        for (target, &form) in importer.code_targets().iter().zip(&importer.targets) {
+            if !target.has_shared_type || form == NOT_LOADED {
+                continue;
+            }
+            let forms = match forms_of_shared_types.get_mut(target.key.path) {
+                Some(forms) => forms,
+                None => forms_of_shared_types
+                    .entry(target.key.path.to_vec())
+                    .or_default(),
+            };
+            if forms.contains(&form) {
+                continue;
+            }
+            forms.push(form);
+            if forms.len() > 1 {
+                let forms = forms.iter().copied();
+                found.extend(forms.filter(|&it| forms_that_share_a_module.insert(it)));
+            }
+        }
+    }
+    found
+}
+
+/// The code of a file reads what a mock stores in its variables too. Returns the files that were folded, or would be, as if they read what they declare.
+fn find_files_stored_by_mocks<'s>(
+    context: &CodeLoadContext<'_, 's, '_>,
+    files: &[WalkedFile<'s, '_>],
+    mocks_every_file: bool,
+    mocked: &[u32],
+    mut variables: Vec<(u32, SymbolId)>,
+) -> Vec<(u32, StoredByMocks<'s>)> {
+    let has_every_export =
+        |file: &u32| files[*file as usize].stored_by_mocks == StoredByMocks::EveryExport;
+    let mut whole: Vec<u32> = match mocks_every_file {
+        true => (0..files.len() as u32).collect(),
+        false => mocked.to_vec(),
+    };
+    whole.retain(|file| !has_every_export(file));
+    variables.retain(|(file, _)| !has_every_export(file) && !whole.contains(file));
+    variables.sort_unstable();
+    let whole = whole.into_iter();
+    let mut found: Vec<_> = whole.map(|it| (it, StoredByMocks::EveryExport)).collect();
+    for of_file in variables.chunk_by(|variable, next| variable.0 == next.0) {
+        let file = of_file[0].0;
+        let known = match files[file as usize].stored_by_mocks {
+            StoredByMocks::Variables(known) => known,
+            StoredByMocks::Nothing | StoredByMocks::EveryExport => &[],
+        };
+        let mut all: Vec<SymbolId> = known.to_vec();
+        all.extend(of_file.iter().map(|variable| variable.1));
+        all.sort_unstable();
+        all.dedup();
+        let all = slice_in(&all, context.session.arena());
+        found.push((file, StoredByMocks::Variables(all)));
+    }
+    found
+}
+
 /// Each folding knows more than the one before, so there are few. Behind this many a file is folded as if it stood alone.
 const MOST_FOLDINGS_OF_ONE_FILE: u32 = 64;
 
 const FILES_OF_ONE_SHARE: usize = 128;
 
-pub(super) fn fold_files_that_import_constants_again<'r>(
-    context: &CodeLoadContext<'_, '_, 'r>,
-    state: &mut WalkState<'_, 'r>,
+pub(super) fn fold_files_that_import_constants_again<'s, 'r>(
+    context: &CodeLoadContext<'_, 's, 'r>,
+    state: &mut WalkState<'s, 'r>,
 ) -> bool {
     let mut looked_up = std::mem::take(&mut state.names_looked_up);
-    let parsed = std::mem::take(&mut looked_up.parsed_since);
+    looked_up.mocks_any_file |= context.inputs.code.mocks_any_file;
+    let mut parsed = std::mem::take(&mut looked_up.parsed_since);
+    // The files that read a constant of a form are asked again when a second form of its path turns up.
+    let forms = find_forms_that_share_a_module(&state.files, &mut looked_up, &parsed);
+    parsed.extend(forms);
     // Which file runs in place of which hangs on the files that are there.
     let mut asks_every_file = false;
     if looked_up.file_count_of_replacements != state.files.len() {
@@ -424,6 +624,44 @@ pub(super) fn fold_files_that_import_constants_again<'r>(
         looked_up.replacements = replacements;
         looked_up.file_count_of_replacements = state.files.len();
     }
+    let stars: Vec<OnceLock<Arc<Stars>>> = state.files.iter().map(|_| OnceLock::new()).collect();
+    // The files that read a constant of a file are asked again when a mock of it turns up.
+    let mocked = find_mocked_files(&Exports::new(&state.files, &looked_up, &stars), &parsed);
+    let forms = find_forms_of_mocked_files(&state.files, &looked_up.mocked, &mocked, &parsed);
+    let mocked = mocked.into_iter().chain(forms);
+    let newly_mocked: Vec<u32> = mocked.filter(|&it| looked_up.mocked.insert(it)).collect();
+    parsed.extend(&newly_mocked);
+    // What a mocked file exports again shows as the files behind it are parsed.
+    let mut exports = Exports::new(&state.files, &looked_up, &stars);
+    let mut mocked: Vec<u32> = looked_up.mocked.iter().copied().collect();
+    mocked.shared_sort_unstable();
+    let exported_again: Vec<_> = mocked
+        .into_iter()
+        .map(|file| exports.find_variables_exported_again(file))
+        .collect();
+    drop(exports);
+    let sees_every_name = exported_again.iter().all(Option::is_some);
+    let mut newly_mocked_variables = Vec::new();
+    for variable in exported_again.into_iter().flatten().flatten() {
+        if looked_up.mocked_variables.insert(variable) {
+            parsed.push(variable.0);
+            newly_mocked_variables.push(variable);
+        }
+    }
+    let mut files = parsed.iter().map(|&it| &state.files[it as usize]);
+    let mut mocks_every_file_from_now = false;
+    if !looked_up.mocks_any_file && (!sees_every_name || files.any(mocks_unknown_path)) {
+        looked_up.mocks_any_file = true;
+        asks_every_file = true;
+        mocks_every_file_from_now = true;
+    }
+    let stored_by_mocks = find_files_stored_by_mocks(
+        context,
+        &state.files,
+        mocks_every_file_from_now,
+        &newly_mocked,
+        newly_mocked_variables,
+    );
     let mut asked: Vec<u32> = match asks_every_file {
         true => (0..state.files.len() as u32).collect(),
         false => {
@@ -433,17 +671,8 @@ pub(super) fn fold_files_that_import_constants_again<'r>(
     };
     asked.shared_sort_unstable();
     asked.dedup();
-    let stars: Vec<OnceLock<Arc<Stars>>> = state.files.iter().map(|_| OnceLock::new()).collect();
     let look_up = |share: &[u32]| {
-        let mut exports = Exports {
-            files: &state.files,
-            replacements: &looked_up.replacements,
-            resolved: FxHashMap::default(),
-            stars: &stars,
-            files_with_stars_in_progress: Vec::new(),
-            first_targets_of_sites: RefCell::default(),
-            files_read: Vec::new(),
-        };
+        let mut exports = Exports::new(&state.files, &looked_up, &stars);
         let mut importers: Vec<(u32, Vec<ImportedConstant>)> = Vec::new();
         let mut reads: Vec<(u32, u32)> = Vec::new();
         for &index in share {
@@ -480,12 +709,24 @@ pub(super) fn fold_files_that_import_constants_again<'r>(
         }
     }
     state.names_looked_up = looked_up;
-    let has_importers = !importers.is_empty();
+    let mut folded_again: Vec<u32> = Vec::new();
     for (index, found) in importers {
         let file = &mut state.files[index as usize];
         file.imported_constants = found;
         file.foldings_with_constants += 1;
+        folded_again.push(index);
+    }
+    for (index, stored) in stored_by_mocks {
+        let file = &mut state.files[index as usize];
+        file.stored_by_mocks = stored;
+        if file.parsed.is_some() {
+            folded_again.push(index);
+        }
+    }
+    folded_again.shared_sort_unstable();
+    folded_again.dedup();
+    for &index in &folded_again {
         fold_parsed_file_again(state, index);
     }
-    has_importers
+    !folded_again.is_empty()
 }

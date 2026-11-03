@@ -296,7 +296,7 @@ fn incomplete_files_stop_build() {
             is_nested_too_deeply,
             deepest_nesting,
         };
-        diagnostics.add_incomplete_files(&[incomplete], 2000);
+        diagnostics.add_incomplete_files(&[incomplete]);
         let is_internal = diagnostics.has_internal_errors();
         (is_internal, kinds_and_texts(&written(diagnostics)))
     };

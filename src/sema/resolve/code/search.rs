@@ -10,15 +10,19 @@ use std::sync::LazyLock;
 
 impl<'h> Resolver<'h> {
     pub fn resolve_code(&self, request: &CodeRequest<'_>) -> CodeResolution<'h> {
-        let options = self.code_options();
-        let (specifier, kind) = (request.specifier, request.kind);
-        if specifier.is_empty() {
+        if request.specifier.is_empty() {
             return CodeResolution::NotFound(CodeFailure::ModuleNotFound);
         }
         if let Some(answer) = self.resolve_claim(self.code_host().resolve_code(request)) {
             return answer;
         }
-        if let Some(answer) = self.resolve_non_path_specifier(specifier, kind) {
+        self.resolve_unclaimed_code(request)
+    }
+
+    fn resolve_unclaimed_code(&self, request: &CodeRequest<'_>) -> CodeResolution<'h> {
+        let options = self.code_options();
+        let (specifier, kind) = (request.specifier, request.kind);
+        if let Some(answer) = self.resolve_non_path_specifier(request) {
             return answer;
         }
         let directory = match request.directory.starts_with(b"/") {
@@ -55,6 +59,27 @@ impl<'h> Resolver<'h> {
                 links_followed: _,
             }
             | FoundCode::NotFound(_)) => self.answer_search(&search, found),
+        };
+        let answer = match answer {
+            CodeResolution::File(file)
+                if kind != CodeImportKind::EntryPoint
+                    && self.code_host().leaves_to_run_time(file.path) =>
+            {
+                CodeResolution::External {
+                    specifier: file.path,
+                    kind: ExternalKind::HostValue,
+                }
+            }
+            CodeResolution::File(file)
+                if kind != CodeImportKind::EntryPoint
+                    && self.code_host().is_in_other_program(file.path) =>
+            {
+                CodeResolution::External {
+                    specifier: file.path,
+                    kind: ExternalKind::UncompiledCode,
+                }
+            }
+            other => other,
         };
         *resolutions.insert_ref(key, answer)
     }
@@ -142,6 +167,7 @@ impl<'h> Resolver<'h> {
         LoaderRequest {
             path,
             kind,
+            is_linked_by_bundler: true,
             type_attribute,
             embed_attribute,
             settings: self.transpile_settings(path),
@@ -206,12 +232,9 @@ impl<'h> Resolver<'h> {
         })
     }
 
-    fn resolve_non_path_specifier(
-        &self,
-        specifier: &[u8],
-        kind: CodeImportKind,
-    ) -> Option<CodeResolution<'h>> {
-        let is_entry_point = kind == CodeImportKind::EntryPoint;
+    fn resolve_non_path_specifier(&self, request: &CodeRequest<'_>) -> Option<CodeResolution<'h>> {
+        let specifier = request.specifier;
+        let is_entry_point = request.kind == CodeImportKind::EntryPoint;
         let has_prefix = |prefix: &[u8]| specifier.starts_with(prefix);
         let is_url = has_prefix(b"http://") || has_prefix(b"https://") || has_prefix(b"//");
         if (is_url && !is_entry_point) || has_prefix(b"data:") {
@@ -220,13 +243,47 @@ impl<'h> Resolver<'h> {
                 kind: ExternalKind::UncompiledCode,
             });
         }
-        if !is_entry_point && strings::contains_char(specifier, b'?') {
-            return Some(CodeResolution::NotFound(CodeFailure::QueryString));
+        if !is_entry_point && let Some(start) = strings::index_of_char_usize(specifier, b'?') {
+            return Some(self.resolve_specifier_with_query(request, start));
         }
         if strings::contains_char(specifier, 0) {
             return Some(CodeResolution::NotFound(CodeFailure::ModuleNotFound));
         }
         None
+    }
+
+    /// `./a.ts?fresh=1`: `bun run` looks for what stands in front of the first `?`. What it finds is one more module of the file for each text that stands behind it.
+    fn resolve_specifier_with_query(
+        &self,
+        request: &CodeRequest<'_>,
+        start: usize,
+    ) -> CodeResolution<'h> {
+        let host = self.code_host();
+        if !host.holds_modules_with_queries() {
+            return CodeResolution::NotFound(CodeFailure::QueryString);
+        }
+        let (specifier, query) = request.specifier.split_at(start);
+        if specifier.is_empty() {
+            return CodeResolution::NotFound(CodeFailure::ModuleNotFound);
+        }
+        let found = self.resolve_unclaimed_code(&CodeRequest {
+            specifier,
+            ..*request
+        });
+        match found {
+            CodeResolution::File(CodeFile {
+                path,
+                host_module: None,
+            }) => match host.add_module_with_query(path, query, request.kind) {
+                Some(path) => CodeResolution::File(self.code_file(&path, None)),
+                None => CodeResolution::NotFound(CodeFailure::QueryString),
+            },
+            CodeResolution::NotFound(failure) => CodeResolution::NotFound(failure),
+            CodeResolution::File(_)
+            | CodeResolution::HostModule(_)
+            | CodeResolution::External { .. }
+            | CodeResolution::Erased => CodeResolution::NotFound(CodeFailure::QueryString),
+        }
     }
 }
 

@@ -7,7 +7,7 @@ description: "What behaves differently in an executable built with bun compile, 
 
 Most programs behave the same under [`bun compile`](/compiler/aot) as under `bun run`. The language, every `node:` and `bun:` module, Workers, native addons, macros, `Bun.build` plugins and nearly all npm packages work. A value that doesn't match its TypeScript type [is slower, not wrong](/compiler/types#when-a-value-doesnt-match-its-type).
 
-What differs: [built-in objects are read-only](#built-in-objects-are-read-only), [code from a string is interpreted](#code-from-strings), [a dynamic import only finds what the build found](#dynamic-imports), and [nothing can hook the module loader](#loader-hooks-and-the-module-cache). The build also checks your types, and [a type error stops it](/compiler/aot#type-errors-stop-the-build).
+What differs: [built-in objects are read-only](#built-in-objects-are-read-only), [code from a string is interpreted](#code-from-strings), [a dynamic import only finds what the build found](#dynamic-imports), [nothing can hook the module loader](#loader-hooks-and-the-module-cache), [packages are bundled](#packages), and [a store to `undefined` or `null` throws before its key is converted](#a-store-to-undefined-or-null). The build also checks your types, and [a type error stops it](/compiler/aot#type-errors-stop-the-build).
 
 ## Built-in objects are read-only
 
@@ -27,9 +27,13 @@ Compiled code calls `push` directly. It doesn't check first whether something re
 - You can't replace, redefine or delete an existing member of the language's own objects: `Object`, `Array`, `String`, `Map`, `Set`, `Promise`, `RegExp`, `Date`, `Math`, `JSON`, `Buffer`, the typed arrays, and their prototypes.
 - You can add a new member to most of them: `Array.prototype.last`, `Math.tau`, `BigInt.prototype.toJSON`.
 - You can't add anything to `Object.prototype`, `Function.prototype`, `Promise.prototype` or `RegExp.prototype`.
+- You can't put anything at an index of `Array.prototype`, such as a setter at `Array.prototype[0]`, or change what `Array.prototype` inherits from. A store to `list[0]` never looks for one. A subclass can have one: `class List extends Array {}`.
 - The prototypes of `Request`, `Response`, `Headers`, `Blob`, `URL` and `URLSearchParams` are read-only. Write a subclass: `class Upper extends Response {}`.
+- What a program reads to find out which runtime it is on is read-only: `process.isBun`, `process.versions`, `process.release`, `process.versions.node`, `process.versions.bun` and `process.release.name`. The build replaces those reads with their values, so a branch for another runtime is not compiled. Under `bun test --aot` a test can still store to `process.versions.node` and `process.versions.bun`.
 
-What tests usually mock still works: `Date.now`, `Math.random`, `JSON.parse`, `JSON.stringify`, `fetch`, the timers, and everything on `console`. So does `Object.freeze(Object.prototype)`, and a polyfill that checks first, like `Array.prototype.at ??= at`.
+What tests usually mock still works: `Date.now`, `Math.random`, `JSON.parse`, `JSON.stringify`, `fetch`, the timers, and everything on `console`. Under [`bun test --aot`](/compiler/debugging#run-your-tests-compiled) a test can replace most other methods too. So does `Object.freeze(Object.prototype)`, and a polyfill that checks first, like `Array.prototype.at ??= at`.
+
+The build has to see the code that replaces them. It can't see [code from a string](#code-from-strings), so `eval("Date.now = () => 5")` throws the same `TypeError` unless compiled code assigns to `Date.now` too.
 
 The build reports the assignments it can see as `TS100014`. The others throw when they run, and the stack trace points at the line. If that line is in a package, look it up in [Packages that don't work](/compiler/libraries#packages-that-dont-work).
 
@@ -51,7 +55,7 @@ bun compile ./strings.ts && ./strings
 
 `eval`, `new Function` and `node:vm` work. The build can't see that code and the executable has no JIT, so Bun interprets it. Call them directly. The build doesn't follow `globalThis[name](code)`, which throws an `EvalError` if it's the only such call in your program.
 
-`ShadowRealm` isn't supported. The build stops at code that uses it, and an executable has no such global. Use a `node:vm` context.
+`ShadowRealm` isn't supported. An executable has no such global, so code that uses it throws a `ReferenceError` when it runs, and the build warns. Use a `node:vm` context.
 
 Interpreted code is fine for a template or a config file. It costs you when a library generates its hot code this way, as zod 4, ajv, fast-json-stringify and Elysia do.
 
@@ -68,10 +72,30 @@ A `.wasm` file that you import is compiled at build time. Bytes that your progra
 
 ```ts app.ts icon="/icons/typescript.svg"
 await import("./plugins/" + name + ".ts"); // finds plugins/*.ts
-await import(name); // only finds the entry points of the build
+await import(new URL(`./plugins/${name}.ts`, import.meta.url)); // same
+await import(`@/plugins/${name}.ts`); // same, with "paths": { "@/*": ["./*"] } in tsconfig.json
+await import(`locales/data/${name}.js`); // finds node_modules/locales/data/*.js
+await import(name); // finds the entry points, and files whose path is a string in your code
 ```
 
-The build compiles every file it can reach from your entry point. Where a path isn't a constant, it uses the parts that are. `__dirname`, `import.meta.dir`, `path.join()`, `process.platform` and `process.arch` count as constants, so the usual loader of a native addon works. Anything else isn't in the executable:
+The build compiles every file it can reach from your entry point. Where a path isn't a constant, it uses the parts that are. `__dirname`, `import.meta.dir`, `import.meta.url`, `path.join()`, `new URL()`, `require.resolve()`, `process.platform` and `process.arch` count as constants, so the usual loader of a native addon works.
+
+A file that only a non-constant path can reach doesn't stop the build if it has a syntax error, like a `.json` file with comments or a broken fixture in a package. Importing it throws when your program runs, with the same error as under `bun run`. A file that you import by a constant path still stops the build.
+
+With a `baseUrl` in `tsconfig.json`, or a key like `"*"` in its `paths`, a name like the last one can also mean one of your own files. An executable then holds your files that match and leaves the package's files on disk, as `bun build --compile` does without `--aot`. `bun test --aot` compiles both.
+
+A file that the build compiled is also found by a relative path that's written out as a string somewhere in your code, like `"./plugins/a.ts"` or the `"/plugins/a.ts"` in `import.meta.dir + "/plugins/a.ts"`, however that string and the loader meet: through a variable, a function, or a `require` that's stored in an object.
+
+`fs.readdirSync()`, `existsSync()` and `statSync()` see the compiled files, so a loader that lists a folder works too. Their source text isn't in the executable, so `readFileSync()` doesn't find them.
+
+```ts app.ts icon="/icons/typescript.svg"
+const folder = path.join(import.meta.dir, "commands");
+for (const file of fs.readdirSync(folder)) require(path.join(folder, file));
+```
+
+`require.resolve()` and `import.meta.resolve()` return a path and nothing more. A file that's only named that way isn't embedded, and an HTML page isn't bundled. `require.resolve()` returns where the file was when you ran the build, so reading that path works while the file is still there and fails with `ENOENT` on another machine. To embed a file, import it: `import icon from "./icon.png" with { type: "file" }`.
+
+Anything else isn't in the executable:
 
 ```txt
 error: Cannot load '/home/me/late.ts': it isn't in this executable ...
@@ -90,29 +114,119 @@ error: Cannot load '/home/me/late.ts': it isn't in this executable ...
 bun compile ./app.ts './extra/*.ts' ./node_modules/pg/lib/index.js
 ```
 
-Code that's loaded from disk is interpreted, and both flags make the executable larger.
+Code that's loaded from disk is interpreted, and both flags make the executable larger. With `--aot-allow-code-from-disk`, a dynamic path also finds every file that was compiled. A file that's loaded from disk can import your source files by their paths and gets the compiled modules, not second copies, as long as the files keep their places next to the executable: a path is mapped by where your root directory lay, seen from the executable that `bun compile` wrote, or else from the folder where you ran it. Such a file can also import your program and the packages compiled into it by name, like `import "my-app"` or `import "some-package"`, wherever it lies. A package that the disk holds next to that file comes first, as under `bun run`. What such a file imports from disk is found as under `bun run`: the `package.json` and `tsconfig.json` files on disk are read, as with `--compile-autoload-package-json` and `--compile-autoload-tsconfig`.
 
-Workers follow the same rule. The build finds `new Worker("./worker.ts")` and `new Worker(new URL("./worker.ts", import.meta.url))` in your own files. Pass any other worker as an entry point, including one that a package in `node_modules` starts.
+Workers follow the same rule. The build finds `new Worker("./worker.ts")`, `new Worker(new URL("./worker.ts", import.meta.url))` and `new Worker("./jobs/" + name + ".ts")` in your own files. Pass any other worker as an entry point, including one that a package in `node_modules` starts.
 
 Next.js and Angular load your pages by dynamic paths. [Frameworks](/compiler/libraries#frameworks) shows what to pass.
 
 ## Loader hooks and the module cache
 
-Every `import`, and every `require()` of a constant path, is resolved at build time. Nothing in `node:module` runs on the way. If your program depends on a hook, build it with `--no-aot`.
+Every `import`, and every `require()` of a constant path, is resolved at build time. An absolute path that doesn't exist yet, such as `/etc/app/config.json`, is looked up when the program runs. Nothing in `node:module` runs on the way. If your program depends on a hook, build it with `--no-aot`.
 
 - `Module._resolveFilename` and `Module.prototype.require` can be replaced, but Bun only calls them for dynamic paths. For aliases, use `paths` in `tsconfig.json` or `imports` in `package.json`.
-- `Module._extensions[".js"] = loader` throws. You don't need `@babel/register` or anything like it, because the build compiles TypeScript and JSX.
+- `Module._extensions[".js"] = loader` is stored, but Bun doesn't call it for a compiled file. That's the same with `--no-aot`. You don't need `@babel/register` or anything like it, because the build compiles TypeScript and JSX.
 - A tracer that patches modules as they load, like OpenTelemetry's auto-instrumentation, sees none of them.
+- A plugin that your program registers with `Bun.plugin()` answers for code that's loaded at run time, so `build.module("lodash", ...)` doesn't replace a `lodash` that was compiled into the executable. That's the same with `--no-aot`.
 - A module runs once, as in every executable. `require.cache` doesn't list compiled modules, and `delete require.cache[path]` does nothing.
+- `require.cache["fs"] = { exports: fake }` makes `require("fs")` answer with `fake`, as in `bun run`, if the build can read the key. Under a computed key that turns out to be `"fs"`, the store throws.
+- `Bun.main = path` changes what `require.main`, `require.main === module` and `import.meta.main` answer, as in `bun run`, if the build can see the assignment. One that it can't see throws a `TypeError`: `Bun[key] = path` with a computed key, or `Bun.main = path` in [code from a string](#code-from-strings).
+
+## Packages
+
+An executable is a bundle, so two fields of a `package.json` mean what they mean to `bun build`. `bun run` treats them differently. That's the same with `--no-aot`.
+
+### `"main"` and `"module"`
+
+```json node_modules/both/package.json icon="file-json"
+{ "name": "both", "main": "./main.js", "module": "./module.mjs" }
+```
+
+```ts app.ts icon="/icons/typescript.svg"
+import { which } from "both"; // bun run loads main.js. An executable loads module.mjs.
+```
+
+| Your program loads the package with     | `bun run` | An executable |
+| --------------------------------------- | --------- | ------------- |
+| `import`, `import()`, `export ... from` | `"main"`  | `"module"`    |
+| `require()`                             | `"main"`  | `"main"`      |
+| Both                                    | `"main"`  | `"main"`      |
+
+One `require()` of the package is enough for the last row, in any file or package that the build compiles. Every import of it then loads `"main"` too, so an executable never holds both files.
+
+- If a package has `"module"`, an `index.js` and no `"main"`, the `index.js` counts as its `"main"`.
+- A folder of your own with a `package.json` follows the same rules: `import "./lib"`.
+- `"exports"` wins over both fields, in an executable and under `bun run`.
+- [`bun test --aot`](/compiler/debugging#what-differs-from-an-executable) loads `"main"`, as `bun test` does.
+
+The two files of a package usually export the same things, so this rarely shows. If it does, put `"main"` first:
+
+```bash terminal icon="terminal"
+bun compile ./app.ts --main-fields main --main-fields module
+```
+
+### `"sideEffects": false`
+
+```json node_modules/pure/package.json icon="file-json"
+{ "name": "pure", "main": "./index.js", "sideEffects": false }
+```
+
+```ts app.ts icon="/icons/typescript.svg"
+import "pure"; // bun run runs index.js. An executable doesn't.
+```
+
+With that field, a package says that loading its files does nothing except define their exports. The build takes it at its word: if your program uses nothing from an import, the import is removed. The file never runs, and neither does a file that only it imports. `bun run` doesn't read the field.
+
+| In your program                                         | In an executable |
+| ------------------------------------------------------- | ---------------- |
+| `import "pure"`                                         | Removed          |
+| `import { x } from "pure"`, and nothing uses `x`        | Removed          |
+| `import * as pure from "pure"`, and nothing uses `pure` | Removed          |
+| `import { x } from "pure"`, and `x` is used             | The file runs    |
+| `require("pure")`, `await import("pure")`               | The file runs    |
+
+- With a list, as in `"sideEffects": ["./setup.js"]`, an import of a file on the list stays. The field covers the package's other files.
+- The field in your own `package.json` covers your own files, so `import "./setup.ts"` is removed too.
+- `bun test --aot` removes the same imports.
+
+If you import such a package for what it does when it loads, like a polyfill or a plugin that registers itself, its field is wrong. Build with `--ignore-dce-annotations`. The build then keeps those imports, and ignores `/* @__PURE__ */` comments too. An index file that only re-exports from other files still [loads only the files you import a name from](/bundler#optimizeimports).
+
+## A store to `undefined` or `null`
+
+Assigning to a computed property of `undefined` or `null` throws before the key is converted, as in Node. `bun run` converts the key first, so a key's `toString` runs there and doesn't run in an executable.
+
+```js store.js icon="/icons/javascript.svg"
+const key = {
+  toString() {
+    console.log("converted");
+    return "name";
+  },
+};
+undefined[key] = 1; // bun run prints "converted" and throws. An executable only throws.
+```
+
+## A function declared in a block
+
+In a CommonJS file that isn't in strict mode, a function declared inside a block is also visible in the rest of the enclosing function once the block has run, as in Node. Under `bun run` it stays inside the block.
+
+```js block.cjs icon="/icons/javascript.svg"
+{
+  function inner() {}
+}
+console.log(typeof inner); // bun run prints "undefined". An executable prints "function".
+```
 
 ## Error messages
 
-The class of an error, its line and its stack trace are the same. Where `bun run` quotes your source in the message, an executable quotes less.
+The class of an error, its line and its stack trace are the same. Where `bun run` quotes your source in the message, an executable quotes it from the text of your functions, which it also keeps for `fn.toString()`, and of the statements at the top level of your files. With [`--no-compile-function-source`](/compiler/size) it has no text and quotes less. [`bun test --aot`](/compiler/debugging#run-your-tests-compiled) has your files beside it and reads the line from there.
 
 ```txt
 bun run      TypeError: null is not an object (evaluating 'o.a.c')
-bun compile  TypeError: null is not an object (evaluating 'null.c')
+bun compile  TypeError: null is not an object (evaluating 'o.a.c')
+bun compile  TypeError: null is not an object (evaluating 'null.c')  without the text
 ```
+
+`bun run` quotes what its transpiler prints from your source, so `f(1 + 2)` reads `f(3)`, a constant reads as its value, `const r = f(x); return r.y` reads `f(x).y`, and a callback in the arguments of a call is reformatted. An executable and `bun test --aot` quote the same. `fn.toString()` in an executable still returns your source, without its types and without what `bun build` removes: a branch that never runs, such as `if (false)`, is empty, and a name that `--define` replaces reads as its value. It keeps your line breaks, spaces and parentheses, and isn't laid out as the bundler prints it. The quote is shorter or missing where what's called isn't a name or a path of names, such as `f()()`, `o["a" + "b"]()` or a tagged template. An executable doesn't keep the source of Bun's built-in modules, so when an error is thrown inside one, for example after your code replaces `Object.keys`, the quoted expression can differ too.
 
 Check `error.name` or use `instanceof`, not `error.message`. A service that groups errors by message, such as Sentry, shows new groups. An uncaught error prints [without the source excerpt](/compiler/debugging#stack-traces) that `bun run` shows above it.
 
@@ -129,6 +243,8 @@ async function watch(target: object) {
 ```
 
 Keep a `FinalizationRegistry` at module level, or somewhere your program reads it again later.
+
+A variable that nothing in your program can read is removed. So is an object that only that variable held, unless your program could notice that it's gone, for example through a `WeakRef`. A [heap snapshot](/compiler/debugging#profiles) doesn't list what was removed.
 
 ## Not supported
 

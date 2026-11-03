@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""collected-keys.py <seed>: `x[key] = v` and `x[key]` on a typed object are remembered by the key's cell. Here: keys that are made anew each time, die, and whose room is taken by OTHER texts: a remembered entry that outlives its key would send a store or a read to another field. Typed records of several layouts, one site each for stores and reads, a model beside; collections of the young and full ones between; wrong values behind right ones (they must be refused and change nothing)."""
+"""collected-keys.py <seed>: `x[key] = v` and `x[key]` on a typed object are cached by the key's cell. The keys here are
+created anew each time and collected, and other strings reuse their memory.
+"""
 import sys, random
 seed = int(sys.argv[1]); R = random.Random(seed)
 n = R.choice([4, 6, 9]); names = ['f%d' % i for i in range(n)]

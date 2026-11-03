@@ -87,10 +87,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn lower_for_effect(&mut self, expression: ExprId, is_unused_in_bun_run: bool) {
         let position = self.file.hir[expression].pos;
+        debug_assert!(!self.file.hir.is_in_jsdoc(position), "a comment is no code");
         if !self.enter_nesting(position) {
             return;
         }
         self.set_position(position);
+        let counted = self.enter_counted_expression(expression);
         match self.file.decisions().decision(expression) {
             Decision::Constant(_) if self.file.runs_as_written() => {
                 self.record_read_of_builtin_path(expression);
@@ -110,6 +112,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.builder.suspend_records(were_suspended);
             }
         }
+        self.leave_counted_expression(counted);
         self.leave_nesting();
     }
 
@@ -162,12 +165,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         evaluation: Evaluation<'_>,
     ) -> ValueId {
         let position = self.file.hir[expression].pos;
+        debug_assert!(!self.file.hir.is_in_jsdoc(position), "a comment is no code");
         if !self.enter_nesting(position) {
             return self.builder.undefined();
         }
         self.set_position(position);
+        let counted = self.enter_counted_expression(expression);
         let value = self.lower_printed_part(expression, evaluation);
         let value = self.finish_expression(expression, value);
+        self.leave_counted_expression(counted);
         self.leave_nesting();
         value
     }
@@ -269,6 +275,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         if let Some(Resolved::Builtin(path)) = self.file.builtins.of_pure_expr(expression)
             && let Some(builtin) = path.locked_builtin()
+            && !self.file.names_source_path(expression)
         {
             return self.emit_locked_builtin(builtin);
         }
@@ -313,9 +320,20 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             ExprKind::TaggedTemplate(_) => {
                 template::lower_tagged_template(self, expression, evaluation.tail)
             }
+            ExprKind::Object(properties) if properties.len() == 0 => {
+                match self.file.find_emitted_enum_born_at(expression) {
+                    Some(found) => self.lower_object_of_emitted_enum(&found),
+                    None if self.file.decisions().is_data_literal(expression)
+                        && !self.file.is_built_by_code(expression) =>
+                    {
+                        self.lower_decided_data(expression)
+                    }
+                    None => object::lower_object_literal(self, expression),
+                }
+            }
             ExprKind::Array(_) | ExprKind::Object(_)
                 if self.file.decisions().is_data_literal(expression)
-                    && !self.file.holds_dictionary_literal(expression) =>
+                    && !self.file.is_built_by_code(expression) =>
             {
                 self.lower_decided_data(expression)
             }
@@ -338,7 +356,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 member::lower_member(self, expression, exit)
             }
             ExprKind::Call(site) => match hir[site].chain {
-                Chain::No => self.lower_call(expression, Evaluation::at_tail(evaluation.tail)),
+                Chain::No => match self.file.find_emitted_enum(expression) {
+                    Some(found) => self.lower_call_of_emitted_enum(&found),
+                    None => self.lower_call(expression, Evaluation::at_tail(evaluation.tail)),
+                },
                 Chain::Start | Chain::Continue => self.lower_call(expression, evaluation),
             },
             ExprKind::New(_) => self.lower_new(expression, evaluation.tail),
@@ -367,7 +388,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             ExprKind::Spread(operand) => self.lower_expression(operand),
             ExprKind::Await(_) => async_function::lower_await(self, expression),
             ExprKind::Yield { .. } => generator::lower_yield(self, expression),
-            ExprKind::Jsx(_) => self.lower_jsx(expression),
+            ExprKind::Jsx(_) => self.lower_jsx(expression, evaluation.tail),
             ExprKind::ImportCall { .. } => module::lower_import_call(self, expression),
             ExprKind::ImportMeta => self.lower_import_meta(),
             ExprKind::As { expr: operand, ty } => {
@@ -414,7 +435,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         if self.file.decisions().reads_member(inner) {
             self.lower_member_reads(inner);
-        } else if has_dead_zone {
+        } else if has_dead_zone && !self.file.names_only_inlined_constants(inner) {
             lower(self, expression);
         }
         self.emit_constant(constant)

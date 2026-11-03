@@ -17,9 +17,10 @@ pub use intrinsics::{find_intrinsic, find_native_call_kind, find_symbol_key};
 pub use names::BuiltinNames;
 pub use prototype_operations::{named_value_of, prototype_operation_of};
 pub use resolve::{
-    BuiltinPath, EvaluatedText, EvaluatedTextForm, FileFacts, ImportTargets, ModuleExport,
-    ResolveInput, Resolved, ResolvedBuiltins, SourceDialect, commonjs_variable_builtin,
-    find_module_export, resolve_file, resolve_within,
+    BuiltinPath, EvaluatedText, EvaluatedTextForm, FileFacts, ImportTargets, KeyOfModuleCache,
+    ModuleExport, ReplacedMembersSought, ResolveInput, Resolved, ResolvedBuiltins, SourceDialect,
+    WriteOnImport, commonjs_variable_builtin, find_member_written_behind, find_module_export,
+    resolve_file, resolve_within,
 };
 pub use returned_arguments::returns_first_argument;
 pub use runtime_uses::RuntimeUses;

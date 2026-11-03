@@ -216,7 +216,7 @@ impl<'a, R: Rule> Cx<'a, R> {
     ///     .fix(|fixer| fixer.remove(declaration));
     /// ```
     #[inline]
-    pub fn report(&self, at: impl Spanned, message: Message) -> Report<'a> {
+    pub fn report(&self, at: impl Spanned, message: &'static Message) -> Report<'a> {
         self.base.report(at.span(), at.packed_node(), message)
     }
 
@@ -271,7 +271,7 @@ impl<'a, R: Rule> Cx<'a, R> {
 
     /// Reports `message` at a position, for when ESLint's `loc` is a `{ line, column }` instead of a range.
     #[inline]
-    pub fn report_at(&self, offset: u32, message: Message) -> Report<'a> {
+    pub fn report_at(&self, offset: u32, message: &'static Message) -> Report<'a> {
         self.base.report_at(offset, message)
     }
 
@@ -279,7 +279,7 @@ impl<'a, R: Rule> Cx<'a, R> {
     /// Formats that need numbers print line 0 and column 0, and there's no code excerpt. With no config it's reported
     /// at the start of the file.
     #[inline]
-    pub fn report_file(&self, message: Message) -> Report<'a> {
+    pub fn report_file(&self, message: &'static Message) -> Report<'a> {
         let nowhere = Position {
             line: 0,
             column: u32::MAX,
@@ -291,7 +291,7 @@ impl<'a, R: Rule> Cx<'a, R> {
 impl<'a> CxBase<'a> {
     #[cold]
     #[inline(never)]
-    fn report(&self, span: Span, node: Option<Packed>, message: Message) -> Report<'a> {
+    fn report(&self, span: Span, node: Option<Packed>, message: &'static Message) -> Report<'a> {
         let (language, sink) = (self.file.language(), &self.file.sink);
         // The `bun:test` rules use oxlint's texts whatever the configuration.
         let has_help =
@@ -330,14 +330,14 @@ impl<'a> CxBase<'a> {
             fix: None,
             suggestions: Vec::new(),
         };
-        Report {
+        Report(Box::new(Building {
             file: self.file,
             message,
             data: SmallVec::new(),
             reads_data: wants_text && message.may_have_placeholders || help.is_some(),
             reads_hints: self.meta.has_hints && !language.is_oxlint && sink.wants_help.get(),
             diagnostic: Some(diagnostic),
-        }
+        }))
     }
 
     /// `Err` has the `RangeError`'s message.
@@ -377,7 +377,7 @@ impl<'a> CxBase<'a> {
 
     #[cold]
     #[inline(never)]
-    fn report_at(&self, offset: u32, message: Message) -> Report<'a> {
+    fn report_at(&self, offset: u32, message: &'static Message) -> Report<'a> {
         let mut report = self.report(Span::empty(offset), None, message);
         if let Some(diagnostic) = &mut report.diagnostic {
             diagnostic.has_no_end = true;
@@ -389,15 +389,32 @@ impl<'a> CxBase<'a> {
 type Data<'a> = SmallVec<[(&'static str, Cow<'a, [u8]>); 2]>;
 
 /// A report being built. See [`Cx::report`].
-pub struct Report<'a> {
+pub struct Report<'a>(Box<Building<'a>>);
+
+#[doc(hidden)]
+pub struct Building<'a> {
     file: &'a File<'a>,
-    message: Message,
+    message: &'static Message,
     data: Data<'a>,
     /// True if some text is built from `data`.
     reads_data: bool,
     /// True if hints are shown. See [`Report::hint`].
     reads_hints: bool,
     diagnostic: Option<Diagnostic>,
+}
+
+impl<'a> std::ops::Deref for Report<'a> {
+    type Target = Building<'a>;
+    #[inline(always)]
+    fn deref(&self) -> &Building<'a> {
+        &self.0
+    }
+}
+impl<'a> std::ops::DerefMut for Report<'a> {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut Building<'a> {
+        &mut self.0
+    }
 }
 
 impl<'a> Report<'a> {
@@ -413,6 +430,13 @@ impl<'a> Report<'a> {
     fn push_data(&mut self, name: &'static str, value: Cow<'a, [u8]>) {
         if self.reads_data {
             self.data.push((name, value));
+        }
+    }
+
+    #[inline(never)]
+    fn push_borrowed(&mut self, name: &'static str, value: &'a [u8]) {
+        if self.reads_data {
+            self.data.push((name, Cow::Borrowed(value)));
         }
     }
 
@@ -737,14 +761,18 @@ impl<'a> Report<'a> {
     }
 
     /// A change an editor can offer, like an element of ESLint's `suggest`.
-    pub fn suggest<F: IntoFix>(self, message: Message, fix: impl FnOnce(Fixer<'a>) -> F) -> Self {
+    pub fn suggest<F: IntoFix>(
+        self,
+        message: &'static Message,
+        fix: impl FnOnce(Fixer<'a>) -> F,
+    ) -> Self {
         self.suggest_with(message, &[], fix)
     }
 
     /// Like [`Report::suggest`], for a message with `{{placeholders}}`.
     pub fn suggest_with<F: IntoFix>(
         self,
-        message: Message,
+        message: &'static Message,
         data: &[(&'static str, &[u8])],
         fix: impl FnOnce(Fixer<'a>) -> F,
     ) -> Self {
@@ -756,7 +784,7 @@ impl<'a> Report<'a> {
     /// one go without review, and only `--fix-dangerously` applies it.
     pub fn suggest_behavior_change<F: IntoFix>(
         self,
-        message: Message,
+        message: &'static Message,
         data: &[(&'static str, &[u8])],
         fix: impl FnOnce(Fixer<'a>) -> F,
     ) -> Self {
@@ -770,7 +798,12 @@ impl<'a> Report<'a> {
     /// oxlint's `diagnostic_with_dangerous_fix`. It's a suggestion with the same message as the report.
     pub fn fix_dangerously<F: IntoFix>(self, fix: impl FnOnce(Fixer<'a>) -> F) -> Self {
         // The message is copied in when the report is submitted.
-        self.suggest_as(SuggestionKind::DangerousFix, Message::new("", ""), &[], fix)
+        self.suggest_as(
+            SuggestionKind::DangerousFix,
+            const { &Message::new("", "") },
+            &[],
+            fix,
+        )
     }
 
     /// Attaches a fix that's only correct for some code: [`Report::fix`] if `is_safe` returns true, otherwise
@@ -793,7 +826,7 @@ impl<'a> Report<'a> {
     /// oxlint's `diagnostic_with_dangerous_suggestion`.
     pub fn suggest_dangerously<F: IntoFix>(
         self,
-        message: Message,
+        message: &'static Message,
         fix: impl FnOnce(Fixer<'a>) -> F,
     ) -> Self {
         self.suggest_as(SuggestionKind::DangerousSuggestion, message, &[], fix)
@@ -802,7 +835,7 @@ impl<'a> Report<'a> {
     fn suggest_as<F: IntoFix>(
         mut self,
         kind: SuggestionKind,
-        message: Message,
+        message: &'static Message,
         data: &[(&'static str, &[u8])],
         fix: impl FnOnce(Fixer<'a>) -> F,
     ) -> Self {
@@ -819,7 +852,7 @@ impl<'a> Report<'a> {
     fn push_suggestion(
         &mut self,
         kind: SuggestionKind,
-        message: Message,
+        message: &'static Message,
         data: &[(&'static str, &[u8])],
         fix: Option<Fix>,
     ) {
@@ -846,13 +879,15 @@ impl<'a> Report<'a> {
 }
 
 impl Drop for Report<'_> {
+    #[inline(never)]
     fn drop(&mut self) {
-        let Some(diagnostic) = &mut self.diagnostic else {
+        let this = &mut *self.0;
+        let Some(diagnostic) = &mut this.diagnostic else {
             return;
         };
-        let data = |name: &str| self.data.iter().find(|it| it.0 == name).map(|it| &*it.1);
-        if !self.file.sink.drops_messages.get() {
-            diagnostic.message = interpolate(self.message, data);
+        let data = |name: &str| this.data.iter().find(|it| it.0 == name).map(|it| &*it.1);
+        if !this.file.sink.drops_messages.get() {
+            diagnostic.message = interpolate(this.message, data);
         }
         if let Some(texts) = diagnostic.constant_help.filter(|it| it.has_values()) {
             let details = &mut **diagnostic.details.get_or_insert_default();
@@ -874,14 +909,14 @@ impl Drop for Report<'_> {
                 suggestion.message.clone_from(&diagnostic.message);
             }
         }
-        let mut diagnostics = self.file.sink.diagnostics.borrow_mut();
-        diagnostics.extend(self.diagnostic.take());
+        let mut diagnostics = this.file.sink.diagnostics.borrow_mut();
+        diagnostics.extend(this.diagnostic.take());
     }
 }
 
 /// ESLint's `interpolate`: replaces each `{{ name }}` with `data(name)`, or leaves it alone if that's `None`. A name
 /// can't contain braces, so `{{{name}}}` becomes `{`, the value, `}`.
-fn interpolate<'d>(message: Message, data: impl Fn(&str) -> Option<&'d [u8]>) -> Vec<u8> {
+fn interpolate<'d>(message: &'static Message, data: impl Fn(&str) -> Option<&'d [u8]>) -> Vec<u8> {
     match message.may_have_placeholders {
         true => interpolate_text(message.text, data),
         false => message.text.as_bytes().to_vec(),
@@ -947,17 +982,29 @@ pub trait IntoText<'a>: Sized {
 
 impl<'a> IntoText<'a> for &'a [u8] {
     #[inline]
+    fn put_into(self, report: &mut Report<'a>, name: &'static str) {
+        report.push_borrowed(name, self);
+    }
+    #[inline]
     fn into_text(self) -> Cow<'a, [u8]> {
         Cow::Borrowed(self)
     }
 }
 impl<'a, const N: usize> IntoText<'a> for &'a [u8; N] {
     #[inline]
+    fn put_into(self, report: &mut Report<'a>, name: &'static str) {
+        report.push_borrowed(name, self);
+    }
+    #[inline]
     fn into_text(self) -> Cow<'a, [u8]> {
         Cow::Borrowed(self)
     }
 }
 impl<'a> IntoText<'a> for &'a str {
+    #[inline]
+    fn put_into(self, report: &mut Report<'a>, name: &'static str) {
+        report.push_borrowed(name, self.as_bytes());
+    }
     #[inline]
     fn into_text(self) -> Cow<'a, [u8]> {
         Cow::Borrowed(self.as_bytes())
@@ -983,11 +1030,19 @@ impl<'a> IntoText<'a> for Cow<'a, [u8]> {
 }
 impl<'a> IntoText<'a> for Name<'a> {
     #[inline]
+    fn put_into(self, report: &mut Report<'a>, name: &'static str) {
+        report.push_borrowed(name, self.bytes());
+    }
+    #[inline]
     fn into_text(self) -> Cow<'a, [u8]> {
         Cow::Borrowed(self.bytes())
     }
 }
 impl<'a> IntoText<'a> for Ident<'a> {
+    #[inline]
+    fn put_into(self, report: &mut Report<'a>, name: &'static str) {
+        report.push_borrowed(name, self.bytes());
+    }
     #[inline]
     fn into_text(self) -> Cow<'a, [u8]> {
         Cow::Borrowed(self.bytes())

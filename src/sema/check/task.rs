@@ -10,7 +10,7 @@
 
 use super::commit::View;
 use super::sink::Reported;
-use super::{Program, Query};
+use super::{Program, Query, QueryFrame};
 use crate::local::{Buffer, FileLocalTables, SlotNumber};
 use crate::program::{FileId, Sym};
 use crate::session::Arena;
@@ -18,6 +18,7 @@ use crate::table::Publish;
 use crate::types::{OwnStore, TypeStore};
 use crate::util::SharedSort;
 use std::cell::{Cell, RefCell, UnsafeCell};
+use std::ops::Range;
 
 /// Permission to store a finished result. `Checker::leave` and the scopes in check/mod.rs create one that knows when the
 /// computation began.
@@ -52,6 +53,67 @@ impl Stored {
 #[derive(Copy, Clone)]
 pub struct Open;
 
+/// Which of the checker's queries in progress are in `Task::cycle_members`.
+///
+/// A walk through n functions that call one another comes back around at most of its steps, and nearly every member of
+/// one cycle is a member of the cycle before. Adding all of them each time costs n^2, in time and in memory.
+#[derive(Default)]
+struct MembersInProgress {
+    /// Ranges of positions on `Checker::stack`, in ascending order, with a gap between any two.
+    ranges: Vec<Range<usize>>,
+    /// `QueryFrame::serial` of the innermost query when `ranges` last changed. A query pushed since has a higher one.
+    innermost: u64,
+}
+
+impl MembersInProgress {
+    /// Adds `positions`, which end at the top of the stack. Calls `add` with each part of them that's new.
+    ///
+    /// `kept`: how many queries at the bottom of the stack have a serial number up to `self.innermost`. The rest were
+    /// pushed since. `innermost`: the serial number of the query at the top.
+    fn add(
+        &mut self,
+        positions: Range<usize>,
+        kept: usize,
+        innermost: u64,
+        mut add: impl FnMut(Range<usize>),
+    ) {
+        while let Some(last) = self.ranges.last_mut() {
+            if last.start < kept {
+                last.end = last.end.min(kept);
+                break;
+            }
+            self.ranges.pop();
+        }
+        self.innermost = innermost;
+        if positions.is_empty() {
+            return;
+        }
+        // Positions from here up are in `ranges` or have been passed to `add`.
+        let mut done_from = positions.end;
+        while let Some(last) = self.ranges.pop_if(|last| last.end >= positions.start) {
+            if last.end < done_from {
+                add(last.end..done_from);
+            }
+            done_from = last.start;
+        }
+        if positions.start < done_from {
+            add(positions.start..done_from);
+            done_from = positions.start;
+        }
+        self.ranges.push(done_from..positions.end);
+    }
+
+    fn clear(&mut self) {
+        self.ranges.clear();
+        self.innermost = 0;
+    }
+
+    #[cfg(test)]
+    fn is_like_new(&self) -> bool {
+        self.ranges.is_empty() && self.innermost == 0
+    }
+}
+
 /// One per `Checker`.
 pub struct Task<'s> {
     /// The round, and an index that's unique within the round. `None` until `begin`.
@@ -81,14 +143,22 @@ pub struct Task<'s> {
     is_first_in_component: Cell<bool>,
     /// See `take_cycle_members`.
     cycle_members: RefCell<Vec<u64>>,
+    members_in_progress: RefCell<MembersInProgress>,
+    /// How many hashes were added to `cycle_members`.
+    cycle_members_added: Cell<u64>,
     /// How often `close_cycle` was called.
     closed_cycles: Cell<u32>,
     /// `Buffer::log_lengths` at the first cycle the task has resolved since it was last idle.
     cycle_since_idle: Cell<Option<[usize; 2]>>,
+    /// While `cycle_since_idle` is set: the lowest position on the checker's stack of a query in those cycles, or 0 if
+    /// the task can't tell. Once the stack is lower than this, every query in the cycles has stored its result. See
+    /// `leaves_the_cycles_below`.
+    cycle_ends_below: Cell<usize>,
     /// See `take_logged_at_cycles`.
     logged_at_cycles: RefCell<Vec<[[usize; 2]; 2]>>,
     /// `Buffer::log_lengths` when the task was last idle.
     logged_when_idle: Cell<[usize; 2]>,
+    most_logged_between_idle_moments: Cell<usize>,
     /// The tables the task writes to immediately, as a bit set by slot. See `may_write_immediately`. 0 means none, or
     /// none until the next commit (`stop_writing_immediately`).
     immediate_tables: Cell<u128>,
@@ -123,10 +193,14 @@ impl<'s> Task<'s> {
             is_first_in_order: Cell::new(false),
             is_first_in_component: Cell::new(false),
             cycle_members: RefCell::default(),
+            members_in_progress: RefCell::default(),
+            cycle_members_added: Cell::new(0),
             closed_cycles: Cell::new(0),
             cycle_since_idle: Cell::new(None),
+            cycle_ends_below: Cell::new(0),
             logged_at_cycles: RefCell::default(),
             logged_when_idle: Cell::new([0; 2]),
+            most_logged_between_idle_moments: Cell::new(0),
             immediate_tables: Cell::new(0),
             immediate_tables_after_commit: 0,
             diagnostics_logged_before_stop: Cell::new(usize::MAX),
@@ -282,34 +356,85 @@ impl<'s> Task<'s> {
         is_reachable_only_by_importers: impl FnOnce() -> bool,
         members: impl Iterator<Item = u64>,
     ) {
+        self.close_cycle_of(is_reachable_only_by_importers, 0, |all| all.extend(members));
+    }
+
+    /// `close_cycle` for a cycle whose members are `stack[from..]`. `stack` and `frames` are the checker's.
+    pub(super) fn close_cycle_in_progress(
+        &self,
+        is_reachable_only_by_importers: impl FnOnce() -> bool,
+        stack: &[Query],
+        frames: &[QueryFrame],
+        from: usize,
+    ) {
+        self.close_cycle_of(is_reachable_only_by_importers, from, |all| {
+            let mut in_progress = self.members_in_progress.borrow_mut();
+            let kept = frames.partition_point(|frame| frame.serial <= in_progress.innermost);
+            let innermost = frames.last().map_or(0, |frame| frame.serial);
+            in_progress.add(from..stack.len(), kept, innermost, |new| {
+                all.extend(stack[new].iter().map(crate::util::fx_hash));
+            });
+        });
+    }
+
+    /// `add_members` adds the hashes of the queries in the cycle that `cycle_members` may lack.
+    fn close_cycle_of(
+        &self,
+        is_reachable_only_by_importers: impl FnOnce() -> bool,
+        from: usize,
+        add_members: impl FnOnce(&mut Vec<u64>),
+    ) {
         self.closed_cycles
             .set(self.closed_cycles.get().wrapping_add(1));
         if self.was_discarded() {
             return;
         }
-        self.cycle_members.borrow_mut().extend(members);
+        {
+            let mut members = self.cycle_members.borrow_mut();
+            let before = members.len();
+            add_members(&mut members);
+            let added = (members.len() - before) as u64;
+            self.cycle_members_added
+                .set(self.cycle_members_added.get() + added);
+        }
         if self.is_first_in_order.get()
             || self.is_trusted
             || self.is_first_in_component.get() && is_reachable_only_by_importers()
         {
-            if self.cycle_since_idle.get().is_none() {
-                let logged = self.buffer().log_lengths();
-                self.cycle_since_idle.set(Some(logged));
-            }
-            self.stop_writing_immediately();
+            self.keep_results_of_cycle(from);
         } else {
             self.discard_until_recheck();
         }
+    }
+
+    /// For a cycle whose members are `stack[from..]`, in a task that isn't discarded because of it.
+    #[inline(never)]
+    fn keep_results_of_cycle(&self, from: usize) {
+        if self.cycle_since_idle.get().is_none() {
+            let logged = self.buffer().log_lengths();
+            self.cycle_since_idle.set(Some(logged));
+            self.cycle_ends_below.set(from);
+        } else {
+            self.cycle_ends_below
+                .set(self.cycle_ends_below.get().min(from));
+        }
+        self.stop_writing_immediately();
     }
 
     pub(super) fn closed_cycle_count(&self) -> u32 {
         self.closed_cycles.get()
     }
 
+    #[cfg(any(test, feature = "test_support"))]
+    pub(super) fn cycle_members_added(&self) -> u64 {
+        self.cycle_members_added.get()
+    }
+
     /// Returns the `members` of the cycles this task has resolved since its last commit, sorted. For a task that was
     /// discarded because of a cycle, that cycle is included.
     pub(super) fn take_cycle_members(&self) -> Vec<u64> {
         let mut members = self.cycle_members.take();
+        self.members_in_progress.borrow_mut().clear();
         members.shared_sort_unstable();
         members.dedup();
         members
@@ -324,9 +449,10 @@ impl<'s> Task<'s> {
     /// a cycle and its next idle moment, as `Buffer::log_lengths` at both ends. Empty if it hasn't resolved a cycle
     /// since its last commit.
     ///
-    /// These parts include the result of every query in a cycle, because the stack is empty at an idle moment. They
-    /// don't include what the task logs in later statements. Another task that computes one of those needs the cycle's
-    /// queries, so it has either hit them or stored one itself.
+    /// These parts include the result of every query in a cycle: a part ends at an idle moment, where the stack is empty,
+    /// or when the query below the lowest member has left the stack (`leaves_the_cycles_below`), and a query stores its
+    /// result before the query below it leaves. They don't include what the task logs after that. Another task that
+    /// computes one of those needs the cycle's queries, so it has either hit them or stored one itself.
     pub(super) fn take_logged_at_cycles(&self) -> Vec<[[usize; 2]; 2]> {
         self.note_idle();
         self.logged_at_cycles.take()
@@ -344,11 +470,33 @@ impl<'s> Task<'s> {
     /// Call when nothing is in progress in the task. Records the log lengths for `logged_since_idle` and ends the log
     /// range of a resolved cycle.
     pub(super) fn note_idle(&self) {
-        let logged = self.buffer().log_lengths();
+        self.end_log_range_of_cycles();
+        let (before, now) = (self.logged_when_idle.get(), self.buffer().log_lengths());
+        let logged = (now[0] + now[1]).saturating_sub(before[0] + before[1]);
+        let most = self.most_logged_between_idle_moments.get();
+        self.most_logged_between_idle_moments.set(most.max(logged));
+        self.logged_when_idle.set(now);
+    }
+
+    pub(super) fn most_logged_between_idle_moments(&self) -> usize {
+        self.most_logged_between_idle_moments.get()
+    }
+
+    /// Call when a query has left the checker's stack, which now has `height` entries. Ends the log range of the cycles
+    /// the task has resolved if all of their queries are done.
+    #[inline]
+    pub(super) fn leaves_the_cycles_below(&self, height: usize) {
+        if height < self.cycle_ends_below.get() {
+            self.end_log_range_of_cycles();
+        }
+    }
+
+    fn end_log_range_of_cycles(&self) {
         if let Some(from) = self.cycle_since_idle.take() {
+            let logged = self.buffer().log_lengths();
             self.logged_at_cycles.borrow_mut().push([from, logged]);
         }
-        self.logged_when_idle.set(logged);
+        self.cycle_ends_below.set(0);
     }
 
     /// The keys the task has stored under since it was last idle, except for its immediate writes.
@@ -422,10 +570,14 @@ impl<'s> Task<'s> {
             is_first_in_order,
             is_first_in_component,
             cycle_members,
+            members_in_progress,
+            cycle_members_added,
             closed_cycles,
             cycle_since_idle,
+            cycle_ends_below,
             logged_at_cycles,
             logged_when_idle,
+            most_logged_between_idle_moments,
             immediate_tables,
             immediate_tables_after_commit,
             diagnostics_logged_before_stop,
@@ -444,10 +596,14 @@ impl<'s> Task<'s> {
         is_first_in_order.set(false);
         is_first_in_component.set(false);
         cycle_members.get_mut().clear();
+        members_in_progress.get_mut().clear();
+        cycle_members_added.set(0);
         closed_cycles.set(0);
         cycle_since_idle.set(None);
+        cycle_ends_below.set(0);
         logged_at_cycles.get_mut().clear();
         logged_when_idle.set([0; 2]);
+        most_logged_between_idle_moments.set(0);
         immediate_tables.set(0);
         *immediate_tables_after_commit = 0;
         diagnostics_logged_before_stop.set(usize::MAX);

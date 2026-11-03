@@ -117,7 +117,7 @@ const hasTerminal = (() => {
   }
 })();
 
-// Runs `cmd` in a terminal with colors, like a person would. The progress line is drawn immediately, not after 300 ms.
+// Runs `cmd` in a terminal with colors, like a person would. The progress line is drawn before the check starts, not after 300 ms.
 async function inTerminal(cwd: string, cmd: string[]) {
   const decoder = new TextDecoder();
   let output = "";

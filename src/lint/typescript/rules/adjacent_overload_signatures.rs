@@ -8,7 +8,7 @@ use std::hash::Hash;
 /// Require that function overload signatures be consecutive.
 pub struct AdjacentOverloadSignatures;
 
-const ADJACENT_SIGNATURE: Message = Message::new(
+const ADJACENT_SIGNATURE: &Message = &Message::new(
     "adjacentSignature",
     "All {{name}} signatures should be adjacent.",
 );

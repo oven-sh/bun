@@ -135,12 +135,12 @@ export {};
 // CHECK-NEXT: Return v8
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="assemble"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|number|string|symbol|bigint|[[L_8]]> site=[[w_12]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|[[L_8]] site=[[w_13]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<undefined|null|number|string|symbol|bigint|[[L_8]]>):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|number|string|symbol|bigint|[[L_12]]> site=[[w_13]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|[[L_8]] site=[[w_14]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK-NEXT: b0(v0: undefined|null|Array<undefined|null|number|string|symbol|bigint|[[L_12]]>):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Data data=[[d_14]]
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[L_8]] site=[[w_15]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v1 = Data data=[[d_15]]
+// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[L_8]] site=[[w_16]] flags=[OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: v3 = IteratorOpen v0
 // CHECK-NEXT: Jump -> next b2(v2)
 // CHECK-NEXT: b2(v4: undefined|null|[[L_8]]):
@@ -150,18 +150,18 @@ export {};
 // CHECK-NEXT: v8 = ResultAt v6 index=1
 // CHECK-NEXT: Branch v7 -> taken b3(), notTaken b4()
 // CHECK-NEXT: b3():
-// CHECK-NEXT: v9 = Convert v4 declared={type=undefined|null|[[L_8]] site=[[w_13]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v9 = Convert v4 declared={type=undefined|null|[[L_8]] site=[[w_14]] flags=[OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: Return v9
 // CHECK-NEXT: b4():
 // CHECK-NEXT: Jump -> next b5()
 // CHECK-NEXT: b5() handler=b7():
-// CHECK-NEXT: v10 = Convert v8 declared={type=undefined|null|number|string|symbol|bigint|[[L_8]] flags=[IsExpected, OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v10 = Convert v8 declared={type=undefined|null|number|string|symbol|bigint|[[L_12]] flags=[IsExpected, OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: v11 = NewObject layout=[[L_8]]
 // CHECK-NEXT: CopyDataProperties v11, v10
 // CHECK-NEXT: CopyDataProperties v11, v4
 // CHECK-NEXT: CopyDataProperties v11, v10
 // CHECK-NEXT: v15 = FinishObject v11
-// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|null|[[L_8]] site=[[w_15]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|null|[[L_8]] site=[[w_16]] flags=[OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: Jump -> next b6()
 // CHECK-NEXT: b6() handler=b7():
 // CHECK-NEXT: Jump -> next b2(v16)
@@ -171,7 +171,7 @@ export {};
 // CHECK-NEXT: Rethrow v17
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="y"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=[[w_16]]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=[[w_17]]}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -180,8 +180,8 @@ export {};
 // CHECK-NEXT: v2 = PropGet v1 key="push"
 // CHECK-NEXT: v3 = String string="get y"
 // CHECK-NEXT: v4 = Call v2, v1, v3 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v5 = Convert v4 declared={type=number site=[[w_17]]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v5 = Convert v4 declared={type=number site=[[w_18]]} illTypedCause=DeclarationWithoutBody
 // CHECK-NEXT: v6 = Integer integer=2
-// CHECK-NEXT: v7 = Convert v6 declared={type=number site=[[w_16]]}
+// CHECK-NEXT: v7 = Convert v6 declared={type=number site=[[w_17]]}
 // CHECK-NEXT: Return v7
 // CHECK-NEXT: }

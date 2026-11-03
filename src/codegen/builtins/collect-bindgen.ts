@@ -805,6 +805,8 @@ function collectClassMember(type: ClassType, member: ClassMember, path: BuiltinP
   // The host function answers undefined for a receiver that is no instance, and the thunk takes an instance.
   if (methods[0].invalidThis === "undefined")
     return collectFunction(member, path, b.any.parameter, () => null, type.name);
+  // The thunk of a function that `protoCaller` calls takes other arguments, and its host function reads the callee, which a frame of values lacks.
+  if (type.protoCaller !== undefined) return collectFunction(member, path, type.parameterType, () => null, type.name);
   const thunkOf = (signature: Signature) => methodSymbolName(type, signature as Method);
   return collectFunction(member, path, type.parameterType, thunkOf, type.name).map(declaration =>
     declaration.declares === "Member"
@@ -817,7 +819,7 @@ const pathOfMember = (classPath: BuiltinPath, side: "static" | "proto", name: st
   pathOfClassMember(classPath, side, name === "@@inspectCustom" ? `@@@${symbolDescription(name)}` : name);
 
 function prototypeBaseOf(type: ClassType): BuiltinPath | null {
-  if (type.forBind) return "Function.prototype";
+  if (type.forBind || type.callInstance) return "Function.prototype";
   return type.prototypeBase === "Error" ? "Error.prototype" : null;
 }
 
@@ -865,6 +867,7 @@ function collectClass(type: ClassType, joins: Joins): Declaration[] {
       : undefined,
     hasConstructor: construct !== null,
     construct: collectConstruction(type),
+    prototypeListsAllMembers: true,
   });
   const byName = (left: ClassMember, right: ClassMember) => compareBytes(left.name, right.name);
   const binding = pathOfConstructorBinding(type);
@@ -883,6 +886,11 @@ function collectClass(type: ClassType, joins: Joins): Declaration[] {
       { length: construct === null ? null : (construct.length ?? construct.requiredCount) },
     ),
     ...(prototypeBase === null ? [] : b.inherits(joinPath([path, "prototype"]), prototypeBase)),
+    // setup${name}ClassStructure() in bindgen-emit.ts puts these on the prototype beside the members of the schema, and nothing else.
+    ...["@@toStringTag", ...(type.prototypeBase === "Error" ? ["name"] : [])]
+      .map(member => pathOfMember(path, "proto", member))
+      .filter(member => !joins.writtenMembers.has(member))
+      .flatMap(member => b.method(member, b.property(b.string))),
     ...type.protoMembers
       .toSorted(byName)
       .flatMap(member => collectClassMember(type, member, pathOfMember(path, "proto", member.name), false)),
@@ -914,7 +922,7 @@ function collectBoundNamespace(
     ...namespace.functions.flatMap(fn => [
       ...declareFunction(fn, joinPath([path, fn.name])),
       ...b.extend(joinPath([path, fn.name]), {
-        functionObjectCode: { symbol: cppSymbolOf(fn), header, name: fn.name },
+        functionObjectCode: { symbol: cppSymbolOf(fn), header, name: fn.jsName },
       }),
     ]),
     ...b.static(binding, {
@@ -988,7 +996,7 @@ function collectSchema(schema: SchemaFile, joins: Joins, report: (message: strin
     if (!joins.nativeBindings.has(path)) continue;
     declarations.push(
       ...b.extend(path, {
-        functionObjectCode: { symbol: cppSymbolOf(fn), header: `Generated${cppNamespace}.h`, name: fn.name },
+        functionObjectCode: { symbol: cppSymbolOf(fn), header: `Generated${cppNamespace}.h`, name: fn.jsName },
       }),
     );
   }

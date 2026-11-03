@@ -13,11 +13,11 @@ enum Null {
     Ignore,
 }
 
-const UNEXPECTED: Message = Message::new(
+const UNEXPECTED: &Message = &Message::new(
     "unexpected",
     "Expected '{{expectedOperator}}' and instead saw '{{actualOperator}}'.",
 );
-const REPLACE_OPERATOR: Message = Message::new(
+const REPLACE_OPERATOR: &Message = &Message::new(
     "replaceOperator",
     "Use '{{expectedOperator}}' instead of '{{actualOperator}}'.",
 );

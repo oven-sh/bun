@@ -146,7 +146,7 @@ Promise.all([inAsync(plain, 1), inAsync(thrower, 2)]).then(results => { say("asy
 // CHECK-NEXT: Throw v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="n"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_6]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=anything variableName="i"}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_6]]] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

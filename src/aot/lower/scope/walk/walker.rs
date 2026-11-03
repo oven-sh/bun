@@ -2,6 +2,7 @@ use bun_sema::bind::{Binding, Decl, ScopeId, SymbolId};
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::fold::{TreeNode, push_children};
 use bun_sema::hir::{ExprId, ExprKind, FnId, StmtId, is_moved_to_file_start};
+use bun_sema::util::SharedSort;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -12,7 +13,7 @@ use super::prepass::{
 use super::{Context, Initialization, ScopeWalk, Task, WalkedFunction, WalkedFunctionId, Walker};
 use crate::ir::FunctionKey;
 use crate::lower::commonjs;
-use crate::lower::scope::analysis::sort_unique;
+use crate::lower::scope::analysis::{shared_sort_unique, sort_unique};
 use crate::lower::scope::lexical_owners::{ScopeObjectSearch, for_each_scope_object};
 use crate::lower::scope::{BindingRef, ScopeInput, ScopeSlot};
 use crate::modules::ModuleKind;
@@ -45,15 +46,15 @@ pub(in crate::lower::scope) fn walk_file(
     }
     sort_unique(&mut walk.uses);
     sort_unique(&mut walk.function_references);
-    sort_unique(&mut walk.eval_uses);
-    sort_unique(&mut walk.stored_slots);
-    walk.this_bindings.sort_unstable();
+    shared_sort_unique(&mut walk.eval_uses);
+    shared_sort_unique(&mut walk.stored_slots);
+    walk.this_bindings.shared_sort_unstable();
     sort_unique(&mut walk.symbols_read_by_enums);
     sort_unique(&mut walk.symbols_in_export_lists);
     walk.symbol_stores
         .sort_unstable_by_key(|store| (store.0, store.1));
     sort_unique(&mut walk.function_of_field);
-    sort_unique(&mut walk.slot_initializations);
+    shared_sort_unique(&mut walk.slot_initializations);
     for walked_loop in &mut walk.loops {
         sort_unique(&mut walked_loop.stored);
     }

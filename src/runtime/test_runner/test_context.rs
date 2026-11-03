@@ -460,7 +460,7 @@ pub(crate) fn skip(
         result.put(global, b"note", note);
     }
     TestContext::sync_result(this_value, global, sequence)?;
-    Err(global.throw_value(buntest.get().skip_error(global)))
+    Err(global.throw_value(buntest.get().new_skip_error(global)))
 }
 
 pub(crate) fn defer_hook<'a>(

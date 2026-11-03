@@ -696,6 +696,13 @@ pub(crate) mod on_unhandled_rejection {
                 // The runner that started this report has the next step in hand.
                 return;
             }
+            let queue = &buntest.result_queue;
+            // A describe() callback that settled has its result in the queue. A second one would end the next describe().
+            if matches!(current_state_data, RefDataValue::Collection { .. })
+                && (0..queue.readable_length()).any(|index| matches!(queue.peek_item(index), RefDataValue::Collection { .. }))
+            {
+                return;
+            }
             buntest.add_result(current_state_data);
             // The JS that reported the error may still be on the stack, so don't start the next test under it.
             bun_test::BunTest::run_next_tick(

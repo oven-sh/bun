@@ -903,9 +903,13 @@ impl<'a> EarlierRejections<'a> {
         Self { global, mark: Bun__holdRejectedPromises(global) }
     }
 
-    /// `None` if nothing is rejected, which is the usual case.
+    /// Whether a promise that was rejected with no handler still waits for its report. Usually none does.
+    pub(crate) fn any(global: &JSGlobalObject) -> bool {
+        Bun__hasRejectedPromises(global)
+    }
+
     pub(crate) fn hold_any(global: &'a JSGlobalObject) -> Option<Self> {
-        Bun__hasRejectedPromises(global).then(|| Self::hold(global))
+        Self::any(global).then(|| Self::hold(global))
     }
 }
 

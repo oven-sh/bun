@@ -175,7 +175,7 @@ impl Collection {
 
         if !matches!(data, RefDataValue::Start) {
             // The describe() whose callback ended is still the active scope, so what it left rejected is charged to it.
-            BunTest::report_before_leaving(buntest_strong, global_this);
+            BunTest::report_before_leaving(buntest_strong, global_this, Some(false));
             buntest_strong.get().collection.run_one_completed(global_this, None, data)?;
         }
         let this = &mut buntest_strong.get().collection;

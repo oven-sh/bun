@@ -48,6 +48,7 @@ use super::bun_test::{
     group_begin, AddedInPhase, Around, AroundPhase, BunTest, BunTestPtr, Calling, EntryData, ExecutionEntry,
     HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, StepResult,
 };
+use super::expect::EarlierRejections;
 use super::expect::expect_deferred::ExpectDeferred;
 use super::test_context::{self, TestContext};
 use super::test_context_around::{self, AroundHook};
@@ -510,13 +511,13 @@ impl Execution {
                 let is_serial_test =
                     sequence.active_entry == sequence.test_entry && group.sequence_end - group.sequence_start == 1;
                 let group_ptr = NonNull::from(group);
-                if is_serial_test {
-                    // The test is still current here, so what it left rejected fails it and not the next test.
-                    BunTest::report_before_leaving(buntest_strong, global_this);
+                // The test is still current here, so what it left rejected fails it and not the next test.
+                if is_serial_test
+                    && BunTest::report_before_leaving(buntest_strong, global_this, None)
                     // The report ran JS, which can have called matchers. The test waits for those like for any other.
-                    if buntest_strong.get().execution.sequences[seq_abs].waits_for_matchers() {
-                        return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
-                    }
+                    && buntest_strong.get().execution.sequences[seq_abs].waits_for_matchers()
+                {
+                    return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
                 }
                 let buntest = buntest_strong.get();
                 let buntest_ptr = NonNull::from(&mut *buntest);
@@ -530,6 +531,10 @@ impl Execution {
                     AdvanceSequenceStatus::Execute { timeout } => {
                         return Ok(StepResult::Waiting { timeout });
                     }
+                }
+                // The sequence is over. Inside a microtask drain, the runner leaves what comes next to the queued task.
+                if buntest_strong.get().defer_step() {
+                    return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
                 }
                 // this sequence is complete; execute the next sequence
                 // re-slice from `this` each iteration via the group's range; carry
@@ -584,11 +589,6 @@ impl Execution {
             return None;
         }
         Some(&self.groups[self.group_index])
-    }
-
-    /// Whether the tests of the active group take turns. No single one of them is the current test then.
-    pub(crate) fn is_group_concurrent(&self) -> bool {
-        self.active_group_ref().is_some_and(|group| group.sequence_end - group.sequence_start > 1)
     }
 
     pub(crate) fn get_current_and_valid_execution_sequence(
@@ -1014,16 +1014,18 @@ fn step_group(
     now: &mut Timespec,
 ) -> JsResult<StepResult> {
     let _g = group_begin!();
+    let buntest = buntest_strong.get();
+    let this = &mut buntest.execution;
 
     loop {
-        let Some(group) = buntest_strong.get().execution.active_group() else {
+        let Some(group) = this.active_group() else {
             return Ok(ExpectDeferred::step_file_end(buntest_strong, global_this, now));
         };
         if !group.executing {
             Execution::on_group_started(global_this);
             group.executing = true;
         }
-        // Raw, so that it does not alias the `&mut Execution` that the calls below re-derive.
+        // Raw, so that it does not alias the `&mut Execution` that step_group_one re-derives.
         let group_ptr = NonNull::from(group);
 
         // loop over items in the group and advance their execution
@@ -1036,10 +1038,8 @@ fn step_group(
             AdvanceStatus::Done => {}
         }
 
-        let this = &mut buntest_strong.get().execution;
         // SAFETY: re-deref after step_group_one; disjoint from this.sequences read below.
         let group = unsafe { &mut *group_ptr.as_ptr() };
-        let is_concurrent = group.sequence_end - group.sequence_start > 1;
         if group.pending_matchers > 0 {
             // Any test in the group may have called them, so wait until the latest test deadline.
             let timeout = this.sequences[group.sequence_start..group.sequence_end]
@@ -1054,24 +1054,6 @@ fn step_group(
             group.pending_matchers = 0;
             ExpectDeferred::group_timed_out(buntest_strong, global_this, this.group_index);
         }
-        if is_concurrent {
-            // Which test left it isn't known, so the listeners of the process get it only if every test is Vitest's.
-            global_this.bun_vm().as_mut().is_running_vitest_entry = this.sequences[group.sequence_start..group.sequence_end]
-                .iter()
-                // SAFETY: arena-owned entry
-                .all(|sequence| sequence.test_entry.is_some_and(|entry| unsafe { entry.as_ref() }.calling.is_vitest()));
-            // The tests of a concurrent group ended one by one with no report, so what they left is reported now.
-            BunTest::report_before_leaving(buntest_strong, global_this);
-            // The report ran JS, which can have called matchers. The group waits for those like for any other.
-            // SAFETY: as above.
-            if unsafe { group_ptr.as_ref() }.pending_matchers > 0 {
-                continue;
-            }
-        }
-
-        let this = &mut buntest_strong.get().execution;
-        // SAFETY: as above.
-        let group = unsafe { &mut *group_ptr.as_ptr() };
         group.executing = false;
         Execution::on_group_completed(global_this);
 
@@ -1256,9 +1238,13 @@ fn step_sequence_one(
     };
     // SAFETY: arena-owned entry
     let next_item = unsafe { &mut *next_item_ptr.as_ptr() };
-    sequence.executing = true;
     // The first entry becomes active again after its fixture setup entries, so `started_at` guards against a second start.
-    if Some(next_item_ptr) == sequence.first_entry && sequence.started_at.eql(&Timespec::EPOCH) {
+    let starts_attempt = Some(next_item_ptr) == sequence.first_entry && sequence.started_at.eql(&Timespec::EPOCH);
+    if starts_attempt && buntest_strong.get().defer_step() {
+        return Ok(Some(AdvanceSequenceStatus::Execute { timeout: Timespec::EPOCH }));
+    }
+    sequence.executing = true;
+    if starts_attempt {
         Execution::on_sequence_started(global_this, sequence);
     }
     Execution::on_entry_started(next_item);
@@ -1364,8 +1350,11 @@ fn step_sequence_one(
 
         // The callback re-enters and reaches the sequence on its own, so no `&mut` is held across it.
         let sequence_ptr = NonNull::from(sequence);
-        global_this.bun_vm().as_mut().is_running_vitest_entry = next_item.calling.is_vitest();
-        if BunTest::run_test_callback(
+        let vm = global_this.bun_vm().as_mut();
+        let earlier_is_vitest = core::mem::replace(&mut vm.is_running_vitest_entry, next_item.calling.is_vitest());
+        // What was rejected before this callback isn't its own, and it can still handle that.
+        let earlier_rejections = EarlierRejections::hold_any(global_this);
+        let completed = BunTest::run_test_callback(
             buntest_strong,
             global_this,
             callback,
@@ -1374,8 +1363,17 @@ fn step_sequence_one(
             callback_data,
             &next_item.timespec,
         )
-        .is_some()
-        {
+        .is_some();
+        let had_earlier_rejections = earlier_rejections.is_some();
+        drop(earlier_rejections);
+        // SAFETY: group points into execution.groups; read-only.
+        let group_ref = unsafe { group.as_ref() };
+        let is_serial = group_ref.sequence_end - group_ref.sequence_start == 1;
+        if had_earlier_rejections && is_serial {
+            // The callback didn't handle it, and no other test runs that still can. Both have to be Vitest's for the listeners.
+            BunTest::report_earlier(buntest_strong, global_this, earlier_is_vitest && next_item.calling.is_vitest());
+        }
+        if completed {
             *now = Timespec::now_force_real_time();
             // SAFETY: re-deref after run_test_callback; sequence_ptr still valid (sequences is a
             // Box<[ExecutionSequence]>, never reallocated during execution).

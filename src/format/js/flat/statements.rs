@@ -455,6 +455,11 @@ impl<'a> Line<'_, 'a> {
                 self.is_too_wide |= is_too_wide;
                 return Err(Refused);
             }
+        } else if written.is_err()
+            || (!self.is_quiet && self.f.comments().is_owner(Node::Stmt(body)))
+        {
+            // How it's printed isn't known, so neither is whether it breaks. A comment in it can say to ignore it.
+            return Err(Refused);
         }
         self.go_back_to(mark);
         self.check_source_up_to(body.span().start)?;

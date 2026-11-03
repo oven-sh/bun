@@ -857,6 +857,32 @@ async function difference(files: Record<string, string>, options: string[]) {
 
 describe.skipIf(!hasFlag)("statements, declarations, classes and types", () => {
   const files = {
+    // A comment in a body without braces can say to ignore the body, which then isn't certain to break.
+    "ignored.js": `
+      function a() {
+        if (a) if (b); /* c */
+        /* prettier-ignore */
+        else return 2;
+        if (a) if (b); // prettier-ignore
+        else return 2;
+        while (a) if (b) c(); /* prettier-ignore */ else d();
+        for (;;) if (b) {
+          c();
+        } /* prettier-ignore */ else d();
+        if (a) for (;;) { /* prettier-ignore */
+        }
+        if (a) b(() => {
+          // prettier-ignore
+          c( );
+        });
+        if (a) /* prettier-ignore */ b(() => {
+          c( );
+        });
+        if (a) try { b() } /* prettier-ignore */ finally { c( ) }
+        if (a) switch (b) { /* prettier-ignore */ case 1: c( ) }
+        else switch (b) { /* prettier-ignore */ }
+      }
+    `,
     "statements.ts": `
       if (a) return;
       if (a) b(); else c();

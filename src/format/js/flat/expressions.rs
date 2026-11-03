@@ -384,7 +384,9 @@ impl<'a> Line<'_, 'a> {
         }
         let first_name = text.get(..first_name)?;
         // `.5.a` and `1.5.a` start with a number.
-        if first_name.first().is_none_or(|it| it.is_ascii_digit() || *it == b'.')
+        if first_name
+            .first()
+            .is_none_or(|it| it.is_ascii_digit() || *it == b'.')
             || is_name_that_may_need_parentheses(first_name)
         {
             return None;

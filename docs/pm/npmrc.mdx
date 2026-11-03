@@ -35,7 +35,7 @@ Bun reads up to two `.npmrc` files. Options in the later file override the earli
 1. The user-level file. This is the file `NPM_CONFIG_USERCONFIG` (npm's `userconfig` option) points at when that variable is set; otherwise `$XDG_CONFIG_HOME/.npmrc` if it exists, otherwise `$HOME/.npmrc`.
 2. The `.npmrc` next to your project's root `package.json`.
 
-Bun warns when one of these files exists but cannot be read. A command that installs or publishes packages then stops with an error. Other commands continue without its settings. A directory in the file's place gets the warning only.
+Like npm, Bun skips any of these files that it can't read.
 
 A relative `cache` or `cafile` is relative to the `.npmrc` it is written in. A relative `NPM_CONFIG_USERCONFIG` is relative to the directory you run `bun` in. In all three, a leading `~/` is your home directory.
 
@@ -80,7 +80,7 @@ The equivalent `bunfig.toml` option is to add a key in [`install.scopes`](/runti
 myorg = "http://localhost:4873/"
 ```
 
-A scope whose registry is empty uses the default registry. If `--registry` or an environment variable names another host than the config files do, a scope that has credentials of its own stays at the registry of the config files.
+A scope whose registry is empty uses the default registry. If `--registry` or an environment variable points to a different host than the config files, a scope that has its own credentials keeps using the registry from the config files.
 
 ### Configure options for a specific registry
 

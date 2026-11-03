@@ -102,6 +102,8 @@ class Scope implements Target {
   /// The caller's statements pass. close() and release() clear it in the call, COMMIT and ROLLBACK where they are handed over.
   accepting = true;
   finishing: Promise<any> | null = null;
+  /// The callback is over and run() waits for the answer to the end. Only that answer settles the transaction.
+  awaitingAnswer = false;
   error: Error | null = null;
   running = new Set<Query>();
   children = new Set<Scope>();
@@ -181,9 +183,7 @@ function onFileRead(this: Target, query: Query, text: string) {
 }
 
 function readFileThenDispatch(this: Target, query: Query) {
-  Bun.file(query[_strings] as string)
-    .text()
-    .$then(onFileRead.bind(this, query), rejectQuery.bind(query));
+  (Bun.file(query[_strings] as string) as Blob).text().$then(onFileRead.bind(this, query), rejectQuery.bind(query));
 }
 
 function file(this: Target, path: string, values?: unknown) {
@@ -209,6 +209,10 @@ function onQueryConnected(
 ) {
   query[_waiter] = null;
   if (err) {
+    // The caller dropped it while it waited. As in onQuerySettled(): one that is only started ends no process.
+    if (this.closedAtOnce) {
+      $pokePromiseAsHandled(query);
+    }
     return query.reject(err);
   }
   pooledConnection!.bindQuery?.(query);
@@ -217,6 +221,9 @@ function onQueryConnected(
 
 function dispatchToPool(this: Client, query: Query, handle: QueryHandle) {
   const pool = this.pool;
+  if (pool.closed) {
+    return query.reject(pool.connectionClosedError());
+  }
   pool.connect((query[_waiter] = onQueryConnected.bind(pool, query, handle)));
 }
 
@@ -262,6 +269,8 @@ function dispatch(this: Scope, query: Query, handle: QueryHandle) {
     // SQLite ends a transaction inside some failing statements. What follows would run in autocommit.
     (this.kind !== Kind.reservation && this.pool.isInTransaction?.(this.connection) === false)
   ) {
+    // as in onQuerySettled()
+    $pokePromiseAsHandled(query);
     return query.reject(refusal(this));
   }
   start(this, query, handle);
@@ -396,7 +405,7 @@ function abandon(scope: Scope, err: Error | null) {
   }
   abandonChildren(scope, err);
   // savepoint() settles when its callback does.
-  if (scope.kind === Kind.transaction) {
+  if (scope.kind === Kind.transaction && !scope.awaitingAnswer) {
     const failure = scope.failure;
     settle(scope, scope.reject, failure !== null && err !== null ? withCause(err, failure.error) : refusal(scope));
   }
@@ -454,7 +463,7 @@ function idleOrTimeout(scope: Scope, ms: number): Promise<void> | undefined {
     return;
   }
   const { promise, resolve } = Promise.withResolvers<void>();
-  const timer = setTimeout(resolve, ms);
+  const timer: NodeJS.Timeout = setTimeout(resolve, ms);
   timer.unref();
   scope.whenIdle = stopWaiting.bind(null, timer, resolve);
   return promise;
@@ -562,6 +571,7 @@ async function run(scope: Scope, callback: TransactionCallback) {
   }
 
   let answer: { command?: string | null } | undefined;
+  scope.awaitingAnswer = true;
   try {
     answer = await finish(scope, failure === null, undefined);
   } catch (err) {

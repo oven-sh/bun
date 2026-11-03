@@ -1,0 +1,35 @@
+# setTimeout(() => {}, 1)  try { null.x } catch (e) { console.log(e.message) }
+# What the run time throws is an object nobody knows, and so is what is read from it. The formatter looks for a method under Symbol.for("nodejs.util.inspect.custom") on what it prints.
+# Nobody stores under that name, and the prototype object of the timer has no such method: an object of the table that has one lists it. HostChoosesOperands (h7) stays down.
+# RUN: valueflow-why timeline
+# CHECK-NOT: flag h7
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="setTimeout" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Integer integer=1
+    v4 = Call v1, -, v2, v3
+    Jump -> next b1()
+  b1() handler=b2():
+    v5 = Null
+    v6 = PropGet v5 key="x"
+    Jump -> next b3()
+  b2() role=CatchHandler:
+    v7 = CatchValue
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="console" [isFreeName]
+    v10 = PropGet v9 key="log"
+    v11 = PropGet v7 key="message"
+    v12 = Call v10, v9, v11 calleeKey="log"
+    Jump -> next b3()
+  b3():
+    v13 = Undefined
+    Return v13
+}
+function f1 module=m0 kind=Arrow results=[{type=anything}] {
+    v0 = Undefined
+    Return v0
+}

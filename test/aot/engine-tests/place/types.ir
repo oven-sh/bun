@@ -1,0 +1,97 @@
+# A run-time type record copies the plan of a complete test of its type: a layout is tested by the shapes of its family and named for messages, and a closure by the generic entrypoint of its function
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow type-errors=log
+# RUN: tables types
+
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="declared" variable=g8}]
+entry module=m0
+layout L0 name="A" fields=[{key="x" declared={type=number}}]
+layout L1 name="B" fields=[{key="x" declared={type=number}}]
+# The tables name the type of a variable only where it is a static field of a class.
+layout L2 kind=Instance name="Kept" constructor=f3 staticFields=[{key="both" variable=g0}, {key="one" variable=g1}, {key="byte" variable=g2}, {key="word" variable=g3}, {key="closure" variable=g4}, {key="bytes" variable=g5}, {key="callback" variable=g6}, {key="unknown" variable=g7}, {key="neverStored" variable=g9}]
+variable g0 name="both" module=m0 declared={type=anything} owner=L2
+variable g1 name="one" module=m0 declared={type=anything} owner=L2
+variable g2 name="byte" module=m0 declared={type=anything} owner=L2
+variable g3 name="word" module=m0 declared={type=anything} owner=L2
+variable g4 name="closure" module=m0 declared={type=anything} owner=L2
+variable g5 name="bytes" module=m0 declared={type=anything} owner=L2
+variable g6 name="callback" module=m0 declared={type=anything} owner=L2
+variable g7 name="unknown" module=m0 declared={type=anything} owner=L2
+variable g8 name="declared" module=m0 declared={type=function} initialization=Function function=f2
+variable g9 name="neverStored" module=m0 declared={type=number|absent} owner=L2
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = NewClass v0 layout=L2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="input" [isFreeName]
+    v4 = ToNumber v3
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = FinishObject v5
+    v7 = NewObject -, v4 layout=L1 fields=[0]
+    v8 = FinishObject v7
+    PutModuleVariable v6 variable=g0
+    PutModuleVariable v8 variable=g0
+    PutModuleVariable v6 variable=g1
+    v12 = Integer integer=0
+    v13 = Integer integer=255
+    PutModuleVariable v12 variable=g2
+    PutModuleVariable v13 variable=g2
+    v16 = String string="a"
+    v17 = String string="b"
+    PutModuleVariable v16 variable=g3
+    PutModuleVariable v17 variable=g3
+    v20 = NewClosure function=f1
+    PutModuleVariable v20 variable=g4
+    v22 = NewArray v12, v13 contents=anything
+    PutModuleVariable v22 variable=g5
+    PutModuleVariable v3 variable=g7
+    v25 = TypeTest v3 testedType=function
+    Branch v25 -> taken b1(| 0), notTaken b2()
+  b1(v26):
+    PutModuleVariable v26 variable=g6
+    Jump -> next b2()
+  b2():
+    v28 = GetModuleVariable variable=g0
+    v29 = GetModuleVariable variable=g1
+    v30 = GetModuleVariable variable=g2
+    v31 = GetModuleVariable variable=g3
+    v32 = GetModuleVariable variable=g4
+    v33 = GetModuleVariable variable=g5
+    v34 = GetModuleVariable variable=g6
+    v35 = GetModuleVariable variable=g7
+    v36 = GetModuleVariable variable=g9
+    v37 = CheckInitialized v36 name="neverStored"
+    v38 = FinishClass v1 layout=L2
+    Return
+}
+function f1 name="callee" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="declared" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="Kept" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2
+    Return v2
+}
+# CHECK: type number {{*}}primitives=0x70 tests=[] literals=[]
+# A type that code only tests has no record: the test is code.
+# CHECK-NOT: type function
+# CHECK: type anything {{*}}primitives=0x3ff tests=[IsObject()]
+# No value passes the test of a variable that nothing stores.
+# CHECK: type absent {{*}}primitives=0x0 tests=[] literals=[]
+# CHECK: type L0 {{*}}primitives=0x0 tests=[ShapeIn(1+1)] {{*}}set=[[one]]
+# CHECK-NOT: IsClosureOf(f1)
+# CHECK: type f1 {{*}}primitives=0x0 tests=[IsClosureOf(f{{*}})]
+# CHECK: type int[0, 255] offset=[[byte]] primitives=0x10 tests=[] literals=[] minimum=0 maximum=255
+# CHECK: type L0|L1 {{*}}primitives=0x0 tests=[ShapeIn(1+2)] {{*}}set=[[both]]
+# The primitives say "one of the listed strings", not "any string".
+# CHECK: type "a"|"b" {{*}}primitives=0x800 tests=[] literals=["a" "b"]
+# CHECK: type Array<int[0, 255]{{*}}> {{*}}tests=[CellTypeIs({{*}})] {{*}}contents=[[byte]]
+# CHECK: set [[one]] name="A" test=1+1
+# CHECK: set [[both]] name="" test=1+2

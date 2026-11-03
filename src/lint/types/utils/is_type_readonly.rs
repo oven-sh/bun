@@ -13,7 +13,7 @@ use crate::types::{CheckFlags, IdSet, IndexKind, SyntaxKind, TsNode, Type, TypeS
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Readonlyness {
-    /// The type cannot be handled by the function.
+    /// The function can't handle this type.
     UnknownType,
     Mutable,
     Readonly,
@@ -22,13 +22,13 @@ enum Readonlyness {
 /// `ReadonlynessOptions`. The default is `readonlynessOptionsDefaults`.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct ReadonlynessOptions {
-    /// Types that count as readonly whatever they are.
+    /// Types that always count as readonly.
     pub allow: Vec<TypeOrValueSpecifier>,
     pub treat_methods_as_readonly: bool,
 }
 
 impl ReadonlynessOptions {
-    /// From an object that has the properties of `readonlynessOptionsSchema`.
+    /// Parses an object with the properties of `readonlynessOptionsSchema`.
     pub fn parse(options: Object) -> ReadonlynessOptions {
         ReadonlynessOptions {
             allow: parse_type_or_value_specifiers(options.array("allow")),
@@ -69,8 +69,8 @@ impl<'a> Recurser<'_, 'a> {
     }
 
     fn check_type_arguments(&mut self, array_type: Type<'a>) -> Readonlyness {
-        // What has been looked into was not mutable, or this would not be asked. To look into it again for each path that leads
-        // to it takes two to the power of the depth for a `[T, T]` of a `[U, U]` of ..
+        // A type that's already been visited wasn't mutable, or we wouldn't have got here. Revisiting it once per path
+        // that reaches it takes two to the power of the depth for a `[T, T]` of a `[U, U]` of ..
         let is_mutable = |type_arg: Type<'a>| {
             !self.seen_types.contains(type_arg)
                 && self.is_type_readonly_recurser(type_arg) == Readonlyness::Mutable
@@ -129,7 +129,7 @@ impl<'a> Recurser<'_, 'a> {
             if is_property_readonly_in_type(ty, property.escaped_name()) {
                 continue;
             }
-            // For tsgolint 7.0 what a mapped type gives is readonly: it has no declaration of a value.
+            // tsgolint 7.0 treats a mapped type's property as readonly, because it has no value declaration.
             if ty.file().language().is_oxlint && property.check_flags().contains(CheckFlags::MAPPED)
             {
                 continue;
@@ -147,7 +147,7 @@ impl<'a> Recurser<'_, 'a> {
             let Some(property_type) = get_type_of_property_of_type(ty, property) else {
                 continue;
             };
-            // A recursive type. One that is mutable has failed above.
+            // A recursive type. A mutable one has already failed above.
             if self.seen_types.contains(property_type) {
                 continue;
             }
@@ -205,7 +205,7 @@ impl<'a> Recurser<'_, 'a> {
             return self.is_type_readonly_object(ty);
         }
 
-        // tsgolint 7.0 does not look into one: it is no object, so it is readonly.
+        // tsgolint 7.0 doesn't look into a conditional type: it isn't an object, so it's readonly.
         if is_conditional_type(ty)
             && !ty.file().language().is_oxlint
             && let Some(branches) = branches_of_conditional_type(ty)
@@ -213,7 +213,7 @@ impl<'a> Recurser<'_, 'a> {
             return readonly_if(branches.into_iter().all(|t| self.is_seen_or_readonly(t)));
         }
 
-        // What is neither an object nor an intersection is a primitive.
+        // Anything that's neither an object nor an intersection is a primitive.
         if !is_object_type(ty) {
             return Readonlyness::Readonly;
         }
@@ -230,8 +230,7 @@ impl<'a> Recurser<'_, 'a> {
     }
 }
 
-/// `isTypeReadonly(program, type, options)`: nothing that can be reached through a value of the
-/// type can be assigned to.
+/// `isTypeReadonly(program, type, options)`: true if nothing reachable through a value of the type can be assigned to.
 pub fn is_type_readonly(ty: Type, options: &ReadonlynessOptions) -> bool {
     let mut recurser = Recurser {
         options,

@@ -184,6 +184,7 @@ static inline EncodedJSValue constructJSURLPattern2(JSGlobalObject* lexicalGloba
 
 template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSURLPatternDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(UrlPattern, JSURLPatternDOMConstructor::construct);
     SUPPRESS_UNCOUNTED_LOCAL auto& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     UNUSED_PARAM(throwScope);

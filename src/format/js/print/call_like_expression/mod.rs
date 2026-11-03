@@ -17,7 +17,8 @@ use crate::{format_args, write};
 
 pub(crate) fn write_call_expression<'a>(e: Expr<'a>, call: Call<'a>, f: &mut Formatter<'a>) {
     let context = context_of_function(call.callee(), f);
-    // Among classes, the strings in a call of another function are not classes: `cn(a.includes("b c") && "d e")`.
+    // Inside a class list, the strings in a call to some other function aren't classes:
+    // `cn(a.includes("b c") && "d e")`.
     let was_disabled = match context {
         Some(_) => None,
         None => f.context_mut().disable_tailwind_context(true),
@@ -28,7 +29,7 @@ pub(crate) fn write_call_expression<'a>(e: Expr<'a>, call: Call<'a>, f: &mut For
     }
 }
 
-/// `context`: for the arguments. As in oxfmt, they do not get it in a chain of member accesses.
+/// `context` applies to the arguments. As in oxfmt, it isn't applied in a member chain.
 fn write_call<'a>(
     e: Expr<'a>,
     call: Call<'a>,
@@ -41,10 +42,10 @@ fn write_call<'a>(
             callee,
             is_in_member_chain: false
         },
-        boundary_behind_callee(f),
+        boundary_after_callee(f),
         call.is_optional().then_some("?."),
         type_arguments(call.type_args(), Node::Expr(e)),
-        boundary_behind_callee(f).filter(|_| !call.type_args().is_empty())
+        boundary_after_callee(f).filter(|_| !call.type_args().is_empty())
     );
 
     if keeps_arguments_on_one_line(e, call, f) {
@@ -52,16 +53,11 @@ fn write_call<'a>(
         return write!(f, [head, arguments]);
     }
 
-    // A member access needs no parentheses as a callee, unless an optional chain ends with it. Then
-    // it is a member access only in JavaScript: see `is_member_expression`.
-    if matches!(callee.tag(), ExprTag::Dot | ExprTag::Index)
-        && (!callee.is_chain_root()
-            || (f.context().has_tree_of_babel() && !chain_expression_needs_parentheses(callee, f)))
-    {
+    if is_link_of_member_chain(callee, f) {
         return write_member_chain(e, f);
     }
 
-    let arguments = InTailwindContext(context, FormatArguments::of_call(e, call));
+    let arguments = InTailwindContext(context, FormatArguments::from_call(e, call));
     let content = format_args!(head, arguments);
     match is_call_expression(callee, f) {
         true => write!(f, group(&content)),
@@ -69,9 +65,26 @@ fn write_call<'a>(
     }
 }
 
+/// True if `callee` is a member access that's printed without parentheses. It only needs them if
+/// it ends an optional chain. In that case Prettier only sees a member access in JavaScript files:
+/// see `is_member_expression`.
+fn is_link_of_member_chain<'a>(callee: Expr<'a>, f: &Formatter<'a>) -> bool {
+    matches!(callee.tag(), ExprTag::Dot | ExprTag::Index)
+        && (!callee.is_chain_root()
+            || (f.context().has_babel_tree() && !chain_expression_needs_parentheses(callee, f)))
+}
+
+/// True if the call `e` is printed by [`write_member_chain`].
+pub(crate) fn is_printed_as_member_chain<'a>(
+    e: Expr<'a>,
+    call: Call<'a>,
+    f: &Formatter<'a>,
+) -> bool {
+    is_link_of_member_chain(call.callee(), f) && !keeps_arguments_on_one_line(e, call, f)
+}
+
 fn keeps_arguments_on_one_line<'a>(e: Expr<'a>, call: Call<'a>, f: &Formatter<'a>) -> bool {
-    // Each of these takes one of a few names as the callee, or a string or a template as the first
-    // argument.
+    // Each check below requires one of a few callee names, or a string or template as the first argument.
     let Some(first) = call.args().first() else {
         return false;
     };
@@ -114,14 +127,14 @@ pub(crate) fn write_new_expression<'a>(e: Expr<'a>, call: Call<'a>, f: &mut Form
             callee: call.callee(),
             is_in_member_chain: false
         },
-        boundary_behind_callee(f),
+        boundary_after_callee(f),
         type_arguments(call.type_args(), Node::Expr(e)),
-        boundary_behind_callee(f).filter(|_| !call.type_args().is_empty())
+        boundary_after_callee(f).filter(|_| !call.type_args().is_empty())
     );
     if is_template_on_its_own_line_only_argument(call.args(), f) {
         return write!(f, [head, FormatArgumentsOnOneLine(call.args())]);
     }
-    let content = format_args!(head, FormatArguments::of_call(e, call));
+    let content = format_args!(head, FormatArguments::from_call(e, call));
     match is_call_expression(call.callee(), f) {
         true => write!(f, group(&content)),
         false => write!(f, content),
@@ -150,9 +163,9 @@ pub(crate) fn write_import_expression<'a>(
     );
 }
 
-/// A comment at the end of the line of the callee stays there. oxfmt, like Prettier 3.8, moves it behind
-/// the call: `call // comment\n()` is `call(); // comment`.
-fn boundary_behind_callee(f: &Formatter<'_>) -> Option<LineSuffixBoundary> {
+/// A comment at the end of the callee's line stays there. oxfmt, like Prettier 3.8, moves it after the call:
+/// `call // comment\n()` is `call(); // comment`.
+fn boundary_after_callee(f: &Formatter<'_>) -> Option<LineSuffixBoundary> {
     (!f.options().flavor.is_oxfmt()).then_some(line_suffix_boundary())
 }
 
@@ -171,20 +184,20 @@ impl<'a> Format<'a> for FormatArgumentsOnOneLine<'a> {
     }
 }
 
-/// Prettier's `isTemplateOnItsOwnLine` of the only argument, which is not written as the language in it.
+/// Prettier's `isTemplateOnItsOwnLine` for the only argument, if it isn't formatted as its embedded language.
 fn is_template_on_its_own_line_only_argument<'a>(
     args: List<'a, Expr<'a>>,
     f: &Formatter<'a>,
 ) -> bool {
-    let is_one = |only| {
+    let is_own_line_template = |only| {
         is_multiline_template_starting_on_same_line(only, f.source_text())
             && !arguments::has_embed_label(only, f)
             && !is_cast_target(only, f)
     };
-    args.len() == 1 && args.first().is_some_and(is_one)
+    args.len() == 1 && args.first().is_some_and(is_own_line_template)
 }
 
-/// Whether the only argument is a string without comments.
+/// True if the only argument is a string without comments.
 fn is_lone_string_without_comments<'a>(args: List<'a, Expr<'a>>, f: &Formatter<'a>) -> bool {
     args.len() == 1
         && args.first().is_some_and(|first| {
@@ -196,9 +209,8 @@ fn is_identifier(e: Expr<'_>, name: &[u8]) -> bool {
     e.tag() == ExprTag::Ident && e.text() == name
 }
 
-/// Prettier's `isSimpleModuleImport` for a call: `require("a")`, `require.resolve("a")`,
-/// `require.resolve.paths("a")`, `import.meta.resolve("a")`. A long name of a module is no reason
-/// to break.
+/// Prettier's `isSimpleModuleImport` for a call: `require("a")`, `require.resolve("a")`, `require.resolve.paths("a")`,
+/// `import.meta.resolve("a")`. A long module name is no reason to break.
 fn is_simple_module_import<'a>(call: Call<'a>, f: &Formatter<'a>) -> bool {
     if call.args().len() != 1
         || call.chain() != Chain::No
@@ -232,7 +244,7 @@ fn only_leading_comment_breaks_require(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// Prettier's `isCommonsJsOrAmdModuleDefinition`: `require("a", b)`, and `define` of AMD.
+/// Prettier's `isCommonsJsOrAmdModuleDefinition`: `require("a", b)`, and AMD's `define`.
 fn is_commonjs_or_amd_module_definition<'a>(
     e: Expr<'a>,
     call: Call<'a>,

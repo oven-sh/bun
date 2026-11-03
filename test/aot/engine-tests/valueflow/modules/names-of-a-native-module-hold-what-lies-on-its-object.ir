@@ -1,0 +1,52 @@
+# import { nextTick, cwd, nobodyListsThis } from "node:process"; import { listen, serve } from "bun"; process.cwd = other; delete Bun.listen
+# A native module has no body. When it is first loaded the host fills the variables of the names that importers bind: with what lies on the object of the module under the name,
+# and some modules with a value that they make anew where the property is gone or is an accessor by then.
+# So a member of an object that the program only stores to is the function of the table or what is stored. Once the program has deleted something from the object,
+# nobody knows what any of its names holds. `undefined` is what these variables are declared with here
+# RUN: valueflow-why values=f0:v8 values=f0:v10 values=f0:v12 values=f0:v14 values=f0:v16
+# CHECK: values=f0:v8
+# CHECK: operand 0 {{*}} 2 members: primitive0 ProcessNextTick
+# CHECK: values=f0:v10
+# CHECK: operand 0 {{*}} 3 members: primitive0 ProcessCwd f1
+# CHECK: values=f0:v12
+# CHECK: operand 0 {{*}} 11 members: {{*}} unknown
+# CHECK: values=f0:v14
+# CHECK: operand 0 {{*}} unknown BunListen
+# CHECK: values=f0:v16
+# CHECK: operand 0 {{*}} unknown BunServe
+
+variable g0 name="nextTick" module=m1 declared={type=anything} initialization=Undefined
+variable g1 name="cwd" module=m1 declared={type=anything} initialization=Undefined
+variable g2 name="nobodyListsThis" module=m1 declared={type=anything} initialization=Undefined
+variable g3 name="listen" module=m2 declared={type=anything} initialization=Undefined
+variable g4 name="serve" module=m2 declared={type=anything} initialization=Undefined
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}]
+module m1 path="process" displayPath="process" kind=Runtime exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeProcess syntheticExports=[{name="cwd" variable=g1 isKnownMember=true}, {name="nextTick" variable=g0 isKnownMember=true}, {name="nobodyListsThis" variable=g2}]
+module m2 path="bun" displayPath="bun" kind=Runtime exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=Bun syntheticExports=[{name="listen" variable=g3 isKnownMember=true}, {name="serve" variable=g4 isKnownMember=true}]
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = NewClosure function=f1
+    PropSet v0, v1 key="cwd" mode=Strict
+    v3 = PropGet v0 key="nextTick"
+    v4 = PropGet v0 key="nobodyListsThis"
+    v5 = Builtin builtin=Bun
+    v6 = PropDelete v5 key="listen" mode=Strict
+    v7 = GetModuleVariable variable=g0
+    v8 = Call v7
+    v9 = GetModuleVariable variable=g1
+    v10 = Call v9
+    v11 = GetModuleVariable variable=g2
+    v12 = Call v11
+    v13 = GetModuleVariable variable=g3
+    v14 = Call v13
+    v15 = GetModuleVariable variable=g4
+    v16 = Call v15
+    v17 = PropGet v5 key="serve"
+    Return
+}
+function f1 name="other" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}

@@ -3,17 +3,17 @@
 use crate::util_variable::{get_latest_variable_definition, get_variable_from_context};
 use bun_lint::prelude::*;
 
-/// `e.type === "MemberExpression"`, where `e` is reached from above.
+/// `e.type === "MemberExpression"`, for `e` as its parent sees it.
 fn is_member_expression(e: Expr) -> bool {
     matches!(e.tag(), ExprTag::Dot | ExprTag::Index) && !e.is_chain_root()
 }
 
-/// `astUtil.isCallExpression(e)`, where `e` is reached from above.
+/// `astUtil.isCallExpression(e)`, for `e` as its parent sees it.
 fn is_call_expression(e: Expr) -> bool {
     e.tag() == ExprTag::Call && !e.is_chain_root()
 }
 
-/// Whether `init` is `pragma.a`, `pragma`, `require("pragma")` or `require("pragma").a`.
+/// True if `init` is `pragma.a`, `pragma`, `require("pragma")` or `require("pragma").a`.
 fn is_from_pragma(init: Expr, pragma: &[u8]) -> bool {
     let is_pragma = |e: Expr| e.as_ident().is_some_and(|it| it.bytes() == pragma);
     let object = init.object().filter(|_| is_member_expression(init));

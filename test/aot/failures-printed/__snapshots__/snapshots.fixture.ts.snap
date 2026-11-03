@@ -1,0 +1,27 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`snapshots a stored object differs 1`] = `
+{
+  "list": [
+    1,
+    2,
+    4,
+  ],
+  "name": "bob",
+}
+`;
+
+exports[`snapshots a stored text differs 1`] = `
+"first
+2nd
+third"
+`;
+
+exports[`snapshots with a hint: the hint 1`] = `13`;
+
+exports[`snapshots matches 1`] = `
+[
+  1,
+  2,
+]
+`;

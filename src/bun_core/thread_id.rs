@@ -95,8 +95,11 @@ pub fn current() -> ThreadId {
 fn current_uncached() -> ThreadId {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        // SAFETY: `gettid` takes no arguments and cannot fail.
-        return unsafe { libc::gettid() } as ThreadId;
+        unsafe extern "C" {
+            // safe: no args; infallible.
+            safe fn gettid() -> libc::pid_t;
+        }
+        return gettid() as ThreadId;
     }
     #[cfg(any(
         target_os = "macos",

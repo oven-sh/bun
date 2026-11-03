@@ -46,9 +46,7 @@ pub(crate) type Value = TaggedPtrUnion<ValueTypes>;
 /// checker rejects from this crate. Tags are `1024 - i`.
 pub(crate) struct ValueTypes;
 
-impl bun_ptr::tagged_pointer::TypeList for ValueTypes {
-    const MIN_TAG: TagType = 1024 - 2;
-}
+impl bun_ptr::tagged_pointer::TypeList for ValueTypes {}
 impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for ParsedSourceMap {
     const TAG: TagType = 1024;
 }
@@ -183,25 +181,26 @@ impl SavedSourceMap {
         source: &bun_ast::Source,
         mut mappings: MutableString,
     ) -> bun_js_printer::Result<()> {
+        // Readers trust a stored blob's header, so validate it here.
+        if !InternalSourceMap::is_valid_blob(mappings.list.as_slice()) {
+            return Ok(());
+        }
+
         // --hot can re-read a file mid-rewrite (truncate + write) and transpile
         // a comment-only prefix into a 0-mapping map. Overwriting a real map
         // with that would make any still-unreported error from the previous
         // transpile remap against nothing and leak transpiled coords. A map
         // with no mappings can never answer a lookup, so dropping it is never
         // worse than installing it.
-        if mappings.list.len() >= SourceMap::internal_source_map::HEADER_SIZE {
-            let incoming = InternalSourceMap {
-                data: mappings.list.as_ptr(),
-            };
-            if incoming.mapping_count() == 0 {
-                self.lock();
-                let contains = self.map.contains_key(&hash(source.path.text));
-                self.unlock();
-                if contains {
-                    return Ok(());
-                }
-                // Note: reshaped for borrowck — the lock is
-                // released before returning since no further table access follows.
+        let incoming = InternalSourceMap {
+            data: mappings.list.as_ptr(),
+        };
+        if incoming.mapping_count() == 0 {
+            self.lock();
+            let contains = self.map.contains_key(&hash(source.path.text));
+            self.unlock();
+            if contains {
+                return Ok(());
             }
         }
 

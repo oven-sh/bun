@@ -1,22 +1,23 @@
-//! Lints a file for which the configuration has a `processor`: ESLint's `_verifyWithFlatConfigArrayAndProcessor`.
+//! Lints a file whose config has a `processor`: ESLint's `_verifyWithFlatConfigArrayAndProcessor`.
 //!
-//! The processor takes blocks out of the file. Each has a path of its own, `a.md/0_example.js`, hence a configuration of its own, and
-//! is linted like a file at that path.
+//! The processor extracts blocks from the file. Each block has its own path, like `a.md/0_example.js`, so it has its
+//! own config, and it's linted like a file at that path.
 
 use crate::configs::{Flavor, Loaded};
 use crate::lint::{Context, Fixes};
 use crate::paths;
 use crate::results::FileResult;
-use bun_lint::js_plugin::{self, Block, Processor, Refusal, Route, read_messages, write_messages};
+use bun_lint::js_plugin::{
+    self, Block, EslintFailure, Processor, Route, read_messages, write_messages,
+};
 use bun_lint::linter::{FileConfig, LintResult, ResolvedConfig, RuleId};
 use std::sync::Arc;
 
-/// Text to lint.
 #[derive(Copy, Clone)]
 struct Text<'t> {
     /// ESLint's `filename`.
     path: &'t [u8],
-    /// How much of `path` is the path of the file on the disk.
+    /// How many leading bytes of `path` are the path of the file on disk.
     physical_path_len: usize,
     text: &'t [u8],
     fixes: Fixes,
@@ -29,21 +30,22 @@ fn thrown(message: Vec<u8>) -> LintResult {
     }
 }
 
-/// The result for a text that only the `eslint` package can lint, when it isn't installed. Whoever gets it adds the text to
-/// [`Context::needs_eslint`]: [`Context::verify_processed_text`] for a file, [`Context::verify_block`] for a part of one.
+/// The result for a text that only the `eslint` package can lint, when it isn't installed. The caller adds the text to
+/// [`Context::needs_eslint`]: [`Context::verify_processed_text`] for a file, [`Context::verify_block`] for a part of
+/// one.
 fn needs_eslint() -> LintResult {
     LintResult {
-        is_unread: true,
+        needs_another_linter: true,
         ..LintResult::default()
     }
 }
 
-/// What ESLint says about a `processor` that is not there.
+/// ESLint's error for a `processor` that doesn't exist.
 fn no_such_processor(config: &ResolvedConfig) -> Vec<u8> {
-    let written = config.processor.as_deref().unwrap_or_default();
-    let (plugin, name) = match bun_core::strings::last_index_of_char(written, b'/') {
-        Some(at) => (&written[..at], &written[at + 1..]),
-        None => (&b""[..], written),
+    let processor_id = config.processor.as_deref().unwrap_or_default();
+    let (plugin, name) = match bun_core::strings::last_index_of_char(processor_id, b'/') {
+        Some(at) => (&processor_id[..at], &processor_id[at + 1..]),
+        None => (&b""[..], processor_id),
     };
     [
         b"Key \"processor\": Could not find \"",
@@ -56,7 +58,7 @@ fn no_such_processor(config: &ResolvedConfig) -> Vec<u8> {
 }
 
 impl Context<'_, '_> {
-    /// The rule that a message about a file with `config` names.
+    /// Resolves the rule ID in a message about a file with `config`.
     fn find_rule(&self, config: &ResolvedConfig, id: &[u8]) -> RuleId {
         if let Some(entry) = config.find_rule(self.linter.registry(), id) {
             return RuleId::Known(entry.meta);
@@ -67,7 +69,7 @@ impl Context<'_, '_> {
         }
     }
 
-    /// Lints `text` as the file at `path`, which is in `file`.
+    /// Lints `text` as the file at `path`, which is inside `file`.
     fn verify_natively(
         &self,
         loaded: &Loaded,
@@ -80,7 +82,7 @@ impl Context<'_, '_> {
             return needs_eslint();
         }
         let (len, fixes) = (file.physical_path_len, file.fixes);
-        // What only the parser of the configuration can read is for ESLint's own `Linter`, which has that parser.
+        // Text that only the config's parser can parse goes to ESLint's own `Linter`, which has that parser.
         self.verify_block_if_read(path, len, text, config, fixes)
             .unwrap_or_else(|| match loaded.for_eslint {
                 Some(_) => {
@@ -94,7 +96,7 @@ impl Context<'_, '_> {
             })
     }
 
-    /// A block that a processor has found in `file`, which has `config`.
+    /// Lints a block that a processor found in `file`, which has `config`.
     fn verify_block(
         &self,
         loaded: &Loaded,
@@ -104,11 +106,12 @@ impl Context<'_, '_> {
     ) -> LintResult {
         let (path, text) = match block {
             Block::Unnamed(text) => {
-                return self.verify_as_it_is(loaded, Text { text, ..file }, config);
+                return self.verify_without_processor(loaded, Text { text, ..file }, config);
             }
             Block::Named { path, text } => (paths::from_native(path), text),
         };
-        // ESLint's `filterCodeBlock`. ESLint 8 asks `isTargetPath`: whether it lints a file of that name in a directory.
+        // ESLint's `filterCodeBlock`. ESLint 8 calls `isTargetPath`, which checks whether it would lint a file with
+        // that name in a directory.
         let registry = self.linter.registry();
         let found = match loaded.flavor {
             Flavor::EslintRc => loaded.config.get_unless_ignored(registry, &path),
@@ -119,7 +122,7 @@ impl Context<'_, '_> {
         };
         if text == file.text && paths::extname(&path) == paths::extname(file.path) {
             let path = &path;
-            return self.verify_as_it_is(loaded, Text { path, text, ..file }, config);
+            return self.verify_without_processor(loaded, Text { path, text, ..file }, config);
         }
         let block = Text {
             path: &path,
@@ -127,8 +130,8 @@ impl Context<'_, '_> {
             ..file
         };
         let result = self.verify_routed(loaded, block, &own);
-        // The other blocks of the file are still linted, so the warning names this one.
-        if result.is_unread {
+        // The file's other blocks are still linted, so the warning lists only this one.
+        if result.needs_another_linter {
             self.needs_eslint.lock().push((path, loaded.flavor));
             return LintResult::default();
         }
@@ -136,18 +139,23 @@ impl Context<'_, '_> {
     }
 
     /// ESLint's `_verifyWithFlatConfigArrayAndWithoutProcessors`.
-    fn verify_as_it_is(&self, loaded: &Loaded, it: Text, config: &ResolvedConfig) -> LintResult {
-        match config.route_as_it_is(it.path) {
+    fn verify_without_processor(
+        &self,
+        loaded: &Loaded,
+        it: Text,
+        config: &ResolvedConfig,
+    ) -> LintResult {
+        match config.route_without_processor(it.path) {
             Route::Eslint if loaded.for_eslint.is_some() => {
                 self.verify_with_eslint(loaded, it, config).0
             }
-            Route::Language => self.verify_in_language_of(loaded, it, config),
+            Route::Language => self.verify_in_config_language(loaded, it, config),
             _ => self.verify_natively(loaded, it, it.path, it.text, config),
         }
     }
 
     /// Lints with the built-in rules for the language of `config`, which isn't JavaScript.
-    fn verify_in_language_of(
+    fn verify_in_config_language(
         &self,
         loaded: &Loaded,
         it: Text,
@@ -157,7 +165,10 @@ impl Context<'_, '_> {
         let linted = config.dialect.as_ref().map(|dialect| {
             self.verify_in_language(it.path, len, it.text, (config, dialect), it.fixes)
         });
-        match (linted.filter(|it| !it.is_unread), &loaded.for_eslint) {
+        match (
+            linted.filter(|it| !it.needs_another_linter),
+            &loaded.for_eslint,
+        ) {
             (Some(result), _) => result,
             (None, Some(_)) => self.verify_with_eslint(loaded, it, config).0,
             (None, None) => needs_eslint(),
@@ -172,7 +183,7 @@ impl Context<'_, '_> {
         processor: &Processor,
     ) -> LintResult {
         let path = paths::to_native(it.path.to_vec());
-        let mut is_unread = false;
+        let mut needs_another_linter = false;
         let mut lint = |supports_autofix: bool, blocks: Vec<Block>| {
             let file = Text {
                 fixes: match supports_autofix && it.fixes != Fixes::Disabled {
@@ -190,8 +201,8 @@ impl Context<'_, '_> {
                 if let Some(thrown) = result.thrown {
                     return Err(thrown);
                 }
-                // That block is the whole file.
-                is_unread |= result.is_unread;
+                // An unread result only gets here if the block is the whole file.
+                needs_another_linter |= result.needs_another_linter;
                 let (Block::Unnamed(text) | Block::Named { text, .. }) = block;
                 write_messages(&mut lists, &result.messages, &result.suppressed, text);
             }
@@ -202,7 +213,7 @@ impl Context<'_, '_> {
             .js_plugins
             .process(processor, &path, it.text, &mut lint)
         {
-            Ok(_) if is_unread => needs_eslint(),
+            Ok(_) if needs_another_linter => needs_eslint(),
             Ok(messages) => {
                 let (messages, suppressed) =
                     read_messages(&messages, it.text, &|id| self.find_rule(config, id));
@@ -216,7 +227,7 @@ impl Context<'_, '_> {
         }
     }
 
-    /// By ESLint's own `Linter`. Also returns JSON: ESLint's `usedDeprecatedRules`.
+    /// Lints with ESLint's own `Linter`. Also returns ESLint's `usedDeprecatedRules` as JSON.
     fn verify_with_eslint(
         &self,
         loaded: &Loaded,
@@ -245,8 +256,8 @@ impl Context<'_, '_> {
                 },
                 Some(linted.deprecated),
             ),
-            Err(Refusal::NotInstalled) => (needs_eslint(), None),
-            Err(Refusal::Thrown(message)) => (thrown(message), None),
+            Err(EslintFailure::NotInstalled) => (needs_eslint(), None),
+            Err(EslintFailure::Thrown(message)) => (thrown(message), None),
         }
     }
 
@@ -261,8 +272,8 @@ impl Context<'_, '_> {
         }
         match (route, &config.processor_location) {
             (Route::Native, _) => self.verify_natively(loaded, it, it.path, it.text, config),
-            (Route::Language, _) => self.verify_in_language_of(loaded, it, config),
-            // A processor that finds a file for a processor in a file, and so on without end. ESLint overflows its stack.
+            (Route::Language, _) => self.verify_in_config_language(loaded, it, config),
+            // A processor can find a file for a processor in a file, and so on forever. ESLint overflows its stack.
             (Route::Processor, _) if !bun_core::StackCheck::init().is_safe_to_recurse() => {
                 LintResult::default()
             }
@@ -270,15 +281,15 @@ impl Context<'_, '_> {
                 self.verify_with_processor(loaded, it, config, processor)
             }
             (Route::Processor, None) => thrown(no_such_processor(config)),
-            (Route::Unsupported, _) if config.route_as_it_is(it.path) == Route::Eslint => {
+            (Route::Unsupported, _) if config.route_without_processor(it.path) == Route::Eslint => {
                 needs_eslint()
             }
-            // As a file of that kind.
+            // Same as for a file of that kind.
             (Route::Unsupported | Route::Eslint, _) => LintResult::default(),
         }
     }
 
-    /// [`Context::verify_text`] for a file with a processor. `loaded`: where `config` is from. `None`: the file
+    /// [`Context::verify_text`] for a file with a processor. `loaded` is where `config` came from. `None` if the file
     /// [needs `eslint`](Context::needs_eslint).
     pub(crate) fn verify_processed_text(
         &self,
@@ -290,7 +301,7 @@ impl Context<'_, '_> {
         on_circular_fixes: &dyn Fn(&[u8]),
     ) -> Option<FileResult> {
         let reads_fixes = self.lint_options().wants_fixes;
-        let (mut deprecated, mut is_unread) = (None, false);
+        let (mut deprecated, mut needs_another_linter) = (None, false);
         // ESLint reads files as UTF-8, so invalid bytes become U+FFFD.
         let is_read_here = loaded.routes(config, path_to_verify) == Route::Language;
         let text = match is_read_here && !bun_core::strings::is_valid_utf8(&text) {
@@ -306,7 +317,7 @@ impl Context<'_, '_> {
             }
             false => text,
         };
-        let mut verify = |text: &[u8]| {
+        let mut verify = |text: &[u8], _: bool| {
             let it = Text {
                 path: path_to_verify,
                 physical_path_len: path_to_verify.len(),
@@ -321,8 +332,8 @@ impl Context<'_, '_> {
                 }
                 _ => self.verify_routed(loaded, it, config),
             };
-            is_unread |= result.is_unread;
-            // ESLint and a processor have them whoever reads them.
+            needs_another_linter |= result.needs_another_linter;
+            // ESLint and processors always produce fixes, whether or not they're read.
             if !reads_fixes {
                 for message in result.messages.iter_mut().chain(&mut result.suppressed) {
                     message.fix = None;
@@ -339,7 +350,7 @@ impl Context<'_, '_> {
             on_circular_fixes,
             &mut verify,
         );
-        if is_unread {
+        if needs_another_linter {
             let file = (path_to_verify.to_vec(), loaded.flavor);
             self.needs_eslint.lock().push(file);
             return None;

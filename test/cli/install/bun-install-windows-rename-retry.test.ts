@@ -212,7 +212,8 @@ describe.skipIf(!isWindows).concurrent("bun install renames into the cache while
     }
   });
 
-  // Nothing stalls these two installs before the rename: one the fixture comes too late for must succeed, and another is made.
+  // Nothing delays these two installs before the rename. If the fixture is too late for one, that install has to
+  // succeed, and another one is started.
   test.each(modes)("patched package: $mode", async ({ budget, holdMs }) => {
     await using server = serveRegistry();
     let held = false;
@@ -287,7 +288,7 @@ describe.skipIf(!isWindows).concurrent("bun install renames into the cache while
     mkdirSync(join(installed, "held"));
     writeFileSync(join(installed, "held", "file.txt"), "");
 
-    // The file is there already, so the fixture holds it before the install starts.
+    // The file already exists, so the fixture holds it before the install starts.
     const blocker = spawnBlocker(installed, "held", holdMs);
     await blocker.held;
 

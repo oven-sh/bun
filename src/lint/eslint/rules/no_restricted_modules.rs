@@ -4,18 +4,18 @@ use bun_lint::prelude::*;
 
 /// Disallow specified modules when loaded by `require`.
 pub struct NoRestrictedModules {
-    /// Each with its custom message. Of two with the same name, the last counts.
+    /// Each path with its custom message. If two have the same name, the last one wins.
     paths: Vec<(Vec<u8>, Option<Vec<u8>>)>,
     patterns: Option<IgnoreRules>,
 }
 
-const DEFAULT_MESSAGE: Message =
-    Message::new("defaultMessage", "'{{name}}' module is restricted from being used.");
-const CUSTOM_MESSAGE: Message = Message::new(
+const DEFAULT_MESSAGE: &Message =
+    &Message::new("defaultMessage", "'{{name}}' module is restricted from being used.");
+const CUSTOM_MESSAGE: &Message = &Message::new(
     "customMessage",
     "'{{name}}' module is restricted from being used. {{customMessage}}",
 );
-const PATTERN_MESSAGE: Message = Message::new(
+const PATTERN_MESSAGE: &Message = &Message::new(
     "patternMessage",
     "'{{name}}' module is restricted from being used by a pattern.",
 );

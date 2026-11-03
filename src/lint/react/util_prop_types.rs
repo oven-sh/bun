@@ -1,5 +1,5 @@
-//! `lib/util/propTypes.js` of eslint-plugin-react: `propTypesInstructions`, the visitor that stores
-//! in each component which props it declares. What reads a declaration is in
+//! `lib/util/propTypes.js` of eslint-plugin-react: `propTypesInstructions`, the visitor that
+//! records which props each component declares. The code that reads a declaration is in
 //! `util_prop_types_declaration`.
 //!
 //! | upstream | here |
@@ -9,11 +9,11 @@
 //! | `component.ignorePropsValidation` | `Component::ignore_props_validation` |
 //! | `isFunctionType(node)`, `astUtil.isFunction(node)` | `func.kind()` |
 //! | `iterateProperties(context, properties, fn)` | a loop with `get_key_value` |
-//! | `resolveTypeAnnotation(node)` | `.ty()`: a `TSTypeAnnotation` is no node |
+//! | `resolveTypeAnnotation(node)` | `.ty()`: a `TSTypeAnnotation` isn't a node |
 //! | `stack`, `typeScope`, `getInTypeScope`, `setInTypeScope` | nothing: only Flow fills it |
 //!
-//! What only the nodes of Flow get to is left out. Where upstream throws a `TypeError`, which ends
-//! the run of ESLint, nothing is declared.
+//! Code that only Flow nodes can reach isn't ported. Where upstream throws a `TypeError`, which
+//! aborts the ESLint run, nothing is declared.
 
 use crate::util_annotations::{is_annotated_function_props_declaration, is_props};
 use crate::util_ast::{get_key_value, get_property_name};
@@ -38,7 +38,7 @@ use bun_lint::utils::estree_parent;
 use rustc_hash::FxHashSet;
 use std::borrow::Cow;
 
-/// `name in Object.prototype`, which is `name in {}` for what is no property of its own.
+/// `name in Object.prototype`, which is what `name in object` comes down to if `name` isn't an own property.
 pub(crate) fn is_in_object_prototype(name: &[u8]) -> bool {
     matches!(
         name,
@@ -61,7 +61,7 @@ fn is_super_type_parameter_props_declaration(node: Class<'_>) -> bool {
     !node.extends_args().is_empty()
 }
 
-/// `startWithCapitalizedLetter`, which says the opposite. `parent` is `node.parent`.
+/// `startWithCapitalizedLetter`, which returns the opposite of what its name says. `parent` is `node.parent`.
 fn start_with_capitalized_letter(parent: Node<'_>) -> bool {
     matches!(parent, Node::VarDecl(it)
         if !is_first_letter_capitalized(it.pat().as_ident().map(Name::bytes)))
@@ -75,7 +75,7 @@ fn call_with_type_arguments(parent: Node<'_>) -> Option<Call<'_>> {
     }
 }
 
-/// Whether `callee` is `forwardRef` or `React.forwardRef`.
+/// True if `callee` is `forwardRef` or `React.forwardRef`.
 fn is_forward_ref(callee: Expr<'_>) -> bool {
     callee.is_ident("forwardRef")
         || (is_member_called(callee, "forwardRef")
@@ -90,7 +90,7 @@ fn sibling_type_annotation(parent: Node<'_>) -> Option<TypeNode<'_>> {
     }
 }
 
-/// `propsUtil.getTypeArguments(annotation) != null`, for what is no `TSTypeReference`.
+/// `propsUtil.getTypeArguments(annotation) != null`, for anything but a `TSTypeReference`.
 fn has_type_arguments(annotation: TypeNode<'_>) -> bool {
     match annotation.kind() {
         TypeKind::Typeof { args, .. }
@@ -99,7 +99,7 @@ fn has_type_arguments(annotation: TypeNode<'_>) -> bool {
             is_typeof: false,
             ..
         } => !args.is_empty(),
-        // It has no `typeArguments`, so that its `typeParameters` are taken.
+        // It has no `typeArguments`, so its `typeParameters` are used.
         TypeKind::Fn(func) => !func.type_params().is_empty(),
         _ => false,
     }
@@ -114,7 +114,7 @@ fn without_prop_types(text: &[u8]) -> &[u8] {
         .unwrap_or(text)
 }
 
-/// `node.parent` of a `MemberExpression`, as far as `markPropTypesAsDeclared` asks for its `type`.
+/// A `MemberExpression`'s `node.parent`, limited to the `type`s that `markPropTypesAsDeclared` checks for.
 #[derive(Copy, Clone)]
 enum Parent<'a> {
     AssignmentExpression(Expr<'a>),
@@ -124,7 +124,7 @@ enum Parent<'a> {
 
 impl<'a> Parent<'a> {
     fn of(node: Expr<'a>) -> Parent<'a> {
-        // A `ChainExpression`, a `JSXExpressionContainer`.
+        // The parent is a `ChainExpression` or a `JSXExpressionContainer`.
         if node.is_chain_root() || node.jsx_container_span().is_some() {
             return Parent::Other;
         }
@@ -142,12 +142,12 @@ impl<'a> Parent<'a> {
     }
 }
 
-/// The `propTypes` of `markPropTypesAsDeclared`.
+/// The `propTypes` argument of `markPropTypesAsDeclared`.
 #[derive(Copy, Clone)]
 enum PropTypes<'a> {
     /// `null`
     Null,
-    /// Not the `ChainExpression` around it.
+    /// The expression itself, not the `ChainExpression` around it.
     Expr(Expr<'a>),
     /// A `TSTypeReference`, or the type in a `TSTypeAnnotation`.
     Type(TypeNode<'a>),
@@ -156,8 +156,9 @@ enum PropTypes<'a> {
 }
 
 impl<'a> PropTypes<'a> {
-    /// What a node has as its `value`, `init`, `argument` or `right`, or among its `arguments`.
-    fn from_above(e: Option<Expr<'a>>) -> PropTypes<'a> {
+    /// For an expression reached from its parent: a node's `value`, `init`, `argument` or `right`,
+    /// or one of its `arguments`.
+    fn from_child(e: Option<Expr<'a>>) -> PropTypes<'a> {
         match e {
             None => PropTypes::Null,
             Some(e) if e.is_chain_root() => PropTypes::Other,
@@ -167,11 +168,11 @@ impl<'a> PropTypes<'a> {
 
     /// `node.parent.right || node.parent`
     fn right_or_parent(node: Expr<'a>) -> PropTypes<'a> {
-        // A `ChainExpression`, a `JSXExpressionContainer`.
+        // The parent is a `ChainExpression` or a `JSXExpressionContainer`.
         if node.is_chain_root() || node.jsx_container_span().is_some() {
             return PropTypes::Other;
         }
-        // The `right` of an `AssignmentPattern`.
+        // An `AssignmentPattern`'s `right`.
         let default = match estree_parent(Node::Expr(node)) {
             Node::Expr(parent) => {
                 return match parent.kind() {
@@ -180,7 +181,7 @@ impl<'a> PropTypes<'a> {
                         op: BinOp::Comma, ..
                     } => PropTypes::Other,
                     ExprKind::Binary { right, .. } | ExprKind::Assign { value: right, .. } => {
-                        PropTypes::from_above(Some(right))
+                        PropTypes::from_child(Some(right))
                     }
                     _ => PropTypes::Expr(parent),
                 };
@@ -188,7 +189,7 @@ impl<'a> PropTypes<'a> {
             Node::Stmt(parent) => {
                 return match parent.kind() {
                     StmtKind::ForIn { expr, .. } | StmtKind::ForOf { expr, .. } => {
-                        PropTypes::from_above(Some(expr))
+                        PropTypes::from_child(Some(expr))
                     }
                     _ => PropTypes::Other,
                 };
@@ -205,17 +206,17 @@ impl<'a> PropTypes<'a> {
     }
 }
 
-/// What `propTypesInstructions` closes over.
+/// The state that `propTypesInstructions` closes over.
 #[derive(Default)]
 struct PropTypesInstructions<'a> {
     class_expressions: Vec<Class<'a>>,
     custom_validators: Vec<Box<[u8]>>,
     imports: ReactTypeImports<'a>,
-    /// `getFlowVersionFromContext(context)`, once it is asked for.
+    /// `getFlowVersionFromContext(context)`, computed on first use.
     flow_version: Option<Option<Version>>,
-    /// Whether a node has a `ClassBody` around it.
+    /// Caches whether a node is inside a `ClassBody`.
     class_bodies: AncestorMemo<'a, ()>,
-    /// Whether a node is in a declaration of prop types.
+    /// Caches whether a node is inside a prop types declaration.
     declarations: AncestorMemo<'a, ()>,
 }
 
@@ -248,8 +249,7 @@ impl<'a> PropTypesInstructions<'a> {
         declaration.is_some()
     }
 
-    /// The `case "MemberExpression"` of `markPropTypesAsDeclared`: what `ignorePropsValidation` is
-    /// after it.
+    /// The `case "MemberExpression"` of `markPropTypesAsDeclared`. Returns the new `ignorePropsValidation`.
     fn declare_prop_types_for_member_expression(
         &mut self,
         mut prop_types: Expr<'a>,
@@ -257,7 +257,7 @@ impl<'a> PropTypesInstructions<'a> {
         ignore_props_validation: bool,
         root_node: Option<Node<'a>>,
     ) -> Result<bool, RangeError> {
-        // `None`: `undefined`, or the array of a union, which is taken to have no name.
+        // `None` is `undefined`, or a union's array, which is treated as having no named properties.
         let mut cur_declared_prop_types = Some(declared_prop_types);
         // Walk the list of properties, until we reach the assignment
         // ie: ClassX.propTypes.a.b.c = ...
@@ -313,8 +313,8 @@ impl<'a> PropTypesInstructions<'a> {
         Ok(ignore_props_validation)
     }
 
-    /// The `switch` of `markPropTypesAsDeclared`: what `ignorePropsValidation` is after it. Upstream throws a `RangeError`
-    /// where that has no end: `const a = a`.
+    /// The `switch` of `markPropTypesAsDeclared`. Returns the new `ignorePropsValidation`. Upstream
+    /// throws a `RangeError` where the recursion never ends, as with `const a = a`.
     fn declare_prop_types(
         &mut self,
         node: Node<'a>,
@@ -385,16 +385,16 @@ impl<'a> PropTypesInstructions<'a> {
                         return Ok(true);
                     };
                     let def_in_scope = get_latest_variable_definition(first_matching_variable)
-                        // The `node` of the parameter of a `catch` is the `CatchClause`.
+                        // A `catch` parameter's `node` is the `CatchClause`.
                         .filter(|it| it.kind() == Some(DeclarationKind::Variable));
                     match def_in_scope.and_then(Declaration::node) {
-                        Some(Node::VarDecl(it)) => PropTypes::from_above(it.init()),
+                        Some(Node::VarDecl(it)) => PropTypes::from_child(it.init()),
                         _ => PropTypes::Other,
                     }
                 }
                 ExprKind::Call(call) => match call.args().first() {
                     Some(argument) if is_prop_wrapper_function(e.file(), call.callee().text()) => {
-                        PropTypes::from_above(Some(argument))
+                        PropTypes::from_child(Some(argument))
                     }
                     _ => return Ok(ignore_props_validation),
                 },
@@ -403,8 +403,8 @@ impl<'a> PropTypesInstructions<'a> {
         }
     }
 
-    /// `markPropTypesAsDeclared`. A `RangeError` ends it as it ends upstream's, whose listener for
-    /// a `MemberExpression` catches it.
+    /// `markPropTypesAsDeclared`. A `RangeError` aborts it like it aborts upstream's, whose
+    /// `MemberExpression` listener catches the error.
     fn mark_prop_types_as_declared(
         &mut self,
         components: &mut Components<'a>,
@@ -412,7 +412,7 @@ impl<'a> PropTypesInstructions<'a> {
         prop_types: PropTypes<'a>,
         root_node: Option<Node<'a>>,
     ) {
-        // The component that upstream's loop finds. Without one it declares for nobody.
+        // The component that upstream's loop finds. Without one, the declarations are dropped.
         let Some(id) = components.set(node) else {
             return;
         };
@@ -434,7 +434,7 @@ impl<'a> PropTypesInstructions<'a> {
                 component.declared_prop_types = Some(declared_prop_types);
                 component.ignore_props_validation = ignore_props_validation;
             }
-            // What is declared by then stays in the object that the component has.
+            // Whatever was declared before the error stays in the component's existing object.
             Err(RangeError) => {
                 component.declared_prop_types = is_known.then_some(declared_prop_types)
             }
@@ -520,7 +520,7 @@ impl<'a> PropTypesInstructions<'a> {
         }
     }
 
-    /// `ClassDeclaration(node)`, and what `Program:exit` does with a `ClassExpression`.
+    /// `ClassDeclaration(node)`, and `Program:exit`'s handling of a `ClassExpression`.
     fn class(&mut self, components: &mut Components<'a>, class: Class<'a>) {
         let node = Node::Class(class);
         let prop_types = self.resolve_super_parameter_props_type(class);
@@ -534,7 +534,7 @@ impl<'a> PropTypesInstructions<'a> {
         let annotation = member.ty();
         let prop_types = match annotation.filter(|_| is_props(member.file(), member.span().start)) {
             Some(annotation) => PropTypes::Type(annotation),
-            None if is_prop_types_declaration(node) => PropTypes::from_above(member.init()),
+            None if is_prop_types_declaration(node) => PropTypes::from_child(member.init()),
             None => return,
         };
         self.mark_prop_types_as_declared(components, node, prop_types, Some(node));
@@ -554,7 +554,7 @@ impl<'a> PropTypesInstructions<'a> {
             _ => None,
         });
         if let Some(argument) = returned {
-            let prop_types = PropTypes::from_above(argument);
+            let prop_types = PropTypes::from_child(argument);
             self.mark_prop_types_as_declared(components, node, prop_types, Some(node));
         }
     }
@@ -568,7 +568,7 @@ impl<'a> PropTypesInstructions<'a> {
         // Search for the proptypes declaration
         for property in properties {
             if is_prop_types_declaration(Node::Prop(property)) {
-                let prop_types = PropTypes::from_above(property.value());
+                let prop_types = PropTypes::from_child(property.value());
                 self.mark_prop_types_as_declared(components, node, prop_types, Some(node));
             }
         }
@@ -592,7 +592,7 @@ impl<'a> PropTypesInstructions<'a> {
 impl<'a> Instructions<'a> for PropTypesInstructions<'a> {
     fn nodes(&self, file: &'a File<'a>, add: &mut dyn FnMut(Node<'a>, Visit)) {
         let mut add = |node| add(node, Visit::Enter);
-        // The `name` of a `PrivateIdentifier` is without the `#`.
+        // A `PrivateIdentifier`'s `name` has no `#`.
         let mentions_prop_types = file.mentions_any(&["propTypes", "#propTypes"]);
         let mentions_props = file.mentions_any(&["props", "#props"]);
         for class in file.classes() {
@@ -625,7 +625,7 @@ impl<'a> Instructions<'a> for PropTypesInstructions<'a> {
             }
         }
         for func in file.funcs() {
-            // The parent of the function of a method of a class is a `MethodDefinition`.
+            // A class method's function has a `MethodDefinition` as its parent.
             if !ast_utils::is_function_with_body(func) || matches!(func.owner(), Node::Member(_)) {
                 continue;
             }
@@ -659,7 +659,7 @@ impl<'a> Instructions<'a> for PropTypesInstructions<'a> {
             }
             Node::Member(member) => self.method_definition(components, member),
             Node::Func(func) => {
-                // The listeners for the two other kinds are called with the node alone.
+                // The listeners for the other two kinds are called with only the node, without a `rootNode`.
                 let root_node =
                     (!matches!(func.kind(), FnKind::Decl | FnKind::Arrow)).then_some(node);
                 self.mark_annotated_function_arguments_as_declared(components, func, root_node);
@@ -686,7 +686,7 @@ impl<'a> Instructions<'a> for PropTypesInstructions<'a> {
     }
 }
 
-/// `propTypesInstructions`. `custom_validators`: `context.options[0].customValidators`.
+/// `propTypesInstructions`. `custom_validators` is `context.options[0].customValidators`.
 pub(crate) fn declared<'a>(custom_validators: &[Box<[u8]>]) -> Box<dyn Instructions<'a> + 'a> {
     Box::new(PropTypesInstructions {
         custom_validators: custom_validators.to_vec(),

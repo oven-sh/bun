@@ -16,17 +16,17 @@ use bun_core::strings;
 
 #[derive(Copy, Clone, Debug, Default)]
 pub(crate) struct FormatFunctionOptions {
-    /// Whether what is formatted is kept, to be written again.
+    /// Set to `Cache` to reuse the formatted output when it's printed more than once.
     pub(crate) cache_mode: FunctionCacheMode,
 }
 
-/// `a = function /* comment */⏎<T>() {}`: for Prettier the line break after the comment breaks with what the function is in. For
-/// oxfmt it goes if the type parameters fit behind the comment.
-fn comments_of_type_parameters_are_in_a_group_with_them(f: &Formatter<'_>) -> bool {
+/// `a = function /* comment */⏎<T>() {}`: Prettier's line break after the comment breaks with the group around the
+/// function. oxfmt drops it if the type parameters fit after the comment.
+fn groups_type_parameters_with_their_comments(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// A function declaration or expression. Not a method: see `class.rs`.
+/// A function declaration or expression. Methods are in `class.rs`.
 #[inline(never)]
 pub(crate) fn write_function<'a>(
     func: Func<'a>,
@@ -42,7 +42,7 @@ pub(crate) fn write_function<'a>(
         false => "function",
     };
     let is_declared = matches!(func.owner(), Node::Stmt(statement) if statement.modifiers().iter().any(|it| it.flag() == Flags::AMBIENT));
-    // The head of a snippet of Svelte: the plugin takes `function ` and the body off again.
+    // A Svelte snippet's head: the plugin strips `function ` and the body afterwards, so skip both.
     let is_only_head = f.options().in_html.root == HtmlRoot::SvelteExpression
         && matches!(func.owner(), Node::Stmt(statement) if matches!(statement.parent(), Node::File(_)));
     let head = format_with(|f| {
@@ -58,7 +58,7 @@ pub(crate) fn write_function<'a>(
             ]
         );
         let type_parameters = type_parameters(func.type_params(), Node::Func(func));
-        match comments_of_type_parameters_are_in_a_group_with_them(f) {
+        match groups_type_parameters_with_their_comments(f) {
             true => write!(f, group(&type_parameters)),
             false => write!(f, type_parameters),
         }
@@ -119,14 +119,14 @@ fn is_iife_callee_or_tagged_template_tag(e: Expr<'_>) -> bool {
     }
 }
 
-/// `// comment ⏎ (function () {})()`: oxfmt follows Prettier 3.8, for which the parentheses are written around the
-/// function alone, as around anything else.
-fn comments_of_called_function_are_outside_of_its_parentheses(f: &Formatter<'_>) -> bool {
+/// `// comment ⏎ (function () {})()`: oxfmt follows Prettier 3.8, which wraps only the function in the parentheses,
+/// like any other expression.
+fn called_function_comments_stay_outside_parentheses(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// Prettier's `printCommentsForFunction`: the comments around a function that is called, or is the
-/// tag of a template, are written in its parentheses.
+/// Prettier's `printCommentsForFunction`: comments around a function that's called, or used as a template tag, are
+/// printed inside its parentheses.
 ///
 /// ```js
 /// (
@@ -135,16 +135,16 @@ fn comments_of_called_function_are_outside_of_its_parentheses(f: &Formatter<'_>)
 /// )();
 /// ```
 ///
-/// Returns whether `e` is such a function and has been written.
+/// Returns true if `e` is such a function and was printed.
 pub(crate) fn write_called_function_with_comments<'a>(
     e: Expr<'a>,
     options: ExprOptions,
     f: &mut Formatter<'a>,
 ) -> bool {
-    // In the parentheses of a type cast it is not what is called.
+    // Inside a type cast's parentheses, the function isn't the callee.
     if e.as_fn().is_none()
         || !is_iife_callee_or_tagged_template_tag(e)
-        || comments_of_called_function_are_outside_of_its_parentheses(f)
+        || called_function_comments_stay_outside_parentheses(f)
         || is_cast_target(e, f)
     {
         return false;
@@ -168,7 +168,7 @@ pub(crate) fn write_called_function_with_comments<'a>(
     true
 }
 
-/// The `{ .. }` of a function.
+/// A function's `{ .. }`.
 #[derive(Copy, Clone)]
 pub(crate) struct FormatFunctionBody<'a>(pub(crate) Func<'a>);
 
@@ -202,8 +202,8 @@ impl<'a> Format<'a> for FormatFunctionBody<'a> {
             false if owned.dangling.is_empty() => {
                 write!(f, ["{", block_indent(&FormatStatements(statements)), "}"])
             }
-            // `function a() // comment⏎{ "use strict" }`: Babel has no statement in the body that the comment could lead.
-            // Prettier's `printBlockBody` writes it after the directives.
+            // `function a() // comment⏎{ "use strict" }`: Babel's body has no statement for the comment to lead, so
+            // Prettier's `printBlockBody` prints it after the directives.
             false => {
                 let is_next_line_empty = (statements.last())
                     .is_some_and(|last| f.source_text().lines_after(last.span().end) > 1);
@@ -219,8 +219,8 @@ impl<'a> Format<'a> for FormatFunctionBody<'a> {
     }
 }
 
-/// `class A { b() /* prettier-ignore */ { } }` is `b()/* prettier-ignore */ { }` for oxfmt: what is copied is written
-/// without the space before it. A function and a method of an object have a space of their own there.
+/// oxfmt prints `class A { b() /* prettier-ignore */ { } }` as `b()/* prettier-ignore */ { }`: the copied text gets no
+/// space before it. Functions and object methods print their own space there.
 fn space_is_part_of_the_body(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
@@ -231,8 +231,9 @@ impl Spanned for FormatFunctionBody<'_> {
     }
 }
 
-/// Writes the parameters and the return type, which are in a group. Prettier's `shouldGroupFunctionParameters`: the
-/// parameters are a group of their own, so that the return type breaks first, if that is an object type or will break.
+/// Prints the parameters and the return type, which share a group. Prettier's `shouldGroupFunctionParameters`: if the
+/// return type is an object type or will break, the parameters get their own group so that the return type breaks
+/// first.
 ///
 /// ```ts
 /// function a(
@@ -242,8 +243,8 @@ impl Spanned for FormatFunctionBody<'_> {
 /// }> {}
 /// ```
 ///
-/// is what Prettier and oxfmt make of a return type that is on one line and does not fit. Now that the object type is broken
-/// it will break, so they make `function a(b: string): C<{` of that. Here it is that at once.
+/// is what Prettier and oxfmt print for a one-line return type that doesn't fit. On the next run the object type is
+/// already broken, so it will break, and they print `function a(b: string): C<{`. We print that the first time.
 pub(crate) fn write_parameters_and_return_type<'a>(
     func: Func<'a>,
     parameters: &Memoized<impl Format<'a>>,
@@ -269,7 +270,7 @@ pub(crate) fn write_parameters_and_return_type<'a>(
     }
 }
 
-/// Whether something in the return type `ty` of `func` stays expanded once it is broken, and the parameters do not.
+/// True if something in `func`'s return type `ty` stays expanded once it's broken, and the parameters don't.
 fn can_depend_on_what_breaks<'a>(func: Func<'a>, ty: TypeNode<'a>, f: &Formatter<'a>) -> bool {
     // Everything that stays expanded has braces.
     let can_stay_expanded = strings::contains_char(f.source_text().text_for(&ty.span()), b'{');
@@ -282,7 +283,7 @@ fn can_depend_on_what_breaks<'a>(func: Func<'a>, ty: TypeNode<'a>, f: &Formatter
     can_stay_expanded && !stay_expanded
 }
 
-/// Apart, so that its variables are not on the stack while the return type is formatted.
+/// A separate function, so its locals aren't on the stack while the return type is formatted.
 #[inline(never)]
 fn group_parameters_if_object_type_breaks<'a>(
     parameters: &dyn Format<'a>,
@@ -299,13 +300,13 @@ fn group_parameters_if_object_type_breaks<'a>(
     );
 }
 
-/// What it takes, whatever the return type is written as.
+/// The conditions of `shouldGroupFunctionParameters` that don't depend on how the return type prints.
 fn can_group_function_parameters(func: Func<'_>) -> bool {
     let type_parameters = func.type_params();
     match type_parameters.len() {
         0 => {}
         1 => {
-            // Prettier does not ask for the `bound` of Flow.
+            // Prettier doesn't check Flow's `bound`.
             let has_constraint =
                 |it: TypeParam<'_>| it.constraint().is_some() && !it.file().is_flow();
             if type_parameters
@@ -321,8 +322,8 @@ fn can_group_function_parameters(func: Func<'_>) -> bool {
         && func.params().len() + usize::from(func.this_param().is_some()) == 1
 }
 
-/// Content that is formatted once and written as often as it takes to find the layout of a call
-/// that it is an argument of. It cannot be formatted again, because its comments would be gone.
+/// Content that's formatted once and printed as many times as it takes to pick the layout of the call it's an argument
+/// of. It can't be formatted twice, because the first pass consumes its comments.
 pub(crate) struct FormatContentWithCacheMode<T> {
     key: Span,
     content: T,
@@ -330,7 +331,7 @@ pub(crate) struct FormatContentWithCacheMode<T> {
 }
 
 impl<T> FormatContentWithCacheMode<T> {
-    /// `key`: a span that nothing else is cached under.
+    /// `key` is a span that no other cache entry uses.
     #[inline]
     pub(crate) fn new(
         key: impl FnOnce() -> Span,

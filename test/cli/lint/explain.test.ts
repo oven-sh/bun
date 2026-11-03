@@ -137,13 +137,13 @@ describe.concurrent("--rules -f json", () => {
   });
 
   test("is the same no matter what config the project has", async () => {
-    const [alone, eslint, oxlint] = await Promise.all([
+    const [withoutConfig, eslint, oxlint] = await Promise.all([
       lint({}, ["--rules", "-f", "json"]),
       lint({ "eslint.config.mjs": "export default [];" }, ["--rules", "-f", "json"]),
       lint({ ".oxlintrc.json": "{}", "bunfig.toml": '[lint.rules]\n"no-var" = "off"\n' }, ["--rules", "-f", "json"]),
     ]);
-    expect(eslint.stdout).toBe(alone.stdout);
-    expect(oxlint.stdout).toBe(alone.stdout);
+    expect(eslint.stdout).toBe(withoutConfig.stdout);
+    expect(oxlint.stdout).toBe(withoutConfig.stdout);
   });
 
   test("no ID or alias refers to more than one rule", async () => {
@@ -184,9 +184,9 @@ describe.concurrent("--rules -f json", () => {
 
   test("description matches the docs page's description", async () => {
     const rules = new Map((await listRules()).map(it => [it.docs_url.slice(base.length), it]));
-    const written = pages().map(page => ({ page, description: frontmatter(page).description }));
-    expect(written.length).toBeGreaterThan(1000);
-    expect(written.map(({ page }) => ({ page, description: rules.get(page)?.description }))).toEqual(written);
+    const documented = pages().map(page => ({ page, description: frontmatter(page).description }));
+    expect(documented.length).toBeGreaterThan(1000);
+    expect(documented.map(({ page }) => ({ page, description: rules.get(page)?.description }))).toEqual(documented);
   });
 
   test("on_by_default matches --print-config in a project without a config", async () => {
@@ -244,6 +244,10 @@ describe.concurrent("--rules", () => {
         .slice(9 + id.length)
         .trim();
     expect(described("no-var")).toBe(frontmatter("eslint/no-var").description.replaceAll("`", ""));
+    // bunfig.toml can't turn these on.
+    const note = "These need an ESLint config that says which files are in the language.";
+    const noted = lines.flatMap((line, i) => (line === note ? [lines[i - 1].split(" ")[0]] : []));
+    expect(noted).toEqual(["json", "markdown"]);
     expect(lines.slice(-3)).toEqual([
       `${rules.length} rules. The ones marked error or warn are on by default.`,
       "Run bun lint --explain <rule> to read about a rule.",
@@ -340,20 +344,23 @@ describe.concurrent("--explain", () => {
 
   test("reads no config and lints nothing", async () => {
     const files = { "eslint.config.js": "throw new Error('read');", ".oxlintrc.json": "{", "a.js": "debugger;" };
-    const [here, alone] = await Promise.all([lint(files, ["--explain", "no-var"]), lint({}, ["--explain", "no-var"])]);
-    expect(here).toEqual(alone);
+    const [here, inEmptyDirectory] = await Promise.all([
+      lint(files, ["--explain", "no-var"]),
+      lint({}, ["--explain", "no-var"]),
+    ]);
+    expect(here).toEqual(inEmptyDirectory);
     expect(here.exitCode).toBe(0);
   });
 
   test("works even if package.json has a `lint` script", async () => {
     const files = { "package.json": JSON.stringify({ scripts: { lint: "echo the script" } }) };
-    const [one, other, alone] = await Promise.all([
+    const [one, other, inEmptyDirectory] = await Promise.all([
       lint(files, ["--explain", "no-var"]),
       lint(files, ["--explain=no-var"]),
       lint({}, ["--explain", "no-var"]),
     ]);
-    expect(one).toEqual(alone);
-    expect(other).toEqual(alone);
+    expect(one).toEqual(inEmptyDirectory);
+    expect(other).toEqual(inEmptyDirectory);
   });
 
   test("wraps at the terminal width, and uses colors when they're on", async () => {

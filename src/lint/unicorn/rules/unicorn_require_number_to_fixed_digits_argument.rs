@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Enforce using the digits argument with `Number#toFixed()`.
 pub struct RequireNumberToFixedDigitsArgument;
 
-const MISSING_DIGITS_ARGUMENT: Message = Message::new("", "Number method .toFixed() should have an argument");
+const MISSING_DIGITS_ARGUMENT: &Message = &Message::new("", "Number method .toFixed() should have an argument");
 
 impl Rule for RequireNumberToFixedDigitsArgument {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "require-number-to-fixed-digits-argument", Kind::Suggestion)
@@ -35,7 +35,7 @@ impl Rule for RequireNumberToFixedDigitsArgument {
         if !call.args().is_empty() || call.is_optional() || obj.tag() == ExprTag::New && !obj.is_parenthesized() {
             return;
         }
-        // From the end of `a.toFixed`, whatever is between that and the `(`.
+        // Starts at the end of `a.toFixed`, so it includes anything between that and the `(`.
         let parentheses = Span::after(member.span(), e.span().end);
         cx.report(parentheses, MISSING_DIGITS_ARGUMENT)
             .fix(|fixer| fixer.insert_before(Span::empty(parentheses.end.saturating_sub(1)), "0"));

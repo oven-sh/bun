@@ -1,0 +1,25 @@
+ERR_INVALID_ARG_TYPE: The "buf1" argument must be an instance of Buffer or Uint8Array. Received an instance of Point | ran nothing
+ERR_INVALID_ARG_TYPE: The "buf1" argument must be an instance of Buffer or Uint8Array. Received an instance of  | ran nothing
+ERR_INVALID_ARG_TYPE: The "buf1" argument must be an instance of Buffer or Uint8Array. Received an instance of Object | ran nothing
+ERR_INVALID_ARG_TYPE: The "buf1" argument must be an instance of Buffer or Uint8Array. Received an instance of Array | ran nothing
+ERR_INVALID_ARG_TYPE: The "buf1" argument must be an instance of Buffer or Uint8Array. Received [Object: null prototype] {} | ran nothing
+ERR_INVALID_ARG_TYPE: The "buf1" argument must be an instance of Buffer or Uint8Array. Received [Object] | ran nothing
+ERR_INVALID_ARG_TYPE: The "buf1" argument must be an instance of Buffer or Uint8Array. Received {} | ran nothing
+ERR_INVALID_ARG_TYPE: The "buf1" argument must be an instance of Buffer or Uint8Array. Received {} | ran nothing
+ERR_INVALID_ARG_TYPE: The "buf1" argument must be an instance of Buffer or Uint8Array. Received an instance of Array | ran nothing
+ERR_INVALID_ARG_TYPE: The "buf1" argument must be an instance of Buffer or Uint8Array. Received [Object] | ran nothing
+ERR_INVALID_ARG_TYPE: The "buf1" argument must be an instance of Buffer or Uint8Array. Received [Object: null prototype] | ran nothing
+ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received {} | ran nothing
+ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received [] | ran nothing
+ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received { a: 1 } | ran nothing
+ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received [ 1, 2 ] | ran nothing
+ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received Point { x: 1, y: 2 } | ran nothing
+ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received { point: Point { x: 1, y: 2 }, list: [ 1, [ 2 ] ] } | ran nothing
+ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received { a: [Getter], b: 2 } | ran nothing
+ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received { [Symbol(nodejs.util.inspect.custom)]: [Function: [nodejs.util.inspect.custom]] } | ran nothing
+ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received WithInspect { x: 1 } | ran nothing
+ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received [Object] | ran nothing
+ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received [Date] | ran nothing
+ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received [RegExp] | ran nothing
+ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received [Uint8Array] | ran nothing
+ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received { when: [Date], list: [ [RegExp] ] } | ran nothing

@@ -1,4 +1,4 @@
-//! What is asked of a type.
+//! Queries about a type.
 
 use super::super::print;
 use super::*;
@@ -9,7 +9,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         TypeFlags::from_bits_truncate(self.c.flags(ty))
     }
 
-    /// typescript-eslint's `getTypeFlags`: of a union, the flags of all its constituents.
+    /// typescript-eslint's `getTypeFlags`: for a union, the combined flags of its constituents.
     pub fn flags_of_constituents(&mut self, ty: TypeId) -> TypeFlags {
         let flags = self.c.flags(ty);
         if flags & tf::UNION == 0 {
@@ -29,19 +29,19 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         flags
     }
 
-    /// `type.objectFlags`, derived from what the type is made of.
+    /// `type.objectFlags`, derived from the type's data.
     pub fn object_flags(&mut self, ty: TypeId) -> ObjectFlags {
         let mut flags = ObjectFlags::empty();
         match *self.c.data(ty) {
             TypeData::Ref { target, .. } => {
-                let of_target = self.c.files().flags(target);
+                let target_flags = self.c.files().flags(target);
                 if self.c.has_this_type(target) {
                     flags |= ObjectFlags::REFERENCE;
                 }
                 if self.c.declared_type(target) == ty {
-                    if of_target.contains(SymFlags::CLASS) {
+                    if target_flags.contains(SymFlags::CLASS) {
                         flags |= ObjectFlags::CLASS;
-                    } else if of_target.contains(SymFlags::INTERFACE) {
+                    } else if target_flags.contains(SymFlags::INTERFACE) {
                         flags |= ObjectFlags::INTERFACE;
                     }
                 }
@@ -123,12 +123,12 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         }
     }
 
-    /// Whether what is stored as the alias of `ty` is the enum that it is the declared type of.
+    /// True if `ty` is an enum's declared type, whose stored alias is the enum itself.
     fn is_enum_union(&self, ty: TypeId) -> bool {
         self.c.flags(ty) & (tf::UNION | tf::ENUM_LITERAL) == tf::UNION | tf::ENUM_LITERAL
     }
 
-    /// `type.aliasSymbol`. That of the declared type of an enum with several members is the enum.
+    /// `type.aliasSymbol`. For the declared type of an enum with several members, it's the enum.
     pub fn alias_symbol(&mut self, ty: TypeId) -> Option<SymbolRef> {
         // `getUnresolvedSymbolForEntityName`
         if let TypeData::UnresolvedName { name, .. } = *self.c.data(ty) {
@@ -371,7 +371,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         }
     }
 
-    /// `getBaseTypes`, which is defined for the declared type of a class or an interface.
+    /// `getBaseTypes`, which is only defined for the declared type of a class or interface.
     pub fn base_types(&mut self, ty: TypeId) -> &'c [TypeId] {
         let TypeData::Ref { target, .. } = *self.c.data(ty) else {
             return &[];
@@ -417,10 +417,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             self.many_signatures.insert((ty, kind), signatures);
         }
         signatures
-    }
-
-    pub fn compare_types(&mut self, a: TypeId, b: TypeId) -> Option<std::cmp::Ordering> {
-        Some(self.c.compare_types(a, b))
     }
 
     pub fn type_to_string(

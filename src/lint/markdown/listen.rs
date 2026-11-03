@@ -76,7 +76,7 @@ impl Kinds {
     }
 }
 
-/// The part of a selector before its last component: which ancestors the node needs.
+/// The part of a selector before its last component, which determines which ancestors the node needs.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Within {
     Anything,
@@ -95,8 +95,9 @@ pub(crate) struct Listener {
     kinds: Kinds,
     within: Within,
     is_exit: bool,
-    /// The selector isn't just a type name. On the same node, ESLint calls such listeners after the plain type names.
-    is_more_than_a_type: bool,
+    /// True if the selector isn't just a type name. On the same node, ESLint calls such listeners after the plain type
+    /// names.
+    is_complex_selector: bool,
 }
 
 impl Listener {
@@ -104,16 +105,16 @@ impl Listener {
     pub(crate) const fn new(selector: &'static str, kinds: Kinds) -> Listener {
         let bytes = selector.as_bytes();
         let is_exit = matches!(bytes, [.., b':', b'e', b'x', b'i', b't']);
-        let (mut is_more_than_a_type, mut at) = (false, 0);
+        let (mut is_complex_selector, mut at) = (false, 0);
         while at < bytes.len() - if is_exit { 5 } else { 0 } {
-            is_more_than_a_type |= !bytes[at].is_ascii_alphabetic();
+            is_complex_selector |= !bytes[at].is_ascii_alphabetic();
             at += 1;
         }
         Listener {
             kinds,
             within: Within::Anything,
             is_exit,
-            is_more_than_a_type,
+            is_complex_selector,
         }
     }
 
@@ -124,7 +125,7 @@ impl Listener {
 }
 
 struct Report {
-    message: Message,
+    message: &'static Message,
     data: Vec<(&'static str, Vec<u8>)>,
     start: Loc,
     end: Loc,
@@ -152,7 +153,7 @@ impl<'d> Context<'d> {
     pub(crate) fn report(
         &mut self,
         (start, end): (Loc, Loc),
-        message: Message,
+        message: &'static Message,
         data: &[(&'static str, &[u8])],
     ) -> Reported<'_> {
         self.reports.push(Report {
@@ -170,7 +171,7 @@ impl<'d> Context<'d> {
     pub(crate) fn report_node(
         &mut self,
         node: Node<'d>,
-        message: Message,
+        message: &'static Message,
         data: &[(&'static str, &[u8])],
     ) -> Reported<'_> {
         self.report((node.start(), node.end()), message, data)
@@ -232,6 +233,55 @@ fn position_of(loc: Loc) -> Position {
     }
 }
 
+/// The part of [`walk`] that runs once a rule has reported. It doesn't depend on the rule.
+#[cold]
+#[inline(never)]
+fn submit<'a, 'c>(
+    report_at: &dyn Fn(Span, &'static Message) -> bun_lint::context::Report<'a>,
+    document: &'c Document<'c>,
+    reports: &mut Vec<Report>,
+    node: Node<'c>,
+    (is_exit, is_complex_selector): (bool, bool),
+) {
+    let kind = node.kind();
+    for it in reports.drain(..) {
+        let (start, end) = (document.offset_at(it.start), document.offset_at(it.end));
+        let span = Span::new(
+            start.unwrap_or_else(|| node.span().start),
+            end.or(start).unwrap_or_else(|| node.span().start),
+        );
+        let mut report = report_at(span, it.message);
+        for (name, value) in it.data {
+            report = report.data(name, value);
+        }
+        if start.is_none() {
+            report = report.start_at(position_of(it.start));
+        }
+        if end.is_none() {
+            report = report.end_at(position_of(it.end));
+        }
+        report = match (kind, is_exit) {
+            (Kind::Root, true) => report.at_the_end(),
+            (_, true) => report.listened_on(node.span()).on_exit(true),
+            (_, false) if is_complex_selector => report.listened_on(node.span()).by_selector(),
+            (_, false) => report.listened_on(node.span()),
+        };
+        if let Some((span, text)) = it.fix {
+            report = report.fix(|fixer| fixer.replace(span, text));
+        }
+        drop(report);
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn out_of_range(error: &OutOfRange) -> String {
+    format!(
+        "Index out of range (requested index {}, but source text has length {}).",
+        error.index, error.length
+    )
+}
+
 /// Walks the tree in ESLint's order and calls `rule` for every node that one of its selectors matches.
 pub(crate) fn walk<'c, R>(rule: &R, cx: &'c Cx<'_, R>)
 where
@@ -271,41 +321,17 @@ where
                 continue;
             }
             let thrown = rule.on(index, node, &mut seen, &mut context);
-            for it in context.reports.drain(..) {
-                let (start, end) = (document.offset_at(it.start), document.offset_at(it.end));
-                let span = Span::new(
-                    start.unwrap_or_else(|| node.span().start),
-                    end.or(start).unwrap_or_else(|| node.span().start),
+            if !context.reports.is_empty() {
+                submit(
+                    &|span, message| cx.report(span, message),
+                    document,
+                    &mut context.reports,
+                    node,
+                    (is_exit, listener.is_complex_selector),
                 );
-                let mut report = cx.report(span, it.message);
-                for (name, value) in it.data {
-                    report = report.data(name, value);
-                }
-                if start.is_none() {
-                    report = report.start_at(position_of(it.start));
-                }
-                if end.is_none() {
-                    report = report.end_at(position_of(it.end));
-                }
-                report = match (kind, is_exit) {
-                    (Kind::Root, true) => report.at_the_end(),
-                    (_, true) => report.listened_on(node.span()).on_exit(true),
-                    (_, false) if listener.is_more_than_a_type => {
-                        report.listened_on(node.span()).by_selector()
-                    }
-                    (_, false) => report.listened_on(node.span()),
-                };
-                if let Some((span, text)) = it.fix {
-                    report = report.fix(|fixer| fixer.replace(span, text));
-                }
-                drop(report);
             }
             if let Err(error) = thrown {
-                let message = format!(
-                    "Index out of range (requested index {}, but source text has length {}).",
-                    error.index, error.length
-                );
-                cx.throw(node.span(), "RangeError", message);
+                cx.throw(node.span(), "RangeError", out_of_range(&error));
                 return false;
             }
         }

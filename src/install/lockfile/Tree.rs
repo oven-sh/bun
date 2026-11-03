@@ -92,8 +92,8 @@ impl Tree {
         deps[dep_id as usize].name.slice(buf)
     }
 
-    /// Whether this tree belongs to a workspace package that has no symlink in the root
-    /// `node_modules`, because `hoist_dependency` gave its name to a dependency of the root.
+    /// Returns true if this tree belongs to a workspace that has no symlink in the root
+    /// `node_modules`, because `hoist_dependency` gave its name to one of the root's dependencies.
     pub(crate) fn is_unlinked_member(
         &self,
         trees: &[Tree],
@@ -161,7 +161,8 @@ enum HoistDependencyResult {
     ResolveLater,
     /// `Hoisted`, plus the optional peer's slot now points at the version it deduplicated onto.
     Rebind(PackageID),
-    /// `Hoisted`, but the required peer deduplicated onto this package, not the one it resolves to.
+    /// Like `Hoisted`, but the required peer was deduplicated onto this package instead of the one
+    /// it resolves to.
     Served(PackageID),
     Placement {
         id: Id,
@@ -259,28 +260,6 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
         self.tree_id = 0;
     }
 
-    /// Whether tree `id` is under a workspace package whose folder is outside the project. bun.lock
-    /// lists that package's dependencies, but none are installed. See `is_member_outside`.
-    fn is_in_member_outside(&self, id: Id) -> bool {
-        let mut top = self.trees[id as usize];
-        for _ in 0..MAX_DEPTH {
-            if top.parent == 0 {
-                return (self.dependencies.get(top.dependency_id as usize)).is_some_and(|member| {
-                    member.behavior.is_workspace()
-                        && member.version.tag == crate::dependency::VersionTag::Workspace
-                        && crate::bin::path_climbs_out(
-                            member.version.workspace().slice(self.string_bytes),
-                        )
-                });
-            }
-            match self.trees.get(top.parent as usize) {
-                Some(parent) => top = *parent,
-                None => break,
-            }
-        }
-        false
-    }
-
     // `Option<&mut DynamicBitSet>` is accepted unconditionally; callers with PkgPath must pass None.
     pub fn next(
         &mut self,
@@ -294,10 +273,7 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
 
         let mut completed_trees = completed_trees;
 
-        while trees[self.tree_id as usize].dependencies.len == 0
-            || (PATH_STYLE == IteratorPathStyle::NodeModules
-                && self.is_in_member_outside(self.tree_id))
-        {
+        while trees[self.tree_id as usize].dependencies.len == 0 {
             if PATH_STYLE == IteratorPathStyle::NodeModules {
                 if let Some(ct) = completed_trees.as_deref_mut() {
                     ct.set(self.tree_id as usize);
@@ -401,6 +377,7 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
             // `1 <= depth_buf_len <= depth`.
             let id = unsafe { depth_buf[depth_buf_len].assume_init() };
             let mut name = trees[id as usize].folder_name(dependencies, buf);
+            let mut is_workspace_path = false;
             // The tree of an unlinked workspace package is a child of the root tree, so this is the
             // first component. The path starts at the package's own folder, or `./` in bun.lock.
             if trees[id as usize].is_unlinked_member(trees, hoisted_dependencies, dependencies) {
@@ -413,9 +390,11 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
                         member.version.workspace().slice(buf),
                     );
                     path_written = 0;
+                    // A workspace can be outside the project, e.g. `../shared`.
+                    is_workspace_path = true;
                 }
             }
-            if !crate::dependency::is_safe_install_folder_name(name) {
+            if !is_workspace_path && !crate::dependency::is_safe_install_folder_name(name) {
                 Output::err_generic(
                     "Lockfile is malformed (dependency name \"{}\" is not a valid folder name)",
                     (bun_core::fmt::for_terminal(bstr::BStr::new(name)),),
@@ -562,9 +541,10 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) placed: Placed,
     /// A later dependency replaced a row, so a row no longer tells which dependency placed it.
     pub(crate) replaced_row: bool,
-    /// Install-tree rows a tarball ships: placed as in the saved tree, then dropped by `clean`.
+    /// `Filter` tree rows for packages that ship inside a tarball. They're placed like in the saved
+    /// tree, and `clean` drops them afterwards.
     pub(crate) shipped_rows: bun_collections::HashMap<(Id, DependencyID), ()>,
-    /// The folder `process_subtree` is filling is one of `shipped_rows`.
+    /// True if the folder that `process_subtree` is filling is one of `shipped_rows`.
     pub(crate) in_shipped_folder: bool,
     /// `Filter` only: the `(tree, name)` places where two dependency groups of one package resolve
     /// the name to different packages. Which one is installed depends on what the install skips.
@@ -584,9 +564,28 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) linked: reachable::Linked,
 }
 
-/// The hoisted package's required peers (does staying put find it in range?); who has any.
+/// The peers of the package that's being hoisted. Each one comes with whether the package loads an
+/// in-range copy from the highest folder checked so far, and with the copy that its owner uses.
+///
+/// An optional peer is only listed if the owner provides it. The bit sets cache which packages have
+/// peers, and which packages a regular dependency resolves to.
 #[derive(Default)]
-pub(crate) struct PeerProbes(Vec<(DependencyID, bool)>, Option<DynamicBitSet>);
+pub(crate) struct PeerProbes(
+    Vec<(DependencyID, bool, OwnerCopy)>,
+    Option<DynamicBitSet>,
+    Option<DynamicBitSet>,
+);
+
+/// The copy of a peer that the owner of the package uses too.
+#[derive(Clone, Copy)]
+enum OwnerCopy {
+    /// The owner doesn't use the peer, or it only has a peer dependency on the package.
+    None,
+    /// The owner has the same peer dependency, so it uses the first copy above it.
+    FirstAbove,
+    /// The owner depends on this copy.
+    Package(PackageID),
+}
 
 impl PeerProbes {
     /// `package_id` is about to be hoisted out of the package with `owner_deps`.
@@ -597,6 +596,7 @@ impl PeerProbes {
         resolutions: &[PackageID],
         owner_deps: DependencyIDSlice,
         package_id: PackageID,
+        is_for_peer: bool,
     ) {
         self.0.clear();
         if package_id == invalid_package_id {
@@ -604,9 +604,7 @@ impl PeerProbes {
         }
 
         let is_probed = |peer: &Dependency| {
-            peer.behavior.is_peer()
-                && !peer.behavior.is_optional_peer()
-                && peer.version.tag == crate::dependency::VersionTag::Npm
+            peer.behavior.is_peer() && peer.version.tag == crate::dependency::VersionTag::Npm
         };
         let with_peers = self.1.get_or_insert_with(|| {
             let lists = lockfile.packages.items_resolutions();
@@ -656,18 +654,41 @@ impl PeerProbes {
                         && !dep.behavior.is_peer()
                         && resolutions[dep_id as usize] != invalid_package_id
                 })
-                .map(|dep_id| {
-                    pkg_resolutions[resolutions[dep_id as usize] as usize]
-                        .satisfies_dependency_version(&peer.version, buf, buf)
-                });
-            if owner_copy != Some(false) {
-                self.0.push((peer_dep_id, owner_copy.is_some()));
+                .map(|dep_id| resolutions[dep_id as usize]);
+            let is_listed = match owner_copy {
+                Some(id) => pkg_resolutions[id as usize].satisfies_dependency_version(
+                    &peer.version,
+                    buf,
+                    buf,
+                ),
+                None => !peer.behavior.is_optional_peer(),
+            };
+            if is_listed {
+                let has_same_peer = || {
+                    (owner_deps.begin()..owner_deps.end()).any(|dep_id| {
+                        let dep = &deps[dep_id as usize];
+                        dep.name_hash == peer.name_hash && !dep.behavior.is_optional_peer()
+                    })
+                };
+                let used_by_owner = match owner_copy {
+                    _ if is_for_peer => OwnerCopy::None,
+                    Some(copy) => OwnerCopy::Package(copy),
+                    None if has_same_peer() => OwnerCopy::FirstAbove,
+                    None => OwnerCopy::None,
+                };
+                self.0
+                    .push((peer_dep_id, owner_copy.is_some(), used_by_owner));
             }
         }
     }
 
-    /// Whether tree `tree_id` holds an out-of-range version of a peer that the package would find
-    /// in range if it were not hoisted.
+    /// Returns true if the package must not be hoisted into tree `tree_id`, because it would stop
+    /// loading the copy of a peer that it loads now. That's the case if the tree has:
+    /// - an out-of-range version of a required peer, or
+    /// - a different version than the package's owner uses, which was only installed for another
+    ///   package's peer dependency. Adding an unrelated package to a project must not split a
+    ///   plugin from its host. This doesn't apply to a package that's hoisted for a peer
+    ///   dependency. As in pnpm, it belongs to the project.
     fn is_hidden_by(
         &mut self,
         lockfile: &Lockfile,
@@ -681,35 +702,59 @@ impl PeerProbes {
 
         let mut i = 0;
         while i < self.0.len() {
-            let (peer_dep_id, provided) = self.0[i];
+            let (peer_dep_id, provided, owner_copy) = self.0[i];
             let peer = &deps[peer_dep_id as usize];
-            let held = placed
+            let Some(held) = placed
                 .get(&(tree_id, peer.name_hash))
-                .map(|&dep_id| resolutions[dep_id as usize])
+                .map(|&row| resolutions[row as usize])
                 .filter(|&res_id| res_id != invalid_package_id)
-                .map(|res_id| {
-                    pkg_resolutions[res_id as usize].satisfies_dependency_version(
-                        &peer.version,
-                        buf,
-                        buf,
-                    )
-                });
-            match held {
-                None => i += 1,
-                Some(true) => {
-                    self.0[i].1 = true;
-                    i += 1;
+            else {
+                i += 1;
+                continue;
+            };
+            let is_optional = peer.behavior.is_optional_peer();
+            if pkg_resolutions[held as usize].satisfies_dependency_version(&peer.version, buf, buf)
+            {
+                match owner_copy {
+                    OwnerCopy::Package(copy) if copy != held => {
+                        if !(self.2)
+                            .get_or_insert_with(|| regular_targets(lockfile, deps, resolutions))
+                            .is_set(held as usize)
+                        {
+                            return true;
+                        }
+                        self.0[i].2 = OwnerCopy::None;
+                    }
+                    OwnerCopy::FirstAbove => self.0[i].2 = OwnerCopy::Package(held),
+                    _ => {}
                 }
-                Some(false) if provided => return true,
+                self.0[i].1 |= !is_optional;
+                i += 1;
+            } else if provided && !is_optional {
+                return true;
+            } else {
                 // Out of range wherever the package ends up.
-                Some(false) => {
-                    self.0.swap_remove(i);
-                }
+                self.0.swap_remove(i);
             }
         }
 
         false
     }
+}
+
+/// Returns the packages that a dependency other than a peer dependency resolves to.
+fn regular_targets(
+    lockfile: &Lockfile,
+    deps: &[Dependency],
+    resolutions: &[PackageID],
+) -> DynamicBitSet {
+    let mut set = DynamicBitSet::init_empty(lockfile.packages.len()).unwrap_or_oom();
+    for (dep, &id) in deps.iter().zip(resolutions) {
+        if !dep.behavior.is_peer() && id != invalid_package_id {
+            set.set(id as usize);
+        }
+    }
+    set
 }
 
 pub struct BuilderEntry {
@@ -729,7 +774,8 @@ pub(crate) struct CleanResult {
     pub dep_ids: Vec<DependencyID>,
 }
 
-/// `Some(n)`: two equal rounds of `n` trees end at `parent`, so a third would nest forever.
+/// Returns `Some(n)` if two identical rounds of `n` trees end at `parent`, which means a third
+/// round would nest forever.
 fn repeating_period(
     list: &MultiArrayList<BuilderEntry>,
     parent: Id,
@@ -1006,8 +1052,9 @@ struct LinkedRows<'b> {
 }
 
 impl LinkedRows<'_> {
-    /// Whether this install skips the dependency `dep_id` of `pkg_id`. The answer does not apply to
-    /// a copy of `pkg_id` that is bundled in another package's tarball, which skips nothing.
+    /// Returns true if this install skips the dependency `dep_id` of `pkg_id`. The answer doesn't
+    /// apply to a copy of `pkg_id` that's bundled in another package's tarball, which skips
+    /// nothing.
     fn leaves_out(&mut self, dep_id: DependencyID, pkg_id: PackageID) -> bool {
         let (manager, lockfile) = (self.manager, self.lockfile);
         let dep = &self.dependencies[dep_id as usize];
@@ -1151,8 +1198,9 @@ impl LinkedRows<'_> {
         (Some(kept), can_differ)
     }
 
-    /// Whether `older_layout` could place a kept row somewhere else. That layout hoists only the
-    /// dependencies this install keeps, so it differs only if a skipped one moved a kept row.
+    /// Returns true if `older_layout` could place a kept row somewhere else. That layout only
+    /// hoists the dependencies that this install keeps, so it only differs if a skipped one moved a
+    /// kept row.
     fn older_layout_can_differ(&self, kept: &RowMap, mut idle: Vec<bool>, walked: &[bool]) -> bool {
         if self.replaced_row || !self.contested.is_empty() {
             return true;
@@ -1327,7 +1375,8 @@ pub(crate) fn is_filtered_dependency_or_workspace(
         return true;
     }
 
-    // Not a peer: an ancestor's copy can satisfy one; `process_subtree` / `build_store` decide.
+    // Peers are excluded, because an ancestor's copy can satisfy one. `process_subtree` and
+    // `build_store` decide that.
     if !dep.behavior.is_peer()
         && pruned_workspaces::skips_link_to_pruned_workspace(
             manager,
@@ -1341,7 +1390,7 @@ pub(crate) fn is_filtered_dependency_or_workspace(
     }
 
     if parent_pkg_id != 0 {
-        return linked.is_member_outside(lockfile, parent_pkg_id);
+        return false;
     }
 
     if !dep.behavior.is_workspace() {
@@ -1373,14 +1422,6 @@ impl Tree {
         let resolution_list = builder.resolution_lists[parent_pkg_id as usize];
 
         if resolution_list.len == 0 {
-            return Ok(());
-        }
-
-        // Nothing is installed into a workspace package outside the project. Only `Filter` skips
-        // it: the check can depend on symlinks on disk, and the tree saved in bun.lock must not.
-        if METHOD == BuilderMethod::Filter
-            && builder.lockfile.get().is_member_outside(parent_pkg_id)
-        {
             return Ok(());
         }
 
@@ -1492,8 +1533,9 @@ impl Tree {
                     builder,
                 )
             };
-            // Whether resolving `dep_id` to `res_id` needs no new pass. Nothing reads a resolution
-            // before the first walk of the package that lists it, so a new pass would be the same.
+            // Returns true if resolving `dep_id` to `res_id` doesn't need another pass. Nothing
+            // reads a resolution before the first walk of the package that lists it, so another
+            // pass would give the same result.
             let stays_on = |res_id: PackageID, builder: &mut Builder<'_, METHOD>| {
                 first_walk
                     && !builder.bundle_placed
@@ -1550,7 +1592,8 @@ impl Tree {
                         tree_id = tree.parent;
                     }
 
-                    // Its own hoist root: stays in this node, dedupes against a same-name sibling.
+                    // It's its own hoist root, so it stays in this tree and only dedupes against a
+                    // sibling with the same name.
                     break 'hoisted hoist(next_id, &mut *builder);
                 }
 
@@ -1681,7 +1724,8 @@ impl Tree {
                         }
                         continue 'dep;
                     }
-                    // Only a placed row names a folder; enqueue reported an unresolved one's name.
+                    // Only a placed row becomes a folder name. For an unresolved dependency,
+                    // enqueue already reported the name.
                     let dependency_name = dependency
                         .name
                         .slice(lockfile.buffers.string_bytes.as_slice());
@@ -1772,7 +1816,8 @@ impl Tree {
             let dep = &deps[dep_id as usize];
             let res_id = builder.resolutions[dep_id as usize];
 
-            // A row bun installs resolves through no shipped row; a peer shares the bundled copy.
+            // A dependency that Bun installs never resolves to a row that a tarball ships. The
+            // exception is a peer, which shares the bundled copy.
             if METHOD == BuilderMethod::Filter
                 && !builder.in_shipped_folder
                 && package_id != invalid_package_id
@@ -1789,7 +1834,7 @@ impl Tree {
                 return HoistDependencyResult::DependencyLoop; // 3
             }
 
-            // The copy a tarball ships stays in this folder, resolved or not.
+            // The copy that a tarball ships stays in this folder, whether or not it's resolved.
             if res_id == invalid_package_id && dep.behavior.is_bundled() {
                 return HoistDependencyResult::DependencyLoop; // 3
             }
@@ -1839,6 +1884,19 @@ impl Tree {
                 |row: &Dependency| !row.behavior.is_optional() && !row.behavior.is_bundled();
 
             if input_dep_range.contains(dep_id) {
+                // Only a bun.lockb from Bun 1.4 or older has a tag of a workspace's name as a
+                // registry version. Their hoisted linker linked the workspace.
+                if METHOD == BuilderMethod::Filter
+                    && dep.behavior.is_workspace()
+                    && dependency.version.tag == crate::dependency::VersionTag::DistTag
+                    && (dependency.version.dist_tag().name).eql(
+                        dependency.name,
+                        builder.buf(),
+                        builder.buf(),
+                    )
+                {
+                    return HoistDependencyResult::Hoisted; // 1
+                }
                 // A root dependency named like a workspace package takes `node_modules/<name>` from
                 // it, unless an earlier dependency group resolves to the workspace package.
                 if dep.behavior.is_workspace()
@@ -1880,7 +1938,8 @@ impl Tree {
             // or hoist if peer version allows it
 
             if dependency.behavior.is_peer() {
-                // A rule chose this peer's package: an alias of another package does not serve it.
+                // An override chose this peer's package, so an alias of a different package can't
+                // stand in for it.
                 let pkg_name_hashes = builder.lockfile().packages.items_name_hash();
                 if pkg_name_hashes[res_id as usize] != pkg_name_hashes[package_id as usize]
                     && builder.lockfile().is_overridden_dependency(input_dep_id)
@@ -1940,6 +1999,7 @@ impl Tree {
                     &*builder.resolutions,
                     input_dep_range,
                     package_id,
+                    dependency.behavior.is_peer(),
                 );
             }
             let id = Tree::hoist_dependency::<false, METHOD>(
@@ -1955,11 +2015,13 @@ impl Tree {
             }
         }
 
-        // Is the hoist root a bundle? In the installed tree it is one only for the rows it ships.
+        // Check whether the hoist root is a bundle. In the install tree, it's only one for the rows
+        // that it ships.
         if (METHOD == BuilderMethod::Resolvable || builder.in_shipped_folder)
             && this.id == hoist_root_id
         {
-            // a bundle's dependency stops here, but must not shadow what resolves through here.
+            // A bundle's dependency stops here, but it must not shadow a package that other
+            // dependencies resolve through this folder.
             if METHOD == BuilderMethod::Resolvable
                 && !AS_DEFINED
                 && Tree::hoist_root_resolves_elsewhere(
@@ -1988,14 +2050,16 @@ impl Tree {
         } // 2
     }
 
-    /// Does a `name_hash` edge that loading `bun.lock` would rebind to `hoist_root` go elsewhere?
+    /// Returns true if a dependency on `name_hash` that loading `bun.lock` would rebind to
+    /// `hoist_root` really resolves to a different package.
     fn hoist_root_resolves_elsewhere<const METHOD: BuilderMethod>(
         hoist_root: Id,
         package_id: PackageID,
         name_hash: PackageNameHash,
         builder: &Builder<'_, METHOD>,
     ) -> bool {
-        // an unbound optional peer saves no entry; once bound, `Lockfile::resolve` hoists again
+        // An unbound optional peer has no entry in bun.lock. Once it's bound, `Lockfile::resolve`
+        // hoists again.
         if package_id == invalid_package_id {
             return false;
         }
@@ -2023,7 +2087,8 @@ impl Tree {
             })
         };
 
-        // `tree_owner`'s regular dependencies placed in its own node_modules, `tree_id`
+        // Returns `tree_owner`'s regular dependencies that are placed in its own node_modules,
+        // `tree_id`.
         let nested_in = move |tree_id: Id, tree_owner: PackageID| {
             let own_deps = resolution_lists[tree_owner as usize];
             trees[tree_id as usize]
@@ -2053,7 +2118,8 @@ impl Tree {
             return false;
         }
 
-        // The nested packages' own trees hold more of them. A tree comes after its parent.
+        // The nested packages' own trees contain more of them. A tree always comes after its
+        // parent.
         let mut scope: Vec<(Id, PackageID)> = vec![(hoist_root, owner)];
         for (id, tree) in trees.iter().enumerate().skip(hoist_root as usize + 1) {
             let Some(&(_, parent_owner)) =
@@ -2095,7 +2161,8 @@ pub struct FillItem {
 pub(crate) type TreeFiller =
     bun_collections::LinearFifo<FillItem, bun_collections::linear_fifo::DynamicBuffer<FillItem>>;
 
-/// Each `(peer edge, package)` pair a placement of the owner resolves, nearest folder first.
+/// Returns every `(peer dependency, package)` pair that some placement of the owner resolves,
+/// nearest folder first.
 pub fn served_peers(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)> {
     use bun_collections::HashMap;
 

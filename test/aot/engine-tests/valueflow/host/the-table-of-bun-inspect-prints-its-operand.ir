@@ -1,0 +1,28 @@
+# Bun.inspect.table({ inner: { [Symbol.for("nodejs.util.inspect.custom")]: custom } })
+# The printer of console.table. It finds the method on what lies inside its operand. HostChoosesOperands (h7) goes up, and the operand does not escape.
+# RUN: valueflow-why timeline escaped=f1
+# CHECK: flag h7
+# CHECK: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Outer" fields=[{key="inner" declared={type=anything}}] ownFieldCount=1
+layout L1 name="Printed"
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L1
+    v1 = FinishObject v0
+    v2 = Builtin builtin=SymbolFor
+    v3 = String string="nodejs.util.inspect.custom"
+    v4 = Call v2, -, v3
+    v5 = NewClosure function=f1
+    ElemSet v1, v4, v5
+    v7 = NewObject -, v1 layout=L0 fields=[0]
+    v8 = FinishObject v7
+    v9 = Builtin builtin=BunInspectTable
+    v10 = Call v9, -, v8
+    Return v10
+}
+function f1 name="custom" module=m0 results=[{type=anything}] {
+    v0 = String string="shown"
+    Return v0
+}

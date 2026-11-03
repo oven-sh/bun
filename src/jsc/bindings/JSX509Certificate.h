@@ -69,7 +69,7 @@ public:
     // can differ from the queried host (wildcard SANs, case-insensitive matches).
     bool checkHost(JSGlobalObject*, std::span<const char>, uint32_t flags, WTF::String* peerName = nullptr);
     bool checkEmail(JSGlobalObject*, std::span<const char>, uint32_t flags);
-    bool checkIP(JSGlobalObject*, const char*);
+    bool checkIP(JSGlobalObject*, WTF::StringView);
     bool checkIssued(JSGlobalObject*, JSX509Certificate* issuer);
     bool checkPrivateKey(const KeyObject&);
     bool verify(const KeyObject&);

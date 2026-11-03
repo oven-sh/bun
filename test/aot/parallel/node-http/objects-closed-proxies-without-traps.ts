@@ -219,7 +219,12 @@ for (const target of ["request", "response", "socket"] as const) {
       watch("response", response, ["error", "end"]);
       response.on("close", () => (say("response close"), ended.resolve()));
       if (target === "response") response = close(response);
-      if (target === "socket") close(response.socket);
+      if (target === "socket") {
+        close(response.socket);
+        // Whether the server's FIN is read before the client's end() completes varies: a closed
+        // socket throws at its 'end'. Close it at the response's end, ahead of either.
+        response.on("end", () => response.socket?.destroy());
+      }
       attempt("reading", () => response.resume());
     });
     watch("request", request, ["close", "error", "finish"]);

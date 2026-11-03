@@ -593,7 +593,8 @@ const doConnect: (handle: SocketHandle | null, options: NativeConnectOptions) =>
   "doConnect",
 );
 // Bound by the first end(): the loop-turn hop that completes the shutdown request.
-let queueLoopTask: ((fn: (self: $Node.Socket) => void, self: $Node.Socket) => void) | undefined;
+type QueueLoopTask = (fn: typeof completeShutdownNT, self: $Node.Socket, callback: WriteCallback) => void;
+let queueLoopTask: QueueLoopTask | undefined;
 
 const addServerName = $bindgen("Listener.bind.ts", "addServerName") as (
   listener: ListenerHandle,
@@ -805,12 +806,12 @@ function endNT(self: $Node.Socket, socket: SocketHandle | null, callback: WriteC
   handle.shutdown();
   // Node completes the request from libuv's pending phase (afterShutdown), after this drain and its microtasks.
   self[kShutdownCallback] = callback;
-  (queueLoopTask ??= $newCppFunction("BunProcess.cpp", "jsFunctionQueueLoopTask", 2))(completeShutdownNT, self);
+  queueLoopTask ??= $newCppFunction("BunProcess.cpp", "jsFunctionQueueLoopTask", 3) as QueueLoopTask;
+  queueLoopTask(completeShutdownNT, self, callback);
 }
 // Runs the parked _final callback once: from the loop task, or from _destroy() when that comes first.
-function completeShutdownNT(self: $Node.Socket) {
-  const callback = self[kShutdownCallback];
-  if (callback === null) return;
+function completeShutdownNT(self: $Node.Socket, callback: WriteCallback) {
+  if (self[kShutdownCallback] !== callback) return;
   self[kShutdownCallback] = null;
   callback();
 }
@@ -2894,7 +2895,8 @@ Socket.prototype._destroy = function _destroy(this: $Node.Socket, err: Error | n
   this.connecting = false;
   const upgraded = this[kupgraded];
   // libuv cancels a queued shutdown request ahead of the close: complete it before a connect() reuses this socket.
-  completeShutdownNT(this);
+  const queuedShutdown = this[kShutdownCallback];
+  if (queuedShutdown) completeShutdownNT(this, queuedShutdown);
 
   // Close an fd adopted for synchronous writes (node closes the wrapping
   // libuv handle here). Leave stdio fds 0-2 open: process.stdout/stderr and

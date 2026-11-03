@@ -149,7 +149,7 @@ fn parse_part<'a>(template: Template<'a>, index: usize) -> Option<Part<'a>> {
     })
 }
 
-fn is_candidate<'a>(e: Expr<'a>, template: Template<'a>, f: &Formatter<'a>) -> bool {
+pub(crate) fn is_candidate<'a>(e: Expr<'a>, template: Template<'a>, f: &Formatter<'a>) -> bool {
     matches!(
         f.options().embedded_language_formatting,
         EmbeddedLanguageFormatting::Auto

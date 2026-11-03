@@ -2717,3 +2717,35 @@ describe("code in Markdown and MDX", () => {
     expectSame("a.mdx", [...blocks, ...frontMatter, ...texts], markdownOptions);
   });
 });
+
+describe("templates in another language", () => {
+  // A property whose value may be in another language isn't written as a line, whether or not the language's parser
+  // takes it.
+  const texts = [
+    '@Component({\n  selector: "a",\n  template: `<p>a</p>`,\n})\nclass A {}\n',
+    '@Component({\n  selector: "a",\n  template: `\n    <div><p>a</p>\n    <p [b]="c+1">{{d}}</p></div>\n  `,\n  styles: `a{color:red}`,\n})\nclass A {}\n',
+    // What the parser refuses stays as it is.
+    '@Component({\n  selector: "a",\n  template: `<div`,\n})\nclass A {}\n',
+    '@Component({\n  selector: "a",\n  template: `<p>{{</p>`,\n  styles: `a {`,\n})\nclass A {}\n',
+    '@Component({\n  selector: "a",\n  styles: [`a {`, `b{color:red}`],\n})\nclass A {}\n',
+    // Nothing in it.
+    '@Component({\n  selector: "a",\n  template: ``,\n  styles: `  `,\n})\nclass A {}\n',
+    // Not in a component.
+    "const a = {\n  template: `<p>a</p>`,\n  styles: `a{color:red}`,\n  b: `c`,\n  d: `\n  e\n`,\n};\n",
+    // By a comment.
+    "const a = {\n  b: /* HTML */ `<p>a</p>`,\n  c: /* HTML */ `<div`,\n  d: /* GraphQL */ `query{a}`,\n  e: /* GraphQL */ `query{`,\n  f: /* CSS */ `a{color:red}`,\n};\n",
+    // An escape that has no value.
+    '@Component({\n  selector: "a",\n  template: `<p>\\u{</p>`,\n})\nclass A {}\n',
+    '@Component({\n  selector: "a",\n  template: `<p>${a}</p>${b}`,\n})\nclass A {}\n',
+  ];
+  expectSame("a.ts", texts, [
+    [],
+    ["--embedded-language-formatting=off"],
+    ["--print-width=20"],
+    ["--print-width=1"],
+    ["--use-tabs"],
+    ["--tab-width=0"],
+    ["--end-of-line=crlf"],
+    ["--html-whitespace-sensitivity=ignore"],
+  ]);
+});

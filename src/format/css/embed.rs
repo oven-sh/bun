@@ -549,6 +549,17 @@ pub(crate) fn has_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
             || (!is_blank(template) && print_embed_css(template, f.options(), Action::Check)))
 }
 
+/// True if the template `e`, which has no tag, is formatted as another language unless that language's parser refuses
+/// it. Nothing is parsed to find that out.
+pub(crate) fn may_be_in_another_language<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    let ExprKind::Template(template) = e.kind() else {
+        return false;
+    };
+    is_candidate(e, template, f.options())
+        || crate::graphql::embed::is_candidate(e, template, f)
+        || crate::html::in_js::is_candidate(e, template, f)
+}
+
 /// oxc's `embed_hug`: oxfmt lays out a template with a language's tag in a call or after `=>` as if it were formatted
 /// as that language, even when it doesn't parse and is printed verbatim.
 pub(crate) fn tag_alone_decides_template_layout(f: &Formatter<'_>) -> bool {

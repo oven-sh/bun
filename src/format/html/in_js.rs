@@ -80,6 +80,11 @@ fn parser_of<'a>(e: Expr<'a>, template: Template<'a>, f: &Formatter<'a>) -> Opti
     .then_some(parser)
 }
 
+/// True if `embed` treats the template `e` as HTML.
+pub(crate) fn is_candidate<'a>(e: Expr<'a>, template: Template<'a>, f: &Formatter<'a>) -> bool {
+    parser_of(e, template, f).is_some()
+}
+
 /// Returns the text of `template` with placeholders. `counter` distinguishes them from the placeholders of an outer
 /// template whose text contains this one.
 fn text_with_placeholders(template: Template<'_>, counter: u32) -> Vec<u8> {

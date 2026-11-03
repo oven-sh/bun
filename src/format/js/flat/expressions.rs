@@ -1,11 +1,11 @@
 //! Expressions.
 
 use super::*;
+use crate::css::embed::may_be_in_another_language;
 use crate::js::parentheses::expression::is_name_that_may_need_parentheses;
 use crate::js::print::arrow_function_expression::GroupedCallArgumentLayout;
 use crate::js::print::call_like_expression::arguments::{
-    ArgumentsLayout, arguments_layout, has_embed_label,
-    hugged_function_keeps_parameters_on_one_line,
+    ArgumentsLayout, arguments_layout, hugged_function_keeps_parameters_on_one_line,
 };
 use crate::js::utils::object::{printed_key, should_preserve_quote};
 
@@ -1059,7 +1059,9 @@ impl<'a> Line<'_, 'a> {
                 let value = prop.value().ok_or(Refused)?;
                 match (value.tag(), is_last) {
                     // It can be in another language.
-                    (ExprTag::Template, _) if has_embed_label(value, self.f) => Err(Refused),
+                    (ExprTag::Template, _) if may_be_in_another_language(value, self.f) => {
+                        Err(Refused)
+                    }
                     (_, true) => self.last_assigned(value),
                     (_, false) => self.assigned(value),
                 }

@@ -2853,6 +2853,7 @@ it.if(isWindows)("named pipe connection in Bun.serve", async () => {
   const options = { unix, fetch: (req: Request) => new Response("hey " + new URL(req.url).pathname) };
   const first = Bun.serve(options);
   try {
+    expect({ href: first.url.href, pathname: first.url.pathname }).toEqual({ href: "unix:" + unix, pathname: unix });
     expect(await (await fetch("http://localhost/a", { unix })).text()).toBe("hey /a");
     expect(() => Bun.serve(options)).toThrow(expect.objectContaining({ code: "EADDRINUSE", syscall: "listen" }));
   } finally {

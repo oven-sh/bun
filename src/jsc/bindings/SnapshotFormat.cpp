@@ -224,8 +224,8 @@ extern "C" uint32_t SnapshotFormat__lengthOf(JSGlobalObject* globalObject, Encod
                                                                                                             : 0;
 }
 
-// One past the largest index that `value` has as an own property. An `arguments` object can claim any `length`.
-extern "C" uint32_t SnapshotFormat__endOfOwnIndexes(JSGlobalObject* globalObject, EncodedJSValue encodedValue)
+// One past the largest index that `value` has, on itself or on a prototype. An `arguments` object can claim any `length`.
+extern "C" uint32_t SnapshotFormat__endOfIndexes(JSGlobalObject* globalObject, EncodedJSValue encodedValue)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -233,7 +233,7 @@ extern "C" uint32_t SnapshotFormat__endOfOwnIndexes(JSGlobalObject* globalObject
     if (!object)
         return 0;
     PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-    object->methodTable()->getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Include);
+    object->getPropertyNames(globalObject, names, DontEnumPropertiesMode::Include);
     RETURN_IF_EXCEPTION(scope, 0);
     uint32_t end = 0;
     for (auto& name : names) {

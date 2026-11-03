@@ -1073,6 +1073,8 @@ describe("expect()", () => {
         }
         const self = ANY([1]);
         self.push(self);
+        const revoked = Proxy.revocable(function foo() {}, {});
+        revoked.revoke();
         expect({
           bigint: printed(new Proxy({ a: 1n }, {})),
           array: printed(new Proxy([1, 2n], {})),
@@ -1091,6 +1093,7 @@ describe("expect()", () => {
           "empty array": printed(new Proxy([], {})),
           function: printed(new Proxy(function foo() {}, {})),
           arrow: printed(new Proxy(() => {}, {})),
+          "revoked function": printed(revoked.proxy),
           class: printed(new Proxy(Foo, {})),
           "element of a component": printed({
             $$typeof: Symbol.for("react.element"),
@@ -1115,6 +1118,7 @@ describe("expect()", () => {
           "empty array": "[]",
           function: "[Function: foo]",
           arrow: "[Function]",
+          "revoked function": "[Function: foo]",
           class: "[class Foo]",
           "element of a component": "<Button />",
           Date: "Date {}",
@@ -1340,6 +1344,11 @@ describe("expect()", () => {
         expect(printed(new Function("arguments.length = 2 ** 32 - 1; return arguments")(1n, 2))).toBe(
           "Arguments [\n  1n,\n  2,\n]",
         );
+        (function () {
+          Object.setPrototypeOf(arguments, { 1: "inherited" });
+          ANY(arguments).length = 2 ** 32 - 1;
+          expect(printed(arguments)).toBe('Arguments [\n  1,\n  "inherited",\n]');
+        })(1);
         // A function that is not in strict mode has another kind of arguments object, and a third kind with a closure.
         expect(printed(new Function("return arguments")(1n, 2))).toBe("Arguments [\n  1n,\n  2,\n]");
         expect(printed(new Function("a", "(() => a)(); return arguments")(1n, 2))).toBe("Arguments [\n  1n,\n  2,\n]");

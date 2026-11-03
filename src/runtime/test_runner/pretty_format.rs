@@ -3191,18 +3191,18 @@ fn length_of(global: &JSGlobalObject, value: JSValue) -> JsResult<u32> {
     jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__lengthOf(global, value))
 }
 
-/// The `length` of a Proxy or an `arguments` object. An `arguments` object can claim any `length`, so its items end at its last own index.
+/// The `length` of a Proxy or an `arguments` object. An `arguments` object can claim any `length`, so its items end at the last index that it has.
 #[cold]
 #[inline(never)]
 fn length_of_array_like(global: &JSGlobalObject, value: JSValue, js_type: JSType) -> JsResult<u32> {
     unsafe extern "C" {
-        safe fn SnapshotFormat__endOfOwnIndexes(global: &JSGlobalObject, value: JSValue) -> u32;
+        safe fn SnapshotFormat__endOfIndexes(global: &JSGlobalObject, value: JSValue) -> u32;
     }
     let length = length_of(global, value)?;
     if !js_type.is_arguments() || length == 0 || has_index(global, value, length - 1)? {
         return Ok(length);
     }
-    let end = jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__endOfOwnIndexes(global, value))?;
+    let end = jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__endOfIndexes(global, value))?;
     Ok(length.min(end))
 }
 

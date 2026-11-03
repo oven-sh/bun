@@ -983,7 +983,8 @@ describe.concurrent("what is left to write to the stdin of a child that exited d
   const fixture = `
     const [role, how] = process.argv.slice(2);
     const child = [process.execPath, __filename, "child"];
-    const payload = Buffer.alloc(500_000, "a");
+    // More than a pipe holds: on macOS that is 512 KiB on either side.
+    const payload = Buffer.alloc(4 * 1024 * 1024, "a");
     if (role === "grandchild") {
       Bun.connect({
         hostname: "127.0.0.1",

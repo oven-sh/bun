@@ -548,41 +548,10 @@ impl<'a> Context<'a> {
         parsed.selectors.clear();
         parsed.values.clear();
         let raw = &tree.nodes[id as usize];
-        let mut node = CssNode {
-            kind: raw.kind,
-            start: raw.start as usize,
-            end: 0,
-            has_block: raw.has_block,
-            before: self.of(raw.before),
-            between: Cow::Borrowed(self.of(raw.between)),
-            after: self.of(raw.after),
-            after_name: self.of(raw.after_name),
-            semicolon: raw.semicolon,
-            selector: None,
-            raw_selector: Cow::Borrowed(b""),
-            is_scss_nested_property: false,
-            is_nested: raw.is_nested,
-            prop: Cow::Borrowed(self.of(raw.prop)),
-            value: Value::None,
-            important: raw.important,
-            raw_important: raw.raw_important.map(|it| self.of(it)),
-            scss_default: false,
-            raw_scss_default: None,
-            scss_global: false,
-            raw_scss_global: None,
-            name: self.of(raw.name),
-            params: Params::None,
-            raw_params: Cow::Borrowed(b""),
-            custom_selector: None,
-            line_comment: b"",
-            extend: raw.extend,
-            mixin: raw.mixin,
-            function: raw.function,
-            variable: raw.variable,
-        };
+        let mut node = self.unparsed(raw);
 
         match raw.kind {
-            Kind::Root | Kind::Comment => {}
+            Kind::Root | Kind::Comment | Kind::Run => {}
             Kind::Rule => {
                 node.raw_selector =
                     match bun_core::strings::trim_js_whitespace(&node.between).is_empty() {
@@ -639,6 +608,51 @@ impl<'a> Context<'a> {
         }
         .min(text_len);
         Ok(node)
+    }
+
+    /// The rule or at-rule `raw`, whose head the parser knows how to print, as far as the nodes in its block ask about it.
+    pub(crate) fn convert_known(&self, raw: &postcss::Node) -> CssNode<'a> {
+        let mut node = self.unparsed(raw);
+        node.raw_selector = Cow::Borrowed(self.of(raw.selector));
+        node.raw_params = Cow::Borrowed(self.of(raw.params));
+        node.end = raw.end.map_or(0, |end| end as usize);
+        node
+    }
+
+    /// What `postcss` has found out about `raw`.
+    fn unparsed(&self, raw: &postcss::Node) -> CssNode<'a> {
+        CssNode {
+            kind: raw.kind,
+            start: raw.start as usize,
+            end: 0,
+            has_block: raw.has_block,
+            before: self.of(raw.before),
+            between: Cow::Borrowed(self.of(raw.between)),
+            after: self.of(raw.after),
+            after_name: self.of(raw.after_name),
+            semicolon: raw.semicolon,
+            selector: None,
+            raw_selector: Cow::Borrowed(b""),
+            is_scss_nested_property: false,
+            is_nested: raw.is_nested,
+            prop: Cow::Borrowed(self.of(raw.prop)),
+            value: Value::None,
+            important: raw.important,
+            raw_important: raw.raw_important.map(|it| self.of(it)),
+            scss_default: false,
+            raw_scss_default: None,
+            scss_global: false,
+            raw_scss_global: None,
+            name: self.of(raw.name),
+            params: Params::None,
+            raw_params: Cow::Borrowed(b""),
+            custom_selector: None,
+            line_comment: b"",
+            extend: raw.extend,
+            mixin: raw.mixin,
+            function: raw.function,
+            variable: raw.variable,
+        }
     }
 
     fn convert_declaration(

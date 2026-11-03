@@ -563,3 +563,121 @@ describe("MDX", () => {
     ["--bracket-same-line"],
   ]);
 });
+
+describe.skipIf(!hasFlag)("style sheets", () => {
+  // Each of these was printed in another way by a short cut once, or is next to something that was.
+  const cases: Record<string, string> = {
+    "custom-property-with-brace.css": "--a:e{",
+    "custom-property-with-brace.less": "--@{b}@{a}:w{",
+    "grid.css":
+      "a {\n  grid-template-columns: min-content auto min-content min-content auto auto min-content;\n  grid: a b;\n}\n",
+    "sign-and-interpolation.scss": "e{y: -#{a},n}\n$A: -#{a},o;\nf{y: -a,n}\n",
+    "string-of-dots.scss": 'm:2 * "...",$a;\nn: 2 + "~";\no: "~" a;\n',
+    "forward.scss": "@forward 'e' as y;\n",
+    "forward-star.scss": "@forward 'e' as y-* show a, b;\n@use 'a' as *;\n@use 'b' as c;\n",
+    "dash-after-interpolation.scss":
+      "a{@return ( //\n'': (pget($deps,'mlarge-size') #{'/'}- map.get('label-lys-tlabel-large-font')));}\n",
+    "comment-with-quote.less": '//\'\n\nl{o{a:b}}\n//*\n\nr{a:b}\n// "c"\na{b:c}\n',
+    "empty-parentheses.scss": "@use ();\n@import ();\na{@use\n();}\n@include a();\n@if () {\n}\n",
+    "variable-variable.less": "a:@@a,p;\n@A: l,@@a;\nb: @@a;\nc: -@a;\nd: @a @B @c;\n",
+    "important.scss": "e:m,x != important;\nf: a ! important;\ng: a !important;\nh: a!important;\ni: important;\n",
+    "next-to-it.scss":
+      "a {\n  b: c; /* d */\n  e: f; // g\n  h: i;;\n  j {\n  } /* k */\n  @if $l {\n  } @else {\n    m: n;\n  }\n  o: p\n}\n",
+    "ignore.scss":
+      "a {\n  // prettier-ignore\n  b:   c;\n  /* prettier-ignore */\n  d   {e:f}\n  /*\n prettier-ignore */\n  g:   h;\n  i:   j;\n}\n",
+    "empty-lines.css": "a {\n\n  b: c;\n\n\n  d: e;\n  \n  f {\n\n  }\n\n}\n\n\ng {\n}\n",
+    "white-space.css": "a {\r  b: c;\f  d: e;\n\tf: g;\n  h: i ;\n  j : k;\n  l:m;n:o\n}\n",
+    "map.scss":
+      "$a: (\n  // b\n  c: d,\n\n  e: f(g, h),\n  i: (j: k, l: m),\n  n: o p q // r\n);\n@return (a: b, c: d);\n@include e((f: g));\n$h: (i, j);\n",
+    "long.scss":
+      "a {\n  b: some-function($some-argument, $another-argument, some-other-function($yet-another-argument, 10px));\n" +
+      "  @include some-mixin($some-argument, $another-argument, $yet-another-argument, $one-more-argument);\n" +
+      "  transition: opacity 0.3s ease, transform 0.3s ease;\n  font-family: a, b, c;\n  will-change: a, -b;\n}\n",
+    "selectors.scss":
+      "a,b{}\n.c > .d+.e ~ f{}\n&-g, &__h:hover::before{}\n[i='j'] &{}\n.k:not(.l, .m):nth-child(2n + 1){}\n#{$n}-o .p-#{$q}{}\n%r{}\n" +
+      ".some-long-selector .another-long-selector > .yet-another-long-selector ~ .one-more-long-selector:hover{}\n",
+    "selectors.less":
+      ".@{a}-b, .c-@{d}{}\n.e() {}\n.f(@g, 1px) {}\n& when (@h = i) {}\n.j when (default()) and (@k > 1) {}\n.l;\n.m();\n.n(@o, 'p');\n.q(@r; @s);\n",
+    "keyframes.css":
+      "@keyframes a {\n  from {\n  }\n  50%, 75.5% {\n  }\n  TO {\n  }\n}\n@media (min-width: 100px) and (max-width: 200px), print {\n  A {\n  }\n}\n",
+    "at-rules-by-name.scss":
+      "@nest a {\n  b, c {\n  }\n}\n@utility a-* {\n  b: c * d;\n}\n@supports not (a: b) {\n  c: not(d);\n}\n@font-face {\n  a: b;\n}\n@charset 'a';\n",
+    "control-directives.scss":
+      "@if $a == b and not $c {\n  d: some-long-name another-long-name yet-another-long-name one-more-long-name and-one-more;\n} @else if ($e) {\n} @else {\n}\n" +
+      "@each $f, $g in $h {\n}\n@for $i from 1 through 3 {\n}\n@while $j > 0 {\n}\n",
+    "nested-properties.scss":
+      "a {\n  font: {\n    family: b, c d;\n    @include e(f g);\n  }\n  font: bold {\n    size: 1px;\n  }\n}\n",
+    "urls.scss":
+      "a {\n  b: url(c.png);\n  d: url('e f.png');\n  g: url(http://h/i);\n  j: k(url(http://l));\n  url: m;\n  n: url;\n  o: (p);\n  q: urls(r);\n}\n",
+    "numbers.css":
+      "a {\n  b: .5em 1.0px 1.50% 10PX 1e3 1E3 +1 -1 -.5 1hz 1q 007 1.;\n  c: #FFF #abc #ABCDEF;\n  d: INHERIT Initial auto;\n}\n",
+    "strings.css": "a {\n  b: 'c' \"d\" 'e\"f' \"g'h\";\n  i: 'j';\n  k: \"l'm\" 'n';\n  --o: 'p' \"q\";\n}\n",
+    "not-ascii.scss": "a {\n  b: 'é';\n  c: é;\n  // é  \n  /* 日本 */\n  d: e; \n  f: g;\n}\n.é {\n}\n",
+    "bom.css": "﻿a {\n  b: c;\n}\n",
+    "crlf.scss": "a {\r\n  b: c;\r\n\r\n  $d: (\r\n    e: f,\r\n  );\r\n  /* g\r\n   h */\r\n}\r\n",
+    "no-final-newline.less": "@a: b;\n.c {\n  d: @a\n}",
+    "guards.less":
+      "when (@b){}\nwhen~(){}\n.a when (@b) and (@c) {}\n.some-long-name when (@some-long-variable = some-long-value) {}\n",
+    "slash-at-the-end.css": "a: b;\n/",
+    "first-word.scss":
+      "a{@include n,t ();\n@include n, t ();\n@include n ();\n@include n (o);\n@if ($a) and ($b) {}\n@if $a,b ($c) {}\n}\n",
+    "ignore-and-quote.less": "//prettier-ignore'\nf:   g;\n// prettier-ignore *\nh:   i;\n",
+    "evaluated.less":
+      "r:~`o('',) `;\n@a: color(~`colorPalette('@{b}', 1) `);\n@c: mix(color(~`d(\"@{e}\", 2) `), @f, 10%);\n",
+    "keys-with-a-sign.scss":
+      "$e:(-4: x);\n$f: (0: a, -1: b);\n@function g() {\n  @return (t((-3: 4)));\n  @return ();\n}\n",
+    "sign-and-variable.less": "a{t:-@i,h}\nb{t:-@i}\n",
+    "global.scss": "$a: b !global;\n$c: (d: e) !global;\n$f: g !default !global;\nh: i !global;\n",
+    "parentheses.less":
+      "a {\n  padding: 0 (@b / 2);\n  margin: -(@c / 2);\n  top: (@d + 1) * 2;\n}\n@e: 1px + (@f / 2);\n",
+    "standing.scss":
+      '@use "a";\n@use "b" as c;\n\n// d\n$e: f;\n\n.g {\n  h: i;\n\n  /* j */\n  &-k,\n  .l > m:hover {\n    n: o(p, 1px) q;\n' +
+      "    @include r;\n    @include s($t) {\n      u: v;\n    }\n  }\n  .#{$w}-x {\n  }\n\n  @media (min-width: 1px) {\n    y: z;\n  }\n" +
+      "  @if $a {\n    b: c;\n  } @else {\n    d: e;\n  }\n}\n",
+    "nearly-standing.scss":
+      ".a {\n\n  b: c;\n   d: e;\n  f: g; // h\n  i: j;;\n  .k {\n    l: m;\n\n  }\n  .n {\n    o: p;\n  } /* q */\n  .r {\n    s: t\n  }\n" +
+      "  .u {\n    // prettier-ignore\n    v:   w;\n  }\n" +
+      "  x: some-long-name another-long-name yet-another-long-name one-more-long-name and-another-one;\n  .y  {\n  }\n  // z \n}\n",
+    "standing.less":
+      "@a: b;\n@C: @a 1px;\n\n// d\n.e {\n  .f;\n  .g();\n  .h(@a, 1px);\n  i: @a;\n  &-j .@{k}-l {\n    m: n;\n  }\n}\n",
+    "unclosed.css": "a {\n  b: c;\n  d {\n    e: f;\n",
+    "closed-twice.css": "a {\n  b: c;\n}\n}\n",
+    "empty.css": "",
+    "blank.scss": " \n\t\n",
+  };
+  const sets = [
+    [],
+    ["--print-width=40"],
+    ["--print-width=1"],
+    ["--print-width=100000"],
+    ["--tab-width=0"],
+    ["--tab-width=5000", "--print-width=20000"],
+    ["--use-tabs", "--tab-width=3"],
+    ["--single-quote", "--trailing-comma=none"],
+    ["--end-of-line=crlf"],
+    ["--end-of-line=cr", "--print-width=30"],
+  ];
+
+  test.concurrent.each(sets.map(set => set.join(" ")))("with and without them: %s", async set => {
+    const options = set.split(" ").filter(Boolean);
+    const run = async (flags: string[]) => {
+      const dir = tempDir("fmt-short-cuts", cases);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fmt", "--write", "--no-config", "--no-editorconfig", "--threads=1", ...options, ...flags, "."],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const files = Object.fromEntries(
+        Object.keys(cases).map(name => [name, readFileSync(join(String(dir), name), "latin1")]),
+      );
+      dir[Symbol.dispose]();
+      const withoutTime = (text: string) => text.replace(/\[[\d.]+m?s\]/g, "");
+      return { files, stdout: withoutTime(stdout), stderr: withoutTime(stderr), exitCode };
+    };
+    const [short, long] = await Promise.all([run([]), run(["--no-short-cuts"])]);
+    expect(short).toEqual(long);
+  });
+});

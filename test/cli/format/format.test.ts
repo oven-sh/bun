@@ -7272,6 +7272,12 @@ try {
           "¦",
         ),
         ...'@charset "a";¦<!--¦-->¦a{b:c!important;}\n¦/* prettier-ignore */\na{b:c}\n¦---\n'.split("¦"),
+        ..."a{/* b */}¦a{/* b */c:d}¦a {\n¦a {\n  b: c;\n¦a,\n¦a:b\n¦a: b\n¦a: 'b;\n¦a: f(b,\n¦a: (b,\n¦/* a */\n".split(
+          "¦",
+        ),
+        ...'a: b; /* c */\n¦:is(a,\n¦a: url(b;¦a[b="c\n¦a {\n  b: c;\n}\n¦a {\n  b: c;\n} /* d */\n¦@media (a: b) {\n'.split(
+          "¦",
+        ),
       ],
     ],
     [
@@ -7288,6 +7294,12 @@ try {
           "¦",
         ),
         ...'@error "a"+¦a{@extend b;}\n¦...¦@media #{$a} and '.split("¦"),
+        ..."&-a {\n¦a {\n  // b\n¦a{// b\n}¦@include a($b,\n¦$a: (0: b, -1: c,\n¦@return (a: b,\n¦.a-#{$b}-c ¦@if a {\n".split(
+          "¦",
+        ),
+        ...'.a-#{$b\n¦a: #{b\n¦a: b +\n¦@use "a\n¦@forward "a" as b-* ¦$a: b, // c\n¦@if a {\n} @else {\n}\n'.split(
+          "¦",
+        ),
       ],
     ],
     [
@@ -7303,6 +7315,10 @@ try {
         ..."@media @a{¦.m(@a;@b){¦@r:{a:b};\n¦@r();\n¦.a{b:@c+¦.a{b:(@c*¦!important¦.a !important;\n¦// '\n¦// \"\n".split(
           "¦",
         ),
+        ...".a() {\n¦.a(@b;\n¦.a(@b,\n¦.a when (b) and ¦.a when (b\n¦@a: f(~`b('c', 1) `,\n¦.@{a}-b,\n¦.@{a\n¦// (a\n".split(
+          "¦",
+        ),
+        ..."//prettier-ignore'\n¦@a: (@b +\n¦@a: @b\n¦a{/* b */}¦a{// b\n}".split("¦"),
       ],
     ],
     [
@@ -7375,17 +7391,24 @@ try {
         Buffer.alloc(Buffer.byteLength(unit) * Math.floor(times), unit).toString();
       const texts = units.map(unit => repeated(unit, count));
       const length = Math.ceil(texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length);
-      for (const configuration of [{}, { ".oxfmtrc.json": "{}\n" }]) {
-        const run = (text: (index: number) => string) =>
-          format(
-            {
-              ...configuration,
-              ...Object.fromEntries(texts.map((_, index) => [`${index}.${extension}`, text(index)])),
-            },
-            ["--check", "--log-level", "silent"],
-          );
-        const shapes = await run(index => texts[index]);
-        const plain = await run(() => repeated(ordinary, length / ordinary.length));
+      const configurations = [{}, { ".oxfmtrc.json": "{}\n" }];
+      const run = (configuration: Record<string, string>, text: (index: number) => string) =>
+        format(
+          {
+            ...configuration,
+            ...Object.fromEntries(texts.map((_, index) => [`${index}.${extension}`, text(index)])),
+          },
+          ["--check", "--log-level", "silent"],
+        );
+      // Ordinary text takes short cuts that most of the units can't take, and that one of the flavors may not have. The
+      // units are compared with the long way.
+      let plain = { cpu: 0 };
+      for (const configuration of configurations) {
+        const result = await run(configuration, () => repeated(ordinary, length / ordinary.length));
+        if (result.cpu > plain.cpu) plain = result;
+      }
+      for (const configuration of configurations) {
+        const shapes = await run(configuration, index => texts[index]);
         expect(slowdown(shapes, plain)).toBeLessThan(4);
       }
     },

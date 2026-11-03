@@ -12,6 +12,7 @@ mod misc;
 mod parse;
 mod postcss;
 mod printer;
+mod quick;
 mod selector_parser;
 mod sink;
 mod value_groups;
@@ -19,6 +20,7 @@ mod value_parser;
 
 use self::doc::Doc;
 use self::memo::Memo;
+use self::quick::Quick;
 use self::sink::Sink;
 use crate::options::{EmbeddedLanguageFormatting, QuoteStyle, TrailingCommas};
 use crate::pragma::BeforeParsing;
@@ -71,6 +73,9 @@ pub fn parser_for_path(path: &[u8]) -> Option<Parser> {
 #[derive(Default)]
 pub struct Scratch {
     memo: Memo,
+    quick: Quick,
+    buffers: postcss::Buffers,
+    parsed: parse::Parsed,
 }
 
 /// Prettier's `replaceQuotesInInlineComments`. Returns the inline comments whose quotes and asterisks must be replaced
@@ -239,14 +244,22 @@ fn with_semicolons_after_each(text: &[u8]) -> Cow<'_, [u8]> {
     Cow::Owned(result)
 }
 
-/// Parses `text`, whose line breaks must be `\n`, and writes it to `sink`.
+/// Parses `text`, whose line breaks must be `\n`, and writes it to `sink`. `is_quick` is for a sink that writes to the
+/// output: statements are printed while they're read. If that fails, `Quick::is_refused` is set.
 fn parse_and_print<'o>(
     text: &[u8],
     parser: Parser,
     options: &FormatOptions,
     mut sink: Sink<'o>,
-    memo: &'o mut Memo,
+    scratch: &'o mut Scratch,
+    is_quick: bool,
 ) -> Result<Sink<'o>, FormatError> {
+    let Scratch {
+        memo,
+        quick,
+        buffers,
+        parsed,
+    } = scratch;
     let with_semicolons = match parser == Parser::Less && options.flavor.is_oxfmt() {
         true => with_semicolons_after_each(text),
         false => Cow::Borrowed(text),
@@ -281,7 +294,22 @@ fn parse_and_print<'o>(
         true => postcss::Placeholder::Statement,
         false => postcss::Placeholder::AtRule,
     };
-    let tree = postcss::parse(&blanked, parser, placeholder).map_err(FormatError::SyntaxErrorAt)?;
+    // What `quick` knows is what Prettier prints.
+    let is_quick = is_quick
+        && !options.no_short_cuts
+        && !options.flavor.is_oxfmt()
+        && front_matter.is_none()
+        && options.tailwind.is_none();
+    quick.start(options);
+    let tree = postcss::parse(
+        &blanked,
+        text,
+        parser,
+        placeholder,
+        (quick, is_quick),
+        buffers,
+    )
+    .map_err(FormatError::SyntaxErrorAt)?;
     if let Some(front_matter) = front_matter {
         let has_nodes = tree.nodes[0].first_child != 0;
         // Prettier's `printEmbedFrontMatter`.
@@ -364,16 +392,20 @@ fn parse_and_print<'o>(
         failure: None,
         sink,
         memo,
+        has_no_short_cuts: options.no_short_cuts,
+        has_refused_run: false,
         is_memoizable: false,
     };
-    printer.print_root(&tree, &mut parse::Parsed::default());
-    if printer.context.stack.ran_out() {
-        return Err(FormatError::NestedTooDeeply);
-    }
-    match printer.failure {
+    printer.print_root(&tree, parsed);
+    quick.is_refused = printer.has_refused_run;
+    let result = match printer.failure {
+        _ if printer.context.stack.ran_out() => Err(FormatError::NestedTooDeeply),
+        _ if printer.has_refused_run => Err(FormatError::InvalidDocument),
         Some(error) => Err(FormatError::SyntaxErrorAt(error)),
         None => printer.sink.result().map(|()| printer.sink),
-    }
+    };
+    buffers.recycle(tree);
+    result
 }
 
 /// Prettier's `textToDoc`: returns the document for a style sheet embedded in another language. `text`'s line breaks
@@ -383,8 +415,9 @@ pub(crate) fn document(
     parser: Parser,
     options: &FormatOptions,
 ) -> Result<Doc<'static>, FormatError> {
-    let mut memo = Memo::default();
-    let sink = parse_and_print(text, parser, options, Sink::to_document(), &mut memo)?;
+    let mut scratch = Scratch::default();
+    let sink = Sink::to_document();
+    let sink = parse_and_print(text, parser, options, sink, &mut scratch, false)?;
     doc::text_to_doc(sink.into_document()?)
 }
 
@@ -437,15 +470,9 @@ pub fn format(
         out.extend_from_slice(BOM);
     }
     if is_range {
-        parse_and_print(
-            text,
-            parser,
-            options,
-            Sink::to_document(),
-            &mut scratch.memo,
-        )
-        .inspect_err(|_| out.truncate(start))
-        .map_err(in_original)?;
+        parse_and_print(text, parser, options, Sink::to_document(), scratch, false)
+            .inspect_err(|_| out.truncate(start))
+            .map_err(in_original)?;
         return doc::print(
             doc::replace_end_of_line_with_literal_lines(Cow::Borrowed(text)),
             options,
@@ -453,9 +480,15 @@ pub fn format(
             out,
         );
     }
+    out.reserve(text.len() + text.len() / 8 + 16);
     let is_in_html = options.in_html.root != crate::options::HtmlRoot::None;
     let sink = Sink::to_output(doc::Printer::new(options, original, out), is_in_html);
-    let result = parse_and_print(text, parser, options, sink, &mut scratch.memo).map(drop);
+    let mut result = parse_and_print(text, parser, options, sink, scratch, true).map(drop);
+    if result.is_err() && scratch.quick.is_refused {
+        out.truncate(start + if has_bom { BOM.len() } else { 0 });
+        let sink = Sink::to_output(doc::Printer::new(options, original, out), is_in_html);
+        result = parse_and_print(text, parser, options, sink, scratch, false).map(drop);
+    }
     result
         .inspect_err(|_| out.truncate(start))
         .map_err(in_original)

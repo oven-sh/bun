@@ -331,13 +331,14 @@ fn print_embed_css<'a>(
         text.extend_from_slice(template.raw(index));
     }
     let text = bun_core::strings::crlf_as_lf(&text);
-    let mut memo = Default::default();
+    let mut scratch = Default::default();
     let Ok(sink) = super::parse_and_print(
         &text,
         super::Parser::Scss,
         options,
         Sink::to_document(),
-        &mut memo,
+        &mut scratch,
+        false,
     ) else {
         return false;
     };

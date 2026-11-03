@@ -10,6 +10,7 @@ use super::misc::{
 };
 use super::parse::{Context, CssNode, Params, Parsed, Value};
 use super::postcss::{Kind, Node, NodeId, Tree};
+use super::quick::{Printed, Shape};
 use super::selector_parser::{Namespace, SelectorId, SelectorKind, Selectors};
 use super::sink::Sink;
 use super::value_parser::{Before, ValueId, ValueKind, ValueRef, Values};
@@ -124,6 +125,10 @@ pub(crate) struct Printer<'a, 'o> {
     pub(crate) failure: Option<SyntaxError>,
     pub(crate) sink: Sink<'o>,
     pub(crate) memo: &'o mut Memo,
+    /// `FormatOptions::no_short_cuts`
+    pub(crate) has_no_short_cuts: bool,
+    /// A `Kind::Run` is somewhere where its text isn't what's printed, so the output is unusable.
+    pub(crate) has_refused_run: bool,
     /// True while the current declaration's output depends only on its text and on what `memo_context` covers.
     pub(crate) is_memoizable: bool,
 }
@@ -411,7 +416,7 @@ impl<'a> Printer<'a, '_> {
     fn has_no_block(&self, raw: &Node) -> bool {
         match raw.kind {
             Kind::Root | Kind::Rule => false,
-            Kind::Comment => true,
+            Kind::Comment | Kind::Run => true,
             // A custom property set looks like a declaration.
             Kind::Decl => {
                 !raw.has_block
@@ -427,7 +432,10 @@ impl<'a> Printer<'a, '_> {
     /// Returns the `Memo::context` for the declarations in `scope`'s block, or `None` if they can't be cached.
     fn memo_context(&mut self, scope: &Scope<'_, 'a>) -> Option<u32> {
         let parent = scope.node;
-        if matches!(parent.value, Value::Rule(_)) || !self.context.is_original_text {
+        if matches!(parent.value, Value::Rule(_))
+            || !self.context.is_original_text
+            || self.has_no_short_cuts
+        {
             return None;
         }
         let (selectors, values) = Default::default();
@@ -541,6 +549,15 @@ impl<'a> Printer<'a, '_> {
             };
             if id == end {
                 write_after(self);
+            } else if let raw = &tree.nodes[id as usize]
+                && raw.printed.shape == Shape::Lines
+                && raw.next_sibling == end
+                && (end != 0 || after.is_empty())
+                && !self.is_ignore_comment(previous)
+                && (self.sink).printed_lines(self.context.of(raw.printed.text), raw.printed.depth)
+            {
+            } else if tree.nodes[id as usize].kind == Kind::Run {
+                self.has_refused_run = true;
             } else {
                 let raw = &tree.nodes[id as usize];
                 // If the unit's closure runs twice, the node's parse results can be reused, as long as nothing else on
@@ -561,9 +578,12 @@ impl<'a> Printer<'a, '_> {
                         }
                     )
                 });
-                let is_too_long = raw.end.is_some_and(|end| {
-                    !self.sink.has_room_for((end - raw.start.min(end)) as usize)
-                });
+                let len = match raw.printed.shape {
+                    Shape::Word => Some(0),
+                    Shape::Line => Some(raw.printed.text.end - raw.printed.text.start),
+                    Shape::Unknown | Shape::Lines => raw.end.map(|end| end - raw.start.min(end)),
+                };
+                let is_too_long = len.is_some_and(|len| !self.sink.has_room_for(len as usize));
                 self.unit(is_too_long, |printer| {
                     let (mut id, mut previous) = (id, previous);
                     while id != end {
@@ -636,14 +656,7 @@ impl<'a> Printer<'a, '_> {
         let (text, tree) = (self.original_text(), parent.tree);
         let raw = &tree.nodes[id as usize];
         let start = (raw.start as usize).min(text.len());
-        if previous.is_some_and(|it| {
-            it.kind == Kind::Comment
-                && match bun_core::strings::trim_js_whitespace(self.context.of(it.text)) {
-                    b"prettier-ignore" => true,
-                    b"oxfmt-ignore" => self.is_oxfmt,
-                    _ => false,
-                }
-        }) {
+        if self.is_ignore_comment(previous) {
             let end = self.context.end_of(tree, id, parsed);
             return self.sink.text(text.get(start..end).unwrap_or_default());
         }
@@ -656,6 +669,9 @@ impl<'a> Printer<'a, '_> {
             } else {
                 comment
             });
+        }
+        if raw.printed.shape != Shape::Unknown && self.print_known(parent, raw, parsed) {
+            return;
         }
         let position = memo_context
             .zip(self.memo_text(raw))
@@ -681,7 +697,7 @@ impl<'a> Printer<'a, '_> {
         };
         self.is_memoizable = true;
         match node.kind {
-            Kind::Root | Kind::Comment => {}
+            Kind::Root | Kind::Comment | Kind::Run => {}
             Kind::Rule => self.print_rule(&scope, raw, parsed),
             Kind::Decl => self.print_declaration(&scope, raw, parsed),
             Kind::AtRule => self.print_at_rule(&scope, raw, parsed),
@@ -693,6 +709,48 @@ impl<'a> Printer<'a, '_> {
         {
             self.memo.insert(context, text, output, has_group);
         }
+    }
+
+    /// True if `node` is a comment that says to leave the next node as it is.
+    fn is_ignore_comment(&self, node: Option<&Node>) -> bool {
+        node.is_some_and(|it| {
+            it.kind == Kind::Comment
+                && match bun_core::strings::trim_js_whitespace(self.context.of(it.text)) {
+                    b"prettier-ignore" => true,
+                    b"oxfmt-ignore" => self.is_oxfmt,
+                    _ => false,
+                }
+        })
+    }
+
+    /// Writes what the parser knows to be printed for `raw`, a child of `parent`, and then its block, if this is a place
+    /// where that's what is printed. Returns false, and writes nothing, if it isn't.
+    fn print_known(&mut self, parent: &Scope<'_, 'a>, raw: &Node, parsed: &mut Parsed) -> bool {
+        let Printed { shape, text, depth } = raw.printed;
+        let text = self.context.of(text);
+        if !raw.has_block {
+            // It's part of a unit, which is measured at its end.
+            let is_written = shape != Shape::Lines && self.sink.position().is_some();
+            if is_written {
+                self.sink.replay_output(text, shape == Shape::Line);
+            }
+            return is_written;
+        }
+        let is_written = match shape {
+            Shape::Unknown => false,
+            Shape::Word => self.sink.printed_line(text, false),
+            Shape::Line => self.sink.printed_line(text, true),
+            Shape::Lines => self.sink.printed_lines(text, depth),
+        };
+        if is_written {
+            let scope = Scope {
+                node: &self.context.convert_known(raw),
+                parent: Some(parent),
+                tree: parent.tree,
+            };
+            self.print_block(&scope, raw, raw.kind == Kind::Rule, parsed);
+        }
+        is_written
     }
 
     /// Prints `block`'s children, one per line, and the `}`. The `{` is already printed.

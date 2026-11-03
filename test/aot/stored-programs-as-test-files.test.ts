@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { cpSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { run } from "./harness/run";
@@ -46,7 +46,14 @@ const programs = [
   "commonjs/a-store-into-module-parent-in-front-of-the-first-read",
   "commonjs/a-module-object-and-then-a-text-stored-into-module-parent",
   "commonjs/the-parent-of-a-child-is-stored-by-the-file-that-required-it",
-];
+].filter(program => !isDebug || program !== "commonjs/first-required-at-the-end-of-the-stack");
+// Plain Bun of a debug build cannot say what that program prints, under `bun <file>` either: its later require() of a file that it first required
+// at the end of the stack answers with empty exports. The same Bun under --aot answers with the exports of the file, as plain Bun of a release
+// build does, with and without AddressSanitizer.
+if (isDebug)
+  console.error(
+    "SKIPPED: test/aot/stored-programs-as-test-files.test.ts: commonjs/first-required-at-the-end-of-the-stack: plain Bun of a debug build answers its later require() with empty exports, so it cannot say what the program prints",
+  );
 
 const stored = join(import.meta.dir, "parallel");
 
@@ -65,8 +72,15 @@ function copyAsTestFile(directory: string, program: string) {
 }
 
 async function runTests(directory: string, ...flags: string[]) {
-  // A project as small as this one is one program unless the word asks for layers. run() fails where the run has none.
-  const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2" };
+  const env = {
+    ...bunEnv,
+    // A project as small as this one is one program unless the word asks for layers. run() fails where the run has none.
+    BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2",
+    // first-required-at-the-end-of-the-stack fails a require() in hundreds of frames at the end of the stack, and for each error the run in
+    // layers walks every compiled frame below. JavaScriptCore gives JavaScript 5 MB of the stack. With 2 MB the stack ends sooner: the run in
+    // layers fails in as many frames, and both runs print the same.
+    BUN_JSC_maxPerThreadStackUsage: String(2 * 1024 * 1024),
+  };
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--isolate", ...flags, "./p"], directory, env);
   if (exitCode !== 0 && exitCode !== 1) console.error(stderr);
   const printed: Record<string, string[]> = {};
@@ -77,7 +91,18 @@ async function runTests(directory: string, ...flags: string[]) {
       lines = [];
     } else if (!line.startsWith("bun test ")) lines.push(line.replaceAll(directory, "<project>"));
   }
-  return { printed, crashes: stderr.split("\n").filter(line => /worker crashed|could not be compiled/.test(line)) };
+  return {
+    printed,
+    // What stdout holds behind the last of those lines: no program is left to print it.
+    behindTheLast: lines,
+    // What bun test says of each test by its name, and the lines that count them.
+    verdicts: Object.fromEntries(
+      Array.from(stderr.matchAll(/^\((\w+)\) (.+?)(?: \[[\d.]+ms\])?$/gm), ([, verdict, name]) => [name, verdict]),
+    ),
+    counts: stderr.match(/^ \d+ \w+$|^Ran \d+ tests? across \d+ files?\./gm) ?? [],
+    crashes: stderr.split("\n").filter(line => /worker crashed|could not be compiled/.test(line)),
+    exitCode,
+  };
 }
 
 test("the main files of stored programs run as test files", async () => {
@@ -86,6 +111,17 @@ test("the main files of stored programs run as test files", async () => {
   });
   for (const program of programs) copyAsTestFile(String(dir), program);
   const plain = await runTests(String(dir));
+  // Plain Bun says what each must print only where it ran each to its end: every test passed, no file failed to load, nothing was printed behind
+  // the last test, and the run ended well. A program that prints nothing would have nothing compared.
+  const { printed, ...report } = plain;
+  expect({ printedNothing: programs.filter(program => !printed[program]?.length), ...report }).toEqual({
+    printedNothing: [],
+    behindTheLast: [""],
+    verdicts: Object.fromEntries(programs.map(program => [program, "pass"])),
+    counts: [` ${programs.length} pass`, " 0 fail", `Ran ${programs.length} tests across ${programs.length} files.`],
+    crashes: [],
+    exitCode: 0,
+  });
   expect(Object.keys(plain.printed).sort()).toEqual([...programs].sort());
   expect(await runTests(String(dir), "--aot")).toEqual(plain);
 }, 300_000);

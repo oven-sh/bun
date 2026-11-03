@@ -11,10 +11,11 @@ use crate::js::print::jsx::{ChildOnLine, ChildrenOnLine, Parentheses, parenthese
 /// Writes `child` of an element, which has a line of its own: an element, or something in braces.
 pub(crate) fn write_jsx_child<'a>(child: Expr<'a>, f: &mut Formatter<'a>) -> bool {
     let span = child.jsx_container_span().unwrap_or_else(|| child.span());
-    // What a fill prints can be in flat mode, in which only groups break.
+    // What a fill prints can be in flat mode, in which only groups break. After a line break in that mode the printer
+    // measures the groups that follow until one has been measured, which the long way's group around a child is.
     let slot = f.reserve_tag();
     let is_written = f.write_line(span, (0, 0), |line| line.jsx_child(child));
-    if is_written && f.elements().len() > slot + 2 {
+    if is_written {
         f.group_from(slot, false);
     }
     is_written

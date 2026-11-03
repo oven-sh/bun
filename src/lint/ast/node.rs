@@ -811,8 +811,8 @@ impl Parents {
             params(alias.type_params, parent);
             one(alias.ty, parent);
         }
-        // Few expressions contain a type and this loops over all of them, so the check that only needs the expression's
-        // tag comes first.
+        // Few expressions contain a type and this loops over all of them. Which of them can is not predictable, so those
+        // are collected without a branch, a block at a time.
         const fn kind(tag: hir::ExprTag) -> u64 {
             1 << tag as u8
         }
@@ -823,11 +823,24 @@ impl Parents {
             | kind(hir::ExprTag::New)
             | kind(hir::ExprTag::TaggedTemplate)
             | kind(hir::ExprTag::Jsx);
-        for (i, e) in hir.exprs.iter().enumerate() {
-            use hir::ExprKind as K;
-            if CAN_HAVE_TYPES & kind(e.kind.tag()) == 0 {
-                continue;
+        const BLOCK: usize = 64;
+        let mut candidates = [0u8; BLOCK];
+        let blocks = hir.exprs.chunks(BLOCK).enumerate();
+        for (i, e) in blocks.flat_map(|(block, exprs)| {
+            let mut count = 0;
+            for (i, e) in exprs.iter().enumerate() {
+                if let Some(slot) = candidates.get_mut(count) {
+                    *slot = i as u8;
+                }
+                count += usize::from(CAN_HAVE_TYPES & kind(e.kind.tag()) != 0);
             }
+            let candidates = candidates;
+            (0..count).filter_map(move |at| {
+                let i = usize::from(*candidates.get(at)?);
+                Some((block * BLOCK + i, exprs.get(i)?))
+            })
+        }) {
+            use hir::ExprKind as K;
             let (ty, type_args) = match e.kind {
                 K::As { ty, .. } | K::Satisfies { ty, .. } => (ty, hir::IdList::EMPTY),
                 K::Instantiation { type_args, .. } => {

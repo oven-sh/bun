@@ -54,7 +54,7 @@ test("--update-snapshots keeps the old file until the new contents are written",
   expect(await update({})).toEqual({ exitCode: 0, snap: header + '\nexports[`one 1`] = `"new"`;\n' });
 });
 
-test("property matchers that are one asymmetric matcher are applied to the received value", async () => {
+test.concurrent("property matchers that are one asymmetric matcher are applied to the received value", async () => {
   const header = "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n";
   const source = `
     import { test, expect } from "bun:test";
@@ -110,7 +110,7 @@ test("property matchers that are one asymmetric matcher are applied to the recei
   expect(await run()).toEqual(expected);
 });
 
-test("property matchers that are one asymmetric matcher are applied in a Jest and a Vitest snapshot file", async () => {
+test.concurrent("property matchers that are one asymmetric matcher, in a Jest and a Vitest snapshot file", async () => {
   const tests = (module: string) => `
     import { test, expect } from "${module}";
     test("plain", () => { expect("x").toMatchSnapshot(); });
@@ -147,7 +147,7 @@ test("property matchers that are one asymmetric matcher are applied in a Jest an
   });
 });
 
-test("an object with its own asymmetricMatch() keeps the property matchers in the stored snapshot", async () => {
+test.concurrent("an object with its own asymmetricMatch() keeps the property matchers in its snapshot", async () => {
   const source = `
     import { test, expect } from "bun:test";
     const x = Number(process.env.X);

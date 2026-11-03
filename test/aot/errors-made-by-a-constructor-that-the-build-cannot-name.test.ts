@@ -1,7 +1,7 @@
-import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { afterAll, expect } from "bun:test";
+import { bunEnv, bunExe, isDebug, normalizeBunSnapshot, tempDir } from "harness";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { beforeAll, test } from "./supported";
 
 // `new Error()` where the build does not know that `Error` is the built-in one calls the engine's own constructor, like any host function. Over layers that is every
 // `new Error()` of the application and of the test files. The constructor leaves its own frame out of the trace, and for that alone the error listed every frame at
@@ -90,25 +90,121 @@ test("another file, so that the run has pieces", () => expect(1).toBe(1));
 `,
 };
 
+// A debug build of Bun sets `showPrivateScriptsInStackTraces` (ZigGlobalObject.cpp): plain Bun then lists one more frame below the test, until its first `await`,
+// and compiled code has no such frame. Every run here lists what a release lists.
+const env = isDebug ? { ...bunEnv, BUN_JSC_showPrivateScriptsInStackTraces: "0" } : bunEnv;
+
 async function seenIn(directory: string, words: string | undefined, flag?: string, more: Record<string, string> = {}) {
   const flags = flag ? [flag] : [];
-  const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words, ...more } : bunEnv;
-  const { stdout, exitCode } = await run([bunExe(), "test", "--isolate", ...flags], directory, env);
-  return { seen: stdout.split("\n").filter(line => line.startsWith("SEEN ")), exitCode };
+  const { stdout, stderr, exitCode } = await run(
+    [bunExe(), "test", "--isolate", ...flags],
+    directory,
+    words ? { ...env, BUN_DEBUG_TEST_AOT_WORDS: words, ...more } : env,
+  );
+  const reported = normalizeBunSnapshot(stderr, directory)
+    .split("\n")
+    .map(line => line.trim());
+  return {
+    seen: stdout.split("\n").filter(line => line.startsWith("SEEN ")),
+    // A run in layers hands each test file to a worker: which of the two reports first is not asked.
+    tests: reported.filter(line => /^\((?:pass|fail|skip|todo)\) /.test(line)).sort(),
+    totals: reported.filter(line =>
+      /^\d+ (?:pass|skip|todo|fail|expect\(\) calls)$|^Ran \d+ tests? across \d+ files?\.$/.test(line),
+    ),
+    // A compiled run says how it was built, because a word asks for its form. Plain Bun says nothing, and so would a run that left the flag out.
+    built: /^AOT test run \| (one program|layers|programs without layers)\b/m.exec(stderr)?.[1],
+    // A run that fails says why there alone.
+    ...(exitCode !== 0 && { stderr }),
+    exitCode,
+  };
 }
 
-test("an error made by the engine's own constructor says what plain Bun says", async () => {
-  using dir = tempDir("aot-errors-by-a-constructor-nobody-names", files);
-  const plain = await seenIn(String(dir), undefined);
-  expect(plain.exitCode).toBe(0);
-  expect(plain.seen.length).toBe(45);
-  expect(plain.seen[1]).toContain("at madeInTheApplication (src/makes.js:3:");
-  expect(await seenIn(String(dir), "TestRunLayers:0", "--aot")).toEqual(plain);
-  expect(await seenIn(String(dir), "TestRunLayers:1,TestRunPartFiles:1", "--aot")).toEqual(plain);
-  expect(await seenIn(String(dir), "TestRunLayers:2,TestRunPartFiles:1", "--aot")).toEqual(plain);
-  // The run time holds every trace that it keeps as return addresses against the frames listed one by one.
-  expect(await seenIn(String(dir), "TestRunLayers:0", "--aot", { BUN_JSC_validateAOTRuntime: "1" })).toEqual(plain);
-  expect(
-    await seenIn(String(dir), "TestRunLayers:2,TestRunPartFiles:1", "--aot", { BUN_JSC_validateAOTRuntime: "1" }),
-  ).toEqual(plain);
-}, 360_000);
+let dir: ReturnType<typeof tempDir> | undefined;
+let plain: Awaited<ReturnType<typeof seenIn>>;
+beforeAll(async () => {
+  dir = tempDir("aot-errors-by-a-constructor-nobody-names", files);
+  plain = await seenIn(String(dir), undefined);
+});
+afterAll(() => dir?.[Symbol.dispose]());
+
+test("plain Bun says where the engine's own constructor made an error", () => {
+  expect(plain).toMatchInlineSnapshot(`
+    {
+      "built": undefined,
+      "exitCode": 0,
+      "seen": [
+        "SEEN here | Error: here | at <anonymous> (a.test.js:11:19)",
+        "SEEN in the application | Error: a | at madeInTheApplication (src/makes.js:3:64) | at <anonymous> (a.test.js:12:29)",
+        "SEEN in the package | Error: p | at madeInThePackage (node_modules/makes/index.js:2:60) | at <anonymous> (a.test.js:13:25)",
+        "SEEN in a tail call of the application | Error: ta | at <anonymous> (a.test.js:14:44)",
+        "SEEN in a tail call of the package | Error: tp | at inTheApplication (src/makes.js:2:132) | at inThePackage (node_modules/makes/index.js:1:101) | at inThePackage (node_modules/makes/index.js:1:69) | at inTheApplication (src/makes.js:2:73) | at <anonymous> (a.test.js:15:40)",
+        "SEEN by a constructor that is handed over | Error: handed | at byAnyConstructor (src/makes.js:5:77) | at <anonymous> (a.test.js:16:47)",
+        "SEEN by a call | Error: called | at byACall (src/makes.js:6:64) | at <anonymous> (a.test.js:17:20)",
+        "SEEN TypeError | TypeError: TypeError | at byAnyConstructor (src/makes.js:5:77) | at <anonymous> (a.test.js:18:119)",
+        "SEEN RangeError | RangeError: RangeError | at byAnyConstructor (src/makes.js:5:77) | at <anonymous> (a.test.js:18:119)",
+        "SEEN SyntaxError | SyntaxError: SyntaxError | at <parse> (:0) | at byAnyConstructor (src/makes.js:5:77) | at <anonymous> (a.test.js:18:119)",
+        "SEEN EvalError | EvalError: EvalError | at byAnyConstructor (src/makes.js:5:77) | at <anonymous> (a.test.js:18:119)",
+        "SEEN ReferenceError | ReferenceError: ReferenceError | at byAnyConstructor (src/makes.js:5:77) | at <anonymous> (a.test.js:18:119)",
+        "SEEN URIError | URIError: URIError | at byAnyConstructor (src/makes.js:5:77) | at <anonymous> (a.test.js:18:119)",
+        "SEEN an AggregateError | AggregateError: many | at byAnyConstructor (src/makes.js:5:77) | at <anonymous> (a.test.js:19:28)",
+        "SEEN with a cause | Error: outer | at byAnyConstructor (src/makes.js:5:77) | at <anonymous> (a.test.js:20:23)",
+        "SEEN by Reflect.construct | Error: reflected | at <anonymous> (a.test.js:21:39)",
+        "SEEN by Reflect.construct for a subclass | undefined",
+        "SEEN frames of three programs in turn | Error: deep | at madeInThePackage (node_modules/makes/index.js:2:60) | at inTheApplication (src/makes.js:2:132) | at inThePackage (node_modules/makes/index.js:1:101) | at inThePackage (node_modules/makes/index.js:1:69) | at inTheApplication (src/makes.js:2:73) | at inThePackage (node_modules/makes/index.js:1:101) | at inThePackage (node_modules/makes/index.js:1:69) | at inTheApplication (src/makes.js:2:73) | at inThePackage (node_modules/makes/index.js:1:101) | at inThePackage (node_modules/makes/index.js:1:69)",
+        "SEEN frames of three programs in turn, made here | Error: deep here | at inTheApplication (src/makes.js:2:132) | at inThePackage (node_modules/makes/index.js:1:101) | at inThePackage (node_modules/makes/index.js:1:69) | at inTheApplication (src/makes.js:2:73) | at inThePackage (node_modules/makes/index.js:1:101) | at inThePackage (node_modules/makes/index.js:1:69) | at inTheApplication (src/makes.js:2:73) | at inThePackage (node_modules/makes/index.js:1:101) | at inThePackage (node_modules/makes/index.js:1:69) | at inTheApplication (src/makes.js:2:73)",
+        "SEEN below the package alone | Error: below | at madeInTheApplication (src/makes.js:3:64) | at inThePackage (node_modules/makes/index.js:1:101) | at inThePackage (node_modules/makes/index.js:1:69) | at inThePackage (node_modules/makes/index.js:1:69) | at inThePackage (node_modules/makes/index.js:1:69) | at inThePackage (node_modules/makes/index.js:1:69) | at <anonymous> (a.test.js:25:34)",
+        "SEEN a subclass of the package | ErrorOfThePackage: sp | at <anonymous> (a.test.js:26:40)",
+        "SEEN a subclass of the application | ErrorOfTheApplication: sa | at new ErrorOfTheApplication (src/makes.js:7:76) | at <anonymous> (a.test.js:27:44)",
+        "SEEN a subclass of the test file | ErrorOfTheTestFile: st | at new ErrorOfTheTestFile (a.test.js:7:67) | at <anonymous> (a.test.js:28:42)",
+        "SEEN a subclass made elsewhere | ErrorOfTheTestFile: elsewhere | at new ErrorOfTheTestFile (a.test.js:7:67) | at byAnyConstructor (src/makes.js:5:77) | at <anonymous> (a.test.js:29:36)",
+        "SEEN a subclass below frames in turn | ErrorOfThePackage: turns | at <anonymous> (a.test.js:30:69) | at inTheApplication (src/makes.js:2:132) | at inThePackage (node_modules/makes/index.js:1:101) | at inThePackage (node_modules/makes/index.js:1:69) | at inTheApplication (src/makes.js:2:73) | at inThePackage (node_modules/makes/index.js:1:101) | at inThePackage (node_modules/makes/index.js:1:69) | at inTheApplication (src/makes.js:2:73) | at <anonymous> (a.test.js:30:42)",
+        "SEEN behind an await | Error: awaited | at madeInThePackage (node_modules/makes/index.js:2:60) | at madeBehindAnAwait (src/makes.js:8:74) | at async <anonymous> (a.test.js:31:32)",
+        "SEEN in a callback of a built-in | Error: mapped | at madeInTheApplication (src/makes.js:3:64) | at <anonymous> (a.test.js:32:42)",
+        "SEEN in a getter | Error: got | at madeInTheApplication (src/makes.js:3:64) | at <anonymous> (a.test.js:33:75)",
+        "SEEN at most 0 | undefined",
+        "SEEN at most 1 | Error: limited | at madeInThePackage (node_modules/makes/index.js:2:60)",
+        "SEEN at most 2 | Error: limited | at madeInThePackage (node_modules/makes/index.js:2:60) | at inTheApplication (src/makes.js:2:132)",
+        "SEEN at most 3 | Error: limited | at madeInThePackage (node_modules/makes/index.js:2:60) | at inTheApplication (src/makes.js:2:132) | at inThePackage (node_modules/makes/index.js:1:101)",
+        "SEEN at most 100 | Error: limited | at madeInThePackage (node_modules/makes/index.js:2:60) | at inTheApplication (src/makes.js:2:132) | at inThePackage (node_modules/makes/index.js:1:101) | at inThePackage (node_modules/makes/index.js:1:69) | at inTheApplication (src/makes.js:2:73) | at inThePackage (node_modules/makes/index.js:1:101) | at inThePackage (node_modules/makes/index.js:1:69) | at inTheApplication (src/makes.js:2:73) | at <anonymous> (a.test.js:35:87)",
+        "SEEN behind a collection | Error: kept | at madeInTheApplication (src/makes.js:3:64) | at <anonymous> (a.test.js:37:16)",
+        "SEEN captureStackTrace | Error | at <anonymous> (a.test.js:38:28)",
+        "SEEN thrown by the engine | TypeError: null is not an object (evaluating 'null.x') | at <anonymous> (a.test.js:39:9)",
+        "SEEN an import of text that does not parse | AggregateError string",
+        "SEEN the same in the application | AggregateError string",
+        "SEEN thrown and caught | Error: thrown | at madeInThePackage (node_modules/makes/index.js:2:60) | at <anonymous> (a.test.js:43:40) | at inTheApplication (src/makes.js:2:132) | at inThePackage (node_modules/makes/index.js:1:101) | at inThePackage (node_modules/makes/index.js:1:69) | at inTheApplication (src/makes.js:2:73) | at inThePackage (node_modules/makes/index.js:1:101) | at inThePackage (node_modules/makes/index.js:1:69) | at inTheApplication (src/makes.js:2:73) | at <anonymous> (a.test.js:43:9)",
+        "SEEN thrown by a built-in in a tail call, below a job | SyntaxError: JSON Parse error: Expected '}' | at <parse> (:0)",
+        "SEEN the same below a callback | SyntaxError: JSON Parse error: Expected '}' | at <parse> (:0) | at <anonymous> (a.test.js:50:18)",
+        "SEEN the same below Reflect.apply | SyntaxError: JSON Parse error: Expected '}' | at <parse> (:0) | at <anonymous> (a.test.js:51:19)",
+        "SEEN thrown by a built-in in a tail call, below a job | URIError: URI error",
+        "SEEN the same below a callback | URIError: URI error | at <anonymous> (a.test.js:50:18)",
+        "SEEN the same below Reflect.apply | URIError: URI error | at <anonymous> (a.test.js:51:19)",
+      ],
+      "tests": [
+        "(pass) another file, so that the run has pieces",
+        "(pass) traces",
+      ],
+      "totals": [
+        "2 pass",
+        "0 fail",
+        "4 expect() calls",
+        "Ran 2 tests across 2 files.",
+      ],
+    }
+  `);
+});
+
+// The run time holds every trace that it keeps as return addresses against the frames listed one by one.
+const validating = { BUN_JSC_validateAOTRuntime: "1" };
+// Each run is a build of its own, and the five run beside one another. With a debug build of Bun they take turns: there one build keeps six processors busy,
+// and five at once on twelve take 160 s each of the 270 s that a test has.
+(isDebug ? test.serial : test.concurrent).each([
+  ["one program", "TestRunLayers:0", {}],
+  ["one layer", "TestRunLayers:1,TestRunPartFiles:1", {}],
+  ["two layers", "TestRunLayers:2,TestRunPartFiles:1", {}],
+  ["one program that validates", "TestRunLayers:0", validating],
+  ["two layers that validate", "TestRunLayers:2,TestRunPartFiles:1", validating],
+])("an error made by the engine's own constructor says what plain Bun says: %s", async (_, words, more) => {
+  // `run()` holds a run that asks for layers to their number. Where this Bun loads one program a realm, such a run says "programs without layers".
+  const built = words === "TestRunLayers:0" ? "one program" : expect.stringContaining("layers");
+  expect(await seenIn(String(dir), words, "--aot", more)).toEqual({ ...plain, built });
+});

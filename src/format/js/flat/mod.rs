@@ -27,8 +27,14 @@
 mod classes;
 mod expressions;
 mod functions;
+mod holes;
+mod signatures;
 mod statements;
+mod ts_declarations;
 mod types;
+
+pub(crate) use statements::write_case_head;
+pub(crate) use ts_declarations::{write_enum_member, write_signature};
 
 use crate::ir::element::{FormatElement, LineMode, Tag, Text, TextWidth, Token};
 use crate::js::parentheses::expression::{chain_expression_needs_parentheses, needs_parentheses};
@@ -159,6 +165,7 @@ enum Part<'a> {
     Expr(Expr<'a>),
     /// The `{ .. }` of a class, with members in it.
     ClassBody(Class<'a>),
+    Hole(holes::Hole<'a>),
 }
 
 /// Where an expression is, as far as parentheses go.
@@ -325,6 +332,7 @@ impl<'a> Formatter<'a> {
                 }
                 Part::Expr(e) => CertainIf(false, &e).fmt(self),
                 Part::ClassBody(class) => write_class_body_after_head(class, self),
+                Part::Hole(hole) => hole.write(self),
             }
         }
         true
@@ -362,7 +370,8 @@ pub(crate) fn write_property<'a>(property: Prop<'a>, f: &mut Formatter<'a>) -> b
 
 /// Writes `member` of a class. The caller writes the `;` of a property.
 pub(crate) fn write_class_member<'a>(member: Member<'a>, f: &mut Formatter<'a>) -> bool {
-    f.write_line(member.span(), 1, |line| line.class_member(member))
+    let after = u32::from(member.kind() == MemberKind::Property);
+    f.write_line(member.span(), after, |line| line.class_member(member))
 }
 
 impl<'a> Line<'_, 'a> {
@@ -505,6 +514,13 @@ impl<'a> Line<'_, 'a> {
     /// What's written next follows its closing bracket, on a line that starts where this line starts.
     fn end_line_with(&mut self, part: Part<'a>, span: Span, after: u32) -> Written {
         self.check_source_up_to(span.start)?;
+        // That it's too wide on one line has been found by counting its bytes.
+        if self.breaks
+            && matches!(part, Part::Broken(_) | Part::Hole(_))
+            && !self.f.is_plain_source(span)
+        {
+            return Err(Refused);
+        }
         self.end_text(Some(after))?;
         self.parts.push(part);
         self.checked_to = span.end;
@@ -587,8 +603,8 @@ impl<'a> Line<'_, 'a> {
         if written.is_ok() {
             return Ok(());
         }
-        // Nothing of it has been handed to a part.
-        if self.parts.len() != parts {
+        // Nothing of it has been handed to a part. That all of this is too wide has been found by counting its bytes.
+        if self.parts.len() != parts || !self.f.is_plain_source(span) {
             return Err(Refused);
         }
         self.len = len;

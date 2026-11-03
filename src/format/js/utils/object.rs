@@ -119,7 +119,7 @@ fn with_normalized_newlines(text: Cow<'_, [u8]>) -> Cow<'_, [u8]> {
 }
 
 /// The printed form of `key`, which is at `span` and isn't an expression in brackets.
-fn printed_key<'a>(
+pub(crate) fn printed_key<'a>(
     key: Key<'a>,
     span: Span,
     parent: AstNodes<'a>,

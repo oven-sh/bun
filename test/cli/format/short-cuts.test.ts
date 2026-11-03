@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 // A formatter takes a short cut where the output is known without the general machinery. `--no-short-cuts` turns all of
@@ -679,5 +679,345 @@ describe.skipIf(!hasFlag)("style sheets", () => {
     };
     const [short, long] = await Promise.all([run([]), run(["--no-short-cuts"])]);
     expect(short).toEqual(long);
+  });
+});
+
+/** Formats `files` with `options`, with and without short cuts, and returns what differs. */
+async function difference(files: Record<string, string>, options: string[]) {
+  const printed = await Promise.all(
+    [[], ["--no-short-cuts"]].map(async own => {
+      using dir = tempDir("format-short-cuts", files);
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "fmt",
+          "--write",
+          "--no-config",
+          "--no-editorconfig",
+          "--log-level=warn",
+          ...options,
+          ...own,
+          ".",
+        ],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const texts = readdirSync(String(dir)).map(name => [name, readFileSync(join(String(dir), name), "utf8")]);
+      return { texts: Object.fromEntries(texts), stdout, stderr, exitCode };
+    }),
+  );
+  return printed;
+}
+
+describe.skipIf(!hasFlag)("statements, declarations, classes and types", () => {
+  const files = {
+    "statements.ts": `
+      if (a) return;
+      if (a) b(); else c();
+      if (a) b(); else if (c) d(); else { e(); }
+      if (a) {} else {}
+      if (a); else b;
+      if (a) if (b) c(); else d();
+      if (someCondition) someFunction(function () { return 1; });
+      if (someCondition) someFunction({
+        a: 1 });
+      if (someCondition && anotherCondition) return someFunction(argumentNumberOne, argumentNumberTwo);
+      if (a) return "😈 not as wide as it has bytes, not as wide as it has bytes 😈😈😈😈";
+      else throw someFunction(argumentNumberOne, argumentNumberTwo, argumentNumberThree);
+      for (let i = 0, n = list.length; i < n; i++) { f(i); }
+      for (;;) {}
+      for (; a; ) b();
+      for (a; ; b) c();
+      for (var i = ("x" in y); i; ) {}
+      for (var i = f(("x" in y)); i; ) {}
+      for (const inner = 1, begin = 2; inner < begin; ) {}
+      for (const a of b) c(a);
+      for (a.b in c) d();
+      for await (const a of b) {}
+      while (a) b();
+      while (a);
+      while (a) {}
+      do { a(); } while (b);
+      do {} while (b);
+      do a(); while (b);
+      label: for (;;) { break label; }
+      label: ;
+      label: { a(); }
+      { a(); }
+      {}
+      switch (a) {
+        case 1:
+        case 2: {
+          b();
+        }
+        case someFunction(argumentNumberOne, argumentNumberTwo, argumentNumberThree): c();
+        case 3: // comment
+          d();
+
+        case 4: {}
+        case 5: ;
+        default:
+          e();
+      }
+      switch (a) {}
+      switch (a) {
+        // comment
+        case 1:
+      }
+      try {} catch {} finally {}
+      try {} catch (e) {}
+      try { a(); } catch (e: unknown) {} finally { b(); }
+      let a, b, c;
+      let a = 1, b, c = 2;
+      var someVariableName = someFunction(argumentNumberOne), anotherVariableName = argumentNumberTwo;
+      let a: { b: string;
+        c: number };
+      let a: {
+        b: string };
+      declare const a: { someProperty: string; anotherProperty: number; oneMoreProperty: boolean };
+      function f() { let a = 1, b = 2; if (a) return; }
+    `,
+    "modules.ts": `
+      export * from "a";
+      export * as b from 'b';
+      export type * from "c";
+      export type * as d from "someVeryLongModuleSpecifier/someVeryLongModuleSpecifier/someVeryLongModuleSpecifier";
+      export * from "e" with { type: "json" };
+      export = a;
+      export = { a: 1,
+        b: 2 };
+      export as namespace A;
+      import a = require('a');
+      import type b = require("b");
+      import c = d.e.f;
+      export import g = h.i;
+      declare import j = k.l;
+      while (a) import m = require("m");
+      while (a) export * from "someVeryLongModuleSpecifier/someVeryLongModuleSpecifier/someVeryLongModuleSpecifier";
+      label: export * from "someVeryLongModuleSpecifier/someVeryLongModuleSpecifier/someVeryLongModuleSpecifier";
+      @aexport default class A {}
+      declare export const a;
+      export default function () {}
+      export default function f() { a(); }
+      export default class {}
+      export default interface A { a: string }
+      declare module "a" { export const a: number; }
+      declare module "b";
+      declare module 'c' {}
+      declare global { var a: number; }
+      namespace A.B.C { export const a = 1; }
+      module D {}
+      export declare namespace E { }
+      export namespace F { // comment
+      }
+    `,
+    "declarations.ts": `
+      interface A {}
+      interface A { a: string }
+      export interface A<T, U extends T = T> extends B<T>, C.D { a: string, b?: number; readonly c: T }
+      declare interface SomeVeryLongInterfaceName<SomeTypeParameter> extends SomeOtherInterface<SomeTypeParameter>, OneMore {}
+      interface A {
+        a(): void; b?(c: string): number
+        get d(): string; set d(value: string)
+        <T>(e: T): T
+        new (f: string): A
+        new <T>(f: T): A
+        [key: string]: unknown
+        readonly [index: number]: string;
+        "quoted": string; "not-a-name": string; 1: number; [computed]: string; ["a"]: string; [\`b\`]: string
+        method(this: A, ...rest: string[]): asserts this is B
+
+        afterAnEmptyLine: string // comment
+        /* comment */ withComment: string
+        someMethodName(someParameterName: SomeParameterType, anotherParameterName: AnotherParameterType): SomeReturnType;
+        someMethodName(someParameterName: SomeParameterType): { someProperty: string; anotherProperty: number; more: 1 };
+        someMethodName({ a, b }: { a: string; b: number; someProperty: string; anotherProperty: number }): void;
+        someProperty: { someProperty: string; anotherProperty: number; oneMoreProperty: boolean; more: 1 };
+        someProperty: Array<{ someProperty: string; anotherProperty: number; oneMoreProperty: boolean }>;
+        someProperty: { someProperty: string; anotherProperty: number; oneMoreProperty: boolean }[] ;
+        someProperty: { someProperty: string; anotherProperty: number; oneMoreProperty: boolean } | null;
+        someProperty: SomeType | AnotherType | OneMoreType | YetAnotherType | AndAnotherType | TheLastType;
+        nested: {
+          a: string; b: {
+            c: number }
+        }
+        nested: Promise<{
+          a: string }>
+        nested: {
+          a: string } | null | void;
+      }
+      enum A {}
+      enum A { B, C = 1, D = "d", "e-f" = 2, 'g' }
+      export declare const enum A { B = 1 << 0, C = B | 2, D = someFunction(argumentNumberOne, argumentNumberTwo, three) }
+      const enum A { B /* comment */, C, // comment
+        D }
+      type A = { a: string };
+      type A = {
+        a: string };
+      type A<T> = { someProperty: string; anotherProperty: number; oneMoreProperty: boolean; more: T };
+      type A<T extends B, U = C> = { someProperty: string; anotherProperty: number; oneMoreProperty: boolean };
+      function f(a: string, b: number): void {}
+      function f(this: A, a?: string, ...b: number[]): void;
+      declare function f<const T, U>(a: T): U;
+      interface A<in out T, in U, out V> {}
+      export async function* someFunctionName<T>(someParameterName: SomeParameterType, another: AnotherParameterType) {}
+      export function someFunctionName(someParameterName: SomeParameterType, another: AnotherParameterType): T { a(); }
+      function someFunctionName(someParameterName: SomeParameterType<WithSomeArguments, AndMore, AndEvenMoreOfThemHere>) {}
+      function someFunctionName(someParameterName: SomeParameterType = someDefaultValue(withArguments, andMore, andMore)) {}
+      function someFunctionName(someParameterName: SomeParameterType): SomeReturnType<{ a: string; b: number; c: 1 }> {}
+      function someFunctionName({ someProperty, anotherProperty, oneMoreProperty }: SomeParameterType, b: string) {}
+      function someFunctionName({ someProperty, anotherProperty, oneMoreProperty, andAnother }: SomeParameterType) {}
+      function someFunctionName(a: string,
+
+        b: string, someParameterName: SomeParameterType, anotherParameterName: AnotherParameterType) {}
+      function someFunctionName(a: "😈😈😈😈😈😈😈😈😈😈😈😈😈😈😈😈😈😈😈😈😈😈😈😈😈😈😈😈", b: "😈😈😈") {}
+      function someFunctionNameThatIsLong(): SomeReturnType<WithSomeArguments, AndMore, AndEvenMoreOfThemHereAndThere> {}
+    `,
+    "classes.ts": `
+      class A {}
+      class A extends B {}
+      abstract class A<T> extends B<T> implements C, D.E { }
+      @a class A {}
+      @a @b() class A { c = 1 }
+      @a
+      export class A {}
+      @a export default class A {}
+      @a()export class A {}
+      export @a class A {}
+      @Component({
+        selector: "a",
+      })
+      export class A {}
+      @Component({ selector: "some-selector", template: "some template that is long", more: true })
+      class A {}
+      @Some.Decorator(argumentNumberOne, argumentNumberTwo, argumentNumberThree, argumentNumberFour)
+      class SomeVeryLongClassName extends SomeOtherVeryLongClassName implements SomeInterface, AnotherInterface {}
+      @(a.b()) @(a[0]) @(await b) class A {}
+      class A {
+        @a b = 1;
+        @a() b: string;
+        @a()
+        b: string;
+        @a() @b c() {}
+        @a()
+        @b c() {}
+        @Input() someProperty: SomeType<WithArguments> = someFunction(argumentNumberOne, argumentNumberTwo);
+        @Input("someArgument")
+        someProperty: SomeType<WithArguments> = someFunction(argumentNumberOne, argumentNumberTwo, three);
+        @HostListener("window:resize", ["$event"]) onResize(someParameterName: SomeParameterType, b: string) {}
+        @HostListener("window:resize", ["$event"])
+        onResize(someParameterName: SomeParameterType, anotherParameterName: AnotherParameterType) {}
+        @Output({
+          a: 1 }) b = 1;
+        @Output({
+          a: 1 })
+        b = 1;
+        abstract a(): void;
+        abstract b: string;
+        protected abstract override c?(): void;
+        d(): void;
+        d(e: string): void;
+        d(e?: string) {}
+        [key: string]: unknown;
+        static readonly [key: string]: unknown;
+        "quoted" = 1; "not-a-name" = 2; 3 = 4; [computed] = 5; ["a"]() {} #private = 6;
+        'constructor'() {}
+        constructor() {}
+        constructor(private a: string) {}
+        constructor(private a: string, b: number) {}
+        constructor(a: string, protected readonly b = 1, ...c: string[]) { super(); }
+        constructor(@Inject(A) a: A, @Inject(B) private b: B) {}
+        constructor(@Inject(A) a: A, @Inject(B)
+          b: B) {}
+        constructor(@Inject(SOME_VERY_LONG_TOKEN_NAME) private readonly someParameterName: SomeParameterType<A>, b) {}
+        constructor(private someParameterName: SomeParameterType, private anotherOne: { a: string; b: number; c: 1 }) {}
+        override constructor() {}
+        someMethodName(someParameterName: SomeParameterType, anotherParameterName: AnotherParameterType) {}
+        async *someMethodName<T>(someParameterName: SomeParameterType, another: AnotherParameterType): T { a(); }
+        get someAccessorName(): SomeReturnType<WithSomeArguments, AndMore, AndEvenMoreOfThemHereAndThere> { return 1; }
+        set a(value) {}
+        static {}
+        static { a(); }
+        accessor a = 1;
+        declare a: string;
+        a!: string; b?: number;
+        a: { b: string;
+          c: number };
+        a: {
+          b: string };
+        someProperty: { someProperty: string; anotherProperty: number; oneMoreProperty: boolean; more: 1 };
+      }
+    `,
+    "types.ts": `
+      type A = string | number | null;
+      type A = | B;
+      type A = & B;
+      type A = | B | C;
+      type A = (B | C)[] | (D & E)[] | (keyof F)[] | (typeof g)[] | (() => void)[] | (new () => H)[] | (infer I)[];
+      type A = B & C & { d: string } & { e: string };
+      type A = [B, C?, ...D[]] | [a: B, b?: C, ...c: D[]] | [] | [B | C, D];
+      type A = 1 | -1 | - 1 | 1.0 | 0XAB | 1n | -1n | 0XABn | "a" | 'b' | \`c\` | \`d\${E}f\` | true | false;
+      type A = typeof a | typeof a.b.c | typeof a<B> | typeof import("a") | typeof this.a;
+      type A = import("a") | import('a').B | import("a").B.C<D> | import("a", { with: { "resolution-mode": "import" } });
+      type A = keyof B | readonly C[] | unique symbol | B["c"] | B[number][0];
+      type A = () => void | (() => void) | ((a: B) => a is C) | (new () => D) | (abstract new () => E);
+      type A = <T>(this: B, a?: T, ...b: T[]) => asserts a is T;
+      type A = (a) => asserts a;
+      type A<T> = T extends B ? C : D;
+      type A<T> = T extends B ? C : T extends D ? E : F;
+      type A<T> = T extends B ? T extends C ? D : E : F;
+      type A<T> = (T extends B ? C : D) extends E ? F : G;
+      type A<T> = T extends (infer U extends B)[] ? U : T extends (infer U)[] ? U : never;
+      type A<T> = T extends (...a: infer B) => infer C ? [B, C] : never;
+      type A = { [K in B]: C } | { readonly [K in B]?: C } | { +readonly [K in B]+?: C } | { -readonly [K in B as D]-?: C };
+      type A = { [K in B] };
+      type A = {
+        [K in B]: C };
+      type A = {};
+      type A = { a: string, b(): void; c?: { d: number } };
+      type A = Array<{ a: string }> | Promise<B<C, D>>;
+      type A = intrinsic;
+      type A = (intrinsic);
+      type A = ({ a: string });
+      type A = ((B));
+      let a: A.B.C<D>["e"][] = f as G<H> satisfies I;
+      let a = <T,>(b: T) => b;
+      function f(a: [string, number], b: { c: string }, d: () => void, e: typeof f): a is [string, number] {}
+      type SomeVeryLongTypeName = SomeType | AnotherType | OneMoreType | YetAnotherType | AndAnotherType | Last;
+      type SomeVeryLongTypeName<T> = T extends SomeType ? AnotherType<T> : OneMoreType<T, YetAnotherType, AndMore>;
+    `,
+  };
+  const options = [
+    [],
+    ["--print-width=20"],
+    ["--print-width=40", "--tab-width=4"],
+    ["--print-width=60", "--trailing-comma=none"],
+    ["--print-width=100", "--use-tabs", "--single-quote", "--no-bracket-spacing"],
+    ["--print-width=120", "--trailing-comma=es5", "--quote-props=consistent"],
+    ["--print-width=1", "--quote-props=preserve"],
+    ["--print-width=1000", "--object-wrap=collapse", "--tab-width=0"],
+  ];
+  test.concurrent.each(options)("%s %s %s %s", async (...options) => {
+    const [withShortCuts, without] = await difference(files, options.filter(Boolean));
+    expect(withShortCuts).toEqual(without);
+    // Every file has been formatted.
+    expect(without.stderr).toBe("");
+    expect(without.exitCode).toBe(0);
+  });
+
+  // Where a line ends within a few columns of the limit is where a wrong width shows.
+  test("every width", async () => {
+    const widths = Array.from({ length: isDebug ? 8 : 40 }, (_, i) => 50 + i * (isDebug ? 5 : 1));
+    const different: number[] = [];
+    await Promise.all(
+      widths.map(async width => {
+        const [withShortCuts, without] = await difference(files, [`--print-width=${width}`]);
+        if (!Bun.deepEquals(withShortCuts, without)) different.push(width);
+      }),
+    );
+    expect(different).toEqual([]);
   });
 });

@@ -91,9 +91,11 @@ impl<'a> Format<'a> for ObjectLike<'a> {
                     false => f.source_text().has_newline_in_range(before_first),
                 };
             let follows_line = std::mem::take(&mut f.context_mut().short_cuts.follows_line);
+            let should_hug = self.should_hug(f);
             let members = format_with(|f| {
                 let outer = f.context().short_cuts.properties_start_lines;
-                f.context_mut().short_cuts.properties_start_lines = should_expand;
+                // One that's hugged breaks with the parameters.
+                f.context_mut().short_cuts.properties_start_lines = should_expand && !should_hug;
                 self.write_members(f);
                 f.context_mut().short_cuts.properties_start_lines = outer;
             });
@@ -101,7 +103,7 @@ impl<'a> Format<'a> for ObjectLike<'a> {
             let members = CertainIf(follows_line, &members);
             let inner =
                 soft_block_indent_with_maybe_space(&members, f.options().bracket_spacing.value());
-            match self.should_hug(f) {
+            match should_hug {
                 true => write!(f, inner),
                 false => write!(
                     f,

@@ -1,5 +1,5 @@
 use super::program::{FormatStatements, is_next_line_empty};
-use crate::js::flat::Deeper;
+use crate::js::flat::{Deeper, Mode, write_case_head};
 use crate::js::trivia::comments_stay_between_head_and_body;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::statement_body::{write_comments_before_token, write_space_before_body};
@@ -24,11 +24,19 @@ pub(crate) fn write_switch_statement<'a>(
             space(),
             "(",
             group(&soft_block_indent(&discriminant)),
-            ")",
-            space(),
-            "{"
+            ")"
         ]
     );
+    write_cases_after_head(statement, cases, f);
+}
+
+/// ` { .. }`
+pub(crate) fn write_cases_after_head<'a>(
+    statement: Stmt<'a>,
+    cases: List<'a, Case<'a>>,
+    f: &mut Formatter<'a>,
+) {
+    write!(f, [space(), "{"]);
     if cases.is_empty() {
         let node = AstNodes::SwitchStatement(statement);
         match f.comments().of_node(node).dangling.is_empty() {
@@ -70,6 +78,7 @@ pub(crate) fn write_switch_case<'a>(case: Case<'a>, f: &mut Formatter<'a>) {
     }
 
     match case.test() {
+        Some(_) if f.context().short_cuts.mode != Mode::Off && write_case_head(case, f) => {}
         Some(test) => write!(f, ["case", space(), test, ":"]),
         None => write!(f, "default:"),
     }

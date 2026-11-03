@@ -36,7 +36,7 @@ pub(crate) fn is_empty_block<'a>(block: List<'a, Stmt<'a>>) -> bool {
 }
 
 /// True if an empty block in `parent` is printed as `{\n}` instead of `{}`.
-fn is_non_collapsible(parent: AstNodes<'_>, f: &Formatter<'_>) -> bool {
+pub(crate) fn is_non_collapsible(parent: AstNodes<'_>, f: &Formatter<'_>) -> bool {
     match parent {
         // `function a() { {} }`: a statement in the body, not the body.
         AstNodes::FunctionBody(_) => !empty_block_in_function_body_collapses(f),

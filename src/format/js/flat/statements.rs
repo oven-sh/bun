@@ -1,6 +1,32 @@
 //! Statements, imports and exports.
 
+use super::holes::Hole;
 use super::*;
+use crate::js::print::block_statement::is_non_collapsible;
+
+/// Writes the `case a:` of `case`, which starts a line.
+pub(crate) fn write_case_head<'a>(case: Case<'a>, f: &mut Formatter<'a>) -> bool {
+    let Some(test) = case.test() else {
+        return false;
+    };
+    let mut statements = case.body().iter().filter(|it| it.tag() != StmtTag::Empty);
+    let first = statements.next();
+    // The `{` of a block that's the only statement is on this line.
+    let after = match first {
+        Some(first) if first.tag() == StmtTag::Block && statements.next().is_none() => 2,
+        _ => 0,
+    };
+    let end = first.map_or_else(|| case.span().end, |first| first.span().start);
+    f.write_line(Span::new(case.span().start, end), after, |line| {
+        // Where the expression breaks is another matter.
+        if line.breaks {
+            return Err(Refused);
+        }
+        line.token("case ")?;
+        line.expr(test, Place::Other)?;
+        line.byte(b':')
+    })
+}
 
 impl<'a> Line<'_, 'a> {
     pub(super) fn statement(&mut self, statement: Stmt<'a>) -> Written {
@@ -13,23 +39,31 @@ impl<'a> Line<'_, 'a> {
                 self.last_expr(expression, Place::Other)?;
             }
             StmtKind::Var(declarations) => {
-                let (Some(declarator), 1) = (declarations.first(), declarations.len()) else {
-                    return Err(Refused);
-                };
+                let declarator = declarations.first().ok_or(Refused)?;
                 self.declaration_modifiers(statement)?;
                 self.var_kind(declarator)?;
+                if declarations.len() > 1 {
+                    return self.declarators(declarations);
+                }
                 self.pattern(declarator.pat())?;
                 if declarator.is_definite() {
                     self.byte(b'!')?;
                 }
-                self.type_annotation(declarator.ty())?;
-                if let Some(init) = declarator.init() {
-                    self.token(" = ")?;
-                    // A pattern breaks together with what it's assigned.
-                    match declarator.pat().tag() {
-                        PatTag::Ident => self.last_assigned(init)?,
-                        _ => self.assigned(init)?,
+                match (declarator.ty(), declarator.init()) {
+                    (Some(ty), None) => {
+                        self.token(": ")?;
+                        self.last_type(ty)?;
                     }
+                    (ty, Some(init)) => {
+                        self.type_annotation(ty)?;
+                        self.token(" = ")?;
+                        // A pattern breaks together with what it's assigned.
+                        match declarator.pat().tag() {
+                            PatTag::Ident => self.last_assigned(init)?,
+                            _ => self.assigned(init)?,
+                        }
+                    }
+                    (None, None) => {}
                 }
             }
             StmtKind::Return(argument) => {
@@ -56,7 +90,7 @@ impl<'a> Line<'_, 'a> {
             StmtKind::Debugger => self.token("debugger")?,
             StmtKind::Fn(func) => {
                 self.declaration_modifiers(statement)?;
-                self.function(func, true)?;
+                self.function_declaration(func)?;
                 if func.has_body() {
                     return Ok(());
                 }
@@ -67,10 +101,45 @@ impl<'a> Line<'_, 'a> {
             }
             StmtKind::If { .. } => return self.if_statement(statement),
             StmtKind::While { test, body } => {
+                self.breaks = false;
                 self.token("while (")?;
                 self.expr(test, Place::Other)?;
                 self.byte(b')')?;
-                return self.block(body);
+                return self.clause(body);
+            }
+            StmtKind::DoWhile { body, test } => {
+                self.breaks = false;
+                self.token("do")?;
+                self.block(body)?;
+                self.token(" while (")?;
+                self.expr(test, Place::Other)?;
+                self.byte(b')')?;
+            }
+            StmtKind::For {
+                init,
+                test,
+                update,
+                body,
+            } => {
+                self.breaks = false;
+                self.token("for (")?;
+                if let Some(init) = init {
+                    self.for_init(init)?;
+                }
+                self.byte(b';')?;
+                if init.is_some() || test.is_some() || update.is_some() {
+                    self.byte(b' ')?;
+                }
+                if let Some(test) = test {
+                    self.expr(test, Place::Other)?;
+                }
+                self.byte(b';')?;
+                if let Some(update) = update {
+                    self.byte(b' ')?;
+                    self.expr(update, Place::Other)?;
+                }
+                self.byte(b')')?;
+                return self.clause(body);
             }
             StmtKind::ForOf {
                 left,
@@ -78,6 +147,7 @@ impl<'a> Line<'_, 'a> {
                 body,
                 is_await,
             } => {
+                self.breaks = false;
                 self.token(match is_await {
                     true => "for await (",
                     false => "for (",
@@ -86,15 +156,16 @@ impl<'a> Line<'_, 'a> {
                 self.token(" of ")?;
                 self.expr(expr, Place::Other)?;
                 self.byte(b')')?;
-                return self.block(body);
+                return self.clause(body);
             }
             StmtKind::ForIn { left, expr, body } => {
+                self.breaks = false;
                 self.token("for (")?;
                 self.for_binding(left)?;
                 self.token(" in ")?;
                 self.expr(expr, Place::Other)?;
                 self.byte(b')')?;
-                return self.block(body);
+                return self.clause(body);
             }
             StmtKind::Try {
                 block,
@@ -102,6 +173,7 @@ impl<'a> Line<'_, 'a> {
                 handler,
                 finalizer,
             } => {
+                self.breaks = false;
                 self.token("try")?;
                 self.block(block)?;
                 if let Some(handler) = handler {
@@ -136,11 +208,221 @@ impl<'a> Line<'_, 'a> {
                 self.source(alias.name().span())?;
                 self.type_parameters(alias.type_params())?;
                 self.token(" = ")?;
-                self.ty(alias.ty())?;
+                self.last_type(alias.ty())?;
+            }
+            StmtKind::Interface(interface) => {
+                self.declaration_modifiers(statement)?;
+                return self.interface(statement, interface);
+            }
+            StmtKind::Enum(declaration) => {
+                self.declaration_modifiers(statement)?;
+                return self.enum_declaration(statement, declaration);
+            }
+            StmtKind::Module(module) => {
+                self.declaration_modifiers(statement)?;
+                return self.module(statement, module);
+            }
+            StmtKind::Switch { expr, cases } => {
+                let first = cases.first().ok_or(Refused)?;
+                self.token("switch (")?;
+                self.expr(expr, Place::Other)?;
+                self.byte(b')')?;
+                let span = Span::new(first.span().start, statement.span().end);
+                return self.end_line_with_hole(Hole::BodyOf(statement), span, 2);
+            }
+            StmtKind::Labeled { body, .. } => {
+                self.source(statement.label().ok_or(Refused)?.span())?;
+                self.byte(b':')?;
+                if body.tag() == StmtTag::Empty {
+                    return self.byte(b';');
+                }
+                self.byte(b' ')?;
+                return self.nested(|line| line.statement_in_statement(body));
+            }
+            StmtKind::ExportStar {
+                alias, type_only, ..
+            } => {
+                if !statement.modifiers().is_empty() {
+                    return Err(Refused);
+                }
+                // There's nowhere to break.
+                self.limit = usize::MAX;
+                self.token(match type_only {
+                    true => "export type *",
+                    false => "export *",
+                })?;
+                if let Some(alias) = alias {
+                    self.token(" as ")?;
+                    self.module_export_name(alias)?;
+                }
+                self.token(" from ")?;
+                self.module_specifier(statement)?;
+            }
+            StmtKind::ExportAssign(expression) => {
+                if !statement.modifiers().is_empty() {
+                    return Err(Refused);
+                }
+                self.token("export = ")?;
+                self.last_expr(expression, Place::Other)?;
+            }
+            StmtKind::ExportAsNamespace(_) => {
+                self.token("export as namespace ")?;
+                self.source(statement.namespace_export_name().ok_or(Refused)?.span())?;
+            }
+            StmtKind::ImportEquals(import) => {
+                self.declaration_modifiers(statement)?;
+                self.limit = usize::MAX;
+                self.token(match import.flags().contains(Flags::TYPE_ONLY) {
+                    true => "import type ",
+                    false => "import ",
+                })?;
+                self.source(import.name().span())?;
+                self.token(" = ")?;
+                match import.target() {
+                    ImportEqualsTarget::Entity(name) => self.entity_name(name)?,
+                    ImportEqualsTarget::Require(_) => {
+                        self.token("require(")?;
+                        self.string(statement.module_specifier_span().ok_or(Refused)?)?;
+                        self.byte(b')')?;
+                    }
+                }
             }
             _ => return Err(Refused),
         }
         self.byte(b';')
+    }
+
+    /// `a, b`, or `a = 1,` and the others each on a line, after the keyword. With the `;`.
+    fn declarators(&mut self, declarations: List<'a, VarDecl<'a>>) -> Written {
+        self.breaks = false;
+        let are_on_own_lines = declarations.iter().any(|it| it.init().is_some());
+        for (index, declarator) in declarations.iter().enumerate() {
+            match (index, are_on_own_lines) {
+                (0, _) => {}
+                (_, false) => self.token(", ")?,
+                (1, true) => {
+                    self.byte(b',')?;
+                    self.break_line(1)?;
+                }
+                (_, true) => {
+                    self.byte(b',')?;
+                    self.break_line(0)?;
+                }
+            }
+            self.declarator(declarator)?;
+        }
+        self.byte(b';')?;
+        match are_on_own_lines {
+            true => self.end_indent(0),
+            false => Ok(()),
+        }
+    }
+
+    /// `a: T = 1`, on one line.
+    fn declarator(&mut self, declarator: VarDecl<'a>) -> Written {
+        self.pattern(declarator.pat())?;
+        if declarator.is_definite() {
+            self.byte(b'!')?;
+        }
+        self.type_annotation(declarator.ty())?;
+        match declarator.init() {
+            Some(init) => {
+                self.token(" = ")?;
+                self.assigned(init)
+            }
+            None => Ok(()),
+        }
+    }
+
+    /// What is before the first `;` in the head of a `for`.
+    fn for_init(&mut self, init: Stmt<'a>) -> Written {
+        // The operator `in` is in parentheses there, however deep it is.
+        let text = self.text_of(init.span());
+        let is_part_of_name = |byte: Option<&u8>| {
+            byte.is_some_and(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$'))
+        };
+        let mut from = 0;
+        while let Some(at) = text
+            .get(from..)
+            .and_then(|rest| strings::index_of(rest, b"in"))
+        {
+            let at = from + at;
+            if !is_part_of_name(at.checked_sub(1).and_then(|before| text.get(before)))
+                && !is_part_of_name(text.get(at + 2))
+            {
+                return Err(Refused);
+            }
+            from = at + 2;
+        }
+        match init.kind() {
+            StmtKind::Expr(expression) => self.expr(expression, Place::Other),
+            StmtKind::Var(declarations) => {
+                if !init.modifiers().is_empty() {
+                    return Err(Refused);
+                }
+                self.var_kind(declarations.first().ok_or(Refused)?)?;
+                self.list(declarations.iter(), |line, declarator| {
+                    line.declarator(declarator)
+                })
+            }
+            _ => Err(Refused),
+        }
+    }
+
+    /// The body of another statement, which isn't a block.
+    fn statement_in_statement(&mut self, body: Stmt<'a>) -> Written {
+        match body.tag() {
+            StmtTag::Expr
+            | StmtTag::Var
+            | StmtTag::Return
+            | StmtTag::Throw
+            | StmtTag::Break
+            | StmtTag::Continue
+            | StmtTag::Debugger
+            | StmtTag::If
+            | StmtTag::For
+            | StmtTag::ForIn
+            | StmtTag::ForOf
+            | StmtTag::While
+            | StmtTag::DoWhile
+            | StmtTag::Switch
+            | StmtTag::Try
+            | StmtTag::Labeled => self.statement(body),
+            // An error.
+            _ => Err(Refused),
+        }
+    }
+
+    /// The body of an `if`, an `else` or a loop, after the head, which is the last of its line.
+    pub(super) fn clause(&mut self, body: Stmt<'a>) -> Written {
+        match body.tag() {
+            StmtTag::Block => return self.block(body),
+            StmtTag::Empty => return self.byte(b';'),
+            _ => {}
+        }
+        // On the line of the head, if it fits there and nothing in it is certain to break.
+        let mark = self.mark();
+        let was_too_wide = std::mem::replace(&mut self.is_too_wide, false);
+        let written =
+            (self.byte(b' ')).and_then(|()| self.nested(|line| line.statement_in_statement(body)));
+        let is_too_wide = std::mem::replace(&mut self.is_too_wide, was_too_wide);
+        if !self.has_parts_since(mark) {
+            if written.is_ok() {
+                return Ok(());
+            }
+            // That it's too wide has been found by counting its bytes.
+            if !is_too_wide || !self.is_certain() || !self.f.is_plain_source(body.span()) {
+                self.is_too_wide |= is_too_wide;
+                return Err(Refused);
+            }
+        }
+        self.go_back_to(mark);
+        self.check_source_up_to(body.span().start)?;
+        self.end_text(Some(0))?;
+        self.parts.push(Part::Hole(Hole::Statement(body)));
+        self.checked_to = body.span().end;
+        self.start_line(0);
+        Ok(())
     }
 
     pub(super) fn var_kind(&mut self, declarator: VarDecl<'a>) -> Written {
@@ -154,24 +436,49 @@ impl<'a> Line<'_, 'a> {
 
     /// `export default declare abstract `, in this order.
     pub(super) fn declaration_modifiers(&mut self, statement: Stmt<'a>) -> Written {
+        let modifiers = statement.modifiers();
+        if modifiers.is_empty() {
+            return Ok(());
+        }
+        let tag = statement.tag();
         let mut rank = 0;
-        for modifier in statement.modifiers() {
+        for modifier in modifiers {
+            // The decorators of a class are each on a line.
+            if let Some(decorator) = modifier.decorator() {
+                if rank > 0 || tag != StmtTag::Class {
+                    return Err(Refused);
+                }
+                // One that the `export` follows without a blank is printed after it.
+                if (statement.export_span()).is_some_and(|it| it.start <= decorator.span().end) {
+                    return Err(Refused);
+                }
+                let breaks = std::mem::replace(&mut self.breaks, false);
+                self.decorator(decorator, true)?;
+                self.break_line(0)?;
+                self.breaks = breaks;
+                continue;
+            }
             let flag = modifier.flag();
-            let (next, keyword) = if flag == Flags::EXPORT {
-                (1, "export ")
+            // One that makes no sense where it is isn't printed.
+            let (next, keyword, is_printed) = if flag == Flags::EXPORT {
+                (1, "export ", true)
             } else if flag == Flags::DEFAULT {
-                (2, "default ")
+                let can_be_default =
+                    matches!(tag, StmtTag::Fn | StmtTag::Class | StmtTag::Interface);
+                (2, "default ", rank == 1 && can_be_default)
             } else if flag == Flags::AMBIENT {
-                (3, "declare ")
+                (3, "declare ", tag != StmtTag::ImportEquals)
             } else if flag == Flags::ABSTRACT {
-                (4, "abstract ")
+                (4, "abstract ", tag == StmtTag::Class)
             } else if flag == Flags::ASYNC {
                 // The function writes it.
-                (5, "")
+                (5, "", tag == StmtTag::Fn)
+            } else if flag == Flags::CONST {
+                (6, "const ", tag == StmtTag::Enum)
             } else {
                 return Err(Refused);
             };
-            if next <= rank || modifier.decorator().is_some() {
+            if next <= rank || !is_printed {
                 return Err(Refused);
             }
             rank = next;
@@ -180,17 +487,20 @@ impl<'a> Line<'_, 'a> {
         Ok(())
     }
 
-    /// ` {`, and the rest of the block `body`, which has statements in it.
+    /// ` {`, and the rest of the block `body`.
     pub(super) fn block(&mut self, body: Stmt<'a>) -> Written {
-        match body.as_block() {
-            Some(statements) if !is_empty_block(statements) => {
-                self.end_line_with(Part::Block(body), body.span(), 2)
-            }
-            _ => Err(Refused),
+        if !is_empty_block(body.as_block().ok_or(Refused)?) {
+            return self.end_line_with(Part::Block(body), body.span(), 2);
         }
+        self.token(" {")?;
+        if is_non_collapsible(body.ast_parent(), self.f) {
+            self.break_line(0)?;
+        }
+        self.byte(b'}')
     }
 
     pub(super) fn if_statement(&mut self, mut statement: Stmt<'a>) -> Written {
+        self.breaks = false;
         loop {
             let Some((test, yes, no)) = statement.as_if() else {
                 return Err(Refused);
@@ -198,13 +508,19 @@ impl<'a> Line<'_, 'a> {
             self.token("if (")?;
             self.expr(test, Place::Other)?;
             self.byte(b')')?;
-            self.block(yes)?;
+            self.clause(yes)?;
             let Some(no) = no else {
                 return Ok(());
             };
-            self.token(" else")?;
+            match yes.tag() {
+                StmtTag::Block => self.token(" else")?,
+                _ => {
+                    self.break_line(0)?;
+                    self.token("else")?;
+                }
+            }
             if no.tag() != StmtTag::If {
-                return self.block(no);
+                return self.clause(no);
             }
             self.byte(b' ')?;
             statement = no;
@@ -213,6 +529,9 @@ impl<'a> Line<'_, 'a> {
 
     /// `const a`, in the head of a loop.
     pub(super) fn for_binding(&mut self, left: Stmt<'a>) -> Written {
+        if let Some(target) = left.as_expr() {
+            return self.expr(target, Place::Other);
+        }
         let declarations = left.as_var().ok_or(Refused)?;
         let (Some(declarator), 1) = (declarations.first(), declarations.len()) else {
             return Err(Refused);

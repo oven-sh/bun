@@ -6,7 +6,7 @@ use super::program::FormatStatements;
 use super::semicolon::OptionalSemicolon;
 use super::type_parameters::{FormatTSTypeParametersOptions, type_arguments, type_parameters};
 use crate::js::attach::Marker;
-use crate::js::flat::{CertainIf, Deeper, Mode, write_class_member};
+use crate::js::flat::{CertainIf, Deeper, Mode, write_class_member, write_signature};
 use crate::js::format::{
     FormatTypeAnnotation, format_name, format_node, identifier,
     ignored_node_terminator_follows_semi, name_without_comments,
@@ -101,8 +101,10 @@ fn has_empty_line_before<'a>(element: Member<'a>, f: &Formatter<'a>) -> bool {
 /// A member of a class, an interface or a type literal.
 pub(crate) fn write_member<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
     if f.context().short_cuts.mode != Mode::Off
-        && matches!(member.parent(), Node::Class(_))
-        && write_class_member(member, f)
+        && match member.parent() {
+            Node::Class(_) => write_class_member(member, f),
+            _ => f.context().short_cuts.properties_start_lines && write_signature(member, f),
+        }
     {
         return;
     }

@@ -61,6 +61,40 @@ const files = {
       }
     }
   `,
+  // #12372 from the ways to ask that ts/app.mjs does not use; see the issues group.
+  "ts/apis.mjs": `
+    import fs from "node:fs";
+    import path from "node:path";
+    import { createRequire } from "node:module";
+    import { fileURLToPath } from "node:url";
+    const require = createRequire(import.meta.url);
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const elsewhere = () => createRequire(path.join(here, "x.cjs"));
+    const ways = {
+      "require.resolve()": s => require.resolve(s),
+      "require.resolve() with paths": s => require.resolve(s, { paths: [here] }),
+      "import.meta.resolve()": s => fileURLToPath(import.meta.resolve(s)),
+      "Bun.resolveSync()": s => Bun.resolveSync(s, here),
+      "Bun.resolve()": s => Bun.resolve(s, here),
+      "createRequire()": s => elsewhere()(s).file,
+      "createRequire().resolve()": s => elsewhere().resolve(s),
+    };
+    // The first import lists the directory that the alias names. Each way then asks for a
+    // file of its own, written after that.
+    fs.mkdirSync(path.join(here, "api"));
+    fs.writeFileSync(path.join(here, "api", "first.mjs"), "");
+    await import("@/api/first.mjs");
+    let n = 0;
+    for (const [way, ask] of Object.entries(ways)) {
+      const file = path.join(here, "api", "late-" + ++n + ".cjs");
+      fs.writeFileSync(file, "exports.file = __filename;");
+      try {
+        console.log(way, "OK", path.basename(await ask("@/api/late-" + n + ".cjs")));
+      } catch (e) {
+        console.log(way, "ERR", e.code);
+      }
+    }
+  `,
   // The two threads of the race group share these. Each lookup starts from a new require().
   "race-shared.cjs": `
     const path = require("node:path");
@@ -832,6 +866,42 @@ const files = {
         if (keepsListings) console.log("listings read again", count, more.refills);
       },
 
+      async issues() {
+        // #12372, from the ways to ask that the tsconfig group does not use.
+        await import("./ts/apis.mjs");
+
+        // #25370: a package that appears in a node_modules that was listed, asked for from a
+        // directory far below it.
+        const chunks = path.join("next", ".next", "dev", "server", "chunks", "ssr");
+        write(path.join("next", nm("other", "index.js")), "");
+        fs.mkdirSync(chunks, { recursive: true });
+        const chunk = requireFrom(chunks);
+        res("T1", () => chunk.resolve("other"));
+        res("T2", () => chunk.resolve("payload-abc123"));
+        write(path.join("next", nm("payload-abc123", "package.json")), JSON.stringify({ name: "payload-abc123", main: "i.js" }));
+        write(path.join("next", nm("payload-abc123", "i.js")), "");
+        res("T3", () => chunk.resolve("payload-abc123"));
+        // The same for a scoped name that a directory between the two links to.
+        const scope = path.join("next", ".next", nm("@aws-sdk"));
+        res("T4", () => chunk.resolve("@aws-sdk/client-s3-ecbef8e33fd0b8f0"));
+        fs.mkdirSync(scope, { recursive: true });
+        fs.symlinkSync(path.resolve("next", nm("other")), path.join(scope, "client-s3-ecbef8e33fd0b8f0"), "junction");
+        res("T5", () => chunk.resolve("@aws-sdk/client-s3-ecbef8e33fd0b8f0"));
+
+        // #47608: a file added to a directory of node_modules after another file of it was imported.
+        write(nm("@pk", "a.ts"), "export const v = 'a';");
+        await t("F1", "@pk/a.ts");
+        write(nm("@pk", "b.ts"), "export const v = 'b';");
+        await t("F2", "@pk/b.ts");
+
+        // #47457: a relative request with "paths", whose first directory does not exist.
+        fs.mkdirSync("nx");
+        const options = { paths: [path.resolve("nx", ".nx", "installation"), path.resolve("nx")] };
+        res("X1", () => require.resolve("./inference.cjs", options));
+        write(path.join("nx", "inference.cjs"), "");
+        res("X2", () => require.resolve("./inference.cjs", options));
+      },
+
       async build() {
         // Bun.build() shares the cache across calls. Five shapes of "installed
         // after the first build failed".
@@ -1063,6 +1133,33 @@ describe.concurrent("a failed resolution sees them from each way to ask the reso
       ,
       }
     `);
+  });
+});
+
+describe.concurrent("a failed resolution answers as a new process does", () => {
+  test("the reported lookups, from the other ways to ask the resolver", async () => {
+    expect(await runGroup("issues")).toEqual({
+      exitCode: 0,
+      stderr: "",
+      stdout: [
+        "require.resolve() OK late-1.cjs",
+        "require.resolve() with paths OK late-2.cjs",
+        "import.meta.resolve() OK late-3.cjs",
+        "Bun.resolveSync() OK late-4.cjs",
+        "Bun.resolve() OK late-5.cjs",
+        "createRequire() OK late-6.cjs",
+        "createRequire().resolve() OK late-7.cjs",
+        "T1 OK next/node_modules/other/index.js",
+        "T2 ERR MODULE_NOT_FOUND",
+        "T3 OK next/node_modules/payload-abc123/i.js",
+        "T4 ERR MODULE_NOT_FOUND",
+        "T5 OK next/node_modules/other/index.js",
+        "F1 OK a",
+        "F2 OK b",
+        "X1 ERR MODULE_NOT_FOUND",
+        "X2 OK nx/inference.cjs",
+      ].join("\n"),
+    });
   });
 });
 

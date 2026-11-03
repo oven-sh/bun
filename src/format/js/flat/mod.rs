@@ -339,7 +339,7 @@ enum Width {
 #[derive(Default)]
 pub(crate) struct Buffers<'a> {
     /// Its length stays, and what's in it means nothing.
-    text: Vec<u8>,
+    pub(crate) text: Vec<u8>,
     /// Empty lists. A part can write lines of its own while the list that it's in is read.
     parts: Vec<Vec<Part<'a>>>,
 }

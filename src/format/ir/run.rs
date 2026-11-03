@@ -20,6 +20,8 @@ pub struct Scratch {
     unprinted_comments: Vec<u8>,
     /// Their ids, for the second pass.
     unprinted_comment_ids: Vec<u32>,
+    /// `flat::Buffers::text`
+    line_text: Vec<u8>,
 }
 
 /// Formats `file` by printing the document that `write` writes, and appends the text to `out`. Returns the offsets of
@@ -128,6 +130,7 @@ fn write_document<'a>(
     context.cursor = cursor;
     context.short_cuts.mode = context.short_cuts.mode.min(short_cuts);
     context.comments_without_printer = comments_without_printer;
+    context.line_buffers.text = std::mem::take(&mut scratch.line_text);
     write_with(context, file.text(), scratch, |f| write(file, f))
 }
 
@@ -146,8 +149,12 @@ pub(crate) fn write_with<'a>(
 }
 
 /// Hands `formatter`'s buffers back to `scratch` and returns the document's range.
-fn finish(formatter: Formatter<'_>, scratch: &mut Scratch) -> Result<Interned, FormatError> {
+fn finish(mut formatter: Formatter<'_>, scratch: &mut Scratch) -> Result<Interned, FormatError> {
     let ran_out_of_stack = formatter.context().ran_out_of_stack;
+    let line_text = std::mem::take(&mut formatter.context_mut().line_buffers.text);
+    if !line_text.is_empty() {
+        scratch.line_text = line_text;
+    }
     scratch.unprinted_comments.clear();
     scratch.unprinted_comment_ids.clear();
     for comment in formatter.context().comments().unprinted() {

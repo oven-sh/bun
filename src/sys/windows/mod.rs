@@ -1535,9 +1535,13 @@ pub fn update_stdio_mode_flags(
 ) -> Result<DWORD, SystemErrno> {
     let fd = i.fd();
     let mut original_mode: DWORD = 0;
-    if kernel32_2::GetConsoleMode(fd.native(), &mut original_mode) == 0
-        || kernel32_2::SetConsoleMode(fd.native(), (original_mode | opts.set) & !opts.unset) == 0
-    {
+    if kernel32_2::GetConsoleMode(fd.native(), &mut original_mode) == 0 {
+        return Err(last_system_errno());
+    }
+    if matches!(i, bun_sys::Stdio::StdIn) {
+        bun_core::output::windows_stdio::console_input_mode_to_restore(original_mode);
+    }
+    if kernel32_2::SetConsoleMode(fd.native(), (original_mode | opts.set) & !opts.unset) == 0 {
         return Err(last_system_errno());
     }
     Ok(original_mode)

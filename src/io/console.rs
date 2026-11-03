@@ -10,7 +10,7 @@ use bun_core::tty::Mode;
 use bun_core::{Output, strings, zstr};
 use bun_errno::uv_codes::{UV_EINVAL, UV_UNKNOWN};
 use bun_sys::windows::kernel32::{
-    CancelIoEx, CreateEventW, GetConsoleMode, GetTickCount64, SetConsoleMode, SetEvent,
+    CancelIoEx, CreateEventW, GetConsoleMode, SetConsoleMode, SetEvent, SetLastError,
     WaitForMultipleObjects,
 };
 use bun_sys::windows::{
@@ -375,8 +375,8 @@ impl Reader {
         if let Some(error) = result.error {
             return Err(error);
         }
-        // Ctrl+Z at the start of a line. `ReadFile` sees to this itself.
-        if result.len > 0 && result.units[1] == 0x1A && !result.continued {
+        // Ctrl+Z at the start of a line, which `ReadFile` sees to itself.
+        if result.len == 0 || (result.units[1] == 0x1A && !result.continued) {
             return Ok(false);
         }
         result.units[0] = core::mem::take(&mut self.high_surrogate);
@@ -650,8 +650,6 @@ impl LineRead {
         result.error = None;
         result.canceled = false;
         result.asked = false;
-        let mut empty_reads = 0;
-        let mut first_empty_read = 0;
         // The console keeps the rest of a line for the handle, and that is not an input record.
         let mut has_text = result.continued;
         loop {
@@ -662,6 +660,7 @@ impl LineRead {
             result.asked = true;
             // A canceled read reports success and leaves the count alone.
             let mut count = DWORD::MAX;
+            SetLastError(0);
             // SAFETY: `units` has room for `LINE_UNITS` after the first.
             let ok = unsafe {
                 ReadConsoleW(
@@ -680,23 +679,12 @@ impl LineRead {
                 result.canceled = true;
                 return;
             }
-            if count != 0 {
+            // Ctrl+C, Ctrl+Break and another reader that goes away end a read with nothing and this error. That is not the end of the input.
+            if count != 0 || Win32Error::get() != Win32Error::OPERATION_ABORTED {
                 result.len = count as usize;
                 return;
             }
-            // Ctrl+C, Ctrl+Break or another reader going away: not the end of the input, unless it keeps happening.
             result.asked = false;
-            let now = GetTickCount64();
-            if empty_reads == 0 || now - first_empty_read > 1000 {
-                empty_reads = 0;
-                first_empty_read = now;
-            }
-            empty_reads += 1;
-            if empty_reads == 256 {
-                result.units[1] = 0x1A;
-                result.len = 1;
-                return;
-            }
         }
     }
 
@@ -733,8 +721,9 @@ impl LineRead {
                 return false;
             }
             match take(32, CONSOLE_READ_NOREMOVE) {
-                // The read has the error to report.
-                None | Some((_, true)) => return true,
+                // The read has the error to report, unless this is `cancel` at work.
+                None => return !self.cancel_requested.load(Ordering::Acquire),
+                Some((_, true)) => return true,
                 Some((0, _)) => {
                     let handles = [input, self.wake];
                     // Nothing signals that the process behind the console is gone. The look at the records fails then.

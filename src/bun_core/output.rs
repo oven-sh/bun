@@ -480,26 +480,15 @@ pub mod windows_stdio {
         safe fn SetConsoleMode(hConsoleHandle: w::HANDLE, dwMode: w::DWORD) -> w::BOOL;
     }
 
-    /// At program start, we snapshot the console modes of standard in, out, and err
-    /// so that we can restore them at program exit if they change. Restoration is
-    /// best-effort, and may not be applied if the process is killed abruptly.
-    ///
-    /// Write-once at startup → `Once`, not `RacyCell`: `init()` builds the
-    /// snapshot locally and `.set()`s it; `restore()` reads via `.get()`. Both
-    /// sides are fully safe (cell-get reduction).
-    static CONSOLE_MODE: crate::Once<[Option<u32>; 3]> = crate::Once::new();
     static CONSOLE_CODEPAGE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
     static CONSOLE_OUTPUT_CODEPAGE: core::sync::atomic::AtomicU32 =
         core::sync::atomic::AtomicU32::new(0);
-    /// [`console_input_mode_to_restore`] if stdin is not the console. Bit 32 says that it is set.
+    /// [`console_input_mode_to_restore`]. Bit 32 says that it is set.
     static CONSOLE_INPUT_MODE: core::sync::atomic::AtomicU64 =
         core::sync::atomic::AtomicU64::new(0);
 
-    /// The console input mode from before Bun touched it, which [`restore`] puts back. `current`: the mode right now.
+    /// The console input mode from before Bun changed it, which [`restore`] puts back. `current`: the mode right now, which the caller is about to change.
     pub fn console_input_mode_to_restore(current: u32) -> u32 {
-        if let Some([Some(mode), ..]) = CONSOLE_MODE.get() {
-            return *mode;
-        }
         match CONSOLE_INPUT_MODE.compare_exchange(
             0,
             1 << 32 | u64::from(current),
@@ -516,24 +505,8 @@ pub mod windows_stdio {
         restore();
     }
 
+    /// The modes belong to the console and not to this process. So the input mode is put back only if Bun changed it, and the output mode, which others that write to the console go by, never.
     pub(crate) fn restore() {
-        // SAFETY: PEB access is sound on Windows; handles are valid for process
-        // lifetime. `peb()` returns a raw pointer because the OS/CRT mutate the
-        // PEB out-of-band (`SetStdHandle`, …), so we must not materialize a
-        // long-lived `&` — read the handle fields through raw-pointer deref.
-        let (stdin, stdout, stderr) = unsafe {
-            let pp = (*w::peb()).ProcessParameters;
-            ((*pp).hStdInput, (*pp).hStdOutput, (*pp).hStdError)
-        };
-
-        let handles = [stdin, stdout, stderr];
-        let modes = CONSOLE_MODE.get().copied().unwrap_or([None; 3]);
-        for (mode, handle) in modes.iter().zip(handles.iter()) {
-            if let Some(m) = *mode {
-                let _ = SetConsoleMode(*handle, m);
-            }
-        }
-
         let input_mode = CONSOLE_INPUT_MODE.load(Ordering::Relaxed);
         if input_mode != 0 {
             // SAFETY: the name is NUL-terminated, and the null arguments are optional.
@@ -609,27 +582,19 @@ pub mod windows_stdio {
         CONSOLE_CODEPAGE.store(c::GetConsoleCP(), Ordering::Relaxed);
         let _ = c::SetConsoleCP(CP_UTF8);
 
-        // Build the snapshot locally, then publish via `Once::set` — no
-        // long-lived `&mut` into a shared static (cell-get reduction).
-        let mut console_mode: [Option<u32>; 3] = [None; 3];
         for (i, handle) in [stdin, stdout, stderr].into_iter().enumerate() {
             let mut mode: w::DWORD = 0;
-            if GetConsoleMode(handle, &mut mode) != 0 {
-                console_mode[i] = Some(mode);
-                bun_stdio_tty[i].store(1, Ordering::Relaxed);
+            if GetConsoleMode(handle, &mut mode) == 0 {
+                continue;
             }
-        }
-
-        // Nothing is set on stdin. The other two are mostly one screen buffer, which has one mode, so both are saved by now.
-        for (handle, mode) in [(stdout, console_mode[1]), (stderr, console_mode[2])] {
-            if let Some(mode) = mode {
+            bun_stdio_tty[i].store(1, Ordering::Relaxed);
+            if i != 0 {
                 let wanted = w::ENABLE_PROCESSED_OUTPUT
                     | w::ENABLE_VIRTUAL_TERMINAL_PROCESSING
                     | w::ENABLE_WRAP_AT_EOL_OUTPUT;
                 let _ = SetConsoleMode(handle, (mode | wanted) & !w::DISABLE_NEWLINE_AUTO_RETURN);
             }
         }
-        let _ = CONSOLE_MODE.set(console_mode);
     }
 }
 

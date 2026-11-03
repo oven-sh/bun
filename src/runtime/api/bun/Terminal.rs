@@ -674,6 +674,17 @@ impl Terminal {
         let Some(hpcon) = self.hpcon.get() else {
             return;
         };
+        type ReleasePseudoConsole = unsafe extern "system" fn(windows::HPCON) -> i32;
+        // SAFETY: the name is NUL-terminated.
+        let kernel32 = unsafe {
+            windows::kernel32::GetModuleHandleW(bun_core::wstr!("kernel32.dll").as_ptr())
+        };
+        let name = bun_core::zstr!("ReleasePseudoConsole");
+        if let Some(function) = windows::GetProcAddressA(Some(kernel32.cast()), name) {
+            // SAFETY: this is the signature of the export of that name, and `hpcon` is open.
+            unsafe { core::mem::transmute::<*mut c_void, ReleasePseudoConsole>(function)(hpcon) };
+            return;
+        }
         // SAFETY: `hpcon` was returned from inbox `CreatePseudoConsole`, which
         // heap-allocates a `PseudoConsole` and returns it as HPCON.
         // `ClosePseudoConsole` later skips the field when it reads null.

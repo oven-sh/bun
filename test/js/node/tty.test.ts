@@ -371,6 +371,60 @@ describe("ReadStream.prototype.setRawMode", () => {
     `);
     expect(seen).toEqual(["x\r\n"]);
   });
+
+  // Another process may have changed it since this one started.
+  test.skipIf(!isWindows)(
+    "a process that did not change the input mode of its console ends without setting it",
+    async () => {
+      const seen = await seenOnConsole(`
+      const { GetStdHandle, GetConsoleMode } = require("bun:ffi").dlopen("kernel32.dll", {
+        GetStdHandle: { args: ["i32"], returns: "ptr" },
+        GetConsoleMode: { args: ["ptr", "ptr"], returns: "i32" },
+      }).symbols;
+      function inputMode() {
+        const mode = new Uint32Array(1);
+        GetConsoleMode(GetStdHandle(-10), mode);
+        return mode[0];
+      }
+      const started = Promise.withResolvers();
+      const child = Bun.spawn({
+        cmd: [process.execPath, "-e", "process.send('started'); process.on('message', () => process.exit());"],
+        stdio: ["inherit", "inherit", "inherit"],
+        ipc: started.resolve,
+      });
+      await started.promise;
+      const cooked = inputMode();
+      process.stdin.setRawMode(true);
+      const raw = inputMode();
+      child.send("leave");
+      await child.exited;
+      seen.push(raw !== cooked, inputMode() === raw);
+    `);
+      expect(seen).toEqual([true, true]);
+    },
+  );
+
+  // What puts the console back at Ctrl+C is asked last, so only if nothing else handles the event.
+  test.skipIf(!isWindows)(
+    "a Ctrl+C that a listener handles leaves the console to Bun, after TTY#setRawMode(0) too",
+    async () => {
+      const seen = await seenOnConsole(`
+      const { GenerateConsoleCtrlEvent, GetConsoleOutputCP } = require("bun:ffi").dlopen("kernel32.dll", {
+        GenerateConsoleCtrlEvent: { args: ["u32", "u32"], returns: "i32" },
+        GetConsoleOutputCP: { args: [], returns: "u32" },
+      }).symbols;
+      const interrupted = Promise.withResolvers();
+      process.on("SIGINT", interrupted.resolve);
+      const handle = new TTY(0);
+      handle.setRawMode(1);
+      handle.setRawMode(0);
+      GenerateConsoleCtrlEvent(0, 0);
+      await interrupted.promise;
+      seen.push(GetConsoleOutputCP());
+    `);
+      expect(seen).toEqual([65001]);
+    },
+  );
 });
 
 describe.skipIf(!isWindows)("process.stdin on a raw console", () => {
@@ -1007,27 +1061,30 @@ describe("WriteStream.prototype", () => {
     expect(JSON.parse(columns)).toEqual([2, 3]);
   });
 
-  // The standard output and error are one screen buffer here, which has one mode.
-  test.skipIf(!isWindows)("a process leaves the output mode of the console as it found it", async () => {
-    const [, mode] = await runOnConsole(
-      `
-        const { GetStdHandle, GetConsoleMode, SetConsoleMode } = require("bun:ffi").dlopen("kernel32.dll", {
-          GetStdHandle: { args: ["i32"], returns: "ptr" },
-          GetConsoleMode: { args: ["ptr", "ptr"], returns: "i32" },
-          SetConsoleMode: { args: ["ptr", "u32"], returns: "i32" },
-        }).symbols;
-        const output = GetStdHandle(-11);
-        // Without ENABLE_VIRTUAL_TERMINAL_PROCESSING, which Bun turns on.
-        SetConsoleMode(output, 3);
-        Bun.spawnSync({ cmd: [process.execPath, "-e", ""], stdio: ["inherit", "inherit", "inherit"] });
-        const mode = new Uint32Array(1);
-        GetConsoleMode(output, mode);
-        console.log("MODE " + mode[0] + ";");
-      `,
-      /MODE (\d+);/,
-    );
-    expect(mode).toBe("3");
-  });
+  // The mode belongs to the screen buffer, which the other processes on the console go on writing to.
+  test.skipIf(!isWindows).each(["inherit", "pipe"])(
+    "a process that ends leaves escape sequences on for the rest of its console (stdout: %s)",
+    async stdout => {
+      const [, mode] = await runOnConsole(
+        `
+          const { GetStdHandle, GetConsoleMode, SetConsoleMode } = require("bun:ffi").dlopen("kernel32.dll", {
+            GetStdHandle: { args: ["i32"], returns: "ptr" },
+            GetConsoleMode: { args: ["ptr", "ptr"], returns: "i32" },
+            SetConsoleMode: { args: ["ptr", "u32"], returns: "i32" },
+          }).symbols;
+          const output = GetStdHandle(-11);
+          // Without ENABLE_VIRTUAL_TERMINAL_PROCESSING, which Bun turns on.
+          SetConsoleMode(output, 3);
+          Bun.spawnSync({ cmd: [process.execPath, "-e", ""], stdio: ["inherit", "${stdout}", "inherit"] });
+          const mode = new Uint32Array(1);
+          GetConsoleMode(output, mode);
+          console.log("MODE " + mode[0] + ";");
+        `,
+        /MODE (\d+);/,
+      );
+      expect(mode).toBe("7");
+    },
+  );
 });
 
 describe("WriteStream.prototype.getColorDepth", () => {

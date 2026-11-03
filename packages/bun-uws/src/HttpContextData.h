@@ -26,13 +26,13 @@
 namespace uWS {
 template<bool> struct HttpResponse;
 struct HttpRequest;
+struct Http2Context;
 
 struct HttpFlags {
     bool isParsingHttp: 1 = false;
     bool rejectUnauthorized: 1 = false;
     bool usingCustomExpectHandler: 1 = false;
     bool requireHostHeader: 1 = true;
-    bool isAuthorized: 1 = false;
     bool useStrictMethodValidation: 1 = false;
     /* node:http parser leniency. Two llhttp lenient bits: useInsecureHTTPParser = LENIENT_HEADERS
      * ("relaxed"+"insecure"); useLenientTransferEncoding = LENIENT_TRANSFER_ENCODING ("insecure"
@@ -50,13 +50,15 @@ struct alignas(16) HttpContextData {
     template <bool> friend struct HttpContext;
     template <bool> friend struct HttpResponse;
     template <bool> friend struct TemplatedApp;
+    friend struct Http2Context;
 private:
     std::vector<MoveOnlyFunction<void(HttpResponse<SSL> *, int)>> filterHandlers;
     using OnSocketDataCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket, const char *data, int length, bool last);
     using OnSocketDrainCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
     using OnSocketUpgradedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
     using OnClientErrorCallback = MoveOnlyFunction<void(int is_ssl, struct us_socket_t *rawSocket, uWS::HttpParserError errorCode, char *rawPacket, int rawPacketLength)>;
-    using OnSocketClosedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
+    /* readError: 0, or the error of the failed read (a peer RST). peerEnded: the peer sent its FIN first. */
+    using OnSocketClosedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket, int readError, bool peerEnded);
 
     MoveOnlyFunction<void(const char *hostname)> missingServerNameHandler;
 
@@ -64,9 +66,6 @@ private:
         HttpResponse<SSL> *httpResponse;
         HttpRequest *httpRequest;
     };
-
-    /* This is the currently browsed-to router when using SNI */
-    HttpRouter<RouterData> *currentRouter = &router;
 
     /* The socket onData is currently parsing, nullptr outside a parse. The
      * close gates in internalEnd need the per-socket identity: a DIFFERENT
@@ -76,7 +75,6 @@ private:
      * checks the parsed socket. */
     struct us_socket_t *parsingSocket = nullptr;
 
-    /* This is the default router for default SNI or non-SSL */
     HttpRouter<RouterData> router;
     void *upgradedWebSocket = nullptr;
     /* Used to simulate Node.js socket events. */
@@ -87,11 +85,20 @@ private:
     OnClientErrorCallback onClientError = nullptr;
 
     uint64_t maxHeaderSize = 0; // 0 means no limit
+    uint32_t maxHeadersCount = 0; // node:http server.maxHeadersCount; 0 means not set
 
-    // TODO: SNI
+    /* HTTP/2: set by Http2Context::attach(). A connection that negotiated h2
+     * (ALPN) or opened with the prior-knowledge preface is handed over via
+     * onHttp2, which destructs our ext, adopts the socket and feeds it the
+     * bytes already read. */
+    Http2Context *http2Context = nullptr;
+    us_socket_t *(*onHttp2)(void *http2Context, us_socket_t *s, char *data, int length, unsigned prefaceConsumed) = nullptr;
+    /* With HTTP/2 attached: whether HTTP/1.x is still served (ALPN fallback
+     * and non-preface cleartext). */
+    bool allowHttp1 = true;
+
     void clearRoutes() {
         this->router = HttpRouter<RouterData>{};
-        this->currentRouter = &router;
         /* Not filterHandlers: filters are per-context open/close hooks, not
          * routes. server.reload() never re-registers them, so wiping them here
          * leaves Bun's active_connection_count (and node:http's 'connection'
@@ -101,6 +108,8 @@ private:
 public:
     
     HttpFlags flags;
+
+    bool isParsing(struct us_socket_t *s) const { return flags.isParsingHttp && parsingSocket == s; }
 };
 
 }

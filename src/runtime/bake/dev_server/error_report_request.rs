@@ -20,7 +20,7 @@ use bun_alloc::ArenaVecExt as _;
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_collections::ArrayHashMap;
 use bun_core::{Ordinal, Output};
-use bun_core::{String as BunString, strings};
+use bun_core::{String as BunString, StringOrView, strings};
 use bun_io::Write as _;
 use bun_jsc::{
     JSErrorCode, JSRuntimeType, ZigException, ZigStackFrame, ZigStackFrameCode,
@@ -34,7 +34,7 @@ use super::source_map_store::{self, GetResult, Key as SourceMapKey};
 use super::{CLIENT_PREFIX, DevServer};
 use crate::server::StaticRoute;
 use crate::server::static_route::InitFromBytesOptions;
-use bun_core::fmt::parse_hex_to_int;
+use bun_core::fmt::parse_hex_to_u64;
 
 pub(crate) struct ErrorReportRequest {
     // BACKREF: heap-allocated request; DevServer owns the server lifecycle and
@@ -123,15 +123,15 @@ impl ErrorReportRequest {
         let message = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
         let browser_url = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
         let stack_count = reader.read_int_le::<u32>()?.min(255); // does not support more than 255
-        let mut frames: Vec<ZigStackFrame> = Vec::with_capacity(stack_count as usize);
+        let mut frames: Vec<ZigStackFrame<'_>> = Vec::with_capacity(stack_count as usize);
         for _ in 0..stack_count {
             let line = reader.read_int_le::<i32>()?;
             let column = reader.read_int_le::<i32>()?;
             let function_name = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
             let file_name = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
             frames.push(ZigStackFrame {
-                function_name: BunString::init(function_name),
-                source_url: BunString::init(file_name),
+                function_name: StringOrView::from_bytes(function_name),
+                source_url: StringOrView::from_bytes(file_name),
                 position: if line > 0 {
                     ZigStackFramePosition {
                         line: Ordinal::from_one_based(line),
@@ -176,8 +176,8 @@ impl ErrorReportRequest {
         let mut top_frame_position = ZigStackFramePosition::INVALID;
         let mut region_of_interest_line: u32 = 0;
         for frame in frames.iter_mut() {
-            // Every `source_url` here is `Tag::ZigString` (built via
-            // `String::init(&[u8])`), so `byte_slice()` is the right view.
+            // Every `source_url` here is `Tag::EncodedSlice` (built via
+            // `StringOrView::from_bytes`), so `byte_slice()` is the right view.
             let source_url: &[u8] = frame.source_url.byte_slice();
             // The browser code strips "http://localhost:3000" when the string
             // has /_bun/client. It's done because JS can refer to `location`
@@ -224,7 +224,7 @@ impl ErrorReportRequest {
             if generated_mappings.len() <= 1
                 || frame.position.line.zero_based() < generated_mappings[1].lines.zero_based()
             {
-                frame.source_url = BunString::init(RUNTIME_NAME); // matches value in source map
+                frame.source_url = BunString::static_(RUNTIME_NAME).into(); // matches value in source map
                 frame.position = ZigStackFramePosition::INVALID;
                 continue;
             }
@@ -242,11 +242,11 @@ impl ErrorReportRequest {
                 let index = remapped_position.source_index;
                 if index >= 1 && (index as usize - 1) < result.file_paths.len() {
                     let abs_path: &[u8] = &result.file_paths[index as usize - 1];
-                    frame.source_url = BunString::init(abs_path);
+                    frame.source_url = StringOrView::from_bytes(abs_path);
                     let mut relative_path_buf = path_buffer_pool::get();
                     let rel_path = dev.relative_path(&mut relative_path_buf, abs_path);
                     if strings::eql(frame.function_name.byte_slice(), rel_path) {
-                        frame.function_name = BunString::EMPTY;
+                        frame.function_name = StringOrView::EMPTY;
                     }
                     frame.remapped = true;
 
@@ -268,7 +268,7 @@ impl ErrorReportRequest {
                     }
                 } else if index == 0 {
                     // Should be picked up by above but just in case.
-                    frame.source_url = BunString::init(RUNTIME_NAME);
+                    frame.source_url = BunString::static_(RUNTIME_NAME).into();
                     frame.position = ZigStackFramePosition::INVALID;
                 }
             }
@@ -301,12 +301,12 @@ impl ErrorReportRequest {
         let mut exception = ZigException {
             r#type: JSErrorCode::Error,
             runtime_type: JSRuntimeType::NOTHING,
-            name: BunString::init(name),
-            message: BunString::init(message),
+            name: StringOrView::from_bytes(name),
+            message: StringOrView::from_bytes(message),
             stack: ZigStackTrace::from_frames(&mut frames),
             exception: core::ptr::null_mut(),
             remapped: false,
-            browser_url: BunString::init(browser_url),
+            browser_url: StringOrView::from_bytes(browser_url),
             errno: 0,
             syscall: BunString::EMPTY,
             system_code: BunString::EMPTY,
@@ -422,7 +422,7 @@ fn parse_id(source_url: &[u8], browser_url: &[u8]) -> Option<source_map_store::K
         return None;
     }
     let hex = &after_prefix[after_prefix.len() - MIN_LEN..][..core::mem::size_of::<u64>() * 2];
-    Some(source_map_store::Key::init(parse_hex_to_int::<u64>(hex)?))
+    Some(source_map_store::Key::init(parse_hex_to_u64(hex)?))
 }
 
 /// Instead of decoding the entire file, just decode the desired section.
@@ -500,8 +500,7 @@ fn extract_json_encoded_source_code<'a, const N: usize>(
 }
 
 /// `DevServer.readString32` — local zero-copy variant over the body slice
-/// reader (the canonical allocating version lives in the gated `DevServer.rs`
-/// draft and is not yet re-exported from `super`).
+/// reader.
 #[inline]
 fn read_string32<'a>(r: &mut bun_io::FixedBufferStream<&'a [u8]>) -> crate::Result<&'a [u8]> {
     let len = r.read_int_le::<u32>()? as usize;
@@ -510,7 +509,7 @@ fn read_string32<'a>(r: &mut bun_io::FixedBufferStream<&'a [u8]>) -> crate::Resu
         .pos
         .checked_add(len)
         .filter(|&e| e <= buf.len())
-        .ok_or(crate::Error::EndOfStream)?;
+        .ok_or(bun_core::Error::EndOfStream)?;
     let s = &buf[r.pos..end];
     r.pos = end;
     Ok(s)

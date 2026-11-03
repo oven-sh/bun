@@ -308,7 +308,6 @@ const isFreeBSD = process.platform === 'freebsd';
 const isOpenBSD = process.platform === 'openbsd';
 const isLinux = process.platform === 'linux';
 const isMacOS = process.platform === 'darwin';
-const isASan = process.config.variables.asan === 1;
 const isRiscv64 = process.arch === 'riscv64';
 const isDebug = process.features.debug;
 function isPi() {
@@ -1223,7 +1222,21 @@ const common = {
   hasMultiLocalhost,
   invalidArgTypeHelper,
   isAlive,
-  isASan,
+  // Bun reports `process.config.variables.asan` as 0 even in ASan builds (so
+  // node-gyp does not add -fsanitize=address to addons), so ask the runtime.
+  get isASan() {
+    let value = process.config.variables.asan === 1;
+    if (!value && process.versions.bun) {
+      try {
+        const { isASANEnabled } = require('bun:internal-for-testing');
+        value = typeof isASANEnabled === 'function' && !!isASANEnabled();
+      } catch {
+        value = path.basename(process.execPath).includes('bun-asan');
+      }
+    }
+    Object.defineProperty(this, 'isASan', { value, enumerable: true });
+    return value;
+  },
   isDebug,
   isDumbTerminal,
   isFreeBSD,

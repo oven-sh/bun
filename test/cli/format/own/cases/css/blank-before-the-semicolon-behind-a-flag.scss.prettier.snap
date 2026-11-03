@@ -1,0 +1,25 @@
+------------------
+{ printWidth: 80 }
+------------------
+$var: all !default /* c3 */ ; /* c4 */
+$v: a /* c */;
+a {
+  $x: red /* c9 */ !default /* c10 */ ; /* c11 */
+  $y: red !global /* c */  ;
+  color: red !important /* c */ ;
+  color: red /* c */;
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+$var: all !default /* c3 */ ; /* c4 */
+$v: a /* c */;
+a {
+  $x: red /* c9 */ !default /* c10 */ ; /* c11 */
+  $y: red !global /* c */  ;
+  color: red !important /* c */ ;
+  color: red /* c */;
+}
+
+===================== End =====================

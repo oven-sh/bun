@@ -4,6 +4,10 @@ pub enum Error {
     Io(std::io::Error),
     #[error(transparent)]
     Macho(#[from] crate::macho::MachoError),
+    #[error(transparent)]
+    Image(#[from] crate::image::ImageError),
+    #[error(transparent)]
+    Pe(#[from] crate::pe::Error),
 }
 
 impl From<std::io::Error> for Error {
@@ -13,11 +17,12 @@ impl From<std::io::Error> for Error {
 }
 
 impl Error {
-    #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn name(&self) -> &'static str {
         match self {
             Self::Io(_) => "Io",
             Self::Macho(e) => <&'static str>::from(e),
+            Self::Image(e) => <&'static str>::from(e),
+            Self::Pe(e) => <&'static str>::from(e),
         }
     }
 }

@@ -21,7 +21,7 @@ bun patch <package>@<version>
 </ParamField>
 
 <ParamField path="--ignore-scripts" type="boolean">
-  Skip lifecycle scripts in the project's <code>package.json</code> (dependency scripts are never run)
+  Skip lifecycle scripts for all packages, including the project's <code>package.json</code> and trusted dependencies
 </ParamField>
 
 <ParamField path="--trust" type="boolean">
@@ -64,17 +64,25 @@ bun patch <package>@<version>
 
 ### Installation Control
 
-<ParamField path="--backend" type="string" default="clonefile">
-  Platform-specific optimizations for installing dependencies. Possible values: <code>clonefile</code> (default),{" "}
-  <code>hardlink</code>, <code>symlink</code>, <code>copyfile</code>
+<ParamField path="--backend" type="string">
+  Platform-specific optimizations for installing dependencies. Possible values: <code>clonefile</code> (default on
+  macOS), <code>hardlink</code> (default on Linux and Windows), <code>symlink</code>, <code>copyfile</code>
 </ParamField>
 
 <ParamField path="--linker" type="string">
   Linker strategy (one of <code>isolated</code> or <code>hoisted</code>)
 </ParamField>
 
+<ParamField path="--minimum-release-age" type="number">
+  Only install packages published at least N seconds ago (security feature)
+</ParamField>
+
+<ParamField path="--minimum-release-age-excludes" type="string">
+  Packages exempt from <code>--minimum-release-age</code> (comma-separated or repeated; replaces the bunfig.toml list)
+</ParamField>
+
 <ParamField path="--dry-run" type="boolean">
-  Don't install anything
+  Print what the command would do, with or without <code>--commit</code>, and leave the project as it is
 </ParamField>
 
 <ParamField path="--force" type="boolean">
@@ -95,13 +103,25 @@ bun patch <package>@<version>
   Same as <code>--ca</code>, but as a file path to the certificate
 </ParamField>
 
+<ParamField path="--use-system-ca" type="boolean">
+  Use the system's trusted certificate authorities
+</ParamField>
+
+<ParamField path="--use-openssl-ca" type="boolean">
+  Use OpenSSL's default CA store instead of the bundled one
+</ParamField>
+
+<ParamField path="--use-bundled-ca" type="boolean">
+  Use bundled CA store
+</ParamField>
+
 <ParamField path="--registry" type="string">
   Use a specific registry by default, overriding <code>.npmrc</code>, <code>bunfig.toml</code>, and environment
   variables
 </ParamField>
 
-<ParamField path="--network-concurrency" type="number" default="48">
-  Maximum number of concurrent network requests (default 48)
+<ParamField path="--network-concurrency" type="number" default="64">
+  Maximum number of concurrent network requests (default 64)
 </ParamField>
 
 ### Performance &amp; Resource
@@ -127,7 +147,7 @@ bun patch <package>@<version>
 </ParamField>
 
 <ParamField path="--quiet" type="boolean">
-  Only show tarball name when packing
+  Disable the progress bar
 </ParamField>
 
 <ParamField path="--verbose" type="boolean">
@@ -154,6 +174,10 @@ bun patch <package>@<version>
   all)
 </ParamField>
 
+<ParamField path="--libc" type="string">
+  Override libc for optional dependencies (e.g., <code>glibc</code>, <code>musl</code>, <code>*</code> for all)
+</ParamField>
+
 ### Global Configuration &amp; Context
 
 <ParamField path="--config" type="string">
@@ -162,6 +186,14 @@ bun patch <package>@<version>
 
 <ParamField path="--cwd" type="string">
   Set a specific current working directory
+</ParamField>
+
+<ParamField path="--env-file" type="string">
+  Load environment variables from the specified file(s)
+</ParamField>
+
+<ParamField path="--no-env-file" type="boolean">
+  Disable automatic loading of .env files
 </ParamField>
 
 ### Help

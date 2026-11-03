@@ -1,0 +1,1 @@
+{ "features": ["NativeAddons", "Ffi", "Sqlite"], "keptToday": true }

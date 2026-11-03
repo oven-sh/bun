@@ -102,11 +102,6 @@ extern "C" bool io_darwin_schedule_wakeup(mach_port_t waker)
     }
 }
 
-extern "C" void io_darwin_close_machport(mach_port_t port)
-{
-    mach_port_deallocate(mach_task_self(), port);
-}
-
 #else
 
 // stub out these symbols
@@ -119,7 +114,5 @@ extern "C" int io_darwin_create_machport(int fd,
 
 // stub out these symbols
 extern "C" bool io_darwin_schedule_wakeup(void* waker) { return false; }
-
-extern "C" void io_darwin_close_machport(unsigned port) {}
 
 #endif

@@ -81,24 +81,8 @@ impl JsString {
         if let Some(n) = s.javascript_length() {
             return n as usize;
         }
-        // 8-bit non-ASCII WTF-8: count code units by lead byte.
-        s.slice8()
-            .iter()
-            .filter(|&&b| b & 0xC0 != 0x80)
-            .map(|&b| if b >= 0xF0 { 2 } else { 1 })
-            .sum()
-    }
-}
-
-impl From<&str> for JsString {
-    fn from(s: &str) -> Self {
-        Self::from_wtf8_bytes(s.as_bytes())
-    }
-}
-
-impl From<String> for JsString {
-    fn from(s: String) -> Self {
-        Self::from_wtf8_bytes(s.as_bytes())
+        // 8-bit non-ASCII WTF-8
+        strings::element_length_utf8_into_utf16(s.slice8())
     }
 }
 
@@ -112,18 +96,6 @@ impl Eq for JsString {}
 impl Hash for JsString {
     fn hash<H: Hasher>(&self, h: &mut H) {
         self.0.get().hash().hash(h);
-    }
-}
-
-impl PartialEq<str> for JsString {
-    fn eq(&self, other: &str) -> bool {
-        self.0.get().eql_bytes(other.as_bytes())
-    }
-}
-
-impl PartialEq<&str> for JsString {
-    fn eq(&self, other: &&str) -> bool {
-        self.0.get().eql_bytes(other.as_bytes())
     }
 }
 

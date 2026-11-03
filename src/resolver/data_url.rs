@@ -132,7 +132,6 @@ impl PercentEncoding {
 // `mime_type`/`data` are slices into the caller-provided `url` string.
 // Classified as BORROW_PARAM — struct gets a lifetime parameter.
 pub struct DataURL<'a> {
-    pub url: bun_core::String,
     pub mime_type: &'a [u8],
     pub(crate) data: &'a [u8],
     pub(crate) is_base64: bool,
@@ -152,7 +151,6 @@ impl<'a> DataURL<'a> {
             strings::index_of_char(url, b',').ok_or(ParseDataURLError::InvalidDataURL)? as usize;
 
         let mut parsed = DataURL {
-            url: bun_core::String::empty(),
             mime_type: &url[b"data:".len()..comma],
             data: &url[comma + 1..url.len()],
             is_base64: false,
@@ -173,18 +171,15 @@ impl<'a> DataURL<'a> {
     /// Decodes the data from the data URL. Always returns an owned slice.
     pub fn decode_data(&self) -> Result<Vec<u8>, DecodeDataError> {
         let percent_decoded_owned: Option<Vec<u8>> = PercentEncoding::decode_unstrict(self.data)?;
-        // defer: `percent_decoded_owned` drops at scope exit
         let percent_decoded: &[u8] = percent_decoded_owned.as_deref().unwrap_or(self.data);
 
         if self.is_base64 {
-            let len = bun_base64::decode_len(percent_decoded);
-            let mut buf = vec![0u8; len];
-            // errdefer: `buf` drops automatically on error path
-            let result = bun_base64::decode(&mut buf, percent_decoded);
-            if !result.is_successful() || result.count != len {
+            let decoded = bun_base64::decode_alloc(percent_decoded)
+                .map_err(|_| DecodeDataError::Base64DecodeError)?;
+            if decoded.len() != bun_base64::decode_len(percent_decoded) {
                 return Err(DecodeDataError::Base64DecodeError);
             }
-            return Ok(buf);
+            return Ok(decoded);
         }
 
         Ok(percent_decoded.to_vec())
@@ -219,16 +214,72 @@ impl<'a> DataURL<'a> {
             return buf;
         }
 
-        // When the percent-escape path bails, the payload must be
-        // base64-encoded for real (the buffer is sized for the encoded form).
-        let mut base64buf = vec![0u8; total_base64_encode_len];
-        let prefix_len = b"data:".len() + mime_type.len() + b";base64,".len();
-        base64buf[..b"data:".len()].copy_from_slice(b"data:");
-        base64buf[b"data:".len()..b"data:".len() + mime_type.len()].copy_from_slice(mime_type);
-        base64buf[b"data:".len() + mime_type.len()..prefix_len].copy_from_slice(b";base64,");
-        let encoded_len = bun_base64::encode(&mut base64buf[prefix_len..], text);
-        base64buf.truncate(prefix_len + encoded_len);
-        base64buf
+        Self::encode_as_base64_data_url(mime_type, text)
+    }
+
+    pub fn encode_as_base64_data_url(mime_type: &[u8], bytes: &[u8]) -> Vec<u8> {
+        let mut url = Vec::with_capacity(
+            b"data:".len() + mime_type.len() + b";base64,".len() + bun_base64::encode_len(bytes),
+        );
+        url.extend_from_slice(b"data:");
+        url.extend_from_slice(mime_type);
+        url.extend_from_slice(b";base64,");
+        bun_base64::encode_append(&mut url, bytes);
+        url
+    }
+
+    /// Vite's `svgToDataURL`, except that invalid UTF-8 is base64-encoded instead of replaced with U+FFFD.
+    pub fn encode_svg_as_data_url(svg: &[u8]) -> Vec<u8> {
+        const MIME_TYPE: &[u8] = b"image/svg+xml";
+        // Vite's `/"[^"']*'[^"]*"|'[^'"]*"[^']*'/`, i.e. a quote, then the other kind, then the first kind again.
+        let has_nested_quotes = || {
+            let mut quotes = svg.iter().filter(|c| matches!(c, b'"' | b'\''));
+            let mut previous = quotes.next();
+            while let Some(quote) = quotes.next() {
+                if previous.is_some_and(|it| it != quote) && quotes.clone().any(|it| it != quote) {
+                    return true;
+                }
+                previous = Some(quote);
+            }
+            false
+        };
+        if !strings::is_valid_utf8(svg)
+            || strings::contains(svg, b"<text")
+            || strings::contains(svg, b"<foreignObject")
+            || has_nested_quotes()
+        {
+            return Self::encode_as_base64_data_url(MIME_TYPE, svg);
+        }
+
+        let text = strings::trim_js_whitespace(svg);
+        let mut url = Vec::with_capacity(b"data:,".len() + MIME_TYPE.len() + text.len() * 2);
+        url.extend_from_slice(b"data:");
+        url.extend_from_slice(MIME_TYPE);
+        url.push(b',');
+        let mut at = 0;
+        while at < text.len() {
+            let mut end = at;
+            while let len @ 1.. = strings::js_whitespace_len(&text[end..]) {
+                end += len;
+            }
+            if end > at {
+                if !(text[at - 1] == b'>' && text[end] == b'<') {
+                    url.extend_from_slice(b"%20");
+                }
+                at = end;
+                continue;
+            }
+            match text[at] {
+                b'"' => url.push(b'\''),
+                b'%' => url.extend_from_slice(b"%25"),
+                b'#' => url.extend_from_slice(b"%23"),
+                b'<' => url.extend_from_slice(b"%3c"),
+                b'>' => url.extend_from_slice(b"%3e"),
+                byte => url.push(byte),
+            }
+            at += 1;
+        }
+        url
     }
 
     pub(crate) fn encode_string_as_percent_escaped_data_url(

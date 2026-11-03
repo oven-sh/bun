@@ -1,0 +1,156 @@
+// Prints values: do console.log, util.inspect and Bun.inspect need a feature that the program never uses?
+//// primitives
+console.log(1, "a", true, null, undefined, 10n, Symbol("s"), -0, NaN, 1e21, 1.5e-7);
+//// containers
+console.log([1, [2, [3, [4, [5]]]]], { a: { b: { c: { d: {} } } } }, new Map([[1, { a: 1 }]]), new Set([1, "a"]), new WeakMap(), new WeakSet());
+//// proxy
+console.log(new Proxy({ a: 1 }, {}), new Proxy(function f() {}, {}), new Proxy([1, 2], {}));
+//// proxy-with-traps
+console.log(new Proxy({}, { get() { return 1; }, ownKeys() { return ["x"]; }, getOwnPropertyDescriptor() { return { value: 1, enumerable: true, configurable: true }; } }));
+//// typed-arrays-from-buffer
+const buffer = new ArrayBuffer(16);
+console.log(buffer, new DataView(buffer), new Uint8Array(buffer));
+//// buffer
+console.log(Buffer.from("hello"), Buffer.alloc(60));
+//// shared-array-buffer
+console.log(new SharedArrayBuffer(8));
+//// errors
+console.log(new Error("boom").message, new TypeError("t", { cause: new RangeError("r") }).cause.name, new AggregateError([new Error("a")], "agg").errors.length);
+//// error-object
+const error = new Error("boom"); error.stack = "Error: boom\n    at fixed"; error.extra = { a: 1 };
+console.log(error);
+//// error-uncaught
+//@ exit 1
+const error = new Error("boom"); error.stack = "Error: boom\n    at fixed";
+throw error;
+//// error-uncaught-with-stack
+//@ exit 1
+function thrower() { throw new TypeError("boom"); }
+thrower();
+//// error-cause-uncaught
+//@ exit 1
+throw new Error("outer", { cause: new Error("inner") });
+//// throw-non-error
+//@ exit 1
+throw { a: 1, b: [1, 2] };
+//// throw-string
+//@ exit 1
+throw "text";
+//// reject-unhandled
+//@ exit 1
+Promise.reject(new RangeError("rejected"));
+//// suppressed-error
+console.log(new SuppressedError(new Error("a"), new Error("b"), "s").message);
+//// dom-exception
+try { atob("***"); } catch (error) { console.log(error.name, error.code, error instanceof DOMException, error instanceof Error); }
+//// dom-exception-print
+try { structuredClone(() => {}); } catch (error) { console.log(error.name, error.message, error.code); }
+//// functions-and-classes
+console.log(function f() {}, () => {}, class A {}, class B extends Map {}, async function g() {}, function* h() {}, async function* i() {}, Math.max);
+//// class-instances
+class A { x = 1; #y = 2; static z = 3; get w() { return 4; } }
+console.log(new A(), Object.create(null), Object.create({ inherited: 1 }), new (class extends Array {})(3));
+//// getters-setters
+console.log({ get a() { return 1; }, set a(v) {}, get b() { return 2; }, set c(v) {} });
+//// symbols-as-keys
+console.log({ [Symbol("k")]: 1, [Symbol.iterator]: 2, [Symbol.for("x")]: 3 });
+//// circular
+const a = { name: "a" }; a.self = a; a.list = [a, { a }];
+console.log(a);
+//// regexp
+console.log(/a+/gi, new RegExp("\\d+", "y"), /(?<year>\d{4})/.exec("in 2024"));
+//// date
+console.log(new Date(0), new Date(NaN));
+//// promise
+console.log(Promise.resolve(1), Promise.reject(new Error("x")).catch(() => {}) && 1, new Promise(() => {}));
+//// iterators
+console.log([1].values(), new Map([[1, 2]]).entries(), new Set([1]).values(), "ab"[Symbol.iterator](), "ab".matchAll(/a/g), (function* () {})());
+//// boxed
+console.log(new Number(1), new String("s"), new Boolean(false), Object(Symbol("s")), Object(10n));
+//// arguments
+(function () { console.log(arguments); })(1, 2);
+//// weakref-finalization
+console.log(new WeakRef({}), new FinalizationRegistry(() => {}));
+//// global-namespaces
+console.log(Math, JSON, Reflect, Atomics === undefined);
+//// module-namespace
+import * as path from "node:path";
+console.log(Object.keys(path).length > 5, String(path[Symbol.toStringTag]));
+//// long-strings-and-arrays
+console.log("x".repeat(20000).length, new Array(200).fill(7), "line\nline", ["line\nline"]);
+//// sparse
+console.log([1, , 3], new Array(5), Object.assign([1, 2], { extra: true }));
+//// format-specifiers
+console.log("%s %d %i %f %j %o %O %c %%", "s", 1.5, 1.5, "1.5", { a: 1 }, { b: [1] }, { c: 1 }, "color: red");
+//// console-methods
+console.info("i"); console.debug("d"); console.warn("w"); console.error("e"); console.trace === undefined; console.assert(false, "asserted"); console.count(); console.count("x"); console.countReset(); console.group("g"); console.log("in"); console.groupEnd(); console.dir({ a: { b: { c: { d: 1 } } } }, { depth: 0 });
+//// console-table
+console.table([{ a: 1, b: "x" }, { a: 2, c: true }]); console.table(new Map([[1, 2]])); console.table([[1, 2], [3, 4]]); console.table(5);
+//// console-time
+console.time("t"); console.timeEnd("nothing"); console.log("timed");
+//// console-trace
+function here() { console.trace("traced"); }
+here();
+//// custom-inspect
+console.log({ [Symbol.for("nodejs.util.inspect.custom")](depth, options, inspect) { return "custom " + typeof inspect + " " + typeof options.stylize; } });
+//// custom-inspect-gets-inspect
+console.log({ [Symbol.for("nodejs.util.inspect.custom")](depth, options, inspect) { return inspect(new Map([[1, new Set([2])]]), options); } });
+//// bun-inspect-custom
+console.log({ [Bun.inspect.custom]() { return "custom"; } });
+//// toStringTag
+console.log({ [Symbol.toStringTag]: "Tagged", a: 1 }, String({ [Symbol.toStringTag]: "Tagged" }));
+//// util-inspect-options
+import util from "node:util";
+console.log(util.inspect({ a: { b: { c: { d: 1 } } }, s: "x", n: 1234567 }, { depth: 0, colors: true, compact: false, sorted: true, numericSeparator: true, showHidden: true, getters: true, breakLength: 20 }));
+//// util-inspect-showProxy
+import util from "node:util";
+console.log(util.inspect(new Proxy({ a: 1 }, { get() {} }), { showProxy: true }));
+//// util-format
+import util from "node:util";
+console.log(util.format("%s:%d:%j:%o", "a", 1, { a: 1 }, [1]), util.formatWithOptions({ colors: true }, "%O", { a: 1 }));
+//// util-inspect-everything
+import util from "node:util";
+console.log(util.inspect([new Map([[{ a: 1 }, new Set([1])]]), new Uint8Array(3), new ArrayBuffer(2), Promise.resolve(1), new Proxy({}, {}), new WeakMap(), Symbol("s"), 10n, /x/g, new Date(0), new Error("e").message, class A {}, function f() {}, [1].values(), Object.create(null), new (class Foo { x = 1 })()], { depth: 4 }));
+//// Bun-inspect-table
+console.log(Bun.inspect.table([{ a: 1, b: 2 }]));
+//// host-objects
+console.log(new URL("http://a/b?c#d"), new URLSearchParams("a=1&b=2"), new Headers({ a: "b" }), new Blob(["x"], { type: "text/plain" }), new AbortController().signal.aborted, new Event("e").type, new TextEncoder().encoding);
+//// request-response
+console.log(new Request("http://a/b", { method: "POST", body: "x" }), new Response("x", { status: 201, headers: { a: "b" } }));
+//// file
+console.log(new File(["x"], "n.txt", { type: "text/plain", lastModified: 0 }), Bun.file("/nowhere/x.txt"));
+//// formdata
+const form = new FormData(); form.append("a", "b"); form.append("f", new Blob(["x"]), "n.txt");
+console.log(form);
+//// streams
+console.log(new ReadableStream(), new WritableStream(), new TransformStream());
+//// abort-signal-event-target
+console.log(new AbortController(), new EventTarget(), new Event("x"), new CustomEvent("y", { detail: 1 }), new MessageEvent("m", { data: 1 }), new ErrorEvent("e", { message: "m" }), new CloseEvent("c", { code: 1000 }));
+//// process-objects
+console.log(typeof process.stdout, process.env.NOTHING, process.memoryUsage().rss > 0, process.hrtime().length, typeof process.hrtime.bigint());
+//// text-decoder-encoder
+console.log(new TextDecoder(), new TextEncoder());
+//// performance
+console.log(typeof performance.now(), Object.keys(performance.toJSON()).sort().join());
+//// print-performance
+console.log(Bun.inspect(performance).replace(/\d+(\.\d+)?/g, "N"));
+//// crypto-print
+console.log(crypto, typeof crypto.subtle);
+//// navigator-print
+console.log(Object.keys(navigator), navigator.hardwareConcurrency > 0, navigator.userAgent.startsWith("Bun"), navigator.platform);
+//// timers-print
+const t = setTimeout(() => {}, 1); const i = setImmediate(() => {});
+console.log(typeof t, t.constructor.name, i.constructor.name, typeof t[Symbol.toPrimitive]());
+//// print-timer
+const t = setTimeout(() => {}, 1);
+console.log(Object.keys(t).sort().join(), Bun.inspect(t).split("\n").length > 1);
+//// stdout-write
+process.stdout.write("a\n"); process.stderr.write("b\n"); await Bun.write(Bun.stdout, "c\n");
+//// console-write
+console.write("a\n", new Uint8Array([98, 10]));
+//// console-iterator
+//@ stdin one\ntwo\n
+for await (const line of console) console.log("line", line);
+//// prompt-alert-confirm
+//@ stdin yes\n
+console.log(prompt("name?"));

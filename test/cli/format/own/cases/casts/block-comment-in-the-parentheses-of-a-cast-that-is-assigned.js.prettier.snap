@@ -1,0 +1,71 @@
+------------------
+{ printWidth: 80 }
+------------------
+const f1 = /** @type {unknown} */ (
+  /**
+   * Handles
+   */
+  (...args) => fac()(...args)
+);
+const f2 = /** @type {unknown} */ (
+  // c
+  (...args) => fac()(...args)
+);
+const f3 = /** @type {unknown} */ (
+  /* c */
+  (...args) => fac()(...args)
+);
+const f4 = /** @type {unknown} */ (
+  /**
+   * Handles
+   */
+  foo
+);
+f5 = /** @type {unknown} */ (
+  /**
+   * Handles
+   */
+  function () {}
+);
+const f6 = /** @type {unknown} */ (
+  /** Handles */
+  foo
+);
+const f7 = /** @type {unknown} */ (/** Handles */ foo);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const f1 = /** @type {unknown} */ (
+  /**
+   * Handles
+   */
+  (...args) => fac()(...args)
+);
+const f2 = /** @type {unknown} */ (
+  // c
+  (...args) => fac()(...args)
+);
+const f3 = /** @type {unknown} */ (
+  /* c */
+  (...args) => fac()(...args)
+);
+const f4 = /** @type {unknown} */ (
+  /**
+   * Handles
+   */
+  foo
+);
+f5 = /** @type {unknown} */ (
+  /**
+   * Handles
+   */
+  function () {}
+);
+const f6 = /** @type {unknown} */ (
+  /** Handles */
+  foo
+);
+const f7 = /** @type {unknown} */ (/** Handles */ foo);
+
+===================== End =====================

@@ -27,8 +27,6 @@
 #include "config.h"
 #include "ActiveDOMObject.h"
 
-#include "Event.h"
-#include "EventTarget.h"
 #include "ScriptExecutionContext.h"
 #include <wtf/MainThread.h>
 
@@ -91,11 +89,6 @@ bool ActiveDOMObject::isContextStopped() const
     return !scriptExecutionContext() || scriptExecutionContext()->activeDOMObjectsAreStopped();
 }
 
-bool ActiveDOMObject::isAllowedToRunScript() const
-{
-    return scriptExecutionContext() && !scriptExecutionContext()->activeDOMObjectsAreStopped();
-}
-
 void ActiveDOMObject::queueTaskInEventLoop(TaskSource, Function<void()>&& function)
 {
     RefPtr context = scriptExecutionContext();
@@ -103,20 +96,6 @@ void ActiveDOMObject::queueTaskInEventLoop(TaskSource, Function<void()>&& functi
         return;
     context->postTask([function = WTF::move(function)](ScriptExecutionContext&) mutable {
         function();
-    });
-}
-
-void ActiveDOMObject::queueTaskToDispatchEventInternal(EventTarget& target, TaskSource, Ref<Event>&& event)
-{
-    ASSERT(!event->target() || &target == event->target());
-    RefPtr context = scriptExecutionContext();
-    if (!context)
-        return;
-    context->postTask([activity = makePendingActivity(*this), target = Ref { target }, event = WTF::move(event)](ScriptExecutionContext&) {
-        // If this task executes after the script execution context has been stopped, don't
-        // actually dispatch the event.
-        if (activity->object().isAllowedToRunScript())
-            target->dispatchEvent(event);
     });
 }
 

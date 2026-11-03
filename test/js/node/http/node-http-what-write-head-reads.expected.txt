@@ -1,0 +1,36 @@
+nothing, writeHead(object), end(body): 200 body 1   chunked | 
+nothing, setHeader(), writeHead(object), write(), end(): 200 body 1 2  chunked | 
+nothing, writeHead(a content-length), end(body): 200 body   4  | 
+nothing, writeHead(a status alone), end(body): 201 body    chunked | 
+nothing, writeHead() twice: 200 body 1   chunked | ERR_HTTP_HEADERS_SENT
+nothing, end(body): 200 body   4  | 
+headersSent on the response, writeHead(object), end(body): 200 body 1   chunked | headersSent
+headersSent on the response, setHeader(), writeHead(object), write(), end(): 200 body 1 2  chunked | headersSent
+headersSent on the response, writeHead(a content-length), end(body): 200 body   4  | headersSent
+headersSent on the response, writeHead(a status alone), end(body): 201 body    chunked | headersSent
+headersSent on the response, writeHead() twice: 200 body 1   chunked | headersSent | headersSent | ERR_HTTP_HEADERS_SENT
+headersSent on the response, end(body): 200 body   4  | 
+headersSent on an heir of ServerResponse.prototype, writeHead(object), end(body): 200 body 1   chunked | headersSent
+headersSent on an heir of ServerResponse.prototype, setHeader(), writeHead(object), write(), end(): 200 body 1 2  chunked | headersSent
+headersSent on an heir of ServerResponse.prototype, writeHead(a content-length), end(body): 200 body   4  | headersSent
+headersSent on an heir of ServerResponse.prototype, writeHead(a status alone), end(body): 201 body    chunked | headersSent
+headersSent on an heir of ServerResponse.prototype, writeHead() twice: 200 body 1   chunked | headersSent | headersSent | ERR_HTTP_HEADERS_SENT
+headersSent on an heir of ServerResponse.prototype, end(body): 200 body   4  | 
+hasHeader on the response, writeHead(object), end(body): 200 body 1   chunked | hasHeader content-length | hasHeader transfer-encoding
+hasHeader on the response, setHeader(), writeHead(object), write(), end(): 200 body 1 2  chunked | hasHeader content-length | hasHeader transfer-encoding
+hasHeader on the response, writeHead(a content-length), end(body): 200 body   4  | hasHeader content-length
+hasHeader on the response, writeHead(a status alone), end(body): 201 body    chunked | hasHeader content-length | hasHeader transfer-encoding
+hasHeader on the response, writeHead() twice: 200 body 1   chunked | hasHeader content-length | hasHeader transfer-encoding | ERR_HTTP_HEADERS_SENT
+hasHeader on the response, end(body): 200 body   4  | 
+hasHeader on ServerResponse.prototype, writeHead(object), end(body): 200 body 1   chunked | hasHeader content-length | hasHeader transfer-encoding
+hasHeader on ServerResponse.prototype, setHeader(), writeHead(object), write(), end(): 200 body 1 2  chunked | hasHeader content-length | hasHeader transfer-encoding
+hasHeader on ServerResponse.prototype, writeHead(a content-length), end(body): 200 body   4  | hasHeader content-length
+hasHeader on ServerResponse.prototype, writeHead(a status alone), end(body): 201 body    chunked | hasHeader content-length | hasHeader transfer-encoding
+hasHeader on ServerResponse.prototype, writeHead() twice: 200 body 1   chunked | hasHeader content-length | hasHeader transfer-encoding | ERR_HTTP_HEADERS_SENT
+hasHeader on ServerResponse.prototype, end(body): 200 body   4  | 
+hasHeader on OutgoingMessage.prototype, writeHead(object), end(body): 200 body 1   chunked | hasHeader content-length | hasHeader transfer-encoding
+hasHeader on OutgoingMessage.prototype, setHeader(), writeHead(object), write(), end(): 200 body 1 2  chunked | hasHeader content-length | hasHeader transfer-encoding
+hasHeader on OutgoingMessage.prototype, writeHead(a content-length), end(body): 200 body   4  | hasHeader content-length
+hasHeader on OutgoingMessage.prototype, writeHead(a status alone), end(body): 201 body    chunked | hasHeader content-length | hasHeader transfer-encoding
+hasHeader on OutgoingMessage.prototype, writeHead() twice: 200 body 1   chunked | hasHeader content-length | hasHeader transfer-encoding | ERR_HTTP_HEADERS_SENT
+hasHeader on OutgoingMessage.prototype, end(body): 200 body   4  | 

@@ -1,0 +1,24 @@
+// require() of a text file where `bun build` does not link the call, so that the loader answers it in an executable too.
+import { createRequire } from "node:module";
+import { load as exported } from "./exports-require.mjs";
+import "./requires.cjs";
+const show = (name, value) => console.log(name, JSON.stringify(value), Object.prototype.toString.call(value));
+const load = createRequire(import.meta.url);
+show("made", load("./made.txt"));
+show("made at the call", createRequire(import.meta.url)("./made-at-the-call.txt"));
+show("import.meta.require", import.meta.require("./import-meta-require.txt"));
+show("getBuiltinModule", process.getBuiltinModule("module").createRequire(import.meta.url)("./get-builtin-module.txt"));
+show("exported", exported("./exported.txt"));
+for (const name of ["module"]) show("computed", load("./computed/" + name + ".txt"));
+show("linked before", load("./linked-before.txt"));
+show("linked after", load("./linked-after.txt"));
+load("./requires-later.cjs");
+console.log(load("./made.txt") === load("./made.txt"), Object.keys(load("./made.txt")));
+console.log(load("./made.txt") === (await import("./made.txt")));
+show("other data", [load("./data.json"), import.meta.require("./data.toml")]);
+show("markdown", load("./made.md"));
+show("markdown", import.meta.require("./import-meta-require.md"));
+const page = await import("./imported-first.md");
+console.log(page === require("./imported-first.md"), page === load("./imported-first.md"));
+const tree = await import("./imported-first.xml");
+console.log(tree === require("./imported-first.xml"), tree === load("./imported-first.xml"));

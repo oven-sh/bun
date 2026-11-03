@@ -1,0 +1,29 @@
+# A field holds what the stores through the objects of its layout put there. Every allocation of the first layout fills both fields and nothing deletes, redefines or stores another type: they are always filled.
+# The second layout has a field that one allocation leaves out and a field that is deleted; an object of the third goes to code that nobody has seen, so nothing is said of its field.
+# The numbers are no integers: a field that is seen to hold small integers gets a type of its own before the analysis runs
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Point" fields=[{key="x" declared={type=fractional} flags=[IsRequired{{*}}] flow={location={writers=AllKnown {{*}}initialization=SetAtCreation{{*}}} occupancy=AlwaysFilled {{*}}stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="label" declared={type="a"}
+# CHECK: layout L1 name="Partial" fields=[{key="x" declared={type=fractional} {{*}}flow={location={writers=AllKnown{{*}}} prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}
+# CHECK: layout L2 name="Handed" fields=[{key="x" declared={type=anything} flags=[IsRequired{{*}}]}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="label" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Partial" fields=[{key="x" declared={type=anything}}]
+layout L2 name="Handed" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Double number=1.5
+    v1 = String string="a"
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = Double number=2.5
+    PropSet v2, v3 key="x"
+    v5 = NewObject layout=L1 fields=[]
+    PropSet v5, v0 key="x"
+    v7 = PropDelete v5 key="x"
+    v8 = NewObject -, v0 layout=L2 fields=[0]
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="somethingUnknown" [isFreeName]
+    v11 = Call v10, -, v8
+    Return
+}

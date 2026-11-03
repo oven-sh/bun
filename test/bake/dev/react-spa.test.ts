@@ -1,7 +1,10 @@
 // these tests involve ensuring react (html loader + single page app) works
 // react is big and we do lots of stuff like fast refresh.
-import { expect } from "bun:test";
-import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { symlinkSync } from "node:fs";
+import { join } from "node:path";
+import { Client, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 /** To test react refresh's registration system */
 const reactAndRefreshStub = {
@@ -427,6 +430,156 @@ devTest("custom hook tracking", {
     await c.expectMessage("PASS");
   },
 });
+// react-refresh/babel builds the signature from the hook name, the source text
+// of the binding the call is assigned to, and the initial state argument, so
+// renaming or reshaping the destructured result resets the component state.
+devTest("hook signature includes the binding the hook call is assigned to", {
+  framework: minimalFramework,
+  files: {
+    ...reactAndRefreshStub,
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.tsx"],
+    }),
+    "index.tsx": `
+      import { useState } from "react";
+      import { expectHook } from 'bun-devserver-react-mock';
+
+      function useCustom() {
+        return {};
+      }
+
+      function array() {
+        const [a, setA] = useState(0);
+      }
+      function arrayAgain() {
+        const [a, setA] = useState(0);
+      }
+      function arrayRenamed() {
+        const [b, setB] = useState(0);
+      }
+      function arrayShorter() {
+        const [a] = useState(0);
+      }
+      function arrayDefault() {
+        const [a = 1, setA] = useState(0);
+      }
+      function identifier() {
+        const a = useState(0);
+      }
+      function identifierRenamed() {
+        const b = useState(0);
+      }
+      function twoDeclarators() {
+        const a = useState(0), b = useState(0);
+      }
+      function twoDeclaratorsRenamed() {
+        const a = useState(0), c = useState(0);
+      }
+      // Only a call that is the whole initializer takes the binding.
+      function unassigned() {
+        useState(0);
+      }
+      function insideInitializer() {
+        const a = [useState(0)];
+      }
+      function insideCall() {
+        const a = String(useState(0));
+      }
+      function hookArgument() {
+        const a = useCustom(useState(0));
+      }
+      function hookArgumentRenamed() {
+        const b = useCustom(useState(0));
+      }
+      function object() {
+        const { a } = useCustom();
+      }
+      function objectRenamed() {
+        const { b } = useCustom();
+      }
+      function objectAliased() {
+        const { a: b } = useCustom();
+      }
+
+      const functions = {
+        array, arrayAgain, arrayRenamed, arrayShorter, arrayDefault,
+        identifier, identifierRenamed,
+        twoDeclarators, twoDeclaratorsRenamed,
+        unassigned, insideInitializer, insideCall,
+        hookArgument, hookArgumentRenamed,
+        object, objectRenamed, objectAliased,
+      };
+      globalThis.signatures = Object.entries(functions).map(([name, fn]) => [name, expectHook(fn)]);
+      console.log("DONE");
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {});
+    await c.expectMessage("DONE");
+    const signatures: [name: string, signature: string][] = await c.js`globalThis.signatures`;
+
+    const sameSignature = new Map<string, string[]>();
+    for (const [name, signature] of signatures) {
+      sameSignature.set(signature, [...(sameSignature.get(signature) ?? []), name]);
+    }
+    expect([...sameSignature.values()]).toEqual([
+      ["array", "arrayAgain"],
+      ["arrayRenamed"],
+      ["arrayShorter"],
+      ["arrayDefault"],
+      ["identifier"],
+      ["identifierRenamed"],
+      ["twoDeclarators"],
+      ["twoDeclaratorsRenamed"],
+      ["unassigned", "insideInitializer", "insideCall"],
+      ["hookArgument"],
+      ["hookArgumentRenamed"],
+      ["object"],
+      ["objectRenamed"],
+      ["objectAliased"],
+    ]);
+  },
+});
+// The parser builds `x + x + …` in a loop, so its depth has no bound. The hash
+// for the signature must cover all of it and must not overflow the stack.
+const manyTerms = Buffer.alloc(200_000, "+x").toString();
+devTest("hook signature of an operator chain deeper than the stack", {
+  framework: minimalFramework,
+  files: {
+    ...reactAndRefreshStub,
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.tsx"],
+    }),
+    "index.tsx": `
+      import { expectHook } from 'bun-devserver-react-mock';
+      import { chain, chainWithFirstTermEdited } from './chain.tsx';
+
+      globalThis.signatures = [expectHook(chain), expectHook(chainWithFirstTermEdited)];
+      console.log("DONE");
+    `,
+    // A Buffer, so that the harness writes the long lines as they are.
+    "chain.tsx": Buffer.from(`
+      import { useState } from "react";
+      const x = 1, y = 2;
+      export function chain() {
+        const [a] = useState(x${manyTerms});
+      }
+      // The first term is the deepest node of the expression.
+      export function chainWithFirstTermEdited() {
+        const [a] = useState(y${manyTerms});
+      }
+    `),
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {});
+    await c.expectMessage("DONE");
+    const [chain, chainWithFirstTermEdited] = await c.js`globalThis.signatures`;
+    expect(chain).toBeString();
+    expect(chainWithFirstTermEdited).not.toBe(chain);
+  },
+});
 
 devTest("react component with hooks and mutual recursion renders without error", {
   files: {
@@ -747,4 +900,84 @@ devTest("react component with hooks and mutual recursion renders without error",
       "PASS",
     );
   },
+});
+
+test("bun bake hydrates a .tsx page, and Fast Refresh keeps its state after an edit", async () => {
+  const page = (label: string) => `
+    import { useState } from "react";
+    export default function Home() {
+      const [count, setCount] = useState(0);
+      return <button onClick={() => setCount(count + 1)}>{"${label} " + count}</button>;
+    }
+  `;
+  using dir = tempDir("bake-hydrate", { "app/pages/index.tsx": page("count") });
+  // The React of the test suite. A junction needs no privilege on Windows.
+  symlinkSync(join(import.meta.dir, "../../node_modules"), join(String(dir), "node_modules"), "junction");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "bake", "--port=0"],
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1", NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  let text = "";
+  const decoder = new TextDecoder();
+  for await (const chunk of proc.stdout) {
+    text += decoder.decode(chunk);
+    if (/url: \S+/.test(text)) break;
+  }
+  const url = text.match(/url: (\S+)/)![1];
+
+  await using client = new Client(url, { hmr: true });
+  await client.waitForPageLoad();
+  // Clicks work only once React has hydrated the server's HTML.
+  await client.click("button");
+  await client.click("button");
+  await client.expectElemText("button", "count 2");
+
+  await Bun.write(join(String(dir), "app/pages/index.tsx"), page("clicks"));
+  // A full reload would reset the count to 0.
+  await client.expectElemText("button", "clicks 2");
+});
+
+test("bun bake hydrates a page with server props, and loads it again when only its data changes", async () => {
+  using dir = tempDir("bake-hydrate-props", {
+    "app/data.ts": `export const start = 5;`,
+    "app/pages/index.tsx": `
+      import { useState } from "react";
+      import { start } from "../data.ts";
+      export const getServerSideProps = async () => ({ props: { start } });
+      export default function Home({ start }) {
+        const [count, setCount] = useState(start);
+        return <button onClick={() => setCount(count + 1)}>{"count " + count}</button>;
+      }
+    `,
+  });
+  symlinkSync(join(import.meta.dir, "../../node_modules"), join(String(dir), "node_modules"), "junction");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "bake", "--port=0"],
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1", NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  let text = "";
+  const decoder = new TextDecoder();
+  for await (const chunk of proc.stdout) {
+    text += decoder.decode(chunk);
+    if (/url: \S+/.test(text)) break;
+  }
+  const url = text.match(/url: (\S+)/)![1];
+
+  await using client = new Client(url, { hmr: true });
+  await client.waitForPageLoad();
+  // The browser gets the props of the server: a click goes on from 5.
+  await client.click("button");
+  await client.expectElemText("button", "count 6");
+
+  // Only the server imports app/data.ts, so the browser loads the page again for the new props.
+  await client.expectReload(async () => {
+    await Bun.write(join(String(dir), "app/data.ts"), `export const start = 10;`);
+  });
+  await client.expectElemText("button", "count 10");
 });

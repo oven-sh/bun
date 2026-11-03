@@ -1,0 +1,7 @@
+# Programs that heat.py does not judge: at which heat (hot, cold, neither or both), and why.
+arrays/sort-write-back-after-mutation    cold    code that is not hot calls `sort` as it finds it: Bun's is compiled with the program, the shell's is the engine's own, which writes the items back otherwise
+arrays/sort-write-back-after-mutation    neither    code that is not hot calls `sort` as it finds it: Bun's is compiled with the program, the shell's is the engine's own, which writes the items back otherwise
+commonjs/inherited-resolve-called-after-own-is-deleted    both    the shell's `require` has no `resolve` above its own, and the validating build stops at the empty value; it does so at the default heat too
+commonjs/inherited-resolve-called-after-own-is-deleted    neither    the shell's `require` has no `resolve` above its own, and the validating build stops at the empty value; it does so at the default heat too
+modules/commonjs-file-behind-a-deferred-import    both    the shell's loader runs a CommonJS file behind `import defer` at another moment, on arm64 and not in every run; an executable built at that heat answers as plain Bun does
+modules/commonjs-file-behind-a-deferred-import    neither    the shell's loader runs a CommonJS file behind `import defer` at another moment, on arm64 and not in every run; an executable built at that heat answers as plain Bun does

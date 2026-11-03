@@ -17,7 +17,7 @@ describe("when beforeEach callback throws", () => {
     // the important part is not printing some gibberish in place of the second "test 1"
     err = err
       .replaceAll(import.meta.dir, "")
-      .replaceAll(/ \[[\d\.]+ms\]/g, "")
+      .replaceAll(/ \[[\d\.]+m?s\]/g, "")
       .replaceAll("\\", "/");
     expect(err).toBe(`
 err-in-hook-and-multiple-tests.ts:
@@ -56,11 +56,11 @@ Ran 2 tests across 1 file.
     const elapsed = Date.now() - start;
     expect(proc.exitCode).toBe(1);
     let err = await new Response(proc.stderr).text();
-    const matches = [...err.matchAll(/\[([\d\.]+)ms\]/g)];
+    const matches = [...err.matchAll(/\[([\d\.]+)(m?s)\]/g)];
     // 1 for test 0, 1 for the total
     expect(matches.length).toBe(2);
-    for (const match of matches) {
-      const ms = parseFloat(match[1]);
+    for (const [, value, unit] of matches) {
+      const ms = unit === "s" ? parseFloat(value) * 1000 : parseFloat(value);
       expect(ms).toBeGreaterThan(45); // should have slept for at least 50 ms
       expect(ms).toBeLessThan(2 * elapsed); // should not report a time vastly higher than what it actually took
     }

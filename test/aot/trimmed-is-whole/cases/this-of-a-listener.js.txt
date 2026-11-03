@@ -1,0 +1,118 @@
+// A host object is passed to the program's function as `this` or as an argument, and read by a computed name.
+//@ args report binding dlopen color semver HTMLRewriter
+const names = process.argv.slice(2);
+function show(value) { console.log(typeof value, typeof value === "function" ? value.name : value && Object.keys(value).sort().join()); }
+//// process-once-emit
+process.once("ping", function () { show(this[names[0]]); });
+process.emit("ping");
+//// process-on-exit
+process.on("exit", function () { show(this[names[0]]); });
+//// process-on-beforeExit
+process.once("beforeExit", function () { show(this[names[0]]); });
+//// process-addListener
+process.addListener("ping", function () { show(this[names[0]]); });
+process.emit("ping");
+//// process-prependListener
+process.prependListener("ping", function () { show(this[names[0]]); });
+process.emit("ping");
+//// process-on-returns-process
+show(process.on("ping", () => {})[names[0]]);
+//// process-setMaxListeners-returns-process
+//@ exit 1
+show(process.setMaxListeners(20)[names[0]]);
+//// process-off-returns-process
+show(process.off("ping", () => {})[names[0]]);
+//// process-removeAllListeners-returns-process
+show(process.removeAllListeners("ping")[names[0]]);
+//// process-newListener-event
+process.on("newListener", function () { show(this[names[0]]); });
+process.on("ping", () => {});
+//// events-once-process
+import { once } from "node:events";
+const waiting = once(process, "ping");
+process.emit("ping", 1);
+console.log(await waiting);
+//// process-stdout-parent
+console.log(typeof process.stdout.constructor, process.stdout.writable);
+//// process-method-call-this
+const f = function () { return this; };
+process.mine = f;
+show(process.mine()[names[0]]);
+//// process-getter
+Object.defineProperty(process, "me", { get() { return this; } });
+show(process.me[names[0]]);
+//// bun-method-stored
+try { Bun.mine = function () { return this; }; show(Bun.mine()[names[3]]); } catch (error) { console.log(error.name); }
+//// bun-getter
+try { Object.defineProperty(Bun, "me", { get() { return this; } }); show(Bun.me[names[3]]); } catch (error) { console.log(error.name); }
+//// console-method-stored
+console.mine = function () { return this; };
+console.log(Object.keys(console.mine()).sort().join());
+//// toString-coercion-this
+process.toString = function () { show(this[names[0]]); return "p"; };
+console.log(`${process}`);
+//// toJSON-this
+process.toJSON = function () { show(this[names[0]]); return 1; };
+console.log(JSON.stringify({ process }));
+//// symbol-toPrimitive-this
+process[Symbol.toPrimitive] = function () { show(this[names[0]]); return 1; };
+console.log(+process);
+//// prototype-method-this
+//@ build-error TS100014:
+Object.prototype.me = function () { return this; };
+show(process.me()[names[0]]);
+//// prototype-getter-this
+//@ build-error TS100014:
+Object.defineProperty(Object.prototype, "me", { get() { return this; }, configurable: true });
+show(process.me[names[0]]);
+//// prototype-getter-this-Bun
+//@ build-error TS100014:
+Object.defineProperty(Object.prototype, "me", { get() { return this; }, configurable: true });
+show(Bun.me[names[3]]);
+//// prototype-getter-this-global
+//@ build-error TS100014:
+Object.defineProperty(Object.prototype, "me", { get() { return this; }, configurable: true });
+show(globalThis.me[names[5]]);
+//// prototype-getter-bare-name
+//@ build-error TS100014:
+Object.defineProperty(Object.prototype, "me", { get() { return this; }, configurable: true });
+show(me[names[5]]);
+//// prototype-method-bare-call
+//@ build-error TS100014
+//@ ext cjs
+Object.prototype.me = function () { return this; };
+show(me()[names[5]]);
+//// emitter-prototype-this
+import EventEmitter from "node:events";
+EventEmitter.prototype.me = function () { return this; };
+show(process.me()[names[0]]);
+//// valueOf-process
+show(process.valueOf()[names[0]]);
+//// valueOf-Bun
+show(Bun.valueOf()[names[3]]);
+//// Object-process
+show(Object(process)[names[0]]);
+//// unhandled-rejection-args
+process.on("unhandledRejection", function (reason, promise) { console.log(reason, typeof promise, this === process); show(this[names[0]]); });
+Promise.reject(1);
+//// uncaught-exception-this
+process.on("uncaughtException", function (error) { console.log(error.message); show(this[names[0]]); });
+setTimeout(() => { throw new Error("boom"); }, 1);
+//// warning-this
+//@ env NODE_NO_WARNINGS=1
+process.on("warning", function (warning) { console.log(warning.name); show(this[names[0]]); });
+process.emitWarning("careful");
+//// a-function-stored-on-the-global-object-returns-it-and-what-a-name-finds-there-is-constructed
+//@ ext cjs
+globalThis.mine = function () { return this; };
+const Found = globalThis.mine()[names[5]];
+console.log(typeof new Found().on);
+//// a-function-stored-on-Bun-returns-it-and-what-a-name-finds-there-is-called
+//@ trimmed-says Bun.color was removed by --trim because your code never uses it
+//@ ext cjs
+const holder = Object.create(Bun);
+holder.mine = function () { return Object.getPrototypeOf(this); };
+console.log(holder.mine()[names[3]]("red", "hex"));
+//// a-function-stored-on-process-returns-it-and-what-a-name-finds-there-is-called
+process.mine = function () { return this; };
+console.log(typeof process.mine()[names[0]].getReport());

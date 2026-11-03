@@ -1021,6 +1021,39 @@ const files = {
         await run("WK2", "@/workers/late.mjs");
       },
 
+      async macro() {
+        // A module that import() loads is transpiled by a job of the thread pool, which works on
+        // a copy of this thread's resolver. The job looks up the macro that the module imports:
+        // a file written after its directory was listed. Meanwhile this thread looks up entry
+        // points that are not there: the copy must not depend on what this thread is doing.
+        const jobs = 8;
+        const here = path.resolve("macro");
+        for (let i = 0; i < jobs; i++) {
+          write(path.join(here, "macros" + i, "other.ts"), "");
+          write(
+            path.join(here, "mods", "m" + i + ".ts"),
+            'import { v } from "../macros' + i + '/mac.ts" with { type: "macro" };\\nexport const x = v();\\n',
+          );
+          Bun.resolveSync("./macros" + i + "/other.ts", here);
+        }
+        for (let i = 0; i < jobs; i++) write(path.join(here, "macros" + i, "mac.ts"), "export function v() { return 42; }");
+        write(path.join(here, "entry.mjs"), "");
+        const found = [];
+        let missed = 0;
+        for (let i = 0; i < jobs; i++) {
+          found.push(import(path.join(here, "mods", "m" + i + ".ts")).then(module => module.x, error => error.message));
+          for (let k = 0; k < 5; k++) {
+            try {
+              new globalThis.Worker(path.join(here, "entry.mjs"), { preload: [path.join(here, "nope-" + i + "-" + k + ".ts")] });
+            } catch {
+              missed++;
+            }
+          }
+        }
+        console.log("what the macros of " + jobs + " jobs returned:", (await Promise.all(found)).join(" "));
+        console.log("entry points that this thread missed meanwhile:", missed);
+      },
+
       async build() {
         // Bun.build() shares the cache across calls. Five shapes of "installed
         // after the first build failed".
@@ -1335,6 +1368,20 @@ describe.concurrent("a failed resolution answers as a new process does", () => {
       stdout: ['WK1 ERR BuildMessage: ModuleNotFound resolving "@/workers/late.mjs" (entry point)', "WK2 OK ran"].join(
         "\n",
       ),
+    });
+  });
+
+  test("a macro that a transpile job looks up with its copy of the resolver", async () => {
+    const { stdout, stderr, exitCode } = await runGroup("macro");
+    // A debug build also logs "[macro] call v" to stdout.
+    const lines = stdout.split("\n").filter(line => !line.startsWith("[macro]"));
+    expect({ lines, stderr, exitCode }).toEqual({
+      lines: [
+        "what the macros of 8 jobs returned: 42 42 42 42 42 42 42 42",
+        "entry points that this thread missed meanwhile: 40",
+      ],
+      stderr: "",
+      exitCode: 0,
     });
   });
 });

@@ -473,9 +473,10 @@ test.skipIf(isWindows)("connected send() failure reports Node's error shape", as
 // which resolves it synchronously: the same check runs there too, and the
 // socket does not end up marked connected. An address with a zone that does
 // not exist passes the check, and the resolver refuses it without asking anybody.
+// The resolver of macOS takes it and leaves the zone out.
 test.each([
   ["udp4", "127.0.0.1", "this is not a hostname"],
-  ...(isIPv6() ? [["udp6", "::1", "fe80::1%nosuchzone"]] : []),
+  ...(isIPv6() && !isMacOS ? [["udp6", "::1", "fe80::1%nosuchzone"]] : []),
 ] as ["udp4" | "udp6", string, string][])(
   "%s connect() with a custom lookup that yields what cannot be resolved reports getaddrinfo ENOTFOUND",
   async (type, local, hostname) => {

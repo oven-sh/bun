@@ -1839,6 +1839,10 @@ impl<'t> Reader<'t> {
                 }
                 b'<' => match self.angle::<CELL>(at) {
                     Angle::Ends { end, .. } => {
+                        // `[[` is looked for in an address too.
+                        if bun_core::strings::index_of(text.get(at..end)?, b"[[").is_some() {
+                            return None;
+                        }
                         at = end;
                         continue;
                     }
@@ -2071,6 +2075,10 @@ impl<'t> Reader<'t> {
                 }
                 b'<' if limit == self.text.len() => match self.angle::<CELL>(at) {
                     Angle::Ends { end, .. } => {
+                        // `[[` is looked for in an address too.
+                        if bun_core::strings::index_of(text.get(at..end)?, b"[[").is_some() {
+                            return None;
+                        }
                         at = end;
                         continue;
                     }

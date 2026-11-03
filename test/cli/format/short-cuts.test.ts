@@ -493,6 +493,7 @@ describe("Markdown", () => {
     "See http://a.b/c_d, https://a.b/c?d=e&f#g (http://a.b/c) and www.a.b and WWW.A.B and a@b.c and a_b@c.d.\n",
     "http://a.b/*c* and http://a.b/_c_ and http://a.b`c` and http://a.b[c] and [http://a.b](http://a.b) and now. www\n",
     "http://a\u4e2d(*b* and www.a\u4e2d(*b*\n\nhttp://a\"(*b* and http://a'(*b*\n\nhttp://a](*b*\n\nhttp://a|(*b*\n\nhttp://a>(*b* and http://a}(*b* and http://a^(*b*\n",
+    "**<http://a.b/[[c>]]**\n\n**<a:[[>]] b**\n\n<http://a.b/[[c>]]\n\n**<a b='[['>]]**\n\n**`[[`]]**\n",
     "<http://a.b> <a@b.c> <a b> <a> </a> <a b=\"c*d*\"> <a\nb> < a <= b <1@b.c> <!-- c --> <?php ?> <br/> a<b>c\n",
     // What a line of a paragraph starts with.
     "a\n1. b\n\na\n2. b\n\na\n1986. b\n\na\n1986 b\n\na\n- b\n\na\n-b\n\na\n+ b\n\na\n# b\n\na\n#b\n\na\n> b\n\na\n=\n\na\n-\n\na\n---\n",

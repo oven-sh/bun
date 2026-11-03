@@ -1685,6 +1685,15 @@ pub(crate) fn connect(
     if let Some(err) = get_us_error(rc, bun_sys::Tag::connect) {
         return Err(global_this.throw_value(err.to_js(global_this)));
     }
+    if let Some(err) = c_ares::Error::init_eai(rc) {
+        return Err(
+            global_this.throw_value(crate::dns_jsc::cares_jsc::getaddrinfo_error(
+                global_this,
+                err,
+                connect_host.as_bytes(),
+            )),
+        );
+    }
     this.connect_info.set(Some(ConnectInfo { port }));
 
     if let Some(this_value) = this.this_value.get().try_get() {

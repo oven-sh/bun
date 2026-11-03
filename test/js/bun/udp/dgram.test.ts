@@ -471,32 +471,39 @@ test.skipIf(isWindows)("connected send() failure reports Node's error shape", as
 // The default lookup is dns.lookup, which already answers such a name with
 // ENOTFOUND. A custom lookup can hand the raw string to the native connect,
 // which resolves it synchronously: the same check runs there too, and the
-// socket does not end up marked connected.
-test("connect() with a custom lookup that yields a name that cannot be a hostname reports getaddrinfo ENOTFOUND", async () => {
-  const hostname = "this is not a hostname";
-  const socket = createSocket({ type: "udp4", lookup: (address, _family, callback) => callback(null, address, 4) });
-  const { promise: bound, resolve: onBound } = Promise.withResolvers<void>();
-  socket.bind(0, "127.0.0.1", onBound);
-  await bound;
+// socket does not end up marked connected. An address with a zone that does
+// not exist passes the check, and the resolver refuses it without asking anybody.
+test.each([
+  ["udp4", "127.0.0.1", "this is not a hostname"],
+  ...(isIPv6() ? [["udp6", "::1", "fe80::1%nosuchzone"]] : []),
+] as ["udp4" | "udp6", string, string][])(
+  "%s connect() with a custom lookup that yields what cannot be resolved reports getaddrinfo ENOTFOUND",
+  async (type, local, hostname) => {
+    const family = type === "udp4" ? 4 : 6;
+    const socket = createSocket({ type, lookup: (address, _family, callback) => callback(null, address, family) });
+    const { promise: bound, resolve: onBound } = Promise.withResolvers<void>();
+    socket.bind(0, local, onBound);
+    await bound;
 
-  const err: any = await new Promise(resolve => socket.connect(1234, hostname, resolve as () => void));
-  let connected = true;
-  try {
-    socket.remoteAddress();
-  } catch {
-    connected = false;
-  }
-  socket.close();
-  const { name, code, syscall, hostname: errHostname, message } = err ?? {};
-  expect({ name, code, syscall, hostname: errHostname, message, connected }).toEqual({
-    name: "Error",
-    code: "ENOTFOUND",
-    syscall: "getaddrinfo",
-    hostname,
-    message: `getaddrinfo ENOTFOUND ${hostname}`,
-    connected: false,
-  });
-});
+    const err: any = await new Promise(resolve => socket.connect(1234, hostname, resolve as () => void));
+    let connected = true;
+    try {
+      socket.remoteAddress();
+    } catch {
+      connected = false;
+    }
+    socket.close();
+    const { name, code, syscall, hostname: errHostname, message } = err ?? {};
+    expect({ name, code, syscall, hostname: errHostname, message, connected }).toEqual({
+      name: "Error",
+      code: "ENOTFOUND",
+      syscall: "getaddrinfo",
+      hostname,
+      message: `getaddrinfo ENOTFOUND ${hostname}`,
+      connected: false,
+    });
+  },
+);
 
 // Windows has no route to the unspecified address.
 test.skipIf(!isWindows)("connect() that the system refuses reports Node's error shape", async () => {

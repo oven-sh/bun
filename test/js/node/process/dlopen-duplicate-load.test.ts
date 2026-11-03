@@ -192,6 +192,28 @@ NODE_MODULE(non_context_aware, demo::Initialize)
           "ldflags": [ "-Wl,-z,lazy" ]
         },
         {
+          "target_name": "initializer_got_import",
+          "sources": [ "initializer_missing_import.cpp" ],
+          "defines": [ "MISSING_FUNCTION=bun_test_symbol_that_nothing_defines" ],
+          "cflags": [ "-fno-plt" ],
+          "ldflags": [ "-Wl,-z,lazy" ]
+        },
+        {
+          "target_name": "initializer_lazy",
+          "sources": [ "initializer_only.cpp" ],
+          "ldflags": [ "-Wl,-z,lazy" ]
+        },
+        {
+          "target_name": "initializer_bind_now",
+          "sources": [ "initializer_bind_now.cpp" ],
+          "ldflags": [ "-Wl,-z,now" ]
+        },
+        {
+          "target_name": "initializer_compat_import",
+          "sources": [ "initializer_compat_import.cpp" ],
+          "ldflags": [ "-Wl,-z,lazy" ]
+        },
+        {
           "target_name": "initializer_weak_import",
           "sources": [ "initializer_weak_import.cpp" ]
         },
@@ -728,6 +750,23 @@ if (!isMainThread) {
       stderr: "",
       exitCode: 0,
     });
+    // Writes a copy of an addon in which the string table has no size. The loader does not read the size, and Bun reads
+    // no name outside it.
+    const writeWithoutStringTableSize = (addon: string, copy: string) => {
+      const image = readFileSync(built(addon));
+      const view = new DataView(image.buffer, image.byteOffset, image.length);
+      const stringTableSizes = elfDynamicEntries(view).filter(entry => entry.tag === DT_STRSZ);
+      expect(stringTableSizes).toHaveLength(1);
+      view.setBigUint64(stringTableSizes[0].offset + 8, 0n, true);
+      writeFileSync(built(copy), image);
+    };
+    // The error of a dlopen() that failed: the loader's own text, which names the symbol that it did not find.
+    const refusedByLoader = (symbol: string) => ({
+      ...refused(""),
+      stdout: expect.stringMatching(
+        new RegExp(`^\\{"code":"ERR_DLOPEN_FAILED","message":"(?!Cannot load native addon ).*\\b${symbol}\\b.*"\\}$`),
+      ),
+    });
 
     test.skipIf(!callsTheSymbol)(
       "an addon with only this entry loads with require() and process.dlopen(), and each load calls it",
@@ -772,21 +811,52 @@ if (!isMainThread) {
       },
     );
 
+    // Who refuses an addon whose import nothing defines depends on how the addon was linked, which the test reads from
+    // the file. With BIND_NOW the loader binds every import in dlopen(), and glibc binds there every import through the
+    // global offset table (GLOB_DAT): dlopen() fails, with the loader's text. Every loader leaves a jump slot unbound,
+    // and musl a GLOB_DAT too: those Bun finds before it calls the initializer.
     test.skipIf(!isLinux).each([
       ["initializer_missing_import.node", "bun_test_symbol_that_nothing_defines"],
       // Node's executable exports zlib, and Bun's does not.
       ["initializer_zlib_import.node", "deflateInit_"],
+      // Compiled with -fno-plt: the call goes through the global offset table.
+      ["initializer_got_import.node", "bun_test_symbol_that_nothing_defines"],
     ])("%s is refused, because nothing defines its import %s", async (addon, symbol) => {
-      const message = `Cannot load native addon ${built(addon)}: it imports '${symbol}', which Bun does not provide`;
-      expect(await load(addon)).toEqual({
-        ...refused(message),
-        // musl's dlopen() can refuse the addon first, with its own text.
-        ...(isMusl && {
-          stdout: expect.stringMatching(
-            new RegExp(`^\\{"code":"ERR_DLOPEN_FAILED","message":".*\\b${symbol}\\b.*"\\}$`),
-          ),
-        }),
-      });
+      const { bindNow, relocations } = elfImports(built(addon));
+      const relocation = relocations.get(symbol);
+      const leftToBun = !bindNow && (relocation === "JUMP_SLOT" || (relocation === "GLOB_DAT" && isMusl));
+      expect(await load(addon)).toEqual(
+        leftToBun
+          ? refused(`Cannot load native addon ${built(addon)}: it imports '${symbol}', which Bun does not provide`)
+          : refusedByLoader(symbol),
+      );
+    });
+
+    // Built against a glibc before 2.34, an addon imports pthread_yield with the version of that time. A newer glibc has
+    // the function only with that version: the loader binds the import, and a lookup of the name alone finds nothing.
+    test.skipIf(!isLinux || isMusl)(
+      "an addon with only this entry loads with an import that glibc defines only with an old version",
+      async () => {
+        const script = `
+          const loaded = { exports: {} };
+          process.dlopen(loaded, process.env.ADDON_PATH);
+          console.log(JSON.stringify({ yield: loaded.exports.yield() }));
+        `;
+        expect(await run(["-e", script], "initializer_compat_import.node")).toEqual({
+          stdout: JSON.stringify({ yield: 0 }),
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+
+    // The loader has bound every import of this addon when dlopen() returns. Bun has none to check and reads none of
+    // the addon's tables, so the copy that Bun could not read loads too.
+    test.skipIf(!isLinux)("an addon with only this entry loads when it is linked with -z now", async () => {
+      expect(elfImports(built("initializer_bind_now.node")).bindNow).toBe(true);
+      expect(await load("initializer_bind_now.node")).toEqual(loaded({ loaded: "initializer_bind_now" }));
+      writeWithoutStringTableSize("initializer_bind_now.node", "initializer_bind_now_unreadable.node");
+      expect(await load("initializer_bind_now_unreadable.node")).toEqual(loaded({ loaded: "initializer_bind_now" }));
     });
 
     test.skipIf(!isLinux).each([
@@ -806,26 +876,13 @@ if (!isMainThread) {
     });
 
     test.skipIf(!isLinux)("an addon with only this entry is refused when Bun cannot read its imports", async () => {
-      // In this copy the string table has no size. The loader does not read the size, and Bun reads no name outside it.
-      const image = readFileSync(built("initializer_only.node"));
-      const view = new DataView(image.buffer, image.byteOffset, image.length);
-      const [PT_DYNAMIC, DT_STRSZ] = [2, 10n];
-      let stringTableSizes = 0;
-      for (let i = 0; i < view.getUint16(0x38, true); i++) {
-        const header = Number(view.getBigUint64(0x20, true)) + i * view.getUint16(0x36, true);
-        if (view.getUint32(header, true) !== PT_DYNAMIC) continue;
-        const dynamic = Number(view.getBigUint64(header + 8, true));
-        for (let entry = dynamic; entry < dynamic + Number(view.getBigUint64(header + 32, true)); entry += 16) {
-          if (view.getBigInt64(entry, true) !== DT_STRSZ) continue;
-          view.setBigUint64(entry + 8, 0n, true);
-          stringTableSizes++;
-        }
-      }
-      expect(stringTableSizes).toBe(1);
-      writeFileSync(built("initializer_unreadable.node"), image);
-
+      // The addon is linked with -z lazy, so that Bun has imports to check in it. Linked with BIND_NOW it would load.
+      writeWithoutStringTableSize("initializer_lazy.node", "initializer_unreadable.node");
+      const unreadable = built("initializer_unreadable.node");
       expect(await load("initializer_unreadable.node")).toEqual(
-        refused(`Cannot load native addon ${built("initializer_unreadable.node")}: Bun cannot read its import tables`),
+        elfImports(unreadable).bindNow
+          ? loaded({})
+          : refused(`Cannot load native addon ${unreadable}: Bun cannot read its import tables`),
       );
     });
 
@@ -849,6 +906,73 @@ if (!isMainThread) {
     });
   });
 });
+
+const [PT_LOAD, PT_DYNAMIC] = [1, 2];
+const [DT_PLTRELSZ, DT_STRTAB, DT_SYMTAB, DT_RELA, DT_RELASZ, DT_STRSZ, DT_JMPREL] = [2, 5, 6, 7, 8, 10, 23];
+const [DT_BIND_NOW, DT_FLAGS, DT_FLAGS_1, DF_BIND_NOW, DF_1_NOW] = [24, 30, 0x6ffffffb, 8, 1];
+
+// The program headers of a 64-bit ELF file.
+function elfProgramHeaders(view: DataView) {
+  return Array.from({ length: view.getUint16(0x38, true) }, (_, i) => {
+    const header = Number(view.getBigUint64(0x20, true)) + i * view.getUint16(0x36, true);
+    return {
+      type: view.getUint32(header, true),
+      offset: Number(view.getBigUint64(header + 8, true)),
+      address: Number(view.getBigUint64(header + 16, true)),
+      size: Number(view.getBigUint64(header + 32, true)),
+    };
+  });
+}
+
+// The entries of its dynamic section: where each is in the file, its tag and its value.
+function elfDynamicEntries(view: DataView) {
+  return elfProgramHeaders(view)
+    .filter(header => header.type === PT_DYNAMIC)
+    .flatMap(({ offset, size }) =>
+      Array.from({ length: size / 16 }, (_, i) => ({
+        offset: offset + i * 16,
+        tag: Number(view.getBigInt64(offset + i * 16, true)),
+        value: Number(view.getBigUint64(offset + i * 16 + 8, true)),
+      })),
+    );
+}
+
+// How the loader binds the imports of an addon: all of them in dlopen() (BIND_NOW) or not, and for each symbol that a
+// JUMP_SLOT or a GLOB_DAT relocation names, which of the two.
+function elfImports(path: string) {
+  const image = readFileSync(path);
+  const view = new DataView(image.buffer, image.byteOffset, image.length);
+  const headers = elfProgramHeaders(view).filter(header => header.type === PT_LOAD);
+  const dynamic = new Map(elfDynamicEntries(view).map(entry => [entry.tag, entry.value]));
+  // A table of the dynamic section, as its offset in the file.
+  const table = (tag: number) => {
+    const address = dynamic.get(tag)!;
+    const header = headers.find(header => address >= header.address && address < header.address + header.size)!;
+    return address - header.address + header.offset;
+  };
+  const [symbols, strings] = [table(DT_SYMTAB), table(DT_STRTAB)];
+  // The numbers of the two relocation types on arm64 (machine 183) and on x64.
+  const types = view.getUint16(0x12, true) === 183 ? [1025, 1026] : [6, 7];
+  const relocations = new Map<string, "GLOB_DAT" | "JUMP_SLOT">();
+  for (const [tag, size] of [
+    [DT_JMPREL, DT_PLTRELSZ],
+    [DT_RELA, DT_RELASZ],
+  ]) {
+    if (!dynamic.has(tag)) continue;
+    for (let entry = table(tag); entry < table(tag) + dynamic.get(size)!; entry += 24) {
+      const info = view.getBigUint64(entry + 8, true);
+      const type = types.indexOf(Number(info & 0xffffffffn));
+      if (type < 0) continue;
+      const name = strings + view.getUint32(symbols + Number(info >> 32n) * 24, true);
+      relocations.set(image.toString("latin1", name, image.indexOf(0, name)), type === 0 ? "GLOB_DAT" : "JUMP_SLOT");
+    }
+  }
+  const bindNow =
+    dynamic.has(DT_BIND_NOW) ||
+    ((dynamic.get(DT_FLAGS) ?? 0) & DF_BIND_NOW) !== 0 ||
+    ((dynamic.get(DT_FLAGS_1) ?? 0) & DF_1_NOW) !== 0;
+  return { bindNow, relocations };
+}
 
 // The addons of "process.dlopen and the symbol node_register_module_v<ABI>".
 function entryFixtureSources() {
@@ -901,6 +1025,40 @@ ${initializer} {
   puts("the initializer ran");
   fflush(stdout);
   MISSING_FUNCTION();
+}
+`,
+
+    // The loader binds every import of this addon in dlopen(): binding.gyp links it with -z now.
+    "initializer_bind_now.cpp": `
+#include "exports.h"
+
+${initializer} {
+  SetExport(exports, context, "loaded", "initializer_bind_now");
+}
+`,
+
+    // As an addon that was built against glibc before 2.34: the import names the version of that time, and a newer
+    // glibc keeps pthread_yield only with that version.
+    "initializer_compat_import.cpp": `
+#include <node.h>
+
+#ifdef __GLIBC__
+#if defined(__aarch64__)
+__asm__(".symver bun_test_old_yield,pthread_yield@GLIBC_2.17");
+#else
+__asm__(".symver bun_test_old_yield,pthread_yield@GLIBC_2.2.5");
+#endif
+extern "C" int bun_test_old_yield(void);
+#else
+static int bun_test_old_yield(void) { return 0; }
+#endif
+
+static void Yield(const v8::FunctionCallbackInfo<v8::Value>& args) {
+  args.GetReturnValue().Set(v8::Number::New(args.GetIsolate(), bun_test_old_yield()));
+}
+
+${initializer} {
+  NODE_SET_METHOD(exports, "yield", Yield);
 }
 `,
 

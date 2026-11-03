@@ -1,4 +1,4 @@
-//! The lazily bound function imports of an ELF object that the dynamic loader has mapped into this process.
+//! The imports that the dynamic loader has left unbound in an ELF object that it has mapped into this process.
 
 use core::ffi::CStr;
 use core::mem::size_of;
@@ -13,14 +13,31 @@ const DT_NULL: i64 = 0;
 const DT_PLTRELSZ: i64 = 2;
 const DT_STRTAB: i64 = 5;
 const DT_SYMTAB: i64 = 6;
-const DT_RELA: u64 = 7;
+const DT_RELA: i64 = 7;
+const DT_RELASZ: i64 = 8;
+const DT_RELAENT: i64 = 9;
 const DT_STRSZ: i64 = 10;
 const DT_PLTREL: i64 = 20;
 const DT_JMPREL: i64 = 23;
+const DT_BIND_NOW: i64 = 24;
+const DT_FLAGS: i64 = 30;
+const DT_VERSYM: i64 = 0x6fff_fff0;
+const DT_FLAGS_1: i64 = 0x6fff_fffb;
+const DT_VERNEED: i64 = 0x6fff_fffe;
+const DT_VERNEEDNUM: i64 = 0x6fff_ffff;
+const DF_BIND_NOW: u64 = 8;
+const DF_1_NOW: u64 = 1;
+const RELA_SIZE: u64 = size_of::<Elf64_Rela>() as u64;
 const SHN_UNDEF: u16 = 0;
 const STB_GLOBAL: u8 = 1;
+/// The low 15 bits of a `DT_VERSYM` element and of `vna_other`: 0 and 1 mean that the symbol has no version.
+const VERSION_INDEX: u16 = 0x7fff;
+#[cfg(target_arch = "x86_64")]
+const R_GLOB_DAT: u32 = 6;
 #[cfg(target_arch = "x86_64")]
 const R_JUMP_SLOT: u32 = 7;
+#[cfg(target_arch = "aarch64")]
+const R_GLOB_DAT: u32 = 1025;
 #[cfg(target_arch = "aarch64")]
 const R_JUMP_SLOT: u32 = 1026;
 
@@ -50,16 +67,42 @@ struct Elf64_Sym {
     _st_size: u64,
 }
 
-bun_core::impl_any_bit_pattern!(Elf64_Dyn, Elf64_Rela, Elf64_Sym);
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Elf64_Verneed {
+    _vn_version: u16,
+    vn_cnt: u16,
+    _vn_file: u32,
+    vn_aux: u32,
+    vn_next: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Elf64_Vernaux {
+    _vna_hash: u32,
+    _vna_flags: u16,
+    vna_other: u16,
+    vna_name: u32,
+    vna_next: u32,
+}
+
+bun_core::impl_any_bit_pattern!(
+    Elf64_Dyn,
+    Elf64_Rela,
+    Elf64_Sym,
+    Elf64_Verneed,
+    Elf64_Vernaux
+);
 
 /// Why the imports of an object cannot be read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Unreadable {
     /// There is no `PT_DYNAMIC` segment, or it has no `DT_NULL` inside its size and inside a `PT_LOAD` range.
     Dynamic,
-    /// `DT_JMPREL`, `DT_SYMTAB` or `DT_STRTAB` points outside the `PT_LOAD` ranges, or the last two are missing.
+    /// A relocation table, `DT_SYMTAB` or `DT_STRTAB` points outside the `PT_LOAD` ranges, or the last two are missing.
     Table,
-    /// `DT_PLTRELSZ` is larger than the `PT_LOAD` range of the table, or `DT_PLTREL` is not `DT_RELA`.
+    /// A relocation table is larger than the `PT_LOAD` range around it, or `DT_PLTREL` or `DT_RELAENT` names another format than `Elf64_Rela`.
     Relocations,
     /// A relocation names a symbol outside the `PT_LOAD` range of the symbol table.
     SymbolIndex,
@@ -75,13 +118,17 @@ struct Table {
 }
 
 impl Table {
-    fn element<T: AnyBitPattern>(self, index: usize) -> Option<T> {
-        let offset = index.checked_mul(size_of::<T>())?;
+    /// The `T` that starts `offset` bytes into the table.
+    fn at<T: AnyBitPattern>(self, offset: usize) -> Option<T> {
         if offset.checked_add(size_of::<T>())? > self.room {
             return None;
         }
         // SAFETY: the element is inside a range that the loader mapped readable, and the caller of the walk keeps the object loaded.
         Some(unsafe { (self.address.wrapping_add(offset) as *const T).read_unaligned() })
+    }
+
+    fn element<T: AnyBitPattern>(self, index: usize) -> Option<T> {
+        self.at(index.checked_mul(size_of::<T>())?)
     }
 
     fn string<'a>(self, offset: usize) -> Option<&'a CStr> {
@@ -123,13 +170,55 @@ impl Image<'_> {
             })
             .find(|table| table.room != 0)
     }
+
+    /// The version that the object names for its import `symbol`. A version table that is missing or malformed names none.
+    fn version<'a>(&self, versions: Versions, strings: Table, symbol: usize) -> Option<&'a CStr> {
+        let index = self.table(versions.symbols?)?.element::<u16>(symbol)? & VERSION_INDEX;
+        if index < 2 {
+            return None;
+        }
+        let needed = self.table(versions.needed?)?;
+        // A version index has 15 bits, so tables that are well formed have fewer entries than this, and a longer chain ends here.
+        let mut budget = 0..1u32 << 16;
+        let mut need_offset = 0usize;
+        for _ in 0..versions.needed_count {
+            budget.next()?;
+            let need: Elf64_Verneed = needed.at(need_offset)?;
+            let mut aux_offset = need_offset.checked_add(need.vn_aux as usize)?;
+            for _ in 0..need.vn_cnt {
+                budget.next()?;
+                let aux: Elf64_Vernaux = needed.at(aux_offset)?;
+                if aux.vna_other & VERSION_INDEX == index {
+                    return strings.string(aux.vna_name as usize);
+                }
+                if aux.vna_next == 0 {
+                    break;
+                }
+                aux_offset = aux_offset.checked_add(aux.vna_next as usize)?;
+            }
+            if need.vn_next == 0 {
+                break;
+            }
+            need_offset = need_offset.checked_add(need.vn_next as usize)?;
+        }
+        None
+    }
 }
 
-/// The first lazily bound function import that `is_defined` rejects, of an object whose loader keeps `headers` mapped at `base`.
+/// The values of `DT_VERSYM`, `DT_VERNEED` and `DT_VERNEEDNUM`. The walk reads these tables only for an import that has no definition by its name.
+#[derive(Clone, Copy, Default)]
+struct Versions {
+    symbols: Option<u64>,
+    needed: Option<u64>,
+    needed_count: u64,
+}
+
+/// The first import that the loader has left unbound and that `is_defined` rejects by its name and then by the version that the object names for it, of an object whose loader keeps `headers` mapped at `base`. `defers_got` is for musl, which leaves a `GLOB_DAT` import unbound too.
 pub unsafe fn unresolved_lazy_import<'a>(
     headers: &'a [libc::Elf64_Phdr],
     base: usize,
-    mut is_defined: impl FnMut(&CStr) -> bool,
+    defers_got: bool,
+    mut is_defined: impl FnMut(&CStr, Option<&CStr>) -> bool,
 ) -> Result<Option<&'a CStr>, Unreadable> {
     let image = Image { headers, base };
     let dynamic = headers
@@ -142,47 +231,74 @@ pub unsafe fn unresolved_lazy_import<'a>(
         room: image.room(address).min(dynamic.p_memsz as usize),
     };
 
-    let (mut relocations, mut symbols, mut strings) = (None, None, None);
-    let (mut relocations_size, mut strings_size) = (0, 0);
+    // `rela_plt` is the table of `DT_JMPREL`, and `rela_dyn` that of `DT_RELA`, which is read only for musl.
+    let (mut rela_plt, mut rela_dyn, mut symbols, mut strings) = (None, None, None, None);
+    let (mut rela_plt_size, mut rela_dyn_size, mut strings_size) = (0, 0, 0);
+    let (mut bound, mut other_format, mut versions) = (false, false, Versions::default());
     for index in 0.. {
         let entry: Elf64_Dyn = entries.element(index).ok_or(Unreadable::Dynamic)?;
-        let table = || image.table(entry.d_val).ok_or(Unreadable::Table);
+        let table = || Some(image.table(entry.d_val).ok_or(Unreadable::Table));
         match entry.d_tag {
             DT_NULL => break,
-            DT_JMPREL => relocations = Some(table()?),
-            DT_SYMTAB => symbols = Some(table()?),
-            DT_STRTAB => strings = Some(table()?),
-            DT_PLTRELSZ => relocations_size = entry.d_val as usize,
+            DT_JMPREL => rela_plt = table(),
+            DT_RELA if defers_got => rela_dyn = table(),
+            DT_SYMTAB => symbols = table(),
+            DT_STRTAB => strings = table(),
+            DT_PLTRELSZ => rela_plt_size = entry.d_val as usize,
+            DT_RELASZ => rela_dyn_size = entry.d_val as usize,
             DT_STRSZ => strings_size = entry.d_val as usize,
-            DT_PLTREL if entry.d_val != DT_RELA => return Err(Unreadable::Relocations),
+            DT_PLTREL => other_format |= entry.d_val != DT_RELA as u64,
+            DT_RELAENT if defers_got => other_format |= entry.d_val != RELA_SIZE,
+            DT_BIND_NOW => bound = true,
+            DT_FLAGS => bound |= entry.d_val & DF_BIND_NOW != 0,
+            DT_FLAGS_1 => bound |= entry.d_val & DF_1_NOW != 0,
+            DT_VERSYM => versions.symbols = Some(entry.d_val),
+            DT_VERNEED => versions.needed = Some(entry.d_val),
+            DT_VERNEEDNUM => versions.needed_count = entry.d_val,
             _ => {}
         }
     }
-    let Some(relocations) = relocations else {
+    // The loader bound every import of such an object inside dlopen(), which fails when nothing defines one. Only a glibc that profiles or audits calls (LD_PROFILE, LD_AUDIT) does not.
+    if bound {
         return Ok(None);
-    };
-    let (Some(symbols), Some(strings)) = (symbols, strings) else {
-        return Err(Unreadable::Table);
-    };
-    if relocations_size > relocations.room {
+    }
+    if other_format {
         return Err(Unreadable::Relocations);
     }
-    let relocations = Table {
-        room: relocations_size,
-        ..relocations
+    let sized = |table: Option<Result<Table, Unreadable>>, size| match table.transpose()? {
+        Some(table) if size > table.room => Err(Unreadable::Relocations),
+        table => Ok(table.map(|table| Table {
+            room: size,
+            ..table
+        })),
+    };
+    let (rela_plt, rela_dyn) = (
+        sized(rela_plt, rela_plt_size)?,
+        sized(rela_dyn, rela_dyn_size)?,
+    );
+    let (symbols, strings) = (symbols.transpose()?, strings.transpose()?);
+    if rela_plt.is_none() && rela_dyn.is_none() {
+        return Ok(None);
+    }
+    let (Some(symbols), Some(strings)) = (symbols, strings) else {
+        return Err(Unreadable::Table);
     };
     let strings = Table {
         room: strings.room.min(strings_size),
         ..strings
     };
 
-    for relocation in (0..).map_while(|index| relocations.element::<Elf64_Rela>(index)) {
-        if relocation.r_info as u32 != R_JUMP_SLOT {
+    let relocations = [rela_plt, rela_dyn]
+        .into_iter()
+        .flatten()
+        .flat_map(|table| (0..).map_while(move |index| table.element::<Elf64_Rela>(index)));
+    for relocation in relocations {
+        let kind = relocation.r_info as u32;
+        if kind != R_JUMP_SLOT && !(defers_got && kind == R_GLOB_DAT) {
             continue;
         }
-        let symbol: Elf64_Sym = symbols
-            .element((relocation.r_info >> 32) as usize)
-            .ok_or(Unreadable::SymbolIndex)?;
+        let index = (relocation.r_info >> 32) as usize;
+        let symbol: Elf64_Sym = symbols.element(index).ok_or(Unreadable::SymbolIndex)?;
         // A weak import may stay unresolved: the loader binds it to address 0.
         if symbol.st_info >> 4 != STB_GLOBAL || symbol.st_shndx != SHN_UNDEF {
             continue;
@@ -190,7 +306,12 @@ pub unsafe fn unresolved_lazy_import<'a>(
         let name = strings
             .string(symbol.st_name as usize)
             .ok_or(Unreadable::SymbolName)?;
-        if !is_defined(name) {
+        if is_defined(name, None) {
+            continue;
+        }
+        // The loader binds by the version that the object names, and a lookup by the name alone misses a definition that is kept only under an old version.
+        let version = image.version(versions, strings, index);
+        if !version.is_some_and(|version| is_defined(name, Some(version))) {
             return Ok(Some(name));
         }
     }
@@ -208,16 +329,40 @@ mod tests {
     const DYNAMIC_ENTRY: usize = 16;
     const SYMBOL: usize = 24;
     const RELOCATION: usize = 24;
+    const VERSION_ENTRY: usize = 16;
     const GAP: usize = 11 * SYMBOL;
-    const DYNAMIC_TAGS: [i64; 7] = [
+    /// The last but one is a spare entry, which `add_dynamic` replaces.
+    const DYNAMIC_TAGS: [i64; 14] = [
         DT_JMPREL,
         DT_PLTRELSZ,
         DT_PLTREL,
         DT_SYMTAB,
         DT_STRTAB,
         DT_STRSZ,
+        DT_RELA,
+        DT_RELASZ,
+        DT_RELAENT,
+        DT_VERSYM,
+        DT_VERNEED,
+        DT_VERNEEDNUM,
+        DT_DEBUG,
         DT_NULL,
     ];
+    /// The names of the version indexes 2 to 5, which every `Object` has at the start of its string table.
+    const VERSIONS: [&str; 4] = ["VERSION_2", "VERSION_3", "VERSION_4", "VERSION_5"];
+    /// The offsets of the fields of an `Elf64_Verneed` and of an `Elf64_Vernaux`.
+    const VN_CNT: usize = 2;
+    const VN_AUX: usize = 8;
+    const VN_NEXT: usize = 12;
+    const VNA_OTHER: usize = 6;
+    const VNA_NAME: usize = 8;
+    const VNA_NEXT: usize = 12;
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Section {
+        RelaPlt,
+        RelaDyn,
+    }
 
     #[derive(Clone, Copy)]
     struct Import {
@@ -225,6 +370,10 @@ mod tests {
         binding: u8,
         section: u16,
         relocation_type: u32,
+        /// The table that has the relocation: that of `DT_JMPREL`, or that of `DT_RELA`.
+        relocated_in: Section,
+        /// The element of `DT_VERSYM` for the symbol: 1 is a symbol without a version.
+        version: u16,
     }
 
     const fn import(name: &'static str) -> Import {
@@ -233,7 +382,32 @@ mod tests {
             binding: STB_GLOBAL,
             section: SHN_UNDEF,
             relocation_type: R_JUMP_SLOT,
+            relocated_in: Section::RelaPlt,
+            version: 1,
         }
+    }
+
+    /// An import that names the version of index `version`.
+    const fn versioned(name: &'static str, version: u16) -> Import {
+        Import {
+            version,
+            ..import(name)
+        }
+    }
+
+    /// An import through the global offset table, as `-fno-plt` compiles a call.
+    const fn got_import(name: &'static str) -> Import {
+        Import {
+            relocation_type: R_GLOB_DAT,
+            relocated_in: Section::RelaDyn,
+            ..import(name)
+        }
+    }
+
+    /// The offset of the name of a version index in the string table of an `Object`. The indexes below 2 get the first name.
+    fn version_name(index: u16) -> u32 {
+        let before = &VERSIONS[..usize::from(index).saturating_sub(2)];
+        1 + before.iter().map(|name| name.len() as u32 + 1).sum::<u32>()
     }
 
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -248,7 +422,7 @@ mod tests {
         AboveItsMapping,
     }
 
-    /// An object in this process's memory: the symbols, strings and relocations in one segment, and after a gap the dynamic section in another.
+    /// An object in this process's memory: the symbols, strings and relocations of `DT_JMPREL` in one segment, and after gaps the dynamic section in another, and the version tables and the relocations of `DT_RELA` in a third.
     struct Object {
         memory: Vec<u8>,
         link_address: u64,
@@ -259,11 +433,33 @@ mod tests {
         dynamic: usize,
         dynamic_load_size: usize,
         dynamic_size: Option<usize>,
+        /// The third segment, which starts with the `DT_VERSYM` array.
+        versions: usize,
+        versions_size: usize,
+        /// The `DT_VERNEED` table, which is empty until `set_version_needs`.
+        version_needs: usize,
+        /// The `DT_RELA` table, with an entry for each import as the `DT_JMPREL` table has.
+        data_relocations: usize,
+        /// Whether the walk is that of musl.
+        defers_got: bool,
     }
 
     impl Object {
         fn new(linked: Linked, pointers: Pointers, imports: &[Import]) -> Object {
+            Object::with_version_needs_room(linked, pointers, imports, 8 * VERSION_ENTRY)
+        }
+
+        fn with_version_needs_room(
+            linked: Linked,
+            pointers: Pointers,
+            imports: &[Import],
+            version_needs_room: usize,
+        ) -> Object {
             let mut names = vec![0u8];
+            for version in VERSIONS {
+                names.extend_from_slice(version.as_bytes());
+                names.push(0);
+            }
             let name_offsets: Vec<usize> = imports
                 .iter()
                 .map(|import| {
@@ -277,9 +473,13 @@ mod tests {
             let tables_size = relocations + imports.len() * RELOCATION;
             let dynamic = tables_size + GAP;
             let dynamic_load_size = DYNAMIC_TAGS.len() * DYNAMIC_ENTRY;
+            let versions = dynamic + dynamic_load_size + GAP;
+            let version_needs = versions + (2 * (1 + imports.len())).next_multiple_of(8);
+            let data_relocations = version_needs + version_needs_room;
+            let versions_size = data_relocations + imports.len() * RELOCATION - versions;
 
             let mut object = Object {
-                memory: vec![0; dynamic + dynamic_load_size + GAP],
+                memory: vec![0; versions + versions_size + GAP],
                 link_address: 0,
                 tables_flags: PF_R,
                 tables_size,
@@ -288,6 +488,11 @@ mod tests {
                 dynamic,
                 dynamic_load_size,
                 dynamic_size: Some(dynamic_load_size),
+                versions,
+                versions_size,
+                version_needs,
+                data_relocations,
+                defers_got: false,
             };
             if linked == Linked::AboveItsMapping {
                 object.link_address = (object.memory.as_ptr() as u64).wrapping_add(0x1000_0000);
@@ -297,16 +502,31 @@ mod tests {
                 let symbol = (1 + index) * SYMBOL;
                 object.write_u32(symbol, name_offsets[index] as u32);
                 object.memory[symbol + 4] = import.binding << 4;
-                object.memory[symbol + 6..][..2].copy_from_slice(&import.section.to_le_bytes());
-                object.set_relocation(index, 1 + index, import.relocation_type);
+                object.write_u16(symbol + 6, import.section);
+                object.write_u16(versions + 2 * (1 + index), import.version);
+                match import.relocated_in {
+                    Section::RelaPlt => {
+                        object.set_relocation(index, 1 + index, import.relocation_type)
+                    }
+                    Section::RelaDyn => {
+                        object.set_data_relocation(index, 1 + index, import.relocation_type)
+                    }
+                }
             }
             let values = [
                 object.pointer(pointers, relocations),
                 (imports.len() * RELOCATION) as u64,
-                DT_RELA,
+                DT_RELA as u64,
                 object.pointer(pointers, 0),
                 object.pointer(pointers, strings),
                 names.len() as u64,
+                object.pointer(pointers, data_relocations),
+                (imports.len() * RELOCATION) as u64,
+                RELOCATION as u64,
+                object.pointer(pointers, versions),
+                object.pointer(pointers, version_needs),
+                0,
+                0,
                 0,
             ];
             for (index, (tag, value)) in DYNAMIC_TAGS.into_iter().zip(values).enumerate() {
@@ -327,6 +547,10 @@ mod tests {
             (self.memory.as_ptr() as usize).wrapping_sub(self.link_address as usize)
         }
 
+        fn write_u16(&mut self, offset: usize, value: u16) {
+            self.memory[offset..][..2].copy_from_slice(&value.to_le_bytes());
+        }
+
         fn write_u32(&mut self, offset: usize, value: u32) {
             self.memory[offset..][..4].copy_from_slice(&value.to_le_bytes());
         }
@@ -338,6 +562,37 @@ mod tests {
         fn set_relocation(&mut self, index: usize, symbol: usize, relocation_type: u32) {
             let info = (symbol as u64) << 32 | u64::from(relocation_type);
             self.write_u64(self.relocations + index * RELOCATION + 8, info);
+        }
+
+        fn set_data_relocation(&mut self, index: usize, symbol: usize, relocation_type: u32) {
+            let info = (symbol as u64) << 32 | u64::from(relocation_type);
+            self.write_u64(self.data_relocations + index * RELOCATION + 8, info);
+        }
+
+        /// Writes the `DT_VERNEED` table: an `Elf64_Verneed` for each of `needs`, each before an `Elf64_Vernaux` for each of its version indexes.
+        fn set_version_needs(&mut self, needs: &[&[u16]]) {
+            let mut need = self.version_needs;
+            for (position, indexes) in needs.iter().enumerate() {
+                let size = (1 + indexes.len()) * VERSION_ENTRY;
+                let last = position + 1 == needs.len();
+                self.write_u16(need + VN_CNT, indexes.len() as u16);
+                self.write_u32(need + VN_AUX, VERSION_ENTRY as u32);
+                self.write_u32(need + VN_NEXT, if last { 0 } else { size as u32 });
+                for (position, &index) in indexes.iter().enumerate() {
+                    let aux = need + (1 + position) * VERSION_ENTRY;
+                    let last = position + 1 == indexes.len();
+                    self.write_u16(aux + VNA_OTHER, index);
+                    self.write_u32(aux + VNA_NAME, version_name(index & VERSION_INDEX));
+                    self.write_u32(aux + VNA_NEXT, if last { 0 } else { VERSION_ENTRY as u32 });
+                }
+                need += size;
+            }
+            self.set_dynamic(DT_VERNEEDNUM, needs.len() as u64);
+        }
+
+        /// The offset of a field of the `entry`th `Elf64_Verneed` or `Elf64_Vernaux` of the `DT_VERNEED` table.
+        fn version_field(&self, entry: usize, field: usize) -> usize {
+            self.version_needs + entry * VERSION_ENTRY + field
         }
 
         fn set_symbol_name(&mut self, import: usize, offset: usize) {
@@ -356,6 +611,11 @@ mod tests {
             self.write_u64(self.dynamic_entry(tag), new_tag as u64);
         }
 
+        fn add_dynamic(&mut self, tag: i64, value: u64) {
+            self.set_dynamic(DT_DEBUG, value);
+            self.set_dynamic_tag(DT_DEBUG, tag);
+        }
+
         fn headers(&self) -> Vec<libc::Elf64_Phdr> {
             let header = |p_type, p_flags, offset: usize, size: usize| libc::Elf64_Phdr {
                 p_type,
@@ -370,6 +630,7 @@ mod tests {
             let mut headers = vec![
                 header(PT_LOAD, self.tables_flags, 0, self.tables_size),
                 header(PT_LOAD, PF_R | PF_W, self.dynamic, self.dynamic_load_size),
+                header(PT_LOAD, PF_R, self.versions, self.versions_size),
             ];
             if let Some(size) = self.dynamic_size {
                 headers.push(header(PT_DYNAMIC, PF_R | PF_W, self.dynamic, size));
@@ -377,16 +638,19 @@ mod tests {
             headers
         }
 
-        /// The result of the walk when only `defined` have a definition, and the names that it asked for.
+        /// The result of the walk when only `defined` have a definition, and what it asked for: each a name, or a name and a version as `name@version`.
         fn walk(&self, defined: &[&str]) -> (Result<Option<String>, Unreadable>, Vec<String>) {
             let mut asked = Vec::new();
             let headers = self.headers();
             // SAFETY: the headers describe ranges inside `self.memory`, which outlives the call.
             let found = unsafe {
-                unresolved_lazy_import(&headers, self.base(), |name| {
-                    let name = name.to_str().unwrap();
-                    asked.push(name.to_owned());
-                    defined.contains(&name)
+                unresolved_lazy_import(&headers, self.base(), self.defers_got, |name, version| {
+                    let mut question = name.to_str().unwrap().to_owned();
+                    if let Some(version) = version {
+                        question = format!("{question}@{}", version.to_str().unwrap());
+                    }
+                    asked.push(question);
+                    defined.contains(&asked.last().unwrap().as_str())
                 })
             };
             (
@@ -584,5 +848,482 @@ mod tests {
         };
         let object = Object::new(Linked::AtZero, Pointers::Addresses, &[data]);
         assert_eq!(object.walk(&[]), (Ok(None), vec![]));
+    }
+
+    fn asked(questions: &[&str]) -> Vec<String> {
+        questions
+            .iter()
+            .map(|&question| question.to_owned())
+            .collect()
+    }
+
+    /// The three ways in which a dynamic section says that the loader binds every import when it loads the object.
+    const BOUND_AT_LOAD: [(i64, u64); 4] = [
+        (DT_BIND_NOW, 0),
+        (DT_FLAGS, DF_BIND_NOW),
+        (DT_FLAGS, DF_BIND_NOW | 0x12),
+        (DT_FLAGS_1, DF_1_NOW | 0x800_0000),
+    ];
+
+    #[test]
+    fn an_object_that_is_bound_at_load_has_no_unresolved_import() {
+        for (tag, value) in BOUND_AT_LOAD {
+            for defers_got in [false, true] {
+                let imports = [import("first"), got_import("second")];
+                let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &imports);
+                object.defers_got = defers_got;
+                assert_eq!(object.walk(&[]).0, unresolved("first"));
+                object.add_dynamic(tag, value);
+                assert_eq!(object.walk(&[]), (Ok(None), vec![]), "{tag} {value}");
+            }
+        }
+    }
+
+    #[test]
+    fn other_flags_do_not_say_that_an_object_is_bound_at_load() {
+        for (tag, value) in [(DT_FLAGS, !DF_BIND_NOW), (DT_FLAGS_1, !DF_1_NOW)] {
+            let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &IMPORTS);
+            object.add_dynamic(tag, value);
+            assert_eq!(
+                object.walk(&[]),
+                (unresolved("first"), asked(&["first"])),
+                "{tag}"
+            );
+        }
+    }
+
+    #[test]
+    fn reads_no_table_of_an_object_that_is_bound_at_load() {
+        let changes: [fn(&mut Object); 5] = [
+            |object| object.tables_flags = 0,
+            |object| object.set_dynamic(DT_PLTREL, DT_REL),
+            |object| object.set_dynamic(DT_PLTRELSZ, u64::MAX),
+            |object| object.set_dynamic(DT_RELAENT, 1),
+            |object| {
+                object.set_dynamic(
+                    DT_RELA,
+                    object.pointer(Pointers::Addresses, object.tables_size),
+                )
+            },
+        ];
+        for (tag, value) in BOUND_AT_LOAD {
+            for change in changes {
+                let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &IMPORTS);
+                object.defers_got = true;
+                change(&mut object);
+                assert!(object.walk(&[]).0.is_err());
+                object.add_dynamic(tag, value);
+                assert_eq!(object.walk(&[]), (Ok(None), vec![]), "{tag} {value}");
+            }
+        }
+    }
+
+    #[test]
+    fn refuses_a_dynamic_section_without_an_end_that_says_bound_at_load() {
+        for (tag, value) in BOUND_AT_LOAD {
+            let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &IMPORTS);
+            object.add_dynamic(tag, value);
+            object.dynamic_size = Some(object.dynamic_load_size - DYNAMIC_ENTRY / 2);
+            assert_eq!(object.walk(&[]), (Err(Unreadable::Dynamic), vec![]));
+        }
+    }
+
+    /// `old` names the version of index 3, between two imports without a version.
+    const VERSIONED_IMPORTS: [Import; 3] = [import("first"), versioned("old", 3), import("third")];
+
+    fn versioned_object(pointers: Pointers) -> Object {
+        let mut object = Object::new(Linked::AtZero, pointers, &VERSIONED_IMPORTS);
+        object.set_version_needs(&[&[2, 3]]);
+        object
+    }
+
+    #[test]
+    fn asks_for_the_version_of_an_import_that_has_no_definition_by_its_name() {
+        for pointers in [Pointers::Addresses, Pointers::Offsets] {
+            let object = versioned_object(pointers);
+            assert_eq!(
+                object.walk(&["first", "old@VERSION_3", "third"]),
+                (Ok(None), asked(&["first", "old", "old@VERSION_3", "third"]))
+            );
+            assert_eq!(
+                object.walk(&["first", "old@VERSION_2", "third"]),
+                (unresolved("old"), asked(&["first", "old", "old@VERSION_3"]))
+            );
+        }
+    }
+
+    #[test]
+    fn reads_no_version_of_an_import_that_has_a_definition_by_its_name() {
+        let object = versioned_object(Pointers::Addresses);
+        assert_eq!(
+            object.walk(&["first", "old", "old@VERSION_3", "third"]),
+            (Ok(None), asked(&["first", "old", "third"]))
+        );
+    }
+
+    #[test]
+    fn asks_only_by_the_name_for_an_import_without_a_version() {
+        // 0 and 1 are the indexes of a symbol without a version, also where an entry of the table claims them.
+        for index in [0, 1, 0x8000, 0x8001] {
+            let imports = [versioned("plain", index), import("other")];
+            let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &imports);
+            object.set_version_needs(&[&[0, 1, 2]]);
+            assert_eq!(
+                object.walk(&["plain@VERSION_2", "other"]),
+                (unresolved("plain"), asked(&["plain"])),
+                "{index}"
+            );
+        }
+    }
+
+    #[test]
+    fn ignores_the_bit_of_a_hidden_version() {
+        for (symbol, needed) in [(0x8003, 3), (3, 0x8003), (0x8003, 0x8003)] {
+            let mut object = Object::new(
+                Linked::AtZero,
+                Pointers::Addresses,
+                &[versioned("old", symbol)],
+            );
+            object.set_version_needs(&[&[2, needed]]);
+            assert_eq!(
+                object.walk(&["old@VERSION_3"]),
+                (Ok(None), asked(&["old", "old@VERSION_3"]))
+            );
+        }
+    }
+
+    #[test]
+    fn finds_a_version_in_each_entry_of_each_needed_library() {
+        for index in 2..=5 {
+            let mut object = Object::new(
+                Linked::AboveItsMapping,
+                Pointers::Offsets,
+                &[versioned("old", index)],
+            );
+            object.set_version_needs(&[&[2, 3], &[4, 5]]);
+            let version = format!("old@VERSION_{index}");
+            assert_eq!(
+                object.walk(&[&version]),
+                (Ok(None), asked(&["old", &version]))
+            );
+        }
+        // No entry has the index: the answer by the name stands.
+        let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &[versioned("old", 6)]);
+        object.set_version_needs(&[&[2, 3], &[4, 5]]);
+        assert_eq!(object.walk(&[]), (unresolved("old"), asked(&["old"])));
+    }
+
+    #[test]
+    fn version_tables_that_are_missing_or_malformed_name_no_version() {
+        // The table is a need, its two entries, a second need and its two entries: 0 to 5. The last has the version of `old`.
+        let outside = |object: &Object| object.pointer(Pointers::Addresses, object.tables_size);
+        let cases: [(&str, &dyn Fn(&mut Object)); 18] = [
+            ("no DT_VERSYM", &|object| {
+                object.set_dynamic_tag(DT_VERSYM, DT_DEBUG)
+            }),
+            ("no DT_VERNEED", &|object| {
+                object.set_dynamic_tag(DT_VERNEED, DT_DEBUG)
+            }),
+            ("no DT_VERNEEDNUM", &|object| {
+                object.set_dynamic_tag(DT_VERNEEDNUM, DT_DEBUG)
+            }),
+            ("DT_VERNEEDNUM ends before the entry", &|object| {
+                object.set_dynamic(DT_VERNEEDNUM, 1)
+            }),
+            ("vn_cnt ends before the entry", &|object| {
+                object.write_u16(object.version_field(3, VN_CNT), 1)
+            }),
+            ("DT_VERSYM is outside the segments", &|object| {
+                object.set_dynamic(DT_VERSYM, outside(object))
+            }),
+            ("DT_VERNEED is outside the segments", &|object| {
+                object.set_dynamic(DT_VERNEED, outside(object))
+            }),
+            (
+                "the element of DT_VERSYM is outside its segment",
+                &|object| {
+                    let end = object.versions + object.versions_size;
+                    object.set_dynamic(DT_VERSYM, object.pointer(Pointers::Addresses, end - 2))
+                },
+            ),
+            ("vn_next is its own entry", &|object| {
+                object.write_u32(object.version_field(0, VN_NEXT), 0)
+            }),
+            ("vna_next is its own entry", &|object| {
+                object.write_u32(object.version_field(4, VNA_NEXT), 0)
+            }),
+            (
+                "vn_next is the first need again, if the offset wraps",
+                &|object| {
+                    let back = 0u32.wrapping_sub(3 * VERSION_ENTRY as u32);
+                    object.write_u32(object.version_field(3, VN_NEXT), back);
+                    object.write_u16(object.version_field(3, VN_CNT), 1);
+                    object.set_dynamic(DT_VERNEEDNUM, u64::MAX)
+                },
+            ),
+            (
+                "vna_next is the entry before, if the offset wraps",
+                &|object| {
+                    let back = 0u32.wrapping_sub(VERSION_ENTRY as u32);
+                    object.write_u32(object.version_field(5, VNA_NEXT), back);
+                    object.write_u16(object.version_field(5, VNA_OTHER), 4);
+                    object.write_u16(object.version_field(3, VN_CNT), u16::MAX)
+                },
+            ),
+            ("vn_next is outside the segment", &|object| {
+                object.write_u32(object.version_field(0, VN_NEXT), u32::MAX)
+            }),
+            ("vna_next is outside the segment", &|object| {
+                object.write_u32(object.version_field(4, VNA_NEXT), u32::MAX)
+            }),
+            ("vn_aux is outside the segment", &|object| {
+                let size = object.versions_size as u32;
+                object.write_u32(object.version_field(3, VN_AUX), size)
+            }),
+            ("the entry ends outside the segment", &|object| {
+                object.versions_size = object.version_field(6, 0) - 1 - object.versions
+            }),
+            ("the name is outside the string table", &|object| {
+                let size = object.strings_size as u32;
+                object.write_u32(object.version_field(5, VNA_NAME), size)
+            }),
+            ("the name does not end inside the string table", &|object| {
+                // The string table ends with the name of the last import, which loses its end here.
+                let last = object.strings_size - "last\0".len();
+                object.write_u32(object.version_field(5, VNA_NAME), last as u32);
+                object.set_dynamic(DT_STRSZ, object.strings_size as u64 - 1)
+            }),
+        ];
+        for (case, change) in cases {
+            let imports = [versioned("old", 5), import("last")];
+            let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &imports);
+            object.set_version_needs(&[&[2, 3], &[4, 5]]);
+            assert_eq!(
+                object.walk(&["old@VERSION_5", "last"]),
+                (Ok(None), asked(&["old", "old@VERSION_5", "last"]))
+            );
+            change(&mut object);
+            assert_eq!(
+                object.walk(&["old@VERSION_5", "old@last", "last"]),
+                (unresolved("old"), asked(&["old"])),
+                "{case}"
+            );
+        }
+    }
+
+    #[test]
+    fn counts_that_are_larger_than_the_chains_do_not_keep_the_walk_going() {
+        let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &[versioned("old", 5)]);
+        object.set_version_needs(&[&[2, 3], &[4, 5]]);
+        object.set_dynamic(DT_VERNEEDNUM, u64::MAX);
+        for need in [0, 3 * VERSION_ENTRY] {
+            object.write_u16(object.version_needs + need + VN_CNT, u16::MAX);
+        }
+        assert_eq!(
+            object.walk(&["old@VERSION_5"]),
+            (Ok(None), asked(&["old", "old@VERSION_5"]))
+        );
+        // Without the wanted entry the walk reads both chains to their ends and stops there.
+        object.write_u16(object.version_needs + 5 * VERSION_ENTRY + VNA_OTHER, 4);
+        assert_eq!(object.walk(&[]), (unresolved("old"), asked(&["old"])));
+    }
+
+    #[test]
+    fn a_chain_of_more_entries_than_an_object_can_name_versions_ends_the_walk() {
+        // `links` entries without the version, and after them the need and the entry that have it. The links are needs without entries, or the entries of one need.
+        let object = |links: usize, links_are_needs: bool| {
+            let imports = [versioned("old", 2)];
+            let room = (links + 3) * VERSION_ENTRY;
+            let mut object = Object::with_version_needs_room(
+                Linked::AtZero,
+                Pointers::Addresses,
+                &imports,
+                room,
+            );
+            let chain = usize::from(!links_are_needs);
+            if !links_are_needs {
+                object.write_u16(object.version_field(0, VN_CNT), links as u16);
+                object.write_u32(object.version_field(0, VN_AUX), VERSION_ENTRY as u32);
+                let next = ((1 + links) * VERSION_ENTRY) as u32;
+                object.write_u32(object.version_field(0, VN_NEXT), next);
+            }
+            for link in chain..chain + links {
+                object.write_u32(object.version_field(link, VNA_NEXT), VERSION_ENTRY as u32);
+            }
+            if !links_are_needs {
+                object.write_u32(object.version_field(links, VNA_NEXT), 0);
+            }
+            let need = chain + links;
+            object.write_u16(object.version_field(need, VN_CNT), 1);
+            object.write_u32(object.version_field(need, VN_AUX), VERSION_ENTRY as u32);
+            object.write_u16(object.version_field(need + 1, VNA_OTHER), 2);
+            object.write_u32(object.version_field(need + 1, VNA_NAME), version_name(2));
+            object.set_dynamic(DT_VERNEEDNUM, u64::MAX);
+            object
+        };
+        for links_are_needs in [true, false] {
+            assert_eq!(
+                object(1000, links_are_needs).walk(&["old@VERSION_2"]),
+                (Ok(None), asked(&["old", "old@VERSION_2"]))
+            );
+            assert_eq!(
+                object(usize::from(u16::MAX), links_are_needs).walk(&["old@VERSION_2"]),
+                (unresolved("old"), asked(&["old"]))
+            );
+        }
+    }
+
+    /// A jump slot, an import through the global offset table, and a jump slot that the linker put in the table of `DT_RELA`.
+    const MUSL_IMPORTS: [Import; 3] = [
+        import("first"),
+        got_import("second"),
+        Import {
+            relocation_type: R_JUMP_SLOT,
+            ..got_import("third")
+        },
+    ];
+
+    #[test]
+    fn reads_the_table_of_dt_rela_only_for_a_loader_that_defers_its_imports() {
+        for pointers in [Pointers::Addresses, Pointers::Offsets] {
+            let mut object = Object::new(Linked::AboveItsMapping, pointers, &MUSL_IMPORTS);
+            assert_eq!(object.walk(&["first"]), (Ok(None), asked(&["first"])));
+
+            object.defers_got = true;
+            assert_eq!(
+                object.walk(&["first"]),
+                (unresolved("second"), asked(&["first", "second"]))
+            );
+            assert_eq!(
+                object.walk(&["first", "second"]),
+                (unresolved("third"), asked(&["first", "second", "third"]))
+            );
+            assert_eq!(object.walk(&["first", "second", "third"]).0, Ok(None));
+        }
+    }
+
+    #[test]
+    fn reports_a_got_import_in_the_table_of_dt_jmprel_only_for_a_loader_that_defers_it() {
+        let data = Import {
+            relocation_type: R_GLOB_DAT,
+            ..import("data")
+        };
+        let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &[data]);
+        assert_eq!(object.walk(&[]), (Ok(None), vec![]));
+        object.defers_got = true;
+        assert_eq!(object.walk(&[]), (unresolved("data"), asked(&["data"])));
+    }
+
+    #[test]
+    fn reads_the_table_of_dt_jmprel_before_that_of_dt_rela() {
+        let imports = [got_import("data"), import("function")];
+        let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &imports);
+        object.defers_got = true;
+        assert_eq!(
+            object.walk(&[]),
+            (unresolved("function"), asked(&["function"]))
+        );
+        assert_eq!(
+            object.walk(&["function"]),
+            (unresolved("data"), asked(&["function", "data"]))
+        );
+    }
+
+    #[test]
+    fn reads_the_table_of_dt_rela_of_an_object_without_lazy_relocations() {
+        let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &MUSL_IMPORTS);
+        object.defers_got = true;
+        object.set_dynamic_tag(DT_JMPREL, DT_DEBUG);
+        assert_eq!(object.walk(&[]), (unresolved("second"), asked(&["second"])));
+        object.set_dynamic_tag(DT_RELA, DT_DEBUG);
+        assert_eq!(object.walk(&[]), (Ok(None), vec![]));
+    }
+
+    #[test]
+    fn skips_other_relocations_for_a_loader_that_defers_got_imports() {
+        // Neither a jump slot nor a `GLOB_DAT`: among them the copy and the relative relocation of each processor.
+        for relocation_type in [0, 1, R_GLOB_DAT - 1, R_JUMP_SLOT + 1] {
+            for relocated_in in [Section::RelaPlt, Section::RelaDyn] {
+                let other = Import {
+                    relocation_type,
+                    relocated_in,
+                    ..import("other")
+                };
+                let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &[other]);
+                object.defers_got = true;
+                assert_eq!(object.walk(&[]), (Ok(None), vec![]), "{relocation_type}");
+            }
+        }
+    }
+
+    #[test]
+    fn ignores_a_got_import_that_is_weak_or_that_the_object_defines() {
+        let weak = Import {
+            binding: STB_WEAK,
+            ..got_import("weak")
+        };
+        let own = Import {
+            section: 1,
+            ..got_import("own")
+        };
+        let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &[weak, own]);
+        object.defers_got = true;
+        assert_eq!(object.walk(&[]), (Ok(None), vec![]));
+    }
+
+    #[test]
+    fn asks_for_the_version_of_a_got_import() {
+        let imports = [Import {
+            version: 4,
+            ..got_import("old")
+        }];
+        let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &imports);
+        object.set_version_needs(&[&[4]]);
+        object.defers_got = true;
+        assert_eq!(
+            object.walk(&["old@VERSION_4"]),
+            (Ok(None), asked(&["old", "old@VERSION_4"]))
+        );
+    }
+
+    #[test]
+    fn refuses_another_entry_size_only_where_it_reads_the_table_of_dt_rela() {
+        for size in [0, 16, 25] {
+            let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &MUSL_IMPORTS);
+            object.set_dynamic(DT_RELAENT, size);
+            assert_eq!(object.walk(&["first"]), (Ok(None), asked(&["first"])));
+            object.defers_got = true;
+            assert_eq!(
+                object.walk(&["first"]),
+                (Err(Unreadable::Relocations), vec![])
+            );
+        }
+        // The loaders do not read the entry, so an object without one is read as well.
+        let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &MUSL_IMPORTS);
+        object.defers_got = true;
+        object.set_dynamic_tag(DT_RELAENT, DT_DEBUG);
+        assert_eq!(object.walk(&["first"]).0, unresolved("second"));
+    }
+
+    #[test]
+    fn refuses_a_table_of_dt_rela_outside_the_segments_only_where_it_reads_it() {
+        let changes: [(Unreadable, fn(&mut Object)); 2] = [
+            (Unreadable::Table, |object| {
+                object.set_dynamic(
+                    DT_RELA,
+                    object.pointer(Pointers::Addresses, object.tables_size),
+                )
+            }),
+            (Unreadable::Relocations, |object| {
+                object.set_dynamic(DT_RELASZ, (object.versions_size + 1) as u64)
+            }),
+        ];
+        for (error, change) in changes {
+            let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &MUSL_IMPORTS);
+            change(&mut object);
+            assert_eq!(object.walk(&["first"]), (Ok(None), asked(&["first"])));
+            object.defers_got = true;
+            assert_eq!(object.walk(&["first"]), (Err(error), vec![]));
+        }
     }
 }

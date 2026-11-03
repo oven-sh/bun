@@ -312,11 +312,11 @@ function opcodeOf(file: Uint8Array, at: number): number {
 }
 
 // Whether one of the instructions from `from` on has its opcode at `opcode`. Undefined where one of them is unknown.
-function reaches(file: Uint8Array, from: number, opcode: number): boolean | undefined {
+function reaches(file: Uint8Array, from: number, opcode: number, isInAFunction: boolean): boolean | undefined {
   for (;;) {
     const length = instructionLength(file, from);
-    // Two zero bytes are `add [rax], al`, which no compiler writes: they are padding or data, and what is behind them is not known.
-    if (length === 0 || (file[from] === 0 && file[from + 1] === 0)) return undefined;
+    // A zero byte begins `add r/m8, r8`, which a compiler seldom writes, and most padding and data. Only inside a function is it known to be the instruction.
+    if (length === 0 || (file[from] === 0 && !isInAFunction)) return undefined;
     if (from + length > opcode) return opcodeOf(file, from) === opcode;
     from += length;
   }
@@ -328,7 +328,7 @@ function isAnOpcode({ file, functions, dataInCode }: Image, opcode: number, star
   // One of any 15 bytes in a row begins an instruction, as none is longer. From 64 bytes ahead, a reading that began inside one has nearly always joined the real ones.
   let isPassed = false;
   for (let ahead = 64; ahead < 64 + 15 && opcode - 78 >= start; ahead++) {
-    const isReached = reaches(file, opcode - ahead, opcode);
+    const isReached = reaches(file, opcode - ahead, opcode, false);
     if (isReached) return true;
     isPassed ||= isReached === false;
   }
@@ -340,7 +340,7 @@ function isAnOpcode({ file, functions, dataInCode }: Image, opcode: number, star
   }
   // A function begins with an instruction. Where the file says where that is, only the reading from there shows that this is no opcode.
   const from = next > 0 ? functions[next - 1]! - base : -1;
-  if (from >= start) return reaches(file, from, opcode) !== false;
+  if (from >= start) return reaches(file, from, opcode, true) !== false;
   // Elsewhere it is none if a reading passes over it and none reaches it. Where nothing can be read, the place is reported.
   return !isPassed;
 }

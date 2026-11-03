@@ -127,6 +127,9 @@ describe("in x64 code, the scan reports a call only where an instruction begins"
     u32(0x26, 16, 0x638, 24);
     u32(0x29, 16, 0x650, 8 * dataInCode.length);
     const sizeOfCommands = to - 32;
+    // In the file, `nop`s are in front of the code. They are in the segment of the header, so in memory they are not,
+    // and the scan must not read the code from them.
+    file.fill(0x90, to, 0x400);
     to = 0;
     u32(0xfeedfacf, 0x01000007, 3, 2, 9, sizeOfCommands, 0, 0);
     file.set(Buffer.from(code, "hex"), 0x400);
@@ -228,23 +231,28 @@ describe("in x64 code, the scan reports a call only where an instruction begins"
         machO(at - 38, unknown + expandCapacity, [at - 38]),
         ["execvp"],
       ),
+      // `add al, al` begins with a zero byte. Read from the start of a function, that is an instruction and no padding.
+      "the function begins with `add al, al`": placesThatCall(machO(at - 2, "00c0" + expandCapacity, [at - 2]), [
+        "execvp",
+      ]),
     }).toEqual({
       "the file says where the function begins": [],
       "80 bytes that --trim filled are in front": [],
       "neither": [place],
       "the function begins with an instruction that the scan cannot read": [place],
+      "the function begins with `add al, al`": [],
     });
   });
 
   test("not in a jump table, and at the start of the function behind one", () => {
     // A function, its jump table of two entries, a function that is one `jmp` to the stub, and a `ret`. The bytes of
-    // the table are a `jmp` to the stub too, then `add [rax], al`, then a `mov eax` that takes the first four bytes
+    // the table are a `jmp` to the stub too, then `xor eax, eax`, then a `mov eax` that takes the first four bytes
     // of the function behind the table as its operand. So only the file says that a function begins there.
     const at = 0x105e36400;
     const { code, places } = assemble(at, [
       expandCapacity,
       ["e9", stub, false],
-      "0000b8",
+      "31c0b8",
       ["e9", stub],
       "909090",
       "c3",
@@ -282,29 +290,28 @@ describe("in x64 code, the scan reports a call only where an instruction begins"
     expect(addressesOf(machO(at, code))).toEqual(places);
   });
 
-  test("a call behind prefixes that the processor ignores", () => {
+  // The processor takes any number of REX and legacy prefixes in any order, and uses a REX prefix only directly in
+  // front of the opcode. Read with one REX prefix behind the legacy ones, the bytes of each `mov` are other
+  // instructions, and the last of them takes the `e8` of the call as its operand.
+  test.each<[string, Part[]]>([
+    ["a call behind `mov rax, imm64` with two REX prefixes", ["4848b8" + "00000000b8000000", ["e8", stub]]],
+    ["a call behind `mov ax, imm16` with a REX prefix in front of its `66` prefix", ["4866b8" + "0000", ["e8", stub]]],
+    ["a call with two REX prefixes", [["4848e8", stub]]],
+  ])("%s", (_, parts) => {
     const at = 0x105e36400;
-    const { code, places } = assemble(at, [
-      expandCapacity.slice(0, -2),
-      // Of two REX prefixes only the last one counts: this is `mov rax, imm64`, and not `mov eax, imm32` with 4 bytes
-      // of other instructions behind it.
-      "4848b8" + "00000000000000b8",
-      ["e8", stub],
-      // A REX prefix with another prefix behind it does not count: this is `mov ax, imm16`.
-      "4866b8" + "0000",
-      ["e8", stub],
-      ["4848e8", stub], // call with two REX prefixes
-      "c3", // ret
-    ]);
+    const { code, places } = assemble(at, [expandCapacity.slice(0, -2), ...parts, "c3"]);
     expect(addressesOf(machO(at, code))).toEqual(places);
   });
 
-  test("a call behind padding of zeros", () => {
-    // Read as instructions, three zero bytes are `add [rax], al` and the first byte of `add al, ch`, which takes the
-    // `e8` of the call as its operand. No compiler writes `add [rax], al`: two zero bytes are padding or data, and
-    // the scan cannot tell what the bytes behind them are.
+  // Read as an instruction, a zero byte is the opcode of `add r/m8, r8`, and it takes the `e8` of the call behind it
+  // as its operand. A compiler seldom writes that instruction, and padding and data are mostly zero bytes. So the scan
+  // cannot tell what the bytes behind a zero byte are, and reports the call.
+  test.each([
+    ["one zero byte", "00"],
+    ["three zero bytes", "000000"],
+  ])("a call behind %s", (_, zeros) => {
     const at = 0x105e36400;
-    const { code, places } = assemble(at, [expandCapacity, "000000", ["e8", stub], "c3"]);
+    const { code, places } = assemble(at, [expandCapacity, zeros, ["e8", stub], "c3"]);
     expect(addressesOf(machO(at, code))).toEqual(places);
   });
 });

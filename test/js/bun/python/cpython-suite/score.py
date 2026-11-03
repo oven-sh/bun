@@ -85,6 +85,28 @@ def portable(text):
     return re.sub(re.escape(tempfile.gettempdir()) + r"/bun-python3-links-\d+/\w+/", "", text)
 
 
+# Some test files cannot be imported without a helper module of CPython's that is written in C, though few of their tests use it.
+# shims/NAME holds a stand-in, written in Python, that is there to be imported: see README.md. It is on the path of the test
+# modules listed here and of no others, because test.support and many tests do something sensible when a helper is missing.
+SHIMS = {
+    "_testmultiphase": ["test_import", "test_importlib", "test_runpy", "test_pkgutil", "test_compileall", "test_pyclbr", "test_unittest.test_discovery"],
+    "_testinternalcapi": ["test_class", "test_with"],
+    "_testlimitedcapi": ["test_bytes", "test_class"],
+    "_testcapi": ["test_traceback"],
+}
+
+
+# What a shim lets through though it needs the real thing, and has no guard of its own. Not run.
+IGNORED = {
+    # Runs a script in a child that imports test_importlib/util.py, without the shim.
+    "test_importlib.extension.test_loader": ["test.test_importlib.extension.test_loader.NonModuleExtensionTests.test_nonmodule_cases"],
+}
+
+
+def shim_path(name):
+    return os.pathsep.join(os.path.join(HERE, "shims", shim) for shim, users in SHIMS.items() if any(name == user or name.startswith(user + ".") for user in users))
+
+
 def find_tests():
     names = []
     root = os.path.join(LIB, "test")
@@ -284,7 +306,7 @@ def run_one(name, python, limits, extra_env, rounds):
     incidents, outputs = [], []
     seconds = 0
     while True:
-        result, output = run_once(name, python, limits, extra_env, [i["test"] for i in incidents])
+        result, output = run_once(name, python, limits, extra_env, [i["test"] for i in incidents] + (IGNORED.get(name, []) if "PYTHONPATH" in extra_env else []))
         seconds += result["seconds"]
         outputs.append(output)
         if result["status"] not in ("crashed", "timeout"):
@@ -474,7 +496,11 @@ def main():
     started = time.time()
     done = 0
     with concurrent.futures.ThreadPoolExecutor(options.j) as pool:
-        futures = {pool.submit(run_one, n, python, (options.timeout, options.idle), extra_env, options.rounds): n for n in names}
+        def environment(name):
+            path = "" if options.oracle else shim_path(name)
+            return dict(extra_env, PYTHONPATH=path) if path else extra_env
+
+        futures = {pool.submit(run_one, n, python, (options.timeout, options.idle), environment(n), options.rounds): n for n in names}
         for future in concurrent.futures.as_completed(futures):
             result, output = future.result()
             results[result["name"]] = result

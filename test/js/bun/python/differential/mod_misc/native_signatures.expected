@@ -1,0 +1,36 @@
+status: 0
+script: 9f2e555af495f3ff
+---
+sorted ($module, iterable, /, *, key=None, reverse=False) (iterable, /, *, key=None, reverse=False)
+sys.audit ($module, event, /, *args) (event, /, *args)
+atexit.register ($module, func, /, *args, **kwargs) (func, /, *args, **kwargs)
+_thread.stack_size ($module, size=0, /) (size=0, /)
+_thread.start_new_thread ($module, function, args, kwargs={}, /) (function, args, kwargs={}, /)
+_thread.start_new ($module, function, args, kwargs={}, /) (function, args, kwargs={}, /)
+_csv.reader ($module, iterable, /, dialect='excel', **fmtparams) (iterable, /, dialect='excel', **fmtparams)
+_csv.writer ($module, fileobj, /, dialect='excel', **fmtparams) (fileobj, /, dialect='excel', **fmtparams)
+_csv.register_dialect ($module, name, /, dialect='excel', **fmtparams) (name, /, dialect='excel', **fmtparams)
+_json.scanstring ($module, pystr, end, strict=True, /) (pystr, end, strict=True, /)
+Pickler.dump ($self, obj, /) (self, obj, /)
+Unpickler.load ($self, /) (self, /)
+Unpickler.find_class ($self, module_name, global_name, /) (self, module_name, global_name, /)
+Unpickler.persistent_load ($self, pid, /) (self, pid, /)
+Parse ($self, data, isfinal=False, /) (self, data, isfinal=False, /)
+ParseFile ($self, file, /) (self, file, /)
+UseForeignDTD ($self, flag=True, /) (self, flag=True, /)
+_imp.is_frozen_package ($module, name, /) (name, /)
+_imp.get_frozen_object ($module, name, data=None, /) (name, data=None, /)
+_imp.init_frozen ($module, name, /) (name, /)
+_imp.exec_dynamic ($module, mod, /) (mod, /)
+fork_exec ($module, args, executable_list, close_fds, pass_fds, cwd, env, p2cread, p2cwrite, c2pread, c2pwrite, errread, errwrite, errpipe_read, errpipe_write, restore_signals, call_setsid, pgid_to_set, gid, extra_groups, uid, child_umask, preexec_fn, /) (args, executable_list, close_fds, pass_fds, cwd, env, p2cread, p2cwrite, c2pread, c2pwrite, errread, errwrite, errpipe_read, errpipe_write, restore_signals, call_setsid, pgid_to_set, gid, extra_groups, uid, child_umask, preexec_fn, /)
+getstats ($self, /) (self, /)
+get_nowait ($self, /) (self, /)
+object.__init_subclass__ ($type, /) ()
+object.__subclasshook__ ($type, object, /) (object, /)
+[3, 2, 1] ['A', 'b']
+TypeError sorted expected 1 argument, got 0
+TypeError sorted expected 1 argument, got 2
+TypeError sorted expected 1 argument, got 0
+TypeError sort() got an unexpected keyword argument 'nope'
+('a\n', 5) 0 NotImplemented None
+{'iterable': [1], 'key': <built-in function len>}

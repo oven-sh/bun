@@ -181,8 +181,10 @@ test.concurrent("the traceback of a module that has awaited shows the program's 
       "Traceback (most recent call last):\n" +
       '  File "<dir>/main.py", line 4, in <module>\n' +
       "    f()\n" +
+      "    ~^^\n" +
       '  File "<dir>/main.py", line 3, in f\n' +
       "    def f(): return 1 / 0\n" +
+      "                    ~~^~~\n" +
       "ZeroDivisionError: division by zero\n",
     exitCode: 1,
   });

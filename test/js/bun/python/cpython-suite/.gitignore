@@ -3,3 +3,4 @@ logs-*/
 oracle-logs/
 score-*.md
 score-*.json
+__pycache__/

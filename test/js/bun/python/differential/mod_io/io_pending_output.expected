@@ -1,5 +1,5 @@
 status: 0
-script: 73cc93053747d82f
+script: f689b44272257328
 ---
 --- every way of looking
 open True x
@@ -50,6 +50,6 @@ text bytes text
 x
 x
 b'x'
-0
+True
 OSError 9
 b'piped'

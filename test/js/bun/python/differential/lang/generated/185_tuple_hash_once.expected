@@ -1,0 +1,46 @@
+status: 0
+script: 792454adbc0a01b5
+source: f40f6b2ca65f70f3
+---
+calls(lambda: hash(t)) => 2
+calls(lambda: hash(t)) => 0
+calls(lambda: {t: 1}[t]) => 0
+calls(lambda: t in {t}) => 0
+hash(t) == hash((1, 2, "x", 3)) => True
+calls(lambda: hash(nested)) => 1
+calls(lambda: hash(nested)) => 0
+calls(lambda: hash((t, Key(6)))) => 1
+hash(()) => 5740354900026072187
+hash((1,)) => -6644214454873602895
+hash((1, 2)) => -3550055125485641917
+hash((1, 2, 3)) => 529344067295497451
+hash(((), ())) => 9028247024705308198
+hash((1.5, None, True)) => -5590730492151869419
+hash((-1,)) => 8078679518589016365
+hash((2**70,)) => 6011568359958228336
+hash((1, 2)) == hash((1.0, 2.0)) == hash((True, 2)) => True
+hash((1, 2)) != hash((2, 1)) => True
+TypeError e [_=0] => not now
+TypeError e [_=1] => not now
+hash(m) == hash((1, 7)) => True
+hash(m) == hash(m) => True
+TypeError e [bad=tuple, _=0] => unhashable type: 'list'
+TypeError e [bad=tuple, _=1] => unhashable type: 'list'
+TypeError e [bad=tuple, _=0] => unhashable type: 'list'
+TypeError e [bad=tuple, _=1] => unhashable type: 'list'
+TypeError e [bad=tuple, _=0] => unhashable type: 'dict'
+TypeError e [bad=tuple, _=1] => unhashable type: 'dict'
+calls(lambda: hash(p)) => 2
+calls(lambda: hash(p)) => 0
+hash(p) == hash((1, 2)) => True
+calls(lambda: hash(s)) => 2
+calls(lambda: hash(s)) => 0
+hash(s) == hash((1, 2)) => True
+calls(lambda: hash(o)) => 0
+hash(o) => 42
+calls(lambda: tuple.__hash__(o)) => 1
+calls(lambda: tuple.__hash__(o)) => 0
+tuple.__hash__(o) == hash((1,)) => True
+all(hash(big) == h for _ in range(20000)) => True
+len({big: 1, tuple(range(200000)): 2}) => 1
+True

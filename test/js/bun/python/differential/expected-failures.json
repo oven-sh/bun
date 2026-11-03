@@ -3,17 +3,10 @@
   "command-line/path-hooks": "zipimport is imported when the first archive turns up on sys.path, by a hook of another name",
   "extra/co_consts_probe": "co_consts has the constants of the source: nothing is folded, the bytecode being JavaScriptCore's",
   "gc/order1": "what nothing orders is finalized in the order it was made; a list of CPython lets go of its items from the end",
-  "lang/171_generator_delegation": "f_locals of the frame of a suspended generator is empty",
-  "lang/173_with_methods": "FIXME: crashes: `with` calls a native method taken from another type (__enter__ = str.upper) with a self it does not check",
-  "lang/183_generator_throw_context": "FIXME: the script is newer than the build it was last run on (release, 2026-11-03 15:50): run it again",
   "llint/ll_items": "iterator.__setstate__(2 ** 64) does not raise OverflowError (the script prints a digest: give it an argument to see the lines)",
   "mod_ast/known_gaps_parse": "four positions of errors at the end of the input",
   "mod_ast/known_gaps_positions": "a tree with line 0 in it gives line 1 in the traceback",
-  "mod_asyncio/c_exception_context": "FIXME: the script is newer than the build it was last run on (release, 2026-11-03 15:50): run it again",
   "mod_audit/events": "the audit event `import` is raised twice for one import",
-  "mod_collections/008_ordereddict": "FIXME: the script is newer than the build it was last run on (release, 2026-11-03 15:50): run it again; there was no _collections.OrderedDict",
-  "mod_io/io_pending_output": "FIXME: the script is newer than the build it was last run on (release, 2026-11-03 15:50): run it again",
   "mod_posix/posix_surface": "posix has spawnv, spawnve, spawnvp, spawnvpe, P_WAIT, P_NOWAIT and P_NOWAITO of its own: there is no fork for os.py to make them of",
-  "once_crashed/lazy_import_long_dotted_name": "FIXME: 10 000 dots in a thread with a stack of 256 KiB: no RecursionError, and in a debug build the thread dies",
-  "once_hung/jump_out_of_endless_loop": "frame.f_lineno = n from a trace function does not refuse a jump out of the code block"
+  "once_crashed/lazy_import_long_dotted_name": "FIXME: 10 000 dots in a thread with a stack of 256 KiB: no RecursionError, and in a debug build the thread dies"
 }

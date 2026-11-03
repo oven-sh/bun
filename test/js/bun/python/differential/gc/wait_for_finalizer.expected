@@ -1,0 +1,21 @@
+status: 0
+script: a319d6c4dba042f1
+---
+-- an event, no other thread
+200
+woke
+-- a lock
+200
+acquired
+-- with a lock
+200
+entered
+-- a queue
+200
+item
+-- a thread that waits for it, joined
+200
+joined
+-- while another thread sleeps
+200
+woke

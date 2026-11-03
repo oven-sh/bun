@@ -303,6 +303,7 @@ colorsys.rgb_to_hsv(1, 2, "3")
         "Traceback (most recent call last):",
         `  File "<dir>/main.py", line 3, in <module>`,
         `    colorsys.rgb_to_hsv(1, 2, "3")`,
+        "    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^",
         `  File "${library}/colorsys.py", line N, in rgb_to_hsv`,
         "    maxc = max(r, g, b)",
         "TypeError: '>' not supported between instances of 'str' and 'int'",

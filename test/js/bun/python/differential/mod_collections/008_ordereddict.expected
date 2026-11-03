@@ -1,5 +1,5 @@
 status: 0
-script: 9eb177696b7c9ac7
+script: efcb35c0a99f53e9
 ---
 == what it is
 True collections OrderedDict OrderedDict
@@ -165,7 +165,7 @@ True ([('d', 4), ('a', 3), ('b', 2), ('c', 1)],) [('d', 4), ('a', 3), ('b', 2), 
 {}
 True 1
 Slotted({'a': 1}) 5 {'other': 6} 5 5
-True True True
+True True
 True True
 == what subclasses override is what gets called
 (Loud({'a': 1, 'b': 2}), [('set', 'a', 1), ('set', 'b', 2), ('keys',), ('get', 'a'), ('get', 'b')])

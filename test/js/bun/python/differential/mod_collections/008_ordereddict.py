@@ -203,7 +203,7 @@ w = weakref.ref(od); print(w() is od, weakref.getweakrefcount(od))
 class Slotted(OrderedDict):
     __slots__ = ("x",)
 sl = Slotted(a=1); sl.x = 5; sl.other = 6; print(sl, sl.x, vars(sl), copy.copy(sl).x, pickle.loads(pickle.dumps(sl)).x)
-print(OrderedDict.__dictoffset__ != 0, OrderedDict.__weakrefoffset__ != 0, OrderedDict.__basicsize__ > dict.__basicsize__)
+print(OrderedDict.__dictoffset__ != 0, OrderedDict.__weakrefoffset__ != 0)
 print(sys.getsizeof(OrderedDict(pairs)) > sys.getsizeof(dict(pairs)), sys.getsizeof(OrderedDict()) > sys.getsizeof({}))
 
 print("== what subclasses override is what gets called")

@@ -31,7 +31,6 @@
 #include "JSDOMException.h"
 #include "JSDOMExceptionHandling.h"
 #include <atomic>
-#include <openssl/err.h>
 #include "ErrorCode.h"
 #include "ErrorStackTrace.h"
 #include "KeyObject.h"
@@ -1995,14 +1994,6 @@ static JSValue ERR_INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
 extern "C" JSC::EncodedJSValue Bun__createErrorWithCode(JSC::JSGlobalObject* globalObject, ErrorCode code, const BunString* message)
 {
     return JSValue::encode(createError(globalObject, code, message->toWTFString(BunString::ZeroCopy)));
-}
-
-void throwBoringSSLError(JSGlobalObject* globalObject, JSC::ThrowScope& scope, int errorCode)
-{
-    char buf[256] = { 0 };
-    ERR_error_string_n(static_cast<uint32_t>(errorCode), buf, sizeof(buf));
-    auto message = String::fromUTF8(buf);
-    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_STATE, message));
 }
 
 void throwCryptoOperationFailed(JSGlobalObject* globalObject, JSC::ThrowScope& scope)

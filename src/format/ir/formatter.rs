@@ -3,7 +3,7 @@
 use super::document::Tracker;
 use super::element::{
     BestFitting, Fallback, Flat, FlatFlags, FormatElement, Group, GroupId, GroupMode, Interned,
-    LabelId, LineMode, PrintMode, Skip, Tag, Text, TextWidth,
+    LabelId, LineMode, PrintMode, Skip, Tag, Text, TextWidth, Token,
 };
 use super::width::OddBlocks;
 use crate::js::comments::Comments;
@@ -86,6 +86,38 @@ impl<'a> Format<'a> for &'static str {
     #[inline(always)]
     fn as_token(&self) -> Option<&'static str> {
         Some(self)
+    }
+}
+
+/// A string literal among the arguments of `format_args!`: a keyword or punctuator.
+#[derive(Copy, Clone)]
+pub(crate) struct Literal {
+    text: &'static str,
+    /// `None` if `text` is too long for one.
+    token: Option<Token>,
+}
+
+impl Literal {
+    pub(crate) const fn new(text: &'static str) -> Self {
+        Literal {
+            text,
+            token: Token::new_const(text),
+        }
+    }
+}
+
+impl<'a> Format<'a> for Literal {
+    #[inline(always)]
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        match self.token {
+            Some(token) => f.write_short_token(token),
+            None => f.write_long_token(self.text),
+        }
+    }
+
+    #[inline(always)]
+    fn as_token(&self) -> Option<&'static str> {
+        Some(self.text)
     }
 }
 
@@ -652,10 +684,58 @@ impl<'a> Formatter<'a> {
 
     #[inline(always)]
     pub(crate) fn write_token(&mut self, text: &'static str) {
-        match super::element::Token::new(text) {
-            Some(token) => self.write_element(FormatElement::Token(token)),
-            None => self.write_owned_text(text.as_bytes(), TextWidth::single(text.len() as u32)),
+        match Token::new(text) {
+            Some(token) => self.write_short_token(token),
+            None => self.write_long_token(text),
         }
+    }
+
+    // The most frequent elements have functions of their own: thousands of places write one, and the code that does it
+    // is several times as long as a call.
+
+    #[inline(never)]
+    pub(crate) fn write_short_token(&mut self, token: Token) {
+        self.write_element(FormatElement::Token(token));
+    }
+
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn write_long_token(&mut self, text: &'static str) {
+        self.write_owned_text(text.as_bytes(), TextWidth::single(text.len() as u32));
+    }
+
+    #[inline(never)]
+    pub(crate) fn write_space(&mut self) {
+        self.write_element(FormatElement::Space);
+    }
+
+    #[inline(never)]
+    pub(crate) fn write_line_break(&mut self, mode: LineMode) {
+        self.write_element(FormatElement::Line(mode));
+    }
+
+    #[inline(never)]
+    pub(crate) fn start_group(&mut self, group: Group) {
+        self.write_element(FormatElement::Tag(Tag::StartGroup(group)));
+    }
+
+    #[inline(never)]
+    pub(crate) fn end_group(&mut self) {
+        self.write_element(FormatElement::Tag(Tag::EndGroup));
+    }
+
+    #[inline(never)]
+    pub(crate) fn start_indent_with_line(&mut self, mode: LineMode) {
+        self.write_element(FormatElement::Tag(Tag::StartIndentWithLine(mode)));
+    }
+
+    /// `mode` is the line break after the indented content, if there is one.
+    #[inline(never)]
+    pub(crate) fn end_indent_with_line(&mut self, mode: Option<LineMode>) {
+        self.write_element(FormatElement::Tag(match mode {
+            Some(mode) => Tag::EndIndentWithLine(mode),
+            None => Tag::EndIndent,
+        }));
     }
 
     /// Returns the width of `text`, which may contain anything.

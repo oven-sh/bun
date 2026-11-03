@@ -145,6 +145,24 @@ impl Token {
         })
     }
 
+    /// Same, at compile time.
+    pub(crate) const fn new_const(text: &str) -> Option<Token> {
+        let text = text.as_bytes();
+        if text.len() > Token::MAX {
+            return None;
+        }
+        let mut bytes = [0; Token::MAX];
+        let mut index = 0;
+        while index < text.len() {
+            bytes[index] = text[index];
+            index += 1;
+        }
+        Some(Token {
+            len: text.len() as u8,
+            bytes,
+        })
+    }
+
     #[inline(always)]
     pub(crate) fn as_bytes(&self) -> &[u8] {
         self.bytes.get(..self.len as usize).unwrap_or_default()

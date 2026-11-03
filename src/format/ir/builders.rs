@@ -78,7 +78,7 @@ pub(crate) struct Line(LineMode);
 impl<'a> Format<'a> for Line {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
-        f.write_element(FormatElement::Line(self.0));
+        f.write_line_break(self.0);
     }
 
     #[inline(always)]
@@ -203,7 +203,7 @@ pub(crate) struct Space;
 impl<'a> Format<'a> for Space {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
-        f.write_element(FormatElement::Space);
+        f.write_space();
     }
 }
 
@@ -330,7 +330,8 @@ impl<'a, Content: Format<'a> + ?Sized> Format<'a> for Align<'_, Content> {
 pub(crate) fn block_indent<Content: ?Sized>(content: &Content) -> BlockIndent<'_, Content> {
     BlockIndent {
         content,
-        mode: IndentMode::Block,
+        before: LineMode::Hard,
+        after: Some(LineMode::Hard),
     }
 }
 
@@ -339,7 +340,8 @@ pub(crate) fn block_indent<Content: ?Sized>(content: &Content) -> BlockIndent<'_
 pub(crate) fn soft_block_indent<Content: ?Sized>(content: &Content) -> BlockIndent<'_, Content> {
     BlockIndent {
         content,
-        mode: IndentMode::Soft,
+        before: LineMode::Soft,
+        after: Some(LineMode::Soft),
     }
 }
 
@@ -363,7 +365,8 @@ pub(crate) fn soft_line_indent_or_space<Content: ?Sized>(
 ) -> BlockIndent<'_, Content> {
     BlockIndent {
         content,
-        mode: IndentMode::SoftLineOrSpace,
+        before: LineMode::SoftOrSpace,
+        after: None,
     }
 }
 
@@ -375,13 +378,17 @@ pub(crate) fn soft_space_or_block_indent<Content: ?Sized>(
 ) -> BlockIndent<'_, Content> {
     BlockIndent {
         content,
-        mode: IndentMode::SoftSpace,
+        before: LineMode::SoftOrSpace,
+        after: Some(LineMode::SoftOrSpace),
     }
 }
 
 pub(crate) struct BlockIndent<'fmt, Content: ?Sized> {
     content: &'fmt Content,
-    mode: IndentMode,
+    /// The line break before the content.
+    before: LineMode,
+    /// The line break after it.
+    after: Option<LineMode>,
 }
 
 impl<Content: ?Sized> Copy for BlockIndent<'_, Content> {}
@@ -391,28 +398,11 @@ impl<Content: ?Sized> Clone for BlockIndent<'_, Content> {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-enum IndentMode {
-    Soft,
-    Block,
-    SoftSpace,
-    SoftLineOrSpace,
-}
-
 impl<'a, Content: Format<'a> + ?Sized> Format<'a> for BlockIndent<'_, Content> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        let (before, after) = match self.mode {
-            IndentMode::Soft => (LineMode::Soft, Some(LineMode::Soft)),
-            IndentMode::Block => (LineMode::Hard, Some(LineMode::Hard)),
-            IndentMode::SoftSpace => (LineMode::SoftOrSpace, Some(LineMode::SoftOrSpace)),
-            IndentMode::SoftLineOrSpace => (LineMode::SoftOrSpace, None),
-        };
-        f.write_element(FormatElement::Tag(Tag::StartIndentWithLine(before)));
+        f.start_indent_with_line(self.before);
         self.content.fmt(f);
-        f.write_element(FormatElement::Tag(match after {
-            Some(after) => Tag::EndIndentWithLine(after),
-            None => Tag::EndIndent,
-        }));
+        f.end_indent_with_line(self.after);
     }
 }
 
@@ -480,9 +470,9 @@ impl<'a, Content: Format<'a> + ?Sized> Format<'a> for Group<'_, Content> {
             (false, false) => GroupMode::Flat,
         };
         let group = element::Group::new().with_id(self.group_id).with_mode(mode);
-        f.write_element(FormatElement::Tag(Tag::StartGroup(group)));
+        f.start_group(group);
         self.content.fmt(f);
-        f.write_element(FormatElement::Tag(Tag::EndGroup));
+        f.end_group();
     }
 }
 

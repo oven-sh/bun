@@ -58,6 +58,34 @@ test("an output of Bun.build() is hashed as its bytes, and one written to outdir
   expect(() => Bun.sha(written)).toThrow(fileBlob);
   expect(() => nodeHash("sha1", written)).toThrow(fileBlob);
 });
+describe("digest() into a TypedArray needs room for the digest and writes nothing else", () => {
+  function check(make: () => Bun.CryptoHasher) {
+    const { byteLength } = make();
+    const digest = make().digest();
+    expect(digest).toHaveLength(byteLength);
+
+    for (const extra of [0, 1, 100]) {
+      const into = new Uint8Array(byteLength + extra).fill(0xee);
+      expect(make().digest(into)).toBe(into);
+      expect(Buffer.from(into)).toEqual(Buffer.concat([digest, Buffer.alloc(extra, 0xee)]));
+    }
+    expect(() => make().digest(new Uint8Array(byteLength - 1))).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `TypedArray must be at least ${byteLength} bytes`,
+      }),
+    );
+  }
+
+  test.each(Bun.CryptoHasher.algorithms)("%s", algorithm => {
+    check(() => new Bun.CryptoHasher(algorithm).update("abc"));
+  });
+
+  test.each(["md5", "sha1", "sha256", "sha512"] as const)("%s with a key", algorithm => {
+    check(() => new Bun.CryptoHasher(algorithm, "key").update("abc"));
+  });
+});
+
 test("CryptoHasher update should throw when no parameter/null/undefined is passed", () => {
   const expected = expect.objectContaining({
     name: "TypeError",

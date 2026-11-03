@@ -866,6 +866,38 @@ const files = {
         if (keepsListings) console.log("listings read again", count, more.refills);
       },
 
+      async changed() {
+        // What was removed next to the importer after a miss. The old retry answered these as a
+        // new process does: it dropped the importer's directory. Now the run after the miss
+        // checks what it takes from the caches, and finds what is gone.
+        const { resolverCounters } = require("bun:internal-for-testing");
+        const ranAgain = resolverCounters().lookupsRunAgain;
+        // The node_modules next to the importer has a copy of a package whose "exports" do not
+        // cover the request. The copy is removed, as a dedupe does.
+        const hoisted = top => {
+          write(path.join(top, nm("pkg", "package.json")), JSON.stringify({ name: "pkg", main: "./index.js" }));
+          write(path.join(top, nm("pkg", "index.js")), "");
+        };
+        const partial = JSON.stringify({ name: "pkg", exports: { "./other": "./o.js" } });
+        hoisted("r1");
+        write(path.join("r1", "sub", nm("pkg", "package.json")), partial);
+        write(path.join("r1", "sub", nm("pkg", "o.js")), "");
+        const r1 = requireFrom(path.join("r1", "sub"));
+        res("RM1", () => r1.resolve("pkg"));
+        fs.rmSync(path.join("r1", "sub", "node_modules"), { recursive: true });
+        res("RM2", () => r1.resolve("pkg"));
+        // The package.json next to the importer has the name of the package. It is deleted.
+        hoisted("r2");
+        write(path.join("r2", "sub", "package.json"), partial);
+        write(path.join("r2", "sub", "o.js"), "");
+        const r2 = requireFrom(path.join("r2", "sub"));
+        res("RM3", () => r2.resolve("pkg"));
+        fs.rmSync(path.join("r2", "sub", "package.json"));
+        res("RM4", () => r2.resolve("pkg"));
+        // Each of the four lookups missed on its first run, and ran once more.
+        console.log("RM1 to RM4 lookups run again:", resolverCounters().lookupsRunAgain - ranAgain);
+      },
+
       async edits() {
         // An alias is added to a config file after a lookup of it missed. The file is next to
         // the importer (N) or two directories above it (A). The old retry read again the
@@ -1163,6 +1195,21 @@ describe.concurrent("a failed resolution sees them from each way to ask the reso
 });
 
 describe.concurrent("a failed resolution answers as a new process does", () => {
+  test("a node_modules or a package.json removed next to the importer after the miss", async () => {
+    expect(await runGroup("changed")).toEqual({
+      exitCode: 0,
+      stderr: "",
+      stdout: [
+        "RM1 ERR MODULE_NOT_FOUND",
+        "RM2 OK r1/node_modules/pkg/index.js",
+        "RM3 ERR MODULE_NOT_FOUND",
+        "RM4 OK r2/node_modules/pkg/index.js",
+        // The old retry answered the four lines above too. It has no such count.
+        "RM1 to RM4 lookups run again: 4",
+      ].join("\n"),
+    });
+  });
+
   test("an alias added to a config file next to the importer or above it", async () => {
     const rows = ["N1", "N2", "N3", "N4", "A1", "A2", "A3", "A4"];
     expect(await runGroup("edits")).toEqual({

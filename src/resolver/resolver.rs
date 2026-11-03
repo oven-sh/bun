@@ -1767,23 +1767,21 @@ impl<'a> Resolver<'a> {
         }
 
         let marks = (self.log_mark(), self.esm_failure);
-        // The flag is set for what an executable compiled in place holds at the path.
-        let first = DirInfo::dispatch_asker!(self.generation, |asker| self.lookup_sequence(
+        // Set for what an executable compiled in place holds at the path.
+        let mut is_at_source_path = false;
+        let mut tmp = DirInfo::dispatch_asker!(self.generation, |asker| self.lookup_sequence(
             asker,
             (source_dir_normalized, import_path),
-            (kind, global_cache)
+            (kind, global_cache),
+            &mut is_at_source_path
         ));
-        let (tmp, is_at_source_path) =
-            if matches!(first.0, ResultUnion::NotFound) && self.reruns_after_miss(how) {
-                drop(first);
-                self.rerun_after_miss(
-                    marks,
-                    (source_dir_normalized, import_path),
-                    (kind, global_cache),
-                )
-            } else {
-                first
-            };
+        if matches!(tmp, ResultUnion::NotFound) && self.reruns_after_miss(how) {
+            (tmp, is_at_source_path) = self.rerun_after_miss(
+                marks,
+                (source_dir_normalized, import_path),
+                (kind, global_cache),
+            );
+        }
         if is_at_source_path {
             self.extension_order = original_order;
             return tmp;
@@ -2161,72 +2159,78 @@ impl<'a> Resolver<'a> {
         Ok(())
     }
 
-    /// The lookups of one run, the first and the one after a miss: as written, and the rest only after a miss as written. The flag is set for what an executable compiled in place holds at the path.
+    /// The lookups of one run, the first and the one after a miss: as written, and the rest only after a miss as written. The flag is set for what an executable compiled in place holds at the path, by reference: a lookup that finds its module returns its answer without a move into a tuple.
     #[inline(always)]
     fn lookup_sequence<'r, A: Asker>(
         &mut self,
         asker: A,
         (source_dir, import_path): (&[u8], &'r [u8]),
         (kind, global_cache): (ast::ImportKind, GlobalCache),
-    ) -> (ResultUnion<'r>, bool) {
-        let as_written =
+        is_at_source_path: &mut bool,
+    ) -> ResultUnion<'r> {
+        let mut found =
             self.resolve_without_symlinks(asker, source_dir, import_path, kind, global_cache);
-        if matches!(as_written, ResultUnion::NotFound) {
-            self.lookups_after_as_written(
+        if matches!(found, ResultUnion::NotFound) {
+            *is_at_source_path = self.lookups_after_as_written(
                 asker,
-                as_written,
                 (source_dir, import_path),
                 (kind, global_cache),
-            )
-        } else {
-            (as_written, false)
+                &mut found,
+            );
         }
+        found
     }
 
-    /// What an executable compiled in place holds at the path, then a CSS URL without its query or fragment.
+    /// The rest of `lookup_sequence`, after a miss as written: what an executable compiled in place holds at the path (returns true), then a CSS URL without its query or fragment.
     #[cold]
     #[inline(never)]
     fn lookups_after_as_written<'r, A: Asker>(
         &mut self,
         asker: A,
-        as_written: ResultUnion<'r>,
         (source_dir, import_path): (&[u8], &'r [u8]),
         (kind, global_cache): (ast::ImportKind, GlobalCache),
-    ) -> (ResultUnion<'r>, bool) {
+        found: &mut ResultUnion<'r>,
+    ) -> bool {
         if let Some(path) = self.resolve_at_source_path(source_dir, import_path, kind) {
-            let at_source_path = Result {
+            *found = ResultUnion::Success(Result {
                 import_kind: kind,
                 path_pair: PathPair {
                     primary: Path::init(path),
                     secondary: None,
                 },
                 ..Default::default()
-            };
-            return (ResultUnion::Success(at_source_path), true);
+            });
+            return true;
         }
-        // A CSS URL with a query or a fragment is looked up as written, then without it.
-        let css_suffix = if kind.is_from_css() {
-            strings::index_of_any(import_path, b"?#").filter(|&suffix| suffix >= 1)
-        } else {
-            None
-        };
-        let Some(suffix) = css_suffix else {
-            return (as_written, false);
-        };
+        if let Some(without_suffix) = self.css_url_without_suffix(import_path, kind) {
+            *found = self.resolve_without_symlinks(
+                asker,
+                source_dir,
+                without_suffix,
+                kind,
+                global_cache,
+            );
+        }
+        false
+    }
+
+    /// A CSS URL with a query or a fragment is looked up as written, then without it: the URL in front of its first `?` or `#`.
+    fn css_url_without_suffix<'r>(
+        &mut self,
+        import_path: &'r [u8],
+        kind: ast::ImportKind,
+    ) -> Option<&'r [u8]> {
+        if !kind.is_from_css() {
+            return None;
+        }
+        let suffix = strings::index_of_any(import_path, b"?#").filter(|&suffix| suffix >= 1)?;
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
                 "Retrying resolution after removing the suffix {}",
                 bstr::BStr::new(&import_path[suffix..])
             ));
         }
-        let without_suffix = self.resolve_without_symlinks(
-            asker,
-            source_dir,
-            &import_path[0..suffix],
-            kind,
-            global_cache,
-        );
-        (without_suffix, false)
+        Some(&import_path[0..suffix])
     }
 
     /// A lookup that missed runs the same lookups once more, by an asker of a new generation. A lookup that finds its module never runs this.
@@ -2244,11 +2248,17 @@ impl<'a> Resolver<'a> {
         let mut earlier_msgs: Vec<bun_ast::Msg> = Vec::new();
         self.take_log(log_mark, &mut earlier_msgs);
         self.esm_failure = esm_failure;
-        let again = self.lookup_sequence(asker, (source_dir, import_path), (kind, global_cache));
-        if !earlier_msgs.is_empty() && matches!(again.0, ResultUnion::NotFound) {
+        let mut is_at_source_path = false;
+        let again = self.lookup_sequence(
+            asker,
+            (source_dir, import_path),
+            (kind, global_cache),
+            &mut is_at_source_path,
+        );
+        if !earlier_msgs.is_empty() && matches!(again, ResultUnion::NotFound) {
             self.put_back_log(log_mark.0, earlier_msgs);
         }
-        again
+        (again, is_at_source_path)
     }
 
     /// For a caller's own lookups that fall back one to the next, each made with the `AfterMiss` that `sequence` gets. One pass takes every miss as it is. If `missed` says that all of it missed, one more pass checks every miss, unless the resolver trusts cached misses.

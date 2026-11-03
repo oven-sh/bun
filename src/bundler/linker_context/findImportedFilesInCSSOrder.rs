@@ -592,7 +592,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                         while i != 0 {
                             i -= 1;
                             let condition = entry.conditions.at(i as usize);
-                            if condition.layer.as_ref().is_some_and(|l| l.v.is_some()) {
+                            if condition.layer.is_some() {
                                 break;
                             }
                             // SAFETY: `i` was just decremented from a value

@@ -2647,6 +2647,24 @@ describe("bundler", () => {
       },
       out: "@layer{@layer w;@layer v{.t{color:#00f}}@layer w{.t{color:red}}.a{color:green}}",
     },
+    // The first copy of "f.css" stays in the anonymous layer of its neighbours.
+    DuplicateImportBetweenAnonymousLayers: {
+      files: {
+        "/entry.css": `@import "./c.css" layer;`,
+        "/c.css": `@import "./d.css" layer(w);`,
+        "/d.css": `@import "./e.css" layer;`,
+        "/e.css": /* css */ `
+          @import "./h.css";
+          @import "./f.css";
+          @import "./g.css";
+          @import "./f.css";
+        `,
+        "/h.css": `.t.t { color: green }`,
+        "/f.css": `.t { color: red }`,
+        "/g.css": `.g { color: blue }`,
+      },
+      out: "@layer{@layer w{@layer{.t.t{color:green}.g{color:#00f}.t{color:red}}}@layer w;}",
+    },
     SublayerOfADuplicateImportInNestedAnonymousLayer: {
       files: {
         "/entry.css": `@import "./a.css" layer(x);`,

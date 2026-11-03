@@ -7,9 +7,10 @@ import { dirname, join, parse } from "node:path";
 // find, for the life of the process and shares that cache between the runtime,
 // every Worker, and every Bun.build() call. A lookup that failed because a
 // file was not written yet used to stay failed after the file appeared: the
-// retry only dropped the importer's own directory. Now a miss runs the lookup
-// once more to collect what it read from the cache, checks each of those facts
-// on disk, drops the cached directories that changed, and resolves again.
+// retry only dropped the importer's own directory. Now a lookup that misses
+// runs once more, and that run asks the disk about each thing it takes from
+// the caches: a listing whose directory changed is read again in place, and a
+// directory record whose facts changed is replaced by a new one.
 //
 // Each test runs one group of the fixture in its own process.
 const files = {
@@ -78,6 +79,12 @@ const files = {
     exports.GO = 0;
     exports.SET = 1;
     exports.ANSWER = 2;
+    // The steps of resolverMissHold(). ARM: the next lookup of this thread that misses waits before it
+    // runs again. WAIT: until that thread waits there, or false when it was released and had not
+    // missed. RELEASE: the thread that waits goes on.
+    exports.ARM = 0;
+    exports.WAIT = 1;
+    exports.RELEASE = 2;
     exports.store = (cell, index, value) => {
       Atomics.store(cell, index, value);
       Atomics.notify(cell, index);
@@ -91,17 +98,18 @@ const files = {
   `,
   "race-worker.cjs": `
     const { workerData } = require("node:worker_threads");
-    const { resolverMissCheck } = require("bun:internal-for-testing");
-    const { specifier, importer, resolves, GO, SET, ANSWER, store, waitWhile } = require("./race-shared.cjs");
+    const { resolverMissHold } = require("bun:internal-for-testing");
+    const { specifier, importer, resolves, GO, SET, ANSWER, ARM, RELEASE, store, waitWhile } =
+      require("./race-shared.cjs");
     const { cell, kinds } = workerData;
     let turn = 0;
     for (const kind of kinds) {
       waitWhile(cell, GO, turn++);
-      // This lookup misses, reads the caches again, and waits there for the other thread.
-      resolverMissCheck.hold();
+      // This lookup misses on what the caches hold, and waits for the other thread before it runs again.
+      resolverMissHold(ARM);
       store(cell, SET, turn);
       const found = resolves(importer(kind), specifier[kind]);
-      resolverMissCheck.release();
+      resolverMissHold(RELEASE);
       store(cell, ANSWER, found + 1);
     }
   `,
@@ -634,12 +642,14 @@ const files = {
       },
 
       async race() {
-        // A Worker looks up from the cache entries of before a change, misses, reads them again, and
-        // waits. This thread then finds the module: it drops such an entry and reads the directory
-        // again. The Worker continues. The new entry is as the disk is, but the Worker did not read it:
-        // it must look up again, and it must not drop what this thread has just read.
-        const { resolverMissCheck, resolverDirInfoSlotsUsed } = require("bun:internal-for-testing");
-        const { specifier, importer, resolves, GO, SET, ANSWER, store, waitWhile } = require("./race-shared.cjs");
+        // A Worker looks up from what the caches held before a change, misses, and waits before it
+        // runs its lookup again. This thread then finds the module: the run after its miss gives the
+        // directory whose record is out of date a new record. The Worker continues. The new record
+        // is as the disk is, and it is not of the Worker's run: the Worker must find the module
+        // through it, and must not replace what this thread has just read.
+        const { resolverMissHold, resolverCounters } = require("bun:internal-for-testing");
+        const { specifier, importer, resolves, GO, SET, ANSWER, WAIT, RELEASE, store, waitWhile } =
+          require("./race-shared.cjs");
         const json = (file, value) => write(file, JSON.stringify(value));
         const named = (names, value) => Object.fromEntries(names.map(name => [name, value]));
         // Each writes the files of its kind and returns the change.
@@ -665,12 +675,14 @@ const files = {
             write(path.join(pkg, "package.json"), '{ "name": "pkg", "main": ');
             return () => write(path.join(pkg, "package.json"), '{ "name": "pkg", "main": "./real.cjs" }');
           },
-          // An "imports" entry added above the importer. One lookup from there reads that
-          // directory again, and the importer's directory keeps its link to the old entry.
+          // An "imports" entry added above the importer, for a file that is above it too. One lookup
+          // from there gives that directory a new record and takes nothing of the importer's
+          // directory from the caches, so the importer's directory keeps its link to the old one.
           parentlink(top, dir) {
-            write(path.join(dir, "real.cjs"), "");
+            fs.mkdirSync(dir, { recursive: true });
+            write(path.join(top, "real.cjs"), "");
             const imports = names =>
-              json(path.join(top, "package.json"), { name: "p", imports: named(names, "./src/real.cjs") });
+              json(path.join(top, "package.json"), { name: "p", imports: named(names, "./real.cjs") });
             imports(["#other"]);
             return () => {
               imports(["#other", "#late"]);
@@ -690,16 +702,16 @@ const files = {
           Atomics.store(cell, ANSWER, 0);
           store(cell, GO, ++turn);
           waitWhile(cell, SET, turn - 1);
-          if (!resolverMissCheck.waitUntilHeld()) throw new Error(kind + ": the lookup of the Worker did not miss");
+          if (!resolverMissHold(WAIT)) throw new Error(kind + ": the lookup of the Worker did not miss");
           const mine = resolves(dir, specifier[kind]);
-          const slots = resolverDirInfoSlotsUsed();
-          resolverMissCheck.release();
+          const records = resolverCounters().dirInfoSlots;
+          resolverMissHold(RELEASE);
           waitWhile(cell, ANSWER, 0);
           const theirs = Atomics.load(cell, ANSWER) - 1;
-          const again = resolverDirInfoSlotsUsed() - slots;
+          const replaced = resolverCounters().dirInfoSlots - records;
           console.log(
             kind + ": found before the change " + early + ", then by this thread " + mine + ", by the Worker " + theirs +
-              ", directories the Worker read again " + again,
+              ", new directory records by the Worker " + replaced,
           );
         }
         await worker.terminate();
@@ -1216,17 +1228,17 @@ test("a file added to a resolved package, from this thread and a Worker", async 
   `);
 });
 
-// The Worker waits at a fixed point of its lookup for this to be true of every run. See the fixture.
+// The Worker waits between its miss and the run after it, for this to be true of every run. See the fixture.
 test("a miss that another thread's lookup made out of date is looked up again", async () => {
   expect(await runGroup("race")).toMatchInlineSnapshot(`
     {
       "exitCode": 0,
       "stderr": "",
       "stdout": 
-    "tsconfig: found before the change 0, then by this thread 1, by the Worker 1, directories the Worker read again 0
-    imports: found before the change 0, then by this thread 1, by the Worker 1, directories the Worker read again 0
-    unparsed: found before the change 0, then by this thread 1, by the Worker 1, directories the Worker read again 0
-    parentlink: found before the change 0, then by this thread 1, by the Worker 1, directories the Worker read again 0"
+    "tsconfig: found before the change 0, then by this thread 1, by the Worker 1, new directory records by the Worker 0
+    imports: found before the change 0, then by this thread 1, by the Worker 1, new directory records by the Worker 0
+    unparsed: found before the change 0, then by this thread 1, by the Worker 1, new directory records by the Worker 0
+    parentlink: found before the change 0, then by this thread 1, by the Worker 1, new directory records by the Worker 0"
     ,
     }
   `);

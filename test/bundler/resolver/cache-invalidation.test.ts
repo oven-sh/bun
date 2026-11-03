@@ -518,7 +518,8 @@ describe("resolver cache invalidation", () => {
   });
 
   // A build reads the tsconfig.json and the .env of the working directory before its first lookup: as they are then.
-  // The .env is new: a build opens one only when the listing of that directory has it.
+  // The .env is new: a build opens one only when the listing of that directory has it. The jsx factory of that read
+  // goes to part.tsx, whose import a plugin declines. The entry gets the one that its own lookup read.
   test("a build takes the paths, the jsx factory and the .env that were written since the build before it", async () => {
     using dir = tempDir("cache-test-build-config", {
       "package.json": `{}`,
@@ -527,15 +528,31 @@ describe("resolver cache invalidation", () => {
       }),
       "a.ts": `export const v = "lib-a";\n`,
       "b.ts": `export const v = "lib-b";\n`,
-      "src/entry.tsx": `import { v } from "@lib";\nconsole.log(<div />, v, process.env.LATE_VALUE);\n`,
+      "src/part.tsx": `export default <span />;\n`,
+      "src/entry.tsx": `
+        import { v } from "@lib";
+        import part from "./part.tsx";
+        console.log(<div />, part, v, process.env.LATE_VALUE);
+      `,
       "driver.ts": `
         import { writeFileSync } from "node:fs";
+        const declines = {
+          name: "declines",
+          setup(build) {
+            build.onResolve({ filter: /part\\.tsx$/ }, () => undefined);
+          },
+        };
         const build = async () => {
-          const result = await Bun.build({ entrypoints: ["./src/entry.tsx"], env: "inline", throw: false });
+          const result = await Bun.build({
+            entrypoints: ["./src/entry.tsx"],
+            env: "inline",
+            plugins: [declines],
+            throw: false,
+          });
           if (!result.success) return result.logs.map(log => log.message).join(" | ");
           const text = await result.outputs[0].text();
           const env = text.includes("from-dot-env") ? "the .env" : "no .env";
-          return [text.match(/lib-[ab]/)?.[0], text.match(/\\bh[12]\\b/)?.[0], env].join(", ");
+          return [text.match(/lib-[ab]/)?.[0], [...text.matchAll(/\\bh[12]\\b/g)].join("+"), env].join(", ");
         };
         console.log(await build());
         const compilerOptions = { jsx: "react", jsxFactory: "h2", paths: { "@lib": ["./b.ts"] } };
@@ -553,7 +570,7 @@ describe("resolver cache invalidation", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "lib-a, h1, no .env\nlib-b, h2, the .env\n",
+      stdout: "lib-a, h1+h1, no .env\nlib-b, h2+h2, the .env\n",
       stderr: "",
       exitCode: 0,
     });

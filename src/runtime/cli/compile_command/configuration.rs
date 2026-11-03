@@ -415,7 +415,6 @@ fn finish(
     }
 
     this_transpiler.sync_resolver_opts();
-    this_transpiler.resolver.env_loader = NonNull::new(this_transpiler.env);
 
     if ctx.bundler_options.production {
         this_transpiler.options.jsx.development = false;

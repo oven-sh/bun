@@ -1980,7 +1980,6 @@ pub mod bv2_impl {
 
             let this_transpiler: &Transpiler<'a> = &*self.transpiler;
             let this_compile = this_transpiler.options.compile_mode.is_executable();
-            let this_env = this_transpiler.env;
 
             // SAFETY: `self.transpiler` (and the data its `&'a` fields borrow)
             // outlives this `BundleV2<'a>`; `for_worker` widens those borrows to
@@ -2035,7 +2034,6 @@ pub mod bv2_impl {
             // Re-project the resolver subset now that `target`/`conditions` etc.
             // have been overwritten for the browser.
             boxed.sync_resolver_opts();
-            boxed.resolver.env_loader = NonNull::new(this_env.cast());
 
             // Park the owning Box first, then derive both the published `NonNull`
             // and the returned `&mut` from its final resting place. Taking the

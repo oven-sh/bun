@@ -97,6 +97,8 @@ bitflags::bitflags! {
         const IS_STANDALONE_MODULE = 1 << 2;
         // This is true when the package was loaded from within the node_modules directory.
         const IS_FROM_NODE_MODULES = 1 << 3;
+        /// Found in a `NODE_PATH` directory: no `node_modules` folder on the way up from the importer has it.
+        const IS_FROM_NODE_PATH = 1 << 4;
         const EMIT_DECORATOR_METADATA = 1 << 5;
         const EXPERIMENTAL_DECORATORS = 1 << 6;
         /// tsconfig `"useDefineForClassFields": false` was set explicitly.
@@ -153,6 +155,14 @@ impl ResultFlags {
     #[inline]
     pub(crate) fn set_is_from_node_modules(&mut self, v: bool) {
         self.set(Self::IS_FROM_NODE_MODULES, v)
+    }
+    #[inline]
+    pub fn is_from_node_path(self) -> bool {
+        self.contains(Self::IS_FROM_NODE_PATH)
+    }
+    #[inline]
+    pub(crate) fn set_is_from_node_path(&mut self, v: bool) {
+        self.set(Self::IS_FROM_NODE_PATH, v)
     }
     #[inline]
     pub fn emit_decorator_metadata(self) -> bool {
@@ -327,6 +337,7 @@ pub struct MatchResult {
     pub(crate) dirname_fd: FD,
     pub(crate) file_fd: FD,
     pub(crate) is_node_module: bool,
+    pub(crate) is_from_node_path: bool,
     pub(crate) package_json: Option<*const PackageJSON>,
     pub(crate) dir_info: Option<DirInfoRef>,
     pub(crate) module_type: options::ModuleType,
@@ -340,6 +351,7 @@ impl Default for MatchResult {
             dirname_fd: FD::INVALID,
             file_fd: FD::INVALID,
             is_node_module: false,
+            is_from_node_path: false,
             package_json: None,
             dir_info: None,
             module_type: options::ModuleType::Unknown,

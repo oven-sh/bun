@@ -445,7 +445,7 @@ fn __bun_resolver_parse_dependency(
 //     process-lifetime; `init_with_runtime` stores it raw).
 //   • `install` is `BundleOptions.install` (`?*Api.BunInstall`). The pointee is
 //     the CLI-owned `Box<BunInstall>` (process-lifetime), read-only.
-//   • `env` is the resolver's unwrapped `env_loader` (Transpiler-owned,
+//   • `env` is the resolver's `env_loader` (Transpiler-owned,
 //     process-lifetime). `init_with_runtime` stores it as `NonNull<Loader>`.
 #[unsafe(no_mangle)]
 #[inline(never)]

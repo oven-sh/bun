@@ -587,7 +587,6 @@ impl BuildCommand {
         // `bun_resolver::options::BundleOptions` subset, distinct from the
         // bundler-side `BundleOptions<'a>`; re-project the mutated options.
         this_transpiler.sync_resolver_opts();
-        this_transpiler.resolver.env_loader = core::ptr::NonNull::new(this_transpiler.env);
 
         // Allow tsconfig.json overriding, but always set it to false if --production is passed.
         if ctx.bundler_options.production || ctx.bundler_options.library {

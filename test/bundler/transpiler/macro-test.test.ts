@@ -811,3 +811,65 @@ describe("macro VM env loader", () => {
     expect(withMacro).toEqual(withoutMacro);
   });
 });
+
+// A macro VM and a `Bun.Transpiler` each have their own resolver. Each gets NODE_PATH when its own transpiler loads its env.
+describe("NODE_PATH", () => {
+  const specifierSource = `import { value } from "macro-package" with { type: "macro" }; console.log(value());`;
+  const files = {
+    "vendor/dep/index.ts": `export const dep = "from NODE_PATH";\n`,
+    "vendor/macro-package/index.ts": `export function value() {\n  return "macro from NODE_PATH";\n}\n`,
+    "macro.ts": `import { dep } from "dep";\nexport function value() {\n  return dep;\n}\n`,
+    "entry.ts": `import { value } from "./macro.ts" with { type: "macro" };\nconsole.log(value());\n`,
+    "specifier.ts": `${specifierSource}\n`,
+    // A module that is not the entry point is transpiled on a pool thread, and that thread creates a macro VM.
+    "imports-entry.ts": `import "./entry.ts";\n`,
+    "entry.test.ts": `import { test } from "bun:test";\nimport "./entry.ts";\ntest("macro", () => {});\n`,
+    "specifier.test.ts": `import { test } from "bun:test";\nimport "./specifier.ts";\ntest("macro", () => {});\n`,
+    "build.ts": `const result = await Bun.build({ entrypoints: ["./entry.ts"], target: "bun" });\nconsole.log(await result.outputs[0].text());\n`,
+    "transform-sync.ts": `console.log(new Bun.Transpiler({ loader: "ts" }).transformSync(${JSON.stringify(specifierSource)}));\n`,
+    "transform.ts": `console.log(await new Bun.Transpiler({ loader: "ts" }).transform(${JSON.stringify(specifierSource)}));\n`,
+  };
+  const bundled = `console.log("from NODE_PATH");`;
+  const transformed = `console.log("macro from NODE_PATH");`;
+
+  test.concurrent.each([
+    { name: "bun build", cmd: ["build", "./entry.ts", "--target=bun"], expected: bundled },
+    // The macro VM loads .env. The build does not: see "the .env loaded for a macro doesn't affect the build's resolver".
+    {
+      name: "bun build, NODE_PATH in .env",
+      cmd: ["build", "./entry.ts", "--target=bun"],
+      expected: bundled,
+      dotenv: true,
+    },
+    // A parse thread of the bundler resolves the macro with its copy of the build's resolver.
+    {
+      name: "bun build, the macro is the package",
+      cmd: ["build", "./specifier.ts", "--target=bun"],
+      expected: transformed,
+    },
+    { name: "Bun.build", cmd: ["build.ts"], expected: bundled },
+    { name: "bun run, caller is an imported module", cmd: ["imports-entry.ts"], expected: "from NODE_PATH" },
+    { name: "bun test, caller is an imported module", cmd: ["test", "./entry.test.ts"], expected: "from NODE_PATH" },
+    {
+      name: "bun test, the macro is the package",
+      cmd: ["test", "./specifier.test.ts"],
+      expected: "macro from NODE_PATH",
+    },
+    { name: "Bun.Transpiler#transformSync", cmd: ["transform-sync.ts"], expected: transformed },
+    { name: "Bun.Transpiler#transform", cmd: ["transform.ts"], expected: transformed },
+  ])("a macro resolves a package from NODE_PATH: $name", async ({ cmd, expected, dotenv }) => {
+    using dir = tempDir("macro-node-path", files);
+    const nodePath = path.join(String(dir), "vendor");
+    if (dotenv) await Bun.write(path.join(String(dir), ".env"), `NODE_PATH=${nodePath}\n`);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd],
+      env: { ...bunEnv, NODE_PATH: dotenv ? undefined : nodePath },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout, stderr).toContain(expected);
+    expect(exitCode).toBe(0);
+  });
+});

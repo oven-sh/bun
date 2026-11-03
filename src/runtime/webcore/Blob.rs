@@ -106,8 +106,8 @@ impl<H: ReadBytesHandler> read_file::ReadFileCompletion for H {
             syscall: BunString::static_("read"),
             ..Default::default()
         };
-        // The read's thread stopped; this runs at teardown (the unrun job's release,
-        // or `JobList::release_all_js`), where what the handler leaves stays pending.
+        // The read's thread stopped; this runs when the unrun job is released (VM teardown, or a
+        // test file that `--isolate` retired), where what the handler leaves stays pending.
         let _ = self.on_read_bytes(ReadBytesResult::Err(Box::new(err)));
     }
 }

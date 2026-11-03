@@ -10,7 +10,7 @@ namespace Bun {
 namespace PythonModules {
 namespace Zstd {
 
-static constexpr TypeDef errorTypeDef { "compression.zstd.ZstdError"_s, { TypeFlag::Base }, {}, {}, "An error occurred in the zstd library."_s };
+static constexpr TypeDef errorTypeDef { "compression.zstd.ZstdError"_s, { TypeFlag::Base, TypeFlag::Mutable, TypeFlag::HasWeakref }, {}, {}, "An error occurred in the zstd library."_s };
 
 static PyType* errorType(JSGlobalObject* globalObject)
 {

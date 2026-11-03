@@ -39,6 +39,8 @@ Bun statically links these libraries:
 | [`libbase64`](https://github.com/aklomp/base64/blob/master/LICENSE) | BSD 2-Clause |
 | [`libuv`](https://github.com/libuv/libuv) (on Windows) | MIT |
 | [`libdeflate`](https://github.com/ebiggers/libdeflate) | MIT |
+| [`bzip2`](https://sourceware.org/bzip2/) | [bzip2 license](https://sourceware.org/git/?p=bzip2.git;a=blob;f=LICENSE;hb=bzip2-1.0.8) (BSD-style) |
+| [`liblzma`](https://github.com/tukaani-project/xz) (from XZ Utils) | 0BSD |
 | [`libjpeg-turbo`](https://github.com/libjpeg-turbo/libjpeg-turbo) | [BSD 3-Clause / IJG / zlib](https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/LICENSE.md) |
 | [`libspng`](https://github.com/randy408/libspng) (not linked: `src/png` is derived from parts of it) | BSD 2-Clause |
 | [`stb_image`](https://github.com/nothings/stb) (not linked: the PNG codec finds the Paeth predictor its way) | MIT or public domain |

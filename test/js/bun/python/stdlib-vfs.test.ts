@@ -47,7 +47,7 @@ print(email.__path__, colorsys.rgb_to_hsv(1, 0, 0))
     expect(result).toEqual({
       stdout: lines(
         `${root} ${root} ${root} ${root} lib`,
-        `['<dir>', '${library}', '${root}/lib/bun']`,
+        `['<dir>', '${library}']`,
         `os ${library}/os.py`,
         `email ${library}/email/__init__.py`,
         `email.errors ${library}/email/errors.py`,
@@ -472,13 +472,12 @@ open("library/only_here.py", "w").close()
 `,
       "main.py": `
 import sys, os, only_here
-print(sys._stdlib_dir, sys.path[-2:], os.__file__, only_here.__file__)
+print(sys._stdlib_dir, sys.path[1:], os.__file__, only_here.__file__)
 `,
     });
     expect(await runIn(String(dir), "copy.py")).toEqual({ stdout: "", stderr: "", exitCode: 0 });
     expect(await runIn(String(dir), "main.py", { BUN_PYTHON_STDLIB: `${dir}/library` })).toEqual({
-      stdout:
-        "<dir>/library ['<dir>/library', '/$bunfs/python/lib/bun'] <dir>/library/os.py <dir>/library/only_here.py\n",
+      stdout: "<dir>/library ['<dir>/library'] <dir>/library/os.py <dir>/library/only_here.py\n",
       stderr: "",
       exitCode: 0,
     });

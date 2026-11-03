@@ -11,7 +11,7 @@ namespace Bun {
 namespace PythonModules {
 namespace Hashlib {
 
-static constexpr TypeDef unsupportedDigestmodErrorTypeDef { "_hashlib.UnsupportedDigestmodError"_s, { TypeFlag::Base }, {}, {}, {} };
+static constexpr TypeDef unsupportedDigestmodErrorTypeDef { "_hashlib.UnsupportedDigestmodError"_s, { TypeFlag::Base, TypeFlag::Mutable, TypeFlag::HasWeakref }, {}, {}, {} };
 
 static PyType* unsupportedDigestmodError(JSGlobalObject* globalObject)
 {

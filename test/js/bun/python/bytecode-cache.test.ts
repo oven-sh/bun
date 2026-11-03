@@ -207,10 +207,10 @@ describe.skipIf(isWindows).concurrent("compiled code is kept in files", () => {
 
   test("the modules inside the executable have their code in the user's cache directory", async () => {
     using tmp = tempDir("python-pyc", {
-      "main.py": "import os, json, sys; print(os.__spec__.cached, sys.pycache_prefix)",
+      "main.py": "import os, json, sys; print(json.__spec__.cached, sys.pycache_prefix)",
     });
     const dir = String(tmp);
-    const expected = printed("/$bunfs/python/lib/python3.15/__pycache__/os.bun-315.pyc None\n");
+    const expected = printed("/$bunfs/python/lib/python3.15/json/__pycache__/__init__.bun-315.pyc None\n");
     const cache = { BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(dir, "cache") };
     expect(await run(dir, ["main.py"], cache)).toEqual(expected);
     const builds = readdirSync(join(dir, "cache", "@py@"));

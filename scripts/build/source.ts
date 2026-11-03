@@ -470,6 +470,7 @@ export type DepName =
   | "WebKit"
   | "boringssl"
   | "brotli"
+  | "bzip2"
   | "cares"
   | "cpython"
   | "highway"
@@ -487,6 +488,7 @@ export type DepName =
   | "rust-argon2"
   | "sqlite"
   | "tinycc"
+  | "xz"
   | "zlib"
   | "zstd";
 

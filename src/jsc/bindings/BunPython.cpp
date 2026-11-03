@@ -23,6 +23,7 @@ extern "C" void Bun__setExitCode(void* bunVM, uint8_t);
 // src/runtime/cli/python_command.rs
 extern "C" BunString Bun__Python__linkToSelf();
 extern "C" const char* Bun__Python__originalArgument(size_t index);
+extern "C" int32_t bun_is_stdio_null[3];
 
 namespace Bun {
 using namespace JSC;
@@ -83,6 +84,8 @@ static void preparePython()
         if (configuration.executable.isEmpty())
             configuration.executable = configuration.baseExecutable;
         configuration.interactiveModule = "_bun_repl"_s;
+        for (unsigned i = 0; i < 3; ++i)
+            configuration.standardStreamWasClosed[i] = bun_is_stdio_null[i];
     });
 }
 

@@ -867,6 +867,16 @@ deflate_decompress_bmi2            [BMI2]
 
 
 # ----------------------------------------------------------------------------
+# liblzma (xz). Gate: crc32_dispatch() / crc64_dispatch() ->
+# is_arch_extension_supported(): CPUID at the first call, cached in crc32_func /
+# crc64_func (vendor/xz/src/liblzma/check/crc32_fast.c, crc64_fast.c, crc_x86_clmul.h).
+# (2 symbols)
+# ----------------------------------------------------------------------------
+crc32_arch_optimized  [PCLMULQDQ]
+crc64_arch_optimized  [PCLMULQDQ]
+
+
+# ----------------------------------------------------------------------------
 # Rust memchr AVX2 (direct dep + via lolhtml). Gate: is_x86_feature_detected!
 # — memchr stores the resolved fn-ptr in an AtomicPtr after CPUID, see
 # memchr::arch::x86_64::memchr::*_raw::detect / avx2::packedpair::Finder::new.

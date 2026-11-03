@@ -13,6 +13,7 @@
 import type { Dependency } from "../source.ts";
 import { boringssl } from "./boringssl.ts";
 import { brotli } from "./brotli.ts";
+import { bzip2 } from "./bzip2.ts";
 import { cares } from "./cares.ts";
 import { cpython } from "./cpython.ts";
 import { highway } from "./highway.ts";
@@ -31,6 +32,7 @@ import { rustArgon2 } from "./rust-argon2.ts";
 import { sqlite } from "./sqlite.ts";
 import { tinycc } from "./tinycc.ts";
 import { webkit } from "./webkit.ts";
+import { xz } from "./xz.ts";
 import { zlib } from "./zlib.ts";
 import { zstd } from "./zstd.ts";
 
@@ -51,6 +53,8 @@ export const allDeps: readonly Dependency[] = [
   zstd,
   brotli,
   libdeflate,
+  bzip2,
+  xz,
   // Image codecs.
   libjpegTurbo,
   libwebp,
@@ -78,6 +82,7 @@ export const allDeps: readonly Dependency[] = [
 export {
   boringssl,
   brotli,
+  bzip2,
   cares,
   cpython,
   highway,
@@ -96,6 +101,7 @@ export {
   sqlite,
   tinycc,
   webkit,
+  xz,
   zlib,
   zstd,
 };

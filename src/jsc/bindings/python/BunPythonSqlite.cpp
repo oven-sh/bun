@@ -113,7 +113,7 @@ static PyType* prepareProtocolType(JSGlobalObject*);
     v(NotSupportedError, DatabaseError(globalObject))
 
 #define DEFINE_EXCEPTION(name, base) \
-    static constexpr TypeDef name##TypeDef { "sqlite3." #name ""_s, { TypeFlag::Base }, {}, {}, {} }; \
+    static constexpr TypeDef name##TypeDef { "sqlite3." #name ""_s, { TypeFlag::Base, TypeFlag::Mutable, TypeFlag::HasWeakref }, {}, {}, {} }; \
     static PyType* name(JSGlobalObject* globalObject) \
     { \
         Runtime& rt = runtime(globalObject); \

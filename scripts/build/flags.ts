@@ -21,10 +21,12 @@ import { ucrtServicingLibDir } from "./winsysroot.ts";
 
 export const safeStackDependencies: readonly DepName[] = [
   "brotli",
+  "bzip2",
   "libdeflate",
   "libjpeg-turbo",
   "libwebp",
   "lshpack",
+  "xz",
   "zlib",
   "zstd",
 ];

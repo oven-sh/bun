@@ -17,7 +17,7 @@ static constexpr int defaultMemLevel = 8;
 static constexpr size_t sizeOfDeflateState = 300 * 1024;
 static constexpr size_t sizeOfInflateState = 48 * 1024;
 
-static constexpr TypeDef errorTypeDef { "zlib.error"_s, { TypeFlag::Base }, {}, {}, {} };
+static constexpr TypeDef errorTypeDef { "zlib.error"_s, { TypeFlag::Base, TypeFlag::Mutable, TypeFlag::HasWeakref }, {}, {}, {} };
 
 static PyType* errorType(JSGlobalObject* globalObject)
 {

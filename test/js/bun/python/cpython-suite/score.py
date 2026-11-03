@@ -103,6 +103,13 @@ IGNORED = {
 }
 
 
+# Tests that are skipped here for want of a C helper, but not before their setUp() has taken something that only tearDown() gives
+# back, which is not run for a test that setUp() skips: every test after them in the module would fail. Not run.
+SPOILERS = {
+    "test_monitoring": ["test.test_monitoring.TestCApiEventGeneration.*"],
+}
+
+
 def shim_path(name):
     return os.pathsep.join(os.path.join(HERE, "shims", shim) for shim, users in SHIMS.items() if any(name == user or name.startswith(user + ".") for user in users))
 
@@ -306,7 +313,7 @@ def run_one(name, python, limits, extra_env, rounds):
     incidents, outputs = [], []
     seconds = 0
     while True:
-        result, output = run_once(name, python, limits, extra_env, [i["test"] for i in incidents] + (IGNORED.get(name, []) if "PYTHONPATH" in extra_env else []))
+        result, output = run_once(name, python, limits, extra_env, [i["test"] for i in incidents] + (IGNORED.get(name, []) if "PYTHONPATH" in extra_env else []) + (SPOILERS.get(name, []) if "BUN_PYTHON_STDLIB" in extra_env else []))
         seconds += result["seconds"]
         outputs.append(output)
         if result["status"] not in ("crashed", "timeout"):

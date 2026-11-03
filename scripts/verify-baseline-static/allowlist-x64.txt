@@ -960,6 +960,16 @@ deflate_decompress_bmi2            [BMI2]
 
 
 # ----------------------------------------------------------------------------
+# liblzma (xz). Gate: crc32_dispatch() / crc64_dispatch() ->
+# is_arch_extension_supported(): CPUID at the first call, cached in crc32_func /
+# crc64_func (vendor/xz/src/liblzma/check/crc32_fast.c, crc64_fast.c, crc_x86_clmul.h).
+# (2 symbols)
+# ----------------------------------------------------------------------------
+crc32_arch_optimized  [PCLMULQDQ]
+crc64_arch_optimized  [PCLMULQDQ]
+
+
+# ----------------------------------------------------------------------------
 # zlib-ng. Gate: init_functable() — cpu_check_features() CPUID at first call,
 # results cached in `functable` (vendor/zlib/functable.c, arch/x86/x86_features.c).
 # chunkcopy_safe is a static-inline in inflate_p.h that may outline from any of

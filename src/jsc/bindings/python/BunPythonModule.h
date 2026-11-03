@@ -28,6 +28,8 @@ using namespace JSC;
 using namespace JSC::Python;
 
 void initializeZlibModule(JSGlobalObject*, PyModule*);
+void initializeBz2Module(JSGlobalObject*, PyModule*);
+void initializeLzmaModule(JSGlobalObject*, PyModule*);
 void initializeMD5Module(JSGlobalObject*, PyModule*);
 void initializeSHA1Module(JSGlobalObject*, PyModule*);
 void initializeSHA2Module(JSGlobalObject*, PyModule*);

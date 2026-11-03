@@ -129,8 +129,8 @@ class JSFinder:
             if not js.process.getBuiltinModule("node:module").isBuiltin(specifier):
                 return None
             return _bootstrap.ModuleSpec(fullname, JSLoader(specifier, "/"), origin=specifier)
-        # No file has a NUL in its name, and asking for one is an error of another kind.
-        if path is not None or "\0" in fullname:
+        # No file has a NUL in its name, and asking for one is an error of another kind. So it is with a lone surrogate.
+        if path is not None or not fullname.isprintable():
             return None
         verbatim = not fullname.isidentifier()
         # `import readline` is never node:readline, nor is a module the standard library lacks here a package of that name.

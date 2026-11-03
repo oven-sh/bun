@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { renameSync } from "node:fs";
 import { join } from "node:path";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { beforeAll, test } from "./supported";
 
 // A test file writes `new URL("./src/worker/w1.ts", import.meta.url)`, and the `new Worker(entry)` that gets it stands somewhere else: behind a constructor or
 // a method, in a field or in an options object, behind `require()`, or in a package. The build follows `entry` back to the URL and compiles the file.
@@ -186,10 +186,16 @@ self.onmessage = (event: any) => { self.postMessage("w${n} " + double(event.data
 }
 
 const asWritten = ways.map(([name], index) => `SEEN ${name} | w${index + 1} 42`);
+// What a run says at its end: both test files ran, and all five of their checks.
+const ended = " 2 pass\n 0 fail\n 5 expect() calls\nRan 2 tests across 2 files.";
 
 async function see(flags: string[], env: Record<string, string>) {
   using dir = tempDir("aot-worker-behind-a-class-require-or-a-package", { ...files, ...testFiles });
-  const ran = await run([bunExe(), "test", ...flags, "--isolate"], String(dir), { ...bunEnv, ...env });
+  // One test starts all the Workers, one after the other: on a busy machine, or under a sanitizer, they take more than the five seconds that a test has.
+  const ran = await run([bunExe(), "test", ...flags, "--isolate", "--timeout=60000"], String(dir), {
+    ...bunEnv,
+    ...env,
+  });
   return {
     seen: ran.stdout.split("\n").filter(line => line.startsWith("SEEN ")),
     taken: [
@@ -197,16 +203,26 @@ async function see(flags: string[], env: Record<string, string>) {
         /^AOT (?:files are loaded again|load goes on) \| with (\d+) more files that Workers start from$/gm,
       ),
     ].map(match => Number(match[1])),
+    ended: ran.stderr.match(/^ \d+ pass\n[^]*?^Ran \d+ tests? across \d+ files?\./m)?.[0],
     exitCode: ran.exitCode,
+    stderr: ran.exitCode ? ran.stderr : "",
   };
 }
 
+let plain: Awaited<ReturnType<typeof see>>;
+beforeAll(async () => {
+  plain = await see([], {});
+});
+
+test("each Worker answers under plain bun test", () => {
+  expect(plain).toEqual({ seen: asWritten, taken: [], ended, exitCode: 0, stderr: "" });
+});
+
 // Over layers the class, the required function and the package lie in programs below the test file, whose builds don't see it.
+// Each form has one compiled run, the one that writes over the files. A run that leaves them alone builds the same program and finds nothing more:
+// there a Worker that runs from its text answers like a compiled one.
 for (const words of ["TestRunLayers:0", "TestRunLayers:2,TestRunPartFiles:1", "TestRunLayers:3,TestRunPartFiles:1"]) {
   test(`each Worker answers as under plain bun test, and runs compiled (${words})`, async () => {
-    const plain = await see([], {});
-    expect(plain).toEqual({ seen: asWritten, taken: [], exitCode: 0 });
-    expect(await see(["--aot"], { BUN_DEBUG_TEST_AOT_WORDS: words })).toEqual(plain);
     const env = { BUN_DEBUG_TEST_AOT_WORDS: words, WRITES_OVER_WORKERS: "1", BUN_JSC_logAOTPhaseTimes: "1" };
     expect(await see(["--aot"], env)).toEqual({ ...plain, taken: [count] });
   }, 240_000);
@@ -229,7 +245,7 @@ test("the file of each Worker is in the executable", async () => {
     };
   };
   const plain = await seenBy(bunExe(), "main.ts");
-  expect(plain.seen).toEqual([...asWritten, "SEEN function function"]);
+  expect(plain).toEqual({ seen: [...asWritten, "SEEN function function"], stderr: "", exitCode: 0 });
   const executable = join(String(dir), isWindows ? "main.exe" : "main");
   expect(await seenBy(bunExe(), "build", "--compile", "--aot", "--outfile", executable, "main.ts")).toEqual({
     seen: [],

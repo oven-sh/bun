@@ -25,8 +25,6 @@ pub enum ParseError {
     Unexpected,
     #[error("Unknown")]
     Unknown,
-    #[error("Lex")]
-    Lex,
     #[error("NestingTooDeep")]
     NestingTooDeep,
 }
@@ -38,7 +36,6 @@ impl From<ParseError> for crate::Error {
             ParseError::Expected => crate::Error::Expected,
             ParseError::Unexpected => crate::Error::Unexpected,
             ParseError::Unknown => crate::Error::Unknown,
-            ParseError::Lex => crate::Error::Lex,
             ParseError::NestingTooDeep => crate::Error::NestingTooDeep,
         }
     }
@@ -2141,15 +2138,6 @@ pub enum LexerError {
     SubshellDepthExceeded,
 }
 
-impl LexerError {
-    /// The diagnostic text.
-    pub fn msg(&self) -> &'static str {
-        match self {
-            Self::SubshellDepthExceeded => "Subshell nesting depth exceeded",
-        }
-    }
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SubShellKind {
     /// (echo hi; echo hello)
@@ -3137,10 +3125,12 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         }
         let prev_quote_state = self.chars.state;
         let mut sublexer = self.make_sublexer(kind);
-        sublexer.lex()?;
+        // Take the sublexer's state back even when it fails: the fatal error
+        // and the diagnostics before it live in its `errors`.
+        let lexed = sublexer.lex();
         self.continue_from_sublexer(&mut sublexer);
         self.chars.state = prev_quote_state;
-        Ok(())
+        lexed
     }
 
     fn append_string_to_str_pool(&mut self, bunstr: &BunString) -> Result<(), LexerError> {

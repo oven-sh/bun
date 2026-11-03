@@ -443,24 +443,19 @@ impl Interpreter {
         jsstrings_to_escape: &'a [bun_core::String],
     ) -> Result<bun_shell_parser::ast::Script<'a>, ParseFailure<'a>> {
         use crate::shell::shell_body::{LexerAscii, LexerUnicode, Parser};
-        let lex_result = if bun_core::is_all_ascii(src) {
+        let (lexed, lex_result) = if bun_core::is_all_ascii(src) {
             let mut lexer = LexerAscii::new(arena, src, jsstrings_to_escape, jsobjs_len);
-            if let Err(e) = lexer.lex() {
-                return Err(ParseFailure {
-                    msg: e.msg().as_bytes(),
-                });
-            }
-            lexer.get_result()
+            let lexed = lexer.lex();
+            (lexed, lexer.get_result())
         } else {
             let mut lexer = LexerUnicode::new(arena, src, jsstrings_to_escape, jsobjs_len);
-            if let Err(e) = lexer.lex() {
-                return Err(ParseFailure {
-                    msg: e.msg().as_bytes(),
-                });
-            }
-            lexer.get_result()
+            let lexed = lexer.lex();
+            (lexed, lexer.get_result())
         };
-        if !lex_result.errors.is_empty() {
+        // The lexer records a fatal error with `add_error` before it returns
+        // `Err`, so one report carries it and every diagnostic before it.
+        debug_assert!(lexed.is_ok() || !lex_result.errors.is_empty());
+        if lexed.is_err() || !lex_result.errors.is_empty() {
             return Err(ParseFailure {
                 msg: lex_result.combine_errors(arena),
             });

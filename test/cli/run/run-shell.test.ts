@@ -34,7 +34,8 @@ describe.concurrent("run-shell", () => {
       stderr: "pipe",
       stdout: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
     expect(stderr).toBe("error: Failed to run script.sh due to error Unexpected ')'\n");
     // 2 is what sh and bash report for a syntax error. A command that ran and
     // failed reports 1.

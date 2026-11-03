@@ -19,7 +19,7 @@ namespace Bun {
 using namespace JSC;
 using namespace ncrypto;
 
-int pqcKeyTypeToNid(const WTF::StringView& name, bool ignoreCase)
+int pqcKeyTypeToNid(const WTF::StringView& name)
 {
     static constexpr std::pair<ASCIILiteral, int> table[] = {
         { "ml-dsa-44"_s, EVP_PKEY_ML_DSA_44 },
@@ -29,7 +29,7 @@ int pqcKeyTypeToNid(const WTF::StringView& name, bool ignoreCase)
         { "ml-kem-1024"_s, EVP_PKEY_ML_KEM_1024 },
     };
     for (const auto& [candidate, nid] : table) {
-        if (ignoreCase ? WTF::equalIgnoringASCIICase(name, candidate) : name == candidate)
+        if (name == candidate)
             return nid;
     }
     return 0;

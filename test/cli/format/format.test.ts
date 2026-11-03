@@ -2175,6 +2175,20 @@ describe.concurrent("bun fmt", () => {
       });
     });
 
+    test("a column of an MDX table without a cell in the delimiter row isn't aligned like that of another table", async () => {
+      const files = {
+        "a.mdx": "{|||\n|-\n\n|a|b|c*|d|\n|-|-|-:|-|\n",
+        "b.mdx": "|a|b|c*|d|\n|-|-|-:|-|\n\n{|||\n|-\n",
+      };
+      const [short, long] = [
+        "| {   |     |     |\n| --- | --- | --- |\n",
+        "| a   | b   | c\\* | d   |\n| --- | --- | --: | --- |\n",
+      ];
+      const result = await format(files, [], { reads: Object.keys(files) });
+      expect(result.files).toEqual({ "a.mdx": `${short}\n${long}`, "b.mdx": `${long}\n${short}` });
+      expect(result.exitCode).toBe(0);
+    });
+
     describe("the fence of a code block", () => {
       // Each row is the text, Bun's output and Prettier 3.9.9's output. A backtick fence can't have a backtick after it
       // on its line, and it ends at the first line with as many backticks. Where Prettier writes one anyway, the code

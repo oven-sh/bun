@@ -1775,16 +1775,21 @@ impl<'a> Resolver<'a> {
             (kind, global_cache),
             &mut is_at_source_path
         ));
+        // Not one test after the rerun: a lookup that finds its module would run it and the test of a miss.
+        if is_at_source_path {
+            self.extension_order = original_order;
+            return tmp;
+        }
         if matches!(tmp, ResultUnion::NotFound) && self.reruns_after_miss(how) {
             (tmp, is_at_source_path) = self.rerun_after_miss(
                 marks,
                 (source_dir_normalized, import_path),
                 (kind, global_cache),
             );
-        }
-        if is_at_source_path {
-            self.extension_order = original_order;
-            return tmp;
+            if is_at_source_path {
+                self.extension_order = original_order;
+                return tmp;
+            }
         }
 
         let ret = match tmp {

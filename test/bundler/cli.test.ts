@@ -1157,15 +1157,15 @@ describe.concurrent("diagnostic markup", () => {
   });
 });
 
-// A macro writes a module, or another macro, while the build runs. The resolver has listed lib/ by then: the entry point
-// imports "../lib/first.ts" (or second.ts), which imports the file that writes into lib/. lib/ is not below the working
-// directory, so `--watch` does not see the write and does not start over.
+// A macro writes a module, or another macro, while the build runs. The resolver has listed lib/ by then: the entry
+// point imports "../lib/first.ts" (or second.ts), which imports the file that writes into lib/. lib/ is not below the
+// working directory, so `--watch` does not see the write and does not start over.
 describe.concurrent("a module that a macro writes during the build", () => {
   const files = {
     "app/package.json": JSON.stringify({ name: "written-during-the-build" }),
-    // A macro that says how many lookups the resolvers of its process ran again after a miss. In a release build the VM
-    // of a macro of `bun build` does not read the environment that lets Bun's own tests import bun:internal-for-testing.
-    // A Worker's does, and the counters are those of the process.
+    // A macro that says how many lookups the resolvers of its process ran again after a miss. A Worker reads the
+    // counter: in a release build the VM of a macro of `bun build` does not read the environment that lets Bun's own
+    // tests import bun:internal-for-testing, and a Worker's does. The counters are those of the process.
     "app/counters.worker.ts": `
       import { resolverCounters } from "bun:internal-for-testing";
       postMessage(resolverCounters().lookupsRunAgain);
@@ -1173,21 +1173,17 @@ describe.concurrent("a module that a macro writes during the build", () => {
     "app/counters.ts": `
       import path from "node:path";
       export async function lookupsRunAgain() {
-        const testing = await import("bun:internal-for-testing").catch(() => undefined);
-        let count = testing?.resolverCounters().lookupsRunAgain;
-        if (!testing) {
-          const worker = new Worker(path.join(import.meta.dir, "counters.worker.ts"));
-          try {
-            const { promise, resolve, reject } = Promise.withResolvers();
-            worker.onmessage = event => resolve(event.data);
-            worker.onerror = event => reject(new Error(event.message));
-            count = await promise;
-          } finally {
-            worker.terminate();
-          }
+        const worker = new Worker(path.join(import.meta.dir, "counters.worker.ts"));
+        try {
+          const { promise, resolve, reject } = Promise.withResolvers();
+          worker.onmessage = event => resolve(event.data);
+          worker.onerror = event => reject(new Error(event.message));
+          const count = await promise;
+          console.log("lookups run again: " + count);
+          return count;
+        } finally {
+          worker.terminate();
         }
-        console.log("lookups run again: " + count);
-        return count;
       }
     `,
     "app/macros.ts": `
@@ -1199,7 +1195,7 @@ describe.concurrent("a module that a macro writes during the build", () => {
         return name;
       }
     `,
-    // An import of a file that a macro of the importer writes. A build that finds late.ts reads counted.ts after that lookup.
+    // An import of a file that a macro of the importer writes. A build that finds late.ts reads counted.ts after that.
     "app/main.ts": `import { made } from "../lib/first.ts";\nconsole.log(made);\n`,
     "lib/first.ts": `export { made } from "../app/made.ts";\n`,
     "app/made.ts": `
@@ -1229,7 +1225,11 @@ describe.concurrent("a module that a macro writes during the build", () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", ...args],
       cwd: join(dir, "app"),
-      env: bunEnv,
+      env: {
+        ...bunEnv,
+        // `bun build` may exit before the Worker of its macro is gone. The ASAN lane would make that exit code 134.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      },
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",

@@ -489,8 +489,8 @@ export default function () {
     expect(exitCode).toBe(0);
   });
 
-  // A production build takes a miss as the resolver has it: it runs once. The macros of a file run in the order of their
-  // calls, so the build has listed the folder for macros.ts when late.macro.ts is written.
+  // A production build takes a miss as the resolver has it: it runs once. The macros of a file run in the order of
+  // their calls, so the build has listed the folder for macros.ts when late.macro.ts is written.
   test("a macro that a macro writes during the build is not found, and the build looks nothing up again", async () => {
     using dir = tempDir("bake-production-macro-writes-a-macro", {
       "app.ts": `

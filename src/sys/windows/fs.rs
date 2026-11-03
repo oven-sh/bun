@@ -1,6 +1,6 @@
 //! File-system calls with the Win32 call sequences and errno values Node.js has on Windows.
 
-use core::cell::UnsafeCell;
+use core::cell::{OnceCell, UnsafeCell};
 use core::ffi::c_void;
 use core::mem::size_of;
 use core::ptr::{from_mut, from_ref, null, null_mut};
@@ -20,7 +20,7 @@ use bun_windows_sys::externs::{
     FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILETIME, FS_INFORMATION_CLASS,
     GENERIC_WRITE, GetCurrentDirectoryW, GetFileAttributesExW, NT_ERROR, NT_SUCCESS, RtlGenRandom,
     SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE, SYMBOLIC_LINK_FLAG_DIRECTORY, UNICODE_STRING,
-    VOLUME_NAME_DOS, WAIT_TIMEOUT, WIN32_FILE_ATTRIBUTE_DATA,
+    VOLUME_NAME_DOS, WIN32_FILE_ATTRIBUTE_DATA,
 };
 
 use super::{
@@ -565,19 +565,32 @@ enum Direction {
     Write,
 }
 
-/// Until the kernel has let go of `io` and of the buffer that goes with it.
-fn wait_on_handle(handle: HANDLE, io: &UnsafeCell<IO_STATUS_BLOCK>) -> NTSTATUS {
-    // SAFETY: the pointer of a cell is valid. The kernel writes to it in between two instructions of this thread.
-    let status = || NTSTATUS(unsafe { (&raw const (*io.get()).Status).read_volatile() } as u32);
-    // Every operation without an event of its own sets and resets the handle, so its state says nothing about this operation.
-    while status() == NTSTATUS::PENDING {
-        if kernel32::WaitForSingleObject(handle, 10) != WAIT_TIMEOUT
-            && status() == NTSTATUS::PENDING
-        {
-            std::thread::sleep(core::time::Duration::from_millis(1));
+thread_local! {
+    static TRANSFER_EVENT: OnceCell<Handle> = const { OnceCell::new() };
+}
+
+/// Calls `transfer` with the event for the one operation that this thread has at a time.
+fn with_transfer_event<R>(transfer: impl FnOnce(HANDLE) -> R) -> Win32Result<R> {
+    // SAFETY: the attributes and the name are optional.
+    let create = || match unsafe { kernel32::CreateEventW(null_mut(), 1, 0, null()) } {
+        event if event.is_null() => Err(Win32Error::get()),
+        event => Ok(Handle(event)),
+    };
+    let of_thread = TRANSFER_EVENT.try_with(|cell| match cell.get() {
+        Some(event) => Ok(event.0),
+        None => {
+            let event = create()?;
+            Ok(cell.get_or_init(|| event).0)
+        }
+    });
+    match of_thread {
+        Ok(event) => Ok(transfer(event?)),
+        // The thread is ending and has closed its own.
+        Err(_) => {
+            let event = create()?;
+            Ok(transfer(event.0))
         }
     }
-    status()
 }
 
 /// An operation on an overlapped handle that its thread waits for in [`transfer_once`].
@@ -585,7 +598,6 @@ struct PendingTransfer {
     thread_id: DWORD,
     handle: HANDLE,
     io: *mut IO_STATUS_BLOCK,
-    cancelled: bool,
 }
 
 // SAFETY: only the system follows the pointers, under the lock that their thread takes to remove the entry.
@@ -608,20 +620,8 @@ impl PendingTransferEntry {
             thread_id: kernel32::GetCurrentThreadId(),
             handle,
             io,
-            cancelled: false,
         });
         Self
-    }
-
-    /// Starts the operation once more with `issue`, unless [`cancel_transfer`] has ended it.
-    fn issue_again(&self, issue: impl FnOnce() -> NTSTATUS) -> NTSTATUS {
-        let thread_id = kernel32::GetCurrentThreadId();
-        let pending = pending_transfers();
-        let mut mine = pending.iter().filter(|it| it.thread_id == thread_id);
-        if mine.any(|it| it.cancelled) {
-            return NTSTATUS::CANCELLED;
-        }
-        issue()
     }
 }
 
@@ -634,11 +634,10 @@ impl Drop for PendingTransferEntry {
 
 /// Ends the read or write on an overlapped handle that thread `thread_id` waits for. `ERROR_NOT_FOUND`: it waits for none.
 pub(super) fn cancel_transfer(thread_id: DWORD) -> Win32Result<()> {
-    let mut pending = pending_transfers();
-    let Some(transfer) = pending.iter_mut().find(|it| it.thread_id == thread_id) else {
+    let pending = pending_transfers();
+    let Some(transfer) = pending.iter().find(|it| it.thread_id == thread_id) else {
         return Err(Win32Error::NOT_FOUND);
     };
-    transfer.cancelled = true;
     // SAFETY: `io` is valid for as long as its entry is there, and an `OVERLAPPED` starts with an `IO_STATUS_BLOCK`.
     unsafe { kernel32::CancelIoEx(transfer.handle, transfer.io.cast()) };
     Ok(())
@@ -674,13 +673,12 @@ fn transfer_once(
 ) -> (usize, Option<Win32Error>) {
     let cell = UnsafeCell::new(zeroed::<IO_STATUS_BLOCK>());
     let io = cell.get();
-    let issue = |event: HANDLE| {
+    let status = with_transfer_event(|event| {
         let offset = offset.as_ref().map_or(null(), from_ref);
+        let (base, len) = (buf.base.cast::<c_void>(), buf.len);
         // SAFETY: an iovec names memory of its length, writable if it is read into. That, `io` and `offset`
         // outlive the operation, which is over when this function returns.
-        unsafe {
-            (*io).Status = NTSTATUS::PENDING.0 as usize;
-            let (base, len) = (buf.base.cast::<c_void>(), buf.len);
+        let status = unsafe {
             match direction {
                 Direction::Read => ntdll::NtReadFile(
                     handle,
@@ -705,33 +703,20 @@ fn transfer_once(
                     null(),
                 ),
             }
+        };
+        // The answer of an overlapped handle, such as a pipe for the event loop that `fs` is used on.
+        if status != NTSTATUS::PENDING {
+            return status;
         }
+        let _entry = PendingTransferEntry::new(handle, io);
+        kernel32::WaitForSingleObject(event, INFINITE);
+        // SAFETY: the operation is over.
+        NTSTATUS(unsafe { (*io).Status } as u32)
+    });
+    let status = match status {
+        Ok(status) => status,
+        Err(code) => return (0, Some(code)),
     };
-
-    let mut status = issue(null_mut());
-    // The answer of an overlapped handle, such as a pipe for the event loop that `fs` is used on.
-    if status == NTSTATUS::PENDING {
-        let entry = PendingTransferEntry::new(handle, io);
-        // A read is taken back and issued again with an event to wait on. Not a write: part of it may have been read.
-        let taken_back = direction == Direction::Read
-            // SAFETY: an `OVERLAPPED` starts with an `IO_STATUS_BLOCK`, which is all that names the operation.
-            && unsafe { kernel32::CancelIoEx(handle, io.cast()) } != 0;
-        status = wait_on_handle(handle, &cell);
-        // What somebody else cancelled stays cancelled.
-        if status == NTSTATUS::CANCELLED && taken_back {
-            // SAFETY: the attributes and the name are optional.
-            let event = unsafe { kernel32::CreateEventW(null_mut(), 1, 0, null()) };
-            if event.is_null() {
-                return (0, Some(Win32Error::get()));
-            }
-            let event = Handle(event);
-            status = entry.issue_again(|| issue(event.0));
-            if status == NTSTATUS::PENDING {
-                kernel32::WaitForSingleObject(event.0, INFINITE);
-                status = wait_on_handle(handle, &cell);
-            }
-        }
-    }
 
     let transferred = if NT_ERROR(status) {
         0

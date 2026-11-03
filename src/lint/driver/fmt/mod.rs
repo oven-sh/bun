@@ -530,10 +530,12 @@ fn format_block_in(
         },
         ..Resolved::default()
     };
-    let formatted = format(path, code, &resolved, names, scratch, false);
-    formatted
-        .map(|(formatted, _)| out.extend_from_slice(&formatted))
-        .is_ok()
+    let Ok((formatted, _)) = format(path, code, &resolved, names, scratch, false) else {
+        return false;
+    };
+    out.extend_from_slice(&formatted);
+    scratch.spare = formatted;
+    true
 }
 
 /// Parses scripts and expressions in HTML.

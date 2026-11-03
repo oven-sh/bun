@@ -113,6 +113,16 @@ pub(crate) fn keeps_arguments_on_one_line<'a>(
     {
         return false;
     }
+    keeps_arguments_of_likely_call_on_one_line(e, call, f)
+}
+
+/// Not inlined, so that the check that every call makes stays small.
+#[inline(never)]
+fn keeps_arguments_of_likely_call_on_one_line<'a>(
+    e: Expr<'a>,
+    call: Call<'a>,
+    f: &Formatter<'a>,
+) -> bool {
     is_template_on_its_own_line_only_argument(call.args(), f)
         || is_simple_module_import(call, f)
         || is_commonjs_or_amd_module_definition(e, call, f)

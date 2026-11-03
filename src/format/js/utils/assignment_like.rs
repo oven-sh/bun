@@ -535,7 +535,9 @@ impl<'a> AssignmentLike<'a> {
         // Prettier then sees a `ParenthesizedExpression` on the right side, whatever is inside.
         let is_type_cast = right_expression.is_some_and(|e| is_cast_target(e, f));
         if let Some(e) = right_expression {
-            if let Some(layout) = self.chain_formatting_layout(e, is_type_cast, f) {
+            if matches!(self, Self::AssignmentExpression(_))
+                && let Some(layout) = self.chain_formatting_layout(e, is_type_cast, f)
+            {
                 return layout;
             }
             // `a = b = c = d`
@@ -650,6 +652,7 @@ impl<'a> AssignmentLike<'a> {
     /// Prettier's `isAssignment` chains: `a = b = c`.
     ///
     /// `is_type_cast` means `right_expression` is in a type cast's parentheses.
+    #[inline(never)]
     fn chain_formatting_layout(
         &self,
         right_expression: Expr<'a>,
@@ -710,6 +713,7 @@ impl<'a> AssignmentLike<'a> {
 
     /// Prettier's `isComplexDestructuringTarget`: an object pattern with more than two properties,
     /// one of which has a value or a default.
+    #[inline]
     fn is_complex_destructuring(&self) -> bool {
         match *self {
             AssignmentLike::VariableDeclarator(declarator)
@@ -717,6 +721,23 @@ impl<'a> AssignmentLike<'a> {
             {
                 false
             }
+            AssignmentLike::AssignmentExpression(assignment)
+                if assignment
+                    .left()
+                    .is_none_or(|left| left.tag() != ExprTag::Object) =>
+            {
+                false
+            }
+            AssignmentLike::VariableDeclarator(_) | AssignmentLike::AssignmentExpression(_) => {
+                self.is_complex_object_pattern()
+            }
+            _ => false,
+        }
+    }
+
+    #[inline(never)]
+    fn is_complex_object_pattern(&self) -> bool {
+        match *self {
             AssignmentLike::VariableDeclarator(declarator) => match declarator.pat().kind() {
                 PatKind::Object(props) => {
                     props.len() > 2
@@ -1041,6 +1062,7 @@ pub(crate) fn with_assignment_layout(
 
 /// Prettier's `isPoorlyBreakableMemberOrCallChain`: a chain that starts with a name or `this`, and
 /// has no calls, or only calls with no argument or one short argument.
+#[inline(never)]
 fn is_poorly_breakable_member_or_call_chain<'a>(
     expression: Expr<'a>,
     f: &mut Formatter<'a>,

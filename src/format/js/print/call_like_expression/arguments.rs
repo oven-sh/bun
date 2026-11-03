@@ -73,17 +73,7 @@ impl<'a> Format<'a> for FormatArguments<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let last_index = match self.len() {
             0 if f.is_quiet() => return write!(f, "()"),
-            // `call(/* comment */)`
-            0 => {
-                return write!(
-                    f,
-                    [
-                        "(",
-                        dangling_comments(self.parent).with_soft_block_indent(),
-                        ")"
-                    ]
-                );
-            }
+            0 => return write_comments_in_parentheses(self.parent, f),
             len => len - 1,
         };
 
@@ -103,20 +93,7 @@ impl<'a> Format<'a> for FormatArguments<'a> {
 
         if has_function && has & kind(ExprTag::Array) != 0 && is_react_hook_with_deps_array(self, f)
         {
-            return write!(
-                f,
-                [
-                    "(",
-                    format_with(|f| {
-                        f.join_with(space()).entries_with_trailing_separator(
-                            self.iter(),
-                            ",",
-                            TrailingSeparator::Omit,
-                        );
-                    }),
-                    ")"
-                ]
-            );
+            return write!(f, FormatArgumentsOnOneLine(self.args));
         }
 
         if has & (kind(ExprTag::Template) | kind(ExprTag::TaggedTemplate)) != 0
@@ -148,19 +125,7 @@ impl<'a> Format<'a> for FormatArguments<'a> {
             write_grouped_arguments(self, group_layout, f);
         } else if matches!(self.parent, AstNodes::CallExpression(call) if is_long_curried_call(call, f))
         {
-            let trailing_separator =
-                FormatTrailingCommas::Arguments.trailing_separator(f.options());
-            write!(
-                f,
-                [
-                    "(",
-                    soft_block_indent(&format_with(|f| {
-                        f.join_with(soft_line_break_or_space())
-                            .entries_with_trailing_separator(self.iter(), ",", trailing_separator);
-                    })),
-                    ")",
-                ]
-            );
+            write_arguments_of_long_curried_call(self, f);
         } else {
             // Whether the group breaks is only known once its content is written.
             let start = f.reserve_tag();
@@ -231,6 +196,32 @@ pub(crate) fn hugged_function_keeps_parameters_on_one_line<'a>(
         || (matches!(parent, AstNodes::NewExpression(_)) && treats_new_like_call(f)))
         && (count != 1 || has_only_simple_parameters(function, false))
         && has_signature_without_soft_lines(function)
+}
+
+/// `call(/* comment */)`
+#[cold]
+#[inline(never)]
+fn write_comments_in_parentheses<'a>(call: AstNodes<'a>, f: &mut Formatter<'a>) {
+    write!(
+        f,
+        ["(", dangling_comments(call).with_soft_block_indent(), ")"]
+    );
+}
+
+#[inline(never)]
+fn write_arguments_of_long_curried_call<'a>(node: &FormatArguments<'a>, f: &mut Formatter<'a>) {
+    let trailing_separator = FormatTrailingCommas::Arguments.trailing_separator(f.options());
+    write!(
+        f,
+        [
+            "(",
+            soft_block_indent(&format_with(|f| {
+                f.join_with(soft_line_break_or_space())
+                    .entries_with_trailing_separator(node.iter(), ",", trailing_separator);
+            })),
+            ")",
+        ]
+    );
 }
 
 /// oxfmt counts the line breaks between two arguments, wherever the comma is. Prettier checks the line after the

@@ -409,7 +409,7 @@ impl<'a> Comments<'a> {
     }
 
     /// The comments attached to `node`.
-    #[inline]
+    #[inline(never)]
     pub(crate) fn of_node(&self, node: AstNodes<'_>) -> OwnedComments<'a> {
         self.owned(self.file_comments.owners.of_node(node))
     }

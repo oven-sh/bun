@@ -211,7 +211,7 @@ const r = a == b; s += r 376,113,376 (300); 113,376,113 (600); 376,38,0,0 (825)
 if (a != b) ++s;         2624,187,2624 (300); 187,2624,187 (600); 2624,262,300,300 (825)
 a == b; ++s;             3000,300,3000 (300); 300,3000,300 (600); 3000,300,300,300 (825)
 if (a === b) ++s;        376,0,376 (0); 0,376,0 (0); 376,0,0,0 (0)
-if (a == a) ++s;         3000,300,3000 (0); 300,3000,300 (0); 3000,300,300,300 (0)
+if (a == a) ++s;         3000,300,3000 (300); 300,3000,300 (600); 3000,300,300,300 (450)
 if (a < b) ++s;          1500,112,1500 (0); 112,1500,112 (0); 1500,149,112,149 (0)
 const r = a >= b; s += r 1500,188,1500 (0); 188,1500,188 (0); 1500,151,188,151 (0)
 const r = a + b; s += ty 4500,300375,4500 (0); 300375,4500,300375 (0); 4500,262950,450375,300450 (0)
@@ -220,10 +220,12 @@ const r = 1 - a; s += ty 1500,300150,1500 (0); 300150,1500,300150 (0); 1500,1501
 const r = -a; s += typeo -1500,299850,-1500 (0); 299850,-1500,299850 (0); -1500,149850,-150,299850 (0)
 const r = a | 0; s += ty 1500,300150,1500 (0); 300150,1500,300150 (0); 1500,150150,150,300150 (0)
 let c = a; ++c; s += typ 4500,300450,4500 (0); 300450,4500,300450 (0); 4500,150450,450,300450 (0)
-if (a == b) ++s;         376,76,376,38,0 (412); 376,152,76,0,0 (300)
-const r = a == b; s += r 376,76,376,38,0 (412); 376,152,76,0,0 (300)
-if (a != b) ++s;         2624,224,2624,262,300 (412); 2624,148,224,300,300 (300)
-a == b; ++s;             3000,300,3000,300,300 (412); 3000,300,300,300,300 (300)
+if (a == b) ++s;         376,76,376,38,0 (450); 376,152,76,0,0 (300)
+const r = a == b; s += r 376,76,376,38,0 (450); 376,152,76,0,0 (300)
+if (a != b) ++s;         2624,224,2624,262,300 (450); 2624,148,224,300,300 (300)
+a == b; ++s;             3000,300,3000,300,300 (450); 3000,300,300,300,300 (300)
+if (a == a) ++s;         3000,150,3000 (0); 3000,150 (0); 3000,150 (0)
+const r = a != a; s += r 0,150,0 (0); 0,150 (0); 0,150 (0)
 `;
 test.concurrent.each(tiers)("a site sees objects of JS, of Python, or both: %s", async (_, env) => {
   const { stdout, stderr, exitCode } = await run(
@@ -245,9 +247,10 @@ def take_calls():
     n, calls = calls, 0
     return n
 pairs = [(i % 2, "t") for i in range(4)]
+nans = [float("nan"), 1.0, float("nan"), 3.0]
 `,
       "main.js": `
-      import { Counted, Plain, pairs, take_calls } from "./v.py";
+      import { Counted, Plain, nans, pairs, take_calls } from "./v.py";
       const HOT = 3000, WARM = 300;
       class J { constructor(x) { this.x = x; } valueOf() { return this.x; } }
       const four = [0, 1, 2, 3];
@@ -282,6 +285,9 @@ pairs = [(i % 2, "t") for i in range(4)]
       };
       for (const body of bodies) console.log(body.slice(0, 24).padEnd(24), orders.map(phases => go(body, phases)).join("; "));
       for (const body of bodies.slice(0, 4)) console.log(body.slice(0, 24).padEnd(24), equalityOnly.map(phases => go(body, phases)).join("; "));
+      // A value and itself: a NaN of Python's, which is an object in a list, says no.
+      const itself = [[[js, js, HOT], [nans, nans, WARM], [js, js, HOT]], [[kinds, kinds, HOT], [nans, nans, WARM]], [[four, four, HOT], [nans, nans, WARM]]];
+      for (const body of ["if (a == a) ++s;", "const r = a != a; s += r;"]) console.log(body.slice(0, 24).padEnd(24), itself.map(phases => go(body, phases)).join("; "));
     `,
     },
     env,

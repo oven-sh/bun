@@ -21,7 +21,7 @@ Object.freeze(m.obj); m.obj.a = 2; print(m.obj.a, Object.isFrozen(m.obj));
 Object.preventExtensions(m.obj); m.obj.b = 3; print(m.obj.b);
 // Callable objects.
 print(typeof m.callable_obj, m.callable_obj(1, 2), [1, 2].map(m.callable_obj).join(), m.callable_obj.call === undefined);
-try { class J extends m.Obj { } } catch (e) { print(e instanceof TypeError); }
+{ class J extends m.Obj { } print(new J() instanceof m.Obj); }
 // Symbols, and what the VM itself asks.
 print(m.obj[Symbol.toStringTag], m.obj[Symbol.iterator], m.obj[Symbol.toPrimitive].name, Symbol.toPrimitive in m.obj, Object.getOwnPropertySymbols(m.obj).length);
 try { null.x; } catch (e) { print(e instanceof TypeError); }

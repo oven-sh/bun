@@ -30,4 +30,4 @@ The above exception was the direct cause of the following exception:
 Traceback (most recent call last):
   File "012_console.py", line 17, in fail2
 012_console.MyErr: outer
-function default,float,import,kwargs
+function asyncWith,default,float,import,kwargs,method,with

@@ -17,7 +17,7 @@ caller threw TypeError 'arguments', 'callee', and 'caller' cannot be accessed in
 arguments threw TypeError 'arguments', 'callee', and 'caller' cannot be accessed in this context.
 prototype -> undefined
 extends func threw TypeError The superclass is not a constructor.
-extends type threw TypeError The value of the superclass's prototype property is not an object or null.
+extends type -> <X(1, 2, (), k)>
 generator proto next threw TypeError |this| should be a generator
 array iterator next threw TypeError %ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance
 Map.prototype.get threw TypeError Map operation called on non-Map object

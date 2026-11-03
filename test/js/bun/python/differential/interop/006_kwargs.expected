@@ -2,7 +2,7 @@ status: 0
 oracle: none
 mask: addresses
 ---
-kwargs,float,import function
+kwargs,float,import,method,with,asyncWith function
 (1, 2, (), 3, []) (1, 5, (), 3, []) (1, 2, (), 9, [('y', 2), ('z', 1)]) (1, 2, (3, 4), 0, []) ('A', 2, (), 3, []) (1, 2, (), 3, [])
 (2, 1) 2 11 none
 TypeError: f() got multiple values for argument 'a'
@@ -14,7 +14,7 @@ TypeError: simple() missing 1 required positional argument: 'b'
 (1, 5, 6) (1, 1, 0) ((1,), {'k': 2}) 3 4 5
 3,2,1 255 {'a': 1, 'b': 2} -5 a+b
 TypeError: len() takes no keyword arguments
-(OBJ, 2, (), 3, []) kwargs
+(OBJ, 2, (), 3, []) {"a":1}
 (7, 2, (), 3, []) (1, 8, (), 3, []) (1, 2, (), 4, [])
 (1, 2, (), 1.5, [('d', None)]) (1, 2, (), 2.0, []) (3.0, 2, (), 3, []) (3, 2, (), 3, [])
 true kwargs() takes an object

@@ -17,7 +17,7 @@ print(String(c.method(5, kwargs({ q: 6 }))), String(c.method(kwargs({ p: 1 }))),
 print(b.sorted([1, 3, 2], kwargs({ reverse: true })).join(), b.int("ff", kwargs({ base: 16 })), String(b.dict(kwargs({ a: 1, b: 2 }))), b.max([1, -5], kwargs({ key: b.abs })), "a-b".split ? b.str.split("a-b", kwargs({ sep: "-" })).join("+") : "");
 try { b.len([1], kwargs({ x: 1 })); } catch (e) { print(e.name + ": " + e.message); }
 // Only the last argument counts, and only what kwargs() made.
-print(m.f({ b: 5 }).replace(/<.*>/, "OBJ"), m.simple(kwargs({ a: 1 }), 0)[0].constructor.__name__);
+print(m.f({ b: 5 }).replace(/<.*>/, "OBJ"), JSON.stringify(m.simple(kwargs({ a: 1 }), 0)[0]));
 try { m.ident(kwargs({ a: 1 }), 2); } catch (e) { print(e.name + ": " + e.message); }
 print(m.f.call(kwargs({ b: 1 }), 7), m.f.apply(null, [1, kwargs({ b: 8 })]), m.f.bind(null, 1)(kwargs({ c: 4 })));
 // From a dict, and values of all kinds.

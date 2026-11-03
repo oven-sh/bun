@@ -4706,12 +4706,11 @@ pub(crate) fn get_buffered_amount(socket: SocketHandle<'_>) -> usize {
 }
 
 pub(crate) fn has_pending_read(socket: SocketHandle<'_>) -> bool {
-    let queued = match socket {
-        SocketHandle::Tcp(this) => this.socket.get().queued_input(),
-        SocketHandle::Tls(this) => this.socket.get().queued_input(),
-        SocketHandle::Ignored(_) => return false,
-    };
-    queued != uws::QueuedInput::None
+    match socket {
+        SocketHandle::Tcp(this) => this.socket.get().queued_input() != uws::QueuedInput::None,
+        SocketHandle::Tls(this) => this.socket.get().queued_input() != uws::QueuedInput::None,
+        SocketHandle::Ignored(_) => false,
+    }
 }
 
 pub(crate) fn create_socket_pair(cx: &mut JsScope<'_>) -> JsResult<[c_int; 2]> {

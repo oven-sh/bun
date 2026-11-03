@@ -4,6 +4,3 @@ const t = (name, f) => { try { console.log(name, show(f())); } catch (e) { conso
 const ta = async (name, f) => { try { console.log(name, show(await f())); } catch (e) { console.log(name, said(e)); } };
 const keys = (o) => Object.keys(o).filter((k) => k !== "__esModule").sort().join();
 t("require", () => require("sub/lib/a.js").which);
-/* Output:
-require THROWS Error MODULE_NOT_FOUND
-*/

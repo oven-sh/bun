@@ -24,47 +24,48 @@ console.log(o.t, Object.keys(o).join(), take(p), Object.keys(p).join());
 // CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|string site=[[w_3]] flags=[OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: v6 = Integer integer=1
 // CHECK-NEXT: v7 = Convert v6 declared={type=number}
-// CHECK-NEXT: v8 = ToPropertyKey v5
-// CHECK-NEXT: v9 = Integer integer=2
-// CHECK-NEXT: v10 = NewObject -, v7 layout=[[L_4]] fields=[0]
-// CHECK-NEXT: ElemDefine v10, v8, v9
-// CHECK-NEXT: v12 = FinishObject v10
-// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|[[L_4]] site=[[w_5]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
-// CHECK-NEXT: v14 = Integer integer=1
-// CHECK-NEXT: v15 = Call v1, -, v14 calleeName="f"
-// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|null|[[L_6]] site=[[w_7]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v17 = NewObject layout=[[L_8]]
-// CHECK-NEXT: CopyDataProperties v17, v16
-// CHECK-NEXT: v19 = Integer integer=1
-// CHECK-NEXT: v20 = Convert v19 declared={type=number}
-// CHECK-NEXT: PropDefine v17, v20 key="x"
-// CHECK-NEXT: v22 = FinishObject v17
-// CHECK-NEXT: v23 = Convert v22 declared={type=undefined|null|[[L_8]] site=[[w_9]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
-// CHECK-NEXT: v24 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v25 = PropGet v24 key="console" [isFreeName]
-// CHECK-NEXT: v26 = Convert v25 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v27 = PropGet v26 key="log"
-// CHECK-NEXT: v28 = Convert v27 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v29 = PropGet v13 key="t"
-// CHECK-NEXT: v30 = Builtin builtin=Object
-// CHECK-NEXT: v31 = Builtin builtin=ObjectKeys
-// CHECK-NEXT: v32 = Call v31, v30, v13 calleeName="Object.keys"
-// CHECK-NEXT: v33 = Convert v32 declared={type=undefined|null|Array<undefined|null|string> site=[[w_10]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v34 = PropGet v33 key="join"
-// CHECK-NEXT: v35 = Call v34, v33 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v36 = Convert v35 declared={type=undefined|null|string site=[[w_10]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v37 = Call v3, -, v23 calleeName="take"
-// CHECK-NEXT: v38 = Convert v37 declared={type=undefined|null|string site=[[w_11]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v39 = Builtin builtin=Object
-// CHECK-NEXT: v40 = Builtin builtin=ObjectKeys
-// CHECK-NEXT: v41 = Call v40, v39, v23 calleeName="Object.keys"
-// CHECK-NEXT: v42 = Convert v41 declared={type=undefined|null|Array<undefined|null|string> site=[[w_12]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v43 = PropGet v42 key="join"
-// CHECK-NEXT: v44 = Call v43, v42 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v45 = Convert v44 declared={type=undefined|null|string site=[[w_12]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v46 = Call v28, v26, v29, v36, v38, v45 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v47 = Undefined
-// CHECK-NEXT: Return v47
+// CHECK-NEXT: v8 = String string="x"
+// CHECK-NEXT: v9 = ToPropertyKey v8
+// CHECK-NEXT: v10 = Integer integer=2
+// CHECK-NEXT: v11 = NewObject -, v7 layout=[[L_4]] fields=[0]
+// CHECK-NEXT: ElemDefine v11, v9, v10
+// CHECK-NEXT: v13 = FinishObject v11
+// CHECK-NEXT: v14 = Convert v13 declared={type=undefined|null|[[L_4]] site=[[w_5]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+// CHECK-NEXT: v15 = Integer integer=1
+// CHECK-NEXT: v16 = Call v1, -, v15 calleeName="f"
+// CHECK-NEXT: v17 = Convert v16 declared={type=undefined|null|[[L_6]] site=[[w_7]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v18 = NewObject layout=[[L_8]]
+// CHECK-NEXT: CopyDataProperties v18, v17
+// CHECK-NEXT: v20 = Integer integer=1
+// CHECK-NEXT: v21 = Convert v20 declared={type=number}
+// CHECK-NEXT: PropDefine v18, v21 key="x"
+// CHECK-NEXT: v23 = FinishObject v18
+// CHECK-NEXT: v24 = Convert v23 declared={type=undefined|null|[[L_8]] site=[[w_9]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+// CHECK-NEXT: v25 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v26 = PropGet v25 key="console" [isFreeName]
+// CHECK-NEXT: v27 = Convert v26 declared={type=builtin(Console) flags=[IsExpected]}
+// CHECK-NEXT: v28 = PropGet v27 key="log"
+// CHECK-NEXT: v29 = Convert v28 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+// CHECK-NEXT: v30 = PropGet v14 key="t"
+// CHECK-NEXT: v31 = Builtin builtin=Object
+// CHECK-NEXT: v32 = Builtin builtin=ObjectKeys
+// CHECK-NEXT: v33 = Call v32, v31, v14 calleeName="Object.keys"
+// CHECK-NEXT: v34 = Convert v33 declared={type=undefined|null|Array<undefined|null|string> site=[[w_10]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v35 = PropGet v34 key="join"
+// CHECK-NEXT: v36 = Call v35, v34 calleeKey="join" calleeName="join"
+// CHECK-NEXT: v37 = Convert v36 declared={type=undefined|null|string site=[[w_10]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v38 = Call v3, -, v24 calleeName="take"
+// CHECK-NEXT: v39 = Convert v38 declared={type=undefined|null|string site=[[w_11]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v40 = Builtin builtin=Object
+// CHECK-NEXT: v41 = Builtin builtin=ObjectKeys
+// CHECK-NEXT: v42 = Call v41, v40, v24 calleeName="Object.keys"
+// CHECK-NEXT: v43 = Convert v42 declared={type=undefined|null|Array<undefined|null|string> site=[[w_12]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v44 = PropGet v43 key="join"
+// CHECK-NEXT: v45 = Call v44, v43 calleeKey="join" calleeName="join"
+// CHECK-NEXT: v46 = Convert v45 declared={type=undefined|null|string site=[[w_12]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v47 = Call v29, v27, v30, v37, v39, v46 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v48 = Undefined
+// CHECK-NEXT: Return v48
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="f"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=[[w_13]]}] results=[{type=undefined|null|[[L_6]] site=[[w_14]] flags=[OmitsNull, OmitsUndefined]}] {

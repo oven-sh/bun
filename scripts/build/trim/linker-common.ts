@@ -24,6 +24,7 @@ export function createSectionOrder(partition: Partition): SectionOrder {
   return {
     retainedFirst: [],
     groups: partition.groups.map(({ set }) => ({ set, names: [], afterRetained: [] })),
+    groupsOutsidePrograms: partition.groupsOutsidePrograms,
     nodes: [],
     unnamed: new Map(),
   };

@@ -16,5 +16,5 @@ test.skipIf(!isLinux || isASAN)("the static TLS block that every thread pays for
     if (view.getUint32(header, true) === 7) staticTLSSize = Number(view.getBigUint64(header + 40, true));
   }
   expect(staticTLSSize).toBeGreaterThan(0);
-  expect(staticTLSSize).toBeLessThanOrEqual(24 * 1024);
+  expect(staticTLSSize).toBeLessThanOrEqual(23 * 1024);
 });

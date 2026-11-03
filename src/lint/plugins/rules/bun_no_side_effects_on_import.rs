@@ -14,11 +14,11 @@ pub struct NoSideEffectsOnImport {
     allow: Box<[Box<[u8]>]>,
 }
 
-const CALL: Message = Message::new(
+const CALL: &Message = &Message::new(
     "call",
     "This runs as soon as the module is imported. Move it into an exported function.",
 );
-const ASSIGNMENT: Message = Message::new(
+const ASSIGNMENT: &Message = &Message::new(
     "assignment",
     "This changes an object as soon as the module is imported. Move it into an exported function.",
 );
@@ -45,7 +45,7 @@ impl NoSideEffectsOnImport {
     }
 
     /// The first part of `e` that has a side effect, and the message for it.
-    fn effect_in<'a>(&self, e: Expr<'a>) -> Option<(Expr<'a>, Message)> {
+    fn effect_in<'a>(&self, e: Expr<'a>) -> Option<(Expr<'a>, &'static Message)> {
         use UnOp::{Delete, PostDec, PostInc, PreDec, PreInc};
         // A stack with the next expression on top.
         let mut pending: SmallVec<[Expr<'a>; 8]> = smallvec![e];

@@ -14,7 +14,7 @@
 //   aotFlags  more flags for the build with --aot
 //   env       more of the environment in which both run
 //   differs   what the build with --aot prints where it is meant to differ from the other, and the case says why
-import { expect } from "bun:test";
+import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -666,6 +666,7 @@ console.log(result.success, result.logs.filter(log => log.message.includes("TS10
         const dir = tempDir("aot-code-from-disk", files);
         const folder = String(dir);
         const executables: Record<"plain" | "compiled", string> = { plain: "", compiled: "" };
+        afterAll(() => dir[Symbol.dispose]());
 
         beforeAll(async () => {
           const build = async (name: "plain" | "compiled", flags: string[]) => {

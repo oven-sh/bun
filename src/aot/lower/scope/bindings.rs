@@ -14,6 +14,8 @@ use crate::lower::{FileLowering, FunctionLowering, convert, function};
 enum BindingStore {
     Initialize,
     Assign,
+    /// `x = undefined`, `x = null`
+    Release,
 }
 
 impl FileLowering<'_, '_, '_, '_> {
@@ -71,12 +73,21 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     pub(super) fn set_stored(&mut self, binding: BindingRef, value: ValueId) {
+        self.set_stored_as(binding, value, BindingStore::Initialize);
+    }
+
+    fn set_stored_as(&mut self, binding: BindingRef, value: ValueId, store: BindingStore) {
         let Some(placement) = self.file.scopes.placement(binding) else {
             return;
         };
         let local = self.scopes.find_local(binding);
         if let Some(local) = local {
-            self.builder.write_variable(local.variable, value);
+            match (store, &placement.storage) {
+                (BindingStore::Release, Storage::Local) => {
+                    self.builder.write_released_variable(local.variable, value);
+                }
+                _ => self.builder.write_variable(local.variable, value),
+            }
         }
         match placement.storage {
             Storage::Field { scope, field } => {
@@ -208,11 +219,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let position = self.file.binding_position(symbol);
         let subject = convert::Int32Subject::Binding(symbol);
         self.describe_int32_flow(position, subject, source);
+        let store = match self.builder.is_undefined_or_null(value) {
+            true => BindingStore::Release,
+            false => BindingStore::Assign,
+        };
         let value = convert::convert(self, value, position, source);
         if tests_dead_zone && self.file.scopes.form(symbol) == BindingForm::Stored {
             self.check_before_store(symbol, name);
         }
-        self.write_symbol(symbol, name, value, BindingStore::Assign);
+        self.write_symbol(symbol, name, value, store);
     }
 
     fn get_symbol(&mut self, symbol: SymbolId, name: Atom) -> ValueId {
@@ -238,10 +253,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         match self.file.scopes.form(symbol) {
             BindingForm::Stored => {
                 let binding = BindingRef::Symbol(symbol);
-                self.set_stored(binding, value);
+                self.set_stored_as(binding, value, store);
                 match store {
                     BindingStore::Initialize => self.scopes.end_dead_zone(binding),
-                    BindingStore::Assign => {}
+                    BindingStore::Assign | BindingStore::Release => {}
                 }
             }
             BindingForm::MappedArgument { unit, index } => {
@@ -256,7 +271,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 BindingStore::Initialize => {
                     debug_assert!(false, "a symbol without a value is never initialized");
                 }
-                BindingStore::Assign => {
+                BindingStore::Assign | BindingStore::Release => {
                     let error = RuntimeErrorKind::UnresolvableReference;
                     self.emit_binding_error(error, Binding::Free, name);
                 }

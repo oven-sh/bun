@@ -29,9 +29,9 @@ pub struct NoCycle {
     ignore: Vec<Regex>,
 }
 
-const DETECTED: Message = Message::new("", "Dependency cycle detected.");
-const VIA: Message = Message::new("", "Dependency cycle via {{route}}");
-const DETECTED_BY_OXLINT: Message = Message::new("", "Dependency cycle detected");
+const DETECTED: &Message = &Message::new("", "Dependency cycle detected.");
+const VIA: &Message = &Message::new("", "Dependency cycle via {{route}}");
+const DETECTED_BY_OXLINT: &Message = &Message::new("", "Dependency cycle detected");
 
 const OXLINT_HELP: &str = "Refactor to remove the cycle. Consider extracting shared code into a separate module that both files can import.";
 

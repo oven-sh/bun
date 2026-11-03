@@ -1429,13 +1429,6 @@ impl Layers {
         Layers::Borrowed(bun_ptr::BackRef::from(p))
     }
 
-    /// Drop owned (arena-backed, so no-op) and
-    /// install a fresh owned value.
-    #[inline]
-    pub(crate) fn replace(&mut self, new: Vec<bun_css::LayerName>) {
-        *self = Layers::Owned(new);
-    }
-
     /// If borrowed, deep-clone into an owned
     /// list and return `&mut` to it; if already owned, return as-is.
     pub(crate) fn to_owned(&mut self) -> &mut Vec<bun_css::LayerName> {
@@ -1451,7 +1444,7 @@ impl Layers {
 
 impl CssImportOrder<'_> {
     pub(crate) fn hash<H: bun_core::Hasher + ?Sized>(&self, hasher: &mut H) {
-        // TODO: conditions, condition_import_records
+        // Not an identity: it leaves out the conditions. `css_chunk_key` compares on a hit.
 
         // core::mem::Discriminant is opaque/pointer-sized; hash an explicit u8 tag instead.
         let tag: u8 = match &self.kind {

@@ -1,10 +1,10 @@
 # ofFrame(inspected)(); frameOfFrame(frame).method(); emitHandleIPCMessage(handed)
-# Three native functions with rows. Until the program reads Bun.ModuleGraph the first answers undefined, and it only looks at its operand. The second may answer its operand or what is reachable from it.
+# Three native functions with rows. The first answers undefined or a graph, which need not be one that this program has made: another program of the realm may have read Bun.ModuleGraph. It only looks at its operand. The second may answer its operand or what is reachable from it.
 # The third hands its operands to listeners, so a function among them is entered.
 # LIBRARY: own
 # RUN: valueflow-solve calls
 # CHECK: f1 v2 -> NativeFunctionsModuleGraphCppJsFunctionModuleGraphOfFrame
-# CHECK-NOT: f1 v3 -> unknown
+# CHECK-NEXT: f1 v3 -> unknown
 # CHECK: f1 v7 -> NativeFunctionsModuleGraphCppJsFunctionModuleGraphFrameOfFrame
 # CHECK-NEXT: f1 v9 -> f3
 # CHECK-NEXT: f1 v12 -> NativeFunctionsIpc_hostBindTsEmitHandleIPCMessage

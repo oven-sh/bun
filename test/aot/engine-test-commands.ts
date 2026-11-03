@@ -47,10 +47,10 @@ const followTheOrderOfTheRules = [
   "modules/parent-and-children-where-the-run-time-answers-the-require.ir",
   "modules/parent-of-a-module-object-is-a-module-that-requires-it.ir",
   "modules/read-of-process-under-a-key-nobody-knows-answers-the-main-module-where-a-way-is-named.ir",
+  "placeholders/a-store-through-a-value-nobody-knows-writes-no-member-of-a-bun-that-escapes-later.ir",
   "placeholders/class-above-an-escaped-instance-is-found-under-constructor-of-the-unknown-object.ir",
   "placeholders/realm-objects-stay-closed-without-unseen-code.ir",
   "results/a-literal-gets-fields-for-what-a-spread-source-that-unknown-code-holds-is-born-with.ir",
-  "results/store-written-for-the-instances-lists-no-member-of-the-prototype-object.ir",
 ];
 
 export function runFlowTestsUnderOtherSchedules(part: number, parts: number) {

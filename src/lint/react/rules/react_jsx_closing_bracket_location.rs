@@ -17,8 +17,8 @@ enum Location {
     LineAligned,
 }
 
-const BRACKET_LOCATION: Message =
-    Message::new("bracketLocation", "The closing bracket must be {{location}}{{details}}");
+const BRACKET_LOCATION: &Message =
+    &Message::new("bracketLocation", "The closing bracket must be {{location}}{{details}}");
 
 impl Location {
     fn from_option(option: &Json) -> Option<Location> {

@@ -62,6 +62,9 @@ pub(crate) fn describe_module(
     let interop = graph.interop(ModuleRef::File(file));
     let (kind, rule, result) = (interop.kind, interop.export_rule, interop.require_result);
     let mut lines = vec![format!("kind {kind:?} {rule:?} {result:?}")];
+    if interop.answers_loader_with_namespace {
+        lines.push(String::from("namespace for the loader"));
+    }
     if graph.has_top_level_await(file) {
         lines.push(String::from("await"));
     }
@@ -315,6 +318,7 @@ mod tests {
                 module: ModuleRef::External {
                     importer: file_named(input, "main.js"),
                     specifier: input.files.atoms.intern(b"left-pad"),
+                    type_attribute: None,
                 },
                 name: input.files.atoms.intern(b"pad"),
             };
@@ -336,6 +340,7 @@ mod tests {
             let external = ModuleRef::External {
                 importer: other,
                 specifier: input.files.atoms.intern(b"left-pad"),
+                type_attribute: None,
             };
             let runtime = ModuleRef::Runtime(RuntimeModule::NodeFs);
             let file = ModuleRef::File(other);

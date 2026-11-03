@@ -1,0 +1,43 @@
+# import { spyOn, jest } from "bun:test"; import * as used from "./used.js"; spyOn(used, "spiedOn"); jest.spyOn(used, "byJest"); sink(require("bun:test")); sink(spyOn); sink(jest); sink(jest.spyOn)
+# The object of bun:test goes somewhere and so does the spy, so the variable of the import holds the unknown value beside the spy, and the unknown value covers a spy that has escaped: the call
+# goes with the calls of values that nobody knows. The text still says what is called: the export that is named is replaced, the one beside it is not
+# OPTIONS: admit=FilesRunByHost
+# RUN: valueflow-results
+# CHECK: replaced-export g0
+# CHECK-NOT: replaced-export g1
+# CHECK: replaced-export g3
+
+module m0 path="main.test.js" displayPath="main.test.js" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}]
+module m1 path="used.js" displayPath="used.js" body=f1 exports=[{name="beside" variable=g1}, {name="byJest" variable=g3}, {name="spiedOn" variable=g0}]
+module m2 path="bun:test" displayPath="bun:test" kind=Runtime exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=BunTest syntheticExports=[{name="jest" variable=g4 isKnownMember=true}, {name="spyOn" variable=g2 isKnownMember=true}]
+entry module=m0
+variable g0 name="spiedOn" module=m1 declared={type=anything} initialization=Function function=f2
+variable g1 name="beside" module=m1 declared={type=anything} initialization=Function function=f2
+variable g2 name="spyOn" module=m2 declared={type=anything}
+variable g3 name="byJest" module=m1 declared={type=anything} initialization=Function function=f2
+variable g4 name="jest" module=m2 declared={type=anything}
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=BunTest
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0
+    v4 = GetModuleVariable variable=g2
+    v5 = ModuleNamespace module=m1
+    v6 = String string="spiedOn"
+    v7 = Call v4, -, v5, v6
+    v8 = Call v2, -, v4
+    v9 = GetModuleVariable variable=g4
+    v10 = PropGet v9 key="spyOn"
+    v11 = String string="byJest"
+    v12 = Call v10, v9, v5, v11
+    v13 = Call v2, -, v9
+    v14 = Call v2, -, v10
+    Return v7
+}
+function f1 name="used" module=m1 kind=Module results=[{type=anything}] {
+    Return
+}
+function f2 name="exported" results=[{type=anything}] {
+    Return
+}

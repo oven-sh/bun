@@ -211,6 +211,14 @@ export interface Config {
    */
   executeOnlyStart: boolean;
   /**
+   * Default false. On: behind the link, the new executable compiles Bun's own JavaScript ahead of time and the result
+   * goes into it as the section `.bun_library` (scripts/build/embed-compiled-library.ts). `bun test --aot` takes it for
+   * the lowest layer of a run that is built in layers, which otherwise compiles that code in every run. No segment
+   * holds the section, so nothing else reads or maps it. Costs file size. Changes no compiled code of Bun's: the same
+   * link without the section behaves as a build with this off.
+   */
+  compiledLibrary: boolean;
+  /**
    * Compile usockets bsd_* syscall fault-injection hooks. Runtime-armed via
    * `bun:internal-for-testing` socketFaultInjection; disarmed cost is one
    * acquire atomic load per syscall, zero when compiled out.
@@ -241,9 +249,10 @@ export interface Config {
    */
   shadowRealm: boolean;
   /**
-   * Default true. Off builds a Bun whose `bun:ffi` calls no native function: dlopen(), linkSymbols(), CFunction(),
-   * JSCallback() and what cc() returns throw. A WebKit built from source (`webkit: "local"`) is also built with
-   * ENABLE_FFI=0, which leaves the engine's half of those calls out of the binary; a prebuilt one keeps it.
+   * Default true. Off builds a Bun whose `bun:ffi` calls no native function and loads no library: dlopen(),
+   * linkSymbols(), CFunction(), JSCallback(), cc() with a `library` and what cc() returns throw. A WebKit built from
+   * source (`webkit: "local"`) is also built with ENABLE_FFI=0, which leaves the engine's half of those calls out of
+   * the binary; a prebuilt one keeps it.
    */
   ffi: boolean;
   /** Bundle small .cpp files into unified TUs (WebKit-style). See unified.ts. */
@@ -477,6 +486,7 @@ export interface PartialConfig {
   lockEnvironment?: boolean;
   guardedPages?: boolean;
   executeOnlyStart?: boolean;
+  compiledLibrary?: boolean;
   socketFaultInjection?: boolean;
   codeGenerationFromStrings?: boolean;
   webAssembly?: boolean;
@@ -1196,6 +1206,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const lockEnvironment = partial.lockEnvironment ?? hardened;
   const guardedPages = partial.guardedPages ?? hardened;
   const executeOnlyStart = partial.executeOnlyStart ?? !hardened;
+  const compiledLibrary = partial.compiledLibrary ?? false;
   // Default follows asan: on for local debug (Linux / arm64 macOS) and CI
   // release-asan, off everywhere else. The fuzz tests are most useful when
   // memory errors are detectable, and the disarmed-hot-path cost (one acquire
@@ -1221,6 +1232,15 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   assert(!(asan && valgrind), "Cannot enable both asan and valgrind simultaneously");
   assert(!hardened || (linux && abi !== "android"), "hardened=true requires os=linux and abi=gnu or musl");
   assert(!requireMdwe || hardened, "requireMdwe=true requires hardened=true");
+  assert(
+    !compiledLibrary || (linux && abi !== "android" && !hardened && (partial.aot ?? true)),
+    "compiledLibrary=true requires os=linux, abi=gnu or musl, aot=true and hardened=false",
+    { hint: "Only there does a realm take one compiled program above another" },
+  );
+  assert(
+    !compiledLibrary || (os === host.os && arch === host.arch && abi === (detectLinuxAbi() ?? abi)),
+    "compiledLibrary=true requires a build for this machine: the new executable compiles its own code",
+  );
   assert(!lockEnvironment || hardened, "lockEnvironment=true requires hardened=true");
   assert(!guardedPages || linux, "guardedPages=true requires os=linux");
   assert(
@@ -1524,6 +1544,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     lockEnvironment,
     guardedPages,
     executeOnlyStart,
+    compiledLibrary,
     socketFaultInjection,
     codeGenerationFromStrings: partial.codeGenerationFromStrings ?? true,
     webAssembly: partial.webAssembly ?? true,
@@ -1936,6 +1957,7 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (cfg.executeOnlyStart === cfg.hardened) {
     features.push(cfg.executeOnlyStart ? "execute-only-start" : "execute-only-start:off");
   }
+  if (cfg.compiledLibrary) features.push("compiled-library");
   if (cfg.socketFaultInjection !== cfg.asan) {
     features.push(`socket-fault-injection:${cfg.socketFaultInjection ? "on" : "off"}`);
   }

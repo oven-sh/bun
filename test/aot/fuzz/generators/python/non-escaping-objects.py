@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""non-escaping-objects.py <seed> [<functions>]: straight-line untyped JavaScript in which NOTHING ESCAPES: a few local literals a function, and random statements WRITTEN WITH STATIC NAMES that a flow analysis can see to the end: stores, deletes, members added, computed keys that are constants, spreads, Object.assign | freeze | seal | preventExtensions | defineProperty | setPrototypeOf | create | keys | values | entries, arrays, Maps, closures, joins by ?:, loops over two objects, swaps, and small readers shared by the whole program (one a name), so that the families of many functions meet. After each statement something is looked at. Every line must be as plain Bun's."""
+"""non-escaping-objects.py <seed> [<functions>]: Straight-line untyped JavaScript in which nothing escapes: a few local
+literals per function, and random statements with static names that a flow analysis can follow to the end.
+"""
 import random, sys
 seed = int(sys.argv[1]); count = int(sys.argv[2]) if len(sys.argv) > 2 else 120
 R = random.Random(seed)

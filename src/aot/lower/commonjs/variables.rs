@@ -6,10 +6,12 @@ use smallvec::SmallVec;
 
 use crate::builtins::id::BuiltinId;
 use crate::builtins::resolve::{ModuleField, ModuleObjectOwner, ModuleObjectUse};
-use crate::builtins::table::{self, Scope};
+use crate::builtins::table::{self, Platforms, Scope};
 use crate::builtins::{Mutability, Resolved, ResolvedBuiltins};
 use crate::ir::generated::CommonJsParameter;
 use crate::ir::{FunctionKey, PropertyKeyId, Type, TypeId, ValueId, VariableId, VariableKey};
+use crate::load::module_paths::with_separators_of_host;
+use crate::load::worker_files::write_file_url;
 use crate::lower::member::PropertyName;
 use crate::lower::scope::{ArgumentsObject, ScopeSlot};
 use crate::lower::{FileLowering, FunctionLowering, module};
@@ -66,6 +68,10 @@ pub(in crate::lower) struct CommonJsState {
     form: BodyForm,
     // `module.exports` may come to hold another value than the object that `exports` names.
     keeps_first_exports: bool,
+    // `Sources::source_path` answers for the file.
+    has_source_path: bool,
+    // With such a path: the text of the file can read `__filename` or `__dirname`.
+    names_source_path: bool,
 }
 
 #[derive(Copy, Clone)]
@@ -78,6 +84,7 @@ enum VariableSource {
     NoObject,
     ImportMetaMember(&'static [u8]),
     ModuleVariable,
+    SourcePath,
     FreeName,
 }
 
@@ -114,20 +121,38 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn compute_state(&self) -> CommonJsState {
-        if !self.is_commonjs_module() {
-            return CommonJsState::default();
-        }
         let (hir, bound) = (self.hir, self.bound);
+        let has_source_path = self.inputs.sources.has_source_path(self.file);
+        let names_source_path = has_source_path
+            && bound.ident_bindings().iter().any(|&(name, binding)| {
+                matches!(
+                    binding,
+                    Binding::CommonJs(CommonJsVariable::Filename | CommonJsVariable::Dirname)
+                ) && !self.decisions().is_dead_expr(name)
+            });
+        if !self.is_commonjs_module() {
+            return CommonJsState {
+                has_source_path,
+                names_source_path,
+                ..CommonJsState::default()
+            };
+        }
         if keeps_wrapper(bound, self.decisions(), self.builtins) {
             return CommonJsState {
                 form: BodyForm::Wrapped,
                 keeps_first_exports: false,
+                has_source_path,
+                names_source_path: names_source_path
+                    || (has_source_path && reads_paths_out_of_sight(bound, self.decisions())),
             };
         }
         let own_module = ModuleRef::File(self.file);
         let assigns_exports =
             |statement: StmtId| matches!(hir[statement].kind, StmtKind::ExportAssign(_));
+        // A mock puts its object where `module.exports` is read from, and so does the next load of a file that was taken out of `require.cache`.
         let mut replaces_exports = self.inputs.modules.keeps_module_object(own_module)
+            || self.inputs.modules.may_be_mocked(own_module)
+            || self.inputs.modules.may_be_evicted(own_module)
             || hir.ids(hir.body).any(assigns_exports);
         let mut names_exports = false;
         for &(name, binding) in bound.ident_bindings() {
@@ -152,6 +177,8 @@ impl FileLowering<'_, '_, '_, '_> {
         CommonJsState {
             form: BodyForm::Plain,
             keeps_first_exports: replaces_exports && names_exports,
+            has_source_path,
+            names_source_path,
         }
     }
 
@@ -169,6 +196,9 @@ impl FileLowering<'_, '_, '_, '_> {
                 }
                 Shape::Value | Shape::AsToday => VariableSource::ModuleExports,
             },
+            CommonJsVariable::Filename | CommonJsVariable::Dirname if self.has_source_path() => {
+                VariableSource::SourcePath
+            }
             _ => VariableSource::ModuleValue(builtin_of(variable)),
         }
     }
@@ -194,6 +224,10 @@ impl FileLowering<'_, '_, '_, '_> {
             {
                 VariableSource::ModuleVariable
             }
+            // `bun build --compile` declares `var __filename = "/where/the/file/lay.js"`.
+            CommonJsVariable::Filename | CommonJsVariable::Dirname if self.has_source_path() => {
+                VariableSource::SourcePath
+            }
             CommonJsVariable::Require | CommonJsVariable::Filename | CommonJsVariable::Dirname => {
                 let path = self.builtins.commonjs_variable(variable);
                 match path.map(|path| (path.id, path.mutability)) {
@@ -207,11 +241,95 @@ impl FileLowering<'_, '_, '_, '_> {
 
     // The path of a file and its folder, as the record of the file has them.
     fn find_path_text(&self, owner: FileId, builtin: BuiltinId) -> Option<Vec<u8>> {
-        let path = self.inputs.sources.module_paths(owner).public_path;
+        let is_commonjs = self.inputs.modules.kind(owner) == ModuleKind::CommonJs;
+        // `./a.cjs?fresh=1`: `__filename` has the query, `import.meta.path` of an ES module does not.
+        let path = match is_commonjs {
+            true => self.inputs.sources.public_path(owner),
+            false => self.inputs.sources.public_path_without_query(owner),
+        };
         // `import.meta.path` of a text that is no file begins with a `/`, and `__filename` of one that is CommonJS is its name.
-        let is_commonjs_text =
-            is_name_of_text(path) && self.inputs.modules.kind(owner) == ModuleKind::CommonJs;
+        let is_commonjs_text = is_name_of_text(path) && is_commonjs;
         find_text_in_path(path, is_commonjs_text, builtin)
+    }
+
+    // In an executable `import.meta.path` is a path below `/$bunfs/root`, and `__filename` is where the file lay when the program was built.
+    fn has_source_path(&self) -> bool {
+        self.modules.commonjs.has_source_path
+    }
+
+    fn find_source_path_text(&self, variable: CommonJsVariable) -> Option<Vec<u8>> {
+        let is_folder = match variable {
+            CommonJsVariable::Filename => false,
+            CommonJsVariable::Dirname => true,
+            CommonJsVariable::Require | CommonJsVariable::Module | CommonJsVariable::Exports => {
+                return None;
+            }
+        };
+        if !self.has_source_path() {
+            return None;
+        }
+        let mut path = self.inputs.sources.source_path(self.file)?;
+        Some(match is_folder {
+            true => directory_of_source(&path).to_vec(),
+            false => {
+                // `./a.cjs?fresh=1`: `__filename` of a CommonJS file has the query.
+                if self.is_commonjs_module() {
+                    path.extend_from_slice(self.inputs.sources.query(self.file));
+                }
+                path
+            }
+        })
+    }
+
+    /// `__dirname` as it is, and as `path.join` answers it in an executable for Windows that another system builds.
+    pub(in crate::lower) fn find_spellings_of_source_directory(&self) -> SmallVec<[Vec<u8>; 2]> {
+        let mut spellings = SmallVec::new();
+        let Some(text) = self.find_source_path_text_if_named(CommonJsVariable::Dirname) else {
+            return spellings;
+        };
+        let is_windows = self.inputs.options.platform.contains(Platforms::WINDOWS);
+        let joined = with_separators_of_host(&text, is_windows);
+        let is_other_text = joined != text;
+        spellings.push(text);
+        if is_other_text {
+            spellings.push(joined);
+        }
+        spellings
+    }
+
+    pub(in crate::lower) fn has_source_path_of(&self, module: ModuleRef) -> bool {
+        matches!(module, ModuleRef::File(file) if self.inputs.sources.has_source_path(file))
+    }
+
+    /// The URL that `pathToFileURL()` makes of the path that `__dirname`, `__filename` or `require.resolve` lead to for a file of the program.
+    pub(in crate::lower) fn find_url_of_source(&self, module: ModuleRef) -> Option<Vec<u8>> {
+        let ModuleRef::File(file) = module else {
+            return None;
+        };
+        if !self.inputs.reads_source_paths {
+            return None;
+        }
+        let mut url = write_file_url(&self.inputs.sources.source_path(file)?)?;
+        url.extend_from_slice(self.inputs.sources.query(file));
+        Some(url)
+    }
+
+    // Nothing of the machine that builds goes into a program that cannot read it.
+    fn find_source_path_text_if_named(&self, variable: CommonJsVariable) -> Option<Vec<u8>> {
+        match self.modules.commonjs.names_source_path {
+            true => self.find_source_path_text(variable),
+            false => None,
+        }
+    }
+
+    /// `__filename` or `__dirname`, which is another text than the member of `import.meta` that `bun run` reads for it.
+    pub(in crate::lower) fn names_source_path(&self, expression: ExprId) -> bool {
+        self.has_source_path()
+            && matches!(self.hir[expression].kind, ExprKind::Ident(_))
+            && matches!(
+                self.bound.binding(expression),
+                Binding::CommonJs(CommonJsVariable::Filename | CommonJsVariable::Dirname)
+            )
     }
 
     fn find_wrapper_path(
@@ -237,6 +355,17 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 }
 
+// The path has the separators of the machine that builds. The folder of a file that lies in the root keeps its separator.
+fn directory_of_source(path: &[u8]) -> &[u8] {
+    let separator = if cfg!(windows) { b'\\' } else { b'/' };
+    let first = bun_core::strings::index_of_char_usize(path, separator);
+    match bun_core::strings::last_index_of_char(path, separator) {
+        Some(last) if Some(last) == first => &path[..=last],
+        Some(last) => &path[..last],
+        None => b"",
+    }
+}
+
 fn find_text_in_path(path: &[u8], is_commonjs_text: bool, builtin: BuiltinId) -> Option<Vec<u8>> {
     let holds = |separator| bun_core::strings::contains_char(path, separator);
     // In an executable for Windows a path begins with a drive and has that system's separators.
@@ -258,6 +387,22 @@ fn find_text_in_path(path: &[u8], is_commonjs_text: bool, builtin: BuiltinId) ->
         }
         _ => None,
     }
+}
+
+// The function that holds the text is passed `__filename` and `__dirname`, and they are read where the text does not name them.
+fn reads_paths_out_of_sight(bound: &Bound<'_>, decisions: &Decisions<'_>) -> bool {
+    let mut redeclared = bound.runtime.redeclared_commonjs_variables().iter();
+    let mut direct_evals = bound.runtime.eval_scopes().iter();
+    let mut scopes = bound.scopes.iter();
+    bound.file_uses_arguments()
+        || redeclared.any(|entry| {
+            matches!(
+                entry.1,
+                CommonJsVariable::Filename | CommonJsVariable::Dirname
+            )
+        })
+        || direct_evals.any(|&(call, _)| !decisions.is_dead_expr(call))
+        || scopes.any(|scope| matches!(scope.kind, ScopeKind::With(_)))
 }
 
 /// Something in the text can only be said of a function that has the five names as parameters: a store to one of them, the `arguments` of the file, a name that is looked up at run time.
@@ -372,7 +517,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let owner = match mention.owner {
             ModuleObjectOwner::OwnFile if file.body_form() == BodyForm::Plain => file.file,
             ModuleObjectOwner::EntryPoint => main?,
-            ModuleObjectOwner::OwnFile | ModuleObjectOwner::Related => return None,
+            ModuleObjectOwner::OwnFile
+            | ModuleObjectOwner::Related
+            | ModuleObjectOwner::ListedInCache => return None,
         };
         if modules.keeps_module_object(ModuleRef::File(owner)) {
             return None;
@@ -457,6 +604,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let variable = ensure_path_variable(self.file, variable);
                 return self.builder.get_module_variable(variable);
             }
+            VariableSource::SourcePath => return self.emit_path_of_own_file(variable),
             VariableSource::FreeName => {
                 return self.emit_free_name_get(variable.name(), is_for_type_of);
             }
@@ -473,6 +621,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             VariableSource::MappedWrapperParameter => {
                 let index = wrapper_parameter_index(variable);
                 self.set_mapped_argument(CodeUnit::File, index, value);
+            }
+            VariableSource::SourcePath => {
+                unreachable!("a file that stores to the name has a variable or a parameter for it")
             }
             VariableSource::ModuleValue(_) | VariableSource::ImportMetaMember(_) => {
                 debug_assert!(
@@ -505,7 +656,31 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     /// What the body of the module passes to the function that holds its text.
     pub(super) fn emit_passed_value(&mut self, variable: CommonJsVariable) -> ValueId {
-        self.emit_value_of_module(self.file.file, builtin_of(variable))
+        match self.file.find_source_path_text_if_named(variable) {
+            Some(text) => self.emit_text(&text),
+            None => self.emit_value_of_module(self.file.file, builtin_of(variable)),
+        }
+    }
+
+    fn emit_path_of_own_file(&mut self, variable: CommonJsVariable) -> ValueId {
+        match self.file.find_source_path_text(variable) {
+            Some(text) => self.emit_text(&text),
+            None => self.emit_value_of_module(self.file.file, builtin_of(variable)),
+        }
+    }
+
+    /// The folders that a path made of `import.meta.dir` or of `__dirname` begins with. An executable has one for each of the two, in a file that can read `__dirname` or `__filename`.
+    pub(in crate::lower) fn emit_own_directories(&mut self) -> SmallVec<[ValueId; 2]> {
+        let mut directories = SmallVec::new();
+        if !self.file.has_source_path() {
+            directories.push(self.get_commonjs_variable(CommonJsVariable::Dirname));
+            return directories;
+        }
+        directories.push(self.emit_value_of_module(self.file.file, BuiltinId::ImportMetaDir));
+        for text in self.file.find_spellings_of_source_directory() {
+            directories.push(self.emit_text(&text));
+        }
+        directories
     }
 
     pub(in crate::lower) fn initialize_path_variables(&mut self) {
@@ -513,6 +688,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             match self.file.find_source(variable) {
                 VariableSource::ModuleVariable => {}
                 _ => continue,
+            }
+            if let Some(text) = self.file.find_source_path_text_if_named(variable) {
+                let value = self.emit_text(&text);
+                self.set_commonjs_variable(variable, value);
+                continue;
             }
             let meta = self.emit_value_of_module(self.file.file, BuiltinId::ImportMeta);
             let key = text_key(self.file, import_meta_member_name(variable));

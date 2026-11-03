@@ -746,6 +746,18 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
         return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
     }
 
+    const bool actualIsCryptoKey = actual.isCell() && actual.asCell()->inherits<WebCore::JSCryptoKey>();
+    const bool expectedIsCryptoKey = expected.isCell() && expected.asCell()->inherits<WebCore::JSCryptoKey>();
+    if (actualIsCryptoKey || expectedIsCryptoKey) {
+        if (!actualIsCryptoKey || !expectedIsCryptoKey)
+            return false;
+        auto& actualKey = uncheckedDowncast<WebCore::JSCryptoKey>(actual.asCell())->wrapped();
+        auto& expectedKey = uncheckedDowncast<WebCore::JSCryptoKey>(expected.asCell())->wrapped();
+        if (!Bun::KeyObject::cryptoKeysEqual(actualKey, expectedKey))
+            return false;
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
+    }
+
     const bool actualIsURL = actual.isCell() && actual.asCell()->inherits<WebCore::JSDOMURL>();
     const bool expectedIsURL = expected.isCell() && expected.asCell()->inherits<WebCore::JSDOMURL>();
     if (actualIsURL || expectedIsURL) {

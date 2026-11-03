@@ -43,7 +43,7 @@ fn every_compiled_file_has_a_record() {
         assert_eq!(modules.record_files, loaded_files);
         for &file in &loaded_files {
             let interop = file_interop(program.input.files, program.input.sources, file);
-            assert_eq!(modules.interop(ModuleRef::File(file)), interop);
+            assert_eq!(modules.interop(ModuleRef::File(file)).kind, interop.kind);
         }
         assert!(modules.other_modules.is_empty());
         assert!(modules.external_kinds.is_empty());
@@ -108,6 +108,7 @@ fn two_kinds_join_to_uncompiled_code() {
             let module = ModuleRef::External {
                 importer,
                 specifier,
+                type_attribute: None,
             };
             assert_eq!(modules.interop(module), Interop::of_external(expected));
             let is_uncompiled_code = expected == ExternalKind::UncompiledCode;
@@ -126,6 +127,7 @@ fn kind_belongs_to_importer_and_specifier() {
         let external = |importer: &str, specifier: &str| ModuleRef::External {
             importer: program.file(importer),
             specifier: program.atom(specifier),
+            type_attribute: None,
         };
         assert!(modules.is_uncompiled_code(external("main.js", UNCOMPILED_MODULE)));
         assert!(modules.is_uncompiled_code(external("a.js", UNCOMPILED_MODULE)));

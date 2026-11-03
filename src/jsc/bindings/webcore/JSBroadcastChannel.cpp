@@ -208,7 +208,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototype_inspectCustom, (JSC::JSGlob
 
     JSObject* inputObj = constructEmptyObject(lexicalGlobalObject);
     inputObj->putDirect(vm, vm.propertyNames->name, jsString(vm, channel->name()), 0);
-    inputObj->putDirect(vm, Identifier::fromString(vm, "active"_s), jsBoolean(!channel->isClosed()), 0);
+    Bun::putDirectNamed(vm, inputObj, "active"_s, jsBoolean(!channel->isClosed()));
 
     JSFunction* utilInspect = globalObject->utilInspectFunction();
     RETURN_IF_EXCEPTION(throwScope, {});

@@ -315,7 +315,7 @@ console.log(lines.join("\n"));
 // CHECK-NEXT: Return v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="listOfArguments"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasArgumentCount, HasHiddenRest, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] site=[[w_16]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array site=[[w_17]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasArgumentCount, HasHiddenRest, IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] site=[[w_16]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array site=[[w_17]] flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: int[0, 4294967295], v1: undefined|null|[[L_1]], v2: Array):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

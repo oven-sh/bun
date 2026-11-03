@@ -94,8 +94,10 @@ export function generateCargoConfig(cfg: Config): string {
     // CARGO_ENCODED_RUSTFLAGS themselves (the lolhtml dep edge, plain
     // `cargo build`/`cargo check`, rust-analyzer); real linker errors still
     // fail the link.
+    // force-frame-pointers: `bun_core::return_address()` reads the frame pointer, and an optimized `cargo test` without
+    // it ends in a segfault at the first file descriptor that is closed.
     lines.push(
-      `rustflags = ["-C", "link-arg=-fuse-ld=lld", "-C", "link-arg=-Qunused-arguments", "-A", "linker_messages"]`,
+      `rustflags = ["-C", "force-frame-pointers=yes", "-C", "link-arg=-fuse-ld=lld", "-C", "link-arg=-Qunused-arguments", "-A", "linker_messages"]`,
     );
   }
   lines.push("");

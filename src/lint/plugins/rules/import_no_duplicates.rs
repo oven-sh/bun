@@ -17,12 +17,13 @@ pub struct NoDuplicates {
     consider_query_string: bool,
 }
 
-const IMPORTED_MULTIPLE_TIMES: Message = Message::new("", "'{{module}}' imported multiple times.");
-const MODULE: Message = Message::new(
+const IMPORTED_MULTIPLE_TIMES: &Message =
+    &Message::new("", "'{{module}}' imported multiple times.");
+const MODULE: &Message = &Message::new(
     "",
     "Module '{{module_name}}' is imported more than once in this file",
 );
-const MODULES: Message = Message::new(
+const MODULES: &Message = &Message::new(
     "",
     "Modules should not be imported multiple times in the same file",
 );

@@ -2,14 +2,15 @@
 // imports, through a namespace object, a barrel, the exports object of a CommonJS module, a class, an object of functions or
 // `import()`. Where the function object is still created, a stub of a few bytes stands in for its entry point. The files are
 // compiled one by one, not bundled, so nothing but the analysis of the whole program removes these bodies.
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run as runCommand } from "./harness/run";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 import { test } from "./supported";
 
-setDefaultTimeout(240_000);
+raiseDefaultTimeout(240_000);
 
 const largestStub = 64;
 

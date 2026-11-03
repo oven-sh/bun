@@ -1,16 +1,5 @@
-// A typed array, a DataView or a Buffer whose memory is detached, shrinks, grows or moves while something reads or writes through it.
-//
-//   kind      the eleven kinds of typed array, DataView, Buffer
-//   memory    of a fixed size, resizable, shared and growable
-//   window    the whole memory, from an offset, an offset and a length, a part of another view; over resizable memory with and without a length of its own
-//   damage    resize to nothing, to less, to the window's edge, to more; transfer to the same size, to less, to more, to a fixed length; a structured clone that takes the memory along; grow
-//   trigger   the valueOf of a stored value, of an index, of an argument; the callback, the comparator or the species of a built-in; and in the body of a loop a call, or a step that does not look like one:
-//             a getter or a setter behind a declared field, a Proxy, a toString in a template, a number that is an object, Symbol.hasInstance, a closure out of a field or a list, the next() of a generator, an await
-//   use       about ninety: loops that read, write and count with the length read once or each time, the methods of typed arrays, of Array.prototype, of DataView, Buffer, Atomics, Reflect, Object
-//
-// Each use is a function of its own. It runs on healthy memory first, often enough to count as hot where that is drawn, then once with the damage, then on healthy memory again.
-// Behind the damage memory of the same sizes is allocated and filled, so that a read through a pointer that was kept prints something else than plain Bun does even where nothing watches the heap.
-// Always TypeScript: the mode `erased` gives the untyped form.
+// A typed array, DataView or Buffer whose memory is detached, shrinks, grows or moves while something reads or writes
+// through it.
 import type { Random } from "./random";
 
 interface Kind {
@@ -195,7 +184,7 @@ export function generate(random: Random): string {
       `return Buffer.concat([view, Buffer.alloc(4)], ${evilIndex}).length;`, `return view.readBigUInt64LE(${evilIndex});`, `return view.readIntBE(${evilIndex}, 3);`, `return view.writeIntLE(5, 0, ${evil("3")});`,
     ];
     const drawn = pick(holder === "view" ? viewUses : holder === "data" ? dataUses : bufferUses);
-    // An await stands only in the function's own body.
+    // An await can only be in the function's own body.
     const use = strike.startsWith("await") && /=> \{|get \w+\(\)|static get/.test(drawn) ? drawn.replaceAll(strike, direct) : drawn;
     const rounds = pick(bytes > 256 ? [3, 3, 5] : [3, 3, 5, 40, 300]);
     const struck = random.between(1, rounds - 2);

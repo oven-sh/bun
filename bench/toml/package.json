@@ -1,0 +1,7 @@
+{
+  "name": "toml-benchmark",
+  "version": "1.0.0",
+  "dependencies": {
+    "smol-toml": "^1.9.1"
+  }
+}

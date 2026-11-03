@@ -222,9 +222,6 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 );
             }
 
-            // `visited.pop()` happens at the end of this function; the early
-            // return above intentionally skips it.
-
             // Iterate over the "@import" rules
             for import_rule in repr.imports.iter() {
                 let record = &self.all_import_records[source_index.get() as usize]

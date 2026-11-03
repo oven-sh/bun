@@ -50,8 +50,7 @@ const enum Unplaced {
   PARENT = -2,
 }
 
-// Not in Node's v26.12.1 text. It is PlainDepth() of Node's native walker: https://github.com/nodejs/node/blob/95f3cf072e83d94ac90616c86a370b250f44a8d7/src/glob/glob_walker.cc#L1063-L1073
-// The count of the names of `path` from `start`, when no name can take the path out of the directory that it starts in. An `Unplaced` value when the names from `start` do not say where the path is.
+// Not in Node's v26.12.1 text: PlainDepth() of Node's native walker (https://github.com/nodejs/node/blob/95f3cf072e83d94ac90616c86a370b250f44a8d7/src/glob/glob_walker.cc#L1063-L1073). The count of the names of `path` from `start`, or an `Unplaced` value when they do not say where the path is.
 function plainDepth(path: string, start: number) {
   const length = path.length;
   const first = path.$charCodeAt(start);

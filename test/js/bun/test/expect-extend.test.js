@@ -173,9 +173,8 @@ it("defines asymmetric variadic matchers that can be prefixed by not", () => {
 it("applies an asymmetric matcher passed as the whole toMatchObject argument", () => {
   expect({ value: 2 }).toMatchObject(expect._toCustomEqual({ value: 2 }));
   expect({ value: 2 }).not.toMatchObject(expect._toCustomEqual({ value: 3 }));
-  expect(() => expect({ value: 2 }).toMatchObject(expect._toCustomEqual({ value: 3 }))).toThrow(
-    "expect(received).toMatchObject(expected)",
-  );
+  // the message is colored in CI, so match the matcher name only
+  expect(() => expect({ value: 2 }).toMatchObject(expect._toCustomEqual({ value: 3 }))).toThrow(/toMatchObject/);
 
   expect({ value: 2 }).toMatchObject(expect.not._toCustomEqual({ value: 3 }));
   expect({ value: 2 }).not.toMatchObject(expect.not._toCustomEqual({ value: 2 }));

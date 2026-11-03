@@ -1,20 +1,22 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use crate::JSGlobalObject;
 use crate::bindgen::JsHeap;
 use crate::strong::Optional as Strong;
 use crate::virtual_machine::VirtualMachine;
+use crate::zig_exception::SOURCE_LINES_COUNT;
 use bun_boringssl::c as boring;
 use bun_collections::StringArrayHashMap;
-use bun_core::strings;
+use bun_core::strings::{self, LineRange};
 use bun_core::{Mutex, Output};
 use bun_event_loop::MiniEventLoop::__bun_stdio_blob_store_new;
 use bun_io::{self as Async};
 use bun_libdeflate_sys::libdeflate;
 use bun_paths::MAX_PATH_BYTES;
+use bun_sourcemap::ParsedSourceMap;
 use bun_sys::{self as syscall, Fd, Mode};
 use bun_uws::{self as uws, SocketGroup};
 
@@ -155,6 +157,105 @@ impl EntropyCache {
     }
 }
 
+/// Where the text of a code frame came from, under one source map.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CodeFrameSource {
+    /// The map's `sourcesContent` entry at this index.
+    SourcesContent(i32),
+    /// The module's own file. A map with no source names is the map of one module URL.
+    ByPath,
+}
+
+/// Code frames (the source lines printed above an error) that the next print of the same place uses. JS thread only.
+#[derive(Default)]
+pub(crate) struct CodeFrameSlots {
+    /// One per place: a line of a source under a `ParsedSourceMap` value.
+    slots: Vec<CodeFrameSlot>,
+    /// The slot that the next `put` replaces once all of them are in use.
+    next: usize,
+}
+
+/// The byte ranges of a code frame's lines, in text order.
+pub(crate) type CodeFrameRanges = bun_core::BoundedArray<LineRange, SOURCE_LINES_COUNT>;
+
+struct CodeFrameSlot {
+    /// A module that bun transpiles again gets a new value (`SavedSourceMap::put_value`), so this slot stops matching.
+    map: Weak<ParsedSourceMap>,
+    source: CodeFrameSource,
+    line: i32,
+    /// The lines as the last load for this place read them.
+    text: Box<[u8]>,
+    /// Relative to `text`.
+    ranges: CodeFrameRanges,
+}
+
+impl CodeFrameSlots {
+    const CAPACITY: usize = 64;
+    /// A longer frame (minified lines) is not kept. Each print reads it again.
+    const MAX_TEXT_LEN: usize = 4096;
+
+    /// The text and the line ranges kept for this place.
+    pub(crate) fn get(
+        &self,
+        map: &Arc<ParsedSourceMap>,
+        source: CodeFrameSource,
+        line: i32,
+    ) -> Option<(&[u8], &[LineRange])> {
+        let slot = self.slots.iter().find(|slot| {
+            // A `Weak` keeps its allocation, so an equal address is the same map value.
+            core::ptr::eq(slot.map.as_ptr(), Arc::as_ptr(map))
+                && slot.source == source
+                && slot.line == line
+        })?;
+        Some((&slot.text, &slot.ranges))
+    }
+
+    /// Keeps the lines that `ranges` cut from `text`.
+    pub(crate) fn put(
+        &mut self,
+        map: &Arc<ParsedSourceMap>,
+        source: CodeFrameSource,
+        line: i32,
+        text: &[u8],
+        ranges: &CodeFrameRanges,
+    ) {
+        let (Some(first), Some(last)) = (ranges.first(), ranges.last()) else {
+            return;
+        };
+        let Some(span) = text.get(first.start as usize..last.end as usize) else {
+            return;
+        };
+        if span.len() > Self::MAX_TEXT_LEN {
+            return;
+        }
+        let mut kept = CodeFrameRanges::default();
+        for range in ranges.iter() {
+            // A range outside the span would make a kept print index out of bounds.
+            if range.start < first.start || range.end > last.end || range.start > range.end {
+                return;
+            }
+            let _ = kept.push(LineRange {
+                start: range.start - first.start,
+                end: range.end - first.start,
+            });
+        }
+
+        let slot = CodeFrameSlot {
+            map: Arc::downgrade(map),
+            source,
+            line,
+            text: span.into(),
+            ranges: kept,
+        };
+        if self.slots.len() < Self::CAPACITY {
+            self.slots.push(slot);
+        } else {
+            self.slots[self.next] = slot;
+            self.next = (self.next + 1) % Self::CAPACITY;
+        }
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // CleanupHook
 // ──────────────────────────────────────────────────────────────────────────
@@ -206,6 +307,8 @@ pub struct RareData {
     pub(crate) stdout_mode: Mode,
 
     pub(crate) entropy_cache: Option<Box<EntropyCache>>,
+
+    pub(crate) code_frame_slots: CodeFrameSlots,
 
     pub(crate) hot_map: Option<HotMap>,
 
@@ -291,6 +394,7 @@ impl Default for RareData {
             stdout_store: None,
             stdout_mode: 0,
             entropy_cache: None,
+            code_frame_slots: CodeFrameSlots::default(),
             hot_map: None,
             cleanup_hooks: Vec::new(),
             cleanup_hooks_after_teardown_wait: Vec::new(),

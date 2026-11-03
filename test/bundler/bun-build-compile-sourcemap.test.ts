@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { rmSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
@@ -304,5 +305,68 @@ main();`,
 
     // Verify it failed (the error was thrown)
     expect(exitCode).not.toBe(0);
+  });
+
+  // The error printer keeps the code frame that it cut for the next print of
+  // the same place. One source map covers every module of the executable, so
+  // the index of the source is all that tells line 3 of a.ts from line 3 of
+  // b.ts. The third entry of a round is how many sources it loaded.
+  test("compile with sourcemap keeps the code frame of each module for the next print", async () => {
+    const thrower = (name: string) => `export function ${name}() {
+  try {
+    throw new Error("${name}");
+  } catch (error) {
+    return error;
+  }
+}
+`;
+    using dir = tempDir("build-compile-sourcemap-code-frame", {
+      "a.ts": thrower("a"),
+      "b.ts": thrower("b"),
+      "app.ts": `import { getCounters } from "bun:internal-for-testing";
+import { a } from "./a.ts";
+import { b } from "./b.ts";
+
+const errorLine = (text: string) => text.split("\\n").findLast(line => /^\\s*\\d+ \\| /.test(line));
+const rounds: unknown[] = [];
+for (let round = 0; round < 3; round++) {
+  const before = getCounters().codeFrame_sourceLoads;
+  const lines = [a(), b()].map(error => errorLine(Bun.inspect(error)));
+  rounds.push([...lines, getCounters().codeFrame_sourceLoads - before]);
+}
+console.log(JSON.stringify(rounds));
+`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "app.ts")],
+      compile: { outfile: join(String(dir), "app") },
+      sourcemap: "external",
+    });
+    expect(result.success).toBe(true);
+    const executable = result.outputs.find((o: any) => o.kind === "entry-point")!.path;
+
+    // A frame can now only come from the source map in the executable.
+    for (const file of ["app.ts", "a.ts", "b.ts"]) rmSync(join(String(dir), file));
+
+    await using proc = Bun.spawn({
+      cmd: [executable],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const lines = ['3 |     throw new Error("a");', '3 |     throw new Error("b");'];
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify([
+        [...lines, 2],
+        [...lines, 0],
+        [...lines, 0],
+      ]),
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

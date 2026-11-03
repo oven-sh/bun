@@ -4863,11 +4863,42 @@ exports.format = async (text, options) => {
         "  Use --allow-unsupported to make this a warning.",
       ]);
       expect(both.exitCode).toBe(2);
-      // Without the plugins, Prettier leaves the code as it is, and so does Bun.
+      // With --allow-unsupported, the code is left as it is, as Prettier without the plugin would leave it.
       const allowed = await format(project, ["--allow-unsupported"], { reads: ["App.vue", "README.md", "b.js"] });
       expect(allowed.files).toEqual({ "App.vue": vue, "README.md": markdown, "b.js": "b;\n" });
-      expect(allowed.stderr).toBe("Formatted 1 file, 3 unchanged");
+      expect(allowed.stderr.split("\n")).toEqual([
+        "Formatted 1 file, 3 unchanged",
+        "warn: Not installed: prettier, @prettier/plugin-pug",
+        "  Install prettier and every plugin in your config, and bun fmt will use them for these files.",
+        "warn: 2 files were formatted without @prettier/plugin-pug, which formats code in them: 1 .md, 1 .vue",
+      ]);
       expect(allowed.exitCode).toBe(0);
+      const allowedStdin = await format(project, ["--allow-unsupported", "--stdin-filepath", "App.vue"], {
+        stdin: vue,
+      });
+      expect(allowedStdin.raw).toBe(vue);
+      expect(allowedStdin.exitCode).toBe(0);
+    });
+
+    test("--allow-unsupported still uses the plugins that are installed", async () => {
+      const result = await format(files, ["--allow-unsupported"], { reads });
+      expect(calls(result)).toEqual(["App.vue", "README.md"]);
+      expect(result.exitCode).toBe(0);
+    });
+
+    // Prettier doesn't know them, so they're named.
+    test("says that Bun's own settings don't reach the files that Prettier formats", async () => {
+      const result = await format(files, ["--sort-imports"], { reads });
+      expect(calls(result)).toEqual(["App.vue", "README.md"]);
+      expect(result.stderr.split("\n")).toContain(
+        "warn: sortImports does not apply to 2 files with code that needs a plugin, which your Prettier formatted",
+      );
+      expect(result.exitCode).toBe(0);
+      const stdin = await format(files, ["--sort-imports", "--stdin-filepath", "App.vue"], { stdin: vue });
+      expect(stdin.raw).toBe(byPrettier(vue));
+      expect(stdin.stderr).toContain("warn: sortImports does not apply to 1 file with code that needs a plugin");
+      const plain = await format(files, [], { reads });
+      expect(plain.stderr).not.toContain("does not apply");
     });
   });
 

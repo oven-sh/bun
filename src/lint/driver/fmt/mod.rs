@@ -220,10 +220,14 @@ pub(crate) fn extension_or_name(path: &[u8]) -> &[u8] {
 
 /// Counts the file at `path` under its extension in `counts`.
 fn count_extension<'p>(counts: &mut Vec<(&'p [u8], usize)>, path: &'p [u8]) {
-    let kind = extension_or_name(path);
+    count_extensions(counts, extension_or_name(path), 1);
+}
+
+/// Counts `count` files with the extension `kind` in `counts`.
+fn count_extensions<'p>(counts: &mut Vec<(&'p [u8], usize)>, kind: &'p [u8], count: usize) {
     match counts.iter_mut().find(|it| it.0 == kind) {
-        Some(entry) => entry.1 += 1,
-        None => counts.push((kind, 1)),
+        Some(entry) => entry.1 += count,
+        None => counts.push((kind, count)),
     }
 }
 
@@ -1611,25 +1615,6 @@ impl Run<'_> {
         self.out
     }
 
-    /// Standard input has code in a language that only `plugin` has, so it goes to Prettier like a file would.
-    fn hand_stdin_over(
-        mut self,
-        configs: &Configs,
-        (path, scope): (Option<&[u8]>, &config::Scope),
-        (display_name, text): (&[u8], &[u8]),
-        plugin: usize,
-    ) -> Outcome {
-        let not_installed = self.not_installed(configs, scope, path);
-        if not_installed.is_empty() {
-            let config = configs.config_file_path(scope);
-            return self.format_stdin_with_prettier((path, config), (display_name, text));
-        }
-        self.warn_not_installed(&not_installed);
-        let name = extension_or_name(path.unwrap_or(display_name));
-        self.report_needs_plugins(&mut [(name, 1)], &[LANGUAGE_PLUGINS[plugin].package]);
-        self.out
-    }
-
     /// Formats standard input, then prints the result or the `--check` verdict.
     fn print_stdin(mut self, configs: &Configs, piped: Piped, mut options: Resolved) -> Outcome {
         let Piped {
@@ -1665,9 +1650,24 @@ impl Run<'_> {
             Err(first_failure.unwrap_or(Failure::Bug))
         };
         let mut formatted = format_text(&options);
-        // Prettier with the plugin formats it, so there is no need to ask Tailwind for the classes in it.
+        // Prettier with the plugin formats it, so there is no need to ask Tailwind for the classes in it. If Prettier
+        // or the plugin isn't installed, `--allow-unsupported` formats it without them instead.
         if let Err(Failure::NeedsPlugin(plugin)) = formatted {
-            return self.hand_stdin_over(configs, file, (name, &text), plugin);
+            let (path, scope) = file;
+            let not_installed = self.not_installed(configs, scope, path);
+            if not_installed.is_empty() {
+                self.warn_settings_of_bun(1);
+                let config = configs.config_file_path(scope);
+                return self.format_stdin_with_prettier((path, config), (name, &text));
+            }
+            self.warn_not_installed(&not_installed);
+            let kind = extension_or_name(path.unwrap_or(name));
+            self.report_needs_plugins(&mut [(kind, 1)], &[LANGUAGE_PLUGINS[plugin].package]);
+            if !self.options.allow_unsupported {
+                return self.out;
+            }
+            options.options.plugin_languages = None;
+            formatted = format_text(&options);
         }
         if let Some(tailwind) = options
             .options
@@ -1837,7 +1837,7 @@ impl Run<'_> {
                 }
             }
         }
-        if options.list_files {
+        if options.list_files && self.modules.is_none() {
             for (_, target) in work.iter().chain(&routing.handed_over) {
                 self.out
                     .stdout
@@ -1864,6 +1864,9 @@ impl Run<'_> {
         let is_doctor = self.modules.is_some();
         // Tailwind can't be asked and `--allow-unsupported` permits that, so classes stay unsorted.
         let skips_class_sorting = AtomicBool::new(is_doctor);
+        // Prettier or a plugin isn't installed and `--allow-unsupported` permits that, so a block in the plugin's
+        // language stays as written.
+        let skips_plugin_languages = AtomicBool::new(false);
         let written_files = fs::WrittenFiles::default();
         // A file with several hard links is overwritten in place. A thread reading it through another link at the same
         // time could see partial text and write that back. So each link is locked from its read to its write. The lock
@@ -1885,6 +1888,9 @@ impl Run<'_> {
                     .map_err(|error| error.0)?;
                 if skips_class_sorting.load(Ordering::Relaxed) {
                     options.options.tailwind = None;
+                }
+                if skips_plugin_languages.load(Ordering::Relaxed) {
+                    options.options.plugin_languages = None;
                 }
                 let kind = Kind::with_options(&target.path, &options.options);
                 // Only these kinds can have code in a plugin's language. The others aren't even read.
@@ -1909,6 +1915,17 @@ impl Run<'_> {
                         .concat());
                     }
                 };
+                // A block in a plugin's language is in a template of JavaScript, or after a fence of Markdown.
+                let may_have_block = match kind {
+                    Some(Kind::Script) => strings::contains_char(&text, b'`'),
+                    Some(Kind::Markdown | Kind::Mdx) => {
+                        strings::contains(&text, b"```") || strings::contains(&text, b"~~~")
+                    }
+                    _ => true,
+                };
+                if is_doctor && !may_have_block {
+                    return Ok(Done::Unchanged);
+                }
                 tailwind::only_where_sorted(&mut options.options, kind);
                 let formatted = match format(
                     &target.path,
@@ -1990,14 +2007,19 @@ impl Run<'_> {
                 }
             }
         }
-        // A file with code in a plugin's language goes to Prettier too, now that it's known to have some.
+        // A file with code in a plugin's language goes to Prettier too, now that it's known to have some. If Prettier
+        // or the plugin isn't installed, `--allow-unsupported` formats it without them instead.
         let mut needs_plugins: (Vec<(&[u8], usize)>, Vec<&[u8]>) = (Vec::new(), Vec::new());
-        for &(index, target) in &work {
+        let mut without_plugins: Vec<usize> = Vec::new();
+        let handed_over_by_name = routing.handed_over.len();
+        for (at, &(index, target)) in work.iter().enumerate() {
             let plugin = match &results.lock()[index] {
                 Some(Done::NeedsPrettier(plugin)) => *plugin,
                 _ => continue,
             };
             if routing.route(configs, (index, target)) {
+                // The pass through the bridge has the result.
+                results.lock()[index] = None;
                 continue;
             }
             count_extension(&mut needs_plugins.0, &target.path);
@@ -2005,7 +2027,16 @@ impl Run<'_> {
             if !needs_plugins.1.contains(&name) {
                 needs_plugins.1.push(name);
             }
-            results.lock()[index] = None;
+            match options.allow_unsupported {
+                true => without_plugins.push(at),
+                false => results.lock()[index] = None,
+            }
+        }
+        if !without_plugins.is_empty() && !is_doctor {
+            skips_plugin_languages.store(true, Ordering::Relaxed);
+            pool.for_each(without_plugins.len(), 1, &|at| {
+                format_at(without_plugins[at])
+            });
         }
         let Routing {
             handed_over,
@@ -2014,7 +2045,7 @@ impl Run<'_> {
         } = routing;
         if let Some(modules) = self.modules {
             let results = results.get_mut();
-            let stops = results.iter().find_map(|it| match it {
+            let stops = work.iter().find_map(|&(index, _)| match &results[index] {
                 Some(Done::Failed(error)) => Some(error),
                 _ => None,
             });
@@ -2022,12 +2053,16 @@ impl Run<'_> {
                 return self.fail_to_start(configs.flavor, error);
             }
             let formatted: Vec<(usize, &Target)> = (work.iter().copied())
-                .filter(|&(index, _)| matches!(results[index], Some(Done::Unchanged)))
+                .filter(|&(index, _)| {
+                    matches!(
+                        results[index],
+                        Some(Done::Unchanged | Done::NeedsPrettier(_))
+                    )
+                })
                 .collect();
-            for &(kind, count) in &needs_plugins.0 {
-                match others.iter_mut().find(|it| it.0 == kind) {
-                    Some(entry) => entry.1 += count,
-                    None => others.push((kind, count)),
+            if !options.allow_unsupported {
+                for &(kind, count) in &needs_plugins.0 {
+                    count_extensions(&mut others, kind, count);
                 }
             }
             let sorted = doctor::Sorted {
@@ -2307,6 +2342,9 @@ impl Run<'_> {
         if !needs_plugins.0.is_empty() {
             self.report_needs_plugins(&mut needs_plugins.0, &needs_plugins.1);
         }
+        if handed_over.len() > handed_over_by_name {
+            self.warn_settings_of_bun(handed_over.len() - handed_over_by_name);
+        }
         // The emulated tool would have formatted or checked these files, so this is an error and is printed last.
         if !others.is_empty() {
             self.report_unsupported(&mut others);
@@ -2380,17 +2418,57 @@ impl Run<'_> {
             1 => ("file was", "it"),
             _ => ("files were", "them"),
         };
+        let names = names.join(&b", "[..]);
+        let counts = Self::extension_counts(others);
+        if self.options.allow_unsupported {
+            let text = format!("{count} {noun} formatted without ");
+            let text = [
+                text.as_bytes(),
+                &names,
+                b", which formats code in ",
+                them.as_bytes(),
+                b": ",
+                &counts,
+            ]
+            .concat();
+            return self.warn(&text);
+        }
         let text = format!("{count} {noun} not formatted because of code that only ");
+        let hint = format!(
+            "\n  Install what is missing, or use --allow-unsupported to format {them} without the plugins."
+        );
         let text = [
             text.as_bytes(),
-            &names.join(&b", "[..]),
+            &names,
             b" can format: ",
-            &Self::extension_counts(others),
-            format!("\n  Install what is missing, or use --allow-unsupported to format {them} without the plugins.")
-                .as_bytes(),
+            &counts,
+            hint.as_bytes(),
         ]
         .concat();
         self.error(&text);
+    }
+
+    /// Warns that `count` files with code in a plugin's language went to Prettier, which doesn't know the settings of
+    /// bunfig.toml and the flags that are Bun's own.
+    fn warn_settings_of_bun(&mut self, count: usize) {
+        let mut names: Vec<&[u8]> = Vec::new();
+        for (name, _) in &self.options.format {
+            if !config::is_prettier_option(name) && !names.contains(name) {
+                names.push(name);
+            }
+        }
+        if !self.options.overrides.is_empty() {
+            names.push(b"[[fmt.overrides]]");
+        }
+        if names.is_empty() {
+            return;
+        }
+        let verb = if names.len() == 1 { "does" } else { "do" };
+        let noun = if count == 1 { "file" } else { "files" };
+        let text = format!(
+            " {verb} not apply to {count} {noun} with code that needs a plugin, which your Prettier formatted"
+        );
+        self.warn(&[&names.join(&b", "[..])[..], text.as_bytes()].concat());
     }
 
     fn init(self, configs: &Configs) -> Outcome {

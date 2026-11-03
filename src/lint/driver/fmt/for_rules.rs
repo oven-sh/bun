@@ -281,6 +281,10 @@ impl<'e> ForRules<'e> {
         {
             resolved.options.tailwind = None;
         }
+        // Without the plugins, as `bun fmt` does for a file whose plugins aren't installed.
+        if *allows_unsupported {
+            resolved.options.plugin_languages = None;
+        }
         let mut scratch = self.scratches.lock().pop().unwrap_or_default();
         let names = Session::new();
         let names = (&Interner::new_in(&names) as &dyn Intern, &names);

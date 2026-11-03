@@ -1941,8 +1941,7 @@ impl<'c> Configs<'c> {
         resolved.options.embedded_html = true;
         resolved.options.toml = self.is_native_in(scope);
         resolved.options.svelte.is_on = self.formats_svelte(scope, path);
-        // With `--allow-unsupported` the file is formatted without the plugins, as Prettier would without them.
-        if !is_oxfmt && !self.options.allow_unsupported {
+        if !is_oxfmt {
             let listed = self.plugin_languages_for(scope, path);
             resolved.options.plugin_languages = PluginLanguages::new(listed);
         }

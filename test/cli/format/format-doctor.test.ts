@@ -369,6 +369,13 @@ Still needed:   @prettier/plugin-pug, prettier (some files go to them)
 `);
     expect(skipped.isUntouched).toBe(true);
     expect(skipped.exitCode).toBe(0);
+
+    // A named file that no parser covers is no reason to stop, as before.
+    const named = await doctor({ ...project, LICENSE: "MIT\n" }, ["LICENSE", "README.md", "a.js"]);
+    expect(named.stdout).toContain(
+      "    1 file is formatted natively\n    1 file goes to your installed Prettier: 1 *.md\n",
+    );
+    expect(named.exitCode).toBe(0);
   });
 
   test("lists unsupported plugins and plugins that aren't installed", async () => {

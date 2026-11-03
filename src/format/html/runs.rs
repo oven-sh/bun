@@ -1567,7 +1567,11 @@ impl<'a> Scanner<'_, 'a> {
                 _ if attribute == at => return None,
                 _ => {}
             }
-            let (end, attribute_width, drops_semicolon) = self.attribute(name, attribute)?;
+            let (end, attribute_width, drops_semicolon) =
+                match self.plain_attribute(name, attribute) {
+                    Some(end) => (end, end - attribute, false),
+                    None => self.attribute(name, attribute)?,
+                };
             if attribute_width == TOO_WIDE && !can_span_lines {
                 return None;
             }
@@ -2451,8 +2455,12 @@ impl<'a> Scanner<'_, 'a> {
     fn plain_attribute(&self, element: &[u8], from: usize) -> Option<usize> {
         let len = self.marks.after_name.window(from).trailing_zeros() as usize;
         let value_start = from + len + 2;
-        if len == 0 || len > WINDOW || self.text.get(from + len..value_start) != Some(b"=\"") {
+        if len == 0 || len > WINDOW {
             return None;
+        }
+        if self.text.get(from + len..value_start) != Some(b"=\"") {
+            let is_alone = matches!(self.at(from + len), b' ' | b'\n' | b'>');
+            return is_alone.then_some(from + len);
         }
         let mut at = value_start;
         let quote = loop {
@@ -2475,6 +2483,12 @@ impl<'a> Scanner<'_, 'a> {
                 self.text.get(from..from + len)?,
                 self.text.get(value_start..quote)?,
             );
+            // Names with one blank between them, as below.
+            if name == b"class" && (1..=WINDOW).contains(&value.len()) {
+                let blanks = self.marks.blanks.window(value_start) & low_bits(value.len());
+                let is_tidy = blanks & ((blanks >> 1) | 1 | (1 << (value.len() - 1))) == 0;
+                return is_tidy.then_some(end);
+            }
             match self.how_value_is_printed(element, name, value, false) {
                 Printed::AsWritten => {}
                 Printed::AsWrittenOnOneLine
@@ -2849,7 +2863,7 @@ impl<'a> Scanner<'_, 'a> {
             return Some(words);
         }
         // Most texts are words of plain characters with one blank between them, on one line.
-        let (mut at, mut twice) = (start, 0);
+        let (mut at, mut twice, mut has_braces) = (start, 0, 0);
         let has_plain_braces = self.has_plain_braces();
         let plain = loop {
             let mut stops = self.marks.tags.window(at)
@@ -2859,18 +2873,26 @@ impl<'a> Scanner<'_, 'a> {
                 stops |= self.marks.braces.window(at);
             }
             let len = (stops.trailing_zeros() as usize).min(WINDOW);
-            // `{{` is looked at below: what is behind `//` and `\` in it is text, whatever it is.
             let (blanks, braces) = (
                 self.marks.blanks.window(at) & !stops,
                 self.marks.braces.window(at),
             );
-            twice |= ((blanks & (blanks >> 1)) | (braces & (braces >> 1))) & low_bits(len);
+            twice |= blanks & (blanks >> 1) & low_bits(len);
+            has_braces |= braces & (braces >> 1) & low_bits(len);
             at += len;
             if len < WINDOW {
                 break at - start;
             }
         };
-        if self.at(start + plain) == b'<' && twice == 0 && self.is_tag_start(start + plain) {
+        // In `{{ }}` the character behind `//` is text, whatever it is. Nothing else in there changes what plain words are.
+        let hides_tag = has_braces != 0
+            && plain >= 2
+            && self.text.get(start + plain - 2..start + plain) == Some(b"//");
+        if self.at(start + plain) == b'<'
+            && twice == 0
+            && !hides_tag
+            && self.is_tag_start(start + plain)
+        {
             let close = start + plain;
             let end = close - usize::from(self.at(close.wrapping_sub(1)) == b' ');
             if !self.ends_text(close) || end <= start {

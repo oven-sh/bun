@@ -2033,6 +2033,8 @@ describe.skipIf(!hasFlag)("HTML", () => {
     "<p>{{//</p>\n",
     '<a b="{{//"></a>\n',
     "\n<span>{{\\</span>\n<e>",
+    "<p>{{ a }} b//</p>\n<p>{{ a // </p>\n<p>a//</p>\n<p>{{ a\n//</p>\n",
+    '<div\n  hidden\n  a-b\n  c="d"\n  e/>\n<div hidden\ta b/ c>d</div>\n',
     // There are no references in it, and a `<` that starts no tag is text anywhere.
     '<div>\n  {{< placeholder width="200" height="250" background="#55595c" color="#eceeef" text="Thumbnail" >}}\n  <p>{{ a && b ? "c" : "d" }} e &amp; f < g</p>\n  {{ a \\}} &bogus; }} h\n  <b></b>\n</div>\n',
     // Code that is left alone gets the indentation of its element.

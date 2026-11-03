@@ -1351,11 +1351,11 @@ describe("Bun.inspect array with no elements and non-indexed properties", () => 
           return arguments;
         })(),
       ),
+      // The property walk prints no key whose text is `constructor`: a string or a symbol.
       constructorKey: Bun.inspect(keyed({ constructor: 5 })),
-      // The property walk hides a key whose text is `constructor`, so the
-      // bracket that was held back is never written.
       constructorSymbol: Bun.inspect(keyed({ [Symbol("constructor")]: 1 })),
       constructorKeyAndTotal: Bun.inspect(keyed({ constructor: 5, total: 7001 })),
+      constructorSymbolAndTotal: Bun.inspect(keyed({ [Symbol("constructor")]: 1, total: 7001 })),
     }).toEqual({
       plain: "[]",
       deleted: "[]",
@@ -1367,16 +1367,30 @@ describe("Bun.inspect array with no elements and non-indexed properties", () => 
       constructorKey: "[]",
       constructorSymbol: "[]",
       constructorKeyAndTotal: "[ total: 7001 ]",
+      constructorSymbolAndTotal: "[ total: 7001 ]",
     });
 
     expect({
       nonEnumerable: pastTheDepthLimit(Object.defineProperty([], "hidden", { value: 1 })),
       privateField: pastTheDepthLimit(new WithPrivateField()),
       constructorKey: pastTheDepthLimit(keyed({ constructor: 5 })),
+      constructorSymbol: pastTheDepthLimit(keyed({ [Symbol("constructor")]: 1 })),
     }).toEqual({
       nonEnumerable: "{\n  x: [],\n}",
       privateField: "{\n  x: [],\n}",
       constructorKey: "{\n  x: [],\n}",
+      constructorSymbol: "{\n  x: [],\n}",
+    });
+
+    // An array that has elements hides the same keys. If it prints one, the array with no elements must too.
+    expect({
+      nonEnumerable: Bun.inspect(Object.defineProperty([1], "hidden", { value: 1 })),
+      constructorKey: Bun.inspect(withOneElement({ constructor: 5 })),
+      constructorSymbol: Bun.inspect(withOneElement({ [Symbol("constructor")]: 1 })),
+    }).toEqual({
+      nonEnumerable: "[ 1 ]",
+      constructorKey: "[ 1 ]",
+      constructorSymbol: "[ 1 ]",
     });
   });
 

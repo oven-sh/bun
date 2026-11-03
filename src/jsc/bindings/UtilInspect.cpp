@@ -93,7 +93,7 @@ extern "C" uint64_t Bun__JSArray__lengthAndNamedKeys(JSC::EncodedJSValue encoded
     structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
         if ((entry.attributes() & PropertyAttribute::DontEnum) || PropertyName(entry.key()).isPrivateName())
             return true;
-        if (entry.key() == vm.propertyNames->constructor.impl()) // the property walk never prints it
+        if (WTF::equal(entry.key(), "constructor"_s)) // the property walk prints no key with this text, a symbol too
             return true;
         found = true;
         return false;

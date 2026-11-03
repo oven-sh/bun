@@ -206,27 +206,43 @@ impl SortUnionTypes {
             last = Some(span);
         }
 
-        // `sortNodesExcludingEslintDisabled`
-        let sorted = Sorted {
-            all: sort::sort_nodes_by_groups(&nodes, config, false, IgnoredForGroup::Nothing),
-            without_disabled: sort::sort_nodes_by_groups(
-                &nodes,
-                config,
-                true,
-                IgnoredForGroup::Nothing,
-            ),
-        };
-        report::report_all_errors(cx, &MESSAGES, &nodes, &sorted, config, |_| {
-            make_fixes(
-                file,
-                &nodes,
-                &sorted.without_disabled,
-                config,
-                FixOptions {
-                    add_safety_semicolon_when_inline: false,
-                },
-            )
-        });
+        // `for (let nodes of formattedMembers) reportAllErrors(..)`: each partition is sorted, reported and fixed on
+        // its own, so a fix never spans two partitions.
+        let mut start = 0;
+        while let Some(first) = nodes.get(start) {
+            let partition_id = first.partition_id;
+            let mut end = start + 1;
+            while nodes
+                .get(end)
+                .is_some_and(|node| node.partition_id == partition_id)
+            {
+                end += 1;
+            }
+            let partition = &nodes[start..end];
+            start = end;
+
+            // `sortNodesExcludingEslintDisabled`
+            let sorted = Sorted {
+                all: sort::sort_nodes_by_groups(partition, config, false, IgnoredForGroup::Nothing),
+                without_disabled: sort::sort_nodes_by_groups(
+                    partition,
+                    config,
+                    true,
+                    IgnoredForGroup::Nothing,
+                ),
+            };
+            report::report_all_errors(cx, &MESSAGES, partition, &sorted, config, |_| {
+                make_fixes(
+                    file,
+                    partition,
+                    &sorted.without_disabled,
+                    config,
+                    FixOptions {
+                        add_safety_semicolon_when_inline: false,
+                    },
+                )
+            });
+        }
     }
 }
 

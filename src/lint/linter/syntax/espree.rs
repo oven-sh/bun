@@ -244,12 +244,27 @@ pub(super) fn module_syntax_in_commonjs<'a>(
 /// names, misplaced `return`, `import` and `export`, and more. It's meant to format code that isn't quite right. So
 /// this only reports errors that Prettier is known to throw. It doesn't use the file's scopes.
 ///
-/// `finds_candidates` is `false` only in a test that checks it makes no difference.
+/// Without `finds_candidates` every check looks at everything. That makes no difference, which a debug build asserts.
 pub(super) fn babel_rejection<'a>(
     file: &'a File<'a>,
     finds_candidates: bool,
 ) -> Option<SyntaxError> {
-    let candidates = finds_candidates.then(|| Candidates::scan(file));
+    let found = babel_rejection_with(file, finds_candidates);
+    #[cfg(debug_assertions)]
+    if finds_candidates {
+        let place_and_message = |it: &SyntaxError| (it.at, it.message.clone());
+        assert_eq!(
+            found.as_ref().map(place_and_message),
+            babel_rejection_with(file, false)
+                .as_ref()
+                .map(place_and_message)
+        );
+    }
+    found
+}
+
+fn babel_rejection_with<'a>(file: &'a File<'a>, finds_candidates: bool) -> Option<SyntaxError> {
+    let candidates = finds_candidates.then(|| Candidates::scan(file, true));
     let mut checks = Checks {
         file,
         candidates: candidates.as_ref(),
@@ -340,6 +355,8 @@ struct Candidates {
     /// `(2 * kind + 1 if in an optional chain, expression index)`. Sorted, which matches the order of
     /// [`File::exprs_of_kind`].
     found: Vec<(u8, u32)>,
+    /// The same for [`Candidates::STMT_KINDS`], as `(kind, statement index)`.
+    stmts: Vec<(u8, u32)>,
 }
 
 impl Candidates {
@@ -360,13 +377,70 @@ impl Candidates {
         ExprTag::Yield,
     ];
 
-    fn scan(file: &File) -> Candidates {
-        use hir::ExprKind as Kind;
+    /// The kinds of statements that have candidates after [`Candidates::scan`] for Babel. What is checked about the other
+    /// kinds is rare syntax.
+    const STMT_KINDS: [StmtTag; 3] = [StmtTag::ForOf, StmtTag::Switch, StmtTag::Throw];
+
+    /// `for_babel`: leaves out what [`Checks::lacks`] keeps the checks from asking for.
+    fn scan(file: &File, for_babel: bool) -> Candidates {
+        use hir::{ExprKind as Kind, rare};
         let text = file.text();
+        let may_have = |bits: u32| !for_babel || file.has_rare_syntax(bits);
+        let if_it_has = |bits: u32, kinds: u64| if may_have(bits) { kinds } else { 0 };
+        let has_keyword_names = !for_babel || !file.hir.keyword_identifier_positions.is_empty();
         let has_private_names = strings::contains_char(text, b'#');
         let has_nullish = strings::contains(text, b"??");
+        const fn kind(tag: ExprTag) -> u64 {
+            1 << tag as u8
+        }
+        // The kinds that the `match` below can say yes to, but for names.
+        let private_names = match has_private_names {
+            true => kind(ExprTag::Dot) | kind(ExprTag::PrivateIdentifier),
+            false => kind(ExprTag::PrivateIdentifier),
+        };
+        let kinds = kind(ExprTag::ImportCall)
+            | kind(ExprTag::Regex)
+            | kind(ExprTag::Super)
+            | kind(ExprTag::TaggedTemplate)
+            | if_it_has(rare::ODD_TARGET, kind(ExprTag::Assign))
+            | if_it_has(
+                rare::ODD_TARGET | rare::DELETES_A_NAME,
+                kind(ExprTag::Unary),
+            )
+            | if_it_has(
+                rare::SUSPENDS_IN_PARAMETERS,
+                kind(ExprTag::Await) | kind(ExprTag::Yield),
+            )
+            | if_it_has(rare::NEW_TARGET, kind(ExprTag::NewTarget))
+            | if_it_has(rare::ODD_PRIVATE_NAME, private_names)
+            | if has_nullish {
+                kind(ExprTag::Binary)
+            } else {
+                0
+            };
+        // Few expressions are candidates, and which of them are is not predictable. So those that can be are collected
+        // without a branch, a block at a time.
+        const BLOCK: usize = 64;
+        let mut picked = [0u8; BLOCK];
+        let blocks = file.hir.exprs.chunks(BLOCK).enumerate();
+        let may_be_candidates = blocks.flat_map(|(block, exprs)| {
+            let mut count = 0;
+            for (i, raw) in exprs.iter().enumerate() {
+                if let Some(slot) = picked.get_mut(count) {
+                    *slot = i as u8;
+                }
+                let is_keyword = has_keyword_names
+                    & matches!(raw.kind, Kind::Ident(name) if name.is_keyword_identifier());
+                count += usize::from((kinds & kind(raw.kind.tag()) != 0) | is_keyword);
+            }
+            let picked = picked;
+            (0..count).filter_map(move |at| {
+                let i = usize::from(*picked.get(at)?);
+                Some((block * BLOCK + i, exprs.get(i)?))
+            })
+        });
         let mut found = Vec::new();
-        for (i, raw) in file.hir.exprs.iter().enumerate() {
+        for (i, raw) in may_be_candidates {
             let is_candidate = match raw.kind {
                 // `keywords_as_identifiers`
                 Kind::Ident(name) => name.is_keyword_identifier(),
@@ -400,8 +474,24 @@ impl Candidates {
                 found.push((2 * tag as u8 + u8::from(is_chained), i as u32));
             }
         }
-        crate::utils::sort::sort_unstable(&mut found);
-        Candidates { found }
+        let mut stmts = Vec::new();
+        if for_babel {
+            for (i, raw) in file.hir.stmts.iter().enumerate() {
+                if matches!(
+                    raw.kind,
+                    hir::StmtKind::ForOf { .. }
+                        | hir::StmtKind::Switch { .. }
+                        | hir::StmtKind::Throw(_)
+                ) && let Some(tag) = file.stmt_in_tree(i)
+                {
+                    stmts.push((tag as u8, i as u32));
+                }
+            }
+        }
+        Candidates {
+            found: sorted_by_kind(&found),
+            stmts: sorted_by_kind(&stmts),
+        }
     }
 
     /// Collects every expression whose kind is in `tags`, and nothing else. None of these kinds can be part of an
@@ -415,7 +505,7 @@ impl Candidates {
             || !file.hir.import_attributes.is_empty()
             || !tags.is_sorted_by_key(|&tag| tag as u8)
         {
-            return Candidates::scan(file);
+            return Candidates::scan(file, false);
         }
         let count_of = |tag: ExprTag| {
             counts
@@ -437,7 +527,10 @@ impl Candidates {
             }
         }
         debug_assert!(found.is_sorted());
-        Candidates { found }
+        Candidates {
+            found,
+            stmts: Vec::new(),
+        }
     }
 
     fn with_kind(&self, tag: ExprTag) -> &[(u8, u32)] {
@@ -445,6 +538,27 @@ impl Candidates {
         let len = self.found[start..].partition_point(|it| it.0 < 2 * tag as u8 + 2);
         &self.found[start..start + len]
     }
+}
+
+/// `found`, which is in the order of the indices, in the order of the kinds and then of the indices.
+fn sorted_by_kind(found: &[(u8, u32)]) -> Vec<(u8, u32)> {
+    let mut starts = [0u32; 1 << u8::BITS];
+    for it in found {
+        starts[usize::from(it.0)] += 1;
+    }
+    let mut next = 0;
+    for start in &mut starts {
+        next += std::mem::replace(start, next);
+    }
+    let mut sorted = vec![(0, 0); found.len()];
+    for &it in found {
+        let at = &mut starts[usize::from(it.0)];
+        if let Some(slot) = sorted.get_mut(*at as usize) {
+            *slot = it;
+        }
+        *at += 1;
+    }
+    sorted
 }
 
 /// `parser_error` is the error from TypeScript's parser, if any, and its offset.
@@ -632,7 +746,7 @@ pub(super) fn oxc_errors<'a>(
     // `a.#b` and `delete a` belong to kinds that have many expressions.
     let common_kinds = hir::rare::ODD_PRIVATE_NAME | hir::rare::DELETES_A_NAME;
     let candidates = (!file.is_javascript()).then(|| match file.has_rare_syntax(common_kinds) {
-        true => Candidates::scan(file),
+        true => Candidates::scan(file, false),
         false => Candidates::from_binder_kinds(file, kinds),
     });
     let mut checks = oxc_checks(file, candidates.as_ref());
@@ -683,6 +797,22 @@ impl<'a, 'c> Checks<'a, 'c> {
         let found = candidates.map_or(&[][..], |it| it.with_kind(tag));
         (all_of_kind.into_iter().flatten())
             .chain(found.iter().map(move |it| Expr::from_raw(file, it.1)))
+    }
+
+    /// Like [`File::stmts_of_kind`], for one of [`Candidates::STMT_KINDS`]. Nothing else in `bun fmt` needs the file's
+    /// statements indexed by kind.
+    fn stmts_of(&self, tag: StmtTag) -> impl Iterator<Item = Stmt<'a>> + use<'a, 'c> {
+        debug_assert!(Candidates::STMT_KINDS.contains(&tag));
+        let file = self.file;
+        let candidates = self.candidates.filter(|_| self.is_quick_for_babel());
+        let all_of_kind = candidates.is_none().then(|| file.stmts_of_kind(tag));
+        let found = candidates.map_or(&[][..], |it| {
+            let start = it.stmts.partition_point(|it| it.0 < tag as u8);
+            let len = it.stmts[start..].partition_point(|it| it.0 == tag as u8);
+            &it.stmts[start..start + len]
+        });
+        (all_of_kind.into_iter().flatten())
+            .chain(found.iter().map(move |it| Stmt::from_raw(file, it.1)))
     }
 
     /// Records an error at `at`. If acorn would notice two errors at the same offset, the one recorded first wins.
@@ -808,10 +938,15 @@ impl<'a, 'c> Checks<'a, 'c> {
         );
     }
 
-    /// True if a check for oxc can be skipped because the parser didn't see the `hir::rare` syntax `bit`. The checks
-    /// for acorn and Babel never skip.
+    /// True if a check for oxc or Babel can be skipped because the parser didn't see the `hir::rare` syntax `bit`. The
+    /// checks for acorn never skip.
     fn lacks(&self, bit: u32) -> bool {
-        self.is_oxc && !self.file.has_rare_syntax(bit)
+        (self.is_oxc || self.is_quick_for_babel()) && !self.file.has_rare_syntax(bit)
+    }
+
+    /// See [`babel_rejection`]. A check all of whose messages Babel doesn't have (`REJECTED_BY_BABEL`) is skipped.
+    fn is_quick_for_babel(&self) -> bool {
+        self.is_babel && self.candidates.is_some()
     }
 
     /// The source type the emulated parser uses for the file.
@@ -1364,6 +1499,9 @@ impl<'a, 'c> Checks<'a, 'c> {
     /// Checks identifiers that are keywords in some contexts. Costs one comparison per identifier in the file.
     fn keywords_as_identifiers(&mut self) {
         let file = self.file;
+        if self.is_quick_for_babel() && file.hir.keyword_identifier_positions.is_empty() {
+            return;
+        }
         for it in self.exprs_of(ExprTag::Ident) {
             let Some(hir::ExprKind::Ident(name)) = it.try_raw().map(|it| it.kind) else {
                 continue;

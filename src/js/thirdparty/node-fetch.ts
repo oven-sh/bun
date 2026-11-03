@@ -166,8 +166,7 @@ class Response extends WebResponse {
 var ResponsePrototype = Response.prototype;
 
 const kUrl = Symbol("kUrl");
-// The Node stream given as the body of a Request. fetch(request) subscribes to it, as node-fetch does, and
-// leaves null behind: the body is used.
+// The Node stream body of a Request, for fetch(request) to subscribe to. null once used.
 const kNodeBody = Symbol("kNodeBody");
 const ObjectHasOwn = Object.hasOwn;
 

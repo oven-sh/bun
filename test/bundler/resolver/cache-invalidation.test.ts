@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { promises as fs } from "fs";
+import { promises as fs, writeFileSync } from "fs";
 import { tempDir } from "harness";
+import { createRequire } from "module";
 import * as path from "path";
 
 // These tests verify that the resolver properly invalidates cache across multiple
@@ -419,5 +420,53 @@ describe("resolver cache invalidation", () => {
     expect(result3.success).toBe(true);
     const text3 = await result3.outputs[0].text();
     expect(text3).toContain("recreated");
+  });
+
+  // A build checks the config files of each directory that it reads. A lookup at the runtime that fails reads them
+  // again for its own directory and not for the ones below it: the next build must not take the new aliases for the
+  // files of that directory and the old ones for the files below it.
+  test.each([
+    ["and nothing else", false],
+    ["and a lookup from the directory of the config files that fails", true],
+  ])("config files edited between two builds are read again for every directory below them, %s", async (_, fails) => {
+    const aliases = (target: string) =>
+      JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { "@lib": [target] } } });
+    const manifest = (target: string) => JSON.stringify({ name: "config-edit", imports: { "#lib": target } });
+    const user = `import { lib } from "@lib"; import { lib as imported } from "#lib"; export default [lib, imported];`;
+    using dir = tempDir("cache-test-config-edit", {
+      // With a node_modules in sight, the lookup that fails does not ask the registry for a package.
+      "node_modules/.keep": "",
+      "tsconfig.json": aliases("./lib/old.ts"),
+      "package.json": manifest("./lib/old.ts"),
+      "lib/old.ts": `export const lib = "old";`,
+      "lib/new.ts": `export const lib = "new";`,
+      "top.ts": user,
+      "src/a/one.ts": user,
+      "src/b/deep/two.ts": user,
+      "entry.ts": `import top from "./top"; import one from "./src/a/one"; import two from "./src/b/deep/two"; console.log(top, one, two);`,
+    });
+    const root = String(dir);
+    // What each file got for "@lib" and for "#lib".
+    const build = async () => {
+      const result = await Bun.build({ entrypoints: [path.join(root, "entry.ts")], metafile: true });
+      const answers: Record<string, string> = {};
+      for (const [file, input] of Object.entries(result.metafile!.inputs)) {
+        const name = path.basename(file, ".ts");
+        if (name !== "entry" && name !== "old" && name !== "new") {
+          answers[name] = input.imports.map(it => path.basename(it.path, ".ts")).join(" ");
+        }
+      }
+      return answers;
+    };
+    expect(await build()).toEqual({ top: "old old", one: "old old", two: "old old" });
+
+    writeFileSync(path.join(root, "tsconfig.json"), aliases("./lib/new.ts"));
+    writeFileSync(path.join(root, "package.json"), manifest("./lib/new.ts"));
+    if (fails) {
+      const lookup = () => createRequire(path.join(root, "x.cjs")).resolve("@not-there");
+      expect(lookup).toThrow("Cannot find module '@not-there'");
+    }
+
+    expect(await build()).toEqual({ top: "new new", one: "new new", two: "new new" });
   });
 });

@@ -3542,25 +3542,27 @@ impl ExpectedText<'_> {
         name: &bun_core::String,
     ) -> JsResult<Option<bun_core::String>> {
         unsafe extern "C" {
-            safe fn SnapshotFormat__hasOwnToStringTag(global: &JSGlobalObject, object: JSValue) -> bool;
+            safe fn SnapshotFormat__hasOwnStringTag(global: &JSGlobalObject, object: JSValue) -> bool;
         }
         let is_context_global = value.js_type() == JSType::GlobalProxy
             && value.get_proxy_target().get_class_info_name().is_some_and(|class| class == b"NodeVMGlobalObject");
         if !is_context_global {
             return Ok(None);
         }
-        let rest = self.rest.get();
-        if name.eq_ascii(b"JSGlobalProxy") {
+        let (older_name, printed): (&'static str, &[u8]) = if name.eq_ascii(b"JSGlobalProxy") {
             // 1.4.4 had the class `NodeVMGlobalProxy` for it.
-            return Ok(rest.starts_with(b"NodeVMGlobalProxy {}").then(|| bun_core::String::static_("NodeVMGlobalProxy")));
-        }
-        // `name` is a `Symbol.toStringTag`. 1.4.0 to 1.4.3 printed one of the global itself, not one of a prototype that a script set.
-        if !rest.starts_with(b"JSGlobalProxy {}")
-            || jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__hasOwnToStringTag(global, value))?
+            ("NodeVMGlobalProxy", b"NodeVMGlobalProxy {}")
+        } else {
+            // `name` is a `Symbol.toStringTag`. 1.4.0 to 1.4.3 did not read one from a prototype that a script set.
+            ("JSGlobalProxy", b"JSGlobalProxy {}")
+        };
+        // Every version printed the `Symbol.toStringTag` of the global itself.
+        if !self.rest.get().starts_with(printed)
+            || jsc::host_fn::from_js_host_call_generic(global, || SnapshotFormat__hasOwnStringTag(global, value))?
         {
             return Ok(None);
         }
-        Ok(Some(bun_core::String::static_("JSGlobalProxy")))
+        Ok(Some(bun_core::String::static_(older_name)))
     }
 }
 

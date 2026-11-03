@@ -2565,6 +2565,8 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
         sandbox: { "1.4.3": "JSGlobalProxy {}", "1.4.4": "NodeVMGlobalProxy {}" },
         window: { "1.4.3": "JSGlobalProxy {}", "1.4.4": "Window {}" },
         tagged: { "1.4.3": "Tagged {}", "1.4.4": "Tagged {}" },
+        taggedAsTheClass: { "1.4.3": "JSGlobalProxy {}", "1.4.4": "JSGlobalProxy {}" },
+        taggedWithNoText: { "1.4.3": "JSGlobalProxy {}", "1.4.4": "NodeVMGlobalProxy {}" },
         thisOfNotContextified: { "1.4.3": "JSGlobalProxy {}", "1.4.4": "NodeVMGlobalProxy {}" },
         notContextified: { "1.4.4": "NodeVMGlobalProxy {}" },
         classPrototype: { "1.4.3": "JSGlobalProxy {}" },
@@ -2578,6 +2580,7 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
         ["window", "NodeVMGlobalProxy {}"],
         ["tagged", "NodeVMGlobalProxy {}"],
         ["tagged", "JSGlobalProxy {}"],
+        ["taggedAsTheClass", "NodeVMGlobalProxy {}"],
         ["mainGlobal", "NodeVMGlobalProxy {}"],
         // Up to 1.4.3 vm.createContext(vm.constants.DONT_CONTEXTIFY) returned another object than the global. It no longer exists.
         ["notContextified", `\nNodeVMSpecialSandbox {\n  "a": 1,\n}\n`],
@@ -2613,6 +2616,8 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
             // jsdom gives the prototype of its Window class to the global of its context.
             window: () => Object.setPrototypeOf(context({ document: {} }), Window.prototype),
             tagged: () => context({ [Symbol.toStringTag]: "Tagged" }),
+            taggedAsTheClass: () => context({ [Symbol.toStringTag]: "JSGlobalProxy" }),
+            taggedWithNoText: () => context({ [Symbol.toStringTag]: "" }),
             notContextified: () => Object.assign(vm.createContext(vm.constants.DONT_CONTEXTIFY), { a: 1 }),
             thisOfNotContextified: () => vm.runInContext("this", values.notContextified()),
             classPrototype: () => Object.setPrototypeOf(context({ a: 1 }), Plain.prototype),

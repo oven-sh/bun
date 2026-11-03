@@ -94,9 +94,9 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellGlobTask {
             Ok(Err(e)) => this.err = Some(ShellGlobErr::Syscall(e)),
             Err(e) => this.err = Some(ShellGlobErr::Unknown(e)),
         }
-        sort_glob_matches(&mut this.result);
         // The event loop thread drops this task. It must not free the walker's copy of each match.
         this.walker.matched_paths.clear_and_free();
+        sort_glob_matches(&mut this.result);
     }
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         // SAFETY: paired with `heap::alloc` in `create_and_schedule`.

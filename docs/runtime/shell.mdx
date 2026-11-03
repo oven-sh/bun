@@ -624,6 +624,15 @@ await $`git ls-remote origin ${branch}`;
   Validating arguments is your application's responsibility.
 </Note>
 
+A glob can produce such an argument too. Bun Shell sorts the matches of a glob by byte, and `-` sorts before letters and digits. In `rm *`, a file named `-rf` comes first, and `rm` reads it as options. Start the pattern with `./` so that every match starts with `./`:
+
+```js
+import { $ } from "bun";
+
+// `rm` reads `./-rf` as a file name, not as options
+await $`rm ./*`;
+```
+
 ---
 
 ## Credits

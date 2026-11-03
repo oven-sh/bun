@@ -533,6 +533,8 @@ public:
     V(private, WriteBarrier<JSObject>, m_lazyRequireCacheObject)                                             \
     /* The CommonJS module that Module.runMain() made the main module, until the next entry load. */         \
     V(public, WriteBarrier<JSObject>, m_mainModuleOfRunMain)                                                 \
+    /* The `main` accessor of the require functions that are made after that. */                             \
+    V(public, WriteBarrier<JSCell>, m_requireMainOfRunMain)                                                  \
     V(public, LazyPropertyOfGlobalObject<Bun::JSCommonJSExtensions>, m_lazyRequireExtensionsObject)          \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_lazyTestModuleObject)                                 \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_testMatcherUtilsObject)                                \
@@ -685,6 +687,8 @@ public:
     bool hasOverriddenModuleResolveFilenameFunction = false;
     // De-optimization once `require("module").wrapper` or `require("module").wrap` is written to
     bool hasOverriddenModuleWrapper = false;
+    // The path of the entry module, if Module.runMain() started a script before the entry module loaded: that load makes the entry module the main module again.
+    WTF::String m_entryThatTakesMainModuleBack;
     // De-optimization once `require("module").runMain` is written to
     bool hasOverriddenModuleRunMain = false;
 

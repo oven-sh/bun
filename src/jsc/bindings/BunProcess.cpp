@@ -5648,7 +5648,7 @@ JSC_DEFINE_CUSTOM_GETTER(processMainModuleOfTestFile, (JSGlobalObject * lexicalG
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    if (JSValue started = Bun::mainModuleOfNewRequireFunctions(globalObject))
+    if (JSValue started = Bun::mainModuleOfRunMain(globalObject))
         return JSValue::encode(started);
     JSValue main = globalObject->bunObject()->get(globalObject, Bun::builtinNames(vm).mainPublicName());
     RETURN_IF_EXCEPTION(scope, {});
@@ -5668,25 +5668,31 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessMainModuleOfTestFile, (JSGlobalObject * globa
 JSC_DEFINE_CUSTOM_GETTER(processMainModuleAfterRunMain, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue, PropertyName))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    if (JSValue started = Bun::mainModuleOfNewRequireFunctions(globalObject))
+    if (JSValue started = Bun::mainModuleOfRunMain(globalObject))
         return JSValue::encode(started);
     return JSValue::encode(constructMainModuleProperty(JSC::getVM(globalObject), globalObject->processObject()));
 }
 
-void Process::setMainModuleOfRunMain(JSGlobalObject* globalObject, JSValue module)
+void Process::setMainModuleOfRunMain(JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto mainModule = Identifier::fromString(vm, "mainModule"_s);
     JSValue own = getDirect(vm, mainModule);
-    // The two accessors above give `module`.
-    if (!own || own.isCustomGetterSetter()) {
-        if (!own)
-            putDirectCustomAccessor(vm, mainModule, CustomGetterSetter::create(vm, processMainModuleAfterRunMain, setProcessMainModuleOfTestFile), PropertyAttribute::CustomAccessor | 0);
+    // The two accessors above read the started module.
+    if (own && own.isCustomGetterSetter())
         return;
+    // Node assigns the property, so a value that code put there goes away. The accessor gives the entry module again after the next entry load.
+    if (own) {
+        DeletePropertySlot slot;
+        bool isDeleted = methodTable()->deleteProperty(this, globalObject, mainModule, slot);
+        RETURN_IF_EXCEPTION(scope, );
+        if (!isDeleted)
+            return;
     }
-    // Node assigns the property, so a value that code put there is replaced.
-    PropertyDescriptor descriptor(module, 0);
-    JSObject::defineOwnProperty(this, globalObject, mainModule, descriptor, false);
+    // `bun test` reads the require map of the test file.
+    auto getter = isBunTest ? processMainModuleOfTestFile : processMainModuleAfterRunMain;
+    putDirectCustomAccessor(vm, mainModule, CustomGetterSetter::create(vm, getter, setProcessMainModuleOfTestFile), PropertyAttribute::CustomAccessor | 0);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNextTickInDefaultRealm, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))

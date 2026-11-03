@@ -659,11 +659,10 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
 // HOST_EXPORT(BunObject_setter_main, jsc)
 pub(crate) fn set_main(global_this: &JSGlobalObject, new_value: JSValue) -> bool {
     // SAFETY: bun_vm() returns the live per-thread singleton.
-    global_this
-        .bun_vm()
-        .as_mut()
-        .overridden_main
-        .set(global_this, new_value);
+    let vm = global_this.bun_vm().as_mut();
+    vm.overridden_main.set(global_this, new_value);
+    // The assigned path names the main module from now on, also after `Module.runMain()` started a script.
+    vm.forget_run_main_modules();
     true
 }
 

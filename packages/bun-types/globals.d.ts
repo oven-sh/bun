@@ -1466,7 +1466,7 @@ interface ImportMeta extends Bun.__internal.ImportMetaGlob {
 
   /**
    * `true` if the current file started the process, or if
-   * `Module.runMain()` from `node:module` started it
+   * `Module.runMain(path)` from `node:module` started it
    *
    * @example
    * ```ts

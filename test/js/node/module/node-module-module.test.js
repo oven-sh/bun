@@ -1499,22 +1499,11 @@ console.log("survived", require("./late.js"));`,
       import { Worker } from "node:worker_threads";
       new Worker(new URL("./${entry}", import.meta.url));
     `;
-    // A launcher that starts target.cjs and then runs `after`, which has the path of the script in `target`.
-    const startThen = after => `
-      const target = require("node:path").resolve("target.cjs");
-      require("node:module").runMain(target);
-      ${after}
+    // Source of a module that counts its runs.
+    const counted = name => `
+      globalThis.runs = (globalThis.runs ?? 0) + 1;
+      console.log("${name}:", "run", globalThis.runs, "|", ${isMain});
     `;
-    const mainTarget = { "target.cjs": print("target.cjs", isMain, isMainModule) };
-    const targetIsMain = ["target.cjs: require.main===module true | process.mainModule===module true"];
-    // A script that counts its runs.
-    const countedTarget = {
-      "target.cjs": `
-        globalThis.runs = (globalThis.runs ?? 0) + 1;
-        console.log("target.cjs:", "run", globalThis.runs, "|", ${isMain});
-        module.exports = { run: globalThis.runs };
-      `,
-    };
 
     each([
       [
@@ -1542,19 +1531,57 @@ console.log("survived", require("./late.js"));`,
         [...mjsIsMain, "wrapper.mjs: import.meta.main true | process.mainModule undefined"],
       ],
       [
-        "the body behind `if (require.main === module)` runs",
+        "a CommonJS script runs inside the call",
         {
-          "wrapper.cjs": start("guarded.cjs"),
-          "guarded.cjs": `if (require.main === module) console.log("body ran");`,
+          "wrapper.cjs": `console.log("before the call"); ${start("target.cjs")} console.log("after the call");`,
+          "target.cjs": `console.log("target.cjs runs");`,
         },
         ["wrapper.cjs"],
-        ["body ran"],
+        ["before the call", "target.cjs runs", "after the call"],
       ],
       [
-        "the body behind `if (import.meta.main)` runs",
-        { "wrapper.cjs": start("guarded.mjs"), "guarded.mjs": `if (import.meta.main) console.log("body ran");` },
+        "an ES module script with a top-level await starts after the synchronous code of the launcher",
+        {
+          "wrapper.cjs": `console.log("before the call"); ${start("target.mjs")} console.log("after the call");`,
+          "target.mjs": `await null; console.log("target.mjs runs");`,
+        },
         ["wrapper.cjs"],
-        ["body ran"],
+        ["before the call", "after the call", "target.mjs runs"],
+      ],
+      // Node 26.12.0 starts an ES module script that has no top-level await inside the call. Node 26.3.0 and 26.12.1 do not.
+      [
+        "an ES module script starts after the synchronous code of the launcher",
+        {
+          "wrapper.cjs": `console.log("before the call"); ${start("target.mjs")} console.log("after the call");`,
+          "target.mjs": `console.log("target.mjs runs");`,
+        },
+        ["wrapper.cjs"],
+        ["before the call", "after the call", "target.mjs runs"],
+        { bunOnly: true },
+      ],
+      // The script leaves require.cache when it throws, so the second call runs it again.
+      [
+        "the call throws what a CommonJS script throws, and the script is process.mainModule",
+        {
+          "wrapper.cjs": `
+            const path = require("node:path");
+            for (const attempt of [1, 2]) {
+              try {
+                ${start("throws.cjs")}
+              } catch (error) {
+                console.log("the call throws:", error.message, "|", ${mainModule});
+              }
+            }
+          `,
+          "throws.cjs": `${print("throws.cjs", isMain)} throw new Error("from throws.cjs");`,
+        },
+        ["wrapper.cjs"],
+        [
+          "throws.cjs: require.main===module true",
+          "the call throws: from throws.cjs | process.mainModule throws.cjs",
+          "throws.cjs: require.main===module true",
+          "the call throws: from throws.cjs | process.mainModule throws.cjs",
+        ],
       ],
       [
         "two CommonJS scripts started one after the other run in that order, and the last is process.mainModule",
@@ -1589,11 +1616,15 @@ console.log("survived", require("./late.js"));`,
         "a started script that starts another script",
         {
           "wrapper.cjs": start("a.cjs"),
-          "a.cjs": print("a.cjs", isMain) + start("b.cjs"),
-          "b.cjs": print("b.cjs", isMain),
+          "a.cjs": print("a.cjs", isMain) + start("b.cjs") + print("a.cjs after b.cjs", isMainModule),
+          "b.cjs": print("b.cjs", isMain, isMainModule),
         },
         ["wrapper.cjs"],
-        ["a.cjs: require.main===module true", "b.cjs: require.main===module true"],
+        [
+          "a.cjs: require.main===module true",
+          "b.cjs: require.main===module true | process.mainModule===module true",
+          "a.cjs after b.cjs: process.mainModule===module false",
+        ],
       ],
       [
         "a module that is already loaded does not run again and does not become the main module",
@@ -1604,46 +1635,58 @@ console.log("survived", require("./late.js"));`,
           "wrapper.cjs: require.main===module true | process.mainModule wrapper.cjs",
         ],
       ],
+      // On main the loader of import() loads the module here, finds the require cache without it, and runs it again.
       [
-        "a launcher that starts itself does not run again and stays the main module",
-        { "wrapper.cjs": `require("node:module").runMain(__filename); ${print("wrapper.cjs", isMain)}` },
-        ["wrapper.cjs"],
-        ["wrapper.cjs: require.main===module true"],
-      ],
-      [
-        "require.main of what the launcher loaded or made before the call stays the launcher",
+        "a loaded module that is started, and that then leaves require.cache, does not run again",
         {
-          ...targets,
           "wrapper.cjs": `
-            const path = require("node:path");
-            const early = require("./early.cjs");
-            const requireMadeBefore = require("node:module").createRequire(__filename);
-            process.on("exit", () => {
-              console.log("early.cjs:", "require.main", path.basename(early().filename));
-              console.log("createRequire:", "require.main", path.basename(requireMadeBefore.main.filename));
-            });
-            require("node:module").runMain(path.resolve("target.cjs"));
+            const target = require.resolve("./target.cjs");
+            require(target);
+            require("node:module").runMain(target);
+            delete require.cache[target];
           `,
-          "early.cjs": `module.exports = () => require.main;`,
+          "target.cjs": counted("target.cjs"),
         },
         ["wrapper.cjs"],
-        [...cjsIsMain, "early.cjs: require.main wrapper.cjs", "createRequire: require.main wrapper.cjs"],
+        ["target.cjs: run 1 | require.main===module false"],
+      ],
+      [
+        "a module that starts itself while require() runs it, and then throws, does not run again",
+        {
+          "wrapper.cjs": `
+            try {
+              require("./target.cjs");
+            } catch (error) {
+              console.log("require throws:", error.message);
+            }
+          `,
+          "target.cjs": `
+            ${counted("target.cjs")}
+            require("node:module").runMain(__filename);
+            throw new Error("from target.cjs");
+          `,
+        },
+        ["wrapper.cjs"],
+        ["target.cjs: run 1 | require.main===module false", "require throws: from target.cjs"],
       ],
       [
         "a second copy of the script, which require() makes after the first left require.cache, is not a main module",
         {
-          "wrapper.cjs": start("target.cjs"),
-          "target.cjs": `
-            ${print("target.cjs", isMain)}
-            if (!globalThis.ranBefore) {
-              globalThis.ranBefore = true;
-              delete require.cache[__filename];
-              require(__filename);
-            }
+          "wrapper.cjs": `
+            const target = require.resolve("./target.cjs");
+            require("node:module").runMain(target);
+            console.log("in require.cache after the call:", target in require.cache);
+            delete require.cache[target];
+            require(target);
           `,
+          "target.cjs": counted("target.cjs"),
         },
         ["wrapper.cjs"],
-        ["target.cjs: require.main===module true", "target.cjs: require.main===module false"],
+        [
+          "target.cjs: run 1 | require.main===module true",
+          "in require.cache after the call: true",
+          "target.cjs: run 2 | require.main===module false",
+        ],
       ],
       [
         "the same file with a query is another module, and not a main module",
@@ -1658,210 +1701,6 @@ console.log("survived", require("./late.js"));`,
         ["no query import.meta.main true", "?again import.meta.main false"],
       ],
       [
-        "process.nextTick(Module.runMain, path) after process.mainModule = undefined, as corepack does",
-        {
-          "wrapper.cjs": `
-            const Module = require("node:module");
-            process.mainModule = undefined;
-            process.nextTick(Module.runMain, require("node:path").resolve("target.cjs"));
-          `,
-          "target.cjs": print("target.cjs", isMain, isMainModule),
-        },
-        ["wrapper.cjs"],
-        ["target.cjs: require.main===module true | process.mainModule===module true"],
-      ],
-      [
-        "Module.runMain(path, null, true), the call that istanbul makes",
-        {
-          "wrapper.cjs": `require("node:module").runMain(require("node:path").resolve("target.cjs"), null, true);`,
-          "target.cjs": print("target.cjs", isMain, isMainModule),
-        },
-        ["wrapper.cjs"],
-        ["target.cjs: require.main===module true | process.mainModule===module true"],
-      ],
-      [
-        "the named export runMain starts target.cjs",
-        { ...targets, "wrapper.mjs": namedExport("target.cjs") },
-        ["wrapper.mjs"],
-        cjsIsMain,
-      ],
-      [
-        "the named export runMain starts target.mjs",
-        { ...targets, "wrapper.mjs": namedExport("target.mjs") },
-        ["wrapper.mjs"],
-        mjsIsMain,
-      ],
-      [
-        "a --require preload starts other.cjs: it runs first, and then the entry point is the main module",
-        {
-          "preload.cjs": `
-            const path = require("node:path");
-            process.on("exit", () => { ${print("preload.cjs", mainModule)} });
-            ${start("other.cjs")}
-          `,
-          "other.cjs": print("other.cjs", isMain, id),
-          "entry.cjs": print("entry.cjs", isMain, id),
-        },
-        ["--require", "./preload.cjs", "./entry.cjs"],
-        [
-          "other.cjs: require.main===module true | id .",
-          "entry.cjs: require.main===module true | id .",
-          "preload.cjs: process.mainModule entry.cjs",
-        ],
-      ],
-      // In Node and on main the entry point runs first here: the callback runs after the entry module.
-      ...["process.nextTick(start)", "Promise.resolve().then(start)"].map(queued => [
-        `a --require preload starts other.cjs in ${queued}: it runs first, and then the entry point is the main module`,
-        {
-          "preload.cjs": `
-            const path = require("node:path");
-            process.on("exit", () => { ${print("preload.cjs", mainModule)} });
-            const start = () => { ${start("other.cjs")} };
-            ${queued};
-          `,
-          "other.cjs": print("other.cjs", isMain, id),
-          "entry.cjs": print("entry.cjs", isMain, id),
-        },
-        ["--require", "./preload.cjs", "./entry.cjs"],
-        [
-          "other.cjs: require.main===module true | id .",
-          "entry.cjs: require.main===module true | id .",
-          "preload.cjs: process.mainModule entry.cjs",
-        ],
-        { bunOnly: true },
-      ]),
-      [
-        "an override of Module.runMain in a --require preload starts other.cjs, and then the entry point is the main module",
-        {
-          "preload.cjs": `
-            const path = require("node:path");
-            const Module = require("node:module");
-            const original = Module.runMain;
-            process.on("exit", () => { ${print("preload.cjs", mainModule)} });
-            Module.runMain = function (...args) {
-              original(path.resolve("other.cjs"));
-              return original.apply(this, args.length ? args : [process.argv[1]]);
-            };
-          `,
-          "other.cjs": print("other.cjs", isMain, id),
-          "entry.cjs": print("entry.cjs", isMain, id),
-        },
-        ["--require", "./preload.cjs", "./entry.cjs"],
-        [
-          "other.cjs: require.main===module true | id .",
-          "entry.cjs: require.main===module true | id .",
-          "preload.cjs: process.mainModule entry.cjs",
-        ],
-      ],
-      [
-        "a --require preload starts other.mjs, and the entry point is the main module too",
-        {
-          "preload.cjs": start("other.mjs"),
-          "other.mjs": print("other.mjs", metaMain),
-          "entry.mjs": print("entry.mjs", metaMain),
-        },
-        ["--require", "./preload.cjs", "./entry.mjs"],
-        ["other.mjs: import.meta.main true", "entry.mjs: import.meta.main true"],
-      ],
-      [
-        "an ES module script with a top-level await starts after the synchronous code of the launcher",
-        {
-          "wrapper.cjs": `console.log("before the call"); ${start("target.mjs")} console.log("after the call");`,
-          "target.mjs": `await null; console.log("target.mjs runs");`,
-        },
-        ["wrapper.cjs"],
-        ["before the call", "after the call", "target.mjs runs"],
-      ],
-      // Node 26.12.0 and Node 27 start an ES module script that has no top-level await inside the call.
-      [
-        "an ES module script starts after the synchronous code of the launcher",
-        {
-          "wrapper.cjs": `console.log("before the call"); ${start("target.mjs")} console.log("after the call");`,
-          "target.mjs": `console.log("target.mjs runs");`,
-        },
-        ["wrapper.cjs"],
-        ["before the call", "after the call", "target.mjs runs"],
-        { bunOnly: true },
-      ],
-      // Node starts a CommonJS script inside the call.
-      [
-        "a CommonJS script starts after the synchronous code of the launcher",
-        {
-          "wrapper.cjs": `console.log("before the call"); ${start("target.cjs")} console.log("after the call");`,
-          "target.cjs": `console.log("target.cjs runs");`,
-        },
-        ["wrapper.cjs"],
-        ["before the call", "after the call", "target.cjs runs"],
-        { bunOnly: true },
-      ],
-      [
-        "-e starts target.cjs",
-        { "target.cjs": print("target.cjs", isMain) },
-        ["-e", start("target.cjs")],
-        ["target.cjs: require.main===module true"],
-      ],
-      [
-        "-e starts target.mjs",
-        { "target.mjs": print("target.mjs", metaMain) },
-        ["-e", start("target.mjs")],
-        ["target.mjs: import.meta.main true"],
-      ],
-      [
-        "a script whose extension has no loader runs",
-        { "wrapper.cjs": start("task.es6"), "task.es6": print("task.es6", isMain) },
-        ["wrapper.cjs"],
-        ["task.es6: require.main===module true"],
-      ],
-      [
-        "a script whose name is not ASCII",
-        { "wrapper.cjs": start("tärget.mjs"), "tärget.mjs": print("target.mjs", metaMain) },
-        ["wrapper.cjs"],
-        ["target.mjs: import.meta.main true"],
-      ],
-      [
-        "the entry point of a Worker starts target.cjs",
-        {
-          "main.mjs": inWorker("worker.cjs"),
-          "worker.cjs": start("target.cjs"),
-          "target.cjs": print("target.cjs", isMain),
-        },
-        ["main.mjs"],
-        ["target.cjs: require.main===module true"],
-      ],
-      [
-        "the entry point of a Worker starts target.mjs",
-        {
-          "main.mjs": inWorker("worker.cjs"),
-          "worker.cjs": start("target.mjs"),
-          "target.mjs": print("target.mjs", metaMain),
-        },
-        ["main.mjs"],
-        ["target.mjs: import.meta.main true"],
-      ],
-      [
-        "Bun as node starts the launcher through a symlink, as a package manager runs a bin",
-        { "wrapper.cjs": start("target.cjs"), "target.cjs": print("target.cjs", isMain, isMainModule) },
-        ["--bun", "node", "link.cjs"],
-        ["target.cjs: require.main===module true | process.mainModule===module true"],
-        { bunOnly: true, symlinks: { "link.cjs": "wrapper.cjs" } },
-      ],
-      // In Node a script that is an ES module by its syntax leaves process.mainModule and require.main undefined.
-      ...["target.js", "target.ts"].map(target => [
-        `a started ${target} that is an ES module by its syntax keeps the launcher as process.mainModule`,
-        {
-          "wrapper.cjs": wrapperCjs(target),
-          [target]: `import "./dep.cjs"; ${print(target, metaMain)}`,
-          "dep.cjs": `const path = require("node:path"); ${print("dep.cjs", requireMain)}`,
-        },
-        ["wrapper.cjs"],
-        [
-          "dep.cjs: require.main wrapper.cjs",
-          `${target}: import.meta.main true`,
-          "wrapper.cjs: require.main===module true | process.mainModule wrapper.cjs",
-        ],
-        { bunOnly: true },
-      ]),
-      [
         "a CommonJS module that a started ES module imports is not a main module",
         {
           "wrapper.cjs": start("target.mjs"),
@@ -1871,21 +1710,21 @@ console.log("survived", require("./late.js"));`,
         ["wrapper.cjs"],
         ["dep.cjs: require.main wrapper.cjs | id <filename>", "target.mjs: import.meta.main true"],
       ],
+      // With a compile cache the thread that calls import() transpiles the file, so the import() makes the module first.
+      // As in Node, only a module that the call makes is a main module.
       [
-        "a second copy of the script, which import() makes after the first left require.cache, is not a main module",
+        "a script whose import() made its module before the call is not a main module",
         {
           "wrapper.cjs": `
-            const target = require("node:path").resolve("target.cjs");
-            require("node:module").runMain(target);
-            setImmediate(() => {
-              delete require.cache[target];
-              import(require("node:url").pathToFileURL(target));
-            });
+            const path = require("node:path");
+            require("node:module").enableCompileCache(path.resolve("compile-cache"));
+            import(require("node:url").pathToFileURL(path.resolve("target.cjs")));
+            ${start("target.cjs")}
           `,
           "target.cjs": print("target.cjs", isMain),
         },
         ["wrapper.cjs"],
-        ["target.cjs: require.main===module true", "target.cjs: require.main===module false"],
+        ["target.cjs: require.main===module false"],
       ],
       [
         "a second copy of the launcher, which import() makes after it started a script, is not a main module",
@@ -1914,26 +1753,6 @@ console.log("survived", require("./late.js"));`,
         ],
       ],
       [
-        "a second --require preload, after one that started other.cjs, is not a main module",
-        {
-          "first.cjs": start("other.cjs"),
-          "second.cjs": `
-            const path = require("node:path");
-            process.on("exit", () => { ${print("at exit", mainModule)} });
-            ${print("second.cjs", requireMain, id)}
-          `,
-          "other.cjs": print("other.cjs", isMain),
-          "entry.cjs": print("entry.cjs", isMain, id),
-        },
-        ["--require", "./first.cjs", "--require", "./second.cjs", "./entry.cjs"],
-        [
-          "other.cjs: require.main===module true",
-          "second.cjs: require.main other.cjs | id <filename>",
-          "entry.cjs: require.main===module true | id .",
-          "at exit: process.mainModule entry.cjs",
-        ],
-      ],
-      [
         "a main module that is compiled again does not become the main module again",
         {
           "wrapper.cjs": `
@@ -1942,10 +1761,8 @@ console.log("survived", require("./late.js"));`,
             const a = path.resolve("a.cjs");
             Module.runMain(a);
             Module.runMain(path.resolve("b.cjs"));
-            setImmediate(() => {
-              require.cache[a]._compile("", a);
-              ${print("wrapper.cjs", mainModule)}
-            });
+            require.cache[a]._compile("", a);
+            ${print("wrapper.cjs", mainModule)}
           `,
           "a.cjs": print("a.cjs", isMain),
           "b.cjs": print("b.cjs", isMain),
@@ -1957,97 +1774,51 @@ console.log("survived", require("./late.js"));`,
           "wrapper.cjs: process.mainModule b.cjs",
         ],
       ],
-      // Node runs the entry point first, and gives it the id ".".
+      // Node copies process.mainModule into a require function when it makes the function.
       [
-        "a CommonJS entry point after a preload that started an ES module keeps its id and its parent",
-        {
-          "preload.cjs": start("other.mjs"),
-          "other.mjs": print("other.mjs", metaMain),
-          "entry.cjs": print("entry.cjs", isMain, id, parent),
-        },
-        ["--require", "./preload.cjs", "./entry.cjs"],
-        [
-          "other.mjs: import.meta.main true",
-          "entry.cjs: require.main===module true | id <filename> | parent undefined",
-        ],
-        { bunOnly: true },
-      ],
-      // Node makes the script the main module inside the call.
-      [
-        "what the launcher requires or makes after the call, before the script runs, keeps the launcher as require.main",
+        "a require function has the main module of the time when it was made: the launcher before the call, the script after it",
         {
           "wrapper.cjs": `
             const path = require("node:path");
+            const Module = require("node:module");
+            const before = [require("./early.cjs"), Module.createRequire(__filename)];
             ${start("target.cjs")}
-            const late = require("./late.cjs");
-            const requireMadeLate = require("node:module").createRequire(__filename);
-            process.on("exit", () => {
-              console.log("late.cjs:", "require.main", path.basename(late().filename));
-              console.log("createRequire:", "require.main", path.basename(requireMadeLate.main.filename));
-            });
+            const after = [require("./late.cjs"), Module.createRequire(__filename)];
+            const names = list => [list[0](), list[1].main].map(main => path.basename(main.filename)).join(" ");
+            console.log("made before the call:", names(before), "| made after the call:", names(after), "|", ${isMain});
           `,
+          "early.cjs": `module.exports = () => require.main;`,
           "late.cjs": `module.exports = () => require.main;`,
           "target.cjs": print("target.cjs", isMain),
         },
         ["wrapper.cjs"],
         [
           "target.cjs: require.main===module true",
-          "late.cjs: require.main wrapper.cjs",
-          "createRequire: require.main wrapper.cjs",
+          "made before the call: wrapper.cjs wrapper.cjs | made after the call: target.cjs target.cjs | require.main===module true",
         ],
-        { bunOnly: true },
       ],
-      // In Node the import() makes the module first, and it is not a main module.
+      // In Node the property is a value: the module that was process.mainModule when the function was made. Here it is an
+      // accessor that reads process.mainModule at each read.
       [
-        "a script whose import() is in flight at the call is the main module",
+        "require.main of a started script is an own accessor of its require function, which reads process.mainModule",
         {
-          "wrapper.cjs": `import(require("node:path").resolve("target.cjs")); ${start("target.cjs")}`,
-          "target.cjs": print("target.cjs", isMain),
-        },
-        ["wrapper.cjs"],
-        ["target.cjs: require.main===module true"],
-        { bunOnly: true },
-      ],
-      // With a compile cache the thread that calls import() transpiles the file, so the import() makes the module first
-      // here too. As in Node, only a module that the call makes is a main module.
-      [
-        "a script whose import() made its module before the call is not a main module",
-        {
-          "wrapper.cjs": `
+          "wrapper.cjs": start("target.cjs"),
+          "target.cjs": `
             const path = require("node:path");
-            require("node:module").enableCompileCache(path.resolve("compile-cache"));
-            import(require("node:url").pathToFileURL(path.resolve("target.cjs")));
-            ${start("target.cjs")}
+            const { get, set } = Object.getOwnPropertyDescriptor(require, "main");
+            console.log("own accessor:", typeof get, typeof set, "| is the module:", require.main === module);
+            ${start("next.cjs")}
+            ${print("after the next start", requireMain)}
+            process.mainModule = module;
+            ${print("after an assignment to process.mainModule", requireMain)}
           `,
-          "target.cjs": print("target.cjs", isMain),
-        },
-        ["wrapper.cjs"],
-        ["target.cjs: require.main===module false"],
-      ],
-      [
-        "a script that an onLoad callback starts while another script loads: both are main modules",
-        {
-          "wrapper.cjs": `
-            const path = require("node:path");
-            const Module = require("node:module");
-            Bun.plugin({
-              name: "starts another script",
-              setup(build) {
-                build.onLoad({ filter: /outer\\.cjs$/ }, args => {
-                  Module.runMain(path.resolve("inner.cjs"));
-                  return { contents: require("node:fs").readFileSync(args.path, "utf8"), loader: "js" };
-                });
-              },
-            });
-            Module.runMain(path.resolve("outer.cjs"));
-          `,
-          "outer.cjs": print("outer.cjs", isMain, id, parent),
-          "inner.cjs": print("inner.cjs", isMain, id, parent),
+          "next.cjs": "",
         },
         ["wrapper.cjs"],
         [
-          "inner.cjs: require.main===module true | id . | parent null",
-          "outer.cjs: require.main===module true | id . | parent null",
+          "own accessor: function undefined | is the module: true",
+          "after the next start: require.main next.cjs",
+          "after an assignment to process.mainModule: require.main target.cjs",
         ],
         { bunOnly: true },
       ],
@@ -2067,23 +1838,6 @@ console.log("survived", require("./late.js"));`,
         { bunOnly: true },
       ],
       [
-        "require.main of a started script is an own property of its require function, as in Node",
-        {
-          "wrapper.cjs": start("target.cjs"),
-          "target.cjs": `
-            const { value, ...attributes } = Object.getOwnPropertyDescriptor(require, "main");
-            console.log("value is the module", value === module, JSON.stringify(attributes));
-            require.main = null;
-            console.log("after an assignment", require.main, "| process.mainModule===module", process.mainModule === module);
-          `,
-        },
-        ["wrapper.cjs"],
-        [
-          `value is the module true {"writable":true,"enumerable":true,"configurable":true}`,
-          "after an assignment null | process.mainModule===module true",
-        ],
-      ],
-      [
         "import.meta.main of a started ES module can be assigned, redefined and deleted, as in Node",
         {
           "wrapper.cjs": start("target.mjs"),
@@ -2097,6 +1851,237 @@ console.log("survived", require("./late.js"));`,
         ["wrapper.cjs"],
         ["assigned and redefined true", "deleted true"],
       ],
+      [
+        "process.nextTick(Module.runMain, path) after process.mainModule = undefined, as corepack does",
+        {
+          "wrapper.cjs": `
+            const Module = require("node:module");
+            process.mainModule = undefined;
+            process.nextTick(Module.runMain, require("node:path").resolve("target.cjs"));
+          `,
+          "target.cjs": print("target.cjs", isMain, isMainModule),
+        },
+        ["wrapper.cjs"],
+        ["target.cjs: require.main===module true | process.mainModule===module true"],
+      ],
+      [
+        "the named export runMain starts target.mjs",
+        { ...targets, "wrapper.mjs": namedExport("target.mjs") },
+        ["wrapper.mjs"],
+        mjsIsMain,
+      ],
+      [
+        "-e starts target.cjs",
+        { "target.cjs": print("target.cjs", isMain) },
+        ["-e", start("target.cjs")],
+        ["target.cjs: require.main===module true"],
+      ],
+      [
+        "the entry point of a Worker starts target.cjs",
+        {
+          "main.mjs": inWorker("worker.cjs"),
+          "worker.cjs": start("target.cjs"),
+          "target.cjs": print("target.cjs", isMain),
+        },
+        ["main.mjs"],
+        ["target.cjs: require.main===module true"],
+      ],
+      [
+        "Bun as node starts the launcher through a symlink, as a package manager runs a bin",
+        { "wrapper.cjs": start("target.cjs"), "target.cjs": print("target.cjs", isMain, isMainModule) },
+        ["--bun", "node", "link.cjs"],
+        ["target.cjs: require.main===module true | process.mainModule===module true"],
+        { bunOnly: true, symlinks: { "link.cjs": "wrapper.cjs" } },
+      ],
+      [
+        "a script whose extension has no loader runs",
+        { "wrapper.cjs": start("task.es6"), "task.es6": print("task.es6", isMain) },
+        ["wrapper.cjs"],
+        ["task.es6: require.main===module true"],
+      ],
+      [
+        "a script that a require.extensions handler compiles is the main module",
+        {
+          "wrapper.cjs": `
+            require.extensions[".tool"] = (module, filename) =>
+              module._compile(require("node:fs").readFileSync(filename, "utf8"), filename);
+            ${start("task.tool")}
+          `,
+          "task.tool": print("task.tool", isMain, id),
+        },
+        ["wrapper.cjs"],
+        ["task.tool: require.main===module true | id ."],
+      ],
+      [
+        "a script whose name is not ASCII",
+        { "wrapper.cjs": start("tärget.mjs"), "tärget.mjs": print("target.mjs", metaMain) },
+        ["wrapper.cjs"],
+        ["target.mjs: import.meta.main true"],
+      ],
+      // In Node a script that is an ES module by its syntax leaves process.mainModule and require.main undefined.
+      [
+        "a started target.js that is an ES module by its syntax keeps the launcher as process.mainModule",
+        {
+          "wrapper.cjs": wrapperCjs("target.js"),
+          "target.js": `import "./dep.cjs"; ${print("target.js", metaMain)}`,
+          "dep.cjs": `const path = require("node:path"); ${print("dep.cjs", requireMain)}`,
+        },
+        ["wrapper.cjs"],
+        [
+          "dep.cjs: require.main wrapper.cjs",
+          "target.js: import.meta.main true",
+          "wrapper.cjs: require.main===module true | process.mainModule wrapper.cjs",
+        ],
+        { bunOnly: true },
+      ],
+      [
+        "a --require preload starts other.cjs: it runs first, and then the entry point is the main module",
+        {
+          "preload.cjs": `
+            const path = require("node:path");
+            process.on("exit", () => { ${print("preload.cjs", mainModule)} });
+            ${start("other.cjs")}
+          `,
+          "other.cjs": print("other.cjs", isMain, id),
+          "entry.cjs": print("entry.cjs", isMain, isMainModule),
+        },
+        ["--require", "./preload.cjs", "./entry.cjs"],
+        [
+          "other.cjs: require.main===module true | id .",
+          "entry.cjs: require.main===module true | process.mainModule===module true",
+          "preload.cjs: process.mainModule entry.cjs",
+        ],
+      ],
+      [
+        "an override of Module.runMain in a --require preload starts other.cjs, and then the entry point is the main module",
+        {
+          "preload.cjs": `
+            const path = require("node:path");
+            const Module = require("node:module");
+            const original = Module.runMain;
+            process.on("exit", () => { ${print("preload.cjs", mainModule)} });
+            Module.runMain = function (...args) {
+              original(path.resolve("other.cjs"));
+              return original.apply(this, args.length ? args : [process.argv[1]]);
+            };
+          `,
+          "other.cjs": print("other.cjs", isMain, id),
+          "entry.cjs": print("entry.cjs", isMain, isMainModule),
+        },
+        ["--require", "./preload.cjs", "./entry.cjs"],
+        [
+          "other.cjs: require.main===module true | id .",
+          "entry.cjs: require.main===module true | process.mainModule===module true",
+          "preload.cjs: process.mainModule entry.cjs",
+        ],
+      ],
+      [
+        "a second --require preload, after one that started other.cjs, is not a main module",
+        {
+          "first.cjs": start("other.cjs"),
+          "second.cjs": `
+            const path = require("node:path");
+            process.on("exit", () => { ${print("at exit", mainModule)} });
+            ${print("second.cjs", requireMain, id)}
+          `,
+          "other.cjs": print("other.cjs", isMain),
+          "entry.cjs": print("entry.cjs", isMain),
+        },
+        ["--require", "./first.cjs", "--require", "./second.cjs", "./entry.cjs"],
+        [
+          "other.cjs: require.main===module true",
+          "second.cjs: require.main other.cjs | id <filename>",
+          "entry.cjs: require.main===module true",
+          "at exit: process.mainModule entry.cjs",
+        ],
+      ],
+      [
+        "a --require preload starts other.mjs, and the entry point is the main module too",
+        {
+          "preload.cjs": start("other.mjs"),
+          "other.mjs": print("other.mjs", metaMain),
+          "entry.mjs": print("entry.mjs", metaMain),
+        },
+        ["--require", "./preload.cjs", "./entry.mjs"],
+        ["other.mjs: import.meta.main true", "entry.mjs: import.meta.main true"],
+      ],
+      // Bun runs the ticks of a preload before the entry module loads. Node runs the entry module first, and ends with other.cjs as process.mainModule.
+      [
+        "a --require preload starts other.cjs in process.nextTick(): it runs first, and then the entry point is the main module",
+        {
+          "preload.cjs": `
+            const path = require("node:path");
+            process.on("exit", () => { ${print("preload.cjs", mainModule)} });
+            process.nextTick(() => { ${start("other.cjs")} });
+          `,
+          "other.cjs": print("other.cjs", isMain),
+          "entry.cjs": print("entry.cjs", isMain),
+        },
+        ["--require", "./preload.cjs", "./entry.cjs"],
+        [
+          "other.cjs: require.main===module true",
+          "entry.cjs: require.main===module true",
+          "preload.cjs: process.mainModule entry.cjs",
+        ],
+        { bunOnly: true },
+      ],
+      // Node runs the entry point first, and gives it the id ".".
+      [
+        "a CommonJS entry point after a preload that started an ES module keeps its id and its parent",
+        {
+          "preload.cjs": start("other.mjs"),
+          "other.mjs": print("other.mjs", metaMain),
+          "entry.cjs": print("entry.cjs", isMain, id, parent),
+        },
+        ["--require", "./preload.cjs", "./entry.cjs"],
+        [
+          "other.mjs: import.meta.main true",
+          "entry.cjs: require.main===module true | id <filename> | parent undefined",
+        ],
+        { bunOnly: true },
+      ],
+      // Bun.main gives the path that the link names, and the loader has the module under that path.
+      [
+        "Bun as node: an entry point behind a symlink is the main module after a --require preload started other.cjs",
+        {
+          "preload.cjs": start("other.cjs"),
+          "other.cjs": print("other.cjs", isMain),
+          "entry.cjs": print("entry.cjs", isMain, isMainModule),
+        },
+        ["--bun", "node", "--require", "./preload.cjs", "./link.cjs"],
+        [
+          "other.cjs: require.main===module true",
+          "entry.cjs: require.main===module true | process.mainModule===module true",
+        ],
+        { bunOnly: true, symlinks: { "link.cjs": "entry.cjs" } },
+      ],
+      // A plugin can answer later, so the loader of import() asks it, once. A CommonJS module that this loader makes is not a main module.
+      ...[
+        ["served.cjs", print("served.cjs", isMain), "served.cjs: require.main===module false"],
+        ["served.mjs", print("served.mjs", metaMain), "served.mjs: import.meta.main true"],
+      ].map(([served, source, line]) => [
+        `${served} that an onLoad plugin answers for is loaded as import() loads it`,
+        {
+          "wrapper.cjs": `
+            let asked = 0;
+            Bun.plugin({
+              name: "answers for served files",
+              setup(build) {
+                build.onLoad({ filter: /served\\.[cm]js$/ }, async args => {
+                  asked++;
+                  return { contents: require("node:fs").readFileSync(args.path, "utf8"), loader: "js" };
+                });
+              },
+            });
+            process.on("exit", () => console.log("the plugin was asked", asked, "time"));
+            ${start(served)}
+          `,
+          [served]: source,
+        },
+        ["wrapper.cjs"],
+        [line, "the plugin was asked 1 time"],
+        { bunOnly: true },
+      ]),
       [
         "the same file in a Bun.ModuleGraph is not a main module there",
         {
@@ -2116,24 +2101,24 @@ console.log("survived", require("./late.js"));`,
       [
         "the entry file in a Bun.ModuleGraph does not take the main module back from a started script",
         {
-          "host.cjs": `
-            const path = require("node:path");
-            ${print("host.cjs", id)}
-            if (!process.hostRan) {
-              process.hostRan = true;
-              process.on("exit", () => { ${print("at exit", mainModule)} });
-              ${start("other.cjs")}
-              setImmediate(() => new Bun.ModuleGraph().import(__filename));
-            }
+          "preload.mjs": `
+            import Module from "node:module";
+            import path from "node:path";
+            process.on("exit", () => { ${print("at exit", mainModule)} });
+            Module.runMain(path.resolve("other.cjs"));
+            await new Bun.ModuleGraph().import(path.resolve("entry.cjs"));
+            ${print("after the graph", mainModule)}
           `,
           "other.cjs": print("other.cjs", isMain),
+          "entry.cjs": print("entry.cjs", id),
         },
-        ["host.cjs"],
+        ["--preload", "./preload.mjs", "./entry.cjs"],
         [
-          "host.cjs: id .",
           "other.cjs: require.main===module true",
-          "host.cjs: id <filename>",
-          "at exit: process.mainModule other.cjs",
+          "entry.cjs: id <filename>",
+          "after the graph: process.mainModule other.cjs",
+          "entry.cjs: id <filename>",
+          "at exit: process.mainModule entry.cjs",
         ],
         { bunOnly: true },
       ],
@@ -2153,224 +2138,45 @@ console.log("survived", require("./late.js"));`,
         ["other.cjs: require.main===module false", "host.mjs: import.meta.main true | process.mainModule undefined"],
         { bunOnly: true },
       ],
-      // In the rows below require.cache loses the script after the call. Node ran the script inside the call. Here
-      // the script starts after the launcher's turn, and it still runs.
+      // As without a started script: the module of the assigned path is the main module.
       [
-        "the script runs after the launcher deleted it from require.cache",
-        { ...mainTarget, "wrapper.cjs": startThen(`delete require.cache[target];`) },
-        ["wrapper.cjs"],
-        targetIsMain,
-      ],
-      [
-        "the script runs after the launcher deleted every module from require.cache",
+        "Bun.main = path after a started script makes the module of that path the main module",
         {
-          ...mainTarget,
-          "wrapper.cjs": startThen(`for (const key of Object.keys(require.cache)) delete require.cache[key];`),
-        },
-        ["wrapper.cjs"],
-        targetIsMain,
-      ],
-      [
-        "the script runs after a process.nextTick callback deleted it from require.cache",
-        { ...mainTarget, "wrapper.cjs": startThen(`process.nextTick(() => delete require.cache[target]);`) },
-        ["wrapper.cjs"],
-        targetIsMain,
-      ],
-      [
-        "the script runs after a microtask deleted it from require.cache",
-        { ...mainTarget, "wrapper.cjs": startThen(`queueMicrotask(() => delete require.cache[target]);`) },
-        ["wrapper.cjs"],
-        targetIsMain,
-      ],
-      [
-        "the script runs after the launcher put a value that is not a module in its place in require.cache",
-        { ...mainTarget, "wrapper.cjs": startThen(`require.cache[target] = 1;`) },
-        ["wrapper.cjs"],
-        targetIsMain,
-      ],
-      [
-        "the script runs after a process.nextTick callback started it and deleted it from require.cache",
-        { ...mainTarget, "wrapper.cjs": `process.nextTick(() => { ${startThen(`delete require.cache[target];`)} });` },
-        ["wrapper.cjs"],
-        targetIsMain,
-      ],
-      [
-        "the script runs after a setImmediate callback started it and deleted it from require.cache",
-        { ...mainTarget, "wrapper.cjs": `setImmediate(() => { ${startThen(`delete require.cache[target];`)} });` },
-        ["wrapper.cjs"],
-        targetIsMain,
-      ],
-      [
-        "the script runs after an ES module launcher deleted it from require.cache",
-        {
-          ...mainTarget,
-          "wrapper.mjs": `
-            import { runMain, createRequire } from "node:module";
-            import path from "node:path";
-            const target = path.resolve("target.cjs");
-            runMain(target);
-            delete createRequire(import.meta.url).cache[target];
-          `,
-        },
-        ["wrapper.mjs"],
-        targetIsMain,
-      ],
-      [
-        "a --require preload starts other.cjs and deletes it from require.cache: it runs first, and then the entry point",
-        {
-          "preload.cjs": `
-            const other = require("node:path").resolve("other.cjs");
-            require("node:module").runMain(other);
-            delete require.cache[other];
-          `,
-          "other.cjs": print("other.cjs", isMain, id),
-          "entry.cjs": print("entry.cjs", isMain, id),
-        },
-        ["--require", "./preload.cjs", "./entry.cjs"],
-        ["other.cjs: require.main===module true | id .", "entry.cjs: require.main===module true | id ."],
-      ],
-      [
-        "a started script starts another script and deletes it from require.cache",
-        {
-          "wrapper.cjs": start("a.cjs"),
-          "a.cjs": `
-            const b = require("node:path").resolve("b.cjs");
-            ${print("a.cjs", isMain)}
-            require("node:module").runMain(b);
-            delete require.cache[b];
-          `,
-          "b.cjs": print("b.cjs", isMain),
-        },
-        ["wrapper.cjs"],
-        ["a.cjs: require.main===module true", "b.cjs: require.main===module true"],
-      ],
-      [
-        "the first of two started scripts runs after the launcher deleted it from require.cache",
-        {
-          "wrapper.cjs": `
+          "wrapper.cjs": start("target.cjs"),
+          "target.cjs": `
             const path = require("node:path");
-            const a = path.resolve("a.cjs");
-            process.on("exit", () => { ${print("wrapper.cjs", mainModule)} });
-            require("node:module").runMain(a);
-            require("node:module").runMain(path.resolve("b.cjs"));
-            delete require.cache[a];
+            ${print("target.cjs", isMain)}
+            Bun.main = path.resolve("dep.cjs");
+            require("./dep.cjs");
+            ${print("target.cjs after the store", requireMain, mainModule)}
           `,
-          "a.cjs": print("a.cjs", isMain),
-          "b.cjs": print("b.cjs", isMain),
+          "dep.cjs": print("dep.cjs", isMain, isMainModule),
         },
         ["wrapper.cjs"],
         [
-          "a.cjs: require.main===module true",
-          "b.cjs: require.main===module true",
-          "wrapper.cjs: process.mainModule b.cjs",
-        ],
-      ],
-      // Node ran the script before the delete, so require.cache does not have it.
-      [
-        "a script that runs after it left require.cache is in require.cache again",
-        {
-          ...mainTarget,
-          "wrapper.cjs": startThen(`
-            delete require.cache[target];
-            process.on("exit", () => console.log("in require.cache:", target in require.cache));
-          `),
-        },
-        ["wrapper.cjs"],
-        [...targetIsMain, "in require.cache: true"],
-        { bunOnly: true },
-      ],
-      [
-        "the script runs after it left require.cache and the garbage collector ran",
-        { ...mainTarget, "wrapper.cjs": startThen(`delete require.cache[target]; Bun.gc(true);`) },
-        ["wrapper.cjs"],
-        targetIsMain,
-        { bunOnly: true },
-      ],
-      // Node runs the script once, inside the call. Its second copy is what the later require() makes, and it is
-      // not a main module.
-      [
-        "a script that require() ran before the start, and that then left require.cache, runs again as a main module",
-        {
-          ...countedTarget,
-          "wrapper.cjs": startThen(`
-            require(target);
-            delete require.cache[target];
-            setImmediate(() => console.log("later require:", JSON.stringify(require(target))));
-          `),
-        },
-        ["wrapper.cjs"],
-        [
-          "target.cjs: run 1 | require.main===module true",
-          "target.cjs: run 2 | require.main===module true",
-          `later require: {"run":2}`,
-        ],
-        { bunOnly: true },
-      ],
-      [
-        "a loaded module that is started, and that then leaves require.cache, does not run again",
-        {
-          ...countedTarget,
-          "wrapper.cjs": `
-            require("./target.cjs");
-            ${startThen(`delete require.cache[target];`)}
-          `,
-        },
-        ["wrapper.cjs"],
-        ["target.cjs: run 1 | require.main===module false"],
-      ],
-      [
-        "a module that starts itself while require() runs it, and then throws, does not run again",
-        {
-          "wrapper.cjs": `
-            try {
-              require("./target.cjs");
-            } catch (error) {
-              console.log("require throws:", error.message);
-            }
-          `,
-          "target.cjs": `
-            globalThis.runs = (globalThis.runs ?? 0) + 1;
-            console.log("target.cjs:", "run", globalThis.runs, "|", ${isMain});
-            require("node:module").runMain(__filename);
-            throw new Error("from target.cjs");
-          `,
-        },
-        ["wrapper.cjs"],
-        ["target.cjs: run 1 | require.main===module false", "require throws: from target.cjs"],
-      ],
-      // In Node the call throws what the script throws.
-      [
-        "a script that throws in a require() before the start runs again at the start, and a later import() rejects",
-        {
-          "wrapper.cjs": startThen(`
-            try {
-              require(target);
-            } catch (error) {
-              console.log("require throws:", error.message);
-            }
-            setImmediate(() => {
-              import(require("node:url").pathToFileURL(target)).then(
-                () => console.log("later import resolves"),
-                error => console.log("later import rejects:", error.message),
-              );
-            });
-          `),
-          "target.cjs": `
-            globalThis.runs = (globalThis.runs ?? 0) + 1;
-            console.log("target.cjs:", "run", globalThis.runs, "|", ${isMain});
-            throw new Error("from target.cjs");
-          `,
-        },
-        ["wrapper.cjs"],
-        [
-          "target.cjs: run 1 | require.main===module true",
-          "require throws: from target.cjs",
-          "target.cjs: run 2 | require.main===module true",
-          "later import rejects: from target.cjs",
+          "target.cjs: require.main===module true",
+          "dep.cjs: require.main===module true | process.mainModule===module true",
+          "target.cjs after the store: require.main dep.cjs | process.mainModule dep.cjs",
         ],
         { bunOnly: true },
       ],
     ]);
+
+    // The shared rows expect an empty stderr and the exit code 0.
+    test("a CommonJS script that throws ends the process with its error and the exit code 1", async () => {
+      const files = {
+        "wrapper.cjs": `${start("throws.cjs")} console.log("after the call");`,
+        "throws.cjs": `console.log("throws.cjs runs"); throw new Error("from throws.cjs");`,
+      };
+      for (const exe of node ? [bunExe(), node] : [bunExe()]) {
+        const { stdout, stderr, exitCode } = await run(exe, files, ["wrapper.cjs"]);
+        expect({ stdout, hasError: stderr.includes("from throws.cjs"), exitCode }).toEqual({
+          stdout: ["throws.cjs runs"],
+          hasError: true,
+          exitCode: 1,
+        });
+      }
+    });
 
     // Runs `entry` under --hot. Each run is [the files to save before it, the lines that it prints].
     async function hotRuns(entry, runs) {
@@ -2431,10 +2237,12 @@ console.log("survived", require("./late.js"));`,
     });
 
     test("after a --hot reload, a script that the launcher starts no more is not a main module", async () => {
+      // The launcher assigns process.mainModule, as corepack does. The started script takes the place of that value.
       const files = {
         "wrapper.mjs": `
           import Module from "node:module";
           import path from "node:path";
+          process.mainModule = undefined;
           Module.runMain(path.resolve("target.cjs"));
           Module.runMain(path.resolve("target.mjs"));
         `,
@@ -2483,15 +2291,9 @@ console.log("survived", require("./late.js"));`,
       "bun test %s: a script that a test file starts is not the main module of the next file",
       async (flag, scriptIsMain) => {
         const files = {
-          "a.test.cjs": `
-          test("starts x.cjs", async () => {
-            const ran = new Promise(resolve => process.once("x-ran", resolve));
-            ${start("x.cjs")}
-            await ran;
-          });
-        `,
+          "a.test.cjs": `test("starts x.cjs", () => { ${start("x.cjs")} });`,
           "b.test.cjs": readsMainModule("b.test.cjs"),
-          "x.cjs": `${print("x.cjs", isMain)} process.emit("x-ran");`,
+          "x.cjs": print("x.cjs", isMain),
         };
         const args = [...(flag ? [flag] : []), "./a.test.cjs", "./b.test.cjs"];
         expect(await linesOfBunTest(files, args)).toEqual({
@@ -2505,43 +2307,69 @@ console.log("survived", require("./late.js"));`,
       },
     );
 
-    test.each(["jest", "vi"])(
-      "bun test: the script runs after %s.resetModules() in the turn of the call",
-      async api => {
-        const files = {
-          "a.test.cjs": `
-          test("starts x.cjs", async () => {
-            const ran = new Promise(resolve => process.once("x-ran", resolve));
-            ${start("x.cjs")}
-            ${api}.resetModules();
-            await ran;
-          });
-        `,
-          "x.cjs": `${print("x.cjs", isMain)} process.emit("x-ran");`,
-        };
-        expect(await linesOfBunTest(files, ["./a.test.cjs"])).toEqual({
-          lines: ["x.cjs: require.main===module true"],
-          exitCode: 0,
-          stderr: "",
-        });
-      },
-    );
-
-    // The second test file gets the script from the cache of --isolate, so the call makes the module with no wait.
-    test("bun test --isolate: a script that an earlier test file loaded runs after the test file that starts it deleted it from require.cache", async () => {
+    // The later test file gets the script from the cache of --isolate.
+    test("bun test --isolate: a script that an earlier test file loaded is the main module when a later test file starts it", async () => {
       const files = {
         "a.test.cjs": `test("loads target.cjs", () => { require("./target.cjs"); });`,
-        "b.test.cjs": `
-          test("starts target.cjs", async () => {
-            const ran = new Promise(resolve => process.once("target-ran", resolve));
-            ${startThen("delete require.cache[target];")}
-            await ran;
-          });
-        `,
-        "target.cjs": `${print("target.cjs", isMain)} process.emit("target-ran");`,
+        "b.test.cjs": `test("starts target.cjs", () => { ${start("target.cjs")} });`,
+        "target.cjs": print("target.cjs", isMain),
       };
       expect(await linesOfBunTest(files, ["--isolate", "./a.test.cjs", "./b.test.cjs"])).toEqual({
         lines: ["target.cjs: require.main===module false", "target.cjs: require.main===module true"],
+        exitCode: 0,
+        stderr: "",
+      });
+    });
+
+    // dep.cjs stays in the require cache. Its require function was made while x.cjs was the main module.
+    test("bun test: a module that a started script loaded reads the main module of the next test file", async () => {
+      const files = {
+        "a.test.cjs": `
+          test("starts x.cjs", () => {
+            process.mainModule = undefined;
+            ${start("x.cjs")}
+          });
+        `,
+        "b.test.cjs": `
+          const path = require("node:path");
+          test("reads the main module", () => {
+            const main = require("./dep.cjs")();
+            console.log("dep.cjs:", "require.main", path.basename(main.filename), "|", ${mainModule}, "|", ${isMain});
+          });
+        `,
+        "x.cjs": `
+          const path = require("node:path");
+          const main = require("./dep.cjs")();
+          console.log("dep.cjs:", "require.main", path.basename(main.filename), "|", ${mainModule});
+        `,
+        "dep.cjs": `module.exports = () => require.main;`,
+      };
+      expect(await linesOfBunTest(files, ["./a.test.cjs", "./b.test.cjs"])).toEqual({
+        lines: [
+          "dep.cjs: require.main x.cjs | process.mainModule x.cjs",
+          "dep.cjs: require.main b.test.cjs | process.mainModule b.test.cjs | require.main===module true",
+        ],
+        exitCode: 0,
+        stderr: "",
+      });
+    });
+
+    // A mock can answer later, so the loader of import() takes the file, as on main.
+    test("bun test: Module.runMain() of a file that has an async mock does not throw, and the mock stands for the file", async () => {
+      const files = {
+        "a.test.cjs": `
+          const { mock, test } = require("bun:test");
+          test("starts x.cjs", async () => {
+            const target = require("node:path").resolve("x.cjs");
+            mock.module(target, async () => ({ mocked: true }));
+            require("node:module").runMain(target);
+            console.log("x.cjs: import() gives", JSON.stringify(await import(target)));
+          });
+        `,
+        "x.cjs": `console.log("x.cjs: runs");`,
+      };
+      expect(await linesOfBunTest(files, ["./a.test.cjs"])).toEqual({
+        lines: ['x.cjs: import() gives {"mocked":true}'],
         exitCode: 0,
         stderr: "",
       });

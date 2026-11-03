@@ -203,7 +203,10 @@ inline std::optional<JSC::SourceCode> createCommonJSModule(
 }
 
 // The CommonJS module that Module.runMain() made the main module, until the next entry load. Empty if there is none.
-JSC::JSValue mainModuleOfNewRequireFunctions(Zig::GlobalObject*);
+JSC::JSValue mainModuleOfRunMain(Zig::GlobalObject*);
+
+// Module.runMain(path). True: a CommonJS script ran as the main module, or the require cache has the module. False: the caller loads `key` as import() does.
+bool runMainModule(Zig::GlobalObject*, const WTF::String& key);
 
 // `import.meta.main` is true in a module that Module.runMain() started. `key` is the registry key of the module.
 void putImportMetaMainOfRunMainModule(Zig::GlobalObject*, JSC::JSObject* importMeta, JSC::JSValue key);

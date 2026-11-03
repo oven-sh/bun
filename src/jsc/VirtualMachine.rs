@@ -149,46 +149,6 @@ pub enum MainEntryPoint {
     Bake,
 }
 
-/// Main modules that `Module.runMain()` starts: an ES module is one by its registry key, a CommonJS module by its load.
-#[derive(Default)]
-pub struct RunMainModules {
-    keys: bun_collections::StringSet,
-    /// The keys that `Module.runMain()` is loading now. A call inside a call is last.
-    loading: Vec<Box<[u8]>>,
-    /// A script started before the entry module loaded: the load of the entry module makes it the main module again, as in Node.
-    entry_takes_back: bool,
-}
-
-impl RunMainModules {
-    pub fn begin_load(&mut self, key: &[u8], before_entry: bool) {
-        bun_core::handle_oom(self.keys.insert(key));
-        self.loading.push(Box::from(key));
-        self.entry_takes_back |= before_entry;
-    }
-
-    pub fn end_load(&mut self) {
-        self.loading.pop();
-    }
-
-    #[inline]
-    pub fn is_loading(&self, key: &[u8]) -> bool {
-        self.loading.last().is_some_and(|loading| **loading == *key)
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.keys.is_empty()
-    }
-
-    pub fn contains(&self, key: &[u8]) -> bool {
-        self.keys.contains(key)
-    }
-
-    pub fn take_entry_takes_back(&mut self) -> bool {
-        core::mem::take(&mut self.entry_takes_back)
-    }
-}
-
 /// The built-in module that `Bun__loadBuiltinEntryPoint` runs. Mirrors
 /// `Bun::BuiltinEntryPoint` in `BuiltinEntryPoint.cpp`.
 #[repr(u8)]
@@ -228,7 +188,8 @@ pub struct VirtualMachine {
     pub main_hash: u32,
     /// Set if code overrides Bun.main to a custom value.
     pub overridden_main: crate::strong::Optional,
-    pub run_main_modules: RunMainModules,
+    /// The registry keys of the modules that `Module.runMain()` started. `import.meta.main` is true in them until the next entry load.
+    pub run_main_modules: bun_collections::StringSet,
     /// `bun bake`: the plugins of `bake.config.ts`, a JS array. The dev server loads them after the
     /// `[serve.static] plugins` of bunfig.toml.
     pub bake_config_plugins: crate::strong::Optional,
@@ -3519,7 +3480,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).main_hash).write(0);
             addr_of_mut!((*vm).main_entry_point).write(MainEntryPoint::File);
             addr_of_mut!((*vm).main_resolved_path).write(bun_core::String::EMPTY);
-            addr_of_mut!((*vm).run_main_modules).write(RunMainModules::default());
+            addr_of_mut!((*vm).run_main_modules).write(bun_collections::StringSet::default());
             addr_of_mut!((*vm).bake_config_plugin_names).write(Box::default());
             addr_of_mut!((*vm).bake_pages).write(false);
             addr_of_mut!((*vm).hide_bun_stackframes).write(true);
@@ -3726,13 +3687,14 @@ impl VirtualMachine {
                 && crate::compiled_program::entry_point_is_commonjs(self.global()))
     }
 
-    /// A new entry load starts: what `Module.runMain()` started before is not a main module of this run.
-    fn forget_run_main_modules(&mut self) {
+    /// A new entry load starts, or code assigns `Bun.main`: what `Module.runMain()` started before is not a main module.
+    #[inline(never)]
+    pub fn forget_run_main_modules(&mut self) {
         if self.run_main_modules.is_empty() {
             return;
         }
-        self.run_main_modules = RunMainModules::default();
-        crate::cpp::Bun__forgetMainModuleOfNewRequireFunctions(self.global());
+        self.run_main_modules = bun_collections::StringSet::default();
+        crate::cpp::Bun__forgetMainModuleOfRunMain(self.global());
     }
 
     /// `eventLoop().waitForPromise(promise)` — spin tick/auto_tick until

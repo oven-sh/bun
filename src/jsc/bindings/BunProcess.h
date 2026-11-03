@@ -76,8 +76,8 @@ public:
     template<size_t NumArgs>
     void queueNextTick(JSC::JSGlobalObject* globalObject, JSValue func, const JSValue (&args)[NumArgs]);
 
-    // Module.runMain() made `module` the main module (Bun::mainModuleOfNewRequireFunctions): `process.mainModule` gives it.
-    void setMainModuleOfRunMain(JSC::JSGlobalObject*, JSC::JSValue module);
+    // Module.runMain() made a CommonJS module the main module (Bun::mainModuleOfRunMain): `process.mainModule` reads it.
+    void setMainModuleOfRunMain(JSC::JSGlobalObject*);
 
     // Some Node.js events want to be emitted on the next tick rather than synchronously.
     // This is equivalent to `process.nextTick(() => process.emit(eventName, event))` from JavaScript.

@@ -504,6 +504,7 @@ Readable.prototype.setEncoding = function (this: $Node.Readable, enc: string) {
       content += decoder.write(data);
     }
   }
+  if ((state[kState] & Flag.Ended) !== 0) content += decoder.end();
   state.buffer.length = 0;
   state.bufferIndex = 0;
 

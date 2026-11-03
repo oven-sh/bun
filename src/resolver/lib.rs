@@ -1441,23 +1441,15 @@ pub mod fs {
             true
         }
 
-        /// A cached listing whose directory cannot be listed keeps its slot with no names. One stat gives it the identity that a read would, so a later asker keeps it.
+        /// A cached listing whose directory cannot be listed keeps its slot with no names. It has no identity, so each asker that checks tries the directory once.
         #[cold]
         fn keep_not_listable_locked(listing: *mut DirEntry, generation: Generation) {
             // SAFETY: a `DirEntry` of the BSSMap singleton, exclusively held under `entries_mutex`.
             let listing = unsafe { &mut *listing };
-            let read_clock_ns = bun_sys::file_stamp_clock_ns();
-            let mut buf = bun_paths::path_buffer_pool::get();
-            let ino = Self::dir_z(&mut buf, listing.dir)
-                .and_then(|dir| bun_sys::stat_force_sync(dir).ok())
-                .map_or(0, |now| now.ino);
-            if listing.data.count() != 0 {
-                listing.data.clear();
-                listing.version = listing.version.wrapping_add(1);
+            if listing.data.count() != 0 || listing.dot_ino != 0 {
+                listing.forget();
             }
             listing.generation = generation;
-            listing.read_clock_ns = read_clock_ns;
-            listing.dot_ino = ino;
         }
 
         fn dir_z<'buf>(buf: &'buf mut bun_paths::PathBuffer, dir: &[u8]) -> Option<&'buf ZStr> {

@@ -667,6 +667,9 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
         const native = socket[kStateSymbol].handle.socket;
         sender.send("x", socket.address().port, "127.0.0.1");
         const { store, graph } = await message.promise;
+        // 'message' is a callback of the binder's socket. A test that ends inside it, after dispose(), leaves the runner
+        // inside a disposed graph, and the runner does not call the tests that it starts from there.
+        await hostTimerTurns(1);
         graphs.A.dispose();
         const closedByA: boolean = native.closed;
         graphs.B.dispose();

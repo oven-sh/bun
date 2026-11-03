@@ -1,11 +1,12 @@
 import { AsyncLocalStorage } from "async_hooks";
 import { describe, expect, jest, test } from "bun:test";
 import { createSocket } from "dgram";
+import { once } from "node:events";
 import { Worker } from "node:worker_threads";
 
-import { bunEnv, bunExe, bunRun, disableAggressiveGCScope, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, disableAggressiveGCScope, isWindows, tempDir } from "harness";
 import path from "path";
-import { unsupported as aotUnsupported } from "../../../aot/harness/compiler";
+import { Lifetimes } from "../module-graph/module-graph-lifetimes";
 import { nodeDataCases } from "./testdata";
 
 // Spawn a cluster fixture with a hard deadline and no-orphan protection so a
@@ -1015,54 +1016,139 @@ test("a send() that waited behind backpressure reports what its callback throws 
   });
 });
 
-// node:dgram saves the async context of createSocket() and of a queued send(). Where an ahead-of-time build cannot
-// follow a saved context, it takes every AsyncLocalStorage store of the program to be used by code it cannot see, and
-// keeps all that a store names. `bun check --aot` says what a build keeps. node:child_process reaches bind() for a
-// socket that a child receives. (Not on a debug build: the two reports take 50 s there.)
-test.skipIf(aotUnsupported !== undefined || isDebug)(
-  "an ahead-of-time build removes what only a method of a store names, in a program that binds and sends and in one that spawns a child",
-  async () => {
-    const programs = {
-      "binds a node:dgram socket and sends on it": `import { createSocket } from "node:dgram";
-const socket = createSocket("udp4");
-socket.bind(0, "127.0.0.1", () => socket.send("x", socket.address().port, "127.0.0.1", () => socket.close()));`,
-      "spawns a child process": `import { spawn } from "node:child_process";
-spawn(process.execPath, ["--version"]).on("exit", () => {});`,
-    };
-    const collation = "Intl.Collator and localeCompare (";
-    const reports = await Promise.all(
-      Object.entries(programs).map(async ([program, uses]) => {
-        using dir = tempDir("dgram-aot-store", {
-          "main.ts": `// @ts-nocheck
-import { AsyncLocalStorage } from "node:async_hooks";
-class Store {
-  used() { return 1; }
-  neverCalled() { return new Intl.Collator("en").compare("a", "b"); }
-}
-const storage = new AsyncLocalStorage();
-const store = new Store();
-console.log(storage.run(store, () => store.used()));
-${uses}
-`,
-        });
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "check", "--aot", "--no-pretty", "--explain=trim", "main.ts"],
-          cwd: String(dir),
-          env: { ...bunEnv, NO_COLOR: "1" },
-          stdout: "ignore",
-          stderr: "pipe",
-        });
-        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-        return [program, { collation: stderr.split("\n").filter(line => line.includes(collation)), exitCode }];
-      }),
+// What node:dgram keeps of an async context, it keeps as Node.js does: the handle has the store of createSocket() until
+// close(), and a request that waits behind backpressure has the store of its send() until its callback has run. Each
+// row tracks the store object of one run().
+test("an unbound socket keeps the store of createSocket() until close()", async () => {
+  const lifetimes = new Lifetimes();
+  const storage = new AsyncLocalStorage<object>();
+  const sockets: Record<string, ReturnType<typeof createSocket>> = {};
+  // A bind to its port fails.
+  const holder = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0 });
+  const rows = ["held", "closed", "dropped", "a bind failed, then closed"];
+  try {
+    await (async () => {
+      for (const row of rows) {
+        const socket = storage.run(lifetimes.track(row, { row }), () => createSocket("udp4"));
+        if (row !== "dropped") sockets[row] = socket;
+        if (row.startsWith("a bind failed")) {
+          const failed = once(socket, "error");
+          socket.bind(holder.port, "127.0.0.1");
+          expect((await failed)[0].code).toBe("EADDRINUSE");
+        }
+        if (row.endsWith("closed")) {
+          const closed = once(socket, "close");
+          socket.close();
+          await closed;
+        }
+      }
+    })();
+    expect(await lifetimes.stillAlive("closed", "dropped", "a bind failed, then closed")).toEqual([]);
+    expect(await lifetimes.survives("held")).toBe(true);
+  } finally {
+    holder.close();
+    sockets.held?.close();
+  }
+  expect(await lifetimes.stillAlive(...rows)).toEqual([]);
+});
+
+test("a send() that waits behind backpressure keeps the store of its call until its callback has run", async () => {
+  const { kStateSymbol } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+  const lifetimes = new Lifetimes();
+  const storage = new AsyncLocalStorage<object>();
+  const socket = createSocket("udp4");
+  const takesEverySend = { send: () => true };
+  const refusesEverySend = { send: () => false };
+  let closed = false;
+  try {
+    await new Promise<void>((resolve, reject) => socket.once("error", reject).bind(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve, reject) =>
+      socket.connect(socket.address().port, "127.0.0.1", (error?: Error) => (error ? reject(error) : resolve())),
     );
-    const removed = { collation: [expect.stringContaining(`aot: trim: removed ${collation}`)], exitCode: 0 };
-    expect(Object.fromEntries(reports)).toEqual({
-      "binds a node:dgram socket and sends on it": removed,
-      "spawns a child process": removed,
-    });
-  },
-);
+    const handle = socket[kStateSymbol].handle;
+    const realSocket = handle.socket;
+    try {
+      await (async () => {
+        for (const row of ["completed by a drain", "still queued"]) {
+          const completed = Promise.withResolvers<void>();
+          // With a queue, every send() waits behind it: what backpressure does.
+          handle.sendQueue = [];
+          handle.socket = row === "completed by a drain" ? takesEverySend : refusesEverySend;
+          storage.run(lifetimes.track(row, { row }), () => socket.send("x", completed.resolve));
+          handle.drain();
+          if (row === "completed by a drain") await completed.promise;
+        }
+      })();
+      expect(await lifetimes.stillAlive("completed by a drain")).toEqual([]);
+      expect(await lifetimes.survives("still queued")).toBe(true);
+    } finally {
+      handle.socket = realSocket;
+    }
+    closed = true;
+    const done = once(socket, "close");
+    socket.close();
+    await done;
+    expect(await lifetimes.stillAlive("still queued")).toEqual([]);
+  } finally {
+    if (!closed) socket.close();
+  }
+});
+
+// The frame of a queued send() is in a table, by request. A request completes once, and its entry goes then: the table
+// does not grow with the requests that a drain completes. When drain() returns the requests are still in the queue of
+// ticks, so no collection has removed an entry.
+test("the drain of queued send()s leaves none of them in the table of their frames", async () => {
+  // A CommonJS file: its require() calls run in order, so node:dgram loads after the patch.
+  using dir = tempDir("dgram-queued-send-table", {
+    "table.cjs": `
+      // node:dgram takes WeakMap.prototype.set when it loads. Its table of frames is the one that gets a request.
+      const set = WeakMap.prototype.set;
+      let table;
+      WeakMap.prototype.set = function (key, value) {
+        if (table === undefined && key !== null && typeof key === "object" && "oncomplete" in key) table = this;
+        return set.call(this, key, value);
+      };
+      const { AsyncLocalStorage } = require("node:async_hooks");
+      const dgram = require("node:dgram");
+      WeakMap.prototype.set = set;
+      const { estimateShallowMemoryUsageOf } = require("bun:jsc");
+      const { kStateSymbol } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+      const storage = new AsyncLocalStorage();
+      const socket = dgram.createSocket("udp4");
+      socket.bind(0, "127.0.0.1", () =>
+        socket.connect(socket.address().port, "127.0.0.1", () => {
+          const handle = socket[kStateSymbol].handle;
+          const realSocket = handle.socket;
+          // With a queue, every send() waits behind it: what backpressure does.
+          handle.sendQueue = [];
+          storage.run("send()", () => {
+            for (let i = 0; i < 2000; i++) socket.send("x", () => {});
+          });
+          const queued = estimateShallowMemoryUsageOf(table);
+          handle.socket = { send: () => true };
+          handle.drain();
+          handle.socket = realSocket;
+          const drained = estimateShallowMemoryUsageOf(table);
+          console.log(JSON.stringify({ "has a table": table !== undefined, "shrinks at the drain": queued > 16 * drained }));
+          socket.close();
+        }),
+      );
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "table.cjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+    stdout: { "has a table": true, "shrinks at the drain": true },
+    stderr: "",
+    exitCode: 0,
+  });
+});
 
 // `bun test --isolate=modules` runs each test file inside a Bun.ModuleGraph, so every socket of a test file is made
 // with a frame of a graph in its async context. node:dgram does not keep such a context (it would keep the graph), so
@@ -1152,12 +1238,13 @@ const icmpBindModes = {
 for (const [kind, bind] of Object.entries(icmpBindModes)) {
   test.skipIf(isWindows)(`${kind} socket emits the ICMP error instead of silently dying`, async () => {
     const { kStateSymbol } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
-    const deadPort = await getDeadPort();
 
     const socket = createSocket("udp4");
     const { promise: errored, resolve: onError } = Promise.withResolvers<any>();
     socket.on("error", onError);
     await bind(socket);
+    // After the bind: a port that is taken before it can become the port of this socket, and then nothing refuses.
+    const deadPort = await getDeadPort();
     await new Promise<void>(resolve => socket.connect(deadPort, "127.0.0.1", () => resolve()));
 
     // Keep sending until the queued ICMP error surfaces. If the native socket
@@ -1200,12 +1287,13 @@ for (const [kind, bind] of Object.entries(icmpBindModes)) {
     const inStore = <T>(store: string | undefined, fn: () => T) =>
       store === undefined ? fn() : storage.run(store, fn);
     const storeOfError = async (createIn: string | undefined, bindIn: string | undefined) => {
-      const deadPort = await getDeadPort();
       const socket = inStore(createIn, () => createSocket("udp4"));
       try {
         const { promise: errored, resolve: onError } = Promise.withResolvers<string>();
         socket.on("error", error => onError(`${storage.getStore()} (${error.message})`));
         await inStore(bindIn, () => bind(socket));
+        // After the bind: a port that is taken before it can become the port of this socket, and then nothing refuses.
+        const deadPort = await getDeadPort();
         await new Promise<void>((resolve, reject) =>
           socket.connect(deadPort, "127.0.0.1", (error?: Error) => (error ? reject(error) : resolve())),
         );

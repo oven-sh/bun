@@ -52,7 +52,7 @@ const dir = String(
       export function dgramSocketInStoreOfTheGraph(storage) { return storage.run({ log() {} }, dgramSocket); }
       // Calls the listeners of the host's target while the graph's script is on the stack.
       export function dispatch(target) { target.dispatchEvent(new Event("call")); }
-      export function dgramSend(socket) { socket.send("from the graph"); }
+      export function dgramSend(socket, callback) { socket.send("from the graph", callback); }
       export function serve() {
         const server = Bun.serve({ port: 0, fetch: () => new Response("graph " + TAG) });
         control.httpPort = server.port;
@@ -486,6 +486,37 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
     expect(await lifetimes.stillAlive(...rows)).toEqual([]);
   });
 
+  // A bind by the host opens the socket in the async context of createSocket(), so the open socket keeps the store
+  // of createSocket(), as in Node.js. A bind by a graph's script opens it in the context of bind(): nothing needs
+  // the context of createSocket() after that, and the handle lets it go when the bind succeeds.
+  test("an open node:dgram socket keeps the store of createSocket() only when it opened in it", async () => {
+    const lifetimes = new Lifetimes();
+    const storage = new AsyncLocalStorage<object>();
+    const sockets: dgram.Socket[] = [];
+    const graph = new ModuleGraph({ globals: {} });
+    const bind = (socket: dgram.Socket) =>
+      new Promise<string>(resolve => {
+        socket.once("error", (error: NodeJS.ErrnoException) => resolve(String(error.code)));
+        socket.bind(0, "127.0.0.1", () => resolve("listening"));
+      });
+    const rows = ["bound by the host", "bound by a graph's script"];
+    try {
+      await (async () => {
+        for (const row of rows) {
+          const socket = storage.run(lifetimes.track(row, { row }), () => dgram.createSocket("udp4"));
+          sockets.push(socket);
+          expect(await (row === "bound by the host" ? bind(socket) : graph.run(() => bind(socket)))).toBe("listening");
+        }
+      })();
+      expect(await lifetimes.stillAlive("bound by a graph's script")).toEqual([]);
+      expect(await lifetimes.survives("bound by the host")).toBe(true);
+    } finally {
+      for (const socket of sockets) socket.close();
+      graph.dispose();
+    }
+    expect(await lifetimes.stillAlive(...rows)).toEqual([]);
+  });
+
   // A send() that waits behind backpressure keeps the async context of its call for its callback. With no callback
   // it keeps nothing: the queue of a socket of the host's does not keep the graph whose script sent.
   test("a queued node:dgram send() with no callback does not keep the graph that sent it", async () => {
@@ -516,6 +547,51 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
       }
     } finally {
       socket.close();
+    }
+  });
+
+  // With a callback it keeps the async context of its call until the callback has run, as a queued send() of a
+  // WebSocket does. A frame of a graph in that context keeps the graph for that time: until the drain, or close().
+  test("a queued node:dgram send() with a callback keeps the graph that sent it until it completes", async () => {
+    const lifetimes = new Lifetimes();
+    const socket = dgram.createSocket("udp4");
+    const takesEverySend = { send: () => true };
+    const refusesEverySend = { send: () => false };
+    let closed = false;
+    try {
+      socket.bind(0, "127.0.0.1");
+      await once(socket, "listening");
+      socket.connect(socket.address().port, "127.0.0.1");
+      await once(socket, "connect");
+      const handle = socket[kStateSymbol].handle;
+      const realSocket = handle.socket;
+      try {
+        await (async () => {
+          for (const row of ["completed by a drain", "still queued"]) {
+            const graph = lifetimes.track(row, new ModuleGraph({ globals: { TAG: row, control: control() } }));
+            const io = await graph.import(file("io.mjs"));
+            const completed = Promise.withResolvers<void>();
+            // With a queue, every send() waits behind it. The callback is the host's: only the context is the graph's.
+            handle.sendQueue = [];
+            handle.socket = row === "completed by a drain" ? takesEverySend : refusesEverySend;
+            graph.run(() => io.dgramSend(socket, completed.resolve));
+            handle.drain();
+            if (row === "completed by a drain") await completed.promise;
+            graph.dispose();
+          }
+        })();
+        expect(await lifetimes.stillAlive("completed by a drain")).toEqual([]);
+        expect(await lifetimes.survives("still queued")).toBe(true);
+      } finally {
+        handle.socket = realSocket;
+      }
+      closed = true;
+      const done = once(socket, "close");
+      socket.close();
+      await done;
+      expect(await lifetimes.stillAlive("still queued")).toEqual([]);
+    } finally {
+      if (!closed) socket.close();
     }
   });
 

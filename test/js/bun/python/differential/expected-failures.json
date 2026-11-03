@@ -1,6 +1,5 @@
 {
-  "command-line/modules-at-start": "other modules are imported at start-up: no codecs, time and zipimport, and js",
-  "command-line/path-hooks": "zipimport is imported when the first archive turns up on sys.path, by a hook of another name",
+  "command-line/modules-at-start": "other modules are imported at start-up: no codecs, and js",
   "extra/co_consts_probe": "co_consts has the constants of the source: nothing is folded, the bytecode being JavaScriptCore's",
   "gc/order1": "what nothing orders is finalized in the order it was made; a list of CPython lets go of its items from the end",
   "llint/ll_items": "iterator.__setstate__(2 ** 64) does not raise OverflowError (the script prints a digest: give it an argument to see the lines)",

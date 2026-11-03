@@ -13,7 +13,6 @@ RULES = [
     ("no _remote_debugging (sampling profiler, external inspection)", r"^test_profiling|^test_external_inspection|^test_gc_stats|^test_asyncio.test_tools", r"_remote_debugging"),
     ("no _asyncio: the halves of the asyncio tests that are for the C implementation", r"^test_asyncio\.(test_tasks|test_futures|test_futures2|test_eager_task_factory|test_free_threading|test_graph)", r"_CTask|_asyncio"),
     ("no _datetime: the half of test_datetime that is for the C implementation; test_types imports it", r"^test_datetime|^test_types$", r"_datetime"),
-    ("no _lzma, _bz2", r"^test_lzma|^test_bz2|^test_tarfile|^test_shutil|^test_zoneinfo", r"_lzma|_bz2"),
     ("no CJK codecs (_multibytecodec, _codecs_*)", r"^test_codecencodings|^test_codecmaps|^test_multibytecodec|^test_zipfile\.test_core|^test_email.test_asian", r"shift_jis|_multibytecodec|unknown encoding"),
     ("CPython's bytecode: dis, .pyc, marshal of code, code.replace, peephole optimizer", r"^test_dis$|^test_zipimport|^test_peepholer|^test_compileall|^test_py_compile|^test_code$|^test_compile$|^test_marshal|^test_importlib\.source|^test_opcodes|^test__opcode|^test_pkgutil|^test_zipapp", r"unmarshallable|co_linetable|code\.replace"),
     ("tracebacks: no column ranges (carets), suggestions, formatting by the C printer", r"^test_traceback|^test_exceptions$|^test_exception_group|^test_cmd_line_script", None),

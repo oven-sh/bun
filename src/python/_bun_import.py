@@ -222,29 +222,6 @@ def import_file(path, source=None):
     return module
 
 
-def _zip_hook(path):
-    """zipimport.zipimporter, which CPython has in sys.path_hooks from the start, imported when there is an archive to read."""
-    archive = path
-    while not _external._path_isfile(archive):
-        parent = _external._path_split(archive)[0]
-        if parent == archive or _external._path_isdir(archive):
-            raise ImportError("not a Zip file", path=path)
-        archive = parent
-    global _looking_for_zipimport
-    if _looking_for_zipimport:
-        # The archive comes before the standard library on sys.path. zipimport is not in it.
-        raise ImportError("zipimport is being imported", path=path)
-    _looking_for_zipimport = True
-    try:
-        import zipimport
-    finally:
-        _looking_for_zipimport = False
-    return zipimport.zipimporter(path)
-
-
-_looking_for_zipimport = False
-
-
 def _spawn_only(context):
     """multiprocessing.context takes it that whatever is not Windows can fork. Here, as there, processes are spawned."""
 
@@ -303,7 +280,6 @@ def _install():
             break
     else:
         sys.path_hooks.append(hook)
-    sys.path_hooks.insert(0, _zip_hook)
     sys.path_importer_cache.clear()
     sys.meta_path.insert(sys.meta_path.index(_external.PathFinder), _Adapter)
     sys.meta_path.append(JSFinder)

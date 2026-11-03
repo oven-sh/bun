@@ -92,7 +92,7 @@ SHIMS = {
     "_testmultiphase": ["test_import", "test_importlib", "test_runpy", "test_pkgutil", "test_compileall", "test_pyclbr", "test_unittest.test_discovery"],
     "_testinternalcapi": ["test_class", "test_with"],
     "_testlimitedcapi": ["test_bytes", "test_class"],
-    "_testcapi": ["test_traceback"],
+    "_testcapi": ["test_traceback", "test_zipimport"],
 }
 
 

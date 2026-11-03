@@ -27,11 +27,14 @@ CPython's tests have helper modules that are extension modules (`_testcapi`, `_t
 `_testmultiphase`, ...). There are none here, and a test that needs one skips itself. But some test files import one at the top,
 or in the body of a class, for the sake of a few tests, and then none of their tests can run: `test_importlib/util.py` imports
 `_testmultiphase`, so all of `test_importlib`, `test_import`, `test_runpy`, `test_pkgutil`, `test_compileall` were skipped, some 1,450
-tests of which a few dozen have to do with extension modules; likewise `test_bytes`, `test_class` and `test_with`.
+tests of which a few dozen have to do with extension modules; likewise `test_bytes`, `test_class`, `test_with` and `test_traceback`.
 
 `shims/NAME/NAME.py` is a module of that name, written in Python, that is there to be imported. Whatever is asked of it raises
 `unittest.SkipTest`, so a test that needs the real thing is skipped as before. The exceptions are a few functions of the C
-API that do what a program can do as well (`PySequence_GetItem` and the like), which are written out.
+API that do what a program can do as well (`PySequence_GetItem` and the like), which are written out. `_testmultiphase` is
+different: it puts `None` in `sys.modules` in its own place, so the one import in `test_importlib/util.py` goes through and every
+later one fails as if there were no such module, which is what the tests of extension modules look at to skip themselves.
+One test looks at nothing and is left out by name (`IGNORED` in `score.py`).
 
 They are no part of Bun. `score.py` puts a shim on `PYTHONPATH` for the test modules listed in its `SHIMS` and for no others
 (`test.support` and many tests do something sensible when a helper is missing), and never for CPython. By hand:

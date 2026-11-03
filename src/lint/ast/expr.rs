@@ -1211,8 +1211,17 @@ impl File<'_> {
     #[inline]
     pub(super) fn expr_tag(&self, id: hir::ExprId, raw: &hir::Expr) -> ExprTag {
         match raw.kind {
-            hir::ExprKind::String(_) if self.is_backtick_string(id, raw) => ExprTag::Template,
+            hir::ExprKind::String(_) => self.tag_of_string(id, raw),
             kind => kind.tag(),
+        }
+    }
+
+    /// Not inlined: `tag()` is, in hundreds of places.
+    #[inline(never)]
+    fn tag_of_string(&self, id: hir::ExprId, raw: &hir::Expr) -> ExprTag {
+        match self.is_backtick_string(id, raw) {
+            true => ExprTag::Template,
+            false => ExprTag::String,
         }
     }
 

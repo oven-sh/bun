@@ -2479,7 +2479,8 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
     } else {
       this[kOnreadBuffer] = onreadBuffer;
     }
-    // onStreamRead calls the user callback bare - a throw is an uncaught
+    // onStreamRead calls the user callback as a method of the socket and
+    // outside any try/catch: `this` is the socket, and a throw is an uncaught
     // exception, not a socket 'error'. Node bounds each kernel read to the
     // onread buffer's size, so each slice is a separate onStreamRead call and
     // a swallowed uncaughtException loses no bytes; bun slices one larger
@@ -2493,7 +2494,7 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
         if (dest === true) {
           let ret;
           try {
-            ret = onreadCallback(total - offset, true);
+            ret = onreadCallback.$call(self, total - offset, true);
             if (onreadBufferIsFn) {
               const next = onreadBuffer();
               if (isUint8Array(next)) self[kOnreadBuffer] = next;
@@ -2524,7 +2525,7 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
         offset += n;
         let ret;
         try {
-          ret = onreadCallback(n, dest);
+          ret = onreadCallback.$call(self, n, dest);
           if (onreadBufferIsFn) {
             const next = onreadBuffer();
             if (isUint8Array(next)) self[kOnreadBuffer] = next;

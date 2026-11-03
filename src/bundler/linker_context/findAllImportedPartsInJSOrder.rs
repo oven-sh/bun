@@ -453,6 +453,9 @@ impl LoadTimeReads {
         let symbols = &c.graph.symbols;
         // Calls `each` with the id of a live part and the id of each part that it names a binding of.
         let for_each_named_part = |each: &mut dyn FnMut(u32, u32)| {
+            // The symbols that part `uses_of` uses.
+            let mut uses: HashMap<bun_ast::Ref, ()> = HashMap::default();
+            let mut uses_of = u32::MAX;
             for_each_live_part(&mut |file, id, part| {
                 for dependency in part.dependencies.iter() {
                     let other = dependency.source_index.get() as usize;
@@ -460,13 +463,14 @@ impl LoadTimeReads {
                     if dependency.part_index == bun_ast::NAMESPACE_EXPORT_PART_INDEX
                         && other != file
                     {
-                        let exports_ref = symbols.follow(exports_refs[other]);
-                        let uses_object = part
-                            .symbol_uses
-                            .keys()
-                            .iter()
-                            .any(|&used| symbols.follow(used) == exports_ref);
-                        if !uses_object {
+                        if uses_of != id {
+                            uses_of = id;
+                            uses = HashMap::with_capacity(part.symbol_uses.keys().len());
+                            for &used in part.symbol_uses.keys() {
+                                uses.insert(symbols.follow(used), ());
+                            }
+                        }
+                        if !uses.contains(&symbols.follow(exports_refs[other])) {
                             continue;
                         }
                     }

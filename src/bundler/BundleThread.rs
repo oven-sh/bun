@@ -51,7 +51,6 @@ pub(crate) struct BundleThread<C: Node> {
     // `bun.UnboundedQueue(CompletionStruct, .next)` — intrusive over `C.next`;
     // the field offset is encoded via the `Node` supertrait on `CompletionStruct`.
     pub(crate) queue: UnboundedQueue<C>,
-    pub(crate) generation: bun_core::Generation,
 }
 
 /// Trait capturing the interface a completion task must satisfy.
@@ -131,7 +130,6 @@ impl<C: CompletionStruct> BundleThread<C> {
             waker: Async::Waker::placeholder(),
             waker_error: None,
             queue: UnboundedQueue::new(),
-            generation: 0,
             ready_event: ResetEvent::default(),
         }
     }
@@ -156,7 +154,7 @@ impl<C: CompletionStruct> BundleThread<C> {
                 let ptr = ptr;
                 // SAFETY: caller guarantees `instance` is valid for 'static; `thread_main`
                 // accesses fields only via raw-ptr projection (never `&Self`/`&mut Self`)
-                // and is the sole writer of `waker`/`generation`, so concurrent `enqueue()`
+                // and is the sole writer of `waker`, so concurrent `enqueue()`
                 // from other threads is sound.
                 unsafe { Self::thread_main(ptr.0) }
             })?;
@@ -257,8 +255,8 @@ impl<C: CompletionStruct> BundleThread<C> {
                 }
                 // SAFETY: as above; started ⇒ the owner waits for us.
                 let completion = unsafe { &mut *completion };
-                // SAFETY: `generation` is only read/written on this (bundle) thread.
-                let generation = unsafe { (*instance).generation };
+                // Newer than every cached listing, also one a runtime retry read again.
+                let generation = bun_core::next_generation();
                 // `panic = "abort"` → a Rust panic on this thread enters the
                 // crash-handler hook and aborts the whole process.
                 // No `catch_unwind` — there is nothing to catch.
@@ -271,12 +269,6 @@ impl<C: CompletionStruct> BundleThread<C> {
                 }
                 has_bundled = true;
             }
-            // SAFETY: `generation` is only read/written on this (bundle) thread.
-            unsafe {
-                let g = core::ptr::addr_of_mut!((*instance).generation);
-                *g = (*g).saturating_add(1);
-            }
-
             if has_bundled {
                 crate::bundle_v2::dispatch::__bun_jsc_destroy_bytecode_cache_vm();
                 bun_alloc::mimalloc::mi_collect(false);

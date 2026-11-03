@@ -460,6 +460,38 @@ pub use bun_watcher::AnyResolveWatcher;
 // runtime fn-pointer alongside the context — `init` produces the
 // `AnyResolveWatcher` erased shim.
 
+/// The levels one retry has checked, each with whether it was dropped.
+#[derive(Default)]
+pub struct CheckedDirs {
+    levels: Vec<(DirInfoRef, bool)>,
+}
+
+/// From [`Resolver::enter_fresh_generation`]: restores the generation on drop.
+pub struct FreshGeneration {
+    generation: NonNull<Generation>,
+    previous: Generation,
+}
+
+impl Drop for FreshGeneration {
+    fn drop(&mut self) {
+        // SAFETY: points at `Resolver::generation`. The resolver outlives the
+        // guard: the frame that called `enter_fresh_generation` holds both.
+        unsafe { *self.generation.as_ptr() = self.previous };
+    }
+}
+
+/// The bytes of a config file as the parser saw them. `None` when it cannot be read.
+fn file_bytes_without_bom(path: &[u8]) -> Option<Vec<u8>> {
+    let bytes = bun_sys::File::openat(FD::cwd(), path, bun_sys::O::RDONLY, 0)
+        .and_then(|file| file.read_to_end())
+        .ok()?;
+    Some(match Fs::BOM::detect(&bytes) {
+        None => bytes,
+        Some(Fs::BOM::Utf8) => bytes[Fs::BOM::UTF8_BYTES.len()..].to_vec(),
+        Some(other) => other.remove_and_convert_to_utf8_and_free(bytes),
+    })
+}
+
 pub struct Resolver<'a> {
     pub opts: options::BundleOptions,
     // NOTE: `fs` / `log` are raw aliasing
@@ -2746,6 +2778,145 @@ impl<'a> Resolver<'a> {
         first_bust || second_bust
     }
 
+    /// For one more lookup after a miss: every listing it consults is read again unless unchanged.
+    ///
+    /// # Safety
+    /// The guard writes `Resolver::generation` when it drops. The resolver must outlive the
+    /// guard and must not move while the guard lives.
+    pub unsafe fn enter_fresh_generation(&mut self) -> FreshGeneration {
+        let previous = self.generation;
+        self.generation = bun_core::next_generation();
+        FreshGeneration {
+            generation: NonNull::from(&mut self.generation),
+            previous,
+        }
+    }
+
+    /// Drops each `DirInfo` from `dir` up whose listing-derived facts changed, with the levels below it. Stops at a level in `checked`.
+    pub fn drop_stale_dir_info_chain(&mut self, dir: &[u8], checked: &mut CheckedDirs) {
+        // A lookup reads no `DirInfo` for a path that does not fit a path buffer.
+        if !bun_paths::is_absolute(dir) || dir.len() >= MAX_PATH_BYTES {
+            return;
+        }
+        let first = checked.levels.len();
+        let mut topmost_stale: Option<usize> = None;
+        // The nearest manifest and the nearest tsconfig are the ones a lookup reads.
+        let mut manifest_seen = false;
+        let mut tsconfig_seen = false;
+        // A directory that is not there (a `paths` entry, a deleted importer) starts at its nearest ancestor.
+        let mut start = dir;
+        let mut level = loop {
+            if let Some(info) = self.read_dir_info_ignore_error(start) {
+                break Some(info);
+            }
+            let parent = bun_paths::dirname_platform(start, bun_paths::Platform::AUTO);
+            if parent.is_empty() || parent.len() >= start.len() {
+                break None;
+            }
+            start = parent;
+        };
+        while let Some(info) = level {
+            let earlier = checked.levels[..first]
+                .iter()
+                .find(|(seen, _)| std::ptr::eq(&**seen, &*info));
+            if let Some(&(_, busted)) = earlier {
+                if busted {
+                    topmost_stale = Some(checked.levels.len());
+                }
+                break;
+            }
+            checked.levels.push((info, false));
+            let check_manifest =
+                !manifest_seen && info.flags.contains(DirInfo::Flag::HasPackageJsonFile);
+            let check_tsconfig =
+                !tsconfig_seen && info.flags.contains(DirInfo::Flag::HasTsconfigFile);
+            manifest_seen |= check_manifest;
+            tsconfig_seen |= check_tsconfig;
+            if self.dir_info_is_stale(info, check_manifest, check_tsconfig) {
+                topmost_stale = Some(checked.levels.len());
+            }
+            level = info.get_parent();
+        }
+        if let Some(end) = topmost_stale {
+            for (info, busted) in &mut checked.levels[first..end] {
+                self.bust_dir_cache(info.abs_path);
+                *busted = true;
+            }
+        }
+    }
+
+    /// `check_manifest` and `check_tsconfig`: also compare the parsed file with the one on disk.
+    fn dir_info_is_stale(
+        &mut self,
+        info: DirInfoRef,
+        check_manifest: bool,
+        check_tsconfig: bool,
+    ) -> bool {
+        let kind_of = |this: &Self, name: &'static [u8]| {
+            info.get_entry(this.generation, name)
+                .map(|e| e.entry().kind(this.rfs_ref(), this.store_fd))
+        };
+        // Another device or inode after the re-read (a retargeted link) invalidates the real path in the DirInfo.
+        let id_before = info.listing_file_id();
+        let has_node_modules_now = kind_of(self, b"node_modules") == Some(Fs::EntryKind::Dir);
+        let id_after = info.listing_file_id();
+        if let (Some(before), Some(after)) = (id_before, id_after)
+            && before.1 != 0
+            && after.1 != 0
+            && before != after
+        {
+            return true;
+        }
+        if !info.is_node_modules() && info.has_node_modules() != has_node_modules_now {
+            return true;
+        }
+        if self.opts.load_package_json
+            && info.flags.contains(DirInfo::Flag::HasPackageJsonFile)
+                != (kind_of(self, b"package.json") == Some(Fs::EntryKind::File))
+        {
+            return true;
+        }
+        if self.opts.load_tsconfig_json {
+            let selected: Option<&[u8]> = [&b"tsconfig.json"[..], &b"jsconfig.json"[..]]
+                .into_iter()
+                .find(|name| kind_of(self, name) == Some(Fs::EntryKind::File));
+            if info.flags.contains(DirInfo::Flag::HasTsconfigFile) != selected.is_some() {
+                return true;
+            }
+            if let Some(tsconfig) = info.tsconfig_json()
+                && selected != Some(bun_paths::basename(&tsconfig.own_abs_path))
+            {
+                return true;
+            }
+        }
+        // A file that is listed but did not parse is parsed again: it can have been fixed.
+        if check_manifest {
+            match info.package_json() {
+                None => return true,
+                Some(package_json) => {
+                    if let Some(bytes) = file_bytes_without_bom(package_json.source.path.text)
+                        && bytes[..] != package_json.source_contents[..]
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        if check_tsconfig {
+            match info.tsconfig_json() {
+                None => return true,
+                Some(tsconfig) => {
+                    if let Some(bytes) = file_bytes_without_bom(&tsconfig.own_abs_path)
+                        && bun_wyhash::hash(&bytes) != tsconfig.own_source_hash
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
     /// bust both the named file and a parent directory, because `./hello` can resolve
     /// to `./hello.js` or `./hello/index.js`
     pub fn bust_dir_cache_from_specifier(
@@ -3714,7 +3885,9 @@ impl<'a> Resolver<'a> {
 
         if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
             if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
-                if entries.generation >= self.generation {
+                if entries.generation >= self.generation
+                    || entries.keep_if_current(open_dir, self.generation)
+                {
                     dir_entries_option = cached_entry;
                     needs_iter = false;
                 } else {
@@ -3744,6 +3917,10 @@ impl<'a> Resolver<'a> {
             // covers a typical node_modules package dir; larger dirs still
             // rehash from there (cheap relative to starting at 0).
             new_entry.data.reserve(64);
+            if in_place.is_some() {
+                new_entry.identity =
+                    Fs::file_system::ListingIdentity::read(open_dir).unwrap_or_default();
+            }
 
             let mut dir_iterator = bun_sys::iterate_dir(open_dir);
             // Hoist the `FilenameStore` singleton resolve out of the per-entry loop
@@ -4540,14 +4717,59 @@ impl<'a> Resolver<'a> {
         let top_result = self
             .dir_cache_mut()
             .get_or_put(path_without_trailing_slash)?;
-        if top_result.status != allocators::ItemStatus::Unknown {
-            return Ok(self
-                .dir_cache_mut()
-                .at_index(top_result.index)
-                .map(DirInfoRef::from_slot));
+        match top_result.status {
+            allocators::ItemStatus::Exists => {
+                return Ok(self
+                    .dir_cache_mut()
+                    .at_index(top_result.index)
+                    .map(DirInfoRef::from_slot));
+            }
+            allocators::ItemStatus::NotFound => {
+                if self.generation == 0 {
+                    return Ok(None);
+                }
+                // SAFETY: `rfs_ptr()` points at the process-global RealFS singleton.
+                let _entries_unlock = unsafe { &*self.rfs_ptr() }.entries_mutex.lock_guard();
+                if self.not_found_still_holds_locked(path_without_trailing_slash) {
+                    return Ok(None);
+                }
+            }
+            allocators::ItemStatus::Unknown => {}
         }
 
         self.dir_info_cached_miss(enable_logging, input_path, top_result)
+    }
+
+    /// A cached "no such directory" holds at a newer generation if the parent's listing still lacks it. Caller holds `entries_mutex`.
+    fn not_found_still_holds_locked(&mut self, path: &[u8]) -> bool {
+        if self.generation == 0 {
+            return true;
+        }
+        let parent = bun_paths::dirname_platform(path, bun_paths::Platform::AUTO);
+        if parent.is_empty() || parent.len() >= path.len() {
+            return true;
+        }
+        let parent_key = strings::without_trailing_slash_windows_path(parent);
+        let Ok(parent_result) = self.dir_cache_mut().get_or_put(parent_key) else {
+            return true;
+        };
+        match parent_result.status {
+            allocators::ItemStatus::Exists => {
+                let Some(parent_info) = self
+                    .dir_cache_mut()
+                    .at_index(parent_result.index)
+                    .map(DirInfoRef::from_slot)
+                else {
+                    return true;
+                };
+                let base = bun_paths::basename(path);
+                parent_info
+                    .get_entries_ref_locked(self.generation)
+                    .is_some_and(|entries| entries.get(base).is_none())
+            }
+            allocators::ItemStatus::NotFound => self.not_found_still_holds_locked(parent_key),
+            allocators::ItemStatus::Unknown => false,
+        }
     }
 
     /// Cold tail of [`dir_info_cached_maybe_log`]: the directory walk +
@@ -4621,7 +4843,10 @@ impl<'a> Resolver<'a> {
             debug_assert!(top.as_ptr() == root_path.as_ptr());
             let result = self.dir_cache_mut().get_or_put(top)?;
 
-            if result.status != allocators::ItemStatus::Unknown {
+            if result.status == allocators::ItemStatus::Exists
+                || (result.status == allocators::ItemStatus::NotFound
+                    && self.not_found_still_holds_locked(top))
+            {
                 top_parent = result;
                 break;
             }
@@ -4919,7 +5144,10 @@ impl<'a> Resolver<'a> {
 
             if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
                 if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
-                    if entries.generation >= self.generation {
+                    if entries.generation >= self.generation
+                        || (open_dir.is_valid()
+                            && entries.keep_if_current(open_dir, self.generation))
+                    {
                         dir_entries_option = cached_entry;
                         needs_iter = false;
                     } else {
@@ -4949,6 +5177,10 @@ impl<'a> Resolver<'a> {
                 // covers a typical node_modules package dir; larger dirs
                 // still rehash from there (cheap relative to starting at 0).
                 new_entry.data.reserve(64);
+                if in_place.is_some() && open_dir.is_valid() {
+                    new_entry.identity =
+                        Fs::file_system::ListingIdentity::read(open_dir).unwrap_or_default();
+                }
 
                 // A permission-denied ancestor has no fd to enumerate; its
                 // entry set stays empty.
@@ -6594,6 +6826,7 @@ impl<'a> Resolver<'a> {
                 if lookup.entry().kind(self.rfs_ref(), self.store_fd)
                     == Fs::file_system::EntryKind::File
                 {
+                    info.flags.insert(DirInfo::Flag::HasPackageJsonFile);
                     // A package in the global cache has a `package_id`, and keeps it even if its
                     // tarball shipped a `node_modules` folder.
                     info.package_json = if self.use_package_manager()
@@ -6684,6 +6917,7 @@ impl<'a> Resolver<'a> {
             }
 
             if let Some(tsconfigpath) = tsconfig_path {
+                info.flags.insert(DirInfo::Flag::HasTsconfigFile);
                 let fd = if FeatureFlags::STORE_FILE_DESCRIPTORS {
                     fd
                 } else {
@@ -6801,6 +7035,8 @@ impl<'a> Resolver<'a> {
                 let parent_config = unsafe { &mut *parent_config_ptr };
                 // SAFETY: see loop-wide note above.
                 let mc = unsafe { &mut *merged_config };
+                mc.own_abs_path = core::mem::take(&mut parent_config.own_abs_path);
+                mc.own_source_hash = parent_config.own_source_hash;
                 mc.emit_decorator_metadata =
                     mc.emit_decorator_metadata || parent_config.emit_decorator_metadata;
                 if let Some(v) = parent_config.use_define_for_class_fields {

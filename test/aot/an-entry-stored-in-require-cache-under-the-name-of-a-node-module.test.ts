@@ -89,40 +89,108 @@ const loadedByImports = {
 const refusal = (name: string) =>
   `Cannot store an entry under '${name}' in require.cache: the build read no store under that key, so require("${name}") was compiled to answer with the module`;
 
-const ways: [string, Record<string, string>][] = [
-  ["as one program", { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" }],
-  ["in layers", { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2,TestRunPartFiles:1" }],
-  ["with the test files from disk", { BUN_AOT_TEST_FILES_FROM_DISK: "1", BUN_AOT_TESTS_NAME_WHAT_THEY_USE: "1" }],
+type Project = {
+  files: Record<string, string>;
+  /** What its test file prints under plain `bun test`. A compiled run has to print the same. */
+  printed: string[];
+  /** How its tests end there. */
+  results: string[];
+};
+const projects: Record<string, Project> = {
+  "an entry under the name of a Node.js module answers require()": {
+    files: project,
+    printed: [
+      "before: function function function",
+      "stored: number number number",
+      "the module: function function function",
+      "imports: function function function",
+      "made: number number",
+      "names: number number number",
+      "other exports: string string",
+      "the same: true true true",
+      "undefined: function function",
+      "deleted: function function function true true",
+      "os: a fake string function 1",
+      "os again: function function",
+      "exports is read",
+      "fs/promises: number function",
+      "node:path: function function",
+      "untouched: function function",
+    ],
+    results: ["pass under a name that the file spells", "pass under other names"],
+  },
+  "a CommonJS file that an import loads asks for the module": {
+    files: loadedByImports,
+    printed: ["imported: function number function function function number"],
+    results: ["pass a CommonJS file that an import loads"],
+  },
+};
+
+// How a compiled run says that it is built. A Bun that loads one program a realm (macOS, Windows, a hardened build) has no layers.
+const oneRealm = "this Bun loads one program a realm";
+const oneProgram = new RegExp(`^one program(: ${oneRealm})? \\| test files 1$`);
+type Way = { env: Record<string, string>; form: RegExp; standIn: boolean };
+const ways: [string, Way][] = [
+  ["as one program", { env: { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" }, form: oneProgram, standIn: false }],
+  [
+    "in layers",
+    {
+      env: { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2,TestRunPartFiles:1" },
+      form: new RegExp(`^(layers 2|programs without layers: ${oneRealm}) \\| test files 1 \\| to a program 1( \\||$)`),
+      standIn: false,
+    },
+  ],
+  [
+    "with the test files from disk",
+    {
+      // The word changes no build. With it a run says how it is built, and prints the file that stands in for the test files that its build does not see.
+      env: {
+        BUN_AOT_TEST_FILES_FROM_DISK: "1",
+        BUN_AOT_TESTS_NAME_WHAT_THEY_USE: "1",
+        BUN_DEBUG_TEST_AOT_WORDS: "TestRunShowsStandIn:1",
+      },
+      form: oneProgram,
+      standIn: true,
+    },
+  ],
 ];
 
-async function runTests(directory: string, env: Record<string, string>, ...flags: string[]) {
-  const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--isolate", ...flags], directory, {
-    ...bunEnv,
-    ...env,
-  });
-  const results = [...stderr.matchAll(/^\((pass|fail)\) (.*?)(?: \[.*\])?$/gm)].map(match => `${match[1]} ${match[2]}`);
+async function runTests(directory: string, env: Record<string, string> = {}, ...flags: string[]) {
+  const command = [bunExe(), "test", "--isolate", ...flags];
+  const { stdout, stderr, exitCode } = await run(command, directory, { ...bunEnv, ...env });
+  // A crash prints only there.
   if (exitCode !== 0 && exitCode !== 1) console.error(stderr);
-  const printed = stdout.split("\n").filter(line => line && !line.startsWith("bun test "));
-  return { printed: printed.sort(), results: results.sort(), exitCode };
+  return {
+    // Plain `bun test` says nothing of the kind, and neither does a Bun that takes `--aot` and compiles nothing.
+    form: [...stderr.matchAll(/^AOT test run \| ((?:one program|layers|programs without layers)\b.*)$/gm)].map(
+      match => match[1],
+    ),
+    standIn: /^AOT stand-in \| .*[\\/]bun-test-files-from-disk\.js$/m.test(stderr),
+    printed: stdout.split("\n").filter(line => line && !line.startsWith("bun test ")),
+    errors: stderr.split("\n").filter(line => line.startsWith("error")),
+    results: [...stderr.matchAll(/^\((pass|fail)\) (.*?)(?: \[.*\])?$/gm)].map(match => `${match[1]} ${match[2]}`),
+    exitCode,
+  };
 }
 
-for (const [way, env] of ways) {
-  test.concurrent(`an entry under the name of a Node.js module answers require(), ${way}`, async () => {
-    using dir = tempDir("an-entry-under-the-name-of-a-node-module", project);
-    const plain = await runTests(String(dir), {});
-    expect(plain.results.filter(result => result.startsWith("fail"))).toEqual([]);
-    expect(plain.printed).toContain("stored: number number number");
-    expect(await runTests(String(dir), env, "--aot")).toEqual(plain);
+const plainRuns = new Map<string, ReturnType<typeof runTests>>();
+/** Plain `bun test` in a project: once, however many compiled runs are compared with it. */
+const plainRun = (name: string) =>
+  plainRuns.getOrInsertComputed(name, async () => {
+    using dir = tempDir("an-entry-under-the-name-of-a-node-module", projects[name].files);
+    return await runTests(String(dir));
   });
-}
 
-for (const [way, env] of ways) {
-  test.concurrent(`a CommonJS file that an import loads asks for the module, ${way}`, async () => {
-    using dir = tempDir("an-entry-beside-a-file-that-an-import-loads", loadedByImports);
-    const plain = await runTests(String(dir), {});
-    expect(plain.printed).toContain("imported: function number function function function number");
-    expect(await runTests(String(dir), env, "--aot")).toEqual(plain);
-  });
+for (const [name, { files, printed, results }] of Object.entries(projects)) {
+  for (const [title, { env, form, standIn }] of ways) {
+    test.concurrent(`${name}, ${title}`, async () => {
+      const plain = await plainRun(name);
+      expect(plain).toEqual({ form: [], standIn: false, printed, errors: [], results, exitCode: 0 });
+      using dir = tempDir("an-entry-under-the-name-of-a-node-module", files);
+      const compiled = await runTests(String(dir), env, "--aot");
+      expect(compiled).toEqual({ ...plain, form: [expect.stringMatching(form)], standIn });
+    });
+  }
 }
 
 test.concurrent("in an executable the store throws an error that names the module and says what to write", async () => {
@@ -141,13 +209,19 @@ test.concurrent("in an executable the store throws an error that names the modul
   });
   const executable = join(String(dir), isWindows ? "main.exe" : "main");
   const built = await run([bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", executable], String(dir));
-  expect(built.exitCode).toBe(0);
-  const { stdout, exitCode } = await run([executable], String(dir));
-  expect(stdout.split("\n")).toEqual([
-    `${refusal("url")}. Spell the key where it is stored: require.cache["url"] = entry. In a test, mock.module("url", () => ({ .. })) replaces the module too. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)`,
-    "function",
-    "nobody requires zlib: stored",
-    "",
-  ]);
-  expect(exitCode).toBe(0);
+  expect({
+    errors: built.stderr.split("\n").filter(line => line.startsWith("error")),
+    exitCode: built.exitCode,
+  }).toEqual({ errors: [], exitCode: 0 });
+  const { stdout, stderr, exitCode } = await run([executable], String(dir));
+  expect({ stdout: stdout.split("\n"), stderr, exitCode }).toEqual({
+    stdout: [
+      `${refusal("url")}. Spell the key where it is stored: require.cache["url"] = entry. In a test, mock.module("url", () => ({ .. })) replaces the module too. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)`,
+      "function",
+      "nobody requires zlib: stored",
+      "",
+    ],
+    stderr: "",
+    exitCode: 0,
+  });
 });

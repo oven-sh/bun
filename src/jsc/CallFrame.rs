@@ -49,8 +49,7 @@ impl JSGlobalObject {
         CallerSrcLoc { str, line, column }
     }
 
-    /// The line of the innermost call that `file` makes on the stack, or `None` if no
-    /// frame of `file` is on it.
+    /// The line of the innermost call that `file` makes on the stack, if it makes one.
     pub fn get_caller_line_in_file(&self, file: &bun_core::String) -> Option<NonZeroU32> {
         NonZeroU32::new(JSC__JSGlobalObject__getCallerLineInFile(self, file))
     }
@@ -108,9 +107,8 @@ impl<'a> ArgumentsSlice<'a> {
 
 // `CallFrame`/`VM`/`JSGlobalObject` are opaque `UnsafeCell`-backed ZST handles;
 // `&T` is ABI-identical to non-null `*const T`. Out-params are exclusive `&mut`
-// to plain `#[repr(C)]` PODs, and `file` is a `#[repr(C)]` in-param that C++
-// only reads. `describeFrame` returns a raw C string that the caller must
-// NUL-scan, so it stays `unsafe fn`.
+// to plain `#[repr(C)]` PODs. `describeFrame` returns a raw C string that the
+// caller must NUL-scan, so it stays `unsafe fn`.
 unsafe extern "C" {
     safe fn Bun__CallFrame__getCallerSrcLoc(
         cf: &CallFrame,

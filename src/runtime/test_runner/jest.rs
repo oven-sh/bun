@@ -154,7 +154,7 @@ pub(crate) struct TestRunner<'a> {
     /// Without `--isolate`: the last file's DOM is still on `globalThis`. See `left` in environment.ts.
     pub(crate) environment_is_left: bool,
 
-    /// Whether every `test()` and `describe()` call finds its line. See `CallSiteLine`.
+    /// Every `test()` and `describe()` call finds its line, for a reader after the call: JUnit, or a late `TestReporter.enable`.
     pub(crate) finds_call_sites: bool,
 
     pub(crate) bun_test_root: bun_test::BunTestRoot,
@@ -1123,14 +1123,7 @@ pub(crate) fn format_vitest_title(global: &JSGlobalObject, template: &[u8], item
     Ok(title)
 }
 
-/// The line of the `test()` or `describe()` call that is running, in the test file.
-///
-/// Finding it walks the stack and reads a source map, so only a reader pays for it:
-/// - `TestRunner::finds_call_sites`, decided when the run starts. It is set for `--reporter=junit`, and for a debugger that
-///   somebody asked for, because its client can enable `TestReporter` after the call has returned.
-/// - A `TestReporter` that is enabled while the call runs.
-///
-/// Every row of a `.each` table is the same call, so the line is found at most once.
+/// The line of the running `test()` or `describe()` call in the test file, looked up at most once and only for a reader.
 pub(crate) struct CallSiteLine(Option<Option<NonZeroU32>>);
 
 impl CallSiteLine {
@@ -1150,8 +1143,7 @@ impl CallSiteLine {
         self.0.flatten()
     }
 
-    /// The test file has no frame on the stack when the callback of a `describe` block is a function of another module,
-    /// or ends in a tail call. The call is then in the block that the test file did open.
+    /// A `describe` callback of another module, or one that ends in a tail call, has no frame of the test file: use its block's line.
     fn look(global: &JSGlobalObject, file: &bun_test::BunTest) -> Option<NonZeroU32> {
         global.get_caller_line_in_file(file.file_url()).or_else(|| file.collection.active_scope().base.line_no)
     }

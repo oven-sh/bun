@@ -4141,8 +4141,7 @@ impl TestCommand {
                 ..Default::default()
             })?
         };
-        // `BUN_INSPECT_CONNECT_TO` is in the environment of every process that an editor
-        // starts, so it does not say that a client will enable `TestReporter`.
+        // An editor sets `BUN_INSPECT_CONNECT_TO` for every process that it starts, test client or not.
         reporter.jest.finds_call_sites = ctx.test_options.reporters.junit
             || vm
                 .debugger

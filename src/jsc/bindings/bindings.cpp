@@ -7391,8 +7391,7 @@ CPP_DECL unsigned int JSC__JSGlobalObject__getCallerLineInFile(JSC::JSGlobalObje
         if (Zig::isImplementationVisibilityPrivate(visitor) || !visitor->hasLineAndColumnInfo())
             return WTF::IterationStatus::Continue;
 
-        // Zig::sourceURL() prefers a `//# sourceURL=` comment. The debugger ends every module with one, and it is not the
-        // path of a file whose name is not ASCII.
+        // Not Zig::sourceURL(): it prefers the `//# sourceURL=` comment of the debugger, which is not the path if the path is not ASCII.
         auto* codeBlock = visitor->codeBlock();
         auto* provider = codeBlock && codeBlock->ownerExecutable() ? codeBlock->source().provider() : nullptr;
         if ((provider ? provider->sourceURL() : Zig::sourceURL(visitor)) != sourceURL)
@@ -7426,8 +7425,7 @@ CPP_DECL unsigned int JSC__JSGlobalObject__getCallerLineInFile(JSC::JSGlobalObje
         return OrdinalNumber::fromZeroBasedInt(remappedFrame.position.line_zero_based).oneBasedInt();
     };
 
-    // The frame is at the `(` of the call. A source map has no mapping for the end of a template, so after the tagged
-    // template of a `test.each` the mapping before the `(` is a row of the table. The mapping after it is the first argument.
+    // After the tagged template of a `test.each`, the mapping before the `(` is a row of the table and the next one is the first argument.
     int parenthesis = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt();
     unsigned line = lineOfColumn(parenthesis);
     return calleeEndsInTemplate ? std::max(line, lineOfColumn(parenthesis + 1)) : line;

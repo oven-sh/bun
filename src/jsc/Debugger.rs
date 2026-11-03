@@ -850,8 +850,7 @@ unsafe extern "C" {
 }
 
 impl TestReporterHandle {
-    /// `line` is where `source_url` calls `test()` or `describe()`. The protocol has no
-    /// way to leave it out, so an unknown line is sent as 0.
+    /// The protocol cannot leave `line` out, so an unknown line is sent as 0.
     pub fn report_test_found_with_location(
         &mut self,
         test_id: i32,

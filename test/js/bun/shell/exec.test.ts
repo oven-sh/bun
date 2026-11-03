@@ -16,6 +16,12 @@ describe("bun exec", () => {
     .stderr("bun: command not found: sldkfjslkdjflksdjflj\n")
     .runAsTest("it works on command fail");
 
+  TestBuilder.command`${BUN} exec ${"echo ("}`
+    .env(bunEnv)
+    .exitCode(2)
+    .stderr(s => expect(s).toEndWith("due to error Unclosed subshell\n"))
+    .runAsTest("a script that does not parse exits 2");
+
   TestBuilder.command`${BUN} exec`
     .env(bunEnv)
     .stdout(

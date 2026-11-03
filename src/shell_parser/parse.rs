@@ -2141,6 +2141,15 @@ pub enum LexerError {
     SubshellDepthExceeded,
 }
 
+impl LexerError {
+    /// The diagnostic text, same as `Display`.
+    pub fn msg(&self) -> &'static str {
+        match self {
+            Self::SubshellDepthExceeded => "Subshell nesting depth exceeded",
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SubShellKind {
     /// (echo hi; echo hello)

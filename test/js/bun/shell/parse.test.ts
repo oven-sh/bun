@@ -5,6 +5,17 @@ const { parse } = shellInternals;
 const TestBuilder = createTestBuilder(import.meta.path);
 
 describe("parse shell", () => {
+  test("a parse failure throws a SyntaxError with code ERR_SHELL_PARSE", () => {
+    let e: any;
+    try {
+      parse`echo (`;
+    } catch (err) {
+      e = err;
+    }
+    expect(e).toBeInstanceOf(SyntaxError);
+    expect({ code: e.code, message: e.message }).toEqual({ code: "ERR_SHELL_PARSE", message: "Unclosed subshell" });
+  });
+
   test("basic", () => {
     const expected = {
       stmts: [

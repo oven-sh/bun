@@ -380,25 +380,13 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             // duration of `init_and_run_from_source` — single-threaded mini loop,
             // no aliasing `&mut` exists across this call.
             let mini = unsafe { &mut *mini };
-            let code = match crate::shell::Interpreter::init_and_run_from_source(
+            let code = crate::shell::Interpreter::init_and_run_from_source(
                 ctx,
                 mini,
                 name,
                 &copy_script,
                 Some(cwd),
-            ) {
-                Ok(c) => c,
-                Err(err) => {
-                    if !silent {
-                        pretty_errorln!(
-                            "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
-                            bstr::BStr::new(name),
-                            bstr::BStr::new(err.name()),
-                        );
-                    }
-                    Global::exit(1);
-                }
-            };
+            );
 
             if code > 0 {
                 if code != 2 && !silent {
@@ -964,7 +952,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `initAndRunFromFile`: read source then hand off to the interpreter.
         let src = sys::File::read_from(Fd::cwd(), entry_path)?;
 
-        crate::shell::Interpreter::init_and_run_from_file(ctx, mini, entry_path, &src)
+        Ok(crate::shell::Interpreter::init_and_run_from_file(
+            ctx, mini, entry_path, &src,
+        ))
     }
 
     /// `VirtualMachine::init`,

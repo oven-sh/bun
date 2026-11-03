@@ -30,7 +30,7 @@ pub(crate) use super::subproc; // declared once in `shell/mod.rs`
 // (ShellErr, GlobalJS/Mini, shell_cmd_from_js, ShellSrcBuilder, TestingAPIs).
 pub(crate) use bun_shell_parser::parse::{
     IfClauseTok, LEX_JS_OBJREF_PREFIX, LEX_JS_REF_TERMINATOR, LEX_JS_STRING_PREFIX, LexerAscii,
-    LexerUnicode, ParseError, Parser, Token, ast, is_if_clause_keyword_bunstr, needs_escape_bunstr,
+    LexerUnicode, Parser, Token, ast, is_if_clause_keyword_bunstr, needs_escape_bunstr,
     needs_escape_utf8_ascii_latin1,
 };
 
@@ -769,32 +769,14 @@ pub(crate) mod testing_apis {
             marked_argument_buffer,
         )?;
 
-        let mut out_parser: Option<bun_shell_parser::Parser<'_>> = None;
-        let mut out_lex_result: Option<bun_shell_parser::LexResult<'_>> = None;
-
         let script_ast = match interpret::Interpreter::parse(
             &arena,
             &script[..],
             u32::try_from(marked_argument_buffer.size()).expect("int cast"),
             &jsstrings[..],
-            &mut out_parser,
-            &mut out_lex_result,
         ) {
             Ok(a) => a,
-            Err(err) => {
-                // `out_lex_result` is populated by `parse()` only on lex errors.
-                if let Some(lex) = out_lex_result.as_ref() {
-                    let str = lex.combine_errors(&arena);
-                    return Err(global.throw(format_args!("{}", bstr::BStr::new(str))));
-                }
-
-                if let Some(p) = out_parser.as_mut() {
-                    let errstr = p.combine_errors();
-                    return Err(global.throw(format_args!("{}", bstr::BStr::new(errstr))));
-                }
-
-                return Err(global.throw_error(err, "failed to lex/parse shell"));
-            }
+            Err(failure) => return Err(failure.throw(global)),
         };
 
         // `crate::shell::ast::Script` is a `'static`-erased alias of

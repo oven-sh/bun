@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::js::print::function::can_group_function_parameters;
+use crate::js::utils::assignment_like::is_type_without_line_breaks;
 
 impl<'a> Line<'_, 'a> {
     /// `async function* a`, `async `
@@ -76,7 +77,15 @@ impl<'a> Line<'_, 'a> {
             .and_then(|()| self.check_room_for(after));
         let is_signature_on_one_line = written.is_ok();
         if !is_signature_on_one_line {
-            // The parameters of a function that's hugged don't break.
+            // The parameters of a function that's hugged don't break. Its type parameters and its return type can, and
+            // then it stays hugged.
+            if is_hugged
+                && (!func.type_params().is_empty()
+                    || (func.return_type())
+                        .is_some_and(|ty| !is_type_without_line_breaks(ty, self.f)))
+            {
+                self.is_too_wide = false;
+            }
             if is_hugged || !self.is_first_line_too_wide(mark) {
                 return Err(Refused);
             }

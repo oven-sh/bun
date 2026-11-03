@@ -1399,6 +1399,64 @@ describe.skipIf(!hasFlag)("what an operator or parentheses are around, in every 
   );
 });
 
+// The parameters of a function that's the last argument stay on one line. What else is in its head can break.
+describe.skipIf(!hasFlag)("heads of functions", () => {
+  const [a, b, c, d, e] = ["a", "b", "c", "d", "e"].map(it => it.repeat(8));
+  const [T, U] = ["Aaaaaaaa", "Bbbbbbbb"];
+  const parameters = ["", a, `${a}, ${b}`, `${a}: ${T}, ${b}: ${U}`, `{ ${a}, ${b} }`, `${a}, ...${b}`, `${a} = 1`];
+  const returnTypes = [
+    "",
+    `: ${T}`,
+    `: ${T} | ${U}`,
+    `: Promise<${T}<${U}>>`,
+    `: { a: ${T}; b: ${U} }`,
+    `: (${a}: ${T}) => ${U}`,
+    `: ${T} extends ${U} ? ${T} : ${U}`,
+  ];
+  const typeParameters = ["", "<T>", `<T extends ${T}>`];
+  const heads = [
+    "function e% {\n  x();\n}",
+    `${e}(function % {\n  x();\n});`,
+    `${e}(function % {});`,
+    `${e}(${d}, function % {\n  x();\n});`,
+    `${e}(function % {\n  x();\n}, ${d});`,
+    `${e}(% => {\n  x();\n});`,
+    `${e}(${d}, % => {\n  x();\n});`,
+    `${e}(% => ${c});`,
+    `new ${e}(function % {\n  x();\n});`,
+    `${e}.${d}(function % {\n  x();\n});`,
+    `const ${d} = ${e}(function % {\n  x();\n});`,
+    `const ${d} = ${e}(% => {\n  x();\n});`,
+    `const ${d} = % => {\n  x();\n};`,
+    `const ${d} = function % {\n  x();\n};`,
+    "class X {\n  e% {\n    x();\n  }\n}",
+    "interface X {\n  e%;\n}",
+    "x = {\n  e% {\n    x();\n  },\n};",
+  ];
+  const files = Object.fromEntries(
+    heads.map((head, index) => [
+      `${index}.ts`,
+      typeParameters
+        .flatMap(typeParameter =>
+          parameters.flatMap(parameter =>
+            returnTypes.map(returnType => head.replace("%", () => `${typeParameter}(${parameter})${returnType}`)),
+          ),
+        )
+        .join("\n"),
+    ]),
+  );
+
+  test.concurrent.each(Array.from({ length: isDebug ? 4 : 12 }, (_, index) => 24 + index * (isDebug ? 15 : 5)))(
+    "--print-width=%d",
+    async width => {
+      const [withShortCuts, without] = await difference(files, [`--print-width=${width}`]);
+      expect(withShortCuts).toEqual(without);
+      expect(without.stderr).toBe("");
+      expect(without.exitCode).toBe(0);
+    },
+  );
+});
+
 describe.skipIf(!hasFlag)("names, literals, member accesses, calls and operators", () => {
   const binary = "?? || && | ^ & == != === !== < <= > >= in instanceof << >> >>> + - * / % **".split(" ");
   const unary = ["!", "-", "+", "~", "typeof ", "void ", "delete ", "++", "--", "await "];

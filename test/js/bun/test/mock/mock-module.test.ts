@@ -3140,8 +3140,12 @@ describe.concurrent("util.inspect() of a mocked module", () => {
             expect(util.format("%s", own)).toBe("from the factory's toString");
           });
 
+          test("the constructor of the factory's object does not name the mocked module", () => {
+            expect(util.inspect(viMock)).toMatch(/^\\[?Module\\b.* \\{ a: 'mocked-a' \\}$/);
+            expect(util.inspect(jestFn)).toMatch(/^\\[?Module\\b/);
+          });
+
           test("a Proxy of the mocked module prints as the module", () => {
-            expect(util.inspect(viMock)).toEndWith("{ a: 'mocked-a' }");
             expect(util.inspect(new Proxy(viMock, {}))).toBe(util.inspect(viMock));
             expect(util.format("%s", new Proxy(viMock, {}))).toBe(util.inspect(viMock));
           });
@@ -3153,7 +3157,7 @@ describe.concurrent("util.inspect() of a mocked module", () => {
           });
         `,
       },
-      3,
+      4,
     );
   });
 });

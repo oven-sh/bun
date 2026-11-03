@@ -144,6 +144,7 @@ test.concurrent("await as a tagged-template call identifier keeps working in CJS
   expect(stderr).toBe("");
 
   expect(stdout).toContain("var await = String.raw");
+  expect(stdout).toContain("globalThis.output = await");
   expect(exitCode).toBe(0);
 });
 
@@ -350,6 +351,7 @@ globalThis.output = await!.then(console.log);`,
   // JavaScript output entirely. `await` stays as a plain identifier.
   expect(stdout).toContain("var await =");
   expect(stdout).toContain(".then(console.log)");
+  expect(stdout).not.toContain("await!");
   expect(exitCode).toBe(0);
 });
 
@@ -637,4 +639,28 @@ module.exports = 1;`,
   expect(stdout).not.toContain("await");
   expect(stdout).toContain("var x");
   expect(exitCode).toBe(0);
+});
+
+// The diagnostic points at the outermost live `await`, not a nested one.
+test.concurrent("bun build --format=cjs points a nested await diagnostic at the outer await", async () => {
+  using dir = tempDir("issue-29243-nested-await-range", {
+    "entry.js": `const v = await await value;
+module.exports = v;`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.js", "--format=cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
+
+  // Column 11 is the first `await`; the nested one starts at column 17.
+  expect(stderr).toContain("entry.js:1:11");
+  expect(stderr).not.toContain("entry.js:1:17");
+  expect(exitCode).not.toBe(0);
 });

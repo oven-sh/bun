@@ -259,7 +259,7 @@ export default b.declarations(
     constructor: {
       this: b.any,
       getter: b.union(b.builtin("node:module"), b.object),
-      capability: "none",
+      capability: "none" as const,
       uses: { this: b.inspected },
       implementation: b.generic,
     },

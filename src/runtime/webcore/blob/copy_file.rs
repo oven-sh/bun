@@ -103,9 +103,9 @@ impl CopyFile {
             &copy.source_file_store.pathlike,
             &copy.destination_file_store.pathlike,
         ) {
-            (_, PathOrFileDescriptor::Fd(destination)) => jsc::RunsOn::for_io(Some(*destination)),
-            (PathOrFileDescriptor::Fd(_), _) => jsc::RunsOn::for_io(None),
-            _ => jsc::RunsOn::WorkPool,
+            (PathOrFileDescriptor::Path(_), PathOrFileDescriptor::Path(_)) => jsc::RunsOn::WorkPool,
+            // What the source has to give may never come, so the exit of the process does not wait for a copy.
+            _ => jsc::RunsOn::for_io(None),
         };
         jsc::Job::<CopyFile>::schedule_on(runs_on, cx, copy, promise);
         value

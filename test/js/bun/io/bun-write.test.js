@@ -13,8 +13,10 @@ import {
   tempDir,
   withoutAggressiveGC,
 } from "harness";
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import http from "node:http";
+import { createServer } from "node:net";
 import { devNull } from "node:os";
 import { finished } from "node:stream/promises";
 import { promisify } from "node:util";
@@ -474,12 +476,17 @@ let i = 0;
     ];
     const script = data => `Bun.write(Bun.${stream}, ${data}); process.exit(0);`;
 
-    it.skipIf(!isWindows).each([256 * 1024 - 1, 256 * 1024, 1_000_000])(
-      "writes %d bytes, more than a pipe holds, before process.exit()",
-      async size => {
+    it.skipIf(!isWindows).each([
+      [256 * 1024 - 1, "0"],
+      [256 * 1024, "0"],
+      [1_000_000, "0"],
+      [1_000_000, "1"],
+    ])(
+      "writes %d bytes, more than a pipe holds, before process.exit() (BUN_DESTRUCT_VM_ON_EXIT=%s)",
+      async (size, BUN_DESTRUCT_VM_ON_EXIT) => {
         await using proc = Bun.spawn({
           cmd: [bunExe(), "-e", script(`Buffer.alloc(${size}, "w").toString()`)],
-          env: bunEnv,
+          env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT },
           stdout: "pipe",
           stderr: "pipe",
         });
@@ -493,18 +500,43 @@ let i = 0;
       },
     );
 
-    it.skipIf(!isWindows)("writes a file to a pipe before process.exit()", async () => {
-      using dir = tempDir("bun-write-file-then-exit", { "in.txt": "written" });
+    it("does not keep process.exit() waiting for input that does not come", async () => {
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", script(`Bun.file("in.txt")`)],
+        cmd: [bunExe(), "-e", script("Bun.stdin")],
         env: bunEnv,
-        cwd: String(dir),
+        stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0, [stream]: "written" });
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
     });
+
+    it.skipIf(!isWindows).each([1, 3])(
+      "does not keep process.exit() waiting for %d silent pipes that are named by their path",
+      async count => {
+        const server = createServer().listen(`\\\\.\\pipe\\bun-write-then-exit-${randomUUID()}`);
+        await once(server, "listening");
+        try {
+          await using proc = Bun.spawn({
+            cmd: [
+              bunExe(),
+              "-e",
+              `for (let i = 0; i < ${count}; i++) Bun.write(Bun.${stream}, Bun.file(${JSON.stringify(server.address())}));
+              require("fs").write(process.${stream}.fd, "written", () => {});
+              process.exit(0);`,
+            ],
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0, [stream]: "written" });
+        } finally {
+          server.close();
+        }
+      },
+    );
 
     it.each(kinds)("writes %s to a pipe before process.exit()", async (_, data) => {
       await using proc = Bun.spawn({

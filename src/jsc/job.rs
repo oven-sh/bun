@@ -236,8 +236,8 @@ pub enum RunsOn {
     WorkPool,
     /// [`WorkPool::schedule_waiting`]
     WaitingPool,
-    /// As `WaitingPool`, and `run` is over before the process exits: see [`wait_for_jobs_that_hold_exit`].
-    WaitingPoolHoldsExit,
+    /// [`WorkPool::schedule_output`]. `run` is over before the process exits: see [`wait_for_jobs_that_hold_exit`].
+    OutputPool,
     /// `run` is over when [`Job::schedule_on`] returns. `then` still comes from the event loop.
     JsThread,
 }
@@ -251,13 +251,13 @@ impl RunsOn {
         }
         match writes_to {
             // A `process.exit()` right after the call loses nothing, as in Node.js.
-            Some(fd) if fd.is_stdout_or_stderr() => RunsOn::WaitingPoolHoldsExit,
+            Some(fd) if fd.is_stdout_or_stderr() => RunsOn::OutputPool,
             _ => RunsOn::WaitingPool,
         }
     }
 }
 
-/// How many [`RunsOn::WaitingPoolHoldsExit`] jobs are yet to end their `run`.
+/// How many [`RunsOn::OutputPool`] jobs are yet to end their `run`.
 static JOBS_THAT_HOLD_EXIT: AtomicU32 = AtomicU32::new(0);
 
 /// For the thread that is about to end the process.
@@ -423,10 +423,10 @@ impl<C: JobContext> Job<C> {
             match runs_on {
                 RunsOn::WorkPool => WorkPool::schedule(task),
                 RunsOn::WaitingPool => WorkPool::schedule_waiting(task),
-                RunsOn::WaitingPoolHoldsExit => {
+                RunsOn::OutputPool => {
                     JOBS_THAT_HOLD_EXIT.fetch_add(1, Ordering::Relaxed);
                     (*task).callback = Self::run_task_that_holds_exit;
-                    WorkPool::schedule_waiting(task)
+                    WorkPool::schedule_output(task)
                 }
                 RunsOn::JsThread => Self::run_task(task),
             }

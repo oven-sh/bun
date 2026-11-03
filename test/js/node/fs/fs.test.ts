@@ -6052,10 +6052,18 @@ describe("fs.write", () => {
     ["fs.writev(1, buffers)", `fs.writev(1, [Buffer.from("writ"), Buffer.from("ten")], () => {})`, "stdout", 7],
     ["fs.write(1, more than a pipe holds)", `fs.write(1, Buffer.alloc(1_000_000, "w"), () => {})`, "stdout", 1_000_000],
     ["several calls of fs.write(1, string)", `for (const c of "written") fs.write(1, c, () => {})`, "stdout", 7],
+    [
+      "fs.write(1, string) after more reads than there are threads to wait in",
+      `for (let i = 0; i < 8; i++) fs.read(0, Buffer.alloc(1), () => {}); fs.write(1, "written", () => {})`,
+      "stdout",
+      7,
+    ],
   ])("%s has written when process.exit() follows it", async (_, call, stream, length) => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", `const fs = require("fs"); ${call}; process.exit(0);`],
-      env: bunEnv,
+      env: { ...bunEnv, UV_THREADPOOL_SIZE: "4" },
+      // Nothing is ever written to it.
+      stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
     });

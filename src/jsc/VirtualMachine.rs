@@ -2502,13 +2502,14 @@ impl VirtualMachine {
         // doing it causes like 50+ tests to break
         // self.event_loop().tick();
 
+        // First: the teardown cancels the jobs that are left.
+        crate::job::wait_for_jobs_that_hold_exit();
         if self.should_destruct_main_thread_on_exit() {
             // SAFETY: main-thread VM on the main thread; exit handlers have run.
             unsafe { Self::teardown(core::ptr::from_mut(self), Teardown::MainThreadExit) };
         } else {
             self.close_sqlite_databases_for_exit();
         }
-        crate::job::wait_for_jobs_that_hold_exit();
         bun_core::Global::exit(u32::from(self.exit_handler.exit_code))
     }
 

@@ -12,6 +12,10 @@ pub(super) enum Hole<'a> {
     BodyOf(Stmt<'a>),
     /// A type literal that's certain to break.
     Type(TypeNode<'a>),
+    /// Any type, after the `| ` that starts its line.
+    UnionMember(TypeNode<'a>),
+    /// Any expression, on a line of its own. In a group of its own, or not.
+    Expr(Expr<'a>, bool),
     /// Any parameter, on a line of its own.
     Param(Param<'a>),
     /// A line break and a statement, one level deeper.
@@ -39,6 +43,9 @@ impl<'a> Hole<'a> {
                 ty.fmt(f);
                 f.context_mut().short_cuts.follows_line = false;
             }
+            Hole::UnionMember(ty) => CertainIf(false, &align(2, &ty)).fmt(f),
+            Hole::Expr(e, true) => CertainIf(false, &group(&e)).fmt(f),
+            Hole::Expr(e, false) => CertainIf(false, &e).fmt(f),
             Hole::Param(param) => CertainIf(false, &param).fmt(f),
             Hole::Statement(statement) => {
                 f.context_mut().short_cuts.depth += 1;
@@ -96,6 +103,11 @@ impl<'a> Line<'_, 'a> {
         self.parts.len() != mark.parts
     }
 
+    /// True if there's a comment in `span`, or something that owns one.
+    pub(super) fn has_comments_in(&self, span: Span) -> bool {
+        !self.is_quiet && self.f.comments().has_comment_or_owner_in(span)
+    }
+
     /// True if the column at which the line starts is known, so that what's too wide for it is certain to break.
     pub(super) fn is_certain(&self) -> bool {
         self.f.context().short_cuts.is_certain
@@ -106,15 +118,10 @@ impl<'a> Line<'_, 'a> {
         self.end_line_with(Part::Hole(hole), span, after)
     }
 
-    /// Ends the indentation that a [`Line::break_line`] has started, at the end of the text of a line that `after`
-    /// more columns follow.
-    pub(super) fn end_indent(&mut self, after: u32) -> Written {
-        self.end_text(Some(after))?;
+    /// Ends the indentation that a [`Line::break_line`] has started. What's written next is still on the last line
+    /// that's indented, and nothing but the end of the item follows that line.
+    pub(super) fn end_indent(&mut self) {
         self.parts.push(Part::Hole(Hole::EndIndent));
-        self.room += self.indent_width;
-        // Nothing follows on this line.
-        self.start_line(0);
-        Ok(())
     }
 
     /// Writes something on a line of its own, which `after` more columns follow: with `write` if that takes it and it

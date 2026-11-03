@@ -50,10 +50,7 @@ impl<'a> Line<'_, 'a> {
                     self.byte(b'!')?;
                 }
                 match (declarator.ty(), declarator.init()) {
-                    (Some(ty), None) => {
-                        self.token(": ")?;
-                        self.last_type(ty)?;
-                    }
+                    (Some(ty), None) => self.last_type_after(":", ty)?,
                     (ty, Some(init)) => {
                         self.type_annotation(ty)?;
                         self.token(" = ")?;
@@ -103,8 +100,7 @@ impl<'a> Line<'_, 'a> {
             StmtKind::While { test, body } => {
                 self.breaks = false;
                 self.token("while (")?;
-                self.expr(test, Place::Other)?;
-                self.byte(b')')?;
+                self.condition(test, body)?;
                 return self.clause(body);
             }
             StmtKind::DoWhile { body, test } => {
@@ -207,8 +203,7 @@ impl<'a> Line<'_, 'a> {
                 self.token("type ")?;
                 self.source(alias.name().span())?;
                 self.type_parameters(alias.type_params())?;
-                self.token(" = ")?;
-                self.last_type(alias.ty())?;
+                self.last_type_after(" =", alias.ty())?;
             }
             StmtKind::Interface(interface) => {
                 self.declaration_modifiers(statement)?;
@@ -266,6 +261,9 @@ impl<'a> Line<'_, 'a> {
                 self.last_expr(expression, Place::Other)?;
             }
             StmtKind::ExportAsNamespace(_) => {
+                if !statement.modifiers().is_empty() {
+                    return Err(Refused);
+                }
                 self.token("export as namespace ")?;
                 self.source(statement.namespace_export_name().ok_or(Refused)?.span())?;
             }
@@ -311,11 +309,10 @@ impl<'a> Line<'_, 'a> {
             }
             self.declarator(declarator)?;
         }
-        self.byte(b';')?;
-        match are_on_own_lines {
-            true => self.end_indent(0),
-            false => Ok(()),
+        if are_on_own_lines {
+            self.end_indent();
         }
+        self.byte(b';')
     }
 
     /// `a: T = 1`, on one line.
@@ -367,6 +364,93 @@ impl<'a> Line<'_, 'a> {
             }
             _ => Err(Refused),
         }
+    }
+
+    /// The condition of an `if` or a `while` and the `)` after it, before `body`.
+    fn condition(&mut self, test: Expr<'a>, body: Stmt<'a>) -> Written {
+        // What follows on its line.
+        let after = match body.as_block() {
+            Some(statements) if !is_empty_block(statements) => ") {".len(),
+            Some(_) if is_non_collapsible(body.ast_parent(), self.f) => ") {".len(),
+            Some(_) => ") {}".len(),
+            None => {
+                self.expr(test, Place::Other)?;
+                return self.byte(b')');
+            }
+        };
+        let mark = self.mark();
+        let limit = self.limit;
+        let was_too_wide = std::mem::replace(&mut self.is_too_wide, false);
+        self.limit = limit.saturating_sub(after);
+        let written = self.expr(test, Place::Other);
+        self.limit = limit;
+        let is_too_wide = std::mem::replace(&mut self.is_too_wide, was_too_wide);
+        if written.is_ok() {
+            return self.byte(b')');
+        }
+        if !is_too_wide || !self.is_certain() || self.has_parts_since(mark) {
+            self.is_too_wide |= is_too_wide;
+            return Err(Refused);
+        }
+        self.go_back_to(mark);
+        self.condition_on_own_lines(test)?;
+        self.byte(b')')
+    }
+
+    /// A condition that's too wide for the line of its `(`: each operand of `&&` or `||` is on a line.
+    fn condition_on_own_lines(&mut self, test: Expr<'a>) -> Written {
+        if !self.f.options().experimental_operator_position.is_end()
+            || self.has_comments_in(test.outer_span())
+        {
+            return Err(Refused);
+        }
+        let mut operands: SmallVec<[Expr<'a>; 8]> = SmallVec::new();
+        let operator = match test.binary_op() {
+            Some(operator) if operator.is_logical() => {
+                let mut chain = test;
+                loop {
+                    let (_, left, right) = chain.as_binary().ok_or(Refused)?;
+                    // `a && (b && c)` is written like `a && b && c`. An object or an array stays on the operator's line.
+                    if right.binary_op() == Some(operator)
+                        || matches!(right.tag(), ExprTag::Object | ExprTag::Array | ExprTag::Jsx)
+                    {
+                        return Err(Refused);
+                    }
+                    operands.push(right);
+                    if left.binary_op() != Some(operator) {
+                        operands.push(left);
+                        break;
+                    }
+                    chain = left;
+                }
+                bin_op_text(operator)
+            }
+            // The operands of any other operator are in groups. `!(a && b)` is hugged.
+            Some(_) => return Err(Refused),
+            None if test.tag() == ExprTag::Unary => return Err(Refused),
+            None => {
+                operands.push(test);
+                ""
+            }
+        };
+        self.break_line(1)?;
+        let count = operands.len();
+        for (index, operand) in operands.into_iter().rev().enumerate() {
+            if index > 0 {
+                self.break_line(0)?;
+            }
+            let is_last = index + 1 == count;
+            let after = if is_last { 0 } else { 1 + operator.len() };
+            let hole = Hole::Expr(operand, index == 0 && count > 1);
+            self.on_own_line(operand.outer_span(), after, hole, |line| {
+                line.expr(operand, Place::Other)
+            })?;
+            if !is_last {
+                self.byte(b' ')?;
+                self.token(operator)?;
+            }
+        }
+        self.break_line(-1)
     }
 
     /// The body of another statement, which isn't a block.
@@ -506,8 +590,7 @@ impl<'a> Line<'_, 'a> {
                 return Err(Refused);
             };
             self.token("if (")?;
-            self.expr(test, Place::Other)?;
-            self.byte(b')')?;
+            self.condition(test, yes)?;
             self.clause(yes)?;
             let Some(no) = no else {
                 return Ok(());

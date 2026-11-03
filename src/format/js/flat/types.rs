@@ -2,7 +2,9 @@
 
 use super::holes::Hole;
 use super::*;
-use crate::js::utils::typescript::should_hug_type;
+use crate::js::utils::typescript::{
+    is_object_like_type, is_simple_type, should_hug_type, without_lone_operator,
+};
 
 impl<'a> Line<'_, 'a> {
     /// `: T`
@@ -101,10 +103,94 @@ impl<'a> Line<'_, 'a> {
                 && self.has_line_break_in(Span::new(ty.span().start, first.span().start)))
     }
 
+    /// `mark`, which is `:` or ` =`, and a type. Nothing before them can break, and nothing but a `;` follows.
+    pub(super) fn last_type_after(&mut self, mark: &'static str, ty: TypeNode<'a>) -> Written {
+        self.token(mark)?;
+        let ty = without_lone_operator(ty);
+        match ty.kind() {
+            TypeKind::Union(types) if self.breaks && !should_hug_type(types, self.f) => {
+                // Where its comments are printed is another matter.
+                if self.has_comments_in(ty.span()) {
+                    return Err(Refused);
+                }
+                // The blank before the line break counts where decorators ask whether the line fits.
+                self.end_text(Some(1))?;
+                self.union_after_line_break(types)
+            }
+            _ => {
+                self.byte(b' ')?;
+                self.last_type(ty)
+            }
+        }
+    }
+
+    /// A union that's too wide for the line of what's before it: on the next line, or each type on a line. A `;`
+    /// follows.
+    fn union_after_line_break(&mut self, types: List<'a, TypeNode<'a>>) -> Written {
+        self.breaks = false;
+        self.break_line(1)?;
+        let mark = self.mark();
+        let limit = self.limit;
+        (self.limit, self.is_too_wide) = (limit.saturating_sub(1), false);
+        let written = self.types_between(types, " | ");
+        if written.is_ok() && !self.has_parts_since(mark) {
+            self.limit = limit;
+            self.end_indent();
+            return Ok(());
+        }
+        if !self.is_too_wide {
+            return Err(Refused);
+        }
+        self.go_back_to(mark);
+        let count = types.len();
+        for (index, member) in types.iter().enumerate() {
+            if index > 0 {
+                self.break_line(0)?;
+            }
+            self.token("| ")?;
+            let after = usize::from(index + 1 == count);
+            let hole = Hole::UnionMember(member);
+            self.on_own_line(member.outer_span(), after, hole, |line| line.ty(member))?;
+        }
+        self.end_indent();
+        Ok(())
+    }
+
     /// A type with nothing but closing brackets and `;` after it, and nothing before it that can break, so that it can
     /// end the line.
     pub(super) fn last_type(&mut self, ty: TypeNode<'a>) -> Written {
         match ty.kind() {
+            TypeKind::Mapped(_)
+                if self.breaks
+                    || (self.f.options().expand == Expand::Auto
+                        && (self.f.source_text())
+                            .has_line_terminator_after_skipping_comments(ty.span().start + 1)) =>
+            {
+                self.end_line_with_hole(Hole::Type(ty), ty.span(), 1)
+            }
+            TypeKind::Fn(func) if self.breaks => self.function_type(func, true),
+            // Nothing can break between an object type and what's next to it.
+            TypeKind::Intersection(types) if types.len() == 2 => {
+                let (Some(first), Some(second)) = (types.first(), types.last()) else {
+                    return Err(Refused);
+                };
+                if !is_object_like_type(first) && !is_object_like_type(second) {
+                    return self.ty(ty);
+                }
+                // What is too wide can break in the second type as well.
+                if self.breaks && !is_object_like_type(second) && !is_simple_type(second) {
+                    return Err(Refused);
+                }
+                self.nested(|line| match is_object_like_type(first) {
+                    true => line.last_type(first),
+                    false => line.ty(first),
+                })?;
+                self.token(" & ")?;
+                self.nested(|line| match is_object_like_type(second) {
+                    true => line.last_type(second),
+                    false => line.ty(second),
+                })
+            }
             TypeKind::Object(members) => match members.first() {
                 Some(first) if self.is_broken_type_literal(ty, first) => {
                     self.end_line_with_hole(Hole::Type(ty), ty.span(), 1)
@@ -207,24 +293,27 @@ impl<'a> Line<'_, 'a> {
                 self.ty(index)?;
                 self.byte(b']')
             }
-            TypeKind::Fn(func) => {
-                match func.kind() {
-                    FnKind::FunctionType => {}
-                    FnKind::ConstructorType => {
-                        if func.flags().contains(Flags::ABSTRACT) {
-                            self.token("abstract ")?;
-                        }
-                        self.token("new ")?;
-                    }
-                    _ => return Err(Refused),
-                }
-                self.type_parameters(func.type_params())?;
-                self.parameters_on_one_line(func)?;
-                self.token(" => ")?;
-                self.ty(func.return_type().ok_or(Refused)?)
-            }
+            TypeKind::Fn(func) => self.function_type(func, false),
             _ => self.less_common_type(ty),
         }
+    }
+
+    /// `(a: A) => B`, `new (a: A) => B`
+    fn function_type(&mut self, func: Func<'a>, can_break: bool) -> Written {
+        match func.kind() {
+            FnKind::FunctionType => {}
+            FnKind::ConstructorType => {
+                if func.flags().contains(Flags::ABSTRACT) {
+                    self.token("abstract ")?;
+                }
+                self.token("new ")?;
+            }
+            _ => return Err(Refused),
+        }
+        if func.return_type().is_none() {
+            return Err(Refused);
+        }
+        self.head(func, can_break)
     }
 
     /// `types`, with `operator` between them.

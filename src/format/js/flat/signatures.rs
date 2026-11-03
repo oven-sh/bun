@@ -51,7 +51,7 @@ impl<'a> Line<'_, 'a> {
             });
         if !can_break || !(has_modifier || self.breaks) {
             self.parameters_on_one_line(func)?;
-            return self.type_annotation(func.return_type());
+            return self.return_type(func);
         }
         if count == 0 || should_hug_function_parameters(func, false, self.f) {
             return Err(Refused);
@@ -78,7 +78,19 @@ impl<'a> Line<'_, 'a> {
             },
         )?;
         self.byte(b')')?;
-        self.type_annotation(func.return_type())
+        self.return_type(func)
+    }
+
+    /// `: T`, or ` => T` in a function type
+    fn return_type(&mut self, func: Func<'a>) -> Written {
+        let Some(ty) = func.return_type() else {
+            return Ok(());
+        };
+        self.token(match func.kind() {
+            FnKind::FunctionType | FnKind::ConstructorType => " => ",
+            _ => ": ",
+        })?;
+        self.ty(ty)
     }
 
     /// `@a private b?: T = 1`, `...a: T`, `this: T`

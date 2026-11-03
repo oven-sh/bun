@@ -727,6 +727,23 @@ describe.skipIf(!hasFlag)("statements, declarations, classes and types", () => {
       if (someCondition && anotherCondition) return someFunction(argumentNumberOne, argumentNumberTwo);
       if (a) return "😈 not as wide as it has bytes, not as wide as it has bytes 😈😈😈😈";
       else throw someFunction(argumentNumberOne, argumentNumberTwo, argumentNumberThree);
+      if (someCondition && anotherCondition && oneMoreCondition && yetAnotherCondition && theLastCondition) { a(); }
+      if (someCondition || anotherCondition || oneMoreCondition(withArguments, andMore) || yetAnotherCondition) {}
+      if (someCondition && anotherCondition || oneMoreCondition && yetAnotherCondition || theLastCondition1) { a(); }
+      if (someCondition && (anotherCondition && oneMoreCondition) && yetAnotherCondition && theLastCondition) { a(); }
+      if (someCondition && anotherCondition && oneMoreCondition && yetAnotherCondition && { a: 1, b: 2 }) { a(); }
+      if (someCondition ?? anotherCondition ?? oneMoreCondition ?? yetAnotherCondition ?? theLastCondition12) { a(); }
+      if (!(someCondition && anotherCondition && oneMoreCondition && yetAnotherCondition && theLastCondition)) { a(); }
+      if (someFunction(argumentNumberOne, argumentNumberTwo, argumentNumberThree, argumentNumberFour, five)) { a(); }
+      if (someValue + anotherValue + oneMoreValue > yetAnotherValue * theLastValue + andSomeMoreOfThemHere1) { a(); }
+      if (someCondition && someFunction(argumentNumberOne, argumentNumberTwo, argumentNumberThree, argumentNumberFour, five)) { a(); }
+      if (someFunction(argumentNumberOne, argumentNumberTwo, argumentNumberThree, argumentNumberFour, five) && b) { a(); }
+      if (someCondition && anotherCondition && oneMoreCondition && "😈😈😈😈😈😈😈😈😈😈😈😈😈😈😈😈😈") { a(); }
+      if (someCondition && anotherCondition && oneMoreCondition && yetAnotherCondition && theLastCondition) a();
+      if (a) { b(); } else if (someCondition && anotherCondition && oneMoreCondition && yetAnotherCondition1) { a(); }
+      while (someCondition && anotherCondition && oneMoreCondition && yetAnotherCondition && theLastCondition) {}
+      while (someCondition && anotherCondition && oneMoreCondition && yetAnotherCondition && theLastCondition) { a(); }
+      function f() { if (someCondition && anotherCondition && oneMoreCondition && yetAnotherCondition && last) { a(); } }
       for (let i = 0, n = list.length; i < n; i++) { f(i); }
       for (;;) {}
       for (; a; ) b();
@@ -790,6 +807,7 @@ describe.skipIf(!hasFlag)("statements, declarations, classes and types", () => {
       export = { a: 1,
         b: 2 };
       export as namespace A;
+      export export as namespace A;
       import a = require('a');
       import type b = require("b");
       import c = d.e.f;
@@ -902,6 +920,15 @@ describe.skipIf(!hasFlag)("statements, declarations, classes and types", () => {
         @a()
         b: string;
         @a() @b c() {}
+        @Input("someArgumentName") someProperty: string | string[];
+        /* c */ @Input("someArgumentName") someProperty: string | string[];
+        /* c
+c */ @Input("someArgumentName") someProperty: string | string[];
+        /* c
+c */ someMethodName(someParameterName: SomeParameterType, another: AnotherParameterType) {}
+        @Input("someArgumentName") someMethod(someParameter: string, another: number) {}
+        @Input("someArgumentName") someProperty = { a: 1, b: 2, c: 3 };
+        @Input("someArgumentName") someProperty: { a: string; b: number };
         @a()
         @b c() {}
         @Input() someProperty: SomeType<WithArguments> = someFunction(argumentNumberOne, argumentNumberTwo);
@@ -915,6 +942,13 @@ describe.skipIf(!hasFlag)("statements, declarations, classes and types", () => {
         @Output({
           a: 1 })
         b = 1;
+        someProperty: SomeType<WithArguments> = new SomeType<WithArguments>();
+
+;  /** a comment that is printed after the property */
+        someProperty: SomeType<WithArguments> = new SomeType<WithArguments>();
+/* c
+ d */
+;  /** a comment that is printed after the property */
         abstract a(): void;
         abstract b: string;
         protected abstract override c?(): void;
@@ -988,6 +1022,60 @@ describe.skipIf(!hasFlag)("statements, declarations, classes and types", () => {
       function f(a: [string, number], b: { c: string }, d: () => void, e: typeof f): a is [string, number] {}
       type SomeVeryLongTypeName = SomeType | AnotherType | OneMoreType | YetAnotherType | AndAnotherType | Last;
       type SomeVeryLongTypeName<T> = T extends SomeType ? AnotherType<T> : OneMoreType<T, YetAnotherType, AndMore>;
+      type A = "some string" | "another string" | "one more string" | "yet another string" | "and another" | "last";
+      type A = | "some string" | "another string" | "one more string" | "yet another string which is long" | "l";
+      type A = SomeType | ((someParameter: SomeParameterType, anotherParameter: AnotherParameterType) => SomeReturnType);
+      type A = SomeType | { someProperty: string; anotherProperty: number; oneMoreProperty: boolean; more: 1; evenMore: 2 };
+      type A = SomeType | {
+        a: string } | AnotherType;
+      type A = "😈😈😈😈😈😈😈😈😈😈😈😈😈😈😈😈" | "😈😈😈😈😈😈😈😈😈😈😈😈" | "😈😈😈😈😈😈😈😈";
+      type A = SomeType | AnotherType | OneMoreType /* comment */ | YetAnotherType | AndAnotherType | TheLastType;
+      type A = SomeType | { a: string; // comment
+        } | AnotherType // comment2
+        | OneMoreType;
+      type A = (
+        // comment
+        B | C) | D;
+      type A = { direction?: string } & (SomeVeryLongTypeName | AnotherVeryLongTypeName | OneMoreTypeName);
+      type A = (someParameter: SomeParameterType, anotherParameter: AnotherParameterType) => SomeReturnType;
+      type A = new (someParameter: SomeParameterType, anotherParameter: AnotherParameterType) => SomeReturnType;
+      type A = <T>(someParameter: SomeParameterType<T>, anotherParameter: AnotherParameterType) => SomeReturnType<T>;
+      type A = (someParameter: SomeParameterType) => { someProperty: string; anotherProperty: number; more: boolean };
+      type A = (someParameter: { someProperty: string; anotherProperty: number; more: boolean; evenMore: 1 }) => void;
+      type A = (config: {
+        value: string }) => void;
+      type A = () => SomeReturnType<WithSomeArguments, AndMore, AndEvenMoreOfThemHereAndThere, AndSomeMoreOfThem>;
+      type A = B & {
+        c: string };
+      type A = {
+        c: string } & B;
+      type A = {
+        c: string } & { d: string };
+      type A = { c: string } & {
+        d: string };
+      type A = B & C & {
+        d: string };
+      type A = SomeType<WithArguments> & { someProperty: string; anotherProperty: number; oneMoreProperty: boolean };
+      type A = { someProperty: string; anotherProperty: number; oneMoreProperty: boolean } & SomeType<WithArguments>;
+      type A = { someProperty: string; anotherProperty: number } & { oneMoreProperty: boolean; yetAnother: string };
+      type A = SomeVeryLongTypeName & AnotherVeryLongTypeName & OneMoreVeryLongTypeName & YetAnotherVeryLongTypeName;
+      type A = { [SomeKey in keyof SomeVeryLongTypeName]: SomeVeryLongTypeName[SomeKey] extends B ? C : never };
+      type A = ReturnType<typeof someVeryLongFunctionNameThatGoesOnAndOnAndOnAndOnAndOnAndOnAndOnAndOnAndOn>;
+      type SomeVeryLongTypeNameThatGoesOnAndOn = SomeOtherVeryLongTypeNameThatGoesOnAndOnAndOnAndOnAndOnAndOn;
+      interface A {
+        onChange?: (someParameter: SomeParameterType, anotherParameter: AnotherParameterType) => SomeReturnType;
+        onChange?: null | ((someParameter: SomeParameterType, anotherParameter: AnotherParameterType) => void) | undefined;
+        someProperty: "some string" | "another string" | "one more string" | "yet another string" | "last";
+        someProperty: B & {
+          c: string };
+        someProperty: {
+          [K in B]: C };
+      }
+      class A {
+        someProperty: "some string" | "another string" | "one more string" | "yet another string" | "last one";
+        onChange?: (someParameter: SomeParameterType, anotherParameter: AnotherParameterType) => SomeReturnType;
+      }
+      let someVariable: "some string" | "another string" | "one more string" | "yet another string" | "last one";
     `,
   };
   const options = [

@@ -48,11 +48,8 @@ impl<'a> Line<'_, 'a> {
         if has_decorators {
             present = Flags::empty();
             // Each is on a line if one of them is in the source.
+            // Else they're on the line of the member, if what's on it up to where it can break first fits.
             let are_on_own_lines = member.decorators().any(|it| self.ends_its_line(it));
-            // Else they're on the line of the member if that fits. If it doesn't, what breaks first is another matter.
-            if !are_on_own_lines && self.breaks {
-                return Err(Refused);
-            }
             let breaks = std::mem::replace(&mut self.breaks, false);
             for modifier in modifiers {
                 let Some(decorator) = modifier.decorator() else {
@@ -102,6 +99,13 @@ impl<'a> Line<'_, 'a> {
     /// A member of a class. Without the `;` of a property.
     pub(super) fn class_member(&mut self, member: Member<'a>) -> Written {
         let node = member.as_ast_nodes();
+        // A `;` on a line of its own is part of nothing, so a block comment after it is printed on the member's line.
+        let comments = self.f.comments();
+        if comments.is_owner(Node::Member(member))
+            && (comments.of_node(node).trailing.iter()).any(|comment| !comment.is_line())
+        {
+            return Err(Refused);
+        }
         match node {
             AstNodes::PropertyDefinition(_) => {
                 self.member_modifiers(member, false)?;
@@ -114,10 +118,7 @@ impl<'a> Line<'_, 'a> {
                     self.byte(b'!')?;
                 }
                 match (member.ty(), member.init()) {
-                    (Some(ty), None) => {
-                        self.token(": ")?;
-                        self.last_type(ty)
-                    }
+                    (Some(ty), None) => self.last_type_after(":", ty),
                     (ty, Some(init)) => {
                         self.type_annotation(ty)?;
                         self.token(" = ")?;

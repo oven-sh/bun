@@ -151,14 +151,8 @@ impl<'a> Line<'_, 'a> {
                     self.byte(b'?')?;
                 }
                 match member.ty() {
-                    Some(ty) => {
-                        self.token(": ")?;
-                        match is_last {
-                            true => self.last_type(ty),
-                            false => self.ty(ty),
-                        }
-                    }
-                    None => Ok(()),
+                    Some(ty) if is_last => self.last_type_after(":", ty),
+                    ty => self.type_annotation(ty),
                 }
             }
             AstNodes::TSMethodSignature(_) => {

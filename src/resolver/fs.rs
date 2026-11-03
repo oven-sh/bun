@@ -141,9 +141,15 @@ pub struct Entry {
 
     pub mutex: Mutex,
     pub need_stat: AtomicBool,
+    /// Listed as a symlink or of unknown kind: a change outside its directory can change what `cache` holds.
+    pub(crate) is_link: AtomicBool,
 
     abs_path: OnceLock<Interned>,
 }
+
+/// The generation of the last asker that had each link statted again, by the address of its `Entry`.
+static LINK_READS: bun_threading::Guarded<Option<bun_collections::HashMap<usize, Generation>>> =
+    bun_threading::Guarded::new(None);
 
 impl Entry {
     /// Snapshot of the lazily-populated stat cache. `EntryCache` is `Copy`
@@ -266,6 +272,51 @@ impl Entry {
             }
         }
         self.cache().symlink.as_bytes()
+    }
+
+    /// `kind` for a lookup of `generation`. One that checks (not 0) has a link statted again, once for each generation.
+    #[inline(always)]
+    pub(crate) fn kind_for<R: EntryKindResolver>(
+        &self,
+        generation: Generation,
+        fs: &R,
+        store_fd: bool,
+    ) -> EntryKind {
+        // Relaxed: a stale answer adds or skips one stat, and a listing read again asks for that stat itself.
+        if generation != 0 && self.is_link.load(Ordering::Relaxed) {
+            self.stat_link_again(generation);
+        }
+        self.kind(fs, store_fd)
+    }
+
+    /// See [`Entry::kind_for`].
+    #[inline(always)]
+    pub(crate) fn symlink_for<R: EntryKindResolver>(
+        &self,
+        generation: Generation,
+        fs: &R,
+        store_fd: bool,
+    ) -> &'static [u8] {
+        // Relaxed: see `Entry::kind_for`.
+        if generation != 0 && self.is_link.load(Ordering::Relaxed) {
+            self.stat_link_again(generation);
+        }
+        self.symlink(fs, store_fd)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn stat_link_again(&self, generation: Generation) {
+        // Under the mutex: a stat in flight clears `need_stat` when it ends.
+        let _guard = self.mutex.lock_guard();
+        let mut reads = LINK_READS.lock();
+        let link = core::ptr::from_ref(self) as usize;
+        let last = reads
+            .get_or_insert_with(Default::default)
+            .insert(link, generation);
+        if last != Some(generation) {
+            self.need_stat.store(true, Ordering::Release);
+        }
     }
 }
 
@@ -466,6 +517,10 @@ impl DirEntry {
                             || Some(existing.cache().kind) != found_kind,
                         Ordering::Release,
                     );
+                    // Relaxed: see `Entry::kind_for`.
+                    existing
+                        .is_link
+                        .store(found_kind.is_none(), Ordering::Relaxed);
                     break 'brk existing_ptr;
                 }
             }
@@ -512,6 +567,7 @@ impl DirEntry {
                 // contains a directory with over 11,000 entries in it and running "stat"
                 // for each entry was a big performance issue for that package.
                 addr_of_mut!((*p).need_stat).write(AtomicBool::new(found_kind.is_none()));
+                addr_of_mut!((*p).is_link).write(AtomicBool::new(found_kind.is_none()));
                 addr_of_mut!((*p).cache).write(core::cell::Cell::new(EntryCache {
                     symlink: Interned::EMPTY,
                     // if found_kind is null, we have set need_stat above, so we

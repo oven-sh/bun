@@ -710,6 +710,30 @@ impl RuntimeTranspilerCache {
         0
     }
 
+    /// Writes the directory in which the compiled code of Python's standard library is kept into `buf` and returns its
+    /// byte length: beside this cache's directory, or in it if the environment says where that is. Returns 0 if
+    /// `BUN_RUNTIME_TRANSPILER_CACHE_PATH` turns caching off or there is no place for a cache.
+    pub fn python_cache_dir(buf: &mut PathBuffer) -> usize {
+        const NAME: &[u8] = b"@py@";
+        let mut len = Self::really_get_cache_dir(buf);
+        if len == 0 {
+            return 0;
+        }
+        if env_var::BUN_RUNTIME_TRANSPILER_CACHE_PATH.get().is_none()
+            && buf[..len].ends_with(b"@t@")
+        {
+            len -= b"@t@".len();
+        } else if len + 1 < MAX_PATH_BYTES {
+            buf[len] = SEP;
+            len += 1;
+        }
+        if len + NAME.len() >= MAX_PATH_BYTES {
+            return 0;
+        }
+        buf[len..len + NAME.len()].copy_from_slice(NAME);
+        len + NAME.len()
+    }
+
     // Only do this at most once per-thread.
     // A Rust thread_local can't easily hand out borrows into itself across
     // calls, so cache the resolved path bytes + length and re-copy into the

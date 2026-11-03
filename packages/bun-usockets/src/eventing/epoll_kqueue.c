@@ -474,6 +474,59 @@ void us_loop_run(struct us_loop_t *loop) {
 
 extern unsigned int Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm, uint64_t now_ns, int * _Nullable released_heap_access);
 extern void Bun__JSC_acquireHeapAccessAfterWait(void * _Nonnull jsc_vm);
+/* Calls wait(argument) with the VM left to the other threads that run in it (Python's), if there are any. 0: there are none, and it made no call. */
+extern int Bun__JSC_waitWhileOtherThreadsRun(void * _Nonnull jsc_vm, void (* _Nonnull wait)(void * _Nonnull), void * _Nonnull argument);
+
+struct us_internal_wait_for_polls {
+    struct us_loop_t *loop;
+    const struct timespec *timeout;
+    uint64_t now_ns;
+    int will_idle;
+};
+
+static void us_internal_wait_for_polls(void *argument) {
+    struct us_internal_wait_for_polls *wait = (struct us_internal_wait_for_polls *) argument;
+    struct us_loop_t *loop = wait->loop;
+
+    /* The scavenger sweeps our heaps while we are in the kernel. Nothing may touch our heaps until the
+     * matching _end, so the pair is around the system call and nothing else: Bun__JSC_onBeforeWait
+     * allocates, and so does handing the VM to other threads and taking it back.
+     * mimalloc paces the sweep itself, so this costs a compare-and-swap per tick.
+     * Only on a tick that really parks: there is no time to sweep in a poll that returns at once.
+     * With no scavenger to hand off to, fall back to sweeping inline, rate-limited, because doing
+     * it between ticks is what we are avoiding. */
+    const int handed_off = wait->will_idle && mi_on_thread_idle_start();
+    if (!handed_off && wait->will_idle) {
+        static const uint64_t idle_sweep_interval_ns = 100 * 1000000ULL;
+        static _Thread_local uint64_t last_idle_sweep_ns = 0;
+        const uint64_t sweep_now_ns = wait->now_ns ? wait->now_ns : us_internal_monotonic_ns();
+        if (sweep_now_ns >= last_idle_sweep_ns + idle_sweep_interval_ns) {
+            last_idle_sweep_ns = sweep_now_ns;
+            mi_on_thread_idle();
+        }
+    }
+
+#ifdef LIBUS_USE_EPOLL
+    /* A zero timespec already has a fast path in ep_poll (fs/eventpoll.c):
+     * it sets timed_out=1 (line 1952) and returns before any scheduler
+     * interaction (line 1975). No equivalent of KEVENT_FLAG_IMMEDIATE needed. */
+    loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, wait->timeout);
+#else
+    loop->num_ready_polls = bun_kevent64_wait(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS,
+        /* When we won't idle (pending wakeups or zero timeout), use KEVENT_FLAG_IMMEDIATE.
+         * In XNU's kqueue_scan (bsd/kern/kern_event.c):
+         *  - KEVENT_FLAG_IMMEDIATE: returns immediately after kqueue_process() (line 8031)
+         *  - Zero timespec without the flag: falls through to assert_wait_deadline (line 8039)
+         *    and thread_block (line 8048), doing a full context switch cycle (~14us) even
+         *    though the deadline is already in the past. */
+        wait->will_idle ? 0 : KEVENT_FLAG_IMMEDIATE,
+        wait->timeout);
+#endif
+
+    /* Before anything can allocate again. */
+    if (handed_off)
+        mi_on_thread_idle_end();
+}
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, uint64_t now_ns) {
     if (loop->num_polls == 0)
@@ -511,46 +564,13 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     if (will_idle_inside_event_loop && loop->data.jsc_vm)
         (void) Bun__JSC_onBeforeWait(loop->data.jsc_vm, now_ns, &released_heap_access);
 
-    /* The scavenger sweeps our heaps while we are in the kernel. Must come after
-     * Bun__JSC_onBeforeWait, which allocates: nothing may touch our heaps until the matching
-     * _end. mimalloc paces the sweep itself, so this costs a compare-and-swap per tick.
-     * Only on a tick that really parks: there is no time to sweep in a poll that returns at once.
-     * With no scavenger to hand off to, fall back to sweeping inline, rate-limited, because doing
-     * it between ticks is what we are avoiding. */
-    const int handed_off = will_idle_inside_event_loop && mi_on_thread_idle_start();
-    if (!handed_off && will_idle_inside_event_loop) {
-        static const uint64_t idle_sweep_interval_ns = 100 * 1000000ULL;
-        static _Thread_local uint64_t last_idle_sweep_ns = 0;
-        const uint64_t sweep_now_ns = now_ns ? now_ns : us_internal_monotonic_ns();
-        if (sweep_now_ns >= last_idle_sweep_ns + idle_sweep_interval_ns) {
-            last_idle_sweep_ns = sweep_now_ns;
-            mi_on_thread_idle();
-        }
-    }
-
     /* Fetch ready polls */
-#ifdef LIBUS_USE_EPOLL
-    /* A zero timespec already has a fast path in ep_poll (fs/eventpoll.c):
-     * it sets timed_out=1 (line 1952) and returns before any scheduler
-     * interaction (line 1975). No equivalent of KEVENT_FLAG_IMMEDIATE needed. */
-    loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, timeout);
-#else
-    loop->num_ready_polls = bun_kevent64_wait(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS,
-        /* When we won't idle (pending wakeups or zero timeout), use KEVENT_FLAG_IMMEDIATE.
-         * In XNU's kqueue_scan (bsd/kern/kern_event.c):
-         *  - KEVENT_FLAG_IMMEDIATE: returns immediately after kqueue_process() (line 8031)
-         *  - Zero timespec without the flag: falls through to assert_wait_deadline (line 8039)
-         *    and thread_block (line 8048), doing a full context switch cycle (~14us) even
-         *    though the deadline is already in the past. */
-        will_idle_inside_event_loop ? 0 : KEVENT_FLAG_IMMEDIATE,
-        timeout);
-#endif
+    struct us_internal_wait_for_polls wait = { loop, timeout, now_ns, will_idle_inside_event_loop };
+    if (!(will_idle_inside_event_loop && loop->data.jsc_vm && Bun__JSC_waitWhileOtherThreadsRun(loop->data.jsc_vm, us_internal_wait_for_polls, &wait)))
+        us_internal_wait_for_polls(&wait);
 
     /* Anything that stops a poll from here on scrubs this batch (us_internal_loop_update_pending_ready_polls). */
     loop->current_ready_poll = 0;
-    /* Before anything can allocate again. */
-    if (handed_off)
-        mi_on_thread_idle_end();
     /* Before anything touches the JS heap again (this may run a finished collection's epilogue, i.e. destructors). */
     if (released_heap_access)
         Bun__JSC_acquireHeapAccessAfterWait(loop->data.jsc_vm);

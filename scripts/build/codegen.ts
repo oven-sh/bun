@@ -199,7 +199,7 @@ export function registerCodegenRules(n: Ninja, cfg: CodegenFields): void {
   });
 }
 
-function codegenDirStamp(cfg: CodegenFields): string {
+export function codegenDirStamp(cfg: CodegenFields): string {
   return resolve(cfg.codegenDir, ".dir");
 }
 

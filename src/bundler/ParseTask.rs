@@ -1374,6 +1374,15 @@ pub mod parse_worker {
             Loader::Dataurl | Loader::Base64 | Loader::Bunsh => {
                 return get_empty_ast::<E::String>(log, transpiler, opts, bump, source);
             }
+            Loader::Python => {
+                // logger OOM-only
+                let _ = log.add_error(
+                    Some(source),
+                    Loc::EMPTY,
+                    b"The \"python\" loader is not supported by the bundler yet",
+                );
+                return Err(crate::Error::ParserError);
+            }
             Loader::File | Loader::Wasm => {
                 debug_assert!(loader.should_copy_for_bundling());
 

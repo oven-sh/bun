@@ -142,6 +142,10 @@ pub enum MainEntryPoint {
     Compiled,
     /// A file that is not compiled into an executable that runs only what is. The loader gets its path and answers for it.
     OutsideExecutable,
+    /// `bun ./main.py`: the file is the module `__main__`.
+    Python,
+    /// `python3 ...`: the command line says what to run. There is no entry module.
+    PythonCommandLine,
     /// `bun ./index.html`: `src/js/internal/html.ts` serves the pages.
     Html,
     /// `bun bake`: `src/js/internal/bake.ts` serves the app in the working directory. There is no
@@ -2260,6 +2264,12 @@ impl VirtualMachine {
             return true;
         }
 
+        let thrown = err.to_error().unwrap_or(err);
+        if is_python_exception(thrown) && Bun__Python__exitIfExceptionAsksTo(global_object, thrown)
+        {
+            return true;
+        }
+
         // An exception thrown by a Bun.ModuleGraph's module code is that graph's to
         // handle, ahead of the test runner and the thread-wide path. (A rejection
         // re-entering here under --unhandled-rejections=strict/throw was already judged.)
@@ -3371,6 +3381,13 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         entry_point: BuiltinEntryPoint,
     ) -> *mut JSInternalPromise;
+    safe fn Bun__Python__loadMain(
+        global: &JSGlobalObject,
+        path: &bun_core::String,
+    ) -> *mut JSInternalPromise;
+    safe fn Bun__Python__runCommandLine(global: &JSGlobalObject) -> *mut JSInternalPromise;
+    /// `SystemExit` and `KeyboardInterrupt` end the program wherever they surface. False: it is neither.
+    safe fn Bun__Python__exitIfExceptionAsksTo(global: &JSGlobalObject, exception: JSValue) -> bool;
     // safe: `ctx` is an opaque round-trip pointer C++ only forwards to `callback`
     // (never dereferenced as Rust data).
     safe fn JSC__VM__holdAPILock(
@@ -3887,15 +3904,39 @@ impl VirtualMachine {
         // module evaluations from here on mark the entry graph as executing.
         self.entry_evaluation_started = false;
         let builtin = match self.main_entry_point {
-            MainEntryPoint::File | MainEntryPoint::Compiled | MainEntryPoint::OutsideExecutable => {
-                None
-            }
+            MainEntryPoint::File
+            | MainEntryPoint::Compiled
+            | MainEntryPoint::OutsideExecutable
+            | MainEntryPoint::Python
+            | MainEntryPoint::PythonCommandLine => None,
             MainEntryPoint::Html => Some(BuiltinEntryPoint::Html),
             MainEntryPoint::Bake => Some(BuiltinEntryPoint::Bake),
         };
         // Note: reshaped for borrowck — capture raw ptr before &self call.
         let global = self.global;
-        let promise = if let Some(builtin) = builtin {
+        let promise = if self.main_entry_point == MainEntryPoint::Python {
+            self.has_loaded = true;
+            let main = (self.main()).expect("the entry point has a path");
+            let main_str = bun_core::StringView::from_bytes(main);
+            let global_ref = self.global();
+            let p: *mut JSInternalPromise = jsc::from_js_host_call_generic(global_ref, || {
+                Bun__Python__loadMain(global_ref, &main_str)
+            })?;
+            if p.is_null() {
+                return Err(crate::CrateError::JSError);
+            }
+            p
+        } else if self.main_entry_point == MainEntryPoint::PythonCommandLine {
+            self.has_loaded = true;
+            let global_ref = self.global();
+            let p: *mut JSInternalPromise = jsc::from_js_host_call_generic(global_ref, || {
+                Bun__Python__runCommandLine(global_ref)
+            })?;
+            if p.is_null() {
+                return Err(crate::CrateError::JSError);
+            }
+            p
+        } else if let Some(builtin) = builtin {
             // The built-in module is the main module, so what it imports loads as the imports of a
             // main module do (`has_loaded`): a file of an unknown type is a file, not a script.
             if !self.transpiler.options.disable_transpilation {
@@ -4755,6 +4796,11 @@ impl VirtualMachine {
 
         if self.is_shutting_down() || !self.script_allowed() || reason.is_termination_exception() {
             bun_core::debug_warn!("unhandledRejection during shutdown.");
+            return;
+        }
+
+        if is_python_exception(reason) && Bun__Python__exitIfExceptionAsksTo(global_object, reason)
+        {
             return;
         }
 
@@ -6845,6 +6891,18 @@ impl VirtualMachine {
             }
         }
 
+        // A Python exception is reported as Python reports one: its `stack` is the traceback, the chain of causes included.
+        if allow_side_effects && value.is_cell() && value.js_type() == jsc::JSType::PyException {
+            match value.get_stringish(self.global(), "stack") {
+                Ok(Some(traceback)) => {
+                    let _ = writer.write_all(traceback.to_utf8().slice());
+                    return false;
+                }
+                Ok(None) => {}
+                Err(_) => self.global().clear_exception(),
+            }
+        }
+
         if let Err(err) = self.print_error_instance_js(
             value,
             exception_list,
@@ -8318,6 +8376,10 @@ fn is_error_like(global_object: &JSGlobalObject, reason: JSValue) -> JsResult<bo
 /// rejection itself throws (a hostile Proxy under isErrorLike, an OOM resolving a rope), that failure does not
 /// replace the thing being reported: the rejection is the user's bug, so it is reported as-is — unless what was
 /// thrown is a termination, which has to win.
+fn is_python_exception(value: JSValue) -> bool {
+    value.is_cell() && value.js_type() == jsc::JSType::PyException
+}
+
 fn unhandled_rejection_as_uncaught_error(
     global_object: &JSGlobalObject,
     reason: JSValue,

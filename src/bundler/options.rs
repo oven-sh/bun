@@ -700,6 +700,7 @@ const DEFAULT_LOADERS_POSIX: &[(&[u8], Loader)] = &[
     (b".xml", Loader::Xml),
     (b".md", Loader::Md),
     (b".markdown", Loader::Md),
+    (b".py", Loader::Python),
 ];
 
 #[cfg(all(windows, test))]
@@ -736,6 +737,7 @@ impl DefaultLoaders {
                 b".js" => Some(&Loader::Jsx),
                 b".ts" => Some(&Loader::Ts),
                 b".md" => Some(&Loader::Md),
+                b".py" => Some(&Loader::Python),
                 #[cfg(windows)]
                 b".sh" => Some(&Loader::Bunsh),
                 _ => None,

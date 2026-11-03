@@ -26,6 +26,7 @@ const moduleLoaders = [
   "Bun.ModuleGraph",
   "Bun.build",
   "Bun.plugin",
+  "native:Cpp:BunPython.cpp:Bun::createPythonNamespace",
   "node:module._extensions",
   "node:module._load",
   "node:module.runMain",

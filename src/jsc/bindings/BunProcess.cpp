@@ -891,8 +891,12 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     }
 }
 
+extern "C" void Bun__Python__finalize(Zig::GlobalObject*);
+
 extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t exitCode)
 {
+    Bun__Python__finalize(globalObject);
+
     if (!globalObject->hasProcessObject()) {
         return;
     }

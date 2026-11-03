@@ -15,10 +15,11 @@ import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "
 import { relative, resolve, sep } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import { binaryExpectations, exportList, shimExpectations, strippedExpectations } from "./binary-expectations.ts";
-import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
+import { codegenDirStamp, emitCodegen, shJoin, type CodegenOutputs } from "./codegen.ts";
 import { cc, cxx, embedCompiledLibraryPath, link, pch, type PrecompiledHeader } from "./compile.ts";
 import { bunExeName, shouldStrip, type Config } from "./config.ts";
 import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
+import { CPYTHON_COMMIT_TIME } from "./deps/cpython.ts";
 import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { rustArgon2 } from "./deps/rust-argon2.ts";
@@ -39,7 +40,7 @@ import type { Ninja } from "./ninja.ts";
 import { emitRust, windowsShimPath } from "./rust.ts";
 import { quote, slash } from "./shell.ts";
 import { emitShims, machoPostlinkCommand, machoPostlinkImplicitInputs } from "./shims.ts";
-import { resolveDep, type Dependency, type DepName, type ResolvedDep } from "./source.ts";
+import { depSourceDir, resolveDep, type Dependency, type DepName, type ResolvedDep } from "./source.ts";
 import { streamPath } from "./stream.ts";
 import { generateUnifiedSources } from "./unified.ts";
 
@@ -410,6 +411,41 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
       }),
     );
   }
+
+  // Python's standard library: vendor/cpython/Lib and src/python packed into one file, which
+  // BunPythonStdlib.S `.incbin`s. The `.ref` stamp's content is the pinned
+  // commit, so a bump repacks.
+  const pythonStdlib = resolve(cfg.codegenDir, "python-stdlib.bin");
+  const packPythonStdlib = resolve(cfg.cwd, "src", "codegen", "pack-python-stdlib.ts");
+  const ownPythonDir = resolve(cfg.cwd, "src", "python");
+  const ownPythonModules = readdirSync(ownPythonDir, { recursive: true, withFileTypes: true })
+    .filter(entry => entry.isFile())
+    .map(entry => resolve(entry.parentPath, entry.name))
+    .sort();
+  n.build({
+    outputs: [pythonStdlib],
+    rule: "codegen",
+    inputs: [packPythonStdlib],
+    implicitInputs: [...depsByName.get("cpython")!.outputs, ...ownPythonModules],
+    orderOnlyInputs: [codegenDirStamp(cfg)],
+    vars: {
+      cwd: cfg.cwd,
+      desc: "python-stdlib.bin",
+      args: shJoin(cfg, [
+        packPythonStdlib,
+        depSourceDir(cfg, "cpython"),
+        ownPythonDir,
+        pythonStdlib,
+        String(CPYTHON_COMMIT_TIME),
+      ]),
+    },
+  });
+  cObjects.push(
+    cc(n, cfg, resolve(cfg.cwd, "src", "jsc", "bindings", "BunPythonStdlib.S"), {
+      flags: cFlagsFull,
+      implicitInputs: [pythonStdlib],
+    }),
+  );
 
   // Deps that contribute source files for bun to compile directly (via
   // provides.sources) instead of building a lib. Compile them here with

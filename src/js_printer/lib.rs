@@ -6321,6 +6321,9 @@ pub(crate) mod __gated_printer {
                                 Loader::Md => {
                                     self.print_whitespacer(ws!(b" with { type: \"md\" }"))
                                 }
+                                Loader::Python => {
+                                    self.print_whitespacer(ws!(b" with { type: \"python\" }"))
+                                }
                             }
                         }
                     }
@@ -6361,6 +6364,7 @@ pub(crate) mod __gated_printer {
                                         Loader::Json5 => FP::host_defined(mi.str(b"json5")),
                                         Loader::Xml => FP::host_defined(mi.str(b"xml")),
                                         Loader::Md => FP::host_defined(mi.str(b"md")),
+                                        Loader::Python => FP::host_defined(mi.str(b"python")),
                                     }
                                 } else {
                                     FP::None

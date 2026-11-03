@@ -314,6 +314,7 @@ inline constexpr BunLoaderType BunLoaderTypeYAML = 19;
 inline constexpr BunLoaderType BunLoaderTypeJSON5 = 20;
 inline constexpr BunLoaderType BunLoaderTypeMD = 21;
 inline constexpr BunLoaderType BunLoaderTypeXML = 22;
+inline constexpr BunLoaderType BunLoaderTypePython = 23;
 
 #pragma mark - Stream
 

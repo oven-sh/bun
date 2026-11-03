@@ -106,6 +106,8 @@ enum BootMain {
     /// `bun bake`: `src/js/internal/bake.ts` serves the app in the working directory. There is no
     /// entry module.
     Bake,
+    /// `python3 ...`: what `python_command::read_command_line` has read. There is no entry module.
+    PythonCommandLine,
 }
 
 impl RunCommand {
@@ -984,6 +986,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     }
 
     fn boot_main(ctx: &mut ContextData, main: BootMain) -> crate::Result<()> {
+        let is_python_command_line = matches!(main, BootMain::PythonCommandLine);
         if !ctx.debug.loaded_bunfig {
             arguments::load_config_path(
                 CommandTag::RunCommand,
@@ -1083,7 +1086,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // so the allocation is process-lifetime by construction.
         let (entry, loader): (Option<&'static [u8]>, Option<Loader>) = match main {
             BootMain::File { path, loader } => (Some(Box::leak(path)), loader),
-            BootMain::Bake => (None, None),
+            BootMain::Bake | BootMain::PythonCommandLine => (None, None),
         };
         // What `Run::start` passes to `vm.load_entry_point`; `mut` because the
         // cron-execution branch below may swap in a synthetic `cwd/[eval]` path
@@ -1184,6 +1187,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         // Only `bun bake` boots with no entry module.
         vm.main_entry_point = match entry {
+            None if is_python_command_line => MainEntryPoint::PythonCommandLine,
             None => MainEntryPoint::Bake,
             Some(entry)
                 if loader
@@ -1191,6 +1195,13 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     == Loader::Html =>
             {
                 MainEntryPoint::Html
+            }
+            Some(entry)
+                if loader
+                    .unwrap_or_else(|| vm.transpiler.options.loader(paths::extension(entry)))
+                    == Loader::Python =>
+            {
+                MainEntryPoint::Python
             }
             Some(_) => MainEntryPoint::File,
         };
@@ -3141,6 +3152,13 @@ impl RunCommand {
             .to_vec()
             .into_boxed_slice();
         Self::boot(ctx, entry, None)
+    }
+
+    /// `python3` argv0 emulation. The command line is CPython's and has been read: nothing of Bun's configuration applies.
+    pub(crate) fn exec_as_if_python(ctx: &mut ContextData) -> crate::Result<()> {
+        ctx.args.disable_default_env_files = true;
+        ctx.debug.loaded_bunfig = true;
+        Self::boot_main(ctx, BootMain::PythonCommandLine)
     }
 
     /// `node` argv0 emulation. Port of `execAsIfNode`.

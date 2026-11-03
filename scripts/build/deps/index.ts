@@ -14,6 +14,7 @@ import type { Dependency } from "../source.ts";
 import { boringssl } from "./boringssl.ts";
 import { brotli } from "./brotli.ts";
 import { cares } from "./cares.ts";
+import { cpython } from "./cpython.ts";
 import { highway } from "./highway.ts";
 import { libdeflate } from "./libdeflate.ts";
 import { libjpegTurbo } from "./libjpeg-turbo.ts";
@@ -44,6 +45,7 @@ export const allDeps: readonly Dependency[] = [
   // Header-only / source-only first — no link order concerns.
   picohttpparser,
   nodejsHeaders,
+  cpython,
 
   zlib,
   zstd,
@@ -77,6 +79,7 @@ export {
   boringssl,
   brotli,
   cares,
+  cpython,
   highway,
   libdeflate,
   libjpegTurbo,

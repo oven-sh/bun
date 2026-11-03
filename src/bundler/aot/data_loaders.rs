@@ -65,6 +65,14 @@ pub(crate) fn parse_data<'s>(
         Loader::Dataurl | Loader::Base64 | Loader::Bunsh => {
             Ok(create_string_module(b"", arena, atoms))
         }
+        Loader::Python => {
+            log.add_error(
+                Some(&source),
+                Loc::EMPTY,
+                b"The \"python\" loader is not supported by the bundler yet",
+            );
+            Err(Failed)
+        }
         Loader::Css => Ok(DataModule::Value {
             default: arena.alloc(DataValue::Object(&[])),
             exports_keys: false,

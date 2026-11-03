@@ -1,0 +1,251 @@
+import { expect, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+
+// These builds take seconds to start Python.
+if (isDebug || isASAN) setDefaultTimeout(60_000);
+
+async function run(main: string) {
+  using dir = tempDir("python-gc", { "main.py": main });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.py"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+test.concurrent("del and gc.collect() free an object, whatever registers it went through", async () => {
+  const { stdout, stderr, exitCode } = await run(`
+import gc, weakref
+
+class A: pass
+
+a = A(); r = weakref.ref(a); del a; gc.collect(); print(r())
+
+def variable():
+    b = A(); r = weakref.ref(b); del b; gc.collect(); print(r())
+variable()
+
+def temporary():
+    r = weakref.ref(A()); gc.collect(); print(r())
+temporary()
+
+def element():
+    x = [A()]
+    r = weakref.ref(x[0])
+    x.clear()
+    gc.collect()
+    print(r())
+element()
+
+def named():
+    # A variable keeps its object, used again or not.
+    c = A(); r = weakref.ref(c); gc.collect(); print(r() is not None)
+named()
+
+def argument(x, r):
+    del x
+    gc.collect()
+    return r()
+def caller():
+    d = A()
+    return argument(d, weakref.ref(d)) is d
+print(caller())
+`);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("None\nNone\nNone\nNone\nTrue\nTrue\n");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("finalizers run once, see live objects, and may resurrect", async () => {
+  const { stdout, stderr, exitCode } = await run(`
+import gc, weakref
+
+class Node:
+    def __init__(self, name): self.name = name; self.other = None
+    def __del__(self): print("del", self.name, self.other.name if self.other else None)
+
+n = Node("single"); del n; gc.collect()
+
+a, b = Node("a"), Node("b"); a.other, b.other = b, a
+del a, b; gc.collect()
+print("cycle collected")
+
+kept = []
+class Phoenix:
+    def __del__(self): print("rising"); kept.append(self)
+p = Phoenix(); r = weakref.ref(p); del p; gc.collect()
+print(len(kept), r() is None)
+kept.clear(); gc.collect()
+print("gone for good")
+
+class Bad:
+    def __del__(self): raise ValueError("in __del__")
+x = Bad(); del x; gc.collect()
+print("still running")
+
+def generator():
+    try:
+        yield 1
+    finally:
+        print("generator closed")
+g = generator(); next(g); del g; gc.collect()
+
+last = Node("at exit")
+print("end")
+`);
+  expect(stdout).toBe(
+    [
+      "del single None",
+      "del a b",
+      "del b a",
+      "cycle collected",
+      "rising",
+      "1 False",
+      "gone for good",
+      "still running",
+      "generator closed",
+      "end",
+      "del at exit None",
+      "",
+    ].join("\n"),
+  );
+  expect(stderr).toContain("ValueError: in __del__");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("finalizers and weak reference callbacks run without gc.collect(), at a safe point", async () => {
+  const { stdout, stderr, exitCode } = await run(`
+import weakref
+
+log = []
+class A:
+    def __del__(self): log.append("del")
+class B: pass
+
+def churn():
+    A()
+    w = weakref.ref(B(), lambda r: log.append("callback"))
+    n = 0
+    while len(log) < 2:
+        [n] * 10000
+        n += 1
+    return w()
+print(churn(), sorted(log))
+`);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("None ['callback', 'del']\n");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("an object is finalized before what it refers to", async () => {
+  const { stdout, stderr, exitCode } = await run(`
+import gc, os, tempfile
+log = []
+class Node:
+    def __init__(self, name, *children):
+        self.name = name; self.children = list(children); self.closed = False
+    def __del__(self):
+        log.append((self.name, [c.name + ("(closed)" if c.closed else "") for c in self.children]))
+        self.closed = True
+
+def show(title):
+    gc.collect()
+    print(title, log); log.clear()
+
+c = Node("child"); p = Node("parent", c); del c, p
+show("the child was made first:")
+p = Node("parent"); p.children.append(Node("child")); del p
+show("the parent was made first:")
+a = Node("a"); b = Node("b"); a.children.append(b); b.extra = {"k": [Node("c")]}; b.children.append(b.extra["k"][0]); del a, b
+show("three levels:")
+d = Node("d"); l = Node("l", d); r = Node("r", d); t = Node("t", l, r); del d, l, r, t
+gc.collect(); print("a diamond:", log[0], sorted(log[1:3]), log[3]); log.clear()
+x = Node("x"); y = Node("y", x); x.children.append(y); x.children.append(Node("hanging")); del x, y
+gc.collect(); print("a cycle:", sorted(n for n, _ in log), log[-1][0]); log.clear()
+
+keep = []
+class Phoenix(Node):
+    def __del__(self):
+        super().__del__(); keep.append(self)
+p = Phoenix("phoenix", Node("its child")); del p
+show("a parent that finds itself a home keeps its child:")
+print(keep[0].children[0].closed)
+keep.clear()
+show("until it goes:")
+
+head = None
+for i in range(2000):
+    head = Node(str(i), *([head] if head else []))
+del head
+gc.collect()
+print("a chain:", len(log), [n for n, _ in log[:3]], [n for n, _ in log[-2:]], all("(closed)" not in "".join(c) for _, c in log))
+
+path = tempfile.mktemp()
+class Writer:
+    def __init__(self, file): self.file = file
+    def __del__(self): self.file.write("written by __del__"); self.file.close()
+Writer(open(path, "w"))
+gc.collect()
+print(open(path).read())
+os.remove(path)
+`);
+  expect(stderr).toBe("");
+  expect(stdout).toBe(
+    [
+      "the child was made first: [('parent', ['child']), ('child', [])]",
+      "the parent was made first: [('parent', ['child']), ('child', [])]",
+      "three levels: [('a', ['b']), ('b', ['c']), ('c', [])]",
+      "a diamond: ('t', ['l', 'r']) [('l', ['d']), ('r', ['d'])] ('d', [])",
+      "a cycle: ['hanging', 'x', 'y'] hanging",
+      "a parent that finds itself a home keeps its child: [('phoenix', ['its child'])]",
+      "False",
+      "until it goes: [('its child', [])]",
+      "a chain: 2000 ['1999', '1998', '1997'] ['1', '0'] True",
+      "written by __del__",
+      "",
+    ].join("\n"),
+  );
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("what a suspended generator keeps is a value, whatever the stack held", async () => {
+  // The list of the comprehension is made in a register that earlier calls used for the frames of their callees, inside the
+  // range of the handler that cleans up after the comprehension.
+  const { stdout, stderr, exitCode } = await run(`
+import gc
+
+def f(*a, **k):
+    return len(a) + len(k)
+
+def gen(xs):
+    a = yield f(1, 2, 3, 4, 5, x=f(1))
+    b = yield f(xs, b"some data")
+    yield f(a, b, (yield f(*[f(x, x) for x in xs])))
+    try:
+        yield f(f(1), [x for x in xs], *[f(x, x) for x in xs])
+    finally:
+        yield f(xs, k={x: f(x) for x in xs})
+
+kept = []
+for _ in range(20):
+    g = gen([1, 2, 3])
+    kept.append(g)
+    out = []
+    for v in g:
+        gc.collect()
+        out.append(v)
+print(out)
+suspended = [gen([1]) for _ in range(50)]
+for n in range(3):
+    for g in suspended: next(g)
+    gc.collect()
+print(len(suspended))
+`);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("[6, 2, 3, 3, 5, 2]\n50\n");
+  expect(exitCode).toBe(0);
+});

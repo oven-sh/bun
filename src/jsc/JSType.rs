@@ -549,6 +549,11 @@ impl JSType {
 
     pub const DerivedStringObject: JSType = JSType(101);
 
+    /// The first and the last of the types of Python objects (`Python::PyObject` and the classes derived from it,
+    /// vendor/WebKit/Source/JavaScriptCore/python). BunPython.cpp checks the numbers.
+    pub const PyObject: JSType = JSType(103);
+    pub const PyException: JSType = JSType(121);
+
     pub const Event: JSType = JSType(0b11101111);
     pub const DOMWrapper: JSType = JSType(0b11101110);
 
@@ -586,8 +591,14 @@ impl JSType {
         }
     }
 
+    /// To JS these are exotic objects whose properties are the attributes or items of the Python object.
+    #[inline]
+    pub fn is_python_object(self) -> bool {
+        self.0 >= JSType::PyObject.0 && self.0 <= JSType::PyException.0
+    }
+
     pub(crate) fn can_get(self) -> bool {
-        matches!(
+        self.is_python_object() || matches!(
             self,
             JSType::Array
                 | JSType::ArrayBuffer

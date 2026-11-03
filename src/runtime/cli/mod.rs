@@ -205,6 +205,7 @@ pub(crate) mod pm_view_command;
 pub(crate) mod prune_command;
 #[path = "publish_command.rs"]
 pub(crate) mod publish_command;
+pub(crate) mod python_command;
 #[path = "remove_command.rs"]
 pub(crate) mod remove_command;
 #[path = "scan_command.rs"]
@@ -773,6 +774,10 @@ pub(crate) mod command {
             return Tag::RunAsNodeCommand;
         }
 
+        if python_command::is_python(argv0) {
+            return Tag::RunAsPythonCommand;
+        }
+
         let Some(mut first_arg_name) = iter.next() else {
             return Tag::AutoCommand;
         };
@@ -1091,7 +1096,7 @@ pub(crate) mod command {
         {
             let argv = bun::argv();
             let argv0 = argv.get(0).map(bun_core::ZStr::as_bytes).unwrap_or(b"");
-            if !is_node(argv0) && !is_bun_x(argv0) {
+            if !is_node(argv0) && !is_bun_x(argv0) && !python_command::is_python(argv0) {
                 if argv.len() == 2 {
                     match argv.get(1).map(bun_core::ZStr::as_bytes) {
                         Some(b"-v" | b"--version") => print_version_and_exit(),
@@ -1162,6 +1167,7 @@ pub(crate) mod command {
             }
             Tag::PackageManagerCommand => call_removable!(Install, Abort, exec_pm, log),
             Tag::RunAsNodeCommand => call_removable!(Tools, Abort, exec_run_as_node, log),
+            Tag::RunAsPythonCommand => call_removable!(Tools, Abort, exec_run_as_python, log),
             Tag::InfoCommand => call_removable!(Install, Abort, bun_info, log),
             Tag::BuildCommand => call_removable!(BuildCommand, Abort, exec_build, log),
             Tag::CompileCommand => call_removable!(AotCompiler, Abort, exec_compile, log),
@@ -1416,6 +1422,14 @@ pub(crate) mod command {
     fn exec_run_as_node(log: &mut bun_ast::Log) -> CmdResult {
         let ctx = init(Tag::RunAsNodeCommand, log)?;
         run_command::RunCommand::exec_as_if_node(ctx)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn exec_run_as_python(log: &mut bun_ast::Log) -> CmdResult {
+        python_command::read_command_line();
+        let ctx = init(Tag::RunAsPythonCommand, log)?;
+        run_command::RunCommand::exec_as_if_python(ctx)
     }
 
     #[cold]

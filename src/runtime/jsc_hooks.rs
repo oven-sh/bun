@@ -108,6 +108,8 @@ pub(crate) struct RuntimeState {
     pub(crate) matcher_pass: Cell<*const crate::test_runner::expect::expect_deferred::Pass>,
     /// `bun lint`: what runs the rules of JavaScript plugins in this VM.
     pub(crate) lint: core::cell::OnceCell<Box<crate::cli::lint_js::LintVm>>,
+    /// Set by any thread and by signal handlers: see `crate::python::make_calls_owed`.
+    pub(crate) python_calls_are_owed: core::sync::atomic::AtomicBool,
     /// The `uv_loop_t` that addons get for this VM. Stored inline because addons
     /// keep its address for as long as the VM lives.
     #[cfg(unix)]
@@ -393,6 +395,7 @@ unsafe fn init_runtime_state(
         cron_jobs: Vec::new(),
         matcher_pass: Cell::new(ptr::null()),
         lint: core::cell::OnceCell::new(),
+        python_calls_are_owed: core::sync::atomic::AtomicBool::new(false),
         // SAFETY: `vm` is the live VM being initialized. `VirtualMachine::init`
         // wrote `handle` before calling this hook (the wake context below reads
         // it the same way).
@@ -471,6 +474,10 @@ unsafe fn init_runtime_state(
                 unsafe {
                     let t = &mut (*vm).transpiler;
                     t.options.emit_dce_annotations = false;
+                    // Not among the defaults of `loaders_from_transform_options`: to `bun build` a `.py` file is an asset.
+                    if !t.options.loaders.contains(b".py") {
+                        t.options.loaders.insert(b".py", Loader::Python);
+                    }
                     t.options.global_cache = opts.global_cache;
                     t.resolver.opts.global_cache = opts.global_cache;
                     t.resolver.prefer_module_field = false;
@@ -1172,6 +1179,8 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     }
 
     // SAFETY: per fn contract.
+    crate::python::make_calls_owed(unsafe { &*vm });
+    // SAFETY: per fn contract.
     unsafe { (*vm).on_after_event_loop() };
     // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
     let _ = unsafe { (*(*vm).global).handle_rejected_promises() };
@@ -1296,6 +1305,8 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
         unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
     }
 
+    // SAFETY: per fn contract.
+    crate::python::make_calls_owed(unsafe { &*vm });
     // SAFETY: per fn contract.
     unsafe { (*vm).on_after_event_loop() };
 }
@@ -3490,6 +3501,35 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
         }
 
         // ────────────────────────────────────────────────────────────────────
+        // .py
+        // ────────────────────────────────────────────────────────────────────
+        L::Python => {
+            unsafe extern "C" {
+                /// `source`: what a plugin supplied in place of the contents of the file.
+                safe fn Bun__Python__importFile(
+                    global: &JSGlobalObject,
+                    path: &bun_core::String,
+                    source: Option<&bun_core::String>,
+                ) -> JSValue;
+            }
+            use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
+            let file = bun_core::StringView::from_bytes(path.text);
+            let source = args
+                .virtual_source
+                .map(|source| bun_core::StringView::from_bytes(&source.contents));
+            let module = bun_jsc::from_js_host_call(global_object, || {
+                Bun__Python__importFile(global_object, &file, source.as_deref())
+            })
+            .map_err(|_| crate::Error::JSError)?;
+            Ok(ResolvedSource {
+                jsvalue_for_export: module,
+                source_url: input_specifier.create_if_different(path.text),
+                tag: ResolvedSourceTag::ExportsObject,
+                ..Default::default()
+            })
+        }
+
+        // ────────────────────────────────────────────────────────────────────
         // .html
         // ────────────────────────────────────────────────────────────────────
         L::Html => {
@@ -4324,6 +4364,7 @@ fn force_loader_from_api_u8(api_loader: u8) -> Option<Loader> {
         20 => Some(L::Json5),
         21 => Some(L::Md),
         22 => Some(L::Xml),
+        23 => Some(L::Python),
         // 254 = `_none`; everything else is open-tail.
         _ => None,
     }
@@ -4671,6 +4712,7 @@ fn what_loading_gives(loader: Loader) -> Loaded {
         | Loader::Wasm
         | Loader::Napi
         | Loader::Bunsh
+        | Loader::Python
         | Loader::Md => Loaded::Code,
         Loader::Sqlite | Loader::SqliteEmbedded | Loader::Html => Loaded::HostObject,
         Loader::Css

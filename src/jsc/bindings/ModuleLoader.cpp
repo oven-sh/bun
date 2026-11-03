@@ -341,13 +341,15 @@ static OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject
                     loader = BunLoaderTypeText;
                 } else if (loaderString == "css"_s) {
                     loader = BunLoaderTypeCSS;
+                } else if (loaderString == "python"_s) {
+                    loader = BunLoaderTypePython;
                 }
             }
         }
     }
 
     if (loader == BunLoaderTypeNone) [[unlikely]] {
-        throwException(globalObject, scope, createError(globalObject, "Expected loader to be one of \"js\", \"jsx\", \"object\", \"ts\", \"tsx\", \"json\", \"jsonc\", \"json5\", \"toml\", \"yaml\", \"xml\", \"text\", \"md\", or \"css\""_s));
+        throwException(globalObject, scope, createError(globalObject, "Expected loader to be one of \"js\", \"jsx\", \"object\", \"ts\", \"tsx\", \"json\", \"jsonc\", \"json5\", \"toml\", \"yaml\", \"xml\", \"text\", \"md\", \"css\", or \"python\""_s));
         result.value.error = scope.exception();
         (void)scope.tryClearException();
         return result;

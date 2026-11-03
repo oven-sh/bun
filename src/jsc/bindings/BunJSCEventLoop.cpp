@@ -5,6 +5,7 @@
 
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/Heap.h>
+#include <JavaScriptCore/PyExec.h>
 
 #if USE(MIMALLOC)
 // Matches oven-sh/mimalloc's mi_attr_noexcept declaration; bmalloc's
@@ -27,7 +28,14 @@ extern "C" std::atomic<int32_t> Bun__defaultRemainingRunsUntilSkipReleaseAccess;
 
 extern "C" void Bun__JSC_acquireHeapAccessAfterWait(JSC::VM* _Nonnull vm)
 {
-    vm->heap.acquireAccess();
+    // Taking the VM back from Python's other threads (below) has acquired it already.
+    if (!vm->heap.hasAccess())
+        vm->heap.acquireAccess();
+}
+
+extern "C" int Bun__JSC_waitWhileOtherThreadsRun(JSC::VM* _Nonnull vm, void (*_Nonnull wait)(void* _Nonnull), void* _Nonnull argument)
+{
+    return JSC::Python::callWithoutGIL(*vm, wait, argument);
 }
 
 // Returns in how many milliseconds the caller is to call this again even if nothing else

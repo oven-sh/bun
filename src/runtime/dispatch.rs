@@ -1022,6 +1022,10 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
             // SAFETY: `poll` is live per `__bun_run_file_poll`'s contract.
             crate::node::memory_pressure::on_poll(unsafe { &mut *poll }, size_or_offset);
         }
+        poll_tag::PYTHON_FD_WATCHER => poll_arm!(crate::python::FdWatcher, |h| {
+            // SAFETY: tag matched; passed raw, because the callback may destroy the watcher.
+            unsafe { crate::python::FdWatcher::on_poll(h) }
+        }),
         poll_tag::PARENT_DEATH_WATCHDOG => {
             let wd = owner_as!(bun_io::parent_death_watchdog::ParentDeathWatchdog);
             // Mac-only — debug-assert elsewhere (Linux uses prctl(PR_SET_PDEATHSIG)).
@@ -1354,6 +1358,13 @@ pub(crate) unsafe fn __bun_fire_timer(
                 WebWorker,
                 room_timer,
                 |c, _now, _vm| WebWorker::on_room_timer(c)
+            )
+        }
+        EventLoopTimerTag::PythonTimer => {
+            timer_arm!(
+                crate::python::PythonTimer,
+                event_loop_timer,
+                |c, _now, vm| crate::python::PythonTimer::on_fire(c, &*vm)
             )
         }
         EventLoopTimerTag::GcRepeating => {

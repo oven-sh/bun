@@ -32,6 +32,8 @@ pub enum Tag {
     RunCommand,
     /// arg0 == 'node'
     RunAsNodeCommand,
+    /// arg0 == 'python3'
+    RunAsPythonCommand,
     TestCommand,
     UnlinkCommand,
     UpdateCommand,
@@ -78,6 +80,7 @@ impl Tag {
             Tag::RemoveCommand => b'R',
             Tag::RunCommand => b'r',
             Tag::RunAsNodeCommand => b'n',
+            Tag::RunAsPythonCommand => b'y',
             Tag::TestCommand => b't',
             Tag::UnlinkCommand => b'U',
             Tag::UpdateCommand => b'u',
@@ -167,6 +170,7 @@ impl Tag {
         Self::RemoveCommand,
         Self::RunCommand,
         Self::RunAsNodeCommand,
+        Self::RunAsPythonCommand,
         Self::TestCommand,
         Self::UnlinkCommand,
         Self::UpdateCommand,
@@ -293,6 +297,7 @@ pub static USES_GLOBAL_OPTIONS: TagTable<bool> = TagTable({
     a[Tag::PatchCommitCommand as usize] = false;
     a[Tag::PublishCommand as usize] = false;
     a[Tag::RemoveCommand as usize] = false;
+    a[Tag::RunAsPythonCommand as usize] = false;
     a[Tag::UnlinkCommand as usize] = false;
     a[Tag::UpdateCommand as usize] = false;
     a[Tag::WhyCommand as usize] = false;

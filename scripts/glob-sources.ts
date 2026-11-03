@@ -117,6 +117,7 @@ const patterns = {
       "src/jsc/bindings/webcore/*.cpp",
       "src/jsc/bindings/webcore/streams/*.cpp",
       "src/jsc/bindings/sqlite/*.cpp",
+      "src/jsc/bindings/python/*.cpp",
       "src/jsc/bindings/webcrypto/*.cpp",
       "src/jsc/bindings/node/*.cpp",
       "src/jsc/bindings/node/crypto/*.cpp",

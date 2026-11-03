@@ -189,6 +189,7 @@ pub static LOADER_API_NAMES: api::Loader = {
     b"html" => api::Loader::html,
     b"md" => api::Loader::md,
     b"markdown" => api::Loader::md,
+    b"python" => api::Loader::python,
 };
 }
 
@@ -221,6 +222,7 @@ impl LoaderExt for Loader {
             Loader::Text => api::Loader::text,
             Loader::SqliteEmbedded | Loader::Sqlite => api::Loader::sqlite,
             Loader::Md => api::Loader::md,
+            Loader::Python => api::Loader::python,
         }
     }
 
@@ -239,6 +241,7 @@ impl LoaderExt for Loader {
             api::Loader::yaml => Loader::Yaml,
             api::Loader::json5 => Loader::Json5,
             api::Loader::xml => Loader::Xml,
+            api::Loader::python => Loader::Python,
             api::Loader::wasm => Loader::Wasm,
             api::Loader::napi => Loader::Napi,
             api::Loader::base64 => Loader::Base64,

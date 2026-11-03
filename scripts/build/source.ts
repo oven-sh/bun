@@ -471,6 +471,7 @@ export type DepName =
   | "boringssl"
   | "brotli"
   | "cares"
+  | "cpython"
   | "highway"
   | "libdeflate"
   | "libjpeg-turbo"

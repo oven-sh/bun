@@ -3306,6 +3306,7 @@ impl<'a> LinkerContext<'a> {
                         | Loader::Yaml
                         | Loader::Html
                         | Loader::SqliteEmbedded
+                        | Loader::Python
                         | Loader::Md => {
                             log.add_error_fmt(
                                 Some(source),

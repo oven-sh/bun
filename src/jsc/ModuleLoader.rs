@@ -341,7 +341,7 @@ extern "C" fn Bun__getDefaultLoader(
                     .options
                     .loader(bun_resolver::fs::PathName::init(filename.slice()).ext)
                 {
-                    Loader::File | Loader::Bunsh => Loader::Js,
+                    Loader::File | Loader::Bunsh | Loader::Python => Loader::Js,
                     loader => loader,
                 }
             }

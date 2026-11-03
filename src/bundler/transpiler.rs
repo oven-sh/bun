@@ -1786,6 +1786,7 @@ impl<'a> Transpiler<'a> {
             | options::Loader::Base64
             | options::Loader::Dataurl
             | options::Loader::Bunsh
+            | options::Loader::Python
             | options::Loader::Sqlite
             | options::Loader::SqliteEmbedded
             | options::Loader::Html => parse_unsupported_loader(loader, &path),
@@ -2997,6 +2998,7 @@ impl<'a> Transpiler<'a> {
             }
             options::Loader::Html
             | options::Loader::Bunsh
+            | options::Loader::Python
             | options::Loader::SqliteEmbedded
             | options::Loader::Sqlite
             | options::Loader::Wasm

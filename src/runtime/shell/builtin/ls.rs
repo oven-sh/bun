@@ -490,6 +490,7 @@ impl ShellLsTask {
                         this.add_entry(name, fd);
                         if matches!(current.kind, bun_sys::EntryKind::Directory)
                             && this.opts.recursive
+                            && !this.should_skip_entry(name)
                         {
                             this.enqueue(name);
                         }

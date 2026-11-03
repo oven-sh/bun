@@ -81,6 +81,99 @@ describe.concurrent("bunshell ls", () => {
       const lines = sortedLsOutput(s);
       expect(lines).toEqual(allFiles);
     });
+
+    // Each name is unique, so the sorted lines give the structure whatever the order of sections and entries.
+    describe("hidden directories", () => {
+      const checkout = {
+        ".git": { "HEAD": "", "refs": { "main": "" } },
+        ".gitignore": "",
+        "README.md": "",
+        "src": { ".cache": { "tmp": "" }, "main.ts": "" },
+      };
+
+      test("-R prints no name and no section for them", async () => {
+        using dir = tempDir("ls-R-hidden", checkout);
+        await TestBuilder.command`ls -R`
+          .setTempdir(String(dir))
+          .stdout(s => expect(sortedLsOutput(s)).toEqual(["README.md", "src", "./src:", "main.ts"].sort()))
+          .run();
+        await TestBuilder.command`ls -R .`
+          .setTempdir(String(dir))
+          .stdout(s => expect(sortedLsOutput(s)).toEqual(["README.md", "src", "./src:", "main.ts"].sort()))
+          .run();
+      });
+
+      test("-R lists a hidden operand, and no hidden directory below an operand", async () => {
+        using dir = tempDir("ls-R-hidden-operand", checkout);
+        await TestBuilder.command`ls -R .git src`
+          .setTempdir(String(dir))
+          .stdout(s =>
+            expect(sortedLsOutput(s)).toEqual(
+              [".git:", "HEAD", "refs", ".git/refs:", "main", "src:", "main.ts"].sort(),
+            ),
+          )
+          .run();
+      });
+
+      test("-RA lists and enters them", async () => {
+        using dir = tempDir("ls-RA-hidden", checkout);
+        await TestBuilder.command`ls -RA`
+          .setTempdir(String(dir))
+          .stdout(s =>
+            expect(sortedLsOutput(s)).toEqual(
+              [
+                ...[".git", ".gitignore", "README.md", "src"],
+                ...["./.git:", "HEAD", "refs"],
+                ...["./.git/refs:", "main"],
+                ...["./src:", ".cache", "main.ts"],
+                ...["./src/.cache:", "tmp"],
+              ].sort(),
+            ),
+          )
+          .run();
+      });
+
+      test("-Ra lists and enters them, and does not enter . or ..", async () => {
+        using dir = tempDir("ls-Ra-hidden", checkout);
+        await TestBuilder.command`ls -Ra`
+          .setTempdir(String(dir))
+          .stdout(s =>
+            expect(sortedLsOutput(s)).toEqual(
+              [
+                ...[".", "..", ".git", ".gitignore", "README.md", "src"],
+                ...["./.git:", ".", "..", "HEAD", "refs"],
+                ...["./.git/refs:", ".", "..", "main"],
+                ...["./src:", ".", "..", ".cache", "main.ts"],
+                ...["./src/.cache:", ".", "..", "tmp"],
+              ].sort(),
+            ),
+          )
+          .run();
+      });
+
+      // Root and Windows do not apply the mode bits.
+      test.if(isPosix && !isRoot)("-R does not open them", async () => {
+        using dir = tempDir("ls-R-hidden-unreadable", { p: { ".secret": {}, "vis": { "z": "" } } });
+        await $`chmod 000 p/.secret`.quiet().throws(true).cwd(String(dir));
+        try {
+          await TestBuilder.command`ls -R p`
+            .setTempdir(String(dir))
+            .stdout(s => expect(sortedLsOutput(s)).toEqual(["vis", "p/vis:", "z"].sort()))
+            .stderr("")
+            .exitCode(0)
+            .run();
+          // Control: this user cannot open the directory, so `ls` fails when -A makes -R enter it.
+          await TestBuilder.command`ls -RA p`
+            .setTempdir(String(dir))
+            .stdout(s => expect(sortedLsOutput(s)).toEqual([".secret", "vis", "p/vis:", "z"].sort()))
+            .stderr("ls: p/.secret: Permission denied\n")
+            .exitCode(1)
+            .run();
+        } finally {
+          await $`chmod 755 p/.secret`.quiet().throws(true).cwd(String(dir));
+        }
+      });
+    });
   });
 
   describe("basic flags", () => {

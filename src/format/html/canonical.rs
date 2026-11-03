@@ -34,6 +34,8 @@ pub(crate) struct Spelling {
     quotes_keys_one_by_one: bool,
     /// What a string is between where both quotes can be written.
     preferred_quote: u8,
+    /// `sortTailwindcss`: several words in a string or a template can be classes, which change places.
+    sorts_classes: bool,
 }
 
 impl Spelling {
@@ -46,6 +48,7 @@ impl Spelling {
                 QuoteStyle::Double => b'"',
                 QuoteStyle::Single => b'\'',
             },
+            sorts_classes: options.tailwind.is_some(),
         }
     }
 }
@@ -272,6 +275,7 @@ impl Reader<'_> {
             match self.at(at) {
                 b'`' => return Some(at + 1),
                 0..=31 | 127.. | b'\\' | b'"' | b'&' => return None,
+                b' ' if self.spelling.sorts_classes => return None,
                 b'$' if self.at(at + 1) == b'{' => {
                     at = self.expression(at + 2)?;
                     if self.at(at) != b'}' {
@@ -297,6 +301,7 @@ impl Reader<'_> {
                     0..=31 | 127.. | b'\\' | b'"' | b'\'' | b'&' | b'<' | b'{' | b'}' => {
                         return None;
                     }
+                    b' ' if self.spelling.sorts_classes => return None,
                     _ => at += 1,
                 }
             }

@@ -1781,6 +1781,20 @@ describe.skipIf(!hasFlag)("Vue", () => {
     const { short, long } = await bothWays(files, options);
     expect(short).toEqual(long);
   });
+
+  test("classes in code that is written as it is printed are sorted", async () => {
+    const { short, long } = await bothWays(
+      {
+        "node_modules/tailwindcss/package.json": `{ "name": "tailwindcss", "version": "4.0.0", "main": "index.js" }`,
+        "node_modules/tailwindcss/theme.css": "",
+        "node_modules/tailwindcss/index.js": `exports.__unstable__loadDesignSystem = async () => ({\n  getClassOrder: classes => classes.map(name => [name, BigInt(["m-2", "flex", "p-4"].indexOf(name))]),\n});\n`,
+        "a.vue": `<template>\n  <p @click="cn('p-4 flex m-2')" v-for="a in cn(\`p-4 flex m-2\`)">b</p>\n</template>\n`,
+      },
+      ["--sort-tailwindcss"],
+    );
+    expect(short).toEqual(long);
+    expect(short.written["a.vue"]).toContain("cn('m-2 flex p-4')");
+  });
 });
 
 describe.skipIf(!hasFlag)("where lines are written without a document", () => {

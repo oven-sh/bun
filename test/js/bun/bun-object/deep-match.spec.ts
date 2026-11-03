@@ -1,4 +1,8 @@
+import vm from "node:vm";
+
 type TestCase = [a: unknown, b: unknown];
+
+const fn = () => {};
 
 // @ts-ignore
 if (typeof Bun === "undefined")
@@ -55,6 +59,19 @@ describe("Bun.deepMatch", () => {
       [{}, "foo", 1],
       [{}, "foo", 1],
     ],
+    // an array or an object of another realm, as `a` and as `b`
+    [[1, { a: 1 }], vm.runInNewContext("[1, { a: 1 }]")],
+    [vm.runInNewContext("[1, { a: 1 }]"), [1, { a: 1 }]],
+    [{ a: [1] }, vm.runInNewContext("({ a: [1] })")],
+    [vm.runInNewContext("({ a: [1] })"), { a: [1] }],
+
+    // A function matches itself
+    [{ a: fn }, { a: fn }],
+    [{ a: fn, b: fn }, { a: fn, b: fn }],
+    [{ a: { b: fn } }, { a: { b: fn } }],
+    [[fn], [fn]],
+    [{ s: new Set([fn]) }, { s: new Set([fn]) }],
+    [{ m: new Map([ ["foo", fn] ]) }, { m: new Map([ ["foo", fn] ]) }],
 
     // Maps
     [new Map(), new Map()],
@@ -116,6 +133,17 @@ describe("Bun.deepMatch", () => {
     [[null], [undefined]],
     [[], [undefined]],
     [["a", "b", "c"], ["a", "b", "d"]],
+
+    // A function in `a` matches only itself
+    [{ a: () => {} }, { a: () => {} }],
+    [{ a: Object }, { a: Array }],
+    [{ a: Object.assign(() => {}, { x: 1 }) }, { a: Object.assign(() => {}, { x: 1 }) }],
+    [{ a: fn }, { a: {} }],
+    [{ a: { b: fn } }, { a: { b: () => {} } }],
+    [[fn], [() => {}]],
+    [{ a: fn, b: fn }, { a: fn, b: () => {} }], // the same function in `a` is compared under each key
+    [{ s: new Set([fn]) }, { s: new Set([() => {}]) }],
+    [{ m: new Map([ ["foo", fn] ]) }, { m: new Map([ ["foo", () => {}] ]) }],
 
     // Maps: the same size, and each entry of `b` matches an entry of `a`
     [
@@ -227,16 +255,18 @@ describe("Bun.deepMatch", () => {
     });
   });
 
-  it("does not work on functions", () => {
+  it("a function matches only itself", () => {
     function foo() {}
     function bar() {}
     function baz(a) {
       return a;
     }
     expect(Bun.deepMatch(foo, foo)).toBe(true);
-    expect(Bun.deepMatch(foo, bar)).toBe(true);
-    // FIXME
-    // expect(Bun.deepMatch(foo, baz)).toBe(false);
+    expect(Bun.deepMatch(foo, bar)).toBe(false);
+    expect(Bun.deepMatch(foo, baz)).toBe(false);
+    expect(Bun.deepMatch(foo, {})).toBe(false);
+    expect(Bun.deepMatch({ fn: foo }, { fn: foo, other: 1 })).toBe(true);
+    expect(Bun.deepMatch({ fn: foo }, { fn: bar })).toBe(false);
   });
 
   describe("Invalid arguments", () => {

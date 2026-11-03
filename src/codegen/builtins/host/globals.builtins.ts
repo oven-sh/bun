@@ -671,6 +671,8 @@ const serverOptionNames = [
   ...tlsOptionNames,
   "app",
   ...developmentServerOptionNames,
+  // The private name under which node:http names the `_handle` of `server.listen(handle)`.
+  "listenHandle",
 ];
 
 // runSetupFunction in BundlerPlugin.ts calls it as a plain function.

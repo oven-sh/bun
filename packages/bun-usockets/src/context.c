@@ -497,6 +497,20 @@ void us_listen_socket_close(struct us_listen_socket_t *ls) {
     /* We cannot immediately free a listen socket as we can be inside an accept loop */
 }
 
+void us_listen_socket_set_accept(struct us_listen_socket_t *ls, unsigned char kind,
+                                 struct ssl_ctx_st *ssl_ctx, int socket_ext_size, int paused) {
+    if (us_socket_is_closed(&ls->s)) {
+        return;
+    }
+    /* The accept loop reads these again for every socket: a call from an open handler applies to the next accept. */
+    if (ssl_ctx) us_internal_ssl_ctx_up_ref(ssl_ctx);
+    us_internal_listen_socket_ssl_free(ls);
+    ls->ssl_ctx = ssl_ctx;
+    ls->accept_kind = kind;
+    ls->socket_ext_size = socket_ext_size;
+    ls->accept_paused = paused && !ssl_ctx;
+}
+
 __attribute__((always_inline)) void *us_listen_socket_ext(struct us_listen_socket_t *ls) {
     return ls + 1;
 }

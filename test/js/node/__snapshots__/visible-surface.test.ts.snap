@@ -617,7 +617,7 @@ _http_server[Server][prototype][Symbol(Symbol.asyncDispose)]: function function 
 _http_server[Server][prototype][Symbol(Symbol.asyncDispose)][length] c-- number
 _http_server[Server][prototype][Symbol(Symbol.asyncDispose)][name] c-- string
 _http_server[Server][prototype][Symbol(kRealListen)] cew function
-_http_server[Server][prototype][Symbol(kRealListen)]: function function name="" length=5 above=Function extensible=true
+_http_server[Server][prototype][Symbol(kRealListen)]: function function name="" length=6 above=Function extensible=true
 _http_server[Server][prototype][Symbol(kRealListen)][length] c-- number
 _http_server[Server][prototype][Symbol(kRealListen)][name] c-- string
 _http_server[ServerResponse] cew function

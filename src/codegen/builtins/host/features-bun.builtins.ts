@@ -381,6 +381,7 @@ export default b.declarations(
     ["Sockets"],
     "%Listener%",
     ...nativeBindings("Bindgen", "socket_body.bind.ts", "getBufferedAmount", "isNamedPipeSocket"),
+    ...nativeBindings("Bindgen", "Listener.bind.ts", "isListenHandle", "takeListenHandle"),
   ),
 
   extendAll(

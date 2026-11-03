@@ -305,6 +305,25 @@ impl<const SSL: bool> App<SSL> {
         }
     }
 
+    /// A node:http app takes the connections of `ls`. `owner_group` must be the group of `ls`, with no vtable.
+    pub unsafe fn attach_listen_socket(
+        &mut self,
+        ls: &mut UwsListenSocket,
+        owner_group: *mut crate::SocketGroup,
+        user: *mut c_void,
+    ) {
+        // SAFETY: self is a valid app and `ls` a live listen socket; caller contract for `owner_group`.
+        unsafe {
+            c::uws_app_attach_listen_socket(
+                Self::SSL_FLAG,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
+                ls,
+                owner_group,
+                user,
+            )
+        }
+    }
+
     pub fn listen_on_unix_socket(
         &mut self,
         handler: extern "C" fn(*mut UwsListenSocket, *const c_char, i32, *mut c_void),
@@ -672,6 +691,14 @@ pub mod c {
             flags: i32,
             handler: extern "C" fn(*mut UwsListenSocket, *const c_char, i32, *mut c_void),
             user_data: *mut c_void,
+        );
+
+        pub(crate) fn uws_app_attach_listen_socket(
+            ssl_flag: c_int,
+            app: *mut uws_app_t,
+            ls: *mut UwsListenSocket,
+            owner_group: *mut crate::SocketGroup,
+            user: *mut c_void,
         );
 
         pub(crate) safe fn uws_app_clear_routes(ssl_flag: c_int, app: &mut uws_app_t);

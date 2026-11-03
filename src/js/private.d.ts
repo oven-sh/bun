@@ -1259,7 +1259,8 @@ declare namespace $Node {
     ref(): void;
     unref(): void;
     reload(options: { socket: object }): void;
-    getsockname(out: SocketName): undefined;
+    /** A libuv error code (`UV_EBADF`) if the listener is stopped. */
+    getsockname(out: SocketName): number | undefined;
     /** `node:net` stores it on the handle, where `node:cluster` and tests wrap it. */
     onconnection?: (err: number, clientHandle: SocketHandle<Socket>) => void;
   }

@@ -298,6 +298,20 @@ impl SocketGroup {
             )
         }
     }
+
+    /// The `user` of [`crate::NewApp::attach_listen_socket`], which must have put `vtable` there.
+    pub unsafe fn listen_forward_user(&self) -> *mut c_void {
+        debug_assert!(self.vtable.is_some());
+        // SAFETY: caller contract. C++ reads the `uWS::ListenForward` that starts with the vtable.
+        unsafe { uws_listen_forward_user(self) }
+    }
+
+    /// Ends [`crate::NewApp::attach_listen_socket`] and returns its `user`. No socket of the group may be opening.
+    pub unsafe fn detach_listen_forward(&mut self) -> *mut c_void {
+        debug_assert!(self.vtable.is_some());
+        // SAFETY: caller contract. C++ frees the `uWS::ListenForward` and clears `vtable`.
+        unsafe { uws_listen_forward_detach(self) }
+    }
 }
 
 unsafe extern "C" {
@@ -376,4 +390,6 @@ unsafe extern "C" {
         options: c_int,
         ipc: c_int,
     ) -> *mut us_socket_t;
+    fn uws_listen_forward_user(owner_group: *const SocketGroup) -> *mut c_void;
+    fn uws_listen_forward_detach(owner_group: *mut SocketGroup) -> *mut c_void;
 }

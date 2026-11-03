@@ -413,6 +413,10 @@ struct us_listen_socket_t *us_socket_group_listen_fd(us_socket_group_r group,
     LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int socket_ext_size, int *error)
     __attribute__((nonnull(1, 8)));  /* ssl_ctx nullable */
 void us_listen_socket_close(struct us_listen_socket_t *ls) nonnull_fn_decl;
+/* What sockets accepted from now on get. They still land in the group of `ls`. No-op on a closed listen socket. */
+void us_listen_socket_set_accept(struct us_listen_socket_t *ls, unsigned char kind,
+    struct ssl_ctx_st *ssl_ctx, int socket_ext_size, int paused)
+    __attribute__((nonnull(1)));  /* ssl_ctx nullable */
 
 /* SNI: the names outlive us_listen_socket_close() for the connections already
  * accepted. ssl_ctx is up_ref'd. The last registration of a name replaces the

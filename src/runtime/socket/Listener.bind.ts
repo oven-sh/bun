@@ -13,7 +13,7 @@ export const Listener = b.class({
   proto: {
     data: { getter: b.any, setter: { capability: "js" }, capability: "heap" },
     fd: { getter: b.any.returning("number"), capability: "heap" },
-    getsockname: { args: { out: b.any }, capability: "js", throws: true },
+    getsockname: { args: { out: b.any }, returns: b.i32.optional, capability: "js", throws: true },
     hostname: { getter: b.string.utf8.optional, cache: true },
     port: { getter: b.u16.optional, pure: true },
     ref: { capability: "js", passThis: true },
@@ -41,4 +41,14 @@ export const addServerName = b.fn({
 /** `handle` is the `_handle` of a `tls.Server`. A cluster worker's is no `Listener`: JS wraps its connections. */
 export const setSecureContext = b.fn({
   args: { handle: Listener.otherAsNull, context: SecureContext.otherAsNull },
+});
+
+/** `closed` and `pipe` are what node reports as `listen EINVAL` and `listen EEXIST`. `tls` decrypts what it accepts, where node's handle is raw TCP. */
+export const ListenHandleState = b.enumeration(["taken", "closed", "pipe", "tls"]);
+/** Whether node finds a handle in `handle`: it is a listener, and no Windows named pipe. */
+export const isListenHandle = b.fn({ args: { handle: Listener.otherAsNull }, returns: b.bool });
+/** node:net `server.listen(handle)`: the caller's server gets the connections of `handle`. Only `taken` changes anything. */
+export const takeListenHandle = b.fn({
+  args: { handle: Listener.otherAsNull },
+  returns: ListenHandleState.optional,
 });

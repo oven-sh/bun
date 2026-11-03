@@ -1043,6 +1043,14 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
             previous_routes: false,
         },
     )?;
+    let handle = match config.is_node_http_server {
+        true => crate::socket::Listener::from_serve_options(global_object, options)?,
+        false => None,
+    };
+    if handle.is_some() {
+        // A hot reload finds a server by its address, and this one has the address of its handle.
+        config.allow_hot = false;
+    }
 
     // `init()` below `mem::take`s `config` into a heap-boxed `NewServer`, so
     // past that point the raw-`JSValue` handler shadows have no GC root until
@@ -1118,7 +1126,7 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
                 return Ok(JSValue::ZERO);
             }
             // SAFETY: `server` is the live heap-allocated server returned by `init`.
-            let route_list_object = <$ServerType>::listen(server);
+            let route_list_object = <$ServerType>::listen(server, handle);
             if global_object.has_exception() {
                 return Ok(JSValue::ZERO);
             }

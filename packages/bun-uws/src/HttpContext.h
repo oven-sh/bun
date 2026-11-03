@@ -94,6 +94,28 @@ static constexpr auto supportedHttpMethods = makeArray<std::string_view>(
 
 template<bool> struct HttpResponse;
 
+/* The vtable of the group of a listen socket whose connections an HttpContext takes. `vtable` stays first: of() casts it. */
+struct ListenForward {
+    us_socket_vtable_t vtable;
+    /* The group of the HttpContext. */
+    us_socket_group_t *group;
+    /* Opaque to uWS: the creator's way back to the server it accepts for. */
+    void *user;
+
+    static ListenForward *of(const us_socket_group_t *ownerGroup) {
+        return const_cast<ListenForward *>(reinterpret_cast<const ListenForward *>(ownerGroup->vtable));
+    }
+
+    /* Ends it: `ownerGroup` has no vtable again. Returns `user`. */
+    static void *detach(us_socket_group_t *ownerGroup) {
+        ListenForward *forward = of(ownerGroup);
+        ownerGroup->vtable = nullptr;
+        void *user = forward->user;
+        delete forward;
+        return user;
+    }
+};
+
 /* Real heap-allocated owner of one HTTP server's socket group + router state.
  * Replaces the old reinterpret_cast over us_socket_context_t — `group.ext`
  * points back to `this` so socket handlers recover the typed context via
@@ -1299,6 +1321,28 @@ public:
     us_listen_socket_t *listen_unix(struct ssl_ctx_st *sslCtx, const char *path, size_t pathlen, int options) {
         int error = 0;
         return unrefListenSocket(us_socket_group_listen_unix(&group, socketKind(), sslCtx, path, pathlen, options, socketExtSize(), &error));
+    }
+
+    /* node:http `server.listen(handle)`: accept on `ls`, which its creator keeps. It ends with ListenForward::detach(). */
+    void attachListenSocket(us_listen_socket_t *ls, us_socket_group_t *ownerGroup, struct ssl_ctx_st *sslCtx, void *user) {
+        ASSERT(isNodeHttp() && ownerGroup->vtable == nullptr);
+        us_listen_socket_set_accept(ls, socketKind(), sslCtx, socketExtSize(), 0);
+        auto *forward = new ListenForward{};
+        forward->vtable.on_open = &onForwardedOpen;
+        forward->group = &group;
+        forward->user = user;
+        ownerGroup->vtable = &forward->vtable;
+    }
+
+private:
+    /* Nothing reads the ListenForward after the adopt: onOpen() runs JavaScript, which can detach it. */
+    static us_socket_t *onForwardedOpen(us_socket_t *s, int is_client, char *ip, int ip_length) {
+        us_socket_t *adopted = us_socket_adopt(s, ListenForward::of(us_socket_group(s))->group, socketKind(), -1, -1);
+        if (!adopted) {
+            /* Closed before it opened. The ListenForward has no other handler, so nothing reads its empty ext block. */
+            return us_socket_close(s, 0, nullptr);
+        }
+        return onOpen<true>(adopted, is_client, ip, ip_length);
     }
 };
 

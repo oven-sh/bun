@@ -591,6 +591,7 @@ declare global {
         host: string | undefined,
         socketPath: string | undefined,
         reusePort: boolean,
+        listenHandle?: ListenerHandle,
       ): void;
     }
 

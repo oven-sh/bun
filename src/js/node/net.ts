@@ -28,6 +28,8 @@ const EventEmitter = require("node:events");
 const normalizedArgsSymbol = Symbol("normalizedArgs");
 const {
   ExceptionWithHostPort,
+  invalidListenOptions,
+  listenHandleError,
   ConnResetException,
   NodeAggregateError,
   ErrnoException,
@@ -4372,6 +4374,18 @@ Server.prototype.listen = function listen(this: $Node.NetServer, port, hostname,
       onListen = port;
       port = 0;
     } else if (port !== null && typeof port === "object") {
+      // (handle[, backlog][, cb]), one level down: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2127-L2136
+      const handle = port._handle || port.handle || port;
+      if (typeof handle.onconnection === "function") {
+        if (this._handle) throw $ERR_SERVER_ALREADY_LISTEN();
+        const state = $bindgen("Listener.bind.ts", "takeListenHandle")(handle);
+        // A TLS listener decrypts what it accepts, where node's handle gives raw TCP: it stays the error that it was.
+        if (state !== undefined && state !== "tls") {
+          if (onListen != null) this.once("listening", onListen);
+          listenOnHandle(this, handle, state);
+          return this;
+        }
+      }
       const options = port;
       addServerAbortSignalOption(this, options);
 
@@ -4414,33 +4428,18 @@ Server.prototype.listen = function listen(this: $Node.NetServer, port, hostname,
       } else if (isPipeName(path)) {
         const isAbstractPath = path.startsWith("\0");
         if (isLinux && isAbstractPath && (options.writableAll || options.readableAll)) {
-          const message = `The argument 'options' can not set readableAll or writableAll to true when path is abstract unix socket. Received ${JSON.stringify(options)}`;
-
-          const error = new TypeError(message);
-          error.code = "ERR_INVALID_ARG_VALUE";
-          throw error;
+          throw invalidListenOptions(
+            options,
+            "can not set readableAll or writableAll to true when path is abstract unix socket",
+          );
         }
 
         hostname = path;
         port = undefined;
       } else if (!("port" in options) && !("path" in options)) {
-        let message = 'The argument \'options\' must have the property "port" or "path"';
-        try {
-          message = `${message}. Received ${JSON.stringify(options)}`;
-        } catch {}
-
-        const error = new TypeError(message);
-        error.code = "ERR_INVALID_ARG_VALUE";
-        throw error;
+        throw invalidListenOptions(options, 'must have the property "port" or "path"');
       } else {
-        let message = "The argument 'options' is invalid";
-        try {
-          message = `${message}. Received ${JSON.stringify(options)}`;
-        } catch {}
-
-        const error = new TypeError(message);
-        error.code = "ERR_INVALID_ARG_VALUE";
-        throw error;
+        throw invalidListenOptions(options);
       }
 
       // port <number>
@@ -4462,13 +4461,7 @@ Server.prototype.listen = function listen(this: $Node.NetServer, port, hostname,
       validatePort(port, "options.port");
       port = +port | 0;
     } else {
-      let message = "The argument 'options' is invalid";
-      try {
-        message = `${message}. Received ${JSON.stringify(port)}`;
-      } catch {}
-      const error = new TypeError(message);
-      error.code = "ERR_INVALID_ARG_VALUE";
-      throw error;
+      throw invalidListenOptions(port);
     }
     if (reusePort === true) {
       exclusive = true;
@@ -4657,6 +4650,24 @@ Server.prototype[kRealListen] = function (
   // A tick, not a timer, so a close() from 'listening' runs before the loop accepts anything (as in Node).
   process.nextTick(emitListeningNextTick, this);
 };
+
+// listen(handle): as in node, both servers have the one handle, and the one that listened last gets its connections.
+function listenOnHandle(server: $Node.NetServer, handle: ListenerHandle, state: "taken" | "closed" | "pipe") {
+  if (state !== "taken") {
+    process.nextTick(emitErrorNextTick, server, listenHandleError(state === "closed"));
+    return;
+  }
+  // The handle accepts plain TCP. A tls.Server wraps each socket in its 'connection' listener, as it does for one that is emitted to it.
+  server[bunSocketServerOptions]![kSocketClass] = Socket;
+  server._handle = handle;
+  handle[owner_symbol] = server;
+  handle.onconnection = onconnection;
+  // What `ServerHandlers.open` gets for every socket that the handle accepts.
+  handle.data = server;
+  server._connectionKey = "-1:null:-1";
+  if (server._unref) server.unref();
+  process.nextTick(emitListeningNextTick, server);
+}
 
 Server.prototype[EventEmitter.captureRejectionSymbol] = function (
   this: $Node.NetServer,

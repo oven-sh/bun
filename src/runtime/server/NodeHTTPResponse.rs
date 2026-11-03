@@ -19,7 +19,7 @@ use crate::node::{Encoding, StringOrBuffer};
 use crate::server::jsc::{
     self, ErrorCode, JSGlobalObject, JSValue, JsResult, StrongOptional, VirtualMachine,
 };
-use crate::server::{AnyServer, AnyServerTag, HTTPStatusText, ServerWebSocket};
+use crate::server::{AnyServer, HTTPStatusText, ServerWebSocket};
 use crate::webcore::AutoFlusher;
 
 bun_core::declare_scope!(NodeHTTPResponse, visible);
@@ -357,28 +357,6 @@ extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
     // `register_auto_flush`; `DeferredTaskQueue::run` feeds it back unchanged
     // on the JS thread. `on_auto_flush` takes `&self`.
     unsafe { (*(ctx.cast_const().cast::<NodeHTTPResponse>())).on_auto_flush() }
-}
-
-/// Unpack the `AnyServer` tagged-pointer u64 handed across FFI from C++.
-///
-/// The packed repr is bits 0..49 = ptr,
-/// bits 49..64 = tag, with tag = `1024 - index` (see `bun_ptr::tagged_pointer`).
-/// The Rust `AnyServer` stores `(tag, ptr)` unpacked, so map the wire tag back
-/// to `AnyServerTag` here.
-#[inline]
-fn any_server_from_packed(packed: u64) -> AnyServer {
-    let repr = bun_ptr::TaggedPtr::from(packed);
-    let tag = match repr.data() {
-        1024 => AnyServerTag::HTTPServer,
-        1023 => AnyServerTag::HTTPSServer,
-        1022 => AnyServerTag::DebugHTTPServer,
-        1021 => AnyServerTag::DebugHTTPSServer,
-        _ => unreachable!("Invalid pointer tag"),
-    };
-    AnyServer {
-        tag,
-        ptr: repr.get::<()>(),
-    }
 }
 
 /// A large `res.write()` whose unwritten tail is held by reference instead of
@@ -2797,7 +2775,7 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
         // 1 - the JS object
         // 1 - the Server handler.
         ref_count: bun_ptr::RefCount::init_exact_refs(3),
-        server: any_server_from_packed(any_server_tag),
+        server: AnyServer::from_packed(any_server_tag),
         connection: connection::Connection::new(raw_response),
         body_read_state: Cell::new(if *has_body {
             BodyReadState::Pending

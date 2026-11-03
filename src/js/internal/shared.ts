@@ -85,6 +85,31 @@ class ExceptionWithHostPort extends Error {
   }
 }
 
+// Like node, the message shows at most 128 characters of what `server.listen()` received.
+function invalidListenOptions(received: unknown, reason = "is invalid") {
+  let message = `The argument 'options' ${reason}`;
+  try {
+    const text = `${JSON.stringify(received)}`;
+    message += `. Received ${text.length > 128 ? `${text.slice(0, 128)}...` : text}`;
+  } catch {}
+  const error = new TypeError(message) as TypeError & { code: string };
+  error.code = "ERR_INVALID_ARG_VALUE";
+  return error;
+}
+
+// What node's `server.listen(handle)` emits: EINVAL for a handle that is closed, EEXIST for a pipe.
+function listenHandleError(closed: boolean) {
+  const { UV_EINVAL, UV_EEXIST } = process.binding("uv");
+  const ex = new ExceptionWithHostPort(
+    closed ? UV_EINVAL : UV_EEXIST,
+    "listen",
+    null as unknown as string,
+    closed ? -1 : undefined,
+  );
+  ex.message += closed ? ": invalid argument" : ": file already exists";
+  return ex;
+}
+
 class NodeAggregateError extends AggregateError {
   constructor(errors: Error[], message?: string) {
     super(new (require("internal/primordials").SafeArrayIterator)(errors), message);
@@ -470,6 +495,8 @@ export default {
   hideFromStack,
   warnNotImplementedOnce,
   ExceptionWithHostPort,
+  invalidListenOptions,
+  listenHandleError,
   NodeAggregateError,
   ConnResetException,
   ErrnoException,

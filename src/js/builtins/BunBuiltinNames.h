@@ -123,6 +123,7 @@ using namespace JSC;
     macro(lazy) \
     macro(lightStandardStreams) \
     macro(lineText) \
+    macro(listenHandle) \
     macro(loadEsmIntoCjs) \
     macro(main) \
     macro(makeAbortError) \

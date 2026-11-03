@@ -182,6 +182,8 @@ bitflags::bitflags! {
         /// See [`NewServer::hold_open_ref`].
         const OPEN_REF_HELD               = 1 << 0;
         const TERMINATED                  = 1 << 1;
+        /// `listener` is borrowed from a `Bun.listen` listener. See [`NewServer::attach_to_listener`].
+        const BORROWED_LISTENER           = 1 << 2;
     }
 }
 
@@ -1818,6 +1820,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
             return;
         };
+        let borrowed = self.release_borrowed_listener();
         if abrupt || self.is_closed() {
             self.unref();
         }
@@ -1825,7 +1828,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // unrefs when the drain completes): on Windows uv_run skips I/O with
         // zero ref'd handles, so unrefing here wedged server.close() teardown.
 
-        if !SSL {
+        if !SSL && !borrowed {
             // SAFETY: `listener` is a live uws ListenSocket FFI handle just taken
             // from `self.listener`; deref'd once to read the socket fd. `vm` is a
             // STATIC ref (see `NewServer::vm_mut`) — non-null for the server's
@@ -1847,9 +1850,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             server_config::Address::Tcp { .. } => {}
         }
 
+        if borrowed {
+            // As in node, where both servers have the one handle: closing either closes it.
+            Self::stop_listener_owner(listener);
+        }
+
         if !abrupt {
-            // S012: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
-            bun_opaque::opaque_deref_mut(listener).close();
+            if !borrowed {
+                // S012: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
+                bun_opaque::opaque_deref_mut(listener).close();
+            }
             // Close idle keep-alive connections now and mark busy ones to
             // close once their in-flight work completes; open websockets are
             // untouched and drain on their own. Each close reaches
@@ -1896,6 +1906,64 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
             });
         }
+    }
+
+    /// node:http `server.listen(handle)`: serve what the listen socket of `handle` accepts. `handle` keeps and closes it.
+    fn attach_to_listener(
+        &self,
+        handle: &crate::socket::Listener,
+        app: *mut uws_sys::NewApp<SSL>,
+    ) -> Result<(), bun_sys::E> {
+        debug_assert!(self.config.get().is_node_http_server);
+        let user = self.any_server_packed as *mut c_void;
+        let attached = handle.attach_http(&mut |ls, owner_group| {
+            // SAFETY: `owner_group` is the group of `handle`, which `attach_http` left with no vtable.
+            // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+            unsafe { bun_opaque::opaque_deref_mut(app).attach_listen_socket(ls, owner_group, user) }
+        })?;
+        self.listener.set(Some(attached.listen_socket.cast()));
+        self.flags
+            .set(self.flags.get() | ServerFlags::BORROWED_LISTENER);
+        // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine` (non-null
+        // for the server's lifetime); single-threaded JS context.
+        unsafe { (*self.vm_mut()).event_loop_handle = Some(bun_io::Loop::get()) };
+        self.config.with_mut(|config| {
+            config.set_borrowed_listener_address(attached.port, attached.hostname);
+        });
+        // The handle holds the event loop or not as the server before us left it.
+        if attached.referenced {
+            self.ref_();
+        }
+        Ok(())
+    }
+
+    /// `true` if `listener`, just taken, was borrowed from a `Bun.listen` listener.
+    fn release_borrowed_listener(&self) -> bool {
+        let flags = self.flags.get();
+        self.flags
+            .set(flags.difference(ServerFlags::BORROWED_LISTENER));
+        flags.contains(ServerFlags::BORROWED_LISTENER)
+    }
+
+    /// Stops the `Bun.listen` listener that `listener` was borrowed from.
+    fn stop_listener_owner(listener: *mut uws_sys::app::ListenSocket<SSL>) {
+        // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+        let group =
+            bun_opaque::opaque_deref_mut(listener.cast::<uws_sys::ListenSocket>()).accept_group();
+        // SAFETY: a borrowed listen socket accepts into the group that its `Listener` embeds, and
+        // that listener tells us before it closes the socket, so both are live.
+        let owner = unsafe { &*(*group).owner::<crate::socket::Listener>() };
+        owner.stop_from_http();
+    }
+
+    /// The owner of the borrowed listen socket closed it, or gave its connections to another server.
+    pub(crate) fn on_listener_gone(&self) {
+        if !self.release_borrowed_listener() {
+            return;
+        }
+        self.listener.set(None);
+        self.notify_inspector_server_stopped();
+        self.deinit_if_we_can();
     }
 
     pub(crate) fn stop(&self, abrupt: bool) {
@@ -2135,6 +2203,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // the JS VM terminates, it hypothetically might not call stop_listening.
         server.notify_inspector_server_stopped();
         server.abort_handle.leave();
+        // Likewise: the owner of a borrowed listen socket must not accept into a destroyed app.
+        if server.release_borrowed_listener() {
+            if let Some(listener) = server.listener.take() {
+                Self::stop_listener_owner(listener);
+            }
+        }
 
         if Self::HAS_H3 {
             if let Some(h3a) = server.h3_app.take() {
@@ -2818,7 +2892,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// [`Self::init`], with no ref on it but the caller's for the duration
     /// of this call. On listen failure `this` is freed (via [`Self::deinit`])
     /// and must not be used after a `JSValue::ZERO` return.
-    pub(crate) fn listen(this: *mut Self) -> JSValue
+    /// With `handle` (node:http `server.listen(handle)`) it binds nothing and serves that listener's connections.
+    pub(crate) fn listen(this: *mut Self, handle: Option<&crate::socket::Listener>) -> JSValue
     where
         Self: ServerPools<SSL, DEBUG>,
     {
@@ -3034,6 +3109,21 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         if this_ref.config.get().is_node_http_server {
             this_ref.set_using_custom_expect_handler(true);
+        }
+
+        if let Some(handle) = handle {
+            if let Err(errno) = this_ref.attach_to_listener(handle, app) {
+                // What node's `handle.listen()` reports for a handle that is closed, or is no TCP handle.
+                let err = jsc::SystemError::from(
+                    bun_sys::Error::from_code(errno, bun_sys::Tag::listen).to_system_error(),
+                );
+                let _ = global.throw_value(err.to_error_instance(global));
+                // SAFETY: caller contract — `this` is the live boxed server from `init()`.
+                Self::deinit(this);
+                return JSValue::ZERO;
+            }
+            this_ref.hold_open_ref();
+            return route_list_value;
         }
 
         // Owns the bracket-stripped copy of an IPv6 literal hostname; `host`
@@ -3854,7 +3944,7 @@ impl AnyServer {
 
     /// Re-pack into the tagged-pointer wire format
     /// (`u49` ptr | `u15` tag) for the C++ FFI boundary. Inverse of
-    /// [`NodeHTTPResponse::any_server_from_packed`]. Tag values are
+    /// [`Self::from_packed`]. Tag values are
     /// `1024 - index` in declaration order
     /// (HTTP, HTTPS, DebugHTTP, DebugHTTPS).
     pub(crate) fn to_packed(self) -> u64 {
@@ -3866,6 +3956,41 @@ impl AnyServer {
         };
         // `TaggedPtr::to()` bit-casts the full packed word through `*mut c_void`.
         bun_ptr::TaggedPtr::init(self.ptr, tag).to() as u64
+    }
+
+    /// Inverse of [`Self::to_packed`], for the tagged-pointer u64 that C++ hands across FFI.
+    #[inline]
+    pub(crate) fn from_packed(packed: u64) -> AnyServer {
+        let repr = bun_ptr::TaggedPtr::from(packed);
+        let tag = match repr.data() {
+            1024 => AnyServerTag::HTTPServer,
+            1023 => AnyServerTag::HTTPSServer,
+            1022 => AnyServerTag::DebugHTTPServer,
+            1021 => AnyServerTag::DebugHTTPSServer,
+            _ => unreachable!("Invalid pointer tag"),
+        };
+        AnyServer {
+            tag,
+            ptr: repr.get::<()>(),
+        }
+    }
+
+    /// See [`NewServer::on_listener_gone`].
+    pub(crate) fn on_listener_gone(&self) {
+        any_server_dispatch!(self, |s| s.on_listener_gone())
+    }
+
+    /// Whether the server holds the event loop open, as a listening server does until `unref()`.
+    pub(crate) fn has_loop_ref(&self) -> bool {
+        any_server_dispatch!(self, |s| s.poll_ref.get().is_active())
+    }
+
+    pub(crate) fn ref_(&self) {
+        any_server_dispatch!(self, |s| s.ref_())
+    }
+
+    pub(crate) fn unref(&self) {
+        any_server_dispatch!(self, |s| s.unref())
     }
 
     /// Shared borrow of the process-static VM. Routes through

@@ -218,9 +218,7 @@ async function fetch(
   // eslint-disable-next-line no-unused-vars
   init?: RequestInit & { body?: any },
 ) {
-  // node-fetch subscribes to a stream body inside fetch() (body.pipe(req)), so a "data" listener that the
-  // caller attaches after the call cannot drain the stream first. The native fetch reads an async iterable
-  // only once the connection is ready, which is too late: https://github.com/oven-sh/bun/issues/47865
+  // node-fetch pipes a stream body inside fetch(), before a later "data" listener can drain it.
   const initBody = init?.body;
   const body = initBody !== undefined ? initBody : $isObject(url) ? url[kNodeBody] : undefined;
   if (isNodeStream(body)) {

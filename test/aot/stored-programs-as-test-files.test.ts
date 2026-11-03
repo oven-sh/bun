@@ -46,14 +46,33 @@ const programs = [
   "commonjs/a-store-into-module-parent-in-front-of-the-first-read",
   "commonjs/a-module-object-and-then-a-text-stored-into-module-parent",
   "commonjs/the-parent-of-a-child-is-stored-by-the-file-that-required-it",
-].filter(program => !isDebug || program !== "commonjs/first-required-at-the-end-of-the-stack");
-// Plain Bun of a debug build cannot say what that program prints, under `bun <file>` either: its later require() of a file that it first required
-// at the end of the stack answers with empty exports. The same Bun under --aot answers with the exports of the file, as plain Bun of a release
-// build does, with and without AddressSanitizer.
-if (isDebug)
-  console.error(
-    "SKIPPED: test/aot/stored-programs-as-test-files.test.ts: commonjs/first-required-at-the-end-of-the-stack: plain Bun of a debug build answers its later require() with empty exports, so it cannot say what the program prints",
-  );
+];
+
+// Plain Bun of a debug build cannot say what this program prints, under `bun <file>` either: its later require() of a file that it first required
+// at the end of the stack answers with empty exports, and four of these lines are `object ` with no key. So the compiled run is held to the lines
+// themselves, which plain Bun of a release build prints with and without AddressSanitizer, and plain Bun is held to them by a test of its own.
+const atTheEndOfTheStack = {
+  program: "commonjs/first-required-at-the-end-of-the-stack",
+  printed: [
+    "# only-values",
+    "object kState,kOptions",
+    "true object",
+    "# a-function-too",
+    "object f,kState",
+    "true object",
+    "# exports-dot",
+    "object kState,kOptions",
+    "true object",
+    "# a-class",
+    "object Box,kState",
+    "true object",
+    "# it-requires-another",
+    "object kState,other",
+    "true object",
+  ],
+  // The first test stores it here for the second.
+  printedByPlainBun: undefined as string[] | undefined,
+};
 
 const stored = join(import.meta.dir, "parallel");
 
@@ -77,9 +96,9 @@ async function runTests(directory: string, ...flags: string[]) {
     // A project as small as this one is one program unless the word asks for layers. run() fails where the run has none.
     BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2",
     // first-required-at-the-end-of-the-stack fails a require() in hundreds of frames at the end of the stack, and for each error the run in
-    // layers walks every compiled frame below. JavaScriptCore gives JavaScript 5 MB of the stack. With 2 MB the stack ends sooner: the run in
+    // layers walks every compiled frame below. JavaScriptCore gives JavaScript 5 MB of the stack. With 1.5 MB the stack ends sooner: the run in
     // layers fails in as many frames, and both runs print the same.
-    BUN_JSC_maxPerThreadStackUsage: String(2 * 1024 * 1024),
+    BUN_JSC_maxPerThreadStackUsage: String(1.5 * 1024 * 1024),
   };
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--isolate", ...flags, "./p"], directory, env);
   if (exitCode !== 0 && exitCode !== 1) console.error(stderr);
@@ -111,9 +130,11 @@ test("the main files of stored programs run as test files", async () => {
   });
   for (const program of programs) copyAsTestFile(String(dir), program);
   const plain = await runTests(String(dir));
+  const { printed, ...report } = plain;
+  // The next test holds plain Bun to the stored lines of that one program.
+  atTheEndOfTheStack.printedByPlainBun = printed[atTheEndOfTheStack.program];
   // Plain Bun says what each must print only where it ran each to its end: every test passed, no file failed to load, nothing was printed behind
   // the last test, and the run ended well. A program that prints nothing would have nothing compared.
-  const { printed, ...report } = plain;
   expect({ printedNothing: programs.filter(program => !printed[program]?.length), ...report }).toEqual({
     printedNothing: [],
     behindTheLast: [""],
@@ -122,6 +143,13 @@ test("the main files of stored programs run as test files", async () => {
     crashes: [],
     exitCode: 0,
   });
+  // And the compiled run is held to them.
+  printed[atTheEndOfTheStack.program] = atTheEndOfTheStack.printed;
   expect(Object.keys(plain.printed).sort()).toEqual([...programs].sort());
   expect(await runTests(String(dir), "--aot")).toEqual(plain);
 }, 300_000);
+
+// Once plain Bun of a debug build prints the keys, this test fails there: write `test` for `(isDebug ? test.failing : test)`.
+(isDebug ? test.failing : test)(`plain Bun prints the lines of ${atTheEndOfTheStack.program}`, () => {
+  expect(atTheEndOfTheStack.printedByPlainBun).toEqual(atTheEndOfTheStack.printed);
+});

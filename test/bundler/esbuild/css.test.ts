@@ -1,5 +1,4 @@
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { describe, expect } from "bun:test";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { itBundled } from "../expectBundled";
@@ -542,28 +541,17 @@ describe("bundler", () => {
   });
 
   // Without bundling nothing inlines the file, so each rule prints where the source has it.
-  test("css @import after an unknown at-rule prints with --no-bundle", async () => {
-    using dir = tempDir("css-import-after-unknown-no-bundle", {
-      "entry.css": `@layer a;\n@tailwind base;\n@import "./local.css";\n@layer b;\n.k { color: red }\n`,
-      "local.css": `.l { color: blue }\n`,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--no-bundle", "--minify", "entry.css"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({
-      stdout,
-      log: stderr.split("\n").filter(line => /^(warn|error):/.test(line)),
-      exitCode,
-    }).toEqual({
-      stdout: `@layer a;@tailwind base;@import "./local.css";@layer b;.k{color:red}`,
-      log: ["warn: invalid @ rule encountered: '@tailwind'"],
-      exitCode: 0,
-    });
+  itBundled("css/CSSAtImportAfterUnknownAtRuleNoBundle", {
+    files: {
+      "/entry.css": `@layer a;\n@tailwind base;\n@import "./local.css";\n@layer b;\n.k { color: red }\n`,
+      "/local.css": `.l { color: blue }\n`,
+    },
+    outfile: "/out.css",
+    bundling: false,
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toBe(`@layer a;@tailwind base;@import "./local.css";@layer b;.k{color:red}`);
+    },
   });
 
   itBundled("css/CSSUrlImport", {

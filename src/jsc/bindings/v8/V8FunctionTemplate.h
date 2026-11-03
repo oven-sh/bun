@@ -26,13 +26,52 @@ enum class ConstructorBehavior {
     kAllow,
 };
 
-// Only used by v8 fast API calls, which Node.js doesn't seem to intend to support
-// (v8-fast-api-calls.h is not in the headers distribution)
-class CFunction {
-private:
-    [[maybe_unused]] const void* address;
-    [[maybe_unused]] const void* type_info;
+// Same field layout as V8 14's v8-fast-api-calls.h, which Node's headers omit: an addon constructs these in its own storage and reads the fields inline.
+class CTypeInfo {
+public:
+    enum class Type : uint8_t;
+    enum class Flags : uint8_t;
+
+    Type type_;
+    Flags flags_;
 };
+
+static_assert(sizeof(CTypeInfo) == 2, "CTypeInfo has wrong layout");
+
+class CFunctionInfo {
+public:
+    enum class Int64Representation : uint8_t {
+        kNumber = 0,
+        kBigInt = 1,
+    };
+
+    // The constructor may not read arg_info: V8's CFunctionInfoImpl passes the array that follows this base before initializing it.
+    BUN_EXPORT CFunctionInfo(const CTypeInfo& return_info, unsigned int arg_count, const CTypeInfo* arg_info, Int64Representation repr = Int64Representation::kNumber);
+
+    const CTypeInfo return_info_;
+    const Int64Representation repr_;
+    const unsigned int arg_count_;
+    const CTypeInfo* arg_info_;
+};
+
+static_assert(sizeof(CFunctionInfo) == 16, "CFunctionInfo has wrong layout");
+static_assert(offsetof(CFunctionInfo, return_info_) == 0, "CFunctionInfo has wrong layout");
+static_assert(offsetof(CFunctionInfo, repr_) == 2, "CFunctionInfo has wrong layout");
+static_assert(offsetof(CFunctionInfo, arg_count_) == 4, "CFunctionInfo has wrong layout");
+static_assert(offsetof(CFunctionInfo, arg_info_) == 8, "CFunctionInfo has wrong layout");
+
+class CFunction {
+public:
+    // V8 aborts when address or type_info is null. Bun stores null like any other pointer, because it never reads these fields.
+    BUN_EXPORT CFunction(const void* address, const CFunctionInfo* type_info);
+
+    const void* address_;
+    const CFunctionInfo* type_info_;
+};
+
+static_assert(sizeof(CFunction) == 16, "CFunction has wrong layout");
+static_assert(offsetof(CFunction, address_) == 0, "CFunction has wrong layout");
+static_assert(offsetof(CFunction, type_info_) == 8, "CFunction has wrong layout");
 
 class FunctionTemplate : public Template {
 public:

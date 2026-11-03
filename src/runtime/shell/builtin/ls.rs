@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::io::Write as _;
 
-use bun_collections::{HashMap, index_sort};
+use bun_collections::index_sort;
 use bun_core::{ZBox, ZStr, strings};
 use bun_sys::{E, FdExt, O, S, dir_iterator};
 
@@ -32,7 +32,8 @@ pub(crate) enum State {
 
 pub(crate) struct ExecState {
     pub(crate) err: Option<bun_sys::Error>,
-    /// Tasks created. A task's slot is the count before it, so the slots are `0..task_count`.
+    /// Tasks created. Their slots are `0..task_count`: the first task has slot 0, and a task takes
+    /// the next slots for its subtasks.
     pub(crate) task_count: AtomicUsize,
     /// Tasks whose section is written.
     pub(crate) tasks_done: usize,
@@ -46,8 +47,8 @@ pub(crate) struct ExecState {
     turn: Option<u32>,
     /// The slots after `turn`: the subtasks still to come of each written task, innermost last.
     after: Vec<Range<u32>>,
-    /// Results that arrived before their turn.
-    parked: HashMap<u32, Section>,
+    /// Results that arrived before their turn, by slot.
+    parked: Vec<Option<Section>>,
 }
 
 /// What one task found, as the main thread writes it.
@@ -130,7 +131,7 @@ impl Ls {
                     output_done: 0,
                     turn: Some(0),
                     after: Vec::new(),
-                    parked: HashMap::new(),
+                    parked: Vec::new(),
                 });
 
                 // Stable address: `Ls` lives in `Box<Ls>` (Builtin::Impl::Ls),
@@ -218,7 +219,11 @@ impl Ls {
                 return;
             };
             if exec.turn != Some(slot) {
-                exec.parked.insert(slot, section);
+                let slot = slot as usize;
+                if exec.parked.len() <= slot {
+                    exec.parked.resize_with(slot + 1, || None);
+                }
+                exec.parked[slot] = Some(section);
                 return;
             }
         }
@@ -248,7 +253,10 @@ impl Ls {
             // done while a write of this one is still to come.
             exec.tasks_done += 1;
             exec.advance(section.children);
-            match exec.turn.and_then(|next| exec.parked.remove(&next)) {
+            let parked = exec
+                .turn
+                .and_then(|next| exec.parked.get_mut(next as usize));
+            match parked.and_then(Option::take) {
                 Some(next) => section = next,
                 None => break,
             }
@@ -437,14 +445,12 @@ impl ShellLsTask {
         let first =
             unsafe { (*self.task_count).fetch_add(subtasks.len(), Ordering::Relaxed) } as u32;
         self.children = first..first + subtasks.len() as u32;
-        // Last one first: the pool runs the task it got last first, and the section of the first
-        // subtask is the one that is written first.
-        for (i, &subtask) in subtasks.iter().enumerate().rev() {
+        for (slot, &subtask) in self.children.clone().zip(subtasks) {
             // SAFETY: `subtask` is a fresh heap allocation that nothing else has seen. It is
             // scheduled via raw `WorkPool::schedule` (no keep-alive ref) — it runs on a worker
             // thread with no JS-VM thread-local.
             unsafe {
-                (*subtask).slot = first + i as u32;
+                (*subtask).slot = slot;
                 ShellTask::schedule_no_ref::<ShellLsTask>(subtask);
             }
         }
@@ -545,7 +551,7 @@ impl ShellLsTask {
     fn list_operands(&mut self) {
         struct Found<'a> {
             name: &'a [u8],
-            /// Its entry in `output`.
+            /// Its entry in `output`. Empty for a directory.
             entry: Range<usize>,
         }
         let operands = core::mem::take(&mut self.operands);

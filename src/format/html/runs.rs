@@ -358,6 +358,15 @@ const PLAIN_TEXT_KINDS: [u8; 256] = {
     kinds
 };
 
+/// The same where `{{` means nothing by itself: only to the `&` and the `\\` behind it, which are not plain.
+const PLAIN_TEXT_KINDS_WITH_BRACES: [u8; 256] = {
+    let mut kinds = PLAIN_TEXT_KINDS;
+    kinds[b'{' as usize] = WORD;
+    kinds[b'}' as usize] = WORD;
+    kinds[b'@' as usize] = WORD;
+    kinds
+};
+
 // What the bytes of the name of an attribute are. A small letter and `-` are nothing of this.
 const NAME_CAPITAL: u8 = 1;
 /// What is in no name that HTML knows.
@@ -417,6 +426,40 @@ fn is_plain_line(line: &[u8]) -> bool {
         twice | ((byte == b' ') & (next == b' '))
     });
     !has_two_blanks && !blocks.iter().any(|block| has_odd(block)) && !has_odd(rest)
+}
+
+/// Looks at the first 32 bytes of `rest`, eight at a time. Returns where the first `"` is, if `IS_PLAIN_IN_VALUE` is true
+/// for every byte in front of it. If there is none, returns whether it is true for all of the bytes.
+#[inline]
+fn short_plain_value_len(rest: &[u8]) -> Result<usize, bool> {
+    const ONES: u64 = u64::MAX / 255;
+    const HIGH: u64 = ONES * 0x80;
+    // The lowest bit that is set is in the first byte that is `byte`, or less than `byte`: what is wrong with these is
+    // wrong behind such a byte.
+    let is = |bytes: u64, byte: u8| {
+        let zero_where_same = bytes ^ (ONES * byte as u64);
+        zero_where_same.wrapping_sub(ONES) & !zero_where_same & HIGH
+    };
+    let is_less_than =
+        |bytes: u64, byte: u8| bytes.wrapping_sub(ONES * byte as u64) & !bytes & HIGH;
+    let (blocks, _) = rest.as_chunks::<8>();
+    for (index, block) in blocks.iter().take(4).enumerate() {
+        let bytes = u64::from_le_bytes(*block);
+        let quote = is(bytes, b'"');
+        let odd = (bytes & HIGH)
+            | is_less_than(bytes, b' ')
+            | is(bytes, 0x7F)
+            | is(bytes, b'&')
+            | is(bytes, b'{')
+            | is(bytes, b'\\');
+        if quote | odd != 0 {
+            return match quote.trailing_zeros() < odd.trailing_zeros() {
+                true => Ok(index * 8 + quote.trailing_zeros() as usize / 8),
+                false => Err(false),
+            };
+        }
+    }
+    Err(blocks.len() >= 4)
 }
 
 /// True if `IS_PLAIN_IN_VALUE` is true for every byte of `value`, which has no `"` in it. Without a table and without a
@@ -525,6 +568,7 @@ impl Runs {
             settings: self.settings,
             levels: &mut self.levels,
             attributes: &mut self.attributes,
+            has_single_blanks_in_tag: false,
             out: Sink {
                 text,
                 out: printed,
@@ -608,6 +652,8 @@ struct Scanner<'s, 'a> {
     /// The elements that are open in the run.
     levels: &'s mut Vec<Level>,
     attributes: &'s mut Vec<(usize, usize)>,
+    /// One blank is in front of each of `attributes`.
+    has_single_blanks_in_tag: bool,
     /// What has been written for a child that goes the long way after all stays there, unused.
     out: Sink<'s, 'a>,
     /// The children of the innermost open element.
@@ -1032,6 +1078,7 @@ impl<'a> Scanner<'_, 'a> {
         can_span_lines: bool,
     ) -> Option<(usize, usize)> {
         self.attributes.clear();
+        self.has_single_blanks_in_tag = true;
         loop {
             let (attribute, line_breaks) = match self.at(at) {
                 b'>' => return Some((at, width)),
@@ -1049,6 +1096,7 @@ impl<'a> Scanner<'_, 'a> {
             if attribute_width == TOO_WIDE && !can_span_lines {
                 return None;
             }
+            self.has_single_blanks_in_tag &= attribute == at + 1 && self.at(at) == b' ';
             self.attributes.push((attribute, end));
             (at, width) = (end, (width + 1 + attribute_width).min(TOO_WIDE));
         }
@@ -1058,6 +1106,10 @@ impl<'a> Scanner<'_, 'a> {
     /// line, or with an attribute to a line.
     fn put_tag(&mut self, start: usize, name_end: usize, is_broken: bool) {
         let level = self.siblings.level;
+        if !is_broken && self.has_single_blanks_in_tag {
+            let end = self.attributes.last().map_or(name_end, |it| it.1);
+            return self.out.source(start, end);
+        }
         self.out.source(start, name_end);
         for index in 0..self.attributes.len() {
             let Some(&(from, to)) = self.attributes.get(index) else {
@@ -1433,10 +1485,16 @@ impl<'a> Scanner<'_, 'a> {
         let (mut has_braces, mut is_wide, mut has_reference) = (false, false, false);
         let mut has_line_break = false;
         let mut rest = value_and_rest;
-        // Most values are plain from one quote to the other, and some are long.
-        let quote = bun_core::strings::index_of_char_usize(rest, b'"')?;
-        if is_all_plain_in_value(&rest[..quote]) {
-            (end, rest) = (end + quote, &rest[quote..]);
+        // Most values are plain from one quote to the other. Most are short, and some are long.
+        match short_plain_value_len(rest) {
+            Ok(len) => (end, rest) = (end + len, &rest[len..]),
+            Err(true) => {
+                let quote = bun_core::strings::index_of_char_usize(rest, b'"')?;
+                if is_all_plain_in_value(&rest[..quote]) {
+                    (end, rest) = (end + quote, &rest[quote..]);
+                }
+            }
+            Err(false) => {}
         }
         loop {
             let plain = (rest.iter()).position(|byte| !IS_PLAIN_IN_VALUE[*byte as usize])?;
@@ -1673,8 +1731,12 @@ impl<'a> Scanner<'_, 'a> {
         // Most texts are words of plain characters with one blank between them, on one line.
         // No branch at white space: words are of any length, so it would be mispredicted at every word.
         let (mut before, mut twice) = (0, 0);
+        let kinds = match self.has_plain_braces() {
+            true => &PLAIN_TEXT_KINDS_WITH_BRACES,
+            false => &PLAIN_TEXT_KINDS,
+        };
         let plain = (self.text.get(start..)?.iter()).position(|byte| {
-            let kind = PLAIN_TEXT_KINDS[*byte as usize];
+            let kind = kinds[*byte as usize];
             twice |= kind & before;
             before = kind;
             kind >= END
@@ -1704,6 +1766,18 @@ impl<'a> Scanner<'_, 'a> {
         {
             self.measured = Some(words);
             return Some(words);
+        }
+        // A text over several lines is of use in front of an end tag, or with a line break behind it. Most others are
+        // long, with elements in them.
+        if self.at(start + plain) == b'\n'
+            && let Some(rest) = self.text.get(start + plain..)
+            && let Some(len) = bun_core::strings::index_of_char_usize(rest, b'<')
+            && rest.get(len + 1) != Some(&b'/')
+            && (rest[..len].iter().rev())
+                .find(|byte| !matches!(byte, b' ' | b'\t'))
+                .is_some_and(|&byte| byte != b'\n')
+        {
+            return None;
         }
         let mut at = start;
         let (mut before, mut count, mut bytes, mut end) = (SPACE, 0usize, 0usize, start);

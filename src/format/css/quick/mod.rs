@@ -1731,6 +1731,12 @@ fn end_of_less_line_comment(css: &[u8], start: usize) -> Option<usize> {
     }
 }
 
+/// The white space at the end of a `//` comment isn't printed. That's what `trim` of JavaScript takes for white space:
+/// a vertical tab too, and some of what isn't ASCII, all of which counts here.
+fn may_end_with_white_space(text: &[u8]) -> bool {
+    matches!(text.last(), Some(b'\t'..=b'\r' | b' ' | 0x80..))
+}
+
 /// A comment on one line, from `start` on, that's printed as it's written. Returns its end.
 fn end_of_standing_comment(css: &[u8], start: usize, syntax: Syntax) -> Option<usize> {
     let rest = css.get(start + 2..)?;
@@ -1750,8 +1756,7 @@ fn end_of_standing_comment(css: &[u8], start: usize, syntax: Syntax) -> Option<u
                 Syntax::Scss => true,
                 Syntax::Less => end_of_less_line_comment(css, start).is_some(),
             };
-            // White space at its end isn't printed.
-            if !is_taken || matches!(line.last(), Some(b' ' | b'\t' | 0x80..)) {
+            if !is_taken || may_end_with_white_space(line) {
                 return None;
             }
             (line, 0)

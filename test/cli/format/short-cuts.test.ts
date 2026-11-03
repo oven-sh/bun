@@ -663,6 +663,28 @@ describe.skipIf(!hasFlag)("style sheets", () => {
     "guards.less":
       "when (@b){}\nwhen~(){}\n.a when (@b) and (@c) {}\n.some-long-name when (@some-long-variable = some-long-value) {}\n",
     "slash-at-the-end.css": "a: b;\n/",
+    // What `trim` of JavaScript takes for white space, where a comment ends.
+    ...Object.fromEntries(
+      [0x0b, 0x0c, 0x0d, 0x09, 0xa0, 0xfeff, 0x2028, 0x2029, 0x3000].flatMap(code => {
+        const space = String.fromCodePoint(code);
+        const inBlock = `{\n  //${space}\n  a: b;\n  // c${space}\n  /*${space}*/\n  /* d${space}*/\n  //${space}\n}\n`;
+        const inMap = `$e: (\n  //${space}\n  f: g,\n  // h${space}\n  i: j // k${space}\n);\n`;
+        return [
+          [
+            `comments-${code}.scss`,
+            `//${space}\n// l${space}\n//${space}m\n/*${space}*/\n/* n${space}*/\no ${inBlock}${inMap}`,
+          ],
+          [
+            `comments-${code}.less`,
+            `//${space}\n// l${space}\n//${space}m\n/*${space}*/\n/* n${space}*/\no ${inBlock}`,
+          ],
+          [`comment-first-${code}.scss`, `//${space}\na{b:c}`],
+          [`comment-last-${code}.scss`, `a{b:c}\n//${space}`],
+          [`comment-alone-${code}.scss`, `//${space}`],
+          [`comment-alone-${code}.css`, `/*${space}*/${space}`],
+        ];
+      }),
+    ),
     "first-word.scss":
       "a{@include n,t ();\n@include n, t ();\n@include n ();\n@include n (o);\n@if ($a) and ($b) {}\n@if $a,b ($c) {}\n}\n",
     "ignore-and-quote.less": "//prettier-ignore'\nf:   g;\n// prettier-ignore *\nh:   i;\n",

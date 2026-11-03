@@ -10,7 +10,8 @@
 
 use super::super::Parser as Syntax;
 use super::{
-    BLANK, DASH, DIGIT, INDENTATION, LOWER, PLAIN, UNDERSCORE, UPPER, byte, class, skip, skip_long,
+    BLANK, DASH, DIGIT, INDENTATION, LOWER, PLAIN, UNDERSCORE, UPPER, byte, class,
+    may_end_with_white_space, skip, skip_long,
 };
 
 /// Parentheses that are nested deeper than this are refused. It also bounds how deep `layout.rs` calls itself.
@@ -782,7 +783,7 @@ impl Scanner<'_> {
                 let after = skip(css, end + 1, BLANK & !super::NEWLINE);
                 if byte(css, end) != b'\n'
                     || byte(css, after) != b')'
-                    || matches!(css[end - 1], b' ' | b'\t' | 0x80..)
+                    || may_end_with_white_space(&css[q..end])
                 {
                     return None;
                 }
@@ -805,7 +806,7 @@ impl Scanner<'_> {
                     return None;
                 }
                 let end = end_of_line_comment(css, q + 2);
-                if byte(css, end) != b'\n' || matches!(css[end - 1], b' ' | b'\t' | 0x80..) {
+                if byte(css, end) != b'\n' || may_end_with_white_space(&css[q..end]) {
                     return None;
                 }
                 self.record(Kind::Comment, 0, q as u32, end as u32);

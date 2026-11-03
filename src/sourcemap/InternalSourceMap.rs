@@ -170,7 +170,7 @@ impl InternalSourceMap {
     }
 
     #[inline]
-    pub fn mapping_count(self) -> usize {
+    pub(crate) fn mapping_count(self) -> usize {
         // SAFETY: blob is at least HEADER_SIZE bytes.
         unsafe { u64::from_ne_bytes(*self.data.add(8).cast::<[u8; 8]>()) as usize }
     }

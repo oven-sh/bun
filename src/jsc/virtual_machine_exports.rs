@@ -264,32 +264,84 @@ pub fn get_verbose_fetch_value() -> i32 {
 // `bun_runtime::bake::source_provider_exports` (their callers are bake's C++
 // source providers; LAYERING).
 
+// HOST_EXPORT(Bun__registerSourceMap, c)
+pub unsafe fn register_source_map(
+    vm: &mut VirtualMachine,
+    source_provider: *const c_void,
+    url: &BunString,
+    source_map: *mut u8,
+) {
+    // SAFETY: the caller took `source_map` out of `ResolvedSource.source_map`, and nothing else owns it.
+    let blob = unsafe { crate::resolved_source::SourceMapBlob::from_raw(source_map) };
+    vm.source_mappings
+        .register_mappings(source_provider, url, blob);
+}
+
 // HOST_EXPORT(Bun__addSourceProviderSourceMap, c)
+/// `opaque_source_provider` (a `Zig::SourceProvider`) holds a text that ends with a `//# sourceMappingURL`.
 pub fn add_source_provider_source_map(
     vm: &mut VirtualMachine,
     opaque_source_provider: *mut c_void,
-    specifier: &BunString,
+    url: &BunString,
 ) {
-    let slice = specifier.to_utf8();
-    vm.source_mappings.put_source_provider(
+    vm.source_mappings.register_source_provider(
         AnySourceProvider::new(
             opaque_source_provider
                 .cast::<SourceProviderMap>()
                 .cast_const(),
         ),
-        slice.slice(),
+        url,
     );
 }
 
-// HOST_EXPORT(Bun__removeSourceProviderSourceMap, c)
-pub fn remove_source_provider_source_map(
+// HOST_EXPORT(Bun__addEmbeddedSourceMap, c)
+pub fn add_embedded_source_map(
     vm: &mut VirtualMachine,
-    opaque_source_provider: *mut c_void,
-    specifier: &BunString,
+    source_provider: *mut c_void,
+    url: &BunString,
 ) {
-    let slice = specifier.to_utf8();
-    vm.source_mappings
-        .remove_source_provider(opaque_source_provider, slice.slice());
+    vm.source_mappings.register_source_provider(
+        AnySourceProvider::from_fn(source_provider, load_embedded_source_map),
+        url,
+    );
+}
+
+/// `source_filename` is the name of the text in the module graph of the executable.
+fn load_embedded_source_map(
+    _: *mut c_void,
+    source_filename: &[u8],
+    _: bun_sourcemap::SourceMapLoadHint,
+    _: bun_sourcemap::ParseUrlResultHint,
+) -> Option<bun_sourcemap::ParseUrl> {
+    let hooks = crate::virtual_machine::runtime_hooks()?;
+    Some(bun_sourcemap::ParseUrl {
+        map: Some((hooks.load_standalone_sourcemap)(source_filename)?),
+        ..Default::default()
+    })
+}
+
+// HOST_EXPORT(Bun__removeSourceMap, c)
+pub fn remove_source_map(vm: &mut VirtualMachine, source_provider: *const c_void) {
+    vm.source_mappings.remove(source_provider);
+}
+
+// HOST_EXPORT(Bun__aliasSourceMap, c)
+pub fn alias_source_map(
+    vm: &mut VirtualMachine,
+    source_provider: *const c_void,
+    existing: *const c_void,
+) -> bool {
+    vm.source_mappings.alias(source_provider, existing)
+}
+
+// HOST_EXPORT(Bun__shareSourceMap, c)
+pub fn share_source_map(
+    vm: &mut VirtualMachine,
+    source_provider: *const c_void,
+    url: &BunString,
+    existing: *const c_void,
+) -> bool {
+    vm.source_mappings.share(source_provider, url, existing)
 }
 
 pub(crate) fn set_synthetic_allocation_limit_for_testing(limit: f64) -> usize {

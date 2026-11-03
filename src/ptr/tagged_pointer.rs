@@ -125,17 +125,6 @@ impl<Ts: TypeList> TaggedPtrUnion<Ts> {
         }
     }
 
-    #[inline]
-    pub fn tag(self) -> TagType {
-        self.repr.data()
-    }
-
-    /// The tag constant for `Type`.
-    #[inline]
-    pub const fn case<Type: UnionMember<Ts>>() -> TagType {
-        Type::TAG
-    }
-
     /// unsafely cast a tagged pointer to a specific type, without checking that it's really that type
     // `as` is a Rust keyword, hence `as_unchecked`.
     #[inline]

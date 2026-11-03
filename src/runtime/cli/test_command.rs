@@ -3643,7 +3643,8 @@ impl CommandLineReporter {
             let Ok(text) = File::read_from(Fd::cwd(), path) else {
                 continue;
             };
-            let Some(transpiled) = crate::jsc_hooks::transpile_as_loaded(vm.global(), path, &text)
+            let Some(mut transpiled) =
+                crate::jsc_hooks::transpile_as_loaded(vm.global(), path, &text)
             else {
                 continue;
             };
@@ -3651,6 +3652,7 @@ impl CommandLineReporter {
                 path,
                 &text,
                 &transpiled.source_code,
+                core::mem::take(&mut transpiled.source_map).into_parsed(),
                 transpiled.already_bundled,
                 ranges,
                 counts,

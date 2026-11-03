@@ -1097,7 +1097,7 @@ impl AsyncModule {
                 };
             });
 
-        {
+        let source_map = {
             // SAFETY: per-thread VM; `source_map_handler` stashes the
             // `*mut BufferPrinter` and only reborrows inside
             // `on_source_map_chunk` after the writer's last use retires.
@@ -1118,15 +1118,15 @@ impl AsyncModule {
                     None,
                 )
             }?;
-        }
+            mapper.take_source_map()
+        };
 
         // `bun_core::env::DUMP_SOURCE` is debug, non-test builds only. The previous
         // `cfg(feature = "dump_source")` gate referenced a feature that doesn't
         // exist, which silently compiled this call out everywhere.
         if bun_core::env::DUMP_SOURCE {
             crate::runtime_transpiler_store::dump_source_string(
-                // SAFETY: `jsc_vm` is the live per-thread `VirtualMachine` (BACKREF, non-null).
-                unsafe { core::ptr::NonNull::new_unchecked(jsc_vm) },
+                &source_map,
                 specifier,
                 printer.ctx.get_written(),
             );
@@ -1139,6 +1139,7 @@ impl AsyncModule {
         Ok(ResolvedSource {
             source_url: BunString::clone_utf8(path.text),
             is_static: self.is_static,
+            source_map,
             ..ResolvedSource::printed(
                 printed_ast,
                 BunString::clone_latin1(printer.ctx.get_written()),

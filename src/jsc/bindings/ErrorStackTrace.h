@@ -223,6 +223,28 @@ inline bool hasOriginalSourcePosition(const JSC::StackFrame& frame)
     return false;
 }
 
+// The URL a frame shows and the provider of its code: null for host, WebAssembly and ahead-of-time compiled code.
+struct FrameSource {
+    String url;
+    JSC::SourceProvider* provider { nullptr };
+};
+FrameSource sourceOf(JSC::VM&, const JSC::StackFrame&);
+FrameSource sourceOf(JSC::StackVisitor&);
+FrameSource sourceOf(JSC::SourceProvider&);
+
+// The only writers of ZigStackFrame::source_url in C++: each says which text `frame.position` is a position in.
+
+// The text of `source.provider`. The frame takes a ref on the provider, which whoever releases the frame gives back.
+void setSource(ZigStackFrame& frame, const FrameSource& source);
+// A parser's SyntaxError: the text being parsed (JSVMClientData::sourceBeingParsed) if it has that URL, else by URL.
+void setSourceOfParserError(ZigStackFrame& frame, JSC::VM&, const String& sourceURL);
+// The text that registered a source map last under that URL.
+void setSourceByURL(ZigStackFrame& frame, const String& sourceURL);
+// A final position: WebAssembly, one read back out of a stack string, one that an object that is no Error gives.
+void setSourceWithoutMap(ZigStackFrame& frame, const String& sourceURL);
+// A final position of an error whose stack became a string before it got here (ZigStackFrameSourceIfRegistered).
+void setSourceOfCopiedStack(ZigStackFrame& frame, const String& sourceURL);
+
 String sourceURL(const JSC::SourceOrigin& origin);
 String sourceURL(JSC::SourceProvider* sourceProvider);
 String sourceURL(const JSC::SourceCode& sourceCode);

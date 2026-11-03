@@ -1761,6 +1761,7 @@ impl VirtualMachine {
         SourceMapHandlerGetter {
             vm: self,
             printer,
+            source_map: Default::default(),
             _marker: core::marker::PhantomData,
         }
     }
@@ -3149,9 +3150,7 @@ pub struct RuntimeHooks {
     /// `UnsafeCell` singleton accessor (NOT by downcasting the resolver trait
     /// object — that shared-ref provenance is read-only and forming `&mut`
     /// from it would be UB) and returns the lazily-decoded map (already
-    /// strong-ref'd via the returned `Arc`). [`resolve_source_mapping`]
-    /// caches it into `source_mappings` so subsequent lookups hit the fast
-    /// path. The caller gates the call on `vm.standalone_module_graph`.
+    /// strong-ref'd via the returned `Arc`). `SavedSourceMap` calls it once per text and keeps the result.
     pub load_standalone_sourcemap:
         fn(path: &[u8]) -> Option<std::sync::Arc<bun_sourcemap::ParsedSourceMap>>,
     /// `TestReporterAgent.retroactivelyReportDiscoveredTests(agent, next_test_id)`.
@@ -4070,23 +4069,18 @@ pub fn process_fetch_log(
 // SourceMapHandlerGetter
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Holds raw
-/// pointers to the VM and the active `BufferPrinter` so that `get()` can
-/// return an erased `js_printer::SourceMapHandler` borrowing either the VM's
-/// `source_mappings` (fast path) or `self` (debugger / inline-sourcemap path)
-/// without the two `&mut` borrows colliding.
+/// Receives the source map of one print: `take_source_map()` gives it to the `ResolvedSource` of the printed text.
 ///
 /// Note: we keep raw pointers + a `PhantomData<&'a mut ()>` so the getter's lifetime
 /// is tied to the `&'a mut VirtualMachine` it was built from in
-/// `source_map_handler`, but `get()` can still hand out a
-/// `SourceMapHandler<'_>` over `vm.source_mappings` without tripping borrowck
-/// on the disjoint `self.vm` reborrow. `printer` is accepted and stored as a
+/// `source_map_handler`. `printer` is accepted and stored as a
 /// raw pointer (NOT `&'a mut`) because the same `BufferPrinter` is also the
 /// live `writer` inside `print_with_source_map`; holding an `&'a mut` here
 /// would alias it for the whole print.
 pub struct SourceMapHandlerGetter<'a> {
     vm: *mut VirtualMachine,
     printer: *mut bun_js_printer::BufferPrinter,
+    source_map: crate::resolved_source::SourceMapBlob,
     _marker: core::marker::PhantomData<&'a mut ()>,
 }
 
@@ -4096,8 +4090,8 @@ impl<'a> SourceMapHandlerGetter<'a> {
     /// `&mut VirtualMachine` (the VM is concurrently live on the JS thread and
     /// the job slot itself is stored *inside* `vm.transpiler_store`).
     ///
-    /// SAFETY: caller guarantees `vm` outlives `'a` and that only worker-safe
-    /// leaf fields (`source_mappings`, `debugger`) are touched via `get()`.
+    /// SAFETY: caller guarantees `vm` outlives `'a` and that only the worker-safe
+    /// `debugger` leaf field is touched via `get()`.
     #[inline]
     pub(crate) unsafe fn from_raw(
         vm: *mut VirtualMachine,
@@ -4106,8 +4100,15 @@ impl<'a> SourceMapHandlerGetter<'a> {
         Self {
             vm,
             printer,
+            source_map: Default::default(),
             _marker: core::marker::PhantomData,
         }
+    }
+
+    /// The map of what was printed, once the print is done.
+    #[inline]
+    pub fn take_source_map(&mut self) -> crate::resolved_source::SourceMapBlob {
+        core::mem::take(&mut self.source_map)
     }
 
     /// Read-only view of `(*vm).debugger` via raw place projection.
@@ -4129,23 +4130,6 @@ impl<'a> SourceMapHandlerGetter<'a> {
         unsafe { (*self.vm).debugger.as_deref() }
     }
 
-    /// Exclusive access to `(*vm).source_mappings` via raw place projection.
-    ///
-    /// SAFETY: as for `vm_debugger` — `vm` is never null, and we project
-    /// `(*self.vm).source_mappings` directly so only the leaf field's bytes
-    /// are retagged. A whole-VM `&mut *self.vm` here would (a) race with the
-    /// JS thread on the `from_raw` worker path, (b) overlap the caller's own
-    /// `&mut TranspilerJob` storage inside `vm.transpiler_store`, and (c) on
-    /// the main-thread jsc_hooks path, overlap the already-formed
-    /// `&mut (*jsc_vm).transpiler` receiver borrow. The leaf projection
-    /// touches none of those bytes.
-    #[inline]
-    fn vm_source_mappings_mut(&mut self) -> &mut SavedSourceMap {
-        // SAFETY: see fn doc — `self.vm` is non-null; raw place projection to
-        // the `source_mappings` leaf avoids aliasing the caller's borrows.
-        unsafe { &mut (*self.vm).source_mappings }
-    }
-
     /// Raw pointer to the active `BufferPrinter`.
     ///
     /// Intentionally NOT a `&mut`-returning accessor: the same
@@ -4157,17 +4141,13 @@ impl<'a> SourceMapHandlerGetter<'a> {
     pub fn get(&mut self) -> bun_js_printer::SourceMapHandler<'_> {
         // Take the inline-sourcemap path only when a
         // debugger is present AND it is *not* in `.connect` mode — `.connect`
-        // (VSCode-extension) clients fall through to the `source_mappings`
-        // fast-path handler.
+        // (VSCode-extension) clients fall through to the handler that only keeps the map.
         let wants_inline_source_map = matches!(
             self.vm_debugger(),
             Some(d) if d.mode != crate::debugger::Mode::Connect
         );
         if !wants_inline_source_map {
-            // `source_mappings` is a value field on the VM, exclusively
-            // borrowed for the returned handler's lifetime (bounded by
-            // `&mut self`).
-            return bun_js_printer::SourceMapHandler::for_(self.vm_source_mappings_mut());
+            return bun_js_printer::SourceMapHandler::for_(&mut self.source_map);
         }
         bun_js_printer::SourceMapHandler::for_(self)
     }
@@ -4175,7 +4155,7 @@ impl<'a> SourceMapHandlerGetter<'a> {
 
 impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
     /// When the inspector is enabled, we want to generate an inline sourcemap.
-    /// And, for now, we also store it in `source_mappings` like normal.
+    /// And, for now, we also keep it for `SavedSourceMap` like normal.
     /// This is hideously expensive memory-wise...
     fn on_source_map_chunk(
         &mut self,
@@ -4195,9 +4175,7 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
         let prefix_len =
             SOURCE_MAP_URL_PREFIX_START.len() + SOURCE_MAPPING_URL.len() + source_url_len;
 
-        self.vm_source_mappings_mut()
-            .put_mappings(source, chunk.buffer)
-            .map_err(|_| bun_js_printer::Error::WriteFailed)?;
+        self.source_map = crate::resolved_source::SourceMapBlob::new(chunk.buffer.list);
 
         // SAFETY: `printer` is the raw `*mut BufferPrinter` passed in by the
         // caller (jsc_hooks.rs), with the SAME provenance as the `writer` arg
@@ -6966,12 +6944,6 @@ impl VirtualMachine {
         // **Warning** this method can be called in the heap collector thread!!
         self.remap_stack_frames_mutex.lock();
 
-        self.source_mappings.lock();
-
-        // Note: a last-`(hash → InternalSourceMap)` cache across the loop
-        // would be purely a perf optimization (most stacks repeat the same
-        // source); do the straightforward per-frame resolve. See the PERF
-        // note below.
         // SAFETY: caller passes `frames_count` valid `ZigStackFrame`s.
         let frames = unsafe { bun_core::ffi::slice_mut(frames, frames_count) };
         for frame in frames {
@@ -6982,25 +6954,16 @@ impl VirtualMachine {
                 frame.remapped = true;
                 continue;
             }
-            // PERF: could cache `(hash → ism)` across iterations.
-            // Slow path: drops and re-acquires the source_mappings lock around
-            // resolve_source_mapping().
-            self.source_mappings.unlock();
-            let resolved = {
-                let source_url = frame.source_url.to_utf8();
-                self.resolve_source_mapping(
-                    source_url.slice(),
+            let resolved = self
+                .resolve_source_mapping(
+                    frame.source_provider.provider(),
+                    frame.source_flags,
+                    &frame.source_url,
                     frame.position.line,
                     frame.position.column,
                     bun_sourcemap::SourceContentHandling::NoSourceContents,
                 )
-                .map(|lookup| {
-                    (
-                        lookup.display_source_url_if_needed(source_url.slice()),
-                        lookup,
-                    )
-                })
-            };
+                .map(|lookup| (lookup.display_source_url_if_needed(), lookup));
             if let Some((display_url, lookup)) = resolved {
                 if let Some(source_url) = display_url {
                     frame.source_url = source_url.into();
@@ -7014,10 +6977,8 @@ impl VirtualMachine {
             } else {
                 frame.remapped = true;
             }
-            self.source_mappings.lock();
         }
 
-        self.source_mappings.unlock();
         self.remap_stack_frames_mutex.unlock();
     }
 
@@ -7185,7 +7146,6 @@ impl VirtualMachine {
 
         let already_remapped = frames[top].remapped;
         let resolved = {
-            let top_source_url = frames[top].source_url.to_utf8();
             let maybe_lookup: Option<bun_sourcemap::mapping::Lookup> = if already_remapped {
                 Some(bun_sourcemap::mapping::Lookup {
                     mapping: bun_sourcemap::mapping::Mapping {
@@ -7203,10 +7163,13 @@ impl VirtualMachine {
                     },
                     source_map: None,
                     prefetched_source_code: None,
+                    generated_url: bun_core::Utf8Bytes::EMPTY,
                 })
             } else {
                 self.resolve_source_mapping(
-                    top_source_url.slice(),
+                    frames[top].source_provider.provider(),
+                    frames[top].source_flags,
+                    &frames[top].source_url,
                     frames[top].position.line,
                     frames[top].position.column,
                     bun_sourcemap::SourceContentHandling::SourceContents,
@@ -7216,7 +7179,7 @@ impl VirtualMachine {
             maybe_lookup.map(|lookup| {
                 let mapping = lookup.mapping;
                 let display_url = if !already_remapped {
-                    lookup.display_source_url_if_needed(top_source_url.slice())
+                    lookup.display_source_url_if_needed()
                 } else {
                     None
                 };
@@ -7227,7 +7190,7 @@ impl VirtualMachine {
                         .as_deref()
                         .is_some_and(|m| m.is_external())
                 {
-                    lookup.get_source_code(top_source_url.slice())
+                    lookup.get_source_code()
                 } else {
                     None
                 };
@@ -7249,6 +7212,18 @@ impl VirtualMachine {
                 }
                 if top_frame_is_builtin {
                     // Avoid printing "export default 'native'"
+                    break 'code bun_core::Utf8Bytes::EMPTY;
+                }
+                // Not the text of the frame when a newer text registered under its name, or none for a copied stack.
+                let top_provider = frames[top].source_provider.provider();
+                if (!top_provider.is_null()
+                    || frames[top]
+                        .source_flags
+                        .contains(crate::zig_stack_frame::SourceFlags::IF_REGISTERED))
+                    && !self
+                        .source_mappings
+                        .names_file_text(top_provider, &frames[top].source_url)
+                {
                     break 'code bun_core::Utf8Bytes::EMPTY;
                 }
                 // What lies on the disk under the name of a module that is compiled into an executable is not what runs.
@@ -7330,21 +7305,16 @@ impl VirtualMachine {
                 if i == top || frames[i].remapped || frames[i].position.is_invalid() {
                     continue;
                 }
-                let resolved = {
-                    let source_url = frames[i].source_url.to_utf8();
-                    self.resolve_source_mapping(
-                        source_url.slice(),
+                let resolved = self
+                    .resolve_source_mapping(
+                        frames[i].source_provider.provider(),
+                        frames[i].source_flags,
+                        &frames[i].source_url,
                         frames[i].position.line,
                         frames[i].position.column,
                         bun_sourcemap::SourceContentHandling::NoSourceContents,
                     )
-                    .map(|lookup| {
-                        (
-                            lookup.display_source_url_if_needed(source_url.slice()),
-                            lookup,
-                        )
-                    })
-                };
+                    .map(|lookup| (lookup.display_source_url_if_needed(), lookup));
                 if let Some((display_url, lookup)) = resolved {
                     if let Some(src) = display_url {
                         frames[i].source_url = src.into();
@@ -8255,51 +8225,25 @@ impl VirtualMachine {
         let _ = writer.flush();
     }
 
-    /// Looks up the source-map mapping for `path` at `line:column`.
+    /// Looks up the mapping for `line:column` of the text that `source_provider` holds (by `source_url` for `BY_URL`).
     pub(crate) fn resolve_source_mapping(
         &mut self,
-        path: &[u8],
+        source_provider: crate::saved_source_map::Provider,
+        source_flags: crate::zig_stack_frame::SourceFlags,
+        source_url: &bun_core::String,
         line: bun_core::Ordinal,
         column: bun_core::Ordinal,
         source_handling: bun_sourcemap::SourceContentHandling,
     ) -> Option<bun_sourcemap::mapping::Lookup> {
-        if let Some(lookup) =
-            self.source_mappings
-                .resolve_mapping(path, line, column, source_handling)
-        {
-            return Some(lookup);
-        }
-
-        // Standalone-module-graph fallback: the sourcemap load reaches into
-        // `bun_standalone_graph::{Graph,File,LazySourceMap}` (higher tier);
-        // dispatch through [`RuntimeHooks::load_standalone_sourcemap`] per
-        // §Dispatch (cold path — one-time decode then cached below).
-        // Gate only — the hook reaches the concrete graph via its own
-        // `UnsafeCell` singleton (write-provenance), not via this read-only
-        // trait object.
-        let _ = self.standalone_module_graph?;
-        let hooks = runtime_hooks()?;
-        // JS-thread call; hook mutates only per-`File` lazy caches under the
-        // standalone graph's internal `INIT_LOCK`.
-        let map = (hooks.load_standalone_sourcemap)(path)?;
-
-        // The `Arc::clone` is the ref-bump; `into_raw` transfers that strong
-        // ref into the table (reclaimed by `put_value`'s replace path /
-        // `SavedSourceMap` teardown).
-        bun_core::handle_oom(self.source_mappings.put_value(
-            path,
-            crate::saved_source_map::Value::init(std::sync::Arc::into_raw(std::sync::Arc::clone(
-                &map,
-            ))),
-        ));
-
-        let mapping = map.find_mapping(line, column)?;
-
-        Some(bun_sourcemap::mapping::Lookup {
-            mapping,
-            source_map: Some(map),
-            prefetched_source_code: None,
-        })
+        use crate::zig_stack_frame::SourceFlags;
+        let source_provider =
+            if source_provider.is_null() && source_flags.contains(SourceFlags::BY_URL) {
+                self.source_mappings.newest_for_url(source_url)?
+            } else {
+                source_provider
+            };
+        self.source_mappings
+            .resolve_mapping(source_provider, line, column, source_handling)
     }
 
     /// To satisfy the interface from NewHotReloader().

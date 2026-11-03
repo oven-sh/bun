@@ -55,18 +55,13 @@ bun_core::declare_scope!(RuntimeTranspilerStore, hidden);
 // Debug source dumping (debug-only helpers; no-ops in release)
 // ──────────────────────────────────────────────────────────────────────────
 
-// Note: takes `NonNull<VirtualMachine>` (not `&mut`) — these are called
-// from the transpiler worker thread while the JS thread is concurrently live on
-// the same VM, so a `&mut VirtualMachine` would be a data race AND would alias
-// the caller's `&mut TranspilerJob` (which is stored inside
-// `vm.transpiler_store`). Only the `source_mappings` leaf field is touched,
-// under its own internal lock.
-fn dump_source(vm: NonNull<VirtualMachine>, specifier: &[u8], printer: &BufferPrinter) {
-    dump_source_string(vm, specifier, printer.ctx.get_written());
-}
-
-pub(crate) fn dump_source_string(vm: NonNull<VirtualMachine>, specifier: &[u8], written: &[u8]) {
-    if let Err(e) = dump_source_string_failiable(vm, specifier, written) {
+// `source_map` is the map of `written`, as the `ResolvedSource` carries it.
+pub(crate) fn dump_source_string(
+    source_map: &crate::resolved_source::SourceMapBlob,
+    specifier: &[u8],
+    written: &[u8],
+) {
+    if let Err(e) = dump_source_string_failiable(source_map, specifier, written) {
         bun_core::debug_warn!("Failed to dump source string: {}", e.name());
     }
 }
@@ -77,7 +72,7 @@ pub(crate) fn dump_source_string(vm: NonNull<VirtualMachine>, specifier: &[u8], 
 static BUN_DEBUG_HOLDER: Guarded<Option<Dir>> = Guarded::new(None);
 
 fn dump_source_string_failiable(
-    vm: NonNull<VirtualMachine>,
+    source_map: &crate::resolved_source::SourceMapBlob,
     specifier: &[u8],
     written: &[u8],
 ) -> crate::CrateResult<()> {
@@ -131,11 +126,9 @@ fn dump_source_string_failiable(
             return Ok(());
         }
 
-        // SAFETY: `vm` outlives this debug-only call (BACKREF — VM owns the
-        // transpiler store); only the `source_mappings` leaf field is borrowed,
-        // and `SavedSourceMap::get` takes its own internal mutex.
-        if let Some(mappings) = unsafe { (*vm.as_ptr()).source_mappings.get(specifier) } {
-            // `defer mappings.deref()` → Arc::drop.
+        if let Some(mappings) = source_map.get() {
+            let mut vlqs = MutableString::init_empty();
+            mappings.append_vlq_to(&mut vlqs);
             let mut map_path = Vec::with_capacity(base.len() + b".map".len());
             map_path.extend_from_slice(base);
             map_path.extend_from_slice(b".map");
@@ -169,7 +162,7 @@ fn dump_source_string_failiable(
                 json(base),
                 json(specifier),
                 json(&source_file),
-                mappings.format_vlqs(),
+                bstr::BStr::new(vlqs.list.as_slice()),
             )
             .map_err(|_| crate::CrateError::WriteError)?;
             file.write_all(out.as_bytes())?;
@@ -1004,19 +997,12 @@ impl TranspilerJob {
             let mut entry: Box<CacheEntry> =
                 unsafe { bun_core::heap::take(entry_ptr.cast::<CacheEntry>()) };
 
-            // SAFETY: leaf-field `&mut` borrow on `*vm.source_mappings`;
-            // `SavedSourceMap` takes its own internal mutex.
-            let _ = unsafe { &mut (*vm).source_mappings }.put_mappings(
-                &parse_result.source,
-                MutableString {
-                    list: core::mem::take(&mut entry.sourcemap).into_vec(),
-                },
+            let source_map = crate::resolved_source::SourceMapBlob::new(
+                core::mem::take(&mut entry.sourcemap).into_vec(),
             );
 
             if bun_core::env::DUMP_SOURCE {
-                // SAFETY: `vm` is the live owning VM (BACKREF — see `vm` note above).
-                let vm = unsafe { NonNull::new_unchecked(vm) };
-                dump_source_string(vm, specifier, entry.output_code.byte_slice());
+                dump_source_string(&source_map, specifier, entry.output_code.byte_slice());
             }
 
             let module_info = if use_isolation_source_provider_cache
@@ -1034,6 +1020,7 @@ impl TranspilerJob {
                 source_code: core::mem::take(&mut entry.output_code),
                 is_commonjs_module: entry.metadata.module_type == CacheModuleType::Cjs,
                 module_info,
+                source_map,
                 tag: this_tag,
                 ..Default::default()
             };
@@ -1138,9 +1125,9 @@ impl TranspilerJob {
         let module_info_ptr: Option<*mut analyze_transpiled_module::ModuleInfo> =
             module_info.as_deref_mut().map(std::ptr::from_mut);
 
-        let print_result = {
+        let (print_result, source_map) = {
             // SAFETY: see `vm` note above — `from_raw` stores `vm` as a raw
-            // pointer and only borrows leaf fields (`source_mappings`, `debugger`)
+            // pointer and only borrows the `debugger` leaf field
             // inside `get()`. No `&mut VirtualMachine` is ever formed.
             let mut mapper = unsafe { SourceMapHandlerGetter::from_raw(vm, &raw mut printer) };
             let _writeback = scopeguard::guard(
@@ -1156,7 +1143,7 @@ impl TranspilerJob {
                     };
                 },
             );
-            transpiler.print_with_source_map(
+            let print_result = transpiler.print_with_source_map(
                 // Same per-call `arena` that `transpiler.set_arena(&arena)`
                 // and `parse_options.arena` used to build `parse_result.ast`.
                 &arena,
@@ -1165,7 +1152,8 @@ impl TranspilerJob {
                 js_printer::Format::EsmAscii,
                 mapper.get(),
                 module_info_ptr,
-            )
+            );
+            (print_result, mapper.take_source_map())
         };
         if let Err(err) = print_result {
             drop(module_info);
@@ -1174,9 +1162,11 @@ impl TranspilerJob {
         }
 
         if bun_core::env::DUMP_SOURCE {
-            // SAFETY: `vm` is the live owning VM (BACKREF — see `vm` note above).
-            let vm = unsafe { NonNull::new_unchecked(vm) };
-            dump_source(vm, specifier, source_code_printer);
+            dump_source_string(
+                &source_map,
+                specifier,
+                source_code_printer.ctx.get_written(),
+            );
         }
 
         let source_code = 'brk: {
@@ -1213,6 +1203,7 @@ impl TranspilerJob {
                 use analyze_transpiled_module::ModuleInfoExt;
                 mi.into_deserialized()
             }),
+            source_map,
             tag: this_tag,
             ..ResolvedSource::printed(printed_ast, source_code)
         };

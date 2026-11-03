@@ -30,3 +30,6 @@ export const findSourceMap = b.fn({
   capability: "js",
   throws: true,
 });
+
+/** How many source providers of this thread's VM have a source map. Only `bun:internal-for-testing` calls it. */
+export const savedSourceMapCountForTesting = b.fn({ returns: b.usize });

@@ -1559,7 +1559,7 @@ test("lazy error-info materialization does not store an empty stack value when t
 // A collection that finds a frame of an unread trace dead turns the frames into a string before they are
 // lost (ErrorInstance::reconcileWeakReferencesAtGCEnd), and `.stack` must then read as it does when it
 // is materialized on access. Known exceptions: an installed Error.prepareStackTrace (it needs the
-// trace), a SyntaxError's "at <parse>" line, and the positions of node:vm frames in a transpiled file.
+// trace) and a SyntaxError's "at <parse>" line.
 //
 // Whether the collection materializes a given stack is not up to the test, so each shape makes several
 // errors, each under its own functions that are garbage once they return, and each with a twin: a plain
@@ -1614,6 +1614,11 @@ test.concurrent("a stack that a collection materializes reads the same as one ma
       "AggregateError": () => new AggregateError([new Error("inner")], "boom"),
       "with a cause": () => new RangeError("boom", { cause: new Error("why") }),
       "from a node:vm context": () => vm.runInNewContext("new TypeError('boom')"),
+      // node:vm compiles its code as it is, so a position in it is final, also under the name of a file Bun transpiled.
+      "created in node:vm code named after a transpiled file": () => {
+        const inVm = vm.runInNewContext("\\n\\n\\n\\n(function inVm() { try { return new Error('boom'); } finally {} })", {}, { filename: import.meta.path });
+        try { return inVm(); } finally {}
+      },
       // Frames whose text says more than a function name and a position.
       "created in a constructor": () => new (class Widget { constructor() { this.error = new Error("boom"); } })().error,
       "created by eval code": () => (0, eval)("new Error('boom')"),
@@ -1654,6 +1659,7 @@ test.concurrent("a stack that a collection materializes reads the same as one ma
     };
     // The frames, from the top, whose text the test spells out.
     const framesToShow = {
+      "created in node:vm code named after a transpiled file": 1,
       "created in a constructor": 1,
       "created by eval code": 1,
       "created under a builtin": 2,
@@ -1711,6 +1717,7 @@ test.concurrent("a stack that a collection materializes reads the same as one ma
     "AggregateError": row("AggregateError: boom"),
     "with a cause": row("RangeError: boom"),
     "from a node:vm context": row("TypeError: boom"),
+    "created in node:vm code named after a transpiled file": row("Error: boom", ["at inVm"]),
     "created in a constructor": row("Error: boom", ["at new Widget"]),
     "created by eval code": row("Error: boom", ["at <anonymous>"]),
     "created under a builtin": row("Error: boom", ["at <anonymous>", "at map"]),

@@ -167,6 +167,8 @@ void InspectorTestReporterAgent::reportTestFound(int testId, const String& name,
     JSC::LineColumn lineColumn;
     JSC::SourceID sourceID = 0;
     String sourceURL;
+    // The frame's code block holds the provider while the position is mapped below.
+    Zig::FrameSource frameSource;
 
     auto* globalObject = &m_globalObject;
     auto& vm = JSC::getVM(globalObject);
@@ -178,7 +180,8 @@ void InspectorTestReporterAgent::reportTestFound(int testId, const String& name,
         if (visitor->hasLineAndColumnInfo()) {
             lineColumn = visitor->computeLineAndColumn();
 
-            String sourceURLForFrame = Zig::sourceURL(visitor);
+            frameSource = Zig::sourceOf(visitor);
+            String sourceURLForFrame = frameSource.url;
 
             // Sometimes, the sourceURL is empty.
             // For example, pages in Next.js.
@@ -208,7 +211,7 @@ void InspectorTestReporterAgent::reportTestFound(int testId, const String& name,
         ZigStackFrame& remappedFrame = remappedFrames[0];
         remappedFrame.position.line_zero_based = originalLine.zeroBasedInt();
         remappedFrame.position.column_zero_based = originalColumn.zeroBasedInt();
-        remappedFrame.source_url = Bun::toStringRef(sourceURL);
+        Zig::setSource(remappedFrame, frameSource);
 
         remappedFrames.remap(Bun::vm(globalObject));
 

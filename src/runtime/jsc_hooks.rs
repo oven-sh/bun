@@ -3005,15 +3005,10 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     // in `JSC_PARSER_CACHE_VTABLE.get`; sole owner.
                     let mut entry: Box<CacheEntry> =
                         unsafe { bun_core::heap::take(entry_ptr.cast::<CacheEntry>()) };
-                    // Register the cached sourcemap so error
+                    // The cached sourcemap goes with the cached text, so error
                     // stacks remap to original positions even on a cache hit.
-                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread
-                    // VM; `source_mappings` is only touched from the JS thread.
-                    let _ = unsafe { &mut (*jsc_vm).source_mappings }.put_mappings(
-                        source,
-                        bun_core::MutableString {
-                            list: core::mem::take(&mut entry.sourcemap).into_vec(),
-                        },
+                    let source_map = bun_jsc::resolved_source::SourceMapBlob::new(
+                        core::mem::take(&mut entry.sourcemap).into_vec(),
                     );
                     // Rebuild the cached ESM record for the
                     // isolation source-provider cache (same shape as
@@ -3102,6 +3097,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         source_url: input_specifier.create_if_different(path.text),
                         is_commonjs_module,
                         module_info,
+                        source_map,
                         tag,
                         bytecode_cache: node_compile_cache_blob.unwrap_or_default(),
                         ..Default::default()
@@ -3241,7 +3237,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 // `writer: &mut BufferPrinter` live inside `print_ast`. After
                 // this block returns, the `printer` binding is rederived from
                 // the raw pointer below — any earlier Unique tag is dead.
-                {
+                let source_map = {
                     // SAFETY: `jsc_vm` / `(*extra).source_code_printer` are live
                     // for the call (fn contract); `mapper` does not escape this
                     // scope, so the unbounded `'a` from the raw-deref reborrow
@@ -3270,7 +3266,8 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         drop(module_info.take());
                     }
                     print_result?;
-                }
+                    mapper.take_source_map()
+                };
 
                 // `module_info.asDeserialized()`: finalize the printer-filled
                 // record into the FFI shape `Zig::SourceProvider` takes.
@@ -3309,6 +3306,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     }
                     .map_err(|_| global_object.throw_string_too_long())?;
                     resolved_source.module_info = module_info;
+                    resolved_source.source_map = source_map;
                     resolved_source.bytecode_cache = node_compile_cache_blob.unwrap_or_default();
                     return Ok(resolved_source);
                 }
@@ -3403,6 +3401,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 return Ok(ResolvedSource {
                     source_url: input_specifier.create_if_different(path.text),
                     module_info,
+                    source_map,
                     tag,
                     bytecode_cache: node_compile_cache_blob.unwrap_or_default(),
                     ..ResolvedSource::printed(printed_ast, source_code)
@@ -4252,6 +4251,7 @@ export default db;
             source_code: file.to_wtf_string(),
             source_url: specifier.clone(),
             is_static: true,
+            has_embedded_source_map: file.has_sourcemap,
             // An embedded file is served through the builtin-module path but is a file: its origin is its own path
             // (or, with --bytecode, the path the cache was generated under, which must match exactly).
             origin_path: if file.bytecode_origin_path.is_empty() {
@@ -5187,8 +5187,7 @@ fn transpile_error_value(
     }
 }
 
-/// What `bun test --coverage` runs of the file at `path` with the text `source`: what the transpiler prints. Its source map is saved as for a
-/// file that is loaded.
+/// What `bun test --coverage` runs of the file at `path` with the text `source`: the transpiler's output and its map.
 pub(crate) fn transpile_as_loaded(
     global: &JSGlobalObject,
     path: &[u8],

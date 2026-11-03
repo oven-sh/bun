@@ -24,8 +24,56 @@ pub struct ZigStackFrame<'a> {
     /// This informs formatters whether to display as a blob URL or not
     pub remapped: bool,
 
+    /// [`SourceFlags`]: how the text that `position` is a position in is found.
+    pub source_flags: SourceFlags,
+
     /// -1 means not set.
     pub jsc_stack_frame_index: i32,
+
+    /// The `JSC::SourceProvider` that holds the code of this frame: the key of its source map in `SavedSourceMap`.
+    pub source_provider: FrameSource,
+}
+
+bun_core::assert_ffi_layout!(ZigStackFrame<'static>, 80, 8; remapped @ 62, source_flags @ 63, jsc_stack_frame_index @ 64, source_provider @ 72);
+
+/// A ref on the provider of a frame's code (`Zig::setSource`): the code can be collected before its position is mapped.
+#[repr(transparent)]
+pub struct FrameSource(Option<core::ptr::NonNull<crate::SourceProvider>>);
+
+impl FrameSource {
+    pub const NONE: FrameSource = FrameSource(None);
+
+    #[inline]
+    pub fn provider(&self) -> crate::saved_source_map::Provider {
+        self.0
+            .map_or(core::ptr::null(), |provider| provider.as_ptr().cast())
+    }
+}
+
+impl Drop for FrameSource {
+    fn drop(&mut self) {
+        if let Some(provider) = self.0.take() {
+            crate::SourceProvider::opaque_mut(provider.as_ptr()).deref();
+        }
+    }
+}
+
+/// `ZigStackFrameSource` in headers-handwritten.h.
+#[repr(transparent)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub struct SourceFlags(u8);
+
+impl SourceFlags {
+    pub const NONE: SourceFlags = SourceFlags(0);
+    /// A position that a parser reported, with a URL and no provider: its text registered last under that URL.
+    pub const BY_URL: SourceFlags = SourceFlags(1 << 0);
+    /// A position out of a copied stack: the file under its URL holds its text only if the URL has a registered text.
+    pub const IF_REGISTERED: SourceFlags = SourceFlags(1 << 1);
+
+    #[inline]
+    pub const fn contains(self, flag: SourceFlags) -> bool {
+        self.0 & flag.0 != 0
+    }
 }
 
 impl ZigStackFrame<'_> {
@@ -59,7 +107,9 @@ impl ZigStackFrame<'_> {
         position: ZigStackFramePosition::INVALID,
         is_async: false,
         remapped: false,
+        source_flags: SourceFlags::NONE,
         jsc_stack_frame_index: -1,
+        source_provider: FrameSource::NONE,
     };
 
     /// The frame's source as a report that lists files relative to `dir` (the JUnit

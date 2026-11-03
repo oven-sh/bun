@@ -41,6 +41,11 @@ describe("production", () => {
     // Check that the error message shows the proper source location
     expect(buildStderr.toString()).toContain("throw new Error");
     expect(buildStderr.toString()).toContain("oh no!");
+    // The error that React makes of it for the client has no frame to read back. Its position is mapped too.
+    expect(buildStderr.toString()).toMatch(
+      /at .*react-server-dom-webpack-client\.node\.unbundled\.production\.js:\d+:\d+/,
+    );
+    expect(buildStderr.toString()).not.toContain("at bake:/");
   });
 
   test("import.meta properties are inlined in production build", async () => {

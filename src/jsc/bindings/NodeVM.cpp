@@ -30,6 +30,7 @@
 #include "JavaScriptCore/SubspaceInlines.h"
 #include "wtf/GetPtr.h"
 #include "wtf/NoTailCalls.h"
+#include "wtf/SetForScope.h"
 #include "wtf/PointerPreparations.h"
 #include "wtf/URL.h"
 #include "JavaScriptCore/TypedArrayInlines.h"
@@ -237,6 +238,8 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
             }
 
             if (actuallyValid) {
+                // The error's position is one in this text, whatever `filename` names.
+                SetForScope parsing(WebCore::clientData(vm)->sourceBeingParsed, sourceCode.provider());
                 auto exception = error.toErrorObject(globalObject, sourceCode, -1);
                 // Building the error materializes its stack, running a user
                 // Error.prepareStackTrace that may throw; Node throws the

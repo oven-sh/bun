@@ -1332,3 +1332,84 @@ it("--hot does not emit beforeExit to the listeners of a failed run", async () =
   expect(await stdout("still running")).toBe(true);
   expect(await runner.exited).toBe(0);
 });
+
+// The source map of a file is the map of one text: what the transpiler printed for one load. A save that adds a
+// comment or a type leaves that text as it was, and JavaScriptCore then runs the new load on the code of the load
+// before it. A save that changes the text leaves the functions of the load before it running their own text.
+it.each([
+  // Every load of a text shares its newest map.
+  { inspector: "no inspector", args: [], previous: [null, 3, 4, 4, 4, 4] },
+  // For the debugger the map is a part of the text, so every load has a text of its own.
+  { inspector: "--inspect", args: ["--inspect=127.0.0.1:0"], previous: [null, 2, 3, 4, 4, 4] },
+])(
+  "--hot maps each load through the map of the text it runs ($inspector)",
+  async ({ args, previous }) => {
+    using dir = tempDir("hot-sourcemap-of-each-load", {
+      "dep.ts": `export function where(): string {\n  return new Error().stack!.split("\\n")[1];\n}\n`,
+      "entry.ts": String.raw`
+        import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+        import { where } from "./dep.ts";
+        const at = new Error().stack!.split("\n")[1];
+        const g = globalThis as any;
+        const line = (frame: string) => Number(/:(\d+):\d+\)?$/.exec(frame)![1]);
+        const lineOf = (file: string, text: string) =>
+          readFileSync(file, "utf8").split("\n").findIndex(l => l.includes(text)) + 1;
+        const dep = import.meta.dirname + "/dep.ts";
+        const load = (g.loads ??= []).length;
+        g.loads.push({
+          entry: [line(at), lineOf(import.meta.path, "const at =")],
+          dep: [line(where()), lineOf(dep, "new Error()")],
+          // The function of the load before this one.
+          previous: g.where ? line(g.where()) : null,
+        });
+        g.where = where;
+        // As writeHotFileAtomicSync() does: Windows does not rename over a file that --hot watches.
+        const save = (file: string, change: (text: string) => string) => {
+          writeFileSync(file + ".next", change(readFileSync(file, "utf8")));
+          if (process.platform === "win32") {
+            try {
+              rmSync(file);
+            } catch {}
+          }
+          renameSync(file + ".next", file);
+        };
+        const comment = "// a comment\n";
+        const type = "type Removed = number;\n";
+        const saves = [
+          () => save(dep, text => comment + text),
+          () => save(dep, text => type + text),
+          () => save(import.meta.path, text => comment + text),
+          () => save(import.meta.path, text => type + text),
+          // Other code, below fewer lines that the transpiler removes.
+          () => save(dep, text => "export const added = 1;\n" + text.replace(comment, "").replace(type, "")),
+        ];
+        if (load < saves.length) saves[load]();
+        else {
+          console.log(JSON.stringify(g.loads));
+          process.exit(0);
+        }
+      `,
+    });
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", ...args, "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([runner.stdout.text(), runner.stderr.text(), runner.exited]);
+    // A run that did not get to its last load printed why on stderr.
+    expect({ stdout: stdout.trim().startsWith("[") ? "the loads" : stdout, stderr: stdout ? "" : stderr }).toEqual({
+      stdout: "the loads",
+      stderr: "",
+    });
+    const loads: { entry: number[]; dep: number[]; previous: number | null }[] = JSON.parse(stdout);
+    // [the line that the stack trace names, the line of that code in the file at the time]
+    expect(loads.map(load => load.entry)).toEqual([4, 4, 4, 5, 6, 6].map(line => [line, line]));
+    expect(loads.map(load => load.dep)).toEqual([2, 3, 4, 4, 4, 3].map(line => [line, line]));
+    expect(loads.map(load => load.previous)).toEqual(previous);
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);

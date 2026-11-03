@@ -492,6 +492,63 @@ describe("source map remapping of the printed stack", () => {
     });
     expect(exitCode).toBe(1);
   });
+
+  // No frame can be read back out of the stack of an error that was made at the top level of a module once that
+  // stack is a string: its line has no function name. The line and column of the error were mapped when the string
+  // was made, by a collection that found the code of the frame dead or for structuredClone(), so they are not mapped
+  // a second time.
+  test.concurrent("an error whose stack a collection or structuredClone() made into a string", async () => {
+    const { out, exitCode } = await run({
+      // The error is made on line 11, and line 11 of what the transpiler prints is a line of this file too.
+      "sentinel.ts": [
+        "type A = { a: number };",
+        "type B = { b: number };",
+        "type C = { c: number };",
+        "type D = { d: number };",
+        "type E = { e: number };",
+        "interface Shape {",
+        "  one: number;",
+        "  two: number;",
+        "  three: number;",
+        "}",
+        'export const sentinel = new Error("made at the top level");',
+        ...Array.from({ length: 12 }, (_, i) => `export function filler${i}(n: number) {\n  return n + ${i};\n}`),
+        "",
+      ].join("\n"),
+      // Never loaded. Code that node:vm compiles is named after it.
+      "notes.ts": "a file that is not code\nits second line\nits third line\nits fourth line\n",
+      "main.js": `
+        const { sentinel } = require("./sentinel.ts");
+        const shown = error => Bun.inspect(error).replaceAll(__dirname + require("path").sep, "");
+        const out = { cloned: shown(structuredClone(sentinel)) };
+        const named = require("vm").runInThisContext("\\n\\nnew Error('named after a file')", {
+          filename: require("path").join(__dirname, "notes.ts"),
+        });
+        out.named = shown(structuredClone(named));
+        (async () => {
+          for (let i = 0; i < 6; i++) {
+            await new Promise(resolve => setImmediate(resolve));
+            Bun.gc(true);
+          }
+          out.collected = shown(sentinel);
+          console.log(JSON.stringify(out));
+        })();
+      `,
+    });
+    const expected = [
+      '11 | export const sentinel = new Error("made at the top level");',
+      " ".repeat("11 | ".length + 28) + "^",
+      "error: made at the top level",
+      "      at sentinel.ts:11:29",
+    ].join("\n");
+    expect(out.cloned).toContain(expected);
+    expect(out.collected).toContain(expected);
+    // Nothing says that the file under that name is the text of the error: no line of it is shown.
+    expect(out.named).toContain("at notes.ts:3:10");
+    expect(out.named).not.toContain("a file that is not code");
+    expect(out.named).not.toContain("its third line");
+    expect(exitCode).toBe(0);
+  });
 });
 
 // The printer replaces an AggregateError with the members of its `errors`

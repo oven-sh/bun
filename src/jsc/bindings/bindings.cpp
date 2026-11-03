@@ -7191,6 +7191,8 @@ CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JS
     auto& vm = JSC::getVM(globalObject);
     JSC::LineColumn lineColumn;
     String sourceURL;
+    // The frame's code block holds the provider while the position is mapped below.
+    Zig::FrameSource frameSource;
 
     JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
         if (Zig::isImplementationVisibilityPrivate(visitor))
@@ -7200,7 +7202,8 @@ CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JS
 
             lineColumn = visitor->computeLineAndColumn();
 
-            sourceURL = Zig::sourceURL(visitor);
+            frameSource = Zig::sourceOf(visitor);
+            sourceURL = frameSource.url;
 
             return WTF::IterationStatus::Done;
         }
@@ -7216,7 +7219,7 @@ CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JS
         ZigStackFrame& remappedFrame = remappedFrames[0];
         remappedFrame.position.line_zero_based = originalLine.zeroBasedInt();
         remappedFrame.position.column_zero_based = originalColumn.zeroBasedInt();
-        remappedFrame.source_url = Bun::toStringRef(sourceURL);
+        Zig::setSource(remappedFrame, frameSource);
 
         remappedFrames.remap(Bun::vm(globalObject));
 
@@ -7384,17 +7387,20 @@ CPP_DECL [[ZIG_EXPORT(nothrow)]] unsigned int JSC__JSGlobalObject__getCallerLine
     auto& vm = JSC::getVM(globalObject);
     JSC::LineColumn lineColumn;
     String sourceURL;
+    // The frame's code block holds the provider while the position is mapped below.
+    Zig::FrameSource frameSource;
 
     JSC::StackVisitor::visit(vm.topCallFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
         if (Zig::isImplementationVisibilityPrivate(visitor))
             return WTF::IterationStatus::Continue;
 
         if (visitor->hasLineAndColumnInfo()) {
-            String currentSourceURL = Zig::sourceURL(visitor);
+            auto current = Zig::sourceOf(visitor);
 
-            if (!currentSourceURL.startsWith("builtin://"_s) && !currentSourceURL.startsWith("node:"_s)) {
+            if (!current.url.startsWith("builtin://"_s) && !current.url.startsWith("node:"_s)) {
                 lineColumn = visitor->computeLineAndColumn();
-                sourceURL = currentSourceURL;
+                sourceURL = current.url;
+                frameSource = WTF::move(current);
                 return WTF::IterationStatus::Done;
             }
         }
@@ -7406,7 +7412,7 @@ CPP_DECL [[ZIG_EXPORT(nothrow)]] unsigned int JSC__JSGlobalObject__getCallerLine
         ZigStackFrame& remappedFrame = remappedFrames[0];
         remappedFrame.position.line_zero_based = lineColumn.line - 1;
         remappedFrame.position.column_zero_based = lineColumn.column;
-        remappedFrame.source_url = Bun::toStringRef(sourceURL);
+        Zig::setSource(remappedFrame, frameSource);
 
         remappedFrames.remap(Bun::vm(globalObject));
 

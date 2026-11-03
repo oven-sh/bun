@@ -1,4 +1,5 @@
 use bun_bundler::analyze_transpiled_module::ModuleInfoDeserialized;
+use bun_sourcemap::InternalSourceMap;
 
 use bun_core::String as BunString;
 
@@ -19,6 +20,8 @@ pub struct ResolvedSource {
     pub source_url: BunString,
 
     pub is_commonjs_module: bool,
+    /// The executable embeds the source map of `source_code` (`bun build --compile --sourcemap`).
+    pub has_embedded_source_map: bool,
     /// `bun build --compile`: `StringImpl::hash()` of `source_code`, computed at build time (0 = not known).
     pub source_code_hash: u32,
 
@@ -45,6 +48,8 @@ pub struct ResolvedSource {
     pub bytecode_cache: Bytecode,
     /// `Zig::SourceProvider` takes it (nulling the field).
     pub module_info: Option<Box<ModuleInfoDeserialized>>,
+    /// The source map of `source_code`, when Bun printed it. `Zig::SourceProvider` takes it (nulling the field).
+    pub source_map: SourceMapBlob,
     /// The file path whose `file://` URL is this module's source origin (what `import()` resolves against and what a
     /// bytecode cache is validated against). Empty: derived from `source_url` (a builtin gets a `builtin://` origin).
     pub origin_path: BunString,
@@ -77,6 +82,71 @@ impl ResolvedSource {
             ..Default::default()
         }
     }
+}
+
+/// `ResolvedSource.source_map`: to C++ a `void*`, the first byte of an `InternalSourceMap` blob that it owns, or null.
+#[repr(transparent)]
+pub struct SourceMapBlob(*mut u8);
+
+impl Default for SourceMapBlob {
+    fn default() -> Self {
+        Self(core::ptr::null_mut())
+    }
+}
+
+impl SourceMapBlob {
+    /// What the printer or the transpiler cache hands over. A blob with an invalid header is dropped: readers trust it.
+    pub fn new(blob: Vec<u8>) -> Self {
+        if !InternalSourceMap::is_valid_blob(&blob) {
+            return Self::default();
+        }
+        // `into_boxed_slice` keeps the allocation when the capacity is the length, as both producers build it.
+        Self(bun_core::heap::into_raw(blob.into_boxed_slice()).cast::<u8>())
+    }
+
+    /// `blob` is what C++ took out of `ResolvedSource.source_map`, and nothing else owns it.
+    pub(crate) unsafe fn from_raw(blob: *mut u8) -> Self {
+        Self(blob)
+    }
+
+    pub fn get(&self) -> Option<InternalSourceMap> {
+        (!self.0.is_null()).then_some(InternalSourceMap { data: self.0 })
+    }
+
+    /// The blob moves into a refcounted map, for a reader that has no `SourceProvider` to register it under.
+    pub fn into_parsed(mut self) -> Option<std::sync::Arc<bun_sourcemap::ParsedSourceMap>> {
+        let blob = core::mem::replace(&mut self.0, core::ptr::null_mut());
+        (!blob.is_null()).then(|| {
+            std::sync::Arc::new(bun_sourcemap::ParsedSourceMap::from_internal(
+                InternalSourceMap { data: blob },
+            ))
+        })
+    }
+}
+
+impl Drop for SourceMapBlob {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            ResolvedSource__freeSourceMap(self.0);
+        }
+    }
+}
+
+impl bun_js_printer::OnSourceMapChunk for SourceMapBlob {
+    fn on_source_map_chunk(
+        &mut self,
+        chunk: bun_sourcemap::Chunk,
+        _: &bun_ast::Source,
+    ) -> bun_js_printer::Result<()> {
+        *self = Self::new(chunk.buffer.list);
+        Ok(())
+    }
+}
+
+/// `~ErrorableResolvedSource`, for a `ResolvedSource` that no `Zig::SourceProvider` was made from.
+#[unsafe(no_mangle)]
+extern "C" fn ResolvedSource__freeSourceMap(blob: *mut u8) {
+    InternalSourceMap { data: blob }.free_owned();
 }
 
 /// `ResolvedSource.bytecode_cache`: C++ sees `{ uint8_t* ptr; size_t len; bool owned; bool persistent; uint32_t entry_offset; }`
@@ -160,5 +230,5 @@ extern "C" fn ResolvedSource__freeBytecode(bytecode: *mut u8) {
     unsafe { bun_alloc::default_alloc::free(bytecode.cast()) };
 }
 
-bun_core::assert_ffi_layout!(ResolvedSource, 136, 8; is_prelinked_module @ 77, depends_on_more_than_source @ 78, is_static @ 79, bytecode_cache @ 80, module_info @ 104);
+bun_core::assert_ffi_layout!(ResolvedSource, 144, 8; has_embedded_source_map @ 49, source_code_hash @ 52, is_prelinked_module @ 77, depends_on_more_than_source @ 78, is_static @ 79, bytecode_cache @ 80, module_info @ 104, source_map @ 112, origin_path @ 120);
 bun_core::assert_ffi_layout!(Bytecode, 24, 8; owned @ 16, persistent @ 17, entry_offset @ 20);

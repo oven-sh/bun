@@ -88,28 +88,28 @@ export default [
 
 ## Plugins from npm
 
-Install the package and name it. ESLint's short names work, so `"perfectionist"` is `eslint-plugin-perfectionist`.
+Install the package and name it. ESLint's short names work, so `"simple-import-sort"` is `eslint-plugin-simple-import-sort`.
 
 ```bash terminal icon="terminal"
-bun add -d eslint-plugin-perfectionist
+bun add -d eslint-plugin-simple-import-sort
 ```
 
 ```toml bunfig.toml icon="settings"
 [lint]
-plugins = ["perfectionist"]
+plugins = ["simple-import-sort"]
 
 [lint.rules]
-"perfectionist/sort-imports" = "error"
+"simple-import-sort/imports" = "error"
 ```
 
 A path is relative to `bunfig.toml`. A rule's prefix is the plugin's own name, `meta.name`, without `eslint-plugin-`. To use another prefix:
 
 ```toml bunfig.toml icon="settings"
 [lint]
-plugins = [{ name = "sort", specifier = "eslint-plugin-perfectionist" }]
+plugins = [{ name = "sort", specifier = "eslint-plugin-simple-import-sort" }]
 
 [lint.rules]
-"sort/sort-imports" = "error"
+"sort/imports" = "error"
 ```
 
 You don't load the plugins that are built in, such as `react`, `import`, or `unicorn`. Their [rules](/lint/rules) work without it. Next to an ESLint or oxlint config, naming one turns it on, as `plugins` in that file does.
@@ -119,10 +119,10 @@ A config file can't use the processors or languages of a plugin that is loaded t
 For one run, use `--plugin`. Next to an ESLint config its prefix is the name you give the flag, as in ESLint:
 
 ```bash terminal icon="terminal"
-bun lint --plugin perfectionist --rule 'perfectionist/sort-imports: error'
+bun lint --plugin simple-import-sort --rule 'simple-import-sort/imports: error'
 ```
 
-With an ESLint config, eight plugins run natively: `@typescript-eslint`, `react`, `react-hooks`, `import`, `n`, `prettier`, `json`, and `markdown`. Everything else runs from `node_modules`, including `unicorn`, `jsx-a11y`, `promise`, `jest`, and `vitest`. Bun's built-in versions of those follow oxlint, so Bun only uses them with `bunfig.toml` or an oxlint config.
+With an ESLint config, nine plugins run natively: `@typescript-eslint`, `react`, `react-hooks`, `import`, `n`, `perfectionist`, `prettier`, `json`, and `markdown`. A native plugin's rules that aren't built in still run from the package. For `perfectionist`, four rules are native: [`sort-objects`](/lint/rules/perfectionist/sort-objects), [`sort-object-types`](/lint/rules/perfectionist/sort-object-types), [`sort-interfaces`](/lint/rules/perfectionist/sort-interfaces), and [`sort-union-types`](/lint/rules/perfectionist/sort-union-types). Everything else runs from `node_modules`, including `unicorn`, `jsx-a11y`, `promise`, `jest`, and `vitest`. Bun's built-in versions of those follow oxlint, so Bun only uses them with `bunfig.toml` or an oxlint config.
 
 `bun lint --doctor` shows which of your rules run natively and which run in JavaScript.
 

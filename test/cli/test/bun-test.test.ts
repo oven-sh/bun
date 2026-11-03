@@ -517,6 +517,11 @@ describe("bun test", () => {
         const sentinelAt = stderr.indexOf(sentinel);
         expect(sentinelAt).toBeGreaterThan(stderr.indexOf("::group::"));
         expect(sentinelAt).toBeLessThan(stderr.indexOf("::endgroup::"));
+        // Load failure stops repeats; global teardown follows the final repeat.
+        const run = outcome === "load error" ? 1 : repeats;
+        expect(stderr.split("\n").filter(line => line.startsWith("::group::"))).toEqual([
+          `::group::a.test.ts:${repeats > 1 ? ` (run #${run})` : ""}`,
+        ]);
       }
       if (args.includes("--parallel=2")) expect(stdout).toContain("PARALLEL");
       expect(exitCode).toBe(outcome === "pass" ? 0 : 1);

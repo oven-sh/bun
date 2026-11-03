@@ -180,6 +180,10 @@ it("applies an asymmetric matcher passed as the whole toMatchObject argument", (
 
   // the matcher receives the whole object, which is not a number
   expect({ value: 2 }).not.toMatchObject(expect._toBeDivisibleBy(2));
+
+  // the matcher as the whole received value
+  expect(expect._toCustomEqual({ value: 2 })).toMatchObject({ value: 2 });
+  expect(expect._toCustomEqual({ value: 3 })).not.toMatchObject({ value: 2 });
 });
 
 it("prints the Symbol into the error message", () => {

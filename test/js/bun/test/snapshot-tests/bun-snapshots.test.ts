@@ -95,6 +95,12 @@ describe("toMatchSnapshot errors", () => {
     expect(() => {
       expect({ a: new Map([["k", 1]]) }).toMatchSnapshot({ a: new Map([["k", 2]]) });
     }).toThrow("to match properties from received object");
+    expect(() => {
+      expect({ a: 1 }).toMatchSnapshot(expect.objectContaining({ b: 1 }));
+    }).toThrow("to match properties from received object");
+    expect(() => {
+      expect({ a: 1 }).toMatchInlineSnapshot(expect.any(Array), `{"a": 1}`);
+    }).toThrow("to match properties from received object");
   });
   it("should throw if arguments are in the wrong order", () => {
     expect(() => {

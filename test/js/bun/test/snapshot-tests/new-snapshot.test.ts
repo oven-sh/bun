@@ -53,3 +53,35 @@ test("--update-snapshots keeps the old file until the new contents are written",
   expect(await update({ FAIL: "1" })).toEqual({ exitCode: 1, snap: before });
   expect(await update({})).toEqual({ exitCode: 0, snap: header + '\nexports[`one 1`] = `"new"`;\n' });
 });
+
+test("property matchers that are one asymmetric matcher store nothing when the matcher does not match", async () => {
+  const header = "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n";
+  const source = `
+    import { test, expect } from "bun:test";
+    test("plain", () => { expect({ a: 1 }).toMatchSnapshot(); });
+    test("file", () => { expect({ a: 1 }).toMatchSnapshot(expect.objectContaining({ b: 1 })); });
+    test("inline", () => { expect({ a: 1 }).toMatchInlineSnapshot(expect.any(Array)); });
+  `;
+  using dir = tempDir("snapshot-whole-matcher", { "a.test.ts": source });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test"],
+    cwd: String(dir),
+    env: { ...bunEnv, CI: "false" },
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("Expected propertyMatchers to match properties from received object");
+  expect({
+    results: stderr.match(/^\((pass|fail)\) \w+/gm),
+    exitCode,
+    // the file snapshot has no entry for "file", and no inline snapshot was written into the test
+    snap: fs.readFileSync(`${dir}/__snapshots__/a.test.ts.snap`, "utf8"),
+    source: fs.readFileSync(`${dir}/a.test.ts`, "utf8"),
+  }).toEqual({
+    results: ["(pass) plain", "(fail) file", "(fail) inline"],
+    exitCode: 1,
+    snap: header + '\nexports[`plain 1`] = `\n{\n  "a": 1,\n}\n`;\n',
+    source,
+  });
+});

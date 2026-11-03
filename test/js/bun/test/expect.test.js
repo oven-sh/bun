@@ -4637,6 +4637,78 @@ describe("expect()", () => {
       expect({ k: expect.any(Response) }).toEqual({ k: new Response("") });
     });
 
+    test("an asymmetric matcher as the whole expected value is applied", async () => {
+      expect({ a: 1, b: 2 }).toMatchObject(expect.objectContaining({ a: 1 }));
+      expect({ a: 1, b: 2 }).not.toMatchObject(expect.objectContaining({ c: 1 }));
+      expect({ a: 1 }).toMatchObject(expect.not.objectContaining({ b: 1 }));
+      expect({ a: 1 }).not.toMatchObject(expect.not.objectContaining({ a: 1 }));
+      expect([1]).toMatchObject(expect.any(Array));
+      expect({ a: 1 }).not.toMatchObject(expect.any(Array));
+      expect([1, 2]).toMatchObject(expect.arrayContaining([1]));
+      expect([1, 2]).not.toMatchObject(expect.arrayContaining([3]));
+      expect({ a: 1 }).toMatchObject(expect.anything());
+      expect({ a: 1 }).toMatchObject(expect.any(Object));
+      expect(() => expect({ a: 1 }).toMatchObject(expect.objectContaining({ c: 1 }))).toThrow();
+      expect(() => expect({ a: 1 }).not.toMatchObject(expect.objectContaining({ a: 1 }))).toThrow();
+      expect(() => expect({ a: 1 }).toMatchObject(expect.any(Array))).toThrow();
+      expect(() => expect({ a: 1 }).not.toMatchObject(expect.any(Object))).toThrow();
+      // matchers that never match an object
+      expect({ a: 1 }).not.toMatchObject(expect.closeTo(1));
+      expect({ a: 1 }).not.toMatchObject(expect.stringContaining("a"));
+      expect({ a: 1 }).not.toMatchObject(expect.stringMatching(/a/));
+      // matchers inside the matcher
+      expect({ a: { b: 1 }, c: "x" }).toMatchObject(expect.objectContaining({ a: { b: expect.any(Number) } }));
+      expect({ a: { b: 1 }, c: "x" }).not.toMatchObject(expect.objectContaining({ a: { b: expect.any(String) } }));
+      // an object with an asymmetricMatch() method is a matcher too
+      expect({ a: 1 }).toMatchObject({ asymmetricMatch: (/** @type {any} */ other) => other.a === 1 });
+      expect({ a: 1 }).not.toMatchObject({ asymmetricMatch: (/** @type {any} */ other) => other.a === 2 });
+      // a Response is an object of the type that the built-in matchers have
+      expect(new Response("")).toMatchObject(expect.any(Response));
+      expect(new Response("")).not.toMatchObject(expect.any(URL));
+      // what the matcher throws is what the assertion throws
+      const throws = {
+        asymmetricMatch() {
+          throw new Error("from the matcher");
+        },
+      };
+      expect(() => expect({ a: 1 }).toMatchObject(throws)).toThrow("from the matcher");
+      await expect(Promise.resolve({ a: 1 })).resolves.not.toMatchObject(expect.any(Array));
+    });
+
+    test("an asymmetric matcher as the whole received value is applied", () => {
+      expect(expect.any(Object)).toMatchObject({ a: 1 });
+      expect(expect.any(Array)).not.toMatchObject({ a: 1 });
+      expect(() => expect(expect.any(Array)).toMatchObject({ a: 1 })).toThrow();
+      expect(expect.objectContaining({ a: 1 })).toMatchObject({ a: 1, b: 2 });
+      expect(expect.objectContaining({ a: 2 })).not.toMatchObject({ a: 1, b: 2 });
+      expect(expect.arrayContaining([1])).toMatchObject([1, 2]);
+      expect(expect.arrayContaining([3])).not.toMatchObject([1, 2]);
+      // an object with an asymmetricMatch() method
+      expect({ asymmetricMatch: (/** @type {any} */ other) => other.a === 1 }).toMatchObject({ a: 1 });
+      expect({ asymmetricMatch: () => false }).not.toMatchObject({});
+      // the expected value is an object of the type that the built-in matchers have
+      expect(expect.any(URL)).toMatchObject(new URL("http://a/"));
+      expect(expect.any(Response)).not.toMatchObject(new URL("http://a/"));
+    });
+
+    test("an asymmetric matcher on both sides", () => {
+      // one object on both sides is not applied to itself
+      const number = expect.any(Number);
+      expect(number).toMatchObject(number);
+      const containing = expect.objectContaining({ a: 1 });
+      expect(containing).toMatchObject(containing);
+      const holder = { a: expect.any(Number) };
+      expect(holder).toMatchObject(holder);
+      // two matchers that differ
+      expect(expect.any(Number)).not.toMatchObject(expect.any(String));
+      expect(expect.objectContaining({ a: 1 })).not.toMatchObject(expect.objectContaining({ a: 2 }));
+      // the expected matcher is the one that is applied: expect.any(Object) accepts the other matcher
+      expect(expect.any(Object)).not.toMatchObject(expect.any(Number));
+      // a built-in matcher and an object with an asymmetricMatch() method
+      expect({ asymmetricMatch: () => true }).not.toMatchObject(expect.any(Number));
+      expect(expect.any(Number)).not.toMatchObject({ asymmetricMatch: () => true });
+    });
+
     if (isBun) {
       test("Bun.deepMatch compares an expected Date and Error", () => {
         expect(Bun.deepMatch(new Date(1), new Date(2))).toBe(false);
@@ -4766,6 +4838,34 @@ describe("expect()", () => {
           }),
         );
         expect(mapFirst).toContain("- Expected  - 2");
+      });
+
+      test("details of a matcher as the whole expected or received value", () => {
+        const messageOf = (/** @type {() => void} */ fn) => {
+          try {
+            fn();
+          } catch (e) {
+            return stripVTControlCharacters(/** @type {Error} */ (e).message);
+          }
+          return "no error";
+        };
+        // the message shows the matcher
+        expect(messageOf(() => expect({ a: 1 }).toMatchObject(expect.any(Array)))).toBe(
+          'expect(received).toMatchObject(expected)\n\n- Any<Array>\n+ {\n+   "a": 1,\n+ }\n\n- Expected  - 1\n+ Received  + 3\n',
+        );
+        expect(messageOf(() => expect({ a: 1 }).not.toMatchObject(expect.any(Object)))).toBe(
+          "expect(received).not.toMatchObject(expected)\n\nExpected: not Any<Object>\n",
+        );
+        expect(messageOf(() => expect(expect.any(Array)).toMatchObject({ a: 1 }))).toBe(
+          'expect(received).toMatchObject(expected)\n\n- {\n-   "a": 1,\n- }\n+ Any<Array>\n\n- Expected  - 3\n+ Received  + 1\n',
+        );
+        // Bun.deepMatch has no asymmetric matchers. To it a matcher is an object with no properties.
+        expect(Bun.deepMatch(expect.any(Array), { a: 1 })).toBe(true);
+        // expect.toSatisfy() has an enumerable asymmetricMatch, as a matcher of expect.extend has: the key walk never matched it
+        expect({ a: 1 }).toMatchObject(expect.toSatisfy((/** @type {any} */ value) => value.a === 1));
+        expect({ a: 1 }).not.toMatchObject(expect.toSatisfy((/** @type {any} */ value) => value.a === 2));
+        // of a built-in matcher and an object with an asymmetricMatch() method, the built-in matcher is the one applied
+        expect(expect.any(Object)).toMatchObject({ asymmetricMatch: () => false });
       });
     }
   });

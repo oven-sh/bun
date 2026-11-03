@@ -3798,7 +3798,18 @@ bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSVal
 
     Bun::DeepMatchState state;
     state.records = !!replaced;
-    bool matched = Bun__deepMatch<true>(obj, subset, globalObject, scope, state, false);
+    // A matcher can be the whole expected or the whole received value. Jest does not apply a matcher to itself.
+    bool matched = false;
+    switch (obj == subset ? AsymmetricMatcherResult::NOT_MATCHER : matchEitherAsymmetricMatcher(globalObject, scope, obj, subset)) {
+    case AsymmetricMatcherResult::FAIL:
+        break;
+    case AsymmetricMatcherResult::PASS:
+        matched = true;
+        break;
+    case AsymmetricMatcherResult::NOT_MATCHER:
+        matched = Bun__deepMatch<true>(obj, subset, globalObject, scope, state, false);
+        break;
+    }
     RETURN_IF_EXCEPTION(scope, false);
     if (replaced) {
         JSValue shown = matched == replaceWhen ? replaceMatchedProperties(globalObject, scope, state, obj, subset) : obj;

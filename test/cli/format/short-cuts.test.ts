@@ -2024,6 +2024,13 @@ describe.skipIf(!hasFlag)("HTML", () => {
     "<d>\nééééééé\nccc<b></b> , <em></em>\n\n<",
     // An element with one word in it between two words is a part of the text.
     "<div><code>x</code> , bb<em>xxxxxxxxxxxx</em>. <code></code></div>\n",
+    // An element with nothing but an element in it, which does not fit on a line or has an element in it.
+    `<div>\n  <li><a class="link-secondary text-decoration-none" ${attributes} href="#">Stuff for developers</a></li>\n  <td><svg class="bi" width="24" height="24"><use xlink:href="#check"/></svg></td>\n  <li><a href="#"><svg class="bi"><use xlink:href="#x"/></svg></a></li>\n  <td><input ${attributes}></td>\n</div>\n`,
+    '<a href="#"><svg class="bi"><use xlink:href="#x"/></svg></a>\n<a href="#"> <svg class="bi"><use xlink:href="#x"/></svg> </a>\n<p><b>x\ny</b></p>\n',
+    // Without white space, an inline element and its child print parts of each other's tags.
+    '<h2><button></button> </h2>\n<span><img a=""> </span>\n<span> <img a=""></span>\n',
+    // A text over several lines in front of an element.
+    `<p>\n  ${full}\n  tempor ${full}\n  tempor <b>a</b> ut\n</p>\n`,
   ];
   const files = Object.fromEntries(inputs.map((input, index) => [`${index}.html`, input]));
 

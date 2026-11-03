@@ -694,6 +694,8 @@ impl Runs {
             has_odd_pieces: false,
             has_interpolation: false,
             looked_to: 0,
+            parent_of_only_child: None,
+            only_children: 0,
             starts_text: start == 0,
             is_in_root: parent.element.is_none(),
             has_single_blanks_in_tag: false,
@@ -789,6 +791,11 @@ struct Scanner<'s, 'a> {
     has_interpolation: bool,
     /// Up to here the text has been looked at in vain.
     looked_to: usize,
+    /// Where the name of the element is whose only child is being read, and its key. A line break is printed in front of
+    /// the child and behind it.
+    parent_of_only_child: Option<(usize, usize, u128)>,
+    /// How many such elements are in each other.
+    only_children: usize,
     /// The first child that is read is the first of the text.
     starts_text: bool,
     /// The children that are read while no element is open are those of the root.
@@ -846,18 +853,27 @@ impl<'a> Scanner<'_, 'a> {
         }
     }
 
-    /// True if nothing but blanks and tabs is between `index` and the end of its line, or of the text.
+    /// True if nothing but blanks and tabs is between `index` and the end of its line, or of the text, or the end tag
+    /// in front of which a line break is printed.
     #[inline]
     fn ends_line(&self, mut index: usize) -> bool {
         let len = (!self.marks.blanks.window(index)).trailing_zeros() as usize;
         if len <= WINDOW {
             return self.marks.line_feeds.window(index) & low_bits(len) != 0
-                || index + len >= self.text.len();
+                || index + len >= self.text.len()
+                || self.is_at_end_of_only_child(index + len);
         }
         while matches!(self.at(index), b' ' | b'\t') {
             index += 1;
         }
         self.at(index) == b'\n' || index >= self.text.len()
+    }
+
+    /// See `parent_of_only_child`.
+    fn is_at_end_of_only_child(&self, index: usize) -> bool {
+        self.parent_of_only_child.is_some_and(|(start, end, key)| {
+            (self.text.get(start..end)).is_some_and(|name| self.end_tag(index, name, key).is_some())
+        })
     }
 
     /// If the end tag of `name` is at `index`, returns where it ends. `key` is `data::key_of_name(name)`.
@@ -1275,6 +1291,8 @@ impl<'a> Scanner<'_, 'a> {
             self.ends_in_text = true;
             return Item::Ends(end);
         }
+        // A text that something follows on its line is laid out together with that.
+        let mut starts_with_pieces = line_breaks == 0;
         if self.at(first) != b'<' {
             match self.words(first, self.siblings.level + 1) {
                 Some(words) => {
@@ -1282,16 +1300,13 @@ impl<'a> Scanner<'_, 'a> {
                         return self
                             .element_with_words(start, element, width, open_end, words, end);
                     }
+                    starts_with_pieces |= !self.ends_line(words.end);
                 }
                 None if self.reads_interpolations()
                     && (line_breaks == 0 || self.text.get(first..first + 2) == Some(b"{{")) => {}
-                None => return Item::No,
+                None => starts_with_pieces = true,
             }
         }
-        // A text that something follows on its line is laid out together with that.
-        let starts_with_pieces = line_breaks == 0
-            || (self.at(first) != b'<'
-                && (self.measured).is_some_and(|it| it.start == first && !self.ends_line(it.end)));
         if starts_with_pieces && !breaks_its_content(name, display) {
             if let Some(item) = self.element_with_pieces(start, element, width, open_end) {
                 return item;
@@ -1499,7 +1514,13 @@ impl<'a> Scanner<'_, 'a> {
             self.out.push(b' ');
         }
         let Some(ends) = self.read_pieces(first, line_breaks > 0, inner, Some((name, key))) else {
-            return Some(Item::No);
+            // `forceBreakContent`: a child with an element in it.
+            return Some(
+                match line_breaks == 0 && self.starts_with_element(first, inner) {
+                    true => self.element_with_only_child(start, element, width, open_end, mark),
+                    false => Item::No,
+                },
+            );
         };
         let Some(end) = self.end_tag(ends.next, name, key) else {
             self.out.reset(mark);
@@ -1550,17 +1571,14 @@ impl<'a> Scanner<'_, 'a> {
             return Some(Item::No);
         }
         let suffix = if hugs_end { 2 + name.len() } else { 0 };
-        let line_width = self.settings.line_width;
-        if (self.put_pieces(
-            line_width,
-            level + 1,
-            usize::from(hugs_start),
-            suffix,
-            inner,
-        ))
-        .is_none()
-        {
-            return Some(Item::No);
+        let prefix = usize::from(hugs_start);
+        if self.put_pieces(level + 1, prefix, suffix, inner).is_none() {
+            return Some(match self.pieces[..] {
+                [only] if only.marker != 0 => {
+                    self.element_with_only_child(start, element, width, open_end, mark)
+                }
+                _ => Item::No,
+            });
         }
         if hugs_end {
             self.out.put(b"</");
@@ -1572,6 +1590,81 @@ impl<'a> Scanner<'_, 'a> {
             self.put_end_tag_at(name, ends.next, end);
         }
         Some(Item::Ends(end))
+    }
+
+    /// True if the first thing in the element that starts at `start` is an element.
+    fn starts_with_element(
+        &mut self,
+        start: usize,
+        parent: (&'static TagDefinition, bool),
+    ) -> bool {
+        let first = (|| {
+            let Element { name, name_end, .. } = self.element_at(start, parent)?;
+            let (at, _) = self.read_tag(name, name_end, name_end - start, true)?;
+            (self.at(at) == b'>').then(|| self.skip_space(at + 1).0)
+        })();
+        first.is_some_and(|it| self.at(it) == b'<' && self.at(it + 1).is_ascii_alphabetic())
+    }
+
+    /// An element that is broken, with nothing but an element in it. What has been written since `mark` is taken back. See
+    /// `element_with_pieces`.
+    fn element_with_only_child(
+        &mut self,
+        start: usize,
+        element: Element<'_>,
+        width: usize,
+        open_end: usize,
+        mark: Mark,
+    ) -> Item {
+        let Element {
+            name,
+            name_end,
+            key,
+            ..
+        } = element;
+        let level = self.siblings.level;
+        let room = (self.settings.line_width).saturating_sub(level * self.settings.indent_width);
+        // Without white space, an inline element and its child print parts of each other's tags.
+        let is_inline = element.display == Display::Inline;
+        let child = self.skip_space(open_end).0;
+        if self.only_children >= 8 || (is_inline && child == open_end) {
+            return Item::No;
+        }
+        self.out.reset(mark);
+        if self.read_tag(name, name_end, name_end - start, true) != Some((open_end - 1, width)) {
+            return Item::No;
+        }
+        self.put_whole_tag(
+            start,
+            name_end,
+            !self.attributes.is_empty() && width + 1 > room,
+        );
+        self.put_line(level + 1);
+        let inner = (element.definition, element.is_in_svg);
+        let inner = Siblings::new(level + 1, inner, (child, self.out.len()), 0);
+        let (siblings, open) = (
+            std::mem::replace(&mut self.siblings, inner),
+            self.levels.len(),
+        );
+        let parent = (self.parent_of_only_child).replace((name_end - name.len(), name_end, key));
+        self.only_children += 1;
+        let item = self.element(child);
+        self.only_children -= 1;
+        (self.siblings, self.parent_of_only_child) = (siblings, parent);
+        self.levels.truncate(open);
+        let Item::Ends(child_end) = item else {
+            return Item::No;
+        };
+        let next = self.skip_space(child_end).0;
+        let Some(end) = (self.end_tag(next, name, key)).filter(|end| self.ends_line(*end)) else {
+            return Item::No;
+        };
+        if is_inline && next == child_end {
+            return Item::No;
+        }
+        self.put_line(level);
+        self.put_end_tag_at(name, next, end);
+        Item::Ends(end)
     }
 
     /// Texts and small elements from `start` on, which starts a line, up to the end of a line, with a line break that is
@@ -1621,7 +1714,7 @@ impl<'a> Scanner<'_, 'a> {
             return Item::Ends(ends.end);
         }
         self.out.reset(mark);
-        if self.has_odd_pieces || self.put_pieces(line_width, level, 0, 0, parent).is_none() {
+        if self.has_odd_pieces || self.put_pieces(level, 0, 0, parent).is_none() {
             return Item::No;
         }
         Item::Ends(ends.end)
@@ -1812,7 +1905,7 @@ impl<'a> Scanner<'_, 'a> {
         Some(())
     }
 
-    /// Writes `pieces` as the printer lays them out in lines of `line_width` columns with the indentation of `level`, from
+    /// Writes `pieces` as the printer lays them out in lines with the indentation of `level`, from
     /// behind `prefix` columns in such a line on. The last one has to fit together with `suffix` columns. `None` if an
     /// element does not fit on a line, or the layout is not known.
     ///
@@ -1820,12 +1913,12 @@ impl<'a> Scanner<'_, 'a> {
     /// neighbors, and a group fits if it does together with what follows it up to the next possible line break.
     fn put_pieces(
         &mut self,
-        line_width: usize,
         level: usize,
         prefix: usize,
         suffix: usize,
         parent: (&'static TagDefinition, bool),
     ) -> Option<()> {
+        let line_width = self.settings.line_width;
         let indentation = level * self.settings.indent_width;
         let mut column = indentation + prefix;
         // The element in front is followed by a blank, which has been counted and not written.

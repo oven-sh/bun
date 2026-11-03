@@ -2207,8 +2207,9 @@ impl<'t> Reader<'t> {
                 let [b'|', b' ', first, dashes @ .., last, b' '] = cell else {
                     return false;
                 };
-                if (*first == b':') != matches!(align, Align::Left | Align::Center)
-                    || (*last == b':') != matches!(align, Align::Right | Align::Center)
+                let end = |has_colon: bool| if has_colon { b':' } else { b'-' };
+                if *first != end(matches!(align, Align::Left | Align::Center))
+                    || *last != end(matches!(align, Align::Right | Align::Center))
                     || !dashes.iter().all(|&byte| byte == b'-')
                 {
                     return false;

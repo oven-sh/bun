@@ -900,6 +900,80 @@ fn a_directory_behind_a_link_that_leads_elsewhere_now_gets_a_new_real_path() {
 }
 
 #[test]
+fn a_directory_below_the_renamed_target_of_a_link_gets_a_new_real_path() {
+    with_project("renamed-target", |made| {
+        made.write("data/a/x/y/f.js", "");
+        made.link("data/a", "link");
+        let real_path = |info: DirInfoRef| bstr::BStr::new(info.abs_real_path);
+        let old = made.checked_info("link/x/y");
+        assert_eq!(real_path(old), bstr::BStr::new(&made.path("data/a/x/y")));
+        // No directory below the target changes: an asker keeps these listings, with the paths that their entries hold.
+        listing_once_kept(&made.path("link/x"));
+        listing_once_kept(&made.path("link/x/y"));
+        made.rename("data/a", "data/b");
+        made.remove("link");
+        made.link("data/b", "link");
+        let asker = next_generation();
+        let new = made.info(asker, "link/x/y").expect("a directory");
+        let above = made.info(asker, "link/x").expect("a directory");
+        assert_ne!(slot(new), slot(old));
+        assert_eq!(real_path(above), bstr::BStr::new(&made.path("data/b/x")));
+        assert_eq!(real_path(new), bstr::BStr::new(&made.path("data/b/x/y")));
+    });
+}
+
+#[test]
+fn an_asker_with_its_own_tsconfig_leaves_a_new_tsconfig_to_the_next_asker() {
+    with_project("own-tsconfig", |made| {
+        made.mkdir("app/src");
+        made.write("other/tsconfig.json", r#"{ "compilerOptions": {} }"#);
+        let old = made.checked_info("app");
+        assert!(old.tsconfig_json().is_none());
+        made.write(
+            "app/tsconfig.json",
+            r#"{ "compilerOptions": { "paths": { "@a/*": ["./a/*"] } } }"#,
+        );
+        // Each asker below keeps the listing that was read again: only the version that the slot holds tells that it was.
+        listing_once_kept(&made.path("app"));
+        let mut build = resolver();
+        build.opts.tsconfig_override = Some(made.path("other/tsconfig.json").into_boxed_slice());
+        build.generation = next_generation();
+        // It reads its own tsconfig in place of each one on the way, so it keeps the slot.
+        let seen = build.read_dir_info(&made.path("app")).expect("readable");
+        assert_eq!(seen.map(slot), Some(slot(old)));
+        let now = made.checked_info("app");
+        assert!(slot(now) != slot(old) && now.tsconfig_json().is_some());
+    });
+}
+
+#[test]
+fn an_asker_that_preserves_symlinks_leaves_a_new_real_path_to_the_next_asker() {
+    with_project("preserved-links", |made| {
+        made.write("releases/1/a.js", "");
+        made.write("releases/2/a.js", "");
+        made.link("releases/1", "current");
+        let real_path = |info: DirInfoRef| bstr::BStr::new(info.abs_real_path);
+        let old = made.checked_info("current");
+        assert_eq!(real_path(old), bstr::BStr::new(&made.path("releases/1")));
+        made.remove("current");
+        made.link("releases/2", "current");
+        // Each asker below keeps both listings that were read again: only the versions that the slot holds tell that they were.
+        listing_once_kept(&made.path(""));
+        listing_once_kept(&made.path("current"));
+        let mut preserving = resolver();
+        preserving.opts.preserve_symlinks = true;
+        preserving.generation = next_generation();
+        // It takes no real path from the slot, so it keeps the slot.
+        let seen = preserving
+            .read_dir_info(&made.path("current"))
+            .expect("readable");
+        assert_eq!(seen.map(slot), Some(slot(old)));
+        let now = made.checked_info("current");
+        assert_eq!(real_path(now), bstr::BStr::new(&made.path("releases/2")));
+    });
+}
+
+#[test]
 fn a_lookup_that_misses_runs_once_more_unless_it_trusts_cached_misses() {
     with_project("funnel", |made| {
         made.write("src/a.js", "");

@@ -4603,6 +4603,28 @@ describe("bundler", () => {
       expect(api.readFile("/out.js")).toMatch(/^var kept = "kept";$/m);
     },
   });
+  // A direct eval pins names too. A `var` that leaves a block with a direct eval
+  // in it is a top-level name that must keep its spelling.
+  const evalPinnedNameScripts = {
+    "/a.mjs": /* js */ `
+      { var x = "A"; globalThis.readA = () => eval("x"); }
+    `,
+    "/b.mjs": /* js */ `
+      { var x = "B"; globalThis.readB = () => eval("x"); }
+    `,
+  };
+  itBundled("edgecase/EvalPinnedNameOfRequiredScript", {
+    files: {
+      "/entry.js": /* js */ `
+        require("./a.mjs");
+        require("./b.mjs");
+        console.log(readA(), readB(), typeof x);
+      `,
+      ...evalPinnedNameScripts,
+    },
+    format: "cjs",
+    run: { stdout: "A B undefined" },
+  });
 
   // Standard decorator lowering declares `var _init`, `var _dec` and a WeakMap per
   // accessor or `#private` next to each class. Every class needs its own.

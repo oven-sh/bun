@@ -39,7 +39,8 @@ pub struct Ast<'a> {
     /// `force_cjs_to_esm` for a file with no ES module syntax: its exports were
     /// lifted from `exports.foo = ...`, so its `module.exports` is the namespace.
     pub commonjs_lifted_to_esm: bool,
-    /// An `__esm` wrapper of this file hoists nothing: a `with` body reads one of the file's top-level names.
+    /// The file has no exports, and a `with` body or a direct eval pins one of its top-level names. An `__esm`
+    /// wrapper of this file hoists nothing.
     pub keep_top_level_in_wrapper: bool,
     pub exports_kind: ExportsKind,
 

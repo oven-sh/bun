@@ -9104,6 +9104,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         self.register_dynamic_import_items();
 
+        let mut can_pin_top_level_name = self.module_scope().contains_with;
+
         // A direct eval at module scope can assign every top-level variable and
         // reach every top-level name. Nested scopes are pinned in `pop_scope`;
         // the module scope never pops. When the bundler wraps this file in a
@@ -9128,10 +9130,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.symbols[member.ref_.inner_index() as usize].set_must_not_be_renamed(true);
                 }
             }
+            can_pin_top_level_name = true;
         }
 
-        let keep_top_level_in_wrapper =
-            self.module_scope().contains_with && self.with_pins_top_level_name();
+        let keep_top_level_in_wrapper = can_pin_top_level_name && self.pins_top_level_name();
 
         if wrap_mode == WrapMode::BunCommonjs && !self.options.features.remove_cjs_module_wrapper {
             // This transforms the user's code into.
@@ -9611,9 +9613,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         false
     }
 
-    /// A file with exports is left out: its importers read its top-level symbols from the chunk scope.
+    /// A `with` body or a direct eval pins a name. A file with exports is left out: its importers read its top-level
+    /// symbols from the chunk scope.
     #[cold]
-    fn with_pins_top_level_name(&self) -> bool {
+    fn pins_top_level_name(&self) -> bool {
         if self.has_es_module_syntax || self.commonjs_named_exports.count() > 0 {
             return false;
         }

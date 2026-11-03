@@ -32,7 +32,6 @@
 #include <JavaScriptCore/SymbolTable.h>
 #include <wtf/Scope.h>
 #include <JavaScriptCore/WeakGCMapInlines.h>
-#include <JavaScriptCore/WeakMapImplInlines.h>
 #include <wtf/text/StringBuilder.h>
 
 namespace Bun {
@@ -481,38 +480,19 @@ static JSValue makeContextCurrent(Zig::GlobalObject* globalObject, JSModuleGraph
     return previous;
 }
 
-// Keeps asyncContextWithoutModuleGraphs(frame) for `owner`, or answers false where that is `frame` itself. Not returned to built-in JS: an ahead-of-time build loses the types of a program's stores where JS holds a frame that native code made.
-JSC_DEFINE_HOST_FUNCTION(jsFunctionKeepAsyncContextWithoutModuleGraphs, (JSGlobalObject * globalObject, CallFrame* callFrame))
+// For built-ins that keep the AsyncLocalStorage stores something was made in and not its graph (the handle of a node:dgram socket).
+JSC_DEFINE_HOST_FUNCTION(jsFunctionAsyncContextWithoutModuleGraphs, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto* global = defaultGlobalObject(globalObject);
-    JSValue owner = callFrame->argument(0);
-    JSValue frame = callFrame->argument(1);
-    JSValue stores = asyncContextWithoutModuleGraphs(global, frame);
-    if (stores == frame)
-        return JSValue::encode(jsBoolean(false));
-    if (stores.isObject() && owner.isObject()) {
-        VM& vm = global->vm();
-        auto& kept = global->m_moduleGraphs->asyncContextsOfOwners;
-        if (!kept)
-            kept.set(vm, JSWeakMap::create(vm, global->weakMapStructure()));
-        kept->add(vm, asObject(owner), stores);
-    }
-    return JSValue::encode(jsBoolean(true));
+    return JSValue::encode(asyncContextWithoutModuleGraphs(defaultGlobalObject(globalObject), callFrame->argument(0)));
 }
 
-// Makes current what was kept for `owner` (or `frame`), entered by the graph of the running script: what opens there is that graph's. Built-in JS puts back what was current.
-JSC_DEFINE_HOST_FUNCTION(jsFunctionEnterAsyncContextInCurrentModuleGraph, (JSGlobalObject * globalObject, CallFrame* callFrame))
+// The async context such a built-in does its later work in: `stores` inside the graph that the running script is in, so that what opens there is that graph's.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionAsyncContextInCurrentModuleGraph, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto* global = defaultGlobalObject(globalObject);
-    JSValue owner = callFrame->argument(0);
-    JSValue stores = callFrame->argument(1);
-    if (auto* state = global->m_moduleGraphs.get(); state && state->asyncContextsOfOwners && owner.isObject()) {
-        if (JSValue kept = state->asyncContextsOfOwners->get(asObject(owner)); kept.isObject())
-            stores = kept;
-    }
+    JSValue stores = callFrame->argument(0);
     JSModuleGraph* graph = currentModuleGraph(global);
-    global->m_asyncContextData.get()->putInternalField(global->vm(), 0, graph ? frameEntering(global, graph, stores) : stores);
-    return JSValue::encode(jsUndefined());
+    return JSValue::encode(graph ? frameEntering(global, graph, stores) : stores);
 }
 
 // VirtualMachine::entered_context: makes `context` the one native code entered (0: none) and

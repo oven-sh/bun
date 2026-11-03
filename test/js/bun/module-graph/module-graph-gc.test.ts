@@ -415,8 +415,8 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
   // a socket of the host's keep a graph whose script was on the stack when the host made or bound it: the frame that
   // leaves a graph links to the frame of the graph, and what else the host opens over it (Bun.udpSocket() with a
   // handler, a timer) does keep the graph. A socket the graph bound is the graph's: its handlers hold the graph
-  // until the host closes the socket. The stores stay on the handle until close(), and dispose() does not clear
-  // them: a store value that holds a function of the graph holds the graph.
+  // until the host closes the socket. The socket has the stores until close(), and dispose() does not clear them: a
+  // store value that holds a function of the graph holds the graph.
   test("of the node:dgram sockets the host holds, one that the graph bound keeps the graph, and one whose store value is the graph's", async () => {
     const lifetimes = new Lifetimes();
     const storage = new AsyncLocalStorage<unknown>();
@@ -443,6 +443,7 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
     };
     const rows = [
       "made in the graph, never bound",
+      "made in the graph in no store, never bound",
       "made in the graph, a bind by the host failed",
       "made in the graph, never bound, and the graph is dropped with no dispose()",
       "made in the graph, bound by the host",
@@ -459,6 +460,8 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
           const io = await graph.import(file("io.mjs"));
           if (row.startsWith("made in the graph in a store")) {
             sockets[row] = graph.run(() => io.dgramSocketInStoreOfTheGraph(storage));
+          } else if (row.startsWith("made in the graph in no store")) {
+            sockets[row] = graph.run(() => io.dgramSocket());
           } else if (row.startsWith("made in the graph")) {
             const socket = (sockets[row] = graph.run(() => storage.run("createSocket()", () => io.dgramSocket())));
             if (row.endsWith("a bind by the host failed")) expect(await bind(socket, holder.port)).toBe("EADDRINUSE");

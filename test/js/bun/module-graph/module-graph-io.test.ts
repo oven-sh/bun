@@ -680,6 +680,7 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
         const native = socket[kStateSymbol].handle.socket;
         sender.send("x", socket.address().port, "127.0.0.1");
         const { stores, graph } = await message.promise;
+        await hostTimerTurns(1);
         graphs.A.dispose();
         const closedByA: boolean = native.closed;
         graphs.B.dispose();
@@ -700,6 +701,8 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
       "made in a graph, bound by the host in no store": await layout("A", "the host", { bindInStores: false }),
       "made by the host, bound in a graph": await layout("the host", "A"),
       "made by the host in no store, bound in a graph": await layout("the host", "A", { createInStore: false }),
+      "made in a graph in no store, bound in another": await layout("A", "B", { createInStore: false }),
+      "made in a graph in no store, bound by the host": await layout("A", "the host", { createInStore: false }),
     }).toEqual({
       "made and bound in one graph": {
         "'message' reads": ofCreateSocket,
@@ -731,13 +734,33 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
         "'message' runs in": "A",
         "closed by the dispose() of": "A",
       },
+      "made in a graph in no store, bound in another": {
+        "'message' reads": "undefined, undefined",
+        "'message' runs in": "B",
+        "closed by the dispose() of": "B",
+      },
+      "made in a graph in no store, bound by the host": {
+        "'message' reads": "undefined, undefined",
+        "'message' runs in": "the host",
+        "closed by the dispose() of": "nobody",
+      },
     });
     // What a disposed graph's code opens never settles: the bind of a socket that such a graph made is the host's.
-    // It still reads the stores of createSocket(): the handle keeps them until close(), and dispose() does not clear them.
-    expect(await layout("A", "the host", { disposeMakerFirst: true })).toEqual({
-      "'message' reads": ofCreateSocket,
-      "'message' runs in": "the host",
-      "closed by the dispose() of": "nobody",
+    // It still reads the stores of createSocket(): the socket has them until close(), and dispose() does not clear them.
+    expect({
+      "made in a store": await layout("A", "the host", { disposeMakerFirst: true }),
+      "made in no store": await layout("A", "the host", { disposeMakerFirst: true, createInStore: false }),
+    }).toEqual({
+      "made in a store": {
+        "'message' reads": ofCreateSocket,
+        "'message' runs in": "the host",
+        "closed by the dispose() of": "nobody",
+      },
+      "made in no store": {
+        "'message' reads": "undefined, undefined",
+        "'message' runs in": "the host",
+        "closed by the dispose() of": "nobody",
+      },
     });
   });
 
@@ -763,6 +786,9 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
       socket.on("message", () => message.resolve(storage.getStore()));
       sender.send("x", socket.address().port, "127.0.0.1");
       seen["in 'message'"] = await message.promise;
+      // 'message' is a callback of the graph's socket. A test that ends inside it, after dispose(), leaves the runner
+      // inside a disposed graph, and the runner does not call the tests that it starts from there.
+      await hostTimerTurns(1);
       return seen;
     } finally {
       socket.close();
@@ -802,32 +828,32 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
   // Not so yet: a disable() after createSocket(), in the same run(), with a frame of a graph in the async context.
   // Node.js deletes the store from the frame that the socket's handle has, so 'message' reads none, and so does Bun
   // with no graph in the context. Here the stores that node:dgram keeps are a copy, which the note of disable() does
-  // not reach: 'message' reads "entered". A WebSocket has the same limit. dgram.test.ts has a row for it that runs.
-  // (todo and not failing: a test that starts inside the context of a disposed graph is not called, and passes.)
-  const disabledAfterCreateSocket: Record<string, Parameters<typeof seenIn>[0]> = {
-    "the store is entered inside the graph": (storage, graph, create) =>
-      graph.run(() =>
-        storage.run("entered", () => {
-          create();
-          storage.disable();
-        }),
+  // not reach: 'message' reads "entered". A WebSocket has the same limit. When 'message' reads undefined here, the
+  // limit is gone: expect that then.
+  test("a node:dgram 'message' still reads the store after a disable() that follows createSocket() inside a graph", async () => {
+    const stillRead = { "at createSocket()": "entered", "in 'message'": "entered" };
+    expect({
+      "the store is entered inside the graph": await seenIn((storage, graph, create) =>
+        graph.run(() =>
+          storage.run("entered", () => {
+            create();
+            storage.disable();
+          }),
+        ),
       ),
-    "the store is entered around the graph": (storage, graph, create) =>
-      storage.run("entered", () =>
-        graph.run(() => {
-          create();
-          storage.disable();
-        }),
+      "the store is entered around the graph": await seenIn((storage, graph, create) =>
+        storage.run("entered", () =>
+          graph.run(() => {
+            create();
+            storage.disable();
+          }),
+        ),
       ),
-  };
-  for (const [arrangement, arrange] of Object.entries(disabledAfterCreateSocket)) {
-    test.todo(
-      `a node:dgram 'message' reads no store after a disable() that follows createSocket(): ${arrangement}`,
-      async () => {
-        expect(await seenIn(arrange)).toEqual({ "at createSocket()": "entered", "in 'message'": undefined });
-      },
-    );
-  }
+    }).toEqual({
+      "the store is entered inside the graph": stillRead,
+      "the store is entered around the graph": stillRead,
+    });
+  });
 
   // A send() that waited behind backpressure is completed by the socket's drain or by close(). Its callback still
   // runs where that send() was made: in the caller's graph and store, as the callback of a ws send() does. With a

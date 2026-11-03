@@ -37,6 +37,12 @@ const looksForModuleGraph = (returns: b.TableType, uses: readonly b.UseSpec[]) =
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
+// For the natives of ModuleGraph.cpp that answer a frame. Where the operand has a frame of a Bun.ModuleGraph in it, or the running script is inside a graph, they make one: they allocate, which the natives that only look do not.
+const makesFramesAroundModuleGraph = {
+  ...looksForModuleGraph(b.union(b.object, b.undefined), [b.returned, b.returnedFrom(framesOfModuleGraphsCell)]),
+  capability: "heap",
+} satisfies b.FunctionField;
+
 // Functions on which the host puts members that have no entry yet: Bun.inspect.custom, process.hrtime.bigint .. Bun.$ and Bun.sql are callable objects of classes of the library, and require.resolve inherits `paths` from an object of its own.
 const functionsWithUndeclaredMembers = [
   "%ModuleRequire%.resolve",
@@ -291,26 +297,9 @@ export default b.declarations(
       b.returnedFrom(framesOfModuleGraphsCell),
     ]),
   ),
-  // Where `frame` has a frame of a graph in it, native memory keeps a copy of its other frames for `owner`: the answer is true. What it keeps comes back as the async context only, like the frame that any native captures, so the operands count as inspected.
-  b.static(cpp("ModuleGraph.cpp", "jsFunctionKeepAsyncContextWithoutModuleGraphs"), {
-    args: { owner: b.any.optional, frame: b.any.optional },
-    returns: b.bool,
-    capability: "heap",
-    uses: { owner: b.inspected, frame: b.inspected },
-    reads: ["ObjectFields", "NamedProperties", ...externalState],
-    writes: externalState,
-    implementation: b.hostCall,
-  }),
-  // Makes the async context `frame`, what native memory keeps for `owner`, or a frame that it makes over one of them. Built-in JS puts back the frame that it read before the call.
-  b.static(cpp("ModuleGraph.cpp", "jsFunctionEnterAsyncContextInCurrentModuleGraph"), {
-    args: { owner: b.any.optional, frame: b.any.optional },
-    returns: b.undefined,
-    capability: "heap",
-    uses: { owner: b.inspected, frame: b.inspected },
-    reads: ["ObjectFields", "NamedProperties", "InternalFields", ...externalState],
-    writes: ["InternalFields", ...externalState],
-    implementation: b.hostCall,
-  }),
+  // The answer is the operand, a frame below it, or a frame that native code makes. Built-in JS keeps it, compares it and installs it. b.reachableValuesStoredIn(b.result) is left out: with it every value of a store is a possible answer.
+  b.static(cpp("ModuleGraph.cpp", "jsFunctionAsyncContextWithoutModuleGraphs"), makesFramesAroundModuleGraph),
+  b.static(cpp("ModuleGraph.cpp", "jsFunctionAsyncContextInCurrentModuleGraph"), makesFramesAroundModuleGraph),
 
   // What Bun.jest answers. It has no feature: the `require` that gets its names at run time calls it, and such a name keeps nothing.
   b.static(cpp("JSCommonJSModule.cpp", "jsFunctionRequireTestModule"), {

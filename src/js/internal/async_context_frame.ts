@@ -13,8 +13,8 @@
 const moduleGraphOfFrame = $newCppFunction("ModuleGraph.cpp", "jsFunctionModuleGraphOfFrame", 1);
 const moduleGraphFrameOfFrame = $newCppFunction("ModuleGraph.cpp", "jsFunctionModuleGraphFrameOfFrame", 1);
 // Bound at the first call: most programs that load this module call neither.
-let keepAsyncContextWithoutModuleGraphs: ((owner: object, frame: unknown) => boolean) | undefined;
-let enterAsyncContextInCurrentModuleGraph: ((owner: object, frame: unknown) => void) | undefined;
+let asyncContextWithoutModuleGraphs: ((frame: unknown) => unknown) | undefined;
+let asyncContextInCurrentModuleGraph: ((stores: unknown) => unknown) | undefined;
 
 const AsyncContextFrame = {
   enabled: true,
@@ -37,25 +37,23 @@ const AsyncContextFrame = {
   graphOf(frame) {
     return moduleGraphOfFrame(frame);
   },
-  /** Keeps the AsyncLocalStorage stores of `frame` for `owner` in native code, without the frames of a Bun.ModuleGraph. False where `frame` has none: keep `frame` then. */
-  keepWithoutModuleGraphs(owner, frame) {
-    keepAsyncContextWithoutModuleGraphs ??= $newCppFunction(
+  /** `frame` without the frames of a Bun.ModuleGraph: what something long-lived keeps, so that it keeps the AsyncLocalStorage stores and no graph. `frame` itself where it has none. */
+  withoutModuleGraphs(frame) {
+    asyncContextWithoutModuleGraphs ??= $newCppFunction(
       "ModuleGraph.cpp",
-      "jsFunctionKeepAsyncContextWithoutModuleGraphs",
-      2,
+      "jsFunctionAsyncContextWithoutModuleGraphs",
+      1,
     );
-    return keepAsyncContextWithoutModuleGraphs!(owner, frame);
+    return asyncContextWithoutModuleGraphs!(frame);
   },
-  /** Enters the Bun.ModuleGraph of the running script over what keepWithoutModuleGraphs() kept for `owner`, or over `frame`. Returns the frame to exchange() back. */
-  enterCurrentModuleGraphOver(owner, frame) {
-    enterAsyncContextInCurrentModuleGraph ??= $newCppFunction(
+  /** The frame that enters the Bun.ModuleGraph of the running script over `stores`, an answer of withoutModuleGraphs(). `stores` itself outside a graph. */
+  inCurrentModuleGraph(stores) {
+    asyncContextInCurrentModuleGraph ??= $newCppFunction(
       "ModuleGraph.cpp",
-      "jsFunctionEnterAsyncContextInCurrentModuleGraph",
-      2,
+      "jsFunctionAsyncContextInCurrentModuleGraph",
+      1,
     );
-    const previous = $getInternalField($asyncContext, 0);
-    enterAsyncContextInCurrentModuleGraph!(owner, frame);
-    return previous;
+    return asyncContextInCurrentModuleGraph!(stores);
   },
   /** Install `frame` as the active async-context frame; returns the previous one. */
   exchange(frame) {

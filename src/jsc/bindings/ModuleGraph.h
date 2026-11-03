@@ -5,7 +5,6 @@
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSPromise.h>
-#include <JavaScriptCore/JSWeakMap.h>
 #include <JavaScriptCore/LazyClassStructure.h>
 #include <JavaScriptCore/SymbolTable.h>
 #include <JavaScriptCore/WeakGCMap.h>
@@ -92,8 +91,8 @@ private:
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsFrameOfStoppedModuleGraph);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionModuleGraphOfFrame);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionModuleGraphFrameOfFrame);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionKeepAsyncContextWithoutModuleGraphs);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionEnterAsyncContextInCurrentModuleGraph);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionAsyncContextWithoutModuleGraphs);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionAsyncContextInCurrentModuleGraph);
 
 // Per-global state that is not a GC object (Zig::GlobalObject::m_moduleGraphs).
 struct ModuleGraphState {
@@ -121,8 +120,6 @@ public:
     JSC::Strong<JSC::Unknown> enteredFromEventLoop;
     // bun test --isolate=modules: the graph of the running test file.
     JSC::Strong<JSModuleGraph> testFile;
-    // What jsFunctionKeepAsyncContextWithoutModuleGraphs() keeps: owner -> stores, which live as long as their owner.
-    JSC::Strong<JSC::JSWeakMap> asyncContextsOfOwners;
     // Disposed graphs of the most recent files, kept only for their compiled code, which would otherwise be collected
     // with the last graph that ran it. Code that files keep loading stays alive. Code only one file used ages out.
     WTF::Deque<JSC::Strong<JSModuleGraph>, 8> finishedTestFiles;

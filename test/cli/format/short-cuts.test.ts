@@ -1441,6 +1441,30 @@ describe.skipIf(!hasFlag)("where lines are written without a document", () => {
     "flow-declarations.js": `// @flow\nimport typeof A from "a";\nimport { typeof B, type C } from "b";\nimport type D from "d";\ndeclare var z: number;\ndeclare function g(number): string;\ndeclare export default T;\ndeclare module.exports: { a: 1 };\ndeclare export { a };\nopaque type E = string;\nhook useF() {\n  return 1;\n}\ncomponent G(a: T) {\n  return a;\n}\n`,
     "flow-declare-module.js": `// @flow\ndeclare module 'a' {\n  class B extends C {\n    constructor(d?: E): void;\n    f(): void;\n  }\n  function g(): void;\n  export default class H<I> {\n    j: I;\n  }\n}\n`,
     "flow-match.js": `// @flow\nconst m = match (a) {\n  1 => 2,\n  {b: const c} => c,\n  _ => 3,\n};\nmatch (a) {\n  1 | 2 => {\n    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, cccccccccccccc);\n  }\n}\nconst r = R { a: 1 };\nconst s = new S();\n`,
+    // A block comment before it on its line: the line does not start at the indentation.
+    "comment-before-statement.ts": `describe("a", () => {\n  it("b", () => {\n    /* a\n b */ cccccccccccccccccccc(ddddddddddd!, "eeeeeeeeeeeeeeee", "fffffffffff");\n    /* g */ hhhhhhhhhhhhhhhhhhhhhhhh(iiiiiiiiiiiiiiiiiiiiiii, jjjjjjjjjjjjjjjjjjjjj);\n  });\n});\n`,
+    // Text that has more bytes than columns, or escapes.
+    // 80 and 81 columns.
+    "wide-characters.js": `console.log(chalk.yellow("😈${"a".repeat(48)}"));\nconsole.log(chalk.yellow("😈${"a".repeat(49)}"));\nconst 名前 = { placeholder: "日付を選択してください", ключ: 'значение "x"', é: \`ü\${名前}ü\` };\nf("${"中".repeat(35)}", 12);\nf("${"中".repeat(35)}", 123);\nif (a) {\n  b = { c: "${"é".repeat(64)}" };\n  b = { c: "${"é".repeat(65)}" };\n}\n`,
+    "escapes.js": `a = 'b\\'c' + "d\\"e" + 'f"g\\'' + "\\d\\u0041\\x41\\n" + /[\\\\/]\\d+/g.test(\`\\\${h}\\n\`);\nconst \\u0061b = c.\\u0064;\nimport "i\\x6a";\nx = "k\\\nl";\n`,
+    "odd-white-space.js": `f(a,\n \nb);\ng(a,  b);\nh({ a: 1 });\ni("\u007fé", "\u007f", "\t");\n`,
+    // `\\r\\n`
+    "crlf.js": `import { a, b } from "c";\r\nf(a,\r\n\r\n  b);\r\nconst d = {\r\n  e: 1,\r\n  f() {\r\n    return g(h); /* i */\r\n  },\r\n};\r\nj(\`k\r\nl\`);\r\n`,
+    "lone-cr.js": `f(a,\r\r  b);\nconst d = {\r  e: 1 };\n`,
+    // Whether something follows on the line depends on the options.
+    // 80 columns, and a comma or not.
+    "last-property.js": `a = {\n  b: ${"c".repeat(21)}(${"d".repeat(25)}, ${"e".repeat(25)}),\n  f: ${"c".repeat(21)}(${"d".repeat(25)}, ${"e".repeat(25)})\n};\n`,
+    // 80 columns, and a semicolon or not.
+    "class-members.ts": `class A {\n  b = ${"c".repeat(20)}(${"d".repeat(25)}, ${"e".repeat(25)});\n  f = ${"c".repeat(20)}(${"d".repeat(25)}, ${"e".repeat(25)});\n  ["g"] = 1;\n  static;\n  h;\n  *i() {}\n  ${"j".repeat(26)}(${"k".repeat(23)}: L, ${"m".repeat(16)}: N) {}\n}\n`,
+    // Without semicolons, some statements start with one.
+    "start-of-statement.js": `a();\n[b].c();\n(d || e).f();\n\`g\`.h();\n+i;\n/j/.k();\n/** @type {A} */ (l).m();\n(() => {})();\nn => o;\nlet p = 1;\nclass Q {}\n`,
+    // What the parser reads and the printer drops.
+    "rest-parameter.ts": `declare function a(b, ...c?);\nfunction d(...e?: any[]) {}\n`,
+    // Scripts in other languages.
+    "component.vue": `<script setup lang="ts">\nimport { ref } from 'vue'\nconst aaaaaaaaaaaaaaaaaaaaaaaaa = bbbbbbbbbbbbbbbbbbbbbbbbbbb(ccccccccccccccccccc, dddddd)\nfunction e() {\n  return f(() => {\n    g('h')\n  })\n}\n</script>\n<template>\n  <div @click="e()">{{ a }}</div>\n</template>\n`,
+    "page.html": `<html>\n<body>\n<div><div><script>\nconst aaaaaaaaaaaaaaaaaaaaaaa = bbbbbbbbbbbbbbbbbbbbbbb(ccccccccccccccccc, dddddd)\nfunction e() { return f(() => { g('h') }) }\n</script></div></div>\n</body>\n</html>\n`,
+    "text.md": "- a\n\n  ```js\n  const aaaaaaaaaaaaaaaaaaaaaaaaaaa = bbbbbbbbbbbbbbbbbbbbbbbbbbbb(ccccccccccccccccccc, dddd)\n  function e() { return `f\n  g` }\n  ```\n\n```jsx\n<a b='c' />\n```\n",
+    "text.mdx": "import   {a} from 'b'\nexport const c = { d: 1,\n e: f(g) }\n\n# h\n\n<A b={() => { c('d') }} />\n\n```ts\nlet i: J = k('l')\n```\n",
   };
 
   test.concurrent.each([
@@ -1448,6 +1472,9 @@ describe.skipIf(!hasFlag)("where lines are written without a document", () => {
     [["--print-width=24"]],
     [["--print-width=60", "--use-tabs"]],
     [["--tab-width=8", "--single-quote", "--no-bracket-spacing"]],
+    [["--no-semi"]],
+    [["--no-semi", "--trailing-comma=none", "--end-of-line=crlf"]],
+    [["--trailing-comma=none", "--vue-indent-script-and-style"]],
   ])("the same with %j", async flags => {
     const [short, long] = await Promise.all([format(files, flags), format(files, [...flags, "--no-short-cuts"])]);
     expect(short).toEqual(long);

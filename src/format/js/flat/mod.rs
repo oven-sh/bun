@@ -45,8 +45,12 @@ use crate::js::print::call_like_expression::keeps_arguments_on_one_line;
 use crate::js::print::class::write_class_body_after_head;
 use crate::js::print::function::FormatFunctionBody;
 use crate::js::print::parameters::can_avoid_parentheses;
+use crate::js::print::statements::{
+    expression_statement_needs_semicolon, follows_type_cast_comment,
+};
 use crate::js::utils::member_chain::simple_argument::SimpleArgument;
 use crate::js::utils::number::format_trimmed_number;
+use crate::js::utils::string::{FormatLiteralStringToken, StringLiteralParentKind};
 use crate::prelude::*;
 use crate::write;
 use bun_core::strings;
@@ -77,41 +81,103 @@ pub(crate) struct ShortCuts {
     pub(crate) follows_line: bool,
     /// The properties of the object that's being written are each on a line.
     pub(crate) properties_start_lines: bool,
-    /// The file has a block comment with something before it on its line.
-    has_block_comment_after_code: bool,
+    /// The file has a block comment with something before or after it on its line.
+    has_block_comment_in_line: bool,
+    is_flow: bool,
+    /// Statements end with a `;`.
+    has_semicolons: bool,
 }
 
 impl ShortCuts {
+    /// For a file that's formatted by itself.
     pub(crate) fn for_file<'a>(file: &'a File<'a>, options: &FormatOptions) -> ShortCuts {
-        let is_plain_run = !options.no_short_cuts
+        let whole = ShortCuts {
+            mode: match options.in_html.root {
+                HtmlRoot::None => Mode::All,
+                _ => Mode::Off,
+            },
+            is_certain: true,
+            ..ShortCuts::default()
+        };
+        whole.for_code(file, options)
+    }
+
+    /// For a document in another language with scripts in it, which is written again the long way if the printer finds
+    /// a guess to be wrong.
+    pub(crate) fn for_host(options: &FormatOptions) -> ShortCuts {
+        let has_place = options.cursor_offset.is_some()
+            || options.range_start.is_some()
+            || options.range_end.is_some();
+        ShortCuts {
+            mode: match options.no_short_cuts || has_place {
+                true => Mode::Off,
+                false => Mode::All,
+            },
+            ..ShortCuts::default()
+        }
+    }
+
+    /// What the host writes next is indented by `level` levels, if that's known.
+    #[inline]
+    pub(crate) fn start_at(&mut self, level: Option<u32>) {
+        (self.depth, self.is_certain) = (level.unwrap_or(0), level.is_some());
+    }
+
+    /// For a script in the document of a host, whose state this is. Every line of it is indented like the first.
+    pub(crate) fn for_script<'a>(self, file: &'a File<'a>, options: &FormatOptions) -> ShortCuts {
+        let in_script = InHtml {
+            root: HtmlRoot::Program,
+            quote_style: options.in_html.quote_style,
+            has_babel_tree: options.in_html.has_babel_tree,
+            ..InHtml::default()
+        };
+        match options.in_html == in_script {
+            true => self.for_code(file, options),
+            false => ShortCuts::default(),
+        }
+    }
+
+    fn for_code<'a>(self, file: &'a File<'a>, options: &FormatOptions) -> ShortCuts {
+        let is_plain_run = self.mode != Mode::Off
+            && !options.no_short_cuts
             && !options.flavor.is_oxfmt()
-            && options.semicolons.is_always()
             && !options.experimental_ternaries
             && options.cursor_offset.is_none()
             && options.range_start.is_none()
             && options.range_end.is_none()
-            && options.in_html.root == HtmlRoot::None
-            && !options.is_in_markdown
             && !options.is_mdx_jsx
-            && !options.is_mdx_es_syntax
             && options.html_template_depth == 0
             && options.sort_imports.is_none()
             && options.tailwind.is_none()
             && options.debug_comments == DebugComments::Off
-            // Every check for a line break below looks for `\n`.
-            && !strings::contains_char(file.text(), b'\r');
+            && !has_lone_carriage_return(file.text());
+        if !is_plain_run {
+            return ShortCuts::default();
+        }
         ShortCuts {
-            mode: if is_plain_run { Mode::All } else { Mode::Off },
-            depth: 0,
-            is_certain: true,
-            next_in_list: 0,
-            follows_line: false,
-            properties_start_lines: false,
-            has_block_comment_after_code: is_plain_run
-                && (file.comments_by_id())
-                    .any(|comment| comment.is_block() && !comment.has_newline_before()),
+            mode: self.mode,
+            depth: self.depth,
+            is_certain: self.is_certain,
+            has_block_comment_in_line: file.comments_by_id().any(|comment| {
+                comment.is_block() && !(comment.has_newline_before() && comment.has_newline_after())
+            }),
+            is_flow: file.is_flow(),
+            has_semicolons: options.semicolons.is_always(),
+            ..ShortCuts::default()
         }
     }
+}
+
+/// True if `text` has a `\r` that isn't part of `\r\n`. Every check for a line break below looks for `\n`.
+fn has_lone_carriage_return(text: &[u8]) -> bool {
+    let mut rest = text;
+    while let Some(at) = strings::index_of_char_usize(rest, b'\r') {
+        if rest.get(at + 1) != Some(&b'\n') {
+            return true;
+        }
+        rest = &rest[at + 2..];
+    }
+    false
 }
 
 /// The items of a list that's indented by one level more than what's around it.
@@ -163,11 +229,12 @@ const MAX_NESTING: u32 = 48;
 /// What a [`Line`] has written.
 #[derive(Copy, Clone)]
 enum Part<'a> {
-    /// A range of the text buffer, and the width of what follows it on its line. `None` if the text is printed like this
-    /// however wide it is.
+    /// A range of the text buffer, its width, and the width of what follows it on its line. `None` if the text is printed
+    /// like this however wide it is.
     Text {
         start: u32,
         len: u32,
+        width: u32,
         after: Option<u32>,
     },
     /// A line break, after which the indentation is this many levels deeper.
@@ -201,6 +268,8 @@ enum Place {
 struct Line<'f, 'a> {
     f: &'f mut Formatter<'a>,
     source: &'a [u8],
+    /// The source, or nothing if the line is careful.
+    plain_source: &'a [u8],
     /// How many columns there are between the indentation and the end of the line.
     room: usize,
     indent_width: usize,
@@ -212,13 +281,20 @@ struct Line<'f, 'a> {
     limit: usize,
     /// The width of what a part has written on the current line before the text: its closing bracket.
     taken: usize,
+    /// By how many bytes the text of the current line is longer than it's wide. `limit` is later by as much.
+    extra: usize,
     /// The text went past `limit`.
     is_too_wide: bool,
+    /// The source has something in it that isn't plain. For a careful line: a text has more bytes than columns.
+    is_odd: bool,
+    /// The source isn't plain, so every text from it is looked at and measured.
+    is_careful: bool,
     /// On one line it's too wide, so the outermost group breaks.
     breaks: bool,
     /// There's no comment anywhere in the source of what's written.
     is_quiet: bool,
     is_flow: bool,
+    has_semicolons: bool,
     /// Up to here the source is known to be plain and without comments.
     checked_to: u32,
     nesting: u32,
@@ -232,13 +308,33 @@ fn has_empty_line(text: &[u8]) -> bool {
         rest = &rest[at + 1..];
         let blank = rest
             .iter()
-            .take_while(|byte| matches!(byte, b' ' | b'\t'))
+            .take_while(|byte| matches!(byte, b' ' | b'\t' | b'\r'))
             .count();
         if rest.get(blank) == Some(&b'\n') {
             return true;
         }
     }
     false
+}
+
+/// True if `text`, which isn't plain, can have an empty line in it, or a line break that isn't `\n`. What is white space
+/// is not the same everywhere, so every character that isn't ASCII counts.
+#[cold]
+#[inline(never)]
+fn has_odd_line(text: &[u8]) -> bool {
+    let mut rest = text;
+    while let Some(at) = strings::index_of_char_usize(rest, b'\n') {
+        rest = &rest[at + 1..];
+        let blank = rest
+            .iter()
+            .take_while(|byte| matches!(byte, b' ' | 0..=9 | 11..=31 | 0x7F..))
+            .count();
+        if rest.get(blank) == Some(&b'\n') {
+            return true;
+        }
+    }
+    // U+2028 and U+2029
+    strings::contains(text, b"\xE2\x80\xA8") || strings::contains(text, b"\xE2\x80\xA9")
 }
 
 /// True if a block comment follows what ends at `end` and is printed on its line: nothing but commas and semicolons is
@@ -249,7 +345,7 @@ fn is_before_block_comment(source: &[u8], end: u32) -> bool {
     let mut starts_line = false;
     loop {
         rest = match rest {
-            [b' ' | b'\t', tail @ ..] => tail,
+            [b' ' | b'\t' | b'\r', tail @ ..] => tail,
             [b',' | b';', tail @ ..] => {
                 starts_line = false;
                 tail
@@ -263,17 +359,23 @@ fn is_before_block_comment(source: &[u8], end: u32) -> bool {
     }
 }
 
+/// True if a block comment is before what starts at `start` on its line, so that it doesn't start where its line does.
+fn is_after_block_comment(source: &[u8], start: u32) -> bool {
+    let before = source.get(..start as usize).unwrap_or_default();
+    strings::trim_right(before, b" \t").ends_with(b"*/")
+}
+
 /// By how much the text buffer is longer than what's written to it while a [`Line`] writes.
 const SLACK: usize = 256;
 
 impl<'a> Formatter<'a> {
     /// Calls `write` with a [`Line`] that starts a line of the output, for the node at `span`. `after` is the width of
-    /// what the caller writes behind it on the same line. Returns false, with nothing written, if the short cut isn't
-    /// taken.
+    /// what the caller writes behind it on the same line: at least, and at most. Returns false, with nothing written, if
+    /// the short cut isn't taken.
     fn write_line(
         &mut self,
         span: Span,
-        after: u32,
+        after: (u32, u32),
         write: impl Fn(&mut Line<'_, 'a>) -> Written,
     ) -> bool {
         let state = self.context().short_cuts;
@@ -296,11 +398,10 @@ impl<'a> Formatter<'a> {
             return false;
         };
         let source = self.source_text().as_bytes();
-        if state.has_block_comment_after_code && is_before_block_comment(source, span.end) {
-            return false;
-        }
-        // So is one before it, with a blank after it, and the line doesn't start where the indentation ends.
-        if matches!(self.storage.pool.last(), Some(FormatElement::Space)) {
+        if state.has_block_comment_in_line
+            && (is_before_block_comment(source, span.end)
+                || is_after_block_comment(source, span.start))
+        {
             return false;
         }
         let start = self.storage.text.len();
@@ -312,23 +413,40 @@ impl<'a> Formatter<'a> {
             len: start,
             limit: start + room,
             taken: 0,
+            extra: 0,
             is_too_wide: false,
+            is_odd: false,
+            is_careful: false,
             breaks: false,
             is_quiet: self.is_quiet(),
-            is_flow: self.file().is_flow(),
+            is_flow: state.is_flow,
+            has_semicolons: state.has_semicolons,
             f: self,
             source,
+            plain_source: source,
             checked_to: span.start,
             nesting: 0,
             parts: SmallVec::new(),
         };
         let mut written = line.finish(&write, span.end, after);
-        // That it's too wide is only certain if the indentation is.
-        if written.is_err() && line.is_too_wide && state.is_certain {
+        let mut is_last = false;
+        while written.is_err() && !is_last {
+            if !line.is_careful
+                && (line.is_odd || (line.is_too_wide && !line.f.is_plain_source(span)))
+            {
+                // Bytes have been counted, which are more than columns in text that isn't plain.
+                (line.is_careful, line.plain_source) = (true, &[]);
+            } else if line.is_too_wide && !line.is_odd && state.is_certain {
+                // That it's too wide is only certain if the indentation is.
+                (line.is_careful, line.plain_source) = (false, source);
+                (line.breaks, is_last) = (true, true);
+            } else {
+                break;
+            }
             line.parts.clear();
             (line.room, line.start, line.len, line.limit) = (room, start, start, start + room);
-            (line.taken, line.checked_to, line.nesting) = (0, span.start, 0);
-            line.breaks = true;
+            (line.taken, line.extra, line.checked_to, line.nesting) = (0, 0, span.start, 0);
+            (line.is_too_wide, line.is_odd) = (false, false);
             written = line.finish(&write, span.end, after);
         }
         let (parts, len) = (line.parts, line.len);
@@ -339,13 +457,18 @@ impl<'a> Formatter<'a> {
         self.storage.text.truncate(len);
         for part in parts {
             match part {
-                Part::Text { start, len, after } => {
+                Part::Text {
+                    start,
+                    len,
+                    width,
+                    after,
+                } => {
                     self.write_element(FormatElement::OwnedText(Text {
                         start,
                         len,
                         width: match after {
-                            Some(after) => TextWidth::short_cut(len, after),
-                            None => TextWidth::single(len),
+                            Some(after) => TextWidth::short_cut(width, after),
+                            None => TextWidth::single(width),
                         },
                     }));
                 }
@@ -401,9 +524,12 @@ impl<'a> Formatter<'a> {
 /// Writes `statement`, which a list of statements is about to write on a line of its own. Returns false if it has to go
 /// the long way.
 pub(crate) fn write_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) -> bool {
-    f.write_line(statement.span(), 0, |line| {
+    f.write_line(statement.span(), (0, 0), |line| {
         if line.is_flow {
             line.check_flow_statement(statement)?;
+        }
+        if !line.has_semicolons {
+            line.semicolon_before(statement)?;
         }
         line.statement(statement)
     })
@@ -411,12 +537,18 @@ pub(crate) fn write_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) ->
 
 /// Writes `property` of an object whose properties are each on a line. A comma can follow it.
 pub(crate) fn write_property<'a>(property: Prop<'a>, f: &mut Formatter<'a>) -> bool {
-    f.write_line(property.span(), 1, |line| line.property(property, true))
+    let least = u32::from(!f.options().trailing_commas.is_none());
+    f.write_line(property.span(), (least, 1), |line| {
+        line.property(property, true)
+    })
 }
 
 /// Writes `member` of a class. The caller writes the `;` of a property.
 pub(crate) fn write_class_member<'a>(member: Member<'a>, f: &mut Formatter<'a>) -> bool {
-    let after = u32::from(member.kind() == MemberKind::Property);
+    let after = match member.kind() {
+        MemberKind::Property => (u32::from(f.options().semicolons.is_always()), 1),
+        _ => (0, 0),
+    };
     f.write_line(member.span(), after, |line| {
         if line.is_flow {
             line.check_flow_member(member)?;
@@ -426,10 +558,43 @@ pub(crate) fn write_class_member<'a>(member: Member<'a>, f: &mut Formatter<'a>) 
 }
 
 impl<'a> Line<'_, 'a> {
-    fn finish(&mut self, write: &impl Fn(&mut Self) -> Written, end: u32, after: u32) -> Written {
+    fn finish(
+        &mut self,
+        write: &impl Fn(&mut Self) -> Written,
+        end: u32,
+        (least, most): (u32, u32),
+    ) -> Written {
         write(self)?;
         self.check_source_up_to(end)?;
-        self.end_text(Some(after))
+        let written = self.end_text(Some(most));
+        if written.is_err() && least < most {
+            // It isn't certain that it's too wide.
+            self.is_too_wide = self.end_text(Some(least)).is_err();
+        }
+        written
+    }
+
+    /// The `;` that ends a statement.
+    #[inline]
+    fn semicolon(&mut self) -> Written {
+        match self.has_semicolons {
+            true => self.byte(b';'),
+            false => Ok(()),
+        }
+    }
+
+    /// Without semicolons, the `;` before a statement that would go on with the line before it.
+    fn semicolon_before(&mut self, statement: Stmt<'a>) -> Written {
+        if let StmtKind::Expr(expression) = statement.kind()
+            && expression_statement_needs_semicolon(statement, expression, self.f)
+        {
+            // It's before the comment.
+            if follows_type_cast_comment(statement.span().start, self.f) {
+                return Err(Refused);
+            }
+            self.byte(b';')?;
+        }
+        Ok(())
     }
 
     // ───────────────────────────── text ─────────────────────────────
@@ -462,8 +627,12 @@ impl<'a> Line<'_, 'a> {
         self.f.storage.text.resize(len + 4 * SLACK, 0);
     }
 
+    /// Text that's printed as it is.
     #[inline(never)]
     fn long_bytes(&mut self, text: &[u8]) -> Written {
+        if self.is_careful {
+            self.measure(text)?;
+        }
         let end = self.len + text.len();
         if end > self.limit {
             self.is_too_wide = true;
@@ -477,6 +646,36 @@ impl<'a> Line<'_, 'a> {
         }
         self.len = end;
         Ok(())
+    }
+
+    /// Makes room for the bytes of `text`, which isn't known to be plain, that aren't columns.
+    #[cold]
+    #[inline(never)]
+    fn measure(&mut self, text: &[u8]) -> Written {
+        // How wide a control character is depends on what else is in the text.
+        if text.iter().any(|byte| matches!(byte, 0..=31 | 0x7F)) {
+            return Err(Refused);
+        }
+        let extra = text
+            .len()
+            .saturating_sub(self.f.string_width(text) as usize);
+        self.is_odd |= extra > 0;
+        self.extra += extra;
+        self.limit = self.limit.saturating_add(extra);
+        Ok(())
+    }
+
+    /// A string literal that isn't known to be plain.
+    #[cold]
+    #[inline(never)]
+    fn odd_string(&mut self, span: Span) -> Written {
+        let text = self.text_of(span);
+        if !matches!(text, [b'"' | b'\'', _, ..]) {
+            return Err(Refused);
+        }
+        let kind = StringLiteralParentKind::Expression;
+        let printed = FormatLiteralStringToken::new(text, false, kind).clean_text(self.f);
+        self.long_bytes(&printed)
     }
 
     /// A keyword or a punctuator.
@@ -496,15 +695,24 @@ impl<'a> Line<'_, 'a> {
     /// The source at `span`: a name, a keyword, a literal.
     #[inline(always)]
     fn source(&mut self, span: Span) -> Written {
-        let source = self.source;
         if span.len() <= 16
-            && let Some(block) = source
+            && let Some(block) = (self.plain_source)
                 .get(span.start as usize..)
                 .and_then(|rest| rest.first_chunk::<16>())
         {
             return self.chunk(block, span.len() as usize);
         }
-        self.long_bytes(source.get(span.range()).ok_or(Refused)?)
+        self.long_source(span)
+    }
+
+    #[inline(never)]
+    fn long_source(&mut self, span: Span) -> Written {
+        let text = self.source.get(span.range()).ok_or(Refused)?;
+        // A name is printed without escapes.
+        if self.is_careful && strings::contains_char(text, b'\\') {
+            return Err(Refused);
+        }
+        self.long_bytes(text)
     }
 
     #[inline]
@@ -524,8 +732,15 @@ impl<'a> Line<'_, 'a> {
     fn check_source_up_to(&mut self, end: u32) -> Written {
         let span = Span::new(self.checked_to, end.max(self.checked_to));
         self.checked_to = span.end;
-        let is_fine = self.f.is_plain_source(span)
-            && (self.is_quiet || !self.f.comments().has_comment_or_owner_in(span))
+        if self.is_careful {
+            if has_odd_line(self.text_of(span)) {
+                return Err(Refused);
+            }
+        } else if !self.f.is_plain_source(span) {
+            self.is_odd = true;
+            return Err(Refused);
+        }
+        let is_fine = (self.is_quiet || !self.f.comments().has_comment_or_owner_in(span))
             && !has_empty_line(self.text_of(span));
         match is_fine {
             true => Ok(()),
@@ -536,9 +751,10 @@ impl<'a> Line<'_, 'a> {
     /// Ends the text of the current line, which `after` more columns follow.
     fn end_text(&mut self, after: Option<u32>) -> Written {
         let len = self.len - self.start;
+        let width = len - self.extra;
         let after = after.filter(|_| self.limit != usize::MAX);
         if let Some(after) = after
-            && len + self.taken + after as usize > self.room
+            && width + self.taken + after as usize > self.room
         {
             self.is_too_wide = true;
             return Err(Refused);
@@ -547,17 +763,18 @@ impl<'a> Line<'_, 'a> {
             self.parts.push(Part::Text {
                 start: self.start as u32,
                 len: len as u32,
+                width: width as u32,
                 after,
             });
         }
-        self.start = self.len;
+        (self.start, self.extra) = (self.len, 0);
         Ok(())
     }
 
     /// Starts a line after a part, of which `taken` columns are on it.
     fn start_line(&mut self, taken: usize) {
         self.taken = taken;
-        self.start = self.len;
+        (self.start, self.extra) = (self.len, 0);
         self.limit = self.start + self.room.saturating_sub(taken);
     }
 

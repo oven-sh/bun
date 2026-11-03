@@ -532,6 +532,28 @@ pub fn format_with(
     scratch: &mut Scratch,
     out: &mut Vec<u8>,
 ) -> Result<Option<u32>, FormatError> {
+    match format_once(path, text, parser, options, parse_javascript, scratch, out) {
+        // A short cut in a script that rests on a wrong guess shows when the document is printed.
+        Err(FormatError::InvalidDocument) if !options.no_short_cuts => {
+            let options = FormatOptions {
+                no_short_cuts: true,
+                ..options.clone()
+            };
+            format_once(path, text, parser, &options, parse_javascript, scratch, out)
+        }
+        result => result,
+    }
+}
+
+fn format_once(
+    path: &[u8],
+    text: &[u8],
+    parser: Parser,
+    options: &FormatOptions,
+    parse_javascript: Option<JavaScriptParser<'_>>,
+    scratch: &mut Scratch,
+    out: &mut Vec<u8>,
+) -> Result<Option<u32>, FormatError> {
     if let Parser::AngularExpression(root) = parser {
         return format_angular_expression(text, root, options, parse_javascript, scratch, out)
             .map(|()| None);
@@ -623,6 +645,7 @@ pub fn format_with(
         let mut context =
             JsFormatContext::without_file(options.clone(), &crate::js::comments::NO_COMMENTS);
         context.parse_javascript = parse_javascript;
+        context.short_cuts = crate::js::flat::ShortCuts::for_host(&options);
         let root = crate::ir::run::write_with(context, &text, &mut scratch.document, |f| {
             result = write_document_with_cursor(
                 &text,

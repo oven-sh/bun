@@ -317,6 +317,9 @@ impl<'a> Line<'_, 'a> {
 
     /// A string literal at `span`, with the quotes of the options. The text has no backslash.
     pub(super) fn string(&mut self, span: Span) -> Written {
+        if self.is_careful {
+            return self.odd_string(span);
+        }
         let text = self.text_of(span);
         let [first @ (b'"' | b'\''), content @ .., last] = text else {
             return Err(Refused);

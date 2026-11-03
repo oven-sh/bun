@@ -287,7 +287,7 @@ impl<'a> Line<'_, 'a> {
             }
             _ => return Err(Refused),
         }
-        self.byte(b';')
+        self.semicolon()
     }
 
     /// `a, b`, or `a = 1,` and the others each on a line, after the keyword. With the `;`.

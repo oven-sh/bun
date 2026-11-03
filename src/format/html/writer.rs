@@ -478,6 +478,7 @@ impl<'w, 'f> Writer<'w, 'f> {
     pub(crate) fn foreign<R>(&mut self, write: impl FnOnce(&mut Formatter<'f>) -> R) -> R {
         self.flush();
         let start = self.f.elements().len();
+        (self.f.context_mut().short_cuts).start_at(self.indent_level);
         let result = write(self.f);
         if self.f.elements().len() > start {
             self.empty_line = EmptyLine::No;

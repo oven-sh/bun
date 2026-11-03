@@ -254,7 +254,10 @@ pub(crate) fn with_file(
                         result = Attempt::Sorted(sorted);
                         return;
                     }
-                    let context = JsFormatContext::new(file, options.clone(), comments);
+                    let mut context = JsFormatContext::new(file, options.clone(), comments);
+                    if matches!(piece, Piece::Script(_)) {
+                        context.short_cuts = f.context().short_cuts.for_script(file, &options);
+                    }
                     let is_written = match file.comment_count() {
                         0 => f.write_embedded(context, file.text(), |f| write(file, f)),
                         // Prettier's `ensureAllCommentsPrinted`. It throws, so the code is left as written:

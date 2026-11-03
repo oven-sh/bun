@@ -71,7 +71,9 @@ impl<'a> Line<'_, 'a> {
         self.byte(b'(')?;
         self.list(func.params().iter(), |line, param| {
             // A decorator, or an accessibility modifier, which puts each parameter on a line.
-            if !param.modifiers().is_empty() {
+            if !param.modifiers().is_empty()
+                || (param.is_rest() && (param.default().is_some() || param.is_optional()))
+            {
                 return Err(Refused);
             }
             if param.is_rest() {

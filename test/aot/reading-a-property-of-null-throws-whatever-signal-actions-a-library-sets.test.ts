@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, isMusl, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { hasSmallHeap, saysWhereItIs } from "./harness/where-a-child-is";
 import { describe, test } from "./supported";
 
 // Compiled code turns a fault at one of its own null checks into a TypeError, and one at the poll of a loop into a look at what
@@ -329,6 +330,7 @@ async function run(cmd: string[], cwd: string, env: Record<string, string> = {})
     stdout: "pipe",
     stderr: "pipe",
   });
+  using _where = hasSmallHeap(env) ? saysWhereItIs(proc.pid, cmd) : undefined;
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode, signalCode: proc.signalCode };
 }

@@ -28,16 +28,37 @@ function look(pid: number): Look {
   return threads;
 }
 
-/** While the child has not ended, its threads go to stderr: after `first` milliseconds, and then every `every`. Only Linux has the files. */
-export function saysWhereItIs(pid: number, cmd: string[], first = 20_000, every = 30_000): Disposable {
+/** A child with one of these has a heap that is small on purpose: it ends in a second or two, or it does not end. */
+export const hasSmallHeap = (env: Record<string, string | undefined>) =>
+  !!(env.BUN_JSC_markedBlockCageSizeInMB || env.BUN_JSC_structureHeapSizeInKB);
+
+/**
+ * While the child has not ended, its threads go to `say`: after `first` milliseconds, and then every `every`, as long as they are not
+ * where the last look found them. Two looks that are `span` apart make one list. Only Linux has the files.
+ */
+export function saysWhereItIs(
+  pid: number,
+  cmd: string[],
+  { first = 20_000, every = 30_000, span = 1000, say = console.error as (text: string) => void } = {},
+): Disposable & { readonly lists: number } {
   let timer: Timer | undefined;
-  if (process.platform !== "linux") return { [Symbol.dispose]() {} };
+  let lists = 0;
+  let said = "";
+  const ends = {
+    get lists() {
+      return lists;
+    },
+    [Symbol.dispose]() {
+      clearTimeout(timer);
+    },
+  };
+  if (process.platform !== "linux") return ends;
   const started = performance.now();
   const later = (run: () => void, ms: number) => {
     timer = setTimeout(run, ms);
     timer.unref();
   };
-  const say = () => {
+  const list = () => {
     let before: Look;
     try {
       before = look(pid);
@@ -46,28 +67,26 @@ export function saysWhereItIs(pid: number, cmd: string[], first = 20_000, every 
     }
     later(() => {
       let after: Look;
-      let mapped = "";
       try {
         after = look(pid);
-        mapped = readFileSync(`/proc/${pid}/maps`, "utf8").split("\n", 1)[0];
       } catch {
         return;
       }
-      const lines = [...after].map(
-        ([tid, thread]) =>
-          `  ${tid} ${thread.name}: ${thread.state}, ${thread.ticks - (before.get(tid)?.ticks ?? 0)} ticks in a second, ${thread.where}`,
-      );
-      const seconds = Math.round((performance.now() - started) / 1000);
-      console.error(
-        `${cmd.join(" ")} (${pid}) has not ended after ${seconds} s. Its threads:\n${lines.join("\n")}\n  mapped: ${mapped}`,
-      );
-      later(say, every - 1000);
-    }, 1000);
+      const threads = [...after]
+        .map(
+          ([tid, thread]) =>
+            `  ${tid} ${thread.name}: ${thread.state}, ${thread.ticks - (before.get(tid)?.ticks ?? 0)} ticks in ${span} ms, ${thread.where}`,
+        )
+        .join("\n");
+      if (threads !== said) {
+        said = threads;
+        const seconds = Math.round((performance.now() - started) / 1000);
+        say(`${cmd.join(" ")} (${pid}) has not ended after ${seconds} s. Its threads:\n${threads}`);
+      }
+      lists++;
+      later(list, Math.max(every - span, 0));
+    }, span);
   };
-  later(say, first);
-  return {
-    [Symbol.dispose]() {
-      clearTimeout(timer);
-    },
-  };
+  later(list, first);
+  return ends;
 }

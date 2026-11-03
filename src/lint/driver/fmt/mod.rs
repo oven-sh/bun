@@ -2018,17 +2018,6 @@ impl Run<'_> {
                 format_at(without_plugins[at])
             });
         }
-        // Only a file that this formatted is said to have been formatted without its plugin.
-        for &at in &without_plugins {
-            let (index, target) = work[at];
-            let is_formatted = !matches!(
-                results.lock()[index],
-                Some(Done::Failed(_) | Done::NotFormatted(_))
-            );
-            if is_formatted {
-                count_extension(&mut needs_plugins.0, &target.path);
-            }
-        }
         let deferred: Vec<usize> = (0..work.len())
             .filter(|&at| matches!(results.lock()[work[at].0], Some(Done::Deferred)))
             .collect();
@@ -2054,6 +2043,17 @@ impl Run<'_> {
                     skips_class_sorting.store(true, Ordering::Relaxed);
                     pool.for_each(still_deferred.len(), 1, &|at| format_at(still_deferred[at]));
                 }
+            }
+        }
+        // Only a file that this formatted is said to have been formatted without its plugin.
+        for &at in &without_plugins {
+            let (index, target) = work[at];
+            let is_formatted = matches!(
+                results.lock()[index],
+                Some(Done::Unchanged | Done::Different(_))
+            );
+            if is_formatted {
+                count_extension(&mut needs_plugins.0, &target.path);
             }
         }
         let Routing {

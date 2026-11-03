@@ -702,6 +702,8 @@ struct Directory {
     /// True if the `ignorePatterns` of the configuration above it match it. It's still listed, because a configuration
     /// file in it starts over.
     is_ignored_by_configuration: bool,
+    /// Where it is in the listing of its parent directory, after the same about that directory, and so on.
+    position: Vec<u32>,
 }
 
 /// About what it takes to list a directory and then to format what is in it, in nanoseconds.
@@ -732,6 +734,7 @@ fn search(
             base,
         ),
         above,
+        position: Vec::new(),
     };
     // Adds what is in `directory`.
     let search_in =
@@ -767,7 +770,7 @@ fn search(
                 });
             }
             // Links are neither followed nor formatted.
-            for entry in entries.iter().filter(|it| !it.is_link) {
+            for (index, entry) in entries.iter().enumerate().filter(|it| !it.1.is_link) {
                 let path = paths::join(&directory.path, &entry.name);
                 if ignored.is_never_visited(&path, &entry.name, entry.is_directory) {
                     continue;
@@ -794,6 +797,7 @@ fn search(
                             is_first: false,
                             git: git.clone(),
                             is_ignored_by_configuration,
+                            position: [&directory.position[..], &[index as u32]].concat(),
                         });
                     }
                 } else if !is_ignored_by_configuration
@@ -823,9 +827,11 @@ fn search(
     // About what it takes to format the files that are found, in nanoseconds.
     let time_for_files = AtomicU64::new(0);
     let searchers = pool.threads();
-    let mut found: Vec<Guarded<Vec<Target>>> = (0..searchers).map(|_| Default::default()).collect();
+    type Warnings = Vec<(Vec<u32>, Vec<Vec<u8>>)>;
+    let mut found: Vec<Guarded<(Vec<Target>, Warnings)>> =
+        (0..searchers).map(|_| Default::default()).collect();
     let search_all = |searcher: usize| {
-        let (mut files, mut own) = (Vec::new(), VecDeque::new());
+        let (mut files, mut own, mut warnings) = (Vec::new(), VecDeque::new(), Vec::new());
         loop {
             let Some(directory) = own.pop_front().or_else(|| given_away.lock().pop()) else {
                 idle_threads.fetch_add(1, Ordering::SeqCst);
@@ -842,7 +848,11 @@ fn search(
             };
             let (files_before, own_before) = (files.len(), own.len());
             if !has_failed.load(Ordering::Relaxed) {
-                search_in(&directory, &mut files, &mut own);
+                let held_back =
+                    Configs::holding_back_warnings(|| search_in(&directory, &mut files, &mut own));
+                if !held_back.is_empty() {
+                    warnings.push((directory.position, held_back));
+                }
             }
             let left = unfinished.fetch_add(own.len() - own_before, Ordering::SeqCst)
                 + (own.len() - own_before)
@@ -866,14 +876,24 @@ fn search(
             // This thread, or the one that started the search, is one of them.
             pool.call_up(pool.threads_for(time.saturating_add(to_come)) - 1);
         }
-        *found[searcher].lock() = files;
+        *found[searcher].lock() = (files, warnings);
     };
     let threads = pool.threads_for(TIME_FOR_A_DIRECTORY);
     pool.for_each_while(threads, searchers, 1, &search_all, Meanwhile::Helps);
+    // The order in which one thread comes by the directories: those closer to `base` first.
+    let mut warnings: Warnings = (found.iter_mut())
+        .flat_map(|it| std::mem::take(&mut it.get_mut().1))
+        .collect();
+    index_sort::sort_slice_by(&mut warnings[..], |a, b| {
+        (a.0.len(), &a.0).cmp(&(b.0.len(), &b.0))
+    });
+    for warning in warnings.into_iter().flat_map(|it| it.1) {
+        configs.note_warning(warning);
+    }
     match failure.get_mut().take() {
         Some(error) => Err(error),
         None => Ok((found.iter_mut())
-            .flat_map(|it| std::mem::take(it.get_mut()))
+            .flat_map(|it| std::mem::take(&mut it.get_mut().0))
             .collect()),
     }
 }

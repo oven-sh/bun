@@ -31,6 +31,7 @@ use bun_lint::options::Json;
 use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_threading::Guarded;
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::sync::{Arc, OnceLock};
 
 /// Configuration file names, in priority order: oxfmt's, then Prettier's `CONFIG_FILES`.
@@ -1034,6 +1035,11 @@ struct Listed {
     is_project_root: bool,
 }
 
+thread_local! {
+    /// [`Configs::holding_back_warnings`]
+    static HELD_BACK: RefCell<Option<Vec<Vec<u8>>>> = const { RefCell::new(None) };
+}
+
 pub(crate) struct Configs<'c> {
     options: Cow<'c, Options>,
     environment: &'c Environment<'c>,
@@ -1224,10 +1230,32 @@ impl<'c> Configs<'c> {
 
     fn warn(&self, parts: &[&[u8]]) {
         let warning = parts.concat();
+        let is_held_back = HELD_BACK.with_borrow_mut(|held_back| match held_back {
+            Some(held_back) => {
+                held_back.push(warning.clone());
+                true
+            }
+            None => false,
+        });
+        if !is_held_back {
+            self.note_warning(warning);
+        }
+    }
+
+    /// Adds a warning that was [held back](Configs::holding_back_warnings).
+    pub(crate) fn note_warning(&self, warning: Vec<u8>) {
         let mut warnings = self.warnings.lock();
         if !warnings.contains(&warning) {
             warnings.push(warning);
         }
+    }
+
+    /// Calls `work` and returns the warnings that it leads to on this thread. They aren't noted: threads that work side
+    /// by side would note them in any order.
+    pub(crate) fn holding_back_warnings(work: impl FnOnce()) -> Vec<Vec<u8>> {
+        HELD_BACK.set(Some(Vec::new()));
+        work();
+        HELD_BACK.take().unwrap_or_default()
     }
 
     /// Prettier's `loadConfig`. `None` if the file has no configuration, like most `package.json` files.

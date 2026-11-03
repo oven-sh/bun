@@ -9267,6 +9267,31 @@ try {
       }
     });
 
+    test("warnings about configuration files come in the same order on any number of threads", async () => {
+      const files: Record<string, string> = {};
+      for (let i = 0; i < 24; i++) {
+        const directory = `${"sub/".repeat(i % 3)}d${i}`;
+        files[`${directory}/.prettierrc`] = JSON.stringify({ plugins: [`prettier-plugin-number-${i}`] });
+        files[`${directory}/a.ts`] = ugly;
+      }
+      using dir = tempDir("bun-format", files);
+      const run = async (threads: string[]) => {
+        await using proc = spawn({
+          cmd: [...command, "--check", "--allow-unsupported", ...threads],
+          env,
+          cwd: String(dir),
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        return (await proc.stderr.text()).split("\n").filter(line => line.includes("prettier-plugin-number-"));
+      };
+      const one = await run(["--threads=1"]);
+      expect(one).toHaveLength(24);
+      for (const threads of [["--threads=2"], ["--threads=13"], [], []]) {
+        expect(await run(threads)).toEqual(one);
+      }
+    });
+
     test("files of one directory get the options of the overrides and sections that match each of them", async () => {
       const text = `function f() {\n  return "a";\n}\n`;
       const names = ["a.ts", "b.ts", "a.test.ts", "b.test.ts", "a.spec.ts", "b.spec.ts", "a.test.mts", "b.test.mts"];

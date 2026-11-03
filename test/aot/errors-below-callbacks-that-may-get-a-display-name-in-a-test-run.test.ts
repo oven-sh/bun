@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
@@ -89,26 +89,80 @@ test("another file, so that the run has pieces", () => expect(1).toBe(1));
 `,
 };
 
-async function seenIn(directory: string, words: string | undefined, flag?: string, more: Record<string, string> = {}) {
-  const flags = flag ? [flag] : [];
-  const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words, ...more } : bunEnv;
-  const { stdout, exitCode } = await run([bunExe(), "test", "--isolate", ...flags], directory, env);
-  return { seen: stdout.split("\n").filter(line => line.startsWith("SEEN ")), exitCode };
+// What a.test.js prints for one probe: `written` are the frames of the probe as it is written, `named` once the test file has named it.
+const seenOf = (label: string, written: string, named: string) => [
+  `SEEN ${label} 200`,
+  `SEEN ${label}, as written | ${written} < visit < step < each < inThePackage < forEachOf < work < <anonymous>`,
+  `SEEN ${label}, one of the application named | ${written} < visit < step < for each < inThePackage < forEachOf < work < <anonymous>`,
+  `SEEN ${label}, one of the package too | ${written} < visit < step < for each < in a package < forEachOf < work < <anonymous>`,
+  `SEEN ${label}, one of the test file too | ${named} < visit < step < for each < in a package < forEachOf < work < <anonymous>`,
+  `SEEN ${label}, one as written again, behind a collection | ${named} < visit < step < each < in a package < forEachOf < work < <anonymous>`,
+  `SEEN ${label}, others | ${named} < visit < step < each < inThePackage < forEachOf < work < <anonymous>`,
+];
+// Of every run: plain Bun's, and each compiled one.
+const expected = {
+  seen: [
+    ...seenOf("made", "made", "probed by made"),
+    ...seenOf("missing", "statSync < missing", "statSync < probed by missing"),
+    ...seenOf("thrown", "thrown", "probed by thrown"),
+    "SEEN at most 1 | <anonymous>",
+    "SEEN at most 2 | <anonymous> < visit",
+    "SEEN at most 3 | <anonymous> < visit < step",
+    "SEEN at most 4 | <anonymous> < visit < step < for each",
+    "SEEN at most 5 | <anonymous> < visit < step < for each < in a package",
+    "SEEN at most 6 | <anonymous> < visit < step < for each < in a package < forEachOf",
+    "SEEN at most 100 | <anonymous> < visit < step < for each < in a package < forEachOf < work < <anonymous>",
+  ],
+  // Both test files ran.
+  summary: ["2 pass", "0 fail", "2 expect() calls", "Ran 2 tests across 2 files."],
+  exitCode: 0,
+};
+
+async function seenIn(words?: string, more: Record<string, string> = {}) {
+  using dir = tempDir("aot-errors-below-callbacks-that-may-get-a-display-name", files);
+  // A debug build of Bun lists the private helpers of built-ins in a stack unless it is told not to, here the one that flatMap calls.
+  const env = { ...bunEnv, BUN_JSC_showPrivateScriptsInStackTraces: "0", BUN_DEBUG_TEST_AOT_WORDS: words, ...more };
+  const command = [bunExe(), "test", "--isolate", ...(words ? ["--aot"] : [])];
+  const { stdout, stderr, exitCode } = await run(command, String(dir), env);
+  const counts = /^ *(\d+ (?:pass|skip|todo|fail|errors?|expect\(\) calls)$|Ran \d+ tests? across \d+ files?\.)/gm;
+  return {
+    seen: stdout.split("\n").filter(line => line.startsWith("SEEN ")),
+    summary: [...stderr.matchAll(counts)].map(match => match[1]),
+    // run() holds a run that asks for layers to them. Nothing else holds the other runs to one program.
+    builtAsOneProgram: /^AOT test run \| one program\b/m.test(stderr),
+    exitCode,
+  };
 }
 
-test("a stack through three programs names its callbacks as plain Bun does", async () => {
-  using dir = tempDir("aot-errors-below-callbacks-that-may-get-a-display-name", files);
-  const plain = await seenIn(String(dir), undefined);
-  expect(plain.exitCode).toBe(0);
-  expect(plain.seen.length).toBe(28);
-  expect(plain.seen[1]).toContain("made < visit < step < each < inThePackage < forEachOf < work");
-  expect(plain.seen[4]).toContain("probed by made < visit < step < for each < in a package < forEachOf < work");
-  expect(await seenIn(String(dir), "TestRunLayers:0", "--aot")).toEqual(plain);
-  expect(await seenIn(String(dir), "TestRunLayers:1,TestRunPartFiles:1", "--aot")).toEqual(plain);
-  expect(await seenIn(String(dir), "TestRunLayers:2,TestRunPartFiles:1", "--aot")).toEqual(plain);
-  // The run time holds every trace that it keeps as return addresses against the frames listed one by one.
-  const validating = { BUN_JSC_validateAOTRuntime: "1" };
-  expect(await seenIn(String(dir), "TestRunLayers:0", "--aot", validating)).toEqual(plain);
-  expect(await seenIn(String(dir), "TestRunLayers:1,TestRunPartFiles:1", "--aot", validating)).toEqual(plain);
-  expect(await seenIn(String(dir), "TestRunLayers:2,TestRunPartFiles:1", "--aot", validating)).toEqual(plain);
-}, 480_000);
+test.concurrent("plain Bun names the callbacks of a stack through three programs", async () => {
+  expect(await seenIn()).toEqual({ ...expected, builtAsOneProgram: false });
+});
+
+// The run time holds every trace that it keeps as return addresses against the frames listed one by one.
+const validating = { BUN_JSC_validateAOTRuntime: "1" };
+const oneProgram = "TestRunLayers:0";
+const forms: [form: string, words: string, more: Record<string, string>][] = [
+  ["one program", oneProgram, {}],
+  ["one layer", "TestRunLayers:1,TestRunPartFiles:1", {}],
+  ["two layers", "TestRunLayers:2,TestRunPartFiles:1", {}],
+  ["one program that validates", oneProgram, validating],
+  ["one layer that validates", "TestRunLayers:1,TestRunPartFiles:1", validating],
+  ["two layers that validate", "TestRunLayers:2,TestRunPartFiles:1", validating],
+];
+
+// A debug build of Bun takes a minute and a half for one run in layers, on a machine that does nothing else.
+if (isDebug)
+  console.error(
+    "SKIPPED: test/aot/errors-below-callbacks-that-may-get-a-display-name-in-a-test-run.test.ts: the runs in layers: a debug build of Bun takes a minute and a half or more for each, a release build runs them",
+  );
+
+// Each run is a test of its own, so `bun test --max-concurrency` says how many of them are built at once.
+for (const [form, words, more] of forms) {
+  test.skipIf(isDebug && words !== oneProgram).concurrent(
+    `a stack through three programs names its callbacks as plain Bun does: ${form}`,
+    async () => {
+      expect(await seenIn(words, more)).toEqual({ ...expected, builtAsOneProgram: words === oneProgram });
+    },
+    480_000,
+  );
+}

@@ -104,51 +104,43 @@ console.log(lines.join("\n"));
 // CHECK-NEXT: b0(v0: undefined|null|Request):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = TypeTest v0 testedType=undefined|null
-// CHECK-NEXT: Branch v1 -> taken b2(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b2(v2):
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3() frequency=Unlikely:
-// CHECK-NEXT: v3 = NewRuntimeError runtimeError=NotDestructurable name="url"
-// CHECK-NEXT: Throw v3
-// CHECK-NEXT: b4(v4):
-// CHECK-NEXT: v5 = PropGet v0 key="url"
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|string site=[[w_2]]} illTypedCause=Assertion
-// CHECK-NEXT: v7 = PropGet v0 key="url"
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|string site=[[w_3]]} illTypedCause=Assertion
-// CHECK-NEXT: v9 = PropGet v0 key="headers"
-// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|Headers flags=[IsExpected]}
-// CHECK-NEXT: v11 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v12 = CheckInitialized v11 name="tidy"
-// CHECK-NEXT: v13 = Call v12, -, v6 calleeName="tidy"
-// CHECK-NEXT: v14 = Convert v13 declared={type=undefined|null|string site=[[w_5]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v15 = StrictEq v6, v8
-// CHECK-NEXT: v16 = PropGet v0 key="method"
-// CHECK-NEXT: v17 = Convert v16 declared={type=undefined|null|string site=[[w_6]]} illTypedCause=Assertion
-// CHECK-NEXT: v18 = PropGet v0 key="headers"
-// CHECK-NEXT: v19 = Convert v18 declared={type=undefined|null|Headers flags=[IsExpected]}
-// CHECK-NEXT: v20 = StrictEq v10, v19
-// CHECK-NEXT: v21 = PropGet v0 key="headers"
-// CHECK-NEXT: v22 = Convert v21 declared={type=undefined|null|Headers flags=[IsExpected]}
-// CHECK-NEXT: v23 = PropGet v22 key="get"
-// CHECK-NEXT: v24 = String string="x-one"
-// CHECK-NEXT: v25 = Call v23, v22, v24 calleeKey="get" calleeName="request.headers.get"
-// CHECK-NEXT: v26 = Convert v25 declared={type=undefined|null|string site=[[w_7]] flags=[OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v27 = PropGet v0 key="signal"
-// CHECK-NEXT: v28 = Convert v27 declared={type=undefined|null|AbortSignal flags=[IsExpected]}
-// CHECK-NEXT: v29 = PropGet v0 key="signal"
-// CHECK-NEXT: v30 = Convert v29 declared={type=undefined|null|AbortSignal flags=[IsExpected]}
-// CHECK-NEXT: v31 = StrictEq v28, v30
-// CHECK-NEXT: v32 = PropGet v0 key="body"
-// CHECK-NEXT: v33 = Convert v32 declared={type=undefined|null|ReadableStream flags=[IsExpected]}
-// CHECK-NEXT: v34 = PropGet v0 key="body"
-// CHECK-NEXT: v35 = Convert v34 declared={type=undefined|null|ReadableStream flags=[IsExpected]}
-// CHECK-NEXT: v36 = StrictEq v33, v35
-// CHECK-NEXT: v37 = NewArray v14, v15, v17, v20, v26, v31, v36 contents=undefined|null|boolean|string
-// CHECK-NEXT: v38 = PropGet v37 key="join"
-// CHECK-NEXT: v39 = String string=" "
-// CHECK-NEXT: v40 = Call v38, v37, v39 calleeKey="join" calleeName="join"
-// CHECK-NEXT: ReturnCall v40 casts=[{declared={type=undefined|null|string site=[[w_8]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=[[w_1]] flags=[OmitsNull, OmitsUndefined]}}]
+// CHECK-NEXT: v1 = PropGet v0 key="url"
+// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|string site=[[w_2]]} illTypedCause=Assertion
+// CHECK-NEXT: v3 = PropGet v0 key="url"
+// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|string site=[[w_3]]} illTypedCause=Assertion
+// CHECK-NEXT: v5 = PropGet v0 key="headers"
+// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|Headers flags=[IsExpected]}
+// CHECK-NEXT: v7 = GetModuleVariable variable=[[g_4]]
+// CHECK-NEXT: v8 = CheckInitialized v7 name="tidy"
+// CHECK-NEXT: v9 = Call v8, -, v2 calleeName="tidy"
+// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|string site=[[w_5]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v11 = StrictEq v2, v4
+// CHECK-NEXT: v12 = PropGet v0 key="method"
+// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|string site=[[w_6]]} illTypedCause=Assertion
+// CHECK-NEXT: v14 = PropGet v0 key="headers"
+// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|Headers flags=[IsExpected]}
+// CHECK-NEXT: v16 = StrictEq v6, v15
+// CHECK-NEXT: v17 = PropGet v0 key="headers"
+// CHECK-NEXT: v18 = Convert v17 declared={type=undefined|null|Headers flags=[IsExpected]}
+// CHECK-NEXT: v19 = PropGet v18 key="get"
+// CHECK-NEXT: v20 = String string="x-one"
+// CHECK-NEXT: v21 = Call v19, v18, v20 calleeKey="get" calleeName="request.headers.get"
+// CHECK-NEXT: v22 = Convert v21 declared={type=undefined|null|string site=[[w_7]] flags=[OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v23 = PropGet v0 key="signal"
+// CHECK-NEXT: v24 = Convert v23 declared={type=undefined|null|AbortSignal flags=[IsExpected]}
+// CHECK-NEXT: v25 = PropGet v0 key="signal"
+// CHECK-NEXT: v26 = Convert v25 declared={type=undefined|null|AbortSignal flags=[IsExpected]}
+// CHECK-NEXT: v27 = StrictEq v24, v26
+// CHECK-NEXT: v28 = PropGet v0 key="body"
+// CHECK-NEXT: v29 = Convert v28 declared={type=undefined|null|ReadableStream flags=[IsExpected]}
+// CHECK-NEXT: v30 = PropGet v0 key="body"
+// CHECK-NEXT: v31 = Convert v30 declared={type=undefined|null|ReadableStream flags=[IsExpected]}
+// CHECK-NEXT: v32 = StrictEq v29, v31
+// CHECK-NEXT: v33 = NewArray v10, v11, v13, v16, v22, v27, v32 contents=undefined|null|boolean|string
+// CHECK-NEXT: v34 = PropGet v33 key="join"
+// CHECK-NEXT: v35 = String string=" "
+// CHECK-NEXT: v36 = Call v34, v33, v35 calleeKey="join" calleeName="join"
+// CHECK-NEXT: ReturnCall v36 casts=[{declared={type=undefined|null|string site=[[w_8]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=[[w_1]] flags=[OmitsNull, OmitsUndefined]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="change"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[f_9]] site=[[w_10]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=[[w_11]] flags=[OmitsNull, OmitsUndefined]}] {

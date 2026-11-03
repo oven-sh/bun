@@ -1069,6 +1069,37 @@ devTest("import.meta.main", {
     await c.expectMessage(false);
   },
 });
+// A minified bundle prints the two reads as one pattern, `let { first, second } = props`. A pattern throws "Cannot
+// destructure property", and the text of the function shows it. The dev server never minifies.
+devTest("declarators that read members of one object stay as they are written", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      function read(props) {
+        const first = props.first,
+          second = props.second;
+        return [first, second];
+      }
+      export default function (req, meta) {
+        let message = "did not throw";
+        try {
+          read(undefined);
+        } catch (error) {
+          message = error.message;
+        }
+        return new Response(message + "\\n" + read.toString().replace(/\\s+/g, " "));
+      }
+    `,
+  },
+  async test(dev) {
+    await dev
+      .fetch("/")
+      .equals(
+        "undefined is not an object (evaluating 'props.first')\n" +
+          "function read(props) { const first = props.first, second = props.second; return [first, second]; }",
+      );
+  },
+});
 devTest("commonjs forms", {
   timeoutMultiplier: 2,
   files: {

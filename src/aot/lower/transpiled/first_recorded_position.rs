@@ -18,8 +18,6 @@ use bun_ast::{AssignTarget, Binding, E, Expr, G, Loc, OpCode, Ref, S, Stmt, Stmt
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
-use super::JoinedDeclarator;
-
 #[derive(Copy, Clone)]
 enum First {
     At(Loc),
@@ -92,8 +90,6 @@ fn valid_behind(closer: Loc, opener: Loc) -> Option<Loc> {
 
 pub(super) struct Constructor<'a> {
     symbols: &'a [Symbol],
-    /// Sorted by the object.
-    joined_declarators: &'a [JoinedDeclarator],
     variables: &'a Variables,
     /// The number that `variables` has for the constructor.
     closure: u32,
@@ -113,7 +109,6 @@ const MAX_DEPTH: u32 = 200;
 /// `None`: nothing is recorded, or this does not know the form. JSC then names the parameters.
 pub(super) fn find_first_recorded_position_of_class(
     symbols: &[Symbol],
-    joined_declarators: &[JoinedDeclarator],
     variables: &Variables,
     class: &G::Class,
 ) -> Option<u32> {
@@ -130,13 +125,12 @@ pub(super) fn find_first_recorded_position_of_class(
         return None;
     }
     let function = properties.iter().find_map(find_constructor)?;
-    find_first_recorded_position(symbols, joined_declarators, variables, function, true)
+    find_first_recorded_position(symbols, variables, function, true)
 }
 
 /// The same for the function itself: the constructor of a class, or a plain function.
 pub(super) fn find_first_recorded_position(
     symbols: &[Symbol],
-    joined_declarators: &[JoinedDeclarator],
     variables: &Variables,
     function: &G::Fn,
     is_strict: bool,
@@ -154,7 +148,6 @@ pub(super) fn find_first_recorded_position(
     }
     let constructor = Constructor {
         symbols,
-        joined_declarators,
         variables,
         closure,
         has_direct_eval: variables.holds_all_variables_in_scope[closure as usize],
@@ -1090,11 +1083,7 @@ impl Constructor<'_> {
                 continue;
             };
             let place = Place::new(Level::Comma);
-            let printed_object = self.find_printed_object(value);
             let found = match binding.data {
-                _ if printed_object.is_some() && !local.kind.is_using() => {
-                    First::at(printed_object)
-                }
                 // Asking for the method that disposes of it is recorded at the name.
                 B::BIdentifier(_) if local.kind.is_using() => self
                     .first_of_binding(binding, None)
@@ -1128,18 +1117,6 @@ impl Constructor<'_> {
             ExprData::EDot(_) | ExprData::EIndex(_) => self.first_of_target(target, None),
             _ => First::At(brace),
         }
-    }
-
-    /// `a = o.x, b = o.y` is printed `{ x: a, y: b } = o`: the `o` that is printed.
-    fn find_printed_object(&self, value: Expr) -> Option<Loc> {
-        let ExprData::EDot(access) = value.data else {
-            return None;
-        };
-        let object = u32::try_from(access.target.loc.start).ok()?;
-        let joined = self.joined_declarators;
-        let index = joined.binary_search_by_key(&object, |declarator| declarator.object);
-        let start = i32::try_from(joined[index.ok()?].printed_object).ok()?;
-        Some(Loc { start })
     }
 
     /// What storing into the variable of `for (.. in ..)` records.

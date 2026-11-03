@@ -1,4 +1,4 @@
-// Bun's transpiler prints neighboring declarations that read members of one name as one pattern, `const { x, y } = o`: each line has the words and the places of what is thrown there.
+// Bun's transpiler prints neighboring declarations that read members of one name as they are written, and not as one pattern, `const { x, y } = o`: each line has the words and the places of what is thrown there.
 const frames = error => error.stack.split("\n").slice(1, 3).map(line => line.replace(/^.*?([a-zA-Z<>.]+) \(.*:(\d+:\d+)\)$/, "$1@$2").replace(/^.*:(\d+:\d+)$/, "@$1")).join(" ");
 const show = (f, ...a) => { try { console.log(f.name, JSON.stringify(f(...a))); } catch (error) { console.log(f.name, error.name, error.message.replace(/ \(evaluating .*\)$/, ""), frames(error)); } };
 function two(o) { const x = o.x; const y = o.y; return [x, y]; }

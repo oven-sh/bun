@@ -1254,6 +1254,7 @@ pub(crate) fn generate_entry_point_tail_js(
     }
 
     let print_options = js_printer::Options {
+        bundling: true,
         // TODO: IIFE indent
         indent: Default::default(),
         has_run_symbol_renamer: true,

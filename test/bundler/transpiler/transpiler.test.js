@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, bunRun, hideFromStackTrace, integersThatNeedRounding, isDebug, tempDir } from "harness";
 import { join } from "path";
+import { createContext, runInContext } from "vm";
 
 describe("Bun.Transpiler", () => {
   const transpiler = new Bun.Transpiler({
@@ -6553,318 +6554,163 @@ describe("multi-line comment scanning", () => {
   });
 });
 
-// The printer folds `var a = obj.x, b = obj.y` into `var { x: a, y: b } = obj`.
-// A pattern evaluates `obj` once, so a declarator that rebinds `obj` must end
-// the group. A `var` that re-declares a parameter or an earlier `var` gets its
-// own symbol, linked to the existing one. The check has to compare the linked
-// symbols, or `var n = n.next, n = n.next` folds into `{ next: n, next: n } = n`
-// and both members read the original `n`.
-describe("same-target destructuring with a re-declared target", () => {
+// A minified bundle folds `var a = obj.x, b = obj.y` into
+// `var { x: a, y: b } = obj`. test/bundler/bundler_minify.test.ts holds that
+// fold to its rules. A pattern is another text to run: it throws "Cannot
+// destructure property" on the line of its second declarator, it reads `obj`
+// once, and `toString()` shows it. So text that is printed to run in place of
+// a file, or for the caller to run, keeps the reads as they are written.
+describe("declarators that read members of one object", () => {
   const plain = new Bun.Transpiler({ loader: "js" });
+  const forBun = new Bun.Transpiler({ loader: "js", target: "bun" });
   const minifier = new Bun.Transpiler({ loader: "js", minifyWhitespace: true, minify: { syntax: true } });
 
-  it("keeps a run that rebinds a re-declared parameter", () => {
-    expect(plain.transformSync("function f(n) { var n = n.next, n = n.next; return n; }")).toBe(
-      "function f(n) {\n  var n = n.next, n = n.next;\n  return n;\n}\n",
-    );
-    expect(plain.transformSync("function f(o) { var o = o.o, o = o.o, o = o.o; return o; }")).toBe(
-      "function f(o) {\n  var o = o.o, o = o.o, o = o.o;\n  return o;\n}\n",
-    );
-    expect(plain.transformSync("function f() { try {} catch (n) { var n = n.next, n = n.next; } }")).toBe(
-      "function f() {\n  try {} catch (n) {\n    var n = n.next, n = n.next;\n  }\n}\n",
-    );
-  });
-
-  it("keeps a run whose target is re-declared again later in the scope", () => {
-    expect(plain.transformSync("function f(n) { var n = n.next, v = n.v; var n; return v; }")).toBe(
-      "function f(n) {\n  var n = n.next, v = n.v;\n  var n;\n  return v;\n}\n",
-    );
-  });
-
-  it("ends the group at a re-declared parameter that rebinds the target", () => {
-    expect(plain.transformSync("function f(n) { var a = n.next, n = n.next, b = n.v; return [a, n, b]; }")).toBe(
-      "function f(n) {\n  var { next: a, next: n } = n, b = n.v;\n  return [a, n, b];\n}\n",
-    );
-  });
-
-  it("keeps a run that rebinds an earlier var after the statements merge", () => {
-    expect(minifier.transformSync("function f() { var n = L; var n = n.next, n = n.next; return n; }")).toBe(
-      "function f(){var n=L,n=n.next,n=n.next;return n}",
-    );
-    expect(minifier.transformSync("function f() { for (var n = L, n = n.next, n = n.next; ; ) return n; }")).toBe(
-      "function f(){for(var n=L,n=n.next,n=n.next;;)return n}",
-    );
-  });
-
-  it("still folds a run with distinct bindings", () => {
+  it("are printed as written for a target that a minified bundle folds", () => {
+    // A parameter, a local that nothing assigns, and a known pure global.
     expect(plain.transformSync("function f(o) { var a = o.a, b = o.b; return [a, b]; }")).toBe(
-      "function f(o) {\n  var { a, b } = o;\n  return [a, b];\n}\n",
+      "function f(o) {\n  var a = o.a, b = o.b;\n  return [a, b];\n}\n",
     );
-    expect(minifier.transformSync("function f() { var o = M; var a = o.a, b = o.b; return [a, b]; }")).toBe(
-      "function f(){var o=M,{a,b}=o;return[a,b]}",
+    expect(plain.transformSync("function f(o) { const a = o.a, b = o.b; return [a, b]; }")).toBe(
+      "function f(o) {\n  const a = o.a, b = o.b;\n  return [a, b];\n}\n",
     );
-  });
-
-  it("walks a linked list with var re-declarations at runtime", async () => {
-    using dir = tempDir("same-target-redecl", {
-      "walk.js": /* js */ `
-        const L = { v: 0, next: { v: 1, next: { v: 2, next: null } } };
-        const M = { o: { o: { o: "deep" } } };
-        console.log(
-          JSON.stringify({
-            param: (function (n) { var n = n.next, n = n.next; return n.v; })(L),
-            redecl: (function () { var n = L; var n = n.next, n = n.next; return n.v; })(),
-            oneStmt: (function () { var n = L, n = n.next, n = n.next; return n.v; })(),
-            chain3: (function () { var o = M; var o = o.o, o = o.o, o = o.o; return o; })(),
-            arrow: ((n) => { var n = n.next, n = n.next; return n.v; })(L),
-            method: ({ m(n) { var n = n.next, n = n.next; return n.v; } }).m(L),
-            forHead: (function () { for (var n = L, n = n.next, n = n.next; ; ) return n.v; })(),
-            catchParam: (function () { try { throw L; } catch (n) { var n = n.next, n = n.next; return n.v; } })(),
-            laterRedecl: (function (n) { var n = n.next, v = n.v; var n; return v; })(L),
-            mixed: (function (n) { var a = n.next, n = n.next, b = n.v; return [a.v, n.v, b]; })(L),
-            assign: (function () { var n = L; n = n.next, n = n.next; return n.v; })(),
-          }),
-        );
-      `,
-    });
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "walk.js"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({
-      param: 2,
-      redecl: 2,
-      oneStmt: 2,
-      chain3: "deep",
-      arrow: 2,
-      method: 2,
-      forHead: 2,
-      catchParam: 2,
-      laterRedecl: 1,
-      mixed: [1, 1, 1],
-      assign: 2,
-    });
-    expect(exitCode).toBe(0);
-  });
-});
-
-// The pattern reads `obj` once where the declarators read it once each. The
-// fold is only valid when both reads are pure reads of the same value: a
-// symbol this file declares and never assigns, outside `with` and direct
-// eval, or a known pure global like `Math`. An unbound global may be an
-// accessor, and a getter on the first property may reassign a captured
-// variable before the second read.
-describe("same-target destructuring with an unstable target", () => {
-  const plain = new Bun.Transpiler({ loader: "js" });
-  const minifier = new Bun.Transpiler({ loader: "js", minifyWhitespace: true, minify: { syntax: true } });
-
-  it("keeps the reads of an unbound global", () => {
-    expect(plain.transformSync("function f() { var h = CFG.host, p = CFG.port; return [h, p]; }")).toBe(
-      "function f() {\n  var h = CFG.host, p = CFG.port;\n  return [h, p];\n}\n",
-    );
-    expect(minifier.transformSync("function f() { var z = 0, h = CFG.host, p = CFG.port; return [z, h, p]; }")).toBe(
-      "function f(){var z=0,h=CFG.host,p=CFG.port;return[z,h,p]}",
-    );
-  });
-
-  it("keeps the reads of a variable that the file assigns", () => {
-    expect(
-      plain.transformSync("function f() { var o = M; var g = () => { o = N; }; var a = o.a, b = o.b; return [a, b]; }"),
-    ).toBe(
-      "function f() {\n  var o = M;\n  var g = () => {\n    o = N;\n  };\n  var a = o.a, b = o.b;\n  return [a, b];\n}\n",
-    );
-    expect(plain.transformSync("function f(o) { var a = o.a, b = o.b; o = N; return [a, b]; }")).toBe(
-      "function f(o) {\n  var a = o.a, b = o.b;\n  o = N;\n  return [a, b];\n}\n",
-    );
-    expect(plain.transformSync("function f(o) { var a = o.a, b = o.b; o++; return [a, b]; }")).toBe(
-      "function f(o) {\n  var a = o.a, b = o.b;\n  o++;\n  return [a, b];\n}\n",
-    );
-    expect(plain.transformSync("function f(o) { var a = o.a, b = o.b; [o] = N; return [a, b]; }")).toBe(
-      "function f(o) {\n  var a = o.a, b = o.b;\n  [o] = N;\n  return [a, b];\n}\n",
-    );
-    expect(plain.transformSync("function f(o) { var a = o.a, b = o.b; for (o of N); return [a, b]; }")).toBe(
-      "function f(o) {\n  var a = o.a, b = o.b;\n  for (o of N)\n    ;\n  return [a, b];\n}\n",
-    );
-    expect(minifier.transformSync("var o = M; var a = o.a, b = o.b; o = N; console.log(a, b);")).toBe(
-      "var o=M,a=o.a,b=o.b;o=N;console.log(a,b);",
-    );
-  });
-
-  it("keeps the reads when a block var hoists onto the variable", () => {
-    // The block `var o` gets its own symbol, linked to the function-level
-    // `o`. The assignment inside the block must count for the variable.
-    expect(
-      plain.transformSync(
-        "function f() { var g; { var o; g = () => { o = N; }; } var o = M; var a = o.a, b = o.b; return [a, b]; }",
-      ),
-    ).toBe(
-      "function f() {\n  var g;\n  {\n    var o;\n    g = () => {\n      o = N;\n    };\n  }\n  var o = M;\n  var a = o.a, b = o.b;\n  return [a, b];\n}\n",
-    );
-  });
-
-  it("keeps the reads inside a with statement", () => {
-    expect(plain.transformSync("function f(s) { with (s) { var a = o.a, b = o.b; } return [a, b]; }")).toBe(
-      "function f(s) {\n  with (s) {\n    var a = o.a, b = o.b;\n  }\n  return [a, b];\n}\n",
-    );
-    expect(plain.transformSync("function f(s) { var o = M; with (s) { var a = o.a, b = o.b; } return [a, b]; }")).toBe(
-      "function f(s) {\n  var o = M;\n  with (s) {\n    var a = o.a, b = o.b;\n  }\n  return [a, b];\n}\n",
-    );
-    expect(plain.transformSync("function f(s) { with (s) { var a = Math.cos, b = Math.sin; } return [a, b]; }")).toBe(
-      "function f(s) {\n  with (s) {\n    var a = Math.cos, b = Math.sin;\n  }\n  return [a, b];\n}\n",
-    );
-  });
-
-  it("keeps the reads when a direct eval can reach the variable", () => {
-    expect(
-      plain.transformSync("function f() { var o = M; var g = () => eval(s); var a = o.a, b = o.b; return [a, b]; }"),
-    ).toBe("function f() {\n  var o = M;\n  var g = () => eval(s);\n  var a = o.a, b = o.b;\n  return [a, b];\n}\n");
-    // A direct eval anywhere in the file can reach a top-level variable.
-    expect(plain.transformSync("var o = M; var g = () => eval(s); var a = o.a, b = o.b; console.log(a, b);")).toBe(
-      "var o = M;\nvar g = () => eval(s);\nvar a = o.a, b = o.b;\nconsole.log(a, b);\n",
-    );
-    expect(
-      minifier.transformSync("var o = M; function g() { return eval(s); } var a = o.a, b = o.b; console.log(a, b);"),
-    ).toBe("var o=M;function g(){return eval(s)}var a=o.a,b=o.b;console.log(a,b);");
-    expect(plain.transformSync("var o = M; var a = o.a, b = o.b; console.log(a, b, Math.cos, Math.sin);")).toBe(
-      "var o = M;\nvar { a, b } = o;\nconsole.log(a, b, Math.cos, Math.sin);\n",
-    );
-    expect(plain.transformSync("var o = M; var a = Math.cos, b = Math.sin; eval(s); console.log(a, b);")).toBe(
-      "var o = M;\nvar { cos: a, sin: b } = Math;\neval(s);\nconsole.log(a, b);\n",
-    );
-  });
-
-  it("keeps the reads of a parameter when a sloppy function uses arguments", () => {
-    expect(
-      plain.transformSync(
-        "function f(o) { var g = () => { arguments[0] = N; }; var a = o.a, b = o.b; return [a, b]; }",
-      ),
-    ).toBe(
-      "function f(o) {\n  var g = () => {\n    arguments[0] = N;\n  };\n  var a = o.a, b = o.b;\n  return [a, b];\n}\n",
-    );
-    expect(
-      plain.transformSync("function f(o) { var n = arguments.length; var a = o.a, b = o.b; return [a, b, n]; }"),
-    ).toBe("function f(o) {\n  var n = arguments.length;\n  var a = o.a, b = o.b;\n  return [a, b, n];\n}\n");
-    // Strict mode (a class body) and non-simple parameter lists do not map
-    // `arguments` onto the parameters. Nested functions have their own
-    // `arguments`.
-    expect(
-      plain.transformSync(
-        "class C { m(o) { var g = () => { arguments[0] = N; }; var a = o.a, b = o.b; return [a, b]; } }",
-      ),
-    ).toBe(
-      "class C {\n  m(o) {\n    var g = () => {\n      arguments[0] = N;\n    };\n    var { a, b } = o;\n    return [a, b];\n  }\n}\n",
-    );
-    expect(
-      plain.transformSync(
-        "function f(o = 1) { var g = () => { arguments[0] = N; }; var a = o.a, b = o.b; return [a, b]; }",
-      ),
-    ).toBe(
-      "function f(o = 1) {\n  var g = () => {\n    arguments[0] = N;\n  };\n  var { a, b } = o;\n  return [a, b];\n}\n",
-    );
-    expect(
-      plain.transformSync("function f(o) { function g() { arguments[0] = N; } var a = o.a, b = o.b; return [a, b]; }"),
-    ).toBe("function f(o) {\n  function g() {\n    arguments[0] = N;\n  }\n  var { a, b } = o;\n  return [a, b];\n}\n");
-  });
-
-  it("still folds a stable target", () => {
     expect(plain.transformSync("function f() { var o = M; var a = o.a, b = o.b; return [a, b]; }")).toBe(
-      "function f() {\n  var o = M;\n  var { a, b } = o;\n  return [a, b];\n}\n",
-    );
-    expect(plain.transformSync("function f(o) { var a = o.a, b = o.b; return [a, b]; }")).toBe(
-      "function f(o) {\n  var { a, b } = o;\n  return [a, b];\n}\n",
+      "function f() {\n  var o = M;\n  var a = o.a, b = o.b;\n  return [a, b];\n}\n",
     );
     expect(plain.transformSync("function f() { const o = M; var a = o.a, b = o.b; return [a, b]; }")).toBe(
-      "function f() {\n  const o = M;\n  var { a, b } = o;\n  return [a, b];\n}\n",
+      "function f() {\n  const o = M;\n  var a = o.a, b = o.b;\n  return [a, b];\n}\n",
     );
     expect(plain.transformSync("function f() { var a = Math.cos, b = Math.sin; return [a, b]; }")).toBe(
-      "function f() {\n  var { cos: a, sin: b } = Math;\n  return [a, b];\n}\n",
+      "function f() {\n  var a = Math.cos, b = Math.sin;\n  return [a, b];\n}\n",
     );
-    expect(minifier.transformSync("var o = M; var a = o.a, b = o.b; console.log(a, b);")).toBe(
-      "var o=M,{a,b}=o;console.log(a,b);",
+    expect(plain.transformSync("var o = M; var a = o.a, b = o.b; console.log(a, b);")).toBe(
+      "var o = M;\nvar a = o.a, b = o.b;\nconsole.log(a, b);\n",
+    );
+    // A run that ends where its target is bound again.
+    expect(plain.transformSync("function f(n) { var a = n.next, n = n.next, b = n.v; return [a, n, b]; }")).toBe(
+      "function f(n) {\n  var a = n.next, n = n.next, b = n.v;\n  return [a, n, b];\n}\n",
+    );
+    expect(plain.transformSync("function f(o) { for (let a = o.a, b = o.b;;) return [a, b]; }")).toBe(
+      "function f(o) {\n  for (let a = o.a, b = o.b;; )\n    return [a, b];\n}\n",
     );
   });
 
-  it("reads an unstable target once per declarator at runtime", async () => {
-    // A `.cjs` file runs in sloppy mode, which `with` and the mapped
-    // `arguments` object need.
-    using dir = tempDir("same-target-unstable", {
-      "unstable.cjs": /* js */ `
-        let reads = 0;
-        Object.defineProperty(globalThis, "CFG", {
-          get() {
-            reads++;
-            return { host: "h", port: 1 };
-          },
-          configurable: true,
-        });
-        function globalHead() {
-          reads = 0;
-          var h = CFG.host, p = CFG.port;
-          return [h, p, reads];
+  it("are printed as written when minifying merges their statements", () => {
+    expect(minifier.transformSync("function f() { var o = M; var a = o.a, b = o.b; return [a, b]; }")).toBe(
+      "function f(){var o=M,a=o.a,b=o.b;return[a,b]}",
+    );
+    expect(minifier.transformSync("var o = M; var a = o.a, b = o.b; console.log(a, b);")).toBe(
+      "var o=M,a=o.a,b=o.b;console.log(a,b);",
+    );
+    // `target: "bun"` minifies syntax by itself.
+    expect(forBun.transformSync("function f(o) { const a = o.a; const b = o.b; return [a, b]; }")).toBe(
+      "function f(o) {\n  const a = o.a, b = o.b;\n  return [a, b];\n}\n",
+    );
+  });
+
+  // A top-level `var` of a script is a property of the global object, so a
+  // getter can replace it between the two reads without an assignment in the
+  // text. A pattern would read both members from the first object.
+  it("keep both reads of a global that a getter replaces", () => {
+    const script = `
+      var N = { a: "a2", b: "b2" };
+      var o = { get a() { globalThis.o = N; return "a1"; }, b: "b1" };
+      var a = o.a, b = o.b;
+      result = a + b;
+    `;
+    const run = code => {
+      const context = createContext({ result: undefined });
+      runInContext(code, context);
+      return context.result;
+    };
+    expect({
+      written: run(script),
+      plain: run(plain.transformSync(script)),
+      forBun: run(forBun.transformSync(script)),
+      minifier: run(minifier.transformSync(script)),
+    }).toEqual({ written: "a1b2", plain: "a1b2", forBun: "a1b2", minifier: "a1b2" });
+  });
+
+  it.each([
+    "--no-bundle",
+    "--no-bundle --minify-syntax",
+    "--no-bundle --target=bun",
+    "--no-bundle --target=bun --minify-syntax",
+  ])("are printed as written by bun build %s", async flags => {
+    using dir = tempDir("declarators-no-bundle", {
+      "reads.js": "export function f(o) { const a = o.a, b = o.b; return [a, b]; }\n",
+    });
+    const { stdout, stderr, exitCode } = await bunRun(["build", ...flags.split(" "), join(String(dir), "reads.js")]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "export function f(o) {\n  const a = o.a, b = o.b;\n  return [a, b];\n}",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // `exports` is a parameter of the function that wraps a CommonJS file, and
+  // the `arguments` of that function can give it another object.
+  it("read the object again for each member in a CommonJS file", async () => {
+    using dir = tempDir("declarators-of-exports", {
+      "reads.cjs": `
+        const other = { y: 2 };
+        Object.defineProperty(exports, "x", { get: () => { arguments[0] = other; return 1; } });
+        exports.y = 1;
+        function f() {
+          var a = exports.x, b = exports.y;
+          return [a, b];
         }
-        function globalMid() {
-          reads = 0;
-          var z = 0, h = CFG.host, p = CFG.port;
-          return [z, h, p, reads];
-        }
-        function getterReassigns() {
-          var cur = { get a() { cur = nxt; return "a1"; }, b: "b1" }, nxt = { a: "a2", b: "b2" };
-          var x = cur.a, y = cur.b;
-          return x + y;
-        }
-        function withScope() {
-          var has = 0;
-          var scope = new Proxy({ o: { a: "a", b: "b" } }, { has(t, k) { if (k === "o") has++; return k in t; } });
-          with (scope) { var a = o.a, b = o.b; }
-          return [a, b, has];
-        }
-        var hook;
-        function argumentsAlias(o) {
-          hook = () => { arguments[0] = { a: "a2", b: "b2" }; };
-          var a = o.a, b = o.b;
-          return a + b;
-        }
-        function blockHoisted() {
-          var swap;
-          { var o; swap = () => { o = { a: "a2", b: "b2" }; }; }
-          var o = { get a() { swap(); return "a1"; }, b: "b1" };
-          var a = o.a, b = o.b;
-          return a + b;
-        }
-        function directEval() {
-          var o = { get a() { run(); return "a1"; }, b: "b1" };
-          var run = () => eval("o = { a: 'a2', b: 'b2' }");
-          var a = o.a, b = o.b;
-          return a + b;
-        }
-        function stable() {
-          var o = { get a() { return "a1"; }, b: "b1" };
-          var a = o.a, b = o.b;
-          return a + b;
-        }
-        console.log(
-          JSON.stringify({
-            globalHead: globalHead(),
-            globalMid: globalMid(),
-            getterReassigns: getterReassigns(),
-            withScope: withScope(),
-            argumentsAlias: argumentsAlias({ get a() { hook(); return "a1"; }, b: "b1" }),
-            blockHoisted: blockHoisted(),
-            directEval: directEval(),
-            stable: stable(),
-          }),
-        );
+        console.log(JSON.stringify(f()));
       `,
     });
+    const { stdout, stderr, exitCode } = await bunRun([join(String(dir), "reads.cjs")]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "[1,2]", stderr: "", exitCode: 0 });
+  });
 
+  const program = `
+function oneStatement(o) {
+  const a = o.x,
+    b = o.y;
+  return [a, b];
+}
+function twoStatements(o) {
+  const a = o.x;
+  const b = o.y;
+  return [a, b];
+}
+function forInitializer(o) {
+  for (let a = o.x, b = o.y; ; ) return [a, b];
+}
+function said(f, o) {
+  try {
+    return "returned " + f(o);
+  } catch (e) {
+    return e.message + " on line " + /:(\\d+):\\d+\\)?$/.exec(e.stack.split("\\n")[1])[1];
+  }
+}
+console.log(
+  JSON.stringify({
+    oneStatement: [said(oneStatement, undefined), said(oneStatement, null)],
+    twoStatements: [said(twoStatements, undefined), said(twoStatements, null)],
+    forInitializer: [said(forInitializer, undefined), said(forInitializer, null)],
+    text: [oneStatement, forInitializer].map(f => f.toString().replace(/\\s+/g, " ")),
+    patterns: [oneStatement, twoStatements, forInitializer].filter(f => /[{,] x: a\\b/.test(f.toString())).map(f => f.name),
+  }),
+);
+`;
+  const lineOf = text => program.slice(0, program.indexOf(text)).split("\n").length;
+  const both = line => [
+    `undefined is not an object (evaluating 'o.x') on line ${line}`,
+    `null is not an object (evaluating 'o.x') on line ${line}`,
+  ];
+
+  it.each([
+    ["an ES module", ["program.mjs"]],
+    ["a CommonJS module", ["program.cjs"]],
+    ["-e", ["-e", program]],
+  ])("throw where and what the file says in %s", async (_, args) => {
+    using dir = tempDir("declarators-of-one-object", { "program.mjs": program, "program.cjs": program });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "unstable.cjs"],
+      cmd: [bunExe(), ...args],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
@@ -6873,14 +6719,14 @@ describe("same-target destructuring with an unstable target", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({
-      globalHead: ["h", 1, 2],
-      globalMid: [0, "h", 1, 2],
-      getterReassigns: "a1b2",
-      withScope: ["a", "b", 2],
-      argumentsAlias: "a1b2",
-      blockHoisted: "a1b2",
-      directEval: "a1b2",
-      stable: "a1b1",
+      oneStatement: both(lineOf("const a = o.x,")),
+      twoStatements: both(lineOf("const a = o.x;")),
+      forInitializer: both(lineOf("for (let a = o.x")),
+      text: [
+        "function oneStatement(o) { const a = o.x, b = o.y; return [a, b]; }",
+        "function forInitializer(o) { for (let a = o.x, b = o.y;; ) return [a, b]; }",
+      ],
+      patterns: [],
     });
     expect(exitCode).toBe(0);
   });

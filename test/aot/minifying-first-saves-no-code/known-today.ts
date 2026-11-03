@@ -30,6 +30,8 @@ export const knownToday: Record<string, string> = {
     "each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ; bundled: code bytes 176809 -> 176292, run-time operations 323 -> 319",
   "bundler_minify: minify/RequireMainToImportMetaMain":
     "each file: code bytes 315 -> 235, operations 27 -> 23; bundled: code bytes 315 -> 212, operations 27 -> 21",
+  "bundler_minify: minify/SameTargetDestructuringSkipsSloppyTarget":
+    "bundled: the build: 5 |   with (scope) |       ^ | error: TS1101: 'with' statements are not allowed",
   "bundler_minify: minify/SingleUseSubstitutionIntoEachChild":
     "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "bundler_minify: minify/StringAdditionFolding":

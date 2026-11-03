@@ -439,10 +439,10 @@ describe("bytecode cache portability", () => {
     expectOutputs(outputs);
   });
 
-  // Last moved on every platform at once by JavaScriptCore's parser (parseProperty in parser/Parser.cpp): a shorthand
-  // property `{ name }` records the position of its name, no longer that of the token behind it. Twelve hashes and no
-  // size: the sources with a shorthand property (records.js, typescript.js), and the bundles, where `{ a: a }` is
-  // printed `{ a }`.
+  // Last moved on every platform at once by the printer (print_decls in src/js_printer/lib.rs): a bundle that is not
+  // minified prints `a = o.x, b = o.y` as it is written, no longer as the pattern `{ x: a, y: b } = o`. Five bundles,
+  // each with a smaller payload: the ones that hold a library with such declarators (all.js, libraries.js, lodash,
+  // react-dom, svelte).
   function expectOutputs(outputs: Record<string, unknown>) {
     expect(
       outputs,
@@ -486,10 +486,10 @@ describe("bytecode cache portability", () => {
           },
         },
         "bun build --bytecode all.js": {
-          "js": "a55ff68728c0a42514e3b9de528f1131644774f16aa9fe37d365245b164e8b31",
+          "js": "39127ec751bcbd857f748de8059e67f33637f232b0992334321f4733cc3eb787",
           "jsc": {
-            "bytes": 1876304,
-            "sha256": "b474d17efa38adcafc3ade742077c21ca769cabe8eb03ae73922f4835b485842",
+            "bytes": 1874664,
+            "sha256": "37ef1e7ed0b946b1c4e84aebe729bb0ac3e71fc6cfe040aae8806e655e28dd83",
           },
         },
         "bun build --bytecode big.js": {
@@ -521,24 +521,24 @@ describe("bytecode cache portability", () => {
           },
         },
         "bun build --bytecode libraries.js": {
-          "js": "efb37dc3389e11bf3b88e5b53164a56d20f9640d37c019182f92e391cb0bf3b2",
+          "js": "d0d4993f8193322b2307bac827d4b5bdcba799aa58309f8252a368ae352e9f7c",
           "jsc": {
-            "bytes": 21178784,
-            "sha256": "a73c6e2255f9f8cbe422d46368e63e9cc7a02e01f6d4af4c79ba55319b72c05f",
+            "bytes": 21176544,
+            "sha256": "23b2286fd36a2ab8f568129b98e668bff551ab113094f0d62752149e89f0c28d",
           },
         },
         "bun build --bytecode lodash/lodash.js": {
-          "js": "9951d06da1bf94c69dece1b23f304c1cbf4018b894e398ac5ea10f35b5600187",
+          "js": "21127b9f32a4391dbbe14f239f2b61aeb7339e7a1818cbd47c63aad1188b4a54",
           "jsc": {
-            "bytes": 303592,
-            "sha256": "69f602b180e42a72d7c4a49e4c72d5bbca393c94742aea073e80ad5b7e2c1efd",
+            "bytes": 303280,
+            "sha256": "112fb80983141314be97cbff1fc35b01708c494b586790d78de973b50ff2700c",
           },
         },
         "bun build --bytecode react-dom/cjs/react-dom.development.js": {
-          "js": "3392a38ccef2f1bb7b1c8c8cbfc8111b45f6cf6f8dec3c72a99f13a6568fd5a1",
+          "js": "0a606284a9aeb0f92bcb1cbfc5de6cc42af2d9be12eb10fce30cc0c62ccc6a68",
           "jsc": {
-            "bytes": 829864,
-            "sha256": "511dbedae9bc6fb201f0b957d6ea8a36f48ada64f4bddba8e5d1af8c7f1e0aed",
+            "bytes": 828520,
+            "sha256": "f639aafb8f8418e23bc62fcfc58b89d7c88033956025f5256b8d98cf251a7bf2",
           },
         },
         "bun build --bytecode records.js": {
@@ -556,10 +556,10 @@ describe("bytecode cache portability", () => {
           },
         },
         "bun build --bytecode svelte/compiler/index.js": {
-          "js": "17e7431a6f28a4b6b5d356fc815b0876ebd9613ae6c25a98dc4c5560004341ce",
+          "js": "ed04ee45e93baf8b28e8f9d216b631e1c322bda6d2e08657c62a21e59546ac20",
           "jsc": {
-            "bytes": 1820264,
-            "sha256": "ea3853a12f766c394612d22cffd9cd28db6637cc3ec8d40aaaa725b652f8a2d7",
+            "bytes": 1819352,
+            "sha256": "e482ba234644223e591c8a1e178e42cb225541caa4a4f6ca48e58e55b6c7339f",
           },
         },
         "bun build --bytecode undici/index.js": {

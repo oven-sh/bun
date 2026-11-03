@@ -2191,10 +2191,17 @@ pub(crate) mod __gated_printer {
                 unreachable!();
             }
 
+            // The fold below is a syntax minification, so only a minified
+            // bundle gets it. Gated on `bundling` too: the runtime transpiler
+            // forces `minify_syntax` on for `target.is_bun()` (see
+            // bundler/options.rs), and there a pattern throws "Cannot
+            // destructure property" on the line of its second declarator and
+            // shows in `Function.prototype.toString()`.
+            //
             // A `using` or `await using` declaration admits only identifier
             // bindings, never a binding pattern.
             let allow_destructuring =
-                bun_core::FeatureFlags::SAME_TARGET_BECOMES_DESTRUCTURING && !kind.is_using();
+                self.options.minify_syntax && self.options.bundling && !kind.is_using();
 
             let mut needs_comma = false;
             'decls: while !decls.is_empty() {

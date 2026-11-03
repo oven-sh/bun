@@ -985,7 +985,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         );
         let callback = handlers.on_timeout();
-        if callback.is_empty() || this.flags.get().contains(Flags::FINALIZING) {
+        if callback.is_empty() || this.wrapper_gone() {
             return Ok(());
         }
 
@@ -1022,6 +1022,13 @@ impl<const SSL: bool> NewSocket<SSL> {
     #[inline]
     pub(crate) fn has_handlers(&self) -> bool {
         self.handlers.get().is_some()
+    }
+
+    /// No event may reach the JS wrapper: its finalizer runs or ran, or the GC
+    /// condemned it and the sweep has yet to run it. Dispatch nothing, and never
+    /// make a second wrapper for the same socket.
+    pub(crate) fn wrapper_gone(&self) -> bool {
+        self.flags.get().contains(Flags::FINALIZING) || self.this_value.get().is_collected()
     }
 
     /// True when this socket still points at `handlers` — false once a
@@ -1117,7 +1124,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
 
         if vm.script_execution_status() != jsc::ScriptExecutionStatus::Running
-            || this.flags.get().contains(Flags::FINALIZING)
+            || this.wrapper_gone()
         {
             drop(cleanup);
             return Ok(());
@@ -1408,7 +1415,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
         // is nothing to dispatch to.
-        if !this.has_handlers() {
+        if !this.has_handlers() || this.wrapper_gone() {
             return Ok(());
         }
         log!(
@@ -1623,9 +1630,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Some(value) = self.this_value.get().try_get() {
             return value;
         }
-        if matches!(self.this_value.get(), JsRef::Finalized) {
-            // The JS wrapper was already garbage-collected. Creating a new one
-            // here would result in a second `finalize` (and double-deref) later.
+        if self.this_value.get().is_collected() {
+            // The JS wrapper was garbage-collected. Creating a new one here
+            // would result in a second `finalize` (and double-deref) later.
             return JSValue::UNDEFINED;
         }
         let value = self.to_js(global);
@@ -1729,7 +1736,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // is nothing to dispatch to. Nor from the GC finalizer's own close
         // (an SSL shutdown reports the never-finished handshake): a finalizer
         // dispatches nothing and may not inspect other cells mid-sweep.
-        if !this.has_handlers() || this.flags.get().contains(Flags::FINALIZING) {
+        if !this.has_handlers() || this.wrapper_gone() {
             return Ok(());
         }
         let first_report = !this.flags.get().contains(Flags::HANDSHAKE_COMPLETE);
@@ -2185,7 +2192,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             scope
         });
 
-        if this.flags.get().contains(Flags::FINALIZING) {
+        if this.wrapper_gone() {
             return Ok(());
         }
 
@@ -2268,7 +2275,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         );
 
         let callback = handlers.on_data();
-        if callback.is_empty() || this.flags.get().contains(Flags::FINALIZING) {
+        if callback.is_empty() || this.wrapper_gone() {
             return Ok(());
         }
 
@@ -4264,6 +4271,15 @@ impl DuplexUpgradeContext {
                 // The transport closed while this task was queued: an engine
                 // started now could never handshake, and nothing would free it.
                 if this.upgrade.pending_close.replace(false) {
+                    this.upgrade.finish_close();
+                    return;
+                }
+                // The GC condemned the wrapper while this task was queued, and
+                // the stream with it: nothing can reach an engine started now.
+                // The close below dispatches nothing, and the wrapper's
+                // finalizer finds the socket detached.
+                if this.tls_this_ptr().is_some_and(|tls| tls.wrapper_gone()) {
+                    this.upgrade.abandon_js_side();
                     this.upgrade.finish_close();
                     return;
                 }

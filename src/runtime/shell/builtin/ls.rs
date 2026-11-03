@@ -346,6 +346,15 @@ impl Ls {
     }
 }
 
+/// What an operand is.
+// Matched where it is returned, never stored: a `Box` for the `Stat` would be an allocation for each operand.
+#[allow(clippy::large_enum_variant)]
+enum Operand {
+    Directory,
+    /// Not a directory. With `-l`, its `lstat`.
+    Entry(Option<bun_sys::Stat>),
+}
+
 /// Opens the path, iterates its entries (or
 /// prints the path itself for files / `-d`), accumulating into `output`.
 /// With two or more operands, the first task lists the operands instead
@@ -565,28 +574,30 @@ impl ShellLsTask {
             rest = &rest[len + 1..];
             let name = path.as_bytes();
             let start = self.output.len();
-            let directory = match Self::stat_operand(self.cwd, path) {
+            let directory = match self.stat_operand(path) {
                 Err(e) => {
                     self.errs.push(e);
                     continue;
                 }
-                Ok(Some(stat)) => {
-                    self.add_operand(name, &stat);
+                Ok(Operand::Entry(stat)) => {
+                    self.add_operand(name, stat.as_ref());
                     false
                 }
-                Ok(None) if !self.opts.list_directories => true,
+                Ok(Operand::Directory) if !self.opts.list_directories => true,
                 // `-d`: the name alone, and the directory has to open.
-                Ok(None) => match shell_openat(self.cwd, path, O::RDONLY | O::DIRECTORY, 0) {
-                    Ok(fd) => {
-                        fd.close();
-                        self.add_entry_short(name);
-                        false
+                Ok(Operand::Directory) => {
+                    match shell_openat(self.cwd, path, O::RDONLY | O::DIRECTORY, 0) {
+                        Ok(fd) => {
+                            fd.close();
+                            self.add_entry_short(name);
+                            false
+                        }
+                        Err(e) => {
+                            self.errs.push(e.with_path(name));
+                            continue;
+                        }
                     }
-                    Err(e) => {
-                        self.errs.push(e.with_path(name));
-                        continue;
-                    }
-                },
+                }
             };
             found.push(Found {
                 name,
@@ -626,38 +637,38 @@ impl ShellLsTask {
 
     /// An operand that did not open as a directory.
     fn list_non_directory_operand(&mut self, open_err: &bun_sys::Error) {
-        match Self::stat_operand(self.cwd, self.path.as_zstr()) {
-            Ok(Some(stat)) => {
+        match self.stat_operand(self.path.as_zstr()) {
+            Ok(Operand::Entry(stat)) => {
                 let name = ZBox::from_bytes(self.path.as_bytes());
-                self.add_operand(name.as_bytes(), &stat);
+                self.add_operand(name.as_bytes(), stat.as_ref());
             }
             // A directory that would not open: report the open error.
-            Ok(None) => self.errs.push(self.error_with_path(open_err)),
+            Ok(Operand::Directory) => self.errs.push(self.error_with_path(open_err)),
             Err(e) => self.errs.push(e),
         }
     }
 
     /// coreutils operand rule: `stat`, and on ENOENT or ELOOP `lstat` so a symlink is itself.
-    /// `None`: the operand is a directory.
-    fn stat_operand(cwd: bun_sys::Fd, path: &ZStr) -> bun_sys::Result<Option<bun_sys::Stat>> {
-        match shell_statat(cwd, path) {
-            Ok(stat) if S::ISDIR(stat.st_mode as _) => return Ok(None),
+    fn stat_operand(&self, path: &ZStr) -> bun_sys::Result<Operand> {
+        match shell_statat(self.cwd, path) {
+            Ok(stat) if S::ISDIR(stat.st_mode as _) => return Ok(Operand::Directory),
+            // Only the long format prints more than the name.
+            Ok(_) if !self.opts.long_listing => return Ok(Operand::Entry(None)),
             Ok(_) => {}
             Err(e) if matches!(e.get_errno(), E::ENOENT | E::ELOOP) => {}
             Err(e) => return Err(e.with_path(path.as_bytes())),
         }
-        match shell_lstatat(cwd, path) {
-            Ok(stat) => Ok(Some(stat)),
+        match shell_lstatat(self.cwd, path) {
+            Ok(stat) => Ok(Operand::Entry(self.opts.long_listing.then_some(stat))),
             Err(e) => Err(e.with_path(path.as_bytes())),
         }
     }
 
     /// An operand is never subject to the -a/-A filter.
-    fn add_operand(&mut self, name: &[u8], stat: &bun_sys::Stat) {
-        if self.opts.long_listing {
-            self.add_entry_long_from_stat(name, stat);
-        } else {
-            self.add_entry_short(name);
+    fn add_operand(&mut self, name: &[u8], stat: Option<&bun_sys::Stat>) {
+        match stat {
+            Some(stat) => self.add_entry_long_from_stat(name, stat),
+            None => self.add_entry_short(name),
         }
     }
 

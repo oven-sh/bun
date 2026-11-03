@@ -54,6 +54,7 @@ pub struct Scratch {
     elements: Elements,
     /// See `direct::Direct::line_start`.
     line_start: Vec<u8>,
+    stops: bun_highway::ScannerStopsBuffer,
 }
 
 /// Prettier's `parse`. `content` has no `\r`, and its front matter, which ends at `front_matter_end`, has been replaced

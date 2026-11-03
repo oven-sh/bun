@@ -123,6 +123,7 @@ Most of a template is written in a small part of the language: elements with pla
 - **"It does not fit on one line" has to be as certain as a text that is written**: the white space in front of it has been printed by then, whatever is refused later. A line feed is no line break in a component that is printed as `<A />`, or in a block with nothing else in it, so both are found out first.
 - **White space is a blank, a tab or a line feed.** Next to a form feed or a carriage return, which the printer counts too, nothing is split.
 - **What is written is compared with the source** (`copy`, `put`, `new_line`) and joins the run that is still to be copied. A template that is formatted is copied once, at the end.
+- **Runs of bytes are not read one by one.** One kernel call finds where names, blanks and plain text end (`bun_highway::ScannerStops`), so the end of a name, a word, a value or an indentation is a load and a bit scan, with no loop to leave.
 - It is off for `htmlWhitespaceSensitivity: "ignore"`, with front matter, a range, `sortTailwindcss`, another end of line than `\n`, and in Markdown. What is nested more than 128 deep goes the long way, which says what is nested too deeply.
 - What found the mistakes: templates made up from a grammar with odd things in it, the output of the long way with damage, and every construct next to every neighbor in every place at every width, each formatted both ways in one process.
 

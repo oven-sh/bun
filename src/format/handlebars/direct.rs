@@ -30,6 +30,7 @@ use crate::options::{HtmlWhitespaceSensitivity, IndentStyle, LineEnding, QuoteSt
 use crate::stack::Stack;
 use crate::syntax_error::Rejection;
 use bun_core::strings;
+use bun_highway::ScannerStops;
 
 /// Elements, blocks and sub-expressions that are nested deeper go the long way, which says what is nested too deeply.
 const MAX_DEPTH: usize = 128;
@@ -71,7 +72,7 @@ const CLASSES: [u8; 256] = {
     classes[b'\'' as usize] &= !PLAIN;
     classes[b'_' as usize] |= NAME | TAG;
     classes[b'-' as usize] |= NAME | TAG;
-    classes[b'$' as usize] |= NAME;
+    classes[b'$' as usize] |= NAME | TAG;
     classes[b'?' as usize] |= NAME;
     classes[b':' as usize] |= NAME | TAG;
     classes[b'.' as usize] |= TAG;
@@ -120,6 +121,20 @@ enum Parent {
     Block,
 }
 
+/// What is at a place between two nodes.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Next {
+    Space,
+    /// What ends the children of such a parent.
+    End(Parent),
+    Comment,
+    Element,
+    MustacheComment,
+    Block,
+    Mustache,
+    Text,
+}
+
 /// What starts with `{{`.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Braces {
@@ -143,6 +158,8 @@ struct Mark {
 
 struct Direct<'a, 'o> {
     source: &'a [u8],
+    /// Where runs of bytes end in `source`, so that no loop reads them one by one.
+    stops: ScannerStops<'a>,
     options: &'a FormatOptions,
     scratch: &'a mut Scratch,
     /// Prints what goes the long way. Everything is written to its `out`.
@@ -163,6 +180,7 @@ struct Direct<'a, 'o> {
     tab_width: usize,
     /// The bytes of one level of indentation.
     unit: usize,
+    use_tabs: bool,
     /// The quote of a string in a mustache and of the value of an attribute.
     quote: u8,
     /// The quote of a string in a mustache in the quoted value of an attribute.
@@ -210,8 +228,10 @@ pub(super) fn format(
     if first > 0 && source[first..].starts_with(b"\\") {
         return false;
     }
+    let mut stops = std::mem::take(&mut scratch.stops);
     let mut direct = Direct {
         source,
+        stops: stops.find(source),
         options,
         scratch,
         printer: doc::Printer::new(options, original, out),
@@ -225,6 +245,7 @@ pub(super) fn format(
         width: options.line_width.value() as usize,
         tab_width,
         unit: if use_tabs { 1 } else { tab_width },
+        use_tabs,
         quote: if is_single { b'\'' } else { b'"' },
         other_quote: if is_single { b'"' } else { b'\'' },
         depth: 0,
@@ -249,6 +270,7 @@ pub(super) fn format(
         && !crate::is_too_long(direct.printer.out.len())
         && direct.printer.result().is_ok();
     direct.scratch.line_start = std::mem::take(&mut direct.line_start);
+    scratch.stops = stops;
     if !is_done {
         out.truncate(len);
     }
@@ -283,26 +305,71 @@ impl<'a> Direct<'a, '_> {
     fn white_space(&self, mut at: usize) -> (usize, usize) {
         let mut line_feeds = 0;
         loop {
-            match self.byte(at) {
-                b' ' | b'\t' => {}
-                b'\n' => line_feeds += 1,
-                _ => return (at, line_feeds),
+            while self.byte(at) == b'\n' {
+                line_feeds += 1;
+                at += 1;
             }
-            at += 1;
+            let end = self.stops.after_blanks.next(at);
+            if self.byte(end) != b'\n' {
+                return (end, line_feeds);
+            }
+            at = end;
         }
     }
 
     #[inline]
     fn skip_space(&self, at: usize) -> usize {
+        if !is(self.byte(at), SPACE) {
+            return at;
+        }
+        if !is(self.byte(at + 1), SPACE) {
+            return at + 1;
+        }
         self.white_space(at).0
     }
 
+    /// Returns the end of the bytes of `class` at `at`. `class` is `NAME`, `TAG` or both: letters, digits, `_` and `$`
+    /// are in it.
     #[inline]
     fn end_of(&self, mut at: usize, class: u8) -> usize {
-        while is(self.byte(at), class) {
+        loop {
+            at = self.stops.after_name.next(at);
+            if !is(self.byte(at), class) {
+                return at;
+            }
             at += 1;
         }
+    }
+
+    /// Returns the end of the bytes of the class `PLAIN` at `start`.
+    #[inline]
+    fn end_of_plain(&self, start: usize) -> usize {
+        let mut at = start;
+        loop {
+            at = self.stops.in_string.next(at);
+            if !matches!(self.byte(at), b'$' | b'`') {
+                break;
+            }
+            at += 1;
+        }
+        if has_brace(self.slice(start, at)) {
+            at = start;
+            while is(self.byte(at), PLAIN) {
+                at += 1;
+            }
+        }
         at
+    }
+
+    /// True if `source[start..end]`, which is of the class `PLAIN` and not empty, is a list of classes as it's printed:
+    /// one blank between two of them, and nowhere else.
+    #[inline]
+    fn is_list_of_classes(&self, start: usize, end: usize) -> bool {
+        if end - start > 56 {
+            return is_plain_value(self.slice(start, end), true);
+        }
+        let blanks = !self.stops.after_blanks.window(start) & ((1 << (end - start)) - 1);
+        blanks & (blanks >> 1 | 1 | 1 << (end - start - 1)) == 0
     }
 
     #[inline]
@@ -401,6 +468,7 @@ impl<'a> Direct<'a, '_> {
         let mut at = start;
         let mut all = 0;
         loop {
+            at = self.stops.after_name.next(at);
             let byte = self.byte(at);
             if !is(byte, WORD) && !(byte == b'{' && self.starts_word(at)) {
                 break;
@@ -507,28 +575,49 @@ impl<'a> Direct<'a, '_> {
     }
 
     /// Writes a line break. On one line it would be `flat` columns.
+    #[inline]
     fn new_line(&mut self, level: usize, flat: usize) {
-        let len = 1 + level * self.unit;
-        if len > self.line_start.len() {
-            self.grow_line_start(len);
-        }
-        let line_start = self.line_start.get(..len).unwrap_or_default();
+        let len = level * self.unit;
         let (start, end) = self.run;
-        if start < end && self.source.get(end..end + len) == Some(line_start) {
-            self.run.1 = end + len;
+        if start < end && self.byte(end) == b'\n' && self.is_indentation(end + 1, len) {
+            self.run.1 = end + 1 + len;
         } else {
-            self.flush();
-            if crate::is_too_long(self.printer.out.len()) {
-                self.is_too_long = true;
-            }
-            if !self.is_too_long {
-                let line_start = self.line_start.get(..len).unwrap_or_default();
-                self.printer.out.extend_from_slice(line_start);
-            }
+            self.write_new_line(len);
         }
         self.column = level * self.tab_width;
         self.flat += flat;
         self.lines += 1;
+    }
+
+    /// True if the source has `len` bytes of indentation at `at`.
+    #[inline]
+    fn is_indentation(&self, at: usize, len: usize) -> bool {
+        match self.use_tabs {
+            // Blanks, none of which is a control character.
+            false => {
+                self.stops.after_blanks.next(at) >= at + len
+                    && self.stops.in_string.next(at) >= at + len
+            }
+            true => {
+                self.slice(at, at + len).iter().all(|byte| *byte == b'\t')
+                    && at + len <= self.source.len()
+            }
+        }
+    }
+
+    #[inline(never)]
+    fn write_new_line(&mut self, len: usize) {
+        self.flush();
+        if len >= self.line_start.len() {
+            self.grow_line_start(len + 1);
+        }
+        if crate::is_too_long(self.printer.out.len()) {
+            self.is_too_long = true;
+        }
+        if !self.is_too_long {
+            let line_start = self.line_start.get(..len + 1).unwrap_or_default();
+            self.printer.out.extend_from_slice(line_start);
+        }
     }
 
     #[cold]
@@ -558,8 +647,26 @@ impl<'a> Direct<'a, '_> {
         }
     }
 
-    /// White space with that many line feeds between two nodes of a list that's broken.
-    fn breaks(&mut self, line_feeds: usize, level: usize) {
+    /// The white space `source[start..end]`, with that many line feeds, between two nodes of a list that's broken.
+    #[inline]
+    fn breaks(&mut self, (start, end): (usize, usize), line_feeds: usize, level: usize) {
+        let len = level * self.unit;
+        // As it's printed: the line feeds, one or two, and then blanks, none of which is a control character.
+        if self.run.1 == start
+            && self.run.0 < start
+            && end - start == line_feeds + len
+            && matches!(line_feeds, 1 | 2)
+            && self.byte(start + line_feeds - 1) == b'\n'
+            && self.byte(start) == b'\n'
+            && !self.use_tabs
+            && (len == 0 || self.stops.in_string.next(start + line_feeds) >= end)
+        {
+            self.run.1 = end;
+            self.column = level * self.tab_width;
+            self.flat += 1;
+            self.lines += line_feeds;
+            return;
+        }
         if line_feeds > 1 {
             self.new_line(0, 0);
         }
@@ -748,7 +855,7 @@ impl<'a> Direct<'a, '_> {
                 let mut end = at + 1;
                 let mut has_other_quote = false;
                 loop {
-                    end = self.end_of(end, PLAIN);
+                    end = self.end_of_plain(end);
                     match self.byte(end) {
                         byte if byte == delimiter => break,
                         b'"' | b'\'' => has_other_quote = true,
@@ -941,10 +1048,15 @@ impl<'a> Direct<'a, '_> {
         };
         let next = self.skip_space(end);
         if self.ends_params(next) {
-            self.copy(at, open);
-            self.copy(head, end);
-            self.at = next;
-            self.close(is_triple)?;
+            let len = self.close_len(next, is_triple)?;
+            if head == open && next == end {
+                self.copy(at, next + len);
+            } else {
+                self.copy(at, open);
+                self.copy(head, end);
+                self.copy(next, next + len);
+            }
+            self.at = next + len;
             return Ok(false);
         }
         if next == end {
@@ -1232,11 +1344,11 @@ impl<'a> Direct<'a, '_> {
         let value = end + 1;
         match self.byte(value) {
             delimiter @ (b'"' | b'\'') => {
-                let text_end = self.end_of(value + 1, PLAIN);
+                let text_end = self.end_of_plain(value + 1);
                 if self.byte(text_end) == delimiter
                     && (!is_class
                         || text_end == value + 1
-                        || is_plain_value(self.slice(value + 1, text_end), true))
+                        || self.is_list_of_classes(value + 1, text_end))
                 {
                     if delimiter == self.quote {
                         self.copy(at, text_end + 1);
@@ -1520,14 +1632,13 @@ impl<'a> Direct<'a, '_> {
             self.copy_wide(start, end, width);
             self.check(mode)?;
             let next = self.skip_space(end);
-            if self.ends_text(next) {
+            let Ok(word) = self.word(next) else {
                 self.at = end;
-                return Ok(());
-            }
-            if next == end {
-                return Err(Stop::Refused);
-            }
-            let word = self.word(next)?;
+                return match self.ends_text(next) {
+                    true => Ok(()),
+                    false => Err(Stop::Refused),
+                };
+            };
             if mode == Mode::Flat || self.column + 1 + word.1 <= self.width {
                 self.put_byte(b' ');
             } else {
@@ -1537,53 +1648,57 @@ impl<'a> Direct<'a, '_> {
         }
     }
 
-    /// True if the children of `parent` end at `self.at`.
-    fn is_at_end_of(&self, parent: Parent) -> Result<bool, Stop> {
-        let at = self.at;
-        let end_of = if at >= self.source.len() {
-            Parent::Template
-        } else if self.byte(at) == b'<' && self.byte(at + 1) == b'/' {
-            Parent::Element
-        } else if self.is_at_braces(at) && self.braces(at) == Braces::End {
-            Parent::Block
+    /// What is at `at`, between two nodes.
+    #[inline]
+    fn next(&self, at: usize) -> Next {
+        let byte = self.byte(at);
+        if is(byte, SPACE) {
+            Next::Space
+        } else if byte == b'<' {
+            match self.byte(at + 1) {
+                b'/' => Next::End(Parent::Element),
+                b'!' => Next::Comment,
+                _ => Next::Element,
+            }
+        } else if byte == b'{' && self.byte(at + 1) == b'{' {
+            match self.braces(at) {
+                Braces::End => Next::End(Parent::Block),
+                Braces::Comment => Next::MustacheComment,
+                Braces::Block => Next::Block,
+                Braces::Mustache => Next::Mustache,
+            }
+        } else if at >= self.source.len() {
+            Next::End(Parent::Template)
         } else {
-            return Ok(false);
-        };
-        match end_of == parent {
-            true => Ok(true),
-            false => Err(Stop::Refused),
+            Next::Text
         }
     }
 
-    /// Nodes without white space between them. Returns true at the end of the list, false at white space.
-    fn nodes(&mut self, mode: Mode, level: usize, parent: Parent) -> Result<bool, Stop> {
+    /// Nodes without white space between them, the first of which is `next`. Returns true at the end of the list, false
+    /// at white space.
+    fn nodes(
+        &mut self,
+        mode: Mode,
+        level: usize,
+        parent: Parent,
+        mut next: Next,
+    ) -> Result<bool, Stop> {
         loop {
-            let at = self.at;
-            let byte = self.byte(at);
-            if is(byte, SPACE) {
-                return Ok(false);
-            }
-            if byte == b'<' {
-                match self.byte(at + 1) {
-                    b'/' => return self.is_at_end_of(parent),
-                    b'!' => self.comment()?,
-                    _ => self.element(mode, level)?,
+            match next {
+                Next::Space => return Ok(false),
+                Next::End(of) if of == parent => return Ok(true),
+                Next::End(_) => return Err(Stop::Refused),
+                Next::Comment => self.comment()?,
+                Next::Element => self.element(mode, level)?,
+                Next::MustacheComment => self.mustache_comment()?,
+                Next::Block => self.block(mode, level)?,
+                Next::Mustache => {
+                    self.mustache(mode, level, self.quote, Rest::Nodes)?;
                 }
-            } else if self.is_at_braces(at) {
-                match self.braces(at) {
-                    Braces::End => return self.is_at_end_of(parent),
-                    Braces::Comment => self.mustache_comment()?,
-                    Braces::Block => self.block(mode, level)?,
-                    Braces::Mustache => {
-                        self.mustache(mode, level, self.quote, Rest::Nodes)?;
-                    }
-                }
-            } else if at >= self.source.len() {
-                return self.is_at_end_of(parent);
-            } else {
-                self.fill(mode, level)?;
+                Next::Text => self.fill(mode, level)?,
             }
             self.check(mode)?;
+            next = self.next(self.at);
         }
     }
 
@@ -1596,7 +1711,7 @@ impl<'a> Direct<'a, '_> {
     }
 
     fn flat_list(&mut self, parent: Parent) -> Written {
-        while !self.nodes(Mode::Flat, 0, parent)? {
+        while !self.nodes(Mode::Flat, 0, parent, self.next(self.at))? {
             let (end, line_feeds) = self.white_space(self.at);
             if line_feeds > 0 {
                 return Err(Stop::Breaks);
@@ -1617,8 +1732,9 @@ impl<'a> Direct<'a, '_> {
             if self.is_too_long {
                 return Err(Stop::GivenUp);
             }
-            let (end, line_feeds) = self.white_space(self.at);
-            let has_space = end > self.at;
+            let start = self.at;
+            let (end, line_feeds) = self.white_space(start);
+            let has_space = end > start;
             // More white space, of a kind that isn't read here.
             if matches!(self.byte(end), b'\r' | 0x0C) {
                 return Err(Stop::Refused);
@@ -1641,17 +1757,21 @@ impl<'a> Direct<'a, '_> {
                 is_broken = true;
             }
             self.at = end;
-            if self.is_at_end_of(parent)? {
+            let next = self.next(end);
+            if let Next::End(of) = next {
+                if of != parent {
+                    return Err(Stop::Refused);
+                }
                 if has_space {
-                    self.breaks(line_feeds, level.saturating_sub(1));
+                    self.breaks((start, end), line_feeds, level.saturating_sub(1));
                 }
                 return Ok(());
             }
             if has_space {
-                self.breaks(line_feeds, level);
+                self.breaks((start, end), line_feeds, level);
             }
             let mark = self.mark();
-            match self.nodes(Mode::Free, level, parent) {
+            match self.nodes(Mode::Free, level, parent, next) {
                 Ok(true) => return Ok(()),
                 Ok(false) => {}
                 Err(Stop::GivenUp) => return Err(Stop::GivenUp),
@@ -1973,6 +2093,20 @@ impl<'a> Direct<'a, '_> {
         self.lines += 1;
         Ok(())
     }
+}
+
+/// True if `{` or the control character 0x7F is in `text`.
+#[inline]
+fn has_brace(text: &[u8]) -> bool {
+    const fn all(byte: u8) -> u64 {
+        u64::from_ne_bytes([byte; 8])
+    }
+    // The two, and nothing else, are 0x7F with this bit.
+    let (chunks, rest) = text.as_chunks::<8>();
+    chunks.iter().any(|chunk| {
+        let others = (u64::from_ne_bytes(*chunk) | all(4)) ^ all(0x7F);
+        others.wrapping_sub(all(1)) & !others & all(0x80) != 0
+    }) || rest.iter().any(|byte| byte | 4 == 0x7F)
 }
 
 /// What `find_end_of_nodes` finds.

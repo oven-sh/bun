@@ -1317,19 +1317,36 @@ struct udp_stop_test {
   uv_udp_t server;
   uv_udp_t client;
   uv_udp_send_t sends[2];
-  uv_timer_t timer;
   struct reporter reporter;
   char buf[64];
+  int sent;
+  int stopped;
   int closed;
 };
 
 static void udp_stop_close_cb(uv_handle_t *handle) {
   struct udp_stop_test *test = handle->data;
-  if (++test->closed == 3) {
+  if (++test->closed == 2) {
     report(&test->reporter, "closed", test->closed, 0);
     reporter_destroy(&test->reporter);
     free(test);
   }
+}
+
+// Once both datagrams are sent and receiving has stopped, both must still be in
+// the server's socket (loopback delivers them during sendmsg): read them here.
+static void udp_stop_check(struct udp_stop_test *test) {
+  if (test->sent < 2 || !test->stopped)
+    return;
+  uv_os_fd_t fd;
+  int unread = 0;
+  char b[8];
+  if (uv_fileno((uv_handle_t *)&test->server, &fd) == 0)
+    while (recv(fd, b, sizeof(b), MSG_DONTWAIT) == 4)
+      unread++;
+  report(&test->reporter, "unread", unread, 0);
+  uv_close((uv_handle_t *)&test->server, udp_stop_close_cb);
+  uv_close((uv_handle_t *)&test->client, udp_stop_close_cb);
 }
 
 // Stops receiving from inside alloc_cb, as an addon might when it runs out of
@@ -1349,24 +1366,22 @@ static void udp_stop_recv(uv_udp_t *handle, ssize_t nread, const uv_buf_t *buf,
   (void)flags;
   report(&test->reporter, "recv", (int32_t)nread,
          addr == NULL && buf->base == test->buf);
+  test->stopped = 1;
+  udp_stop_check(test);
 }
 
 static void udp_stop_sent(uv_udp_send_t *req, int status) {
-  (void)req;
+  struct udp_stop_test *test = req->handle->data;
   (void)status;
-}
-
-static void udp_stop_timer(uv_timer_t *timer) {
-  struct udp_stop_test *test = timer->data;
-  uv_close((uv_handle_t *)&test->server, udp_stop_close_cb);
-  uv_close((uv_handle_t *)&test->client, udp_stop_close_cb);
-  uv_close((uv_handle_t *)&test->timer, udp_stop_close_cb);
+  test->sent++;
+  udp_stop_check(test);
 }
 
 // testUdpStopInAlloc(callback) sends two datagrams to a receiving server whose
 // alloc_cb calls uv_udp_recv_stop. Reports `alloc stops 0 0`, then `recv 0 1`
-// (nothing read, no address, the addon's buffer handed back), then `closed 3 0`
-// when a timer closes everything 100ms later: neither datagram is delivered.
+// (nothing read, no address, the addon's buffer handed back). Once both sends have
+// completed, it reads the server's socket itself: `unread 2 0` means neither
+// datagram was read or delivered. Then `closed 2 0`.
 static napi_value test_udp_stop_in_alloc(napi_env env, napi_callback_info info) {
   napi_value args[1];
   get_args(env, info, args, 1);
@@ -1375,13 +1390,11 @@ static napi_value test_udp_stop_in_alloc(napi_env env, napi_callback_info info) 
   uv_loop_t *loop = get_loop(env, false);
   test->server.data = test;
   test->client.data = test;
-  test->timer.data = test;
   struct sockaddr_in any = loopback(0);
   if (uv_udp_init(loop, &test->server) != 0 ||
       uv_udp_init(loop, &test->client) != 0 ||
-      uv_udp_bind(&test->server, (const struct sockaddr *)&any, 0) != 0 ||
-      uv_timer_init(loop, &test->timer) != 0) {
-    napi_throw_error(env, NULL, "uv_udp_init, uv_udp_bind or uv_timer_init failed");
+      uv_udp_bind(&test->server, (const struct sockaddr *)&any, 0) != 0) {
+    napi_throw_error(env, NULL, "uv_udp_init or uv_udp_bind failed");
     return NULL;
   }
   struct sockaddr_in to = loopback(udp_port(&test->server));
@@ -1394,7 +1407,6 @@ static napi_value test_udp_stop_in_alloc(napi_env env, napi_callback_info info) 
       return NULL;
     }
   }
-  uv_timer_start(&test->timer, udp_stop_timer, 100, 0);
   return NULL;
 }
 

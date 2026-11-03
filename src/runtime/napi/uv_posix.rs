@@ -1341,9 +1341,11 @@ impl UvUdpNode {
 
     /// Watches the directions the handle needs, and keeps the process alive while it
     /// needs any, like libuv's `uv__io_start`/`uv__io_stop` and `uv__handle_start`.
-    /// Returns 0, or the error from registering with the event loop: then nothing is
-    /// watched and the handle doesn't keep the process alive, since no callback
-    /// would ever come.
+    /// Returns 0, or the error from registering with the event loop. Then the read
+    /// watch is kept if the handle is receiving and only the write watch failed, and
+    /// the queued sends complete with the error, since nothing would tell us when the
+    /// socket takes them: their callbacks run on the next poll event or at close.
+    /// The handle keeps the process alive only if it's still watching for reads.
     ///
     /// # Safety
     /// The handle isn't closing.
@@ -1376,16 +1378,33 @@ impl UvUdpNode {
                 }
             }
             if err != 0 {
+                // epoll and kqueue drop both directions here, so put the read watch back.
                 let _ = poll.unregister(uws_loop, false);
+                if want_read {
+                    let _ = poll.register(uws_loop, Flags::Readable, false);
+                }
             }
         }
-        // SAFETY: fn contract.
-        unsafe {
-            (*self.udp)
-                .ref_state
-                .set_active(err == 0 && (want_read || want_write))
+        if err != 0 {
+            while let Some(req) = self.queued.pop_front() {
+                // SAFETY: a queued request is alive until its callback has run.
+                unsafe { (*req.as_ptr()).status = err as isize };
+                self.completed.push_back(req);
+            }
+        }
+        let active = if err == 0 {
+            want_read || want_write
+        } else {
+            self.watching_reads()
         };
+        // SAFETY: fn contract.
+        unsafe { (*self.udp).ref_state.set_active(active) };
         err
+    }
+
+    fn watching_reads(&self) -> bool {
+        // SAFETY: the node owns its poll until close, and this is the loop thread.
+        !self.poll.is_null() && unsafe { (*self.poll).flags.contains(Flags::PollReadable) }
     }
 
     /// Called by `__bun_run_file_poll` when the socket is readable or writable.
@@ -1401,14 +1420,65 @@ impl UvUdpNode {
             if readable && (*this).reading {
                 UvUdpNode::receive(this);
             }
-            if writable && !UvUdpNode::closing(this) {
-                (*this).send_queued();
+            if !UvUdpNode::closing(this) {
+                if writable {
+                    (*this).send_queued();
+                }
+                // Also the sends that an earlier failed `update` completed with its error.
                 UvUdpNode::run_completed(this);
             }
-            if !UvUdpNode::closing(this) {
-                // A failure here can't be reported to anyone; the handle stops being active.
-                let _ = (*this).update();
+            let err = if UvUdpNode::closing(this) {
+                0
+            } else {
+                (*this).update()
+            };
+            if err != 0 {
+                // The sends it couldn't watch for completed with the error: report them.
+                UvUdpNode::run_completed(this);
+                if !UvUdpNode::closing(this) && (*this).reading && !(*this).watching_reads() {
+                    UvUdpNode::fail_reads(this, err);
+                }
             }
+        }
+    }
+
+    /// Receiving can't go on without a read watch: stop, and tell the addon through
+    /// `recv_cb` with the error, in a buffer from `alloc_cb` like any failed read.
+    ///
+    /// # Safety
+    /// Same as [`Self::on_poll`].
+    unsafe fn fail_reads(this: *mut UvUdpNode, err: c_int) {
+        // SAFETY: fn contract.
+        let (udp, vm) = unsafe {
+            let udp = (*this).udp;
+            (udp, &*(*(*udp).handle.loop_).vm.as_ptr())
+        };
+        // SAFETY: fn contract. The callbacks are set while `reading` is.
+        let (Some(alloc_cb), Some(recv_cb)) = (unsafe { ((*udp).alloc_cb, (*udp).recv_cb) }) else {
+            return;
+        };
+        // SAFETY: fn contract.
+        unsafe {
+            (*this).reading = false;
+            (*udp).alloc_cb = None;
+            (*udp).recv_cb = None;
+        }
+        let global = vm.global();
+        let mut buf = UvBuf {
+            base: core::ptr::null_mut(),
+            len: 0,
+        };
+        let _scope = vm.enter_event_loop_scope();
+        let _handles = CallbackScope::open(global);
+        // SAFETY: calls the addon's callbacks on the loop thread with its handle.
+        unsafe {
+            alloc_cb(udp.cast::<UvHandle>(), 64 * 1024, &raw mut buf);
+            if !UvUdpNode::closing(this) {
+                recv_cb(udp, err as isize, &raw const buf, core::ptr::null(), 0);
+            }
+        }
+        if global.has_exception() {
+            let _ = bun_jsc::task::report_error_or_terminate(global, JsError::Thrown);
         }
     }
 
@@ -2078,10 +2148,11 @@ pub(crate) unsafe extern "C" fn uv_udp_send(
     // SAFETY: the handle isn't closing (`open_node`).
     let err = unsafe { node.update() };
     if err != 0 {
-        // Still queued (not sent): hand it back to the addon, as libuv's failed send
-        // does, rather than leaving it waiting for a callback that won't come.
-        if let Some(i) = node.queued.iter().position(|r| r.as_ptr() == req) {
-            node.queued.remove(i);
+        // Hand it back to the addon, as libuv's failed send does: its callback won't run.
+        // `update` completed it with the error if it was still queued; if it was sent,
+        // nothing would run its callback until another poll event.
+        if let Some(i) = node.completed.iter().position(|r| r.as_ptr() == req) {
+            node.completed.remove(i);
             // SAFETY: the request was set up above and is ours until its callback.
             unsafe {
                 (*handle).send_queue_size -= total_len((*req).bufs, (*req).nbufs);
@@ -2189,6 +2260,8 @@ pub(crate) unsafe extern "C" fn uv_udp_recv_start(
         unsafe {
             (*handle).alloc_cb = None;
             (*handle).recv_cb = None;
+            // Drop a read watch it kept; any failure is already reported.
+            let _ = node.update();
         }
         return err;
     }
@@ -2216,7 +2289,8 @@ pub(crate) unsafe extern "C" fn uv_udp_recv_stop(handle: *mut UvUdp) -> c_int {
     unsafe {
         (*handle).alloc_cb = None;
         (*handle).recv_cb = None;
-        // Only unregisters, which has nothing to report.
+        // A failure here (putting back the write watch for queued sends) completes
+        // those sends with the error.
         let _ = node.update();
     }
     0

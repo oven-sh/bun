@@ -726,7 +726,7 @@ describe.if(!isWindows)("uv stubs", () => {
   test.concurrent("uv_udp_recv_stop from alloc_cb reads nothing and hands the buffer back", async () => {
     const { stdout, stderr, exitCode } = await runInChild(`addon.testUdpStopInAlloc(report);`);
     expect(stderr).toBe("");
-    expect(stdout).toBe(["alloc stops 0 0", "recv 0 1", "closed 3 0", ""].join("\n"));
+    expect(stdout).toBe(["alloc stops 0 0", "recv 0 1", "unread 2 0", "closed 2 0", ""].join("\n"));
     expect(exitCode).toBe(0);
   });
 

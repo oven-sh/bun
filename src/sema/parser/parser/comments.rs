@@ -398,6 +398,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if (self.f.far_names.last()).is_some_and(|it| it.0.idx() == last) {
             self.f.far_names.pop();
         }
+        if Self::CLAIMS {
+            self.claims.forget_last_expr(&self.f);
+        }
         self.f.pop_expr()
     }
 
@@ -406,6 +409,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     pub(crate) fn pop_type(&mut self) -> Option<TypeNode> {
         let last = TypeNodeId(self.f.types.len().saturating_sub(1) as u32);
         self.unfinish_node(NodeData::Type(last));
+        if Self::CLAIMS {
+            self.claims.forget_last_type(&self.f);
+        }
         self.f.types.pop()
     }
 

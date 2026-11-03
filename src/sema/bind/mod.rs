@@ -11,7 +11,7 @@ mod runtime;
 pub mod static_referent;
 
 pub use closed_module::specifiers_of_closed_module;
-pub use parents::{bind_for_format_in, try_bind_for_format_in};
+pub use parents::{ClaimLens, Claims, bind_for_format_in, try_bind_for_format_with};
 pub use runtime::{
     AnnexBFunction, Binding, BindingInitializer, BindingKind, BindingStability, CodeUnit,
     CommonJsVariable, EarlyRedeclaration, EvalScope, FunctionFlags, ImplicitReference,

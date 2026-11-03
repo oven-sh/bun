@@ -197,6 +197,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let flags = self.flags_of(&kind);
         self.f.exprs.push(Expr { kind, pos, end });
         self.f.expr_flags.push(flags);
+        if Self::CLAIMS {
+            self.claims.expr(&self.f, id, &kind);
+        }
         id
     }
 

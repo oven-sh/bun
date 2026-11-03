@@ -34,7 +34,7 @@ use bun_lint::language::{LanguageOptions, ParseOptions, Parser, SourceType};
 use bun_lint::linter::TypesInJavaScript;
 use bun_lint::utils::text::ends_with_ignore_ascii_case as ends_in;
 use bun_sema::atom::{Intern, Interner, InternerPerThread};
-use bun_sema::bind::{BindOptions, Recycled, bind, bind_for_format_in, try_bind_for_format_in};
+use bun_sema::bind::{BindOptions, Recycled, bind, bind_for_format_in, try_bind_for_format_with};
 use bun_sema::hir::Diagnostic;
 use bun_sema::resolve::Dialect;
 use bun_sema::session::Session;
@@ -386,8 +386,8 @@ fn with_file<R>(
         let mut recycled = Recycled::for_current_thread();
         // Use the tree in place, where the parser built it, if that's enough.
         if !needs_symbols
-            && let Summary::InPlace(hir) = &mut summary
-            && let Some(bound) = try_bind_for_format_in(&**hir, &mut recycled)
+            && let Summary::InPlace(hir, claims) = &mut summary
+            && let Some(bound) = try_bind_for_format_with(&**hir, claims, &mut recycled)
         {
             let file = File::new(path, &**hir, bound, atoms, language, None).with_text(text);
             let program = how.verifies.then(|| Program::new(&**hir, text, atoms));
@@ -623,10 +623,10 @@ fn parse_parts(text: &[u8], then: &mut dyn FnMut(ParsePart<'_>)) {
             part,
             |summary, atoms, code, end| {
                 let mut recycled = Recycled::for_current_thread();
-                let Summary::InPlace(hir) = summary else {
+                let Summary::InPlace(hir, claims) = summary else {
                     return false;
                 };
-                let Some(bound) = try_bind_for_format_in(&*hir, &mut recycled) else {
+                let Some(bound) = try_bind_for_format_with(&*hir, claims, &mut recycled) else {
                     return false;
                 };
                 then(
@@ -1005,7 +1005,7 @@ fn print<'a>(
         let is_same = with_tree(how, &out, |after, atoms, _| {
             // The parser recovers from errors, so the tree can be the same even then: `a\n=> b`.
             let (has_parse_errors, after) = match &after {
-                Summary::InPlace(hir) => (
+                Summary::InPlace(hir, _) => (
                     hir.has_errors || hir.has_parse_diagnostics,
                     Program::new(&**hir, &out, atoms),
                 ),

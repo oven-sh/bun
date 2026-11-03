@@ -30,6 +30,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let id = TypeNodeId(self.f.types.len() as u32);
         self.finish_node(NodeData::Type(id), pos, end);
         self.f.types.push(TypeNode { kind, pos, end });
+        if Self::CLAIMS {
+            self.claims.ty(&self.f, id, &kind);
+        }
         id
     }
 

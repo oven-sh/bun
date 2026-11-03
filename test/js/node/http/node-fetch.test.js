@@ -579,6 +579,16 @@ describe("node-fetch fetch() subscribes to a stream body inside the call", () =>
     expect(await fetch2(request).catch(e => e.message)).toBe("Body object should not be disturbed or locked");
   });
 
+  test("fetch() of a Request whose stream body a body method read rejects", async () => {
+    using server = serveRequestBody();
+    const body = new stream.Readable({ read() {} });
+    const request = new Request(server.url, { method: "POST", body });
+    body.push("hello world");
+    body.push(null);
+    expect(await request.text()).toBe("hello world");
+    expect(await fetch2(request).catch(e => e.message)).toBe("Body object should not be disturbed or locked");
+  });
+
   test("a setEncoding() body sends its bytes", async () => {
     using server = serveRequestBody();
     const body = new stream.Readable({ read() {} });
@@ -604,7 +614,9 @@ describe("node-fetch fetch() subscribes to a stream body inside the call", () =>
   test("an objectMode body with an object chunk rejects", async () => {
     using server = serveRequestBody();
     const response = fetch2(server.url, { method: "POST", body: stream.Readable.from([{ a: 1 }]) });
-    expect(await response.catch(e => e.constructor.name)).toBe("TypeError");
+    expect(await response.catch(e => `${e.constructor.name}: ${e.message}`)).toBe(
+      "TypeError: write() expects a string, ArrayBufferView, or ArrayBuffer",
+    );
   });
 
   // minipass 3 to 5 (tar, fs-minipass): a Stream that is not a Readable, with Symbol.asyncIterator, that buffers
@@ -707,7 +719,9 @@ describe("node-fetch fetch() subscribes to a stream body inside the call", () =>
       using server = serveRequestBody();
       const body = new stream.Readable({ read() {} });
       const response = fetch2(server.url, { method, body });
-      expect(await response.catch(e => e.constructor.name)).toBe("TypeError");
+      expect(await response.catch(e => `${e.constructor.name}: ${e.message}`)).toBe(
+        "TypeError: fetch() request with GET/HEAD method cannot have body.",
+      );
       expect(body.listenerCount("data")).toBe(0);
     },
   );

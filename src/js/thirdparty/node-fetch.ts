@@ -225,6 +225,8 @@ async function fetch(
   if (body === undefined && $isObject(url)) {
     body = url[kNodeBody];
     if (body === null) throw new TypeError("Body object should not be disturbed or locked");
+    // A body method read the stream through the native Request, which then rejects the used body itself.
+    if (body !== undefined && url.bodyUsed) body = undefined;
   }
   if (isNodeStream(body)) {
     // The native fetch rejects a GET or HEAD request (the default) with a body, so that stream stays untouched.

@@ -100,7 +100,9 @@ test("the name of a constructor property that is no string does not name the val
   );
 });
 
-test("a Proxy whose target has null at index 0 is not a revoked Proxy", () => {
+// Node.js before v26.0.0 prints "<Revoked Proxy>" for the first value.
+const nodeBefore26 = typeof Bun === "undefined" && Number(process.versions.node.split(".")[0]) < 26;
+(nodeBefore26 ? test.skip : test)("a Proxy whose target has null at index 0 is not a revoked Proxy", () => {
   // Node.js prints "Proxy([ null ])".
   assert.match(inspect(new Proxy([null], {})), /^(Proxy\()?\[ null \]\)?$/);
   const revocable = Proxy.revocable([null], {});

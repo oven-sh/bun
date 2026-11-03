@@ -314,8 +314,10 @@ fn is_style_component(object: ObjectNode<'_>) -> bool {
     if is_style_node(parent) {
         return true;
     }
+    // The arrow's `Func` is a level of its own here: its owner is the `Fn` expression, whose parent is what upstream
+    // reads as `ArrowFunctionExpression.parent`.
     match parent {
-        Node::Func(func) if func.is_arrow() => is_style_node(Node::Func(func).parent()),
+        Node::Func(func) if func.is_arrow() => is_style_node(func.owner().parent()),
         _ => false,
     }
 }

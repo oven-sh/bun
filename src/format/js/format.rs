@@ -130,6 +130,19 @@ pub(crate) fn format_node<'a>(
     }
 }
 
+/// [`format_node`] for a handle. What kind of node it is takes a look at what it's in, and only matters for comments.
+#[inline]
+fn format_handle<'a, H: AsAstNodes<'a>>(
+    handle: H,
+    f: &mut Formatter<'a>,
+    write: impl FnOnce(&mut Formatter<'a>),
+) {
+    match f.is_quiet() {
+        true => write(f),
+        false => format_node_with_comments(handle.as_ast_nodes(), f, write),
+    }
+}
+
 fn format_node_with_comments<'a>(
     node: AstNodes<'a>,
     f: &mut Formatter<'a>,
@@ -1344,7 +1357,7 @@ macro_rules! format_with_comments {
             #[inline]
             fn fmt(&self, f: &mut Formatter<'a>) {
                 let handle = *self;
-                format_node(handle.as_ast_nodes(), f, |f| $write(handle, f));
+                format_handle(handle, f, |f| $write(handle, f));
             }
         })*
     };
@@ -1354,9 +1367,7 @@ impl<'a> Format<'a> for Member<'a> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
         let member = *self;
-        format_node(member.as_ast_nodes(), f, |f| {
-            print::class::write_member(member, f)
-        });
+        format_handle(member, f, |f| print::class::write_member(member, f));
         if !f.context().comments_without_printer.is_empty() {
             write_comments_without_printer(member.span(), f);
         }
@@ -1394,9 +1405,7 @@ impl<'a> Format<'a> for Pat<'a> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
         let pat = *self;
-        format_node(pat.as_ast_nodes(), f, |f| {
-            print::patterns::write_binding_pattern(pat, f)
-        });
+        format_handle(pat, f, |f| print::patterns::write_binding_pattern(pat, f));
     }
 }
 
@@ -1416,7 +1425,7 @@ impl<'a> Format<'a> for TupleElem<'a> {
         if element.name().is_none() && !element.is_rest() && !element.is_optional() {
             return element.ty().fmt(f);
         }
-        format_node(element.as_ast_nodes(), f, |f| {
+        format_handle(element, f, |f| {
             print::tuple_type::write_ts_tuple_element(element, f)
         });
     }

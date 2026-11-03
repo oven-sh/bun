@@ -36,11 +36,17 @@ pub(crate) struct Settings {
     sensitivity: HtmlWhitespaceSensitivity,
     formats_embedded: bool,
     spelling: Spelling,
+    /// How long the front matter of the text is, which the lexer sees as white space.
+    front_matter_len: usize,
 }
 
 impl Settings {
     /// Returns `None` if nothing is read here with `options`.
-    pub(crate) fn new(parser: Parser, options: &FormatOptions) -> Option<Settings> {
+    pub(crate) fn new(
+        parser: Parser,
+        options: &FormatOptions,
+        front_matter_len: usize,
+    ) -> Option<Settings> {
         let is_read = !options.no_short_cuts
             && matches!(parser, Parser::Html | Parser::Vue)
             && !options.bracket_same_line.value()
@@ -58,6 +64,7 @@ impl Settings {
                 EmbeddedLanguageFormatting::Auto
             ),
             spelling: Spelling::new(options),
+            front_matter_len,
         })
     }
 }
@@ -516,20 +523,33 @@ impl Runs {
         !self.is_new && at <= self.scanned_to
     }
 
-    /// Reads `text` from its start on, as the lexer would ask it to. If all of it is one run, returns where what is printed
-    /// for it is, without the last line break, and whether that is in `text` rather than in `printed`. If not, what has
-    /// been found is kept for the lexer, together with `printed`.
+    /// Reads `text` from behind its front matter on, as the lexer would ask it to. If all of it is one run, returns where
+    /// what is printed for it is, without the last line break, and whether that is in `text` rather than in `printed`. If
+    /// not, what has been found is kept for the lexer, together with `printed`.
     pub(crate) fn whole(&mut self, text: &[u8], printed: &mut Vec<u8>) -> Option<(Span, bool)> {
-        if !starts_at_start_of_line(text) {
+        let front_matter_len = self.settings.front_matter_len;
+        let rest = text.get(front_matter_len..)?;
+        let space = rest.len() - rest.trim_ascii_start().len();
+        // White space in front of the first child would be a text. Behind front matter it has to end the line.
+        let starts_line = match front_matter_len {
+            0 => starts_at_start_of_line(text),
+            _ => {
+                rest[..space]
+                    .iter()
+                    .all(|byte| matches!(byte, b' ' | b'\t' | b'\n'))
+                    && bun_core::strings::contains_char(&rest[..space], b'\n')
+            }
+        };
+        if !starts_line {
             return None;
         }
         let root = Parent {
             level: 0,
             element: None,
             is_in_svg: false,
-            has_children: false,
+            has_children: front_matter_len > 0,
         };
-        self.scan(text, 0, root, printed);
+        self.scan(text, front_matter_len + space, root, printed);
         let &[ready] = &self.found[..] else {
             return None;
         };
@@ -560,6 +580,15 @@ impl Runs {
         self.levels.clear();
         if std::mem::take(&mut self.is_new) {
             self.marks.find(text);
+            // What is on the line that front matter ends on does not start a line.
+            let front_matter_len = self.settings.front_matter_len;
+            if front_matter_len > 0
+                && !(text.get(front_matter_len..start))
+                    .is_some_and(|between| bun_core::strings::contains_char(between, b'\n'))
+            {
+                self.scanned_to = start;
+                return;
+            }
         }
         let definition = (parent.element).map_or(&data::DEFAULT_TAG_DEFINITION, |it| it.1);
         let printed_so_far = printed.len();

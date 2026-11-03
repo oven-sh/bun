@@ -126,6 +126,17 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
         }
     }
 
+    /// What `print_root` writes for a text that is front matter and one run, for which `run` is printed.
+    pub(crate) fn print_front_matter_and_run(&mut self, front_matter: &[u8], run: &[u8]) {
+        if !(self.formats_embedded() && self.embed_front_matter(front_matter)) {
+            self.out.text(front_matter);
+        }
+        self.out.hardline();
+        self.out.hardline();
+        self.out.lines(run);
+        self.out.hardline();
+    }
+
     /// Calls `print`, which prints `target`, and marks where the part of the text around the cursor starts and ends.
     pub(crate) fn with_cursor_marks(&mut self, target: Target, print: impl FnOnce(&mut Self)) {
         let (starts_before, starts_after, ends_before, ends_after) = match self.cursor {

@@ -381,7 +381,9 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
     /// Prettier's `embed`. Returns true if it wrote the node.
     pub(crate) fn embed(&mut self, id: Id) -> bool {
         match self.tree[id].kind {
-            Kind::FrontMatter => self.embed_front_matter(id),
+            Kind::FrontMatter => {
+                self.embed_front_matter(self.tree[id].span.of(self.options.original_text))
+            }
             Kind::Element => self.embed_element(id),
             Kind::Text => self.embed_text(id),
             _ => false,
@@ -389,8 +391,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
     }
 
     /// `printEmbedFrontMatter`
-    fn embed_front_matter(&mut self, id: Id) -> bool {
-        let raw = self.tree[id].span.of(self.options.original_text);
+    pub(super) fn embed_front_matter(&mut self, raw: &[u8]) -> bool {
         let (Some(first_line_end), Some(last_line_start)) = (
             strings::index_of_char_usize(raw, b'\n'),
             strings::last_index_of_char(raw, b'\n').map(|at| at + 1),

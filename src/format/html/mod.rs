@@ -381,7 +381,8 @@ fn write_document_with_cursor(
     let reads_runs = reads_runs
         && (parser != Parser::Vue
             || (!strings::contains(text, b"v-pre") && !script_flavor.is_oxfmt()));
-    let runs = runs::Settings::new(parser, options).filter(|_| reads_runs);
+    let runs = runs::Settings::new(parser, options, front_matter_len.unwrap_or(0))
+        .filter(|_| reads_runs);
     parse::parse_with_runs(&content, front_matter_len, parser, runs, &mut tree).map_err(
         |error| match error {
             parse::ParseError::Syntax(_) => FormatError::SyntaxError,
@@ -613,13 +614,20 @@ fn format_once(
         true => options.flavor,
         false => Flavor::Prettier,
     };
-    // A text that is one run from its start to its end needs no tree and no document.
+    let options_of_text = || FormatOptions {
+        line_ending: options.line_ending.resolve(original),
+        is_in_html_file: path.ends_with(b".html") || path.ends_with(b".htm"),
+        filepath: Some(options.filepath.clone().unwrap_or_else(|| path.into())),
+        ..options_of_host(options, parser)
+    };
+    // A text that is one run from its start to its end needs no tree and no document. Behind front matter it needs no
+    // tree.
     let mut found = None;
     if parser == Parser::Html
         && !is_range
         && cursor_offset.is_none()
-        && without_front_matter(&text).1.is_none()
-        && let Some(settings) = runs::Settings::new(parser, options)
+        && let front_matter_len = front_matter::parse(&text).map_or(0, |it| it.end)
+        && let Some(settings) = runs::Settings::new(parser, options, front_matter_len)
     {
         let (mut runs, mut printed) = (runs::Runs::new(settings), Vec::new());
         if let Some((span, is_in_text)) = runs.whole(&text, &mut printed)
@@ -627,18 +635,49 @@ fn format_once(
             && let Some(whole) = (if is_in_text { &text[..] } else { &printed[..] })
                 .get(span.start as usize..span.end as usize)
         {
-            out.extend_from_slice(whole);
-            out.push(b'\n');
-            return Ok(None);
+            if front_matter_len == 0 {
+                out.extend_from_slice(whole);
+                out.push(b'\n');
+                return Ok(None);
+            }
+            let options = options_of_text();
+            let mut context =
+                JsFormatContext::without_file(options.clone(), &crate::js::comments::NO_COMMENTS);
+            context.parse_javascript = parse_javascript;
+            let root = crate::ir::run::write_with(context, &text, &mut scratch.document, |f| {
+                let mut printer = printer::Printer {
+                    tree: &ast::Tree::default(),
+                    options: &Options {
+                        parser,
+                        original_text: &text,
+                        format: &options,
+                        filepath: Some(path).filter(|path| !path.is_empty()),
+                        has_parent_parser: false,
+                        script_flavor,
+                    },
+                    out: writer::Writer::new(f, Some(0), true),
+                    ancestors: 0,
+                    stack_check: bun_core::StackCheck::init(),
+                    is_nested_too_deeply: false,
+                    has_wrong_short_cut: false,
+                    has_typescript_script: None,
+                    has_tsx_script: None,
+                    cursor: Cursor::Nowhere,
+                    css_scratch: Default::default(),
+                };
+                printer.print_front_matter_and_run(&text[..front_matter_len], whole);
+                printer.out.finish();
+            });
+            return root
+                .and_then(|root| {
+                    crate::ir::run::print(root, &text, &options, &mut scratch.document, out)
+                })
+                .map(|()| None)
+                .inspect_err(|_| out.truncate(start));
         }
         found = Some((runs, printed));
     }
-    let mut options = FormatOptions {
-        line_ending: options.line_ending.resolve(original),
-        is_in_html_file: path.ends_with(b".html") || path.ends_with(b".htm"),
-        filepath: Some(options.filepath.clone().unwrap_or_else(|| path.into())),
-        ..options_of_host(options, parser)
-    };
+    let mut options = options_of_text();
     let path = Some(path).filter(|path| !path.is_empty());
     let (result, root) = loop {
         let (mut result, mut has_wrong_short_cut) = (Ok(None), false);

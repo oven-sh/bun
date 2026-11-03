@@ -5578,47 +5578,64 @@ impl VirtualMachine {
             .filter(|_| self.finds_entry_points_by_path && !is_special_source)
             .map(|graph| graph.base_public_path_with_default_suffix())
             .filter(|root| !source_to_use.starts_with(root));
+        let chai_next_to_vitest =
+            normalized_specifier == b"chai" && self.transpiler.options.rewrite_jest_for_tests;
         let resolver = &mut self.transpiler.resolver;
-        let lookup = |resolver: &mut bun_resolver::Resolver<'_>, source_dir: &[u8]| {
+        let is_miss =
+            |found: &ResultUnion| matches!(found, ResultUnion::Pending(_) | ResultUnion::NotFound);
+        let found = if root.is_none() && !chai_next_to_vitest {
             resolver.resolve_and_auto_install(
-                source_dir,
+                source_to_use,
                 normalized_specifier,
                 import_kind,
                 global_cache,
             )
-        };
-        let is_miss =
-            |found: &ResultUnion| matches!(found, ResultUnion::Pending(_) | ResultUnion::NotFound);
-        let found = match root {
-            None => lookup(resolver, source_to_use),
-            // One check on disk when both miss.
-            Some(root) => resolver
-                .with_deferred_miss_check(source_to_use, normalized_specifier, |resolver| {
-                    let from_importer = lookup(resolver, source_to_use);
+        } else {
+            // The lookups fall back one to the next: one more pass when all of them miss.
+            resolver.with_miss_recheck(
+                |resolver, how| {
+                    let from_importer = resolver.resolve_and_auto_install_as(
+                        source_to_use,
+                        normalized_specifier,
+                        import_kind,
+                        global_cache,
+                        how,
+                    );
                     if !is_miss(&from_importer) {
-                        return Ok(from_importer);
+                        return from_importer;
                     }
-                    let from_root = lookup(resolver, root);
-                    if is_miss(&from_root) {
-                        Err(())
-                    } else {
-                        Ok(from_root)
+                    if let Some(root) = root {
+                        let from_root = resolver.resolve_and_auto_install_as(
+                            root,
+                            normalized_specifier,
+                            import_kind,
+                            global_cache,
+                            how,
+                        );
+                        if !is_miss(&from_root) {
+                            return from_root;
+                        }
                     }
-                })
-                .unwrap_or(ResultUnion::NotFound),
+                    if chai_next_to_vitest
+                        && let Some(chai) = Self::resolve_chai_next_to_vitest(
+                            resolver,
+                            how,
+                            source_to_use,
+                            import_kind,
+                        )
+                    {
+                        return ResultUnion::Success(chai);
+                    }
+                    ResultUnion::NotFound
+                },
+                is_miss,
+            )
         };
         let result: bun_resolver::Result = match found {
             ResultUnion::Success(found) => found,
             ResultUnion::Failure(error) => return Err(error.into()),
             ResultUnion::Pending(_) | ResultUnion::NotFound => {
-                match self.resolve_chai_next_to_vitest(
-                    normalized_specifier,
-                    source_to_use,
-                    import_kind,
-                ) {
-                    Some(chai) => chai,
-                    None => return Err(crate::CrateError::ModuleNotFound),
-                }
+                return Err(crate::CrateError::ModuleNotFound);
             }
         };
 
@@ -5642,30 +5659,17 @@ impl VirtualMachine {
 
     /// `import { assert } from "vitest"` imports "chai". pnpm links it next to vitest, not into the project's node_modules.
     fn resolve_chai_next_to_vitest(
-        &mut self,
-        specifier: &[u8],
+        resolver: &mut bun_resolver::Resolver<'_>,
+        how: bun_resolver::AfterMiss,
         source_dir: &[u8],
         kind: bun_ast::ImportKind,
     ) -> Option<bun_resolver::Result<'static>> {
-        use bun_resolver::{GlobalCache, ResultUnion};
-        if specifier != b"chai" || !self.transpiler.options.rewrite_jest_for_tests {
-            return None;
-        }
-        let resolver = &mut self.transpiler.resolver;
-        let ResultUnion::Success(vitest) = resolver.resolve_and_auto_install(
-            source_dir,
-            b"vitest/package.json",
-            kind,
-            GlobalCache::disable,
-        ) else {
-            return None;
-        };
+        let vitest = resolver
+            .resolve_as(source_dir, b"vitest/package.json", kind, how)
+            .ok()?;
         let vitest_dir =
             bun_resolver::fs::PathName::init(vitest.path_const()?.text).dir_with_trailing_slash();
-        match resolver.resolve_and_auto_install(vitest_dir, b"chai", kind, GlobalCache::disable) {
-            ResultUnion::Success(chai) => Some(chai),
-            _ => None,
-        }
+        resolver.resolve_as(vitest_dir, b"chai", kind, how).ok()
     }
 
     /// Module-resolution core: resolves `specifier` relative to `source`, with

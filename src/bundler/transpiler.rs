@@ -305,23 +305,27 @@ impl<'a> Transpiler<'a> {
         dot_slash: &'e OnceCell<Vec<u8>>,
     ) -> crate::Result<resolver::Result<'e>> {
         let top_level_dir = Fs::FileSystem::get().top_level_dir();
-        // The lookup as a package is expected to miss for `bun build index.ts`: one check for both.
-        self.resolver
-            .with_deferred_miss_check(top_level_dir, entry_point, |resolver| {
-                Self::resolve_entry_point_once(resolver, top_level_dir, entry_point, dot_slash)
-            })
+        // The lookup as a package is expected to miss for `bun build index.ts`: one more pass for both.
+        self.resolver.with_miss_recheck(
+            |resolver, how| {
+                Self::resolve_entry_point_once(resolver, how, top_level_dir, entry_point, dot_slash)
+            },
+            |found| found.is_err(),
+        )
     }
 
     fn resolve_entry_point_once<'e>(
         resolver: &mut Resolver<'a>,
+        how: resolver::AfterMiss,
         top_level_dir: &[u8],
         entry_point: &'e [u8],
         dot_slash: &'e OnceCell<Vec<u8>>,
     ) -> crate::Result<resolver::Result<'e>> {
-        let first = match resolver.resolve_with_framework(
+        let first = match resolver.resolve_with_framework_as(
             top_level_dir,
             entry_point,
             bun_ast::ImportKind::EntryPointBuild,
+            how,
         ) {
             Ok(r) if !r.flags.is_external() => return Ok(r),
             // A data: URL whose MIME type is not code; there is no module in it.
@@ -340,10 +344,11 @@ impl<'a> Transpiler<'a> {
         {
             let prefixed = dot_slash.get_or_init(|| [b"./", entry_point].concat());
             assert_eq!(&prefixed[2..], entry_point, "`dot_slash` was reused");
-            if let Ok(r) = resolver.resolve(
+            if let Ok(r) = resolver.resolve_as(
                 top_level_dir,
                 prefixed,
                 bun_ast::ImportKind::EntryPointBuild,
+                how,
             ) {
                 if !r.flags.is_external() {
                     return Ok(r);

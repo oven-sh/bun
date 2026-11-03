@@ -536,6 +536,11 @@ describe("MDX", () => {
     "{/* a */}\n\n{/* a */}\n```js\nb\n```\n\n{/* a */}\ntext\n\n{/*a*/}\n\n{/*  a  */}\n\n{/* a */} b\n\n{/* a */} b {/* c */}\n\n{/* é */}\n\n# {/* a */}\n",
     "{/* prettier-ignore */}\n| a | b |\n|--|--|\n\n{/* prettier-ignore */}\n*a*  b\n\n*c*\n",
     "<A />\n\n<A>\n\ntext\n\n</A>\n\n<A b=\"c\">\n  <B>\n\n<A>b</A>\n\n<A.B c>\n\n<a-b>\n\n<pre>\n\n<A>\n  \n</A>\n\n<A>\n<!-- b -->\n\n<A b={c}>\n\n<>\n\n<A>\u00a0\n",
+    // JSX that's formatted already, and nearly so.
+    '<Note>You cannot use both.</Note>\n\n<ParamField path="--config" type="string">\n  Specify path to config file (<code>bunfig.toml</code>). Alias: <code>-c</code>\n</ParamField>\n\n<ParamField path="--elide-lines" type="number" default="0">\n  Truncate each script\'s output to its last N lines when using --filter. Default 0 shows all lines\n</ParamField>\n',
+    '<A b="c">\n  d\n</A>\n\n<A>\n  d\n</A>\n\n<A b="c" d>\n  e\n</A>\n\n<A b="c" d>e</A>\n\n<A b=\'c\'>d</A>\n\n<A b={c}>d</A>\n\n<A b="&quot;">d</A>\n\n<fbt>a</fbt>\n\n<A />\n\n<A/>\n\n<A b />\n\n<A>  d</A>\n\n<A>d  e</A>\n\n<A>{d}</A>\n\n<A>\u00e9</A>\n',
+    "<A>\n  <code>a</code>\n</A>\n\n<A>\n  a <code>b</code>\n  c\n</A>\n\n<A>\n  a <code>b</code> c\n</A>\n\n<A>\n  a<code>b</code> c\n</A>\n\n<A>\n  a <br /> c\n</A>\n\n<A>\n    a\n</A>\n\n<A>\n\ta\n</A>\n\n<A>\n  a\n  b\n</A>\n\n<A>\n</A>\n\n<A>\n  a\n</B>\n",
+    `<A>\n  ${"word ".repeat(15)}word\n  ${"word ".repeat(3)}word\n</A>\n\n<A>\n  ${"word ".repeat(14)}word\n  ${"word ".repeat(3)}word\n</A>\n\n<A>${"word ".repeat(14)}word</A>\n\n<A>${"word ".repeat(15)}word</A>\n\n<A b="${"c".repeat(90)}">\n  d\n</A>\n`,
     "a <b>c</b> d <br/> e < f <= g <A b=\"*c*\" /> *h*\n\na {b} c {{ d }} e {% f %} g { h } i {/* j */}\n",
     "_a_ and *a* and _two words_ and a_b and a_b_ c and _a and snake_case `a_` and __a__\n\n**a** and **a b** and ** a** and **a **  and **a*b** and **`a*b`** and **a_b** and **[a](b)** and ***a***\n",
     "[a](b) and [a](b \"c\") and [a] and [a][b] and ![a](b) and [`a`](b) and [a](é) and [a\\]](b) and a] b\n\n[a](b)\n\n[a]: b\n",
@@ -550,5 +555,11 @@ describe("MDX", () => {
     "\f\n```\n\n```\n",
     "a\n\n\n\nb\n# c\nd\n```\ne\n```\nf\n",
   ];
-  expectSame("a.mdx", texts, markdownOptions);
+  expectSame("a.mdx", texts, [
+    ...markdownOptions,
+    ["--print-width=40"],
+    ["--jsx-single-quote"],
+    ["--single-attribute-per-line"],
+    ["--bracket-same-line"],
+  ]);
 });

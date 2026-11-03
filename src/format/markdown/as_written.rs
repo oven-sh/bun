@@ -259,6 +259,21 @@ enum HtmlStart {
     Unknown,
 }
 
+/// An opening tag of JSX.
+struct JsxTag {
+    end: usize,
+    name: (usize, usize),
+    attributes: u32,
+    /// Its only attribute is a string.
+    is_only_one_string: bool,
+    is_self_closing: bool,
+}
+
+/// A byte of a word in JSX: ASCII, and nothing that's read as something else than text.
+fn is_jsx_word_byte(byte: u8) -> bool {
+    byte.is_ascii_graphic() && !matches!(byte, b'<' | b'>' | b'{' | b'}')
+}
+
 /// The marker of an item.
 #[derive(Copy, Clone)]
 struct Marker {
@@ -991,8 +1006,9 @@ impl<'t> Reader<'t> {
         }
     }
 
-    /// For MDX: JSX that starts with the tag at `at`, ends before an empty line and isn't formatted, because embedded code
-    /// isn't or because it's only a part of an element, which can't be parsed.
+    /// For MDX: JSX that starts with the tag at `at`, ends before an empty line and is printed as it's written: because
+    /// embedded code isn't formatted, because it's only a part of an element, which can't be parsed, or because that's how
+    /// it's formatted.
     fn jsx(&self, at: usize) -> Option<usize> {
         let text = self.text;
         let is_closing = self.byte(at + 1) == b'/';
@@ -1025,11 +1041,228 @@ impl<'t> Reader<'t> {
         // Nothing ends an element or a comment without a slash.
         let is_formatted = super::is_formatted(super::MDX_JSX, self.options)
             && !is_closing
-            && bun_core::strings::contains_char(jsx, b'/');
+            && bun_core::strings::contains_char(jsx, b'/')
+            && !self.is_formatted_jsx(at, at + len);
         (!is_formatted
             && !bun_core::strings::contains(jsx, b"<!--")
             && bun_core::strings::trim_js_whitespace_end(jsx).len() == len)
             .then_some(at + len)
+    }
+
+    /// `<Name a="b" c>` or `<Name a="b" />` on one line, as it's printed.
+    fn jsx_opening_tag(&self, at: usize, limit: usize) -> Option<JsxTag> {
+        let is_in_name = |byte: u8| byte.is_ascii_alphanumeric();
+        let mut end = at + 1;
+        if !self.byte(end).is_ascii_alphabetic() {
+            return None;
+        }
+        loop {
+            if is_in_name(self.byte(end)) {
+                end += 1;
+            } else if self.byte(end) == b'.' && self.byte(end + 1).is_ascii_alphabetic() {
+                end += 2;
+            } else {
+                break;
+            }
+        }
+        let mut tag = JsxTag {
+            end,
+            name: (at + 1, end),
+            attributes: 0,
+            is_only_one_string: false,
+            is_self_closing: false,
+        };
+        // `<fbt>` has rules of its own.
+        if &self.text[at + 1..end] == b"fbt" {
+            return None;
+        }
+        loop {
+            if end >= limit {
+                return None;
+            }
+            match (self.byte(end), self.byte(end + 1), self.byte(end + 2)) {
+                (b'>', ..) => tag.end = end + 1,
+                (b' ', b'/', b'>') => (tag.end, tag.is_self_closing) = (end + 3, true),
+                (b' ', first, _) if first.is_ascii_alphabetic() => {
+                    end += 1;
+                    while is_in_name(self.byte(end)) || self.byte(end) == b'-' {
+                        end += 1;
+                    }
+                    tag.attributes += 1;
+                    tag.is_only_one_string = false;
+                    if self.byte(end) != b'=' {
+                        continue;
+                    }
+                    if self.byte(end + 1) != b'"' {
+                        return None;
+                    }
+                    end += 2;
+                    // A character reference could be a quote, and a line break breaks the tag.
+                    while self.byte(end) != b'"' {
+                        if !matches!(self.byte(end), b' '..=b'~')
+                            || self.byte(end) == b'&'
+                            || end >= limit
+                        {
+                            return None;
+                        }
+                        end += 1;
+                    }
+                    end += 1;
+                    tag.is_only_one_string = tag.attributes == 1;
+                    continue;
+                }
+                _ => return None,
+            }
+            return Some(tag);
+        }
+    }
+
+    /// Where `</Name>` at `at` ends.
+    fn jsx_closing_tag(&self, at: usize, name: (usize, usize)) -> Option<usize> {
+        let name = &self.text[name.0..name.1];
+        let rest = self
+            .text
+            .get(at..)?
+            .strip_prefix(b"</")?
+            .strip_prefix(name)?;
+        rest.starts_with(b">").then_some(at + name.len() + 3)
+    }
+
+    /// Where the words end that start at `at`, with one space between two of them.
+    fn jsx_words_end(&self, mut at: usize) -> usize {
+        loop {
+            if is_jsx_word_byte(self.byte(at)) {
+                at += 1;
+            } else if self.byte(at) == b' ' && is_jsx_word_byte(self.byte(at + 1)) {
+                at += 2;
+            } else {
+                return at;
+            }
+        }
+    }
+
+    /// Where `<code>a b</code>` among words ends: no more than one attribute, and words in it.
+    fn jsx_inline_element(&self, at: usize, limit: usize) -> Option<usize> {
+        let tag = self.jsx_opening_tag(at, limit)?;
+        if tag.attributes > 1 || tag.is_self_closing || !is_jsx_word_byte(self.byte(tag.end)) {
+            return None;
+        }
+        self.jsx_closing_tag(self.jsx_words_end(tag.end), tag.name)
+    }
+
+    /// True if the text from `start` to `end` is one element with strings for attributes and words and small elements for
+    /// children, laid out as Prettier's `printJsxElement` does it:
+    /// - The opening tag is on one line: it fits, or its only attribute is a string.
+    /// - An element with more than one attribute, or with an element in it, is broken. Any other is if it doesn't fit.
+    /// - In a broken element the children are a `fill`: a word goes on the line as long as it fits.
+    /// - White space with a line break next to an element means nothing. Without one it's `{" "}` where the line is broken,
+    ///   so an element among the words has words on both sides on its line, or the tag of its parent on the other side of
+    ///   the line break.
+    fn is_formatted_jsx(&self, start: usize, end: usize) -> bool {
+        self.is_jsx_as_printed(start, end).unwrap_or(false)
+    }
+
+    fn is_jsx_as_printed(&self, start: usize, end: usize) -> Option<bool> {
+        let options = self.options;
+        let print_width = options.line_width.value() as usize;
+        let tab_width = options.indent_width.value() as usize;
+        let uses_tabs = matches!(options.indent_style, crate::options::IndentStyle::Tab);
+        let is_one_per_line =
+            options.attribute_position == crate::options::AttributePosition::Multiline;
+        let byte = |at: usize| self.byte(at);
+        if !options.jsx_quote_style.is_double() {
+            return None;
+        }
+        let tag = self.jsx_opening_tag(start, end)?;
+        let mut at = tag.end;
+        if (tag.attributes > 1 && is_one_per_line)
+            || (!tag.is_only_one_string && at - start > print_width)
+        {
+            return None;
+        }
+        if tag.is_self_closing {
+            return Some(at == end);
+        }
+        let mut must_break = tag.attributes > 1;
+        if byte(at) != b'\n' {
+            // On one line: words, and it fits.
+            if must_break || !is_jsx_word_byte(byte(at)) {
+                return None;
+            }
+            at = self.jsx_closing_tag(self.jsx_words_end(at), tag.name)?;
+            return Some(at == end && at - start <= print_width);
+        }
+        // One item of the `fill` after the other. `flat` is the width of the element on one line.
+        let mut flat = at - start;
+        let (mut is_first_line, mut last_column) = (true, 0);
+        loop {
+            at += 1;
+            if byte(at) == b'<' && byte(at + 1) == b'/' {
+                break;
+            }
+            let indentation = if uses_tabs { 1 } else { tab_width };
+            let fill = if uses_tabs { b'\t' } else { b' ' };
+            let white = self.text.get(at..at + indentation)?;
+            if !white.iter().all(|&byte| byte == fill) {
+                return None;
+            }
+            at += indentation;
+            let mut column = tab_width;
+            let mut items = 0;
+            loop {
+                let item = at;
+                let is_element = byte(at) == b'<';
+                if is_element {
+                    at = self.jsx_inline_element(at, end)?;
+                    must_break = true;
+                    // Text right next to it is another matter.
+                    if is_jsx_word_byte(byte(at)) || byte(at) == b'<' {
+                        return None;
+                    }
+                } else {
+                    if !is_jsx_word_byte(byte(at)) {
+                        return None;
+                    }
+                    while is_jsx_word_byte(byte(at)) {
+                        at += 1;
+                    }
+                    if byte(at) == b'<' {
+                        return None;
+                    }
+                }
+                let width = at - item;
+                let fits = column + width <= print_width;
+                if items > 0 && !fits {
+                    return None;
+                }
+                // The first one didn't fit on the line before. An element starts a line only after the opening tag, and
+                // if it needn't be broken itself.
+                if items == 0
+                    && ((!is_first_line && last_column + 1 + width <= print_width)
+                        || (is_element && (!is_first_line || !fits)))
+                {
+                    return None;
+                }
+                column += width;
+                flat += width + usize::from(!(is_first_line && items == 0));
+                items += 1;
+                match byte(at) {
+                    b' ' => {
+                        at += 1;
+                        column += 1;
+                    }
+                    // An element ends a line only before the closing tag.
+                    b'\n' if !is_element || (byte(at + 1) == b'<' && byte(at + 2) == b'/') => break,
+                    _ => return None,
+                }
+            }
+            (last_column, is_first_line) = (column, false);
+        }
+        if is_first_line {
+            return None;
+        }
+        let closing_end = self.jsx_closing_tag(at, tag.name)?;
+        Some(closing_end == end && (must_break || flat + (closing_end - at) > print_width))
     }
 
     /// HTML that starts at `at` and ends before a line with nothing on it.

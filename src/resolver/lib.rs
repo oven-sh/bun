@@ -895,7 +895,7 @@ pub mod fs {
     /// What a read that fails means to the caller of [`RealFS::listing_locked`].
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub(crate) enum ListingReader {
-        /// `read_directory`: a failed read is reported, and a cached error is the answer.
+        /// `read_directory`: a failed read is reported, and a cached error is the answer until an asker that checks at another generation asks.
         Lookup,
         /// The `DirInfo` fill, which has the directory open: it keeps the names that could be read.
         DirInfoFill,
@@ -1111,6 +1111,7 @@ pub mod fs {
             &mut self,
             dir: &[u8],
             err: crate::Error,
+            generation: Generation,
         ) -> crate::CrateResult<&'static mut EntriesOption> {
             let mut get_or_put_result = self.entries.get_or_put(dir)?;
             if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
@@ -1119,6 +1120,7 @@ pub mod fs {
                     dir_entry::Err {
                         original_err: err,
                         canonical_error: err,
+                        generation,
                     },
                 )));
             }
@@ -1127,10 +1129,31 @@ pub mod fs {
                 EntriesOption::Err(dir_entry::Err {
                     original_err: err,
                     canonical_error: err,
+                    generation,
                 }),
             )?;
             // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
             Ok(unsafe { &mut *opt })
+        }
+
+        /// `read_directory_error` for a listing that a `DirInfo` holds by index: the slot keeps the listing, so the next asker that checks opens the directory again.
+        fn read_directory_error_transient(
+            &mut self,
+            dir: &[u8],
+            err: crate::Error,
+            generation: Generation,
+        ) -> crate::CrateResult<&'static mut EntriesOption> {
+            if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                let result = self.entries.get_or_put(dir)?;
+                self.entries.mark_not_found(result);
+            }
+            Ok(temp_entries_option_write(EntriesOption::Err(
+                dir_entry::Err {
+                    original_err: err,
+                    canonical_error: err,
+                    generation,
+                },
+            )))
         }
 
         pub fn read_directory(
@@ -1200,6 +1223,7 @@ pub mod fs {
                     dir_entry::Err {
                         original_err: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
                         canonical_error: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
+                        generation: asker.generation(),
                     },
                 )));
             }
@@ -1222,7 +1246,7 @@ pub mod fs {
             match self.listing_locked(asker, slot, read, iterator)? {
                 // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
                 Ok(slot) => Ok(unsafe { &mut *slot }),
-                Err(err) => self.read_directory_error(dir, err),
+                Err(err) => self.read_directory_error(dir, err, asker.generation()),
             }
         }
 
@@ -1256,6 +1280,9 @@ pub mod fs {
                     {
                         refill = Some((cached, std::ptr::from_mut::<DirEntry>(*listing)));
                     }
+                    // A failure has the stamp of the asker that met it: a checked asker of another generation opens the directory again.
+                    EntriesOption::Err(failed)
+                        if A::CHECKS && failed.generation != asker.generation() => {}
                     // The `DirInfo` fill has the directory open, so an error that was cached no longer holds.
                     EntriesOption::Err(_) if read.reader == ListingReader::DirInfoFill => {}
                     _ => return Ok(Ok(cached)),
@@ -1747,7 +1774,9 @@ pub mod fs {
                         if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {
                             existing.forget();
                         }
-                        return self.read_directory_error(dir, err).ok();
+                        return self
+                            .read_directory_error_transient(dir, err, asker.generation())
+                            .ok();
                     }
                 }
             }

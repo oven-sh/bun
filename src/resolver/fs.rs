@@ -387,6 +387,8 @@ pub mod dir_entry {
     pub struct Err {
         pub original_err: crate::Error,
         pub canonical_error: crate::Error,
+        /// The asker that met the failure. One that checks at another generation opens the directory again.
+        pub(crate) generation: bun_core::Generation,
     }
 }
 

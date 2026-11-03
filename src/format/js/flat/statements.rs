@@ -46,6 +46,15 @@ impl<'a> Line<'_, 'a> {
                 self.declaration_modifiers(statement)?;
                 self.var_kind(declarator)?;
                 if declarations.len() > 1 {
+                    // As the body of a `for` loop they're on one line for oxfmt.
+                    if self.f.options().flavor.is_oxfmt()
+                        && matches!(statement.parent(), Node::Stmt(parent) if matches!(
+                            parent.tag(),
+                            StmtTag::For | StmtTag::ForIn | StmtTag::ForOf
+                        ))
+                    {
+                        return Err(Refused);
+                    }
                     return self.declarators(declarations);
                 }
                 self.declared(declarator)?;
@@ -681,6 +690,10 @@ impl<'a> Line<'_, 'a> {
     }
 
     pub(super) fn export_named(&mut self, statement: Stmt<'a>, export: Export<'a>) -> Written {
+        // `declare export { a }`
+        if !statement.modifiers().is_empty() {
+            return Err(Refused);
+        }
         self.token(match export.is_type_only() {
             true => "export type ",
             false => "export ",

@@ -246,9 +246,13 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         };
         let program = |syntax: Syntax, printer: &mut Self| {
             let flavor = printer.options.script_flavor;
-            printer
-                .out
-                .foreign(|f| js::write_program(f, code, syntax, source_type, in_html, flavor))
+            let level = printer.out.indent_level();
+            printer.out.foreign(|f| {
+                f.context_mut().short_cuts.start_script_at(level);
+                let is_written = js::write_program(f, code, syntax, source_type, in_html, flavor);
+                f.context_mut().short_cuts.end_script();
+                is_written
+            })
         };
         if let Some(parser) = crate::css::Parser::from_name(parser)
             && self.out.indent_level().is_some()
@@ -575,7 +579,10 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         write_value: impl FnOnce(&mut Self) -> bool,
     ) -> bool {
         let attempt = self.out.start_attempt_after_text();
+        // The quotes in the value are written as entities afterwards, so nothing in it is as wide as it's written.
+        let short_cuts = std::mem::take(&mut self.out.f.context_mut().short_cuts.mode);
         let is_written = write_value(self);
+        self.out.f.context_mut().short_cuts.mode = short_cuts;
         self.print_attribute_with_attempt(attr, attempt, is_written)
     }
 

@@ -50,11 +50,11 @@ impl<'a> Line<'_, 'a> {
         Ok(())
     }
 
-    /// Refuses what's printed in another way in a Flow file, whatever it is.
+    /// Refuses what's printed in another way in a file that isn't TypeScript, whatever it is.
     pub(super) fn only_in_typescript(&self) -> Written {
-        match self.is_flow {
-            true => Err(Refused),
-            false => Ok(()),
+        match self.is_typescript {
+            true => Ok(()),
+            false => Err(Refused),
         }
     }
 
@@ -88,6 +88,9 @@ impl<'a> Line<'_, 'a> {
 
     /// `<A, B: C = D>`
     pub(super) fn flow_type_parameters(&mut self, params: List<'a, TypeParam<'a>>) -> Written {
+        if !self.is_flow {
+            return Err(Refused);
+        }
         self.byte(b'<')?;
         self.list(params.iter(), |line, param| {
             // A variance, `const`
@@ -114,6 +117,10 @@ impl<'a> Line<'_, 'a> {
     /// A keyword, a name with arguments, a string, and `?T`, `T[]` and `A | B` of those. None of them has a function
     /// type in it, which is what puts parentheses around the return type of an arrow function.
     pub(super) fn flow_type(&mut self, ty: TypeNode<'a>) -> Written {
+        // A type in JavaScript is an error.
+        if !self.is_flow {
+            return Err(Refused);
+        }
         match ty.tag() {
             TypeTag::Keyword | TypeTag::BoolLit => return self.source(ty.span()),
             TypeTag::Ref | TypeTag::StringLit => {}

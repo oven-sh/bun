@@ -95,9 +95,12 @@ pub(crate) struct ShortCuts {
     pub(crate) follows_line: bool,
     /// The properties of the object that's being written are each on a line.
     pub(crate) properties_start_lines: bool,
+    /// See [`ShortCuts::start_script_at`].
+    is_before_script: bool,
     /// The file has a block comment with something before or after it on its line.
     has_block_comment_in_line: bool,
     is_flow: bool,
+    is_typescript: bool,
     /// Statements end with a `;`.
     has_semicolons: bool,
 }
@@ -131,14 +134,26 @@ impl ShortCuts {
         }
     }
 
-    /// What the host writes next is indented by `level` levels, if that's known.
-    #[inline]
-    pub(crate) fn start_at(&mut self, level: Option<u32>) {
+    /// What the host writes next is what's in a `<script>`, indented by `level` levels, if that's known.
+    pub(crate) fn start_script_at(&mut self, level: Option<u32>) {
         (self.depth, self.is_certain) = (level.unwrap_or(0), level.is_some());
+        self.is_before_script = true;
     }
 
-    /// For a script in the document of a host, whose state this is. Every line of it is indented like the first.
-    pub(crate) fn for_script<'a>(self, file: &'a File<'a>, options: &FormatOptions) -> ShortCuts {
+    pub(crate) fn end_script(&mut self) {
+        self.is_before_script = false;
+    }
+
+    /// For a script in the document of a host, whose state this is. Every line of it is indented like the first. Code
+    /// that the host hasn't announced gets none: in an attribute, its quotes are written as entities afterwards.
+    pub(crate) fn for_script<'a>(
+        &mut self,
+        file: &'a File<'a>,
+        options: &FormatOptions,
+    ) -> ShortCuts {
+        if !std::mem::take(&mut self.is_before_script) {
+            return ShortCuts::default();
+        }
         let in_script = InHtml {
             root: HtmlRoot::Program,
             quote_style: options.in_html.quote_style,
@@ -154,7 +169,6 @@ impl ShortCuts {
     fn for_code<'a>(self, file: &'a File<'a>, options: &FormatOptions) -> ShortCuts {
         let is_plain_run = self.mode != Mode::Off
             && !options.no_short_cuts
-            && !options.flavor.is_oxfmt()
             && !options.experimental_ternaries
             && options.cursor_offset.is_none()
             && options.range_start.is_none()
@@ -176,6 +190,7 @@ impl ShortCuts {
                 comment.is_block() && !(comment.has_newline_before() && comment.has_newline_after())
             }),
             is_flow: file.is_flow(),
+            is_typescript: !file.is_flow() && !file.is_javascript(),
             has_semicolons: options.semicolons.is_always(),
             ..ShortCuts::default()
         }
@@ -337,6 +352,8 @@ struct Line<'f, 'a> {
     /// There's no comment anywhere in the source of what's written.
     is_quiet: bool,
     is_flow: bool,
+    /// Neither Flow nor JavaScript, where types are printed like those of Flow.
+    is_typescript: bool,
     has_semicolons: bool,
     /// Up to here the source is known to be plain and without comments.
     checked_to: u32,
@@ -344,14 +361,15 @@ struct Line<'f, 'a> {
     parts: SmallVec<[Part<'a>; 6]>,
 }
 
-/// True if `text` has a line with nothing but white space on it.
+/// True if `text` has a line with nothing but white space on it, or nothing but a comma: oxfmt counts the line breaks
+/// between two arguments.
 fn has_empty_line(text: &[u8]) -> bool {
     let mut rest = text;
     while let Some(at) = strings::index_of_char_usize(rest, b'\n') {
         rest = &rest[at + 1..];
         let blank = rest
             .iter()
-            .take_while(|byte| matches!(byte, b' ' | b'\t' | b'\r'))
+            .take_while(|byte| matches!(byte, b' ' | b'\t' | b'\r' | b','))
             .count();
         if rest.get(blank) == Some(&b'\n') {
             return true;
@@ -370,7 +388,7 @@ fn has_odd_line(text: &[u8]) -> bool {
         rest = &rest[at + 1..];
         let blank = rest
             .iter()
-            .take_while(|byte| matches!(byte, b' ' | 0..=9 | 11..=31 | 0x7F..))
+            .take_while(|byte| matches!(byte, b' ' | b',' | 0..=9 | 11..=31 | 0x7F..))
             .count();
         if rest.get(blank) == Some(&b'\n') {
             return true;
@@ -473,6 +491,7 @@ impl<'a> Formatter<'a> {
             tail: after.1 as usize,
             is_quiet: self.is_quiet(),
             is_flow: state.is_flow,
+            is_typescript: state.is_typescript,
             has_semicolons: state.has_semicolons,
             f: self,
             source,

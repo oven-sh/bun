@@ -36,7 +36,7 @@ impl<'a> Line<'_, 'a> {
         if params.is_empty() {
             return Ok(());
         }
-        if self.is_flow {
+        if !self.is_typescript {
             return self.flow_type_parameters(params);
         }
         self.byte(b'<')?;
@@ -76,7 +76,7 @@ impl<'a> Line<'_, 'a> {
     }
 
     pub(super) fn ty(&mut self, ty: TypeNode<'a>) -> Written {
-        if self.is_flow {
+        if !self.is_typescript {
             return self.flow_type(ty);
         }
         match ty.tag() {
@@ -112,15 +112,15 @@ impl<'a> Line<'_, 'a> {
     /// `mark`, which is `:` or ` =`, and a type. Nothing before them can break, and nothing but a `;` follows.
     pub(super) fn last_type_after(&mut self, mark: &'static str, ty: TypeNode<'a>) -> Written {
         self.token(mark)?;
-        if self.is_flow {
+        if !self.is_typescript {
             self.byte(b' ')?;
             return self.flow_type(ty);
         }
         let ty = without_lone_operator(ty);
         match ty.kind() {
             TypeKind::Union(types) if self.breaks && !should_hug_type(types, self.f) => {
-                // Where its comments are printed is another matter.
-                if self.has_comments_in(ty.span()) {
+                // Where its comments are printed is another matter, and oxfmt has no line for all of it.
+                if self.has_comments_in(ty.span()) || self.f.options().flavor.is_oxfmt() {
                     return Err(Refused);
                 }
                 // The blank before the line break counts where decorators ask whether the line fits.
@@ -177,7 +177,7 @@ impl<'a> Line<'_, 'a> {
     /// A type with nothing but closing brackets and `;` after it, and nothing before it that can break, so that it can
     /// end the line.
     pub(super) fn last_type(&mut self, ty: TypeNode<'a>) -> Written {
-        if self.is_flow {
+        if !self.is_typescript {
             return self.flow_type(ty);
         }
         match ty.kind() {
@@ -268,6 +268,13 @@ impl<'a> Line<'_, 'a> {
     pub(super) fn type_without_parentheses(&mut self, ty: TypeNode<'a>) -> Written {
         match ty.kind() {
             TypeKind::Ref { name, args } => {
+                // oxfmt keeps the parentheses of `type A = (intrinsic)`.
+                if ty.span().len() == 9
+                    && name.is("intrinsic")
+                    && self.f.options().flavor.is_oxfmt()
+                {
+                    return Err(Refused);
+                }
                 self.entity_name(name)?;
                 self.type_arguments(args)
             }

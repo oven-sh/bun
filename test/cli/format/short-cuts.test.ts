@@ -1490,7 +1490,7 @@ describe.skipIf(!hasFlag)("where lines are written without a document", () => {
   async function format(files: Record<string, string>, flags: string[]) {
     using dir = tempDir("format-short-cuts", files);
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "fmt", "--write", "--no-config", "--no-editorconfig", "--log-level=silent", ...flags, "."],
+      cmd: [bunExe(), "fmt", "--write", "--no-editorconfig", "--log-level=silent", ...flags, "."],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
@@ -1547,6 +1547,8 @@ describe.skipIf(!hasFlag)("where lines are written without a document", () => {
     "union-width.ts": `type ${"A".repeat(30)} = "${"b".repeat(35)}" | "${"c".repeat(36)}";\ninterface D {\n  ${"e".repeat(30)}: "${"b".repeat(35)}" | "${"c".repeat(34)}";\n}\n`,
     "ignored-mapped-type.ts": `type A= {\n    /* prettier-ignore */\n    [B in C]: D  |  E\n  }\n`,
     "flow-other-kinds.js": `// @flow\ninterface A { b: C }\nenum D of string { E = "e" }\nswitch (f) {\n  case 1:\n    g();\n}\ndeclare class H { i(): void; [k: string]: J }\nfor (let l = 0; l < 1; l++) m();\n`,
+    // However deep in the head of a loop, `a in b` is in parentheses.
+    "in-operator.js": `for (var a = {\nb: (b in c)};;);\nfor (a = () => { d = { e: (b in c),\n f: 1 }; g(h in i); };;) {\n  x();\n}\n`,
     // Scripts in other languages.
     "component.vue": `<script setup lang="ts">\nimport { ref } from 'vue'\nconst aaaaaaaaaaaaaaaaaaaaaaaaa = bbbbbbbbbbbbbbbbbbbbbbbbbbb(ccccccccccccccccccc, dddddd)\nfunction e() {\n  return f(() => {\n    g('h')\n  })\n}\n</script>\n<template>\n  <div @click="e()">{{ a }}</div>\n</template>\n`,
     "page.html": `<html>\n<body>\n<div><div><script>\nconst aaaaaaaaaaaaaaaaaaaaaaa = bbbbbbbbbbbbbbbbbbbbbbb(ccccccccccccccccc, dddddd)\nfunction e() { return f(() => { g('h') }) }\n</script></div></div>\n</body>\n</html>\n`,
@@ -1566,11 +1568,30 @@ describe.skipIf(!hasFlag)("where lines are written without a document", () => {
     [["--bracket-same-line", "--jsx-single-quote", "--print-width=40"]],
     [["--single-attribute-per-line", "--print-width=27"]],
   ])("the same with %j", async flags => {
+    flags = ["--no-config", ...flags];
     const [short, long] = await Promise.all([format(files, flags), format(files, [...flags, "--no-short-cuts"])]);
     expect(short).toEqual(long);
     expect(long.stderr).toBe("");
     expect(long.texts).not.toEqual(files);
     expect(long.exitCode).toBe(0);
+  });
+
+  test.concurrent.each([[[]], [["--print-width=40"]], [["--no-semi"]]])("the same as oxfmt with %j", async flags => {
+    const all = {
+      ...files,
+      ".oxfmtrc.json": "{}\n",
+      // oxfmt has no line for all of a union, and counts the line breaks between two arguments.
+      "union.ts": `type ${"A".repeat(40)} = "${"b".repeat(20)}" | "${"c".repeat(20)}";\n`,
+      // For oxfmt the value of a native event handler in Vue is a script, whose quotes are written as entities.
+      "handlers.vue": `<template>\\n  <div onclick="${"a".repeat(50)}('b'); c()" onfocus="d('e')"></div>\\n</template>\\n`,
+      "loop-body.js": `for (x in y) var a = 1, b = 2;\\nwhile (x) var e = 1, f = 2;\\n`,
+      "intrinsic.ts": `type A = (intrinsic);\\ntype B = (intrinsic) | C;\\n`,
+      "comma-on-its-line.js": `a(\n  "b"\n,\n  async () => {}\n);\n`,
+      "types-in-javascript.js": `type A = { b: C; d: E };\ndeclare export { f };\n`,
+    };
+    const [short, long] = await Promise.all([format(all, flags), format(all, [...flags, "--no-short-cuts"])]);
+    expect(short).toEqual(long);
+    expect(long.texts).not.toEqual(all);
   });
 });
 

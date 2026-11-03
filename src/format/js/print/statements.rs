@@ -3,6 +3,7 @@
 use super::parameters::can_avoid_parentheses;
 use super::semicolon::OptionalSemicolon;
 use crate::js::comments::OwnedComments;
+use crate::js::flat::LongWay;
 use crate::js::format::{identifier, name_without_comments};
 use crate::js::parentheses::expression::expression_needs_parentheses;
 use crate::js::trivia::comments_stay_between_head_and_body;
@@ -355,9 +356,10 @@ struct FormatForHead<'a>(Stmt<'a>);
 
 impl<'a> Format<'a> for FormatForHead<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
+        // However deep in it, `a in b` is in parentheses.
         match self.0.kind() {
-            StmtKind::Expr(expression) => write!(f, expression),
-            _ => write!(f, self.0),
+            StmtKind::Expr(expression) => write!(f, LongWay(&expression)),
+            _ => write!(f, LongWay(&self.0)),
         }
     }
 }

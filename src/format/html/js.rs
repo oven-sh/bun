@@ -256,7 +256,8 @@ pub(crate) fn with_file(
                     }
                     let mut context = JsFormatContext::new(file, options.clone(), comments);
                     if matches!(piece, Piece::Script(_)) {
-                        context.short_cuts = f.context().short_cuts.for_script(file, &options);
+                        context.short_cuts =
+                            (f.context_mut().short_cuts).for_script(file, &options);
                     }
                     let is_written = match file.comment_count() {
                         0 => f.write_embedded(context, file.text(), |f| write(file, f)),

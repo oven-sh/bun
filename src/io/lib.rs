@@ -491,6 +491,7 @@ pub use pipes::{Chunk, FileType, ReadState};
 bun_dispatch::link_interface! {
     pub BufferedReaderParentLink[
         SubprocessPipeReader,
+        SubprocessPipeDrain,
         ShellPipeReader,
         ShellIoReader,
         FileReader,

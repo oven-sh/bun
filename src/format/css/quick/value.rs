@@ -1150,12 +1150,12 @@ impl Scanner<'_> {
 
             // ───────────── more of the same word: `#{..}` and what's attached to it
             if is_scss && byte(css, p) == b'#' && byte(css, p + 1) == b'{' {
-                // Not after a number, a color, a string or a name with capitals.
+                // Not after a number, a color, a string, a name with capitals or `url(..)`.
                 let is_attachable = p == term
                     || (matches!(c, b'a'..=b'z' | b'_' | b'-' | b'$')
                         && !css[term..p]
                             .iter()
-                            .any(|it| it.is_ascii_uppercase() || *it == b'.'));
+                            .any(|it| it.is_ascii_uppercase() || matches!(it, b'.' | b')')));
                 if !is_attachable {
                     return None;
                 }

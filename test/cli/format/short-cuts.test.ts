@@ -719,6 +719,8 @@ describe.skipIf(!hasFlag)("style sheets", () => {
       "a {\n  font: {\n    family: b, c d;\n    @include e(f g);\n  }\n  font: bold {\n    size: 1px;\n  }\n}\n",
     "urls.scss":
       "a {\n  b: url(c.png);\n  d: url('e f.png');\n  g: url(http://h/i);\n  j: k(url(http://l));\n  url: m;\n  n: url;\n  o: (p);\n  q: urls(r);\n}\n",
+    "interpolation-behind-url.scss":
+      "a {\n  b: url(c)#{$d};\n  e: (url(c)#{$d} f);\n  g: url('c')#{$d};\n  h: i#{$d};\n  j: k(l)#{$d};\n}\n",
     "numbers.css":
       "a {\n  b: .5em 1.0px 1.50% 10PX 1e3 1E3 +1 -1 -.5 1hz 1q 007 1.;\n  c: #FFF #abc #ABCDEF;\n  d: INHERIT Initial auto;\n}\n",
     "strings.css": "a {\n  b: 'c' \"d\" 'e\"f' \"g'h\";\n  i: 'j';\n  k: \"l'm\" 'n';\n  --o: 'p' \"q\";\n}\n",

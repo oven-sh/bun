@@ -319,8 +319,7 @@ fn loader_of_extension(global: &JSGlobalObject, ext: &[u8]) -> Option<bun_ast::L
     })
 }
 
-/// The loader for contents that have none: from the import's `type` attribute, or else the extension at the end of
-/// `filename`, or else `unnamed`. `_none` for a `type` whose loader reads the path rather than the contents.
+/// The loader for contents that have none: from the import's `type`, else the extension of `filename`, else `unnamed`.
 fn default_loader(
     global: &JSGlobalObject,
     filename: &[u8],
@@ -331,6 +330,7 @@ fn default_loader(
     use bun_options_types::schema::api;
     let loader =
         match type_attribute.and_then(|attribute| Loader::from_string(&attribute.to_utf8())) {
+            // A loader that reads the path cannot read contents.
             Some(
                 Loader::File
                 | Loader::Wasm

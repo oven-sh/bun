@@ -334,7 +334,8 @@ impl<'a> Formatter<'a> {
                 }
                 Part::Block(block) => write!(self, [space(), block]),
                 Part::Broken(e) => {
-                    self.context_mut().short_cuts.follows_line = true;
+                    // What's in an array isn't counted as a level.
+                    self.context_mut().short_cuts.follows_line = e.tag() == ExprTag::Object;
                     e.fmt(self);
                     self.context_mut().short_cuts.follows_line = false;
                 }

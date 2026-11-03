@@ -39,7 +39,7 @@ impl<'a> Hole<'a> {
                 _ => {}
             },
             Hole::Type(ty) => {
-                f.context_mut().short_cuts.follows_line = true;
+                f.context_mut().short_cuts.follows_line = ty.tag() == TypeTag::Object;
                 ty.fmt(f);
                 f.context_mut().short_cuts.follows_line = false;
             }

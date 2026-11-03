@@ -20,7 +20,7 @@ fn __bun_resolver_parse_dependency(
     None
 }
 
-/// `bun_install` defines it for Bun. No lookup of these tests installs a package.
+/// `bun_install` defines it for Bun. Here no package manager comes: each call is counted, and fails.
 #[unsafe(no_mangle)]
 fn __bun_resolver_init_package_manager(
     _log: NonNull<bun_ast::Log>,
@@ -29,8 +29,13 @@ fn __bun_resolver_init_package_manager(
     _prefer_offline: bool,
     _importer_dir: &[u8],
 ) -> crate::CrateResult<NonNull<dyn AutoInstaller>> {
+    PACKAGE_MANAGER_ASKED.fetch_add(1, Ordering::Relaxed);
     Err(crate::Error::ModuleNotFound)
 }
+
+/// How many times a lookup asked for the package manager.
+static PACKAGE_MANAGER_ASKED: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
 
 /// How many times the names of a listing were read again in place.
 fn version_of(entries: &Fs::file_system::DirEntry) -> u64 {
@@ -953,6 +958,90 @@ fn a_lookup_that_runs_again_and_finds_its_module_keeps_what_a_config_is_missing(
             bstr::BStr::new(&log.msgs[0].data.text),
             "Unexpected end of file"
         );
+    });
+}
+
+#[test]
+fn a_module_that_a_rerun_finds_in_a_new_directory_gets_the_package_json_above_it() {
+    with_project("rerun-finalize", |made| {
+        made.write("app/package.json", r#"{ "name": "app", "type": "module" }"#);
+        made.mkdir("app/src");
+        let dir = [&made.path("app/src")[..], b"/"].concat();
+        let stmt = ast::ImportKind::Stmt;
+        assert!(made.resolver.resolve(&dir, b"./late/a.js", stmt).is_err());
+        // The miss left a mark in the cache: `app/src/late` is no directory.
+        assert!(made.info(0, "app/src/late").is_none());
+        made.write("app/src/late/a.js", "");
+        let found = made
+            .resolver
+            .resolve(&dir, b"./late/a.js", stmt)
+            .expect("found");
+        let package = Result::deref_package_json(found.package_json);
+        assert_eq!(found.module_type, options::ModuleType::Esm);
+        assert_eq!(
+            package.map(|json| bstr::BStr::new(&json.name)),
+            Some("app".into())
+        );
+        // The asker of the rerun replaced the mark: an asker that trusts what is cached gets the directory, and the next lookup says the same.
+        assert!(made.info(0, "app/src/late").is_some());
+        let again = made
+            .resolver
+            .resolve(&dir, b"./late/a.js", stmt)
+            .expect("found");
+        assert_eq!(again.module_type, options::ModuleType::Esm);
+    });
+}
+
+#[test]
+fn only_the_last_run_of_a_lookup_asks_the_package_manager() {
+    with_project("package-manager", |made| {
+        made.write(
+            "app/tsconfig.json",
+            r#"{ "compilerOptions": { "baseUrl": "." } }"#,
+        );
+        made.write("app/lib/one.js", "");
+        made.mkdir("app/src");
+        let env = Box::leak(Box::new(DotEnv::Loader::init()));
+        made.resolver.env_loader = Some(NonNull::from(env));
+        let dir = [&made.path("app/src")[..], b"/"].concat();
+        let stmt = ast::ImportKind::Stmt;
+        // It allows the package manager with or without a `node_modules` directory above the project.
+        let allowed = GlobalCache::fallback;
+        let counts = || (PACKAGE_MANAGER_ASKED.load(Ordering::Relaxed), counters().0);
+        let (asked, ran_again) = counts();
+        let one = made
+            .resolver
+            .resolve_and_auto_install(&dir, b"lib/one.js", stmt, allowed);
+        assert!(matches!(one, ResultUnion::Success(_)));
+        assert_eq!(counts(), (asked, ran_again));
+        made.write("app/lib/two.js", "");
+        // The cached listing of `app/lib` lacks the file. The first run does not ask for a package `lib`, and the rerun finds the file.
+        let two = made
+            .resolver
+            .resolve_and_auto_install(&dir, b"lib/two.js", stmt, allowed);
+        assert!(matches!(two, ResultUnion::Success(_)));
+        assert_eq!(counts(), (asked, ran_again + 1));
+        // Nothing on disk has the name: the rerun asks, once.
+        let nowhere: &[u8] = b"bun-resolver-tests-no-such-package";
+        let missing = made
+            .resolver
+            .resolve_and_auto_install(&dir, nowhere, stmt, allowed);
+        assert!(matches!(missing, ResultUnion::Failure(_)));
+        assert_eq!(counts(), (asked + 1, ran_again + 2));
+        // The first pass of a caller's sequence asks nothing. The rerun of its second pass asks.
+        let missing = made.resolver.with_miss_recheck(
+            |resolver, how| resolver.resolve_and_auto_install_as(&dir, nowhere, stmt, allowed, how),
+            |found| matches!(found, ResultUnion::NotFound),
+        );
+        assert!(matches!(missing, ResultUnion::Failure(_)));
+        assert_eq!(counts(), (asked + 2, ran_again + 3));
+        // No run follows a miss of a resolver that trusts cached misses: its one run asks.
+        let mut trusting = resolver();
+        trusting.trust_cached_misses();
+        trusting.env_loader = made.resolver.env_loader;
+        let missing = trusting.resolve_and_auto_install(&dir, nowhere, stmt, allowed);
+        assert!(matches!(missing, ResultUnion::Failure(_)));
+        assert_eq!(counts(), (asked + 3, ran_again + 3));
     });
 }
 

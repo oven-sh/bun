@@ -1780,8 +1780,10 @@ impl<'a> Resolver<'a> {
             self.extension_order = original_order;
             return tmp;
         }
+        // The generation of the run that answers: what the rerun finds is finalized by the asker of the rerun.
+        let mut answered_at = self.generation;
         if matches!(tmp, ResultUnion::NotFound) && self.reruns_after_miss(how) {
-            (tmp, is_at_source_path) = self.rerun_after_miss(
+            (tmp, is_at_source_path, answered_at) = self.rerun_after_miss(
                 marks,
                 (source_dir_normalized, import_path),
                 (kind, global_cache),
@@ -1797,7 +1799,7 @@ impl<'a> Resolver<'a> {
                 if result.path_pair.primary.namespace() != b"node"
                     && !result.flags.is_standalone_module()
                 {
-                    let finalized = DirInfo::dispatch_asker!(self.generation, |asker| self
+                    let finalized = DirInfo::dispatch_asker!(answered_at, |asker| self
                         .finalize_result(asker, &mut result, kind));
                     if let Err(err) = finalized {
                         self.extension_order = original_order;
@@ -2234,7 +2236,7 @@ impl<'a> Resolver<'a> {
         Some(&import_path[0..suffix])
     }
 
-    /// A lookup that missed runs the same lookups once more, by an asker of a new generation. A lookup that finds its module never runs this.
+    /// A lookup that missed runs the same lookups once more, by an asker of a new generation. With the answer and the flag it returns that generation. A lookup that finds its module never runs this.
     #[cold]
     #[inline(never)]
     fn rerun_after_miss<'r>(
@@ -2242,7 +2244,7 @@ impl<'a> Resolver<'a> {
         (log_mark, esm_failure): ((usize, u32, u32), Option<crate::package_json::Status>),
         (source_dir, import_path): (&[u8], &'r [u8]),
         (kind, global_cache): (ast::ImportKind, GlobalCache),
-    ) -> (ResultUnion<'r>, bool) {
+    ) -> (ResultUnion<'r>, bool, Generation) {
         test_hooks::hold_before_rerun();
         let asker = DirInfo::Checked(bun_core::next_generation());
         test_hooks::count_rerun();
@@ -2259,7 +2261,7 @@ impl<'a> Resolver<'a> {
         if !earlier_msgs.is_empty() && matches!(again, ResultUnion::NotFound) {
             self.put_back_log(log_mark.0, earlier_msgs);
         }
-        (again, is_at_source_path)
+        (again, is_at_source_path, asker.0)
     }
 
     /// For a caller's own lookups that fall back one to the next, each made with the `AfterMiss` that `sequence` gets. One pass takes every miss as it is. If `missed` says that all of it missed, one more pass checks every miss, unless the resolver trusts cached misses.
@@ -2302,6 +2304,12 @@ impl<'a> Resolver<'a> {
         how == AfterMiss::Recheck && !self.trusts_cached_misses
     }
 
+    /// Whether the run that asks at `generation` may ask the package manager: each run of a resolver that trusts cached misses, else only the rerun, which asks at a generation of its own. A first run never asks where a rerun or the second pass of `with_miss_recheck` can follow.
+    #[inline]
+    fn may_ask_package_manager(&self, generation: Generation) -> bool {
+        self.trusts_cached_misses || generation != self.generation
+    }
+
     #[inline]
     fn log_mark(&mut self) -> (usize, u32, u32) {
         let log = self.log_mut();
@@ -2320,7 +2328,7 @@ impl<'a> Resolver<'a> {
         log.errors = errors;
     }
 
-    /// For a lookup that misses at last: puts back what its earlier runs logged and its last run did not. The package manager reports a failed request once.
+    /// For a lookup that misses at last: puts back what its earlier runs logged and its last run did not.
     #[cold]
     fn put_back_log(&mut self, len: usize, earlier_msgs: Vec<bun_ast::Msg>) {
         let log = self.log_mut();
@@ -3492,6 +3500,7 @@ impl<'a> Resolver<'a> {
         // this is the magic!
         if global_cache.can_use(any_node_modules_folder)
             && self.use_package_manager()
+            && self.may_ask_package_manager(asker.generation())
             && let Some(esm_ref) = esm_.as_ref()
             && strings::is_npm_package_name(esm_ref.name)
         {

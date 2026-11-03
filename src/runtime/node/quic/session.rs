@@ -2210,17 +2210,8 @@ impl QuicSession {
     }
     pub(crate) fn get_peer_certificate(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global = cx.global();
-        if let Some(conn) = self.conn() {
-            // lsquic returns a STACK_OF(X509)* the callee frees
-            // (sk_X509_pop_free inside leaf_certificate_der).
-            if let Some(der) = tls::leaf_certificate_der(conn.server_cert_chain()) {
-                return ArrayBuffer::create_buffer(global, &der);
-            }
-            if let Some(ssl) = self.conn_ssl() {
-                if let Some(der) = tls::peer_certificate_der(ssl) {
-                    return ArrayBuffer::create_buffer(global, &der);
-                }
-            }
+        if let Some(der) = self.conn_ssl().and_then(tls::peer_certificate_der) {
+            return ArrayBuffer::create_buffer(global, &der);
         }
         if let Some(der) = self
             .hsk_snapshot

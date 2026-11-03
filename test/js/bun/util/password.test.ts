@@ -4,6 +4,30 @@ import { bunEnv, bunExe, isASAN, isDebug, isLinux } from "harness";
 
 const placeholder = "hey";
 
+const notBytes = [
+  null,
+  5,
+  true,
+  1n,
+  Symbol(),
+  {},
+  [],
+  () => {},
+  new Blob(["abc"]),
+  { toString: () => "abc" },
+  {
+    toString() {
+      throw new Error("toString() failed");
+    },
+  },
+];
+const mustBeBytes = (name: string) =>
+  expect.objectContaining({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message: `${name} must be a string, ArrayBuffer or ArrayBufferView`,
+  });
+
 // argon2id iterates so slowly under debug/ASAN that the 60 000 warm-up
 // iterations blow past the 90 s test timeout before the leak check even
 // starts. The leak numbers are only meaningful on release anyway — skip
@@ -209,29 +233,10 @@ describe("hash", () => {
       });
 
       test("a password that is neither a string nor bytes throws", () => {
-        for (const value of [null, 5, true, 1n, {}, [], () => {}, new Blob(["abc"]), { toString: () => "abc" }]) {
+        for (const value of notBytes) {
           // @ts-expect-error
-          expect(() => hash(value, { algorithm: "bcrypt", cost: 4 })).toThrow(
-            expect.objectContaining({
-              name: "TypeError",
-              code: "ERR_INVALID_ARG_TYPE",
-              message: "password must be a string, ArrayBuffer or ArrayBufferView",
-            }),
-          );
+          expect(() => hash(value, { algorithm: "bcrypt", cost: 4 })).toThrow(mustBeBytes("password"));
         }
-      });
-
-      test("coercion throwing doesn't crash", () => {
-        // @ts-expect-error
-        expect(() => hash(Symbol())).toThrow();
-        expect(() =>
-          // @ts-expect-error
-          hash({
-            toString() {
-              throw new Error("toString() failed");
-            },
-          }),
-        ).toThrow();
       });
 
       for (let ArrayBufferView of [
@@ -290,42 +295,12 @@ describe("verify", () => {
       });
 
       test("a password or a hash that is neither a string nor bytes throws", () => {
-        const invalid = (name: string) =>
-          expect.objectContaining({
-            name: "TypeError",
-            code: "ERR_INVALID_ARG_TYPE",
-            message: `${name} must be a string, ArrayBuffer or ArrayBufferView`,
-          });
-        for (const value of [null, 5, true, 1n, {}, [], () => {}, new Blob(["abc"]), { toString: () => "abc" }]) {
+        for (const value of notBytes) {
           // @ts-expect-error
-          expect(() => verify(value, "$")).toThrow(invalid("password"));
+          expect(() => verify(value, "$")).toThrow(mustBeBytes("password"));
           // @ts-expect-error
-          expect(() => verify("$", value)).toThrow(invalid("hash"));
+          expect(() => verify("$", value)).toThrow(mustBeBytes("hash"));
         }
-      });
-
-      test("coercion throwing doesn't crash", () => {
-        // @ts-expect-error
-        expect(() => verify(Symbol(), Symbol())).toThrow();
-        expect(() =>
-          verify(
-            // @ts-expect-error
-            {
-              toString() {
-                throw new Error("toString() failed");
-              },
-            },
-            "valid",
-          ),
-        ).toThrow();
-        expect(() =>
-          // @ts-expect-error
-          verify("valid", {
-            toString() {
-              throw new Error("toString() failed");
-            },
-          }),
-        ).toThrow();
       });
 
       for (let ArrayBufferView of [
@@ -352,6 +327,31 @@ describe("verify", () => {
 // The async hashing tests below only await the thread-pooled password.hash /
 // password.verify on closure-local inputs (no shared mutable state, no RSS
 // assertions), so they can safely overlap.
+test.concurrent.each([
+  ["an ArrayBuffer", (bytes: Uint8Array<ArrayBuffer>) => bytes.buffer],
+  [
+    "a SharedArrayBuffer",
+    (bytes: Uint8Array<ArrayBuffer>) => {
+      const shared = new SharedArrayBuffer(bytes.length);
+      new Uint8Array(shared).set(bytes);
+      return shared;
+    },
+  ],
+  ["a DataView", (bytes: Uint8Array<ArrayBuffer>) => new DataView(bytes.buffer)],
+  ["a Uint16Array", (bytes: Uint8Array<ArrayBuffer>) => new Uint16Array(bytes.buffer)],
+])("a password and a hash can be %s", async (_, wrap) => {
+  const bytesOf = (text: string) => wrap(new TextEncoder().encode(text)) as Bun.StringOrBuffer;
+  const options = { algorithm: "bcrypt", cost: 4 } as const;
+  const hashed = await password.hash(bytesOf("abcd"), options);
+  expect({
+    string: await password.verify("abcd", hashed),
+    password: await password.verify(bytesOf("abcd"), hashed),
+    hash: await password.verify("abcd", bytesOf(hashed)),
+    other: await password.verify(bytesOf("abce"), hashed),
+    sync: password.verifySync(bytesOf("abcd"), bytesOf(password.hashSync(bytesOf("abcd"), options))),
+  }).toEqual({ string: true, password: true, hash: true, other: false, sync: true });
+});
+
 test.concurrent("bcrypt uses the SHA-512 of passwords longer than 72 characters", async () => {
   const boop = Buffer.from("hey".repeat(100));
   const hashed = await password.hash(boop, "bcrypt");

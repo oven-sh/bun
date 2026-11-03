@@ -374,7 +374,6 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "Timer.bind.ts": null,
   "Transpiler.bind.ts": "typeof Bun",
   "UnsafeObject.bind.ts": "typeof Bun.unsafe",
-  "UpgradedDuplex.bind.ts": null,
   "XMLObject.bind.ts": "typeof Bun.XML",
   "YAMLObject.bind.ts": "typeof Bun.YAML",
   "bake_plugins.bind.ts": null,

@@ -640,10 +640,11 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
   });
 
   // node:dgram opens a socket in bind(), inside the async context of createSocket(): 'message' then runs in the
-  // AsyncLocalStorage store node runs it in. The socket is still of the graph whose script binds it, because
-  // Bun.udpSocket() takes the owner from the async context. So when another graph made the socket, or the host,
-  // bind() opens it in its own context: those rows read "bind()", as they did before.
-  test("a node:dgram socket is of the graph that binds it, not of the one that made it", async () => {
+  // AsyncLocalStorage store node runs it in. Not where a graph is involved. The socket is of the graph whose script
+  // binds it, because Bun.udpSocket() takes the owner from the async context, and a handle that kept a context with
+  // a frame of a graph in it would keep that graph. So when a graph made the socket or binds it, bind() opens it in
+  // its own context: every row reads "bind()", as it did before.
+  test("a node:dgram socket is of the graph that binds it, and 'message' reads the store of bind()", async () => {
     const storage = new AsyncLocalStorage<string>();
     type Where = "A" | "B" | "the host";
     async function layout(madeIn: Where, boundIn: Where, { disposeMakerFirst = false } = {}) {
@@ -685,7 +686,7 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
       "made by the host, bound in a graph": await layout("the host", "A"),
     }).toEqual({
       "made and bound in one graph": {
-        "'message' reads": "createSocket()",
+        "'message' reads": "bind()",
         "'message' runs in": "A",
         "closed by the dispose() of": "A",
       },

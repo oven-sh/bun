@@ -1064,6 +1064,60 @@ ${uses}
   },
 );
 
+// `bun test --isolate=modules` runs each test file inside a Bun.ModuleGraph, so every socket of a test file is made
+// with a frame of a graph in its async context. node:dgram does not keep such a context (it would keep the graph), so
+// there 'message' still reads the store of bind(). Node.js has no such mode: it reads the store of createSocket().
+const storesInATestFile = `
+import { test } from "bun:test";
+import { AsyncLocalStorage } from "node:async_hooks";
+import dgram from "node:dgram";
+import { once } from "node:events";
+
+test("what 'message' reads", async () => {
+  const storage = new AsyncLocalStorage();
+  const socket = storage.run("createSocket()", () => dgram.createSocket("udp4"));
+  const sender = dgram.createSocket("udp4");
+  try {
+    storage.run("bind()", () => socket.bind(0, "127.0.0.1"));
+    await once(socket, "listening");
+    const message = Promise.withResolvers();
+    socket.on("message", () => message.resolve(String(storage.getStore())));
+    socket.on("error", message.reject);
+    sender.on("error", message.reject);
+    sender.send("x", socket.address().port, "127.0.0.1");
+    console.log(
+      JSON.stringify({
+        "inside a Bun.ModuleGraph": Bun.ModuleGraph.current !== undefined,
+        "'message' reads the store of": await message.promise,
+      }),
+    );
+  } finally {
+    socket.close();
+    sender.close();
+  }
+});
+`;
+test.concurrent.each([
+  { mode: "no flag", flags: [] as string[], inGraph: false, reads: "createSocket()" },
+  { mode: "--isolate", flags: ["--isolate"], inGraph: false, reads: "createSocket()" },
+  { mode: "--isolate=modules", flags: ["--isolate=modules"], inGraph: true, reads: "bind()" },
+])("bun test with $mode: 'message' reads the store of $reads", async ({ flags, inGraph, reads }) => {
+  using dir = tempDir("dgram-test-modes", { "stores.test.js": storesInATestFile });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", ...flags, "./stores.test.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const line = stdout.split("\n").find(each => each.startsWith("{"));
+  expect({ read: line === undefined ? stderr : JSON.parse(line), exitCode }).toEqual({
+    read: { "inside a Bun.ModuleGraph": inGraph, "'message' reads the store of": reads },
+    exitCode: 0,
+  });
+});
+
 // Reserves an ephemeral UDP port and frees it, so datagrams sent there get
 // ICMP port-unreachable replies on loopback.
 async function getDeadPort() {

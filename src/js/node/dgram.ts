@@ -331,14 +331,24 @@ interface UDPHandle {
 }
 
 // The async context of createSocket(), for a handle whose native socket is not open yet. node makes the UDP handle there, and what that handle delivers ('message', a receive error) runs in it: https://github.com/nodejs/node/blob/v26.3.0/lib/dgram.js#L143
-const handleFrames = new WeakMap<UDPHandle, object>();
+// null: that context has a frame of a Bun.ModuleGraph in it. A handle that kept it would keep the graph, so bind() opens such a socket in its own context.
+const handleFrames = new WeakMap<UDPHandle, object | null>();
 // The async context of a queued send() that has a callback, where node makes the request that it completes (https://github.com/nodejs/node/blob/v26.3.0/lib/dgram.js#L738). Not a field of the queue entry: with a frame in one, an ahead-of-time build of a program that can reach send() loses the types of its AsyncLocalStorage stores.
 const queuedSendFrames = new WeakMap<SendRequest, object>();
 
-// Bun.udpSocket() takes the socket's Bun.ModuleGraph from the async context, so a socket that another graph binds opens in the context of bind(): it stays the binder's.
+// Whether a frame of a Bun.ModuleGraph is in the async context `frame`, under a frame that leaves a graph too.
+function hasFrameOfModuleGraph(frame: any) {
+  const AsyncContextFrame = require("internal/async_context_frame");
+  for (; frame !== undefined; frame = frame.prev) {
+    if (AsyncContextFrame.graphOf(frame) !== undefined) return true;
+  }
+  return false;
+}
+
+// Bun.udpSocket() takes the socket's Bun.ModuleGraph from the async context, so a socket that a graph binds opens in the context of bind(): it stays the binder's.
 function openInFrameOfHandle(frame: unknown, udpOptions: any) {
   const AsyncContextFrame = require("internal/async_context_frame");
-  if (AsyncContextFrame.graphOf(frame) !== AsyncContextFrame.currentGraph()) return Bun.udpSocket(udpOptions);
+  if (AsyncContextFrame.currentGraph() !== undefined) return Bun.udpSocket(udpOptions);
   // Not through AsyncContextFrame.run(), here and in completeQueuedSend(): with it an ahead-of-time executable compiles more of a program's functions to other bytes than its test run does, and test/aot/servers has a floor for that.
   const previous = AsyncContextFrame.exchange(frame);
   try {
@@ -385,7 +395,7 @@ function newHandle(type: string, lookup: LookupFunction | undefined) {
   handle.onmessage = onMessage;
 
   const frame = $getInternalField($asyncContext, 0);
-  if (frame !== undefined) WeakMapPrototypeSet.$call(handleFrames, handle, frame);
+  if (frame !== undefined) WeakMapPrototypeSet.$call(handleFrames, handle, hasFrameOfModuleGraph(frame) ? null : frame);
 
   return handle;
 }
@@ -954,7 +964,7 @@ function startBunSocket(
     const handle = state.handle!;
     const frame = WeakMapPrototypeGet.$call(handleFrames, handle);
     const opened =
-      sharedHandle !== undefined || frame === $getInternalField($asyncContext, 0)
+      sharedHandle !== undefined || frame === null || frame === $getInternalField($asyncContext, 0)
         ? Bun.udpSocket(udpOptions)
         : openInFrameOfHandle(frame, udpOptions);
     (opened as Promise<$Node.UDPSocketHandle>).$then(

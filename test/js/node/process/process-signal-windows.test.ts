@@ -78,10 +78,13 @@ test.skipIf(!isWindows)("Ctrl+Break is SIGBREAK and the end of the console is SI
   });
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, cwd: String(dir), terminal });
   proc.exited.then(code => broke.reject(new Error(`exited with code ${code}: ${JSON.stringify(output)}`)));
+  // Ends a child that a signal does not reach while the test can still report how far it got.
+  const watchdog = setTimeout(() => proc.kill(), 20_000);
 
   await broke.promise;
   terminal.close();
   const exitCode = await proc.exited;
+  clearTimeout(watchdog);
   expect(readFileSync(join(String(dir), "said.txt"), "utf8")).toBe("SIGBREAK\nSIGHUP\n");
   expect(exitCode).toBe(9);
 });

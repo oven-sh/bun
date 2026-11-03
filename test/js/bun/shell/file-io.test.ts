@@ -156,7 +156,9 @@ describe("IOWriter file output redirection", () => {
       });
       proc.exited.then(code => done.reject(new Error(`exited with code ${code}: ${JSON.stringify(text)}`)));
       await done.promise;
-      const lines = Bun.stripANSI(text).split(/[\r\n]+/);
+      const lines = Bun.stripANSI(text)
+        .split(/[\r\n]+/)
+        .filter(Boolean);
       expect(lines.slice(0, 2)).toEqual(["héllo → 日本", "ls: /does/not/exist/日本: No such file or directory"]);
     });
   });

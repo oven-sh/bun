@@ -35,9 +35,12 @@ async function runOnConsole(
     result.reject(new Error(`child exited with code ${code}; terminal output: ${JSON.stringify(buffer)}`)),
   );
 
+  // Ends a child that never prints it while the test can still report what the console did print.
+  const watchdog = setTimeout(() => proc.kill(), 20_000);
   try {
     return await result.promise;
   } finally {
+    clearTimeout(watchdog);
     proc.kill();
     await proc.exited;
   }

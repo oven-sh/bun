@@ -104,8 +104,9 @@ async function printed(directory: string, words: string | undefined, ...flags: s
 }
 
 /**
- * For a run whose workers print at once: the lines of each stream in the order of a dictionary. The name of a file is left out: it
- * is printed again wherever the lines of another file came between.
+ * For a run whose workers print at once: the lines of each stream in the order of a dictionary, and the results that stand under the
+ * name of each file, in their order. The name itself is printed again wherever the lines of another file came between. What a test
+ * prints may stand above the result of the test before it, so of a file's lines only the results keep their order.
  */
 const inAnyOrder = ({ stdout, stderr, exitCode }: Printed) => {
   const sorted = (text: string) =>
@@ -113,7 +114,13 @@ const inAnyOrder = ({ stdout, stderr, exitCode }: Printed) => {
       .split("\n")
       .filter(line => line !== "" && !/^\w\.test\.ts:$/.test(line))
       .sort();
-  return { stdout: sorted(stdout), stderr: sorted(stderr), exitCode };
+  const results: Record<string, string[]> = {};
+  let file = "";
+  for (const line of stderr.split("\n")) {
+    file = line.match(/^(\w\.test\.ts):$/)?.[1] ?? file;
+    if (/^\((pass|fail|skip)\) /.test(line)) (results[file] ??= []).push(line);
+  }
+  return { stdout: sorted(stdout), stderr: sorted(stderr), results, exitCode };
 };
 
 // One run in parts answers two cases: how it reads, and what its junit report holds. The case that comes first starts it.

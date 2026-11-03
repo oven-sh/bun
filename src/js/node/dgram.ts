@@ -331,12 +331,11 @@ interface UDPHandle {
 }
 
 // The async context of createSocket(), for a handle whose native socket is not open yet. node makes the UDP handle there, and what that handle delivers ('message', a receive error) runs in it: https://github.com/nodejs/node/blob/v26.3.0/lib/dgram.js#L143
-// null: that context has a frame of a Bun.ModuleGraph in it. A handle that kept it would keep the graph, so bind() opens such a socket in its own context.
 const handleFrames = new WeakMap<UDPHandle, object | null>();
 // The async context of a queued send() that has a callback, where node makes the request that it completes (https://github.com/nodejs/node/blob/v26.3.0/lib/dgram.js#L738). Not a field of the queue entry: with a frame in one, an ahead-of-time build of a program that can reach send() loses the types of its AsyncLocalStorage stores.
 const queuedSendFrames = new WeakMap<SendRequest, object>();
 
-// Whether a frame of a Bun.ModuleGraph is in the async context `frame`, under a frame that leaves a graph too.
+// Whether a frame of a Bun.ModuleGraph is in the async context `frame`, under a frame that leaves a graph too. A handle that kept such a context would keep the graph: it keeps null, and bind() opens its socket in the context of bind().
 function hasFrameOfModuleGraph(frame: any) {
   const AsyncContextFrame = require("internal/async_context_frame");
   for (; frame !== undefined; frame = frame.prev) {

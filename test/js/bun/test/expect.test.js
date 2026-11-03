@@ -959,7 +959,7 @@ describe("expect()", () => {
     });
 
     // A read of `length` or of an element of a Proxy of an array runs a trap, and the trap can throw.
-    test("toMatchObject and expect.arrayContaining check the exception of each read of a Proxy of an array", async () => {
+    test.concurrent("toMatchObject and expect.arrayContaining check the exception of each Proxy read", async () => {
       const { bunEnv, bunExe } = require("harness");
       const src = `
         const { expect } = require("bun:test");
@@ -975,7 +975,7 @@ describe("expect()", () => {
             try { Bun.deepMatch(a, b); } catch {}
             try { expect(a).toEqual(expect.objectContaining(b)); } catch {}
             try { expect(a).toEqual(expect.arrayContaining(b)); } catch {}
-            try { expect({ x: a }).toMatchObject({ x: expect.not.arrayContaining(b) }); } catch {}
+            try { expect({ x: a, y: 1 }).toMatchObject({ x: expect.not.arrayContaining(b), y: 1 }); } catch {}
           }
         }
         const late = Proxy.revocable([1], {});
@@ -1002,7 +1002,7 @@ describe("expect()", () => {
 
     // Bun's own format prints the received value, so only the verdict is checked for it. The formats of
     // Jest and Vitest print the received value merged with the property matchers.
-    test("the property matchers of toMatchSnapshot take a Proxy of an array", async () => {
+    test.concurrent("the property matchers of toMatchSnapshot take a Proxy of an array", async () => {
       const { bunEnv, bunExe, tempDir } = require("harness");
       const tests = `
         test("a", () => {
@@ -1028,8 +1028,8 @@ describe("expect()", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect(stderr).toContain(" 3 pass");
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout + stderr).toContain(" 3 pass");
       expect(exitCode).toBe(0);
 
       const written = [
@@ -5346,8 +5346,9 @@ describe("expect()", () => {
       // a Proxy of an object is not an array, and a revoked Proxy throws
       const notArray = () => ANY(new Proxy({ 0: 1, length: 1 }, {}));
       expect(notArray()).not.toEqual(expect.arrayContaining([1]));
-      expect(() => expect([1]).toEqual(expect.arrayContaining(notArray()))).toThrow();
-      expect(() => expect([1]).toEqual(expect.not.arrayContaining(notArray()))).toThrow();
+      const notAnArray = /Expected a array|You must provide an array/;
+      expect(() => expect([1]).toEqual(expect.arrayContaining(notArray()))).toThrow(notAnArray);
+      expect(() => expect([1]).toEqual(expect.not.arrayContaining(notArray()))).toThrow(notAnArray);
       const revoked = () => {
         const { proxy, revoke } = Proxy.revocable([1], {});
         revoke();
@@ -5375,7 +5376,9 @@ describe("expect()", () => {
           });
         expect(() => expect(throws()).toEqual(expect.not.arrayContaining([2]))).toThrow(RangeError);
         expect(() => expect([1]).toEqual(expect.not.arrayContaining(throws()))).toThrow(RangeError);
-        expect(() => expect({ x: throws() }).toMatchObject({ x: expect.not.arrayContaining([2]) })).toThrow(RangeError);
+        expect(() => expect({ x: throws(), y: 1 }).toMatchObject({ x: expect.not.arrayContaining([2]), y: 1 })).toThrow(
+          RangeError,
+        );
       }
       const { proxy, revoke } = Proxy.revocable([1], {});
       revoke();

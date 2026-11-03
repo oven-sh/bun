@@ -2289,7 +2289,10 @@ describe("bundler", () => {
       `,
     },
     run: { stdout: "impl.cjs ran\nloaded" },
-    ...printsRead("exports_barrel.movable"),
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("exports_barrel.movable");
+      api.expectFile("/out.js").toContain("var exports_barrel = {}");
+    },
   });
 
   // Another file re-exports the names by name.
@@ -2551,9 +2554,9 @@ describe("bundler", () => {
     outdir: "/out",
     run: { file: "/out/entry.js", stdout: "entry 200\nlazy 500" },
     onAfterBundle(api) {
-      for (const name of readdirSync(api.outdir)) {
-        if (name !== "entry.js") expect(api.readFile("/out/" + name)).not.toContain('"./entry.js"');
-      }
+      const chunks = readdirSync(api.outdir).filter(name => name !== "entry.js");
+      expect(chunks.length).toBeGreaterThan(0);
+      for (const name of chunks) expect(api.readFile("/out/" + name)).not.toContain('"./entry.js"');
     },
   });
 

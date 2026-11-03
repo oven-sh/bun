@@ -2004,6 +2004,26 @@ describe.skipIf(!hasFlag)("HTML", () => {
     "<div>\n  <p>a</p>\n</div>\n<i>z</i>  ",
     "<!DOCTYPE html>\n<p>a</p>\n",
     "<!DOCTYPE HTML>\n<p>a</p>\n",
+    // Words and elements that share lines.
+    `<div>\n  <p>${words} <b>bold</b> ${words} <a href="#">link</a>, ${words} (<i>x</i>) ${words}</p>\n  <li class="nav-item mb-2"><a href="#" class="nav-link p-0 text-body-secondary">Frequently asked</a></li>\n</div>\n`,
+    `<div>\n  <h1>a</h1>\n  ${words} <b>bold</b> ${words}\n  <a href="#">link</a> ${words}\n  <h1>b</h1>\n  c <i>d</i>\n\n  e <i>f</i>\n</div>\n`,
+    `<p>\n  ${full}\n  tempor <b>a</b> ut\n</p>\n<a>${words} <b>bold</b> ${words}</a>\n<a> ${words} <b>bold</b> ${words} </a>\n`,
+    // The end of an element without a text at its end is printed in front of the end tag of its parent.
+    '<span class="mdc-list-item__primary-text aaaaaaaaaaaaaaaaaaaaaaaaaaaa">{{ label }} <ng-content></ng-content></span>\n',
+    // There is no line between `/>` and a word.
+    '<div>\n  <input type="checkbox" id="can-drink" [formControl]="canDrinkCtrl" aaaaaaaaaaaa>&nbsp;\n  <label for="can-drink">I am 21 or older</label>\n</div>\n',
+    // A blank in front of a line break takes no room.
+    "aaaaaaaaa <em>x</em> <x-y>x</x-y> <i/> <a></a>\n",
+    // What has a line break on one side only shares a line with its neighbor.
+    "\n<em></em><b></b>\n>",
+    ">\n<x-y></x-y>é\n",
+    '<b>\n)<a f=""></a>\n,\n',
+    "\na<i></i>\n<!DOCTYPE>",
+    "\n<b></b>;\n\n<",
+    // There is a line between a word and `<b></b>`, in the tag.
+    "<d>\nééééééé\nccc<b></b> , <em></em>\n\n<",
+    // An element with one word in it between two words is a part of the text.
+    "<div><code>x</code> , bb<em>xxxxxxxxxxxx</em>. <code></code></div>\n",
   ];
   const files = Object.fromEntries(inputs.map((input, index) => [`${index}.html`, input]));
 
@@ -2167,6 +2187,13 @@ describe.skipIf(!hasFlag)("Vue", () => {
     `<template>\n  <xmp :a="b">${"x".repeat(60)} <b>c</b></xmp>\n</template>\n`,
     // A comment says that the element is a table, in which no group is around a child.
     "<template>\n  <!-- display: table -->\n  <div>\n    {{ a }}\n    b\n  </div>\n</template>\n",
+    // `{{ }}` is a node of its own, so a line break next to it is more than white space in a text.
+    "<template><e>\n}\n{{x}}<b></b>\n<div>",
+    '<template>\n<label a="">{{x}}\nd\n</label>\n>',
+    "<template>\n<code></code>{{x}}\n;\n<div>",
+    "<template>\n  <p>a {{ b }} <i>c</i> dddddddddd eeeeeeeeee ffffffffff</p>\n  g <i>h</i> iiiiiiiiii jjjjjjjjjj kkkkkkkkkk\n  <p>l</p>\n</template>\n",
+    // A `<` that starts no tag goes on with the text.
+    "<template><h>\n}<code></code>\n>\n<",
   );
   const files = Object.fromEntries(inputs.map((input, index) => [`${index}.vue`, input]));
 

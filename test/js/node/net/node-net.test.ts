@@ -21,6 +21,7 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs";
 import {
+  type AddressInfo,
   BlockList,
   connect,
   createConnection,
@@ -37,7 +38,7 @@ import {
   Stream,
 } from "node:net";
 import { join } from "node:path";
-import { TLSSocket } from "node:tls";
+import { connect as tlsConnect, TLSSocket } from "node:tls";
 
 const socket_domain = tmpdirSync();
 
@@ -1028,6 +1029,58 @@ it("should trigger error when aborted even if connection failed, and the signal 
   expect(err.name).toBe("AbortError");
   expect(err.code).toBe("ABORT_ERR");
   expect(err.cause?.name).toBe("TimeoutError");
+});
+
+describe.concurrent("'timeout' is emitted with a write that does not move", () => {
+  it("while the socket is connecting", async () => {
+    const neverAnswers = () => {};
+    const socket = connect({ host: "localhost", port: 1, lookup: neverAnswers });
+    try {
+      socket.write("x");
+      socket.setTimeout(1);
+      await once(socket, "timeout");
+      expect(socket.connecting).toBe(true);
+    } finally {
+      socket.destroy();
+    }
+  });
+
+  it("while the TLS handshake gets no answer", async () => {
+    const server = createServer().listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const accepted = once(server, "connection");
+    const socket = tlsConnect({ port: (server.address() as AddressInfo).port, host: "127.0.0.1" });
+    try {
+      socket.write("x");
+      await once(socket, "connect");
+      socket.setTimeout(1);
+      await once(socket, "timeout");
+      expect((socket as any).secureConnecting).toBe(true);
+    } finally {
+      socket.destroy();
+      (await accepted)[0].destroy();
+      server.close();
+    }
+  });
+
+  it("while the peer does not read", async () => {
+    const server = createServer().listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const accepted = once(server, "connection");
+    const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      await once(socket, "connect");
+      // More than the kernel takes for the two ends of a connection.
+      socket.write(Buffer.alloc(64 * 1024 * 1024));
+      socket.setTimeout(1);
+      await once(socket, "timeout");
+      expect(socket.writableLength).toBeGreaterThan(0);
+    } finally {
+      socket.destroy();
+      (await accepted)[0].destroy();
+      server.close();
+    }
+  });
 });
 
 // Regression test for #30697: net.connect({ localPort, lookup }) on the

@@ -1,7 +1,9 @@
+use core::ops::Range;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::io::Write as _;
 
+use bun_collections::HashMap;
 use bun_core::ZBox;
 use bun_sys::{E, FdExt, O, S, dir_iterator};
 
@@ -30,12 +32,48 @@ pub(crate) enum State {
 
 pub(crate) struct ExecState {
     pub(crate) err: Option<bun_sys::Error>,
+    /// Tasks created. A task's slot is the count before it, so the slots are `0..task_count`.
     pub(crate) task_count: AtomicUsize,
+    /// Tasks whose section is written.
     pub(crate) tasks_done: usize,
     /// Chunks queued on an `IOWriter`.
     pub(crate) output_waiting: usize,
     /// Chunks whose `on_io_writer_chunk` ran.
     pub(crate) output_done: usize,
+    /// The slot whose section is written next. The order is depth first: the section of a task,
+    /// then the sections of its subtasks, each with its own subtasks. The pool completes the tasks
+    /// in any order.
+    turn: Option<u32>,
+    /// The slots after `turn`: the subtasks still to come of each written task, innermost last.
+    after: Vec<Range<u32>>,
+    /// Results that arrived before their turn.
+    parked: HashMap<u32, Section>,
+}
+
+/// What one task found, as the main thread writes it.
+struct Section {
+    err: Option<bun_sys::Error>,
+    output: Vec<u8>,
+    /// Slots of the subtasks.
+    children: Range<u32>,
+}
+
+impl ExecState {
+    /// Moves `turn` past a written section whose subtasks are `children`.
+    fn advance(&mut self, children: Range<u32>) {
+        if !children.is_empty() {
+            self.after.push(children);
+        }
+        self.turn = loop {
+            let Some(siblings) = self.after.last_mut() else {
+                break None;
+            };
+            if let Some(slot) = siblings.next() {
+                break Some(slot);
+            }
+            self.after.pop();
+        };
+    }
 }
 
 enum ParseFlag {
@@ -93,6 +131,13 @@ impl Ls {
                     tasks_done: 0,
                     output_waiting: 0,
                     output_done: 0,
+                    turn: Some(0),
+                    after: if task_count > 1 {
+                        vec![1..task_count as u32]
+                    } else {
+                        Vec::new()
+                    },
+                    parked: HashMap::new(),
                 });
 
                 // Stable address: `Ls` lives in `Box<Ls>` (Builtin::Impl::Ls),
@@ -110,7 +155,7 @@ impl Ls {
                 let interp_ptr = interp.as_ctx_ptr();
                 if let Some(start) = paths_start {
                     let print_directory = task_count > 1;
-                    for i in start..argc {
+                    for (slot, i) in (start..argc).enumerate() {
                         let path = Builtin::of(interp, cmd).arg_bytes(i);
                         let task = ShellLsTask::create(
                             cmd,
@@ -124,6 +169,7 @@ impl Ls {
                         // SAFETY: freshly heap-allocated.
                         unsafe {
                             (*task).print_directory = print_directory;
+                            (*task).slot = slot as u32;
                             ShellTask::schedule_no_ref::<ShellLsTask>(task);
                         }
                     }
@@ -183,21 +229,40 @@ impl Ls {
         Self::next(interp, cmd)
     }
 
-    fn on_shell_ls_task_done(interp: &Interpreter, cmd: NodeId, task: &mut ShellLsTask) {
-        if let Some(e) = task.err.take() {
-            let errstr = Builtin::task_error_to_string(interp, cmd, Kind::Ls, &e).to_vec();
-            if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                if exec.err.is_none() {
-                    exec.err = Some(e);
-                }
+    /// A pool task completed. Writes its section if it is next, and then each parked section
+    /// whose turn that makes it.
+    fn on_shell_ls_task_done(interp: &Interpreter, cmd: NodeId, slot: u32, mut section: Section) {
+        {
+            let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
+                return;
+            };
+            if exec.turn != Some(slot) {
+                exec.parked.insert(slot, section);
+                return;
             }
-            Self::write(interp, cmd, IoKind::Stderr, &errstr);
         }
-        Self::write(interp, cmd, IoKind::Stdout, &task.output);
-        // Counted only now: a chunk that completes inside `write` must not find every task done while
-        // a write of this one is still to come.
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+        loop {
+            if let Some(e) = section.err.take() {
+                let errstr = Builtin::task_error_to_string(interp, cmd, Kind::Ls, &e).to_vec();
+                if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+                    if exec.err.is_none() {
+                        exec.err = Some(e);
+                    }
+                }
+                Self::write(interp, cmd, IoKind::Stderr, &errstr);
+            }
+            Self::write(interp, cmd, IoKind::Stdout, &section.output);
+            let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
+                return;
+            };
+            // Counted only now: a chunk that completes inside `write` must not find every task
+            // done while a write of this one is still to come.
             exec.tasks_done += 1;
+            exec.advance(section.children);
+            match exec.turn.and_then(|next| exec.parked.remove(&next)) {
+                Some(next) => section = next,
+                None => break,
+            }
         }
         Self::next(interp, cmd).run(interp);
     }
@@ -299,9 +364,13 @@ pub(crate) struct ShellLsTask {
     /// Cached once per task to avoid repeated syscalls.
     now_secs: u64,
     pub event_loop: EventLoopHandle,
-    /// Back-ref so recursive `enqueue` can populate the subtask's
+    /// Back-ref so a subtask can populate its
     /// `task.interp` (needed by [`ShellTask::run_from_main_thread`]).
     pub interp: *mut Interpreter,
+    /// Where this task's section goes in the output (see [`ExecState::turn`]).
+    slot: u32,
+    /// Slots of the subtasks this task scheduled.
+    children: Range<u32>,
     pub task: ShellTask,
 }
 
@@ -328,16 +397,16 @@ impl ShellLsTask {
             now_secs: 0,
             event_loop,
             interp,
+            slot: 0,
+            children: 0..0,
             task: ShellTask::new(event_loop),
         });
         task.task.interp = interp;
         bun_core::heap::into_raw(task)
     }
 
-    /// Spawns a subtask for a recursively
-    /// discovered subdirectory.
-    fn enqueue(&mut self, name: &[u8]) {
-        let new_path = self.join(name);
+    /// A subtask that lists `path`. [`Self::schedule_subtasks`] schedules it.
+    fn subtask(&self, path: ZBox) -> *mut ShellLsTask {
         // Pool thread: the subtask inherits our poster rather than deriving
         // one from the VM (`ShellTask::new` is JS-thread only).
         let mut subtask = Box::new(ShellLsTask {
@@ -346,24 +415,42 @@ impl ShellLsTask {
             print_directory: true,
             task_count: self.task_count,
             cwd: self.cwd,
-            path: new_path,
+            path,
             output: Vec::new(),
             is_absolute: false,
             err: None,
             now_secs: 0,
             event_loop: self.event_loop,
             interp: self.interp,
+            slot: 0,
+            children: 0..0,
             task: ShellTask::new_child(&self.task),
         });
         subtask.task.interp = self.interp;
+        bun_core::heap::into_raw(subtask)
+    }
+
+    /// Schedules the subtasks made by [`Self::subtask`]. Their sections are written in this order,
+    /// after the section of this task.
+    fn schedule_subtasks(&mut self, subtasks: &[*mut ShellLsTask]) {
+        if subtasks.is_empty() {
+            return;
+        }
         // SAFETY: `task_count` points into the `Box<Ls>` ExecState which
-        // outlives every in-flight task (see `next`). `subtask` is freshly
-        // heap-allocated and scheduled via raw `WorkPool::schedule` (no
-        // keep-alive ref) — it runs on a worker thread with no JS-VM
-        // thread-local.
-        unsafe {
-            (*self.task_count).fetch_add(1, Ordering::Relaxed);
-            ShellTask::schedule_no_ref::<ShellLsTask>(bun_core::heap::into_raw(subtask));
+        // outlives every in-flight task (see `next`).
+        let first =
+            unsafe { (*self.task_count).fetch_add(subtasks.len(), Ordering::Relaxed) } as u32;
+        self.children = first..first + subtasks.len() as u32;
+        // Last one first: the pool runs the task it got last first, and the section of the first
+        // subtask is the one that is written first.
+        for (i, &subtask) in subtasks.iter().enumerate().rev() {
+            // SAFETY: `subtask` is a fresh heap allocation that nothing else has seen. It is
+            // scheduled via raw `WorkPool::schedule` (no keep-alive ref) — it runs on a worker
+            // thread with no JS-VM thread-local.
+            unsafe {
+                (*subtask).slot = first + i as u32;
+                ShellTask::schedule_no_ref::<ShellLsTask>(subtask);
+            }
         }
     }
 
@@ -424,23 +511,25 @@ impl ShellLsTask {
             // our `DirIterator` abstraction skips them, so add them now.
             this.add_dot_entries_if_needed(fd);
 
-            loop {
+            let mut subtasks = Vec::new();
+            let read = loop {
                 match iterator.next() {
-                    Err(e) => {
-                        this.err = Some(this.error_with_path(&e));
-                        return;
-                    }
-                    Ok(None) => break,
+                    Err(e) => break Err(e),
+                    Ok(None) => break Ok(()),
                     Ok(Some(current)) => {
                         let name = current.name.slice_u8();
                         this.add_entry(name, fd);
                         if matches!(current.kind, bun_sys::EntryKind::Directory)
                             && this.opts.recursive
                         {
-                            this.enqueue(name);
+                            subtasks.push(this.subtask(this.join(name)));
                         }
                     }
                 }
+            };
+            this.schedule_subtasks(&subtasks);
+            if let Err(e) = read {
+                this.err = Some(this.error_with_path(&e));
             }
             return;
         }
@@ -567,9 +656,21 @@ impl ShellLsTask {
     /// [`ShellLsTask::create`]; ownership is reclaimed here.
     fn run_from_main_thread(this: NonNull<ShellLsTask>, interp: &Interpreter) {
         // SAFETY: precondition.
-        let mut task = unsafe { bun_core::heap::take(this.as_ptr()) };
-        let cmd = task.cmd;
-        Ls::on_shell_ls_task_done(interp, cmd, &mut task);
+        let task = unsafe { bun_core::heap::take(this.as_ptr()) };
+        let ShellLsTask {
+            cmd,
+            slot,
+            err,
+            output,
+            children,
+            ..
+        } = *task;
+        let section = Section {
+            err,
+            output,
+            children,
+        };
+        Ls::on_shell_ls_task_done(interp, cmd, slot, section);
     }
 }
 

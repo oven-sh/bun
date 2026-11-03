@@ -84,72 +84,80 @@ fn inline_comments_with_quotes(text: &[u8]) -> Vec<(usize, usize)> {
         CommentBlock,
         CommentInline,
     }
+    use bun_core::strings::{contains_any, index_of_any};
+    // Nearly always, no line has a quote or an asterisk after a `//`.
+    let mut from = 0;
+    loop {
+        let Some(at) = text::index_of_from(text, b"//", from) else {
+            return Vec::new();
+        };
+        let line_end = index_of_any(&text[at..], b"\n\r").map_or(text.len(), |len| at + len);
+        if contains_any(&text[at + 2..line_end], b"\"'*") {
+            break;
+        }
+        from = line_end;
+    }
     let mut state = State::Initial;
     let mut state_to_return_from_quotes = State::Initial;
-    let mut inline_comment_start = 0;
-    let mut inline_comment_contains_quotes = false;
     let mut comments = Vec::new();
+    // In each state, goes on to the next byte that means something there.
     let mut i = 0;
-    while let Some(&c) = text.get(i) {
+    loop {
+        let rest = text.get(i..).unwrap_or_default();
+        let found = match state {
+            State::Initial => index_of_any(rest, b"'\"/("),
+            State::Quotes(quote) => index_of_any(rest, &[quote, b'\n', b'\r']),
+            State::Url => index_of_any(rest, b")\n\r'\""),
+            // The `*` of `/*` can be that of `*/` too.
+            State::CommentBlock => text::index_of_from(text, b"*/", i - 1).map(|at| at + 1 - i),
+            State::CommentInline => index_of_any(rest, b"\n\r"),
+        };
+        let Some(found) = found else {
+            return comments;
+        };
+        let start = i;
+        i += found;
+        let c = text[i];
         match state {
             State::Initial => match c {
                 b'\'' | b'"' => state = State::Quotes(c),
-                b'u' | b'U'
-                    if text
-                        .get(i..i + 4)
-                        .is_some_and(|it| it.eq_ignore_ascii_case(b"url(")) =>
-                {
-                    state = State::Url;
-                    i += 3;
-                }
+                b'(' if i >= 3 && text[i - 3..i].eq_ignore_ascii_case(b"url") => state = State::Url,
                 b'/' if text.get(i + 1) == Some(&b'*') => {
                     state = State::CommentBlock;
                     i += 1;
                 }
                 b'/' if text.get(i + 1) == Some(&b'/') => {
                     state = State::CommentInline;
-                    inline_comment_start = i;
                     i += 1;
                 }
                 _ => {}
             },
             State::Quotes(quote) => {
-                if c == quote && text[i - 1] != b'\\' {
-                    state = std::mem::replace(&mut state_to_return_from_quotes, State::Initial);
-                }
-                if matches!(c, b'\n' | b'\r') {
+                if c != quote {
                     return Vec::new();
+                }
+                if text[i - 1] != b'\\' {
+                    state = std::mem::replace(&mut state_to_return_from_quotes, State::Initial);
                 }
             }
             State::Url => match c {
                 b')' => state = State::Initial,
-                b'\n' | b'\r' => return Vec::new(),
                 b'\'' | b'"' => {
                     state = State::Quotes(c);
                     state_to_return_from_quotes = State::Url;
                 }
-                _ => {}
+                _ => return Vec::new(),
             },
-            State::CommentBlock => {
-                if c == b'/' && text[i - 1] == b'*' {
-                    state = State::Initial;
+            State::CommentBlock => state = State::Initial,
+            State::CommentInline => {
+                if contains_any(&text[start..i], b"\"'*") {
+                    comments.push((start - 2, i));
                 }
+                state = State::Initial;
             }
-            State::CommentInline => match c {
-                b'"' | b'\'' | b'*' => inline_comment_contains_quotes = true,
-                b'\n' | b'\r' => {
-                    if inline_comment_contains_quotes {
-                        comments.push((inline_comment_start, i));
-                    }
-                    state = State::Initial;
-                    inline_comment_contains_quotes = false;
-                }
-                _ => {}
-            },
         }
         i += 1;
     }
-    comments
 }
 
 /// oxfmt treats Less's `each(@list, { .. })` as a statement and adds the `;` after it if it's missing. `postcss-less`

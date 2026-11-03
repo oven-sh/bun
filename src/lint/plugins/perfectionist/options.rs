@@ -284,7 +284,8 @@ pub(crate) struct Configuration {
     pub(crate) error: Option<Vec<u8>>,
     /// The message of the `RangeError` that `localeCompare` throws for a `locales` tag that is not well-formed,
     /// `Invalid language tag: <tag>`, at the first comparison that reaches it: one by `alphabetical`, or one by
-    /// `natural` of two chunks with a character outside ASCII.
+    /// `natural` of two chunks with a character outside ASCII. [`Configuration::complete`] puts it in `error` where
+    /// the first comparison is sure to reach it.
     pub(crate) invalid_locale: Option<Vec<u8>>,
 }
 
@@ -427,13 +428,20 @@ impl<'o> Merged<'o> {
 impl Configuration {
     /// [`Configuration::parse`], then what upstream throws at the first node that picks the result, as
     /// [`Configuration::error`]: `validateSettingsValues` for these settings and this element, then
-    /// `validateCustomSortConfig` and `validateNewlinesAndPartitionConfig` on the merged options.
+    /// `validateCustomSortConfig` and `validateNewlinesAndPartitionConfig` on the merged options, then the
+    /// `Invalid language tag` of `type: "alphabetical"`, whose every comparison is a `localeCompare`. `natural`
+    /// reaches one only for a chunk outside ASCII, and the other types only through `fallbackSort`: those collate
+    /// as the root instead.
     fn complete(rule: RuleKind, options: Object<'_>, settings: Object<'_>) -> Configuration {
         let mut configuration = Configuration::parse(rule, options, settings);
         configuration.error = validate_settings_values(rule, settings, options)
             .and_then(|()| configuration.validate_custom_sort())
             .and_then(|()| configuration.validate_newlines_and_partition())
-            .err();
+            .err()
+            .or_else(|| match configuration.sort.type_ {
+                SortType::Alphabetical => configuration.invalid_locale.clone(),
+                _ => None,
+            });
         configuration
     }
 
@@ -526,6 +534,37 @@ impl Configuration {
     /// The text of a group name, for a message.
     pub(crate) fn group_name(&self, id: GroupId) -> &str {
         self.group_names.get(id as usize).map_or("", |name| &**name)
+    }
+
+    /// The message of [`Configuration::invalid_locale`] if a comparator of this configuration calls
+    /// `localeCompare`: the main `type` or, once it compares equal, its `fallbackSort` is `alphabetical` or
+    /// `natural`, for the main options or for the overrides of a `groups` entry or a custom group. A rule throws
+    /// it as the `RangeError` of the first comparison, so before sorting two or more nodes.
+    pub(crate) fn invalid_locale_error(&self) -> Option<&[u8]> {
+        let message = self.invalid_locale.as_deref()?;
+        let uses_locale =
+            |type_: SortType| matches!(type_, SortType::Alphabetical | SortType::Natural);
+        let reaches_locale = |type_: SortType, fallback: FallbackSort| {
+            uses_locale(type_) || (type_ != SortType::Unsorted && uses_locale(fallback.type_))
+        };
+        let main = reaches_locale(self.sort.type_, self.sort.fallback_sort);
+        let overridden = |type_: Option<SortType>, fallback: Option<FallbackSort>| {
+            reaches_locale(
+                type_.unwrap_or(self.sort.type_),
+                fallback.unwrap_or(self.sort.fallback_sort),
+            )
+        };
+        let in_groups = self.groups.iter().any(|entry| match entry {
+            GroupEntry::Overrides(overrides) => {
+                overridden(overrides.type_, overrides.fallback_sort)
+            }
+            GroupEntry::Names(_) | GroupEntry::NewlinesBetween(_) => false,
+        });
+        let in_custom_groups = self
+            .custom_groups
+            .iter()
+            .any(|group| overridden(group.type_, group.fallback_sort));
+        (main || in_groups || in_custom_groups).then_some(message)
     }
 
     /// `validateCustomSortConfig`

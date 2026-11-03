@@ -205,6 +205,17 @@ impl SortUnionTypes {
             });
             last = Some(span);
         }
+        // A partition of one node is sorted without a comparison.
+        let has_pair_in_partition = nodes
+            .iter()
+            .zip(nodes.iter().skip(1))
+            .any(|(a, b)| a.partition_id == b.partition_id);
+        if has_pair_in_partition
+            && let Some(message) = config.invalid_locale_error()
+        {
+            cx.throw(ty, "RangeError", message);
+            return;
+        }
 
         // `for (let nodes of formattedMembers) reportAllErrors(..)`: each partition is sorted, reported and fixed on
         // its own, so a fix never spans two partitions.

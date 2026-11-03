@@ -453,6 +453,12 @@ impl SortObjects {
             cx.throw(object.span(), "SyntaxError", message);
             return;
         }
+        if nodes.len() >= 2
+            && let Some(message) = config.invalid_locale_error()
+        {
+            cx.throw(object.span(), "RangeError", message);
+            return;
+        }
 
         let sorted = Sorted {
             all: sort_nodes_by_dependencies(&nodes, config, false),

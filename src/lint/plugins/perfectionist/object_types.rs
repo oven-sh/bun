@@ -292,6 +292,12 @@ pub(crate) fn sort_object_type_elements<'a, R>(
         });
         last_in_partition = Some(span);
     }
+    if nodes.len() >= 2
+        && let Some(message) = config.invalid_locale_error()
+    {
+        cx.throw(node, "RangeError", message);
+        return;
+    }
 
     // `sortNodesExcludingEslintDisabled`
     let sort_all = |ignore_eslint_disabled| {

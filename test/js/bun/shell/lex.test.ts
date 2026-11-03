@@ -310,13 +310,16 @@ describe("lex shell", () => {
     let result = JSON.parse(lex`echo foo > cat secrets.txt`);
     expect(result).toEqual(expected);
 
+    // fd 0 is never written, so the digit is a word.
     expected = [
       { "Text": "cmd1" },
       { "Delimit": {} },
+      { "Text": "0" },
+      { "Delimit": {} },
       {
         "Redirect": {
-          "stdin": true,
-          "stdout": false,
+          "stdin": false,
+          "stdout": true,
           "stderr": false,
           "append": false,
           duplicate_out: false,
@@ -513,6 +516,37 @@ describe("lex shell", () => {
       ],
       // `0<` takes a file, with no append flag.
       ["cmd1 0< f", [...cmd, { Redirect: redirect({ stdin: true }) }, { Text: "f" }, { Delimit: {} }, { Eof: {} }]],
+      // fd 1 and 2 are never read, so the digit is a word.
+      [
+        "cmd1 1< f",
+        [
+          ...cmd,
+          { Text: "1" },
+          { Delimit: {} },
+          { Redirect: redirect({ stdin: true }) },
+          { Text: "f" },
+          { Delimit: {} },
+          { Eof: {} },
+        ],
+      ],
+      [
+        "cmd1 2< f",
+        [
+          ...cmd,
+          { Text: "2" },
+          { Delimit: {} },
+          { Redirect: redirect({ stdin: true }) },
+          { Text: "f" },
+          { Delimit: {} },
+          { Eof: {} },
+        ],
+      ],
+      // The number ends at a command substitution close or an escaped newline.
+      [
+        "$(cmd1 2>&1)",
+        [{ CmdSubstBegin: {} }, ...cmd, stderrToStdout, { Delimit: {} }, { CmdSubstEnd: {} }, { Eof: {} }],
+      ],
+      ["cmd1 2>&1\\\ncmd1", [...cmd, stderrToStdout, ...cmd, { Eof: {} }]],
       // Quoted and escaped forms stay text.
       ['cmd1 ">&2"', [{ Text: "cmd1" }, { Delimit: {} }, { DoubleQuotedText: ">&2" }, { Eof: {} }]],
       ["cmd1 >\\&2", [...cmd, { Redirect: redirect({ stdout: true }) }, { Text: "&2" }, { Delimit: {} }, { Eof: {} }]],

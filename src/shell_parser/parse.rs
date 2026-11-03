@@ -1362,13 +1362,15 @@ impl<'bump> Parser<'bump> {
                     break 'redirect_file Some(ast::Redirect::JsBuf(ast::JSBuf::new(obj_ref)));
                 }
 
-                // `1>&2` has no file. A word after it is not its target.
-                if redirect.duplicate_out() {
-                    break 'redirect_file None;
-                }
-                let Some(file) = self.parse_atom()? else {
-                    self.add_error(format_args!("Redirection with no file"))?;
-                    return Err(ParseError::Expected.into());
+                let file = match self.parse_atom()? {
+                    Some(f) => f,
+                    None => {
+                        if redirect.duplicate_out() {
+                            break 'redirect_file None;
+                        }
+                        self.add_error(format_args!("Redirection with no file"))?;
+                        return Err(ParseError::Expected.into());
+                    }
                 };
                 break 'redirect_file Some(ast::Redirect::Atom(file));
             }
@@ -2143,6 +2145,14 @@ pub(crate) enum RedirectDirection {
     In,
 }
 
+/// The fd before a redirect operator. The runtime has no other fds.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StdFd {
+    Stdin = 0,
+    Stdout = 1,
+    Stderr = 2,
+}
+
 /// What `Lexer::eat_redirect_operator` found after a `>` or `<`.
 enum RedirectLex {
     /// A redirect that takes a file, or a `1>&2` / `2>&1` duplication.
@@ -2721,6 +2731,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             {
                                 break 'escaped;
                             }
+                            let snapshot = self.make_snapshot();
+                            let fd = self.eat_digit_run(c - u32::from(b'0'));
                             let dir = match self.peek() {
                                 Some(next) if !next.escaped && next.char == u32::from(b'>') => {
                                     RedirectDirection::Out
@@ -2728,13 +2740,35 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 Some(next) if !next.escaped && next.char == u32::from(b'<') => {
                                     RedirectDirection::In
                                 }
-                                _ => break 'escaped,
+                                _ => {
+                                    self.backtrack(&snapshot);
+                                    break 'escaped;
+                                }
                             };
-                            // Guarded by the arm pattern: c is an ASCII digit.
-                            let fd = u8::try_from(c - u32::from(b'0')).expect("int cast");
+                            // fd 0 is read and fd 1 and 2 are written. In `0>f`,
+                            // `1<f` and `2<f` the digit is a word.
+                            let src_fd = match (fd, dir) {
+                                (0, RedirectDirection::In) => StdFd::Stdin,
+                                (1, RedirectDirection::Out) => StdFd::Stdout,
+                                (2, RedirectDirection::Out) => StdFd::Stderr,
+                                (0..=2, _) => {
+                                    self.backtrack(&snapshot);
+                                    break 'escaped;
+                                }
+                                _ => {
+                                    let op = match dir {
+                                        RedirectDirection::Out => '>',
+                                        RedirectDirection::In => '<',
+                                    };
+                                    self.add_error_fmt(format_args!(
+                                        "`{fd}{op}`: Bun Shell only redirects file descriptors 0, 1 and 2. Please file an issue on GitHub."
+                                    ));
+                                    return Ok(());
+                                }
+                            };
                             let _ = self.eat();
                             self.break_word(AddDelimiter::AfterText)?;
-                            match self.eat_redirect_operator(Some(fd), dir) {
+                            match self.eat_redirect_operator(Some(src_fd), dir) {
                                 RedirectLex::Redirect(flags) => {
                                     self.tokens.push(Token::Redirect(flags))
                                 }
@@ -3023,13 +3057,34 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         Ok(())
     }
 
+    /// Eats the digits that follow `first`, a digit already eaten, and returns the number they form.
+    fn eat_digit_run(&mut self, first: u32) -> u32 {
+        let mut n = first;
+        while let Some(next) = self.peek() {
+            if next.escaped || !(u32::from(b'0')..=u32::from(b'9')).contains(&next.char) {
+                break;
+            }
+            let _ = self.eat();
+            n = n
+                .saturating_mul(10)
+                .saturating_add(next.char - u32::from(b'0'));
+        }
+        n
+    }
+
     /// Lexes `[n]>[>][&m]` or `[n]<[<][&m]` after the caller ate the `>` or `<`.
     /// `src_fd` is the `n` that came before it. It defaults to 1 for `>` and 0 for `<`.
-    fn eat_redirect_operator(&mut self, src_fd: Option<u8>, dir: RedirectDirection) -> RedirectLex {
+    fn eat_redirect_operator(
+        &mut self,
+        src_fd: Option<StdFd>,
+        dir: RedirectDirection,
+    ) -> RedirectLex {
         let is_double = self.eat_simple_redirect_operator(dir);
         // The operator as typed, for error messages: `1>`, `>>`, `0<`.
         let shown_fd = match src_fd {
-            Some(fd) => ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"][usize::from(fd)],
+            Some(StdFd::Stdin) => "0",
+            Some(StdFd::Stdout) => "1",
+            Some(StdFd::Stderr) => "2",
             None => "",
         };
         let shown_op = match (dir, is_double) {
@@ -3039,20 +3094,14 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             (RedirectDirection::In, true) => "<<",
         };
         let src_fd = src_fd.unwrap_or(match dir {
-            RedirectDirection::Out => 1,
-            RedirectDirection::In => 0,
+            RedirectDirection::Out => StdFd::Stdout,
+            RedirectDirection::In => StdFd::Stdin,
         });
 
         let mut flags = match src_fd {
-            0 => ast::RedirectFlags::STDIN,
-            1 => ast::RedirectFlags::STDOUT,
-            2 => ast::RedirectFlags::STDERR,
-            _ => {
-                self.add_error_fmt(format_args!(
-                    "`{shown_fd}{shown_op}`: Bun Shell only redirects file descriptors 0, 1 and 2. Please file an issue on GitHub."
-                ));
-                return RedirectLex::Unsupported;
-            }
+            StdFd::Stdin => ast::RedirectFlags::STDIN,
+            StdFd::Stdout => ast::RedirectFlags::STDOUT,
+            StdFd::Stderr => ast::RedirectFlags::STDERR,
         };
         if is_double {
             flags |= ast::RedirectFlags::APPEND;
@@ -3085,8 +3134,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 if !next.escaped && (u32::from(b'0')..=u32::from(b'9')).contains(&next.char) =>
             {
                 let _ = self.eat();
-                // Guarded by the match arm: next.char is an ASCII digit.
-                u8::try_from(next.char - u32::from(b'0')).expect("int cast")
+                self.eat_digit_run(next.char - u32::from(b'0'))
             }
             _ => {
                 self.add_error_fmt(format_args!(
@@ -3096,15 +3144,16 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             }
         };
 
+        // The number must end the word. An escaped newline is whitespace.
         let at_word_end = match self.peek() {
             None => true,
+            Some(next) if next.escaped => next.char == u32::from(b'\n'),
             Some(next) => {
-                !next.escaped
-                    && (ShellCharIter::<ENCODING>::is_whitespace(next)
-                        || matches!(
-                            u8::try_from(next.char),
-                            Ok(b';' | b'|' | b'&' | b'(' | b')' | b'<' | b'>')
-                        ))
+                ShellCharIter::<ENCODING>::is_whitespace(next)
+                    || matches!(
+                        u8::try_from(next.char),
+                        Ok(b';' | b'|' | b'&' | b'(' | b')' | b'<' | b'>' | b'`')
+                    )
             }
         };
         if !at_word_end {
@@ -3114,14 +3163,14 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             return RedirectLex::Unsupported;
         }
 
-        if target_fd == src_fd {
+        if target_fd == src_fd as u32 {
             return RedirectLex::NoOp;
         }
         match (dir, src_fd, target_fd) {
-            (RedirectDirection::Out, 1, 2) => RedirectLex::Redirect(
+            (RedirectDirection::Out, StdFd::Stdout, 2) => RedirectLex::Redirect(
                 ast::RedirectFlags::STDERR | ast::RedirectFlags::DUPLICATE_OUT,
             ),
-            (RedirectDirection::Out, 2, 1) => RedirectLex::Redirect(
+            (RedirectDirection::Out, StdFd::Stderr, 1) => RedirectLex::Redirect(
                 ast::RedirectFlags::STDOUT | ast::RedirectFlags::DUPLICATE_OUT,
             ),
             _ => {

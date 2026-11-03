@@ -2041,10 +2041,28 @@ describe("deno_task", () => {
         .stderr("")
         .runAsTest("a digit that ends a word is not an fd");
 
-      TestBuilder.command`echo hi 1>&2 no_such_cmd_47822`
-        .stderr(s => expect(s).toContain("command not found: no_such_cmd_47822"))
-        .exitCode(1)
-        .runAsTest("a word after 1>&2 is not a file");
+      TestBuilder.command`echo $(echo hi 2>&1)`
+        .stdout("hi\n")
+        .runAsTest("2>&1 before the end of a command substitution");
+      TestBuilder.command`echo $(echo hi >&2)`
+        .stdout("\n")
+        .stderr("hi\n")
+        .runAsTest(">&2 before the end of a command substitution");
+      TestBuilder.command`echo ${{ raw: "`echo hi 2>&1`" }}`.stdout("hi\n").runAsTest("2>&1 before a closing backtick");
+      TestBuilder.command`echo hi 2>&1${{ raw: "\\\n" }}&& echo cont`
+        .stdout("hi\ncont\n")
+        .runAsTest("2>&1 before an escaped newline");
+
+      TestBuilder.command`echo z 1<f`
+        .ensureTempDir()
+        .file("f", "F\n")
+        .stdout("z 1\n")
+        .fileEquals("f", "F\n")
+        .runAsTest("1< is a word and a stdin redirect");
+      TestBuilder.command`echo hi 0>f; cat f`
+        .ensureTempDir()
+        .stdout("hi 0\n")
+        .runAsTest("0> is a word and a stdout redirect");
 
       TestBuilder.command`echo hi ">&2"`.stdout("hi >&2\n").runAsTest("quoted >&2 is a word");
 
@@ -2072,7 +2090,16 @@ describe("deno_task", () => {
       test.each([
         ["echo hi 3>&1", onlyStdFds],
         ["echo hi 3> out", onlyStdFds],
+        [
+          "echo hi 10>&1",
+          "`10>`: Bun Shell only redirects file descriptors 0, 1 and 2. Please file an issue on GitHub.",
+        ],
+        [
+          "echo hi 12>out",
+          "`12>`: Bun Shell only redirects file descriptors 0, 1 and 2. Please file an issue on GitHub.",
+        ],
         ["echo hi >&3", onlyStdPairs(">&3")],
+        ["echo hi >&12", onlyStdPairs(">&12")],
         ["echo hi 1>&0", onlyStdPairs("1>&0")],
         ["cat 0<&1", onlyStdPairs("0<&1")],
         [

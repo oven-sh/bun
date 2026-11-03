@@ -63,15 +63,13 @@ impl<'a> Line<'_, 'a> {
                     }
                     return self.declarators(declarations);
                 }
-                // A pattern that nothing is assigned to has no group of its own, and breaks with its type.
-                if declarator.init().is_none() && declarator.pat().tag() != PatTag::Ident {
-                    return Err(Refused);
-                }
                 self.declared(declarator)?;
                 if declarator.is_definite() {
                     self.byte(b'!')?;
                 }
                 match (declarator.ty(), declarator.init()) {
+                    // A pattern that nothing is assigned to has no group of its own, and breaks with its type.
+                    (_, None) if declarator.pat().tag() != PatTag::Ident => return Err(Refused),
                     (Some(ty), None) => self.last_type_after(":", ty)?,
                     (ty, Some(init)) => {
                         self.type_annotation(ty)?;

@@ -475,6 +475,12 @@ fn is_after_block_comment(source: &[u8], start: u32) -> bool {
 const SLACK: usize = 256;
 
 impl<'a> Formatter<'a> {
+    #[cold]
+    #[inline(never)]
+    fn has_comment_in_item(&self, span: Span) -> bool {
+        !self.is_quiet() && self.comments().has_comment_or_owner_in(span)
+    }
+
     /// Calls `write` with a [`Line`] that starts a line of the output, for the node at `span`. `after` is the width of
     /// what the caller writes behind it on the same line: at least, and at most. Returns false, with nothing written, if
     /// the short cut isn't taken.
@@ -511,10 +517,7 @@ impl<'a> Formatter<'a> {
             return false;
         }
         // What's ignored is copied, so nothing that's known about where a node breaks holds for it.
-        if state.has_ignore_comment
-            && !self.is_quiet()
-            && self.comments().has_comment_or_owner_in(span)
-        {
+        if state.has_ignore_comment && self.has_comment_in_item(span) {
             return false;
         }
         // Looking at all of a long item takes longer than an attempt that ends where the source isn't plain.

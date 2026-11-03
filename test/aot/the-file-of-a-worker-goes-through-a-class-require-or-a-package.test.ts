@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { renameSync } from "node:fs";
 import { join } from "node:path";
 import { run } from "./harness/run";
-import { beforeAll, test } from "./supported";
+import { test } from "./supported";
 
 // A test file writes `new URL("./src/worker/w1.ts", import.meta.url)`, and the `new Worker(entry)` that gets it stands somewhere else: behind a constructor or
 // a method, in a field or in an options object, behind `require()`, or in a package. The build follows `entry` back to the URL and compiles the file.
@@ -186,8 +186,12 @@ self.onmessage = (event: any) => { self.postMessage("w${n} " + double(event.data
 }
 
 const asWritten = ways.map(([name], index) => `SEEN ${name} | w${index + 1} 42`);
+// What a Worker answers that starts from the text on disk, once the test file has written over that text.
+const fromDisk = ways.map(([name]) => `SEEN ${name} | from disk 42`);
 // What a run says at its end: both test files ran, and all five of their checks.
 const ended = " 2 pass\n 0 fail\n 5 expect() calls\nRan 2 tests across 2 files.";
+// What plain bun test makes of the project. Each compiled run is held to the same, and to how many Worker files its build took in.
+const plain = { seen: asWritten, taken: [], ended, exitCode: 0, stderr: "" };
 
 async function see(flags: string[], env: Record<string, string>) {
   using dir = tempDir("aot-worker-behind-a-class-require-or-a-package", { ...files, ...testFiles });
@@ -209,13 +213,13 @@ async function see(flags: string[], env: Record<string, string>) {
   };
 }
 
-let plain: Awaited<ReturnType<typeof see>>;
-beforeAll(async () => {
-  plain = await see([], {});
+test("each Worker answers under plain bun test", async () => {
+  expect(await see([], {})).toEqual(plain);
 });
 
-test("each Worker answers under plain bun test", () => {
-  expect(plain).toEqual({ seen: asWritten, taken: [], ended, exitCode: 0, stderr: "" });
+// Plain Bun starts every Worker from the text on disk. So in a run that writes over the files, only compiled code answers as written.
+test("each Worker answers from disk under plain bun test, once the test has written over its file", async () => {
+  expect(await see([], { WRITES_OVER_WORKERS: "1" })).toEqual({ ...plain, seen: fromDisk });
 });
 
 // Over layers the class, the required function and the package lie in programs below the test file, whose builds don't see it.

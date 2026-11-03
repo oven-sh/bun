@@ -338,6 +338,41 @@ struct Small {
     is_simple: bool,
 }
 
+/// Code in what is printed for a run, which another formatter prints: between two forced line breaks that are not
+/// written down. In the text it is a NUL and ten bytes. Nothing else in there has a NUL.
+#[derive(Copy, Clone)]
+pub(crate) struct Code {
+    /// It is a style sheet. Else it is a script.
+    pub(crate) is_style: bool,
+    /// The number of `indent`s around it.
+    pub(crate) level: u8,
+    /// Where it is in the source.
+    pub(crate) span: Span,
+}
+
+impl Code {
+    /// Splits `printed` at the first one: what is in front of it, the code, and what is behind it.
+    pub(crate) fn split(printed: &[u8]) -> Option<(&[u8], Code, &[u8])> {
+        let (before, rest) =
+            printed.split_at_checked(bun_core::strings::index_of_char_usize(printed, 0)?)?;
+        let (&[_, is_style, level, a, b, c, d, e, f, g, h], after) = rest.split_first_chunk()?;
+        let span = Span::new(
+            u32::from_le_bytes([a, b, c, d]),
+            u32::from_le_bytes([e, f, g, h]),
+        );
+        let is_style = is_style != 0;
+        Some((
+            before,
+            Code {
+                is_style,
+                level,
+                span,
+            },
+            after,
+        ))
+    }
+}
+
 /// How much has been written to a `Sink`.
 #[derive(Copy, Clone)]
 struct Mark {
@@ -372,6 +407,14 @@ impl Sink<'_, '_> {
     fn reset(&mut self, mark: Mark) {
         self.out.truncate(mark.copied);
         self.pending = mark.pending.0..mark.pending.1;
+    }
+
+    fn code(&mut self, code: Code) {
+        self.flush();
+        self.out
+            .extend_from_slice(&[0, u8::from(code.is_style), code.level]);
+        self.out.extend_from_slice(&code.span.start.to_le_bytes());
+        self.out.extend_from_slice(&code.span.end.to_le_bytes());
     }
 
     /// Takes back the last byte.
@@ -957,8 +1000,7 @@ impl<'a> Scanner<'_, 'a> {
         };
         let definition = facts.definition;
         if definition.content_type == ContentType::RawText
-            && (self.settings.parser != Parser::Html
-                || !(name == b"script" || (name == b"style" && !self.settings.formats_embedded)))
+            && (self.settings.parser != Parser::Html || !matches!(name, b"script" | b"style"))
         {
             return None;
         }
@@ -1288,10 +1330,7 @@ impl<'a> Scanner<'_, 'a> {
         }
         if must_be_empty {
             if definition.content_type == ContentType::RawText {
-                return match self.settings.formats_embedded {
-                    true => Item::No,
-                    false => self.element_with_code(start, element, width, open_end),
-                };
+                return self.element_with_code(start, element, width, open_end);
             }
             // Plain words in it, all on one line with the tags.
             let len = match name {
@@ -1399,8 +1438,8 @@ impl<'a> Scanner<'_, 'a> {
         }
     }
 
-    /// A `<script>` or a `<style>` whose code is left alone: its lines get the indentation of the element. See
-    /// `element_with_words`.
+    /// A `<script>` or a `<style>`. Code that is left alone gets the indentation of the element. For code that is
+    /// formatted a [`Code`] is written. See `element_with_words`.
     fn element_with_code(
         &mut self,
         start: usize,
@@ -1422,6 +1461,32 @@ impl<'a> Scanner<'_, 'a> {
         let is_odd = |byte: &u8| matches!(byte, 0..=8 | 11..=31 | 127);
         if code.is_empty() || !self.ends_line(end) || all.iter().any(is_odd) {
             return Item::No;
+        }
+        if self.settings.formats_embedded {
+            // Which formatter is asked is a matter of these. Where what is written is taken back, so would this be.
+            let names_language = self.attributes.iter().any(|it| {
+                let attribute = text.get(it.start..it.end).unwrap_or_default();
+                [&b"type"[..], b"lang", b"src"].iter().any(|name| {
+                    (attribute.strip_prefix(*name))
+                        .is_some_and(|rest| matches!(rest, [] | [b'=', ..]))
+                })
+            });
+            if names_language || self.only_children > 0 || level >= 128 {
+                return Item::No;
+            }
+            self.put_whole_tag(
+                start,
+                name_end,
+                !self.attributes.is_empty() && width + 1 > room,
+            );
+            self.out.code(Code {
+                is_style: name == b"style",
+                level: level as u8 + 1,
+                span: Span::new(open_end as u32, close as u32),
+            });
+            self.put_end_tag(name);
+            self.ends_in_text = true;
+            return Item::Ends(end);
         }
         let dedent = super::utilities::min_indentation(code);
         self.put_whole_tag(
@@ -2965,6 +3030,9 @@ impl<'a> Scanner<'_, 'a> {
         // Behind a comment as the last child of an element whose `-->` is where the end tag of the parent will be, no
         // line break is printed.
         let value = &rest[..len];
+        if bun_core::strings::contains_char(value, 0) {
+            return Item::No;
+        }
         let blanks = value.len() - value.trim_ascii_end().len();
         let is_where_end_tag_will_be = blanks > 0
             && self.siblings.level > 0

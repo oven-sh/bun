@@ -2038,6 +2038,10 @@ describe.skipIf(!hasFlag)("HTML", () => {
     // Code that is left alone gets the indentation of its element.
     "<div>\n<script>\n      a;\n\n        b;  \n\t\n</script>\n<style>\na {\n  b: c;\n}\n</style>\n<script>a</script>\n<script>\n  a\n</SCRIPT>\n</div>\n",
     "<script>\n\n  a\n\tb\n</script>\n<style>a</style >\n<script>'</script>'</script>\n",
+    // Code in a run is handed to its formatter. What cannot be formatted stays, and so does what names its language.
+    '<html>\n  <head>\n    <script>\n      const a = `x\n  y`; // c\n      f(aaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, cccccccccccccccccccc)\n    </script>\n    <style>\n      a{color:red}\n    </style>\n    <meta charset="utf-8">\n  </head>\n</html>\n',
+    '<script>\n  (\n</script>\n<style>\n  a {\n</style>\n<script type="text/x">\n  a  b\n</script>\n<script lang="ts">\n  let a:b\n</script>\n<p>c</p>\n',
+    "---\na:   1\n---\n<script>a</script>\n<div><script>a</script></div>\n",
     // Words in an element in which white space counts, on one line with its tags.
     `<div>\n  <pre>a b</pre>\n  <pre>a\nb</pre>\n  <pre> a</pre>\n  <pre>{{ a }}</pre>\n  <pre>{{//</pre>\n  <textarea>a b</textarea>\n  <textarea>a  b</textarea>\n  <textarea a="b">${full} ${full}</textarea>\n</div>\n`,
     "<svg>\n  <title>a b</title>\n  <title> a </title>\n  <g></g>\n</svg>\n",

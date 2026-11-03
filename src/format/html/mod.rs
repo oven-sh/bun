@@ -637,7 +637,7 @@ fn format_once(
             && let Some(whole) = (if is_in_text { &text[..] } else { &printed[..] })
                 .get(span.start as usize..span.end as usize)
         {
-            if front_matter_len == 0 {
+            if front_matter_len == 0 && (is_in_text || !strings::contains_char(whole, 0)) {
                 out.extend_from_slice(whole);
                 out.push(b'\n');
                 return Ok(None);
@@ -646,6 +646,8 @@ fn format_once(
             let mut context =
                 JsFormatContext::without_file(options.clone(), &crate::js::comments::NO_COMMENTS);
             context.parse_javascript = parse_javascript;
+            context.short_cuts = crate::js::flat::ShortCuts::for_host(&options);
+            let mut has_wrong_short_cut = false;
             let root = crate::ir::run::write_with(context, &text, &mut scratch.document, |f| {
                 let mut printer = printer::Printer {
                     tree: &ast::Tree::default(),
@@ -668,9 +670,15 @@ fn format_once(
                     css_scratch: Default::default(),
                 };
                 printer.print_front_matter_and_run(&text[..front_matter_len], whole);
+                has_wrong_short_cut = printer.has_wrong_short_cut || printer.is_nested_too_deeply;
                 printer.out.finish();
             });
             return root
+                .and_then(|root| match has_wrong_short_cut {
+                    // Once more, without short cuts.
+                    true => Err(FormatError::InvalidDocument),
+                    false => Ok(root),
+                })
                 .and_then(|root| {
                     crate::ir::run::print(root, &text, &options, &mut scratch.document, out)
                 })

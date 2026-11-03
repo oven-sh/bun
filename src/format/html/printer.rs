@@ -2,6 +2,8 @@
 
 use super::ast::{Attribute, Flags, Id, Kind, StartTagComment, Tree};
 use super::cursor::{Cursor, Target};
+use super::js::SourceType;
+use super::runs::Code;
 use super::tag::Tags;
 use super::utilities::{
     html_split, html_trim_preserve_indentation, is_pre_like, is_script_like_tag, is_text_like,
@@ -131,10 +133,51 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
         if !(self.formats_embedded() && self.embed_front_matter(front_matter)) {
             self.out.text(front_matter);
         }
+        if !front_matter.is_empty() {
+            self.out.hardline();
+            self.out.hardline();
+        }
+        self.print_lines_and_code(run, 0);
         self.out.hardline();
-        self.out.hardline();
-        self.out.lines(run);
-        self.out.hardline();
+    }
+
+    /// Writes what is printed for a run at `level`: lines, and the code between them.
+    fn print_lines_and_code(&mut self, mut lines: &[u8], level: u32) {
+        let mut indents = 0;
+        while let Some((before, code, after)) = Code::split(lines) {
+            self.out.lines(before);
+            for _ in 0..std::mem::replace(&mut indents, u32::from(code.level).saturating_sub(level))
+            {
+                self.out.end_indent();
+            }
+            for _ in 0..indents {
+                self.out.start_indent();
+            }
+            self.out.hardline();
+            let (parser, source_type): (&[u8], _) = match code.is_style {
+                true => (b"css", SourceType::Unknown),
+                false => (b"babel", SourceType::Script),
+            };
+            let attempt = self.out.start_attempt();
+            let is_written = self.text_to_doc(
+                code.span.of(self.options.original_text),
+                parser,
+                source_type,
+            );
+            // What cannot be formatted is printed as it is written, which is not for here.
+            self.has_wrong_short_cut |= !self.out.end_attempt(attempt, is_written) || indents == 0;
+            // The end tag is a level further out. The line break in front of it is written with it.
+            if indents > 0 {
+                self.out.end_indent();
+                indents -= 1;
+            }
+            self.out.hardline();
+            lines = after;
+        }
+        self.out.lines(lines);
+        for _ in 0..indents {
+            self.out.end_indent();
+        }
     }
 
     /// Calls `print`, which prints `target`, and marks where the part of the text around the cursor starts and ends.
@@ -273,11 +316,12 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
             self.has_wrong_short_cut = true;
             return;
         }
-        let text = match node.has(Flags::IS_PRINTED_AS_WRITTEN) {
-            true => self.options.original_text,
-            false => &self.tree.printed,
-        };
-        self.out.lines(node.printed.of(text));
+        match node.has(Flags::IS_PRINTED_AS_WRITTEN) {
+            true => (self.out).lines(node.printed.of(self.options.original_text)),
+            false => {
+                self.print_lines_and_code(node.printed.of(&self.tree.printed), node.printed_level)
+            }
+        }
     }
 
     pub(crate) fn with_ancestor<R>(&mut self, print: impl FnOnce(&mut Self) -> R) -> R {

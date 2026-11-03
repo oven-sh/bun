@@ -957,6 +957,8 @@ public:
     BIOPointer getInfoAccess() const;
     BIOPointer getValidFrom() const;
     BIOPointer getValidTo() const;
+    std::optional<int64_t> getValidFromTime() const;
+    std::optional<int64_t> getValidToTime() const;
     std::optional<std::string_view> getSignatureAlgorithm() const;
     std::optional<std::string> getSignatureAlgorithmOID() const;
     DataPointer getSerialNumber() const;

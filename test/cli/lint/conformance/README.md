@@ -16,7 +16,7 @@ commits, and `licenses/` has the license of each (MIT, and Apache 2.0 for `@esli
 | eslint-plugin-prettier      | 5.5.6   | 1     | 448   |
 | @eslint/json                | 2.1.1   | 6     | 332   |
 | @eslint/markdown            | 8.0.3   | 21    | 1410  |
-| eslint-plugin-perfectionist | 5.13.0  | 3     | 965   |
+| eslint-plugin-perfectionist | 5.13.0  | 4     | 1280  |
 | oxc (oxlint)                | 1.70.0  | 1     | 83    |
 
 The rules of `react-hooks` follow eslint-plugin-react-hooks 7.1.1, which reports the same for all of these cases of 7.0.0.
@@ -260,7 +260,7 @@ A case that cannot be reproduced without upstream's test code. It still has what
 | `parser: custom`           | typescript-eslint | 1     | a stub parser without parser services                     |
 | `skipped upstream`         | typescript-eslint | 1     | `skip: true` in the test; a known false negative          |
 | `half of a surrogate pair` | json              | 3     | the code has a lone surrogate, which UTF-8 can't encode   |
-| `the rule throws: <error>` | perfectionist     | 3     | a setting with a bad value; the test expects the error    |
+| `the rule throws: <error>` | perfectionist     | 4     | a setting with a bad value; the test expects the error    |
 
 26 core cases name a "parser" of `tests/fixtures/parsers/*.js`, which returns a hard-coded AST (type annotations, old
 babel-eslint and typescript-eslint). They are not skipped: 25 are recorded with the real parser that reads the code

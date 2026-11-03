@@ -33,5 +33,5 @@ FAIL markdown/no-space-in-emphasis#205 messages differ
 
 4 cases have a fix that --fix holds back
 
-532 rules, 529 without failures, 0 not implemented
-71349 cases passed, 30 failed, 306 skipped
+536 rules, 533 without failures, 0 not implemented
+72625 cases passed, 30 failed, 310 skipped

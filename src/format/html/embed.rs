@@ -491,10 +491,24 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                 }
                 _ => SourceType::Unknown,
             };
+            // `printLineAfterChildren` prints nothing then, so `</script` is on the last line of the code, which a short
+            // cut takes to end with the code.
+            let lends_end_of_closing_tag = match (tree.next(parent), tree.parent(parent)) {
+                (Some(next), _) => tags.needs_to_borrow_prev_closing_tag_end_marker(next),
+                (None, Some(outer)) => {
+                    tags.needs_to_borrow_last_child_closing_tag_end_marker(outer)
+                }
+                (None, None) => false,
+            };
             let attempt = self.out.start_attempt();
             self.out.break_parent();
             self.out.built_text(|out| tags.opening_tag_prefix(id, out));
+            let short_cuts = self.out.f.context_mut().short_cuts.mode;
+            if lends_end_of_closing_tag {
+                self.out.f.context_mut().short_cuts.mode = Default::default();
+            }
             let is_written = self.text_to_doc(value, parser, source_type);
+            self.out.f.context_mut().short_cuts.mode = short_cuts;
             self.out.built_text(|out| tags.closing_tag_suffix(id, out));
             return self.out.end_attempt(attempt, is_written);
         }

@@ -1598,6 +1598,8 @@ describe.skipIf(!hasFlag)("HTML", () => {
     Array.from({ length: 40 }, (_, depth) => line(depth, "<div>")).join("") +
       line(40, "<p>a b c</p>") +
       Array.from({ length: 40 }, (_, depth) => line(39 - depth, "</div>")).join(""),
+    // `</script` is on the last line of the code, which does not fit with it.
+    "<b><script>foo(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)</script>x</b>\n",
   ];
   const files = Object.fromEntries(inputs.map((input, index) => [`${index}.html`, input]));
 

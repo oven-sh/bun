@@ -10,9 +10,13 @@ import { test } from "./supported";
 // Every project here prints what it sees; a run in layers has to print what plain Bun prints.
 const part = (name: string) =>
   readFileSync(join(import.meta.dir, "layers-of-a-test-run-share-one-realm", name + ".txt"), "utf8");
+const listed = (name: string) =>
+  part(name)
+    .split("\n")
+    .filter(line => line);
 
 async function seen(directory: string, flags: string[], words: string) {
-  const { stdout, stderr } = await run(
+  const { stdout, stderr, exitCode } = await run(
     [bunExe(), "test", ...flags, "--isolate", "--parallel=4", "--timeout=60000"],
     directory,
     {
@@ -20,49 +24,49 @@ async function seen(directory: string, flags: string[], words: string) {
       BUN_DEBUG_TEST_AOT_WORDS: words,
     },
   );
-  const all = stdout + "\n" + stderr;
+  const all = (stdout + "\n" + stderr).split("\n");
   return {
-    lines: all
-      .split("\n")
-      .filter(line => line.startsWith("SEEN"))
-      .sort(),
-    deadWorkers: all.split("\n").filter(line => line.includes("worker crashed")),
+    lines: all.filter(line => line.startsWith("SEEN")).sort(),
+    ended: {
+      // The last lines of the run, without the time that it took.
+      summary: stderr.match(/^ \d+ pass\n(?:.*\n)*?Ran \d+ tests across \d+ files\./m)?.[0],
+      deadWorkers: all.filter(line => line.includes("worker crashed")),
+      exitCode,
+    },
+    // A run that is told how many test files go to a program says how it is built.
+    programs: stderr.match(/^AOT test run \| .*\b(test files \d+ \| to a program \d+)/m)?.[1],
   };
 }
 
-async function expectLayersToSeeWhatPlainSees(
+/** What a project prints under plain Bun and in layers, `filesOfPiece` test files to a program. Both runs have to end as `ended` says. */
+async function seenPlainAndInLayers(
   name: string,
   files: Record<string, string>,
   filesOfPiece: number,
-  fewestLines: number,
+  ended: Awaited<ReturnType<typeof seen>>["ended"],
 ) {
   using dir = tempDir(name, { "package.json": `{ "name": "p", "type": "module" }`, "tsconfig.json": `{}`, ...files });
-  const plain = await seen(String(dir), [], "");
-  const layers = await seen(
-    String(dir),
-    ["--aot"],
-    `TestRunLayers:2,TestRunPartFiles:${filesOfPiece},TestRunPartsGoOnAfterCrash`,
-  );
-  expect(plain.lines.length).toBeGreaterThanOrEqual(fewestLines);
-  expect(layers.deadWorkers).toEqual([]);
-  expect(layers.lines).toEqual(plain.lines);
+  const [plain, layers] = await Promise.all([
+    seen(String(dir), [], ""),
+    seen(String(dir), ["--aot"], `TestRunLayers:2,TestRunPartFiles:${filesOfPiece}`),
+  ]);
+  expect(plain.ended).toEqual(ended);
+  expect(layers.ended).toEqual(ended);
+  const testFiles = Object.keys(files).filter(path => path.endsWith(".test.js")).length;
+  expect(layers.programs).toBe(`test files ${testFiles} | to a program ${filesOfPiece}`);
+  return { plain: plain.lines, layers: layers.lines };
 }
 
-const expressions = part("made-by-the-library")
-  .split("\n")
-  .filter(line => line);
+const expressions = listed("made-by-the-library");
 const number = (index: number) => String(index).padStart(3, "0");
+// Node's console asks its streams for more than `write`, so the statement with this one throws, under plain Bun too.
+const throwsInPlainBun = (expression: string) => expression.includes("new console.Console({ stdout: {");
 
-test("a value that the library or native code makes, used by one statement of a test file", async () => {
-  const files: Record<string, string> = {};
-  expressions.forEach((expression, index) => {
-    files[`t${number(index)}.test.js`] =
-      `import { test } from "bun:test";\ntest("f", () => { ${expression}; console.log("SEEN", "${number(index)}", "came through"); });\n`;
-  });
-  await expectLayersToSeeWhatPlainSees("aot-layers-made-by-the-library-bare", files, 4, expressions.length - 3);
-}, 600000);
-
-test("the same values, in a test file and in a file of the project", async () => {
+// Most of a run in layers is the build of its lowest layer. For the first two tests that layer is the same program, Bun's own library alone, so their test files are one project, which runs once in each way.
+// The third test keeps a project of its own: its lowest layer holds a package too, and a build of these two takes every module for one that a test may mock, because one expression reads `Bun.jest`.
+let seenOnce: ReturnType<typeof seeExpressions> | undefined;
+const expressionsSeen = () => (seenOnce ??= seeExpressions());
+async function seeExpressions() {
   const withRequire = `import { createRequire } from "node:module"; const require = createRequire(import.meta.url);\n`;
   const files: Record<string, string> = {
     "src/all.js":
@@ -71,23 +75,70 @@ test("the same values, in a test file and in a file of the project", async () =>
       expressions.map(expression => `  async () => (${expression}),\n`).join("") +
       "];\n",
   };
+  // A program above the layers holds four test files that follow one another by name. A name begins with the number of its four, so that no program but the last holds files of both tests.
+  const count = { statement: 0, value: 0 };
+  const name = (kind: keyof typeof count, index: number) =>
+    `${number(Math.floor(count[kind]++ / 4))}-${kind}-${number(index)}.test.js`;
   expressions.forEach((expression, index) => {
-    // Compiled code words one TypeError of the library otherwise.
-    if (expression.includes("new console.Console({ stdout: {")) return;
-    files[`t${number(index)}.test.js`] =
-      `import { test } from "bun:test"; import { all } from "./src/all.js"; ${withRequire}
+    files[name("statement", index)] =
+      `import { test } from "bun:test";\ntest("f", () => { ${expression}; console.log("SEEN", "${number(index)}", "came through"); });\n`;
+    // Compiled code words that TypeError of the library otherwise.
+    if (throwsInPlainBun(expression)) return;
+    files[name("value", index)] = `import { test } from "bun:test"; import { all } from "./src/all.js"; ${withRequire}
 const note = (...parts) => console.log("SEEN", "${number(index)}", ...parts); const clean = error => "threw " + error.name + " " + String(error.message).slice(0, 90);
 test("in the test file", async () => { try { note("own", String(await (${expression}))); } catch (error) { note("own", clean(error)); } });
 test("in the file of the project", async () => { try { note("theirs", String(await all[${index}]())); } catch (error) { note("theirs", clean(error)); } });
 `;
   });
-  await expectLayersToSeeWhatPlainSees("aot-layers-made-by-the-library", files, 4, 2 * expressions.length - 2);
+  const { plain, layers } = await seenPlainAndInLayers("aot-layers-made-by-the-library", files, 4, {
+    // The statement that throws fails its test.
+    summary: " 351 pass\n 1 fail\nRan 352 tests across 235 files.",
+    deadWorkers: [],
+    exitCode: 1,
+  });
+  const isOfStatement = (line: string) => line.endsWith(" came through");
+  return {
+    statements: { plain: plain.filter(isOfStatement), layers: layers.filter(isOfStatement) },
+    values: { plain: plain.filter(line => !isOfStatement(line)), layers: layers.filter(line => !isOfStatement(line)) },
+  };
+}
+
+test("a value that the library or native code makes, used by one statement of a test file", async () => {
+  const { statements } = await expressionsSeen();
+  const cameThrough = expressions.flatMap((expression, index) =>
+    throwsInPlainBun(expression) ? [] : [`SEEN ${number(index)} came through`],
+  );
+  expect(statements.plain).toEqual(cameThrough);
+  expect(statements.layers).toEqual(cameThrough);
+}, 600000);
+
+test("the same values, in a test file and in a file of the project", async () => {
+  const { values } = await expressionsSeen();
+  // `[number, value]` of each expression, as the test file or the file of the project has it under plain Bun.
+  const valuesIn = (place: string) =>
+    values.plain.flatMap(line => {
+      const found = line.match(new RegExp(`^SEEN (\\d+) ${place} (.*)$`));
+      return found ? [[found[1], found[2]]] : [];
+    });
+  const [own, theirs] = [valuesIn("own"), valuesIn("theirs")];
+  const asked = expressions.flatMap((expression, index) => (throwsInPlainBun(expression) ? [] : [number(index)]));
+  expect(own.map(([index]) => index)).toEqual(asked);
+  expect(theirs.map(([index]) => index)).toEqual(asked);
+  expect([...own, ...theirs].filter(([, value]) => value.startsWith("threw "))).toEqual([]);
+  // The file of the project answers second, in the realm of the test file: it counts that file's listener and its mark too, and it is not the main module.
+  const differ = own.flatMap(([index, value], at) => (value === theirs[at][1] ? [] : [[index, value, theirs[at][1]]]));
+  expect(differ).toEqual([
+    ["005", "1", "2"],
+    ["046", "number,number,a,number,1", "number,number,a,number,2"],
+    ["084", "function,string,function,string,true", "function,string,function,string,false"],
+  ]);
+  expect(values.layers).toEqual(values.plain);
 }, 600000);
 
 test("one of each thing, one queue of each kind, and what one layer sets the others see", async () => {
   const shared = part("shared");
   const testFile = shared.replaceAll(/^export const /gm, "const ") + part("asks");
-  await expectLayersToSeeWhatPlainSees(
+  const { plain, layers } = await seenPlainAndInLayers(
     "aot-layers-one-realm",
     {
       "node_modules/pkg/package.json": `{ "name": "pkg", "version": "1.0.0", "type": "module", "main": "index.js" }`,
@@ -97,6 +148,12 @@ test("one of each thing, one queue of each kind, and what one layer sets the oth
       "two.test.js": testFile,
     },
     1,
-    100,
+    { summary: " 12 pass\n 0 fail\nRan 12 tests across 2 files.", deadWorkers: [], exitCode: 0 },
   );
+  // Each of the two test files gives every answer once.
+  const answers = listed("answers")
+    .flatMap(answer => [answer, answer])
+    .sort();
+  expect(plain).toEqual(answers);
+  expect(layers).toEqual(answers);
 }, 600000);

@@ -1,0 +1,57 @@
+SEEN custom helper shown my way { inner: shown my way }
+SEEN custom own shown my way { inner: shown my way }
+SEEN custom pkg shown my way { inner: shown my way }
+SEEN depth helper 0 { a: [Object] }
+SEEN depth own 0 { a: [Object] }
+SEEN depth pkg 0 { a: [Object] }
+SEEN emitted helper true true own 1,helper 1,pkg 1,own 2,helper 2,pkg 2 3
+SEEN emitted own true true own 1,helper 1,pkg 1,own 2,helper 2,pkg 2 3
+SEEN emitted pkg true true own 1,helper 1,pkg 1,own 2,helper 2,pkg 2 3
+SEEN iterated helper a
+SEEN iterated own a
+SEEN iterated pkg a
+SEEN listeners helper 1 true true 8192
+SEEN listeners own 1 true true 8192
+SEEN listeners pkg 1 true true 8192
+SEEN made by helper judged by helper all
+SEEN made by helper judged by own all
+SEEN made by helper judged by pkg all
+SEEN made by own judged by helper all
+SEEN made by own judged by own all
+SEEN made by own judged by pkg all
+SEEN made by pkg judged by helper all
+SEEN made by pkg judged by own all
+SEEN made by pkg judged by pkg all
+SEEN order tick own,tick helper,tick pkg,tick own,tick pkg,tick helper,then own,then helper,then pkg,then own,then pkg,then helper,micro own,micro helper,micro pkg,micro own,micro pkg,micro helper,immediate own,immediate helper,immediate pkg,immediate own,immediate pkg,immediate helper,timeout own,timeout helper,timeout pkg,timeout own,timeout pkg,timeout helper
+SEEN piped helper a
+SEEN piped own a
+SEEN piped pkg a
+SEEN prepared helper text
+SEEN prepared own text
+SEEN prepared pkg text
+SEEN prototype helper function function function function
+SEEN prototype own function function function function
+SEEN prototype pkg function function function function
+SEEN set by helper read by helper 21 21 21 helper helper string helper
+SEEN set by helper read by own 21 21 21 helper helper string helper
+SEEN set by helper read by pkg 21 21 21 helper helper string helper
+SEEN set by own read by helper 20 20 20 own own string own
+SEEN set by own read by own 20 20 20 own own string own
+SEEN set by own read by pkg 20 20 20 own own string own
+SEEN set by pkg read by helper 22 22 22 pkg pkg string pkg
+SEEN set by pkg read by own 22 22 22 pkg pkg string pkg
+SEEN set by pkg read by pkg 22 22 22 pkg pkg string pkg
+SEEN stack limit helper 3 3
+SEEN stack limit own 3 3
+SEEN stack limit pkg 3 3
+SEEN store helper helper helper's later 5
+SEEN store helper own helper's later 5
+SEEN store helper pkg helper's later 5
+SEEN store own helper own's later 5
+SEEN store own own own's later 5
+SEEN store own pkg own's later 5
+SEEN store pkg helper pkg's later 5
+SEEN store pkg own pkg's later 5
+SEEN store pkg pkg pkg's later 5
+SEEN things helper all the same
+SEEN things pkg all the same

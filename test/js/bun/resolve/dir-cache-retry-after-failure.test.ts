@@ -998,6 +998,29 @@ const files = {
         res("X2", () => require.resolve("./inference.cjs", options));
       },
 
+      async workeralias() {
+        // The entry point of a Worker is looked up from the working directory, which is ts/ here:
+        // its tsconfig.json maps "@/*" onto that directory.
+        const run = (label, specifier) =>
+          new Promise(done => {
+            // The Worker of the web takes any specifier. The one of node:worker_threads takes a path.
+            const worker = new globalThis.Worker(specifier);
+            worker.onmessage = event => {
+              console.log(label, "OK", event.data);
+              worker.terminate();
+              done();
+            };
+            worker.onerror = event => {
+              console.log(label, "ERR", event.message.split("\\n")[0]);
+              done();
+            };
+          });
+        fs.mkdirSync("workers");
+        await run("WK1", "@/workers/late.mjs");
+        write(path.join("workers", "late.mjs"), "postMessage('ran');");
+        await run("WK2", "@/workers/late.mjs");
+      },
+
       async build() {
         // Bun.build() shares the cache across calls. Five shapes of "installed
         // after the first build failed".
@@ -1301,6 +1324,17 @@ describe.concurrent("a failed resolution answers as a new process does", () => {
         "X1 ERR MODULE_NOT_FOUND",
         "X2 OK nx/inference.cjs",
       ].join("\n"),
+    });
+  });
+
+  test("new Worker() of a tsconfig alias whose file is written after the miss", async () => {
+    const inTs = (dir: string) => ({ cwd: join(dir, "ts"), flags: [] });
+    expect(await runGroup("workeralias", undefined, undefined, inTs)).toEqual({
+      exitCode: 0,
+      stderr: "",
+      stdout: ['WK1 ERR BuildMessage: ModuleNotFound resolving "@/workers/late.mjs" (entry point)', "WK2 OK ran"].join(
+        "\n",
+      ),
     });
   });
 });

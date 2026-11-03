@@ -444,12 +444,17 @@ impl DirEntry {
     pub(crate) fn unchanged_since_read(&self, now: &bun_sys::PosixStat) -> bool {
         let ns = |t: bun_core::Timespec| t.sec.saturating_mul(1_000_000_000).saturating_add(t.nsec);
         let (mtime_ns, ctime_ns) = (ns(now.mtim), ns(now.ctim));
-        // A change time on a whole millisecond comes from a file system that keeps no fine one (or none: FAT reports 0).
-        let fine_stamps = ctime_ns > 0 && ctime_ns % bun_core::time::NS_PER_MS as i64 != 0;
+        let whole_ms = |stamp: i64| stamp % bun_core::time::NS_PER_MS as i64 == 0;
+        // A stamp on a whole millisecond can come from a file system that keeps whole seconds, or every second one: its stamp of a change can be that much before the change.
+        let margin = if whole_ms(mtime_ns) || whole_ms(ctime_ns) {
+            Self::KEEP_MARGIN_NS + 2 * bun_core::time::NS_PER_S as i64
+        } else {
+            Self::KEEP_MARGIN_NS
+        };
         self.dot_ino != 0
             && now.ino == self.dot_ino
-            && fine_stamps
-            && mtime_ns.max(ctime_ns) < self.read_clock_ns.saturating_sub(Self::KEEP_MARGIN_NS)
+            && mtime_ns.max(ctime_ns) > 0
+            && mtime_ns.max(ctime_ns) < self.read_clock_ns.saturating_sub(margin)
             && bun_sys::file_stamp_clock_ns().1
                 >= self.read_clock_lead_ns.saturating_sub(Self::KEEP_MARGIN_NS)
     }

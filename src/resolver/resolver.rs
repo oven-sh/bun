@@ -5044,6 +5044,7 @@ impl<'a> Resolver<'a> {
         let mut path_buf = ::bun_paths::path_buffer_pool::get();
         path_buf[..key.len()].copy_from_slice(key);
         let path = &path_buf[..key.len()];
+        let root_key_len = Self::root_key_len(path);
         // The key length of each level to check, nearest first.
         let mut levels: bun_collections::smallvec::SmallVec<[u32; 32]> = Default::default();
         let mut level = path;
@@ -5062,7 +5063,7 @@ impl<'a> Resolver<'a> {
                 break;
             }
             let parent = strings::without_trailing_slash_windows_path(Dirname::dirname(level));
-            if parent.len() >= level.len() {
+            if parent.len() >= level.len() || level.len() <= root_key_len {
                 break;
             }
             level = parent;
@@ -5107,6 +5108,21 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    /// The length of the key of the root that `path` is below, a drive or a share on Windows: the miss tail stops there.
+    #[inline]
+    fn root_key_len(path: &[u8]) -> usize {
+        #[cfg(windows)]
+        {
+            strings::without_trailing_slash_windows_path(ResolvePath::windows_filesystem_root(path))
+                .len()
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = path;
+            1
+        }
+    }
+
     /// Whether `slot`, which the cache maps `key` to, still says what the disk says. The levels above `key` were checked before. The caller holds the resolver mutex.
     fn check_dir_info(
         &mut self,
@@ -5116,8 +5132,11 @@ impl<'a> Resolver<'a> {
     ) -> SlotCheck {
         use core::sync::atomic::Ordering::Relaxed;
         let parent_key = strings::without_trailing_slash_windows_path(Dirname::dirname(key));
-        // 1. The parent. A slot keeps the index of the slot that it was built below.
-        if slot.package_id().is_none() && parent_key.len() < key.len() {
+        // 1. The parent. A slot keeps the index of the slot that it was built below. A root, also of a share, was built below none.
+        if slot.package_id().is_none()
+            && parent_key.len() < key.len()
+            && key.len() > Self::root_key_len(key)
+        {
             let Ok(parent_result) = self.dir_cache_mut().get_or_put(parent_key) else {
                 return SlotCheck::Changed;
             };

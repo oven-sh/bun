@@ -430,6 +430,36 @@ fn an_unchanged_directory_is_kept_and_stamped_again() {
 }
 
 #[test]
+fn a_directory_stamped_in_whole_seconds_is_kept_two_seconds_after_its_last_change() {
+    const SECOND: i64 = 1_000_000_000;
+    let (clock, lead) = bun_sys::file_stamp_clock_ns();
+    let mut listing = Fs::file_system::DirEntry::init(b"/", 1);
+    listing.dot_ino = 7;
+    listing.read_clock_ns = clock;
+    listing.read_clock_lead_ns = lead;
+    let kept = |ino: u64, stamp: i64| {
+        let mut now = bun_core::ffi::zeroed::<bun_sys::PosixStat>();
+        now.ino = ino;
+        let time = bun_core::Timespec {
+            sec: stamp / SECOND,
+            nsec: stamp % SECOND,
+        };
+        (now.mtim, now.ctim) = (time, time);
+        listing.unchanged_since_read(&now)
+    };
+    // A fine stamp is never on a whole millisecond here.
+    let fine = |before_read: i64| ((clock - before_read) / 1_000_000) * 1_000_000 + 1;
+    let whole_second = |before_read: i64| ((clock - before_read) / SECOND) * SECOND;
+    assert!(kept(7, fine(SECOND)));
+    assert!(!kept(7, fine(10_000_000)));
+    // A file system that keeps whole seconds stamps a change up to two seconds before it.
+    assert!(!kept(7, whole_second(SECOND)));
+    assert!(kept(7, whole_second(4 * SECOND)));
+    assert!(!kept(7, 0));
+    assert!(!kept(8, fine(SECOND)));
+}
+
+#[test]
 fn a_listing_read_before_the_wall_clock_was_set_back_is_read_again() {
     with_project("clock-set-back", |made| {
         made.write("src/a.js", "");

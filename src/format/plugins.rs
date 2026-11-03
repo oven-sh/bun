@@ -1,11 +1,6 @@
-//! Prettier plugins that add a language, and where that language can turn up inside a file that this crate prints.
-//!
-//! Prettier's `inferParser(options, { language })` looks the word after a code fence in Markdown, or the `lang`
-//! attribute of a block in HTML or Vue, up in the `languages` of every loaded plugin. So `@prettier/plugin-pug` prints
-//! a `<template lang="pug">` and a ```` ```pug ```` block, not only a `.pug` file. This crate has no printer for those
-//! languages. When one of them is in a file, the whole file has to go to the project's own Prettier, which loads the
-//! plugin. [`PluginLanguages`] tells the printers which plugins the configuration lists, and records the one a file
-//! needs.
+//! Prettier plugins that add a language. Prettier's `inferParser(options, { language })` finds their languages by the
+//! word after a code fence and by a `lang` attribute, so a block in one of them can be inside a file that this crate
+//! prints. Only the project's own Prettier can print that file: [`PluginLanguages`] records which plugin it needs.
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
@@ -35,10 +30,8 @@ const fn plugin(
     }
 }
 
-/// Plugins that add a language to Prettier, each with what it formats: files with its name endings, and code in its
-/// languages inside Markdown, HTML and Vue. The rest of a project is formatted the same without them.
-///
-/// `names` and `extensions` are the `languages` that each plugin published in this version: prettier-plugin-astro
+/// Plugins that add a language to Prettier. The rest of a project is formatted the same without them. `names` and
+/// `extensions` are the `languages` that each plugin published in this version: prettier-plugin-astro
 /// 1.1.2, @prettier/plugin-pug 3.6.0, @prettier/plugin-php 0.26.0, @prettier/plugin-ruby 4.0.4, @prettier/plugin-xml
 /// 3.4.2, prettier-plugin-toml 4.1.0, prettier-plugin-java 2.11.0, prettier-plugin-kotlin 2.1.0, prettier-plugin-sh
 /// 0.20.2, prettier-plugin-prisma 5.0.0, prettier-plugin-solidity 2.4.1, prettier-plugin-sql 0.20.0,
@@ -136,8 +129,8 @@ fn has_word(words: &[u8], word: &[u8]) -> bool {
 
 const NONE: u8 = u8::MAX;
 
-/// The language plugins that the configuration lists for a file, and the one the file turns out to need. It's shared
-/// by the options of everything embedded in the file, so a block nested in a block is seen too.
+/// The language plugins that the configuration lists for a file, and the one the file turns out to need. The options
+/// of everything embedded in the file share it.
 #[derive(Debug)]
 pub struct PluginLanguages {
     /// A bit per index into [`LANGUAGE_PLUGINS`].
@@ -147,8 +140,7 @@ pub struct PluginLanguages {
 }
 
 impl PluginLanguages {
-    /// `listed` has a bit set for each index into [`LANGUAGE_PLUGINS`]. Returns `None` if it has none, so a file whose
-    /// configuration lists no such plugin pays nothing.
+    /// `listed` has a bit set for each index into [`LANGUAGE_PLUGINS`]. `None` if it has none.
     pub fn new(listed: u32) -> Option<std::sync::Arc<PluginLanguages>> {
         (listed != 0).then(|| {
             std::sync::Arc::new(PluginLanguages {
@@ -171,22 +163,19 @@ impl PluginLanguages {
         }
     }
 
-    /// The first language found decides. Where two listed plugins have the same word, Prettier takes the one listed
-    /// last, and here the first of this table is named: the file goes to Prettier with both of them either way.
+    /// The first language found decides. Prettier takes the plugin listed last for a word two of them have, and this
+    /// takes the first of the table: the file goes to Prettier either way.
     fn note(&self, at: usize) {
         let _ =
             (self.needed).compare_exchange(NONE, at as u8, Ordering::Relaxed, Ordering::Relaxed);
     }
 }
 
-/// Prettier's `inferParser(options, { language })` with the plugins of `options` loaded: the parser for code in
-/// `language`, or `None`. If a listed plugin has the language, nothing here can print the code: the plugin is noted in
-/// `options.plugin_languages` and the result is `None` too.
+/// Prettier's `inferParser(options, { language })` with the plugins of `options` loaded. If a listed plugin has the
+/// language, it is noted in `options.plugin_languages` and the result is `None`: nothing here prints the code.
 ///
-/// Prettier looks for the word as the name of a language, then as an alias, then as an extension, each time through
-/// the plugins as listed, last first, and through its own languages after them. So a plugin's alias beats a core
-/// extension (`inc` is PHP with `@prettier/plugin-php`), a core name beats a plugin's extension (`mjml` stays MJML
-/// with `@prettier/plugin-xml`), and a plugin's extension beats a core extension (`wxs` is XML with it).
+/// Prettier tries names, then aliases, then extensions, each time through the listed plugins before its own languages:
+/// `inc` is PHP with `@prettier/plugin-php`, `mjml` stays MJML with `@prettier/plugin-xml`, `wxs` is XML with it.
 pub(crate) fn infer_parser_with(
     options: &crate::FormatOptions,
     language: &[u8],

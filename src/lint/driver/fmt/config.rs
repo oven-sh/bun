@@ -172,8 +172,7 @@ struct Plugins {
     missing: Vec<Vec<u8>>,
     /// The file name endings that they add to what Prettier formats.
     endings: Vec<&'static [u8]>,
-    /// The ones that add a language, as a bit per index into [`LANGUAGE_PLUGINS`]. Code in their languages can also be
-    /// inside a file that Bun formats.
+    /// The ones that add a language, as a bit per index into [`LANGUAGE_PLUGINS`].
     languages: u32,
     /// The ones that are packages, as opposed to paths or objects.
     packages: Vec<Vec<u8>>,
@@ -1690,8 +1689,7 @@ impl<'c> Configs<'c> {
     }
 
     /// The plugins that add a language, among those the config or `--plugin` lists for the file at `path` in `scope`,
-    /// as a bit per index into [`LANGUAGE_PLUGINS`]. Prettier also prints code in their languages where it's
-    /// embedded in a file that Bun formats: a code block in Markdown, a block with `lang` in Vue or HTML.
+    /// as a bit per index into [`LANGUAGE_PLUGINS`].
     fn plugin_languages_for(&self, scope: &Scope, path: Option<&[u8]>) -> u32 {
         let from_config = self.plugins_for(scope, path).map_or(0, |it| it.languages);
         (self.options.plugins.iter())

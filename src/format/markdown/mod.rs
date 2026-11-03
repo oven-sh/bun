@@ -204,14 +204,13 @@ pub fn parse_to_mdast(text: &[u8], with: Extensions, tree: &mut ast::Tree) -> Op
     Some(root)
 }
 
-/// Prettier's `inferParser(options, { language })` over the languages Prettier has itself: the parser for code in
-/// `language`. [`crate::plugins::infer_parser_with`] is the same with the plugins of the configuration loaded.
+/// Prettier's `inferParser(options, { language })` over the languages Prettier has itself.
 pub(crate) fn infer_parser(language: &[u8]) -> Option<&'static [u8]> {
     infer_parser_by_name(language).or_else(|| infer_parser_by_extension(language))
 }
 
-/// The first two of the three passes of Prettier's `getLanguageByLanguageName`: `language` is the name of a language,
-/// in lowercase, or one of its aliases. `angular-ts` is what Markdown's `embed` maps to TypeScript itself.
+/// The first two passes of Prettier's `getLanguageByLanguageName`: a language's name, in lowercase, or an alias.
+/// `angular-ts` is what Markdown's `embed` maps to TypeScript itself.
 pub(crate) fn infer_parser_by_name(language: &[u8]) -> Option<&'static [u8]> {
     Some(match language {
         b"json.stringify" | b"geojson" | b"jsonl" | b"sarif" | b"topojson" => b"json-stringify",

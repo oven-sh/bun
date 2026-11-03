@@ -201,8 +201,8 @@ enum Failure {
     Changed(&'static str),
     /// TOML that can't be parsed, with the error. oxfmt silently skips such a file, so it isn't an error.
     Unread(Problem),
-    /// Code in the file is in a language that only the plugin at this index into [`LANGUAGE_PLUGINS`] has, which the
-    /// config lists. Only the project's own Prettier can format the file.
+    /// Code in the file is in the language of the listed plugin at this index into [`LANGUAGE_PLUGINS`]. Only the
+    /// project's own Prettier can format it.
     NeedsPlugin(usize),
 }
 
@@ -1096,8 +1096,7 @@ enum Done {
     PartlyStaged,
     /// It has Tailwind CSS classes whose order isn't known yet.
     Deferred,
-    /// It has code in a language that only the plugin at this index into [`LANGUAGE_PLUGINS`] has. It goes to the
-    /// project's own Prettier, which loads the plugin.
+    /// It has code in the language of the plugin at this index into [`LANGUAGE_PLUGINS`], so it goes to Prettier.
     NeedsPrettier(usize),
     /// A message to print. The exit code is 2.
     Failed(Vec<u8>),
@@ -1127,8 +1126,7 @@ impl<'r> Routing<'r> {
         }
     }
 
-    /// Hands the file to Prettier if it and every plugin in the file's config are installed. Else notes what is
-    /// missing and returns false.
+    /// Hands the file to Prettier if it and every plugin in the file's config are installed. Else notes what is missing.
     fn route(&mut self, configs: &'r Configs, (index, target): (usize, &'r Target)) -> bool {
         let packages = || {
             std::iter::once(&b"prettier"[..])
@@ -1861,8 +1859,8 @@ impl Run<'_> {
         let mut results = Guarded::new(done);
         // Keyed by the file's index in `expanded`.
         let mut warnings: Guarded<Vec<(usize, Vec<Problem>)>> = Guarded::new(Vec::new());
-        // `--doctor` formats a file only to learn whether code in it needs a plugin. Nothing is written, and Tailwind
-        // isn't asked.
+        // `--doctor` formats a file only to learn whether code in it needs a plugin. It writes nothing and doesn't ask
+        // Tailwind.
         let is_doctor = self.modules.is_some();
         // Tailwind can't be asked and `--allow-unsupported` permits that, so classes stay unsorted.
         let skips_class_sorting = AtomicBool::new(is_doctor);
@@ -1992,8 +1990,7 @@ impl Run<'_> {
                 }
             }
         }
-        // A file with code in a plugin's language goes to Prettier too, now that it's known to have some. If Prettier
-        // or the plugin isn't installed, it's skipped like a file in the plugin's language.
+        // A file with code in a plugin's language goes to Prettier too, now that it's known to have some.
         let mut needs_plugins: (Vec<(&[u8], usize)>, Vec<&[u8]>) = (Vec::new(), Vec::new());
         for &(index, target) in &work {
             let plugin = match &results.lock()[index] {
@@ -2375,8 +2372,8 @@ impl Run<'_> {
         }
     }
 
-    /// Reports files with code in the languages of the plugins `names`, which aren't installed or whose Prettier isn't.
-    /// `others` holds the files' extensions with a file count each.
+    /// Reports files with code in the languages of the plugins `names`, which Prettier can't be given. `others` holds
+    /// their extensions with a file count each.
     fn report_needs_plugins(&mut self, others: &mut [(&[u8], usize)], names: &[&[u8]]) {
         let count: usize = others.iter().map(|it| it.1).sum();
         let (noun, them) = match count {

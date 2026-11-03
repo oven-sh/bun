@@ -72,3 +72,14 @@ test.concurrent(
   },
   60_000,
 );
+
+test.concurrent("a req.signal abort listener cannot write to the direct stream of a closed response", async () => {
+  const { stdout, stderr, exitCode, signalCode } = await runFixture("serve-abort-listener-write-fixture.ts");
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    heard: ["write:0", "flush:0", "cancel:AbortError: The connection was closed."],
+    pendingRequests: 0,
+  });
+  expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
+});

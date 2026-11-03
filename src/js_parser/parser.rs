@@ -123,7 +123,6 @@ pub mod options {
     /// §Forbidden re: `&'static [T]` for arena-freed data.
     #[derive(Clone, Default)]
     pub struct Framework {
-        pub is_built_in_react: bool,
         pub server_components: Option<FrameworkServerComponents>,
         pub react_fast_refresh: Option<ReactFastRefresh>,
     }
@@ -193,12 +192,20 @@ pub mod Runtime {
         pub inlining: bool,
 
         pub inject_jest_globals: bool,
+        /// True for a `bun test` test file or preload, but not for the modules they import.
+        pub is_test_entry_point: bool,
+        /// Inject the globals from "vitest" instead of "bun:test".
+        pub vitest_globals: bool,
+        /// Bitset indexed like `Jest::GLOBALS`, set for the ones a script put on `globalThis` itself.
+        pub own_test_globals: u32,
 
         pub no_macros: bool,
 
         pub commonjs_named_exports: bool,
 
         pub minify_syntax: bool,
+        /// `--library` and `--dts`: the output has to type check once the types of its sources are put back.
+        pub is_library: bool,
         pub minify_identifiers: bool,
         /// Preserve function/class names during minification (CLI: --keep-names)
         pub minify_keep_names: bool,
@@ -220,6 +227,9 @@ pub mod Runtime {
         ///
         /// This comment must never be used manually.
         pub dont_bundle_twice: bool,
+
+        /// Only hashed: `js_printer::Options::code_coverage` changes the source map that is cached.
+        pub code_coverage: bool,
 
         /// This is a list of packages which even when require() is used, we will
         /// instead convert to ESM import statements.
@@ -247,6 +257,9 @@ pub mod Runtime {
 
         // TODO: make this a bitset of all unsupported features
         pub lower_using: bool,
+
+        /// The printer escapes everything that is not ASCII.
+        pub ascii_only: bool,
 
         /// Feature flags for dead-code elimination via `import { feature } from "bun:bundle"`
         /// When `feature("FLAG_NAME")` is called, it returns true if FLAG_NAME is in this set.
@@ -286,9 +299,13 @@ pub mod Runtime {
                 allow_runtime: true,
                 inlining: false,
                 inject_jest_globals: false,
+                is_test_entry_point: false,
+                vitest_globals: false,
+                own_test_globals: 0,
                 no_macros: false,
                 commonjs_named_exports: true,
                 minify_syntax: false,
+                is_library: false,
                 minify_identifiers: false,
                 minify_keep_names: false,
                 minify_whitespace: false,
@@ -298,6 +315,7 @@ pub mod Runtime {
                 auto_polyfill_require: false,
                 replace_exports: ReplaceableExportMap::default(),
                 dont_bundle_twice: false,
+                code_coverage: false,
                 unwrap_commonjs_packages: &[],
                 commonjs_at_runtime: false,
                 unwrap_commonjs_to_esm: false,
@@ -306,6 +324,7 @@ pub mod Runtime {
                 remove_cjs_module_wrapper: false,
                 runtime_transpiler_cache: None,
                 lower_using: true,
+                ascii_only: false,
                 bundler_feature_flags: None,
                 define_hash: None,
                 repl_mode: false,
@@ -359,7 +378,7 @@ pub mod Runtime {
         pub(crate) fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
             debug_assert!(self.runtime_transpiler_cache.is_some());
 
-            let bools: [bool; 17] = [
+            let bools: [bool; 19] = [
                 self.top_level_await,
                 self.auto_import_jsx,
                 self.allow_runtime,
@@ -372,18 +391,24 @@ pub mod Runtime {
                 self.set_breakpoint_on_first_line,
                 self.trim_unused_imports,
                 self.dont_bundle_twice,
+                self.code_coverage,
                 self.commonjs_at_runtime,
                 self.emit_decorator_metadata,
                 self.standard_decorators,
                 self.lower_using,
                 self.repl_mode,
-                // note that we do not include .inject_jest_globals, as we bail out of the cache entirely if this is true
+                self.ascii_only,
+                // `hash_test_features_for_runtime_transpiler` hashes `inject_jest_globals` and `vitest_globals`.
             ];
 
             // `[bool; N]` is N bytes of 0x00/0x01.
-            // `bool: NoUninit`, `u8: AnyBitPattern` → `cast_slice` is statically sound.
-            hasher.update(bytemuck::cast_slice::<bool, u8>(&bools));
+            hasher.update(bun_core::slice_as_bytes(&bools));
             hasher.update(&[self.react_compiler as u8]);
+
+            // `P::runs_imports_in_turn` depends on both, even when `P::uses_test_api` is false. Other files hash nothing extra.
+            if self.is_test_entry_point {
+                hasher.update(&[b'e', u8::from(self.vitest_globals)]);
+            }
 
             // Hash --feature flags. These directly affect transpiled output via
             // feature("NAME") replacement in visit_expr.rs. When empty, we add
@@ -401,6 +426,15 @@ pub mod Runtime {
                 hasher.update(b"define");
                 hasher.update(&define_hash.to_le_bytes());
             }
+        }
+
+        /// Only part of the cache key for a file with `P::uses_test_api`.
+        pub(crate) fn hash_test_features_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
+            hasher.update(&[
+                u8::from(self.inject_jest_globals),
+                u8::from(self.vitest_globals),
+            ]);
+            hasher.update(&self.own_test_globals.to_le_bytes());
         }
 
         pub(crate) fn should_unwrap_require(&self, package_name: &[u8]) -> bool {
@@ -511,7 +545,7 @@ pub struct JSXImportSymbols {
 }
 
 impl JSXImportSymbols {
-    fn get(&self, name: &[u8]) -> Option<Ref> {
+    pub(crate) fn get(&self, name: &[u8]) -> Option<Ref> {
         if name == b"jsx" {
             return self.jsx.map(|jsx| jsx.ref_);
         }
@@ -601,39 +635,14 @@ impl JSXImportSymbols {
     }
 }
 
-// ─── GenerateImportSymbols impls (for `P::generate_import_stmt`) ───
-// `generate_import_stmt` maps a key to its string name via this trait, with
-// `Key = u8` (index into `ALL`) for `RuntimeImports` and
-// `Key = &'static [u8]` (the alias string itself) for `JSXImportSymbols`.
+#[derive(Default)]
+pub(crate) struct ChaiImports(pub(crate) Vec<(&'static [u8], Ref)>);
 
-impl crate::p::GenerateImportSymbols for RuntimeImports {
-    /// Index into [`RuntimeImports::ALL`].
-    type Key = u8;
-
-    #[inline]
-    fn get(&self, key: &u8) -> Option<Ref> {
-        // Disambiguate from the trait method: call the inherent `get(usize)`.
-        RuntimeImports::get(self, *key as usize)
-    }
-
-    #[inline]
-    fn alias_name(&self, key: &u8) -> &'static [u8] {
-        RuntimeImports::ALL[*key as usize]
-    }
-}
-
-impl crate::p::GenerateImportSymbols for JSXImportSymbols {
-    type Key = &'static [u8];
-
-    #[inline]
-    fn get(&self, key: &&'static [u8]) -> Option<Ref> {
-        // Disambiguate from the trait method: call the inherent `get(&[u8])`.
-        JSXImportSymbols::get(self, *key)
-    }
-
-    #[inline]
-    fn alias_name(&self, key: &&'static [u8]) -> &'static [u8] {
-        *key
+impl ChaiImports {
+    pub(crate) fn name(alias: &[u8]) -> Option<&'static [u8]> {
+        [b"assert".as_slice(), b"should"]
+            .into_iter()
+            .find(|&name| name == alias)
     }
 }
 
@@ -1053,6 +1062,8 @@ pub struct ExprIn {
 
     /// The parent only reads, calls or assigns a property of this: `x.a`, `x[a]`, `const { a } = x`, not `delete x.a`.
     pub(crate) is_property_access_target: bool,
+
+    pub(crate) is_object_keys_argument: bool,
 }
 
 /// This function exists to tie all of these checks together in one place
@@ -1391,8 +1402,8 @@ impl Default for PropertyOpts {
     }
 }
 
-pub struct ScanPassResult {
-    pub import_records: Vec<ImportRecord>,
+pub struct ScanPassResult<'a> {
+    pub import_records: Vec<ImportRecord<'a>>,
     pub(crate) named_imports: bun_ast::ast_result::NamedImports,
     pub(crate) used_symbols: ParsePassSymbolUsageMap,
 }
@@ -1405,8 +1416,8 @@ pub struct ParsePassSymbolUse {
 
 pub(crate) type ParsePassSymbolUsageMap = StringArrayHashMap<ParsePassSymbolUse>;
 
-impl ScanPassResult {
-    pub fn init() -> ScanPassResult {
+impl<'a> ScanPassResult<'a> {
+    pub fn init() -> ScanPassResult<'a> {
         ScanPassResult {
             import_records: Vec::new(),
             named_imports: Default::default(),
@@ -1414,10 +1425,21 @@ impl ScanPassResult {
         }
     }
 
-    pub fn reset(&mut self) {
+    /// Empties it, keeping capacity. Being empty it borrows nothing, so any lifetime fits.
+    pub fn recycle<'b>(mut self) -> ScanPassResult<'b> {
         self.named_imports.clear_retaining_capacity();
         self.import_records.clear();
         self.used_symbols.clear_retaining_capacity();
+        ScanPassResult {
+            // std collects this in place. Were it to stop, only the capacity would be lost.
+            import_records: self
+                .import_records
+                .into_iter()
+                .map(|_| unreachable!())
+                .collect(),
+            named_imports: self.named_imports,
+            used_symbols: self.used_symbols,
+        }
     }
 }
 
@@ -1590,62 +1612,60 @@ impl<'a> MacroState<'a> {
 }
 
 pub struct Jest {
-    pub(crate) test: Ref,
-    pub(crate) it: Ref,
-    pub(crate) describe: Ref,
-    pub(crate) expect: Ref,
-    pub(crate) expect_type_of: Ref,
-    pub(crate) before_all: Ref,
-    pub(crate) before_each: Ref,
-    pub(crate) after_each: Ref,
-    pub(crate) after_all: Ref,
-    pub(crate) jest: Ref,
-    pub(crate) vi: Ref,
-    pub(crate) xit: Ref,
-    pub(crate) xtest: Ref,
-    pub(crate) xdescribe: Ref,
+    /// Indexed like `Jest::GLOBALS`. `Ref::NONE` unless the file uses the name without binding it.
+    pub(crate) refs: [Ref; Jest::GLOBALS.len()],
 }
 
 impl Jest {
-    /// `_parse` iterates this static table. The `&str` is the *JavaScript*
-    /// global name, and the fn-ptr projects the corresponding `Ref` out of
-    /// the struct. The table order determines the emitted import-clause /
-    /// binding property order.
-    pub(crate) const FIELDS: &'static [(&'static str, fn(&Jest) -> Ref)] = &[
-        ("test", |j| j.test),
-        ("it", |j| j.it),
-        ("describe", |j| j.describe),
-        ("expect", |j| j.expect),
-        ("expectTypeOf", |j| j.expect_type_of),
-        ("beforeAll", |j| j.before_all),
-        ("beforeEach", |j| j.before_each),
-        ("afterEach", |j| j.after_each),
-        ("afterAll", |j| j.after_all),
-        ("jest", |j| j.jest),
-        ("vi", |j| j.vi),
-        ("xit", |j| j.xit),
-        ("xtest", |j| j.xtest),
-        ("xdescribe", |j| j.xdescribe),
+    /// The order sets both the emitted import clause order and the `own_test_globals` bit index.
+    pub const GLOBALS: &'static [&'static str] = &[
+        "test",
+        "it",
+        "describe",
+        "expect",
+        "expectTypeOf",
+        "beforeAll",
+        "beforeEach",
+        "afterEach",
+        "afterAll",
+        "jest",
+        "vi",
+        "xit",
+        "xtest",
+        "xdescribe",
+        "onTestFinished",
+        "suite",
+        "vitest",
+        "onTestFailed",
+        "assertType",
+        "aroundEach",
+        "aroundAll",
     ];
+
+    #[cold]
+    #[optimize(size)]
+    pub(crate) fn did_declare_unbound(&mut self, name: &[u8], symbol: Ref) {
+        if let Some(global) = Self::GLOBALS
+            .iter()
+            .position(|global| global.as_bytes() == name)
+        {
+            self.refs[global] = symbol;
+        }
+    }
+
+    pub fn is_of_bun_only(global: &str) -> bool {
+        matches!(global, "jest" | "xit" | "xtest" | "xdescribe")
+    }
+
+    pub fn is_of_vitest_only(global: &str) -> bool {
+        matches!(global, "suite" | "vitest" | "onTestFailed" | "assertType")
+    }
 }
 
 impl Default for Jest {
     fn default() -> Self {
         Self {
-            test: Ref::NONE,
-            it: Ref::NONE,
-            describe: Ref::NONE,
-            expect: Ref::NONE,
-            expect_type_of: Ref::NONE,
-            before_all: Ref::NONE,
-            before_each: Ref::NONE,
-            after_each: Ref::NONE,
-            after_all: Ref::NONE,
-            jest: Ref::NONE,
-            vi: Ref::NONE,
-            xit: Ref::NONE,
-            xtest: Ref::NONE,
-            xdescribe: Ref::NONE,
+            refs: [Ref::NONE; Jest::GLOBALS.len()],
         }
     }
 }
@@ -1696,7 +1716,7 @@ pub fn new_lazy_export_ast<'bump>(
     opts: ParserOptions<'bump>,
     log_to_copy_into: &mut bun_ast::Log,
     expr: Expr,
-    source: &'bump bun_ast::Source,
+    source: &'bump bun_ast::Source<'bump>,
     runtime_api_call: &'static [u8],
 ) -> crate::CrateResult<Option<js_ast::Ast<'bump>>> {
     new_lazy_export_ast_impl(
@@ -1717,7 +1737,7 @@ pub fn new_lazy_export_ast_impl<'bump>(
     opts: ParserOptions<'bump>,
     log_to_copy_into: &mut bun_ast::Log,
     expr: Expr,
-    source: &'bump bun_ast::Source,
+    source: &'bump bun_ast::Source<'bump>,
     runtime_api_call: &'static [u8],
     symbols: js_ast::symbol::List<'bump>,
 ) -> crate::CrateResult<Option<js_ast::Ast<'bump>>> {
@@ -1744,13 +1764,13 @@ pub fn new_lazy_export_ast_impl<'bump>(
             if temp_log.errors == 0 {
                 log_to_copy_into.add_range_error(Some(source), range, err.name().as_bytes());
             }
-            let _ = temp_log.append_to_maybe_recycled(log_to_copy_into, source);
+            temp_log.append_to(log_to_copy_into);
             return Ok(None);
         }
     };
     drop(parser);
 
-    let _ = temp_log.append_to_maybe_recycled(log_to_copy_into, source);
+    temp_log.append_to(log_to_copy_into);
     match result {
         crate::Result::Ast(mut ast) => {
             ast.has_lazy_export = true;

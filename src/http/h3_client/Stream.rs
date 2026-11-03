@@ -38,6 +38,9 @@ pub struct Stream {
     pub(crate) is_streaming_body: bool,
     pub(crate) headers_delivered: bool,
     pub(crate) read_paused: bool,
+    /// The origin did not process the request. It ended the stream with
+    /// H3_REQUEST_REJECTED, or the stream is above the id in its GOAWAY.
+    pub(crate) peer_rejected: bool,
 }
 
 impl Stream {
@@ -58,6 +61,7 @@ impl Stream {
             is_streaming_body: false,
             headers_delivered: false,
             read_paused: false,
+            peer_rejected: false,
         }))
     }
 

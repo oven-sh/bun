@@ -19,7 +19,7 @@ describe("subprocess.kill", () => {
 
           const { promise, resolve, reject } = Promise.withResolvers();
           proc.exited.then(resolve, reject);
-          proc.kill(...input);
+          proc.kill(...(input as any));
 
           await promise;
           expect(proc.exitCode).toBe(null);
@@ -58,6 +58,7 @@ describe("subprocess.kill", () => {
 
       let err: any;
       try {
+        // @ts-expect-error
         proc.kill("SIGGOD");
       } catch (e) {
         err = e;
@@ -98,7 +99,7 @@ const platformSignals = (["SIGUSR1", "SIGUSR2", "SIGSTKFLT"] as const).filter(na
 // Names that are signals on Linux, but not on every OS (none are left on Linux).
 const unsupportedSignals = (["SIGSTKFLT", "SIGPWR"] as const).filter(name => !(name in constants.signals));
 
-const quiet = { stdio: ["ignore", "ignore", "ignore"] } as const;
+const quiet: { stdio: ["ignore", "ignore", "ignore"] } = { stdio: ["ignore", "ignore", "ignore"] };
 
 describe.concurrent.skipIf(isWindows)("signal names map to the OS's own numbers", () => {
   describe.each(platformSignals)("%s", name => {
@@ -142,7 +143,7 @@ describe.concurrent.skipIf(isWindows)("signal names map to the OS's own numbers"
         timeout: 1,
         killSignal: number,
       });
-      expect({ exitCode, signalCode }).toEqual({ exitCode: null, signalCode: name });
+      expect({ exitCode, signalCode }).toEqual<unknown>({ exitCode: null, signalCode: name });
     });
   });
 });
@@ -199,6 +200,6 @@ describe.concurrent.skipIf(!isLinux)("a signal with no name", () => {
 
   test("spawnSync reports the number too", () => {
     const { exitCode, signalCode } = Bun.spawnSync({ cmd: ["sh", "-c", "kill -40 $$"], ...quiet });
-    expect({ exitCode, signalCode }).toEqual({ exitCode: null, signalCode: 40 });
+    expect({ exitCode, signalCode }).toEqual<unknown>({ exitCode: null, signalCode: 40 });
   });
 });

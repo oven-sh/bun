@@ -29,6 +29,42 @@ describe("web worker", () => {
       ).toThrow(/Invalid file URL/);
     });
 
+    // Reaching the real limit needs 2.5 GB, so the child runs with a 64 KiB synthetic allocation limit
+    // (2730 24-byte entries).
+    test("throws a RangeError for more entries than the native list allows", async () => {
+      const LIMIT_BYTES = 64 * 1024;
+      const MAX_ENTRIES = Math.floor(LIMIT_BYTES / 24);
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          // The last entry is an invalid file URL, so a list within the limit still throws and never starts a thread.
+          const construct = count => {
+            const preload = new Array(count).fill("./preload.js");
+            preload[count - 1] = "file://:!:!:!!!!";
+            try {
+              new Worker("./entry.js", { preload });
+              return "constructed";
+            } catch (e) {
+              return e.name + ": " + e.message;
+            }
+          };
+          console.log(JSON.stringify({ atLimit: construct(${MAX_ENTRIES}), onePast: construct(${MAX_ENTRIES + 1}) }));
+          `,
+        ],
+        env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(LIMIT_BYTES) },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout || "null")).toEqual({
+        atLimit: 'TypeError: Invalid file URL: "file://:!:!:!!!!"',
+        onePast: "RangeError: Out of memory",
+      });
+      expect(exitCode).toBe(0);
+    });
+
     test("string", async () => {
       const worker = new Worker(new URL("worker-fixture-preload-entry.js", import.meta.url).href, {
         preload: new URL("worker-fixture-preload.js", import.meta.url).href,
@@ -249,7 +285,7 @@ describe("web worker", () => {
     const worker = new Worker(new URL("worker-fixture-argv.js", import.meta.url).href, {
       argv: worker_argv,
       execArgv: worker_execArgv,
-    });
+    } as Bun.WorkerOptions);
     const result = await waitForWorkerResult(worker, "hello");
 
     expect(result).toEqual({
@@ -708,7 +744,7 @@ describe("worker_threads", () => {
   test("worker with process.exit", done => {
     const worker = new wt.Worker(new URL("worker-fixture-process-exit.js", import.meta.url), {
       smol: true,
-    });
+    } as wt.WorkerOptions);
     worker.on("exit", code => {
       try {
         expect(code).toBe(2);
@@ -726,7 +762,7 @@ describe("worker_threads", () => {
     for (let i = 0; i < 10; i++) {
       const worker = new wt.Worker(new URL("worker-fixture-hang.js", import.meta.url), {
         smol: true,
-      });
+      } as wt.WorkerOptions);
       worker.on("error", expect.unreachable);
       const code = await worker.terminate();
       expect(code === 0 || code === 1, `unexpected exit code ${code}`).toBeTrue();
@@ -736,7 +772,7 @@ describe("worker_threads", () => {
   test("worker with process.exit (delay) and terminate", async () => {
     const worker = new wt.Worker(new URL("worker-fixture-process-exit.js", import.meta.url), {
       smol: true,
-    });
+    } as wt.WorkerOptions);
     // Wait for the worker to self-exit (its setTimeout fires process.exit(2)
     // after 10 ms) — a fixed sleep races with worker startup, which under
     // debug/ASAN can exceed 200 ms.

@@ -280,7 +280,7 @@ describe("WebKit 7b485a76e9 upgrade", () => {
 
     let thrownInside: any;
     try {
-      [].reduce(() => {});
+      ([] as unknown[]).reduce(() => {});
     } catch (e) {
       thrownInside = e;
     }

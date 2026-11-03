@@ -1,0 +1,111 @@
+# A loop costs the same wherever it stands: at the top level of a module, the way a first benchmark is written, and in a function that is called once.
+# What a turn takes: calls into the run time, and instructions by the counter of the hardware, where that can be read. The file beside this one has the other place.
+# -- source: main.ts
+# declare const turns: string, given: string | undefined, report: (...values: unknown[]) => void;
+# let text = "";
+# const count = Number(turns);
+# let sum = 0;
+# for (let i = 0; i < count; i++) {
+#   text += String.fromCharCode(97 + (i % 26));
+#   if (text.length === 64) {
+#     sum = (sum + text.charCodeAt(i & 63)) | 0;
+#     text = "";
+#   }
+# }
+# report(sum);
+# -- end of source
+# FORM: AsRead
+# REPEAT: run = L0; loop = the_loop; most = 64
+# RUN(%(run)): run-in-shell --aotCountsPath=/dev/null --useConcurrentGC=0 --numberOfGCMarkers=1 const calls = () => aotRuntimeCounters().split("\n").reduce((sum, line) => sum + (/\toperation:/.test(line) ? parseInt(line) : 0), 0); let callsBefore, instructionsBefore; globalThis.loop = "%(loop)".replaceAll("_", " "); globalThis.isLoud = false; Object.defineProperty(globalThis, "turns", { get() { callsBefore = calls(); instructionsBefore = aotInstructionCount(); return 100000; } }); globalThis.given = undefined; globalThis.apply = Reflect.apply; globalThis.report = (...values) => { const instructions = aotInstructionCount(); print(values.join(" ")); if (callsBefore === undefined) return; const taken = instructions === null ? 0 : Math.round((instructions - instructionsBefore) / 10000) / 10; print("a turn:", Math.round((calls() - callsBefore) / 10000) / 10, "calls into the run time,", taken <= %(most) ? "at most %(most) instructions" : taken + " instructions"); callsBefore = undefined; };
+# REQUIRES(%(run)): x86_64 unsanitized-code not-windows faulting-loop-polls
+# END REPEAT
+# the loop
+# L0: 171828
+# L0-NEXT: a turn: 0 calls into the run time, at most 64 instructions
+# L0-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=100 kind=Variable
+typesite w1 module=m0 position=144 kind=Variable
+typesite w2 module=m0 position=125 kind=CallResult
+typesite w3 module=m0 position=162 kind=Variable
+typesite w4 module=m0 position=197 kind=CallResult
+typesite w5 module=m0 position=239 kind=PropertyRead
+typesite w6 module=m0 position=278 kind=CallResult
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = String string="" @107
+    v1 = Convert v0 declared={type=undefined|null|string site=w0 flags=[OmitsNull, OmitsUndefined]} @107
+    v2 = Builtin builtin=Number @125
+    v3 = Builtin builtin=GlobalThis @137
+    v4 = PropGet v3 key="turns" [isFreeName] @137
+    v5 = Call v2, -, v4 calleeName="Number" @125
+    v6 = Convert v5 declared={type=number site=w2} illTypedCause=DeclarationWithoutBody @125
+    v7 = Integer @150
+    v8 = Convert v7 declared={type=number site=w1} @150
+    v9 = Integer @166
+    v10 = Convert v9 declared={type=number site=w3} @166
+    Jump -> next b2(v1, v8, v10) @162
+  b2(v11: undefined|null|string, v12: number, v13: number):
+    LoopHint @162
+    v15 = Convert v13 declared={type=i32 flags=[IsExpected]} @169
+    v16 = Less v15, v6 @169
+    Branch v16 -> taken b3(| 0, 1), notTaken b10(| 0, 1) @169
+  b3(v17, v18):
+    Jump -> next b4() @169
+  b4():
+    v19 = Builtin builtin=String @197
+    v20 = Builtin builtin=StringFromCharCode @197
+    v21 = Integer integer=97 @217
+    v22 = Convert v17 declared={type=i32 flags=[IsExpected]} @223
+    v23 = Integer integer=26 @227
+    v24 = Mod v22, v23 @217
+    v25 = Add v21, v24 @217
+    v26 = Call v20, v19, v25 calleeName="String.fromCharCode" @204
+    v27 = Convert v26 declared={type=undefined|null|string site=w4 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @197
+    v28 = Add v11, v27 @204
+    v29 = Convert v28 declared={type=undefined|null|string site=w0 flags=[OmitsNull, OmitsUndefined]} @189
+    v30 = PropGet v29 key="length" @239
+    v31 = Convert v30 declared={type=number site=w5} illTypedCause=Assertion @239
+    v32 = Integer integer=64 @255
+    v33 = StrictEq v31, v32 @239
+    Branch v33 -> taken b5(| 0), notTaken b7(| 0) @239
+  b5(v34):
+    v35 = NarrowByField v29, v34 key="length" @239
+    Jump -> next b6() @239
+  b6():
+    v36 = Convert v12 declared={type=i32 flags=[IsExpected]} @272
+    v37 = PropGet v35 key="charCodeAt" @278
+    v38 = Integer integer=63 @298
+    v39 = BitAnd v22, v38 @294
+    v40 = Call v37, v35, v39 calleeKey="charCodeAt" calleeName="text.charCodeAt" @283
+    v41 = Convert v40 declared={type=number site=w6} illTypedCause=DeclarationWithoutBody @278
+    v42 = Add v36, v41 @272
+    v43 = Integer @305
+    v44 = BitOr v42, v43 @272
+    v45 = Convert v44 declared={type=number site=w1} @265
+    v46 = String string="" @319
+    v47 = Convert v46 declared={type=undefined|null|string site=w0 flags=[OmitsNull, OmitsUndefined]} @312
+    Jump -> next b8(v47, v45) @312
+  b7(v48):
+    v49 = NarrowByField v29, v48 key="length" @239
+    Jump -> next b8(v49, v12) @239
+  b8(v50: undefined|null|string, v51: number):
+    Jump -> next b9() @312
+  b9():
+    v52 = Increment v22 @272
+    v53 = Convert v52 declared={type=number site=w3} @180
+    Jump -> next b2(v50, v51, v53) @180
+  b10(v54, v55):
+    Jump -> next b11() @169
+  b11():
+    v56 = Builtin builtin=GlobalThis @329
+    v57 = PropGet v56 key="report" [isFreeName] @329
+    v58 = Convert v12 declared={type=i32 flags=[IsExpected]} @336
+    v59 = Call v57, -, v58 calleeName="report" @329
+    v60 = Undefined @329
+    Return v60 @329
+}

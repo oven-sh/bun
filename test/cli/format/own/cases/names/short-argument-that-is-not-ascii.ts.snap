@@ -1,0 +1,29 @@
+------------------
+{ printWidth: 80 }
+------------------
+function f() {
+  it("a", async () => {
+    const editor = await screen.findByLabelText(
+      "描述需要修改的内容或你注意到的问题…",
+    );
+    const edito2 = await screen.findByLabelText(
+      "描述需要修改的内容或你注意到的问题……",
+    );
+    const edito3 = await screen.findByLabelText(
+      描述需要修改的内容或你注意到的问题描述,
+    );
+  });
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+function f() {
+  it("a", async () => {
+    const editor = await screen.findByLabelText("描述需要修改的内容或你注意到的问题…");
+    const edito2 = await screen.findByLabelText("描述需要修改的内容或你注意到的问题……");
+    const edito3 = await screen.findByLabelText(描述需要修改的内容或你注意到的问题描述);
+  });
+}
+
+===================== End =====================

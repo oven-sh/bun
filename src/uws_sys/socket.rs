@@ -246,9 +246,8 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     // ── state queries ───────────────────────────────────────────────────────
 
-    /// Raw-TCP write that also reports a fatal send error as the positive
-    /// errno of the failed `send()` (0 = none); non-Connected and TLS-wrapped
-    /// sockets fall back to the plain write (no fatal signal).
+    /// Write that also reports a fatal write error as a positive errno (0 =
+    /// none); non-Connected sockets fall back to the plain write (no fatal signal).
     pub fn write_check_error(&self, data: &[u8]) -> (i32, i32) {
         on_socket!(self.socket;
             connected s => s.write_check_error(data),
@@ -290,6 +289,17 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     #[inline]
     pub fn is_closed_or_has_error(&self) -> bool {
         self.is_closed() || self.is_shutdown() || self.get_error() != 0
+    }
+
+    /// TLS sockets only. The kernel rejected a send of TLS records, so the error
+    /// code of the close stands for the lost records, not for a failed read.
+    pub fn ssl_send_rejected(&self) -> bool {
+        on_socket!(self.socket;
+            connected s => s.ssl_send_rejected(),
+            duplex _d => false,
+            pipe _p => false,
+            else => false,
+        )
     }
 
     /// What the read side holds right now, without waiting for the loop to
@@ -343,6 +353,14 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             duplex d => d.close(),
             pipe p => p.close(),
         )
+    }
+
+    /// Closes with a FIN before it returns; TLS sends close_notify but does not wait for the peer's, which `CloseCode::Normal` does.
+    pub fn close_now(&self) {
+        match self.socket {
+            InternalSocket::Connected(s) => sock(s).close_now(),
+            _ => self.close(CloseCode::FastShutdown),
+        }
     }
 
     /// The JS wrapper that owns this socket is being finalized: whatever the
@@ -492,7 +510,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             connected s => if s.is_established() { s.pause(); true } else { false },
             connecting _c => false,
             detached => true,
-            duplex _d => false, // TODO: pause/resume upgraded duplex
+            duplex d => d.pause_stream(),
             pipe p => p.pause_stream(),
         )
     }
@@ -502,7 +520,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             connected s => if s.is_established() { s.resume(); true } else { false },
             connecting _c => false,
             detached => true,
-            duplex _d => false, // TODO: pause/resume upgraded duplex
+            duplex d => d.resume_stream(),
             pipe p => p.resume_stream(),
         )
     }
@@ -569,6 +587,20 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             #[cfg(windows)]
             InternalSocket::Pipe(p) => pipe(p).set_inline_reject(),
             _ => {}
+        }
+    }
+
+    /// Drop the handshake flight that usockets holds across the handshake callback.
+    pub fn release_held_flight(&self) {
+        if let InternalSocket::Connected(s) = self.socket {
+            sock(s).release_held_flight();
+        }
+    }
+
+    /// A shutdown before the first handshake step sends its FIN after that step.
+    pub fn set_first_flight_before_fin(&self) {
+        if let InternalSocket::Connected(s) = self.socket {
+            sock(s).set_first_flight_before_fin();
         }
     }
 
@@ -842,7 +874,8 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     }
 
     /// Move an open socket into a new group/kind, stashing `owner` in the ext.
-    /// Replaces `Socket.adoptPtr`.
+    /// Replaces `Socket.adoptPtr`. Returns `false` and leaves the socket and
+    /// `owner` untouched if the socket is closed or shut down.
     ///
     /// `set_socket_field` — the closure writes the resulting
     /// `Self` into the owner's socket field via the raw `*mut Owner` (passing
@@ -950,6 +983,7 @@ impl AnySocket {
         fn is_shutdown(&self) -> bool;
         fn is_established(&self) -> bool;
         fn close(&self, code: CloseCode);
+        fn close_now(&self);
         fn write(&self, data: &[u8]) -> i32;
         fn set_timeout(&self, seconds: c_uint);
         fn shutdown(&self);

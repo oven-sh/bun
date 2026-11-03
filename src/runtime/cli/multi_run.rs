@@ -6,9 +6,10 @@ use std::time::Instant;
 use crate::Error;
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::strings;
-use bun_core::{self as bun, Global, Output, UnwrapOrOom};
+use bun_core::{self as bun, Global, Output, UnwrapOrOom, ZStr};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
+use bun_install::lifecycle_script_runner::ScriptArgv;
 use bun_install::package_manager::workspace_selection;
 use bun_io::BufferedReader;
 use bun_paths as path;
@@ -39,10 +40,14 @@ type OwnedScriptsMap = StringArrayHashMap<Box<[u8]>>;
 
 struct ScriptConfig {
     label: Box<[u8]>,
+    /// Of the script in package.json. Empty: it is not one.
+    name: Box<[u8]>,
     command: Box<[u8]>,
     cwd: Box<[u8]>,
     /// PATH env var value for this script
     path: Box<[u8]>,
+    /// Index of its group: pre, main and post scripts share a color.
+    color_idx: usize,
 }
 
 /// Wraps a BufferedReader and tracks whether it represents stdout or stderr,
@@ -80,6 +85,7 @@ impl<'a> PipeReader<'a> {
 // outlives all handles (lives on `run`'s stack frame for the whole event loop).
 bun_io::impl_buffered_reader_parent! {
     MultiRunPipeReader for PipeReader<'a>;
+    feature = Tools;
     has_on_read_chunk = true;
     on_read_chunk = |this, chunk, _has_more| {
         let state = &mut *((*(*this).handle).state as *mut State);
@@ -113,7 +119,6 @@ struct ProcessSlot {
 pub(crate) struct ProcessHandle<'a> {
     config: &'a ScriptConfig,
     state: *const State<'a>,
-    color_idx: usize,
 
     stdout_reader: PipeReader<'a>,
     stderr_reader: PipeReader<'a>,
@@ -141,34 +146,29 @@ impl<'a> ProcessHandle<'a> {
         let state = unsafe { &mut *self.state.cast_mut() };
         state.remaining_scripts += 1;
 
-        // Null-terminated argv array, as required by spawnProcess.
-        let argv: [*const c_char; 4] = [
-            state.shell_bin.as_ptr().cast::<c_char>(),
-            if cfg!(unix) {
-                c"-c".as_ptr()
-            } else {
-                c"exec".as_ptr()
-            },
-            self.config.command.as_ptr().cast::<c_char>(),
-            ptr::null(),
-        ];
+        let argv = ScriptArgv::new(
+            state.shell_bin,
+            ZStr::from_slice_with_nul(&self.config.command),
+        )?;
 
         let start_time = Instant::now();
         let envp;
-        let env_ptr = state.env;
         let spawned: SpawnProcessResult = {
-            // SAFETY: state.env points at the process-lifetime DotEnv loader.
-            let env = unsafe { &mut *env_ptr };
+            // SAFETY: state.env points at the process-lifetime DotEnv loader; nothing else reaches it before the guard drops.
+            let env = unsafe { &mut *state.env };
             let original_path: Box<[u8]> = env.map.get(b"PATH").map(Box::from).unwrap_or_default();
             let _ = env.map.put(b"PATH", &self.config.path);
-            let _restore = scopeguard::guard(original_path, move |original_path| {
-                // SAFETY: env_ptr is the process-lifetime loader; outlives this scope.
-                let _ = unsafe { (*env_ptr).map.put(b"PATH", &original_path) };
+            let mut env = scopeguard::guard(env, move |env| {
+                let _ = env.map.put(b"PATH", &original_path);
             });
-            // SAFETY: same loader; the `_restore` guard's closure has not fired yet.
-            envp = unsafe { (*env_ptr).map.create_null_delimited_env_map()? };
-            // SAFETY: `argv`/`envp` are local null-terminated C-string arrays
-            // with argv[0] non-null; valid for this call.
+            envp = crate::cli::script_or_command::with_package_script(
+                &mut env,
+                &self.config.name,
+                &self.config.cwd,
+                |env| env.map.create_null_delimited_env_map(),
+            )?;
+            // SAFETY: `argv` and `envp` are null-terminated C-string arrays
+            // (argv[0] non-null) owned by locals that outlive this call.
             unsafe {
                 spawn::spawn_process(
                     &self.options,
@@ -349,8 +349,8 @@ struct State<'a> {
     event_loop_handle: EventLoopHandle,
     remaining_scripts: usize,
     max_label_len: usize,
-    // NUL-terminated (last byte is 0) for argv[0].
-    shell_bin: Box<[u8]>,
+    /// The POSIX shell that the scripts run under. `None` on Windows (see `ScriptArgv`).
+    shell_bin: Option<&'static ZStr>,
     aborted: bool,
     no_exit_on_error: bool,
     env: *mut DotEnvLoader,
@@ -376,8 +376,8 @@ impl<'a> State<'a> {
         while let Some(newline_pos) = strings::index_of_char_usize(&pipe.line_buffer, b'\n') {
             let line = &pipe.line_buffer[0..newline_pos + 1];
             // SAFETY: pipe.handle backref set in ProcessHandle::start()
-            let handle = unsafe { &*pipe.handle };
-            self.write_line_with_prefix(handle, line, writer)?;
+            let config = unsafe { (*pipe.handle).config };
+            self.write_line_with_prefix(config, line, writer)?;
             // Remove processed line from buffer
             pipe.line_buffer.drain_front(newline_pos + 1);
         }
@@ -386,22 +386,22 @@ impl<'a> State<'a> {
 
     fn write_line_with_prefix(
         &self,
-        handle: &ProcessHandle,
+        config: &ScriptConfig,
         line: &[u8],
         writer: &mut OutputWriter,
     ) -> Result<(), Error> {
-        self.write_prefix(handle, writer)?;
+        self.write_prefix(config, writer)?;
         writer.write_all(line)?;
         Ok(())
     }
 
-    fn write_prefix(&self, handle: &ProcessHandle, writer: &mut OutputWriter) -> Result<(), Error> {
+    fn write_prefix(&self, config: &ScriptConfig, writer: &mut OutputWriter) -> Result<(), Error> {
         if self.use_colors {
-            writer.write_all(COLORS[handle.color_idx % COLORS.len()])?;
+            writer.write_all(COLORS[config.color_idx % COLORS.len()])?;
         }
 
-        writer.write_all(&handle.config.label)?;
-        let padding = self.max_label_len.saturating_sub(handle.config.label.len());
+        writer.write_all(&config.label)?;
+        let padding = self.max_label_len.saturating_sub(config.label.len());
         for _ in 0..padding {
             writer.write_all(b" ")?;
         }
@@ -416,7 +416,7 @@ impl<'a> State<'a> {
 
     fn flush_pipe_buffer(
         &self,
-        handle: &ProcessHandle<'a>,
+        config: &ScriptConfig,
         pipe: &mut PipeReader<'a>,
     ) -> Result<(), Error> {
         if !pipe.line_buffer.is_empty() {
@@ -427,7 +427,7 @@ impl<'a> State<'a> {
             } else {
                 Output::writer()
             };
-            self.write_line_with_prefix(handle, line, writer)?;
+            self.write_line_with_prefix(config, line, writer)?;
             if needs_newline {
                 let _ = writer.write_all(b"\n");
             }
@@ -440,7 +440,9 @@ impl<'a> State<'a> {
     /// ended; finishing on exit alone can drop output the exit notification
     /// beat. The exit path force-ends pipes a leftover child holds open
     /// (`drain_and_close_pipes`); on abort, exit alone suffices.
+    #[inline(never)]
     fn maybe_finish(&mut self, handle: &mut ProcessHandle<'a>) -> Result<(), Error> {
+        bun_removable_features::removable_definition!(Tools, Self::maybe_finish);
         let exited = matches!(&handle.process, Some(p) if !matches!(p.status, Status::Running));
         let pipes_open = !handle.stdout_reader.ended || !handle.stderr_reader.ended;
         if handle.finished || !exited || (pipes_open && !self.aborted) {
@@ -450,21 +452,12 @@ impl<'a> State<'a> {
         self.remaining_scripts -= 1;
 
         // Flush remaining buffers (stdout first, then stderr)
-        // Reshaped for borrowck — `flush_pipe_buffer` would need both
-        // `&ProcessHandle` and `&mut handle.stdout_reader` which overlap. Route
-        // through a raw ptr (the State/handle backref pattern is already
-        // raw-ptr-based throughout this file).
-        let handle_ptr = std::ptr::from_mut::<ProcessHandle>(handle);
-        // SAFETY: handle_ptr is live for this call; flush_pipe_buffer reads only
-        // `config`/`color_idx` from `handle` and writes only `pipe.line_buffer`.
-        unsafe {
-            self.flush_pipe_buffer(&*handle_ptr, &mut (*handle_ptr).stdout_reader)?;
-            self.flush_pipe_buffer(&*handle_ptr, &mut (*handle_ptr).stderr_reader)?;
-        }
+        self.flush_pipe_buffer(handle.config, &mut handle.stdout_reader)?;
+        self.flush_pipe_buffer(handle.config, &mut handle.stderr_reader)?;
 
         // Print exit status to stderr (status messages always go to stderr)
         let writer = Output::error_writer();
-        self.write_prefix(handle, writer)?;
+        self.write_prefix(handle.config, writer)?;
 
         let slot = handle.process.as_ref().unwrap();
         match &slot.status {
@@ -736,6 +729,11 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
     } else {
         Box::from(raw_name)
     };
+    // The label is only ever printed, never used to look up a script, so escaping it is safe.
+    let label: Box<[u8]> = bun_core::fmt::escape_control_chars(&label)
+        .to_string()
+        .into_bytes()
+        .into();
 
     let script_content = scripts_map.and_then(|sm| sm.get(raw_name));
 
@@ -763,9 +761,11 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
             cmd_buf.push(0);
             configs.push(ScriptConfig {
                 label: label.clone(),
+                name: pre_name.into_boxed_slice(),
                 command: cmd_buf.into_boxed_slice(),
                 cwd: Box::from(cwd),
                 path: Box::from(path),
+                color_idx: group_infos.len(),
             });
         }
 
@@ -776,9 +776,11 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
             cmd_buf.push(0);
             configs.push(ScriptConfig {
                 label: label.clone(),
+                name: Box::from(raw_name),
                 command: cmd_buf.into_boxed_slice(),
                 cwd: Box::from(cwd),
                 path: Box::from(path),
+                color_idx: group_infos.len(),
             });
         }
 
@@ -788,9 +790,11 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
             cmd_buf.push(0);
             configs.push(ScriptConfig {
                 label,
+                name: post_name.into_boxed_slice(),
                 command: cmd_buf.into_boxed_slice(),
                 cwd: Box::from(cwd),
                 path: Box::from(path),
+                color_idx: group_infos.len(),
             });
         }
     } else {
@@ -821,9 +825,11 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
         };
         configs.push(ScriptConfig {
             label,
+            name: Box::default(),
             command: command_z,
             cwd: Box::from(cwd),
             path: Box::from(path),
+            color_idx: group_infos.len(),
         });
     }
 
@@ -877,7 +883,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     // Out-param init pattern.
     let mut this_transpiler_slot =
         ::core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
-    let _ = RunCommand::configure_env_for_run(
+    let (this_transpiler, _) = RunCommand::configure_env_for_run(
         ctx,
         &mut this_transpiler_slot,
         None,
@@ -886,9 +892,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             store_root_fd: false,
         },
     )?;
-    // SAFETY: `configure_env_for_run` fully writes the slot on the success path.
-    let this_transpiler = unsafe { this_transpiler_slot.assume_init_mut() };
-    let cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
+    let cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir();
 
     // SAFETY: transpiler.env is a process-lifetime *mut Loader set in init.
     let env_ptr: *mut DotEnvLoader = this_transpiler.env;
@@ -906,22 +910,13 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     bun_io::ParentDeathWatchdog::install_on_event_loop(event_loop_handle_to_ctx(
         EventLoopHandle::init_mini(event_loop),
     ));
-    // shell_bin is NUL-terminated ([:0]const u8) for argv use.
-    let shell_bin: Box<[u8]> = if cfg!(unix) {
+    let shell_bin: Option<&'static ZStr> = if cfg!(unix) {
         // SAFETY: env_ptr is the process-lifetime DotEnv loader; the &mut borrow passed to
         // init_global above has been released, so this read does not alias a live &mut.
         let path_env = unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b"");
-        Box::from(
-            RunCommand::find_shell(path_env, cwd)
-                .ok_or(crate::Error::MissingShell)?
-                .as_bytes_with_nul(),
-        )
+        Some(RunCommand::find_shell(path_env, cwd).ok_or(crate::Error::MissingShell)?)
     } else {
-        Box::from(
-            bun::self_exe_path()
-                .map_err(|_| crate::Error::MissingShell)?
-                .as_bytes_with_nul(),
-        )
+        None
     };
 
     // Build ScriptConfigs and ProcessHandles
@@ -955,10 +950,9 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             }
 
             let run_in_bun = ctx.debug.run_in_bun;
-            let pkg_path_env = RunCommand::configure_path_for_run_with_package_json_dir(
-                ctx,
+            let pkg_path_env = RunCommand::path_for_run(
+                this_transpiler.env_mut(),
                 &package.dir,
-                this_transpiler,
                 None,
                 &package.dir,
                 run_in_bun,
@@ -1038,14 +1032,8 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     } else {
         // Single-package mode: use the root package.json
         let run_in_bun = ctx.debug.run_in_bun;
-        let path_env = RunCommand::configure_path_for_run_with_package_json_dir(
-            ctx,
-            b"",
-            this_transpiler,
-            None,
-            cwd,
-            run_in_bun,
-        )?;
+        let path_env =
+            RunCommand::path_for_run(this_transpiler.env_mut(), b"", None, cwd, run_in_bun)?;
 
         // Load package.json scripts
         let root_dir_info = match this_transpiler.resolver.read_dir_info(cwd) {
@@ -1144,20 +1132,10 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
 
     // Initialize handles
     let mut handles: Vec<ProcessHandle> = Vec::with_capacity(configs.len());
-    for (i, config) in configs.iter().enumerate() {
-        // Find which group this belongs to, for color assignment
-        let mut color_idx: usize = 0;
-        for (gi, group) in group_infos.iter().enumerate() {
-            if i >= group.start && i < group.start + group.count {
-                color_idx = gi;
-                break;
-            }
-        }
-
+    for config in &configs {
         handles.push(ProcessHandle {
             state: &raw const state,
             config,
-            color_idx,
             stdout_reader: PipeReader::new(false),
             stderr_reader: PipeReader::new(true),
             process: None,

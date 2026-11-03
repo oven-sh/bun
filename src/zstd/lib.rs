@@ -141,6 +141,14 @@ pub mod c {
         pub fn ZSTD_freeCCtx(cctx: *mut ZSTD_CCtx) -> usize;
         pub safe fn ZSTD_createDCtx() -> *mut ZSTD_DCtx;
         pub fn ZSTD_freeDCtx(dctx: *mut ZSTD_DCtx) -> usize;
+        pub(crate) fn ZSTD_compressCCtx(
+            cctx: *mut ZSTD_CCtx,
+            dst: *mut c_void,
+            dst_capacity: usize,
+            src: *const c_void,
+            src_size: usize,
+            compression_level: c_int,
+        ) -> usize;
         pub fn ZSTD_CCtx_setPledgedSrcSize(
             cctx: *mut ZSTD_CCtx,
             pledged_src_size: c_ulonglong,
@@ -158,6 +166,20 @@ pub mod c {
             dict: *const c_void,
             dict_size: usize,
         ) -> usize;
+        /// References `prefix` as the raw content dictionary of the next frame only. It is not
+        /// copied, so it has to outlive the decompression of that frame.
+        pub(crate) fn ZSTD_DCtx_refPrefix(
+            dctx: *mut ZSTD_DCtx,
+            prefix: *const c_void,
+            prefix_size: usize,
+        ) -> usize;
+        pub(crate) fn ZSTD_decompressDCtx(
+            dctx: *mut ZSTD_DCtx,
+            dst: *mut c_void,
+            dst_capacity: usize,
+            src: *const c_void,
+            src_size: usize,
+        ) -> usize;
         pub fn ZSTD_CCtx_setParameter(
             cctx: *mut ZSTD_CCtx,
             param: ZSTD_cParameter,
@@ -168,7 +190,6 @@ pub mod c {
             param: ZSTD_dParameter,
             value: c_int,
         ) -> usize;
-        pub fn ZSTD_CCtx_reset(cctx: *mut ZSTD_CCtx, reset: ZSTD_ResetDirective) -> usize;
         pub fn ZSTD_DCtx_reset(dctx: *mut ZSTD_DCtx, reset: ZSTD_ResetDirective) -> usize;
         pub fn ZSTD_compressStream2(
             cctx: *mut ZSTD_CCtx,
@@ -272,6 +293,90 @@ pub fn compress_append(out: &mut Vec<u8>, src: &[u8], level: Option<i32>) -> Res
     Result::Success(rc)
 }
 
+/// The contexts that `ZSTD_compress` and `ZSTD_decompress` make and free in every call, kept from one call to the next.
+/// Making one costs more than a few kilobytes of data do.
+pub struct Contexts {
+    compression: core::ptr::NonNull<c::ZSTD_CCtx>,
+    decompression: core::ptr::NonNull<c::ZSTD_DCtx>,
+}
+
+impl Contexts {
+    /// `None`: out of memory.
+    pub fn new() -> Option<Contexts> {
+        let compression = core::ptr::NonNull::new(c::ZSTD_createCCtx())?;
+        let Some(decompression) = core::ptr::NonNull::new(c::ZSTD_createDCtx()) else {
+            // SAFETY: it was made above and has no other owner.
+            unsafe { c::ZSTD_freeCCtx(compression.as_ptr()) };
+            return None;
+        };
+        Some(Contexts {
+            compression,
+            decompression,
+        })
+    }
+
+    /// [`compress_append`].
+    pub fn compress_append(&mut self, out: &mut Vec<u8>, src: &[u8], level: i32) -> Result {
+        let spare = out.spare_capacity_mut();
+        // SAFETY: the context is ours, spare/src are valid for their lengths, and zstd reads src and writes into spare.
+        let rc = unsafe {
+            c::ZSTD_compressCCtx(
+                self.compression.as_ptr(),
+                spare.as_mut_ptr().cast::<c_void>(),
+                spare.len(),
+                src.as_ptr().cast::<c_void>(),
+                src.len(),
+                level,
+            )
+        };
+        if c::ZSTD_isError(rc) != 0 {
+            // SAFETY: ZSTD_getErrorName returns a static NUL-terminated string.
+            return Result::Err(unsafe { ZStr::from_c_ptr(c::ZSTD_getErrorName(rc)) });
+        }
+        // SAFETY: zstd has initialized `rc` bytes at the start of spare.
+        unsafe { bun_core::vec::commit_spare(out, rc) };
+        Result::Success(rc)
+    }
+
+    /// Decompresses one frame, which fills `dest`.
+    pub fn decompress_into(
+        &mut self,
+        dest: &mut [u8],
+        src: &[u8],
+    ) -> core::result::Result<(), ZstdError> {
+        // SAFETY: the context is ours, dest/src are valid for their lengths, and zstd reads src and writes into dest.
+        let rc = unsafe {
+            c::ZSTD_decompressDCtx(
+                self.decompression.as_ptr(),
+                dest.as_mut_ptr().cast::<c_void>(),
+                dest.len(),
+                src.as_ptr().cast::<c_void>(),
+                src.len(),
+            )
+        };
+        if c::ZSTD_isError(rc) != 0 {
+            return Err(ZstdError::for_decompression(
+                rc,
+                ZstdError::DecompressionFailed,
+            ));
+        }
+        match rc == dest.len() {
+            true => Ok(()),
+            false => Err(ZstdError::ShortRead),
+        }
+    }
+}
+
+impl Drop for Contexts {
+    fn drop(&mut self) {
+        // SAFETY: both were made by `new` and have no other owner.
+        unsafe {
+            c::ZSTD_freeCCtx(self.compression.as_ptr());
+            c::ZSTD_freeDCtx(self.decompression.as_ptr());
+        }
+    }
+}
+
 /// `ZSTD_isError` — true when a `size_t` return value (including from
 /// [`compress_bound`], see zstd.h: "ZSTD_compressBound() itself can fail, if
 /// `srcSize >= ZSTD_MAX_INPUT_SIZE`") is an error code rather than a size.
@@ -349,6 +454,56 @@ pub fn decompress_alloc(src: &[u8]) -> core::result::Result<Vec<u8>, ZstdError> 
         .map_err(|_| ZstdError::OutOfMemory)?;
 
     decompress_append(&mut output, src)?;
+    Ok(output)
+}
+
+/// Decompresses one frame that was compressed with `prefix` as its raw content dictionary, which is
+/// referenced and not copied. The size has to be in the header of the frame, and at most 16 MB.
+pub fn decompress_alloc_with_prefix(
+    src: &[u8],
+    prefix: &[u8],
+) -> core::result::Result<Vec<u8>, ZstdError> {
+    const MAX_SIZE: usize = 16 * 1024 * 1024;
+    let size = get_decompressed_size(src);
+    // Also if it is unknown or invalid, which are the two largest values.
+    if size > MAX_SIZE {
+        return Err(ZstdError::InvalidZstdData);
+    }
+    let mut output: Vec<u8> = Vec::new();
+    output
+        .try_reserve_exact(size)
+        .map_err(|_| ZstdError::OutOfMemory)?;
+    let dctx = c::ZSTD_createDCtx();
+    if dctx.is_null() {
+        return Err(ZstdError::OutOfMemory);
+    }
+    let spare = output.spare_capacity_mut();
+    // SAFETY: `dctx` is live until it is freed below. `prefix`, `src` and `spare` are valid for
+    // their lengths and outlive the calls, and at most `spare.len()` bytes are written to `spare`.
+    let rc = unsafe {
+        let rc = c::ZSTD_DCtx_refPrefix(dctx, prefix.as_ptr().cast::<c_void>(), prefix.len());
+        let rc = if c::ZSTD_isError(rc) != 0 {
+            rc
+        } else {
+            c::ZSTD_decompressDCtx(
+                dctx,
+                spare.as_mut_ptr().cast::<c_void>(),
+                spare.len(),
+                src.as_ptr().cast::<c_void>(),
+                src.len(),
+            )
+        };
+        c::ZSTD_freeDCtx(dctx);
+        rc
+    };
+    if c::ZSTD_isError(rc) != 0 {
+        return Err(ZstdError::for_decompression(
+            rc,
+            ZstdError::DecompressionFailed,
+        ));
+    }
+    // SAFETY: zstd has initialized `rc` bytes at the start of spare.
+    unsafe { bun_core::vec::commit_spare(&mut output, rc) };
     Ok(output)
 }
 
@@ -698,6 +853,9 @@ impl Drop for StreamingDecoder {
 /// Bun never executes or parses itself: the shell completion scripts and the
 /// JS/CSS bundles that are shipped to a browser (dev-server client runtime,
 /// error overlay/page). Anything that runs inside Bun stays uncompressed.
+///
+/// The exception is text that only `bun lint`, `bun fmt` and `bun check`
+/// read. It may be compressed because it isn't on the path of running a program.
 ///
 /// Release (`bun_codegen_embed`) builds include the `.zst` twin that
 /// `scripts/build/codegen.ts` (`emitCompressedEmbeds`) writes to

@@ -42,13 +42,14 @@ describe("Bun.serve http2 + http3 on one port", () => {
     expect((await request(session, { ":path": "/reload" })).body.toString()).toBe("reloaded");
     expect((await request(session, { ":path": "/reloaded-route" })).body.toString()).toBe("after-reload");
     expect(await (await fetchH3(fx.port, "/reloaded-route")).text()).toBe("after-reload");
-    // graceful stop with one slow stream in flight on each transport
-    const slow2 = request(session, { ":path": "/slow?ms=300" });
-    const slow3 = fetchH3(fx.port, "/slow?ms=300").then(r => r.text());
+    // graceful stop with one stream open on each transport: h2's is ahead of /stop on its connection, h3's has answered
+    const closed = new Promise<void>(r => session.once("close", () => r()));
+    const open2 = request(session, { ":path": "/open-until-stop" });
+    const open3 = await fetchH3(fx.port, "/open-until-stop");
     expect((await request(session, { ":path": "/stop" })).body.toString()).toBe("stopping");
-    expect((await slow2).body.toString()).toBe("slow");
-    expect(await slow3).toBe("slow");
-    await new Promise<void>(r => session.once("close", () => r()));
+    expect((await open2).body.toString()).toBe("open,stopped");
+    expect(await open3.text()).toBe("open,stopped");
+    await closed;
   }, 30000);
 
   test("http1: false with both h2 and h3", async () => {
@@ -134,7 +135,7 @@ describe("Bun.serve http2 lifecycle", () => {
       const chunks: Buffer[] = [];
       let headers: http2.IncomingHttpHeaders = {};
       r.on("response", h => (headers = h));
-      r.on("data", c => chunks.push(c));
+      r.on("data", (c: Buffer) => chunks.push(c));
       r.on("end", () => resolve({ status: Number(headers[":status"]), headers, body: Buffer.concat(chunks) }));
       r.on("error", reject);
       // 12 × 512 KB; at 700 ms per delivered chunk the stream sits paused

@@ -535,7 +535,7 @@ impl crate::pool::ObjectPoolType for Vec<u8> {
 
 #[derive(Default)]
 pub struct OffsetByteList {
-    pub head: u32,
+    pub head: usize,
     pub byte_list: Vec<u8>,
 }
 
@@ -546,12 +546,12 @@ impl OffsetByteList {
     }
 
     pub fn remaining(&self) -> &[u8] {
-        &self.byte_list[self.head as usize..]
+        &self.byte_list[self.head..]
     }
 
-    pub fn consume(&mut self, bytes: u32) {
+    pub fn consume(&mut self, bytes: usize) {
         self.head = self.head.saturating_add(bytes);
-        let head = self.head as usize;
+        let head = self.head;
         if head >= self.byte_list.len() {
             self.head = 0;
             self.byte_list.clear();
@@ -563,8 +563,8 @@ impl OffsetByteList {
         }
     }
 
-    pub fn len(&self) -> u32 {
-        self.byte_list.len() as u32 - self.head
+    pub fn len(&self) -> usize {
+        self.byte_list.len() - self.head
     }
 
     pub fn clear_and_free(&mut self) {

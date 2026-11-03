@@ -129,6 +129,7 @@ private:
 
 JSC_DECLARE_HOST_FUNCTION(jsHashProtoFuncUpdate);
 JSC_DECLARE_HOST_FUNCTION(jsHashProtoFuncDigest);
+JSC_DECLARE_HOST_FUNCTION(jsOneShotDigest);
 
 void setupJSHashClassStructure(JSC::LazyClassStructure::Initializer& init);
 

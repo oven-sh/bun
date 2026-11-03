@@ -754,7 +754,7 @@ describe.concurrent("bunshell ls", () => {
     // What `ls -R top` has to print, from the listings in `output`: the section of a directory comes after the
     // listing that names it and before the section of the entry after it (depth first). A listing is in the order
     // of its directory, so the test reads each one from the output. `denied` prints its error and no section.
-    // `entries` is every name that the listings have, for a check against the fixture.
+    // `listings` is the names under each header, sorted, for a check against the fixture.
     function depthFirst(output: string, denied?: string) {
       const error = `ls: ${denied}: Permission denied`;
       const listings = new Map<string, string[]>([["top", []]]);
@@ -776,8 +776,7 @@ describe.concurrent("bunshell ls", () => {
         );
       };
       return {
-        directories: [...listings.keys()].sort(),
-        entries: [...listings.values()].flat().sort(),
+        listings: Object.fromEntries([...listings].map(([directory, names]) => [directory, names.toSorted()])),
         expected: section("top", ""),
       };
     }
@@ -788,21 +787,26 @@ describe.concurrent("bunshell ls", () => {
           ...Object.fromEntries(shuffled.map(i => [`s${two(i)}`, { g: "", [`t${two(i)}`]: { h: "" } }])),
         },
       });
-    const recursiveDirectories = (without?: number) =>
-      ["top", ...shuffled.flatMap(i => (i === without ? [] : [`top/s${two(i)}`, `top/s${two(i)}/t${two(i)}`]))].sort();
-    const recursiveEntries = (without?: number) =>
-      ["f", ...shuffled.flatMap(i => [`s${two(i)}`, ...(i === without ? [] : ["g", `t${two(i)}`, "h"])])].sort();
+    const recursiveListings = (without?: number) => ({
+      top: ["f", ...shuffled.map(i => `s${two(i)}`)].sort(),
+      ...Object.fromEntries(
+        shuffled.flatMap(i =>
+          i === without
+            ? []
+            : [
+                [`top/s${two(i)}`, ["g", `t${two(i)}`]],
+                [`top/s${two(i)}/t${two(i)}`, ["h"]],
+              ],
+        ),
+      ),
+    });
 
     test("-R lists a directory before its subdirectories", async () => {
       using dir = recursiveFixture();
       const { stdout, stderr, exitCode } = await run("ls -R top", String(dir));
       const output = stdout.replaceAll("\\", "/");
-      const { directories, entries, expected } = depthFirst(output);
-      expect({ directories, entries, stderr }).toEqual({
-        directories: recursiveDirectories(),
-        entries: recursiveEntries(),
-        stderr: "",
-      });
+      const { listings, expected } = depthFirst(output);
+      expect({ listings, stderr }).toEqual({ listings: recursiveListings(), stderr: "" });
       expect(output).toBe(expected);
       expect(exitCode).toBe(0);
     });
@@ -942,13 +946,8 @@ describe.concurrent("bunshell ls", () => {
       test.each(oneDestination)("under -R, %s", async (_, cmd) => {
         using dir = recursiveFixture();
         const { stdout, stderr, exitCode } = await child(cmd("ls -R top"), String(dir), "top/s05");
-        const { directories, entries, expected } = depthFirst(stdout, "top/s05");
-        expect({ directories, entries, stderr, exitCode }).toEqual({
-          directories: recursiveDirectories(5),
-          entries: recursiveEntries(5),
-          stderr: "",
-          exitCode: 1,
-        });
+        const { listings, expected } = depthFirst(stdout, "top/s05");
+        expect({ listings, stderr, exitCode }).toEqual({ listings: recursiveListings(5), stderr: "", exitCode: 1 });
         expect(stdout).toBe(expected);
       });
     });

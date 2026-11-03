@@ -680,6 +680,7 @@ it.each([
   ["Cipheriv", ["aes-128-ctr", Buffer.alloc(16), Buffer.alloc(16)], object => object.update("a")],
   ["Decipheriv", ["aes-128-ctr", Buffer.alloc(16), Buffer.alloc(16)], object => object.update("a")],
   ["Hmac", ["sha256", "key"], object => object.update("a").digest()],
+  ["Certificate", [], object => typeof object.verifySpkac],
 ])("%s.call(this) initializes an instance of a function that inherits from it", (name, args, use) => {
   const Base = crypto[name];
   function Derived() {
@@ -1432,9 +1433,6 @@ describe("KeyObject raw-public / raw-private / raw-seed formats", () => {
       crypto.createPrivateKey({ key: Buffer.alloc(32), format: "raw-private", asymmetricKeyType: "rsa" }),
     ).toThrow(expect.objectContaining({ code: "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS" }));
     expect(() =>
-      crypto.createPrivateKey({ key: Buffer.alloc(32), format: "raw-private", asymmetricKeyType: "banana" }),
-    ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
-    expect(() =>
       crypto.createPublicKey({ key: Buffer.alloc(32), format: "raw-public", asymmetricKeyType: "ec" }),
     ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
     expect(() =>
@@ -1478,7 +1476,7 @@ describe("KeyObject raw-public / raw-private / raw-seed formats", () => {
     ).toThrow(expect.objectContaining({ code: "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS" }));
   });
 
-  it.each(["Ed25519", "ED25519", "X25519", "EC", "ML-DSA-44", "Ml-Dsa-65", "ML-KEM-768"])(
+  it.each(["Ed25519", "ED25519", "X25519", "EC", "ML-DSA-44", "Ml-Dsa-65", "ML-KEM-768", "banana"])(
     "asymmetricKeyType %j is not how a key type is spelled",
     asymmetricKeyType => {
       const invalid = expect.objectContaining({
@@ -1493,42 +1491,26 @@ describe("KeyObject raw-public / raw-private / raw-seed formats", () => {
     },
   );
 
-  describe.each([
+  it.each([
     ["an array", name => [name]],
     ["an object with toString()", name => ({ toString: () => name })],
     ["a String object", name => new String(name)],
     ["a symbol", name => Symbol(name)],
-  ])("%s", (_, wrap) => {
-    it("is not a format to import", () => {
-      const { publicKey } = crypto.generateKeyPairSync("ed25519");
-      expect(() => crypto.createPublicKey({ key: publicKey.export({ format: "jwk" }), format: wrap("jwk") })).toThrow(
-        expect.objectContaining({
-          name: "TypeError",
-          code: "ERR_INVALID_ARG_TYPE",
-          message: expect.stringContaining('The "key.key" property must be of type string or an instance of'),
-        }),
-      );
-      expect(() =>
-        crypto.createPublicKey({
-          key: publicKey.export({ format: "raw-public" }),
-          format: wrap("raw-public"),
-          asymmetricKeyType: "ed25519",
-        }),
-      ).toThrow(expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_VALUE" }));
-    });
-
-    it("is not a type of raw-public to export", () => {
-      const { publicKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
-      expect(() => publicKey.export({ format: "raw-public", type: wrap("compressed") })).toThrow(
-        expect.objectContaining({
-          name: "TypeError",
-          code: "ERR_INVALID_ARG_VALUE",
-          message: expect.stringContaining(
-            "The property 'options.type' must be one of: 'compressed', 'uncompressed'. Received ",
-          ),
-        }),
-      );
-    });
+  ])("%s is not a format to import, nor a type of raw-public to export", (_, wrap) => {
+    const typeError = (code, message) =>
+      expect.objectContaining({ name: "TypeError", code, message: expect.stringContaining(message) });
+    const ed = crypto.generateKeyPairSync("ed25519").publicKey;
+    expect(() => crypto.createPublicKey({ key: ed.export({ format: "jwk" }), format: wrap("jwk") })).toThrow(
+      typeError("ERR_INVALID_ARG_TYPE", 'The "key.key" property must be of type string or an instance of'),
+    );
+    const raw = { key: ed.export({ format: "raw-public" }), asymmetricKeyType: "ed25519" };
+    expect(() => crypto.createPublicKey({ ...raw, format: wrap("raw-public") })).toThrow(
+      typeError("ERR_INVALID_ARG_VALUE", "format' is invalid. Received "),
+    );
+    const ec = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" }).publicKey;
+    expect(() => ec.export({ format: "raw-public", type: wrap("compressed") })).toThrow(
+      typeError("ERR_INVALID_ARG_VALUE", "'options.type' must be one of: 'compressed', 'uncompressed'. Received "),
+    );
   });
 
   it("publicEncrypt is not confused by a buffer detached from an oaepLabel getter", () => {

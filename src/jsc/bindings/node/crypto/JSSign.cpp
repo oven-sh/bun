@@ -405,7 +405,7 @@ JSUint8Array* signWithKey(JSC::JSGlobalObject* lexicalGlobalObject, JSSign* this
     if (finalSignatureLength != sigBuffer->byteLength()) {
         sigBuffer = JSC::ArrayBuffer::tryCreate(sigBuffer->span().first(finalSignatureLength));
         if (!sigBuffer) {
-            throwOutOfMemoryError(lexicalGlobalObject, scope);
+            throwTypeError(lexicalGlobalObject, scope, "Failed to allocate signature buffer"_s);
             return nullptr;
         }
     }

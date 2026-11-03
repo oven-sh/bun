@@ -181,7 +181,7 @@ function exportChallenge(spkac: string | BufferSource, encoding?: string) {
 }
 
 function Certificate(): void {
-  if (!new.target) {
+  if (!(this instanceof Certificate)) {
     return new Certificate() as any;
   }
 

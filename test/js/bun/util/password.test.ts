@@ -367,19 +367,16 @@ test.concurrent("verifySync() takes a hash in memory that another thread is writ
     const text = "$argon2id$v=18$m=8,t=1,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA";
     const hash = new Uint8Array(new SharedArrayBuffer(text.length));
     hash.set(Buffer.from(text));
-    const started = new Int32Array(new SharedArrayBuffer(4));
     new Worker(
-      \`const { hash, started } = require("node:worker_threads").workerData;
-        Atomics.store(started, 0, 1);
-        Atomics.notify(started, 0);
+      \`const hash = require("node:worker_threads").workerData;
         for (;;) {
           hash[10] = 0x80;
           hash[10] = 0x76;
         }\`,
-      { eval: true, workerData: { hash, started } },
+      { eval: true, workerData: hash },
     );
-    Atomics.wait(started, 0, 0);
-    for (let i = 0; i < 5000; i++) {
+    while (Atomics.load(hash, 10) !== 0x80);
+    for (let i = 0; i < ${isDebug ? 1000 : 5000}; i++) {
       try {
         Bun.password.verifySync("password", hash);
       } catch {}

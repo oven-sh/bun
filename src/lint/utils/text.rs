@@ -20,7 +20,8 @@
 //! | `String.fromCodePoint(...values)`, `String.fromCharCode(...values)` | [`string_from_code_points`], [`strings::push_codepoint_wtf8_joined`] |
 //! | `a < b`, `a.localeCompare`-free sorting | [`strings::order_utf16`] |
 //! | `require("natural-compare")` | [`natural_compare`] |
-//! | `require("natural-orderby").compare()` | [`natural_orderby`] |
+//! | `require("natural-orderby").compare()`, `compare({ locale })` | [`natural_orderby`], [`natural_orderby_in`] |
+//! | `a.localeCompare(b, locale)` | [`strings::Collator`] |
 //! | `esutils.keyword.isIdentifierES5`, `isIdentifierES6` | [`is_identifier_es5`], [`is_identifier_es6`] |
 //! | `s.split(/\r\n\|[\r\n\u2028\u2029]/u)`, `/\r\n\|[\r\n\u2028\u2029]/u.test(s)` | [`strings::js_lines`], [`strings::contains_js_line_break`] |
 //! | `s.slice(a, b)` with UTF-16 indices (an index in the middle of a surrogate pair is treated as the pair's start) |
@@ -308,7 +309,13 @@ pub fn natural_compare(a: &[u8], b: &[u8]) -> Ordering {
 /// ASCII is ordered as `localeCompare` orders it. A text that looks like a date (`2024-01-05`, `1/5/2024`) is
 /// compared as `Date.parse` parses it, where that has one reading.
 pub fn natural_orderby(a: &[u8], b: &[u8]) -> Ordering {
-    natural_orderby::compare(a, b)
+    natural_orderby::compare(a, b, strings::locale_compare)
+}
+
+/// [`natural_orderby`] as `compare({ locale })` makes it: text with a character outside ASCII is ordered by
+/// `collator`, `localeCompare(other, locale)`.
+pub fn natural_orderby_in(collator: strings::Collator, a: &[u8], b: &[u8]) -> Ordering {
+    natural_orderby::compare(a, b, |a, b| collator.compare(a, b))
 }
 
 mod natural_orderby {
@@ -325,7 +332,11 @@ mod natural_orderby {
         number: Option<f64>,
     }
 
-    pub(super) fn compare(a: &[u8], b: &[u8]) -> Ordering {
+    pub(super) fn compare(
+        a: &[u8],
+        b: &[u8],
+        locale_compare: impl Fn(&[u8], &[u8]) -> Ordering,
+    ) -> Ordering {
         if a == b {
             return Ordering::Equal;
         }
@@ -339,7 +350,7 @@ mod natural_orderby {
         let printed_b = number_b.filter(|n| *n != 0.0).map(number_to_string);
         let chunks_a = chunks_of(printed_a.as_deref().unwrap_or(&a));
         let chunks_b = chunks_of(printed_b.as_deref().unwrap_or(&b));
-        compare_chunks(&chunks_a, &chunks_b)
+        compare_chunks(&chunks_a, &chunks_b, locale_compare)
     }
 
     /// `value.toLowerCase().replace(/^\s+|\s+$/g, "")`
@@ -569,7 +580,11 @@ mod natural_orderby {
         Cow::Borrowed(trimmed)
     }
 
-    fn compare_chunks(a: &[Chunk<'_>], b: &[Chunk<'_>]) -> Ordering {
+    fn compare_chunks(
+        a: &[Chunk<'_>],
+        b: &[Chunk<'_>],
+        locale_compare: impl Fn(&[u8], &[u8]) -> Ordering,
+    ) -> Ordering {
         for (chunk_a, chunk_b) in a.iter().zip(b) {
             if chunk_a.text == chunk_b.text {
                 continue;
@@ -586,7 +601,7 @@ mod natural_orderby {
                     if strings::first_non_ascii(&chunk_a.text).is_some()
                         || strings::first_non_ascii(&chunk_b.text).is_some()
                     {
-                        strings::locale_compare(&chunk_a.text, &chunk_b.text)
+                        locale_compare(&chunk_a.text, &chunk_b.text)
                     } else {
                         strings::order_utf16(&chunk_a.text, &chunk_b.text)
                     }

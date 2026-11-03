@@ -5158,7 +5158,9 @@ impl<'a> Resolver<'a> {
                             lookup
                                 .entry()
                                 .symlink_for(generation, self.rfs_ref(), self.store_fd);
-                        if !symlink.is_empty() {
+                        // Only a link holds a real path of its own: another entry holds what a fill joined below the real path that its parent had then.
+                        let is_link = lookup.entry().is_link.load(Relaxed);
+                        if is_link && !symlink.is_empty() {
                             symlink
                         } else if !parent.abs_real_path.is_empty() {
                             self.fs_ref()
@@ -7426,10 +7428,17 @@ impl<'a> Resolver<'a> {
                             lookup.entry().set_cache_fd(entries_fd);
                         }
 
-                        let mut symlink =
+                        let held =
                             lookup
                                 .entry()
                                 .symlink_for(generation, self.rfs_ref(), self.store_fd);
+                        // A fill that checks takes the path that an entry holds only from a link: another entry holds what a fill joined below the real path that its parent had then.
+                        let is_own = generation == 0
+                            || lookup
+                                .entry()
+                                .is_link
+                                .load(core::sync::atomic::Ordering::Relaxed);
+                        let mut symlink: &'static [u8] = if is_own { held } else { b"" };
                         if !symlink.is_empty() {
                             if let Some(logs) = self.debug_logs.as_mut() {
                                 let mut buf = Vec::new();
@@ -7448,12 +7457,17 @@ impl<'a> Resolver<'a> {
                                 bufs!(dir_info_uncached_filename),
                             )
                         {
-                            // this might leak a little i'm not sure
-                            symlink = self
-                                .fs_ref()
-                                .dirname_store
-                                .append_slice(joined)
-                                .expect("unreachable");
+                            // The path that a fill joined before is kept when it is this one: no second copy of it is stored.
+                            let joined_before = held == joined;
+                            symlink = if joined_before {
+                                held
+                            } else {
+                                // this might leak a little i'm not sure
+                                self.fs_ref()
+                                    .dirname_store
+                                    .append_slice(joined)
+                                    .expect("unreachable")
+                            };
 
                             if let Some(logs) = self.debug_logs.as_mut() {
                                 let mut buf = Vec::new();
@@ -7465,7 +7479,7 @@ impl<'a> Resolver<'a> {
                                 );
                                 logs.add_note(buf);
                             }
-                            {
+                            if !joined_before {
                                 // Every cached-`Entry` rewrite takes the per-entry mutex.
                                 let _entry_guard = lookup.entry().mutex.lock_guard();
                                 lookup
@@ -7473,6 +7487,10 @@ impl<'a> Resolver<'a> {
                                     .set_cache_symlink(Interned::from_static(symlink));
                             }
                             info.abs_real_path = symlink;
+                        } else if !held.is_empty() {
+                            // No real path above this directory now: what a fill joined before is dropped.
+                            let _entry_guard = lookup.entry().mutex.lock_guard();
+                            lookup.entry().set_cache_symlink(Interned::EMPTY);
                         }
                     }
                 }

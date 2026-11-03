@@ -222,7 +222,7 @@ The callback can return a new `contents` string for the module as well as a new 
 
 At runtime, `contents` can be a string or UTF-8 bytes, and Bun loads it like a file of that type. CommonJS stays CommonJS, and with `"json"`, `import` and `require()` return what they return for a `.json` file.
 
-`loader` can be `"js"`, `"jsx"`, `"ts"`, `"tsx"`, `"json"`, `"jsonc"`, `"json5"`, `"toml"`, `"yaml"`, `"xml"`, `"text"`, `"md"` or `"css"`. If you don't return one, Bun uses the `type` the module was imported with, then its file extension. For a file without an extension, Bun reads the contents as TSX, as it reads the file. A `type` that isn't in this list, such as `"file"`, is an error unless you set `loader`.
+`loader` can be `"js"`, `"jsx"`, `"ts"`, `"tsx"`, `"json"`, `"jsonc"`, `"json5"`, `"toml"`, `"yaml"`, `"xml"`, `"text"`, `"md"` or `"css"`. If you don't return one, Bun uses the `type` the module was imported with, then its file extension. For a file without an extension, Bun reads the contents as TSX, as it reads the file. A loader that you set for files without an extension, such as `--loader :text`, replaces TSX. A `type` that isn't in this list, such as `"file"`, is an error unless you set `loader`.
 
 To skip a module, return `undefined` or a promise that resolves to `undefined`. Bun runs the next matching `onLoad()` callback. If they all skip it, Bun loads the module as if no plugin had matched it.
 

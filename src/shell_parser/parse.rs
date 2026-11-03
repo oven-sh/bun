@@ -2768,7 +2768,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                         RedirectDirection::In => '<',
                                     };
                                     self.add_error_fmt(format_args!(
-                                        "`{fd}{op}`: Bun Shell only redirects file descriptors 0, 1 and 2 (`<`, `>`, `2>`, `1>&2`, `2>&1`). Please file an issue on GitHub."
+                                        "`{fd}{op}`: Bun Shell only redirects file descriptors 0, 1 and 2 (`<`, `>`, `2>`, `1>&2`, `2>&1`)."
                                     ));
                                     return Ok(());
                                 }
@@ -3181,7 +3181,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             ),
             _ => {
                 self.add_error_fmt(format_args!(
-                    "`{shown_fd}{shown_op}&{target_fd}`: Bun Shell only duplicates stdout and stderr onto each other: `1>&2` (or `>&2`) and `2>&1`. Please file an issue on GitHub."
+                    "`{shown_fd}{shown_op}&{target_fd}`: Bun Shell only duplicates stdout and stderr onto each other: `1>&2` (or `>&2`) and `2>&1`."
                 ));
                 RedirectLex::Unsupported
             }

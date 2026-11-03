@@ -2102,10 +2102,9 @@ describe("deno_task", () => {
         return undefined;
       };
 
-      const onlyStdFds =
-        "`3>`: Bun Shell only redirects file descriptors 0, 1 and 2 (`<`, `>`, `2>`, `1>&2`, `2>&1`). Please file an issue on GitHub.";
+      const onlyStdFds = "`3>`: Bun Shell only redirects file descriptors 0, 1 and 2 (`<`, `>`, `2>`, `1>&2`, `2>&1`).";
       const onlyStdPairs = (form: string) =>
-        `\`${form}\`: Bun Shell only duplicates stdout and stderr onto each other: \`1>&2\` (or \`>&2\`) and \`2>&1\`. Please file an issue on GitHub.`;
+        `\`${form}\`: Bun Shell only duplicates stdout and stderr onto each other: \`1>&2\` (or \`>&2\`) and \`2>&1\`.`;
       const needsFd =
         "`>&` must be followed by a file descriptor number: `>&2`, `1>&2` or `2>&1`. To send stdout and stderr to a file, use `&> file`.";
 

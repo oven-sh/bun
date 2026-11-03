@@ -53,14 +53,14 @@ impl<'a> Line<'_, 'a> {
         let is_asked = !is_in_statement && place != Place::Free;
         match raw.kind {
             hir::ExprKind::Dot { .. } | hir::ExprKind::Call(_) | hir::ExprKind::Index { .. } => {
-                if !self.is_plain_chain(id)
-                    || (is_asked
-                        && place == Place::Other
-                        && needs_parentheses(file.handle_of_plain_expr(id), self.f))
+                let copied = self.as_plain_chain(id)?;
+                if is_asked
+                    && place == Place::Other
+                    && needs_parentheses(file.handle_of_plain_expr(id), self.f)
                 {
                     return None;
                 }
-                Some(self.plain_chain(id))
+                Some(self.plain_chain(id, copied))
             }
             hir::ExprKind::Binary { op, left, right }
                 if !matches!(op, BinOp::Comma | BinOp::In) =>
@@ -157,19 +157,18 @@ impl<'a> Line<'_, 'a> {
 
     /// No operator needs parentheses around a member access or a call.
     fn plain_operand_of_any_operator(&mut self, id: ExprId, raw: &hir::Expr) -> Written {
-        match raw.kind {
-            hir::ExprKind::Dot { .. } | hir::ExprKind::Call(_) | hir::ExprKind::Index { .. }
-                if self.is_plain_chain(id) =>
-            {
-                self.plain_chain(id)
+        let written = match raw.kind {
+            hir::ExprKind::Dot { .. } | hir::ExprKind::Call(_) | hir::ExprKind::Index { .. } => {
+                (self.as_plain_chain(id)).map(|copied| self.plain_chain(id, copied))
             }
-            _ => match self.plain_leaf(raw, Place::Other) {
-                Some(written) => written,
-                None => {
-                    let e = self.f.file().handle_of_plain_expr(id);
-                    self.nested(|line| line.expr(e, Place::Other))
-                }
-            },
+            _ => self.plain_leaf(raw, Place::Other),
+        };
+        match written {
+            Some(written) => written,
+            None => {
+                let e = self.f.file().handle_of_plain_expr(id);
+                self.nested(|line| line.expr(e, Place::Other))
+            }
         }
     }
 
@@ -211,21 +210,15 @@ impl<'a> Line<'_, 'a> {
                 {
                     return None;
                 }
-                self.is_plain_chain(id).then(|| self.plain_chain(id))
+                (self.as_plain_chain(id)).map(|copied| self.plain_chain(id, copied))
             }
             // `a.b = c`, as a statement
             hir::ExprKind::Assign { op, target, value } if is_statement => {
-                let target_raw = file.plain_expr(target)?;
-                match target_raw.kind {
-                    hir::ExprKind::Ident(_)
-                        if !is_special_name(
-                            self.text_of(Span::new(target_raw.pos, target_raw.end)),
-                        ) => {}
-                    hir::ExprKind::Dot { .. } | hir::ExprKind::Index { .. }
-                        if self.is_plain_chain(target) => {}
-                    _ => return None,
+                if matches!(file.plain_expr(target)?.kind, hir::ExprKind::Call(_)) {
+                    return None;
                 }
-                Some(self.plain_chain(target).and_then(|()| {
+                let copied = self.as_plain_chain(target)?;
+                Some(self.plain_chain(target, copied).and_then(|()| {
                     self.byte(b' ')?;
                     self.token(assign_op_text(op))?;
                     self.byte(b' ')?;
@@ -259,7 +252,7 @@ impl<'a> Line<'_, 'a> {
             hir::ExprKind::String(_)
                 if matches!(self.source.get(raw.pos as usize), Some(b'"' | b'\'')) =>
             {
-                self.string(span)
+                self.plain_string(span)
             }
             hir::ExprKind::Number(_)
                 if place != Place::Object && self.text_of(span).iter().all(u8::is_ascii_digit) =>
@@ -270,17 +263,97 @@ impl<'a> Line<'_, 'a> {
         })
     }
 
-    /// True if `id` is a chain of member accesses and at most two calls that starts with a name or `this`, without `?.`,
-    /// `!` or type arguments. A chain with more calls can break whether it fits or not. A call that's too wide has rules
-    /// of its own.
-    fn is_plain_chain(&self, mut id: ExprId) -> bool {
+    /// [`Line::string`]
+    fn plain_string(&mut self, span: Span) -> Written {
+        if self.is_careful {
+            return self.string(span);
+        }
+        let [first, content @ .., last] = self.text_of(span) else {
+            return Err(Refused);
+        };
+        let preferred = self.f.options().quote_style.as_byte();
+        let (mut has_preferred, mut has_odd) = (false, false);
+        for &byte in content {
+            has_preferred |= byte == preferred;
+            has_odd |= byte < b' ';
+        }
+        if has_odd || first != last {
+            return Err(Refused);
+        }
+        let start = self.len;
+        self.source(span)?;
+        if *first != preferred && !has_preferred {
+            for at in [start, self.len.saturating_sub(1)] {
+                if let Some(quote) = self.text.get_mut(at) {
+                    *quote = preferred;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Where `id` is, if it's a name or a literal that's printed as it's written.
+    #[inline]
+    fn copied_leaf(&self, id: ExprId) -> Option<Span> {
+        let raw = self.f.file().plain_expr(id)?;
+        let span = Span::new(raw.pos, raw.end);
+        let is_copied = match raw.kind {
+            hir::ExprKind::Ident(_)
+            | hir::ExprKind::This
+            | hir::ExprKind::Null
+            | hir::ExprKind::True
+            | hir::ExprKind::False => true,
+            hir::ExprKind::Number(_) => self.text_of(span).iter().all(u8::is_ascii_digit),
+            _ => false,
+        };
+        is_copied.then_some(span)
+    }
+
+    /// Where the `(` of the call at `raw` is, if its arguments are printed as they're written.
+    #[inline]
+    fn open_parenthesis_of_copied_arguments(
+        &self,
+        raw: &hir::Expr,
+        call: &hir::Call,
+    ) -> Option<u32> {
+        if raw.end != call.close_pos.wrapping_add(1) {
+            return None;
+        }
+        let mut arguments = self.f.file().plain_list(call.args).iter();
+        let Some(&first) = arguments.next() else {
+            return Some(call.close_pos.wrapping_sub(1));
+        };
+        let first = self.copied_leaf(ExprId(first))?;
+        let mut end = first.end;
+        for &argument in arguments {
+            let argument = self.copied_leaf(ExprId(argument))?;
+            if self.text_of(Span::new(end, argument.start)) != b", " {
+                return None;
+            }
+            end = argument.end;
+        }
+        (end == call.close_pos).then(|| first.start.wrapping_sub(1))
+    }
+
+    /// `None` unless `id` is a chain of member accesses and at most two calls that starts with a name or `this`, without
+    /// `?.`, `!` or type arguments. A chain with more calls can break whether it fits or not. A call that's too wide has
+    /// rules of its own.
+    ///
+    /// Returns the longest part of the chain that's printed as it's written: nothing is between its tokens.
+    fn as_plain_chain(&self, mut id: ExprId) -> Option<ExprId> {
+        /// No expression ends here.
+        const NOWHERE: u32 = u32::MAX;
         let file = self.f.file();
         let (mut calls, mut links) = (0, 0);
         let mut is_callee = false;
+        let mut copied = id;
+        // Where the link has to end for the one around it to be printed as it's written.
+        let mut end = file.plain_expr(id)?.end;
         loop {
-            let Some(raw) = file.plain_expr(id) else {
-                return false;
-            };
+            let raw = file.plain_expr(id)?;
+            if raw.end != end {
+                copied = id;
+            }
             links += 1;
             let was_callee = std::mem::replace(&mut is_callee, false);
             id = match raw.kind {
@@ -289,68 +362,92 @@ impl<'a> Line<'_, 'a> {
                     chain: Chain::No,
                     name_before_end,
                     ..
-                } if name_before_end < hir::FAR_IN_BRACKETS => obj,
+                } if name_before_end < hir::FAR_IN_BRACKETS => {
+                    end = (raw.end.wrapping_sub(u32::from(name_before_end))).wrapping_sub(1);
+                    obj
+                }
                 hir::ExprKind::Index {
                     obj,
+                    index,
                     chain: Chain::No,
-                    ..
-                } => obj,
-                hir::ExprKind::Call(call) => {
-                    let Some(call) = file.plain_call(call) else {
-                        return false;
+                } => {
+                    end = match self.copied_leaf(index) {
+                        Some(index) if index.end + 1 == raw.end => index.start.wrapping_sub(1),
+                        _ => NOWHERE,
                     };
+                    obj
+                }
+                hir::ExprKind::Call(call) => {
+                    let call = file.plain_call(call)?;
                     calls += 1;
                     if call.chain != Chain::No
                         || !call.type_args.is_empty()
                         || calls > 2
                         || self.breaks
                     {
-                        return false;
+                        return None;
                     }
                     is_callee = true;
+                    end = (self.open_parenthesis_of_copied_arguments(raw, call)).unwrap_or(NOWHERE);
                     call.callee
                 }
                 hir::ExprKind::Ident(_) => {
                     let name = self.text_of(Span::new(raw.pos, raw.end));
                     // `graphql(schema, `..`)` has another language in it.
-                    return !is_special_name(name) && !(was_callee && name == b"graphql");
+                    if is_special_name(name) || (was_callee && name == b"graphql") {
+                        return None;
+                    }
+                    return Some(copied);
                 }
-                hir::ExprKind::This => return true,
-                _ => return false,
+                hir::ExprKind::This => return Some(copied),
+                _ => return None,
             };
             if links > MAX_LINKS {
-                return false;
+                return None;
             }
         }
     }
 
-    /// Writes what [`Line::is_plain_chain`] is true for.
-    fn plain_chain(&mut self, id: ExprId) -> Written {
+    /// Writes a chain, of which [`Line::as_plain_chain`] has returned `copied`.
+    fn plain_chain(&mut self, id: ExprId, copied: ExprId) -> Written {
         let file = self.f.file();
         let raw = file.plain_expr(id).ok_or(Refused)?;
+        if id == copied {
+            let span = Span::new(raw.pos, raw.end);
+            if span.len() <= 32
+                && let Some(block) = (self.plain_source)
+                    .get(span.start as usize..)
+                    .and_then(|rest| rest.first_chunk::<32>())
+            {
+                return self.chunk(block, span.len() as usize);
+            }
+            return self.long_source(span);
+        }
         match raw.kind {
             hir::ExprKind::Dot {
                 obj,
                 name_before_end,
                 ..
             } => {
-                self.plain_chain(obj)?;
+                self.plain_chain(obj, copied)?;
                 self.byte(b'.')?;
-                self.source(Span::new(raw.end - u32::from(name_before_end), raw.end))
+                self.source(Span::new(
+                    raw.end.saturating_sub(u32::from(name_before_end)),
+                    raw.end,
+                ))
             }
             hir::ExprKind::Index { obj, index, .. } => {
-                self.plain_chain(obj)?;
+                self.plain_chain(obj, copied)?;
                 self.byte(b'[')?;
                 self.nested(|line| line.expr(file.handle_of_plain_expr(index), Place::Free))?;
                 self.byte(b']')
             }
             hir::ExprKind::Call(call) => {
                 let call = file.plain_call(call).ok_or(Refused)?;
-                self.plain_chain(call.callee)?;
+                self.plain_chain(call.callee, copied)?;
                 self.plain_arguments(file.plain_list(call.args))
             }
-            hir::ExprKind::This => self.token("this"),
-            _ => self.source(Span::new(raw.pos, raw.end)),
+            _ => Err(Refused),
         }
     }
 

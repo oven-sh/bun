@@ -1191,6 +1191,153 @@ c */ someMethodName(someParameterName: SomeParameterType, another: AnotherParame
   });
 });
 
+describe.skipIf(!hasFlag)("names, literals, member accesses, calls and operators", () => {
+  const binary = "?? || && | ^ & == != === !== < <= > >= in instanceof << >> >>> + - * / % **".split(" ");
+  const unary = ["!", "-", "+", "~", "typeof ", "void ", "delete ", "++", "--", "await "];
+  // In every place that knows what it's in.
+  const places = (e: string) => [
+    `x = ${e};`,
+    `const y = ${e};`,
+    `if (${e}) g();`,
+    `while (${e}) {\n  g();\n}`,
+    `return ${e};`,
+    `g(${e}, 1);`,
+    `${e};`,
+    `x = (${e}).y;`,
+    `x = !(${e});`,
+    `switch (${e}) {\n  case ${e}:\n    g();\n}`,
+    `for (; ${e}; ${e}) g();`,
+    `x = (${e}) ? 1 : 2;`,
+    `x = new (${e})();`,
+    `x = \`\${${e}}\`;`,
+  ];
+  const isError = (first: string, second: string) =>
+    ((first === "??") !== (second === "??") && [first, second].some(it => it === "||" || it === "&&")) ||
+    ((first === "<" || first === "<<") && second.startsWith(">"));
+  const files: Record<string, string> = {};
+  for (const [index, first] of binary.entries()) {
+    const expressions: string[] = [];
+    for (const second of binary) {
+      expressions.push(`(a ${first} b) ${second} c`, `a ${first} (b ${second} c)`, `(a.b ${first} c()) ${second} d[0]`);
+      if (!isError(first, second)) expressions.push(`a ${first} b ${second} c`, `a.b ${first} c() ${second} 1`);
+    }
+    for (const operator of unary) {
+      const operand = operator === "++" || operator === "--" || operator === "delete " ? "a.b" : "a";
+      expressions.push(`(${operator}${operand}) ${first} b`, `a ${first} ${operator}${operand}`);
+      if (first !== "**") expressions.push(`${operator}${operand} ${first} b`);
+      if (operand === "a") expressions.push(`${operator}(a ${first} b)`);
+      if (operator === "++" || operator === "--") expressions.push(`a.b${operator} ${first} c`, `c ${first} a.b${operator}`);
+    }
+    files[`operators-${index}.ts`] = `async function f() {\n${expressions.flatMap(places).join("\n")}\n}\n`;
+  }
+  files["unary.ts"] = `async function f() {\n${unary
+    .flatMap(outer =>
+      unary.flatMap(inner => {
+        if (outer === "++" || outer === "--") return [];
+        const operand = inner === "++" || inner === "--" || inner === "delete " ? "a.b" : "a";
+        const isOneToken = "+-".includes(outer.trim()) && inner.startsWith(outer.trim());
+        return [`${outer}(${inner}${operand})`, ...(isOneToken ? [] : [`${outer}${inner}${operand}`])];
+      }),
+    )
+    .flatMap(places)
+    .join("\n")}\n}\n`;
+  // What is between the tokens decides whether a chain is copied from the source.
+  const chains = [
+    "a.b.c",
+    "a .b.c",
+    "a. b.c",
+    "a.b .c",
+    "(a).b.c",
+    "(a.b).c",
+    "((a.b.c))",
+    "a\n  .b.c",
+    "a.b()",
+    "a.b( )",
+    "a.b ()",
+    "a.b(c)",
+    "a.b( c)",
+    "a.b(c )",
+    "a.b((c))",
+    "a.b(c,)",
+    "a.b(c, d)",
+    "a.b(c,d)",
+    "a.b(c ,d)",
+    "a.b(c,  d)",
+    "a.b(c,\n  d)",
+    "a.b(c, d,)",
+    "a.b(c, d).e",
+    "a.b(c,d).e",
+    "a.b(c).d(e)",
+    "a.b(c).d( e)",
+    "a.b( c).d(e)",
+    "a.b(c).d(e).f(g)",
+    "a[0]",
+    "a[ 0]",
+    "a[0 ]",
+    "a [0]",
+    "a[b].c",
+    "a[(b)].c",
+    "a[b.c].d",
+    "a[0][1]",
+    "a[0x1]",
+    "a[1.0]",
+    "a.b(1.0)",
+    "a.b(0)",
+    "a.b(null, true, false, this)",
+    "this.a.b",
+    "this .a",
+    "(this).a",
+    "this.a(this.b)",
+    "a.#b.c",
+    "a.b('c')",
+    'a.b("c")',
+    "a.b('c\"d')",
+    "a.b(\"c'd\")",
+    "a.b('', \"\")",
+    "a.b('c', d)",
+    "a('b').c",
+    "a?.b.c",
+    "a.b?.c",
+    "a.b?.()",
+    "a!.b",
+    "a.b!",
+    "a.b<c>()",
+    "a.b(c)(d)",
+    "a()()()",
+    "let.a",
+    "async.a()",
+    "await.a",
+    "type.a",
+    "graphql(a, b)",
+    "a.graphql(a, b)",
+    "a.veryLongNameOfAProperty.anotherVeryLongNameOfAProperty.yetAnotherVeryLongNameOfAProperty.b",
+    "a.veryLongNameOfAFunction(anArgumentWithALongName, anotherArgumentWithALongName, b)",
+    "\u0061.b",
+    "a.\\u0062",
+    "é.b.c",
+    "a.é('é')",
+  ];
+  files["chains.ts"] = `function f() {\n${chains.flatMap(places).join("\n")}\n}\n`;
+  files["targets.ts"] = `function f() {\n${chains
+    .filter(it => !/[)!?]$|^\(\(|\?\./.test(it))
+    .flatMap(it => [`${it} = 1;`, `${it}  =  a.b(c);`, `${it} += a.b;`, `${it}++;`])
+    .join("\n")}\n}\n`;
+
+  test.concurrent.each([
+    [],
+    ["--single-quote"],
+    ["--no-semi"],
+    ["--print-width=20"],
+    ["--print-width=30", "--use-tabs"],
+    ["--print-width=40", "--single-quote", "--tab-width=4"],
+  ])("%s %s %s", async (...options) => {
+    const [withShortCuts, without] = await difference(files, options.filter(Boolean));
+    expect(withShortCuts).toEqual(without);
+    expect(without.stderr).toBe("");
+    expect(without.exitCode).toBe(0);
+  });
+});
+
 /** Formats `files` with `options`, with and without short cuts. Returns what is written and said each way. */
 async function bothWays(files: Record<string, string>, options: string[]) {
   using dir = tempDir("fmt-short-cuts", {

@@ -2691,6 +2691,53 @@ describe("bundler", () => {
       },
       out: "@layer{@layer w;@layer v{.t{color:#00f}}}",
     },
+    // "v" comes first because the import that closes the cycle declares it.
+    SublayerOfACycleInImportedFileOfAnonymousLayer: {
+      files: {
+        "/entry.css": `@import "./a.css" layer;`,
+        "/a.css": /* css */ `
+          @import "./b.css";
+          @layer v { .t { color: red } }
+          @layer c { .t { color: green } }
+        `,
+        "/b.css": /* css */ `
+          @import "./entry.css" layer(v);
+          @layer c { .u { color: blue } }
+        `,
+      },
+      out: "@layer{@layer v;@layer c{.u{color:#00f}}@layer v{.t{color:red}}@layer c{.t{color:green}}}",
+    },
+    // The external import prints an anonymous layer of its own, so it does not declare "w" for its neighbours.
+    SublayerOfAnExternalImportInAnonymousLayer: {
+      files: {
+        "/entry.css": `@import "./a.css" layer;`,
+        "/a.css": /* css */ `
+          @import "https://example.com/ext.css" layer(w);
+          @import "./f.css" layer(w);
+          @import "./g.css";
+          @import "./f.css" layer(w);
+        `,
+        "/g.css": `@layer v { .t { color: blue } }`,
+        "/f.css": `.t { color: red }`,
+      },
+      out: `@import "data:text/css,@import \\"https://example.com/ext.css\\" layer(w);" layer;@layer{@layer w;@layer v{.t{color:#00f}}@layer w{.t{color:red}}}`,
+    },
+    // Browsers accept an "@import" behind an unknown at-rule, and it applies once.
+    ImportBehindAnUnknownAtRule: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.css";
+          @import "https://example.com/f.css";
+        `,
+        "/a.css": /* css */ `
+          @layer first;
+          @unknown x;
+          @import "https://example.com/e.css";
+          .a { c: d }
+        `,
+      },
+      out: `@layer first;@import "https://example.com/e.css";@import "https://example.com/f.css";@unknown x;.a{c:d}`,
+    },
     // A copy with no layer does not cover a list under "layer(w)": the list is what declares "w" ahead of "u".
     ListForADuplicateImportUnderLayer: {
       files: {

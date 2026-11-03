@@ -542,12 +542,20 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 &wip_order,
                 CssOrderDebugStep::WhileOptimizingRedundantLayerRules,
             );
+            // An external import prints an anonymous layer of its own, apart
+            // from the one that its neighbours share.
+            let in_anonymous_layer = entry
+                .conditions
+                .slice_const()
+                .iter()
+                .any(ImportConditions::has_anonymous_layer);
             match &mut entry.kind {
                 // Simplify the conditions since we know they only wrap "@layer"
                 CssImportOrderKind::Layers(layers) => {
                     // An external import with these exact conditions already
                     // declares what this entry would.
                     if layers.inner().is_empty()
+                        && !in_anonymous_layer
                         && wip_order.slice().iter().any(|kept| {
                             matches!(kept.kind, CssImportOrderKind::ExternalPath(_))
                                 && import_conditions_are_equal(
@@ -657,12 +665,12 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 let duplicate_index = duplicates[j];
                 // A file may have these names under "@media", which is no proof
                 // that it declares them for this list.
-                if !layers_key.is_empty()
-                    && matches!(entry.kind, CssImportOrderKind::Layers(_))
-                    && !matches!(
-                        wip_order.at(duplicate_index as usize).kind,
-                        CssImportOrderKind::Layers(_)
-                    )
+                if matches!(entry.kind, CssImportOrderKind::Layers(_))
+                    && match wip_order.at(duplicate_index as usize).kind {
+                        CssImportOrderKind::Layers(_) => false,
+                        CssImportOrderKind::SourceIndex(_) => !layers_key.is_empty(),
+                        CssImportOrderKind::ExternalPath(_) => in_anonymous_layer,
+                    }
                 {
                     continue;
                 }

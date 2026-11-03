@@ -559,27 +559,10 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                         continue 'next_forward;
                     }
 
-                    // With no names to declare, truncate the conditions at the
-                    // first anonymous layer. The layer is anonymous if it's a
-                    // "layer" token without any children instead of a
-                    // "layer(...)" token with children. Names stay: they order
-                    // the layers of the block that the entry shares.
-                    if layers.inner().is_empty()
-                        && let Some(i) = entry
-                            .conditions
-                            .slice()
-                            .iter()
-                            .position(ImportConditions::has_anonymous_layer)
-                    {
-                        // SAFETY: `i < entry.conditions.len() <= capacity`;
-                        // shrinking exposes no uninitialized range. The
-                        // truncated tail is arena-owned (`fork_conditions`)
-                        // and bulk-freed with the arena, so skipping `Drop` is sound.
-                        unsafe { entry.conditions.set_len(i) };
-                    }
-
                     // If there are no layer names for this file, trim all conditions
-                    // without layers because we know they have no effect.
+                    // after the last named layer because we know they have no effect.
+                    // An anonymous layer ahead of a named one stays, as it holds the
+                    // place of that name among the sublayers of the anonymous layer.
                     //
                     // (They have no effect because this is a `.layer` import with no rules
                     //  and only layer declarations.)

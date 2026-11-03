@@ -2632,6 +2632,65 @@ describe("bundler", () => {
       },
       out: "@layer{@layer p,q;.leaf{c:d}@layer q{.x{c:e}}@layer p{.x{c:f}}}.z{c:d}",
     },
+    // The first copy of "f.css" declares "w" ahead of "v", also inside an anonymous layer.
+    SublayerOfADuplicateImportInAnonymousLayer: {
+      files: {
+        "/entry.css": `@import "./a.css" layer;`,
+        "/a.css": /* css */ `
+          @import "./f.css" layer(w);
+          @import "./g.css";
+          @import "./f.css" layer(w);
+          .a { color: green }
+        `,
+        "/g.css": `@layer v { .t { color: blue } }`,
+        "/f.css": `.t { color: red }`,
+      },
+      out: "@layer{@layer w;@layer v{.t{color:#00f}}@layer w{.t{color:red}}.a{color:green}}",
+    },
+    // The first copy of "f.css" stays in the anonymous layer of its neighbours.
+    DuplicateImportBetweenAnonymousLayers: {
+      files: {
+        "/entry.css": `@import "./c.css" layer;`,
+        "/c.css": `@import "./d.css" layer(w);`,
+        "/d.css": `@import "./e.css" layer;`,
+        "/e.css": /* css */ `
+          @import "./h.css";
+          @import "./f.css";
+          @import "./g.css";
+          @import "./f.css";
+        `,
+        "/h.css": `.t.t { color: green }`,
+        "/f.css": `.t { color: red }`,
+        "/g.css": `.g { color: blue }`,
+      },
+      out: "@layer{@layer w{@layer{.t.t{color:green}.g{color:#00f}.t{color:red}}}@layer w;}",
+    },
+    SublayerOfADuplicateImportInNestedAnonymousLayer: {
+      files: {
+        "/entry.css": `@import "./a.css" layer(x);`,
+        "/a.css": `@import "./b.css" layer;`,
+        "/b.css": /* css */ `
+          @import "./f.css" layer(w);
+          @import "./g.css";
+          @import "./f.css" layer(w);
+        `,
+        "/g.css": `@layer v { .t { color: blue } }`,
+        "/f.css": `.t { color: red }`,
+      },
+      out: "@layer x{@layer{@layer w;@layer v{.t{color:#00f}}@layer w{.t{color:red}}}}@layer x;",
+    },
+    // An import that closes a cycle is not loaded, but it declares its layer.
+    SublayerOfACycleInAnonymousLayer: {
+      files: {
+        "/entry.css": `@import "./a.css" layer;`,
+        "/a.css": /* css */ `
+          @import "./a.css" layer(w);
+          @import "./g.css";
+        `,
+        "/g.css": `@layer v { .t { color: blue } }`,
+      },
+      out: "@layer{@layer w;@layer v{.t{color:#00f}}}",
+    },
     // A copy with no layer does not cover a list under "layer(w)": the list is what declares "w" ahead of "u".
     ListForADuplicateImportUnderLayer: {
       files: {

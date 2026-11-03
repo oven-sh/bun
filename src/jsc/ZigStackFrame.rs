@@ -36,10 +36,7 @@ pub struct ZigStackFrame<'a> {
 
 bun_core::assert_ffi_layout!(ZigStackFrame<'static>, 80, 8; remapped @ 62, source_flags @ 63, jsc_stack_frame_index @ 64, source_provider @ 72);
 
-/// A ref on the `JSC::SourceProvider` of a frame's code, which C++ took (`Zig::setSource`): the code of a frame
-/// can be collected between the time the frame is filled and the time its position is mapped (printing an error
-/// runs its `message` getter), and the address of a provider that is gone can be that of another one. Null: no
-/// provider is known (a frame parsed back out of a stack string, one a browser sent).
+/// A ref on the provider of a frame's code (`Zig::setSource`): the code can be collected before its position is mapped.
 #[repr(transparent)]
 pub struct FrameSource(Option<core::ptr::NonNull<crate::SourceProvider>>);
 
@@ -68,11 +65,9 @@ pub struct SourceFlags(u8);
 
 impl SourceFlags {
     pub const NONE: SourceFlags = SourceFlags(0);
-    /// A position the parser reported: it comes with a source URL and no provider. The text is that of the provider
-    /// with a map that registered last among those that have the URL.
+    /// A position that a parser reported, with a URL and no provider: its text registered last under that URL.
     pub const BY_URL: SourceFlags = SourceFlags(1 << 0);
-    /// A position that was mapped when its error's stack became a string, and no frame says from which text. The
-    /// file under the source URL holds that text if a text is registered under the URL.
+    /// A position out of a copied stack: the file under its URL holds its text only if the URL has a registered text.
     pub const IF_REGISTERED: SourceFlags = SourceFlags(1 << 1);
 
     #[inline]

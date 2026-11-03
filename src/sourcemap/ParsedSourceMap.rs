@@ -41,8 +41,7 @@ pub struct ParsedSourceMap {
 impl Drop for ParsedSourceMap {
     fn drop(&mut self) {
         // When the mappings are backed
-        // by an `InternalSourceMap` blob the blob is *owned* (what the printer
-        // made, see `SourceMapBlob::into_parsed`) unless this is the
+        // by an `InternalSourceMap` blob the blob is *owned* (the printer made it) unless this is the
         // standalone-module-graph case where the bytes live in the embedded
         // section. The doc on the `internal` field only describes that latter
         // borrowed case.
@@ -116,8 +115,7 @@ impl AnySourceProvider {
         }
     }
 
-    /// A map that `get_source_map` reads for `ptr` without a [`SourceProvider`] impl (one that is embedded in the
-    /// executable).
+    /// For a map that `get_source_map` reads without a [`SourceProvider`] impl: one embedded in the executable.
     pub fn from_fn(ptr: *mut c_void, get_source_map: ErasedGetSourceMap) -> AnySourceProvider {
         AnySourceProvider {
             ptr,

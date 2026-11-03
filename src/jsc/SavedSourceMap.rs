@@ -12,21 +12,10 @@ use bun_threading::{Guarded, Mutex};
 
 use crate::resolved_source::SourceMapBlob;
 
-/// A `JSC::SourceProvider`: the object that holds a text JavaScriptCore runs. A frame names the provider of its
-/// code, and that is how its source map is found, never by the name of the file.
+/// A `JSC::SourceProvider`, which holds one text that JavaScriptCore runs: the key of the source map of that text.
 pub type Provider = *const c_void;
 
-/// The source maps of the code of one VM.
-///
-/// A provider registers the map of its text when it is made, and leaves when its `Bun::SourceMapRegistration` is
-/// destroyed with it. Text that a caller names after a loaded file (`module._compile`, `node:vm`, `//# sourceURL`)
-/// is in a provider of its own, which has no map here.
-///
-/// Providers with one source URL and one text share a map: that of the one that registered last. JavaScriptCore
-/// runs a module that is loaded again on the code of an earlier load when URL and text are the same
-/// (`JSModuleRecord::getOrMakeExecutable`), whatever was loaded under the URL in between, and a save that adds a
-/// comment or a type changes the map and not the text: the frames of the new load then name the provider of the
-/// old one.
+/// The source maps of one VM, by provider. Providers with equal URL and text share the newest map (#47842).
 #[derive(Default)]
 pub struct SavedSourceMap {
     inner: Guarded<Inner>,
@@ -34,8 +23,7 @@ pub struct SavedSourceMap {
 
 #[derive(Default)]
 struct Inner {
-    /// By address. Each is the address of a live provider: a provider is destroyed by the JS thread, and its
-    /// registration takes it out of here first.
+    /// By address, of live providers only: `Bun::SourceMapRegistration` takes a provider out before it is destroyed.
     providers: Table<Entry>,
     /// By `Entry::text`.
     texts: Table<Text>,
@@ -48,8 +36,7 @@ struct Inner {
 struct Entry {
     /// The number of the text in `Inner::texts`.
     text: u64,
-    /// The providers of a text are a ring. `older` registered before this one, and `older` of the first is the
-    /// last. Those that only share the map (`SavedSourceMap::alias`) come after all that registered one.
+    /// The providers of a text are a ring. `older` registered before this one. Aliases of the map come last.
     older: usize,
     newer: usize,
     /// Reads the map of the text through this provider, if it registered as one that does.
@@ -78,17 +65,14 @@ enum Map {
     Parsed(Arc<ParsedSourceMap>),
     /// `Entry::loader` of the head reads it when a position is first asked for.
     NotRead,
-    /// What the head read. It refers to the head. When another text registers under the URL next, this goes back
-    /// to `NotRead`: a position in the earlier text is rare, and the head reads again for one. A `.map` file beside
-    /// a file that was replaced is then read as it is on disk.
+    /// What the head read. It goes back to `NotRead` when another text registers under the URL next.
     Read(Arc<ParsedSourceMap>),
     /// There is none: do not look again.
     Missing,
 }
 
 impl Map {
-    /// `Printed` becomes `Parsed`. No VLQ decode: the blob moves into a refcounted shell, so that callers can hold it
-    /// while the table changes.
+    /// `Printed` becomes `Parsed`: the blob moves into a refcounted shell that callers can hold, with no VLQ decode.
     fn parse_printed(&mut self) -> Option<Arc<ParsedSourceMap>> {
         let Map::Printed(blob) = core::mem::replace(self, Map::Missing) else {
             unreachable!()
@@ -122,8 +106,7 @@ unsafe extern "C" {
     fn Bun__SourceProvider__sourceURL(provider: Provider) -> bun_core::String;
 }
 
-/// The keys are addresses, hashes and counts. hashbrown takes the bucket from the low bits and the tag from the
-/// high ones.
+/// The keys are addresses, hashes and counts: hashbrown takes the bucket from the low bits, the tag from the high ones.
 #[derive(Default)]
 struct KeyHasher(u64);
 
@@ -143,8 +126,7 @@ impl Hasher for KeyHasher {
     }
 }
 
-/// Entries leave with their providers, and hashbrown reclaims the slots of removed ones
-/// (`bun_collections::HashMap` only does when it grows).
+/// hashbrown reclaims the slots of removed entries, which `bun_collections::HashMap` only does when it grows.
 type Table<V> = bun_collections::hashbrown::HashMap<u64, V, BuildHasherDefault<KeyHasher>>;
 
 /// Thin forwarder to the leaf-crate state in
@@ -192,8 +174,7 @@ fn link(providers: &mut Table<Entry>, head: usize, provider: usize) -> usize {
 struct Replaced(Option<Map>, Option<Map>);
 
 impl Inner {
-    /// `provider` holds a text under the source URL with the hash `url`, and `hash` is
-    /// `Bun__SourceProvider__hash` of it. `map` is its map, which `loader` reads if it is `Map::NotRead`.
+    /// `provider` holds a text with that URL hash and text hash. `loader` reads `map` if it is `Map::NotRead`.
     fn register(
         &mut self,
         provider: Provider,
@@ -387,9 +368,7 @@ impl SavedSourceMap {
         drop(replaced);
     }
 
-    /// `provider` reads the map of its text itself, when a position in it is first asked for: the text ends with a
-    /// `//# sourceMappingURL`, or the map is in the executable. `provider.ptr()` is the `JSC::SourceProvider`, and
-    /// `url` its source URL.
+    /// `provider` reads the map of its text when a position in it is first asked for. `url` is its source URL.
     pub fn register_source_provider(&self, provider: AnySourceProvider, url: &bun_core::String) {
         let key = text_key(provider.ptr(), url);
         let replaced =
@@ -397,15 +376,12 @@ impl SavedSourceMap {
         drop(replaced);
     }
 
-    /// `provider` holds the text of `existing`, which it wraps: a position in it is mapped like one in
-    /// `existing`. False when `existing` has no map.
+    /// `provider` wraps the text of `existing` and shares its map. False when `existing` has no map.
     pub fn alias(&self, provider: Provider, existing: Provider) -> bool {
         self.inner.lock().alias(provider, existing)
     }
 
-    /// `provider` holds another text that the printed map of `existing` is the map of too: what a compile hook
-    /// compiles again of the file that Bun's loader handed to it. `url` is its source URL. False when `existing`
-    /// has no such map.
+    /// `provider` holds another text that `existing`'s printed map maps too (a compile hook's retry). False: no map.
     pub fn share(&self, provider: Provider, url: &bun_core::String, existing: Provider) -> bool {
         let key = text_key(provider, url);
         let mut inner = self.inner.lock();
@@ -433,9 +409,7 @@ impl SavedSourceMap {
         drop(unused);
     }
 
-    /// The provider that registered last under the source URL `url`, if its text is still there. Only for a
-    /// position that arrives with a URL and no provider (a parser error raised inside JSC's module loader): it can
-    /// name a provider that Bun registered, and nothing else.
+    /// The provider that registered last under `url`: for a parser's SyntaxError, which has a URL and no provider.
     pub fn newest_for_url(&self, url: &bun_core::String) -> Option<Provider> {
         let inner = self.inner.lock();
         let text = inner.texts.get(inner.urls.get(&url_key(url))?)?;
@@ -445,9 +419,7 @@ impl SavedSourceMap {
             .then_some(head)
     }
 
-    /// Whether the file that a frame names can hold the text of the frame. `provider` holds the code of the frame:
-    /// no other text registered under its source URL after its text did. Without a provider, `url` is all the
-    /// frame has: a text is registered under it.
+    /// Whether the file that a frame names can hold its text: no other text registered under the URL after that one.
     pub(crate) fn names_file_text(&self, provider: Provider, url: &bun_core::String) -> bool {
         if provider.is_null() {
             return self.newest_for_url(url).is_some();
@@ -515,8 +487,7 @@ impl SavedSourceMap {
         // Not the URL of the frame: a `//# sourceURL` in the text changes that one, and the map is beside the file.
         // SAFETY: `head` is in the table, so it is live.
         let url = unsafe { Bun__SourceProvider__sourceURL(head as Provider) };
-        // Not with the lock held: this reads a file and parses JSON. `head` stays live (see `Inner::providers`):
-        // the JS thread is the one that runs this, or it waits for the collector that does.
+        // Not with the lock held: this reads a file and parses JSON. `head` stays live (see `Inner::providers`).
         drop(guard);
         let url = url.to_utf8();
         let parse = loader.get_source_map(&url, Default::default(), hint);

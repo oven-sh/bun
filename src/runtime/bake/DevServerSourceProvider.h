@@ -56,8 +56,7 @@ private:
     }
 
     MiString m_sourceMapJSON;
-    // Holds the Rust VirtualMachine, not the GC-allocated Zig::GlobalObject: it is destroyed from JSC's sweep, by
-    // which point the global object cell may already have been swept.
+    // Holds the Rust VirtualMachine: JSC's sweep destroys this, and can have swept the Zig::GlobalObject cell before.
     Bun::SourceMapRegistration m_sourceMap;
 };
 

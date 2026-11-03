@@ -620,8 +620,7 @@ pub struct ByteRangeMapping {
     pub source_url: Utf8Bytes<'static>,
     /// `bun test --aot --coverage`: JSC has compiled no text of the file, or not every time it was loaded.
     compiled: Option<CompiledCounts>,
-    /// Of the text. `SavedSourceMap` holds a map as long as a `SourceProvider` of the text lives, and the report
-    /// is made when many are gone.
+    /// Of the text, kept here: `SavedSourceMap` drops a map with the last `SourceProvider` of its text.
     source_map: Option<std::sync::Arc<ParsedSourceMap>>,
     /// A text whose provider reads the map when it is asked (a `// @bun` file). The report asks if it needs the map.
     unread_source_map: Option<bun_jsc::saved_source_map::SavedText>,
@@ -1075,7 +1074,7 @@ impl ByteRangeMapping {
         }
     }
 
-    /// For a file that ran as compiled code. `transpiled` is what JSC would have compiled of `text`, and `source_map` its source map.
+    /// For a file that ran as compiled code: `transpiled` is what JSC would have compiled of `text`, with `source_map`.
     /// `ranges` and `counts`: `CompiledCounts::parse`.
     pub fn add_compiled_file(
         path: &[u8],
@@ -1308,8 +1307,7 @@ extern "C" fn ByteRangeMapping__generate(
     );
 }
 
-/// The entry of the file with that text, which JSC knows under `source_id` too. The map of the text is the one
-/// that `source_provider` registered, or `source_map` when no provider holds the text.
+/// The entry of the file with that text. Its map is what `source_provider` registered, or else `source_map`.
 fn find_or_insert(
     str_: &bun_core::String,
     source_contents_str: &bun_core::String,
@@ -1327,8 +1325,7 @@ fn find_or_insert(
     let hash = bun_wyhash::hash(source_url.slice());
     let source_contents = source_contents_str.to_utf8();
     let source_hash = bun_wyhash::hash(source_contents.slice());
-    // Taken now: the provider can be gone when the report is made. What a provider has to read (a `// @bun` file
-    // reads the map it links to) waits until the report asks.
+    // Taken now: the provider can be gone when the report is made. A map that is not read yet waits for the report.
     let mut unread_source_map = None;
     let source_map = source_map.or_else(|| {
         use bun_jsc::saved_source_map::Saved;

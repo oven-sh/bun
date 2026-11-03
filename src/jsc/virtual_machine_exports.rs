@@ -265,18 +265,13 @@ pub fn get_verbose_fetch_value() -> i32 {
 // source providers; LAYERING).
 
 // HOST_EXPORT(Bun__registerSourceMap, c)
-/// `source_provider` (a `JSC::SourceProvider` whose source URL is `url`) holds the text that `source_map` (an
-/// `InternalSourceMap` blob the table owns from here on) maps back to its file.
-///
-/// # Safety
-/// `source_map` is what the caller took out of `ResolvedSource.source_map`, and nothing else owns it.
 pub unsafe fn register_source_map(
     vm: &mut VirtualMachine,
     source_provider: *const c_void,
     url: &BunString,
     source_map: *mut u8,
 ) {
-    // SAFETY: per fn contract.
+    // SAFETY: the caller took `source_map` out of `ResolvedSource.source_map`, and nothing else owns it.
     let blob = unsafe { crate::resolved_source::SourceMapBlob::from_raw(source_map) };
     vm.source_mappings
         .register_mappings(source_provider, url, blob);
@@ -300,7 +295,6 @@ pub fn add_source_provider_source_map(
 }
 
 // HOST_EXPORT(Bun__addEmbeddedSourceMap, c)
-/// `source_provider` holds a text of the standalone executable, which embeds the map of it.
 pub fn add_embedded_source_map(
     vm: &mut VirtualMachine,
     source_provider: *mut c_void,
@@ -327,13 +321,11 @@ fn load_embedded_source_map(
 }
 
 // HOST_EXPORT(Bun__removeSourceMap, c)
-/// The end of a `Bun::SourceMapRegistration`.
 pub fn remove_source_map(vm: &mut VirtualMachine, source_provider: *const c_void) {
     vm.source_mappings.remove(source_provider);
 }
 
 // HOST_EXPORT(Bun__aliasSourceMap, c)
-/// `source_provider` holds the text of `existing`. False: that one has no map.
 pub fn alias_source_map(
     vm: &mut VirtualMachine,
     source_provider: *const c_void,
@@ -343,7 +335,6 @@ pub fn alias_source_map(
 }
 
 // HOST_EXPORT(Bun__shareSourceMap, c)
-/// `source_provider` holds another text that the map of `existing` maps too. False: that one has no map.
 pub fn share_source_map(
     vm: &mut VirtualMachine,
     source_provider: *const c_void,

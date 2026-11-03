@@ -137,8 +137,7 @@ pub(crate) fn add_bake_source_provider_source_map(
 }
 
 // HOST_EXPORT(Bun__addDevServerSourceProvider, c)
-/// Every server patch has one URL: what was read of the patch before this one is dropped here, and read again if a
-/// position in that patch is asked for.
+/// Every server patch has one URL: this drops the map that was read for the patch before, to be read again on demand.
 pub(crate) fn add_dev_server_source_provider(
     vm: &mut VirtualMachine,
     opaque_source_provider: *mut c_void,

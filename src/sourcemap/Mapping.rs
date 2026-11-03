@@ -303,8 +303,7 @@ pub struct Lookup {
     /// Owned by default_allocator always
     /// use `get_source_code` to access this as a Slice
     pub prefetched_source_code: Option<Box<[u8]>>,
-    /// Where the code that `source_map` maps is, when `source_map` names its sources: a name is a path from there.
-    /// Not the URL that a frame shows, which a `//# sourceURL` in the code changes.
+    /// Where the mapped code is, when `source_map` names its sources as paths from there. Not the URL a frame shows.
     pub generated_url: Utf8Bytes<'static>,
 }
 

@@ -20,8 +20,7 @@ pub struct ResolvedSource {
     pub source_url: BunString,
 
     pub is_commonjs_module: bool,
-    /// `bun build --compile --sourcemap`: the executable embeds the source map of `source_code`, and
-    /// `Zig::SourceProvider` registers it to be read when a position is first asked for.
+    /// The executable embeds the source map of `source_code` (`bun build --compile --sourcemap`).
     pub has_embedded_source_map: bool,
     /// `bun build --compile`: `StringImpl::hash()` of `source_code`, computed at build time (0 = not known).
     pub source_code_hash: u32,
@@ -49,8 +48,7 @@ pub struct ResolvedSource {
     pub bytecode_cache: Bytecode,
     /// `Zig::SourceProvider` takes it (nulling the field).
     pub module_info: Option<Box<ModuleInfoDeserialized>>,
-    /// The map from `source_code` back to the file, when Bun printed `source_code`. `Zig::SourceProvider` takes it
-    /// (nulling the field) and registers it in `SavedSourceMap` as the map of its text.
+    /// The source map of `source_code`, when Bun printed it. `Zig::SourceProvider` takes it (nulling the field).
     pub source_map: SourceMapBlob,
     /// The file path whose `file://` URL is this module's source origin (what `import()` resolves against and what a
     /// bytecode cache is validated against). Empty: derived from `source_url` (a builtin gets a `builtin://` origin).
@@ -86,8 +84,7 @@ impl ResolvedSource {
     }
 }
 
-/// `ResolvedSource.source_map`: C++ sees one `void*`, the first byte of an `InternalSourceMap` blob that the field
-/// owns (a `Box<[u8]>::into_raw`), or null.
+/// `ResolvedSource.source_map`: to C++ a `void*`, the first byte of an `InternalSourceMap` blob that it owns, or null.
 #[repr(transparent)]
 pub struct SourceMapBlob(*mut u8);
 
@@ -98,18 +95,15 @@ impl Default for SourceMapBlob {
 }
 
 impl SourceMapBlob {
-    /// What the printer or the transpiler cache hands over. Readers trust a blob's header, so one that is not valid
-    /// is dropped here.
+    /// What the printer or the transpiler cache hands over. A blob with an invalid header is dropped: readers trust it.
     pub fn new(blob: Vec<u8>) -> Self {
         if !InternalSourceMap::is_valid_blob(&blob) {
             return Self::default();
         }
-        // `into_boxed_slice` keeps the allocation when the capacity is the length, which is how both producers
-        // build it (1.38 MB for `_tsc.js`'s cached map).
+        // `into_boxed_slice` keeps the allocation when the capacity is the length, as both producers build it.
         Self(bun_core::heap::into_raw(blob.into_boxed_slice()).cast::<u8>())
     }
 
-    /// # Safety
     /// `blob` is what C++ took out of `ResolvedSource.source_map`, and nothing else owns it.
     pub(crate) unsafe fn from_raw(blob: *mut u8) -> Self {
         Self(blob)

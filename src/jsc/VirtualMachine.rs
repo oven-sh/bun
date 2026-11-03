@@ -3150,9 +3150,7 @@ pub struct RuntimeHooks {
     /// `UnsafeCell` singleton accessor (NOT by downcasting the resolver trait
     /// object — that shared-ref provenance is read-only and forming `&mut`
     /// from it would be UB) and returns the lazily-decoded map (already
-    /// strong-ref'd via the returned `Arc`). `SavedSourceMap` calls it once
-    /// for a text of the graph whose `SourceProvider` registered the map
-    /// (`Bun__addEmbeddedSourceMap`), and keeps the result.
+    /// strong-ref'd via the returned `Arc`). `SavedSourceMap` calls it once per text and keeps the result.
     pub load_standalone_sourcemap:
         fn(path: &[u8]) -> Option<std::sync::Arc<bun_sourcemap::ParsedSourceMap>>,
     /// `TestReporterAgent.retroactivelyReportDiscoveredTests(agent, next_test_id)`.
@@ -4071,11 +4069,7 @@ pub fn process_fetch_log(
 // SourceMapHandlerGetter
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Receives the source map of one print: `get()` returns the erased
-/// `js_printer::SourceMapHandler` for it, and `take_source_map()` the map,
-/// which goes into the `ResolvedSource` beside the text it describes. With a
-/// debugger attached the handler also appends the map to the text (the
-/// inline-sourcemap path).
+/// Receives the source map of one print: `take_source_map()` gives it to the `ResolvedSource` of the printed text.
 ///
 /// Note: we keep raw pointers + a `PhantomData<&'a mut ()>` so the getter's lifetime
 /// is tied to the `&'a mut VirtualMachine` it was built from in
@@ -4111,8 +4105,7 @@ impl<'a> SourceMapHandlerGetter<'a> {
         }
     }
 
-    /// The map of what was printed, once the print is done. The text's `ResolvedSource` carries it to the
-    /// `SourceProvider` that will hold the text.
+    /// The map of what was printed, once the print is done.
     #[inline]
     pub fn take_source_map(&mut self) -> crate::resolved_source::SourceMapBlob {
         core::mem::take(&mut self.source_map)
@@ -4148,8 +4141,7 @@ impl<'a> SourceMapHandlerGetter<'a> {
     pub fn get(&mut self) -> bun_js_printer::SourceMapHandler<'_> {
         // Take the inline-sourcemap path only when a
         // debugger is present AND it is *not* in `.connect` mode — `.connect`
-        // (VSCode-extension) clients fall through to the fast-path handler,
-        // which only keeps the map.
+        // (VSCode-extension) clients fall through to the handler that only keeps the map.
         let wants_inline_source_map = matches!(
             self.vm_debugger(),
             Some(d) if d.mode != crate::debugger::Mode::Connect
@@ -7222,8 +7214,7 @@ impl VirtualMachine {
                     // Avoid printing "export default 'native'"
                     break 'code bun_core::Utf8Bytes::EMPTY;
                 }
-                // The file under the name of the frame is not the text of the frame when another text registered
-                // under that name after it, or, for a position that only a copied stack has, when none is registered.
+                // Not the text of the frame when a newer text registered under its name, or none for a copied stack.
                 let top_provider = frames[top].source_provider.provider();
                 if (!top_provider.is_null()
                     || frames[top]
@@ -8234,9 +8225,7 @@ impl VirtualMachine {
         let _ = writer.flush();
     }
 
-    /// Looks up the source-map mapping for `line:column` of the text that `source_provider` holds. A position with
-    /// [`SourceFlags::BY_URL`](crate::zig_stack_frame::SourceFlags::BY_URL) has no provider: `source_url` is what
-    /// its frame has as the URL.
+    /// Looks up the mapping for `line:column` of the text that `source_provider` holds (by `source_url` for `BY_URL`).
     pub(crate) fn resolve_source_mapping(
         &mut self,
         source_provider: crate::saved_source_map::Provider,

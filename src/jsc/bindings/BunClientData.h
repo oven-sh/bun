@@ -272,11 +272,9 @@ public:
     // Their GCRequest::didFinishEndPhase, made once (JSC__VM__collectAsyncIdle).
     RefPtr<WTF::SharedTask<void()>> idleCollectionDidFinish;
 
-    // Set while Bun has the parser read a text. A SyntaxError of the parser says which URL and line it is about and not
-    // which text, and a text can be named after a file whose source map maps another text (Zig::setSourceOfParserError).
+    // The text Bun has the parser read. A parser's SyntaxError names a URL and no text (Zig::setSourceOfParserError).
     JSC::SourceProvider* sourceBeingParsed { nullptr };
-    // The innermost Bun::SourceMapHandoff (ZigSourceProvider.h), for the length of one call of an overridden
-    // module._compile.
+    // The innermost Bun::SourceMapHandoff, for the length of one call of an overridden module._compile.
     Bun::SourceMapHandoff* sourceMapHandoff { nullptr };
 
     void* bunVM;

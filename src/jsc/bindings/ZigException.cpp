@@ -684,10 +684,7 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
                 String url = sourceURL.toWTFString(global);
                 if (!scope.clearExceptionExceptTermination()) [[unlikely]]
                     return;
-                // An error gets here when no frame can be read back out of its stack: the stack is empty, or its first
-                // line has no function name. Its position is one in the text that JavaScriptCore ran or parsed in two
-                // cases: a parser gave it to a SyntaxError, or nothing in this VM maps a stack when it is made (the VM
-                // that `bun build --app` renders in). Every other position is final (see `remapped` below).
+                // A parser's position, and one of a VM that maps no stack when it is made, is a position in the text.
                 positionIsInCode = err->isParseError() || !vm.onComputeErrorInfo();
                 if (positionIsInCode)
                     Zig::setSourceByURL(except.stack.frames_ptr[0], url);
@@ -732,9 +729,7 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
             }
 
             except.stack.frames_len = 1;
-            // The line and column of an error of this realm were mapped when its stack was made: by a collection, or
-            // before structuredClone() or postMessage() copied them. An error of another realm (node:vm) names a
-            // place in a text that can have the name of any file.
+            // The position of an error of this realm was mapped when its stack was made. One of another realm was not.
             except.stack.frames_ptr[0].remapped = hasOriginalLine || (!positionIsInCode && err->globalObject() == global);
         }
     }

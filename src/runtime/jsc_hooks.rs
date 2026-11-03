@@ -5187,7 +5187,7 @@ fn transpile_error_value(
     }
 }
 
-/// What `bun test --coverage` runs of the file at `path` with the text `source`: what the transpiler prints, with its source map.
+/// What `bun test --coverage` runs of the file at `path` with the text `source`: the transpiler's output and its map.
 pub(crate) fn transpile_as_loaded(
     global: &JSGlobalObject,
     path: &[u8],

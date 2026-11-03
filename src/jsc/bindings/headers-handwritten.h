@@ -156,8 +156,7 @@ typedef struct ResolvedSource {
     uint32_t bytecode_cache_entry_offset;
     // Owned; Zig::SourceProvider takes it (nulling the field).
     bun_ModuleInfoDeserialized* module_info;
-    // Owned: the map from source_code back to the file, when Bun printed source_code. Zig::SourceProvider::create takes it
-    // (nulling the field) and registers it as the map of its text (Bun__registerSourceMap).
+    // Owned: the map from source_code back to the file. Zig::SourceProvider::create takes it (nulling the field).
     void* source_map;
     // File path whose file:// URL is the source origin (what import() resolves against, what a bytecode cache is
     // validated against). If empty, origin is derived from source_url.
@@ -245,11 +244,9 @@ typedef struct ZigStackFramePosition {
 
 // How the text that ZigStackFrame::position is a position in is found. SourceFlags in src/jsc/ZigStackFrame.rs.
 enum ZigStackFrameSource : uint8_t {
-    // A position the parser reported: it comes with a source URL and no provider. The text is that of the provider
-    // with a source map that registered last among those that have the URL.
+    // A parser's position, with a URL and no provider: the text that registered a source map last under the URL.
     ZigStackFrameSourceByURL = 1 << 0,
-    // A position that was mapped when its error's stack became a string, and no frame says from which text. The file
-    // under the source URL holds that text if a text is registered under the URL.
+    // A position that was mapped when its error's stack became a string: no frame says from which text of the URL.
     ZigStackFrameSourceIfRegistered = 1 << 1,
 };
 
@@ -263,9 +260,7 @@ typedef struct ZigStackFrame {
     // ZigStackFrameSource bits.
     uint8_t source_flags;
     int32_t jsc_stack_frame_index;
-    // The provider that holds the frame's code: what its source map is registered under. Ref'd (Zig::setSource): the
-    // code can be collected before the position is mapped, and the address of a provider that is gone can be that of
-    // another one. Null: no provider is known, and the position is not mapped.
+    // The provider of the frame's code, which its source map is registered under. Ref'd (Zig::setSource). Null: no map.
     JSC::SourceProvider* source_provider;
 
     ZigStackFrame()
@@ -516,8 +511,7 @@ bool Bun__deepMatch(
 
 extern "C" void Bun__remapStackFramePositions(void*, ZigStackFrame*, size_t);
 
-// SavedSourceMap (src/jsc/SavedSourceMap.rs): the source maps of a VM, each under the provider that holds the mapped
-// text. Only Bun::SourceMapRegistration calls these. `url` is the provider's source URL.
+// SavedSourceMap (src/jsc/SavedSourceMap.rs). Only Bun::SourceMapRegistration calls these, with the provider's URL.
 extern "C" void Bun__registerSourceMap(void* bunVM, const JSC::SourceProvider*, const BunString* url, void* sourceMap);
 extern "C" void Bun__removeSourceMap(void* bunVM, const JSC::SourceProvider*);
 // The provider holds the text of `existing`. False: that one has no map.
@@ -578,8 +572,7 @@ private:
     WTF::Vector<ZigStackFrame, 8> m_frames;
 };
 
-// A provider's entry in SavedSourceMap. The entry leaves the table when this is destroyed, so a provider holds it as
-// its last member: the entry is gone before anything that the table reads of the provider is.
+// A provider's entry in SavedSourceMap, removed when this is destroyed. A provider holds it as its last member.
 class [[nodiscard]] SourceMapRegistration {
     WTF_MAKE_NONCOPYABLE(SourceMapRegistration);
 
@@ -611,8 +604,7 @@ public:
         return SourceMapRegistration(bunVM, &provider);
     }
 
-    // `add`: the Bun__add* function of a provider that reads the map of its text itself, when a position is first
-    // asked for.
+    // `add`: the Bun__add* function of a provider that reads the map of its text when a position is first asked for.
     template<typename Provider>
     static SourceMapRegistration lazy(void (*add)(void*, Provider*, const BunString*), void* bunVM, std::type_identity_t<Provider>& provider)
     {

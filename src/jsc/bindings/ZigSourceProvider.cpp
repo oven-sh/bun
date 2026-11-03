@@ -57,7 +57,7 @@ void addCodeCoverageSourceID(JSC::VM& vm, JSC::SourceProvider& provider)
 extern "C" bool BunTest__shouldGenerateCodeCoverage(const BunString* sourceURL);
 // A `// @bun` file: the map its text links to is read when a position in it is first asked for.
 extern "C" void Bun__addSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, const BunString* url);
-// A file of a standalone executable: the map that the executable embeds is read when a position in it is first asked for.
+// A file of a standalone executable: the embedded map is read when a position in it is first asked for.
 extern "C" void Bun__addEmbeddedSourceMap(void* bun_vm, const JSC::SourceProvider*, const BunString* url);
 
 Ref<SourceProvider> SourceProvider::create(
@@ -130,8 +130,7 @@ Ref<SourceProvider> SourceProvider::create(
 
     auto provider = getProvider();
 
-    // The map of this text belongs to this provider: a frame finds it by the provider of its code, never by the name of
-    // the file. Coverage takes it below.
+    // A frame finds the map of this text by the provider of its code, never by the name of the file.
     void* bunVM = globalObject->bunVM();
     if (void* sourceMap = std::exchange(resolvedSource.source_map, nullptr))
         provider->m_sourceMap = Bun::SourceMapRegistration::printed(bunVM, provider.get(), sourceMap);
@@ -208,8 +207,7 @@ SourceMapHandoff::~SourceMapHandoff()
 
 namespace {
 
-// A text that an overridden module._compile compiles of the file Bun's loader handed to it. It has the map of what
-// was handed over, as a Zig::SourceProvider has the map of its text.
+// What an overridden module._compile compiles of the file that the loader handed to it, with the map of that file.
 class HandedOffSourceProvider final : public JSC::StringSourceProvider {
 public:
     static Ref<HandedOffSourceProvider> create(const String& text, const JSC::SourceOrigin& origin, String&& url, JSC::SourceTaintedness taintedness, const TextPosition& position, JSC::SourceProviderSourceType type)
@@ -234,7 +232,7 @@ Ref<JSC::SourceProvider> providerOfCompiledText(JSC::VM& vm, JSC::JSCell* module
     for (SourceMapHandoff* handoff = clientData->sourceMapHandoff; handoff; handoff = handoff->m_previous) {
         if (handoff->m_module != module)
             continue;
-        // Another name is another text: a helper that the hook compiles on the module, or what the file compiles itself.
+        // Another name is another text: a helper the hook compiles on the module, or what the file compiles itself.
         if (handoff->m_filename != filename)
             break;
         Ref provider = HandedOffSourceProvider::create(text, origin, WTF::move(filename), taintedness, TextPosition(), JSC::SourceProviderSourceType::Program);

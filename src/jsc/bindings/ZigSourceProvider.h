@@ -72,9 +72,7 @@ private:
     RefPtr<JSC::CachedBytecode> m_cachedBytecode;
     Ref<WTF::StringImpl> m_source;
     unsigned m_hash = 0;
-    // The source map of this text, when it has one. Last: it leaves the table before m_source goes. It holds the Bun
-    // VM itself (not the creating global), so that this stays valid when the provider outlives its global under
-    // --isolate caching.
+    // Last member: the entry leaves the table before m_source goes. Holds the Bun VM, which outlives the global.
     Bun::SourceMapRegistration m_sourceMap;
 };
 
@@ -82,17 +80,12 @@ private:
 
 namespace Bun {
 
-// While Bun's loader hands a file that it transpiled to an overridden module._compile (JSCommonJSModule::
-// evaluateWithPotentiallyOverriddenCompile). Node hands such a hook the text of the file. Bun hands it what the
-// transpiler printed, and no Zig::SourceProvider holds that text, so its map goes to the provider of what the override
-// compiles for the module under the name of the file (providerOfCompiledText). A hook that keeps every line where it
-// is gets the positions of the file that way.
+// Gives the loader's map to what an overridden module._compile compiles for `module` as `filename`, while it is called.
 class SourceMapHandoff {
     WTF_MAKE_NONCOPYABLE(SourceMapHandoff);
 
 public:
-    // `module` is the JSCommonJSModule that is being loaded, and `filename` what the override is called with. Takes
-    // `sourceMap` (ResolvedSource::source_map).
+    // Takes `sourceMap` (ResolvedSource::source_map).
     SourceMapHandoff(JSC::VM&, JSC::JSCell* module, const String& filename, void* sourceMap);
     ~SourceMapHandoff();
 
@@ -105,14 +98,11 @@ private:
     String m_filename;
     // Until a provider takes it.
     void* m_sourceMap;
-    // The provider that took it. What the module compiles after it under the name of the file has that map too: a hook
-    // that compiles again after a SyntaxError.
+    // The provider that took it. A later compile of the module under that name shares its map.
     RefPtr<JSC::SourceProvider> m_first;
 };
 
-// The provider of the text that module._compile(text, filename) is called with on `module`. The name says nothing of
-// the text: a file of that name may be loaded, and its source map maps another text. So the provider has no source map,
-// unless Bun's loader is handing `module` to the module._compile that makes this call.
+// The provider of module._compile(text, filename) on `module`. It has a source map only inside a SourceMapHandoff.
 Ref<JSC::SourceProvider> providerOfCompiledText(JSC::VM&, JSC::JSCell* module, const String& text, const JSC::SourceOrigin&, String filename, JSC::SourceTaintedness);
 
 // JSC's bytecode encoder aborts on a string of 2^27 or more characters unless it encodes against a string table.

@@ -907,8 +907,7 @@ pub struct File {
     pub loader: Loader,
     pub contents: &'static ZStr,
     pub sourcemap: LazySourceMap,
-    /// Whether the executable has a source map of this file. Unlike `sourcemap`, never written after the graph is
-    /// made, so any thread reads it.
+    /// Whether the executable has a source map of this file. Never written after the graph is made, unlike `sourcemap`.
     pub has_sourcemap: bool,
     /// VM-independent `webcore::Blob` template (store, content type, shared name); see
     /// `standalone_graph_jsc::file_blob`.

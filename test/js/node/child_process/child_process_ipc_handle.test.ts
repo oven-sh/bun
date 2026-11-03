@@ -821,6 +821,72 @@ const server = net.createServer().listen(0, '127.0.0.1', () => {
     expect(exitCode).toBe(0);
   });
 
+  // node: a disconnect() that waits for the ack of a handle leaves the channel reading, so what the
+  // other end sent meanwhile is delivered, and a handle acknowledged. The child reads nothing until
+  // its own handle is on its way, so each end gets the other's handle before the ack of its own.
+  test.concurrent.each([
+    ["the parent disconnects", "parent"],
+    ["both ends disconnect", "both"],
+  ])("handles that cross each other arrive when %s right after sending", async (_, who) => {
+    using dir = tempDir("ipc-handles-cross", {
+      "parent.js": `
+const { fork } = require('node:child_process');
+const fs = require('node:fs');
+const net = require('node:net');
+const got = [];
+const server = net.createServer().listen(0, '127.0.0.1', () => {
+  const child = fork('child.js', [process.argv[2]]);
+  child.on('message', (m, h) => {
+    got.push(h ? 'handle:' + m : m);
+    if (h) h.close();
+    if (m !== 'ready') return;
+    child.send('from-parent', server);
+    child.disconnect();
+    fs.writeFileSync('parent-disconnected', '');
+  });
+  const disconnected = new Promise(resolve => child.on('disconnect', resolve)).then(() => { got.push('disconnect'); server.close(); });
+  child.on('exit', async code => {
+    await disconnected;
+    console.log(JSON.stringify({ parent: got, child: JSON.parse(fs.readFileSync('child-got', 'utf8')), code }));
+  });
+});
+`,
+      "child.js": `
+const fs = require('node:fs');
+const net = require('node:net');
+const got = [];
+const server = net.createServer().listen(0, '127.0.0.1', () => {
+  process.send('ready', () => {
+    const deadline = Date.now() + 10_000;
+    while (!fs.existsSync('parent-disconnected') && Date.now() < deadline) {}
+    process.send('plain');
+    process.send('from-child', server);
+    if (process.argv[2] === 'both') process.disconnect();
+  });
+});
+process.on('message', (m, h) => { got.push(h ? 'handle:' + m : m); if (h) h.close(); });
+process.on('disconnect', () => { got.push('disconnect'); fs.writeFileSync('child-got', JSON.stringify(got)); server.close(); });
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js", who],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+      out: {
+        parent: ["ready", "plain", "handle:from-child", "disconnect"],
+        child: ["handle:from-parent", "disconnect"],
+        code: 0,
+      },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
   // Only a Windows pipe takes a write that is larger than its buffer in one piece, so that the parent
   // has read and acknowledged all of it before the child's event loop learns that it is written.
   test.concurrent.skipIf(!isWindows).each(["json", "advanced"])(

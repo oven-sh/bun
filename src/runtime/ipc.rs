@@ -1338,6 +1338,12 @@ impl SendQueue {
         self.close_socket_next_tick(true);
     }
 
+    /// Node's `_handleQueue !== null`: a handle of ours awaits its ack or has yet to go out.
+    fn has_unacked_handle(&self) -> bool {
+        self.waiting_for_ack.get().is_some()
+            || self.queue.get().iter().any(|item| item.handle.is_some())
+    }
+
     fn start_message(
         &self,
         global: &JSGlobalObject,
@@ -1886,10 +1892,8 @@ fn handle_ipc_message(
         }
     }
 
-    // After disconnect() nothing is delivered, as in Node, but the postponed close waits for these two.
-    if send_queue.close_after_flush.get()
-        && !matches!(internal_command, Some(IPCCommand::Ack | IPCCommand::Nack))
-    {
+    // As in Node, a disconnect() that waits for the ack of a handle still delivers, and any other delivers nothing more.
+    if send_queue.close_after_flush.get() && !send_queue.has_unacked_handle() {
         send_queue.set_incoming_fd(None);
         return Ok(());
     }

@@ -363,7 +363,7 @@ describe("spawn stdin ReadableStream", () => {
 
   // The ReadableStream -> stdin FileSink pump intentionally does not await the
   // Promise FileSink.write() returns for writes it cannot complete synchronously
-  // (a full pipe on POSIX, every pipe write on Windows). When the child dies
+  // (a full pipe). When the child dies
   // while one is in flight, the sink rejects that Promise with EPIPE; the pump
   // must mark it handled or it surfaces as an unhandled rejection in the parent.
   // Run in a child process so a stray rejection lands on its counter.

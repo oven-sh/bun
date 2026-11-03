@@ -73,15 +73,16 @@ test.concurrent("fs.promises.writeFile keeps the chunks written before the itera
   const path = dir + "/partial.bin";
   writeFileSync(path, Buffer.alloc(100_000, 7));
 
+  const stop = new Error("stop");
   await expect(
     writeFile(
       path,
       (async function* () {
         yield Buffer.alloc(10, 1);
-        throw new Error("stop");
+        throw stop;
       })(),
     ),
-  ).rejects.toThrow("stop");
+  ).rejects.toBe(stop);
 
   expect(await readFile(path)).toEqual(Buffer.alloc(10, 1));
 });
@@ -102,7 +103,7 @@ test.concurrent("fs.promises.writeFile keeps the chunks written before an abort"
       })(),
       { signal: ac.signal },
     ),
-  ).rejects.toThrow(/abort/i);
+  ).rejects.toMatchObject({ name: "AbortError", code: "ABORT_ERR" });
 
   expect(await readFile(path)).toEqual(Buffer.alloc(10, 1));
 });

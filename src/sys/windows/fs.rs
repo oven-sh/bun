@@ -297,7 +297,7 @@ fn lift_max_path(buf: &mut [u16], len: usize) -> Win32Result<usize> {
     if len + base < LONG_PATH || strings::has_prefix_comptime_utf16(&buf[..len], b"\\\\?\\") {
         return Ok(len);
     }
-    // The object manager's spelling of that prefix, which `CreateDirectoryW` for one does not know.
+    // Another spelling of that prefix, which `CreateDirectoryW` for one does not know.
     if strings::has_prefix_comptime_utf16(&buf[..len], b"\\??\\") {
         buf[1] = u16::from(b'\\');
         return Ok(len);

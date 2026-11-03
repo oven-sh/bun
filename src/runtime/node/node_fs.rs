@@ -7587,6 +7587,10 @@ impl NodeFS {
 
             let target_path = args.target_path.slice();
             let new_path = args.new_path.slice();
+            let too_long = || {
+                sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::symlink)
+                    .with_path_dest(target_path, new_path)
+            };
             // Note: to_buf and sync_error_buf hold intermediate states, but the
             // ending state is:
             //    - new_path is in &sync_error_buf
@@ -7603,15 +7607,15 @@ impl NodeFS {
                         Err(_) => panic!("failed to resolve current working directory"),
                     };
                     let dir = bun_core::dirname(new_path).unwrap_or(new_path);
-                    let src_len =
-                        paths::resolve_path::join_abs_string_buf::<paths::platform::Windows>(
-                            &to_buf[..cwd_len],
-                            &mut self.sync_error_buf[..],
-                            &[dir, target_path],
-                        )
-                        .len();
-                    self.sync_error_buf[src_len] = 0;
-                    let src_z = ZStr::from_buf(&self.sync_error_buf[..], src_len);
+                    let Some(src_z) = paths::resolve_path::join_abs_string_buf_z_checked::<
+                        paths::platform::Windows,
+                    >(
+                        &to_buf[..cwd_len],
+                        &mut self.sync_error_buf[..],
+                        &[dir, target_path],
+                    ) else {
+                        return Err(too_long());
+                    };
                     break 'auto_detect match sys::directory_exists_at(FD::INVALID, src_z) {
                         Err(_) => SymlinkKind::File,
                         Ok(is_dir) => {
@@ -7643,11 +7647,16 @@ impl NodeFS {
                         Err(_) => panic!("failed to resolve current working directory"),
                     };
                     let dir = bun_core::dirname(new_path).unwrap_or(new_path);
-                    let joined = paths::resolve_path::join_abs_string_buf::<paths::platform::Windows>(
+                    let room = self.sync_error_buf.len() - 1;
+                    let Some(joined) = paths::resolve_path::join_abs_string_buf_checked::<
+                        paths::platform::Windows,
+                    >(
                         &to_buf[..cwd_len],
-                        &mut self.sync_error_buf[4..],
+                        &mut self.sync_error_buf[4..room],
                         &[dir, target_path],
-                    );
+                    ) else {
+                        return Err(too_long());
+                    };
                     let has_prefix = joined.starts_with(&paths::windows::LONG_PATH_PREFIX_U8);
                     let unprefixed = if has_prefix { &joined[4..] } else { joined };
                     let separators_at_the_end = unprefixed.len()

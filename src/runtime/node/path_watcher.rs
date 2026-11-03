@@ -2068,7 +2068,7 @@ impl Windows {
                 return true;
             }
             at += next as usize;
-            if !at.is_multiple_of(size_of::<u32>()) || at >= len {
+            if at < name_end || !at.is_multiple_of(size_of::<u32>()) || at >= len {
                 return false;
             }
         }

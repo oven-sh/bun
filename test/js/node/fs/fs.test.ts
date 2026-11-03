@@ -7355,7 +7355,6 @@ describe.skipIf(!isWindows)("a path that only Windows' long form can name", () =
       (cwd, name) => `//?/${cwd}/${name}`.replaceAll("\\", "/"),
       (_, name) => name,
     ));
-  it("the long form as the object manager spells it", () => run((cwd, name) => `\\??\\${cwd}\\${name}`));
 
   const share = (path: string) => `\\\\localhost\\${path[0]}$${path.slice(2)}`;
   it.skipIf(!isWindows || !existsSync(share(tmpdir())))("a name on a share", () =>

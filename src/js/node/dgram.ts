@@ -332,25 +332,45 @@ interface UDPHandle {
 
 // The async context of createSocket(), for a handle whose native socket is not open yet. node makes the UDP handle there, and what that handle delivers ('message', a receive error) runs in it: https://github.com/nodejs/node/blob/v26.3.0/lib/dgram.js#L143
 const handleFrames = new WeakMap<UDPHandle, object | null>();
+// The same for a handle that a Bun.ModuleGraph made, for a bind by that graph. The frame holds its graph, so the graph is a weak key: a handle that the host holds keeps no graph through its frame.
+const graphHandleFrames = new WeakMap<object, WeakMap<UDPHandle, object>>();
 // The async context of a queued send() that has a callback, where node makes the request that it completes (https://github.com/nodejs/node/blob/v26.3.0/lib/dgram.js#L738). Not a field of the queue entry: with a frame in one, an ahead-of-time build of a program that can reach send() loses the types of its AsyncLocalStorage stores (test/aot/a-saved-async-context-keeps-no-method-of-a-store-that-nothing-calls.test.ts).
 const queuedSendFrames = new WeakMap<SendRequest, object>();
 
-// Whether a frame of a Bun.ModuleGraph is in the async context `frame`, under a frame that leaves a graph too. A handle that kept such a context would keep the graph: it keeps null, and bind() opens its socket in the context of bind().
-function hasFrameOfModuleGraph(frame: any) {
+// How many frames of the async context `frame` are a Bun.ModuleGraph's, up to two. A handle that kept a context with such a frame would keep the graph.
+function framesOfModuleGraphs(frame: any) {
   const AsyncContextFrame = require("internal/async_context_frame");
   // graphOf() walks down from the frame it gets, so it gets each frame alone, with no `prev`: one pass over the context.
   const alone: { storage: unknown } = { storage: undefined };
-  for (; frame !== undefined; frame = frame.prev) {
+  let graphs = 0;
+  for (; frame !== undefined && graphs < 2; frame = frame.prev) {
     alone.storage = frame.storage;
-    if (AsyncContextFrame.graphOf(alone) !== undefined) return true;
+    if (AsyncContextFrame.graphOf(alone) !== undefined) graphs++;
   }
-  return false;
+  return graphs;
 }
 
-// Bun.udpSocket() takes the socket's Bun.ModuleGraph from the async context, so a socket that a graph binds opens in the context of bind(): it stays the binder's.
-function openInFrameOfHandle(frame: unknown, udpOptions: any) {
+// `frame` is the current async context. With a graph's frame in it the handle keeps null, and the graph that makes the handle keeps the frame. Not with the frames of two graphs in it: the weak key names one.
+function saveFrameOfHandle(handle: UDPHandle, frame: object) {
+  const graphs = framesOfModuleGraphs(frame);
+  WeakMapPrototypeSet.$call(handleFrames, handle, graphs === 0 ? frame : null);
+  if (graphs !== 1) return;
+  const graph = require("internal/async_context_frame").currentGraph();
+  if (graph === undefined) return;
+  let frames = WeakMapPrototypeGet.$call(graphHandleFrames, graph);
+  if (frames === undefined) WeakMapPrototypeSet.$call(graphHandleFrames, graph, (frames = new WeakMap()));
+  WeakMapPrototypeSet.$call(frames, handle, frame);
+}
+
+// Bun.udpSocket() takes the socket's Bun.ModuleGraph from the async context, so only the maker opens the socket in the context of createSocket(): the host, or the graph that made the handle. Any other caller opens it in the context of bind(), and the socket stays the binder's.
+function openInFrameOfHandle(handle: UDPHandle, frame: object | null | undefined, udpOptions: any) {
   const AsyncContextFrame = require("internal/async_context_frame");
-  if (AsyncContextFrame.currentGraph() !== undefined) return Bun.udpSocket(udpOptions);
+  const graph = AsyncContextFrame.currentGraph();
+  if (graph !== undefined) {
+    const frames = frame === null ? WeakMapPrototypeGet.$call(graphHandleFrames, graph) : undefined;
+    frame = frames === undefined ? undefined : WeakMapPrototypeGet.$call(frames, handle);
+    if (frame === undefined || frame === $getInternalField($asyncContext, 0)) return Bun.udpSocket(udpOptions);
+  } else if (frame === null) return Bun.udpSocket(udpOptions);
   // Not through AsyncContextFrame.run(), here and in completeQueuedSend(): with it the share of functions that an ahead-of-time executable and its test run compile to the same bytes falls from 65% to 55% for a fastify server that imports node:child_process (test/aot/servers measures that share).
   const previous = AsyncContextFrame.exchange(frame);
   try {
@@ -397,7 +417,7 @@ function newHandle(type: string, lookup: LookupFunction | undefined) {
   handle.onmessage = onMessage;
 
   const frame = $getInternalField($asyncContext, 0);
-  if (frame !== undefined) WeakMapPrototypeSet.$call(handleFrames, handle, hasFrameOfModuleGraph(frame) ? null : frame);
+  if (frame !== undefined) saveFrameOfHandle(handle, frame);
 
   return handle;
 }
@@ -968,9 +988,9 @@ function startBunSocket(
     const handle = state.handle!;
     const frame = WeakMapPrototypeGet.$call(handleFrames, handle);
     const opened =
-      sharedHandle !== undefined || frame === null || frame === $getInternalField($asyncContext, 0)
+      sharedHandle !== undefined || frame === $getInternalField($asyncContext, 0)
         ? Bun.udpSocket(udpOptions)
-        : openInFrameOfHandle(frame, udpOptions);
+        : openInFrameOfHandle(handle, frame, udpOptions);
     (opened as Promise<$Node.UDPSocketHandle>).$then(
       (socket: $Node.UDPSocketHandle) => {
         // The native socket has the context it runs in, so a bound handle needs its frame no more. Until a bind succeeds, the handle keeps it.

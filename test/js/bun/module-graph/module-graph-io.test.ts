@@ -639,34 +639,47 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
     });
   });
 
-  // node:dgram opens a socket in bind(), inside the async context of createSocket(): 'message' then runs in the
-  // AsyncLocalStorage store node runs it in. Not where a graph is involved. The socket is of the graph whose script
-  // binds it, because Bun.udpSocket() takes the owner from the async context, and a handle that kept a context with
-  // a frame of a graph in it would keep that graph. So when a graph made the socket or binds it, bind() opens it in
-  // its own context: every row reads "bind()", as it did before.
-  test("a node:dgram socket is of the graph that binds it, and 'message' reads the store of bind()", async () => {
+  // node:dgram opens a socket in bind(). The socket is of the graph whose script binds it, because Bun.udpSocket()
+  // takes the owner from the async context. When that graph also made the socket, bind() opens it in the async
+  // context of createSocket(): 'message' then reads the stores that node reads. Any other binder opens it in its own
+  // context, and 'message' reads the stores of bind(), as before. So does a graph that was entered from another
+  // graph: its frame holds both graphs, and node:dgram keeps a frame only behind the one graph it is of.
+  test("a node:dgram socket is of the graph that binds it, and 'message' reads the stores of createSocket() when that graph made it", async () => {
     const storage = new AsyncLocalStorage<string>();
-    type Where = "A" | "B" | "the host";
-    async function layout(madeIn: Where, boundIn: Where, { disposeMakerFirst = false } = {}) {
+    // What the host is in when it enters the graph that binds.
+    const request = new AsyncLocalStorage<string>();
+    type Where = "A" | "B" | "B inside A" | "the host";
+    async function layout(madeIn: Where, boundIn: Where, { disposeMakerFirst = false, createInStore = true } = {}) {
       const graphs = { A: new Bun.ModuleGraph(), B: new Bun.ModuleGraph() };
-      const enter = <T>(where: Where, fn: () => T): T => (where === "the host" ? fn() : graphs[where].run(fn));
+      const enter = <T>(where: Where, fn: () => T): T =>
+        where === "the host"
+          ? fn()
+          : where === "B inside A"
+            ? graphs.A.run(() => graphs.B.run(fn))
+            : graphs[where].run(fn);
       const nameOf = (graph: unknown) => (graph === graphs.A ? "A" : graph === graphs.B ? "B" : "the host");
-      const socket = enter(madeIn, () => storage.run("createSocket()", () => dgram.createSocket("udp4")));
+      const create = () => dgram.createSocket("udp4");
+      const socket = enter(madeIn, () => (createInStore ? storage.run("createSocket()", create) : create()));
       const sender = dgram.createSocket("udp4");
       try {
         if (disposeMakerFirst) graphs.A.dispose();
-        enter(boundIn, () => storage.run("bind()", () => socket.bind(0, "127.0.0.1")));
+        request.run("the request", () =>
+          enter(boundIn, () => storage.run("bind()", () => socket.bind(0, "127.0.0.1"))),
+        );
         await once(socket, "listening");
-        const message = Promise.withResolvers<{ store: string; graph: string }>();
+        const message = Promise.withResolvers<{ stores: string; graph: string }>();
         socket.on("error", message.reject);
         sender.on("error", message.reject);
         socket.on("message", () =>
-          message.resolve({ store: String(storage.getStore()), graph: nameOf(Bun.ModuleGraph.current) }),
+          message.resolve({
+            stores: `${storage.getStore()}, ${request.getStore()}`,
+            graph: nameOf(Bun.ModuleGraph.current),
+          }),
         );
         // dispose() closes the sockets of its graph at once, and the native socket says so.
         const native = socket[kStateSymbol].handle.socket;
         sender.send("x", socket.address().port, "127.0.0.1");
-        const { store, graph } = await message.promise;
+        const { stores, graph } = await message.promise;
         // 'message' is a callback of the binder's socket. A test that ends inside it, after dispose(), leaves the runner
         // inside a disposed graph, and the runner does not call the tests that it starts from there.
         await hostTimerTurns(1);
@@ -674,7 +687,7 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
         const closedByA: boolean = native.closed;
         graphs.B.dispose();
         const closedBy = closedByA ? "A" : native.closed ? "B" : "nobody";
-        return { "'message' reads": store, "'message' runs in": graph, "closed by the dispose() of": closedBy };
+        return { "'message' reads": stores, "'message' runs in": graph, "closed by the dispose() of": closedBy };
       } finally {
         graphs.A.dispose();
         graphs.B.dispose();
@@ -682,38 +695,145 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
         sender.close();
       }
     }
+    const ofCreateSocket = "createSocket(), undefined";
+    const ofBind = "bind(), the request";
     expect({
       "made and bound in one graph": await layout("A", "A"),
+      "made in a graph in no store, bound in that graph": await layout("A", "A", { createInStore: false }),
+      "made in a graph, bound in it from inside another graph": await layout("B", "B inside A"),
+      "made and bound in a graph that was entered from another graph": await layout("B inside A", "B inside A"),
       "made in one graph, bound in another": await layout("A", "B"),
       "made in a graph, bound by the host": await layout("A", "the host"),
       "made by the host, bound in a graph": await layout("the host", "A"),
     }).toEqual({
       "made and bound in one graph": {
-        "'message' reads": "bind()",
+        "'message' reads": ofCreateSocket,
         "'message' runs in": "A",
         "closed by the dispose() of": "A",
       },
+      "made in a graph in no store, bound in that graph": {
+        "'message' reads": "undefined, undefined",
+        "'message' runs in": "A",
+        "closed by the dispose() of": "A",
+      },
+      "made in a graph, bound in it from inside another graph": {
+        "'message' reads": ofCreateSocket,
+        "'message' runs in": "B",
+        "closed by the dispose() of": "B",
+      },
+      "made and bound in a graph that was entered from another graph": {
+        "'message' reads": ofBind,
+        "'message' runs in": "B",
+        "closed by the dispose() of": "B",
+      },
       "made in one graph, bound in another": {
-        "'message' reads": "bind()",
+        "'message' reads": ofBind,
         "'message' runs in": "B",
         "closed by the dispose() of": "B",
       },
       "made in a graph, bound by the host": {
-        "'message' reads": "bind()",
+        "'message' reads": ofBind,
         "'message' runs in": "the host",
         "closed by the dispose() of": "nobody",
       },
       "made by the host, bound in a graph": {
-        "'message' reads": "bind()",
+        "'message' reads": ofBind,
         "'message' runs in": "A",
         "closed by the dispose() of": "A",
       },
     });
     // What a disposed graph's code opens never settles: the bind of a socket that such a graph made is the host's.
     expect(await layout("A", "the host", { disposeMakerFirst: true })).toEqual({
-      "'message' reads": "bind()",
+      "'message' reads": ofBind,
       "'message' runs in": "the host",
       "closed by the dispose() of": "nobody",
+    });
+  });
+
+  // What createSocket() and a later 'message' read in a store, for a socket that one graph makes and binds. `arrange`
+  // calls `create` where the socket is to be made.
+  type Graph = InstanceType<typeof Bun.ModuleGraph>;
+  async function seenIn(arrange: (storage: AsyncLocalStorage<string>, graph: Graph, create: () => void) => void) {
+    const storage = new AsyncLocalStorage<string>();
+    const graph = new Bun.ModuleGraph();
+    const sender = dgram.createSocket("udp4");
+    const seen: Record<string, unknown> = {};
+    const created = Promise.withResolvers<dgram.Socket>();
+    arrange(storage, graph, () => {
+      seen["at createSocket()"] = storage.getStore();
+      created.resolve(dgram.createSocket("udp4"));
+    });
+    const socket = await created.promise;
+    try {
+      graph.run(() => storage.run("bind()", () => socket.bind(0, "127.0.0.1")));
+      await once(socket, "listening");
+      const message = Promise.withResolvers<unknown>();
+      socket.on("error", message.reject);
+      sender.on("error", message.reject);
+      socket.on("message", () => message.resolve(storage.getStore()));
+      sender.send("x", socket.address().port, "127.0.0.1");
+      seen["in 'message'"] = await message.promise;
+      // Out of the callback of the graph's socket before dispose(), as in the layouts above.
+      await hostTimerTurns(1);
+      return seen;
+    } finally {
+      socket.close();
+      sender.close();
+      graph.dispose();
+    }
+  }
+  // disable() is noted on the newest frame, and a lookup reads only the note of the frame it starts at. The newest
+  // frame can be the graph's. node:dgram keeps the frame of createSocket() as it is, with its note.
+  test("a node:dgram 'message' reads what createSocket() read when a store is disabled around a graph", async () => {
+    const store = "entered by the host";
+    expect({
+      "disabled inside the graph, before createSocket()": await seenIn((storage, graph, create) =>
+        storage.run(store, () =>
+          graph.run(() => {
+            storage.disable();
+            create();
+          }),
+        ),
+      ),
+      "disabled by the host, after the graph's script queued createSocket()": await seenIn((storage, graph, create) =>
+        storage.run(store, () => {
+          graph.run(() => void Promise.resolve().then(create));
+          storage.disable();
+        }),
+      ),
+    }).toEqual({
+      "disabled inside the graph, before createSocket()": { "at createSocket()": undefined, "in 'message'": undefined },
+      "disabled by the host, after the graph's script queued createSocket()": {
+        "at createSocket()": store,
+        "in 'message'": store,
+      },
+    });
+  });
+
+  // A disable() after createSocket(), in the same run(): Node.js deletes the store from the frame that the socket's
+  // handle has, so 'message' reads none. node:dgram keeps that frame and not a copy, so the note of disable() is on it.
+  test("a node:dgram 'message' reads no store after a disable() that follows createSocket() inside a graph", async () => {
+    const disabled = { "at createSocket()": "entered", "in 'message'": undefined };
+    expect({
+      "the store is entered inside the graph": await seenIn((storage, graph, create) =>
+        graph.run(() =>
+          storage.run("entered", () => {
+            create();
+            storage.disable();
+          }),
+        ),
+      ),
+      "the store is entered around the graph": await seenIn((storage, graph, create) =>
+        storage.run("entered", () =>
+          graph.run(() => {
+            create();
+            storage.disable();
+          }),
+        ),
+      ),
+    }).toEqual({
+      "the store is entered inside the graph": disabled,
+      "the store is entered around the graph": disabled,
     });
   });
 

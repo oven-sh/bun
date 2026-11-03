@@ -410,12 +410,13 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
     expect(await accepts(state.httpPort)).toBe(false);
   });
 
-  // node:dgram keeps the async context of createSocket() for the bind() that opens the socket, but not a context
-  // that has a frame of a graph in it. So a socket that the host holds does not keep the graph that made it. Nor does
-  // a socket of the host's keep a graph whose script was on the stack when the host made or bound it: the frame that
-  // leaves a graph links to the frame of the graph, and what else the host opens over it (Bun.udpSocket() with a
-  // handler, a timer) does keep the graph. A socket the graph bound is the graph's: its handlers hold the graph
-  // until the host closes the socket.
+  // node:dgram keeps the async context of createSocket() for the bind() that opens the socket. A context that has a
+  // frame of a graph in it is kept only behind that graph, as a weak key, for a bind by that graph. So a socket that
+  // the host holds does not keep the graph that made it. Nor does it keep a graph that the graph of createSocket()
+  // was entered from: such a frame holds both graphs, and it is not kept. Nor does a socket of the host's keep a
+  // graph whose script was on the stack when the host made or bound it: the frame that leaves a graph links to the
+  // frame of the graph, and what else the host opens over it (Bun.udpSocket() with a handler, a timer) does keep the
+  // graph. A socket the graph bound is the graph's: its handlers hold the graph until the host closes the socket.
   test("of the node:dgram sockets the host holds, only one that the graph bound keeps the graph", async () => {
     const lifetimes = new Lifetimes();
     const storage = new AsyncLocalStorage<unknown>();
@@ -440,8 +441,13 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
       expect(ranAs).toBe("the host");
       return result;
     };
+    // Graphs that the host holds to the end: a row's graph enters one of them.
+    const secondGraphs: Graph[] = [];
     const rows = [
       "made in the graph, never bound",
+      "made in the graph in no store, never bound",
+      "made in a second graph that the graph's script entered, never bound",
+      "made in a second graph that the graph's script entered, never bound, and the graph is dropped with no dispose()",
       "made in the graph, a bind by the host failed",
       "made in the graph, never bound, and the graph is dropped with no dispose()",
       "made in the graph, bound by the host",
@@ -458,6 +464,13 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
           const io = await graph.import(file("io.mjs"));
           if (row.startsWith("made in the graph in a store")) {
             sockets[row] = graph.run(() => io.dgramSocketInStoreOfTheGraph(storage));
+          } else if (row.startsWith("made in the graph in no store")) {
+            sockets[row] = graph.run(() => io.dgramSocket());
+          } else if (row.startsWith("made in a second graph")) {
+            const second = new ModuleGraph({ globals: { TAG: row, control: control() } });
+            secondGraphs.push(second);
+            const io2 = await second.import(file("io.mjs"));
+            sockets[row] = graph.run(() => second.run(() => storage.run("createSocket()", () => io2.dgramSocket())));
           } else if (row.startsWith("made in the graph")) {
             const socket = (sockets[row] = graph.run(() => storage.run("createSocket()", () => io.dgramSocket())));
             if (row.endsWith("a bind by the host failed")) expect(await bind(socket, holder.port)).toBe("EADDRINUSE");
@@ -481,6 +494,7 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
       expect(await lifetimes.survives(boundByTheGraph)).toBe(true);
     } finally {
       for (const socket of Object.values(sockets)) socket.close();
+      for (const second of secondGraphs) second.dispose();
       holder.close();
     }
     expect(await lifetimes.stillAlive(...rows)).toEqual([]);

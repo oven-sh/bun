@@ -4446,12 +4446,23 @@ impl<'a> Resolver<'a> {
                     return MatchStatus::NotFound;
                 }
 
-                self.build_exact_match(
+                let absolute_out_path: &[u8] = entry_query
+                    .entry()
+                    .abs_path_or_fill(|| {
+                        Interned::from_static(
+                            self.fs_ref()
+                                .dirname_store
+                                .append_slice(abs_esm_path)
+                                .expect("unreachable"),
+                        )
+                    })
+                    .as_bytes();
+                Self::build_exact_match(
                     resolved_dir_info,
                     dirname_fd,
                     package_json,
                     &entry_query,
-                    abs_esm_path,
+                    absolute_out_path,
                     out,
                 );
                 MatchStatus::Success
@@ -4496,28 +4507,16 @@ impl<'a> Resolver<'a> {
         ));
     }
 
-    /// Writes to `out` the match for an `exports`/`imports` target that is the file `query` names at `abs_esm_path`.
+    /// Writes to `out` the match for an `exports`/`imports` target that is the file `query` names, at `absolute_out_path`.
     #[inline(always)]
     fn build_exact_match(
-        &mut self,
         resolved_dir_info: DirInfoRef,
         dirname_fd: FD,
         package_json: &PackageJSON,
         query: &crate::fs::EntryLookup<'static>,
-        abs_esm_path: &[u8],
+        absolute_out_path: &'static [u8],
         out: &mut MatchResult,
     ) {
-        let absolute_out_path: &[u8] = query
-            .entry()
-            .abs_path_or_fill(|| {
-                Interned::from_static(
-                    self.fs_ref()
-                        .dirname_store
-                        .append_slice(abs_esm_path)
-                        .expect("unreachable"),
-                )
-            })
-            .as_bytes();
         let module_type = if let Some(pkg) = resolved_dir_info.package_json() {
             pkg.module_type
         } else {
@@ -6465,7 +6464,25 @@ impl<'a> Resolver<'a> {
                 .kind_for(asker.generation(), self.rfs_ref(), self.store_fd)
                 == Fs::file_system::EntryKind::File
             {
-                return self.index_file_match(dir_info, &base[..], &lookup, dirname_fd, out);
+                let Ok(out_buf) = lookup.entry().abs_path_or_try_fill(|| {
+                    let parts = [dir_info.abs_path, &base[..]];
+                    let out_buf_ = self
+                        .fs_ref()
+                        .abs_buf_checked(&parts, bufs!(index))
+                        .ok_or(())?;
+                    Ok::<_, ()>(Interned::from_static(
+                        self.fs_ref()
+                            .dirname_store
+                            .append_slice(out_buf_)
+                            .expect("unreachable"),
+                    ))
+                }) else {
+                    return MatchStatus::NotFound;
+                };
+                let out_buf: &[u8] = out_buf.as_bytes();
+
+                self.index_file_match(dir_info, out_buf, dirname_fd, out);
+                return MatchStatus::Success;
             }
         }
 
@@ -6492,33 +6509,15 @@ impl<'a> Resolver<'a> {
         Some(base)
     }
 
-    /// Writes to `out` the match for the index file `base` that `lookup` names in `dir_info`.
+    /// Writes to `out` the match for the index file of `dir_info`, whose path is `out_buf`.
     #[inline(always)]
     fn index_file_match(
         &mut self,
         dir_info: DirInfoRef,
-        base: &[u8],
-        lookup: &Fs::EntryLookup<'static>,
+        out_buf: &'static [u8],
         dirname_fd: FD,
         out: &mut MatchResult,
-    ) -> MatchStatus {
-        let Ok(out_buf) = lookup.entry().abs_path_or_try_fill(|| {
-            let parts = [dir_info.abs_path, base];
-            let out_buf_ = self
-                .fs_ref()
-                .abs_buf_checked(&parts, bufs!(index))
-                .ok_or(())?;
-            Ok::<_, ()>(Interned::from_static(
-                self.fs_ref()
-                    .dirname_store
-                    .append_slice(out_buf_)
-                    .expect("unreachable"),
-            ))
-        }) else {
-            return MatchStatus::NotFound;
-        };
-        let out_buf: &[u8] = out_buf.as_bytes();
-
+    ) {
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!("Found file: \"{}\"", bstr::BStr::new(out_buf)));
         }
@@ -6533,7 +6532,7 @@ impl<'a> Resolver<'a> {
                 dirname_fd,
                 ..Default::default()
             };
-            return MatchStatus::Success;
+            return;
         }
 
         *out = MatchResult {
@@ -6544,7 +6543,6 @@ impl<'a> Resolver<'a> {
             dirname_fd,
             ..Default::default()
         };
-        MatchStatus::Success
     }
 
     pub(crate) fn load_as_index_with_browser_remapping<A: Asker>(
@@ -6559,10 +6557,18 @@ impl<'a> Resolver<'a> {
         out: &mut MatchResult,
     ) -> MatchStatus {
         // In order for our path handling logic to be correct, it must end with a trailing slash.
-        let Some(path) = Self::with_trailing_separator(path_, bufs!(remap_path_trailing_slash))
-        else {
-            return MatchStatus::NotFound;
-        };
+        let mut path = path_;
+        // Hoisted to fn-body scope so the immutable reborrow taken below can outlive
+        // the `if` block without lifetime erasure; the field is not touched again in
+        // this fn (only `remap_path` is, via a separate `bufs!` raw-ptr projection).
+        let path_buf = bufs!(remap_path_trailing_slash);
+        if !strings::ends_with_char(path_, SEP) {
+            // Leave room for the separator and the NUL.
+            if path.len() + 2 > path_buf.len() {
+                return MatchStatus::NotFound;
+            }
+            path = Self::with_separator(path_buf, path);
+        }
 
         if self.care_about_browser_field {
             if let Some(browser_scope) = dir_info.get_enclosing_browser_scope() {
@@ -6641,20 +6647,13 @@ impl<'a> Resolver<'a> {
         self.load_as_index(asker, dir_info, extension_order, out)
     }
 
-    /// `path` if it ends with a separator, else a copy in `buf` that does. `None` if the copy does not fit.
+    /// Writes `path`, a separator and a NUL to `path_buf`, which has room for them. Gives the path with the separator.
     #[inline(always)]
-    fn with_trailing_separator<'b>(path: &'b [u8], buf: &'b mut PathBuffer) -> Option<&'b [u8]> {
-        if strings::ends_with_char(path, SEP) {
-            return Some(path);
-        }
-        // Leave room for the separator and the NUL.
-        if path.len() + 2 > buf.len() {
-            return None;
-        }
-        buf[..path.len()].copy_from_slice(path);
-        buf[path.len()] = SEP;
-        buf[path.len() + 1] = 0;
-        Some(&buf[..path.len() + 1])
+    fn with_separator<'b>(path_buf: &'b mut PathBuffer, path: &[u8]) -> &'b [u8] {
+        path_buf[..path.len()].copy_from_slice(path);
+        path_buf[path.len()] = SEP;
+        path_buf[path.len() + 1] = 0;
+        &path_buf[..path.len() + 1]
     }
 
     pub(crate) fn load_as_file_or_directory<A: Asker>(
@@ -7172,7 +7171,29 @@ impl<'a> Resolver<'a> {
                 .kind_for(asker.generation(), self.rfs_ref(), self.store_fd)
                 == Fs::file_system::EntryKind::File
             {
-                return Some(self.found_with_extension(&query, buffer, dirname_fd));
+                if let Some(debug) = self.debug_logs.as_mut() {
+                    debug.add_note_fmt(format_args!(
+                        "Found file \"{}\" ",
+                        bstr::BStr::new(&buffer[..])
+                    ));
+                }
+
+                // now that we've found it, we allocate it.
+                return Some(LoadResult {
+                    path: query
+                        .entry()
+                        .abs_path_or_fill(|| {
+                            Interned::from_static(
+                                self.fs_ref()
+                                    .dirname_store
+                                    .append_slice(&buffer[..])
+                                    .expect("unreachable"),
+                            )
+                        })
+                        .as_bytes(),
+                    dirname_fd,
+                    file_fd: query.entry().cache().fd,
+                });
             }
         }
 
@@ -7196,7 +7217,7 @@ impl<'a> Resolver<'a> {
         path: &[u8],
         ext: &[u8],
         dir_entry: bun_ptr::BackRef<Fs::file_system::real_fs::EntriesOption>,
-    ) -> (&'b [u8], Option<Fs::EntryLookup<'static>>, FD) {
+    ) -> (&'b mut [u8], Option<Fs::EntryLookup<'static>>, FD) {
         let buffer = &mut buf[0..path.len() + ext.len()];
         buffer[path.len()..].copy_from_slice(ext);
         let file_name = &buffer[path.len() - base.len()..buffer.len()];
@@ -7210,36 +7231,6 @@ impl<'a> Resolver<'a> {
 
         let (ext_query, dirname_fd) = dir_entry.get().lookup(file_name);
         (buffer, ext_query, dirname_fd)
-    }
-
-    /// The result for the file that `query` names, whose path with its extension is `buffer`.
-    #[inline(always)]
-    fn found_with_extension(
-        &mut self,
-        query: &Fs::EntryLookup<'static>,
-        buffer: &[u8],
-        dirname_fd: FD,
-    ) -> LoadResult {
-        if let Some(debug) = self.debug_logs.as_mut() {
-            debug.add_note_fmt(format_args!("Found file \"{}\" ", bstr::BStr::new(buffer)));
-        }
-
-        // now that we've found it, we allocate it.
-        LoadResult {
-            path: query
-                .entry()
-                .abs_path_or_fill(|| {
-                    Interned::from_static(
-                        self.fs_ref()
-                            .dirname_store
-                            .append_slice(buffer)
-                            .expect("unreachable"),
-                    )
-                })
-                .as_bytes(),
-            dirname_fd,
-            file_fd: query.entry().cache().fd,
-        }
     }
 
     fn dir_info_uncached(

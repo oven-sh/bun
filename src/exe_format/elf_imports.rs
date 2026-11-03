@@ -32,10 +32,14 @@ const VERSION_INDEX: u16 = 0x7fff;
 const R_GLOB_DAT: u32 = 6;
 #[cfg(target_arch = "x86_64")]
 const R_JUMP_SLOT: u32 = 7;
+#[cfg(target_arch = "x86_64")]
+const R_TLSDESC: u32 = 36;
 #[cfg(target_arch = "aarch64")]
 const R_GLOB_DAT: u32 = 1025;
 #[cfg(target_arch = "aarch64")]
 const R_JUMP_SLOT: u32 = 1026;
+#[cfg(target_arch = "aarch64")]
+const R_TLSDESC: u32 = 1031;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -159,7 +163,7 @@ impl Image<'_> {
             .unwrap_or(0)
     }
 
-    /// glibc stores the address of a table in the dynamic entry, musl and FreeBSD leave its offset from the base there.
+    /// The table that a dynamic entry points to. glibc adds the base in place to `DT_SYMTAB`, `DT_STRTAB`, `DT_JMPREL`, `DT_RELA` and `DT_VERSYM`, never to `DT_VERNEED`, and to no entry of an object whose `PT_DYNAMIC` is read-only. musl and FreeBSD add it to none. So each pointer is tried in both forms.
     fn table(&self, pointer: u64) -> Option<Table> {
         [pointer as usize, self.base.wrapping_add(pointer as usize)]
             .into_iter()
@@ -185,6 +189,7 @@ impl Image<'_> {
     /// Whether a slot that holds `value` has the address of a definition. An unbound slot holds 0 or points into the object, at its stub for the import, and musl (`unrelocated`) leaves there what the file has: the stub's offset from the base.
     fn is_bound(&self, value: usize, unrelocated: bool) -> bool {
         let in_object = |address| self.room(0, address) != 0;
+        // With musl a bound slot can look unbound: it holds an address in the host's image, which is not position independent, and `base + value` can lie inside a large object. The question by the name is what accepts such an import.
         value != 0
             && !in_object(value)
             && !(unrelocated && in_object(self.base.wrapping_add(value)))
@@ -304,7 +309,8 @@ pub unsafe fn unresolved_lazy_import<'a>(
         .flat_map(|table| (0..).map_while(move |index| table.element::<Elf64_Rela>(index)));
     for relocation in relocations {
         let kind = relocation.r_info as u32;
-        if kind != R_JUMP_SLOT && !(defers_got && kind == R_GLOB_DAT) {
+        // glibc before 2.27 (aarch64) and before 2.34 (x86-64) binds a thread-local import in `DT_JMPREL` at its first access: until then the first word of its descriptor points at a stub of the object.
+        if kind != R_JUMP_SLOT && kind != R_TLSDESC && !(defers_got && kind == R_GLOB_DAT) {
             continue;
         }
         let index = (relocation.r_info >> 32) as usize;
@@ -347,6 +353,8 @@ mod tests {
     const DF_BIND_NOW: u64 = 8;
     const DF_1_NOW: u64 = 1;
     const STB_WEAK: u8 = 2;
+    /// The copy relocation of each processor, which every loader applies in dlopen().
+    const R_COPY: u32 = R_GLOB_DAT - 1;
     const DYNAMIC_ENTRY: usize = 16;
     const SYMBOL: usize = 24;
     const RELOCATION: usize = 24;
@@ -425,6 +433,14 @@ mod tests {
         Import {
             relocation_type: R_GLOB_DAT,
             relocated_in: Section::RelaDyn,
+            ..import(name)
+        }
+    }
+
+    /// An import of a thread-local variable through a descriptor, which GNU ld relocates in the table of `DT_JMPREL`.
+    const fn tls_import(name: &'static str) -> Import {
+        Import {
+            relocation_type: R_TLSDESC,
             ..import(name)
         }
     }
@@ -624,6 +640,15 @@ mod tests {
 
         fn set_slot(&mut self, import: usize, value: usize) {
             self.write_u64(self.slots + import * SLOT, value as u64);
+        }
+
+        fn slot_values(&self) -> Vec<usize> {
+            let (slots, _) = self.memory[self.slots..].as_chunks::<SLOT>();
+            let imports = (self.tables_size - self.relocations) / RELOCATION;
+            slots[..imports]
+                .iter()
+                .map(|slot| usize::from_le_bytes(*slot))
+                .collect()
         }
 
         /// The address of `offset` in the memory of the object.
@@ -915,13 +940,47 @@ mod tests {
     }
 
     #[test]
-    fn ignores_a_relocation_that_is_not_a_jump_slot() {
+    fn ignores_a_relocation_that_no_loader_binds_late() {
         let data = Import {
-            relocation_type: R_JUMP_SLOT ^ 1,
+            relocation_type: R_COPY,
             ..import("data")
         };
         let object = Object::new(Linked::AtZero, Pointers::Addresses, &[data]);
         assert_eq!(object.walk(&[]), (Ok(None), vec![]));
+    }
+
+    #[test]
+    fn asks_about_a_thread_local_import_whose_descriptor_is_not_resolved() {
+        for defers_got in [false, true] {
+            let imports = [import("first"), tls_import("variable"), import("third")];
+            let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &imports);
+            object.defers_got = defers_got;
+            // The first word of a descriptor that the loader resolves at the first access points at a stub of the object, as an unbound jump slot does.
+            assert_eq!(object.slot_values()[1], object.stub(1));
+            assert_eq!(
+                object.walk(&["first", "third"]),
+                (unresolved("variable"), asked(&["first", "variable"]))
+            );
+            assert_eq!(
+                object.walk(&["first", "variable", "third"]),
+                (Ok(None), asked(&["first", "variable", "third"]))
+            );
+        }
+    }
+
+    #[test]
+    fn skips_a_thread_local_import_whose_descriptor_is_resolved() {
+        for defers_got in [false, true] {
+            let imports = [import("first"), tls_import("variable"), import("third")];
+            let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &imports);
+            object.defers_got = defers_got;
+            // A resolved descriptor starts with the address of a function of the loader.
+            object.set_slot(1, ELSEWHERE);
+            assert_eq!(
+                object.walk(&["first", "third"]),
+                (Ok(None), asked(&["first", "third"]))
+            );
+        }
     }
 
     fn asked(questions: &[&str]) -> Vec<String> {
@@ -1075,7 +1134,7 @@ mod tests {
                 ..import("own")
             },
             Import {
-                relocation_type: R_JUMP_SLOT ^ 1,
+                relocation_type: R_COPY,
                 ..import("data")
             },
         ];
@@ -1151,6 +1210,22 @@ mod tests {
         assert_eq!(
             object.walk(&["first", "old", "old@VERSION_3", "third"]),
             (Ok(None), asked(&["first", "old", "third"]))
+        );
+    }
+
+    #[test]
+    fn reads_the_version_tables_of_an_object_that_has_one_as_an_address_and_one_as_an_offset() {
+        // What glibc leaves: it adds the base to `DT_VERSYM` in place, as to the other tables here, and never to `DT_VERNEED`.
+        let mut object = versioned_object(Pointers::Addresses);
+        let offset = object.pointer(Pointers::Offsets, object.version_needs);
+        assert_ne!(
+            offset,
+            object.pointer(Pointers::Addresses, object.version_needs)
+        );
+        object.set_dynamic(DT_VERNEED, offset);
+        assert_eq!(
+            object.walk(&["first", "old@VERSION_3", "third"]),
+            (Ok(None), asked(&["first", "old", "old@VERSION_3", "third"]))
         );
     }
 
@@ -1322,6 +1397,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "Miri walks these chains for half an hour")]
     fn a_chain_of_more_entries_than_an_object_can_name_versions_ends_the_walk() {
         // `links` entries without the version, and after them the need and the entry that have it. The links are needs without entries, or the entries of one need.
         let object = |links: usize, links_are_needs: bool| {

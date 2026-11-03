@@ -320,7 +320,7 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
   });
 
   // https://github.com/oven-sh/bun/issues/9785
-  describe("an addon whose only entry is the symbol node_register_module_v<ABI>", () => {
+  describe("the symbol node_register_module_v<ABI>", () => {
     const run = async (exe: string, fixture: string) => {
       await using proc = spawn({
         cmd: [exe, join(directories.badModules, fixture)],
@@ -334,17 +334,27 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     const runInBunAndNode = async (fixture: string) =>
       await Promise.all([run(bunExe(), fixture), run(await nodeExeMatchingAbi(), fixture)]);
 
-    // Bun calls this symbol only where it can check the addon's imports before. macOS and Windows also bind an
-    // import at its first call, and a call of one that nothing defines ends the process.
+    const loaded = {
+      stdout: JSON.stringify({ require: "world", dlopen: "world", worker: "world", workerExitCode: 0 }),
+      stderr: "",
+      exitCode: 0,
+    };
+
+    // Bun calls this symbol only where it can check the addon's imports before. macOS's loader binds every lazy import inside dlopen() and stores 0 or an abort function for a missing one, and Bun has no Mach-O reader for those slots. On Windows Bun already checks the load-time node.exe imports of every addon, and this entry is not ported there.
     it.skipIf(isMacOS || isWindows)(
-      "loads with require(), with process.dlopen() and in a Worker, like in Node",
+      "an addon with only this entry loads with require(), with process.dlopen() and in a Worker, like in Node",
       async () => {
-        const loaded = {
-          stdout: JSON.stringify({ require: "world", dlopen: "world", worker: "world", workerExitCode: 0 }),
-          stderr: "",
-          exitCode: 0,
-        };
         const [bun, node] = await runInBunAndNode("initializer-only-fixture.js");
+        expect(node).toEqual(loaded);
+        expect(bun).toEqual(loaded);
+      },
+    );
+
+    // Node calls the symbol also for an addon that registered itself with another module version than Node's own.
+    it.skipIf(isMacOS || isWindows)(
+      "an addon that registered itself with another module version loads through it, like in Node",
+      async () => {
+        const [bun, node] = await runInBunAndNode("registered-other-version-fixture.js");
         expect(node).toEqual(loaded);
         expect(bun).toEqual(loaded);
       },
@@ -352,7 +362,7 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
 
     // uws_shaped.node is built on Linux only.
     it.skipIf(!isLinux)(
-      "serves a request with Node's loop, uv_poll_t and node::MakeCallback, like in Node",
+      "an addon with only this entry serves a request with Node's loop, uv_poll_t and node::MakeCallback, like in Node",
       async () => {
         const body = Array(20).fill("Hello /uWS").join(", ");
         const served = { stdout: JSON.stringify({ status: 200, encoding: null, body }), stderr: "", exitCode: 0 };

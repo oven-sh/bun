@@ -478,6 +478,34 @@ static void closeDLHandle(Bun::DLHandleMap::DLHandle handle)
 #endif
 }
 
+#if OS(LINUX) || OS(FREEBSD)
+// macOS's loader binds every lazy import inside dlopen() and stores 0 or an abort function for a missing one, and Bun has no Mach-O reader for those slots. On Windows Bun already checks the load-time node.exe imports of every addon (NodeExeImportsWindows.cpp), and this entry is not ported there.
+static std::optional<JSC::EncodedJSValue> loadThroughInitializerSymbol(Zig::GlobalObject* globalObject, JSC::ThrowScope& scope, void* handle, const WTF::String& filename, JSC::JSObject* moduleObject, const node::node_module* registered)
+{
+    // Node calls node_register_module_v<ABI> for an addon that registered no module, and for one that registered a module with another module version: https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/src/node_binding.cc#L533-L540
+    if (registered && registered->nm_version == REPORTED_NODEJS_ABI_VERSION)
+        return std::nullopt;
+    auto initializer = reinterpret_cast<node::addon_initializer_func>(dlsym(handle, "node_register_module_v" STRINGIZE_VALUE_OF(REPORTED_NODEJS_ABI_VERSION)));
+    if (!initializer)
+        return std::nullopt;
+#if !OS(ANDROID)
+    // The addon is opened with RTLD_LAZY, so a call of an import that nothing defines would end the process. bionic binds every import in dlopen().
+    char symbol[512] = { 0 };
+    if (int32_t result = Bun__addonUnresolvedImport(reinterpret_cast<void*>(initializer), handle, symbol, sizeof(symbol))) {
+        // The registration of a module is saved for this handle and points into the library, which therefore stays open.
+        if (!registered)
+            closeDLHandle(handle);
+        if (result < 0)
+            return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, makeString("Cannot load native addon "_s, filename, ": Bun cannot read its import tables"_s));
+        return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, makeString("Cannot load native addon "_s, filename, ": it imports '"_s, WTF::String::fromUTF8ReplacingInvalidSequences(byteCast<uint8_t>(unsafeSpan(symbol))), "', and Bun found no definition of it"_s));
+    }
+#endif
+    node::executeV8Initializer(globalObject, initializer, moduleObject);
+    RETURN_IF_EXCEPTION(scope, JSC::EncodedJSValue {});
+    return JSValue::encode(jsUndefined());
+}
+#endif
+
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
     BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(NativeAddons, Process_functionDlopen);
@@ -700,6 +728,10 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 
         // Run V8 init functions here instead of in node_module_register(). See https://github.com/oven-sh/bun/issues/20454
         for (auto* mod : pendingV8Modules) {
+#if OS(LINUX) || OS(FREEBSD)
+            if (auto result = loadThroughInitializerSymbol(globalObject, scope, handle, filename, strongModule.get(), mod))
+                return *result;
+#endif
             node::executePendingV8Module(globalObject, mod, strongModule.get());
             RETURN_IF_EXCEPTION(scope, {});
         }
@@ -732,6 +764,10 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         // m_pendingNapiModules; a V8 one runs its nm_register_func right here.
         for (auto& registration : *cachedModules) {
             if (auto* v8Module = std::get_if<Bun::V8ModuleRegistration>(&registration)) {
+#if OS(LINUX) || OS(FREEBSD)
+                if (auto result = loadThroughInitializerSymbol(globalObject, scope, handle, filename, strongModule.get(), v8Module->module))
+                    return *result;
+#endif
                 node::executePendingV8Module(globalObject, v8Module->module, strongModule.get());
                 RETURN_IF_EXCEPTION(scope, {});
             } else {
@@ -759,25 +795,11 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 
     auto napi_register_module_v1 = reinterpret_cast<napi_value (*)(napi_env, napi_value)>(dlsym(handle, "napi_register_module_v1"));
 
-    // Node prefers node_register_module_v<ABI> to napi_register_module_v1. Here an addon with both keeps using Node-API.
+    // Node prefers node_register_module_v<ABI> to napi_register_module_v1: https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/src/node_binding.cc#L509-L513. Here an addon with both keeps using Node-API.
     if (!napi_register_module_v1) {
 #if OS(LINUX) || OS(FREEBSD)
-        // macOS and Windows also bind an import at its first call, and there Bun cannot check the imports yet, so the addon gets the error below.
-        if (auto initializer = reinterpret_cast<node::addon_initializer_func>(dlsym(handle, "node_register_module_v" STRINGIZE_VALUE_OF(REPORTED_NODEJS_ABI_VERSION)))) {
-#if !OS(ANDROID)
-            // The addon is opened with RTLD_LAZY, so a call of an import that nothing defines would end the process. bionic binds every import in dlopen().
-            char symbol[512] = { 0 };
-            if (int32_t result = Bun__addonUnresolvedImport(reinterpret_cast<void*>(initializer), handle, symbol, sizeof(symbol))) {
-                closeDLHandle(handle);
-                if (result < 0)
-                    return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, makeString("Cannot load native addon "_s, filename, ": Bun cannot read its import tables"_s));
-                return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, makeString("Cannot load native addon "_s, filename, ": it imports '"_s, WTF::String::fromUTF8ReplacingInvalidSequences(byteCast<uint8_t>(unsafeSpan(symbol))), "', which Bun does not provide"_s));
-            }
-#endif
-            node::executeV8Initializer(globalObject, initializer, strongModule.get());
-            RETURN_IF_EXCEPTION(scope, {});
-            return JSValue::encode(jsUndefined());
-        }
+        if (auto result = loadThroughInitializerSymbol(globalObject, scope, handle, filename, strongModule.get(), nullptr))
+            return *result;
 #endif
 
         closeDLHandle(handle);

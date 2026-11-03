@@ -11,6 +11,10 @@
     {
       "target_name": "initializer_only",
       "sources": ["initializer_only.cpp"],
+    },
+    {
+      "target_name": "registered_other_version",
+      "sources": ["registered_other_version.cpp"],
     }
   ],
   "conditions": [

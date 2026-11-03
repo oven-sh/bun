@@ -33,8 +33,10 @@ pub(crate) unsafe extern "C" fn Bun__addonUnresolvedImport(
         };
         !definition.is_null()
     };
+    // With musl an import that the loader has left unbound has a definition in neither scope. The global scope is asked for a bound slot that looks unbound (`Image::is_bound`), and the handle would find only an entry of a dependency that an earlier dlopen() relocated.
     let is_defined = |name: &CStr, version: Option<&CStr>| {
-        defines(libc::RTLD_DEFAULT, name, version) || defines(handle, name, version)
+        defines(libc::RTLD_DEFAULT, name, version)
+            || (cfg!(not(target_env = "musl")) && defines(handle, name, version))
     };
     // musl leaves a `GLOB_DAT` import that nothing defines unbound as it does a jump slot, and both slots as the file has them. glibc and FreeBSD bind a `GLOB_DAT` import in dlopen() and add the base to an unbound jump slot.
     let defers_got = cfg!(target_env = "musl");

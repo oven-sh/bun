@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { copyFileSync, readFileSync, writeFileSync } from "fs";
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -10,6 +10,7 @@ import {
   isMacOS,
   isMusl,
   isWindows,
+  nodeExeMatchingAbi,
   tempDirWithFiles,
 } from "harness";
 import { join } from "path";
@@ -225,6 +226,68 @@ NODE_MODULE(non_context_aware, demo::Initialize)
           "ldflags": [ "-Wl,-z,lazy" ]
         },
         {
+          "target_name": "versioned",
+          "type": "shared_library",
+          "sources": [ "versioned.c" ],
+          "ldflags": [ "-Wl,--version-script=<(module_root_dir)/versioned.map" ]
+        },
+        {
+          "target_name": "versioned_without_versions",
+          "type": "shared_library",
+          "sources": [ "versioned.c" ]
+        },
+        {
+          "target_name": "versioned_other_function",
+          "type": "shared_library",
+          "sources": [ "versioned.c" ],
+          "ldflags": [ "-Wl,--version-script=<(module_root_dir)/versioned_other_function.map" ]
+        },
+        {
+          "target_name": "versioned_later_version",
+          "type": "shared_library",
+          "sources": [ "versioned.c" ],
+          "ldflags": [ "-Wl,--version-script=<(module_root_dir)/versioned_later_version.map" ]
+        },
+        {
+          "target_name": "versioned_second",
+          "type": "shared_library",
+          "sources": [ "versioned_second.c" ]
+        },
+        {
+          "target_name": "versioned_second_with_function",
+          "type": "shared_library",
+          "sources": [ "versioned_second.c" ],
+          "defines": [ "WITH_VERSIONED_FUNCTION" ]
+        },
+        {
+          "target_name": "initializer_versioned_import",
+          "sources": [ "initializer_versioned_import.cpp" ],
+          "dependencies": [ "versioned", "versioned_second" ],
+          "ldflags": [ "-Wl,-z,lazy" ]
+        },
+        {
+          "target_name": "old_version_dependency",
+          "type": "shared_library",
+          "sources": [ "old_version_dependency.c" ],
+          "ldflags": [ "-Wl,--version-script=<(module_root_dir)/old_version_dependency.map" ]
+        },
+        {
+          "target_name": "initializer_old_version_dependency_import",
+          "sources": [ "initializer_old_version_dependency_import.cpp" ],
+          "dependencies": [ "old_version_dependency" ],
+          "ldflags": [ "-Wl,-z,lazy" ]
+        },
+        {
+          "target_name": "initializer_large_image",
+          "sources": [ "initializer_large_image.cpp" ],
+          "ldflags": [ "-Wl,-z,lazy" ]
+        },
+        {
+          "target_name": "initializer_large_image_bind_now",
+          "sources": [ "initializer_large_image.cpp" ],
+          "ldflags": [ "-Wl,-z,now" ]
+        },
+        {
           "target_name": "initializer_weak_import",
           "sources": [ "initializer_weak_import.cpp" ]
         },
@@ -246,6 +309,10 @@ NODE_MODULE(non_context_aware, demo::Initialize)
           "target_name": "registered_missing_import",
           "sources": [ "registered_missing_import.cpp" ],
           "ldflags": [ "-Wl,-z,lazy" ]
+        },
+        {
+          "target_name": "registered_initializer",
+          "sources": [ "registered_initializer.cpp" ]
         }
       ]
     }]
@@ -722,14 +789,13 @@ if (!isMainThread) {
 
   // https://github.com/oven-sh/bun/issues/9785
   describe.concurrent("process.dlopen and the symbol node_register_module_v<ABI>", () => {
-    // Bun calls this symbol only where it can check the addon's imports before. macOS and Windows also bind an
-    // import at its first call, and a call of one that nothing defines ends the process.
+    // Bun calls this symbol only where it can check the addon's imports before. macOS's loader binds every lazy import inside dlopen() and stores 0 or an abort function for a missing one, and Bun has no Mach-O reader for those slots. On Windows Bun already checks the load-time node.exe imports of every addon, and this entry is not ported there.
     const callsTheSymbol = !isMacOS && !isWindows;
     const built = (addon: string) => join(addonPath, "..", addon);
 
-    async function run(args: string[], addon: string, env: Record<string, string> = {}) {
+    async function run(args: string[], addon: string, env: Record<string, string> = {}, exe = bunExe()) {
       await using proc = Bun.spawn({
-        cmd: [bunExe(), ...args],
+        cmd: [exe, ...args],
         env: { ...bunEnv, ADDON_PATH: built(addon), ...env },
         stdout: "pipe",
         stderr: "pipe",
@@ -841,7 +907,9 @@ if (!isMainThread) {
       const leftToBun = !bindNow && (relocation === "JUMP_SLOT" || (relocation === "GLOB_DAT" && isMusl));
       expect(await load(addon)).toEqual(
         leftToBun
-          ? refused(`Cannot load native addon ${built(addon)}: it imports '${symbol}', which Bun does not provide`)
+          ? refused(
+              `Cannot load native addon ${built(addon)}: it imports '${symbol}', and Bun found no definition of it`,
+            )
           : refusedByLoader(symbol),
       );
     });
@@ -864,6 +932,97 @@ if (!isMainThread) {
       },
     );
 
+    // The library that the addon links keeps the function only with a version that is not its default, as glibc keeps
+    // pthread_yield, and it is not in the global scope. Only the lookup by that version in the addon's own libraries
+    // finds the function.
+    test.skipIf(!isLinux || isMusl)(
+      "an addon with only this entry loads with an import that the library that it links defines only with an old version",
+      async () => {
+        const script = `
+          const loaded = { exports: {} };
+          process.dlopen(loaded, process.env.ADDON_PATH);
+          console.log(JSON.stringify({ call: loaded.exports.call() }));
+        `;
+        expect(await run(["-e", script], "initializer_old_version_dependency_import.node")).toEqual({
+          stdout: JSON.stringify({ call: 7 }),
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+
+    // initializer_versioned_import.node imports bun_test_versioned_function with the version BUN_TEST_V1 of versioned.so,
+    // through a jump slot. Each test runs a copy of the addon in a directory of its own, beside the libraries that the
+    // test names there as the addon needs them: the loader looks beside the addon first.
+    const versionedImport = (directory: string, libraries: Record<string, string>) => {
+      mkdirSync(built(directory), { recursive: true });
+      copyFileSync(built("initializer_versioned_import.node"), built(join(directory, "addon.node")));
+      for (const [name, library] of Object.entries(libraries))
+        copyFileSync(built(library), built(join(directory, name)));
+      const script = `
+        const loaded = { exports: {} };
+        process.dlopen(loaded, process.env.ADDON_PATH);
+        console.log("loaded");
+        console.log(JSON.stringify({ call: loaded.exports.call() }));
+      `;
+      const runIn = (exe: string) => run(["-e", script], join(directory, "addon.node"), {}, exe);
+      return { addon: built(join(directory, "addon.node")), runIn };
+    };
+
+    // Bun asks whether something defines the import by its name first, and by its version only after a no. The loader
+    // binds an import that names a version also to a function that has no version, which a lookup by the version
+    // does not find. So each of these addons loads only because the name is asked first.
+    test.skipIf(!isLinux || isMusl).each([
+      ["has no versions", "without-versions", "versioned_without_versions.so", "versioned_second.so", 7],
+      [
+        "has that version for another function only",
+        "other-function",
+        "versioned_other_function.so",
+        "versioned_second.so",
+        7,
+      ],
+      [
+        "has the function with a later version only, and a second library has it without a version",
+        "second-library",
+        "versioned_later_version.so",
+        "versioned_second_with_function.so",
+        9,
+      ],
+    ])(
+      "an addon with only this entry loads with an import by a version when its library %s, like in Node",
+      async (_, directory, versioned, second, result) => {
+        const { runIn } = versionedImport(directory, { "versioned.so": versioned, "versioned_second.so": second });
+        const called = { stdout: `loaded\n${JSON.stringify({ call: result })}`, stderr: "", exitCode: 0 };
+        const [bun, node] = await Promise.all([runIn(bunExe()), runIn(await nodeExeMatchingAbi())]);
+        expect(node).toEqual(called);
+        expect(bun).toEqual(called);
+      },
+    );
+
+    // The import that this order accepts although nothing defines it: a lookup by the name cannot tell a function
+    // without a version, which the loader binds, from one whose only version is another one, which it does not bind.
+    // Node calls the initializer of this addon too, and the loader ends either process at the first call.
+    test.skipIf(!isLinux || isMusl)(
+      "an addon with only this entry loads with an import by a version when its library has the function with a later version only, and the first call ends the process, like in Node",
+      async () => {
+        const libraries = {
+          "versioned.so": "versioned_later_version.so",
+          "versioned_second.so": "versioned_second.so",
+        };
+        const { addon, runIn } = versionedImport("later-version", libraries);
+        const ended = {
+          stdout: "loaded",
+          stderr: expect.stringContaining(
+            `symbol lookup error: ${addon}: undefined symbol: bun_test_versioned_function, version BUN_TEST_V1`,
+          ),
+          exitCode: 127,
+        };
+        const [bun, node] = await Promise.all([runIn(bunExe()), runIn(await nodeExeMatchingAbi())]);
+        expect(node).toEqual(ended);
+        expect(bun).toEqual(ended);
+      },
+    );
+
     // The loader has bound every import of this addon when dlopen() returns. Bun finds the address of a definition in
     // each import's slot and asks nothing about it. It reads no name for such an import, so the copy whose names Bun
     // could not read loads too.
@@ -873,6 +1032,25 @@ if (!isMainThread) {
       writeWithoutStringTableSize("initializer_bind_now.node", "initializer_bind_now_unreadable.node");
       expect(await load("initializer_bind_now_unreadable.node")).toEqual(loaded({ loaded: "initializer_bind_now" }));
     });
+
+    // With musl a slot that the loader has bound can hold an address in Bun's own image, which is not position
+    // independent. Where the addon spans more memory than that address is large, Bun cannot tell the slot from one
+    // that musl has left as the file has it, and only the lookup of the import's name says that the import is
+    // defined. So the zeroes of this addon must span more memory than Bun's image does: about 126 MB with musl today.
+    test.skipIf(!isLinux).each([
+      ["-z lazy", "initializer_large_image.node"],
+      ["-z now", "initializer_large_image_bind_now.node"],
+    ])(
+      "an addon with only this entry that spans more memory than Bun loads when it is linked with %s",
+      async (_, addon) => {
+        const image = readFileSync(built(addon));
+        const segments = elfProgramHeaders(new DataView(image.buffer, image.byteOffset, image.length));
+        const memory = Math.max(...segments.filter(({ type }) => type === PT_LOAD).map(s => s.address + s.memorySize));
+        // The zeroes are not in the file: the loader maps them after the addon's data.
+        expect({ file: image.length < 1 << 20, memory: memory > 160 << 20 }).toEqual({ file: true, memory: true });
+        expect(await load(addon)).toEqual(loaded({ loaded: "initializer_large_image" }));
+      },
+    );
 
     // A glibc that profiles calls binds every object at the first call, also one that is linked with -z now. So
     // dlopen() passes for the addon that it refuses in the test above, and its import is left for Bun to find.
@@ -885,7 +1063,7 @@ if (!isMainThread) {
         const profiling = { LD_PROFILE: "bun_test_object_that_nothing_loads", LD_PROFILE_OUTPUT: built("") };
         expect(await load(addon, profiling)).toEqual(
           refused(
-            `Cannot load native addon ${built(addon)}: it imports 'bun_test_symbol_that_nothing_defines', which Bun does not provide`,
+            `Cannot load native addon ${built(addon)}: it imports 'bun_test_symbol_that_nothing_defines', and Bun found no definition of it`,
           ),
         );
       },
@@ -935,6 +1113,25 @@ if (!isMainThread) {
       },
     );
 
+    // The static constructor of an addon runs once, when its library is mapped: here in the dlopen() of bun:ffi, which
+    // saves no registration. process.dlopen() then finds a library that is mapped and has registered nothing, and
+    // calls the symbol, as Node does.
+    test.skipIf(!isLinux)(
+      "an addon that also registers itself loads through the symbol when its library is already mapped",
+      async () => {
+        const script = `
+          const symbol = "node_register_module_v" + process.versions.modules;
+          require("bun:ffi").dlopen(process.env.ADDON_PATH, { [symbol]: { args: [], returns: "void" } });
+          const loaded = { exports: {} };
+          process.dlopen(loaded, process.env.ADDON_PATH);
+          console.log(JSON.stringify({ exports: loaded.exports }));
+        `;
+        expect(await run(["-e", script], "registered_initializer.node")).toEqual(
+          loaded({ loaded: "registered_initializer" }),
+        );
+      },
+    );
+
     // Node calls node_register_module_v<ABI> for this addon.
     test("an addon that also exports napi_register_module_v1 loads through Node-API", async () => {
       expect(await load("both_entries.node")).toEqual(loaded({ via: "napi_register_module_v1" }));
@@ -961,6 +1158,7 @@ function elfProgramHeaders(view: DataView) {
       offset: Number(view.getBigUint64(header + 8, true)),
       address: Number(view.getBigUint64(header + 16, true)),
       size: Number(view.getBigUint64(header + 32, true)),
+      memorySize: Number(view.getBigUint64(header + 40, true)),
     };
   });
 }
@@ -1103,6 +1301,80 @@ ${initializer} {
 }
 `,
 
+    // The function that initializer_versioned_import.node imports with the version BUN_TEST_V1. binding.gyp builds
+    // several libraries of this file, and the version script of each says which version the function has in it:
+    // BUN_TEST_V1, none, or BUN_TEST_V2. getpid() gives each library a table of versions, as a real library has.
+    "versioned.c": `
+#include <unistd.h>
+
+int bun_test_versioned_function(void) { return getpid() > 0 ? 7 : 0; }
+int bun_test_versioned_marker(void) { return 1; }
+`,
+    "versioned.map": `BUN_TEST_V1 { global: bun_test_versioned_function; bun_test_versioned_marker; };\n`,
+    "versioned_other_function.map": `BUN_TEST_V1 { global: bun_test_versioned_marker; };\n`,
+    "versioned_later_version.map": `
+BUN_TEST_V1 { global: bun_test_versioned_marker; };
+BUN_TEST_V2 { global: bun_test_versioned_function; } BUN_TEST_V1;
+`,
+
+    // A second library that the addon needs. One build of it has the function too, without a version.
+    "versioned_second.c": `
+#include <unistd.h>
+
+int bun_test_second_marker(void) { return 2; }
+#ifdef WITH_VERSIONED_FUNCTION
+int bun_test_versioned_function(void) { return getpid() > 0 ? 9 : 0; }
+#endif
+`,
+    "initializer_versioned_import.cpp": `
+#include <node.h>
+
+extern "C" int bun_test_versioned_function();
+extern "C" int bun_test_second_marker();
+
+static void Call(const v8::FunctionCallbackInfo<v8::Value>& args) {
+  args.GetReturnValue().Set(v8::Number::New(args.GetIsolate(), bun_test_versioned_function()));
+}
+
+${initializer} {
+  if (bun_test_second_marker() == 2) NODE_SET_METHOD(exports, "call", Call);
+}
+`,
+
+    // The library keeps the function only with a version that is not its default, and the addon names that version.
+    "old_version_dependency.c": `
+int bun_test_old_version_implementation(void) { return 7; }
+__asm__(".symver bun_test_old_version_implementation,bun_test_old_version_function@BUN_TEST_OLD");
+`,
+    "old_version_dependency.map": `BUN_TEST_OLD { };\n`,
+    "initializer_old_version_dependency_import.cpp": `
+#include <node.h>
+
+__asm__(".symver bun_test_old_version_reference,bun_test_old_version_function@BUN_TEST_OLD");
+extern "C" int bun_test_old_version_reference();
+
+static void Call(const v8::FunctionCallbackInfo<v8::Value>& args) {
+  args.GetReturnValue().Set(v8::Number::New(args.GetIsolate(), bun_test_old_version_reference()));
+}
+
+${initializer} {
+  NODE_SET_METHOD(exports, "call", Call);
+}
+`,
+
+    // About 160 MB of zeroes, which the file does not carry.
+    "initializer_large_image.cpp": `
+#include "exports.h"
+
+extern "C" {
+NODE_MODULE_EXPORT char bun_test_zeroes[160 << 20];
+}
+
+${initializer} {
+  SetExport(exports, context, "loaded", "initializer_large_image");
+}
+`,
+
     // As the _ITM_* functions in uWebSockets.js: the import is in the PLT and is never called.
     "initializer_weak_import.cpp": `
 #include "exports.h"
@@ -1150,6 +1422,15 @@ extern "C" NODE_MODULE_EXPORT void never_called() { bun_test_symbol_that_nothing
 
 NODE_MODULE_INIT() {
   SetExport(exports, context, "loaded", "registered_missing_import");
+}
+`,
+
+    // The same without an import that nothing defines.
+    "registered_initializer.cpp": `
+#include "exports.h"
+
+NODE_MODULE_INIT() {
+  SetExport(exports, context, "loaded", "registered_initializer");
 }
 `,
 

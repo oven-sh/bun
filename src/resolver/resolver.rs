@@ -3981,57 +3981,6 @@ impl<'a> Resolver<'a> {
         MatchStatus::NotFound
     }
 
-    /// Writes to `out` the match for the package.json of the package in `pkg_dir_info`, whose "exports" do not list it.
-    #[inline(always)]
-    fn hidden_package_json_match(
-        package_json: &PackageJSON,
-        pkg_dir_info: DirInfoRef,
-        dir_info: DirInfoRef,
-        out: &mut MatchResult,
-    ) {
-        *out = MatchResult {
-            path_pair: PathPair {
-                primary: Path::init(package_json.source.path.text),
-                secondary: None,
-            },
-            dirname_fd: pkg_dir_info.get_file_descriptor(),
-            file_fd: FD::INVALID,
-            // `is_node_module` looks at the directory part of a `Path` made from the text.
-            is_node_module: Path::init(package_json.source.path.text).is_node_module(),
-            package_json: Some(std::ptr::from_ref(package_json)),
-            dir_info: Some(dir_info),
-            ..Default::default()
-        };
-    }
-
-    /// For entry `dependency_id` of the dependencies that `package_json` lists: the package the lockfile resolved it to, or the directory that a relative path in its version starts from.
-    #[inline(never)]
-    fn listed_dependency_target(
-        manager: &dyn AutoInstaller,
-        package_json: &'static PackageJSON,
-        resolve_from_lockfile: bool,
-        dependency_id: usize,
-    ) -> (Install::PackageID, Option<&'static [u8]>) {
-        if resolve_from_lockfile {
-            let resolutions =
-                manager.lockfile_package_resolutions(package_json.package_manager_package_id);
-
-            // found it!
-            return (
-                resolutions.get(manager.lockfile_resolutions_buf())[dependency_id],
-                None,
-            );
-        }
-
-        if !package_json.source.path.is_node_module() {
-            return (
-                Install::INVALID_PACKAGE_ID,
-                bun_paths::dirname(package_json.source.path.text),
-            );
-        }
-        (Install::INVALID_PACKAGE_ID, None)
-    }
-
     fn dir_info_for_resolution<A: Asker>(
         &mut self,
         asker: A,
@@ -4188,6 +4137,57 @@ impl<'a> Resolver<'a> {
         )?;
         // SAFETY: `dir_info_ptr` is the BSSMap slot just filled by `dir_info_uncached`.
         Ok(Some(unsafe { DirInfoRef::from_raw(dir_info_ptr) }))
+    }
+
+    /// Writes to `out` the match for the package.json of the package in `pkg_dir_info`, whose "exports" do not list it.
+    #[inline(always)]
+    fn hidden_package_json_match(
+        package_json: &PackageJSON,
+        pkg_dir_info: DirInfoRef,
+        dir_info: DirInfoRef,
+        out: &mut MatchResult,
+    ) {
+        *out = MatchResult {
+            path_pair: PathPair {
+                primary: Path::init(package_json.source.path.text),
+                secondary: None,
+            },
+            dirname_fd: pkg_dir_info.get_file_descriptor(),
+            file_fd: FD::INVALID,
+            // `is_node_module` looks at the directory part of a `Path` made from the text.
+            is_node_module: Path::init(package_json.source.path.text).is_node_module(),
+            package_json: Some(std::ptr::from_ref(package_json)),
+            dir_info: Some(dir_info),
+            ..Default::default()
+        };
+    }
+
+    /// For entry `dependency_id` of the dependencies that `package_json` lists: the package the lockfile resolved it to, or the directory that a relative path in its version starts from.
+    #[inline(never)]
+    fn listed_dependency_target(
+        manager: &dyn AutoInstaller,
+        package_json: &'static PackageJSON,
+        resolve_from_lockfile: bool,
+        dependency_id: usize,
+    ) -> (Install::PackageID, Option<&'static [u8]>) {
+        if resolve_from_lockfile {
+            let resolutions =
+                manager.lockfile_package_resolutions(package_json.package_manager_package_id);
+
+            // found it!
+            return (
+                resolutions.get(manager.lockfile_resolutions_buf())[dependency_id],
+                None,
+            );
+        }
+
+        if !package_json.source.path.is_node_module() {
+            return (
+                Install::INVALID_PACKAGE_ID,
+                bun_paths::dirname(package_json.source.path.text),
+            );
+        }
+        (Install::INVALID_PACKAGE_ID, None)
     }
 
     fn enqueue_dependency_to_resolve(

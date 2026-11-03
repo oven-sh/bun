@@ -1,6 +1,7 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { chmodSync } from "fs";
+import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 import { createTestBuilder } from "./test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -82,6 +83,25 @@ describe("bun exec", () => {
     const val = await $`bun exec 'bun'`.env({ ...bunEnv, PATH: "" }).nothrow();
     expect(val.stderr.toString()).not.toContain("bun: command not found: bun");
     expect(val.stdout.toString()).toContain("Bun is a fast JavaScript runtime");
+  });
+
+  // POSIX 2.8.2: 126 when the command is found and cannot be executed. Windows has no execute bit.
+  test.skipIf(isWindows)("a file without the execute bit exits 126", async () => {
+    using dir = tempDir("exec-exit-126", { "notexec.sh": "#!/bin/sh\necho ran\n" });
+    chmodSync(join(String(dir), "notexec.sh"), 0o644);
+    await using proc = Bun.spawn({
+      cmd: [BUN, "exec", "./notexec.sh"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "",
+      stderr: "bun: Permission denied: ./notexec.sh\n",
+      exitCode: 126,
+    });
   });
 
   test("works with latin1 paths", async () => {

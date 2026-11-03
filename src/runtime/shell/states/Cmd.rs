@@ -50,6 +50,8 @@ pub enum CmdState {
 pub(crate) enum CmdFailure {
     /// An expansion, a redirect or the stdio setup failed, or the shell refused an argument.
     Setup,
+    /// The command is there and cannot be executed. POSIX 2.8.2 and sh: 126.
+    CannotExecute,
     /// No command of that name exists. POSIX 2.8.2 and sh: 127.
     NotFound,
 }
@@ -58,6 +60,7 @@ impl CmdFailure {
     pub(crate) const fn exit_code(self) -> ExitCode {
         match self {
             CmdFailure::Setup => 1,
+            CmdFailure::CannotExecute => 126,
             CmdFailure::NotFound => 127,
         }
     }
@@ -511,12 +514,7 @@ impl Cmd {
         };
         let Some(mut resolved) = resolved else {
             drop(spawn_args);
-            return Builtin::cmd_write_failing_error(
-                interp,
-                this,
-                CmdFailure::NotFound,
-                format_args!("bun: command not found: {}\n", bstr::BStr::new(&first_arg)),
-            );
+            return Self::lookup_failed(interp, this, &first_arg);
         };
         // CreateProcessW runs `.bat`/`.cmd` files through `cmd.exe`, which
         // re-tokenizes the command line with shell metacharacter rules
@@ -692,6 +690,57 @@ impl Cmd {
             return Yield::Next(this);
         }
         Yield::suspended()
+    }
+
+    /// `which()` found nothing to run: 127, or 126 when a path with a slash is there.
+    #[cold]
+    fn lookup_failed(interp: &Interpreter, this: NodeId, argv0: &[u8]) -> Yield {
+        if let Some(err) = Self::why_not_executable(interp, this, argv0) {
+            return Builtin::cmd_write_failing_error(
+                interp,
+                this,
+                CmdFailure::CannotExecute,
+                format_args!("{}\n", crate::shell::ShellErr::new_sys(&err)),
+            );
+        }
+        Builtin::cmd_write_failing_error(
+            interp,
+            this,
+            CmdFailure::NotFound,
+            format_args!("bun: command not found: {}\n", bstr::BStr::new(argv0)),
+        )
+    }
+
+    /// Why the path that `which()` refused cannot run. `None` when nothing is there.
+    fn why_not_executable(
+        interp: &Interpreter,
+        this: NodeId,
+        argv0: &[u8],
+    ) -> Option<bun_sys::Error> {
+        // A bare name is a `$PATH` search: a file that is not executable is no match (POSIX 2.9.1.1).
+        // Windows: `which()` decides by existence and extension, so a path it refuses cannot run.
+        if !cfg!(unix) || !bun_core::strings::contains_char(argv0, b'/') {
+            return None;
+        }
+        // `which()` resolves a relative name against the cwd string, not `cwd_fd`.
+        let path = if bun_paths::is_absolute(argv0) {
+            [argv0, b"\0"].concat()
+        } else {
+            let cwd = interp.as_cmd(this).base.shell().cwd();
+            if cwd.is_empty() {
+                return None;
+            }
+            [cwd, b"/", argv0, b"\0"].concat()
+        };
+        let err = match bun_sys::stat(bun_core::ZStr::from_buf(&path, path.len() - 1)) {
+            Err(err) if err.get_errno() == bun_sys::E::ENOENT => return None,
+            Err(err) => err,
+            Ok(stat) if bun_sys::S::ISDIR(stat.st_mode as _) => {
+                bun_sys::Error::from_code(bun_sys::E::EISDIR, bun_sys::Tag::access)
+            }
+            Ok(_) => bun_sys::Error::from_code(bun_sys::E::EACCES, bun_sys::Tag::access),
+        };
+        Some(err.with_path(argv0))
     }
 
     /// Applies the AST

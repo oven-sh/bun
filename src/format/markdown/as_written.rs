@@ -132,6 +132,7 @@ const STOPS_WORDS: [bool; 256] = table(b"\\`*_[]<~${:.@|&!", true);
 const STOPS_CODE: [bool; 256] = table(b"`|", true);
 /// In a link's destination without angle brackets: what ends it, and what makes the printer look at it.
 const STOPS_DESTINATION: [bool; 256] = table(b" ()\\&<|{", true);
+const ENDS_DESTINATION: [bool; 256] = table(b" ()", true);
 const STOPS_TITLE: [bool; 256] = table(b"\"'\\&|", true);
 /// In a label: what ends it, and what isn't printed as it's written.
 const STOPS_LABEL: [bool; 256] = {
@@ -1781,9 +1782,20 @@ impl<'t> Reader<'t> {
                     {
                         return None;
                     }
-                    // Liquid comes first, so there's no destination.
-                    let has_destination =
-                        byte(at + 1) == b'(' && self.liquid_end(at + 2, CELL).is_none();
+                    let mut has_destination = byte(at + 1) == b'(';
+                    let starts_liquid = has_destination && self.liquid_end(at + 2, CELL).is_some();
+                    if starts_liquid {
+                        // What starts first comes first. It's Liquid after `](` unless that is a link, with the Liquid
+                        // up to the first space for a destination: then `)` or a title follows.
+                        let end = skip(at + 2, &ENDS_DESTINATION);
+                        let next = end + count(end, b' ');
+                        match (byte(end), byte(next)) {
+                            (b')', _) => {}
+                            (b' ', 0 | b'\n' | b'"' | b'\'' | b'(' | b')') => return None,
+                            (b' ', _) => has_destination = false,
+                            _ => return None,
+                        }
+                    }
                     if !has_destination {
                         // A reference if the label is defined, or text: `[a]`, `[a][b]` and `[a][]` stay as they are.
                         // The label of an image is written anew, and `[a]:` can be a definition.
@@ -1802,7 +1814,9 @@ impl<'t> Reader<'t> {
                     loop {
                         end = skip(end, &STOPS_DESTINATION);
                         match byte(end) {
-                            b'{' if !matches!(byte(end + 1), b'{' | b'%') => end += 1,
+                            b'{' if starts_liquid || !matches!(byte(end + 1), b'{' | b'%') => {
+                                end += 1
+                            }
                             b'&' => {
                                 // One that starts no character reference.
                                 end += 1;
@@ -1860,7 +1874,14 @@ impl<'t> Reader<'t> {
                 b'$' if byte(at + 1) != b'$' => {}
                 b'{' if !matches!(byte(at + 1), b'{' | b'%') => {}
                 b'{' => {
-                    at = self.liquid_end(at, CELL)?;
+                    let end = self.liquid_end(at, CELL)?;
+                    // A `[` before it finds its `]` in it.
+                    if (is_in_link || is_in_image)
+                        && bun_core::strings::contains_char(text.get(at..end)?, b']')
+                    {
+                        return None;
+                    }
+                    at = end;
                     continue;
                 }
                 // An address without angle brackets takes everything up to the next white space with it.

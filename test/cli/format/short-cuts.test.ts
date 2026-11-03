@@ -504,6 +504,10 @@ describe("Markdown", () => {
     // Liquid.
     "{{ a }}\n\n{% b %}\n{{ c }}\ntext\n{{ d }}\n# e\n{{ f }}\n<div>\n</div>\n{{ g }}\n\n{{ h }} \n# i\n\n{{ j\n}}\n\n{{ k }} l {{ m }}\n",
     "n\n{{}}\n#\n\n{{}}\nn\n-\n\n{{}}\n|\n\n{{}}\n>\n\n{{}}\n~\n\n{{}}\ni  \n",
+    "[a]({{ 'b') {{ c }}\n\n[a]({% (b)){% c %}\n\n[a]({{ \"b\") }}\n\n[a]({{) }}\n\n[a]({{ ) }}\n\n[a]({{b}} 'c')\n\n[a]({{b}})\n\n[a]({{\n'b') }}\n\n| [a]({{ (b)) {{ c }} |\n| --- |\n",
+    "[a]({{b) *c* }}\n\n[a]({{b}}/c_d) *e*\n\n[a]({{b}}&amp;) }}\n\n[a]({{b}}(c)) }}\n\n[a]({{b}}\\)) }}\n\n[a]({%b%}) and [a]({{b}}{{c}}) and ![a]({{b}})\n",
+    "[a][{%]  %}]\n\n[][{{]  }}]\n\n[{%]  %}]\n\n[{%]: u\n[{{]: u\n",
+    "[a {{ b ] }} c   d](e)\n\n[{{ a }}]({{ b }})\n\n![{{ a ] }}](b)\n",
     "[a]({{ b }}) and [a]({{< b \"c\" >}}) and ![a]({{ b }}) and [a](b{{ c }})\n",
     // HTML.
     "<div>\n  <p>*a*</p>  \n\n</div>\n\n<img src=\"a\">\n\n<img src=\"a\"> b\n\n<span>a</span> *b*\n\n<my-element>\n\n<p-a>\n\n</div>\n  \n<div>\n",

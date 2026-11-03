@@ -134,7 +134,7 @@ This step ensures that any module importing a CommonJS module is properly set up
 _What happens_:
 
 - Traverses dependency chains to mark files that need wrapper functions
-- Propagates wrapper requirements up the dependency tree
+- Propagates wrapper requirements down the dependency tree: a wrapped file wraps every file it imports
 - Handles export star statements with dynamic exports
 
 _Algorithm_:
@@ -147,7 +147,7 @@ function wrap(sourceIndex) {
   // Mark this module as wrapped
   flags[sourceIndex].wrap = (isCommonJS ? .cjs : .esm);
 
-  // Recursively wrap all modules that import this one
+  // Recursively wrap all modules that this one imports
   for (importRecord in allImportsOfThisModule) {
     wrap(importRecord.sourceIndex);
   }
@@ -158,20 +158,22 @@ _Example cascade_:
 
 ```javascript
 // File hierarchy:
-// entry.js → utils.js → legacy.cjs
+// entry.js → page.js → utils.js
 
-// legacy.cjs (CommonJS module)
-exports.helper = function () {
+// entry.js (loads an ES module lazily)
+export const page = require("./page.js"); // Forces page.js to be wrapped (wrap = .esm)
+
+// page.js (wrapped module)
+import { helper } from "./utils.js"; // Forces utils.js to be wrapped
+export const title = helper();
+
+// utils.js
+console.log("utils");
+export function helper() {
   return "help";
-};
+}
 
-// utils.js (imports CommonJS)
-import { helper } from "./legacy.cjs"; // Forces utils.js to be wrapped
-
-// entry.js (imports wrapped module)
-import { helper } from "./utils.js"; // Forces entry.js to be wrapped
-
-// Result: All three files get wrapper functions to maintain compatibility
+// Result: page.js and utils.js get init_*() wrappers. entry.js does not.
 ```
 
 **Step 3: Resolve Export Star Statements**
@@ -183,6 +185,7 @@ _What happens_:
 - Handles export star conflicts when multiple modules export the same name
 - Ignores export stars from CommonJS modules (since their exports aren't statically analyzable)
 - Generates code for expression-style loaders (JSON, CSS modules, etc.)
+- Records, for each export that arrives through `export *` from a lazily initialized ES module (`wrap = .esm`), the `export *` statement that calls that module's `init_*()` wrapper (`LinkerGraph.export_star_statements`). Steps 4, 5 and 6 add that statement to the dependencies of whatever binds to the export, as they do for a named re-export statement. Without it, a `"sideEffects": false` barrel is dropped and nothing calls the wrapper before the importer runs.
 
 _Export star resolution algorithm_:
 
@@ -367,6 +370,7 @@ _What happens_:
 - Creates entry point dependencies to ensure all exports are included
 - Sets up cross-chunk binding code for code splitting scenarios
 - Handles wrapper function dependencies and exports object dependencies
+- Lets an unwrapped file without side effects drop an `export *` of a lazily initialized ES module: the statement stays only if a binding is read through it (step 3), as `export { x } from` does
 
 _Runtime helper usage examples_:
 
@@ -754,6 +758,7 @@ The renamed symbols are then used during final code generation to produce output
 - Analyzes imports between chunks
 - Sets up cross-chunk binding code
 - Handles dynamic imports across chunks
+- Makes a chunk import the chunk of an `export *` statement that one of its parts depends on for the `init_*()` call (`LinkerGraph.export_star_statements`): the part uses no symbol of that chunk, so no other rule loads it first
 - Manages chunk metadata for dependency resolution
 
 #### `findAllImportedPartsInJSOrder.rs`

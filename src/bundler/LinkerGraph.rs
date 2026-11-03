@@ -253,7 +253,16 @@ pub struct LinkerGraph<'a> {
     /// This is for cross-module inlining of TypeScript enum constants
     pub(crate) ts_enums: bun_ast::ast_result::TsEnumsMap,
     pub(crate) import_member_bindings: bun_ast::ast_result::ImportMemberBindings,
+    /// `(file, export symbol)` -> the `export *` statement that initializes
+    /// the module the symbol is declared in. Only for an export that `file`
+    /// has through an `export *` path that enters a lazily initialized ES
+    /// module: that statement prints the `init_*()` call, so whatever binds to
+    /// the export depends on it, like on a named re-export statement.
+    /// Step 3 of `scan_imports_and_exports` writes it. It is read-only after.
+    pub(crate) export_star_statements: ExportStarStatements,
 }
+
+pub(crate) type ExportStarStatements = bun_collections::HashMap<(u32, Ref), Dependency>;
 
 // SAFETY: workers share `&LinkerGraph`. What is not `Sync` on its own:
 // - The `MultiArrayList`s. Workers write their columns through `split_raw()` and
@@ -273,6 +282,16 @@ impl<'a> LinkerGraph<'a> {
         self.bump
     }
 
+    /// See `export_star_statements`. `symbol` is the export's `import_ref` in
+    /// `file`'s resolved exports.
+    #[inline]
+    pub(crate) fn export_star_statement(&self, file: u32, symbol: Ref) -> Option<Dependency> {
+        if self.export_star_statements.is_empty() {
+            return None;
+        }
+        self.export_star_statements.get(&(file, symbol)).copied()
+    }
+
     pub(crate) fn new(bump: &'a Arena) -> Self {
         LinkerGraph {
             files: FileList::default(),
@@ -289,6 +308,7 @@ impl<'a> LinkerGraph<'a> {
             is_scb_bitset: BitSet::default(),
             ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
             import_member_bindings: bun_ast::ast_result::ImportMemberBindings::default(),
+            export_star_statements: ExportStarStatements::default(),
         }
     }
 }

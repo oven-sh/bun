@@ -532,6 +532,12 @@ pub(crate) fn scan_imports_and_exports(
                             exports_kind,
                             named_exports,
                             ast_flags: ast_flags_list,
+                            flags,
+                            wrapper_refs,
+                            parts: parts_list,
+                            lazy_file_entry: None,
+                            record_parts: HashMap::default(),
+                            statements: Default::default(),
                         });
                     }
                     export_star_ctx.as_mut().unwrap().add_exports(
@@ -553,6 +559,9 @@ pub(crate) fn scan_imports_and_exports(
                     ..Default::default()
                 };
             }
+            this.graph.export_star_statements = export_star_ctx
+                .map(|ctx| ctx.statements)
+                .unwrap_or_default();
         }
 
         if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
@@ -1014,6 +1023,12 @@ pub(crate) fn scan_imports_and_exports(
                     let mut target_source_index = exp.data.source_index;
                     let mut target_ref = exp.data.import_ref;
 
+                    if let Some(statement) =
+                        this.graph.export_star_statement(source_index, target_ref)
+                    {
+                        dependencies.push(statement);
+                    }
+
                     // If this is an import, then target what the import points to
                     if let Some(import_data) = col_ref!(imports_to_bind_list)
                         [target_source_index.get() as usize]
@@ -1092,6 +1107,12 @@ pub(crate) fn scan_imports_and_exports(
                 bstr::BStr::new(&source.path.text),
                 id
             );
+
+            // An unwrapped file without side effects can drop an `export *` of a
+            // lazily initialized module that nothing is read through (below).
+            let can_drop_export_star = wrap == WrapKind::None
+                && !col_ref!(ast_flags_list)[id].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                && this.file_has_no_side_effects(source_index);
 
             let parts_len = col_ref!(parts_list)[id].len() as usize;
             for part_index in 0..parts_len {
@@ -1231,6 +1252,23 @@ pub(crate) fn scan_imports_and_exports(
                                 1,
                                 Index::source(other_source_index),
                             )?;
+                        }
+
+                        // A static `export *` of a lazily initialized module prints only
+                        // `init_other()`. Each binding that is read through it depends on
+                        // this part (`LinkerGraph::export_star_statements`), so it is kept
+                        // like `export { x } from`: only if something uses it. A run-time
+                        // `__reExport` has no such dependency and stays.
+                        if can_drop_export_star
+                            && kind == ImportKind::Stmt
+                            && other_flags.wrap == WrapKind::Esm
+                            && wrapper_ref.is_valid()
+                            && !other_export_kind.is_dynamic()
+                        {
+                            let part = &mut col!(parts_list)[id].as_mut_slice()[part_index];
+                            if is_export_star_part(part) {
+                                part.can_be_removed_if_unused = true;
+                            }
                         }
 
                         // This is an ES6 import of a CommonJS module, so it needs the
@@ -1384,9 +1422,18 @@ pub(crate) fn scan_imports_and_exports(
                             Index::source(source_index),
                         )?;
                         col!(ast_flags_list)[id].insert(AstFlags::USES_EXPORTS_REF);
-                        col!(import_records_list)[id].as_mut_slice()[*import_record_index as usize]
-                            .flags
-                            .insert(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN);
+                        let flags = &mut col!(import_records_list)[id].as_mut_slice()
+                            [*import_record_index as usize]
+                            .flags;
+                        flags.insert(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN);
+                        // `convert_stmts_for_chunk` prints an external one as
+                        // `import * as ns`, and the printer names `ns` only for
+                        // a record that contains an import star.
+                        if !rec_source_index.is_valid()
+                            && output_format.keep_es6_import_export_syntax()
+                        {
+                            flags.insert(ImportRecordFlags::CONTAINS_IMPORT_STAR);
+                        }
                         re_export_uses += 1;
                     }
                 }
@@ -1438,6 +1485,14 @@ pub(crate) fn scan_imports_and_exports(
     }
 
     Ok(())
+}
+
+/// A part that is one `export * from "path"` statement.
+fn is_export_star_part(part: &Part) -> bool {
+    matches!(
+        part.stmts.slice(),
+        [stmt] if matches!(&stmt.data, bun_ast::StmtData::SExportStar(star) if star.alias.is_none())
+    )
 }
 
 #[inline]
@@ -1603,6 +1658,18 @@ struct ExportStarContext<'a> {
     imports_to_bind: *mut [RefImportData],
     export_star_records: *mut [bun_alloc::AstVec<u32>],
     ast_flags: *mut [AstFlags],
+    flags: *mut [js_meta::Flags],
+    wrapper_refs: *mut [Ref],
+    parts: *mut [PartList<'a>],
+    /// Set while the path is inside lazily initialized files: the `stack`
+    /// index of the first one, and the `export *` statement that enters it.
+    /// A wrapped file wraps every file it imports (`DependencyWrapper::wrap`;
+    /// only the runtime is exempt), so the path enters once.
+    lazy_file_entry: Option<(usize, Dependency)>,
+    /// File -> the part that holds each of its import records, built on the
+    /// first `init_statement_of_record` that needs it.
+    record_parts: HashMap<IndexInt, Vec<u32>>,
+    statements: crate::linker_graph::ExportStarStatements,
 }
 
 impl<'a> ExportStarContext<'a> {
@@ -1616,6 +1683,7 @@ impl<'a> ExportStarContext<'a> {
         source_index: IndexInt,
     ) {
         debug_assert!(self.stack.is_empty());
+        debug_assert!(self.lazy_file_entry.is_none());
         self.push(source_index);
 
         while let Some(frame) = self.stack.last_mut() {
@@ -1625,6 +1693,12 @@ impl<'a> ExportStarContext<'a> {
             else {
                 self.stack.pop();
                 self.on_stack.unset(source_index as usize);
+                if self
+                    .lazy_file_entry
+                    .is_some_and(|(depth, _)| depth == self.stack.len())
+                {
+                    self.lazy_file_entry = None;
+                }
                 continue;
             };
             frame.next_record += 1;
@@ -1656,6 +1730,17 @@ impl<'a> ExportStarContext<'a> {
             if col_ref!(self.exports_kind)[other_id] == ExportsKind::Cjs {
                 continue;
             }
+
+            // The statement that prints `init_*()` for what this record re-exports.
+            let init_statement = match self.lazy_file_entry {
+                Some((_, statement)) => {
+                    debug_assert!(
+                        col_ref!(self.flags)[source_index as usize].wrap != WrapKind::None
+                    );
+                    Some(statement)
+                }
+                None => self.init_statement_of_record(source_index, import_id, other_id),
+            };
 
             // Collect (alias, name) pairs so the
             // loop body can mutably borrow `resolved_exports` / `imports_to_bind`.
@@ -1697,6 +1782,10 @@ impl<'a> ExportStarContext<'a> {
                         },
                         ..Default::default()
                     };
+                    if let Some(statement) = init_statement {
+                        self.statements
+                            .insert((target_id as u32, name.ref_), statement);
+                    }
 
                     // Make sure the symbol is marked as imported so that code splitting
                     // imports it correctly if it ends up being shared with another chunk
@@ -1731,6 +1820,11 @@ impl<'a> ExportStarContext<'a> {
             // Search further through this file's export stars, unless it's
             // already on the stack (a cycle)
             if !self.on_stack.is_set(other_id) {
+                if self.lazy_file_entry.is_none()
+                    && let Some(statement) = init_statement
+                {
+                    self.lazy_file_entry = Some((self.stack.len(), statement));
+                }
                 self.push(other_source_index);
             }
         }
@@ -1742,6 +1836,41 @@ impl<'a> ExportStarContext<'a> {
             source_index,
             next_record: 0,
         });
+    }
+
+    /// The `export *` statement of `record` in `source_index`, if it is the one
+    /// that initializes `other_id`: an unwrapped file prints `init_other()`
+    /// for it at the top level. A wrapped file calls it from its own wrapper.
+    fn init_statement_of_record(
+        &mut self,
+        source_index: IndexInt,
+        record: u32,
+        other_id: usize,
+    ) -> Option<Dependency> {
+        if col_ref!(self.flags)[source_index as usize].wrap != WrapKind::None
+            || col_ref!(self.flags)[other_id].wrap != WrapKind::Esm
+            || !col_ref!(self.wrapper_refs)[other_id].is_valid()
+        {
+            return None;
+        }
+        let parts = self.parts;
+        let record_parts = self.record_parts.entry(source_index).or_insert_with(|| {
+            let mut record_parts = Vec::new();
+            for (part_index, part) in col_ref!(parts)[source_index as usize].iter().enumerate() {
+                for &record in part.import_record_indices.iter() {
+                    if record_parts.len() <= record as usize {
+                        record_parts.resize(record as usize + 1, u32::MAX);
+                    }
+                    record_parts[record as usize] = part_index as u32;
+                }
+            }
+            record_parts
+        });
+        let part_index = *record_parts.get(record as usize)?;
+        (part_index != u32::MAX).then_some(Dependency {
+            source_index: bun_ast::Index::source(source_index as usize),
+            part_index,
+        })
     }
 }
 

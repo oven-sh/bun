@@ -426,12 +426,67 @@ fn inert_chunks(c: &LinkerContext, chunks: &[Chunk]) -> Result<AutoBitSet, bun_a
     }
 }
 
+/// `(chunk, other chunk)` for each live part of `chunk` that depends on an
+/// `export *` statement in `other chunk` for its `init_x()` call
+/// (`LinkerGraph::export_star_statements`). The part uses no symbol of that
+/// chunk, so nothing else makes `chunk` load it first.
+fn chunks_of_export_star_statements(c: &LinkerContext, chunks: &[Chunk]) -> Vec<(u32, u32)> {
+    let mut edges = Vec::new();
+    if c.graph.export_star_statements.is_empty() {
+        return edges;
+    }
+    let mut chunk_of_file = vec![u32::MAX; c.graph.files.len()];
+    for (chunk_index, chunk) in chunks.iter().enumerate() {
+        if matches!(chunk.content, chunk::Content::Javascript(_)) {
+            for &source_index in chunk.files_with_parts_in_chunk.keys() {
+                chunk_of_file[source_index as usize] = chunk_index as u32;
+            }
+        }
+    }
+    let mut statements = bun_collections::HashMap::<(u32, u32), ()>::default();
+    for statement in c.graph.export_star_statements.values() {
+        statements.insert((statement.source_index.get(), statement.part_index), ());
+    }
+    let parts = c.graph.ast.items_parts();
+    for (chunk_index, chunk) in chunks.iter().enumerate() {
+        if !matches!(chunk.content, chunk::Content::Javascript(_)) {
+            continue;
+        }
+        for &source_index in chunk.files_with_parts_in_chunk.keys() {
+            let parts_live = &c.graph.parts_live[source_index as usize];
+            for (part_index, part) in parts[source_index as usize].as_slice().iter().enumerate() {
+                if !parts_live.is_set(part_index) {
+                    continue;
+                }
+                for dependency in part.dependencies.iter() {
+                    let other = chunk_of_file[dependency.source_index.get() as usize];
+                    if other != u32::MAX
+                        && other != chunk_index as u32
+                        && statements
+                            .contains_key(&(dependency.source_index.get(), dependency.part_index))
+                    {
+                        edges.push((chunk_index as u32, other));
+                    }
+                }
+            }
+        }
+    }
+    edges
+}
+
 fn compute_cross_chunk_dependencies_with_chunk_metas(
     c: &mut LinkerContext,
     chunks: &mut [Chunk],
     chunk_metas: &mut [ChunkMeta],
 ) -> Result<(), bun_alloc::AllocError> {
     let mut inert: Option<AutoBitSet> = None;
+
+    for (chunk_index, other_chunk_index) in chunks_of_export_star_statements(c, chunks) {
+        let js = chunks[chunk_index as usize].content.javascript_mut();
+        let _ = js
+            .imports_from_other_chunks
+            .get_or_put_value(other_chunk_index, CrossChunkImportItemList::default())?;
+    }
 
     // Mark imported symbols as exported in the chunk from which they are declared
     // The loop body also indexes chunk_metas[other_chunk_index] /

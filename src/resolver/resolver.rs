@@ -2159,7 +2159,7 @@ impl<'a> Resolver<'a> {
         Ok(())
     }
 
-    /// The lookups of one run, the first and the one after a miss: as written, and the rest only after a miss as written. The flag is set for what an executable compiled in place holds at the path, by reference: a lookup that finds its module returns its answer without a move into a tuple.
+    /// The lookups of one run, the first and the one after a miss: as written, and the rest only after a miss as written. The flag is set for what an executable compiled in place holds at the path. The answer is moved here and never borrowed: a reference to it makes every lookup that finds its module copy its answer.
     #[inline(always)]
     fn lookup_sequence<'r, A: Asker>(
         &mut self,
@@ -2171,47 +2171,43 @@ impl<'a> Resolver<'a> {
         let mut found =
             self.resolve_without_symlinks(asker, source_dir, import_path, kind, global_cache);
         if matches!(found, ResultUnion::NotFound) {
-            *is_at_source_path = self.lookups_after_as_written(
+            (found, *is_at_source_path) = self.lookups_after_as_written(
                 asker,
+                found,
                 (source_dir, import_path),
                 (kind, global_cache),
-                &mut found,
             );
         }
         found
     }
 
-    /// The rest of `lookup_sequence`, after a miss as written: what an executable compiled in place holds at the path (returns true), then a CSS URL without its query or fragment.
+    /// The rest of `lookup_sequence`, after a miss as written: what an executable compiled in place holds at the path (the flag), then a CSS URL without its query or fragment.
     #[cold]
     #[inline(never)]
     fn lookups_after_as_written<'r, A: Asker>(
         &mut self,
         asker: A,
+        as_written: ResultUnion<'r>,
         (source_dir, import_path): (&[u8], &'r [u8]),
         (kind, global_cache): (ast::ImportKind, GlobalCache),
-        found: &mut ResultUnion<'r>,
-    ) -> bool {
+    ) -> (ResultUnion<'r>, bool) {
         if let Some(path) = self.resolve_at_source_path(source_dir, import_path, kind) {
-            *found = ResultUnion::Success(Result {
+            let at_source_path = Result {
                 import_kind: kind,
                 path_pair: PathPair {
                     primary: Path::init(path),
                     secondary: None,
                 },
                 ..Default::default()
-            });
-            return true;
+            };
+            return (ResultUnion::Success(at_source_path), true);
         }
-        if let Some(without_suffix) = self.css_url_without_suffix(import_path, kind) {
-            *found = self.resolve_without_symlinks(
-                asker,
-                source_dir,
-                without_suffix,
-                kind,
-                global_cache,
-            );
-        }
-        false
+        let Some(url) = self.css_url_without_suffix(import_path, kind) else {
+            return (as_written, false);
+        };
+        let without_suffix =
+            self.resolve_without_symlinks(asker, source_dir, url, kind, global_cache);
+        (without_suffix, false)
     }
 
     /// A CSS URL with a query or a fragment is looked up as written, then without it: the URL in front of its first `?` or `#`.

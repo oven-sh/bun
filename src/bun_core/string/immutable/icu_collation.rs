@@ -115,11 +115,8 @@ pub fn locale_compare_numeric_base(a: &[u8], b: &[u8]) -> Ordering {
     )
 }
 
-/// `new Intl.Collator(locale)`: ICU's collator for one BCP 47 language tag (`"zh-CN"`), which orders as
-/// `a.localeCompare(b, locale)` does, with the `-u-co-`, `-u-kn-` and `-u-kf-` extensions of the tag and the
-/// locale's own defaults for what they do not set. ICU opens one per tag for the life of the process and shares
-/// it, so this is a `Copy` handle that any thread may compare with; open it once per configuration, not per
-/// comparison.
+/// `new Intl.Collator(locale)` for one BCP 47 tag, with its `-u-co-`, `-u-kn-` and `-u-kf-` extensions. ICU keeps
+/// one per tag for the life of the process, so this is a `Copy` handle: open it once per configuration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Collator(NonNull<c_void>);
 
@@ -131,18 +128,16 @@ unsafe impl Sync for Collator {}
 /// Why [`Collator::open`] has no collator for a language tag.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NoCollator {
-    /// The tag is not a `unicode_locale_id` of UTS 35 (`"zh_CN"`, `"x-private"`), which is ECMA-402's
-    /// `IsStructurallyValidLanguageTag`: `localeCompare` throws a `RangeError` for it.
+    /// Not a `unicode_locale_id` of UTS 35 (ECMA-402's `IsStructurallyValidLanguageTag`): `localeCompare` throws a
+    /// `RangeError` for it.
     Malformed,
-    /// A well-formed tag ICU has no collation data for (`"xx"`): `Intl` passes it over for the next of a list, or
-    /// the default locale.
+    /// Well-formed, but ICU has no collation data for it (`"xx"`): `Intl` passes it over.
     Unsupported,
 }
 
 impl Collator {
-    /// The collator of one tag. Supported is what `Intl.Collator.supportedLocalesOf` says: ICU has data for the
-    /// tag or for a prefix of it, as `"zh-CN"` has `"zh"`. 150 us the first time a tag is opened, a hash lookup
-    /// after that.
+    /// The collator of one tag, supported as `Intl.Collator.supportedLocalesOf` says. 150 us the first time a tag is
+    /// opened, a hash lookup after that.
     pub fn open(locale: &[u8]) -> Result<Collator, NoCollator> {
         let mut is_well_formed = false;
         // SAFETY: a live slice, which is read and not kept; `is_well_formed` is a live local.
@@ -156,9 +151,8 @@ impl Collator {
         }
     }
 
-    /// `new Intl.Collator(locales)` for a list of tags: the first one that is supported, or `None` when none is,
-    /// for the default locale's collation, which is the root. `Err` is the first tag of the list that is not
-    /// well-formed, wherever it is: `localeCompare` throws a `RangeError` for it before any tag is matched.
+    /// `new Intl.Collator(locales)` for a list of tags: `None` when none is supported (the root). `Err` is the first
+    /// tag that is not well-formed, wherever it is in the list.
     pub fn open_first<'a>(
         locales: impl IntoIterator<Item = &'a [u8]>,
     ) -> Result<Option<Collator>, &'a [u8]> {

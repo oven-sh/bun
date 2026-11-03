@@ -1,10 +1,5 @@
-//! The options the four rules share (`types/all-common-options.ts`), parsed once in `Rule::new` from each element of
-//! the options array, and the per-file `settings.perfectionist` that `complete()` merges under them.
-//!
-//! `context.options` is an array of option objects: each becomes a [`Configuration`], and a node uses the first one
-//! whose `useConfigurationIf` matches it (`compute-matched-context-options.ts`), else the defaults with the settings.
-//! Regexes are compiled here, once; a [`Pattern`] that does not compile keeps the error until a node needs it, as
-//! `new RegExp` in upstream's `matches()` throws at the first match, not in `create`.
+//! `types/all-common-options.ts`, `utils/complete.ts`, `utils/get-settings.ts`, `utils/matches.ts`, the
+//! `validate-*.ts`. A [`Pattern`] that does not compile keeps the error until a node needs it, as `matches()` throws.
 
 use super::FileState;
 use super::configuration_if::{ConfigurationIf, ObjectType, ScopedPatterns};
@@ -15,9 +10,8 @@ use bun_lint::selector::Selector;
 use rustc_hash::FxHashMap;
 use std::sync::{Arc, OnceLock};
 
-/// Which rule the options are for: its `defaultOptions`, the selectors and modifiers its predefined groups are made
-/// of, and which `useConfigurationIf` keys its schema has. `sort-interfaces` takes all three from `sort-object-types`
-/// upstream, so it is `ObjectTypes` here too.
+/// Which rule's `defaultOptions`, selectors, modifiers and schema apply. `sort-interfaces` is `ObjectTypes`, as
+/// upstream.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum RuleKind {
     Objects,
@@ -106,9 +100,7 @@ pub(crate) enum SortBy {
     Value,
 }
 
-/// `fallbackSort`: `type` is required, the rest overrides the main options only where given
-/// (`{...options, ...options.fallbackSort}` in `compute-comparators.ts`). A group's or custom group's `fallbackSort`
-/// is merged key by key over the main one (`compute-overridden-options-by-group-index.ts`).
+/// `fallbackSort`: `type` is required, the rest overrides the main options only where given.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct FallbackSort {
     pub(crate) type_: SortType,
@@ -144,23 +136,19 @@ pub(crate) enum Locale {
     /// The root collation: the default `'en-US'`, or a list with no supported tag.
     Root,
     Collator(strings::Collator),
-    /// A tag that is not well-formed, for which `localeCompare` throws the `RangeError` of
-    /// [`Configuration::invalid_locale`]. The comparison that reaches it records that, and the rule throws after
-    /// sorting: a comparison that never calls `localeCompare` (`natural` of two ASCII chunks, a `fallbackSort`
-    /// after a decided main sort, a group with one node) does not throw upstream either.
+    /// A tag that is not well-formed: `localeCompare` throws [`Configuration::invalid_locale`] only when a comparison
+    /// reaches it, so the rule throws after sorting.
     Invalid,
 }
 
-/// `alphabet` for `type: "custom"` (`compare-by-custom-sort.ts`): the index of each code point of the string. A
-/// character that is not in it sorts last (`Infinity`). Values are compared UTF-16 unit by unit, as JavaScript
-/// indexes strings, so a code point outside the BMP in the alphabet never matches.
+/// `alphabet` for `type: "custom"` (`compare-by-custom-sort.ts`). Values are compared UTF-16 unit by unit, so a code
+/// point outside the BMP in the alphabet never matches.
 #[derive(Default, Debug)]
 pub(crate) struct Alphabet {
     pub(crate) index_of: FxHashMap<u32, u32>,
 }
 
-/// `newlinesBetween`, and a group's `newlinesInside`: `'ignore'` or a number. Numbers stay `f64` because upstream
-/// compares the count of blank lines with `<` and `>` and loops `for (i = 0; i < n; i++)` when fixing, so `1.5` is
+/// `newlinesBetween` and `newlinesInside`. `f64` because upstream compares and loops on the number as is: `1.5` is
 /// not `1` or `2`.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) enum Newlines {
@@ -176,9 +164,8 @@ pub(crate) enum NewlinesInside {
     Fixed(Newlines),
 }
 
-/// One `RegexOption` (`types/common-options.ts`): a string, a `{pattern, flags}`, or an array of those. Matches if
-/// any of them does (`utils/matches.ts`); an empty array never matches. JavaScript's truthiness decides whether an
-/// option is set at all: `""` is off (the parser gives `None`), `[]` is on (`Some` of an empty list).
+/// One `RegexOption` (`types/common-options.ts`). Truthiness decides whether it is set: `""` is `None`, `[]` is
+/// `Some` of an empty list, which never matches.
 #[derive(Debug)]
 pub(crate) struct Patterns(pub(crate) Vec<Pattern>);
 
@@ -276,9 +263,8 @@ pub(crate) struct CustomGroupMatch {
     pub(crate) element_value_pattern: Option<Patterns>,
 }
 
-/// One element of the options array, completed with upstream's `defaultOptions`: what `complete()` returns before
-/// the settings, for the keys all four rules share. A rule keeps its own options (`styledComponents`,
-/// `partitionByComputedKey`, ..) next to it in a struct of its own, one per element.
+/// What `complete()` returns for one element of the options array, for the keys all four rules share. A rule keeps
+/// its own options in a parallel struct.
 pub(crate) struct Configuration {
     pub(crate) sort: SortOptions,
     pub(crate) alphabet: Alphabet,
@@ -289,19 +275,15 @@ pub(crate) struct Configuration {
     pub(crate) groups: Vec<GroupEntry>,
     pub(crate) custom_groups: Vec<CustomGroup>,
     pub(crate) use_configuration_if: ConfigurationIf,
-    /// Every name a node's group can have: the names in `groups` (`computeGroupsNames`, in order, once each), then
-    /// the custom group names that are not in `groups` (they never match, but `validate` names them), then
-    /// `"unknown"` if it was not in `groups`. A [`GroupId`] indexes it.
+    /// Indexed by [`GroupId`]: `computeGroupsNames` in order, then the custom group names not in `groups`, then
+    /// `"unknown"` if it was not in `groups`.
     pub(crate) group_names: Vec<Box<str>>,
     /// For each [`GroupId`], `getGroupIndex`: the index of the `groups` entry that names it, or `groups.len()`.
     pub(crate) groups_index: Vec<u32>,
     /// The [`GroupId`] of `"unknown"`.
     pub(crate) unknown: GroupId,
-    /// What upstream throws at the first node that picks this configuration, in its order: `validateSettingsValues`
-    /// for the keys the element leaves to the file's settings, then `validateCustomSortConfig`,
-    /// `validateGroupsConfig` and `validateNewlinesAndPartitionConfig` on the merged options. [`FileState::pick`]
-    /// throws it (`cx.throw(node, "Error", ..)`) once `matching_configuration` has picked the slot, not before: an
-    /// element no node picks throws nothing.
+    /// The first error of `validateSettingsValues`, `validateCustomSortConfig`, `validateGroupsConfig` and
+    /// `validateNewlinesAndPartitionConfig`, thrown by [`FileState::pick`] at the first node that picks this slot.
     pub(crate) error: Option<Vec<u8>>,
     /// The message of the `RangeError` that `localeCompare` throws for a `locales` tag that is not well-formed,
     /// `Invalid language tag: <tag>`. `Some` exactly when [`SortOptions::locale`] is [`Locale::Invalid`].
@@ -312,17 +294,13 @@ pub(crate) struct Configuration {
 /// it again under a file's `settings.perfectionist`. Built once in `Rule::new`, shared by all threads.
 pub(crate) struct RuleOptions {
     pub(crate) rule: RuleKind,
-    /// `context.options`, kept for [`FileState::with_settings`](super::FileState::with_settings): a file with
-    /// settings parses each element again as `{..settings, ..element}`, and validates the settings' values for the
-    /// keys the element does not have (`validateSettingsValues`) into that slot's [`Configuration::error`].
+    /// `context.options`, parsed again as `{..settings, ..element}` for a file with `settings.perfectionist`.
     raw: Vec<Json>,
-    /// One per element of `raw`, in order, then one of the defaults alone, whose `useConfigurationIf` is empty: the
-    /// first whose `useConfigurationIf` matches a node is the node's, so the last is what upstream uses when
-    /// `context.options.find(..)` finds nothing. A rule's own options follow the same layout in a parallel `Vec`.
+    /// One per element of `raw`, then the defaults alone, for when `context.options.find(..)` finds nothing. A rule's
+    /// own options follow the same layout.
     pub(crate) configurations: Vec<Configuration>,
     /// The `settings.perfectionist` of the first file that had one, with [`RuleOptions::configurations_with`] of it.
-    /// A rule instance belongs to one resolved config, whose settings every file shares, so that is computed once
-    /// and every later file borrows it.
+    /// Every file of a resolved config shares the settings, so it is computed once.
     with_settings: OnceLock<(Json, WithSettings)>,
 }
 
@@ -344,9 +322,8 @@ impl RuleOptions {
         }
     }
 
-    /// What upstream throws for the options alone in `create`, whatever a file's settings add: an `esquery` error
-    /// for `matchesAstSelector`. Everything else upstream validates on the element a node picks, under the file's
-    /// settings, so it is [`Configuration::error`] of that slot.
+    /// What `create` throws for the options alone: an `esquery` error for `matchesAstSelector`. The rest is
+    /// [`Configuration::error`], validated under the file's settings.
     pub(crate) fn validate(options: &Options) -> Result<(), Vec<u8>> {
         for element in options.all() {
             let object = Object::of(Some(element));
@@ -357,9 +334,7 @@ impl RuleOptions {
         Ok(())
     }
 
-    /// The state of one file: `getSettings(context.settings)`, which is the one error that is the file's, and
-    /// `complete()` of every element under the settings, each with the error of its own. A file without
-    /// `settings.perfectionist` keeps [`RuleOptions::configurations`].
+    /// `getSettings(context.settings)` and `complete()` of every element under the settings.
     pub(crate) fn file_state(&self, settings: &Json) -> FileState {
         let Some(value) = settings.get(b"perfectionist") else {
             return FileState::default();
@@ -382,9 +357,8 @@ impl RuleOptions {
         }
     }
 
-    /// `{..defaults, ..settings, ..element}` for every element and for the defaults alone. Upstream validates the
-    /// settings' values and the merged options against the one element a node picks, so each slot keeps its own
-    /// error and only `getSettings` fails the file. `None` when the settings have nothing to merge.
+    /// `{..defaults, ..settings, ..element}` for every element and for the defaults alone. `None` when the settings
+    /// have nothing to merge.
     fn configurations_with(&self, value: &Json) -> WithSettings {
         let settings = settings_of(value)?;
         if settings.entries().is_empty() {
@@ -411,9 +385,8 @@ fn selector_source(use_configuration_if: Object<'_>) -> Option<&str> {
         .filter(|source| !source.is_empty())
 }
 
-/// `sort-objects`'s own options (`rules/sort-objects/types.ts`), one per element of the options array in the layout
-/// of [`RuleOptions::configurations`]. `getSettings` rejects these keys, so the settings never change them and one
-/// parse serves every file.
+/// `rules/sort-objects/types.ts`, in the layout of [`RuleOptions::configurations`]. `getSettings` rejects these keys,
+/// so one parse serves every file.
 #[derive(Debug)]
 pub(crate) struct SortObjectsOptions {
     pub(crate) styled_components: bool,
@@ -456,10 +429,7 @@ impl<'o> Merged<'o> {
 }
 
 impl Configuration {
-    /// [`Configuration::parse`], then what upstream throws at the first node that picks the result, as
-    /// [`Configuration::error`]: `validateSettingsValues` for these settings and this element, then
-    /// `validateCustomSortConfig`, `validateGroupsConfig` and `validateNewlinesAndPartitionConfig` on the merged
-    /// options.
+    /// `complete()` followed by the `validate*` calls, whose first error is [`Configuration::error`].
     fn complete(rule: RuleKind, options: Object<'_>, settings: Object<'_>) -> Configuration {
         let mut configuration = Configuration::parse(rule, options, settings);
         configuration.error = validate_settings_values(rule, settings, options)
@@ -1106,9 +1076,8 @@ fn settings_of(value: &Json) -> Result<Object<'_>, Vec<u8>> {
     Err(list_error(PREFIX, &names))
 }
 
-/// `validateSettingsValues`: a setting the element does not override has to match the option's JSON schema, which
-/// ESLint checks for the options only. `tsconfig` is the one allowed setting these rules have no default for, so it
-/// is not checked.
+/// `validateSettingsValues`. `tsconfig` is the one allowed setting these rules have no default for, so it is not
+/// checked.
 fn validate_settings_values(
     rule: RuleKind,
     settings: Object<'_>,
@@ -1218,9 +1187,8 @@ fn matches_single_regex_schema(value: &Json) -> bool {
     }
 }
 
-/// `locales`, as `Intl.Collator` reads it: a string on its own, or a list whose first supported tag decides, and
-/// `None` for the root collation when none is. Every tag has to be well-formed, wherever it is in the list: `Err`
-/// is the message of the `RangeError` that `localeCompare` throws for the first one that is not.
+/// `locales`, as `Intl.Collator` reads it. `Err` is the `RangeError` message of the first tag that is not well-formed,
+/// wherever it is in the list.
 fn locale_of(value: Option<&Json>) -> Result<Option<strings::Collator>, Vec<u8>> {
     let Some(value) = value else {
         return Ok(None);

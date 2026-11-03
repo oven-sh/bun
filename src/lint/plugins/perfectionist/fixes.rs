@@ -1,7 +1,5 @@
-//! The fix that puts a node list in order: `get-node-range.ts`, `make-order-fixes.ts`, `make-comment-after-fixes.ts`,
-//! `make-single-node-comment-after-fixes.ts`, `make-fixes.ts`, `range-to-diff.ts`. The fixes of one list are returned
-//! as one `Vec<Fix>`, which `IntoFix` merges exactly as upstream's `mergeFixes` does, and every message of the list
-//! gets the same merged fix.
+//! `get-node-range.ts`, `make-order-fixes.ts`, `make-comment-after-fixes.ts`, `make-single-node-comment-after-fixes.ts`,
+//! `make-fixes.ts`, `range-to-diff.ts`. One `Vec<Fix>` per list, merged by `IntoFix` as `mergeFixes` does.
 
 use super::SortingNode;
 use super::disabled::{Directive, eslint_disabled_rules};
@@ -11,9 +9,7 @@ use super::partition::is_partition_comment;
 use bun_core::strings;
 use bun_lint::prelude::*;
 
-/// What a rule decides about its fixes, beyond the options: the `addSafetySemicolonWhenInline` of its sorting
-/// nodes. It is `true` for interface and type literal members, whose text can end without a `;`, and `false` for
-/// the others.
+/// `addSafetySemicolonWhenInline`: `true` for interface and type literal members only.
 #[derive(Clone, Copy)]
 pub(crate) struct FixOptions {
     pub(crate) add_safety_semicolon_when_inline: bool,
@@ -27,12 +23,7 @@ pub(crate) fn range_to_diff(file: &File<'_>, span: Span) -> u32 {
     strings::utf8_decoded_len_utf16(text).saturating_sub(punctuation)
 }
 
-/// Upstream's `getNodeRange`: the node with its parentheses and the comments directly above it, down to the first
-/// comment that is a partition comment under `by_comment` (`PartitionByComment::Off` where upstream passes no
-/// options), an `eslint-disable` or `eslint-enable`, or has a blank line below it.
-///
-/// `ignoreHighestBlockComment` and `implicitDecorators` are `sort-decorators`' and `sort-classes`'; these rules never
-/// pass them.
+/// `getNodeRange` without `ignoreHighestBlockComment` and `implicitDecorators`, which these rules never pass.
 pub(crate) fn node_range<'a>(
     file: &'a File<'a>,
     node: &SortingNode<'a>,
@@ -45,13 +36,8 @@ pub(crate) fn node_range<'a>(
     range
 }
 
-/// Upstream's `computeHighestCommentStart` over `getCommentsBefore`: walks up from the node through the comments
-/// that end on the line right above the previous one. A comment on the same line as the token before it trails
-/// that token and is not above the node.
-///
-/// Upstream throws from the fixer when a `partitionByComment` pattern that `shouldPartition` never reached (it stops
-/// at the first match) does not compile. The fix closure has no `Cx` to throw with, so that pattern is treated as
-/// not matching here.
+/// `computeHighestCommentStart` over `getCommentsBefore`. A `partitionByComment` pattern that does not compile
+/// counts as not matching: the fix closure has no `Cx` to throw with.
 fn highest_comment_start<'a>(
     file: &'a File<'a>,
     node: Span,
@@ -85,10 +71,8 @@ fn is_eslint_block_directive(comment: Token<'_>) -> bool {
     )
 }
 
-/// Upstream's `makeFixes` for these rules: the order fixes, with the comment-after fixes if there are any, else with
-/// the newlines fixes if there are any. `sorted` is `sortNodesExcludingEslintDisabled(true)`: the index into `nodes`
-/// of the node that belongs at each position. None of the four rules has a `missedCommentAbove` message, so there
-/// is nothing after the order fixes.
+/// `makeFixes` without `missedCommentAbove`, which none of these rules has. `sorted[i]` is the index into `nodes`
+/// of the node that belongs at position `i`.
 pub(crate) fn make_fixes<'a>(
     file: &'a File<'a>,
     nodes: &[SortingNode<'a>],
@@ -106,11 +90,7 @@ pub(crate) fn make_fixes<'a>(
     fixes
 }
 
-/// Upstream's `makeOrderFixes`: each node's range gets the text of the node sorted into its place, plus a `;` where
-/// that text would otherwise run into a token on the same line.
-///
-/// Upstream also adds the `;` when the sorted node `doesNodeEndWithExpression` and an expression continuation
-/// follows; that is true only of variable declarations and class fields, never of a member of these rules' lists.
+/// `makeOrderFixes` without `doesNodeEndWithExpression`, which is never true of a member of these rules' lists.
 fn order_fixes<'a>(
     file: &'a File<'a>,
     nodes: &[SortingNode<'a>],

@@ -1,16 +1,12 @@
-//! `useConfigurationIf`: which element of the options array applies to a node (each rule's
-//! `compute-matched-context-options.ts`, `utils/context-matching/`, `utils/scoped-regex/`). The first configuration
-//! whose conditions all hold is used; one without `useConfigurationIf` always matches.
+//! `useConfigurationIf`: each rule's `compute-matched-context-options.ts`, `utils/context-matching/`,
+//! `utils/scoped-regex/`.
 
 use super::options::{Configuration, Pattern, Patterns};
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::selector::{self, EsNode, Selector};
 
-/// `useConfigurationIf` of one configuration. Every field is optional, and a rule only parses the keys its schema
-/// has: `objectType` and `callingFunctionNamePattern` are `sort-objects`'s, `declarationMatchesPattern` and
-/// `declarationCommentMatchesPattern` are the object rules', `allNamesMatchPattern`, `hasNumericKeysOnly` and
-/// `matchesAstSelector` are everyone's.
+/// `useConfigurationIf` of one configuration. A rule only parses the keys its schema has.
 #[derive(Default)]
 pub(crate) struct ConfigurationIf {
     /// Every node name matches.
@@ -36,9 +32,7 @@ pub(crate) enum ObjectType {
     NonDestructured,
 }
 
-/// A `ScopedRegexOption`, split as `partition-patterns-by-scope.ts` does: a pattern with `scope: "deep"` is tested
-/// against every allowed ancestor, the others (`"shallow"` and no scope) against the nearest one only. The option
-/// matches if either side does.
+/// A `ScopedRegexOption`, split as `partition-patterns-by-scope.ts` does. No scope is `"shallow"`.
 #[derive(Debug)]
 pub(crate) struct ScopedPatterns {
     pub(crate) shallow: Patterns,
@@ -80,10 +74,8 @@ impl Rejected<'_> {
     }
 }
 
-/// Upstream's `computeMatchedContextOptions` and the fallback to the defaults in one: the index in
-/// `configurations` of the first whose `useConfigurationIf` holds for `subject`. The last configuration has no
-/// conditions, so it is the answer when no other holds. `names` are the members' names as the rule names its sorting
-/// nodes, for `allNamesMatchPattern`.
+/// `computeMatchedContextOptions` plus the fallback to the defaults: the last configuration has no conditions.
+/// `names` feed `allNamesMatchPattern`.
 pub(crate) fn matching_configuration<'c, 'n>(
     configurations: &'c [Configuration],
     subject: Subject<'_>,
@@ -156,11 +148,8 @@ impl ConfigurationIf {
     }
 }
 
-/// `passesAstSelectorFilter`. Upstream's listener for the selector fires on every ESTree node and records a match
-/// only on a node of a type the rule listens on, so of the ESTree nodes made from the subject's node (a
-/// `TSTypeAnnotation` or `JSXExpressionContainer` around it, an interface's name and body inside it) only the listened
-/// node itself is tested: the one with its range. A type predicate's `TSTypeAnnotation` has the range of its type and
-/// comes before it, so the last with that range is the one.
+/// `passesAstSelectorFilter`: only the listened ESTree node is tested. A type predicate's `TSTypeAnnotation` has the
+/// range of its type and comes before it, so the last node with that range is the one.
 fn matches_selector(selector: &Selector, subject: Subject<'_>) -> Result<bool, selector::Error> {
     let span = subject.estree_span();
     let mut listened = None;
@@ -446,9 +435,8 @@ pub(crate) fn key_name<'a>(file: &'a File<'a>, key: Key<'a>) -> &'a [u8] {
     }
 }
 
-/// `computePropertyOrVariableDeclaratorName` of `sort-objects` and `computeNodeParentName` of `sort-object-types`.
-/// They differ on a declarator: the object rule takes an identifier's name and otherwise ESTree's text of the
-/// binding, which includes its type annotation, while the type rule takes the text up to the annotation.
+/// `computePropertyOrVariableDeclaratorName` of `sort-objects` and `computeNodeParentName` of `sort-object-types`,
+/// which differ on a declarator with a type annotation.
 fn declaration_name<'a>(file: &'a File<'a>, parent: Parent<'a>, is_object_rule: bool) -> &'a [u8] {
     const NONE: &[u8] = b"";
     match parent {
@@ -472,9 +460,8 @@ fn declaration_name<'a>(file: &'a File<'a>, parent: Parent<'a>, is_object_rule: 
     }
 }
 
-/// `computeRelevantNodeForComment`: what `getCommentsBefore` is asked about. For a declarator it is the
-/// `VariableDeclaration`, which `sort-objects` swaps for the `ExportNamedDeclaration` around it and
-/// `sort-object-types` does not.
+/// `computeRelevantNodeForComment`: only `sort-objects` swaps a `VariableDeclaration` for the
+/// `ExportNamedDeclaration` around it.
 fn comment_anchor(parent: Parent<'_>, is_object_rule: bool) -> Span {
     match parent {
         Parent::VarDecl(decl) => match decl.parent() {

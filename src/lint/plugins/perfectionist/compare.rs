@@ -1,10 +1,4 @@
-//! How two nodes compare under a set of options: `utils/compare/*.ts`.
-//!
-//! Upstream builds a list of comparator closures per group (`computeComparators`: the main one, then the one for
-//! `fallbackSort`) and tries them in order until one is not `0`. Here [`compare`] does the same with plain values:
-//! the main options, then the main options with `fallbackSort` spread over them, each formatted and compared on the
-//! spot. Nothing is allocated unless a name has to change to be compared (`ignoreCase` on an upper-case letter, a
-//! special character to drop, whitespace).
+//! `utils/compare/*.ts`. Nothing is allocated unless a name has to change to be compared.
 
 use super::SortingNode;
 use super::groups::GroupId;
@@ -18,11 +12,8 @@ use std::borrow::Cow;
 use std::cell::Cell;
 use std::cmp::Ordering;
 
-/// Upstream's `computeComparators` applied to two nodes: the comparator of `options`, then, if that is `0`, the
-/// comparator of `{...options, ...options.fallbackSort}`. `type: "unsorted"` has no comparators at all, so the
-/// fallback is not tried either. `options` is the group's, already overridden by its `groups` entry and custom
-/// group; `config` has the `alphabet` and `groups`, which no override changes. A comparison that calls
-/// `localeCompare` with a [`Locale::Invalid`] sets `reached_invalid_locale`, where upstream throws.
+/// `computeComparators` applied to two nodes. `type: "unsorted"` has no comparators, so the fallback is not tried
+/// either. A `localeCompare` with a [`Locale::Invalid`] sets `reached_invalid_locale`, where upstream throws.
 pub(crate) fn compare(
     a: &SortingNode,
     b: &SortingNode,
@@ -163,10 +154,8 @@ fn retain_code_points(text: Cow<'_, [u8]>, keep: impl Fn(u32) -> bool) -> Cow<'_
     Cow::Owned(kept)
 }
 
-/// What `/[^a-z\u{C0}-\u{24F}\u{1E00}-\u{1EFF}]+/giu` leaves: the letters of the class, and with the `i` flag every
-/// character whose simple case folding is one of theirs. Besides `A-Z` those are the lower-case IPA letters whose
-/// capitals are in U+0180-U+024F (`Ɓ` is there, `ɓ` is not), and Kelvin and Angstrom sign, which fold to `k` and
-/// `å`.
+/// What `/[^a-z\u{C0}-\u{24F}\u{1E00}-\u{1EFF}]+/giu` leaves. The `i` flag adds the IPA letters whose capitals are
+/// in U+0180-U+024F, and the Kelvin and Angstrom signs.
 fn is_kept_special_character(cp: u32) -> bool {
     matches!(
         cp,

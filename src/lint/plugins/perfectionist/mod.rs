@@ -1,24 +1,5 @@
-//! What the `perfectionist/*` rules share: a port of eslint-plugin-perfectionist's `utils/` (Copyright Azat S., MIT
-//! License). A rule turns the members of one node (an object literal, a union, an interface body) into
-//! [`SortingNode`]s, picks the [`Configuration`] whose `useConfigurationIf` matches, sorts the nodes ([`sort`]) twice
-//! (with and without the `eslint-disable`d members moving) and reports every adjacent pair that is out of order
-//! (`report`), with one merged fix per node list ([`fixes`]).
-//!
-//! Module by module, the upstream files they port:
-//! - `options`: `types/*.ts`, `utils/complete.ts`, `utils/get-settings.ts`, `utils/matches.ts`, the `validate-*.ts`
-//! - `configuration_if`: `compute-matched-context-options.ts` of each rule, `utils/context-matching/`,
-//!   `utils/scoped-regex/`, `compute-parent-nodes-with-types.ts`
-//! - `groups`: `compute-group.ts`, `get-group-index.ts`, `does-custom-group-match.ts`,
-//!   `generate-predefined-groups.ts`, `compute-overridden-options-by-group-index.ts`, `compute-group-name.ts`
-//! - `compare`: `utils/compare/*.ts`
-//! - `sort`: `sort-nodes.ts`, `sort-nodes-by-groups.ts`, `sort-nodes-by-dependencies.ts`,
-//!   `compute-nodes-in-circular-dependencies.ts`, `is-node-dependent-on-other-node.ts`
-//! - `partition`: `should-partition.ts`, `is-partition-comment.ts`, `get-comments-before.ts`, `get-lines-between.ts`
-//! - `disabled`: `get-eslint-disabled-lines.ts`, `get-eslint-disabled-rules.ts`, `is-node-eslint-disabled.ts`
-//! - `fixes`: `get-node-range.ts`, `make-order-fixes.ts`, `make-comment-after-fixes.ts`,
-//!   `make-single-node-comment-after-fixes.ts`, `make-fixes.ts`, `range-to-diff.ts`
-//! - `object_types`: `rules/sort-object-types/sort-object-type-elements.ts` and its helpers, shared by
-//!   `sort-object-types` and `sort-interfaces`
+//! What the `perfectionist/*` rules share: eslint-plugin-perfectionist's `utils/` (Copyright Azat S., MIT License).
+//! Each module's doc names the upstream files it corresponds to.
 
 pub(crate) mod compare;
 pub(crate) mod configuration_if;
@@ -44,13 +25,11 @@ use std::sync::Arc;
 
 pub(crate) use options::Configuration;
 
-/// Upstream's `SortingNode` (`types/sorting-node.ts`) plus `SortingNodeWithDependencies` and the `value` of the
-/// object rules. The node itself is its spans: the engine only needs its text, its lines, its parentheses and the
-/// tokens and comments around it. A rule that needs its AST handles keeps them beside the list, by index.
+/// `SortingNode` (`types/sorting-node.ts`) plus `SortingNodeWithDependencies` and the object rules' `value`.
+/// Holds spans only: a rule that needs the AST handles keeps them beside the list, by index.
 pub(crate) struct SortingNode<'a> {
-    /// ESTree's range of the node: where the report goes, what `sourceCode.getText(node)` is, what `rangeToDiff`
-    /// measures, whose lines `getLinesBetween` and `isNodeOnSingleLine` count. For an interface or type literal
-    /// member that includes the `,` or `;`, like `TSPropertySignature`.
+    /// ESTree's range of the node. For an interface or type literal member that includes the `,` or `;`, like
+    /// `TSPropertySignature`.
     pub(crate) span: Span,
     /// `span` widened to the parentheses around the node (`getNodeRange`'s `isParenthesized`). Equal to `span` for
     /// everything but a union member (`TypeNode::outer_span`).
@@ -66,18 +45,14 @@ pub(crate) struct SortingNode<'a> {
     /// `computeGroup`: the group the node is in.
     pub(crate) group: GroupId,
     /// `getGroupIndex(options.groups, node)`: the position of `group`'s entry in `groups`, or `groups.len()`.
-    /// Computed once here instead of at every use.
     pub(crate) group_index: u32,
-    /// `partitionId`: 1 for the first partition, as upstream. Nodes of different partitions are never reordered
-    /// relative to each other and get no spacing errors.
+    /// `partitionId`: 1 for the first partition, as upstream.
     pub(crate) partition_id: u32,
-    /// `isEslintDisabled`: an `eslint-disable*` comment for this rule covers the line the node starts on. The node
-    /// keeps its position in the fix, but still counts when errors are detected.
+    /// `isEslintDisabled`: an `eslint-disable*` comment for this rule covers the line the node starts on.
     pub(crate) is_eslint_disabled: bool,
     /// `dependencyNames` of `sort-objects` in a pattern: the names the property binds. Other nodes leave it empty.
     pub(crate) dependency_names: SmallVec<[Name<'a>; 1]>,
-    /// `dependencies` of `sort-objects` in a pattern: the sibling bindings the property's default value reads. Empty
-    /// unless the node is in an object pattern (`canHavePropertyDependencies`).
+    /// `dependencies` of `sort-objects` in a pattern: the sibling bindings the property's default value reads.
     pub(crate) dependencies: SmallVec<[Name<'a>; 2]>,
 }
 
@@ -106,8 +81,8 @@ impl<'a> SortingNode<'a> {
     }
 }
 
-/// Upstream's `availableMessageIds`: which message each rule reports for each kind of error. A rule without
-/// dependency errors (every rule but `sort-objects`) has `None`, and the engine then computes no dependencies.
+/// `availableMessageIds`. `unexpected_dependency_order: None` (every rule but `sort-objects`) also turns off the
+/// dependency computation.
 pub(crate) struct Messages {
     pub(crate) unexpected_order: &'static Message,
     pub(crate) unexpected_group_order: &'static Message,
@@ -116,29 +91,21 @@ pub(crate) struct Messages {
     pub(crate) extra_spacing: &'static Message,
 }
 
-/// What one of the four rules keeps per file. Each rule wraps it in `pub struct State(pub(crate) FileState);` with
-/// `type State<'a> = State;`, because `Rule::State` has to be a reachable type.
+/// What a rule keeps per file. Each rule wraps it in a `pub struct`, because `Rule::State` has to be a reachable type.
 #[derive(Default)]
 pub(crate) struct FileState {
-    /// The configurations parsed again under the file's `settings.perfectionist` (upstream's `complete`:
-    /// `{..defaults, ..settings, ..options}` per option object), shared with the rule that computed them once
-    /// ([`RuleOptions::file_state`]). `None` for a file without that key, which uses the rule's own:
-    /// [`RuleOptions::configurations`].
+    /// The configurations under the file's `settings.perfectionist` (`complete`), from [`RuleOptions::file_state`].
+    /// `None` for a file without that key, which uses [`RuleOptions::configurations`].
     pub(crate) with_settings: Option<Arc<[Configuration]>>,
-    /// Upstream's `Invalid Perfectionist setting(s): ..`. `start` has no `Cx`, so [`FileState::pick`] throws it
-    /// (`cx.throw(node, "Error", ..)`) at the first node that is sortable, as `getSettings` does.
+    /// `getSettings`' `Invalid Perfectionist setting(s): ..`, thrown by [`FileState::pick`] because `start` has no `Cx`.
     pub(crate) settings_error: Option<Vec<u8>>,
-    /// `getEslintDisabledLines` for this rule's id, which reads every comment of the file once. Computed on the first
-    /// node with more than one member.
+    /// `getEslintDisabledLines` for this rule's id.
     disabled_lines: OnceCell<DisabledLines>,
 }
 
 impl FileState {
-    /// What upstream does between `isSortable` and the sorting nodes, in its order: `getSettings`,
-    /// `computeMatchedContextOptions`, `complete` and the `validate*` calls. The [`Configuration`] the node at `at`
-    /// uses and its index in [`RuleOptions::configurations`] (a rule's own options are in the same layout), or
-    /// `None` when one of those threw, which `cx` has been told. `names` are the members' names, for
-    /// `allNamesMatchPattern`.
+    /// `getSettings`, `computeMatchedContextOptions`, `complete` and the `validate*` calls: the [`Configuration`]
+    /// for the node at `at` and its index, or `None` after a throw on `cx`. `names` feed `allNamesMatchPattern`.
     pub(crate) fn pick<'s, 'n, R: Rule>(
         &'s self,
         rule: &'s RuleOptions,

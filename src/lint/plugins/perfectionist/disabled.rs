@@ -1,7 +1,5 @@
-//! `eslint-disable` comments as upstream reads them itself (`get-eslint-disabled-lines.ts`,
-//! `get-eslint-disabled-rules.ts`, `is-node-eslint-disabled.ts`): a node that starts on a disabled line keeps its
-//! place in the fix and is still compared for errors. This is separate from the linter's own handling of those
-//! comments, which drops the reports.
+//! `get-eslint-disabled-lines.ts`, `get-eslint-disabled-rules.ts`, `is-node-eslint-disabled.ts`: upstream reads the
+//! `eslint-disable` comments itself, apart from the linter's handling of them.
 
 use bun_core::strings;
 use bun_lint::prelude::*;
@@ -13,9 +11,8 @@ pub(crate) struct DisabledLines {
 }
 
 impl DisabledLines {
-    /// Upstream's `getEslintDisabledLines`. `rule_id` is `context.id`, the rule with its plugin prefix
-    /// (`perfectionist/sort-objects`), which is what a directive names. An `eslint-disable` that no `eslint-enable`
-    /// follows disables nothing, as upstream.
+    /// `getEslintDisabledLines`. `rule_id` is `context.id`, with the plugin prefix. An `eslint-disable` that no
+    /// `eslint-enable` follows disables nothing, as upstream.
     pub(crate) fn compute<'a>(file: &'a File<'a>, rule_id: &[u8]) -> DisabledLines {
         let mut lines = Vec::new();
         let mut disabled_from: Option<u32> = None;

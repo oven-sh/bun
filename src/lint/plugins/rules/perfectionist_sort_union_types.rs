@@ -1,7 +1,5 @@
 //! `perfectionist/sort-union-types`: `rules/sort-union-types.ts` and `rules/sort-union-or-intersection-types/*` of
-//! eslint-plugin-perfectionist. The engine in `crate::perfectionist` sorts and reports; this file turns the members of
-//! a union into its sorting nodes and decides what only this rule decides: the selector of a member, its name, and
-//! that the `|` before a member is the token whose comments count as the member's.
+//! eslint-plugin-perfectionist. `crate::perfectionist` sorts and reports.
 
 use crate::perfectionist::configuration_if::Subject;
 use crate::perfectionist::fixes::{FixOptions, make_fixes, range_to_diff};
@@ -54,9 +52,8 @@ const RULE_ID: &[u8] = b"perfectionist/sort-union-types";
 /// Upstream's `tokenValueToIgnoreBefore`: a comment before the `|` of a member is the member's.
 const TOKEN_TO_IGNORE_BEFORE: &str = "|";
 
-/// The `selectors` of a member, the `switch` of `sortUnionOrIntersectionTypes` on the ESTree type: one, or none
-/// for a type it has no case for (`TSIntrinsicKeyword`, `TSTypePredicate`). `typeof import("x")` is a
-/// `TSTypeQuery` there, so it is an operator and not an import.
+/// The `switch` of `sortUnionOrIntersectionTypes` on the ESTree type. `typeof import("x")` is a `TSTypeQuery` there,
+/// so it is an operator and not an import.
 fn selectors(ty: TypeNode<'_>) -> &'static [&'static str] {
     match ty.kind() {
         TypeKind::Template(_)

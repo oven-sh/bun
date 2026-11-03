@@ -1,9 +1,5 @@
-//! The sorted order of a node list: `sort-nodes.ts`, `sort-nodes-by-groups.ts`, `sort-nodes-by-dependencies.ts`,
-//! `compute-nodes-in-circular-dependencies.ts`.
-//!
-//! An order is a list of original indices, one per sorted position, over the `&[SortingNode]` the rule built. Nodes
-//! are never cloned or moved; `report` and `fixes` pair `nodes[i]` with `nodes[sorted[i]]`. The sort is stable
-//! (`toSorted`) and tolerant of comparators that are not total orders (`bun_lint::utils::sort`).
+//! `sort-nodes.ts`, `sort-nodes-by-groups.ts`, `sort-nodes-by-dependencies.ts`,
+//! `compute-nodes-in-circular-dependencies.ts`. An order is a list of original indices, one per sorted position.
 
 use super::SortingNode;
 use super::compare::compare;
@@ -13,9 +9,7 @@ use bun_lint::utils::sort::{merge_sort_indices, sort_indices};
 use std::cell::Cell;
 use std::cmp::Ordering;
 
-/// The two orders `reportAllErrors` needs: `sortNodesExcludingEslintDisabled(false)` and `(true)`. In `all` every
-/// node is sorted; in `without_disabled` an `eslint-disable`d node stays at its original index, which is what the
-/// fix produces. An index is a position in the rule's node slice.
+/// `sortNodesExcludingEslintDisabled(false)` and `(true)`.
 pub(crate) struct Sorted {
     pub(crate) all: Vec<u32>,
     pub(crate) without_disabled: Vec<u32>,
@@ -42,10 +36,8 @@ impl IgnoredForGroup {
     }
 }
 
-/// Upstream's `sortNodes` on `order`, indices into `nodes` in their current order: sorts them in place under
-/// `options` (a group's, from `options_by_group_index`), and a node `is_ignored` says to stays at its index.
-/// `reached_invalid_locale` is set by a comparison that upstream's `localeCompare` throws for (see
-/// [`compare`]).
+/// `sortNodes` on `order`, in place. `reached_invalid_locale` is set by a comparison that upstream's `localeCompare`
+/// throws for (see [`compare`]).
 pub(crate) fn sort_nodes<'a>(
     nodes: &[SortingNode<'a>],
     order: &mut [u32],
@@ -84,10 +76,7 @@ pub(crate) fn sort_nodes<'a>(
     }
 }
 
-/// Upstream's `sortNodesByGroups` over each partition in turn (`sortingNodeGroups.flatMap(..)`): within a
-/// partition the nodes go in the order of their group index, each group sorted with its own options
-/// (`computeOverriddenOptionsByGroupIndex`), and a node that is `eslint-disable`d, when those are ignored, or that
-/// `ignored_for_group` names keeps its place. A partition is a run of nodes with one `partition_id`.
+/// `sortNodesByGroups` over each partition in turn (`sortingNodeGroups.flatMap(..)`).
 pub(crate) fn sort_nodes_by_groups<'a>(
     nodes: &[SortingNode<'a>],
     config: &Configuration,
@@ -184,9 +173,7 @@ pub(crate) fn is_node_dependent_on_other_node<'a>(
         .any(|name| other.dependencies.contains(name))
 }
 
-/// Upstream's `computeNodesInCircularDependencies`: for each index into `nodes`, whether the node is on a cycle of
-/// dependencies. `order` is the list upstream walks, which decides which of two nodes binding one name a
-/// dependency leads to.
+/// `computeNodesInCircularDependencies`. `order` decides which of two nodes binding one name a dependency leads to.
 pub(crate) fn nodes_in_circular_dependencies(
     nodes: &[SortingNode<'_>],
     order: &[u32],
@@ -251,9 +238,7 @@ impl CycleSearch<'_, '_> {
     }
 }
 
-/// Upstream's `sortNodesByDependencies`: `order` (the nodes sorted by groups) walked depth first, so that every
-/// node a node depends on comes before it, unless the dependency is on a cycle or, when those are ignored,
-/// `eslint-disable`d.
+/// `sortNodesByDependencies` over `order`, the nodes sorted by groups.
 pub(crate) fn sort_nodes_by_dependencies(
     nodes: &[SortingNode<'_>],
     order: &[u32],

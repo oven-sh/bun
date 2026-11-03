@@ -1,9 +1,4 @@
-//! What is reported for a node list: `report-all-errors.ts`, `report-errors.ts`, `can-report-errors.ts`.
-//!
-//! Each adjacent pair of nodes is looked at once, in source order. A pair is out of order when the right node comes
-//! before the left one in the sorted order (or, for an `eslint-disable`d left node, at or before it in the order
-//! that leaves such nodes in place), and is a dependency error instead when a node before the right one depends on
-//! it. The spacing between the two is checked whatever the order. Every message of the list carries the same fix,
+//! `report-all-errors.ts`, `report-errors.ts`, `can-report-errors.ts`. Every message of a list carries the same fix,
 //! made once.
 
 use super::compare::compare;
@@ -20,9 +15,7 @@ use std::borrow::Cow;
 use std::cell::Cell;
 use std::cmp::Ordering;
 
-/// Upstream's `canReportErrors`: whether these options can produce any report at all, asked before the nodes are
-/// built. Every rule has the order and spacing messages, so what remains is whether anything orders the nodes
-/// (groups, dependencies, a comparator that is not `unsorted`) or spaces them.
+/// `canReportErrors`, with every rule having the order and spacing messages.
 pub(crate) fn can_report_errors(config: &Configuration, can_have_dependencies: bool) -> bool {
     let has_groups = !config.groups.is_empty();
     has_groups
@@ -31,13 +24,8 @@ pub(crate) fn can_report_errors(config: &Configuration, can_have_dependencies: b
         || newlines_between_option(config, 0, 0) != Newlines::Ignore
 }
 
-/// Whether a node list is certainly in order without being built: nothing but the comparator orders the nodes (no
-/// `groups`, no spacing to check, no dependencies), no line of the file disables the rule (a comparator that is not
-/// transitive, like `natural`, can report a pair the sort without the disabled nodes moves apart), and no adjacent
-/// pair is out of order under it. Upstream sorts every list to find that out; most lists a rule sees are in order,
-/// and this keeps them off the path that allocates. `nodes(size)` are the list's nodes in source order, with `name`
-/// and `value` filled in, and `size` only if `size` is asked for, which `type: "line-length"` does. Partitions need
-/// no look: they only keep nodes where they are.
+/// Whether a list is in order without being built, to keep the common case off the path that allocates. Disabled
+/// lines are excluded: a non-transitive comparator like `natural` can report a pair the sort moves apart.
 pub(crate) fn is_in_order_without_groups<'a, N: Iterator<Item = SortingNode<'a>>>(
     config: &Configuration,
     can_have_dependencies: bool,

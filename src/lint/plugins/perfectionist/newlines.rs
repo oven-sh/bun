@@ -1,9 +1,5 @@
-//! The blank lines between two nodes of one list: `get-newlines-between-option.ts` decides how many there should be
-//! from `newlinesBetween`, `newlinesInside` and the `groups` entries between the two groups,
-//! `get-newlines-between-errors.ts` reports `missedSpacing` / `extraSpacing` and `make-newlines-between-fixes.ts`
-//! removes or inserts them. `partition::lines_between` counts them.
-//!
-//! `newlinesBetweenValueGetter` is `sort-classes`' and `sort-modules`'; the four rules pass none.
+//! `get-newlines-between-option.ts`, `get-newlines-between-errors.ts`, `make-newlines-between-fixes.ts`, without
+//! `newlinesBetweenValueGetter`, which these rules never pass.
 
 use super::fixes::node_range;
 use super::options::{
@@ -30,9 +26,7 @@ pub(crate) fn newlines_between_option(
     config.newlines_between
 }
 
-/// Upstream's `computeNewlinesBetweenOptionForDifferentGroups`: the `{ newlinesBetween }` entry right between the
-/// two groups, or, over a longer stretch, the largest of the entries in it and of `newlinesBetween` wherever two
-/// groups of it are adjacent; `'ignore'` if none is a count of at least one, and `0` if none is `'ignore'` either.
+/// `computeNewlinesBetweenOptionForDifferentGroups`
 fn newlines_between_for_different_groups(
     config: &Configuration,
     group_index: u32,
@@ -101,9 +95,7 @@ fn newlines_inside_option(config: &Configuration, group_index: u32) -> Newlines 
     custom_group.or(group_override).unwrap_or(global)
 }
 
-/// Upstream's `getNewlinesBetweenErrors`: the spacing message for two adjacent nodes, if the blank lines between
-/// them are not what the options ask for. Nothing across partitions, or where `left`'s group comes after `right`'s
-/// (that pair gets an order error instead).
+/// `getNewlinesBetweenErrors`
 pub(crate) fn newlines_between_errors<'a>(
     file: &'a File<'a>,
     config: &Configuration,
@@ -129,9 +121,7 @@ pub(crate) fn newlines_between_errors<'a>(
     }
 }
 
-/// Upstream's `makeNewlinesBetweenFixes`: for each pair of adjacent positions whose sorted nodes want a count of
-/// blank lines that the original nodes there do not have, replaces the text between the original nodes (their
-/// parentheses and the comments that move with the next one excluded) with that count of blank lines.
+/// `makeNewlinesBetweenFixes`
 pub(crate) fn newlines_between_fixes<'a>(
     file: &'a File<'a>,
     nodes: &[SortingNode<'a>],
@@ -174,9 +164,7 @@ pub(crate) fn newlines_between_fixes<'a>(
     }
 }
 
-/// Upstream's `computeRangeReplacement`: the text between two nodes with its blank lines removed, then one line
-/// break added before its first for each blank line wanted. Nodes on one line get one more: the first break only
-/// separates them.
+/// `computeRangeReplacement`
 fn range_replacement(text: &[u8], newlines_between: f64, is_on_same_line: bool) -> Vec<u8> {
     let mut replacement = without_invalid_newlines(text);
     if newlines_between == 0.0 {
@@ -201,9 +189,8 @@ fn add_newline_before_first_newline(value: &mut Vec<u8>) {
     }
 }
 
-/// Upstream's `getStringWithoutInvalidNewlines`: `value.replaceAll(/\n\s*\n/gu, '\n')`. Each `\n` followed by
-/// whitespace with another `\n` in it becomes one `\n`, up to the last `\n` of that whitespace. The
-/// `replaceAll(/\n+/gu, '\n')` that follows upstream changes nothing: after this, no two `\n` are adjacent.
+/// `getStringWithoutInvalidNewlines`: `value.replaceAll(/\n\s*\n/gu, '\n')`. Upstream's second `replaceAll(/\n+/gu,
+/// '\n')` changes nothing after that.
 fn without_invalid_newlines(text: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(text.len());
     let mut rest = text;

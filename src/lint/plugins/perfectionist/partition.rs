@@ -1,18 +1,13 @@
-//! Where a node list splits into partitions that are sorted on their own: `should-partition.ts`,
-//! `is-partition-comment.ts`, `get-comments-before.ts`, `get-lines-between.ts`. A spread, a rest element and (with
-//! `partitionByComputedKey`) a computed key also start a partition in `sort-objects`, but those are decided by the
-//! rule from the node, before it builds the sorting node.
+//! `should-partition.ts`, `is-partition-comment.ts`, `get-comments-before.ts`, `get-lines-between.ts`. The partitions
+//! that `sort-objects` starts at a spread, a rest element or a computed key are the rule's own.
 
 use super::disabled::eslint_disabled_rules;
 use super::options::{CommentMatcher, Configuration, PartitionByComment, Pattern, Patterns};
 use bun_core::strings;
 use bun_lint::prelude::*;
 
-/// Upstream's `shouldPartition`: whether `node` starts a new partition. `last` is the node before it in the
-/// current partition, `None` for the first of the list. `token_to_ignore_before` is `tokenValueToIgnoreBefore`: the
-/// `|` before a union member, whose own comments count as the member's when nothing else stands between the two.
-/// `Err` is the message of the `SyntaxError` that `new RegExp` throws for a pattern of `partitionByComment`, for the
-/// rule to `cx.throw`.
+/// `shouldPartition`. `token_to_ignore_before` is `tokenValueToIgnoreBefore`. `Err` is the `SyntaxError` message of
+/// a `partitionByComment` pattern, for the rule to `cx.throw`.
 pub(crate) fn should_partition<'a, 'c>(
     file: &'a File<'a>,
     options: &'c Configuration,

@@ -1,8 +1,5 @@
 //! `perfectionist/sort-objects`: `rules/sort-objects.ts` and `rules/sort-objects/*` of eslint-plugin-perfectionist.
-//! The engine in `crate::perfectionist` does the sorting and the reports; this file turns an object literal or pattern
-//! into its sorting nodes and decides what only this rule decides: the selectors and modifiers of a property, its
-//! name and value, where a spread or a computed key splits the list, which properties of a pattern depend on which
-//! (through the default values) and the styled-components exemption.
+//! `crate::perfectionist` sorts and reports.
 
 use crate::perfectionist::configuration_if::{Subject, key_name};
 use crate::perfectionist::fixes::{FixOptions, make_fixes, range_to_diff};
@@ -205,9 +202,8 @@ fn dependency_names<'a>(member: Member<'a>) -> SmallVec<[Name<'a>; 1]> {
     names
 }
 
-/// Upstream's `computeDependencies`, the detection without `useExperimentalDependencyDetection`: every identifier in
-/// the default value of a pattern's property, found through the fields it looks into, and never inside a function. In
-/// an object literal `a: b = 1` is an assignment, not a default.
+/// `computeDependencies` without `useExperimentalDependencyDetection`. In an object literal `a: b = 1` is an
+/// assignment, not a default.
 fn dependencies_in_default<'a>(member: Member<'a>, is_destructured: bool) -> SmallVec<[Name<'a>; 2]> {
     let mut names: SmallVec<[Name<'a>; 2]> = SmallVec::new();
     let default = match member {
@@ -293,9 +289,7 @@ fn target_may_contain_references(target: Expr<'_>) -> bool {
     }
 }
 
-/// Upstream's `isStyleComponent`: the object, or the object literal it is nested in through property values, is an
-/// argument of `styled.x(..)`, `styled(..)(..)` or `css(..)`, or the value of a JSX `style` attribute, directly or as
-/// the body of an arrow function.
+/// `isStyleComponent`
 fn is_style_component(object: ObjectNode<'_>) -> bool {
     let ObjectNode::Literal(mut root, _) = object else {
         return false;
@@ -504,10 +498,8 @@ fn sort_nodes_by_dependencies(
     sort::sort_nodes_by_dependencies(nodes, &by_groups, ignore_eslint_disabled)
 }
 
-/// Upstream's `computeDependenciesOutsideDeferredFunctionsBySortingNode` with
-/// `populateSortingNodeGroupsWithDependencies`: for each reference inside the nodes to a name another node binds, the
-/// referencing node depends on the binding node's `dependencyNames`, unless the reference is inside a function that
-/// is not called right away. `Err` is a pattern of `ignoreCallbackDependenciesPatterns` that does not compile.
+/// `computeDependenciesOutsideDeferredFunctionsBySortingNode` with `populateSortingNodeGroupsWithDependencies`.
+/// `Err` is a pattern of `ignoreCallbackDependenciesPatterns` that does not compile.
 fn add_dependencies_outside_deferred_functions<'a, 'p>(
     file: &'a File<'a>,
     nodes: &mut [SortingNode<'a>],
@@ -559,9 +551,7 @@ fn add_dependencies_outside_deferred_functions<'a, 'p>(
     Ok(())
 }
 
-/// Upstream's `isNodeInsideDeferredFunction`: between `node` and `max_parent` there is a call whose callee's name
-/// matches `ignoreCallbackDependenciesPatterns`, or a function expression that is neither an argument of a call nor
-/// called right away.
+/// `isNodeInsideDeferredFunction`
 fn is_node_inside_deferred_function<'a, 'p>(
     node: Node<'a>,
     max_parent: Node<'a>,

@@ -1,6 +1,5 @@
-// `String.prototype.localeCompare` and `Intl.Collator` for Rust: ICU's collator for English, which is CLDR's root collation,
-// with the attributes that IntlCollator.cpp sets, and one per BCP 47 language tag for `localeCompare(b, locale)`, read
-// with JSC's own locale helpers so that the two agree on which tags are valid and which are supported.
+// `String.prototype.localeCompare` and `Intl.Collator` for Rust: ICU collators with the attributes that IntlCollator.cpp
+// sets, for the root collation ("en") and per BCP 47 tag, read with JSC's locale helpers so the two agree on tags.
 
 #include "root.h"
 
@@ -52,8 +51,7 @@ static const UCollator* open(const char* locale, bool isNumericAndBase)
     UCollator* collator = ucol_open(locale, &status);
     if (U_FAILURE(status))
         return nullptr;
-    // `Intl.Collator` sets the strength and the case level for its `sensitivity`. The rest is the locale's, with
-    // the `-u-kn-` and `-u-kf-` of the tag: Danish puts upper case first, `localeCompare` in Danish does too.
+    // As IntlCollator.cpp: strength and case level are `sensitivity`'s, the rest (`-u-kn-`, `-u-kf-`) is the locale's.
     ucol_setAttribute(collator, UCOL_STRENGTH, isNumericAndBase ? UCOL_PRIMARY : UCOL_TERTIARY, &status);
     ucol_setAttribute(collator, UCOL_CASE_LEVEL, UCOL_OFF, &status);
     if (isNumericAndBase)
@@ -80,11 +78,8 @@ static const UCollator* get(bool isNumericAndBase)
     return collator;
 }
 
-// `new Intl.Collator(tag)`: the collator of one language tag, opened once per tag for the life of the process. Null
-// with `isWellFormed` false for a tag that is not well-formed, which `localeCompare` throws a `RangeError` for; null
-// with `isWellFormed` true for a well-formed tag that ICU has no collation data for, which `Intl` passes over for
-// the next of a list, or the default locale. The tag is read as `Intl.Collator` reads it: the `-u-co-`, `-u-kn-`
-// and `-u-kf-` extensions count, the other extensions do not.
+// `new Intl.Collator(tag)`, opened once per tag for the life of the process. Null with `isWellFormed` false for a tag
+// that is not well-formed, with it true for one ICU has no collation data for.
 static const UCollator* forLanguageTag(const char* tag, size_t tagLength, bool* isWellFormed)
 {
     static std::mutex mutex;

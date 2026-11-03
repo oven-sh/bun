@@ -1,10 +1,5 @@
-//! Which group a node is in, and what that changes: `compute-group.ts`, `get-group-index.ts`,
-//! `does-custom-group-match.ts`, `generate-predefined-groups.ts`, `compute-overridden-options-by-group-index.ts`.
-//!
-//! A predefined group name is `modifier(-modifier)*-selector` or a selector alone (`multiline-optional-property`,
-//! `method`, `member`). Upstream generates every permutation of the node's modifiers for each of its selectors and
-//! takes the first that `groups` names; here the candidates are built in a stack buffer in that order and looked up
-//! in [`Configuration::group_names`](super::options::Configuration::group_names), so nothing is allocated per node.
+//! `compute-group.ts`, `get-group-index.ts`, `does-custom-group-match.ts`, `generate-predefined-groups.ts`,
+//! `compute-overridden-options-by-group-index.ts`. Predefined group candidates are looked up in upstream's order.
 
 use super::options::{
     Configuration, CustomGroup, CustomGroupMatch, CustomGroupMatcher, FallbackSort, GroupEntry,
@@ -16,10 +11,8 @@ use smallvec::SmallVec;
 /// `rightGroup` of a message; the engine compares ids.
 pub(crate) type GroupId = u32;
 
-/// Upstream's `computeGroup`: the first custom group the node matches whose name is in `groups`, else the first
-/// predefined group of the node's modifiers and selectors that is in `groups`, else `"unknown"`. `selectors` and
-/// `modifiers` are in the order the rule pushes them, which decides which predefined name wins. `Err` is the
-/// `SyntaxError` of a pattern that does not compile, which upstream throws at this point.
+/// `computeGroup`. The order of `selectors` and `modifiers` decides which predefined name wins. `Err` is the
+/// `SyntaxError` of a pattern that does not compile.
 pub(crate) fn compute_group<'c>(
     config: &'c Configuration,
     selectors: &[&str],
@@ -122,10 +115,8 @@ pub(crate) fn matches<'p>(patterns: &'p Patterns, text: &[u8]) -> Result<bool, &
     Ok(false)
 }
 
-/// Upstream's `generatePredefinedGroups` followed by `predefinedGroups.find(group => groupsSet.has(group))`, without
-/// building the list: for each selector, the permutations of every combination of the modifiers, longest
-/// combinations first, each followed by the selector, then the selector alone. The first candidate that `groups`
-/// names wins.
+/// `generatePredefinedGroups` followed by `predefinedGroups.find(group => groupsSet.has(group))`, without building
+/// the list.
 fn find_predefined_group(
     config: &Configuration,
     selectors: &[&str],
@@ -240,9 +231,7 @@ pub(crate) fn custom_group_at(config: &Configuration, group_index: u32) -> Optio
     config.custom_groups.iter().find(|it| it.name == name)
 }
 
-/// Upstream's `computeOverriddenOptionsByGroupIndex`: the sort options for the nodes of the group at `group_index`.
-/// A `{ group, .. }` entry's `type`, `order` and `sortBy` replace the main ones and its `fallbackSort` is merged key
-/// by key over them; a custom group of that name then does the same over the result.
+/// `computeOverriddenOptionsByGroupIndex`
 pub(crate) fn options_by_group_index(config: &Configuration, group_index: u32) -> SortOptions {
     let mut options = config.sort;
     if let Some(GroupEntry::Overrides(overrides)) = config.groups.get(group_index as usize) {

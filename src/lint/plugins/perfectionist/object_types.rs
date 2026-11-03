@@ -1,7 +1,5 @@
 //! What `sort-object-types` and `sort-interfaces` share: `rules/sort-object-types/sort-object-type-elements.ts` and
-//! its helpers (`compute-node-name.ts`, `is-member-optional.ts`, `is-node-function-type.ts`). The members of a type
-//! literal or an interface body become one [`SortingNode`] each, except call and construct signatures, which are
-//! never sorted and end a partition on each side.
+//! its helpers (`compute-node-name.ts`, `is-member-optional.ts`, `is-node-function-type.ts`).
 
 use super::configuration_if::Subject;
 use super::fixes::{self, FixOptions};
@@ -14,9 +12,7 @@ use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::cell::Cell;
 
-/// Both rules parse the same options: `sort-interfaces` reuses the `defaultOptions` and `jsonSchema` of
-/// `sort-object-types`. Its `allSelectors` are `index-signature`, `member`, `method` and `property`, its
-/// `allModifiers` `optional`, `required` and `multiline`.
+/// `sort-interfaces` reuses the `defaultOptions` and `jsonSchema` of `sort-object-types`.
 pub(crate) const RULE: RuleKind = RuleKind::ObjectTypes;
 
 /// `addSafetySemicolonWhenInline: true` on every sorting node of both rules.

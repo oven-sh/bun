@@ -303,11 +303,8 @@ pub fn natural_compare(a: &[u8], b: &[u8]) -> Ordering {
     compare_units(&strings::wtf8_to_utf16(a), &strings::wtf8_to_utf16(b))
 }
 
-/// The npm package `natural-orderby`'s `compare()` on two strings, which eslint-plugin-perfectionist sorts with for
-/// `type: "natural"`. Unlike [`natural_compare`]: the texts are lower-cased and trimmed first, a text that `Number()`
-/// parses (`0x10`, `1e3`, `-1`, `001`) is that number, a number comes before text, and text with a character outside
-/// ASCII is ordered as `localeCompare` orders it. A text that looks like a date (`2024-01-05`, `1/5/2024 10:00`) is
-/// compared as `Date.parse` parses it.
+/// The npm package `natural-orderby`'s `compare()` on two strings. Unlike [`natural_compare`] it lower-cases, parses
+/// numbers and dates, and orders text outside ASCII as `localeCompare` does.
 pub fn natural_orderby(a: &[u8], b: &[u8]) -> Ordering {
     natural_orderby::compare(a, b, strings::locale_compare)
 }
@@ -318,9 +315,8 @@ pub fn natural_orderby_in(collator: strings::Collator, a: &[u8], b: &[u8]) -> Or
     natural_orderby::compare(a, b, |a, b| collator.compare(a, b))
 }
 
-/// [`natural_orderby`] as `compare({ locale })` makes it for a `locale` that `localeCompare` throws a `RangeError`
-/// for: `None` where that call is made, which is for two differing chunks that are not numbers with a character
-/// outside ASCII between them; `Some` of the order everywhere else, where the locale is never read.
+/// [`natural_orderby`] for a `locale` that `localeCompare` throws a `RangeError` for: `None` where that call is
+/// reached, `Some` of the order everywhere else.
 pub fn natural_orderby_without_locale(a: &[u8], b: &[u8]) -> Option<Ordering> {
     let reached_locale = std::cell::Cell::new(false);
     let order = natural_orderby::compare(a, b, |_, _| {
@@ -392,9 +388,7 @@ mod natural_orderby {
         (!number.is_nan()).then_some(number)
     }
 
-    /// `parseDate`: `Date.parse(value)` for a text that `RE_DATE` takes for a date, which is one of
-    /// `^([\w ]+,?[\w ]+)?[\w ]+,?[\w ]+\d+:\d+(:\d+)?[\w ]?`, `^\d{1,4}[/-]\d{1,4}[/-]\d{1,4}` and
-    /// `^\w+, \w+ \d+, \d{4}`.
+    /// `parseDate`: `Date.parse(value)` for a text that `RE_DATE` takes for a date.
     fn parse_date(text: &[u8]) -> Option<f64> {
         if !looks_like_date(text) {
             return None;

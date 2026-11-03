@@ -111,7 +111,7 @@ fn node_name<'a>(file: &'a File<'a>, ty: TypeNode<'a>) -> &'a [u8] {
 
 /// `getNodeRange`'s `isParenthesized` step: the member widened to the one pair of parentheses directly around it,
 /// not to every pair like `TypeNode::outer_span`. For `B | ((A))` upstream moves `(A)` and leaves the outer pair.
-fn outer_span_once(file: &File<'_>, span: Span) -> Span {
+fn outer_span_once<'a>(file: &'a File<'a>, span: Span) -> Span {
     let text = file.text();
     let before = file.end_of_token_before(span.start) as usize;
     if before == 0 || text.get(before - 1) != Some(&b'(') {

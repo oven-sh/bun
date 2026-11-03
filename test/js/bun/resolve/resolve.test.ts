@@ -353,6 +353,14 @@ async function missesNotRunAgain(specifiers: string[]) {
   return notRunAgain;
 }
 
+// The directory records and the listings that the resolver made since `before`. It frees neither, so a miss may
+// make none when nothing changed on disk since the same miss before it: the run after it finds each cached
+// directory as it was. `refills` is left out: Windows reads each listing again in place.
+function madeSince(before: ReturnType<typeof internals.resolverCounters>) {
+  const now = internals.resolverCounters();
+  return { dirInfoSlots: now.dirInfoSlots - before.dirInfoSlots, newListings: now.newListings - before.newListings };
+}
+
 // A lookup that misses runs once more, and that run asks the disk about each cached directory on its way. Both
 // runs make the cache keys of those directories from the specifier as it is spelled: with repeated separators,
 // and as a UNC path with and without a share.
@@ -380,22 +388,30 @@ it.if(isWindows)("directory cache key computation", async () => {
 });
 
 // The run after the miss asks the disk about the directory of the file, which for `C:\\\x` is the root of the
-// drive. The cache key of a drive root is the only one that ends with a separator: `C:\`.
+// drive. The cache key of a drive root is the only one that ends with a separator: `C:\`. The same misses once
+// more keep the record of that root: see madeSince().
 it.if(isWindows)("import() of a missing file at the drive root rejects", async () => {
   const drive = process.cwd().slice(0, 2);
-  const notRunAgain = await missesNotRunAgain([
+  const specifiers = [
     ...[2, 3, 4].map(separators => drive + "\\".repeat(separators) + "doesnotexist.ts"),
     `${drive}///doesnotexist.ts`,
-  ]);
-  expect(notRunAgain).toEqual([]);
+  ];
+  expect(await missesNotRunAgain(specifiers)).toEqual([]);
+  const before = internals.resolverCounters();
+  expect(await missesNotRunAgain(specifiers)).toEqual([]);
+  expect(madeSince(before)).toEqual({ dirInfoSlots: 0, newListings: 0 });
 });
 
 // The cache key of the root of a share ends without a separator, and the server above that root is no directory.
-// The administrative share of a drive is such a root, as in test/js/node/fs/fs.test.ts.
+// The administrative share of a drive is such a root, as in test/js/node/fs/fs.test.ts. Its record is built below
+// no other, and the same misses once more keep it: see madeSince().
 it.if(isWindows)("import() of a missing file at the root of a share rejects", async () => {
   const share = `\\\\localhost\\${process.cwd()[0]}$`;
-  const notRunAgain = await missesNotRunAgain([`${share}\\doesnotexist.ts`, `${share}\\\\doesnotexist.ts`]);
-  expect(notRunAgain).toEqual([]);
+  const specifiers = [`${share}\\doesnotexist.ts`, `${share}\\\\doesnotexist.ts`];
+  expect(await missesNotRunAgain(specifiers)).toEqual([]);
+  const before = internals.resolverCounters();
+  expect(await missesNotRunAgain(specifiers)).toEqual([]);
+  expect(madeSince(before)).toEqual({ dirInfoSlots: 0, newListings: 0 });
 });
 
 // A test cannot write to the root of a real drive, so `subst` makes a directory the root of a new one. The
@@ -427,6 +443,13 @@ describe.if(isWindows)("a lookup that missed finds what was written since", () =
         return e.code;
       }
     };
+    // Before anything is written, the first lookup misses twice. The second miss keeps the record of `root` and of
+    // each directory above it: see madeSince().
+    const missing = () => found(() => from(root).resolve(`${root}\\${one}`));
+    missing();
+    const before = internals.resolverCounters();
+    missing();
+    const madeByUnchangedMiss = madeSince(before);
     const answers: Record<string, string[]> = {};
     // Asks, writes, and asks again. The write goes through `root` too: what the client of a share cached about a
     // directory can be seconds old until it writes there itself.
@@ -466,6 +489,7 @@ describe.if(isWindows)("a lookup that missed finds what was written since", () =
       "a package": ["MODULE_NOT_FOUND", "index.js"],
       "an alias, from the directory below": ["MODULE_NOT_FOUND", "impl.cjs"],
     });
+    expect(madeByUnchangedMiss).toEqual({ dirInfoSlots: 0, newListings: 0 });
   });
 });
 

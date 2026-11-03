@@ -82,7 +82,8 @@ test("property matchers that are one asymmetric matcher store the received value
   }).toEqual({
     results: ["(pass) plain", "(pass) matches", "(fail) file", "(fail) inline"],
     exitCode: 1,
-    snap: header + '\nexports[`plain 1`] = `\n{\n  "a": 1,\n}\n`;\n' + '\nexports[`matches 1`] = `\n{\n  "a": 1,\n}\n`;\n',
+    snap:
+      header + '\nexports[`plain 1`] = `\n{\n  "a": 1,\n}\n`;\n' + '\nexports[`matches 1`] = `\n{\n  "a": 1,\n}\n`;\n',
     source,
   });
 });

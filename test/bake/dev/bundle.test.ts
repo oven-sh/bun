@@ -1168,6 +1168,56 @@ devTest("barrel optimization skips unused submodules", {
   },
 });
 
+// A barrel with a deferred re-export is bundled again with each importer. Its
+// output is the same, so it stays out of the hot update. In the update it made
+// a page reload when the entry does not accept (#47857).
+for (const [where, specifier, barrel] of [
+  ["a package", "barrel-lib", "node_modules/barrel-lib"],
+  ["a folder of the project", "./lib", "lib"],
+] as const) {
+  devTest(`barrel with a deferred re-export in ${where} is not re-sent when an importer changes`, {
+    files: {
+      "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+      "index.ts": `
+        import { label } from "./page.ts";
+        import { Alpha } from "${specifier}";
+        globalThis.read = () => label() + ", index " + Alpha;
+        console.log("index");
+      `,
+      "page.ts": `
+        import { Alpha } from "${specifier}";
+        export const label = () => "page 1 " + Alpha;
+        import.meta.hot.accept();
+      `,
+      [`${barrel}/package.json`]: JSON.stringify({
+        name: "barrel-lib",
+        version: "1.0.0",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      [`${barrel}/index.js`]: `
+        export { Alpha } from "./alpha.js";
+        export { Beta } from "./beta.js";
+      `,
+      [`${barrel}/alpha.js`]: `export const Alpha = "ALPHA";`,
+      [`${barrel}/beta.js`]: `export const Beta = "BETA";`,
+    },
+    async test(dev) {
+      await using c = await dev.client("/", { storeHotChunks: true });
+      await c.expectMessage("index");
+      expect(await c.js<string>`read()`).toBe("page 1 ALPHA, index ALPHA");
+      for (const n of [2, 3]) {
+        await dev.patch("page.ts", { find: `page ${n - 1}`, replace: `page ${n}` });
+        const chunk = await c.getMostRecentHmrChunk();
+        expect([...chunk.matchAll(/^  ("(?:[^"\\]|\\.)*")(?:: \[|\()/gm)].map(m => JSON.parse(m[1]))).toEqual([
+          "page.ts",
+        ]);
+        expect(await c.js<string>`read()`).toBe(`page ${n} ALPHA, index ALPHA`);
+      }
+    },
+  });
+}
+
 // The barrel file is bundled again with the saved file, and its output is the
 // same. It copies the exports of `x.ts` when it runs (`export *`), so it must
 // run again after `x.ts`.

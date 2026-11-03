@@ -23,7 +23,7 @@ pub(crate) fn write_case_head<'a>(case: Case<'a>, f: &mut Formatter<'a>) -> bool
             return Err(Refused);
         }
         line.token("case ")?;
-        line.expr(test, Place::Other)?;
+        line.expr_of_statement(test)?;
         line.byte(b':')
     })
 }
@@ -120,7 +120,7 @@ impl<'a> Line<'_, 'a> {
                 self.token("do")?;
                 self.block(body)?;
                 self.token(" while (")?;
-                self.expr(test, Place::Other)?;
+                self.expr_of_statement(test)?;
                 self.byte(b')')?;
             }
             StmtKind::For {
@@ -139,12 +139,12 @@ impl<'a> Line<'_, 'a> {
                     self.byte(b' ')?;
                 }
                 if let Some(test) = test {
-                    self.expr(test, Place::Other)?;
+                    self.expr_of_statement(test)?;
                 }
                 self.byte(b';')?;
                 if let Some(update) = update {
                     self.byte(b' ')?;
-                    self.expr(update, Place::Other)?;
+                    self.expr_of_statement(update)?;
                 }
                 self.byte(b')')?;
                 return self.clause(body);
@@ -232,7 +232,7 @@ impl<'a> Line<'_, 'a> {
             StmtKind::Switch { expr, cases } => {
                 let first = cases.first().ok_or(Refused)?;
                 self.token("switch (")?;
-                self.expr(expr, Place::Other)?;
+                self.expr_of_statement(expr)?;
                 self.byte(b')')?;
                 let span = Span::new(first.span().start, statement.span().end);
                 return self.end_line_with_hole(Hole::BodyOf(statement), span, 2);
@@ -386,7 +386,7 @@ impl<'a> Line<'_, 'a> {
             Some(_) if is_non_collapsible(body.ast_parent(), self.f) => ") {".len(),
             Some(_) => ") {}".len(),
             None => {
-                self.expr(test, Place::Other)?;
+                self.expr_of_statement(test)?;
                 return self.byte(b')');
             }
         };
@@ -394,7 +394,7 @@ impl<'a> Line<'_, 'a> {
         let limit = self.limit;
         let was_too_wide = std::mem::replace(&mut self.is_too_wide, false);
         self.limit = limit.saturating_sub(after);
-        let written = self.expr(test, Place::Other);
+        let written = self.expr_of_statement(test);
         self.limit = limit;
         let is_too_wide = std::mem::replace(&mut self.is_too_wide, was_too_wide);
         if written.is_ok() {

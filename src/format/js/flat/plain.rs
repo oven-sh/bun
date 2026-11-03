@@ -1,4 +1,4 @@
-//! Plain expressions: names, `this`, literals, member accesses and calls of those.
+//! Plain expressions: names, `this`, literals, member accesses and calls of those, and operators between them.
 //!
 //! They're most of what's in a line, and all there is to know about them is in their records: the kind, where they start
 //! and end. So they're written from the records ([`File::plain_expr`]), without handles. What's written is what
@@ -27,22 +27,149 @@ impl<'a> Line<'_, 'a> {
     /// Writes `e` if it's plain. Returns `None`, with nothing written, if it isn't.
     #[inline]
     pub(super) fn plain_expr(&mut self, e: Expr<'a>, place: Place) -> Option<Written> {
-        // What is too wide has rules of its own.
-        if self.breaks {
-            return None;
+        let raw = self.f.file().plain_expr(e.id())?;
+        self.plain(e.id(), raw, place, false)
+    }
+
+    /// [`Line::expr`] for what's directly in a statement other than `export default`, or in a `case`: a condition, say.
+    #[inline]
+    pub(super) fn expr_of_statement(&mut self, e: Expr<'a>) -> Written {
+        let raw = self.f.file().plain_expr(e.id());
+        match raw.and_then(|raw| self.plain(e.id(), raw, Place::Other, true)) {
+            Some(written) => written,
+            None => self.expr(e, Place::Other),
         }
-        let id = e.id();
-        let raw = self.f.file().plain_expr(id)?;
+    }
+
+    /// `is_in_statement` as in [`Line::expr_of_statement`]: only a name, a sequence or `in` can need parentheses there.
+    fn plain(
+        &mut self,
+        id: ExprId,
+        raw: &hir::Expr,
+        place: Place,
+        is_in_statement: bool,
+    ) -> Option<Written> {
+        let file = self.f.file();
+        let is_asked = !is_in_statement && place != Place::Free;
         match raw.kind {
             hir::ExprKind::Dot { .. } | hir::ExprKind::Call(_) | hir::ExprKind::Index { .. } => {
                 if !self.is_plain_chain(id)
-                    || (place == Place::Other && needs_parentheses(e, self.f))
+                    || (is_asked
+                        && place == Place::Other
+                        && needs_parentheses(file.handle_of_plain_expr(id), self.f))
                 {
                     return None;
                 }
                 Some(self.plain_chain(id))
             }
+            hir::ExprKind::Binary { op, left, right }
+                if !matches!(op, BinOp::Comma | BinOp::In) =>
+            {
+                if is_asked && needs_parentheses(file.handle_of_plain_expr(id), self.f) {
+                    return None;
+                }
+                Some(self.nested(|line| line.plain_binary(op, left, right)))
+            }
+            hir::ExprKind::Unary { op, operand } => {
+                if is_asked && needs_parentheses(file.handle_of_plain_expr(id), self.f) {
+                    return None;
+                }
+                Some(self.nested(|line| line.plain_unary(op, operand)))
+            }
             _ => self.plain_leaf(raw, place),
+        }
+    }
+
+    /// `left op right`, without parentheses.
+    fn plain_binary(&mut self, op: BinOp, left: ExprId, right: ExprId) -> Written {
+        let file = self.f.file();
+        let left_raw = file.plain_expr(left).ok_or(Refused)?;
+        let right_raw = file.plain_expr(right).ok_or(Refused)?;
+        // `a && (b && c)` loses its parentheses.
+        if matches!(right_raw.kind, hir::ExprKind::Binary { op: right_op, .. } if right_op == op) {
+            return Err(Refused);
+        }
+        match left_raw.kind {
+            // One chain, without the parentheses that `(a | b) | c` would get otherwise.
+            hir::ExprKind::Binary {
+                op: left_op,
+                left,
+                right,
+            } if left_op != BinOp::Comma && should_flatten(op, left_op) => {
+                self.nested(|line| line.plain_binary(left_op, left, right))?;
+            }
+            _ => self.plain_operand(left, left_raw, op, false)?,
+        }
+        self.byte(b' ')?;
+        self.token(bin_op_text(op))?;
+        self.byte(b' ')?;
+        self.plain_operand(right, right_raw, op, true)
+    }
+
+    /// An operand of `parent`.
+    fn plain_operand(
+        &mut self,
+        id: ExprId,
+        raw: &hir::Expr,
+        parent: BinOp,
+        is_right: bool,
+    ) -> Written {
+        match raw.kind {
+            hir::ExprKind::Binary { op, left, right }
+                if !matches!(op, BinOp::Comma | BinOp::In) =>
+            {
+                let has_parentheses = match parent.is_logical() && op.is_logical() {
+                    true => parent != op,
+                    false => operand_needs_parentheses(parent, op, is_right),
+                };
+                if has_parentheses {
+                    self.byte(b'(')?;
+                }
+                self.nested(|line| line.plain_binary(op, left, right))?;
+                if has_parentheses {
+                    self.byte(b')')?;
+                }
+                Ok(())
+            }
+            // `(-a) ** b`, `(!a) in b`
+            hir::ExprKind::Unary { op, operand }
+                if is_right || !matches!(parent, BinOp::Pow | BinOp::In | BinOp::Instanceof) =>
+            {
+                self.nested(|line| line.plain_unary(op, operand))
+            }
+            _ => self.plain_operand_of_any_operator(id, raw),
+        }
+    }
+
+    /// `!operand`, `operand++`, without parentheses.
+    fn plain_unary(&mut self, op: UnOp, operand: ExprId) -> Written {
+        let raw = self.f.file().plain_expr(operand).ok_or(Refused)?;
+        if op.is_update() && !op.is_prefix() {
+            self.plain_operand_of_any_operator(operand, raw)?;
+            return self.token(op.as_str());
+        }
+        self.token(op.as_str())?;
+        if op.is_keyword() {
+            self.byte(b' ')?;
+        }
+        self.plain_operand_of_any_operator(operand, raw)
+    }
+
+    /// No operator needs parentheses around a member access or a call.
+    fn plain_operand_of_any_operator(&mut self, id: ExprId, raw: &hir::Expr) -> Written {
+        match raw.kind {
+            hir::ExprKind::Dot { .. } | hir::ExprKind::Call(_) | hir::ExprKind::Index { .. }
+                if self.is_plain_chain(id) =>
+            {
+                self.plain_chain(id)
+            }
+            _ => match self.plain_leaf(raw, Place::Other) {
+                Some(written) => written,
+                None => {
+                    let e = self.f.file().handle_of_plain_expr(id);
+                    self.nested(|line| line.expr(e, Place::Other))
+                }
+            },
         }
     }
 
@@ -67,6 +194,7 @@ impl<'a> Line<'_, 'a> {
     /// Writes an expression that ends its line, and that needs no parentheses where it is unless it's a name, if it's
     /// plain, or a plain assignment that `is_statement`.
     fn last_plain_expr(&mut self, id: ExprId, place: Place, is_statement: bool) -> Option<Written> {
+        // What ends a line that's too wide is where it breaks.
         if self.breaks {
             return None;
         }
@@ -83,9 +211,6 @@ impl<'a> Line<'_, 'a> {
                 {
                     return None;
                 }
-                self.is_plain_chain(id).then(|| self.plain_chain(id))
-            }
-            hir::ExprKind::Dot { .. } | hir::ExprKind::Index { .. } => {
                 self.is_plain_chain(id).then(|| self.plain_chain(id))
             }
             // `a.b = c`, as a statement
@@ -107,6 +232,10 @@ impl<'a> Line<'_, 'a> {
                     self.last_assigned_or_plain(file.handle_of_plain_expr(value))
                 }))
             }
+            hir::ExprKind::Dot { .. }
+            | hir::ExprKind::Index { .. }
+            | hir::ExprKind::Binary { .. }
+            | hir::ExprKind::Unary { .. } => self.plain(id, raw, place, true),
             _ => self.plain_leaf(raw, place),
         }
     }
@@ -142,7 +271,8 @@ impl<'a> Line<'_, 'a> {
     }
 
     /// True if `id` is a chain of member accesses and at most two calls that starts with a name or `this`, without `?.`,
-    /// `!` or type arguments. A chain with more calls can break whether it fits or not.
+    /// `!` or type arguments. A chain with more calls can break whether it fits or not. A call that's too wide has rules
+    /// of its own.
     fn is_plain_chain(&self, mut id: ExprId) -> bool {
         let file = self.f.file();
         let (mut calls, mut links) = (0, 0);
@@ -170,7 +300,11 @@ impl<'a> Line<'_, 'a> {
                         return false;
                     };
                     calls += 1;
-                    if call.chain != Chain::No || !call.type_args.is_empty() || calls > 2 {
+                    if call.chain != Chain::No
+                        || !call.type_args.is_empty()
+                        || calls > 2
+                        || self.breaks
+                    {
                         return false;
                     }
                     is_callee = true;

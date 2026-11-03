@@ -858,15 +858,24 @@ fn binary_or_cast_needs_parentheses<'a>(
             false => is_binary_cast || is_parent_bitwise,
         };
     };
-    let precedence = operator.precedence();
+    operand_needs_parentheses(parent_operator, operator, right == e)
+}
 
+/// True if `a operator b` needs parentheses as an operand of `parent_operator`. They aren't both logical operators.
+pub(crate) fn operand_needs_parentheses(
+    parent_operator: BinOp,
+    operator: BinOp,
+    is_right: bool,
+) -> bool {
+    let (parent_precedence, precedence) = (parent_operator.precedence(), operator.precedence());
     parent_precedence > precedence
         // `a ** (b ** c)`
-        || (parent_precedence == precedence && (right == e || !should_flatten(parent_operator, operator)))
+        || (parent_precedence == precedence && (is_right || !should_flatten(parent_operator, operator)))
         // `(a % 4) + 4`
         || (parent_precedence < precedence && operator.is_remainder() && parent_precedence.is_additive())
         // `(a * 3) >> 5`
-        || is_parent_bitwise
+        || parent_precedence.is_bitwise()
+        || parent_precedence.is_shift()
 }
 
 /// For Prettier's `NGPipeExpression`. A pipe that's an argument of another pipe gets its parentheses from that pipe.

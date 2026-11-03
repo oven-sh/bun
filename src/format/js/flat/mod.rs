@@ -52,7 +52,9 @@ pub(crate) use statements::write_case_head;
 pub(crate) use ts_declarations::{write_enum_member, write_signature};
 
 use crate::ir::element::{FormatElement, LineMode, Tag, Text, TextWidth, Token};
-use crate::js::parentheses::expression::{chain_expression_needs_parentheses, needs_parentheses};
+use crate::js::parentheses::expression::{
+    chain_expression_needs_parentheses, needs_parentheses, operand_needs_parentheses,
+};
 use crate::js::print::binary_like_expression::should_flatten;
 use crate::js::print::block_statement::is_empty_block;
 use crate::js::print::call_like_expression::keeps_arguments_on_one_line;

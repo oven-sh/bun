@@ -372,9 +372,15 @@ fn as_expression(argument: Expr<'_>) -> Option<Expr<'_>> {
 
 /// True if `e` is a template that's formatted as its embedded language.
 pub(crate) fn has_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    has_non_html_embed_label(e, f) || crate::html::in_js::label(e, f).is_some()
+    is_template(e) && (has_non_html_embed_label(e, f) || crate::html::in_js::label(e, f).is_some())
 }
 
+#[inline]
+fn is_template(e: Expr<'_>) -> bool {
+    matches!(e.tag(), ExprTag::Template | ExprTag::TaggedTemplate)
+}
+
+/// `e` is a template.
 fn has_non_html_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     crate::css::embed::has_embed_label(e, f)
         || crate::graphql::embed::has_embed_label(e, f)
@@ -383,8 +389,9 @@ fn has_non_html_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
 
 /// `label?.embed && label?.hug !== false`
 fn has_embed_label_with_hug<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    has_non_html_embed_label(e, f)
-        || crate::html::in_js::label(e, f) == Some(crate::html::in_js::Label::Embed)
+    is_template(e)
+        && (has_non_html_embed_label(e, f)
+            || crate::html::in_js::label(e, f) == Some(crate::html::in_js::Label::Embed))
 }
 
 /// Prettier's `shouldGroupFirst` and `shouldGroupLast`.

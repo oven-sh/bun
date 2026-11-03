@@ -140,11 +140,22 @@ describe("crypto.hash", () => {
     expect(crypto.hash("sha256", "x", { outputEncoding: "base64" })).toBe(digest.toString("base64"));
     expect(crypto.hash("sha256", "x", { outputEncoding: "buffer" })).toEqual(digest);
     expect(crypto.hash("sha256", "x", { outputLength: 32 })).toBe(digest.toString("hex"));
+  });
 
-    // It is an object without options, not a place to put the digest.
-    const bytes = new Uint8Array(32);
-    expect(crypto.hash("sha256", "x", bytes as any)).toBe(digest.toString("hex"));
-    expect(bytes).toEqual(new Uint8Array(32));
+  test("writes the digest into a TypedArray or a DataView, like Bun.CryptoHasher.hash()", () => {
+    const hash = crypto.hash as (...args: unknown[]) => unknown;
+    const digest = crypto.createHash("sha256").update("x").digest();
+    for (const output of [
+      new Uint8Array(32),
+      Buffer.alloc(32),
+      new Uint32Array(8),
+      new DataView(new ArrayBuffer(32)),
+      new Uint8Array(40),
+    ]) {
+      expect(hash("sha256", "x", output)).toBe(output);
+      expect(Buffer.from(output.buffer, output.byteOffset, 32)).toEqual(digest);
+    }
+    expect(() => hash("sha256", "x", new Uint8Array(31))).toThrow("TypedArray must be at least 32 bytes");
   });
 
   test("outputLength", () => {

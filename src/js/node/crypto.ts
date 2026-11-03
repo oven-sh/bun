@@ -3,6 +3,7 @@ const StringDecoder = require("node:string_decoder").StringDecoder;
 const LazyTransform = require("internal/streams/lazy_transform");
 const { defineCustomPromisifyArgs } = require("internal/promisify");
 const Writable = require("internal/streams/writable");
+const { CryptoHasher } = Bun;
 
 const {
   getCurves,
@@ -260,6 +261,10 @@ crypto_exports.hash = function hash(algorithm, input, options) {
   if (typeof options === "string") {
     outputEncoding = options;
   } else {
+    // Not in Node: the digest is written into a TypedArray or a DataView.
+    if (isArrayBufferView(options)) {
+      return CryptoHasher.hash(algorithm, input as Bun.BlobOrStringOrBuffer, options as NodeJS.TypedArray);
+    }
     validateObject(options, "options");
     outputLength = options.outputLength;
     outputEncoding = options.outputEncoding;

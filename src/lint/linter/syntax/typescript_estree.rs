@@ -19,7 +19,7 @@ use crate::tokens::{skip_trivia, token_len};
 use bun_sema::bind::{ClassOwner, FnOwner, MemberOwner, Parent};
 use bun_sema::hir::{
     self, BinOp, Chain, Diagnostic, Flags, FnBody, FnKind, MemberKind, ModifierKind, NameKind,
-    PropKind, StmtKind, UnOp, VarKind,
+    PropKind, StmtKind, UnOp, VarKind, rare,
 };
 
 /// `ts.SyntaxKind` of a node with modifiers, reduced to the kinds `checkModifiers` distinguishes.
@@ -336,8 +336,17 @@ impl<'a> Checks<'a> {
 
     fn statements(&mut self) {
         let (hir, bound) = (&self.file.hir, &self.file.bound);
+        // In the order of the statements.
+        let mut lists_of_modifiers = hir.modifiers_of_stmts.iter().peekable();
         for (i, raw) in hir.stmts.iter().enumerate() {
-            let has_check = !hir.stmt_modifiers(hir::StmtId(i as u32)).is_empty()
+            let list = lists_of_modifiers.next_if(|of| of.0.idx() <= i);
+            let list = match list {
+                Some(&(of, list)) if of.idx() == i => list,
+                // Out of order.
+                Some(_) => hir.stmt_modifiers(hir::StmtId(i as u32)),
+                None => hir::Span::EMPTY,
+            };
+            let has_check = !list.is_empty()
                 || matches!(
                     raw.kind,
                     StmtKind::Switch { .. }
@@ -353,7 +362,7 @@ impl<'a> Checks<'a> {
                 continue;
             }
             let node = Span::new(raw.start, raw.loc.end);
-            let modifiers = self.modifiers(hir.stmt_modifiers(hir::StmtId(i as u32)));
+            let modifiers = self.modifiers(list);
             // A class's modifiers are checked in `classes`.
             if !modifiers.is_empty() && !matches!(raw.kind, StmtKind::Class(_)) {
                 let kind = match raw.kind {
@@ -1104,6 +1113,10 @@ impl<'a> Checks<'a> {
             for kind in kinds {
                 file.exprs_of_kind(kind).for_each(|it| self.expression(it));
             }
+            return;
+        }
+        // What is incremented or decremented is a valid target unless the parser says that some target is odd.
+        if !file.has_rare_syntax(rare::UNCOMMON_EXPRESSION | rare::ODD_TARGET) {
             return;
         }
         // Nothing else in `bun fmt` needs the index of expressions by kind, so don't build it. It also doesn't matter

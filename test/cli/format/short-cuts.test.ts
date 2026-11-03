@@ -1533,6 +1533,41 @@ describe.skipIf(!hasFlag)("what breaks whether it fits or not, and what only loo
       ]),
     ),
     "closing-tag.jsx": "function a(a = <a>a\nb</a\n/**/>) {}\n",
+    // What's after \`<T>\` is printed flat first.
+    "assertions.ts": `
+      x = <a>function () {
+        @x class a {}
+      };
+      <T>((c) => {
+        interface a {
+          o;
+        }
+      });
+      <T>((c) => {
+        f((y) => {
+          enum a {
+            b,
+          }
+        });
+      });
+      x = <T>class {
+        m() {
+          interface a {
+            o(): j;
+          }
+          enum b {
+            c = 1,
+          }
+          switch (d) {
+            case 1:
+              e();
+          }
+          namespace f {
+            g();
+          }
+        }
+      };
+    `,
   };
 
   test.concurrent.each([5, 8, 10, 12, 18, 20, 24, 28, 40, 80])("--print-width=%d", async width => {

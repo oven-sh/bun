@@ -27,12 +27,17 @@ pub(super) enum Hole<'a> {
 impl<'a> Hole<'a> {
     pub(super) fn write(self, f: &mut Formatter<'a>) {
         match self {
+            // What follows the last member is there if the group around it is broken. Without one of its own, that's
+            // whatever is around the statement, which can be printed flat: a variant that's tried.
             Hole::BodyOf(statement) => match statement.kind() {
                 StmtKind::Interface(interface) => {
-                    write_interface_body_after_head(statement, interface, f);
+                    let body =
+                        format_with(|f| write_interface_body_after_head(statement, interface, f));
+                    group(&body).should_expand(true).fmt(f);
                 }
                 StmtKind::Enum(declaration) => {
-                    write_enum_body_after_head(statement, declaration, f)
+                    let body = format_with(|f| write_enum_body_after_head(statement, declaration, f));
+                    group(&body).should_expand(true).fmt(f);
                 }
                 StmtKind::Module(module) => write_module_body_after_head(statement, module, f),
                 StmtKind::Switch { cases, .. } => write_cases_after_head(statement, cases, f),

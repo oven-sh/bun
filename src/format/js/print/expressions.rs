@@ -373,6 +373,8 @@ pub(crate) fn write_ts_type_assertion<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
         return write!(f, [format_cast, expression]);
     }
     let format_cast = format_cast.memoized();
+    // It's printed flat first, and indented in one of the variants.
+    let expression = crate::js::flat::LongWay(&expression);
     let format_expression = expression.memoized();
     write!(
         f,

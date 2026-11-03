@@ -370,7 +370,7 @@ _What happens_:
 - Generates symbol import declarations for runtime helper functions (`__toESM`, `__toCommonJS`, etc.)
 - Creates entry point dependencies to ensure all exports are included
 - Sets up cross-chunk binding code for code splitting scenarios
-- Handles wrapper function dependencies and exports object dependencies
+- Makes the part that holds an import record depend on the wrapper of a wrapped file. An import record gives a dependency on the exports object of the imported file in two cases only: `require()` and `import()` of an ESM-wrapped file, and an `export *` that runs at run time (`__reExport(exports_a, exports_b)`). A read of a run-time name gets that dependency in step 4
 - Lets an unwrapped file without side effects drop an `export *` of a lazily initialized ES module: the statement stays only if a binding is read through it (step 3), as `export { x } from` does
 
 _Runtime helper usage examples_:

@@ -175,6 +175,115 @@ describe("bundler", () => {
       stdout: "bar",
     },
   });
+  // `export *` of a CommonJS file or of a module that is not in the bundle
+  // runs at run time. The file that has it prints no exports object for a
+  // file that it imports.
+  for (const format of ["esm", "cjs", "iife"] as const) {
+    for (const [starName, star] of [
+      ["CommonJS", "./other.cjs"],
+      ["External", "node:path"],
+    ] as const) {
+      for (const place of ["Entry", "InnerFile"] as const) {
+        // An external `export *` of an ES module entry point stays a statement.
+        if (format === "esm" && starName === "External" && place === "Entry") continue;
+        const reExporter = /* js */ `
+          export * from '${star}';
+          import { used } from './d.js';
+          import data from './data.json';
+          import text from './t.txt';
+          export const own = [used, data.v, text.trim()].join(" ");
+        `;
+        itBundled(`edgecase/RunTimeExportStarOf${starName}In${place}PrintsNoExportsObjectOfImport_${format}`, {
+          files: {
+            "/entry.js":
+              place === "Entry"
+                ? reExporter + "console.log(own);"
+                : /* js */ `
+                    import { own } from './re.js';
+                    console.log(own);
+                  `,
+            ...(place === "Entry" ? {} : { "/re.js": reExporter }),
+            "/other.cjs": /* js */ `module.exports = { fromCjs: 1 };`,
+            "/d.js": /* js */ `
+              export const used = "used";
+              export const unused = "unused";
+            `,
+            "/data.json": `{ "v": 7, "w": 8 }`,
+            "/t.txt": `hello`,
+          },
+          format,
+          target: "bun",
+          run: { stdout: "used 7 hello" },
+          onAfterBundle(api) {
+            const exportsObjects = [...api.readFile("/out.js").matchAll(/var (exports_\w+) = \{\}/g)];
+            expect(exportsObjects.map(match => match[1])).toEqual([place === "Entry" ? "exports_entry" : "exports_re"]);
+          },
+        });
+      }
+    }
+  }
+  // The same for the imports of the runtime that the parser adds (`__require`, `__using`).
+  itBundled("edgecase/RunTimeExportStarPrintsNoExportsObjectOfRuntime", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as reExporter from './re-exporter.js';
+        console.log(JSON.stringify(reExporter));
+      `,
+      "/re-exporter.js": /* js */ `
+        export * from './other.cjs';
+        const name = "./dep.cjs";
+        {
+          using handle = { [Symbol.dispose]() { console.log("disposed"); } };
+          console.log(require(name));
+        }
+      `,
+      "/other.cjs": /* js */ `module.exports = { fromCjs: 1 };`,
+    },
+    runtimeFiles: {
+      "/dep.cjs": /* js */ `module.exports = "dep";`,
+    },
+    target: "browser",
+    run: { stdout: 'dep\ndisposed\n{"fromCjs":1}' },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__require(name)");
+      api.expectFile("/out.js").not.toContain("exports_runtime");
+    },
+  });
+  // `e2.js` has the `export *`. The chunk of `e1.js` printed an exports object
+  // for the CSS file that both import, with no `__export` helper.
+  for (const [starName, star, format] of [
+    ["CommonJS", "./other.cjs", "esm"],
+    ["External", "node:path", "cjs"],
+    ["External", "node:path", "iife"],
+  ] as const) {
+    itBundled(`edgecase/RunTimeExportStarOf${starName}InOtherEntryPointWithSharedCss_${format}`, {
+      files: {
+        "/e1.js": /* js */ `
+          import './plain.css';
+          console.log("e1");
+        `,
+        "/e2.js": /* js */ `
+          export * from '${star}';
+          import './plain.css';
+          console.log("e2");
+        `,
+        "/other.cjs": /* js */ `module.exports = { fromCjs: 1 };`,
+        "/plain.css": `body { margin: 0; }`,
+      },
+      entryPoints: ["/e1.js", "/e2.js"],
+      outdir: "/out",
+      format,
+      target: "bun",
+      run: [
+        { file: "/out/e1.js", stdout: "e1" },
+        { file: "/out/e2.js", stdout: "e2" },
+      ],
+      onAfterBundle(api) {
+        api.expectFile("/out/e1.js").not.toContain("exports_plain");
+        api.expectFile("/out/e2.js").not.toContain("exports_plain");
+      },
+    });
+  }
   itBundled("edgecase/NodeEnvDefaultUnset", {
     files: {
       "/entry.js": /* js */ `

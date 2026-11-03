@@ -264,12 +264,8 @@ impl<'a> Formatter<'a> {
         if rest.starts_with(b"/*") {
             return false;
         }
-        // So is one before it, and the line doesn't start where the indentation ends.
-        let mut before = source.get(..span.start as usize).unwrap_or_default();
-        while let [head @ .., b' ' | b'\t'] = before {
-            before = head;
-        }
-        if before.ends_with(b"*/") {
+        // So is one before it, with a blank after it, and the line doesn't start where the indentation ends.
+        if matches!(self.storage.pool.last(), Some(FormatElement::Space)) {
             return false;
         }
         let start = self.storage.text.len();

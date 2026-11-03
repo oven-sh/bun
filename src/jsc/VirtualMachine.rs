@@ -259,9 +259,7 @@ pub struct VirtualMachine {
     pub(crate) hide_bun_stackframes: bool,
 
     pub is_shutting_down: bool,
-    /// Set once `on_exit()` is past `RareData::cleanup_hooks`, run or not
-    /// (`exit_tears_down_napi_envs`). The list is never walked again, so a hook
-    /// pushed after this (a finalizer deferred from the final collection) would only leak.
+    /// Set once `on_exit()` is past the cleanup hooks, run or not (`exit_frees_environment`). `RareData::cleanup_hooks` is not walked again, so a finalizer deferred onto it after this would only leak.
     pub(crate) has_run_cleanup_hooks: bool,
     pub is_main_thread: bool,
     pub exit_handler: ExitHandler,
@@ -797,8 +795,7 @@ pub struct ExitHandler {
     pub exit_code: u8,
     /// `bun test` sets this at the end of a run unless `node:test` APIs were used: jest and vitest never fire a test file's `process.on('exit')` listeners.
     pub skip_exit_listeners: bool,
-    /// `process.exit()`, a fatal error or the end of a `bun test` run, as opposed to the event loop running dry.
-    /// See `VirtualMachine::exit_tears_down_napi_envs`.
+    /// Set for `process.exit()`, a fatal error and the end of a `bun test` run. A caller of `on_exit()` that leaves it unset ends like an event loop that ran dry: see `VirtualMachine::exit_frees_environment`.
     pub requested: bool,
 }
 
@@ -2470,11 +2467,10 @@ impl VirtualMachine {
 
         self.is_shutting_down = true;
 
-        // Node's FreeEnvironment sets `is_stopping` before `RunCleanup`: the
-        // Node-API env teardown below refuses every `NAPI_PREAMBLE` call.
+        // Node forbids script before `RunCleanup` (https://github.com/nodejs/node/blob/v26.12.1/src/api/environment.cc#L559-L567). After this stop Node-API refuses every `NAPI_PREAMBLE` call of a hook, and the V8 API does not yet.
         self.handle.stop();
 
-        if self.exit_tears_down_napi_envs() {
+        if self.exit_frees_environment() {
             self.run_cleanup_hooks();
         }
         self.has_run_cleanup_hooks = true;
@@ -2487,29 +2483,27 @@ impl VirtualMachine {
         }
     }
 
-    /// Whether `on_exit()` runs `RareData::cleanup_hooks`, i.e. `NapiEnv::cleanup` for
-    /// each addon. Node does this when it frees an environment: a worker's on any exit,
-    /// the main thread's only once its loop ran dry (`process.exit()` and a fatal error
-    /// call `exit()` instead). `BUN_DESTRUCT_VM_ON_EXIT` destroys the main thread's VM
-    /// like a worker's, and that teardown expects the envs to be gone, so it tears them
-    /// down on every exit too.
-    fn exit_tears_down_napi_envs(&self) -> bool {
+    /// Whether `on_exit()` runs the cleanup hooks of V8 addons and of Node-API envs, as Node does when it frees an environment (https://github.com/nodejs/node/blob/v26.12.1/src/api/environment.cc#L557-L579): always for a worker, and for the main thread unless the exit was requested. `BUN_DESTRUCT_VM_ON_EXIT` destroys the main thread's VM like a worker's, so it runs them after a requested exit too.
+    fn exit_frees_environment(&self) -> bool {
         !self.is_main_thread()
             || !self.exit_handler.requested
             || self.should_destruct_main_thread_on_exit()
     }
 
-    /// Drains `RareData::cleanup_hooks`, repeating while the hooks push more (an env's
-    /// cleanup defers finalizers onto this list once shutdown has begun). The `Vec` is
-    /// taken out of `rare_data` before the hooks run: they re-enter the VM.
+    /// Runs the cleanup hooks in rounds until a round adds none, as Node does (https://github.com/nodejs/node/blob/v26.12.1/src/env.cc#L1548-L1556). `RareData::cleanup_hooks` is taken out before its hooks run: they re-enter the VM and push more.
     fn run_cleanup_hooks(&mut self) {
         loop {
             let hooks = match self.rare_data.as_deref_mut() {
-                Some(rare) if !rare.cleanup_hooks.is_empty() => {
+                Some(rare)
+                    if !rare.cleanup_hooks.is_empty()
+                        || !rare.environment_cleanup_hooks.is_empty() =>
+                {
                     core::mem::take(&mut rare.cleanup_hooks)
                 }
                 _ => break,
             };
+            // Node has one queue for both kinds of hook (https://github.com/nodejs/node/blob/v26.12.1/src/node_api.cc#L814-L823). These run first, which is Node's order for an env that was made before the hooks were added.
+            self.run_environment_cleanup_hooks();
             for hook in hooks {
                 (hook.func)(hook.ctx);
                 // A hook's C signature returns nothing, so one that entered JS
@@ -2519,6 +2513,40 @@ impl VirtualMachine {
                 if global.has_exception() {
                     let _ = crate::task::report_error_or_terminate(global, crate::JsError::Thrown);
                 }
+            }
+        }
+    }
+
+    /// One round of the hooks of `node::AddEnvironmentCleanupHook`, newest first, as in Node (https://github.com/nodejs/node/blob/v26.12.1/src/cleanup_queue.cc#L16-L40). A hook that one of them adds waits for the next round.
+    #[inline(never)]
+    fn run_environment_cleanup_hooks(&mut self) {
+        unsafe extern "C" {
+            safe fn HandleScopeImpl__open(global: &JSGlobalObject) -> *mut c_void;
+            fn HandleScopeImpl__close(global: &JSGlobalObject, scope: *mut c_void);
+        }
+        let hooks = match self.rare_data.as_deref() {
+            Some(rare) if !rare.environment_cleanup_hooks.is_empty() => {
+                rare.environment_cleanup_hooks_newest_first()
+            }
+            _ => return,
+        };
+        let global = self.global();
+        crate::top_scope!(exception_scope, global);
+        for hook in hooks {
+            // The scope is a GC cell, and a collection can run a finalizer that removes the hook and frees its argument. So the scope opens before the hook is looked up.
+            let handle_scope = HandleScopeImpl__open(global);
+            let registered = self
+                .rare_data
+                .as_deref_mut()
+                .is_some_and(|rare| rare.remove_environment_cleanup_hook(hook));
+            if registered {
+                // SAFETY: an addon added `func` with `arg` on this thread and has not removed the pair, so it expects this call.
+                unsafe { (hook.func)(hook.arg) };
+            }
+            // SAFETY: `handle_scope` is the scope that was opened on `global` above, and the hook closed the ones that it opened.
+            unsafe { HandleScopeImpl__close(global, handle_scope) };
+            if exception_scope.exception().is_some() {
+                let _ = crate::task::report_error_or_terminate(global, crate::JsError::Thrown);
             }
         }
     }
@@ -6557,6 +6585,8 @@ impl VirtualMachine {
                     hook.global_this = new_global;
                 }
             }
+            // The cleanup of an addon does not run when its file is retired, and an isolate that its hooks use goes with the realm.
+            rare.environment_cleanup_hooks.clear_and_free();
         }
 
         self.undo_process_env_side_effects();

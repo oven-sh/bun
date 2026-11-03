@@ -89,6 +89,7 @@ void didDeleteRequireCacheEntry(Zig::GlobalObject*, const WTF::String& key);
 bool requireCacheListsCompiledFiles(Zig::GlobalObject*);
 bool isLibraryModuleInRequireCache(Zig::GlobalObject*, const WTF::String& key);
 bool isEvaluatedCompiledFile(Zig::GlobalObject*, const WTF::String& key);
+bool isCompiledESModule(const WTF::String& path);
 JSC::JSValue compiledRequireCacheEntry(Zig::GlobalObject*, const WTF::String& key);
 bool isRecordOfCompiledModule(JSC::AbstractModuleRecord*);
 void forEachEvaluatedCompiledFile(Zig::GlobalObject*, const WTF::Function<void(const WTF::String&)>&);

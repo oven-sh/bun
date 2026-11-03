@@ -30,6 +30,9 @@ JSRequireCache* JSRequireCache::create(VM& vm, Zig::GlobalObject* globalObject, 
     cache->finishCreation(vm);
     cache->m_requireMap.set(vm, cache, requireMap);
     cache->m_owner.setMayBeNull(vm, cache, owner);
+    // A thread runs a compiled program from its start, or never.
+    cache->m_isOverCompiledProgram = Bun::hasCompiledModules();
+    cache->m_hidesCompiledFiles = cache->m_isOverCompiledProgram && !Bun::requireCacheListsCompiledFiles(globalObject);
     return cache;
 }
 
@@ -60,7 +63,7 @@ static JSModuleLoader* loaderOf(Zig::GlobalObject* globalObject, JSCommonJSModul
 
 bool JSRequireCache::seesCompiledModules(Zig::GlobalObject* globalObject) const
 {
-    return Bun::hasCompiledModules() && loaderOf(globalObject, m_owner.get()) == globalObject->moduleLoader();
+    return m_isOverCompiledProgram && loaderOf(globalObject, m_owner.get()) == globalObject->moduleLoader();
 }
 
 // Node.js never adds builtin modules to require.cache. Serving them from the ESM registry would hand out the frozen module namespace object,
@@ -73,14 +76,9 @@ static bool isBuiltinKey(StringView key)
 
 // An executable that `bun build --compile --aot` made never lists its own files, which run once: the cache holds the files that were loaded from
 // outside of the executable, as in a bundled executable. A test run that is compiled in place shows its files, as plain does.
-static bool hidesCompiledFiles(Zig::GlobalObject* globalObject)
+bool JSRequireCache::isHiddenKey(UniquedStringImpl* key) const
 {
-    return Bun::hasCompiledModules() && !Bun::requireCacheListsCompiledFiles(globalObject);
-}
-
-static bool isHiddenKey(Zig::GlobalObject* globalObject, UniquedStringImpl* key)
-{
-    return hidesCompiledFiles(globalObject) && Bun::isHiddenFromRequireCache(String(key));
+    return m_hidesCompiledFiles && Bun::isHiddenFromRequireCache(String(key));
 }
 
 // The require map is asked with a JSString, and a property name is not one. An atom keeps one JSString for as long as something holds it, so that
@@ -117,10 +115,23 @@ static NEVER_INLINE bool ownPropertySlot(JSObject* object, JSGlobalObject* globa
     return JSObject::getOwnPropertySlot(object, globalObject, propertyName, slot);
 }
 
-static bool ownsProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName)
+// False: the object holds no property. It has no inline storage, so that the first property brings the butterfly.
+static ALWAYS_INLINE bool mayOwnProperties(JSRequireCache* cache)
 {
-    PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
-    return ownPropertySlot(object, globalObject, propertyName, slot);
+    return !!cache->butterfly();
+}
+
+static bool ownsProperty(JSRequireCache* cache, JSGlobalObject* globalObject, PropertyName propertyName)
+{
+    PropertySlot slot(cache, PropertySlot::InternalMethodType::GetOwnProperty);
+    return mayOwnProperties(cache) && ownPropertySlot(cache, globalObject, propertyName, slot);
+}
+
+// The object holds a property that is not configurable under the name: a deletion is refused, and the loader keeps its entry.
+static bool holdsForGood(JSRequireCache* cache, JSGlobalObject* globalObject, PropertyName propertyName)
+{
+    PropertySlot slot(cache, PropertySlot::InternalMethodType::GetOwnProperty);
+    return mayOwnProperties(cache) && ownPropertySlot(cache, globalObject, propertyName, slot) && (slot.attributes() & PropertyAttribute::DontDelete);
 }
 
 static AbstractModuleRecord* evaluatedModuleRecord(Zig::GlobalObject* globalObject, JSCommonJSModule* owner, UniquedStringImpl* key)
@@ -132,13 +143,18 @@ static AbstractModuleRecord* evaluatedModuleRecord(Zig::GlobalObject* globalObje
     return entry && isModuleEvaluated(entry->record()) ? entry->record() : nullptr;
 }
 
-bool JSRequireCache::isListedByLoader(Zig::GlobalObject* globalObject, UniquedStringImpl* key) const
+JSRequireCache::Listed JSRequireCache::listedByLoader(Zig::GlobalObject* globalObject, UniquedStringImpl* key) const
 {
+    bool seesCompiled = seesCompiledModules(globalObject);
+    if (seesCompiled && Bun::isLibraryModuleInRequireCache(globalObject, String(key)))
+        return Listed::WithEntry;
     if (isBuiltinKey(key))
-        return seesCompiledModules(globalObject) && Bun::isLibraryModuleInRequireCache(globalObject, String(key));
+        return Listed::No;
     if (evaluatedModuleRecord(globalObject, m_owner.get(), key))
-        return true;
-    return seesCompiledModules(globalObject) && Bun::isEvaluatedCompiledFile(globalObject, String(key));
+        return Listed::WithoutEntry;
+    if (!seesCompiled || !Bun::isEvaluatedCompiledFile(globalObject, String(key)))
+        return Listed::No;
+    return Bun::isCompiledESModule(String(key)) ? Listed::WithoutEntry : Listed::WithEntry;
 }
 
 JSValue JSRequireCache::entryMadeOnRead(UniquedStringImpl* key)
@@ -204,36 +220,56 @@ bool JSRequireCache::getOwnPropertySlot(JSObject* object, JSGlobalObject* lexica
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* key = propertyName.uid();
-    bool namesEntry = key && !key->isSymbol();
-    auto* globalObject = thisObject->zigGlobalObject();
-    if (namesEntry) {
-        slot.disableCaching();
-        if (slot.isVMInquiry()) {
-            slot.setIsTaintedByOpaqueObject();
-            return false;
-        }
-        if (isHiddenKey(globalObject, key))
-            return false;
+    if (!key || key->isSymbol())
+        return ownPropertySlot(object, lexicalGlobalObject, propertyName, slot);
 
-        bool isStored;
-        JSValue stored = entryInMap(globalObject, thisObject->m_requireMap.get(), stringOfKey(vm, key), isStored);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (isStored) {
-            // A compiled file that ran again left the falsy value that asked for it in the require map: the engine holds its entry.
-            if (Bun::hasCompiledModules() && !stored.toBoolean(globalObject) && thisObject->seesCompiledModules(globalObject)) [[unlikely]]
-                slot.setCustom(thisObject, 0, jsRequireCacheEntryMadeOnRead);
-            else
-                slot.setValue(thisObject, 0, stored);
-            return true;
-        }
+    slot.disableCaching();
+    if (slot.isVMInquiry()) {
+        slot.setIsTaintedByOpaqueObject();
+        return false;
+    }
+    if (thisObject->isHiddenKey(key))
+        return false;
+
+    auto* globalObject = thisObject->zigGlobalObject();
+    bool isStored;
+    JSValue stored = entryInMap(globalObject, thisObject->m_requireMap.get(), stringOfKey(vm, key), isStored);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    // A property that a definition left on the object gives the key its shape. The value of a data property is the entry while the require map
+    // has one: the loader reads and replaces the entry there.
+    if (mayOwnProperties(thisObject) && ownPropertySlot(object, lexicalGlobalObject, propertyName, slot)) [[unlikely]] {
+        slot.disableCaching();
+        if (isStored && slot.isValue())
+            slot.setValue(thisObject, slot.attributes(), stored);
+        return true;
     }
 
-    if (ownPropertySlot(object, lexicalGlobalObject, propertyName, slot))
+    if (isStored) {
+        // A compiled file that ran again left the falsy value that asked for it in the require map: the engine holds its entry.
+        if (thisObject->m_isOverCompiledProgram && !stored.toBoolean(globalObject) && thisObject->seesCompiledModules(globalObject)) [[unlikely]]
+            slot.setCustom(thisObject, 0, jsRequireCacheEntryMadeOnRead);
+        else
+            slot.setValue(thisObject, 0, stored);
         return true;
+    }
 
-    if (!namesEntry || !thisObject->isListedByLoader(globalObject, key))
+    switch (thisObject->listedByLoader(globalObject, key)) {
+    case Listed::No:
         return false;
-    // `in`, Object.hasOwn() and a listing ask for no value, and make no entry.
+    case Listed::WithoutEntry:
+        // Only a read of the key makes the entry. A property descriptor holds no value until then, and says so to whoever copies properties:
+        // Object.assign() and Object.entries() read the key.
+        if (slot.internalMethodType() == PropertySlot::InternalMethodType::GetOwnProperty) {
+            slot.setValue(thisObject, static_cast<unsigned>(PropertyAttribute::ReadOnly), jsUndefined());
+            slot.setIsTaintedByOpaqueObject();
+            return true;
+        }
+        break;
+    case Listed::WithEntry:
+        break;
+    }
+    // `in`, Object.hasOwn() and a listing ask for no value.
     slot.setCustom(thisObject, 0, jsRequireCacheEntryMadeOnRead);
     return true;
 }
@@ -270,12 +306,14 @@ bool JSRequireCache::put(JSCell* cell, JSGlobalObject* lexicalGlobalObject, Prop
         RELEASE_AND_RETURN(scope, Base::put(cell, lexicalGlobalObject, propertyName, value, slot));
 
     auto* globalObject = thisObject->zigGlobalObject();
-    if (ownsProperty(thisObject, lexicalGlobalObject, propertyName)) [[unlikely]] {
-        // A setter or a read-only property that Object.defineProperty() left on the object answers, unless the require map has the key since.
-        bool isStored;
-        entryInMap(globalObject, thisObject->m_requireMap.get(), stringOfKey(vm, key), isStored);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (!isStored) {
+    if (mayOwnProperties(thisObject)) [[unlikely]] {
+        PropertySlot own(thisObject, PropertySlot::InternalMethodType::GetOwnProperty);
+        if (ownPropertySlot(thisObject, lexicalGlobalObject, propertyName, own)) {
+            // A setter or a read-only property that a definition left on the object answers. A value that the property takes is the loader's entry too.
+            if (own.isValue() && !(own.attributes() & PropertyAttribute::ReadOnly)) {
+                thisObject->store(globalObject, key, value);
+                RETURN_IF_EXCEPTION(scope, false);
+            }
             // JSObject::put() hands an index back to putByIndex().
             if (std::optional<uint32_t> index = parseIndex(propertyName))
                 RELEASE_AND_RETURN(scope, Base::putByIndex(cell, lexicalGlobalObject, *index, value, slot.isStrictMode()));
@@ -296,7 +334,7 @@ bool JSRequireCache::takeOut(Zig::GlobalObject* globalObject, UniquedStringImpl*
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (isHiddenKey(globalObject, key))
+    if (isHiddenKey(key))
         return false;
 
     String path(key);
@@ -336,6 +374,8 @@ bool JSRequireCache::deleteProperty(JSCell* cell, JSGlobalObject* lexicalGlobalO
     if (std::optional<uint32_t> index = parseIndex(propertyName))
         RELEASE_AND_RETURN(scope, deletePropertyByIndex(cell, lexicalGlobalObject, *index));
 
+    if (holdsForGood(thisObject, lexicalGlobalObject, propertyName)) [[unlikely]]
+        return false;
     bool isShown = thisObject->takeOut(thisObject->zigGlobalObject(), key);
     RETURN_IF_EXCEPTION(scope, false);
     if (!isShown)
@@ -349,7 +389,10 @@ bool JSRequireCache::deletePropertyByIndex(JSCell* cell, JSGlobalObject* lexical
     VM& vm = getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    bool isShown = thisObject->takeOut(thisObject->zigGlobalObject(), Identifier::from(vm, index).impl());
+    auto name = Identifier::from(vm, index);
+    if (holdsForGood(thisObject, lexicalGlobalObject, name)) [[unlikely]]
+        return false;
+    bool isShown = thisObject->takeOut(thisObject->zigGlobalObject(), name.impl());
     RETURN_IF_EXCEPTION(scope, false);
     if (!isShown)
         return true;
@@ -364,9 +407,17 @@ void JSRequireCache::getOwnPropertyNames(JSObject* object, JSGlobalObject* lexic
 
     if (propertyNames.includeStringProperties()) {
         auto* globalObject = thisObject->zigGlobalObject();
-        bool hidesFiles = hidesCompiledFiles(globalObject);
-        auto isHidden = [&](UniquedStringImpl* key) {
-            return hidesFiles && Bun::isHiddenFromRequireCache(String(key));
+        // A property of the object itself stands in front of the key: the key is listed in its place here if that property is listed at all, and
+        // add() below takes a name that it has already for none.
+        Structure* structure = thisObject->structure();
+        bool ownsProperties = structure->outOfLineSize() || hasIndexedProperties(structure->indexingType());
+        auto isListed = [&](PropertyName name) {
+            if (thisObject->isHiddenKey(name.uid())) [[unlikely]]
+                return false;
+            PropertySlot own(thisObject, PropertySlot::InternalMethodType::GetOwnProperty);
+            if (!ownsProperties || !ownPropertySlot(thisObject, lexicalGlobalObject, name, own)) [[likely]]
+                return true;
+            return mode == DontEnumPropertiesMode::Include || !(own.attributes() & PropertyAttribute::DontEnum);
         };
 
         auto* iterator = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), thisObject->m_requireMap.get(), IterationKind::Keys);
@@ -377,34 +428,27 @@ void JSRequireCache::getOwnPropertyNames(JSObject* object, JSGlobalObject* lexic
                 continue;
             auto name = asString(key)->toIdentifier(globalObject);
             RETURN_IF_EXCEPTION(scope, );
-            if (!isHidden(name.impl()))
+            if (isListed(name))
                 propertyNames.add(name);
         }
         RETURN_IF_EXCEPTION(scope, );
 
-        // A key that the require map has too is listed once: add() takes a name that it has already for none. A property of the object itself
-        // stands in front of what the loader lists, and is listed below as what it is.
-        Structure* structure = thisObject->structure();
-        bool ownsProperties = structure->inlineSize() || structure->outOfLineSize() || hasIndexedProperties(structure->indexingType());
         bool seesCompiled = thisObject->seesCompiledModules(globalObject);
-        auto addListed = [&](UniquedStringImpl* key) {
+        auto addListedByLoader = [&](UniquedStringImpl* key) {
             if (isBuiltinKey(key) && !(seesCompiled && Bun::isLibraryModuleInRequireCache(globalObject, String(key))))
                 return;
-            if (isHidden(key)) [[unlikely]]
-                return;
-            if (ownsProperties && ownsProperty(thisObject, lexicalGlobalObject, Identifier::fromUid(vm, key))) [[unlikely]]
-                return;
-            propertyNames.add(key);
+            if (isListed(Identifier::fromUid(vm, key)))
+                propertyNames.add(key);
         };
         if (auto* loader = loaderOf(globalObject, thisObject->m_owner.get())) {
             Bun::forEachModuleRegistrySpecifier(loader, [&](UniquedStringImpl* specifier, ModuleRegistryEntry* entry) {
                 if (isModuleEvaluated(entry->record()))
-                    addListed(specifier);
+                    addListedByLoader(specifier);
             });
         }
         if (seesCompiled) {
             Bun::forEachEvaluatedCompiledFile(globalObject, [&](const String& path) {
-                addListed(Identifier::fromString(vm, path).impl());
+                addListedByLoader(Identifier::fromString(vm, path).impl());
             });
         }
     }
@@ -423,29 +467,46 @@ bool JSRequireCache::defineOwnProperty(JSObject* object, JSGlobalObject* lexical
         RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, lexicalGlobalObject, propertyName, descriptor, shouldThrow));
 
     auto* globalObject = thisObject->zigGlobalObject();
-    JSMap* map = thisObject->m_requireMap.get();
-    JSString* keyString = stringOfKey(vm, key);
-    bool isStored;
-    entryInMap(globalObject, map, keyString, isStored);
-    RETURN_IF_EXCEPTION(scope, false);
+    // The cache shows nothing under the path of a file of the executable. A definition there leaves no property: the loader takes a value that
+    // it names, as it takes a store.
+    if (thisObject->isHiddenKey(key)) [[unlikely]] {
+        if (!descriptor.value())
+            return true;
+        RELEASE_AND_RETURN(scope, thisObject->store(globalObject, key, descriptor.value()));
+    }
+
+    // The definition is of the property that the object itself holds under the key, if it holds one, and else of the entry.
     bool isOwn = ownsProperty(thisObject, lexicalGlobalObject, propertyName);
-    bool isEntry = isStored || (!isOwn && !isHiddenKey(globalObject, key) && thisObject->isListedByLoader(globalObject, key));
+    bool isEntry = false;
+    if (!isOwn) {
+        entryInMap(globalObject, thisObject->m_requireMap.get(), stringOfKey(vm, key), isEntry);
+        RETURN_IF_EXCEPTION(scope, false);
+        isEntry = isEntry || thisObject->listedByLoader(globalObject, key) != Listed::No;
+    }
 
     // A definition that leaves the key a writable, enumerable and configurable data property is a store, as an assignment is. What a definition
     // leaves out stays as it is for an entry, and is false for a key that is new.
     bool refusesWrite = descriptor.writablePresent() ? !descriptor.writable() : !isEntry;
     bool hidesKey = descriptor.enumerablePresent() ? !descriptor.enumerable() : !isEntry;
     bool locksKey = descriptor.configurablePresent() ? !descriptor.configurable() : !isEntry;
-    if (!descriptor.isAccessorDescriptor() && !refusesWrite && !hidesKey && !locksKey && (isEntry || !isOwn)) {
+    if (!isOwn && !descriptor.isAccessorDescriptor() && !refusesWrite && !hidesKey && !locksKey) {
         if (!descriptor.value() && isEntry)
             return true;
         RELEASE_AND_RETURN(scope, thisObject->store(globalObject, key, descriptor.value() ? descriptor.value() : jsUndefined()));
     }
-    if (!isEntry)
-        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, lexicalGlobalObject, propertyName, descriptor, shouldThrow));
 
-    // The require map holds no other shape: the entry leaves it, and the object itself holds the property from here on. The next require() of the
-    // file finds no entry and loads it again. What the definition leaves out is as the entry had it.
+    // The require map holds no other shape. The object itself holds the property from here on, in front of the entry, which the loader keeps:
+    // the next require() of the file answers with it, and loads nothing again.
+    if (!isEntry) {
+        bool isDefined = Base::defineOwnProperty(object, lexicalGlobalObject, propertyName, descriptor, shouldThrow);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!isDefined || !descriptor.value())
+            return isDefined;
+        // A value that a definition names is the loader's entry too.
+        RELEASE_AND_RETURN(scope, thisObject->store(globalObject, key, descriptor.value()));
+    }
+
+    // What the definition leaves out is as the entry has it.
     PropertyDescriptor ownDescriptor = descriptor;
     if (!ownDescriptor.enumerablePresent())
         ownDescriptor.setEnumerable(true);
@@ -455,34 +516,20 @@ bool JSRequireCache::defineOwnProperty(JSObject* object, JSGlobalObject* lexical
         if (!ownDescriptor.writablePresent())
             ownDescriptor.setWritable(true);
         if (!ownDescriptor.value()) {
+            // The read makes the entry of a key that only the loader lists.
             JSValue current = object->get(lexicalGlobalObject, propertyName);
             RETURN_IF_EXCEPTION(scope, false);
             ownDescriptor.setValue(current);
         }
     }
-    if (isStored && thisObject->seesCompiledModules(globalObject)) {
-        Bun::didDeleteRequireCacheEntry(globalObject, String(key));
+    if (descriptor.value()) {
+        thisObject->store(globalObject, key, descriptor.value());
         RETURN_IF_EXCEPTION(scope, false);
     }
-    // Reading the value above has stored the entry of a key that only the loader listed.
-    JSC__JSMap__remove(map, globalObject, JSValue::encode(keyString));
-    RETURN_IF_EXCEPTION(scope, false);
 
-    std::optional<uint32_t> index = parseIndex(propertyName);
-    // What an earlier definition left on the object was out of sight behind the entry.
-    if (isOwn) {
-        VM::DeletePropertyModeScope ignoreConfigurable(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-        if (index)
-            Base::deletePropertyByIndex(object, lexicalGlobalObject, *index);
-        else {
-            DeletePropertySlot deleteSlot;
-            Base::deleteProperty(object, lexicalGlobalObject, propertyName, deleteSlot);
-        }
-        RETURN_IF_EXCEPTION(scope, false);
-    }
-    if (index)
+    if (std::optional<uint32_t> index = parseIndex(propertyName))
         RELEASE_AND_RETURN(scope, thisObject->defineOwnIndexedProperty(lexicalGlobalObject, *index, ownDescriptor, shouldThrow));
-    // JSObject::defineOwnProperty() would ask this object for the property first, and that read makes the entry of a listed key again.
+    // JSObject::defineOwnProperty() would read what the key has now from this object, which answers with a value only for an entry that is made.
     if (ownDescriptor.isAccessorDescriptor())
         thisObject->putDirectAccessor(lexicalGlobalObject, propertyName, ownDescriptor.slowGetterSetter(lexicalGlobalObject), (ownDescriptor.attributes() | PropertyAttribute::Accessor) & ~PropertyAttribute::ReadOnly);
     else

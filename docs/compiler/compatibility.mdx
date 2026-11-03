@@ -129,7 +129,7 @@ Every `import`, and every `require()` of a constant path, is resolved at build t
 - A tracer that patches modules as they load, like OpenTelemetry's auto-instrumentation, sees none of them.
 - A plugin that your program registers with `Bun.plugin()` answers for code that's loaded at run time, so `build.module("lodash", ...)` doesn't replace a `lodash` that was compiled into the executable. That's the same with `--no-aot`.
 - A module runs once, as in every executable. `require.cache` doesn't list compiled modules, and `delete require.cache[path]` does nothing.
-- `require.cache["fs"] = { exports: fake }` makes `require("fs")` answer with `fake`, as in `bun run`, if the build can read the key. Under a computed key that turns out to be `"fs"`, the store throws.
+- `require.cache["fs"] = { exports: fake }` makes `require("fs")` answer with `fake`, as in `bun run`, if the build can read the key. Under a computed key that turns out to be `"fs"`, the store throws. So does `Object.defineProperty(require.cache, "fs", { value: entry, ... })`, which stores an entry in `bun run`: the build reads assignments only.
 - `Bun.main = path` changes what `require.main`, `require.main === module` and `import.meta.main` answer, as in `bun run`, if the build can see the assignment. One that it can't see throws a `TypeError`: `Bun[key] = path` with a computed key, or `Bun.main = path` in [code from a string](#code-from-strings).
 
 ## Packages

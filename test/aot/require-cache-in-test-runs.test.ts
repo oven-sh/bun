@@ -343,16 +343,27 @@ test("a property descriptor of require.cache holds the entry", async () => {
       import { value } from "./es";
       import { ask } from "./user.cjs";
       const cache = require.cache;
-      test("of a CommonJS file, an ES module and a built-in module", () => {
+      const describe = (key: string) => {
+        const listed = [key in cache, Object.hasOwn(cache, key), Object.keys(cache).includes(key)];
+        const { value: entry, ...attributes } = Object.getOwnPropertyDescriptor(cache, key)!;
+        return [...listed, typeof entry, JSON.stringify(attributes)].join(" ");
+      };
+      test("of a CommonJS file and of a built-in module", () => {
         const common = require("./common.cjs");
         const sqlite = require("bun:sqlite");
-        for (const name of ["./common.cjs", "./es", "./one.test.ts", "bun:sqlite"]) {
+        for (const name of ["./common.cjs", "bun:sqlite"]) {
           const key = require.resolve(name);
-          const listed = [key in cache, Object.hasOwn(cache, key), Object.keys(cache).includes(key)];
-          const { value: entry, ...attributes } = Object.getOwnPropertyDescriptor(cache, key)!;
-          console.log(name, listed.join(" "), entry === cache[key], JSON.stringify(attributes), Object.keys(entry.exports).slice(0, 1).join());
+          const entry = Object.getOwnPropertyDescriptor(cache, key)!.value;
+          console.log(name, describe(key), entry === cache[key], Object.keys(entry.exports).slice(0, 1).join());
         }
-        console.log(value, cache[require.resolve("./common.cjs")].exports === common, cache["bun:sqlite"].exports === sqlite);
+        console.log(cache[require.resolve("./common.cjs")]!.exports === common, cache["bun:sqlite"]!.exports === sqlite);
+      });
+      test("of an ES module that nothing has read: no value, and the key reads as the module", () => {
+        for (const name of ["./es", "./one.test.ts"]) {
+          const key = require.resolve(name);
+          console.log(name, describe(key), Object.prototype.propertyIsEnumerable.call(cache, key));
+        }
+        console.log(value, cache[require.resolve("./es")]!.exports.value, Object.entries(cache).every(([key, entry]) => entry === cache[key]));
       });
       test("behind a falsy value that is stored under the key", () => {
         const key = require.resolve("./common.cjs");
@@ -370,6 +381,48 @@ test("a property descriptor of require.cache holds the entry", async () => {
         console.log(Object.getOwnPropertyDescriptor(cache, key)!.value === fake, require("./common.cjs").value, ask());
         delete cache[key];
         console.log(require("./common.cjs").value, ask());
+      });`,
+  });
+});
+
+test("a definition that gives an entry another shape leaves the entry with the loader", async () => {
+  const counted = `
+    globalThis.runs ??= {};
+    const name = require("node:path").basename(__filename);
+    globalThis.runs[name] = (globalThis.runs[name] ?? 0) + 1;
+    exports.run = globalThis.runs[name];`;
+  await expectCompiledToRunAsPlain({
+    "read-only.cjs": counted,
+    "hidden.cjs": counted,
+    "locked.cjs": counted,
+    "behind-accessor.cjs": counted,
+    "hides-itself.cjs": `${counted}
+      Object.defineProperty(require.cache, __filename, { enumerable: false });`,
+    "one.test.js": `
+      import { test } from "bun:test";
+      import { basename } from "node:path";
+      const cache = require.cache;
+      const shape = d => d && ("get" in d ? ["accessor", d.enumerable, d.configurable] : [typeof d.value, d.writable, d.enumerable, d.configurable]).join(" ");
+      const reshape = (file, descriptorOf) => {
+        const key = require.resolve(file);
+        const first = require(file);
+        const entry = cache[key];
+        Object.defineProperty(cache, key, descriptorOf(entry));
+        const again = require(file);
+        console.log(basename(file), again === first, globalThis.runs[basename(file)], shape(Object.getOwnPropertyDescriptor(cache, key)), cache[key] === entry, Object.keys(cache).includes(key), key in cache);
+      };
+      test("a file whose entry has another shape runs once", () => {
+        reshape("./read-only.cjs", () => ({ writable: false }));
+        reshape("./hidden.cjs", () => ({ enumerable: false }));
+        reshape("./locked.cjs", () => ({ configurable: false }));
+        reshape("./behind-accessor.cjs", entry => ({ get: () => entry, enumerable: true, configurable: true }));
+        console.log(Reflect.set(cache, require.resolve("./read-only.cjs"), 1), Reflect.deleteProperty(cache, require.resolve("./locked.cjs")), require("./read-only.cjs").run, require("./locked.cjs").run);
+      });
+      test("a file that hides its own entry runs once", () => {
+        const answers = new Set();
+        for (let i = 0; i < 5; i++) answers.add(require("./hides-itself.cjs"));
+        const key = require.resolve("./hides-itself.cjs");
+        console.log(globalThis.runs["hides-itself.cjs"], answers.size, Object.keys(cache).includes(key), key in cache);
       });`,
   });
 });

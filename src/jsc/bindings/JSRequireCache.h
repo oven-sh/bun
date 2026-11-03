@@ -12,7 +12,7 @@ class JSCommonJSModule;
 
 // `require.cache` and `Module._cache`, an object without a prototype as in Node. Its string keys are those of a require map and of the ES modules
 // that the map's loader has evaluated: an entry is a data property that is writable, enumerable and configurable. The object's own storage holds
-// symbol keys, and what Object.defineProperty() gave another shape.
+// symbol keys, and the shape that Object.defineProperty() gave a key: that property stands in front of the entry, which stays in the require map.
 class JSRequireCache final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -57,17 +57,28 @@ private:
     {
     }
 
+    // What the loader says of a key that the require map does not hold.
+    enum class Listed : uint8_t {
+        No,
+        // An ES module that only `import` has loaded, in a compiled program too: the first read of the key makes its entry.
+        WithoutEntry,
+        // A CommonJS file of a compiled test run, or a built-in module that a compiled require() has loaded: the engine holds the entry.
+        WithEntry,
+    };
+
     Zig::GlobalObject* zigGlobalObject() const;
     // The files of a compiled program are modules of the realm. A Bun.ModuleGraph has modules of its own, and its cache shows those alone.
     bool seesCompiledModules(Zig::GlobalObject*) const;
-    // A key that the loader answers for: an evaluated ES module, a file of a compiled test run, a built-in module that a compiled require() has put there.
-    bool isListedByLoader(Zig::GlobalObject*, WTF::UniquedStringImpl* key) const;
+    bool isHiddenKey(WTF::UniquedStringImpl* key) const;
+    Listed listedByLoader(Zig::GlobalObject*, WTF::UniquedStringImpl* key) const;
     bool store(Zig::GlobalObject*, WTF::UniquedStringImpl* key, JSC::JSValue);
     // False: the key is hidden, and there is nothing to take out.
     bool takeOut(Zig::GlobalObject*, WTF::UniquedStringImpl* key);
 
     JSC::WriteBarrier<JSC::JSMap> m_requireMap;
     JSC::WriteBarrier<JSCommonJSModule> m_owner;
+    bool m_isOverCompiledProgram { false };
+    bool m_hidesCompiledFiles { false };
 };
 
 } // namespace Bun

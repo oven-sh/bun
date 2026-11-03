@@ -185,7 +185,10 @@ describe.concurrent("require.cache", () => {
         };
       `,
       "worker.cjs": `postMessage(require("./describe.cjs")(require.cache, require));`,
-      "in-graph.mjs": `export const described = require("./describe.cjs")(require.cache, require);`,
+      "in-graph.mjs": `
+        export const described = require("./describe.cjs")(require.cache, require);
+        export const cache = require.cache;
+      `,
       "index.mjs": `
         import Module, { createRequire } from "node:module";
         import { join } from "node:path";
@@ -198,7 +201,12 @@ describe.concurrent("require.cache", () => {
         });
         await worker.terminate();
         const graph = new Bun.ModuleGraph();
-        const inGraph = (await graph.import(join(import.meta.dir, "in-graph.mjs"))).described;
+        const { described: inGraph, cache: ofGraph } = await graph.import(join(import.meta.dir, "in-graph.mjs"));
+        const dep = join(import.meta.dir, "dep.cjs");
+        const listedInGraph = Object.keys(ofGraph).includes(dep);
+        graph.dispose();
+        ofGraph["/stored"] = 1;
+        const ofDisposedGraph = [listedInGraph, Object.keys(ofGraph), dep in ofGraph, typeof ofGraph[dep], ofGraph["/stored"]];
         const refused = [];
         for (const lock of [Object.freeze, Object.seal, Object.preventExtensions]) {
           try {
@@ -212,6 +220,7 @@ describe.concurrent("require.cache", () => {
           here: describe(require.cache, created),
           inWorker,
           inGraph,
+          ofDisposedGraph,
           // The loader adds keys to the cache whatever the object allows, so the object stays extensible.
           refused,
           stillLists: Object.isExtensible(require.cache) && Object.keys(require.cache).some(key => key.endsWith("dep.cjs")),
@@ -233,8 +242,169 @@ describe.concurrent("require.cache", () => {
         here: described,
         inWorker: described,
         inGraph: described,
+        ofDisposedGraph: [true, ["/stored"], false, "undefined", 1],
         refused: ["TypeError", "TypeError", "TypeError"],
         stillLists: true,
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("in a test file, Module._cache is the require.cache of the file and answers with the entry", async () => {
+    using dir = tempDir("require-cache-descriptor-test-file", {
+      "dep.cjs": `exports.dep = 1;`,
+      "one.test.js": `
+        import { test } from "bun:test";
+        import Module from "node:module";
+        test("the cache of a test file", () => {
+          require("./dep.cjs");
+          const key = require.resolve("./dep.cjs");
+          const { value, ...attributes } = Object.getOwnPropertyDescriptor(Module._cache, key);
+          console.log(JSON.stringify([Module._cache === require.cache, value === require.cache[key], attributes, Object.getPrototypeOf(Module._cache)]));
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "one.test.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("1 pass");
+    expect(stdout.split("\n").filter(line => line.startsWith("["))).toEqual([
+      JSON.stringify([true, true, { writable: true, enumerable: true, configurable: true }, null]),
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // Node prints the same line. Its loader reads the property that a definition leaves, and Bun's loader reads the require map, which keeps the entry.
+  test("a definition that gives an entry another shape leaves the entry with the loader", async () => {
+    const counted = `
+      globalThis.runs ??= {};
+      const name = require("node:path").basename(__filename);
+      globalThis.runs[name] = (globalThis.runs[name] ?? 0) + 1;
+      exports.run = globalThis.runs[name];
+    `;
+    using dir = tempDir("require-cache-reshape", {
+      "a.cjs": counted,
+      "b.cjs": counted,
+      "c.cjs": counted,
+      "d.cjs": counted,
+      "e.cjs": counted,
+      "hides-itself.cjs": `${counted}
+        Object.defineProperty(require.cache, __filename, { enumerable: false });
+      `,
+      "throws-once.cjs": `${counted}
+        Object.defineProperty(require.cache, __filename, { enumerable: false });
+        if (exports.run === 1) throw new Error("the first load fails");
+      `,
+      "index.cjs": `
+        "use strict";
+        const { basename } = require("node:path");
+        const cache = require.cache;
+        const shape = d => d && ("get" in d ? ["accessor", d.enumerable, d.configurable] : [typeof d.value, d.writable, d.enumerable, d.configurable]);
+        const attempt = fn => {
+          try {
+            return fn();
+          } catch (error) {
+            return error.constructor.name;
+          }
+        };
+        const result = {};
+        let setterGot;
+        const reshape = (file, descriptorOf) => {
+          const key = require.resolve(file);
+          const first = require(file);
+          const entry = cache[key];
+          Object.defineProperty(cache, key, descriptorOf(entry));
+          return [
+            require(file) === first,
+            globalThis.runs[basename(file)],
+            shape(Object.getOwnPropertyDescriptor(cache, key)),
+            cache[key] === entry,
+            Object.keys(cache).includes(key),
+            Reflect.ownKeys(cache).includes(key),
+            key in cache,
+          ];
+        };
+        result.readOnly = reshape("./a.cjs", () => ({ writable: false }));
+        result.hidden = reshape("./b.cjs", () => ({ enumerable: false }));
+        result.locked = reshape("./c.cjs", () => ({ configurable: false }));
+        result.accessor = reshape("./d.cjs", entry => ({ get: () => entry, set: value => void (setterGot = value), enumerable: true, configurable: true }));
+
+        // What a store and a deletion do to each shape, and what the next require() answers with.
+        const [a, b, c, d, e] = ["a", "b", "c", "d", "e"].map(name => require.resolve("./" + name + ".cjs"));
+        const replacement = { exports: "replaced", loaded: true };
+        result.storeIntoReadOnly = [Reflect.set(cache, a, replacement), attempt(() => (cache[a] = replacement)), require("./a.cjs").run];
+        cache[b] = replacement;
+        result.storeIntoHidden = [require("./b.cjs"), cache[b] === replacement, shape(Object.getOwnPropertyDescriptor(cache, b)), Object.keys(cache).includes(b)];
+        result.deleteLocked = [Reflect.deleteProperty(cache, c), attempt(() => delete cache[c]), c in cache, require("./c.cjs").run];
+        cache[d] = replacement;
+        result.storeThroughAccessor = [setterGot === replacement, require("./d.cjs").run];
+        result.deleteHidden = [delete cache[b], b in cache, require("./b.cjs").run, shape(Object.getOwnPropertyDescriptor(cache, b)), Object.keys(cache).includes(b)];
+
+        // A value that a definition names is what require() answers with, whatever the shape.
+        Object.defineProperty(cache, e, { value: replacement, configurable: true });
+        result.definedBeforeLoad = [
+          require("./e.cjs"),
+          globalThis.runs["e.cjs"] ?? 0,
+          shape(Object.getOwnPropertyDescriptor(cache, e)),
+          Object.keys(cache).includes(e),
+          delete cache[e],
+          require("./e.cjs").run,
+        ];
+
+        // A file that hides its own entry runs once.
+        const hider = require.resolve("./hides-itself.cjs");
+        const answers = new Set();
+        for (let i = 0; i < 5; i++) answers.add(require("./hides-itself.cjs"));
+        result.hidesItself = [globalThis.runs["hides-itself.cjs"], answers.size, Object.keys(cache).includes(hider), hider in cache];
+
+        // The loader puts a new entry under a key that has a shape already: the property shows that entry.
+        const thrower = require.resolve("./throws-once.cjs");
+        const threw = attempt(() => require("./throws-once.cjs"));
+        const loaded = require("./throws-once.cjs");
+        result.loadedAgain = [threw, globalThis.runs["throws-once.cjs"], cache[thrower].exports === loaded, Object.keys(cache).includes(thrower)];
+
+        // A key that looks like an array index is a key like any other.
+        const numbered = { exports: "numbered" };
+        cache[7] = numbered;
+        result.index = [cache["7"] === numbered, 7 in cache, Object.keys(cache).includes("7"), shape(Object.getOwnPropertyDescriptor(cache, 7))];
+        Object.defineProperty(cache, 7, { writable: false });
+        result.indexReadOnly = [shape(Object.getOwnPropertyDescriptor(cache, "7")), Reflect.set(cache, 7, 1), cache[7] === numbered, delete cache[7], 7 in cache];
+        Object.defineProperty(cache, 8, { value: 1, configurable: true });
+        result.indexDefined = [shape(Object.getOwnPropertyDescriptor(cache, 8)), cache[8], Object.keys(cache).includes("8"), Reflect.ownKeys(cache).includes("8"), delete cache[8], "8" in cache];
+        console.log(JSON.stringify(result));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({
+        readOnly: [true, 1, ["object", false, true, true], true, true, true, true],
+        hidden: [true, 1, ["object", true, false, true], true, false, true, true],
+        locked: [true, 1, ["object", true, true, false], true, true, true, true],
+        accessor: [true, 1, ["accessor", true, true], true, true, true, true],
+        storeIntoReadOnly: [false, "TypeError", 1],
+        storeIntoHidden: ["replaced", true, ["object", true, false, true], false],
+        deleteLocked: [false, "TypeError", true, 1],
+        storeThroughAccessor: [true, 1],
+        deleteHidden: [true, false, 2, ["object", true, true, true], true],
+        definedBeforeLoad: ["replaced", 0, ["object", false, false, true], false, true, 1],
+        hidesItself: [1, 1, false, true],
+        loadedAgain: ["Error", 2, true, false],
+        index: [true, true, true, ["object", true, true, true]],
+        indexReadOnly: [["object", false, true, true], false, true, true, false],
+        indexDefined: [["number", false, false, true], 1, false, true, true, false],
       }),
       stderr: "",
       exitCode: 0,
@@ -251,34 +421,19 @@ describe.concurrent("require.cache", () => {
         import { join } from "node:path";
         const namespaces = () => heapStats().objectTypeCounts.ModuleNamespaceObject ?? 0;
         const aPath = join(import.meta.dir, "a.mjs");
-        const bPath = join(import.meta.dir, "b.mjs");
-        let seen = namespaces();
-        const createdSince = () => {
-          const now = namespaces();
-          const created = now - seen;
-          seen = now;
-          return created;
-        };
+        const before = namespaces();
         const keys = Object.keys(require.cache)
           .filter(key => key.startsWith(import.meta.dir))
           .map(key => key.slice(import.meta.dir.length + 1))
           .sort();
         const has = aPath in require.cache;
-        const hasOwn = Object.hasOwn(require.cache, aPath);
-        let walked = 0;
-        for (const key in require.cache) if (key === aPath) walked++;
-        const createdByListing = createdSince();
-        // A descriptor holds the entry, so asking for one makes the entry, as reading the key does.
-        const { value, ...attributes } = Object.getOwnPropertyDescriptor(require.cache, aPath);
-        const createdByDescriptor = createdSince();
-        const descriptorHoldsEntry = value === Object.getOwnPropertyDescriptor(require.cache, aPath).value && value === require.cache[aPath];
-        const createdByReadingAgain = createdSince();
+        const descriptor = Object.getOwnPropertyDescriptor(require.cache, aPath);
+        const createdByListing = namespaces() - before;
         const { a } = require.cache[aPath].exports;
-        const sameB = require.cache[bPath].exports.b === b;
-        const createdByGet = createdSince();
+        const createdByGet = namespaces() - before - createdByListing;
         // The key is now in both tables; it is still listed once.
         const listedAfterGet = Object.keys(require.cache).filter(key => key === aPath).length;
-        console.log(JSON.stringify({ b, keys, has, hasOwn, walked, createdByListing, attributes, createdByDescriptor, descriptorHoldsEntry, createdByReadingAgain, a, sameB, createdByGet, listedAfterGet }));
+        console.log(JSON.stringify({ b, keys, has, descriptor, createdByListing, a, createdByGet, listedAfterGet }));
       `,
     });
     await using proc = Bun.spawn({
@@ -294,21 +449,184 @@ describe.concurrent("require.cache", () => {
         b: 2,
         keys: ["a.mjs", "b.mjs"],
         has: true,
-        hasOwn: true,
-        walked: 1,
+        descriptor: { writable: false, enumerable: true, configurable: true },
         createdByListing: 0,
-        attributes: { writable: true, enumerable: true, configurable: true },
-        createdByDescriptor: 1,
-        descriptorHoldsEntry: true,
-        createdByReadingAgain: 0,
         a: 1,
-        sameB: true,
         createdByGet: 1,
         listedAfterGet: 1,
       }),
       stderr: "",
       exitCode: 0,
     });
+  });
+
+  test("only a read of the key makes the entry of an ES module: a property descriptor holds no value until then", async () => {
+    using dir = tempDir("require-cache-esm-descriptors", {
+      "a.mjs": `export const a = 1;`,
+      "b.mjs": `export const b = 2;`,
+      "c.mjs": `export const c = 3;`,
+      "index.mjs": `
+        import { heapStats } from "bun:jsc";
+        import { join } from "node:path";
+        import { isDeepStrictEqual } from "node:util";
+        import * as aNamespace from "./a.mjs";
+        import "./b.mjs";
+        import "./c.mjs";
+        const cache = require.cache;
+        const [aPath, bPath, cPath] = ["a.mjs", "b.mjs", "c.mjs"].map(name => join(import.meta.dir, name));
+        const count = () => {
+          const { Module = 0, ModuleNamespaceObject = 0 } = heapStats().objectTypeCounts;
+          return Module + ModuleNamespaceObject;
+        };
+        let seen = count();
+        const madeSince = () => {
+          const now = count();
+          const made = now - seen;
+          seen = now;
+          return made;
+        };
+        const shape = d => d && [typeof d.value, d.writable, d.enumerable, d.configurable];
+        const result = {};
+
+        // Whoever asks what a key is like makes no entry.
+        result.descriptor = [shape(Object.getOwnPropertyDescriptor(cache, bPath)), shape(Reflect.getOwnPropertyDescriptor(cache, cPath)), madeSince()];
+        result.descriptors = [shape(Object.getOwnPropertyDescriptors(cache)[bPath]), madeSince()];
+        result.isEnumerable = [Object.prototype.propertyIsEnumerable.call(cache, bPath), madeSince()];
+        const valueless = Object.create(null);
+        for (const key of Object.keys(cache)) valueless[key] = undefined;
+        isDeepStrictEqual(valueless, cache);
+        result.comparedWith = madeSince();
+
+        // require() answers with the module behind a descriptor read as it does without one.
+        result.required = [require("./a.mjs") === aNamespace, cache[aPath].exports === aNamespace, shape(Object.getOwnPropertyDescriptor(cache, aPath))];
+        seen = count();
+
+        // Whoever copies the values reads each key, which makes its entry.
+        const entries = Object.entries(cache).filter(([key]) => key === bPath);
+        result.entries = [entries.length, entries[0][1] === cache[bPath], entries[0][1].exports.b, madeSince() > 0];
+        result.copies = [{ ...cache }[cPath] === cache[cPath], Object.assign({}, cache)[cPath] === cache[cPath], Object.values(cache).includes(cache[cPath])];
+        result.afterRead = [shape(Object.getOwnPropertyDescriptor(cache, bPath)), Object.getOwnPropertyDescriptor(cache, bPath).value === cache[bPath], madeSince()];
+        console.log(JSON.stringify(result));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({
+        descriptor: [["undefined", false, true, true], ["undefined", false, true, true], 0],
+        descriptors: [["undefined", false, true, true], 0],
+        isEnumerable: [true, 0],
+        comparedWith: 0,
+        required: [true, true, ["object", true, true, true]],
+        entries: [1, true, 2, true],
+        copies: [true, true, true],
+        afterRead: [["object", true, true, true], true, 0],
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("a debugger that looks at require.cache makes no entry", async () => {
+    using dir = tempDir("require-cache-debugger-view", {
+      "a.mjs": `export const a = 1;`,
+      "b.mjs": `export const b = 2;`,
+      "index.mjs": `
+        import { heapStats } from "bun:jsc";
+        import "./a.mjs";
+        import "./b.mjs";
+        globalThis.cache = require.cache;
+        globalThis.entries = () => {
+          const { Module = 0, ModuleNamespaceObject = 0 } = heapStats().objectTypeCounts;
+          return Module + ModuleNamespaceObject;
+        };
+        console.log("ready");
+        setInterval(() => {}, 1000);
+      `,
+    });
+    await using child = Bun.spawn({
+      cmd: [bunExe(), "--inspect=ws://127.0.0.1:0/", "index.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const decoder = new TextDecoder();
+    let stderr = "";
+    let url: string | undefined;
+    for await (const chunk of child.stderr) {
+      stderr += decoder.decode(chunk);
+      url = stderr.match(/(ws:\/\/[^\s]+)/)?.[1];
+      if (url) break;
+    }
+    if (!url) throw new Error(`Unable to find the inspector URL in:\n${stderr}`);
+    let stdout = "";
+    for await (const chunk of child.stdout) {
+      stdout += decoder.decode(chunk);
+      if (stdout.includes("ready")) break;
+    }
+    expect(stdout).toContain("ready");
+
+    type Reply = { result?: any; error?: { message: string } };
+    const pending = new Map<number, (reply: Reply) => void>();
+    // A crash closes the socket. The reply then says so, and the assertions below show it.
+    const closed = Promise.withResolvers<Reply>();
+    const opened = Promise.withResolvers<Reply>();
+    const webSocket = new WebSocket(url);
+    webSocket.addEventListener("open", () => opened.resolve({}));
+    webSocket.addEventListener("close", () =>
+      closed.resolve({ error: { message: "the inspector closed the socket" } }),
+    );
+    webSocket.addEventListener("error", () => closed.resolve({ error: { message: "the inspector socket failed" } }));
+    webSocket.addEventListener("message", ({ data }) => {
+      const reply: Reply & { id: number } = JSON.parse(data.toString());
+      pending.get(reply.id)?.(reply);
+      pending.delete(reply.id);
+    });
+    let nextId = 1;
+    const send = (method: string, params: object = {}): Promise<Reply> => {
+      const id = nextId++;
+      const { promise, resolve } = Promise.withResolvers<Reply>();
+      pending.set(id, resolve);
+      webSocket.send(JSON.stringify({ id, method, params }));
+      return Promise.race([promise, closed.promise]);
+    };
+    const valueOf = async (expression: string) => {
+      const reply = await send("Runtime.evaluate", { expression, returnByValue: true });
+      return reply.error?.message ?? reply.result.result.value;
+    };
+    expect(await Promise.race([opened.promise, closed.promise])).toEqual({});
+
+    const before = await valueOf("entries()");
+    const viewed = await send("Runtime.evaluate", { expression: "cache", generatePreview: true });
+    const objectId = viewed.result?.result?.objectId;
+    const names = async (method: string) => {
+      const reply = await send(method, { objectId, ownProperties: true, generatePreview: true });
+      const properties: { name: string }[] = reply.result?.properties ?? reply.result?.result ?? [];
+      return reply.error?.message ?? properties.map(({ name }) => name.slice(name.lastIndexOf("/") + 1)).sort();
+    };
+    expect({
+      view: viewed.error?.message ?? viewed.result.result.type,
+      properties: await names("Runtime.getProperties"),
+      displayed: await names("Runtime.getDisplayableProperties"),
+      made: (await valueOf("entries()")) - before,
+      // The key reads as it does without a debugger.
+      read: await valueOf(`Object.keys(cache).filter(key => key.endsWith("a.mjs")).map(key => cache[key].exports.a)`),
+    }).toEqual({
+      view: "object",
+      properties: ["a.mjs", "b.mjs", "index.mjs"],
+      displayed: ["a.mjs", "b.mjs", "index.mjs"],
+      made: 0,
+      read: [1],
+    });
+    webSocket.close();
   });
 
   test("a specifier imported under two import attribute types is one key of require.cache", async () => {

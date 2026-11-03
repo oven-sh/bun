@@ -125,6 +125,18 @@ for (const [way, env] of ways) {
   });
 }
 
+const whatToWrite = (name: string) =>
+  `${refusal(name)}. Spell the key where it is stored: require.cache["${name}"] = entry. In a test, mock.module("${name}", () => ({ .. })) replaces the module too. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)`;
+
+// The build reads an assignment. Object.defineProperty(require.cache, key, descriptor) is a store that it does not read.
+const definition = (name: string, exports: string) => `
+  try {
+    Object.defineProperty(require.cache, "${name}", { value: { exports: ${exports} }, writable: true, enumerable: true, configurable: true });
+    console.log("defined");
+  } catch (error) {
+    console.log(error.message);
+  }`;
+
 test.concurrent("in an executable the store throws an error that names the module and says what to write", async () => {
   using dir = tempDir("an-entry-under-a-key-that-nobody-reads-in-an-executable", {
     "main.cjs": `
@@ -136,6 +148,8 @@ test.concurrent("in an executable the store throws an error that names the modul
         console.log(error.message);
       }
       console.log(typeof require("url").parse);
+      ${definition("path", "{ join: 1 }")}
+      console.log(typeof require("path").join);
       require.cache[["z", "lib"].join("")] = { exports: { gzipSync: 1 } };
       console.log("nobody requires zlib: stored");`,
   });
@@ -144,10 +158,39 @@ test.concurrent("in an executable the store throws an error that names the modul
   expect(built.exitCode).toBe(0);
   const { stdout, exitCode } = await run([executable], String(dir));
   expect(stdout.split("\n")).toEqual([
-    `${refusal("url")}. Spell the key where it is stored: require.cache["url"] = entry. In a test, mock.module("url", () => ({ .. })) replaces the module too. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)`,
+    whatToWrite("url"),
+    "function",
+    whatToWrite("path"),
     "function",
     "nobody requires zlib: stored",
     "",
   ]);
   expect(exitCode).toBe(0);
 });
+
+test.concurrent(
+  "in a test run a definition throws that error, and an assignment beside it lets the definition store",
+  async () => {
+    using dir = tempDir("an-entry-that-a-definition-stores-in-a-test-run", {
+      "package.json": `{}`,
+      "defined.test.js": `${head}
+      test("a definition alone", () => {
+        ${definition("fs", "{ readFileSync: 1 }")}
+        console.log("fs:", typeof require("fs").readFileSync);
+      });`,
+      "assigned.test.js": `${head}
+      test("a definition beside an assignment", () => {
+        require.cache["os"] = { exports: { platform: 1 } };
+        ${definition("os", '{ platform: "text" }')}
+        console.log("os:", typeof require("os").platform);
+        delete require.cache["os"];
+      });`,
+    });
+    const plain = await runTests(String(dir), {});
+    expect(plain.printed).toEqual(["defined", "defined", "fs: number", "os: string"]);
+    expect(await runTests(String(dir), {}, "--aot")).toEqual({
+      ...plain,
+      printed: ["defined", "fs: function", "os: string", whatToWrite("fs")].sort(),
+    });
+  },
+);

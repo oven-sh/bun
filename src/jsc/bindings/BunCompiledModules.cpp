@@ -496,6 +496,12 @@ bool isEvaluatedCompiledFile(Zig::GlobalObject* globalObject, const String& key)
     return module && AOT::isEvaluatedFile(globalObject, *module);
 }
 
+bool isCompiledESModule(const String& path)
+{
+    auto module = compiledModuleForPath(path);
+    return module && AOT::isESModule(*module);
+}
+
 JSValue compiledRequireCacheEntry(Zig::GlobalObject* globalObject, const String& key)
 {
     if (auto module = AOT::findLibraryModuleInRequireCache(globalObject, key))
@@ -1219,6 +1225,7 @@ void didDeleteRequireCacheEntry(Zig::GlobalObject*, const String&) {}
 bool requireCacheListsCompiledFiles(Zig::GlobalObject*) { return false; }
 bool isLibraryModuleInRequireCache(Zig::GlobalObject*, const String&) { return false; }
 bool isEvaluatedCompiledFile(Zig::GlobalObject*, const String&) { return false; }
+bool isCompiledESModule(const String&) { return false; }
 JSValue compiledRequireCacheEntry(Zig::GlobalObject*, const String&) { return {}; }
 bool isRecordOfCompiledModule(AbstractModuleRecord*) { return false; }
 void forEachEvaluatedCompiledFile(Zig::GlobalObject*, const WTF::Function<void(const String&)>&) {}

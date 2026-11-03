@@ -121,14 +121,6 @@ static ALWAYS_INLINE bool mayOwnProperties(JSRequireCache* cache)
     return !!cache->butterfly();
 }
 
-static bool ownsProperty(JSRequireCache* cache, JSGlobalObject* globalObject, PropertyName propertyName)
-{
-    if (!mayOwnProperties(cache)) [[likely]]
-        return false;
-    PropertySlot slot(cache, PropertySlot::InternalMethodType::GetOwnProperty);
-    return ownPropertySlot(cache, globalObject, propertyName, slot);
-}
-
 // The object holds a property that is not configurable under the name: a deletion is refused, and the loader keeps its entry.
 static bool holdsForGood(JSRequireCache* cache, JSGlobalObject* globalObject, PropertyName propertyName)
 {
@@ -482,13 +474,12 @@ bool JSRequireCache::defineOwnProperty(JSObject* object, JSGlobalObject* lexical
     }
 
     // The definition is of the property that the object itself holds under the key, if it holds one, and else of the entry.
-    bool isOwn = ownsProperty(thisObject, lexicalGlobalObject, propertyName);
-    bool isEntry = false;
-    if (!isOwn) {
-        entryInMap(globalObject, thisObject->m_requireMap.get(), stringOfKey(vm, key), isEntry);
-        RETURN_IF_EXCEPTION(scope, false);
-        isEntry = isEntry || thisObject->listedByLoader(globalObject, key) != Listed::No;
-    }
+    PropertySlot own(thisObject, PropertySlot::InternalMethodType::GetOwnProperty);
+    bool isOwn = mayOwnProperties(thisObject) && ownPropertySlot(thisObject, lexicalGlobalObject, propertyName, own);
+    bool isStored;
+    entryInMap(globalObject, thisObject->m_requireMap.get(), stringOfKey(vm, key), isStored);
+    RETURN_IF_EXCEPTION(scope, false);
+    bool isEntry = !isOwn && (isStored || thisObject->listedByLoader(globalObject, key) != Listed::No);
 
     // A definition that leaves the key a writable, enumerable and configurable data property is a store, as an assignment is. What a definition
     // leaves out stays as it is for an entry, and is false for a key that is new.
@@ -505,9 +496,15 @@ bool JSRequireCache::defineOwnProperty(JSObject* object, JSGlobalObject* lexical
     if (!isEntry) {
         bool isDefined = Base::defineOwnProperty(object, lexicalGlobalObject, propertyName, descriptor, shouldThrow);
         RETURN_IF_EXCEPTION(scope, false);
-        if (!isDefined || !descriptor.value())
-            return isDefined;
-        RELEASE_AND_RETURN(scope, thisObject->store(globalObject, key, descriptor.value()));
+        if (!isDefined)
+            return false;
+        JSValue value = descriptor.value();
+        // An accessor that becomes a data property without a value holds undefined, and so does the entry that stood behind the accessor.
+        if (!value && isStored && isOwn && !own.isValue() && descriptor.isDataDescriptor())
+            value = jsUndefined();
+        if (!value)
+            return true;
+        RELEASE_AND_RETURN(scope, thisObject->store(globalObject, key, value));
     }
 
     // The property stands in front of the entry from here on. The loader keeps the entry: the next require() of the file answers with it, and

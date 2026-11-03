@@ -344,6 +344,9 @@ describe.concurrent("require.cache", () => {
         result.deleteLocked = [Reflect.deleteProperty(cache, c), attempt(() => delete cache[c]), c in cache, require("./c.cjs").run];
         cache[d] = replacement;
         result.storeThroughAccessor = [setterGot === replacement, require("./d.cjs").run];
+        // An accessor that becomes a data property again holds no value, and the loader has no entry any more.
+        Object.defineProperty(cache, d, { writable: true });
+        result.accessorToData = [shape(Object.getOwnPropertyDescriptor(cache, d)), require("./d.cjs").run, cache[d].exports.run, shape(Object.getOwnPropertyDescriptor(cache, d))];
         result.deleteHidden = [delete cache[b], b in cache, require("./b.cjs").run, shape(Object.getOwnPropertyDescriptor(cache, b)), Object.keys(cache).includes(b)];
 
         // A value that a definition names is what require() answers with, whatever the shape.
@@ -398,6 +401,7 @@ describe.concurrent("require.cache", () => {
         storeIntoHidden: ["replaced", true, ["object", true, false, true], false],
         deleteLocked: [false, "TypeError", true, 1],
         storeThroughAccessor: [true, 1],
+        accessorToData: [["undefined", true, true, true], 2, 2, ["object", true, true, true]],
         deleteHidden: [true, false, 2, ["object", true, true, true], true],
         definedBeforeLoad: ["replaced", 0, ["object", false, false, true], false, true, 1],
         hidesItself: [1, 1, false, true],

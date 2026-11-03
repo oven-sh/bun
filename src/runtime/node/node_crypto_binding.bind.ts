@@ -151,7 +151,6 @@ export const crypto = b.namespace({
   getFips: { returns: b.i32 },
   setFips: { length: 1 },
   setEngine: { length: 2, capability: "heap", throws: true },
-  getHashes: { returns: b.array(b.string.utf8) },
   scrypt: [
     {
       args: { ...passwordAndSaltHandles, keylen, options: ScryptOptions, callback: b.callable },

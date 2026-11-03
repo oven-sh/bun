@@ -83,7 +83,7 @@ pub struct PackageJSON {
     /// The `PackageJSON` itself is the owner so the bytes free if it ever drops.
     /// (This owner field keeps that erased borrow, and the map values above, alive.)
     pub(crate) source_contents: Box<[u8]>,
-    /// What `stat()` said of the file when a lookup last found `source_contents` in it. 0: not known, or the file was too new.
+    /// What `stat()` said of the file when a lookup last found `source_contents` in it. 0: not known, the file was too new, or its file system stamps with another clock.
     pub(crate) disk_key: core::sync::atomic::AtomicU64,
     pub(crate) json_tape: Option<Box<js_ast::E::JsonTape>>,
     pub(crate) main_fields: MainFieldMap,

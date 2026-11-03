@@ -136,7 +136,7 @@ pub(crate) type JsxFieldSet = EnumSet<JsxField>;
 pub(crate) struct ConfigSource {
     pub(crate) path: Box<[u8]>,
     pub(crate) hash: Option<u64>,
-    /// What `stat()` said of the file when a lookup last found these bytes in it. 0: not known, or the file was too new.
+    /// What `stat()` said of the file when a lookup last found these bytes in it. 0: not known, the file was too new, or its file system stamps with another clock.
     pub(crate) disk_key: core::sync::atomic::AtomicU64,
 }
 

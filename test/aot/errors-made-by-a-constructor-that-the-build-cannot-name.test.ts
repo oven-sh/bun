@@ -124,6 +124,8 @@ let plain: Awaited<ReturnType<typeof seenIn>>;
 beforeAll(async () => {
   dir = tempDir("aot-errors-by-a-constructor-nobody-names", files);
   plain = await seenIn(String(dir), undefined);
+  // A plain run that fails is one failure, with what it said: no build is started to be held against it.
+  expect({ stderr: plain.stderr, exitCode: plain.exitCode }).toEqual({ stderr: undefined, exitCode: 0 });
 });
 afterAll(() => dir?.[Symbol.dispose]());
 

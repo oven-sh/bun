@@ -1571,6 +1571,9 @@ describe.skipIf(!hasFlag)("what breaks whether it fits or not, and what only loo
           `a = (\n<>\n${first}\n<Divider orientation="left">sub-element xxxxxxxxxxxxxxxxxx center</Divider> <Row>\n</Row>\n</>\n);\n`,
       )
       .join(""),
+    // \`<c />\` is on a line of its own in a fill and is no group, so what follows \`</b>\` is still measured.
+    "after-element-without-group.jsx":
+      'x = <a><b>t<c/><d/></b>{{eeee: ffff}}{" "}e</a>;\ne = <><b>ae<c/></b>{e} e</>;\ne = <><b>ae<c/></b><d>e</d> e</>;\n',
     "optional-targets.ts":
       "a?.bbbbbbbb.cccc = `/${dddd.eeeee}/`;\na?.b = c(dddddddd, eeeeeeee);\nf = a?.b.c = `${dddddddddd}`;\n",
     // A comment before the \`{\` is printed before the first statement, which starts after it.

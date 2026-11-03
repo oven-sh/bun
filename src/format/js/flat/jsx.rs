@@ -12,10 +12,17 @@ use crate::js::print::jsx::{ChildOnLine, ChildrenOnLine, Parentheses, parenthese
 pub(crate) fn write_jsx_child<'a>(child: Expr<'a>, f: &mut Formatter<'a>) -> bool {
     let span = child.jsx_container_span().unwrap_or_else(|| child.span());
     // What a fill prints can be in flat mode, in which only groups break. After a line break in that mode the printer
-    // measures the groups that follow until one has been measured, which the long way's group around a child is.
+    // measures the groups that follow until one has been measured, so a child is a group here if and only if the long
+    // way writes one for it: always, but for `<a />`.
+    let has_group = match child.kind() {
+        ExprKind::Jsx(jsx) if child.jsx_container_span().is_none() => {
+            !(jsx.is_self_closing() && jsx.attrs().is_empty())
+        }
+        _ => true,
+    };
     let slot = f.reserve_tag();
     let is_written = f.write_line(span, (0, 0), |line| line.jsx_child(child));
-    if is_written {
+    if is_written && has_group {
         f.group_from(slot, false);
     }
     is_written

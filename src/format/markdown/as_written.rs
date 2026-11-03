@@ -1581,6 +1581,7 @@ impl<'t> Reader<'t> {
         let mut at = from;
         // After a `[` or a `![` that waits for its `]`.
         let (mut is_in_link, mut is_in_image) = (false, false);
+        let mut image_text_start = 0;
         let end = loop {
             at = skip(at, stops_text);
             if at >= text.len() {
@@ -1761,6 +1762,7 @@ impl<'t> Reader<'t> {
                     }
                     if before(at) == b'!' {
                         is_in_image = true;
+                        image_text_start = at + 1;
                     } else if is_in_link {
                         return None;
                     } else {
@@ -1772,6 +1774,13 @@ impl<'t> Reader<'t> {
                 b']' => {
                     let is_image = std::mem::take(&mut is_in_image);
                     is_in_link &= is_image;
+                    // The printer looks for the end of an image's text by itself, and counts the brackets in code too.
+                    if is_image
+                        && (text[image_text_start..at].iter())
+                            .any(|byte| matches!(byte, b'[' | b']'))
+                    {
+                        return None;
+                    }
                     // Liquid comes first, so there's no destination.
                     let has_destination =
                         byte(at + 1) == b'(' && self.liquid_end(at + 2, CELL).is_none();

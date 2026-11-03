@@ -4396,11 +4396,9 @@ describe.each([
       expect(await run("duplex-destroySoon", "after-first-flight")).toEqual(clientDestroyed);
     });
 
-    // Known gap in bun: 'finish' does not wait for the transport's end(). In
-    // the turn that created the socket it fires before the engine exists, so
-    // destroySoon()'s destroy() runs first and destroys the transport: no
-    // ClientHello and no final(), the peer only sees the connection close.
-    (!exe ? it.skip : runtime === "bun" ? it.failing : it)(
+    // The StartTLS hop and end()'s shutdown completion share the VM task queue, so the engine
+    // exists and its ClientHello is written before 'finish' lets destroySoon() destroy.
+    it.skipIf(!exe)(
       "destroySoon() in the turn that created the socket ends the transport, then closes the socket",
       async () => {
         expect(await run("duplex-destroySoon", "same-turn")).toEqual(clientDestroyed);

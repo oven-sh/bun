@@ -5502,6 +5502,27 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionReportUncaughtException, (JSC::JSGlobalObject
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionQueueLoopTask, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue callback = callFrame->argument(0);
+    if (!callback.isCallable())
+        return throwVMTypeError(globalObject, scope, "The task must be a function"_s);
+    JSValue fn = AsyncContextFrame::withAsyncContextIfNeeded(globalObject, callback);
+    globalObject->scriptExecutionContext()->postTask([fn = Strong<Unknown>(vm, fn), a = Strong<Unknown>(vm, callFrame->argument(1)), b = Strong<Unknown>(vm, callFrame->argument(2))](ScriptExecutionContext& context) {
+        auto* globalObject = context.globalObject();
+        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+        MarkedArgumentBuffer args;
+        args.append(a.get());
+        args.append(b.get());
+        AsyncContextFrame::call(globalObject, fn.get(), jsUndefined(), args);
+        RETURN_IF_EXCEPTION(scope, );
+    });
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionFatalException, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     // Node-compat: process._fatalException(err, fromPromise) runs the uncaught-exception

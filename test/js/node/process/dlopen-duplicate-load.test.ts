@@ -209,11 +209,6 @@ NODE_MODULE(non_context_aware, demo::Initialize)
           "ldflags": [ "-Wl,-z,lazy" ]
         },
         {
-          "target_name": "initializer_lazy",
-          "sources": [ "initializer_only.cpp" ],
-          "ldflags": [ "-Wl,-z,lazy" ]
-        },
-        {
           "target_name": "initializer_bind_now",
           "sources": [ "initializer_bind_now.cpp" ],
           "ldflags": [ "-Wl,-z,now" ]
@@ -912,17 +907,25 @@ if (!isMainThread) {
       expect(await load(addon)).toEqual(loaded(exports));
     });
 
-    test.skipIf(!isLinux)("an addon with only this entry is refused when Bun cannot read its imports", async () => {
-      // The addon is linked with -z lazy, so that the loader leaves Bun imports to check in it. Linked with BIND_NOW it
-      // would load.
-      writeWithoutStringTableSize("initializer_lazy.node", "initializer_unreadable.node");
-      const unreadable = built("initializer_unreadable.node");
-      expect(await load("initializer_unreadable.node")).toEqual(
-        elfImports(unreadable).bindNow
-          ? loaded({})
-          : refused(`Cannot load native addon ${unreadable}: Bun cannot read its import tables`),
-      );
-    });
+    // Every loader leaves the import of this addon unbound, because nothing defines it, and Bun must read the name of
+    // the import to ask about it. The copy has no name that Bun can read. An addon without such an import has nothing
+    // that Bun must read with musl, which binds each import that has a definition already in dlopen().
+    test.skipIf(!isLinux)(
+      "an addon with only this entry is refused when Bun cannot read the name of an import that the loader left unbound",
+      async () => {
+        const symbol = "bun_test_symbol_that_nothing_defines";
+        const { bindNow, relocations } = elfImports(built("initializer_missing_import.node"));
+        const relocation = relocations.get(symbol);
+        const leftToBun = !bindNow && (relocation === "JUMP_SLOT" || (relocation === "GLOB_DAT" && isMusl));
+        writeWithoutStringTableSize("initializer_missing_import.node", "initializer_unreadable.node");
+        const unreadable = built("initializer_unreadable.node");
+        expect(await load("initializer_unreadable.node")).toEqual(
+          leftToBun
+            ? refused(`Cannot load native addon ${unreadable}: Bun cannot read its import tables`)
+            : refusedByLoader(symbol),
+        );
+      },
+    );
 
     // @datadog/pprof is such an addon: it has an import that nothing defines, and never calls it.
     test.skipIf(!isLinux)(

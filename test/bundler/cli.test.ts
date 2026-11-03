@@ -1170,10 +1170,12 @@ describe.concurrent("a module that a macro writes during the build", () => {
       import { resolverCounters } from "bun:internal-for-testing";
       postMessage(resolverCounters().lookupsRunAgain);
     `,
+    // The macro waits for its Worker to close: LeakSanitizer reports what a live Worker holds when `bun build` exits.
     "app/counters.ts": `
       import path from "node:path";
       export async function lookupsRunAgain() {
         const worker = new Worker(path.join(import.meta.dir, "counters.worker.ts"));
+        const closed = new Promise(resolve => worker.addEventListener("close", resolve));
         try {
           const { promise, resolve, reject } = Promise.withResolvers();
           worker.onmessage = event => resolve(event.data);
@@ -1183,6 +1185,7 @@ describe.concurrent("a module that a macro writes during the build", () => {
           return count;
         } finally {
           worker.terminate();
+          await closed;
         }
       }
     `,
@@ -1225,11 +1228,7 @@ describe.concurrent("a module that a macro writes during the build", () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", ...args],
       cwd: join(dir, "app"),
-      env: {
-        ...bunEnv,
-        // `bun build` may exit before the Worker of its macro is gone. The ASAN lane would make that exit code 134.
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
-      },
+      env: bunEnv,
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",

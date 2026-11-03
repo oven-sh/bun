@@ -28,6 +28,12 @@ test("the same export of an imported module", async () => {
   assert.match(inspect(ns, { breakLength: Infinity }), /\{ x: <uninitialized>, y: 1 \}$/);
 });
 
+test("another error from the custom inspect function of an export fails an assertion", async () => {
+  const throwsTypeError = `{ [Symbol.for("nodejs.util.inspect.custom")]() { throw new TypeError("from the custom inspect function"); } }`;
+  const ns = await importSource(`export const x = ${throwsTypeError}; export const y = 1;`);
+  assert.throws(() => inspect(ns), { code: /^ERR_(INTERNAL_)?ASSERTION$/ });
+});
+
 test("an export named constructor does not name the namespace object", async () => {
   const ns = await importSource(`export function constructor() {}`);
   // Node.js prints "[Module: null prototype] { constructor: [Function: constructor] }".
@@ -49,6 +55,27 @@ test("format() with %s throws the error of a toString that it cannot read", () =
   };
   assert.throws(() => format("%s", value), { name: "Error", message: "from the toString getter" });
   assert.strictEqual(thrownForUninitializedToString?.name, "ReferenceError");
+
+  // A value that is no namespace object: its `has` trap is not asked whether the error counts.
+  const traps = [];
+  const inherits = Object.create(
+    new Proxy(
+      {},
+      {
+        get(target, key, receiver) {
+          if (key !== "toString") return Reflect.get(target, key, receiver);
+          traps.push("get");
+          throw new Error("from the get trap");
+        },
+        has() {
+          traps.push("has");
+          return false;
+        },
+      },
+    ),
+  );
+  assert.throws(() => format("%s", inherits), { name: "Error", message: "from the get trap" });
+  assert.deepStrictEqual(traps, ["get"]);
 });
 
 test("a constructor getter that throws does not make inspect throw", () => {
@@ -60,6 +87,25 @@ test("a constructor getter that throws does not make inspect throw", () => {
     },
   });
   assert.strictEqual(inspect(Object.create(prototype)), "Object <[Object: null prototype] {}> {}");
+});
+
+test("the name of a constructor property that is no string does not name the value", () => {
+  for (const name of [7, Symbol("s"), { __proto__: null }]) {
+    const value = { __proto__: null, constructor: { __proto__: null, name } };
+    assert.match(inspect(value), /^\[Object: null prototype\] \{\n  constructor: \[Object: null prototype\] \{ name: /);
+  }
+  assert.strictEqual(
+    inspect(Object.create({ __proto__: null, constructor: { name: 7 } })),
+    "Object <[Object: null prototype]> {}",
+  );
+});
+
+test("a Proxy whose target has null at index 0 is not a revoked Proxy", () => {
+  // Node.js prints "Proxy([ null ])".
+  assert.match(inspect(new Proxy([null], {})), /^(Proxy\()?\[ null \]\)?$/);
+  const revocable = Proxy.revocable([null], {});
+  revocable.revoke();
+  assert.strictEqual(inspect(revocable.proxy), "<Revoked Proxy>");
 });
 
 // Only in Bun: when Node.js runs this file it must not spawn itself again.

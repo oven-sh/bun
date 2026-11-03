@@ -3091,6 +3091,71 @@ describe.concurrent("util.inspect() of a mocked module", () => {
       2,
     );
   });
+
+  test("formats with %s a mocked module whose factory returned an object or a function", async () => {
+    await expectFixturesToPass(
+      {
+        ...Object.fromEntries(
+          ["vi-mock", "jest-mock", "mock-module", "jest-fn", "own", "thrown"].map(name => [
+            `${name}.ts`,
+            `export const a = "real-a";`,
+          ]),
+        ),
+        "thrown-star.ts": `export * from "./thrown";`,
+        "format.test.ts": `
+          import { expect, jest, mock, test, vi } from "bun:test";
+          import util from "node:util";
+          import * as viMock from "./vi-mock";
+          import * as jestMock from "./jest-mock";
+          import * as jestFn from "./jest-fn";
+          import * as own from "./own";
+          import * as thrownStar from "./thrown-star";
+
+          vi.mock("./vi-mock", () => ({ a: "mocked-a" }));
+          jest.mock("./jest-mock", () => ({ a: "mocked-a" }));
+          jest.mock("./jest-fn", () => jest.fn());
+          vi.mock("./own", () => ({ a: "mocked-a", toString: () => "from the factory's toString" }));
+          vi.mock("./thrown", () => ({
+            get unreadable() {
+              throw Object.defineProperty(new Error("x"), "message", {
+                get() {
+                  throw new RangeError("from the message getter");
+                },
+              });
+            },
+            get string() {
+              throw "a string";
+            },
+            get nothing() {
+              throw null;
+            },
+          }));
+
+          test("the toString that the factory's object inherits is not called", async () => {
+            mock.module("./mock-module", () => ({ a: "mocked-a" }));
+            for (const ns of [viMock, jestMock, await import("./mock-module")]) {
+              expect(util.format("%s", ns)).toEndWith("{ a: 'mocked-a' }");
+            }
+            expect(util.format("%s", jestFn)).toEndWith("{  }");
+            expect(util.format("%s", own)).toBe("from the factory's toString");
+          });
+
+          test("a Proxy of the mocked module prints as the module", () => {
+            expect(util.inspect(viMock)).toEndWith("{ a: 'mocked-a' }");
+            expect(util.inspect(new Proxy(viMock, {}))).toBe(util.inspect(viMock));
+            expect(util.format("%s", new Proxy(viMock, {}))).toBe(util.inspect(viMock));
+          });
+
+          test("a getter that throws a value whose message cannot be read", () => {
+            expect(util.inspect(thrownStar, { breakLength: Infinity })).toEndWith(
+              "{ nothing: <Inspection threw (null)>, string: <Inspection threw (undefined)>, unreadable: <Inspection threw (undefined)> }",
+            );
+          });
+        `,
+      },
+      3,
+    );
+  });
 });
 
 describe.concurrent("a factory that returns a module namespace object", () => {

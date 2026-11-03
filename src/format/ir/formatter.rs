@@ -454,6 +454,16 @@ impl FormatElement {
     }
 }
 
+/// The source text of `span`, which is as many columns wide as it has bytes.
+#[inline(always)]
+fn plain_source_text(span: Span) -> FormatElement {
+    FormatElement::SourceText(Text {
+        start: span.start,
+        len: span.len(),
+        width: TextWidth::single(span.len()),
+    })
+}
+
 /// A [`Formatter`]'s vectors, reused across files to keep their capacity.
 #[derive(Default)]
 pub(crate) struct FormatterBuffers {
@@ -701,7 +711,8 @@ impl<'a> Formatter<'a> {
     }
 
     // The most frequent elements have functions of their own: thousands of places write one, and the code that does it
-    // is several times as long as a call.
+    // is several times as long as a call. What they usually do calls nothing, so they have no registers to save: the
+    // rest is in a second function.
 
     #[inline(always)]
     pub(crate) fn write_short_token(&mut self, token: Token) {
@@ -711,7 +722,46 @@ impl<'a> Formatter<'a> {
     /// `bits` is [`Token::to_bits`].
     #[inline(never)]
     fn write_token_of_bits(&mut self, bits: u128) {
-        self.push(FormatElement::Token(Token::from_bits(bits)));
+        let token = Token::from_bits(bits);
+        self.write_text_element(
+            || FormatElement::Token(token),
+            token.len() as u32,
+            |f| f.write_first_token_of_bits(bits),
+        );
+    }
+
+    #[inline(never)]
+    fn write_first_token_of_bits(&mut self, bits: u128) {
+        let token = Token::from_bits(bits);
+        self.write_first_text_element(FormatElement::Token(token), token.len() as u32);
+    }
+
+    /// Writes the element that `make` returns, which is a text of `width` columns on one line. `write_first` does the
+    /// same with [`Formatter::write_first_text_element`]. It gets what the element is made of, in registers, so that
+    /// the element is only made where it's stored.
+    #[inline(always)]
+    fn write_text_element(
+        &mut self,
+        make: impl Fn() -> FormatElement,
+        width: u32,
+        write_first: impl Fn(&mut Self),
+    ) {
+        if self.tracker.waits_for_first_text() {
+            return write_first(self);
+        }
+        let index = self.storage.pool.len() as u32;
+        match self.storage.pool.push_within_capacity(make()) {
+            Ok(_) => self.tracker.text_after_first(width, index),
+            Err(_) => write_first(self),
+        }
+    }
+
+    /// Writes `element`, which is a text of `width` columns on one line and may be the first text in a group.
+    #[inline(always)]
+    fn write_first_text_element(&mut self, element: FormatElement, width: u32) {
+        let index = self.storage.pool.len() as u32;
+        self.storage.pool.push(element);
+        self.tracker.text(width, index);
     }
 
     #[cold]
@@ -722,36 +772,58 @@ impl<'a> Formatter<'a> {
 
     #[inline(never)]
     pub(crate) fn write_space(&mut self) {
-        self.push(FormatElement::Space);
+        let index = self.storage.pool.len() as u32;
+        match self.storage.pool.push_within_capacity(FormatElement::Space) {
+            Ok(_) => self.tracker.space(index),
+            Err(_) => self.write_element(FormatElement::Space),
+        }
     }
 
     #[inline(never)]
     pub(crate) fn write_line_break(&mut self, mode: LineMode) {
-        self.push(FormatElement::Line(mode));
+        self.write_element_with_line(|| FormatElement::Line(mode), mode);
+    }
+
+    /// Writes the element that `make` returns, which is or has a line break of `mode`.
+    #[inline(always)]
+    fn write_element_with_line(&mut self, make: impl Fn() -> FormatElement, mode: LineMode) {
+        let index = self.storage.pool.len() as u32;
+        match self.storage.pool.push_within_capacity(make()) {
+            Ok(_) => self.tracker.line(mode, index),
+            Err(_) => self.write_element(make()),
+        }
     }
 
     #[inline(never)]
-    pub(crate) fn start_group(&mut self, group: Group) {
-        self.push(FormatElement::Tag(Tag::StartGroup(group)));
+    pub(crate) fn start_group(&mut self, id: Option<GroupId>, mode: GroupMode) {
+        let make = || FormatElement::Tag(Tag::StartGroup(Group::new().with_id(id).with_mode(mode)));
+        let index = self.storage.pool.len() as u32;
+        match self.storage.pool.push_within_capacity(make()) {
+            Ok(_) => self.tracker.start_group(mode, index),
+            Err(_) => self.write_element(make()),
+        }
     }
 
     #[inline(never)]
     pub(crate) fn end_group(&mut self) {
-        self.push(FormatElement::Tag(Tag::EndGroup));
+        let index = self.storage.pool.len() as u32;
+        self.storage.pool.push(FormatElement::Tag(Tag::EndGroup));
+        self.tracker.end_group(index, &mut self.storage);
     }
 
     #[inline(never)]
     pub(crate) fn start_indent_with_line(&mut self, mode: LineMode) {
-        self.push(FormatElement::Tag(Tag::StartIndentWithLine(mode)));
+        self.write_element_with_line(|| FormatElement::Tag(Tag::StartIndentWithLine(mode)), mode);
     }
 
     /// `mode` is the line break after the indented content, if there is one.
     #[inline(never)]
     pub(crate) fn end_indent_with_line(&mut self, mode: Option<LineMode>) {
-        self.push(FormatElement::Tag(match mode {
-            Some(mode) => Tag::EndIndentWithLine(mode),
-            None => Tag::EndIndent,
-        }));
+        match mode {
+            Some(mode) => self
+                .write_element_with_line(|| FormatElement::Tag(Tag::EndIndentWithLine(mode)), mode),
+            None => self.write_tag_without_content(Tag::EndIndent),
+        }
     }
 
     #[inline(always)]
@@ -762,7 +834,7 @@ impl<'a> Formatter<'a> {
     /// `bits` is [`Token::to_bits`].
     #[inline(never)]
     fn write_token_of_bits_if_breaks(&mut self, bits: u128) {
-        self.push(FormatElement::TokenIfBreaks(Token::from_bits(bits)));
+        self.write_without_notes(|| FormatElement::TokenIfBreaks(Token::from_bits(bits)));
     }
 
     #[inline(never)]
@@ -800,7 +872,15 @@ impl<'a> Formatter<'a> {
                 | Tag::StartLabelled(_)
                 | Tag::EndLabelled
         ));
-        self.storage.pool.push(FormatElement::Tag(tag));
+        self.write_without_notes(|| FormatElement::Tag(tag));
+    }
+
+    /// Writes the element that `make` returns, about which the tracker has nothing to note.
+    #[inline(always)]
+    fn write_without_notes(&mut self, make: impl Fn() -> FormatElement) {
+        if self.storage.pool.push_within_capacity(make()).is_err() {
+            self.write_element(make());
+        }
     }
 
     /// Returns the width of `text`, which may contain anything.
@@ -828,11 +908,17 @@ impl<'a> Formatter<'a> {
         if !self.is_plain_source(span) {
             return self.write_odd_source_token(span);
         }
-        self.push(FormatElement::SourceText(Text {
-            start: span.start,
-            len: span.len(),
-            width: TextWidth::single(span.len()),
-        }));
+        self.write_text_element(
+            || plain_source_text(span),
+            TextWidth::single(span.len()).value(),
+            |f| f.write_first_plain_source_token(span),
+        );
+    }
+
+    #[inline(never)]
+    fn write_first_plain_source_token(&mut self, span: Span) {
+        let width = TextWidth::single(span.len()).value();
+        self.write_first_text_element(plain_source_text(span), width);
     }
 
     #[inline(never)]

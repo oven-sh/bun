@@ -154,7 +154,7 @@ impl Token {
     #[inline(always)]
     pub(crate) const fn to_bits(self) -> u128 {
         let mut bytes = [0; 16];
-        bytes[0] = self.len;
+        bytes[15] = self.len;
         let mut index = 0;
         while index < Token::MAX {
             bytes[index + 1] = self.bytes[index];
@@ -172,7 +172,10 @@ impl Token {
             bytes[index] = all[index + 1];
             index += 1;
         }
-        Token { len: all[0], bytes }
+        Token {
+            len: all[15],
+            bytes,
+        }
     }
 
     /// Same, at compile time.

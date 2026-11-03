@@ -473,8 +473,7 @@ impl<'a, Content: Format<'a> + ?Sized> Format<'a> for Group<'_, Content> {
             (false, true) => GroupMode::StaysExpanded,
             (false, false) => GroupMode::Flat,
         };
-        let group = element::Group::new().with_id(self.group_id).with_mode(mode);
-        f.start_group(group);
+        f.start_group(self.group_id, mode);
         self.content.fmt(f);
         f.end_group();
     }

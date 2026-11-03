@@ -11,6 +11,8 @@
 #![forbid(unsafe_code)]
 // For code that only `--debug-check` runs: `#[optimize(size)]` roughly halves its size, and its speed doesn't matter.
 #![feature(optimize_attribute)]
+// For the functions that write the elements of a document: without a call to grow the vector they save no registers.
+#![feature(vec_push_within_capacity)]
 
 pub mod css;
 pub mod cursor;

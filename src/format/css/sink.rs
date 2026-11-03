@@ -222,7 +222,10 @@ impl<'o> Sink<'o> {
         let printer = self.printer.as_ref().filter(|_| {
             self.writes_directly() && !self.needs_document && self.line_breaks == line_breaks
         })?;
-        Some((printer.out.get(len..)?, self.has_group_in_line))
+        // A text can have a line break in it too, which isn't in the output as it was in the text.
+        let output = printer.out.get(len..)?;
+        (!bun_core::strings::contains_any(output, b"\n\r"))
+            .then_some((output, self.has_group_in_line))
     }
 
     /// Writes output that `written_since` returned earlier.

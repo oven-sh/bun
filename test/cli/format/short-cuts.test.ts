@@ -663,6 +663,10 @@ describe.skipIf(!hasFlag)("style sheets", () => {
     "guards.less":
       "when (@b){}\nwhen~(){}\n.a when (@b) and (@c) {}\n.some-long-name when (@some-long-variable = some-long-value) {}\n",
     "slash-at-the-end.css": "a: b;\n/",
+    // The second one is written from the memo.
+    "line-break-in-a-value.html": "<style>a{--b: \n;--b: \n;}</style>\n",
+    "line-break-in-a-value.vue": "<style>--A: b c\n// d;</style>\n<style>--A: b c\n// d;</style>\n",
+    "line-break-in-a-value.css": "a{--b: \n;--b: \n;--c: d\ne;--c: d\ne;}\n",
     // What `trim` of JavaScript takes for white space, where a comment ends.
     ...Object.fromEntries(
       [0x0b, 0x0c, 0x0d, 0x09, 0xa0, 0xfeff, 0x2028, 0x2029, 0x3000].flatMap(code => {

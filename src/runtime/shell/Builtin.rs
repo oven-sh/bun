@@ -305,6 +305,29 @@ impl BuiltinIO {
         }
     }
 
+    /// One place takes the bytes of both, in the order of the writes (`2>&1`, `&> file`).
+    fn same_sink(&self, other: &BuiltinIO) -> bool {
+        match (self, other) {
+            (BuiltinIO::Fd(a), BuiltinIO::Fd(b)) => {
+                Rc::ptr_eq(&a.writer, &b.writer) && a.captured == b.captured
+            }
+            (BuiltinIO::Buf(a), BuiltinIO::Buf(b)) => a == b,
+            _ => false,
+        }
+    }
+
+    /// Two writers on one file (a terminal, one pipe as fd 1 and fd 2), where the order of their writes shows.
+    fn same_file(&self, other: &BuiltinIO) -> bool {
+        let (BuiltinIO::Fd(a), BuiltinIO::Fd(b)) = (self, other) else {
+            return false;
+        };
+        match (bun_sys::fstat(a.writer.fd()), bun_sys::fstat(b.writer.fd())) {
+            (Ok(a), Ok(b)) => a.st_dev == b.st_dev && a.st_ino == b.st_ino,
+            // Not known, as for a Windows pipe or console: keep the order.
+            _ => true,
+        }
+    }
+
     /// Body of [`Builtin::write_no_io`] with the Cmd split-borrow already
     /// performed by the caller. Exists so builtins whose payload lives in
     /// `Builtin.impl_` (disjoint from `stdout`/`stderr`) can write a borrowed
@@ -404,6 +427,107 @@ impl BuiltinInput {
     #[inline]
     pub(crate) fn needs_io(&self) -> bool {
         matches!(self, BuiltinInput::Fd(_))
+    }
+}
+
+/// Output that a builtin collects whole, in the order it was produced, before [`Builtin::write_output_runs`] writes it.
+#[derive(Default)]
+pub(crate) struct OutputRuns {
+    bytes: Vec<u8>,
+    /// Stream and length of each consecutive run of `bytes`. Neighbours differ in stream.
+    runs: Vec<(IoKind, usize)>,
+    /// The first run not yet given to its sink, and where it starts in `bytes`.
+    next_run: usize,
+    offset: usize,
+    /// Chunks on an `IOWriter` whose completion has not come.
+    in_flight: usize,
+    /// The streams are two writers on one file: a run waits until the run before it is written.
+    sequenced: bool,
+}
+
+impl OutputRuns {
+    /// What `write` appends goes to `stream`.
+    pub(crate) fn push_with<R>(
+        &mut self,
+        stream: IoKind,
+        write: impl FnOnce(&mut Vec<u8>) -> R,
+    ) -> R {
+        let from = self.bytes.len();
+        let result = write(&mut self.bytes);
+        self.end_run(stream, from);
+        result
+    }
+
+    fn end_run(&mut self, stream: IoKind, from: usize) {
+        let len = self.bytes.len() - from;
+        if len == 0 {
+            return;
+        }
+        match self.runs.last_mut() {
+            Some((last, run_len)) if *last == stream => *run_len += len,
+            _ => self.runs.push((stream, len)),
+        }
+    }
+
+    /// `count` chunks that [`Builtin::write_output_runs`] queued are written, or have failed.
+    pub(crate) fn chunks_done(&mut self, count: usize) {
+        self.in_flight -= count;
+    }
+
+    /// `len` bytes of the run at `next_run` are with their sink.
+    fn advance(&mut self, len: usize) {
+        self.offset += len;
+        let left = &mut self.runs[self.next_run].1;
+        *left -= len;
+        if *left == 0 {
+            self.next_run += 1;
+        }
+    }
+
+    /// At most a page of `run`, up to a line end: a blocking pipe that is writable takes that much at once.
+    fn chunk_len(run: &[u8]) -> usize {
+        const PAGE: usize = 4096;
+        if run.len() <= PAGE {
+            return run.len();
+        }
+        let line_end = bun_core::strings::last_index_of_char(&run[..PAGE], b'\n')
+            .or_else(|| bun_core::strings::index_of_char_usize(run, b'\n'));
+        line_end.map_or(run.len(), |end| end + 1)
+    }
+
+    /// Fits runs of both streams to their sinks, before the first write.
+    fn plan(&mut self, stdout: &BuiltinIO, stderr: &BuiltinIO) {
+        if self.runs.len() < 2 {
+            return;
+        }
+        if stdout.same_sink(stderr) {
+            self.runs.clear();
+            self.runs.push((IoKind::Stdout, self.bytes.len()));
+        } else if stdout.same_file(stderr) {
+            self.sequenced = true;
+        } else {
+            self.split();
+        }
+    }
+
+    /// Order across the streams does not show: each stream becomes one run.
+    fn split(&mut self) {
+        let mut stdout = Vec::with_capacity(self.bytes.len());
+        let mut stderr = Vec::new();
+        let mut rest = &self.bytes[..];
+        for &(stream, len) in &self.runs {
+            let (run, after) = rest.split_at(len);
+            rest = after;
+            match stream {
+                IoKind::Stdout => stdout.extend_from_slice(run),
+                IoKind::Stderr => stderr.extend_from_slice(run),
+            }
+        }
+        self.runs.clear();
+        self.runs.push((IoKind::Stdout, stdout.len()));
+        self.runs.push((IoKind::Stderr, stderr.len()));
+        stdout.append(&mut stderr);
+        self.bytes = stdout;
     }
 }
 
@@ -961,30 +1085,28 @@ impl Builtin {
         kind: Kind,
         err: &bun_sys::Error,
     ) -> &'a [u8] {
+        let mut buf = Vec::new();
+        Self::write_task_error(&mut buf, kind, err);
+        let me = Self::of_mut(interp, cmd);
+        me.err_buf = buf;
+        &me.err_buf
+    }
+
+    /// [`Self::task_error_to_string`] for a pool thread: appends the line to `out`.
+    pub(crate) fn write_task_error(out: &mut Vec<u8>, kind: Kind, err: &bun_sys::Error) {
+        use std::io::Write as _;
+        let _ = write!(out, "{}: ", kind.as_str());
         if let Some((_code, sys_errno)) = err.get_error_code_tag_name() {
             if let Some(message) = bun_sys::coreutils_error_map::get(sys_errno) {
-                if !err.path.is_empty() {
-                    return Self::fmt_error_arena(
-                        interp,
-                        cmd,
-                        Some(kind),
-                        format_args!("{}: {}\n", bstr::BStr::new(&err.path[..]), message),
-                    );
-                }
-                return Self::fmt_error_arena(
-                    interp,
-                    cmd,
-                    Some(kind),
-                    format_args!("{}\n", message),
-                );
+                let _ = if err.path.is_empty() {
+                    writeln!(out, "{}", message)
+                } else {
+                    writeln!(out, "{}: {}", bstr::BStr::new(&err.path[..]), message)
+                };
+                return;
             }
         }
-        Self::fmt_error_arena(
-            interp,
-            cmd,
-            Some(kind),
-            format_args!("unknown error {}\n", err.errno),
-        )
+        let _ = writeln!(out, "unknown error {}", err.errno);
     }
 
     /// Shared failure path for builtins whose option parser returns
@@ -1043,6 +1165,43 @@ impl Builtin {
         }
         let _ = Self::write_no_io(interp, cmd, IoKind::Stderr, buf);
         Self::done(interp, cmd, exit_code)
+    }
+
+    /// Gives each run that does not have to wait to its sink. True: all of `output` is written.
+    pub(crate) fn write_output_runs(
+        interp: &Interpreter,
+        cmd: NodeId,
+        output: &mut OutputRuns,
+    ) -> bool {
+        if output.offset == 0 {
+            let me = Self::of(interp, cmd);
+            output.plan(&me.stdout, &me.stderr);
+        }
+        while let Some(&(stream, left)) = output.runs.get(output.next_run) {
+            if output.sequenced && output.in_flight > 0 {
+                return false;
+            }
+            let run = &output.bytes[output.offset..][..left];
+            let me = Self::of_mut(interp, cmd);
+            let io = match stream {
+                IoKind::Stdout => &mut me.stdout,
+                IoKind::Stderr => &mut me.stderr,
+            };
+            let Some(safeguard) = io.needs_io() else {
+                let _ = Self::write_no_io(interp, cmd, stream, run);
+                output.advance(left);
+                continue;
+            };
+            let chunk = &run[..OutputRuns::chunk_len(run)];
+            let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Builtin);
+            // Any other yield is this chunk's completion: it is written, or has failed, already.
+            if matches!(io.enqueue(child, chunk, safeguard), Yield::Suspended) {
+                output.in_flight += 1;
+            }
+            let len = chunk.len();
+            output.advance(len);
+        }
+        output.in_flight == 0
     }
 }
 

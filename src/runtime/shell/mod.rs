@@ -97,6 +97,8 @@ pub(crate) mod builtins {
     pub(crate) mod mkdir;
     #[path = "mv.rs"]
     pub(crate) mod mv;
+    #[path = "operands.rs"]
+    pub(crate) mod operands;
     #[path = "pwd.rs"]
     pub(crate) mod pwd;
     #[path = "rm.rs"]

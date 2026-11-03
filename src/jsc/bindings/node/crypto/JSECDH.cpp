@@ -64,7 +64,7 @@ EncodedJSValue JSECDH::getPublicKey(JSGlobalObject* globalObject, ThrowScope& sc
     const auto group = m_key.getGroup();
     const auto pubKey = m_key.getPublicKey();
     if (!pubKey) {
-        throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_INVALID_STATE, "Failed to get ECDH public key"_s);
+        throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to get ECDH public key"_s);
         return {};
     }
 

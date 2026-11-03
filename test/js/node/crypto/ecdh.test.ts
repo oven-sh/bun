@@ -274,6 +274,35 @@ test("ECDH - computeSecret throws when only a public key is set (no private key)
   expect(carolSecret.toString("hex")).toBe(aliceSecret.toString("hex"));
 });
 
+// @types/node does not declare setPublicKey(), which Node deprecates (DEP0031).
+type ECDHWithSetPublicKey = ECDH & { setPublicKey(key: Buffer | string, encoding?: BufferEncoding): ECDH };
+
+// Node's code: https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_ec.cc#L216-L218 and #L237-L239
+test("ECDH - the key getters throw ERR_CRYPTO_OPERATION_FAILED before a key exists", () => {
+  const noPublicKey = expect.objectContaining({
+    name: "Error",
+    code: "ERR_CRYPTO_OPERATION_FAILED",
+    message: "Failed to get ECDH public key",
+  });
+  const noPrivateKey = expect.objectContaining({
+    name: "Error",
+    code: "ERR_CRYPTO_OPERATION_FAILED",
+    message: "Failed to get ECDH private key",
+  });
+
+  const ecdh = createECDH("prime256v1") as ECDHWithSetPublicKey;
+  expect(() => ecdh.getPublicKey()).toThrow(noPublicKey);
+  expect(() => ecdh.getPublicKey("hex", "compressed")).toThrow(noPublicKey);
+  expect(() => ecdh.getPrivateKey()).toThrow(noPrivateKey);
+  expect(() => ecdh.getPrivateKey("hex")).toThrow(noPrivateKey);
+
+  // A public key alone does not give the object a private key.
+  const publicKey = createECDH("prime256v1").generateKeys();
+  ecdh.setPublicKey(publicKey);
+  expect(ecdh.getPublicKey()).toEqual(publicKey);
+  expect(() => ecdh.getPrivateKey()).toThrow(noPrivateKey);
+});
+
 // The secp256k1 point of the private key "cafebabe" x 8, from Node's test-crypto-dh-curves.js.
 // It has the length and the prefix byte of a prime256v1 point, so only the curve equation rejects it.
 const secp256k1Point =
@@ -282,18 +311,24 @@ const secp256k1Point =
 
 // Node's text: https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_ec.cc#L322-L325
 test.each([
-  ["bytes that are not a point", (ecdh: ECDH) => ecdh.setPublicKey(Buffer.from("abcd"))],
-  ["a hex string that is not a point", (ecdh: ECDH) => ecdh.setPublicKey("abcd", "hex")],
-  ["an empty buffer", (ecdh: ECDH) => ecdh.setPublicKey(Buffer.alloc(0))],
-  ["a truncated point", (ecdh: ECDH) => ecdh.setPublicKey(createECDH("prime256v1").generateKeys().subarray(0, 10))],
-  ["a secp384r1 point, which is too long", (ecdh: ECDH) => ecdh.setPublicKey(createECDH("secp384r1").generateKeys())],
-  ["a secp256k1 point of the same length", (ecdh: ECDH) => ecdh.setPublicKey(secp256k1Point, "hex")],
+  ["bytes that are not a point", (ecdh: ECDHWithSetPublicKey) => ecdh.setPublicKey(Buffer.from("abcd"))],
+  ["a hex string that is not a point", (ecdh: ECDHWithSetPublicKey) => ecdh.setPublicKey("abcd", "hex")],
+  ["an empty buffer", (ecdh: ECDHWithSetPublicKey) => ecdh.setPublicKey(Buffer.alloc(0))],
+  [
+    "a truncated point",
+    (ecdh: ECDHWithSetPublicKey) => ecdh.setPublicKey(createECDH("prime256v1").generateKeys().subarray(0, 10)),
+  ],
+  [
+    "a secp384r1 point, which is too long",
+    (ecdh: ECDHWithSetPublicKey) => ecdh.setPublicKey(createECDH("secp384r1").generateKeys()),
+  ],
+  ["a secp256k1 point of the same length", (ecdh: ECDHWithSetPublicKey) => ecdh.setPublicKey(secp256k1Point, "hex")],
   [
     "coordinates that are not on the curve",
-    (ecdh: ECDH) => ecdh.setPublicKey(Buffer.concat([Buffer.from([4]), Buffer.alloc(64)])),
+    (ecdh: ECDHWithSetPublicKey) => ecdh.setPublicKey(Buffer.concat([Buffer.from([4]), Buffer.alloc(64)])),
   ],
 ])("ECDH - setPublicKey rejects %s with Node's error", (_name, setPublicKey) => {
-  const ecdh = createECDH("prime256v1");
+  const ecdh = createECDH("prime256v1") as ECDHWithSetPublicKey;
   const publicKey = ecdh.generateKeys();
 
   expect(() => setPublicKey(ecdh)).toThrow(

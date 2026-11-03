@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { beforeAll, test } from "./supported";
 
 // A test file writes `new URL("./src/worker/w1.ts", import.meta.url)` and hands it to a function of the project, which says `new Worker(entry)`.
 // Where the run is built in layers, the project's build doesn't see the test file and the test file's build doesn't read the project. The project's build
@@ -84,10 +84,22 @@ self.onmessage = (event: any) => { self.postMessage("w${n} " + double(event.data
 });
 
 const asWritten = Object.keys(ways).map((name, index) => `SEEN ${name} | w${index + 1} 42`);
+// What a Worker says that starts from the text on disk, once WRITES_OVER_WORKERS has had the test file write over that text.
+const fromDisk = Object.keys(ways).map(name => `SEEN ${name} | from disk 42`);
 
 async function see(flags: string[], env: Record<string, string>) {
   using dir = tempDir("aot-worker-named-by-a-test-file", files);
-  const ran = await run([bunExe(), "test", ...flags, "--isolate"], String(dir), { ...bunEnv, ...env });
+  // The one test of the project starts eleven Workers. A debug build takes from one second to more than five for that, and bun:test
+  // gives a test five.
+  const command = [bunExe(), "test", "--timeout=60000", ...flags, "--isolate"];
+  const ran = await run(command, String(dir), { ...bunEnv, ...env });
+  // A crash prints only there. The log of the phases is thousands of lines that say nothing of one.
+  if (ran.exitCode !== 0) {
+    const withoutLog = ran.stderr.replace(/^(?:AOT |  \w+: wall \d).*\n/gm, "").replace(/\n{3,}/g, "\n\n");
+    console.error(
+      `bun ${command.slice(1).join(" ")} ${JSON.stringify(env)} exited with ${ran.exitCode}:\n${withoutLog}`,
+    );
+  }
   return {
     seen: ran.stdout.split("\n").filter(line => line.startsWith("SEEN ")),
     taken: [
@@ -95,17 +107,58 @@ async function see(flags: string[], env: Record<string, string>) {
         /^AOT (?:files are loaded again|load goes on) \| with (\d+) more files that Workers start from$/gm,
       ),
     ].map(match => Number(match[1])),
+    // How a run with `--aot` says it is built: the first fields of that line. The others say what else such a run holds.
+    built: ran.stderr.match(
+      /^AOT test run \| ((?:one program|programs without layers|layers \d+)\b[^|]*\| test files \d+(?: \| to a program \d+)?)/m,
+    )?.[1],
+    // Sorted: in which order the test files run is not asked here.
+    results: [...ran.stderr.matchAll(/^(\((?:pass|fail|skip|todo)\) .*?)(?: \[.*\])?$/gm)]
+      .map(match => match[1])
+      .sort(),
+    summary: [
+      ...ran.stderr.matchAll(
+        /^ *(\d+ (?:pass|fail|skip|todo|expect\(\) calls)|Ran \d+ tests? across \d+ files?\.)(?: \[.*\])?$/gm,
+      ),
+    ].map(match => match[1]),
     exitCode: ran.exitCode,
   };
 }
 
+// What every run reports of the two test files of the project.
+const report = {
+  results: ["(pass) another file", "(pass) the Workers answer"],
+  summary: ["2 pass", "0 fail", "2 expect() calls", "Ran 2 tests across 2 files."],
+  exitCode: 0,
+};
+
+let plain: Awaited<ReturnType<typeof see>>;
+let plainWrittenOver: Awaited<ReturnType<typeof see>>;
+beforeAll(async () => {
+  [plain, plainWrittenOver] = await Promise.all([see([], {}), see([], { WRITES_OVER_WORKERS: "1" })]);
+});
+
+test("each Worker answers under plain bun test, and from disk once its file is written over", () => {
+  expect(plain).toEqual({ seen: asWritten, taken: [], built: undefined, ...report });
+  // Plain Bun reads a file when a Worker starts from it. So in a run that writes over the files, what a Worker says tells one that
+  // runs compiled from one that runs from its text.
+  expect(plainWrittenOver).toEqual({ ...plain, seen: fromDisk });
+});
+
 // Over three layers src/spawn.ts lies in a program below the files that import it, so what its build says goes through the build between.
-for (const words of ["TestRunLayers:0", "TestRunLayers:2,TestRunPartFiles:1", "TestRunLayers:3,TestRunPartFiles:1"]) {
-  test(`each Worker answers as under plain bun test, and runs compiled (${words})`, async () => {
-    const plain = await see([], {});
-    expect(plain).toEqual({ seen: asWritten, taken: [], exitCode: 0 });
-    expect(await see(["--aot"], { BUN_DEBUG_TEST_AOT_WORDS: words })).toEqual(plain);
+// To the right of each: how such a run says it is built.
+const forms = {
+  "TestRunLayers:0": "one program | test files 2",
+  "TestRunLayers:2,TestRunPartFiles:1": "layers 2 | test files 2 | to a program 1",
+  "TestRunLayers:3,TestRunPartFiles:1": "layers 3 | test files 2 | to a program 1",
+};
+// A form is built once, for the run that writes over the files: a build is what costs. There each Worker still says what plain bun test
+// prints for the files as they were written, which only compiled code does.
+for (const [words, form] of Object.entries(forms)) {
+  test.concurrent(`each Worker answers as under plain bun test, and runs compiled (${words})`, async () => {
     const env = { BUN_DEBUG_TEST_AOT_WORDS: words, WRITES_OVER_WORKERS: "1", BUN_JSC_logAOTPhaseTimes: "1" };
-    expect(await see(["--aot"], env)).toEqual({ ...plain, taken: [count] });
-  }, 240_000);
+    const compiled = await see(["--aot"], env);
+    // Where this Bun loads one program a realm (macOS, Windows, a hardened build) no word brings layers, and the run says so.
+    const built = compiled.built?.includes("this Bun loads one program a realm") ? compiled.built : form;
+    expect(compiled).toEqual({ ...plain, taken: [count], built });
+  });
 }

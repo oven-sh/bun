@@ -122,7 +122,7 @@ impl<'a> Iterator for RelevantComments<'a> {
 }
 
 /// Upstream's `isPartitionComment`. An `eslint-disable*` / `eslint-enable` comment never partitions.
-fn is_partition_comment<'c>(
+pub(crate) fn is_partition_comment<'c>(
     comment: Token<'_>,
     by_comment: &'c PartitionByComment,
 ) -> Result<bool, &'c str> {

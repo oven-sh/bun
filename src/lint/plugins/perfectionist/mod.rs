@@ -23,6 +23,7 @@ pub(crate) mod configuration_if;
 pub(crate) mod disabled;
 pub(crate) mod fixes;
 pub(crate) mod groups;
+pub(crate) mod newlines;
 pub(crate) mod options;
 pub(crate) mod partition;
 pub(crate) mod sort;

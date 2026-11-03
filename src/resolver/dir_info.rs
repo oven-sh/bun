@@ -334,7 +334,7 @@ impl DirInfo {
     /// [`RealFS::entries_at_locked`](fs::RealFS::entries_at_locked). The
     /// `DirEntry` is a slot in the BSSMap-backed `EntriesOptionMap` singleton
     /// (ARENA — process lifetime), so a `&'static` reborrow of the
-    /// `&'static mut` returned by `entries_at_locked` is sound and needs no
+    /// `&'static` returned by `entries_at_locked` is sound and needs no
     /// `unsafe` here. The `.data` map must only be probed/iterated while the
     /// lock is held; use [`get_entry_as`](Self::get_entry_as) for one-shot lookups.
     pub fn get_entries_ref_locked(&self, generation: Generation) -> Option<&'static fs::DirEntry> {
@@ -366,11 +366,7 @@ impl DirInfo {
     /// pointer into the process-lifetime `EntryStore`, which stays valid after
     /// the lock is dropped.
     #[inline]
-    pub(crate) fn get_entry_as<A: Asker>(
-        &self,
-        asker: A,
-        query: &[u8],
-    ) -> Option<fs::EntryLookup<'static>> {
+    pub(crate) fn get_entry_as<A: Asker>(&self, asker: A, query: &[u8]) -> Option<fs::EntryLookup> {
         let rfs = &mut fs::FileSystem::instance().fs;
         // `MutexGuard` stores the mutex by raw pointer, so holding it does not
         // keep `rfs` borrowed.

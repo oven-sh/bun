@@ -334,7 +334,7 @@ impl SocketAddress {
                 if let Some(address_str) = options.address {
                     presentation = address_str;
                     let slice = presentation.to_owned_slice_z();
-                    // Box<ZStr> drops at scope exit
+                    // ZBox drops at scope exit
                     pton(
                         global,
                         inet::AF_INET,

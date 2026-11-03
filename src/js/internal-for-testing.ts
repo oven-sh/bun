@@ -100,11 +100,6 @@ export const napiThreadsafeFunctionLiveCount = $bindgen("napi_body.bind.ts", "th
 
 export const bundlerWorkerLiveCount = $bindgen("JSBundler.bind.ts", "workerLiveCount");
 
-/** For a test with two threads. 0: the next lookup of this thread that misses waits before it runs again. 1: waits for that thread, and answers false when it was let go without a miss. 2: lets it go on. */
-export const resolverMissHold = $bindgen("BunObjectInternals.bind.ts", "resolverMissHold") as (
-  step: 0 | 1 | 2,
-) => boolean;
-
 export const semverIntersects = $bindgen("SemverObjectInternals.bind.ts", "intersects") as (
   left: string,
   right: string,

@@ -241,7 +241,7 @@ struct Listing {
 fn read_directory(
     dir: &[u8],
     generation: Generation,
-) -> &'static mut Fs::file_system::real_fs::EntriesOption {
+) -> &'static Fs::file_system::real_fs::EntriesOption {
     let real_fs = &mut Fs::FileSystem::instance().fs;
     let read = real_fs.read_directory(dir, None, generation, false);
     read.expect("only the directory fails")
@@ -466,12 +466,16 @@ fn a_listing_read_before_the_wall_clock_was_set_back_is_read_again() {
         let dir = made.path("src");
         let kept = listing_once_kept(&dir);
         // As after a wall clock set back by one second: its lead over the monotonic clock was larger at the read.
-        let Fs::file_system::real_fs::EntriesOption::Entries(entries) =
-            read_directory(&dir, kept.stamp)
-        else {
-            panic!("a listing");
-        };
-        entries.read_clock_lead_ns += 1_000_000_000;
+        {
+            let real_fs = &mut Fs::FileSystem::instance().fs;
+            let _entries_unlock = real_fs.entries_mutex.lock_guard();
+            let Some(Fs::file_system::real_fs::EntriesOption::Entries(entries)) =
+                real_fs.entries.get(&dir)
+            else {
+                panic!("a listing");
+            };
+            entries.read_clock_lead_ns += 1_000_000_000;
+        }
         let read_again = listing(&dir, next_generation()).expect("a directory");
         assert_eq!(read_again.version, kept.version + 1);
         // The read took the clocks as they are now.
@@ -1174,7 +1178,7 @@ fn a_module_that_a_rerun_finds_in_a_new_directory_gets_the_package_json_above_it
             .resolver
             .resolve(&dir, b"./late/a.js", stmt)
             .expect("found");
-        let package = Result::deref_package_json(found.package_json);
+        let package = found.package_json;
         assert_eq!(found.module_type, options::ModuleType::Esm);
         assert_eq!(
             package.map(|json| bstr::BStr::new(&json.name)),
@@ -1210,7 +1214,7 @@ fn a_module_below_a_directory_that_failed_for_an_earlier_build_gets_the_package_
                 .resolver
                 .resolve(&dir, b"./a/sub/x.js", stmt)
                 .expect("found");
-            let package = Result::deref_package_json(found.package_json);
+            let package = found.package_json;
             assert_eq!(found.module_type, options::ModuleType::Esm);
             assert_eq!(
                 package.map(|json| bstr::BStr::new(&json.name)),
@@ -1389,6 +1393,86 @@ fn the_second_pass_of_a_sequence_finds_what_was_made_after_the_miss() {
             (late.clone(), 1)
         );
         assert_eq!(from_either(&mut trusting, dirs, b"./late.js"), (late, 1));
+    });
+}
+
+/// As two threads do with one lookup each: `first` misses on what the caches hold, `second` then misses, runs again and finds the module, and `first` runs again last. Its second run is at `generation`, or at one drawn after `second` is done.
+fn found_by_each_in_turn(
+    [first, second]: [&mut Resolver<'static>; 2],
+    (dir, specifier): (&[u8], &[u8]),
+    generation: Option<Generation>,
+) -> [bool; 3] {
+    let kind = ast::ImportKind::Require;
+    let missed = first.resolve_as(dir, specifier, kind, AfterMiss::TrustCache);
+    let by_second = second.resolve(dir, specifier, kind).is_ok();
+    let slots = DirInfo::slots_used();
+    let again = AfterMiss::CheckedPass(generation.unwrap_or_else(next_generation));
+    let by_first = first.resolve_as(dir, specifier, kind, again).is_ok();
+    [
+        missed.is_err(),
+        by_second && by_first,
+        DirInfo::slots_used() == slots,
+    ]
+}
+
+#[test]
+fn a_lookup_that_runs_again_after_another_one_did_finds_the_module_and_fills_no_slot() {
+    with_project("in-turn", |made| {
+        let mut other = resolver();
+        let kind = ast::ImportKind::Require;
+        let top = made.path("");
+        let dir = |below: &str| [&top[..], b"/", below.as_bytes(), b"/"].concat();
+        let all = [true; 3];
+
+        // An alias that the tsconfig.json next to the importer gets.
+        made.write("ts/real.cjs", "");
+        let paths =
+            |names: &str| format!(r#"{{ "compilerOptions": {{ "paths": {{ {names} }} }} }}"#);
+        made.write("ts/tsconfig.json", &paths(r#""other": ["./real.cjs"]"#));
+        let ask = (&dir("ts")[..], &b"late-alias"[..]);
+        assert!(made.resolver.resolve(ask.0, ask.1, kind).is_err());
+        let both = r#""other": ["./real.cjs"], "late-alias": ["./real.cjs"]"#;
+        made.write("ts/tsconfig.json", &paths(both));
+        let in_turn = found_by_each_in_turn([&mut other, &mut made.resolver], ask, None);
+        assert_eq!(in_turn, all);
+
+        // The "imports" that the package.json next to the importer gets. The first lookup drew its generation before the other one ran.
+        made.write("imports/real.cjs", "");
+        made.write("imports/package.json", r#"{ "name": "p" }"#);
+        let ask = (&dir("imports")[..], &b"#late"[..]);
+        assert!(made.resolver.resolve(ask.0, ask.1, kind).is_err());
+        let with_imports = r##"{ "name": "p", "imports": { "#late": "./real.cjs" } }"##;
+        made.write("imports/package.json", with_imports);
+        let older = Some(next_generation());
+        let in_turn = found_by_each_in_turn([&mut other, &mut made.resolver], ask, older);
+        assert_eq!(in_turn, all);
+
+        // The package.json of a package, read while it was half written.
+        made.write("half/node_modules/pkg/real.cjs", "");
+        let manifest = "half/node_modules/pkg/package.json";
+        made.write(manifest, r#"{ "name": "pkg", "exports": "#);
+        let ask = (&dir("half")[..], &b"pkg"[..]);
+        assert!(made.resolver.resolve(ask.0, ask.1, kind).is_err());
+        made.write(manifest, r#"{ "name": "pkg", "exports": "./real.cjs" }"#);
+        let in_turn = found_by_each_in_turn([&mut other, &mut made.resolver], ask, None);
+        assert_eq!(in_turn, all);
+
+        // "imports" above the importer, which a lookup from there has read again: the slot of the importer's directory still names the old slot above it.
+        made.mkdir("above/src");
+        made.write("above/real.cjs", "");
+        let imports = |names: &str| format!(r#"{{ "name": "p", "imports": {{ {names} }} }}"#);
+        made.write(
+            "above/package.json",
+            &imports(r##""#other": "./real.cjs""##),
+        );
+        let ask = (&dir("above/src")[..], &b"#late"[..]);
+        assert!(made.resolver.resolve(ask.0, ask.1, kind).is_err());
+        let both = r##""#other": "./real.cjs", "#late": "./real.cjs""##;
+        made.write("above/package.json", &imports(both));
+        assert!(made.resolver.resolve(&dir("above"), ask.1, kind).is_ok());
+        let older = Some(next_generation());
+        let in_turn = found_by_each_in_turn([&mut other, &mut made.resolver], ask, older);
+        assert_eq!(in_turn, all);
     });
 }
 

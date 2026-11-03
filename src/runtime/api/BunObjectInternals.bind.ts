@@ -8,6 +8,3 @@ export const registerMacro = b.fn({
   capability: "heap",
   throws: true,
 });
-
-/** `bun:internal-for-testing`. */
-export const resolverMissHold = b.fn({ args: { step: b.i32 }, returns: b.bool });

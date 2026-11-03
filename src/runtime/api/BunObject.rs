@@ -873,17 +873,6 @@ pub(crate) fn resolve_sync(
     do_resolve_with_args::<false>(global_this, &module_id, &parent, mode)
 }
 
-/// `bun:internal-for-testing`: 0 arms the hold of `bun_resolver::resolver::test_hooks`, 1 waits for it, 2 releases it.
-pub(crate) fn resolver_miss_hold(step: i32) -> bool {
-    use bun_resolver::resolver::test_hooks;
-    match step {
-        0 => test_hooks::arm(),
-        1 => return test_hooks::wait_until_held(),
-        _ => test_hooks::release(),
-    }
-    true
-}
-
 pub(crate) fn resolve(
     cx: &mut JsScope<'_>,
     module_id: Option<BunString>,

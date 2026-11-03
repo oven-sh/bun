@@ -104,58 +104,6 @@ const files = {
       }
     }
   `,
-  // The two threads of the race group share these. Each lookup starts from a new require().
-  "race-shared.cjs": `
-    const path = require("node:path");
-    const { createRequire } = require("node:module");
-    exports.specifier = { tsconfig: "late-alias", imports: "#late", unparsed: "pkg", parentlink: "#late" };
-    exports.importer = kind => path.resolve("race", kind, kind === "parentlink" ? "src" : "");
-    exports.resolves = (dir, specifier) => {
-      try {
-        createRequire(path.join(dir, "x.cjs")).resolve(specifier);
-        return 1;
-      } catch {
-        return 0;
-      }
-    };
-    // Cells that both threads read: the turn to run, the turn the worker is set for, the worker's answer.
-    exports.GO = 0;
-    exports.SET = 1;
-    exports.ANSWER = 2;
-    // The steps of resolverMissHold(). ARM: the next lookup of this thread that misses waits before it
-    // runs again. WAIT: until that thread waits there, or false when it was released and had not
-    // missed. RELEASE: the thread that waits goes on.
-    exports.ARM = 0;
-    exports.WAIT = 1;
-    exports.RELEASE = 2;
-    exports.store = (cell, index, value) => {
-      Atomics.store(cell, index, value);
-      Atomics.notify(cell, index);
-    };
-    // Blocks while the cell holds the value, until the other thread stores the next one.
-    exports.waitWhile = (cell, index, value) => {
-      while (Atomics.load(cell, index) === value) {
-        if (Atomics.wait(cell, index, value, 60_000) === "timed-out") throw new Error("the other thread did not answer");
-      }
-    };
-  `,
-  "race-worker.cjs": `
-    const { workerData } = require("node:worker_threads");
-    const { resolverMissHold } = require("bun:internal-for-testing");
-    const { specifier, importer, resolves, GO, SET, ANSWER, ARM, RELEASE, store, waitWhile } =
-      require("./race-shared.cjs");
-    const { cell, kinds } = workerData;
-    let turn = 0;
-    for (const kind of kinds) {
-      waitWhile(cell, GO, turn++);
-      // This lookup misses on what the caches hold, and waits for the other thread before it runs again.
-      resolverMissHold(ARM);
-      store(cell, SET, turn);
-      const found = resolves(importer(kind), specifier[kind]);
-      resolverMissHold(RELEASE);
-      store(cell, ANSWER, found + 1);
-    }
-  `,
   "main.mjs": `
     import fs from "node:fs";
     import path from "node:path";
@@ -769,83 +717,6 @@ const files = {
         write(path.join("g", "b", "lib.cjs"), "");
         write(path.join("g", "b", "package.json"), manifest("b", { "#late": "./lib.cjs" }));
         res("LG2", () => requireFrom(path.join("g", "b")).resolve("#late", { paths: [path.resolve("g", "b", "c", "d")] }));
-      },
-
-      async race() {
-        // A Worker looks up from what the caches held before a change, misses, and waits before it
-        // runs its lookup again. This thread then finds the module: the run after its miss gives the
-        // directory whose record is out of date a new record. The Worker continues. The new record
-        // is as the disk is, and it is not of the Worker's run: the Worker must find the module
-        // through it, and must not replace what this thread has just read.
-        const { resolverMissHold, getCounters } = require("bun:internal-for-testing");
-        const { specifier, importer, resolves, GO, SET, ANSWER, WAIT, RELEASE, store, waitWhile } =
-          require("./race-shared.cjs");
-        const json = (file, value) => write(file, JSON.stringify(value));
-        const named = (names, value) => Object.fromEntries(names.map(name => [name, value]));
-        // Each writes the files of its kind and returns the change.
-        const setup = {
-          // An alias added to the tsconfig.json next to the importer.
-          tsconfig(top) {
-            write(path.join(top, "real.cjs"), "");
-            const paths = names =>
-              json(path.join(top, "tsconfig.json"), { compilerOptions: { paths: named(names, ["./real.cjs"]) } });
-            paths(["other"]);
-            return () => paths(["other", "late-alias"]);
-          },
-          // The package.json next to the importer gets its "imports".
-          imports(top) {
-            write(path.join(top, "real.cjs"), "");
-            json(path.join(top, "package.json"), { name: "p" });
-            return () => json(path.join(top, "package.json"), { name: "p", imports: { "#late": "./real.cjs" } });
-          },
-          // The package.json of a package that was read while half written.
-          unparsed(top) {
-            const pkg = path.join(top, "node_modules", "pkg");
-            write(path.join(pkg, "real.cjs"), "");
-            write(path.join(pkg, "package.json"), '{ "name": "pkg", "main": ');
-            return () => write(path.join(pkg, "package.json"), '{ "name": "pkg", "main": "./real.cjs" }');
-          },
-          // An "imports" entry added above the importer. One lookup from there gives that directory a
-          // new record. The alias names a file that is above the importer too, so that lookup does not
-          // come through the importer's directory: there it would leave a new record as well, and the
-          // Worker would find the module at once. The importer's directory keeps its link to the old one.
-          parentlink(top, dir) {
-            fs.mkdirSync(dir, { recursive: true });
-            write(path.join(top, "real.cjs"), "");
-            const imports = names =>
-              json(path.join(top, "package.json"), { name: "p", imports: named(names, "./real.cjs") });
-            imports(["#other"]);
-            return () => {
-              imports(["#other", "#late"]);
-              if (!resolves(top, "#late")) throw new Error("the lookup from above the importer did not recover");
-            };
-          },
-        };
-        const kinds = Object.keys(setup);
-        const cell = new Int32Array(new SharedArrayBuffer(12));
-        const worker = new Worker(path.resolve("race-worker.cjs"), { workerData: { cell, kinds } });
-        let turn = 0;
-        for (const kind of kinds) {
-          const dir = importer(kind);
-          const change = setup[kind](path.resolve("race", kind), dir);
-          const early = resolves(dir, specifier[kind]);
-          change();
-          Atomics.store(cell, ANSWER, 0);
-          store(cell, GO, ++turn);
-          waitWhile(cell, SET, turn - 1);
-          if (!resolverMissHold(WAIT)) throw new Error(kind + ": the lookup of the Worker did not miss");
-          const mine = resolves(dir, specifier[kind]);
-          const records = getCounters().resolver.dirInfoSlots;
-          resolverMissHold(RELEASE);
-          waitWhile(cell, ANSWER, 0);
-          const theirs = Atomics.load(cell, ANSWER) - 1;
-          const replaced = getCounters().resolver.dirInfoSlots - records;
-          console.log(
-            kind + ": found before the change " + early + ", then by this thread " + mine + ", by the Worker " + theirs +
-              ", new directory records by the Worker " + replaced,
-          );
-        }
-        await worker.terminate();
       },
 
       async steady() {
@@ -1963,22 +1834,6 @@ test("a file added to a resolved package, from this thread and a Worker", async 
     D2 OK 2
     D3 OK 3
     steps that failed, of 25 in each thread: 0 0"
-    ,
-    }
-  `);
-});
-
-// The Worker waits between its miss and the run after it, for this to be true of every run. See the fixture.
-test("a miss that another thread's lookup made out of date is looked up again", async () => {
-  expect(await runGroup("race")).toMatchInlineSnapshot(`
-    {
-      "exitCode": 0,
-      "stderr": "",
-      "stdout": 
-    "tsconfig: found before the change 0, then by this thread 1, by the Worker 1, new directory records by the Worker 0
-    imports: found before the change 0, then by this thread 1, by the Worker 1, new directory records by the Worker 0
-    unparsed: found before the change 0, then by this thread 1, by the Worker 1, new directory records by the Worker 0
-    parentlink: found before the change 0, then by this thread 1, by the Worker 1, new directory records by the Worker 0"
     ,
     }
   `);

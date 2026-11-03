@@ -600,10 +600,9 @@ pub enum AfterMiss {
     CheckedPass(Generation),
 }
 
-/// `bun:internal-for-testing`: what the caches did so far, and one point where a test holds a thread.
+/// What the caches did so far, for `getCounters()` of `bun:internal-for-testing`.
 pub mod test_hooks {
-    use bun_threading::Futex;
-    use core::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+    use core::sync::atomic::{AtomicUsize, Ordering};
 
     static RERUNS: AtomicUsize = AtomicUsize::new(0);
     static NEW_LISTINGS: AtomicUsize = AtomicUsize::new(0);
@@ -643,60 +642,6 @@ pub mod test_hooks {
     #[inline]
     pub(crate) fn count_refill() {
         REFILLS.fetch_add(1, Ordering::Relaxed);
-    }
-
-    const OFF: u32 = 0;
-    const ARMED: u32 = 1;
-    const HELD: u32 = 2;
-    static HOLD: AtomicU32 = AtomicU32::new(OFF);
-    /// The thread that `arm` ran on.
-    static HOLD_THREAD: AtomicU64 = AtomicU64::new(0);
-
-    /// The next lookup of this thread that misses waits before it runs again, until `release`.
-    pub fn arm() {
-        HOLD_THREAD.store(bun_threading::current_thread_id(), Ordering::SeqCst);
-        HOLD.store(ARMED, Ordering::SeqCst);
-    }
-
-    /// Waits for the thread that called `arm`. False: `release` came before that thread missed.
-    pub fn wait_until_held() -> bool {
-        loop {
-            match HOLD.load(Ordering::SeqCst) {
-                ARMED => Futex::wait_forever(&HOLD, ARMED),
-                state => return state == HELD,
-            }
-        }
-    }
-
-    pub fn release() {
-        HOLD.store(OFF, Ordering::SeqCst);
-        Futex::wake(&HOLD, u32::MAX);
-    }
-
-    /// Called between a miss and the run that follows it.
-    #[inline]
-    pub(crate) fn hold_before_rerun() {
-        if HOLD.load(Ordering::Relaxed) != OFF {
-            hold();
-        }
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn hold() {
-        if HOLD_THREAD.load(Ordering::SeqCst) != bun_threading::current_thread_id() {
-            return;
-        }
-        if HOLD
-            .compare_exchange(ARMED, HELD, Ordering::SeqCst, Ordering::SeqCst)
-            .is_err()
-        {
-            return;
-        }
-        Futex::wake(&HOLD, u32::MAX);
-        while HOLD.load(Ordering::SeqCst) == HELD {
-            Futex::wait_forever(&HOLD, HELD);
-        }
     }
 }
 
@@ -2231,7 +2176,6 @@ impl<'a> Resolver<'a> {
         (source_dir, import_path): (&[u8], &'r [u8]),
         (kind, global_cache): (ast::ImportKind, GlobalCache),
     ) -> (ResultUnion<'r>, bool, Generation) {
-        test_hooks::hold_before_rerun();
         let asker = DirInfo::Checked(bun_core::next_generation());
         test_hooks::count_rerun();
         let mut earlier_msgs: Vec<bun_ast::Msg> = Vec::new();
@@ -2275,7 +2219,6 @@ impl<'a> Resolver<'a> {
         mut sequence: impl FnMut(&mut Self, AfterMiss) -> T,
         missed: impl Fn(&T) -> bool,
     ) -> T {
-        test_hooks::hold_before_rerun();
         let generation = bun_core::next_generation();
         test_hooks::count_rerun();
         let mut earlier_msgs: Vec<bun_ast::Msg> = Vec::new();

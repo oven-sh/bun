@@ -800,6 +800,8 @@ pub(crate) enum HandleKind {
     Server,
     Connection,
     Datagram,
+    /// An end of a named pipe, or a server on one.
+    Pipe,
 }
 
 pub(crate) struct Handle {
@@ -837,7 +839,7 @@ impl Handle {
         #[cfg(windows)]
         {
             // libuv's frame can describe a TCP socket and nothing else, and this is what it says.
-            if kind == HandleKind::Datagram {
+            if matches!(kind, HandleKind::Datagram | HandleKind::Pipe) {
                 return Err(bun_sys::Error::from_code(
                     bun_sys::E::ENOTSUP,
                     bun_sys::Tag::write,

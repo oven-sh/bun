@@ -156,9 +156,12 @@ pub(crate) fn do_send(
                 // owned by uSockets; `get_socket` only reinterpret-casts to
                 // `&mut us_socket_t` and `get_fd` is a read-only FFI call.
                 let socket = unsafe { &mut *socket_uws }.get_socket();
-                if !socket.is_pipe() {
-                    send_fd(socket.get_fd(), HandleKind::Server, false);
-                }
+                let kind = if socket.is_pipe() {
+                    HandleKind::Pipe
+                } else {
+                    HandleKind::Server
+                };
+                send_fd(socket.get_fd(), kind, false);
             }
         } else if let Some(socket) = crate::socket::TCPSocket::from_js(handle) {
             // SAFETY: from_js returned a non-null pointer; the JS wrapper
@@ -173,9 +176,12 @@ pub(crate) fn do_send(
                 if !keep_open {
                     pause_target = handle;
                 }
-                if !socket.is_pipe() {
-                    send_fd(fd, HandleKind::Connection, !keep_open);
-                }
+                let kind = if socket.is_pipe() {
+                    HandleKind::Pipe
+                } else {
+                    HandleKind::Connection
+                };
+                send_fd(fd, kind, !keep_open);
             }
         } else if let Some(udp) = handle.as_class_ref::<crate::socket::UDPSocket>() {
             if let Some(fd) = udp.native_fd() {

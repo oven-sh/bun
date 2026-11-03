@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, isWindows, nodeExe, tempDir, tls } from "harness";
+import { randomUUID } from "node:crypto";
 
 const node = nodeExe();
 
@@ -511,6 +512,95 @@ process.on('message', (m, socket) => {
       stderr: expect.any(String),
       response: true,
     });
+  });
+
+  // As in Node, but for the server: there the send throws a TypeError.
+  test.concurrent.skipIf(!isWindows)("a named pipe is not sent, and neither is its message", async () => {
+    using dir = tempDir("ipc-handle-named-pipe", {
+      "parent.js": `
+const { fork } = require('node:child_process');
+const { once } = require('node:events');
+const net = require('node:net');
+const { text } = require('node:stream/consumers');
+
+const name = process.argv[2];
+const describe = error => error && error.code + ' ' + error.syscall;
+const send = (...args) => new Promise(resolve => child.send(...args, error => resolve(describe(error))));
+const server = net.createServer();
+const child = fork('child.js', [name]);
+const received = [];
+child.on('message', message => received.push(message));
+
+async function connect() {
+  const socket = net.connect(name);
+  const [[peer]] = await Promise.all([once(server, 'connection'), once(socket, 'connect')]);
+  return { socket, peer };
+}
+
+(async () => {
+  await once(server.listen(name), 'listening');
+  const results = {};
+
+  const detached = await connect();
+  results.socket = await send('socket', detached.socket);
+  results.peerOfTheSocket = await text(detached.peer);
+
+  const kept = await connect();
+  results.keepOpen = await send('keepOpen', kept.socket, { keepOpen: true });
+  kept.socket.end('still open');
+  results.peerOfTheKeptSocket = await text(kept.peer);
+
+  const withoutCallback = await connect();
+  const failed = once(child, 'error');
+  child.send('no callback', withoutCallback.socket);
+  results.noCallback = describe((await failed)[0]);
+
+  results.server = await send('server', server);
+  (await connect()).socket.destroy();
+
+  const [[peer]] = await Promise.all([once(server, 'connection'), send('your turn')]);
+  await text(peer);
+  await once(child, 'message');
+  console.log(JSON.stringify({ ...results, received }));
+  child.disconnect();
+  server.close();
+})();
+`,
+      "child.js": `
+const { once } = require('node:events');
+const net = require('node:net');
+
+const received = [];
+process.on('message', async message => {
+  received.push(message);
+  const socket = net.connect(process.argv[2]);
+  await once(socket, 'connect');
+  const failed = once(process, 'error');
+  process.send('from the child', socket);
+  const [error] = await failed;
+  process.send({ error: error.code + ' ' + error.syscall, received });
+});
+`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js", `\\\\.\\pipe\\bun-test-${randomUUID()}`],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.json(), proc.exited]);
+    expect(stdout).toEqual({
+      socket: "ENOTSUP write",
+      peerOfTheSocket: "",
+      keepOpen: "ENOTSUP write",
+      peerOfTheKeptSocket: "still open",
+      noCallback: "ENOTSUP write",
+      server: "ENOTSUP write",
+      received: [{ error: "ENOTSUP write", received: ["your turn"] }],
+    });
+    expect(exitCode).toBe(0);
   });
 
   test.concurrent("received net.Socket has connecting=false and remoteAddress synchronously", async () => {

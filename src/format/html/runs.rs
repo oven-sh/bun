@@ -1403,7 +1403,9 @@ impl<'a> Scanner<'_, 'a> {
         if must_be_empty || display == Display::None || matches!(name, b"br" | b"select") {
             return None;
         }
-        let is_block = display.is_block_like();
+        // Where white space does not count, a line break is printed next to a text too.
+        let is_block = display.is_block_like()
+            || self.settings.sensitivity == HtmlWhitespaceSensitivity::Ignore;
         let written_from = self.out.len();
         let (mut at, width) = self.read_tag(name, to, to - start, false)?;
         self.put_tag(start, to, false);

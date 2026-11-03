@@ -1603,6 +1603,8 @@ describe.skipIf(!hasFlag)("HTML", () => {
     // The printer does not count the blank in front of a word that takes no room.
     "b \u0300\n",
     `<div>\n  a \u0300 ${"x".repeat(70)} yyyyy\n  <b></b>\n</div>\n`,
+    // Where white space does not count, a line break is printed between a text and an `<svg>`.
+    "<rt>;<svg></svg></rt>\n",
   ];
   const files = Object.fromEntries(inputs.map((input, index) => [`${index}.html`, input]));
 

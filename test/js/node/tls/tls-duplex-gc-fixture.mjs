@@ -36,7 +36,9 @@ function handshake() {
   const [clientSide, serverSide] = duplexPair();
   const server = new tls.TLSSocket(serverSide, { isServer: true, key, cert });
   const client = tls.connect({ socket: clientSide, rejectUnauthorized: false });
-  return new Promise(resolve => client.once("secureConnect", () => resolve({ client, server, clientSide, serverSide })));
+  return new Promise(resolve =>
+    client.once("secureConnect", () => resolve({ client, server, clientSide, serverSide })),
+  );
 }
 
 const cases = {
@@ -52,7 +54,12 @@ const cases = {
   // The engine runs, its ClientHello sits in a stream that never answers.
   "with the handshake pending": async () => {
     for (let i = 0; i < N; i++) {
-      const silent = new Duplex({ read() {}, write(chunk, encoding, callback) { callback(); } });
+      const silent = new Duplex({
+        read() {},
+        write(chunk, encoding, callback) {
+          callback();
+        },
+      });
       const client = tls.connect({ socket: silent, rejectUnauthorized: false });
       registry.register(client, null);
     }

@@ -48,6 +48,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCurves, (JSC::JSGlobalObject * lexicalGlobalObject
     const size_t numCurves = EC_get_builtin_curves(nullptr, 0);
     Vector<EC_builtin_curve> curves(numCurves);
     EC_get_builtin_curves(curves.begin(), numCurves);
+    std::ranges::sort(curves, [](const auto& a, const auto& b) { return strcmp(OBJ_nid2sn(a.nid), OBJ_nid2sn(b.nid)) < 0; });
 
     JSArray* result = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, numCurves);
     RETURN_IF_EXCEPTION(scope, {});
@@ -61,6 +62,29 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCurves, (JSC::JSGlobalObject * lexicalGlobalObject
     }
 
     return JSValue::encode(result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsGetHashes, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto names = ncrypto::getDigestNames();
+    JSArray* result = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, names.size());
+    RETURN_IF_EXCEPTION(scope, {});
+
+    for (size_t i = 0; i < names.size(); i++) {
+        result->putDirectIndex(lexicalGlobalObject, i, JSC::jsNontrivialString(vm, names[i].name));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    return JSValue::encode(result);
+}
+
+// For pbkdf2(), which is in Rust.
+extern "C" const EVP_MD* Bun__getDigestByName(const Latin1Character* name, size_t length)
+{
+    return ncrypto::getDigestByName(WTF::StringView(std::span { name, length }));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsGetCiphers, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -284,24 +308,16 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
         }
     }
 
-    JSObject* result = JSC::constructEmptyObject(lexicalGlobalObject);
-
-    if (!modeLabel.isEmpty()) {
-        Bun::putDirectNamed(vm, result, "mode"_s, jsString(vm, String::fromUTF8(modeLabel)));
-    }
-
+    // Like Node's, it has no prototype and always has all six properties.
+    JSObject* result = JSC::constructEmptyObject(vm, lexicalGlobalObject->nullPrototypeObjectStructure());
+    Bun::putDirectNamed(vm, result, "mode"_s, modeLabel.isEmpty() ? jsUndefined() : jsString(vm, String::fromUTF8(modeLabel)));
     Bun::putDirectNamed(vm, result, "name"_s, jsString(vm, name.convertToASCIILowercase()));
     Bun::putDirectNamed(vm, result, "nid"_s, jsNumber(cipher.getNid()));
-
-    if (!cipher.isStreamMode()) {
-        Bun::putDirectNamed(vm, result, "blockSize"_s, jsNumber(blockSize));
-    }
-
-    if (ivLength != 0) {
-        Bun::putDirectNamed(vm, result, "ivLength"_s, jsNumber(ivLength));
-    }
-
     Bun::putDirectNamed(vm, result, "keyLength"_s, jsNumber(keyLength));
+    // Stream ciphers do not have a meaningful block size
+    Bun::putDirectNamed(vm, result, "blockSize"_s, cipher.isStreamMode() ? jsUndefined() : jsNumber(blockSize));
+    // Ciphers that do not use an IV shouldn't report a length
+    Bun::putDirectNamed(vm, result, "ivLength"_s, ivLength == 0 ? jsUndefined() : jsNumber(ivLength));
 
     return JSValue::encode(result);
 }
@@ -320,6 +336,10 @@ __attribute__((minsize)) JSValue createNodeCryptoBinding(Zig::GlobalObject* glob
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "getCurves"_s)),
         JSFunction::create(vm, globalObject, 0, "getCurves"_s, jsGetCurves, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "oneShotDigest"_s)),
+        JSFunction::create(vm, globalObject, 5, "oneShotDigest"_s, jsOneShotDigest, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "getHashes"_s)),
+        JSFunction::create(vm, globalObject, 0, "getHashes"_s, jsGetHashes, ImplementationVisibility::Public, NoIntrinsic), 0);
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "getCiphers"_s)),
         JSFunction::create(vm, globalObject, 0, "getCiphers"_s, jsGetCiphers, ImplementationVisibility::Public, NoIntrinsic), 0);
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "getCipherInfo"_s)),

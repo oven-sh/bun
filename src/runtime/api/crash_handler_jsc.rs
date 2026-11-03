@@ -181,6 +181,51 @@ pub(crate) fn raise_ignoring_panic_handler() {
     Global::raise_ignoring_panic_handler(bun_core::SignalCode::SIGSEGV);
 }
 
+/// Whether a stack trace from below a frame with a signed return address,
+/// trimmed to that address, starts there: the walk and the address to trim by
+/// must both come without the signature. `None` where the test does not run.
+pub(crate) fn stack_trace_starts_at_signed_return_address() -> Option<bool> {
+    #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+    {
+        extern "C" fn capture() -> usize {
+            use bun_core::debug::{frame_address, return_address_of_frame};
+            let mut addresses = [0; 32];
+            // SAFETY: a frame record starts with the address of the caller's,
+            // which here is the signed one.
+            let begin = unsafe { return_address_of_frame(*(frame_address() as *const usize)) };
+            bun_core::capture_stack_trace(begin, &mut addresses);
+            addresses[0]
+        }
+        let (return_address, first): (usize, usize);
+        // SAFETY: what a function does that saves its return address signed,
+        // calls `capture` and returns to `2:`. The stack pointer and x29 end as
+        // they began, and `capture` follows the C calling convention.
+        unsafe {
+            core::arch::asm!(
+                "adr x30, 2f",
+                "mov x20, x30",
+                "hint #25", // PACIASP
+                "stp x29, x30, [sp, #-16]!",
+                "mov x29, sp",
+                "blr x8",
+                "ldp x29, x30, [sp], #16",
+                "hint #29", // AUTIASP
+                "2:",
+                // x20 outlives the call, and nothing writes x8 before it.
+                out("x20") return_address,
+                in("x8") capture as extern "C" fn() -> usize,
+                lateout("x0") first,
+                clobber_abi("C"),
+            )
+        };
+        Some(first == return_address)
+    }
+    #[cfg(not(all(target_arch = "aarch64", target_os = "linux")))]
+    {
+        None
+    }
+}
+
 pub(crate) fn get_feature_data() -> FeatureData {
     FeatureData {
         // Not `static_`: a feature can be named like a common string ("s3").

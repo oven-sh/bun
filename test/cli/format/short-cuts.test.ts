@@ -470,6 +470,7 @@ describe("Markdown", () => {
     "**a** and __b__ and **a_b** and **a\\*b** and ***c*** and **a* b and *a** b\n\n_a_ _b_ and *a*_b_ and _a *b* c_ and _a_b and a_ b_\n",
     "_[a](b)_ and [_a_](b) and [*a*](b) and [**a**](b) and ~~a~~ and ~a~ and ~~~a\n",
     "**a\u2028** b and **\u2029a** b and **\u00a0a** and **中文**中文 and 中文**中文**\n",
+    "**a\u00a0** b** and **a \u3000** b** and **\u2003a** b and **a\u200b** b** and **a\ufeff** b** and **a \u0085** b**\n",
     "e\n*http://a\n\ne\n*a*\n\ne\n**a**\n\ne\n* a\n",
     // Code spans.
     "`a` and `` a`b `` and `` `a` `` and ` a ` and `  ` and ` a` and ``a`` and `a\nb` and `not closed\n",
@@ -531,6 +532,34 @@ describe("Markdown", () => {
     "| b       |\n| ------- |\n| \u2014     |\n| default |\n\n| b       |\n| ------- |\n| \u2014       |\n| default |\n\n| \u4e2d\u6587 |\n| ---- |\n| a    |\n\n| \u4e2d\u6587 |\n| ------ |\n| a      |\n",
   ];
   expectSame("a.md", texts, markdownOptions);
+
+  test.skipIf(!hasFlag).concurrent("bytes that aren't UTF-8", async () => {
+    const inputs = [
+      "**\xffw\xc2\xa0** q**\n",
+      "**a \xff** b**\n",
+      "a\xff_b\n",
+      "| \xff   |\n| --- |\n| b   |\n",
+      "# \xe2\x80\n\n- \xc3\n",
+    ];
+    using dir = tempDir("format-short-cuts", {});
+    for (const input of inputs) {
+      const [short, long] = await Promise.all(
+        [[], ["--no-short-cuts"]].map(async own => {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "fmt", "--no-config", "--no-editorconfig", "--stdin-filepath=a.md", ...own],
+            cwd: String(dir),
+            env: bunEnv,
+            stdin: Buffer.from(input, "latin1"),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+          return { stdout: Buffer.from(stdout).toString("latin1"), stderr, exitCode };
+        }),
+      );
+      expect({ input, ...short }).toEqual({ input, ...long });
+    }
+  });
 });
 
 describe("MDX", () => {

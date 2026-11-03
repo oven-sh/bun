@@ -270,6 +270,22 @@ struct JsxTag {
 }
 
 /// A byte of a word in JSX: ASCII, and nothing that's read as something else than text.
+/// True for a character that isn't ASCII and that is white space to the parser or to the printer, or has no width.
+fn is_wide_space(character: Option<&[u8]>) -> bool {
+    matches!(
+        character,
+        Some(
+            [0xC2, 0x85 | 0xA0]
+            | [0xE1, 0x9A, 0x80]
+            | [0xE1, 0xA0, 0x8E]
+            | [0xE2, 0x80, 0x80..=0x8F | 0xA8..=0xAF]
+            | [0xE2, 0x81, 0x9F..=0xA4]
+            | [0xE3, 0x80, 0x80]
+            | [0xEF, 0xBB, 0xBF],
+        )
+    )
+}
+
 fn is_jsx_word_byte(byte: u8) -> bool {
     byte.is_ascii_graphic() && !matches!(byte, b'<' | b'>' | b'{' | b'}')
 }
@@ -1649,11 +1665,15 @@ impl<'t> Reader<'t> {
                     if run == 2 {
                         // Two of them start or end strong emphasis or are text, and are printed as they are either way.
                         // Between brackets they could be text in strong emphasis, where the printer looks at them again.
-                        // U+2028 and U+2029 are white space to the parser and part of a word to the printer.
-                        let is_separator =
-                            |bytes: Option<&[u8]>| matches!(bytes, Some([0xE2, 0x80, 0xA8 | 0xA9]));
-                        if is_separator(at.checked_sub(3).and_then(|start| text.get(start..at)))
-                            || is_separator(text.get(at + 2..at + 5))
+                        // Between white space they are text wherever they are, and white space that isn't ASCII is part
+                        // of a word to the printer, which then writes the word anew.
+                        let is_space = |start: Option<usize>, len: usize| {
+                            start.is_some_and(|start| is_wide_space(text.get(start..start + len)))
+                        };
+                        if (before(at) >= 0x80
+                            && (is_space(at.checked_sub(2), 2) || is_space(at.checked_sub(3), 3)))
+                            || (byte(at + 2) >= 0x80
+                                && (is_space(Some(at + 2), 2) || is_space(Some(at + 2), 3)))
                         {
                             return None;
                         }

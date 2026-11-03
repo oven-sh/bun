@@ -221,12 +221,18 @@ devTest("css file imported twice keeps the place of its last import when its own
   },
   async test(dev) {
     const stylesheetHref = (await (await dev.fetch("/")).text()).match(/<link rel="stylesheet"[^>]*href="([^"]+)"/)![1];
-    const printedFiles = async () =>
-      Array.from((await (await dev.fetch(stylesheetHref)).text()).matchAll(/^\/\* (\S+) \*\/$/gm), m => m[1]);
-    expect(await printedFiles()).toEqual(["x.css", "c.css", "b.css", "styles.css"]);
+    const stylesheet = async () => (await dev.fetch(stylesheetHref)).text();
+    const printed = (file: string, selector: string) => `/* ${file} */\n${selector} {\n  width: 1px;\n}\n`;
+    const [x, c, b, e] = [
+      printed("x.css", ".x"),
+      printed("c.css", ".c"),
+      printed("b.css", ".b"),
+      printed("styles.css", ".e"),
+    ];
+    expect(await stylesheet()).toBe([x, c, b, e].join("\n"));
     // c.css no longer parses, so the chunk prints without it.
     await dev.write("c.css", `.c { width: 1px; }}}`, { errors: null });
-    expect(await printedFiles()).toEqual(["x.css", "b.css", "styles.css"]);
+    expect(await stylesheet()).toBe([x, b, e].join("\n"));
   },
 });
 devTest("asset referenced in css", {

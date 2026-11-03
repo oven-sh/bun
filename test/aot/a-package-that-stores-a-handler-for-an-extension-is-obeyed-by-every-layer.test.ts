@@ -23,6 +23,13 @@ const tools = `
     };
   };
   exports.note = () => { Module._extensions[".note"] = function (module, filename) { seen.push("note " + short(filename)); module.exports = require("fs").readFileSync(filename, "utf8").trim(); }; };
+  exports.load = (file, own) => {
+    const made = new Module(file, module);
+    made.filename = file;
+    if (own) made._compile = function (code, name) { seen.push("compile " + short(name)); return Module.prototype._compile.call(this, code.replace(/"plain"/g, '"changed"'), name); };
+    Module._extensions[".js"](made, file);
+    return made.exports.kind;
+  };
   exports.decache = file => {
     const visited = {};
     (function run(current) {
@@ -36,6 +43,17 @@ const ways = {
   "a handler": [`tools.handler(".js");`, `plain,plain | handler b.js`],
   "a handler that changes the text": [`tools.transform(".js");`, `plain,changed | compile b.js`],
   "a handler for a new extension": [`tools.note();`, `plain,plain,a note | note x.note`, `, user.note()`],
+  // No handler is stored: the package calls the built-in loader on a module object that it made for a file of the project.
+  "the built-in loader called on a module that the package made": [
+    `const made = tools.load(require.resolve("./src/b.js"), false);`,
+    `plain,plain,plain | `,
+    `, made`,
+  ],
+  "the built-in loader called on a made module that has a _compile of its own": [
+    `const made = tools.load(require.resolve("./src/b.js"), true);`,
+    `plain,plain,changed | compile b.js`,
+    `, made`,
+  ],
   "a walk over the children": [
     `user.b(); tools.decache(require.resolve("./src/user.js")); user = require("./src/user.js");`,
     `plain,plain | out a.js,out b.js,out user.js`,

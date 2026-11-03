@@ -131,7 +131,6 @@ export default b.declarations(
   b.namespace(
     "%ModuleObject%",
     {
-      _compile: compilesText,
       // The record of the module has these four.
       id: b.property(b.string, constantUnlessWritten),
       filename: b.property(b.string, constantUnlessWritten),
@@ -169,6 +168,11 @@ export default b.declarations(
   b.inherits("%ImportMeta%", "Object.prototype"),
   b.same("%ImportMeta%.require", "%ModuleRequire%"),
   b.same("%ModuleObject%.require", "%ModuleRequire%"),
+  // The table lists under the module object what a lookup finds on Module.prototype.
+  b.same("%ModuleObject%.constructor", "node:module"),
+  b.same("%ModuleObject%._compile", "node:module.prototype._compile"),
+  // Object.getPrototypeOf(module) is Module.prototype.
+  b.inherits("%ModuleObject%", "node:module.prototype"),
   b.fn("process.getBuiltinModule", {
     args: { id: b.string },
     returns: b.any,
@@ -187,9 +191,10 @@ export default b.declarations(
       uses: { operands: b.inspected },
       implementation: b.generic,
     },
+    // Nobody else holds the new module: the constructor does not push it into parent.children as Node does. Its own `exports` and `parent` are not listed, so it is not called fresh.
     construct: {
       args: { id: b.any.optional, parent: b.any.optional },
-      returns: moduleObject,
+      returns: b.instance("node:module").unaliased,
       capability: "heap",
       throws: true,
       uses: { id: b.inspected, parent: [b.retained] },
@@ -200,8 +205,15 @@ export default b.declarations(
   b.extend("node:module.Module", { mutability: "AlwaysLocked" }),
   b.static("node:module._cache", b.property(moduleCache)),
   b.static("node:module._extensions", b.property(moduleExtensions)),
-  // It returns undefined and converts nothing.
-  b.static("node:module._load", { ...loadsModule, readsStateBeforeConversions: true }),
+  // It calls the built-in require on the parent with the request alone, whatever the program has stored in Module.prototype.require.
+  b.static("node:module._load", {
+    ...loadsModule,
+    args: { specifier: b.string, parent: b.any.optional },
+    uses: {
+      specifier: [b.retained, b.loadedAsModule],
+      parent: [b.retained, b.runs("ToPrimitive", b.named("filename"))],
+    },
+  }),
   // nodeModuleWrapper in NodeModuleModule.cpp keeps nothing: every read calls getWrapperArrayProxy, which makes a proxy of a new array.
   b.static("node:module.wrapper", {
     getter: b.object,
@@ -226,6 +238,7 @@ export default b.declarations(
     implementation: b.generic,
     mutability: "AlwaysLocked",
   }),
+  // No prototype object of a class: once one has escaped, a named store into an object nobody follows counts as a store into it, and such a `holder.require = f` would be a loader function that the program stores.
   b.namespace("node:module.prototype", {
     require: {
       this: b.any,
@@ -242,8 +255,16 @@ export default b.declarations(
       implementation: b.generic,
     },
     _compile: compilesText,
+    // As in Node, a getter with no setter. It answers the class whatever it is entered with.
+    constructor: {
+      this: b.any,
+      getter: b.union(b.builtin("node:module"), b.object),
+      capability: "none",
+      uses: { this: b.inspected },
+      implementation: b.generic,
+    },
   }),
-  b.inherits("node:module.prototype", "Object.prototype"),
+  // What stands above Module.prototype is not stated. Code that the build never saw can add a name to it or give it another prototype, and every module object then finds that name.
   objectsMadeByNativeModuleMacro.flatMap(path => b.inherits(path, "Object.prototype")),
   // It looks at a string. For anything else the answer is false.
   b.fn("node:module.isBuiltin", {

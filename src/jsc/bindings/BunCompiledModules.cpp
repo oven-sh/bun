@@ -439,7 +439,11 @@ JSValue loadCompiledModuleNamespace(Zig::GlobalObject* globalObject, const Strin
 
 bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject* globalObject, JSCommonJSModule* target, const String& path, bool isTypeScriptLoader)
 {
-    if (!hasCompiledModules() || target->moduleGraph() || target->m_overriddenCompile) [[likely]]
+    if (!hasCompiledModules() || target->moduleGraph()) [[likely]]
+        return false;
+    auto& vm = getVM(globalObject);
+    // A store to `module._compile` makes an own property, which the loader calls with the text of the file.
+    if (target->getDirect(vm, Identifier::fromString(vm, "_compile"_s)))
         return false;
     auto module = compiledModuleForPath(path);
     // The run time has sent the call here for such a file: it would only send it here again.
@@ -450,7 +454,7 @@ bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject* globalObject, JSCom
     bool isTypeScriptFile = loader == BunLoaderTypeTS || loader == BunLoaderTypeTSX;
     if (isTypeScriptFile != isTypeScriptLoader)
         return false;
-    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    auto scope = DECLARE_THROW_SCOPE(vm);
     requireInto(globalObject, target, *module);
     RETURN_IF_EXCEPTION(scope, false);
     target->hasEvaluated = true;

@@ -95,6 +95,16 @@ export const calls: Record<string, string[]> = {
     `${internals}\nprivateGlobalFunctions["makeErrorWithCode ERR_MISSING_ARGS"]("a", "b", "c")`,
   ],
   "node:module.builtinModules > Array": ['import { builtinModules } from "node:module";\nbuiltinModules'],
+  // The row calls the module unaliased, which a constructor that pushes it into parent.children would make false.
+  "node:module": [
+    [
+      'import { Module } from "node:module";',
+      "const parent = { children: [] };",
+      'const made = new Module("/folder/file.js", parent);',
+      'if (parent.children.includes(made)) throw new Error("the parent holds the new module");',
+      "made",
+    ].join("\n"),
+  ],
   "node:string_decoder.StringDecoder > NodeString_decoderStringDecoder": [
     'import { StringDecoder } from "node:string_decoder";\nStringDecoder("utf8")',
   ],

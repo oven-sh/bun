@@ -356,7 +356,6 @@ const findsNoEvent = new Set([
   "loader provide fetch",
   "loader registry hands out modules",
   "loader request import",
-  "module compile through constructor",
   "module extensions",
   "module prototype load",
   "module register",

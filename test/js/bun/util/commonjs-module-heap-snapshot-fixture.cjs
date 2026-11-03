@@ -1,6 +1,4 @@
-// Prints the class names each "Property" edge out of a Module (CommonJS) node points at.
-// The property name alone is not meaningful: the prototype's accessor produces a
-// CustomGetterSetter edge under the same name whether or not the cached slot is reported.
+// Prints the class names that the "Property" edges out of CommonJS module objects point at.
 module._compile = function overriddenCompileFn() {};
 module.children; // materializes the lazily-built children array
 
@@ -20,10 +18,18 @@ for (let i = 0; i < nodes.length; i += nodeStride) {
 }
 
 const propertyEdgeType = edgeTypes.indexOf("Property");
+// Module.prototype and the Module constructor are "Module" nodes too, but only a module object has an "exports" edge.
+const moduleObjectIds = new Set();
+for (let i = 0; i < edges.length; i += 4) {
+  if (edges[i + 2] !== propertyEdgeType) continue;
+  if (moduleIds.has(edges[i]) && edgeNames[edges[i + 3]] === "exports") moduleObjectIds.add(edges[i]);
+}
+if (moduleObjectIds.size === 0) throw new Error("no module object in snapshot");
+
 const targetsByName = {};
 for (let i = 0; i < edges.length; i += 4) {
   if (edges[i + 2] !== propertyEdgeType) continue;
-  if (!moduleIds.has(edges[i])) continue;
+  if (!moduleObjectIds.has(edges[i])) continue;
   const name = edgeNames[edges[i + 3]];
   (targetsByName[name] ??= []).push(classNameOfId.get(edges[i + 1]));
 }

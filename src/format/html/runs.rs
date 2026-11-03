@@ -936,6 +936,7 @@ impl<'a> Scanner<'_, 'a> {
     }
 
     /// See `parent_of_only_child`.
+    #[inline(never)]
     fn is_at_end_of_only_child(&self, index: usize) -> bool {
         self.parent_of_only_child.is_some_and(|(start, end, key)| {
             (self.text.get(start..end)).is_some_and(|name| self.end_tag(index, name, key).is_some())
@@ -963,6 +964,7 @@ impl<'a> Scanner<'_, 'a> {
         (self.at(end) == b'>').then_some(end + 1)
     }
 
+    #[inline(never)]
     fn put_end_tag(&mut self, name: &[u8]) {
         self.out.put(b"</");
         self.out.put(name);
@@ -1235,6 +1237,7 @@ impl<'a> Scanner<'_, 'a> {
 
     /// The last child that has been read is printed in front of a line break only if a sibling follows it, or the end
     /// tag of its parent of which no neighbor prints a part. Takes it back if that is not for sure.
+    #[inline(never)]
     fn settle(&mut self, is_sole_text: bool, parent: &Parent<'_>) {
         if self.siblings.last.at == 0 {
             return;
@@ -1449,6 +1452,8 @@ impl<'a> Scanner<'_, 'a> {
 
     /// A `<script>` or a `<style>`. Code that is left alone gets the indentation of the element. For code that is
     /// formatted a [`Code`] is written. See `element_with_words`.
+    #[cold]
+    #[inline(never)]
     fn element_with_code(
         &mut self,
         start: usize,
@@ -1695,6 +1700,7 @@ impl<'a> Scanner<'_, 'a> {
     /// An element with texts and small elements in it and no line break that is forced between them. Its start tag starts
     /// at `start`, is `width` columns wide on one line without `>`, and ends at `open_end`. Its attributes are in
     /// `attributes`. Returns `None` if there is a line break that is forced.
+    #[inline(never)]
     fn element_with_pieces(
         &mut self,
         start: usize,
@@ -1797,6 +1803,8 @@ impl<'a> Scanner<'_, 'a> {
     }
 
     /// True if the first thing in the element that starts at `start` is an element.
+    #[cold]
+    #[inline(never)]
     fn starts_with_element(
         &mut self,
         start: usize,
@@ -1812,6 +1820,8 @@ impl<'a> Scanner<'_, 'a> {
 
     /// An element that is broken, with nothing but an element in it. What has been written since `mark` is taken back. See
     /// `element_with_pieces`.
+    #[cold]
+    #[inline(never)]
     fn element_with_only_child(
         &mut self,
         start: usize,
@@ -1873,6 +1883,7 @@ impl<'a> Scanner<'_, 'a> {
 
     /// Texts and small elements from `start` on, which starts a line, up to the end of a line, with a line break that is
     /// forced in front of them and behind them.
+    #[inline(never)]
     fn pieces_on_lines(&mut self, start: usize) -> Item {
         // The group around a child is what keeps it on one line with its neighbors.
         if self.siblings.are_in_no_groups || self.siblings.is_in_svg {
@@ -1925,6 +1936,8 @@ impl<'a> Scanner<'_, 'a> {
     }
 
     /// `element_with_pieces` for an element whose start tag has been read before.
+    #[cold]
+    #[inline(never)]
     fn element_of_pieces(&mut self, level: &Level) -> Option<Item> {
         let parent = (self.siblings.parent_definition, self.siblings.is_in_svg);
         let element = self.element_at(level.start, parent)?;
@@ -1949,6 +1962,7 @@ impl<'a> Scanner<'_, 'a> {
     /// as no line break is forced between two of them. Writes them on one line. `starts_line` says whether there is a
     /// line break in front of the first one, `parent_name` has the name of the element and its key, if it is known.
     /// `None` if what is printed for them cannot be told, or there is none.
+    #[inline(never)]
     fn read_pieces(
         &mut self,
         start: usize,
@@ -2070,6 +2084,14 @@ impl<'a> Scanner<'_, 'a> {
                 next,
                 line_breaks,
             };
+            // `preferHardlineAsTrailingSpaces`
+            if is_element
+                && next > end
+                && (self.text.get(at + 1..at + 3) == Some(b"br"))
+                && self.pieces.last().is_some_and(|it| it.marker == 3)
+            {
+                return Some(ends);
+            }
             match (self.at(next), self.at(next + 1)) {
                 (b'<', b'/') => return Some(ends),
                 (0, _) => return is_at_end.then_some(ends),
@@ -2115,6 +2137,7 @@ impl<'a> Scanner<'_, 'a> {
     ///
     /// The words of a text are a `fill`. An element is `group([line, group([element, line])])`: the lines are those to its
     /// neighbors, and a group fits if it does together with what follows it up to the next possible line break.
+    #[inline(never)]
     fn put_pieces(
         &mut self,
         level: usize,
@@ -2236,6 +2259,7 @@ impl<'a> Scanner<'_, 'a> {
 
     /// The word that starts at `start`: writes it. Returns where it ends, and how many bytes it is longer than it is
     /// wide.
+    #[inline(never)]
     fn word(&mut self, start: usize, can_have_interpolations: bool) -> Option<(usize, usize)> {
         let (mut at, mut is_wide) = (start, false);
         // What is in front of this has been written.
@@ -2280,6 +2304,7 @@ impl<'a> Scanner<'_, 'a> {
 
     /// `{{`, an expression that is printed as it is written, and `}}`, from `start` on: writes it on one line. Returns
     /// where it ends.
+    #[inline(never)]
     fn interpolation(&mut self, start: usize) -> Option<usize> {
         (self.has_odd_pieces, self.has_interpolation) = (true, true);
         if !self.settings.formats_embedded {
@@ -2316,6 +2341,7 @@ impl<'a> Scanner<'_, 'a> {
     }
 
     /// The same on a line of its own, if it fits.
+    #[inline(never)]
     fn interpolation_on_line(&mut self, start: usize) -> Item {
         // The group around a child is what keeps it on one line.
         if self.siblings.are_in_no_groups {
@@ -2335,6 +2361,7 @@ impl<'a> Scanner<'_, 'a> {
 
     /// The element that starts at `start`, in a line with its siblings in `parent`, if it has nothing or words in it, all
     /// on that line: writes it on one line.
+    #[inline(never)]
     fn small_element(
         &mut self,
         start: usize,
@@ -2350,7 +2377,7 @@ impl<'a> Scanner<'_, 'a> {
             ..
         } = self.element_at(start, parent)?;
         // A line break is printed next to some.
-        if must_be_empty || display == Display::None || matches!(name, b"br" | b"select") {
+        if must_be_empty || display == Display::None || name == b"select" {
             return None;
         }
         // Where white space does not count, a line break is printed next to a text too.
@@ -2463,6 +2490,7 @@ impl<'a> Scanner<'_, 'a> {
     /// The attribute that starts at `from`, if it is `name` or `name="value"` and is printed like that. Returns where it
     /// ends, how wide it is, and whether the `;` at its end is dropped. It is `TOO_WIDE` with a line break in it, which
     /// breaks the tag like a line that is too long.
+    #[inline(never)]
     fn attribute(&self, element: &[u8], from: usize) -> Option<(usize, usize, bool)> {
         let rest = self.text.get(from..)?;
         let mut seen = 0;
@@ -2575,6 +2603,7 @@ impl<'a> Scanner<'_, 'a> {
     }
 
     /// What `embed` makes of the value of an attribute.
+    #[inline(never)]
     fn how_value_is_printed(
         &self,
         element: &[u8],
@@ -2867,6 +2896,12 @@ impl<'a> Scanner<'_, 'a> {
             self.measured = Some(words);
             return Some(words);
         }
+        self.odd_words(start, plain)
+    }
+
+    /// `words` for a text whose first `plain` bytes are plain and which is not.
+    #[inline(never)]
+    fn odd_words(&mut self, start: usize, plain: usize) -> Option<Words> {
         // A text over several lines is of use in front of an end tag, or with a line break behind it. Most others are
         // long, with elements in them.
         if self.at(start + plain) == b'\n'
@@ -2952,6 +2987,19 @@ impl<'a> Scanner<'_, 'a> {
         if is_as_written {
             return self.out.source(words.start, words.end);
         }
+        self.fill_words(words, line_width, level, prefix, suffix);
+    }
+
+    /// `put_words` for words that are not written as they are printed.
+    #[inline(never)]
+    fn fill_words(
+        &mut self,
+        words: Words,
+        line_width: usize,
+        level: usize,
+        prefix: usize,
+        suffix: usize,
+    ) {
         let text = self.text;
         let indentation = level * self.settings.indent_width;
         let mut column = indentation + prefix;
@@ -3004,6 +3052,7 @@ impl<'a> Scanner<'_, 'a> {
 
     /// The comment that starts at `start`, if a line break follows it and nobody reads it: not `prettier-ignore`,
     /// `display: block`, `[if IE]` and so on.
+    #[inline(never)]
     fn comment(&mut self, start: usize) -> Item {
         let Some(rest) = (self.text.get(start..)).and_then(|it| it.strip_prefix(b"<!--")) else {
             const DOCTYPE: &[u8] = b"<!doctype html>";

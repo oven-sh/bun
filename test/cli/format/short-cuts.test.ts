@@ -2050,6 +2050,8 @@ describe.skipIf(!hasFlag)("HTML", () => {
     // What a comment starts with says whether somebody reads it.
     "<div>\n  <!-- position: x -->\n  <p   a>b</p>\n  <!-- dropstart -->\n  <span>c</span>\n  <!-- 感谢 -->\n  <!-- prettier-ignore -->\n  <p   a>b</p>\n  <!--\vprettier-ignore -->\n  <p   a>b</p>\n</div>\n",
     "<div>\n  <title>{{ a }} b</title>\n  <textarea>{{a}}</textarea>\n  <textarea>a &amp; b</textarea>\n</div>\n",
+    // A line break is forced behind a `<br>` that white space follows.
+    `<div>\n  <x-y a="b">checked?</x-y><br />\n  <x-y a="b">c</x-y> d<br>\n  e <b>f</b><br> g\n  <p>h<br>i <b>j</b><br /></p>\n  <p>${words}<br>\n  ${words} <b>k</b></p>\n</div>\n`,
     // A text over several lines in front of an element.
     `<p>\n  ${full}\n  tempor ${full}\n  tempor <b>a</b> ut\n</p>\n`,
   ];

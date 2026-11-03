@@ -1225,6 +1225,8 @@ const SocketHandlers = {
         if (!holdRejectedWrite(self, socket, res, callback)) failWrite(self, res, callback);
       } else if (res) {
         self._pendingData = self[kwriteCallback] = null;
+        self._unrefTimer();
+        self[kLastWriteQueueSize] = 0;
         unrefAfterDrain(self, socket);
         callback(null);
       } else {
@@ -2085,6 +2087,8 @@ const SocketHandlers2 = {
       } else if (res) {
         self[kBytesWritten] = socket.bytesWritten;
         self._pendingData = self[kwriteCallback] = null;
+        self._unrefTimer();
+        self[kLastWriteQueueSize] = 0;
         unrefAfterDrain(self, socket);
         callback(null);
       } else {
@@ -2596,8 +2600,7 @@ Socket.prototype.address = function address(this: $Node.Socket) {
 Socket.prototype._onTimeout = function (this: $Node.Socket) {
   const handle = this._handle;
   if (handle) {
-    // What the handle has left to send changed since the last look, so a write is making progress
-    // and the timeout is put off. A write that does not move times out.
+    // As in Node, a write that moved since the last look puts the timeout off. Its first look is at the size of the write, this one at 0.
     // https://github.com/nodejs/node/blob/v26.12.1/lib/net.js#L872-L887
     const writeQueueSize = getBufferedAmount(handle);
     if (writeQueueSize !== this[kLastWriteQueueSize]) {

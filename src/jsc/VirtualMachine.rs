@@ -311,7 +311,6 @@ pub struct VirtualMachine {
     pub preload_hash: u32,
     /// True if `load_preloads` kept the preload list for a reload that was deferred while it ran.
     pub preloads_kept_for_reload: bool,
-    pub has_patched_run_main: bool,
 
     pub transpiler_store: crate::runtime_transpiler_store::RuntimeTranspilerStore,
 
@@ -3378,6 +3377,7 @@ unsafe extern "C" {
         ctx: *mut c_void,
         callback: extern "C" fn(ctx: *mut c_void),
     );
+    safe fn NodeModuleModule__hasReplacedRunMain(global: &JSGlobalObject) -> bool;
     safe fn NodeModuleModule__callOverriddenRunMain(
         global: &JSGlobalObject,
         argv1: JSValue,
@@ -3723,6 +3723,14 @@ impl VirtualMachine {
         }
     }
 
+    /// The entry point is text, not a file: `--eval`, `--print`, stdin, a cron run, or a `data:` or `blob:` Worker.
+    fn entry_point_is_text(&self) -> bool {
+        self.module_loader.eval_source.is_some()
+            || self
+                .worker_ref()
+                .is_some_and(crate::web_worker::WebWorker::entry_point_is_text)
+    }
+
     /// `reloadEntryPoint(entry_path)` — set `main`, generate the synthetic
     /// `bun:main` entry, run preloads, and kick off module evaluation.
     /// `entry_path` is `None` for a built-in entry point with no entry module (`bun bake`).
@@ -3828,14 +3836,15 @@ impl VirtualMachine {
                     }
                 }
 
-                // Check if Module.runMain was patched.
-                if self.has_patched_run_main
-                    && matches!(
-                        self.main_entry_point,
-                        MainEntryPoint::File
-                            | MainEntryPoint::Compiled
-                            | MainEntryPoint::OutsideExecutable
-                    )
+                // Node.js starts a main script that is a file with `Module.runMain(main)`, which a preload can replace.
+                if matches!(
+                    self.main_entry_point,
+                    MainEntryPoint::File
+                        | MainEntryPoint::Compiled
+                        | MainEntryPoint::OutsideExecutable
+                ) && !self.entry_point_is_text()
+                    && self.script_allowed() // a Worker's preload can call `process.exit()`
+                    && NodeModuleModule__hasReplacedRunMain(self.global())
                 {
                     bun_core::hint::cold();
                     self.set_pending_internal_promise(None);
@@ -6519,7 +6528,6 @@ impl VirtualMachine {
         self.entry_point_result.cjs_set_value = false;
         self.entry_point_result.evaluated_as_cjs = false;
         self.set_pending_internal_promise(None);
-        self.has_patched_run_main = false;
         self.set_main(None);
         self.main_resolved_path = bun_core::String::EMPTY;
         self.unhandled_error_counter = 0;

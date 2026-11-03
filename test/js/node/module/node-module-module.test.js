@@ -98,9 +98,19 @@ describe.concurrent("node-module-module", () => {
     expect(ns.default.prototype).toBe(Module.prototype);
   });
 
+  test("Module.runMain is a data property", () => {
+    expect(Object.getOwnPropertyDescriptor(Module, "runMain")).toEqual({
+      value: Module.runMain,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+    expect(Module.runMain).toBeFunction();
+  });
+
   // jest-runtime builds the `Module` it hands to tests this way. Assigning a class's `prototype` throws, so this
   // needs `prototype` to be non-enumerable; and the copy goes through the inherited `wrapper` / `_resolveFilename`
-  // / `runMain` setters with their current values, which must not count as overriding them (an overridden wrapper
+  // setters with their current values, which must not count as overriding them (an overridden wrapper
   // re-wraps every CommonJS module from source and bypasses the --isolate SourceProvider cache).
   test("Module's enumerable statics can be copied onto a subclass without overriding the CJS wrapper", async () => {
     using dir = tempDir("module-statics-copy", {
@@ -1343,21 +1353,26 @@ console.log("survived", require("./late.js"));`,
       process.on("uncaughtException", error => console.log("uncaughtException: " + error.message));
       process.on("unhandledRejection", error => console.log("unhandledRejection: " + error.message));
     `;
-    async function run(preload, inWorker = false, main = `console.log("main ran");`) {
-      using dir = tempDir("module-run-main", {
-        "preload.cjs": preload,
-        "main.cjs": main,
-        "worker.mjs": `new Worker(import.meta.dir + "/main.cjs", { preload: [import.meta.dir + "/preload.cjs"] });`,
-      });
+    async function spawnIn(files, args, stdin) {
+      using dir = tempDir("module-run-main", files);
       await using proc = Bun.spawn({
-        cmd: inWorker ? [bunExe(), "./worker.mjs"] : [bunExe(), "--require", "./preload.cjs", "./main.cjs"],
+        cmd: [bunExe(), ...args],
         env: bunEnv,
         cwd: String(dir),
+        stdin,
         stderr: "pipe",
         stdout: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { stdout, stderr: normalizeBunSnapshot(stderr, dir), exitCode };
+    }
+    function run(preload, inWorker = false, main = `console.log("main ran");`, mainFile = "main.cjs") {
+      const files = {
+        "preload.cjs": preload,
+        [mainFile]: main,
+        "worker.mjs": `new Worker(import.meta.dir + "/${mainFile}", { preload: [import.meta.dir + "/preload.cjs"] });`,
+      };
+      return spawnIn(files, inWorker ? ["./worker.mjs"] : ["--require", "./preload.cjs", `./${mainFile}`]);
     }
 
     test.each([
@@ -1366,6 +1381,9 @@ console.log("survived", require("./late.js"));`,
       [`"a string"`, `"a string"`],
       [`Symbol("s")`, "Symbol(s)"],
       ["10n", "10"],
+      ["5", "5"],
+      ["null", "null"],
+      ["undefined", "undefined"],
     ])("to %s, which is not a function", async (value, described) => {
       expect(await run(`require("module").runMain = ${value};`)).toEqual({
         stdout: "",
@@ -1420,6 +1438,308 @@ console.log("survived", require("./late.js"));`,
       const expected = { stdout: `uncaughtException: ${message}\n`, stderr: "", exitCode: 0 };
       expect(await run(`${handlers} require("module").runMain = ${value};`)).toEqual(expected);
       expect(await run(`${handlers} require("module").runMain = ${value};`, true)).toEqual(expected);
+    });
+
+    const patch = `
+      const Module = require("node:module");
+      function patch() {
+        console.log("patch called");
+      }
+    `;
+    const data = `writable: true, enumerable: true, configurable: true`;
+
+    // The output of each row is what `node --require ./preload.cjs ./main.cjs` prints (v26.3.0).
+    test.each([
+      ["with an assignment", `Module.runMain = patch;`, "patch called\n"],
+      ["with Reflect.set", `Reflect.set(Module, "runMain", patch);`, "patch called\n"],
+      ["with Object.assign", `Object.assign(Module, { runMain: patch });`, "patch called\n"],
+      [
+        "with Object.defineProperty and a value",
+        `Object.defineProperty(Module, "runMain", { value: patch, ${data} });`,
+        "patch called\n",
+      ],
+      [
+        "with Reflect.defineProperty and a value",
+        `Reflect.defineProperty(Module, "runMain", { value: patch, ${data} });`,
+        "patch called\n",
+      ],
+      [
+        "with Object.defineProperties and a value",
+        `Object.defineProperties(Module, { runMain: { value: patch, ${data} } });`,
+        "patch called\n",
+      ],
+      [
+        "with Object.defineProperty and a getter",
+        `Object.defineProperty(Module, "runMain", { get: () => patch, enumerable: true, configurable: true });`,
+        "patch called\n",
+      ],
+      ["with delete and then an assignment", `delete Module.runMain; Module.runMain = patch;`, "patch called\n"],
+      [
+        "with delete and then a function on the prototype chain",
+        `delete Module.runMain; Object.getPrototypeOf(Module).runMain = patch;`,
+        "patch called\n",
+      ],
+      [
+        "with an assignment and then Object.defineProperty",
+        `Module.runMain = () => console.log("first patch called");
+         Object.defineProperty(Module, "runMain", { value: patch, ${data} });`,
+        "patch called\n",
+      ],
+      [
+        "and then restored with an assignment",
+        `const original = Module.runMain; Module.runMain = patch; Module.runMain = original;`,
+        "main ran\n",
+      ],
+      [
+        "and then restored with Object.defineProperty",
+        `const original = Module.runMain; Module.runMain = patch;
+         Object.defineProperty(Module, "runMain", { value: original, ${data} });`,
+        "main ran\n",
+      ],
+      [
+        "and then restored behind a getter",
+        `const original = Module.runMain; Module.runMain = patch;
+         Object.defineProperty(Module, "runMain", { get: () => original, enumerable: true, configurable: true });`,
+        "main ran\n",
+      ],
+      [
+        "to its own value, with Object.defineProperty and other attributes",
+        `Object.defineProperty(Module, "runMain", { writable: false, enumerable: false, configurable: false });`,
+        "main ran\n",
+      ],
+      ["on a subclass of Module", `class Sub extends Module {} Sub.runMain = patch;`, "main ran\n"],
+      ["on a frozen Module", `Object.freeze(Module); Module.runMain = patch;`, "main ran\n"],
+      ["with Reflect.set and another receiver", `Reflect.set(Module, "runMain", patch, {});`, "main ran\n"],
+    ])("%s", async (_, install, stdout) => {
+      const expected = { stdout, stderr: "", exitCode: 0 };
+      expect(await run(patch + install)).toEqual(expected);
+      expect(await run(patch + install, true)).toEqual(expected);
+    });
+
+    test("by the last of two preloads", async () => {
+      const files = {
+        "first.cjs": `require("node:module").runMain = () => console.log("first patch called");`,
+        "second.cjs": `${patch} Object.defineProperty(Module, "runMain", { value: patch, ${data} });`,
+        "main.cjs": `console.log("main ran");`,
+      };
+      expect(await spawnIn(files, ["--require", "./first.cjs", "--require", "./second.cjs", "./main.cjs"])).toEqual({
+        stdout: "patch called\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("with delete, which leaves no function", async () => {
+      expect(await run(`delete require("module").runMain;`)).toEqual({
+        stdout: "",
+        stderr: `TypeError: undefined is not a function\n\nBun v<bun-version>`,
+        exitCode: 1,
+      });
+    });
+
+    test("is called with Module as `this` and one argument", async () => {
+      const preload = `
+        const Module = require("node:module");
+        Module.runMain = function (...args) {
+          console.log(this === Module, args.length, typeof args[0]);
+        };
+      `;
+      const expected = { stdout: "true 1 string\n", stderr: "", exitCode: 0 };
+      expect(await run(preload)).toEqual(expected);
+      expect(await run(preload, true)).toEqual(expected);
+    });
+
+    test("to a getter, which is read once with Module as `this`", async () => {
+      const preload = `
+        const Module = require("node:module");
+        const original = Module.runMain;
+        Object.defineProperty(Module, "runMain", {
+          get() {
+            console.log("getter read", this === Module);
+            return original;
+          },
+        });
+      `;
+      const expected = { stdout: "getter read true\nmain ran\n", stderr: "", exitCode: 0 };
+      expect(await run(preload)).toEqual(expected);
+      expect(await run(preload, true)).toEqual(expected);
+    });
+
+    test("to a getter that throws, which is reported once", async () => {
+      const preload = `
+        Object.defineProperty(require("node:module"), "runMain", {
+          get() {
+            throw new RangeError("from the getter");
+          },
+        });
+      `;
+      const expected = { stdout: "uncaughtException: from the getter\n", stderr: "", exitCode: 0 };
+      expect(await run(handlers + preload)).toEqual(expected);
+      expect(await run(handlers + preload, true)).toEqual(expected);
+      const { stdout, stderr, exitCode } = await run(preload);
+      expect(stderr).toContain("RangeError: from the getter\n");
+      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+    });
+
+    test.each(["main.cjs", "main.mjs"])("to a wrapper of the original, which starts %s", async mainFile => {
+      const preload = `
+        const Module = require("node:module");
+        const original = Module.runMain;
+        Object.defineProperty(Module, "runMain", {
+          value(...args) {
+            console.log("patch called");
+            return original.apply(this, args);
+          },
+          ${data},
+        });
+      `;
+      const expected = { stdout: "patch called\nmain ran\n", stderr: "", exitCode: 0 };
+      expect(await run(preload, false, undefined, mainFile)).toEqual(expected);
+      expect(await run(preload, true, undefined, mainFile)).toEqual(expected);
+    });
+
+    test.each([
+      ["its arguments", `original.apply(this, args)`],
+      ["process.argv[1]", `original.call(this, process.argv[1])`],
+    ])("to a wrapper that calls the original with %s, which starts the main module", async (_, call) => {
+      const preload = `
+        const Module = require("node:module");
+        const original = Module.runMain;
+        Object.defineProperty(Module, "runMain", {
+          value(...args) {
+            console.log("patch called");
+            return ${call};
+          },
+          ${data},
+        });
+      `;
+      const expected = { stdout: "patch called\nmain ran true\n", stderr: "", exitCode: 0 };
+      expect(await run(preload, false, `console.log("main ran", require.main === module);`)).toEqual(expected);
+      expect(await run(preload, false, `console.log("main ran", import.meta.main);`, "main.mjs")).toEqual(expected);
+    });
+
+    // Node.js passes. Bun loses a load that the original starts late: https://github.com/oven-sh/bun/pull/45358
+    test.failing(
+      "to a wrapper that calls the original after an await, which reports what the main script throws",
+      async () => {
+        const preload = `
+          const Module = require("node:module");
+          const original = Module.runMain;
+          Object.defineProperty(Module, "runMain", {
+            async value(...args) {
+              await null;
+              return original.apply(this, args);
+            },
+            ${data},
+          });
+        `;
+        const { stdout, stderr, exitCode } = await run(preload, false, `throw new Error("from main");`);
+        expect(stderr).toContain("error: from main\n");
+        expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+      },
+    );
+
+    // Node.js reads Module.runMain in the tick of the last --require module. Bun first waits for every preload.
+    test.each([
+      [
+        "an --import preload with an assignment",
+        ["--import", "./preload.mjs"],
+        { "preload.mjs": `import Module from "node:module"; Module.runMain = () => console.log("patch called");` },
+      ],
+      [
+        "an --import preload with Object.defineProperty",
+        ["--import", "./preload.mjs"],
+        {
+          "preload.mjs": `import Module from "node:module";
+            Object.defineProperty(Module, "runMain", { value: () => console.log("patch called"), ${data} });`,
+        },
+      ],
+      [
+        "a preload in a later tick",
+        ["--require", "./preload.cjs"],
+        {
+          "preload.cjs": `${patch}
+            process.nextTick(() => Object.defineProperty(Module, "runMain", { value: patch, ${data} }));`,
+        },
+      ],
+    ])("by %s, where Node.js starts the main script", async (_, args, files) => {
+      expect(await spawnIn({ ...files, "main.cjs": `console.log("main ran");` }, [...args, "./main.cjs"])).toEqual({
+        stdout: "patch called\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // A Worker that is told to stop while its preloads run starts nothing, as in Node.js.
+    describe("is not called in a Worker", () => {
+      const main = { "main.cjs": `console.log("main ran");` };
+
+      test.each([
+        ["an assignment", `Module.runMain = patch;`],
+        ["Object.defineProperty and a value", `Object.defineProperty(Module, "runMain", { value: patch, ${data} });`],
+        [
+          "Object.defineProperty and a getter",
+          `Object.defineProperty(Module, "runMain", { get: () => (console.log("getter read"), patch) });`,
+        ],
+      ])("whose preload exits after %s", async (_, install) => {
+        const files = {
+          ...main,
+          "preload.cjs": `${patch} ${install} process.exit(7);`,
+          "worker.cjs": `
+            const { Worker } = require("node:worker_threads");
+            const worker = new Worker(__dirname + "/main.cjs", { preload: [__dirname + "/preload.cjs"] });
+            worker.on("exit", code => console.log("exit", code));
+          `,
+        };
+        expect(await spawnIn(files, ["./worker.cjs"])).toEqual({ stdout: "exit 7\n", stderr: "", exitCode: 0 });
+      });
+
+      test("that is terminated while its preload runs", async () => {
+        const files = {
+          ...main,
+          "preload.cjs": `${patch} Module.runMain = patch;
+            require("node:worker_threads").parentPort.postMessage("in the preload");
+            for (;;);`,
+          "worker.cjs": `
+            const { Worker } = require("node:worker_threads");
+            const worker = new Worker(__dirname + "/main.cjs", { preload: [__dirname + "/preload.cjs"] });
+            worker.on("message", () => worker.terminate());
+            worker.on("exit", code => console.log("exit", code));
+          `,
+        };
+        expect(await spawnIn(files, ["./worker.cjs"])).toEqual({ stdout: "exit 1\n", stderr: "", exitCode: 0 });
+      });
+    });
+
+    // Node.js starts only a main script that is a file with Module.runMain.
+    describe("is not called for text", () => {
+      const files = {
+        "preload.cjs": `${patch} Module.runMain = patch;`,
+        "job.cjs": `module.exports = { scheduled: () => console.log("text ran") };`,
+      };
+      const expected = { stdout: "text ran\n", stderr: "", exitCode: 0 };
+
+      test.each([
+        ["--eval", ["--eval", `console.log("text ran")`], undefined],
+        ["--print", ["--print", `"text ran"`], undefined],
+        ["stdin", ["-"], Buffer.from(`console.log("text ran")`)],
+        // Bun writes the script of a cron run, which imports the file.
+        ["a cron run", ["--cron-title=job", "--cron-period=* * * * *", "./job.cjs"], undefined],
+      ])("of %s", async (_, args, stdin) => {
+        expect(await spawnIn(files, ["--require", "./preload.cjs", ...args], stdin)).toEqual(expected);
+      });
+
+      test.each([
+        ["a data: URL", `new Worker("data:text/javascript,console.log('text ran')", options);`],
+        ["a blob: URL", `new Worker(URL.createObjectURL(new Blob(["console.log('text ran')"])), options);`],
+        [
+          "eval: true",
+          `new (require("node:worker_threads").Worker)("console.log('text ran')", { ...options, eval: true });`,
+        ],
+      ])("of a Worker with %s", async (_, start) => {
+        const worker = `const options = { preload: [__dirname + "/preload.cjs"] }; ${start}`;
+        expect(await spawnIn({ ...files, "worker.cjs": worker }, ["./worker.cjs"])).toEqual(expected);
+      });
     });
   });
   test.each(["no args", "--access-early"])("children, %s", async arg => {

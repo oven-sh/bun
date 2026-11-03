@@ -1249,7 +1249,7 @@ impl<'t> Reader<'t> {
             experimental_ternaries: _,
             sort_imports: _,
             jsdoc: _,
-            // `jsx` asks. Without a formatter it's printed as it's written, too.
+            // `jsx` asks. There's no `Reader` for MDX without a formatter for JavaScript.
             embedded_language_formatting: _,
             format_javascript: _,
             // There's no `Reader` with another value.

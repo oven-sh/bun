@@ -71,6 +71,12 @@ pub struct Scratch {
 struct Guests {
     json: crate::json::Scratch,
     yaml: crate::yaml::Scratch,
+    /// Made when the first of them comes: a text in a template or in a code block has memory of its own.
+    others: Option<Box<OtherGuests>>,
+}
+
+#[derive(Default)]
+struct OtherGuests {
     css: crate::css::Scratch,
     graphql: crate::graphql::Scratch,
     handlebars: crate::handlebars::Scratch,
@@ -390,15 +396,21 @@ fn format_embedded(
     if let Some(parser) = crate::json::Parser::from_name(parser) {
         crate::json::format(code, parser, options, &mut guests.json, out).is_ok()
     } else if let Some(parser) = crate::css::Parser::from_name(parser) {
-        crate::css::format(code, parser, options, &mut guests.css, out).is_ok()
+        let others = guests.others.get_or_insert_default();
+        crate::css::format(code, parser, options, &mut others.css, out).is_ok()
     } else if let Some(parser) = crate::html::Parser::from_name(parser) {
+        let others = guests.others.get_or_insert_default();
         options.embedded_html
-            && crate::html::format(b"", code, parser, options, &mut guests.html, out).is_ok()
+            && crate::html::format(b"", code, parser, options, &mut others.html, out).is_ok()
     } else {
         match parser {
-            b"graphql" => crate::graphql::format(code, options, &mut guests.graphql, out).is_ok(),
+            b"graphql" => {
+                let others = guests.others.get_or_insert_default();
+                crate::graphql::format(code, options, &mut others.graphql, out).is_ok()
+            }
             b"glimmer" => {
-                crate::handlebars::format(code, options, &mut guests.handlebars, out).is_ok()
+                let others = guests.others.get_or_insert_default();
+                crate::handlebars::format(code, options, &mut others.handlebars, out).is_ok()
             }
             b"yaml" => crate::yaml::format(code, options, &mut guests.yaml, out).is_ok(),
             b"svelte" => {
@@ -673,8 +685,11 @@ fn with_printer<R>(
     } else {
         parse::Syntax::Markdown
     };
-    let mut memory =
-        as_written.filter(|_| blanked.is_none() && has_short_cuts(text, options, mode));
+    // The `Reader` writes JSX as JavaScript formats it. Without a formatter for JavaScript it stays as it is.
+    let has_javascript = format_block.is_some() || options.format_javascript.is_some();
+    let mut memory = as_written.filter(|_| {
+        blanked.is_none() && has_short_cuts(text, options, mode) && (has_javascript || !mode.is_mdx)
+    });
     let root = loop {
         let reader = memory.as_deref_mut().map(|memory| {
             RefCell::new(as_written::Reader::new(

@@ -67,6 +67,10 @@ impl<'a> Line<'_, 'a> {
                     call.callee()
                 }
                 ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
+                // What's after `<T>` is one of several variants, which a line break doesn't leave.
+                ExprKind::AsConst(_) | ExprKind::As { .. } if e.is_angle_bracket_assertion() => {
+                    return false;
+                }
                 ExprKind::NonNull(inner)
                 | ExprKind::Await(inner)
                 | ExprKind::Spread(inner)

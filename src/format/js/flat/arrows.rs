@@ -23,6 +23,16 @@ impl<'a> Line<'_, 'a> {
         }
     }
 
+    /// The parameter of an arrow function that's written without parentheses.
+    pub(super) fn lone_parameter(&mut self, func: Func<'a>) -> Written {
+        let parameter = func.params().first().ok_or(Refused)?;
+        // Flow's `readonly a`
+        if !parameter.modifiers().is_empty() {
+            return Err(Refused);
+        }
+        self.pattern(parameter.pat())
+    }
+
     /// The parameters and the return type of a function expression or an arrow function, and the `=>`.
     fn signature_on_one_line(&mut self, func: Func<'a>) -> Written {
         if !func.is_arrow() {
@@ -32,7 +42,7 @@ impl<'a> Line<'_, 'a> {
             return Err(Refused);
         }
         match can_avoid_parentheses(func, self.f) {
-            true => self.pattern(func.params().first().ok_or(Refused)?.pat())?,
+            true => self.lone_parameter(func)?,
             false => self.parameters(func)?,
         }
         self.type_annotation(func.return_type())?;

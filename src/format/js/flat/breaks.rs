@@ -243,7 +243,10 @@ impl<'a> Line<'_, 'a> {
     pub(super) fn outdent(&mut self) -> Written {
         let (limit, width) = (self.limit, self.width);
         let taken = self.taken + (self.len - self.start);
-        self.end_text(Some(0))?;
+        // What follows on this line can be written by the caller, which the printer has to know where the column is a
+        // guess.
+        let after = u32::try_from(self.tail).ok().filter(|it| *it <= 7);
+        self.end_text(Some(after.ok_or(Refused)?))?;
         self.parts.push(Part::Outdent);
         self.room += self.indent_width;
         // The rest of this line is as far to the right as before.

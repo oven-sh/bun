@@ -1105,7 +1105,7 @@ impl<'a> Line<'_, 'a> {
             return Err(Refused);
         }
         match can_avoid_parentheses(func, self.f) {
-            true => self.pattern(func.params().first().ok_or(Refused)?.pat())?,
+            true => self.lone_parameter(func)?,
             false => self.parameters(func)?,
         }
         self.type_annotation(func.return_type())?;

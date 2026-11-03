@@ -1558,6 +1558,28 @@ describe.skipIf(!hasFlag)("what breaks whether it fits or not, and what only loo
       var { i }, j;
       let { k };
     `,
+    // Where the column is a guess, the printer has to know of the \`;\` or the \`,\` after a chain that always breaks.
+    "chains.ts": `
+      x = a || class d { a = l().p().t(b + c); };
+      a, {
+       a: l().p().t(b + c) };
+      x = a ? class d { a = l().p().t(b, c + e); } : f;
+    `,
+    // A line break after \`<T>\` doesn't break what's around it.
+    "assertions-in-bodies.ts": `
+      if (a) b = { a: <T>function () { c; } };
+      if (a) b = [<T>function () { c; }];
+      if (a) b = { a: <T>e([], function () { c; }) };
+      if (a) b = { a: function () { c; } as T };
+    `,
+    "cases.js": `
+      switch (a) { case bbbbbbbb + cccccccc: {/* prettier-ignore */} }
+      switch (a) { case bbbbbbbb + cccccccc: {/* c */} }
+      switch (a) { case bbbbbbbb + cccccccc: {} }
+      switch (a) { case bbbbbbbb + cccccccc: { d(); } }
+    `,
+    "html-comments.js": "try { a; } finally <!--\n{ b; }\n",
+    "after-line-comment.js": "a = { /* c */ // d\n  b: 'c'// c\n,/** c */ /**\n */\n};\n",
     // What's after \`<T>\` is printed flat first.
     "assertions.ts": `
       x = <a>function () {
@@ -1595,10 +1617,18 @@ describe.skipIf(!hasFlag)("what breaks whether it fits or not, and what only loo
     `,
   };
 
-  test.concurrent.each([5, 8, 10, 12, 18, 20, 24, 28, 40, 80])("--print-width=%d", async width => {
+  test.concurrent.each([5, 8, 10, 12, 15, 18, 20, 24, 28, 40, 80])("--print-width=%d", async width => {
     const [withShortCuts, without] = await difference(files, [`--print-width=${width}`]);
     expect(withShortCuts).toEqual(without);
     expect(without.stderr).toBe("");
+    expect(without.exitCode).toBe(0);
+  });
+
+  test("a parameter with a modifier and without parentheses", async () => {
+    const [withShortCuts, without] = await difference({ "a.js": "// @flow\nx = (readonly a) => b;\n" }, [
+      "--arrow-parens=avoid",
+    ]);
+    expect(withShortCuts).toEqual(without);
     expect(without.exitCode).toBe(0);
   });
 });

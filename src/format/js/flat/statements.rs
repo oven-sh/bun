@@ -13,7 +13,13 @@ pub(crate) fn write_case_head<'a>(case: Case<'a>, f: &mut Formatter<'a>) -> bool
     let first = statements.next();
     // The `{` of a block that's the only statement is on this line.
     let after = match first {
-        Some(first) if first.tag() == StmtTag::Block && statements.next().is_none() => 2,
+        Some(first) if first.tag() == StmtTag::Block && statements.next().is_none() => {
+            // All of a block with nothing but a comment in it can be on this line.
+            if first.as_block().is_none_or(|it| it.is_empty()) {
+                return false;
+            }
+            2
+        }
         _ => 0,
     };
     let end = first.map_or_else(|| case.span().end, |first| first.span().start);

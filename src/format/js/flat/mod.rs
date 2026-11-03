@@ -102,7 +102,7 @@ pub(crate) struct ShortCuts {
     is_before_script: bool,
     /// The file has a block comment with something before or after it on its line.
     has_block_comment_in_line: bool,
-    /// The file has a comment that says to ignore something.
+    /// The file has a comment that says to ignore something, or one that starts with `<!--` or `-->`.
     has_ignore_comment: bool,
     is_flow: bool,
     is_typescript: bool,
@@ -194,8 +194,10 @@ impl ShortCuts {
             has_block_comment_in_line: file.comments_by_id().any(|comment| {
                 comment.is_block() && !is_alone_on_its_lines(file.text(), comment.span())
             }),
-            has_ignore_comment: (file.comments_by_id())
-                .any(|comment| comment.is_ignore_comment(options.flavor)),
+            has_ignore_comment: file.comments_by_id().any(|comment| {
+                comment.is_ignore_comment(options.flavor)
+                    || file.text().get(comment.span().start as usize) != Some(&b'/')
+            }),
             is_flow: file.is_flow(),
             is_typescript: !file.is_flow() && !file.is_javascript(),
             has_semicolons: options.semicolons.is_always(),
@@ -449,6 +451,11 @@ fn is_before_block_comment(source: &[u8], end: u32) -> bool {
             [b'\n', tail @ ..] => {
                 starts_line = true;
                 tail
+            }
+            // `a // b⏎, /* c */`
+            [b'/', b'/', tail @ ..] => {
+                let end = strings::index_of_char_usize(tail, b'\n').unwrap_or(tail.len());
+                tail.get(end..).unwrap_or_default()
             }
             _ => return !starts_line && rest.starts_with(b"/*"),
         };

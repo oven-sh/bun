@@ -1150,44 +1150,104 @@ test("the drain of queued send()s leaves none of them in the table of their fram
   });
 });
 
-// `bun test --isolate=modules` runs each test file inside a Bun.ModuleGraph, so every socket of a test file is made
-// with a frame of a graph in its async context. node:dgram does not keep such a context (it would keep the graph), so
-// there 'message' still reads the store of bind(). Node.js has no such mode: it reads the store of createSocket().
+// `bun test --isolate=modules` runs each test file inside a Bun.ModuleGraph, so one graph makes and opens every socket
+// of a test file. node:dgram keeps the async context of createSocket() for a bind by that graph: a test file reads
+// the same stores in every mode, whichever call opens the socket. Node.js v26.3.0 reads these stores.
 const storesInATestFile = `
+import { exposedInternals } from "bun:internal-for-testing";
 import { test } from "bun:test";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dgram from "node:dgram";
 import { once } from "node:events";
 
-test("what 'message' reads", async () => {
-  const storage = new AsyncLocalStorage();
-  const socket = storage.run("createSocket()", () => dgram.createSocket("udp4"));
-  const sender = dgram.createSocket("udp4");
+const storage = new AsyncLocalStorage();
+const create = () => dgram.createSocket("udp4");
+const bind = async socket => {
+  socket.bind(0, "127.0.0.1");
+  await once(socket, "listening");
+};
+const bindDescriptor = async socket => {
+  const wrap = exposedInternals["internal/dgram"]._createSocketHandle("127.0.0.1", 0, "udp4");
+  const listening = once(socket, "listening");
+  socket.bind({ fd: wrap.fd });
+  await listening;
+};
+
+// The store that 'message' reads, for a socket that make() makes and open() opens, each inside a store of its own.
+async function message(make, open) {
+  const socket = storage.run("createSocket()", make);
+  const sender = create();
   try {
-    storage.run("bind()", () => socket.bind(0, "127.0.0.1"));
-    await once(socket, "listening");
-    const message = Promise.withResolvers();
-    socket.on("message", () => message.resolve(String(storage.getStore())));
-    socket.on("error", message.reject);
-    sender.on("error", message.reject);
+    await storage.run("the call that opens", () => open(socket));
+    const read = Promise.withResolvers();
+    socket.on("message", () => read.resolve(String(storage.getStore())));
+    socket.on("error", read.reject);
+    sender.on("error", read.reject);
     sender.send("x", socket.address().port, "127.0.0.1");
-    console.log(
-      JSON.stringify({
-        "inside a Bun.ModuleGraph": Bun.ModuleGraph.current !== undefined,
-        "'message' reads the store of": await message.promise,
-      }),
-    );
+    return await read.promise;
   } finally {
     socket.close();
     sender.close();
   }
+}
+
+// The store that 'error' reads when nobody holds the port that a connected socket sends to. connect() binds.
+async function receiveError() {
+  const socket = storage.run("createSocket()", create);
+  const target = create();
+  try {
+    const errored = Promise.withResolvers();
+    socket.on("error", error => errored.resolve(storage.getStore() + " (" + error.message + ")"));
+    await bind(target);
+    await storage.run("the call that opens", () =>
+      new Promise((resolve, reject) =>
+        socket.connect(target.address().port, "127.0.0.1", error => (error ? reject(error) : resolve())),
+      ),
+    );
+    // Closed after that bind, so the port of the target cannot become the port of the socket.
+    await new Promise(resolve => target.close(resolve));
+    let stop = false;
+    const pump = (async () => {
+      while (!stop) {
+        try {
+          socket.send("x");
+        } catch {}
+        await Bun.sleep(10);
+      }
+    })();
+    try {
+      return await errored.promise;
+    } finally {
+      stop = true;
+      await pump;
+    }
+  } finally {
+    socket.close();
+  }
+}
+
+test("what a socket of this file reads", async () => {
+  const read = {
+    "inside a Bun.ModuleGraph": Bun.ModuleGraph.current !== undefined,
+    "'message' after bind()": await message(create, bind),
+    "'message' after a disable() that follows createSocket()": await message(() => {
+      const socket = create();
+      storage.disable();
+      return socket;
+    }, bind),
+  };
+  if (process.platform !== "win32") {
+    read["'message' after bind({ fd })"] = await message(create, bindDescriptor);
+    read["'error' after a connect() that binds"] = await receiveError();
+  }
+  console.log(JSON.stringify(read));
 });
 `;
 test.concurrent.each([
-  { mode: "no flag", flags: [] as string[], inGraph: false, reads: "createSocket()" },
-  { mode: "--isolate", flags: ["--isolate"], inGraph: false, reads: "createSocket()" },
-  { mode: "--isolate=modules", flags: ["--isolate=modules"], inGraph: true, reads: "bind()" },
-])("bun test with $mode: 'message' reads the store of $reads", async ({ flags, inGraph, reads }) => {
+  { mode: "no flag", flags: [] as string[], inGraph: false },
+  { mode: "--isolate", flags: ["--isolate"], inGraph: false },
+  { mode: "--isolate=modules", flags: ["--isolate=modules"], inGraph: true },
+])("bun test with $mode: a socket of a test file reads the store of createSocket()", async ({ flags, inGraph }) => {
   using dir = tempDir("dgram-test-modes", { "stores.test.js": storesInATestFile });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", ...flags, "./stores.test.js"],
@@ -1199,10 +1259,90 @@ test.concurrent.each([
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const line = stdout.split("\n").find(each => each.startsWith("{"));
   expect({ read: line === undefined ? stderr : JSON.parse(line), exitCode }).toEqual({
-    read: { "inside a Bun.ModuleGraph": inGraph, "'message' reads the store of": reads },
+    read: {
+      "inside a Bun.ModuleGraph": inGraph,
+      "'message' after bind()": "createSocket()",
+      "'message' after a disable() that follows createSocket()": "undefined",
+      // bind({ fd }) is not on Windows, and Windows reports no refused datagram.
+      ...(isWindows
+        ? {}
+        : {
+            "'message' after bind({ fd })": "createSocket()",
+            "'error' after a connect() that binds": "createSocket() (recvmsg ECONNREFUSED)",
+          }),
+    },
     exitCode: 0,
   });
 });
+
+// The six layouts that AsyncLocalStorage-tracking.test.ts runs under Bun and Node.js, as the script of one
+// Bun.ModuleGraph: bind(), a send() that binds, a connect() that binds, and a bind() after one that failed.
+test("inside a Bun.ModuleGraph, 'message' reads the store of createSocket() whichever call opens the socket", async () => {
+  const layouts = path.join(
+    import.meta.dir,
+    "../../node/async_hooks/async-context/async-context-dgram-createSocket.js",
+  );
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", "await new Bun.ModuleGraph().import(process.argv[1]);", layouts],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+});
+
+// bun test runs a mock.module() factory in an async context that says which factory it is. An import() that the
+// factory causes later is traced back to it through that context, also from the 'message' listener of a socket that
+// the factory made: the context that node:dgram keeps for the socket has the frame of the factory in it.
+test.concurrent.each([
+  { mode: "no flag", flags: [] as string[] },
+  { mode: "--isolate=modules", flags: ["--isolate=modules"] },
+])(
+  "bun test with $mode: an import() in 'message' of a socket that a running mock.module() factory made settles",
+  async ({ flags }) => {
+    using dir = tempDir("dgram-mock-factory", {
+      "factory.test.ts": `
+        import { expect, mock, test } from "bun:test";
+        import dgram from "node:dgram";
+        import path from "node:path";
+        import { importOnMessage } from "./helper";
+
+        mock.module("./dep", async () => {
+          const socket = dgram.createSocket("udp4");
+          await new Promise(resolve => socket.bind(0, "127.0.0.1", () => resolve()));
+          const imported = importOnMessage(socket, path.join(import.meta.dir, "uses-dep.ts"));
+          const client = dgram.createSocket("udp4");
+          client.send("x", socket.address().port, "127.0.0.1", () => client.close());
+          const usesDep = await imported;
+          socket.close();
+          return { default: "mock over " + usesDep.x };
+        });
+
+        test("the factory gets the module that it mocks", async () => {
+          expect((await import("./dep")).default).toBe("mock over original");
+        });
+      `,
+      // Not the file of the factory: only the async context says that this import() is the factory's.
+      "helper.ts": `
+        export function importOnMessage(socket, specifier) {
+          return new Promise((resolve, reject) => socket.on("message", () => import(specifier).then(resolve, reject)));
+        }
+      `,
+      "dep.ts": `export default "original";`,
+      "uses-dep.ts": `import dep from "./dep"; export const x = dep;`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...flags, "./factory.test.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ passed: /^ 1 pass$/m.test(stderr), exitCode }).toEqual({ passed: true, exitCode: 0 });
+  },
+);
 
 // Reserves an ephemeral UDP port and frees it, so datagrams sent there get
 // ICMP port-unreachable replies on loopback.

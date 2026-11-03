@@ -2422,6 +2422,13 @@ describe("Handlebars", () => {
     "{{true}}{{false}}{{null}}{{undefined}}{{1}}{{\"a\"}}{{'a'}}{{\"...attributes\"}}\n{{true a}}\n{{1 a}}",
     "{{a \"it's\"}}{{a 'say \"b\"'}}{{a \"\\\"\"}}{{a \"b\\\\\"}}{{a \"{{\"}}{{a \"}}\"}}{{a \"é\"}}{{a \"\n\"}}",
     "{{a 0}}{{a 00}}{{a 1.5}}{{a -1}}{{a 123456789012345}}{{a 1234567890123456}}",
+    "{{a -0}}{{a -00}}{{a 0.0}}{{a -0.5}}{{a 1.50}}{{a 10.25}}{{a 0.000001}}{{a 0.0000001}}{{-1}}{{0.5}}{{a b=-1.5}}",
+    "{{a 123456789.123456}}{{a 1234567890.123456}}{{a 0.12345678901234}}{{a 0.123456789012345}}",
+    "{{a 1.}}",
+    "{{a .5}}",
+    "{{a 1.5.2}}",
+    "{{a 1-2}}",
+    "{{a -}}",
     "{{a.true}}\n{{true.a}}\n{{a.this}}\n{{@this}}\n{{a.else}}\n{{elsewhere}}\n{{a/b}}\n{{../a}}\n{{a.[b]}}\n{{[a]}}\n{{a.1}}\n{{a.#b}}\n{{é}}",
     "{{a b = c}}\n{{a b= c}}\n{{a b=c d}}\n{{a as |b|}}\n{{a (b as |c|)}}\n{{(a) b}}\n{{(a).b}}\n{{a (b).c}}",
     "{{&a}}\n{{>a}}\n{{*a}}\n{{^}}\n{{a}}}\n{{{a}}\n{{{{a}}}} {{{{/a}}}}",
@@ -2470,6 +2477,17 @@ describe("Handlebars", () => {
     // A component is known to be empty before the white space in it counts as a line break.
     " }<Foo::Bar>\n</Foo::Bar\n>",
     ' (<Foo::Bar k="" as |f|>\n</Foo::Bar\n>',
+    // A start tag or the head of a block that isn't certain goes the long way without what is in the element or block.
+    '<div title="a\nb">\n  <p   c>d</p>\n  {{e   f}}\n</div>',
+    "{{#if (eq a.[b] 1)}}\n  <p   c>d</p>\n{{else}}\n  {{e   f}}\n{{/if}}",
+    '<div>\n  x<div title="a\nb" class="some classes that take some room on the line" id="and-some-more-of-it">\n    <p   c>d</p>\n  </div>\n</div>',
+    '<div title="a\nb"> <p   c>d</p>\n</div>\n<div title="a\nb"><p   c>d</p>\n</div>\n<div title="a\nb">\n</div>',
+    '<Foo title="a\nb">\n</Foo>\n<Foo title="a\nb">\n\n  c\n</Foo>\n<img title="a\nb">\n<Foo title="a\nb" />\n',
+    "{{#if a.[b]}}\n{{/if}}\n{{#if a.[b]}}\n{{else}}\n  c\n{{/if}}\n{{#if a.[b]}} c\n{{/if}}\n{{#a.[b] c}}\n  d\n{{/a.[b]}}",
+    '<div title="a\\">\n  <p   c>d</p>\n</div>\n<div title="\\{{a}}">\n  <p   c>d</p>\n  \\\\{{e}}\n</div>',
+    '<div title="a\nb>\n  <p   c>d</p>\n</div>',
+    '<pre title="a\nb">\n  c\n</pre>\n<div title="a\nb">\n\f  c\n</div>',
+    "{{#if a}}\n  b\n{{else if c.[d]}}\n  e\n{{/if}}",
     // Comments.
     "{{! a }}{{!a}}{{!}}{{! }}{{~! a ~}}{{!-- a --}}{{!-- a }} --}}{{!----}}{{!--}}{{!---}}{{!- a -}}{{! a --}}{{!-- a ~--}}{{! a~ }}",
     "{{! a\n   b }}c\n<b>{{! a\n   b }}</b>\n{{!-- a\n   b --}} {{c d}}",
@@ -2508,6 +2526,9 @@ describe("Handlebars", () => {
     // Widths.
     "日本語の文章 日本語の文章 日本語の文章 日本語の文章 日本語の文章 日本語の文章 日本語の文章 日本語の文章",
     "<p>e\u0301e\u0301e\u0301 👍👍👍 {{a}} é</p>",
+    '<a title="日本語の文章" class="日本語 の文章" data-b=\'é\' {{c "日本語の文章" d="é"}}>{{e "日本語の文章 日本語の文章" f=\'é\'}}</a>',
+    '<a title="e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301" b="c">{{d "👍👍👍👍👍👍👍👍👍👍" "it\u2019s" "a\u00a0b" "\u2028"}}</a>',
+    '<a title="a\u007fb">{{c "d\u007fe"}}</a>\n<a title="a\u0001b"></a>\n<a title="a\tb"></a>',
     "a\u0001b\n{{c}}",
     "a\u0000b",
     // What loses text is printed as it is.

@@ -271,6 +271,47 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Prints the start tag of the element, or the `{{#a}}` of the block, that's all there is in `template` and that has
+    /// nothing in it. Returns false if `template` is something else.
+    pub(crate) fn head(&mut self, template: NodeId) -> bool {
+        let Kind::Template { body } = self.tree.kind(template) else {
+            return false;
+        };
+        let &[only] = self.list(body) else {
+            return false;
+        };
+        let node = self.tree.node(only);
+        match node.kind {
+            _ if node.is_verbatim => false,
+            Kind::Element {
+                tag,
+                attributes,
+                block_params,
+                children,
+                is_self_closing: false,
+            } if children.is_empty() => {
+                self.starting_tag(self.text(tag), self.list(attributes), block_params, false);
+                true
+            }
+            Kind::BlockStatement {
+                call,
+                program,
+                inverse: NOTHING,
+                strip,
+            } => {
+                let (body, block_params) = self.body_of(program);
+                if !body.is_empty() {
+                    return false;
+                }
+                self.start_group();
+                self.open_block(call, block_params, strip);
+                self.out.end_group();
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// `path.map(print, "body")` or `"children"`. `outer` is set if `nodes` is the `{{else}}` part of that block.
     fn children(&mut self, nodes: &'a [NodeId], parent: Parent, outer: Option<(Call, u8)>) {
         if !self.stack.has_room() {
@@ -449,7 +490,21 @@ impl<'a> Printer<'a> {
         if !self.is_white_space_sensitive && follows_element {
             self.out.line(Line::Soft);
         }
-        // `printStartingTag`
+        self.starting_tag(tag, attributes, block_params, is_void);
+        if is_void {
+            return;
+        }
+        self.rest_of_element(tag, attributes, children);
+    }
+
+    /// `printStartingTag`
+    fn starting_tag(
+        &mut self,
+        tag: &[u8],
+        attributes: &[NodeId],
+        block_params: Range,
+        is_void: bool,
+    ) {
         self.start_group();
         self.token("<");
         self.out.text(tag);
@@ -475,10 +530,10 @@ impl<'a> Printer<'a> {
         }
         self.out.end_if_break();
         self.out.end_group();
-        if is_void {
-            return;
-        }
+    }
 
+    /// The children and the end tag.
+    fn rest_of_element(&mut self, tag: &[u8], attributes: &[NodeId], children: &'a [NodeId]) {
         // Prettier fills the text of `<script>` and `<textarea>` like any other text, which joins the lines.
         let is_raw_text = match tag == b"style" {
             true => self.has_significant_mustache_in_style(children),
@@ -911,6 +966,31 @@ impl<'a> Printer<'a> {
         self.token(if strips { "~}}" } else { "}}" });
     }
 
+    /// `printOpenBlock`, without the group around it.
+    fn open_block(&mut self, call: Call, block_params: Range, strip: u8) {
+        let has_params = !call.params.is_empty() || !call.pairs.is_empty();
+        self.open_mustache(strip & ast::OPEN_OPEN != 0, "#");
+        self.expression(call.path, false);
+        if has_params || !block_params.is_empty() {
+            self.start_indent();
+            self.out.line(Line::Space);
+            if has_params {
+                self.start_group();
+                self.params(call, false);
+                self.out.end_group();
+            }
+            if !block_params.is_empty() {
+                if has_params {
+                    self.out.line(Line::Space);
+                }
+                self.block_params(block_params);
+            }
+            self.out.end_indent();
+        }
+        self.out.line(Line::Soft);
+        self.close_mustache(strip & ast::OPEN_CLOSE != 0);
+    }
+
     /// If `outer_strip` is set, the block is printed as the `{{else if ..}}` of an outer block with that `strip`.
     fn block_statement(&mut self, node: Node, outer_strip: Option<u8>) {
         let Kind::BlockStatement {
@@ -923,7 +1003,6 @@ impl<'a> Printer<'a> {
             return;
         };
         let (body, block_params) = self.body_of(program);
-        let has_params = !call.params.is_empty() || !call.pairs.is_empty();
         let is_ignoring_white_space = !self.is_white_space_sensitive;
 
         self.start_group();
@@ -946,29 +1025,7 @@ impl<'a> Printer<'a> {
                 self.out.line(Line::Soft);
                 self.close_mustache(outer & ast::INVERSE_CLOSE != 0);
             }
-            // `printOpenBlock`
-            None => {
-                self.open_mustache(strip & ast::OPEN_OPEN != 0, "#");
-                self.expression(call.path, false);
-                if has_params || !block_params.is_empty() {
-                    self.start_indent();
-                    self.out.line(Line::Space);
-                    if has_params {
-                        self.start_group();
-                        self.params(call, false);
-                        self.out.end_group();
-                    }
-                    if !block_params.is_empty() {
-                        if has_params {
-                            self.out.line(Line::Space);
-                        }
-                        self.block_params(block_params);
-                    }
-                    self.out.end_indent();
-                }
-                self.out.line(Line::Soft);
-                self.close_mustache(strip & ast::OPEN_CLOSE != 0);
-            }
+            None => self.open_block(call, block_params, strip),
         }
         self.out.end_group();
 

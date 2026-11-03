@@ -7569,6 +7569,65 @@ try {
     expect(slowdown(odd, plain)).toBeLessThan(6);
   }, 120_000);
 
+  // What the short cut for Handlebars refuses goes the long way by itself, or together with what is around it. Neither
+  // the search for its end nor an attempt to write something on one line is repeated for each level or each repetition.
+  test("Handlebars takes linear time where parts of a template go the long way", async () => {
+    const count = isDebug || isASAN ? 2_000 : 40_000;
+    const deep = 100;
+    // Each row is a prefix, the repeated unit and a suffix.
+    const shapes: [string, string, string][] = [
+      ["<a>\n".repeat(deep), "<b>c</b>\n", "\\{{x}}" + "</a>".repeat(deep)],
+      ["<a>\n".repeat(deep), "<b>c</b>\n", "<pre></pre>" + "</a>".repeat(deep)],
+      ["{{#a}}\n".repeat(deep), "<b>c</b>\n", "\\{{x}}" + "{{/a}}".repeat(deep)],
+      ["<a>\n".repeat(deep), "b ", "\\{{x}}" + "</a>".repeat(deep)],
+      ["\\{{a}} ", "<b></b> ", "\\\\{{c}}"],
+      ["\\{{a}}\n", "<b></b>\n", "\\\\{{c}}"],
+      ['<a b="\\{{"></a>\n', "<b></b>\n", "\\\\{{c}}"],
+      ["", "{{! prettier-ignore }}\n<a   b></a>\n", ""],
+      ["", "{{! prettier-ignore }}\n", ""],
+      ["", "{{! prettier-ignore }} ", ""],
+      ["", "<pre>a</pre>\n", ""],
+      ["", "{{a.[b]}}\n", ""],
+      ["", '<a title="b\nc">\nd\n</a>\n', ""],
+      ["", "{{#a b.[c]}}\nd\n{{/a}}\n", ""],
+      ["<p>", "<a>b</a> ", "</p>"],
+      ["<p> ", "<a>b</a>", "</p>"],
+      ["<a> ".repeat(deep), "b ", "</a>".repeat(deep)],
+      ["<a> ".repeat(deep), "<b>c</b>", "\n" + "</a>".repeat(deep)],
+      ["", "<!-- a\n b -->\n", ""],
+      ["", "<a>\n", ""],
+      ["", "{{#a}}\n", ""],
+      ["", "<a>\n", "</a>".repeat(count)],
+      ["", '<a b="c\nd">\n', ""],
+      ["", '<a class="b {{c}}\n', ""],
+      ['<a class="', "b {{c d}} ", '"></a>'],
+      ["<a\n", "b={{c d}}\n", "></a>"],
+      ["{{a ", "(b c) ", "}}"],
+      ["{{a " + "(b ".repeat(deep), "c ", ")".repeat(deep) + "}}"],
+      ["", "{{a (b\n", ""],
+      ["", "a\n\f\n", ""],
+      ["", "<Foo>\n", "</Foo>".repeat(count)],
+      ["", "{{#a}} ", "{{/a}}".repeat(count)],
+    ];
+    const texts = shapes.map(([before, unit, after]) => before + unit.repeat(count) + after);
+    const ordinary = '<div class="a {{b}}">\n  {{#if c}}\n    <span>{{d.e}}</span>\n  {{/if}}\n</div>\n';
+    const length = Math.ceil(texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length);
+    const run = (configuration: Record<string, string>, text: (index: number) => string) =>
+      format({ ...configuration, ...Object.fromEntries(shapes.map((_, index) => [`${index}.hbs`, text(index)])) }, [
+        "--check",
+        "--log-level",
+        "silent",
+      ]);
+    // Ordinary text goes the long way where white space doesn't count.
+    const longWay = { ".prettierrc": '{ "htmlWhitespaceSensitivity": "ignore" }\n' };
+    const [odd, plain] = [
+      await run({}, index => texts[index]),
+      await run(longWay, () => ordinary.repeat(length / ordinary.length)),
+    ];
+    // 1 when all is well.
+    expect(slowdown(odd, plain)).toBeLessThan(4);
+  }, 120_000);
+
   // Something on every line that is opened and not closed, or refused after a look ahead: what reads children from the
   // bytes looks for the end of each, which must not be a search through the rest of the text every time.
   test.each([[[]], [["--embedded-language-formatting=off"]]])(

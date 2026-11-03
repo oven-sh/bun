@@ -168,6 +168,8 @@ struct Direct<'a, 'o> {
     indents: Vec<u32>,
     /// A line feed and as much indentation as was needed so far.
     line_start: Vec<u8>,
+    /// The text that `delegate_head` parses.
+    head: Vec<u8>,
     at: usize,
     /// The part of the source that's written but not copied yet.
     run: (usize, usize),
@@ -237,6 +239,7 @@ pub(super) fn format(
         printer: doc::Printer::new(options, original, out),
         indents: vec![0],
         line_start,
+        head: Vec::new(),
         at,
         run: (at, at),
         column: 0,
@@ -846,6 +849,34 @@ impl<'a> Direct<'a, '_> {
         Ok(())
     }
 
+    /// Returns the end of the number without a sign at `start` if `String(Number(..))` gives it back: no more digits
+    /// than a double has, and no zeros that say nothing.
+    fn number(&self, start: usize) -> Result<usize, Stop> {
+        let digits = |mut at: usize| {
+            while self.byte(at).is_ascii_digit() {
+                at += 1;
+            }
+            at
+        };
+        let mut end = digits(start);
+        let mut count = end - start;
+        if count == 0 || (count > 1 && self.byte(start) == b'0') {
+            return Err(Stop::Refused);
+        }
+        if self.byte(end) == b'.' {
+            let fraction = end + 1;
+            end = digits(fraction);
+            count += end - fraction;
+            if end == fraction || self.byte(end - 1) == b'0' {
+                return Err(Stop::Refused);
+            }
+        }
+        match count > 15 {
+            true => Err(Stop::Refused),
+            false => Ok(end),
+        }
+    }
+
     /// A string, a number, a path, a keyword or a sub-expression. `quote` is the quote of a string.
     fn param(&mut self, mode: Mode, level: usize, quote: u8) -> Written {
         let at = self.at;
@@ -854,31 +885,35 @@ impl<'a> Direct<'a, '_> {
             delimiter @ (b'"' | b'\'') => {
                 let mut end = at + 1;
                 let mut has_other_quote = false;
+                let mut is_ascii = true;
                 loop {
                     end = self.end_of_plain(end);
                     match self.byte(end) {
                         byte if byte == delimiter => break,
                         b'"' | b'\'' => has_other_quote = true,
+                        0x80.. => is_ascii = false,
                         _ => return Err(Stop::Refused),
                     }
                     end += 1;
                 }
+                let width = match is_ascii {
+                    true => end - (at + 1),
+                    false => string_width(self.slice(at + 1, end)) as usize,
+                };
                 // With the other quote in it, the string keeps its own.
                 if delimiter == quote || has_other_quote {
-                    self.copy(at, end + 1);
+                    self.copy_wide(at, end + 1, width + 2);
                 } else {
                     self.put_byte(quote);
-                    self.copy(at + 1, end);
+                    self.copy_wide(at + 1, end, width);
                     self.put_byte(quote);
                 }
                 end + 1
             }
-            first @ b'0'..=b'9' => {
-                let mut end = at + 1;
-                while self.byte(end).is_ascii_digit() {
-                    end += 1;
-                }
-                if end - at > 15 || (first == b'0' && end - at > 1) {
+            first @ (b'0'..=b'9' | b'-') => {
+                let end = self.number(at + usize::from(first == b'-'))?;
+                // `-0` is printed as `0`.
+                if self.slice(at, end) == b"-0" {
                     return Err(Stop::Refused);
                 }
                 self.copy(at, end);
@@ -1344,18 +1379,25 @@ impl<'a> Direct<'a, '_> {
         let value = end + 1;
         match self.byte(value) {
             delimiter @ (b'"' | b'\'') => {
-                let text_end = self.end_of_plain(value + 1);
+                let mut text_end = self.end_of_plain(value + 1);
+                let mut width = text_end - (value + 1);
+                if self.byte(text_end) >= 0x80 {
+                    while self.byte(text_end) >= 0x80 {
+                        text_end = self.end_of_plain(text_end + 1);
+                    }
+                    width = string_width(self.slice(value + 1, text_end)) as usize;
+                }
                 if self.byte(text_end) == delimiter
                     && (!is_class
                         || text_end == value + 1
                         || self.is_list_of_classes(value + 1, text_end))
                 {
                     if delimiter == self.quote {
-                        self.copy(at, text_end + 1);
+                        self.copy_wide(at, text_end + 1, value - at + width + 2);
                     } else {
                         self.copy(at, value);
                         self.put_byte(self.quote);
-                        self.copy(value + 1, text_end);
+                        self.copy_wide(value + 1, text_end, width);
                         self.put_byte(self.quote);
                     }
                     self.at = text_end + 1;
@@ -1477,9 +1519,26 @@ impl<'a> Direct<'a, '_> {
         }
         match mode {
             Mode::Flat => self.start_tag(Mode::Flat, level, name_end)?,
-            Mode::Free => self.group(self.byte(name_end) == b'\n', Rest::Nodes, |this, mode| {
-                this.start_tag(mode, level, name_end)
-            })?,
+            Mode::Free => {
+                let mark = self.mark();
+                let written =
+                    self.group(self.byte(name_end) == b'\n', Rest::Nodes, |this, mode| {
+                        this.start_tag(mode, level, name_end)
+                    });
+                match written {
+                    Err(Stop::Refused) if !is_special => {
+                        self.reset(mark);
+                        let (end, is_self_closing) =
+                            self.end_of_tag(name_end).ok_or(Stop::Refused)?;
+                        if is_self_closing || is_void_tag(name) {
+                            return Err(Stop::Refused);
+                        }
+                        self.delegate_head(level, end, [b"</", name, b">"])?;
+                        self.is_void = false;
+                    }
+                    written => written?,
+                }
+            }
         }
         if self.is_void {
             return Ok(());
@@ -1567,9 +1626,20 @@ impl<'a> Direct<'a, '_> {
             match mode {
                 Mode::Flat => self.open_block(Mode::Flat, level, path, is_chained)?,
                 Mode::Free => {
-                    self.group(self.byte(path.1) == b'\n', Rest::Nodes, |this, mode| {
-                        this.open_block(mode, level, path, is_chained)
-                    })?
+                    let mark = self.mark();
+                    let written =
+                        self.group(self.byte(path.1) == b'\n', Rest::Nodes, |this, mode| {
+                            this.open_block(mode, level, path, is_chained)
+                        });
+                    match written {
+                        Err(Stop::Refused) if !is_chained => {
+                            self.reset(mark);
+                            let end = self.end_of_mustache(self.at).ok_or(Stop::Refused)?;
+                            let name = self.slice(name.0, name.1);
+                            self.delegate_head(level, end, [b"{{/", name, b"}}"])?;
+                        }
+                        written => written?,
+                    }
                 }
             }
             self.list(mode, level + 1, Parent::Block)?;
@@ -2000,6 +2070,70 @@ impl<'a> Direct<'a, '_> {
         }
     }
 
+    /// Prints the start tag or the `{{#a}}` at `self.at`, which ends at `end`, from a tree and a document of its own, so
+    /// that what is in the element or the block need not go the long way with it. `close` is what ends it.
+    #[cold]
+    #[inline(never)]
+    fn delegate_head(&mut self, level: usize, end: usize, close: [&[u8]; 3]) -> Written {
+        let head = self.slice(self.at, end);
+        // A line break follows, so the head is measured by itself and all that's around it is on several lines. What has
+        // nothing but white space in it can be printed in another way.
+        let (next, line_feeds) = self.white_space(end);
+        if line_feeds == 0
+            || matches!(self.next(next), Next::End(_))
+            || matches!(self.byte(next), b'\r' | 0x0C)
+            || strings::contains_char(head, b'\\')
+        {
+            return Err(Stop::Refused);
+        }
+        self.flush();
+        let mut text = std::mem::take(&mut self.head);
+        text.clear();
+        text.extend_from_slice(head);
+        close.iter().for_each(|part| text.extend_from_slice(part));
+        let template = parse(&text, 0, self.scratch, &Rejection::default());
+        let Scratch { tree, elements, .. } = &mut *self.scratch;
+        elements.clear();
+        let mut printer = Printer {
+            tree,
+            source: &text,
+            front_matter: b"",
+            options: self.options,
+            is_white_space_sensitive: true,
+            single_quote: self.quote == b'\'',
+            out: elements,
+            pre_depth: 0,
+            stack: Stack::for_tree(),
+        };
+        let is_printed = template
+            .is_ok_and(|template| !tree.has_lost_text && printer.head(template))
+            && !printer.stack.ran_out();
+        self.head = text;
+        if !is_printed {
+            return Err(Stop::Refused);
+        }
+        let indent = self.indent(level);
+        self.column = self
+            .printer
+            .print(&self.scratch.elements, indent, self.column);
+        if self.printer.result().is_err() {
+            return Err(Stop::GivenUp);
+        }
+        self.at = end;
+        self.run = (end, end);
+        self.lines += 1;
+        Ok(())
+    }
+
+    /// The printer's indentation for `level`.
+    fn indent(&mut self, level: usize) -> u32 {
+        while self.indents.len() <= level {
+            let last = self.indents.last().copied().unwrap_or(0);
+            self.indents.push(self.printer.indented(last));
+        }
+        self.indents.get(level).copied().unwrap_or(0)
+    }
+
     /// Prints the nodes at `self.at`, which start a line among nodes that are on several lines, from a tree and a
     /// document of their own.
     #[cold]
@@ -2079,12 +2213,10 @@ impl<'a> Direct<'a, '_> {
         if printer.stack.ran_out() {
             return Err(Stop::GivenUp);
         }
-        while self.indents.len() <= level {
-            let last = self.indents.last().copied().unwrap_or(0);
-            self.indents.push(self.printer.indented(last));
-        }
-        let indent = self.indents.get(level).copied().unwrap_or(0);
-        self.column = self.printer.print(elements, indent, self.column);
+        let indent = self.indent(level);
+        self.column = self
+            .printer
+            .print(&self.scratch.elements, indent, self.column);
         if self.printer.result().is_err() {
             return Err(Stop::GivenUp);
         }

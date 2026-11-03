@@ -237,7 +237,7 @@ impl DirInfo {
     /// [`RealFS::entries_at_locked`](fs::RealFS::entries_at_locked). The
     /// `DirEntry` is a slot in the BSSMap-backed `EntriesOptionMap` singleton
     /// (ARENA — process lifetime), so a `&'static` reborrow of the
-    /// `&'static mut` returned by `entries_at_locked` is sound and needs no
+    /// `&'static` returned by `entries_at_locked` is sound and needs no
     /// `unsafe` here. The `.data` map must only be probed/iterated while the
     /// lock is held; use [`get_entry`](Self::get_entry) for one-shot lookups.
     pub fn get_entries_ref_locked(&self, generation: Generation) -> Option<&'static fs::DirEntry> {

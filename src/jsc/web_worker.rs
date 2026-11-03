@@ -1651,9 +1651,8 @@ unsafe fn resolve_entry_point_specifier<'s>(
         }
     }
 
-    // SAFETY: per fn contract — `parent`'s `transpiler` is mutated only on its
-    // owning thread: both call sites (`create()` on the parent thread, `spin()`
-    // on the worker thread) satisfy that.
+    // SAFETY: per fn contract — `parent` is this thread's VM, and only its own
+    // thread mutates its `transpiler`.
     let resolved_entry_point = unsafe { (*parent).transpiler.resolve_entry_point(str, dot_slash) }
         .map_err(|_| Unresolved::Logged)?;
 

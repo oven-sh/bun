@@ -340,7 +340,8 @@ pub struct Loop {
     pub data: *mut c_void,
     /// A `Cell` because Bun counts its own keep-alive refs here, through a `&Loop`.
     pub active_handles: Cell<c_uint>,
-    pub handle_queue: uv__queue,
+    /// A `Cell` because `uv_walk` relinks it, under the `&Loop` of `has_active_io_handles`.
+    pub handle_queue: Cell<uv__queue>,
     active_reqs: active_reqs_u,
     pub internal_fields: *mut c_void,
     pub stop_flag: c_uint,
@@ -545,12 +546,13 @@ impl Loop {
         unsafe { uv_loop_alive(self) != 0 }
     }
     /// Unlike `uv_loop_alive`, also finds unref'd handles. Only looks at I/O, process and fs-watch handles.
-    pub fn has_active_io_handles(&mut self) -> bool {
+    pub fn has_active_io_handles(&self) -> bool {
         let mut found = false;
-        // SAFETY: self is a live loop; the walk is synchronous, so `found` outlives it.
+        // SAFETY: self is a live loop, of which the walk writes only `handle_queue`;
+        // it is synchronous, so `found` outlives it.
         unsafe {
             uv_walk(
-                self,
+                ptr::from_ref(self).cast_mut(),
                 Some(find_active_io_handle_cb),
                 (&raw mut found).cast(),
             )

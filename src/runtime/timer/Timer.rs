@@ -483,8 +483,7 @@ impl DateHeaderTimer {
         if elapsed >= 1000 {
             // Update the date immediately since it's stale
             // updateDate() is an expensive function.
-            // SAFETY: `uws_loop()` returns the VM's own uws loop, which outlives this call.
-            unsafe { (*vm.uws_loop()).update_date() };
+            vm.uws_loop_ref().update_date();
 
             let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
             // SAFETY: single JS thread; nothing `All::update` touches overlaps

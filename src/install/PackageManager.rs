@@ -457,7 +457,7 @@ bun_output::declare_scope!(PackageManager, hidden);
 pub struct PackageManager {
     pub(crate) cache_directory: Option<bun_sys::Dir>,
     pub(crate) cache_directory_path: ZBox, // owned; process lifetime via the leaked singleton
-    pub root_dir: &'static mut fs::DirEntry,
+    pub root_dir: &'static fs::DirEntry,
     // allocator dropped per §Allocators (was `bun.default_allocator`). For the
     // handful of sites that allocated AST nodes via `Expr.allocate(manager.allocator, …)`
     // — i.e. nodes that must outlive `Expr.Data.Store.reset()` across workspace
@@ -1557,7 +1557,7 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
 fn allocate_package_manager(
     options: Options,
     log: *mut bun_ast::Log,
-    root_dir: &'static mut fs::DirEntry,
+    root_dir: &'static fs::DirEntry,
     env: &mut dot_env::Loader,
     // NUL-terminated
     original_package_json_path: Vec<u8>,
@@ -2617,7 +2617,7 @@ pub fn init(
     // `*EntriesOption` slot.
     let entries_option = FileSystem::instance()
         .read_directory(top_level_dir, 0, true)?
-        .try_entries_mut()?;
+        .try_entries()?;
 
     env.load_process()?;
     // This is read before the project's `.env` files are loaded, so they cannot set it.
@@ -2961,7 +2961,7 @@ fn init_with_runtime_once(
     let top_level_dir = FileSystem::get().top_level_dir();
     let root_dir = FileSystem::instance()
         .read_directory(top_level_dir, 0, true)?
-        .try_entries_mut()?;
+        .try_entries()?;
 
     // A file inside `node_modules` belongs to the project that installed the package.
     let importer_dir = match strings::index_of(importer_dir, bun_paths::NODE_MODULES_NEEDLE) {
@@ -3144,7 +3144,7 @@ fn init_with_runtime_once(
         // Workspace paths are relative to `root_dir`. A lockfile records them relative to its own
         // directory, and `parse_with_json` makes them relative to the working directory.
         if manager.lockfile.packages.len() > 0 {
-            manager.root_dir = &mut **entries;
+            manager.root_dir = entries;
             // Auto-install ignores an override that points away from the registry, so it also drops
             // what such an override resolved to in the lockfile.
             use crate::lockfile_real::package::PackageColumns as _;

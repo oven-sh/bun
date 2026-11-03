@@ -1791,7 +1791,7 @@ impl VirtualMachine {
         }
     }
 
-    /// Per-callback hot path: `drain_microtasks_with_global` calls
+    /// Per-callback hot path: `drain_microtasks_once` calls
     /// `uws_loop_ref()` (→ this) every time the microtask queue drains, and
     /// the only call site there is already gated on
     /// `event_loop_handle.is_some()`.
@@ -3002,7 +3002,7 @@ pub struct RuntimeHooks {
     /// idle — folding it into `auto_tick` would change shutdown semantics.
     pub auto_tick_active: unsafe fn(vm: *mut VirtualMachine),
     /// Runs the next `bun test` test or hook. See [`VirtualMachine::has_pending_test_step`].
-    pub run_pending_test_step: unsafe fn(vm: *mut VirtualMachine),
+    pub run_pending_test_step: fn(global: &JSGlobalObject),
     /// `printException` / `printErrorlikeObject` — formats `value` (or its
     /// wrapped `JSC::Exception`) to stderr via `ConsoleObject::Formatter`.
     /// High tier

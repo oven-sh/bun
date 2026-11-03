@@ -772,7 +772,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
     // need `&mut VirtualMachine` while we're also iterating `vm.preload` and
     // touching `vm.transpiler.resolver` / `vm.log`. Dereference per-field via
     // the raw `vm` ptr; iterate preloads by index (the `Box<[u8]>` payloads are
-    // heap-stable so a raw `*const [u8]` survives the resolver borrow).
+    // heap-stable so a borrow survives the resolver borrow).
 
     // ── is_in_preload guard ─────────────────────────────────────────────
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
@@ -820,9 +820,8 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
     // SAFETY: per fn contract.
     let n = unsafe { &*vm }.preload.len();
     for i in 0..n {
-        // SAFETY: `i < n`; the `Box<[u8]>` allocation is stable across the
-        // `resolve_and_auto_install` call below (which only touches
-        // `vm.transpiler.resolver`, not `vm.preload`).
+        // SAFETY: `i < n`; nothing touches `vm.preload` until the `clear()` after
+        // this loop: the resolver does not, and `reload()` defers while `is_in_preload`.
         let preload_slice: &[u8] = unsafe { &(&(*vm).preload)[i] };
         // Strip "file://".
         let normalized: &[u8] = preload_slice
@@ -1170,15 +1169,12 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     let _ = unsafe { (*(*vm).global).handle_rejected_promises() };
 }
 
-/// # Safety
-/// `vm` is the live per-thread VM.
-unsafe fn run_pending_test_step(vm: *mut VirtualMachine) {
+fn run_pending_test_step(global: &JSGlobalObject) {
     bun_removable_features::call_removable!(
         Test,
         Abort,
         crate::test_runner::bun_test::BunTest::run_pending_step,
-        // SAFETY: per fn contract.
-        unsafe { &*vm }.global()
+        global
     );
 }
 

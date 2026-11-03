@@ -1539,11 +1539,11 @@ pub(crate) unsafe fn __bun_fire_timer(
             (
                 c: *mut crate::test_runner::vi_wait::ViWait =
                     owner!(crate::test_runner::vi_wait::ViWait, timer),
-                now: *const ElTimespec = now,
+                now: &ElTimespec = now,
                 vm: *mut VirtualMachine = vm,
             ) -> JsResult<()> {
-                // SAFETY: an armed wait roots its JS wrapper, which owns `c`; `now` and `vm` per fn contract.
-                unsafe { (*c).on_timer_fire(&*now, &*vm) }
+                // SAFETY: an armed wait roots its JS wrapper, which owns `c`; `vm` per fn contract.
+                unsafe { (*c).on_timer_fire(now, &*vm) }
             }
         ),
         EventLoopTimerTag::UvTimer => {

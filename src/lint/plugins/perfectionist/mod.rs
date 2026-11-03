@@ -77,6 +77,26 @@ pub(crate) struct SortingNode<'a> {
     pub(crate) dependencies: SmallVec<[Name<'a>; 2]>,
 }
 
+impl<'a> SortingNode<'a> {
+    /// A node of a list that [`report::is_in_order_without_groups`] looks at: only what the comparator reads is
+    /// filled in.
+    pub(crate) fn for_comparison(span: Span, name: &'a [u8], value: &'a [u8], size: u32) -> SortingNode<'a> {
+        SortingNode {
+            span,
+            outer_span: span,
+            name: Cow::Borrowed(name),
+            value,
+            size,
+            group: 0,
+            group_index: 0,
+            partition_id: 1,
+            is_eslint_disabled: false,
+            dependency_names: SmallVec::new(),
+            dependencies: SmallVec::new(),
+        }
+    }
+}
+
 /// Upstream's `availableMessageIds`: which message each rule reports for each kind of error. A rule without
 /// dependency errors (every rule but `sort-objects`) has `None`, and the engine then computes no dependencies.
 pub(crate) struct Messages {

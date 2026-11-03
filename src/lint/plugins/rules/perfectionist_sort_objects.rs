@@ -375,6 +375,18 @@ impl SortObjects {
         if !report::can_report_errors(config, can_have_dependencies) {
             return;
         }
+        let for_comparison = |with_size: bool| {
+            object.members().filter_map(move |member| {
+                let span = member.span();
+                let name = key_name(file, member.key()?);
+                let value = member.value(file, is_destructured);
+                let size = if with_size { range_to_diff(file, span) } else { 0 };
+                Some(SortingNode::for_comparison(span, name, value, size))
+            })
+        };
+        if report::is_in_order_without_groups(config, can_have_dependencies, for_comparison) {
+            return;
+        }
         let disabled_lines = state.disabled_lines.get_or_init(|| DisabledLines::compute(file, RULE_ID));
 
         let mut nodes: Vec<SortingNode<'a>> = Vec::with_capacity(object.len());

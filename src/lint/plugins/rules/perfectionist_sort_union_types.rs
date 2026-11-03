@@ -161,6 +161,16 @@ impl SortUnionTypes {
         if !report::can_report_errors(config, false) {
             return;
         }
+        let for_comparison = |with_size: bool| {
+            types.iter().zip(&names).map(move |(member, &name)| {
+                let span = member.span();
+                let size = if with_size { range_to_diff(file, span) } else { 0 };
+                SortingNode::for_comparison(span, name, b"", size)
+            })
+        };
+        if report::is_in_order_without_groups(config, false, for_comparison) {
+            return;
+        }
         let disabled_lines = state
             .disabled_lines
             .get_or_init(|| DisabledLines::compute(file, RULE_ID));

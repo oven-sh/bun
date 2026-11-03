@@ -237,6 +237,16 @@ pub(crate) fn sort_object_type_elements<'a, R>(
     if !report::can_report_errors(config, false) {
         return;
     }
+    let for_comparison = |with_size: bool| {
+        elements.iter().filter(|element| !element.is_signature).map(move |element| {
+            let span = element.member.span();
+            let size = if with_size { fixes::range_to_diff(file, span) } else { 0 };
+            SortingNode::for_comparison(span, element.name, element.value, size)
+        })
+    };
+    if report::is_in_order_without_groups(config, false, for_comparison) {
+        return;
+    }
 
     let disabled_lines = state.disabled_lines.get_or_init(|| {
         // `context.id`: the rule with its plugin prefix.

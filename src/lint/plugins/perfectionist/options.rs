@@ -129,6 +129,14 @@ pub(crate) struct SortOptions {
     pub(crate) locale: Locale,
 }
 
+impl SortOptions {
+    /// Whether a comparison under these options reads a node's `size`: `type: "line-length"`, or that as the
+    /// fallback. Where it does not, a caller that builds nodes only to compare them need not measure the text.
+    pub(crate) fn reads_size(self) -> bool {
+        self.type_ == SortType::LineLength || self.fallback_sort.type_ == SortType::LineLength
+    }
+}
+
 /// `locales`, as `a.localeCompare(b, locales)` and natural-orderby's `compare({ locale })` read it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Locale {

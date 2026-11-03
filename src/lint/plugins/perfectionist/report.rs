@@ -6,6 +6,8 @@
 //! it. The spacing between the two is checked whatever the order. Every message of the list carries the same fix,
 //! made once.
 
+use super::compare::compare;
+use super::groups;
 use super::newlines::{newlines_between_errors, newlines_between_option};
 use super::options::{Configuration, Newlines, SortType};
 use super::sort::{Sorted, is_node_dependent_on_other_node, nodes_in_circular_dependencies};
@@ -14,6 +16,8 @@ use bun_core::strings;
 use bun_lint::fix::IntoFix;
 use bun_lint::prelude::*;
 use std::borrow::Cow;
+use std::cell::Cell;
+use std::cmp::Ordering;
 
 /// Upstream's `canReportErrors`: whether these options can produce any report at all, asked before the nodes are
 /// built. Every rule has the order and spacing messages, so what remains is whether anything orders the nodes
@@ -24,6 +28,41 @@ pub(crate) fn can_report_errors(config: &Configuration, can_have_dependencies: b
         || can_have_dependencies
         || config.sort.type_ != SortType::Unsorted
         || newlines_between_option(config, 0, 0) != Newlines::Ignore
+}
+
+/// Whether a node list is certainly in order without being built: nothing but the comparator orders the nodes (no
+/// `groups`, no spacing to check, no dependencies), and no adjacent pair is out of order under it. Upstream sorts
+/// every list to find that out; most lists a rule sees are in order, and this keeps them off the path that allocates.
+/// `nodes(size)` are the list's nodes in source order, with `name` and `value` filled in, and `size` only if
+/// `size` is asked for, which `type: "line-length"` does. Partitions need no look: they only keep nodes where they
+/// are.
+pub(crate) fn is_in_order_without_groups<'a, N: Iterator<Item = SortingNode<'a>>>(
+    config: &Configuration,
+    can_have_dependencies: bool,
+    nodes: impl FnOnce(bool) -> N,
+) -> bool {
+    if !config.groups.is_empty()
+        || can_have_dependencies
+        || newlines_between_option(config, 0, 0) != Newlines::Ignore
+    {
+        return false;
+    }
+    let options = groups::options_by_group_index(config, config.groups.len() as u32);
+    let nodes = nodes(options.reads_size());
+    let reached_invalid_locale = Cell::new(false);
+    let mut previous: Option<SortingNode<'a>> = None;
+    for node in nodes {
+        if let Some(left) = &previous
+            && compare(left, &node, options, config, &reached_invalid_locale) == Ordering::Greater
+        {
+            return false;
+        }
+        if reached_invalid_locale.get() {
+            return false;
+        }
+        previous = Some(node);
+    }
+    true
 }
 
 /// Upstream's `reportAllErrors`. `fixes` makes the fixes of the whole list (`makeFixes`); it runs at most once, on

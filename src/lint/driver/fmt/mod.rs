@@ -1999,14 +1999,16 @@ impl Run<'_> {
                 results.lock()[index] = None;
                 continue;
             }
-            count_extension(&mut needs_plugins.0, &target.path);
             let name = LANGUAGE_PLUGINS[plugin].package;
             if !needs_plugins.1.contains(&name) {
                 needs_plugins.1.push(name);
             }
             match options.allow_unsupported {
                 true => without_plugins.push(at),
-                false => results.lock()[index] = None,
+                false => {
+                    count_extension(&mut needs_plugins.0, &target.path);
+                    results.lock()[index] = None;
+                }
             }
         }
         // Before Tailwind is asked: a file that is formatted again here can have classes to ask about.
@@ -2015,6 +2017,17 @@ impl Run<'_> {
             pool.for_each(without_plugins.len(), 1, &|at| {
                 format_at(without_plugins[at])
             });
+        }
+        // Only a file that this formatted is said to have been formatted without its plugin.
+        for &at in &without_plugins {
+            let (index, target) = work[at];
+            let is_formatted = !matches!(
+                results.lock()[index],
+                Some(Done::Failed(_) | Done::NotFormatted(_))
+            );
+            if is_formatted {
+                count_extension(&mut needs_plugins.0, &target.path);
+            }
         }
         let deferred: Vec<usize> = (0..work.len())
             .filter(|&at| matches!(results.lock()[work[at].0], Some(Done::Deferred)))

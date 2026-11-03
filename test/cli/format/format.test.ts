@@ -4899,6 +4899,7 @@ exports.__unstable__loadDesignSystem = async () => ({
       const result = await format(project, ["--allow-unsupported", "--sort-tailwindcss"], { reads: ["App.vue"] });
       expect(result.files["App.vue"]).toBe(classes.replace("p-4 flex m-2", "m-2 flex p-4"));
       expect(result.stderr).not.toContain("not formatted");
+      expect(result.stderr).toContain("formatted without @prettier/plugin-pug");
       expect(result.exitCode).toBe(0);
     });
 

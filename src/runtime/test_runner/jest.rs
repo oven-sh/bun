@@ -1153,6 +1153,6 @@ impl CallSiteLine {
     /// The test file has no frame on the stack when the callback of a `describe` block is a function of another module,
     /// or ends in a tail call. The call is then in the block that the test file did open.
     fn look(global: &JSGlobalObject, file: &bun_test::BunTest) -> Option<NonZeroU32> {
-        global.get_caller_line_in_file(file.file_url()).or(file.collection.active_scope().base.line_no)
+        global.get_caller_line_in_file(file.file_url()).or_else(|| file.collection.active_scope().base.line_no)
     }
 }

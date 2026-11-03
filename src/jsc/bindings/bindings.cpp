@@ -7385,6 +7385,7 @@ CPP_DECL unsigned int JSC__JSGlobalObject__getCallerLineInFile(JSC::JSGlobalObje
     auto& vm = JSC::getVM(globalObject);
     String sourceURL = file->toWTFString(BunString::ZeroCopy);
     JSC::LineColumn lineColumn;
+    bool calleeEndsInTemplate = false;
 
     JSC::StackVisitor::visit(vm.topCallFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
         if (Zig::isImplementationVisibilityPrivate(visitor) || !visitor->hasLineAndColumnInfo())
@@ -7398,25 +7399,38 @@ CPP_DECL unsigned int JSC__JSGlobalObject__getCallerLineInFile(JSC::JSGlobalObje
             return WTF::IterationStatus::Continue;
 
         lineColumn = visitor->computeLineAndColumn();
+        if (provider && lineColumn.line) {
+            StringView text = provider->source();
+            unsigned parenthesis = provider->offsetForPosition(OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt(), OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt());
+            calleeEndsInTemplate = parenthesis && parenthesis <= text.length() && text[parenthesis - 1] == '`';
+        }
         return WTF::IterationStatus::Done;
     });
 
     if (!lineColumn.line)
         return 0;
 
-    Bun::OwnedZigStackFrames remappedFrames(1);
-    ZigStackFrame& remappedFrame = remappedFrames[0];
-    remappedFrame.position.line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt();
-    remappedFrame.position.column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt();
-    remappedFrame.source_url = Bun::toStringRef(sourceURL);
+    auto lineOfColumn = [&](int column) -> unsigned {
+        Bun::OwnedZigStackFrames remappedFrames(1);
+        ZigStackFrame& remappedFrame = remappedFrames[0];
+        remappedFrame.position.line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt();
+        remappedFrame.position.column_zero_based = column;
+        remappedFrame.source_url = Bun::toStringRef(sourceURL);
 
-    remappedFrames.remap(Bun::vm(globalObject));
+        remappedFrames.remap(Bun::vm(globalObject));
 
-    // The source map of a bundle names the files that the bundle was made from. The caller pairs the line with `file`.
-    if (remappedFrame.source_url.toWTFString(BunString::ZeroCopy) != sourceURL)
-        return lineColumn.line;
+        // The source map of a bundle names the files that the bundle was made from. The caller pairs the line with `file`.
+        if (remappedFrame.source_url.toWTFString(BunString::ZeroCopy) != sourceURL)
+            return lineColumn.line;
 
-    return OrdinalNumber::fromZeroBasedInt(remappedFrame.position.line_zero_based).oneBasedInt();
+        return OrdinalNumber::fromZeroBasedInt(remappedFrame.position.line_zero_based).oneBasedInt();
+    };
+
+    // The frame is at the `(` of the call. A source map has no mapping for the end of a template, so after the tagged
+    // template of a `test.each` the mapping before the `(` is a row of the table. The mapping after it is the first argument.
+    int parenthesis = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt();
+    unsigned line = lineOfColumn(parenthesis);
+    return calleeEndsInTemplate ? std::max(line, lineOfColumn(parenthesis + 1)) : line;
 }
 
 // REPL evaluation function - evaluates JavaScript code in the global scope

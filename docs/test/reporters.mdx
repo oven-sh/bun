@@ -111,7 +111,6 @@ The `line` of a `<testcase>`, and of the `<testsuite>` of a `describe` block, is
 
 - A test that a helper in another module registers has the line of the call to the helper.
 - A test that no call in the test file leads to has the line of the `describe` block it is in. An example is a test in a `describe` callback that another module defines.
-- With a `test.each` tagged template, it is the line of the last row of the table.
 
 The attribute is absent when the test is in no `describe` block and no call in the test file leads to it, such as a test that an imported module registers while it loads.
 

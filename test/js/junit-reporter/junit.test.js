@@ -948,6 +948,12 @@ test("in a required module", () => {});
 test("in the test file", () => {});
 require("./required.cjs");
 `,
+      "imported.js": `import { test } from "bun:test";
+
+test("in an imported module", () => {});
+`,
+      "c.test.js": `import "./imported.js";
+`,
     });
     const junitPath = join(tmpDir, "junit.xml");
     await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
@@ -959,18 +965,21 @@ require("./required.cjs");
     const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     const testcases = (await file(junitPath).text()).matchAll(
-      /<testcase name="([^"]*)"[^>]* file="([^"]*)" line="(\d+)"/g,
+      /<testcase name="([^"]*)"[^>]* file="([^"]*)"(?: line="(\d+)")?/g,
     );
-    expect(Object.fromEntries(Array.from(testcases, ([, name, path, line]) => [name, `${path}:${line}`]))).toEqual({
+    const places = Array.from(testcases, ([, name, path, line]) => [name, line ? `${path}:${line}` : path]);
+    expect(Object.fromEntries(places)).toEqual({
       // Not the line of the constant.
       "named by a constant": "a.test.js:7",
       "call on several lines": "a.test.js:8",
-      // A source map has nothing at the "(" that follows a tagged template. What it has before that is the last row.
-      "tagged 1": "a.test.js:14",
+      // Not a row of the table.
+      "tagged 1": "a.test.js:15",
       // The file is a.test.js, so the line is not that of test() in helper.js.
       "from helper": "a.test.js:16",
       "in the test file": "b.test.cjs:3",
       "in a required module": "b.test.cjs:4",
+      // No call in c.test.js leads to it, and it is in no describe block. The line of imported.js is not written.
+      "in an imported module": "c.test.js",
     });
     expect(exitCode).toBe(0);
   });
@@ -1003,7 +1012,13 @@ test("second", () => {});
         stderr: "pipe",
       },
     );
-    expect(await build.exited).toBe(0);
+    const [buildStdout, buildStderr, buildExitCode] = await Promise.all([
+      build.stdout.text(),
+      build.stderr.text(),
+      build.exited,
+    ]);
+    expect(buildStdout + buildStderr).toContain("a.test.js.map");
+    expect(buildExitCode).toBe(0);
 
     const junitPath = join(tmpDir, "junit.xml");
     await using proc = spawn(

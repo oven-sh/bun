@@ -469,6 +469,7 @@ test("in the first file", () => {});
     [name]: `import { describe, test } from "bun:test";
 import { test as nodeTest } from "node:test";
 import { defineTest, sharedSuite } from "./helper";
+import "./imported";
 
 const stdin = Bun.stdin.stream().getReader();
 async function gate(marker: string) {
@@ -517,6 +518,10 @@ export function sharedSuite() {
   test("in shared suite", () => {});
 }
 `,
+    "imported.ts": `import { test } from "bun:test";
+
+test("in an imported module", () => {});
+`,
   });
   // The line of the test file that has `text`.
   const lineOf = (text: string) =>
@@ -531,9 +536,9 @@ export function sharedSuite() {
     { type: "test", name: "call on several lines", line: lineOf(`test( // on several lines`) },
     { type: "test", name: "row 1", line: lineOf(`("row %d"`) },
     { type: "test", name: "row 2", line: lineOf(`("row %d"`) },
-    // A source map has nothing at the "(" that follows a tagged template. What it has before that is the last row.
-    { type: "test", name: "tagged 3", line: lineOf("${4}") },
-    { type: "test", name: "tagged 4", line: lineOf("${4}") },
+    // Not a row of the table.
+    { type: "test", name: "tagged 3", line: lineOf(`("tagged $n"`) },
+    { type: "test", name: "tagged 4", line: lineOf(`("tagged $n"`) },
     // The url is the test file, so the line is that of the call that the test file makes.
     { type: "test", name: "from helper", line: lineOf(`defineTest("from helper")`) },
     { type: "test", name: "node:test", line: lineOf(`nodeTest("node:test"`) },
@@ -545,6 +550,8 @@ export function sharedSuite() {
     { type: "test", name: "in shared suite", line: lineOf(`describe("shared"`) },
     { type: "describe", name: "after the gate", line: lineOf(`describe("after the gate"`) },
     { type: "test", name: "registered last", line: lineOf(`test("registered last"`) },
+    // Nothing in the test file leads to this call, and it is in no block. The line of "imported.ts" is not a line of the url.
+    { type: "test", name: "in an imported module", line: 0 },
   ];
   const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name);
 
@@ -588,18 +595,22 @@ export function sharedSuite() {
       stderr: "pipe",
     });
 
+    const stderr = proc.stderr.text();
     let stdout = "";
     const reader = proc.stdout.getReader();
     const decoder = new TextDecoder();
     async function printed(marker: string) {
       while (!stdout.includes(marker)) {
         const { value, done } = await reader.read();
-        if (done) throw new Error(`The tests ended before they printed ${marker}:\n${stdout}`);
+        if (done) throw new Error(`The tests ended before they printed ${marker}:\n${stdout}\n${await stderr}`);
         stdout += decoder.decode(value, { stream: true });
       }
     }
 
-    await connected.promise;
+    const exitedFirst = await Promise.race([connected.promise, proc.exited]);
+    if (exitedFirst !== undefined) {
+      throw new Error(`bun test exited with ${exitedFirst} before it reached the inspector client:\n${await stderr}`);
+    }
     session.enableInspector();
     if (enable === "before collection") session.enableTestReporter();
     session.initialize();
@@ -620,7 +631,7 @@ export function sharedSuite() {
     const found = await session.waitForFoundTests(locations.length + ofFirstFile.length);
     await proc.stdin.end();
 
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const exitCode = await proc.exited;
     const elements = junit
       ? (await Bun.file(join(String(dir), "junit.xml")).text()).matchAll(/<test(?:case|suite) [^>]*>/g)
       : [];
@@ -637,7 +648,7 @@ export function sharedSuite() {
           .filter(([, line]) => line)
           .map(([name, line]) => [name, Number(line)]),
       ),
-      stderr,
+      stderr: await stderr,
       exitCode,
     };
   }
@@ -662,7 +673,7 @@ export function sharedSuite() {
     expect(found).toEqual(expected());
     expect(junit).toEqual({
       "in the first file": 3,
-      ...Object.fromEntries(locations.map(({ name, line }) => [name, line])),
+      ...Object.fromEntries(locations.filter(({ line }) => line).map(({ name, line }) => [name, line])),
     });
     expect(exitCode).toBe(0);
   });

@@ -711,6 +711,8 @@ scopes."@other" = "https://registry.other.com/"
   // same `[table]` blocks in any order parse to the same value, or every
   // order is refused.
   test(`the order of [table] blocks does not change the outcome (seed=${fuzzSeed}, iters=${fuzzIters})`, () => {
+    // A count below 1, or one that is not a number, would check no document and still pass.
+    expect(fuzzIters).toBeGreaterThanOrEqual(1);
     let state = fuzzSeed;
     const next = () => {
       state = (state + 0x6d2b79f5) | 0;

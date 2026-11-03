@@ -2142,7 +2142,7 @@ pub enum LexerError {
 }
 
 impl LexerError {
-    /// The diagnostic text, same as `Display`.
+    /// The diagnostic text.
     pub fn msg(&self) -> &'static str {
         match self {
             Self::SubshellDepthExceeded => "Subshell nesting depth exceeded",

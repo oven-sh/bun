@@ -123,15 +123,19 @@ static ALWAYS_INLINE bool mayOwnProperties(JSRequireCache* cache)
 
 static bool ownsProperty(JSRequireCache* cache, JSGlobalObject* globalObject, PropertyName propertyName)
 {
+    if (!mayOwnProperties(cache)) [[likely]]
+        return false;
     PropertySlot slot(cache, PropertySlot::InternalMethodType::GetOwnProperty);
-    return mayOwnProperties(cache) && ownPropertySlot(cache, globalObject, propertyName, slot);
+    return ownPropertySlot(cache, globalObject, propertyName, slot);
 }
 
 // The object holds a property that is not configurable under the name: a deletion is refused, and the loader keeps its entry.
 static bool holdsForGood(JSRequireCache* cache, JSGlobalObject* globalObject, PropertyName propertyName)
 {
+    if (!mayOwnProperties(cache)) [[likely]]
+        return false;
     PropertySlot slot(cache, PropertySlot::InternalMethodType::GetOwnProperty);
-    return mayOwnProperties(cache) && ownPropertySlot(cache, globalObject, propertyName, slot) && (slot.attributes() & PropertyAttribute::DontDelete);
+    return ownPropertySlot(cache, globalObject, propertyName, slot) && (slot.attributes() & PropertyAttribute::DontDelete);
 }
 
 static AbstractModuleRecord* evaluatedModuleRecord(Zig::GlobalObject* globalObject, JSCommonJSModule* owner, UniquedStringImpl* key)
@@ -411,11 +415,13 @@ void JSRequireCache::getOwnPropertyNames(JSObject* object, JSGlobalObject* lexic
         // add() below takes a name that it has already for none.
         Structure* structure = thisObject->structure();
         bool ownsProperties = structure->outOfLineSize() || hasIndexedProperties(structure->indexingType());
-        auto isListed = [&](PropertyName name) {
-            if (thisObject->isHiddenKey(name.uid())) [[unlikely]]
+        auto isListed = [&](UniquedStringImpl* key) {
+            if (thisObject->isHiddenKey(key)) [[unlikely]]
                 return false;
+            if (!ownsProperties) [[likely]]
+                return true;
             PropertySlot own(thisObject, PropertySlot::InternalMethodType::GetOwnProperty);
-            if (!ownsProperties || !ownPropertySlot(thisObject, lexicalGlobalObject, name, own)) [[likely]]
+            if (!ownPropertySlot(thisObject, lexicalGlobalObject, PropertyName(key), own))
                 return true;
             return mode == DontEnumPropertiesMode::Include || !(own.attributes() & PropertyAttribute::DontEnum);
         };
@@ -428,7 +434,7 @@ void JSRequireCache::getOwnPropertyNames(JSObject* object, JSGlobalObject* lexic
                 continue;
             auto name = asString(key)->toIdentifier(globalObject);
             RETURN_IF_EXCEPTION(scope, );
-            if (isListed(name))
+            if (isListed(name.impl()))
                 propertyNames.add(name);
         }
         RETURN_IF_EXCEPTION(scope, );
@@ -437,7 +443,7 @@ void JSRequireCache::getOwnPropertyNames(JSObject* object, JSGlobalObject* lexic
         auto addListedByLoader = [&](UniquedStringImpl* key) {
             if (isBuiltinKey(key) && !(seesCompiled && Bun::isLibraryModuleInRequireCache(globalObject, String(key))))
                 return;
-            if (isListed(Identifier::fromUid(vm, key)))
+            if (isListed(key))
                 propertyNames.add(key);
         };
         if (auto* loader = loaderOf(globalObject, thisObject->m_owner.get())) {
@@ -495,18 +501,17 @@ bool JSRequireCache::defineOwnProperty(JSObject* object, JSGlobalObject* lexical
         RELEASE_AND_RETURN(scope, thisObject->store(globalObject, key, descriptor.value() ? descriptor.value() : jsUndefined()));
     }
 
-    // The require map holds no other shape. The object itself holds the property from here on, in front of the entry, which the loader keeps:
-    // the next require() of the file answers with it, and loads nothing again.
+    // The require map holds no other shape: the object itself holds the property. A value that the definition names is the loader's entry too.
     if (!isEntry) {
         bool isDefined = Base::defineOwnProperty(object, lexicalGlobalObject, propertyName, descriptor, shouldThrow);
         RETURN_IF_EXCEPTION(scope, false);
         if (!isDefined || !descriptor.value())
             return isDefined;
-        // A value that a definition names is the loader's entry too.
         RELEASE_AND_RETURN(scope, thisObject->store(globalObject, key, descriptor.value()));
     }
 
-    // What the definition leaves out is as the entry has it.
+    // The property stands in front of the entry from here on. The loader keeps the entry: the next require() of the file answers with it, and
+    // loads nothing again. What the definition leaves out is as the entry has it.
     PropertyDescriptor ownDescriptor = descriptor;
     if (!ownDescriptor.enumerablePresent())
         ownDescriptor.setEnumerable(true);

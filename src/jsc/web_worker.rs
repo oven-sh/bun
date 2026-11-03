@@ -335,8 +335,7 @@ impl WebWorker {
         self.eval_mode
     }
 
-    /// Whether the entry point is text and not a file: a `data:` or `blob:` URL, which is also what
-    /// `node:worker_threads` makes of `eval: true`.
+    /// The entry point is a `data:` or `blob:` URL, which `eval: true` of node:worker_threads also makes, not a file.
     pub(crate) fn entry_point_is_text(&self) -> bool {
         is_text_specifier(&self.unresolved_specifier)
     }

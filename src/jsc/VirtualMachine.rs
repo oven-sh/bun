@@ -3723,8 +3723,7 @@ impl VirtualMachine {
         }
     }
 
-    /// Whether the entry point is text and not a file: `--eval`, `--print`, stdin, the script that Bun writes for a
-    /// cron run, or a Worker from a `data:` or `blob:` URL.
+    /// The entry point is text, not a file: `--eval`, `--print`, stdin, a cron run, or a `data:` or `blob:` Worker.
     fn entry_point_is_text(&self) -> bool {
         self.module_loader.eval_source.is_some()
             || self
@@ -3838,14 +3837,13 @@ impl VirtualMachine {
                 }
 
                 // Node.js starts a main script that is a file with `Module.runMain(main)`, which a preload can replace.
-                // A Worker that a preload stopped (`process.exit()`, or `terminate()` meanwhile) starts nothing.
                 if matches!(
                     self.main_entry_point,
                     MainEntryPoint::File
                         | MainEntryPoint::Compiled
                         | MainEntryPoint::OutsideExecutable
                 ) && !self.entry_point_is_text()
-                    && self.script_allowed()
+                    && self.script_allowed() // a Worker's preload can call `process.exit()`
                     && NodeModuleModule__hasReplacedRunMain(self.global())
                 {
                     bun_core::hint::cold();

@@ -832,8 +832,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-// Whether `Module.runMain` holds anything but the function it starts with. It runs no code of the program, and it
-// does not make the function for a realm that never read the property.
+// Whether `Module.runMain` is not its default function. Runs no script and makes no function for the table row.
 extern "C" bool NodeModuleModule__hasReplacedRunMain(Zig::GlobalObject* global)
 {
     if (!global->m_nodeModuleConstructor.isInitialized())
@@ -850,8 +849,7 @@ extern "C" bool NodeModuleModule__hasReplacedRunMain(Zig::GlobalObject* global)
     return callData.type != JSC::CallData::Type::Native || callData.native.function.untaggedPtr() != &jsFunctionRunMain;
 }
 
-// `Module.runMain(main)`, as Node.js starts the main script:
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/main/run_main_module.js#L33
+// `Module.runMain(main)` of https://github.com/nodejs/node/blob/v26.3.0/lib/internal/main/run_main_module.js#L33
 extern "C" JSC::EncodedJSValue NodeModuleModule__callOverriddenRunMain(Zig::GlobalObject* global, JSValue argv1)
 {
     auto& vm = JSC::getVM(global);

@@ -1618,8 +1618,7 @@ console.log("survived", require("./late.js"));`,
       expect(await run(preload, false, `console.log("main ran", import.meta.main);`, "main.mjs")).toEqual(expected);
     });
 
-    // Node.js reports what the main script throws. Bun takes the promise that the wrapper returns for the entry
-    // point's, and nothing looks at the load that the original starts later: https://github.com/oven-sh/bun/pull/45358
+    // Node.js passes. Bun loses a load that the original starts late: https://github.com/oven-sh/bun/pull/45358
     test.failing(
       "to a wrapper that calls the original after an await, which reports what the main script throws",
       async () => {
@@ -1640,8 +1639,7 @@ console.log("survived", require("./late.js"));`,
       },
     );
 
-    // Node.js reads Module.runMain right after the last --require module, in the same tick, and before it loads an
-    // --import module. Bun waits for each preload, of either kind, and then reads the property.
+    // Node.js reads Module.runMain in the tick of the last --require module. Bun first waits for every preload.
     test.each([
       [
         "an --import preload with an assignment",

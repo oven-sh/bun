@@ -1,6 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
-import { mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+  unprivilegedSpawnOptions,
+} from "harness";
+import { chmodSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, parse } from "node:path";
 
 // The resolver caches every directory it reads, including the ones it did not
@@ -190,6 +199,93 @@ const files = {
     };
     // A require() whose lookups start from a directory other than this file's.
     const requireFrom = dir => createRequire(path.resolve(dir, "x.cjs"));
+    // For a group whose misses change nothing on disk: the test wrote its files before this
+    // process started. Each miss runs its lookup once more, and that run asks the disk about
+    // each directory and config file that it takes from the caches. None of them changed. So
+    // no directory gets a new record or a new listing: those take memory that is never freed.
+    // And no listing is read again, except on Windows: see keepsListings. This prints what
+    // each miss answers, then what 20 more rounds of the misses add to each counter of the
+    // resolver. The fixture is in the directory "here".
+    const unchangedMisses = (here, misses) => {
+      const { resolverCounters } = require("bun:internal-for-testing");
+      for (const [label, miss] of misses) res(label, miss);
+      // What one more round of the misses adds to each counter of the resolver.
+      const round = () => {
+        const before = resolverCounters();
+        for (const [, miss] of misses) {
+          try {
+            miss();
+          } catch {}
+        }
+        const after = resolverCounters();
+        const added = {};
+        for (const name of Object.keys(after)) added[name] = after[name] - before[name];
+        return added;
+      };
+      // The directories above the fixture are every test's: the temporary directory changes
+      // with each test that starts or ends, and a miss reads again a directory that changed.
+      // This tells when one of them did: each directory above, and the node_modules in it,
+      // which the lookup of a package reads.
+      const above = [];
+      for (let dir = path.dirname(here); dir !== above.at(-1); dir = path.dirname(dir)) above.push(dir);
+      const stamp = dir => {
+        try {
+          const { ino, mtimeNs, ctimeNs } = fs.statSync(dir, { bigint: true });
+          return [ino, mtimeNs, ctimeNs].join(" ");
+        } catch {
+          return "none";
+        }
+      };
+      // The directories above as they were last seen, and when they were first seen so.
+      let seen;
+      let since;
+      const look = () => {
+        const now = above.flatMap(dir => [stamp(dir), stamp(path.join(dir, "node_modules"))]).join();
+        if (now !== seen) [seen, since] = [now, performance.now()];
+        return now;
+      };
+      look();
+      // Windows lists a directory without its identity, and reads each listing again.
+      const keepsListings = process.platform !== "win32";
+      // A listing that was read right after its directory changed is read once more: the times
+      // of a directory cannot tell a later change from that one. So a round can read a listing
+      // again for two reasons that are not the resolver's doing: the test has just written the
+      // fixture, and a directory above changed. A round is charged with the listings that it
+      // read again when no directory above changed during it, and none since a round that read
+      // no listing again, or since a round that began a tenth of a second after the last
+      // change, which is five times the margin of that rule.
+      const more = { lookupsRunAgain: 0, dirInfoSlots: 0, newListings: 0, refills: 0 };
+      // The directories above, as they were around the last round that read no listing again,
+      // and around the last round that began that long after they changed.
+      let kept;
+      let settled;
+      let charged = false;
+      const run = counted => {
+        const before = look();
+        const late = performance.now() - since >= 100;
+        const added = round();
+        const calm = look() === before;
+        const chargeable = calm && (before === kept || before === settled);
+        settled = calm && late ? before : undefined;
+        if (added.refills === 0) {
+          if (calm) kept = before;
+        } else if (chargeable) {
+          charged = true;
+          more.refills += added.refills;
+        }
+        if (counted) for (const name of ["lookupsRunAgain", "dirInfoSlots", "newListings"]) more[name] += added[name];
+      };
+      // Rounds until one reads no listing again, or is charged. The deadline is for directories
+      // above that keep changing.
+      const deadline = performance.now() + 1000;
+      while (keepsListings && kept === undefined && !charged && performance.now() < deadline) run(false);
+      for (let i = 0; i < 20; i++) run(true);
+      const count = "by " + 20 * misses.length + " more misses:";
+      console.log("lookups run again", count, more.lookupsRunAgain);
+      console.log("new directory records", count, more.dirInfoSlots);
+      console.log("new listings", count, more.newListings);
+      if (keepsListings) console.log("listings read again", count, more.refills);
+    };
 
     const groups = {
       async search() {
@@ -753,13 +849,6 @@ const files = {
       },
 
       async steady() {
-        // The test wrote these files before this process started, and nothing
-        // changes on disk here. Each miss runs its lookup once more, and that run
-        // asks the disk about each directory and config file that it takes from
-        // the caches. None of them changed. So no directory gets a new record or a
-        // new listing: those take memory that is never freed. And no listing is
-        // read again, except on Windows: see keepsListings.
-        const { resolverCounters } = require("bun:internal-for-testing");
         // The working directory can be another one: see the test.
         const here = path.dirname(fileURLToPath(import.meta.url));
         const s1 = requireFrom(path.join(here, "s1"));
@@ -787,83 +876,25 @@ const files = {
           // A link whose target is not there.
           ["Z10", () => require.resolve("./s7.cjs")],
         ];
-        for (const [label, miss] of misses) res(label, miss);
-        // What one more round of the misses adds to each counter of the resolver.
-        const round = () => {
-          const before = resolverCounters();
-          for (const [, miss] of misses) {
-            try {
-              miss();
-            } catch {}
-          }
-          const after = resolverCounters();
-          const added = {};
-          for (const name of Object.keys(after)) added[name] = after[name] - before[name];
-          return added;
-        };
-        // The directories above the fixture are every test's: the temporary directory changes
-        // with each test that starts or ends, and a miss reads again a directory that changed.
-        // This tells when one of them did: each directory above, and the node_modules in it,
-        // which the lookup of a package reads.
-        const above = [];
-        for (let dir = path.dirname(here); dir !== above.at(-1); dir = path.dirname(dir)) above.push(dir);
-        const stamp = dir => {
-          try {
-            const { ino, mtimeNs, ctimeNs } = fs.statSync(dir, { bigint: true });
-            return [ino, mtimeNs, ctimeNs].join(" ");
-          } catch {
-            return "none";
-          }
-        };
-        // The directories above as they were last seen, and when they were first seen so.
-        let seen;
-        let since;
-        const look = () => {
-          const now = above.flatMap(dir => [stamp(dir), stamp(path.join(dir, "node_modules"))]).join();
-          if (now !== seen) [seen, since] = [now, performance.now()];
-          return now;
-        };
-        look();
-        // Windows lists a directory without its identity, and reads each listing again.
-        const keepsListings = process.platform !== "win32";
-        // A listing that was read right after its directory changed is read once more: the times
-        // of a directory cannot tell a later change from that one. So a round can read a listing
-        // again for two reasons that are not the resolver's doing: the test has just written the
-        // fixture, and a directory above changed. A round is charged with the listings that it
-        // read again when no directory above changed during it, and none since a round that read
-        // no listing again, or since a round that began a tenth of a second after the last
-        // change, which is five times the margin of that rule.
-        const more = { lookupsRunAgain: 0, dirInfoSlots: 0, newListings: 0, refills: 0 };
-        // The directories above, as they were around the last round that read no listing again,
-        // and around the last round that began that long after they changed.
-        let kept;
-        let settled;
-        let charged = false;
-        const run = counted => {
-          const before = look();
-          const late = performance.now() - since >= 100;
-          const added = round();
-          const calm = look() === before;
-          const chargeable = calm && (before === kept || before === settled);
-          settled = calm && late ? before : undefined;
-          if (added.refills === 0) {
-            if (calm) kept = before;
-          } else if (chargeable) {
-            charged = true;
-            more.refills += added.refills;
-          }
-          if (counted) for (const name of ["lookupsRunAgain", "dirInfoSlots", "newListings"]) more[name] += added[name];
-        };
-        // Rounds until one reads no listing again, or is charged. The deadline is for directories
-        // above that keep changing.
-        const deadline = performance.now() + 1000;
-        while (keepsListings && kept === undefined && !charged && performance.now() < deadline) run(false);
-        for (let i = 0; i < 20; i++) run(true);
-        const count = "by " + 20 * misses.length + " more misses:";
-        console.log("lookups run again", count, more.lookupsRunAgain);
-        console.log("new directory records", count, more.dirInfoSlots);
-        console.log("new listings", count, more.newListings);
-        if (keepsListings) console.log("listings read again", count, more.refills);
+        unchangedMisses(here, misses);
+      },
+
+      async unlistable() {
+        // The test made "xonly" a directory that the user of this process can enter and cannot
+        // list. Such a directory reads as an empty one, so the node_modules in it is not
+        // searched. Nothing tells whether it is as it was, so the run after a miss tries once
+        // more to list it. That fails as before, and gives it no new record and no new listing.
+        const here = path.dirname(fileURLToPath(import.meta.url));
+        const src = requireFrom(path.join(here, "xonly", "proj", "src"));
+        const misses = [
+          // A package that is not installed, and one that the node_modules of "xonly" has.
+          ["XA", () => src.resolve("never-installed")],
+          ["XB", () => src.resolve("held")],
+          // An alias that the package.json below "xonly" does not have, and a file that is not there.
+          ["XC", () => src.resolve("#x")],
+          ["XD", () => src.resolve("./nope.cjs")],
+        ];
+        unchangedMisses(here, misses);
       },
 
       async changed() {
@@ -1126,16 +1157,21 @@ async function runGroup(
   setup: (dir: string) => void = () => {},
   // Where the process starts, and its flags.
   start: (dir: string) => { cwd: string; flags: string[] } = dir => ({ cwd: dir, flags: [] }),
+  // The user that the process runs as: the one of the test, unless this names another. Disposed of after the process.
+  user: (dir: string) => { uid?: number; gid?: number } & Disposable = () => ({ [Symbol.dispose]() {} }),
 ) {
   using dir = tempDir("dir-cache-retry", files);
   setup(String(dir));
   const { cwd, flags } = start(String(dir));
+  using runAs = user(String(dir));
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...flags, join(String(dir), "main.mjs"), group],
     env: { ...bunEnv, ...env(String(dir)) },
     cwd,
     stdout: "pipe",
     stderr: "pipe",
+    uid: runAs.uid,
+    gid: runAs.gid,
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout: normalizeBunSnapshot(stdout, String(dir)), stderr: stderr.trim(), exitCode };
@@ -1627,6 +1663,48 @@ describe.concurrent("a failed resolution checks again what else it read from the
       ].join("\n"),
     });
   });
+
+  // The mode of a directory does not stop the superuser, so under it the fixture runs as another user. Windows
+  // has no such mode. Serial: `unprivilegedSpawnOptions` may change and restore the modes of the directories
+  // above the test's own.
+  test.serial.skipIf(isWindows)(
+    "an unchanged miss below a directory that can be entered but not listed makes no record or listing",
+    async () => {
+      const unlistableFiles = (dir: string) => {
+        mkdirSync(join(dir, "xonly", "node_modules", "held"), { recursive: true });
+        writeFileSync(join(dir, "xonly", "node_modules", "held", "index.js"), "");
+        mkdirSync(join(dir, "xonly", "proj", "src"), { recursive: true });
+        writeFileSync(join(dir, "xonly", "proj", "package.json"), JSON.stringify({ name: "proj" }));
+      };
+      // The user of the fixture can enter "xonly" and cannot list it, until the fixture is removed.
+      const cannotList = (dir: string) => {
+        const user = unprivilegedSpawnOptions(dir);
+        chmodSync(join(dir, "xonly"), 0o111);
+        return {
+          uid: user.uid,
+          gid: user.gid,
+          [Symbol.dispose]() {
+            chmodSync(join(dir, "xonly"), 0o755);
+            user[Symbol.dispose]();
+          },
+        };
+      };
+      expect(await runGroup("unlistable", undefined, unlistableFiles, undefined, cannotList)).toEqual({
+        exitCode: 0,
+        stderr: "",
+        stdout: [
+          "XA ERR MODULE_NOT_FOUND",
+          "XB ERR MODULE_NOT_FOUND",
+          "XC ERR MODULE_NOT_FOUND",
+          "XD ERR MODULE_NOT_FOUND",
+          "lookups run again by 80 more misses: 80",
+          "new directory records by 80 more misses: 0",
+          "new listings by 80 more misses: 0",
+          "listings read again by 80 more misses: 0",
+        ].join("\n"),
+      });
+    },
+  );
 });
 
 // A Worker takes more than a second to start in a debug build, so this one does not share

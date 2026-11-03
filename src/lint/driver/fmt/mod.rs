@@ -480,6 +480,14 @@ struct Scratches {
 }
 
 impl Scratches {
+    /// Forgets what is known from the files that have been formatted, as at the start of a run.
+    fn forget_other_files(&mut self) {
+        self.css.forget_other_files();
+        if let Some(blocks) = &mut self.blocks {
+            blocks.forget_other_files();
+        }
+    }
+
     /// An empty buffer for what a text of `len` bytes is formatted to.
     fn buffer_for(&mut self, len: usize) -> Vec<u8> {
         let mut buffer = std::mem::take(&mut self.spare);
@@ -1959,6 +1967,12 @@ impl Run<'_> {
                 .collect();
             let mut best = f64::MAX;
             for round in 0..options.bench {
+                // A round stands for a run.
+                for worker in &workers {
+                    if let Some(worker) = &mut *worker.lock() {
+                        worker.scratch.forget_other_files();
+                    }
+                }
                 let began = Instant::now();
                 let format_loaded = |worker: &mut Worker, at: usize| {
                     let Some((resolved, text)) = &loaded[at] else {

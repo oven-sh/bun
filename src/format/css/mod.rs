@@ -78,6 +78,13 @@ pub struct Scratch {
     parsed: parse::Parsed,
 }
 
+impl Scratch {
+    /// Forgets what is known from the style sheets that have been formatted, as at the start of a run.
+    pub fn forget_other_files(&mut self) {
+        self.memo = Memo::default();
+    }
+}
+
 /// Prettier's `replaceQuotesInInlineComments`. Returns the inline comments whose quotes and asterisks must be replaced
 /// with spaces so that `postcss-less` doesn't trip over them.
 fn inline_comments_with_quotes(text: &[u8]) -> Vec<(usize, usize)> {

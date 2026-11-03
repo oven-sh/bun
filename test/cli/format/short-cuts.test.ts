@@ -1573,3 +1573,97 @@ describe.skipIf(!hasFlag)("where lines are written without a document", () => {
     expect(long.exitCode).toBe(0);
   });
 });
+
+/** Formats `files` in place, and returns what they are afterwards. */
+async function formatInPlace(files: Record<string, string>, flags: string[]) {
+  using dir = tempDir("format-short-cuts", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fmt", "--no-editorconfig", "--log-level=silent", ...flags, "."],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const formatted = Object.fromEntries(
+    Object.keys(files).map(name => [name, readFileSync(join(String(dir), name), "utf8")]),
+  );
+  return { formatted, stderr, exitCode };
+}
+
+/** `inputs` once for each set of options, each time in a directory with a `.prettierrc`. */
+function inDirectoriesWithOptions(inputs: Record<string, string>, options: object[]) {
+  const files: Record<string, string> = {};
+  options.forEach((set, index) => {
+    files[`${index}/.prettierrc`] = JSON.stringify(set);
+    for (const [name, text] of Object.entries(inputs)) files[`${index}/${name}`] = text;
+  });
+  return files;
+}
+
+describe.skipIf(!hasFlag)("expressions that are too wide for their line", () => {
+  // Each of these was printed differently with and without short cuts at some width.
+  const inputs = {
+    // Without a comma after it, the last property fits.
+    "last-property.ts": `const messages = {\n  pagination: {\n    deprecationWarning: "Deprecated usages detected, please refer to the documentation for more",\n  },\n};\n`,
+    // The first place where the right side can break is the \`(\`.
+    "optional-call.ts": `function f() {\n  const selectedOption = this.autocomplete.options?.find((option) => option.selected);\n  const dragRange = this._rangeStrategy.createDrag?.(this.activeDrag.value, this.selected as DateRange<D>, value, event);\n}\n`,
+    // An assignment on a line of its own among the arguments keeps its parentheses.
+    "assignment-argument.ts": `register(someLongFunctionName, anotherLongArgument, (scope.onConnectionClosed = onConnectionClosed.bind(scope)));\n`,
+    // What can't be written isn't too wide.
+    "arrow-argument.ts": `const testResults = results.testResults.map((testResult) => formatResult(testResult, formatter, reporter));\nconst options = {\n  options: optionDebugEls.map((el) => el.injector.get<CdkOption<O>>(CdkOption)),\n};\n`,
+    // A comment forces a line break that isn't seen before the line is full.
+    "dangling-comment.js": `func(one, two, three, four, five, six, seven, eig, is, this, too, long, yes, {\n  // Comments\n});\nvar a = {/* dangling */};\n`,
+    // A chain is on one line if it fits up to a line break that's forced in its last call.
+    "chain-with-method.js": `jest.dontMock("event-target-shim").setMock("../../BatchedBridge/NativeModules", { Networking: { sendRequest(options, callback) { if (typeof callback === "function") { callback(1); } } }, PlatformConstants: { getConstants() {} } });\n`,
+    // Nothing fits after a string that's too wide.
+    "long-strings.ts": `it("should return true for an element with \`visibility: hidden\` ancestor and *closer* " + "\`visibility: visible\` ancestor", () => {\n  run();\n});\nthrow new Error("deleteSelectedTextAndJoinRemainingNodes(): cannot delete because of must-keep division: " + division.properties.name);\n`,
+    // The right side moves to the next line if it doesn't fit up to where it can break first.
+    "conditional.ts": `function f() {\n  const bytes: NodeJS.TypedArray = require("node:util/types").isAnyArrayBuffer(serialized) ? new Uint8Array(serialized as ArrayBufferLike) : serialized;\n  const limit = start ? 0 : this.maximumNumberOfConnections;\n  const hideEvent = active ? EventHandler.trigger(active, EVENT_HIDE, { relatedTarget: innerElem }) : null;\n}\n`,
+    // The object that an arrow function returns brings its parentheses.
+    "arrow-body.ts": `export const setProp = (y) => ({\n  ...y,\n  a: "very, very, very long very, very long text",\n});\nconst isNeedInserted = () => React.Children.count(children) === 1 && !icon && !isUnBorderedButtonType(type);\nconst settingOpen = (value: boolean, e?: React.MouseEvent<HTMLButtonElement> | React.KeyboardEvent<HTMLDivElement>) => {\n  setOpen(value, true);\n};\nconst Alert = ({ description, prefixCls, message, banner, className, style, onMouseEnter, onMouseLeave }) => {\n  run();\n};\n`,
+    // There's no line break between the arguments of a test.
+    "tests.ts": `beforeEach(inject([FocusMonitor], (fm: FocusMonitor) => {\n  focusMonitor = fm;\n}));\nit("should close all open dialogs when the location hash changes", fakeAsync(() => {\n  flush();\n}));\nbeforeEach(waitForAsync(() => {\n  TestBed.configureTestingModule({ imports: [OverlayTestModule] });\n}));\n`,
+    // The cells of a table are printed apart from the file, on one line.
+    "table.js": `test.each\`\na | b\n\${[{ start: 1, end: 3 }, { start: 15, end: 20 }, { start: 15, end: 20 }]} | \${1}\n\`("example test", ({ a, b }) => {});\n`,
+    // The parentheses of an \`await\` at the start of the argument of an \`await\` have no group of their own.
+    "await.ts": `async function f() {\n  await (await (await a.b.c(d))?.e())?.f;\n  const x = await (await a).b;\n  await (await a)();\n}\n`,
+    // The parameters of a function expression can break while it's hugged, so a chain fits up to its \`(\`.
+    "chain-with-function.ts": `const mockFn = vi.fn().mockImplementation(function (this: MockWithPrettyLongName) {\n  return this;\n});\njest.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element, ...args) {\n  return args;\n});\n`,
+    // Neither the \`?\` nor the default of a rest parameter is printed.
+    "rest-parameters.ts": `const a = (...a?: T) => {};\nconst b = (...a = 1) => {};\nconst c = (...a?: T[]) => {\n  run();\n};\nclass F {\n  g(...a?: T) {}\n}\nconst i = (a?, ...b?) => a;\nconst j = function (this: T, ...b?: U[]) {};\nconst l = (this: T) => {};\nconst o = (...{ a }?: T) => {};\nconst p = (...[a] = []) => {};\ntype Q = (...a?: T) => void;\ndeclare function s(...a?: T): void;\n`,
+    // Functions among the arguments of a decorator don't put each on a line, and the line can break after a decorator.
+    "decorators.ts": `class A {\n  @ContentChildren(forwardRef(() => MatRadioButton), { descendants: true })\n  _radios: QueryList<MatRadioButton>;\n  @OneToMany((type) => Topic, (topic) => topic.board)\n  topics: Topic[];\n  @Input({ transform: booleanAttribute }) showBeforeIframeApiLoads: boolean = false;\n}\n`,
+    "computed-key.ts": `class A {\n  [thisxxxxxxxxxxxx.resource = resource] = 1;\n  [this.resource = resource]() {}\n}\n`,
+    // An empty line between two properties stays, so the object breaks, and the chain fits up to its brace.
+    "empty-line.ts": `jest.unmock("event-target-shim").setMock("../../BatchedBridge/NativeModules", {\n  BlobModule: require("../__mocks__/BlobModule"),\n\n  FileReaderModule: require("../__mocks__/FileReaderModule"),\n});\n`,
+    // Whether a \`;\` follows a property of a class without semicolons depends on the next member.
+    "class-properties.ts": `class A {\n  readonly hasFocus: Observable<boolean> = this._hasFocus.pipe(startWith(false), debounceTime(0), distinctUntilChanged());\n  scrolledIndexChange: Observable<number> = this._scrolledIndexChange.pipe(distinctUntilChanged());\n  [key] = 1;\n}\n`,
+    // The \`}\` in JSX is on a line of its own after the body of an arrow function that is.
+    "jsx-arrow.tsx": `const a = (\n  <Switch\n    onValueChange={(enabled) => setProps((prev) => ({ ...prev, transparent: enabled }))}\n    value={value}\n  />\n);\n`,
+    "in.ts": `for (var a = {\n  b: b in c };;);\nfor (var a = f(b in c);;);\n`,
+    "calls.ts": `expect(keyManager.getActiveItemIndex()).withContext("active item index").toBe(0);\nexpect(fixture.componentInstance.connectedOverlayDirective.push).not.toBe(true);\nconst lineAndCharacter = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile), true);\nthis._requestAnimationFrame(() => this._hostElement.classList.add(OPENING_CLASS, OPEN_CLASS));\nsetTimeout(() => {\n  done();\n}, 1000);\nuseEffect(() => {\n  subscribe();\n}, [subscribe, unsubscribe]);\nexpect(() => {\n  fixture.detectChanges();\n}).not.toThrow();\nrerender(createTable({\n  columns,\n  dataSource,\n}));\nconst { getPrefixCls, direction, pagination = {} } = React.useContext(ConfigContext);\nconst { fixture, testComponent, listbox, listboxEl, options, optionEls } = setupComponent(ListboxWithOptions);\n`,
+    "conditions.ts": `if (!this._hasAllOutlets && this._rowOutlet && this._headerRowOutlet && this._footerRowOutlet) {\n  run();\n} else if (value !== "above" && value !== "below" && (typeof ngDevMode === "undefined" || ngDevMode)) {\n  stop();\n}\nfunction f() {\n  return this._disabled || (this.buttonToggleGroup && this.buttonToggleGroup.disabled) || other;\n}\nconst deferredBody = body !== undefined && (isBlob(body) || FileHandle.isFileHandle(body));\nconst preview = document.querySelector(".cdk-drag-preview-with-a-long-name")! as HTMLElement;\nconst trigger = fixture.debugElement.query(By.css(".mat-mdc-select-trigger"))!.nativeElement;\n`,
+    "literals.ts": `const routes = [{ path: "a", component: A }, { path: "b", component: B }];\nconst table = { "quoted-key": 1, 2: two, [computed]: three, plain: [first, second, { third: function () { return 3; } }] };\n`,
+  };
+  const widths = [20, 24, 30, 34, 36, 40, 45, 50, 60, 66, 70, 72, 74, 76, 78, 79, 80, 81, 82, 84, 88, 90, 100, 110, 120];
+  const others = [
+    {},
+    { trailingComma: "none" },
+    { objectWrap: "collapse", tabWidth: 4 },
+    { useTabs: true, arrowParens: "avoid", bracketSpacing: false },
+    { quoteProps: "consistent", singleQuote: true },
+    { semi: false },
+  ];
+  const files = inDirectoriesWithOptions(
+    inputs,
+    others.flatMap(set => widths.map(printWidth => ({ printWidth, ...set }))),
+  );
+
+  test("are the same with and without short cuts", async () => {
+    const [short, long] = await Promise.all([formatInPlace(files, []), formatInPlace(files, ["--no-short-cuts"])]);
+    expect(short).toEqual(long);
+    expect(short.stderr).toBe("");
+    expect(short.exitCode).toBe(0);
+  });
+});

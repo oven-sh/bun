@@ -1580,6 +1580,29 @@ describe.skipIf(!hasFlag)("what breaks whether it fits or not, and what only loo
     `,
     "html-comments.js": "try { a; } finally <!--\n{ b; }\n",
     "after-line-comment.js": "a = { /* c */ // d\n  b: 'c'// c\n,/** c */ /**\n */\n};\n",
+    // A chain in a default value breaks without the parameters.
+    "default-values.js": `
+      d((a = d.e().a()) => {});
+      d(({} = d.e().a()) => {});
+      d(([a] = d.e().a(), b) => { c(); });
+      d(a, (b = d.e().a()) => {});
+      new d((a = d.e().a()) => {});
+      d((a = f(bbbbbb)) => {});
+      d((a = 1) => {});
+    `,
+    "assertions-in-conditions.ts": "if (a && <{\n b: c }>d) { e; }\nwhile (a && <a<{\nT}>>x) { e; }\nif (a < b && c) { e; }\n",
+    // A comment after a \`(\` belongs to what's before the parenthesis.
+    "comments-in-parentheses.mjs": `
+      new l(2, (/**/
+      a((a) => { n(); })));
+      e((// c
+      f(() => { l; })));
+      await e((e(2, () => {})
+      //
+      ), 2);
+      x = a ? (/* c */
+      b(() => { c(); })) : d;
+    `,
     // What's after \`<T>\` is printed flat first.
     "assertions.ts": `
       x = <a>function () {
@@ -2208,7 +2231,8 @@ describe.skipIf(!hasFlag)("where lines are written without a document", () => {
     expect(long.exitCode).toBe(0);
   });
 
-  test.concurrent.each([[[]], [["--print-width=40"]], [["--no-semi"]]])("the same as oxfmt with %j", async flags => {
+  const flagsForOxfmt = [[[]], [["--print-width=40"]], [["--print-width=6"]], [["--no-semi"]]];
+  test.concurrent.each(flagsForOxfmt)("the same as oxfmt with %j", async flags => {
     const all = {
       ...files,
       ".oxfmtrc.json": "{}\n",
@@ -2219,6 +2243,8 @@ describe.skipIf(!hasFlag)("where lines are written without a document", () => {
       "loop-body.js": `for (x in y) var a = 1, b = 2;\\nwhile (x) var e = 1, f = 2;\\n`,
       "intrinsic.ts": `type A = (intrinsic);\\ntype B = (intrinsic) | C;\\n`,
       "comma-on-its-line.js": `a(\n  "b"\n,\n  async () => {}\n);\n`,
+      "parenthesis-on-its-line.js": `a(o,\n(\n[{"":l}]))\n`,
+      "empty-line-in-chain.js": `e=a.\n\ne(wo)\n`,
       "types-in-javascript.js": `type A = { b: C; d: E };\ndeclare export { f };\n`,
     };
     const [short, long] = await Promise.all([format(all, flags), format(all, [...flags, "--no-short-cuts"])]);

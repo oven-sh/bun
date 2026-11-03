@@ -82,6 +82,12 @@ impl<'a> Line<'_, 'a> {
         }
     }
 
+    /// True if there can be a `<T>a` in `e`. A line break that's forced in one doesn't break what's around it, so the
+    /// printer measures up to there, which is less than what's measured here.
+    pub(super) fn can_have_assertion(&self, e: Expr<'a>) -> bool {
+        self.is_typescript && strings::contains_char(self.text_of(e.outer_span()), b'<')
+    }
+
     /// The arguments of `e` after the `(`, which can't be written on one line, with nothing but closing brackets after
     /// them.
     pub(super) fn arguments_with_forced_line_break(

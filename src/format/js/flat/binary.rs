@@ -22,7 +22,7 @@ impl<'a> Line<'_, 'a> {
     /// What's between the parentheses of `if (..) {` and `while (..) {`, which is too wide for their line.
     pub(super) fn condition_too_wide(&mut self, test: Expr<'a>) -> Written {
         // `!(a && b)` starts on the line of the statement.
-        if test.tag() == ExprTag::Unary {
+        if test.tag() == ExprTag::Unary || self.can_have_assertion(test) {
             return Err(Refused);
         }
         self.has_measured = true;

@@ -53,6 +53,7 @@ impl<'a> Line<'_, 'a> {
             self.back_to(mark);
             self.has_measured = true;
         }
+        self.check_parentheses(e)?;
         self.check_measured(span)?;
         self.end_text(None)?;
         self.parts.push(Part::Aligned(e));

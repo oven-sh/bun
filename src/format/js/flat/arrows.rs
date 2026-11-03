@@ -87,12 +87,16 @@ impl<'a> Line<'_, 'a> {
             .and_then(|()| self.check_room_for(after));
         let is_signature_on_one_line = written.is_ok();
         if !is_signature_on_one_line {
-            // The parameters of a function that's hugged don't break. Its type parameters and its return type can, and
-            // then it stays hugged.
+            // The parameters of a function that's hugged don't break. Its type parameters, its return type and a chain
+            // in a default value can, and then it stays hugged.
             if is_hugged
                 && (!func.type_params().is_empty()
                     || (func.return_type())
-                        .is_some_and(|ty| !is_type_without_line_breaks(ty, self.f)))
+                        .is_some_and(|ty| !is_type_without_line_breaks(ty, self.f))
+                    || func.params().iter().any(|param| {
+                        param.pat().tag() != PatTag::Ident
+                            || param.default().is_some_and(|it| !is_unbreakable(it.tag()))
+                    }))
             {
                 self.is_too_wide = false;
             }

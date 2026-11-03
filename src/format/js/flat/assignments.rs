@@ -186,8 +186,8 @@ impl<'a> Line<'_, 'a> {
     }
 
     fn assigned_on_next_line(&mut self, value: Expr<'a>) -> Written {
-        // An arrow function is told about the layout.
-        if value.tag() == ExprTag::Fn {
+        // An arrow function is told about the layout. An empty line that's kept is a line break up to which it can fit.
+        if value.tag() == ExprTag::Fn || has_empty_line(self.text_of(value.outer_span())) {
             return Err(Refused);
         }
         // The space after the operator.

@@ -183,6 +183,7 @@ impl<'a> Line<'_, 'a> {
         if self.parts.len() == self.must_fit {
             return Err(Refused);
         }
+        self.check_parentheses(e)?;
         self.check_measured(span)?;
         self.is_too_wide = false;
         self.end_text(None)?;
@@ -213,6 +214,15 @@ impl<'a> Line<'_, 'a> {
         }
         (self.limit, self.width) = (usize::MAX, Width::TooWide);
         self.expr(e, place)
+    }
+
+    /// Refuses what goes the long way with its parentheses if there's a comment in it: one between a parenthesis and the
+    /// expression can belong to what's before it, which has been written here.
+    pub(super) fn check_parentheses(&self, e: Expr<'a>) -> Written {
+        match e.is_parenthesized() && self.has_comments_in(e.outer_span()) {
+            true => Err(Refused),
+            false => Ok(()),
+        }
     }
 
     /// Refuses what goes the long way if it has been part of what was measured, unless it's as wide as it has bytes

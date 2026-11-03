@@ -397,15 +397,15 @@ struct Line<'f, 'a> {
     parts: Vec<Part<'a>>,
 }
 
-/// True if `text` has a line with nothing but white space on it, or nothing but a comma: oxfmt counts the line breaks
-/// between two arguments.
+/// True if `text` has a line with nothing but white space on it, or nothing but a comma or a `(`: oxfmt counts the line
+/// breaks between two arguments.
 fn has_empty_line(text: &[u8]) -> bool {
     let mut rest = text;
     while let Some(at) = strings::index_of_char_usize(rest, b'\n') {
         rest = &rest[at + 1..];
         let blank = rest
             .iter()
-            .take_while(|byte| matches!(byte, b' ' | b'\t' | b'\r' | b','))
+            .take_while(|byte| matches!(byte, b' ' | b'\t' | b'\r' | b',' | b'('))
             .count();
         if rest.get(blank) == Some(&b'\n') {
             return true;
@@ -424,7 +424,7 @@ fn has_odd_line(text: &[u8]) -> bool {
         rest = &rest[at + 1..];
         let blank = rest
             .iter()
-            .take_while(|byte| matches!(byte, b' ' | b',' | 0..=9 | 11..=31 | 0x7F..))
+            .take_while(|byte| matches!(byte, b' ' | b',' | b'(' | 0..=9 | 11..=31 | 0x7F..))
             .count();
         if rest.get(blank) == Some(&b'\n') {
             return true;

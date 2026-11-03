@@ -1,9 +1,9 @@
-import { expect } from "bun:test";
+import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { cpSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { beforeAll, test } from "./supported";
 
 // `bun test --aot` compiles what the test files share as programs of their own, below the test files. Here the main file of a stored program
 // is itself the test file, so each of its imports and require() calls, and every object that comes back, crosses from one program into another.
@@ -70,7 +70,7 @@ const atTheEndOfTheStack = {
     "object kState,other",
     "true object",
   ],
-  // The first test stores it here for the second.
+  // What plain Bun printed for it, before the first test puts the stored lines in its place.
   printedByPlainBun: undefined as string[] | undefined,
 };
 
@@ -124,17 +124,23 @@ async function runTests(directory: string, ...flags: string[]) {
   };
 }
 
-test("the main files of stored programs run as test files", async () => {
-  using dir = tempDir("aot-stored-programs-as-test-files", {
+// One project and one run of plain Bun, for both tests and in whichever order they run.
+let dir: ReturnType<typeof tempDir>;
+let plain: Awaited<ReturnType<typeof runTests>>;
+beforeAll(async () => {
+  dir = tempDir("aot-stored-programs-as-test-files", {
     "package.json": `{ "name": "stored-programs-as-test-files" }`,
   });
   for (const program of programs) copyAsTestFile(String(dir), program);
-  const plain = await runTests(String(dir));
-  const { printed, ...report } = plain;
-  // The next test holds plain Bun to the stored lines of that one program.
-  atTheEndOfTheStack.printedByPlainBun = printed[atTheEndOfTheStack.program];
+  plain = await runTests(String(dir));
+  atTheEndOfTheStack.printedByPlainBun = plain.printed[atTheEndOfTheStack.program];
+});
+afterAll(() => dir?.[Symbol.dispose]());
+
+test("the main files of stored programs run as test files", async () => {
   // Plain Bun says what each must print only where it ran each to its end: every test passed, no file failed to load, nothing was printed behind
   // the last test, and the run ended well. A program that prints nothing would have nothing compared.
+  const { printed, ...report } = plain;
   expect({ printedNothing: programs.filter(program => !printed[program]?.length), ...report }).toEqual({
     printedNothing: [],
     behindTheLast: [""],
@@ -143,7 +149,7 @@ test("the main files of stored programs run as test files", async () => {
     crashes: [],
     exitCode: 0,
   });
-  // And the compiled run is held to them.
+  // The compiled run is held to the stored lines of that one program. The next test holds plain Bun to them.
   printed[atTheEndOfTheStack.program] = atTheEndOfTheStack.printed;
   expect(Object.keys(plain.printed).sort()).toEqual([...programs].sort());
   expect(await runTests(String(dir), "--aot")).toEqual(plain);

@@ -464,19 +464,41 @@ describe.skipIf(!isWindows)("process.stdin on a raw console", () => {
   ];
 
   // With ENABLE_VIRTUAL_TERMINAL_INPUT, which raw mode asks for, the console translates most keys itself.
+  const passKeysOnAsTheyAre = `
+    const { symbols: kernel32 } = require("bun:ffi").dlopen("kernel32.dll", {
+      GetNumberOfConsoleInputEvents: { args: ["i64", "ptr"], returns: "i32" },
+      GetStdHandle: { args: ["i32"], returns: "i64" },
+      SetConsoleMode: { args: ["i64", "u32"], returns: "i32" },
+      WriteConsoleInputW: { args: ["i64", "ptr", "u32", "ptr"], returns: "i32" },
+    });
+    const STD_INPUT_HANDLE = -10, ENABLE_WINDOW_INPUT = 8, KEY_EVENT = 1;
+    const input = kernel32.GetStdHandle(STD_INPUT_HANDLE);
+    process.stdin.setRawMode(true);
+    kernel32.SetConsoleMode(input, ENABLE_WINDOW_INPUT);
+    function press(events) {
+      const records = Buffer.alloc(20 * events.length);
+      events.forEach(([down, repeat, key, scan, unit, state], i) => {
+        records.writeUInt16LE(KEY_EVENT, 20 * i);
+        records.writeInt32LE(down, 20 * i + 4);
+        records.writeUInt16LE(repeat, 20 * i + 8);
+        records.writeUInt16LE(key, 20 * i + 10);
+        records.writeUInt16LE(scan, 20 * i + 12);
+        records.writeUInt16LE(unit, 20 * i + 14);
+        records.writeUInt32LE(state, 20 * i + 16);
+      });
+      kernel32.WriteConsoleInputW(input, records, events.length, new Uint32Array(1));
+    }
+  `;
+  const [a, b, fullStop]: KeyEvent[] = [
+    [1, 65535, 0x41, 0x1e, 0x61, 0],
+    [1, 65535, 0x42, 0x30, 0x62, 0],
+    [1, 1, 0xbe, 0x34, 0x2e, 0],
+  ];
+
   test("gets what a terminal sends for a key from a console that passes keys on as they are", async () => {
     const [, seen] = await runOnConsole(
       `
-        const { symbols: kernel32 } = require("bun:ffi").dlopen("kernel32.dll", {
-          GetStdHandle: { args: ["i32"], returns: "i64" },
-          SetConsoleMode: { args: ["i64", "u32"], returns: "i32" },
-          WriteConsoleInputW: { args: ["i64", "ptr", "u32", "ptr"], returns: "i32" },
-        });
-        const STD_INPUT_HANDLE = -10, ENABLE_WINDOW_INPUT = 8, KEY_EVENT = 1;
-        const input = kernel32.GetStdHandle(STD_INPUT_HANDLE);
-        process.stdin.setRawMode(true);
-        kernel32.SetConsoleMode(input, ENABLE_WINDOW_INPUT);
-
+        ${passKeysOnAsTheyAre}
         let text = "", gotFullStop;
         process.stdin.setEncoding("utf8").on("data", chunk => {
           text += chunk;
@@ -484,20 +506,10 @@ describe.skipIf(!isWindows)("process.stdin on a raw console", () => {
         });
         const seen = [];
         for (const events of ${JSON.stringify(keys.map(([, events]) => events))}) {
-          events.push([1, 1, 0xbe, 0x34, 0x2e, 0]);
-          const records = Buffer.alloc(20 * events.length);
-          events.forEach(([down, repeat, key, scan, unit, state], i) => {
-            records.writeUInt16LE(KEY_EVENT, 20 * i);
-            records.writeInt32LE(down, 20 * i + 4);
-            records.writeUInt16LE(repeat, 20 * i + 8);
-            records.writeUInt16LE(key, 20 * i + 10);
-            records.writeUInt16LE(scan, 20 * i + 12);
-            records.writeUInt16LE(unit, 20 * i + 14);
-            records.writeUInt32LE(state, 20 * i + 16);
-          });
+          events.push(${JSON.stringify(fullStop)});
           const { promise, resolve } = Promise.withResolvers();
           gotFullStop = resolve;
-          kernel32.WriteConsoleInputW(input, records, events.length, new Uint32Array(1));
+          press(events);
           await promise;
           seen.push(Buffer.from(text.slice(0, -1)).toString("hex"));
           text = "";
@@ -510,6 +522,46 @@ describe.skipIf(!isWindows)("process.stdin on a raw console", () => {
     expect((JSON.parse(seen) as string[]).map((hex, i) => [keys[i][0], Buffer.from(hex, "hex").toString()])).toEqual(
       keys.map(([name, , text]) => [name, text]),
     );
+  });
+
+  test("gets every repeat of a key in order, with a pause in between", async () => {
+    const [, runs] = await runOnConsole(
+      `
+        ${passKeysOnAsTheyAre}
+        let text = "";
+        process.stdin.setEncoding("utf8").on("data", chunk => {
+          if (!text) {
+            process.stdin.pause();
+            setImmediate(() => process.stdin.resume());
+          }
+          text += chunk;
+          if (!text.endsWith(".")) return;
+          process.stdout.write("RESULT " + JSON.stringify(text.match(/(.)\\1*/g).map(run => run[0] + run.length)));
+        });
+        press(${JSON.stringify([a, b, fullStop])});
+      `,
+      /RESULT (\[[^\]]*\])/,
+    );
+    expect(JSON.parse(runs)).toEqual(["a65535", "b65535", ".1"]);
+  });
+
+  // One event stands for up to 65535 keys.
+  test("leaves to the console what it has no room for", async () => {
+    const events = Array.from({ length: 600 }, (_, i) => (i % 2 ? b : a));
+    const [, left] = await runOnConsole(
+      `
+        ${passKeysOnAsTheyAre}
+        process.stdin.once("data", () => {
+          process.stdin.pause();
+          const count = new Uint32Array(1);
+          kernel32.GetNumberOfConsoleInputEvents(input, count);
+          process.stdout.write("LEFT " + count[0] + ";");
+        });
+        press(${JSON.stringify(events)});
+      `,
+      /LEFT (\d+);/,
+    );
+    expect(Number(left)).toBeGreaterThanOrEqual(300);
   });
 });
 

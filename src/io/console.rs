@@ -2,6 +2,7 @@
 
 use core::cell::Cell;
 use core::ffi::{c_int, c_void};
+use core::ops::Range;
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -227,6 +228,13 @@ pub struct Reader {
     /// UTF-8 that [`Reader::read`] has yet to hand out, from `consumed` on.
     pending: Vec<u8>,
     consumed: usize,
+    /// Taken from the console. Those in `unread` have yet to be looked at.
+    records: Box<[INPUT_RECORD; 256]>,
+    unread: Range<usize>,
+    /// What the key that was looked at last sends, and how many more times.
+    sequence: [u8; 8],
+    sequence_len: usize,
+    repeats: u16,
     /// The first half of a pair whose second half has yet to arrive.
     high_surrogate: u16,
     /// For the next [`Reader::read`] to report.
@@ -244,6 +252,11 @@ impl Reader {
             started: false,
             pending: Vec::new(),
             consumed: 0,
+            records: Box::new([bun_core::ffi::zeroed(); 256]),
+            unread: 0..0,
+            sequence: [0; 8],
+            sequence_len: 0,
+            repeats: 0,
             high_surrogate: 0,
             error: None,
             line: Arc::new(LineRead::new()),
@@ -276,7 +289,7 @@ impl Reader {
     }
 
     fn has_pending(&self) -> bool {
-        self.consumed < self.pending.len()
+        self.consumed < self.pending.len() || self.repeats > 0 || !self.unread.is_empty()
     }
 
     /// Gets input coming. Returns the handle, not always the same one, that is signaled while [`Reader::read`] has something.
@@ -338,7 +351,7 @@ impl Reader {
 
     /// As `read` on a non-blocking descriptor.
     pub(crate) fn read(&mut self, buf: &mut [u8]) -> sys::Result<usize> {
-        if !self.has_pending() {
+        if self.consumed == self.pending.len() {
             self.pending.clear();
             self.consumed = 0;
             let filled = match self.error.take() {
@@ -394,36 +407,26 @@ impl Reader {
 
     /// Moves what the console has to `pending`, unless it is editing a line.
     fn take_records(&mut self) -> Result<(), Win32Error> {
-        if !is_raw(self.input)? {
-            return Ok(());
-        }
-        let read_console_input = read_console_input_ex()?;
-        let mut records = [bun_core::ffi::zeroed::<INPUT_RECORD>(); 256];
         let mut resized = false;
         // One chunk per escape sequence: `readline` takes an ESC at the end of a chunk for the key. Bounded for input that outruns it.
-        for _ in 0..16 {
-            let mut count: DWORD = 0;
-            // SAFETY: `records` has room for as many as the call is told.
-            let ok = unsafe {
-                read_console_input(
-                    self.input,
-                    records.as_mut_ptr(),
-                    records.len() as DWORD,
-                    &raw mut count,
-                    CONSOLE_READ_NOWAIT,
-                )
-            };
-            if ok == 0 {
-                return Err(Win32Error::get());
-            }
-            for record in &records[..count as usize] {
+        let mut calls_left = 16;
+        // A key can say that it was pressed 65535 times.
+        while self.pending.len() < 64 * 1024 {
+            if self.repeats > 0 {
+                self.repeats -= 1;
+                self.pending
+                    .extend_from_slice(&self.sequence[..self.sequence_len]);
+            } else if let Some(index) = self.unread.next() {
+                let record = self.records[index];
                 match record.EventType {
                     KEY_EVENT => self.key(&record.KeyEvent),
                     WINDOW_BUFFER_SIZE_EVENT => resized = true,
                     _ => {}
                 }
-            }
-            if (count as usize) < records.len() {
+            } else if calls_left > 0 {
+                let is_full = self.read_records()? == self.records.len();
+                calls_left = if is_full { calls_left - 1 } else { 0 };
+            } else {
                 break;
             }
         }
@@ -431,6 +434,30 @@ impl Reader {
             watcher.check();
         }
         Ok(())
+    }
+
+    /// Refills `records`, all of which have been looked at. Returns how many there are.
+    fn read_records(&mut self) -> Result<usize, Win32Error> {
+        if !is_raw(self.input)? {
+            return Ok(0);
+        }
+        let read_console_input = read_console_input_ex()?;
+        let mut count: DWORD = 0;
+        // SAFETY: `records` has room for as many as the call is told.
+        let ok = unsafe {
+            read_console_input(
+                self.input,
+                self.records.as_mut_ptr(),
+                self.records.len() as DWORD,
+                &raw mut count,
+                CONSOLE_READ_NOWAIT,
+            )
+        };
+        if ok == 0 {
+            return Err(Win32Error::get());
+        }
+        self.unread = 0..count as usize;
+        Ok(count as usize)
     }
 
     /// What a terminal would send for `key`. With `ENABLE_VIRTUAL_TERMINAL_INPUT` most keys come translated, a unit per event.
@@ -490,9 +517,9 @@ impl Reader {
             return;
         }
 
-        for _ in 0..key.wRepeatCount.max(1) {
-            self.pending.extend_from_slice(&bytes[..len]);
-        }
+        self.sequence = bytes;
+        self.sequence_len = len;
+        self.repeats = key.wRepeatCount.max(1);
     }
 }
 

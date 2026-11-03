@@ -1778,15 +1778,11 @@ impl<'a> Resolver<'a> {
         let mut is_at_source_path = false;
         let mut tmp = DirInfo::dispatch_asker!(generation, |asker| self.lookup_sequence(
             asker,
-            (source_dir_normalized, import_path),
+            source_dir_normalized,
+            import_path,
             (kind, global_cache),
             &mut is_at_source_path
         ));
-        // Not one test after the rerun: a lookup that finds its module would run it and the test of a miss.
-        if is_at_source_path {
-            self.extension_order = original_order;
-            return tmp;
-        }
         // The generation of the run that answers: what the rerun finds is finalized by the asker of the rerun.
         let mut answered_at = generation;
         if matches!(tmp, ResultUnion::NotFound) && self.reruns_after_miss(how) {
@@ -1795,10 +1791,10 @@ impl<'a> Resolver<'a> {
                 (source_dir_normalized, import_path),
                 (kind, global_cache),
             );
-            if is_at_source_path {
-                self.extension_order = original_order;
-                return tmp;
-            }
+        }
+        if is_at_source_path {
+            self.extension_order = original_order;
+            return tmp;
         }
 
         let ret = match tmp {
@@ -2173,12 +2169,13 @@ impl<'a> Resolver<'a> {
         Ok(())
     }
 
-    /// The lookups of one run, the first and the one after a miss: as written, and the rest only after a miss as written. The flag is set for what an executable compiled in place holds at the path. The answer is moved here and never borrowed: a reference to it makes every lookup that finds its module copy its answer.
+    /// The lookups of one run, the first and the one after a miss: as written, and the rest only after a miss as written. The flag is set for what an executable compiled in place holds at the path. The answer is moved here and never borrowed: a reference to it makes every lookup that finds its module copy its answer. `source_dir` and `import_path` are two parameters: as one tuple they make such a lookup test for a miss once more and test the flag.
     #[inline(always)]
     fn lookup_sequence<'r, A: Asker>(
         &mut self,
         asker: A,
-        (source_dir, import_path): (&[u8], &'r [u8]),
+        source_dir: &[u8],
+        import_path: &'r [u8],
         (kind, global_cache): (ast::ImportKind, GlobalCache),
         is_at_source_path: &mut bool,
     ) -> ResultUnion<'r> {
@@ -2261,7 +2258,8 @@ impl<'a> Resolver<'a> {
         let mut is_at_source_path = false;
         let again = self.lookup_sequence(
             asker,
-            (source_dir, import_path),
+            source_dir,
+            import_path,
             (kind, global_cache),
             &mut is_at_source_path,
         );

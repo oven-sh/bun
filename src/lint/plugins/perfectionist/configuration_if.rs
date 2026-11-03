@@ -25,7 +25,7 @@ pub(crate) struct ConfigurationIf {
     pub(crate) declaration_matches_pattern: Option<ScopedPatterns>,
     /// A comment above that declaration.
     pub(crate) declaration_comment_matches_pattern: Option<ScopedPatterns>,
-    /// An esquery selector the listened node itself matches. Parsed in `new`; `validate` reports a bad one.
+    /// An esquery selector the listened node itself matches.
     pub(crate) matches_ast_selector: Option<Selector>,
 }
 
@@ -95,41 +95,6 @@ pub(crate) fn matching_configuration<'c, 'n>(
 }
 
 impl ConfigurationIf {
-    /// Parses the `useConfigurationIf` of one options object. `listened` is the ESTree type, or the types separated
-    /// by commas, the rule listens on: upstream only records that a selector matched a node of one of those.
-    pub(crate) fn parse(object: Object<'_>, listened: &str) -> ConfigurationIf {
-        ConfigurationIf {
-            all_names_match_pattern: object.get("allNamesMatchPattern").and_then(regex_option),
-            object_type: match object.str("objectType") {
-                Some("destructured") => Some(ObjectType::Destructured),
-                Some("non-destructured") => Some(ObjectType::NonDestructured),
-                _ => None,
-            },
-            has_numeric_keys_only: object.bool("hasNumericKeysOnly"),
-            calling_function_name_pattern: object
-                .get("callingFunctionNamePattern")
-                .and_then(scoped_regex_option),
-            declaration_matches_pattern: object
-                .get("declarationMatchesPattern")
-                .and_then(scoped_regex_option),
-            declaration_comment_matches_pattern: object
-                .get("declarationCommentMatchesPattern")
-                .and_then(scoped_regex_option),
-            matches_ast_selector: object
-                .str("matchesAstSelector")
-                .and_then(|source| restricted_selector(listened, source).ok()),
-        }
-    }
-
-    /// What `validate` rejects: a `matchesAstSelector` esquery cannot parse. ESLint throws for it when it registers
-    /// the rule's listeners, before it visits a node.
-    pub(crate) fn validate(object: Object<'_>) -> Result<(), Vec<u8>> {
-        if let Some(source) = object.str("matchesAstSelector") {
-            Selector::parse(source.as_bytes()).map_err(|error| error.message().to_vec())?;
-        }
-        Ok(())
-    }
-
     /// Upstream's `isContextOptionMatching`, with the conditions in the order `sort-objects` tests them. The other
     /// rules test a subset in the same order.
     fn holds<'c, 'n>(
@@ -177,7 +142,7 @@ impl ConfigurationIf {
             return Ok(false);
         }
         if let Some(selector) = &self.matches_ast_selector
-            && !matches_selector(selector, subject.node()).map_err(Rejected::Selector)?
+            && !matches_selector(selector, subject).map_err(Rejected::Selector)?
         {
             return Ok(false);
         }
@@ -185,23 +150,20 @@ impl ConfigurationIf {
     }
 }
 
-/// The selector as upstream's `buildAstListeners` applies it: its listener fires on any node, but only a node of a
-/// type the rule listens on is recorded. Tested with that type restriction, it can match nothing but the listened
-/// node among the ESTree nodes made from it, like the `JSXExpressionContainer` or `TSTypeAnnotation` around it.
-fn restricted_selector(listened: &str, source: &str) -> Result<Selector, selector::Error> {
-    let source = source.strip_suffix(":exit").unwrap_or(source);
-    Selector::parse(format!(":matches({listened}):matches({source})").as_bytes())
-}
-
-/// `passesAstSelectorFilter`
-fn matches_selector(selector: &Selector, node: Node<'_>) -> Result<bool, selector::Error> {
-    let mut result = Ok(false);
-    EsNode::for_each_at(node, |es_node| {
-        if matches!(result, Ok(false)) {
-            result = selector.test(es_node);
+/// `passesAstSelectorFilter`. Upstream's listener for the selector fires on every ESTree node and records a match
+/// only on a node of a type the rule listens on, so of the ESTree nodes made from the subject's node (a
+/// `TSTypeAnnotation` or `JSXExpressionContainer` around it, an interface's name and body inside it) only the listened
+/// node itself is tested: the one with its range. A type predicate's `TSTypeAnnotation` has the range of its type and
+/// comes before it, so the last with that range is the one.
+fn matches_selector(selector: &Selector, subject: Subject<'_>) -> Result<bool, selector::Error> {
+    let span = subject.estree_span();
+    let mut listened = None;
+    EsNode::for_each_at(subject.node(), |es_node| {
+        if es_node.span() == span {
+            listened = Some(es_node);
         }
     });
-    result
+    listened.map_or(Ok(false), |es_node| selector.test(es_node))
 }
 
 /// `matches(value, regexOption)`: any of the patterns matches. A pattern that is not a regular expression throws
@@ -386,6 +348,24 @@ impl<'a> Subject<'a> {
         }
     }
 
+    /// ESTree's range of the listened node: an `ObjectPattern` that declares a variable or a parameter includes its
+    /// type annotation, and an exported interface starts after the `export`.
+    fn estree_span(self) -> Span {
+        match self {
+            Subject::Object {
+                node: Node::Pat(pat),
+                ..
+            } => match pat.parent() {
+                Node::Param(param) if !param.is_rest() => param.binding_span(),
+                Node::VarDecl(decl) => decl.binding_span(),
+                _ => pat.span(),
+            },
+            Subject::Object { node, .. } => node.span(),
+            Subject::TypeLiteral(ty) | Subject::Union(ty) => ty.span(),
+            Subject::Interface(statement) => statement.span_without_export(),
+        }
+    }
+
     fn parents(self) -> Parents<'a> {
         match self {
             Subject::Object { node, .. } => Parents::Ancestors {
@@ -500,61 +480,5 @@ fn comment_anchor(parent: Parent<'_>, is_object_rule: bool) -> Span {
         Parent::PatProp(prop) => prop.span(),
         Parent::Member(member) => member.span(),
         Parent::Declaration(statement) => statement.span_without_export(),
-    }
-}
-
-/// A `RegexOption` (`utils/matches.ts`): a pattern, a `{ pattern, flags }`, or an array of those. `None` if it is
-/// falsy, as `""` is; `[]` is on and matches nothing.
-fn regex_option(json: &Json) -> Option<Patterns> {
-    json.is_truthy().then(|| {
-        Patterns(
-            single_patterns(json)
-                .map(|(pattern, flags, _)| compile(pattern, flags))
-                .collect(),
-        )
-    })
-}
-
-/// `partitionPatternsByScope`: only an object with `scope: "deep"` is deep.
-fn scoped_regex_option(json: &Json) -> Option<ScopedPatterns> {
-    if !json.is_truthy() {
-        return None;
-    }
-    let (mut shallow, mut deep) = (Vec::new(), Vec::new());
-    for (pattern, flags, scope) in single_patterns(json) {
-        let side = match scope {
-            Some(b"deep") => &mut deep,
-            _ => &mut shallow,
-        };
-        side.push(compile(pattern, flags));
-    }
-    Some(ScopedPatterns {
-        shallow: Patterns(shallow),
-        deep: Patterns(deep),
-    })
-}
-
-/// The `(pattern, flags, scope)` of each element of a regex option.
-fn single_patterns(json: &Json) -> impl Iterator<Item = (&[u8], &[u8], Option<&[u8]>)> {
-    let items = match json {
-        Json::Array(items) => &items[..],
-        other => std::slice::from_ref(other),
-    };
-    items.iter().filter_map(|item| match item {
-        Json::String(pattern) => Some((&pattern[..], &b""[..], None)),
-        Json::Object(_) => Some((
-            item.get(b"pattern")?.as_str()?,
-            item.get(b"flags").and_then(Json::as_str).unwrap_or(b""),
-            item.get(b"scope").and_then(Json::as_str),
-        )),
-        _ => None,
-    })
-}
-
-/// `new RegExp(pattern, flags)`, keeping the error for the node that first tests it.
-fn compile(pattern: &[u8], flags: &[u8]) -> Pattern {
-    match Regex::from_bytes(pattern, flags) {
-        Ok(regex) => Pattern::Valid(regex),
-        Err(error) => Pattern::Invalid(error.message),
     }
 }

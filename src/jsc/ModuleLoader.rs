@@ -319,9 +319,8 @@ fn loader_of_extension(global: &JSGlobalObject, ext: &[u8]) -> Option<bun_ast::L
     })
 }
 
-/// The loader for contents with no loader of their own: the one that the import's `type` attribute names, or else the
-/// extension at the end of `filename`, or else `unnamed`. `_none` for a `type` whose loader reads the path rather than
-/// the contents.
+/// The loader for contents that have none: from the import's `type` attribute, or else the extension at the end of
+/// `filename`, or else `unnamed`. `_none` for a `type` whose loader reads the path rather than the contents.
 fn default_loader(
     global: &JSGlobalObject,
     filename: &[u8],
@@ -380,8 +379,7 @@ extern "C" fn Bun__getOnLoadDefaultLoader(
         Some(query) => &key[..query],
         None => &key[..],
     };
-    // Bun reads a file without an extension as TSX, or with the loader that is set for no extension. Contents in its
-    // place are read the same way.
+    // Contents for a file without an extension get the loader of that file: TSX, or the one set for no extension.
     let unnamed = if is_resolved_file(&key) && bun_resolver::fs::PathName::init(path).ext.is_empty()
     {
         loader_of_extension(global, b"").unwrap_or(Loader::Tsx)

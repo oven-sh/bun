@@ -1,4 +1,4 @@
-//! One field through `Encoder::encode` and `Decoder::next`, by the kind and length of its value. Run `scripts/bench-hpack-rust.sh`.
+//! One field through `Encoder::encode` and `Decoder::next`, by the kind and length of its value. Run `bun scripts/bench-hpack-rust.ts`.
 use bun_hpack::{Decoder, Encoder, Indexing};
 use criterion::{
     BenchmarkGroup, Criterion, criterion_group, criterion_main, measurement::WallTime,

@@ -71,6 +71,10 @@ pub struct Scratch {
 struct Guests {
     json: crate::json::Scratch,
     yaml: crate::yaml::Scratch,
+    css: crate::css::Scratch,
+    graphql: crate::graphql::Scratch,
+    handlebars: crate::handlebars::Scratch,
+    html: crate::html::Scratch,
 }
 
 /// Fills `tree` with the syntax tree of `text`, a description in a JSDoc comment. Returns the root.
@@ -326,22 +330,43 @@ fn is_formatted(language: &[u8], options: &FormatOptions) -> bool {
         && parser_for(language, options).is_some()
 }
 
-/// Formats `code`, the content of a code block in `language`, for lines of `width` columns.
+/// The options for the code in a text with `options`, but for the three that differ from one piece of code to the next.
+fn options_of_guests(options: &FormatOptions) -> FormatOptions {
+    FormatOptions {
+        line_ending: LineEnding::Lf,
+        parser: None,
+        filepath: None,
+        range_start: None,
+        range_end: None,
+        cursor_offset: None,
+        insert_pragma: false,
+        require_pragma: false,
+        check_ignore_pragma: false,
+        is_in_markdown: true,
+        ..options.clone()
+    }
+}
+
+/// Formats `code`, the content of a code block in `language`, for lines of `width` columns, and appends it to `out`.
+/// Returns `false` if the code stays as it is. `options` are [`options_of_guests`].
 fn format_embedded(
     language: &[u8],
     code: &[u8],
     width: usize,
-    options: &FormatOptions,
+    options: &mut FormatOptions,
     is_in_template: bool,
     format_block: Option<&mut FormatBlock<'_>>,
     guests: &mut Guests,
-) -> Option<Vec<u8>> {
+    out: &mut Vec<u8>,
+) -> bool {
     // Nothing to format: empty front matter.
     if language.is_empty() {
-        return Some(Vec::new());
+        return true;
     }
     let is_mdx_jsx = language == MDX_JSX;
-    let (parser, oxfmt_file_name) = parser_for(language, options)?;
+    let Some((parser, oxfmt_file_name)) = parser_for(language, options) else {
+        return false;
+    };
     let in_fragment;
     let code = match is_mdx_jsx {
         true => {
@@ -356,52 +381,29 @@ fn format_embedded(
     if matches!(parser, b"json" | b"json5" | b"json-stringify" | b"graphql")
         && bun_core::strings::trim_js_whitespace_start(code).is_empty()
     {
-        return None;
+        return false;
     }
-    let options = FormatOptions {
-        line_width: LineWidth(width.clamp(1, u32::MAX as usize) as u32),
-        line_ending: LineEnding::Lf,
-        parser: None,
-        filepath: None,
-        range_start: None,
-        range_end: None,
-        cursor_offset: None,
-        insert_pragma: false,
-        require_pragma: false,
-        check_ignore_pragma: false,
-        is_in_markdown: true,
-        is_mdx_jsx,
-        is_mdx_es_syntax: language == MDX_ES_SYNTAX,
-        ..options.clone()
-    };
-    let mut out = Vec::new();
-    let is_done = if let Some(parser) = crate::json::Parser::from_name(parser) {
-        crate::json::format(code, parser, &options, &mut guests.json, &mut out).is_ok()
+    options.line_width = LineWidth(width.clamp(1, u32::MAX as usize) as u32);
+    options.is_mdx_jsx = is_mdx_jsx;
+    options.is_mdx_es_syntax = language == MDX_ES_SYNTAX;
+    let options = &*options;
+    if let Some(parser) = crate::json::Parser::from_name(parser) {
+        crate::json::format(code, parser, options, &mut guests.json, out).is_ok()
     } else if let Some(parser) = crate::css::Parser::from_name(parser) {
-        crate::css::format(code, parser, &options, &mut Default::default(), &mut out).is_ok()
+        crate::css::format(code, parser, options, &mut guests.css, out).is_ok()
     } else if let Some(parser) = crate::html::Parser::from_name(parser) {
         options.embedded_html
-            && crate::html::format(
-                b"",
-                code,
-                parser,
-                &options,
-                &mut Default::default(),
-                &mut out,
-            )
-            .is_ok()
+            && crate::html::format(b"", code, parser, options, &mut guests.html, out).is_ok()
     } else {
         match parser {
-            b"graphql" => {
-                crate::graphql::format(code, &options, &mut Default::default(), &mut out).is_ok()
-            }
+            b"graphql" => crate::graphql::format(code, options, &mut guests.graphql, out).is_ok(),
             b"glimmer" => {
-                crate::handlebars::format(code, &options, &mut Default::default(), &mut out).is_ok()
+                crate::handlebars::format(code, options, &mut guests.handlebars, out).is_ok()
             }
-            b"yaml" => crate::yaml::format(code, &options, &mut guests.yaml, &mut out).is_ok(),
+            b"yaml" => crate::yaml::format(code, options, &mut guests.yaml, out).is_ok(),
             b"svelte" => {
                 let scratch = &mut Default::default();
-                crate::svelte::format(b"", code, &options, None, scratch, &mut out).is_ok()
+                crate::svelte::format(b"", code, options, None, scratch, out).is_ok()
             }
             b"markdown" | b"mdx" => {
                 let mode = Mode {
@@ -409,7 +411,7 @@ fn format_embedded(
                     is_mdx: parser == b"mdx",
                 };
                 let scratch = &mut Default::default();
-                format_in(code, &options, scratch, &mut out, mode, format_block).is_ok()
+                format_in(code, options, scratch, out, mode, format_block).is_ok()
             }
             _ => {
                 let path: &[u8] = match parser {
@@ -419,14 +421,13 @@ fn format_embedded(
                     _ => b"dummy.ts",
                 };
                 match (format_block, options.format_javascript) {
-                    (Some(format), _) => format(path, code, &options, &mut out),
-                    (None, Some(format)) => format(path, code, &options, &mut out),
+                    (Some(format), _) => format(path, code, options, out),
+                    (None, Some(format)) => format(path, code, options, out),
                     (None, None) => false,
                 }
             }
         }
-    };
-    is_done.then_some(out)
+    }
 }
 
 /// True if a comment with `@` and one of `pragmas` is at the start of `text`, after the front matter.
@@ -715,17 +716,24 @@ fn with_printer<R>(
         options.embedded_language_formatting,
         EmbeddedLanguageFormatting::Auto
     );
-    let mut embed = |embedded: &printer::Embedded<'_>| match formats_embedded {
-        true => format_embedded(
-            embedded.language,
-            embedded.code,
-            embedded.width,
-            options,
-            mode.is_in_template,
-            format_block.as_deref_mut(),
-            guests,
-        ),
-        false => None,
+    let mut options_of_guests = None;
+    let mut embed = |embedded: &printer::Embedded<'_>, out: &mut Vec<u8>| {
+        let written = out.len();
+        let is_formatted = formats_embedded
+            && format_embedded(
+                embedded.language,
+                embedded.code,
+                embedded.width,
+                options_of_guests.get_or_insert_with(|| self::options_of_guests(options)),
+                mode.is_in_template,
+                format_block.as_deref_mut(),
+                guests,
+                out,
+            );
+        if !is_formatted {
+            out.truncate(written);
+        }
+        is_formatted
     };
     let mut printer = printer::Printer {
         text,

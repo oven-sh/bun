@@ -2668,3 +2668,52 @@ describe("Handlebars", () => {
     });
   });
 });
+
+describe("code in Markdown and MDX", () => {
+  // A fence, what follows it on its line and the formatted code are one text where nothing is indented.
+  const blocks = [
+    // The common shapes, one after the other, so that what is kept from one piece of code to the next shows.
+    '```js\nconst  a=1\n```\n\n```ts\nconst  a:number=1\n```\n\n```css\na{color:red}\n```\n\n```scss\na{b{color:red}}\n```\n\n```json\n{"a":1}\n```\n\n```yaml\na:   1\n```\n\n```graphql\nquery{a}\n```\n\n```html\n<p>a</p>\n```\n\n```hbs\n{{a}}\n```\n\n```css\na{color:red}\n```\n\n```js\nconst  a=1\n```\n',
+    // What follows the fence: a blank at its end goes away.
+    "```js a \nb\n```\n\n```js a\t\nb\n```\n\n```js  two  blanks\nb\n```\n\n``` js\nb\n```\n\n```js {1,3}\nb\n```\n\n```js \\\nb\n```\n",
+    // A line break in a text isn't one that the code is indented after.
+    "```js\nlet a = `\n  b\n`;\n```\n\n```js\n/* a\n   b */\n```\n\n- ```js\n  let a = `\n    b\n  `;\n  ```\n\n> ```js\n> let a = `\n>   b\n> `;\n> ```\n",
+    // The fence is longer than every run in the code, before and after.
+    "````js\nfoo(`a\n```\nb`);\n````\n\n```js\n// ``\n```\n\n~~~js\n// ```\n~~~\n\n```md\n~~~js\nconst  a=1\n~~~\n```\n\n~~~md\n```js\nconst  a=1\n```\n~~~\n\n`````js\na\n`````\n",
+    // Nothing in it, white space in it, white space at its end.
+    "```js\n```\n\n```js\n\n```\n\n```js\n  \n```\n\n```js\na;  \n```\n\n```js\na;\n\n\n```\n\n```json\n```\n\n```yaml\n```\n\n```yaml\na: |\n  b  \n```\n\n```md\na  \n```\n",
+    // Code that stays as it is.
+    "```js\nconst = ;\n```\n\n```ts\nconst a = ...;\n```\n\n```css\na {\n```\n\n```json\n{\n```\n\n```sh\nls   -l\n```\n\n```\na   b\n```\n",
+    // Not closed, and what is around it.
+    "```js\nconst  a=1\n",
+    "a\n```js\nconst  a=1\n```\nb\n\n<!-- prettier-ignore -->\n```js\nconst  a=1\n```\n\n<!-- prettier-ignore-start -->\n```js\nconst  a=1\n```\n<!-- prettier-ignore-end -->\n",
+    " ```js\n const  a=1\n ```\n\n   ```js\n   const  a=1\n   ```\n\n1. a\n\n   ```js\n   const  a=1\n   ```\n",
+    "﻿```js\nconst  a=1\n```\n",
+    "```js\r\nconst  a=1\r\nlet b = `\r\n`;\r\n```\r\n",
+  ];
+  const frontMatter = [
+    "---\na:   1\n---\n\nb\n",
+    "---\n---\n\nb\n",
+    "---\n\n---\n",
+    "--- \na:   1\n---\n",
+    "---yaml\na:   1\n---\n",
+    "--- yaml\na:   1\n---\n",
+    "---toml\na   = 1\n---\n",
+    "+++\na   = 1\n+++\n",
+    "---\na: |\n  b  \n---\n",
+    '---\na: "b\n  c"\n---\n',
+    "---\na: {\n---\n",
+    "---\na:   1\n--- \n",
+    "---\na:   1\n\n\n---\n",
+    "---\r\na:   1\r\n---\r\n",
+    "﻿---\na:   1\n---\n",
+  ];
+  describe("Markdown", () => expectSame("a.md", [...blocks, ...frontMatter], markdownOptions));
+  describe("MDX", () => {
+    const texts = [
+      "import  a from 'a'\n\nexport const b = `\n  c\n`\n\nexport const d = 1  \n\n<A b={`\n  c\n`} />\n\n<A>{`a\n  b  \nc`}</A>\n\n<A\n  a={1}\n/>\n",
+      "- a\n\n  <A b={1}  />\n\nexport const a = ;\n\n<A b={} />\n",
+    ];
+    expectSame("a.mdx", [...blocks, ...frontMatter, ...texts], markdownOptions);
+  });
+});

@@ -31,8 +31,9 @@ pub(crate) struct Printer<'a, 'e> {
     pub(crate) original: &'a [u8],
     pub(crate) tree: &'a Tree,
     pub(crate) options: &'a FormatOptions,
-    /// Formats code in another language. If it returns `None`, the code is left as is.
-    pub(crate) embed: &'e mut dyn FnMut(&Embedded<'_>) -> Option<Vec<u8>>,
+    /// Formats code in another language and appends it. If it returns `false`, it has appended nothing and the code is
+    /// left as is.
+    pub(crate) embed: &'e mut dyn FnMut(&Embedded<'_>, &mut Vec<u8>) -> bool,
     /// The document is for a JavaScript template, so no backticks.
     pub(crate) is_in_template: bool,
     pub(crate) is_mdx: bool,
@@ -637,13 +638,15 @@ impl<'a> Printer<'a, '_> {
         else {
             return false;
         };
+        // To find a line takes a search, so what can be told from the offsets and the kinds comes first.
         if !self.is_mdx
+            && node.start < previous.end
             && self.is_setext_heading(node)
             && self.start_line(node) < self.end_line(previous)
         {
             return false;
         }
-        let follows_directly = self.end_line(previous) + 1 == self.start_line(node);
+        let follows_directly = || self.end_line(previous) + 1 == self.start_line(node);
         if self.is_loose_list_item(node.previous)
             || (node.kind == Kind::List
                 && parent.kind == Kind::ListItem
@@ -661,7 +664,7 @@ impl<'a> Printer<'a, '_> {
             && (node.kind == Kind::List || !self.is_loose_list_item(node.parent));
         let is_previous_ignore = self.prettier_ignore(node.previous) == Some(Ignore::Next);
         let is_html_after_html_or_paragraph = node.first_kind() == Kind::Html
-            && follows_directly
+            && follows_directly()
             && match previous.last_kind() {
                 Kind::Html => true,
                 Kind::Paragraph => {
@@ -671,7 +674,7 @@ impl<'a> Printer<'a, '_> {
             };
         let is_liquid_without_blank_line = (node.first_kind() == Kind::LiquidNode
             || previous.last_kind() == Kind::LiquidNode)
-            && follows_directly;
+            && follows_directly();
         !(is_sibling_node
             || is_in_tight_list_item
             || is_previous_ignore
@@ -2092,11 +2095,22 @@ impl<'a> Printer<'a, '_> {
         ]
     }
 
+    /// True if what is printed for `node` isn't indented, so that a line break in a text is what a forced line break
+    /// is, as long as no blank is in front of it that one of the two would take away.
+    fn is_one_text(&self, node: &Node) -> bool {
+        !self.options.no_short_cuts
+            && self.indentation == 0
+            && !self.is_in_template
+            && !self.options.is_in_markdown
+            && self.kind(node.parent) == Some(Kind::Root)
+    }
+
     /// Prettier's `embed`
     fn print_embedded(&mut self, id: NodeId, node: &Node) -> Option<Doc<'a>> {
         if matches!(node.kind, Kind::Import | Kind::Export | Kind::Jsx) {
             let code = self.str(node.value);
-            let formatted = (self.embed)(&Embedded {
+            let mut formatted = Vec::with_capacity(code.len() + code.len() / 8 + 16);
+            let embedded = Embedded {
                 language: if node.kind == Kind::Jsx {
                     super::MDX_JSX
                 } else {
@@ -2104,10 +2118,15 @@ impl<'a> Printer<'a, '_> {
                 },
                 code,
                 width: (self.options.line_width.value() as usize).saturating_sub(self.indentation),
-            })?;
-            return Some(lines_of(bun_core::strings::trim_js_whitespace_end(
-                &formatted,
-            )));
+            };
+            if !(self.embed)(&embedded, &mut formatted) {
+                return None;
+            }
+            formatted.truncate(bun_core::strings::trim_js_whitespace_end(&formatted).len());
+            if self.is_one_text(node) && !bun_core::strings::contains_char(&formatted, b'\r') {
+                return Some(Doc::from(formatted));
+            }
+            return Some(lines_of(&formatted));
         }
         if node.kind != Kind::Code || node.second.is_null() {
             return None;
@@ -2138,15 +2157,48 @@ impl<'a> Printer<'a, '_> {
                 ]);
             }
         }
-        let formatted = (self.embed)(&Embedded {
+        let embedded = Embedded {
             language,
             code,
             width,
-        })?;
-        let formatted = super::front_matter::trim_end_to_last_line(&formatted);
+        };
+        let unit = self.fence_unit(node);
+        // The fence that the code needs as it's written, and what follows it on its line, are written in front of the
+        // code.
+        let meta = self.str(node.third);
+        let fence = (max_continuous_count(code, unit) + 1).max(3);
+        let mut formatted = Vec::new();
+        let is_one_text = self.is_one_text(node)
+            && !is_oxfmt
+            && !matches!(meta.last().or_else(|| language.last()), Some(b' ' | b'\t'));
+        if is_one_text {
+            let around = 2 * (fence + 1) + language.len() + meta.len();
+            formatted.reserve(code.len() + code.len() / 8 + around + 16);
+            formatted.resize(fence, unit);
+            formatted.extend_from_slice(language);
+            if !meta.is_empty() {
+                formatted.push(b' ');
+                formatted.extend_from_slice(meta);
+            }
+            formatted.push(b'\n');
+        }
+        let start = formatted.len();
+        if !(self.embed)(&embedded, &mut formatted) {
+            return None;
+        }
+        let len = super::front_matter::trim_end_to_last_line(&formatted[start..]).len();
+        formatted.truncate(start + len);
+        if is_one_text
+            && !bun_core::strings::contains_char(&formatted[start..], b'\r')
+            && max_continuous_count(&formatted[start..], unit) < fence
+        {
+            formatted.push(b'\n');
+            formatted.resize(formatted.len() + fence, unit);
+            return Some(Doc::from(formatted));
+        }
+        let formatted = &formatted[start..];
         let end = line_break_after(formatted);
         // Prettier only measures the original code. Embedded Markdown that had `~~~` fences has backtick fences now.
-        let unit = self.fence_unit(node);
         let run = match is_oxfmt {
             true => max_continuous_count(formatted, unit),
             false => max_continuous_count(formatted, unit).max(max_continuous_count(code, unit)),
@@ -2181,24 +2233,48 @@ impl<'a> Printer<'a, '_> {
         let value = super::front_matter::trim_end_to_last_line(
             bun_core::strings::trim_js_whitespace_start(value),
         );
-        let formatted = match value {
-            b"" if is_yaml || is_toml => (self.embed)(&Embedded {
-                language: b"",
-                code: b"",
-                width: 0,
-            }),
-            _ if super::front_matter::has_indented_delimiter(raw) => None,
-            _ if is_yaml => (self.embed)(&Embedded {
-                language: b"yaml",
-                code: value,
-                width: self.options.line_width.value() as usize,
-            }),
-            _ => None,
+        let is_one_text = self.is_one_text(node) && !matches!(language.last(), Some(b' ' | b'\t'));
+        let mut formatted = Vec::new();
+        if is_one_text {
+            formatted.reserve(raw.len() + raw.len() / 8 + 16);
+            formatted.extend_from_slice(&raw[..3]);
+            formatted.extend_from_slice(language);
+            formatted.push(b'\n');
+        }
+        let start = formatted.len();
+        let is_formatted = match value {
+            b"" if is_yaml || is_toml => (self.embed)(
+                &Embedded {
+                    language: b"",
+                    code: b"",
+                    width: 0,
+                },
+                &mut formatted,
+            ),
+            _ if super::front_matter::has_indented_delimiter(raw) => false,
+            _ if is_yaml => (self.embed)(
+                &Embedded {
+                    language: b"yaml",
+                    code: value,
+                    width: self.options.line_width.value() as usize,
+                },
+                &mut formatted,
+            ),
+            _ => false,
         };
-        let Some(formatted) = formatted else {
+        if !is_formatted {
             return Doc::from(raw);
-        };
-        let formatted = super::front_matter::trim_end_to_last_line(&formatted);
+        }
+        let len = super::front_matter::trim_end_to_last_line(&formatted[start..]).len();
+        formatted.truncate(start + len);
+        if is_one_text && !bun_core::strings::contains_char(&formatted[start..], b'\r') {
+            if formatted.len() > start {
+                formatted.push(b'\n');
+            }
+            formatted.extend_from_slice(&raw[raw.len() - 3..]);
+            return Doc::from(formatted);
+        }
+        let formatted = &formatted[start..];
         mark_as_root(docs![
             &raw[..3],
             language,

@@ -3,6 +3,7 @@
 //! ```text
 //! text ─ lexer::lex ─→ [Token] ─ parser::parse ─→ [Statement] ─ tokenizer::build ─→ Tree ─ printer::Printer ─→ Elements
 //!        @handlebars/parser                                     simple-html-tokenizer, @glimmer/syntax
+//! text ─ direct::format ─→ bytes                                most of a template
 //! ```
 //!
 //! Prettier prints what the parsers give it, and they drop and change things: there's no `<!DOCTYPE html>` in the tree,

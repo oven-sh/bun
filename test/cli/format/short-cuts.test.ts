@@ -2488,6 +2488,9 @@ describe("Handlebars", () => {
     '<div title="a\nb>\n  <p   c>d</p>\n</div>',
     '<pre title="a\nb">\n  c\n</pre>\n<div title="a\nb">\n\f  c\n</div>',
     "{{#if a}}\n  b\n{{else if c.[d]}}\n  e\n{{/if}}",
+    // What is too wide as far as it's read can be narrower as it's written, which is how it's printed.
+    "x <i a=b a=b a=b a=b a=b \\{{></i>",
+    "<p>x <i a=b a=b a=b a=b a=b \\{{></i></p>",
     // Comments.
     "{{! a }}{{!a}}{{!}}{{! }}{{~! a ~}}{{!-- a --}}{{!-- a }} --}}{{!----}}{{!--}}{{!---}}{{!- a -}}{{! a --}}{{!-- a ~--}}{{! a~ }}",
     "{{! a\n   b }}c\n<b>{{! a\n   b }}</b>\n{{!-- a\n   b --}} {{c d}}",
@@ -2513,6 +2516,10 @@ describe("Handlebars", () => {
     "<a ></a>\n\\{{<br> :\n\\\\{{o}}<b></b>",
     '<a b="c \\{{"> \\{{ </a>\n<a class=" d \\{{">\\{{</a>\n\n<e>f</e>\n{{g}}',
     "a \\{{b}} c\n{{d}}\n\\{{e}}\nf\n\\{{g}}",
+    // A string ends at a quote with a backslash in front of it only if there's no other one, however far away.
+    "<script>{{'\\'\"\\\"}}</script>\n'",
+    "<pre>{{a '\\'}}</pre>\n{{b}}\n'",
+    "<pre>{{a.[b\\]}}</pre>\n{{c}}\n]",
     // White space that isn't a blank, a tab or a line feed.
     "\n\fa",
     "{{a}}\n\fb",
@@ -2545,6 +2552,7 @@ describe("Handlebars", () => {
   const options = [
     [],
     ["--print-width=40"],
+    ["--print-width=33"],
     ["--print-width=20", "--single-quote"],
     ["--print-width=1"],
     ["--print-width=100000"],

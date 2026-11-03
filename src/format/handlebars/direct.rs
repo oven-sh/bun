@@ -1798,6 +1798,8 @@ impl<'a> Direct<'a, '_> {
         let first_line = self.lines;
         let mut is_broken = false;
         let mut is_first = true;
+        // The end of what was read of the nodes that didn't fit on one line.
+        let mut read_to = 0;
         loop {
             if self.is_too_long {
                 return Err(Stop::GivenUp);
@@ -1819,7 +1821,7 @@ impl<'a> Direct<'a, '_> {
                                 return Ok(());
                             }
                         }
-                        Err(Stop::Breaks) => {}
+                        Err(Stop::Breaks) => read_to = self.at + 1,
                         Err(stop) => return Err(stop),
                     }
                     self.reset(mark);
@@ -1846,7 +1848,11 @@ impl<'a> Direct<'a, '_> {
                 Ok(false) => {}
                 Err(Stop::GivenUp) => return Err(Stop::GivenUp),
                 Err(_) => {
-                    if !has_space && !(is_first && parent == Parent::Template) {
+                    // A node that's refused may be printed in another way than it was read up to there, as it's written
+                    // for example. So it isn't certain that it didn't fit, and the white space has been printed.
+                    if (!has_space && !(is_first && parent == Parent::Template))
+                        || mark.at < read_to
+                    {
                         return Err(Stop::Refused);
                     }
                     self.reset(mark);
@@ -2167,6 +2173,19 @@ impl<'a> Direct<'a, '_> {
             && let Some(rest) = self.source.get(end..)
             && let Some(next) = strings::index_of(rest, b"{{")
             && rest[..next].ends_with(b"\\")
+        {
+            return Err(Stop::GivenUp);
+        }
+        // A string or a name in brackets only ends at a quote or a bracket with a backslash in front of it if no other
+        // one follows, however far away.
+        if strings::contains_char(part, b'\\')
+            && tokens.iter().any(|token| {
+                matches!(token.kind, TokenKind::String | TokenKind::Id)
+                    && matches!(
+                        part.get(..token.end as usize),
+                        Some([.., b'\\', b'"' | b'\'' | b']'])
+                    )
+            })
         {
             return Err(Stop::GivenUp);
         }

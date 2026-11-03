@@ -1329,10 +1329,8 @@ describe.concurrent("what onResolve answers without a namespace", () => {
         "module.img": "a-module",
         "namespace.img": "served:thing",
         "absent.img": import.meta.dir + "/src/absent.served",
-        "plain.img": import.meta.dir + "/src/absent",
         "itself.img": "itself.img",
         "bare.img": "bare",
-        "dot.img": "./absent",
         "symlink.img": join(import.meta.dir, "src", "link.img"),
         "long.img": "/" + Buffer.alloc(200_000, "a") + ".js",
       };
@@ -1346,7 +1344,7 @@ describe.concurrent("what onResolve answers without a namespace", () => {
             contents: "export default " + JSON.stringify(path),
             loader: "js",
           }));
-          build.onLoad({ filter: /(absent(\\.served)?|(itself|link|real)\\.img|^bare)$/ }, ({ path }) => ({
+          build.onLoad({ filter: /(absent\\.served|(itself|link|real)\\.img|^bare)$/ }, ({ path }) => ({
             contents: "export default " + JSON.stringify(basename(path)),
             loader: "js",
           }));
@@ -1376,12 +1374,11 @@ describe.concurrent("what onResolve answers without a namespace", () => {
     "module",
     "namespace",
     "absent",
-    "plain",
     "itself",
   ];
   const S = `const S = ${JSON.stringify(specifiers.map(name => name + ".img"))};\n`;
-  const loaded = "a.mjs,a.mjs,index.mjs,dep,a.mjs,a module,thing,absent.served,absent,itself.img\n";
-  const resolved = "a.mjs,a.mjs,index.mjs,main.mjs,a.mjs,a-module,served:thing,absent.served,absent,itself.img\n";
+  const loaded = "a.mjs,a.mjs,index.mjs,dep,a.mjs,a module,thing,absent.served,itself.img\n";
+  const resolved = "a.mjs,a.mjs,index.mjs,main.mjs,a.mjs,a-module,served:thing,absent.served,itself.img\n";
   it.each([
     [
       "an import statement",
@@ -1413,23 +1410,16 @@ describe.concurrent("what onResolve answers without a namespace", () => {
     expect(await run(name, source)).toEqual({ stdout, stderr: "", exitCode: 0 });
   });
 
-  // No onLoad is called for a bare or relative key with no extension and no namespace. "plain.img" above is absolute.
+  // No onLoad is called for a key with no extension and no namespace.
   it("is not found when only the filter of an onLoad that is not called for it matches", async () => {
     const source = `
       try { require.resolve("bare.img"); } catch (error) { console.log("require.resolve()", error.message.split("\\n")[0]); }
       try { require("bare.img"); } catch (error) { console.log("require()", error.message.split("\\n")[0]); }
-      try { require.resolve("dot.img"); } catch (error) { console.log("require.resolve()", error.message.split("\\n")[0]); }
-      try { require("dot.img"); } catch (error) { console.log("require()", error.message.split("\\n")[0]); }
-      import("bare.img")
-        .catch(error => console.log("import()", error.message.split(" imported")[0]))
-        .then(() => import("dot.img"))
-        .catch(error => console.log("import()", error.message.split(" imported")[0]));
+      import("bare.img").catch(error => console.log("import()", error.message.split(" imported")[0]));
     `;
     expect(await run("entry.cjs", source)).toEqual({
       stdout:
-        "require.resolve() Cannot find module 'bare'\nrequire() Cannot find module 'bare'\n" +
-        "require.resolve() Cannot find module './absent'\nrequire() Cannot find module './absent'\n" +
-        "import() Cannot find package 'bare'\nimport() Cannot find module './absent'\n",
+        "require.resolve() Cannot find module 'bare'\nrequire() Cannot find module 'bare'\nimport() Cannot find package 'bare'\n",
       stderr: "",
       exitCode: 0,
     });
@@ -3166,27 +3156,59 @@ describe.concurrent("a file without an extension", () => {
         name: "not on disk",
         setup(build) {
           build.onResolve({ filter: /^(served|declined)$/ }, ({ path }) => ({ path: root + path }));
+          build.onResolve({ filter: /^relative$/ }, () => ({ path: "./not-on-disk" }));
           build.onLoad({ filter: /not-on-disk/ }, ({ path }) =>
             path.endsWith("served") ? { contents: "export default " + JSON.stringify("onLoad " + path) + ";", loader: "js" } : undefined,
           );
         },
       });
       console.log((await import("served")).default);
+      console.log((await import("./statement.mjs")).default);
       console.log(require("served").default);
+      console.log(import.meta.require("served").default);
       console.log(require.resolve("served"));
       console.log(Bun.resolveSync("served", import.meta.dir));
       console.log(Bun.fileURLToPath(import.meta.resolve("served")));
       console.log(await import("declined").then(() => "loaded", error => error.message.split(" imported")[0]));
+      // A relative answer is no file that the resolver found: it keeps the extension test.
+      console.log(await import("relative").then(() => "loaded", error => error.message.split(" imported")[0]));
+      try { require("relative"); } catch (error) { console.log(error.message.split("\\n")[0]); }
     `;
-    expect(await run({ "entry.mjs": source }, ["--no-install", "entry.mjs"])).toEqual({
+    const files = { "entry.mjs": source, "statement.mjs": `export { default } from "served";` };
+    expect(await run(files, ["--no-install", "entry.mjs"])).toEqual({
       stdout: [
+        `onLoad ${root}served`,
+        `onLoad ${root}served`,
         `onLoad ${root}served`,
         `onLoad ${root}served`,
         `${root}served`,
         `${root}served`,
         `${root}served`,
         `ENOENT reading "${root}declined"`,
+        `Cannot find module './not-on-disk'`,
+        `Cannot find module './not-on-disk'`,
       ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A callback is asked before Bun applies an import suffix. One that implements "?raw" returns JavaScript, and no loader.
+  it("is what its onLoad returns for an import with a suffix", async () => {
+    const source = `
+      import { readFileSync } from "node:fs";
+      Bun.plugin({
+        name: "raw",
+        setup(build) {
+          build.onLoad({ filter: /\\?raw$/ }, ({ path }) => ({
+            contents: "export default " + JSON.stringify("onLoad " + readFileSync(path.split("?")[0], "utf8")) + ";",
+          }));
+        },
+      });
+      console.log((await import("./note.txt?raw")).default + ", " + (await import("./LICENSE?raw")).default);
+    `;
+    expect(await run({ "note.txt": "note", "LICENSE": "LICENSE", "entry.mjs": source }, ["entry.mjs"])).toEqual({
+      stdout: ["onLoad note, onLoad LICENSE"],
       stderr: "",
       exitCode: 0,
     });

@@ -4073,7 +4073,7 @@ mod windows_impl {
             sys_uv::readlink(path, buf).map(|target| target.len())
         })
     }
-    /// Runs `call` with `path`. libuv passes the path to Windows unchanged, and a path of 260 characters or more only works with the `\\?\` prefix, so an ENOENT for a long drive-absolute path is tried once more with it.
+    /// Runs `call` with `path`, and once more with the `\\?\` prefix after ENOENT for a long drive-absolute path: libuv passes a path of 260 characters or more unchanged.
     pub(crate) fn with_long_path_retry<T>(
         path: &ZStr,
         mut call: impl FnMut(&ZStr) -> Maybe<T>,
@@ -9043,30 +9043,38 @@ pub fn iterate_dir(dir: Fd) -> dir_iterator::WrappedIterator {
     dir_iterator::iterate(dir)
 }
 
-/// Nanoseconds of the wall clock that stamps a file change, read without a syscall. 0 when there is no clock: on Windows, where no listing has an inode of `.` to go with one, or when the call fails.
-pub fn file_stamp_clock_ns() -> i64 {
+/// Read without a syscall: the wall clock that stamps a file change, in nanoseconds, and its lead over the monotonic clock, which drops only when the wall clock is set back. `(0, 0)` on Windows.
+pub fn file_stamp_clock_ns() -> (i64, i64) {
     #[cfg(unix)]
     {
-        // On Linux and Android the coarse clock is never ahead of the one an inode is stamped with, which the fine clock can be by a tick. On FreeBSD the name is an alias of `CLOCK_REALTIME_FAST`.
+        // The coarse clock is never ahead of the one an inode is stamped with, which the fine clock can be by a tick. On FreeBSD it is `CLOCK_REALTIME_FAST`.
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-        const CLOCK: libc::clockid_t = libc::CLOCK_REALTIME_COARSE;
+        const WALL: libc::clockid_t = libc::CLOCK_REALTIME_COARSE;
         #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
-        const CLOCK: libc::clockid_t = libc::CLOCK_REALTIME;
-        let mut now = libc::timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
+        const WALL: libc::clockid_t = libc::CLOCK_REALTIME;
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        const MONOTONIC: libc::clockid_t = libc::CLOCK_MONOTONIC_COARSE;
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        const MONOTONIC: libc::clockid_t = libc::CLOCK_MONOTONIC;
+        let ns = |clock: libc::clockid_t| {
+            let mut now = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            };
+            // SAFETY: `now` is a valid out-param.
+            if unsafe { libc::clock_gettime(clock, &raw mut now) } != 0 {
+                return 0;
+            }
+            (now.tv_sec as i64)
+                .saturating_mul(1_000_000_000)
+                .saturating_add(now.tv_nsec as i64)
         };
-        // SAFETY: `now` is a valid out-param.
-        if unsafe { libc::clock_gettime(CLOCK, &raw mut now) } != 0 {
-            return 0;
-        }
-        (now.tv_sec as i64)
-            .saturating_mul(1_000_000_000)
-            .saturating_add(now.tv_nsec as i64)
+        let wall = ns(WALL);
+        (wall, wall.saturating_sub(ns(MONOTONIC)))
     }
     #[cfg(not(unix))]
     {
-        0
+        (0, 0)
     }
 }
 

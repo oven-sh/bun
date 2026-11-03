@@ -1789,7 +1789,11 @@ impl<'a> Resolver<'a> {
         ));
         // The generation of the run that answers: what the rerun finds is finalized by the asker of the rerun.
         let mut answered_at = generation;
-        if matches!(tmp, ResultUnion::NotFound) && self.reruns_after_miss(how) {
+        // A package that the executable holds answers the miss below with no second run, as on a lookup that never had one.
+        if matches!(tmp, ResultUnion::NotFound)
+            && self.reruns_after_miss(how)
+            && (self.resolve_package_of_program_for_code_from_disk(import_path, kind)).is_none()
+        {
             (tmp, is_at_source_path, answered_at) = self.rerun_after_miss(
                 marks,
                 (source_dir_normalized, import_path),
@@ -2173,7 +2177,7 @@ impl<'a> Resolver<'a> {
         Ok(())
     }
 
-    /// The lookups of one run, the first and the one after a miss: as written, and the rest only after a miss as written. The flag is set for what an executable compiled in place holds at the path. The answer is moved here and never borrowed: a reference to it makes every lookup that finds its module copy its answer. `source_dir` and `import_path` are two parameters: as one tuple they make such a lookup test for a miss once more and test the flag.
+    /// The lookups of one run: as written, then the rest after a miss. The answer is moved and the two paths are separate parameters: a borrow or a tuple costs every hit a copy or one more test.
     #[inline(always)]
     fn lookup_sequence<'r, A: Asker>(
         &mut self,
@@ -2196,7 +2200,7 @@ impl<'a> Resolver<'a> {
         found
     }
 
-    /// The rest of `lookup_sequence`, after a miss as written: what an executable compiled in place holds at the path (the flag), then a CSS URL without its query or fragment.
+    /// The rest of `lookup_sequence` after a miss as written: what an executable compiled in place holds at the path (the flag), then a CSS URL without its suffix.
     #[cold]
     #[inline(never)]
     fn lookups_after_as_written<'r, A: Asker>(
@@ -2244,7 +2248,7 @@ impl<'a> Resolver<'a> {
         Some(&import_path[0..suffix])
     }
 
-    /// A lookup that missed runs the same lookups once more, by an asker of a new generation. With the answer and the flag it returns that generation. A lookup that finds its module never runs this.
+    /// Runs the lookups of a lookup that missed once more, by an asker of a new generation, which it returns with the answer and the flag.
     #[cold]
     #[inline(never)]
     fn rerun_after_miss<'r>(
@@ -2273,7 +2277,7 @@ impl<'a> Resolver<'a> {
         (again, is_at_source_path, asker.0)
     }
 
-    /// For a caller's own lookups that fall back one to the next, each made with the `AfterMiss` that `sequence` gets. One pass takes every miss as it is. If `missed` says that all of it missed, one more pass asks at one new generation, unless the resolver trusts cached misses.
+    /// For a caller's lookups that fall back one to the next: one pass takes each miss as it is, then, if `missed`, one pass asks at one new generation (not in a resolver that trusts cached misses).
     pub fn with_miss_recheck<T>(
         &mut self,
         mut sequence: impl FnMut(&mut Self, AfterMiss) -> T,
@@ -2316,7 +2320,7 @@ impl<'a> Resolver<'a> {
         how == AfterMiss::Recheck && !self.trusts_cached_misses
     }
 
-    /// Whether the run that asks at `generation` may ask the package manager. Each run of a resolver that trusts cached misses may. In any other resolver only a run that asks at a generation of its own may, which no other run follows: the rerun of a lookup, or a lookup of the second pass of `with_miss_recheck`. A run at the generation of the resolver does not, also not one made with `AfterMiss::TrustCache`.
+    /// Whether the run at `generation` may ask the package manager: any run of a resolver that trusts cached misses, else only the last run of a lookup, so no cached miss is answered by the registry.
     #[inline]
     fn may_ask_package_manager(&self, generation: Generation) -> bool {
         self.trusts_cached_misses || generation != self.generation
@@ -4164,7 +4168,7 @@ impl<'a> Resolver<'a> {
         };
     }
 
-    /// For entry `dependency_id` of the dependencies that `package_json` lists: the package the lockfile resolved it to, or the directory that a relative path in its version starts from.
+    /// For entry `dependency_id` of the dependencies of `package_json`: the package the lockfile resolved it to, or the directory a relative version path starts from.
     #[inline(never)]
     fn listed_dependency_target(
         manager: &dyn AutoInstaller,
@@ -5024,7 +5028,7 @@ impl<'a> Resolver<'a> {
         input_path
     }
 
-    /// `dir_info_cached_maybe_log` for an asker that checks: each cached level from the first one not yet checked at `generation` down to `key`. The caller holds the resolver mutex.
+    /// `dir_info_cached_maybe_log` for an asker that checks: each cached level not yet checked at `generation`, down to `key`. Caller holds the resolver mutex.
     #[cold]
     #[inline(never)]
     fn dir_info_checked(
@@ -5198,7 +5202,7 @@ impl<'a> Resolver<'a> {
         SlotCheck::Holds
     }
 
-    /// Whether the cached listing of `dir` is a failure that an asker of `generation` met. The miss tail stops at such a directory and gives what is below it no parent. The caller holds the resolver mutex and not `entries_mutex`.
+    /// Whether the cached listing of `dir` is a failure that an asker of `generation` met: the miss tail gives what is below it no parent. Caller holds the resolver mutex only.
     fn listing_failed_for(&self, generation: Generation, dir: &[u8]) -> bool {
         // SAFETY: `rfs_ptr()` points at the process-global RealFS singleton.
         let rfs = unsafe { &mut *self.rfs_ptr() };
@@ -5396,7 +5400,7 @@ impl<'a> Resolver<'a> {
         self.not_found_still_holds_locked(generation, path)
     }
 
-    /// A cached "no such directory" holds while the listing of the nearest cached directory above it lacks the name below it, and for the asker whose open of it failed last. The caller holds the resolver mutex and `entries_mutex`.
+    /// A cached "no such directory" holds while the listing of the nearest cached directory above lacks the name, and for the asker whose open failed last. Caller holds both mutexes.
     fn not_found_still_holds_locked(&mut self, generation: Generation, path: &[u8]) -> bool {
         let mut child = strings::without_trailing_slash_windows_path(path);
         loop {
@@ -5441,7 +5445,7 @@ impl<'a> Resolver<'a> {
         failed_at.get(&marked.hash) == Some(&generation)
     }
 
-    /// Remembers that the open of the directory `key`, which was just marked, failed for an asker of `generation`, unless a listing vouches for the mark. The caller holds the resolver mutex and `entries_mutex`.
+    /// Remembers that the open of `key`, just marked, failed for an asker of `generation`, unless a listing vouches for the mark. Caller holds both mutexes.
     fn note_failed_open(&mut self, generation: Generation, key: &[u8], key_hash: u64) {
         if generation == 0 || self.not_found_still_holds_locked(generation, key) {
             return;
@@ -7484,7 +7488,7 @@ impl<'a> Resolver<'a> {
                             lookup
                                 .entry()
                                 .symlink_for(generation, self.rfs_ref(), self.store_fd);
-                        // A fill that checks takes the path that an entry holds only from a link: another entry holds what a fill joined below the real path that its parent had then.
+                        // A fill that checks takes an entry's path only from a link: another entry holds a join below the real path its parent had then.
                         let is_own = generation == 0
                             || lookup
                                 .entry()
@@ -7704,7 +7708,7 @@ impl<'a> Resolver<'a> {
             })
     }
 
-    /// The configuration file at `tsconfigpath`, with what it inherits from those that it extends. When it gives nothing, `unparsed` gets each file that was read with a hash of its bytes, the one at `tsconfigpath` first.
+    /// The configuration at `tsconfigpath` with what it extends. If it gives nothing, `unparsed` gets each file that was read and a hash of its bytes, `tsconfigpath` first.
     fn load_tsconfig(
         &mut self,
         tsconfigpath: &[u8],

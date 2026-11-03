@@ -1076,7 +1076,7 @@ pub mod fs {
 
             let fd = dir.fd;
             // Read before the first name, so a name added while they are read carries a later stamp.
-            let read_clock_ns = bun_sys::file_stamp_clock_ns();
+            let (read_clock_ns, read_clock_lead_ns) = bun_sys::file_stamp_clock_ns();
             let mut iter = bun_sys::iterate_dir(handle);
             let mut filename_store = FilenameStoreAppender::new();
             loop {
@@ -1085,6 +1085,7 @@ pub mod fs {
                     // Only a read that reached the end takes the clock and the inode of `.`: a stat later vouches for all of the names or for none.
                     Ok(None) => {
                         dir.read_clock_ns = read_clock_ns;
+                        dir.read_clock_lead_ns = read_clock_lead_ns;
                         dir.dot_ino = iter.dot_ino();
                         break;
                     }
@@ -1259,7 +1260,7 @@ pub mod fs {
             }
         }
 
-        /// The slot whose listing `asker` may use: the cached one, the same one read again in place, or a new one. The inner error is a directory that could not be opened or read. Caller holds `entries_mutex`, so a refill happens under it.
+        /// The slot whose listing `asker` may use: cached, read again in place, or new. The inner error is a directory that did not open or read. Caller holds `entries_mutex`.
         #[inline(always)]
         pub(crate) fn listing_locked<'r, A: crate::dir_info::Asker, I: DirEntryIterator>(
             &mut self,
@@ -1307,7 +1308,7 @@ pub mod fs {
             self.read_listing_locked(asker.generation(), target, reader, read(), iterator)
         }
 
-        /// What `listing_locked` does when the cache has no answer its asker may use: one stat keeps the listing of an unchanged directory, else open, read, store. Caller holds `entries_mutex`.
+        /// `listing_locked` without a cached answer for its asker: one stat keeps the listing of an unchanged directory, else open, read, store.
         #[inline(never)]
         fn read_listing_locked<I: DirEntryIterator>(
             &mut self,
@@ -1455,7 +1456,7 @@ pub mod fs {
             true
         }
 
-        /// A cached listing whose directory cannot be listed keeps its slot with no names, marked as never listed. It has no identity, so each asker that checks tries the directory once.
+        /// A listing whose directory cannot be listed keeps its slot, empty and marked as never listed: each asker that checks tries the directory once.
         #[cold]
         fn keep_not_listable_locked(listing: *mut DirEntry, generation: Generation) {
             // SAFETY: a `DirEntry` of the BSSMap singleton, exclusively held under `entries_mutex`.
@@ -1508,9 +1509,19 @@ pub mod fs {
             &self,
             dir_: &[u8],
             base: &[u8],
-            existing_fd: Fd,
+            held: EntryCache,
             store_fd: bool,
         ) -> crate::CrateResult<EntryCache> {
+            let existing_fd = held.fd;
+            // A link that names what it named at the last stat keeps the path that was interned then.
+            let intern = |symlink: &[u8]| -> crate::CrateResult<Interned> {
+                if held.symlink.as_bytes() == symlink {
+                    return Ok(held.symlink);
+                }
+                Ok(Interned::from_static(
+                    FilenameStore::instance().append_slice(symlink)?,
+                ))
+            };
             use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
             #[cfg(not(windows))]
             use bun_sys::{FileKind, kind_from_mode};
@@ -1616,8 +1627,7 @@ pub mod fs {
 
                 let mut buf2 = bun_paths::path_buffer_pool::get();
                 if let Ok(real) = bun_sys::get_fd_path(Fd::from_system(handle), &mut buf2) {
-                    cache.symlink =
-                        Interned::from_static(FilenameStore::instance().append_slice(real)?);
+                    cache.symlink = intern(real)?;
                 }
                 return Ok(cache);
             }
@@ -1687,8 +1697,7 @@ pub mod fs {
                     EntryKind::File
                 };
                 if !symlink.is_empty() {
-                    cache.symlink =
-                        Interned::from_static(FilenameStore::instance().append_slice(symlink)?);
+                    cache.symlink = intern(symlink)?;
                 }
 
                 Ok(cache)
@@ -1711,10 +1720,10 @@ pub mod fs {
             &self,
             dir: &[u8],
             base: &[u8],
-            existing_fd: bun_sys::Fd,
+            held: EntryCache,
             store_fd: bool,
         ) -> crate::CrateResult<EntryCache> {
-            self.kind(dir, base, existing_fd, store_fd)
+            self.kind(dir, base, held, store_fd)
         }
     }
 

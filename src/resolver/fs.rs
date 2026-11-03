@@ -92,12 +92,12 @@ impl strings::Appender for FilenameStoreAppender {
 /// `RealFS` type; the inline-`fs::RealFS` in `lib.rs` impls this by forwarding
 /// to `RealFS::kind`.
 pub trait EntryKindResolver {
-    /// Runs with the entry's `mutex` held, so it must not ask for that entry's kind or symlink.
+    /// Runs with the entry's `mutex` held, so it must not ask for that entry's kind or symlink. `held` is what the entry has now.
     fn resolve_kind(
         &self,
         dir: &[u8],
         base: &[u8],
-        existing_fd: Fd,
+        held: EntryCache,
         store_fd: bool,
     ) -> crate::CrateResult<EntryCache>;
 }
@@ -232,7 +232,7 @@ impl Entry {
             // Relaxed: every write happens under `mutex`, which we hold.
             if self.need_stat.load(Ordering::Relaxed) {
                 // This is technically incorrect, but we are choosing not to handle errors here
-                match fs.resolve_kind(self.dir, self.base(), self.cache().fd, store_fd) {
+                match fs.resolve_kind(self.dir, self.base(), self.cache(), store_fd) {
                     Ok(c) => self.cache.set(c),
                     Err(_) => {
                         self.need_stat.store(false, Ordering::Release);
@@ -256,7 +256,7 @@ impl Entry {
             if self.need_stat.load(Ordering::Relaxed) {
                 // This error can happen if the file was deleted between the time the directory
                 // was scanned and the time it was read
-                match fs.resolve_kind(self.dir, self.base(), self.cache().fd, store_fd) {
+                match fs.resolve_kind(self.dir, self.base(), self.cache(), store_fd) {
                     Ok(c) => self.cache.set(c),
                     Err(_) => {
                         self.need_stat.store(false, Ordering::Release);
@@ -412,8 +412,10 @@ pub struct DirEntry {
     pub(crate) generation: Generation,
     /// Counts the times the names were replaced in place. A `DirInfo` keeps the count its facts came from.
     pub(crate) version: u32,
-    /// `bun_sys::file_stamp_clock_ns` just before the names were read. 0 when the read did not finish, `NOT_LISTABLE` when there was none.
+    /// The wall clock of `bun_sys::file_stamp_clock_ns` just before the names were read. 0 when the read did not finish, `NOT_LISTABLE` when there was none.
     pub(crate) read_clock_ns: i64,
+    /// The lead of that clock at that read: a wall clock that was set back since then stamps a later change as an earlier one.
+    pub(crate) read_clock_lead_ns: i64,
     /// The inode the directory listed for ".", 0 if it listed none: which directory the names came from.
     pub(crate) dot_ino: u64,
     pub data: dir_entry::EntryMap,
@@ -432,6 +434,7 @@ impl DirEntry {
             generation,
             version: 0,
             read_clock_ns: 0,
+            read_clock_lead_ns: 0,
             dot_ino: 0,
             fd: Fd::INVALID,
         }
@@ -447,6 +450,8 @@ impl DirEntry {
             && now.ino == self.dot_ino
             && fine_stamps
             && mtime_ns.max(ctime_ns) < self.read_clock_ns.saturating_sub(Self::KEEP_MARGIN_NS)
+            && bun_sys::file_stamp_clock_ns().1
+                >= self.read_clock_lead_ns.saturating_sub(Self::KEEP_MARGIN_NS)
     }
 
     /// False when the names were never read: the listing does not say that a name is missing.

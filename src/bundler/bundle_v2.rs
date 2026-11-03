@@ -2646,7 +2646,7 @@ pub mod bv2_impl {
             }
         }
 
-        /// What the lookup of an import record does after a miss. A miss that the program handles is taken as it is, except where a watcher runs: under the dev server, which waits for the file, and under `bun build --watch`, where the file may be written during the build.
+        /// What the lookup of an import record does after a miss: a miss that the program handles stays, except under a watcher (the dev server, `bun build --watch`).
         #[inline]
         fn after_miss(&self, handles_import_errors: bool) -> _resolver::AfterMiss {
             if handles_import_errors && self.dev_server.is_none() && self.bun_watcher.is_none() {

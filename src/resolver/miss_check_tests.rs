@@ -328,7 +328,7 @@ fn sizes_of_what_the_caches_hold() {
     #[cfg(all(target_os = "linux", target_pointer_width = "64", debug_assertions))]
     assert_eq!(
         sizes,
-        [80, 152, 128],
+        [88, 152, 128],
         "DirEntry, Entry and DirInfo in bytes"
     );
     let _ = sizes;
@@ -426,6 +426,46 @@ fn an_unchanged_directory_is_kept_and_stamped_again() {
             listing(&dir, after).expect("a directory").version,
             kept.version
         );
+    });
+}
+
+#[test]
+fn a_listing_read_before_the_wall_clock_was_set_back_is_read_again() {
+    with_project("clock-set-back", |made| {
+        made.write("src/a.js", "");
+        let dir = made.path("src");
+        let kept = listing_once_kept(&dir);
+        // As after a wall clock set back by one second: its lead over the monotonic clock was larger at the read.
+        let Fs::file_system::real_fs::EntriesOption::Entries(entries) =
+            read_directory(&dir, kept.stamp)
+        else {
+            panic!("a listing");
+        };
+        entries.read_clock_lead_ns += 1_000_000_000;
+        let read_again = listing(&dir, next_generation()).expect("a directory");
+        assert_eq!(read_again.version, kept.version + 1);
+        // The read took the clocks as they are now.
+        assert_eq!(listing_once_kept(&dir).version, read_again.version);
+    });
+}
+
+#[test]
+fn a_link_that_is_statted_again_keeps_the_path_that_was_interned_for_it() {
+    with_project("link-path-kept", |made| {
+        made.write("src/a.txt", "");
+        made.write("src/b.txt", "");
+        made.link("a.txt", "src/link");
+        let dir = made.path("src");
+        let link = listed(&dir, next_generation(), b"link").expect("listed");
+        let first = link.symlink_for(next_generation(), real_fs(), false);
+        assert_eq!(bstr::BStr::new(first), bstr::BStr::new(&made.path("src/a.txt")));
+        let again = link.symlink_for(next_generation(), real_fs(), false);
+        assert!(std::ptr::eq(first, again));
+        // A link that names another file now gets that path.
+        made.remove("src/link");
+        made.link("b.txt", "src/link");
+        let other = link.symlink_for(next_generation(), real_fs(), false);
+        assert_eq!(bstr::BStr::new(other), bstr::BStr::new(&made.path("src/b.txt")));
     });
 }
 

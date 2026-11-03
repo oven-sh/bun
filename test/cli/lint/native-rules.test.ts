@@ -711,6 +711,177 @@ export default [
     expect(problems(stdout)).toEqual([]);
     expect(exitCode).toBe(0);
   });
+
+  // One rule on, with its options and the `settings` of the config. `code` has one sortable node for each rule.
+  const oneRule = (rule: string, options: unknown, settings?: unknown) => ({
+    "a.ts": `export const o = { b: 1, a: 2 };
+export type U = "b" | "a";
+export type T = { b: 1; a: 2 };
+export interface I { b: 1; a: 2 }
+`,
+    "eslint.config.js": `const perfectionist = { meta: { name: "eslint-plugin-perfectionist" }, rules: {} };
+export default [
+  {
+    files: ["**/*.ts"],
+    plugins: { perfectionist },
+    ${settings === undefined ? "" : `settings: ${JSON.stringify(settings)},`}
+    rules: { "perfectionist/${rule}": ["error", ${JSON.stringify(options)}] },
+  },
+];
+`,
+  });
+  const rules = ["sort-objects", "sort-union-types", "sort-object-types", "sort-interfaces"];
+
+  // The plugin validates the options at the first node that is sorted, not when the rule is created, so the run ends
+  // with the rule's name and the line, as ESLint prints it for a rule that throws in a listener.
+  describe.each(rules)("%s throws at the first sortable node", rule => {
+    test.each([
+      [{ type: "custom", alphabet: "" }, "`alphabet` option must not be empty"],
+      [
+        { partitionByNewLine: true, newlinesBetween: 1 },
+        "The 'partitionByNewLine' and 'newlinesBetween' options cannot be used together",
+      ],
+      [{ groups: ["nope"] }, "Invalid group(s): nope"],
+      [{ groups: ["unknown", "unknown"] }, "Duplicated group(s): unknown"],
+      [
+        { groups: [{ newlinesBetween: 1 }, { newlinesBetween: 1 }] },
+        "Consecutive `newlinesBetween` objects are not allowed",
+      ],
+    ])("with the options %j", async (options, message) => {
+      const { stdout, stderr, exitCode } = await lint(oneRule(rule, options), ["-f", "json", "a.ts"]);
+      expect(stderr).toContain(`error: ${message}\nOccurred while linting `);
+      expect(stderr).toContain(`a.ts:${rules.indexOf(rule) + 1}\nRule: "perfectionist/${rule}"\n`);
+      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
+    });
+
+    test("with a setting whose value is not allowed", async () => {
+      const files = oneRule(rule, {}, { perfectionist: { type: "bad" } });
+      const { stdout, stderr, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
+      expect(stderr).toContain("error: Invalid value(s) for Perfectionist setting(s): type\nOccurred while linting ");
+      expect(stderr).toContain(`a.ts:${rules.indexOf(rule) + 1}\nRule: "perfectionist/${rule}"\n`);
+      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
+    });
+
+    test("not in a file without one", async () => {
+      const files = { ...oneRule(rule, { groups: ["nope"] }), "a.ts": "export const one = { a: 1 };\n" };
+      const { stdout, stderr, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
+      expect(stderr).not.toContain("error:");
+      expect(problems(stdout)).toEqual([]);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  /** The reports of the rules, without the unused-directive warnings. */
+  const ruleMessages = (stdout: string) =>
+    (JSON.parse(stdout) as { messages: Message[] }[]).flatMap(file =>
+      file.messages
+        .filter(it => it.ruleId !== null)
+        .map(({ line, column, endLine, endColumn, ruleId, message, fix }) => ({
+          line,
+          column,
+          endLine,
+          endColumn,
+          ruleId,
+          message,
+          fix,
+        })),
+    );
+  const located = (stdout: string) =>
+    ruleMessages(stdout).map(({ line, column, endLine, endColumn, message }) => ({
+      line,
+      column,
+      endLine,
+      endColumn,
+      message,
+    }));
+
+  // Recorded from ESLint: the member on the disabled line stays where it is, and `natural` order is not transitive
+  // here ("z" < "~" and "~" < "é", but "é" < "z"), so "é" is still reported against "~".
+  test("a member on an eslint-disable line keeps its place, and the others are still reported", async () => {
+    const files = {
+      ...oneRule("sort-objects", { type: "natural" }),
+      "a.ts": `const o = { z: 1,\n  // eslint-disable-next-line perfectionist/sort-objects\n  "~": 2,\n  "é": 3 };\n`,
+    };
+    const { stdout, stderr, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
+    expect(stderr).not.toContain("error:");
+    expect(ruleMessages(stdout)).toEqual([
+      {
+        line: 4,
+        column: 3,
+        endLine: 4,
+        endColumn: 9,
+        ruleId: "perfectionist/sort-objects",
+        message: 'Expected "é" to come before "~".',
+        fix: {
+          range: [12, 93],
+          text: '"é": 3,\n  // eslint-disable-next-line perfectionist/sort-objects\n  "~": 2,\n  z: 1',
+        },
+      },
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  // Recorded from ESLint: `type` comes from the settings where the options leave it out. Two files in one run, to
+  // see that the second file gets the same options as the first.
+  test("settings.perfectionist applies to every file", async () => {
+    const code = `export const o = { bb: 1, a: 22222 };\nexport const p = { a: 11111, bb: 1 };\n`;
+    const settings = { perfectionist: { type: "line-length" } };
+    const without = await lint({ ...oneRule("sort-objects", { order: "asc" }), "a.ts": code }, ["-f", "json", "a.ts"]);
+    expect(without.stderr).not.toContain("error:");
+    expect(located(without.stdout)).toEqual([
+      { line: 1, column: 27, endLine: 1, endColumn: 35, message: 'Expected "a" to come before "bb".' },
+    ]);
+    const files = { ...oneRule("sort-objects", { order: "asc" }, settings), "a.ts": code, "b.ts": code };
+    const { stdout, stderr, exitCode } = await lint(files, ["-f", "json", "a.ts", "b.ts"]);
+    expect(stderr).not.toContain("error:");
+    expect(problems(stdout)).toEqual(["a.ts:2 perfectionist/sort-objects", "b.ts:2 perfectionist/sort-objects"]);
+    expect(located(stdout)).toEqual([
+      { line: 2, column: 30, endLine: 2, endColumn: 35, message: 'Expected "bb" to come before "a".' },
+      { line: 2, column: 30, endLine: 2, endColumn: 35, message: 'Expected "bb" to come before "a".' },
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  // `locales` orders as `a.localeCompare(b, locales)` does in Node.js: Danish puts upper case first, `-u-kn` counts
+  // digits as numbers, `-u-ka` is an extension `Intl.Collator` does not read, Swedish puts `ä` after `z`.
+  const localeCode = `export const x = { a: 1, A: 2 };
+export const y = { A: 1, a: 2 };
+export const z = { a9: 1, a10: 2 };
+export const w = { aa: 1, "a-b": 2 };
+export const v = { ä: 1, z: 2 };
+`;
+  test.each([
+    ["da", ["a.ts:1", "a.ts:3", "a.ts:4", "a.ts:5"]],
+    ["en", ["a.ts:2", "a.ts:3", "a.ts:4"]],
+    ["en-u-kn", ["a.ts:2", "a.ts:4"]],
+    ["en-u-ka-shifted", ["a.ts:2", "a.ts:3", "a.ts:4"]],
+    ["sv", ["a.ts:2", "a.ts:3", "a.ts:4", "a.ts:5"]],
+    [
+      ["xx", "da"],
+      ["a.ts:1", "a.ts:3", "a.ts:4", "a.ts:5"],
+    ],
+  ])("locales %j collates as localeCompare does", async (locales, expected) => {
+    const options = { type: "alphabetical", ignoreCase: false, locales };
+    const files = { ...oneRule("sort-objects", options), "a.ts": localeCode };
+    const { stdout, stderr, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
+    expect(stderr).not.toContain("error:");
+    expect(problems(stdout)).toEqual(expected.map(it => `${it} perfectionist/sort-objects`));
+    expect(exitCode).toBe(1);
+  });
+
+  // A tag that is not a `unicode_locale_id` is a `RangeError` in `localeCompare`, wherever it is in the list.
+  test.each([["zh_CN"], ["x-private"], ["abcd"], [["xx", "x-private", "sv"]]])(
+    "locales %j is rejected as localeCompare rejects it",
+    async (locales: string | string[]) => {
+      const options = { type: "alphabetical", locales };
+      const files = { ...oneRule("sort-objects", options), "a.ts": localeCode };
+      const { stderr, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
+      const tag = Array.isArray(locales) ? "x-private" : locales;
+      expect(stderr).toContain(`RangeError: Invalid language tag: ${tag}`);
+      expect(stderr).toContain('Rule: "perfectionist/sort-objects"');
+      expect(exitCode).toBe(2);
+    },
+  );
 });
 
 describe.concurrent("rules from every plugin report problems", () => {

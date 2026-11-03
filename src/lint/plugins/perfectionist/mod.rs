@@ -33,10 +33,14 @@ pub(crate) mod report;
 pub(crate) mod sort;
 
 use bun_lint::prelude::*;
+use configuration_if::{Subject, matching_configuration};
+use disabled::DisabledLines;
 use groups::GroupId;
+use options::RuleOptions;
 use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::cell::OnceCell;
+use std::sync::Arc;
 
 pub(crate) use options::Configuration;
 
@@ -117,13 +121,58 @@ pub(crate) struct Messages {
 #[derive(Default)]
 pub(crate) struct FileState {
     /// The configurations parsed again under the file's `settings.perfectionist` (upstream's `complete`:
-    /// `{..defaults, ..settings, ..options}` per option object). `None` for a file without that key, which uses the
-    /// rule's own: [`options::RuleOptions::configurations`] picks.
-    pub(crate) with_settings: Option<Vec<Configuration>>,
-    /// Upstream's `Invalid Perfectionist setting(s): ..` / `Invalid value(s) for Perfectionist setting(s): ..`. `start`
-    /// has no `Cx`, so the first listener throws it (`cx.throw(node, "Error", ..)`) and returns.
+    /// `{..defaults, ..settings, ..options}` per option object), shared with the rule that computed them once
+    /// ([`RuleOptions::file_state`]). `None` for a file without that key, which uses the rule's own:
+    /// [`RuleOptions::configurations`].
+    pub(crate) with_settings: Option<Arc<[Configuration]>>,
+    /// Upstream's `Invalid Perfectionist setting(s): ..`. `start` has no `Cx`, so [`FileState::pick`] throws it
+    /// (`cx.throw(node, "Error", ..)`) at the first node that is sortable, as `getSettings` does.
     pub(crate) settings_error: Option<Vec<u8>>,
     /// `getEslintDisabledLines` for this rule's id, which reads every comment of the file once. Computed on the first
     /// node with more than one member.
-    pub(crate) disabled_lines: OnceCell<disabled::DisabledLines>,
+    disabled_lines: OnceCell<DisabledLines>,
+}
+
+impl FileState {
+    /// What upstream does between `isSortable` and the sorting nodes, in its order: `getSettings`,
+    /// `computeMatchedContextOptions`, `complete` and the `validate*` calls. The [`Configuration`] the node at `at`
+    /// uses and its index in [`RuleOptions::configurations`] (a rule's own options are in the same layout), or
+    /// `None` when one of those threw, which `cx` has been told. `names` are the members' names, for
+    /// `allNamesMatchPattern`.
+    pub(crate) fn pick<'s, 'n, R: Rule>(
+        &'s self,
+        rule: &'s RuleOptions,
+        subject: Subject<'_>,
+        names: impl Iterator<Item = &'n [u8]> + Clone,
+        cx: &Cx<'_, R>,
+        at: Span,
+    ) -> Option<(&'s Configuration, usize)> {
+        if let Some(error) = &self.settings_error {
+            cx.throw(at, "Error", error.clone());
+            return None;
+        }
+        let configurations = self
+            .with_settings
+            .as_deref()
+            .unwrap_or(&rule.configurations);
+        let index = match matching_configuration(configurations, subject, names) {
+            Ok(index) => index,
+            Err(rejected) => {
+                rejected.throw(cx, at);
+                return None;
+            }
+        };
+        let config = configurations.get(index)?;
+        if let Some(error) = &config.error {
+            cx.throw(at, "Error", error.clone());
+            return None;
+        }
+        Some((config, index))
+    }
+
+    /// `getEslintDisabledLines` for `rule_id` (`context.id`), computed on the first call.
+    pub(crate) fn disabled_lines<'a>(&self, file: &'a File<'a>, rule_id: &[u8]) -> &DisabledLines {
+        self.disabled_lines
+            .get_or_init(|| DisabledLines::compute(file, rule_id))
+    }
 }

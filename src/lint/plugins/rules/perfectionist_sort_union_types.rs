@@ -3,8 +3,7 @@
 //! a union into its sorting nodes and decides what only this rule decides: the selector of a member, its name, and
 //! that the `|` before a member is the token whose comments count as the member's.
 
-use crate::perfectionist::configuration_if::{Subject, matching_configuration};
-use crate::perfectionist::disabled::DisabledLines;
+use crate::perfectionist::configuration_if::Subject;
 use crate::perfectionist::fixes::{FixOptions, make_fixes, range_to_diff};
 use crate::perfectionist::options::{RuleKind, RuleOptions};
 use crate::perfectionist::sort::{IgnoredForGroup, Sorted};
@@ -135,32 +134,22 @@ impl SortUnionTypes {
     ) {
         let file = cx.file();
         let state = &cx.state.0;
-        if let Some(error) = &state.settings_error {
-            cx.throw(ty, "Error", error.clone());
-            return;
-        }
-        let configurations = state
-            .with_settings
-            .as_deref()
-            .unwrap_or(&self.options.configurations);
 
         let names: SmallVec<[&'a [u8]; 8]> =
             types.iter().map(|member| node_name(file, member)).collect();
-        let matched =
-            matching_configuration(configurations, Subject::Union(ty), names.iter().copied());
-        let config = match matched {
-            Ok(index) => match configurations.get(index) {
-                Some(config) => config,
-                None => return,
-            },
-            Err(rejected) => {
-                rejected.throw(cx, ty);
-                return;
-            }
+        let Some((config, _)) = state.pick(
+            &self.options,
+            Subject::Union(ty),
+            names.iter().copied(),
+            cx,
+            ty.span(),
+        ) else {
+            return;
         };
         if !report::can_report_errors(config, false) {
             return;
         }
+        let disabled_lines = state.disabled_lines(file, RULE_ID);
         let for_comparison = |with_size: bool| {
             types.iter().zip(&names).map(move |(member, &name)| {
                 let span = member.span();
@@ -168,12 +157,9 @@ impl SortUnionTypes {
                 SortingNode::for_comparison(span, name, b"", size)
             })
         };
-        if report::is_in_order_without_groups(config, false, for_comparison) {
+        if report::is_in_order_without_groups(config, false, disabled_lines, for_comparison) {
             return;
         }
-        let disabled_lines = state
-            .disabled_lines
-            .get_or_init(|| DisabledLines::compute(file, RULE_ID));
 
         let mut nodes: Vec<SortingNode<'a>> = Vec::with_capacity(types.len());
         let mut partition_id = 1;
@@ -282,7 +268,7 @@ impl Rule for SortUnionTypes {
     }
 
     fn validate(options: &Options) -> Result<(), Vec<u8>> {
-        RuleOptions::validate(options, RuleKind::UnionTypes)
+        RuleOptions::validate(options)
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State> {

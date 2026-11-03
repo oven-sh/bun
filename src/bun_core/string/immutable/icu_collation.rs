@@ -116,8 +116,10 @@ pub fn locale_compare_numeric_base(a: &[u8], b: &[u8]) -> Ordering {
 }
 
 /// `new Intl.Collator(locale)`: ICU's collator for one BCP 47 language tag (`"zh-CN"`), which orders as
-/// `a.localeCompare(b, locale)` does. ICU opens one per tag for the life of the process and shares it, so this is
-/// a `Copy` handle that any thread may compare with; open it once per configuration, not per comparison.
+/// `a.localeCompare(b, locale)` does, with the `-u-co-`, `-u-kn-` and `-u-kf-` extensions of the tag and the
+/// locale's own defaults for what they do not set. ICU opens one per tag for the life of the process and shares
+/// it, so this is a `Copy` handle that any thread may compare with; open it once per configuration, not per
+/// comparison.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Collator(NonNull<c_void>);
 
@@ -129,7 +131,8 @@ unsafe impl Sync for Collator {}
 /// Why [`Collator::open`] has no collator for a language tag.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NoCollator {
-    /// The tag is not well-formed (`"zh_CN"`): `localeCompare` throws a `RangeError` for it.
+    /// The tag is not a `unicode_locale_id` of UTS 35 (`"zh_CN"`, `"x-private"`), which is ECMA-402's
+    /// `IsStructurallyValidLanguageTag`: `localeCompare` throws a `RangeError` for it.
     Malformed,
     /// A well-formed tag ICU has no collation data for (`"xx"`): `Intl` passes it over for the next of a list, or
     /// the default locale.

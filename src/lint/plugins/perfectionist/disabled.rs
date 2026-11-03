@@ -44,6 +44,11 @@ impl DisabledLines {
         DisabledLines { lines }
     }
 
+    /// No line of the file disables the rule, so no node is `isEslintDisabled`.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.lines.is_empty()
+    }
+
     /// Upstream's `isNodeEslintDisabled`: the rule is disabled on the line `node` starts on.
     pub(crate) fn contains(&self, file: &File<'_>, node: Span) -> bool {
         !self.lines.is_empty() && self.lines.binary_search(&file.line_of(node.start)).is_ok()

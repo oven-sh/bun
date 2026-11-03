@@ -1,7 +1,7 @@
 icu-data break-iteration : IntlSegmenter
 icu-data sentence-break : IntlSegmenter IntlDisplayNames
-icu-data collation by-locale : IntlCollation
-icu-data collation-root : IntlCollation RuntimeTranspiler Bundler
+icu-data collation by-locale : IntlCollation Lint
+icu-data collation-root : IntlCollation RuntimeTranspiler Bundler Lint Fmt
 icu-data currency by-locale : IntlDisplayNames IntlOther IntlDateTimeFormat IntlNumberFormat
 icu-data language-names by-locale : IntlDisplayNames IntlDateTimeFormat
 icu-data region-names by-locale : IntlDisplayNames IntlDateTimeFormat

@@ -385,6 +385,13 @@ unsafe extern "C" fn Bun__collateUTF16(
     panic!("this program has no ICU")
 }
 
+/// `Date.parse`, which only the linter's natural sort calls.
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn Bun__parseDateTimeString(_bytes: *const u8, _length: usize) -> f64 {
+    panic!("this program has no WTF")
+}
+
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
 unsafe extern "C" fn Bun__collatorForLanguageTag(

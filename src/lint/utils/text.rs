@@ -306,8 +306,8 @@ pub fn natural_compare(a: &[u8], b: &[u8]) -> Ordering {
 /// The npm package `natural-orderby`'s `compare()` on two strings, which eslint-plugin-perfectionist sorts with for
 /// `type: "natural"`. Unlike [`natural_compare`]: the texts are lower-cased and trimmed first, a text that `Number()`
 /// parses (`0x10`, `1e3`, `-1`, `001`) is that number, a number comes before text, and text with a character outside
-/// ASCII is ordered as `localeCompare` orders it. A text that looks like a date (`2024-01-05`, `1/5/2024`) is
-/// compared as `Date.parse` parses it, where that has one reading.
+/// ASCII is ordered as `localeCompare` orders it. A text that looks like a date (`2024-01-05`, `1/5/2024 10:00`) is
+/// compared as `Date.parse` parses it.
 pub fn natural_orderby(a: &[u8], b: &[u8]) -> Ordering {
     natural_orderby::compare(a, b, strings::locale_compare)
 }
@@ -392,57 +392,81 @@ mod natural_orderby {
         (!number.is_nan()).then_some(number)
     }
 
-    /// `Date.parse` of the two forms that `RE_DATE` accepts without words, `YYYY-MM-DD` and `M/D/YYYY` (also with
-    /// `-`), as milliseconds since the epoch. The forms with words in them are not dates here.
+    /// `parseDate`: `Date.parse(value)` for a text that `RE_DATE` takes for a date, which is one of
+    /// `^([\w ]+,?[\w ]+)?[\w ]+,?[\w ]+\d+:\d+(:\d+)?[\w ]?`, `^\d{1,4}[/-]\d{1,4}[/-]\d{1,4}` and
+    /// `^\w+, \w+ \d+, \d{4}`.
     fn parse_date(text: &[u8]) -> Option<f64> {
-        let mut parts = [0u32; 3];
-        let mut lengths = [0usize; 3];
-        let mut index = 0;
-        for &c in text {
-            match c {
-                b'0'..=b'9' if lengths[index] < 4 => {
-                    parts[index] = parts[index] * 10 + u32::from(c - b'0');
-                    lengths[index] += 1;
-                }
-                b'/' | b'-' if index < 2 && lengths[index] > 0 => index += 1,
-                _ => return None,
-            }
-        }
-        if index != 2 || lengths[2] == 0 {
+        if !looks_like_date(text) {
             return None;
         }
-        let (year, month, day) = if lengths[0] == 4 {
-            (parts[0], parts[1], parts[2])
-        } else {
-            let year = match lengths[2] {
-                ..=2 if parts[2] < 50 => parts[2] + 2000,
-                ..=2 => parts[2] + 1900,
-                _ => parts[2],
-            };
-            (year, parts[0], parts[1])
-        };
-        if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-            return None;
-        }
-        Some(days_from_civil(year, month, day) * 86_400_000.0)
+        bun_core::wtf::parse_date(text).ok()
     }
 
-    /// Days since 1970-01-01 of a proleptic Gregorian date.
-    fn days_from_civil(year: u32, month: u32, day: u32) -> f64 {
-        let (year, month, day) = (f64::from(year), f64::from(month), f64::from(day));
-        let year = if month <= 2.0 { year - 1.0 } else { year };
-        let era = (year / 400.0).floor();
-        let year_of_era = year - era * 400.0;
-        let month_index = if month > 2.0 {
-            month - 3.0
-        } else {
-            month + 9.0
+    fn looks_like_date(text: &[u8]) -> bool {
+        let is_word = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+        let digits = |from: usize| {
+            text.get(from..).map_or(0, |rest| {
+                rest.iter().take_while(|c| c.is_ascii_digit()).count()
+            })
         };
-        let day_of_year = (153.0 * month_index + 2.0).div_euclid(5.0) + day - 1.0;
-        let day_of_era = year_of_era * 365.0 + (year_of_era / 4.0).floor()
-            - (year_of_era / 100.0).floor()
-            + day_of_year;
-        era * 146_097.0 + day_of_era - 719_468.0
+        let words = |from: usize| {
+            text.get(from..)
+                .map_or(0, |rest| rest.iter().take_while(|&&c| is_word(c)).count())
+        };
+        // `^\d{1,4}[/-]\d{1,4}[/-]\d{1,4}`
+        let mut at = 0;
+        let mut numeric = true;
+        for part in 0..3 {
+            let count = digits(at);
+            if !(1..=4).contains(&count) {
+                numeric = false;
+                break;
+            }
+            at += count;
+            if part < 2 {
+                if !matches!(text.get(at), Some(b'/' | b'-')) {
+                    numeric = false;
+                    break;
+                }
+                at += 1;
+            }
+        }
+        if numeric {
+            return true;
+        }
+        // `^\w+, \w+ \d+, \d{4}`
+        let first = words(0);
+        if first > 0 && text.get(first..first + 2) == Some(b", ") {
+            let second = words(first + 2);
+            let mut at = first + 2 + second;
+            if second > 0 && text.get(at) == Some(&b' ') {
+                at += 1;
+                let day = digits(at);
+                at += day;
+                if day > 0 && text.get(at..at + 2) == Some(b", ") && digits(at + 2) >= 4 {
+                    return true;
+                }
+            }
+        }
+        // `^([\w ]+,?[\w ]+)?[\w ]+,?[\w ]+\d+:\d+(:\d+)?[\w ]?`: words and spaces with up to two commas in
+        // them, ending in digits, then `:` and a digit.
+        let mut commas = 0;
+        let mut run = 0;
+        while let Some(&c) = text.get(run) {
+            if c == b',' {
+                commas += 1;
+                if commas > 2 || run == 0 || text.get(run - 1) == Some(&b',') {
+                    return false;
+                }
+            } else if !is_word(c) && c != b' ' {
+                break;
+            }
+            run += 1;
+        }
+        run >= 3
+            && text.get(run) == Some(&b':')
+            && text.get(run - 1).is_some_and(u8::is_ascii_digit)
+            && text.get(run + 1).is_some_and(u8::is_ascii_digit)
     }
 
     fn compare_numbers(a: f64, b: f64) -> Ordering {

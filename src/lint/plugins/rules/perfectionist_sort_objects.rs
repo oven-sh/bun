@@ -4,8 +4,7 @@
 //! name and value, where a spread or a computed key splits the list, which properties of a pattern depend on which
 //! (through the default values) and the styled-components exemption.
 
-use crate::perfectionist::configuration_if::{self, Subject, key_name};
-use crate::perfectionist::disabled::DisabledLines;
+use crate::perfectionist::configuration_if::{Subject, key_name};
 use crate::perfectionist::fixes::{FixOptions, make_fixes, range_to_diff};
 use crate::perfectionist::options::{Patterns, RuleKind, RuleOptions, SortObjectsOptions};
 use crate::perfectionist::sort::{IgnoredForGroup, Sorted};
@@ -347,25 +346,16 @@ impl SortObjects {
         }
         let file = cx.file();
         let state = &cx.state.0;
-        if let Some(error) = &state.settings_error {
-            cx.throw(object.span(), "Error", error.clone());
-            return;
-        }
-        let configurations = state.with_settings.as_deref().unwrap_or(&self.options.configurations);
         let is_destructured = object.is_destructured();
         let subject = Subject::Object {
             node: object.node(),
             is_destructured,
         };
         let names = object.members().filter_map(Member::key).map(|key| key_name(file, key));
-        let index = match configuration_if::matching_configuration(configurations, subject, names) {
-            Ok(index) => index,
-            Err(rejected) => {
-                rejected.throw(cx, object.span());
-                return;
-            }
+        let Some((config, index)) = state.pick(&self.options, subject, names, cx, object.span()) else {
+            return;
         };
-        let (Some(config), Some(own)) = (configurations.get(index), self.own.get(index)) else {
+        let Some(own) = self.own.get(index) else {
             return;
         };
         if !own.styled_components && is_style_component(object) {
@@ -375,6 +365,7 @@ impl SortObjects {
         if !report::can_report_errors(config, can_have_dependencies) {
             return;
         }
+        let disabled_lines = state.disabled_lines(file, RULE_ID);
         let for_comparison = |with_size: bool| {
             object.members().filter_map(move |member| {
                 let span = member.span();
@@ -384,10 +375,9 @@ impl SortObjects {
                 Some(SortingNode::for_comparison(span, name, value, size))
             })
         };
-        if report::is_in_order_without_groups(config, can_have_dependencies, for_comparison) {
+        if report::is_in_order_without_groups(config, can_have_dependencies, disabled_lines, for_comparison) {
             return;
         }
-        let disabled_lines = state.disabled_lines.get_or_init(|| DisabledLines::compute(file, RULE_ID));
 
         let mut nodes: Vec<SortingNode<'a>> = Vec::with_capacity(object.len());
         let mut members: Vec<Member<'a>> = Vec::with_capacity(object.len());
@@ -627,7 +617,7 @@ impl Rule for SortObjects {
     }
 
     fn validate(options: &Options) -> Result<(), Vec<u8>> {
-        RuleOptions::validate(options, RuleKind::Objects)
+        RuleOptions::validate(options)
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State> {

@@ -3,8 +3,7 @@
 //! literal or an interface body become one [`SortingNode`] each, except call and construct signatures, which are
 //! never sorted and end a partition on each side.
 
-use super::configuration_if::{self, Subject};
-use super::disabled::DisabledLines;
+use super::configuration_if::Subject;
 use super::fixes::{self, FixOptions};
 use super::options::{RuleKind, RuleOptions};
 use super::sort::{IgnoredForGroup, Sorted};
@@ -204,39 +203,24 @@ pub(crate) fn sort_object_type_elements<'a, R>(
     let file = cx.file();
     let node = listened.node();
     let state = &cx.state.0;
-    if let Some(error) = &state.settings_error {
-        cx.throw(node, "Error", error.clone());
-        return;
-    }
-    let configurations = state
-        .with_settings
-        .as_deref()
-        .unwrap_or(&rule.configurations);
 
     let elements: SmallVec<[Element<'a>; 8]> = members
         .iter()
         .map(|member| Element::new(member, file))
         .collect();
-    // `computeMatchedContextOptions`
     let names = elements.iter().map(|element| element.name);
-    let index =
-        match configuration_if::matching_configuration(configurations, listened.subject(), names) {
-            Ok(index) => index,
-            Err(rejected) => {
-                rejected.throw(cx, node);
-                return;
-            }
-        };
-    let Some(config) = configurations.get(index) else {
+    let Some((config, _)) = state.pick(rule, listened.subject(), names, cx, node.span()) else {
         return;
     };
-    if let Some(error) = &config.error {
-        cx.throw(node, "Error", error.clone());
-        return;
-    }
     if !report::can_report_errors(config, false) {
         return;
     }
+    // `context.id`: the rule with its plugin prefix.
+    let mut rule_id: SmallVec<[u8; 48]> = SmallVec::new();
+    rule_id.extend_from_slice(R::META.plugin.prefix().as_bytes());
+    rule_id.push(b'/');
+    rule_id.extend_from_slice(R::META.name.as_bytes());
+    let disabled_lines = state.disabled_lines(file, &rule_id);
     let for_comparison = |with_size: bool| {
         elements
             .iter()
@@ -251,18 +235,9 @@ pub(crate) fn sort_object_type_elements<'a, R>(
                 SortingNode::for_comparison(span, element.name, element.value, size)
             })
     };
-    if report::is_in_order_without_groups(config, false, for_comparison) {
+    if report::is_in_order_without_groups(config, false, disabled_lines, for_comparison) {
         return;
     }
-
-    let disabled_lines = state.disabled_lines.get_or_init(|| {
-        // `context.id`: the rule with its plugin prefix.
-        let mut rule_id: SmallVec<[u8; 48]> = SmallVec::new();
-        rule_id.extend_from_slice(R::META.plugin.prefix().as_bytes());
-        rule_id.push(b'/');
-        rule_id.extend_from_slice(R::META.name.as_bytes());
-        DisabledLines::compute(file, &rule_id)
-    });
 
     let mut nodes: Vec<SortingNode<'a>> = Vec::with_capacity(elements.len());
     let mut partition_id = 1;

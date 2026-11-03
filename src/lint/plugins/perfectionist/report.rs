@@ -7,6 +7,7 @@
 //! made once.
 
 use super::compare::compare;
+use super::disabled::DisabledLines;
 use super::groups;
 use super::newlines::{newlines_between_errors, newlines_between_option};
 use super::options::{Configuration, Newlines, SortType};
@@ -31,18 +32,21 @@ pub(crate) fn can_report_errors(config: &Configuration, can_have_dependencies: b
 }
 
 /// Whether a node list is certainly in order without being built: nothing but the comparator orders the nodes (no
-/// `groups`, no spacing to check, no dependencies), and no adjacent pair is out of order under it. Upstream sorts
-/// every list to find that out; most lists a rule sees are in order, and this keeps them off the path that allocates.
-/// `nodes(size)` are the list's nodes in source order, with `name` and `value` filled in, and `size` only if
-/// `size` is asked for, which `type: "line-length"` does. Partitions need no look: they only keep nodes where they
-/// are.
+/// `groups`, no spacing to check, no dependencies), no line of the file disables the rule (a comparator that is not
+/// transitive, like `natural`, can report a pair the sort without the disabled nodes moves apart), and no adjacent
+/// pair is out of order under it. Upstream sorts every list to find that out; most lists a rule sees are in order,
+/// and this keeps them off the path that allocates. `nodes(size)` are the list's nodes in source order, with `name`
+/// and `value` filled in, and `size` only if `size` is asked for, which `type: "line-length"` does. Partitions need
+/// no look: they only keep nodes where they are.
 pub(crate) fn is_in_order_without_groups<'a, N: Iterator<Item = SortingNode<'a>>>(
     config: &Configuration,
     can_have_dependencies: bool,
+    disabled_lines: &DisabledLines,
     nodes: impl FnOnce(bool) -> N,
 ) -> bool {
     if !config.groups.is_empty()
         || can_have_dependencies
+        || !disabled_lines.is_empty()
         || newlines_between_option(config, 0, 0) != Newlines::Ignore
     {
         return false;

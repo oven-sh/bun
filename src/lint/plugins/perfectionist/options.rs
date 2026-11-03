@@ -13,6 +13,7 @@ use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::selector::Selector;
 use rustc_hash::FxHashMap;
+use std::sync::{Arc, OnceLock};
 
 /// Which rule the options are for: its `defaultOptions`, the selectors and modifiers its predefined groups are made
 /// of, and which `useConfigurationIf` keys its schema has. `sort-interfaces` takes all three from `sort-object-types`
@@ -297,9 +298,10 @@ pub(crate) struct Configuration {
     /// The [`GroupId`] of `"unknown"`.
     pub(crate) unknown: GroupId,
     /// What upstream throws at the first node that picks this configuration, in its order: `validateSettingsValues`
-    /// for the keys the element leaves to the file's settings, then `validateCustomSortConfig` and
-    /// `validateNewlinesAndPartitionConfig` on the merged options. A rule throws it (`cx.throw(node, "Error", ..)`)
-    /// once `matching_configuration` has picked the slot, not before: an element no node picks throws nothing.
+    /// for the keys the element leaves to the file's settings, then `validateCustomSortConfig`,
+    /// `validateGroupsConfig` and `validateNewlinesAndPartitionConfig` on the merged options. [`FileState::pick`]
+    /// throws it (`cx.throw(node, "Error", ..)`) once `matching_configuration` has picked the slot, not before: an
+    /// element no node picks throws nothing.
     pub(crate) error: Option<Vec<u8>>,
     /// The message of the `RangeError` that `localeCompare` throws for a `locales` tag that is not well-formed,
     /// `Invalid language tag: <tag>`. `Some` exactly when [`SortOptions::locale`] is [`Locale::Invalid`].
@@ -313,12 +315,19 @@ pub(crate) struct RuleOptions {
     /// `context.options`, kept for [`FileState::with_settings`](super::FileState::with_settings): a file with
     /// settings parses each element again as `{..settings, ..element}`, and validates the settings' values for the
     /// keys the element does not have (`validateSettingsValues`) into that slot's [`Configuration::error`].
-    pub(crate) raw: Vec<Json>,
+    raw: Vec<Json>,
     /// One per element of `raw`, in order, then one of the defaults alone, whose `useConfigurationIf` is empty: the
     /// first whose `useConfigurationIf` matches a node is the node's, so the last is what upstream uses when
     /// `context.options.find(..)` finds nothing. A rule's own options follow the same layout in a parallel `Vec`.
     pub(crate) configurations: Vec<Configuration>,
+    /// The `settings.perfectionist` of the first file that had one, with [`RuleOptions::configurations_with`] of it.
+    /// A rule instance belongs to one resolved config, whose settings every file shares, so that is computed once
+    /// and every later file borrows it.
+    with_settings: OnceLock<(Json, WithSettings)>,
 }
+
+/// [`RuleOptions::configurations`] completed under a file's settings, or the error of `getSettings`.
+type WithSettings = Result<Option<Arc<[Configuration]>>, Vec<u8>>;
 
 impl RuleOptions {
     /// Every element of `options` as a [`Configuration`] over the rule's `defaultOptions`, then the defaults alone.
@@ -331,22 +340,19 @@ impl RuleOptions {
             rule,
             raw,
             configurations,
+            with_settings: OnceLock::new(),
         }
     }
 
-    /// What upstream throws for the options alone, whatever a file's settings add: an `esquery` error for
-    /// `matchesAstSelector` in `create`, and `validateGroupsConfig` for every element, since `groups` and
-    /// `customGroups` are no settings. Upstream runs the latter on the element a node picks, so an element no node
-    /// ever picks is checked here and not there. `validateCustomSortConfig` and `validateNewlinesAndPartitionConfig`
-    /// read `alphabet`, `partitionByNewLine`, `newlinesBetween` and `newlinesInside`, which the settings can supply
-    /// or break, so they are [`Configuration::error`] of the merged slot.
-    pub(crate) fn validate(options: &Options, rule: RuleKind) -> Result<(), Vec<u8>> {
+    /// What upstream throws for the options alone in `create`, whatever a file's settings add: an `esquery` error
+    /// for `matchesAstSelector`. Everything else upstream validates on the element a node picks, under the file's
+    /// settings, so it is [`Configuration::error`] of that slot.
+    pub(crate) fn validate(options: &Options) -> Result<(), Vec<u8>> {
         for element in options.all() {
             let object = Object::of(Some(element));
             if let Some(source) = selector_source(object.object("useConfigurationIf")) {
                 Selector::parse(source.as_bytes()).map_err(|error| error.message().to_vec())?;
             }
-            Configuration::parse(rule, object, Object::default()).validate_groups(rule)?;
         }
         Ok(())
     }
@@ -358,7 +364,14 @@ impl RuleOptions {
         let Some(value) = settings.get(b"perfectionist") else {
             return FileState::default();
         };
-        let (with_settings, settings_error) = match self.configurations_with(value) {
+        let (known, cached) = self
+            .with_settings
+            .get_or_init(|| (value.clone(), self.configurations_with(value)));
+        let with_settings = match known == value {
+            true => cached.clone(),
+            false => self.configurations_with(value),
+        };
+        let (with_settings, settings_error) = match with_settings {
             Ok(with_settings) => (with_settings, None),
             Err(error) => (None, Some(error)),
         };
@@ -372,7 +385,7 @@ impl RuleOptions {
     /// `{..defaults, ..settings, ..element}` for every element and for the defaults alone. Upstream validates the
     /// settings' values and the merged options against the one element a node picks, so each slot keeps its own
     /// error and only `getSettings` fails the file. `None` when the settings have nothing to merge.
-    fn configurations_with(&self, value: &Json) -> Result<Option<Vec<Configuration>>, Vec<u8>> {
+    fn configurations_with(&self, value: &Json) -> WithSettings {
         let settings = settings_of(value)?;
         if settings.entries().is_empty() {
             return Ok(None);
@@ -445,11 +458,13 @@ impl<'o> Merged<'o> {
 impl Configuration {
     /// [`Configuration::parse`], then what upstream throws at the first node that picks the result, as
     /// [`Configuration::error`]: `validateSettingsValues` for these settings and this element, then
-    /// `validateCustomSortConfig` and `validateNewlinesAndPartitionConfig` on the merged options.
+    /// `validateCustomSortConfig`, `validateGroupsConfig` and `validateNewlinesAndPartitionConfig` on the merged
+    /// options.
     fn complete(rule: RuleKind, options: Object<'_>, settings: Object<'_>) -> Configuration {
         let mut configuration = Configuration::parse(rule, options, settings);
         configuration.error = validate_settings_values(rule, settings, options)
             .and_then(|()| configuration.validate_custom_sort())
+            .and_then(|()| configuration.validate_groups(rule))
             .and_then(|()| configuration.validate_newlines_and_partition())
             .err();
         configuration

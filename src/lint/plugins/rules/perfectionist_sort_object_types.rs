@@ -49,7 +49,7 @@ impl Rule for SortObjectTypes {
     }
 
     fn validate(options: &Options) -> Result<(), Vec<u8>> {
-        RuleOptions::validate(options, object_types::RULE)
+        RuleOptions::validate(options)
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State> {

@@ -31,7 +31,7 @@ impl Expect {
 
         // Jest refuses a function too. To Vitest it's a value that only matches itself.
         if !expected.is_object()
-            || (!matches!(expected.js_type(), JSType::FinalObject | JSType::Array)
+            || (!matches!(expected.js_type(), JSType::FinalObject | JSType::CompiledObject | JSType::Array)
                 && expected.is_callable()
                 && !this.is_vitest())
         {

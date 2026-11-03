@@ -2676,6 +2676,7 @@ describe.concurrent("behavior depends on the module a function is imported from"
         `bun as the whole value, an object: ${refused}`,
         `bun as the whole value, an object, with .not: ${refused}`,
         "vitest under a key: passes fails passes",
+        // A known difference: Vitest passes this row. Bun reads the symbol keys of a pattern under both imports.
         "vitest under a symbol key: fails",
         "vitest as the whole value, the same function: passes",
         "vitest as the whole value, another function: fails",

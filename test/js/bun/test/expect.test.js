@@ -4651,7 +4651,7 @@ describe("expect()", () => {
       // a matcher and a plain expected object still accept a function
       expect({ cb: f }).toMatchObject({ cb: expect.any(Function) });
       expect({ cb: f }).toMatchObject({ cb: {} });
-      // expect.objectContaining() compares two functions by identity, as before
+      // under a key of expect.objectContaining() a function is compared as toEqual() compares it, as before
       expect({ cb: f }).toEqual(expect.objectContaining({ cb: f }));
       expect({ cb: f }).not.toEqual(expect.objectContaining({ cb: g }));
       expect({ cb: Array }).not.toEqual(expect.objectContaining({ cb: Object }));
@@ -4679,6 +4679,8 @@ describe("expect()", () => {
       expect({ [key]: { cb: f } }).not.toMatchObject({ [key]: { cb: g } });
     });
 
+    // Each todo below passes in Jest and in Vitest. Its comment says what Bun does differently.
+
     // Jest and Vitest compare two iterables by what they yield. Bun has no rule for an iterable, so it compares the two methods.
     test.todo("two iterables with their own iterator method match", () => {
       const iterable = () => ({
@@ -4688,6 +4690,36 @@ describe("expect()", () => {
         },
       });
       expect({ k: iterable() }).toMatchObject({ k: iterable() });
+    });
+
+    // Jest and Vitest read the own keys of an expected object. Bun reads the keys that it inherits too (#45950), so it compares the two methods.
+    test.todo("a method that the expected object inherits is not compared", () => {
+      // as two copies of one class that has an enumerable method on its prototype
+      const instance = () => Object.assign(Object.create({ method() {} }), { x: 1 });
+      expect({ k: instance() }).toMatchObject({ k: instance() });
+    });
+
+    // Jest and Vitest do not read the keys of an expected Set, Map or Date. Bun reads them, as on main, so it compares the two functions.
+    test.todo("a function that an expected Set, Map or Date holds as a property is not compared", () => {
+      class Registry extends Map {
+        onChange = () => {};
+      }
+      class Tags extends Set {
+        onChange = () => {};
+      }
+      class Stamp extends Date {
+        format = () => "";
+      }
+      expect({ k: new Registry() }).toMatchObject({ k: new Registry() });
+      expect({ k: new Tags() }).toMatchObject({ k: new Tags() });
+      expect({ k: new Stamp(5) }).toMatchObject({ k: new Stamp(5) });
+    });
+
+    // toEqual() has its own list of the types of a function, and a callable Proxy is not on it (#38334).
+    test.todo("toEqual() compares two callable Proxies by identity, as toMatchObject() does", () => {
+      const f = () => 1;
+      expect({ cb: new Proxy(f, {}) }).not.toMatchObject({ cb: new Proxy(f, {}) });
+      expect({ cb: new Proxy(f, {}) }).not.toEqual({ cb: new Proxy(f, {}) });
     });
 
     test("a matcher beside a value that only has the type of a matcher is applied", () => {

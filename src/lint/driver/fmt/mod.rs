@@ -1662,12 +1662,16 @@ impl Run<'_> {
             }
             self.warn_not_installed(&not_installed);
             let kind = extension_or_name(path.unwrap_or(name));
-            self.report_needs_plugins(&mut [(kind, 1)], &[LANGUAGE_PLUGINS[plugin].package]);
+            let names = [LANGUAGE_PLUGINS[plugin].package];
             if !self.options.allow_unsupported {
+                self.report_needs_plugins(&mut [(kind, 1)], &names);
                 return self.out;
             }
             options.options.plugin_languages = None;
             formatted = format_text(&options);
+            if formatted.is_ok() {
+                self.report_needs_plugins(&mut [(kind, 1)], &names);
+            }
         }
         if let Some(tailwind) = options
             .options

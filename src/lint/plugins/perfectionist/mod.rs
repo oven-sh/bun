@@ -13,26 +13,16 @@
 //! - `compare`: `utils/compare/*.ts`
 //! - `sort`: `sort-nodes.ts`, `sort-nodes-by-groups.ts`, `sort-nodes-by-dependencies.ts`,
 //!   `compute-nodes-in-circular-dependencies.ts`, `is-node-dependent-on-other-node.ts`
-//! - `partition`: `should-partition.ts`, `is-partition-comment.ts`, `get-comments-before.ts`, `get-lines-between.ts`
 //! - `disabled`: `get-eslint-disabled-lines.ts`, `get-eslint-disabled-rules.ts`, `is-node-eslint-disabled.ts`
-//! - `newlines`: `get-newlines-between-option.ts`, `get-newlines-between-errors.ts`,
-//!   `make-newlines-between-fixes.ts`
 //! - `fixes`: `get-node-range.ts`, `make-order-fixes.ts`, `make-comment-after-fixes.ts`,
 //!   `make-single-node-comment-after-fixes.ts`, `make-fixes.ts`, `range-to-diff.ts`
-//! - `report`: `report-all-errors.ts`, `report-errors.ts`, `can-report-errors.ts`
-//! - `object_types`: `rules/sort-object-types/sort-object-type-elements.ts` and its helpers, shared by
-//!   `sort-object-types` and `sort-interfaces`
 
 pub(crate) mod compare;
 pub(crate) mod configuration_if;
 pub(crate) mod disabled;
 pub(crate) mod fixes;
 pub(crate) mod groups;
-pub(crate) mod newlines;
-pub(crate) mod object_types;
 pub(crate) mod options;
-pub(crate) mod partition;
-pub(crate) mod report;
 pub(crate) mod sort;
 
 use bun_lint::prelude::*;

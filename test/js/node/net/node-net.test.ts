@@ -3610,7 +3610,7 @@ it.each(Object.entries({ setDefaultAutoSelectFamily, setDefaultAutoSelectFamilyA
 // Node completes end()'s shutdown request from libuv's pending phase, a loop turn after the
 // nextTick drain. Until then the socket is ended but not finished and not destroyed. #47834
 describe.concurrent("the _final callback runs a loop turn after the shutdown", () => {
-  type Peer = { server: Server; port: number; [Symbol.asyncDispose](): Promise<void> };
+  type Peer = { server: Server; port: number; connect(): Promise<Socket>; [Symbol.asyncDispose](): Promise<void> };
   // The disposer destroys the sockets of both sides: server.close() leaves live connections open.
   async function listen(onConnection: (peer: Socket) => void): Promise<Peer> {
     const sockets: Socket[] = [];
@@ -3634,7 +3634,7 @@ describe.concurrent("the _final callback runs a loop turn after the shutdown", (
         await once(socket, "connect");
         return socket;
       },
-    } as Peer & { connect(): Promise<Socket> };
+    };
   }
   // Resolves at 'close'. Unlike once(), an 'error' before it does not reject.
   function record(socket: Socket, events: string[]): Promise<void> {

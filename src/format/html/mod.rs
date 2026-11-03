@@ -602,9 +602,10 @@ pub fn format_with(
         let (mut runs, mut printed) = (runs::Runs::new(settings), Vec::new());
         if let Some((span, is_in_text)) = runs.whole(&text, &mut printed)
             && options.line_ending.resolve(original) == crate::options::LineEnding::Lf
+            && let Some(whole) = (if is_in_text { &text[..] } else { &printed[..] })
+                .get(span.start as usize..span.end as usize)
         {
-            let from = if is_in_text { &text[..] } else { &printed[..] };
-            out.extend_from_slice(&from[span.start as usize..span.end as usize]);
+            out.extend_from_slice(whole);
             out.push(b'\n');
             return Ok(None);
         }

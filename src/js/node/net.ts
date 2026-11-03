@@ -853,9 +853,7 @@ function onUpgradedConnect(self: $Node.Socket, connection: $Node.Socket) {
   self.connecting = false;
   self.emit("connect");
 }
-// The duplex's events reach the TLS engine through its socket handle. These listeners hold the handle, so the
-// engine lives as long as the stream that can still feed it, and the GC frees both together (node's TLSWrap over a
-// JSStream is weak the same way).
+// These listeners hold the handle: the engine lives as long as the stream that feeds it, like node's TLSWrap over a JSStream.
 function onUpgradedData(handle: SocketHandle, chunk: unknown) {
   handle.$duplexOnData(chunk);
 }

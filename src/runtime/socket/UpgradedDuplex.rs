@@ -31,8 +31,6 @@ pub(crate) struct UpgradedDuplex {
     pub wrapper: JsCell<Option<WrapperType>>,
     /// The owning `JSTLSSocket` wrapper. Its `duplexOrigin` internal field
     /// roots `origin`; that field below is a read-side shadow of the slot.
-    /// The stream's listeners hold the wrapper, and its `duplexOn*` methods
-    /// feed the stream's events to this engine.
     pub js_wrapper: JSValue,
     pub origin: Cell<JSValue>, // any duplex
     // JSC_BORROW per LIFETIMES.tsv.
@@ -684,9 +682,7 @@ impl Drop for UpgradedDuplex {
     }
 }
 
-/// The stream's events, from the `duplexOn*` methods of the owning `TLSSocket`
-/// wrapper. The wrapper's `socket` names this engine only until the connection
-/// closes, so a late event of the stream finds no engine and does nothing.
+/// The stream's events, from the `duplexOn*` methods of the owning `TLSSocket` wrapper.
 impl UpgradedDuplex {
     /// `data` of the stream.
     pub(crate) fn received_data<'a>(&self, cx: &mut JsScope<'a>, data: DuplexChunk<'a>) {

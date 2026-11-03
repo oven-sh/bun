@@ -21,10 +21,7 @@ const objectIfAny = { returns: b.any.returning("object", "undefined"), ...js } a
 
 /** What a `Duplex` emits as `data`. What is not a buffer is reported to the socket's `error` handler, not thrown. */
 export const DuplexChunk = b.union({ none: b.null, bytes: b.bufferSource.allowShared, other: b.any });
-/**
- * The `data`, `end`, `drain` and `close` of the `Duplex` a `TLSSocket` runs over, called by node:net's listeners.
- * A listener holds the socket, so the GC frees the socket and its TLS engine together with the stream.
- */
+/** The `data`, `end`, `drain` and `close` of the `Duplex` a `TLSSocket` runs over, from node:net's listeners. */
 const duplexListeners = {
   duplexOnData: { args: { chunk: DuplexChunk }, capability: "js", privateSymbol: "duplexOnData" },
   duplexOnEnd: { capability: "js", privateSymbol: "duplexOnEnd" },
@@ -136,10 +133,7 @@ export const DuplexTLSOptions = b.dictionary({
   tls: b.any.emptyStringAsNull,
   data: b.any,
 });
-/**
- * Returns the `TLSSocket` that runs over `duplex`. The caller wires the duplex's `data`, `end`, `drain` and `close` to
- * the socket's `duplexOn*`. `data` of the options is `data` of the new socket.
- */
+/** Returns the `TLSSocket` over `duplex`; the caller wires the duplex's events to its `duplexOn*`. `data` of the options is `data` of the new socket. */
 export const upgradeDuplexToTLS = b.fn({
   ...js,
   args: { duplex: b.any, options: DuplexTLSOptions },

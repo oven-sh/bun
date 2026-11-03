@@ -1284,16 +1284,11 @@ impl<const SSL: bool> NewSocket<SSL> {
             let handlers = self.get_handlers();
             handlers.mark_active();
             self.update_flags(|f| f.insert(Flags::IS_ACTIVE));
-            // Keep the JS wrapper alive while the socket is active: the event
-            // loop can deliver an event to it with no JS reference left.
-            // `getThisValue` may not have been called yet (e.g. server-side
-            // sockets without default data), in which case the ref is still
-            // empty and there's nothing to upgrade.
-            //
-            // A TLS engine over a JS stream gets every event from that stream's
-            // listeners, which hold the wrapper. Once nothing in JS reaches it,
-            // nothing can ever reach it: leave it weak, like node's TLSWrap over
-            // a JSStream, so the GC collects it with its engine.
+            // Keep the JS wrapper alive while the socket is active. `getThisValue`
+            // may not have been called yet (e.g. server-side sockets without
+            // default data), in which case the ref is still empty and there's
+            // nothing to upgrade. A socket over a JS stream stays weak: the
+            // stream's listeners hold the wrapper, like node's TLSWrap over a JSStream.
             if self.this_value.get().is_not_empty() {
                 if self.socket.get().upgraded_duplex().is_some() {
                     self.this_value.with_mut(|r| r.downgrade());
@@ -4690,10 +4685,8 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
     Ok(tls_js_value)
 }
 
-/// The events of the `Duplex` a `TLSSocket` runs over, from the listeners
-/// node:net puts on it. `socket` names the engine until the connection closes
-/// (`on_close` and `handle_connect_error` detach it before the context that
-/// owns the engine can be freed), so a late event does nothing.
+/// The events of the `Duplex` a `TLSSocket` runs over, from node:net's listeners.
+/// `socket` is detached before the engine's context is freed, so a late event does nothing.
 impl TLSSocket {
     fn upgraded_duplex(&self) -> Option<&UpgradedDuplex> {
         // SAFETY: the engine is `.upgrade` of the live `DuplexUpgradeContext`

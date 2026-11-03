@@ -47,11 +47,18 @@ One test looks at nothing and is left out by name (`IGNORED` in `score.py`).
 could be imported, some 380 tests. There are no subinterpreters: the stand-in knows of the main interpreter and refuses to make
 another, so the tests of interpreter pools fail. Three tests start a child with `-I`, which does not see the stand-in, and are left out by name.
 
+`_ctypes_test` is the one that does the whole job. The real one is an extension module that `test_ctypes` loads a second time, as a plain shared
+library, through its `__file__`: 25 of the 61 files of `test_ctypes` need it. `shims/_ctypes_test/build.sh <CPython's sources>` builds
+`Modules/_ctypes/_ctypes_test.c` against `src/Python.h`, a stand-in of some 90 lines that needs no C API, into `_ctypes_test_library.so` next to the shim (which is
+not kept in the repository); `_ctypes_test.py` has that path for its `__file__` and the few functions that the module has for Python. Until the library is built the
+shim raises `ImportError`, and the tests are skipped as without it. It works under CPython too, and a CPython installed without its test modules is
+given it (`SHIMS_FOR_ORACLE`): `test_ctypes` then runs 624 tests there instead of 327.
+
 `shims/_impl_detail` is of another kind: `score.py --impl-detail` puts it on the path of every module, and the tests marked
 `@cpython_only` are run instead of skipped. Of the 838 such tests that CPython passes, 502 pass here, 228 then skip themselves for want
 of a C helper, 108 fail (reference counts, sizes, bytecode, which objects are the same object). The scoreboard does not count them.
 
 They are no part of Bun. `score.py` puts a shim on `PYTHONPATH` for the test modules listed in its `SHIMS` and for no others
-(`test.support` and many tests do something sensible when a helper is missing), and never for CPython. By hand:
+(`test.support` and many tests do something sensible when a helper is missing), and, `_ctypes_test` aside, never for CPython. By hand:
 
     PYTHONPATH=shims/_testmultiphase BUN_PYTHON_STDLIB=vendor/cpython/Lib python3 -m test -v test_import

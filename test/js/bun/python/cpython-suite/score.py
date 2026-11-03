@@ -67,7 +67,6 @@ EXCLUDED = {
     "test_ttk_textonly": "Tk",
     "test_tcl": "Tk",
     "test_turtle": "Tk",
-    "test_ctypes": "ctypes",
     "test_winapi": "Windows",
     "test_winreg": "Windows",
     "test_winsound": "Windows",
@@ -96,6 +95,7 @@ SHIMS = {
     "_testlimitedcapi": ["test_bytes", "test_class"],
     "_testcapi": ["test_traceback", "test_zipimport"],
     "_interpreters": ["test_concurrent_futures"],
+    "_ctypes_test": ["test_ctypes"],
 }
 
 
@@ -125,8 +125,14 @@ TOGETHER = {
 }
 
 
-def shim_path(name):
-    return os.pathsep.join(os.path.join(HERE, "shims", shim) for shim, users in SHIMS.items() if any(name == user or name.startswith(user + ".") for user in users))
+# These do the whole job of the helper they stand in for, under CPython as well. A CPython that was installed without its test
+# modules is given them too, or it would skip what is to be compared.
+SHIMS_FOR_ORACLE = {"_ctypes_test"}
+
+
+def shim_path(name, for_oracle=False):
+    return os.pathsep.join(os.path.join(HERE, "shims", shim) for shim, users in SHIMS.items()
+                           if (not for_oracle or shim in SHIMS_FOR_ORACLE) and any(name == user or name.startswith(user + ".") for user in users))
 
 
 def find_tests():
@@ -540,7 +546,7 @@ def main():
     done = 0
     with concurrent.futures.ThreadPoolExecutor(options.j) as pool:
         def environment(name):
-            path = "" if options.oracle else shim_path(name)
+            path = shim_path(name, for_oracle=options.oracle)
             if options.impl_detail and not options.oracle:
                 path = os.pathsep.join(filter(None, [os.path.join(HERE, "shims", "_impl_detail"), path]))
             return dict(extra_env, PYTHONPATH=path) if path else extra_env

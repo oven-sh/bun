@@ -11,6 +11,39 @@ test.each(["child", "parent"])("what the %s sent before disconnect() arrives", s
   expect(actual.exitCode).toBe(0);
 });
 
+// The end of the process takes along what the channel has taken and not passed on.
+test.concurrent.each(["json", "advanced"])(
+  "a message has left the process when the callback of send() runs (%s)",
+  async serialization => {
+    using dir = tempDir("ipc-exit-in-send-callback", {
+      "fixture.mjs": `
+      import { fork } from "child_process";
+
+      if (process.send) {
+        process.send(Buffer.alloc(3_000_000, "x").toString(), () => process.exit(0));
+      } else {
+        fork(process.argv[1], { serialization: process.argv[2] })
+          .on("message", message => console.log("received: " + message.length))
+          .on("exit", code => console.log("exit: " + code));
+      }
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.mjs", serialization],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ lines: stdout.trim().split("\n").sort(), stderr, exitCode }).toEqual({
+      lines: ["exit: 0", "received: 3000000"],
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
 // What it sent before still goes out then, and the other end answers each message that it gets.
 test.concurrent.each(["child", "parent"])("the %s gets no 'message' after its disconnect()", async sender => {
   using dir = tempDir("ipc-message-after-disconnect", {

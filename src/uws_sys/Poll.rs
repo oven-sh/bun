@@ -112,12 +112,18 @@ impl Poll {
         Self::result(unsafe { us_internal_pipe_read(loop_, self, buf.as_mut_ptr().cast(), len) })
     }
 
-    /// Pipes only, as a non-blocking `send`, but after `WSAEWOULDBLOCK` the bytes are on their way: offer them again on [`WRITABLE`].
+    /// Pipes only, as a non-blocking `send`, but after `WSAEWOULDBLOCK` the bytes are on their way: a write that begins with other bytes fails.
     pub fn write(&mut self, loop_: &Loop, buf: &[u8]) -> Result<usize, Win32Error> {
         debug_assert!(self.is_pipe());
         let len = buf.len().min(c_int::MAX as usize) as c_int;
         // SAFETY: as in `set_events`; `buf` is readable for `len` bytes.
         Self::result(unsafe { us_internal_pipe_write(loop_, self, buf.as_ptr().cast(), len) })
+    }
+
+    /// The bytes that [`Poll::write`] answered `WSAEWOULDBLOCK` for will not be offered again. The peer gets them all the same.
+    pub fn disown_write(&mut self) {
+        // SAFETY: `self` is a valid poll.
+        unsafe { us_internal_pipe_disown_write(self) }
     }
 }
 
@@ -139,4 +145,5 @@ unsafe extern "C" {
         buffer: *const c_void,
         length: c_int,
     ) -> c_int;
+    fn us_internal_pipe_disown_write(p: *mut Poll);
 }

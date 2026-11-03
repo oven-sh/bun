@@ -951,7 +951,9 @@ void us_loop_free(struct us_loop_t *loop) {
      * what it has in flight, and collect the packets. */
     for (struct us_internal_poll_req_t *req = loop->reqs, *next; req; req = next) {
         next = req->next;
-        if (req->owner) {
+        if (req->kind >= LIBUS_POLL_KIND_PIPE) {
+            us_internal_pipe_abandon(req);
+        } else if (req->owner) {
             us_internal_poll_detach(req->owner);
         }
     }

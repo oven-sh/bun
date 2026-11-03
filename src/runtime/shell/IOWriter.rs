@@ -429,6 +429,10 @@ impl IOWriter {
         while s.writer_idx < s.writers.len() {
             let w = &s.writers[s.writer_idx];
             if w.is_dead() {
+                #[cfg(windows)]
+                if let bun_io::pipes::PollOrFd::Poll(poll) = s.writer.handle {
+                    poll.disown_write();
+                }
                 s.total_bytes_written += w.len - w.written;
                 s.writer_idx += 1;
                 continue;

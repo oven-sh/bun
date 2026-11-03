@@ -138,11 +138,14 @@ void us_internal_poll_read_was_shut_down(struct us_poll_t *p);
 
 /* As recv() and send() on a non-blocking socket: the number of bytes, 0 at the end of the stream, or
  * -1 with the reason in LIBUS_ERR (WSAEWOULDBLOCK, or else a Win32 error).
- * After a write that would block, the next one has to start with the same bytes: they are on their way. */
+ * A write that would block has begun all the same. As with SSL_write, the next one has to begin with the same bytes, and
+ * is told that they are written. With other bytes it fails, and so does every write after it. */
 int us_internal_pipe_read(struct us_loop_t *loop, struct us_poll_t *p, void *buffer, int length);
 int us_internal_pipe_write(struct us_loop_t *loop, struct us_poll_t *p, const void *buffer, int length);
-/* On LIBUS_POLL_KIND_PIPE it all leaves in one write: up to 1 MiB of a stream, and a message whatever its size. */
+/* It all leaves in one write: up to 1 MiB of a stream, and a message whatever its size. */
 int us_internal_pipe_writev(struct us_loop_t *loop, struct us_poll_t *p, const struct us_iovec_t *iov, int count);
+/* For any poll. The bytes of a write that would block will not be offered again. The peer gets them all the same. */
+void us_internal_pipe_disown_write(struct us_poll_t *p);
 void us_internal_pipe_shutdown(struct us_poll_t *p);
 void us_internal_pipe_shutdown_read(struct us_poll_t *p);
 /* For a poll that was started. Closing it then closes the descriptor, which closes the handle. */

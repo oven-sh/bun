@@ -24,6 +24,10 @@
 #ifndef STATUS_PIPE_NOT_AVAILABLE
 #define STATUS_PIPE_NOT_AVAILABLE ((NTSTATUS) 0xC00000ACL)
 #endif
+/* The server ended the connection with DisconnectNamedPipe(). What was not read yet is gone. */
+#ifndef STATUS_PIPE_DISCONNECTED
+#define STATUS_PIPE_DISCONNECTED ((NTSTATUS) 0xC00000B0L)
+#endif
 /* The peer closed its end: what a write gets, and a listen whose client has come and gone. */
 #ifndef STATUS_PIPE_CLOSING
 #define STATUS_PIPE_CLOSING ((NTSTATUS) 0xC00000B1L)
@@ -113,6 +117,7 @@ int us_internal_pipe_start(struct us_loop_t *loop, struct us_poll_t *p);
 void us_internal_pipe_update(struct us_internal_poll_req_t *req);
 void us_internal_pipe_ready(struct us_internal_poll_req_t *req);
 void us_internal_pipe_detach(struct us_internal_poll_req_t *req, int close_handle);
+void us_internal_pipe_abandon(struct us_internal_poll_req_t *req);
 void us_internal_pipe_destroy(struct us_internal_poll_req_t *req);
 
 #endif // IOCP_INTERNAL_H

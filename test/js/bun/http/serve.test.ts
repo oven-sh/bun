@@ -2862,6 +2862,41 @@ it.if(isWindows)("named pipe connection in Bun.serve", async () => {
   expect(await (await fetch("http://localhost/b", { unix })).text()).toBe("hey /b");
 });
 
+// A pipe queues a response that does not fit. The client has all of it before the server's loop hears that the write is through.
+it.if(isWindows)("a named pipe client sends its next request as soon as it has all of a large response", async () => {
+  const fixture = JSON.stringify(join(import.meta.dir, "..", "..", "node", "net", "windows-foreign-pipe-fixture.js"));
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const size = 100_000;
+        const unix = process.env.PIPE;
+        const server = Bun.serve({ unix, fetch: () => new Response(Buffer.alloc(size, "#")) });
+        const client = require(${fixture}).connect(unix);
+        let responses = 0;
+        for (; responses < 3; responses++) {
+          client.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+          let received = "";
+          while (received.length - received.indexOf("#") < size) {
+            await new Promise(setImmediate);
+            // Throws once the server has closed the connection.
+            if (client.available()) received += client.text();
+          }
+        }
+        console.log(responses);
+        client.close();
+        await server.stop();
+      `,
+    ],
+    env: { ...bunEnv, PIPE: `\\\\.\\pipe\\bun-test-serve-${crypto.randomUUID()}` },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: "3\n", exitCode: 0 });
+});
+
 it("unix socket connection throws an error on a bad domain without crashing", async () => {
   const unix = "/i/don/tevent/exist/because/the/directory/is/invalid/yes.sock";
   expect(() => {

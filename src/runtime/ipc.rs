@@ -1046,8 +1046,6 @@ pub(crate) struct SendQueue {
     root: Cell<Option<core::ptr::NonNull<SendQueue>>>,
     pub(crate) queue: JsCell<Vec<SendHandle>>,
     pub(crate) waiting_for_ack: JsCell<Option<SendHandle>>,
-    /// The answer to the handle at the head of `queue`, which came before the report that its last byte is written.
-    early_ack_nack: Cell<Option<AckNack>>,
 
     pub(crate) retry_count: Cell<u32>,
     pub(crate) keep_alive: JsCell<KeepAlive>,
@@ -1171,7 +1169,6 @@ impl SendQueue {
             root: Cell::new(None),
             queue: JsCell::new(Vec::new()),
             waiting_for_ack: JsCell::new(None),
-            early_ack_nack: Cell::new(None),
             retry_count: Cell::new(0),
             keep_alive: JsCell::new(KeepAlive::default()),
             #[cfg(debug_assertions)]
@@ -1407,13 +1404,7 @@ impl SendQueue {
             Some(item) => Some(item.handle.is_some()),
         });
         let Some(has_handle) = waiting else {
-            // A Windows pipe reports a queued write in a later tick than the one the peer has read it in.
-            match self.queue.get().first() {
-                Some(first) if first.handle.is_some() && first.is_offered => {
-                    self.early_ack_nack.set(Some(ack_nack));
-                }
-                _ => log!("onAckNack: ack received but not waiting for ack"),
-            }
+            log!("onAckNack: ack received but not waiting for ack");
             return;
         };
         if !has_handle {
@@ -1632,10 +1623,9 @@ impl SendQueue {
             }
         });
         match done {
-            Done::AwaitAck => match self.early_ack_nack.take() {
-                Some(ack_nack) => self.on_ack_nack(&global_this, ack_nack),
-                None => self.continue_send(&global_this, ContinueSendReason::OnWritable),
-            },
+            Done::AwaitAck => {
+                self.continue_send(&global_this, ContinueSendReason::OnWritable);
+            }
             Done::Completed(item) => {
                 item.complete(&global_this); // call the callback & deinit
                 self.continue_send(&global_this, ContinueSendReason::OnWritable);

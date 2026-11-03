@@ -5,9 +5,11 @@ const fs = require("node:fs");
 const kernel32 = dlopen("kernel32.dll", {
   CloseHandle: { args: ["u64"], returns: "i32" },
   CreateNamedPipeW: { args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32", "ptr"], returns: "u64" },
+  DisconnectNamedPipe: { args: ["u64"], returns: "i32" },
   FlushFileBuffers: { args: ["u64"], returns: "i32" },
   GetNamedPipeInfo: { args: ["u64", "ptr", "ptr", "ptr", "ptr"], returns: "i32" },
   GetStartupInfoW: { args: ["ptr"], returns: "void" },
+  PeekNamedPipe: { args: ["u64", "ptr", "u32", "ptr", "ptr", "ptr"], returns: "i32" },
   ReadFile: { args: ["u64", "ptr", "u32", "ptr", "ptr"], returns: "i32" },
   SetNamedPipeHandleState: { args: ["u64", "ptr", "ptr", "ptr"], returns: "i32" },
   WriteFile: { args: ["u64", "ptr", "u32", "ptr", "ptr"], returns: "i32" },
@@ -44,22 +46,27 @@ function setNoWait(handle) {
   }
 }
 
-/** The server end of a new pipe. It does not wait, so nothing here holds up the event loop but `flush()`. */
-function createServer({ messages = false, quota = 4096 } = {}) {
-  const name = String.raw`\\.\pipe\bun-test-${crypto.randomUUID()}`;
-  const mode = PIPE_NOWAIT | (messages ? PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE : 0);
-  const wideName = Buffer.from(name + "\0", "utf16le");
-  const handle = kernel32.CreateNamedPipeW(wideName, PIPE_ACCESS_DUPLEX, mode, 1, quota, quota, 0, null);
-  if (handle === INVALID_HANDLE_VALUE) throw new Error("CreateNamedPipeW");
+/** An end that does not wait, so nothing here holds up the event loop but `flush()`. */
+function end(handle, close) {
   const chunk = Buffer.alloc(4 * 1024 * 1024);
   const length = new Uint32Array(1);
   return {
-    name,
     /** How much each read returned, until there was nothing more. One read is one message. */
     read() {
       const lengths = [];
       while (kernel32.ReadFile(handle, chunk, chunk.length, length, null)) lengths.push(length[0]);
       return lengths;
+    },
+    /** What there is to read. */
+    text() {
+      let text = "";
+      while (kernel32.ReadFile(handle, chunk, chunk.length, length, null)) text += chunk.latin1Slice(0, length[0]);
+      return text;
+    },
+    /** How much there is to read. All of a write that has to wait counts from the moment it is made. */
+    available() {
+      if (!kernel32.PeekNamedPipe(handle, null, 0, null, length, null)) throw new Error("PeekNamedPipe");
+      return length[0];
     },
     write(text) {
       const bytes = Buffer.from(text);
@@ -71,8 +78,27 @@ function createServer({ messages = false, quota = 4096 } = {}) {
     flush() {
       if (!kernel32.FlushFileBuffers(handle)) throw new Error("FlushFileBuffers");
     },
-    close() {
-      kernel32.CloseHandle(handle);
+    close,
+  };
+}
+
+function pipeName() {
+  return String.raw`\\.\pipe\bun-test-${crypto.randomUUID()}`;
+}
+
+/** The server end of a new pipe. A client can write `quota` bytes before the server reads, and the server `outQuota`. */
+function createServer({ messages = false, quota = 4096, outQuota = quota } = {}) {
+  const name = pipeName();
+  const mode = PIPE_NOWAIT | (messages ? PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE : 0);
+  const wideName = Buffer.from(name + "\0", "utf16le");
+  const handle = kernel32.CreateNamedPipeW(wideName, PIPE_ACCESS_DUPLEX, mode, 1, outQuota, quota, 0, null);
+  if (handle === INVALID_HANDLE_VALUE) throw new Error("CreateNamedPipeW");
+  return {
+    name,
+    ...end(handle, () => kernel32.CloseHandle(handle)),
+    /** How a server ends a connection and keeps its end for the next client. */
+    disconnect() {
+      if (!kernel32.DisconnectNamedPipe(handle)) throw new Error("DisconnectNamedPipe");
     },
   };
 }
@@ -85,4 +111,11 @@ function openClient(name, flags) {
   return { fd, handle };
 }
 
-module.exports = { createServer, inheritedHandle, openClient, setNoWait };
+/** A client end of a pipe that somebody listens on. */
+function connect(name) {
+  const { fd, handle } = openClient(name, "r+");
+  setNoWait(handle);
+  return end(handle, () => fs.closeSync(fd));
+}
+
+module.exports = { connect, createServer, inheritedHandle, openClient, pipeName, setNoWait };

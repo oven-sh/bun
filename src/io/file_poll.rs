@@ -1195,7 +1195,7 @@ impl FilePoll {
         }
     }
 
-    /// `true`: the loop closes `fd` when the poll goes away, because the helper thread of a pipe may be using it.
+    /// `true`: the loop closes `fd` when the poll goes away. It knows what `fd` is, and a socket is not closed the way a pipe is.
     pub(crate) fn close_fd_on_deinit(&mut self) -> bool {
         // The C runtime has to close its own descriptors, and a console reader waits on a handle that is not `fd`.
         if self.fd.kind() != bun_core::FdKind::System
@@ -1213,8 +1213,7 @@ impl FilePoll {
     pub(crate) fn read(&mut self, buf: &mut [u8]) -> sys::Result<usize> {
         let fd = self.fd;
         match self.native(Flags::Readable).kind() {
-            NativeKind::Socket => sys::recv_non_block(fd, buf),
-            NativeKind::Waitable => match self.console_mut() {
+            NativeKind::Socket | NativeKind::Waitable => match self.console_mut() {
                 Some(console) => console.read(buf),
                 None => sys::Result::Err(
                     sys::Error::from_code(sys::E::EINVAL, sys::Tag::read).with_fd(fd),
@@ -1229,12 +1228,11 @@ impl FilePoll {
         }
     }
 
-    /// As `write` on a non-blocking descriptor.
+    /// As `write` on a non-blocking descriptor, but what follows `EAGAIN` has to begin with the same bytes. See [`NativePoll::write`].
     pub(crate) fn write(&mut self, buf: &[u8]) -> sys::Result<usize> {
         let fd = self.fd;
         match self.native(Flags::Writable).kind() {
-            NativeKind::Socket => sys::send_non_block(fd, buf),
-            NativeKind::Waitable => {
+            NativeKind::Socket | NativeKind::Waitable => {
                 sys::Result::Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::write).with_fd(fd))
             }
             NativeKind::Pipe | NativeKind::ForeignPipe => {
@@ -1244,6 +1242,11 @@ impl FilePoll {
                     .map_err(|code| sys::Error::from_win32(code, sys::Tag::write).with_fd(fd))
             }
         }
+    }
+
+    /// See [`NativePoll::disown_write`].
+    pub(crate) fn disown_write(&mut self) {
+        self.native.disown_write()
     }
 }
 

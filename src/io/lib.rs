@@ -1801,6 +1801,12 @@ impl FilePollRef {
     pub(crate) fn write(self, buf: &[u8]) -> sys::Result<usize> {
         self.inner().write(buf)
     }
+    /// For a writer that drops bytes it was told would block. See `us_internal_pipe_disown_write`.
+    #[cfg(windows)]
+    #[inline]
+    pub fn disown_write(self) {
+        self.inner().disown_write()
+    }
     #[cfg(windows)]
     #[inline]
     pub(crate) fn close_fd_on_deinit(self) -> bool {

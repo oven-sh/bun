@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, nodeExe, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, nodeExe, tempDir, tls } from "harness";
 
 const node = nodeExe();
 
@@ -943,6 +943,64 @@ process.once('message', (message, handle) => {
       expect(exitCode).toBe(0);
     },
   );
+
+  // The parent's small messages keep the child reading while its large ones are on their way, so an ack arrives
+  // at every point of a read.
+  test.skipIf(!isWindows)("the ack of a handle is not lost while the other end keeps sending", async () => {
+    const sends = isDebug ? 200 : 3000;
+    using dir = tempDir("ipc-handle-ack-under-traffic", {
+      "parent.js": `
+const { fork } = require('node:child_process');
+const net = require('node:net');
+const child = fork('child.js', [process.argv[2]]);
+const server = net.createServer(connection => connection.unref());
+let received = 0;
+child.on('message', (message, handle) => {
+  received++;
+  handle.destroy();
+});
+child.on('disconnect', () => {
+  console.log('parent got', received);
+  server.close();
+});
+function ping() {
+  if (child.connected) child.send('ping', () => setImmediate(ping));
+}
+server.listen(0, '127.0.0.1', () => {
+  const socket = net.connect(server.address().port, '127.0.0.1', () => {
+    child.send('socket', socket, { keepOpen: true });
+    for (let i = 0; i < 8; i++) ping();
+  });
+  socket.unref();
+});
+`,
+      "child.js": `
+const large = Buffer.alloc(1 << 18, 'a').toString();
+let left = Number(process.argv[2]), socket;
+function next(error) {
+  if (error) throw error;
+  if (left-- > 0) return process.send(large, socket, { keepOpen: true }, next);
+  socket.destroy();
+  process.disconnect();
+}
+process.on('message', (message, handle) => {
+  if (!handle) return;
+  socket = handle;
+  next();
+});
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js", String(sends)],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: `parent got ${sends}\n`, stderr: "" });
+    expect(exitCode).toBe(0);
+  });
 
   test.concurrent.skipIf(!isWindows)("a received socket is not inheritable", async () => {
     using dir = tempDir("ipc-handle-not-inheritable", {

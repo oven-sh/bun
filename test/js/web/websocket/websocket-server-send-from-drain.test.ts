@@ -1,7 +1,9 @@
 import { setSocketOptions } from "bun:internal-for-testing";
-import { expect, it } from "bun:test";
-import { isWindows } from "harness";
+import { describe, expect, it } from "bun:test";
+import { isWindows, tempDir } from "harness";
+import { once } from "node:events";
 import net from "node:net";
+import { join } from "node:path";
 
 const CHUNK = new Uint8Array(64 * 1024);
 // With a 64 KiB SO_SNDBUF, 4 MiB hit backpressure dozens of times. Winsock may take any write whole, so send 64 MiB
@@ -73,3 +75,75 @@ it("ServerWebSocket.send() that backpressures inside drain keeps draining", asyn
   expect(drainCount).toBe(backpressureCount);
   sock.destroy();
 }, 30_000);
+
+describe("a client on a unix socket that is slow to read", () => {
+  /** Has the server run `send` while the client does not read. Resolves with getBufferedAmount() right behind it and at every drain. */
+  async function sendToSlowClient(send: (ws: Bun.ServerWebSocket<undefined>, server: Bun.Server<undefined>) => number) {
+    using dir = tempDir("ws-slow-client", {});
+    const unix = isWindows ? `\\\\.\\pipe\\bun-test-${crypto.randomUUID()}` : join(String(dir), "s.sock");
+    const opened = Promise.withResolvers<Bun.ServerWebSocket<undefined>>();
+    const drained = Promise.withResolvers<void>();
+    const drains: number[] = [];
+    using server = Bun.serve({
+      unix,
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response();
+      },
+      websocket: {
+        open(ws) {
+          ws.subscribe("topic");
+          opened.resolve(ws);
+        },
+        message() {},
+        drain(ws) {
+          drains.push(ws.getBufferedAmount());
+          if (drains.at(-1) === 0) drained.resolve();
+        },
+      },
+    });
+    const sock = net.connect(unix);
+    sock.write(
+      "GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n",
+    );
+    await once(sock, "data");
+    sock.pause();
+    const ws = await opened.promise;
+    const status = send(ws, server);
+    const buffered = ws.getBufferedAmount();
+    sock.resume();
+    await drained.promise;
+    sock.destroy();
+    return { status, buffered, drains };
+  }
+
+  // More than a unix socket or a Windows named pipe has room for.
+  it.each([
+    ["send", (ws, _) => ws.send(new Uint8Array(1_000_000))],
+    ["publish", (_, server) => server.publish("topic", new Uint8Array(1_000_000))],
+  ] as [string, Parameters<typeof sendToSlowClient>[0]][])(
+    "%s() reports backpressure, and drain follows",
+    async (_, send) => {
+      const { status, buffered } = await sendToSlowClient(send);
+      expect({ status, isBuffered: buffered > 0 }).toEqual({ status: -1, isBuffered: true });
+    },
+  );
+
+  // These leave with the flush of a cork buffer, which is more than a named pipe has room for and less than a unix socket has.
+  it.skipIf(!isWindows).each([
+    ["sends inside cork()", ws => ws.cork(() => ws.send("x") + ws.send(new Uint8Array(100_000)))],
+    [
+      "several publish() in one tick",
+      (_, server) => Array.from({ length: 10 }, () => server.publish("topic", new Uint8Array(10_000))).at(-1)!,
+    ],
+  ] as [string, Parameters<typeof sendToSlowClient>[0]][])("drain follows %s on a named pipe", async (_, send) => {
+    const { drains } = await sendToSlowClient(send);
+    expect(drains).toEqual([0]);
+  });
+
+  it("drain tells of progress before the whole backlog is out", async () => {
+    const { drains } = await sendToSlowClient(ws => ws.send(new Uint8Array(8 * 1024 * 1024)));
+    expect(drains[0]).toBeGreaterThan(0);
+  });
+});

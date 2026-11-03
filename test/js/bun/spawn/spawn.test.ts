@@ -977,6 +977,84 @@ describe("stdout reader of an unref'd child and process lifetime", () => {
   });
 });
 
+// The read end of a child's stdin outlives the child in a process that inherited it, and that one never reads.
+describe.concurrent("what is left to write to the stdin of a child that exited does not keep the process alive", () => {
+  const fixture = `
+    const [role, how] = process.argv.slice(2);
+    const child = [process.execPath, __filename, "child"];
+    const payload = Buffer.alloc(500_000, "a");
+    if (role === "grandchild") {
+      Bun.connect({
+        hostname: "127.0.0.1",
+        port: Number(process.env.PORT),
+        socket: {
+          data() {},
+          close() {
+            process.exit(0);
+          },
+        },
+      });
+    } else if (role === "child") {
+      Bun.spawn({
+        cmd: [process.execPath, __filename, "grandchild"],
+        stdio: ["inherit", "ignore", "ignore"],
+        detached: true,
+      }).unref();
+    } else if (how === "a write() on the sink") {
+      const proc = Bun.spawn({ cmd: child, stdio: ["pipe", "ignore", "inherit"] });
+      const written = Promise.resolve(proc.stdin.write(payload)).then(
+        () => "written",
+        error => error.code,
+      );
+      await proc.exited;
+      console.log(await written);
+    } else if (how === "a buffer") {
+      await Bun.spawn({ cmd: child, stdio: [payload, "ignore", "inherit"] }).exited;
+      console.log("exited");
+    } else if (how === "a buffer for spawnSync") {
+      Bun.spawnSync({ cmd: child, stdio: [payload, "ignore", "inherit"] });
+      console.log("exited");
+    } else {
+      const proc = require("node:child_process").spawn(child[0], child.slice(1), { stdio: ["pipe", "ignore", "inherit"] });
+      proc.stdin.on("error", () => {});
+      proc.stdin.write(payload, error => console.log(error.code));
+    }
+  `;
+
+  it.each([
+    ["a write() on the sink", "EPIPE\n"],
+    ["a buffer", "exited\n"],
+    ["a buffer for spawnSync", "exited\n"],
+    ["a write() on the stream of node:child_process", "EPIPE\n"],
+  ])("%s", async (how, expected) => {
+    using dir = tempDir("spawn-stdin-outlives-child", { "fixture.js": fixture });
+    const grandchild = Promise.withResolvers<Bun.Socket>();
+    let grandchildLeft = false;
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open: grandchild.resolve,
+        data() {},
+        close() {
+          grandchildLeft = true;
+        },
+      },
+    });
+    await using parent = spawn({
+      cmd: [bunExe(), "fixture.js", "parent", how],
+      cwd: String(dir),
+      env: { ...bunEnv, PORT: String(server.port) },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([parent.stdout.text(), parent.exited]);
+    const socket = await grandchild.promise;
+    expect({ stdout, exitCode, grandchildLeft }).toEqual({ stdout: expected, exitCode: 0, grandchildLeft: false });
+    socket.end();
+  });
+});
+
 describe("unref() + .exited with nothing else ref'd (Windows)", () => {
   // Windows: with only an unref'd process left, the loop used to skip its turn
   // and never dequeue the IOCP exit packet, so these children busy-spun forever.

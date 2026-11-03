@@ -9,7 +9,9 @@
  * Writable: pipes have no such notion. A write that does not fit is not refused, it is queued, its bytes are
  * visible to the reader at once, and taking it back loses an unknown part of it. So the write that finds the pipe
  * full stays queued, on a copy of its bytes, and the caller is told that it would block. The pipe is writable again
- * when that write completes, and the caller, who then offers the same bytes again, is told that they are written. */
+ * when that write completes, and the caller, who then offers the same bytes again, is told that they are written.
+ * So nobody hears "written" before the system has the bytes, which is what everybody who writes to a socket goes by.
+ * The price is the rule of SSL_write: what follows a write that would block begins with the same bytes. */
 
 #include "libusockets.h"
 #include "internal/internal.h"
@@ -22,6 +24,7 @@
 #include <string.h>
 
 #define LIBUS_FSCTL_PIPE_LISTEN 0x110008
+#define LIBUS_FSCTL_PIPE_PEEK 0x11400c
 #define LIBUS_FSCTL_PIPE_WAIT 0x110018
 #define LIBUS_FSCTL_PIPE_FLUSH 0x118040
 
@@ -42,6 +45,9 @@ enum {
  * gets a turn after this much. */
 #define LIBUS_PIPE_MAX_WRITE (16 * LIBUS_PIPE_CHUNK)
 
+/* The longest pause between two attempts to get a helper thread out of a call. */
+#define LIBUS_PIPE_RETRY_MAX_MS 128
+
 /* How long the peer of a pipe that was shut down can stay silent before our end is closed. */
 #define LIBUS_PIPE_EOF_TIMEOUT_MS 50
 
@@ -54,7 +60,7 @@ static char us_internal_pipe_nothing;
 
 struct us_internal_pipe_op_t {
     struct us_internal_iocp_op_t op;
-    /* Set when the operation completes. */
+    /* Set when the operation completes. A timer, if the operation is a pause. */
     HANDLE event;
     HANDLE packet;
     /* The packet is waiting, or is on its way to on_complete. */
@@ -66,12 +72,12 @@ static IO_STATUS_BLOCK *us_internal_pipe_op_iosb(struct us_internal_pipe_op_t *o
 }
 
 /* On failure the reason is in LIBUS_ERR. */
-static int us_internal_pipe_op_init(struct us_internal_pipe_op_t *op,
+static int us_internal_pipe_op_init_as(struct us_internal_pipe_op_t *op, int is_timer,
     void (*on_complete)(struct us_loop_t *, struct us_internal_iocp_op_t *)) {
     if (op->packet) {
         return 0;
     }
-    HANDLE event = CreateEventW(NULL, TRUE, FALSE, NULL);
+    HANDLE event = is_timer ? CreateWaitableTimerW(NULL, TRUE, NULL) : CreateEventW(NULL, TRUE, FALSE, NULL);
     if (!event) {
         return -1;
     }
@@ -85,6 +91,11 @@ static int us_internal_pipe_op_init(struct us_internal_pipe_op_t *op,
     op->event = event;
     op->op.on_complete = on_complete;
     return 0;
+}
+
+static int us_internal_pipe_op_init(struct us_internal_pipe_op_t *op,
+    void (*on_complete)(struct us_loop_t *, struct us_internal_iocp_op_t *)) {
+    return us_internal_pipe_op_init_as(op, 0, on_complete);
 }
 
 static void us_internal_pipe_op_destroy(struct us_internal_pipe_op_t *op) {
@@ -172,8 +183,8 @@ static int us_internal_pipe_type(HANDLE pipe) {
  *
  * An inherited handle can be synchronous, which cannot be found out without risking what it means: every call
  * on such a handle waits for the one before it, in whichever process that is, and a thread that waits like that
- * cannot be cancelled. So a thread of its own makes the calls that can take long: the reads, and the writes that
- * the pipe has no room for. It works for overlapped handles as well.
+ * cannot be cancelled. So a thread of its own makes the calls: the reads, the writes, and what there is to ask.
+ * It works for overlapped handles as well.
  *
  * The thread waits in a read of zero bytes, so that nothing is taken from a pipe nobody reads from here.
  * Then it takes no more than the last read here asked for: who wants only so much leaves the rest to the others.
@@ -184,8 +195,8 @@ static int us_internal_pipe_type(HANDLE pipe) {
 enum {
     LIBUS_PIPE_THREAD_PARK = 0,
     LIBUS_PIPE_THREAD_READ = 1,
+    /* Nobody wants the rest of a write either. */
     LIBUS_PIPE_THREAD_EXIT = 2,
-    LIBUS_PIPE_THREAD_CLOSE_AND_EXIT = 3,
 };
 
 struct us_internal_pipe_thread_t {
@@ -203,9 +214,9 @@ struct us_internal_pipe_thread_t {
     /* The loop's side is cancelling. That call does not return while the thread it interrupted is in its next blocking
      * call, on this handle or any other, so the thread starts nothing. */
     LONG is_interrupted;
+    /* A handle of the thread's own, which it closes. Whoever has the other one can close it at any time: the value is not
+     * used here, and that close is not the one of the last handle, which blocks while a read is parked on the pipe. */
     HANDLE pipe;
-    /* For LIBUS_PIPE_THREAD_CLOSE_AND_EXIT. */
-    int crt_descriptor;
     /* Auto-reset. One of the above was changed. */
     HANDLE wake;
     /* The event of the block's read operation: the answer is in `status`, `length` and `buffer`. */
@@ -236,6 +247,7 @@ static void us_internal_pipe_close(HANDLE handle, int crt_descriptor) {
 
 static void us_internal_pipe_thread_unref(struct us_internal_pipe_thread_t *thread) {
     if (__atomic_sub_fetch(&thread->refs, 1, __ATOMIC_ACQ_REL) == 0) {
+        if (thread->pipe) NtClose(thread->pipe);
         if (thread->wake) NtClose(thread->wake);
         if (thread->read_done) NtClose(thread->read_done);
         if (thread->write_done) NtClose(thread->write_done);
@@ -304,8 +316,7 @@ static void us_internal_pipe_thread_write(struct us_internal_pipe_thread_t *thre
     }
     for (ULONG written = 0; written < length;) {
         __atomic_store_n(&thread->is_writing, 1, __ATOMIC_SEQ_CST);
-        /* Nobody waits for the answer any more. */
-        if (__atomic_load_n(&thread->command, __ATOMIC_SEQ_CST) >= LIBUS_PIPE_THREAD_EXIT) {
+        if (__atomic_load_n(&thread->command, __ATOMIC_SEQ_CST) == LIBUS_PIPE_THREAD_EXIT) {
             __atomic_store_n(&thread->is_writing, 0, __ATOMIC_SEQ_CST);
             status = STATUS_CANCELLED;
             break;
@@ -347,7 +358,7 @@ static DWORD WINAPI us_internal_pipe_thread_main(void *arg) {
             us_internal_pipe_thread_write(thread);
             continue;
         }
-        if (__atomic_load_n(&thread->command, __ATOMIC_SEQ_CST) >= LIBUS_PIPE_THREAD_EXIT) {
+        if (__atomic_load_n(&thread->command, __ATOMIC_SEQ_CST) == LIBUS_PIPE_THREAD_EXIT) {
             break;
         }
         if (!__atomic_load_n(&thread->owes_read, __ATOMIC_SEQ_CST)) {
@@ -385,10 +396,9 @@ static DWORD WINAPI us_internal_pipe_thread_main(void *arg) {
             SetEvent(thread->read_done);
         }
     }
-    /* Closing the last handle of a pipe blocks while a read is parked on it, so this is the place. */
-    if (__atomic_load_n(&thread->command, __ATOMIC_SEQ_CST) == LIBUS_PIPE_THREAD_CLOSE_AND_EXIT) {
-        us_internal_pipe_close(thread->pipe, thread->crt_descriptor);
-    }
+    /* Not left to the last reference: the peer reads the end of the stream once this handle is closed too. */
+    NtClose(thread->pipe);
+    thread->pipe = NULL;
     us_internal_pipe_thread_unref(thread);
     return 0;
 }
@@ -401,11 +411,11 @@ static struct us_internal_pipe_thread_t *us_internal_pipe_thread_create(HANDLE p
     }
     memset(thread, 0, offsetof(struct us_internal_pipe_thread_t, buffer));
     thread->refs = 2;
-    thread->pipe = pipe;
     thread->wake = CreateEventW(NULL, FALSE, FALSE, NULL);
     thread->io_event = CreateEventW(NULL, TRUE, FALSE, NULL);
     HANDLE handle = NULL;
     if (thread->wake && thread->io_event &&
+        DuplicateHandle(GetCurrentProcess(), pipe, GetCurrentProcess(), &thread->pipe, 0, FALSE, DUPLICATE_SAME_ACCESS) &&
         DuplicateHandle(GetCurrentProcess(), read_done, GetCurrentProcess(), &thread->read_done, 0, FALSE, DUPLICATE_SAME_ACCESS) &&
         DuplicateHandle(GetCurrentProcess(), write_done, GetCurrentProcess(), &thread->write_done, 0, FALSE, DUPLICATE_SAME_ACCESS)) {
         handle = CreateThread(NULL, LIBUS_HELPER_STACK_COMMIT, us_internal_pipe_thread_main, thread, 0, NULL);
@@ -422,28 +432,23 @@ static struct us_internal_pipe_thread_t *us_internal_pipe_thread_create(HANDLE p
     return thread;
 }
 
-/* Gets the thread out of a blocking call. The caller has already changed what the thread checks before it starts the next one. */
-static void us_internal_pipe_thread_interrupt(struct us_internal_pipe_thread_t *thread, LONG *is_in_operation, IO_STATUS_BLOCK *io_status) {
-    /* A cancel finds nothing while the thread is on its way into the kernel, so it takes more than one, and time
-     * if the thread was kept from running on that way. It never finds anything if the operation is queued
-     * behind one of another process. That one holds up whoever shares the handle anyway, so give up. */
-    __atomic_store_n(&thread->is_interrupted, 1, __ATOMIC_SEQ_CST);
-    enum { YIELDS = 2000, SLEEPS = 4 };
-    for (int i = 0; i < YIELDS + SLEEPS && __atomic_load_n(is_in_operation, __ATOMIC_SEQ_CST); i++) {
-        IO_STATUS_BLOCK cancel_status;
-        NtCancelIoFileEx(thread->pipe, io_status, &cancel_status);
-        if (i < YIELDS) {
-            SwitchToThread();
-        } else {
-            Sleep(1);
+/* Cancels the call that the thread is in, if that is one it would not start now. Returns whether there was one.
+ * `is_interrupted` is set, so the thread gets no further than out of that call, and its handle is open. */
+static int us_internal_pipe_thread_cancel(struct us_internal_pipe_thread_t *thread) {
+    IO_STATUS_BLOCK *io_status = NULL;
+    if (__atomic_load_n(&thread->is_reading, __ATOMIC_SEQ_CST)) {
+        if (__atomic_load_n(&thread->command, __ATOMIC_SEQ_CST) != LIBUS_PIPE_THREAD_READ || __atomic_load_n(&thread->write_length, __ATOMIC_SEQ_CST)) {
+            io_status = &thread->read_io_status;
         }
+    } else if (__atomic_load_n(&thread->is_writing, __ATOMIC_SEQ_CST) && __atomic_load_n(&thread->command, __ATOMIC_SEQ_CST) == LIBUS_PIPE_THREAD_EXIT) {
+        io_status = &thread->write_io_status;
     }
-    __atomic_store_n(&thread->is_interrupted, 0, __ATOMIC_SEQ_CST);
-    SetEvent(thread->wake);
-}
-
-static void us_internal_pipe_thread_interrupt_read(struct us_internal_pipe_thread_t *thread) {
-    us_internal_pipe_thread_interrupt(thread, &thread->is_reading, &thread->read_io_status);
+    if (!io_status) {
+        return 0;
+    }
+    IO_STATUS_BLOCK cancel_status;
+    NtCancelIoFileEx(thread->pipe, io_status, &cancel_status);
+    return 1;
 }
 
 /* Whether the loop can read and write by itself. Besides a synchronous handle, the thread copes with an end that reads
@@ -493,13 +498,21 @@ struct us_internal_pipe_req_t {
     struct us_internal_pipe_op_t read;
     /* Why there is nothing more to read. STATUS_PIPE_BROKEN is the end of the stream. */
     NTSTATUS read_status;
+    /* How much of what there is to read was there before the queued write was made. That is no answer to it and does
+     * not wait for it, or an owner that writes again at every writable event would never get to read. */
+    ULONG earlier_input;
 
-    /* LIBUS_POLL_KIND_FOREIGN_PIPE */
+    /* LIBUS_POLL_KIND_FOREIGN_PIPE. Stays until the block goes. */
     struct us_internal_pipe_thread_t *thread;
     /* How much of thread->buffer is yet to be read. */
     ULONG buffer_length, buffer_offset;
     /* How much the last read asked for. */
     ULONG read_length;
+    /* The pause before the next attempt to get the thread out of a call, and how long it is. 0: the last attempt did. */
+    struct us_internal_pipe_op_t retry;
+    ULONG retry_ms;
+    /* There is no next attempt: the loop is being freed. */
+    unsigned char is_abandoned;
 
     struct us_internal_pipe_op_t write;
     /* Why nothing more can be written. */
@@ -526,6 +539,7 @@ struct us_internal_pipe_req_t {
 
 static void us_internal_pipe_on_read_complete(struct us_loop_t *loop, struct us_internal_iocp_op_t *op);
 static void us_internal_pipe_on_write_complete(struct us_loop_t *loop, struct us_internal_iocp_op_t *op);
+static void us_internal_pipe_on_retry(struct us_loop_t *loop, struct us_internal_iocp_op_t *op);
 
 static struct us_internal_pipe_req_t *us_internal_pipe_create(struct us_loop_t *loop, struct us_poll_t *p) {
     struct us_internal_pipe_req_t *pipe = us_xcalloc(1, sizeof(struct us_internal_pipe_req_t));
@@ -535,8 +549,32 @@ static struct us_internal_pipe_req_t *us_internal_pipe_create(struct us_loop_t *
     return pipe;
 }
 
+static int us_internal_pipe_has_queued_write(struct us_internal_pipe_req_t *pipe) {
+    return pipe->write.is_armed && (pipe->phase == LIBUS_PIPE_OPEN || pipe->phase == LIBUS_PIPE_ENDING);
+}
+
+/* There is nothing more to read, and the owner can be told. That the peer is gone has also ended a queued write, and
+ * what became of that comes first: the owner closes at the end of the stream, and would never learn it. */
+static int us_internal_pipe_read_is_over(struct us_internal_pipe_req_t *pipe) {
+    int peer_is_gone = pipe->read_status == STATUS_PIPE_BROKEN || pipe->read_status == STATUS_PIPE_DISCONNECTED;
+    return pipe->read_status != STATUS_SUCCESS && !(peer_is_gone && us_internal_pipe_has_queued_write(pipe));
+}
+
+static int us_internal_pipe_has_input(struct us_internal_pipe_req_t *pipe) {
+    return pipe->has_data || pipe->read_is_shut_down || us_internal_pipe_read_is_over(pipe) || pipe->buffer_offset < pipe->buffer_length;
+}
+
+/* The queued write is through, and the port has yet to tell. The system finishes a request in the thread that made it, ahead of
+ * what that thread asks for next: this holds as soon as a call of ours has seen what the peer sent once it had the write.
+ * The helper thread reports a write before it reads on. */
+static int us_internal_pipe_write_is_through(struct us_internal_pipe_req_t *pipe) {
+    return pipe->phase == LIBUS_PIPE_OPEN && pipe->write.is_armed && !pipe->thread && us_internal_pipe_op_iosb(&pipe->write)->Status != (NTSTATUS) STATUS_PENDING;
+}
+
+/* What the peer answers to a queued write waits until the owner has heard that the write is through. Where "would
+ * block" means that the peer got nothing, no answer can come before the socket is writable again, and owners go by that. */
 static int us_internal_pipe_is_readable(struct us_internal_pipe_req_t *pipe) {
-    return pipe->has_data || pipe->read_is_shut_down || pipe->read_status != STATUS_SUCCESS || pipe->buffer_offset < pipe->buffer_length;
+    return us_internal_pipe_has_input(pipe) && (pipe->earlier_input || !us_internal_pipe_write_is_through(pipe));
 }
 
 static int us_internal_pipe_is_writable(struct us_internal_pipe_req_t *pipe) {
@@ -547,7 +585,7 @@ static int us_internal_pipe_is_writable(struct us_internal_pipe_req_t *pipe) {
  * either. That is what epoll reports for a unix socket as EPOLLHUP, asked or not, and what closes a socket
  * that allows half-open or has stopped reading. */
 static int us_internal_pipe_is_hung_up(struct us_internal_pipe_req_t *pipe) {
-    return pipe->read_status != STATUS_SUCCESS && pipe->buffer_offset == pipe->buffer_length &&
+    return us_internal_pipe_read_is_over(pipe) && pipe->buffer_offset == pipe->buffer_length &&
         us_internal_poll_type(pipe->req.owner) != POLL_TYPE_FILE_POLL;
 }
 
@@ -570,9 +608,46 @@ static struct us_internal_pipe_thread_t *us_internal_pipe_thread_get(struct us_i
     return pipe->thread;
 }
 
+/* Gets the thread out of a blocking call. The caller has already changed what the thread checks before it starts the next one. */
+static void us_internal_pipe_interrupt_thread(struct us_internal_pipe_req_t *pipe) {
+    struct us_internal_pipe_thread_t *thread = pipe->thread;
+    /* A cancel finds nothing while the thread is on its way into the kernel, so it takes more than one. */
+    int attempts = pipe->retry_ms ? 8 : 2000;
+    __atomic_store_n(&thread->is_interrupted, 1, __ATOMIC_SEQ_CST);
+    while (us_internal_pipe_thread_cancel(thread) && --attempts) {
+        SwitchToThread();
+    }
+    __atomic_store_n(&thread->is_interrupted, 0, __ATOMIC_SEQ_CST);
+    SetEvent(thread->wake);
+    if (attempts) {
+        pipe->retry_ms = 0;
+        us_internal_pipe_op_cancel(&pipe->req, &pipe->retry, NULL);
+        return;
+    }
+    /* It keeps finding nothing while the call waits behind one of another process. Nothing tells when that is over, and
+     * from then on the thread is in the way of whoever shares the handle. So look again, without holding up the loop. */
+    if (pipe->is_abandoned || pipe->retry.is_armed || us_internal_pipe_op_init_as(&pipe->retry, 1, us_internal_pipe_on_retry) != 0) {
+        return;
+    }
+    pipe->retry_ms = !pipe->retry_ms ? 1 : pipe->retry_ms < LIBUS_PIPE_RETRY_MAX_MS ? pipe->retry_ms * 2 : LIBUS_PIPE_RETRY_MAX_MS;
+    LARGE_INTEGER due = { .QuadPart = -(LONGLONG) pipe->retry_ms * LIBUS_100NS_PER_MS };
+    SetWaitableTimer(pipe->retry.event, &due, 0, NULL, NULL, FALSE);
+    if (us_internal_pipe_op_arm(&pipe->req, &pipe->retry, pipe->retry.event) != 0) {
+        pipe->retry_ms = 0;
+    }
+}
+
+static void us_internal_pipe_on_retry(struct us_loop_t *loop, struct us_internal_iocp_op_t *op) {
+    struct us_internal_pipe_req_t *pipe = (struct us_internal_pipe_req_t *) ((char *) op - offsetof(struct us_internal_pipe_req_t, retry.op));
+    us_internal_iocp_op_finished(&pipe->req);
+    pipe->retry.is_armed = 0;
+    us_internal_pipe_interrupt_thread(pipe);
+    us_internal_iocp_req_free_if_unused(&pipe->req);
+}
+
 /* Asks to be told when there is something to read, unless that is known already. */
 static void us_internal_pipe_arm_read(struct us_internal_pipe_req_t *pipe) {
-    if (pipe->read.is_armed || us_internal_pipe_is_readable(pipe) || pipe->cannot_read || pipe->phase == LIBUS_PIPE_CONNECTING) {
+    if (pipe->read.is_armed || pipe->read_status != STATUS_SUCCESS || us_internal_pipe_has_input(pipe) || pipe->cannot_read || pipe->phase == LIBUS_PIPE_CONNECTING) {
         return;
     }
 
@@ -670,10 +745,36 @@ static int us_internal_pipe_would_block(void) {
 }
 
 static int us_internal_pipe_read_ended(struct us_internal_pipe_req_t *pipe) {
+    if (!us_internal_pipe_read_is_over(pipe)) {
+        return us_internal_pipe_would_block();
+    }
+    /* The peer left without what it was sent. A unix socket reads a reset then, not the end of the stream. */
+    if (pipe->write_status != STATUS_SUCCESS) {
+        return us_internal_pipe_fail(pipe->write_status);
+    }
     if (pipe->read_status == STATUS_PIPE_BROKEN || pipe->read_status == STATUS_END_OF_FILE) {
         return 0;
     }
     return us_internal_pipe_fail(pipe->read_status);
+}
+
+/* How much there is to read, as PeekNamedPipe() asks. No bound if the pipe does not tell. */
+static ULONG us_internal_pipe_available(struct us_loop_t *loop, struct us_internal_pipe_req_t *pipe) {
+    /* FILE_PIPE_PEEK_BUFFER without the data */
+    struct {
+        ULONG state;
+        ULONG available;
+        ULONG messages;
+        ULONG message_length;
+    } peek;
+    HANDLE event = us_internal_pipe_scratch_event(loop);
+    IO_STATUS_BLOCK io_status;
+    NTSTATUS status = NtFsControlFile(pipe->handle, event, NULL, NULL, &io_status, LIBUS_FSCTL_PIPE_PEEK, NULL, 0, &peek, sizeof(peek));
+    if (status == (NTSTATUS) STATUS_PENDING) {
+        NtWaitForSingleObject(event, FALSE, NULL);
+        status = io_status.Status;
+    }
+    return status == STATUS_SUCCESS || status == STATUS_BUFFER_OVERFLOW ? peek.available : ULONG_MAX;
 }
 
 int us_internal_pipe_read(struct us_loop_t *loop, struct us_poll_t *p, void *buffer, int length) {
@@ -722,6 +823,21 @@ int us_internal_pipe_read(struct us_loop_t *loop, struct us_poll_t *p, void *buf
         found->Status = STATUS_CANCELLED;
     }
 
+    if (pipe->phase == LIBUS_PIPE_OPEN && pipe->write.is_armed) {
+        ULONG no_answer = pipe->earlier_input;
+        if (!no_answer) {
+            /* First the count, then the look at the write: what gets read was there while the write was not through. */
+            no_answer = us_internal_pipe_available(loop, pipe);
+            if (us_internal_pipe_write_is_through(pipe)) {
+                pipe->has_data = 1;
+                return us_internal_pipe_would_block();
+            }
+        }
+        if (no_answer < (ULONG) length) {
+            length = (int) no_answer;
+        }
+    }
+
     pipe->has_data = 0;
     us_internal_iocp_queue_update(&pipe->req);
 
@@ -737,7 +853,9 @@ int us_internal_pipe_read(struct us_loop_t *loop, struct us_poll_t *p, void *buf
         status = io_status.Status;
     }
     if (status == STATUS_SUCCESS || status == STATUS_BUFFER_OVERFLOW) {
-        return io_status.Information ? (int) io_status.Information : us_internal_pipe_would_block();
+        ULONG taken = (ULONG) io_status.Information;
+        pipe->earlier_input -= taken < pipe->earlier_input ? taken : pipe->earlier_input;
+        return taken ? (int) taken : us_internal_pipe_would_block();
     }
     if (status == STATUS_CANCELLED) {
         return us_internal_pipe_would_block();
@@ -790,32 +908,20 @@ static void us_internal_pipe_cursor_copy(struct us_internal_pipe_cursor_t *curso
     }
 }
 
-/* The queued write has completed. If the caller offers its bytes again, moves past them and returns how many. */
+/* The queued write is through. Moves past as much of it as the caller offers again, and returns how much that is.
+ * -1 if the caller offers other bytes: the peer has the queued ones, so these cannot be what follows. */
 static int us_internal_pipe_claim_queued(struct us_internal_pipe_req_t *pipe, struct us_internal_pipe_cursor_t *cursor) {
-    if (pipe->claimed_length == pipe->queued_length) {
-        return 0;
-    }
-    const char *queued = (pipe->thread ? pipe->thread->write_buffer : pipe->staging) + pipe->claimed_length;
-    struct us_internal_pipe_cursor_t end = *cursor;
-    ULONG claimed = 0;
+    const char *queued = pipe->thread ? pipe->thread->write_buffer : pipe->staging;
+    const ULONG claimed_before = pipe->claimed_length;
     const char *bytes;
     size_t length;
-    while ((bytes = us_internal_pipe_cursor_next(&end, pipe->queued_length - pipe->claimed_length - claimed, &length))) {
-        if (memcmp(queued + claimed, bytes, length) != 0) {
-            /* The caller offers other bytes than the ones that are queued, which are sent all the same. */
-            pipe->queued_length = pipe->claimed_length = 0;
-            return 0;
+    while ((bytes = us_internal_pipe_cursor_next(cursor, pipe->queued_length - pipe->claimed_length, &length))) {
+        if (memcmp(queued + pipe->claimed_length, bytes, length) != 0) {
+            return -1;
         }
-        claimed += (ULONG) length;
+        pipe->claimed_length += (ULONG) length;
     }
-    pipe->claimed_length += claimed;
-    *cursor = end;
-    return (int) claimed;
-}
-
-static void us_internal_pipe_set_queued(struct us_internal_pipe_req_t *pipe, ULONG length) {
-    pipe->queued_length = length;
-    pipe->claimed_length = 0;
+    return (int) (pipe->claimed_length - claimed_before);
 }
 
 static void us_internal_pipe_hold_loop(struct us_internal_pipe_req_t *pipe) {
@@ -835,48 +941,13 @@ static void us_internal_pipe_release_loop(struct us_internal_pipe_req_t *pipe) {
     }
 }
 
-/* Any call on the handle would wait for the read that the thread is in. */
-static int us_internal_pipe_is_busy(struct us_internal_pipe_req_t *pipe) {
-    return pipe->thread && __atomic_load_n(&pipe->thread->owes_read, __ATOMIC_SEQ_CST);
-}
-
-/* Writes what the pipe has room for of the next `*length` bytes, which takes no waiting, and sets `*length` to how
- * much that was. The pipe counts a read that waits at the other end as that much less room. */
-static NTSTATUS us_internal_pipe_write_what_fits(struct us_internal_pipe_req_t *pipe, struct us_internal_pipe_cursor_t *cursor, ULONG *length) {
-    const ULONG all = *length;
-    *length = 0;
-    IO_STATUS_BLOCK io_status;
-    struct us_internal_pipe_local_information_t information;
-    if (us_internal_pipe_is_busy(pipe) || !us_internal_pipe_query(pipe->handle, &information)) {
-        return STATUS_SUCCESS;
-    }
-    struct us_internal_pipe_cursor_t end = *cursor;
-    size_t piece;
-    const char *bytes = us_internal_pipe_cursor_next(&end, all < information.write_quota_available ? all : information.write_quota_available, &piece);
-    if (!bytes || (pipe->type != LIBUS_PIPE_TYPE_BYTES && piece < all)) {
-        return STATUS_SUCCESS;
-    }
-    HANDLE event = us_internal_pipe_scratch_event(pipe->req.loop);
-    NTSTATUS status = NtWriteFile(pipe->handle, event, NULL, NULL, &io_status, (void *) bytes, (ULONG) piece, NULL, NULL);
-    if (status == (NTSTATUS) STATUS_PENDING) {
-        NtWaitForSingleObject(event, FALSE, NULL);
-        status = io_status.Status;
-    }
-    if (status == STATUS_SUCCESS) {
-        *length = (ULONG) io_status.Information;
-        end.offset -= piece - io_status.Information;
-        *cursor = end;
-    }
-    return status;
-}
-
-/* 0, or the reason there is no write queued. */
+/* Has the thread write the next `length` bytes. 0, or the reason there is no write queued. */
 static NTSTATUS us_internal_pipe_thread_queue_write(struct us_internal_pipe_req_t *pipe, struct us_internal_pipe_cursor_t *cursor, ULONG length) {
     struct us_internal_pipe_thread_t *thread = us_internal_pipe_thread_get(pipe);
     if (!thread) {
         return STATUS_INSUFFICIENT_RESOURCES;
     }
-    if (length > thread->write_capacity || thread->write_capacity > LIBUS_PIPE_CHUNK) {
+    if (length > thread->write_capacity || (length <= LIBUS_PIPE_CHUNK && thread->write_capacity > LIBUS_PIPE_CHUNK)) {
         if (thread->write_buffer) HeapFree(GetProcessHeap(), 0, thread->write_buffer);
         thread->write_capacity = length > LIBUS_PIPE_CHUNK ? length : LIBUS_PIPE_CHUNK;
         thread->write_buffer = HeapAlloc(GetProcessHeap(), 0, thread->write_capacity);
@@ -890,10 +961,46 @@ static NTSTATUS us_internal_pipe_thread_queue_write(struct us_internal_pipe_req_
         return STATUS_INSUFFICIENT_RESOURCES;
     }
     us_internal_pipe_cursor_copy(cursor, thread->write_buffer, length);
-    us_internal_pipe_set_queued(pipe, length);
     __atomic_store_n(&thread->write_length, (LONG) length, __ATOMIC_SEQ_CST);
-    us_internal_pipe_thread_interrupt_read(thread);
+    us_internal_pipe_interrupt_thread(pipe);
     return STATUS_SUCCESS;
+}
+
+/* A large write is rare. */
+static void us_internal_pipe_trim_staging(struct us_internal_pipe_req_t *pipe) {
+    if (pipe->staging_capacity > LIBUS_PIPE_CHUNK) {
+        us_free(pipe->staging);
+        pipe->staging = NULL;
+        pipe->staging_capacity = 0;
+    }
+}
+
+/* Writes the next `length` bytes, or leaves them queued. 0, or the reason that not all of them will be written. */
+static NTSTATUS us_internal_pipe_start_write(struct us_internal_pipe_req_t *pipe, struct us_internal_pipe_cursor_t *cursor, ULONG length) {
+    if (us_internal_pipe_op_init(&pipe->write, us_internal_pipe_on_write_complete) != 0) {
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    if (length > pipe->staging_capacity) {
+        ULONG capacity = 4096;
+        while (capacity < length) capacity *= 2;
+        us_free(pipe->staging);
+        pipe->staging = us_xmalloc(capacity);
+        pipe->staging_capacity = capacity;
+    }
+    us_internal_pipe_cursor_copy(cursor, pipe->staging, length);
+    pipe->earlier_input = pipe->has_data ? us_internal_pipe_available(pipe->req.loop, pipe) : 0;
+    IO_STATUS_BLOCK *io_status = us_internal_pipe_op_iosb(&pipe->write);
+    io_status->Status = STATUS_PENDING;
+    NTSTATUS status = NtWriteFile(pipe->handle, pipe->write.event, NULL, NULL, io_status, pipe->staging, length, NULL, NULL);
+    if (status == (NTSTATUS) STATUS_PENDING) {
+        if (us_internal_pipe_op_arm_or_cancel(&pipe->req, &pipe->write, pipe->handle) == 0) {
+            return STATUS_SUCCESS;
+        }
+        /* How much the peer read before the cancel is not known, unless the write got through first. */
+        status = io_status->Status == STATUS_SUCCESS ? STATUS_SUCCESS : STATUS_INSUFFICIENT_RESOURCES;
+    }
+    us_internal_pipe_trim_staging(pipe);
+    return status;
 }
 
 int us_internal_pipe_writev(struct us_loop_t *loop, struct us_poll_t *p, const struct us_iovec_t *iov, int count) {
@@ -912,75 +1019,38 @@ int us_internal_pipe_writev(struct us_loop_t *loop, struct us_poll_t *p, const s
         return us_internal_pipe_would_block();
     }
 
-    struct us_internal_pipe_cursor_t cursor = { iov, count, 0, 0 };
-    int written = us_internal_pipe_claim_queued(pipe, &cursor);
-
-    if (!pipe->type) {
-        pipe->type = (unsigned char) (us_internal_pipe_is_busy(pipe) ? __atomic_load_n(&pipe->thread->type, __ATOMIC_SEQ_CST) : us_internal_pipe_type(pipe->handle));
-    }
-    /* What could be a message goes out in one piece. */
-    const int is_stream = pipe->type == LIBUS_PIPE_TYPE_BYTES;
-
     const int is_foreign = pipe->req.kind == LIBUS_POLL_KIND_FOREIGN_PIPE;
-    const int limit = is_stream ? written + LIBUS_PIPE_MAX_WRITE : INT_MAX;
-    while (written < limit) {
-        /* The pipe holds all of a queued write, so its reader goes on without the loop for that long. */
-        ULONG chunk = us_internal_pipe_cursor_left(cursor, is_foreign && is_stream ? LIBUS_PIPE_CHUNK : (ULONG) (limit - written));
-        if (!chunk) {
-            if (pipe->staging_capacity > LIBUS_PIPE_CHUNK && pipe->claimed_length == pipe->queued_length) {
-                us_free(pipe->staging);
-                pipe->staging = NULL;
-                pipe->staging_capacity = 0;
-            }
-            us_internal_pipe_release_loop(pipe);
-            return written;
-        }
-        NTSTATUS status;
-        if (is_foreign) {
-            const ULONG all = chunk;
-            status = us_internal_pipe_write_what_fits(pipe, &cursor, &chunk);
-            if (status == STATUS_SUCCESS && !chunk) {
-                status = us_internal_pipe_thread_queue_write(pipe, &cursor, all);
-                if (status == STATUS_SUCCESS) {
-                    break;
-                }
-            }
-        } else {
-            if (us_internal_pipe_op_init(&pipe->write, us_internal_pipe_on_write_complete) != 0) {
-                return written ? written : -1;
-            }
-            if (chunk > pipe->staging_capacity) {
-                ULONG capacity = 4096;
-                while (capacity < chunk) capacity *= 2;
-                us_free(pipe->staging);
-                pipe->staging = us_xmalloc(capacity);
-                pipe->staging_capacity = capacity;
-            }
-            us_internal_pipe_cursor_copy(&cursor, pipe->staging, chunk);
-            IO_STATUS_BLOCK *io_status = us_internal_pipe_op_iosb(&pipe->write);
-            io_status->Status = STATUS_PENDING;
-            status = NtWriteFile(pipe->handle, pipe->write.event, NULL, NULL, io_status, pipe->staging, chunk, NULL, NULL);
-            if (status == (NTSTATUS) STATUS_PENDING) {
-                if (us_internal_pipe_op_arm(&pipe->req, &pipe->write, pipe->write.event) == 0) {
-                    us_internal_pipe_set_queued(pipe, chunk);
-                    break;
-                }
-                NtWaitForSingleObject(pipe->write.event, FALSE, NULL);
-                status = io_status->Status;
-            }
-        }
+    if (!pipe->type) {
+        /* The thread asks at its first write. */
+        pipe->type = (unsigned char) (!is_foreign ? us_internal_pipe_type(pipe->handle) : pipe->thread ? __atomic_load_n(&pipe->thread->type, __ATOMIC_SEQ_CST) : LIBUS_PIPE_TYPE_UNKNOWN);
+    }
+    struct us_internal_pipe_cursor_t cursor = { iov, count, 0, 0 };
+    const int is_empty = !us_internal_pipe_cursor_left(cursor, 1);
+    int written = us_internal_pipe_claim_queued(pipe, &cursor);
+    if (written < 0) {
+        pipe->write_status = STATUS_INVALID_PARAMETER;
+        return us_internal_pipe_fail(pipe->write_status);
+    }
+    /* What could be a message goes out in one piece. Nothing is left here while a part of the queued write is unclaimed. */
+    const ULONG length = us_internal_pipe_cursor_left(cursor, pipe->type == LIBUS_PIPE_TYPE_BYTES ? LIBUS_PIPE_MAX_WRITE : (ULONG) (INT_MAX - written));
+    if (length) {
+        NTSTATUS status = is_foreign ? us_internal_pipe_thread_queue_write(pipe, &cursor, length) : us_internal_pipe_start_write(pipe, &cursor, length);
         if (status != STATUS_SUCCESS) {
             pipe->write_status = status;
-            return written ? written : us_internal_pipe_fail(status);
+            return us_internal_pipe_fail(status);
         }
-        written += (int) chunk;
+        pipe->claimed_length = 0;
+        pipe->queued_length = pipe->write.is_armed ? length : 0;
+        written += pipe->write.is_armed ? 0 : (int) length;
+    } else if (pipe->claimed_length == pipe->queued_length) {
+        us_internal_pipe_trim_staging(pipe);
     }
     if (pipe->write.is_armed || us_internal_pipe_cursor_left(cursor, 1)) {
         us_internal_pipe_hold_loop(pipe);
     } else {
         us_internal_pipe_release_loop(pipe);
     }
-    return written ? written : us_internal_pipe_would_block();
+    return written || is_empty ? written : us_internal_pipe_would_block();
 }
 
 int us_internal_pipe_write(struct us_loop_t *loop, struct us_poll_t *p, const void *buffer, int length) {
@@ -988,11 +1058,24 @@ int us_internal_pipe_write(struct us_loop_t *loop, struct us_poll_t *p, const vo
     return us_internal_pipe_writev(loop, p, &iov, 1);
 }
 
-static void us_internal_pipe_quiesce(struct us_internal_pipe_req_t *pipe, int close_handle);
+/* NULL unless `p` is an end of a pipe and has a block. */
+static struct us_internal_pipe_req_t *us_internal_pipe_of(struct us_poll_t *p) {
+    int is_end = p->state.kind == LIBUS_POLL_KIND_PIPE || p->state.kind == LIBUS_POLL_KIND_FOREIGN_PIPE;
+    return is_end ? (struct us_internal_pipe_req_t *) p->state.req : NULL;
+}
 
-/* Closes our end for good and has the owner read the end of the stream. */
+void us_internal_pipe_disown_write(struct us_poll_t *p) {
+    struct us_internal_pipe_req_t *pipe = us_internal_pipe_of(p);
+    if (pipe) {
+        pipe->queued_length = pipe->claimed_length = 0;
+    }
+}
+
+static void us_internal_pipe_quiesce(struct us_internal_pipe_req_t *pipe);
+
+/* Closes our end for good and has the owner read the end of the stream. No write is queued. */
 static void us_internal_pipe_end_of_stream(struct us_internal_pipe_req_t *pipe) {
-    us_internal_pipe_quiesce(pipe, 1);
+    us_internal_pipe_quiesce(pipe);
     us_internal_pipe_close_handle(pipe);
     if (pipe->read_status == STATUS_SUCCESS) {
         pipe->read_status = STATUS_PIPE_BROKEN;
@@ -1237,8 +1320,7 @@ static void us_internal_pipe_on_write_complete(struct us_loop_t *loop, struct us
     case LIBUS_PIPE_ENDING:
         if (status != STATUS_SUCCESS) {
             pipe->write_status = status;
-        }
-        if (pipe->phase == LIBUS_PIPE_ENDING) {
+        } else if (pipe->phase == LIBUS_PIPE_ENDING) {
             us_internal_pipe_continue_shutdown(pipe);
             return;
         }
@@ -1429,7 +1511,7 @@ void us_internal_pipe_update(struct us_internal_poll_req_t *req) {
         }
     } else if (pipe->thread && pipe->read.is_armed && __atomic_load_n(&pipe->thread->command, __ATOMIC_SEQ_CST) == LIBUS_PIPE_THREAD_READ) {
         __atomic_store_n(&pipe->thread->command, LIBUS_PIPE_THREAD_PARK, __ATOMIC_SEQ_CST);
-        us_internal_pipe_thread_interrupt_read(pipe->thread);
+        us_internal_pipe_interrupt_thread(pipe);
     } else if (us_internal_pipe_is_hung_up(pipe) && !req->hangup_was_reported) {
         us_internal_iocp_queue_ready(req);
     }
@@ -1460,26 +1542,16 @@ void us_internal_pipe_ready(struct us_internal_poll_req_t *req) {
     us_internal_iocp_dispatch(req->loop, req->owner, error, eof, events);
 }
 
-/* Takes back what is in flight. The caller of a queued write has not been told that it is written. */
-static void us_internal_pipe_quiesce(struct us_internal_pipe_req_t *pipe, int close_handle) {
-    us_internal_pipe_release_loop(pipe);
+/* Takes back what is in flight. The caller of a queued write has not been told that it is written, and the peer has
+ * read an unknown part of it, so nothing may follow it. */
+static void us_internal_pipe_quiesce(struct us_internal_pipe_req_t *pipe) {
+    HANDLE file = pipe->thread ? NULL : pipe->handle;
     if (pipe->thread) {
-        struct us_internal_pipe_thread_t *thread = pipe->thread;
-        pipe->thread = NULL;
-        thread->crt_descriptor = pipe->crt_descriptor;
-        __atomic_store_n(&thread->command, close_handle ? LIBUS_PIPE_THREAD_CLOSE_AND_EXIT : LIBUS_PIPE_THREAD_EXIT, __ATOMIC_SEQ_CST);
-        us_internal_pipe_thread_interrupt_read(thread);
-        us_internal_pipe_thread_interrupt(thread, &thread->is_writing, &thread->write_io_status);
-        us_internal_pipe_thread_unref(thread);
+        __atomic_store_n(&pipe->thread->command, LIBUS_PIPE_THREAD_EXIT, __ATOMIC_SEQ_CST);
+        us_internal_pipe_interrupt_thread(pipe);
         pipe->buffer_length = pipe->buffer_offset = 0;
-        us_internal_pipe_op_cancel(&pipe->req, &pipe->read, NULL);
-        us_internal_pipe_op_cancel(&pipe->req, &pipe->write, NULL);
-        if (close_handle) {
-            pipe->phase = LIBUS_PIPE_CLOSED;
-        }
-        return;
     }
-    us_internal_pipe_op_cancel(&pipe->req, &pipe->read, pipe->handle);
+    us_internal_pipe_op_cancel(&pipe->req, &pipe->read, file);
     switch (pipe->phase) {
     case LIBUS_PIPE_CONNECTING:
         us_internal_pipe_op_cancel(&pipe->req, &pipe->write, us_internal_pipe_driver_handle());
@@ -1491,9 +1563,10 @@ static void us_internal_pipe_quiesce(struct us_internal_pipe_req_t *pipe, int cl
     case LIBUS_PIPE_CLOSED:
         break;
     default:
-        us_internal_pipe_op_cancel(&pipe->req, &pipe->write, pipe->handle);
+        us_internal_pipe_op_cancel(&pipe->req, &pipe->write, file);
         break;
     }
+    us_internal_pipe_release_loop(pipe);
 }
 
 void us_internal_pipe_set_crt_descriptor(struct us_poll_t *p, int crt_descriptor) {
@@ -1501,8 +1574,8 @@ void us_internal_pipe_set_crt_descriptor(struct us_poll_t *p, int crt_descriptor
 }
 
 int us_internal_pipe_get_crt_descriptor(struct us_poll_t *p) {
-    int is_end = p->state.kind == LIBUS_POLL_KIND_PIPE || p->state.kind == LIBUS_POLL_KIND_FOREIGN_PIPE;
-    return is_end && p->state.req ? ((struct us_internal_pipe_req_t *) p->state.req)->crt_descriptor : -1;
+    struct us_internal_pipe_req_t *pipe = us_internal_pipe_of(p);
+    return pipe ? pipe->crt_descriptor : -1;
 }
 
 void us_internal_pipe_detach(struct us_internal_poll_req_t *req, int close_handle) {
@@ -1524,11 +1597,25 @@ void us_internal_pipe_detach(struct us_internal_poll_req_t *req, int close_handl
     }
 
     struct us_internal_pipe_req_t *pipe = (struct us_internal_pipe_req_t *) req;
-    us_internal_pipe_quiesce(pipe, close_handle);
+    us_internal_pipe_quiesce(pipe);
     if (close_handle) {
         us_internal_pipe_close_handle(pipe);
     }
     us_internal_iocp_req_free_if_unused(req);
+}
+
+/* The loop goes away, so nothing of the block's may stay in flight. */
+void us_internal_pipe_abandon(struct us_internal_poll_req_t *req) {
+    if (req->kind != LIBUS_POLL_KIND_PIPE_LISTENER) {
+        struct us_internal_pipe_req_t *pipe = (struct us_internal_pipe_req_t *) req;
+        pipe->is_abandoned = 1;
+        us_internal_pipe_op_cancel(req, &pipe->retry, NULL);
+    }
+    if (req->owner) {
+        us_internal_pipe_detach(req, 0);
+    } else {
+        us_internal_iocp_req_free_if_unused(req);
+    }
 }
 
 void us_internal_pipe_destroy(struct us_internal_poll_req_t *req) {
@@ -1541,8 +1628,10 @@ void us_internal_pipe_destroy(struct us_internal_poll_req_t *req) {
         return;
     }
     struct us_internal_pipe_req_t *pipe = (struct us_internal_pipe_req_t *) req;
+    if (pipe->thread) us_internal_pipe_thread_unref(pipe->thread);
     us_internal_pipe_op_destroy(&pipe->read);
     us_internal_pipe_op_destroy(&pipe->write);
+    us_internal_pipe_op_destroy(&pipe->retry);
     if (pipe->eof_timer) NtClose(pipe->eof_timer);
     us_free(pipe->staging);
     us_free(pipe->name);

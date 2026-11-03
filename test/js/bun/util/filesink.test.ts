@@ -168,6 +168,7 @@ describe("FileSink", () => {
 });
 
 import { spawn, type SpawnOptions } from "node:child_process";
+import { once } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
 import type { Readable } from "node:stream";
@@ -993,6 +994,74 @@ describe.concurrent.skipIf(!isWindows)("a writer of a named pipe that another pr
       console.log(lengths.join(" "));
     `);
     expect(result).toEqual({ stdout: "1 4096 4097 65536 65537 1048576 1048577 3000000 1\n", exitCode: 0 });
+  });
+
+  // A call on a synchronous handle waits for the call before it, whoever made that one. Here only this thread can end it.
+  it("does not wait for a write that another thread has on the handle", async () => {
+    const result = await run(`
+      const server = createServer({ quota: 4096 });
+      const { fd } = openClient(server.name, "w");
+      const source = 'require("fs").writeSync(' + fd + ', Buffer.alloc(100_000, "w")); postMessage("done");';
+      const worker = new Worker(URL.createObjectURL(new Blob([source], { type: "application/javascript" })));
+      const workerIsDone = new Promise(resolve => (worker.onmessage = resolve));
+      while (server.available() < 100_000) await new Promise(setImmediate);
+      const writer = Bun.file(fd).writer();
+      writer.write("x");
+      const flushed = writer.flush();
+      let text = "";
+      while (text.length < 100_001) {
+        text += server.text();
+        await new Promise(setImmediate);
+      }
+      await Promise.all([workerIsDone, flushed]);
+      console.log(text.length, text.at(-1));
+      await writer.end();
+    `);
+    expect(result).toEqual({ stdout: "100001 x\n", exitCode: 0 });
+  });
+
+  it("reports that the reader went away with a write on its way", async () => {
+    const result = await run(`
+      const server = createServer({ quota: 4096 });
+      const { fd } = openClient(server.name, "w");
+      const writer = Bun.file(fd).writer();
+      const written = Promise.resolve(writer.write(Buffer.alloc(100_000, "x")));
+      while (server.available() <= 4096) await new Promise(setImmediate);
+      server.close();
+      console.log(await written.catch(error => error.code));
+    `);
+    expect(result).toEqual({ stdout: "EPIPE\n", exitCode: 0 });
+  });
+});
+
+// The end of the process takes along what a Windows pipe has taken and not passed on.
+describe.concurrent("what a writer of a pipe reported as written is not lost by process.exit()", () => {
+  it.each([
+    ["write()", "written", 0],
+    ["flush()", "writer.flush()", 0],
+    ["end()", "writer.end()", 0],
+    ["write() and a write() of one byte behind it", `Promise.all([written, writer.write("y")])`, 1],
+    ["write() and a write() of 4 KiB behind it", `Promise.all([written, writer.write(Buffer.alloc(4096, "y"))])`, 4096],
+  ])("%s", async (_, reported, more) => {
+    const size = 500_000;
+    const script = `
+      const writer = Bun.file(3).writer();
+      const written = writer.write(Buffer.alloc(${size}, "x"));
+      const reported = ${reported};
+      console.log("issued");
+      await reported;
+      process.exit(0);
+    `;
+    const options: SpawnOptions = { stdio: ["ignore", "pipe", "inherit", "pipe"], env: bunEnv as NodeJS.ProcessEnv };
+    const child = spawn(bunExe(), ["-e", script], options);
+    const exited = once(child, "exit");
+    const pipe = child.stdio[3] as Readable;
+    const pipeClosed = once(pipe, "close");
+    await once(child.stdout!, "data");
+    let received = 0;
+    pipe.on("data", chunk => (received += chunk.length));
+    const [[exitCode]] = await Promise.all([exited, pipeClosed]);
+    expect({ received, exitCode }).toEqual({ received: size + more, exitCode: 0 });
   });
 });
 

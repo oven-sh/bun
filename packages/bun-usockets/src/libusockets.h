@@ -624,7 +624,8 @@ void *us_socket_get_native_handle(us_socket_r s) nonnull_fn_decl;
 
 /* Plaintext write (TLS-encrypts if `s->ssl`). Returns bytes accepted; on
  * partial write the next on_writable will fire. A pipe on Windows already has
- * up to 1 MiB of the rest on its way then, so the next write has to start with the rest. */
+ * up to 1 MiB of the rest on its way then, so the next write has to start with
+ * the rest, as a retry of SSL_write has to. The socket fails if it does not. */
 int us_socket_write(us_socket_r s, const char *nonnull_arg data, int length) nonnull_fn_decl;
 int us_socket_write2(us_socket_r s, const char *header, int header_length, const char *payload, int payload_length) nonnull_fn_decl;
 /* Bypass TLS — write raw bytes to the fd even if `s->ssl` is set. */

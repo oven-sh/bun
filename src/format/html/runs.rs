@@ -388,6 +388,22 @@ const IS_PLAIN_IN_VALUE: [bool; 256] = {
     plain
 };
 
+/// True if `IS_PLAIN_IN_VALUE` is true for every byte of `value`, which has no `"` in it. Without a table and without a
+/// way out of the loops, so that the compiler looks at many bytes at a time.
+fn is_all_plain_in_value(value: &[u8]) -> bool {
+    let is_plain = |bytes: &[u8]| {
+        let odd = bytes.iter().fold(false, |odd, &byte| {
+            odd | (byte.wrapping_sub(b' ') >= 0x5F)
+                | (byte == b'&')
+                | (byte == b'{')
+                | (byte == b'\\')
+        });
+        !odd
+    };
+    let (blocks, rest) = value.as_chunks::<32>();
+    blocks.iter().all(|block| is_plain(block)) && is_plain(rest)
+}
+
 /// The runs of a text, and the buffers to find them with.
 pub(crate) struct Runs {
     settings: Settings,
@@ -1152,9 +1168,11 @@ impl<'a> Scanner<'_, 'a> {
     /// where it ends.
     fn interpolation(&mut self, start: usize) -> Option<usize> {
         if !self.settings.formats_embedded {
-            // It is printed as it is written, whatever it is.
+            // It is printed as it is written, whatever it is. Only on one line, so no more is looked at: a text can have
+            // many `{{` and no `}}`.
             let rest = self.text.get(start + 3..)?;
-            let end = start + 3 + bun_core::strings::index_of(rest, b"}}")? + 2;
+            let line = &rest[..bun_core::strings::index_of_char_usize(rest, b'\n')?];
+            let end = start + 3 + bun_core::strings::index_of(line, b"}}")? + 2;
             // But for white space alone.
             let is_plain = (self.text.get(start..end)?.iter())
                 .all(|byte| matches!(byte, b' '..=b'~') && !matches!(byte, b'<' | b'\\' | b'&'))
@@ -1300,6 +1318,11 @@ impl<'a> Scanner<'_, 'a> {
         let mut end = value_start;
         let (mut has_braces, mut is_wide, mut has_reference) = (false, false, false);
         let mut rest = value_and_rest;
+        // Most values are plain from one quote to the other, and some are long.
+        let quote = bun_core::strings::index_of_char_usize(rest, b'"')?;
+        if is_all_plain_in_value(&rest[..quote]) {
+            (end, rest) = (end + quote, &rest[quote..]);
+        }
         loop {
             let plain = (rest.iter()).position(|byte| !IS_PLAIN_IN_VALUE[*byte as usize])?;
             end += plain;
@@ -1360,7 +1383,12 @@ impl<'a> Scanner<'_, 'a> {
                     && value[value.len() - 1] != b' '
                     && !bun_core::strings::contains(value, b"  ")
             }
-            b"style" => false,
+            b"style" => {
+                return match canonical::is_style(value) {
+                    true => Printed::AsWrittenOnOneLine,
+                    false => Printed::Otherwise,
+                };
+            }
             b"allow" => element != b"iframe",
             _ => !data::is_event_attribute(name),
         };

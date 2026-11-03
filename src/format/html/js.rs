@@ -66,12 +66,24 @@ pub fn is_probably_jsx(text: &[u8]) -> bool {
         }
         rest = &rest[at + 1..];
     }
-    strings::split(text, b"\n").any(|line| {
-        line.len() >= 4
-            && line[0] != b'/'
-            && line[1] != b'/'
-            && strings::contains(&line[2..], b"/>")
-    })
+    // `/>` with two characters that are no slashes at the start of its line.
+    let mut from = 0;
+    while let Some(at) = strings::index_of(&text[from..], b"/>").map(|at| from + at) {
+        let line_start = strings::last_index_of_char(&text[..at], b'\n').map_or(0, |it| it + 1);
+        if at < line_start + 2 {
+            from = at + 1;
+            continue;
+        }
+        if text[line_start] != b'/' && text[line_start + 1] != b'/' {
+            return true;
+        }
+        // The rest of the line starts with the same two characters.
+        match strings::index_of_char_usize(&text[at..], b'\n') {
+            Some(line_len) => from = at + line_len,
+            None => break,
+        }
+    }
+    false
 }
 
 /// Returns the options for code embedded in HTML that's formatted with `options`.

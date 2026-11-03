@@ -7506,6 +7506,69 @@ try {
     expect(slowdown(odd, plain)).toBeLessThan(6);
   }, 120_000);
 
+  // Something on every line that is opened and not closed, or refused after a look ahead: what reads children from the
+  // bytes looks for the end of each, which must not be a search through the rest of the text every time.
+  test.each([[[]], [["--embedded-language-formatting=off"]]])(
+    "HTML and Vue with something unclosed on every line take linear time: %j",
+    async flags => {
+      const count = isDebug || isASAN ? 2_000 : 40_000;
+      const [open, close] = ["<template>\n", "</template>\n"];
+      // Each row is the file extension, a prefix, the repeated unit and a suffix.
+      const shapes: [string, string, string, string][] = [
+        ["vue", open, "{{ a\n", close],
+        ["vue", open, "{{ a\n", "}}\n" + close],
+        ["vue", open, "<p>{{ a</p>\n", close],
+        ["vue", open, "<p>{{ a</p>\n", "}}\n" + close],
+        ["vue", open, "<p>{{ 'a</p>\n", close],
+        ["vue", open, "<p>{{ a(</p>\n", close],
+        ["vue", open + "<p>", "{{ a ", "</p>\n" + close],
+        ["vue", open, '<a :b="c(\n', close],
+        ["vue", open, '<a :b="\'c">\n', close],
+        ["vue", open + '<a :b="', "f(", '" />\n' + close],
+        ["vue", open, "<ElA>\n<b c='d'/>\n", close],
+        ["html", "", "<p>{{ a</p>\n", ""],
+        ["html", "", "<!-- a\n", ""],
+        ["html", "", "<!-- a\n", "-->\n"],
+        ["html", "", "<!-- a\n", "-->x\n"],
+        ["html", "", "<!-- a -->x\n", ""],
+        ["html", "", '<a b="c\n', ""],
+        ["html", "", '<a b="c\n', '">\n'],
+        ["html", '<a b="', "<i>x</i>\n", ""],
+        ["html", "", "<a b='c\n", ""],
+        ["html", "", "<a\n", ""],
+        ["html", "", "<a b\n", ""],
+        ["html", "<a", '\nb="c"', " d='e'>\n</a>\n"],
+        ["html", "", "<div>\n<a b='c'/>\n", ""],
+        ["html", "<svg>\n", "<g>\n<a b='c'/>\n", "</svg>\n"],
+        ["html", "<div>\n<p>a</p>\n", "</p>\n", "</div>\n"],
+        ["html", "", "<p>a</p\n", ""],
+        ["html", "<div>\n<p>a</p", "\n", "x>\n</div>\n"],
+        ["html", "", "a <\n", ""],
+        ["html", "", "a\n<a: b\n", ""],
+        ["html", "<div>\n", "a\n", "<b>c</b> d\n</div>\n"],
+        ["html", "<ul>\n", "<li>\na\n", "</ul>\n"],
+        ["html", "", "<p>&bogus;</p>\n", ""],
+        ["html", "<div>\n<p>a</p>", "\n", "</div>\n"],
+        ["html", "<p>x</p>\n<", "a", ""],
+      ];
+      const texts = shapes.map(([, before, unit, after]) => before + unit.repeat(count) + after);
+      const ordinary =
+        '<div class="a b">\n  <p>The quick brown fox <b>jumps</b> over the <a href="c">lazy dog</a>, and then <i>once more</i> for good measure.</p>\n  <img src="d" alt="e" style="f:g" />\n</div>\n';
+      const length = Math.ceil(texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length);
+      const run = (text: (index: number) => string) =>
+        format(Object.fromEntries(shapes.map(([ending], index) => [`${index}.${ending}`, text(index)])), [
+          "--check",
+          ...flags,
+        ]);
+      const [odd, plain] = [
+        await run(index => texts[index]),
+        await run(() => ordinary.repeat(length / ordinary.length)),
+      ];
+      expect(slowdown(odd, plain)).toBeLessThan(6);
+    },
+    120_000,
+  );
+
   // A comment in each repetition. These are inputs that attaching or printing comments once rescanned for each comment,
   // and similar ones.
   test("JavaScript with many comments takes linear time", async () => {

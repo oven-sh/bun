@@ -69,6 +69,8 @@ bitflags::bitflags! {
         const IS_PRINTED_AS_WRITTEN = 1 << 19;
         /// Element: `printed` is its start tag, and it has no `attrs`.
         const HAS_READY_START_TAG = 1 << 20;
+        /// It is called `text` or `foreignObject`, or is in something that is. Set while the tree is built.
+        const IS_IN_TEXT_OR_FOREIGN_OBJECT = 1 << 21;
     }
 }
 

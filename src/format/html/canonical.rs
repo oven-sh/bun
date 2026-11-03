@@ -570,6 +570,132 @@ pub(crate) fn is_vue_attribute(name: &[u8], value: &[u8], spelling: Spelling) ->
     })
 }
 
+/// A word of small letters, a plain number with a unit of small letters or `%`, a color. With `is_in_call`, `--a-name`
+/// too. Returns where it ends.
+fn term(text: &[u8], start: usize, is_in_call: bool) -> Option<usize> {
+    let at = |index: usize| text.get(index).copied().unwrap_or(0);
+    let mut end = start;
+    if at(end).is_ascii_lowercase() {
+        while at(end).is_ascii_lowercase() || (at(end) == b'-' && at(end + 1).is_ascii_lowercase())
+        {
+            end += 1;
+        }
+        if at(end) != b'(' {
+            return Some(end);
+        }
+        // `var(--a)`, `var(--a, 1px)`, `rgb(0, 0, 0)`, `rgba(0, 0, 0, 0.5)`: terms with `, ` between them.
+        if is_in_call
+            || !matches!(
+                &text[start..end],
+                b"var" | b"rgb" | b"rgba" | b"hsl" | b"hsla"
+            )
+        {
+            return None;
+        }
+        end += 1;
+        loop {
+            end = term(text, end, true)?;
+            if at(end) == b')' {
+                return Some(end + 1);
+            }
+            if at(end) != b',' || at(end + 1) != b' ' {
+                return None;
+            }
+            end += 2;
+        }
+    }
+    if at(end) == b'#' {
+        let from = end + 1;
+        end = from;
+        while matches!(at(end), b'0'..=b'9' | b'a'..=b'f') {
+            end += 1;
+        }
+        return matches!(end - from, 3 | 6).then_some(end);
+    }
+    if at(end) == b'-' {
+        end += 1;
+        if at(end) == b'-' && is_in_call {
+            end += 1;
+            if !at(end).is_ascii_lowercase() {
+                return None;
+            }
+            while at(end).is_ascii_lowercase()
+                || at(end).is_ascii_digit()
+                || (at(end) == b'-' && !matches!(at(end + 1), b'-' | b')' | b','))
+            {
+                end += 1;
+            }
+            return Some(end);
+        }
+    }
+    match at(end) {
+        b'0' => end += 1,
+        b'1'..=b'9' => {
+            while at(end).is_ascii_digit() {
+                end += 1;
+            }
+        }
+        _ => return None,
+    }
+    if at(end) == b'.' {
+        end += 1;
+        while at(end).is_ascii_digit() {
+            end += 1;
+        }
+        if matches!(at(end - 1), b'0' | b'.') {
+            return None;
+        }
+    }
+    if at(end) == b'%' {
+        return Some(end + 1);
+    }
+    // `px`, `em`, `rem`, `vh`. Not `e`, which starts an exponent, nor `Q`, `Hz`, `kHz`, which have capital letters.
+    let unit = end;
+    while at(end).is_ascii_lowercase() {
+        end += 1;
+    }
+    let is_plain = end - unit <= 4
+        && (at(unit) != b'e' || end - unit == 2)
+        && !matches!(at(unit), b'q' | b'h' | b'k');
+    is_plain.then_some(end)
+}
+
+/// `width: 100px`, `margin: 0 auto; color: var(--a)`: the value of a `style` attribute that is printed as it is written
+/// on one line. Declarations with `; ` between them, whose values are terms with a blank between them.
+pub(crate) fn is_style(value: &[u8]) -> bool {
+    let at = |index: usize| value.get(index).copied().unwrap_or(0);
+    let mut end = 0;
+    loop {
+        if !at(end).is_ascii_lowercase() {
+            return false;
+        }
+        while at(end).is_ascii_lowercase() || (at(end) == b'-' && at(end + 1) != b'-') {
+            end += 1;
+        }
+        if at(end) != b':' || at(end - 1) == b'-' || at(end + 1) != b' ' {
+            return false;
+        }
+        end += 2;
+        loop {
+            match term(value, end, false) {
+                Some(it) => end = it,
+                None => return false,
+            }
+            if end == value.len() {
+                return true;
+            }
+            if at(end) != b' ' {
+                break;
+            }
+            end += 1;
+        }
+        if at(end) != b';' || at(end + 1) != b' ' {
+            return false;
+        }
+        end += 2;
+    }
+}
+
 /// The value of `#default` or `v-slot`: one parameter.
 fn is_binding(value: &[u8], spelling: Spelling) -> bool {
     in_attribute(value, spelling).binding(0) == Some(value.len())

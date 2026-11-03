@@ -115,11 +115,7 @@ impl<'a> TreeBuilder<'a, '_, '_, '_> {
                 let is_plain = is_plain
                     && match is_in_svg {
                         // What is in these is not printed like the rest.
-                        true => !self.container_stack.iter().any(|&id| {
-                            let name = self.full_name_of(id).name;
-                            name.eq_ignore_ascii_case(b"foreignObject")
-                                || name.eq_ignore_ascii_case(b"text")
-                        }),
+                        true => !node.has(Flags::IS_IN_TEXT_OR_FOREIGN_OBJECT),
                         false => {
                             node.namespace.is_empty()
                                 && name.iter().all(|byte| match byte {
@@ -597,9 +593,16 @@ impl<'a> TreeBuilder<'a, '_, '_, '_> {
         }
     }
 
-    fn push_container(&mut self, node: Node<'a>, is_closed_by_child: bool) {
+    fn push_container(&mut self, mut node: Node<'a>, is_closed_by_child: bool) {
         if is_closed_by_child {
             self.container_stack.pop();
+        }
+        if node.name.eq_ignore_ascii_case(b"text")
+            || node.name.eq_ignore_ascii_case(b"foreignObject")
+            || (self.container())
+                .is_some_and(|parent| self.tree[parent].has(Flags::IS_IN_TEXT_OR_FOREIGN_OBJECT))
+        {
+            node.flags.insert(Flags::IS_IN_TEXT_OR_FOREIGN_OBJECT);
         }
         let id = self.add_to_parent(node);
         self.container_stack.push(id);

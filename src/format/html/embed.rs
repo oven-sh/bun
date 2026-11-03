@@ -535,6 +535,25 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         self.out.end_attempt(attempt, is_written)
     }
 
+    /// True if short cuts can be taken, and an attribute of `element` that is `width` columns wide on one line is printed
+    /// on one line: the start tag is either on one line, with all that is in it, or the attribute is on a line of its own
+    /// at the current indentation, which has room for it.
+    pub(crate) fn has_room_on_line_of_its_own(&self, element: Id, width: usize) -> bool {
+        let format = self.options.format;
+        // The end of the tag can be on the line of the last attribute.
+        let ends_on_line_of_its_own = !format.bracket_same_line.value()
+            && !(self.tree[element].has(Flags::IS_SELF_CLOSING)
+                && self.tree.parent(element).is_some_and(|parent| {
+                    self.tags()
+                        .needs_to_borrow_last_child_closing_tag_end_marker(parent)
+                }));
+        !format.no_short_cuts
+            && ends_on_line_of_its_own
+            && (self.out.indentation_width()).is_some_and(|indentation| {
+                indentation + width <= format.line_width.value() as usize
+            })
+    }
+
     /// True if the expression `code` is printed as it is written, so that nobody has to parse it. It is either on one
     /// line with its braces, or on a line of its own at the current indentation, given that a `line` follows it.
     fn is_printed_as_written_between_braces(&self, code: &[u8]) -> bool {
@@ -620,6 +639,15 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             match &attr.name[..] {
                 b"srcset" if node.is_full_name(b"img") || node.is_full_name(b"source") => {
                     return self.print_attribute_with(attr, |printer| printer.print_srcset(value));
+                }
+                // What is printed as it is written needs no parser, as in `is_printed_as_written` for Vue.
+                b"style"
+                    if is_plain
+                        && value.len() == raw_value.len()
+                        && self.has_room_on_line_of_its_own(element, 5 + 3 + value.len())
+                        && canonical::is_style(value) =>
+                {
+                    return false;
                 }
                 b"style" if is_plain => {
                     return self.print_attribute_with(attr, |printer| printer.print_style(value));

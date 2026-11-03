@@ -664,7 +664,6 @@ pub trait CustomAtRuleParser {
     ) -> CssResult<Self::AtRule>;
 
     /// Returns true when the rule got an import record and belongs in [`StyleSheet::imports`].
-    /// `rules` is the top-level rule list so far.
     fn on_import_rule(
         this: &mut Self,
         import_rule: &mut ImportRule,
@@ -2377,8 +2376,7 @@ pub struct StyleSheet<AtRule> {
     /// [`ParserOptions::flags`] of the parse.
     pub flags: ParserFlags,
     pub layer_names: Vec<LayerName>,
-    /// The `@layer` statements ahead of the first `@import`. These names are not in `layer_names`,
-    /// and the statements are not in `rules`.
+    /// The `@layer` statements ahead of the first `@import`. These names are not in `layer_names`.
     pub layers_pre_import: Vec<LayerName>,
 
     /// Used when css modules is enabled. Maps `local name string` -> `Ref`.

@@ -255,11 +255,18 @@ test.concurrent("worker: every store that ends in a definition on self installs 
       next();
     `,
     "main.js": `
+      const expected = Object.keys(require(${JSON.stringify(storesFixture)})).map(what => what + ": echo");
       const worker = new Worker(new URL("./worker.js", import.meta.url).href);
       const answers = [];
       worker.onmessage = e => {
-        if (e.data === "ready") worker.postMessage("echo");
-        else answers.push(e.data);
+        if (e.data === "ready") return worker.postMessage("echo");
+        answers.push(e.data);
+        // A store that did not install its handler leaves the one before it in place.
+        if (e.data !== expected[answers.length - 1]) worker.terminate();
+      };
+      worker.onerror = event => {
+        answers.push("error: " + event.message);
+        worker.terminate();
       };
       worker.addEventListener("close", () => console.log(JSON.stringify(answers)));
     `,

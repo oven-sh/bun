@@ -381,7 +381,7 @@ fn write_document_with_cursor(
     let reads_runs = reads_runs
         && (parser != Parser::Vue
             || (!strings::contains(text, b"v-pre") && !script_flavor.is_oxfmt()));
-    let runs = runs::Settings::new(parser, options, front_matter_len.unwrap_or(0))
+    let runs = runs::Settings::new(parser, options, path, front_matter_len.unwrap_or(0))
         .filter(|_| reads_runs);
     parse::parse_with_runs(&content, front_matter_len, parser, runs, &mut tree).map_err(
         |error| match error {
@@ -627,7 +627,7 @@ fn format_once(
         && !is_range
         && cursor_offset.is_none()
         && let front_matter_len = front_matter::parse(&text).map_or(0, |it| it.end)
-        && let Some(settings) = runs::Settings::new(parser, options, front_matter_len)
+        && let Some(settings) = runs::Settings::new(parser, options, Some(path), front_matter_len)
     {
         let (mut runs, mut printed) = (runs::Runs::new(settings), Vec::new());
         if let Some((span, is_in_text)) = runs.whole(&text, &mut printed)

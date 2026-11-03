@@ -36,15 +36,18 @@ pub(crate) struct Settings {
     sensitivity: HtmlWhitespaceSensitivity,
     formats_embedded: bool,
     spelling: Spelling,
+    /// `<!DOCTYPE html>` is printed in small letters.
+    lowers_doctype: bool,
     /// How long the front matter of the text is, which the lexer sees as white space.
     front_matter_len: usize,
 }
 
 impl Settings {
-    /// Returns `None` if nothing is read here with `options`.
+    /// Returns `None` if nothing is read here with `options`. `path` is the name of the file.
     pub(crate) fn new(
         parser: Parser,
         options: &FormatOptions,
+        path: Option<&[u8]>,
         front_matter_len: usize,
     ) -> Option<Settings> {
         let is_read = !options.no_short_cuts
@@ -64,6 +67,8 @@ impl Settings {
                 EmbeddedLanguageFormatting::Auto
             ),
             spelling: Spelling::new(options),
+            lowers_doctype: path
+                .is_some_and(|path| path.ends_with(b".html") || path.ends_with(b".htm")),
             front_matter_len,
         })
     }
@@ -2092,20 +2097,20 @@ impl<'a> Scanner<'_, 'a> {
     /// `display: block`, `[if IE]` and so on.
     fn comment(&mut self, start: usize) -> Item {
         let Some(rest) = (self.text.get(start..)).and_then(|it| it.strip_prefix(b"<!--")) else {
-            // In small letters it is printed as it is written in any file.
             const DOCTYPE: &[u8] = b"<!doctype html>";
             let end = start + DOCTYPE.len();
-            return match self.text.get(start..end) == Some(DOCTYPE)
-                && self.siblings.level == 0
-                && self.ends_line(end)
-            {
-                true => {
-                    self.out.source(start, end);
-                    self.ends_in_text = false;
-                    Item::Ends(end)
-                }
-                false => Item::No,
-            };
+            let is_doctype = (self.text.get(start..end)).is_some_and(|it| {
+                it[..9].eq_ignore_ascii_case(&DOCTYPE[..9]) && it[9..] == DOCTYPE[9..]
+            });
+            if !is_doctype || self.siblings.level != 0 || !self.ends_line(end) {
+                return Item::No;
+            }
+            match self.settings.lowers_doctype {
+                true => self.out.put(DOCTYPE),
+                false => self.out.source(start, end),
+            }
+            self.ends_in_text = false;
+            return Item::Ends(end);
         };
         let first = rest.iter().find(|byte| !matches!(byte, 9..=13 | b' '));
         if matches!(first, None | Some(b'p' | b'd' | b'[' | b'<' | 128..)) {

@@ -2002,6 +2002,8 @@ describe.skipIf(!hasFlag)("HTML", () => {
     "<a>x</a>\n<b>y</b>\n<i>z</i>",
     "<a>x <u>y</u></a>\n<i>z</i>",
     "<div>\n  <p>a</p>\n</div>\n<i>z</i>  ",
+    "<!DOCTYPE html>\n<p>a</p>\n",
+    "<!DOCTYPE HTML>\n<p>a</p>\n",
   ];
   const files = Object.fromEntries(inputs.map((input, index) => [`${index}.html`, input]));
 

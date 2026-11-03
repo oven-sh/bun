@@ -952,6 +952,9 @@ pub mod fs {
         pub(crate) cwd: &'static [u8],
         #[cfg(not(windows))]
         pub(crate) file_limit: usize,
+        /// Devices the listing check has met, each with `bun_sys::stamps_with_local_clock`. Guarded by `entries_mutex`.
+        local_devices: [(u64, bool); 4],
+        local_devices_next: usize,
     }
 
     impl RealFS {
@@ -968,6 +971,8 @@ pub mod fs {
                 cwd,
                 #[cfg(not(windows))]
                 file_limit,
+                local_devices: [(u64::MAX, false); 4],
+                local_devices_next: 0,
             }
         }
 
@@ -1070,12 +1075,19 @@ pub mod fs {
             }
 
             let fd = dir.fd;
+            // Read before the first name, so a name added while they are read carries a later stamp.
+            let read_clock_ns = bun_sys::file_stamp_clock_ns();
             let mut iter = bun_sys::iterate_dir(handle);
             let mut filename_store = FilenameStoreAppender::new();
             loop {
                 let entry_ = match iter.next() {
                     Ok(Some(entry_)) => entry_,
-                    Ok(None) => break,
+                    // Only a read that reached the end takes the clock and the inode of `.`: a stat later vouches for all of the names or for none.
+                    Ok(None) => {
+                        dir.read_clock_ns = read_clock_ns;
+                        dir.dot_ino = iter.dot_ino();
+                        break;
+                    }
                     // The `DirInfo` fill keeps the names that could be read.
                     Err(_) if fill => break,
                     Err(err) => return Err(err.into()),
@@ -1238,8 +1250,9 @@ pub mod fs {
             if let Some(cached) = cached {
                 // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
                 match unsafe { &mut *cached } {
+                    // A checked asker trusts only its own stamp. `!=`, not `<`: a build does not trust a later runtime stamp.
                     EntriesOption::Entries(listing)
-                        if A::CHECKS && listing.generation < asker.generation() =>
+                        if A::CHECKS && listing.generation != asker.generation() =>
                     {
                         refill = Some((cached, std::ptr::from_mut::<DirEntry>(*listing)));
                     }
@@ -1257,7 +1270,7 @@ pub mod fs {
             self.read_listing_locked(asker.generation(), target, read, iterator)
         }
 
-        /// What `listing_locked` does when the cache has no answer its asker may use: open, read, store. Caller holds `entries_mutex`.
+        /// What `listing_locked` does when the cache has no answer its asker may use: one stat keeps the listing of an unchanged directory, else open, read, store. Caller holds `entries_mutex`.
         #[inline(never)]
         fn read_listing_locked<I: DirEntryIterator>(
             &mut self,
@@ -1266,6 +1279,11 @@ pub mod fs {
             read: ListingRead<'_>,
             iterator: &mut I,
         ) -> crate::CrateResult<core::result::Result<*mut EntriesOption, crate::Error>> {
+            if let ListingTarget::Refill(cached, listing) = &target {
+                if self.keep_listing_locked(*listing, generation) {
+                    return Ok(Ok(*cached));
+                }
+            }
             let ListingRead {
                 reader,
                 handle,
@@ -1307,13 +1325,13 @@ pub mod fs {
                 // SAFETY: BSSMap-owned, no aliasing here (entries_mutex held).
                 unsafe { &mut (*listing).data }
             });
-            let entries =
+            let mut entries =
                 match self.readdir(reader, store_fd, prev, dir, generation, handle, iterator) {
                     Ok(entries) => entries,
                     Err(err) => {
                         if let Some(listing) = refill {
                             // SAFETY: see above.
-                            unsafe { (*listing).data.clear() };
+                            unsafe { (*listing).forget() };
                         }
                         return match reader {
                             ListingReader::Lookup => Ok(Err(err)),
@@ -1335,7 +1353,10 @@ pub mod fs {
                 ListingTarget::Refill(cached, listing) => {
                     crate::resolver::test_hooks::count_refill();
                     // SAFETY: a live `DirEntry` of the BSSMap singleton, exclusively held under `entries_mutex`.
-                    unsafe { *listing = entries };
+                    unsafe {
+                        entries.version = (*listing).version.wrapping_add(1);
+                        *listing = entries;
+                    }
                     Ok(Ok(cached))
                 }
                 ListingTarget::New(result) => {
@@ -1347,6 +1368,50 @@ pub mod fs {
                     Ok(Ok(self.entries.put(result, value)?))
                 }
             }
+        }
+
+        /// One stat of the directory by path. True, with `listing` stamped for `generation`, when no name was added or removed since the read.
+        #[cold]
+        #[inline(never)]
+        fn keep_listing_locked(&mut self, listing: *mut DirEntry, generation: Generation) -> bool {
+            // SAFETY: a `DirEntry` of the BSSMap singleton, exclusively held under `entries_mutex`.
+            let listing = unsafe { &mut *listing };
+            // Without the inode of "." (Windows, some FUSE mounts, a read that failed) there is nothing to compare.
+            if listing.dot_ino == 0 {
+                return false;
+            }
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let Some(dir) = Self::dir_z(&mut buf, listing.dir) else {
+                return false;
+            };
+            let Ok(now) = bun_sys::stat_force_sync(dir) else {
+                return false;
+            };
+            if !listing.unchanged_since_read(&now) || !self.stamps_with_local_clock(now.dev, dir) {
+                return false;
+            }
+            listing.generation = generation;
+            true
+        }
+
+        fn dir_z<'buf>(buf: &'buf mut bun_paths::PathBuffer, dir: &[u8]) -> Option<&'buf ZStr> {
+            if dir.len() >= buf.len() {
+                return None;
+            }
+            buf[..dir.len()].copy_from_slice(dir);
+            buf[dir.len()] = 0;
+            Some(ZStr::from_buf(&buf[..], dir.len()))
+        }
+
+        /// `bun_sys::stamps_with_local_clock` for the device `dev`, asked once for each of the last four devices.
+        fn stamps_with_local_clock(&mut self, dev: u64, dir: &ZStr) -> bool {
+            if let Some(&(_, local)) = self.local_devices.iter().find(|known| known.0 == dev) {
+                return local;
+            }
+            let local = bun_sys::stamps_with_local_clock(dir);
+            self.local_devices[self.local_devices_next % self.local_devices.len()] = (dev, local);
+            self.local_devices_next = self.local_devices_next.wrapping_add(1);
+            local
         }
 
         /// Evicts `file_path` from the directory-entry cache; returns whether
@@ -1641,7 +1706,7 @@ pub mod fs {
                     {
                         // SAFETY: see above.
                         if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {
-                            existing.data.clear();
+                            existing.forget();
                         }
                         return self.read_directory_error(dir, err).ok();
                     }

@@ -404,18 +404,51 @@ pub struct DirEntry {
     // DirnameStore (a process-lifetime BSSList), so `&'static` is correct.
     pub dir: &'static [u8],
     pub fd: Fd,
+    /// The asker this listing was last read or checked for.
     pub(crate) generation: Generation,
+    /// Counts the times the names were replaced in place. A `DirInfo` keeps the count its facts came from.
+    pub(crate) version: u32,
+    /// `bun_sys::file_stamp_clock_ns` just before the names were read. 0 when the read did not finish.
+    pub(crate) read_clock_ns: i64,
+    /// The inode the directory listed for ".", 0 if it listed none: which directory the names came from.
+    pub(crate) dot_ino: u64,
     pub data: dir_entry::EntryMap,
 }
 
 impl DirEntry {
+    /// A stamp less than this before the read clock can be that of a change after the read: a stamping clock lags a fine one by up to a tick.
+    pub(crate) const KEEP_MARGIN_NS: i64 = 20 * bun_core::time::NS_PER_MS as i64;
+
     pub(crate) fn init(dir: &'static [u8], generation: Generation) -> DirEntry {
         DirEntry {
             dir,
             data: dir_entry::EntryMap::default(),
             generation,
+            version: 0,
+            read_clock_ns: 0,
+            dot_ino: 0,
             fd: Fd::INVALID,
         }
+    }
+
+    /// Whether `now`, one stat of the directory by path, shows the directory that was read with no name added or removed since.
+    pub(crate) fn unchanged_since_read(&self, now: &bun_sys::PosixStat) -> bool {
+        let ns = |t: bun_core::Timespec| t.sec.saturating_mul(1_000_000_000).saturating_add(t.nsec);
+        let (mtime_ns, ctime_ns) = (ns(now.mtim), ns(now.ctim));
+        // A change time on a whole millisecond comes from a file system that keeps no fine one (or none: FAT reports 0).
+        let fine_stamps = ctime_ns > 0 && ctime_ns % bun_core::time::NS_PER_MS as i64 != 0;
+        self.dot_ino != 0
+            && now.ino == self.dot_ino
+            && fine_stamps
+            && mtime_ns.max(ctime_ns) < self.read_clock_ns.saturating_sub(Self::KEEP_MARGIN_NS)
+    }
+
+    /// After a read that failed: no names and no identity, so no asker keeps what is left.
+    pub(crate) fn forget(&mut self) {
+        self.data.clear();
+        self.version = self.version.wrapping_add(1);
+        self.read_clock_ns = 0;
+        self.dot_ino = 0;
     }
 
     // Compatibility wrapper for callers outside the `readdir` hot loop —

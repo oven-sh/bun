@@ -879,6 +879,52 @@ const files = {
         unchangedMisses(here, misses);
       },
 
+      async unparsed() {
+        // The test wrote config files that do not parse. A lookup that misses says what is
+        // wrong with each one that it read. The record of a directory keeps what reading its
+        // config files logged, and the run after a miss writes that again for each record that
+        // it keeps. So every miss reports the same, and no directory gets a new record for it.
+        const here = path.dirname(fileURLToPath(import.meta.url));
+        const from = (...dir) => requireFrom(path.join(here, ...dir));
+        // The notes of an error, each as "note: <what is wrong> at <file>:<line>:<column>".
+        const notesOf = e => {
+          const lines = Bun.inspect(e).split("\\n");
+          const notes = lines.flatMap((line, i) =>
+            line.startsWith("note: ") ? [line + " " + (lines[i + 1] ?? "").trim()] : [],
+          );
+          return notes.join(", ") || "no notes";
+        };
+        // What the runs of each miss reported: one text for a miss when every run of it, the
+        // first one and each one after it, reports the same.
+        const reported = {};
+        const noted = (label, miss) => [
+          label,
+          () => {
+            try {
+              return miss();
+            } catch (e) {
+              (reported[label] ??= new Set()).add(notesOf(e));
+              throw e;
+            }
+          },
+        ];
+        unchangedMisses(here, [
+          // The package.json next to the importer, for a package and for an alias of its "imports".
+          noted("UP1", () => from("up1").resolve("never-installed")),
+          noted("UP2", () => from("up1").resolve("#x")),
+          // The tsconfig.json next to the importer, and the file that one extends.
+          noted("UP3", () => from("up2").resolve("never-installed")),
+          noted("UP4", () => from("up3").resolve("never-installed")),
+          // The package.json above the importer.
+          noted("UP5", () => from("up4", "src").resolve("never-installed")),
+          // The package.json of the package that is asked for.
+          noted("UP6", () => from("up5").resolve("pkg")),
+          // Two files: the package.json above the importer, and the tsconfig.json next to it.
+          noted("UP7", () => from("up6", "src").resolve("never-installed")),
+        ]);
+        for (const [label, notes] of Object.entries(reported)) console.log(label, "reported", [...notes].join(" or "));
+      },
+
       async unlistable() {
         // The test made "xonly" a directory that the user of this process can enter and cannot
         // list. Such a directory reads as an empty one, so the node_modules in it is not
@@ -1739,6 +1785,52 @@ describe.concurrent("a failed resolution checks again what else it read from the
         "new listings by 200 more misses: 0",
         // Windows lists a directory without its identity, and reads each listing again.
         ...(isWindows ? [] : ["listings read again by 200 more misses: 0"]),
+      ].join("\n"),
+    });
+  });
+
+  // Each file ends where a key or a value is due. Reading it logs what is missing, once, and the record of its
+  // directory keeps that: every run of a miss reports it, the first one and each one after it.
+  test("an unchanged miss reports each config file that does not parse and makes no record or listing", async () => {
+    const unparsedFiles = (dir: string) => {
+      const tree = {
+        "up1/package.json": `{ "name": "up1", `,
+        "up2/tsconfig.json": `{ "compilerOptions": `,
+        "up3/base.json": `{ "compilerOptions": `,
+        "up3/tsconfig.json": JSON.stringify({ extends: "./base.json" }),
+        "up4/package.json": `{ "name": "up4", `,
+        "up5/node_modules/pkg/package.json": `{ "name": "pkg", "main": `,
+        "up5/node_modules/pkg/real.cjs": "",
+        "up6/package.json": `{ "name": "up6", `,
+        "up6/src/tsconfig.json": `{ "compilerOptions": `,
+      };
+      for (const [file, contents] of Object.entries(tree)) {
+        mkdirSync(dirname(join(dir, file)), { recursive: true });
+        writeFileSync(join(dir, file), contents);
+      }
+      mkdirSync(join(dir, "up4", "src"));
+    };
+    const noKey = (file: string) => `note: Expected string but found end of file at <dir>/${file}`;
+    const noValue = (file: string) => `note: Unexpected end of file at <dir>/${file}`;
+    const labels = ["UP1", "UP2", "UP3", "UP4", "UP5", "UP6", "UP7"];
+    expect(await runGroup("unparsed", undefined, unparsedFiles)).toEqual({
+      exitCode: 0,
+      stderr: "",
+      stdout: [
+        ...labels.map(label => `${label} ERR MODULE_NOT_FOUND`),
+        "lookups run again by 140 more misses: 140",
+        "new directory records by 140 more misses: 0",
+        "new listings by 140 more misses: 0",
+        // Windows lists a directory without its identity, and reads each listing again.
+        ...(isWindows ? [] : ["listings read again by 140 more misses: 0"]),
+        `UP1 reported ${noKey("up1/package.json:1:17")}`,
+        `UP2 reported ${noKey("up1/package.json:1:17")}`,
+        `UP3 reported ${noValue("up2/tsconfig.json:1:21")}`,
+        `UP4 reported ${noValue("up3/base.json:1:21")}`,
+        `UP5 reported ${noKey("up4/package.json:1:17")}`,
+        `UP6 reported ${noValue("up5/node_modules/pkg/package.json:1:25")}`,
+        // Each file once, the one above the importer first, as in a process that reads them for the first time.
+        `UP7 reported ${noKey("up6/package.json:1:17")}, ${noValue("up6/src/tsconfig.json:1:21")}`,
       ].join("\n"),
     });
   });

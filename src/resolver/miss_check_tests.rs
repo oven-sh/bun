@@ -787,6 +787,12 @@ fn a_directory_that_was_not_there_is_found_once_its_name_is_listed() {
             made.info(asker, "app/late/deep").is_none() && made.info(asker, "app/late").is_none()
         );
         assert!(made.info(0, "app/late").is_none());
+        let own = next_generation();
+        assert!(made.info(own, "app/other").is_none());
+        made.mkdir("app/other");
+        // The listing of `app` that this asker trusts lacks the name: the mark holds, though the directory is there now.
+        assert!(made.info(own, "app/other").is_none());
+        assert!(made.info(next_generation(), "app/other").is_some());
     });
 }
 

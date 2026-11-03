@@ -1035,13 +1035,21 @@ fn only_the_last_run_of_a_lookup_asks_the_package_manager() {
         );
         assert!(matches!(missing, ResultUnion::Failure(_)));
         assert_eq!(counts(), (asked + 2, ran_again + 3));
+        // The first run of a build checks at the generation of the build, and asks nothing either.
+        made.resolver.generation = next_generation();
+        let missing = made
+            .resolver
+            .resolve_and_auto_install(&dir, nowhere, stmt, allowed);
+        made.resolver.generation = 0;
+        assert!(matches!(missing, ResultUnion::Failure(_)));
+        assert_eq!(counts(), (asked + 3, ran_again + 4));
         // No run follows a miss of a resolver that trusts cached misses: its one run asks.
         let mut trusting = resolver();
         trusting.trust_cached_misses();
         trusting.env_loader = made.resolver.env_loader;
         let missing = trusting.resolve_and_auto_install(&dir, nowhere, stmt, allowed);
         assert!(matches!(missing, ResultUnion::Failure(_)));
-        assert_eq!(counts(), (asked + 3, ran_again + 3));
+        assert_eq!(counts(), (asked + 4, ran_again + 4));
     });
 }
 

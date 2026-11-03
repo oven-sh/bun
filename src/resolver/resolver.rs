@@ -2314,7 +2314,7 @@ impl<'a> Resolver<'a> {
         how == AfterMiss::Recheck && !self.trusts_cached_misses
     }
 
-    /// Whether the run that asks at `generation` may ask the package manager: each run of a resolver that trusts cached misses, else only the rerun, which asks at a generation of its own. A first run never asks where a rerun or the second pass of `with_miss_recheck` can follow.
+    /// Whether the run that asks at `generation` may ask the package manager. Each run of a resolver that trusts cached misses may. In any other resolver only the rerun may, which asks at a generation of its own: no first run does, also not one made with `AfterMiss::TrustCache`, which the second pass of `with_miss_recheck` can follow.
     #[inline]
     fn may_ask_package_manager(&self, generation: Generation) -> bool {
         self.trusts_cached_misses || generation != self.generation

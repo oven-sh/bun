@@ -132,7 +132,7 @@ pub(crate) enum JsxField {
 
 pub(crate) type JsxFieldSet = EnumSet<JsxField>;
 
-/// A config file that was read, with a hash of its bytes then (`None`: not read): each file of a `TSConfigJSON`, or one that gave no parsed value.
+/// A config file that was read, with a hash of its bytes then (`None`: not read): each file of a `TSConfigJSON`, or of a config that gave no parsed value.
 pub(crate) struct ConfigSource {
     pub(crate) path: Box<[u8]>,
     pub(crate) hash: Option<u64>,

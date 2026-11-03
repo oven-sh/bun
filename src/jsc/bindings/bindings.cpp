@@ -3717,8 +3717,8 @@ static JSObject* shallowCopyForDeepMatch(JSGlobalObject* globalObject, ThrowScop
 {
     auto& vm = JSC::getVM(globalObject);
     JSObject* copy = nullptr;
-    // A Proxy is copied as what it stands for, through its traps.
-    bool isProxy = object->type() == ProxyObjectType;
+    // A Proxy of an array or of an object is copied as what it stands for, through its traps. A Proxy of a function is printed as is, like a function.
+    bool isProxy = object->type() == ProxyObjectType && !object->isCallable();
     bool copyIsArray = isProxy ? isArray(globalObject, object) : isJSArray(object);
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (copyIsArray) {

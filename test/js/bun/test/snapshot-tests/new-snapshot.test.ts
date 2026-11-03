@@ -94,6 +94,10 @@ test("a property matcher behind a Proxy is stored as the matcher", async () => {
     const id = Number(process.env.ID);
     test("array", () => { expect({ a: new Proxy([{ id }], {}) }).toMatchSnapshot({ a: [{ id: expect.any(Number) }] }); });
     test("object", () => { expect(new Proxy({ id }, {})).toMatchSnapshot({ id: expect.any(Number) }); });
+    // a Proxy of a function is printed as a function
+    const fn = Object.assign(function f() {}, { id });
+    test("function", () => { expect({ f: fn }).toMatchSnapshot({ f: { id: expect.any(Number) } }); });
+    test("proxied", () => { expect({ f: new Proxy(fn, {}) }).toMatchSnapshot({ f: { id: expect.any(Number) } }); });
   `;
   using dir = tempDir("snapshot-proxy-holder", { "a.test.ts": source });
   async function run(id: number) {
@@ -108,11 +112,15 @@ test("a property matcher behind a Proxy is stored as the matcher", async () => {
     return { results: stderr.match(/^\((pass|fail)\) \w+/gm), exitCode };
   }
   // the first run stores the matchers, so the second run with another id passes
-  expect(await run(1)).toEqual({ results: ["(pass) array", "(pass) object"], exitCode: 0 });
-  expect(fs.readFileSync(`${dir}/__snapshots__/a.test.ts.snap`, "utf8")).toBe(
-    "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n" +
-      '\nexports[`array 1`] = `\n{\n  "a": [\n    {\n      "id": Any<Number>,\n    },\n  ],\n}\n`;\n' +
-      '\nexports[`object 1`] = `\n{\n  "id": Any<Number>,\n}\n`;\n',
+  const results = ["(pass) array", "(pass) object", "(pass) function", "(pass) proxied"];
+  expect(await run(1)).toEqual({ results, exitCode: 0 });
+  const snap = fs.readFileSync(`${dir}/__snapshots__/a.test.ts.snap`, "utf8");
+  expect(snap).toContain(
+    '\nexports[`array 1`] = `\n{\n  "a": [\n    {\n      "id": Any<Number>,\n    },\n  ],\n}\n`;\n',
   );
-  expect(await run(2)).toEqual({ results: ["(pass) array", "(pass) object"], exitCode: 0 });
+  expect(snap).toContain('\nexports[`object 1`] = `\n{\n  "id": Any<Number>,\n}\n`;\n');
+  // a function is printed without its properties, so neither function entry has the id or the matcher
+  expect(snap).not.toContain('"id": 1');
+  expect(snap.split("exports[`function 1`]")[1]).not.toContain("Any<Number>");
+  expect(await run(2)).toEqual({ results, exitCode: 0 });
 });

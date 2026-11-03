@@ -341,6 +341,15 @@ unsafe fn environment_block(envp: Envp) -> Vec<u16> {
     }
     let name = |variable: &Variable| &units[variable.start..variable.start + variable.name_len];
     variables.sort_by(|a, b| compare_names(name(a), name(b)));
+    // A child finds the first of the names that differ in case at most, so that is the one given last.
+    variables.dedup_by(|later, earlier| {
+        let is_same =
+            later.name_len != 0 && compare_names(name(later), name(earlier)) == Order::Equal;
+        if is_same {
+            core::mem::swap(later, earlier);
+        }
+        is_same
+    });
 
     let mut block = Vec::with_capacity(units.len() + variables.len() + 1);
     let mut required = REQUIRED_VARIABLES.iter().copied().peekable();
@@ -762,7 +771,7 @@ impl Request<'_> {
         startup.StartupInfo.wShowWindow = self.show_window;
 
         let mut reserved2;
-        // Not whatever else is inheritable right now, such as what another thread made for another child.
+        // What the child inherits.
         let mut handles: &[HANDLE] = &[];
         if let Some(stdio) = self.stdio {
             reserved2 = stdio.reserved2();

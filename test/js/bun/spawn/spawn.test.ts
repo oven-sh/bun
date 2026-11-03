@@ -20,6 +20,7 @@ import {
 } from "harness";
 import {
   closeSync,
+  copyFileSync,
   fstatSync,
   mkdirSync,
   openSync,
@@ -1877,6 +1878,39 @@ it.if(isWindows)("a child gets this process's USERDOMAIN when its env has none, 
     return await proc.stdout.text();
   };
   expect(await Promise.all([run("somewhere"), run("")])).toEqual(['"somewhere"\n', '""\n']);
+});
+
+// `{ ...process.env, PATH }` has two of them when the variable is spelled `Path`.
+it.if(isWindows)("of the names in env that differ in case only, the last one counts", async () => {
+  using dir = tempDir("spawn-env-case", { "first/.keep": "", "last/.keep": "" });
+  const system32 = join(process.env.SystemRoot!, "System32");
+  copyFileSync(join(system32, "hostname.exe"), join(String(dir), "first", "tool.exe"));
+  copyFileSync(join(system32, "whoami.exe"), join(String(dir), "last", "tool.exe"));
+
+  const names = { Foo: "1", FOO: "2", bar: "only", BAZ: "1", baz: "2", Baz: "3" };
+  const script = `console.log(JSON.stringify(Object.entries(process.env).filter(([name]) => /^(foo|bar|baz)$/i.test(name))))`;
+  const run = async (cmd: string[], env: Record<string, string | undefined>) => {
+    await using proc = spawn({ cmd, env, stdio: ["ignore", "pipe", "inherit"] });
+    return (await proc.stdout.text()).trim();
+  };
+  const { SystemRoot } = process.env;
+  const [inBun, inCmd, lastIsUpper, lastIsMixed] = await Promise.all([
+    run([bunExe(), "-e", script], { ...bunEnv, ...names }),
+    run([join(system32, "cmd.exe"), "/d", "/s", "/c", "echo %foo% %bar% %baz%"], { SystemRoot, ...names }),
+    run(["tool"], { SystemRoot, Path: join(String(dir), "first"), PATH: join(String(dir), "last") }),
+    run(["tool"], { SystemRoot, PATH: join(String(dir), "first"), Path: join(String(dir), "last") }),
+  ]);
+  expect({
+    inBun: Object.fromEntries(JSON.parse(inBun)),
+    inCmd,
+    lastIsUpper: lastIsUpper.includes("\\") ? "last" : "first",
+    lastIsMixed: lastIsMixed.includes("\\") ? "last" : "first",
+  }).toEqual({
+    inBun: { FOO: "2", bar: "only", Baz: "3" },
+    inCmd: "2 only 3",
+    lastIsUpper: "last",
+    lastIsMixed: "last",
+  });
 });
 
 // Two programs of Windows under other names: what is printed tells which file ran. The rules are those of Node.js.

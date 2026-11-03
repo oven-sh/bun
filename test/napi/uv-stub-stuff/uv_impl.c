@@ -1313,6 +1313,91 @@ static napi_value test_udp_echo(napi_env env, napi_callback_info info) {
   return result;
 }
 
+struct udp_stop_test {
+  uv_udp_t server;
+  uv_udp_t client;
+  uv_udp_send_t sends[2];
+  uv_timer_t timer;
+  struct reporter reporter;
+  char buf[64];
+  int closed;
+};
+
+static void udp_stop_close_cb(uv_handle_t *handle) {
+  struct udp_stop_test *test = handle->data;
+  if (++test->closed == 3) {
+    report(&test->reporter, "closed", test->closed, 0);
+    reporter_destroy(&test->reporter);
+    free(test);
+  }
+}
+
+// Stops receiving from inside alloc_cb, as an addon might when it runs out of
+// buffers: no datagram may be read into the buffer or delivered after that.
+static void udp_stop_alloc(uv_handle_t *handle, size_t suggested,
+                           uv_buf_t *buf) {
+  struct udp_stop_test *test = handle->data;
+  (void)suggested;
+  report(&test->reporter, "alloc stops", uv_udp_recv_stop((uv_udp_t *)handle),
+         0);
+  *buf = uv_buf_init(test->buf, sizeof(test->buf));
+}
+
+static void udp_stop_recv(uv_udp_t *handle, ssize_t nread, const uv_buf_t *buf,
+                          const struct sockaddr *addr, unsigned flags) {
+  struct udp_stop_test *test = handle->data;
+  (void)flags;
+  report(&test->reporter, "recv", (int32_t)nread,
+         addr == NULL && buf->base == test->buf);
+}
+
+static void udp_stop_sent(uv_udp_send_t *req, int status) {
+  (void)req;
+  (void)status;
+}
+
+static void udp_stop_timer(uv_timer_t *timer) {
+  struct udp_stop_test *test = timer->data;
+  uv_close((uv_handle_t *)&test->server, udp_stop_close_cb);
+  uv_close((uv_handle_t *)&test->client, udp_stop_close_cb);
+  uv_close((uv_handle_t *)&test->timer, udp_stop_close_cb);
+}
+
+// testUdpStopInAlloc(callback) sends two datagrams to a receiving server whose
+// alloc_cb calls uv_udp_recv_stop. Reports `alloc stops 0 0`, then `recv 0 1`
+// (nothing read, no address, the addon's buffer handed back), then `closed 3 0`
+// when a timer closes everything 100ms later: neither datagram is delivered.
+static napi_value test_udp_stop_in_alloc(napi_env env, napi_callback_info info) {
+  napi_value args[1];
+  get_args(env, info, args, 1);
+  struct udp_stop_test *test = calloc(1, sizeof(*test));
+  reporter_init(&test->reporter, env, args[0]);
+  uv_loop_t *loop = get_loop(env, false);
+  test->server.data = test;
+  test->client.data = test;
+  test->timer.data = test;
+  struct sockaddr_in any = loopback(0);
+  if (uv_udp_init(loop, &test->server) != 0 ||
+      uv_udp_init(loop, &test->client) != 0 ||
+      uv_udp_bind(&test->server, (const struct sockaddr *)&any, 0) != 0 ||
+      uv_timer_init(loop, &test->timer) != 0) {
+    napi_throw_error(env, NULL, "uv_udp_init, uv_udp_bind or uv_timer_init failed");
+    return NULL;
+  }
+  struct sockaddr_in to = loopback(udp_port(&test->server));
+  uv_buf_t ping = uv_buf_init("ping", 4);
+  uv_udp_recv_start(&test->server, udp_stop_alloc, udp_stop_recv);
+  for (int i = 0; i < 2; i++) {
+    if (uv_udp_send(&test->sends[i], &test->client, &ping, 1,
+                    (const struct sockaddr *)&to, udp_stop_sent) != 0) {
+      napi_throw_error(env, NULL, "uv_udp_send failed");
+      return NULL;
+    }
+  }
+  uv_timer_start(&test->timer, udp_stop_timer, 100, 0);
+  return NULL;
+}
+
 struct udp_cancel_test {
   uv_udp_t handle;
   uv_udp_send_t first;
@@ -1620,6 +1705,9 @@ napi_value Init(napi_env env, napi_value exports) {
 
   napi_create_function(env, NULL, 0, test_udp_echo, NULL, &fn);
   napi_set_named_property(env, exports, "testUdpEcho", fn);
+
+  napi_create_function(env, NULL, 0, test_udp_stop_in_alloc, NULL, &fn);
+  napi_set_named_property(env, exports, "testUdpStopInAlloc", fn);
 
   napi_create_function(env, NULL, 0, test_udp_close_cancels, NULL, &fn);
   napi_set_named_property(env, exports, "testUdpCloseCancels", fn);

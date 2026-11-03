@@ -1341,12 +1341,16 @@ impl UvUdpNode {
 
     /// Watches the directions the handle needs, and keeps the process alive while it
     /// needs any, like libuv's `uv__io_start`/`uv__io_stop` and `uv__handle_start`.
+    /// Returns 0, or the error from registering with the event loop: then nothing is
+    /// watched and the handle doesn't keep the process alive, since no callback
+    /// would ever come.
     ///
     /// # Safety
     /// The handle isn't closing.
-    unsafe fn update(&mut self) {
+    unsafe fn update(&mut self) -> c_int {
         let want_read = self.reading;
         let want_write = !self.queued.is_empty() || !self.completed.is_empty();
+        let mut err = 0;
         if !self.poll.is_null() {
             let ctx = self.loop_ctx();
             // SAFETY: this is the JS thread, whose loop lives as long as the VM.
@@ -1362,14 +1366,26 @@ impl UvUdpNode {
                 has_write = false;
             }
             if want_read && !has_read {
-                let _ = poll.register(uws_loop, Flags::Readable, false);
+                if let Err(e) = poll.register(uws_loop, Flags::Readable, false) {
+                    err = -(e.errno as c_int);
+                }
             }
-            if want_write && !has_write {
-                let _ = poll.register(uws_loop, Flags::Writable, false);
+            if err == 0 && want_write && !has_write {
+                if let Err(e) = poll.register(uws_loop, Flags::Writable, false) {
+                    err = -(e.errno as c_int);
+                }
+            }
+            if err != 0 {
+                let _ = poll.unregister(uws_loop, false);
             }
         }
         // SAFETY: fn contract.
-        unsafe { (*self.udp).ref_state.set_active(want_read || want_write) };
+        unsafe {
+            (*self.udp)
+                .ref_state
+                .set_active(err == 0 && (want_read || want_write))
+        };
+        err
     }
 
     /// Called by `__bun_run_file_poll` when the socket is readable or writable.
@@ -1390,7 +1406,8 @@ impl UvUdpNode {
                 UvUdpNode::run_completed(this);
             }
             if !UvUdpNode::closing(this) {
-                (*this).update();
+                // A failure here can't be reported to anyone; the handle stops being active.
+                let _ = (*this).update();
             }
         }
     }
@@ -1430,6 +1447,16 @@ impl UvUdpNode {
             let _handles = CallbackScope::open(global);
             // SAFETY: calls the addon's callback on the loop thread with its handle.
             unsafe { alloc_cb(udp.cast::<UvHandle>(), 64 * 1024, &raw mut buf) };
+            // alloc_cb may have stopped receiving or closed the handle: read nothing,
+            // and give the buffer back through recv_cb ("nothing read") so it's freed.
+            // SAFETY: fn contract. The node outlives the callback.
+            if unsafe { UvUdpNode::closing(this) || !(*this).reading } {
+                if !buf.base.is_null() {
+                    // SAFETY: same as the `alloc_cb` call.
+                    unsafe { recv_cb(udp, 0, &raw const buf, core::ptr::null(), 0) };
+                }
+                return;
+            }
             if buf.base.is_null() || buf.len == 0 {
                 // SAFETY: same as above.
                 unsafe {
@@ -2049,7 +2076,27 @@ pub(crate) unsafe extern "C" fn uv_udp_send(
         node.send_queued();
     }
     // SAFETY: the handle isn't closing (`open_node`).
-    unsafe { node.update() };
+    let err = unsafe { node.update() };
+    if err != 0 {
+        // Still queued (not sent): hand it back to the addon, as libuv's failed send
+        // does, rather than leaving it waiting for a callback that won't come.
+        if let Some(i) = node.queued.iter().position(|r| r.as_ptr() == req) {
+            node.queued.remove(i);
+            // SAFETY: the request was set up above and is ours until its callback.
+            unsafe {
+                (*handle).send_queue_size -= total_len((*req).bufs, (*req).nbufs);
+                (*handle).send_queue_count -= 1;
+                if (*req).bufs != (&raw mut (*req).bufsml).cast::<UvBuf>() {
+                    drop(Box::from_raw(core::ptr::slice_from_raw_parts_mut(
+                        (*req).bufs,
+                        (*req).nbufs as usize,
+                    )));
+                }
+                (*req).bufs = core::ptr::null_mut();
+            }
+            return err;
+        }
+    }
     0
 }
 
@@ -2135,7 +2182,16 @@ pub(crate) unsafe extern "C" fn uv_udp_recv_start(
     }
     node.reading = true;
     // SAFETY: the handle isn't closing (`open_node`).
-    unsafe { node.update() };
+    let err = unsafe { node.update() };
+    if err != 0 {
+        node.reading = false;
+        // SAFETY: fn contract.
+        unsafe {
+            (*handle).alloc_cb = None;
+            (*handle).recv_cb = None;
+        }
+        return err;
+    }
     0
 }
 
@@ -2160,7 +2216,8 @@ pub(crate) unsafe extern "C" fn uv_udp_recv_stop(handle: *mut UvUdp) -> c_int {
     unsafe {
         (*handle).alloc_cb = None;
         (*handle).recv_cb = None;
-        node.update();
+        // Only unregisters, which has nothing to report.
+        let _ = node.update();
     }
     0
 }

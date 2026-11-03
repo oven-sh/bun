@@ -27,7 +27,7 @@ test("what one place sets the others see", () => {
     places[setter].state.setMaxListeners(number); places[setter].state.setEnv("SET_BY", setter); places[setter].state.setGlobal("setBy", setter);
     for (const reader of Object.keys(places)) note("set by", setter, "read by", reader, places[reader].state.maxListeners(), places[reader].state.env("SET_BY"), places[reader].state.global("setBy"));
   }
-  Error.stackTraceLimit = 3; for (const reader of Object.keys(places)) note("stack limit", reader, places[reader].state.stackLimit(), places[reader].state.framesOfNew()); Error.stackTraceLimit = 10;
+  Error.stackTraceLimit = 1; for (const reader of Object.keys(places)) note("stack limit", reader, places[reader].state.stackLimit(), places[reader].state.framesOfNew()); Error.stackTraceLimit = 10;
   Error.prepareStackTrace = (error, frames) => "prepared " + frames.length; for (const reader of Object.keys(places)) note("prepared", reader, places[reader].state.prepared().replace(/\d+/, "n")); Error.prepareStackTrace = undefined;
   util.inspect.defaultOptions.depth = 0; for (const reader of Object.keys(places)) note("depth", reader, places[reader].state.inspectDepth()); util.inspect.defaultOptions.depth = 2;
   class Shown { [util.inspect.custom]() { return "shown my way"; } } for (const reader of Object.keys(places)) note("custom", reader, places[reader].state.inspected(new Shown()), places[reader].state.inspected({ inner: new Shown() }));

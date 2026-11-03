@@ -26,9 +26,9 @@ SEEN order tick own,tick helper,tick pkg,tick own,tick pkg,tick helper,then own,
 SEEN piped helper a
 SEEN piped own a
 SEEN piped pkg a
-SEEN prepared helper text
-SEEN prepared own text
-SEEN prepared pkg text
+SEEN prepared helper prepared n
+SEEN prepared own prepared n
+SEEN prepared pkg prepared n
 SEEN prototype helper function function function function
 SEEN prototype own function function function function
 SEEN prototype pkg function function function function
@@ -41,9 +41,9 @@ SEEN set by own read by pkg 20 20 20 own own string own
 SEEN set by pkg read by helper 22 22 22 pkg pkg string pkg
 SEEN set by pkg read by own 22 22 22 pkg pkg string pkg
 SEEN set by pkg read by pkg 22 22 22 pkg pkg string pkg
-SEEN stack limit helper 3 3
-SEEN stack limit own 3 3
-SEEN stack limit pkg 3 3
+SEEN stack limit helper 1 2
+SEEN stack limit own 1 2
+SEEN stack limit pkg 1 2
 SEEN store helper helper helper's later 5
 SEEN store helper own helper's later 5
 SEEN store helper pkg helper's later 5

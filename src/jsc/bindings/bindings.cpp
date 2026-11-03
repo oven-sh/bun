@@ -7379,41 +7379,44 @@ CPP_DECL [[ZIG_EXPORT(check_slow)]] void Bun__JSValue__setPrototypeDirect(JSC::E
     return;
 }
 
-CPP_DECL [[ZIG_EXPORT(nothrow)]] unsigned int JSC__JSGlobalObject__getCallerLineNumber(JSC::JSGlobalObject* globalObject)
+// The line of the innermost call that `file` makes on the stack, or 0 if no frame of `file` is on it.
+CPP_DECL unsigned int JSC__JSGlobalObject__getCallerLineInFile(JSC::JSGlobalObject* globalObject, const BunString* file)
 {
     auto& vm = JSC::getVM(globalObject);
+    String sourceURL = file->toWTFString(BunString::ZeroCopy);
     JSC::LineColumn lineColumn;
-    String sourceURL;
 
     JSC::StackVisitor::visit(vm.topCallFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-        if (Zig::isImplementationVisibilityPrivate(visitor))
+        if (Zig::isImplementationVisibilityPrivate(visitor) || !visitor->hasLineAndColumnInfo())
             return WTF::IterationStatus::Continue;
 
-        if (visitor->hasLineAndColumnInfo()) {
-            String currentSourceURL = Zig::sourceURL(visitor);
+        // Zig::sourceURL() prefers a `//# sourceURL=` comment. The debugger ends every module with one, and it is not the
+        // path of a file whose name is not ASCII.
+        auto* codeBlock = visitor->codeBlock();
+        auto* provider = codeBlock && codeBlock->ownerExecutable() ? codeBlock->source().provider() : nullptr;
+        if ((provider ? provider->sourceURL() : Zig::sourceURL(visitor)) != sourceURL)
+            return WTF::IterationStatus::Continue;
 
-            if (!currentSourceURL.startsWith("builtin://"_s) && !currentSourceURL.startsWith("node:"_s)) {
-                lineColumn = visitor->computeLineAndColumn();
-                sourceURL = currentSourceURL;
-                return WTF::IterationStatus::Done;
-            }
-        }
-        return WTF::IterationStatus::Continue;
+        lineColumn = visitor->computeLineAndColumn();
+        return WTF::IterationStatus::Done;
     });
 
-    if (!sourceURL.isEmpty() && lineColumn.line > 0) {
-        Bun::OwnedZigStackFrames remappedFrames(1);
-        ZigStackFrame& remappedFrame = remappedFrames[0];
-        remappedFrame.position.line_zero_based = lineColumn.line - 1;
-        remappedFrame.position.column_zero_based = lineColumn.column;
-        remappedFrame.source_url = Bun::toStringRef(sourceURL);
+    if (!lineColumn.line)
+        return 0;
 
-        remappedFrames.remap(Bun::vm(globalObject));
+    Bun::OwnedZigStackFrames remappedFrames(1);
+    ZigStackFrame& remappedFrame = remappedFrames[0];
+    remappedFrame.position.line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt();
+    remappedFrame.position.column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt();
+    remappedFrame.source_url = Bun::toStringRef(sourceURL);
 
-        return remappedFrame.position.line_zero_based + 1;
-    }
+    remappedFrames.remap(Bun::vm(globalObject));
 
-    return lineColumn.line;
+    // The source map of a bundle names the files that the bundle was made from. The caller pairs the line with `file`.
+    if (remappedFrame.source_url.toWTFString(BunString::ZeroCopy) != sourceURL)
+        return lineColumn.line;
+
+    return OrdinalNumber::fromZeroBasedInt(remappedFrame.position.line_zero_based).oneBasedInt();
 }
 
 // REPL evaluation function - evaluates JavaScript code in the global scope

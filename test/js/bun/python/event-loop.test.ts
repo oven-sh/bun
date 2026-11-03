@@ -177,9 +177,11 @@ class Awaitable:
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(isWindows).concurrent("signal handlers and finalizers run while the process idles in the event loop", async () => {
-  const files = {
-    "main.py": `
+test
+  .skipIf(isWindows)
+  .concurrent("signal handlers and finalizers run while the process idles in the event loop", async () => {
+    const files = {
+      "main.py": `
 import js, os, signal, sys
 mode = sys.argv[1]
 if mode == "handler":
@@ -207,25 +209,30 @@ elif mode == "finalizer":
     interval = js.setInterval(churn, 1)
 print("the module is over")
 `,
-  };
-  expect(await run(files, "handler")).toEqual({
-    stdout: lines("the module is over", "the handler ran"),
-    stderr: "",
-    exitCode: 0,
-    signalCode: null,
+    };
+    expect(await run(files, "handler")).toEqual({
+      stdout: lines("the module is over", "the handler ran"),
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+    const interrupted = await run(files, "interrupt");
+    expect(interrupted.stdout).toBe("the module is over\n");
+    expect(interrupted.stderr).toEndWith("KeyboardInterrupt\n");
+    expect(interrupted.signalCode).toBe("SIGINT");
+    expect(await run(files, "exit")).toEqual({
+      stdout: "the module is over\n",
+      stderr: "",
+      exitCode: 4,
+      signalCode: null,
+    });
+    expect(await run(files, "finalizer")).toEqual({
+      stdout: lines("the module is over", "finalized"),
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
   });
-  const interrupted = await run(files, "interrupt");
-  expect(interrupted.stdout).toBe("the module is over\n");
-  expect(interrupted.stderr).toEndWith("KeyboardInterrupt\n");
-  expect(interrupted.signalCode).toBe("SIGINT");
-  expect(await run(files, "exit")).toEqual({ stdout: "the module is over\n", stderr: "", exitCode: 4, signalCode: null });
-  expect(await run(files, "finalizer")).toEqual({
-    stdout: lines("the module is over", "finalized"),
-    stderr: "",
-    exitCode: 0,
-    signalCode: null,
-  });
-});
 
 test.skipIf(isWindows).concurrent("a signal interrupts a wait", async () => {
   const { stdout, stderr, exitCode } = await run({
@@ -337,4 +344,74 @@ print(asyncio.run(main()), done)
     stderr: "",
     exitCode: 0,
   });
+});
+
+test.concurrent("a promise is a future to asyncio", async () => {
+  const { stdout, stderr, exitCode } = await run({
+    "main.py": `
+import asyncio, js
+
+def later(value, fails=False):
+    return js.Promise.new(lambda resolve, reject: js.setTimeout(lambda: (reject if fails else resolve)(value), 1))
+
+rejected = js.Promise.reject(js.Error("at once"))
+print(asyncio.isfuture(rejected), asyncio.ensure_future(rejected) is rejected)
+# Nothing here counts as a rejection that nobody handled.
+print(await asyncio.gather(rejected, later(js.Error("later"), True), later(1), return_exceptions=True))
+
+pending = later("value")
+print(pending.done(), pending.cancelled(), pending.cancel(), pending.get_loop() is asyncio.get_running_loop())
+try:
+    pending.result()
+except asyncio.InvalidStateError as error:
+    print("InvalidStateError", error)
+seen = []
+pending.add_done_callback(seen.append)
+pending.add_done_callback(print)
+print(pending.remove_done_callback(print))
+done, waiting = await asyncio.wait([pending, later(2)])
+print(len(done), len(waiting), pending.done(), pending.result(), pending.exception(), seen == [pending])
+
+failed = later(js.RangeError("no"), True)
+await asyncio.wait([failed])
+print(type(failed.exception()).__name__, failed.exception().value.message)
+try:
+    failed.result()
+except Exception as error:
+    print(type(error).__name__, error)
+
+print(await asyncio.shield(later(3)), [await first for first in asyncio.as_completed([later(4)])])
+print(await asyncio.wait_for(later(5), 10))
+
+async def coroutine():
+    await asyncio.sleep(3600)
+promise = js.Function("f", "return f()")(coroutine)
+await asyncio.sleep(0)
+print(type(promise).__name__, promise.cancel())
+try:
+    await promise
+except asyncio.CancelledError:
+    print("cancelled", promise.cancelled())
+print(asyncio.get_running_loop().is_running())
+`,
+  });
+  expect(stderr).toBe("");
+  expect(stdout).toBe(
+    lines(
+      "True True",
+      "[JSError('Error: at once'), JSError('Error: later'), 1]",
+      "False False False True",
+      "InvalidStateError Result is not ready.",
+      "1",
+      "2 0 True value None True",
+      "JSError no",
+      "JSError RangeError: no",
+      "3 [4]",
+      "5",
+      "JSPromise True",
+      "cancelled True",
+      "True",
+    ),
+  );
+  expect(exitCode).toBe(0);
 });

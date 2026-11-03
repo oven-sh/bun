@@ -34,6 +34,7 @@ class _Looking:
 class BunEventLoop(asyncio.SelectorEventLoop):
     def __init__(self):
         self._bun_turning = False
+        self._bun_closing = False
         self._bun_asked = False
         self._bun_timer = None
         self._bun_thread = _thread.get_ident()
@@ -120,12 +121,24 @@ class BunEventLoop(asyncio.SelectorEventLoop):
         if not self._bun_turning:
             self._bun_plan()
 
+    def is_running(self):
+        """Bun's event loop runs it, between the iterations too."""
+        return not self._closed and not self._bun_closing
+
+    def _check_running(self):
+        # An iteration asks too, as it begins.
+        if not self._bun_turning:
+            raise RuntimeError("This event loop is already running")
+        if events._get_running_loop() is not None:
+            raise RuntimeError("Cannot run the event loop while another loop is running")
+
     def run_forever(self):
         raise RuntimeError("Bun's event loop runs this loop")
 
     def close(self):
         if self.is_closed():
             return
+        self._bun_closing = True
         self._bun_timer.close()
         self._bun_watcher.close()
         super().close()
@@ -177,6 +190,102 @@ def run(awaitable):
     task.add_done_callback(done)
     _task_of.set(resolvers.promise, task)
     return resolvers.promise
+
+
+def coroutine_for(promise):
+    """The coroutine that a task made of a JavaScript promise runs: create_task(promise)."""
+    # Whoever has the task hears of a failure.
+    promise.catch(_ignore)
+    return _await(promise)
+
+
+# ---- A promise is a future: what asyncio asks of one ----
+
+
+_seen_rejected = js.WeakSet()
+
+
+def _state(promise):
+    """(0, None) while the promise is pending, (1, value), or (2, reason)."""
+    state = _js.promise_state(promise)
+    # Who has asked knows of the rejection, and it is theirs to handle.
+    if state[0] == 2 and not _seen_rejected.has(promise):
+        _seen_rejected.add(promise)
+        promise.catch(_ignore)
+    return state
+
+
+def future_done(promise):
+    return _state(promise)[0] != 0
+
+
+def future_cancelled(promise):
+    state, reason = _state(promise)
+    return state == 2 and isinstance(reason, asyncio.CancelledError)
+
+
+def future_result(promise):
+    state, value = _state(promise)
+    if state == 0:
+        raise asyncio.InvalidStateError("Result is not ready.")
+    if state == 2:
+        raise _js.exception_for(value)
+    return value
+
+
+def future_exception(promise):
+    state, value = _state(promise)
+    if state == 0:
+        raise asyncio.InvalidStateError("Exception is not set.")
+    if state == 1:
+        return None
+    exception = _js.exception_for(value)
+    if isinstance(exception, asyncio.CancelledError):
+        raise exception
+    return exception
+
+
+def future_cancel(promise, msg=None):
+    """There is no cancelling a promise, but for the coroutine behind one that an `async def` gave JavaScript."""
+    task = _task_of.get(promise)
+    return task is not None and task.cancel(msg)
+
+
+def future_get_loop(promise):
+    """A promise belongs to no loop: whichever asks can have it."""
+    task = _task_of.get(promise)
+    if task is not None:
+        return task.get_loop()
+    return events._get_running_loop() or loop()
+
+
+# For each promise that has any, the callbacks still to be called: [callback, context, loop]
+_callbacks = js.WeakMap()
+
+
+def future_add_done_callback(promise, callback, *, context=None):
+    entry = [callback, context, future_get_loop(promise)]
+    entries = _callbacks.get(promise)
+    if entries is None:
+        entries = []
+        _callbacks.set(promise, entries)
+    entries.append(entry)
+
+    def settled(value=None):
+        if any(entry is other for other in entries):
+            entries[:] = [other for other in entries if other is not entry]
+            if not entry[2].is_closed():
+                entry[2].call_soon_threadsafe(callback, promise, context=context)
+
+    promise.then(settled, settled)
+
+
+def future_remove_done_callback(promise, callback):
+    entries = _callbacks.get(promise) or []
+    kept = [entry for entry in entries if entry[0] != callback]
+    removed = len(entries) - len(kept)
+    entries[:] = kept
+    return removed
 
 
 def _settle(future, value, thrown):

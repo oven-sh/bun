@@ -156,6 +156,12 @@ async function orders() {
   });
   const array = [adding(entry => array.push(entry))];
   const set = new Set([adding(entry => set.add(entry))]);
+  const cleared = new Set([
+    adding(entry => {
+      cleared.clear();
+      cleared.add(entry);
+    }),
+  ]);
   // keyUsages from a new realm: an entry for "sign" whose conversion defines `return` for every iterator of that
   // realm, then "bogus". The realm is new each time, and never this one: in a realm whose iterators have `return`,
   // JSC reads no array and no Set in place.
@@ -183,8 +189,12 @@ async function orders() {
     "an array with an entry that is not a usage": await run(() =>
       subtle.generateKey(hmac, true, [logged("bogus"), logged("verify")]),
     ),
+    "a Set with an entry that is not a usage": await run(() =>
+      subtle.generateKey(hmac, true, new Set([logged("bogus"), logged("verify")])),
+    ),
     "an array that an entry appends to": await run(() => subtle.generateKey(hmac, true, array)),
     "a Set that an entry adds to": await run(() => subtle.generateKey(hmac, true, set)),
+    "a Set that an entry clears and then adds to": await run(() => subtle.generateKey(hmac, true, cleared)),
     "a Set without an entry": await run(() => subtle.generateKey(hmac, true, new Set())),
     "an array with an entry that defines return, then one that is not a usage": await run(() =>
       subtle.generateKey(hmac, true, definingArray),

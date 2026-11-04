@@ -1994,8 +1994,13 @@ describe("keyUsages", () => {
       answer: bogus,
     },
     "an array with an entry that is not a usage": { log: ["toString bogus"], answer: bogus },
+    "a Set with an entry that is not a usage": { log: ["toString bogus"], answer: bogus },
     "an array that an entry appends to": { log: ["toString sign", "toString verify"], answer: ["sign", "verify"] },
     "a Set that an entry adds to": { log: ["toString sign", "toString verify"], answer: ["sign", "verify"] },
+    "a Set that an entry clears and then adds to": {
+      log: ["toString sign", "toString verify"],
+      answer: ["sign", "verify"],
+    },
     "a Set without an entry": {
       log: [],
       answer: { name: "SyntaxError", code: 12, message: "Usages cannot be empty when creating a key." },

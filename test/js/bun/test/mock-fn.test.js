@@ -2292,15 +2292,25 @@ describe("spyOn", () => {
           for (const getterFirst of [true, false]) {
             using fn = spyOn(Error, "prepareStackTrace");
             using getter = spyOn(Error, "prepareStackTrace", "get");
-            expect(Object.getOwnPropertyDescriptor(Error, "prepareStackTrace")).toEqual({
-              get: getter,
-              set: undefined,
-              enumerable: false,
-              configurable: true,
-            });
+            const stacked = { get: getter, set: undefined, enumerable: false, configurable: true };
+            expect(Object.getOwnPropertyDescriptor(Error, "prepareStackTrace")).toEqual(stacked);
             expect(Error.prepareStackTrace).toBe(fn);
-            (getterFirst ? getter : fn).mockRestore();
-            (getterFirst ? fn : getter).mockRestore();
+            expect(getter).toHaveBeenCalledTimes(1);
+
+            if (getterFirst) {
+              getter.mockRestore();
+              expect(Object.getOwnPropertyDescriptor(Error, "prepareStackTrace")).toEqual({ ...original, value: fn });
+              fn.mockRestore();
+            } else {
+              // The spy on the getter stays until it is restored itself, and the engine has the original back already.
+              fn.mockRestore();
+              expect(Object.getOwnPropertyDescriptor(Error, "prepareStackTrace")).toEqual(stacked);
+              expect(new Error("message").stack).toStartWith("Error: message\n    at ");
+              expect(fn).not.toHaveBeenCalled();
+              void Error.prepareStackTrace;
+              expect(getter).toHaveBeenCalledTimes(2);
+              getter.mockRestore();
+            }
             expect(Object.getOwnPropertyDescriptor(Error, "prepareStackTrace")).toEqual(original);
           }
         });

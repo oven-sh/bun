@@ -868,6 +868,19 @@ public:
         return getter && getter->boundThis() == this;
     }
 
+    // True if `storage` is the accessor of a spy on the getter or setter that puts `original` back when it is restored.
+    static bool isAccessorOfSpyOver(JSValue storage, JSCell* original)
+    {
+        auto* accessor = tryJSDynamicCast<GetterSetter*>(storage);
+        if (!accessor)
+            return false;
+        auto putsBack = [&](JSObject* half) {
+            auto* spy = dynamicDowncast<JSMockFunction>(half);
+            return spy && spy->m_spyOriginal.get() == JSValue(original);
+        };
+        return putsBack(accessor->getter()) || putsBack(accessor->setter());
+    }
+
     // `original` is getOwnPropertyStorage() of the replaced property, or empty if the target had no own one.
     // With SpyAttributeNativeSetter nothing was replaced: it is an InternalFieldTuple of the CustomGetterSetter and the value that was read from it.
     void didInstall(JSObject* target, const Identifier& key, JSValue original, unsigned attributes);
@@ -1013,8 +1026,8 @@ private:
             if (attributes & SpyAttributeNativeSetter) {
                 auto* originalStorage = uncheckedDowncast<InternalFieldTuple>(original);
                 auto* custom = uncheckedDowncast<CustomGetterSetter>(originalStorage->getInternalField(0));
-                // Object.defineProperty() or `delete` under the spy took the cell away, and native code still has the spy.
-                if (current != JSValue(custom)) {
+                // Object.defineProperty() or `delete` under the spy took the cell away, and native code still has the spy. A spy that went on top stays.
+                if (current != JSValue(custom) && !isAccessorOfSpyOver(current, custom)) {
                     ThroughLockOfBuiltins throughLock(globalObject->vm(), false);
                     putOwnPropertyStorage(globalObject, target, identifier, custom, attributes & ~SpyAttributeNativeSetter, false);
                     RETURN_IF_EXCEPTION(scope, );

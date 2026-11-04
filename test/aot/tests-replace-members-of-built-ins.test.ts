@@ -45,6 +45,7 @@ async function expectCompiledToRunAsPlain(files: Record<string, string>, ...flag
   const plain = await runTests(String(dir), ...flags);
   expect(plain.results.filter(result => result.startsWith("fail"))).toEqual([]);
   expect(plain.results).not.toEqual([]);
+  expect(plain.exitCode).toBe(0);
   expect(await runTests(String(dir), "--aot", ...flags)).toEqual(plain);
 }
 
@@ -1898,19 +1899,26 @@ test("a spy on a value that native code keeps behind a setter is what native cod
       test("the exports of a CommonJS file", () => {
         const attributes = attributesOf(greetModule, "exports");
         const spy = spyOn(greetModule, "exports").mockImplementation((name: string) => "spied on " + name);
-        console.log(uses.greet("a"), spy.mock.calls, attributesOf(greetModule, "exports") === attributes);
+        console.log(uses.greet("a"), attributesOf(greetModule, "exports") === attributes);
+        expect(spy.mock.calls).toEqual([["a"]]);
         spy.mockRestore();
         console.log(uses.greet("b"), attributesOf(greetModule, "exports") === attributes);
       });
       test("a value with no setter behind it", () => {
         const spy = spyOn(console, "Console");
-        console.log(attributesOf(console, "Console"), (console.Console as unknown) === spy);
+        expect(Object.getOwnPropertyDescriptor(console, "Console")).toEqual({
+          value: spy,
+          writable: true,
+          enumerable: true,
+          configurable: true,
+        });
         spy.mockRestore();
         console.log(attributesOf(console, "Console"), console.Console.name);
       });
       test("the function behind require()", () => {
         const spy = spyOn(Module.prototype, "require");
-        console.log(uses.separator().length, spy.mock.calls.map(call => call[0]));
+        console.log(uses.separator().length);
+        expect(spy.mock.calls.map(call => call[0])).toEqual(["node:path"]);
         spy.mockRestore();
         console.log(uses.separator().length, spy.mock.calls.length);
       });`,

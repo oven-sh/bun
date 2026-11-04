@@ -4256,6 +4256,488 @@ registry = { url = "https://${host}/", token = "https-only" }
     expect(cdn.requests).toEqual([{ path: "/npm/b/x.tgz", auth: basic("carol", "SECRETPASSWORD") }]);
     expect(exitCode).toBe(1);
   });
+
+  // A tarball URL that the project names gets credentials by the rule above, with the default registry standing in
+  // for its registry whatever its name. One that only another package names gets none.
+  describe("a dependency written as a tarball URL", () => {
+    const filesPath = "/files/no-deps-1.0.0.tgz";
+    const dependsOn = (dependencies: Record<string, string>) =>
+      JSON.stringify({ name: "app", version: "1.0.0", dependencies });
+    const npmrc = (...lines: string[]) => [...lines, ""].join("\n");
+
+    // The requests for `path` of a first install, and of one from bun.lock with nothing cached.
+    async function requestsOfTwoInstalls(
+      dir: string,
+      registry: { requests: Req[] },
+      path: string,
+      args: string[] = [],
+    ) {
+      const first = await install(dir, args);
+      const firstRequests = registry.requests.splice(0).filter(r => r.path === path);
+      await rm(join(dir, "node_modules"), { recursive: true, force: true });
+      await rm(join(dir, ".cache"), { recursive: true, force: true });
+      const frozen = await install(dir, [...args, "--frozen-lockfile"]);
+      return {
+        firstRequests,
+        first: first.exitCode,
+        frozenRequests: registry.requests.filter(r => r.path === path),
+        frozen: frozen.exitCode,
+      };
+    }
+    const twice = (auth: string | null, path: string) => ({
+      firstRequests: [{ path, auth }],
+      first: 0,
+      frozenRequests: [{ path, auth }],
+      frozen: 0,
+    });
+
+    test.each(["hoisted", "isolated"])(
+      "on the default registry's origin it gets the registry's token, also from bun.lock (--linker %s)",
+      async linker => {
+        using registry = mockRegistry("Bearer registry-token", { registryPath: "/npm", tarballPath: filesPath });
+        using dir = tempDir("npmrc-url-dep-registry-origin", {
+          "package.json": dependsOn({ "no-deps": `${registry.origin}${filesPath}` }),
+          ".npmrc": npmrc(`registry=${registry.origin}/npm/`, `//${registry.host}/npm/:_authToken=registry-token`),
+        });
+
+        expect(await requestsOfTwoInstalls(String(dir), registry, filesPath, ["--linker", linker])).toEqual(
+          twice("Bearer registry-token", filesPath),
+        );
+      },
+    );
+
+    test("`bun add` of one on the default registry's origin sends the registry's token", async () => {
+      using registry = mockRegistry("Bearer registry-token", { registryPath: "/npm", tarballPath: filesPath });
+      using dir = tempDir("npmrc-url-dep-add", {
+        "package.json": dependsOn({}),
+        ".npmrc": npmrc(`registry=${registry.origin}/npm/`, `//${registry.host}/npm/:_authToken=registry-token`),
+      });
+
+      const { exitCode } = await install(String(dir), [`${registry.origin}${filesPath}`]);
+
+      expect({ requests: registry.requests, exitCode }).toEqual({
+        requests: [{ path: filesPath, auth: "Bearer registry-token" }],
+        exitCode: 0,
+      });
+    });
+
+    // Two names share one download: one in a scope that has its own token, one that falls back to the default
+    // registry. The default registry's token goes with the download whichever name comes first.
+    test.each([
+      ["@sc/a", "@zz/b"],
+      ["@aa/b", "@sc/a"],
+    ])("one URL under %s and %s gets the default registry's token once, not a scope's", async (first, second) => {
+      using registry = mockRegistry("Bearer default-token", { registryPath: "/npm", tarballPath: filesPath });
+      using dir = tempDir("npmrc-url-dep-two-names", {
+        "package.json": dependsOn({
+          [first]: `${registry.origin}${filesPath}`,
+          [second]: `${registry.origin}${filesPath}`,
+        }),
+        ".npmrc": npmrc(
+          `registry=${registry.origin}/npm/`,
+          `//${registry.host}/npm/:_authToken=default-token`,
+          `@sc:registry=${registry.origin}/sc/`,
+          `//${registry.host}/sc/:_authToken=scope-token`,
+        ),
+      });
+
+      const { exitCode } = await install(String(dir));
+
+      expect({ requests: registry.requests, exitCode }).toEqual({
+        requests: [{ path: filesPath, auth: "Bearer default-token" }],
+        exitCode: 0,
+      });
+    });
+
+    test("a scoped registry's token does not reach it, even under a name in that scope", async () => {
+      using registry = mockRegistry("Bearer scope-token", { registryPath: "/npm", tarballPath: filesPath });
+      using dir = tempDir("npmrc-url-dep-scope", {
+        "package.json": dependsOn({ "@sc/no-deps": `${registry.origin}${filesPath}` }),
+        ".npmrc": npmrc(`@sc:registry=${registry.origin}/npm/`, `//${registry.host}/npm/:_authToken=scope-token`),
+      });
+
+      const { exitCode } = await install(String(dir));
+
+      expect({ requests: registry.requests, exitCode }).toEqual({
+        requests: [{ path: filesPath, auth: null }],
+        exitCode: 1,
+      });
+    });
+
+    test("an https tarball URL on another origin gets that origin's own line", async () => {
+      using cdn = mockRegistry("Bearer cdn-token", { secure: true, tarballPath: filesPath });
+      using dir = tempDir("npmrc-url-dep-own-line", {
+        "package.json": dependsOn({ "no-deps": `${cdn.origin}${filesPath}` }),
+        ".npmrc": npmrc(`//${cdn.host}/files/:_authToken=cdn-token`),
+      });
+
+      const { exitCode } = await install(String(dir));
+
+      expect({ requests: cdn.requests, exitCode }).toEqual({
+        requests: [{ path: filesPath, auth: "Bearer cdn-token" }],
+        exitCode: 0,
+      });
+    });
+
+    test("an http tarball URL on another origin gets neither the registry's token nor a line for its host", async () => {
+      using registry = mockRegistry("Bearer must-not-leak");
+      using other = mockRegistry("Bearer must-not-leak", { tarballPath: filesPath });
+      using dir = tempDir("npmrc-url-dep-other-http-host", {
+        "package.json": dependsOn({ "no-deps": `${other.origin}${filesPath}` }),
+        ".npmrc": npmrc(
+          `registry=${registry.origin}/`,
+          `//${registry.host}/:_authToken=must-not-leak`,
+          `//${other.host}/:_authToken=must-not-leak`,
+        ),
+      });
+
+      const { exitCode } = await install(String(dir));
+
+      expect({ requests: other.requests, exitCode }).toEqual({
+        requests: [{ path: filesPath, auth: null }],
+        exitCode: 1,
+      });
+    });
+
+    // Same host and port, another scheme: not the registry's origin.
+    test("an https registry's token does not reach an http tarball URL on its host and port", async () => {
+      const seen: (string | null)[] = [];
+      using plain = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req) {
+          seen.push(req.headers.get("authorization"));
+          return new Response(Bun.file(tgz));
+        },
+      });
+      using dir = tempDir("npmrc-url-dep-http-same-host", {
+        "package.json": dependsOn({ "no-deps": `http://127.0.0.1:${plain.port}${filesPath}` }),
+        ".npmrc": npmrc(
+          `registry=https://127.0.0.1:${plain.port}/npm/`,
+          `//127.0.0.1:${plain.port}/npm/:_authToken=must-not-leak`,
+        ),
+      });
+
+      const { exitCode } = await install(String(dir));
+
+      expect({ seen, exitCode }).toEqual({ seen: [null], exitCode: 0 });
+    });
+
+    test("the registry's token is sent in place of credentials written into the URL", async () => {
+      using registry = mockRegistry("Bearer registry-token", { registryPath: "/npm", tarballPath: filesPath });
+      using dir = tempDir("npmrc-url-dep-over-userinfo", {
+        "package.json": dependsOn({ "no-deps": `http://carol:s3cret@${registry.host}${filesPath}` }),
+        ".npmrc": npmrc(`registry=${registry.origin}/npm/`, `//${registry.host}/npm/:_authToken=registry-token`),
+      });
+
+      const { exitCode } = await install(String(dir));
+
+      expect({ requests: registry.requests, exitCode }).toEqual({
+        requests: [{ path: filesPath, auth: "Bearer registry-token" }],
+        exitCode: 0,
+      });
+    });
+
+    test("the registry's token does not follow a redirect to another origin", async () => {
+      const hops: (string | null)[] = [];
+      using elsewhere = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req) {
+          hops.push(req.headers.get("authorization"));
+          return new Response(Bun.file(tgz));
+        },
+      });
+      using registry = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req) {
+          hops.push(req.headers.get("authorization"));
+          return Response.redirect(`http://127.0.0.1:${elsewhere.port}${filesPath}`, 302);
+        },
+      });
+      using dir = tempDir("npmrc-url-dep-redirect", {
+        "package.json": dependsOn({ "no-deps": `http://127.0.0.1:${registry.port}${filesPath}` }),
+        ".npmrc": npmrc(
+          `registry=http://127.0.0.1:${registry.port}/npm/`,
+          `//127.0.0.1:${registry.port}/npm/:_authToken=registry-token`,
+        ),
+      });
+
+      const { exitCode } = await install(String(dir));
+
+      expect({ hops, exitCode }).toEqual({ hops: ["Bearer registry-token", null], exitCode: 0 });
+    });
+
+    type OuterOptions = {
+      secure?: boolean;
+      /** What `outer` declares `inner` as (default: the URL of `innerPath`), or null if it depends on nothing. */
+      inner?: (host: string) => string | null;
+    };
+
+    // A registry at `/npm/` with the packages `outer`, which depends on `inner`, and `pending`, whose manifest is not
+    // answered before the tarball of `outer` is asked for. Only `innerPath` answers without `Bearer registry-token`.
+    function registryWithOuter(innerPath: string, { secure = false, inner }: OuterOptions = {}) {
+      const requests: Req[] = [];
+      const outerTarballAsked = Promise.withResolvers<void>();
+      const manifest = (name: string, dependencies: Record<string, string>) =>
+        Response.json({
+          name,
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": {
+              name,
+              version: "1.0.0",
+              dependencies,
+              dist: { tarball: `${origin}/npm/${name}/-/${name}-1.0.0.tgz` },
+            },
+          },
+        });
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        ...(secure ? { tls } : {}),
+        async fetch(req) {
+          const url = new URL(req.url);
+          const auth = req.headers.get("authorization");
+          requests.push({ path: url.pathname, auth });
+          if (url.pathname === innerPath) return new Response(Bun.file(tgz));
+          if (auth !== "Bearer registry-token") return new Response("unauthorized", { status: 401 });
+          switch (url.pathname) {
+            case "/npm/outer": {
+              const range = inner ? inner(url.host) : `${origin}${innerPath}`;
+              return manifest("outer", range === null ? {} : { inner: range });
+            }
+            case "/npm/pending":
+              await outerTarballAsked.promise;
+              return manifest("pending", {});
+            case "/npm/outer/-/outer-1.0.0.tgz":
+              outerTarballAsked.resolve();
+              return new Response(Bun.file(tgz));
+            case "/npm/pending/-/pending-1.0.0.tgz":
+              return new Response(Bun.file(tgz));
+          }
+          return new Response("not found", { status: 404 });
+        },
+      });
+      const origin = `${secure ? "https" : "http"}://127.0.0.1:${server.port}`;
+      return {
+        requests,
+        host: `127.0.0.1:${server.port}`,
+        origin,
+        [Symbol.dispose]() {
+          server.stop(true);
+        },
+      };
+    }
+
+    // Over https, where an `.npmrc` line would apply if the project named the URL.
+    describe.each(["hoisted", "isolated"])("one that only another package lists (--linker %s)", linker => {
+      test.each([
+        ["outside every .npmrc key", "/other/inner.tgz", []],
+        ["under the registry's own key", "/npm/other/inner.tgz", []],
+        ["under a key for the whole host", "/other/inner.tgz", ["/"]],
+        ["under a key of its own", "/files/inner.tgz", ["/files/"]],
+      ])("%s, gets no credentials", async (_, innerPath, keys) => {
+        using registry = registryWithOuter(innerPath, { secure: true });
+        using dir = tempDir("npmrc-url-dep-of-package", {
+          "package.json": dependsOn({ outer: "1.0.0" }),
+          ".npmrc": npmrc(
+            `registry=${registry.origin}/npm/`,
+            `//${registry.host}/npm/:_authToken=registry-token`,
+            ...keys.map(key => `//${registry.host}${key}:_authToken=must-not-leak`),
+          ),
+        });
+
+        expect(await requestsOfTwoInstalls(String(dir), registry, innerPath, ["--linker", linker])).toEqual(
+          twice(null, innerPath),
+        );
+      });
+    });
+
+    test("one that only another package lists still sends the credentials written into it", async () => {
+      const innerPath = "/other/inner.tgz";
+      using registry = registryWithOuter(innerPath, { inner: host => `http://carol:s3cret@${host}${innerPath}` });
+      using dir = tempDir("npmrc-url-dep-of-package-userinfo", {
+        "package.json": dependsOn({ outer: "1.0.0" }),
+        ".npmrc": npmrc(`registry=${registry.origin}/npm/`, `//${registry.host}/npm/:_authToken=registry-token`),
+      });
+
+      expect(await requestsOfTwoInstalls(String(dir), registry, innerPath)).toEqual(
+        twice(basic("carol", "s3cret"), innerPath),
+      );
+    });
+
+    const app = { name: "app", version: "1.0.0" };
+    const local = (url: string, name = "local") =>
+      JSON.stringify({ name, version: "1.0.0", dependencies: { inner: url } });
+    test.each([
+      [
+        "the root and another package both list",
+        (url: string) => ({
+          "package.json": dependsOn({ outer: "1.0.0", "also-inner": url }),
+        }),
+      ],
+      [
+        "a workspace lists",
+        (url: string) => ({
+          "package.json": JSON.stringify({ ...app, workspaces: ["pkgs/*"] }),
+          "pkgs/local/package.json": local(url),
+        }),
+      ],
+      [
+        "a file: folder of the root lists",
+        (url: string) => ({
+          "package.json": dependsOn({ local: "file:./local" }),
+          "local/package.json": local(url),
+        }),
+      ],
+      [
+        "a file: folder of a workspace lists",
+        (url: string) => ({
+          "package.json": JSON.stringify({ ...app, workspaces: ["pkgs/*"] }),
+          "pkgs/w/package.json": JSON.stringify({
+            name: "w",
+            version: "1.0.0",
+            dependencies: { local: "file:../../local" },
+          }),
+          "local/package.json": local(url),
+        }),
+      ],
+      [
+        "a catalog lists",
+        (url: string) => ({
+          "package.json": JSON.stringify({ ...app, workspaces: ["pkgs/*"], catalog: { inner: url } }),
+          "pkgs/w/package.json": JSON.stringify({ name: "w", version: "1.0.0", dependencies: { inner: "catalog:" } }),
+        }),
+      ],
+      [
+        "a named catalog lists",
+        (url: string) => ({
+          "package.json": JSON.stringify({ ...app, workspaces: ["pkgs/*"], catalogs: { c: { inner: url } } }),
+          "pkgs/w/package.json": JSON.stringify({ name: "w", version: "1.0.0", dependencies: { inner: "catalog:c" } }),
+        }),
+      ],
+    ] as const)("one that %s gets the registry's token", async (_, files) => {
+      const innerPath = "/other/inner.tgz";
+      using registry = registryWithOuter(innerPath);
+      using dir = tempDir("npmrc-url-dep-of-project", {
+        ...files(`${registry.origin}${innerPath}`),
+        ".npmrc": npmrc(`registry=${registry.origin}/npm/`, `//${registry.host}/npm/:_authToken=registry-token`),
+      });
+
+      expect(await requestsOfTwoInstalls(String(dir), registry, innerPath)).toEqual(
+        twice("Bearer registry-token", innerPath),
+      );
+    });
+
+    // `outer` asks for a version of `inner`, and the rule of the project replaces it with the URL.
+    test.each([
+      ["an override", (url: string) => ({ inner: url })],
+      ["an override under a parent", (url: string) => ({ outer: { inner: url } })],
+    ])("one that %s lists gets the registry's token", async (_, overrides) => {
+      const innerPath = "/other/inner.tgz";
+      using registry = registryWithOuter(innerPath, { inner: () => "^1.0.0" });
+      using dir = tempDir("npmrc-url-dep-of-override", {
+        "package.json": JSON.stringify({
+          ...app,
+          dependencies: { outer: "1.0.0" },
+          overrides: overrides(`${registry.origin}${innerPath}`),
+        }),
+        ".npmrc": npmrc(`registry=${registry.origin}/npm/`, `//${registry.host}/npm/:_authToken=registry-token`),
+      });
+
+      expect(await requestsOfTwoInstalls(String(dir), registry, innerPath)).toEqual(
+        twice("Bearer registry-token", innerPath),
+      );
+    });
+
+    test.each([
+      ["", ""],
+      [", after whitespace", " "],
+    ])("one that packageExtensions lists%s gets the registry's token", async (_, before) => {
+      const innerPath = "/other/inner.tgz";
+      using registry = registryWithOuter(innerPath, { inner: () => null });
+      using dir = tempDir("npmrc-url-dep-of-extension", {
+        "package.json": JSON.stringify({
+          ...app,
+          dependencies: { outer: "1.0.0" },
+          packageExtensions: { outer: { dependencies: { inner: `${before}${registry.origin}${innerPath}` } } },
+        }),
+        ".npmrc": npmrc(`registry=${registry.origin}/npm/`, `//${registry.host}/npm/:_authToken=registry-token`),
+      });
+
+      expect(await requestsOfTwoInstalls(String(dir), registry, innerPath)).toEqual(
+        twice("Bearer registry-token", innerPath),
+      );
+    });
+
+    // Neither the root nor a workspace depends on the folder: the override puts it in place of what `outer` asks for.
+    test("one that only a file: folder that an override selects lists gets no credentials", async () => {
+      const innerPath = "/other/inner.tgz";
+      using registry = registryWithOuter(innerPath, { inner: () => "^1.0.0" });
+      using dir = tempDir("npmrc-url-dep-of-override-folder", {
+        "package.json": JSON.stringify({
+          ...app,
+          dependencies: { outer: "1.0.0" },
+          overrides: { inner: "file:./vendored" },
+        }),
+        "vendored/package.json": JSON.stringify({
+          name: "inner",
+          version: "1.0.0",
+          dependencies: { deep: `${registry.origin}${innerPath}` },
+        }),
+        ".npmrc": npmrc(`registry=${registry.origin}/npm/`, `//${registry.host}/npm/:_authToken=registry-token`),
+      });
+
+      expect(await requestsOfTwoInstalls(String(dir), registry, innerPath)).toEqual(twice(null, innerPath));
+    });
+
+    // Dependencies are resolved by name: `outer`, `pending`, `vendored`. While `pending` keeps `vendored` from being
+    // read, nothing shows that the project lists the URL too, so the download waits for the turn of `inner`.
+    test("one that another package lists before a file: folder of the project does gets the registry's token", async () => {
+      const innerPath = "/other/inner.tgz";
+      using registry = registryWithOuter(innerPath);
+      using dir = tempDir("npmrc-url-dep-listed-later", {
+        "package.json": dependsOn({ outer: "1.0.0", pending: "1.0.0", vendored: "file:./vendored" }),
+        "vendored/package.json": local(`${registry.origin}${innerPath}`, "vendored"),
+        ".npmrc": npmrc(`registry=${registry.origin}/npm/`, `//${registry.host}/npm/:_authToken=registry-token`),
+      });
+
+      const { exitCode } = await install(String(dir));
+
+      expect({ inner: registry.requests.filter(r => r.path === innerPath), exitCode }).toEqual({
+        inner: [{ path: innerPath, auth: "Bearer registry-token" }],
+        exitCode: 0,
+      });
+    });
+
+    test("a github: dependency on the registry's origin still gets no credentials", async () => {
+      const seen: Req[] = [];
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req) {
+          seen.push({ path: new URL(req.url).pathname, auth: req.headers.get("authorization") });
+          return new Response(Bun.file(tgz));
+        },
+      });
+      using dir = tempDir("npmrc-url-dep-github", {
+        "package.json": dependsOn({ "no-deps": "github:owner/repo#0000000" }),
+        ".npmrc": npmrc(
+          `registry=http://127.0.0.1:${server.port}/`,
+          `//127.0.0.1:${server.port}/:_authToken=must-not-leak`,
+        ),
+      });
+
+      const { exitCode } = await install(String(dir), [], { GITHUB_API_URL: `http://127.0.0.1:${server.port}` });
+
+      expect({ seen, exitCode }).toEqual({
+        seen: [{ path: "/repos/owner/repo/tarball/0000000", auth: null }],
+        exitCode: 0,
+      });
+    });
+  });
 });
 
 describe.concurrent("which credential a registry gets", () => {

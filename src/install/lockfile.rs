@@ -1031,6 +1031,32 @@ impl Lockfile {
             .is_some_and(|parent_id| self.is_local_declarer(parent_id))
     }
 
+    /// Whether the project, and not only a package that it installs, names the tarball URL `url`.
+    pub(crate) fn is_tarball_url_of_project(&self, url: &[u8]) -> bool {
+        let buf = self.buffers.string_bytes.as_slice();
+        let dependencies = self.buffers.dependencies.as_slice();
+        let resolutions = self.packages.items_resolution();
+        let names_url = |declared: &Dependency| {
+            declared.version.tag == dependency::version::Tag::Tarball
+                && matches!(
+                    &declared.version.tarball().uri,
+                    dependency::tarball::Uri::Remote(remote) if remote.slice(buf) == url
+                )
+        };
+        (self.overrides.values().chain(self.catalogs.values())).any(names_url)
+            || self.package_extensions.has_specifier(url)
+            || (self.packages.items_dependencies().iter().enumerate()).any(|(id, declared)| {
+                // A folder that only an override selects may be resolved after the download starts.
+                let tag = resolutions[id].tag;
+                matches!(
+                    tag,
+                    ResolutionTag::Root | ResolutionTag::Workspace | ResolutionTag::Folder
+                ) && declared.get(dependencies).iter().any(names_url)
+                    && (tag != ResolutionTag::Folder
+                        || self.is_workspace_declared_package(id as PackageID))
+            })
+    }
+
     /// See `is_dependency_of_local_package`.
     pub(crate) fn is_local_declarer(&self, id: PackageID) -> bool {
         match self.packages.items_resolution()[id as usize].tag {

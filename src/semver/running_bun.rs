@@ -27,8 +27,7 @@ pub fn mismatch<'a>(path: &'a [u8], pin: &'a [u8]) -> Option<Mismatch<'a>> {
     (!running.eql(pinned)).then_some(Mismatch { path, pin })
 }
 
-/// Warns for a mismatch. Returns the marker for `BUN_INTERNAL_BUN_VERSION_CHECKED` when the file
-/// pins a version, printed or not: the running version and the path, so only the same bun skips.
+/// Warns for a mismatch. Returns the `BUN_INTERNAL_BUN_VERSION_CHECKED` marker when the file pins.
 pub fn check(path: &[u8], package_manager: &[u8], quiet: bool) -> Option<Vec<u8>> {
     let pin = package_manager_pin(package_manager)?;
     let marker = [RUNNING.as_bytes(), b"\n", path].concat();

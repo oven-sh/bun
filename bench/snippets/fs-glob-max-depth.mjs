@@ -12,11 +12,12 @@ import { join, sep } from "node:path";
 import { bench, group, run } from "../runner.mjs";
 
 const pad = length => "-".padEnd(length, "a-long-name-");
-// Names of 2, 49 and 200 characters, and names that need a 16-bit string. A path of the longest names is over 512 bytes.
+// Names of 2, 49 and 160 characters, and names that need a 16-bit string. A path of the longest names is over 512 bytes,
+// and the deepest one stays below the 1,024 bytes that macOS allows for a path.
 const trees = {
   short: { dir: i => `d${i}`, file: i => `f${i}.txt` },
   long: { dir: i => `d${i}${pad(47)}`, file: i => `f${i}${pad(43)}.txt` },
-  longest: { dir: i => `d${i}${pad(198)}`, file: i => `f${i}${pad(194)}.txt` },
+  longest: { dir: i => `d${i}${pad(158)}`, file: i => `f${i}${pad(154)}.txt` },
   "16-bit": { dir: i => `目录${i}`, file: i => `文件${i}.txt` },
 };
 

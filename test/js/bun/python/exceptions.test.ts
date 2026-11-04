@@ -206,6 +206,83 @@ describe("in a catch", () => {
     expect(handled()).toBeUndefined();
   });
 
+  test("the same catch again and again, whether somebody asks or not", () => {
+    // In a loop.
+    const seen: string[] = [];
+    for (let i = 0; i < 12; i++) {
+      try {
+        if (i % 2) py.fail(i);
+        else throw new RangeError(String(i));
+      } catch {
+        if (i % 4 >= 2) seen.push(String(repr(handled())));
+      }
+      if (i % 3 === 2) seen.push(String(handled()));
+    }
+    expect(seen).toEqual([
+      "JSError('RangeError: 2')",
+      "undefined",
+      "ValueError(3)",
+      "undefined",
+      "JSError('RangeError: 6')",
+      "ValueError(7)",
+      "undefined",
+      "JSError('RangeError: 10')",
+      "ValueError(11)",
+      "undefined",
+    ]);
+
+    // In a function that is called again and again: its frame is where the last one was.
+    function catches(i: number, asks: boolean) {
+      try {
+        py.fail(i);
+      } catch {
+        return asks ? String(handled()) : "not asked";
+      }
+    }
+    const results: unknown[] = [];
+    for (let i = 0; i < 8; i++) results.push(catches(i, i === 3 || i >= 6));
+    expect(results).toEqual([
+      "not asked",
+      "not asked",
+      "not asked",
+      "ValueError: 3",
+      "not asked",
+      "not asked",
+      "ValueError: 6",
+      "ValueError: 7",
+    ]);
+    expect(handled()).toBeUndefined();
+
+    // From a catch, and then no longer from a catch.
+    function calls(i: number, inCatch: boolean) {
+      if (!inCatch) return [catches(i, false), catches(i + 1, true), String(handled())];
+      try {
+        py.fail("outer");
+      } catch {
+        return [catches(i, false), catches(i + 1, false), String(handled()), catches(i + 2, true), String(handled())];
+      }
+    }
+    expect(calls(0, true)).toEqual(["not asked", "not asked", "ValueError: outer", "ValueError: 2", "ValueError: outer"]);
+    expect(calls(10, false)).toEqual(["not asked", "ValueError: 11", "undefined"]);
+    expect(calls(20, true)).toEqual(["not asked", "not asked", "ValueError: outer", "ValueError: 22", "ValueError: outer"]);
+    catches(30, false);
+    expect(calls(40, false)).toEqual(["not asked", "ValueError: 41", "undefined"]);
+
+    // Under handlers of Python's, which have their exceptions back.
+    catches(50, false);
+    expect(shown(py.around(() => [catches(51, false), catches(52, true), catches(53, false)].join()))).toEqual([
+      "LookupError('outer')",
+      "'not asked,ValueError: 52,not asked'",
+      "LookupError('outer')",
+    ]);
+    expect(shown(py.generator(() => [catches(54, false), catches(55, false), catches(56, true)].join()))).toEqual([
+      "'not asked,not asked,ValueError: 56'",
+      "LookupError('of the generator')",
+      "None",
+    ]);
+    expect(handled()).toBeUndefined();
+  });
+
   test("a finally is not a catch", () => {
     let inFinally, inFinallyAfterCatch;
     try {

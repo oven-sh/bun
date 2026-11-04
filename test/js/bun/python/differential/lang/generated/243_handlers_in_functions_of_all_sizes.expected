@@ -1,0 +1,67 @@
+status: 0
+script: 0fec6fcff1cacdc5
+source: cacd8c78fc5e9eea
+---
+row [variables=1, row=('start', 'NoneType', None)] => ('start', 'NoneType', None)
+row [variables=1, row=('except', 'KeyError', '(1,)')] => ('except', 'KeyError', '(1,)')
+row [variables=1, row=('after except', 'NoneType', None)] => ('after except', 'NoneType', None)
+row [variables=1, row=('except as', 'KeyError', '(2,)')] => ('except as', 'KeyError', '(2,)')
+row [variables=1, row=(2,)] => (2,)
+row [variables=1, row=('after except as', 'NoneType', None)] => ('after except as', 'NoneType', None)
+row [variables=1, row=('finally', 'KeyError', '(3,)')] => ('finally', 'KeyError', '(3,)')
+row [variables=1, row=('outer of finally', 'KeyError', '(3,)')] => ('outer of finally', 'KeyError', '(3,)')
+row [variables=1, row=('after finally', 'NoneType', None)] => ('after finally', 'NoneType', None)
+row [variables=1, row=('nested', 'ValueError', '(5,)')] => ('nested', 'ValueError', '(5,)')
+row [variables=1, row=tuple] => ('context', (4,))
+row [variables=1, row=('back in the outer', 'KeyError', '(4,)')] => ('back in the outer', 'KeyError', '(4,)')
+row [variables=1, row=('after nested', 'NoneType', None)] => ('after nested', 'NoneType', None)
+row [variables=1, row=('before raising in a handler', 'KeyError', '(6,)')] => ('before raising in a handler', 'KeyError', '(6,)')
+row [variables=1, row=('raised in a handler', 'ValueError', '(7,)')] => ('raised in a handler', 'ValueError', '(7,)')
+row [variables=1, row=tuple] => ('context', (6,))
+row [variables=1, row=('after raising in a handler', 'NoneType', None)] => ('after raising in a handler', 'NoneType', None)
+row [variables=1, row=('raised from', 'ValueError', '(9,)')] => ('raised from', 'ValueError', '(9,)')
+row [variables=1, row=tuple] => ('cause', (8,), False)
+row [variables=1, row=('no clause matched', 'KeyError', '(10,)')] => ('no clause matched', 'KeyError', '(10,)')
+row [variables=1, row=('after no clause matched', 'NoneType', None)] => ('after no clause matched', 'NoneType', None)
+row [variables=1, row=('raised again', 'KeyError', '(11,)')] => ('raised again', 'KeyError', '(11,)')
+row [variables=1, row=('context', None)] => ('context', None)
+row [variables=1, row=('enter', 'NoneType', None)] => ('enter', 'NoneType', None)
+row [variables=1, row=('exit', 'KeyError', '(12,)')] => ('exit', 'KeyError', '(12,)')
+row [variables=1, row=tuple] => ('given', 'KeyError', (12,), True)
+row [variables=1, row=('after with', 'NoneType', None)] => ('after with', 'NoneType', None)
+row [variables=1, row=('enter', 'NoneType', None)] => ('enter', 'NoneType', None)
+row [variables=1, row=('exit', 'KeyError', '(13,)')] => ('exit', 'KeyError', '(13,)')
+row [variables=1, row=tuple] => ('given', 'KeyError', (13,), True)
+row [variables=1, row=('through with', 'KeyError', '(13,)')] => ('through with', 'KeyError', '(13,)')
+row [variables=1, row=('enter', 'KeyError', '(14,)')] => ('enter', 'KeyError', '(14,)')
+row [variables=1, row=('with in a handler', 'KeyError', '(14,)')] => ('with in a handler', 'KeyError', '(14,)')
+row [variables=1, row=('exit', 'ValueError', '(15,)')] => ('exit', 'ValueError', '(15,)')
+row [variables=1, row=tuple] => ('given', 'ValueError', (15,), True)
+row [variables=1, row=('after with in a handler', 'KeyError', '(14,)')] => ('after with in a handler', 'KeyError', '(14,)')
+row [variables=1, row=('in a loop', 'KeyError', '(16, 0)')] => ('in a loop', 'KeyError', '(16, 0)')
+row [variables=1, row=('finally in a loop', 'NoneType', None)] => ('finally in a loop', 'NoneType', None)
+row [variables=1, row=('in a loop', 'KeyError', '(16, 1)')] => ('in a loop', 'KeyError', '(16, 1)')
+row [variables=1, row=('finally in a loop', 'NoneType', None)] => ('finally in a loop', 'NoneType', None)
+row [variables=1, row=('in a loop', 'KeyError', '(16, 2)')] => ('in a loop', 'KeyError', '(16, 2)')
+row [variables=1, row=('finally in a loop', 'NoneType', None)] => ('finally in a loop', 'NoneType', None)
+row [variables=1, row=('after the loop', 'NoneType', None)] => ('after the loop', 'NoneType', None)
+row [variables=1, row=('except*', 'ExceptionGroup', "('g', [KeyError(17)])")] => ('except*', 'ExceptionGroup', "('g', [KeyError(17)])")
+row [variables=1, row=(17,)] => (17,)
+row [variables=1, row=('second except*', 'ExceptionGroup', "('g', [ValueError(18)])")] => ('second except*', 'ExceptionGroup', "('g', [ValueError(18)])")
+row [variables=1, row=('third except*', 'ExceptionGroup', "('g', [TypeError(19)])")] => ('third except*', 'ExceptionGroup', "('g', [TypeError(19)])")
+row [variables=1, row=('after except*', 'NoneType', None)] => ('after except*', 'NoneType', None)
+row [variables=1, row=('finally of a return', 'NoneType', None)] => ('finally of a return', 'NoneType', None)
+row [variables=1, row=(20,)] => (20,)
+row [variables=1, row=('after a return in a handler', 'NoneType', None)] => ('after a return in a handler', 'NoneType', None)
+row [variables=1, row=('out of a comprehension', 'ZeroDivisionError', "('division by zero',)")] => ('out of a comprehension', 'ZeroDivisionError', "('division by zero',)")
+row [variables=1, row=('end', 'NoneType', None)] => ('end', 'NoneType', None)
+result[1] [variables=1] => ['KeyError', 'KeyError', 'OSError', 'OSError', 'in try', ('thrown in', (2,), 'ValueError'), ('finally', 'NoneType'), 'NoneType', []]
+variables [variables=1] => 1
+result == first [variables=1] => True
+sys.exception() [variables=1] => None
+variables [variables=300] => 300
+result == first [variables=300] => True
+sys.exception() [variables=300] => None
+variables [variables=33000] => 33000
+result == first [variables=33000] => True
+sys.exception() [variables=33000] => None

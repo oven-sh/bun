@@ -11,6 +11,13 @@ import threading from "python:threading";
 // These builds take seconds to start Python, and longer to import asyncio.
 if (isDebug || isASAN) setDefaultTimeout(120_000);
 
+/** The globals of a piece of Python. */
+function run(code: string) {
+  const globals = dict([["__name__", "fixture"]]);
+  exec(code, globals);
+  return globals;
+}
+
 const globals = dict([["__name__", "fixture"]]);
 exec(
   `
@@ -109,6 +116,46 @@ describe("with()", () => {
     });
     expect(with_(ofJavaScript(), (value: string) => value)).toBe("value");
     expect(take()).toEqual(["finally"]);
+  });
+
+  test("finds __enter__ and __exit__ as the statement does", () => {
+    const { Callables, Descriptors, statement } = run(`
+log = []
+
+class Callable:
+    def __init__(self, name):
+        self.name = name
+    def __call__(self, *args):
+        log.append((self.name, len(args)))
+
+class Callables:
+    __enter__ = Callable("enter")
+    __exit__ = Callable("exit")
+
+class Descriptor:
+    def __init__(self, name, value):
+        self.name, self.value = name, value
+    def __get__(self, instance, owner):
+        log.append("get " + self.name)
+        return self.value
+
+class Descriptors:
+    __enter__ = Descriptor("__enter__", lambda: None)
+    __exit__ = Descriptor("__exit__", lambda *args: None)
+
+def statement(manager):
+    with manager:
+        pass
+    taken = str(log)
+    log.clear()
+    return taken
+`);
+    for (const Manager of [Callables, Descriptors]) {
+      const expected = statement(Manager());
+      with_(Manager(), () => {});
+      // The log has what with() did, and then what the statement does.
+      expect(statement(Manager())).toBe(expected.slice(0, -1) + ", " + expected.slice(1));
+    }
   });
 
   test("what is no manager", () => {

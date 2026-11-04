@@ -6,10 +6,10 @@ import _js
 def _leave(exits, exception=None):
     """What leaving the `with` statements does, the last that was entered first. An exception that no manager swallows is raised."""
     while exits:
-        exit, manager = exits.pop()
+        exit = exits.pop()
         if exception is None:
             try:
-                exit(manager, None, None, None)
+                exit(None, None, None)
             except BaseException as raised:
                 exception = raised
             continue
@@ -20,7 +20,7 @@ def _leave(exits, exception=None):
         except BaseException:
             exception.__traceback__ = traceback
             try:
-                if exit(manager, type(exception), exception, traceback):
+                if exit(type(exception), exception, traceback):
                     exception = None
             except BaseException as raised:
                 exception = raised
@@ -38,13 +38,14 @@ def with_(*arguments):
     try:
         values = []
         for manager in managers:
-            cls = type(manager)
-            if not hasattr(cls, "__enter__") or not hasattr(cls, "__exit__"):
+            exit = _js.special_method(manager, "__exit__")
+            enter = _js.special_method(manager, "__enter__")
+            if enter is None or exit is None:
                 # For what the statement has to say to that.
                 with manager:
                     pass
-            values.append(cls.__enter__(manager))
-            exits.append((cls.__exit__, manager))
+            values.append(enter())
+            exits.append(exit)
         result = body(*values)
     except BaseException as exception:
         raised = exception

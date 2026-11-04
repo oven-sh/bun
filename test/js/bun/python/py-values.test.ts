@@ -11,11 +11,15 @@ import {
   abs,
   dict,
   exec,
+  iter,
   len,
   list,
   repr,
   str,
+  tuple,
 } from "python:builtins";
+import _queue from "python:_queue";
+import fractions from "python:fractions";
 import json from "python:json";
 import math from "python:math";
 
@@ -83,4 +87,62 @@ test("a class has its own name, whatever its instances call `name`", () => {
   expect(NameError.name).toBe("NameError");
   expect(new ImportError("x").constructor.name).toBe("ImportError");
   expect(python("class C:\n    name = 'own'").C.name).toBe("own");
+});
+
+test("yield* gives what the iterator returned", () => {
+  const { generator, Plain } = python(`
+def generator():
+    yield 1
+    return 42
+
+class Plain:
+    def __iter__(self):
+        return self
+    def __next__(self):
+        raise StopIteration(7)
+`);
+  function* outer(make: () => any): Generator<unknown> {
+    yield ["returned", yield* make()];
+  }
+  expect([...outer(generator)]).toEqual([1, ["returned", 42]]);
+  expect([...outer(Plain)]).toEqual([["returned", 7]]);
+  expect(Plain().next()).toEqual({ value: 7, done: true });
+});
+
+test("a native function that has to wait takes keywords from JavaScript", () => {
+  const queue = _queue.SimpleQueue();
+  expect(() => queue.get(kwargs({ timeout: 0.001 }))).toThrow(_queue.Empty);
+  expect(() => queue.get(kwargs({ block: false }))).toThrow(_queue.Empty);
+  queue.put(1);
+  expect(queue.get(kwargs({ timeout: 10 }))).toBe(1);
+});
+
+describe.each([
+  ["a Proxy around", (value: any) => new Proxy(value, {})],
+  ["Object.create() of", (value: any) => Object.create(value)],
+])("%s an object of Python's", (_, wrap) => {
+  const half = wrap(fractions.Fraction(1, 2));
+  const items = wrap(dict([["a", 1]]));
+
+  test("has its attributes, items and methods", () => {
+    expect([half.numerator, half.denominator, items.a, items.get("a"), half.limit_denominator(1) == 0]).toEqual([
+      1,
+      2,
+      1,
+      1,
+      true,
+    ]);
+  });
+
+  test("is shown as it is", () => {
+    expect([String(half), `${half}`, half.toString(), Bun.inspect(items)]).toEqual(["1/2", "1/2", "1/2", "{'a': 1}"]);
+    expect(Number(half)).toBe(0.5);
+    expect(half == fractions.Fraction(1, 2)).toBe(true);
+  });
+
+  test("is iterated over as it is", () => {
+    expect([...items]).toEqual([["a", 1]]);
+    expect([...wrap(tuple([1, 2]))]).toEqual([1, 2]);
+    expect(wrap(iter([7])).next()).toEqual({ value: 7, done: false });
+  });
 });

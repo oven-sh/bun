@@ -157,6 +157,19 @@ fn is_imported_as_data(behind_name: &[u8]) -> bool {
     )
 }
 
+// What a scan ahead of a build asks is a guess at an import, so a cached miss is final: the build says what is wrong with a name.
+fn resolve_in_scan<'r>(
+    vm: &mut VirtualMachine,
+    folder: &[u8],
+    name: &'r [u8],
+    kind: bun_ast::ImportKind,
+) -> Option<bun_resolver::Result<'r>> {
+    let resolver = &mut vm.transpiler.resolver;
+    resolver
+        .resolve_as(folder, name, kind, bun_resolver::AfterMiss::TrustCache)
+        .ok()
+}
+
 // A file with JSX imports the run time of JSX and does not spell its name. The names are what the tsconfig.json of the file makes of them.
 fn find_names_imported_for_jsx(vm: &mut VirtualMachine, file: &[u8]) -> Vec<Box<[u8]>> {
     const EXTENSIONS: [&[u8]; 3] = [b".tsx", b".jsx", b".js"];
@@ -165,7 +178,7 @@ fn find_names_imported_for_jsx(vm: &mut VirtualMachine, file: &[u8]) -> Vec<Box<
     }
     let folder = resolve_path::dirname::<bun_path::platform::Auto>(file);
     let kind = bun_ast::ImportKind::Stmt;
-    let Ok(result) = vm.transpiler.resolver.resolve(folder, file, kind) else {
+    let Some(result) = resolve_in_scan(vm, folder, file, kind) else {
         return Vec::new();
     };
     let source = &result.jsx.import_source;
@@ -259,12 +272,12 @@ fn find_files_imported_by<Path: core::ops::Deref<Target = [u8]> + Sync>(
             let (is_behind_import, name) = (marked[0] == 1, &marked[1..]);
             if !is_behind_import {
                 let kind = bun_ast::ImportKind::Require;
-                if let Ok(result) = vm.transpiler.resolver.resolve(folder, name, kind) {
+                if let Some(result) = resolve_in_scan(vm, folder, name, kind) {
                     named_otherwise.push(Box::from(result.path_pair.primary.text()));
                 }
             }
             let kind = bun_ast::ImportKind::Stmt;
-            let Ok(result) = vm.transpiler.resolver.resolve(folder, name, kind) else {
+            let Some(result) = resolve_in_scan(vm, folder, name, kind) else {
                 continue;
             };
             let path = result.path_pair.primary.text();
@@ -675,7 +688,7 @@ fn find_lowest_files_reached_from(
                     continue;
                 }
                 let kind = bun_ast::ImportKind::Stmt;
-                let Ok(result) = vm.transpiler.resolver.resolve(&folder, &name, kind) else {
+                let Some(result) = resolve_in_scan(vm, &folder, &name, kind) else {
                     continue;
                 };
                 let path = result.path_pair.primary.text();
@@ -866,8 +879,8 @@ fn find_files_of_preloads(vm: &mut VirtualMachine, preloads: &[Box<[u8]>]) -> Ve
     let top = FileSystem::get().top_level_dir();
     let mut file_of = |name: &[u8]| -> Box<[u8]> {
         let kind = bun_ast::ImportKind::Stmt;
-        match vm.transpiler.resolver.resolve(top, name, kind) {
-            Ok(found) if bun_path::is_absolute(found.path_pair.primary.text()) => {
+        match resolve_in_scan(vm, top, name, kind) {
+            Some(found) if bun_path::is_absolute(found.path_pair.primary.text()) => {
                 Box::from(found.path_pair.primary.text())
             }
             // Whoever loads it says what is wrong with it.
@@ -903,11 +916,7 @@ fn find_what_tests_replace<Path: core::ops::Deref<Target = [u8]>>(
             true => bun_ast::ImportKind::RequireResolve,
             false => bun_ast::ImportKind::Stmt,
         };
-        let result = vm
-            .transpiler
-            .resolver
-            .resolve(folder, specifier, kind)
-            .ok()?;
+        let result = resolve_in_scan(vm, folder, specifier, kind)?;
         Some(result.path_pair.primary.text().to_vec())
     };
     bun_aot::builtins::find_what_tests_replace(&files, threads, resolve)
@@ -1516,7 +1525,7 @@ impl NamedByTests<'_> {
             return vec![(specifier.to_vec(), true)];
         }
         for kind in [bun_ast::ImportKind::Stmt, bun_ast::ImportKind::Require] {
-            let Ok(result) = self.vm.transpiler.resolver.resolve(folder, specifier, kind) else {
+            let Some(result) = resolve_in_scan(self.vm, folder, specifier, kind) else {
                 continue;
             };
             let path = result.path_pair.primary.text();
@@ -1575,7 +1584,7 @@ impl NamedByTests<'_> {
                 }
                 let is_in_statement = named_by_statements.contains(&name);
                 let kind = bun_ast::ImportKind::Stmt;
-                let Ok(result) = self.vm.transpiler.resolver.resolve(folder, name, kind) else {
+                let Some(result) = resolve_in_scan(self.vm, folder, name, kind) else {
                     let is_mocked = || self.modules.get(name).is_some_and(|it| it.is_mocked);
                     if is_in_statement && !self.is_module_of_bun(name) && !is_mocked() {
                         cannot_load.push(file.clone());

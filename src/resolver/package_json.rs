@@ -83,6 +83,8 @@ pub struct PackageJSON {
     /// The `PackageJSON` itself is the owner so the bytes free if it ever drops.
     /// (This owner field keeps that erased borrow, and the map values above, alive.)
     pub(crate) source_contents: Box<[u8]>,
+    /// What `stat()` said of the file when a lookup last found `source_contents` in it. 0: not known, the file was too new, or its file system stamps with another clock.
+    pub(crate) disk_key: core::sync::atomic::AtomicU64,
     pub(crate) json_tape: Option<Box<js_ast::E::JsonTape>>,
     pub(crate) main_fields: MainFieldMap,
     pub module_type: ModuleType,
@@ -143,6 +145,7 @@ impl Default for PackageJSON {
             name: Box::default(),
             source: bun_ast::Source::default(),
             source_contents: Box::default(),
+            disk_key: core::sync::atomic::AtomicU64::new(0),
             json_tape: None,
             main_fields: MainFieldMap::default(),
             module_type: ModuleType::default(),
@@ -385,7 +388,8 @@ impl PackageJSON {
         macro_map
     }
 
-    #[inline(never)]
+    /// [`Self::parse_noting`] for a caller that does not keep what an unparsed file was.
+    #[inline]
     pub fn parse<const INCLUDE_DEPENDENCIES: IncludeDependencies>(
         r: &mut resolver::Resolver<'_>,
         input_path: &[u8],
@@ -393,9 +397,30 @@ impl PackageJSON {
         package_id: Option<PackageID>,
         include_scripts_: IncludeScripts,
     ) -> Option<PackageJSON> {
+        let unparsed = &mut None;
+        Self::parse_noting::<INCLUDE_DEPENDENCIES>(
+            r,
+            input_path,
+            dirname_fd,
+            package_id,
+            include_scripts_,
+            unparsed,
+        )
+    }
+
+    /// `unparsed` gets a hash of the bytes that were read, when they give no `PackageJSON`.
+    #[inline(never)]
+    pub(crate) fn parse_noting<const INCLUDE_DEPENDENCIES: IncludeDependencies>(
+        r: &mut resolver::Resolver<'_>,
+        input_path: &[u8],
+        dirname_fd: Fd,
+        package_id: Option<PackageID>,
+        include_scripts_: IncludeScripts,
+        unparsed: &mut Option<u64>,
+    ) -> Option<PackageJSON> {
         bun_removable_features::removable_definition!(
             PackageFiles,
-            Self::parse::<INCLUDE_DEPENDENCIES>
+            Self::parse_noting::<INCLUDE_DEPENDENCIES>
         );
         let include_scripts = include_scripts_ == IncludeScripts::IncludeScripts;
 
@@ -492,7 +517,10 @@ impl PackageJSON {
 
         let parsed_json = match r.caches.json.parse_package_json(r_log, &json_source) {
             Ok(Some(v)) => v,
-            Ok(None) => return None,
+            Ok(None) => {
+                *unparsed = Some(bun_wyhash::hash(&entry_contents));
+                return None;
+            }
             Err(err) => {
                 if cfg!(debug_assertions) {
                     Output::print_error(format_args!(
@@ -501,6 +529,7 @@ impl PackageJSON {
                         bstr::BStr::new(err.name())
                     ));
                 }
+                *unparsed = Some(bun_wyhash::hash(&entry_contents));
                 return None;
             }
         };
@@ -510,6 +539,7 @@ impl PackageJSON {
             // Invalid package.json in node_modules is noisy.
             // Let's just ignore it.
             // (allocator.free dropped — entry.contents owned by `entry`)
+            *unparsed = Some(bun_wyhash::hash(&entry_contents));
             return None;
         }
 
@@ -521,6 +551,7 @@ impl PackageJSON {
             source: bun_ast::Source::default(),
             // Filled at the bottom by moving `entry_contents` in (see SAFETY note above).
             source_contents: Box::default(),
+            disk_key: core::sync::atomic::AtomicU64::new(0),
             json_tape: None,
             module_type: ModuleType::Unknown,
             browser_map: BrowserMap::default(),
@@ -1546,6 +1577,7 @@ impl<'a> Package<'a> {
         }
     }
 
+    #[inline(always)]
     pub(crate) fn parse_version(specifier_after_name: &[u8]) -> Option<&[u8]> {
         if let Some(slash) = strings::index_of_char(specifier_after_name, b'/') {
             // "foo@/bar" is not a valid specifier\
@@ -1567,6 +1599,8 @@ impl<'a> Package<'a> {
         None
     }
 
+    // Inlined as when it had one caller: `load_node_modules` is compiled once for each asker.
+    #[inline(always)]
     pub(crate) fn parse(specifier: &'a [u8], subpath_buf: &'a mut [u8]) -> Option<Package<'a>> {
         if specifier.is_empty() {
             return None;

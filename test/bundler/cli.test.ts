@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
+import { unsupported } from "../aot/harness/compiler";
 
 (describe.concurrent as any)(
   "bun build",
@@ -1153,5 +1154,153 @@ describe.concurrent("diagnostic markup", () => {
     expect(stderr).toContain("The value of color in the class foo is undefined.");
     expect(stderr).not.toContain("<b>");
     expect(stderr).not.toContain("\x1b[");
+  });
+});
+
+// A macro writes a module, or another macro, while the build runs. The resolver has listed lib/ by then: the entry
+// point imports "../lib/first.ts" (or second.ts), which imports the file that writes into lib/. lib/ is not below the
+// working directory, so `--watch` does not see the write and does not start over.
+describe.concurrent("a module that a macro writes during the build", () => {
+  const files = {
+    "app/package.json": JSON.stringify({ name: "written-during-the-build" }),
+    // A macro that says how many lookups the resolvers of its process ran again after a miss. A Worker reads the
+    // counter: in a release build the VM of a macro of `bun build` does not read the environment that lets Bun's own
+    // tests import bun:internal-for-testing, and a Worker's does. The counters are those of the process.
+    "app/counters.worker.ts": `
+      import { getCounters } from "bun:internal-for-testing";
+      postMessage(getCounters().resolver.lookupsRunAgain);
+    `,
+    // The macro waits for its Worker to close: LeakSanitizer reports what a live Worker holds when `bun build` exits.
+    "app/counters.ts": `
+      import path from "node:path";
+      export async function lookupsRunAgain() {
+        const worker = new Worker(path.join(import.meta.dir, "counters.worker.ts"));
+        const closed = new Promise(resolve => worker.addEventListener("close", resolve));
+        try {
+          const { promise, resolve, reject } = Promise.withResolvers();
+          worker.onmessage = event => resolve(event.data);
+          worker.onerror = event => reject(new Error(event.message));
+          const count = await promise;
+          console.log("lookups run again: " + count);
+          return count;
+        } finally {
+          worker.terminate();
+          await closed;
+        }
+      }
+    `,
+    "app/macros.ts": `
+      import fs from "node:fs";
+      import path from "node:path";
+
+      export function write(name: string, text: string) {
+        fs.writeFileSync(path.join(import.meta.dir, name), text);
+        return name;
+      }
+    `,
+    // An import of a file that a macro of the importer writes. A build that finds late.ts reads counted.ts after that.
+    "app/main.ts": `import { made } from "../lib/first.ts";\nconsole.log(made);\n`,
+    "lib/first.ts": `export { made } from "../app/made.ts";\n`,
+    "app/made.ts": `
+      import { write } from "./macros.ts" with { type: "macro" };
+      import { v } from "../lib/late.ts";
+      import { ranAgain } from "./counted.ts";
+      export const made = [write("../lib/late.ts", "export const v = 'LATE';\\n"), v, ranAgain];
+    `,
+    "app/counted.ts": `
+      import { lookupsRunAgain } from "./counters.ts" with { type: "macro" };
+      export const ranAgain = lookupsRunAgain();
+    `,
+    // A macro that a macro of the importer writes. The macros of a file run in the order of their calls.
+    "app/macro.ts": `import { found } from "../lib/second.ts";\nconsole.log(found);\n`,
+    "lib/second.ts": `export { found } from "../app/probe.ts";\n`,
+    "app/probe.ts": `
+      import { lookupsRunAgain } from "./counters.ts" with { type: "macro" };
+      import { write } from "./macros.ts" with { type: "macro" };
+      import { late } from "../lib/late.macro.ts" with { type: "macro" };
+      export const written = write("../lib/late.macro.ts", "export function late() { return 'LATE MACRO'; }\\n");
+      export const found = [late(), lookupsRunAgain()];
+    `,
+  };
+
+  // Starts `bun build` in app/ and reads what it says: all of it, or under --watch up to the end of the first build.
+  async function firstBuild(dir: string, args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", ...args],
+      cwd: join(dir, "app"),
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const said = { stdout: "", stderr: "" };
+    const firstBuildEnded = Promise.withResolvers<void>();
+    const read = async (from: "stdout" | "stderr") => {
+      const decoder = new TextDecoder();
+      for await (const chunk of proc[from]) {
+        said[from] += decoder.decode(chunk, { stream: true });
+        if (/\(entry point\)|^error: /m.test(said[from])) firstBuildEnded.resolve();
+      }
+    };
+    const ended = Promise.all([read("stdout"), read("stderr")]);
+    if (args.includes("--watch")) {
+      await Promise.race([firstBuildEnded.promise, ended]);
+      proc.kill();
+    }
+    const [exitCode] = await Promise.all([proc.exited, ended]);
+    const all = said.stdout + "\n" + said.stderr;
+    return {
+      errors: [...all.matchAll(/^error: .*$/gm)].map(found => found[0]).sort(),
+      ranAgain: [...all.matchAll(/^lookups run again: .*$/gm)].map(found => found[0]),
+      bundled: all.match(/Bundled \d+ modules/)?.[0],
+      exitCode: args.includes("--watch") ? undefined : exitCode,
+    };
+  }
+
+  test("bun build takes what the resolver listed before", async () => {
+    using dir = tempDir("build-macro-writes-a-module", files);
+    expect(await firstBuild(String(dir), ["./main.ts", "./macro.ts", "--outdir", "../out"])).toEqual({
+      errors: [
+        'error: "MacroNotFound" error in macro',
+        'error: Could not resolve: "../lib/late.ts"',
+        'error: Macro "../lib/late.macro.ts" not found',
+      ],
+      ranAgain: ["lookups run again: 0"],
+      bundled: undefined,
+      exitCode: 1,
+    });
+  });
+
+  // The lookup of an entry point is a sequence that its caller owns. A resolver that trusts its cached misses runs it
+  // once too. "./not-there.ts" comes first: it has missed when the macro of counted.ts reads the counter.
+  test("bun build looks once for an entry point that is not there", async () => {
+    using dir = tempDir("build-entry-point-not-there", files);
+    expect(await firstBuild(String(dir), ["./not-there.ts", "./counted.ts", "--outdir", "../out"])).toEqual({
+      errors: ['error: ModuleNotFound resolving "./not-there.ts" (entry point)'],
+      ranAgain: ["lookups run again: 0"],
+      bundled: undefined,
+      exitCode: 1,
+    });
+  });
+
+  test("bun build --watch looks on disk again", async () => {
+    using dir = tempDir("build-watch-macro-writes-a-module", files);
+    const args = ["--watch", "--no-clear-screen", "./main.ts", "--outdir", "../out"];
+    expect(await firstBuild(String(dir), args)).toEqual({
+      errors: [],
+      ranAgain: ["lookups run again: 1"],
+      bundled: "Bundled 5 modules",
+      exitCode: undefined,
+    });
+  });
+
+  test.skipIf(!!unsupported)("bun build --compile --aot takes what the resolver listed before", async () => {
+    using dir = tempDir("build-aot-macro-writes-a-module", files);
+    expect(await firstBuild(String(dir), ["--compile", "--aot", "./macro.ts", "--outfile", "../out/exe"])).toEqual({
+      errors: ['error: "MacroNotFound" error in macro', 'error: Macro "../lib/late.macro.ts" not found'],
+      ranAgain: ["lookups run again: 0"],
+      bundled: undefined,
+      exitCode: 1,
+    });
   });
 });

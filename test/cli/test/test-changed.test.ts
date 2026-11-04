@@ -394,6 +394,51 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The scan takes a miss as the resolver has it. What a macro writes while the scan reads a file is not there for it.
+  test("a module that a macro writes during the scan is not followed, and the scan looks nothing up again", async () => {
+    using dir = tempDir("test-changed-scan-takes-misses", {
+      "package.json": JSON.stringify({ name: "changed-scan", type: "module" }),
+      "dep.ts": `export const dep = 1;\n`,
+      "write.macro.ts": `
+        import fs from "node:fs";
+        import path from "node:path";
+        export function write(name: string, text: string) {
+          fs.writeFileSync(path.join(import.meta.dir, name), text);
+          return name;
+        }
+      `,
+      // The scan looks "./not-there.ts" up. The run does not: nothing calls the function.
+      "a.test.ts": `
+        import { getCounters } from "bun:internal-for-testing";
+        import { test } from "bun:test";
+        function never() {
+          return require("./not-there.ts");
+        }
+        test("a", () => {
+          console.log(typeof never, "lookups run again before the tests:", getCounters().resolver.lookupsRunAgain);
+        });
+      `,
+      // gen.ts is written while the scan reads this file, and leads to dep.ts.
+      "b.test.ts": `
+        import { expect, test } from "bun:test";
+        import { write } from "./write.macro.ts" with { type: "macro" };
+        import { dep } from "./gen.ts";
+        test("b", () => {
+          expect(write("gen.ts", 'export { dep } from "./dep.ts";')).toBe("gen.ts");
+          expect(dep).toBe(1);
+        });
+      `,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "a.test.ts"), "// touched\n");
+    appendFileSync(join(String(dir), "dep.ts"), "// touched\n");
+
+    const { stdout, stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, ["a.test.ts", "b.test.ts"])).toEqual(["a.test.ts"]);
+    expect(stdout).toContain("function lookups run again before the tests: 0\n");
+    expect(exitCode).toBe(0);
+  });
+
   test("a node:vm timeout can interrupt a hot loop", async () => {
     using dir = tempDir("test-changed-vm-timeout", {
       "package.json": JSON.stringify({ name: "vm-timeout", type: "module" }),

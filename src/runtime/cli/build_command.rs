@@ -141,6 +141,10 @@ impl BuildCommand {
             std::ptr::from_ref::<transpiler::Transpiler>(this_transpiler).cast(),
             core::mem::size_of::<transpiler::Transpiler>(),
         );
+        // A watched build runs a lookup that missed once more: the file may be written during the build.
+        if ctx.debug.hot_reload != HotReload::Watch {
+            this_transpiler.resolver.trust_cached_misses();
+        }
         if let Some(fetch) = fetcher {
             this_transpiler
                 .options

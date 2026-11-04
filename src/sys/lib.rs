@@ -358,12 +358,31 @@ pub mod dir_iterator {
     #[cfg(unix)]
     #[inline]
     fn record_at(buf: &AlignedBuf, index: usize, end_index: usize) -> Option<dirent::Record<'_>> {
+        dirent::parse::<dirent::Native>(filled(buf, end_index)?, index)
+    }
+
+    /// The bytes the last refill wrote, `end_index` of them. `None` after a walk ended at a malformed record.
+    #[cfg(unix)]
+    #[inline]
+    fn filled(buf: &AlignedBuf, end_index: usize) -> Option<&[u8]> {
         if end_index > BUF_SIZE {
             return None;
         }
         // SAFETY: the syscall filled `[0..end_index]`, and `end_index <= BUF_SIZE`.
-        let filled = unsafe { buf.filled(end_index) };
-        dirent::parse::<dirent::Native>(filled, index)
+        Some(unsafe { buf.filled(end_index) })
+    }
+
+    /// The inode of the record at `index` if that record is `.`, which `dirent::parse` reports as skipped.
+    #[cfg(unix)]
+    #[inline]
+    fn dot_ino_at(buf: &AlignedBuf, index: usize, end_index: usize) -> Option<u64> {
+        let record = filled(buf, end_index)?.get(index..)?;
+        let name = record.get(<dirent::Native as dirent::Layout>::D_NAME..)?;
+        if !matches!(*name, [b'.', 0, ..]) {
+            return None;
+        }
+        // `d_ino` is the first field of every layout. 0 marks a removed record on Darwin and FreeBSD.
+        Some(u64::from_ne_bytes(*record.first_chunk()?)).filter(|&ino| ino != 0)
     }
 
     // ── Linux / Android ──────────────────────────────────────────────────
@@ -374,6 +393,7 @@ pub mod dir_iterator {
         buf: AlignedBuf,
         index: usize,
         end_index: usize,
+        dot_ino: u64,
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     impl State {
@@ -383,6 +403,7 @@ pub mod dir_iterator {
                 buf: AlignedBuf::uninit(),
                 index: 0,
                 end_index: 0,
+                dot_ino: 0,
             }
         }
         fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
@@ -409,8 +430,15 @@ pub mod dir_iterator {
                 let Some(record) = record_at(&self.buf, self.index, self.end_index) else {
                     return dirent::end_walk(&mut self.end_index, Tag::getdents64);
                 };
+                let Some(entry) = record.entry else {
+                    // `self.index` is still at the skipped record.
+                    if let Some(ino) = dot_ino_at(&self.buf, self.index, self.end_index) {
+                        self.dot_ino = ino;
+                    }
+                    self.index = record.next;
+                    continue;
+                };
                 self.index = record.next;
-                let Some(entry) = record.entry else { continue };
 
                 return Ok(Some(IteratorResult {
                     name: Name::borrow(entry.name),
@@ -429,6 +457,7 @@ pub mod dir_iterator {
         index: usize,
         end_index: usize,
         received_eof: bool,
+        dot_ino: u64,
     }
     #[cfg(target_os = "macos")]
     impl State {
@@ -440,6 +469,7 @@ pub mod dir_iterator {
                 index: 0,
                 end_index: 0,
                 received_eof: false,
+                dot_ino: 0,
             }
         }
         fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
@@ -490,8 +520,15 @@ pub mod dir_iterator {
                 let Some(record) = record_at(&self.buf, self.index, self.end_index) else {
                     return dirent::end_walk(&mut self.end_index, Tag::getdirentries64);
                 };
+                let Some(entry) = record.entry else {
+                    // `self.index` is still at the skipped record.
+                    if let Some(ino) = dot_ino_at(&self.buf, self.index, self.end_index) {
+                        self.dot_ino = ino;
+                    }
+                    self.index = record.next;
+                    continue;
+                };
                 self.index = record.next;
-                let Some(entry) = record.entry else { continue };
 
                 return Ok(Some(IteratorResult {
                     name: Name::borrow(entry.name),
@@ -508,6 +545,7 @@ pub mod dir_iterator {
         buf: AlignedBuf,
         index: usize,
         end_index: usize,
+        dot_ino: u64,
     }
     #[cfg(target_os = "freebsd")]
     impl State {
@@ -517,6 +555,7 @@ pub mod dir_iterator {
                 buf: AlignedBuf::uninit(),
                 index: 0,
                 end_index: 0,
+                dot_ino: 0,
             }
         }
         fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
@@ -545,8 +584,15 @@ pub mod dir_iterator {
                 let Some(record) = record_at(&self.buf, self.index, self.end_index) else {
                     return dirent::end_walk(&mut self.end_index, Tag::getdents64);
                 };
+                let Some(entry) = record.entry else {
+                    // `self.index` is still at the skipped record.
+                    if let Some(ino) = dot_ino_at(&self.buf, self.index, self.end_index) {
+                        self.dot_ino = ino;
+                    }
+                    self.index = record.next;
+                    continue;
+                };
                 self.index = record.next;
-                let Some(entry) = record.entry else { continue };
 
                 return Ok(Some(IteratorResult {
                     name: Name::borrow(entry.name),
@@ -780,6 +826,18 @@ pub mod dir_iterator {
         #[inline]
         pub fn next(&mut self) -> Result<Option<IteratorResult>> {
             self.state.next(self.dir)
+        }
+        /// The inode the directory listed for `.`, itself. 0 until `next` has passed that record, and always on Windows.
+        #[inline]
+        pub fn dot_ino(&self) -> u64 {
+            #[cfg(not(windows))]
+            {
+                self.state.dot_ino
+            }
+            #[cfg(windows)]
+            {
+                0
+            }
         }
     }
 
@@ -2342,6 +2400,19 @@ mod posix_impl {
             Fd::from_native(libc::AT_FDCWD),
             Some(path),
             0,
+            mask,
+            Tag::stat,
+        )
+    }
+    /// `statx` by path that makes a network file system fetch the attributes again.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub fn statx_force_sync(path: &ZStr, mask: u32) -> Maybe<PosixStat> {
+        // `AT_STATX_FORCE_SYNC` of the kernel UAPI: `libc` has no name for it on musl.
+        const AT_STATX_FORCE_SYNC: c_int = 0x2000;
+        statx_impl(
+            Fd::from_native(libc::AT_FDCWD),
+            Some(path),
+            AT_STATX_FORCE_SYNC,
             mask,
             Tag::stat,
         )
@@ -4005,21 +4076,42 @@ mod windows_impl {
         sys_uv::symlink_uv(target, link, 0)
     }
     pub fn readlink(path: &ZStr, buf: &mut [u8]) -> Maybe<usize> {
-        let err = match sys_uv::readlink(path, buf) {
-            Ok(target) => return Ok(target.len()),
+        with_long_path_retry(path, |path| {
+            sys_uv::readlink(path, buf).map(|target| target.len())
+        })
+    }
+    /// Runs `call` with `path`, and once more with the `\\?\` prefix after ENOENT for a long drive-absolute path: libuv passes a path of 260 characters or more unchanged.
+    pub(crate) fn with_long_path_retry<T>(
+        path: &ZStr,
+        mut call: impl FnMut(&ZStr) -> Maybe<T>,
+    ) -> Maybe<T> {
+        let err = match call(path) {
+            Ok(value) => return Ok(value),
             Err(err) => err,
         };
-        // libuv passes the path to Windows unchanged, and a path of 260 characters or more only
-        // works with the `\\?\` prefix, so retry with it.
-        let bytes = path.as_bytes();
-        if err.get_errno() != E::ENOENT
-            || bytes.len() < 248
+        if err.get_errno() != E::ENOENT {
+            return Err(err);
+        }
+        match long_path(path.as_bytes()) {
+            Some((long, len)) => call(ZStr::from_buf(&long[..], len)),
+            None => Err(err),
+        }
+    }
+    /// A long drive-absolute path with the `\\?\` prefix, and its length. `None` for any other path.
+    #[inline(never)]
+    fn long_path(
+        bytes: &[u8],
+    ) -> Option<(
+        bun_paths::path_buffer_pool::PoolGuard<bun_paths::PathBuffer>,
+        usize,
+    )> {
+        if bytes.len() < 248
             || bytes.len() + 5 > bun_paths::MAX_PATH_BYTES
             || !bun_paths::is_drive_letter(bytes[0])
             || bytes[1] != b':'
             || !bun_paths::is_sep_any(bytes[2])
         {
-            return Err(err);
+            return None;
         }
         let mut long = bun_paths::path_buffer_pool::get();
         long[..4].copy_from_slice(&w::LONG_PATH_PREFIX_U8);
@@ -4029,7 +4121,7 @@ mod windows_impl {
         );
         let len = 4 + normalized.len();
         long[len] = 0;
-        sys_uv::readlink(ZStr::from_buf(&long[..], len), buf).map(|target| target.len())
+        Some((long, len))
     }
     pub fn fchmod(fd: Fd, mode: Mode) -> Maybe<()> {
         sys_uv::fchmod(fd, mode)
@@ -8972,6 +9064,88 @@ pub fn get_fd_path_z<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'
 #[inline]
 pub fn iterate_dir(dir: Fd) -> dir_iterator::WrappedIterator {
     dir_iterator::iterate(dir)
+}
+
+/// Read without a syscall: the wall clock that stamps a file change, in nanoseconds, and its lead over the monotonic clock, which drops only when the wall clock is set back. `(0, 0)` on Windows.
+pub fn file_stamp_clock_ns() -> (i64, i64) {
+    #[cfg(unix)]
+    {
+        // The coarse clock is never ahead of the one an inode is stamped with, which the fine clock can be by a tick. On FreeBSD it is `CLOCK_REALTIME_FAST`.
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+        const WALL: libc::clockid_t = libc::CLOCK_REALTIME_COARSE;
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
+        const WALL: libc::clockid_t = libc::CLOCK_REALTIME;
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        const MONOTONIC: libc::clockid_t = libc::CLOCK_MONOTONIC_COARSE;
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        const MONOTONIC: libc::clockid_t = libc::CLOCK_MONOTONIC;
+        let ns = |clock: libc::clockid_t| {
+            let mut now = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            };
+            // SAFETY: `now` is a valid out-param.
+            if unsafe { libc::clock_gettime(clock, &raw mut now) } != 0 {
+                return 0;
+            }
+            (now.tv_sec as i64)
+                .saturating_mul(1_000_000_000)
+                .saturating_add(now.tv_nsec as i64)
+        };
+        let wall = ns(WALL);
+        (wall, wall.saturating_sub(ns(MONOTONIC)))
+    }
+    #[cfg(not(unix))]
+    {
+        (0, 0)
+    }
+}
+
+/// One stat by path, following links, that is not answered from a network file system's attribute cache on Linux.
+pub fn stat_force_sync(path: &ZStr) -> Maybe<PosixStat> {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if SUPPORTS_STATX_ON_LINUX.load(core::sync::atomic::Ordering::Relaxed) {
+        return statx_force_sync(path, STATX_MASK_FOR_STATS);
+    }
+    #[cfg(windows)]
+    let result = with_long_path_retry(path, stat);
+    #[cfg(not(windows))]
+    let result = stat(path);
+    result.map(|stat| PosixStat::init(&stat))
+}
+
+/// Whether the file system of `path` stamps a change with this machine's clock. False for a network mount and for a type not listed.
+pub fn stamps_with_local_clock(path: &ZStr) -> bool {
+    #[cfg(unix)]
+    {
+        let Ok(fs) = statfs(path) else {
+            return false;
+        };
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            // ext2/3/4, xfs, btrfs, tmpfs, overlayfs, f2fs, zfs, bcachefs (`linux/magic.h`).
+            matches!(
+                fs.f_type as u32,
+                0xEF53
+                    | 0x5846_5342
+                    | 0x9123_683E
+                    | 0x0102_1994
+                    | 0x794C_7630
+                    | 0xF2F5_2010
+                    | 0x2FC1_2FC1
+                    | 0xCA45_1A4E
+            )
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        {
+            (fs.f_flags as u64) & (libc::MNT_LOCAL as u64) != 0
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        false
+    }
 }
 /// `bun.sys.exists`. Non-NUL-terminated convenience over
 /// [`exists_z`]: copies into a stack `PathBuffer`, NUL-terminates, then

@@ -1,8 +1,22 @@
 import { pathToFileURL } from "bun";
+import * as internals from "bun:internal-for-testing";
 import { describe, expect, it, test } from "bun:test";
 import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isRoot, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
-import { join, resolve, sep } from "path";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  isLinux,
+  isMacOS,
+  isRoot,
+  isWindows,
+  joinP,
+  substDrive,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
+import { createRequire } from "module";
+import { basename, join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
 
@@ -327,33 +341,156 @@ it("import override to bun:test", async () => {
   expect(await import("#bun_test")).toBeDefined();
 });
 
-it.if(isWindows)("directory cache key computation", () => {
-  expect(import(`${process.cwd()}\\\\doesnotexist.ts`)).rejects.toThrow();
-  expect(import(`${process.cwd()}\\\\\\doesnotexist.ts`)).rejects.toThrow();
-  expect(import(`\\\\Test\\\\doesnotexist.ts\\` as any)).rejects.toThrow();
-  expect(import(`\\\\Test\\\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
-  expect(import(`\\\\Test\\\\doesnotexist.ts\\\\\\` as any)).rejects.toThrow();
-  expect(import(`\\\\Test\\\\\\doesnotexist.ts` as any)).rejects.toThrow();
-  expect(import(`\\\\Test\\\\\\\\doesnotexist.ts` as any)).rejects.toThrow();
-  expect(import(`\\\\Test\\doesnotexist.ts` as any)).rejects.toThrow();
-  expect(import(`\\\\\\Test\\doesnotexist.ts` as any)).rejects.toThrow();
-  expect(import(`\\\\Test\\\\\\doesnotexist.ts\\` as any)).rejects.toThrow();
-  expect(import(`\\\\Test\\\\\\\\doesnotexist.ts\\` as any)).rejects.toThrow();
-  expect(import(`\\\\Test\\doesnotexist.ts\\` as any)).rejects.toThrow();
-  expect(import(`\\\\\\Test\\doesnotexist.ts\\` as any)).rejects.toThrow();
-  expect(import(`\\\\Test\\\\\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
-  expect(import(`\\\\Test\\\\\\\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
-  expect(import(`\\\\Test\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
-  expect(import(`\\\\\\Test\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
+// `import()` of each specifier has to reject. Returns the specifiers whose lookup did not run once more after it
+// missed.
+async function missesNotRunAgain(specifiers: string[]) {
+  const notRunAgain: string[] = [];
+  for (const specifier of specifiers) {
+    const before = internals.getCounters().resolver.lookupsRunAgain;
+    await expect(import(specifier)).rejects.toThrow();
+    if (internals.getCounters().resolver.lookupsRunAgain === before) notRunAgain.push(specifier);
+  }
+  return notRunAgain;
+}
+
+// The directory records and the listings that the resolver made since `before`. It frees neither, so a miss may
+// make none when nothing changed on disk since the same miss before it: the run after it finds each cached
+// directory as it was. `refills` is left out: Windows reads each listing again in place.
+function madeSince(before: ReturnType<typeof internals.getCounters>["resolver"]) {
+  const now = internals.getCounters().resolver;
+  return { dirInfoSlots: now.dirInfoSlots - before.dirInfoSlots, newListings: now.newListings - before.newListings };
+}
+
+// A lookup that misses runs once more, and that run asks the disk about each cached directory on its way. Both
+// runs make the cache keys of those directories from the specifier as it is spelled: with repeated separators,
+// and as a UNC path with and without a share.
+it.if(isWindows)("directory cache key computation", async () => {
+  const notRunAgain = await missesNotRunAgain([
+    `${process.cwd()}\\\\doesnotexist.ts`,
+    `${process.cwd()}\\\\\\doesnotexist.ts`,
+    `\\\\Test\\\\doesnotexist.ts\\`,
+    `\\\\Test\\\\doesnotexist.ts\\\\`,
+    `\\\\Test\\\\doesnotexist.ts\\\\\\`,
+    `\\\\Test\\\\\\doesnotexist.ts`,
+    `\\\\Test\\\\\\\\doesnotexist.ts`,
+    `\\\\Test\\doesnotexist.ts`,
+    `\\\\\\Test\\doesnotexist.ts`,
+    `\\\\Test\\\\\\doesnotexist.ts\\`,
+    `\\\\Test\\\\\\\\doesnotexist.ts\\`,
+    `\\\\Test\\doesnotexist.ts\\`,
+    `\\\\\\Test\\doesnotexist.ts\\`,
+    `\\\\Test\\\\\\doesnotexist.ts\\\\`,
+    `\\\\Test\\\\\\\\doesnotexist.ts\\\\`,
+    `\\\\Test\\doesnotexist.ts\\\\`,
+    `\\\\\\Test\\doesnotexist.ts\\\\`,
+  ]);
+  expect(notRunAgain).toEqual([]);
 });
 
-// The failed resolution busts the directory cache for the dirname, which for `C:\\\x` is `C:\\`.
+// The run after the miss asks the disk about the directory of the file, which for `C:\\\x` is the root of the
+// drive. The cache key of a drive root is the only one that ends with a separator: `C:\`. The same misses once
+// more keep the record of that root: see madeSince().
 it.if(isWindows)("import() of a missing file at the drive root rejects", async () => {
   const drive = process.cwd().slice(0, 2);
-  for (const separators of [2, 3, 4]) {
-    await expect(import(drive + "\\".repeat(separators) + "doesnotexist.ts")).rejects.toThrow();
-  }
-  await expect(import(`${drive}///doesnotexist.ts`)).rejects.toThrow();
+  const specifiers = [
+    ...[2, 3, 4].map(separators => drive + "\\".repeat(separators) + "doesnotexist.ts"),
+    `${drive}///doesnotexist.ts`,
+  ];
+  expect(await missesNotRunAgain(specifiers)).toEqual([]);
+  const before = internals.getCounters().resolver;
+  expect(await missesNotRunAgain(specifiers)).toEqual([]);
+  expect(madeSince(before)).toEqual({ dirInfoSlots: 0, newListings: 0 });
+});
+
+// The cache key of the root of a share ends without a separator, and the server above that root is no directory.
+// The administrative share of a drive is such a root, as in test/js/node/fs/fs.test.ts. Its record is built below
+// no other, and the same misses once more keep it: see madeSince().
+it.if(isWindows)("import() of a missing file at the root of a share rejects", async () => {
+  const share = `\\\\localhost\\${process.cwd()[0]}$`;
+  const specifiers = [`${share}\\doesnotexist.ts`, `${share}\\\\doesnotexist.ts`];
+  expect(await missesNotRunAgain(specifiers)).toEqual([]);
+  const before = internals.getCounters().resolver;
+  expect(await missesNotRunAgain(specifiers)).toEqual([]);
+  expect(madeSince(before)).toEqual({ dirInfoSlots: 0, newListings: 0 });
+});
+
+// A test cannot write to the root of a real drive, so `subst` makes a directory the root of a new one. The
+// administrative share of its drive makes the same directory one of a network share, as in
+// test/js/node/fs/cp.test.ts. From both, the run after a miss has to find what was written since: it reads the
+// listing of the root again for a file, the one of its node_modules for a package, and the package.json of the
+// root for an alias that is asked for from the directory below.
+describe.if(isWindows)("a lookup that missed finds what was written since", () => {
+  it.each(["at the root of a drive", "through a network share"])("%s", where => {
+    using dir = tempDir("resolve-late-root", {
+      "node_modules/.keep": "",
+      "package.json": JSON.stringify({ name: "root" }),
+      "impl.cjs": "",
+      "sub/.keep": "",
+    });
+    using drive = where === "at the root of a drive" ? substDrive(String(dir)) : undefined;
+    const real = realpathSync(String(dir));
+    // Without the separator at its end.
+    const root = drive ? drive.root.slice(0, -1) : `\\\\localhost\\${real[0]}$\\${real.slice(3)}`;
+    // Names that no earlier run has asked for: this process keeps what it cached for the letter of the drive, and
+    // the next run gives that letter to another directory.
+    const id = basename(real);
+    const [one, two, pkg, alias] = [`one-${id}.cjs`, `two-${id}.cjs`, `pkg-${id}`, `#alias-${id}`];
+    const from = (folder: string) => createRequire(`${folder}\\x.cjs`);
+    const found = (lookUp: () => string) => {
+      try {
+        return basename(lookUp());
+      } catch (e: any) {
+        return e.code;
+      }
+    };
+    // Before anything is written, the first lookup misses twice. The second miss keeps the record of `root` and of
+    // each directory above it: see madeSince().
+    const missing = () => found(() => from(root).resolve(`${root}\\${one}`));
+    missing();
+    const before = internals.getCounters().resolver;
+    missing();
+    const madeByUnchangedMiss = madeSince(before);
+    const answers: Record<string, string[]> = {};
+    // Asks, writes, and asks again. The write goes through `root` too: what the client of a share cached about a
+    // directory can be seconds old until it writes there itself.
+    const row = (name: string, lookUp: () => string, write: () => void) => {
+      answers[name] = [found(lookUp)];
+      write();
+      answers[name].push(found(lookUp));
+    };
+    row(
+      "a file",
+      () => from(root).resolve(`${root}\\${one}`),
+      () => writeFileSync(`${root}\\${one}`, ""),
+    );
+    row(
+      "a file after two separators",
+      () => from(root).resolve(`${root}\\\\${two}`),
+      () => writeFileSync(`${root}\\${two}`, ""),
+    );
+    row(
+      "a package",
+      () => from(root).resolve(pkg),
+      () => {
+        mkdirSync(`${root}\\node_modules\\${pkg}`);
+        writeFileSync(`${root}\\node_modules\\${pkg}\\index.js`, "");
+      },
+    );
+    row(
+      "an alias, from the directory below",
+      () => from(`${root}\\sub`).resolve(alias),
+      () =>
+        writeFileSync(`${root}\\package.json`, JSON.stringify({ name: "root", imports: { [alias]: "./impl.cjs" } })),
+    );
+
+    expect(answers).toEqual({
+      "a file": ["MODULE_NOT_FOUND", one],
+      "a file after two separators": ["MODULE_NOT_FOUND", two],
+      "a package": ["MODULE_NOT_FOUND", "index.js"],
+      "an alias, from the directory below": ["MODULE_NOT_FOUND", "impl.cjs"],
+    });
+    expect(madeByUnchangedMiss).toEqual({ dirInfoSlots: 0, newListings: 0 });
+  });
 });
 
 describe("NODE_PATH test", () => {

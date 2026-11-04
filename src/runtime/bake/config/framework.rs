@@ -80,9 +80,10 @@ pub(crate) struct Framework {
 pub(super) fn resolve_path(
     r: &mut bun_resolver::Resolver,
     path: &[u8],
+    how: bun_resolver::AfterMiss,
 ) -> Result<Utf8Bytes<'static>, bun_resolver::Error> {
     let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
-    let result = r.resolve(top_level_dir, path, bun_ast::ImportKind::Stmt)?;
+    let result = r.resolve_as(top_level_dir, path, bun_ast::ImportKind::Stmt, how)?;
     // No path: disabled, by a "browser" map for example.
     let text = result
         .path_const()
@@ -229,7 +230,7 @@ impl Framework {
             }
             return;
         }
-        match resolve_path(r, path) {
+        match resolve_path(r, path, bun_resolver::AfterMiss::Recheck) {
             Ok(resolved) => *path = resolved,
             Err(err) => {
                 // This routes through `Output::err` (stderr), not

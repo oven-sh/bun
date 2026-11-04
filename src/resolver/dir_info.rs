@@ -1,4 +1,5 @@
 use core::ptr::NonNull;
+use core::sync::atomic::{AtomicU32, AtomicU64};
 
 use bun_alloc as allocators;
 use bun_core::Generation;
@@ -6,13 +7,62 @@ use bun_core::feature_flags as FeatureFlags;
 use bun_sys::Fd;
 
 use crate::fs;
-use crate::package_json::PackageJSON;
-use crate::tsconfig_json::TSConfigJSON;
+use crate::package_json::{PackageID, PackageJSON};
+use crate::tsconfig_json::{ConfigSource, TSConfigJSON};
 
 pub use allocators::IndexType;
 use allocators::{NOT_FOUND, UNASSIGNED};
 
 pub type Index = IndexType;
+
+/// Who asks the caches for a fact. It is a type of the lookup, not a field: a `Resolver` is copied while it runs.
+pub(crate) trait Asker: Copy {
+    /// False for `Trusting`, whose code is the code without any check.
+    const CHECKS: bool;
+    /// The generation that a cached fact is compared with. 0 for `Trusting`.
+    fn generation(self) -> Generation;
+}
+
+/// Takes every cached fact as it is.
+#[derive(Clone, Copy)]
+pub(crate) struct Trusting;
+
+/// Takes a cached fact as it is only if it was read or checked at this generation, which is never 0.
+#[derive(Clone, Copy)]
+pub(crate) struct Checked(pub(crate) Generation);
+
+impl Asker for Trusting {
+    const CHECKS: bool = false;
+    #[inline(always)]
+    fn generation(self) -> Generation {
+        0
+    }
+}
+
+impl Asker for Checked {
+    const CHECKS: bool = true;
+    #[inline(always)]
+    fn generation(self) -> Generation {
+        self.0
+    }
+}
+
+/// Runs `$body` with `$asker` bound to the asker that `$generation` stands for: `Trusting` for 0, else `Checked`.
+macro_rules! dispatch_asker {
+    ($generation:expr, |$asker:ident| $body:expr) => {
+        match $generation {
+            0 => {
+                let $asker = $crate::dir_info::Trusting;
+                $body
+            }
+            generation => {
+                let $asker = $crate::dir_info::Checked(generation);
+                $body
+            }
+        }
+    };
+}
+pub(crate) use dispatch_asker;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DirInfoRef — arena handle into the DirInfo BSSMap singleton.
@@ -26,6 +76,7 @@ pub type Index = IndexType;
 // only inside `dir_info_uncached` while filling a freshly-`put` slot, before
 // any handle to that slot escapes. All access is additionally serialized under
 // the resolver mutex.
+// `stamp` and the two listing versions are atomics: a lookup that checks a slot stores them through `&DirInfo`.
 //
 // `as_ptr()` exposes the raw `*mut` for the few callers that still need it
 // (the `dir_info_uncached` fill path and `MatchResult.dir_info` round-trip).
@@ -69,6 +120,12 @@ impl DirInfoRef {
     pub(crate) fn from_slot(slot: &mut DirInfo) -> Self {
         DirInfoRef(bun_ptr::BackRef::new_mut(slot))
     }
+
+    /// The address of the slot. A directory that is read again after a drop gets another slot.
+    #[inline]
+    pub(crate) fn as_ptr(self) -> *const DirInfo {
+        self.0.as_ptr()
+    }
 }
 
 impl core::ops::Deref for DirInfoRef {
@@ -92,8 +149,7 @@ impl core::fmt::Debug for DirInfoRef {
 }
 
 pub struct DirInfo {
-    // These objects are immutable, so we can just point to the parent directory
-    // and avoid having to lock the cache again
+    // A slot is filled once and a directory that changed gets a new one, so this index is read without locking the cache.
     pub(crate) parent: Index,
 
     // A pointer to the enclosing dirInfo with a valid "browser" field in
@@ -146,6 +202,38 @@ pub struct DirInfo {
     pub abs_real_path: &'static [u8],
 
     pub(crate) flags: Flags,
+
+    /// The generation of the lookup that last read these facts from disk or found them unchanged. 0: one that checks nothing.
+    pub(crate) stamp: AtomicU64,
+    /// `DirEntry::version` of the listing when the facts that come from it were last derived.
+    pub(crate) listing_version: AtomicU32,
+    /// The same for the listing of the parent, which gives `abs_real_path`.
+    pub(crate) parent_listing_version: AtomicU32,
+    pub(crate) rare: Option<Box<RareFacts>>,
+}
+
+/// What few directories have: a config file that gave no parsed value, what reading the config files logged, a package id.
+#[derive(Default)]
+pub(crate) struct RareFacts {
+    /// `package.json` was listed as a file and gave no `PackageJSON`.
+    pub(crate) unparsed_package_json: Option<ConfigSource>,
+    /// `tsconfig.json` or `jsconfig.json` was listed as a file and gave no `TSConfigJSON`: that file, then each other file that was read for it.
+    pub(crate) unparsed_tsconfig: Vec<ConfigSource>,
+    /// A lookup that checks the slot and keeps it writes these again: the readers logged them only when they filled it.
+    pub(crate) package_json_msgs: Vec<bun_ast::Msg>,
+    pub(crate) tsconfig_msgs: Vec<bun_ast::Msg>,
+    /// Set for a package of the global cache, which has no parent: `Resolver::dir_info_for_resolution` filled the slot.
+    pub(crate) package_id: Option<PackageID>,
+}
+
+impl RareFacts {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.unparsed_package_json.is_none()
+            && self.unparsed_tsconfig.is_empty()
+            && self.package_json_msgs.is_empty()
+            && self.tsconfig_msgs.is_empty()
+            && self.package_id.is_none()
+    }
 }
 
 impl Default for DirInfo {
@@ -164,6 +252,10 @@ impl Default for DirInfo {
             tsconfig_json: None,
             abs_real_path: b"",
             flags: Flags::empty(),
+            stamp: AtomicU64::new(0),
+            listing_version: AtomicU32::new(0),
+            parent_listing_version: AtomicU32::new(0),
+            rare: None,
         }
     }
 }
@@ -199,6 +291,12 @@ impl DirInfo {
     #[inline]
     pub(crate) fn is_inside_node_modules(&self) -> bool {
         self.flags.contains(Flags::InsideNodeModules)
+    }
+
+    /// The id that the package manager gave this directory, if it is a package of the global cache.
+    #[inline]
+    pub(crate) fn package_id(&self) -> Option<PackageID> {
+        self.rare.as_deref().and_then(|rare| rare.package_id)
     }
 
     /// Read-only view of `package_json`. The field stores `NonNull` to preserve
@@ -238,11 +336,24 @@ impl DirInfo {
     /// (ARENA — process lifetime), so a `&'static` reborrow of the
     /// `&'static` returned by `entries_at_locked` is sound and needs no
     /// `unsafe` here. The `.data` map must only be probed/iterated while the
-    /// lock is held; use [`get_entry`](Self::get_entry) for one-shot lookups.
+    /// lock is held; use [`get_entry_as`](Self::get_entry_as) for one-shot lookups.
     pub fn get_entries_ref_locked(&self, generation: Generation) -> Option<&'static fs::DirEntry> {
+        if generation == 0 {
+            self.entries_ref_locked_as(Trusting)
+        } else {
+            self.entries_ref_locked_as(Checked(generation))
+        }
+    }
+
+    /// The listing as `asker` may use it. Caller holds `entries_mutex`.
+    #[inline]
+    pub(crate) fn entries_ref_locked_as<A: Asker>(
+        &self,
+        asker: A,
+    ) -> Option<&'static fs::DirEntry> {
         fs::FileSystem::instance()
             .fs
-            .entries_at_locked(self.entries, generation)?
+            .entries_at_locked(self.entries, asker)?
             .as_entries()
     }
 
@@ -254,16 +365,13 @@ impl DirInfo {
     /// is released can walk freed buckets. The returned lookup wraps a raw
     /// pointer into the process-lifetime `EntryStore`, which stays valid after
     /// the lock is dropped.
-    pub(crate) fn get_entry(
-        &self,
-        generation: Generation,
-        query: &[u8],
-    ) -> Option<fs::EntryLookup> {
+    #[inline]
+    pub(crate) fn get_entry_as<A: Asker>(&self, asker: A, query: &[u8]) -> Option<fs::EntryLookup> {
         let rfs = &mut fs::FileSystem::instance().fs;
         // `MutexGuard` stores the mutex by raw pointer, so holding it does not
         // keep `rfs` borrowed.
         let _lock = rfs.entries_mutex.lock_guard();
-        rfs.entries_at_locked(self.entries, generation)?
+        rfs.entries_at_locked(self.entries, asker)?
             .as_entries()?
             .get(query)
     }
@@ -312,6 +420,12 @@ pub(crate) fn hash_map_instance() -> *mut HashMap {
         return p.as_ptr();
     }
     hash_map_instance_init()
+}
+
+/// `bun:internal-for-testing`: `DirInfo` slots filled so far. None is freed: a directory read again counts twice.
+pub fn slots_used() -> usize {
+    // SAFETY: the singleton lives for the process, and `slots_used` takes the map's mutex.
+    unsafe { (*hash_map_instance()).slots_used() }
 }
 
 #[cold]
@@ -386,6 +500,14 @@ bitflags::bitflags! {
         /// This directory has a node_modules subdirectory
         const HasNodeModules    = 1 << 1;
         const InsideNodeModules = 1 << 2;
+        /// A `package.json` file was listed, whether or not it parsed.
+        const HasPackageJsonFile = 1 << 3;
+        /// A `tsconfig.json` or `jsconfig.json` file was listed, whether or not it loaded.
+        const HasTsconfigFile   = 1 << 4;
+        /// The resolver that filled the slot reads `package.json` files. One that does not leaves no fact about that file.
+        const ReadsPackageJson  = 1 << 5;
+        /// The same for `tsconfig.json` and `jsconfig.json`.
+        const ReadsTsconfig     = 1 << 6;
     }
 }
 impl Flags {

@@ -50,7 +50,7 @@ pub use tsconfig_json::TSConfigJSON;
 /// Re-export so dependents can spell `bun_resolver::install_types::AutoInstaller`.
 pub use ::bun_install_types::resolver_hooks as install_types;
 pub use resolver::{
-    AnyResolveWatcher, BrowserMapPathKind, Bufs, Dirname, Resolver, module_type_from_ext,
+    AfterMiss, AnyResolveWatcher, BrowserMapPathKind, Bufs, Dirname, Resolver, module_type_from_ext,
 };
 pub use result::{
     DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, LoadResult, MatchResult,
@@ -881,6 +881,52 @@ pub mod fs {
     /// The active filesystem backend (always the real filesystem).
     pub(crate) type Implementation = RealFS;
 
+    /// What a read that fails means to the caller of [`RealFS::listing_locked`].
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum ListingReader {
+        /// `read_directory`: a failed read is reported, and a cached error is the answer until an asker that checks at another generation asks.
+        Lookup,
+        /// The `DirInfo` fill, which has the directory open: it keeps the names that could be read.
+        DirInfoFill,
+    }
+
+    /// The directory that [`RealFS::listing_locked`] reads when it has to.
+    #[derive(Clone, Copy)]
+    pub(crate) enum ListingHandle<'a> {
+        /// The caller has it open and closes it. Not valid: a directory that can be entered but not listed.
+        Held(Fd),
+        /// `RealFS::open_dir` of this path.
+        Open(&'a [u8]),
+        /// `bun_sys::open_dir_for_iteration` of this path, which asks for read access too.
+        OpenForIteration(&'a [u8]),
+    }
+
+    /// Which slot of the listing cache [`RealFS::listing_locked`] works on.
+    pub(crate) enum ListingSlot<'a> {
+        /// The slot of a key: a directory that has no listing yet gets one.
+        Keyed(&'a mut bun_alloc::Result),
+        /// A slot that a `DirInfo` holds by index. It is filled, so at most its listing is read again in place.
+        Filled(*mut EntriesOption),
+    }
+
+    /// How [`RealFS::listing_locked`] reads a directory for one caller.
+    #[derive(Clone, Copy)]
+    pub(crate) struct ListingRead<'a> {
+        pub(crate) handle: ListingHandle<'a>,
+        /// Keep the handle in the listing.
+        pub(crate) store_fd: bool,
+        /// The spelling a new listing is stored under. A listing that is read again keeps its own.
+        pub(crate) name: &'a [u8],
+    }
+
+    /// Where the names that [`RealFS::listing_locked`] reads go.
+    enum ListingTarget<'a> {
+        /// Into the listing the slot has, in place.
+        Refill(*mut EntriesOption, *mut DirEntry),
+        /// Into a new listing, which the key is then mapped to.
+        New(&'a mut bun_alloc::Result),
+    }
+
     // ── RealFS ───────────────────────────────────────────────────────────
 
     /// Real-filesystem backend: directory-entry cache plus fd-limit
@@ -894,6 +940,9 @@ pub mod fs {
         pub(crate) cwd: &'static [u8],
         #[cfg(not(windows))]
         pub(crate) file_limit: usize,
+        /// Devices the listing check has met, each with `bun_sys::stamps_with_local_clock`. Guarded by `entries_mutex`.
+        local_devices: [(u64, bool); 4],
+        local_devices_next: usize,
     }
 
     impl RealFS {
@@ -910,6 +959,8 @@ pub mod fs {
                 cwd,
                 #[cfg(not(windows))]
                 file_limit,
+                local_devices: [(u64::MAX, false); 4],
+                local_devices_next: 0,
             }
         }
 
@@ -985,6 +1036,7 @@ pub mod fs {
         /// fresh `DirEntry` (re-using `prev_map` Entry slots where the name matches).
         fn readdir<I: DirEntryIterator>(
             &self,
+            reader: ListingReader,
             store_fd: bool,
             mut prev_map: Option<&mut dir_entry::EntryMap>,
             dir_: &'static [u8],
@@ -992,17 +1044,44 @@ pub mod fs {
             handle: Fd,
             iterator: &mut I,
         ) -> crate::CrateResult<DirEntry> {
-            let mut iter = bun_sys::iterate_dir(handle);
+            let fill = reader == ListingReader::DirInfoFill;
             let mut dir = DirEntry::init(dir_, generation);
+            if fill {
+                // 64 covers a typical node_modules package dir without the 1→2→4→…→N rehash cascade.
+                dir.data.reserve(64);
+            }
 
             if store_fd {
-                FileSystem::set_max_fd(bun_sys::Fd::native(handle));
+                if !fill {
+                    FileSystem::set_max_fd(bun_sys::Fd::native(handle));
+                }
                 dir.fd = handle;
+            }
+            // A permission-denied ancestor has no fd to enumerate: its listing stays empty.
+            if fill && !handle.is_valid() {
+                dir.read_clock_ns = DirEntry::NOT_LISTABLE;
+                return Ok(dir);
             }
 
             let fd = dir.fd;
+            // Read before the first name, so a name added while they are read carries a later stamp.
+            let (read_clock_ns, read_clock_lead_ns) = bun_sys::file_stamp_clock_ns();
+            let mut iter = bun_sys::iterate_dir(handle);
             let mut filename_store = FilenameStoreAppender::new();
-            while let Some(entry_) = iter.next()? {
+            loop {
+                let entry_ = match iter.next() {
+                    Ok(Some(entry_)) => entry_,
+                    // Only a read that reached the end takes the clock and the inode of `.`: a stat later vouches for all of the names or for none.
+                    Ok(None) => {
+                        dir.read_clock_ns = read_clock_ns;
+                        dir.read_clock_lead_ns = read_clock_lead_ns;
+                        dir.dot_ino = iter.dot_ino();
+                        break;
+                    }
+                    // The `DirInfo` fill keeps the names that could be read.
+                    Err(_) if fill => break,
+                    Err(err) => return Err(err.into()),
+                };
                 // debug("readdir entry {}", BStr::new(entry_.name.slice()));
                 if let Some(entry) =
                     dir.add_entry_with_store(prev_map.as_deref_mut(), &entry_, &mut filename_store)?
@@ -1022,6 +1101,7 @@ pub mod fs {
             &mut self,
             dir: &[u8],
             err: crate::Error,
+            generation: Generation,
         ) -> crate::CrateResult<&'static EntriesOption> {
             let mut get_or_put_result = self.entries.get_or_put(dir)?;
             if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
@@ -1030,18 +1110,49 @@ pub mod fs {
                     dir_entry::Err {
                         original_err: err,
                         canonical_error: err,
+                        generation,
+                        version: 0,
                     },
                 )));
             }
+            // A `DirInfo` may hold this slot by index: the listing that takes it next does not count from 0 again.
+            let version = match self.entries.at_index(get_or_put_result.index) {
+                Some(EntriesOption::Entries(listing)) => listing.version.wrapping_add(1),
+                Some(EntriesOption::Err(failed)) => failed.version,
+                None => 0,
+            };
             let opt = self.entries.put(
                 &mut get_or_put_result,
                 EntriesOption::Err(dir_entry::Err {
                     original_err: err,
                     canonical_error: err,
+                    generation,
+                    version,
                 }),
             )?;
             // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
             Ok(unsafe { &*opt })
+        }
+
+        /// `read_directory_error` for a listing that a `DirInfo` holds by index: the slot keeps the listing, so the next asker that checks opens the directory again.
+        fn read_directory_error_transient(
+            &mut self,
+            dir: &[u8],
+            err: crate::Error,
+            generation: Generation,
+        ) -> crate::CrateResult<&'static EntriesOption> {
+            if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                let result = self.entries.get_or_put(dir)?;
+                self.entries.mark_not_found(result);
+            }
+            Ok(temp_entries_option_write(EntriesOption::Err(
+                dir_entry::Err {
+                    original_err: err,
+                    canonical_error: err,
+                    generation,
+                    version: 0,
+                },
+            )))
         }
 
         /// A missing directory's `Err` is this thread's scratch slot; read it before the next call.
@@ -1071,117 +1182,300 @@ pub mod fs {
             store_fd: bool,
             iterator: &mut I,
         ) -> crate::CrateResult<&'static EntriesOption> {
+            use crate::dir_info::{Checked, Trusting};
+            if generation == 0 {
+                self.read_directory_as(
+                    Trusting,
+                    dir_maybe_trail_slash,
+                    maybe_handle,
+                    store_fd,
+                    iterator,
+                )
+            } else {
+                self.read_directory_as(
+                    Checked(generation),
+                    dir_maybe_trail_slash,
+                    maybe_handle,
+                    store_fd,
+                    iterator,
+                )
+            }
+        }
+
+        /// `read_directory_with_iterator` for an asker: the cached answer if the asker may use it, else the directory as it is read now.
+        #[inline]
+        pub(crate) fn read_directory_as<A: crate::dir_info::Asker, I: DirEntryIterator>(
+            &mut self,
+            asker: A,
+            dir_maybe_trail_slash: &[u8],
+            maybe_handle: Option<Fd>,
+            store_fd: bool,
+            iterator: &mut I,
+        ) -> crate::CrateResult<&'static EntriesOption> {
             let dir = strings::paths::without_trailing_slash_windows_path(dir_maybe_trail_slash);
 
             crate::Resolver::assert_valid_cache_key(dir);
             let _unlock_guard = self.entries_mutex.lock_guard();
 
-            let mut in_place: Option<*mut DirEntry> = None;
-
             let mut cache_result = self.entries.get_or_put(dir)?;
-            if cache_result.has_checked_if_exists() {
-                if let Some(cached_result) = self.entries.at_index(cache_result.index) {
-                    // erase to raw immediately so the early-return reborrow
-                    // doesn't conflict with the `&mut self.entries` borrow above.
-                    let cached_ptr = std::ptr::from_mut::<EntriesOption>(cached_result);
-                    // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
-                    // Single `&mut` reborrow — the catch-all arm binds and returns the
-                    // scrutinee directly so no second `&mut *cached_ptr` is materialized
-                    // while the first is on the borrow stack (Stacked Borrows hygiene).
-                    match unsafe { &mut *cached_ptr } {
-                        EntriesOption::Entries(e) if e.generation < generation => {
-                            in_place = Some(std::ptr::from_mut::<DirEntry>(*e));
-                        }
-                        cached => return Ok(cached),
-                    }
-                } else if cache_result.status == bun_alloc::ItemStatus::NotFound && generation == 0
-                {
-                    return Ok(temp_entries_option_write(EntriesOption::Err(
-                        dir_entry::Err {
-                            original_err: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
-                            canonical_error: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
-                        },
-                    )));
-                }
+            if cache_result.status == bun_alloc::ItemStatus::NotFound && asker.generation() == 0 {
+                return Ok(temp_entries_option_write(EntriesOption::Err(
+                    dir_entry::Err {
+                        original_err: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
+                        canonical_error: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
+                        generation: asker.generation(),
+                        version: 0,
+                    },
+                )));
             }
 
-            let had_handle = maybe_handle.is_some();
-            let handle: Fd = match maybe_handle {
-                Some(h) => h,
-                None => match self.open_dir(dir) {
-                    Ok(h) => h,
-                    Err(err) => return self.read_directory_error(dir, err),
+            let read = || ListingRead {
+                handle: match maybe_handle {
+                    Some(handle) => ListingHandle::Held(handle),
+                    None => ListingHandle::Open(dir),
+                },
+                store_fd,
+                // A new listing is stored under the caller's spelling when this opens the directory itself.
+                name: if maybe_handle.is_some() {
+                    dir
+                } else {
+                    dir_maybe_trail_slash
                 },
             };
+            let slot = ListingSlot::Keyed(&mut cache_result);
+            match self.listing_locked(asker, slot, ListingReader::Lookup, read, iterator)? {
+                // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
+                Ok(slot) => Ok(unsafe { &*slot }),
+                Err(err) => self.read_directory_error(dir, err, asker.generation()),
+            }
+        }
 
-            // Close the handle on every exit path. Use
-            // scopeguard so close happens even if `readdir`/`put` early-return with `?`.
-            let should_close_handle = !had_handle && (!store_fd || self.need_to_close_files());
+        /// The slot whose listing `asker` may use: cached, read again in place, or new. The inner error is a directory that did not open or read. Caller holds `entries_mutex`.
+        #[inline(always)]
+        pub(crate) fn listing_locked<'r, A: crate::dir_info::Asker, I: DirEntryIterator>(
+            &mut self,
+            asker: A,
+            slot: ListingSlot<'_>,
+            reader: ListingReader,
+            read: impl FnOnce() -> ListingRead<'r>,
+            iterator: &mut I,
+        ) -> crate::CrateResult<core::result::Result<*mut EntriesOption, crate::Error>> {
+            debug_assert!(
+                self.entries_mutex.is_held_by_current_thread(),
+                "listing_locked: caller must hold entries_mutex",
+            );
+            let cached: Option<*mut EntriesOption> = match &slot {
+                ListingSlot::Keyed(result) => self
+                    .entries
+                    .at_index(result.index)
+                    .map(std::ptr::from_mut::<EntriesOption>),
+                ListingSlot::Filled(filled) => Some(*filled),
+            };
+            let mut refill: Option<(*mut EntriesOption, *mut DirEntry)> = None;
+            if let Some(cached) = cached {
+                // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
+                match unsafe { &mut *cached } {
+                    // A checked asker trusts only its own stamp. `!=`, not `<`: a build does not trust a later runtime stamp.
+                    EntriesOption::Entries(listing)
+                        if A::CHECKS && listing.generation != asker.generation() =>
+                    {
+                        refill = Some((cached, std::ptr::from_mut::<DirEntry>(*listing)));
+                    }
+                    // A failure has the stamp of the asker that met it: a checked asker of another generation opens the directory again.
+                    EntriesOption::Err(failed)
+                        if A::CHECKS && failed.generation != asker.generation() => {}
+                    // The `DirInfo` fill has the directory open, so an error that was cached no longer holds.
+                    EntriesOption::Err(_) if reader == ListingReader::DirInfoFill => {}
+                    _ => return Ok(Ok(cached)),
+                }
+            }
+            let target = match (refill, slot) {
+                (Some((cached, listing)), _) => ListingTarget::Refill(cached, listing),
+                (None, ListingSlot::Keyed(result)) => ListingTarget::New(result),
+                // A slot held by index keeps what it has: there is no key to map a new listing to.
+                (None, ListingSlot::Filled(filled)) => return Ok(Ok(filled)),
+            };
+            self.read_listing_locked(asker.generation(), target, reader, read(), iterator)
+        }
+
+        /// `listing_locked` without a cached answer for its asker: one stat keeps the listing of an unchanged directory, else open, read, store.
+        #[inline(never)]
+        fn read_listing_locked<I: DirEntryIterator>(
+            &mut self,
+            generation: Generation,
+            target: ListingTarget<'_>,
+            reader: ListingReader,
+            read: ListingRead<'_>,
+            iterator: &mut I,
+        ) -> crate::CrateResult<core::result::Result<*mut EntriesOption, crate::Error>> {
+            if let ListingTarget::Refill(cached, listing) = &target {
+                if self.keep_listing_locked(*listing, generation) {
+                    return Ok(Ok(*cached));
+                }
+            }
+            let ListingRead {
+                handle,
+                store_fd,
+                name,
+            } = read;
+            let held = matches!(handle, ListingHandle::Held(_));
+            let opened: crate::CrateResult<Fd> = match handle {
+                ListingHandle::Held(handle) => Ok(handle),
+                ListingHandle::Open(dir) => self.open_dir(dir),
+                ListingHandle::OpenForIteration(dir) => {
+                    bun_sys::open_dir_for_iteration(Fd::cwd(), dir).map_err(Into::into)
+                }
+            };
+            let handle: Fd = match opened {
+                Ok(handle) => handle,
+                Err(err) => {
+                    // A listing whose directory can be entered but not listed stays, with no names, as the `DirInfo` fill has it.
+                    if let ListingTarget::Refill(cached, listing) = &target
+                        && matches!(
+                            err,
+                            crate::Error::Sys(bun_errno::SystemErrno::EPERM)
+                                | crate::Error::Sys(bun_errno::SystemErrno::EACCES)
+                        )
+                    {
+                        Self::keep_not_listable_locked(*listing, generation);
+                        return Ok(Ok(*cached));
+                    }
+                    return Ok(Err(err));
+                }
+            };
+            // The `DirInfo` fill holds no handle for a directory that it could enter but not list.
+            if !handle.is_valid()
+                && let ListingTarget::Refill(cached, listing) = &target
+            {
+                Self::keep_not_listable_locked(*listing, generation);
+                return Ok(Ok(*cached));
+            }
+
+            // Closed on every exit path, unless the caller or the listing keeps it. Decided before the read, which can raise the highest fd.
+            let should_close_handle = !held && (!store_fd || self.need_to_close_files());
             let _close_guard = scopeguard::guard(handle, move |h| {
                 if should_close_handle {
                     let _ = bun_sys::close(h);
                 }
             });
 
-            // if we get this far, it's a real directory, so we can just store the dir name.
-            // An in-place refresh always keeps the slot's existing interned name: callers
-            // spell the same directory with and without a trailing slash, and rewriting
-            // `dir` to the other spelling races every unlocked `Entry::dir()` reader.
-            let dir: &'static [u8] = if let Some(existing) = in_place {
-                // SAFETY: `in_place` points to a `DirEntry` inside the BSSMap singleton;
-                // its `dir` field is DirnameStore-interned (&'static).
-                unsafe { (*existing).dir }
-            } else if !had_handle {
-                DirnameStore::instance().append_slice(dir_maybe_trail_slash)?
-            } else {
-                // Intern into DirnameStore so the cache entry never dangles —
-                // `append_slice` is a bump-pointer copy, cost is bounded.
-                DirnameStore::instance().append_slice(dir)?
+            let refill: Option<*mut DirEntry> = match &target {
+                ListingTarget::Refill(_, listing) => Some(*listing),
+                ListingTarget::New(_) => None,
             };
-
-            // Cache miss: read the directory entries
-            let prev = in_place.map(|p| {
+            // A refill keeps the spelling its listing has: an unlocked `Entry::dir()` reader must not see it change.
+            let dir: &'static [u8] = match refill {
+                // SAFETY: a `DirEntry` of the BSSMap singleton; its `dir` is interned in `DirnameStore`.
+                Some(listing) => unsafe { (*listing).dir },
+                None => DirnameStore::instance().append_slice(name)?,
+            };
+            let prev = refill.map(|listing| {
                 // SAFETY: BSSMap-owned, no aliasing here (entries_mutex held).
-                unsafe { &mut (*p).data }
+                unsafe { &mut (*listing).data }
             });
-            let mut entries = match self.readdir(store_fd, prev, dir, generation, handle, iterator)
-            {
-                Ok(e) => e,
-                Err(err) => {
-                    if let Some(existing) = in_place {
-                        // SAFETY: see above.
-                        unsafe { (*existing).data.clear() };
+            let mut entries =
+                match self.readdir(reader, store_fd, prev, dir, generation, handle, iterator) {
+                    Ok(entries) => entries,
+                    Err(err) => {
+                        if let Some(listing) = refill {
+                            // SAFETY: see above.
+                            unsafe { (*listing).forget() };
+                        }
+                        return match reader {
+                            ListingReader::Lookup => Ok(Err(err)),
+                            ListingReader::DirInfoFill => Err(err),
+                        };
                     }
-                    return self.read_directory_error(dir, err);
+                };
+            if reader == ListingReader::DirInfoFill {
+                bun_core::scoped_log!(
+                    crate::fs_full::Fs,
+                    "readdir({}, {}) = {}",
+                    handle,
+                    bstr::BStr::new(name),
+                    entries.data.count(),
+                );
+            }
+
+            match target {
+                ListingTarget::Refill(cached, listing) => {
+                    crate::resolver::test_hooks::count_refill();
+                    // SAFETY: a live `DirEntry` of the BSSMap singleton, exclusively held under `entries_mutex`.
+                    unsafe {
+                        entries.version = (*listing).version.wrapping_add(1);
+                        *listing = entries;
+                    }
+                    Ok(Ok(cached))
                 }
-            };
-
-            // `EntriesOption::Entries` here holds an unbounded `&mut DirEntry` (raw, BSSMap-stored
-            // pointer), so a fresh slot is a leaked `Box<DirEntry>` whose lifetime is the
-            // `entries_option_map()` singleton (process-static).
-            let entries_ptr: *mut DirEntry = match in_place {
-                Some(p) => p,
-                None => bun_core::heap::into_raw(Box::new(DirEntry::init(dir, generation))),
-            };
-            if let Some(original) = in_place {
-                // SAFETY: BSSMap-owned; entries_mutex held.
-                unsafe { (*original).data.clear() };
+                ListingTarget::New(result) => {
+                    crate::resolver::test_hooks::count_new_listing();
+                    if let Some(EntriesOption::Err(failed)) = self.entries.at_index(result.index) {
+                        entries.version = failed.version;
+                    }
+                    // The slot holds an unbounded `&mut DirEntry`: a leaked `Box` that lives as long as the `entries_option_map()` singleton.
+                    let listing: *mut DirEntry = bun_core::heap::into_raw(Box::new(entries));
+                    // SAFETY: a fresh leaked Box, exclusively owned here under `entries_mutex`.
+                    let value = EntriesOption::Entries(unsafe { &mut *listing });
+                    Ok(Ok(self.entries.put(result, value)?))
+                }
             }
-            if store_fd && !entries.fd.is_valid() {
-                entries.fd = handle;
+        }
+
+        /// One stat of the directory by path. True, with `listing` stamped for `generation`, when no name was added or removed since the read.
+        #[cold]
+        #[inline(never)]
+        fn keep_listing_locked(&mut self, listing: *mut DirEntry, generation: Generation) -> bool {
+            // SAFETY: a `DirEntry` of the BSSMap singleton, exclusively held under `entries_mutex`.
+            let listing = unsafe { &mut *listing };
+            // Without the inode of "." (Windows, some FUSE mounts, a read that failed) there is nothing to compare.
+            if listing.dot_ino == 0 {
+                return false;
             }
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let Some(dir) = Self::dir_z(&mut buf, listing.dir) else {
+                return false;
+            };
+            let Ok(now) = bun_sys::stat_force_sync(dir) else {
+                return false;
+            };
+            // Overlayfs with layers on different file systems and xino off lists the layer's inode for ".", not the one a stat reports: no listing is kept there.
+            if !listing.unchanged_since_read(&now) || !self.stamps_with_local_clock(now.dev, dir) {
+                return false;
+            }
+            listing.generation = generation;
+            true
+        }
 
-            // SAFETY: `entries_ptr` is either a live BSSMap slot (`in_place`) or a fresh
-            // leaked Box; exclusively owned here under `entries_mutex`.
-            unsafe { *entries_ptr = entries };
-            let result = EntriesOption::Entries(
-                // SAFETY: see above — re-borrow as 'static for the BSSMap slot.
-                unsafe { &mut *entries_ptr },
-            );
+        /// A listing whose directory cannot be listed keeps its slot, empty and marked as never listed: each asker that checks tries the directory once.
+        #[cold]
+        fn keep_not_listable_locked(listing: *mut DirEntry, generation: Generation) {
+            // SAFETY: a `DirEntry` of the BSSMap singleton, exclusively held under `entries_mutex`.
+            let listing = unsafe { &mut *listing };
+            if listing.data.count() != 0 || listing.dot_ino != 0 {
+                listing.forget();
+            }
+            listing.generation = generation;
+            listing.read_clock_ns = DirEntry::NOT_LISTABLE;
+        }
 
-            let out = self.entries.put(&mut cache_result, result)?;
-            // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
-            Ok(unsafe { &*out })
+        fn dir_z<'buf>(buf: &'buf mut bun_paths::PathBuffer, dir: &[u8]) -> Option<&'buf ZStr> {
+            if dir.len() >= buf.len() {
+                return None;
+            }
+            buf[..dir.len()].copy_from_slice(dir);
+            buf[dir.len()] = 0;
+            Some(ZStr::from_buf(&buf[..], dir.len()))
+        }
+
+        /// `bun_sys::stamps_with_local_clock` for the device `dev`, asked once for each of the last four devices.
+        fn stamps_with_local_clock(&mut self, dev: u64, dir: &ZStr) -> bool {
+            if let Some(&(_, local)) = self.local_devices.iter().find(|known| known.0 == dev) {
+                return local;
+            }
+            let local = bun_sys::stamps_with_local_clock(dir);
+            self.local_devices[self.local_devices_next % self.local_devices.len()] = (dev, local);
+            self.local_devices_next = self.local_devices_next.wrapping_add(1);
+            local
         }
 
         /// Evicts `file_path` from the directory-entry cache; returns whether
@@ -1205,9 +1499,19 @@ pub mod fs {
             &self,
             dir_: &[u8],
             base: &[u8],
-            existing_fd: Fd,
+            held: EntryCache,
             store_fd: bool,
         ) -> crate::CrateResult<EntryCache> {
+            let existing_fd = held.fd;
+            // A link that names what it named at the last stat keeps the path that was interned then.
+            let intern = |symlink: &[u8]| -> crate::CrateResult<Interned> {
+                if held.symlink.as_bytes() == symlink {
+                    return Ok(held.symlink);
+                }
+                Ok(Interned::from_static(
+                    FilenameStore::instance().append_slice(symlink)?,
+                ))
+            };
             use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
             #[cfg(not(windows))]
             use bun_sys::{FileKind, kind_from_mode};
@@ -1313,8 +1617,7 @@ pub mod fs {
 
                 let mut buf2 = bun_paths::path_buffer_pool::get();
                 if let Ok(real) = bun_sys::get_fd_path(Fd::from_system(handle), &mut buf2) {
-                    cache.symlink =
-                        Interned::from_static(FilenameStore::instance().append_slice(real)?);
+                    cache.symlink = intern(real)?;
                 }
                 return Ok(cache);
             }
@@ -1383,8 +1686,7 @@ pub mod fs {
                     EntryKind::File
                 };
                 if !symlink.is_empty() {
-                    cache.symlink =
-                        Interned::from_static(FilenameStore::instance().append_slice(symlink)?);
+                    cache.symlink = intern(symlink)?;
                 }
 
                 Ok(cache)
@@ -1407,10 +1709,10 @@ pub mod fs {
             &self,
             dir: &[u8],
             base: &[u8],
-            existing_fd: bun_sys::Fd,
+            held: EntryCache,
             store_fd: bool,
         ) -> crate::CrateResult<EntryCache> {
-            self.kind(dir, base, existing_fd, store_fd)
+            self.kind(dir, base, held, store_fd)
         }
     }
 
@@ -1446,10 +1748,10 @@ pub mod fs {
         /// (and the bucket allocation behind its `data` map) in place, and
         /// every `.data` reader holds `entries_mutex` for the probe, so the
         /// caller must already hold it (the mutex is non-recursive).
-        pub(crate) fn entries_at_locked(
+        pub(crate) fn entries_at_locked<A: crate::dir_info::Asker>(
             &mut self,
             index: bun_alloc::IndexType,
-            generation: Generation,
+            asker: A,
         ) -> Option<&EntriesOption> {
             debug_assert!(
                 self.entries_mutex.is_held_by_current_thread(),
@@ -1459,39 +1761,27 @@ pub mod fs {
             // `open_dir`/`readdir`/`read_directory_error` doesn't conflict.
             // `entries_mutex` held by the caller; sole `&mut` to this slot.
             let result_ptr = std::ptr::from_mut::<EntriesOption>(self.entries.at_index(index)?);
-            // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
-            if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {
-                if existing.generation < generation {
-                    let e_ptr: *mut DirEntry = std::ptr::from_mut::<DirEntry>(*existing);
-                    // SAFETY: BSSMap-owned `DirEntry` (boxed/leaked into `EntriesOption`); `entries_mutex` held.
-                    let dir = unsafe { (*e_ptr).dir };
-                    // `open_dir_for_iteration`, NOT `RealFS.openDir`. On POSIX
-                    // the two diverge: `O_DIRECTORY` only vs `O_RDONLY|O_DIRECTORY`.
-                    let handle = match bun_sys::open_dir_for_iteration(Fd::cwd(), dir) {
-                        Ok(h) => h,
-                        Err(err) => {
-                            // SAFETY: see above.
-                            unsafe { (*e_ptr).data.clear() };
-                            return self.read_directory_error(dir, err.into()).ok();
-                        }
+            if A::CHECKS {
+                // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
+                if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {
+                    let dir = existing.dir;
+                    let read = || ListingRead {
+                        // `open_dir_for_iteration`, not `RealFS::open_dir`: the two diverge on POSIX.
+                        handle: ListingHandle::OpenForIteration(dir),
+                        store_fd: false,
+                        name: dir,
                     };
-                    let _close_guard = scopeguard::guard(handle, |h| {
-                        let _ = bun_sys::close(h);
-                    });
-                    // SAFETY: see above — exclusive `&mut` on the prev map for the duration of `readdir`.
-                    let prev = Some(unsafe { &mut (*e_ptr).data });
-                    match self.readdir(false, prev, dir, generation, handle, &mut ()) {
-                        Ok(new_entry) => {
-                            // SAFETY: see above.
-                            unsafe { (*e_ptr).data.clear() };
-                            // SAFETY: see above — slot is exclusively owned here.
-                            unsafe { *e_ptr = new_entry };
+                    let slot = ListingSlot::Filled(result_ptr);
+                    if let Ok(Err(err)) | Err(err) =
+                        self.listing_locked(asker, slot, ListingReader::Lookup, read, &mut ())
+                    {
+                        // SAFETY: see above.
+                        if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {
+                            existing.forget();
                         }
-                        Err(err) => {
-                            // SAFETY: see above.
-                            unsafe { (*e_ptr).data.clear() };
-                            return self.read_directory_error(dir, err).ok();
-                        }
+                        return self
+                            .read_directory_error_transient(dir, err, asker.generation())
+                            .ok();
                     }
                 }
             }

@@ -489,6 +489,59 @@ export default function () {
     expect(exitCode).toBe(0);
   });
 
+  // A production build takes a miss as the resolver has it: it runs once. The macros of a file run in the order of
+  // their calls, so the build has listed the folder for macros.ts when late.macro.ts is written.
+  test("a macro that a macro writes during the build is not found, and the build looks nothing up again", async () => {
+    using dir = tempDir("bake-production-macro-writes-a-macro", {
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+        export default { app: { framework: { fileSystemRouterTypes: [fsr] } } };
+      `,
+      "server.ts": `
+        export function render(request, meta) {
+          return new Response(String(meta.pageModule.default()));
+        }
+        export async function prerender(meta) {
+          return { files: { "index.html": String(meta.pageModule.default()) } };
+        }
+      `,
+      // How many lookups the resolvers of the process that builds have run again after a miss.
+      "counters.ts": `
+        import { getCounters } from "bun:internal-for-testing";
+        export function lookupsRunAgain() {
+          const count = getCounters().resolver.lookupsRunAgain;
+          console.log("lookups run again: " + count);
+          return count;
+        }
+      `,
+      "macros.ts": `
+        import fs from "node:fs";
+        import path from "node:path";
+        export function write(name: string, text: string) {
+          fs.writeFileSync(path.join(import.meta.dir, name), text);
+          return name;
+        }
+      `,
+      "routes/index.ts": `
+        import { lookupsRunAgain } from "../counters.ts" with { type: "macro" };
+        import { write } from "../macros.ts" with { type: "macro" };
+        import { late } from "../late.macro.ts" with { type: "macro" };
+        export const written = write("late.macro.ts", "export function late() { return 'LATE MACRO'; }\\n");
+        const found = [late(), lookupsRunAgain()];
+        export default () => found.join(" ");
+      `,
+    });
+
+    const { exitCode, stdout, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`
+      .cwd(String(dir))
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).toContain('error: Macro "../late.macro.ts" not found');
+    expect(stdout.toString()).toContain("lookups run again: 0\n");
+    expect(existsSync(path.join(String(dir), "dist"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
   test("fails the build for a route file with an invalid name", async () => {
     using dir = tempDir("bake-production-invalid-route", {
       "app.ts": `export default { app: { framework: ${JSON.stringify(minimalFramework)} } };`,

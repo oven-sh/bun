@@ -7,7 +7,7 @@ use bun_paths::is_sep_native;
 
 use crate::compiled_program::{compare_source_paths, normalize_separator, public_path_from_root};
 use crate::package_json::Package;
-use crate::resolver::{Resolver, TSConfigRef};
+use crate::resolver::{AfterMiss, Resolver, TSConfigRef};
 
 /// A file or a folder: where it is on the disk of the build, and where in the executable.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -192,7 +192,10 @@ impl Resolver<'_> {
         kind: ImportKind,
         entry_points: &[BuildPaths<'_>],
     ) -> Option<u32> {
-        let found = self.resolve(folder, specifier, kind).ok()?;
+        // A name that leads nowhere is expected here: the build has checked what this lookup reads.
+        let found = self
+            .resolve_as(folder, specifier, kind, AfterMiss::TrustCache)
+            .ok()?;
         let path = found.path_pair.primary.text();
         let position = entry_points
             .iter()
@@ -251,7 +254,9 @@ impl Resolver<'_> {
                 return;
             };
             let mut find = |kind: ImportKind| {
-                let found = resolver.resolve(folder, specifier, kind).ok()?;
+                let found = resolver
+                    .resolve_as(folder, specifier, kind, AfterMiss::TrustCache)
+                    .ok()?;
                 let path = found.path_pair.primary.text();
                 let position = public_paths
                     .binary_search_by(|file| compare_source_paths(file.0, path))

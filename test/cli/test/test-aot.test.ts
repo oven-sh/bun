@@ -466,6 +466,37 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(exitCode).toBe(1);
   });
 
+  // The scans that decide what a run is built from take a miss as the resolver has it. The macro runs while the run
+  // is built: after the scans, and in the process that made them. With --parallel the command first asks what the
+  // test files import, to see whether one program holds them, and then what the tests replace.
+  test.concurrent("the scans ahead of the build look nothing up again", async () => {
+    using dir = tempDir("test-aot-scans", {
+      "tsconfig.json": "{}",
+      "package.json": JSON.stringify({ name: "scans", type: "module" }),
+      "counters.ts": `
+        import { getCounters } from "bun:internal-for-testing";
+        export function lookupsRunAgain() {
+          return getCounters().resolver.lookupsRunAgain;
+        }
+      `,
+      "a.test.ts": `
+        import { test } from "bun:test";
+        import { lookupsRunAgain } from "./counters.ts" with { type: "macro" };
+        const aheadOfTheBuild = lookupsRunAgain();
+        let optional: unknown = "absent";
+        try {
+          optional = require("not-installed");
+        } catch {}
+        test("the scans ahead of the build", () => {
+          console.log("SAID", optional, "lookups run again ahead of the build:", aheadOfTheBuild);
+        });
+      `,
+    });
+    const { stdout, exitCode } = await runTests(String(dir), true, ["--parallel=2"]);
+    expect(stdout).toContain("SAID absent lookups run again ahead of the build: 0\n");
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("a build error", async () => {
     using dir = tempDir("test-aot", { "bad.test.ts": `import "./does-not-exist";` });
     const { stderr, exitCode } = await runTests(String(dir), true, [], false);

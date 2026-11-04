@@ -51,7 +51,6 @@ pub(crate) struct BundleThread<C: Node> {
     // `bun.UnboundedQueue(CompletionStruct, .next)` — intrusive over `C.next`;
     // the field offset is encoded via the `Node` supertrait on `CompletionStruct`.
     pub(crate) queue: UnboundedQueue<C>,
-    pub(crate) generation: bun_core::Generation,
 }
 
 /// Trait capturing the interface a completion task must satisfy.
@@ -89,6 +88,7 @@ pub trait CompletionStruct: Node + Send + 'static {
     /// `resolver: Resolver<'a>`) that cannot be zero-init'd, so the allocate +
     /// configure pair is folded into one trait call returning the
     /// arena-allocated, fully-configured transpiler.
+    /// `generation` is the one of this build: the resolver has it before anything reads the directory caches.
     // The returned `&'a mut Transpiler<'a>` is arena-allocated via `bump.alloc(...)`
     // (bumpalo `Bump`), which hands out `&mut` from `&self` through interior
     // mutability — the standard arena pattern `mut_from_ref` cannot see through.
@@ -96,6 +96,7 @@ pub trait CompletionStruct: Node + Send + 'static {
     fn create_and_configure_transpiler<'a>(
         &mut self,
         bump: &'a Arena,
+        generation: bun_core::Generation,
     ) -> Result<&'a mut Transpiler<'a>, crate::Error>;
 
     /// Constructs the `BundleV2`, wires `plugins`/`completion`/`file_map`,
@@ -131,7 +132,6 @@ impl<C: CompletionStruct> BundleThread<C> {
             waker: Async::Waker::placeholder(),
             waker_error: None,
             queue: UnboundedQueue::new(),
-            generation: 0,
             ready_event: ResetEvent::default(),
         }
     }
@@ -156,7 +156,7 @@ impl<C: CompletionStruct> BundleThread<C> {
                 let ptr = ptr;
                 // SAFETY: caller guarantees `instance` is valid for 'static; `thread_main`
                 // accesses fields only via raw-ptr projection (never `&Self`/`&mut Self`)
-                // and is the sole writer of `waker`/`generation`, so concurrent `enqueue()`
+                // and is the sole writer of `waker`, so concurrent `enqueue()`
                 // from other threads is sound.
                 unsafe { Self::thread_main(ptr.0) }
             })?;
@@ -257,8 +257,8 @@ impl<C: CompletionStruct> BundleThread<C> {
                 }
                 // SAFETY: as above; started ⇒ the owner waits for us.
                 let completion = unsafe { &mut *completion };
-                // SAFETY: `generation` is only read/written on this (bundle) thread.
-                let generation = unsafe { (*instance).generation };
+                // One for each build, from the counter of the process: a stamp equal to it was set for this build.
+                let generation = bun_core::next_generation();
                 // `panic = "abort"` → a Rust panic on this thread enters the
                 // crash-handler hook and aborts the whole process.
                 // No `catch_unwind` — there is nothing to catch.
@@ -271,12 +271,6 @@ impl<C: CompletionStruct> BundleThread<C> {
                 }
                 has_bundled = true;
             }
-            // SAFETY: `generation` is only read/written on this (bundle) thread.
-            unsafe {
-                let g = core::ptr::addr_of_mut!((*instance).generation);
-                *g = (*g).saturating_add(1);
-            }
-
             if has_bundled {
                 crate::bundle_v2::dispatch::__bun_jsc_destroy_bytecode_cache_vm();
                 bun_alloc::mimalloc::mi_collect(false);
@@ -302,9 +296,7 @@ impl<C: CompletionStruct> BundleThread<C> {
         ast_memory_store.push();
 
         // Allocate + configure folded — see `create_and_configure_transpiler` doc.
-        let transpiler = completion.create_and_configure_transpiler(bump)?;
-
-        transpiler.resolver.generation = generation;
+        let transpiler = completion.create_and_configure_transpiler(bump, generation)?;
 
         // Construction + run delegated — see
         // `init_and_run` doc. Reborrow `transpiler` through a raw ptr so

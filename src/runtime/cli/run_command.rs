@@ -2648,19 +2648,22 @@ impl RunCommand {
                         .get()
                         .unwrap_or(false);
             let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
-            let resolved = match this_transpiler.resolver.resolve(
+            // The process started a moment ago, so a miss here is not rechecked on disk.
+            let resolved = match this_transpiler.resolver.resolve_as(
                 top_level_dir,
                 target_name,
                 bun_ast::ImportKind::EntryPointRun,
+                bun_resolver::AfterMiss::TrustCache,
             ) {
                 ok @ Ok(_) => ok,
                 Err(_) => {
                     // Retry with explicit `./` prefix.
                     prefixed = [b"./".as_slice(), target_name].concat();
-                    this_transpiler.resolver.resolve(
+                    this_transpiler.resolver.resolve_as(
                         top_level_dir,
                         &prefixed,
                         bun_ast::ImportKind::EntryPointRun,
+                        bun_resolver::AfterMiss::TrustCache,
                     )
                 }
             };

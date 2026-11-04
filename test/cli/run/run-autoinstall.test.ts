@@ -1119,7 +1119,34 @@ describe.concurrent("auto-install reports why a package could not be installed",
     using r = registryWithMissingTarball("some-other-package");
     const { stderr, exitCode } = await runWithRegistry(r.origin, "index.js", `import "${name}";\n`);
 
-    // A resolve that misses runs the resolver a second time, which does not ask again.
+    // A resolve that misses runs the resolver a second time, and only that run asks.
+    expect(r.requests).toEqual([`/${name}`]);
+    expect(stderr).toContain(`error: Cannot find package '${name}'`);
+    expect(stderr).toContain(`note: GET ${r.origin}/${name} - 404`);
+    expect(exitCode).toBe(1);
+  });
+
+  // A lookup that misses runs once more, and only that run asks the package manager. Here it also
+  // finds a package.json that appeared next to the importer: the registry still gets each request
+  // once, and the note of the failed one is reported.
+  const afterAChange = (name: string) =>
+    `require("node:fs").writeFileSync(__dirname + "/package.json", JSON.stringify({ name: "app" }));\nrequire("${name}");\n`;
+
+  test("tarball 404, from a lookup that runs again", async () => {
+    const name = "pkg-whose-tarball-is-missing-twice";
+    using r = registryWithMissingTarball(name);
+    const { stderr, exitCode } = await runWithRegistry(r.origin, "index.cjs", afterAChange(name));
+
+    expect(r.requests).toEqual([`/${name}`, r.tarballPath]);
+    expect(stderr).toContain(`note: GET ${r.tarballUrl} - 404`);
+    expect(exitCode).toBe(1);
+  });
+
+  test("manifest 404, from a lookup that runs again", async () => {
+    const name = "pkg-whose-manifest-is-missing-twice";
+    using r = registryWithMissingTarball("some-other-package");
+    const { stderr, exitCode } = await runWithRegistry(r.origin, "index.cjs", afterAChange(name));
+
     expect(r.requests).toEqual([`/${name}`]);
     expect(stderr).toContain(`error: Cannot find package '${name}'`);
     expect(stderr).toContain(`note: GET ${r.origin}/${name} - 404`);
@@ -1160,8 +1187,7 @@ function noteLines(stderr: string) {
 // belong to the dependency auto-install enqueues on the root, whose errors used
 // to go to a callback that never reported them, so they printed a bare
 // "Cannot find package". Each one now prints the same line `bun install` does,
-// exactly once: the runtime retries a failed resolve after busting its
-// directory cache, and the retry reports the same failure again.
+// exactly once, also when the resolver looks the package up again after the miss.
 describe.concurrent("auto-install reports why a package could not be resolved", () => {
   test("version the registry does not have", async () => {
     using r = registryWithOneFreshVersion();
@@ -1444,6 +1470,90 @@ describe.concurrent("auto-install of a package whose tarball ships a node_module
   });
 });
 
+// The resolver knows a package of the cache by its package id. A lookup that misses and then finds
+// a new folder in that package must not forget the id: the package then looks for its dependencies
+// in the node_modules folders above the cache, like a package that was installed there.
+test.concurrent("a package that loads a file from a new folder of its own still finds its dependencies", async () => {
+  using registry = fixtureRegistry();
+  using dir = tempDir("autoinstall-new-folder-in-package", {
+    "project/index.js": `
+      const fs = require("fs");
+      const path = require("path");
+      const entry = require.resolve("one-fixed-dep");
+      const asPackage = require("module").createRequire(entry);
+      const resolved = specifier => {
+        try {
+          return path.relative(process.env.BUN_INSTALL_CACHE_DIR, asPackage.resolve(specifier)).split(path.sep).slice(1).join("/");
+        } catch (e) {
+          return e.code;
+        }
+      };
+      const before = resolved("./gen/file.js");
+      fs.mkdirSync(path.join(path.dirname(entry), "gen"));
+      fs.writeFileSync(path.join(path.dirname(entry), "gen", "file.js"), "");
+      console.log(JSON.stringify([before, resolved("./gen/file.js"), resolved("no-deps")]));
+    `,
+    "project/package.json": JSON.stringify({ name: "project", dependencies: { "one-fixed-dep": "1.0.0" } }),
+    "project/bunfig.toml": registry.bunfig,
+    "elsewhere/node_modules/.keep": "",
+  });
+  const { stdout, stderr, exitCode } = await runAutoInstallWithEnv(
+    { BUN_INSTALL_CACHE_DIR: join(String(dir), "elsewhere", "cache") },
+    join(String(dir), "project"),
+    "index.js",
+  );
+
+  expect(stderr).toBe("");
+  expect(stdout).toBe('["MODULE_NOT_FOUND","gen/file.js","index.js"]\n');
+  expect(exitCode).toBe(0);
+});
+
+// A tsconfig "paths" alias can have the name of a package that the registry has. The file that the
+// alias names is written here after its directory was listed, so the lookup misses at first. It
+// looks on disk again before the package manager is asked: the package of the registry has a file
+// of that name too, and the miss used to download and run that one.
+test.concurrent.each([
+  [
+    "require()",
+    "index.cjs",
+    `
+      const fs = require("node:fs");
+      console.log(require("no-deps/first.js").version);
+      fs.writeFileSync("local/index.js", 'module.exports = { version: "the local file" };');
+      console.log(require("no-deps/index.js").version);
+    `,
+  ],
+  [
+    "import()",
+    "index.mjs",
+    `
+      import fs from "node:fs";
+      console.log((await import("no-deps/first.js")).default.version);
+      fs.writeFileSync("local/index.js", 'module.exports = { version: "the local file" };');
+      console.log((await import("no-deps/index.js")).default.version);
+    `,
+  ],
+])(
+  "a file behind a tsconfig alias that is written after its directory was listed is not auto-installed, %s",
+  async (_, entry, source) => {
+    using registry = fixtureRegistry();
+    using dir = tempDir("autoinstall-alias-late-file", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "no-deps/*": ["./local/*"] } } }),
+      "local/first.js": `module.exports = { version: "the first local file" };`,
+      [entry]: source,
+      "bunfig.toml": registry.bunfig,
+    });
+    const { stdout, stderr, exitCode } = await runAutoInstall(String(dir), entry);
+
+    expect(stderr).toBe("");
+    expect({ stdout, requests: registry.requests }).toEqual({
+      stdout: "the first local file\nthe local file\n",
+      requests: [],
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
 test.concurrent("--install=fallback to install missing packages", async () => {
   using registry = fixtureRegistry();
   using dir = tempDir("autoinstall-fallback", {
@@ -1667,7 +1777,7 @@ describe.concurrent("a failed registry lookup is retried by the next resolve", (
     return { stdout: stdout.trim(), stderr, exitCode };
   }
 
-  // A resolve that misses runs the resolver a second time, which does not ask again.
+  // A resolve that misses runs the resolver a second time, and only that run asks.
   function expectLookups(requests: string[], path: string, requestsPerLookup: number) {
     expect(requests).toEqual(Array(requestsPerLookup).fill(path));
   }

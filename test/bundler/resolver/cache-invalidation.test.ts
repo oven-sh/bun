@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { promises as fs } from "fs";
-import { tempDir } from "harness";
+import { promises as fs, writeFileSync } from "fs";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { createRequire } from "module";
 import * as path from "path";
 
 // These tests verify that the resolver properly invalidates cache across multiple
@@ -348,6 +349,34 @@ describe("resolver cache invalidation", () => {
     expect(text3).toContain("v2");
   });
 
+  test("a package installed after a build that missed it", async () => {
+    using dir = tempDir("cache-test-late-package", {
+      "entry.js": `export { value } from "latelib";`,
+      "node_modules/.keep": "",
+    });
+
+    // Build 1: the package is not there, and the miss is cached
+    const result1 = await Bun.build({
+      entrypoints: [path.join(String(dir), "entry.js")],
+      outdir: path.join(String(dir), "out1"),
+      throw: false,
+    });
+    expect(result1.success).toBe(false);
+
+    const latelib = path.join(String(dir), "node_modules", "latelib");
+    await fs.mkdir(latelib);
+    await fs.writeFile(path.join(latelib, "package.json"), JSON.stringify({ name: "latelib" }));
+    await fs.writeFile(path.join(latelib, "index.js"), `export const value = "late";`);
+
+    // Build 2: finds the package
+    const result2 = await Bun.build({
+      entrypoints: [path.join(String(dir), "entry.js")],
+      outdir: path.join(String(dir), "out2"),
+    });
+    expect(result2.success).toBe(true);
+    expect(await result2.outputs[0].text()).toContain("late");
+  });
+
   test("sibling directory resolution after parent deletion", async () => {
     using dir = tempDir("cache-test-sibling", {
       "src/index.js": `export { helper } from "../lib/helper.js";`,
@@ -391,5 +420,159 @@ describe("resolver cache invalidation", () => {
     expect(result3.success).toBe(true);
     const text3 = await result3.outputs[0].text();
     expect(text3).toContain("recreated");
+  });
+
+  // A build checks the config files of each directory that it reads. A lookup at the runtime that fails reads them
+  // again for its own directory and not for the ones below it: the next build must not take the new aliases for the
+  // files of that directory and the old ones for the files below it.
+  test.each([
+    ["and nothing else", false],
+    ["and a lookup from the directory of the config files that fails", true],
+  ])("config files edited between two builds are read again for every directory below them, %s", async (_, fails) => {
+    const aliases = (target: string) =>
+      JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { "@lib": [target] } } });
+    const manifest = (target: string) => JSON.stringify({ name: "config-edit", imports: { "#lib": target } });
+    const user = `import { lib } from "@lib"; import { lib as imported } from "#lib"; export default [lib, imported];`;
+    using dir = tempDir("cache-test-config-edit", {
+      // With a node_modules in sight, the lookup that fails does not ask the registry for a package.
+      "node_modules/.keep": "",
+      "tsconfig.json": aliases("./lib/old.ts"),
+      "package.json": manifest("./lib/old.ts"),
+      "lib/old.ts": `export const lib = "old";`,
+      "lib/new.ts": `export const lib = "new";`,
+      "top.ts": user,
+      "src/a/one.ts": user,
+      "src/b/deep/two.ts": user,
+      "entry.ts": `import top from "./top"; import one from "./src/a/one"; import two from "./src/b/deep/two"; console.log(top, one, two);`,
+    });
+    const root = String(dir);
+    // What each file got for "@lib" and for "#lib".
+    const build = async () => {
+      const result = await Bun.build({ entrypoints: [path.join(root, "entry.ts")], metafile: true });
+      const answers: Record<string, string> = {};
+      for (const [file, input] of Object.entries(result.metafile!.inputs)) {
+        const name = path.basename(file, ".ts");
+        if (name !== "entry" && name !== "old" && name !== "new") {
+          answers[name] = input.imports.map(it => path.basename(it.path, ".ts")).join(" ");
+        }
+      }
+      return answers;
+    };
+    expect(await build()).toEqual({ top: "old old", one: "old old", two: "old old" });
+
+    writeFileSync(path.join(root, "tsconfig.json"), aliases("./lib/new.ts"));
+    writeFileSync(path.join(root, "package.json"), manifest("./lib/new.ts"));
+    if (fails) {
+      const lookup = () => createRequire(path.join(root, "x.cjs")).resolve("@not-there");
+      expect(lookup).toThrow("Cannot find module '@not-there'");
+    }
+
+    expect(await build()).toEqual({ top: "new new", one: "new new", two: "new new" });
+  });
+
+  // The second build takes the record of sub/ as the first one left it, and says again what the first one read there.
+  test("a config file that does not parse fails each build of its project", async () => {
+    using dir = tempDir("cache-test-unparsed-config", {
+      "entry.ts": `import { value } from "./sub/mod.ts"; console.log(value);`,
+      "sub/mod.ts": `export const value = 1;`,
+      "sub/tsconfig.json": `{ "compilerOptions": { "paths": `,
+    });
+    const build = async () => {
+      const result = await Bun.build({ entrypoints: [path.join(String(dir), "entry.ts")], throw: false });
+      return { success: result.success, logs: result.logs.map(log => log.message) };
+    };
+    const first = await build();
+    expect(first).toEqual({ success: false, logs: ["Unexpected end of file"] });
+    expect(await build()).toEqual(first);
+  });
+
+  test("a lookup that finds its module when it is run again keeps the error of the config file it read", async () => {
+    using dir = tempDir("cache-test-rerun-keeps-config-error", {
+      "entry.js": `import { early } from "./lib/early.js"; import { value } from "./pkg"; console.log(early, value);`,
+      "lib/early.js": `export const early = 1;`,
+      "pkg/package.json": JSON.stringify({ name: "pkg", main: "../lib/late.js" }),
+      "pkg/tsconfig.json": `{ "compilerOptions": { "paths": `,
+    });
+    const root = String(dir);
+    // The build has listed lib/ for the first import. The plugin writes lib/late.js and declines, so the lookup of
+    // "./pkg" reads pkg/ for the first time, with its tsconfig.json, and misses in lib/. It finds lib/late.js when it
+    // is run again.
+    const writesTheMainFile: Bun.BunPlugin = {
+      name: "writes-the-main-file",
+      setup(build) {
+        build.onResolve({ filter: /^\.\/pkg$/ }, () => {
+          writeFileSync(path.join(root, "lib", "late.js"), `export const value = 2;`);
+          return undefined;
+        });
+      },
+    };
+    const result = await Bun.build({
+      entrypoints: [path.join(root, "entry.js")],
+      plugins: [writesTheMainFile],
+      throw: false,
+    });
+    expect({ success: result.success, logs: result.logs.map(log => log.message) }).toEqual({
+      success: false,
+      logs: ["Unexpected end of file"],
+    });
+  });
+
+  // A build reads the tsconfig.json and the .env of the working directory before its first lookup: as they are then.
+  // The .env is new: a build opens one only when the listing of that directory has it. The jsx factory of that read
+  // goes to part.tsx, whose import a plugin declines. The entry gets the one that its own lookup read.
+  test("a build takes the paths, the jsx factory and the .env that were written since the build before it", async () => {
+    using dir = tempDir("cache-test-build-config", {
+      "package.json": `{}`,
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { jsx: "react", jsxFactory: "h1", paths: { "@lib": ["./a.ts"] } },
+      }),
+      "a.ts": `export const v = "lib-a";\n`,
+      "b.ts": `export const v = "lib-b";\n`,
+      "src/part.tsx": `export default <span />;\n`,
+      "src/entry.tsx": `
+        import { v } from "@lib";
+        import part from "./part.tsx";
+        console.log(<div />, part, v, process.env.LATE_VALUE);
+      `,
+      "driver.ts": `
+        import { writeFileSync } from "node:fs";
+        const declines = {
+          name: "declines",
+          setup(build) {
+            build.onResolve({ filter: /part\\.tsx$/ }, () => undefined);
+          },
+        };
+        const build = async () => {
+          const result = await Bun.build({
+            entrypoints: ["./src/entry.tsx"],
+            env: "inline",
+            plugins: [declines],
+            throw: false,
+          });
+          if (!result.success) return result.logs.map(log => log.message).join(" | ");
+          const text = await result.outputs[0].text();
+          const env = text.includes("from-dot-env") ? "the .env" : "no .env";
+          return [text.match(/lib-[ab]/)?.[0], [...text.matchAll(/\\bh[12]\\b/g)].join("+"), env].join(", ");
+        };
+        console.log(await build());
+        const compilerOptions = { jsx: "react", jsxFactory: "h2", paths: { "@lib": ["./b.ts"] } };
+        writeFileSync("tsconfig.json", JSON.stringify({ compilerOptions }));
+        writeFileSync(".env", "LATE_VALUE=from-dot-env\\n");
+        console.log(await build());
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "driver.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "lib-a, h1+h1, no .env\nlib-b, h2+h2, the .env\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

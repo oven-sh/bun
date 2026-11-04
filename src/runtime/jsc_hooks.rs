@@ -1387,8 +1387,8 @@ fn create_node_fs(vm: &mut VirtualMachine) -> *mut c_void {
         None
     };
     bun_core::heap::into_raw(Box::new(NodeFS {
+        sync_error_buf: bun_paths::path_buffer_pool::get(),
         vm: vm_field,
-        ..Default::default()
     }))
     .cast::<c_void>()
 }

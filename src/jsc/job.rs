@@ -234,8 +234,8 @@ pub trait JobContext: Sized + 'static {
 #[derive(Clone, Copy)]
 pub enum RunsOn {
     WorkPool,
-    /// [`WorkPool::schedule_for_descriptor`]
-    DescriptorPool,
+    /// [`WorkPool::schedule_waiting`]
+    WaitingPool,
     /// [`WorkPool::schedule_output`]. `run` is over before the process exits: see [`wait_for_jobs_that_hold_exit`].
     OutputPool,
     /// `run` is over when [`Job::schedule_on`] returns. `then` still comes from the event loop.
@@ -243,16 +243,16 @@ pub enum RunsOn {
 }
 
 impl RunsOn {
-    /// For a job whose blocking calls are about a descriptor, or about the path of a `Blob`, which can name a pipe. `None`: it is not open yet, or all they do is read from it.
-    pub fn for_io(fd: Option<bun_core::Fd>) -> RunsOn {
+    /// For a job whose blocking calls read a descriptor or write to `writes_to`.
+    pub fn for_io(writes_to: Option<bun_core::Fd>) -> RunsOn {
         // Elsewhere a `Blob` job polls, and `fs.read()` of a pipe holds a thread of the one pool.
         if !cfg!(windows) {
             return RunsOn::WorkPool;
         }
-        match fd {
+        match writes_to {
             // A `process.exit()` right after the call loses nothing, as in Node.js.
             Some(fd) if fd.is_stdout_or_stderr() => RunsOn::OutputPool,
-            _ => RunsOn::DescriptorPool,
+            _ => RunsOn::WaitingPool,
         }
     }
 }
@@ -422,7 +422,7 @@ impl<C: JobContext> Job<C> {
             let task = &raw mut (*job).task;
             match runs_on {
                 RunsOn::WorkPool => WorkPool::schedule(task),
-                RunsOn::DescriptorPool => WorkPool::schedule_for_descriptor(task),
+                RunsOn::WaitingPool => WorkPool::schedule_waiting(task),
                 RunsOn::OutputPool => {
                     JOBS_THAT_HOLD_EXIT.fetch_add(1, Ordering::Relaxed);
                     (*task).callback = Self::run_task_that_holds_exit;

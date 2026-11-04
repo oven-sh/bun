@@ -472,7 +472,7 @@ impl Task {
     }
 }
 
-/// A list of Tasks, the first pushed first, which can be submitted for scheduling as a group.
+/// An unordered collection of Tasks which can be submitted for scheduling as a group.
 #[derive(Default, Clone, Copy)]
 pub struct Batch {
     pub len: usize,
@@ -480,16 +480,7 @@ pub struct Batch {
     pub(crate) tail: Option<NonNull<Task>>,
 }
 
-// SAFETY: a list of `Task`s, which are `Send`.
-unsafe impl Send for Batch {}
-
 impl Batch {
-    pub(crate) const EMPTY: Batch = Batch {
-        len: 0,
-        head: None,
-        tail: None,
-    };
-
     pub fn pop(&mut self) -> Option<NonNull<Task>> {
         // SAFETY: `len` is only read here for the fast-path zero check.
         let len = unsafe { (*(&raw const self.len).cast::<AtomicUsize>()).load(Ordering::Relaxed) };

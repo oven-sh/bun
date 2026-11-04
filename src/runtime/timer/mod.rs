@@ -220,15 +220,16 @@ impl TimerHeap {
 
     /// The deadline of the first timer.
     #[inline]
-    pub(crate) fn peek_next(&self) -> Option<Timespec> {
-        // SAFETY: the root is null or a linked node, and `insert`'s contract
-        // keeps a linked node valid.
-        unsafe { self.0.peek().as_ref() }.map(|t| t.next)
+    pub(crate) fn peek_next(&self) -> Option<&Timespec> {
+        // SAFETY: the root is null or a linked node. `insert`'s contract keeps a
+        // linked node as it is, and unlinking it takes `&mut self`.
+        unsafe { self.0.peek().as_ref() }.map(|t| &t.next)
     }
 
     /// # Safety
     /// `v` is a valid, exclusively-owned node not currently in any heap
-    /// (its `IntrusiveField` links are null). It stays valid while linked.
+    /// (its `IntrusiveField` links are null). While linked it stays valid, with
+    /// the same `next`.
     #[inline]
     unsafe fn insert(&mut self, v: *mut EventLoopTimer) {
         // SAFETY: forwarded — see fn contract.
@@ -252,10 +253,10 @@ impl TimerHeap {
     }
 
     #[inline]
-    pub(crate) fn find_max_next(&self) -> Option<Timespec> {
-        // SAFETY: `insert`'s contract keeps every linked node valid. `find_max`
-        // visits only linked nodes and returns null or one of them.
-        unsafe { self.0.find_max().as_ref() }.map(|t| t.next)
+    pub(crate) fn find_max_next(&self) -> Option<&Timespec> {
+        // SAFETY: as in `peek_next`. `find_max` visits only linked nodes and
+        // returns null or one of them.
+        unsafe { self.0.find_max().as_ref() }.map(|t| &t.next)
     }
 
     /// Only a faked `setImmediate` puts an `ImmediateObject` in a heap.
@@ -717,8 +718,8 @@ impl All {
             "timer scheduled after teardown closed the heap's uv timer"
         );
 
-        let reg_next = self.timers.peek_next();
-        let wtf_next = self.wtf_timers.lock().peek_next();
+        let reg_next = self.timers.peek_next().copied();
+        let wtf_next = self.wtf_timers.lock().peek_next().copied();
         let Some(next_ts) = Self::soonest(reg_next, wtf_next) else {
             return;
         };
@@ -879,7 +880,7 @@ impl All {
             let min = {
                 // SAFETY: `this` is live; the guard drops before `fire`.
                 let mut wtf = unsafe { &(*this).wtf_timers }.lock();
-                let min_next = wtf.peek_next()?;
+                let min_next = *wtf.peek_next()?;
                 let now = *maybe_now
                     .get_or_insert_with(|| Timespec::now(TimespecMockMode::ForceRealTime));
                 if min_next.greater(&now) {
@@ -948,7 +949,7 @@ impl All {
         let wtf_next = unsafe { Self::drain_due_wtf_timers(this, maybe_now, vm) };
 
         // SAFETY: `this` is live, and only this thread touches the regular heap.
-        let reg_next = (unsafe { &*this }).timers.peek_next();
+        let reg_next = (unsafe { &*this }).timers.peek_next().copied();
 
         let Some(next) = Self::soonest(wtf_next, reg_next) else {
             if let Some(us) = quic_next_tick_us {

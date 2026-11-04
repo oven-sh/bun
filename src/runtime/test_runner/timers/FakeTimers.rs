@@ -1122,7 +1122,7 @@ impl FakeTimers {
     fn run_only_pending(global: &JSGlobalObject) -> Result<JSValue, Stop> {
         // SAFETY: per-thread `timer::All`.
         match unsafe { (*timer_all()).fake_timers.timers.find_max_next() } {
-            Some(last) => Self::run_until(global, last),
+            Some(&last) => Self::run_until(global, last),
             None => Self::run_ticks(global).map(|()| JSValue::ZERO),
         }
     }
@@ -1234,7 +1234,8 @@ impl FakeTimers {
     /// Must run before the drive's first `run_ticks`, to match `run_only_pending`.
     fn aim_at_last_timer(&mut self, id: u32) {
         let now = self.now;
-        let to_last = self.timers
+        let to_last = self
+            .timers
             .find_max_next()
             .map_or(Timespec::EPOCH, |last| last.duration(&now));
         if let Some(drive) = self.drive_mut(id) {

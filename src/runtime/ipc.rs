@@ -33,9 +33,8 @@ use bun_sys::windows::libuv::{UvHandle as _, UvStream as _};
 // through that module's safe wrappers; no local extern block needed.
 
 // `SendQueue.owner` is a [`SendQueueOwner`] enum over the two concrete owner
-// types (`Subprocess`, parent side; `ipc_host::IPCInstance`, child side) —
-// both nameable in this crate — stored as a BACKREF cleared before the owner
-// drops.
+// types (`Subprocess`, parent side, stored as a BACKREF; the thread's one
+// `ipc_host::IPCInstance`, child side), cleared before the owner drops.
 
 // TODO: rewrite this code.
 /// Queue for messages sent between parent and child processes in an IPC environment. node:cluster sends json serialized messages
@@ -112,6 +111,7 @@ impl InternalMsgHolder {
 
     pub(crate) fn flush(&mut self, global: &JSGlobalObject) -> JsResult<()> {
         debug_assert!(self.is_ready());
+        let messages = core::mem::take(&mut self.messages);
         // `&mut self` carries LLVM `noalias`, but
         // `dispatch_unsafe` → `event_loop.run_callback` runs the JS IPC
         // listener which can re-enter via a fresh `&mut Self` from the
@@ -121,8 +121,6 @@ impl InternalMsgHolder {
         // of the loop — ASM-verified PROVEN_CACHED. Launder so each iteration
         // re-reads through an opaque pointer.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        // SAFETY: `this` aliases the live `&mut self`; single JS thread.
-        let messages = core::mem::take(unsafe { &mut (*this).messages });
         for strong in messages {
             if let Some(message) = strong.get() {
                 // SAFETY: `this` is still live across re-entry — the IPC
@@ -946,7 +944,7 @@ pub(crate) struct SendQueue {
 #[derive(Copy, Clone)]
 pub(crate) enum SendQueueOwner {
     Subprocess(core::ptr::NonNull<crate::api::bun::subprocess::Subprocess<'static>>),
-    Instance(core::ptr::NonNull<crate::ipc_host::IPCInstance>),
+    Instance,
 }
 
 impl SendQueueOwner {
@@ -954,7 +952,7 @@ impl SendQueueOwner {
     pub(crate) fn kind(self) -> SendQueueOwnerKind {
         match self {
             SendQueueOwner::Subprocess(_) => SendQueueOwnerKind::Subprocess,
-            SendQueueOwner::Instance(_) => SendQueueOwnerKind::VirtualMachine,
+            SendQueueOwner::Instance => SendQueueOwnerKind::VirtualMachine,
         }
     }
 
@@ -963,7 +961,7 @@ impl SendQueueOwner {
         match self {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
             SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }.global_this.as_ptr(),
-            SendQueueOwner::Instance(_) => core::ptr::from_ref(
+            SendQueueOwner::Instance => core::ptr::from_ref(
                 bun_jsc::virtual_machine::VirtualMachine::get()
                     .as_mut()
                     .global(),
@@ -975,8 +973,7 @@ impl SendQueueOwner {
         match self {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
             SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }.handle_ipc_close(),
-            // SAFETY: as above — an attached owner is live.
-            SendQueueOwner::Instance(i) => unsafe { i.as_ref() }.handle_ipc_close(),
+            SendQueueOwner::Instance => crate::ipc_host::IPCInstance::handle_ipc_close(),
         }
     }
 
@@ -984,8 +981,9 @@ impl SendQueueOwner {
         match self {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
             SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }.handle_ipc_message(msg, handle),
-            // SAFETY: as above — an attached owner is live.
-            SendQueueOwner::Instance(i) => unsafe { i.as_ref() }.handle_ipc_message(msg, handle),
+            SendQueueOwner::Instance => {
+                crate::ipc_host::IPCInstance::handle_ipc_message(msg, handle)
+            }
         }
     }
 
@@ -997,7 +995,7 @@ impl SendQueueOwner {
                 .get()
                 .try_get()
                 .unwrap_or_default(),
-            SendQueueOwner::Instance(_) => JSValue::ZERO,
+            SendQueueOwner::Instance => JSValue::ZERO,
         }
     }
 }
@@ -1023,10 +1021,6 @@ impl SendQueue {
     #[inline]
     fn owner_ref(&self) -> Option<SendQueueOwner> {
         self.owner.get()
-    }
-
-    pub(crate) fn set_owner(&self, owner: SendQueueOwner) {
-        self.owner.set(Some(owner));
     }
 
     pub(crate) fn detach(&self) {

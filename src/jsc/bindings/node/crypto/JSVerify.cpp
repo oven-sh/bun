@@ -419,11 +419,17 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
         saltLen = RSA_PSS_SALTLEN_AUTO;
     }
 
-    // Options that the key does not take are a signature that does not verify, not an error.
-    bool result = (!keyPtr.isRsaVariant() || ncrypto::EVPKeyCtxPointer::setRsaPadding(pkctx.get(), padding, saltLen))
-        && pkctx.setSignatureMd(mdCtx)
-        && pkctx.verify(sigBuf, data);
-    return JSValue::encode(jsBoolean(result));
+    if (keyPtr.isRsaVariant()) {
+        // Options that the key does not take are a signature that does not verify, not an error.
+        if (!ncrypto::EVPKeyCtxPointer::setRsaPadding(pkctx.get(), padding, saltLen) || !pkctx.setSignatureMd(mdCtx))
+            return JSValue::encode(jsBoolean(false));
+    } else if (!pkctx.setSignatureMd(mdCtx)) {
+        // BoringSSL refuses digests for an EC key that OpenSSL takes, so the signature may be a valid one.
+        throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to set signature message digest"_s);
+        return {};
+    }
+
+    return JSValue::encode(jsBoolean(pkctx.verify(sigBuf, data)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(callVerify, (JSGlobalObject * globalObject, CallFrame* callFrame))

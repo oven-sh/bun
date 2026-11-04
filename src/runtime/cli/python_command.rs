@@ -123,6 +123,15 @@ extern "C" fn Bun__Python__didChangeDirectory(global_object: &bun_jsc::JSGlobalO
     });
 }
 
+/// `Bun.main` of the thread. Empty: there is none.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__Python__mainFile(global_object: &bun_jsc::JSGlobalObject) -> bun_core::String {
+    global_object
+        .bun_vm()
+        .main()
+        .map_or(bun_core::String::EMPTY, bun_core::String::clone_utf8)
+}
+
 /// `sys.executable`: a link named `python3` to this executable, in a directory of this user and this executable. Empty: none.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__Python__linkToSelf() -> bun_core::String {

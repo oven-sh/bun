@@ -16,3 +16,8 @@ export function middle() {
   call(raiser, "deep");
   return "not reached";
 }
+
+export function calls(body: () => void) {
+  body();
+  return "no tail call";
+}

@@ -28,6 +28,7 @@ extern "C" BunString Bun__Python__linkToSelf();
 extern "C" BunString Bun__Python__executedPath();
 extern "C" const char* Bun__Python__originalArgument(size_t index);
 extern "C" void Bun__Python__didChangeDirectory(JSC::JSGlobalObject*);
+extern "C" BunString Bun__Python__mainFile(JSC::JSGlobalObject*);
 extern "C" int32_t bun_is_stdio_null[3];
 
 namespace Bun {
@@ -105,6 +106,13 @@ static void didChangeDirectory(JSGlobalObject* globalObject)
     defaultGlobalObject(globalObject)->processObject()->clearCachedCwd();
 }
 
+// Bun.main
+static bool isMainFile(JSGlobalObject* globalObject, const String& filename)
+{
+    BunString main = Bun__Python__mainFile(globalObject);
+    return main.transferToWTFString() == filename;
+}
+
 // Before anything that may start Python.
 static void preparePython()
 {
@@ -115,6 +123,7 @@ static void preparePython()
         Python::setDidChangeDirectoryFunction(didChangeDirectory);
         Python::setHostEnvironment({ readProcessEnvForPython, writeProcessEnvFromPython });
         Python::setClassIsCalledFunction(Bun::Bindgen::isClassWithCall);
+        Python::setIsMainFileFunction(isMainFile);
         auto& configuration = Python::configuration();
         if (!s_isPythonCommand) {
             for (size_t i = 0; const char* argument = Bun__Python__originalArgument(i); ++i)

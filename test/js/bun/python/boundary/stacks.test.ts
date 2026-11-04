@@ -8,7 +8,7 @@ import { kwargs, with as with_ } from "bun:python";
 import { len, str, tuple } from "python:builtins";
 import re from "python:re";
 import warnings from "python:warnings";
-import { middle, throughPython, thrower } from "./fixtures/stacks-helpers";
+import { calls, middle, throughPython, thrower } from "./fixtures/stacks-helpers";
 import { call, catch as catch_, chain, context, deprecated, format, frames, group, raiser } from "./fixtures/stacks.py";
 
 // These builds take seconds to start Python.
@@ -318,18 +318,30 @@ describe("warnings", () => {
     expect(recorded(() => void call(caller))).toEqual(["<dir>/stacks.py:8"]);
   });
 
+  const shownTo = (module: string, body: () => void) =>
+    with_(warnings.catch_warnings(kwargs({ record: true })), (log: any) => {
+      warnings.simplefilter("ignore");
+      warnings.filterwarnings("default", kwargs({ module }));
+      body();
+      return len(log);
+    });
+
   test("the module is named after the file, and a place is warned about once", () => {
+    const shown = shownTo(re.escape(join(fixtures, "stacks-helpers.ts")), () => {
+      for (let i = 0; i < 3; i++) calls(deprecated);
+      call(deprecated);
+    });
+    expect(shown).toBe(1);
+  });
+
+  test("the file that the program began with is __main__", () => {
     function caller() {
       deprecated();
     }
-    const shown = with_(warnings.catch_warnings(kwargs({ record: true })), (log: any) => {
-      warnings.simplefilter("ignore");
-      warnings.filterwarnings("default", kwargs({ module: re.escape(import.meta.path) }));
-      for (let i = 0; i < 3; i++) caller();
-      call(deprecated);
-      return len(log);
-    });
-    expect(shown).toBe(1);
+    expect(Bun.main).toBe(import.meta.path);
+    expect(shownTo("__main__", caller)).toBe(1);
+    expect(shownTo(re.escape(import.meta.path), caller)).toBe(0);
+    expect(shownTo("__main__", () => void calls(deprecated))).toBe(0);
   });
 });
 
@@ -350,6 +362,72 @@ async function run(main: string, files: Record<string, string>) {
       .trimEnd();
   return { stdout: clean(stdout), stderr: clean(stderr), exitCode };
 }
+
+describe.concurrent("a DeprecationWarning, as Python starts", () => {
+  const helper = `
+import { deprecated } from "./module.py";
+export function old() {
+  deprecated();
+  return "no tail call";
+}`;
+
+  test("is shown if it is about the file that a program in TypeScript began with", async () => {
+    const { stdout, stderr, exitCode } = await run("main.ts", {
+      "main.ts": `
+import { deprecated } from "./module.py";
+import { old } from "./helper";
+old();
+deprecated();
+console.log("done");`,
+      "helper.ts": helper,
+    });
+    expect({ stdout, stderr }).toEqual({
+      stdout: "done",
+      stderr: `<dir>/main.ts:5: DeprecationWarning: old
+  deprecated();`,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("in a worker that is the file of the worker", async () => {
+    const { stdout, stderr, exitCode } = await run("main.ts", {
+      "main.ts": `
+const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
+await new Promise(resolve => worker.addEventListener("close", resolve));
+console.log("done");`,
+      "worker.ts": `
+import { deprecated } from "./module.py";
+import { old } from "./helper";
+old();
+deprecated();`,
+      "helper.ts": helper,
+    });
+    expect({ stdout, stderr }).toEqual({
+      stdout: "done",
+      stderr: `<dir>/worker.ts:5: DeprecationWarning: old
+  deprecated();`,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("in a program in Python no file of TypeScript is", async () => {
+    const { stdout, stderr, exitCode } = await run("main.py", {
+      "main.py": `
+from helper import old
+from module import deprecated
+old()
+deprecated()
+print("done")`,
+      "helper.ts": helper,
+    });
+    expect({ stdout, stderr }).toEqual({
+      stdout: "done",
+      stderr: `<dir>/main.py:5: DeprecationWarning: old
+  deprecated()`,
+    });
+    expect(exitCode).toBe(0);
+  });
+});
 
 describe.concurrent("not caught", () => {
   test("Python's, in a program in TypeScript", async () => {

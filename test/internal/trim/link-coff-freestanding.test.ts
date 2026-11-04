@@ -52,6 +52,7 @@ import {
   builtinUsing,
   callAll,
   callersWithoutEffectSource,
+  canBuildRustFor,
   compileRust,
   embedderSource,
   entryCalling,
@@ -1053,7 +1054,7 @@ __asm__(".section .rdata$note,\"dr\",associative,parent\n.quad feature_noted\n.t
       }
     });
 
-    testLink(
+    test.skipIf(freestandingSkipReasons[machine] !== undefined || !canBuildRustFor(triple(machine)))(
       "keep the call of a function that has no side effect where it starts with keep_call_of_entry_point()",
       async () => {
         using dir = tempDir("trim-coff-freestanding-rust", {
@@ -1068,8 +1069,8 @@ __asm__(".section .rdata$note,\"dr\",associative,parent\n.quad feature_noted\n.t
         });
         const folder = String(dir);
         const options = await compileRustInputs(folder);
-        if (options === undefined) return;
-        const { symbols, featuresAt } = await linked(folder, options);
+        expect(options).toBeDefined();
+        const { symbols, featuresAt } = await linked(folder, options!);
         const functions = ["aborts", "defaults", "throws"].flatMap(stub => [`constant_${stub}`, `unread_${stub}`]);
         const featuresOf = (name: string) => {
           const symbol = symbols.find(([symbol]) => symbol.includes(name));

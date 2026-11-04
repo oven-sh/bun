@@ -1,7 +1,8 @@
 import { readTrimTable } from "bun:internal-for-testing";
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import { sharedCacheDir } from "../../../scripts/build/config.ts";
 import { prebuiltDirPrefix, WEBKIT_VERSION } from "../../../scripts/build/deps/webkit.ts";
@@ -817,6 +818,24 @@ const rustFlags = (folder: string, target: string | undefined) => [
 async function hasTargetLibraries(folder: string, rustc: string, target: string): Promise<boolean> {
   const printed = await run([rustc, "--print", "target-libdir", "--target", target], folder);
   return printed.exitCode === 0 && existsSync(printed.stdout.trim());
+}
+
+const rustTargets = new Map<string, boolean>();
+
+/**
+ * For `test.skipIf`, what `buildGuardCrate` finds out in a toy's folder: rustc is on PATH and has the libraries of
+ * `target`.
+ */
+export function canBuildRustFor(target: string): boolean {
+  let known = rustTargets.get(target);
+  if (known === undefined) {
+    const rustc = Bun.which("rustc");
+    const cmd = rustc === null ? undefined : [rustc, "--print", "target-libdir", "--target", target];
+    const printed = cmd && Bun.spawnSync({ cmd, cwd: realpathSync(tmpdir()), env: bunEnv });
+    known = printed?.exitCode === 0 && existsSync(printed.stdout.toString().trim());
+    rustTargets.set(target, known);
+  }
+  return known;
 }
 
 export async function buildGuardCrate(folder: string, rustc: string, target?: string): Promise<string | undefined> {

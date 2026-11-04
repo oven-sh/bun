@@ -1218,6 +1218,10 @@ finish({ armedAtThePause: globalThis.armedAtThePause });
     const paused = first.notified("Debugger.paused");
     await first.send("Runtime.runIfWaitingForDebugger");
     await paused;
+    // The notice comes before the program serves the pause, and this reply
+    // comes from inside it. Bun ends a pause when every frontend that was
+    // attached at its start has left, so the second one attaches after that.
+    await first.send(...evaluate("0"));
     first.send(...evaluate("globalThis.inspectorOfTheProgram.waitForDebugger(); globalThis.armedAtThePause = true"));
     await first.close();
 

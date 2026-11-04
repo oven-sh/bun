@@ -366,8 +366,14 @@ Ran 4 tests across 2 files.
 ];
 
 test.concurrent.each(cases)("bun test $flags", async ({ flags, startsWorkers, ...stated }) => {
-  // Workers report when they end, so the files of a run that starts them come in any order.
-  const seen = (run: Ended) => (startsWorkers ? { ...run, stderr: run.stderr.trim().split("\n\n").sort() } : run);
+  // Workers report when they end, so the files of a run that starts them come in any order. The rest stands still: an empty
+  // line above each file, nothing above the first of those lines, and the summary behind the last file.
+  const seen = (run: Ended) => {
+    if (!startsWorkers) return run;
+    const [above, ...files] = `\n${run.stderr}`.split("\n\n");
+    const summary = files.pop();
+    return { ...run, stderr: [above, ...files.sort(), summary] };
+  };
   const plain = await ended(...flags);
   expect(seen(plain)).toEqual(seen(stated));
   // No build fits into this, so the run is built in layers.

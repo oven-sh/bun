@@ -366,6 +366,175 @@ devTest("deleting imported file shows error then recovers", {
     });
   },
 });
+// A workspace install links node_modules/lib to packages/lib. The resolver walks the link to find a file of the
+// package, and the watcher reports that file by its real path. The links exist before the server starts.
+{
+  const throughNodeModulesLink = {
+    how: "through a node_modules link",
+    lib: "lib",
+    symlinks: { "node_modules/lib": "../packages/lib" },
+  };
+  const throughDirectoryLink = {
+    how: "through a directory link",
+    lib: "./linked",
+    symlinks: { linked: "packages/lib" },
+  };
+  const byRelativePath = { how: "by its relative path", lib: "./packages/lib", symlinks: undefined };
+  const indexHtml = emptyHtmlFile({ scripts: ["index.ts"] });
+  const libPackageJson = JSON.stringify({ name: "lib", version: "1.0.0" });
+  const libExport = (name: string, value: string) => `export const ${name} = "EXPORT_${value}";`;
+  const clientScriptUrl = (html: string) => /src="([^"]+\.js)"/.exec(html)?.[1];
+  // Which of the exports of packages/lib the script of "/" holds.
+  async function servedLibExports(dev: Dev) {
+    // A watcher event that arrives after a build bundles the route again, and its script gets a new URL.
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const url = clientScriptUrl(await dev.fetch("/").text());
+      if (!url) throw new Error('"/" serves no script');
+      const script = await dev.fetch(url).text();
+      if (clientScriptUrl(await dev.fetch("/").text()) === url) {
+        return ["EXPORT_A", "EXPORT_C", "EXPORT_D"].filter(name => script.includes(name));
+      }
+    }
+    throw new Error('The script of "/" got a new URL on every attempt');
+  }
+  // Only the rename is in this batch. An importer that is saved in the same batch keeps its import of the
+  // removed file, with or without a link.
+  async function renameLibFile(dev: Dev) {
+    await using batch = await dev.batchChanges();
+    await dev.delete("packages/lib/c.ts");
+    await dev.write("packages/lib/c.tsx", libExport("c", "D"));
+  }
+
+  for (const { how, lib, symlinks, env } of [
+    { ...throughNodeModulesLink, env: undefined },
+    { ...throughDirectoryLink, env: undefined },
+    { ...byRelativePath, env: undefined },
+    // `bun init` scaffolds "dev": "bun --hot src/index.ts". The reloader of the runtime then watches the files too.
+    { ...throughNodeModulesLink, how: "through a node_modules link under bun --hot", env: { BUN_OPTIONS: "--hot" } },
+  ]) {
+    devTest(`renaming a file of a package imported ${how}`, {
+      symlinks,
+      env,
+      files: {
+        "index.html": indexHtml,
+        "index.ts": `
+          import { a } from '${lib}/a';
+          import { c } from '${lib}/c';
+          console.log(a, c);
+        `,
+        "packages/lib/package.json": libPackageJson,
+        "packages/lib/a.ts": libExport("a", "A"),
+        "packages/lib/c.ts": libExport("c", "C"),
+      },
+      async test(dev) {
+        expect(await servedLibExports(dev)).toEqual(["EXPORT_A", "EXPORT_C"]);
+        await renameLibFile(dev);
+        expect(await servedLibExports(dev)).toEqual(["EXPORT_A", "EXPORT_D"]);
+        await dev.writeNoChanges("index.ts");
+        expect(await servedLibExports(dev)).toEqual(["EXPORT_A", "EXPORT_D"]);
+      },
+    });
+  }
+
+  // `bun run --filter` starts the server in the directory of the app. The package is then outside the working
+  // directory, where the watcher takes files and no directory: it reports a rename of a file and no new file.
+  devTest("renaming a file of a package linked from outside the working directory", {
+    // The Windows watcher does not watch files outside the project directory.
+    skip: ["win32"],
+    cwd: "apps/web",
+    symlinks: { "apps/web/node_modules/lib": "../../../packages/lib" },
+    files: {
+      "apps/web/index.html": indexHtml,
+      "apps/web/index.ts": `
+        import { c } from 'lib/c';
+        console.log(c);
+      `,
+      "packages/lib/package.json": libPackageJson,
+      "packages/lib/c.ts": libExport("c", "C"),
+    },
+    async test(dev) {
+      expect(await servedLibExports(dev)).toEqual(["EXPORT_C"]);
+      {
+        await using batch = await dev.batchChanges();
+        fs.renameSync(dev.join("packages/lib/c.ts"), dev.join("packages/lib/c.tsx"));
+      }
+      // The server watches the file under its new name only when the importer found it there.
+      await dev.write("packages/lib/c.tsx", libExport("c", "D"));
+      expect(await servedLibExports(dev)).toEqual(["EXPORT_D"]);
+    },
+  });
+
+  // A route of a framework is bundled for the server. A module that a client component imports too is in the
+  // server graph and in the client graph, and each graph bundles the importers of a removed file again.
+  for (const { importers, component, separateSSRGraph } of [
+    { importers: "a server route imports", component: false, separateSSRGraph: false },
+    { importers: "a server route and a client component import", component: true, separateSSRGraph: false },
+    { importers: "a server route and a client component import", component: true, separateSSRGraph: true },
+  ]) {
+    const graphs = separateSSRGraph ? " with an SSR graph" : "";
+    devTest(`renaming a file of a linked package that ${importers}${graphs}`, {
+      framework: {
+        fileSystemRouterTypes: minimalFramework.fileSystemRouterTypes,
+        serverComponents: { ...minimalFramework.serverComponents!, separateSSRGraph },
+      },
+      symlinks: throughNodeModulesLink.symlinks,
+      files: {
+        "packages/lib/package.json": libPackageJson,
+        "packages/lib/c.ts": libExport("c", "C"),
+        "routes/index.ts": `
+          import { c } from 'lib/c';
+          ${component ? `import "../Component";` : ""}
+          export default function (req, meta) {
+            return new Response(c);
+          }
+        `,
+        "Component.ts": `
+          "use client";
+          import { c } from 'lib/c';
+          export const marker = c;
+        `,
+      },
+      async test(dev) {
+        await dev.fetch("/").equals("EXPORT_C");
+        await renameLibFile(dev);
+        await dev.fetch("/").equals("EXPORT_D");
+      },
+    });
+  }
+
+  // With no link, the directory of a removed file is read again before the file is looked up when another import
+  // waits for a file of that directory. The removed file then does not resolve, in the two graphs that have it.
+  devTest("renaming a file in two graphs while another import waits for a file of its directory", {
+    framework: minimalFramework,
+    files: {
+      "packages/lib/c.ts": libExport("c", "C"),
+      "routes/index.ts": `
+        import { c } from '../packages/lib/c';
+        import "../Component";
+        export default function (req, meta) {
+          return new Response(c);
+        }
+      `,
+      "Component.ts": `
+        "use client";
+        import { c } from './packages/lib/c';
+        export const marker = c;
+      `,
+      "routes/waiting.ts": `
+        import '../packages/lib/later';
+        export default function (req, meta) {
+          return new Response("later");
+        }
+      `,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals("EXPORT_C");
+      expect((await dev.fetch("/waiting")).status).toBe(500);
+      await renameLibFile(dev);
+      await dev.fetch("/").equals("EXPORT_D");
+    },
+  });
+}
 // Without a separate SSR graph, the server bundle keeps a "use client" module
 // and the parser wraps its exported values in `registerClientReference(value,
 // file, name)`. The parser chose `file` by the JSX development flag. A

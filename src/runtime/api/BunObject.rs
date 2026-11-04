@@ -529,6 +529,15 @@ fn get_inspect(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
     fun
 }
 
+/// `bun:internal-for-testing`: see `Resolver::bust_dir_cache`.
+pub(crate) fn bust_resolver_dir_cache(path: &[u8]) {
+    let _ = VirtualMachine::get()
+        .as_mut()
+        .transpiler
+        .resolver
+        .bust_dir_cache(path);
+}
+
 pub(crate) fn register_macro<'a>(
     heap: &JsHeap<'a>,
     id: f64,

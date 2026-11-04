@@ -9,6 +9,7 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "fs";
@@ -954,6 +955,16 @@ function follow(stream: ReadableStream<Uint8Array>) {
   };
 }
 
+/** Resolves to the text of a `--hot` process's stderr once a reload fails, which prints "error: ...", or at EOF. */
+async function failedReload(stderr: ReadableStream<Uint8Array>) {
+  let text = "";
+  for await (const chunk of stderr) {
+    text += Buffer.from(chunk).toString();
+    if (/^error: .*\n/m.test(text)) break;
+  }
+  return text;
+}
+
 /** Windows only. Suspends the process while `change` runs, so all of its file events are queued on resume. */
 function whileSuspended(pid: number, change: () => void) {
   const kernel32 = dlopen("kernel32.dll", {
@@ -1125,6 +1136,84 @@ it.skipIf(isWindows)("survives a directory event for a folder whose cached listi
 
   writeFileSync(join(cwd, "main.ts"), `console.log("reloaded");\nprocess.exit(0);\n`);
   expect(await stdout("reloaded")).toBe(true);
+  expect(await runner.exited).toBe(0);
+});
+
+// `bun install` links a workspace package like this: node_modules/lib is a link to ../packages/lib. The importer
+// resolves through the link, and the watcher reports the files of the package by their real path.
+const importedFolders = [
+  ["through a link in node_modules", "lib"],
+  ["by a relative path", "./packages/lib"],
+] as const;
+
+/** Starts `bun --hot main.ts` in a project whose packages/lib is also node_modules/lib, a link made before the start. */
+function hotWithLinkedFolder(prefix: string, files: Record<string, string>) {
+  const dir = tempDir(prefix, {
+    "packages/lib/package.json": JSON.stringify({ name: "lib", version: "1.0.0" }),
+    ...files,
+  });
+  // The watcher takes files below the working directory, and the link leads to the folder as it is on disk.
+  const root = realpathSync(String(dir));
+  const folder = join(root, "packages", "lib");
+  mkdirSync(join(root, "node_modules"));
+  // A junction on Windows, where a symlink to a folder needs a privilege. A junction takes an absolute target.
+  symlinkSync(isWindows ? folder : join("..", "packages", "lib"), join(root, "node_modules", "lib"), "junction");
+  const runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.ts"],
+    env: bunEnv,
+    cwd: root,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  const failed = failedReload(runner.stderr);
+  /** Resolves to `true` once stdout has `output`, or to the text of stderr when a reload fails first. */
+  const loaded = (output: string) => Promise.race([stdout(output), failed]);
+  return { dir, root, folder, runner, failed, loaded };
+}
+
+it.each(importedFolders)("reloads when a file of a folder imported %s is renamed", async (_, lib) => {
+  const main = `import { c } from "${lib}/c";\nimport { d } from "${lib}/sub/d";\nconsole.log("loaded", c, d);\n`;
+  const { dir, root, folder, runner, failed, loaded } = hotWithLinkedFolder("hot-folder-rename", {
+    "main.ts": main,
+    "packages/lib/c.ts": `export const c = import.meta.file;`,
+    "packages/lib/sub/d.ts": `export const d = import.meta.file;`,
+  });
+  using _dir = dir;
+  await using _runner = runner;
+  expect(await loaded("loaded c.ts d.ts\n")).toBe(true);
+
+  renameSync(join(folder, "c.ts"), join(folder, "c.tsx"));
+  expect(await loaded("loaded c.tsx d.ts\n")).toBe(true);
+
+  renameSync(join(folder, "sub", "d.ts"), join(folder, "sub", "d.tsx"));
+  expect(await loaded("loaded c.tsx d.tsx\n")).toBe(true);
+
+  // writeFileSync truncates after it writes, so a shorter file could be read with the rest of the old one.
+  writeFileSync(join(root, "main.ts"), main + `process.exit(0);\n`);
+  expect(await failed).not.toContain("error: ");
+  expect(await runner.exited).toBe(0);
+});
+
+it.each(importedFolders)("imports a file created in a folder imported %s", async (_, lib) => {
+  const main = (names: string[]) =>
+    names.map(name => `import { ${name} } from "${lib}/${name}";\n`).join("") +
+    `console.log("loaded", ${names.join(", ")});\n`;
+  const { dir, root, folder, runner, failed, loaded } = hotWithLinkedFolder("hot-folder-create", {
+    "main.ts": main(["a"]),
+    "packages/lib/a.ts": `export const a = "a.ts";`,
+  });
+  using _dir = dir;
+  await using _runner = runner;
+  expect(await loaded("loaded a.ts\n")).toBe(true);
+
+  writeFileSync(join(folder, "d.ts"), `export const d = "d.ts";`);
+  writeFileSync(join(root, "main.ts"), main(["a", "d"]));
+  expect(await loaded("loaded a.ts d.ts\n")).toBe(true);
+
+  writeFileSync(join(root, "main.ts"), main(["a", "d"]) + `process.exit(0);\n`);
+  expect(await failed).not.toContain("error: ");
   expect(await runner.exited).toBe(0);
 });
 

@@ -98,6 +98,11 @@ export const sslCtxLiveCount = $bindgen("SecureContext.bind.ts", "liveCount");
 
 export const napiThreadsafeFunctionLiveCount = $bindgen("napi_body.bind.ts", "threadsafeFunctionLiveCount");
 
+/** Makes the resolver read the directory `path` again, as a watcher does when the directory changed. */
+export const bustResolverDirCache = $bindgen("BunObjectInternals.bind.ts", "bustResolverDirCache") as (
+  path: string,
+) => void;
+
 export const bundlerWorkerLiveCount = $bindgen("JSBundler.bind.ts", "workerLiveCount");
 
 export const semverIntersects = $bindgen("SemverObjectInternals.bind.ts", "intersects") as (

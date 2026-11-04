@@ -460,7 +460,6 @@ declare interface Function {
 
 interface String {
   $charCodeAt: String["charCodeAt"];
-  $endsWith: String["endsWith"];
   // add others as needed
 }
 

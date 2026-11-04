@@ -34,69 +34,11 @@ function pathDepth(path: string) {
   return path.split(sep).length;
 }
 
-// prettier-ignore
-const enum Char {
-  DOT = 46,            // .
-  FORWARD_SLASH = 47,  // /
-  COLON = 58,          // :
-  BACKWARD_SLASH = 92, // \
-}
-
-// What plainDepth() gives when the names of a path do not say its depth.
-const enum Unplaced {
-  // The path has a root or a drive. Its text can still start with the root of the limiter.
-  ROOTED = -1,
-  // The path has a ".." segment.
-  PARENT = -2,
-}
-
-// Not in Node's v26.12.1 text: PlainDepth() of Node's native walker (https://github.com/nodejs/node/blob/95f3cf072e83d94ac90616c86a370b250f44a8d7/src/glob/glob_walker.cc#L1063-L1073). The count of the names of `path` from `start`, or an `Unplaced` value when they do not say where the path is.
-function plainDepth(path: string, start: number) {
-  const length = path.length;
-  const first = path.$charCodeAt(start);
-  if (first === Char.FORWARD_SLASH || (isWindows && first === Char.BACKWARD_SLASH)) {
-    return Unplaced.ROOTED;
-  }
-  let depth = 0;
-  let i = start;
-  for (;;) {
-    while (i < length) {
-      const code = path.$charCodeAt(i);
-      if (code === Char.FORWARD_SLASH || (isWindows && code === Char.BACKWARD_SLASH)) {
-        break;
-      }
-      // path.win32 reads a drive in a path with ":", and the names do not say where that is: resolve(root, "x:y") is on drive x, "C:" is the root itself, and relative() gives "C:\\a" for ".\\C:\\a", which pathDepth() takes for an absolute path.
-      if (isWindows && code === Char.COLON) {
-        return Unplaced.ROOTED;
-      }
-      i++;
-    }
-    // The segment from `start` to `i`. An empty one and "." are not names.
-    const size = i - start;
-    if (size > 2 || (size !== 0 && path.$charCodeAt(start) !== Char.DOT)) {
-      depth++;
-    } else if (size === 2) {
-      if (path.$charCodeAt(start + 1) === Char.DOT) {
-        return Unplaced.PARENT;
-      }
-      depth++;
-    }
-    if (i >= length) {
-      return depth;
-    }
-    start = ++i;
-  }
-}
-
-// Not in Node's text. Whether `path` is `dir`, a separator and one name, which is how join() writes an entry of `dir`.
-function isNameIn(path: string, dir: string) {
-  const at = dir.length;
-  if (at === 0 || path.length <= at || !path.$endsWith(dir, at)) {
-    return false;
-  }
-  const code = path.$charCodeAt(at);
-  return (code === Char.FORWARD_SLASH || (isWindows && code === Char.BACKWARD_SLASH)) && plainDepth(path, at + 1) === 1;
-}
+// Not in Node's v26.12.1 text: DepthFromRoot() of Node's native walker (https://github.com/nodejs/node/blob/95f3cf072e83d94ac90616c86a370b250f44a8d7/src/glob/glob_walker.cc#L1075-L1163). The depth of `path` below `root`, which is what resolve() answered: what pathDepth(relative(root, resolve(root, path))) counts. `~k` for a directory `k` levels above `root`, and UNPLACED when the characters of the two do not settle it.
+const depthFromRoot: (path: string, root: string, foldsCase: boolean) => number = isWindows
+  ? $bindgen("node_path.bind.ts", "depthFromRootWin32")
+  : $bindgen("node_path.bind.ts", "depthFromRootPosix");
+const UNPLACED = -0x80000000;
 
 function ancestorAtDepth(path: string, relativePath: string) {
   let ancestor = path;
@@ -149,10 +91,6 @@ type IdentityCache = Map<string, string | null | Promise<string | null>>;
 class DepthLimiter {
   #root: string;
   #maxDepth: number;
-  // Not in Node's text. #root with a separator at its end: resolve() leaves one at the root of a volume only.
-  #rootPrefix: string;
-  // Not in Node's text. The directory that canTraverse() last allowed by its depth. A name in it is one level deeper at most, so it is within the limit.
-  #open: string | undefined = undefined;
   #relativeCache = new Map<string, string | Promise<string>>();
   // Not in Node's text, which has these two in the Cache of every walk. Only Windows and macOS read them.
   #identityCache: IdentityCache | undefined;
@@ -160,7 +98,6 @@ class DepthLimiter {
 
   constructor(root: string, maxDepth: number) {
     this.#root = resolve(root);
-    this.#rootPrefix = this.#root.$endsWith(sep) ? this.#root : this.#root + sep;
     this.#maxDepth = maxDepth;
   }
 
@@ -348,77 +285,51 @@ class DepthLimiter {
     return isStrictDescendant(realRootFromPath);
   }
 
-  // Not in Node's text, which asks resolve() and relative() about every path. The depth of a path that its text puts at or below the root: the path as it is, or what follows the root as #root spells it. An `Unplaced` value for any other path.
-  #plainDepth(path: string) {
-    const plain = plainDepth(path, 0);
-    if (plain !== Unplaced.ROOTED) {
-      return plain;
-    }
-    const prefix = this.#rootPrefix;
-    return path.$endsWith(prefix, prefix.length) ? plainDepth(path, prefix.length) : plain;
-  }
-
-  #depth(path: string) {
-    const plain = this.#plainDepth(path);
-    return plain < 0 ? pathDepth(this.#relativeFromRoot(path)) : plain;
-  }
-
   includes(path: string) {
-    const open = this.#open;
-    return (open !== undefined && isNameIn(path, open)) || this.#depth(path) <= this.#maxDepth;
+    const depth = depthFromRoot(path, this.#root, isMacOS);
+    if (depth === UNPLACED) {
+      return pathDepth(this.#relativeFromRoot(path)) <= this.#maxDepth;
+    }
+    return (depth < 0 ? ~depth : depth) <= this.#maxDepth;
   }
 
   // Not in Node's text. For the async walk, which cannot await where it adds a match: `undefined` when only the file system can say, and the lookup has then started.
   includesNow(path: string) {
-    const open = this.#open;
-    if (open !== undefined && isNameIn(path, open)) {
-      return true;
+    const depth = depthFromRoot(path, this.#root, isMacOS);
+    if (depth === UNPLACED) {
+      const relativePath = this.#relativeFromRootAsync(path);
+      return typeof relativePath === "string" ? pathDepth(relativePath) <= this.#maxDepth : undefined;
     }
-    const plain = this.#plainDepth(path);
-    if (plain >= 0) {
-      return plain <= this.#maxDepth;
-    }
-    const relativePath = this.#relativeFromRootAsync(path);
-    return typeof relativePath === "string" ? pathDepth(relativePath) <= this.#maxDepth : undefined;
+    return (depth < 0 ? ~depth : depth) <= this.#maxDepth;
   }
 
   async includesAsync(path: string) {
-    return pathDepth(await this.#relativeFromRootAsync(path)) <= this.#maxDepth;
+    const depth = depthFromRoot(path, this.#root, isMacOS);
+    if (depth === UNPLACED) {
+      return pathDepth(await this.#relativeFromRootAsync(path)) <= this.#maxDepth;
+    }
+    return (depth < 0 ? ~depth : depth) <= this.#maxDepth;
   }
 
   canTraverse(path: string, isAbsolutePattern: boolean) {
-    const plain = this.#plainDepth(path);
-    if (plain < 0) {
-      if (isAbsolutePattern && this.#isAncestorOfRoot(path)) {
-        return true;
-      }
-      if (pathDepth(this.#relativeFromRoot(path)) >= this.#maxDepth) {
-        return false;
-      }
-      // Windows and macOS ask the file system about a path that can be the root in another spelling, in the order of Node's text. A name in this directory can be such a path, so there the directory is not remembered.
-      if (isWindows || isMacOS) {
-        return true;
-      }
-    } else if (plain >= this.#maxDepth) {
-      return false;
+    const depth = depthFromRoot(path, this.#root, isMacOS);
+    if (depth === UNPLACED) {
+      return (
+        (isAbsolutePattern && this.#isAncestorOfRoot(path)) || pathDepth(this.#relativeFromRoot(path)) < this.#maxDepth
+      );
     }
-    this.#open = path;
-    return true;
+    return depth >= 0 ? depth < this.#maxDepth : isAbsolutePattern || ~depth < this.#maxDepth;
   }
 
   async canTraverseAsync(path: string, isAbsolutePattern: boolean) {
-    const plain = this.#plainDepth(path);
-    if (plain >= 0) {
-      if (plain >= this.#maxDepth) {
-        return false;
-      }
-      this.#open = path;
-      return true;
+    const depth = depthFromRoot(path, this.#root, isMacOS);
+    if (depth === UNPLACED) {
+      return (
+        (isAbsolutePattern && (await this.#isAncestorOfRootAsync(path))) ||
+        pathDepth(await this.#relativeFromRootAsync(path)) < this.#maxDepth
+      );
     }
-    return (
-      (isAbsolutePattern && (await this.#isAncestorOfRootAsync(path))) ||
-      pathDepth(await this.#relativeFromRootAsync(path)) < this.#maxDepth
-    );
+    return depth >= 0 ? depth < this.#maxDepth : isAbsolutePattern || ~depth < this.#maxDepth;
   }
 }
 

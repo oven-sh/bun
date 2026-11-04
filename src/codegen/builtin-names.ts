@@ -57,7 +57,6 @@ export const jscNames = {
     "clear",
     "defineProperty",
     "delete",
-    "endsWith",
     "forEach",
     "get",
     "getPrototypeOf",

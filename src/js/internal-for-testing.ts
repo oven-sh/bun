@@ -1339,3 +1339,17 @@ export function membersUnderNamesOfTheRuntime(tag: string): string[] {
   });
   return lines;
 }
+
+// What the DepthLimiter of fs.glob takes the depth of a path from, for both platforms.
+export const depthFromRoot = {
+  posix: $bindgen("node_path.bind.ts", "depthFromRootPosix") as (
+    path: string,
+    root: string,
+    foldsCase: boolean,
+  ) => number,
+  win32: $bindgen("node_path.bind.ts", "depthFromRootWin32") as (
+    path: string,
+    root: string,
+    foldsCase: boolean,
+  ) => number,
+};

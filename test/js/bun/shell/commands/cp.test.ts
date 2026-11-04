@@ -1,8 +1,8 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, isMacOS, isWindows, tempDir, tempDirWithFiles } from "harness";
-import { mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { bunEnv, isMacOS, isWindows, tempDir, tempDirWithFiles, unprivilegedSpawnOptions } from "harness";
+import { chmodSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, sep } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
@@ -247,9 +247,170 @@ test("operands longer than the path buffers fail with ENAMETOOLONG", async () =>
   expect(exitCode).toBe(0);
 });
 
+// The children force-enable the builtin, so these also run on POSIX.
+describe.concurrent("bunshell cp options", () => {
+  test("-f, -r and the long names of -R, -v, -n and -f", async () => {
+    // Each command runs in a directory that holds the files a ("new") and b ("old"), and the directory d with f.
+    const overwritten = { exitCode: 0, stdout: "", stderr: "", b: "new", "e/f": null };
+    const kept = { ...overwritten, b: "old" };
+    const verbose = { ...overwritten, stdout: p("<cwd>/a -> <cwd>/b\n") };
+    const tree = { ...kept, "e/f": "tree" };
+    // macOS clones a directory in one call and prints no line for it.
+    const treeVerbose = { ...tree, stdout: isMacOS ? "" : p("<cwd>/d -> <cwd>/e\n<cwd>/d/f -> <cwd>/e/f\n") };
+    const failed = (stderr: string) => ({ ...kept, exitCode: 1, stderr });
+    const notCopied = failed("cp: d is a directory (not copied)\n");
+    const unsupported = (option: string) => failed(`cp: unsupported option, please open a GitHub issue -- ${option}\n`);
+    const illegal = (option: string) => failed(`cp: illegal option -- ${option}\n`);
+    const usage = failed(
+      "usage: cp [-R [-H | -L | -P]] [-fi | -n] [-aclpsvXx] source_file target_file\n" +
+        "       cp [-R [-H | -L | -P]] [-fi | -n] [-aclpsvXx] source_file ... target_directory\n",
+    );
+    const expected = {
+      "cp -f a b": overwritten,
+      "cp --force a b": overwritten,
+      "cp -ff a b": overwritten,
+      "cp -fv a b": verbose,
+      "cp -v -f a b": verbose,
+      "cp -vf a b": verbose,
+      "cp -fR d e": tree,
+      "cp -R -f d e": tree,
+      "cp -Rf d e": tree,
+      "cp -Rv -f d e": treeVerbose,
+      // -f does not turn on -R.
+      "cp d e": notCopied,
+      "cp -f d e": notCopied,
+      "cp --force d e": notCopied,
+      "cp -vf d e": notCopied,
+      "cp -f": usage,
+      "cp -f a": usage,
+
+      "cp -r d e": tree,
+      "cp -rR d e": tree,
+      "cp -rf d e": tree,
+      "cp -nr d e": tree,
+      "cp -rv d e": treeVerbose,
+      "cp -vr d e": treeVerbose,
+      "cp -rv a b": verbose,
+
+      "cp --recursive d e": tree,
+      "cp --verbose a b": verbose,
+      "cp --no-clobber a b": kept,
+      // Only the whole name is accepted. GNU cp also takes a prefix such as --rec.
+      "cp --rec d e": illegal("-rec"),
+      "cp --recursivex d e": illegal("-recursivex"),
+      "cp --Force a b": illegal("-Force"),
+
+      // -n wins over -f in every order, as in GNU cp.
+      "cp -fn a b": kept,
+      "cp -nf a b": kept,
+      "cp -n -f a b": kept,
+      "cp -f -n a b": kept,
+      "cp -Rnf a b": kept,
+      "cp -Rfn a b": kept,
+      "cp -vnf a b": kept,
+      "cp -n -Rf a b": kept,
+      "cp -Rf -n a b": kept,
+      "cp --no-clobber --force a b": kept,
+      "cp --force --no-clobber a b": kept,
+
+      // p is ignored when it is not the first option of its group.
+      "cp -Rp a b": overwritten,
+      "cp -rp d e": tree,
+      "cp -rfp d e": tree,
+      "cp -fp a b": overwritten,
+      "cp -p a b": unsupported("-p"),
+      "cp -pR a b": unsupported("-p"),
+      "cp -R -p a b": unsupported("-p"),
+      "cp -P a b": unsupported("-P"),
+
+      // After R, v or n, an option that cp does not implement is ignored, as in the released versions.
+      "cp -RH a b": overwritten,
+      "cp -Ri a b": overwritten,
+      "cp -Rz a b": overwritten,
+      "cp -Ra d e": tree,
+      "cp -vH a b": verbose,
+      "cp -nz a b": kept,
+      // After r or f, it fails.
+      "cp -rT d e": illegal("T"),
+      "cp -ru a b": illegal("u"),
+      "cp -rL d e": unsupported("-L"),
+      "cp -fi a b": unsupported("-i"),
+      "cp -ra d e": unsupported("-a"),
+      "cp -a d e": unsupported("-a"),
+      "cp -ar d e": unsupported("-a"),
+      // So does a word that only starts like -f or -r, such as a file name that a glob gives.
+      "cp -force a b": illegal("orce"),
+      "cp -recursive d e": illegal("ecursive"),
+      "cp *.css b": illegal("onts.css"),
+      "cp ./*.css b": overwritten,
+    };
+
+    using dir = tempDir("cp-options", {
+      "a": "new",
+      "d": { "f": "tree" },
+      "-fonts.css": "new",
+      "commands.json": JSON.stringify(Object.keys(expected)),
+      "fixture.ts": /* ts */ `
+        import { $ } from "bun";
+        import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+        import commands from "./commands.json";
+
+        $.nothrow();
+        const cwd = process.cwd();
+        const read = (path: string) => (existsSync(path) ? readFileSync(path, "utf8") : null);
+
+        const results: Record<string, unknown> = {};
+        for (const command of commands) {
+          writeFileSync("b", "old");
+          rmSync("e", { recursive: true, force: true });
+          const { exitCode, stdout, stderr } = await $\`\${{ raw: command }}\`.quiet();
+          results[command] = {
+            exitCode,
+            stdout: stdout.toString().replaceAll(cwd, "<cwd>"),
+            stderr: stderr.toString(),
+            b: read("b"),
+            "e/f": read("e/f"),
+          };
+        }
+        console.log(JSON.stringify(results));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts"],
+      env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/14595
+  test.each(["script.ts", "script.sh"])("cp -r folder dest in %s", async script => {
+    using dir = tempDir("cp-r", {
+      "folder": { "file": "hi" },
+      "script.ts": 'import { $ } from "bun";\n\nawait $`cp -r folder dest`;\n',
+      "script.sh": "#!/bin/bash -e\ncp -r folder dest\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", script],
+      env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    expect(readFileSync(join(String(dir), "dest", "file"), "utf8")).toBe("hi");
+  });
+});
+
 // The child force-enables the builtin, so these also run on POSIX.
 describe.concurrent("bunshell cp src/dest validation", () => {
-  async function cp(cwd: string, command: string) {
+  async function cp(cwd: string, command: string, options: { uid?: number; gid?: number } = {}) {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -260,6 +421,7 @@ describe.concurrent("bunshell cp src/dest validation", () => {
       env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
       stdout: "pipe",
       stderr: "inherit",
+      ...options,
     });
     const [stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     return { stderr, exitCode };
@@ -306,6 +468,47 @@ describe.concurrent("bunshell cp src/dest validation", () => {
 
     expect(await cp(String(dir), "cp -n d/f fresh")).toEqual(silent);
     expect(read("fresh")).toBe("hi");
+  });
+
+  // Copies onto a mode 444 file. Root ignores file modes, so the child runs unprivileged.
+  async function cpOntoReadOnly(size: number, command: string) {
+    using dir = tempDir("cp-read-only", { a: Buffer.alloc(size, "n").toString(), b: "old" });
+    const b = join(String(dir), "b");
+    chmodSync(b, 0o444);
+    using unprivileged = unprivilegedSpawnOptions(String(dir));
+    try {
+      const { stderr, exitCode } = await cp(String(dir), command, unprivileged);
+      return {
+        stderr: stderr.replaceAll(String(dir), "<dir>"),
+        exitCode,
+        replaced: readFileSync(b, "utf8") !== "old",
+      };
+    } finally {
+      // A read-only file must not stop the removal of the directory.
+      chmodSync(b, 0o644);
+    }
+  }
+
+  // POSIX and GNU cp -f remove a destination that cannot be opened and create it again (uutils test_cp_arg_force).
+  test.each([3, 200 * 1024])("-f copies onto a read-only file as plain cp does (%d byte source)", async size => {
+    // Above 128 KiB the macOS copy unlinks the destination and clones the source.
+    const plain =
+      isMacOS && size > 128 * 1024
+        ? { stderr: "", exitCode: 0, replaced: true }
+        : {
+            stderr: `cp: ${isWindows ? "Operation not permitted" : "Permission denied"}: ${p("<dir>/b")}\n`,
+            exitCode: 1,
+            replaced: false,
+          };
+    expect({
+      "cp a b": await cpOntoReadOnly(size, "cp a b"),
+      "cp -f a b": await cpOntoReadOnly(size, "cp -f a b"),
+      "cp -n -f a b": await cpOntoReadOnly(size, "cp -n -f a b"),
+    }).toEqual({
+      "cp a b": plain,
+      "cp -f a b": plain,
+      "cp -n -f a b": { stderr: "", exitCode: 0, replaced: false },
+    });
   });
 
   // Directory symlinks need extra privileges on Windows.

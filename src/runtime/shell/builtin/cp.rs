@@ -861,17 +861,27 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellCpTask {
 
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Opts {
-    /// `-R` — copy file hierarchies
+    /// `-R`, `-r`, `--recursive` — copy file hierarchies
     pub(crate) recursive: bool,
-    /// `-v` — verbose
+    /// `-v`, `--verbose` — verbose
     pub(crate) verbose: bool,
-    /// `-n` — do not overwrite an existing file
+    /// `-n`, `--no-clobber` — do not overwrite an existing file
     pub(crate) no_clobber: bool,
 }
 
 impl FlagParser for Opts {
-    fn parse_long<'a>(&mut self, _flag: &'a [u8]) -> Option<ParseFlagResult<'a>> {
-        None
+    fn parse_long<'a>(&mut self, flag: &'a [u8]) -> Option<ParseFlagResult<'a>> {
+        let short = match flag {
+            b"--recursive" => b'R',
+            b"--verbose" => b'v',
+            b"--no-clobber" => b'n',
+            b"--force" => b'f',
+            _ => return None,
+        };
+        Some(
+            self.parse_short(short, flag, 0)
+                .unwrap_or(ParseFlagResult::ContinueParsing),
+        )
     }
 
     fn parse_short<'a>(
@@ -881,17 +891,21 @@ impl FlagParser for Opts {
         i: usize,
     ) -> Option<ParseFlagResult<'a>> {
         match ch {
-            b'R' => self.recursive = true,
+            b'R' | b'r' => self.recursive = true,
             b'v' => self.verbose = true,
             b'n' => self.no_clobber = true,
-            // Only the first flag of a group is rejected. Scripts rely on `-Rp` and `-Rf` working.
-            _ if i > 0 => {}
-            b'f' => return Some(ParseFlagResult::Unsupported(b"-f")),
+            // Overwriting is the default, and `-n` wins over `-f` in any order, as in GNU cp.
+            b'f' => {}
+            // Scripts use `-Rp` and `-rp`.
+            b'p' if i > 0 => {}
+            // A group led by `R`, `v` or `n` has never failed on a later flag, and scripts rely on it.
+            _ if i > 0 && matches!(smallflags[0], b'R' | b'v' | b'n') => {}
+            b'a' => return Some(ParseFlagResult::Unsupported(b"-a")),
             b'H' => return Some(ParseFlagResult::Unsupported(b"-H")),
             b'i' => return Some(ParseFlagResult::Unsupported(b"-i")),
             b'L' => return Some(ParseFlagResult::Unsupported(b"-L")),
             b'P' => return Some(ParseFlagResult::Unsupported(b"-P")),
-            b'p' => return Some(ParseFlagResult::Unsupported(b"-P")),
+            b'p' => return Some(ParseFlagResult::Unsupported(b"-p")),
             _ => return Some(ParseFlagResult::IllegalOption(&smallflags[i..])),
         }
         None

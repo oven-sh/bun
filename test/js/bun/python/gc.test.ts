@@ -1,5 +1,5 @@
 import { expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 
 // These builds take seconds to start Python.
 if (isDebug || isASAN) setDefaultTimeout(60_000);
@@ -247,5 +247,51 @@ print(len(suspended))
 `);
   expect(stderr).toBe("");
   expect(stdout).toBe("[6, 2, 3, 3, 5, 2]\n50\n");
+  expect(exitCode).toBe(0);
+});
+
+// It takes seconds of work for the difference to show, which these builds would make minutes.
+test.skipIf(isDebug || isASAN || isWindows)("idle threads do not collect again and again beside a thread that works", async () => {
+  const { stdout, stderr, exitCode } = await run(`
+import argparse, collections, gc, hashlib, inspect, io, os, select, threading, tokenize
+
+def full_collections_during(work):
+    before = gc.get_stats()[2]["collections"]
+    work()
+    return gc.get_stats()[2]["collections"] - before
+
+# Generators and lists that live for a while.
+source = inspect.getsource(argparse)
+def tokenizes():
+    kept = collections.deque(maxlen=20)
+    for i in range(150):
+        kept.append(list(tokenize.generate_tokens(io.StringIO(source).readline))[:200])
+
+# Nearly all the time in native code, without the GIL.
+class A:
+    def __del__(self):
+        pass
+data = bytes(32 * 1024 * 1024)
+def hashes():
+    kept = collections.deque(maxlen=200)
+    for i in range(50):
+        kept.extend(A() for j in range(20))
+        hashlib.sha256(data).digest()
+
+heap = [[i] for i in range(600000)]   # So that a full collection takes a while.
+condition = threading.Condition()
+def waits():
+    with condition:
+        condition.wait()
+threading.Thread(target=waits, daemon=True).start()
+threading.Thread(target=select.select, args=([os.pipe()[0]], [], []), daemon=True).start()
+print(full_collections_during(tokenizes), full_collections_during(hashes))
+`);
+  expect(stderr).toBe("");
+  const [whileTokenizing, whileHashing] = stdout.trim().split(" ").map(Number);
+  // A handful: the engine's own, and those of the idle threads, which come less and less often. One every 50 ms or so was 20 and more
+  // while tokenizing, and anything up to that while hashing.
+  expect(whileTokenizing).toBeLessThan(10);
+  expect(whileHashing).toBeLessThan(5);
   expect(exitCode).toBe(0);
 });

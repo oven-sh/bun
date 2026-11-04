@@ -255,6 +255,27 @@ export default b.declarations(
     reads: externalState,
     implementation: b.hostCall,
   }),
+  // It keeps the function, or lets go of the last one when it gets undefined. The heap observer behind the 'gc' entries of node:perf_hooks
+  // calls the function on a later tick, once for each collection: with the start and the duration, and whether it was full and forced.
+  b.static(cpp("GCPerformanceEntries.cpp", "jsFunctionSetGCPerformanceEntryListener"), {
+    args: { listener: b.any.optional },
+    returns: b.undefined,
+    capability: "none",
+    uses: {
+      listener: [
+        b.retained,
+        b.called({
+          afterwards: "TouchesOnlyWhatRowNames",
+          times: "PerEvent",
+          this: b.undefined,
+          args: [b.f64, b.f64, b.bool, b.bool],
+          result: "Ignored",
+        }),
+      ],
+    },
+    writes: externalState,
+    implementation: b.hostCall,
+  }),
   b.static(cpp("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled"), {
     args: { enabled: b.any },
     returns: b.undefined,

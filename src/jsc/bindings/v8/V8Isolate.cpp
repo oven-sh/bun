@@ -81,7 +81,10 @@ bool Isolate::GetHeapObjectStatisticsAtLastGC(HeapObjectStatistics*, size_t)
 
 void Isolate::AddGCPrologueCallback(GCCallbackWithData callback, void* data, GCType)
 {
-    // Stored but not fired: JSC's GC does not expose matching phase hooks.
+    // Stored but not fired. V8 calls the pair on the JS thread, right before and right after a collection, and the
+    // callbacks may allocate. JSC::HeapObserver is notified inside the collection, where nothing may allocate, and
+    // for some collections on the collector thread. A call made later would have prologue and epilogue back to back,
+    // and an addon that times the gap between them would record a collection of no length.
     m_globalInternals->gcPrologueCallbacks().append({ callback, data });
 }
 
@@ -94,7 +97,7 @@ void Isolate::RemoveGCPrologueCallback(GCCallbackWithData callback, void* data)
 
 void Isolate::AddGCEpilogueCallback(GCCallbackWithData callback, void* data, GCType)
 {
-    // Stored but not fired: JSC's GC does not expose matching phase hooks.
+    // Stored but not fired: see AddGCPrologueCallback.
     m_globalInternals->gcEpilogueCallbacks().append({ callback, data });
 }
 

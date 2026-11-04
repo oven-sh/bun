@@ -5,6 +5,7 @@
 #include "BunModuleRegistry.h"
 #include "BuiltinModuleKeys.h"
 #include "IsolatedModuleCache.h"
+#include "GCPerformanceEntries.h"
 #include "MessagePort.h"
 #include "helpers.h"
 #include "JavaScriptCore/AOTHost.h"
@@ -913,6 +914,10 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
         globalObject->scriptExecutionContext()->setSharedEnvStore(*sharedEnvStore);
         globalObject->m_processEnvObject.set(vm, globalObject, Bun::createSharedEnvironmentVariablesMap(globalObject).getObject());
     }
+
+    // Nothing disconnects the 'gc' observers of the finished file.
+    if (auto* gcPerformanceEntries = WebCore::clientData(vm)->gcPerformanceEntries.get())
+        gcPerformanceEntries->setListener(oldGlobal, nullptr);
 
     // The plugin registries hold Strong<> roots into the old realm; owned by the global itself,
     // they would keep it (and everything it loaded) alive for the rest of the run.
@@ -5234,6 +5239,9 @@ void GlobalObject::prepareForDestruction()
     // separately because finalizers during the final collection and ~VM both reach scheduleWorkSoon().
     context->markTerminating();
     WebCore::clientData(vm)->deferredWorkTimer.markShuttingDown();
+    // The collections of the teardown are no 'gc' performance entries.
+    if (auto gcPerformanceEntries = std::exchange(WebCore::clientData(vm)->gcPerformanceEntries, nullptr))
+        gcPerformanceEntries->stop();
 
     // WorkerOrWorkletGlobalScope::prepareForDestruction(): stop every ActiveDOMObject (workers are
     // asked to terminate, ports/channels/sockets close without dispatching) and strip listeners,

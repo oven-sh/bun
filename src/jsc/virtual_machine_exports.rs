@@ -26,6 +26,11 @@ pub fn script_execution_status(this: &VirtualMachine) -> i32 {
     this.script_execution_status() as i32
 }
 
+// HOST_EXPORT(Bun__VM__isEventLoopKeptAlive, c)
+pub fn is_event_loop_kept_alive(this: &VirtualMachine) -> bool {
+    this.is_event_loop_kept_alive()
+}
+
 // HOST_EXPORT(Bun__getVM, c)
 pub fn get_vm() -> *mut VirtualMachine {
     VirtualMachine::get_mut_ptr()

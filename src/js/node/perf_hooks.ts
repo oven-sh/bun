@@ -37,6 +37,7 @@ var constants = {
   NODE_PERFORMANCE_GC_INCREMENTAL: 8,
   NODE_PERFORMANCE_GC_MAJOR: 4,
   NODE_PERFORMANCE_GC_MINOR: 1,
+  NODE_PERFORMANCE_GC_MINOR_MARK_SWEEP: 2,
   NODE_PERFORMANCE_GC_WEAKCB: 16,
   NODE_PERFORMANCE_MILESTONE_BOOTSTRAP_COMPLETE: 7,
   NODE_PERFORMANCE_MILESTONE_ENVIRONMENT: 2,
@@ -111,8 +112,63 @@ function eventLoopUtilization(_utilization1, _utilization2) {
   };
 }
 
+// ─── 'gc' entries ────────────────────────────────────────────────────────────
+// A heap observer (GCPerformanceEntries.cpp) times each collection of JavaScriptCore while an observer here wants
+// 'gc' entries, and calls emitGCEntry() for it on a later tick.
+
+const {
+  NODE_PERFORMANCE_GC_MAJOR,
+  NODE_PERFORMANCE_GC_MINOR,
+  NODE_PERFORMANCE_GC_FLAGS_FORCED,
+  NODE_PERFORMANCE_GC_FLAGS_NO,
+} = constants;
+
+let setGCEntryListener: ((listener: typeof emitGCEntry | undefined) => void) | undefined;
+let isGCEntryListenerSet = false;
+
+// https://github.com/nodejs/node/blob/v26.12.1/src/node_perf.h#L112-L140
+function emitGCEntry(startTime: number, duration: number, isFullCollection: boolean, forced: boolean) {
+  // As in Node, the observers that exist now get the entry, whether or not they did when the collection ran.
+  if (!hasObserver("gc")) return;
+  // JavaScriptCore has two kinds of collection: an eden one is Node's minor, a full one its major.
+  const detail = {
+    kind: isFullCollection ? NODE_PERFORMANCE_GC_MAJOR : NODE_PERFORMANCE_GC_MINOR,
+    flags: forced ? NODE_PERFORMANCE_GC_FLAGS_FORCED : NODE_PERFORMANCE_GC_FLAGS_NO,
+  };
+  enqueueNodeEntry(new PerformanceNodeEntry("gc", "gc", startTime, duration, detail));
+}
+
+// https://github.com/nodejs/node/blob/v26.12.1/src/node_perf.cc#L254-L275
+function updateGCTracking() {
+  const wanted = hasObserver("gc");
+  if (wanted === isGCEntryListenerSet) return;
+  isGCEntryListenerSet = wanted;
+  setGCEntryListener ??= $newCppFunction("GCPerformanceEntries.cpp", "jsFunctionSetGCPerformanceEntryListener", 1);
+  setGCEntryListener!(wanted ? emitGCEntry : undefined);
+}
+
+// What a NodeEntryObserver that observes 'gc' is. The count of those observers changes in these two only, also
+// when the registry disconnects the observer of a disposed Bun.ModuleGraph by itself.
+class GCEntryObserver extends NodeEntryObserver {
+  observe(types: Iterable<string>) {
+    super.observe(types);
+    updateGCTracking();
+  }
+
+  disconnect() {
+    super.disconnect();
+    updateGCTracking();
+  }
+}
+const GCEntryObserverPrototype = GCEntryObserver.prototype;
+const ObjectSetPrototypeOf = Object.setPrototypeOf;
+
+let webEntryTypes: Set<string> | undefined;
+const isWebEntryType = (type: string) => (webEntryTypes ??= new Set(PerformanceObserver.supportedEntryTypes)).has(type);
+
 const kNodeObserver = Symbol("kNodeObserver");
 const kObserverCallback = Symbol("kObserverCallback");
+const kObserveMode = Symbol("kObserveMode");
 
 /**
  * The native (WebCore) observer only understands mark/measure/resource.
@@ -129,6 +185,7 @@ type ObserverCallback = (
 class PerformanceObserverForNodeTypes extends PerformanceObserver {
   declare [kNodeObserver]: NodeEntryObserver | undefined;
   declare [kObserverCallback]: ObserverCallback;
+  declare [kObserveMode]: "type" | "entryTypes" | undefined;
 
   constructor(callback: ObserverCallback) {
     super(callback);
@@ -145,10 +202,23 @@ class PerformanceObserverForNodeTypes extends PerformanceObserver {
     let isTypeMode = false;
     if (options != null && typeof options === "object") {
       const entryTypes = options.entryTypes;
-      let type: string | undefined;
+      const type = options.type;
+      // An observer takes `type` or `entryTypes`, and keeps to the one it took first until disconnect(). These are
+      // Node's checks, made before anything changes. The native class makes them only for the types it knows.
+      // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/perf/observe.js#L273-L296
+      if (entryTypes != null && type != null) {
+        throw new TypeError("either entryTypes or type must be provided");
+      }
+      const mode = this[kObserveMode];
+      if (mode === undefined) {
+        if (type !== undefined) this[kObserveMode] = "type";
+        else if (entryTypes !== undefined) this[kObserveMode] = "entryTypes";
+      } else if (mode === "type" ? entryTypes !== undefined : type !== undefined) {
+        throw new DOMException("observer type can't be changed once registered", "InvalidModificationError");
+      }
       if (entryTypes !== undefined && Array.isArray(entryTypes)) {
         requested = entryTypes;
-      } else if ((type = options.type) !== undefined) {
+      } else if (type !== undefined) {
         requested = [type];
         isTypeMode = true;
       }
@@ -160,6 +230,10 @@ class PerformanceObserverForNodeTypes extends PerformanceObserver {
         registration = this[kNodeObserver] = new NodeEntryObserver(this[kObserverCallback], this);
       }
       if (registration) {
+        // GCEntryObserver adds no state, so a registration that starts to observe 'gc' only changes class.
+        if (nodeTypes.includes("gc") && !(registration instanceof GCEntryObserver)) {
+          ObjectSetPrototypeOf(registration, GCEntryObserverPrototype);
+        }
         if (isTypeMode) {
           // observe({type}) appends to the observed set per the spec.
           registration.observe([...registration.types, ...nodeTypes]);
@@ -189,6 +263,9 @@ class PerformanceObserverForNodeTypes extends PerformanceObserver {
         // forwarded subscription is always an entryTypes one.
         return super.observe({ ...options, entryTypes: webTypes });
       }
+      // Node disconnects an observer whose `entryTypes` name no type there is, so it is free to take `type` next.
+      // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/perf/observe.js#L334-L337
+      if (!isTypeMode && !requested.some(isWebEntryType)) this[kObserveMode] = undefined;
     }
     return super.observe(options);
   }
@@ -196,6 +273,7 @@ class PerformanceObserverForNodeTypes extends PerformanceObserver {
   disconnect() {
     this[kNodeObserver]?.disconnect();
     this[kNodeObserver] = undefined;
+    this[kObserveMode] = undefined;
     return super.disconnect();
   }
 }

@@ -129,7 +129,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:perf_hooks`](https://nodejs.org/api/perf_hooks.html)
 
-🟡 `monitorEventLoopDelay()`, `createHistogram()`, `timerify()` and `PerformanceObserver` (`mark`, `measure`, `function`, `net`, `http` and `http2` entries) are implemented. Bun never emits `gc`, `dns` or `resource` entries. `eventLoopUtilization()` always returns zeros, and `performance.nodeTiming` holds placeholder values. The Node-specific additions to the global `performance` object only appear once `node:perf_hooks` has been imported.
+🟡 `monitorEventLoopDelay()`, `createHistogram()`, `timerify()` and `PerformanceObserver` (`mark`, `measure`, `function`, `gc`, `net`, `http` and `http2` entries) are implemented. A `gc` entry is one collection of JavaScriptCore: its `duration` is the time from the start to the end of the collection, part of which runs beside the program, its `detail.kind` is `NODE_PERFORMANCE_GC_MINOR` or `NODE_PERFORMANCE_GC_MAJOR`, and its `detail.flags` is `NODE_PERFORMANCE_GC_FLAGS_FORCED` only for `gc()` and `Bun.gc(true)`. Bun never emits `dns` or `resource` entries. `eventLoopUtilization()` always returns zeros, and `performance.nodeTiming` holds placeholder values. The Node-specific additions to the global `performance` object only appear once `node:perf_hooks` has been imported.
 
 ### [`node:process`](https://nodejs.org/api/process.html)
 
@@ -361,7 +361,7 @@ The following list covers the globals implemented by Node.js and Bun's compatibi
 
 ### [`PerformanceObserver`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceObserver)
 
-🟡 Observing `mark` and `measure` entries works. Bun only delivers Node-only entry types (`function`, `http`, `net`, ...) to the `node:perf_hooks` `PerformanceObserver`, and never emits `gc`, `dns` or `resource` entries.
+🟡 Observing `mark` and `measure` entries works. Bun only delivers Node-only entry types (`function`, `gc`, `http`, `net`, ...) to the `node:perf_hooks` `PerformanceObserver`, and never emits `dns` or `resource` entries.
 
 ### [`PerformanceObserverEntryList`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceObserverEntryList)
 

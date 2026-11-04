@@ -532,6 +532,10 @@ unsafe extern "C" {
     safe fn Zig__GlobalObject__retireDerivedRealmsForTestIsolation(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
     safe fn WebWorker__teardownJSCVM(global: &JSGlobalObject);
+    /// GCPerformanceEntries.cpp: how many collections the source of `node:perf_hooks`' `gc` entries has recorded
+    /// (0 while nothing observes them), and the mark on the last one if there are more than `count_before`.
+    safe fn Bun__GCPerformanceEntries__recordedCount(vm: &crate::VM) -> u64;
+    safe fn Bun__GCPerformanceEntries__markLastRecordForced(vm: &crate::VM, count_before: u64);
 }
 
 bun_core::define_scoped_log!(teardown_log, Worker, hidden);
@@ -1864,6 +1868,17 @@ impl VirtualMachine {
             || self.has_immediates()
     }
 
+    /// Whether the loop turns again as things are, by the reading of whoever drives it. Work that must not keep the
+    /// loop alive by itself waits for this before it queues what does (a `gc` performance entry, as Node's unrefed
+    /// immediate).
+    pub(crate) fn is_event_loop_kept_alive(&self) -> bool {
+        if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
+            self.is_event_loop_alive_despite_errors()
+        } else {
+            self.is_event_loop_alive()
+        }
+    }
+
     /// Unlike `is_event_loop_alive`, also counts unref'd handles and timers, since they can still run JS.
     pub fn has_work_left(&self) -> bool {
         // Must be read before the queues: the waiter thread posts a child's exit, then stops counting the child.
@@ -1972,10 +1987,15 @@ impl VirtualMachine {
     /// `Bun.gc(force)` and `gc()`. Whoever asks for a synchronous collection reads the footprint next: what the collection
     /// freed goes back to the OS now, not whenever the allocator's purge delay has passed.
     pub fn garbage_collect_from_js(&self, sync: bool) -> usize {
-        let size = self.garbage_collect(sync);
-        if sync {
-            bun_core::Global::mimalloc_cleanup(true);
+        if !sync {
+            return self.garbage_collect(false);
         }
+        // `node:perf_hooks` reports the collection that the program forces with NODE_PERFORMANCE_GC_FLAGS_FORCED.
+        let vm = self.global().vm();
+        let recorded = Bun__GCPerformanceEntries__recordedCount(vm);
+        let size = self.garbage_collect(true);
+        Bun__GCPerformanceEntries__markLastRecordForced(vm, recorded);
+        bun_core::Global::mimalloc_cleanup(true);
         size
     }
 

@@ -912,7 +912,8 @@ impl All {
             };
             // SAFETY: `min` is live; no guard or borrow of `All` is held here.
             let fired = unsafe { EventLoopTimer::fire(min, &el_now, vm) };
-            // WTF timers run JSC-internal work, not user JS; a stop found here
+            // WTF timers run JSC-internal work, and the hand-off of `gc` performance
+            // entries, which takes what its built-in function throws. A stop found here
             // is the loop's to act on at its next gate, and the heap's next
             // deadline is still reported to the poll.
             // SAFETY: `vm` is the erased per-thread VM per fn contract.

@@ -462,11 +462,7 @@ unsafe fn init_runtime_state(
                 // field is zero-init'd uninhabited memory (never dropped).
                 unsafe { ptr::write(ptr::addr_of_mut!((*vm).transpiler), transpiler) };
                 // Post-`Transpiler.init` wiring that must run BEFORE
-                // `JSGlobalObject.create`. `configure_linker` MUST run
-                // after the `ptr::write` above so the self-referential
-                // `addr_of_mut!(self.options)` etc. captured by `Linker::init`
-                // point at the final `(*vm).transpiler` storage, not the moved-
-                // from stack temporary.
+                // `JSGlobalObject.create`.
                 // SAFETY: `vm` unique on this thread; `transpiler` just written.
                 unsafe {
                     let t = &mut (*vm).transpiler;
@@ -520,7 +516,7 @@ unsafe fn init_runtime_state(
                 // Unwind the per-VM state this hook set up before the
                 // `Transpiler::init` attempt: the `RuntimeState` box + its TLS
                 // slot (set above) and the thread-local AST stores that
-                // `Transpiler::init_in_place` `create()`d before it failed.
+                // `Transpiler::init` `create()`d before it failed.
                 // Mirrors `deinit_runtime_state`, which is the teardown the
                 // `Ok` path would otherwise reach.
                 RUNTIME_STATE.with(|c| c.set(ptr::null_mut()));
@@ -738,7 +734,7 @@ unsafe fn deinit_runtime_state(_vm: *mut VirtualMachine, state: OpaqueRuntimeSta
         debug_assert!(state.cron_jobs.is_empty());
         drop(state);
     }
-    // Free the thread-local AST stores allocated by `Transpiler::init_in_place`
+    // Free the thread-local AST stores allocated by `Transpiler::init`
     // (via `Store::create()`). They live in TLS without a Drop, so each worker
     // thread strands a `Box<Store>` plus its lazily-allocated block chain when
     // the thread exits. `deinit()` is a no-op if a bundler arena currently owns
@@ -2484,7 +2480,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
             // "uninitialized Transpiler" gate was stale.
             // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
             // `transpiler.log` / `args.log` are never-null (set in
-            // `Transpiler::init_in_place` / by the C++ caller respectively).
+            // `Transpiler::init` / by the C++ caller respectively).
             let old_log = unsafe { &*jsc_vm }.transpiler.log;
             let old_log_nn = core::ptr::NonNull::new(old_log).expect("transpiler.log is non-null");
             let args_log_nn = core::ptr::NonNull::new(args.log).expect("args.log is non-null");
@@ -3060,9 +3056,10 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
 
                 // Link import records.
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM;
-                // `origin` is read-only and `linker` is JS-thread-exclusive.
+                // `origin` and `options` are only read and `linker` is JS-thread-exclusive.
                 unsafe {
                     (*jsc_vm).transpiler.linker.link::<false, true>(
+                        &(*jsc_vm).transpiler.options,
                         path,
                         &mut parse_result,
                         &(*jsc_vm).origin,
@@ -3163,13 +3160,6 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 if let Some(mi) = module_info.as_deref_mut() {
                     mi.flags.has_tla = !parse_result.ast.top_level_await_keyword.is_empty();
                 }
-                // Derive the `*mut` from a `&mut` borrow (not `&x as *const _
-                // as *mut _`, which is Stacked-Borrows UB). The borrow ends
-                // here; the raw pointer stays valid until `module_info` is
-                // moved/touched again (after `print_with_source_map`).
-                let module_info_ptr: Option<
-                    *mut bun_bundler::analyze_transpiled_module::ModuleInfo,
-                > = module_info.as_deref_mut().map(core::ptr::from_mut);
 
                 // ── js_printer::print ───────────────────────────────────────
                 // SAFETY: `extra.source_code_printer` is non-null per `TranspileExtra`
@@ -3223,7 +3213,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                             &mut *extra.source_code_printer,
                             bun_js_printer::Format::EsmAscii,
                             mapper.get(),
-                            module_info_ptr,
+                            module_info.as_deref_mut(),
                         )
                     };
                     // The printer never took ownership of `module_info`;

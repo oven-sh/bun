@@ -4,7 +4,7 @@
 //!
 //! `Worker::create` / `initialize_transpiler` build the per-worker
 //! `Transpiler` via `Transpiler::for_worker` (per-field deep clone — no
-//! bitwise struct copy); the self-referential `linker` backrefs are wired by
+//! bitwise struct copy); the self-referential `macro_context` is wired by
 //! `Transpiler::wire_after_move` once the value is at its final address.
 
 use core::mem::ManuallyDrop;
@@ -67,7 +67,7 @@ pub struct ThreadPool {
     /// freed slot), so each pool draws a fresh `u64` from [`POOL_GENERATION`].
     pub(crate) generation: u64,
     // BACKREF (LIFETIMES.tsv row 170: ThreadPool.v2). `BundleV2` is generic
-    // over `'a`; erase to `'static` behind the raw pointer like ParseTask.ctx.
+    // over `'a`; erase to `'static` behind the raw pointer.
     pub(crate) v2: *const BundleV2<'static>,
 }
 
@@ -650,7 +650,7 @@ impl Worker {
             transpiler: Self::initialize_transpiler(log, ctx.transpiler(), arena_ref),
             other_transpiler: None,
         });
-        // Wire self-referential `linker`/`macro_context` now that `transpiler`
+        // Wire the self-referential `macro_context` now that `transpiler`
         // is at its final address inside `WorkerData`.
         data.transpiler.wire_after_move();
 

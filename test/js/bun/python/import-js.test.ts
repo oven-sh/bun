@@ -96,8 +96,8 @@ test.concurrent("Python imports packages from node_modules, and what is built in
     "node_modules/@scope/thing/package.json": `{"name":"@scope/thing","version":"1.0.0"}`,
     "node_modules/@scope/thing/index.js": `exports.scoped = true;`,
     // Neither the name of a module of Node nor that of one the standard library should have is looked for here.
-    "node_modules/readline/package.json": `{"name":"readline","version":"1.0.0"}`,
-    "node_modules/readline/index.js": `exports.wrong = true;`,
+    "node_modules/tkinter/package.json": `{"name":"tkinter","version":"1.0.0"}`,
+    "node_modules/tkinter/index.js": `exports.wrong = true;`,
     "local.js": `export const local = "beside the importer";`,
     "main.py": `
 import importlib
@@ -113,7 +113,7 @@ print(repr(EOL))
 import bun
 from bun import version, sqlite
 print(version == bun.version, type(bun.file).__name__, sqlite.Database is not None, bun.require("./local.js").local)
-for name in "nothing_like_this", "readline", "_curses", "node.nothing", "fs":
+for name in "nothing_like_this", "tkinter", "_curses", "node.nothing", "fs":
     try:
         importlib.import_module(name)
         print(name, "was imported")
@@ -130,7 +130,7 @@ for name in "nothing_like_this", "readline", "_curses", "node.nothing", "fs":
       String.raw`'\n'`,
       "True JSFunction True beside the importer",
       "No module named 'nothing_like_this'",
-      "No module named 'readline'",
+      "No module named 'tkinter'",
       "No module named '_curses'",
       "No module named 'node.nothing'",
       "No module named 'fs'",

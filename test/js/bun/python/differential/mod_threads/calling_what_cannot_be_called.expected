@@ -1,0 +1,28 @@
+status: 0
+script: cc253125af7249f9
+---
+True 744
+TypeError: 'list' object is not callable
+False
+TypeError: 'L' object is not callable
+TypeError: 'tuple' object is not callable
+TypeError: 'dict' object is not callable
+TypeError: 'set' object is not callable
+TypeError: 'frozenset' object is not callable
+TypeError: 'str' object is not callable
+TypeError: 'bytes' object is not callable
+TypeError: 'bytearray' object is not callable
+TypeError: 'int' object is not callable
+TypeError: 'float' object is not callable
+TypeError: 'complex' object is not callable
+TypeError: 'NoneType' object is not callable
+no error
+TypeError: 'bool' object is not callable
+TypeError: 'ellipsis' object is not callable
+TypeError: 'NotImplementedType' object is not callable
+TypeError: 'object' object is not callable
+TypeError: 'module' object is not callable
+TypeError: 'range' object is not callable
+TypeError: 'slice' object is not callable
+TypeError: 'list_iterator' object is not callable
+TypeError: 'memoryview' object is not callable

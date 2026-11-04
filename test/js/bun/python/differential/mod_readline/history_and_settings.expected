@@ -1,0 +1,159 @@
+status: 0
+script: aef0795e0cde4b44
+---
+readline False module
+' \t\n`~!@#$%^&*()-=+[{]}\\|;:\'",<>/?' None -1 0
+'' 0 0 0 None
+add None
+add None
+add None
+add None
+add None
+add None
+add None
+add None
+['one', 'two', 'two', '', ' ', 'é€😀', 'with\ttab', 'a\nb']
+add 1 TypeError bad argument type for built-in operation
+add None TypeError bad argument type for built-in operation
+add b'bytes' TypeError bad argument type for built-in operation
+add 'nul\x00' ValueError embedded null character
+add '\udc80' None
+add '\ud800' UnicodeEncodeError 'locale' codec can't encode character '\ud800' in position 0: encoding error
+['one', 'two', 'two', '', ' ', 'é€😀', 'with\ttab', 'a\nb', '\udc80']
+item 0 None
+item 1 'one'
+item -1 None
+item 3 'two'
+item 100 None
+item True 'one'
+item 1.0 TypeError 'float' object cannot be interpreted as an integer
+item '1' TypeError 'str' object cannot be interpreted as an integer
+item None TypeError 'NoneType' object cannot be interpreted as an integer
+item 2147483648 OverflowError Python int too large to convert to C int
+item 1180591620717411303424 OverflowError Python int too large to convert to C int
+remove -1 ValueError History index cannot be negative
+replace -1 ValueError History index cannot be negative
+remove 100 ValueError No history item at position 100
+replace 100 ValueError No history item at position 100
+remove '0' TypeError 'str' object cannot be interpreted as an integer
+replace '0' TypeError 'str' object cannot be interpreted as an integer
+remove None TypeError 'NoneType' object cannot be interpreted as an integer
+replace None TypeError 'NoneType' object cannot be interpreted as an integer
+remove 1180591620717411303424 OverflowError Python int too large to convert to C int
+replace 1180591620717411303424 OverflowError Python int too large to convert to C int
+replace None
+replace TypeError replace_history_item() argument 2 must be str, not int
+remove None
+['ONE', 'two', '', ' ', 'é€😀', 'with\ttab', 'a\nb', '\udc80']
+read a missing file FileNotFoundError [Errno 2] No such file or directory
+append to a missing file FileNotFoundError [Errno 2] No such file or directory
+write None
+b'ONE\ntwo\n\n \n\xc3\xa9\xe2\x82\xac\xf0\x9f\x98\x80\nwith\ttab\na\nb\n\x80\n' 0o600
+append None
+append None
+append None
+append ValueError nelements must be non-negative
+21
+[]
+read None
+19 ['ONE', 'two', ' ', 'é€😀', 'with\ttab', 'a', 'b', '\udc80', 'a', 'b', '\udc80', 'ONE']
+read bytes None
+read a path object None
+read a directory OSError [Errno 22] Invalid argument
+read 1 TypeError expected str, bytes or os.PathLike object, not int
+57
+["'first'", "'  '", "'second'", "'third '", "'#comment'", "'\\udcff\\udcfe'"]
+set length 2 None
+2
+set length 0 None
+0
+set length -1 None
+-1
+set length -5 None
+-5
+set length '1' TypeError 'str' object cannot be interpreted as an integer
+-5
+set length None TypeError 'NoneType' object cannot be interpreted as an integer
+-5
+set length 1.5 TypeError 'float' object cannot be interpreted as an integer
+-5
+set length 1180591620717411303424 OverflowError Python int too large to convert to C int
+-5
+5
+['line 3', 'line 4', ''] 5
+['line 4', 'line 4', '']
+['']
+default file None
+['.history', 'history']
+default file None
+10
+tilde FileNotFoundError [Errno 2] No such file or directory
+['.history', 'history']
+set_completer(completer) None
+set_completer(None) None
+set_completer(1) TypeError set_completer(func): argument not callable
+set_completer(x) TypeError set_completer(func): argument not callable
+set_completer(print) None
+set_completer() None
+set_startup_hook(completer) None
+set_startup_hook(None) None
+set_startup_hook(1) TypeError set_startup_hook(func): argument not callable
+set_startup_hook(x) TypeError set_startup_hook(func): argument not callable
+set_startup_hook(print) None
+set_startup_hook() None
+set_pre_input_hook(completer) None
+set_pre_input_hook(None) None
+set_pre_input_hook(1) TypeError set_pre_input_hook(func): argument not callable
+set_pre_input_hook(x) TypeError set_pre_input_hook(func): argument not callable
+set_pre_input_hook(print) None
+set_pre_input_hook() None
+set_completion_display_matches_hook(completer) None
+set_completion_display_matches_hook(None) None
+set_completion_display_matches_hook(1) TypeError set_completion_display_matches_hook(func): argument not callable
+set_completion_display_matches_hook(x) TypeError set_completion_display_matches_hook(func): argument not callable
+set_completion_display_matches_hook(print) None
+set_completion_display_matches_hook() None
+True
+None
+True
+None
+delims ' \t' None
+' \t'
+delims '' None
+''
+delims 'abc' None
+'abc'
+delims '\xe9' None
+'\xe9'
+delims 1 TypeError bad argument type for built-in operation
+'\xe9'
+delims None TypeError bad argument type for built-in operation
+'\xe9'
+delims b' ' TypeError bad argument type for built-in operation
+'\xe9'
+delims 'a\x00b' ValueError embedded null character
+'\xe9'
+auto history True None
+auto history False None
+auto history 0 None
+auto history 1 None
+auto history '' None
+auto history 'x' None
+auto history None None
+auto history [] None
+bind 'tab: complete' None
+bind '' None
+bind 'set editing-mode vi' None
+bind 'set editing-mode emacs' None
+bind '"\\C-x": beginning-of-line' None
+bind 'a\x00b' ValueError embedded null character
+bind 1 TypeError bad argument type for built-in operation
+bind None TypeError bad argument type for built-in operation
+bind b'tab: complete' TypeError bad argument type for built-in operation
+init file FileNotFoundError [Errno 2] No such file or directory
+init file None
+init file TypeError expected str, bytes or os.PathLike object, not int
+insert_text None
+insert_text TypeError bad argument type for built-in operation
+prompt> 'from a file'
+['line 4']

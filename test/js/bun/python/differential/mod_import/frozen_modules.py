@@ -35,7 +35,7 @@ print(os.makedirs.__code__.co_filename, importlib.util.find_spec.__code__.co_fil
 print(repr(os).replace(library, "<lib>"), repr(importlib._bootstrap).replace(library, "<lib>"), repr(sys), repr(zipimport).replace(library, "<lib>"))
 
 # What a host has frozen for itself is its own business.
-names = [name for name in _imp._frozen_module_names() if not name.startswith("_bun_")]
+names = [name for name in _imp._frozen_module_names() if not name.startswith("_bun_") and name != "readline"]
 print(names)
 for name in names:
     data, is_package, original = _imp.find_frozen(name)
@@ -101,7 +101,7 @@ del sys.modules["__hello__"]
 
 # Switched off, all but those the import system is made of come from their files.
 _imp._override_frozen_modules_for_tests(-1)
-print(_imp._frozen_module_names()[:3] == names[:3], [n for n in _imp._frozen_module_names() if not n.startswith("_bun_")])
+print(_imp._frozen_module_names()[:3] == names[:3], [n for n in _imp._frozen_module_names() if not n.startswith("_bun_") and n != "readline"])
 for name in ("os", "__hello__", "zipimport", "_frozen_importlib", "__hello_only__"):
     print(name, _imp.find_frozen(name), _imp.is_frozen(name))
     spec = importlib.util.find_spec(name) if name not in sys.modules else importlib.machinery.PathFinder.find_spec(name)

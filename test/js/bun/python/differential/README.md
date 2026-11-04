@@ -104,4 +104,6 @@ the system offers and what its C library computes are in them.
 Other tools: `tools/verify.py` (checks the tests of `lang/` themselves against CPython), `tools/keep_generators.py` (shows whether a test
 relies on reference counting), `tools/cold_warm.py` (runs each test of `lang/` as a module twice: compiled, and from its `.pyc` file),
 `tools/in_a_thread.py` (runs each test in a thread that is not the main one, under CPython and under Bun: crashes and hangs count, the
-rest is for a person to read; that is how `os.chdir()` in a thread was found to crash).
+rest is for a person to read; that is how `os.chdir()` in a thread was found to crash),
+`tools/uninitialized_instances.py` (every method of every built-in type on instances whose `__init__` has not run, one process per type:
+for a debug build with sanitizers; 12 minutes).

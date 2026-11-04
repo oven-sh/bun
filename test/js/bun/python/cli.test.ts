@@ -745,9 +745,10 @@ print(subprocess.run(["env/bin/python", "-c", ${JSON.stringify(show)}], capture_
 
   describe("on a terminal", () => {
     // Each step waits for some text to appear after the last step's, then types.
+    type Terminal = NonNullable<Bun.Subprocess["terminal"]>;
     async function onTerminal(
       args: string[],
-      steps: [string, string][],
+      steps: [string, string | ((terminal: Terminal) => void)][],
       { files = {}, env: extraEnv = {} }: Options = {},
     ) {
       using dir = tempDir("python-cli-terminal", files);
@@ -790,13 +791,16 @@ print(subprocess.run(["env/bin/python", "-c", ${JSON.stringify(show)}], capture_
         look();
         const ended = await Promise.race([found.promise.then(() => false), proc.exited.then(() => true)]);
         if (ended) break;
-        proc.terminal!.write(keys);
+        if (typeof keys === "string") proc.terminal!.write(keys);
+        else keys(proc.terminal!);
       }
       const exitCode = await proc.exited;
       await closed.promise;
       proc.terminal!.close();
       return { output: output.replaceAll("\r\n", "\n"), exitCode: proc.signalCode ?? exitCode };
     }
+
+    const withoutEscapes = (text: string) => text.replace(/\x1b(\[[0-9;?]*[a-zA-Z@]|[=>])/g, "");
 
     test("Ctrl-C raises KeyboardInterrupt", async () => {
       const { output, exitCode } = await onTerminal(["main.py"], [["ready", "\x03"]], {
@@ -863,8 +867,322 @@ except KeyboardInterrupt:
         ],
         { env: { PYTHON_BASIC_REPL: "1" } },
       );
-      expect(output).toBe(">>> \n>>> # nothing\n>>>    \n>>> print(6 * 7)\n42\n>>> \n");
+      // The line editor moves the cursor about.
+      const lines = withoutEscapes(output)
+        .split(/[\r\n]+/)
+        .filter(line => line !== "");
+      expect(lines).toEqual([">>> ", ">>> # nothing", ">>>    ", ">>> print(6 * 7)", "42", ">>> "]);
       expect(exitCode).toBe(0);
+    });
+
+    test("input(): the terminal edits the line, Ctrl-D ends the input, Ctrl-C interrupts", async () => {
+      const { output, exitCode } = await onTerminal(
+        ["main.py"],
+        [
+          ["? ", "abc\x7fd\r"],
+          ["then? ", "\u00e9\u20ac\r"],
+          ["end? ", "\x04"],
+          ["end? ", "\x03"],
+        ],
+        {
+          files: {
+            "main.py": `
+import sys
+print(repr(input("? ")))
+sys.stdout.write("no newline, "); print(repr(input("then? ")))
+for i in range(2):
+    try: print(repr(input("end? ")))
+    except (EOFError, KeyboardInterrupt) as e: print(type(e).__name__)
+`,
+          },
+        },
+      );
+      expect(output).toBe(
+        "? abc\b \bd\n'abd'\nno newline, then? \u00e9\u20ac\n'\u00e9\u20ac'\nend? EOFError\nend? ^CKeyboardInterrupt\n",
+      );
+      expect(exitCode).toBe(0);
+    });
+
+    test("getpass() does not show what is typed, and puts the terminal back", async () => {
+      const { output, exitCode } = await onTerminal(
+        ["main.py"],
+        [
+          ["Password: ", "secret\r"],
+          ["Stars: ", "ab\x7fc\r"],
+          ["shown? ", "yes\r"],
+        ],
+        {
+          files: {
+            "main.py": `
+import getpass, termios
+before = termios.tcgetattr(0)
+print(repr(getpass.getpass()))
+print(repr(getpass.getpass("Stars: ", echo_char="*")))
+print(termios.tcgetattr(0) == before)
+print(repr(input("shown? ")))
+`,
+          },
+        },
+      );
+      expect(output).toStartWith("Password: \n'secret'\nStars: *");
+      expect(output).toEndWith("*\n'ac'\nTrue\nshown? yes\n'yes'\n");
+      expect(output).not.toContain("ab");
+      expect(exitCode).toBe(0);
+    });
+
+    test.each([
+      ["a terminal", { NO_COLOR: "" }, true],
+      ["NO_COLOR", { NO_COLOR: "1" }, false],
+      ["PYTHON_COLORS=0", { NO_COLOR: "", PYTHON_COLORS: "0" }, false],
+      ["a terminal that has none", { NO_COLOR: "", TERM: "dumb" }, false],
+      ["FORCE_COLOR on such a terminal", { NO_COLOR: "", TERM: "dumb", FORCE_COLOR: "1" }, true],
+    ])("colours in a traceback: %s", async (_name, extraEnv, colours) => {
+      const { output, exitCode } = await onTerminal(["-c", "1 / 0"], [], { env: extraEnv });
+      expect(output.includes("\x1b[")).toBe(colours);
+      expect(output.replace(/\x1b\[[0-9;]*m/g, "")).toBe(
+        'Traceback (most recent call last):\n  File "<string>", line 1, in <module>\n    1 / 0\n    ~~^~~\nZeroDivisionError: division by zero\n',
+      );
+      expect(exitCode).toBe(1);
+    });
+
+    test("the size of the terminal, and SIGWINCH when it changes", async () => {
+      const { output, exitCode } = await onTerminal(
+        ["main.py"],
+        [
+          ["ready", terminal => terminal.resize(100, 30)],
+          ["changed", "\r"],
+        ],
+        {
+          files: {
+            "main.py": `
+import os, shutil, signal, sys
+print(tuple(os.get_terminal_size()), tuple(os.get_terminal_size(2)), tuple(shutil.get_terminal_size()))
+signal.signal(signal.SIGWINCH, lambda number, frame: print("changed", tuple(os.get_terminal_size()), flush=True))
+print("ready", flush=True)
+sys.stdin.readline()
+`,
+          },
+        },
+      );
+      expect(output).toBe("(80, 24) (80, 24) (80, 24)\nready\nchanged (100, 30)\n\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("termios and tty: keys one at a time, without echo", async () => {
+      const { output, exitCode } = await onTerminal(
+        ["main.py"],
+        [
+          ["ready", "k"],
+          ["b'k'", "\x1b[A"],
+          ["b'\\x1b[A'", "\x03"],
+          ["b'\\x03'", "line\r"],
+        ],
+        {
+          files: {
+            "main.py": `
+import os, sys, termios, tty
+print(os.isatty(0), sys.stdin.isatty(), sys.stdout.isatty(), os.ttyname(0) == os.ttyname(1), sys.stdout.line_buffering)
+before = termios.tcgetattr(0)
+tty.setraw(0)
+os.write(1, b"ready\\r\\n")
+for i in range(3):
+    os.write(1, repr(os.read(0, 10)).encode() + b"\\r\\n")
+termios.tcsetattr(0, termios.TCSADRAIN, before)
+print(repr(sys.stdin.readline()))
+`,
+          },
+        },
+      );
+      expect(output).toBe("True True True True True\nready\nb'k'\nb'\\x1b[A'\nb'\\x03'\nline\n'line\\n'\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("what is stopped with Ctrl-Z goes on when it is told to", async () => {
+      const { output, exitCode } = await onTerminal(
+        ["main.py"],
+        [
+          ["ready", "\x1a"],
+          ["continued", "after\r"],
+        ],
+        {
+          files: {
+            // The shell's part: the job has a process group of its own, which is the one in the foreground.
+            "main.py": `
+import os, signal, subprocess, sys
+signal.signal(signal.SIGTTOU, signal.SIG_IGN)
+job = subprocess.Popen([sys.executable, "job.py"], process_group=0)
+os.tcsetpgrp(0, job.pid)
+pid, status = os.waitpid(job.pid, os.WUNTRACED)
+print("stopped by", signal.Signals(os.WSTOPSIG(status)).name if os.WIFSTOPPED(status) else status, flush=True)
+os.kill(job.pid, signal.SIGCONT)
+print("status", job.wait())
+`,
+            "job.py": `
+import signal, sys
+signal.signal(signal.SIGCONT, lambda number, frame: print("continued", flush=True))
+print(signal.getsignal(signal.SIGTSTP) == signal.SIG_DFL, "ready", flush=True)
+print(repr(sys.stdin.readline()))
+`,
+          },
+        },
+      );
+      expect(output).toBe("True ready\n^Zstopped by SIGTSTP\ncontinued\nafter\n'after\\n'\nstatus 0\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("there is no ctypes.pythonapi, which is how programs learn that there is no C API", async () => {
+      const { output, exitCode } = await onTerminal(["main.py"], [["ready", "\x03"]], {
+        files: {
+          // What prompt_toolkit does around each prompt.
+          "main.py": `
+import asyncio, signal
+try:
+    from ctypes import c_int, c_void_p, pythonapi
+except ImportError:
+    pythonapi = None
+if pythonapi is not None:
+    pythonapi.PyOS_getsig.restype = c_void_p
+    pythonapi.PyOS_getsig.argtypes = (c_int,)
+    pythonapi.PyOS_getsig(signal.SIGINT)
+async def main():
+    loop = asyncio.get_running_loop()
+    pressed = loop.create_future()
+    before = signal.getsignal(signal.SIGINT)
+    loop.add_signal_handler(signal.SIGINT, pressed.set_result, "Ctrl-C")
+    print("ready", flush=True)
+    print(await pressed)
+    loop.remove_signal_handler(signal.SIGINT)
+    signal.signal(signal.SIGINT, before)
+asyncio.run(main())
+print(pythonapi, signal.getsignal(signal.SIGINT).__name__)
+`,
+        },
+      });
+      expect(output).toBe("ready\n^CCtrl-C\nNone default_int_handler\n");
+      expect(exitCode).toBe(0);
+    });
+
+    describe("readline", () => {
+      // The editor redraws as it pleases. What counts is what the program gets.
+      const results = (output: string) =>
+        withoutEscapes(output)
+          .split(/[\r\n]+/)
+          .filter(line => line.startsWith("got "));
+
+      test("input() edits the line and keeps a history once the module has been imported", async () => {
+        const { output, exitCode } = await onTerminal(
+          ["main.py"],
+          [
+            ["0> ", "hello\x01X\x05Y\r"],
+            ["1> ", "one two three\x17\x17X\r"],
+            ["2> ", "\x1bOA\x1bOA!\r"],
+            ["3> ", "\x10\r"],
+            ["4> ", "\x12one\r"],
+            ["5> ", "\x04"],
+            ["6> ", "abc\x03"],
+          ],
+          {
+            files: {
+              "main.py": `
+import readline, traceback
+for i in range(7):
+    try:
+        print("got", repr(input("%d> " % i)))
+    except (EOFError, KeyboardInterrupt) as e:
+        print()
+        print("got", type(e).__name__, len(traceback.extract_tb(e.__traceback__)))
+print("got", [readline.get_history_item(i + 1) for i in range(readline.get_current_history_length())])
+`,
+            },
+          },
+        );
+        expect(results(output)).toEqual([
+          "got 'XhelloY'",
+          "got 'one X'",
+          "got 'XhelloY!'",
+          "got 'XhelloY!'",
+          "got 'one X'",
+          "got EOFError 1",
+          "got KeyboardInterrupt 1",
+          "got ['XhelloY', 'one X', 'XhelloY!', 'one X']",
+        ]);
+        expect(exitCode).toBe(0);
+      });
+
+      test("completion, hooks, and prompts with colours", async () => {
+        const { output, exitCode } = await onTerminal(
+          ["main.py"],
+          [
+            ["plain> ", "a\tb\r"],
+            ["(c) ", "gree\t yo\t\r"],
+            ["(c) ", "q\t\r"],
+            ["case> ", "sel\t\r"],
+            ["filled> ", " more\r"],
+            ["colour> ", "abc\x01X\r"],
+          ],
+          {
+            files: {
+              "main.py": `
+import cmd, readline
+print("got", repr(input("plain> ")))
+class C(cmd.Cmd):
+    prompt = "(c) "
+    def do_greet(self, arg): print("got", arg)
+    def complete_greet(self, text, line, begidx, endidx): return [n for n in ("world", "you") if n.startswith(text)]
+    def do_quit(self, arg): return True
+C().cmdloop()
+readline.set_completer(lambda text, state: ["SELECT"][state:state + 1][0] if state == 0 else None)
+print("got", repr(input("case> ")))
+readline.set_startup_hook(lambda: readline.insert_text("text"))
+print("got", repr(input("filled> ")))
+readline.set_startup_hook()
+print("got", repr(input("\\001\\033[1;35m\\002colour> \\001\\033[0m\\002")))
+`,
+            },
+          },
+        );
+        expect(results(output)).toEqual(["got 'a\\tb'", "got you", "got 'SELECT'", "got 'text more'", "got 'Xabc'"]);
+        expect(output).not.toContain("\x01");
+        expect(exitCode).toBe(0);
+      });
+
+      test("the plain interactive interpreter has a history, which it keeps in a file, and completes names", async () => {
+        const steps: [string, string][] = [
+          [">>> ", "value = 41\r"],
+          [">>> ", "\x1bOA\x7f2\r"],
+          [">>> ", "print('got', val\t)\r"],
+          ["got 42", ""],
+          [">>> ", "\x04"],
+        ];
+        const options = { env: { PYTHON_BASIC_REPL: "1", PYTHON_HISTORY: "history.txt" }, files: { "main.py": "" } };
+        const { output, exitCode } = await onTerminal(["-q"], steps, options);
+        expect(results(output)).toEqual(["got 42"]);
+        expect(exitCode).toBe(0);
+      });
+
+      test("without a terminal it costs nothing and changes nothing", async () => {
+        const result = await python(
+          [
+            "-c",
+            `
+import os, sys
+before = sorted(os.listdir("/dev/fd")), set(sys.modules)
+import readline
+readline.parse_and_bind("tab: complete")
+readline.set_completer(lambda text, state: None)
+readline.add_history("line")
+print(sorted(os.listdir("/dev/fd")) == before[0], sorted(set(sys.modules) - before[1]))
+print(repr(input("prompt> ")), readline.get_current_history_length(), readline.backend)
+`,
+          ],
+          { stdin: "from a pipe\n" },
+        );
+        expect(result).toEqual({
+          stdout: "True ['readline']\nprompt> 'from a pipe' 1 readline\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      });
     });
   });
 });

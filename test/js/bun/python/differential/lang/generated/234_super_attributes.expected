@@ -1,0 +1,120 @@
+status: 0
+script: 825815c1d46ceea0
+source: 041292bdcf985d86
+---
+--- what is found
+  C.method = ('C.method', 'Base.method', 'C', (), {})
+  C.two = ('Base.method', 'C', (), {})
+  C.past_base = ('Other.method', 'C', (), {})
+  C.get_attr = 'base attr'
+  C.get_method = ('method', True, True, ('Base.method', 'C', (1,), {}))
+  C.get_prop = ('Base.prop', 'C')
+  C.call_prop ! TypeError 'tuple' object is not callable
+  C.static = (('Base.smethod', (1,)), True)
+  C.klass = (('Base.cmethod', 'C', (1,)), 'C')
+  C.other = 'only other'
+  C.missing ! AttributeError 'super' object has no attribute 'nothing'
+  C.missing_call ! AttributeError 'super' object has no attribute 'nothing'
+  C.dunder_class = (<class 'super'>, <class 'super'>)
+  C.keywords = ('Base.method', 'C', (1, 2, 3), {'k': 4, 'm': 5})
+  C.chained = (4, 'BASE ATTR', 'Base.method')
+  C.stored = (('Base.method', 'C', (), {}), 'super')
+  C.in_lambda = ('base attr', 'base attr')
+  C.in_comprehension = (['base attr', 'base attr'], ['base attr'])
+  C.in_generator_expression = ['base attr']
+  C.in_nested = 'base attr'
+    'super' object has no attribute 'x' and no __dict__ for setting new attributes
+    'super' object has no attribute 'attr' and no __dict__ for setting new attributes
+  C.set_and_delete = None
+  C.cmethod = ('C.cmethod', 'Base.cmethod', 'C', (5,))
+  C.unbound_from_class = (True, ('Base.method', 'C', (2,), {}))
+  list(c.generator()) => ['base attr', ('Base.method', 'C', (1,), {})]
+  C.method = ('C.method', 'Base.method', 'D', (1,), {})
+  C.cmethod = ('C.cmethod', 'Base.cmethod', 'D', ())
+--- what goes wrong
+  E.wrong_self ! TypeError super(type, obj): obj (instance of int) is not an instance or subtype of type (E).
+  E.wrong_self ! TypeError super(type, obj): obj (instance of Base) is not an instance or subtype of type (E).
+  E.rebound_self ! TypeError super(type, obj): obj (instance of int) is not an instance or subtype of type (E).
+  E.deleted_self ! UnboundLocalError cannot access local variable 'self' where it is not associated with a value
+  E.none_self ! AttributeError 'super' object has no attribute 'method'
+  E.not_a_type ! TypeError super() argument 1 must be a type, not int
+  E.wrong_pair ! TypeError super(type, obj): obj (instance of E) is not an instance or subtype of type (Other).
+  E.one_argument ! AttributeError 'super' object has no attribute 'method'
+  E.three_arguments ! TypeError super() expected at most 2 arguments, got 3
+  E.keyword_argument ! TypeError super() takes no keyword arguments
+  E.starred = ('Base.method', 'E', (), {})
+  E.varargs ! RuntimeError super(): no arguments
+  E.cell_self = (('Base.method', 'E', (), {}), True)
+  E.no_arguments ! RuntimeError super(): no arguments
+  E.keyword_only ! TypeError E.keyword_only() missing 1 required keyword-only argument: 'self'
+  outside ! RuntimeError super(): __class__ cell not found
+   in the body:   empty_cell.<locals>.F.f ! NameError cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+--- evaluation order
+   note G
+   note <G>
+   note 1
+   note 2
+  G.f = ('Base.method', 'G', (1, 2), {})
+--- super is another thing
+   FakeSuper []
+  H.zero = 'fake method'
+   FakeSuper ['H', <H>]
+  H.two = 'fake method'
+   FakeSuper []
+  H.attr_of = 'fake attr'
+  H.zero = ('Base.method', 'H', (), {})
+   FakeSuper []
+  H.zero = 'fake method'
+   FakeSuper ['H', <H>]
+  H.two = 'fake method'
+   FakeSuper []
+  H.attr_of = 'fake attr'
+  H.zero = ('Base.method', 'H', (), {})
+  H.zero ! NameError name 'super' is not defined
+  H.two ! TypeError 'tuple' object is not callable
+  H.attr_of = ('SubSuper', 'attr')
+  local_super = ('Base.method', 'Base', (), {})
+--- classes that change
+  [i.f() for _ in range(3)] => ['Base.method', 'Base.method', 'Base.method']
+  i.f() => patched
+  i.f() => Other.method
+  i.f() => Base.method
+  J.method() => MetaSub, Meta.method of J
+  C.get_attr(Proxy(c)) => base attr
+C.two(Proxy(c))[:1] => ('Base.method',)
+  L().f() => ('got', <L>, 'L')
+L.g() => ('got', None, 'L')
+--- what the code says
+  names_of(C.method) => (('super', 'method'), ('__class__',))
+names_of(C.two) => (('super', 'C', 'method'), ('__class__',))
+names_of(C.get_attr) => (('super', 'attr'), ('__class__',))
+--- tracebacks
+  f.__qualname__ [f=function] => M.f
+tb.tb_lineno - code.co_firstlineno [f=function] => 1
+position[0] - code.co_firstlineno [f=function] => 1
+position[1] - code.co_firstlineno [f=function] => 1
+position[2:] [f=function] => (19, 39)
+e [f=function] => 'super' object has no attribute 'nothing_here'
+  f.__qualname__ [f=function] => M.g
+tb.tb_lineno - code.co_firstlineno [f=function] => 3
+position[0] - code.co_firstlineno [f=function] => 3
+position[1] - code.co_firstlineno [f=function] => 3
+position[2:] [f=function] => (21, 28)
+e [f=function] => 'function' object has no attribute 'nothing'
+--- tools
+  f.__qualname__ [f=function, args=tuple] => C.method
+seen[1:] [f=function, args=tuple] => [('CALL', 'super', 'MISSING'), ('C_RETURN', 'super', 'MISSING'), ('CALL', 'Base.method', 'MISSING'), ('CALL', 'type', ('Base.__getattr__', '__qualname__')), ('C_RETURN', 'type', ('Base.__getattr__', '__qualname__')), ('CALL', 'stop', 'MISSING')]
+  f.__qualname__ [f=function, args=tuple] => C.two
+seen[1:] [f=function, args=tuple] => [('CALL', 'super', 'C'), ('C_RETURN', 'super', 'C'), ('CALL', 'Base.method', 'MISSING'), ('CALL', 'type', ('Base.__getattr__', '__qualname__')), ('C_RETURN', 'type', ('Base.__getattr__', '__qualname__')), ('CALL', 'stop', 'MISSING')]
+  f.__qualname__ [f=function, args=tuple] => C.get_attr
+seen[1:] [f=function, args=tuple] => [('CALL', 'super', 'MISSING'), ('C_RETURN', 'super', 'MISSING'), ('CALL', 'stop', 'MISSING')]
+  f.__qualname__ [f=function, args=tuple] => C.missing
+seen[1:] [f=function, args=tuple] => [('CALL', 'super', 'MISSING'), ('C_RETURN', 'super', 'MISSING'), ('CALL', 'type', 'AttributeError("\'super\' object has no attribute \'nothing\'")'), ('C_RETURN', 'type', 'AttributeError("\'super\' object has no attribute \'nothing\'")'), ('CALL', 'list.append', '[(\'CALL\', \'C.missing\', (\'Base.__getattr__\', \'__qualname__\')), (\'CALL\', \'super\', \'MISSING\'), (\'C_RETURN\', \'super\', \'MISSING\'), (\'CALL\', \'type\', \'AttributeError("\\\'super\\\' object has no attribute \\\'nothing\\\'")\'), (\'C_RETURN\', \'type\', \'AttributeError("\\\'super\\\' object has no attribute \\\'nothing\\\'")\')]'), 'AttributeError', ('C_RETURN', 'list.append', '[(\'CALL\', \'C.missing\', (\'Base.__getattr__\', \'__qualname__\')), (\'CALL\', \'super\', \'MISSING\'), (\'C_RETURN\', \'super\', \'MISSING\'), (\'CALL\', \'type\', \'AttributeError("\\\'super\\\' object has no attribute \\\'nothing\\\'")\'), (\'C_RETURN\', \'type\', \'AttributeError("\\\'super\\\' object has no attribute \\\'nothing\\\'")\'), (\'CALL\', \'list.append\', \'[(\\\'CALL\\\', \\\'C.missing\\\', (\\\'Base.__getattr__\\\', \\\'__qualname__\\\')), (\\\'CALL\\\', \\\'super\\\', \\\'MISSING\\\'), (\\\'C_RETURN\\\', \\\'super\\\', \\\'MISSING\\\'), (\\\'CALL\\\', \\\'type\\\', \\\'AttributeError("\\\\\\\'super\\\\\\\' object has no attribute \\\\\\\'nothing\\\\\\\'")\\\'), (\\\'C_RETURN\\\', \\\'type\\\', \\\'AttributeError("\\\\\\\'super\\\\\\\' object has no attribute \\\\\\\'nothing\\\\\\\'")\\\')]\'), \'AttributeError\']'), ('CALL', 'stop', 'MISSING')]
+  f.__qualname__ [f=function, args=(5,)] => E.wrong_self
+seen[1:] [f=function, args=(5,)] => [('CALL', 'super', 'MISSING'), ('C_RAISE', 'super', 'MISSING'), ('CALL', 'type', "TypeError('super(type, obj): obj (instance of int) is not an instance or subtype of type (E).')"), ('C_RETURN', 'type', "TypeError('super(type, obj): obj (instance of int) is not an instance or subtype of type (E).')"), ('CALL', 'list.append', '[(\'CALL\', \'E.wrong_self\', \'5\'), (\'CALL\', \'super\', \'MISSING\'), (\'C_RAISE\', \'super\', \'MISSING\'), (\'CALL\', \'type\', "TypeError(\'super(type, obj): obj (instance of int) is not an instance or subtype of type (E).\')"), (\'C_RETURN\', \'type\', "TypeError(\'super(type, obj): obj (instance of int) is not an instance or subtype of type (E).\')")]'), 'TypeError', ('C_RETURN', 'list.append', '[(\'CALL\', \'E.wrong_self\', \'5\'), (\'CALL\', \'super\', \'MISSING\'), (\'C_RAISE\', \'super\', \'MISSING\'), (\'CALL\', \'type\', "TypeError(\'super(type, obj): obj (instance of int) is not an instance or subtype of type (E).\')"), (\'C_RETURN\', \'type\', "TypeError(\'super(type, obj): obj (instance of int) is not an instance or subtype of type (E).\')"), (\'CALL\', \'list.append\', \'[(\\\'CALL\\\', \\\'E.wrong_self\\\', \\\'5\\\'), (\\\'CALL\\\', \\\'super\\\', \\\'MISSING\\\'), (\\\'C_RAISE\\\', \\\'super\\\', \\\'MISSING\\\'), (\\\'CALL\\\', \\\'type\\\', "TypeError(\\\'super(type, obj): obj (instance of int) is not an instance or subtype of type (E).\\\')"), (\\\'C_RETURN\\\', \\\'type\\\', "TypeError(\\\'super(type, obj): obj (instance of int) is not an instance or subtype of type (E).\\\')")]\'), \'TypeError\']'), ('CALL', 'stop', 'MISSING')]
+  f.__qualname__ [f=function, args=tuple] => E.not_a_type
+seen[1:] [f=function, args=tuple] => [('CALL', 'super', '5'), ('C_RAISE', 'super', '5'), ('CALL', 'type', "TypeError('super() argument 1 must be a type, not int')"), ('C_RETURN', 'type', "TypeError('super() argument 1 must be a type, not int')"), ('CALL', 'list.append', '[(\'CALL\', \'E.not_a_type\', (\'Base.__getattr__\', \'__qualname__\')), (\'CALL\', \'super\', \'5\'), (\'C_RAISE\', \'super\', \'5\'), (\'CALL\', \'type\', "TypeError(\'super() argument 1 must be a type, not int\')"), (\'C_RETURN\', \'type\', "TypeError(\'super() argument 1 must be a type, not int\')")]'), 'TypeError', ('C_RETURN', 'list.append', '[(\'CALL\', \'E.not_a_type\', (\'Base.__getattr__\', \'__qualname__\')), (\'CALL\', \'super\', \'5\'), (\'C_RAISE\', \'super\', \'5\'), (\'CALL\', \'type\', "TypeError(\'super() argument 1 must be a type, not int\')"), (\'C_RETURN\', \'type\', "TypeError(\'super() argument 1 must be a type, not int\')"), (\'CALL\', \'list.append\', \'[(\\\'CALL\\\', \\\'E.not_a_type\\\', (\\\'Base.__getattr__\\\', \\\'__qualname__\\\')), (\\\'CALL\\\', \\\'super\\\', \\\'5\\\'), (\\\'C_RAISE\\\', \\\'super\\\', \\\'5\\\'), (\\\'CALL\\\', \\\'type\\\', "TypeError(\\\'super() argument 1 must be a type, not int\\\')"), (\\\'C_RETURN\\\', \\\'type\\\', "TypeError(\\\'super() argument 1 must be a type, not int\\\')")]\'), \'TypeError\']'), ('CALL', 'stop', 'MISSING')]
+  f.__qualname__ [f=function] => C.method
+seen[:-1] [f=function] => []
+  f.__qualname__ [f=function] => C.get_attr
+seen[:-1] [f=function] => []

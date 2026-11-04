@@ -1,0 +1,150 @@
+status: 0
+script: 71b84e3ffeaaf063
+source: c04e882ad40ade68
+---
+--- operations
+seconds 86400 (60, 86400)
+power (1024, 1267650600228229401496703205376, 0.5, 1.4142135623730951, -8, -4) (2, 0.5, 1024, 1.4142135623730951, -8, -4)
+too_large (1606938044258990275541962092341162602522202993782792835301376, 1606938044258990275541962092341162602522202993782792835301376, 515377520732011331036461129765621272702107522001) (2,)
+text ('--------------------', 'ab', b'xxx', '', 'ababab') ('-', ('--------------------', 'ab', b'xxx', '', 'ababab'))
+long_text (5000, 4096, 4098) ('-', 5000, 'ab', 2049, 'abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab')
+fails 'ZeroDivisionError' (1,)
+fails_too 'ZeroDivisionError' (1,)
+fails_with_types 'TypeError' ('a',)
+formats '3' ('%d',)
+floats (0.30000000000000004, inf, -0.0, -0.0, 0.3333333333333333, 3, 1, -4, 3.0) (0.1, (0.30000000000000004, inf, -0.0, -0.0, 0.3333333333333333, 3, 1, -4, 3.0))
+complexes ((1+2j), (1-2j), (2+4j), (-4+0j), (-0-1j)) (1, ((1+2j), (1-2j), (2+4j), (-4+0j), (-0-1j)))
+bits (2, 7, 5, -7, 16, 16, -1, 1, False, True, True) (6, (2, 7, 5, -7, 16, 16, -1, 1, False, True, True))
+booleans (2, 3, 3, 4) (True,)
+nested (21, -3, -9, 46) (1, (21, -3, -9, 46))
+matmul 'TypeError' (1,)
+small_and_large (256, 255, 0, -1, 255) (255, (256, 255, 0, -1, 255))
+partly 7200 (60, 3600)
+not_from_the_right 7200 (60,)
+['int', 'int', 'float', 'float', 'int', 'int', 'float', 'float', 'float', 'float', 'float', 'int', 'int', 'int', 'float', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'bool', 'bool', 'bool', 'int', 'int', 'int', 'int']
+str(floats()[2]) => -0.0
+str(floats()[3]) => -0.0
+--- tuples
+plain (1, 2, 3) (1, (1, 2, 3))
+of_tuples ((1, 2), (3, (4, 5)), ()) (1, ((1, 2), (3, (4, 5)), ()))
+with_operations (2, 'aa', -3, (8,)) (1, (2, 'aa', -3, (8,)))
+with_names (None, True, False, Ellipsis, 'x', b'y', 1.5, 2j) (None, (None, True, False, Ellipsis, 'x', b'y', 1.5, 2j))
+defaults (1, (2, 3), None, -1, 6) (None,)
+empty () (None, ())
+not_constant (1, 2, 3) (1,)
+plain() is plain() => True
+of_tuples() is of_tuples() => True
+with_operations() is with_operations() => True
+not_constant(1) is not_constant(1) => False
+defaults.__defaults__ => (1, (2, 3), None, -1, 6)
+make().__defaults__ is make().__defaults__ => True
+consts(make) => (1, ((1, 2), 3))
+--- searched
+in_list True (1, (1, 2, 3))
+in_list True (1, (1, 2, 3))
+in_list False (1, (1, 2, 3))
+in_list False (1, (1, 2, 3))
+in_list False (1, (1, 2, 3))
+in_set True (1, frozenset({1, 2, 3}))
+in_set True (1, frozenset({1, 2, 3}))
+in_set False (1, frozenset({1, 2, 3}))
+in_set False (1, frozenset({1, 2, 3}))
+in_set False (1, frozenset({1, 2, 3}))
+in_tuple True (1, (1, 2, 3))
+in_tuple True (1, (1, 2, 3))
+in_tuple False (1, (1, 2, 3))
+in_tuple False (1, (1, 2, 3))
+in_tuple False (1, (1, 2, 3))
+not_in_list True ('a', ('a', 'b'))
+not_in_list True ('a', ('a', 'b'))
+not_in_list False ('a', ('a', 'b'))
+not_in_list True ('a', ('a', 'b'))
+not_in_list True ('a', ('a', 'b'))
+in_short_set True (1, frozenset({1}))
+in_short_set False (1, frozenset({1}))
+in_short_set False (1, frozenset({1}))
+in_short_set False (1, frozenset({1}))
+in_short_set False (1, frozenset({1}))
+in_set_of_equals True (1, frozenset({1}))
+in_set_of_equals False (1, frozenset({1}))
+in_set_of_equals False (1, frozenset({1}))
+in_set_of_equals False (1, frozenset({1}))
+in_set_of_equals False (1, frozenset({1}))
+in_empty (False, False) (None, ())
+in_empty (False, False) (None, ())
+in_empty (False, False) (None, ())
+in_empty (False, False) (None, ())
+in_empty (False, False) (None, ())
+in_test 'list' (1, 'list', 'set', 'neither', 'last', (1, 2), frozenset({3, 4}), frozenset({5, 6}))
+in_test 'list' (1, 'list', 'set', 'neither', 'last', (1, 2), frozenset({3, 4}), frozenset({5, 6}))
+in_test 'neither' (1, 'list', 'set', 'neither', 'last', (1, 2), frozenset({3, 4}), frozenset({5, 6}))
+in_test 'last' (1, 'list', 'set', 'neither', 'last', (1, 2), frozenset({3, 4}), frozenset({5, 6}))
+in_test 'neither' (1, 'list', 'set', 'neither', 'last', (1, 2), frozenset({3, 4}), frozenset({5, 6}))
+in_operations False (1, (2, 6))
+in_operations True (1, (2, 6))
+in_operations False (1, (2, 6))
+in_operations False (1, (2, 6))
+in_operations False (1, (2, 6))
+in_many True (0, (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32))
+in_many True (0, (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32))
+in_many False (0, (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32))
+in_many True (0, (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32))
+in_many True (0, (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32))
+in_list_of_names True (2,)
+in_list_of_names False (2,)
+in_set_of_names True (2,)
+in_set_of_names False (2,)
+in_starred True (2,)
+equal_to_list([1, 2, 3]) => (True, False, True)
+equal_to_list((1, 2, 3)) => (False, True, False)
+'abc'[1] => b
+(1, 2, 3)[0] => 1
+'abc'[1:] => bc
+b'abc'[0] => 97
+chained (True, False, False) (0, (1, 2, 3), (True,))
+in_nested (True, True) (1, ((1, 2), (3, 4)), frozenset({(1, 2), (3, 4)}))
+in_unhashable 'TypeError' (1,)
+in_set 'TypeError' (1, frozenset({1, 2, 3}))
+in_set False (1, frozenset({1, 2, 3}))
+in_set False (1, frozenset({1, 2, 3}))
+   compared with 1
+   compared with 2
+   compared with 3
+in_list False (1, (1, 2, 3))
+   compared with 1
+in_set False (1, frozenset({1, 2, 3}))
+--- iterated over
+over_set [1, 2, 3] (frozenset({1, 2, 3}),)
+loop_over_list [1, 2, 3] (1, (1, 2, 3))
+loop_over_set ['a'] ('a', frozenset({'a'}))
+loop_over_list_of_lists [[1], [1]] (1,)
+order_of_evaluation [1, 2, ('loop', 1), ('loop', 2)] ('loop',)
+[1, 2, 3]
+loop_over_names [1, 2] (None,)
+loop_over_starred [5, 6, 1] (1,)
+loop_over_list_of_lists() == loop_over_list_of_lists() => True
+loop_over_list_of_lists()[0] is not loop_over_list_of_lists()[0] => True
+--- displays that are kept are new each time
+f.__name__ [f=function] => a_list
+first == second [f=function] => True
+first is second [f=function] => False
+type(first).__name__ [f=function] => list
+f.__name__ [f=function] => a_set
+first == second [f=function] => True
+first is second [f=function] => False
+type(first).__name__ [f=function] => set
+f.__name__ [f=function] => a_dict
+first == second [f=function] => True
+first is second [f=function] => False
+type(first).__name__ [f=function] => dict
+--- lines
+operation_over_lines [('call', 0), ('line', 1), ('line', 4), ('return', 4)]
+loop_over_lines [('call', 0), ('line', 1), ('line', 3), ('line', 1), ('line', 3), ('line', 1), ('return', 1)]
+loop_over_set_over_lines [('call', 0), ('line', 1), ('line', 3), ('line', 1), ('return', 1)]
+tuple_over_lines [('call', 0), ('line', 1), ('line', 6), ('return', 6)]
+defaults_over_lines [('call', 0), ('line', 1), ('line', 5), ('return', 5)]
+unary_over_lines [('call', 0), ('line', 1), ('line', 4), ('return', 4)]
+none_on_its_own_line [('call', 0), ('line', 1), ('line', 2), ('line', 1), ('line', 4), ('line', 5), ('line', 4), ('line', 6), ('line', 7), ('line', 6), ('line', 8), ('line', 9), ('line', 8), ('line', 10), ('line', 11), ('line', 10), ('line', 13), ('return', 13)]
+partly_over_lines [('call', 0), ('line', 1), ('line', 3), ('line', 1), ('line', 4), ('return', 4)]
+search_over_lines [('call', 0), ('line', 1), ('line', 2), ('line', 1), ('return', 1)]
+search_names_over_lines [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('line', 4), ('line', 2), ('line', 1), ('return', 1)]

@@ -801,7 +801,7 @@ mod _async_tasks {
             [None, None]
         }
         fn runs_on(&self) -> bun_jsc::RunsOn {
-            bun_jsc::RunsOn::NODE_FS
+            bun_jsc::RunsOn::WorkPool
         }
     }
 
@@ -809,6 +809,14 @@ mod _async_tasks {
         match file {
             PathOrFileDescriptor::Path(path) => Some(path),
             PathOrFileDescriptor::Fd(_) => None,
+        }
+    }
+
+    /// A call that is given a descriptor is in line with what else is asked of that descriptor.
+    fn runs_on_of(file: &PathOrFileDescriptor<'static>, writes: bool) -> bun_jsc::RunsOn {
+        match file {
+            PathOrFileDescriptor::Path(_) => bun_jsc::RunsOn::WorkPool,
+            PathOrFileDescriptor::Fd(fd) => bun_jsc::RunsOn::for_io(writes.then_some(*fd)),
         }
     }
 
@@ -828,7 +836,6 @@ mod _async_tasks {
 }
     impl_fs_argument!(
         args::Rename<'static> => |args| [Some(&args.old_path), Some(&args.new_path)],
-        args::Truncate<'static> => |args| [path_of(&args.path), None],
         args::Chown<'static> => |args| [Some(&args.path), None],
         args::Lutimes<'static> => |args| [Some(&args.path), None],
         args::Chmod<'static> => |args| [Some(&args.path), None],
@@ -844,13 +851,24 @@ mod _async_tasks {
         args::Mkdir<'static> => |args| [Some(&args.path), None],
         args::MkdirTemp<'static> => |args| [Some(&args.prefix), None],
         args::Readdir<'static> => |args| [Some(&args.path), None],
-        args::Open<'static> => |args| [Some(&args.path), None],
         args::Exists<'static> => |args| [args.path.as_ref(), None],
         args::Access<'static> => |args| [Some(&args.path), None],
         args::CopyFile<'static> => |args| [Some(&args.src), Some(&args.dest)],
         args::Cp<'static> => |args| [Some(&args.src), Some(&args.dest)],
     );
-    impl_fs_argument!(
+    /// What is asked of one descriptor is in one line, so a `close()` does not start ahead of the `write()` before it.
+    macro_rules! impl_fs_argument_with_fd {
+    ( $( $ty:ty ),+ $(,)? ) => {
+        $(
+        // SAFETY: same as `impl_fs_argument!`.
+        unsafe impl ThreadIsolatedArg for $ty {}
+        impl FsArgument for $ty {
+            #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { <$ty>::from_js(ctx, arguments) }
+            fn runs_on(&self) -> bun_jsc::RunsOn { bun_jsc::RunsOn::for_io(Some(self.fd)) }
+        } )+
+    };
+}
+    impl_fs_argument_with_fd!(
         args::FTruncate,
         args::Fchown,
         args::FChmod,
@@ -859,27 +877,35 @@ mod _async_tasks {
         args::FdataSync,
         args::Fsync,
         args::Close,
+        args::Write<'static>,
+        args::Writev,
     );
     // SAFETY: same as `impl_fs_argument!`.
-    unsafe impl ThreadIsolatedArg for args::Write<'static> {}
-    impl FsArgument for args::Write<'static> {
+    unsafe impl ThreadIsolatedArg for args::Truncate<'static> {}
+    impl FsArgument for args::Truncate<'static> {
         #[inline]
         fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
-            args::Write::from_js(ctx, arguments)
+            args::Truncate::from_js(ctx, arguments)
+        }
+        fn paths(&self) -> [Option<&PathLike<'static>>; 2] {
+            [path_of(&self.path), None]
         }
         fn runs_on(&self) -> bun_jsc::RunsOn {
-            bun_jsc::RunsOn::for_fd(self.fd, true)
+            runs_on_of(&self.path, true)
         }
     }
     // SAFETY: same as `impl_fs_argument!`.
-    unsafe impl ThreadIsolatedArg for args::Writev {}
-    impl FsArgument for args::Writev {
+    unsafe impl ThreadIsolatedArg for args::Open<'static> {}
+    impl FsArgument for args::Open<'static> {
         #[inline]
         fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
-            args::Writev::from_js(ctx, arguments)
+            args::Open::from_js(ctx, arguments)
+        }
+        fn paths(&self) -> [Option<&PathLike<'static>>; 2] {
+            [Some(&self.path), None]
         }
         fn runs_on(&self) -> bun_jsc::RunsOn {
-            bun_jsc::RunsOn::for_fd(self.fd, true)
+            bun_jsc::RunsOn::for_io(None)
         }
     }
     // SAFETY: same as `impl_fs_argument!`.
@@ -896,7 +922,7 @@ mod _async_tasks {
             }
         }
         fn runs_on(&self) -> bun_jsc::RunsOn {
-            bun_jsc::RunsOn::for_fd(self.fd, false)
+            bun_jsc::RunsOn::for_io(None)
         }
     }
     // SAFETY: same as `impl_fs_argument!`.
@@ -911,7 +937,7 @@ mod _async_tasks {
             self.buffers.write_back(bytes_read as usize);
         }
         fn runs_on(&self) -> bun_jsc::RunsOn {
-            bun_jsc::RunsOn::for_fd(self.fd, false)
+            bun_jsc::RunsOn::for_io(None)
         }
     }
     // `ReadFile`/`WriteFile` carry an `AbortSignal` field — opt them in so
@@ -935,6 +961,9 @@ mod _async_tasks {
         fn paths(&self) -> [Option<&PathLike<'static>>; 2] {
             [path_of(&self.path), None]
         }
+        fn runs_on(&self) -> bun_jsc::RunsOn {
+            runs_on_of(&self.path, false)
+        }
     }
     impl FsArgument for args::WriteFile<'static> {
         const HAVE_ABORT_SIGNAL: bool = true;
@@ -948,6 +977,9 @@ mod _async_tasks {
         }
         fn paths(&self) -> [Option<&PathLike<'static>>; 2] {
             [path_of(&self.file), None]
+        }
+        fn runs_on(&self) -> bun_jsc::RunsOn {
+            runs_on_of(&self.file, true)
         }
     }
     impl FsArgument for args::AppendFile<'static> {
@@ -963,6 +995,9 @@ mod _async_tasks {
         }
         fn paths(&self) -> [Option<&PathLike<'static>>; 2] {
             [path_of(&self.0.file), None]
+        }
+        fn runs_on(&self) -> bun_jsc::RunsOn {
+            runs_on_of(&self.0.file, true)
         }
     }
 
@@ -4409,18 +4444,28 @@ pub(crate) mod ret {
 // https://github.com/DefinitelyTyped/DefinitelyTyped/blob/master/types/node/fs.d.ts
 // ──────────────────────────────────────────────────────────────────────────
 
+#[derive(Default)]
 pub(crate) struct NodeFS {
     /// Scratch for a temporary file path that might appear in a returned error message.
-    pub(crate) sync_error_buf: bun_paths::path_buffer_pool::Guard,
+    pub(crate) sync_error_buf: LazyPathBuffer,
     pub(crate) vm: Option<NonNull<VirtualMachine>>,
 }
 
-impl Default for NodeFS {
-    fn default() -> Self {
-        Self {
-            sync_error_buf: bun_paths::path_buffer_pool::get(),
-            vm: None,
-        }
+/// Taken from the pool at its first use: few calls need one, and what a task does ahead of its system call lets a later task on another thread go first.
+#[derive(Default)]
+pub(crate) struct LazyPathBuffer(core::cell::OnceCell<bun_paths::path_buffer_pool::Guard>);
+
+impl core::ops::Deref for LazyPathBuffer {
+    type Target = PathBuffer;
+    fn deref(&self) -> &PathBuffer {
+        self.0.get_or_init(bun_paths::path_buffer_pool::get)
+    }
+}
+
+impl core::ops::DerefMut for LazyPathBuffer {
+    fn deref_mut(&mut self) -> &mut PathBuffer {
+        self.0.get_or_init(bun_paths::path_buffer_pool::get);
+        self.0.get_mut().expect("set above")
     }
 }
 
@@ -7028,7 +7073,7 @@ impl NodeFS {
     }
 
     pub(crate) fn write_file_with_path_buffer(
-        pathbuf: &mut PathBuffer,
+        pathbuf: &mut impl core::ops::DerefMut<Target = PathBuffer>,
         args: &args::WriteFile,
     ) -> Maybe<ret::WriteFile> {
         let fd = match &args.file {

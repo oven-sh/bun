@@ -8606,21 +8606,23 @@ describe.if(isPosix)("fs.read into a view over a WebAssembly.Memory that grows d
   });
 });
 
-// A read of a pipe holds its thread until the pipe's writer is gone. With two threads, the first two pipes that get a reader are the two calls that started first.
-it.skipIf(!isWindows)("asynchronous operations start in the order they were asked for", async () => {
-  const names = ["a", "b", "c", "d"];
+// A write of more than a pipe takes holds its thread until the other end reads. With all four threads held, what was asked for later waits for one of them.
+it.skipIf(!isWindows)("what is asked of descriptors starts in the order it was asked for", async () => {
+  const names = ["a", "b", "c", "d", "e", "f"];
   const pathOf = (name: string) => `\\\\.\\pipe\\fs-start-order-${process.pid}-${name}`;
+  using dir = tempDir("fs-start-order", { "g.txt": "", "h.txt": "", "i.txt": "" });
 
-  const started: string[] = [];
-  const held: net.Socket[] = [];
-  const twoStarted = Promise.withResolvers<void>();
+  const sockets: net.Socket[] = [];
+  let started = 0;
+  const fourStarted = Promise.withResolvers<void>();
   const servers: net.Server[] = [];
   for (const name of names) {
     const server = net.createServer(socket => {
-      started.push(name);
-      if (started.length > 2) return void socket.end();
-      held.push(socket);
-      if (started.length === 2) twoStarted.resolve();
+      sockets.push(socket);
+      socket.once("data", () => {
+        socket.pause();
+        if (++started === 4) fourStarted.resolve();
+      });
     });
     servers.push(server);
     await new Promise<void>(resolve => server.listen(pathOf(name), resolve));
@@ -8630,22 +8632,92 @@ it.skipIf(!isWindows)("asynchronous operations start in the order they were aske
     cmd: [
       bunExe(),
       "-e",
-      `for (const path of process.argv.slice(1)) require("fs").readFile(path, error => { if (error) throw error; });`,
+      `
+        const fs = require("fs");
+        const [a, b, c, d, e, f, g, h, i] = process.argv.slice(1).map(path => fs.openSync(path, "w"));
+        const ended = [];
+        const end = name => error => {
+          if (error) throw error;
+          ended.push(name);
+        };
+        for (const fd of [a, b, c, d]) fs.write(fd, Buffer.alloc(4 * 1024 * 1024), end("write"));
+        fs.fsync(e, end("fsync"));
+        fs.close(f, end("close"));
+        fs.promises.truncate(g, 0).then(end("truncate"));
+        fs.writeFile(h, "hello", end("writeFile"));
+        fs.appendFile(i, "hello", end("appendFile"));
+        process.on("exit", () => console.log(ended[0], ended.toSorted().join(" ")));
+      `,
       ...names.map(pathOf),
+      ...["g.txt", "h.txt", "i.txt"].map(name => join(String(dir), name)),
     ],
-    env: { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
-    stdout: "inherit",
+    env: { ...bunEnv, UV_THREADPOOL_SIZE: "4" },
+    stdout: "pipe",
     stderr: "inherit",
   });
 
-  await Promise.race([twoStarted.promise, proc.exited]);
-  const firstTwo = started.toSorted();
-  for (const socket of held) socket.end();
-  const exitCode = await proc.exited;
+  await Promise.race([fourStarted.promise, proc.exited]);
+  for (const socket of sockets) socket.resume();
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   for (const server of servers) server.close();
 
-  expect(firstTwo).toEqual(["a", "b"]);
+  expect(stdout).toBe("write appendFile close fsync truncate write write write write writeFile\n");
   expect(exitCode).toBe(0);
+});
+
+describe.skipIf(!isWindows)("an fsync() does not overtake the write() to a pipe that was asked for before it", () => {
+  it.each([
+    // A thread that was just started is the last to run.
+    "one processor",
+    // A thread that has run nothing yet is slower than one that has.
+    "all processors",
+  ])("with %s", async processors => {
+    const path = `\\\\.\\pipe\\fs-write-close-${process.pid}-${processors.split(" ")[0]}`;
+    let received = "";
+    const closed = Promise.withResolvers<void>();
+    const server = net.createServer(socket => {
+      socket.on("data", chunk => (received += chunk));
+      socket.on("close", () => closed.resolve());
+    });
+    await new Promise<void>(resolve => server.listen(path, resolve));
+
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            if (process.argv[2] === "one processor") {
+              const kernel32 = require("bun:ffi").dlopen("kernel32.dll", { SetProcessAffinityMask: { args: ["i64", "u64"], returns: "i32" } });
+              if (!kernel32.symbols.SetProcessAffinityMask(-1n, 1n)) throw new Error("SetProcessAffinityMask failed");
+            }
+
+            const fs = require("fs");
+            const errors = {};
+            const ended = name => error => (errors[name] = error?.code ?? null);
+            fs.open(process.argv[1], "w", (error, fd) => {
+              if (error) throw error;
+              fs.write(fd, Buffer.from("hello"), ended("write"));
+              fs.fsync(fd, () => fs.close(fd, ended("close")));
+            });
+            process.on("exit", () => console.log("write:", errors.write, "close:", errors.close));
+          `,
+          path,
+          processors,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("write: null close: null\n");
+      await closed.promise;
+      expect(received).toBe("hello");
+      expect(exitCode).toBe(0);
+    } finally {
+      server.close();
+    }
+  });
 });
 
 describe("module init", () => {

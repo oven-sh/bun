@@ -131,26 +131,65 @@ macro_rules! owned_task {
 }
 
 static POOL: OnceLock<ThreadPool> = OnceLock::new();
-static WAITING_POOL: OnceLock<ThreadPool> = OnceLock::new();
-static OUTPUT_POOL: OnceLock<ThreadPool> = OnceLock::new();
-/// What [`WorkPool::schedule_in_order`] was given and no thread has taken yet, the oldest first.
-static IN_ORDER: Guarded<Batch> = Guarded::new(Batch::EMPTY);
+static DESCRIPTOR_POOL: PoolInOrder =
+    PoolInOrder::new("Bun I/O", || u32::from(bun_core::get_thread_count()).max(4));
+static OUTPUT_POOL: PoolInOrder = PoolInOrder::new("Bun Output", || 2);
 
-/// The pool takes the newest of what waits for it first, so it is given a turn, and the turn takes the oldest task.
+/// Its tasks start in the order they were given in, as the requests of libuv's pool do. Which ends first is open.
+struct PoolInOrder {
+    name: &'static str,
+    max_threads: fn() -> u32,
+    pool: OnceLock<ThreadPool>,
+    /// What no thread has taken yet, the oldest first.
+    waiting: Guarded<Batch>,
+}
+
+/// A [`ThreadPool`] takes the newest of what waits for it first, so it is given a turn, and the turn takes the oldest task.
 struct Turn {
     task: Task,
+    pool: &'static PoolInOrder,
 }
 
 crate::owned_task!(Turn, task);
 
 impl Turn {
     fn run_owned(self: Box<Self>) {
-        drop(self);
-        let Some(task) = IN_ORDER.lock().pop() else {
+        let Some(task) = self.pool.waiting.lock().pop() else {
             unreachable!("one turn per task");
         };
+        drop(self);
         // SAFETY: the task is live until its callback runs, as for a task that the pool itself holds.
         unsafe { ((*task.as_ptr()).callback)(task.as_ptr()) };
+    }
+}
+
+impl PoolInOrder {
+    const fn new(name: &'static str, max_threads: fn() -> u32) -> PoolInOrder {
+        PoolInOrder {
+            name,
+            max_threads,
+            pool: OnceLock::new(),
+            waiting: Guarded::new(Batch::EMPTY),
+        }
+    }
+
+    fn schedule(&'static self, task: *mut Task) {
+        self.waiting.lock().push(Batch::from(task));
+        let pool = self.pool.get_or_init(|| {
+            ThreadPool::init(crate::thread_pool::Config {
+                max_threads: (self.max_threads)(),
+                stack_size: crate::thread_pool::POOL_THREAD_STACK_SIZE,
+            })
+            .named(self.name)
+            .without_spare_threads()
+        });
+        WorkPool::schedule_owned_on(
+            pool,
+            Box::new(Turn {
+                task: Task::default(),
+                pool: self,
+            }),
+        );
     }
 }
 
@@ -172,45 +211,25 @@ impl WorkPool {
         Self::get().schedule(Batch::from(task));
     }
 
-    /// These tasks start in the order they were given in, as the requests of libuv's pool do. Which ends first is open.
-    pub fn schedule_in_order(task: *mut Task) {
-        IN_ORDER.lock().push(Batch::from(task));
-        Self::schedule_new(Turn {
-            task: Task::default(),
-        });
+    /// For a task that works on a descriptor. It can block until somebody outside the process acts (a pipe read), so these have threads of their own.
+    pub fn schedule_for_descriptor(task: *mut Task) {
+        DESCRIPTOR_POOL.schedule(task);
     }
 
-    /// For a task that blocks until somebody outside the process acts (a pipe read): threads of their own, so the others still run.
-    pub fn schedule_waiting(task: *mut Task) {
-        WAITING_POOL
-            .get_or_init(|| {
-                ThreadPool::init(crate::thread_pool::Config {
-                    max_threads: u32::from(bun_core::get_thread_count()).max(4),
-                    stack_size: crate::thread_pool::POOL_THREAD_STACK_SIZE,
-                })
-                .named("Bun I/O")
-            })
-            .schedule(Batch::from(task));
-    }
-
-    /// For a task that writes to the standard output or error. The exit of the process waits for it, so it is behind no other wait.
+    /// For a task about the standard output or error. The exit of the process waits for it, so it is behind no other wait.
     pub fn schedule_output(task: *mut Task) {
-        OUTPUT_POOL
-            .get_or_init(|| {
-                ThreadPool::init(crate::thread_pool::Config {
-                    max_threads: 2,
-                    stack_size: crate::thread_pool::POOL_THREAD_STACK_SIZE,
-                })
-                .named("Bun Output")
-            })
-            .schedule(Batch::from(task));
+        OUTPUT_POOL.schedule(task);
     }
 
     /// Schedule a heap-allocated task by value. The pool takes ownership of
     /// the `Box`; [`OwnedTask::run`] receives it back on a worker thread.
     /// Replaces the open-coded `Box::into_raw` + `&raw mut (*p).task` +
     /// `container_of`-in-callback pattern.
-    pub fn schedule_owned<T: OwnedTask>(mut task: Box<T>) {
+    pub fn schedule_owned<T: OwnedTask>(task: Box<T>) {
+        Self::schedule_owned_on(Self::get(), task);
+    }
+
+    fn schedule_owned_on<T: OwnedTask>(pool: &ThreadPool, mut task: Box<T>) {
         // Install the monomorphized shim via the safe accessor — no raw
         // byte-offset write. `node` is left as the caller initialized it
         // (always `Node::default()`).
@@ -221,7 +240,7 @@ impl WorkPool {
         let raw = Box::into_raw(task);
         // SAFETY: `raw` is a live heap allocation now owned by the pool;
         // `IntrusiveField::field_of` projects to the embedded `Task`.
-        Self::schedule(unsafe { T::field_of(raw) });
+        pool.schedule(Batch::from(unsafe { T::field_of(raw) }));
     }
 
     /// `Box::new` + [`schedule_owned`](Self::schedule_owned). Convenience for

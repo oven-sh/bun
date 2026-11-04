@@ -1,0 +1,39 @@
+status: 0
+script: e5ce6b17c23adac9
+---
+The frames of the daemon thread are none - status 0 
+    finalized: a cycle that was dropped
+    finalized: a global of __main__
+    finalized: a global of __main__ that is in a cycle
+    finalized: a global of another module
+    finalized: an attribute of a class of __main__
+    finalized: an attribute of builtins
+    finalized: an attribute of sys
+The frames of the daemon thread are of __main__ - status 0 
+    finalized: a cycle that was dropped
+    finalized: a global of another module
+    finalized: an attribute of builtins
+    finalized: an attribute of sys
+The frames of the daemon thread are of another module - status 0 
+    finalized: a cycle that was dropped
+    finalized: a global of __main__
+    finalized: a global of __main__ that is in a cycle
+    finalized: an attribute of a class of __main__
+    finalized: an attribute of builtins
+    finalized: an attribute of sys
+The frames of the daemon thread are in a system call - status 0 
+    finalized: a cycle that was dropped
+    finalized: a global of __main__
+    finalized: a global of __main__ that is in a cycle
+    finalized: an attribute of a class of __main__
+    finalized: an attribute of builtins
+    finalized: an attribute of sys
+The frames of the daemon thread are of many kinds - status 0 
+    finalized: a cycle that was dropped
+    finalized: a global of __main__
+    finalized: a global of __main__ that is in a cycle
+    finalized: a global of another module
+    finalized: a thread-local value
+    finalized: an attribute of a class of __main__
+    finalized: an attribute of builtins
+    finalized: an attribute of sys

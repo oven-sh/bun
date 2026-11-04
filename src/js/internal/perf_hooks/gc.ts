@@ -1,0 +1,60 @@
+// The 'gc' entries of node:perf_hooks, loaded when an observer first asks for them. A heap observer
+// (GCPerformanceEntries.cpp) times each collection of JavaScriptCore while an observer wants 'gc' entries, and calls
+// emitGCEntry() for it on a later tick.
+const { NodeEntryObserver, enqueueNodeEntry, hasObserver, PerformanceNodeEntry } = require("internal/shared");
+
+const setGCEntryListener: (listener: typeof emitGCEntry | undefined) => void = $newCppFunction(
+  "GCPerformanceEntries.cpp",
+  "jsFunctionSetGCPerformanceEntryListener",
+  1,
+);
+const ObjectSetPrototypeOf = Object.setPrototypeOf;
+
+// As in the constants of node:perf_hooks. JavaScriptCore has two kinds of collection: an eden one is Node's minor,
+// a full one its major.
+const NODE_PERFORMANCE_GC_MAJOR = 4;
+const NODE_PERFORMANCE_GC_MINOR = 1;
+const NODE_PERFORMANCE_GC_FLAGS_NO = 0;
+const NODE_PERFORMANCE_GC_FLAGS_FORCED = 4;
+
+let isGCEntryListenerSet = false;
+
+// https://github.com/nodejs/node/blob/v26.12.1/src/node_perf.h#L112-L140
+function emitGCEntry(startTime: number, duration: number, isFullCollection: boolean, forced: boolean) {
+  // As in Node, the observers that exist now get the entry, whether or not they did when the collection ran.
+  if (!hasObserver("gc")) return;
+  const detail = {
+    kind: isFullCollection ? NODE_PERFORMANCE_GC_MAJOR : NODE_PERFORMANCE_GC_MINOR,
+    flags: forced ? NODE_PERFORMANCE_GC_FLAGS_FORCED : NODE_PERFORMANCE_GC_FLAGS_NO,
+  };
+  enqueueNodeEntry(new PerformanceNodeEntry("gc", "gc", startTime, duration, detail));
+}
+
+// https://github.com/nodejs/node/blob/v26.12.1/src/node_perf.cc#L254-L275
+function updateGCTracking() {
+  const wanted = hasObserver("gc");
+  if (wanted === isGCEntryListenerSet) return;
+  isGCEntryListenerSet = wanted;
+  setGCEntryListener(wanted ? emitGCEntry : undefined);
+}
+
+// A registration that observes 'gc'. The count of 'gc' observers changes in these two methods only: the registry
+// itself calls disconnect() for the observer of a disposed Bun.ModuleGraph.
+class GCEntryObserver extends NodeEntryObserver {
+  observe(types: Iterable<string>) {
+    super.observe(types);
+    updateGCTracking();
+  }
+
+  disconnect() {
+    super.disconnect();
+    updateGCTracking();
+  }
+}
+
+export default {
+  /** For a registration that starts to observe 'gc'. GCEntryObserver adds no state, so it only changes class. */
+  observeGC(registration: InstanceType<typeof NodeEntryObserver>) {
+    if (!(registration instanceof GCEntryObserver)) ObjectSetPrototypeOf(registration, GCEntryObserver.prototype);
+  },
+};

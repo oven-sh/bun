@@ -1,0 +1,18 @@
+status: 0
+script: b8d1688f2bf75029
+---
+plain      False False True True
+setsid     True True False False
+setpgrp    False True True False
+session    True True False False
+group 0    False True True False
+SubprocessError: Exception occurred in preexec_fn.
+SubprocessError: Exception occurred in preexec_fn.
+SubprocessError: Exception occurred in preexec_fn.
+pgrp twice False True True False
+(b'out\n/\n', b'err\n') 3 b'kept\n'
+FileNotFoundError: [Errno 2] No such file or directory: '/nonexistent/program'
+FileNotFoundError: [Errno 2] No such file or directory: '/nonexistent'
+b'ready\n' True
+-15
+True True False False True

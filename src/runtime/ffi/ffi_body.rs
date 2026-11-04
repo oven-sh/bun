@@ -1361,10 +1361,12 @@ impl FFI {
     pub(crate) fn close<'a>(&self, this_value: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) {
         unsafe extern "C" {
             /// Type-checks `library` (`dynamicDowncast`) before use.
-            safe fn Bun__FFI__closeFunctions(global: &JSGlobalObject, library: JSValue) -> bool;
+            fn Bun__FFI__closeFunctions(global: &JSGlobalObject, library: JSValue) -> bool;
         }
         jsc::mark_binding();
-        let is_running = Bun__FFI__closeFunctions(cx.global(), this_value.to_js());
+        // SAFETY: C++ indexes `functionsValue` unchecked up to its length. It is empty or the array
+        // that `cc` filled from 0 to its length, which JS never sees.
+        let is_running = unsafe { Bun__FFI__closeFunctions(cx.global(), this_value.to_js()) };
         if is_running {
             // The running call returns into the compiled code, so leak it instead of letting `do_close` free it.
             self.shared_state.set(None);

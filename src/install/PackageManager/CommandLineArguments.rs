@@ -906,8 +906,7 @@ pub struct CommandLineArguments {
     pub diff_raw: bool,
     /// The subcommand only needs registry configuration; a missing package.json is not an error.
     pub no_project_ok: bool,
-    /// The command writes bun.lock or runs the project's scripts, in the running bun's format, so
-    /// `init` compares the bun version that `packageManager` pins with the running one.
+    /// `init` checks the `packageManager` pin: the command writes bun.lock or runs scripts.
     pub checks_bun_version: bool,
     pub diff_unminify: bool,
     pub diff_minify: bool,

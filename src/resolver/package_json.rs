@@ -98,8 +98,7 @@ pub struct PackageJSON {
     /// parses the row it looks up. Each range is where a group's rows are in `json_tape`.
     pub(crate) installed_dependency_rows:
         [core::ops::Range<u32>; INSTALLED_DEPENDENCY_GROUPS.len()],
-    /// Where `packageManager` is in `json_tape`. Empty when the file has none, or when the parse
-    /// did not include scripts.
+    /// The tape row of `packageManager`. Empty without one, or when scripts were not parsed.
     pub(crate) package_manager_row: core::ops::Range<u32>,
 
     pub(crate) side_effects: SideEffects,

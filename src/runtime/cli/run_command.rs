@@ -92,9 +92,7 @@ pub(crate) struct ConfigureEnvOptions {
     /// for callers that go on to read files through it, like `bunx` resolving
     /// a package's `bin`.
     pub(crate) store_root_fd: bool,
-    /// Warn when `packageManager` pins another bun version. `false` for a caller whose install
-    /// half checked the workspace root already (`bun pm pack`), and for `bunx`, which runs a
-    /// tool that need not be from the project.
+    /// Off for `bun pm pack`, whose install half checked, and for `bunx`, whose tool is foreign.
     pub(crate) check_bun_version: bool,
 }
 
@@ -784,10 +782,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         Ok((this_transpiler, root_dir_info))
     }
 
-    /// The nearest package.json with `packageManager` in the working directory or an ancestor,
-    /// as corepack reads it. Every `DirInfo` up to the root is parsed with scripts already, so
-    /// this reads no file. A dependency's package.json is not the project's: a lifecycle script
-    /// runs in `node_modules/<dep>`, and its `bun run` must not report that package's pin.
+    /// The nearest `packageManager` above the working directory, never a dependency's.
     fn check_bun_version(
         root_dir_info: bun_resolver::DirInfoRef,
         silent: bool,

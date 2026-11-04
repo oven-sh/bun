@@ -220,8 +220,7 @@ new!(pub BUN_INTERNAL_BUNX_INSTALL: string, "BUN_INTERNAL_BUNX_INSTALL", {});
 new!(pub BUN_INTERNAL_SCRIPTS_OF_COMMANDS: string, "BUN_INTERNAL_SCRIPTS_OF_COMMANDS", {});
 // What a Bun that has `bun check` and not the other two sets in its place. Only read.
 new!(pub BUN_INTERNAL_CHECK_SCRIPTS: string, "BUN_INTERNAL_CHECK_SCRIPTS", {});
-// Set by a command that checked the `packageManager` pin of a package.json, to that file's path. A
-// `bun` that a script of the same project starts does not check that file again.
+// The package.json whose `packageManager` pin a parent bun checked. A child skips that file.
 new!(pub BUN_INTERNAL_BUN_VERSION_CHECKED: string, "BUN_INTERNAL_BUN_VERSION_CHECKED", {});
 // Set by HostProcess.rs when spawning the WebView host subprocess. The
 // child's CLI entrypoint checks this before anything else and hands off to

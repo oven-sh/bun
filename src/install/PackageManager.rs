@@ -2228,8 +2228,7 @@ fn find_workspace_root_above<'a>(
     Ok(None)
 }
 
-/// Reads the root package.json into the cache, where every later read of it finds it. A file that
-/// does not parse is reported by that later read.
+/// Reads the root package.json into the cache, where the later reads find it and report it.
 fn check_bun_version(
     cache: &mut WorkspacePackageJSONCache,
     root_package_json_path: &ZStr,

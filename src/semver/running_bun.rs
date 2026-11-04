@@ -9,9 +9,7 @@ use crate::{PackageManagerSpec, SlicedString, Version};
 /// Without `-debug` or `-canary`, so a pin of a canary's base version matches that canary.
 const RUNNING: &str = bun_core::env::VERSION_STRING;
 
-/// The exact version after `bun@`, without corepack's `+<hash>`. `None` for another package
-/// manager, a range, a tag such as `latest`, or a pre-release: the running version is compared
-/// without its tag, so a pre-release pin could never match.
+/// The version after `bun@`, without the `+<hash>`. A range, a tag or a pre-release is no pin.
 pub fn package_manager_pin(value: &[u8]) -> Option<&[u8]> {
     let spec = PackageManagerSpec::parse(value)?;
     if !spec.is_bun() {
@@ -29,10 +27,7 @@ pub fn mismatch<'a>(path: &'a [u8], pin: &'a [u8]) -> Option<Mismatch<'a>> {
     (!running.eql(pinned)).then_some(Mismatch { path, pin })
 }
 
-/// Prints the warning when `package_manager`, read from the package.json at `path`, pins another
-/// version. `quiet` skips the line (`--silent`, `--ignore-engines`). Returns `path` when the file
-/// pins a version, printed or not: the caller exports it as `BUN_INTERNAL_BUN_VERSION_CHECKED`,
-/// so a `bun` that a script of this project starts does not check the same file again.
+/// Warns for a mismatch. Returns `path` when the file pins a version, printed or not.
 pub fn check<'a>(path: &'a [u8], package_manager: &[u8], quiet: bool) -> Option<&'a [u8]> {
     let pin = package_manager_pin(package_manager)?;
     let skip = quiet

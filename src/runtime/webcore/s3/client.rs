@@ -181,6 +181,7 @@ pub(crate) fn list_objects(
     list_options: &S3ListObjectsOptions,
     callback: fn(S3ListObjectsResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
+    request_payer: bool,
 ) -> JsResult<()> {
     bun_removable_features::removable_definition!(S3Client, list_objects);
     let mut search_params: Vec<u8> = Vec::<u8>::default();
@@ -268,7 +269,7 @@ pub(crate) fn list_objects(
             content_encoding: None,
             acl: None,
             storage_class: None,
-            request_payer: false,
+            request_payer,
         },
         None,
     ) {

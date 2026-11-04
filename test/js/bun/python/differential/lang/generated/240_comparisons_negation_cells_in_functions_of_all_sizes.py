@@ -1,17 +1,17 @@
 # Comparisons with and without a jump behind them, unary operators, floor division and stores to cells, in functions with a few
-# variables, with hundreds and with tens of thousands, over short and long distances; run plainly, traced by line and by
-# instruction, monitored, and after a round trip through marshal.
+# variables, with hundreds and with tens of thousands, over short and longer distances; run plainly, traced by line and by
+# instruction, monitored, and after a round trip through marshal. (slow/ has the same with more values, sizes and distances.)
 try: import sys, marshal, hashlib, types
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: import sys, marshal, hashlib, types')
 
-try: VALUES = [(1, 2), (2, 1), (2, 2), (1.5, 2), (2, 1.5), (-0.0, 0), (float('nan'), 1), (10 ** 30, 1), ('a', 'b'), ('b', 'a'), ((1, 2), (1, 3)), (True, 1), (None, None), ([1], [1])]
-except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: VALUES = [(1, 2), (2, 1), (2, 2), (1.5, 2), (2, 1.5), (-0.0, 0), (flo...')
+try: VALUES = [(1, 2), (2, 1), (2, 2), (float('nan'), 1), (None, None)]
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: VALUES = [(1, 2), (2, 1), (2, 2), (float('nan'), 1), (None, None)]")
 
 
 try:
     def source(variables, distance):
-        lines = ['def f(p, q):']
-        lines += ['    v%d = %d' % (i, i) for i in range(variables)]
+        # The variables that come first only take up room: nothing is ever assigned to them.
+        lines = ['def f(p, q):', '    if p is ...:', '        ' + ' = '.join('v%d' % i for i in range(variables)) + ' = 0']
         lines += ['    a = p', '    b = q', '    out = []', '    add = out.append']
         lines += ['    c = 0', '    def get(): return c, d', '    d = 1']
         for operator in ('<', '<=', '==', '!=', '>', '>='):
@@ -27,7 +27,7 @@ try:
         for expression in ('-a', '+a', '~a', 'not a', 'a // b', 'b // a', '-(a // b)', 'not -a'):
             lines += ['    try:', '        r = %s' % expression, '        add(r)', '    except (TypeError, ZeroDivisionError) as e:', '        add(str(e))']
         lines += ['    c = a', '    d = b', '    add(get())', '    c = d = out', '    add(get()[0] is get()[1] is out)']
-        lines += ['    c = None', '    return out + [v%d]' % (variables - 1)]
+        lines += ['    c = None', '    return out + [%d]' % (variables - 1)]
         return '\n'.join(lines) + '\n'
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: def source(variables, distance):')
 
@@ -102,7 +102,7 @@ except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> 
 try: first = None
 except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: first = None')
 try:
-    for variables, distance in ((1, 1), (1, 40), (1, 3000), (150, 1), (150, 40), (300, 3000), (40000, 1), (40000, 40)):
+    for variables, distance in ((1, 1), (300, 40), (33000, 1)):
         try: code = compile(source(variables, distance), '<sizes>', 'exec')
         except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + "> in: code = compile(source(variables, distance), '<sizes>', 'exec')")
         try: namespace = {}
@@ -129,8 +129,8 @@ try:
         except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: plain == first')
         try: print('f(1, 2)[-1] [' + 'variables=' + (repr(variables) if type(variables) in (str, int, float, bytes, bool, type(None)) or (type(variables) is tuple and all(type(_i) in (str, int, float, bytes, bool, type(None)) for _i in variables)) else variables.__name__ if type(variables) is type else type(variables).__name__) + ", " + 'distance=' + (repr(distance) if type(distance) in (str, int, float, bytes, bool, type(None)) or (type(distance) is tuple and all(type(_i) in (str, int, float, bytes, bool, type(None)) for _i in distance)) else distance.__name__ if type(distance) is type else type(distance).__name__) + '] =>', f(1, 2)[-1])
         except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: f(1, 2)[-1]')
-        try: small = variables < 1000 and distance < 1000
-        except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: small = variables < 1000 and distance < 1000')
+        try: small = variables < 1000
+        except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: small = variables < 1000')
         try: by_line = traced(f, False)
         except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: by_line = traced(f, False)')
         try: print('    by line:', 'by_line[0] == plain [' + 'variables=' + (repr(variables) if type(variables) in (str, int, float, bytes, bool, type(None)) or (type(variables) is tuple and all(type(_i) in (str, int, float, bytes, bool, type(None)) for _i in variables)) else variables.__name__ if type(variables) is type else type(variables).__name__) + ", " + 'distance=' + (repr(distance) if type(distance) in (str, int, float, bytes, bool, type(None)) or (type(distance) is tuple and all(type(_i) in (str, int, float, bytes, bool, type(None)) for _i in distance)) else distance.__name__ if type(distance) is type else type(distance).__name__) + '] =>', by_line[0] == plain)
@@ -171,4 +171,4 @@ try:
         except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: sys.settrace(None)')
         try: print('    a copy made while tracing:', 'run(types.FunctionType(copy, {})) == plain if not copy.co_freevars el... [' + 'variables=' + (repr(variables) if type(variables) in (str, int, float, bytes, bool, type(None)) or (type(variables) is tuple and all(type(_i) in (str, int, float, bytes, bool, type(None)) for _i in variables)) else variables.__name__ if type(variables) is type else type(variables).__name__) + ", " + 'distance=' + (repr(distance) if type(distance) in (str, int, float, bytes, bool, type(None)) or (type(distance) is tuple and all(type(_i) in (str, int, float, bytes, bool, type(None)) for _i in distance)) else distance.__name__ if type(distance) is type else type(distance).__name__) + '] =>', run(types.FunctionType(copy, {})) == plain if not copy.co_freevars else None)
         except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: run(types.FunctionType(copy, {})) == plain if not copy.co_freevars el...')
-except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: for variables, distance in ((1, 1), (1, 40), (1, 3000), (150, 1), (15...')
+except Exception as _pe: print('<!' + type(_pe).__name__ + ": " + str(_pe) + '> in: for variables, distance in ((1, 1), (300, 40), (33000, 1)):')

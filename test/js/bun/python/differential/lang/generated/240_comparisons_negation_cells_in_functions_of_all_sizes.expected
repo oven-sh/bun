@@ -1,6 +1,6 @@
 status: 0
-script: 44958e5fcd9bf240
-source: 568c2d09071243b6
+script: 286ccc4db42a278d
+source: 27374d29e32ef035
 ---
 values [variables=1, distance=1, values=(1, 2), result="[True, True, False, True, False, False, '<', 1, 1, 'no', '<=', 1, 2, 'no', 'not ==', 2, 0, 'no', '!=', 1, 1, 'yes', 'not >', 2, 0, 'yes', 'not >=', 2, 0, 'yes', -1, 1, -2, False, 0, 2, 0, False, (1, 2), True]"] => (1, 2)
 result [variables=1, distance=1, values=(1, 2), result="[True, True, False, True, False, False, '<', 1, 1, 'no', '<=', 1, 2, 'no', 'not ==', 2, 0, 'no', '!=', 1, 1, 'yes', 'not >', 2, 0, 'yes', 'not >=', 2, 0, 'yes', -1, 1, -2, False, 0, 2, 0, False, (1, 2), True]"] => [True, True, False, True, False, False, '<', 1, 1, 'no', '<=', 1, 2, 'no', 'not ==', 2, 0, 'no', '!=', 1, 1, 'yes', 'not >', 2, 0, 'yes', 'not >=', 2, 0, 'yes', -1, 1, -2, False, 0, 2, 0, False, (1, 2), True]
@@ -8,137 +8,50 @@ values [variables=1, distance=1, values=(2, 1), result="[False, False, False, Tr
 result [variables=1, distance=1, values=(2, 1), result="[False, False, False, True, True, True, 'not <', 2, 1, 'yes', 'not <=', 2, 2, 'yes', 'not ==', 2, 0, 'no', '!=', 1, 1, 'yes', '>', 1, 0, 'no', '>=', 1, 0, 'no', -2, 2, -3, False, 2, 0, -2, False, (2, 1), True]"] => [False, False, False, True, True, True, 'not <', 2, 1, 'yes', 'not <=', 2, 2, 'yes', 'not ==', 2, 0, 'no', '!=', 1, 1, 'yes', '>', 1, 0, 'no', '>=', 1, 0, 'no', -2, 2, -3, False, 2, 0, -2, False, (2, 1), True]
 values [variables=1, distance=1, values=(2, 2), result="[False, True, True, False, False, True, 'not <', 2, 1, 'no', '<=', 1, 2, 'yes', '==', 1, 0, 'yes', 'not !=', 2, 1, 'no', 'not >', 2, 0, 'no', '>=', 1, 0, 'yes', -2, 2, -3, False, 1, 1, -1, False, (2, 2), True]"] => (2, 2)
 result [variables=1, distance=1, values=(2, 2), result="[False, True, True, False, False, True, 'not <', 2, 1, 'no', '<=', 1, 2, 'yes', '==', 1, 0, 'yes', 'not !=', 2, 1, 'no', 'not >', 2, 0, 'no', '>=', 1, 0, 'yes', -2, 2, -3, False, 1, 1, -1, False, (2, 2), True]"] => [False, True, True, False, False, True, 'not <', 2, 1, 'no', '<=', 1, 2, 'yes', '==', 1, 0, 'yes', 'not !=', 2, 1, 'no', 'not >', 2, 0, 'no', '>=', 1, 0, 'yes', -2, 2, -3, False, 1, 1, -1, False, (2, 2), True]
-values [variables=1, distance=1, values=(1.5, 2), result='[True, True, False, True, False, False, \'<\', 1, 1, \'no\', \'<=\', 1, 2, \'no\', \'not ==\', 2, 0, \'no\', \'!=\', 1, 1, \'yes\', \'not >\', 2, 0, \'yes\', \'not >=\', 2, 0, \'yes\', -1.5, 1.5, "bad operand type for unary ~: \'float\'", False, 0.0, 1.0, -0.0, False, (1.5, 2), True]'] => (1.5, 2)
-result [variables=1, distance=1, values=(1.5, 2), result='[True, True, False, True, False, False, \'<\', 1, 1, \'no\', \'<=\', 1, 2, \'no\', \'not ==\', 2, 0, \'no\', \'!=\', 1, 1, \'yes\', \'not >\', 2, 0, \'yes\', \'not >=\', 2, 0, \'yes\', -1.5, 1.5, "bad operand type for unary ~: \'float\'", False, 0.0, 1.0, -0.0, False, (1.5, 2), True]'] => [True, True, False, True, False, False, '<', 1, 1, 'no', '<=', 1, 2, 'no', 'not ==', 2, 0, 'no', '!=', 1, 1, 'yes', 'not >', 2, 0, 'yes', 'not >=', 2, 0, 'yes', -1.5, 1.5, "bad operand type for unary ~: 'float'", False, 0.0, 1.0, -0.0, False, (1.5, 2), True]
-values [variables=1, distance=1, values=(2, 1.5), result="[False, False, False, True, True, True, 'not <', 2, 1, 'yes', 'not <=', 2, 2, 'yes', 'not ==', 2, 0, 'no', '!=', 1, 1, 'yes', '>', 1, 0, 'no', '>=', 1, 0, 'no', -2, 2, -3, False, 1.0, 0.0, -1.0, False, (2, 1.5), True]"] => (2, 1.5)
-result [variables=1, distance=1, values=(2, 1.5), result="[False, False, False, True, True, True, 'not <', 2, 1, 'yes', 'not <=', 2, 2, 'yes', 'not ==', 2, 0, 'no', '!=', 1, 1, 'yes', '>', 1, 0, 'no', '>=', 1, 0, 'no', -2, 2, -3, False, 1.0, 0.0, -1.0, False, (2, 1.5), True]"] => [False, False, False, True, True, True, 'not <', 2, 1, 'yes', 'not <=', 2, 2, 'yes', 'not ==', 2, 0, 'no', '!=', 1, 1, 'yes', '>', 1, 0, 'no', '>=', 1, 0, 'no', -2, 2, -3, False, 1.0, 0.0, -1.0, False, (2, 1.5), True]
-values [variables=1, distance=1, values=(-0.0, 0), result='[False, True, True, False, False, True, \'not <\', 2, 1, \'no\', \'<=\', 1, 2, \'yes\', \'==\', 1, 0, \'yes\', \'not !=\', 2, 1, \'no\', \'not >\', 2, 0, \'no\', \'>=\', 1, 0, \'yes\', 0.0, -0.0, "bad operand type for unary ~: \'float\'", True, \'division by zero\', \'division by zero\', \'division by zero\', True, (-0.0, 0), True]'] => (-0.0, 0)
-result [variables=1, distance=1, values=(-0.0, 0), result='[False, True, True, False, False, True, \'not <\', 2, 1, \'no\', \'<=\', 1, 2, \'yes\', \'==\', 1, 0, \'yes\', \'not !=\', 2, 1, \'no\', \'not >\', 2, 0, \'no\', \'>=\', 1, 0, \'yes\', 0.0, -0.0, "bad operand type for unary ~: \'float\'", True, \'division by zero\', \'division by zero\', \'division by zero\', True, (-0.0, 0), True]'] => [False, True, True, False, False, True, 'not <', 2, 1, 'no', '<=', 1, 2, 'yes', '==', 1, 0, 'yes', 'not !=', 2, 1, 'no', 'not >', 2, 0, 'no', '>=', 1, 0, 'yes', 0.0, -0.0, "bad operand type for unary ~: 'float'", True, 'division by zero', 'division by zero', 'division by zero', True, (-0.0, 0), True]
 values [variables=1, distance=1, values=(nan, 1), result='[False, False, False, True, False, False, \'not <\', 2, 1, \'no\', \'not <=\', 2, 2, \'no\', \'not ==\', 2, 0, \'no\', \'!=\', 1, 1, \'yes\', \'not >\', 2, 0, \'no\', \'not >=\', 2, 0, \'no\', nan, nan, "bad operand type for unary ~: \'float\'", False, nan, nan, nan, False, (nan, 1), True]'] => (nan, 1)
 result [variables=1, distance=1, values=(nan, 1), result='[False, False, False, True, False, False, \'not <\', 2, 1, \'no\', \'not <=\', 2, 2, \'no\', \'not ==\', 2, 0, \'no\', \'!=\', 1, 1, \'yes\', \'not >\', 2, 0, \'no\', \'not >=\', 2, 0, \'no\', nan, nan, "bad operand type for unary ~: \'float\'", False, nan, nan, nan, False, (nan, 1), True]'] => [False, False, False, True, False, False, 'not <', 2, 1, 'no', 'not <=', 2, 2, 'no', 'not ==', 2, 0, 'no', '!=', 1, 1, 'yes', 'not >', 2, 0, 'no', 'not >=', 2, 0, 'no', nan, nan, "bad operand type for unary ~: 'float'", False, nan, nan, nan, False, (nan, 1), True]
-values [variables=1, distance=1, values=(1000000000000000000000000000000, 1), result="[False, False, False, True, True, True, 'not <', 2, 1, 'yes', 'not <=', 2, 2, 'yes', 'not ==', 2, 0, 'no', '!=', 1, 1, 'yes', '>', 1, 0, 'no', '>=', 1, 0, 'no', -1000000000000000000000000000000, 1000000000000000000000000000000, -1000000000000000000000000000001, False, 1000000000000000000000000000000, 0, -1000000000000000000000000000000, False, (1000000000000000000000000000000, 1), True]"] => (1000000000000000000000000000000, 1)
-result [variables=1, distance=1, values=(1000000000000000000000000000000, 1), result="[False, False, False, True, True, True, 'not <', 2, 1, 'yes', 'not <=', 2, 2, 'yes', 'not ==', 2, 0, 'no', '!=', 1, 1, 'yes', '>', 1, 0, 'no', '>=', 1, 0, 'no', -1000000000000000000000000000000, 1000000000000000000000000000000, -1000000000000000000000000000001, False, 1000000000000000000000000000000, 0, -1000000000000000000000000000000, False, (1000000000000000000000000000000, 1), True]"] => [False, False, False, True, True, True, 'not <', 2, 1, 'yes', 'not <=', 2, 2, 'yes', 'not ==', 2, 0, 'no', '!=', 1, 1, 'yes', '>', 1, 0, 'no', '>=', 1, 0, 'no', -1000000000000000000000000000000, 1000000000000000000000000000000, -1000000000000000000000000000001, False, 1000000000000000000000000000000, 0, -1000000000000000000000000000000, False, (1000000000000000000000000000000, 1), True]
-values [variables=1, distance=1, values=('a', 'b'), result='[True, True, False, True, False, False, \'<\', 1, 1, \'no\', \'<=\', 1, 2, \'no\', \'not ==\', 2, 0, \'no\', \'!=\', 1, 1, \'yes\', \'not >\', 2, 0, \'yes\', \'not >=\', 2, 0, \'yes\', "bad operand type for unary -: \'str\'", "bad operand type for unary +: \'str\'", "bad operand type for unary ~: \'str\'", False, "unsupported operand type(s) for //: \'str\' and \'str\'", "unsupported operand type(s) for //: \'str\' and \'str\'", "unsupported operand type(s) for //: \'str\' and \'str\'", "bad operand type for unary -: \'str\'", (\'a\', \'b\'), True]'] => ('a', 'b')
-result [variables=1, distance=1, values=('a', 'b'), result='[True, True, False, True, False, False, \'<\', 1, 1, \'no\', \'<=\', 1, 2, \'no\', \'not ==\', 2, 0, \'no\', \'!=\', 1, 1, \'yes\', \'not >\', 2, 0, \'yes\', \'not >=\', 2, 0, \'yes\', "bad operand type for unary -: \'str\'", "bad operand type for unary +: \'str\'", "bad operand type for unary ~: \'str\'", False, "unsupported operand type(s) for //: \'str\' and \'str\'", "unsupported operand type(s) for //: \'str\' and \'str\'", "unsupported operand type(s) for //: \'str\' and \'str\'", "bad operand type for unary -: \'str\'", (\'a\', \'b\'), True]'] => [True, True, False, True, False, False, '<', 1, 1, 'no', '<=', 1, 2, 'no', 'not ==', 2, 0, 'no', '!=', 1, 1, 'yes', 'not >', 2, 0, 'yes', 'not >=', 2, 0, 'yes', "bad operand type for unary -: 'str'", "bad operand type for unary +: 'str'", "bad operand type for unary ~: 'str'", False, "unsupported operand type(s) for //: 'str' and 'str'", "unsupported operand type(s) for //: 'str' and 'str'", "unsupported operand type(s) for //: 'str' and 'str'", "bad operand type for unary -: 'str'", ('a', 'b'), True]
-values [variables=1, distance=1, values=('b', 'a'), result='[False, False, False, True, True, True, \'not <\', 2, 1, \'yes\', \'not <=\', 2, 2, \'yes\', \'not ==\', 2, 0, \'no\', \'!=\', 1, 1, \'yes\', \'>\', 1, 0, \'no\', \'>=\', 1, 0, \'no\', "bad operand type for unary -: \'str\'", "bad operand type for unary +: \'str\'", "bad operand type for unary ~: \'str\'", False, "unsupported operand type(s) for //: \'str\' and \'str\'", "unsupported operand type(s) for //: \'str\' and \'str\'", "unsupported operand type(s) for //: \'str\' and \'str\'", "bad operand type for unary -: \'str\'", (\'b\', \'a\'), True]'] => ('b', 'a')
-result [variables=1, distance=1, values=('b', 'a'), result='[False, False, False, True, True, True, \'not <\', 2, 1, \'yes\', \'not <=\', 2, 2, \'yes\', \'not ==\', 2, 0, \'no\', \'!=\', 1, 1, \'yes\', \'>\', 1, 0, \'no\', \'>=\', 1, 0, \'no\', "bad operand type for unary -: \'str\'", "bad operand type for unary +: \'str\'", "bad operand type for unary ~: \'str\'", False, "unsupported operand type(s) for //: \'str\' and \'str\'", "unsupported operand type(s) for //: \'str\' and \'str\'", "unsupported operand type(s) for //: \'str\' and \'str\'", "bad operand type for unary -: \'str\'", (\'b\', \'a\'), True]'] => [False, False, False, True, True, True, 'not <', 2, 1, 'yes', 'not <=', 2, 2, 'yes', 'not ==', 2, 0, 'no', '!=', 1, 1, 'yes', '>', 1, 0, 'no', '>=', 1, 0, 'no', "bad operand type for unary -: 'str'", "bad operand type for unary +: 'str'", "bad operand type for unary ~: 'str'", False, "unsupported operand type(s) for //: 'str' and 'str'", "unsupported operand type(s) for //: 'str' and 'str'", "unsupported operand type(s) for //: 'str' and 'str'", "bad operand type for unary -: 'str'", ('b', 'a'), True]
-values [variables=1, distance=1, values=tuple, result='[True, True, False, True, False, False, \'<\', 1, 1, \'no\', \'<=\', 1, 2, \'no\', \'not ==\', 2, 0, \'no\', \'!=\', 1, 1, \'yes\', \'not >\', 2, 0, \'yes\', \'not >=\', 2, 0, \'yes\', "bad operand type for unary -: \'tuple\'", "bad operand type for unary +: \'tuple\'", "bad operand type for unary ~: \'tuple\'", False, "unsupported operand type(s) for //: \'tuple\' and \'tuple\'", "unsupported operand type(s) for //: \'tuple\' and \'tuple\'", "unsupported operand type(s) for //: \'tuple\' and \'tuple\'", "bad operand type for unary -: \'tuple\'", ((1, 2), (1, 3)), True]'] => ((1, 2), (1, 3))
-result [variables=1, distance=1, values=tuple, result='[True, True, False, True, False, False, \'<\', 1, 1, \'no\', \'<=\', 1, 2, \'no\', \'not ==\', 2, 0, \'no\', \'!=\', 1, 1, \'yes\', \'not >\', 2, 0, \'yes\', \'not >=\', 2, 0, \'yes\', "bad operand type for unary -: \'tuple\'", "bad operand type for unary +: \'tuple\'", "bad operand type for unary ~: \'tuple\'", False, "unsupported operand type(s) for //: \'tuple\' and \'tuple\'", "unsupported operand type(s) for //: \'tuple\' and \'tuple\'", "unsupported operand type(s) for //: \'tuple\' and \'tuple\'", "bad operand type for unary -: \'tuple\'", ((1, 2), (1, 3)), True]'] => [True, True, False, True, False, False, '<', 1, 1, 'no', '<=', 1, 2, 'no', 'not ==', 2, 0, 'no', '!=', 1, 1, 'yes', 'not >', 2, 0, 'yes', 'not >=', 2, 0, 'yes', "bad operand type for unary -: 'tuple'", "bad operand type for unary +: 'tuple'", "bad operand type for unary ~: 'tuple'", False, "unsupported operand type(s) for //: 'tuple' and 'tuple'", "unsupported operand type(s) for //: 'tuple' and 'tuple'", "unsupported operand type(s) for //: 'tuple' and 'tuple'", "bad operand type for unary -: 'tuple'", ((1, 2), (1, 3)), True]
-values [variables=1, distance=1, values=(True, 1), result="[False, True, True, False, False, True, 'not <', 2, 1, 'no', '<=', 1, 2, 'yes', '==', 1, 0, 'yes', 'not !=', 2, 1, 'no', 'not >', 2, 0, 'no', '>=', 1, 0, 'yes', -1, 1, -2, False, 1, 1, -1, False, (True, 1), True]"] => (True, 1)
-result [variables=1, distance=1, values=(True, 1), result="[False, True, True, False, False, True, 'not <', 2, 1, 'no', '<=', 1, 2, 'yes', '==', 1, 0, 'yes', 'not !=', 2, 1, 'no', 'not >', 2, 0, 'no', '>=', 1, 0, 'yes', -1, 1, -2, False, 1, 1, -1, False, (True, 1), True]"] => [False, True, True, False, False, True, 'not <', 2, 1, 'no', '<=', 1, 2, 'yes', '==', 1, 0, 'yes', 'not !=', 2, 1, 'no', 'not >', 2, 0, 'no', '>=', 1, 0, 'yes', -1, 1, -2, False, 1, 1, -1, False, (True, 1), True]
 values [variables=1, distance=1, values=(None, None), result='["\'<\' not supported between instances of \'NoneType\' and \'NoneType\'", "\'<=\' not supported between instances of \'NoneType\' and \'NoneType\'", True, False, "\'>\' not supported between instances of \'NoneType\' and \'NoneType\'", "\'>=\' not supported between instances of \'NoneType\' and \'NoneType\'", "\'<\' not supported between instances of \'NoneType\' and \'NoneType\'", "\'<=\' not supported between instances of \'NoneType\' and \'NoneType\'", \'==\', 1, 0, \'yes\', \'not !=\', 2, 1, \'no\', "\'>\' not supported between instances of \'NoneType\' and \'NoneType\'", "\'>=\' not supported between instances of \'NoneType\' and \'NoneType\'", "bad operand type for unary -: \'NoneType\'", "bad operand type for unary +: \'NoneType\'", "bad operand type for unary ~: \'NoneType\'", True, "unsupported operand type(s) for //: \'NoneType\' and \'NoneType\'", "unsupported operand type(s) for //: \'NoneType\' and \'NoneType\'", "unsupported operand type(s) for //: \'NoneType\' and \'NoneType\'", "bad operand type for unary -: \'NoneType\'", (None, None), True]'] => (None, None)
 result [variables=1, distance=1, values=(None, None), result='["\'<\' not supported between instances of \'NoneType\' and \'NoneType\'", "\'<=\' not supported between instances of \'NoneType\' and \'NoneType\'", True, False, "\'>\' not supported between instances of \'NoneType\' and \'NoneType\'", "\'>=\' not supported between instances of \'NoneType\' and \'NoneType\'", "\'<\' not supported between instances of \'NoneType\' and \'NoneType\'", "\'<=\' not supported between instances of \'NoneType\' and \'NoneType\'", \'==\', 1, 0, \'yes\', \'not !=\', 2, 1, \'no\', "\'>\' not supported between instances of \'NoneType\' and \'NoneType\'", "\'>=\' not supported between instances of \'NoneType\' and \'NoneType\'", "bad operand type for unary -: \'NoneType\'", "bad operand type for unary +: \'NoneType\'", "bad operand type for unary ~: \'NoneType\'", True, "unsupported operand type(s) for //: \'NoneType\' and \'NoneType\'", "unsupported operand type(s) for //: \'NoneType\' and \'NoneType\'", "unsupported operand type(s) for //: \'NoneType\' and \'NoneType\'", "bad operand type for unary -: \'NoneType\'", (None, None), True]'] => ["'<' not supported between instances of 'NoneType' and 'NoneType'", "'<=' not supported between instances of 'NoneType' and 'NoneType'", True, False, "'>' not supported between instances of 'NoneType' and 'NoneType'", "'>=' not supported between instances of 'NoneType' and 'NoneType'", "'<' not supported between instances of 'NoneType' and 'NoneType'", "'<=' not supported between instances of 'NoneType' and 'NoneType'", '==', 1, 0, 'yes', 'not !=', 2, 1, 'no', "'>' not supported between instances of 'NoneType' and 'NoneType'", "'>=' not supported between instances of 'NoneType' and 'NoneType'", "bad operand type for unary -: 'NoneType'", "bad operand type for unary +: 'NoneType'", "bad operand type for unary ~: 'NoneType'", True, "unsupported operand type(s) for //: 'NoneType' and 'NoneType'", "unsupported operand type(s) for //: 'NoneType' and 'NoneType'", "unsupported operand type(s) for //: 'NoneType' and 'NoneType'", "bad operand type for unary -: 'NoneType'", (None, None), True]
-values [variables=1, distance=1, values=tuple, result='[False, True, True, False, False, True, \'not <\', 2, 1, \'no\', \'<=\', 1, 2, \'yes\', \'==\', 1, 0, \'yes\', \'not !=\', 2, 1, \'no\', \'not >\', 2, 0, \'no\', \'>=\', 1, 0, \'yes\', "bad operand type for unary -: \'list\'", "bad operand type for unary +: \'list\'", "bad operand type for unary ~: \'list\'", False, "unsupported operand type(s) for //: \'list\' and \'list\'", "unsupported operand type(s) for //: \'list\' and \'list\'", "unsupported operand type(s) for //: \'list\' and \'list\'", "bad operand type for unary -: \'list\'", ([1], [1]), True]'] => ([1], [1])
-result [variables=1, distance=1, values=tuple, result='[False, True, True, False, False, True, \'not <\', 2, 1, \'no\', \'<=\', 1, 2, \'yes\', \'==\', 1, 0, \'yes\', \'not !=\', 2, 1, \'no\', \'not >\', 2, 0, \'no\', \'>=\', 1, 0, \'yes\', "bad operand type for unary -: \'list\'", "bad operand type for unary +: \'list\'", "bad operand type for unary ~: \'list\'", False, "unsupported operand type(s) for //: \'list\' and \'list\'", "unsupported operand type(s) for //: \'list\' and \'list\'", "unsupported operand type(s) for //: \'list\' and \'list\'", "bad operand type for unary -: \'list\'", ([1], [1]), True]'] => [False, True, True, False, False, True, 'not <', 2, 1, 'no', '<=', 1, 2, 'yes', '==', 1, 0, 'yes', 'not !=', 2, 1, 'no', 'not >', 2, 0, 'no', '>=', 1, 0, 'yes', "bad operand type for unary -: 'list'", "bad operand type for unary +: 'list'", "bad operand type for unary ~: 'list'", False, "unsupported operand type(s) for //: 'list' and 'list'", "unsupported operand type(s) for //: 'list' and 'list'", "unsupported operand type(s) for //: 'list' and 'list'", "bad operand type for unary -: 'list'", ([1], [1]), True]
 variables [variables=1, distance=1] => 1
 distance [variables=1, distance=1] => 1
 as in the smallest: plain == first [variables=1, distance=1] => True
 f(1, 2)[-1] [variables=1, distance=1] => 0
     by line: by_line[0] == plain [variables=1, distance=1] => True
-len(by_line[1]) [variables=1, distance=1] => 2181
-digest(by_line[1]) [variables=1, distance=1] => 31509cb9f5
+len(by_line[1]) [variables=1, distance=1] => 747
+digest(by_line[1]) [variables=1, distance=1] => 61436630e2
     by instruction: by_instruction[0] == plain [variables=1, distance=1] => True
 by_instruction[1] == by_line[1] [variables=1, distance=1] => True
     monitored: branches[0] == plain [variables=1, distance=1] => True
-len(branches[1]) [variables=1, distance=1] => 649
-digest(branches[1]) [variables=1, distance=1] => 29bab66333
+len(branches[1]) [variables=1, distance=1] => 216
+digest(branches[1]) [variables=1, distance=1] => 9cfff3bbdb
     afterwards: run(f) == plain [variables=1, distance=1] => True
     after marshal: run(namespace['f']) == plain [variables=1, distance=1] => True
     a copy made while tracing: run(types.FunctionType(copy, {})) == plain if not copy.co_freevars el... [variables=1, distance=1] => True
-variables [variables=1, distance=40] => 1
-distance [variables=1, distance=40] => 40
-as in the smallest: plain == first [variables=1, distance=40] => True
-f(1, 2)[-1] [variables=1, distance=40] => 0
-    by line: by_line[0] == plain [variables=1, distance=40] => True
-len(by_line[1]) [variables=1, distance=40] => 10488
-digest(by_line[1]) [variables=1, distance=40] => f94f17aa72
-    by instruction: by_instruction[0] == plain [variables=1, distance=40] => True
-by_instruction[1] == by_line[1] [variables=1, distance=40] => True
-    monitored: branches[0] == plain [variables=1, distance=40] => True
-len(branches[1]) [variables=1, distance=40] => 649
-digest(branches[1]) [variables=1, distance=40] => 9ba0dfdd4f
-    afterwards: run(f) == plain [variables=1, distance=40] => True
-    after marshal: run(namespace['f']) == plain [variables=1, distance=40] => True
-    a copy made while tracing: run(types.FunctionType(copy, {})) == plain if not copy.co_freevars el... [variables=1, distance=40] => True
-variables [variables=1, distance=3000] => 1
-distance [variables=1, distance=3000] => 3000
-as in the smallest: plain == first [variables=1, distance=3000] => True
-f(1, 2)[-1] [variables=1, distance=3000] => 0
-    by line: by_line[0] == plain [variables=1, distance=3000] => True
-len(by_line[1]) [variables=1, distance=3000] => 640968
-digest(by_line[1]) [variables=1, distance=3000] => 5c2f42562c
-    monitored: branches[0] == plain [variables=1, distance=3000] => True
-len(branches[1]) [variables=1, distance=3000] => 649
-digest(branches[1]) [variables=1, distance=3000] => 4dabc4c954
-    afterwards: run(f) == plain [variables=1, distance=3000] => True
-    after marshal: run(namespace['f']) == plain [variables=1, distance=3000] => True
-    a copy made while tracing: run(types.FunctionType(copy, {})) == plain if not copy.co_freevars el... [variables=1, distance=3000] => True
-variables [variables=150, distance=1] => 150
-distance [variables=150, distance=1] => 1
-as in the smallest: plain == first [variables=150, distance=1] => True
-f(1, 2)[-1] [variables=150, distance=1] => 149
-    by line: by_line[0] == plain [variables=150, distance=1] => True
-len(by_line[1]) [variables=150, distance=1] => 4267
-digest(by_line[1]) [variables=150, distance=1] => 4254f47611
-    by instruction: by_instruction[0] == plain [variables=150, distance=1] => True
-by_instruction[1] == by_line[1] [variables=150, distance=1] => True
-    monitored: branches[0] == plain [variables=150, distance=1] => True
-len(branches[1]) [variables=150, distance=1] => 649
-digest(branches[1]) [variables=150, distance=1] => b1b629a241
-    afterwards: run(f) == plain [variables=150, distance=1] => True
-    after marshal: run(namespace['f']) == plain [variables=150, distance=1] => True
-    a copy made while tracing: run(types.FunctionType(copy, {})) == plain if not copy.co_freevars el... [variables=150, distance=1] => True
-variables [variables=150, distance=40] => 150
-distance [variables=150, distance=40] => 40
-as in the smallest: plain == first [variables=150, distance=40] => True
-f(1, 2)[-1] [variables=150, distance=40] => 149
-    by line: by_line[0] == plain [variables=150, distance=40] => True
-len(by_line[1]) [variables=150, distance=40] => 12574
-digest(by_line[1]) [variables=150, distance=40] => d492482837
-    by instruction: by_instruction[0] == plain [variables=150, distance=40] => True
-by_instruction[1] == by_line[1] [variables=150, distance=40] => True
-    monitored: branches[0] == plain [variables=150, distance=40] => True
-len(branches[1]) [variables=150, distance=40] => 649
-digest(branches[1]) [variables=150, distance=40] => 9c9f95d31c
-    afterwards: run(f) == plain [variables=150, distance=40] => True
-    after marshal: run(namespace['f']) == plain [variables=150, distance=40] => True
-    a copy made while tracing: run(types.FunctionType(copy, {})) == plain if not copy.co_freevars el... [variables=150, distance=40] => True
-variables [variables=300, distance=3000] => 300
-distance [variables=300, distance=3000] => 3000
-as in the smallest: plain == first [variables=300, distance=3000] => True
-f(1, 2)[-1] [variables=300, distance=3000] => 299
-    by line: by_line[0] == plain [variables=300, distance=3000] => True
-len(by_line[1]) [variables=300, distance=3000] => 645154
-digest(by_line[1]) [variables=300, distance=3000] => 405fec3947
-    monitored: branches[0] == plain [variables=300, distance=3000] => True
-len(branches[1]) [variables=300, distance=3000] => 649
-digest(branches[1]) [variables=300, distance=3000] => bddeab83cf
-    afterwards: run(f) == plain [variables=300, distance=3000] => True
-    after marshal: run(namespace['f']) == plain [variables=300, distance=3000] => True
-    a copy made while tracing: run(types.FunctionType(copy, {})) == plain if not copy.co_freevars el... [variables=300, distance=3000] => True
-variables [variables=40000, distance=1] => 40000
-distance [variables=40000, distance=1] => 1
-as in the smallest: plain == first [variables=40000, distance=1] => True
-f(1, 2)[-1] [variables=40000, distance=1] => 39999
-    by line: by_line[0] == plain [variables=40000, distance=1] => True
-len(by_line[1]) [variables=40000, distance=1] => 562167
-digest(by_line[1]) [variables=40000, distance=1] => 6014309a74
-    monitored: branches[0] == plain [variables=40000, distance=1] => True
-len(branches[1]) [variables=40000, distance=1] => 649
-digest(branches[1]) [variables=40000, distance=1] => a486397673
-    afterwards: run(f) == plain [variables=40000, distance=1] => True
-    after marshal: run(namespace['f']) == plain [variables=40000, distance=1] => True
-    a copy made while tracing: run(types.FunctionType(copy, {})) == plain if not copy.co_freevars el... [variables=40000, distance=1] => True
-variables [variables=40000, distance=40] => 40000
-distance [variables=40000, distance=40] => 40
-as in the smallest: plain == first [variables=40000, distance=40] => True
-f(1, 2)[-1] [variables=40000, distance=40] => 39999
-    by line: by_line[0] == plain [variables=40000, distance=40] => True
-len(by_line[1]) [variables=40000, distance=40] => 570474
-digest(by_line[1]) [variables=40000, distance=40] => d1011c0c7e
-    monitored: branches[0] == plain [variables=40000, distance=40] => True
-len(branches[1]) [variables=40000, distance=40] => 649
-digest(branches[1]) [variables=40000, distance=40] => fbdaf54cc7
-    afterwards: run(f) == plain [variables=40000, distance=40] => True
-    after marshal: run(namespace['f']) == plain [variables=40000, distance=40] => True
-    a copy made while tracing: run(types.FunctionType(copy, {})) == plain if not copy.co_freevars el... [variables=40000, distance=40] => True
+variables [variables=300, distance=40] => 300
+distance [variables=300, distance=40] => 40
+as in the smallest: plain == first [variables=300, distance=40] => True
+f(1, 2)[-1] [variables=300, distance=40] => 299
+    by line: by_line[0] == plain [variables=300, distance=40] => True
+len(by_line[1]) [variables=300, distance=40] => 3438
+digest(by_line[1]) [variables=300, distance=40] => 75de342306
+    by instruction: by_instruction[0] == plain [variables=300, distance=40] => True
+by_instruction[1] == by_line[1] [variables=300, distance=40] => True
+    monitored: branches[0] == plain [variables=300, distance=40] => True
+len(branches[1]) [variables=300, distance=40] => 216
+digest(branches[1]) [variables=300, distance=40] => fd8ae9ed88
+    afterwards: run(f) == plain [variables=300, distance=40] => True
+    after marshal: run(namespace['f']) == plain [variables=300, distance=40] => True
+    a copy made while tracing: run(types.FunctionType(copy, {})) == plain if not copy.co_freevars el... [variables=300, distance=40] => True
+variables [variables=33000, distance=1] => 33000
+distance [variables=33000, distance=1] => 1
+as in the smallest: plain == first [variables=33000, distance=1] => True
+f(1, 2)[-1] [variables=33000, distance=1] => 32999
+    by line: by_line[0] == plain [variables=33000, distance=1] => True
+len(by_line[1]) [variables=33000, distance=1] => 747
+digest(by_line[1]) [variables=33000, distance=1] => 61436630e2
+    monitored: branches[0] == plain [variables=33000, distance=1] => True
+len(branches[1]) [variables=33000, distance=1] => 216
+digest(branches[1]) [variables=33000, distance=1] => 9cfff3bbdb
+    afterwards: run(f) == plain [variables=33000, distance=1] => True
+    after marshal: run(namespace['f']) == plain [variables=33000, distance=1] => True
+    a copy made while tracing: run(types.FunctionType(copy, {})) == plain if not copy.co_freevars el... [variables=33000, distance=1] => True

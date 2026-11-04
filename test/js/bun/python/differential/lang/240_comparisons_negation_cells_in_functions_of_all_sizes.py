@@ -1,14 +1,14 @@
 # Comparisons with and without a jump behind them, unary operators, floor division and stores to cells, in functions with a few
-# variables, with hundreds and with tens of thousands, over short and long distances; run plainly, traced by line and by
-# instruction, monitored, and after a round trip through marshal.
+# variables, with hundreds and with tens of thousands, over short and longer distances; run plainly, traced by line and by
+# instruction, monitored, and after a round trip through marshal. (slow/ has the same with more values, sizes and distances.)
 import sys, marshal, hashlib, types
 
-VALUES = [(1, 2), (2, 1), (2, 2), (1.5, 2), (2, 1.5), (-0.0, 0), (float('nan'), 1), (10 ** 30, 1), ('a', 'b'), ('b', 'a'), ((1, 2), (1, 3)), (True, 1), (None, None), ([1], [1])]
+VALUES = [(1, 2), (2, 1), (2, 2), (float('nan'), 1), (None, None)]
 
 
 def source(variables, distance):
-    lines = ['def f(p, q):']
-    lines += ['    v%d = %d' % (i, i) for i in range(variables)]
+    # The variables that come first only take up room: nothing is ever assigned to them.
+    lines = ['def f(p, q):', '    if p is ...:', '        ' + ' = '.join('v%d' % i for i in range(variables)) + ' = 0']
     lines += ['    a = p', '    b = q', '    out = []', '    add = out.append']
     lines += ['    c = 0', '    def get(): return c, d', '    d = 1']
     for operator in ('<', '<=', '==', '!=', '>', '>='):
@@ -24,7 +24,7 @@ def source(variables, distance):
     for expression in ('-a', '+a', '~a', 'not a', 'a // b', 'b // a', '-(a // b)', 'not -a'):
         lines += ['    try:', '        r = %s' % expression, '        add(r)', '    except (TypeError, ZeroDivisionError) as e:', '        add(str(e))']
     lines += ['    c = a', '    d = b', '    add(get())', '    c = d = out', '    add(get()[0] is get()[1] is out)']
-    lines += ['    c = None', '    return out + [v%d]' % (variables - 1)]
+    lines += ['    c = None', '    return out + [%d]' % (variables - 1)]
     return '\n'.join(lines) + '\n'
 
 
@@ -88,7 +88,7 @@ def monitored(function):
 
 
 first = None
-for variables, distance in ((1, 1), (1, 40), (1, 3000), (150, 1), (150, 40), (300, 3000), (40000, 1), (40000, 40)):
+for variables, distance in ((1, 1), (300, 40), (33000, 1)):
     code = compile(source(variables, distance), '<sizes>', 'exec')
     namespace = {}
     exec(code, namespace)
@@ -99,7 +99,7 @@ for variables, distance in ((1, 1), (1, 40), (1, 3000), (150, 1), (150, 40), (30
         for values, result in zip(VALUES, plain):
             print(values, result)
     print(variables, distance, 'as in the smallest:', plain == first, f(1, 2)[-1])
-    small = variables < 1000 and distance < 1000
+    small = variables < 1000
     by_line = traced(f, False)
     print('    by line:', by_line[0] == plain, len(by_line[1]), digest(by_line[1]))
     if small:

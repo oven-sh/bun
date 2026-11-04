@@ -317,12 +317,11 @@ pub(crate) type EventPathString = Box<[u8]>;
 
 /// The kind of change a watcher backend reports for a path, before it becomes a JS event.
 /// Every backend (inotify, kqueue, FSEvents, Windows) produces exactly these two.
-#[derive(Copy, Clone, Default, Eq, PartialEq, strum::IntoStaticStr)]
+#[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
 pub enum WatchEventKind {
     #[strum(serialize = "rename")]
     Rename,
     #[strum(serialize = "change")]
-    #[default]
     Change,
 }
 

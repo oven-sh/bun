@@ -1878,7 +1878,7 @@ test("a spy on a value that native code keeps behind a setter is what native cod
       exports.greet = name => require("./greet.cjs")(name);
       exports.separator = () => require("node:path").sep;`,
     "one.test.ts": `
-      import { expect, spyOn, test } from "bun:test";
+      import { expect, jest, spyOn, test } from "bun:test";
       import Module, { createRequire } from "node:module";
       const require = createRequire(import.meta.url);
       const uses = require("./uses.cjs");
@@ -1894,7 +1894,9 @@ test("a spy on a value that native code keeps behind a setter is what native cod
         expect(spy).toHaveBeenCalledTimes(1);
         console.log(delete (Error as any).prepareStackTrace);
         spy.mockRestore();
-        console.log(String(new Error("b").stack).split("\\n")[0], attributesOf(Error, "prepareStackTrace") === attributes);
+        console.log(String(new Error("b").stack).split("\\n")[0]);
+        expect(spy).not.toHaveBeenCalled();
+        expect(attributesOf(Error, "prepareStackTrace")).toBe(attributes);
       });
       test("the exports of a CommonJS file", () => {
         const attributes = attributesOf(greetModule, "exports");
@@ -1902,25 +1904,27 @@ test("a spy on a value that native code keeps behind a setter is what native cod
         console.log(uses.greet("a"), attributesOf(greetModule, "exports") === attributes);
         expect(spy.mock.calls).toEqual([["a"]]);
         spy.mockRestore();
-        console.log(uses.greet("b"), attributesOf(greetModule, "exports") === attributes);
+        expect(uses.greet("b")).toBe("hello b");
+        expect(spy).not.toHaveBeenCalled();
+        expect(attributesOf(greetModule, "exports")).toBe(attributes);
       });
+      // Nothing reads console.Console before the spy does: its getter replaces itself with a plain value on the first read.
       test("a value with no setter behind it", () => {
+        const data = { writable: true, enumerable: true, configurable: true };
         const spy = spyOn(console, "Console");
-        expect(Object.getOwnPropertyDescriptor(console, "Console")).toEqual({
-          value: spy,
-          writable: true,
-          enumerable: true,
-          configurable: true,
-        });
+        expect(Object.getOwnPropertyDescriptor(console, "Console")).toEqual({ ...data, value: spy });
         spy.mockRestore();
-        console.log(attributesOf(console, "Console"), console.Console.name);
+        expect(Object.getOwnPropertyDescriptor(console, "Console")).toEqual({ ...data, value: expect.any(Function) });
+        expect(Object.is(console.Console, spy)).toBe(false);
+        console.log(console.Console.name);
       });
       test("the function behind require()", () => {
         const spy = spyOn(Module.prototype, "require");
         console.log(uses.separator().length);
         expect(spy.mock.calls.map(call => call[0])).toEqual(["node:path"]);
         spy.mockRestore();
-        console.log(uses.separator().length, spy.mock.calls.length);
+        console.log(uses.separator().length, typeof jest.requireActual("node:path").sep);
+        expect(spy).not.toHaveBeenCalled();
       });`,
   });
 });

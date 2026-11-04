@@ -20,6 +20,41 @@ async function run(files: Record<string, string>, entry = "main.py") {
 // Threads are POSIX only so far.
 const it = isWindows ? test.skip : test.concurrent;
 
+it("a wait that nothing can end is an error where JavaScript has called into Python", async () => {
+  // A program of Python sleeps until a signal comes, as in CPython. Here nothing of JavaScript runs while the thread waits.
+  const { stdout, stderr, exitCode } = await run(
+    {
+      "waits.py": `
+import os, signal, threading
+
+def wait():
+    threading.Event().wait()
+
+def wait_for_a_signal():
+    signal.signal(signal.SIGUSR1, lambda number, frame: 1 / 0)
+    os.kill(os.getpid(), signal.SIGUSR1)
+    threading.Event().wait()
+`,
+      "main.js": `
+import { wait, wait_for_a_signal } from "./waits.py";
+for (const f of [wait, wait_for_a_signal]) {
+  try {
+    f();
+  } catch (e) {
+    console.log(e.name + ": " + e.message);
+  }
+}
+`,
+    },
+    "main.js",
+  );
+  expect(stderr).toBe("");
+  expect(stdout).toBe(
+    "RuntimeError: deadlock: the lock is held, and there is no other thread\nZeroDivisionError: division by zero\n",
+  );
+  expect(exitCode).toBe(0);
+});
+
 it("threads run while others wait in blocking calls", async () => {
   const { stdout, stderr, exitCode } = await run({
     "main.py": `

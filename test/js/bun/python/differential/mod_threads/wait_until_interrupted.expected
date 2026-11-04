@@ -1,0 +1,13 @@
+status: 0
+script: fd68320ff1514aec
+---
+Event.wait KeyboardInterrupt
+Lock.acquire KeyboardInterrupt
+Condition.wait KeyboardInterrupt
+Semaphore.acquire KeyboardInterrupt
+Queue.get KeyboardInterrupt
+ready
+SIG_DFL '' -2
+ready
+SIG_IGN '' -15
+True

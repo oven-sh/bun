@@ -2053,8 +2053,7 @@ pub mod closer {
     }
 
     bun_threading::intrusive_work_task!(Closer, task);
-    // SAFETY: `Closer` is `Send` (`Fd` + intrusive `Task`).
-    unsafe impl bun_threading::work_pool::OwnedTask for Closer {
+    impl bun_threading::work_pool::OwnedTask for Closer {
         fn run(self: Box<Self>) {
             use bun_sys::FdExt;
             self.fd.close();

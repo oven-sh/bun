@@ -236,12 +236,17 @@ impl Loop {
     pub fn drain_quic_if_necessary(&self) {
         if !self.internal_loop_data.nq_head.get().is_null() {
             // Full pass with close dispatch deferred to the next loop point.
-            c::us_nq_loop_drain(self);
+            // SAFETY: `self` is this thread's live loop. The walk holds its successor while JS
+            // runs, and relies on an endpoint staying rooted until its close is delivered.
+            unsafe { c::us_nq_loop_drain(self) };
         }
         if !self.internal_loop_data.has_quic() {
             return;
         }
-        c::us_quic_loop_flush_if_pending(self);
+        // SAFETY: `self` is this thread's live loop. `processing` keeps this out of every lsquic
+        // callback but the `on_stream_open` that `us_quic_socket_make_stream` makes, and that one
+        // does not flush.
+        unsafe { c::us_quic_loop_flush_if_pending(self) };
     }
 
     /// `None` if the epoll/kqueue descriptor or the completion port cannot be created (EMFILE).
@@ -255,18 +260,25 @@ impl Loop {
     }
 
     pub fn tick(&self) {
-        c::us_loop_run_bun_tick(self, None, NOW_NS_UNKNOWN);
+        // SAFETY: as in `tick_with_timeout`.
+        unsafe { c::us_loop_run_bun_tick(self, None, NOW_NS_UNKNOWN) };
     }
 
     pub fn tick_without_idle(&self) {
-        c::us_loop_run_bun_tick(self, Some(&Timespec { sec: 0, nsec: 0 }), NOW_NS_UNKNOWN);
+        // SAFETY: as in `tick_with_timeout`.
+        unsafe {
+            c::us_loop_run_bun_tick(self, Some(&Timespec { sec: 0, nsec: 0 }), NOW_NS_UNKNOWN)
+        };
     }
 
     /// `now_ns` is the CLOCK_MONOTONIC reading the caller took to pick `timespec` (see
     /// `timer::All::get_timeout`), reused by the JS park hook's idle-sweep rate limit rather
     /// than read again. `NOW_NS_UNKNOWN` if the caller has none to share.
     pub fn tick_with_timeout(&self, timespec: Option<&Timespec>, now_ns: u64) {
-        c::us_loop_run_bun_tick(self, timespec, now_ns);
+        // SAFETY: `self` is this thread's live loop, and `jsc_vm` is null or its live VM. A handler
+        // may tick (`tick_depth`), but that refills the receive buffer and can dispatch the same
+        // socket again: such a handler is done with what the dispatch lent it.
+        unsafe { c::us_loop_run_bun_tick(self, timespec, now_ns) };
     }
 
     /// Free everything queued on `loop->data.closed_head` /
@@ -291,7 +303,10 @@ impl Loop {
     /// loop — covers Listener/App-owned groups that `RareData`'s static field
     /// list doesn't enumerate. Returns whether any group was linked.
     pub fn close_all_groups(&self) -> bool {
-        c::us_loop_close_all_groups(self) != 0
+        // SAFETY: `self` is this thread's live loop. The walk reads its successor after the close
+        // handlers ran, so none may free another group. The one caller runs at teardown, with the
+        // owners of the groups stopped and script forbidden.
+        unsafe { c::us_loop_close_all_groups(self) != 0 }
     }
 
     pub fn should_enable_date_header_timer(&self) -> bool {
@@ -329,16 +344,16 @@ mod c {
             ext_size: c_uint,
         ) -> *mut Loop;
         pub(super) fn us_loop_free(loop_: *mut Loop);
-        pub(super) safe fn us_quic_loop_flush_if_pending(loop_: &Loop);
-        pub(super) safe fn us_nq_loop_drain(loop_: &Loop);
+        pub(super) fn us_quic_loop_flush_if_pending(loop_: &Loop);
+        pub(super) fn us_nq_loop_drain(loop_: &Loop);
         pub fn us_wakeup_loop(loop_: *const Loop);
-        pub(super) safe fn us_loop_run_bun_tick(
+        pub(super) fn us_loop_run_bun_tick(
             loop_: &Loop,
             timeout_ms: Option<&Timespec>,
             now_ns: u64,
         );
         pub(super) fn us_internal_free_closed_sockets(loop_: &Loop);
-        pub(super) safe fn us_loop_close_all_groups(loop_: &Loop) -> c_int;
+        pub(super) fn us_loop_close_all_groups(loop_: &Loop) -> c_int;
         pub(super) safe fn uws_get_loop() -> *mut Loop;
         pub(super) fn uws_loop_date_header_timer_update(loop_: &Loop);
         pub(super) fn uws_loop_flush_pending_writes(loop_: &Loop);

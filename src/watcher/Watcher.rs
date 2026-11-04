@@ -523,7 +523,8 @@ impl Watcher {
         // Basically:
         // - We register the event here.
         // our while(true) loop above receives notification of changes to any of the events created here.
-        let _ = bun_sys::kevent(self.platform.fd, &[event], &mut [], None);
+        // SAFETY: only `watch_loop_cycle` waits on this kqueue, and it reads `udata` as an index.
+        let _ = unsafe { bun_sys::kevent(self.platform.fd, &[event], &mut [], None) };
     }
 
     fn append_file_assume_capacity<const CLONE_FILE_PATH: bool>(

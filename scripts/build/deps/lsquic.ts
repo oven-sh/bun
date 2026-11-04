@@ -153,6 +153,14 @@ export const lsquic: Dependency = {
     // and failed for a larger one. Such a block gets a heap buffer, sized from
     // the header list.
     "patches/lsquic/large-header-block.patch",
+    // immediate_close() sent nothing for lsquic_conn_abort_error() on a client
+    // that had not heard from the server, never used the Initial space, and
+    // turned code 0 into INTERNAL_ERROR. A close the application asked for now
+    // goes out with its code in the highest space that has keys. lsquic's own
+    // aborts are not changed. lsquic_conn_ack_now() no longer queues an ACK
+    // when no ack-eliciting packet waits for one. With nothing received that
+    // ACK failed and became an INTERNAL_ERROR close.
+    "patches/lsquic/user-abort-close.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

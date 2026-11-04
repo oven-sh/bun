@@ -1,5 +1,6 @@
 import { expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { join } from "node:path";
 
 // These builds take seconds to start Python.
 if (isDebug || isASAN) setDefaultTimeout(60_000);
@@ -402,6 +403,65 @@ nans = [float("nan"), 1.0, float("nan"), 3.0]
   );
   expect(stderr).toBe("");
   expect(stdout).toBe(answersOfEveryTier);
+  expect(exitCode).toBe(0);
+});
+
+// differential/interop/018_operator_operands has every operator with every kind of operand, once. Minutes in the slow builds.
+test.skipIf(isDebug || isASAN).concurrent.each(tiers.slice(2))(
+  "Python is asked before an operand is converted: %s",
+  async (_, env) => {
+    const script = join(import.meta.dir, "differential", "interop", "018_operator_operands");
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "main.js": await Bun.file(script + ".js").text(),
+        "018_operator_operands.py": await Bun.file(script + ".py").text(),
+      },
+      { ...env, TURNS: "300" },
+    );
+    const expected = await Bun.file(script + ".expected").text();
+    expect(stderr).toBe("");
+    expect(stdout).toBe(expected.slice(expected.indexOf("\n---\n") + 5));
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent("code of a realm that has no Python", async () => {
+  const { stdout, stderr, exitCode } = await run({
+    "v.py": vector,
+    "main.js": `
+      import { runInNewContext } from "node:vm";
+      import { V, Plain } from "./v.py";
+      const results = runInNewContext(\`
+        const outcome = f => { try { return String(f()); } catch (e) { return e.constructor.name + ": " + e.message; } };
+        [() => a - 1, () => 10 - a, () => a * b, () => a & 1, () => 1 << a, () => ~a, () => -a, () => { let c = a; ++c; return c; }, () => a + 1, () => "s" + a,
+         () => a == b, () => a == a, () => a != 3, () => a < b, () => 4 >= a, () => plain - 1, () => plain < 1, () => plain == plain, () => plain + "!"].map(outcome)
+      \`, { a: new V(3), b: new V(4), plain: new Plain() });
+      console.log(results.join("\\n"));
+    `,
+  });
+  expect(stderr).toBe("");
+  expect(stdout).toMatchInlineSnapshot(`
+    "V(2)
+    V(7)
+    V(12)
+    V(1)
+    TypeError: unsupported operand type(s) for <<: 'int' and 'V'
+    V(-4)
+    V(-3)
+    V(4)
+    V(4)
+    V(('r', 's', 3))
+    false
+    true
+    true
+    true
+    true
+    TypeError: unsupported operand type(s) for -: 'Plain' and 'int'
+    TypeError: '<' not supported between instances of 'Plain' and 'int'
+    true
+    plain!
+    "
+  `);
   expect(exitCode).toBe(0);
 });
 

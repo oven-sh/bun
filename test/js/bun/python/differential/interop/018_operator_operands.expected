@@ -1,0 +1,109 @@
+status: 0
+oracle: none
+mask: addresses
+---
+answers OP int: __OP__(int 3) | int OP answers: __rOP__(int 3)
+answers OP double: __OP__(float 1.5) | double OP answers: __rOP__(float 1.5)
+answers OP large: __OP__(int 1099511627776) | large OP answers: __rOP__(int 1099511627776)
+answers OP -0: __OP__(int 0) | -0 OP answers: __rOP__(int 0)
+answers OP NaN: __OP__(float nan) | NaN OP answers: __rOP__(float nan)
+answers OP BigInt: __OP__(int 5) | BigInt OP answers: __rOP__(int 5)
+answers OP string: __OP__(str '7') | string OP answers: __rOP__(str '7')
+answers OP rope: __OP__(str '1203456789012345') | rope OP answers: __rOP__(str '1203456789012345')
+answers OP : __OP__(str '') |  OP answers: __rOP__(str '')
+answers OP true: __OP__(bool True) | true OP answers: __rOP__(bool True)
+answers OP null: __OP__(NoneType None) | null OP answers: __rOP__(NoneType None)
+answers OP undefined: __OP__(NoneType None) | undefined OP answers: __rOP__(NoneType None)
+answers OP symbol: __OP__(JSSymbol) | symbol OP answers: __rOP__(JSSymbol)
+answers OP valueOf: __OP__(JSPlainObject) | valueOf OP answers: __rOP__(JSPlainObject)
+answers OP throws: __OP__(JSPlainObject) | throws OP answers: __rOP__(JSPlainObject)
+answers OP toPrimitive: __OP__(JSPlainObject) | toPrimitive OP answers: __rOP__(JSPlainObject)
+answers OP array: __OP__(list) | array OP answers: __rOP__(list)
+answers OP Date: __OP__(JSObject) | Date OP answers: __rOP__(JSObject)
+answers OP function: __OP__(JSFunction) | function OP answers: __rOP__(JSFunction)
+answers OP answers: __OP__(Answers) | answers OP answers: __OP__(Answers)
+answers OP raises: __OP__(Raises) | raises OP answers: ValueError: no
+answers OP nothing: __OP__(Nothing) | nothing OP answers: __rOP__(Nothing)
+answers, *: the same
+answers, /: the same
+answers, %: 
+  answers OP string: __OP__(str '7') | string OP answers: TypeError: not all arguments converted during string formatting (required 0, got 1)
+  answers OP rope: __OP__(str '1203456789012345') | rope OP answers: TypeError: not all arguments converted during string formatting (required 0, got 1)
+  answers OP : __OP__(str '') |  OP answers: TypeError: not all arguments converted during string formatting (required 0, got 1)
+answers, **: the same
+answers, <<: the same
+answers, >>: the same
+answers, &: the same
+answers, |: the same
+answers, ^: the same
+raises OP answers: ValueError: no | answers OP raises: __OP__(Raises)
+raises OP any of the other 21, and the other way round: ValueError: no
+raises, *: the same
+raises, /: the same
+raises, %: 
+  raises OP string: ValueError: no | string OP raises: TypeError: not all arguments converted during string formatting (required 0, got 1)
+  raises OP rope: ValueError: no | rope OP raises: TypeError: not all arguments converted during string formatting (required 0, got 1)
+  raises OP : ValueError: no |  OP raises: TypeError: not all arguments converted during string formatting (required 0, got 1)
+raises, **: the same
+raises, <<: the same
+raises, >>: the same
+raises, &: the same
+raises, |: the same
+raises, ^: the same
+nothing OP int: TypeError: unsupported: 'Nothing' and 'int' | int OP nothing: TypeError: unsupported: 'int' and 'Nothing'
+nothing OP double: TypeError: unsupported: 'Nothing' and 'float' | double OP nothing: TypeError: unsupported: 'float' and 'Nothing'
+nothing OP large: TypeError: unsupported: 'Nothing' and 'int' | large OP nothing: TypeError: unsupported: 'int' and 'Nothing'
+nothing OP -0: TypeError: unsupported: 'Nothing' and 'int' | -0 OP nothing: TypeError: unsupported: 'int' and 'Nothing'
+nothing OP NaN: TypeError: unsupported: 'Nothing' and 'float' | NaN OP nothing: TypeError: unsupported: 'float' and 'Nothing'
+nothing OP BigInt: TypeError: unsupported: 'Nothing' and 'int' | BigInt OP nothing: TypeError: unsupported: 'int' and 'Nothing'
+nothing OP string: TypeError: unsupported: 'Nothing' and 'str' | string OP nothing: TypeError: unsupported: 'str' and 'Nothing'
+nothing OP rope: TypeError: unsupported: 'Nothing' and 'str' | rope OP nothing: TypeError: unsupported: 'str' and 'Nothing'
+nothing OP : TypeError: unsupported: 'Nothing' and 'str' |  OP nothing: TypeError: unsupported: 'str' and 'Nothing'
+nothing OP true: TypeError: unsupported: 'Nothing' and 'bool' | true OP nothing: TypeError: unsupported: 'bool' and 'Nothing'
+nothing OP null: TypeError: unsupported: 'Nothing' and 'NoneType' | null OP nothing: TypeError: unsupported: 'NoneType' and 'Nothing'
+nothing OP undefined: TypeError: unsupported: 'Nothing' and 'NoneType' | undefined OP nothing: TypeError: unsupported: 'NoneType' and 'Nothing'
+nothing OP symbol: TypeError: unsupported: 'Nothing' and '_js.JSSymbol' | symbol OP nothing: TypeError: unsupported: '_js.JSSymbol' and 'Nothing'
+nothing OP valueOf: TypeError: unsupported: 'Nothing' and 'JSPlainObject' | valueOf OP nothing: TypeError: unsupported: 'JSPlainObject' and 'Nothing'
+nothing OP throws: TypeError: unsupported: 'Nothing' and 'JSPlainObject' | throws OP nothing: TypeError: unsupported: 'JSPlainObject' and 'Nothing'
+nothing OP toPrimitive: TypeError: unsupported: 'Nothing' and 'JSPlainObject' | toPrimitive OP nothing: TypeError: unsupported: 'JSPlainObject' and 'Nothing'
+nothing OP array: TypeError: unsupported: 'Nothing' and 'list' | array OP nothing: TypeError: unsupported: 'list' and 'Nothing'
+nothing OP Date: TypeError: unsupported: 'Nothing' and 'JSObject' | Date OP nothing: TypeError: unsupported: 'JSObject' and 'Nothing'
+nothing OP function: TypeError: unsupported: 'Nothing' and 'JSFunction' | function OP nothing: TypeError: unsupported: 'JSFunction' and 'Nothing'
+nothing OP answers: __rOP__(Nothing) | answers OP nothing: __OP__(Nothing)
+nothing OP nothing: TypeError: unsupported: 'Nothing' and 'Nothing' | nothing OP nothing: TypeError: unsupported: 'Nothing' and 'Nothing'
+nothing OP any of the other 1, and the other way round: ValueError: no
+nothing, *: 
+  nothing OP string: TypeError: can't multiply sequence by non-int of type 'Nothing' | string OP nothing: TypeError: can't multiply sequence by non-int of type 'Nothing'
+  nothing OP rope: TypeError: can't multiply sequence by non-int of type 'Nothing' | rope OP nothing: TypeError: can't multiply sequence by non-int of type 'Nothing'
+  nothing OP : TypeError: can't multiply sequence by non-int of type 'Nothing' |  OP nothing: TypeError: can't multiply sequence by non-int of type 'Nothing'
+  nothing OP array: TypeError: can't multiply sequence by non-int of type 'Nothing' | array OP nothing: TypeError: can't multiply sequence by non-int of type 'Nothing'
+nothing, /: the same
+nothing, %: 
+  nothing OP string: TypeError: unsupported: 'Nothing' and 'str' | string OP nothing: TypeError: not all arguments converted during string formatting (required 0, got 1)
+  nothing OP rope: TypeError: unsupported: 'Nothing' and 'str' | rope OP nothing: TypeError: not all arguments converted during string formatting (required 0, got 1)
+  nothing OP : TypeError: unsupported: 'Nothing' and 'str' |  OP nothing: TypeError: not all arguments converted during string formatting (required 0, got 1)
+nothing, **: the same
+nothing, <<: the same
+nothing, >>: the same
+nothing, &: the same
+nothing, |: the same
+nothing, ^: the same
+
+++a; return a;  answers: __add__(int 1) | raises: ValueError: no | nothing: TypeError: unsupported operand type(s) for +: 'Nothing' and 'int' | symbol: TypeError: Cannot convert a symbol to a number | valueOf: 5 (ran valueOf) | string: 8 | BigInt: 6n
+--a; return a;  answers: __sub__(int 1) | raises: ValueError: no | nothing: TypeError: unsupported operand type(s) for -: 'Nothing' and 'int' | symbol: TypeError: Cannot convert a symbol to a number | valueOf: 3 (ran valueOf) | string: 6 | BigInt: 4n
+return ~a;  answers: __invert__ | raises: ValueError: no | nothing: TypeError: bad operand type for unary ~: 'Nothing' | symbol: TypeError: Cannot convert a symbol to a number | valueOf: -5 (ran valueOf) | string: -8 | BigInt: -6n
+return -a;  answers: __neg__ | raises: ValueError: no | nothing: TypeError: bad operand type for unary -: 'Nothing' | symbol: TypeError: Cannot convert a symbol to a number | valueOf: -4 (ran valueOf) | string: -7 | BigInt: -5n
+a -= 1; return a;  answers: __sub__(int 1) | raises: ValueError: no | nothing: TypeError: unsupported operand type(s) for -: 'Nothing' and 'int' | symbol: TypeError: Cannot convert a symbol to a number | valueOf: 3 (ran valueOf) | string: 6 | BigInt: TypeError: Invalid mix of BigInt and other type in subtraction.
+a <<= 1; return a;  answers: __lshift__(int 1) | raises: ValueError: no | nothing: TypeError: unsupported operand type(s) for <<: 'Nothing' and 'int' | symbol: TypeError: Cannot convert a symbol to a number | valueOf: 8 (ran valueOf) | string: 14 | BigInt: TypeError: Invalid mix of BigInt and other type in left shift operation.
+a &= 3; return a;  answers: __and__(int 3) | raises: ValueError: no | nothing: TypeError: unsupported operand type(s) for &: 'Nothing' and 'int' | symbol: TypeError: Cannot convert a symbol to a number | valueOf: 0 (ran valueOf) | string: 3 | BigInt: TypeError: Invalid mix of BigInt and other type in bitwise 'and' operation.
+
+string & 3, 3 & string, string & string: 3 3 7 | 1 1 -1637261447 | 0 0 0 | 0 0 12 | 0 0 16 | 0 0 1000 | 3 3 -5 | 1 1 5 | 0 0 0 | 0 0 0 | 0 0 0
+string | 3, 3 | string, string | string: 7 7 7 | -1637261445 -1637261445 -1637261447 | 3 3 0 | 15 15 12 | 19 19 16 | 1003 1003 1000 | -5 -5 -5 | 7 7 5 | 3 3 0 | 3 3 0 | 3 3 0
+string ^ 3, 3 ^ string, string ^ string: 4 4 0 | -1637261446 -1637261446 0 | 3 3 0 | 15 15 0 | 19 19 0 | 1003 1003 0 | -8 -8 0 | 6 6 0 | 3 3 0 | 3 3 0 | 3 3 0
+string << 3, 3 << string, string << string: 56 384 896 | -213189688 100663296 -234881024 | 0 3 0 | 96 12288 49152 | 128 196608 1048576 | 8000 768 256000 | -40 402653184 -671088640 | 40 96 160 | 0 3 0 | 0 3 0 | 0 3 0
+string >> 3, 3 >> string, string >> string: 0 0 0 | -204657681 0 -49 | 0 3 0 | 1 0 0 | 2 0 0 | 125 0 3 | -1 0 -1 | 0 0 0 | 0 3 0 | 0 3 0 | 0 3 0
+string >>> 3, 3 >>> string, string >>> string: 0 0 0 | 332213231 0 79 | 0 3 0 | 1 0 0 | 2 0 0 | 125 0 3 | 536870911 0 31 | 0 0 0 | 0 3 0 | 0 3 0 | 0 3 0
+string - 3, 3 - string, string - string: 4 -4 0 | 1203456789012342 -1203456789012342 0 | -3 3 0 | 9 -9 0 | 13 -13 0 | 997 -997 0 | -8.9 8.9 0 | 4294967298 -4294967298 0 | Infinity -Infinity NaN | NaN NaN NaN | NaN NaN NaN
+string * 3, 3 * string, string * string: 21 21 49 | 3610370367037035 3610370367037035 1.448308243019904e+30 | 0 0 0 | 36 36 144 | 48 48 256 | 3000 3000 1000000 | -17.700000000000003 -17.700000000000003 34.81 | 12884901903 12884901903 18446744116659225000 | Infinity Infinity Infinity | NaN NaN NaN | NaN NaN NaN
+~string: -8 1637261446 -1 -13 -17 -1001 4 -6 -1 -1 -1
+string & BigInt: TypeError: Invalid mix of BigInt and other type in bitwise 'and' operation. | TypeError: Invalid mix of BigInt and other type in left shift operation.

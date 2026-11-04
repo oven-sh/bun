@@ -459,9 +459,9 @@ const consoleForwardingFiles = (script: string) => ({
     // value too. JSON reads nothing of a value that has this method.
     const hidden = value => Object.defineProperty(value, "toJSON", { value: () => null });
     globalThis.results = {};
-    globalThis.probe = function probe(name, value, method = "log") {
+    globalThis.probe = function probe(name, value, method = "log", ...after) {
       try {
-        console[method](name, value);
+        console[method](name, value, ...after);
         globalThis.results[name] = "returned";
       } catch (e) {
         globalThis.results[name] = "threw " + e;
@@ -511,6 +511,7 @@ devTest("browser console forwarding does not throw into the page", {
     probe("value that throws twice", { a: throws, b: throws, c: [7] });
     probe("error whose stack is a symbol", Object.defineProperty(new Error("e"), "stack", { value: Symbol("s") }));
     probe("error", new TypeError("with a stack"));
+    probe("value before another argument", { [custom]() { throw new Error("thrown by the function"); } }, "log", "after");
     // The console of the test client throws for a BigInt. The page still sees that.
     probe("console that throws", 1n);
     console.log("done");
@@ -532,6 +533,7 @@ devTest("browser console forwarding does not throw into the page", {
       "value that throws twice",
       "error whose stack is a symbol",
       "error",
+      "value before another argument",
     ];
     expect(await c.js`results`).toEqual({
       ...Object.fromEntries(returned.map(name => [name, "returned"])),
@@ -554,6 +556,7 @@ devTest("browser console forwarding does not throw into the page", {
       "value that throws twice { a: [threw while printing], b: [threw while printing], c: [ 7 ] }",
       "error whose stack is a symbol Symbol(s)",
       "error TypeError: with a stack",
+      "value before another argument [threw while printing] after",
       "done",
     ]);
     expect(Bun.stripANSI(dev.output.lines.join("\n"))).toMatch(/\[browser\] error TypeError: with a stack\n\s+at /);
@@ -578,22 +581,14 @@ devTest("browser console forwarding does not throw into the page", {
 // running until the stack is full.
 devTest("browser console forwarding returns for a value that logs while it prints", {
   files: consoleForwardingFiles(`
-    globalThis.calls = { trap: 0, functionTrap: 0, getter: 0 };
+    globalThis.calls = { trap: 0, functionTrap: 0, getter: 0, hook: 0 };
     const logs = new Proxy({ a: 1 }, {
       getPrototypeOf(target) {
-        if (calls.trap++ < 1000) console.log("trap", logs, null, 2, "text");
+        if (calls.trap++ < 1000) console.log("trap", logs, { self: logs });
         return Reflect.getPrototypeOf(target);
       },
     });
     probe("trap that logs its Proxy", logs);
-
-    const logsFunction = new Proxy(function f() {}, {
-      getPrototypeOf(target) {
-        if (calls.functionTrap++ < 1000) console.log("function trap", logsFunction);
-        return Reflect.getPrototypeOf(target);
-      },
-    });
-    probe("trap that logs its Proxy of a function", logsFunction);
 
     class Store {
       get a() {
@@ -605,7 +600,25 @@ devTest("browser console forwarding returns for a value that logs while it print
         return 2;
       }
     }
-    probe("getters that log", new Store());
+    probe("getters that log their object", new Store());
+
+    // A function is not in the list of the values that print, and a custom inspect function
+    // runs before its object is in the list.
+    const logsFunction = new Proxy(function f() {}, {
+      getPrototypeOf(target) {
+        if (calls.functionTrap++ < 1000) console.log("function trap", logsFunction);
+        return Reflect.getPrototypeOf(target);
+      },
+    });
+    probe("trap that logs its Proxy of a function", logsFunction);
+
+    const hooked = {
+      [custom]() {
+        if (calls.hook++ < 1000) console.log("hook", hooked, null, 2);
+        return "text of the function";
+      },
+    };
+    probe("custom inspect function that logs its object", hooked);
     console.log("done");
   `),
   htmlFiles: [],
@@ -616,36 +629,33 @@ devTest("browser console forwarding returns for a value that logs while it print
     expect(await c.js`({ results, calls })`).toEqual({
       results: {
         "trap that logs its Proxy": "returned",
+        "getters that log their object": "returned",
         "trap that logs its Proxy of a function": "returned",
-        "getters that log": "returned",
+        "custom inspect function that logs its object": "returned",
       },
-      calls: { trap: 90, functionTrap: 2, getter: 6 },
+      calls: { trap: 9, getter: 2, functionTrap: 2, hook: 2 },
     });
 
-    // A call from the code that a value runs prints as before. A call from the code that
-    // such a call runs prints a tag for an object, and that ends the recursion.
-    const tag = "[logged while printing]";
     const lines = forwardedLines(dev);
     expect(lines).toEqual([
-      ...Array.from({ length: 9 }, () => [
-        ...Array.from({ length: 9 }, () => `trap ${tag} null 2 text`),
-        "trap { a: 1 } null 2 text",
-      ]).flat(),
+      // A value that prints now is [Circular] in a call from the code that it runs.
+      ...Array.from({ length: 9 }, () => "trap [Circular] { self: [Circular] }"),
       "trap that logs its Proxy { a: 1 }",
-      `function trap ${tag}`,
+      "getter a [Circular]",
+      "getter b { of: [Circular] } [Function: Store]",
+      "getters that log their object Store { a: 1, b: 2 }",
+      // Another call from code that such a call runs prints a tag for an object or a function.
+      "function trap [logged while printing]",
       "function trap [Function: f]",
       "trap that logs its Proxy of a function [Function: f]",
-      `getter a ${tag}`,
-      `getter b ${tag} ${tag}`,
-      "getter a Store { a: 1, b: 2 }",
-      `getter a ${tag}`,
-      `getter b ${tag} ${tag}`,
-      "getter b { of: Store { a: 1, b: 2 } } [Function: Store]",
-      "getters that log Store { a: 1, b: 2 }",
+      "hook [logged while printing] null 2",
+      "hook text of the function null 2",
+      "custom inspect function that logs its object text of the function",
       "done",
     ]);
     // The console of the test client got every one of these calls, each before its line was sent.
-    const names = /^(function trap|getter [ab]|getters that log|trap( that logs its Proxy( of a function)?)?|done)/;
+    const names =
+      /^(function trap|getter [ab]|hook|trap( that logs its Proxy( of a function)?)?|getters that log their object|custom inspect function that logs its object|done)/;
     await c.expectMessageInAnyOrder(...lines.map(line => names.exec(line)![0]));
   },
 });

@@ -17,6 +17,9 @@ const inspectSymbol = Symbol.for("nodejs.util.inspect.custom");
 
 const threwWhilePrinting = "[threw while printing]";
 
+// The values that print now. A console call from page code that one of them runs shares the list.
+const printing: any[] = [];
+
 let inspectDepth = 0;
 
 export interface InspectOptions {
@@ -57,14 +60,14 @@ const defaultOptions: InspectOptions = {
  * @returns {string} String representation
  */
 export function inspect(obj: any, options: InspectOptions = {}) {
-  // Page code that runs while a value prints can log that value again, so a call nested this deep prints a tag.
+  // Page code that runs while a value prints can log a new value each time, so a call nested this deep prints a tag.
   if (inspectDepth > 1 && obj !== null && (typeof obj === "object" || typeof obj === "function")) {
     return "[logged while printing]";
   }
 
   // Set up context with merged options
   const ctx: InspectContext = {
-    seen: [],
+    seen: printing,
     currentDepth: 0,
     ...defaultOptions,
     ...options,

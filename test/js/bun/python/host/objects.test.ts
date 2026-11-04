@@ -33,6 +33,20 @@ export const bare = Object.assign(Object.create(null), { x: 1 });
 export const lazy = { get next() { return (this.n = (this.n ?? 0) + 1); } };
 export function Old(x) { this.x = x; }
 Old.prototype.get = function () { return this.x; };
+export function Heir(x) { Old.call(this, x); }
+Object.setPrototypeOf(Heir.prototype, Old.prototype);
+export function Replaced() {}
+Replaced.prototype = { a: 1 };
+export function Symbolic() {}
+Symbolic.prototype[Symbol.toStringTag] = "Symbolic";
+export function Hidden() {}
+Object.defineProperty(Hidden.prototype, "secret", { value: 1, enumerable: false });
+export function plain() { return new.target ? this : "called"; }
+export function touched() { return new.target ? this : "called"; }
+touched.prototype.constructor;
+export function* generator() { yield 1; }
+export const arrow = () => "called";
+export const { method } = { method() { return "called"; } };
 export const withProps = Object.assign(function f() { return "called"; }, { version: "1.0", sub: { k: 1 } });
 export const arrayLike = { length: 2, 0: "a", 1: "b" };
 export const keywords = { from: 1, class: 2, in: 3, None: 4, def: 5, import: 6, lambda: 7 };
@@ -42,14 +56,14 @@ export const shadows = { __class__: "mine", keys: "not a method", items: 3 };
 const setup = `
 import js
 import lib
-from lib import Temp, Sub, frozen, proxy, callable as callable_proxy, sym, withSym, bare, lazy, Old, withProps, arrayLike, keywords, shadows
+from lib import Temp, Sub, frozen, proxy, callable as callable_proxy, sym, withSym, bare, lazy, Old, Heir, Replaced, Symbolic, Hidden, plain, touched, generator, arrow, method, withProps, arrayLike, keywords, shadows
 `;
 
 group("classes, accessors and methods", { setup, files: { "lib.js": lib } }, [
   ["x = Temp()\nx.celsius, x.fahrenheit", "(0, 32)"],
   ["x = Temp()\nx.celsius = 100\nx.celsius, x.fahrenheit, x['celsius']", "(100, 212, 100)"],
-  ["Temp().celsius = 'hot'\n0", "!JSError: TypeError: number expected"],
-  ["Temp().fahrenheit = 1\n0", "!JSError: TypeError: Attempted to assign to readonly property."],
+  ["Temp().celsius = 'hot'\n0", "!JSTypeError: TypeError: number expected"],
+  ["Temp().fahrenheit = 1\n0", "!JSTypeError: TypeError: Attempted to assign to readonly property."],
   ["Temp.count, Temp.create(5).celsius, Temp.count, Temp.zero, Sub.create(1).who()", "(0, 5, 1, -273.15, 'sub of 1')"],
   [
     "x = Temp.create(100)\nstr(x), f'{x}', '%s' % x, repr(x).split(' at ')[0]",
@@ -77,8 +91,18 @@ group("classes, accessors and methods", { setup, files: { "lib.js": lib } }, [
   ],
   ["names = dir(Temp())\nlen(names) == len(set(names))", "True"],
   ["Old.new(5).get(), Old.new(5).x, isinstance(Old.new(1), Old)", "(5, 5, True)"],
-  // A constructor written as a function, as those of Node's older modules are (EventEmitter, Readable), cannot be told from a function.
-  ["Old(5).x", "5", "a plain function is called, not constructed"],
+  // A constructor written as a function, as those of Node's older modules are (EventEmitter, Readable): its instances inherit something.
+  ["Old(5).x, Old(5).get(), isinstance(Old(1), Old), lib.Old is Old", "(5, 5, True, True)"],
+  [
+    "Heir(5).x, Heir(5).get(), isinstance(Heir(1), Old), Replaced().a, isinstance(Symbolic(), Symbolic), isinstance(Hidden(), Hidden)",
+    "(5, 5, True, 1, True, True)",
+  ],
+  // Nothing says that these are for `new`.
+  [
+    "plain(), touched(), list(generator()), type(plain.new()).__name__, arrow(), method()",
+    "('called', 'called', [1], 'JSObject', 'called', 'called')",
+  ],
+  ["class Young(Old):\n    def twice(self): return self.get() * 2\nYoung(4).twice()", "8"],
   ["withProps(), withProps.version, withProps.sub.k, withProps.__name__", "('called', '1.0', 1, 'f')"],
   ["lazy.next, lazy.next, lazy.n", "(1, 2, 2)"],
   [
@@ -149,9 +173,9 @@ group("proxies, symbols, unusual objects", { setup, files: { "lib.js": lib } }, 
     "a method read as an item is not bound, and a symbol cannot name an attribute",
   ],
   ["getattr(withSym, sym)", "!TypeError: attribute name must be string, not '_js.JSSymbol'"],
-  ["frozen.a = 2\n0", "!JSError: TypeError: Attempted to assign to readonly property."],
-  ["frozen.b = 2\n0", "!JSError: TypeError: Attempting to define property on object that is not extensible."],
-  ["del frozen.a\n0", "!JSError: TypeError: Unable to delete property."],
+  ["frozen.a = 2\n0", "!JSTypeError: TypeError: Attempted to assign to readonly property."],
+  ["frozen.b = 2\n0", "!JSTypeError: TypeError: Attempting to define property on object that is not extensible."],
+  ["del frozen.a\n0", "!JSTypeError: TypeError: Unable to delete property."],
   ["bare.x, list(bare), dict(bare), repr(bare).split(' at ')[0]", "(1, ['x'], {'x': 1}, '<JavaScript Object')"],
   ["str(bare)", "'[object Object]'", "str() of an object without toString() raises, so print() does"],
   ["str(lib).startswith('[object Module')", "True", "so for the module itself"],
@@ -162,12 +186,22 @@ group("proxies, symbols, unusual objects", { setup, files: { "lib.js": lib } }, 
     "getattr(keywords, 'from'), getattr(keywords, 'class'), keywords['in'], keywords['None'], keywords['def'], keywords['lambda']",
     "(1, 2, 3, 4, 5, 7)",
   ],
+  ["keywords.from_, keywords.class_, keywords.None_, js.Array.from_('ab')", "(1, 2, 4, ['a', 'b'])"],
+  ["await js.Promise.resolve(1).finally_(lambda: None), await js.Promise.reject(1).catch(lambda e: e + 1)", "(1, 2)"],
   [
-    "keywords.from_, keywords.class_, js.Array.from_('ab')",
-    "(1, 2, ['a', 'b'])",
-    "there is no spelling for them as attributes: Array.from, promise.finally, import",
+    "o = js.Object()\no.class_ = 1\no.in_ = 2\ndel o.in_\nhasattr(o, 'class_'), hasattr(o, 'in_'), list(o), o['class']",
+    "(True, False, ['class'], 1)",
   ],
-  ["shadows.__class__, shadows.keys, shadows.items, type(shadows).__name__", "('mine', 'not a method', 3, 'JSObject')"],
+  // A property of that very name comes first, and only what cannot be written otherwise is written so.
+  [
+    "o = js.eval('({ from_: 1, from: 2, match: 3, x: 4 })')\no.from_, getattr(o, 'from'), o.match, hasattr(o, 'match_'), hasattr(o, 'x_'), hasattr(o, 'class_')",
+    "(1, 2, 3, False, False, False)",
+  ],
+  ["o = js.Date()\ndel o.class_\no", "!AttributeError: 'JSObject' object has no attribute 'class_'"],
+  [
+    "shadows.__class__, shadows.keys, shadows.items, type(shadows).__name__",
+    "('mine', 'not a method', 3, 'JSPlainObject')",
+  ],
   ["js.globalThis is js, type(js).__name__", "(True, 'JSObject')"],
   [
     "js.fromPython = {'a': 1}\njs.eval('fromPython.a'), js.eval('var fromEval = 5; fromEval'), js.fromEval",
@@ -176,6 +210,123 @@ group("proxies, symbols, unusual objects", { setup, files: { "lib.js": lib } }, 
   ["js.noSuchGlobal", "!AttributeError: 'JSObject' object has no attribute 'noSuchGlobal'"],
   ["js.eval('syntax error here')", "!JSError: SyntaxError: Unexpected identifier 'error'"],
 ]);
+
+group(
+  "mappings by their methods",
+  {
+    setup: "from bags import Bag, ReadOnly, NotIterable\n",
+    files: {
+      "bags.js": `
+export class ReadOnly {
+  #m = new Map([["a", 1], ["b", 2]]);
+  get(k) { return this.#m.get(k); }
+  has(k) { return this.#m.has(k); }
+  keys() { return this.#m.keys(); }
+  [Symbol.iterator]() { return this.#m[Symbol.iterator](); }
+  get map() { return this.#m; }
+}
+export class Bag extends ReadOnly {
+  extra = "a property";
+  set(k, v) { this.map.set(k, v); }
+  delete(k) { return this.map.delete(k); }
+}
+export class NotIterable { get() {} has() {} keys() {} x = 1; }
+`,
+    },
+  },
+  [
+    [
+      "b = Bag()\nb['a'], 'a' in b, 'extra' in b, b.extra, len(b), list(b), dict(b), b.items(), type(b).__name__",
+      "(1, True, False, 'a property', 2, ['a', 'b'], {'a': 1, 'b': 2}, [('a', 1), ('b', 2)], 'JSObject')",
+    ],
+    ["b['extra']", "!KeyError: 'extra'"],
+    [
+      "k = (1, 2)\nb[k] = [3]\ndel b['a']\nb[k], k in b, list(b), b.popitem(), b.clear(), bool(b)",
+      "([3], True, ['b', (1, 2)], ('b', 2), None, False)",
+    ],
+    ["r = ReadOnly()\nr['c'] = 1\nr", "!TypeError: this JavaScript object has no method set()"],
+    ["del r['a']\nr", "!TypeError: this JavaScript object has no method delete()"],
+    // Not these: one cannot be iterated over, one is a plain object, whose items are its properties.
+    ["n = NotIterable()\nn['x'], 'get' in n, list(n)", "(1, True, ['x'])"],
+    [
+      "o = js.eval('({ get() {}, has() {}, keys() { return [] }, [Symbol.iterator]() { return [][Symbol.iterator]() } })')\ncallable(o['get']), 'has' in o",
+      "(True, True)",
+    ],
+  ],
+);
+
+group(
+  "what can be disposed of is a context manager",
+  {
+    setup:
+      "import contextlib\nfrom disposables import log, Res, AsyncRes, Failing, Thenable\ndef logged():\n    r = list(log)\n    log.clear()\n    return r\n",
+    files: {
+      "disposables.js": `
+export const log = [];
+export class Res {
+  constructor(n) { this.n = n; }
+  [Symbol.dispose]() { log.push("dispose " + this.n); return true; }
+}
+export class AsyncRes {
+  async [Symbol.asyncDispose]() { await 1; log.push("async dispose"); return true; }
+}
+export class Failing { [Symbol.dispose]() { throw new Error("dispose failed"); } }
+export class Thenable {
+  then(resolve) { resolve("not this"); }
+  [Symbol.asyncDispose]() { log.push("thenable disposed"); }
+}
+`,
+    },
+  },
+  [
+    ["with Res(1) as r:\n    log.append('body ' + str(r.n))\nlogged()", "['body 1', 'dispose 1']"],
+    ["with Res(1), Res(2):\n    pass\nlogged()", "['dispose 2', 'dispose 1']"],
+    // The exception goes on, whatever the method returns.
+    [
+      "try:\n    with Res(3):\n        raise ValueError('from the body')\nexcept ValueError as e:\n    r = str(e)\nr, logged()",
+      "('from the body', ['dispose 3'])",
+    ],
+    [
+      "async with AsyncRes() as a:\n    log.append('body')\nisinstance(a, AsyncRes), logged()",
+      "(True, ['body', 'async dispose'])",
+    ],
+    [
+      "try:\n    async with AsyncRes():\n        raise ValueError('from the body')\nexcept ValueError as e:\n    r = str(e)\nr, logged()",
+      "('from the body', ['async dispose'])",
+    ],
+    ["async with Res(4) as r:\n    pass\nr.n, logged()", "(4, ['dispose 4'])"],
+    ["async with Thenable() as t:\n    pass\nisinstance(t, Thenable), logged()", "(True, ['thenable disposed'])"],
+    [
+      "try:\n    with Failing():\n        raise ValueError('from the body')\nexcept Exception as e:\n    r = type(e).__name__, str(e)\nr",
+      "('JSError', 'Error: dispose failed')",
+    ],
+    // It is the statement that knows. What looks for the methods in the class finds none, and a function is a callback.
+    [
+      "hasattr(Res(5), '__enter__'), hasattr(type(Res(5)), '__exit__'), isinstance(Res(5), contextlib.AbstractContextManager)",
+      "(False, False, False)",
+    ],
+    [
+      "with contextlib.ExitStack() as stack:\n    stack.enter_context(Res(5))\n0",
+      "!TypeError: 'builtins.JSObject' object does not support the context manager protocol",
+    ],
+    [
+      "with contextlib.ExitStack() as stack:\n    res = Res(5)\n    stack.callback(res[js.Symbol.dispose].bind(res))\n    stack.push(js.eval('log => (type, error, traceback) => { log.push(\"pushed\") }')(log))\nlogged()",
+      "['pushed', 'dispose 5']",
+    ],
+    [
+      "with js.Object():\n    pass\n0",
+      "!TypeError: 'JSPlainObject' object does not support the context manager protocol: it has no [Symbol.dispose]()",
+    ],
+    [
+      "with AsyncRes():\n    pass\n0",
+      "!TypeError: 'JSObject' object does not support the context manager protocol: it has no [Symbol.dispose]() but it has [Symbol.asyncDispose](). Did you mean to use 'async with'?",
+    ],
+    [
+      "async with js.Date():\n    pass\n0",
+      "!TypeError: 'JSObject' object does not support the asynchronous context manager protocol: it has no [Symbol.asyncDispose]() or [Symbol.dispose]()",
+    ],
+  ],
+);
 
 group("Date, RegExp, Map, Set, weak references", { setup: "import js, datetime, gc, weakref\nclass K: pass\n" }, [
   [
@@ -239,7 +390,7 @@ group("Date, RegExp, Map, Set, weak references", { setup: "import js, datetime, 
     "w = js.WeakMap()\no = K()\nw.set(o, 'v')\nw.get(o), w.has(o), w.has(K()), w.set((1, 2), 1) is w, w.set([1], 1) is w",
     "('v', True, False, True, True)",
   ],
-  ["js.WeakMap().set('str', 1)", "!JSError: TypeError: WeakMap keys must be objects or non-registered symbols"],
+  ["js.WeakMap().set('str', 1)", "!JSTypeError: TypeError: WeakMap keys must be objects or non-registered symbols"],
   ["o = K()\nr = js.WeakRef(o)\nr.deref() is o", "True"],
   ["o = js.Object()\nweakref.ref(o)() is o", "True"],
   ["o = js.Object()\nweakref.WeakValueDictionary({'a': o})['a'] is o", "True"],
@@ -291,7 +442,7 @@ class Num(enum.IntEnum):
     ],
     ["js.Intl.NumberFormat('en-US').format(decimal.Decimal('1.5'))", "'1.5'"],
     ["js.JSON.stringify(decimal.Decimal('1.5'))", "'1.5'", "JSON.stringify shows the slots of the object"],
-    ["js.JSON.stringify(datetime.date(2020, 1, 2))", `'"2020-01-02"'`, "{}: a date has nothing JSON.stringify can see"],
+    ["js.JSON.stringify(datetime.date(2020, 1, 2))", `'"2020-01-02"'`],
     [
       "js.eval('d => [String(d), d.year, d.isoformat(), new Date(d.isoformat()).getTime()]')(datetime.date(2020, 1, 2))",
       "['2020-01-02', 2020, '2020-01-02', 1577923200000]",
@@ -424,14 +575,11 @@ def matched(v):
       "matched(js.eval('[1, 2]')), matched(js.eval(\"'s'\")), matched(js.Uint8Array([1, 2]))",
       "(('sequence', 1, 2), ('str', 's'), ('sequence', 1, 2))",
     ],
-    [
-      "matched(js.eval('({ a: 1, b: 2 })')), matched(js.Map([['a', 1]]))",
-      "(('mapping', 1, {'b': 2}), ('mapping', 1, {}))",
-      "neither an object nor a Map is a mapping to `match`",
-    ],
+    ["matched(js.eval('({ a: 1, b: 2 })'))", "('mapping', 1, {'b': 2})"],
+    ["matched(js.Map([['a', 1]]))", "('mapping', 1, {})", "a Map is no mapping to `match`"],
     [
       "which(js.Object(), 'Mapping', 'Sequence', 'Callable', 'Awaitable', 'Iterator', 'Hashable', 'Container')",
-      "['Hashable', 'Container']",
+      "['Mapping', 'Hashable', 'Container']",
     ],
     [
       "which(js.eval('(function* () {})()'), 'Iterable', 'Iterator', 'Generator'), which(js.Promise.resolve(1), 'Awaitable', 'Callable'), which(js.eval('() => 1'), 'Callable')",
@@ -499,7 +647,7 @@ def outcome(source):
     ],
     [
       "outcome('b => Object.setPrototypeOf(b, null)'), outcome('b => Object.defineProperty(b, \"z\", { get() { return 1; } })'), outcome('b => Object.defineProperty(b, \"y\", { value: 2 }).y')",
-      "('JSError TypeError: Cannot set prototype of immutable prototype object', 'JSError TypeError: A Python object cannot be given an accessor property', 2)",
+      "('JSTypeError TypeError: Cannot set prototype of immutable prototype object', 'JSTypeError TypeError: A Python object cannot be given an accessor property', 2)",
     ],
   ],
 );
@@ -576,7 +724,8 @@ class Named:
   [
     [
       "p = P()\nx = js.Proxy(p, Handler())\nx.public = 9\nx.public, p.public, 'anything' in x, type(x).__name__, log",
-      "(9, 9, True, 'JSObject', [('set', 'public', 9), ('get', 'public')])",
+      // `in` first asks whether the object is a mapping by its methods.
+      "(9, 9, True, 'JSObject', [('set', 'public', 9), ('get', 'public'), ('get', Symbol(Symbol.iterator))])",
     ],
     [
       "js.Proxy(js.Object(), {'get': lambda target, key, receiver: 'got ' + key}).anything, js.Proxy(lambda x: x + 1, {'apply': lambda target, this, args: target(*args) * 10})(1)",

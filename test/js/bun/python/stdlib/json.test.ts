@@ -307,9 +307,19 @@ describe("TestDump", () => {
     expect(dumps(data)).toBe('{"x": {"a": 1}, "y": {"b": 2}}');
   });
 
-  // An object of JavaScript is no dict, and the encoder asks isinstance(o, dict).
-  test.failing("test_dumps_dict, with objects of JavaScript", () => {
+  // A plain object of JavaScript is no dict, but dumps() writes it as one.
+  test("test_dumps_dict, with objects of JavaScript", () => {
     expect(dumps({ x: 1, y: 2 })).toBe('{"x": 1, "y": 2}');
+    expect(dumps([{ x: { a: [1, {}] } }, py({ y: { b: 2 } })])).toBe('[{"x": {"a": [1, {}]}}, {"y": {"b": 2}}]');
+    expect(dumps({ b: 1, a: { d: 1, c: 2 } }, kwargs({ sort_keys: true }))).toBe('{"a": {"c": 2, "d": 1}, "b": 1}');
+  });
+
+  // dump() goes piece by piece, with an encoder in Python that asks isinstance(o, dict).
+  test("test_dump, with objects of JavaScript", () => {
+    expect(() => json.dump({ x: 1 }, StringIO())).toThrow(PyTypeError);
+    const sio = StringIO();
+    json.dump({ x: { y: 1 } }, sio, kwargs({ default: dict }));
+    expect(sio.getvalue()).toBe('{"x": {"y": 1}}');
   });
 
   test("test_dump_skipkeys", () => {

@@ -297,6 +297,72 @@ print(function(1))
   expect(exitCode).toBe(0);
 });
 
+it("another thread may look at an object of JavaScript where that runs no code", async () => {
+  const { stdout, stderr, exitCode } = await run({
+    "lib.mjs": `export const exported = 1;`,
+    "main.py": `
+import js, lib, sys, threading, unittest, warnings
+import bun, node.events, node.fs
+
+js.eval("var declared = 5")
+o = js.eval("({ value: 1, nested: { deep: [1] }, method() { return 2 }, get getter() { return 3 }, from: 4 })")
+instance = js.eval("new (class A { field = 1; method() {} get getter() { return 1 } })")
+proxy = js.Proxy(js.Object(), js.Object())
+out = []
+def attempt(name, f):
+    try:
+        out.append((name, f()))
+    except (RuntimeError, AttributeError) as e:
+        out.append((name, type(e).__name__, str(e)))
+def other():
+    # What unittest, warnings and inspect do to everything in sys.modules.
+    attempt("modules", lambda: [getattr(m, "__warningregistry__", None) for m in list(sys.modules.values())].count(None) == len(sys.modules))
+    with unittest.TestCase().assertWarns(UserWarning):
+        warnings.warn("in a thread", UserWarning)
+    attempt("value", lambda: (o.value, o.nested.deep, o.from_, instance.field, js.declared))
+    attempt("absent", lambda: (hasattr(o, "nothing"), hasattr(js, "nothing"), hasattr(node.events, "nothing"), hasattr(lib, "nothing"), hasattr(instance, "nothing")))
+    attempt("missing", lambda: o.nothing)
+    attempt("of Python", lambda: (type(o).__name__, o.__class__.__name__, type(js).__name__, type(node.events).__name__))
+    attempt("repr", lambda: (repr(o).split(" at ")[0], repr(instance).split(" at ")[0], repr(o.method).split(" at ")[0]))
+    attempt("method", lambda: o.method is method)
+    attempt("call", lambda: o.method())
+    attempt("getter", lambda: o.getter)
+    attempt("inherited getter", lambda: instance.getter)
+    attempt("proxy", lambda: proxy.anything)
+    attempt("export", lambda: lib.exported)
+    attempt("made when asked for", lambda: js.WeakRef)
+    attempt("set", lambda: setattr(o, "value", 2))
+    attempt("import", lambda: __import__("js") is js)
+method = o.method
+t = threading.Thread(target=other); t.start(); t.join()
+for line in out: print(*line)
+`,
+  });
+  const refused = "RuntimeError JavaScript can only be used from the main thread";
+  expect(stderr).toBe("");
+  expect(stdout).toBe(
+    [
+      "modules True",
+      "value (1, [1], 4, 1, 5)",
+      "absent (False, False, False, False, False)",
+      "missing AttributeError 'JSPlainObject' object has no attribute 'nothing'",
+      "of Python ('JSPlainObject', 'JSPlainObject', 'JSObject', 'JSFunction')",
+      "repr ('<JavaScript object', '<JavaScript object', '<JavaScript function ')",
+      "method True",
+      "call " + refused,
+      "getter " + refused,
+      "inherited getter " + refused,
+      "proxy " + refused,
+      "export " + refused,
+      "made when asked for " + refused,
+      "set " + refused,
+      "import True",
+      "",
+    ].join("\n"),
+  );
+  expect(exitCode).toBe(0);
+});
+
 it("threads run while JS awaits, and the event loop waits for them", async () => {
   const { stdout, stderr, exitCode } = await run(
     {

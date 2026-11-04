@@ -17,6 +17,8 @@ P(1) {'a': 1, 'b': [1, 2.0], 3: (4,)} (1, 'two', None, 3.0) {1} b'bytes'
 <function add at 0xADDR> <class '012_console.P'> <012_console.Plain object at 0xADDR> <module '012_console' from '<dir>/012_console.py'>
 P(4) (1, 'two', None, 3.0) P(5)|P(6)
 Traceback (most recent call last):
+  File "012_console.js", line 10, in <module>
+    try { m.fail(); } catch (e) { console.log(clean(util.inspect(e))); }
   File "012_console.py", line 11, in fail
     def fail(): raise ValueError("shown")
 ValueError: shown
@@ -28,6 +30,7 @@ ValueError: shown
 The above exception was the direct cause of the following exception:
 
 Traceback (most recent call last):
+  File "012_console.js", line 11, in <module>
   File "012_console.py", line 17, in fail2
 012_console.MyErr: outer
-function asyncWith,default,float,import,kwargs,method,with
+function asyncWith,default,enter,enterAsync,float,import,kwargs,method,with

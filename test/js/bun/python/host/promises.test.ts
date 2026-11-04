@@ -235,7 +235,6 @@ group(
     [
       "js.Promise is js.Promise, js.Promise.resolve(1).constructor is js.Promise, js.Map is js.Map",
       "(True, True, True)",
-      "Promise is a function to the engine, so it is bound anew each time it is read off globalThis",
     ],
   ],
 );

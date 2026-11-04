@@ -558,11 +558,14 @@ describe("TestSuppress", () => {
     expect(outer_continued).toBe(true);
   });
 
-  test("what JavaScript throws is an Exception, and none of the others", () => {
+  test("what JavaScript throws is an Exception, a TypeError is a TypeError, and none of the others", () => {
     with_(suppress(Exception), () => {
       throw new RangeError("of JavaScript");
     });
-    const error = new TypeError("of JavaScript");
+    with_(suppress(PyTypeError), () => {
+      throw new TypeError("of JavaScript");
+    });
+    const error = new RangeError("of JavaScript");
     expect(() =>
       with_(suppress(PyTypeError, ValueError), () => {
         throw error;

@@ -97,7 +97,7 @@ describe("truth", () => {
       new (class Point {})(),
       generator(),
       [][Symbol.iterator](),
-      new Headers(),
+      new Headers({ a: "1" }),
       new Blob([]),
       new WeakMap(),
       /x/,
@@ -110,7 +110,16 @@ describe("truth", () => {
   });
 
   test("a container is false when it is empty", () => {
-    const empty = [new Map(), new Set(), new Uint8Array(0), Buffer.alloc(0), {}, Object.create(null), { length: 0 }];
+    const empty = [
+      new Map(),
+      new Set(),
+      new Uint8Array(0),
+      Buffer.alloc(0),
+      {},
+      Object.create(null),
+      { length: 0 },
+      new Headers(),
+    ];
     const full = [new Map([[1, 2]]), new Set([0]), new Uint8Array(1), Buffer.alloc(1), { a: undefined }, { length: 1 }];
     expect(empty.map(value => bool(value))).toEqual(empty.map(() => false));
     expect(full.map(value => bool(value))).toEqual(full.map(() => true));
@@ -148,6 +157,49 @@ def has(o, name): return hasattr(o, name)
 
   test("its own properties come first", () => {
     expect(methodsOf.get({ get: () => "mine" })).toBe("mine");
+  });
+
+  test("a plain one says so", () => {
+    class Point {}
+    const plain = [{}, { a: 1 }, Object.create(null), JSON.parse("{}"), new Object()];
+    const others = [new Point(), Object.create({}), new Date(0), new Map(), [], () => 1, Math, namespace, globalThis];
+    expect(plain.map(value => type(value))).toEqual(plain.map(() => _js.JSPlainObject));
+    expect(plain.map(value => isinstance(value, abc.MutableMapping))).toEqual(plain.map(() => true));
+    expect(others.map(value => isinstance(value, abc.Mapping))).toEqual(others.map(() => false));
+    expect(isinstance({}, _js.JSObject)).toBe(true);
+    expect(isinstance({}, dict)).toBe(false);
+    // What it is goes by its prototype, now.
+    const object = {};
+    Object.setPrototypeOf(object, Point.prototype);
+    expect(type(object)).toBe(_js.JSObject);
+    const { kind } = python(`
+def kind(value):
+    match value:
+        case {"type": "circle", "r": r}: return ("circle", r)
+        case {"type": str(name), **rest}: return (name, rest)
+        case {}: return "a mapping"
+        case _: return "something else"
+`);
+    expect(Array.from(kind({ type: "circle", r: 2 }))).toEqual(["circle", 2]);
+    expect(Array.from(kind({ type: "square", side: 1 }))).toEqual(["square", dict([["side", 1]])]);
+    expect([kind({}), kind(new Point()), kind(new Map())]).toEqual(["a mapping", "something else", "something else"]);
+  });
+
+  test("what has get(), has() and keys() and is iterated over is a mapping by those", () => {
+    const headers = new Headers({ a: "1", B: "2" });
+    expect(getitem(headers, "b")).toBe("2");
+    expect(() => getitem(headers, "z")).toThrow(KeyError);
+    expect([contains(headers, "A"), contains(headers, "z"), len(headers)]).toEqual([true, false, 2]);
+    expect(list(headers)).toEqual(["a", "b"]);
+    expect(dict(headers)).toEqual(dict([["a", "1"], ["b", "2"]])); // prettier-ignore
+    setitem(headers, "c", "3");
+    delitem(headers, "a");
+    expect([...headers]).toEqual([["b", "2"], ["c", "3"]]); // prettier-ignore
+    expect(methodsOf.pop(headers, "c")).toBe("3");
+    expect(methodsOf.has(headers, "items")).toBe(true);
+    // As it was: a Map iterates by pairs, a Set has no items.
+    expect(list(new Map([[1, 2]]))).toEqual([[1, 2]]);
+    expect(methodsOf.has(new Map(), "items")).toBe(false);
   });
 
   test("what JavaScript iterates over otherwise is none", () => {

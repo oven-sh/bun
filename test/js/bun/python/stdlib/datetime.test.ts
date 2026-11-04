@@ -154,13 +154,14 @@ describe("TestTimeDelta", () => {
     expect(() => truediv(a, "")).toThrow(PyTypeError);
   });
 
-  test("where neither class has an answer, the operators of JavaScript do what they do with any object", () => {
+  test("where neither class has an answer, the operators of JavaScript raise what those of Python raise", () => {
     const a = timedelta(42);
-    expect(a + 1).toBe("42 days, 0:00:001");
-    expect(a - 1).toBeNaN();
-    expect(a / "").toBeNaN();
-    expect(a < 10).toBe(false);
-    expect(a >= 10).toBe(false);
+    expect(() => a + 1).toThrow(PyTypeError);
+    expect(() => a - 1).toThrow(PyTypeError);
+    expect(() => a / "").toThrow(PyTypeError);
+    expect(() => a < 10).toThrow(PyTypeError);
+    expect(() => a >= 10).toThrow(PyTypeError);
+    expect(a + "!").toBe("42 days, 0:00:00!");
   });
 
   test("test_disallowed_special", () => {

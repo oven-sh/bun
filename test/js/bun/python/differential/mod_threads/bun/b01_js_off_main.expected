@@ -2,10 +2,10 @@ status: 0
 oracle: none
 ---
 call JavaScript can only be used from the main thread
-getattr JavaScript can only be used from the main thread
+getattr allowed
 setattr JavaScript can only be used from the main thread
 getitem JavaScript can only be used from the main thread
-repr JavaScript can only be used from the main thread
+repr allowed
 method JavaScript can only be used from the main thread
 new JavaScript can only be used from the main thread
 iter JavaScript can only be used from the main thread

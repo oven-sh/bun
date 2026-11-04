@@ -25,8 +25,16 @@ group("None, undefined and null", { setup }, [
   ["js.eval('(a, b = 5) => b')(1, None)", "5"],
   ["js.eval('(a, b = 5) => b')(1, null)", "None"],
   ["js.eval('(...a) => a.length')(None, None)", "2"],
-  // Some functions tell the two apart: stream.push(null), Object.create(null). Python has no name for null.
-  ["kind(js.null)", "'null'", "there is no way to write null but js.eval('null')"],
+  // Some functions tell the two apart: stream.push(null), Object.create(null). js.null is the None that is null.
+  [
+    "kind(js.null), kind([js.null][0]), kind({'a': js.null}['a']), kind((js.null,)[0])",
+    "('null', 'null', 'null', 'null')",
+  ],
+  ["js.null is None, bool(js.null), repr(js.null), js.Object.is_(js.null, null)", "(True, False, 'None', True)"],
+  [
+    "from js import null as n\njs.eval('l => l.map(x => x === null)')([n, None]), js.Object.getPrototypeOf(js.Object.create(n)) is None, js.JSON.stringify({'a': n, 'b': None})",
+    `([True, False], True, '{"a":null}')`,
+  ],
 ]);
 
 group("numbers", { setup }, [
@@ -38,12 +46,26 @@ group("numbers", { setup }, [
     "[ident(v) for v in (0, 1, -1, 2**53 - 1, 2**53, 2**53 + 1, -2**53, 2**63, 2**200)] == [0, 1, -1, 2**53 - 1, 2**53, 2**53 + 1, -2**53, 2**63, 2**200]",
     "True",
   ],
-  ["[ident(v) for v in (0.1, 1e308, 1e21, math.inf, -math.inf, -0.0)]", "[0.1, 1e+308, 1e+21, inf, -inf, -0.0]"],
+  ["[ident(v) for v in (0.1, 1e308, 1e21, math.inf, -math.inf)]", "[0.1, 1e+308, 1e+21, inf, -inf]"],
   ["math.isnan(ident(math.nan))", "True"],
   // A whole float is a number to JavaScript, and a whole number an int to Python.
   ["ident(1.0), type(ident(1.0)).__name__", "(1, 'int')"],
   ["js.Math.sqrt(16), js.Math.round(2.5), js.Math.max(1, 2.5, 2)", "(4, 3, 2.5)"],
-  ["js.eval('-0'), js.eval('1e21'), js.eval('2**53'), js.eval('0.5 + 0.5')", "(-0.0, 1e+21, 9007199254740992.0, 1)"],
+  ["js.eval('1e21'), js.eval('2**53'), js.eval('0.5 + 0.5')", "(1e+21, 9007199254740992.0, 1)"],
+  // -0 is whole as well. Python's -0.0 is -0 to JavaScript.
+  [
+    "import struct\nz = js.eval('-0')\nzero = 0\nz, type(z).__name__, z is zero, id(z) == id(0), list(range(z)), 'ab'[z], float(z), z * -1.5, 1.5 * z, z / 2, math.copysign(1, z), math.atan2(z, -1) == math.pi, complex(z), {0: 'zero'}[z], hash(z), f'{z:.1f} {z:d} {z!r}', -z, z + z, struct.pack('<d', z)[7]",
+    "(0, 'int', True, True, [], 'a', 0.0, -0.0, 0.0, 0.0, 1.0, True, 0j, 'zero', 0, '0.0 0 0', 0, 0, 0)",
+  ],
+  ["1 / js.eval('-0')", "!ZeroDivisionError: division by zero"],
+  [
+    "js.Object.is_(-0.0, js.eval('-0')), js.Object.is_(0.0, 0), js.eval('x => 1 / x')(-0.0), ident(-0.0), type(ident(-0.0)).__name__",
+    "(True, True, -inf, 0, 'int')",
+  ],
+  [
+    "import json\nn = -0.0\nn, type(n).__name__, math.copysign(1, n), -n, n * 1, 0.0 * -1, -0.0 + 0.0, n == 0, [n][0], js.eval('a => typeof a[0]')([n]), json.dumps([n]), js.JSON.stringify([n])",
+    "(-0.0, 'float', -1.0, 0.0, -0.0, -0.0, 0.0, True, -0.0, 'object', '[-0.0]', '[0]')",
+  ],
   [
     "js.eval('5n'), type(js.eval('5n')).__name__, js.eval('9007199254740993n'), js.eval('-(2n**70n)')",
     "(5, 'int', 9007199254740993, -1180591620717411303424)",
@@ -54,7 +76,10 @@ group("numbers", { setup }, [
     "(True, False, True, True)",
   ],
   ["js.eval('(a, b) => a + b')(2**64, 2**64)", "36893488147419103232"],
-  ["js.eval('(a, b) => a + b')(1, 2**64)", "!JSError: TypeError: Invalid mix of BigInt and other type in addition."],
+  [
+    "js.eval('(a, b) => a + b')(1, 2**64)",
+    "!JSTypeError: TypeError: Invalid mix of BigInt and other type in addition.",
+  ],
   // What BigInt() makes stays a BigInt on the way back, small as it may be.
   [
     "kind(js.BigInt(5)), js.BigInt(5) == 5, js.BigInt(5) + 1, js.BigInt.asUintN(8, js.BigInt(257))",
@@ -64,7 +89,7 @@ group("numbers", { setup }, [
   ["a = js.BigInt64Array(1)\na[0] = 5\na[0]", "5"],
   ["js.BigInt.asUintN(8, 257)", "1", "an int below 2**53 is a number where JavaScript wants a BigInt"],
   ["type(js.process.hrtime.bigint()).__name__", "'int'"],
-  ["js.JSON.stringify([2**53])", "!JSError: TypeError: JSON.stringify cannot serialize BigInt."],
+  ["js.JSON.stringify([2**53])", "!JSTypeError: TypeError: JSON.stringify cannot serialize BigInt."],
   ["js.parseInt('12px'), js.parseFloat('1.50'), js.Number('0x10'), js.Number('')", "(12, 1.5, 16, 0)"],
   [
     "js.Intl.NumberFormat('en-US').format(1234567.891), js.Intl.NumberFormat('en-US').format(2**64)",
@@ -170,7 +195,7 @@ group("lists are arrays", { setup }, [
     "[1, 7]",
     "an item that is an accessor reads as None",
   ],
-  ["l = js.Object.freeze([1, 2])\nl.append(3)", "!JSError: TypeError: Attempted to assign to readonly property."],
+  ["l = js.Object.freeze([1, 2])\nl.append(3)", "!JSTypeError: TypeError: Attempted to assign to readonly property."],
   // What an array has besides its items.
   [
     "m = js.eval(\"/(?<y>a)/.exec('xa')\")\nlist(m), js.Reflect.get(m, 'index'), js.Reflect.get(m, 'groups').y",
@@ -215,7 +240,7 @@ group("dicts, tuples, sets and objects", { setup }, [
   ["js.eval('r => [r.length, r[1], [...r], r.start, r.step]')(range(1, 7, 2))", "[3, 3, [1, 3, 5], 1, 2]"],
   [
     "o = js.eval('({ a: 1, b: [1, 2], c: { d: null } })')\ntype(o).__name__, o.a, o['a'], o.b, o.c.d, len(o), list(o), 'a' in o, 'z' in o",
-    "('JSObject', 1, 1, [1, 2], None, 3, ['a', 'b', 'c'], True, False)",
+    "('JSPlainObject', 1, 1, [1, 2], None, 3, ['a', 'b', 'c'], True, False)",
   ],
   [
     "o = js.eval('({ a: 1 })')\no.b = 2\no['c'] = 3\ndel o.a\ndict(o), {**o}, o.keys(), o.values(), o.items()",
@@ -225,9 +250,26 @@ group("dicts, tuples, sets and objects", { setup }, [
     "o = js.eval('({ a: 1 })')\ngetattr(o, 'z', 'default'), hasattr(o, 'z'), o.get('a') if hasattr(o, 'get') else 'no get()'",
     "('default', False, 1)",
   ],
-  ["js.eval('({ a: 1 })').z", "!AttributeError: 'JSObject' object has no attribute 'z'"],
+  ["js.eval('({ a: 1 })').z", "!AttributeError: 'JSPlainObject' object has no attribute 'z'"],
   ["js.eval('({ a: 1 })')['z']", "!KeyError: 'z'"],
   ["o = js.Object()\no == o, o == js.Object(), hash(o) == hash(o), {o: 1}[o]", "(True, False, True, 1)"],
+  // A plain object is a mapping to whoever asks, though no dict. An instance of a class is not.
+  [
+    "import _js, collections.abc as abc\no = js.eval('({ a: 1 })')\ntype(o) is _js.JSPlainObject, isinstance(o, _js.JSObject), isinstance(o, abc.MutableMapping), isinstance(o, abc.Mapping), isinstance(js.Object.create(js.null), abc.Mapping), isinstance(o, dict)",
+    "(True, True, True, True, True, False)",
+  ],
+  [
+    "[isinstance(js.eval(s), abc.Mapping) for s in ('new Date', 'new Map', 'new (class A {})', 'Object.create({})', 'Math', '() => 1', 'globalThis')]",
+    "[False, False, False, False, False, False, False]",
+  ],
+  [
+    "match js.eval('({ kind: \"a\", n: { x: 1 }, more: 2 })'):\n    case {'kind': 'b'}: r = 'b'\n    case {'kind': 'a', 'n': {'x': x}, **rest}: r = (x, rest)\nr",
+    "(1, {'more': 2})",
+  ],
+  [
+    "def kind_of(v):\n    match v:\n        case {}: return 'mapping'\n        case [*_]: return 'sequence'\n        case _: return 'other'\n[kind_of(js.eval(s)) for s in ('({})', '[]', 'new Date', 'new Map', 'new (class A {})')]",
+    "['mapping', 'sequence', 'other', 'other', 'other']",
+  ],
   // As libraries look at what they are given.
   [
     'js.eval(\'d => [Object.hasOwn(d, "a"), d.hasOwnProperty("a"), Reflect.has(d, "a"), Object.getPrototypeOf(d) === Object.prototype, d.constructor === Object, Object.prototype.toString.call(d), Symbol.iterator in d]\')({\'a\': 1})',
@@ -259,14 +301,32 @@ group("JSON and structuredClone", { setup: "import json, copy\n" + setup }, [
   ],
   [
     'r = js.JSON.parse(\'{"a": [1, 2.0, null, {"b": 1e3}], "c": 1.5}\')\ntype(r).__name__, r.a[:3], r.a[3].b, r.c',
-    "('JSObject', [1, 2, None], 1000, 1.5)",
+    "('JSPlainObject', [1, 2, None], 1000, 1.5)",
   ],
   ["js.JSON.parse('[1, 2]', lambda key, value: value * 2 if isinstance(value, int) else value)", "[2, 4]"],
   ["js.JSON.stringify({'a': 1, 'b': 2}, lambda key, value: None if key == 'a' else value)", `'{"b":2}'`],
+  ['json.dumps(js.JSON.parse(\'{"a": [1, {"b": null}]}\'))', `'{"a": [1, {"b": null}]}'`],
   [
-    'json.dumps(js.JSON.parse(\'{"a": [1, {"b": null}]}\'))',
-    `'{"a": [1, {"b": null}]}'`,
-    "json does not know an object of JavaScript",
+    "o = js.eval('({ b: [1, { c: null }], a: { z: 1.5, y: \"s\" }, e: {} })')\njson.dumps(o), json.dumps(o, sort_keys=True), json.dumps(o.a, separators=(',', ':')), json.dumps({'k': [o.a], 't': (o.e,)})",
+    `('{"b": [1, {"c": null}], "a": {"z": 1.5, "y": "s"}, "e": {}}', '{"a": {"y": "s", "z": 1.5}, "b": [1, {"c": null}], "e": {}}', '{"z":1.5,"y":"s"}', '{"k": [{"z": 1.5, "y": "s"}], "t": [{}]}')`,
+  ],
+  ["json.dumps({'k': [o.a]}, indent=1)", `'{\\n "k": [\\n  {\\n   "z": 1.5,\\n   "y": "s"\\n  }\\n ]\\n}'`],
+  [
+    "json.dumps(js.eval('({ d: new Date(0), u: undefined, 1: 2 })'), default=lambda x: x.toISOString()), json.JSONEncoder().encode(js.eval('({ a: 1 })'))",
+    `('{"1": 2, "d": "1970-01-01T00:00:00.000Z", "u": null}', '{"a": 1}')`,
+  ],
+  ["o = js.Object()\no.me = [o]\njson.dumps(o)", "!ValueError: Circular reference detected"],
+  ["json.dumps(js.Map())", "!TypeError: Object of type JSObject is not JSON serializable"],
+  ["json.dumps(js.eval('({ f() {} })'))", "!TypeError: Object of type JSFunction is not JSON serializable"],
+  // json.dump() goes piece by piece, in Python, and knows what isinstance() says is a dict.
+  [
+    "import io\nf = io.StringIO()\njson.dump(js.eval('({ a: { b: 1 } })'), f, default=dict)\nf.getvalue()",
+    `'{"a": {"b": 1}}'`,
+  ],
+  [
+    "f = io.StringIO()\njson.dump(js.eval('({ a: 1 })'), f)\nf.getvalue()",
+    `'{"a": 1}'`,
+    "the encoder of json.dump() and iterencode() is the library's own, which asks isinstance(o, dict)",
   ],
   ["json.loads(js.JSON.stringify({'a': (1, 2)}))", "{'a': [1, 2]}"],
   ["json.dumps([None, null]), kind(copy.deepcopy([null])[0])", "('[null, null]', 'null')"],

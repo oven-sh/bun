@@ -291,7 +291,7 @@ server.stop()
   expect(stdout).toBe(
     lines(
       `200 {"path":"/hello","method":"GET","body":"","header":null,"list":[1,2.5,"x",null,true]}`,
-      "JSObject POST from Python a dict of headers [1, 2.5, 'x', None, True] list",
+      "JSPlainObject POST from Python a dict of headers [1, 2.5, 'x', None, True] list",
     ),
   );
   expect(exitCode).toBe(0);

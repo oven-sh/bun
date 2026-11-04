@@ -53,7 +53,7 @@ group("Python catches what JavaScript throws", { setup, files: { "lib.js": lib }
   ["str(catch('type'))", `"TypeError: null is not an object (evaluating 'null.x')"`],
   [
     "[type(catch(k).value).__name__ for k in ('app', 'string', 'object', 'undefined')], catch('object').value.reason, catch('string').value",
-    "(['JSObject', 'str', 'JSObject', 'NoneType'], 42, 'just a string')",
+    "(['JSObject', 'str', 'JSPlainObject', 'NoneType'], 42, 'just a string')",
   ],
   [
     "e = catch('app')\ntype(e).__mro__[1].__name__, repr(e), e.args, isinstance(e.value, AppError), isinstance(e.value, js.Error), e.value.code, e.value.name, e.value.message",
@@ -79,13 +79,44 @@ group("Python catches what JavaScript throws", { setup, files: { "lib.js": lib }
     "error = js.Error('kept')\ndef rethrow(): js.eval('e => { throw e; }')(error)\ntry:\n    rethrow()\nexcept JSError as e:\n    same = e.value is error\nsame",
     "True",
   ],
-  ["catch('app').code, catch('app').message", "('E_APP', 'app failed')", "what the Error has is on e.value only"],
+  // What the exception has not is asked of what was thrown.
+  ["catch('app').code, catch('app').message", "('E_APP', 'app failed')"],
+  [
+    "e = catch('cause')\ne.cause.message, e.name, e.stack == e.value.stack, [x.message for x in catch('aggregate').errors], catch('object').reason",
+    "('inner', 'Error', True, ['one', 'two'], 42)",
+  ],
+  [
+    "e = catch('app')\ne.args, hasattr(e, 'nothing'), hasattr(e, 'keys'), hasattr(catch('string'), 'length'), getattr(e, 'errno', None)",
+    "(('AppError: app failed',), False, False, False, None)",
+  ],
+  ["catch('app').nothing", "!AttributeError: '_js.JSError' object has no attribute 'nothing'"],
+  ["e = catch('app')\ne.code = 'mine'\ne.code, e.value.code", "('mine', 'E_APP')"],
   [
     "try:\n    thrower('app')\nexcept AppError as e:\n    r = 'caught by its class'\nr",
     "'caught by its class'",
     "TypeError: a class of JavaScript cannot stand in an except clause",
   ],
-  ["isinstance(catch('type'), TypeError)", "False"],
+  // A TypeError of JavaScript is a TypeError, and no other error is anything but a JSError.
+  [
+    "e = catch('type')\n[c.__name__ for c in type(e).__mro__], type(e).__module__, isinstance(e.value, js.TypeError)",
+    "(['JSTypeError', 'JSError', 'TypeError', 'Exception', 'BaseException', 'object'], '_js', True)",
+  ],
+  [
+    "try:\n    thrower('type')\nexcept TypeError as e:\n    r = str(e)\nr",
+    `"TypeError: null is not an object (evaluating 'null.x')"`,
+  ],
+  [
+    "def caught_as(source):\n    try:\n        js.eval(source)\n    except TypeError:\n        return 'TypeError'\n    except JSError:\n        return 'JSError'\n[caught_as(s) for s in ('undefined()', 'throw new (class extends TypeError {})', 'throw Object.create(TypeError.prototype)', 'BigInt(1) + 1', 'new Array(-1)', 'nothing', 'throw \"TypeError: said so\"')]",
+    "['TypeError', 'TypeError', 'TypeError', 'TypeError', 'JSError', 'JSError', 'JSError']",
+  ],
+  [
+    "from node import fs\ntry:\n    fs.readFileSync(None)\nexcept TypeError as e:\n    r = e.code\nr",
+    "'ERR_INVALID_ARG_TYPE'",
+  ],
+  [
+    "js.eval('f => { try { f(); } catch (e) { return [e.constructor === TypeError, e.message]; } }')(lambda: thrower('type'))",
+    `[True, "null is not an object (evaluating 'null.x')"]`,
+  ],
 ]);
 
 group("Python raises for JavaScript", { setup, files: { "lib.js": lib } }, [
@@ -122,7 +153,19 @@ group("Python raises for JavaScript", { setup, files: { "lib.js": lib } }, [
   ["def interrupt(): raise KeyboardInterrupt()\nthrough(interrupt)", "!KeyboardInterrupt: "],
   [
     "js.eval('(f, E) => { try { f(); } catch (e) { return [e instanceof E, e instanceof TypeError]; } }')(lambda: len(5), TypeError)",
-    "[True, False]",
+    "[True, True]",
+  ],
+  [
+    "class Mine(TypeError): pass\nclass Both(ValueError, TypeError): pass\n[js.eval('e => [e instanceof TypeError, e instanceof Error, e instanceof RangeError]')(e) for e in (Mine(), Both(), ValueError(), BaseException())]",
+    "[[True, True, False], [True, True, False], [False, True, False], [False, True, False]]",
+  ],
+  [
+    "class Other(Exception): pass\nis_type_error = js.eval('e => e instanceof TypeError')\ne = Other()\nseen = [is_type_error(e)]\ne.__class__ = Mine\nseen.append(is_type_error(e))\nseen",
+    "[False, True]",
+  ],
+  [
+    "describe(lambda: len(5))[1:4] + describe(lambda: len(5))[6:]",
+    `['TypeError', "object of type 'int' has no len()", "TypeError: object of type 'int' has no len()", 'TypeError']`,
   ],
   [
     "js.Error.isError(ValueError('x'))",

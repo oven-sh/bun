@@ -14,6 +14,8 @@ export { builtins };
 const objectPrototype = Object.getPrototypeOf(builtins.object());
 const functionPrototype = Object.getPrototypeOf(builtins.len);
 const exceptionPrototype = Object.getPrototypeOf(builtins.ValueError());
+const typeErrorPrototype = Object.getPrototypeOf(builtins.TypeError());
+const prototypesOfPython = new Set([objectPrototype, functionPrototype, exceptionPrototype, typeErrorPrototype]);
 const { type: typeOf, getattr, list: listType, tuple: tupleType } = builtins;
 
 const enum Kind {
@@ -28,7 +30,7 @@ function kindOf(x): number {
   const t = typeof x;
   if ((t !== "object" && t !== "function") || x === null) return 0;
   const prototype = Object.getPrototypeOf(x);
-  if (prototype !== objectPrototype && prototype !== functionPrototype && prototype !== exceptionPrototype) return 0;
+  if (!prototypesOfPython.has(prototype)) return 0;
   const type = typeOf(x);
   let kind = kindOfType.get(type);
   if (kind === undefined) {
@@ -102,7 +104,7 @@ function isObjectOfPython(x): boolean {
   const t = typeof x;
   if ((t !== "object" && t !== "function") || x === null) return false;
   const prototype = Object.getPrototypeOf(x);
-  return prototype === objectPrototype || prototype === functionPrototype || prototype === exceptionPrototype;
+  return prototypesOfPython.has(prototype);
 }
 
 // The operators of JavaScript ask the classes of the objects of Python's among their operands. On numbers, strings and arrays
@@ -356,7 +358,11 @@ export const untranslated = (what: string, reason: string) => () => {
   throw new Untranslated(`${what}: ${reason}`);
 };
 
-const isException = x => typeof x === "object" && x !== null && Object.getPrototypeOf(x) === exceptionPrototype;
+const isException = x => {
+  if (typeof x !== "object" || x === null) return false;
+  const prototype = Object.getPrototypeOf(x);
+  return prototype === exceptionPrototype || prototype === typeErrorPrototype;
+};
 
 /**
  * `except types:`. What is not an exception of Python's comes from a mistake, of the translation or of the runtime, since the

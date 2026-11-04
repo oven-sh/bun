@@ -552,8 +552,7 @@ describe("TestBasic", () => {
       d.rotate(i); // check vs. rot(1) n times
       for (let j = 0; j < i; j++) e.rotate(1);
       expect(tuple(d)).toEqual(tuple(e));
-      // Not -i: for 0 that is -0 in JavaScript, which is a float to Python.
-      d.rotate(0 - i); // check that it works in reverse
+      d.rotate(-i); // check that it works in reverse
       expect(tuple(d)).toEqual(s);
       e.rotate(n - i); // check that it wraps forward
       expect(tuple(e)).toEqual(s);
@@ -579,7 +578,6 @@ describe("TestBasic", () => {
     expect(tuple(d)).toEqual(tuple(e));
 
     expect(() => d.rotate("x")).toThrow(PyTypeError); // Wrong arg type
-    expect(() => d.rotate(-0)).toThrow(PyTypeError);
     expect(() => call(d.rotate, [1, 10])).toThrow(PyTypeError); // Too many args
 
     d = deque();

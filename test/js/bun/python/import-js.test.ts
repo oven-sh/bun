@@ -78,7 +78,7 @@ except ImportError as e:
       "42 a property of the function",
       "the Python module comes first",
       "pkg/inner.js pkg/inner.js True",
-      "JSError TypeError: thrown while the module runs False",
+      "JSTypeError TypeError: thrown while the module runs False",
       "ImportError",
     ),
     stderr: "",
@@ -257,15 +257,7 @@ print(again is js, foreign())
   });
   expect(result.stderr).toBe("");
   expect(result.stdout).toBe(
-    lines(
-      "False []",
-      "[]",
-      "['js'] True True JSObject",
-      "[] []",
-      "True True",
-      "True [1]",
-      "True ['js']",
-    ),
+    lines("False []", "[]", "['js'] True True JSObject", "[] []", "True True", "True [1]", "True ['js']"),
   );
   expect(result.exitCode).toBe(0);
 });
@@ -302,7 +294,7 @@ except Exception as e:
       "2 /a 0 200",
       "'12' 3 False JSSymbol 5 3",
       "['a.example'] message",
-      "JSError",
+      "JSTypeError",
     ),
     stderr: "",
     exitCode: 0,

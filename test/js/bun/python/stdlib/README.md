@@ -17,7 +17,7 @@ The standard library that is built into `bun` has no `test` package, so nothing 
 
 ## How Python is written in JavaScript
 
-`kwargs`, `float`, `with` (here `with_`), `asyncWith` and `method` are from `bun:python`; `t`, `b`, `py`, `call`, `makeClass`,
+`kwargs`, `float`, `with` (here `with_`), `asyncWith`, `enter`, `enterAsync` and `method` are from `bun:python`; `t`, `b`, `py`, `call`, `makeClass`,
 `raises`, `raisesAsync` and `warns` from `./helpers`.
 
 ### Calls
@@ -53,7 +53,7 @@ The standard library that is built into `bun` has no `test` package, so nothing 
 | `b"abc\xff"`            | `b("abc\xff")`                     |                                                                                                           |
 | `[1, 2]`                | `[1, 2]`                           | The same object in both languages.                                                                        |
 | `(1, 2)`                | `t(1, 2)`                          | An array will do wherever Python only iterates or unpacks.                                                |
-| `{"a": 1}`              | `py({ a: 1 })`                     | An object of JavaScript is no dict: `json.dumps({ a: 1 })` is a `TypeError`.                              |
+| `{"a": 1}`              | `py({ a: 1 })`                     | A plain object is a `Mapping`, which `json.dumps({ a: 1 })` takes, but no dict: `isinstance` says so.     |
 | `{1: "a", (1, 2): "b"}` | `dict([[1, "a"], [t(1, 2), "b"]])` | or `py(new Map(...))`                                                                                     |
 | `{1, 2}`                | `set([1, 2])`                      |                                                                                                           |
 | `1 + 2j`                | `complex(1, 2)`                    |                                                                                                           |
@@ -69,7 +69,7 @@ The standard library that is built into `bun` has no `test` package, so nothing 
   `int`. Inside a container it stays what it is, and JavaScript sees an object: of `json.loads("[1.0]")[0]`, `typeof` is
   `"object"`, `=== 1` is false, `== 1` true, `+ 1` is 2. `array.includes(1)` does not find it. `Number(x)` makes a number of it.
   The same goes for a NaN that Python made. `toEqual([1])` holds.
-- `-0` is a float: `range(-i)` is a `TypeError` when `i` is 0. Write `0 - i`.
+- `-0` is the int 0, like any whole number: `range(-i)` works when `i` is 0. For Python's `-0.0`, `float(-0)` of `bun:python`.
 
 **Strings.** `len("a😀b")` is 3 and `"a😀b".length` 4. What Python gives for a position (`m.start()`, `s.find()`) counts
 characters: use it with `getitem(s, i)` or `[...s][i]`, not with `s[i]`.
@@ -96,6 +96,7 @@ the types: `list.sort(a)`, `list.index(a, x)`, `str.partition(s, ",")`, `int.bit
 | `not x`, `if x:`                    | `!bool(x)`: every object is true to JavaScript, an empty dict too                                                 |
 | `with cm as v: ...`                 | `with_(cm, v => { ... })`                                                                                         |
 | `async with cm as v: ...`           | `await asyncWith(cm, async v => { ... })`                                                                         |
+| `with cm as v:`, to the next `}`    | `using e = enter(cm)`, `e.value`; `await using e = await enterAsync(cm)`. `__exit__` hears of no exception        |
 | `for k, v in d.items():`            | `for (const [k, v] of d.items())`, or `of d`: a dict iterates as a `Map` does                                     |
 | `[f(x) for x in it]`                | `Array.from(it, f)`                                                                                               |
 | `yield`                             | `function*`: a generator of JavaScript is a generator to Python (`next`, `send`, `throw`, `close`)                |
@@ -118,10 +119,11 @@ the types: `list.sort(a)`, `list.index(a, x)`, `str.partition(s, ",")`, `int.bit
 bound like a function of Python's: one that has a `this` (`function`, a method) gets the instance as `this`, an arrow function as
 its first argument. `method(f)` says the former of any function.
 
-**Operators** on objects of Python's ask their classes: `Fraction(1, 2) + 1`, `date2 - date1`, `a < b`, `s1 | s2`, `-x`,
-`2 ** x`. On two arrays they are JavaScript's: `[1] + [2]` is `"12"`, `[10] < [9]` is true. Use `operator.add`, `operator.lt`.
-Where neither class has an answer, Python raises a `TypeError` and JavaScript goes on as with any object:
-`timedelta(1) + 1` is the string `"1 day, 0:00:001"`. A test of such a `TypeError` calls `operator.add`.
+**Operators** with an object of Python's among the operands are Python's: `Fraction(1, 2) + 1`, `date2 - date1`, `a < b`,
+`s1 | s2`, `-x`, `2 ** x`, `"%s=%s" % pair`, `[0] * index`. Where neither operand has an answer that is Python's `TypeError`:
+`timedelta(1) + 1`. Only `+` with a string of JavaScript concatenates if the class has nothing to say: `"at " + date`.
+On two values of JavaScript they are JavaScript's: `[1] + [2]` is `"12"`, `[10] < [9]` is true, `"%d" % 1` is `NaN`. Use
+`operator.add`, `operator.lt`, `operator.mod`.
 
 **Mappings.** A property of a mapping is an item first and an attribute second, so `d.get` is the item if there is a key `"get"`;
 `dict.get(d, key)` is safe. Assigning to a property always sets an item: for an attribute (`defaultdict.default_factory`),
@@ -159,8 +161,10 @@ An exception of Python's is an `Error` (`instanceof Error`), with `name` (the na
 | `assertWarns(W)`                     | `expect(warns(W, () => ...)).toHaveLength(1)`          |
 
 What JavaScript throws goes through Python unchanged and comes out as it was thrown. In Python it is a `JSError`, an
-`Exception`: `except TypeError` does not catch a `TypeError` of JavaScript's, nor is Python's `TypeError` an instance of
-JavaScript's. Import it as `TypeError as PyTypeError`. Where Python hands such an exception over as a value and does not raise it
+`Exception`. A `TypeError` is one in both languages: `except TypeError` catches a `TypeError` of JavaScript's (a `JSTypeError`,
+which is a `JSError` as well), and Python's `TypeError` is an `instanceof TypeError`, so `toThrow(TypeError)` takes either. To tell
+them apart, import Python's as `TypeError as PyTypeError`. No other class is linked: a `RangeError` is no `ValueError`. Where Python
+hands such an exception over as a value and does not raise it
 (`gather(return_exceptions=True)`, `task.exception()`), JavaScript sees the `JSError`, and what was thrown is its `value`.
 
 ### Assertions
@@ -194,8 +198,8 @@ and nothing else does. `toStrictEqual` wants the same type on both sides. A fail
 
 `String(x)` and `` `${x}` `` are `str(x)`; `console.log(x)`, `Bun.inspect(x)` and `util.inspect(x)` are `repr(x)`.
 `JSON.stringify` makes an array of what has a length and can be iterated over (tuple, set, deque, bytes), an object of a mapping
-(leaving out the keys whose value is `None`, which is `undefined`) and of an instance (its attributes). Of what has neither
-(`date`) it makes `{}`.
+(leaving out the keys whose value is `None`, which is `undefined`) and of an instance (its attributes). A `date`, a `time` and a
+`datetime` give their `isoformat()`, as a `Date` does. Of what has none of this (`timedelta`) it makes `{}`.
 
 ### Async
 

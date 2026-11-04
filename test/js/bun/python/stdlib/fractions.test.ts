@@ -94,7 +94,7 @@ describe("FractionTest", () => {
 
   test("testInitFromFloat", () => {
     expect(_components(F(2.5))).toEqual([5, 2]);
-    expect(_components(F(-0.0))).toEqual([0, 1]);
+    expect(_components(F(float(-0.0)))).toEqual([0, 1]);
     expect(_components(F(0.1))).toEqual([3602879701896397, 36028797018963968n]);
     // bug 16469: error types should be consistent with float -> int
     expect(() => F(NaN)).toThrow(ValueError);
@@ -142,7 +142,7 @@ describe("FractionTest", () => {
     expect(_components(F.from_float(10))).toEqual([10, 1]);
     const bigint = 1234567890123456789n;
     expect(_components(F.from_float(bigint))).toEqual([bigint, 1]);
-    expect(_components(F.from_float(-0.0))).toEqual([0, 1]);
+    expect(_components(F.from_float(float(-0.0)))).toEqual([0, 1]);
     expect(_components(F.from_float(float(10)))).toEqual([10, 1]);
     expect(_components(F.from_float(-2.5))).toEqual([-5, 2]);
     expect(_components(F.from_float(1e23))).toEqual([99999999999999991611392n, 1]);

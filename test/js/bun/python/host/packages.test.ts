@@ -55,7 +55,7 @@ def inc(): return x + 1
 group("packages", { files, setup: "import importlib, importlib.util, sys, js, bun\n" }, [
   [
     "import cjs_pkg\ncjs_pkg.add(1, 2), cjs_pkg.helper.name, cjs_pkg.helper.dirname, cjs_pkg.version, cjs_pkg.lazy, type(cjs_pkg).__name__",
-    "(3, 'helper', 'cjs-pkg/lib', '1.2.3', 'computed', 'JSObject')",
+    "(3, 'helper', 'cjs-pkg/lib', '1.2.3', 'computed', 'JSPlainObject')",
   ],
   [
     "from cjs_pkg import add, helper\nadd('a', 'b'), helper.name, sys.modules['cjs_pkg'] is cjs_pkg",
@@ -77,7 +77,7 @@ group("packages", { files, setup: "import importlib, importlib.util, sys, js, bu
     "ns.feature, ns.default, list(esm_pkg), 'VERSION' in esm_pkg",
     "(True, 'feature default', ['VERSION', 'bump', 'configure', 'default', 'live', 'ns'], True)",
   ],
-  ["esm_pkg.VERSION = '2'\n0", "!JSError: TypeError: Attempted to assign to readonly property."],
+  ["esm_pkg.VERSION = '2'\n0", "!JSTypeError: TypeError: Attempted to assign to readonly property."],
   [
     "importlib.import_module('esm-pkg/feature').feature, bun.require('esm-pkg/feature').feature, bun.require('esm-pkg/data.json').k[:2]",
     "(True, True, [1, 2])",

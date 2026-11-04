@@ -70,13 +70,9 @@ shutil.rmtree(directory)
       "js.process.pid == os.getpid(), js.process.cwd() == os.getcwd(), js.process.platform, js.process.argv[1] == os.path.abspath(__file__), js.process.versions.bun == js.Bun.version",
       "(True, True, 'linux', True, True)",
     ],
-    // The environment is kept twice.
-    [
-      "os.environ['FROM_PYTHON'] = '1'\njs.process.env.FROM_PYTHON",
-      "'1'",
-      "process.env does not see what os.environ sets",
-    ],
-    ["js.process.env.FROM_JS = '2'\nos.environ.get('FROM_JS')", "'2'", "nor os.environ what process.env sets"],
+    // More of it in process.test.ts.
+    ["os.environ['FROM_PYTHON'] = '1'\njs.process.env.FROM_PYTHON", "'1'"],
+    ["js.process.env.FROM_JS = '2'\nos.environ.get('FROM_JS')", "'2'"],
   ],
 );
 
@@ -167,7 +163,7 @@ assert_ = importlib.import_module("node.assert")
       "('/a/b', 'file:///a%20b', 'http://a.example/p?q=1')",
     ],
     [
-      "u = js.URL('http://u:p@a.example:8080/p/x?q=1&q=2&r=%20#h')\nu.host, u.port, u.username, u.searchParams.getAll('q'), u.searchParams.get('r'), u.searchParams.get('none'), list(u.searchParams.keys()), [list(x) for x in u.searchParams], str(u)",
+      "u = js.URL('http://u:p@a.example:8080/p/x?q=1&q=2&r=%20#h')\nu.host, u.port, u.username, u.searchParams.getAll('q'), u.searchParams.get('r'), u.searchParams.get('none'), list(u.searchParams.keys()), [list(x) for x in u.searchParams.entries()], str(u)",
       "('a.example:8080', '8080', 'u', ['1', '2'], ' ', None, ['q', 'q', 'r'], [['q', '1'], ['q', '2'], ['r', ' ']], 'http://u:p@a.example:8080/p/x?q=1&q=2&r=%20#h')",
     ],
     [
@@ -175,18 +171,15 @@ assert_ = importlib.import_module("node.assert")
       "('http://a.example/new?q=1&z=5#h', 'http://a.example/x', False)",
     ],
     [
-      "str(js.URLSearchParams({'a': 1, 'b': 'x y'})), str(js.URLSearchParams([('a', 1), ('a', 2)])), str(js.URLSearchParams(a=1)), len(js.URLSearchParams('a=1&b=2')), {k: v for k, v in js.URLSearchParams('a=1&b=2')}",
+      "str(js.URLSearchParams({'a': 1, 'b': 'x y'})), str(js.URLSearchParams([('a', 1), ('a', 2)])), str(js.URLSearchParams(a=1)), len(js.URLSearchParams('a=1&b=2')), {k: v for k, v in js.URLSearchParams('a=1&b=2').items()}",
       "('a=1&b=x+y', 'a=1&a=2', 'a=1', 2, {'a': '1', 'b': '2'})",
     ],
+    ["dict(js.URLSearchParams('a=1&b=2'))", "{'a': '1', 'b': '2'}"],
+    ["'a' in js.URLSearchParams('a=1'), js.URLSearchParams('a=1')['a']", "(True, '1')"],
+    // A key that is there twice is there twice, and [] is get(), which gives the first.
     [
-      "dict(js.URLSearchParams('a=1&b=2'))",
-      "{'a': '1', 'b': '2'}",
-      "KeyError: it has keys(), so dict() takes it for a mapping, and its items are its properties",
-    ],
-    [
-      "'a' in js.URLSearchParams('a=1'), js.URLSearchParams('a=1')['a']",
-      "(True, '1')",
-      "`in` and [] ask for properties",
+      "p = js.URLSearchParams('x=1&y=2&x=3')\np['x'], len(p), list(p), dict(p), p.items(), p.getAll('x'), [list(e) for e in p.entries()]",
+      "('1', 3, ['x', 'y', 'x'], {'x': '1', 'y': '2'}, [('x', '1'), ('y', '2'), ('x', '1')], ['1', '3'], [['x', '1'], ['y', '2'], ['x', '3']])",
     ],
     [
       "q = querystring.parse('a=1&a=2&b=x%20y')\nq.a, q.b, dict(q), querystring.stringify({'a': [1, 2], 'b': 'x y'}), querystring.stringify(a=[1, 2], b='x y')",
@@ -237,11 +230,10 @@ class H:
       "e.listenerCount('x'), e.listeners('x')[0] is on_x, e.off('x', on_x) is e, e.listenerCount('x'), e.eventNames()",
       "(1, True, True, 0, [])",
     ],
-    ["EventEmitter().on", "!AttributeError: 'NoneType' object has no attribute 'on'"],
+    // It is written as a function.
     [
-      "type(EventEmitter()).__name__",
-      "'JSObject'",
-      "EventEmitter is written as a function, which Python calls: the result is None",
+      "type(EventEmitter()).__name__, isinstance(EventEmitter(), EventEmitter), EventEmitter().listenerCount('x')",
+      "('JSObject', True, 0)",
     ],
     ["h = H()\ne.on('y', h.handle)\ne.emit('y', 1)\nh.seen", "[1]"],
     [
@@ -302,7 +294,7 @@ loop = asyncio.get_running_loop()
       "(None, [b'X', b'Y'])",
     ],
     [
-      "r = Readable.new(read=lambda size: None)\nr.push('pushed')\nr.push(null)\n[bytes(c) async for c in r]",
+      "r = Readable(read=lambda size: None)\nr.push('pushed')\nr.push(js.null)\n[bytes(c) async for c in r]",
       "[b'pushed']",
     ],
     [

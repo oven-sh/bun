@@ -101,10 +101,10 @@ shutil.rmtree(directory)
       "['const', 'a', '=', '1;', 'export', '{', 'a', '};']",
     ],
     [
-      "c = bun.CookieMap('a=1; b=2')\nc.get('a'), c.size, len(c), [list(x) for x in c]",
+      "c = bun.CookieMap('a=1; b=2')\nc.get('a'), c.size, len(c), [list(x) for x in c.entries()]",
       "('1', 2, 2, [['a', '1'], ['b', '2']])",
     ],
-    ["dict(bun.CookieMap('a=1; b=2'))", "{'a': '1', 'b': '2'}", "KeyError: see URLSearchParams"],
+    ["dict(bun.CookieMap('a=1; b=2'))", "{'a': '1', 'b': '2'}"],
     ["sorted(n for n in dir(bun) if n in ('serve', 'file', 'require', 'nothing'))", "['file', 'serve']"],
     ["bun.nothing", "!AttributeError: 'JSObject' object has no attribute 'nothing'"],
     ["from bun import nothing\n0", "!ImportError: cannot import name 'nothing' from 'bun' (unknown location)"],
@@ -174,7 +174,7 @@ def fetch(request, server):
     if path == "/status": return js.Response("no", status=404, headers={"x-a": "b", "content-type": "text/x"})
     if path == "/init": return js.Response("no", {"status": 201, "headers": [("x-a", "1"), ("x-b", "2")]})
     if path == "/raise": raise ValueError("handler failed")
-    if path == "/headers": return js.Response.json({k: v for k, v in request.headers})
+    if path == "/headers": return js.Response.json(dict(request.headers))
     if path == "/ip": return js.Response(server.requestIP(request).address)
     if path == "/redirect": return js.Response.redirect("/sync", 302)
     return js.Response("fallback " + request.method)
@@ -210,13 +210,33 @@ async def get(path, **options):
       "([1, 2.5, None], [1, 2], True, {'a': [1, 2.5, None], 't': [1, 2], 'n': {'x': True}})",
     ],
     [
-      "h = js.Headers({'A': '1'})\nh.append('b', '2')\nh.get('a'), [list(x) for x in h], {k: v for k, v in h}, dict(list(h)), h.toJSON().a",
-      "('1', [['a', '1'], ['b', '2']], {'a': '1', 'b': '2'}, {'a': '1', 'b': '2'}, '1')",
+      "h = js.Headers({'A': '1'})\nh.append('b', '2')\nh.get('a'), [list(x) for x in h.entries()], {k: v for k, v in h.items()}, h.toJSON().a",
+      "('1', [['a', '1'], ['b', '2']], {'a': '1', 'b': '2'}, '1')",
+    ],
+    // What has get(), has() and keys() and can be iterated over is a mapping by those.
+    [
+      "h['a'], h['B'], 'A' in h, 'z' in h, len(h), list(h), dict(h), {**h}, h.items(), bool(h), bool(js.Headers())",
+      "('1', '2', True, False, 2, ['a', 'b'], {'a': '1', 'b': '2'}, {'a': '1', 'b': '2'}, [('a', '1'), ('b', '2')], True, False)",
+    ],
+    ["h['z']", "!KeyError: 'z'"],
+    ["h['c'] = '3'\ndel h['a']\nlist(h), h.get('c'), h.has('a')", "(['b', 'c'], '3', False)"],
+    ["del h['a']\nh", "!KeyError: 'a'"],
+    [
+      "h.pop('c'), h.pop('c', 'gone'), h.setdefault('d', '4'), h.setdefault('d', '5'), h.update({'e': '6'}, f='7'), dict(h)",
+      "('3', 'gone', '4', '4', None, {'b': '2', 'd': '4', 'e': '6', 'f': '7'})",
+    ],
+    // Its own methods are JavaScript's.
+    [
+      "h.get('z'), h.get('z', 'default'), list(h.keys()), list(h.values())",
+      "(None, None, ['b', 'd', 'e', 'f'], ['2', '4', '6', '7'])",
     ],
     [
-      "dict(js.Headers({'a': '1'})), 'a' in js.Headers({'a': '1'}), len(js.Headers({'a': '1'}))",
-      "({'a': '1'}, True, 1)",
-      "KeyError: see URLSearchParams",
+      "f = js.FormData()\nf['k'] = 'v'\nf['k'], 'k' in f, 'z' in f, list(f), len(f), dict(f)",
+      "('v', True, False, ['k'], 1, {'k': 'v'})",
+    ],
+    [
+      "c = js.Bun.CookieMap('a=1; b=2')\nc['a'], 'b' in c, len(c), sorted(c), dict(c)",
+      "('1', True, 2, ['a', 'b'], {'a': '1', 'b': '2'})",
     ],
     ["dict(js.Headers({'a': '1'}).entries())", "{'a': '1'}"],
     [
@@ -240,7 +260,7 @@ async def get(path, **options):
       "('1', 1)",
     ],
     [
-      "f = js.FormData()\nf.append('k', 'v')\nf.append('f', js.Blob(['data']), 'n.txt')\nf.get('k'), f.get('f').name, [k for k, v in f], (await get('/x', method='POST', body=f))[0]",
+      "f = js.FormData()\nf.append('k', 'v')\nf.append('f', js.Blob(['data']), 'n.txt')\nf.get('k'), f.get('f').name, [k for k, v in f.entries()], (await get('/x', method='POST', body=f))[0]",
       "('v', 'n.txt', ['k', 'f'], 200)",
     ],
   ],
@@ -324,7 +344,7 @@ insert = db.prepare("insert into t(name, score, data) values (?, ?, ?)")
     ],
     [
       "rows = db.query('select * from t order by id').all()\ntype(rows).__name__, type(rows[0]).__name__, [(r.id, r.name, r.score) for r in rows], bytes(rows[0].data), dict(rows[1])",
-      "('list', 'JSObject', [(1, 'a', 1.5), (2, 'b', 2)], b'\\x00\\x01', {'id': 2, 'name': 'b', 'score': 2, 'data': None})",
+      "('list', 'JSPlainObject', [(1, 'a', 1.5), (2, 'b', 2)], b'\\x00\\x01', {'id': 2, 'name': 'b', 'score': 2, 'data': None})",
     ],
     [
       "db.query('select name from t where id = ?').get(2).name, db.query('select name from t where id = $id').get(**{'$id': 1}).name, db.query('select 1 as x where 0').get(), db.query('select id, name from t').values(), [r.name for r in db.query('select name from t').iterate()]",
@@ -350,11 +370,7 @@ insert = db.prepare("insert into t(name, score, data) values (?, ?, ?)")
       "('JSError', 'SQLiteError', 'SQLITE_CONSTRAINT_PRIMARYKEY', 1555)",
     ],
     ["db.run('nonsense')", '!JSError: SQLiteError: near "nonsense": syntax error'],
-    [
-      "with Database(':memory:') as other:\n    r = other.query('select 1 as one').get().one\nr",
-      "1",
-      "what JavaScript can dispose of (Symbol.dispose) is no context manager",
-    ],
+    ["with Database(':memory:') as other:\n    r = other.query('select 1 as one').get().one\nr", "1"],
     [
       "from bun.ffi import dlopen, FFIType, ptr, JSCallback, toArrayBuffer\nlib = dlopen('libc.so.6', {'strlen': {'args': ['cstring'], 'returns': 'usize'}, 'abs': {'args': [FFIType.i32], 'returns': FFIType.i32}, 'getpid': {'args': [], 'returns': 'i32'}, 'qsort': {'args': ['ptr', 'usize', 'usize', 'function'], 'returns': 'void'}})\nlib.symbols.abs(-5), lib.symbols.getpid() == os.getpid(), lib.symbols.strlen(js.TextEncoder().encode('hello\\0'))",
       "(5, True, 5)",
@@ -370,7 +386,7 @@ insert = db.prepare("insert into t(name, score, data) values (?, ?, ?)")
   ],
 );
 
-// expect() can be called and cannot be constructed, but it looks like a class of the host's, which Python constructs.
+// expect() looks like a class of the host's, which Python would construct. Bun says that it is meant to be called.
 script(
   "bun:test from Python",
   {
@@ -385,13 +401,13 @@ async def awaits():
     import asyncio
     await asyncio.sleep(0.001)
     expect({"a": 1}).toEqual({"a": 1})
-test("awaits", awaits)
+test("awaits", awaits, 90_000)  # A debug build takes its time to import asyncio.
 `,
   },
   ({ stderr, exitCode }) => {
     expect(stderr).toContain("3 pass");
     expect(exitCode).toBe(0);
   },
-  "failing",
+  undefined,
   ["test", "python.test.ts"],
 );

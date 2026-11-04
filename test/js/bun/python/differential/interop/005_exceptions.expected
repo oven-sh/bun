@@ -4,7 +4,7 @@ mask: addresses
 ---
 ValueError bad value true true true false false object
 ValueError: bad value ValueError: bad value ValueError: bad value [object ValueError] 1 bad value
-Traceback (most recent call last):|  File "005_exceptions.py", line 9, in fail|ValueError: bad value|
+Traceback (most recent call last):|  File "005_exceptions.js", line 6, in grab|  File "005_exceptions.py", line 9, in fail|ValueError: bad value|
 AppError app failed 7 true true code
 KeyError 'k' KeyError: 'k'
 ZeroDivisionError division by zero
@@ -19,7 +19,12 @@ true
 JSError RangeError: js error true true true
 JSError RangeError: js error | ValueError bad value | ValueError made in js
 true true true
-true KeyError: 'mine'
+true Traceback (most recent call last):
+  File "<dir>/005_exceptions.js", line 6, in grab
+    function grab(f) { try { f(); } catch (e) { return e; } }
+  File "<dir>/005_exceptions.js", line 32, in <anonymous>
+    const mine = new b.KeyError("mine"); print(grab(() => { throw mine; }) === mine, mine.stack.trim());
+KeyError: 'mine'
 true
 {"code":7}
 rejected ValueError

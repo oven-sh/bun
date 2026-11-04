@@ -31,4 +31,4 @@ sub sub! 3 s "sub" SUB object
 2.5 [1.5] 1 1.5 false
 bigint 1180591620717411303424 1180591620717411303425
 [object tuple] [object Plain] (1, 2.0, 'x', None) 1 (1, 2.0, 'x', None) {3}
-NoneType NoneType None int float str list bool int JSObject JSFunction
+NoneType NoneType None int float str list bool int JSPlainObject JSFunction

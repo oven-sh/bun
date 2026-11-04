@@ -459,7 +459,7 @@ def hook(type, value, traceback):
 sys.excepthook = hook
 js.eval("(function () { throw new TypeError('of JavaScript') })")()`,
     });
-    expect({ stdout, stderr }).toEqual({ stdout: "hook: JSError TypeError: of JavaScript TypeError", stderr: "" });
+    expect({ stdout, stderr }).toEqual({ stdout: "hook: JSTypeError TypeError: of JavaScript TypeError", stderr: "" });
     expect(exitCode).toBe(1);
   });
 

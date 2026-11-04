@@ -69,9 +69,9 @@ test.concurrent("the operators of JS ask the classes of Python objects", async (
       show(a < b, a <= b, a > b, a >= b, a < 7, 7 > a, 7 < a, a >= 6);
       let c = new V(1); c++; ++c; c--; c += 10; c *= 2;
       show(c);
-      // Not overloaded: what JS does with any object.
+      // With a string, + concatenates, as it does with any object.
       const p = new Plain();
-      show("<" + p + ">", p + "!", \`\${p}\`, p - 1, p * 2, p < 1, p == "plain", p == p);
+      show("<" + p + ">", p + "!", \`\${p}\`, p == "plain", p == p);
       try { new Raises() + 1; } catch (e) { show(e.name ?? e.constructor?.name, String(e)); }
       // A float that is a whole number is a number in JS.
       show(typeof half(4), half(4) === 2, half(4) + 1, typeof half(3), half(3));
@@ -86,9 +86,117 @@ test.concurrent("the operators of JS ask the classes of Python objects", async (
     true false true false true false false false false
     false false true true true true false true
     V(24)
-    <plain> plain! plain NaN NaN false true true
+    <plain> plain! plain true true
     ValueError ValueError: no sum
     number true 3 number 1.5
+    "
+  `);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("an operator that neither operand has an answer to is a TypeError", async () => {
+  const { stdout, stderr, exitCode } = await run({
+    "v.py": vector,
+    "n.py": "class Number:\n    def __float__(self): return 1.5\n",
+    "main.js": `
+      import { Plain, V } from "./v.py";
+      import { Number as PyNumber } from "./n.py";
+      import { TypeError as PyTypeError } from "python:builtins";
+      const p = new Plain(), v = new V(1), n = new PyNumber();
+      let counter = new Plain();
+      for (const f of [
+        () => p - 1, () => 1 - p, () => p * 2, () => p + 1, () => 1 + p, () => p + p, () => p / p, () => p % 2, () => p ** 2, () => p & 1, () => p | 1,
+        () => p ^ 1, () => p << 1, () => p >> 1, () => -p, () => ~p, () => p < 1, () => 1 <= p, () => p > p, () => p >= null,
+        () => p + null, () => p + undefined, () => p + {}, () => p + [], () => p + 1n, () => p + true, () => { counter++; }, () => { --counter; }, () => (counter -= 1),
+        () => v / "a", () => n * 2,
+      ]) {
+        try {
+          console.log("no exception:", String(f), String(f()));
+        } catch (e) {
+          console.log(e instanceof PyTypeError, e.message ?? String(e));
+        }
+      }
+      // To make a number of it is up to the program, as in Python.
+      console.log(+n * 2, Number(n) * 2, Math.round(n));
+    `,
+  });
+  expect(stderr).toBe("");
+  expect(stdout).toMatchInlineSnapshot(`
+    "true unsupported operand type(s) for -: 'Plain' and 'int'
+    true unsupported operand type(s) for -: 'int' and 'Plain'
+    true unsupported operand type(s) for *: 'Plain' and 'int'
+    true unsupported operand type(s) for +: 'Plain' and 'int'
+    true unsupported operand type(s) for +: 'int' and 'Plain'
+    true unsupported operand type(s) for +: 'Plain' and 'Plain'
+    true unsupported operand type(s) for /: 'Plain' and 'Plain'
+    true unsupported operand type(s) for %: 'Plain' and 'int'
+    true unsupported operand type(s) for ** or pow(): 'Plain' and 'int'
+    true unsupported operand type(s) for &: 'Plain' and 'int'
+    true unsupported operand type(s) for |: 'Plain' and 'int'
+    true unsupported operand type(s) for ^: 'Plain' and 'int'
+    true unsupported operand type(s) for <<: 'Plain' and 'int'
+    true unsupported operand type(s) for >>: 'Plain' and 'int'
+    true bad operand type for unary -: 'Plain'
+    true bad operand type for unary ~: 'Plain'
+    true '<' not supported between instances of 'Plain' and 'int'
+    true '<=' not supported between instances of 'int' and 'Plain'
+    true '>' not supported between instances of 'Plain' and 'Plain'
+    true '>=' not supported between instances of 'Plain' and 'NoneType'
+    true unsupported operand type(s) for +: 'Plain' and 'NoneType'
+    true unsupported operand type(s) for +: 'Plain' and 'NoneType'
+    true unsupported operand type(s) for +: 'Plain' and 'JSPlainObject'
+    true unsupported operand type(s) for +: 'Plain' and 'list'
+    true unsupported operand type(s) for +: 'Plain' and 'int'
+    true unsupported operand type(s) for +: 'Plain' and 'bool'
+    true unsupported operand type(s) for +: 'Plain' and 'int'
+    true unsupported operand type(s) for -: 'Plain' and 'int'
+    true unsupported operand type(s) for -: 'Plain' and 'int'
+    true unsupported operand type(s) for /: 'int' and 'str'
+    true unsupported operand type(s) for *: 'Number' and 'int'
+    3 3 2
+    "
+  `);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("the type of an operand that is a value of JS is asked as well", async () => {
+  const { stdout, stderr, exitCode } = await run({
+    "v.py": `
+import fractions
+class Index:
+    def __index__(self): return 2
+class Pair(tuple): pass
+class Text(str): pass
+index, pair, one, half, text = Index(), Pair((1, 2)), (1,), fractions.Fraction(1, 2), Text("%d!")
+class Reflected:
+    def __radd__(self, other): return ("radd", other)
+    def __rmod__(self, other): return ("rmod", other)
+reflected = Reflected()
+`,
+    "main.js": `
+      import { index, pair, one, half, text, reflected } from "./v.py";
+      import { repr } from "python:builtins";
+      const show = (...values) => console.log(values.map(repr).join(" "));
+      show("%s and %s" % pair, "%s" % one, "%.2f" % half, text % 3);
+      show("ab" * index, index * "ab", [1, 2] * index, index * [0]);
+      show(one * 2, 2 * one, one + one, true + half, 10n + half, 1.5 + half, 2 ** half);
+      show("a" + reflected, 1 + reflected, [] + reflected, 2 % reflected);
+      for (const f of [() => [1] + one, () => one + [1], () => "ab" * half, () => "a" < one, () => [1] < one, () => "%d" % text])
+        try { show(f()); } catch (e) { console.log(String(e)); }
+    `,
+  });
+  expect(stderr).toBe("");
+  expect(stdout).toMatchInlineSnapshot(`
+    "'1 and 2' '1' '0.50' '3!'
+    'abab' 'abab' [1, 2, 1, 2] [0, 0]
+    (1, 1) (1, 1) (1, 1) Fraction(3, 2) Fraction(21, 2) 2 1.4142135623730951
+    ('radd', 'a') ('radd', 1) ('radd', []) ('rmod', 2)
+    TypeError: can only concatenate list (not "tuple") to list
+    TypeError: can only concatenate tuple (not "list") to tuple
+    TypeError: can't multiply sequence by non-int of type 'Fraction'
+    TypeError: '<' not supported between instances of 'str' and 'tuple'
+    TypeError: '<' not supported between instances of 'list' and 'tuple'
+    TypeError: format argument: %d requires a real number, not v.Text
     "
   `);
   expect(exitCode).toBe(0);

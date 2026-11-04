@@ -221,7 +221,7 @@ describe("in a catch", () => {
     try {
       (null as any).property;
     } catch (error) {
-      expect(String(repr(handled()))).toStartWith('JSError("TypeError: ');
+      expect(String(repr(handled()))).toStartWith('JSTypeError("TypeError: ');
       expect(handled().value).toBe(error);
       expect(handled()).toBe(handled());
     }

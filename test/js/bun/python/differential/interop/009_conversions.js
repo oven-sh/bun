@@ -3,7 +3,7 @@ import python from "bun:python";
 const pythonImport = python.import;
 const print = (...values) => console.log(values.map(String).join(" "));
 print(String(m.text), `${m.text}`, m.text + "", "" + m.text, m.text.toString(), m.text.toLocaleString(), String(m.only), m.text.valueOf() === m.text);
-print(+m.num, m.num * 2, `${m.num}`, m.num + "", Number(m.num), Math.round(m.num), +m.idx, m.idx * 2, [10, 20, 30, 40, 50, 60, 70, 80][+m.idx], +m.text, Number.isNaN(+m.only));
+print(+m.num, +m.num * 2, `${m.num}`, m.num + "", Number(m.num), Math.round(m.num), +m.idx, +m.idx * 2, [10, 20, 30, 40, 50, 60, 70, 80][+m.idx], +m.text, Number.isNaN(+m.only));
 print(+m.frac, m.frac * 4, String(m.frac), String(m.cplx), +m.cplx);
 try { String(m.bad); } catch (e) { print(e.name, e.message); }
 try { `${m.bad}`; } catch (e) { print(e.name, e.message); }

@@ -55,7 +55,7 @@ group("JavaScript calls functions of Python", { setup }, [
     "((1, 2), (1, 2), (1, 2), (1, 2))",
   ],
   ["js.eval('f => new f()')(C).m(1), js.eval('(f, o) => o instanceof f')(C, C())", "(('m', 1), True)"],
-  ["js.eval('f => new f()')(two)", "!JSError: TypeError: function is not a constructor (evaluating 'new f()')"],
+  ["js.eval('f => new f()')(two)", "!JSTypeError: TypeError: function is not a constructor (evaluating 'new f()')"],
   // An object as the last argument is an argument. (kwargs() of bun:python makes keyword arguments.)
   ["call(var, js.eval('({ k: 2 })'))[0].k, call(kws)", "(2, {})"],
   // `this` is not handed to a function of Python.

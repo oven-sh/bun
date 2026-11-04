@@ -11,6 +11,6 @@ python's toString 12 true
 object,object,object,number,number,number 2,1,-1,3.5,100000000000000000000,Infinity 1.0,0.0,-2.0,2.5,100000000000000000000,Infinity [1,0,-2,2.5]
 true false 2 2 true false true true 2.5 true 0x1.0000000000000p+0
 -2,0,1,2.5 1.5 [object float] float
-float,float,float,float,float,float int,int,int,float,float,float int,float,int,float,int,float,float,float,float,float
-NoneType,NoneType,bool,str,int,int,list,JSObject,JSFunction,JSSymbol,JSObject,JSObject,JSObject
+float,float,float,float,float,float int,int,int,float,float,float int,float,int,float,int,float,float,int,float,float
+NoneType,NoneType,bool,str,int,int,list,JSPlainObject,JSFunction,JSSymbol,JSObject,JSObject,JSObject
 undefined 1 true true true true true true

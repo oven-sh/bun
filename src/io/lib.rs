@@ -2299,6 +2299,12 @@ pub mod closer {
         /// `_compat`: for signature compatibility with the Windows version.
         pub fn close(fd: Fd, _compat: ()) {
             debug_assert!(fd.is_valid());
+            // If the OS can't start the pool's first thread, this thread closes it.
+            if !WorkPool::get().ensure_worker() {
+                use bun_sys::FdExt;
+                fd.close();
+                return;
+            }
             WorkPool::schedule_owned(Box::new(Closer {
                 fd,
                 task: WorkPoolTask {

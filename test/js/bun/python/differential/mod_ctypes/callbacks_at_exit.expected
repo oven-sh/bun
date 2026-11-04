@@ -1,0 +1,7 @@
+status: 0
+script: 74d91aca3616eec7
+---
+[3, 2, 1]
+the end
+in a cycle [9, 6, 5, 4, 3, 2, 1, 1]
+a global of the program [9, 6, 5, 4, 3, 2, 1, 1]

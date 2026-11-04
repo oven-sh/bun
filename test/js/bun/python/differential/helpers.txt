@@ -2,6 +2,7 @@
 extra/grid
 extra/lazy_imports/lz
 mod_cjk/common
+mod_ctypes/callbacks_at_exit_helper
 mod_decimal/engine
 mod_expat/expat_common
 mod_memoryview/js/holders_helper

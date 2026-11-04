@@ -1,4 +1,4 @@
-import faulthandler, sys, os, re, signal, time, tempfile
+import faulthandler, sys, os, re, select, signal, time, tempfile
 def t(f, *a, **k):
     try:
         print(repr(f(*a, **k)))
@@ -9,9 +9,10 @@ def norm(b):
     s = re.sub(r'0x[0-9a-f]{16}', '0xT', s); s = re.sub(r' \[[^\]]*\]', ' [name]', s); s = re.sub(r'File ".*?([^/"]*)"', r'File "\1"', s)
     return s
 r, w = os.pipe(); os.set_blocking(r, False)
-def got():
-    try: return norm(os.read(r, 65536))
-    except BlockingIOError: return ''
+def raw():
+    try: return os.read(r, 65536)
+    except BlockingIOError: return b''
+def got(): return norm(raw())
 
 print(sorted(n for n in dir(faulthandler) if not n.startswith('_')))
 print(faulthandler.is_enabled(), faulthandler.disable(), faulthandler.enable(w), faulthandler.is_enabled(), faulthandler.enable(file=w, all_threads=False, c_stack=False, max_threads=5), faulthandler.disable(), faulthandler.is_enabled(), faulthandler.disable())
@@ -95,13 +96,12 @@ for a in (0, -1, 'x', None, float('nan'), 1e30):
     t(faulthandler.dump_traceback_later, a, file=w)
 t(faulthandler.dump_traceback_later); t(faulthandler.cancel_dump_traceback_later); t(faulthandler.cancel_dump_traceback_later, 1)
 def wait(n=1):
-    s = ''
-    deadline = time.monotonic() + 10
-    while s.count('Timeout') < n or not s.endswith('<module>\n'):
-        s += got()
-        if time.monotonic() > deadline: break
-    return s
-faulthandler.dump_traceback_later(0.05, file=w); s = wait(); print(re.sub(r'line \d+ in wait', 'line N in wait', re.sub(r'  File "[^"]*", line \d+ in got\n', '', s)))
+    # It is written piece by piece, by a thread that looks at the frames of this one as they are: no function of Python is called here.
+    s = b''
+    while (s.count(b'Timeout') < n or not s.endswith(b'<module>\n')) and select.select([r], [], [], 10)[0]:
+        s += os.read(r, 65536)
+    return norm(s)
+faulthandler.dump_traceback_later(0.05, file=w); s = wait(); print(re.sub(r'line \d+ in wait', 'line N in wait', s))
 faulthandler.dump_traceback_later(0.05, file=w); time.sleep(0.3); print(got())
 faulthandler.dump_traceback_later(5, file=w); faulthandler.cancel_dump_traceback_later(); time.sleep(0.05); print(repr(got()))
 faulthandler.dump_traceback_later(5, file=w); faulthandler.dump_traceback_later(0.05, file=w); time.sleep(0.3); print(got().count('Timeout'))

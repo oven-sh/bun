@@ -1,55 +1,55 @@
 status: 0
-script: 95b7705bd2b3a775
+script: dd73babfc9ebb10a
 ---
 ['cancel_dump_traceback_later', 'disable', 'dump_c_stack', 'dump_traceback', 'dump_traceback_later', 'enable', 'is_enabled', 'register', 'unregister']
 False False None True None True False False
 Current thread 0xT [name] (most recent call first):
-  File "faulthandler_basic.py", line 19 in f
-  File "faulthandler_basic.py", line 20 in g
-  File "faulthandler_basic.py", line 21 in <module>
+  File "faulthandler_basic.py", line 20 in f
+  File "faulthandler_basic.py", line 21 in g
+  File "faulthandler_basic.py", line 22 in <module>
 
 Stack (most recent call first):
-  File "faulthandler_basic.py", line 22 in f2
-  File "faulthandler_basic.py", line 23 in <module>
-
-Stack (most recent call first):
+  File "faulthandler_basic.py", line 23 in f2
   File "faulthandler_basic.py", line 24 in <module>
 
 Stack (most recent call first):
-  File "faulthandler_basic.py", line 26 in method
-  File "faulthandler_basic.py", line 27 in <module>
+  File "faulthandler_basic.py", line 25 in <module>
 
 Stack (most recent call first):
-  File "faulthandler_basic.py", line 28 in <lambda>
+  File "faulthandler_basic.py", line 27 in method
   File "faulthandler_basic.py", line 28 in <module>
 
 Stack (most recent call first):
-  File "faulthandler_basic.py", line 30 in gen
-  File "faulthandler_basic.py", line 31 in <module>
+  File "faulthandler_basic.py", line 29 in <lambda>
+  File "faulthandler_basic.py", line 29 in <module>
 
 Stack (most recent call first):
+  File "faulthandler_basic.py", line 31 in gen
   File "faulthandler_basic.py", line 32 in <module>
+
+Stack (most recent call first):
+  File "faulthandler_basic.py", line 33 in <module>
 
 53
 101
 101
-101   File "faulthandler_basic.py", line 34 in deep
+101   File "faulthandler_basic.py", line 35 in deep
 Stack (most recent call first):
   File "f\xefle \u20ac\U0001f600\x0a.py", line 1 in h\xe9\u4e2d
   File "f\xefle \u20ac\U0001f600\x0a.py", line 2 in <module>
-  File "faulthandler_basic.py", line 40 in <module>
+  File "faulthandler_basic.py", line 41 in <module>
 
 532 xxxxxx...", line 1 in <module>
 before
 Stack (most recent call first):
-  File "faulthandler_basic.py", line 44 in <module>
+  File "faulthandler_basic.py", line 45 in <module>
 
 flushed
 Stack (most recent call first):
-  File "faulthandler_basic.py", line 48 in <module>
+  File "faulthandler_basic.py", line 49 in <module>
 
 Stack (most recent call first):
-  File "faulthandler_basic.py", line 51 in <module>
+  File "faulthandler_basic.py", line 52 in <module>
 
 ValueError: file is not a valid file descriptor
 AttributeError: 'str' object has no attribute 'fileno'
@@ -115,27 +115,27 @@ TypeError: faulthandler.unregister() takes exactly one argument (0 given)
 OSError: [Errno 22] Invalid argument
 False None 0
 Current thread 0xT [name] (most recent call first):
-  File "faulthandler_basic.py", line 81 in send
-  File "faulthandler_basic.py", line 82 in <module>
+  File "faulthandler_basic.py", line 82 in send
+  File "faulthandler_basic.py", line 83 in <module>
 
 Stack (most recent call first):
-  File "faulthandler_basic.py", line 81 in send
-  File "faulthandler_basic.py", line 83 in <module>
+  File "faulthandler_basic.py", line 82 in send
+  File "faulthandler_basic.py", line 84 in <module>
 
 True False
 Stack (most recent call first):
-  File "faulthandler_basic.py", line 81 in send
-  File "faulthandler_basic.py", line 87 in <module>
+  File "faulthandler_basic.py", line 82 in send
+  File "faulthandler_basic.py", line 88 in <module>
  []
 '' [10]
 Stack (most recent call first):
-  File "faulthandler_basic.py", line 81 in send
-  File "faulthandler_basic.py", line 89 in <module>
+  File "faulthandler_basic.py", line 82 in send
+  File "faulthandler_basic.py", line 90 in <module>
  [10]
 '' [10]
 Stack (most recent call first):
-  File "faulthandler_basic.py", line 81 in send
-  File "faulthandler_basic.py", line 91 in <module>
+  File "faulthandler_basic.py", line 82 in send
+  File "faulthandler_basic.py", line 92 in <module>
 
 ''
 ValueError: timeout must be greater than 0
@@ -149,7 +149,7 @@ None
 TypeError: faulthandler.cancel_dump_traceback_later() takes no arguments (1 given)
 Timeout (0:00:00.050000)!
 Thread 0xT [name] (most recent call first):
-  File "<dir>/faulthandler_basic.py", line N in wait
+  File "faulthandler_basic.py", line N in wait
   File "faulthandler_basic.py", line 104 in <module>
 
 Timeout (0:00:00.050000)!

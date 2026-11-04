@@ -1,6 +1,6 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
-import { mkdirSync, symlinkSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 // Started under the name python3, Bun has the command line of CPython.
@@ -518,6 +518,48 @@ sys.exit(subprocess.run([sys.executable, "-c", "import inside"], env=environment
         exitCode: 1,
       });
     });
+
+    // Where both go to one file: what a script or standard input has printed comes before the traceback. After -c and -m it is
+    // still in the buffer of sys.stdout, and follows when the interpreter ends.
+    test.each([
+      ["a script", ["main.py"], undefined, true],
+      ["standard input", [], "print('printed'); 1 / 0\n", true],
+      ["-c", ["-c", "print('printed'); 1 / 0"], undefined, false],
+      ["-m", ["-m", "main"], undefined, false],
+      ["a directory", ["."], undefined, false],
+      ["bun main.py", ["main.py"], undefined, true],
+    ] as [string, string[], string | undefined, boolean][])(
+      "the traceback and what is left in sys.stdout: %s",
+      async (name, args, stdin, printedFirst) => {
+        using dir = tempDir("python-cli-order", {
+          "main.py": "print('printed'); 1 / 0\n",
+          "__main__.py": "print('printed'); 1 / 0\n",
+        });
+        const program = name.startsWith("bun") ? bunExe() : join(String(dir), "python3");
+        if (program !== bunExe()) symlinkSync(bunExe(), program);
+        const output = openSync(join(String(dir), "output"), "a");
+        try {
+          await using proc = Bun.spawn({
+            cmd: [program, ...args],
+            env: { ...env, HOME: String(dir) },
+            cwd: String(dir),
+            stdin: stdin === undefined ? "ignore" : new Blob([stdin]),
+            stdout: output,
+            stderr: output,
+          });
+          const exitCode = await proc.exited;
+          const written = readFileSync(join(String(dir), "output"), "utf8").split("\n");
+          expect([written[0], written.at(-2)]).toEqual(
+            printedFirst
+              ? ["printed", "ZeroDivisionError: division by zero"]
+              : ["Traceback (most recent call last):", "printed"],
+          );
+          expect(exitCode).toBe(1);
+        } finally {
+          closeSync(output);
+        }
+      },
+    );
 
     test("a syntax error", async () => {
       expect(await python(["main.py"], { files: { "main.py": "print('not run')\nx = = 1\n" } })).toEqual({

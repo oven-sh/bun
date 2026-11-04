@@ -1,0 +1,311 @@
+status: 0
+script: 0050a94ef50eceaa
+---
+plain throw [1, 'ValueError']
+    outer:PY_START
+    outer:LINE:1
+    inner_plain:PY_START
+    inner_plain:LINE:1
+    inner_plain:PY_YIELD
+    outer:PY_YIELD
+    inner_plain:PY_THROW:ValueError
+    inner_plain:RAISE:ValueError
+    inner_plain:EXCEPTION_HANDLED:ValueError
+    inner_plain:RERAISE:ValueError
+    inner_plain:PY_UNWIND:ValueError
+    outer:PY_THROW:ValueError
+    outer:RAISE:ValueError
+    outer:EXCEPTION_HANDLED:ValueError
+    outer:LINE:1
+    outer:RERAISE:ValueError
+    outer:EXCEPTION_HANDLED:ValueError
+    outer:RERAISE:ValueError
+    outer:PY_UNWIND:ValueError
+caught inside [1, 'caught', ('after', None)]
+    outer:PY_START
+    outer:LINE:1
+    inner_catches:PY_START
+    inner_catches:LINE:1
+    inner_catches:LINE:2
+    inner_catches:PY_YIELD
+    outer:PY_YIELD
+    inner_catches:PY_THROW:ValueError
+    inner_catches:RAISE:ValueError
+    inner_catches:EXCEPTION_HANDLED:ValueError
+    inner_catches:LINE:3
+    inner_catches:LINE:4
+    inner_catches:PY_YIELD
+    outer:PY_RESUME
+    inner_catches:PY_RESUME
+    inner_catches:PY_RETURN
+    outer:STOP_ITERATION:StopIteration
+    outer:LINE:2
+    outer:PY_YIELD
+returns [1, ('after', 'ret')]
+    outer:PY_START
+    outer:LINE:1
+    inner_returns:PY_START
+    inner_returns:LINE:1
+    inner_returns:LINE:2
+    inner_returns:PY_YIELD
+    outer:PY_YIELD
+    inner_returns:PY_THROW:ValueError
+    inner_returns:RAISE:ValueError
+    inner_returns:EXCEPTION_HANDLED:ValueError
+    inner_returns:LINE:3
+    inner_returns:LINE:4
+    inner_returns:PY_RETURN
+    outer:PY_THROW:StopIteration
+    outer:RAISE:StopIteration
+    outer:EXCEPTION_HANDLED:StopIteration
+    outer:LINE:1
+    outer:LINE:2
+    outer:PY_YIELD
+outer catches [1, 'outer caught']
+    outer_try:PY_START
+    outer_try:LINE:1
+    outer_try:LINE:2
+    inner_plain:PY_START
+    inner_plain:LINE:1
+    inner_plain:PY_YIELD
+    outer_try:PY_YIELD
+    inner_plain:PY_THROW:ValueError
+    inner_plain:RAISE:ValueError
+    inner_plain:EXCEPTION_HANDLED:ValueError
+    inner_plain:RERAISE:ValueError
+    inner_plain:PY_UNWIND:ValueError
+    outer_try:PY_THROW:ValueError
+    outer_try:RAISE:ValueError
+    outer_try:EXCEPTION_HANDLED:ValueError
+    outer_try:LINE:2
+    outer_try:RERAISE:ValueError
+    outer_try:EXCEPTION_HANDLED:ValueError
+    outer_try:LINE:3
+    outer_try:LINE:4
+    outer_try:PY_YIELD
+raises on next [1, 'KeyError']
+    outer:PY_START
+    outer:LINE:1
+    inner_raises_on_next:PY_START
+    inner_raises_on_next:LINE:1
+    inner_raises_on_next:PY_YIELD
+    outer:PY_YIELD
+    outer:PY_RESUME
+    inner_raises_on_next:PY_RESUME
+    inner_raises_on_next:LINE:2
+    inner_raises_on_next:RAISE:KeyError
+    inner_raises_on_next:EXCEPTION_HANDLED:KeyError
+    inner_raises_on_next:RERAISE:KeyError
+    inner_raises_on_next:PY_UNWIND:KeyError
+    outer:RAISE:KeyError
+    outer:EXCEPTION_HANDLED:KeyError
+    outer:RERAISE:KeyError
+    outer:PY_UNWIND:KeyError
+raises on next, caught [1, 'outer caught']
+    outer_try:PY_START
+    outer_try:LINE:1
+    outer_try:LINE:2
+    inner_raises_on_next:PY_START
+    inner_raises_on_next:LINE:1
+    inner_raises_on_next:PY_YIELD
+    outer_try:PY_YIELD
+    outer_try:PY_RESUME
+    inner_raises_on_next:PY_RESUME
+    inner_raises_on_next:LINE:2
+    inner_raises_on_next:RAISE:KeyError
+    inner_raises_on_next:EXCEPTION_HANDLED:KeyError
+    inner_raises_on_next:RERAISE:KeyError
+    inner_raises_on_next:PY_UNWIND:KeyError
+    outer_try:RAISE:KeyError
+    outer_try:EXCEPTION_HANDLED:KeyError
+    outer_try:LINE:3
+    outer_try:LINE:4
+    outer_try:PY_YIELD
+close [1, None]
+    outer:PY_START
+    outer:LINE:1
+    inner_plain:PY_START
+    inner_plain:LINE:1
+    inner_plain:PY_YIELD
+    outer:PY_YIELD
+    inner_plain:PY_THROW:GeneratorExit
+    inner_plain:RAISE:GeneratorExit
+    inner_plain:EXCEPTION_HANDLED:GeneratorExit
+    inner_plain:RERAISE:GeneratorExit
+    inner_plain:PY_UNWIND:GeneratorExit
+    outer:PY_THROW:GeneratorExit
+    outer:RAISE:GeneratorExit
+    outer:EXCEPTION_HANDLED:GeneratorExit
+    outer:LINE:1
+    outer:RERAISE:GeneratorExit
+    outer:EXCEPTION_HANDLED:GeneratorExit
+    outer:RERAISE:GeneratorExit
+    outer:PY_UNWIND:GeneratorExit
+close caught [1, None]
+    outer:PY_START
+    outer:LINE:1
+    inner_catches:PY_START
+    inner_catches:LINE:1
+    inner_catches:LINE:2
+    inner_catches:PY_YIELD
+    outer:PY_YIELD
+    inner_catches:PY_THROW:GeneratorExit
+    inner_catches:RAISE:GeneratorExit
+    inner_catches:EXCEPTION_HANDLED:GeneratorExit
+    inner_catches:LINE:3
+    inner_catches:RERAISE:GeneratorExit
+    inner_catches:EXCEPTION_HANDLED:GeneratorExit
+    inner_catches:RERAISE:GeneratorExit
+    inner_catches:EXCEPTION_HANDLED:GeneratorExit
+    inner_catches:RERAISE:GeneratorExit
+    inner_catches:PY_UNWIND:GeneratorExit
+    outer:PY_THROW:GeneratorExit
+    outer:RAISE:GeneratorExit
+    outer:EXCEPTION_HANDLED:GeneratorExit
+    outer:LINE:1
+    outer:RERAISE:GeneratorExit
+    outer:EXCEPTION_HANDLED:GeneratorExit
+    outer:RERAISE:GeneratorExit
+    outer:PY_UNWIND:GeneratorExit
+two levels [1, 'ValueError']
+    outer2:PY_START
+    outer2:LINE:1
+    outer:PY_START
+    outer:LINE:1
+    inner_plain:PY_START
+    inner_plain:LINE:1
+    inner_plain:PY_YIELD
+    outer:PY_YIELD
+    outer2:PY_YIELD
+    inner_plain:PY_THROW:ValueError
+    inner_plain:RAISE:ValueError
+    inner_plain:EXCEPTION_HANDLED:ValueError
+    inner_plain:RERAISE:ValueError
+    inner_plain:PY_UNWIND:ValueError
+    outer:PY_THROW:ValueError
+    outer:RAISE:ValueError
+    outer:EXCEPTION_HANDLED:ValueError
+    outer:LINE:1
+    outer:RERAISE:ValueError
+    outer:EXCEPTION_HANDLED:ValueError
+    outer:RERAISE:ValueError
+    outer:PY_UNWIND:ValueError
+    outer2:PY_THROW:ValueError
+    outer2:RAISE:ValueError
+    outer2:EXCEPTION_HANDLED:ValueError
+    outer2:LINE:1
+    outer2:RERAISE:ValueError
+    outer2:EXCEPTION_HANDLED:ValueError
+    outer2:RERAISE:ValueError
+    outer2:PY_UNWIND:ValueError
+two levels caught [1, 'caught']
+    outer2:PY_START
+    outer2:LINE:1
+    outer:PY_START
+    outer:LINE:1
+    inner_catches:PY_START
+    inner_catches:LINE:1
+    inner_catches:LINE:2
+    inner_catches:PY_YIELD
+    outer:PY_YIELD
+    outer2:PY_YIELD
+    inner_catches:PY_THROW:ValueError
+    inner_catches:RAISE:ValueError
+    inner_catches:EXCEPTION_HANDLED:ValueError
+    inner_catches:LINE:3
+    inner_catches:LINE:4
+    inner_catches:PY_YIELD
+no delegate [1, 'ValueError']
+    inner_plain:PY_START
+    inner_plain:LINE:1
+    inner_plain:PY_YIELD
+    inner_plain:PY_THROW:ValueError
+    inner_plain:RAISE:ValueError
+    inner_plain:EXCEPTION_HANDLED:ValueError
+    inner_plain:RERAISE:ValueError
+    inner_plain:PY_UNWIND:ValueError
+no delegate caught [1, 'caught']
+    inner_catches:PY_START
+    inner_catches:LINE:1
+    inner_catches:LINE:2
+    inner_catches:PY_YIELD
+    inner_catches:PY_THROW:ValueError
+    inner_catches:RAISE:ValueError
+    inner_catches:EXCEPTION_HANDLED:ValueError
+    inner_catches:LINE:3
+    inner_catches:LINE:4
+    inner_catches:PY_YIELD
+ValueError ['waiting', 'waiting', ('returned', 'done')]
+    call top 0
+    line top 1
+    call middle 0
+    line middle 1
+    call leaf 0
+    line leaf 1
+    line leaf 2
+    call __await__ 0
+    line __await__ 1
+    return __await__ 1
+    return leaf 2
+    return middle 1
+    return top 1
+    call __await__ 1
+    exception __await__ 1
+    return __await__ 1
+    call leaf 2
+    exception leaf 2
+    line leaf 2
+    line leaf 3
+    line leaf 4
+    call __await__ 0
+    line __await__ 1
+    return __await__ 1
+    return leaf 4
+    call top 1
+    call middle 1
+    call leaf 4
+    call __await__ 1
+    line __await__ 2
+    return __await__ 2
+    exception leaf 4
+    return leaf 4
+    exception middle 1
+    return middle 1
+    exception top 1
+    return top 1
+KeyError ['waiting', ('returned', 'suppressed')]
+    call top 0
+    line top 1
+    call middle 0
+    line middle 1
+    call leaf 0
+    line leaf 1
+    line leaf 2
+    call __await__ 0
+    line __await__ 1
+    return __await__ 1
+    return leaf 2
+    return middle 1
+    return top 1
+    call __await__ 1
+    exception __await__ 1
+    return __await__ 1
+    call leaf 2
+    exception leaf 2
+    line leaf 2
+    line leaf 3
+    return leaf 3
+    call middle 1
+    exception middle 1
+    line middle 1
+    return middle 1
+    call top 1
+    exception top 1
+    line top 1
+    line top 2
+    return top 2
+handler on the line of the yield [1, 2] [('call', 'one_line', 0), ('line', 'one_line', 1), ('return', 'one_line', 1), ('call', 'one_line', 1), ('exception', 'one_line', 1), ('line', 'one_line', 1), ('line', 'one_line', 2), ('return', 'one_line', 2)]
+cancelled
+    cancelled 3 3
+    middle_sleeps 2 2
+    sleeps 2 2

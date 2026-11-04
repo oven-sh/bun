@@ -639,6 +639,8 @@ JSC::JSValue readableStreamToJSON(JSC::JSGlobalObject*, JSReadableStream*); // u
 JSC::JSValue readableStreamToJSONSource(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
 JSC::JSValue readableStreamToBlob(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
 JSC::JSValue readableStreamToFormData(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue contentType); // userJS: yes — BunStreamConsumers.cpp
+// Body.formData() on a body that is not form data: the stream is read to its end like any body, then `error` rejects the result.
+JSC::JSValue readableStreamConsumeThenReject(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue error); // userJS: yes — BunStreamConsumers.cpp
 
 // The buffered fast path: returns the native handle's own .text()/.arrayBuffer()/... promise,
 // or the EMPTY JSValue if the fast path does not apply. `method` is the property name to
@@ -721,5 +723,6 @@ JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSON(Zig::GlobalObject*, JS
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSONSource(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToFormData(Zig::GlobalObject*, JSC::EncodedJSValue stream, JSC::EncodedJSValue contentType); // userJS: yes
+JSC::EncodedJSValue ZigGlobalObject__readableStreamConsumeThenReject(Zig::GlobalObject*, JSC::EncodedJSValue stream, JSC::EncodedJSValue error); // userJS: yes
 
 } // extern "C"

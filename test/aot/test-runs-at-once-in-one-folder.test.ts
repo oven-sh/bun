@@ -1,8 +1,9 @@
 import { expect, vi } from "bun:test";
-import { bunEnv, bunExe, isCI, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isCI, isDebug, isMacOS, isWindows, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join, relative } from "node:path";
+import { isHardened } from "./hardened";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
@@ -41,24 +42,24 @@ const plain = {
 };
 
 // The entry point still has the name of that file, and its text is in memory. With the word TestRunShowsStandIn:1 each build prints
-// the text of its own. What a run of each form has to print: the name in the project, and how many of the modules that the test
-// file loads the text names.
+// the text of its own. What a run of each form has to print: the name in the project, and what the text requires by a name that
+// it spells, which is every module that the test file loads or none at all.
 const standIn = "node_modules/.cache/bun-test-files-from-disk";
 const layers = "TestRunLayers:2,TestRunPartFiles:1,TestRunShowsStandIn:1";
 type Form = { env: Record<string, string>; standIns: string[] };
 const forms: Record<string, Form> = {
-  // Two texts under one name: an upper layer's, and the lowest layer's.
+  // Two texts under one name: the lowest layer's, and an upper layer's.
   "in layers": {
     env: { BUN_DEBUG_TEST_AOT_WORDS: layers },
-    standIns: [`${standIn}.ts names 0`, `${standIn}.ts names 11`],
+    standIns: [`${standIn}.ts names every module of the test file`, `${standIn}.ts names none`],
   },
   "in layers that are told what is named": {
     env: { BUN_DEBUG_TEST_AOT_WORDS: layers, BUN_AOT_TESTS_NAME_WHAT_THEY_USE: "1" },
-    standIns: [`${standIn}.js names 0`, `${standIn}.ts names 11`],
+    standIns: [`${standIn}.js names none`, `${standIn}.ts names every module of the test file`],
   },
   "with test files from disk": {
     env: { BUN_DEBUG_TEST_AOT_WORDS: "TestRunShowsStandIn:1", BUN_AOT_TEST_FILES_FROM_DISK: "1" },
-    standIns: [`${standIn}.ts names 11`],
+    standIns: [`${standIn}.ts names every module of the test file`],
   },
   "with test files from disk that say what they name": {
     env: {
@@ -66,7 +67,7 @@ const forms: Record<string, Form> = {
       BUN_AOT_TEST_FILES_FROM_DISK: "1",
       BUN_AOT_TESTS_NAME_WHAT_THEY_USE: "1",
     },
-    standIns: [`${standIn}.js names 0`],
+    standIns: [`${standIn}.js names none`],
   },
 };
 
@@ -96,7 +97,8 @@ const written = ["library.test.js", "other.test.js", "package.json", "src/", "sr
 /**
  * What `bun test --isolate <flags>` prints in the project: its stdout behind the line that names Bun, and of its stderr each test
  * with its verdict, each count and each line that begins with an error. A folder is run in the order in which it is read, so the
- * lines are sorted. `standIns`: what stands in for the test files in the builds of the run.
+ * lines are sorted. `standIns`: what stands in for the test files in the builds of the run. `builtOtherwise`: how the run says
+ * that it is built in another form than it is asked for here.
  */
 async function runTests(directory: string, env: Record<string, string>, ...flags: string[]) {
   const command = [bunExe(), "test", "--isolate", ...flags];
@@ -105,8 +107,15 @@ async function runTests(directory: string, env: Record<string, string>, ...flags
   const said = stderr.replace(shown, "AOT stand-in | $1");
   if (exitCode !== 0) console.error(said);
   const standIns = [...stderr.matchAll(shown)].map(([, path, text]) => {
-    const named = names.filter(name => text.includes(`require("node:${name}")`));
-    return `${relative(directory, path).replaceAll("\\", "/")} names ${named.length}`;
+    const required: string[] = text.match(/\brequire\("[^"]+"\)/g) ?? [];
+    const ofTestFile = names.filter(name => required.includes(`require("node:${name}")`));
+    const named =
+      required.length === 0
+        ? "none"
+        : ofTestFile.length === names.length
+          ? "every module of the test file"
+          : `${ofTestFile.length} modules of the test file among ${required.length}`;
+    return `${relative(directory, path).replaceAll("\\", "/")} names ${named}`;
   });
   return {
     stdout: stdout
@@ -122,11 +131,9 @@ async function runTests(directory: string, env: Record<string, string>, ...flags
       )
       .map(line => line.replace(/ \[[\d.]+m?s\]$/, ""))
       .sort(),
-    // A build that starts over prints its own once more. Where this Bun loads one program a realm (macOS, Windows, a hardened
-    // build), or holds its own code compiled, a run is built in another form than it is asked for here, with other stand-ins.
-    standIns: /^AOT test run \| .*(this Bun loads one program a realm|as this Bun holds it)/m.test(stderr)
-      ? undefined
-      : [...new Set(standIns)].sort(),
+    // A build that starts over prints its own once more.
+    standIns: [...new Set(standIns)].sort(),
+    builtOtherwise: said.match(/^AOT test run \| .*(this Bun loads one program a realm|as this Bun holds it)/m)?.[1],
     exitCode,
   };
 }
@@ -134,14 +141,19 @@ async function runTests(directory: string, env: Record<string, string>, ...flags
 type Ran = Awaited<ReturnType<typeof runTests>>;
 
 /** A compiled run has printed what plain Bun prints, and the stand-ins of its form. */
-function expectAsPlain({ standIns, ...seen }: Ran, form: Form) {
+function expectAsPlain({ standIns, builtOtherwise, ...seen }: Ran, form: Form) {
   expect(seen).toEqual(plain);
-  if (standIns) expect(standIns).toEqual(form.standIns);
+  // macOS, Windows and a hardened build load one program a realm: a run says so there, and nowhere else. Such a run, and a run
+  // over the code that a Bun holds compiled, is built in another form, with stand-ins that are not stated here.
+  expect({ oneProgramARealm: builtOtherwise === "this Bun loads one program a realm" }).toEqual({
+    oneProgramARealm: isMacOS || isWindows || isHardened,
+  });
+  if (!builtOtherwise) expect(standIns).toEqual(form.standIns);
 }
 
 testOfOneRun("what plain Bun prints in the project", async () => {
   using dir = tempDir("aot-test-run-plain", files);
-  expect(await runTests(String(dir), {})).toEqual({ ...plain, standIns: [] });
+  expect(await runTests(String(dir), {})).toEqual({ ...plain, standIns: [], builtOtherwise: undefined });
 });
 
 for (const [name, form] of Object.entries(forms)) {

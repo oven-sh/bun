@@ -314,13 +314,12 @@ describe("Bun.semver.order()", () => {
 describe("Bun.semver.satisfies()", () => {
   test("expected errors", () => {
     expect(satisfies).toBeInstanceOf(Function);
-    // An argument that is left out is `undefined`, so the string "undefined": not a version, and a range with no
-    // parseable part, which behaves like "*".
+    // An argument that is left out is `undefined`, so the string "undefined": not a version, and not a range either.
     // @ts-expect-error
     expect(satisfies()).toBe(false);
     // @ts-expect-error
-    expect(satisfies("1.2.3")).toBe(true);
-    for (const range of [undefined, null, "undefined", "latest"] as any[]) expect(satisfies("1.2.3", range)).toBe(true);
+    expect(satisfies("1.2.3")).toBe(false);
+    for (const range of [undefined, null, "undefined", "latest"] as any[]) expect(satisfies("1.2.3", range)).toBe(false);
     expect(satisfies(undefined as any, "1.2.3")).toBe(false);
     // @ts-expect-error
     expect(satisfies("1.2.3", "1.2.3", "blah")).toBeTrue();
@@ -1037,21 +1036,23 @@ describe("Bun.semver.satisfies()", () => {
       ]);
     });
 
-    test("an operator before text that is not a version keeps its reading", () => {
-      // npm calls these ranges invalid. Bun reads the text as `*` after `<` or `>`, and the rows above do not change that.
+    test("an operator before text that is not a version makes the range invalid", () => {
+      // npm throws for these ranges, so nothing satisfies them. The text is not a wildcard, so the
+      // rows above do not apply, and the text is not a version, so there is no comparator to read.
       check([
-        [">latest", "1.0.0", true],
-        ["<foo", "1.0.0", true],
-        ["< v", "1.0.0", true],
-        [">^1.0.0", "2.0.0", true],
+        [">latest", "1.0.0", false],
+        ["<foo", "1.0.0", false],
+        ["< v", "1.0.0", false],
+        [">^1.0.0", "2.0.0", false],
         // text that starts with a wildcard character is still text
-        [">xenial", "1.0.0", true],
-        ["<xstate", "1.0.0", true],
-        [">*next", "1.0.0", true],
-        [">x.1.2.3", "1.0.0", true],
-        // after `^` the text adds no comparator
+        [">xenial", "1.0.0", false],
+        ["<xstate", "1.0.0", false],
+        [">*next", "1.0.0", false],
+        [">x.1.2.3", "1.0.0", false],
+        // after `^` too, and in every alternative
         ["^latest || 1.0.0", "2.0.0", false],
         ["^xenial || 1.0.0", "2.0.0", false],
+        ["^latest || 1.0.0", "1.0.0", false],
       ]);
     });
   });
@@ -1355,18 +1356,24 @@ describe("Bun.semver.satisfies()", () => {
     ]);
   });
 
-  test("malformed text next to a comparator still starts an alternative", () => {
-    // Packages publish ranges like these: adaptableblotter-react-aggrid@4.2.0 has the peer range "=>16.8.0".
+  test("malformed text next to a comparator", () => {
+    // npm throws for every range here. `bun install` still reads them, since packages publish ranges like these:
+    // adaptableblotter-react-aggrid@4.2.0 has the peer range "=>16.8.0". `satisfies` answers false where the
+    // parser skips text it cannot read as a comparator.
     testSatisfiesTable([
-      ["18.2.0", "=>16.8.0", true],
-      ["18.2.0", "=> 16.0.0", true],
-      ["18.2.0", ">=18.0.0 - <19.0.0", true],
-      ["5.0.0", ">=1.0.0 1.2.3.4", true],
+      ["18.2.0", "=>16.8.0", false],
+      ["18.2.0", "=> 16.0.0", false],
+      ["18.2.0", ">=18.0.0 - <19.0.0", false],
+      ["5.0.0", ">=1.0.0 1.2.3.4", false],
+      ["4.5.6", "1.2.3 foo 4.5.6", false],
+      ["1.0.0", "*1.0.0", false],
+    ]);
+    // The parser reads these without skipping anything: a hyphen range or a `|` next to a version starts an
+    // alternative.
+    testSatisfiesTable([
       ["1.5.0", "^2 1.2.3 - 2.3.4", true],
       ["4.5.6", "1.2.3 - 2.3.4 4.5.6", true],
-      ["4.5.6", "1.2.3 foo 4.5.6", true],
       ["4.5.6", "1.2.3-beta|4.5.6", true],
-      ["1.0.0", "*1.0.0", true],
     ]);
   });
 
@@ -1499,15 +1506,16 @@ describe("Bun.semver.satisfies()", () => {
       ["1.2.3*", "*", false],
       ["1.2x", "*", false],
     ]);
-    // npm calls these ranges invalid. Bun still reads "2x" as "2.x", but as malformed text that cannot narrow a range.
+    // npm calls these ranges invalid, and so does `satisfies`: "2x" is not "2.x".
     testSatisfiesTable([
-      ["2.5.0", "2x", true],
+      ["2.5.0", "2x", false],
       ["3.0.0", "2x", false],
-      ["1.2.9", "1.2x", true],
-      ["2.5.0", "2x || 1", true],
-      ["1.5.0", "2x || 1", true],
-      ["1.5.0", ">=1 2x", true],
+      ["1.2.9", "1.2x", false],
+      ["2.5.0", "2x || 1", false],
+      ["1.5.0", "2x || 1", false],
+      ["1.5.0", ">=1 2x", false],
       ["1.5.0", ">=1 2.x", false],
+      ["2.5.0", ">=1 2.x", true],
     ]);
   });
 
@@ -1547,6 +1555,45 @@ describe("Bun.semver.satisfies()", () => {
     expect(valid.map(([version, range]) => ({ version, range, satisfies: satisfies(version, range) }))).toEqual(
       valid.map(([version, range]) => ({ version, range, satisfies: true })),
     );
+  });
+
+  test("a range with text that is not a comparator is satisfied by nothing", () => {
+    // node-semver: `new Range("latest")` throws, so `satisfies("1.2.3", "latest")` is false. Bun used to read the
+    // text as "*". Every expectation is node-semver 7's answer for the same input.
+    testSatisfiesTable([
+      ["1.2.3", "foo", false],
+      ["1.2.3", "latest", false],
+      ["0.0.0", "next", false],
+      ["1.2.3", "not a range", false],
+      ["1.2.3", "lts/*", false],
+      ["1.2.3", "1.2.3 || foo", false],
+      ["1.2.3", "foo || 1.2.3", false],
+      ["1.2.3", "foo 1.2.3", false],
+      ["1.2.3", ">=1.0.0 foo", false],
+      ["1.2.3", ">=1.0.0 && <2.0.0", false],
+      ["1.2.3", ">=1.0.0, <2.0.0", false],
+      ["1.2.3", "1.2.3.4", false],
+      ["1.2.3", ">=", false],
+      // an empty range and a wildcard are `*`
+      ["1.2.3", "", true],
+      ["1.2.3", "*", true],
+      ["1.2.3", "  ", true],
+    ]);
+  });
+
+  test("a range with tabs and line breaks between comparators", () => {
+    // node-semver collapses each run of whitespace in a range to one space.
+    testSatisfiesTable([
+      ["1.2.3", "^1.0.0\n", true],
+      ["1.2.3", "\t^1.0.0", true],
+      ["1.2.3", ">=1.0.0\t<2.0.0", true],
+      ["2.0.0", ">=1.0.0\t<2.0.0", false],
+      ["1.2.3", ">=1.0.0\r\n<2.0.0", true],
+      ["1.2.3", "1.0.0\n-\n2.0.0", true],
+      ["1.2.3", "  1.2.3  ||  4.5.6  ", true],
+      ["4.5.6", "1.2.3\n||\n4.5.6", true],
+      ["1.2.3", "^1.0.0\tfoo", false],
+    ]);
   });
 
   test("pre-release snapshot", () => {
@@ -2250,15 +2297,15 @@ test("a range with a dangling '-' after a skipped tag does not crash the parser"
   // reach `unreachable!()` in the range parser once at least one comparator had
   // already been parsed, crashing the process.
   const fuzzed = "> > > > > > > `{" + "`${".repeat(34) + "- - - 1e-323-alpha.1";
+  // Every range here has text that is not a comparator, so nothing satisfies it. The test is that the
+  // parser reads the whole range without crashing.
   const cases = [
-    // "" is not a valid version, so it never satisfies anything
     ["", fuzzed],
     ["1.0.0", fuzzed],
     ["", "1 || -"],
     ["1.0.0", "1 || -"],
     ["2.0.0", "1 || -"],
     ["1.0.0", "1 a - b"],
-    // the skipped "-q" chunk must not swallow the "||", so "^2" still matches
     ["2.5.0", "^1 || -q ^2"],
   ];
   await using proc = Bun.spawn({
@@ -2273,7 +2320,7 @@ test("a range with a dangling '-' after a skipped tag does not crash the parser"
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   if (exitCode !== 0) expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual([false, true, false, true, false, true, true]);
+  expect(JSON.parse(stdout)).toEqual([false, false, false, false, false, false, false]);
   expect(exitCode).toBe(0);
 });
 
@@ -2300,7 +2347,8 @@ test("a version range made of hundreds of thousands of 'v' or '= ' prefix charac
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   if (exitCode !== 0) expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual([true, true]);
+  // Neither is a range that npm accepts. The test is the time the parser takes.
+  expect(JSON.parse(stdout)).toEqual([false, false]);
   expect(exitCode).toBe(0);
 }, 30_000);
 

@@ -611,6 +611,7 @@ impl<T: VersionInt> VersionType<T> {
                                 is_done = true;
                                 break;
                             }
+                            result.overflow_after_wildcard = true;
                         }
                         match part_i {
                             0 => result.version.major = number,
@@ -1282,6 +1283,9 @@ pub struct ParseResult<T: VersionInt> {
     pub valid: bool,
     /// A number before any wildcard is above `T::MAX`. The range parser reads this, not `valid`.
     pub(crate) overflow: bool,
+    /// A number after a wildcard is above `T::MAX` (`1.x.<number>`). `valid` is false, and the
+    /// range parser still reads the token as `1.x`.
+    pub(crate) overflow_after_wildcard: bool,
     pub version: Partial<T>,
     /// Where parsing stopped. It's shorter than the input if trailing bytes aren't part of the
     /// version.
@@ -1294,6 +1298,7 @@ impl<T: VersionInt> Default for ParseResult<T> {
             wildcard: Wildcard::None,
             valid: true,
             overflow: false,
+            overflow_after_wildcard: false,
             version: Partial::default(),
             len: 0,
         }

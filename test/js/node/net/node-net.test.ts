@@ -4162,6 +4162,42 @@ describe.skipIf(!isWindows)("connect() error codes on Windows", () => {
     }
   });
 
+  // As in Node.js on Windows. Elsewhere it and Bun find the reset where they look for the outcome of the connect.
+  it("a connection that is reset while the client is busy has connected first", async () => {
+    using dir = tempDir("reset-while-busy", {});
+    const wasReset = join(String(dir), "was-reset");
+    await using server = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const server = require("node:net").createServer(socket => {
+            socket.on("close", () => require("node:fs").writeFileSync(process.argv[1], "")).resetAndDestroy();
+          });
+          server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+        `,
+        wasReset,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const { value: port } = await server.stdout.getReader().read();
+    const seen: string[] = [];
+    const { promise: closed, resolve } = Promise.withResolvers<void>();
+    connect(Number(new TextDecoder().decode(port)), "127.0.0.1")
+      .on("connect", () => seen.push("connect"))
+      .on("error", (err: NodeJS.ErrnoException) => seen.push(`${err.code} ${err.syscall}`))
+      .on("close", () => resolve());
+    // By then the system call is made, and the loop has not looked at the socket.
+    setImmediate(() => {
+      const deadline = Date.now() + 4_000;
+      while (!fs.existsSync(wasReset) && Date.now() < deadline) Bun.sleepSync(1);
+    });
+    await closed;
+    expect(seen).toEqual(["connect", "ECONNRESET read"]);
+  });
+
   it("connect to a path that is not a socket reports ECONNREFUSED/ENOTSOCK, missing path reports ENOENT", async () => {
     const dir = tmpdirSync();
     const regular = join(dir, "not-a-socket.txt");

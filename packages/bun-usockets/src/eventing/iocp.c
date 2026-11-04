@@ -315,7 +315,7 @@ static void us_internal_afd_on_complete(struct us_loop_t *loop, struct us_intern
     }
 
     if (reported & AFD_POLL_LOCAL_CLOSE) {
-        /* Closed without us_poll_stop. Whichever socket gets this handle value next is not the owner's to watch, use or close. */
+        /* Closed without us_poll_stop. */
         p->state.fd = LIBUS_SOCKET_ERROR;
         us_internal_iocp_dispatch(loop, p, 1, 0, 0);
         return;
@@ -338,7 +338,10 @@ static void us_internal_afd_on_complete(struct us_loop_t *loop, struct us_intern
             eof = LIBUS_POLL_HANGUP;
         }
     }
-    if (reported & AFD_POLL_ABORT) {
+    if ((reported & (AFD_POLL_ABORT | AFD_POLL_CONNECT_FAIL)) == AFD_POLL_ABORT && us_internal_poll_type(p) == POLL_TYPE_SEMI_SOCKET) {
+        /* It was connected first, and the owner hears of the two in that order. */
+        events |= LIBUS_SOCKET_WRITABLE;
+    } else if (reported & AFD_POLL_ABORT) {
         /* As with epoll. An owner that only looks at these two, like c-ares, finds the error in recv() or send(). */
         events |= LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE;
         error = 1;

@@ -716,7 +716,9 @@ pub(crate) fn run_task(
         // ── process / signals ────────────────────────────────────────────
         task_tag::ProcessWaiterThreadTask => {
             #[cfg(not(windows))]
-            feature_arm!([ChildProcess], |result: ProcessWaiterThreadTask| {
+            feature_arm!([ChildProcess], |result: ProcessWaiterThreadTask<
+                Process,
+            >| {
                 // SAFETY: tag identifies pointee; heap-allocated in WaiterThread.
                 unsafe { bun_core::heap::take(result) }.run_from_js_thread();
             });
@@ -1348,7 +1350,7 @@ pub(crate) unsafe fn __bun_fire_timer(
             timer_arm!(
                 GarbageCollectionController,
                 gc_repeating_timer,
-                |c, _now, vm| (*c).on_gc_repeating_timer(&*vm)
+                |c, _now, vm| GarbageCollectionController::on_gc_repeating_timer(c, vm)
             )
         }
         EventLoopTimerTag::FakeTimersTick => {
@@ -1771,7 +1773,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::MemoryPressureTask => release!(crate::node::memory_pressure::MemoryPressureTask),
         task_tag::ProcessWaiterThreadTask => {
             #[cfg(not(windows))]
-            release_in!([ChildProcess], ProcessWaiterThreadTask);
+            release_in!([ChildProcess], ProcessWaiterThreadTask<Process>);
             #[cfg(windows)]
             unreachable!("posix-only tag");
         }

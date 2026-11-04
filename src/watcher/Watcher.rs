@@ -108,8 +108,8 @@ pub struct Watcher {
     /// The platform-specific implementation of the watcher
     pub(crate) platform: Platform,
 
-    pub watchlist: WatchList,
-    pub mutex: Mutex,
+    pub(crate) watchlist: WatchList,
+    pub(crate) mutex: Mutex,
 
     // Storing the `top_level_dir` slice directly avoids a forward-decl
     // dependency on the higher-tier `bun_resolver::fs::FileSystem` type.
@@ -917,7 +917,7 @@ impl Watcher {
         r
     }
 
-    pub fn index_of(&self, hash: HashType) -> Option<u32> {
+    pub(crate) fn index_of(&self, hash: HashType) -> Option<u32> {
         for (i, other) in self.watchlist.items_hash().iter().enumerate() {
             if hash == *other {
                 return Some(i as u32);

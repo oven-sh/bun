@@ -67,8 +67,9 @@ impl RefString {
     /// this stays an explicit raw-pointer destroy rather than `impl Drop`.
     ///
     /// SAFETY: `this` must be the unique live reference to a `RefString`
-    /// previously allocated via `heap::alloc` (or equivalent). After this
-    /// call `this` is dangling.
+    /// previously allocated via `heap::alloc` (or equivalent), and the caller
+    /// must be on the JS thread of the VM that interned it. After this call
+    /// `this` is dangling.
     pub(crate) unsafe fn destroy(this: *mut RefString) {
         // SAFETY: caller contract — `this` is the unique live pointer to a
         // `Box<RefString>`-allocated value.

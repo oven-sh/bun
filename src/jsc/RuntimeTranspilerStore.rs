@@ -857,8 +857,9 @@ impl TranspilerJob {
                     && bun_paths::is_absolute(path.text)
                     && !strings::contains(path.text, b"node_modules")
                 {
-                    // SAFETY: BACKREF — see `import_watcher` above; `add_file` is
-                    // thread-safe via watcher mutex.
+                    // SAFETY: BACKREF — see `import_watcher` above. The watcher thread holds a
+                    // `&mut Watcher` of its own (see `bun_watcher_ptr`); `add_file` works under
+                    // the watcher's mutex.
                     let added = unsafe { iw.assume_mut() }.add_file::<true>(
                         *input_file_fd,
                         path.text,
@@ -883,8 +884,7 @@ impl TranspilerJob {
                 && bun_paths::is_absolute(path.text)
                 && !strings::contains(path.text, b"node_modules")
             {
-                // SAFETY: BACKREF — see `import_watcher` above; `add_file` is
-                // thread-safe via watcher mutex.
+                // SAFETY: as for the `add_file` above.
                 let added = unsafe { iw.assume_mut() }.add_file::<true>(
                     *input_file_fd,
                     path.text,

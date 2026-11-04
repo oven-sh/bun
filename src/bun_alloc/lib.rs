@@ -1843,7 +1843,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
     }
 
     /// SAFETY: see [`append_mutable`].
-    pub unsafe fn print<'a>(
+    pub(crate) unsafe fn print_with_type<'a>(
         this: *mut Self,
         args: core::fmt::Arguments<'_>,
     ) -> core::result::Result<&'a [u8], AllocError> {
@@ -1882,6 +1882,15 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         buf[buf_len - 1] = 0;
         let written = crate::buf_print_len(&mut buf[..buf_len - 1], args).expect("counted length");
         Ok(&buf[..written])
+    }
+
+    /// SAFETY: see [`append_mutable`].
+    pub unsafe fn print<'a>(
+        this: *mut Self,
+        args: core::fmt::Arguments<'_>,
+    ) -> core::result::Result<&'a [u8], AllocError> {
+        // SAFETY: forwarded — see `append_mutable`.
+        unsafe { Self::print_with_type(this, args) }
     }
 
     /// Append `value`, returning a stable `&[u8]` over the freshly-reserved bytes.

@@ -1047,10 +1047,21 @@ pub mod waiter_thread_posix {
         pub(crate) js_process: ProcessQueue,
     }
 
-    pub struct ProcessQueue {
-        pub(crate) queue: ConcurrentQueue<Process>,
+    type ProcessQueue = NewQueue<Process>;
+
+    pub struct NewQueue<T: 'static> {
+        pub(crate) queue: ConcurrentQueue<T>,
         /// Entries in `queue` plus the waiter thread's `active`. Decremented only after the entry's exit is posted.
         pub(crate) watched: AtomicU32,
+    }
+
+    impl<T: 'static> NewQueue<T> {
+        pub(crate) const fn new() -> Self {
+            Self {
+                queue: ConcurrentQueue::new(),
+                watched: AtomicU32::new(0),
+            }
+        }
     }
 
     /// Intrusive node pushed onto `ConcurrentQueue` from the JS thread and
@@ -1069,14 +1080,14 @@ pub mod waiter_thread_posix {
 
     /// Posted to the JS event loop from the waiter thread when a `wait4()`
     /// resolves. Maps to `task_tag::ProcessWaiterThreadTask` in `jsc::Task`.
-    pub struct ResultTask {
+    pub struct ResultTask<T: 'static> {
         pub(crate) result: bun_sys::Result<WaitPidResult>,
-        pub(crate) subprocess: *mut Process,
+        pub(crate) subprocess: *mut T,
         pub(crate) rusage: Rusage,
     }
 
-    impl bun_event_loop::Taskable for ResultTask {
-        const TAG: TaskTag = task_tag::ProcessWaiterThreadTask;
+    impl<T: ProcessLike> bun_event_loop::Taskable for ResultTask<T> {
+        const TAG: TaskTag = T::TASK_TAG;
         /// An exit status the waiter thread posted whose delivery will not run:
         /// drop it and the strong ref it carried for the JS thread.
         unsafe fn release_unrun(this: *mut Self) {
@@ -1084,7 +1095,7 @@ pub mod waiter_thread_posix {
             // holds the ref taken before `append()`.
             unsafe {
                 let t = bun_core::heap::take(this);
-                Process::deref(t.subprocess);
+                T::release_ref_from_waiter_thread(t.subprocess);
             }
         }
         /// A child's exit is delivered to its `Process` whatever became of the script that spawned it
@@ -1094,9 +1105,9 @@ pub mod waiter_thread_posix {
         }
     }
 
-    impl ResultTask {
+    impl<T: ProcessLike> ResultTask<T> {
         #[inline]
-        pub(crate) fn new(v: ResultTask) -> *mut ResultTask {
+        pub(crate) fn new(v: ResultTask<T>) -> *mut ResultTask<T> {
             bun_core::heap::into_raw(Box::new(v))
         }
 
@@ -1108,7 +1119,7 @@ pub mod waiter_thread_posix {
             // SAFETY: subprocess strong-ref'd before append(); released by
             // on_wait_pid_from_waiter_thread → deref().
             unsafe {
-                Process::on_wait_pid_from_waiter_thread(self.subprocess, &self.result, &self.rusage)
+                T::on_wait_pid_from_waiter_thread(self.subprocess, &self.result, &self.rusage)
             };
         }
     }
@@ -1116,15 +1127,15 @@ pub mod waiter_thread_posix {
     /// Posted to `MiniEventLoop` from the waiter thread. Self-referential via
     /// the embedded intrusive `task: AnyTaskWithExtraContext` (`.ctx == self`).
     #[repr(C)]
-    pub(crate) struct ResultTaskMini {
+    pub(crate) struct ResultTaskMini<T: 'static> {
         pub(crate) result: bun_sys::Result<WaitPidResult>,
-        pub(crate) subprocess: *mut Process,
+        pub(crate) subprocess: *mut T,
         pub(crate) task: AnyTaskWithExtraContext,
     }
 
-    impl ResultTaskMini {
+    impl<T: ProcessLike> ResultTaskMini<T> {
         #[inline]
-        pub(crate) fn new(v: ResultTaskMini) -> *mut ResultTaskMini {
+        pub(crate) fn new(v: ResultTaskMini<T>) -> *mut ResultTaskMini<T> {
             bun_core::heap::into_raw(Box::new(v))
         }
 
@@ -1132,9 +1143,7 @@ pub mod waiter_thread_posix {
             let result = self.result;
             let subprocess = self.subprocess;
             // SAFETY: see ResultTask::run_from_main_thread.
-            unsafe {
-                Process::on_wait_pid_from_waiter_thread(subprocess, &result, &rusage_zeroed())
-            };
+            unsafe { T::on_wait_pid_from_waiter_thread(subprocess, &result, &rusage_zeroed()) };
         }
 
         /// Stored thunk for `AnyTaskWithExtraContext` (`fn(*mut T, *mut C)`
@@ -1146,15 +1155,63 @@ pub mod waiter_thread_posix {
         }
     }
 
-    impl ProcessQueue {
-        pub(crate) const fn new() -> Self {
-            Self {
-                queue: ConcurrentQueue::new(),
-                watched: AtomicU32::new(0),
-            }
-        }
+    /// Trait abstracting `process.pid` / `process.event_loop` /
+    /// `process.onWaitPidFromWaiterThread` for generic `T` (only `Process`
+    /// today).
+    pub trait ProcessLike: 'static {
+        /// `jsc::Task` tag for this `T`'s `ResultTask`; callers supply it.
+        const TASK_TAG: TaskTag;
+        fn pid(&self) -> PidT;
+        fn event_loop(&self) -> EventLoopHandle;
+        /// The poster for a JS-owned process (see `Process::js_poster`).
+        fn js_poster(&self) -> Option<&bun_event_loop::JsPoster>;
+        /// Waiter thread, VM gone: release the strong ref the result would have
+        /// consumed on the JS thread.
+        ///
+        /// # Safety
+        /// `this` is a live, strong-ref'd pointer; callee releases one ref.
+        unsafe fn release_ref_from_waiter_thread(this: *mut Self);
+        /// # Safety
+        /// `this` must be a live, strong-ref'd pointer; callee releases one ref.
+        unsafe fn on_wait_pid_from_waiter_thread(
+            this: *mut Self,
+            result: &bun_sys::Result<WaitPidResult>,
+            rusage: &Rusage,
+        );
+    }
 
-        pub(crate) fn append(&self, process: *mut Process) {
+    impl ProcessLike for Process {
+        const TASK_TAG: TaskTag = task_tag::ProcessWaiterThreadTask;
+        #[inline]
+        fn pid(&self) -> PidT {
+            self.pid
+        }
+        #[inline]
+        fn event_loop(&self) -> EventLoopHandle {
+            self.event_loop
+        }
+        #[inline]
+        fn js_poster(&self) -> Option<&bun_event_loop::JsPoster> {
+            self.js_poster.as_ref()
+        }
+        #[inline]
+        unsafe fn release_ref_from_waiter_thread(this: *mut Self) {
+            // SAFETY: fn contract.
+            unsafe { Process::deref(this) };
+        }
+        #[inline]
+        unsafe fn on_wait_pid_from_waiter_thread(
+            this: *mut Self,
+            result: &bun_sys::Result<WaitPidResult>,
+            rusage: &Rusage,
+        ) {
+            // SAFETY: caller contract.
+            unsafe { Process::on_wait_pid_from_waiter_thread(this, result, rusage) };
+        }
+    }
+
+    impl<T: ProcessLike> NewQueue<T> {
+        pub(crate) fn append(&self, process: *mut T) {
             self.watched.fetch_add(1, Ordering::SeqCst);
             self.queue.push(bun_core::heap::alloc_nn(TaskQueueEntry {
                 process,
@@ -1163,7 +1220,7 @@ pub mod waiter_thread_posix {
         }
 
         /// `active` is the waiter thread's list of the processes it has taken off the queue and not reaped yet.
-        fn loop_(&self, active: &mut Vec<*mut Process>) {
+        fn loop_(&self, active: &mut Vec<*mut T>) {
             {
                 let batch = self.queue.pop_batch();
                 active.reserve(batch.count);
@@ -1184,12 +1241,13 @@ pub mod waiter_thread_posix {
                 let mut remove = false;
 
                 let process = active[i];
-                // SAFETY: each `*mut Process` in `active` was strong-ref'd by the
+                // SAFETY: each `*mut T` in `active` was strong-ref'd by the
                 // producer (`Process::watch` → `ref_()`) before `append()`;
                 // the matching `deref()` is in `on_wait_pid_from_waiter_thread`,
-                // so the pointee outlives this shared borrow.
+                // so the pointee outlives this shared borrow. Single deref
+                // serves both `pid()` and `event_loop()` accessor reads.
                 let process_ref = unsafe { &*process };
-                let pid = process_ref.pid;
+                let pid = T::pid(process_ref);
                 // this case shouldn't really happen
                 if pid == 0 {
                     remove = true;
@@ -1217,29 +1275,26 @@ pub mod waiter_thread_posix {
         }
     }
 
-    /// Posts a `wait4` result to the loop that owns `process`, which runs `Process::on_wait_pid_from_waiter_thread` there.
+    /// Posts a `wait4` result to the loop that owns `process`, which runs `T::on_wait_pid_from_waiter_thread` there.
     ///
     /// # Safety
     /// `process` is live and carries a +1 ref, which the delivery releases (or this function, if the loop refuses).
-    pub(crate) unsafe fn post_wait_result(
-        process: *mut Process,
+    pub(crate) unsafe fn post_wait_result<T: ProcessLike>(
+        process: *mut T,
         result: bun_sys::Result<WaitPidResult>,
         rusage: &Rusage,
     ) {
         // SAFETY: caller contract — the +1 ref keeps the pointee live.
         let process_ref = unsafe { &*process };
-        match process_ref.event_loop {
+        match T::event_loop(process_ref) {
             EventLoopHandle::Js { .. } => {
-                let rt = ResultTask::new(ResultTask {
+                let rt = ResultTask::<T>::new(ResultTask {
                     result,
                     subprocess: process,
                     rusage: *rusage,
                 });
                 let ct = ConcurrentTask::create(Task::init(rt));
-                let poster = process_ref
-                    .js_poster
-                    .as_ref()
-                    .expect("JS-owned process has a poster");
+                let poster = T::js_poster(process_ref).expect("JS-owned process has a poster");
                 if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
                     // VM torn down: nobody will observe this exit. Free the
                     // task and drop the ref its delivery would have released.
@@ -1247,21 +1302,21 @@ pub mod waiter_thread_posix {
                     unsafe {
                         drop(bun_core::heap::take(ct.as_ptr()));
                         drop(bun_core::heap::take(rt));
-                        Process::deref(process);
+                        T::release_ref_from_waiter_thread(process);
                     }
                 }
             }
             EventLoopHandle::Mini(mini) => {
-                let out = ResultTaskMini::new(ResultTaskMini {
+                let out = ResultTaskMini::<T>::new(ResultTaskMini {
                     result,
                     subprocess: process,
                     task: AnyTaskWithExtraContext::default(),
                 });
                 // SAFETY: `out` just produced by heap::alloc — non-null.
                 unsafe {
-                    (*out).task = AnyTaskNew::<ResultTaskMini, ()>::init(
+                    (*out).task = AnyTaskNew::<ResultTaskMini<T>, ()>::init(
                         out,
-                        ResultTaskMini::run_from_main_thread_mini,
+                        ResultTaskMini::<T>::run_from_main_thread_mini,
                     );
                     mini.enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(
                         core::ptr::addr_of_mut!((*out).task),

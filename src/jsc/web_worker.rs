@@ -255,9 +255,12 @@ unsafe extern "C" {
 /// Children created by a child are handled by that child's own `shutdown()`
 /// before it can be joined, so this is transitively complete.
 /// `children` is what was left in the VM's `child_workers`: each release re-enters and reads that field.
-pub(crate) fn join_child_workers(children: Vec<bun_ptr::ParentRef<WebWorker>>) {
+pub(crate) fn join_child_workers(children: Vec<*mut WebWorker>) {
     for child in children {
-        WebWorker__parentContextWillDestroy(child.messaging_proxy);
+        // SAFETY: registered children are live until the parent releases them
+        // (the proxy's ref); this is that release.
+        let messaging_proxy = unsafe { (*child).messaging_proxy };
+        WebWorker__parentContextWillDestroy(messaging_proxy);
     }
 }
 
@@ -623,7 +626,7 @@ impl WebWorker {
         }
         let worker = worker.into_raw();
         // SAFETY: `parent` is the calling thread's VM; parent-thread-only list.
-        unsafe { (*parent).child_workers.push(worker_ref) };
+        unsafe { (*parent).child_workers.push(worker) };
         worker
     }
 
@@ -678,12 +681,15 @@ impl WebWorker {
     }
 
     fn has_ending_child(parent: &VirtualMachine) -> bool {
-        parent.child_workers.iter().any(|child| child.is_ending())
+        parent.child_workers.iter().any(|&child| {
+            bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child")).is_ending()
+        })
     }
 
     /// Whether the thread of one of `parent`'s children is returning.
     fn has_returning_child(parent: &VirtualMachine) -> bool {
-        parent.child_workers.iter().any(|&worker| {
+        parent.child_workers.iter().any(|&child| {
+            let worker = bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child"));
             worker.is_returning.load(Ordering::Acquire)
                 && worker.join_handle.with_mut(|handle| handle.is_some())
         })
@@ -692,7 +698,8 @@ impl WebWorker {
     /// Whether more of `parent`'s children are ending than wait for room.
     fn has_room_to_wait_for(parent: &VirtualMachine) -> bool {
         let (mut ending, mut waiting) = (0usize, 0usize);
-        for &worker in parent.child_workers.iter() {
+        for &child in parent.child_workers.iter() {
+            let worker = bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child"));
             ending += usize::from(worker.is_ending());
             waiting += usize::from(!worker.thread_start.get().is_null());
         }
@@ -704,7 +711,8 @@ impl WebWorker {
     fn join_returning_children(parent: &VirtualMachine) -> bool {
         let mut joined_any = false;
         // Nothing runs on this thread during a join, so the list does not change.
-        for &worker in parent.child_workers.iter() {
+        for &child in parent.child_workers.iter() {
+            let worker = bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child"));
             if worker.is_returning.load(Ordering::Acquire) {
                 joined_any |= worker.join_thread();
             }
@@ -724,7 +732,9 @@ impl WebWorker {
             let oldest = parent
                 .child_workers
                 .iter()
-                .copied()
+                .map(|&child| {
+                    bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child"))
+                })
                 .filter(|worker| !worker.thread_start.get().is_null())
                 .min_by_key(|worker| worker.execution_context_id);
             let Some(worker) = oldest else { return };
@@ -888,10 +898,7 @@ impl WebWorker {
         this.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
         // SAFETY: parent thread; `parent` outlives its children (it joins them).
         let children = unsafe { &mut (*this.parent).child_workers };
-        if let Some(i) = children
-            .iter()
-            .position(|c| core::ptr::eq(c.as_const_ptr(), this))
-        {
+        if let Some(i) = children.iter().position(|&c| core::ptr::eq(c, this)) {
             children.swap_remove(i);
         }
     }
@@ -996,8 +1003,9 @@ impl WebWorker {
         self.arena.set(Some(bun_alloc::Arena::new()));
 
         // Checkpoint before the expensive part: initWorker builds a full JSC
-        // VM. If a parent's request_termination() fired, bail now rather than spending ~50–100ms (release) creating a
-        // VM that will immediately tear down.
+        // VM. If a parent's request_termination() fired, bail now rather than
+        // spending ~50–100ms (release) creating a VM that will immediately tear
+        // down.
         if self.has_requested_terminate() {
             self.shutdown();
             return Ok(core::ptr::null_mut());
@@ -1008,11 +1016,12 @@ impl WebWorker {
         if !runs_apart && let Some(image) = self.image {
             crate::compiled_program::use_image_of_worker(image);
         }
+        let env_loader = Box::new(env_loader);
         let vm = VirtualMachine::init_worker(
             self,
             virtual_machine::Options {
                 args: transform_options,
-                owned_env_loader: Some(Box::new(env_loader)),
+                owned_env_loader: Some(env_loader),
                 graph: crate::virtual_machine::standalone_module_graph(),
                 ..Default::default()
             },

@@ -37,7 +37,7 @@ impl WeakImpl {
     ///
     /// Safe: every `NonNull<WeakImpl>` in this crate originates from
     /// [`WeakImpl::init`] and is held by a [`Weak<T>`] that drops it via
-    /// [`Bun__WeakRef__delete`] before releasing the slot — so any
+    /// [`WeakImpl::destroy`] before releasing the slot — so any
     /// `NonNull<WeakImpl>` reachable here is a live C++ `JSC::Weak` handle.
     /// Same contract as [`crate::strong::Impl::get`].
     fn get(this: NonNull<WeakImpl>) -> JSValue {
@@ -50,6 +50,11 @@ impl WeakImpl {
     /// construction; `clear` is idempotent and does not invalidate `this`.
     fn clear(this: NonNull<WeakImpl>) {
         Bun__WeakRef__clear(WeakImpl::opaque_ref(this.as_ptr()))
+    }
+
+    unsafe fn destroy(this: NonNull<WeakImpl>) {
+        // SAFETY: `this` is a live WeakImpl handle; consumed here.
+        unsafe { Bun__WeakRef__delete(this.as_ptr()) }
     }
 }
 
@@ -148,6 +153,6 @@ impl<T> Drop for Weak<T> {
         };
         self.r#ref = None;
         // SAFETY: `r#ref` was live; we just took ownership and are deleting it.
-        unsafe { Bun__WeakRef__delete(r#ref.as_ptr()) };
+        unsafe { WeakImpl::destroy(r#ref) };
     }
 }

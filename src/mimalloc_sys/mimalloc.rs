@@ -102,6 +102,7 @@ type mi_block_visit_fun =
     extern "C" fn(*const Heap, &mi_heap_area_t, *mut c_void, usize, &mut usize) -> bool;
 
 unsafe extern "C" {
+    /// `visitor` gets an `area` that is never null and valid for the call. `arg` is only passed on to it.
     pub fn mi_heap_visit_blocks(
         heap: *const Heap,
         visit_all_blocks: bool,

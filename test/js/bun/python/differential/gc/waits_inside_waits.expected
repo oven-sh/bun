@@ -1,0 +1,11 @@
+status: 0
+script: e2da2d589b2d1803
+---
+acquire False not early: True not late: True
+poll [] not early: True not late: True
+sleep None not early: True not late: True
+read b'x' not early: True not late: True
+['ResourceWarning', 'ResourceWarning', 'ResourceWarning', 'ResourceWarning']
+['accepted', 'timed out, not early: True not late: True']
+['not early: True not late: True'] []
+done

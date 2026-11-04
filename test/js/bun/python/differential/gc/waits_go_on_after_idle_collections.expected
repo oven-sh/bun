@@ -1,0 +1,31 @@
+status: 0
+script: 859e686ab8b57078
+---
+Lock.acquire False not early: True not late: True
+Lock.acquire keyword False not early: True not late: True
+RLock.acquire False not early: True not late: True
+SimpleQueue.get Empty not early: True not late: True
+Queue.get Empty not early: True not late: True
+Thread.join None not early: True not late: True
+Event.wait False not early: True not late: True
+Condition.wait False not early: True not late: True
+sleep None not early: True not late: True
+sleep of a whole number None not early: True not late: True
+poll [] not early: True not late: True
+select ([], [], []) not early: True not late: True
+epoll [] not early: True not late: True
+recv TimeoutError not early: True not late: True
+recvfrom TimeoutError not early: True not late: True
+accept TimeoutError not early: True not late: True
+read b'x' not early: True not late: True
+recv of something b'y' not early: True not late: True
+acquire of a lock that is released True not early: True not late: True
+waitpid 0 not early: True not late: True
+[('c_call', 'acquire'), ('c_return', 'acquire'), ('c_call', 'sleep'), ('c_return', 'sleep')]
+acquire with a handler in between False not early: True not late: True
+sleep with a handler in between None not early: True not late: True
+poll with a handler in between [] not early: True not late: True
+[True, True, True]
+acquire ended by a handler KeyError not early: True not late: True
+sleep ended by a handler KeyError not early: True not late: True
+done

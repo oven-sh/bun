@@ -1,0 +1,24 @@
+status: 0
+script: 9e3cf582bb761fc2
+---
+acquire while finalizers run, not early: True not late: True
+poll while finalizers run, not early: True not late: True
+['ZeroDivisionError', 'ZeroDivisionError', 'waited', 'waited']
+sleep None ['index']
+sleep None ['float']
+read b'x' ['index']
+read b'x' ['index', 'index']
+waitpid 0 ['index']
+acquire False ['float']
+acquire False ['bool']
+acquire, not bound False []
+get Empty ['float']
+poll [] ['index']
+poll [] ['float']
+acquire, bound False ['bool']
+acquire, bound False ['bool']
+get, bound Empty ['bool']
+poll, bound [] ['index']
+recv, bound TimeoutError ['index']
+[('time.sleep', (1.2,))]
+done

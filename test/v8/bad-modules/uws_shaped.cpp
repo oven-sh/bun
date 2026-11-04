@@ -1,9 +1,13 @@
 // An addon with the shape of uWebSockets.js. Its only entry is
 // node_register_module_v<ABI>. It takes Node's loop, polls its listening socket
 // and its connections with uv_poll_t, and calls the JavaScript handler with
-// node::MakeCallback.
+// node::MakeCallback. Built with DEFLATE_RESPONSE it deflates the response with
+// the host's zlib: like uWebSockets.js it links none.
 #include <node.h>
 #include <uv.h>
+#ifdef DEFLATE_RESPONSE
+#include <zlib.h>
+#endif
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -47,6 +51,24 @@ static void throw_error(Isolate *isolate, const char *message) {
       Exception::Error(String::NewFromUtf8(isolate, message).ToLocalChecked()));
 }
 
+#ifdef DEFLATE_RESPONSE
+// The zlib format, which "Content-Encoding: deflate" names.
+static bool deflate_body(const std::string &body, std::string &deflated) {
+  z_stream stream = {};
+  if (deflateInit2(&stream, Z_BEST_SPEED, Z_DEFLATED, MAX_WBITS, 8,
+                   Z_DEFAULT_STRATEGY) != Z_OK)
+    return false;
+  deflated.assign(deflateBound(&stream, body.size()), '\0');
+  stream.next_in = reinterpret_cast<Bytef *>(const_cast<char *>(body.data()));
+  stream.avail_in = body.size();
+  stream.next_out = reinterpret_cast<Bytef *>(deflated.data());
+  stream.avail_out = deflated.size();
+  bool ended = deflate(&stream, Z_FINISH) == Z_STREAM_END;
+  deflated.resize(stream.total_out);
+  return deflateEnd(&stream) == Z_OK && ended;
+}
+#endif
+
 // response.end(body)
 static void end_response(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
@@ -58,9 +80,18 @@ static void end_response(const FunctionCallbackInfo<Value> &info) {
   Local<String> text = info[0].As<String>();
   std::string body(text->Utf8LengthV2(isolate), '\0');
   text->WriteUtf8V2(isolate, body.data(), body.size());
+  std::string encoding;
+#ifdef DEFLATE_RESPONSE
+  std::string plain;
+  plain.swap(body);
+  if (!deflate_body(plain, body))
+    return throw_error(isolate, "zlib failed");
+  encoding = "Content-Encoding: deflate\r\n";
+#endif
   std::string response =
-      "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: " +
-      std::to_string(body.size()) + "\r\n\r\n" + body;
+      "HTTP/1.1 200 OK\r\n" + encoding +
+      "Connection: close\r\nContent-Length: " + std::to_string(body.size()) +
+      "\r\n\r\n" + body;
   (void)!send(connection->fd, response.data(), response.size(), MSG_NOSIGNAL);
   info.This()->SetAlignedPointerInInternalField(0, nullptr,
                                                 kEmbedderDataTypeTagDefault);

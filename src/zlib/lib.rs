@@ -60,6 +60,15 @@ pub use stream::ZStream;
 // ZEXTERN int ZEXPORT inflateInit OF((z_streamp strm));
 
 unsafe extern "C" {
+    pub fn deflateInit_(
+        strm: z_streamp,
+        level: c_int,
+        version: *const u8,
+        stream_size: c_int,
+    ) -> ReturnCode;
+
+    pub fn inflateInit_(strm: z_streamp, version: *const u8, stream_size: c_int) -> ReturnCode;
+
     pub fn inflateInit2_(
         strm: z_streamp,
         window_size: c_int,

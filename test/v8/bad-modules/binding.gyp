@@ -24,6 +24,13 @@
         {
           "target_name": "uws_shaped",
           "sources": ["uws_shaped.cpp"],
+        },
+        # It imports zlib from the host, which opens only with lazy binding, and that is not the default of every compiler.
+        {
+          "target_name": "uws_shaped_deflate",
+          "sources": ["uws_shaped.cpp"],
+          "defines": ["DEFLATE_RESPONSE"],
+          "ldflags": ["-Wl,-z,lazy"],
         }
       ],
     }],

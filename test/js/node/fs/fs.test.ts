@@ -5832,6 +5832,22 @@ describe("utimesSync", () => {
     expect(newStats.atime.getTime() / 1000).toEqual(atime);
   });
 
+  // The count of 100 ns since 1601 is worked out in a double, whose steps there are 1.6 µs wide, and 3.2 µs from 2057 on.
+  it.skipIf(!isWindows)("stores of a fraction of a second what Node.js stores", () => {
+    using dir = tempDir("utimes-fraction", { "file": "" });
+    const file = join(String(dir), "file");
+    const stored = (time: number) => {
+      fs.utimesSync(file, time, time);
+      return fs.statSync(file, { bigint: true }).mtimeNs;
+    };
+    expect([1700000000.1234567, 1700000000.1234569, 1700000000.9999999, 4102444800.7654321].map(stored)).toEqual([
+      1700000000123456000n,
+      1700000000123457600n,
+      1700000001000000000n,
+      4102444800765433600n,
+    ]);
+  });
+
   // Windows counts 100 ns since 1601 in an i64. Milliseconds passed for seconds are past the end of that.
   it.skipIf(!isWindows)("refuses a time that Windows cannot hold", () => {
     using dir = tempDir("utimes-range", { "file": "" });

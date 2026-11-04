@@ -4,3 +4,5 @@ oracle-logs/
 score-*.md
 score-*.json
 __pycache__/
+*.names.json
+shims/_ctypes_test/_ctypes_test_library.so

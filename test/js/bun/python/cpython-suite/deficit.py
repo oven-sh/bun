@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """deficit.py [score.json [oracle.json]]: where the tests are that CPython passes and Bun does not, by root cause (rules on the module's name and on why it did not run)."""
 import collections, json, os, re, sys
-from score import matched
+from score import load_results, matched
 HERE = os.path.dirname(os.path.abspath(__file__))
-m = json.load(open(sys.argv[1] if len(sys.argv) > 1 else HERE + '/score.json'))['modules']
-o = json.load(open(sys.argv[2] if len(sys.argv) > 2 else HERE + '/oracle.json'))['modules']
+m = load_results(sys.argv[1] if len(sys.argv) > 1 else HERE + '/score.json')
+o = load_results(sys.argv[2] if len(sys.argv) > 2 else HERE + '/oracle.json')
 RULES = [
     ("no fork (multiprocessing fork and forkserver, os.fork)", r"^test_multiprocessing_fork|^test_fork1|^test_pty|^test_forkserver", r"os\.fork|requires working os.fork"),
     ("no subinterpreters (_interpreters, InterpreterPoolExecutor)", r"^test_interpreters|^test__interp|^test_crossinterp|^test_concurrent_futures", r"_interpreters|_interpchannels|_interpqueues|InterpreterPoolExecutor"),

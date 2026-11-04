@@ -1,12 +1,12 @@
 # CPython's test suite under Bun
 
 `Lib/test` of CPython 3.15, unchanged, run by `python3 -m test` where `python3` is Bun. It is not part of Bun's CI: a run takes
-about ten minutes on a large machine, needs a checkout of CPython (the tests are not in the executable), and a fifth of the tests fail. It is
-how progress is measured, and where most bugs are found.
+about ten minutes on a large machine, needs a checkout of CPython (the tests are not in the executable), and a tenth of what CPython passes does not
+pass yet. It is how progress is measured, and where most bugs are found.
 
     score.py [--bun build/release/bun] [--lib vendor/cpython/Lib] [-j N] [test_x ...]
 
-runs each of the 666 test modules in a process of its own and writes `score.md` and `score.json`: totals, the tests that kill the
+runs each test module (724 of them in 3.15.2) in a process of its own and writes `score.md` and `score.json`: totals, the tests that kill the
 interpreter or hang, failures grouped by cause, what changed since the last run. See the top of the file. Use a release build:
 a debug build takes seconds to start Python.
 
@@ -65,8 +65,12 @@ They are no part of Bun. `score.py` puts a shim on `PYTHONPATH` for the test mod
 
 ## The percentage
 
-Both files have, module by module, the names of the tests that passed. The percentage is the share of the tests that pass under CPython that also pass
-here. A test that passes here and that CPython skips or fails there does not count: it cannot make up for a failure elsewhere.
+The percentage is the share of the tests that pass under CPython that also pass here, matched by name. A test that passes here and that CPython skips or fails there
+does not count: it cannot make up for a failure elsewhere.
+
+A run writes the names of the tests that passed to a file beside its results (`oracle.names.json`, `score.names.json`: 2 MB each, not kept in the repository). What is kept has, for each module, a digest of
+its names and how many of the reference's tests were among them (`"matched"`, with the digest of the reference's names). So the kept files give the same figure without the names; to match a new run by name,
+run `score.py --oracle` first, which takes three minutes and is to be done on the same machine anyway. Where the names of either side are missing and the digests do not agree, a module counts for no more than CPython passes in it.
 
 So the CPython of `--oracle` has to be complete. One that was built without the headers of OpenSSL, gdbm, readline, ncurses or libuuid, or without `_decimal`, skips
 some 1,200 tests (`test_ssl`, the halves of `test_decimal`, `test_shelve`, `test_uuid`, `test_dbm`, the TLS tests of `test_asyncio`, `test_imaplib`, `test_poplib`, `test_ftplib`),

@@ -96,7 +96,9 @@ def portable(text):
     """What is written to the files that are kept says nothing of where things are on this machine."""
     text = text.replace(LIB, "<Lib>").replace(os.path.dirname(LIB), "<cpython>")
     text = re.sub(re.escape(tempfile.gettempdir()) + r"/score-\w+", "<tmp>", text)
-    return re.sub(re.escape(tempfile.gettempdir()) + r"/bun-python3-links-\d+/\w+/", "", text)
+    text = re.sub(re.escape(tempfile.gettempdir()) + r"/bun-python3-links-\d+(?:/\w+)?/?", "", text)
+    # What is left of paths near the library, whole or cut short by a message.
+    return re.sub(re.escape("/".join(LIB.split("/")[:2])) + r"/[\w./-]*", "<path>", text)
 
 
 # Some test files cannot be imported without a helper module of CPython's that is written in C, though few of their tests use it.
@@ -280,10 +282,46 @@ def short_id(case, module):
 
 
 def matched(result, reference):
-    """How many of the tests that pass in the reference pass in the result: by name, if both runs kept the names."""
+    """How many of the tests that pass in the reference pass in the result: by name, if the names of both runs are at hand, or as it was counted when they were."""
     if "passed_tests" in result and "passed_tests" in reference:
         return sum((collections.Counter(result["passed_tests"]) & collections.Counter(reference["passed_tests"])).values())
+    if result.get("matched") and result["matched"][1] == reference.get("names"):
+        return result["matched"][0]
     return min(result.get("passed", 0), reference.get("passed", 0))
+
+
+def names_file(path):
+    return os.path.splitext(path)[0] + ".names.json"
+
+
+def digest(tests):
+    return hashlib.sha256("\n".join(tests).encode()).hexdigest()[:12]
+
+
+LEFT_OUT_OF_THE_FILE = {"errors": 0, "failed": 0, "skipped": 0, "returncode": 0, "incidents": [], "problems": [], "reason": None}
+
+
+def dump_results(header, modules):
+    """A line for each module, without what is zero or empty, and without the names of the tests that passed."""
+    lines = ["  %s: %s" % (json.dumps(name), json.dumps({k: v for k, v in result.items() if k not in ("name", "passed_tests") and not (k in LEFT_OUT_OF_THE_FILE and LEFT_OUT_OF_THE_FILE[k] == v)},
+                                                        sort_keys=True, separators=(",", ":"))) for name, result in sorted(modules.items())]
+    return "{\n" + "".join(" %s: %s,\n" % (json.dumps(k), json.dumps(v)) for k, v in header.items()) + ' "modules": {\n' + ",\n".join(lines) + "\n }\n}\n"
+
+
+def load_results(path):
+    """The modules of a run. The names of the tests that passed are in a file beside it, which is too large to be kept in the repository."""
+    with open(path) as f:
+        modules = json.load(f)["modules"]
+    for name, result in modules.items():
+        result["name"] = name
+        for key, value in LEFT_OUT_OF_THE_FILE.items():
+            result.setdefault(key, list(value) if isinstance(value, list) else value)
+    if os.path.exists(names_file(path)):
+        with open(names_file(path)) as f:
+            for name, tests in json.load(f).items():
+                if name in modules and modules[name].get("names") == digest(tests):
+                    modules[name]["passed_tests"] = tests
+    return modules
 
 
 def run_once(name, python, limits, extra_env, ignored):
@@ -361,6 +399,7 @@ def run_once(name, python, limits, extra_env, ignored):
     result.update(ran=len(cases), passed=counts["passed"], failed=counts["failed"], errors=counts["error"], skipped=counts["skipped"])
     result["problems"] = [[case, outcome, detail] for case, outcome, detail in cases if outcome in ("failed", "error")]
     result["passed_tests"] = sorted(short_id(case, name) for case, outcome, _ in cases if outcome == "passed")
+    result["names"] = digest(result["passed_tests"])
 
     died = process.returncode < 0 or process.returncode in (132, 133, 134, 139)
     crash = None
@@ -598,13 +637,12 @@ def main():
             options.tag = options.tag or "impl-detail"
         target = "score-%s.json" % options.tag if options.tag else "score.json"
     library = library_with_tests(python) if options.engine else None
-    offered = set() if options.no_shims else modules_missing(python, SHIMS) if options.engine or options.oracle_file != "oracle.json" and options.oracle else None
+    offered = set() if options.no_shims else modules_missing(python, SHIMS) if options.engine or options.oracle else None
 
     path = os.path.join(HERE, target)
     previous = {}
     if os.path.exists(path):
-        with open(path) as f:
-            previous = json.load(f)["modules"]
+        previous = load_results(path)
     results = {n: r for n, r in previous.items() if n in all_names} if options.names else {}
 
     logs = os.path.join(HERE, ("oracle-logs" if options.oracle_file == "oracle.json" else os.path.splitext(options.oracle_file)[0] + "-logs") if options.oracle else "logs-" + options.tag if options.tag else "logs")
@@ -638,16 +676,22 @@ def main():
             if result["status"] not in ("passed", "skipped") or len(names) < 30:
                 print("[%d/%d] %-45s %-9s ran %4d passed %4d  %s" % (done, len(names), result["name"], result["status"], result["ran"], result["passed"], (result.get("reason") or "")[:90]), flush=True)
 
+    oracle = {}
+    if not options.oracle and os.path.exists(os.path.join(HERE, options.oracle_file)):
+        oracle = load_results(os.path.join(HERE, options.oracle_file))
+    for name, result in results.items():
+        if "passed_tests" in result:
+            result["names"] = digest(result["passed_tests"])
+            if "passed_tests" in oracle.get(name, {}):
+                result["matched"] = [matched(result, oracle[name]), digest(oracle[name]["passed_tests"])]
+    with open(names_file(path), "w") as f:
+        json.dump({n: r["passed_tests"] for n, r in results.items() if "passed_tests" in r}, f, indent=0, sort_keys=True)
     with open(path, "w") as f:
-        f.write(portable(json.dumps({"when": time.strftime("%Y-%m-%d %H:%M"), "python": [os.path.basename(python[0])] + python[1:], "modules": results}, indent=1, sort_keys=True)) + "\n")
+        f.write(portable(dump_results({"when": time.strftime("%Y-%m-%d %H:%M"), "python": [os.path.basename(python[0])] + python[1:]}, results)))
     if options.oracle:
         passed = sum(r.get("passed", 0) for r in results.values())
         print("oracle: %d modules, %d tests passed" % (len(results), passed))
         return
-    oracle = {}
-    if os.path.exists(os.path.join(HERE, options.oracle_file)):
-        with open(os.path.join(HERE, options.oracle_file)) as f:
-            oracle = json.load(f)["modules"]
     title = "Run of %s with `%s`, %d at a time, %d s a module; took %d s." % (time.strftime("%Y-%m-%d %H:%M"), " ".join([os.path.basename(python[0])] + python[1:]), options.j, options.timeout, time.time() - started)
     totals, statuses = write_reports(results, previous, oracle, HERE, title, "score-%s.md" % options.tag if options.tag else "score.md", options.tag if options.engine else "Bun")
     print(dict(statuses))

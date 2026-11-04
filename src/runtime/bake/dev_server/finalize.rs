@@ -1040,7 +1040,7 @@ fn finalize_bundle_inner(
             // SAFETY: the node stays alive until `deref_()` releases it below.
             scopeguard::defer! { unsafe { (*req_ptr).deref_() } };
 
-            let rb = dev.route_bundle_ptr(req.route_bundle_index);
+            let rb = dev.route_bundle_ptr(req.route_bundle_index());
             rb.server_state = route_bundle::State::PossibleBundlingFailures;
 
             let resp: AnyResponse = match &mut req.handler {
@@ -1051,6 +1051,7 @@ fn finalize_bundle_inner(
                     break 'brk resp;
                 }
                 Handler::BundledHtmlPage(ram) => ram.response,
+                Handler::Unrouted(_) => unreachable!(),
             };
 
             dev.send_serialized_failures(
@@ -1128,7 +1129,7 @@ fn finalize_bundle_inner(
                         if !first.is_null() {
                             // SAFETY: `first` is a live intrusive node held by current_bundle.requests; `data` was initialized by `defer_request`.
                             break 'rbi unsafe { (*first).data.assume_init_ref() }
-                                .route_bundle_index;
+                                .route_bundle_index();
                         }
                         break 'brk None;
                     };
@@ -1186,7 +1187,7 @@ fn finalize_bundle_inner(
             // `data` was initialized by `defer_request`.
             let n = unsafe { &*node };
             // SAFETY: `data` was initialized by `defer_request` before being linked.
-            let rb = dev.route_bundle_ptr(unsafe { n.data.assume_init_ref() }.route_bundle_index);
+            let rb = dev.route_bundle_ptr(unsafe { n.data.assume_init_ref() }.route_bundle_index());
             rb.server_state = route_bundle::State::Loaded;
             node = n.next;
         }
@@ -1200,7 +1201,7 @@ fn finalize_bundle_inner(
         // SAFETY: the node stays alive until `deref_()` releases it below.
         scopeguard::defer! { unsafe { (*req_ptr).deref_() } };
 
-        let rb = dev.route_bundle_ptr(req.route_bundle_index);
+        let rb = dev.route_bundle_ptr(req.route_bundle_index());
         rb.server_state = route_bundle::State::Loaded;
 
         // Note: `SavedRequest` is move-only (`Strong` field). Take the
@@ -1221,14 +1222,15 @@ fn finalize_bundle_inner(
                 // deinit") never sees DevServer Drop.
                 scopeguard::defer! { ctx.deref() };
                 dev.on_framework_request_with_bundle(
-                    req.route_bundle_index,
+                    req.route_bundle_index(),
                     SavedRequestUnion::Saved(saved),
                     response,
                 )?
             }
             Handler::BundledHtmlPage(ram) => {
-                dev.on_html_request_with_bundle(req.route_bundle_index, ram.response, ram.method)
+                dev.on_html_request_with_bundle(req.route_bundle_index(), ram.response, ram.method)
             }
+            Handler::Unrouted(_) => unreachable!(),
         }
     }
     Ok(())

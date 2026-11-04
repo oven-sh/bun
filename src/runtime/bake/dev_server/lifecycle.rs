@@ -100,7 +100,17 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             }
         );
         w!(source_maps, SourceMapStore::empty());
-        w!(plugin_state, PluginState::Unknown);
+        w!(
+            plugin_state,
+            if options.bundler_options.pending_plugin_setup.is_some() {
+                // `ServePlugins::adopt_pending_app_setup` tells the dev server when the last `setup()` has settled.
+                PluginState::AppSetup
+            } else if options.bundler_options.plugin.is_some() {
+                PluginState::Loaded
+            } else {
+                PluginState::Unknown
+            }
+        );
         w!(bundling_failures, Default::default());
         w!(
             assume_perfect_incremental_bundling,
@@ -454,12 +464,18 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 &mut buf[..],
                 &[&fsr.root],
             );
-            let Some(entry) = dev
-                .server_transpiler
-                .resolver
-                .read_dir_info_ignore_error(joined_root)
-            else {
-                continue;
+            let abs_root: Box<[u8]> = if dev.plugin_state == PluginState::AppSetup {
+                // A pending `setup()` can still create this directory, and the resolver remembers a failed read.
+                strings::without_trailing_slash(joined_root).into()
+            } else {
+                let Some(entry) = dev
+                    .server_transpiler
+                    .resolver
+                    .read_dir_info_ignore_error(joined_root)
+                else {
+                    continue;
+                };
+                strings::without_trailing_slash(entry.abs_path).into()
             };
 
             let server_file = dev.server_graph.insert_stale_extra(
@@ -471,7 +487,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             // Types with a missing root were skipped above, so this can differ from the index in the config.
             let type_index = router::TypeIndex::init(u8::try_from(types.len()).expect("int cast"));
             types.push(router::Type {
-                abs_root: strings::without_trailing_slash(entry.abs_path).into(),
+                abs_root,
                 ignore_underscores: fsr.ignore_underscores,
                 ignore_dirs: fsr
                     .ignore_dirs
@@ -509,7 +525,9 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // TODO: move scanning to be one tick after server startup. this way the
     // line saying the server is ready shows quicker, and route errors show up
     // after that line.
-    dev.scan_initial_routes()?;
+    if dev.plugin_state != PluginState::AppSetup {
+        dev.discover_routes(router::Listing::Cached)?;
+    }
 
     debug_assert!(dev.magic == Magic::Valid);
 
@@ -629,7 +647,10 @@ impl Drop for DevServer {
                 // SAFETY: `pop_first` returns a live node linked by `defer_request`,
                 // which initialized `data`. This exclusive borrow ends at `deref_`.
                 let data = unsafe { (*r).data.assume_init_mut() };
-                debug_assert!(!matches!(data.handler, Handler::ServerHandler(_)));
+                debug_assert!(!matches!(
+                    data.handler,
+                    Handler::ServerHandler(_) | Handler::Unrouted(_)
+                ));
                 data.abort_and_deref();
             }
         }
@@ -777,9 +798,10 @@ impl DevServer {
         Ok(())
     }
 
-    /// Deferred one tick so that the server can be up faster
-    fn scan_initial_routes(&mut self) -> crate::Result<()> {
+    /// Reads the route directories, once: in `init`, or after the last `setup()` of `app.plugins` (`PluginState::AppSetup`).
+    pub(super) fn discover_routes(&mut self, listing: router::Listing) -> crate::Result<()> {
         self.router.scan_all(
+            listing,
             &mut self.server_transpiler.resolver,
             router::InsertionContext::wrap(&mut router_glue::DevRouteScan {
                 root: &self.root,
@@ -853,7 +875,11 @@ impl DevServer {
         // Only attach a catch-all handler if the framework has filesystem
         // router types. Otherwise, this can just be Bun.serve's default handler.
         if !self.framework.file_system_router_types.is_empty() {
-            route!(any, b"/*", DevHandlerId::Request);
+            if self.plugin_state == PluginState::AppSetup {
+                route!(any, b"/*", DevHandlerId::RequestAwaitingAppSetup);
+            } else {
+                route!(any, b"/*", DevHandlerId::Request);
+            }
             Ok(true)
         } else {
             Ok(false)

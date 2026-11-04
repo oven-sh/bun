@@ -904,17 +904,7 @@ impl ServerConfig {
                     let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
                     let framework = match bake_framework {
                         Some(object) if bake_pages => {
-                            match crate::bake::Framework::from_js(
-                                object,
-                                global,
-                                &mut bundler_options,
-                            ) {
-                                Ok(framework) => framework,
-                                Err(err) => {
-                                    bundler_options.destroy_plugin();
-                                    return Err(err);
-                                }
-                            }
+                            crate::bake::Framework::from_js(object, global, &mut bundler_options)?
                         }
                         _ if bake_pages => crate::bake::Framework::bake_pages(resolver),
                         _ => crate::bake::Framework::auto(

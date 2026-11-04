@@ -239,6 +239,10 @@ impl AnyRequestContext {
         dispatch!(self, (), |_T, ctx| ctx.end_with_internal_server_error())
     }
 
+    pub(crate) fn end_with_not_found(self) {
+        dispatch!(self, (), |_T, ctx| ctx.end_with_not_found())
+    }
+
     pub fn on_request_body_stream_drained(self) {
         dispatch!(self, (), |_T, ctx| ctx.on_request_body_stream_drained())
     }

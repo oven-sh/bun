@@ -353,47 +353,60 @@ export function runSetupFunction(
     return this.promises;
   };
 
-  var setupResult = setup({
-    config: config,
-    onDispose: () => {
-      throw new TypeError(
-        "On-dispose callbacks is not implemented yet. See https://github.com/oven-sh/bun/issues/2771",
-      );
-    },
-    onEnd,
-    onLoad,
-    onResolve,
-    onBeforeParse,
-    onStart,
-    resolve: () => {
-      throw new TypeError("build.resolve() is not implemented yet. See https://github.com/oven-sh/bun/issues/2771");
-    },
-    module: () => {
-      throw new TypeError("module() is not supported in Bun.build() yet. Only via Bun.plugin() at runtime");
-    },
-    addPreload: () => {
-      throw new TypeError("addPreload() is not supported in Bun.build() yet.");
-    },
-    // esbuild's options argument is different, we provide some interop
-    initialOptions: {
-      ...config,
-      bundle: true,
-      entryPoints: config.entrypoints ?? config.entryPoints ?? [],
-      minify: typeof config.minify === "boolean" ? config.minify : false,
-      minifyIdentifiers: config.minify === true || (config.minify as MinifyObj)?.identifiers,
-      minifyWhitespace: config.minify === true || (config.minify as MinifyObj)?.whitespace,
-      minifySyntax: config.minify === true || (config.minify as MinifyObj)?.syntax,
-      outbase: config.root,
-      platform: config.target === "bun" ? "node" : config.target,
-    },
-    esbuild: {},
-  } as PluginBuilderExt);
+  const createBuilder = () =>
+    ({
+      config: config,
+      onDispose: () => {
+        throw new TypeError(
+          "On-dispose callbacks is not implemented yet. See https://github.com/oven-sh/bun/issues/2771",
+        );
+      },
+      onEnd,
+      onLoad,
+      onResolve,
+      onBeforeParse,
+      onStart,
+      resolve: () => {
+        throw new TypeError("build.resolve() is not implemented yet. See https://github.com/oven-sh/bun/issues/2771");
+      },
+      module: () => {
+        throw new TypeError("module() is not supported in Bun.build() yet. Only via Bun.plugin() at runtime");
+      },
+      addPreload: () => {
+        throw new TypeError("addPreload() is not supported in Bun.build() yet.");
+      },
+      // esbuild's options argument is different, we provide some interop
+      initialOptions: {
+        ...config,
+        bundle: true,
+        entryPoints: config.entrypoints ?? config.entryPoints ?? [],
+        minify: typeof config.minify === "boolean" ? config.minify : false,
+        minifyIdentifiers: config.minify === true || (config.minify as MinifyObj)?.identifiers,
+        minifyWhitespace: config.minify === true || (config.minify as MinifyObj)?.whitespace,
+        minifySyntax: config.minify === true || (config.minify as MinifyObj)?.syntax,
+        outbase: config.root,
+        platform: config.target === "bun" ? "node" : config.target,
+      },
+      esbuild: {},
+    }) as PluginBuilderExt;
+
+  // `Bun.serve({ app })` does not wait for a pending `setup()`. Each `setup()` behind it waits here, and is not called for a plugin that was destroyed.
+  const before = isBake ? self.pendingSetup : undefined;
+  var setupResult =
+    before === undefined
+      ? setup(createBuilder())
+      : before.$then(() => (self.tombstoned ? undefined : setup(createBuilder())));
 
   if (setupResult && $isPromise(setupResult)) {
-    if ($peekPromiseStatus(setupResult) === 1) {
+    const status = $peekPromiseStatus(setupResult);
+    if (status === 1) {
       setupResult = $peekPromiseSettledValue(setupResult);
+    } else if (isBake && status === 2) {
+      // `Bun.serve({ app })` throws what a `setup()` has already rejected with.
+      $pokePromiseAsHandled(setupResult);
+      throw $peekPromiseSettledValue(setupResult);
     } else {
-      return setupResult.$then(() => {
+      const pending = setupResult.$then(() => {
         let selfPromises;
         if (is_last && (selfPromises = self.promises) !== undefined && selfPromises.length > 0) {
           const awaitAll = Promise.all(selfPromises);
@@ -401,6 +414,8 @@ export function runSetupFunction(
         }
         return processSetupResult();
       });
+      if (isBake) self.pendingSetup = pending;
+      return pending;
     }
   }
 

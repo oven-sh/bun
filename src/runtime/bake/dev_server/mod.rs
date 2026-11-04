@@ -85,6 +85,7 @@ mod watch;
 mod watcher_atomics;
 
 pub(super) use crate::server::SavedRequestUnion;
+use crate::server::UnroutedRequest;
 pub(crate) use bundle::EntryPointList;
 use bundle::{RouteIndexAndRecurseFlag, TestingBatch};
 use deferred_request::{DeferredRequest, DeferredScriptRequest, Handler, ResponseAndMethod};
@@ -373,11 +374,13 @@ pub(crate) enum Magic {
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub(crate) enum PluginState {
-    /// Should ask server for plugins. Once plugins are loaded, the plugin
-    /// pointer is written into `server_transpiler.options.plugin`
+    /// The first request asks the server for its plugins (bunfig.toml, `bake.config.ts`).
     Unknown,
-    // These two states mean that `server.getOrLoadPlugins()` was called.
+    /// A `setup()` of `app.plugins` is pending. Nothing has read the route directories yet, because a `setup()` can write to them.
+    AppSetup,
+    /// The server's plugins load.
     Pending,
+    /// The only state in which a bundle starts.
     Loaded,
     /// Currently, this represents a degraded state where no bundle can
     /// be correctly executed because the plugins did not load successfully.

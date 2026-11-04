@@ -1361,6 +1361,21 @@ where
         self.end_without_body(true);
     }
 
+    /// Answers the 404 of a dev server that has no `fetch` handler, for a request that was saved before the routes were known.
+    pub(crate) fn end_with_not_found(&self) {
+        if let Some(resp) = self.resp.get() {
+            resp.run_corked_with_type(Self::end_with_not_found_corked, self);
+        }
+    }
+
+    fn end_with_not_found_corked(&self) {
+        if let Some(resp) = self.resp.get() {
+            self.flags.set_has_written_status(true);
+            resp.write_status(b"404 Not Found");
+            self.end(b"404 Not Found", true);
+        }
+    }
+
     /// Answers 413 to a request whose body outgrew `maxRequestBodySize`, after that body has failed.
     fn end_with_payload_too_large(&self) {
         let Some(resp) = self.resp.get() else { return };

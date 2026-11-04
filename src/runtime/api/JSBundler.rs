@@ -2343,6 +2343,30 @@ pub(crate) mod js_bundler {
         }
     }
 
+    /// The cell that [`PluginJscExt::create`] made. To drop it is its [`PluginJscExt::destroy`]. JS thread only.
+    pub(crate) struct OwnedPlugin(core::ptr::NonNull<Plugin>);
+
+    impl OwnedPlugin {
+        pub(crate) fn create(global: &JSGlobalObject, target: BunPluginTarget) -> Self {
+            Self(
+                core::ptr::NonNull::new(Plugin::create(global, target))
+                    .expect("JSBundlerPlugin__create returns a non-null protected JSCell"),
+            )
+        }
+
+        /// For a holder that only borrows the cell. Valid until `self` drops.
+        #[inline]
+        pub(crate) fn as_non_null(&self) -> core::ptr::NonNull<Plugin> {
+            self.0
+        }
+    }
+
+    impl Drop for OwnedPlugin {
+        fn drop(&mut self) {
+            Plugin::destroy(self.0.as_ptr());
+        }
+    }
+
     /// Convert a JS exception value into a `logger.Msg`. If the conversion itself
     /// throws (e.g. `Symbol.toPrimitive` on the thrown object throws), clear that
     /// secondary exception and return a generic fallback message so
@@ -2435,6 +2459,7 @@ pub(crate) fn worker_live_count() -> usize {
 }
 
 pub(crate) use js_bundler::BunPluginTarget;
+pub(crate) use js_bundler::OwnedPlugin;
 /// `jsc.API.JSBundler.Plugin` — re-exported for `crate::bake` (`SplitBundlerOptions.plugin`).
 pub(crate) use js_bundler::Plugin;
 pub(crate) use js_bundler::PluginJscExt;

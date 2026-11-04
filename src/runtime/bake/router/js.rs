@@ -93,7 +93,7 @@ impl JSFrameworkRouter {
                 files,
                 stored_parse_errors,
             };
-            router.scan(TypeIndex::init(0), resolver, &mut ctx)?;
+            router.scan(TypeIndex::init(0), Listing::Cached, resolver, &mut ctx)?;
         }
 
         if !jsfr.stored_parse_errors.is_empty() {

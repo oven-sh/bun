@@ -18,8 +18,7 @@ impl RequestEnsureRouteBundledCtx<'_> {
         let req = ::core::mem::replace(&mut self.req, ReqOrSaved::Aborted);
         Ok(dev.defer_request(
             bundle_field,
-            self.route_bundle_index,
-            self.kind,
+            HeldFor::Bundle(self.route_bundle_index, self.kind),
             req,
             self.resp,
         )?)
@@ -95,54 +94,47 @@ pub(super) fn ensure_route_is_bundled(
                 'plugin: loop {
                     match plugin {
                         PluginState::Unknown => {
-                            if dev.bundler_options.plugin.is_some() {
-                                // Framework-provided plugin is likely going to be phased out later
-                                dev.plugin_state = PluginState::Loaded;
-                            } else {
-                                // TODO: implement a proper solution here
-                                // `vm()` is the centralized JSC_BORROW accessor (one
-                                // `unsafe` site for the field); the borrow is dropped
-                                // before the assignment so no overlap with `&mut dev`.
-                                let vm = dev.vm();
-                                let has_tailwind = vm
-                                    .transpiler
-                                    .options
-                                    .serve_plugins
-                                    .iter()
-                                    .flatten()
-                                    .chain(vm.bake_config_plugin_names.iter())
-                                    .find(|p| strings::includes(p, b"tailwind"))
-                                    .map(|_| Default::default());
-                                dev.has_tailwind_plugin_hack = has_tailwind;
+                            // TODO: implement a proper solution here. The borrow of `vm()` ends before the assignment, so it does not overlap `&mut dev`.
+                            let vm = dev.vm();
+                            let has_tailwind = vm
+                                .transpiler
+                                .options
+                                .serve_plugins
+                                .iter()
+                                .flatten()
+                                .chain(vm.bake_config_plugin_names.iter())
+                                .find(|p| strings::includes(p, b"tailwind"))
+                                .map(|_| Default::default());
+                            dev.has_tailwind_plugin_hack = has_tailwind;
 
-                                let load_result: crate::server::GetOrStartLoadResult = dev
-                                    .server
-                                    .as_ref()
-                                    .expect("infallible: server bound")
-                                    .get_or_load_plugins(
-                                        crate::server::ServePluginsCallback::DevServer,
-                                    );
-                                match load_result {
-                                    crate::server::GetOrStartLoadResult::Pending => {
-                                        dev.plugin_state = PluginState::Pending;
-                                        plugin = PluginState::Pending;
-                                        continue 'plugin;
-                                    }
-                                    crate::server::GetOrStartLoadResult::Err => {
-                                        dev.plugin_state = PluginState::Err;
-                                        plugin = PluginState::Err;
-                                        continue 'plugin;
-                                    }
-                                    crate::server::GetOrStartLoadResult::Ready(ready) => {
-                                        dev.plugin_state = PluginState::Loaded;
-                                        dev.bundler_options.plugin =
-                                            ready.map(::core::ptr::NonNull::from);
-                                    }
+                            let load_result: crate::server::GetOrStartLoadResult = dev
+                                .server
+                                .as_ref()
+                                .expect("infallible: server bound")
+                                .get_or_load_plugins(
+                                    crate::server::ServePluginsCallback::DevServer,
+                                );
+                            match load_result {
+                                crate::server::GetOrStartLoadResult::Pending => {
+                                    dev.plugin_state = PluginState::Pending;
+                                    plugin = PluginState::Pending;
+                                    continue 'plugin;
+                                }
+                                crate::server::GetOrStartLoadResult::Err => {
+                                    dev.plugin_state = PluginState::Err;
+                                    plugin = PluginState::Err;
+                                    continue 'plugin;
+                                }
+                                crate::server::GetOrStartLoadResult::Ready(ready) => {
+                                    dev.plugin_state = PluginState::Loaded;
+                                    dev.bundler_options.plugin = ready
+                                        .map(::core::ptr::NonNull::from)
+                                        .map(bake::PluginCell::Borrowed);
                                 }
                             }
                             break 'plugin;
                         }
-                        PluginState::Pending => {
+                        PluginState::AppSetup | PluginState::Pending => {
                             if ctx.on_defer(dev, BundleQueueType::NextBundle)? == Deferral::Answered
                             {
                                 return Ok(());
@@ -249,12 +241,34 @@ impl ReqOrSaved<'_> {
     }
 }
 
+/// What a held request waits for.
+#[derive(Copy, Clone)]
+enum HeldFor {
+    Bundle(route_bundle::Index, deferred_request::HandlerKind),
+    /// The read of the route directories that ends `PluginState::AppSetup`.
+    Routes,
+}
+
 impl DevServer {
+    pub(super) fn defer_unrouted_request(
+        &mut self,
+        req: &mut Request,
+        resp: AnyResponse,
+    ) -> crate::Result<()> {
+        debug_assert!(self.plugin_state == PluginState::AppSetup);
+        self.defer_request(
+            BundleQueueType::NextBundle,
+            HeldFor::Routes,
+            ReqOrSaved::Req(req),
+            resp,
+        )?;
+        Ok(())
+    }
+
     fn defer_request(
         &mut self,
         bundle_field: BundleQueueType,
-        route_bundle_index: route_bundle::Index,
-        kind: deferred_request::HandlerKind,
+        held_for: HeldFor,
         req: ReqOrSaved<'_>,
         resp: AnyResponse,
     ) -> crate::Result<Deferral> {
@@ -276,12 +290,15 @@ impl DevServer {
         };
 
         let mut deferred_data = DeferredRequest {
-            route_bundle_index,
+            route_bundle_index: match held_for {
+                HeldFor::Bundle(route_bundle_index, _) => route_bundle_index.to_optional(),
+                HeldFor::Routes => bun_core::GenericIndexOptional::NONE,
+            },
             dev: std::ptr::from_ref(self),
             referenced_by_devserver: true,
             weakly_referenced_by_requestcontext: false,
-            handler: match kind {
-                deferred_request::HandlerKind::BundledHtmlPage => 'brk: {
+            handler: match held_for {
+                HeldFor::Bundle(_, deferred_request::HandlerKind::BundledHtmlPage) => 'brk: {
                     // Note: `on_aborted<U: 'static>` rejects `DeferredRequest`;
                     // erase to `c_void` and cast back inside the trampoline.
                     resp.on_aborted(
@@ -296,7 +313,7 @@ impl DevServer {
                         method,
                     });
                 }
-                deferred_request::HandlerKind::ServerHandler => 'brk: {
+                HeldFor::Bundle(_, deferred_request::HandlerKind::ServerHandler) => 'brk: {
                     let server_handler: SavedRequest = match req {
                         ReqOrSaved::Req(r) => {
                             let global = self.vm().global();
@@ -318,34 +335,46 @@ impl DevServer {
                         }
                         _ => unreachable!(),
                     };
-                    server_handler.ctx.ref_();
-                    server_handler.ctx.set_additional_on_abort_callback(Some(
-                        crate::server::any_request_context::AdditionalOnAbortCallback {
-                            cb: {
-                                fn cb(ptr: *mut c_void) {
-                                    DeferredRequest::on_abort_wrapper(ptr)
-                                }
-                                cb
-                            },
-                            // SAFETY: deferred.data is a live field of a HiveArray-owned node
-                            data: unsafe { ::core::ptr::NonNull::new_unchecked(deferred_data_ptr) },
-                            deref_fn: {
-                                fn deref_fn(ptr: *mut c_void) {
-                                    // SAFETY: ptr is &mut DeferredRequest from above
-                                    let self_: &mut DeferredRequest =
-                                        unsafe { &mut *ptr.cast::<DeferredRequest>() };
-                                    self_.weak_deref();
-                                }
-                                deref_fn
-                            },
-                        },
-                    ));
                     break 'brk Handler::ServerHandler(server_handler);
+                }
+                HeldFor::Routes => 'brk: {
+                    let ReqOrSaved::Req(r) = req else {
+                        unreachable!()
+                    };
+                    let server = self.server.as_ref().unwrap();
+                    match server.save_unrouted_request(r, resp) {
+                        Some(unrouted) => break 'brk Handler::Unrouted(unrouted),
+                        None => return Ok(Deferral::Answered),
+                    }
                 }
             },
         };
 
-        if matches!(deferred_data.handler, Handler::ServerHandler(_)) {
+        if let Handler::ServerHandler(SavedRequest { ctx, .. })
+        | Handler::Unrouted(UnroutedRequest { ctx, .. }) = &deferred_data.handler
+        {
+            ctx.ref_();
+            ctx.set_additional_on_abort_callback(Some(
+                crate::server::any_request_context::AdditionalOnAbortCallback {
+                    cb: {
+                        fn cb(ptr: *mut c_void) {
+                            DeferredRequest::on_abort_wrapper(ptr)
+                        }
+                        cb
+                    },
+                    // SAFETY: deferred.data is a live field of a HiveArray-owned node
+                    data: unsafe { ::core::ptr::NonNull::new_unchecked(deferred_data_ptr) },
+                    deref_fn: {
+                        fn deref_fn(ptr: *mut c_void) {
+                            // SAFETY: ptr is &mut DeferredRequest from above
+                            let self_: &mut DeferredRequest =
+                                unsafe { &mut *ptr.cast::<DeferredRequest>() };
+                            self_.weak_deref();
+                        }
+                        deref_fn
+                    },
+                },
+            ));
             deferred_data.weak_ref();
         }
 

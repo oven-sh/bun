@@ -85,9 +85,6 @@ pub(crate) fn set_pages<'a>(cx: &mut JsScope<'a>, framework: JsLocal<'a>) {
 /// object of a plugin, so that `bun bake` reports it as an error of `bake.config.ts`.
 pub(crate) fn check_framework<'a>(cx: &mut JsScope<'a>, framework: JsLocal<'a>) -> JsResult<()> {
     let mut bundler_options = crate::bake::SplitBundlerOptions::default();
-    let result =
-        crate::bake::Framework::from_js(framework.to_js(), cx.global(), &mut bundler_options);
-    bundler_options.destroy_plugin();
-    result?;
+    crate::bake::Framework::from_js(framework.to_js(), cx.global(), &mut bundler_options)?;
     Ok(())
 }

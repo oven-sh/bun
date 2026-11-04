@@ -14,6 +14,8 @@ pub(super) enum DevHandlerId {
     UnrefSourceMap,
     NotFound,
     Request,
+    /// `Request` for a server that started in `PluginState::AppSetup`, where no request can be routed yet.
+    RequestAwaitingAppSetup,
 }
 
 /// DNS-rebinding guard for `/_bun/...` internal routes and the Chrome
@@ -180,6 +182,9 @@ pub(super) extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId
             // The catch-all route can reach a framework request handler; this
             // trampoline folds what bundling for it left pending.
             crate::dispatch::fold(on_request(dev, req, resp));
+        }
+        DevHandlerId::RequestAwaitingAppSetup => {
+            crate::dispatch::fold(on_request_awaiting_app_setup(dev, req, resp));
         }
     }
 }
@@ -379,6 +384,18 @@ fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) -> 
 
     send_built_in_not_found(&mut resp);
     Ok(())
+}
+
+/// The settled `setup()` calls cannot swap this handler for `on_request`: they can run inside a request of this route.
+fn on_request_awaiting_app_setup(
+    dev: &mut DevServer,
+    req: &mut Request,
+    resp: AnyResponse,
+) -> JsResult<()> {
+    if dev.plugin_state != PluginState::AppSetup {
+        return on_request(dev, req, resp);
+    }
+    Ok(dev.defer_unrouted_request(req, resp)?)
 }
 
 fn send_built_in_not_found<R: ResponseLike>(resp: &mut R) {

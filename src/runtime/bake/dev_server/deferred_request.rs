@@ -3,7 +3,9 @@
 /// When requests are waiting on a bundle, the relevant request information is
 /// prepared and stored in a linked list.
 pub(crate) struct DeferredRequest {
-    pub(crate) route_bundle_index: route_bundle::Index,
+    /// `NONE` for a request that waits for the route directories to be read (`Handler::Unrouted`, also once it aborted).
+    pub(crate) route_bundle_index:
+        bun_core::GenericIndexOptional<u32, route_bundle::RouteBundleMarker>,
     pub(crate) handler: Handler,
     pub(crate) dev: *const DevServer, // BACKREF: owned by dev.deferred_request_pool
 
@@ -29,6 +31,8 @@ pub(crate) enum Handler {
     ServerHandler(SavedRequest),
     /// For a .html route. Serve the bundled HTML page.
     BundledHtmlPage(ResponseAndMethod),
+    /// For a request that arrived in `PluginState::AppSetup`. When the routes are known it becomes a `ServerHandler`, or `fetch` answers it.
+    Unrouted(UnroutedRequest),
     /// Do nothing and free this node. To simplify lifetimes,
     /// the `DeferredRequest` is not freed upon abortion. Which
     /// is okay since most requests do not abort.
@@ -50,6 +54,13 @@ impl DeferredRequest {
         self.referenced_by_devserver
     }
 
+    /// A bundle takes the waiting requests only in `PluginState::Loaded`, and by then each one has its route.
+    pub(crate) fn route_bundle_index(&self) -> route_bundle::Index {
+        self.route_bundle_index
+            .unwrap()
+            .expect("a request in a bundle has a route")
+    }
+
     // NOTE: This should only be called from the DevServer which is the only
     // place that can hold a strong reference
     pub(crate) fn deref_(&mut self) {
@@ -63,12 +74,14 @@ impl DeferredRequest {
 
     /// Ends the response before the deref because until then uWS has an abort callback that points to this node.
     pub(super) fn abort_and_deref(&mut self) {
-        if let Handler::ServerHandler(saved) = &self.handler {
+        match &self.handler {
             // Releases `prepare_and_save_js_request_context`'s ref. `deref_` releases
             // `defer_request`'s.
-            saved.ctx.end_with_internal_server_error();
-        } else {
-            self.abort();
+            Handler::ServerHandler(SavedRequest { ctx, .. })
+            | Handler::Unrouted(UnroutedRequest { ctx, .. }) => {
+                ctx.end_with_internal_server_error()
+            }
+            Handler::BundledHtmlPage(_) | Handler::Aborted => self.abort(),
         }
         self.deref_();
     }
@@ -136,6 +149,7 @@ impl DeferredRequest {
                 saved.deinit();
                 // `saved` (incl. `js_request: jsc::Strong`) drops at scope exit.
             }
+            Handler::Unrouted(unrouted) => unrouted.deinit(),
             Handler::BundledHtmlPage(_) | Handler::Aborted => {}
         }
     }
@@ -160,6 +174,8 @@ impl DeferredRequest {
                 // Releases `defer_request`'s ref. The context's abort handler has its own.
                 saved.deinit();
             }
+            // No JS `Request` exists yet, so nothing listens to its signal.
+            Handler::Unrouted(unrouted) => unrouted.deinit(),
             Handler::BundledHtmlPage(r) => {
                 // Reached from JS event-loop tasks (on_plugins_rejected, the
                 // bundle-completion OOM cleanup), so end_without_body

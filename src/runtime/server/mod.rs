@@ -170,7 +170,7 @@ impl AnyRoute {
 
 // ─── ServePlugins ────────────────────────────────────────────────────────────
 // Full state machine + intrusive refcount lives in `server_body.rs` (the
-// `*mut ServePlugins` is smuggled through `JSValue::then` as a promise context,
+// `*mut ServePlugins` is the claim that a `NativePromiseContext` cell holds for a promise reaction,
 // so `Rc` is unsuitable). Re-exported here for `AnyServer` callers.
 pub(crate) use server_body::ServePlugins;
 
@@ -395,6 +395,28 @@ impl<const SSL: bool, const DEBUG: bool> PreparedRequest<SSL, DEBUG> {
 
         SavedRequest {
             js_request: jsc::StrongOptional::create(self.js_request, global),
+            request: self.request_object,
+            ctx: AnyRequestContext::init(self.ctx),
+            response: any_response_from::<SSL>(resp),
+        }
+    }
+
+    /// As `save`, for a request that was prepared with `CreateJsRequest::No`.
+    fn save_unrouted(
+        self,
+        req: &mut uws_sys::Request,
+        resp: *mut uws_sys::NewAppResponse<SSL>,
+    ) -> UnroutedRequest {
+        debug_assert!(self.js_request.is_empty());
+        // SAFETY: as in `save`.
+        unsafe {
+            (*self.ctx).to_async(
+                std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
+                &mut *self.request_object,
+            );
+        }
+
+        UnroutedRequest {
             request: self.request_object,
             ctx: AnyRequestContext::init(self.ctx),
             response: any_response_from::<SSL>(resp),
@@ -1115,6 +1137,25 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
             SavedRequestUnion::Saved(_) => {} // info already copied
         }
+    }
+
+    /// Calls `fetch` for a request that the dev server saved before it knew the routes, as `on_request` does for one that arrives.
+    fn on_saved_fetch_request(
+        &self,
+        unrouted: UnroutedRequest,
+        resp: *mut uws_sys::NewAppResponse<SSL>,
+    ) {
+        // As in `on_request`.
+        let _context = self.vm().enter_context(self.context.get());
+        let saved = unrouted.into_fetch_request(self.global_this());
+        // With no server object `on_saved_request` answers 503 and reads no argument.
+        let server_js = self.js_value_for_dispatch().unwrap_or(JSValue::UNDEFINED);
+        self.on_saved_request(
+            SavedRequestUnion::Saved(saved),
+            resp,
+            self.config.get().on_request,
+            [server_js],
+        );
     }
 
     /// Common tail of `on_request` /
@@ -2179,6 +2220,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             };
             // SAFETY: `server` is uniquely owned here.
             unsafe { (*server).dev_server.set(Some(dev)) };
+            let app_setup =
+                ServePlugins::adopt_pending_app_setup(global, AnyServer::from(server.cast_const()));
+            if app_setup.is_some() {
+                // SAFETY: `server` is uniquely owned here.
+                unsafe { (*server).plugins.set(app_setup) };
+            }
         }
 
         if SSL {
@@ -2528,6 +2575,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             if !names.is_empty() || vm.bake_config_plugins.has() {
                 self.plugins.set(Some(ServePlugins::init(names)));
             }
+        }
+        if let Some(dev) = dev_server
+            && self.plugins.get().is_none()
+        {
+            // SAFETY: `dev` is the live `*mut DevServer` snapshotted from `self.dev_server` above.
+            unsafe { &mut *dev }.on_no_server_plugins();
         }
 
         // --- 7. Debug-mode specific routes ---
@@ -3986,6 +4039,25 @@ impl AnyServer {
         })
     }
 
+    /// Saves a request that the dev server cannot route yet. `None` when it is answered already (a 413).
+    pub(crate) fn save_unrouted_request(
+        &self,
+        req: &mut uws::Request,
+        resp: uws::AnyResponse,
+    ) -> Option<UnroutedRequest> {
+        let req: &mut uws_sys::Request = req;
+        any_server_dispatch_resp!(self, resp, |s, r| {
+            let p = s.prepare_js_request_context(req, r, None, CreateJsRequest::No, None)?;
+            Some(p.save_unrouted(req, r))
+        })
+    }
+
+    /// See [`NewServer::on_saved_fetch_request`].
+    pub(crate) fn on_saved_fetch_request(&self, unrouted: UnroutedRequest) {
+        let resp = unrouted.response;
+        any_server_dispatch_resp!(self, resp, |s, r| s.on_saved_fetch_request(unrouted, r))
+    }
+
     /// Mutable handle to the DevServer (when configured). HTMLBundle's request
     /// path mutates DevServer state (`respond_for_html_bundle`).
     #[allow(clippy::mut_from_ref)] // dispatched through the tagged raw `self.ptr`
@@ -4177,6 +4249,52 @@ pub(crate) enum SavedRequestUnion<'a> {
     Stack(&'a mut uws::Request),
     /// Heap-allocated copy that persists beyond the initial handler frame.
     Saved(SavedRequest),
+}
+
+/// A request that the dev server saved before it knew the routes. It owns `request` until a JS `Request` adopts it: a page of the framework and `fetch` get different ones.
+pub(crate) struct UnroutedRequest {
+    request: *mut crate::webcore::Request,
+    pub ctx: AnyRequestContext,
+    pub(crate) response: uws::AnyResponse,
+}
+
+impl UnroutedRequest {
+    pub(crate) fn url(&self) -> &bun_core::String {
+        // SAFETY: this owns a ref of `request`.
+        unsafe { (*self.request).url.get() }
+    }
+
+    /// The request that a page of the framework gets, as `prepare_and_save_js_request_context` makes it.
+    pub(crate) fn into_page_request(
+        self,
+        global: &jsc::JSGlobalObject,
+    ) -> jsc::JsResult<SavedRequest> {
+        let js_request = crate::webcore::Request::to_js_for_bake(self.request, global)?;
+        Ok(self.adopted_by(js_request, global))
+    }
+
+    /// The request that `fetch` gets.
+    fn into_fetch_request(self, global: &jsc::JSGlobalObject) -> SavedRequest {
+        // SAFETY: this owns a ref of `request`, which the wrapper adopts.
+        let js_request = unsafe { crate::webcore::Request::to_js(self.request, global) };
+        self.adopted_by(js_request, global)
+    }
+
+    fn adopted_by(self, js_request: JSValue, global: &jsc::JSGlobalObject) -> SavedRequest {
+        SavedRequest {
+            js_request: jsc::StrongOptional::create(js_request, global),
+            request: self.request,
+            ctx: self.ctx,
+            response: self.response,
+        }
+    }
+
+    /// Releases a request that no JS `Request` adopted, and the request-context ref of the caller.
+    pub(crate) fn deinit(self) {
+        // SAFETY: this owns a ref of `request`.
+        unsafe { <crate::webcore::Request as bun_ptr::CellRefCounted>::deref(self.request) };
+        self.ctx.deref();
+    }
 }
 
 // ─── schedule_deinit's tasks ─────────────────────────────────────────────────

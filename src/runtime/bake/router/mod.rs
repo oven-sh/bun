@@ -231,14 +231,29 @@ impl FrameworkRouter {
 
     pub(crate) fn scan_all(
         &mut self,
+        listing: Listing,
         r: &mut Resolver,
         ctx: &mut dyn InsertionHandler,
     ) -> Result<(), AllocError> {
         for i in 0..self.types.len() {
-            self.scan(TypeIndex::init(u8::try_from(i).expect("int cast")), r, ctx)?;
+            self.scan(
+                TypeIndex::init(u8::try_from(i).expect("int cast")),
+                listing,
+                r,
+                ctx,
+            )?;
         }
         Ok(())
     }
+}
+
+/// Which directory listings a scan reads.
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub(crate) enum Listing {
+    /// The resolver's, which can be older than the directory.
+    Cached,
+    /// The directory's, for a scan that runs after code that can write route files.
+    Fresh,
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -545,22 +560,27 @@ impl FrameworkRouter {
     pub(crate) fn scan(
         &mut self,
         ty: TypeIndex,
+        listing: Listing,
         r: &mut Resolver,
         ctx: &mut dyn InsertionHandler,
     ) -> Result<(), AllocError> {
         let abs_root: Box<[u8]> = self.types[ty.get() as usize].abs_root.clone();
         debug_assert!(!abs_root.ends_with(b"/"));
         debug_assert!(paths::is_absolute(&abs_root));
+        if listing == Listing::Fresh {
+            r.bust_dir_cache(&abs_root);
+        }
         let Some(root_info) = r.read_dir_info_ignore_error(&abs_root) else {
             return Ok(());
         };
         let mut arena_state = Arena::new();
-        self.scan_inner(ty, r, &root_info, &mut arena_state, ctx)
+        self.scan_inner(ty, listing, r, &root_info, &mut arena_state, ctx)
     }
 
     fn scan_inner(
         &mut self,
         t_index: TypeIndex,
+        listing: Listing,
         r: &mut Resolver,
         dir_info: &DirInfo,
         arena_state: &mut Arena,
@@ -615,10 +635,13 @@ impl FrameworkRouter {
                             }
                         }
 
+                        if listing == Listing::Fresh {
+                            r.bust_dir_cache(fs_ref.abs(&[file.dir, file.base()]));
+                        }
                         if let Some(child_info) =
                             r.read_dir_info_ignore_error(fs_ref.abs(&[file.dir, file.base()]))
                         {
-                            self.scan_inner(t_index, r, &child_info, arena_state, ctx)?;
+                            self.scan_inner(t_index, listing, r, &child_info, arena_state, ctx)?;
                         }
                     }
                     bun_resolver::fs::EntryKind::File => {

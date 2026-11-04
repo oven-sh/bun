@@ -264,17 +264,120 @@ impl DevServer {
         Ok(())
     }
 
+    /// `plugins` is the cell of the server's `[serve.static]` plugins. It is `None` for `app.plugins`: `bundler_options` owns their cell.
     pub(crate) fn on_plugins_resolved(
         &mut self,
         plugins: Option<*mut crate::api::js_bundler::Plugin>,
     ) -> crate::Result<()> {
-        self.bundler_options.plugin = plugins.and_then(::core::ptr::NonNull::new);
+        if let Some(plugin) = plugins.and_then(::core::ptr::NonNull::new) {
+            self.bundler_options.plugin = Some(bake::PluginCell::Borrowed(plugin));
+        }
+        let without_page = self.end_app_setup()?;
         self.plugin_state = PluginState::Loaded;
         self.start_next_bundle_if_present();
+        self.answer_requests_without_page(without_page);
         Ok(())
     }
 
+    /// Leaves `PluginState::AppSetup`: reads the route directories and gives each request that waited for them its page. Returns the requests that have none, oldest first.
+    fn end_app_setup(&mut self) -> crate::Result<Vec<*mut deferred_request::Node>> {
+        let mut without_page = Vec::new();
+        if self.plugin_state != PluginState::AppSetup {
+            return Ok(without_page);
+        }
+        {
+            let _g = self.graph_safety_lock.guard();
+            self.discover_routes(router::Listing::Fresh)?;
+        }
+        self.report_pages_hidden_by_server_routes();
+
+        let global = self.vm().global();
+        let mut held = Vec::new();
+        while let Some(node) = self.next_bundle.requests.pop_first() {
+            held.push(node);
+        }
+        // `defer_request` prepends, so this goes from the oldest request to the newest and links them again in the same order.
+        for node in held.into_iter().rev() {
+            // SAFETY: `pop_first` returned a node that `defer_request` initialized. Only this loop reaches it until it is linked again.
+            let request = unsafe { (*node).data.assume_init_mut() };
+            if request.route_bundle_index.is_none() {
+                let Handler::Unrouted(unrouted) = &request.handler else {
+                    // The client left while the request waited.
+                    request.deref_();
+                    continue;
+                };
+                let url = unrouted.url().to_utf8();
+                let mut params: router::MatchedParams = Default::default();
+                let Some(route_index) = self
+                    .router
+                    .match_slow(extract_pathname_from_url(url.slice()), &mut params)
+                else {
+                    without_page.push(node);
+                    continue;
+                };
+                drop(url);
+                let route_bundle_index = self.get_or_put_route_bundle(
+                    route_bundle::UnresolvedIndex::Framework(route_index),
+                )?;
+                let Handler::Unrouted(unrouted) =
+                    ::core::mem::replace(&mut request.handler, Handler::Aborted)
+                else {
+                    unreachable!()
+                };
+                request.handler = Handler::ServerHandler(unrouted.into_page_request(global)?);
+                request.route_bundle_index = route_bundle_index.to_optional();
+                self.next_bundle.route_queue.put(route_bundle_index, ())?;
+                self.route_bundle_ptr(route_bundle_index).server_state =
+                    route_bundle::State::DeferredToNextBundle;
+            }
+            // SAFETY: as above.
+            unsafe { self.next_bundle.requests.prepend(&mut *node) };
+        }
+        Ok(without_page)
+    }
+
+    /// Answers the requests that `end_app_setup` found no page for, as `on_request` does for one that arrives: with `fetch`, or with the 404.
+    fn answer_requests_without_page(&mut self, without_page: Vec<*mut deferred_request::Node>) {
+        let Some(server) = self.server else {
+            debug_assert!(without_page.is_empty());
+            return;
+        };
+        if without_page.is_empty() {
+            return;
+        }
+        // As in `on_plugins_rejected`: `fetch` can stop the server.
+        server.on_pending_request();
+        for node in without_page {
+            // SAFETY: `end_app_setup` took the node out of the list. The pool keeps it until `deref_`.
+            let request = unsafe { (*node).data.assume_init_mut() };
+            // A `fetch` call of an earlier request can have closed this one.
+            if let Handler::Unrouted(unrouted) =
+                ::core::mem::replace(&mut request.handler, Handler::Aborted)
+            {
+                if server.config().on_request.is_empty() {
+                    unrouted.ctx.end_with_not_found();
+                    unrouted.deinit();
+                } else {
+                    let ctx = unrouted.ctx;
+                    server.on_saved_fetch_request(unrouted);
+                    // Releases `defer_request`'s ref.
+                    ctx.deref();
+                }
+            }
+            request.deref_();
+        }
+        server.on_static_request_complete();
+    }
+
+    /// The server has no plugin to load, so no request has to ask for one.
+    pub(crate) fn on_no_server_plugins(&mut self) {
+        if self.plugin_state == PluginState::Unknown {
+            self.plugin_state = PluginState::Loaded;
+        }
+    }
+
     pub(crate) fn on_plugins_rejected(&mut self) -> crate::Result<()> {
+        let without_page = self.end_app_setup()?;
         self.plugin_state = PluginState::Err;
         // Completing the last request on a stopped server frees `self`, so count as a pending request until the end.
         let mut server = self.server;
@@ -295,6 +398,7 @@ impl DevServer {
                 route_bundle::State::Unqueued;
         }
         self.next_bundle.route_queue.clear_retaining_capacity();
+        self.answer_requests_without_page(without_page);
         if let Some(server) = server.as_mut() {
             server.on_static_request_complete();
         }
@@ -341,6 +445,8 @@ impl DevServer {
         bun_removable_features::removable_definition!(Bundler, Self::start_async_bundle);
         debug_assert!(self.current_bundle.is_none());
         debug_assert!(!entry_points.set.is_empty());
+        // A plugin `setup()` that has not finished can still register a filter, and a bundle freezes the filters.
+        debug_assert!(self.plugin_state == PluginState::Loaded);
         self.log.clear_and_free();
 
         // Notify inspector about bundle start
@@ -393,7 +499,11 @@ impl DevServer {
                 framework: self.framework.as_bundler_view(),
                 client_transpiler: ::core::ptr::NonNull::from(&mut *self.client_transpiler),
                 ssr_transpiler: ::core::ptr::NonNull::from(&mut self.ssr_transpiler).cast(),
-                plugins: self.bundler_options.plugin,
+                plugins: self
+                    .bundler_options
+                    .plugin
+                    .as_ref()
+                    .map(bake::PluginCell::ptr),
             }),
             heap_ref,
             event_loop,
@@ -455,7 +565,8 @@ impl DevServer {
     /// Bundle the files a testing batch collected, or report an empty batch.
     pub(crate) fn release_testing_batch(&mut self, batch: TestingBatch) {
         debug_assert!(self.current_bundle.is_none());
-        if batch.entry_points.set.count() == 0 {
+        // Before the plugins are loaded nothing is bundled, so the first request bundles these files.
+        if batch.entry_points.set.count() == 0 || self.plugin_state != PluginState::Loaded {
             self.publish(
                 HmrTopic::TestingWatchSynchronization,
                 &[MessageId::TestingWatchSynchronization.char(), 2],

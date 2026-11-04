@@ -27,7 +27,7 @@ declare module "bun" {
        */
       bundlerOptions?: BundlerOptions | undefined;
       /**
-       * These plugins are applied after `framework.plugins`
+       * These plugins are applied after `framework.plugins`. `Bun.serve()` does not wait for a `setup()` promise. The route directories are read when the last one has settled. Until then a request for a page or for the `fetch` handler waits, at most `idleTimeout`.
        */
       plugins?: BunPlugin[] | undefined;
     }
@@ -112,7 +112,7 @@ declare module "bun" {
        * @default false
        */
       reactFastRefresh?: boolean | ReactFastRefreshOptions | undefined;
-      /** Framework bundler plugins load before the user-provided ones. */
+      /** Framework bundler plugins load before the user-provided ones, one `setup()` at a time. */
       plugins?: BunPlugin[];
 
       // /**

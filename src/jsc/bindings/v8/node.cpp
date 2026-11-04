@@ -1,8 +1,10 @@
 #include "node.h"
 #include "V8HandleScope.h"
+#include "AsyncContextFrame.h"
 
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/CallData.h"
+#include "JavaScriptCore/InternalFieldTuple.h"
 #include "JavaScriptCore/ThrowScope.h"
 
 #include "node/node_version.h"
@@ -99,7 +101,34 @@ v8::MaybeLocal<v8::Value> MakeCallback(v8::Isolate* isolate,
         args.append(argv[i]->localToJSValue());
     }
 
-    JSC::JSValue result = JSC::call(globalObject, callee, thisValue, args, "node::MakeCallback"_s);
+    // Inside a Node-API completion callback or callback scope Node treats the call as nested and Bun does not: Bun has no callback-scope depth (tracked separately).
+    bool isOutermost = !vm.entryScope;
+    JSC::JSValue asyncContextBefore = isOutermost ? globalObject->m_asyncContextData->getInternalField(0) : JSC::JSValue();
+    // At the outermost call AsyncContextFrame::call enters no JavaScript once the VM is stopping. JSC::call throws the TypeError for a callee that is not callable.
+    JSC::JSValue result = isOutermost && callee.isCallable()
+        ? AsyncContextFrame::call(globalObject, callee, thisValue, args)
+        : JSC::call(globalObject, callee, thisValue, args, "node::MakeCallback"_s);
+    // As Node's InternalCallbackScope does with no JavaScript below it: report a throw, otherwise run the ticks, the microtasks and the rejection reports.
+    if (isOutermost) {
+        if (auto* exception = scope.exception()) {
+            if (scope.tryClearException()) {
+                globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
+                globalObject->m_asyncContextData->putInternalField(vm, 0, asyncContextBefore);
+            }
+            result = JSC::jsUndefined();
+        } else {
+            // Rejections are reported here and not at the end of the loop turn: the addon gets control back first and can end the process.
+            do {
+                if (globalObject->drainMicrotasks()) {
+                    result = JSC::jsUndefined();
+                    break;
+                }
+            } while (globalObject->handleRejectedPromises());
+        }
+        // The VM's stop can arrive in the callback, in the report or in the queues. Like Node, answer undefined and enter no more JavaScript.
+        if (vm.traps().maybeNeedHandling() && vm.hasExceptionsAfterHandlingTraps() && Bun::takeTerminationOutsideScript(vm, scope))
+            result = JSC::jsUndefined();
+    }
     RETURN_IF_EXCEPTION(scope, MaybeLocal<Value>());
 
     return isolate->currentHandleScope()->createLocal<Value>(vm, result);

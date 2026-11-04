@@ -172,7 +172,7 @@ describe("mv", async () => {
   });
 
   // POSIX: after a source that fails, `mv` goes on to any remaining sources.
-  describe("moves every source it can and reports each source it cannot", () => {
+  describe.concurrent("moves every source it can and reports each source it cannot", () => {
     const mv = async (sources: string[], existing: string[]) => {
       using dir = tempDir("mv-sources", { dest: {}, ...Object.fromEntries(existing.map(name => [name, name])) });
       const { exitCode, stdout, stderr } = await $`mv ${sources} dest`.cwd(String(dir)).quiet();

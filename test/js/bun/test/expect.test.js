@@ -1486,16 +1486,27 @@ describe("expect()", () => {
       expect(serving(new Set([1]), { size: 1n })).toEqual(serving(new Set([1]), { size: 1n }));
       expect(serving(new Set([1]), { size: undefined })).toEqual(serving(new Set([1]), { size: undefined }));
       expect(serving(new Set([1]), { size: undefined })).not.toEqual(serving(new Set([2]), { size: undefined }));
-      // Two sizes that are undefined say nothing: each value must have the members of the other. Other sizes that are equal are trusted.
-      const unsized = (/** @type {number[]} */ ...members) => serving(new Set(members), { size: undefined });
-      expect(unsized(1)).not.toEqual(unsized(1, 2));
-      expect(unsized(1, 2)).not.toEqual(unsized(1));
-      const unsizedMap = (/** @type {[string, number][]} */ ...entries) =>
-        serving(new Map(entries), { size: undefined });
-      expect(unsizedMap(["k", 1])).not.toEqual(unsizedMap(["k", 1], ["j", 2]));
-      expect(unsizedMap(["k", 1], ["j", 2])).not.toEqual(unsizedMap(["k", 1]));
+      // Two sizes that are equal are trusted: each member of the first value is looked for in the second value, and not the other way.
+      expect(serving(new Set([1, 2]), { size: undefined })).not.toEqual(serving(new Set([1]), { size: undefined }));
+      expect(
+        serving(
+          new Map([
+            ["k", 1],
+            ["j", 2],
+          ]),
+          { size: undefined },
+        ),
+      ).not.toEqual(serving(new Map([["k", 1]]), { size: undefined }));
       expect(serving(new Set([1]), { size: "1" })).toEqual(serving(new Set([1, 2]), { size: "1" }));
       expect(serving(new Set([1, 2]), { size: "1" })).not.toEqual(serving(new Set([1]), { size: "1" }));
+      // A value with no size that holds itself
+      const holdingItself = () => {
+        const target = new Set();
+        const proxy = serving(target, { size: undefined });
+        target.add(proxy);
+        return proxy;
+      };
+      expect(holdingItself()).toEqual(holdingItself());
       // `has` that says yes to each value, and no to each
       expect(new Set([1])).toEqual(serving(new Set([2]), { has: () => "yes" }));
       expect(new Set([1])).toEqual(serving(new Set([1]), { has: () => 0 }));
@@ -1710,11 +1721,13 @@ describe("expect()", () => {
         );
         expect(log).toEqual(["return()"]);
         // Both values are served here, so two walks are closed. What return() throws does not take the place of that error.
+        log.length = 0;
         expect(
           thrownBy(() =>
             expect(throwingAt("return()", new Set([1]))).toEqual(throwingAt("return()", new Set([throwingMatcher]))),
           ),
         ).toBe(matcherError);
+        expect(log).toEqual(["return()", "return()"]);
         const returnThatCannotBeRead = new Proxy(new Set([1]), {
           get(target, key) {
             if (key === Symbol.iterator) {
@@ -1778,9 +1791,15 @@ describe("expect()", () => {
         );
         expect(noGet).toBeInstanceOf(TypeError);
         expect(/** @type {Error} */ (noGet).message).toBe("get is not a function");
-        // The first value is asked for neither.
+        // The first value is asked for neither, also if the two values serve no size.
         expect(serving(new Set([1]), { has: undefined })).toEqual(new Set([1]));
         expect(serving(new Map([["k", 1]]), { has: undefined, get: undefined })).toEqual(new Map([["k", 1]]));
+        expect(serving(new Set([1]), { has: undefined, size: undefined })).toEqual(
+          serving(new Set([1]), { size: undefined }),
+        );
+        expect(serving(new Map([["k", 1]]), { has: undefined, get: undefined, size: undefined })).toEqual(
+          serving(new Map([["k", 1]]), { size: undefined }),
+        );
       });
 
       test("a cycle that is made of served members only ends in a RangeError", () => {
@@ -1803,6 +1822,8 @@ describe("expect()", () => {
       test("where the answer is not that of Jest 30.5.2 and Vitest 4.1.12", () => {
         const noIterator = () => serving(new Set([1]), { [Symbol.iterator]: undefined });
         const untagged = () => serving(new Set([1, 2]), { [Symbol.toStringTag]: undefined });
+        const unsized = (/** @type {object} */ target, /** @type {Record<PropertyKey, unknown>} */ instead = {}) =>
+          serving(target, { size: undefined, ...instead });
         /** @returns {object} */
         const throwing = () =>
           new Proxy(new Set(), {
@@ -1819,16 +1840,34 @@ describe("expect()", () => {
           [() => expect(noIterator()).toEqual(new Set([1])), "fail", "pass"],
           [() => expect(new Set([1])).toEqual(noIterator()), "fail", "pass"],
           [() => expect(new Set([2])).not.toEqual(noIterator()), "pass", "fail"],
-          // The references compare the members in order if the first value serves no `size`.
-          [() => expect(serving(new Set([1]), { size: undefined })).toEqual(new Set([1])), "fail", "pass"],
+          // The references walk the two values in step if the first value serves no `size`: the members in order, then the properties.
+          [() => expect(unsized(new Set([1]))).toEqual(new Set([1])), "fail", "pass"],
+          [() => expect(unsized(new Set([1, 2]))).toEqual(unsized(new Set([2, 1]))), "pass", "fail"],
+          // Here two sizes that are undefined are equal sizes. A member that only the second value has is not seen, and no property is.
+          [() => expect(unsized(new Set([1]))).toEqual(unsized(new Set([1, 2]))), "pass", "fail"],
           [
             () =>
-              expect(serving(new Set([1, 2]), { size: undefined })).toEqual(
-                serving(new Set([2, 1]), { size: undefined }),
+              expect(unsized(new Map([["k", 1]]))).toEqual(
+                unsized(
+                  new Map([
+                    ["k", 1],
+                    ["j", 2],
+                  ]),
+                ),
               ),
             "pass",
             "fail",
           ],
+          [
+            () =>
+              expect(unsized(Object.assign(new Set([1]), { x: 1 }))).toEqual(
+                unsized(Object.assign(new Set([1]), { x: 2 })),
+              ),
+            "pass",
+            "fail",
+          ],
+          // The references do not ask such a second value for `has`.
+          [() => expect(unsized(new Set([1]))).toEqual(unsized(new Set([1]), { has: undefined })), "fail", "pass"],
           // So they do if the first value does not say that it is a Set.
           [() => expect(untagged()).toEqual(new Set([2, 1])), "pass", "fail"],
           // A Set is no Map, whatever `constructor` its Proxy serves.

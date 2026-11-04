@@ -629,14 +629,18 @@ describe("fs.watch", () => {
       const watcher = fs.watch(watched, { recursive }, (event, filename) => events.push([event, filename]));
       watcher.on("error", (error: NodeJS.ErrnoException) => events.push([error.code, error.syscall]));
       watcher.on("close", () => closed.resolve());
-      fs.rmdirSync(watched);
-      await closed.promise;
-      expect(events).toEqual([
-        ["rename", watched],
-        ["ENOENT", "watch"],
-      ]);
-      // The watcher holds on to nothing of the directory.
-      fs.mkdirSync(watched);
+      try {
+        fs.rmdirSync(watched);
+        await closed.promise;
+        expect(events).toEqual([
+          ["rename", watched],
+          ["ENOENT", "watch"],
+        ]);
+        // The watcher holds on to nothing of the directory.
+        fs.mkdirSync(watched);
+      } finally {
+        watcher.close();
+      }
     },
   );
 
@@ -675,6 +679,7 @@ describe("fs.watch", () => {
         expect(await seenByNewWatch.promise).toEqual(["rename", "created-after.txt"]);
       } finally {
         again?.close();
+        watcher.close();
       }
     },
   );
@@ -697,16 +702,20 @@ describe("fs.watch", () => {
         );
         watcher.on("error", (error: NodeJS.ErrnoException) => events.push([error.code, error.syscall]));
         watcher.on("close", () => closed.resolve());
-        return { events, closed: closed.promise };
+        return { events, closed: closed.promise, watcher };
       });
-      fs.rmdirSync(watched);
-      await Promise.all(watches.map(watch => watch.closed));
-      expect(watches.map(watch => watch.events)).toEqual(
-        options.map(option => [
-          ["rename", option.encoding === "buffer" ? ["buffer", watched] : watched],
-          ["ENOENT", "watch"],
-        ]),
-      );
+      try {
+        fs.rmdirSync(watched);
+        await Promise.all(watches.map(watch => watch.closed));
+        expect(watches.map(watch => watch.events)).toEqual(
+          options.map(option => [
+            ["rename", option.encoding === "buffer" ? ["buffer", watched] : watched],
+            ["ENOENT", "watch"],
+          ]),
+        );
+      } finally {
+        for (const { watcher } of watches) watcher.close();
+      }
     },
   );
 
@@ -788,11 +797,8 @@ describe("fs.watch", () => {
       done.resolve();
     });
     try {
-      try {
-        fs.writeFileSync(path.join(String(dir), "a:stream"), "x");
-      } catch {
-        // Not every file system has streams.
-      }
+      fs.writeFileSync(path.join(String(dir), "a:stream"), "x");
+      expect(fs.readFileSync(path.join(String(dir), "a:stream"), "utf8")).toBe("x");
       fs.writeFileSync(path.join(String(dir), "last.txt"), "x");
       await done.promise;
       expect(errors).toEqual([]);

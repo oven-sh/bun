@@ -957,6 +957,112 @@ describe("expect()", () => {
         signalCode: null,
       });
     });
+
+    // A read of `length` or of an element of a Proxy of an array runs a trap, and the trap can throw.
+    test.concurrent("toMatchObject and expect.arrayContaining check the exception of each Proxy read", async () => {
+      const { bunEnv, bunExe } = require("harness");
+      const src = `
+        const { expect } = require("bun:test");
+        const P = (target, handler = {}) => new Proxy(target, handler);
+        const serves = length => P([1], { get: (t, k, r) => (k === "length" ? length : Reflect.get(t, k, r)) });
+        const throwsOn = key => P([1], { get(t, k, r) { if (k === key) throw new Error(key); return Reflect.get(t, k, r); } });
+        const revoked = () => { const { proxy, revoke } = Proxy.revocable([1], {}); revoke(); return proxy; };
+        const badLength = { valueOf() { throw new Error("valueOf"); } };
+        const values = [[1], P([1]), P(P([1, 2])), serves(1n), serves(badLength), throwsOn("length"), throwsOn("0"), revoked(), P({})];
+        for (const a of values) {
+          for (const b of values) {
+            try { expect(a).toMatchObject(b); } catch {}
+            try { Bun.deepMatch(a, b); } catch {}
+            try { expect(a).toEqual(expect.objectContaining(b)); } catch {}
+            try { expect(a).toEqual(expect.arrayContaining(b)); } catch {}
+            try { expect({ x: a, y: 1 }).toMatchObject({ x: expect.not.arrayContaining(b), y: 1 }); } catch {}
+          }
+        }
+        const late = Proxy.revocable([1], {});
+        const received = expect(late.proxy);
+        const matcher = expect.arrayContaining(late.proxy);
+        late.revoke();
+        try { received.toMatchObject([1]); } catch {}
+        try { expect([1]).toEqual(matcher); } catch {}
+        console.log("ok");
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toMatchObject({
+        stdout: "ok\n",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+
+    // Bun's own format prints the received value, so only the verdict is checked for it. The formats of
+    // Jest and Vitest print the received value merged with the property matchers.
+    test.concurrent("the property matchers of toMatchSnapshot take a Proxy of an array", async () => {
+      const { bunEnv, bunExe, tempDir } = require("harness");
+      const tests = `
+        test("a", () => {
+          const received = () => new Proxy([{ id: 1, name: "a" }], {});
+          expect(received()).toMatchSnapshot([{ id: expect.any(Number) }]);
+          expect({ list: received() }).toMatchSnapshot({ list: [{ id: expect.any(Number) }] });
+          expect(() => expect(received()).toMatchSnapshot([{ id: expect.any(String) }])).toThrow(
+            "to match properties from received object",
+          );
+        });
+      `;
+      const jestHeader = "// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing\n";
+      using dir = tempDir("proxy-array-property-matchers", {
+        "bun.test.js": `import { expect, test } from "bun:test";${tests}`,
+        "jest.test.js": `import { expect, test } from "bun:test";${tests}`,
+        "__snapshots__/jest.test.js.snap": jestHeader,
+        "vitest.test.js": `import { expect, test } from "vitest";${tests}`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "./bun.test.js", "./jest.test.js", "./vitest.test.js"],
+        env: { ...bunEnv, CI: "false" },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout + stderr).toContain(" 3 pass");
+      expect(exitCode).toBe(0);
+
+      const written = [
+        "",
+        "exports[`a 1`] = `",
+        "[",
+        "  {",
+        '    "id": Any<Number>,',
+        '    "name": "a",',
+        "  },",
+        "]",
+        "`;",
+        "",
+        "exports[`a 2`] = `",
+        "{",
+        '  "list": [',
+        "    {",
+        '      "id": Any<Number>,',
+        '      "name": "a",',
+        "    },",
+        "  ],",
+        "}",
+        "`;",
+        "",
+      ].join("\n");
+      expect({
+        jest: await Bun.file(`${dir}/__snapshots__/jest.test.js.snap`).text(),
+        vitest: await Bun.file(`${dir}/__snapshots__/vitest.test.js.snap`).text(),
+      }).toEqual({
+        jest: jestHeader + written,
+        vitest: "// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html\n" + written,
+      });
+    });
   }
 
   test("deepEquals works with sets/maps/dates/strings", () => {
@@ -4250,6 +4356,212 @@ describe("expect()", () => {
       expect(otherRealm()).not.toMatchObject([1, { a: 2 }]);
     });
 
+    // https://github.com/oven-sh/bun/issues/9103
+    test("a Proxy of an array matches as the array that it serves", async () => {
+      const P = (/** @type {any[]} */ target, /** @type {ProxyHandler<any>} */ handler = {}) =>
+        new Proxy(target, handler);
+      // as the received value, as the expected value, as both, and nested each way
+      expect(P([{ a: 1 }])).toMatchObject([{ a: 1 }]);
+      expect([{ a: 1 }]).toMatchObject(P([{ a: 1 }]));
+      expect(P([1, 2])).toMatchObject(P([1, 2]));
+      expect({ x: P([{ a: 1 }]) }).toMatchObject({ x: [{ a: 1 }] });
+      expect({ x: [{ a: 1 }] }).toMatchObject({ x: P([{ a: 1 }]) });
+      expect(P([[1], [2]])).toMatchObject([[1], [2]]);
+      expect([P([1]), P([2])]).toMatchObject([[1], [2]]);
+      expect(P(P([{ a: 1 }]))).toMatchObject([{ a: 1 }]);
+      await expect(Promise.resolve(P([{ a: 1 }]))).resolves.toMatchObject([{ a: 1 }]);
+      // an element is still matched as a subset
+      expect(P([{ a: 1, b: 2 }])).toMatchObject([{ a: 1 }]);
+      expect(P([{ a: 1 }])).not.toMatchObject([{ a: 1, b: 2 }]);
+      expect(P([{ a: 1 }])).toMatchObject([{ a: expect.any(Number) }]);
+      expect(P([1, "a"])).toMatchObject([expect.any(Number), "a"]);
+      expect(P([1])).not.toMatchObject([expect.any(String)]);
+      // the length and the keys must be equal, as for two arrays
+      expect(P([1, 2])).not.toMatchObject([1, 2, 3]);
+      expect(P([1, 2, 3])).not.toMatchObject([1, 2]);
+      expect([1, 2, 3]).not.toMatchObject(P([1, 2]));
+      expect(P([1, 2])).not.toMatchObject(P([1]));
+      expect(P([1, 2, 3])).not.toMatchObject([1, 2, 4]);
+      expect(P(Object.assign([1], { x: 1 }))).not.toMatchObject([1]);
+      expect(P([1])).not.toMatchObject(Object.assign([1], { x: 1 }));
+      expect(P(Object.assign([1], { x: 1 }))).toMatchObject(Object.assign([1], { x: 1 }));
+      // the target can be a derived, a null-prototype, a frozen or a sparse array
+      class List extends Array {}
+      expect(P(List.from([1, 2]))).toMatchObject([1, 2]);
+      expect(P(Object.setPrototypeOf([1, 2], null))).toMatchObject([1, 2]);
+      expect(P(ANY(Object.freeze([1, 2])))).toMatchObject([1, 2]);
+      const sparse = () => Object.assign([1, 2, 3], { length: 4 });
+      expect(P(sparse())).toMatchObject(sparse());
+      // the `get` trap decides what an element is
+      const served = P([1], { get: (target, key, receiver) => (key === "0" ? 9 : Reflect.get(target, key, receiver)) });
+      expect(served).toMatchObject([9]);
+      expect(served).not.toMatchObject([1]);
+      // an array pattern still needs an array, and an object pattern can still be satisfied by one
+      expect({}).not.toMatchObject(P([]));
+      expect(new Proxy({ 0: 1, length: 1 }, {})).not.toMatchObject([1]);
+      expect(P([1])).toMatchObject({ 0: 1 });
+      // Array.prototype is an array without indexed storage, as a Proxy of an array is
+      expect(Array.prototype).toMatchObject([]);
+      expect([]).toMatchObject(Array.prototype);
+      expect(P([])).toMatchObject(Array.prototype);
+      expect(Array.prototype).toMatchObject(P([]));
+      expect([1]).not.toMatchObject(Array.prototype);
+      expect(Array.prototype).not.toMatchObject(P([1]));
+      // expect() takes no copy of the received value
+      const target = [1];
+      const late = expect(P(target));
+      target.push(2);
+      late.toMatchObject([1, 2]);
+      // a revoked Proxy is not an array
+      const { proxy, revoke } = Proxy.revocable([1], {});
+      revoke();
+      expect(() => expect(proxy).toMatchObject([1])).toThrow(TypeError);
+    });
+
+    test("a reactive array, as Vue and Pinia make it, matches", () => {
+      // The part of `reactive()` of @vue/reactivity that matters here: an object is served as a
+      // Proxy of itself, and a ref in a member of an object is served as its value.
+      const ref = (/** @type {unknown} */ value) => ({ __v_isRef: true, value });
+      /** @type {(target: any) => any} */
+      const reactive = target =>
+        new Proxy(target, {
+          get(target, key, receiver) {
+            const value = Reflect.get(target, key, receiver);
+            if (value === null || typeof value !== "object") return value;
+            if (value.__v_isRef && !Array.isArray(target)) return value.value;
+            return reactive(value);
+          },
+        });
+
+      const alerts = reactive([]);
+      alerts.push({ message: "1" });
+      expect(alerts).toMatchObject([{ message: "1" }]);
+      expect(() => expect(alerts).not.toMatchObject([{ message: "1" }])).toThrow(/toMatchObject|match object/);
+      expect(alerts).not.toMatchObject([{ message: "2" }]);
+      expect(alerts).not.toMatchObject([]);
+
+      const store = reactive({ alerts: [{ message: "1" }], rows: [{ count: ref(1) }] });
+      expect(store).toMatchObject({ alerts: [{ message: "1" }] });
+      expect(store.alerts).toMatchObject([{ message: "1" }]);
+      // `count` is the value that the Proxy serves, not the ref that the target holds
+      expect(store).toMatchObject({ rows: [{ count: 1 }] });
+      expect(store).not.toMatchObject({ rows: [{ count: 2 }] });
+    });
+
+    // Jest, Vitest and Bun do not give one answer for two arrays with holes. These rows ask only that
+    // a Proxy of an array gets the answer of the array that it serves.
+    test("the length of a Proxy of an array counts as the length of that array does", () => {
+      const P = (/** @type {any[]} */ target, /** @type {ProxyHandler<any>} */ handler = {}) =>
+        new Proxy(target, handler);
+      const matches = (/** @type {any[]} */ received, /** @type {any[]} */ expected) => {
+        try {
+          expect(received).toMatchObject(expected);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      const sparse = () => Object.assign([1, 2, 3], { length: 4 });
+      const rows = [
+        { received: sparse(), expected: sparse() },
+        { received: sparse(), expected: [1, 2, 3] },
+        { received: [1, 2, 3], expected: sparse() },
+        { received: [1, 2, 3], expected: [1, 2, 3, undefined] },
+        { received: [1, undefined], expected: [1] },
+        { received: new Array(3), expected: [] },
+        { received: [], expected: new Array(3) },
+        { received: [, 1], expected: [undefined, 1] },
+      ];
+      const answers = rows.map(({ received, expected }) => matches(received, expected));
+      expect(rows.map(({ received, expected }) => matches(P(received), expected))).toEqual(answers);
+      expect(rows.map(({ received, expected }) => matches(received, P(expected)))).toEqual(answers);
+      expect(rows.map(({ received, expected }) => matches(P(received), P(expected)))).toEqual(answers);
+
+      // the `get` trap decides what the length is: this Proxy serves [1, <hole>]
+      const served = P([1], {
+        get: (target, key, receiver) => (key === "length" ? 2 : Reflect.get(target, key, receiver)),
+      });
+      const holed = () => Object.assign([1], { length: 2 });
+      expect(matches(served, holed())).toBe(true);
+      expect(matches(holed(), served)).toBe(true);
+      expect(matches(served, [1])).toBe(matches(holed(), [1]));
+      expect(matches([1], served)).toBe(matches([1], holed()));
+
+      // a `length` trap that throws ends the assertion with its error
+      const throws = P([1], {
+        get(target, key, receiver) {
+          if (key === "length") throw new RangeError("no length");
+          return Reflect.get(target, key, receiver);
+        },
+      });
+      expect(() => expect(throws).not.toMatchObject([1])).toThrow(RangeError);
+      expect(() => expect([1]).not.toMatchObject(throws)).toThrow(RangeError);
+    });
+
+    // Jest rejects every array under expect.objectContaining(), and Vitest compares an array sample key by key.
+    // A Proxy of an array gets the answer of the array in each of them.
+    test("expect.objectContaining() takes a Proxy of an array as the array that it wraps", () => {
+      const P = (/** @type {any[]} */ target) => new Proxy(target, {});
+      const equal = (/** @type {unknown} */ value, /** @type {unknown} */ matcher) => {
+        try {
+          expect(value).toEqual(matcher);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      const rows = [
+        { value: [1, 2], sample: [1, 2] },
+        { value: [1, 2], sample: [1] },
+        { value: [1, 2], sample: [1, 3] },
+        { value: [{ a: 1 }], sample: [{ a: 1 }] },
+        { value: [{ a: 1, b: 2 }], sample: [{ a: 1 }] },
+        { value: [[1, 2]], sample: [[1, 2]] },
+      ];
+      for (const containing of [
+        (/** @type {any[]} */ sample) => expect.objectContaining(sample),
+        (/** @type {any[]} */ sample) => expect.not.objectContaining(sample),
+      ]) {
+        const answers = rows.map(({ value, sample }) => equal(value, containing(sample)));
+        expect(rows.map(({ value, sample }) => equal(P(value), containing(sample)))).toEqual(answers);
+        expect(rows.map(({ value, sample }) => equal(value, containing(P(sample))))).toEqual(answers);
+        expect(rows.map(({ value, sample }) => equal(P(value), containing(P(sample))))).toEqual(answers);
+      }
+    });
+
+    if (isBun) {
+      test("the match of a Proxy of an array reads `length` once for each Proxy", () => {
+        /** @type {string[]} */
+        let reads = [];
+        const spy = (/** @type {any[]} */ target, /** @type {string} */ name) =>
+          new Proxy(target, {
+            get(target, key, receiver) {
+              reads.push(`${name}.${String(key)}`);
+              return Reflect.get(target, key, receiver);
+            },
+          });
+        const lengthReads = () => reads.filter(read => read.endsWith(".length"));
+
+        const received = expect(spy([{ a: 1 }], "received"));
+        expect(reads).toEqual([]);
+        received.toMatchObject([{ a: 1 }]);
+        expect(lengthReads()).toEqual(["received.length"]);
+
+        reads = [];
+        expect([{ a: 1 }]).toMatchObject(spy([{ a: 1 }], "expected"));
+        expect(lengthReads()).toEqual(["expected.length"]);
+
+        reads = [];
+        expect(spy([[1], [2]], "received")).toMatchObject(spy([[1], [2]], "expected"));
+        expect(lengthReads()).toEqual(["received.length", "expected.length"]);
+
+        // unequal lengths end the match before an element is read
+        reads = [];
+        expect(spy([1, 2], "received")).not.toMatchObject([1, 2, 3]);
+        expect(reads).toEqual(["received.length"]);
+      });
+    }
+
     if (isBun) {
       test("Bun.deepMatch leaves out private fields, and an array in the subset needs an array", () => {
         class Counter {
@@ -5495,6 +5807,108 @@ describe("expect()", () => {
         expect(expect.not.arrayContaining("foo")).toEqual([]);
       }).toThrow(/*"You must provide an array to ArrayNotContaining, not 'string'."*/);
     });
+
+    test("ArrayContaining takes a Proxy of an array as an array", () => {
+      const P = (/** @type {any[]} */ target, /** @type {ProxyHandler<any>} */ handler = {}) =>
+        new Proxy(target, handler);
+      // as the value, as the sample, and as both
+      expect(P([1, 2])).toEqual(expect.arrayContaining([1]));
+      expect([1, 2]).toEqual(expect.arrayContaining(P([1])));
+      expect(P([1, 2])).toEqual(expect.arrayContaining(P([1])));
+      expect(P([1, 2])).toEqual(expect.arrayContaining([]));
+      expect(P([{ a: 1 }, { b: 2 }])).toEqual(expect.arrayContaining([{ b: 2 }]));
+      expect(P([1, 2])).not.toEqual(expect.arrayContaining([3]));
+      expect([1, 2]).not.toEqual(expect.arrayContaining(P([3])));
+      // nested in a pattern, and for the argument of a call
+      expect({ x: P([1, 2]) }).toMatchObject({ x: expect.arrayContaining([1]) });
+      expect({ x: P([1, 2]) }).not.toMatchObject({ x: expect.arrayContaining([3]) });
+      const fn = jest.fn();
+      fn(P([1, 2]));
+      expect(fn).toHaveBeenCalledWith(expect.arrayContaining([1]));
+      // the `get` trap decides what an element is
+      const served = P([1], { get: (target, key, receiver) => (key === "0" ? 9 : Reflect.get(target, key, receiver)) });
+      expect(served).toEqual(expect.arrayContaining([9]));
+      expect(served).not.toEqual(expect.arrayContaining([1]));
+      // the sample is read when it is matched
+      const sample = [1];
+      const matcher = expect.arrayContaining(P(sample));
+      sample.push(3);
+      expect([1, 2]).not.toEqual(matcher);
+      expect([1, 2, 3]).toEqual(matcher);
+      // a served length of 2 ** 32 does not wrap to 0
+      const long = P([1], {
+        get: (target, key, receiver) => (key === "length" ? 2 ** 32 : Reflect.get(target, key, receiver)),
+      });
+      expect(long).toEqual(expect.arrayContaining([1]));
+      expect([]).not.toEqual(expect.arrayContaining(long));
+      // a Proxy of an object is not an array, and a revoked Proxy throws
+      const notArray = () => ANY(new Proxy({ 0: 1, length: 1 }, {}));
+      expect(notArray()).not.toEqual(expect.arrayContaining([1]));
+      const notAnArray = /Expected a array|You must provide an array/;
+      expect(() => expect([1]).toEqual(expect.arrayContaining(notArray()))).toThrow(notAnArray);
+      expect(() => expect([1]).toEqual(expect.not.arrayContaining(notArray()))).toThrow(notAnArray);
+      const revoked = () => {
+        const { proxy, revoke } = Proxy.revocable([1], {});
+        revoke();
+        return proxy;
+      };
+      expect(() => expect([1]).toEqual(expect.arrayContaining(revoked()))).toThrow(TypeError);
+      expect(() => expect(revoked()).toEqual(expect.arrayContaining([1]))).toThrow(TypeError);
+    });
+
+    test("ArrayNotContaining takes a Proxy of an array as an array", () => {
+      const P = (/** @type {any[]} */ target) => new Proxy(target, {});
+      expect(P([1, 2])).not.toEqual(expect.not.arrayContaining([1]));
+      expect(P([1, 2])).toEqual(expect.not.arrayContaining([3]));
+      expect([1, 2]).not.toEqual(expect.not.arrayContaining(P([1])));
+      expect([1, 2]).toEqual(expect.not.arrayContaining(P([3])));
+      expect({ x: P([1, 2]) }).not.toMatchObject({ x: expect.not.arrayContaining([1]) });
+      // a trap that throws ends the assertion with its error, and so does a revoked Proxy
+      for (const key of ["length", "0"]) {
+        const throws = () =>
+          new Proxy([1], {
+            get(target, property, receiver) {
+              if (property === key) throw new RangeError(key);
+              return Reflect.get(target, property, receiver);
+            },
+          });
+        expect(() => expect(throws()).toEqual(expect.not.arrayContaining([2]))).toThrow(RangeError);
+        expect(() => expect([1]).toEqual(expect.not.arrayContaining(throws()))).toThrow(RangeError);
+        expect(() => expect({ x: throws(), y: 1 }).toMatchObject({ x: expect.not.arrayContaining([2]), y: 1 })).toThrow(
+          RangeError,
+        );
+      }
+      const { proxy, revoke } = Proxy.revocable([1], {});
+      revoke();
+      expect(() => expect(proxy).toEqual(expect.not.arrayContaining([1]))).toThrow(TypeError);
+    });
+
+    if (isBun) {
+      test("ArrayContaining reads `length` once and each element when it needs it", () => {
+        /** @type {string[]} */
+        const reads = [];
+        const spy = new Proxy([1, 2, 3], {
+          get(target, key, receiver) {
+            reads.push(String(key));
+            return Reflect.get(target, key, receiver);
+          },
+        });
+        const matcher = expect.arrayContaining(spy);
+        expect(reads).toEqual([]);
+        expect([3, 1, 2]).toEqual(matcher);
+        expect(reads).toEqual(["length", "0", "1", "2"]);
+      });
+
+      test("ArrayContaining checks that its sample is an array when it is made", () => {
+        const notArray = ANY(new Proxy({ 0: 1, length: 1 }, {}));
+        expect(() => expect.arrayContaining(notArray)).toThrow("Expected a array");
+        expect(() => expect.not.arrayContaining(notArray)).toThrow("Expected a array");
+        const { proxy, revoke } = Proxy.revocable([1], {});
+        revoke();
+        expect(() => expect.arrayContaining(proxy)).toThrow(TypeError);
+        expect(() => expect.not.arrayContaining(proxy)).toThrow(TypeError);
+      });
+    }
 
     test("ObjectContaining matches", () => {
       // we differ in jest on these cases: bun will fail matching non-object expected values, while jest doesn't

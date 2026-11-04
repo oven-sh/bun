@@ -21,7 +21,7 @@ export const PasswordHashAlgorithm = b.union({
 
 const stringOrBuffer = b.bytes({ from: ["string", "buffer"] });
 /** For a job to own, and to zero when it is done. */
-const copied = b.bytes({ from: ["string", "buffer"], otherwise: "toString", refuse: ["undefined"], held: "copied" });
+const copied = b.bytes({ from: ["string", "buffer"], held: "copied" });
 
 export const password = b.namespace({
   hash: {

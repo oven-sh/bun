@@ -6311,7 +6311,7 @@ declare module "bun" {
     /**
      * Finalize the hash
      *
-     * @param hashInto `TypedArray` to write the hash into. Faster than creating a new one each time
+     * @param hashInto `TypedArray` to write the hash into. Faster than creating a new one each time. It must hold at least {@link byteLength} bytes.
      */
     digest(hashInto: NodeJS.TypedArray): NodeJS.TypedArray;
 

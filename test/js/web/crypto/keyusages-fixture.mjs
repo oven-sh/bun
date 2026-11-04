@@ -156,11 +156,13 @@ async function orders() {
   });
   const array = [adding(entry => array.push(entry))];
   const set = new Set([adding(entry => set.add(entry))]);
+  // The entry for "decrypt" is gone before its turn. HMAC takes no "decrypt".
   const cleared = new Set([
     adding(entry => {
       cleared.clear();
       cleared.add(entry);
     }),
+    logged("decrypt"),
   ]);
   // keyUsages from a new realm: an entry for "sign" whose conversion defines `return` for every iterator of that
   // realm, then "bogus". The realm is new each time, and never this one: in a realm whose iterators have `return`,

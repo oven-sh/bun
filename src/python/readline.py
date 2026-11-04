@@ -5,6 +5,7 @@
 # interpreter has a history and a completer of its own, as it has beside GNU readline.
 
 import os as _os
+import sys as _sys
 
 backend = "readline"
 # The GNU readline whose interface this is.
@@ -22,6 +23,14 @@ _startup_hook = None
 _pre_input_hook = None
 _display_matches_hook = None
 _bindings = {}  # keys: command, as _pyrepl spells them
+_variables = {  # `set name value`: those that have an effect here, besides history-size
+    "bell-style": "audible",
+    "completion-display-width": -1,
+    "completion-query-items": 100,
+    "print-completions-horizontally": False,
+    "show-all-if-ambiguous": False,
+    "show-all-if-unmodified": False,
+}
 _reader = None
 _reading = False
 
@@ -155,6 +164,7 @@ def _cut_to_history_length(path):
 def read_history_file(filename=None, /):
     """Add the lines of the file (~/.history) to the history."""
     path = _history_file(filename)
+    _sys.audit("open", "~/.history" if filename is None else filename, "r", 0)
     with _without_filename():
         if _os.path.isdir(path):
             raise OSError(22, _os.strerror(22))
@@ -171,6 +181,7 @@ def read_history_file(filename=None, /):
 def write_history_file(filename=None, /):
     """Write the history to the file (~/.history), in place of what it held."""
     path = _history_file(filename)
+    _sys.audit("open", "~/.history" if filename is None else filename, "w", 0)
     with _without_filename():
         with open(_os.open(path, _os.O_WRONLY | _os.O_CREAT | _os.O_TRUNC, 0o600), "wb") as f:
             f.write(_lines(_history))
@@ -183,6 +194,7 @@ def append_history_file(nelements, filename=None, /):
     if nelements < 0:
         raise ValueError("nelements must be non-negative")
     path = _history_file(filename)
+    _sys.audit("open", "~/.history" if filename is None else filename, "a", 0)
     with _without_filename():
         with open(_os.open(path, _os.O_WRONLY | _os.O_APPEND), "ab") as f:
             f.write(_lines(_history[max(len(_history) - nelements, 0) :]))
@@ -328,16 +340,25 @@ def parse_and_bind(string, /):
     """One line of an init file.
 
     `key: function` and `"keys": function` bind what the editor has a command for, `key: "text"` makes the key insert the text. Of the
-    variables (`set ...`) history-size has an effect."""
+    variables (`set ...`) history-size, bell-style and those that say how matches are listed have an effect."""
     global _history_size
     line = _text(string).strip()
     if line.startswith("bind "):  # libedit's way to say it
         line = "tab: complete" if line.split() == ["bind", "^I", "rl_complete"] else ""
     if line.startswith(("set ", "set\t")):
         words = line.split()
-        if len(words) == 3 and words[1].lower() == "history-size" and words[2].lstrip("-").isdecimal():
-            _history_size = int(words[2])
+        name, value = (words[1].lower(), words[2].lower()) if len(words) == 3 else ("", "")
+        is_number = value.removeprefix("-").isdecimal()
+        if name == "history-size" and is_number:
+            _history_size = int(value)
             _forget_the_oldest()
+        elif isinstance(_variables.get(name), bool):
+            _variables[name] = value in ("on", "1")
+        elif isinstance(_variables.get(name), int):
+            if is_number:
+                _variables[name] = int(value)
+        elif name in _variables:
+            _variables[name] = value
         return
     if not line or line.startswith(("#", "$")):
         return
@@ -373,6 +394,7 @@ def _bind(keys, command):
 
 def read_init_file(filename=None, /):
     """parse_and_bind() for each line of the file ($INPUTRC, ~/.inputrc, /etc/inputrc), with its $if, $else and $endif."""
+    _sys.audit("open", "<readline_init_file>" if filename is None else filename, "r", 0)
     if filename is None:
         filename = _os.environ.get("INPUTRC") or _os.path.join(_os.path.expanduser("~"), ".inputrc")
         if not _os.path.exists(filename):
@@ -438,13 +460,197 @@ def _run_hooks():
                 pass
 
 
+def _make_console(Console):
+    """What the editor shows, written as GNU's writes it: text, backspaces, carriage returns and line feeds, and next to nothing else. A
+    line longer than the terminal is wide goes on in the next row, if the terminal can go up a row and erase the rest of one. Of a
+    terminal of which nothing is known (TERM is "dumb", or not set) one row is used, and shows a part of the line."""
+    import dataclasses
+    import termios
+
+    from _pyrepl import keymap, terminfo
+    from _pyrepl.render import render_cells
+    from _pyrepl.unix_eventqueue import get_terminal_keycodes
+
+    endless = 1 << 20  # The editor is not to break the line.
+
+    class Plain(Console):
+        columns = 80
+
+        def __init__(self):
+            # For what the keys send, which is known well enough.
+            super().__init__(0, 1, term="xterm", encoding="utf-8")
+            codes = get_terminal_keycodes(self.terminfo)
+            for code, key in (("A", "up"), ("B", "down"), ("C", "right"), ("D", "left"), ("H", "home"), ("F", "end"), ("3~", "delete")):
+                codes[b"\x1b[" + code.encode()] = key
+            codes[termios.tcgetattr(0)[6][termios.VERASE]] = "backspace"
+            self.event_queue.compiled_keymap = self.event_queue.keymap = keymap.compile_keymap(codes)
+            try:
+                can = terminfo.TermInfo(None).get
+            except Exception:
+                can = {}.get
+            self.up, self.erase, self.clear_screen = ((can(name) or b"").decode("latin-1") for name in ("cuu1", "el", "clear"))
+            self.wraps = bool(self.up and self.erase)
+            self.forget()
+
+        def forget(self):
+            self.above = 0  # So many lines of the prompt have been written.
+            self.below = ()  # What was last written under the line.
+            self.shown = ()  # The cells on the terminal,
+            self.starts = [0]  # where each begins and the last ends, in columns from the beginning of the line through all its rows,
+            self.at = 0  # and where the cursor is.
+            self.first = 0  # The first cell of the line that is shown.
+
+        def write(self, text):
+            if text:
+                _os.write(1, text.encode("utf-8", "replace"))
+
+        def getheightwidth(self):
+            height, self.columns = super().getheightwidth()
+            return height, endless
+
+        # What the console would have done to the terminal is not done.
+        def flushoutput(self):
+            del self._UnixConsole__buffer[:]
+
+        def _UnixConsole__enable_bracketed_paste(self):
+            pass
+
+        def _UnixConsole__disable_bracketed_paste(self):
+            pass
+
+        def set_cursor_vis(self, visible):
+            pass
+
+        def prepare(self):
+            super().prepare()
+            self.flushoutput()
+            self.forget()
+
+        def refresh(self, rendered):
+            lines = rendered.composed_lines
+            x, y = rendered.cursor
+            for line in lines[self.above : y]:
+                self.write(line.text + "\r\n")
+            self.above = max(self.above, y)
+            below = tuple(line.text for line in lines[y + 1 :])
+            while below and not below[-1]:
+                below = below[:-1]
+            if below and below != self.below:
+                self.go_to_last_row()
+                self.write("\r\n" + "\r\n".join(below) + "\r\n")
+                self.shown, self.starts, self.at = (), [0], 0
+            self.below = below
+            self.show(lines[y].cells if y < len(lines) else (), x)
+            self.sync_rendered_screen(rendered, rendered.cursor)
+
+        def show(self, cells, x):
+            cursor, width = 0, 0  # The cell under the cursor.
+            while cursor < len(cells) and width < x:
+                width += cells[cursor].width
+                cursor += 1
+            cells = list(cells)
+            room = max(self.columns - 1, 8)
+            if self.wraps or sum(cell.width for cell in cells) <= room:
+                self.first = 0
+            else:
+                # A part that has the cursor in it. It moves by a third of the width at a time.
+                while cursor < self.first + (self.first > 0):
+                    self.first = max(self.first - room // 3, 0)
+                while sum(cell.width for cell in cells[self.first : cursor + 1]) >= room:
+                    self.first += room // 3
+                cursor -= self.first
+                rest, cells, width = cells[self.first :], [], 0
+                for cell in rest:
+                    if width + cell.width > room:
+                        break
+                    width += cell.width
+                    cells.append(cell)
+                if len(cells) < len(rest):
+                    cells[-1] = dataclasses.replace(cells[-1], text=">".ljust(cells[-1].width), controls=())
+                if self.first:
+                    cells[0] = dataclasses.replace(cells[0], text="<".ljust(cells[0].width), controls=())
+
+            starts, at = [], 0
+            for i, cell in enumerate(cells):
+                if cell.text == "^I":  # A tab.
+                    cells[i] = cell = dataclasses.replace(cell, text=" " * (8 - at % 8), width=8 - at % 8)
+                if self.wraps and at % self.columns + cell.width > self.columns:
+                    at += self.columns - at % self.columns
+                starts.append(at)
+                at += cell.width
+            starts.append(at)
+
+            same = 0
+            while same < len(cells) and same < len(self.shown) and cells[same] == self.shown[same] and starts[same] == self.starts[same]:
+                same += 1
+            end = self.starts[-1]
+            if same < len(cells) or end > at:
+                self.go_to(starts[same])
+            self.shown, self.starts = tuple(cells), starts
+            if same < len(cells):
+                self.write(render_cells(cells[same:]))
+                self.at = at
+                if self.wraps and at % self.columns == 0:
+                    self.write(" \r")  # Until something more is written the cursor stays in the last column.
+            if end > at:
+                self.erase_to(end)
+            self.go_to(starts[cursor])
+
+        def erase_to(self, end):
+            if not self.wraps:
+                return self.write(" " * (end - self.at) + "\b" * (end - self.at))
+            self.write(self.erase)
+            for _ in range(end // self.columns - self.at // self.columns):
+                self.write("\n\r" + self.erase)
+                self.at += self.columns - self.at % self.columns
+
+        def go_to(self, at):
+            columns = self.columns if self.wraps else endless
+            rows = at // columns - self.at // columns
+            self.write(self.up * -rows + "\n" * rows)
+            self.at += rows * columns
+            self.write("\b" * (self.at - at))
+            self.write(render_cells([cell for cell, start in zip(self.shown, self.starts) if self.at <= start < at]))
+            self.at = at
+
+        def move_cursor(self, x, y):
+            self.refresh(dataclasses.replace(self._rendered_screen, cursor=(x, y)))
+
+        def go_to_last_row(self):
+            if self.wraps:
+                self.write("\n" * (self.starts[-1] // self.columns - self.at // self.columns))
+
+        def finish(self):
+            self.go_to_last_row()
+            self.write("\r\n")
+            self.forget()
+
+        def clear(self):
+            self.write(self.clear_screen or "\r\n")
+            self.forget()
+            self.invalidate_render_state()
+
+        def repaint(self):
+            end = self.starts[-1]
+            self.go_to(0)
+            self.shown, self.starts = (), [0]
+            self.erase_to(end)
+            self.go_to(0)
+            self.refresh(self._rendered_screen)
+
+        def beep(self):
+            self.write("\a")
+
+    return Plain()
+
+
 def _make_reader():
     global _reader, _completer, _when_continued
     import signal
 
     # It imports rlcompleter, which sets a completer when it is imported. That is for the program to ask for.
     completer = _completer
-    from _pyrepl import commands, completing_reader, historical_reader
+    from _pyrepl import commands, historical_reader
     from _pyrepl.readline import Console, ReadlineAlikeReader, ReadlineConfig
 
     _completer = completer
@@ -483,25 +689,79 @@ def _make_reader():
                 raise EOFError
             super().do()
 
-    class complete(completing_reader.complete):
-        # The program shows the matches, where the editor would.
+    class complete(commands.Command):
+        # As GNU's: what the matches have in common is inserted. If that leaves the line as it was, the bell rings, and the next Tab
+        # lists the matches under the line, which is then written again.
         def do(self):
-            super().do()
             reader = self.reader
-            if _display_matches_hook is None or not reader.cmpltn_menu_visible:
+            lists = reader.last_command_is(type(self)) and reader.tab_changed_nothing
+            reader.tab_changed_nothing = False
+            before = reader.buffer[:]
+            stem = reader.get_stem()
+            matches = list(dict.fromkeys(reader.get_completions(stem)[0]))
+            if not matches:
+                return ring()
+            if lists:
+                return self.list(matches)
+            reader.insert(_os.path.commonprefix(matches)[len(stem) :])
+            if len(matches) == 1:
                 return
-            matches = reader.cmpltn_menu_choices
-            reader.cmpltn_reset()
-            reader.console.restore()
+            reader.tab_changed_nothing = reader.buffer == before
+            if _variables["show-all-if-ambiguous"] or (_variables["show-all-if-unmodified"] and reader.tab_changed_nothing):
+                return self.list(matches)
+            ring()
+
+        def list(self, matches):
+            reader = self.reader
+            console = reader.console
+            longest = max(map(len, matches))
+            console.go_to_last_row()
+            console.restore()
             try:
-                _display_matches_hook(reader.get_stem(), matches, max(map(len, matches)))
-            except Exception:
-                pass
+                if _display_matches_hook is not None:
+                    try:
+                        _display_matches_hook(reader.get_stem(), matches, longest)
+                    except Exception:
+                        pass
+                    # It may have written the prompt and the line again, as it has to with GNU's.
+                    _os.write(1, ("\r" + console.erase if console.wraps else "\r\n").encode())
+                    return
+                limit = _variables["completion-query-items"]
+                if 0 < limit <= len(matches):
+                    # As under CPython, which has GNU's call it back for each key: then the question is not waited for.
+                    _os.write(1, b"\nDisplay all %d possibilities? (y or n)" % len(matches))
+                width = _os.get_terminal_size(1).columns
+                if 0 <= _variables["completion-display-width"] <= width:
+                    width = _variables["completion-display-width"]
+                columns = width // (longest + 2)
+                if columns != 1 and columns * (longest + 2) == width:
+                    columns -= 1
+                columns = max(columns, 1)
+                rows = (len(matches) + columns - 1) // columns
+                if _variables["print-completions-horizontally"]:
+                    table = [matches[i : i + columns] for i in range(0, len(matches), columns)]
+                else:
+                    table = [matches[i::rows] for i in range(rows)]
+                text = "".join("".join(match.ljust(longest + 2) for match in row[:-1]) + row[-1] + (" " * (longest + 2 - len(row[-1])) if len(row) < columns else "") + "\n" for row in table)
+                _os.write(1, ("\n" + text).encode("utf-8", "replace"))
             finally:
-                # It may have written the prompt and the line again, as it has to with GNU's.
-                _os.write(1, b"\r\x1b[K")
-                reader.console.prepare()
+                console.prepare()
                 reader.invalidate_full()
+
+    def ring():
+        if _variables["bell-style"] != "none":
+            _reader.console.beep()
+
+    class transpose_characters(commands.transpose_characters):
+        # At the end of the line: the two before it.
+        def do(self):
+            reader = self.reader
+            if not reader.pos or len(reader.buffer) < 2:
+                return ring()
+            if reader.pos == len(reader.buffer):
+                reader.pos -= 1
+            super().do()
+            reader.pos += 1
 
     class isearch_end(historical_reader.isearch_end):
         # Return ends the search and takes the line that was found.
@@ -512,15 +772,17 @@ def _make_reader():
     # The console sets a handler for good. It is wanted while a line is read.
     handler = signal.getsignal(signal.SIGCONT)
     try:
-        console = Console(0, 1, encoding="utf-8")
+        console = _make_console(Console)
         _when_continued = signal.getsignal(signal.SIGCONT)
     finally:
         signal.signal(signal.SIGCONT, handler)
     _reader = Reader(console=console, config=ReadlineConfig(readline_completer=_complete, module_completer=_NoModules))
     _reader.history = _history
     _reader.can_colorize = False
+    _reader.tab_changed_nothing = False
     _reader.commands["delete"] = delete
     _reader.commands["complete"] = complete
+    _reader.commands["transpose-characters"] = _reader.commands["transpose_characters"] = transpose_characters
     _reader.commands["isearch-end"] = _reader.commands["isearch_end"] = isearch_end
     # Until somebody binds it, Tab is a character like any other. The user's init file comes before what the program has asked for.
     asked_for = list(_bindings.items())
@@ -536,8 +798,8 @@ def _make_reader():
 
 
 def _read_line(prompt):
-    """A line from the terminal, without its end. NotImplemented: not here (a terminal that can do too little, a thread that cannot
-    set handlers of signals, as the editor does)."""
+    """A line from the terminal, without its end. NotImplemented: not here (no terminal after all, a thread that cannot set handlers
+    of signals, as the editor does)."""
     global _reading
     import _thread
     import signal

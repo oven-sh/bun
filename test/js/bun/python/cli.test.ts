@@ -1202,6 +1202,134 @@ print("got", repr(input("\\001\\033[1;35m\\002colour> \\001\\033[0m\\002")))
         expect(exitCode).toBe(0);
       });
 
+      // What GNU readline writes in the same session, but for the way the cursor is moved to the right.
+      test.each([
+        ["xterm", "\x1b[K"],
+        ["dumb", " \b"],
+        [undefined, " \b"],
+        ["a terminal nobody has heard of", " \b"],
+      ])("what is written to the terminal, with TERM=%s", async (TERM, erased) => {
+        const { output, exitCode } = await onTerminal(
+          ["main.py"],
+          [
+            ["0> ", "abc\x7fY\r"],
+            ["1> ", "be\t!\r"],
+            ["2> ", "al\t\t\t"],
+            ["2> alpha", "b\t\r"],
+            ["3> ", "zz\t\r"],
+            ["4> ", "a\tb\r"],
+          ],
+          {
+            env: { TERM, INPUTRC: "/dev/null" },
+            files: {
+              "main.py": `
+import readline
+def complete(text, state):
+    found = [w for w in ("alpha", "alphabet", "alphabetical", "beta") if w.startswith(text)]
+    return found[state] if state < len(found) else None
+readline.set_completer(complete)
+readline.parse_and_bind("tab: complete")
+for i in range(4):
+    print("got", repr(input("%d> " % i)))
+readline.parse_and_bind("tab: self-insert")
+print("got", repr(input("4> ")))
+`,
+            },
+          },
+        );
+        expect(output).toBe(
+          [
+            `0> abc\b${erased}Y`,
+            "got 'abY'",
+            "1> beta!",
+            "got 'beta!'",
+            "2> al\x07pha\x07",
+            "alpha         alphabet      alphabetical  ",
+            "2> alphab\x07et",
+            "got 'alphabet'",
+            "3> zz\x07",
+            "got 'zz'",
+            "4> a    b",
+            "got 'a\\tb'",
+            "",
+          ].join("\n"),
+        );
+        expect(exitCode).toBe(0);
+      });
+
+      test("a line longer than the terminal is wide", async () => {
+        const line = Buffer.alloc(100, "x").toString();
+        const files = { "main.py": `import readline\nprint("got", repr(input("> ")))` };
+        const steps: [string, string][] = [["> ", line + "\x01y\x05z\r"]];
+        for (const TERM of ["xterm", "dumb"]) {
+          const { output, exitCode } = await onTerminal(["main.py"], steps, { env: { TERM }, files });
+          expect(results(output)).toEqual([`got 'y${line}z'`]);
+          // One goes up a row. The other shows a part of the line.
+          expect({
+            TERM,
+            goesUp: output.includes("\x1b[A"),
+            hasEscapes: output.includes("\x1b"),
+            showsPart: output.includes("<x"),
+          }).toEqual({
+            TERM,
+            goesUp: TERM === "xterm",
+            hasEscapes: TERM === "xterm",
+            showsPart: TERM === "dumb",
+          });
+          expect(exitCode).toBe(0);
+        }
+      });
+
+      test("matches are listed as the variables say", async () => {
+        const { output, exitCode } = await onTerminal(
+          ["main.py"],
+          [
+            ["0> ", "w\t\t"],
+            ["w9", ""],
+            ["0> w", "1\r"],
+            ["1> ", "w1\t"],
+            ["1> w1", "\r"],
+          ],
+          {
+            env: { INPUTRC: "/dev/null" },
+            files: {
+              "main.py": `
+import readline
+words = ["w%d" % i for i in range(12)]
+def complete(text, state):
+    found = [w for w in words if w.startswith(text)]
+    return found[state] if state < len(found) else None
+readline.set_completer(complete)
+readline.parse_and_bind("tab: complete")
+readline.parse_and_bind("set completion-query-items 10")
+readline.parse_and_bind("set bell-style none")
+print("got", repr(input("0> ")))
+readline.parse_and_bind("set completion-display-width 0")
+readline.parse_and_bind("set show-all-if-ambiguous on")
+print("got", repr(input("1> ")))
+`,
+            },
+          },
+        );
+        expect(output).toBe(
+          [
+            "0> w",
+            "Display all 12 possibilities? (y or n)",
+            "w0   w1   w10  w11  w2   w3   w4   w5   w6   w7   w8   w9   ",
+            "0> w1",
+            "got 'w1'",
+            "1> w1",
+            "w1",
+            "w10",
+            "w11",
+            "1> w1",
+            "got 'w1'",
+            "",
+          ].join("\n"),
+        );
+        expect(exitCode).toBe(0);
+      });
+
       test("without a terminal it costs nothing and changes nothing", async () => {
         const result = await python(
           [

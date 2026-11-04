@@ -328,7 +328,26 @@ def _no_c_api(ctypes):
     del ctypes.pythonapi
 
 
-_ADAPTATIONS = {"ctypes": _no_c_api, "multiprocessing.context": _spawn_only}
+def _collects_before_it_stops(resource_tracker):
+    """Semaphores and shared memory are struck off the tracker's list by finalizers, which reference counts have run by the time that a
+    program stops the tracker. What is still on the list then counts as leaked."""
+    import gc
+
+    stop = resource_tracker.ResourceTracker._stop
+
+    def _stop(self, *args, **kwargs):
+        if not sys.is_finalizing():
+            gc.collect()
+        return stop(self, *args, **kwargs)
+
+    resource_tracker.ResourceTracker._stop = _stop
+
+
+_ADAPTATIONS = {
+    "ctypes": _no_c_api,
+    "multiprocessing.context": _spawn_only,
+    "multiprocessing.resource_tracker": _collects_before_it_stops,
+}
 
 
 class _AdaptingLoader:

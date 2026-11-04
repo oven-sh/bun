@@ -1,0 +1,7 @@
+status: 0
+script: cc497fe8eecff6e5
+---
+drops all 0 status of the tracker: 0
+ False
+leaks 0 status of the tracker: 1
+ True

@@ -1821,8 +1821,6 @@ unsafe extern "system" {
         lpSecurityAttributes: *mut SECURITY_ATTRIBUTES,
     ) -> BOOL;
 
-    pub fn SetEndOfFile(hFile: HANDLE) -> BOOL;
-
     pub fn GetProcessTimes(
         in_hProcess: HANDLE,
         out_lpCreationTime: *mut FILETIME,

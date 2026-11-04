@@ -31,7 +31,6 @@ pub mod kernel32 {
         BOOL, CONDITION_VARIABLE, DWORD, FileNotifyChangeFilter, HANDLE, LPCWSTR, LPOVERLAPPED,
         LPOVERLAPPED_COMPLETION_ROUTINE, OVERLAPPED, SRWLOCK, ULONG, ULONG_PTR,
     };
-    pub use bun_windows_sys::externs::SetEndOfFile;
     pub use bun_windows_sys::externs::{GetConsoleMode, GetExitCodeProcess, SetConsoleMode};
     pub use bun_windows_sys::kernel32::*;
     use core::ffi::c_void;
@@ -1412,7 +1411,6 @@ pub use bun_windows_sys::externs::DeleteFileW;
 pub use bun_windows_sys::externs::GetCommandLineW;
 pub use bun_windows_sys::externs::GetCurrentThread;
 pub use bun_windows_sys::externs::GetProcessTimes;
-pub use bun_windows_sys::externs::SetEndOfFile;
 
 /// `PROCESS_MEMORY_COUNTERS` (`psapi.h`).
 #[repr(C)]

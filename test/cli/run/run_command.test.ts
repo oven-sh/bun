@@ -109,7 +109,7 @@ describe.concurrent("bun version check", () => {
   const running = Bun.version.replace(/-.*$/, "");
   // Paths are compared with forward slashes.
   const warning = (dir: string, pin = "0.0.1") =>
-    `warn: ${join(dir, "package.json").replaceAll("\\", "/")} pins bun@${pin}, running ${running}. Set BUN_CONFIG_IGNORE_ENGINES=1 to skip this check.\n`;
+    `warn: "${join(dir, "package.json").replaceAll("\\", "/")}" pins bun@${pin}, running ${running}\nnote: set BUN_CONFIG_IGNORE_ENGINES=1 to skip this check\n`;
   const normalize = (stderr: string) => stderr.replaceAll("\\", "/");
   const count = (stderr: string) => stderr.split(" pins bun@").length - 1;
   // `--parallel` and `--sequential` prefix each line with the script name.
@@ -222,22 +222,25 @@ describe.concurrent("bun version check", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const stderr = proc.stderr.text();
-    const reader = proc.stdout.getReader();
-    let stdout = "";
-    const waitFor = async (text: string) => {
-      while (!stdout.includes(text)) {
-        const { value, done } = await reader.read();
-        if (done) throw new Error(`exited before ${JSON.stringify(text)}: ${stdout}`);
-        stdout += new TextDecoder().decode(value);
+    const output = { stdout: "", stderr: "" };
+    const readers = { stdout: proc.stdout.getReader(), stderr: proc.stderr.getReader() };
+    const waitFor = async (stream: "stdout" | "stderr", text: string) => {
+      while (!output[stream].includes(text)) {
+        const { value, done } = await readers[stream].read();
+        if (done) throw new Error(`exited before ${JSON.stringify(text)}: ${output[stream]}`);
+        output[stream] += new TextDecoder().decode(value);
       }
     };
-    await waitFor("v1\n");
+    await waitFor("stderr", " pins bun@");
+    await waitFor("stdout", "v1\n");
     writeFileSync(join(String(dir), "watched.ts"), "console.log('v2')");
-    await waitFor("v2\n");
+    await waitFor("stdout", "v2\n");
     proc.kill();
     await proc.exited;
-    expect(count(await stderr)).toBe(1);
+    for (let chunk = await readers.stderr.read(); !chunk.done; chunk = await readers.stderr.read()) {
+      output.stderr += new TextDecoder().decode(chunk.value);
+    }
+    expect(count(output.stderr)).toBe(1);
   });
 
   // A dependency's lifecycle script runs in `node_modules/<dep>`. Its pin is not the project's.

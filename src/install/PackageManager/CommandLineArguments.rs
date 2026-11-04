@@ -473,7 +473,7 @@ const IGNORED_FOREIGN_FLAGS: clap::IgnoredLongFlags = clap::IgnoredLongFlags {
     b"use-store-server", b"verify-store-integrity", b"workspace-root", b"workspaces-update", b"ws",
     b"yes",
     // These are in `FOREIGN_FLAGS` too, which doesn't match them if they have a value.
-    b"ignore-optional", b"immutable", b"legacy-peer-deps", b"non-interactive",
+    b"ignore-engines", b"ignore-optional", b"immutable", b"legacy-peer-deps", b"non-interactive",
     b"package-lock-only", b"prefer-frozen-lockfile", b"save-catalog", b"save-dev", b"save-exact",
     b"save-optional", b"save-peer", b"save-prod", b"shamefully-hoist", b"unsafe-perm",
     ],

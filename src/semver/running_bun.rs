@@ -27,16 +27,20 @@ pub fn mismatch<'a>(path: &'a [u8], pin: &'a [u8]) -> Option<Mismatch<'a>> {
     (!running.eql(pinned)).then_some(Mismatch { path, pin })
 }
 
-/// Warns for a mismatch. Returns `path` when the file pins a version, printed or not.
-pub fn check<'a>(path: &'a [u8], package_manager: &[u8], quiet: bool) -> Option<&'a [u8]> {
+/// Warns for a mismatch. Returns the marker for `BUN_INTERNAL_BUN_VERSION_CHECKED` when the file
+/// pins a version, printed or not: the running version and the path, so only the same bun skips.
+pub fn check(path: &[u8], package_manager: &[u8], quiet: bool) -> Option<Vec<u8>> {
     let pin = package_manager_pin(package_manager)?;
+    let marker = [RUNNING.as_bytes(), b"\n", path].concat();
     let skip = quiet
         || env_var::BUN_CONFIG_IGNORE_ENGINES.get().unwrap_or(false)
-        || env_var::BUN_INTERNAL_BUN_VERSION_CHECKED.get() == Some(path);
+        || env_var::BUN_INTERNAL_BUN_VERSION_CHECKED.get() == Some(marker.as_slice());
     if !skip && let Some(mismatch) = mismatch(path, pin) {
         bun_core::warn!("{}", mismatch);
+        bun_core::note!("set BUN_CONFIG_IGNORE_ENGINES=1 to skip this check");
+        bun_core::output::flush();
     }
-    Some(path)
+    Some(marker)
 }
 
 /// Formats as the one warning line that every command prints for a mismatch.
@@ -50,8 +54,8 @@ impl fmt::Display for Mismatch<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{} pins bun@{}, running {}. Set BUN_CONFIG_IGNORE_ENGINES=1 to skip this check.",
-            bstr::BStr::new(self.path),
+            "{} pins bun@{}, running {}",
+            bun_core::fmt::QuotedFormatter { text: self.path },
             bstr::BStr::new(self.pin),
             RUNNING,
         )
@@ -103,9 +107,7 @@ mod tests {
         .to_string();
         assert_eq!(
             text,
-            format!(
-                "/app/package.json pins bun@1.2.0, running {RUNNING}. Set BUN_CONFIG_IGNORE_ENGINES=1 to skip this check."
-            )
+            format!("\"/app/package.json\" pins bun@1.2.0, running {RUNNING}")
         );
     }
 }

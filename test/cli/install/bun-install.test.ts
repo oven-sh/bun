@@ -16812,7 +16812,7 @@ describe.concurrent("bun version check", () => {
   const running = Bun.version.replace(/-.*$/, "");
   // Paths are compared with forward slashes.
   const warning = (dir: string, pin: string) =>
-    `warn: ${join(dir, "package.json").replaceAll("\\", "/")} pins bun@${pin}, running ${running}. Set BUN_CONFIG_IGNORE_ENGINES=1 to skip this check.\n`;
+    `warn: "${join(dir, "package.json").replaceAll("\\", "/")}" pins bun@${pin}, running ${running}\nnote: set BUN_CONFIG_IGNORE_ENGINES=1 to skip this check\n`;
   const count = (stderr: string) => stderr.split(" pins bun@").length - 1;
   const project = (fields: Record<string, unknown>, dependencies?: Record<string, string>) =>
     tempDir("install-bun-version", {
@@ -16921,7 +16921,6 @@ describe.concurrent("bun version check", () => {
     [["pm", "bin"], 0],
     [["pm", "hash"], 0],
     [["pm", "untrusted"], 0],
-    [["info", "dep"], 0],
     [["why", "dep"], 0],
   ])("bun %j warns %i times", async (cmd, times) => {
     using dir = project({ packageManager: "bun@0.0.1" }, { dep: "./dep" });
@@ -16982,6 +16981,18 @@ describe.concurrent("bun version check", () => {
     expect(stderr.replaceAll("\\", "/")).toStartWith(warning(String(dir), "0.0.1"));
     expect(count(stderr)).toBe(1);
     expect(stdout).toContain("hi\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // A dependency's lifecycle script can run `bun install` in `node_modules/<dep>`. Its pin is not the project's.
+  it("a package in node_modules is not a project", async () => {
+    using dir = tempDir("install-bun-version-node-modules", {
+      "package.json": JSON.stringify({ name: "foo", packageManager: `bun@${running}` }),
+      "node_modules/dep/package.json": JSON.stringify({ name: "dep", packageManager: "bun@0.0.1" }),
+    });
+    const { stderr, exitCode } = await bunIn(join(String(dir), "node_modules", "dep"), ["install"]);
+    expect(count(stderr)).toBe(0);
+    expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
   });
 

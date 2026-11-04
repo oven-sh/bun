@@ -437,7 +437,8 @@ When a `bun.lock` exists and `package.json` hasn’t changed, Bun downloads miss
 
 ```bash terminal icon="terminal"
 bun install
-warn: /home/me/app/package.json pins bun@1.3.0, running 1.4.3. Set BUN_CONFIG_IGNORE_ENGINES=1 to skip this check.
+warn: "/home/me/app/package.json" pins bun@1.3.0, running 1.4.3
+note: set BUN_CONFIG_IGNORE_ENGINES=1 to skip this check
 ```
 
 Only an exact release version is a pin. A range like `^1.3.0`, a tag like `latest`, a pre-release like `1.3.0-canary.1`, another package manager, and `engines.bun` are not checked. A `+sha256.…` suffix after the version is ignored. The [`oven-sh/setup-bun`](https://github.com/oven-sh/setup-bun) action reads the same field to pick the version it installs.

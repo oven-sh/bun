@@ -2250,11 +2250,12 @@ fn check_bun_version(
     else {
         return Ok(());
     };
+    // The path as the resolver spells it too, so that `bun run` finds the same marker.
     if let Some(checked) =
-        bun_semver::running_bun::check(entry.source.path.text, package_manager, quiet)
+        bun_semver::running_bun::check(root_package_json_path.as_bytes(), package_manager, quiet)
     {
         // Lifecycle scripts get a copy of this map.
-        env.map.put(b"BUN_INTERNAL_BUN_VERSION_CHECKED", checked)?;
+        env.map.put(b"BUN_INTERNAL_BUN_VERSION_CHECKED", &checked)?;
     }
     Ok(())
 }
@@ -2679,7 +2680,15 @@ pub fn init(
     env.map.remove(b"BUN_INTERNAL_BUNX_INSTALL");
     env.map.remove(b"BUN_INTERNAL_BUNX_HAS_COPY");
 
-    if cli.checks_bun_version && !no_project && !cli.global {
+    // A package in node_modules is not the project: its lifecycle script can run `bun install`.
+    if cli.checks_bun_version
+        && !no_project
+        && !cli.global
+        && !strings::contains(
+            root_package_json_path.as_bytes(),
+            bun_paths::NODE_MODULES_NEEDLE,
+        )
+    {
         check_bun_version(
             &mut workspace_package_json_cache,
             root_package_json_path,

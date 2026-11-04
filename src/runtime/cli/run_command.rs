@@ -800,13 +800,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     package_manager,
                     silent,
                 ) {
-                    env.map.put(b"BUN_INTERNAL_BUN_VERSION_CHECKED", checked)?;
+                    env.map.put(b"BUN_INTERNAL_BUN_VERSION_CHECKED", &checked)?;
                     // `--watch` starts this process again with its environment, on POSIX.
                     #[cfg(not(windows))]
                     {
-                        let value = bun_core::ZBox::from_bytes(checked);
-                        // SAFETY: both strings are NUL-terminated; setenv copies them.
-                        unsafe {
+                        let value = bun_core::ZBox::from_bytes(&checked);
+                        // SAFETY: both strings are NUL-terminated; setenv copies them. A failure
+                        // (ENOMEM) only repeats the warning after a restart.
+                        let _ = unsafe {
                             libc::setenv(
                                 c"BUN_INTERNAL_BUN_VERSION_CHECKED".as_ptr(),
                                 value.as_ptr().cast(),

@@ -1,5 +1,6 @@
 #include "root.h"
 
+#include "Bindgen/JSWrapper.h"
 #include "BunClientData.h"
 #include "BunProcess.h"
 #include "BunPython.h"
@@ -113,6 +114,7 @@ static void preparePython()
     std::call_once(once, [] {
         Python::setDidChangeDirectoryFunction(didChangeDirectory);
         Python::setHostEnvironment({ readProcessEnvForPython, writeProcessEnvFromPython });
+        Python::setClassIsCalledFunction(Bun::Bindgen::isClassWithCall);
         auto& configuration = Python::configuration();
         if (!s_isPythonCommand) {
             for (size_t i = 0; const char* argument = Bun__Python__originalArgument(i); ++i)

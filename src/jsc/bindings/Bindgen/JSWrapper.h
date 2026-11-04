@@ -72,6 +72,9 @@ private:
 // A class called without `new`.
 JSC_DECLARE_HOST_FUNCTION(callJSClassConstructor);
 
+// Whether it is the constructor of a class that says what a call without `new` does (`call` in its `.bind.ts`): `expect(value)`.
+bool isClassWithCall(JSC::JSObject*);
+
 // `new` on a class that only native code makes.
 JSC_DECLARE_HOST_FUNCTION(illegalConstructor);
 

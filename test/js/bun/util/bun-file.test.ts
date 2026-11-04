@@ -1,6 +1,7 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { closeSync, openSync, writeFileSync } from "fs";
 import fsPromises from "fs/promises";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 test("delete() and stat() should work with unicode paths", async () => {
@@ -197,4 +198,143 @@ test.concurrent.each([
   expect(pathIsAlive).toBe("true");
   expect(Number(live)).toBeWithin(1, 50);
   expect(exitCode).toBe(0);
+});
+
+describe("Bun.file().text()", () => {
+  const utf8Bom = [0xef, 0xbb, 0xbf];
+  const utf16leBom = [0xff, 0xfe];
+  const fixtures: [name: string, bytes: Buffer, text: string][] = [
+    ["empty", Buffer.alloc(0), ""],
+    ["ASCII", Buffer.from("plain ascii"), "plain ascii"],
+    ["multibyte UTF-8", Buffer.from("wörld 世界 😀"), "wörld 世界 😀"],
+    ["0xFF bytes", Buffer.alloc(4, 0xff), "\ufffd\ufffd\ufffd\ufffd"],
+    ["a truncated sequence", Buffer.from([0x61, 0xe2, 0x82]), "a\ufffd"],
+    ["a UTF-8 BOM alone", Buffer.from(utf8Bom), ""],
+    ["a UTF-8 BOM and ASCII", Buffer.from([...utf8Bom, ...Buffer.from("hello")]), "hello"],
+    ["a UTF-8 BOM and multibyte UTF-8", Buffer.from([...utf8Bom, ...Buffer.from("héllo 🎉")]), "héllo 🎉"],
+    ["FF FE alone", Buffer.from(utf16leBom), "\ufffd\ufffd"],
+    ["a UTF-16LE BOM and one byte", Buffer.from([...utf16leBom, 0x41]), ""],
+    [
+      "a UTF-16LE BOM, code units and an odd byte",
+      Buffer.from([...utf16leBom, ...Buffer.from("hé🎉", "utf16le"), 0x41]),
+      "hé🎉",
+    ],
+    ["FE FF and bytes", Buffer.from([0xfe, 0xff, 0x00, 0x41]), "\ufffd\ufffd\u0000A"],
+  ];
+
+  test.concurrent.each(fixtures)("decodes %s by path, by fd and as a Response body", async (_, bytes, text) => {
+    using dir = tempDir("bun-file-text", { "data.bin": bytes });
+    const path = join(String(dir), "data.bin");
+    const fd = openSync(path, "r");
+    try {
+      expect({
+        blob: await new Blob([bytes]).text(),
+        path: await Bun.file(path).text(),
+        fd: await Bun.file(fd).text(),
+        response: await new Response(Bun.file(path)).text(),
+      }).toEqual({ blob: text, path: text, fd: text, response: text });
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  test.concurrent.each(fixtures.filter(([, bytes]) => bytes.length > 1))(
+    "decodes a slice of %s like the same bytes in memory",
+    async (_, bytes) => {
+      using dir = tempDir("bun-file-text-slice", { "data.bin": bytes });
+      const file = Bun.file(join(String(dir), "data.bin"));
+      const end = bytes.length;
+      expect({
+        tail: await file.slice(1, end).text(),
+        head: await file.slice(0, end - 1).text(),
+      }).toEqual({
+        tail: await new Blob([bytes.subarray(1)]).text(),
+        head: await new Blob([bytes.subarray(0, end - 1)]).text(),
+      });
+    },
+  );
+
+  test.concurrent.each(
+    fixtures.filter(([name]) =>
+      ["multibyte UTF-8", "a UTF-8 BOM and ASCII", "a UTF-16LE BOM, code units and an odd byte"].includes(name),
+    ),
+  )("decodes %s from a pipe", async (_, bytes, text) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "process.stdout.write(JSON.stringify(await Bun.stdin.text()))"],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const middle = bytes.length >> 1;
+    proc.stdin.write(bytes.subarray(0, middle));
+    await proc.stdin.flush();
+    proc.stdin.write(bytes.subarray(middle));
+    await proc.stdin.end();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toBe(text);
+    expect(exitCode).toBe(0);
+  });
+
+  test("decodes the content a file has now, not what an earlier read saw", async () => {
+    using dir = tempDir("bun-file-text-rewrite", { "data.txt": "plain ascii" });
+    const path = join(String(dir), "data.txt");
+    const file = Bun.file(path);
+    const before = await file.text();
+    writeFileSync(path, "wörld 世界");
+    expect({ before, after: await file.text() }).toEqual({ before: "plain ascii", after: "wörld 世界" });
+  });
+
+  // 0xFF bytes take the replacement path, the slowest decode, so the decode is
+  // most of the CPU time of the read. Thread CPU time advances in 4 ms ticks
+  // on Linux: an optimized build needs the larger file to spend several.
+  const size = (isDebug ? 1 : 8) * 1024 * 1024;
+  const read = {
+    path: "Bun.file(process.argv[1]).text()",
+    fd: 'Bun.file(openSync(process.argv[1], "r")).text()',
+    slice: "Bun.file(process.argv[1]).slice(1).text()",
+    response: "new Response(Bun.file(process.argv[1])).text()",
+    stdin: "Bun.stdin.text()",
+  };
+
+  // The POSIX read job decodes where it has the bytes, on the work pool: about
+  // 2% of the process CPU time is then on the JS thread, against 98% when the
+  // completion decodes. Windows reads through ReadFileUV on the event loop and
+  // decodes there until #42819 removes it.
+  test.concurrent.todoIf(isWindows).each(Object.keys(read) as (keyof typeof read)[])(
+    "decodes on the work pool, not on the JS thread: %s",
+    async route => {
+      const bytes = Buffer.alloc(size, 0xff);
+      using dir = tempDir("bun-file-text-thread", { "data.bin": bytes });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { openSync } from "fs";
+          const all = process.cpuUsage();
+          const thread = process.threadCpuUsage();
+          const text = await ${read[route]};
+          const p = process.cpuUsage(all);
+          const t = process.threadCpuUsage(thread);
+          console.log(JSON.stringify({ length: text.length, jsThread: t.user + t.system, process: p.user + p.system }));`,
+          join(String(dir), "data.bin"),
+        ],
+        env: bunEnv,
+        stdin: route === "stdin" ? "pipe" : "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      if (route === "stdin") {
+        proc.stdin!.write(bytes);
+        await proc.stdin!.end();
+      }
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const { length, jsThread, process: all } = JSON.parse(stdout);
+      expect(length).toBe(route === "slice" ? size - 1 : size);
+      expect(jsThread / all).toBeLessThan(0.5);
+      expect(exitCode).toBe(0);
+    },
+  );
 });

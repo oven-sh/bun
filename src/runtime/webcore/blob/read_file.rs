@@ -8,12 +8,12 @@ use core::sync::atomic::Ordering;
 
 use crate::Error;
 use crate::webcore::Lifetime;
-#[cfg(not(windows))]
-use crate::webcore::blob::ClosingState;
 #[cfg(windows)]
 use crate::webcore::blob::store::Bytes as ByteStore;
 use crate::webcore::blob::store::{Data, File as FileStore};
 use crate::webcore::blob::{Blob, FileCloser, FileOpener, MAX_SIZE, SizeType, Store};
+#[cfg(not(windows))]
+use crate::webcore::blob::{ClosingState, text_from_owned_bytes};
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
 use bun_collections::ByteVecExt as _;
@@ -25,7 +25,8 @@ use bun_io::FileAction;
 // `bun_jsc::EventLoop` is the *module*; the struct is one level deeper.
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{
-    self as jsc, AnyPromise, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, SystemError,
+    self as jsc, AnyPromise, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, StringJsc as _,
+    SystemError,
 };
 use bun_ptr::RefPtr;
 #[cfg(windows)]
@@ -52,9 +53,21 @@ macro_rules! log {
 // NewReadFileHandler
 // ──────────────────────────────────────────────────────────────────────────
 
+/// What a [`ReadFile`] job hands its completion.
+#[cfg(not(windows))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReadAs {
+    Bytes,
+    /// Blob text, decoded on the work pool: [`ReadFileResultType::Text`].
+    Text,
+}
+
 /// `F` provides the callback that converts the read bytes to a JSValue.
 /// Modelled as a trait so each instantiation monomorphizes.
 pub(crate) trait ReadFileToJs {
+    /// What the job hands `then`. Windows has no pool stage until `ReadFileUV` goes (#42819).
+    #[cfg(not(windows))]
+    const READ_AS: ReadAs;
     /// `by` carries the caller's allocation provenance unchanged:
     /// `Lifetime::Temporary` ⇒ a `Box::<[u8]>::into_raw` the callee MUST take
     /// ownership of (every `to_*_with_bytes::<Temporary>` arm reclaims it);
@@ -130,6 +143,9 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
                         Lifetime::Temporary,
                     )
                 })?;
+            }
+            ReadFileResultType::Text(text) => {
+                AnyPromise::Normal(promise).wrap(global_this, move |g| text.into_js(g))?;
             }
             ReadFileResultType::Err(err) => {
                 // SAFETY: `promise` was just swapped out of `handler.promise`,
@@ -215,15 +231,18 @@ pub(crate) struct ReadFileRead {
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum ReadFileResultType {
     Result(ReadFileRead),
+    /// Blob text that the job decoded on the work pool.
+    Text(BunString),
     Err(SystemError),
 }
 
 /// The completion token a `ReadFile` keeps across its async I/O.
 pub(crate) type ReadFileTask = bun_jsc::Completion<ReadFile>;
 
-// SAFETY: file store / byte store / blob store ref (atomic), the read buffer and io-loop
-// registration state — nothing thread-affine. What the bytes are delivered to lives in the job's
-// JS side (`ReadFileCompletionFns`), never here.
+// SAFETY: file store / byte store / blob store ref (atomic), the read buffer, the text decoded
+// from it (a string this job built and no other thread has seen) and io-loop registration
+// state: nothing thread-affine. What the bytes are delivered to lives in the job's JS side
+// (`ReadFileCompletionFns`), never here.
 unsafe impl Send for ReadFile {}
 
 impl bun_jsc::JobContext for ReadFile {
@@ -293,6 +312,10 @@ pub(crate) struct ReadFile {
     #[cfg(not(windows))]
     pub(crate) size: SizeType,
     pub(crate) buffer: Vec<u8>,
+    #[cfg(not(windows))]
+    pub(crate) read_as: ReadAs,
+    /// `buffer`, decoded where the job finishes. Only a `ReadAs::Text` job sets it.
+    pub(crate) text: Option<BunString>,
     pub task: WorkPoolTask,
     pub(crate) system_error: Option<SystemError>,
     pub(crate) errno: Option<Error>,
@@ -370,6 +393,7 @@ impl ReadFile {
         store: RefPtr<Store>,
         off: SizeType,
         max_len: SizeType,
+        read_as: ReadAs,
     ) -> Result<ReadFile, Error> {
         let file_store = store.data.as_file().clone();
         let read_file = ReadFile {
@@ -383,6 +407,8 @@ impl ReadFile {
             read_eof: false,
             size: 0,
             buffer: Vec::new(),
+            read_as,
+            text: None,
             task: WorkPoolTask {
                 node: Default::default(),
                 callback: Self::do_read_loop_task,
@@ -635,6 +661,7 @@ impl ReadFile {
         let _store = this.store.take().unwrap();
         // reshaped for borrowck — take buffer out so it survives `drop(this)`.
         let buf = core::mem::take(&mut this.buffer);
+        let text = this.text.take();
 
         // `_store` is dropped at end of scope (= store.deref()).
         let system_error = this.system_error.take();
@@ -642,6 +669,9 @@ impl ReadFile {
 
         if let Some(err) = system_error {
             return completion.complete(ReadFileResultType::Err(err));
+        }
+        if let Some(text) = text {
+            return completion.complete(ReadFileResultType::Text(text));
         }
 
         // The receiver takes ownership. Normalize to `Box<[u8]>` so every
@@ -694,6 +724,16 @@ impl ReadFile {
         if !close_after_io {
             if let Some(io_task) = self.io_task.take() {
                 bloblog!("ReadFile.onFinish() = immediately");
+                // A stopping VM releases this job unrun, and waits for this thread first.
+                if self.read_as == ReadAs::Text
+                    && self.system_error.is_none()
+                    && io_task.ticket().script_allowed()
+                {
+                    let bytes = core::mem::take(&mut self.buffer).into_boxed_slice();
+                    let text = text_from_owned_bytes(bytes);
+                    debug_assert!(text.is_thread_isolated());
+                    self.text = Some(text);
+                }
                 io_task.finish();
             }
         }

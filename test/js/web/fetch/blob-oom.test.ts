@@ -114,7 +114,12 @@ describe("Bun.file", () => {
   let dir: string;
   let file: string;
   beforeAll(() => {
-    dir = tempDirWithFiles("file-oom", { "file.txt": Buffer.alloc(FILE_SIZE, "x") });
+    dir = tempDirWithFiles("file-oom", {
+      "file.txt": Buffer.alloc(FILE_SIZE, "x"),
+      // FILE_SIZE UTF-16 code units.
+      "multibyte.txt": Buffer.alloc(FILE_SIZE * 2, "é"),
+      "bom.txt": Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.alloc(FILE_SIZE, "x")]),
+    });
     file = path.join(dir, "file.txt");
   });
   afterAll(() => {
@@ -123,6 +128,14 @@ describe("Bun.file", () => {
 
   test(".text() rejects with ERR_STRING_TOO_LONG", async () => {
     await expect(Bun.file(file).text()).rejects.toMatchObject(stringTooLong);
+  });
+
+  test(".text() of multibyte UTF-8 rejects with ERR_STRING_TOO_LONG", async () => {
+    await expect(Bun.file(path.join(dir, "multibyte.txt")).text()).rejects.toMatchObject(stringTooLong);
+  });
+
+  test(".text() of ASCII behind a UTF-8 BOM rejects with ERR_STRING_TOO_LONG", async () => {
+    await expect(Bun.file(path.join(dir, "bom.txt")).text()).rejects.toMatchObject(stringTooLong);
   });
 
   test(".json() rejects with ERR_STRING_TOO_LONG", async () => {

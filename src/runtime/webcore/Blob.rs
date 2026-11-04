@@ -451,6 +451,7 @@ impl BlobExt for Blob {
                 self.store().expect("infallible: store present").clone(),
                 self.offset.get(),
                 self.size.get(),
+                F::READ_AS,
             )
             .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
             // Create the Promise only after the store has been ref()'d.
@@ -510,6 +511,9 @@ impl BlobExt for Blob {
                             // ReadFile finisher; reclaim ownership here.
                             let buf = unsafe { bun_core::heap::take(b.buf) };
                             ReadBytesResult::Ok(buf.into_vec())
+                        }
+                        read_file::ReadFileResultType::Text(_) => {
+                            unreachable!("do_read_file_internal reads as ReadAs::Bytes")
                         }
                         read_file::ReadFileResultType::Err(e) => ReadBytesResult::Err(Box::new(e)),
                     };
@@ -683,6 +687,7 @@ impl BlobExt for Blob {
                 self.store().expect("infallible: store present").clone(),
                 self.offset.get(),
                 self.size.get(),
+                read_file::ReadAs::Bytes,
             )
             .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
             read_file::ReadFile::schedule(
@@ -2346,22 +2351,20 @@ impl BlobExt for Blob {
         global: &JSGlobalObject,
         raw_bytes: *mut [u8],
     ) -> JsResult<JSValue> {
-        // SAFETY: `raw_bytes` is valid for reads for the duration of this call
-        // (either a leaked Box for `Temporary` or a store-backed view otherwise).
+        if LIFETIME == Lifetime::Temporary {
+            // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`; reclaim it.
+            let bytes = unsafe { bun_core::heap::take(raw_bytes) };
+            return text_from_owned_bytes(bytes).into_js(global);
+        }
+        // SAFETY: `raw_bytes` is a store-backed view, valid for reads during this call.
         let raw_slice: &[u8] = unsafe { &*raw_bytes };
         let (bom, buf) = strings::BOM::detect_and_split(raw_slice);
 
         if buf.is_empty() {
-            // If all it contained was the bom, we need to free the bytes
-            if LIFETIME == Lifetime::Temporary {
-                // SAFETY: temporary lifetime means raw_bytes is a leaked default-allocator buffer.
-                unsafe { drop(bun_core::heap::take(raw_bytes)) };
-            }
             return Ok(JSValue::js_empty_string(global));
         }
 
         if bom == Some(strings::BOM::Utf16Le) {
-            let _free = (LIFETIME == Lifetime::Temporary).then(|| TemporaryBytes(raw_bytes));
             // This branch intentionally does NOT `self.detach()` for
             // `Lifetime::Transfer`, unlike the toJSON path.
             return BunString::clone_utf16_bytes(buf).into_js(global);
@@ -2378,31 +2381,18 @@ impl BlobExt for Blob {
             let converted = match strings::to_utf16_alloc(buf, false, false) {
                 Ok(converted) => converted,
                 Err(_) => {
-                    let err = bun_string_jsc::throw_utf16_transcode_failure(global, buf);
-                    if LIFETIME == Lifetime::Temporary {
-                        // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`; reclaim it.
-                        unsafe { drop(bun_core::heap::take(raw_bytes)) };
-                    }
-                    return Err(err);
+                    return Err(bun_string_jsc::throw_utf16_transcode_failure(global, buf));
                 }
             };
             if let Some(external) = converted {
-                if LIFETIME != Lifetime::Temporary {
-                    self.set_is_ascii_flag(false);
-                }
+                self.set_is_ascii_flag(false);
                 if LIFETIME == Lifetime::Transfer {
                     self.detach();
-                }
-                if LIFETIME == Lifetime::Temporary {
-                    // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`; reclaim it.
-                    unsafe { drop(bun_core::heap::take(raw_bytes)) };
                 }
                 return bun_string_jsc::owned_utf16_into_js(global, external);
             }
 
-            if LIFETIME != Lifetime::Temporary {
-                self.set_is_ascii_flag(true);
-            }
+            self.set_is_ascii_flag(true);
         }
 
         match LIFETIME {
@@ -2450,17 +2440,7 @@ impl BlobExt for Blob {
                     )
                 }
             }
-            Lifetime::Temporary => {
-                // if there was a UTF-8 BOM, we need to clone the buffer because
-                // external doesn't support this case here yet.
-                if buf.len() != raw_slice.len() {
-                    let out = BunString::clone_latin1(buf);
-                    // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`.
-                    unsafe { drop(bun_core::heap::take(raw_bytes)) };
-                    return out.into_js(global);
-                }
-                EncodedSlice::latin1(buf).to_external_value(global)
-            }
+            Lifetime::Temporary => unreachable!("returned above"),
         }
     }
 
@@ -5923,6 +5903,25 @@ impl Drop for TemporaryBytes {
     }
 }
 
+/// `Blob.text()` of bytes that an ASCII text adopts. It needs no JS heap, so it runs on any thread.
+pub(crate) fn text_from_owned_bytes(bytes: Box<[u8]>) -> BunString {
+    let mut bytes = bytes.into_vec();
+    let (bom, rest) = strings::BOM::detect_and_split(&bytes);
+    match bom {
+        Some(strings::BOM::Utf16Le) => BunString::clone_utf16_bytes(rest),
+        None => BunString::from_owned_utf8(bytes),
+        Some(strings::BOM::Utf8) => match strings::to_utf16_alloc(rest, false, false) {
+            Ok(Some(utf16)) => BunString::create_external_globally_allocated_utf16(utf16),
+            Ok(None) => {
+                let bom_len = bytes.len() - rest.len();
+                bytes.drain(..bom_len);
+                BunString::create_external_globally_allocated_latin1(bytes)
+            }
+            Err(_) => BunString::utf16_transcode_failure(rest),
+        },
+    }
+}
+
 // Marker types for static fn dispatch through do_read_file/do_read_from_s3.
 // Each implements `ReadFileToJs` so a plain fn-pointer monomorphizes per `*WithBytes` body.
 pub(crate) struct ToStringWithBytesFn;
@@ -5933,6 +5932,8 @@ pub(crate) struct ToUint8ArrayWithBytesFn;
 pub(crate) struct ToFormDataWithBytesFn;
 
 impl read_file::ReadFileToJs for ToStringWithBytesFn {
+    #[cfg(not(windows))]
+    const READ_AS: read_file::ReadAs = read_file::ReadAs::Text;
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         // SAFETY: `by` upholds the `ReadFileToJs::call` contract — a leaked
         // `Box<[u8]>` for `Temporary`, store-backed otherwise.
@@ -5947,6 +5948,8 @@ impl read_file::ReadFileToJs for ToStringWithBytesFn {
     }
 }
 impl read_file::ReadFileToJs for ToJsonWithBytesFn {
+    #[cfg(not(windows))]
+    const READ_AS: read_file::ReadAs = read_file::ReadAs::Bytes;
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         // SAFETY: see `ToStringWithBytesFn::call`.
         unsafe {
@@ -5960,6 +5963,8 @@ impl read_file::ReadFileToJs for ToJsonWithBytesFn {
     }
 }
 impl read_file::ReadFileToJs for ToJsonSourceWithBytesFn {
+    #[cfg(not(windows))]
+    const READ_AS: read_file::ReadAs = read_file::ReadAs::Bytes;
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         // SAFETY: see `ToStringWithBytesFn::call`.
         let Some(text) = json_text_behind_mark(g, unsafe { &*by }) else {
@@ -5973,6 +5978,8 @@ impl read_file::ReadFileToJs for ToJsonSourceWithBytesFn {
     }
 }
 impl read_file::ReadFileToJs for ToArrayBufferWithBytesFn {
+    #[cfg(not(windows))]
+    const READ_AS: read_file::ReadAs = read_file::ReadAs::Bytes;
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         // SAFETY: see `ToStringWithBytesFn::call`.
         unsafe {
@@ -5988,6 +5995,8 @@ impl read_file::ReadFileToJs for ToArrayBufferWithBytesFn {
     }
 }
 impl read_file::ReadFileToJs for ToUint8ArrayWithBytesFn {
+    #[cfg(not(windows))]
+    const READ_AS: read_file::ReadAs = read_file::ReadAs::Bytes;
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         // SAFETY: see `ToStringWithBytesFn::call`.
         unsafe {
@@ -6003,6 +6012,8 @@ impl read_file::ReadFileToJs for ToUint8ArrayWithBytesFn {
     }
 }
 impl read_file::ReadFileToJs for ToFormDataWithBytesFn {
+    #[cfg(not(windows))]
+    const READ_AS: read_file::ReadAs = read_file::ReadAs::Bytes;
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         let _ = l; // FormData ignores lifetime — bytes are read-only.
         // SAFETY: `by` is valid for reads per the `ReadFileToJs::call` contract.

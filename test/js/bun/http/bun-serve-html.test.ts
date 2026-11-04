@@ -1014,7 +1014,7 @@ describe("html route whose file a plugin resolves to a different file", () => {
       stdout: JSON.stringify({ devServer: [failurePage, failurePage], ...builtWithout[target] }),
       exitCode: 0,
     });
-    // Printed by the dev server (and by the development build when it fails too). Production says nothing.
+    // Printed by the dev server, and by the other two builds when they fail too.
     expect(stderr).toMatch(
       /error: Bundling "[^"]*index\.html" did not produce an html page for it\. A plugin may have resolved it to another file or loaded it as something other than html\./,
     );
@@ -1388,6 +1388,148 @@ test.concurrent("a route keeps failing when its broken module was imported throu
   });
   const { stdout, stderr, exitCode } = await runServeFixture(dir);
   expect({ stdout, exitCode }, stderr).toEqual({ stdout: "500 200 500", exitCode: 0 });
+});
+
+test.concurrent(
+  "a production route whose build failed answers every request with 500 and prints the error once",
+  async () => {
+    using dir = tempDir("bun-serve-html-build-failed", {
+      "index.html": `<!DOCTYPE html><html><head><script type="module" src="./missing.js"></script></head><body></body></html>`,
+      "serve.ts": /*ts*/ `
+      import net from "node:net";
+      import html from "./index.html";
+
+      using server = Bun.serve({ port: 0, development: false, idleTimeout: 0, routes: { "/": html } });
+      // This request waits for the build. The response has "Connection: close", so the server must close the socket.
+      const first = await new Promise((resolve, reject) => {
+        let response = "";
+        const socket = net.connect(server.port, "127.0.0.1", () => socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n"));
+        socket.on("data", chunk => (response += chunk));
+        socket.on("error", reject);
+        socket.on("close", () => resolve(response.split("\\r\\n")[0]));
+      });
+      const later = [];
+      for (const method of ["GET", "HEAD"]) {
+        const response = await fetch(server.url, { method });
+        later.push([response.status, response.headers.get("content-length"), await response.text()]);
+      }
+      console.log(JSON.stringify({ first, later }));
+    `,
+    });
+    const { stdout, stderr, exitCode } = await runServeFixture(dir);
+    expect(stderr.split(`Could not resolve: "./missing.js"`)).toHaveLength(2);
+    expect({ stdout, exitCode }, stderr).toEqual({
+      stdout: JSON.stringify({
+        first: "HTTP/1.1 500 Build Failed",
+        later: [
+          [500, "0", ""],
+          [500, "0", ""],
+        ],
+      }),
+      exitCode: 0,
+    });
+  },
+);
+
+// A stylesheet link must not put a script in the page. The route fails, and no response runs the linked file.
+describe("html route whose page has a stylesheet link to a script", () => {
+  // Serves the route in each mode. For each response: the status, and whether the page's script holds the linked file.
+  const serveInEachMode = /*ts*/ `
+    import page from "./index.html";
+
+    async function serve(development, requestCount) {
+      using server = Bun.serve({ port: 0, development, routes: { "/": page } });
+      const responses = [];
+      for (let i = 0; i < requestCount; i++) {
+        const response = await fetch(server.url);
+        const scriptSrc = (await response.text()).match(/<script[^>]*\\ssrc="([^"]+)"/)?.[1];
+        const script = scriptSrc ? await (await fetch(new URL(scriptSrc, server.url))).text() : "";
+        responses.push({ status: response.status, runsTheFile: script.includes("linked-file-marker") });
+      }
+      return responses;
+    }
+
+    console.log(
+      JSON.stringify({
+        devServer: await serve(true, 2),
+        devWithoutHmr: await serve({ hmr: false }, 2),
+        production: await serve(false, 2),
+      }),
+    );
+  `;
+  const page = (href: string) =>
+    `<!DOCTYPE html><html><head><link rel="stylesheet" href="${href}"></head><body></body></html>`;
+
+  test.concurrent.each(["0", "1"])("fails, BUN_ASSUME_PERFECT_INCREMENTAL=%s", async assumePerfectIncremental => {
+    using dir = tempDir("bun-serve-html-stylesheet-link-to-script", {
+      "index.html": page("./theme.js"),
+      "theme.js": `console.log("linked-file-marker");`,
+      "serve.ts": serveInEachMode,
+    });
+    const { stdout, stderr, exitCode } = await runServeFixture(dir, {
+      BUN_ASSUME_PERFECT_INCREMENTAL: assumePerfectIncremental,
+    });
+    const failed = { status: 500, runsTheFile: false };
+    expect({ stdout, exitCode }, stderr).toEqual({
+      stdout: JSON.stringify({
+        devServer: [failed, failed],
+        devWithoutHmr: [failed, failed],
+        production: [failed, failed],
+      }),
+      exitCode: 0,
+    });
+    // The dev server prints the error for each bundle of the page: one bundle with BUN_ASSUME_PERFECT_INCREMENTAL=1,
+    // two with 0. The development build prints it for each request, and the production build once.
+    const devServerPrints = assumePerfectIncremental === "1" ? 1 : 2;
+    expect(stderr.split('error: Cannot use "theme.js" as a stylesheet')).toHaveLength(devServerPrints + 2 + 1 + 1);
+  });
+
+  // A plugin can make a script of a stylesheet, to add the styles at run time. That page is served.
+  test.concurrent("is served when a plugin loads the stylesheet as a script", async () => {
+    using dir = tempDir("bun-serve-html-stylesheet-link-css-to-js-plugin", {
+      "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+      "index.html": page("./styles.css"),
+      "styles.css": `body { color: red; }`,
+      "plugin.ts": /*ts*/ `
+        export default {
+          name: "css-to-js",
+          setup(build) {
+            build.onLoad({ filter: /\\.css$/ }, () => ({ contents: "console.log('linked-file-marker');", loader: "js" }));
+          },
+        };
+      `,
+      "serve.ts": serveInEachMode,
+    });
+    const { stdout, stderr, exitCode } = await runServeFixture(dir);
+    const served = { status: 200, runsTheFile: true };
+    expect({ stdout, exitCode }, stderr).toEqual({
+      stdout: JSON.stringify({
+        devServer: [served, served],
+        devWithoutHmr: [served, served],
+        production: [served, served],
+      }),
+      exitCode: 0,
+    });
+  });
+
+  // The check is about scripts and pages only. It does not decide what a link to a data file becomes.
+  test.concurrent("is served when the link is to a data file", async () => {
+    using dir = tempDir("bun-serve-html-stylesheet-link-to-data-file", {
+      "index.html": page("./data.json"),
+      "data.json": `{ "marker": "linked-file-marker" }`,
+      "serve.ts": serveInEachMode,
+    });
+    const { stdout, stderr, exitCode } = await runServeFixture(dir);
+    // Only the statuses. What the page's script holds for a data file is not the subject here.
+    expect({ stdout: stdout.replace(/,"runsTheFile":(true|false)/g, ""), exitCode }, stderr).toEqual({
+      stdout: JSON.stringify({
+        devServer: [{ status: 200 }, { status: 200 }],
+        devWithoutHmr: [{ status: 200 }, { status: 200 }],
+        production: [{ status: 200 }, { status: 200 }],
+      }),
+      exitCode: 0,
+    });
+  });
 });
 
 // process.chdir() leaves the cached top-level directory with a trailing slash,

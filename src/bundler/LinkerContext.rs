@@ -33,6 +33,7 @@ use bun_js_printer::{self as js_printer, renamer};
 use crate::bun_node_fallbacks as NodeFallbackModules;
 use bun_ast::SideEffects;
 use bun_resolver::Resolver;
+use bun_resolver::fs::PathResolverExt as _;
 
 use crate::Graph::Graph;
 use crate::options::{CompileMode, Format, Loader, SourceMapOption, Target};
@@ -87,6 +88,8 @@ pub struct LinkerContext<'a> {
     /// instead of open-coding a raw deref. `Option` because [`Self::new`] precedes
     /// [`Self::load`]. Read-only — never `assume_mut`.
     pub(crate) resolver: Option<bun_ptr::ParentRef<Resolver<'a>>>,
+    /// Backref into `BundleV2.transpiler.options.loaders`: the loader that this build gives each file extension. `None` until [`Self::load`].
+    pub(crate) loader_table: Option<bun_ptr::ParentRef<bun_ast::LoaderHashTable>>,
     pub(crate) cycle_detector: Vec<ImportTracker>,
 
     /// We may need to refer to the "__esm" and/or "__commonJS" runtime symbols
@@ -160,6 +163,7 @@ impl<'a> LinkerContext<'a> {
             graph: LinkerGraph::new(bump),
             log: core::ptr::null_mut(),
             resolver: None,
+            loader_table: None,
             cycle_detector: Vec::new(),
             cjs_runtime_ref: Ref::NONE,
             esm_runtime_ref: Ref::NONE,
@@ -563,6 +567,7 @@ impl<'a> LinkerContext<'a> {
         self.resolver = Some(unsafe {
             bun_ptr::ParentRef::from_raw(core::ptr::from_ref(&transpiler.resolver).cast())
         });
+        self.loader_table = Some(bun_ptr::ParentRef::new(&transpiler.options.loaders));
         self.cycle_detector = Vec::new();
         self.inits_already_done = None;
 
@@ -3021,14 +3026,7 @@ impl<'a> LinkerContext<'a> {
         // via .url kind import records. Follow all import records for HTML files
         // so these assets are marked live and included in the manifest.
         if self.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html {
-            for record in ctx.import_records[source_index as usize].iter() {
-                if record.source_index.is_valid() {
-                    let other = record.source_index.get();
-                    if !self.graph.files_live.is_set(other as usize) {
-                        ctx.worklist.push(TreeShakeWork::File(other));
-                    }
-                }
-            }
+            self.mark_html_imports_live(ctx, source_index);
             return;
         }
 
@@ -3126,6 +3124,47 @@ impl<'a> LinkerContext<'a> {
                         source_index,
                     });
                 }
+            }
+        }
+    }
+
+    /// Queues what the tags of an HTML file use, and reports a stylesheet link that would put a script in the page. Cold: pages are few, and `mark_file_live_step` runs for every file.
+    #[cold]
+    #[inline(never)]
+    fn mark_html_imports_live(
+        &self,
+        ctx: &mut TreeShakeCtx<'a, '_>,
+        source_index: crate::IndexInt,
+    ) {
+        let input_files = &self.parse_graph().input_files;
+        let (sources, loaders) = (input_files.items_source(), input_files.items_loader());
+        let loader_table = self
+            .loader_table
+            .as_ref()
+            .expect("LinkerContext.loader_table accessed before load()")
+            .get();
+        for record in ctx.import_records[source_index as usize].iter() {
+            if !record.source_index.is_valid() {
+                continue;
+            }
+            let other = record.source_index.get();
+            let target = &sources[other as usize].path;
+            if let Some(loader) = Self::html_import_mismatch(
+                record.kind,
+                loaders[other as usize],
+                target,
+                loader_table,
+            ) {
+                Self::add_html_import_mismatch_error(
+                    self.log_disjoint(),
+                    &sources[source_index as usize],
+                    record,
+                    target.pretty,
+                    loader,
+                );
+            }
+            if !self.graph.files_live.is_set(other as usize) {
+                ctx.worklist.push(TreeShakeWork::File(other));
             }
         }
     }
@@ -3333,6 +3372,96 @@ impl<'a> LinkerContext<'a> {
         } else {
             ScanCssImportsResult::Ok
         }
+    }
+
+    /// The loader of the script that a tag of an HTML file would put in the page. `loader` loads the file that the tag resolves to, `path` is the path of that file, and `loader_table` is `options.loaders` of the build.
+    #[inline(always)]
+    pub(crate) fn html_import_mismatch(
+        kind: ImportKind,
+        loader: Loader,
+        path: &bun_paths::fs::Path<'_>,
+        loader_table: &bun_ast::LoaderHashTable,
+    ) -> Option<Loader> {
+        match kind {
+            // `<link rel="stylesheet">` and `<link as="style">`. A plugin can make a script of a stylesheet, so the path must be the path of a script too.
+            ImportKind::At => (Self::adds_scripts(loader)
+                && Self::is_script_path(path, loader_table))
+            .then_some(loader),
+            // `<script src>`. Also `<link as="worker">`, which this rule does not judge.
+            ImportKind::Stmt => None,
+            // The asset tags, which this rule does not judge.
+            ImportKind::Url => None,
+            // The HTML scanner makes none of these.
+            ImportKind::EntryPointRun
+            | ImportKind::EntryPointBuild
+            | ImportKind::Require
+            | ImportKind::Dynamic
+            | ImportKind::RequireResolve
+            | ImportKind::AtConditional
+            | ImportKind::Composes
+            | ImportKind::HtmlManifest
+            | ImportKind::Internal => None,
+        }
+    }
+
+    /// A file that this loader loads puts scripts in the page that uses it.
+    #[inline]
+    fn adds_scripts(loader: Loader) -> bool {
+        loader.is_javascript_like() || loader == Loader::Html
+    }
+
+    /// This build loads `path` as a script or a page when no plugin chooses the loader. Cold: asked only for a stylesheet link to a file that is loaded as one.
+    #[cold]
+    fn is_script_path(
+        path: &bun_paths::fs::Path<'_>,
+        loader_table: &bun_ast::LoaderHashTable,
+    ) -> bool {
+        // The MIME type of a data URL picks its loader, and `Path::loader` does not read it.
+        if path.is_data_url() {
+            return bun_resolver::DataURL::parse(path.text)
+                .ok()
+                .flatten()
+                .is_some_and(|url| {
+                    url.decode_mime_type().category
+                        == bun_http_types::MimeType::Category::Javascript
+                });
+        }
+        // `file` and `node` are the namespaces of Bun. A plugin makes the modules of each other namespace.
+        (path.is_file() || path.namespace == b"node")
+            && path.loader(loader_table).is_some_and(Self::adds_scripts)
+    }
+
+    /// Reports what [`Self::html_import_mismatch`] found for `record` of the HTML file `page`. `target` is the pretty path of the file that the tag resolves to.
+    #[cold]
+    pub(crate) fn add_html_import_mismatch_error(
+        log: &mut Log,
+        page: &Source,
+        record: &ImportRecord,
+        target: &[u8],
+        loader: Loader,
+    ) {
+        const REMEDY: &str =
+            "Link a CSS file or remove the link. A script is loaded with <script src>.";
+        let loader = <&'static str>::from(loader);
+        let file = bun_core::fmt::quote(target);
+        let href = record.original_path;
+        // The HTML scanner replaces a rooted or a bare href with an absolute path, which is not the text of the attribute.
+        let note = if bun_paths::is_absolute(href) {
+            bun_ast::alloc_print(format_args!(
+                "A stylesheet link resolves to {file}, which the \"{loader}\" loader loads. {REMEDY}",
+            ))
+        } else {
+            bun_ast::alloc_print(format_args!(
+                "The stylesheet link {} resolves to {file}, which the \"{loader}\" loader loads. {REMEDY}",
+                bun_core::fmt::quote(href),
+            ))
+        };
+        log.add_range_error_fmt_with_notes(
+            Some(page),
+            record.range,
+            Box::new([bun_ast::range_data(None, Range::NONE, note)]),
+            format_args!("Cannot use {file} as a stylesheet"),
+        );
     }
 
     /// Creates the synthetic wrapper part (CommonJS or ESM) for a wrapped

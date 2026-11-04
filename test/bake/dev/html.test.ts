@@ -516,3 +516,235 @@ devTest("editing a file imported from outside the project root hot-reloads", {
     await c.expectMessage("three");
   },
 });
+
+// A stylesheet link must not put a script in the page. The page fails when Bun loads the link target as a script.
+const stylesheetLinkError = (file: string) => `index.html: error: Cannot use "${file}" as a stylesheet`;
+
+devTest("a stylesheet link to a script fails the page until the link is fixed", {
+  files: {
+    "index.html": emptyHtmlFile({ styles: ["./theme.js"], body: "<h1>Page</h1>" }),
+    "theme.js": `console.log("theme-script");`,
+    "theme.css": `h1 { color: red; }`,
+  },
+  async test(dev) {
+    // The page and the script are bundled together.
+    await using c = await dev.client("/", { errors: [stylesheetLinkError("theme.js")] });
+    // The page is bundled again when the script goes away, and when it comes back.
+    await dev.delete("theme.js", { errors: ['index.html: error: Could not resolve: "./theme.js"'] });
+    await dev.write("theme.js", `console.log("theme-script");`, { errors: [stylesheetLinkError("theme.js")] });
+    // The script is in the module cache now. The page still fails.
+    expect([(await dev.fetch("/")).status, (await dev.fetch("/")).status]).toEqual([500, 500]);
+
+    await c.expectReload(async () => {
+      await dev.write("index.html", emptyHtmlFile({ styles: ["./theme.css"], body: "<h1>Page</h1>" }));
+    });
+    await c.style("h1").color.expect.toBe("red");
+  },
+});
+devTest("a page fails when it gains a stylesheet link to a script that it already loads", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["./app.js"] }),
+    "app.js": `console.log("app");`,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(200);
+
+    // Only the page is bundled again. The script comes from the module cache.
+    await dev.write("index.html", emptyHtmlFile({ styles: ["./app.js"], scripts: ["./app.js"] }), { errors: null });
+    await using c = await dev.client("/", { errors: [stylesheetLinkError("app.js")] });
+    await c.expectReload(async () => {
+      await dev.write("index.html", emptyHtmlFile({ scripts: ["./app.js"] }));
+    });
+    await c.expectMessage("app");
+  },
+});
+// A page that failed on a link to a cached script is bundled again when that script goes away, and when it comes back.
+devTest("a page with a stylesheet link to a script that it loaded before follows that script", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["./app.js"] }),
+    "app.js": `console.log("app");`,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(200);
+
+    await dev.write("index.html", emptyHtmlFile({ styles: ["./app.js"] }), { errors: null });
+    await using c = await dev.client("/", { errors: [stylesheetLinkError("app.js")] });
+    await dev.delete("app.js", { errors: ['index.html: error: Could not resolve: "./app.js"'] });
+    // The link still names the script.
+    await dev.write("app.js", `console.log("app");`, { errors: [stylesheetLinkError("app.js")] });
+  },
+});
+devTest("a page does not run a new script that it gains a stylesheet link to", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["./app.js"] }),
+    "app.js": `console.log("app");`,
+    "theme.js": `console.log("theme-script");`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("app");
+
+    // The page and the new script are bundled together. The page fails, and the open page does not get the script.
+    await dev.write("index.html", emptyHtmlFile({ styles: ["./theme.js"], scripts: ["./app.js"] }), {
+      errors: [stylesheetLinkError("theme.js")],
+    });
+    await c.expectMessage();
+    expect((await dev.fetch("/")).status).toBe(500);
+  },
+});
+devTest("a stylesheet link to a script with a syntax error still fails the page after the script is repaired", {
+  files: {
+    "index.html": emptyHtmlFile({ styles: ["./theme.js"], body: "<h1>Page</h1>" }),
+    "theme.js": `const = ;`,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    // Only the script is repaired. The page is bundled again with it, and the link is still an error.
+    await dev.write("theme.js", `console.log("theme-script");`, { errors: null });
+    await using c = await dev.client("/", { errors: [stylesheetLinkError("theme.js")] });
+  },
+});
+// The page and the script both load "./dep". When dep.ts goes away, both are bundled again, and the script is still in the module cache.
+devTest("a page reports a stylesheet link once when its cached script is bundled again with it", {
+  files: {
+    "index.html": emptyHtmlFile({ styles: ["./app.js"], scripts: ["./dep"], body: "<h1>Page</h1>" }),
+    "app.js": `import "./dep";\nconsole.log("app");`,
+    "dep.ts": `console.log("dep-ts");`,
+    "dep.js": `console.log("dep-js");`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { errors: [stylesheetLinkError("app.js")] });
+    await dev.delete("dep.ts", { errors: [stylesheetLinkError("app.js")] });
+  },
+});
+// A plugin can make a script of a stylesheet, to add the styles at run time. Those pages build, and the plugin loads the file once.
+devTest("pages keep a stylesheet link to a file that a plugin loads as a script", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./css-to-js-plugin.ts"]
+    `,
+    "css-to-js-plugin.ts": `
+      let loads = 0;
+      export default {
+        name: "css-to-js",
+        setup(build) {
+          build.onLoad({ filter: /\\.css$/ }, () => {
+            loads++;
+            return { contents: "console.log('styles-load-" + loads + "');", loader: "js" };
+          });
+        },
+      };
+    `,
+    "first.html": emptyHtmlFile({ styles: ["./styles.css"], body: "<h1>one</h1>" }),
+    "second.html": emptyHtmlFile({ styles: ["./styles.css"], body: "<h1>second</h1>" }),
+    "styles.css": `h1 { color: red; }`,
+  },
+  async test(dev) {
+    await using second = await dev.client("/second");
+    await second.expectMessage("styles-load-1");
+    await using first = await dev.client("/first");
+    await first.expectMessage("styles-load-1");
+
+    // Only the first page is bundled again. The plugin does not load the stylesheet again.
+    await first.expectReload(async () => {
+      await dev.patch("first.html", { find: "one", replace: "two" });
+    });
+    await first.expectMessage("styles-load-1");
+    // The second page got no new module: it did not reload and its script did not run again.
+    await second.expectMessage();
+  },
+});
+// A plugin can also make a stylesheet of a file with a script path. The plugin loads that file once, too.
+devTest("pages keep a stylesheet link to a script path that a plugin loads as CSS", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./to-css-plugin.ts"]
+    `,
+    "to-css-plugin.ts": `
+      const colors = ["red", "green", "blue"];
+      let loads = 0;
+      export default {
+        name: "to-css",
+        setup(build) {
+          build.onLoad({ filter: /generated\\.js$/ }, () => ({
+            contents: "h1 { color: " + colors[loads++] + "; }",
+            loader: "css",
+          }));
+        },
+      };
+    `,
+    "first.html": emptyHtmlFile({ styles: ["./generated.js"], body: "<h1>one</h1>" }),
+    "second.html": emptyHtmlFile({ styles: ["./generated.js"], body: "<h1>second</h1>" }),
+    "generated.js": `not a script`,
+  },
+  async test(dev) {
+    await using first = await dev.client("/first");
+    await first.style("h1").color.expect.toBe("red");
+    await using second = await dev.client("/second");
+    await second.style("h1").color.expect.toBe("red");
+
+    await first.expectReload(async () => {
+      await dev.patch("first.html", { find: "one", replace: "two" });
+    });
+    await first.style("h1").color.expect.toBe("red");
+  },
+});
+// What a plugin makes of a file can change with the file. A page that failed is bundled again with the file that it links.
+devTest("a page that failed on a stylesheet link is bundled again when the linked file changes", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./as-written-plugin.ts"]
+    `,
+    "as-written-plugin.ts": `
+      import { readFileSync } from "node:fs";
+      export default {
+        name: "as-written",
+        setup(build) {
+          build.onLoad({ filter: /generated\\.js$/ }, ({ path }) => {
+            const contents = readFileSync(path, "utf8");
+            return { contents, loader: contents.startsWith("/* css */") ? "css" : "js" };
+          });
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ styles: ["./generated.js"], body: "<h1>Page</h1>" }),
+    "generated.js": `console.log("generated-script");`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { errors: [stylesheetLinkError("generated.js")] });
+    // Only the linked file changes.
+    await c.expectReload(async () => {
+      await dev.write("generated.js", `/* css */ h1 { color: red; }`);
+    });
+    await c.style("h1").color.expect.toBe("red");
+  },
+});
+// While a plugin throws for a file, the file has the loader of its path. The page fails on the link too.
+devTest("a plugin throws for a stylesheet that has a script path", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./css-in-ts-plugin.ts"]
+    `,
+    "css-in-ts-plugin.ts": `
+      export default {
+        name: "css-in-ts",
+        setup(build) {
+          build.onLoad({ filter: /\\.css\\.ts$/ }, () => {
+            throw new Error("styles.css.ts is broken");
+          });
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ styles: ["./styles.css.ts"], body: "<h1>Page</h1>" }),
+    "styles.css.ts": `export const color = "red";`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: ["styles.css.ts: error: styles.css.ts is broken", stylesheetLinkError("styles.css.ts")],
+    });
+  },
+});

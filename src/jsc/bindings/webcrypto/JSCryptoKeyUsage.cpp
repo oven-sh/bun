@@ -24,6 +24,9 @@
 
 #include "JSCryptoKeyUsage.h"
 
+#include "ErrorCode.h"
+#include "ObjectBindings.h"
+#include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSString.h>
 #include <wtf/NeverDestroyed.h>
@@ -90,9 +93,73 @@ template<> std::optional<CryptoKeyUsage> parseEnumerationFromString<CryptoKeyUsa
     return std::nullopt;
 }
 
-template<> std::optional<CryptoKeyUsage> parseEnumeration<CryptoKeyUsage>(JSGlobalObject& lexicalGlobalObject, JSValue value)
+// Node's createSequenceConverter() of createEnumConverter(): https://github.com/nodejs/node/blob/v26.12.1/lib/internal/webidl.js#L817-L876 and #L643-L660
+Vector<CryptoKeyUsage> convertKeyUsages(JSGlobalObject& lexicalGlobalObject, JSValue value, ASCIILiteral context)
 {
-    return parseEnumerationFromString<CryptoKeyUsage>(value.toWTFString(&lexicalGlobalObject));
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    Vector<CryptoKeyUsage> usages;
+    auto convertEntry = [&](VM& vm, JSGlobalObject* globalObject, JSValue entry) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        if (entry.isSymbol()) [[unlikely]] {
+            Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, makeString(context, '[', usages.size(), "] is a Symbol and cannot be converted to a string."_s));
+            return;
+        }
+        auto string = entry.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, );
+        auto usage = parseEnumerationFromString<CryptoKeyUsage>(string);
+        if (!usage) [[unlikely]] {
+            Bun::MessageBuilder message;
+            message.append(context, '[', usages.size(), "] '"_s, string, "' is not a valid enum value of type KeyUsage."_s);
+            Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_VALUE, message);
+            return;
+        }
+        if (!usages.tryAppend(*usage)) [[unlikely]]
+            throwOutOfMemoryError(globalObject, scope);
+    };
+    auto notSequence = [&] {
+        Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, makeString(context, " cannot be converted to sequence."_s));
+        return Vector<CryptoKeyUsage> {};
+    };
+
+    auto* object = value.getObject();
+    if (!object) [[unlikely]]
+        return notSequence();
+
+    // JSC reads an array or a Set in place when nothing can observe its iteration.
+    if (isJSArray(object) && asArray(object)->isIteratorProtocolFastAndNonObservable()) [[likely]]
+        forEachInFastArray(&lexicalGlobalObject, object, asArray(object), convertEntry);
+    else if (auto* set = dynamicDowncast<JSSet>(object); set && set->isIteratorProtocolFastAndNonObservable())
+        forEachInIterable(&lexicalGlobalObject, set, convertEntry);
+    else {
+        JSValue method = object->get(&lexicalGlobalObject, vm.propertyNames->iteratorSymbol);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!method.isCallable())
+            return notSequence();
+        JSValue iterator = JSC::call(&lexicalGlobalObject, method, object, ArgList(), "keyUsages[Symbol.iterator]"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!iterator.isObject())
+            return notSequence();
+        JSValue next = iterator.get(&lexicalGlobalObject, vm.propertyNames->next);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!next.isCallable())
+            return notSequence();
+        while (true) {
+            JSValue step = JSC::call(&lexicalGlobalObject, next, iterator, ArgList(), "keyUsages iterator next"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!step.isObject())
+                return notSequence();
+            auto [done, entry] = Bun::getIteratorResult(&lexicalGlobalObject, asObject(step), Bun::IteratorDoneValue::Skip);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (done.toBoolean(&lexicalGlobalObject))
+                break;
+            convertEntry(vm, &lexicalGlobalObject, entry);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+    RETURN_IF_EXCEPTION(scope, {});
+    return usages;
 }
 
 } // namespace WebCore

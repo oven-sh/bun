@@ -42,7 +42,6 @@
 #include "JSDOMConvertNumbers.h"
 #include "JSDOMConvertObject.h"
 #include "JSDOMConvertPromise.h"
-#include "JSDOMConvertSequences.h"
 #include "JSDOMConvertStrings.h"
 #include "JSDOMConvertUnion.h"
 #include "JSDOMExceptionHandling.h"
@@ -404,7 +403,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_generateKeyBod
     auto extractable = convert<IDLBoolean>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
-    auto keyUsages = convert<IDLSequence<IDLEnumeration<CryptoKeyUsage>>>(*lexicalGlobalObject, argument2.value());
+    auto keyUsages = convertKeyUsages(*lexicalGlobalObject, argument2.value(), "Failed to execute 'generateKey' on 'SubtleCrypto': 3rd argument"_s);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.generateKey(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(algorithm), WTF::move(extractable), WTF::move(keyUsages), WTF::move(promise)); })));
 }
@@ -437,7 +436,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_deriveKeyBody(
     auto extractable = convert<IDLBoolean>(*lexicalGlobalObject, argument3.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument4 = callFrame->uncheckedArgument(4);
-    auto keyUsages = convert<IDLSequence<IDLEnumeration<CryptoKeyUsage>>>(*lexicalGlobalObject, argument4.value());
+    auto keyUsages = convertKeyUsages(*lexicalGlobalObject, argument4.value(), "Failed to execute 'deriveKey' on 'SubtleCrypto': 5th argument"_s);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.deriveKey(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(algorithm), *baseKey, WTF::move(derivedKeyType), WTF::move(extractable), WTF::move(keyUsages), WTF::move(promise)); })));
 }
@@ -519,7 +518,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_importKeyBody(
     auto extractable = convert<IDLBoolean>(*lexicalGlobalObject, argument3.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument4 = callFrame->uncheckedArgument(4);
-    auto keyUsages = convert<IDLSequence<IDLEnumeration<CryptoKeyUsage>>>(*lexicalGlobalObject, argument4.value());
+    auto keyUsages = convertKeyUsages(*lexicalGlobalObject, argument4.value(), "Failed to execute 'importKey' on 'SubtleCrypto': 5th argument"_s);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLInterface<CryptoKey>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.importKey(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(format), WTF::move(keyData), WTF::move(algorithm), WTF::move(extractable), WTF::move(keyUsages), WTF::move(promise)); })));
 }
@@ -635,7 +634,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_unwrapKeyBody(
     auto extractable = convert<IDLBoolean>(*lexicalGlobalObject, argument5.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument6 = callFrame->uncheckedArgument(6);
-    auto keyUsages = convert<IDLSequence<IDLEnumeration<CryptoKeyUsage>>>(*lexicalGlobalObject, argument6.value());
+    auto keyUsages = convertKeyUsages(*lexicalGlobalObject, argument6.value(), "Failed to execute 'unwrapKey' on 'SubtleCrypto': 7th argument"_s);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLInterface<CryptoKey>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.unwrapKey(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(format), WTF::move(wrappedKey), *unwrappingKey, WTF::move(unwrapAlgorithm), WTF::move(unwrappedKeyAlgorithm), WTF::move(extractable), WTF::move(keyUsages), WTF::move(promise)); })));
 }
@@ -659,7 +658,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_getPublicKeyBo
     auto key = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 0, "key"_s, "SubtleCrypto"_s, "getPublicKey"_s, "CryptoKey"_s); });
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto keyUsages = convert<IDLSequence<IDLEnumeration<CryptoKeyUsage>>>(*lexicalGlobalObject, argument1.value());
+    auto keyUsages = convertKeyUsages(*lexicalGlobalObject, argument1.value(), "Failed to execute 'getPublicKey' on 'SubtleCrypto': 2nd argument"_s);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLInterface<CryptoKey>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.getPublicKey(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), *key, WTF::move(keyUsages), WTF::move(promise)); })));
 }
@@ -716,7 +715,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_encapsulateKey
     auto extractable = convert<IDLBoolean>(*lexicalGlobalObject, argument3.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument4 = callFrame->uncheckedArgument(4);
-    auto keyUsages = convert<IDLSequence<IDLEnumeration<CryptoKeyUsage>>>(*lexicalGlobalObject, argument4.value());
+    auto keyUsages = convertKeyUsages(*lexicalGlobalObject, argument4.value(), "Failed to execute 'encapsulateKey' on 'SubtleCrypto': 5th argument"_s);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.encapsulateKey(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(algorithm), *encapsulationKey, WTF::move(sharedKeyAlgorithm), WTF::move(extractable), WTF::move(keyUsages), WTF::move(promise)); })));
 }
@@ -779,7 +778,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_decapsulateKey
     auto extractable = convert<IDLBoolean>(*lexicalGlobalObject, argument4.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument5 = callFrame->uncheckedArgument(5);
-    auto keyUsages = convert<IDLSequence<IDLEnumeration<CryptoKeyUsage>>>(*lexicalGlobalObject, argument5.value());
+    auto keyUsages = convertKeyUsages(*lexicalGlobalObject, argument5.value(), "Failed to execute 'decapsulateKey' on 'SubtleCrypto': 6th argument"_s);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLInterface<CryptoKey>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.decapsulateKey(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(algorithm), *decapsulationKey, WTF::move(ciphertext), WTF::move(sharedKeyAlgorithm), WTF::move(extractable), WTF::move(keyUsages), WTF::move(promise)); })));
 }

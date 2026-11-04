@@ -22,10 +22,8 @@
 #include "SubtleCrypto.h"
 #include "JSDOMConvertInterface.h"
 #include "JSDOMConvertObject.h"
-#include "JSDOMConvertSequences.h"
 #include "JSDOMConvertStrings.h"
 #include "JSDOMConvertUnion.h"
-#include "JSDOMConvertEnumeration.h"
 #include "JSDOMExceptionHandling.h"
 #include "OpenSSLUtilities.h"
 #include "CryptoGenKeyPair.h"
@@ -967,7 +965,7 @@ JSValue KeyObject::toCryptoKey(JSGlobalObject* lexicalGlobalObject, ThrowScope& 
     auto algorithm = WebCore::convert<WebCore::IDLUnion<WebCore::IDLObject, WebCore::IDLDOMString>>(*lexicalGlobalObject, algorithmValue);
     RETURN_IF_EXCEPTION(scope, {});
     bool extractable = extractableValue.toBoolean(lexicalGlobalObject);
-    auto keyUsages = WebCore::convert<WebCore::IDLSequence<WebCore::IDLEnumeration<WebCore::CryptoKeyUsage>>>(*lexicalGlobalObject, keyUsagesValue);
+    auto keyUsages = WebCore::convertKeyUsages(*lexicalGlobalObject, keyUsagesValue, "Value"_s);
     RETURN_IF_EXCEPTION(scope, {});
     auto usagesBitmap = WebCore::SubtleCrypto::toCryptoKeyUsageBitmap(keyUsages);
 

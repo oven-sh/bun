@@ -1991,6 +1991,7 @@ describe("keyUsages", () => {
     },
     "an array with an entry that is not a usage": { log: ["toString bogus"], answer: bogus },
     "an array that an entry appends to": { log: ["toString sign", "toString verify"], answer: ["sign", "verify"] },
+    "a Set that an entry adds to": { log: ["toString sign", "toString verify"], answer: ["sign", "verify"] },
     // Every argument is converted before the algorithm is normalized.
     "SubtleCrypto with an algorithm and a usage that are not known": { log: ["toString bogus"], answer: bogus },
     // The algorithm is normalized before keyUsages is converted.

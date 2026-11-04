@@ -145,15 +145,16 @@ async function orders() {
     const answer = await settle(Promise.resolve().then(call));
     return { log: [...log], answer };
   };
-  const growing = [
-    {
-      toString() {
-        log.push("toString sign");
-        growing.push(logged("verify"));
-        return "sign";
-      },
+  // An entry for "sign" whose conversion gives `add` an entry for "verify".
+  const adding = add => ({
+    toString() {
+      log.push("toString sign");
+      add(logged("verify"));
+      return "sign";
     },
-  ];
+  });
+  const array = [adding(entry => array.push(entry))];
+  const set = new Set([adding(entry => set.add(entry))]);
   return {
     "an iterable": await run(() => subtle.generateKey(hmac, true, iterable([logged("sign"), logged("verify")]))),
     "an iterable with an entry that is not a usage": await run(() =>
@@ -162,7 +163,8 @@ async function orders() {
     "an array with an entry that is not a usage": await run(() =>
       subtle.generateKey(hmac, true, [logged("bogus"), logged("verify")]),
     ),
-    "an array that an entry appends to": await run(() => subtle.generateKey(hmac, true, growing)),
+    "an array that an entry appends to": await run(() => subtle.generateKey(hmac, true, array)),
+    "a Set that an entry adds to": await run(() => subtle.generateKey(hmac, true, set)),
     "SubtleCrypto with an algorithm and a usage that are not known": await run(() =>
       subtle.generateKey({ name: "bogus" }, true, [logged("bogus")]),
     ),

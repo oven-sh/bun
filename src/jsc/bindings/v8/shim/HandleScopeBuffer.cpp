@@ -1,4 +1,5 @@
 #include "HandleScopeBuffer.h"
+#include "GlobalHandleRegistry.h"
 #include "GlobalInternals.h"
 #include "../v8_handle_scope_data.h"
 #include <wtf/TZoneMallocInlines.h>
@@ -15,6 +16,7 @@ HandleScopeBuffer::HandleScopeBuffer(Bun::HandleScopeImpl* owner, Isolate* isola
     auto* data = getHandleScopeData(isolate);
     m_savedNext = data->next;
     m_savedLimit = data->limit;
+    isolate->globalHandleRegistry().didOpenScope();
 }
 
 HandleScopeBuffer::~HandleScopeBuffer() = default;
@@ -131,9 +133,7 @@ TaggedPointer HandleScopeBuffer::appendRescuedLayout(const ObjectLayout& layout)
     if (layout.map() == &Map::heap_number_map()) {
         handle = Handle(layout.asDouble());
     } else {
-        // Besides heap numbers, scope buffers only ever own string_map/object_map
-        // cells (oddballs live in the isolate's roots and globals in their own
-        // buffer), so everything else is a cell.
+        // Besides heap numbers, a scope buffer only owns string_map and object_map cells: an Oddball belongs to the process, and the handle of a v8::Global to a GlobalHandleBlock.
         handle = Handle(layout.map(), layout.asCell(), vm(), m_owner);
     }
     return *handle.slot();
@@ -186,6 +186,14 @@ TaggedPointer* HandleScopeBuffer::createHandleFromExistingObject(TaggedPointer a
                     reinterpret_cast<Oddball*>(v8_object)->kind());
             }
         }
+        if (v8_object->map()->m_instanceType == InstanceType::HeapNumber) {
+            if (reuseHandle) {
+                *reuseHandle = Handle(v8_object->asDouble());
+                return reuseHandle->slot();
+            } else {
+                return createDoubleHandle(v8_object->asDouble());
+            }
+        }
         if (reuseHandle) {
             *reuseHandle = Handle(v8_object->map(), v8_object->asCell(), vm(), m_owner);
             return reuseHandle->slot();
@@ -211,6 +219,7 @@ void HandleScopeBuffer::close(Bun::HandleScopeImpl* parent)
     if (parent && !internals->activeReturnValueSlots().isEmpty()) {
         evacuateActiveReturnValues(parent);
     }
+    m_isolate->globalHandleRegistry().didCloseScope();
     // The owner detaches this buffer and then frees it, along with every handle.
 }
 

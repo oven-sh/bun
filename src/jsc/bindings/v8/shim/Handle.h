@@ -28,6 +28,13 @@ struct ObjectLayout {
     {
     }
 
+    // No write barrier: for the handle of a v8::Global, which the collector does not visit.
+    ObjectLayout(const Map* map_ptr, JSC::JSCell* cell)
+        : m_taggedMap(const_cast<Map*>(map_ptr))
+        , m_contents({ .cell = JSC::WriteBarrier<JSC::JSCell>(cell, JSC::WriteBarrierEarlyInit) })
+    {
+    }
+
     ObjectLayout(double number)
         : m_taggedMap(const_cast<Map*>(&Map::heap_number_map()))
         , m_contents({ .number = number })
@@ -41,7 +48,7 @@ struct ObjectLayout {
     JSC::JSCell* asCell() const { return m_contents.cell.get(); }
 };
 
-// A handle stored in a HandleScope with layout suitable for V8's inlined functions:
+// A handle stored in a HandleScopeBuffer or a GlobalHandleBlock, with layout suitable for V8's inlined functions:
 // - The first field is a V8 tagged pointer. If it's a SMI (int32), it holds the numeric value
 //   directly and the other fields don't matter.
 // - Otherwise, if the first field is a pointer value, V8 treats that as a pointer to an object with
@@ -56,6 +63,8 @@ struct ObjectLayout {
 //   points to Map::object_map or Map::raw_ptr_map).
 struct Handle {
     Handle(const Map* map, JSC::JSCell* cell, JSC::VM& vm, const JSC::JSCell* owner);
+
+    Handle(const Map* map, JSC::JSCell* cell);
 
     Handle(double number);
 

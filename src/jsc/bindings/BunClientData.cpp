@@ -32,6 +32,7 @@
 #include "ModuleGraph.h"
 #include "StrongRootBlock.h"
 #include "IsolatedModuleCache.h"
+#include "v8/shim/GlobalHandleRegistry.h"
 
 namespace WebCore {
 using namespace JSC;

@@ -13,6 +13,7 @@ class HeapProfiler;
 class Isolate;
 
 namespace shim {
+class GlobalHandleRegistry;
 class GlobalInternals;
 class HandleScopeBuffer;
 }
@@ -90,6 +91,7 @@ public:
     Zig::GlobalObject* globalObject() { return m_globalObject; }
     JSC::VM& vm() { return globalObject()->vm(); }
     shim::GlobalInternals* globalInternals() { return m_globalInternals; }
+    shim::GlobalHandleRegistry& globalHandleRegistry() { return *m_globalHandleRegistry; }
     // Returns the innermost open handle scope, where new handles are created (see GlobalInternals::currentHandleScope).
     shim::HandleScopeBuffer* currentHandleScope();
 
@@ -115,6 +117,9 @@ public:
     // include in this layout-sensitive header). Placed after m_roots so the
     // kIsolateRootsOffset static_assert is unaffected.
     void* m_heapProfiler { nullptr };
+
+    // The v8::Global handles of the VM of this isolate's realm. JSVMClientData owns it, so it outlives the isolate.
+    shim::GlobalHandleRegistry* m_globalHandleRegistry;
 };
 
 } // namespace v8

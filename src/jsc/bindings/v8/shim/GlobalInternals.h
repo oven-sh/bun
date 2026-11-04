@@ -7,10 +7,6 @@
 #include "../V8Isolate.h"
 #include "Oddball.h"
 
-namespace Bun {
-class HandleScopeImpl;
-}
-
 namespace v8 {
 
 namespace shim {
@@ -52,9 +48,6 @@ public:
         return m_v8FunctionStructure.getInitializedOnMainThread(globalObject);
     }
 
-    // Returns the scope for v8::Global handles. It's never closed.
-    HandleScopeBuffer* globalHandles();
-
     // Returns the innermost open scope's V8 handles (GlobalObject::m_currentHandleScopeImpl). Like V8,
     // aborts if no scope is open. Bun opens a scope around every native callback it makes.
     HandleScopeBuffer* currentHandleScope();
@@ -78,7 +71,7 @@ public:
 
     // Return-value slots of the callback frames currently on the native stack
     // (innermost last). V8's inline ReturnValue::Set stores a Local's Address
-    // — for heap values a pointer into some HandleScopeBuffer's storage —
+    // (for a heap value a pointer into a handle: of a HandleScopeBuffer, or of a v8::Global, which is not rescued and which GlobalHandleRegistry keeps while a scope is open)
     // into the frame, and V8 guarantees the returned value outlives any inner
     // handle scope (the scope owns only the slot, never the object). Scope
     // teardown consults this list to rescue handles a frame still points at
@@ -109,10 +102,6 @@ public:
     WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>>& gcEpilogueCallbacks() { return m_gcEpilogueCallbacks; }
     WTF::Vector<std::pair<NearHeapLimitCallback, void*>>& nearHeapLimitCallbacks() { return m_nearHeapLimitCallbacks; }
 
-    // MakeWeak/ClearWeak bookkeeping: global-handle slot (in globalHandles()) to
-    // the parameter passed to MakeWeak.
-    WTF::HashMap<uintptr_t*, void*>& weakHandleParameters() { return m_weakHandleParameters; }
-
     Isolate* isolate() { return &m_isolate; }
 
     DECLARE_INFO;
@@ -130,27 +119,16 @@ private:
     // No inline capacity, because in-cell inline Vector storage would leave stale ASAN container
     // annotations behind (this cell is swept without running destructors).
     WTF::Vector<TaggedPointer*> m_activeReturnValueSlots;
-    JSC::LazyProperty<GlobalInternals, Bun::HandleScopeImpl> m_globalHandles;
 
     WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>> m_gcPrologueCallbacks;
     WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>> m_gcEpilogueCallbacks;
     WTF::Vector<std::pair<NearHeapLimitCallback, void*>> m_nearHeapLimitCallbacks;
-    WTF::HashMap<uintptr_t*, void*> m_weakHandleParameters;
-
-    Oddball m_undefinedValue;
-    Oddball m_nullValue;
-    Oddball m_trueValue;
-    Oddball m_falseValue;
 
     Isolate m_isolate;
 
     void finishCreation(JSC::VM& vm);
     GlobalInternals(JSC::VM& vm, JSC::Structure* structure, Zig::GlobalObject* globalObject)
         : Base(vm, structure)
-        , m_undefinedValue(Oddball::Kind::kUndefined)
-        , m_nullValue(Oddball::Kind::kNull)
-        , m_trueValue(Oddball::Kind::kTrue)
-        , m_falseValue(Oddball::Kind::kFalse)
         , m_isolate(this)
         , m_globalObject(globalObject)
     {

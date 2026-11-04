@@ -4,6 +4,7 @@
 #include "V8Data.h"
 #include "V8Value.h"
 #include "shim/HandleScopeBuffer.h"
+#include "shim/GlobalHandleRegistry.h"
 #include "shim/GlobalInternals.h"
 #include "shim/Function.h"
 #include "shim/FunctionTemplate.h"
@@ -16,11 +17,6 @@ ASSERT_V8_ENUM_MATCHES(WeakCallbackType, kInternalFields)
 namespace v8 {
 
 namespace api_internal {
-
-static WTF::HashMap<uintptr_t*, void*>& weakHandleParameters()
-{
-    return Isolate::GetCurrent()->globalInternals()->weakHandleParameters();
-}
 
 void ToLocalEmpty()
 {
@@ -35,39 +31,37 @@ void FromJustIsNothing()
 uintptr_t* GlobalizeReference(internal::Isolate* i_isolate, uintptr_t address)
 {
     auto* isolate = reinterpret_cast<Isolate*>(i_isolate);
-    auto* globalHandles = isolate->globalInternals()->globalHandles();
-    TaggedPointer* newSlot = globalHandles->createHandleFromExistingObject(TaggedPointer::fromRaw(address));
+    TaggedPointer* newSlot = isolate->globalHandleRegistry().create(isolate, TaggedPointer::fromRaw(address));
     return newSlot->asRawPtrLocation();
 }
 
 void DisposeGlobal(uintptr_t* location)
 {
-    if (location) weakHandleParameters().remove(location);
-    // TODO free up a slot in the handle scope
-    (void)location;
+    if (!location) return;
+    shim::GlobalHandleRegistry::dispose(reinterpret_cast<shim::Handle*>(location));
 }
 
 void MakeWeak(uintptr_t* location, void* data, WeakCallbackInfo<void>::Callback weak_callback, WeakCallbackType type)
 {
     // Record the parameter so ClearWeak() can return it. The underlying handle
-    // remains strongly visited by globalHandles(); firing the callback on collect
+    // keeps its strong root in the GlobalHandleRegistry; firing the callback on collect
     // is not yet wired up.
     (void)weak_callback;
     (void)type;
     if (!location) return;
-    weakHandleParameters().set(location, data);
+    shim::GlobalHandleRegistry::setWeakParameter(reinterpret_cast<shim::Handle*>(location), data);
 }
 
 void* ClearWeak(uintptr_t* location)
 {
     if (!location) return nullptr;
-    return weakHandleParameters().take(location);
+    return shim::GlobalHandleRegistry::takeWeakParameter(reinterpret_cast<shim::Handle*>(location));
 }
 
 void MoveGlobalReference(uintptr_t** from, uintptr_t** to)
 {
     // The inline caller already copied *from into *to. Our weak state is keyed by the
-    // global-handle storage slot (which did not move), so nothing to update here.
+    // handle, which did not move: its GlobalHandleBlock has the parameter, so there is nothing to update here.
     (void)from;
     (void)to;
 }

@@ -7,10 +7,13 @@
 
 #include <v8-profiler.h>
 
+#include <atomic>
 #include <cinttypes>
 #include <cstdarg>
+#include <cstring>
 #include <iomanip>
 #include <iostream>
+#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -492,6 +495,441 @@ void GlobalTestWrapper::store(Isolate *isolate, Local<Value> new_value) {
 }
 
 void GlobalTestWrapper::cleanup(void *unused) { value.Reset(); }
+
+// Globals that outlive the native call that created them.
+static std::vector<Global<Value>> held_globals;
+// Globals that Workers leave set when they exit. No cleanup hook resets them.
+static std::vector<Global<Value>> left_globals;
+static std::mutex left_globals_mutex;
+static Global<Value> stored_global;
+constexpr int primitive_global_count = 8;
+static Global<Value> primitive_globals[primitive_global_count];
+
+// node cannot destroy a non-empty static Global at exit.
+static void reset_test_globals(void *unused) {
+  held_globals.clear();
+  stored_global.Reset();
+  for (Global<Value> &global : primitive_globals) {
+    global.Reset();
+  }
+}
+
+// A Global's only field is the address of its handle.
+static Local<Value> handle_address(Isolate *isolate,
+                                   const Global<Value> &global) {
+  uintptr_t address = *reinterpret_cast<const uintptr_t *>(&global);
+  return Number::New(isolate, static_cast<double>(address));
+}
+
+static void hold_arguments(const FunctionCallbackInfo<Value> &info,
+                           std::vector<Global<Value>> &globals) {
+  for (int i = 0; i < info.Length(); i++) {
+    globals.emplace_back(info.GetIsolate(), info[i]);
+  }
+}
+
+static void return_addresses(const FunctionCallbackInfo<Value> &info,
+                             const std::vector<Global<Value>> &globals) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<Array> addresses = Array::New(isolate);
+  for (size_t i = 0; i < globals.size(); i++) {
+    addresses
+        ->Set(context, static_cast<uint32_t>(i),
+              handle_address(isolate, globals[i]))
+        .Check();
+  }
+  info.GetReturnValue().Set(addresses);
+}
+
+void global_hold(const FunctionCallbackInfo<Value> &info) {
+  hold_arguments(info, held_globals);
+}
+
+void global_held(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<Array> values = Array::New(isolate);
+  for (size_t i = 0; i < held_globals.size(); i++) {
+    values->Set(context, static_cast<uint32_t>(i), held_globals[i].Get(isolate))
+        .Check();
+  }
+  info.GetReturnValue().Set(values);
+}
+
+void global_held_addresses(const FunctionCallbackInfo<Value> &info) {
+  return_addresses(info, held_globals);
+}
+
+void global_reset_held(const FunctionCallbackInfo<Value> &info) {
+  held_globals.clear();
+}
+
+void global_leave(const FunctionCallbackInfo<Value> &info) {
+  std::lock_guard<std::mutex> lock(left_globals_mutex);
+  hold_arguments(info, left_globals);
+}
+
+void global_left_addresses(const FunctionCallbackInfo<Value> &info) {
+  std::lock_guard<std::mutex> lock(left_globals_mutex);
+  return_addresses(info, left_globals);
+}
+
+void global_reset_left(const FunctionCallbackInfo<Value> &info) {
+  std::lock_guard<std::mutex> lock(left_globals_mutex);
+  left_globals.clear();
+}
+
+void global_hold_and_reset(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Global<Value> global(isolate, info[0]);
+  Global<Value> moved(std::move(global));
+  Local<Value> local = moved.Get(isolate);
+  moved.Reset();
+  info.GetReturnValue().Set(local);
+}
+
+void global_hold_briefly(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Global<Value> global(isolate, info[0]);
+  info.GetReturnValue().Set(handle_address(isolate, global));
+}
+
+void global_store(const FunctionCallbackInfo<Value> &info) {
+  stored_global.Reset(info.GetIsolate(), info[0]);
+}
+
+void global_stored(const FunctionCallbackInfo<Value> &info) {
+  info.GetReturnValue().Set(stored_global);
+}
+
+void global_stored_address(const FunctionCallbackInfo<Value> &info) {
+  info.GetReturnValue().Set(handle_address(info.GetIsolate(), stored_global));
+}
+
+void global_reset_stored(const FunctionCallbackInfo<Value> &info) {
+  stored_global.Reset();
+}
+
+static std::string name_of(Isolate *isolate, Local<Value> value) {
+  if (!value->IsObject()) {
+    return "not an object: " + describe(isolate, value);
+  }
+  Local<Value> name = value.As<Object>()
+                          ->Get(isolate->GetCurrentContext(),
+                                String::NewFromUtf8Literal(isolate, "name"))
+                          .ToLocalChecked();
+  return describe(isolate, name);
+}
+
+// Only the Local keeps the object alive. The new Globals could take its handle.
+void global_local_outlives_reset(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Value> local = stored_global.Get(isolate);
+  Local<Value> copy = Local<Value>::New(isolate, local);
+  stored_global.Reset();
+  isolate->LowMemoryNotification();
+  std::cout << "local after Reset = " << name_of(isolate, local) << std::endl;
+  global_hold(info);
+  isolate->LowMemoryNotification();
+  std::cout << "local after other Globals were created = "
+            << name_of(isolate, local)
+            << ", its copy = " << name_of(isolate, copy) << std::endl;
+  info.GetReturnValue().Set(local);
+}
+
+// The caller reads the return value after the Global is reset.
+static void return_stored_then_reset(const FunctionCallbackInfo<Value> &info,
+                                     bool as_local) {
+  Isolate *isolate = info.GetIsolate();
+  if (as_local) {
+    info.GetReturnValue().Set(stored_global.Get(isolate));
+  } else {
+    info.GetReturnValue().Set(stored_global);
+  }
+  stored_global.Reset();
+  global_hold(info);
+  isolate->LowMemoryNotification();
+}
+
+void global_return_local_then_reset(const FunctionCallbackInfo<Value> &info) {
+  return_stored_then_reset(info, true);
+}
+
+void global_return_global_then_reset(const FunctionCallbackInfo<Value> &info) {
+  return_stored_then_reset(info, false);
+}
+
+// info[0] makes native calls that reset the Global before the Local is read.
+void global_local_outlives_nested_reset(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Value> local = stored_global.Get(isolate);
+  info.GetReturnValue().Set(stored_global);
+  if (info[0]
+          .As<Function>()
+          ->Call(isolate->GetCurrentContext(), Undefined(isolate), 0, nullptr)
+          .IsEmpty()) {
+    return;
+  }
+  isolate->LowMemoryNotification();
+  std::cout << "local after nested calls reset the Global = "
+            << name_of(isolate, local) << std::endl;
+}
+
+// The values rotate by `round`, so a reused handle holds another kind of value.
+void global_primitives_round(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  int round = static_cast<int>(info[0].As<Number>()->Value());
+
+  // the string of the previous round is only held by its Global
+  isolate->LowMemoryNotification();
+  std::cout << "round " << round << ":";
+  for (Global<Value> &global : primitive_globals) {
+    if (global.IsEmpty()) {
+      continue;
+    }
+    Local<Value> value = global.Get(isolate);
+    global.Reset();
+    std::cout << " " << describe(isolate, value);
+  }
+  std::cout << " | " << describe(isolate, Undefined(isolate)) << " "
+            << describe(isolate, Null(isolate)) << " "
+            << describe(isolate, True(isolate)) << " "
+            << describe(isolate, False(isolate)) << std::endl;
+  if (round < 0) {
+    return;
+  }
+
+  std::string text = "string " + std::to_string(round);
+  Local<Value> values[primitive_global_count] = {
+      Undefined(isolate),
+      Undefined(isolate),
+      Null(isolate),
+      True(isolate),
+      False(isolate),
+      Integer::New(isolate, round),
+      Number::New(isolate, round + 0.5),
+      String::NewFromUtf8(isolate, text.c_str()).ToLocalChecked(),
+  };
+  for (int i = 0; i < primitive_global_count; i++) {
+    primitive_globals[(i + round) % primitive_global_count].Reset(isolate,
+                                                                  values[i]);
+  }
+}
+
+static void weak_callback_that_never_runs(const WeakCallbackInfo<int> &data) {}
+
+// The other thread has no isolate, and this one waits for it.
+void global_use_on_another_thread(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Global<Value> reset_there(isolate, info[0]);
+  Global<Value> weak_there(isolate, info[0]);
+  int parameter = 0;
+  std::thread thread([&] {
+    reset_there.Reset();
+    weak_there.SetWeak(&parameter, weak_callback_that_never_runs,
+                       WeakCallbackType::kParameter);
+    weak_there.ClearWeak();
+  });
+  thread.join();
+  std::cout << "the Global that the other thread reset is empty = "
+            << (reset_there.IsEmpty() ? "true" : "false") << std::endl;
+  std::cout << "the Global that the other thread made weak and strong again = "
+            << name_of(isolate, weak_there.Get(isolate)) << std::endl;
+}
+
+static int weak_parameter_of_stored;
+
+void global_make_stored_weak(const FunctionCallbackInfo<Value> &info) {
+  stored_global.SetWeak(&weak_parameter_of_stored,
+                        weak_callback_that_never_runs,
+                        WeakCallbackType::kParameter);
+}
+
+void global_clear_weak_of_stored(const FunctionCallbackInfo<Value> &info) {
+  int *parameter = stored_global.ClearWeak<int>();
+  const char *text = "another pointer";
+  if (parameter == nullptr) {
+    text = "null";
+  } else if (parameter == &weak_parameter_of_stored) {
+    text = "the parameter of SetWeak";
+  }
+  info.GetReturnValue().Set(
+      String::NewFromUtf8(info.GetIsolate(), text).ToLocalChecked());
+}
+
+// V8 does not allow two Globals with one handle, which a bitwise copy makes.
+void global_reset_twice(const FunctionCallbackInfo<Value> &info) {
+  Global<Value> global(info.GetIsolate(), info[0]);
+  Global<Value> copy;
+  memcpy(static_cast<void *>(&copy), &global, sizeof copy);
+  global.Reset();
+  copy.Reset();
+}
+
+// As many Globals of info[1] as info[0] says, all set at once, then all reset.
+void global_hold_many_briefly(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  size_t count = static_cast<size_t>(info[0].As<Number>()->Value());
+  std::vector<Global<Value>> globals;
+  globals.reserve(count);
+  for (size_t i = 0; i < count; i++) {
+    globals.emplace_back(isolate, info[1]);
+  }
+}
+
+// JS reads the byte that the callback sets without a call into this addon.
+void global_reset_held_in_uv_timer(const FunctionCallbackInfo<Value> &info) {
+  auto *timer = new uv_timer_t;
+  timer->data = info[0].As<ArrayBuffer>()->GetBackingStore()->Data();
+  uv_timer_init(node::GetCurrentEventLoop(info.GetIsolate()), timer);
+  uv_timer_start(
+      timer,
+      [](uv_timer_t *timer) {
+        held_globals.clear();
+        *static_cast<uint8_t *>(timer->data) = 1;
+        uv_close(reinterpret_cast<uv_handle_t *>(timer),
+                 [](uv_handle_t *handle) {
+                   delete reinterpret_cast<uv_timer_t *>(handle);
+                 });
+      },
+      0, 0);
+}
+
+static std::atomic<int> global_holders_destroyed{0};
+
+// Destroyed when its thread exits (thread_local) or the process does (static).
+struct GlobalHolder {
+  // Two, because the first reset can leave a state that only the next one sees.
+  Global<Value> globals[2];
+  ~GlobalHolder() {
+    if (globals[0].IsEmpty()) {
+      return;
+    }
+    for (Global<Value> &global : globals) {
+      global.Reset();
+    }
+    std::cout << "a destructor reset its Globals" << std::endl;
+    global_holders_destroyed++;
+  }
+};
+static thread_local GlobalHolder global_holder_of_thread;
+static GlobalHolder global_holder_of_process;
+
+void global_hold_until_destructor(const FunctionCallbackInfo<Value> &info) {
+  GlobalHolder &holder =
+      info[1]->IsTrue() ? global_holder_of_thread : global_holder_of_process;
+  for (Global<Value> &global : holder.globals) {
+    global.Reset(info.GetIsolate(), info[0]);
+  }
+}
+
+void global_count_holders_destroyed(const FunctionCallbackInfo<Value> &info) {
+  info.GetReturnValue().Set(
+      Integer::New(info.GetIsolate(), global_holders_destroyed));
+}
+
+static const char *true_or_false(bool value) {
+  return value ? "true" : "false";
+}
+
+// What an addon reads from a Global that it has not reset.
+void global_print_stored(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Value> value = stored_global.Get(isolate);
+  std::cout << "the stored Global: IsEmpty() = "
+            << true_or_false(stored_global.IsEmpty())
+            << ", IsUndefined() = " << true_or_false(value->IsUndefined())
+            << ", == Undefined(isolate) = "
+            << true_or_false(value == Undefined(isolate)) << std::endl;
+}
+
+// The first four held Globals are of undefined, null, true and false. Another
+// isolate than this one can have made them.
+void global_print_held_oddballs(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Value> held[4];
+  for (int i = 0; i < 4; i++) {
+    held[i] = held_globals[i].Get(isolate);
+  }
+  std::cout << "held == Undefined(isolate) = "
+            << true_or_false(held[0] == Undefined(isolate))
+            << ", IsUndefined() = " << true_or_false(held[0]->IsUndefined())
+            << std::endl;
+  std::cout << "held == Null(isolate) = "
+            << true_or_false(held[1] == Null(isolate))
+            << ", IsNull() = " << true_or_false(held[1]->IsNull()) << std::endl;
+  std::cout << "held == True(isolate) = "
+            << true_or_false(held[2] == True(isolate))
+            << ", IsTrue() = " << true_or_false(held[2]->IsTrue()) << std::endl;
+  std::cout << "held == False(isolate) = "
+            << true_or_false(held[3] == False(isolate))
+            << ", IsFalse() = " << true_or_false(held[3]->IsFalse())
+            << std::endl;
+}
+
+// A copy of the bits of the Global that the other thread reset.
+static Global<Value> reset_on_another_thread;
+
+// The other thread has no isolate, and this one waits for it. In V8 it would
+// need a Locker to use the isolate of this one.
+void global_hold_copies_made_on_another_thread(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  // A Global of a number has no object, so Bun copies it without its engine.
+  Global<Value> number(isolate, info[0]);
+  size_t count = static_cast<size_t>(info[1].As<Number>()->Value());
+  // The other thread must not move the Globals that this thread made.
+  held_globals.reserve(held_globals.size() + count);
+  std::thread thread([&] {
+    for (size_t i = 0; i < count; i++) {
+      held_globals.emplace_back(isolate, number);
+    }
+    // The last one is in a block of handles that this thread allocated.
+    memcpy(static_cast<void *>(&reset_on_another_thread), &held_globals.back(),
+           sizeof reset_on_another_thread);
+    held_globals.back().Reset();
+    held_globals.pop_back();
+  });
+  thread.join();
+}
+
+// Returns the value of that Global, and resets it on the thread of its
+// isolate.
+void global_take_reset_on_another_thread(
+    const FunctionCallbackInfo<Value> &info) {
+  info.GetReturnValue().Set(reset_on_another_thread);
+  reset_on_another_thread.Reset();
+}
+
+static std::atomic<int> isolate_askers_destroyed{0};
+
+// Destroyed when its thread exits, which is after the isolate of the thread
+// is gone.
+struct IsolateAsker {
+  bool armed = false;
+  ~IsolateAsker() {
+    if (!armed) {
+      return;
+    }
+    std::cout << "Isolate::TryGetCurrent() once the isolate of the thread is "
+                 "gone = "
+              << (Isolate::TryGetCurrent() ? "an isolate" : "null")
+              << std::endl;
+    isolate_askers_destroyed++;
+  }
+};
+static thread_local IsolateAsker isolate_asker_of_thread;
+
+void isolate_ask_when_thread_exits(const FunctionCallbackInfo<Value> &info) {
+  isolate_asker_of_thread.armed = true;
+}
+
+void isolate_count_askers_destroyed(const FunctionCallbackInfo<Value> &info) {
+  info.GetReturnValue().Set(
+      Integer::New(info.GetIsolate(), isolate_askers_destroyed));
+}
 
 // Native data property whose getter returns the holder it was invoked on and
 // whose setter stores it where global_get() can read it, so JS can check what
@@ -2557,6 +2995,53 @@ void initialize(Local<Object> exports, Local<Value> module,
                   create_objects_with_internal_fields);
   NODE_SET_METHOD(exports, "global_get", GlobalTestWrapper::get);
   NODE_SET_METHOD(exports, "global_set", GlobalTestWrapper::set);
+  NODE_SET_METHOD(exports, "global_hold", global_hold);
+  NODE_SET_METHOD(exports, "global_held", global_held);
+  NODE_SET_METHOD(exports, "global_held_addresses", global_held_addresses);
+  NODE_SET_METHOD(exports, "global_reset_held", global_reset_held);
+  NODE_SET_METHOD(exports, "global_leave", global_leave);
+  NODE_SET_METHOD(exports, "global_left_addresses", global_left_addresses);
+  NODE_SET_METHOD(exports, "global_reset_left", global_reset_left);
+  NODE_SET_METHOD(exports, "global_hold_and_reset", global_hold_and_reset);
+  NODE_SET_METHOD(exports, "global_hold_briefly", global_hold_briefly);
+  NODE_SET_METHOD(exports, "global_store", global_store);
+  NODE_SET_METHOD(exports, "global_stored", global_stored);
+  NODE_SET_METHOD(exports, "global_stored_address", global_stored_address);
+  NODE_SET_METHOD(exports, "global_reset_stored", global_reset_stored);
+  NODE_SET_METHOD(exports, "global_local_outlives_reset",
+                  global_local_outlives_reset);
+  NODE_SET_METHOD(exports, "global_return_local_then_reset",
+                  global_return_local_then_reset);
+  NODE_SET_METHOD(exports, "global_return_global_then_reset",
+                  global_return_global_then_reset);
+  NODE_SET_METHOD(exports, "global_local_outlives_nested_reset",
+                  global_local_outlives_nested_reset);
+  NODE_SET_METHOD(exports, "global_primitives_round", global_primitives_round);
+  NODE_SET_METHOD(exports, "global_use_on_another_thread",
+                  global_use_on_another_thread);
+  NODE_SET_METHOD(exports, "global_make_stored_weak", global_make_stored_weak);
+  NODE_SET_METHOD(exports, "global_clear_weak_of_stored",
+                  global_clear_weak_of_stored);
+  NODE_SET_METHOD(exports, "global_reset_twice", global_reset_twice);
+  NODE_SET_METHOD(exports, "global_hold_many_briefly",
+                  global_hold_many_briefly);
+  NODE_SET_METHOD(exports, "global_reset_held_in_uv_timer",
+                  global_reset_held_in_uv_timer);
+  NODE_SET_METHOD(exports, "global_hold_until_destructor",
+                  global_hold_until_destructor);
+  NODE_SET_METHOD(exports, "global_count_holders_destroyed",
+                  global_count_holders_destroyed);
+  NODE_SET_METHOD(exports, "global_print_stored", global_print_stored);
+  NODE_SET_METHOD(exports, "global_print_held_oddballs",
+                  global_print_held_oddballs);
+  NODE_SET_METHOD(exports, "global_hold_copies_made_on_another_thread",
+                  global_hold_copies_made_on_another_thread);
+  NODE_SET_METHOD(exports, "global_take_reset_on_another_thread",
+                  global_take_reset_on_another_thread);
+  NODE_SET_METHOD(exports, "isolate_ask_when_thread_exits",
+                  isolate_ask_when_thread_exits);
+  NODE_SET_METHOD(exports, "isolate_count_askers_destroyed",
+                  isolate_count_askers_destroyed);
   NODE_SET_METHOD(exports, "test_many_v8_locals", test_many_v8_locals);
   NODE_SET_METHOD(exports, "test_handle_scope_gc", test_handle_scope_gc);
   NODE_SET_METHOD(exports, "test_v8_escapable_handle_scope",
@@ -2668,6 +3153,8 @@ void initialize(Local<Object> exports, Local<Value> module,
   // with the isolate entered, so take the current one)
   node::AddEnvironmentCleanupHook(Isolate::GetCurrent(),
                                   GlobalTestWrapper::cleanup, nullptr);
+  node::AddEnvironmentCleanupHook(Isolate::GetCurrent(), reset_test_globals,
+                                  nullptr);
 }
 
 NODE_MODULE_CONTEXT_AWARE(NODE_GYP_MODULE_NAME, initialize)

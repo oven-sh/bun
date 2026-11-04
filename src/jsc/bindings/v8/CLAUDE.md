@@ -31,6 +31,7 @@ src/jsc/bindings/v8/
 │   ├── TaggedPointer.h     # V8-style tagged pointer implementation
 │   ├── Map.h               # V8 Map objects for inline function compatibility
 │   ├── GlobalInternals.h   # V8 global state management
+│   ├── GlobalHandleRegistry.h # The handles of a VM's v8::Globals (see "Global Handles" below)
 │   ├── InternalFieldObject.h # Objects with internal fields
 │   └── Oddball.h           # Primitive values (undefined, null, true, false)
 ├── node.h                  # Node.js module registration compatibility
@@ -227,6 +228,18 @@ For `ObjectTemplate` or `FunctionTemplate` implementations, see existing pattern
 - Use `isolate->currentHandleScope()->createLocal<T>()` to create handles
 - Handle scopes automatically clean up when destroyed
 - Node-API and the V8 API share one handle scope implementation, `Bun::HandleScopeImpl` (`src/jsc/bindings/napi_handle_scope.h`). `v8::HandleScope` and `Bun::NapiHandleScope` both open one, and `currentHandleScope()` returns the V8 handle storage of the innermost one, so V8 calls made from a Node-API callback work without any V8 scope of their own. Addons built against Node 26 headers never construct Bun's `v8::HandleScope` at all (it is inline); their scopes reach Bun only through `HandleScope::Extend` and `DeleteExtensions`.
+
+### Global Handles
+
+- A `v8::Global` (or `Persistent`) holds the address of a 24-byte handle. The per-VM `v8::shim::GlobalHandleRegistry` (`shim/GlobalHandleRegistry.h`, owned by `JSVMClientData`) owns the handles, in 512-byte blocks of 19 at addresses that are multiples of 512. So `DisposeGlobal`, `MakeWeak` and `ClearWeak` find the block, and with it the Bun VM that owns the handle (`ownerBunVM`), from the address of the handle alone.
+- No realm owns a Global handle, and the collector never reads one. A handle that holds a cell has a strong root from `Bun__StrongRef__new` (`StrongRef.h`, what `bun_jsc::Strong` uses). So a Global keeps its value, and what the value references, until it is reset, until it is retired, or until its VM ends.
+- A retired handle is what a Global of an object becomes when `bun test --isolate` replaces the global object after a file (`retireHandlesOfObjects()`, called by `swap_global_for_test_isolation`), so that no Global keeps the realm of a finished file alive. Its root is deleted, and it holds `undefined`. An addon reads a Global inline, so Bun cannot make one empty: `IsEmpty()` stays false and `Get()` returns `undefined`. The handle stays live until the addon's own `Reset()`, which frees it as any other, and `SetWeak()` and `ClearWeak()` still work on it. A handle of a string, a symbol, a BigInt or a number is not retired: these keep no realm alive, and such a Global keeps its value for the later files.
+- `Reset()` marks the handle as disposed. The handle is released (root deleted, handle cleared and put on the free list) once no realm of the VM has an open scope with V8 handles: V8's inline `Local::New(isolate, global)` copies the Global's word, so a `Local` points into the Global's handle. The registry counts the `HandleScopeBuffer`s of the VM for that (`didOpenScope()`, `didCloseScope()`), and the last one to close releases the handles that wait.
+- Once the Bun VM is shutting down, `Reset()` only marks the handle, because `Bun__StrongRef__delete` must not run then.
+- `Reset()`, `SetWeak()` and `ClearWeak()` do nothing unless the Bun VM of the calling thread is the one that owns the block: not on a thread that has no VM, and not in another Worker. A thread id is not compared, because the system uses one again.
+- When the VM ends, `~GlobalHandleRegistry` frees every block that has no live handle. A block with a Global that is still set is kept for the life of the process, with `registry` null: a later `Reset()` of that Global reads valid memory, and no later handle gets its address. Such a Global must not be read, as in V8.
+- A Global of `undefined`, `null`, `true` or `false` has no cell: its handle holds the word that points at the Oddball. The four Oddballs are constants of the process (`shim/Oddball.h`), and the roots of every isolate point at them, so such a Global equals `Undefined(isolate)` (or the other three) in every realm, also after the realm that made it is collected.
+- `SetWeak()` only stores its parameter for `ClearWeak()`. The value stays strongly rooted and the callback never runs.
 
 ### JSC Integration
 

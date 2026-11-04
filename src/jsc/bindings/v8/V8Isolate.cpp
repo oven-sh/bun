@@ -1,6 +1,7 @@
 #include "V8Isolate.h"
 #include "V8HandleScope.h"
 #include "V8String.h"
+#include "shim/GlobalHandleRegistry.h"
 #include "shim/GlobalInternals.h"
 #include "ZigGlobalObject.h"
 #include "real_v8.h"
@@ -167,11 +168,12 @@ Isolate::Isolate(shim::GlobalInternals* globalInternals)
     // (next/limit/level, see HandleScope::Extend) inside this region, and relies on it starting
     // out zeroed just like real V8's HandleScopeData::Initialize() leaves it.
     , m_padding {}
+    , m_globalHandleRegistry(&shim::GlobalHandleRegistry::ensure(m_globalObject->vm()))
 {
-    m_roots[kUndefinedValueRootIndex] = TaggedPointer(&globalInternals->m_undefinedValue);
-    m_roots[kNullValueRootIndex] = TaggedPointer(&globalInternals->m_nullValue);
-    m_roots[kTrueValueRootIndex] = TaggedPointer(&globalInternals->m_trueValue);
-    m_roots[kFalseValueRootIndex] = TaggedPointer(&globalInternals->m_falseValue);
+    m_roots[kUndefinedValueRootIndex] = TaggedPointer(const_cast<shim::Oddball*>(&shim::Oddball::undefined_value()));
+    m_roots[kNullValueRootIndex] = TaggedPointer(const_cast<shim::Oddball*>(&shim::Oddball::null_value()));
+    m_roots[kTrueValueRootIndex] = TaggedPointer(const_cast<shim::Oddball*>(&shim::Oddball::true_value()));
+    m_roots[kFalseValueRootIndex] = TaggedPointer(const_cast<shim::Oddball*>(&shim::Oddball::false_value()));
 }
 
 shim::HandleScopeBuffer* Isolate::currentHandleScope()

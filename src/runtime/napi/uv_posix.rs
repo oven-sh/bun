@@ -10,6 +10,7 @@
 //!   `type` from it ([`UvHandle`], [`UvReq`]). Bun owns the fields after those.
 //! - Only `uv_async_send` may be called off the loop's JS thread. A handle is valid
 //!   until its `close_cb` has run, and a request until its `after_work_cb` has run.
+//! - `uv_close` stops the handle and gives its address and `close_cb` to the loop as a [`Closing`]: Bun then reads and writes nothing in the handle, and each loop pass calls the queued `close_cb`s after its check handles, the handle closed last first.
 //! - A `uv_loop_t*` points to a [`UvLoop`]. Each VM has one. Only its `data` word is ABI.
 //! - `uv_async_send` sets the handle's `pending` flag and posts at most one
 //!   dispatch task per loop through the VM's [`VmHandle`], where libuv writes to an
@@ -22,6 +23,7 @@
 //! - `uv_queue_work` schedules a [`Job`] that runs `work_cb` on the thread pool and
 //!   `after_work_cb` when it completes.
 //! - A handle keeps the process alive while it is started and ref'd ([`RefState`]).
+//! - A new handle type keeps the closing rule: its `uv_close` moves out of the handle everything that the closing phase needs, and a type with requests (UDP, TCP, pipe and TTY in libuv) adds an owned finish payload to [`Closing`] that runs before `close_cb`.
 
 use core::cell::Cell;
 use core::ffi::{CStr, c_char, c_int, c_uint, c_void};
@@ -109,7 +111,6 @@ const UV_PRIORITIZED: c_int = 8;
 
 // Same `flags` values as libuv (src/uv-common.h).
 const UV_HANDLE_CLOSING: c_uint = 0x01;
-const UV_HANDLE_CLOSED: c_uint = 0x02;
 
 // `sizeof` each struct on 64-bit unix. The addon allocates them, so Bun's versions can't be bigger.
 const UV_ASYNC_T_SIZE: usize = 128;
@@ -190,6 +191,12 @@ pub(crate) struct UvLoop {
     /// Lets `uv_async_send` post to the JS thread from any thread.
     handle: VmHandle,
     dispatch_state: AtomicU8,
+    /// Keeps the loop alive while a close waits for its `close_cb`, like libuv's `uv__loop_alive` for its closing handles.
+    closing_alive: JsCell<KeepAlive>,
+    /// The number of started idle, prepare and check handles and of closes whose `close_cb` hasn't run. `auto_tick` has no phase to run here while it's 0. JS thread only.
+    phase_work: Cell<u32>,
+    /// Whether `uv_close` has woken the loop for the closes in `closing`. JS thread only.
+    closing_woke: Cell<bool>,
     /// True while a `poll_cb` is on the stack. A nested event loop run skips the poll handles, whose fds report again. JS thread only.
     in_poll_cb: Cell<bool>,
     /// Async handles that are initialized and not closed. JS thread only.
@@ -200,11 +207,27 @@ pub(crate) struct UvLoop {
     idles: WatcherList,
     prepares: WatcherList,
     checks: WatcherList,
+    /// The closes whose `close_cb` hasn't run, in the order of their `uv_close` calls, like libuv's `closing_handles`. JS thread only.
+    closing: JsCell<Vec<Closing>>,
+    /// The rest of the batch that the running closing phase took from `closing`. Teardown inside a `close_cb` finds them here.
+    finishing: JsCell<Vec<Closing>>,
     /// One bit per fd that a started poll handle watches. A second handle for it gets `UV_EEXIST`.
     poll_fds: JsCell<Vec<u64>>,
 }
 
 const _: () = assert!(core::mem::offset_of!(UvLoop, data) == 0);
+
+/// One `uv_close` whose `close_cb` hasn't run. The loop keeps the callback here and reads nothing from the handle, so a handle that the addon frees or initializes again before the closing phase can't break the queue.
+struct Closing {
+    handle: *mut UvHandle,
+    close_cb: Option<UvCloseCb>,
+}
+
+/// A [`Closing`] on its way to the thread of its loop. `uv_close` on another thread posts it as a task.
+pub(crate) struct ClosingTask {
+    loop_: NonNull<UvLoop>,
+    closing: Closing,
+}
 
 /// Lists the started handles of one watcher type in the order they were started.
 /// `walk` is libuv's `uv__run_idle` and friends. JS thread only.
@@ -292,42 +315,151 @@ impl UvLoop {
             vm,
             handle,
             dispatch_state: AtomicU8::new(DispatchState::Idle as u8),
+            closing_alive: JsCell::new(KeepAlive::default()),
+            phase_work: Cell::new(0),
+            closing_woke: Cell::new(false),
             in_poll_cb: Cell::new(false),
             asyncs: JsCell::new(Vec::new()),
             dispatching: JsCell::new(Vec::new()),
             idles: WatcherList::new(),
             prepares: WatcherList::new(),
             checks: WatcherList::new(),
+            closing: JsCell::new(Vec::new()),
+            finishing: JsCell::new(Vec::new()),
             poll_fds: JsCell::new(Vec::new()),
         }
     }
 
-    /// Runs the idle handles, then the prepare handles. `auto_tick` calls this before
-    /// it polls. Returns true if an idle handle is started, so the poll must not block.
+    /// `auto_tick` calls this before it polls. Returns true if that poll must not block. Only this test is inlined there: `run_before_poll` is cold, which keeps even its argument out of the path of a process without uv handles.
+    #[inline]
     pub(crate) fn before_poll(&self) -> bool {
-        if self.idles.is_empty() && self.prepares.is_empty() {
-            return false;
-        }
+        self.phase_work.get() != 0 && self.run_before_poll()
+    }
+
+    /// Runs the idle handles, then the prepare handles. Returns true if the poll must not block: an idle handle is started or a close waits for its `close_cb`.
+    #[cold]
+    #[inline(never)]
+    fn run_before_poll(&self) -> bool {
         // SAFETY: the VM owns the `RuntimeState` that contains this loop, and this is
         // the JS thread.
         let vm = unsafe { self.vm.as_ref() };
-        if !vm.script_allowed() {
-            return false;
+        let mut idle_started = false;
+        if vm.script_allowed() {
+            self.idles.walk(vm);
+            self.prepares.walk(vm);
+            idle_started = !self.idles.is_empty();
         }
-        self.idles.walk(vm);
-        self.prepares.walk(vm);
-        !self.idles.is_empty()
+        idle_started || self.has_closing()
     }
 
-    /// Runs the check handles. `auto_tick` calls this after it polls.
+    /// `auto_tick` calls this after it polls and before its timers. As in `before_poll`, only this test is inlined there.
+    #[inline]
     pub(crate) fn after_poll(&self) {
-        if self.checks.is_empty() {
-            return;
+        if self.phase_work.get() != 0 {
+            self.run_after_poll();
         }
-        // SAFETY: same as `before_poll`.
+    }
+
+    /// Runs the check handles, then the closing phase, which is libuv's order between its poll and its timers.
+    #[cold]
+    #[inline(never)]
+    fn run_after_poll(&self) {
+        // SAFETY: same as `run_before_poll`.
         let vm = unsafe { self.vm.as_ref() };
         if vm.script_allowed() {
             self.checks.walk(vm);
+        }
+        self.closing_phase();
+    }
+
+    /// Whether a close waits for its `close_cb`.
+    fn has_closing(&self) -> bool {
+        !self.closing.get().is_empty() || !self.finishing.get().is_empty()
+    }
+
+    /// Whether the calling thread is this loop's JS thread. `uv_default_loop()` in a Worker is the main thread's loop.
+    fn on_its_thread(&self) -> bool {
+        VirtualMachine::get_or_null() == Some(self.vm.as_ptr())
+    }
+
+    /// Queues a close for the next closing phase, like libuv's `uv__make_close_pending`. It keeps the loop alive and its next poll from blocking. The loop's thread only.
+    fn push_closing(&self, closing: Closing) {
+        self.closing.with_mut(|queue| queue.push(closing));
+        self.phase_work.set(self.phase_work.get().wrapping_add(1));
+        self.closing_alive
+            .with_mut(|alive| alive.ref_(bun_io::js_vm_ctx()));
+        // A close that a finalizer makes after `before_poll` has looked must not wait for another event. One wake is enough until the phase takes the queue.
+        if !self.closing_woke.replace(true) {
+            self.handle.wake();
+        }
+    }
+
+    /// Posts a close that another thread made to the loop's thread, so only that thread touches the queue. If the VM is gone, the task is refused and `close_cb` never runs.
+    fn post_closing(&self, closing: Closing) {
+        let record = bun_core::heap::alloc(ClosingTask {
+            loop_: NonNull::from(self),
+            closing,
+        });
+        let task = ConcurrentTask::create_from(record);
+        if let Posted::Refused(task) = self.handle.post(LoopKind::Regular, task) {
+            // SAFETY: a refused task was never queued, so we own it and its record.
+            unsafe {
+                ConcurrentTask::release_refused(task);
+                bun_core::heap::destroy(record);
+            }
+        }
+    }
+
+    /// Runs one closing phase. `after_poll` runs it after the check handles, and the drivers that tick without `after_poll` call it (`RuntimeHooks::run_uv_closing_phase`).
+    pub(crate) fn closing_phase(&self) {
+        if self.take_closing() {
+            // SAFETY: same as `run_before_poll`.
+            self.run_finishing(unsafe { self.vm.as_ref() });
+        }
+    }
+
+    /// Starts a closing phase like libuv's `uv__run_closing_handles`: moves the queued closes to `finishing`, so one that a `close_cb` makes waits for the next phase. Returns false if there are none.
+    fn take_closing(&self) -> bool {
+        self.closing_woke.set(false);
+        self.closing.with_mut(|closing| {
+            self.finishing
+                .with_mut(|finishing| finishing.append(closing))
+        });
+        !self.finishing.get().is_empty()
+    }
+
+    /// Runs `close_cb` for each close in `finishing`, the one made last first, also when the VM is stopping: that callback is where the addon frees the handle.
+    fn run_finishing(&self, vm: &VirtualMachine) {
+        let global = vm.global();
+        while let Some(closing) = self.finishing.with_mut(Vec::pop) {
+            self.phase_work.set(self.phase_work.get().wrapping_sub(1));
+            if !self.has_closing() {
+                self.closing_alive
+                    .with_mut(|alive| alive.unref(bun_io::js_vm_ctx()));
+            }
+            bun_output::scoped_log!(uv, "uv_handle_t {:?}: close_cb", closing.handle);
+            if let Some(close_cb) = closing.close_cb {
+                let _scope = vm.enter_event_loop_scope();
+                let _handles = CallbackScope::open(global);
+                // SAFETY: calls the addon's callback on the loop thread with the handle that it gave `uv_close`.
+                unsafe { close_cb(closing.handle) };
+            }
+            if global.has_exception() {
+                // On `Err` the VM is terminating, and the closes that are left still get their `close_cb`.
+                let _ = bun_jsc::task::report_error_or_terminate(global, JsError::Thrown);
+            }
+        }
+    }
+
+    /// Runs `close_cb` for every queued close. VM teardown calls this where it releases the queued tasks, because the loop won't run another closing phase.
+    pub(crate) fn release_closing(&self) {
+        // SAFETY: same as `run_before_poll`.
+        let vm = unsafe { self.vm.as_ref() };
+        loop {
+            self.run_finishing(vm);
+            if !self.take_closing() {
+                break;
+            }
         }
     }
 
@@ -744,9 +876,11 @@ impl UvWatcher {
                 return UV_EINVAL;
             }
             (*handle).cb = cb;
-            (*(*handle).handle.loop_)
+            let loop_ = &*(*handle).handle.loop_;
+            loop_
                 .watchers((*handle).handle.type_)
                 .add(NonNull::new_unchecked(handle));
+            loop_.phase_work.set(loop_.phase_work.get().wrapping_add(1));
             (*handle).ref_state.set_active(true);
         }
         0
@@ -762,9 +896,11 @@ impl UvWatcher {
             if !(*handle).ref_state.active {
                 return;
             }
-            (*(*handle).handle.loop_)
+            let loop_ = &*(*handle).handle.loop_;
+            loop_
                 .watchers((*handle).handle.type_)
                 .remove(NonNull::new_unchecked(handle));
+            loop_.phase_work.set(loop_.phase_work.get().wrapping_sub(1));
             (*handle).ref_state.set_active(false);
         }
     }
@@ -938,8 +1074,7 @@ impl UvTimer {
         }
     }
 
-    /// Called by `uv_close`. Frees the node here instead of in the close task because
-    /// a stopping VM refuses the task. Nothing reads the node once the closing flag is set.
+    /// Called by `uv_close`. Frees the node here because only the handle has its address, and nothing reads the handle once `uv_close` has returned.
     ///
     /// # Safety
     /// Same as [`Self::arm`], and `handle` is being closed for the first time.
@@ -1462,15 +1597,13 @@ unsafe fn ref_state(handle: *mut UvHandle, function: &'static CStr) -> *mut RefS
     }
 }
 
-/// `uv_close` posts the handle as a task.
-impl Taskable for UvHandle {
+/// `uv_close` on another thread posts the close as a task.
+impl Taskable for ClosingTask {
     const TAG: TaskTag = task_tag::UvHandleClose;
-    /// Still runs `close_cb` because that's where the addon frees the handle. Any JS
-    /// it tries to run is refused.
+    /// Queues the close all the same: teardown runs the queued closes right after it releases the tasks.
     unsafe fn release_unrun(this: *mut Self) {
-        // On `Err` the exception is still pending, and the release dispatcher handles it.
-        // SAFETY: fn contract.
-        let _ = unsafe { UvHandle::run_close(this) };
+        // SAFETY: fn contract. The VM that releases the task is the one that would have run it.
+        unsafe { ClosingTask::arrive(this) };
     }
     /// Not tied to one context, like [`UvLoop`]'s task.
     unsafe fn context(_: *const Self) -> ContextId {
@@ -1478,36 +1611,18 @@ impl Taskable for UvHandle {
     }
 }
 
-impl UvHandle {
-    /// Runs `close_cb` one turn after `uv_close`. The callback usually frees the
-    /// handle, so don't read it afterwards.
-    ///
-    /// # Safety
-    /// `uv_close` posted the task for `handle`, which the addon keeps alive until
-    /// `close_cb` has run. This is the loop thread.
-    pub(crate) unsafe fn run_close(handle: *mut UvHandle) -> JsResult<()> {
-        // SAFETY: fn contract.
-        let (close_cb, loop_) = unsafe {
-            (*handle).flags |= UV_HANDLE_CLOSED;
-            ((*handle).close_cb, (*handle).loop_)
-        };
-        bun_output::scoped_log!(uv, "uv_handle_t {:?}: close_cb", handle);
-        // SAFETY: the VM owns the loop, so it outlives its handles.
-        let global = unsafe { &*loop_ }.global();
-        if let Some(close_cb) = close_cb {
-            let _handles = CallbackScope::open(global);
-            // SAFETY: calls the addon's callback on the loop thread with its handle.
-            unsafe { close_cb(handle) };
+impl ClosingTask {
+    /// Queues the close on its loop. `this` is the record of a task that `post_closing` posted, and this is the loop's thread.
+    pub(crate) unsafe fn arrive(this: *mut ClosingTask) {
+        // SAFETY: fn contract. `post_closing` allocated the record, and the VM that runs the task owns the loop.
+        unsafe {
+            let ClosingTask { loop_, closing } = *bun_core::heap::take(this);
+            loop_.as_ref().push_closing(closing);
         }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
-        Ok(())
     }
 }
 
-/// Implements `void uv_close(uv_handle_t*, uv_close_cb)`. Stops the handle immediately
-/// and runs `close_cb` on a later turn, like libuv does. A second close is a no-op.
+/// Implements `void uv_close(uv_handle_t*, uv_close_cb)`. Stops the handle immediately and runs `close_cb` in the loop's next closing phase, like libuv. A second close is a no-op.
 ///
 /// # Safety
 /// `handle` was initialized by one of this module's `uv_*_init`.
@@ -1540,12 +1655,12 @@ pub(crate) unsafe extern "C" fn uv_close(handle: *mut UvHandle, close_cb: Option
             _ => UvWatcher::stop(handle.cast::<UvWatcher>()),
         }
     }
-    // The queued task keeps the loop alive until `close_cb` has run, like libuv's
-    // closing list. If the VM is gone, the task is refused and `close_cb` never runs.
-    let task = ConcurrentTask::create_from(handle);
-    if let Posted::Refused(task) = loop_.handle.post(LoopKind::Regular, task) {
-        // SAFETY: a refused task was never queued, so we own it.
-        unsafe { ConcurrentTask::release_refused(task) };
+    // From here on only the record is used. After the VM's teardown nothing takes the queue, and `close_cb` never runs.
+    let closing = Closing { handle, close_cb };
+    if loop_.on_its_thread() {
+        loop_.push_closing(closing);
+    } else {
+        loop_.post_closing(closing);
     }
 }
 
@@ -1603,7 +1718,7 @@ pub(crate) unsafe extern "C" fn uv_is_closing(handle: *mut UvHandle) -> c_int {
     unsafe { handle_type(handle, c"uv_is_closing") };
     // SAFETY: `handle` is initialized, and this is the loop thread.
     let flags = unsafe { (*handle).flags };
-    c_int::from(flags & (UV_HANDLE_CLOSING | UV_HANDLE_CLOSED) != 0)
+    c_int::from(flags & UV_HANDLE_CLOSING != 0)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

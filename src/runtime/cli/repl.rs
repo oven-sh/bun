@@ -1122,6 +1122,13 @@ impl<'a> Repl<'a> {
         false
     }
 
+    /// Ticks the event loop after a line. The line's own wait is the only loop pass here, so this also runs the closing phase for an addon's `uv_close`.
+    fn tick_after_line(vm: &VirtualMachine) {
+        vm.as_mut().tick();
+        // SAFETY: `vm` is this thread's VM, and this is its JS thread.
+        unsafe { crate::jsc_hooks::run_uv_closing_phase(vm.as_mut()) };
+    }
+
     /// Restore raw terminal mode after promise wait
     fn disable_signals_during_wait(&mut self) {
         SIGINT_ARMED.store(false, core::sync::atomic::Ordering::Release);
@@ -1708,7 +1715,7 @@ impl<'a> Repl<'a> {
                         let exc = global.take_exception(err);
                         self.set_last_error(exc);
                         self.print_js_error(exc);
-                        vm.as_mut().tick();
+                        Self::tick_after_line(vm);
                         return;
                     }
                 };
@@ -1738,7 +1745,7 @@ impl<'a> Repl<'a> {
         }
 
         // Tick the event loop to handle any pending work
-        vm.as_mut().tick();
+        Self::tick_after_line(vm);
     }
 
     /// Evaluate a script from `bun repl -e/--eval` or `-p/--print` non-interactively.
@@ -1914,7 +1921,7 @@ impl<'a> Repl<'a> {
         }
 
         if let Some(vm) = self.vm {
-            vm.as_mut().tick();
+            Self::tick_after_line(vm);
         }
     }
 
@@ -1993,7 +2000,7 @@ impl<'a> Repl<'a> {
                         let exc = global.take_exception(err);
                         self.set_last_error(exc);
                         self.print_js_error(exc);
-                        vm.as_mut().tick();
+                        Self::tick_after_line(vm);
                         return;
                     }
                 };
@@ -2013,7 +2020,7 @@ impl<'a> Repl<'a> {
             self.set_last_error(exc);
             self.print_js_error(exc);
         }
-        vm.as_mut().tick();
+        Self::tick_after_line(vm);
     }
 
     /// Format a JS value as a string suitable for clipboard.

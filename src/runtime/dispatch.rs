@@ -624,11 +624,11 @@ pub(crate) fn run_task(
         task_tag::UvHandleClose => {
             #[cfg(unix)]
             {
-                use crate::napi::uv_posix::UvHandle;
-                feature_arm!([NativeAddons], |uv_handle: UvHandle| -> JsResult<()> {
-                    // SAFETY: `uv_close` posted this handle.
-                    unsafe { UvHandle::run_close(uv_handle) }
-                })?;
+                use crate::napi::uv_posix::ClosingTask;
+                feature_arm!([NativeAddons], |closing: ClosingTask| {
+                    // SAFETY: `uv_close` posted this record from another thread to this VM's loop.
+                    unsafe { ClosingTask::arrive(closing) };
+                })
             }
             #[cfg(not(unix))]
             unreachable!("posix-only");
@@ -1862,7 +1862,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         }
         task_tag::UvHandleClose => {
             #[cfg(unix)]
-            release_in!([NativeAddons], crate::napi::uv_posix::UvHandle);
+            release_in!([NativeAddons], crate::napi::uv_posix::ClosingTask);
             #[cfg(not(unix))]
             unreachable!("posix-only tag");
         }

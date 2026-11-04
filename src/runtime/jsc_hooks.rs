@@ -1098,9 +1098,9 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // the `uv_loop` field, so it doesn't alias the `timer` accesses that
     // callbacks make through `runtime_state()`.
     #[cfg(unix)]
-    let uv_idle_started = unsafe { (*state).uv_loop.before_poll() };
+    let uv_poll_must_not_block = unsafe { (*state).uv_loop.before_poll() };
     #[cfg(not(unix))]
-    let uv_idle_started = false;
+    let uv_poll_must_not_block = false;
 
     // Call `ctx.timer.getTimeout(..)` ONLY inside
     // `if (loop.isActive())` — `get_timeout` has side effects (pops + fires
@@ -1110,10 +1110,10 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // Read `immediate_tasks` AFTER
         // `tickImmediateTasks` swaps `next_immediate_tasks` in, so this
         // reflects next-tick immediates (queued during the drain above).
-        // A started idle handle keeps the poll from blocking, like in libuv.
+        // A started idle handle or a closing handle keeps the poll from blocking, like in libuv.
         // SAFETY: `el` is the live per-thread event loop.
         let has_pending_immediate = has_yielded_tasks
-            || uv_idle_started
+            || uv_poll_must_not_block
             || !unsafe { &*el }.immediate_tasks.is_empty()
             || unsafe { &*el }.has_pending_tasks();
         // Fold the QUIC deadline into the poll timeout.
@@ -1158,7 +1158,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
 
     #[cfg(unix)]
     {
-        // ── addons' uv_check_t (libuv runs them right after its poll) ────
+        // ── addons' uv_check_t, then their closing handles (libuv's order between its poll and its timers) ──
         // SAFETY: same as `before_poll` above.
         unsafe { (*state).uv_loop.after_poll() };
         // Note (§Forbidden aliased-&mut): `drain_timers` fires user
@@ -1248,14 +1248,14 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
 
     // SAFETY: see the matching call in `auto_tick`.
     #[cfg(unix)]
-    let uv_idle_started = unsafe { (*state).uv_loop.before_poll() };
+    let uv_poll_must_not_block = unsafe { (*state).uv_loop.before_poll() };
     #[cfg(not(unix))]
-    let uv_idle_started = false;
+    let uv_poll_must_not_block = false;
 
     {
         // SAFETY: `el` is the live per-thread event loop.
         let has_pending_immediate = has_yielded_tasks
-            || uv_idle_started
+            || uv_poll_must_not_block
             || !unsafe { &*el }.immediate_tasks.is_empty()
             || unsafe { &*el }.has_pending_tasks();
         let quic_next_tick_us = loop_.internal_loop_data.quic_next_tick_us();
@@ -1638,6 +1638,8 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     stop_dns_for_vm_teardown,
     stop_active_handles_for_vm_teardown: stop_active_handles_for_vm_teardown_hook,
     disarm_all_timers_for_vm_teardown,
+    release_uv_closing_handles,
+    run_uv_closing_phase,
     close_timer_loop_handles_after_vm_destroyed,
 };
 
@@ -1866,6 +1868,32 @@ unsafe fn disarm_all_timers_for_vm_teardown(_vm: *mut VirtualMachine) {
     }
     // SAFETY: live per-thread `All`; JS thread; teardown has forbidden script.
     unsafe { crate::timer::All::disarm_all_for_vm_teardown(all) };
+}
+
+/// `RuntimeHooks::release_uv_closing_handles`. `vm` is the thread's VM on its JS thread, with the JSC heap alive.
+unsafe fn release_uv_closing_handles(vm: *mut VirtualMachine) {
+    #[cfg(unix)]
+    {
+        // SAFETY: fn contract. The loop is a field of `vm`'s `RuntimeState`, or null before that exists.
+        if let Some(uv_loop) = unsafe { crate::napi::uv_posix::UvLoop::of_vm(vm).as_ref() } {
+            uv_loop.release_closing();
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = vm;
+}
+
+/// `RuntimeHooks::run_uv_closing_phase`, which the REPL also calls after the ticks of a line. `vm` is the thread's VM on its JS thread.
+pub(crate) unsafe fn run_uv_closing_phase(vm: *mut VirtualMachine) {
+    #[cfg(unix)]
+    {
+        // SAFETY: fn contract. The loop is a field of `vm`'s `RuntimeState`, or null before that exists.
+        if let Some(uv_loop) = unsafe { crate::napi::uv_posix::UvLoop::of_vm(vm).as_ref() } {
+            uv_loop.closing_phase();
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = vm;
 }
 
 /// `RuntimeHooks::stop_dns_for_vm_teardown` — destroy the per-VM global DNS

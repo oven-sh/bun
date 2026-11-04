@@ -109,46 +109,52 @@ const expected = {
   exitCode: 0,
 };
 
-// A way: its name, the environment of its compiled runs, what such a run says of its form, and the flags of each run. A run says
-// its form on stderr where a word of BUN_DEBUG_TEST_AOT_WORDS begins with `TestRun`. The text here is the part of that line that
-// every Bun prints: one that loads one program a realm (macOS, Windows, a hardened build) says so in place of the layers.
-const ways: [string, Record<string, string> | undefined, string, string[][]][] = [
-  ["in plain Bun", undefined, "", [["--isolate"], []]],
+// A way: its name, the environment of its compiled runs, a part of each line in which such a run says its form, and the flags
+// of each run. A run says its form in one line on stderr where a word of BUN_DEBUG_TEST_AOT_WORDS begins with `TestRun`. The
+// part here is what every Bun prints: one that loads one program a realm (macOS, Windows, a hardened build) says so in place
+// of the layers.
+const ways: [string, Record<string, string> | undefined, string[], string[][]][] = [
+  ["in plain Bun", undefined, [], [["--isolate"], []]],
   [
     "as one program",
     { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" },
-    "AOT test run | one program",
+    ["AOT test run | one program"],
     [["--isolate"], []],
   ],
   [
     "in layers",
     { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2,TestRunPartFiles:3" },
-    " | test files 3 | to a program 3",
+    [" | test files 3 | to a program 3"],
     [["--isolate"]],
   ],
   [
     "in layers with a process for each test file",
     { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2,TestRunPartFiles:1" },
-    " | test files 3 | to a program 1",
+    [" | test files 3 | to a program 1"],
     [["--isolate"]],
   ],
   [
     "with the test files from disk",
     { BUN_AOT_TEST_FILES_FROM_DISK: "1", BUN_AOT_TESTS_NAME_WHAT_THEY_USE: "1" },
-    "",
+    [],
     [["--isolate"], []],
   ],
 ];
 
 async function runTests(directory: string, env: Record<string, string> | undefined, ...flags: string[]) {
   const command = [bunExe(), "test", ...(env ? ["--aot"] : []), ...flags];
-  const { stdout, stderr, exitCode } = await run(command, directory, { ...bunEnv, ...env });
+  // The shell may ask for the log of the phases: then every run, a plain one too, prints lines of it on stderr.
+  const { stdout, stderr, exitCode } = await run(command, directory, {
+    ...bunEnv,
+    BUN_JSC_logAOTPhaseTimes: undefined,
+    ...env,
+  });
   // Every line, without the version and the times.
   const lines = (text: string) => normalizeBunSnapshot(text, directory).split("\n").filter(Boolean);
   const saysForm = (line: string) => line.startsWith("AOT test run | ");
   const reported = lines(stderr);
   return {
-    form: reported.filter(saysForm).join("\n"),
+    form: reported.filter(saysForm),
     output: { printed: lines(stdout), reported: reported.filter(line => !saysForm(line)), exitCode },
   };
 }
@@ -160,7 +166,7 @@ for (const [way, env, says, isolations] of ways) {
       using dir = tempDir("a-commonjs-file-taken-out-of-require-cache-and-loaded-again", project);
       const { form, output } = await runTests(String(dir), env, ...isolation);
       expect(output).toEqual(expected);
-      expect(form).toContain(says);
+      expect(form).toEqual(says.map(part => expect.stringContaining(part)));
     });
   }
 }

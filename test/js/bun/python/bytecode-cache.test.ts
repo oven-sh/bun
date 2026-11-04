@@ -381,4 +381,41 @@ True True
 `),
     );
   });
+
+  // A function is decoded when it is first called, from what was read when the module was imported.
+  test.each(["replaced", "removed", "overwritten", "truncated"])(
+    "a file that is %s while the program runs",
+    async what => {
+      const functions = (result: string) =>
+        Array.from({ length: 100 }, (_, i) => `def f${i}(x):\n    return ${result}, x + ${i}\n`).join("");
+      using tmp = tempDir("python-pyc", {
+        "mod.py":
+          functions("'mod'") + "class C:\n    def method(self):\n        return [(lambda: i)() for i in range(3)]\n",
+        "other.py": functions("'other'"),
+        "compile.py": "import mod, other",
+        "main.py": `
+import os, sys, mod
+cached = mod.__spec__.cached
+print(mod.f1(1))
+with open(cached.replace("mod.", "other."), "rb") as f:
+    other = f.read()
+if sys.argv[1] == "replaced":
+    with open(cached + ".new", "wb") as f:
+        f.write(other)
+    os.replace(cached + ".new", cached)
+elif sys.argv[1] == "removed":
+    os.remove(cached)
+elif sys.argv[1] == "overwritten":
+    with open(cached, "r+b") as f:
+        f.write(other)
+elif sys.argv[1] == "truncated":
+    os.truncate(cached, 0)
+print(mod.f1(2), mod.f2(2), mod.C().method(), len(mod.f3.__code__.co_code) > 0)
+`,
+      });
+      const dir = String(tmp);
+      expect(await run(dir, ["compile.py"])).toEqual(printed(""));
+      expect(await run(dir, ["main.py", what])).toEqual(printed("('mod', 2)\n('mod', 3) ('mod', 4) [0, 1, 2] True\n"));
+    },
+  );
 });

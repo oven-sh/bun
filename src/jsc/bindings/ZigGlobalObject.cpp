@@ -4967,7 +4967,11 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     RefPtr<JSC::ScriptFetcher>)
 {
     auto* importMeta = Zig::ImportMetaObject::create(globalObject, key);
-    importMeta->setModuleGraph(globalObject->vm(), Bun::moduleGraphOfLoader(globalObject, loader));
+    auto* graph = Bun::moduleGraphOfLoader(globalObject, loader);
+    importMeta->setModuleGraph(globalObject->vm(), graph);
+    // An ES module that Module.runMain() started is a main module beside the entry module.
+    if (auto* runMain = uncheckedDowncast<GlobalObject>(globalObject)->m_runMain.get(); runMain && !graph && runMain->startedURLs.contains(importMeta->url)) [[unlikely]]
+        importMeta->putDirect(globalObject->vm(), WebCore::builtinNames(globalObject->vm()).mainPublicName(), jsBoolean(true), static_cast<unsigned>(PropertyAttribute::DontEnum));
     return importMeta;
 }
 

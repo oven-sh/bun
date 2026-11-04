@@ -86,10 +86,11 @@ public:
     JSC::WriteBarrier<JSModuleGraph> m_moduleGraph;
 
     bool ignoreESModuleAnnotation { false };
-    // Pending: Module.runMain() loads the module, and it becomes the main module when it starts to run. LeftToESLoader: the built-in loader under a require.extensions handler found an ES module, which the loader of import() loads.
+    // While Module.runMain() loads the module. Pending: not the main module yet. Assigned: it is, and has not run. LeftToESLoader: an ES module under a handler.
     enum class MainLoad : uint8_t {
         No,
         Pending,
+        Assigned,
         LeftToESLoader,
     };
     MainLoad mainLoad { MainLoad::No };
@@ -212,9 +213,9 @@ struct RunMainState {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(RunMainState);
 
 public:
-    // The path of the entry module while its load is still to come. When that module runs, it is the main module in place of a script that a preload or an override of Module.runMain started.
+    // The path of the entry module while the loader has not reached it: when that module runs, it takes the main module from a started script.
     WTF::String entryThatTakesMainModuleBack;
-    // The started scripts by `import.meta.url`. `import.meta.main` is true in an ES module with such a URL. True: a CommonJS module with such a URL becomes the main module when the loader of import() runs it.
+    // The started scripts by `import.meta.url`, where `import.meta.main` is true. True: a CommonJS module of that URL becomes the main module when it runs.
     WTF::HashMap<WTF::String, bool> startedURLs;
 };
 
@@ -222,6 +223,8 @@ public:
 bool loadMainModule(Zig::GlobalObject*, const WTF::String& key);
 // The load that the caller started after loadMainModule() returned false. Null: it threw. A load that fails leaves no started script behind.
 void didStartLoadOfMainModule(Zig::GlobalObject*, const WTF::String& key, JSC::JSPromise* load);
+// A require.extensions handler is asked next about a module that Module.runMain() loads: the module is the main module before the handler runs.
+void becomeMainModuleBeforeExtensionHandler(Zig::GlobalObject*, JSCommonJSModule*);
 
 class RequireResolveFunctionPrototype final : public JSC::JSNonFinalObject {
 public:

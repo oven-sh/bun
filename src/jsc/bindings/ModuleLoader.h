@@ -115,7 +115,7 @@ JSC::JSObject* appendNativeModuleExports(Zig::GlobalObject*, uint32_t registryID
 
 JSC::JSObject* createAsyncModuleRequiredError(JSC::JSGlobalObject*, const WTF::String& specifier);
 
-// `asksExtensionHandlers` false: no require.extensions handler is asked about the file, as for a file that Node gives to its ES module loader.
+// `asksExtensionHandlers` false: no require.extensions handler is asked about the file.
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSCommonJSModule* moduleObject,

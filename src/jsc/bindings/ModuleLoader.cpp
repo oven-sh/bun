@@ -1056,6 +1056,10 @@ JSValue fetchCommonJSModuleNonBuiltin(
             JSC::throwException(globalObject, scope, JSC::createSyntaxError(globalObject, "Recursive extension. This is a bug in Bun"_s));
             RELEASE_AND_RETURN(scope, {});
         }
+        if (target->mainLoad == JSCommonJSModule::MainLoad::Pending) [[unlikely]] {
+            Bun::becomeMainModuleBeforeExtensionHandler(globalObject, target);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
         evaluateCommonJSCustomExtension(globalObject, target, specifierWtfString, specifierValue, JSC::JSValue::decode(res->result.value.cjsCustomExtension));
         RETURN_IF_EXCEPTION(scope, {});
         RELEASE_AND_RETURN(scope, target);

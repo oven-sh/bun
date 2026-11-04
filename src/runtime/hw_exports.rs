@@ -99,26 +99,32 @@ pub(crate) fn set_override_module_run_main_promise(
     if vm.pending_internal_promise().is_some() {
         return;
     }
-    let is_entry_point = key.eql_utf8(bun_jsc::virtual_machine::MAIN_FILE_NAME)
-        || vm.main().is_some_and(|main| key.eql_utf8(main));
-    if is_entry_point || !vm.run_main_ran_entry_point {
-        vm.set_pending_internal_promise(Some(promise));
+    if vm.run_main_ran_entry_point && !key.eql_utf8(bun_jsc::virtual_machine::MAIN_FILE_NAME) {
+        // `Bun.main` gives the real path of the entry point, which is the key of its module also behind a symlink.
+        let main = crate::api::bun_object::get_main(vm.global());
+        let is_entry_point = main.is_string()
+            && bun_core::String::from_js(main, vm.global()).is_ok_and(|main| main.eql(key));
+        if !is_entry_point {
+            return;
+        }
     }
+    vm.set_pending_internal_promise(Some(promise));
 }
 
 // HOST_EXPORT(Bun__VM__noteMainModuleOfRunMain, c)
 pub(crate) fn note_main_module_of_run_main(this: &mut VirtualMachine) {
-    // JSCommonJSModule.cpp calls this when `Module.runMain()` makes a CommonJS module the main module.
+    // JSCommonJSModule.cpp calls this when a CommonJS module that `Module.runMain()` loaded is the main module.
     if this.pending_internal_promise().is_none() {
         this.run_main_ran_entry_point = true;
     }
 }
 
-// HOST_EXPORT(Bun__VM__entryModuleLoadIsToCome, c)
-pub(crate) fn entry_module_load_is_to_come(this: &mut VirtualMachine) -> bool {
-    // A preload runs, or the override of `Module.runMain` has not started that load. Node does not load the text of `-e`, `-p` or stdin as a main module, so that text is no entry module.
-    this.module_loader.eval_source.is_none()
-        && (this.is_in_preload || this.pending_internal_promise().is_none())
+// HOST_EXPORT(Bun__VM__entryModuleLoad, c)
+pub(crate) fn entry_module_load(this: &mut VirtualMachine) -> u8 {
+    // Bit 0: the entry point is a file, not the text of `-e`, `-p` or stdin. Bit 1: a preload runs. Bit 2: a load read the entry file.
+    u8::from(this.module_loader.eval_source.is_none())
+        | (u8::from(this.is_in_preload) << 1)
+        | (u8::from(this.has_loaded) << 2)
 }
 
 /// Exported as `Bun__VM__setEntryPointEvalResultESM`.

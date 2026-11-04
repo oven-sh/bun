@@ -79,7 +79,6 @@
 #include <JavaScriptCore/FunctionCodeBlock.h>
 #include <JavaScriptCore/WeakGCMapInlines.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
-#include <JavaScriptCore/JSNativeStdFunction.h>
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
@@ -172,24 +171,21 @@ JSC_DEFINE_CUSTOM_GETTER(jsModuleGraphRequireMainGetter, (JSC::JSGlobalObject * 
 
 JSC_DECLARE_CUSTOM_SETTER(jsRequireCacheSetter);
 
-// `require.main` of a require() that was made while a script that Module.runMain() started was the main module: that script, as Node copies process.mainModule into each require function. After the next entry load it is the entry module, as on the prototype.
+// Node copies process.mainModule into each require function. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/modules/helpers.js#L362
 JSC_DEFINE_CUSTOM_GETTER(jsRequireMainOfRunMainGetter, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue require = JSValue::decode(thisValue);
-    if (auto* mains = require.isCell() ? globalObject->m_requireMainOfRunMain.get() : nullptr) {
-        JSValue started = mains->get(require.asCell());
-        if (!started.isUndefined())
-            return JSValue::encode(started);
-    }
+    if (auto* mains = require.isCell() ? globalObject->m_requireMainOfRunMain.get() : nullptr; mains && mains->has(require.asCell()))
+        return JSValue::encode(mains->get(require.asCell()));
     JSValue main = globalObject->bunObject()->get(globalObject, WebCore::builtinNames(vm).mainPublicName());
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(globalObject->requireMap()->get(globalObject, main)));
 }
 
-// Node copies process.mainModule into each require function that it makes. Here the prototype gives the entry module, a Bun.ModuleGraph has its own main module, and a function that is made while a script that Module.runMain() started is the main module reads that script.
+// A function that is made while a script that Module.runMain() started is the main module gets what process.mainModule holds. Else the prototype answers.
 static void putRequireMain(VM& vm, Zig::GlobalObject* globalObject, JSFunction* requireFunction, JSCommonJSModule* requirer)
 {
     if (requirer->moduleGraph()) {
@@ -200,23 +196,33 @@ static void putRequireMain(VM& vm, Zig::GlobalObject* globalObject, JSFunction* 
             mains = JSWeakMap::create(vm, globalObject->weakMapStructure());
             globalObject->m_requireMainOfRunMain.set(vm, globalObject, mains);
         }
-        mains->set(vm, requireFunction, started);
+        mains->set(vm, requireFunction, globalObject->processObject()->mainModuleOfRequire(vm, started));
         requireFunction->putDirectCustomAccessor(vm, WebCore::builtinNames(vm).mainPublicName(), JSC::CustomGetterSetter::create(vm, jsRequireMainOfRunMainGetter, jsRequireCacheSetter), JSC::PropertyAttribute::CustomValue | 0);
     }
 }
 
 extern "C" bool Bun__isESModuleByExtensionOrPackageType(JSC::JSGlobalObject*, const BunString* path);
-extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, const BunString* specifier, const BunString* typeAttribute);
-extern "C" bool Bun__VM__entryModuleLoadIsToCome(void*);
+extern "C" uint8_t Bun__kindOfRequiredFile(JSC::JSGlobalObject*, const BunString* path);
 extern "C" void Bun__VM__noteMainModuleOfRunMain(void*);
+// The bits of entry_module_load() in hw_exports.rs.
+extern "C" uint8_t Bun__VM__entryModuleLoad(void*);
+static constexpr uint8_t entryPointIsFile = 1;
+static constexpr uint8_t entryLoadIsInPreload = 2;
+static constexpr uint8_t entryFileWasRead = 4;
 
-// A new entry load starts, or code assigns `Bun.main`: nothing that Module.runMain() started is a main module from now on, and each require function reads the entry module again.
-extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__forgetMainModuleOfRunMain(Zig::GlobalObject* globalObject)
+// The script that Module.runMain() started is no main module any more.
+static void forgetMainModule(Zig::GlobalObject* globalObject)
 {
     if (JSObject* started = globalObject->m_mainModuleOfRunMain.get()) {
         globalObject->processObject()->forgetMainModule(JSC::getVM(globalObject), started);
         globalObject->m_mainModuleOfRunMain.clear();
     }
+}
+
+// A new entry load starts, or code assigns `Bun.main`: nothing that Module.runMain() started is a main module from now on.
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__forgetMainModuleOfRunMain(Zig::GlobalObject* globalObject)
+{
+    forgetMainModule(globalObject);
     globalObject->m_requireMainOfRunMain.clear();
     if (auto* state = globalObject->m_runMain.get()) {
         state->entryThatTakesMainModuleBack = String();
@@ -224,11 +230,12 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__forgetMainModuleOfRunMain(Zig::Glob
     }
 }
 
-// The entry module runs after a preload or an override of Module.runMain started a script: it is the main module, as Node's load of the entry module assigns process.mainModule. The require functions that exist keep their main module, as in Node.
+// The entry module runs after Module.runMain() started a script: it is the main module from now on, with the id ".". A require function keeps its main module.
 static void takeMainModuleBack(VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* entry)
 {
-    globalObject->m_mainModuleOfRunMain.clear();
-    globalObject->processObject()->assignMainModule(vm, entry);
+    globalObject->processObject()->assignMainModule(vm, entry, globalObject->m_mainModuleOfRunMain.get());
+    globalObject->m_mainModuleOfRunMain.set(vm, globalObject, entry);
+    entry->m_id.set(vm, entry, jsString(vm, String("."_s)));
     if (auto* state = globalObject->m_runMain.get()) {
         state->entryThatTakesMainModuleBack = String();
         for (auto& started : state->startedURLs)
@@ -236,10 +243,11 @@ static void takeMainModuleBack(VM& vm, Zig::GlobalObject* globalObject, JSCommon
     }
 }
 
-// While the load of the entry module is still to come, that module takes the main module back when it runs.
+// The entry module takes the main module back when it runs, unless it ran before, or its file was read and no module of its path waits to run.
 static void noteEntryThatTakesMainModuleBack(Zig::GlobalObject* globalObject)
 {
-    if (!Bun__VM__entryModuleLoadIsToCome(globalObject->bunVM()))
+    uint8_t load = Bun__VM__entryModuleLoad(globalObject->bunVM());
+    if (!(load & entryPointIsFile))
         return;
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -247,11 +255,16 @@ static void noteEntryThatTakesMainModuleBack(Zig::GlobalObject* globalObject)
     RETURN_IF_EXCEPTION(scope, );
     if (!main.isString())
         return;
-    String entry = asString(main)->value(globalObject);
+    JSValue loaded = JSValue::decode(JSC__JSMap__get(globalObject->requireMap(), globalObject, JSValue::encode(main)));
+    RETURN_IF_EXCEPTION(scope, );
+    auto* entry = dynamicDowncast<JSCommonJSModule>(loaded);
+    if (entry ? entry->hasEvaluated : !!(load & entryFileWasRead))
+        return;
+    String path = asString(main)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, );
     if (!globalObject->m_runMain)
         globalObject->m_runMain = makeUnique<RunMainState>();
-    globalObject->m_runMain->entryThatTakesMainModuleBack = WTF::move(entry);
+    globalObject->m_runMain->entryThatTakesMainModuleBack = WTF::move(path);
 }
 
 static bool isEntryThatTakesMainModuleBack(RunMainState& state, JSCommonJSModule* moduleObject)
@@ -259,18 +272,22 @@ static bool isEntryThatTakesMainModuleBack(RunMainState& state, JSCommonJSModule
     return !state.entryThatTakesMainModuleBack.isNull() && moduleObject->filename().isString() && asString(moduleObject->filename())->tryGetValue().data == state.entryThatTakesMainModuleBack;
 }
 
-// Node's Module._load() for a main module: it is process.mainModule, and `require.main` of the require functions that are made while it is.
+// Node's Module._load() of a main module. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/modules/cjs/loader.js#L1433-L1438
 static void becomeMainModule(VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!globalObject->processObject()->assignMainModule(vm, moduleObject)) {
+    if (!globalObject->processObject()->assignMainModule(vm, moduleObject, globalObject->m_mainModuleOfRunMain.get())) {
         throwTypeError(globalObject, scope, "Cannot redefine property: mainModule"_s);
         return;
     }
     globalObject->m_mainModuleOfRunMain.set(vm, globalObject, moduleObject);
-    noteEntryThatTakesMainModuleBack(globalObject);
-    RETURN_IF_EXCEPTION(scope, );
-    Bun__VM__noteMainModuleOfRunMain(globalObject->bunVM());
+    RELEASE_AND_RETURN(scope, noteEntryThatTakesMainModuleBack(globalObject));
+}
+
+void becomeMainModuleBeforeExtensionHandler(Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject)
+{
+    moduleObject->mainLoad = JSCommonJSModule::MainLoad::Assigned;
+    becomeMainModule(JSC::getVM(globalObject), globalObject, moduleObject);
 }
 
 // The loader of import() has `moduleObject`, and runs it now if it has not run.
@@ -278,7 +295,7 @@ static void didReachModuleOfLoader(VM& vm, Zig::GlobalObject* globalObject, RunM
 {
     if (moduleObject->moduleGraph())
         return;
-    // Module.runMain() gave the script to this loader: it becomes the main module as it starts to run. As in Node, a module that ran before does not, and neither does a script that starts after the entry module took the main module back.
+    // A script that Module.runMain() gave to this loader becomes the main module as it starts, unless it ran before or the entry module ran since.
     if (!state.startedURLs.isEmpty()) {
         if (auto started = state.startedURLs.find(Zig::ImportMetaObject::urlOfSpecifier(key.string())); started != state.startedURLs.end()) {
             if (started->value && !moduleObject->hasEvaluated)
@@ -289,7 +306,7 @@ static void didReachModuleOfLoader(VM& vm, Zig::GlobalObject* globalObject, RunM
     }
     if (!isEntryThatTakesMainModuleBack(state, moduleObject))
         return;
-    // Node's load of an entry module that a preload required finds it in the cache, and assigns nothing.
+    // An entry module that ran before takes nothing back.
     if (moduleObject->hasEvaluated)
         state.entryThatTakesMainModuleBack = String();
     else
@@ -331,8 +348,9 @@ private:
 static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    bool becomesMain = moduleObject->mainLoad == JSCommonJSModule::MainLoad::Pending;
-    if (becomesMain) [[unlikely]]
+    auto mainLoad = moduleObject->mainLoad;
+    bool isMainLoad = mainLoad == JSCommonJSModule::MainLoad::Pending || mainLoad == JSCommonJSModule::MainLoad::Assigned;
+    if (isMainLoad) [[unlikely]]
         moduleObject->mainLoad = JSCommonJSModule::MainLoad::No;
     SourceCode code = WTF::move(moduleObject->sourceCode);
     // JSC's code cache has the unlinked code of a source it has seen. Optimized JIT code belongs to a linked
@@ -372,9 +390,12 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
             Bun__VM__noteCommonJSEvaluation(globalObject->bunVM(), JSValue::encode(filename));
     }
 
-    if (becomesMain) [[unlikely]] {
-        becomeMainModule(vm, globalObject, moduleObject);
-        RETURN_IF_EXCEPTION(scope, false);
+    if (isMainLoad) [[unlikely]] {
+        if (mainLoad == JSCommonJSModule::MainLoad::Pending) {
+            becomeMainModule(vm, globalObject, moduleObject);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+        Bun__VM__noteMainModuleOfRunMain(globalObject->bunVM());
     }
 
     JSFunction* resolveFunction = nullptr;
@@ -483,7 +504,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
             auto* importMeta = Zig::ImportMetaObject::create(globalObject, filename);
             RETURN_IF_EXCEPTION(scope, false);
             importMeta->setModuleGraph(vm, graph);
-            if (becomesMain) [[unlikely]]
+            if (isMainLoad) [[unlikely]]
                 importMeta->putDirect(vm, WebCore::builtinNames(vm).mainPublicName(), jsBoolean(true), static_cast<unsigned>(PropertyAttribute::DontEnum));
             args.append(importMeta);
         }
@@ -1684,19 +1705,19 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
 }
 #undef REQUIRE_CJS_RETURN_IF_EXCEPTION
 
-// Module.runMain(path), as Node's executeUserEntryPoint(): a CommonJS script runs here, inside the call, as the main module. False: the caller loads `key` as import() does. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/modules/run_main.js#L163-L181
+// Node's executeUserEntryPoint(). https://github.com/nodejs/node/blob/v26.12.1/lib/internal/modules/run_main.js#L144-L182
 bool loadMainModule(Zig::GlobalObject* globalObject, const WTF::String& key)
 {
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    // What is no file loads as import() loads it. A Bun.ModuleGraph has a main module of its own, and an ahead-of-time executable names its main module when it is built.
+    // What is no file loads as import() loads it. A Bun.ModuleGraph and an ahead-of-time executable have a main module of their own.
     if (!isAbsolutePath(key) || Bun::currentModuleGraph(globalObject) || Bun::hasCompiledModules())
         return false;
     JSMap* requireMap = globalObject->requireMap();
     JSString* specifierValue = jsString(vm, key);
     JSValue cached = JSValue::decode(JSC__JSMap__get(requireMap, globalObject, JSValue::encode(specifierValue)));
     RETURN_IF_EXCEPTION(throwScope, false);
-    // Node's Module._load() does not make a module of its cache the main module. It runs one that has not run, as require() does.
+    // A module of the require cache does not become the main module. It runs if it has not run, as for require().
     if (cached.toBoolean(globalObject)) {
         if (auto* cachedModule = dynamicDowncast<JSCommonJSModule>(cached))
             cachedModule->load(vm, globalObject);
@@ -1711,13 +1732,12 @@ bool loadMainModule(Zig::GlobalObject* globalObject, const WTF::String& key)
         size_t query = key.find('?');
         String pathOfKey = query == notFound ? key : key.left(query);
         BunString path = Bun::toString(pathOfKey);
-        // Node's CommonJS loader has a handler for a script, for JSON and for an addon. Any other kind of file loads as import() loads it, and is no main module.
-        BunLoaderType loader = Bun__getDefaultLoader(globalObject, &path, nullptr);
-        bool isScript = loader == BunLoaderTypeJS || loader == BunLoaderTypeJSX || loader == BunLoaderTypeTS || loader == BunLoaderTypeTSX;
-        if (!isScript && loader != BunLoaderTypeJSON && loader != BunLoaderTypeNAPI)
+        // A script and JSON load here, as require() loads them. Any other kind of file, an addon too, loads as on main and is no main module.
+        uint8_t kind = Bun__kindOfRequiredFile(globalObject, &path);
+        if (kind > 1)
             return false;
-        // Node's shouldUseESMLoader(): no require.extensions handler gets a file whose extension or package.json says that it is an ES module. Its body can still be CommonJS.
-        bool isESModuleByName = isScript && Bun__isESModuleByExtensionOrPackageType(globalObject, &path);
+        // As Node's shouldUseESMLoader(): no handler gets such a file. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/modules/run_main.js#L53-L85
+        bool isESModuleByName = !kind && Bun__isESModuleByExtensionOrPackageType(globalObject, &path);
 
         // The loader of require() makes the module before it loads the file. The main module has the id "." and no parent.
         auto* child = JSCommonJSModule::create(globalObject, specifierValue, constructEmptyObject(globalObject), false, jsNull());
@@ -1729,29 +1749,36 @@ bool loadMainModule(Zig::GlobalObject* globalObject, const WTF::String& key)
         JSObject* mainModuleBefore = globalObject->m_mainModuleOfRunMain.get();
         BunString referrer = BunStringEmpty;
         JSValue loaded = Bun::fetchCommonJSModule(globalObject, child, specifierValue, key, &referrer, nullptr, !isESModuleByName);
-        // A module that starts to run takes the mark.
         auto mainLoad = std::exchange(child->mainLoad, JSCommonJSModule::MainLoad::No);
-        bool ranNothing = mainLoad == JSCommonJSModule::MainLoad::Pending;
         if (throwScope.exception()) [[unlikely]] {
-            // What a script throws leaves through the call. A file that is an ES module by its name, and that did not run, is left to the loader of import(), which reports the failure after the call, as Node does.
-            if (!isESModuleByName || !ranNothing) {
+            // What a script throws leaves through the call. An ES module by its name of which nothing ran is left to the loader of import(), as on main.
+            if (!isESModuleByName || mainLoad != JSCommonJSModule::MainLoad::Pending) {
                 finishRequireWithError(globalObject, child, throwScope, specifierValue);
                 return false;
             }
             if (!throwScope.tryClearException())
                 return false;
         } else if (!loaded.isNumber() && mainLoad != JSCommonJSModule::MainLoad::LeftToESLoader) {
-            // JSON, an addon, and a require.extensions handler that compiled nothing: the module is the main module, unless the load started another script.
-            if (ranNothing && globalObject->m_mainModuleOfRunMain.get() == mainModuleBefore) {
+            // JSON runs nothing, and is the main module all the same.
+            if (mainLoad == JSCommonJSModule::MainLoad::Pending) {
                 becomeMainModule(vm, globalObject, child);
                 RETURN_IF_EXCEPTION(throwScope, false);
             }
-            // The main load ended without a throw. If this is the entry module, no later copy of it takes the main module back.
-            if (auto* state = globalObject->m_runMain.get(); state && isEntryThatTakesMainModuleBack(*state, child))
+            if (mainLoad != JSCommonJSModule::MainLoad::No)
+                Bun__VM__noteMainModuleOfRunMain(globalObject->bunVM());
+            // This was the load of the entry module, unless a preload made it: then the load of the entry point itself is still to come.
+            if (auto* state = globalObject->m_runMain.get(); state && isEntryThatTakesMainModuleBack(*state, child) && !(Bun__VM__entryModuleLoad(globalObject->bunVM()) & entryLoadIsInPreload))
                 state->entryThatTakesMainModuleBack = String();
             return true;
         }
-        // An ES module: the loader of import() loads it.
+        // An ES module: the loader of import() loads it. If it was the main module for a require.extensions handler, what was the main module before is it again.
+        if (globalObject->m_mainModuleOfRunMain.get() == child) {
+            if (mainModuleBefore) {
+                globalObject->processObject()->assignMainModule(vm, mainModuleBefore, child);
+                globalObject->m_mainModuleOfRunMain.set(vm, globalObject, mainModuleBefore);
+            } else
+                forgetMainModule(globalObject);
+        }
         JSC__JSMap__remove(requireMap, globalObject, JSValue::encode(specifierValue));
         RETURN_IF_EXCEPTION(throwScope, false);
     }
@@ -1760,7 +1787,17 @@ bool loadMainModule(Zig::GlobalObject* globalObject, const WTF::String& key)
         globalObject->m_runMain = makeUnique<RunMainState>();
     globalObject->m_runMain->startedURLs.set(Zig::ImportMetaObject::urlOfSpecifier(key), true);
     noteEntryThatTakesMainModuleBack(globalObject);
-    RELEASE_AND_RETURN(throwScope, false);
+    RETURN_IF_EXCEPTION(throwScope, false);
+    return false;
+}
+
+// The reaction to a load that Module.runMain() started and that fails: (reason, the URL of the script).
+JSC_DEFINE_HOST_FUNCTION(jsFunctionForgetStartedModule, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto* state = defaultGlobalObject(lexicalGlobalObject)->m_runMain.get();
+    if (state && callFrame->argument(1).isString())
+        state->startedURLs.remove(asString(callFrame->argument(1))->tryGetValue().data);
+    return JSValue::encode(jsUndefined());
 }
 
 void didStartLoadOfMainModule(Zig::GlobalObject* globalObject, const WTF::String& key, JSC::JSPromise* load)
@@ -1769,19 +1806,15 @@ void didStartLoadOfMainModule(Zig::GlobalObject* globalObject, const WTF::String
     if (!state || state->startedURLs.isEmpty())
         return;
     String url = Zig::ImportMetaObject::urlOfSpecifier(key);
-    if (!load) {
+    // A load that fails leaves no started script behind. A promise that is rejected already gets no reaction: one would keep its rejection from being reported.
+    if (!load || load->status() == JSPromise::Status::Rejected) {
         state->startedURLs.remove(url);
         return;
     }
-    if (!state->startedURLs.contains(url))
+    if (load->status() != JSPromise::Status::Pending || !state->startedURLs.contains(url))
         return;
     auto& vm = JSC::getVM(globalObject);
-    auto* onRejected = JSC::JSNativeStdFunction::create(vm, globalObject, 1, String(), [url = WTF::move(url)](JSGlobalObject* lexicalGlobalObject, CallFrame*) {
-        if (auto* state = defaultGlobalObject(lexicalGlobalObject)->m_runMain.get())
-            state->startedURLs.remove(url);
-        return JSValue::encode(jsUndefined());
-    });
-    load->performPromiseThenExported(vm, globalObject, jsUndefined(), onRejected, JSC::JSPromise::create(vm, globalObject->promiseStructure()));
+    load->performPromiseThenWithContext(vm, globalObject, jsUndefined(), globalObject->thenable(jsFunctionForgetStartedModule), JSPromise::create(vm, globalObject->promiseStructure()), jsString(vm, url));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
@@ -2010,8 +2043,7 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                 // the module's code runs in its graph's (what it opens is the graph's).
                 ModuleGraphContextScope graphContext(globalObject, graph.get());
                 JSMap* requireMap = requireMapOf(globalObject, graph.get());
-                // Not JSMap::get() inline: a register of this frame would keep the address of the map's table while the module runs, and with it each table that takes its place.
-                JSValue entry = JSValue::decode(JSC__JSMap__get(requireMap, globalObject, JSValue::encode(keyValue)));
+                JSValue entry = requireMap->get(globalObject, keyValue);
                 RETURN_IF_EXCEPTION(scope, void());
 
                 if (entry) {

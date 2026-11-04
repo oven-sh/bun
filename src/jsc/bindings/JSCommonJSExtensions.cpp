@@ -265,7 +265,7 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
     RETURN_IF_EXCEPTION(scope, {});
     if (result == jsNumber(-1)) {
         // Module.runMain() loads an ES module as import() does, after this handler returns.
-        if (mod->mainLoad == Bun::JSCommonJSModule::MainLoad::Pending) [[unlikely]] {
+        if (mod->mainLoad == Bun::JSCommonJSModule::MainLoad::Assigned) [[unlikely]] {
             mod->mainLoad = Bun::JSCommonJSModule::MainLoad::LeftToESLoader;
             return JSC::JSValue::encode(jsUndefined());
         }

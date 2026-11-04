@@ -34,6 +34,8 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<JSString> m_cachedCwd;
     // The JS warning printer (ProcessObjectInternals createOnWarning), built on the first warning.
     WriteBarrier<JSObject> m_onWarning;
+    // What process.mainModule held as a value when Module.runMain() assigned a main module over it.
+    WriteBarrier<Unknown> m_mainModuleBeforeRunMain;
 
     void installDefaultWarningListener(JSC::VM&);
 
@@ -76,10 +78,12 @@ public:
     template<size_t NumArgs>
     void queueNextTick(JSC::JSGlobalObject* globalObject, JSValue func, const JSValue (&args)[NumArgs]);
 
-    // As Node's Module._load() of a main module assigns process.mainModule. False: code made the property non-configurable.
-    bool assignMainModule(JSC::VM&, JSC::JSObject* module);
-    // `module` is no main module any more: a `mainModule` that holds it as a value holds undefined.
+    // Makes `module` process.mainModule. `previous` was the main module until now. False: code made the property non-configurable.
+    bool assignMainModule(JSC::VM&, JSC::JSObject* module, JSC::JSObject* previous);
+    // `module` is no main module any more: a `mainModule` that holds it as a value holds again what code had assigned.
     void forgetMainModule(JSC::VM&, JSC::JSObject* module);
+    // What a new require function gets as `main` while `module` is the main module: a value that code assigned to process.mainModule since, else `module`.
+    JSC::JSValue mainModuleOfRequire(JSC::VM&, JSC::JSObject* module);
 
     // Some Node.js events want to be emitted on the next tick rather than synchronously.
     // This is equivalent to `process.nextTick(() => process.emit(eventName, event))` from JavaScript.

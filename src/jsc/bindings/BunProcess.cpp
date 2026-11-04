@@ -4852,6 +4852,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_nextTickFunction);
     visitor.append(thisObject->m_cachedCwd);
     visitor.append(thisObject->m_onWarning);
+    visitor.append(thisObject->m_mainModuleBeforeRunMain);
 
     thisObject->m_cpuUsageStructure.visit(visitor);
     thisObject->m_resourceUsageStructure.visit(visitor);
@@ -5664,7 +5665,7 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessMainModuleOfTestFile, (JSGlobalObject * globa
     RELEASE_AND_RETURN(scope, Bun::defineOwnDataProperty(globalObject, thisObject, propertyName, JSValue::decode(value), 0));
 }
 
-bool Process::assignMainModule(VM& vm, JSObject* module)
+bool Process::assignMainModule(VM& vm, JSObject* module, JSObject* previous)
 {
     auto mainModule = Identifier::fromString(vm, "mainModule"_s);
     unsigned attributes = 0;
@@ -5676,6 +5677,8 @@ bool Process::assignMainModule(VM& vm, JSObject* module)
         return true;
     if (attributes & PropertyAttribute::DontDelete)
         return false;
+    if (own != JSValue(previous) && !own.isGetterSetter())
+        m_mainModuleBeforeRunMain.set(vm, this, own);
     putDirect(vm, mainModule, module, 0);
     return true;
 }
@@ -5684,7 +5687,14 @@ void Process::forgetMainModule(VM& vm, JSObject* module)
 {
     auto mainModule = Identifier::fromString(vm, "mainModule"_s);
     if (getDirect(vm, mainModule) == JSValue(module))
-        putDirect(vm, mainModule, jsUndefined(), 0);
+        putDirect(vm, mainModule, m_mainModuleBeforeRunMain ? m_mainModuleBeforeRunMain.get() : jsUndefined(), 0);
+    m_mainModuleBeforeRunMain.clear();
+}
+
+JSValue Process::mainModuleOfRequire(VM& vm, JSObject* module)
+{
+    JSValue own = getDirect(vm, Identifier::fromString(vm, "mainModule"_s));
+    return own && !own.isCustomGetterSetter() && !own.isGetterSetter() ? own : JSValue(module);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNextTickInDefaultRealm, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))

@@ -188,7 +188,7 @@ pub struct VirtualMachine {
     pub main_hash: u32,
     /// Set if code overrides Bun.main to a custom value.
     pub overridden_main: crate::strong::Optional,
-    /// `Module.runMain()` made a CommonJS module the main module before a load had the entry point's promise. For the call of an overridden `Module.runMain`, that module stands for the entry point: it has no promise, and after it only a load of the entry point itself gives one.
+    /// An overridden `Module.runMain` ran a CommonJS module as the main module, with no promise. Then only a load of the entry point itself gives its promise.
     pub run_main_ran_entry_point: bool,
     /// `bun bake`: the plugins of `bake.config.ts`, a JS array. The dev server loads them after the
     /// `[serve.static] plugins` of bunfig.toml.
@@ -3854,6 +3854,7 @@ impl VirtualMachine {
                         (_, Some(main)) => main,
                     };
                     let argv1 = bun_string_jsc::create_utf8_for_js(global_ref, run_main_path)?;
+                    let mut returned = false;
                     let promise: *mut JSInternalPromise =
                         match jsc::from_js_host_call_generic(global_ref, || {
                             NodeModuleModule__callOverriddenRunMain(global_ref, argv1)
@@ -3864,6 +3865,7 @@ impl VirtualMachine {
                                 if let Some(stored) = self.pending_internal_promise() {
                                     return Ok(stored);
                                 }
+                                returned = true;
                                 // `Promise.resolve(ret)` reads `ret.constructor` / `ret.then`,
                                 // which may throw.
                                 jsc::call_check_slow(global_ref, || {
@@ -3887,9 +3889,12 @@ impl VirtualMachine {
                             }
                         };
                     self.set_pending_internal_promise(Some(promise));
-                    // Nothing waits for a settled promise. This runs the microtasks and the ticks that the call queued.
-                    if crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Fulfilled
-                    {
+                    // Nothing waits for a promise that is settled when the override returns, so this runs what the call queued. The caller reports a rejection.
+                    let status = crate::JSPromise::status_ptr(promise);
+                    if returned && status != crate::js_promise::Status::Pending {
+                        if status == crate::js_promise::Status::Rejected {
+                            crate::JSPromise::opaque_mut(promise).set_handled();
+                        }
                         self.event_loop_mut().tick();
                     }
                     return Ok(promise);

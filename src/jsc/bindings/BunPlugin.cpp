@@ -4312,9 +4312,10 @@ bool isLoadAnsweredByPluginOrMock(Zig::GlobalObject* globalObject, const String&
     auto& plugins = globalObject->onLoadPlugins;
     if (plugins.isEmpty() && !plugins.hasVirtualModules())
         return false;
-    // Outside `bun test`, the loaders take a file that an executable holds before they ask.
+    // Outside `bun test`, the loaders take a file that an executable holds before they ask. The executable names its files in UTF-8.
     size_t length = 0;
-    if (!isBunTest && key.is8Bit() && Bun__standaloneModuleKey(key.span8().data(), key.length(), &length))
+    auto utf8 = key.utf8();
+    if (!isBunTest && Bun__standaloneModuleKey(byteCast<Latin1Character>(utf8.span().data()), utf8.length(), &length))
         return false;
     if (String mocked = Zig::specifierOfUnwaitedModuleMockKey(key); !mocked.isNull() && Zig::registeredModuleMock(globalObject, mocked))
         return true;

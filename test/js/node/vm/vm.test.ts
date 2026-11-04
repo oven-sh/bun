@@ -4085,8 +4085,16 @@ describe.concurrent("a store with a receiver from a context runs the native sett
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: stored[holder], stderr: "", exitCode: 0 });
+    return { stdout, stderr, exitCode };
   }
+
+  // A `failing` test takes every failure of its body for the expected one. So each store with such a test also has a
+  // test that its child process ends well, which holds with and without the change. Both read one run of the child.
+  const once = <T>(run: () => Promise<T>) => {
+    let result: Promise<T> | undefined;
+    return () => (result ??= run());
+  };
+  const endedWell = { stderr: "", exitCode: 0 };
 
   // The setter takes the global of the context for Bun's global object and writes past the end of it. A build with
   // assertions aborts there, so these do not run as `failing` tests.
@@ -4095,21 +4103,33 @@ describe.concurrent("a store with a receiver from a context runs the native sett
     ["Reflect.set() with a Proxy made in a context as the receiver"],
     // Node.js does not take a function for the contextified object, so it has no answer for this row.
     ["Reflect.set() with the global of a context as the receiver"],
-  ])("Error.prepareStackTrace, %s", receiver => storeInItsOwnProcess("Error.prepareStackTrace", receiver));
+  ])("Error.prepareStackTrace, %s", async receiver => {
+    expect(await storeInItsOwnProcess("Error.prepareStackTrace", receiver)).toEqual({
+      stdout: stored["Error.prepareStackTrace"],
+      ...endedWell,
+    });
+  });
+
+  const requireStores = [
+    "an assignment to a Proxy made in a context",
+    "Reflect.set() with a Proxy made in a context as the receiver",
+    "Reflect.set() with the global of a context as the receiver",
+    "Reflect.set() with the global of a context over the global of a context as the receiver",
+    "Reflect.set() with the global of a context over a Proxy as the receiver",
+  ].map(receiver => [receiver, once(() => storeInItsOwnProcess("Module.prototype.require", receiver))] as const);
+
+  test.each(requireStores)("Module.prototype.require, %s: the child process ends well", async (_, store) => {
+    const { stderr, exitCode } = await store();
+    expect({ stderr, exitCode }).toEqual(endedWell);
+  });
 
   // The setter keeps the override on the global of the context. The store prints [false,[]].
-  test.failing.each([
-    ["an assignment to a Proxy made in a context"],
-    ["Reflect.set() with a Proxy made in a context as the receiver"],
-    ["Reflect.set() with the global of a context as the receiver"],
-    ["Reflect.set() with the global of a context over the global of a context as the receiver"],
-    ["Reflect.set() with the global of a context over a Proxy as the receiver"],
-  ])("Module.prototype.require, %s", receiver => storeInItsOwnProcess("Module.prototype.require", receiver));
+  test.failing.each(requireStores)("Module.prototype.require, %s", async (_, store) => {
+    expect((await store()).stdout).toBe(stored["Module.prototype.require"]);
+  });
 
-  // The setters of onmessage and onerror take the global object of the main realm when they are given another object.
-  // That is the holder unless the holder is the global object of another realm. The store prints
-  // {"realm":[],"main":["function","function"]}.
-  test.failing("a ShadowRealm's onmessage and onerror, the global of a context as the receiver", async () => {
+  const ifShadowRealm = test.skipIf(typeof ShadowRealm === "undefined");
+  const storeInAShadowRealm = once(async () => {
     const script = `
       const realm = new ShadowRealm();
       const seen = realm.evaluate(\`
@@ -4129,11 +4149,21 @@ describe.concurrent("a store with a receiver from a context runs the native sett
     `;
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: `{"realm":["message: delivered","error: delivered"],"main":["object","object"]}\n`,
-      stderr: "",
-      exitCode: 0,
-    });
+    return { stdout, stderr, exitCode };
+  });
+
+  ifShadowRealm("a ShadowRealm's onmessage and onerror: the child process ends well", async () => {
+    const { stderr, exitCode } = await storeInAShadowRealm();
+    expect({ stderr, exitCode }).toEqual(endedWell);
+  });
+
+  // The setters of onmessage and onerror take the global object of the main realm when they are given another object.
+  // That is the holder unless the holder is the global object of another realm. The store prints
+  // {"realm":[],"main":["function","function"]}.
+  ifShadowRealm.failing("a ShadowRealm's onmessage and onerror, the global of a context as the receiver", async () => {
+    expect((await storeInAShadowRealm()).stdout).toBe(
+      `{"realm":["message: delivered","error: delivered"],"main":["object","object"]}\n`,
+    );
   });
 });
 

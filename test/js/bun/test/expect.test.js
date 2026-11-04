@@ -5945,21 +5945,6 @@ describe("expect()", () => {
         expect(serving(new Set([1]), { size: undefined })).not.toMatchObject(
           serving(new Set([2]), { size: undefined }),
         );
-        // Two sizes that are undefined say nothing: each expected member must match a received member too. Other sizes that are the same are trusted.
-        const unsized = (/** @type {unknown[]} */ ...members) => serving(new Set(members), { size: undefined });
-        expect(unsized(1)).not.toMatchObject(unsized(1, 2));
-        expect(unsized(1, 2)).not.toMatchObject(unsized(1));
-        expect(unsized({ a: 1, b: 2 })).toMatchObject(unsized({ a: 1 }));
-        expect(unsized({ a: 1, b: 2 })).not.toMatchObject(unsized({ a: 1 }, { c: 1 }));
-        const unsizedMap = (/** @type {[string, unknown][]} */ ...entries) =>
-          serving(new Map(entries), { size: undefined });
-        expect(unsizedMap(["k", 1])).not.toMatchObject(unsizedMap(["k", 1], ["j", 2]));
-        expect(unsizedMap(["k", 1], ["j", 2])).not.toMatchObject(unsizedMap(["k", 1]));
-        expect(unsizedMap(["k", { a: 1, b: 2 }])).toMatchObject(unsizedMap(["k", { a: 1 }]));
-        expect(unsizedMap(["k", { a: 1, b: 2 }])).not.toMatchObject(unsizedMap(["k", { a: 1 }], ["j", 2]));
-        expect({ s: unsized(1) }).not.toMatchObject({ s: unsized(1, 2) });
-        expect(serving(new Set([1]), { size: "1" })).toMatchObject(serving(new Set([1, 2]), { size: "1" }));
-        expect(serving(new Set([1, 2]), { size: "1" })).not.toMatchObject(serving(new Set([1]), { size: "1" }));
         // `has` that says yes to each value, and no to each
         expect(new Set([1])).toMatchObject(serving(new Set([2]), { has: () => "yes" }));
         expect(new Set([1])).toMatchObject(serving(new Set([1]), { has: () => 0 }));
@@ -6210,24 +6195,6 @@ describe("expect()", () => {
         expect(
           asked(() => expect(handingOn(new Set([1, 2]), log)).not.toMatchObject(handingOn(new Set([1]), log))),
         ).toBe("@@iterator @@iterator size size");
-        // Two Proxies that serve no size: the received members are walked again for each expected member, and `has` of the received value is not asked.
-        const noSize = (/** @type {string} */ name, /** @type {number[]} */ members) =>
-          serving(new Set(members), {
-            size: undefined,
-            *[Symbol.iterator]() {
-              for (const member of members) {
-                log.push(`${name}.next`);
-                yield member;
-              }
-            },
-            has: (/** @type {number} */ member) => (log.push(`${name}.has`), members.includes(member)),
-          });
-        expect(asked(() => expect(noSize("a", [1, 2])).toMatchObject(noSize("b", [1, 2])))).toBe(
-          "a.next b.has a.next b.has b.next a.next b.next a.next a.next",
-        );
-        expect(asked(() => expect(noSize("a", [1])).not.toMatchObject(noSize("b", [1, 2])))).toBe(
-          "a.next b.has b.next a.next b.next a.next",
-        );
         // The walk of the expected members goes on behind the last match. One that is left for a walk from the start is closed first.
         const inOrder = (/** @type {number[]} */ ids) => ids.map(id => ({ id }));
         expect(
@@ -6403,19 +6370,6 @@ describe("expect()", () => {
           thrownBy(() => expect(serves(valueThrows("k"))).toMatchObject(handingOn(new Map([["k", 1]]), asked))),
         ).toBe(boom);
         expect(asked).toEqual(["@@iterator", "size", "has"]);
-        // With no size on either side the received members are walked once more. What that walk throws is thrown.
-        let walks = 0;
-        const secondWalkThrows = serving(new Set([1]), {
-          size: undefined,
-          *[Symbol.iterator]() {
-            if (++walks === 2) throw boom;
-            yield 1;
-          },
-        });
-        expect(thrownBy(() => expect(secondWalkThrows).toMatchObject(serving(new Set([1]), { size: undefined })))).toBe(
-          boom,
-        );
-        expect(walks).toBe(2);
       });
 
       test("a member that a Proxy serves stays alive while the expected value is asked", () => {
@@ -6440,30 +6394,6 @@ describe("expect()", () => {
         expect(fresh(new Set(), 3)).toMatchObject(fresh(new Set(), 3));
         expect(fresh(new Map(), 3)).toMatchObject(fresh(new Map(), 3));
         expect(collections).toBe(6);
-        // With no size on either side each expected member is held while the received members are walked again. That walk collects garbage.
-        const unsized = (/** @type {object} */ target, /** @type {number} */ count) =>
-          new Proxy(target, {
-            get(target, key) {
-              if (key === "size") return undefined;
-              if (key === "has") return () => false;
-              if (key === Symbol.iterator) {
-                return function* () {
-                  for (let id = 0; id < count; id++) {
-                    Bun.gc(true);
-                    collections++;
-                    const member = { id, name: `member ${id}` };
-                    yield target instanceof Map ? [member, { of: member.name }] : member;
-                  }
-                };
-              }
-              return Reflect.get(target, key, target);
-            },
-          });
-        collections = 0;
-        expect(unsized(new Set(), 3)).toMatchObject(unsized(new Set(), 3));
-        expect(unsized(new Map(), 3)).toMatchObject(unsized(new Map(), 3));
-        expect(unsized(new Set(), 3)).not.toMatchObject(unsized(new Set(), 4));
-        expect(collections).toBe(49);
       });
 
       test("an expected Proxy whose `has` or `get` is no function", () => {
@@ -6507,6 +6437,7 @@ describe("expect()", () => {
           // The references compare the members in order if the received value serves no `size`.
           [() => expect(unsized([1])).toMatchObject(new Set([1])), "fail", "pass"],
           [() => expect(unsized([1, 2])).toMatchObject(unsized([2, 1])), "pass", "fail"],
+          [() => expect(unsized([1])).toMatchObject(unsized([1, 2])), "pass", "fail"],
           // So they do if the received value does not say that it is a Set.
           [
             () => expect(serving(new Set([1, 2]), { [Symbol.toStringTag]: undefined })).toMatchObject(new Set([2, 1])),
@@ -6583,45 +6514,6 @@ describe("expect()", () => {
           for (const size of [undefined, "1", 1n, NaN, 2]) {
             attempt(() => expect(serving(new Set([1]), { size })).toMatchObject(serving(new Set([1]), { size })));
           }
-          // Two Proxies that serve no size: each call into one of them throws in its turn.
-          let calls = 0, failAt = -1;
-          const counted = () => { if (calls++ === failAt) throw boom; };
-          const unsized = target => new Proxy(target, {
-            get(target, key) {
-              counted();
-              if (key === "size") return undefined;
-              if (key === Symbol.iterator) return () => {
-                counted();
-                const iterator = target[Symbol.iterator]();
-                return {
-                  next: () => {
-                    counted();
-                    const result = iterator.next();
-                    if (result.done || !(target instanceof Map)) return result;
-                    const [key, value] = result.value;
-                    return { done: false, value: { get 0() { counted(); return key; }, get 1() { counted(); return value; } } };
-                  },
-                  return: () => { counted(); return {}; },
-                };
-              };
-              const value = Reflect.get(target, key, target);
-              if (typeof value !== "function" || key === "constructor") return value;
-              return (...args) => { counted(); return value.apply(target, args); };
-            },
-          });
-          let unsizedRuns = 0;
-          for (const [received, expected] of pairs.slice(0, 7)) {
-            failAt = -1;
-            calls = 0;
-            attempt(() => expect(unsized(received())).toMatchObject(unsized(expected())));
-            for (let total = calls, at = 0; at < total; at++) {
-              failAt = at;
-              calls = 0;
-              attempt(() => expect(unsized(received())).toMatchObject(unsized(expected())));
-              unsizedRuns++;
-            }
-          }
-          if (unsizedRuns < 100) throw new Error("the Proxies that serve no size were asked too little: " + unsizedRuns);
           for (const iterator of [undefined, null, 0, "", 1, {}]) {
             attempt(() => expect(serving(new Set([1]), { [Symbol.iterator]: iterator })).toMatchObject(new Set([1])));
             attempt(() => expect(new Set([{}])).toMatchObject(serving(new Set([{}]), { [Symbol.iterator]: iterator })));

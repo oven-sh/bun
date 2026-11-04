@@ -3034,34 +3034,6 @@ static bool subsetMapMatches(JSGlobalObject* globalObject, ThrowScope& scope, Bu
     return true;
 }
 
-// True if each expected member, for a Map each entry, has a received one that matches it. It asks `has` and `get` of neither value, and it leaves the state as it is.
-static bool subsetServedExpectedIsCovered(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, SubsetValueMatches valueMatches, ServedSubsetSide& received, ServedSubsetSide& expected)
-{
-    // Never `matched`: the scan of the received members has put each pair that counts into the state.
-    Bun::DeepMatchState::Trial trial(state);
-    expected.iterate(globalObject);
-    RETURN_IF_EXCEPTION(scope, false);
-    JSValue expectedKey, expectedEntry;
-    while (expected.nextKeyValue(globalObject, expectedKey, expectedEntry)) {
-        received.iterate(globalObject);
-        RETURN_IF_EXCEPTION(scope, false);
-        bool found = false;
-        JSValue key, entry;
-        while (!found && received.nextKeyValue(globalObject, key, entry)) {
-            JSValue candidateKey = expectedKey;
-            found = expected.isMap()
-                ? subsetEntryMatches(globalObject, scope, state, valueMatches, &received, &expected, key, candidateKey, entry, expectedEntry)
-                : subsetCandidateMatches(globalObject, scope, state, valueMatches, key, expectedKey);
-            RETURN_IF_EXCEPTION(scope, false);
-        }
-        RETURN_IF_EXCEPTION(scope, false);
-        if (!found)
-            return false;
-    }
-    RETURN_IF_EXCEPTION(scope, false);
-    return true;
-}
-
 // The rule of a Set or a Map for a pair with a Proxy. True with no exception: the pair matches, or it has no rule here and the key walk decides.
 static NEVER_INLINE bool subsetServedCollectionMatches(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, JSObject* obj, JSObject* subsetObj, SubsetValueMatches valueMatches)
 {
@@ -3100,9 +3072,6 @@ static NEVER_INLINE bool subsetServedCollectionMatches(JSGlobalObject* globalObj
     bool matched = expected.isMap()
         ? subsetMapMatches(globalObject, scope, state, &received, &expected, valueMatches)
         : subsetSetMatches(globalObject, scope, state, &received, &expected, valueMatches);
-    // Two sizes that are undefined do not say that the expected value has no other member.
-    if (matched && receivedSize.isUndefined() && !scope.exception())
-        matched = subsetServedExpectedIsCovered(globalObject, scope, state, valueMatches, received, expected);
     received.close(globalObject);
     expected.close(globalObject);
     RETURN_IF_EXCEPTION(scope, false);

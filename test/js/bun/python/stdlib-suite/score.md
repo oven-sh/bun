@@ -3,9 +3,9 @@
 - Files: 821. Test methods in them: 32270.
 - Translated: 31868 (98.8%). Left out: 402.
 - Tests run (a method counts once for each class that inherits it): 40849; the originals run 40954 under the same bun.
-- Pass: 36978 (90.5% of those run).
-- Fail: 1572. Crash: 2. Timeout: 13. Need something that was left out: 352. Need JavaScript on a second thread: 1552.
-- Fail as the original does under the same bun (no matter of the translation): 780.
+- Pass: 36982 (90.5% of those run).
+- Fail: 1569. Crash: 2. Timeout: 13. Need something that was left out: 352. Need JavaScript on a second thread: 1552.
+- Fail as the original does under the same bun (no matter of the translation): 779.
 - Methods in files that fail to load: 66.
 
 ## Why test methods were left out
@@ -36,8 +36,8 @@
 
 | Tests | Files | Cause | Example |
 | ---: | ---: | --- | --- |
-| 807 | 30 | the test is about its own code: tracing, frames, code objects, bytecode | test_annotationlib TestCallAnnotateFunction.test_error_from_value_raised |
-| 81 | 4 | a test that needed JavaScript on a second thread was interrupted and left something behind | test_docxmlrpc DocXMLRPCHTTPGETServer.test_annotations |
+| 803 | 30 | the test is about its own code: tracing, frames, code objects, bytecode | test_annotationlib TestCallAnnotateFunction.test_error_from_value_raised |
+| 80 | 4 | a test that needed JavaScript on a second thread was interrupted and left something behind | test_docxmlrpc DocXMLRPCHTTPGETServer.test_annotations |
 | 40 | 14 | a whole float that a call returns is an int when it goes back | test_builtin BuiltinTest.test_round |
 | 32 | 7 | a function of JavaScript cannot be pickled, copied by reference or weakly referenced | test_builtin BuiltinTest.test_filter_pickle |
 | 30 | 11 | a function of JavaScript has no code object, closure, defaults, annotations, signature or __dict__ | test_builtin BuiltinTest.test_exec_closure |
@@ -55,7 +55,7 @@
 | 38 | 1 | (the file) TypeError: __class__ must be set to a class, not 'NoneType' object | test_super  |
 | 38 | 5 | AssertionError: RuntimeError not raised | test_asyncio.test_base_events BaseEventLoopTests.test_custom_run_forever_integration |
 | 28 | 1 | (the file) AttributeError: 'JSFunction' object has no attribute '__code__' | test_sys_setprofile  |
-| 19 | 14 | AssertionError: N != N | test_contextlib ContextManagerTestCase.test_contextmanager_traceback |
+| 20 | 14 | AssertionError: N != N | test_contextlib ContextManagerTestCase.test_contextmanager_traceback |
 | 16 | 1 | RuntimeError: text 'await asyncio.sleep(N)' not found in: | test_asyncio.test_tasks CTaskSubclass_PyFuture_Tests.test_cancel_traceback_for_future_exception |
 | 14 | 1 | AttributeError: 'NoneType' object has no attribute 'clear' | test_warnings CWarnTests.test_filename_module |
 | 13 | 7 | timeout: timeout | test_exceptions ExceptionTests.testInfiniteRecursion |

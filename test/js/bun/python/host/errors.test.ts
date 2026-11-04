@@ -64,7 +64,19 @@ group("Python catches what JavaScript throws", { setup, files: { "lib.js": lib }
     "[x.message for x in catch('aggregate').value.errors], catch('cause').value.cause.message",
     "(['one', 'two'], 'inner')",
   ],
-  ["type(catch('cause').__cause__).__name__", "'JSError'", "the cause of an Error is not the __cause__ of the JSError"],
+  // new Error(message, { cause }) is `raise ... from cause`.
+  [
+    "e = catch('cause')\ntype(e.__cause__).__name__, e.__cause__.value is e.value.cause, e.__suppress_context__, catch('app').__cause__",
+    "('JSTypeError', True, True, None)",
+  ],
+  [
+    "k = KeyError('k')\ntry:\n    js.eval('c => { throw new Error(\"outer\", { cause: c }); }')(k)\nexcept JSError as e:\n    r = e.__cause__ is k\nr",
+    "True",
+  ],
+  [
+    'def cause_of(source):\n    try:\n        js.eval(source)\n    except JSError as e:\n        return e.__cause__ is e if e.__cause__ else e.__cause__\ncause_of(\'const a = new Error("a"); a.cause = a; throw a\'), cause_of(\'throw new Error("a", { cause: "text" })\'), cause_of(\'throw new Error("a", { cause: { reason: 1 } })\')',
+    "(True, None, None)",
+  ],
   ["thrower('overflow')", "!RecursionError: maximum recursion depth exceeded"],
   [
     "def inner(): thrower('app')\ndef outer(): inner()\ntry:\n    outer()\nexcept JSError as e:\n    names = [f.name for f in traceback.extract_tb(e.__traceback__)]\nnames",
@@ -91,11 +103,7 @@ group("Python catches what JavaScript throws", { setup, files: { "lib.js": lib }
   ],
   ["catch('app').nothing", "!AttributeError: '_js.JSError' object has no attribute 'nothing'"],
   ["e = catch('app')\ne.code = 'mine'\ne.code, e.value.code", "('mine', 'E_APP')"],
-  [
-    "try:\n    thrower('app')\nexcept AppError as e:\n    r = 'caught by its class'\nr",
-    "'caught by its class'",
-    "TypeError: a class of JavaScript cannot stand in an except clause",
-  ],
+  ["try:\n    thrower('app')\nexcept AppError as e:\n    r = 'caught by its class'\nr", "'caught by its class'"],
   // A TypeError of JavaScript is a TypeError, and no other error is anything but a JSError.
   [
     "e = catch('type')\n[c.__name__ for c in type(e).__mro__], type(e).__module__, isinstance(e.value, js.TypeError)",
@@ -174,10 +182,23 @@ group("Python raises for JavaScript", { setup, files: { "lib.js": lib } }, [
   ],
   ["js.eval('e => Object.prototype.toString.call(e)')(ValueError('x'))", "'[object Error]'", "[object ValueError]"],
   // An error of JavaScript, raised by Python.
+  ["raise js.Error('raised in Python')\n0", "!JSError: Error: raised in Python"],
   [
-    "raise js.Error('raised in Python')\n0",
-    "!JSError: Error: raised in Python",
-    "TypeError: exceptions must derive from BaseException",
+    "def raises(what, *cause):\n    try:\n        if cause: raise what from cause[0]\n        raise what\n    except BaseException as e:\n        return type(e).__name__, str(e), type(e.__cause__).__name__, getattr(e, 'value', None) is what\nerror = AppError('mine', 'E')\nraises(error), raises(js.TypeError('t')), raises(js.RangeError)[:3]",
+    "(('JSError', 'AppError: mine', 'NoneType', True), ('JSTypeError', 'TypeError: t', 'NoneType', True), ('JSError', 'RangeError', 'NoneType'))",
+  ],
+  [
+    "raises(ValueError('v'), js.Error('c'))[:3], raises(ValueError('v'), js.RangeError)[:3], raises(js.Error('x'), KeyError('k'))[:3]",
+    "(('ValueError', 'v', 'JSError'), ('ValueError', 'v', 'JSError'), ('JSError', 'Error: x', 'KeyError'))",
+  ],
+  // Only an Error, or a class of them.
+  [
+    "[raises(x)[:2] for x in (js.Object(), js.Map, js.Map(), js.parseInt, js.eval('() => 1'))] == [('TypeError', 'exceptions must derive from BaseException')] * 5, raises(ValueError(), js.Object())[:2]",
+    "(True, ('TypeError', 'exception causes must derive from BaseException'))",
+  ],
+  [
+    "def raiser(): raise AppError('from Python', 'E_PY')\ne = caught(raiser)\ne.constructor.name, e.code, list(describe(raiser))[:4]",
+    "('AppError', 'E_PY', [True, 'AppError', 'from Python', 'AppError: from Python'])",
   ],
   [
     "def raiser(): raise JSError(AppError('from Python', 'E_PY'))\ne = caught(raiser)\ne.constructor.name, e.code",
@@ -190,6 +211,154 @@ group("Python raises for JavaScript", { setup, files: { "lib.js": lib } }, [
   ],
   ["js.Promise.reject(AppError('rejected', 'E_R')).catch(lambda e: e.code) is not None", "True"],
 ]);
+
+group(
+  "a class of JavaScript in an except clause",
+  {
+    setup:
+      setup +
+      `
+import contextlib, threading
+js.eval("globalThis.Mine = class Mine extends RangeError {}; globalThis.Old = function Old() {}; Old.prototype = Object.create(Error.prototype); globalThis.Thing = class Thing {}")
+def caught_by(source, *classes):
+    try:
+        js.eval(source)
+    except classes as e:
+        return "caught"
+    except Exception as e:
+        return "missed"
+try:
+    js.eval("throw new RangeError('r')")
+except js.Error as e:
+    kept = e
+`,
+    files: { "lib.js": lib },
+  },
+  [
+    [
+      "[caught_by('throw new RangeError(1)', *c) for c in ((js.RangeError,), (js.Error,), (js.SyntaxError,), (ValueError, js.SyntaxError, js.RangeError), (js.RangeError.bind(None),))]",
+      "['caught', 'caught', 'missed', 'caught', 'caught']",
+    ],
+    [
+      "[caught_by('throw new Mine(1)', c) for c in (js.Mine, js.RangeError, js.Error, js.TypeError)], caught_by('throw new Old()', js.Old), caught_by('throw new Old()', js.Error)",
+      "(['caught', 'caught', 'caught', 'missed'], 'caught', 'caught')",
+    ],
+    // JavaScript can throw anything.
+    [
+      "caught_by('throw new Thing()', js.Thing), caught_by('throw new Thing()', js.Error), caught_by('throw new Thing()', js.Object), caught_by('throw 1', js.Error), caught_by('throw new Map()', js.Map)",
+      "('caught', 'missed', 'caught', 'missed', 'caught')",
+    ],
+    // It goes by the prototypes and runs no code.
+    [
+      "caught_by('throw new RangeError(1)', js.eval('(class { static [Symbol.hasInstance]() { return true; } })'))",
+      "'missed'",
+    ],
+    // What is no class is refused, as ever.
+    [
+      "def refused(x):\n    try:\n        return caught_by('throw 1', x)\n    except TypeError as e:\n        return str(e)\n{refused(x) for x in (js.parseInt, js.eval('() => 1'), js.eval('(function f() {})'), js.Object(), js.Number, js.Math, 1)}",
+      "{'catching classes that do not inherit from BaseException is not allowed'}",
+    ],
+    // It catches what JavaScript threw, and nothing of Python's, though to JavaScript that is an Error too.
+    [
+      "def python(error, cls):\n    try:\n        raise error\n    except cls:\n        return 'caught'\n    except BaseException:\n        return 'missed'\npython(ValueError(), js.Error), python(TypeError(), js.TypeError), python(KeyboardInterrupt(), js.Error), isinstance(ValueError(), js.Error)",
+      "('missed', 'missed', 'missed', True)",
+    ],
+    [
+      "isinstance(kept, js.RangeError), isinstance(kept, js.Error), isinstance(kept, js.TypeError), isinstance(kept, (ValueError, js.RangeError)), isinstance(catch('string'), js.Error), isinstance(catch('app'), AppError)",
+      "(True, True, False, True, False, True)",
+    ],
+    [
+      "g = ExceptionGroup('g', [kept, ValueError('v')])\nnames = lambda g: [type(e).__name__ for e in g.exceptions]\n[names(x) for x in g.split(js.RangeError)], names(g.subgroup((js.RangeError, KeyError))), g.subgroup(js.SyntaxError), names(g.subgroup(js.eval('e => true')))",
+      "([['JSError'], ['ValueError']], ['JSError'], None, ['JSError', 'ValueError'])",
+    ],
+    [
+      "out = []\ntry:\n    raise g\nexcept* js.RangeError as eg:\n    out.append(('js', names(eg)))\nexcept* ValueError as eg:\n    out.append(('py', names(eg)))\nout",
+      "[('js', ['JSError']), ('py', ['ValueError'])]",
+    ],
+    [
+      "out = []\ndef work():\n    try:\n        raise kept\n    except js.SyntaxError:\n        out.append('syntax')\n    except js.RangeError:\n        out.append('range')\nt = threading.Thread(target=work)\nt.start()\nt.join()\nout",
+      "['range']",
+    ],
+    // The class of the exception says nothing of the class of what was thrown.
+    [
+      "with contextlib.suppress(js.RangeError):\n    raise kept\n0",
+      "0",
+      "JSError: RangeError: r: what asks issubclass(type(e), cls) is told no",
+    ],
+  ],
+);
+
+group(
+  "an error of the system is an OSError",
+  {
+    setup:
+      setup +
+      `
+import errno, os, tempfile
+import node.fs as fs
+directory = tempfile.mkdtemp()
+missing = os.path.join(directory, "missing")
+def system(f, *a):
+    try:
+        f(*a)
+    except OSError as e:
+        return e
+def thrown(source):
+    try:
+        js.eval(source)
+    except Exception as e:
+        return type(e).__name__
+`,
+    teardown: "os.rmdir(directory)",
+    files: { "lib.js": lib },
+  },
+  [
+    [
+      "e = system(fs.readFileSync, missing)\n[c.__name__ for c in type(e).__mro__[:4]], type(e).__module__, e.errno == errno.ENOENT, e.strerror, e.filename == missing, e.filename2, e.args, str(e).replace(directory, 'DIR'), repr(e)",
+      `(['JSFileNotFoundError', 'JSError', 'FileNotFoundError', 'OSError'], '_js', True, 'No such file or directory', True, None, (2, 'No such file or directory'), "[Errno 2] No such file or directory: 'DIR/missing'", "JSFileNotFoundError(2, 'No such file or directory')")`,
+    ],
+    // What Node says is still there.
+    [
+      "e.code, e.syscall, e.path == missing, e.value.errno, e.message.replace(directory, 'DIR'), isinstance(e, JSError), isinstance(e, js.Error)",
+      `('ENOENT', 'open', True, -2, "ENOENT: no such file or directory, open 'DIR/missing'", True, True)`,
+    ],
+    [
+      "[type(system(*c)).__name__ for c in ((fs.readFileSync, directory), (fs.readdirSync, __file__), (fs.mkdirSync, directory))]",
+      "['JSIsADirectoryError', 'JSNotADirectoryError', 'JSFileExistsError']",
+    ],
+    [
+      "e = system(fs.renameSync, missing, missing + '2')\ntype(e).__name__, e.filename == missing, e.filename2 == missing + '2', e.args",
+      "('JSFileNotFoundError', True, True, (2, 'No such file or directory'))",
+    ],
+    [
+      "e = system(fs.readFileSync, directory)\ne.errno == errno.EISDIR, e.filename, e.args, str(e)",
+      "(True, None, (21, 'Is a directory'), '[Errno 21] Is a directory')",
+    ],
+    [
+      "try:\n    await fs.promises.readFile(missing)\nexcept FileNotFoundError as e:\n    r = type(e).__name__, e.errno\nr",
+      "('JSFileNotFoundError', 2)",
+    ],
+    // It is told by `errno`, a number, and `code`, the name of an error number, of an Error.
+    [
+      'thrown(\'throw Object.assign(new Error(1), { errno: -13, code: "EACCES", path: "/p" })\'), thrown(\'throw Object.assign(new RangeError(1), { errno: 110, code: "ETIMEDOUT" })\'), thrown(\'throw Object.assign(new Error(1), { errno: -39, code: "ENOTEMPTY" })\')',
+      "('JSPermissionError', 'JSTimeoutError', 'JSOSError')",
+    ],
+    [
+      "[thrown('throw ' + s) for s in ('Object.assign(new Error(1), { code: \"ENOENT\" })', 'Object.assign(new Error(1), { errno: -3008, code: \"ENOTFOUND\" })', '({ errno: -2, code: \"ENOENT\" })', 'Object.defineProperty(new Error(1), \"errno\", { get() { throw 1; } })', 'Object.assign(new Error(1), { errno: \"2\", code: \"ENOENT\" })')]",
+      "['JSError', 'JSError', 'JSError', 'JSError', 'JSError']",
+    ],
+    // JavaScript gets back what it threw.
+    [
+      "e = system(fs.readFileSync, missing)\ndef again(): raise e\ncaught(again) is e.value, system(again) is e",
+      "(True, True)",
+    ],
+    // And an OSError of Python's answers what code written for Node asks.
+    [
+      "show = js.eval('e => [e.code, e.errno, e.path, e.dest, e.syscall, e.name]')\nlist(show(caught(lambda: open(missing)))) == ['ENOENT', 2, missing, None, None, 'FileNotFoundError'], list(show(caught(lambda: os.rename(missing, missing + '2'))))[2:4] == [missing, missing + '2'], list(show(OSError('plain'))), list(show(OSError(10 ** 6, 'x')))[:2]",
+      "(True, True, [None, None, None, None, None, 'OSError'], [None, 1000000])",
+    ],
+  ],
+);
 
 script(
   "the stack of an Error has the frames of both languages",

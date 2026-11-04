@@ -26,7 +26,7 @@ shutil.rmtree(directory)
     ],
     [
       "try:\n    await file(p + 'x').text()\nexcept Exception as e:\n    r = type(e).__name__, e.value.code\nr",
-      "('JSError', 'ENOENT')",
+      "('JSFileNotFoundError', 'ENOENT')",
     ],
     [
       "b = await file(p).bytes()\ntype(b).__name__, bytes(b), bytes(await file(p).arrayBuffer())",
@@ -144,7 +144,7 @@ from bun import spawn, spawnSync
     ["await spawn(('echo', 'tuple')).stdout.text()", "'tuple\\n'", "TypeError: cmd must be an array"],
     [
       "spawnSync(['no-such-program-at-all'])",
-      '!JSError: Error: Executable not found in $PATH: "no-such-program-at-all"',
+      "!JSFileNotFoundError: [Errno 2] No such file or directory: 'no-such-program-at-all'",
     ],
     // $ is a tag for template literals, which Python has none of that JavaScript knows.
     ["await js.eval('async x => await Bun.$`echo ${x}`.text()')('a b')", "'a b\\n'"],

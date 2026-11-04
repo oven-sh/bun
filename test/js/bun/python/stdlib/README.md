@@ -128,6 +128,7 @@ On two values of JavaScript they are JavaScript's: `[1] + [2]` is `"12"`, `[10] 
 **Mappings.** A property of a mapping is an item first and an attribute second, so `d.get` is the item if there is a key `"get"`;
 `dict.get(d, key)` is safe. Assigning to a property always sets an item: for an attribute (`defaultdict.default_factory`),
 `setattr`. A key that looks like a number is an int: `d["3"] = x` sets `d[3]`. Reading a property does not call `__missing__`.
+The other way round, a plain object and a `Map` that are handed to Python are mappings there: iterated over by their keys, with `items()`, `dict(m)` and `**m`.
 
 ### Bytes
 
@@ -163,7 +164,9 @@ An exception of Python's is an `Error` (`instanceof Error`), with `name` (the na
 What JavaScript throws goes through Python unchanged and comes out as it was thrown. In Python it is a `JSError`, an
 `Exception`. A `TypeError` is one in both languages: `except TypeError` catches a `TypeError` of JavaScript's (a `JSTypeError`,
 which is a `JSError` as well), and Python's `TypeError` is an `instanceof TypeError`, so `toThrow(TypeError)` takes either. To tell
-them apart, import Python's as `TypeError as PyTypeError`. No other class is linked: a `RangeError` is no `ValueError`. Where Python
+them apart, import Python's as `TypeError as PyTypeError`. An error of the system (`code: "ENOENT"`, with an `errno`) is in Python the `OSError` for
+that number, a `FileNotFoundError` here, and an `OSError` of Python's has a `code` and a `path` for JavaScript. No other class is linked: a `RangeError` is
+no `ValueError`, but Python can say `except js.RangeError`. Where Python
 hands such an exception over as a value and does not raise it
 (`gather(return_exceptions=True)`, `task.exception()`), JavaScript sees the `JSError`, and what was thrown is its `value`.
 

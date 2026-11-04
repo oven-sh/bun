@@ -162,7 +162,7 @@ def has(o, name): return hasattr(o, name)
   test("a plain one says so", () => {
     class Point {}
     const plain = [{}, { a: 1 }, Object.create(null), JSON.parse("{}"), new Object()];
-    const others = [new Point(), Object.create({}), new Date(0), new Map(), [], () => 1, Math, namespace, globalThis];
+    const others = [new Point(), Object.create({}), new Date(0), new Set(), [], () => 1, Math, namespace, globalThis];
     expect(plain.map(value => type(value))).toEqual(plain.map(() => _js.JSPlainObject));
     expect(plain.map(value => isinstance(value, abc.MutableMapping))).toEqual(plain.map(() => true));
     expect(others.map(value => isinstance(value, abc.Mapping))).toEqual(others.map(() => false));
@@ -182,7 +182,7 @@ def kind(value):
 `);
     expect(Array.from(kind({ type: "circle", r: 2 }))).toEqual(["circle", 2]);
     expect(Array.from(kind({ type: "square", side: 1 }))).toEqual(["square", dict([["side", 1]])]);
-    expect([kind({}), kind(new Point()), kind(new Map())]).toEqual(["a mapping", "something else", "something else"]);
+    expect([kind({}), kind(new Point()), kind(new Set())]).toEqual(["a mapping", "something else", "something else"]);
   });
 
   test("what has get(), has() and keys() and is iterated over is a mapping by those", () => {
@@ -197,9 +197,7 @@ def kind(value):
     expect([...headers]).toEqual([["b", "2"], ["c", "3"]]); // prettier-ignore
     expect(methodsOf.pop(headers, "c")).toBe("3");
     expect(methodsOf.has(headers, "items")).toBe(true);
-    // As it was: a Map iterates by pairs, a Set has no items.
-    expect(list(new Map([[1, 2]]))).toEqual([[1, 2]]);
-    expect(methodsOf.has(new Map(), "items")).toBe(false);
+    expect(methodsOf.has(new Set(), "items")).toBe(false);
   });
 
   test("what JavaScript iterates over otherwise is none", () => {
@@ -441,6 +439,49 @@ describe("a Map", () => {
     expect(len(made)).toBe(2);
     expect(getitem(made, "a")).toBe(1);
     expect(getitem(made, key)).toBe("b");
+  });
+
+  test("is a mapping", () => {
+    const map = new Map<any, any>([
+      ["a", 1],
+      [key, "b"],
+    ]);
+    expect(type(map)).toBe(_js.JSMap);
+    expect([isinstance(map, abc.MutableMapping), isinstance(map, _js.JSObject), isinstance(map, dict)]).toEqual([
+      true,
+      true,
+      false,
+    ]);
+    expect(list(map)).toEqual(["a", key]);
+    const { items, spread, kind, pop } = python(`
+def items(m): return [(k, v) for k, v in m.items()]
+def pop(m, key): return m.pop(key)
+def spread(m): return {**m}
+def kind(m):
+    match m:
+        case {"a": a, **rest}: return (a, rest)
+`);
+    expect(items(map)).toEqual([tuple(["a", 1]), tuple([key, "b"])]);
+    expect(spread(map)).toEqual(dict(map));
+    expect(Array.from(kind(map))).toEqual([1, dict([[key, "b"]])]);
+    expect(pop(map, "a")).toBe(1);
+    expect([...map]).toEqual([[key, "b"]]);
+  });
+
+  test("of a class with methods of its own goes by those", () => {
+    class Upper extends Map<string, number> {
+      get(name: string) {
+        return super.get(name.toUpperCase());
+      }
+      has(name: string) {
+        return super.has(name.toUpperCase());
+      }
+    }
+    const map = new Upper([["A", 1]]);
+    expect(type(map)).toBe(_js.JSMap);
+    expect([getitem(map, "a"), contains(map, "a"), contains(map, "b")]).toEqual([1, true, false]);
+    expect(() => getitem(map, "b")).toThrow(KeyError);
+    expect(dict(map)).toEqual(dict([["A", 1]]));
   });
 
   test("keeps its methods", () => {

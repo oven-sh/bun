@@ -39,12 +39,11 @@ shutil.rmtree(directory)
     ],
     [
       "try:\n    fs.readFileSync(p + 'x')\nexcept Exception as e:\n    r = type(e).__name__, e.value.code, e.value.errno, e.value.syscall, e.value.path == p + 'x', str(e).replace(directory, 'DIR')\nr",
-      `('JSError', 'ENOENT', -2, 'open', True, "Error: ENOENT: no such file or directory, open 'DIR/a.txtx'")`,
+      `('JSFileNotFoundError', 'ENOENT', -2, 'open', True, "[Errno 2] No such file or directory: 'DIR/a.txtx'")`,
     ],
     [
       "try:\n    fs.readFileSync(p + 'x')\nexcept FileNotFoundError as e:\n    r = e.errno, e.filename == p + 'x'\nr",
       "(2, True)",
-      "an error of the system that Node reports is no OSError",
     ],
     ["fd = fs.openSync(p, 'r')\ndata = os.read(fd, 2)\nfs.closeSync(fd)\ndata", "b'h\\xc3'"],
     ["fd = os.open(p, os.O_RDONLY)\ndata = fs.readFileSync(fd, 'utf8')\nos.close(fd)\ndata", "'héllo'"],
@@ -108,7 +107,7 @@ shutil.rmtree(directory)
     ],
     [
       "try:\n    await promises.readFile(p + 'x')\nexcept Exception as e:\n    r = type(e).__name__, e.value.code\nr",
-      "('JSError', 'ENOENT')",
+      "('JSFileNotFoundError', 'ENOENT')",
     ],
     ["h = await promises.open(p)\ntext = await h.readFile('utf8')\nawait h.close()\ntext", "'data'"],
     [

@@ -364,10 +364,39 @@ group("Date, RegExp, Map, Set, weak references", { setup: "import js, datetime, 
   ],
   // The keys of a Map are compared as JavaScript compares them: two equal tuples are two keys.
   ["m = js.Map([[(1, 2), 'tuple']])\nm.get((1, 2))", "None"],
+  // A Map is a mapping: it is iterated over by its keys. What it has itself is JavaScript's, and the rest is what a mapping has.
   [
-    "dict(js.Map([['a', 1]])), [list(e) for e in js.Map([['a', 1]])], list(js.Map([['a', 1]]).keys()), list(js.Map([['a', 1]]).values())",
-    "({'a': 1}, [['a', 1]], ['a'], [1])",
+    "m = js.Map([['a', 1], [2, 'two'], ['2', 'text']])\ntype(m).__name__, list(m), m[2], m['2'], list(m.items()), dict(m), {**m}, [(k, v) for k, v in m.items()] == list(m.items())",
+    "('JSMap', ['a', 2, '2'], 'two', 'text', [('a', 1), (2, 'two'), ('2', 'text')], {'a': 1, 2: 'two', '2': 'text'}, {'a': 1, 2: 'two', '2': 'text'}, True)",
   ],
+  [
+    "m = js.Map([['a', 1]])\ntype(m.keys()).__name__, list(m.keys()), list(m.values()), [list(e) for e in m.entries()], m.get('a'), m.get('b')",
+    "('JSIterator', ['a'], [1], [['a', 1]], 1, None)",
+  ],
+  ["js.Map().get('b', 0)", "0", "get() is that of JavaScript, which takes no default"],
+  [
+    "m = js.Map([['a', 1], ['b', 2]])\nr = m.pop('a'), m.pop('a', 'none'), m.setdefault('c', 3), m.setdefault('c', 4)\nm.update({'d': 4}, e=5)\nr, dict(m), m.popitem(), len(m)",
+    "((1, 'none', 3, 3), {'b': 2, 'c': 3, 'd': 4, 'e': 5}, ('b', 2), 3)",
+  ],
+  ["m = js.Map([['a', 1]])\ndel m['a']\nm['b'] = 2\nm.clear()\nlen(m), bool(m)", "(0, False)"],
+  ["js.Map()['a']", "!KeyError: 'a'"],
+  ["del js.Map()['a']\n0", "!KeyError: 'a'"],
+  [
+    "import collections.abc as abc, _js\nm = js.Map()\nisinstance(m, abc.MutableMapping), isinstance(m, _js.JSMap), isinstance(m, _js.JSObject), isinstance(m, js.Map), isinstance(m, dict), _js.JSMap.__mro__",
+    "(True, True, True, True, False, (<class '_js.JSMap'>, <class 'JSObject'>, <class 'object'>))",
+  ],
+  // A class derived from Map may have methods of its own, and then it is they that are asked.
+  [
+    "Upper = js.eval('(class Upper extends Map { get(k) { return super.get(k.toUpperCase()) } has(k) { return super.has(k.toUpperCase()) } })')\nu = Upper([['A', 1]])\ntype(u).__name__, u['a'], 'a' in u, 'b' in u, list(u), dict(u)",
+    "('JSMap', 1, True, False, ['A'], {'A': 1})",
+  ],
+  ["Upper([['A', 1]])['b']", "!KeyError: 'b'"],
+  [
+    "Logged = js.eval('(class Logged extends Map { log = []; set(k, v) { this.log?.push(k); return super.set(k, v) } delete(k) { this.log.push(-k); return super.delete(k) } })')\nl = Logged()\nl[1] = 'a'\nl.update({2: 'b'})\ndel l[1]\nl.log, dict(l)",
+    "([1, 2, -1], {2: 'b'})",
+  ],
+  // A Set is what it was, and the weak ones have no items.
+  ["s = js.Set(['a'])\ntype(s).__name__, list(s), 'a' in s, hasattr(s, 'items')", "('JSObject', ['a'], True, False)"],
   ["dict(js.Map([['a', 1]]).entries())", "{'a': 1}"],
   [
     "js.Map({'a': 1}).get('a'), js.Map({'a': 1}.items()).get('a'), js.Map([('a', 1)]).get('a'), js.Object.fromEntries(js.Map([('a', 1)])).a",
@@ -524,7 +553,11 @@ Base = js.eval("(class Base { constructor(x) { this.x = x; } hello() { return 'h
     ],
     [
       "class M(js.Map):\n    def total(self): return sum(self.values())\nm = M([[1, 2], [3, 4]])\nm.total(), m.size, m[3], type(m).__mro__[1:], repr(m)[:18]",
-      "(6, 2, 4, (<class 'js.Map'>, <class 'JSObject'>, <class 'object'>), '<__main__.M object')",
+      "(6, 2, 4, (<class 'js.Map'>, <class '_js.JSMap'>, <class 'JSObject'>, <class 'object'>), '<__main__.M object')",
+    ],
+    [
+      "import collections.abc\nm = M([[1, 2], [3, 4]])\nmatch m:\n    case {1: one, **rest}: r = one, rest\nlist(m), dict(m), list(m.items()), isinstance(m, collections.abc.MutableMapping), r",
+      "([1, 3], {1: 2, 3: 4}, [(1, 2), (3, 4)], True, (2, {3: 4}))",
     ],
     [
       "class Bytes(js.Uint8Array):\n    def total(self): return sum(self)\nb = Bytes([1, 2, 3])\nb.total(), b[-1], type(b[1:]).__name__, list(b[::-1]), b == bytes([1, 2, 3]), bytes(b), [c.__name__ for c in Bytes.__mro__[1:]]",
@@ -576,7 +609,10 @@ def matched(v):
       "(('sequence', 1, 2), ('str', 's'), ('sequence', 1, 2))",
     ],
     ["matched(js.eval('({ a: 1, b: 2 })'))", "('mapping', 1, {'b': 2})"],
-    ["matched(js.Map([['a', 1]]))", "('mapping', 1, {})", "a Map is no mapping to `match`"],
+    [
+      "matched(js.Map([['a', 1]])), matched(js.Map([['a', 1], [2, 3]]))",
+      "(('mapping', 1, {}), ('mapping', 1, {2: 3}))",
+    ],
     [
       "which(js.Object(), 'Mapping', 'Sequence', 'Callable', 'Awaitable', 'Iterator', 'Hashable', 'Container')",
       "['Mapping', 'Hashable', 'Container']",

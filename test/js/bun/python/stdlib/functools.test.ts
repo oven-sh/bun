@@ -262,8 +262,9 @@ describe("TestReduce", () => {
 
     const d = py({ one: 1, two: 2, three: 3 });
     expect(reduce(add, d)).toBe(str.join("", d.keys()));
-    // An object of JavaScript is iterated over as a dict is, a Map as JavaScript does.
+    // An object of JavaScript is iterated over as a dict is, and so is a Map.
     expect(reduce(add, { one: 1, two: 2, three: 3 })).toBe("onetwothree");
+    expect(reduce(add, new Map(Object.entries({ one: 1, two: 2, three: 3 })))).toBe("onetwothree");
   });
 
   // test correctness of keyword usage of `initial` in `reduce`

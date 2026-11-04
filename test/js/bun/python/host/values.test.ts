@@ -259,8 +259,8 @@ group("dicts, tuples, sets and objects", { setup }, [
     "(True, True, True, True, True, False)",
   ],
   [
-    "[isinstance(js.eval(s), abc.Mapping) for s in ('new Date', 'new Map', 'new (class A {})', 'Object.create({})', 'Math', '() => 1', 'globalThis')]",
-    "[False, False, False, False, False, False, False]",
+    "[isinstance(js.eval(s), abc.Mapping) for s in ('new Date', 'new Map', 'new Set', 'new WeakMap', 'new (class A {})', 'Object.create({})', 'Math', '() => 1', 'globalThis')]",
+    "[False, True, False, False, False, False, False, False, False]",
   ],
   [
     "match js.eval('({ kind: \"a\", n: { x: 1 }, more: 2 })'):\n    case {'kind': 'b'}: r = 'b'\n    case {'kind': 'a', 'n': {'x': x}, **rest}: r = (x, rest)\nr",
@@ -268,7 +268,7 @@ group("dicts, tuples, sets and objects", { setup }, [
   ],
   [
     "def kind_of(v):\n    match v:\n        case {}: return 'mapping'\n        case [*_]: return 'sequence'\n        case _: return 'other'\n[kind_of(js.eval(s)) for s in ('({})', '[]', 'new Date', 'new Map', 'new (class A {})')]",
-    "['mapping', 'sequence', 'other', 'other', 'other']",
+    "['mapping', 'sequence', 'other', 'mapping', 'other']",
   ],
   // As libraries look at what they are given.
   [
@@ -316,7 +316,8 @@ group("JSON and structuredClone", { setup: "import json, copy\n" + setup }, [
     `('{"1": 2, "d": "1970-01-01T00:00:00.000Z", "u": null}', '{"a": 1}')`,
   ],
   ["o = js.Object()\no.me = [o]\njson.dumps(o)", "!ValueError: Circular reference detected"],
-  ["json.dumps(js.Map())", "!TypeError: Object of type JSObject is not JSON serializable"],
+  ["json.dumps(js.Map())", "!TypeError: Object of type JSMap is not JSON serializable"],
+  ["json.dumps(dict(js.Map([['a', 1]])))", `'{"a": 1}'`],
   ["json.dumps(js.eval('({ f() {} })'))", "!TypeError: Object of type JSFunction is not JSON serializable"],
   // json.dump() goes piece by piece, in Python, and knows what isinstance() says is a dict.
   [

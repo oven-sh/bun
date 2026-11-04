@@ -317,7 +317,7 @@ test.concurrent("iterators, async iterators and plain objects of JavaScript", as
 import itertools, js
 from helper import naturals, ticks, failing, config, stream, Animal, Cat
 print(list(itertools.islice(naturals(), 3)), next(iter(naturals())), [x for x, _ in zip(naturals(), "ab")])
-it = iter(js.Map([[1, 2]])); print(list(next(it)), next(it, "end"), next(it, "still the end"))
+it = iter(js.Map([[1, 2]]).entries()); print(list(next(it)), next(it, "end"), next(it, "still the end"))
 print([x async for x in ticks(3)])
 try:
     async for x in failing(): print(x)

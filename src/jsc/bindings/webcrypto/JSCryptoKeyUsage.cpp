@@ -128,12 +128,19 @@ CryptoKeyUsageBitmap convertKeyUsages(JSGlobalObject& lexicalGlobalObject, JSVal
     if (!object) [[unlikely]]
         return notSequence();
 
-    // JSC reads an array or a Set in place when nothing can observe its iteration.
-    if (isJSArray(object) && asArray(object)->isIteratorProtocolFastAndNonObservable()) [[likely]]
-        forEachInFastArray(&lexicalGlobalObject, object, asArray(object), convertEntry);
-    else if (auto* set = dynamicDowncast<JSSet>(object); set && set->isIteratorProtocolFastAndNonObservable())
-        forEachInIterable(&lexicalGlobalObject, set, convertEntry);
-    else {
+    // An array or a Set is read in place when nothing can observe its iteration. JSC's forEachInFastArray() and forEachInIterable() close an iterator when an entry fails, and WebIDL closes none.
+    if (isJSArray(object) && asArray(object)->isIteratorProtocolFastAndNonObservable()) [[likely]] {
+        auto* array = asArray(object);
+        for (unsigned i = 0; i < array->length(); ++i) {
+            JSValue entry = array->getIndex(&lexicalGlobalObject, i);
+            RETURN_IF_EXCEPTION(scope, 0);
+            convertEntry(vm, &lexicalGlobalObject, entry);
+            RETURN_IF_EXCEPTION(scope, 0);
+        }
+    } else if (auto* set = dynamicDowncast<JSSet>(object); set && set->isIteratorProtocolFastAndNonObservable()) {
+        if (auto* storage = set->storageOrSentinel(vm); storage != vm.orderedHashTableSentinel())
+            forEachInSetStorage(vm, &lexicalGlobalObject, storage, 0, convertEntry);
+    } else {
         JSValue method = object->get(&lexicalGlobalObject, vm.propertyNames->iteratorSymbol);
         RETURN_IF_EXCEPTION(scope, 0);
         if (!method.isCallable())

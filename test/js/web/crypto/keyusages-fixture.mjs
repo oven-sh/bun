@@ -1,6 +1,7 @@
 // What each operation that takes keyUsages does with the values below, and the user code that the conversion runs.
 // Bun and Node.js both run this file. web-crypto.test.ts holds what they answer.
 import { createSecretKey, generateKeyPairSync } from "node:crypto";
+import { runInNewContext } from "node:vm";
 
 const { subtle } = crypto;
 const hmac = { name: "HMAC", hash: "SHA-256" };
@@ -155,6 +156,25 @@ async function orders() {
   });
   const array = [adding(entry => array.push(entry))];
   const set = new Set([adding(entry => set.add(entry))]);
+  // keyUsages from a new realm: an entry for "sign" whose conversion defines `return` for every iterator of that
+  // realm, then "bogus". The realm is new each time, and never this one: in a realm whose iterators have `return`,
+  // JSC reads no array and no Set in place.
+  const defining = make => {
+    const realm = runInNewContext("({ Array, Set, Object })");
+    return make(realm, {
+      toString() {
+        log.push("toString sign");
+        Object.defineProperty(realm.Object.prototype, "return", {
+          get() {
+            log.push("get return");
+          },
+        });
+        return "sign";
+      },
+    });
+  };
+  const definingArray = defining((realm, entry) => realm.Array.of(entry, "bogus"));
+  const definingSet = defining((realm, entry) => new realm.Set([entry, "bogus"]));
   return {
     "an iterable": await run(() => subtle.generateKey(hmac, true, iterable([logged("sign"), logged("verify")]))),
     "an iterable with an entry that is not a usage": await run(() =>
@@ -165,6 +185,13 @@ async function orders() {
     ),
     "an array that an entry appends to": await run(() => subtle.generateKey(hmac, true, array)),
     "a Set that an entry adds to": await run(() => subtle.generateKey(hmac, true, set)),
+    "a Set without an entry": await run(() => subtle.generateKey(hmac, true, new Set())),
+    "an array with an entry that defines return, then one that is not a usage": await run(() =>
+      subtle.generateKey(hmac, true, definingArray),
+    ),
+    "a Set with an entry that defines return, then one that is not a usage": await run(() =>
+      subtle.generateKey(hmac, true, definingSet),
+    ),
     "SubtleCrypto with an algorithm and a usage that are not known": await run(() =>
       subtle.generateKey({ name: "bogus" }, true, [logged("bogus")]),
     ),

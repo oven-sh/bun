@@ -1625,8 +1625,10 @@ describe("exception scope discipline", () => {
         "generateKey usage toString throws = REJECTED Error: boom",
         `generateKey usage not known = REJECTED TypeError: ${keyUsagesOfGenerateKey}[0] 'bogus' is not a valid enum value of type KeyUsage.`,
         `generateKey usage is a symbol = REJECTED TypeError: ${keyUsagesOfGenerateKey}[0] is a Symbol and cannot be converted to a string.`,
+        `generateKey usage is a hole = REJECTED TypeError: ${keyUsagesOfGenerateKey}[0] 'undefined' is not a valid enum value of type KeyUsage.`,
         `generateKey usages not an object = REJECTED TypeError: ${keyUsagesOfGenerateKey} cannot be converted to sequence.`,
         "generateKey usages from a Set = RESOLVED",
+        "generateKey usages from a Set without an entry = REJECTED SyntaxError: Usages cannot be empty when creating a key.",
         `generateKey usage not known in a Set = REJECTED TypeError: ${keyUsagesOfGenerateKey}[0] 'bogus' is not a valid enum value of type KeyUsage.`,
         "generateKey usages from an iterator = RESOLVED",
         `generateKey usage not known from an iterator = REJECTED TypeError: ${keyUsagesOfGenerateKey}[0] 'bogus' is not a valid enum value of type KeyUsage.`,
@@ -1994,6 +1996,19 @@ describe("keyUsages", () => {
     "an array with an entry that is not a usage": { log: ["toString bogus"], answer: bogus },
     "an array that an entry appends to": { log: ["toString sign", "toString verify"], answer: ["sign", "verify"] },
     "a Set that an entry adds to": { log: ["toString sign", "toString verify"], answer: ["sign", "verify"] },
+    "a Set without an entry": {
+      log: [],
+      answer: { name: "SyntaxError", code: 12, message: "Usages cannot be empty when creating a key." },
+    },
+    // An array or a Set that is read in place has no iterator to close. "get return" in a log is a read of `return`.
+    "an array with an entry that defines return, then one that is not a usage": {
+      log: ["toString sign"],
+      answer: notUsage(keyUsagesOfGenerateKey, 1, "bogus"),
+    },
+    "a Set with an entry that defines return, then one that is not a usage": {
+      log: ["toString sign"],
+      answer: notUsage(keyUsagesOfGenerateKey, 1, "bogus"),
+    },
     // Every argument is converted before the algorithm is normalized.
     "SubtleCrypto with an algorithm and a usage that are not known": { log: ["toString bogus"], answer: bogus },
     // The algorithm is normalized before keyUsages is converted.

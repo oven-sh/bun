@@ -51,6 +51,7 @@ pub(crate) struct BundleThread<C: Node> {
     // `bun.UnboundedQueue(CompletionStruct, .next)` — intrusive over `C.next`;
     // the field offset is encoded via the `Node` supertrait on `CompletionStruct`.
     pub(crate) queue: UnboundedQueue<C>,
+    /// Resolver generation of the current build; advanced before every build (0 is the runtime's).
     pub(crate) generation: bun_core::Generation,
 }
 
@@ -258,7 +259,11 @@ impl<C: CompletionStruct> BundleThread<C> {
                 // SAFETY: as above; started ⇒ the owner waits for us.
                 let completion = unsafe { &mut *completion };
                 // SAFETY: `generation` is only read/written on this (bundle) thread.
-                let generation = unsafe { (*instance).generation };
+                let generation = unsafe {
+                    let g = core::ptr::addr_of_mut!((*instance).generation);
+                    *g = (*g).saturating_add(1);
+                    *g
+                };
                 // `panic = "abort"` → a Rust panic on this thread enters the
                 // crash-handler hook and aborts the whole process.
                 // No `catch_unwind` — there is nothing to catch.
@@ -270,11 +275,6 @@ impl<C: CompletionStruct> BundleThread<C> {
                     }
                 }
                 has_bundled = true;
-            }
-            // SAFETY: `generation` is only read/written on this (bundle) thread.
-            unsafe {
-                let g = core::ptr::addr_of_mut!((*instance).generation);
-                *g = (*g).saturating_add(1);
             }
 
             if has_bundled {

@@ -148,8 +148,8 @@ const ROWS: Row[] = [
     files: { "a/b/c/d.txt": "x", "a/e.txt": "y", "f/g/h.txt": "z" },
   },
   {
-    // The builtin's pool task hands the copy to an fs.cp task carrying a
-    // clone of its poster; that task's last subtask posts the completion.
+    // The builtin's pool task keeps its poster while the fs.cp subtasks copy
+    // the tree; the pool thread that ends the copy posts the completion.
     name: "$ cp -R",
     worker: `Bun.$\`cp -R \${workerData.dir}/src \${workerData.dir}/dst\`.quiet().catch(() => {});`,
     ticket: "cp.rs",

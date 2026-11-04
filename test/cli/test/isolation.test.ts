@@ -2580,7 +2580,8 @@ describe.concurrent("--isolate: Module._extensions handlers", () => {
     expect(exitCode).toBe(0);
   });
 
-  // The handler that answers here is the one of a.test.cjs, and its require() is the one of a finished file.
+  // Only the first load of shared.js reaches a handler. After that file the handler that could answer is the one of
+  // a.test.cjs, and its require() is the one of a finished file.
   test("--isolate=modules: the cache answers before a --preload handler of a finished file", async () => {
     const testFile = `
       const { test, expect } = require("bun:test");
@@ -2591,8 +2592,11 @@ describe.concurrent("--isolate: Module._extensions handlers", () => {
     using dir = tempDir("isolate-modules-require-extensions", {
       "preload.cjs": `
         const Module = require("node:module");
+        const { appendFileSync } = require("node:fs");
+        const { basename, join } = require("node:path");
         const original = Module._extensions[".js"];
         Module._extensions[".js"] = (module, filename) => {
+          appendFileSync(join(__dirname, "handler-calls"), basename(filename) + "\\n");
           require("node:path");
           return original(module, filename);
         };
@@ -2609,6 +2613,7 @@ describe.concurrent("--isolate: Module._extensions handlers", () => {
     );
     expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
     expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(fs.readFileSync(join(String(dir), "handler-calls"), "utf8")).toBe("shared.js\n");
     expect(exitCode).toBe(0);
   });
 });

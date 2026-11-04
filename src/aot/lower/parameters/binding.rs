@@ -97,8 +97,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.list_held_bindings(source);
     }
 
-    // A suspended function holds what the names of its parameters hold, for the parameters that its body or a closure names: those are
-    // in the activation of JavaScriptCore's wrapper function. The others are in registers of the wrapper, which has returned.
     fn list_held_bindings(&mut self, source: FnId) {
         let flags = self.builder.function().flags;
         if !flags.intersects(FunctionFlags::IS_ASYNC | FunctionFlags::IS_GENERATOR) {
@@ -169,9 +167,8 @@ pub(in crate::lower) fn parameter_symbols(
     symbols
 }
 
-/// The parameters that the body of a function names: in a statement or expression of the body, in a function nested in it, or as a
-/// `var` of the same name. JavaScriptCore's wrapper of a generator or async function captures these into its activation, and keeps the
-/// others in registers. A name in a parameter expression of the function itself is not a capture.
+/// The parameters that an identifier in the body (or in a function nested in it) names, or that a `var` of the same name declares.
+/// JavaScriptCore's wrapper of a generator or async function captures only these into its activation.
 pub(in crate::lower) fn parameters_named_in_body(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,

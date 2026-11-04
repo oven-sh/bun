@@ -8,8 +8,8 @@ import { join } from "node:path";
 // `.../annotations`: 30 annotations per page unless `per_page` asks for more, 100 at most, pages
 // count from 1, and `omit_body=true` leaves `body_html` out. `/pipelines/bun/builds?branch=main`:
 // the builds of main, newest first, only in the states that `state[]` names, only those created
-// before `created_to`, and `per_page` of them. Shell scripts do not resolve as executables on
-// Windows, hence the skip.
+// before `created_to`, and `per_page` of them. `/pipelines/bun/builds/<number>`: that build, with the
+// `jobs` that the test gives it. Shell scripts do not resolve as executables on Windows, hence the skip.
 describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", () => {
   const script = join(import.meta.dir, "..", "..", "scripts", "find-build.ts");
   const fakeGh = [
@@ -34,6 +34,10 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
     "      exit 1",
     "      ;;",
     "  esac",
+    "fi",
+    'if [ "bk $*" = "$FAKE_FAILING_CALL" ]; then',
+    '  echo "Error: error making request: HTTP request failed: 500 Internal Server Error" >&2',
+    "  exit 1",
     "fi",
     'case "$1 $2" in',
     '  "api /pipelines/bun/builds/"*"/annotations"*)',
@@ -78,7 +82,6 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
     "    build=${2#/pipelines/bun/builds/}",
     '    cat "$FAKE/build-${build%%\\?*}.json"',
     "    ;;",
-    '  "build view") cat "$FAKE/view-$3.json" ;;',
     '  "build list") cat "$FAKE/list-$4.json" ;;',
     "  *)",
     '    echo "no canned answer for: bk $*" >&2',
@@ -157,33 +160,50 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
     "bk api /pipelines/bun/builds?branch=main&state[]=passed&state[]=failed&exclude_jobs=true&exclude_pipeline=true&per_page=10";
   /** The same, of those created before the build. */
   const completeBefore = (build: number) => `${complete}&created_to=${createdAt(build)}`;
-  /** Asks for the branch and the creation time of a target that is given as a build number. */
-  const lookup = (build: number) => `bk api /pipelines/bun/builds/${build}?exclude_jobs=true`;
+  /**
+   * Asks for a build with every attempt of its jobs: the attempts that Buildkite replaced too. The comparison
+   * takes the branch and the creation time of a target that is given as a build number from the same answer.
+   */
+  const attempts = (build: number) => `bk api /pipelines/bun/builds/${build}?include_retried_jobs=true`;
 
   interface Canned {
     /** `bk api /pipelines/bun/builds/<key>/annotations`, in the order the API lists them. */
     annotations: Record<number, readonly Annotation[]>;
-    /** `bk build view <key> --json` */
-    views?: Record<number, object>;
-    /** `bk build list --branch <key>` */
-    lists?: Record<string, readonly { number: number }[]>;
+    /** `bk build list --branch <key>`. `jobs`: the latest attempt of each job of the build. */
+    lists?: Record<string, readonly { number: number; jobs?: readonly object[] }[]>;
     /** `bk api /pipelines/bun/builds?branch=main`: every build of main, newest first. */
     main?: readonly ReturnType<typeof onMain>[];
-    /** `bk api /pipelines/bun/builds/<number>` */
-    builds?: readonly ReturnType<typeof buildOf>[];
+    /** `bk api /pipelines/bun/builds/<number>`. `jobs`: every attempt of every job of the build. */
+    builds?: readonly (ReturnType<typeof buildOf> & {
+      jobs?: readonly object[];
+      started_at?: string | null;
+      finished_at?: string | null;
+    })[];
     /** `gh pr view <key>`: the branch of the pull request. */
     prs?: Record<number, string>;
     /** The annotations page on which `bk api` fails. */
     failingPage?: number;
     /** `bk` fails when its arguments contain this text. */
     failing?: string;
+    /** `bk` fails for exactly this call. */
+    failingCall?: string;
     /** An annotation that the build `<key>` gets ahead of its others, after the script read the first page. */
     added?: Record<number, Annotation>;
   }
 
   async function runFindBuild(
     args: string[],
-    { annotations, views = {}, lists = {}, main = [], builds = [], prs = {}, failingPage, failing, added = {} }: Canned,
+    {
+      annotations,
+      lists = {},
+      main = [],
+      builds = [],
+      prs = {},
+      failingPage,
+      failing,
+      failingCall,
+      added = {},
+    }: Canned,
   ) {
     using dir = tempDir("find-build", {
       "bin/gh": fakeGh,
@@ -207,7 +227,6 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
           [`annotations-${build}.names.jsonl.added`, JSON.stringify(summary) + "\n"],
         ]),
       ),
-      ...Object.fromEntries(Object.entries(views).map(([build, view]) => [`view-${build}.json`, JSON.stringify(view)])),
       ...Object.fromEntries(
         Object.entries(lists).map(([branch, builds]) => [`list-${branch}.json`, JSON.stringify(builds)]),
       ),
@@ -224,6 +243,7 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
         FAKE: String(dir),
         FAKE_FAILING_PAGE: String(failingPage ?? ""),
         FAKE_FAILING: failing ?? "",
+        FAKE_FAILING_CALL: failingCall ?? "",
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -234,24 +254,29 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
     const calls: Record<string, string[]> = {};
     for (const call of readFileSync(join(String(dir), "calls"), "utf8").split("\n")) {
       const build = call.match(/^bk api \/pipelines\/bun\/builds\/(\d+)\/annotations/)?.[1];
-      const key = build ?? (call.startsWith("bk api ") ? "comparison" : call.startsWith("gh ") ? "gh" : undefined);
+      const key = build ?? (call.startsWith("bk api ") ? "builds" : call.startsWith("gh ") ? "gh" : undefined);
       if (key) (calls[key] ??= []).push(call);
     }
     // The comparison asks for the builds of main and for the target at the same time.
-    calls.comparison?.sort();
+    calls.builds?.sort();
     const requests: Record<string, readonly string[]> = calls;
     return {
       stdout: lines,
       /** The `== <context> ==` line above each annotation that `--errors` prints. */
       headings: lines.filter(line => line.startsWith("== ")),
-      /** The lines of `--errors` that say that the list is cut, and what it is compared with. */
-      notes: lines.filter(line => /^(\(only the first |compared with main |not compared with main: )/.test(line)),
+      /** The lines of `--errors` that say that the list is cut, what it is compared with, and what is left out. */
+      notes: lines.filter(line =>
+        /^(\(only the first |compared with main |not compared with main: |\(\d+ sections? of |\(replaced job attempts )/.test(
+          line,
+        ),
+      ),
       stderr,
       exitCode,
       /**
-       * The `bk api` calls for the annotations of each build, in the order the script made them. `comparison`:
-       * its other `bk api` calls, which only the comparison makes, sorted. `gh`: its `gh` calls. A key is absent
-       * when the script made no such call.
+       * The `bk api` calls for the annotations of each build, in the order the script made them. `builds`: its
+       * other `bk api` calls, sorted. They ask for the builds of main, which only the comparison does, and for
+       * one build with every attempt of its jobs. `gh`: its `gh` calls. A key is absent when the script made no
+       * such call.
        */
       requests,
     };
@@ -457,7 +482,7 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
       expect(result).toEqual({
         stdout: expect.any(Array),
         ...tagged,
-        requests: { ...read, comparison: [lookup(7), complete] },
+        requests: { ...read, builds: [attempts(7), complete] },
       });
       expect(result.stdout.slice(0, 4)).toEqual([
         "build #7  https://buildkite.com/bun/bun/builds/7",
@@ -483,7 +508,7 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
         expect(result).toEqual({
           stdout: expect.any(Array),
           ...tagged,
-          requests: { ...read, comparison: [complete], ...gh },
+          requests: { ...read, builds: [complete], ...gh },
         });
       },
     );
@@ -501,7 +526,7 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
         canned: { lists: { main: [onMain(10)] } },
         headings: [heading(onlyOn(10), " [new]"), heading(failingFile(5), " [pre-existing]")],
         notes: ["compared with main #9 (2 failing), #6 (230 failing)"],
-        requests: { 10: [request(10, 1)], 9: read[9], 6: read[6], comparison: [complete] },
+        requests: { 10: [request(10, 1)], 9: read[9], 6: read[6], builds: [complete] },
       },
       {
         target: "5",
@@ -509,7 +534,7 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
         // Builds 6, 9 and 10 have the second one too.
         headings: [heading(onlyOn(5), " [new]"), heading(failingFile(5), " [new]")],
         notes: ["compared with main #3 (1 failing)"],
-        requests: { 5: [request(5, 1)], 3: [names(3, 1)], comparison: [lookup(5), complete] },
+        requests: { 5: [request(5, 1)], 3: [names(3, 1)], builds: [attempts(5), complete] },
       },
     ];
     scenario.each(onMainTargets)(
@@ -589,7 +614,7 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
           notes,
           stderr: "",
           exitCode: 0,
-          requests: { 7: [request(7, 1)], ...requests, comparison: [lookup(7), complete, completeBefore(7)] },
+          requests: { 7: [request(7, 1)], ...requests, builds: [attempts(7), complete, completeBefore(7)] },
         });
       },
     );
@@ -613,7 +638,7 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
           6: [names(6, 1)],
           5: [names(5, 1)],
           13: [names(13, 1)],
-          comparison: [lookup(7), complete],
+          builds: [attempts(7), complete],
         },
       });
     });
@@ -654,7 +679,7 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
           onMain(2),
         ],
         notes: ["compared with main #4 (1 failing), #3 (0 failing), newer #9 (0 failing)"],
-        requests: { 4: [names(4, 1)], 3: [names(3, 1)], 9: [names(9, 1)], comparison: [lookup(7), complete] },
+        requests: { 4: [names(4, 1)], 3: [names(3, 1)], 9: [names(9, 1)], builds: [attempts(7), complete] },
       },
       {
         // The ten newest hold builds below the target, and none of them ran its tests: a second request.
@@ -672,7 +697,7 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
           4: [names(4, 1)],
           3: [names(3, 1)],
           14: [names(14, 1)],
-          comparison: [lookup(7), complete, completeBefore(7)],
+          builds: [attempts(7), complete, completeBefore(7)],
         },
       },
     ];
@@ -707,7 +732,7 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
         notes: ["compared with main #6 (0 failing), #5 (0 failing)"],
         stderr: "",
         exitCode: 0,
-        requests: { 7: [request(7, 1)], 6: [names(6, 1)], 5: [names(5, 1)], comparison: [lookup(7), complete] },
+        requests: { 7: [request(7, 1)], 6: [names(6, 1)], 5: [names(5, 1)], builds: [attempts(7), complete] },
       });
     });
 
@@ -722,38 +747,38 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
         why: "the request for the builds of main fails",
         canned: { failing: "builds?branch=main" },
         reason: failedRequest(complete),
-        requests: { 7: [request(7, 1)], comparison: [lookup(7), complete] },
+        requests: { 7: [request(7, 1)], builds: [attempts(7), complete] },
       },
       {
         why: "the request for the target fails",
         canned: { failing: "builds/7?" },
-        reason: failedRequest(lookup(7)),
-        requests: { 7: [request(7, 1)], comparison: [lookup(7), complete] },
+        reason: failedRequest(attempts(7)),
+        requests: { 7: [request(7, 1)], builds: [attempts(7), complete] },
       },
       {
         why: "a page of a build of main fails",
         canned: { failing: "builds/6/annotations?per_page=100&page=2" },
         reason: failedRequest(names(6, 2)),
-        requests: { ...read, 6: [names(6, 1), names(6, 2)], comparison: [lookup(7), complete] },
+        requests: { ...read, 6: [names(6, 1), names(6, 2)], builds: [attempts(7), complete] },
       },
       {
         why: "main has no passed or failed build before the target",
         canned: { main: [onMain(9), onMain(8, "canceled"), onMain(6, "canceled")] },
         reason: "no passed or failed build of main ran its tests before this build",
-        requests: { 7: [request(7, 1)], comparison: [lookup(7), complete] },
+        requests: { 7: [request(7, 1)], builds: [attempts(7), complete] },
       },
       {
         why: "no job of a build of main reported",
         canned: { main: [onMain(6, "passed", 0), onMain(5, "passed", 0)] },
         reason: "no passed or failed build of main ran its tests before this build",
-        requests: { 7: [request(7, 1)], comparison: [lookup(7), complete] },
+        requests: { 7: [request(7, 1)], builds: [attempts(7), complete] },
       },
       {
         // The ten newest are all above the target, so the script asks for the builds before it first.
         why: "no job of a build of main before an older target reported",
         canned: { main: [onMain(22), ...older.slice(0, 9), onMain(6, "passed", 0), onMain(5, "passed", 0)] },
         reason: "no passed or failed build of main ran its tests before this build",
-        requests: { 7: [request(7, 1)], comparison: [lookup(7), complete, completeBefore(7)] },
+        requests: { 7: [request(7, 1)], builds: [attempts(7), complete, completeBefore(7)] },
       },
     ];
     scenario.each(notCompared)("prints no tag, and says why, when $why", async ({ canned, reason, requests }) => {
@@ -782,15 +807,15 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
   describe("a command that does not compare", () => {
     scenario("--watch reads only the build it watches", async () => {
       const result = await runFindBuild(["--watch", "7"], {
-        views: {
-          7: {
+        builds: [
+          {
+            ...buildOf("a-branch", 7),
             state: "passed",
             started_at: null,
             finished_at: "2999-01-01T00:00:00Z",
-            web_url: "https://buildkite.com/bun/bun/builds/7",
             jobs: [],
           },
-        },
+        ],
         annotations: { 7: [] },
       });
       expect(result).toEqual({
@@ -799,7 +824,7 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
         notes: [],
         stderr: "",
         exitCode: 0,
-        requests: { 7: [names(7, 1)] },
+        requests: { 7: [names(7, 1)], builds: [attempts(7)] },
       });
     });
 
@@ -822,11 +847,12 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
   });
 
   describe("--status", () => {
-    const view = (state: string, finished_at: string | null) => ({
+    /** Build 7 with its one job. */
+    const build7 = (state: string, finished_at: string | null) => ({
+      ...buildOf("a-branch", 7),
       state,
       started_at: null,
       finished_at,
-      web_url: "https://buildkite.com/bun/bun/builds/7",
       jobs: [{ id: "job", type: "script", name: "test-bun", state: "passed", web_url: "" }],
     });
 
@@ -844,7 +870,7 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
       },
     ])("names 30 of $count failing test files and counts the others", async ({ count, rest, requests }) => {
       const result = await runFindBuild(["--status", "7"], {
-        views: { 7: view("failed", null) },
+        builds: [build7("failed", null)],
         annotations: { 7: [...failingFiles(count), flaky("test/js/retried.test.ts"), binarySize] },
       });
       expect(result).toEqual({
@@ -863,12 +889,12 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
         notes: [],
         stderr: "",
         exitCode: 0,
-        requests,
+        requests: { ...requests, builds: [attempts(7)] },
       });
     });
 
     // The build ends in the future, which prints as `0s ago` whenever the test runs.
-    const finished = view("passed", "2999-01-01T00:00:00Z");
+    const finished = build7("passed", "2999-01-01T00:00:00Z");
     const notRead = `(could not read the annotations: ${failedRequest(names(7, 2))})`;
     const summaries: { summary: string; of: string; canned: Canned; rest: string[]; requests: string[] }[] = [
       {
@@ -894,7 +920,7 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
       },
     ];
     scenario.each(summaries)("says $summary for $of", async ({ canned, rest, requests }) => {
-      const result = await runFindBuild(["--status", "7"], { views: { 7: finished }, ...canned });
+      const result = await runFindBuild(["--status", "7"], { builds: [finished], ...canned });
       expect(result).toEqual({
         stdout: [
           "#7 passed  https://buildkite.com/bun/bun/builds/7",
@@ -908,7 +934,434 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
         notes: [],
         stderr: "",
         exitCode: 0,
-        requests: { 7: requests },
+        requests: { 7: requests, builds: [attempts(7)] },
+      });
+    });
+  });
+
+  // An annotation is a log: a job attempt appends a section when a test file fails in it, and the section stays
+  // when Buildkite replaces the attempt. Buildkite counts only the latest attempt of a job. So do `--errors`,
+  // `--status` and `--watch`.
+  describe("a job attempt that Buildkite replaced", () => {
+    /** The id of job attempt `n`, in the form of a Buildkite job id. */
+    const jobId = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+    const jobUrl = (job: number, build = 7) => `https://buildkite.com/bun/bun/builds/${build}#${jobId(job)}`;
+    /** A section as the test runner writes it. Its summary links the test file, at a line, and the job attempt. */
+    const section = (file: string, job: number, build = 7) =>
+      `<details><summary><a href="https://github.com/oven-sh/bun/blob/main/${file}#L12"><code>${file}</code></a> - ` +
+      `code 1 on <a href="${jobUrl(job, build)}">13 x64</a></summary>\n` +
+      `<pre class="term"><code>attempt ${job}: 1 fail</code></pre>\n</details>\n`;
+    /** An error annotation of `file` in build 7, with one section from each of `jobs`. */
+    const failedIn = (file: string, ...jobs: number[]): Annotation => ({
+      ...failing(file),
+      body_html: jobs.map(job => section(file, job)).join(""),
+    });
+
+    /** A job attempt as `bk build list` and the REST API give it. */
+    const attempt = (n: number, rest: object = {}) => ({
+      id: jobId(n),
+      type: "script",
+      name: `lane ${n} - test-bun`,
+      state: "passed",
+      exit_status: 0 as number | null,
+      started_at: createdAt(7) as string | null,
+      web_url: jobUrl(n),
+      ...rest,
+    });
+    /** Attempt `n` lost its agent, and Buildkite replaced it with attempt `by`. The API lists it only when asked. */
+    const lost = (n: number, by: number, rest: object = {}) =>
+      attempt(n, { state: "failed", exit_status: -1, retried: true, retried_in_job_id: jobId(by), ...rest });
+    /** Attempt `n` replaced attempt `of`. */
+    const replacing = (n: number, of: number, rest: object = {}) =>
+      attempt(n, { retry_source: { job_id: jobId(of) }, ...rest });
+    /** Attempt `n` expired in the queue, and attempt `by` replaced it. It wrote nothing. */
+    const expired = (n: number, by: number) => lost(n, by, { state: "expired", exit_status: null, started_at: null });
+
+    // Attempt 1 lost its agent after it reported on three files. Attempt 2 replaced it and passed. Job 3 ran once.
+    const ranOnce = attempt(3, { state: "failed", exit_status: 2 });
+    const latest = [replacing(2, 1), ranOnce];
+    const every = [lost(1, 2), ...latest];
+    const onlyReplaced = "test/js/only-the-replaced-attempt.test.ts";
+    const inBoth = "test/js/the-replaced-attempt-and-another-job.test.ts";
+    const flakyInReplaced = "test/js/flaky-in-the-replaced-attempt.test.ts";
+    const inBatch = "test/js/in-the-parallel-batch.test.ts";
+    const annotations = {
+      7: [
+        failedIn(onlyReplaced, 1),
+        failedIn(inBoth, 1, 3),
+        // Its section names no job, so it stays. So does a file that failed in the parallel batch and passed alone.
+        failing(failingFile(1)),
+        {
+          ...flaky(inBatch),
+          body_html:
+            section(flakyInReplaced, 1) +
+            details(inBatch, "1 fail <i>(in the parallel batch on 13 x64; passed alone)</i>"),
+        },
+      ],
+    };
+    const live = [heading(inBoth), heading(failingFile(1)), heading(inBatch, " [flaky]")];
+    const leftOut = "(3 sections of 1 replaced job attempt left out)";
+    const byNumber = { ...buildOf("a-branch", 7), jobs: every };
+    /** The output of each section with a job that `--errors` prints. */
+    const printed = (stdout: string[]) => stdout.filter(line => line.startsWith("attempt "));
+
+    const byName: { target: string; gh: Record<string, readonly string[]> }[] = [
+      { target: "a-branch", gh: {} },
+      { target: "#123", gh: { gh: ["gh pr view 123 --repo oven-sh/bun --json headRefName -q .headRefName"] } },
+    ];
+    scenario.each(byName)(
+      "--errors leaves its sections out of the latest build of $target, and asks for nothing more",
+      async ({ target, gh }) => {
+        const result = await runFindBuild(["--errors", target, "--no-compare"], {
+          annotations,
+          // The latest attempt of each job. Attempt 2 names the attempt that it replaced.
+          lists: { "a-branch": [{ ...buildOf("a-branch", 7), jobs: latest }] },
+          prs: { 123: "a-branch" },
+        });
+        expect(result).toEqual({
+          stdout: expect.any(Array),
+          headings: live,
+          notes: [leftOut, leftOut],
+          stderr: "",
+          exitCode: 0,
+          requests: { 7: [request(7, 1)], ...gh },
+        });
+        expect(result.stdout.slice(0, 4)).toEqual([
+          "build #7  https://buildkite.com/bun/bun/builds/7",
+          "",
+          leftOut,
+          "",
+        ]);
+        expect(result.stdout.slice(-3)).toEqual(["", leftOut, ""]);
+        expect(printed(result.stdout)).toEqual(["attempt 3: 1 fail"]);
+      },
+    );
+
+    scenario("--errors asks for the attempts of a build number, and leaves the same out", async () => {
+      const result = await runFindBuild(["--errors", "7", "--no-compare"], { annotations, builds: [byNumber] });
+      expect(result).toEqual({
+        stdout: expect.any(Array),
+        headings: live,
+        notes: [leftOut, leftOut],
+        stderr: "",
+        exitCode: 0,
+        requests: { 7: [request(7, 1)], builds: [attempts(7)] },
+      });
+      expect(printed(result.stdout)).toEqual(["attempt 3: 1 fail"]);
+    });
+
+    scenario("--errors prints every section of a build number when no replaced attempt wrote one", async () => {
+      const result = await runFindBuild(["--errors", "7", "--no-compare"], {
+        annotations: { 7: [failedIn(inBoth, 2, 3)] },
+        builds: [{ ...buildOf("a-branch", 7), jobs: [expired(1, 2), ...latest] }],
+      });
+      expect(result).toEqual({
+        stdout: expect.any(Array),
+        headings: [heading(inBoth)],
+        notes: [],
+        stderr: "",
+        exitCode: 0,
+        requests: { 7: [request(7, 1)], builds: [attempts(7)] },
+      });
+      expect(printed(result.stdout)).toEqual(["attempt 2: 1 fail", "attempt 3: 1 fail"]);
+    });
+
+    scenario("--errors asks for the attempts of a branch when its jobs do not explain a section", async () => {
+      // Attempts 1 and 4 lost their agent one after the other. Attempt 5, the latest, names only attempt 4.
+      const twice = [lost(1, 4), lost(4, 5, { retry_source: { job_id: jobId(1) } }), replacing(5, 4), ranOnce];
+      const result = await runFindBuild(["--errors", "a-branch", "--no-compare"], {
+        annotations: { 7: [failedIn(onlyReplaced, 1), failedIn(failingFile(2), 4), failedIn(inBoth, 4, 3)] },
+        lists: { "a-branch": [{ ...buildOf("a-branch", 7), jobs: [replacing(5, 4), ranOnce] }] },
+        builds: [{ ...buildOf("a-branch", 7), jobs: twice }],
+      });
+      const note = "(3 sections of 2 replaced job attempts left out)";
+      expect(result).toEqual({
+        stdout: expect.any(Array),
+        headings: [heading(inBoth)],
+        notes: [note, note],
+        stderr: "",
+        exitCode: 0,
+        requests: { 7: [request(7, 1)], builds: [attempts(7)] },
+      });
+      expect(printed(result.stdout)).toEqual(["attempt 3: 1 fail"]);
+    });
+
+    scenario("--errors prints every section, and says why, when the request for the attempts fails", async () => {
+      const result = await runFindBuild(["--errors", "7", "--no-compare"], {
+        annotations,
+        builds: [byNumber],
+        failing: "include_retried_jobs",
+      });
+      const note = `(replaced job attempts are not left out: ${failedRequest(attempts(7))})`;
+      expect(result).toEqual({
+        stdout: expect.any(Array),
+        headings: [heading(onlyReplaced), live[0], live[1], heading(flakyInReplaced, " [flaky]"), live[2]],
+        notes: [note, note],
+        stderr: "",
+        exitCode: 0,
+        requests: { 7: [request(7, 1)], builds: [attempts(7)] },
+      });
+      expect(result.stdout.slice(0, 4)).toEqual(["build #7  https://buildkite.com/bun/bun/builds/7", "", note, ""]);
+      expect(result.stdout.slice(-3)).toEqual(["", note, ""]);
+    });
+
+    scenario("--errors says `no error annotations` when only a replaced attempt reported", async () => {
+      const result = await runFindBuild(["--errors", "7", "--no-compare"], {
+        annotations: { 7: [failedIn(onlyReplaced, 1), failedIn(failingFile(2), 1)] },
+        builds: [byNumber],
+      });
+      const note = "(2 sections of 1 replaced job attempt left out)";
+      expect(result).toEqual({
+        stdout: ["build #7  https://buildkite.com/bun/bun/builds/7", "", note, "no error annotations", ""],
+        headings: [],
+        notes: [note],
+        stderr: "",
+        exitCode: 0,
+        requests: { 7: [request(7, 1)], builds: [attempts(7)] },
+      });
+    });
+
+    // The job that replaces an attempt runs the same files. With exit 0 or 2 the runner ran them all. After any
+    // other end, a file that only the replaced attempt reported on can still fail, so the line names the job.
+    const ends: { end: string; latest: object | null; open: string }[] = [
+      { end: "passed", latest: {}, open: "" },
+      { end: "ran every file and failed", latest: { state: "failed", exit_status: 2 }, open: "" },
+      {
+        end: "lost its agent too",
+        latest: { state: "failed", exit_status: -1 },
+        open: "lane 2 - test-bun (failed, exit -1)",
+      },
+      {
+        end: "failed outside the runner",
+        latest: { state: "failed", exit_status: 1 },
+        open: "lane 2 - test-bun (failed, exit 1)",
+      },
+      { end: "was canceled", latest: { state: "canceled", exit_status: null }, open: "lane 2 - test-bun (canceled)" },
+      { end: "still runs", latest: { state: "running", exit_status: null }, open: "lane 2 - test-bun (running)" },
+      { end: "is not among the jobs", latest: null, open: "a job that Buildkite does not list" },
+    ];
+    scenario.each(ends)("--errors leaves its sections out when the latest attempt $end", async ({ latest, open }) => {
+      const result = await runFindBuild(["--errors", "7", "--no-compare"], {
+        annotations,
+        builds: [
+          { ...buildOf("a-branch", 7), jobs: [lost(1, 2), ...(latest ? [replacing(2, 1, latest)] : []), ranOnce] },
+        ],
+      });
+      const note = open
+        ? `(3 sections of 1 replaced job attempt left out. The latest attempt did not run every test file: ${open})`
+        : leftOut;
+      expect(result).toEqual({
+        stdout: expect.any(Array),
+        headings: live,
+        notes: [note, note],
+        stderr: "",
+        exitCode: 0,
+        requests: { 7: [request(7, 1)], builds: [attempts(7)] },
+      });
+    });
+
+    scenario("--errors --all leaves out what a replaced attempt of a build step reported", async () => {
+      const compileError = "[E0425] cannot find value `x` in this scope";
+      const outside = {
+        ...failedIn("step failed outside runner", 1),
+        id: "outside",
+        context: "step-failed-outside-runner",
+      };
+      const result = await runFindBuild(["--errors", "7", "--no-compare", "--all"], {
+        annotations: { 7: [failedIn(compileError, 1), outside, binarySize, failedIn(inBoth, 3)] },
+        builds: [byNumber],
+      });
+      const note = "(2 sections of 1 replaced job attempt left out)";
+      expect(result).toEqual({
+        stdout: expect.any(Array),
+        headings: [heading("binary-size"), heading(inBoth)],
+        notes: [note, note],
+        stderr: "",
+        exitCode: 0,
+        requests: { 7: [request(7, 1)], builds: [attempts(7)] },
+      });
+    });
+
+    const compared = "compared with main #6 (1 failing), #5 (0 failing)";
+    scenario("--errors asks once for a build number: for its branch, and for its job attempts", async () => {
+      const result = await runFindBuild(["--errors", "7"], {
+        main: [onMain(6), onMain(5)],
+        annotations: { ...annotations, 6: [failing(inBoth)], 5: [] },
+        builds: [byNumber],
+      });
+      expect(result).toEqual({
+        stdout: expect.any(Array),
+        // No tag for the file that only the replaced attempt reported on: it is not printed.
+        headings: [heading(failingFile(1), " [new]"), heading(inBoth, " [pre-existing]"), live[2]],
+        notes: [compared, leftOut, leftOut],
+        stderr: "",
+        exitCode: 0,
+        requests: { 7: [request(7, 1)], 6: [names(6, 1)], 5: [names(5, 1)], builds: [attempts(7), complete] },
+      });
+    });
+
+    scenario("--errors counts every attempt of a build of main", async () => {
+      // In build 6 of main, only a replaced attempt failed the file. Main can fail it, so it is `[pre-existing]`.
+      const result = await runFindBuild(["--errors", "a-branch"], {
+        main: [onMain(6), onMain(5)],
+        annotations: {
+          7: [failedIn(inBoth, 3)],
+          6: [{ ...failing(inBoth), body_html: section(inBoth, 1, 6) }],
+          5: [],
+        },
+        lists: { "a-branch": [{ ...buildOf("a-branch", 7), jobs: latest }] },
+        builds: [{ ...onMain(6), jobs: every }],
+      });
+      expect(result).toEqual({
+        stdout: expect.any(Array),
+        headings: [heading(inBoth, " [pre-existing]")],
+        notes: [compared],
+        stderr: "",
+        exitCode: 0,
+        // The names of the annotations of build 6, and nothing about its jobs.
+        requests: { 7: [request(7, 1)], 6: [names(6, 1)], 5: [names(5, 1)], builds: [complete] },
+      });
+    });
+
+    scenario(
+      "--errors counts the annotations that it read, not the ones that it prints, when the list is cut",
+      async () => {
+        const result = await runFindBuild(["--errors", "7", "--no-compare"], {
+          annotations: { 7: [failedIn(onlyReplaced, 1), ...failingFiles(229)] },
+          builds: [byNumber],
+        });
+        const note = "(1 section of 1 replaced job attempt left out)";
+        expect(result).toEqual({
+          stdout: expect.any(Array),
+          headings: failingHeadings(199),
+          notes: [cutNote, note, cutNote, note],
+          stderr: "",
+          exitCode: 0,
+          requests: { 7: [request(7, 1), request(7, 2), after200(7)], builds: [attempts(7)] },
+        });
+      },
+    );
+
+    describe("--status and --watch", () => {
+      /** Build 7, finished, with every attempt of its jobs. */
+      const build7 = (state: string, jobs: object[]) => ({
+        ...buildOf("a-branch", 7),
+        state,
+        started_at: null,
+        finished_at: "2999-01-01T00:00:00Z",
+        jobs,
+      });
+      const top = (state: string) => [
+        `#7 ${state}  https://buildkite.com/bun/bun/builds/7`,
+        "started - ago, finished 0s ago",
+        "",
+      ];
+      // Job 3 failed. The replaced attempt 1 failed too, and it is not a job of the build.
+      const jobs = [
+        "jobs: 1 passed, 1 failed  (2 total)",
+        "",
+        "failed jobs:",
+        `  ${"lane 3 - test-bun".padEnd(48)} ${jobUrl(3)}`,
+        "",
+      ];
+
+      scenario("--status reads only the names when Buildkite replaced no job attempt", async () => {
+        const result = await runFindBuild(["--status", "7"], {
+          builds: [build7("failed", [attempt(2), ranOnce])],
+          annotations: { 7: [failedIn(inBoth, 2, 3), failing(failingFile(1))] },
+        });
+        expect(result).toEqual({
+          stdout: [...top("failed"), ...jobs, "failing tests so far:", `  ${inBoth}`, `  ${failingFile(1)}`, ""],
+          headings: [],
+          notes: [],
+          stderr: "",
+          exitCode: 0,
+          requests: { 7: [names(7, 1)], builds: [attempts(7)] },
+        });
+      });
+
+      scenario("--status reads only the names when the replaced attempt did not start", async () => {
+        const result = await runFindBuild(["--status", "7"], {
+          builds: [build7("failed", [expired(1, 2), ...latest])],
+          annotations: { 7: [failedIn(inBoth, 2, 3), failing(failingFile(1))] },
+        });
+        expect(result).toEqual({
+          stdout: [...top("failed"), ...jobs, "failing tests so far:", `  ${inBoth}`, `  ${failingFile(1)}`, ""],
+          headings: [],
+          notes: [],
+          stderr: "",
+          exitCode: 0,
+          requests: { 7: [names(7, 1)], builds: [attempts(7)] },
+        });
+      });
+
+      scenario("--status reads the bodies when a replaced attempt started, and leaves its sections out", async () => {
+        const result = await runFindBuild(["--status", "7"], { builds: [build7("failed", every)], annotations });
+        expect(result).toEqual({
+          stdout: [
+            ...top("failed"),
+            ...jobs,
+            "failing tests so far:",
+            `  ${inBoth}`,
+            `  ${failingFile(1)}`,
+            "  (+1 warning/flaky)",
+            `  ${leftOut}`,
+            "",
+          ],
+          headings: [],
+          notes: [],
+          stderr: "",
+          exitCode: 0,
+          requests: { 7: [names(7, 1), request(7, 1)], builds: [attempts(7)] },
+        });
+      });
+
+      const passed = build7("passed", [lost(1, 2), replacing(2, 1)]);
+      const onlyStale = { 7: [failedIn(onlyReplaced, 1)] };
+      scenario.each(["--status", "--watch"])(
+        "%s says `no failures` when only a replaced attempt reported",
+        async command => {
+          const result = await runFindBuild([command, "7"], { builds: [passed], annotations: onlyStale });
+          expect(result).toEqual({
+            stdout: [
+              ...top("passed"),
+              "jobs: 1 passed  (1 total)",
+              "  (1 section of 1 replaced job attempt left out)",
+              "",
+              "no failures",
+              "",
+            ],
+            headings: [],
+            notes: [],
+            stderr: "",
+            exitCode: 0,
+            requests: { 7: [names(7, 1), request(7, 1)], builds: [attempts(7)] },
+          });
+        },
+      );
+
+      scenario("--status names every annotation, and says why, when the request for the bodies fails", async () => {
+        const result = await runFindBuild(["--status", "7"], {
+          builds: [passed],
+          annotations: onlyStale,
+          failingCall: request(7, 1),
+        });
+        expect(result).toEqual({
+          stdout: [
+            ...top("passed"),
+            "jobs: 1 passed  (1 total)",
+            "",
+            "failing tests so far:",
+            `  ${onlyReplaced}`,
+            `  (replaced job attempts are not left out: ${failedRequest(request(7, 1))})`,
+            "",
+          ],
+          headings: [],
+          notes: [],
+          stderr: "",
+          exitCode: 0,
+          requests: { 7: [names(7, 1), request(7, 1)], builds: [attempts(7)] },
+        });
       });
     });
   });

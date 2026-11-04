@@ -2081,7 +2081,6 @@ pub fn generate_network_task_for_tarball<'a>(
     is_required: bool,
     dependency_id: DependencyID,
     package: &Package,
-    authorization: Authorization,
 ) -> Result<Option<&'a mut NetworkTask>, ForTarballError> {
     // Only reached when the tarball is not already extracted in the cache.
     if this.options.offline == Options::OfflineMode::Offline {
@@ -2129,7 +2128,22 @@ pub fn generate_network_task_for_tarball<'a>(
     let network_task = unsafe { &mut *net_ptr };
 
     let pkg_name = this.lockfile.str(&package.name);
-    let scope = this.scope_for_package_name(pkg_name);
+    let (scope, authorization) = match package.resolution.tag {
+        bun_install::ResolutionTag::Npm => (
+            this.scope_for_package_name(pkg_name),
+            Authorization::AllowAuthorization,
+        ),
+        // One download serves every name that the URL is listed under, so the name picks no scope.
+        bun_install::ResolutionTag::RemoteTarball
+            if this.lockfile.is_tarball_url_of_project(url) =>
+        {
+            (&this.options.scope, Authorization::AllowAuthorization)
+        }
+        _ => (
+            this.scope_for_package_name(pkg_name),
+            Authorization::NoAuthorization,
+        ),
+    };
 
     let extract_tarball = ExtractTarball {
         // BACKREF — `this_backref` is non-null (just derived from `&mut *this`)

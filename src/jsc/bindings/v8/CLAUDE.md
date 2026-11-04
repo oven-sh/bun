@@ -231,14 +231,15 @@ For `ObjectTemplate` or `FunctionTemplate` implementations, see existing pattern
 
 ### Global Handles
 
-- A `v8::Global` (or `Persistent`) holds the address of a 24-byte handle. The per-VM `v8::shim::GlobalHandleRegistry` (`shim/GlobalHandleRegistry.h`, owned by `JSVMClientData`) owns the handles, in 512-byte blocks of 19 at addresses that are multiples of 512. So `DisposeGlobal`, `MakeWeak` and `ClearWeak` find the block, and with it the VM and its thread, from the address of the handle alone.
+- A `v8::Global` (or `Persistent`) holds the address of a 32-byte `GlobalHandle`. The per-VM `v8::shim::GlobalHandleRegistry` (`shim/GlobalHandleRegistry.h`, owned by `JSVMClientData`) owns the handles, in 1024-byte blocks of 31 at addresses that are multiples of 1024. So `DisposeGlobal`, `MakeWeak` and `ClearWeak` find the block, and with it the VM and its thread, from the address of the handle alone.
+- A `GlobalHandle` has the layout of a node of V8's GlobalHandles, because V8's inline code reads it: `IsWeak()` reads the state in the byte at 11 (Free 0, Normal 1, Weak 2), and `WrapperClassId()` and `SetWrapperClassId()` read and write the two bytes at 8. Word 0 is a Smi, or points at the `ObjectLayout` at 16, or at an Oddball.
 - No realm owns a Global handle, and the collector never reads one. A handle that holds a cell has a strong root from `Bun__StrongRef__new` (`StrongRef.h`, what `bun_jsc::Strong` uses). So a Global keeps its value, and what the value references, until it is reset or its VM ends, also after the realm that made it is collected (`bun test --isolate`).
-- `Reset()` marks the handle as disposed. The handle is released (root deleted, handle cleared and put on the free list) once no realm of the VM has an open scope with V8 handles: V8's inline `Local::New(isolate, global)` copies the Global's word, so a `Local` points into the Global's handle. `HandleScopeBuffer::close()` calls `GlobalHandleRegistry::didCloseScope()` while disposed handles wait.
+- `Reset()` makes the handle Free. The handle is released (root deleted, handle cleared and put on the free list) once no realm of the VM has an open scope with V8 handles: V8's inline `Local::New(isolate, global)` copies the Global's word, so a `Local` points into the Global's handle. `HandleScopeBuffer::close()` calls `GlobalHandleRegistry::didCloseScope()` while disposed handles wait.
 - Once the Bun VM is shutting down, `Reset()` only marks the handle, because `Bun__StrongRef__delete` must not run then.
 - On a thread other than the VM's, `Reset()`, `SetWeak()` and `ClearWeak()` do nothing.
 - When the VM ends, `~GlobalHandleRegistry` frees every block that has no live handle. A block with a Global that is still set is kept for the life of the process, with `registry` null: a later `Reset()` of that Global reads valid memory, and no later handle gets its address. Such a Global must not be read, as in V8.
 - A Global of `undefined`, `null`, `true` or `false` has no cell: its handle holds the word that points at the root of the isolate, and that root is in the `GlobalInternals` of the realm.
-- `SetWeak()` only stores its parameter for `ClearWeak()`. The value stays strongly rooted and the callback never runs.
+- `SetWeak()` makes the handle Weak and stores its parameter for `ClearWeak()`, which makes the handle Normal again. The value stays strongly rooted and the callback never runs.
 
 ### JSC Integration
 

@@ -38,7 +38,7 @@ uintptr_t* GlobalizeReference(internal::Isolate* i_isolate, uintptr_t address)
 void DisposeGlobal(uintptr_t* location)
 {
     if (!location) return;
-    shim::GlobalHandleRegistry::dispose(reinterpret_cast<shim::Handle*>(location));
+    shim::GlobalHandleRegistry::dispose(reinterpret_cast<shim::GlobalHandle*>(location));
 }
 
 void MakeWeak(uintptr_t* location, void* data, WeakCallbackInfo<void>::Callback weak_callback, WeakCallbackType type)
@@ -49,13 +49,13 @@ void MakeWeak(uintptr_t* location, void* data, WeakCallbackInfo<void>::Callback 
     (void)weak_callback;
     (void)type;
     if (!location) return;
-    shim::GlobalHandleRegistry::setWeakParameter(reinterpret_cast<shim::Handle*>(location), data);
+    shim::GlobalHandleRegistry::makeWeak(reinterpret_cast<shim::GlobalHandle*>(location), data);
 }
 
 void* ClearWeak(uintptr_t* location)
 {
     if (!location) return nullptr;
-    return shim::GlobalHandleRegistry::takeWeakParameter(reinterpret_cast<shim::Handle*>(location));
+    return shim::GlobalHandleRegistry::clearWeak(reinterpret_cast<shim::GlobalHandle*>(location));
 }
 
 void MoveGlobalReference(uintptr_t** from, uintptr_t** to)

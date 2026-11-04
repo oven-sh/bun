@@ -2861,6 +2861,64 @@ void WrapWithCleanupHook::report_at_cleanup(
   node::AddEnvironmentCleanupHook(info.GetIsolate(), report, nullptr);
 }
 
+void test_v8_global_wrapper_class_id(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  static int parameter;
+  Global<Value> global(isolate, String::NewFromUtf8Literal(isolate, "text"));
+  std::cout << "WrapperClassId() of a new Global = " << global.WrapperClassId()
+            << std::endl;
+  // The highest one, as TEST(WrapperClassId) of V8.
+  global.SetWrapperClassId(65535);
+  std::cout << "after SetWrapperClassId(65535) = " << global.WrapperClassId()
+            << ", value = " << describe(isolate, global.Get(isolate))
+            << std::endl;
+  global.SetWeak(&parameter, weak_callback_that_never_runs,
+                 WeakCallbackType::kParameter);
+  std::cout << "after SetWeak = " << global.WrapperClassId();
+  global.ClearWeak();
+  std::cout << ", after ClearWeak = " << global.WrapperClassId()
+            << ", value = " << describe(isolate, global.Get(isolate))
+            << std::endl;
+  global.Reset();
+  // In Bun this one takes the handle that the first one gave back.
+  Global<Value> next(isolate, String::NewFromUtf8Literal(isolate, "next"));
+  std::cout << "WrapperClassId() of the next Global = " << next.WrapperClassId()
+            << ", value = " << describe(isolate, next.Get(isolate))
+            << std::endl;
+}
+
+void test_v8_weak_is_weak(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  static int parameter;
+  std::pair<const char *, Local<Value>> values[] = {
+      {"an object", Object::New(isolate)},
+      {"a string", String::NewFromUtf8Literal(isolate, "text")},
+      {"a small integer", Integer::New(isolate, 7)},
+      {"a double", Number::New(isolate, 1.5)},
+      {"undefined", Undefined(isolate)},
+      {"true", True(isolate)},
+  };
+  std::cout << std::boolalpha;
+  for (auto &[name, value] : values) {
+    Global<Value> global(isolate, value);
+    std::cout << "Global of " << name << ": IsWeak() = " << global.IsWeak();
+    global.SetWeak(&parameter, weak_callback_that_never_runs,
+                   WeakCallbackType::kParameter);
+    std::cout << ", after SetWeak = " << global.IsWeak();
+    bool returned = global.ClearWeak<int>() == &parameter;
+    std::cout << ", after ClearWeak = " << global.IsWeak()
+              << ", ClearWeak returned the parameter = " << returned;
+    global.SetWeak(&parameter, weak_callback_that_never_runs,
+                   WeakCallbackType::kParameter);
+    std::cout << ", after a second SetWeak = " << global.IsWeak()
+              << ", value = " << describe(isolate, global.Get(isolate))
+              << std::endl;
+  }
+  Global<Value> empty;
+  std::cout << "empty Global: IsWeak() = " << empty.IsWeak() << std::endl;
+  std::cout << std::noboolalpha;
+}
+
 void initialize(Local<Object> exports, Local<Value> module,
                 Local<Context> context) {
   NODE_SET_METHOD(exports, "test_v8_native_call", test_v8_native_call);
@@ -2921,6 +2979,9 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "global_make_stored_weak", global_make_stored_weak);
   NODE_SET_METHOD(exports, "global_clear_weak_of_stored",
                   global_clear_weak_of_stored);
+  NODE_SET_METHOD(exports, "test_v8_global_wrapper_class_id",
+                  test_v8_global_wrapper_class_id);
+  NODE_SET_METHOD(exports, "test_v8_weak_is_weak", test_v8_weak_is_weak);
   NODE_SET_METHOD(exports, "global_reset_twice", global_reset_twice);
   NODE_SET_METHOD(exports, "global_hold_many_briefly",
                   global_hold_many_briefly);

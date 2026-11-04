@@ -592,6 +592,16 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
       ]);
     });
 
+    it("keeps its wrapper class id apart from its value, and starts with the id 0", async () => {
+      const output = await checkSameOutput("test_v8_global_wrapper_class_id");
+      expect(output.split(/\r?\n/)).toEqual([
+        "WrapperClassId() of a new Global = 0",
+        'after SetWrapperClassId(65535) = 65535, value = "text"',
+        'after SetWeak = 65535, after ClearWeak = 65535, value = "text"',
+        'WrapperClassId() of the next Global = 0, value = "next"',
+      ]);
+    });
+
     it("gives its handle back once when a copy of it is reset too", async () => {
       const expected = "handles of the next 8 Globals: 8\nvalues that those Globals held: 8";
       expect(await runOnBun("test_v8_global_reset_twice")).toEqual([expected, expected]);
@@ -794,6 +804,23 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
       const env = { ...asanEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" };
       const outputs = await runOnBun("test_v8_global_reset_by_destructor", "[false]", env);
       expect(linesOf(outputs)).toEqual([expected, expected]);
+    });
+  });
+
+  describe("weak Global", () => {
+    it("says so in IsWeak(), and is strong again after ClearWeak()", async () => {
+      const output = await checkSameOutput("test_v8_weak_is_weak");
+      const states =
+        "IsWeak() = false, after SetWeak = true, after ClearWeak = false, ClearWeak returned the parameter = true, after a second SetWeak = true";
+      expect(output.split(/\r?\n/)).toEqual([
+        `Global of an object: ${states}, value = [object Object]`,
+        `Global of a string: ${states}, value = "text"`,
+        `Global of a small integer: ${states}, value = 7.000000`,
+        `Global of a double: ${states}, value = 1.500000`,
+        `Global of undefined: ${states}, value = undefined`,
+        `Global of true: ${states}, value = true`,
+        "empty Global: IsWeak() = false",
+      ]);
     });
   });
 

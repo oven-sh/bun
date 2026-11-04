@@ -30,7 +30,7 @@ pub fn mismatch<'a>(path: &'a [u8], pin: &'a [u8]) -> Option<Mismatch<'a>> {
 /// Warns for a mismatch. Returns the `BUN_INTERNAL_BUN_VERSION_CHECKED` marker when the file pins.
 pub fn check(path: &[u8], package_manager: &[u8], quiet: bool) -> Option<Vec<u8>> {
     let pin = package_manager_pin(package_manager)?;
-    let marker = [RUNNING.as_bytes(), b"\n", path].concat();
+    let marker = [RUNNING.as_bytes(), b"\n", pin, b"\n", path].concat();
     let skip = quiet
         || env_var::BUN_CONFIG_IGNORE_ENGINES.get().unwrap_or(false)
         || env_var::BUN_INTERNAL_BUN_VERSION_CHECKED.get() == Some(marker.as_slice());

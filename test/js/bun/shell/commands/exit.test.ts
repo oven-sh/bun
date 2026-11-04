@@ -1,5 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { createTestBuilder } from "../test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
 
@@ -69,6 +70,32 @@ describe("exit", async () => {
         .throws(true)
         .catch(error => error);
       expect(error).toMatchObject({ name: "ShellError", exitCode: 1 });
+    });
+
+    async function run(files: Record<string, string>, ...args: string[]) {
+      using dir = tempDir("shell-exit", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        cwd: String(dir),
+        env: bunEnv,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    test.concurrent("in a script file", async () => {
+      expect(await run({ "script.sh": "false\nexit\n" }, "script.sh")).toEqual({ stdout: "", stderr: "", exitCode: 1 });
+    });
+
+    test.concurrent("in a package.json script that the Bun Shell runs", async () => {
+      const files = { "package.json": JSON.stringify({ name: "exit-fixture", scripts: { fail: "false || exit" } }) };
+      expect(await run(files, "run", "--shell=bun", "fail")).toEqual({
+        stdout: "",
+        stderr: '$ false || exit\nerror: script "fail" exited with code 1\n',
+        exitCode: 1,
+      });
     });
   });
 });

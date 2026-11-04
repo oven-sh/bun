@@ -37,34 +37,6 @@ describe.concurrent("run-shell", () => {
     const stderr = await proc.stderr.text();
     expect(stderr).toBe("error: Failed to run script.sh due to error Unexpected ')'\n");
   });
-
-  describe("exit with no argument gives the status of the last command", () => {
-    async function run(files: Record<string, string>, ...args: string[]) {
-      using dir = tempDir("run-shell-exit", files);
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), ...args],
-        cwd: String(dir),
-        env: bunEnv,
-        stderr: "pipe",
-        stdout: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { stdout, stderr, exitCode };
-    }
-
-    test("in a script file", async () => {
-      expect(await run({ "script.sh": "false\nexit\n" }, "script.sh")).toEqual({ stdout: "", stderr: "", exitCode: 1 });
-    });
-
-    test("in a package.json script", async () => {
-      const files = { "package.json": JSON.stringify({ name: "exit-fixture", scripts: { fail: "false || exit" } }) };
-      expect(await run(files, "run", "--shell=bun", "fail")).toEqual({
-        stdout: "",
-        stderr: '$ false || exit\nerror: script "fail" exited with code 1\n',
-        exitCode: 1,
-      });
-    });
-  });
 });
 
 test.skipIf(isWindows)(

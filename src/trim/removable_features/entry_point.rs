@@ -132,6 +132,9 @@ macro_rules! removable_host_function_definition {
     };
 }
 
+/// Calls `$function`, an entry point of `$feature`, behind a guard: a record at the call names it. `$function` stays
+/// out of line (`#[inline(never)]`). Where it has no side effect in some build, it starts with
+/// `keep_call_of_entry_point()`.
 #[macro_export]
 macro_rules! call_removable {
     ($feature:ident, Abort, $function:path $(, $argument:expr)* $(,)?) => {{
@@ -153,6 +156,7 @@ macro_rules! call_removable {
     };
 }
 
+/// `$function` is an entry point as in `call_removable!`, with the same two rules.
 #[macro_export]
 macro_rules! call_removable_or {
     ($feature:ident, $stub:ident, $removed:block, $function:path $(, $argument:expr)* $(,)?) => {
@@ -209,14 +213,24 @@ pub fn run_body_of_either<const FIRST: u16, const SECOND: u16, R, B: FnOnce() ->
 #[doc(hidden)]
 #[inline(never)]
 pub fn removable_body_entry_point<R, B: FnOnce() -> R>(body: B) -> R {
-    // The optimizer removes a call of a function that has no effect, also of one that it may not inline, and the link
-    // expects a call behind every guard.
+    keep_call_of_entry_point();
+    body()
+}
+
+/// Keeps the call of the function that starts with it. The link expects a call behind every guard. The optimizer can
+/// remove the call of a function that has no side effect, also of one that it may not inline. A function that
+/// `call_removable!` or `call_removable_or!` names starts with this where it has no side effect in some build.
+///
+/// It emits no instruction, so the linker can fold a function that does nothing else with other code. The link leaves
+/// the guards of a folded entry point out. A function that exists only for its record keeps its call with
+/// `core::hint::black_box` of a value instead: that is code of its own.
+#[inline(always)]
+pub fn keep_call_of_entry_point() {
     // SAFETY: it emits no instruction.
     #[cfg(not(miri))]
     unsafe {
         ::core::arch::asm!("", options(nomem, nostack, preserves_flags))
     };
-    body()
 }
 
 #[cfg(test)]

@@ -49,9 +49,12 @@ import {
   type LinkedProgram,
 } from "./link-elf-support.ts";
 import {
+  allRecordsOfCallsWithoutEffect,
   builtinEnteringOtherObjects,
   builtinEnteringOtherSources,
   builtinUsing,
+  callersWithoutEffectMain,
+  callersWithoutEffectSource,
   cleanExit,
   compileRust,
   embedderSource,
@@ -65,6 +68,7 @@ import {
   Extra,
   guardHeaderSkipReason,
   indexOf,
+  keepCallOfEntryPoint,
   mainEnteringBuiltin,
   mixingFunction,
   model,
@@ -75,8 +79,10 @@ import {
   plainSpellingsSource,
   pointerToBuiltinEnteringOtherObjects,
   pointerToBuiltinEnteringOtherSources,
+  recordsOfCallsWithoutEffect,
   reviewFiles,
   run,
+  rustCallsWithoutEffect,
   rustSource,
   skipNotice,
   spelledBuiltin,
@@ -574,6 +580,33 @@ pub extern "C" fn rust_bodies_without_effect(x: i32) -> i32 {
     );
   }
 
+  for (const [name, isBitcode] of [
+    ["native code", false],
+    ["bitcode", true],
+  ] as const) {
+    test.skipIf(rustc === null || (isBitcode && !canLinkRustBitcode))(
+      `a function of call_removable! or call_removable_or! that has no side effect is still called where it starts with keep_call_of_entry_point(): ${name}`,
+      async () => {
+        using dir = tempDir("trim-elf-stubs", {
+          ...rustFiles(rustSource + rustCallsWithoutEffect(keepCallOfEntryPoint)),
+          "main.c": callersWithoutEffectMain,
+        });
+        const folder = String(dir);
+        const result = await inspectAndRun(folder, await wrappedRust(folder, isBitcode));
+        expect(result.programResult.stdout).toBe("63 64\n");
+        expect(result.trimmedResult.stdout).toBe("57 -2\n");
+        expect(await exitCodeOf(folder, "program", ["a"])).toBe(62);
+        expect(await exitCodeOf(folder, "trimmed", ["a"])).toBe(endedByTrap);
+        const [listed, folded = ""] = entryPointsText(folder, "program").split(foldedEntryPointsHeading);
+        expect(recordsOfCallsWithoutEffect(listed!)).toEqual(allRecordsOfCallsWithoutEffect);
+        // The three functions that do nothing are a return, as rust_eh_personality is: the linker folds them with it.
+        expect(folded.match(/^  Atomics toy::(?:constant|unread|empty)_/gm)).toEqual(
+          Array(3).fill("  Atomics toy::empty_"),
+        );
+      },
+    );
+  }
+
   test("trimExecutable rejects an already trimmed executable, an unknown feature name and a missing file", async () => {
     using dir = tempDir("trim-elf-stubs", sources);
     const folder = String(dir);
@@ -957,6 +990,24 @@ describeLink("the link fails", () => {
     const folder = String(dir);
     expectLinkFailure(folder, "program", await wrappedRust(folder, false), ["GuardWithoutReference"]);
   });
+
+  test.skipIf(rustc === null)(
+    "on a Rust entry point that has no side effect and does not start with keep_call_of_entry_point()",
+    async () => {
+      using dir = tempDir("trim-elf-fails", {
+        ...rustFiles(rustSource + rustCallsWithoutEffect("")),
+        "main.c": `
+          ${callersWithoutEffectSource}
+          int main(int argc, char **argv) {
+            return argc == 2 ? rust_aborting_calls(1) : rust_defaulting_calls(1) + rust_throwing_calls(1);
+          }
+        `,
+      });
+      const folder = String(dir);
+      const texts = ["GuardWithoutReference", "constant_aborts", "unread_defaults", "constant_throws", "empty_"];
+      expectLinkFailure(folder, "program", await wrappedRust(folder, false), texts);
+    },
+  );
 
   test("on a record whose guard site has no reference to the entry point", async () => {
     using dir = tempDir("trim-elf-fails", {

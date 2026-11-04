@@ -29,9 +29,11 @@ import {
   wrapped,
 } from "./link-macho-support.ts";
 import {
+  allRecordsOfCallsWithoutEffect,
   buildGuardCrate,
   builtinUsing,
   callAll,
+  callersWithoutEffectMain,
   compileRust,
   cxxFlags,
   embedderSource,
@@ -46,13 +48,16 @@ import {
   guardHeader,
   guardHeaderSkipReason,
   indexOf,
+  keepCallOfEntryPoint,
   mainEnteringBuiltin,
   manyFunctions,
   mixingFunction,
   Other,
   plainSpellingsSource,
+  recordsOfCallsWithoutEffect,
   reviewFiles,
   run,
+  rustCallsWithoutEffect,
   rustSource,
   skipNotice,
   spelledBuiltin,
@@ -909,6 +914,32 @@ describeEachMachine("Mach-O $name", machine => {
       expect([await exitCodeOf(folder, "trimmed", ["a"]), await exitCodeOf(folder, "trimmed", ["a", "b"])]).toEqual([
         70, 70,
       ]);
+    });
+
+    test("a function of call_removable! or call_removable_or! that has no side effect is still called where it starts with keep_call_of_entry_point()", async () => {
+      using dir = tempDir("trim-macho-stubs", {
+        ...sources,
+        "embedder.c": embedderSource("macho", { stateFromRust: true, exit: exits }),
+        "toy.rs": rustSource + rustCallsWithoutEffect(keepCallOfEntryPoint),
+        "main.c": callersWithoutEffectMain,
+      });
+      const folder = String(dir);
+      const rustc = Bun.which("rustc");
+      const crate = rustc === null ? undefined : await buildGuardCrate(folder, rustc, rustTarget);
+      if (crate === undefined) return skipNotice(testFile, `rustc cannot build for ${rustTarget}`);
+      const archive = await compileRust(folder, rustc!, crate, "toy.rs", { target: rustTarget });
+      const { entryAddresses, featuresAt, programResult, trimmedResult } = await linked(machine, folder, {
+        objects: ["feature_code", "embedder", "main"],
+        inputs: [archive],
+        linkFlags,
+      });
+      expect(recordsOfCallsWithoutEffect(entryPointsText(folder, "program"))).toEqual(allRecordsOfCallsWithoutEffect);
+      expect([...entryAddresses].map(featuresAt)).toEqual([...entryAddresses].map(() => [Extra]));
+      expectCleanRuns({ programResult, trimmedResult });
+      if (programResult === undefined || trimmedResult === undefined) return;
+      expect(programResult.stdout).toBe("63 64\n");
+      expect(trimmedResult.stdout).toBe("57 -2\n");
+      expect(await exitCodeOf(folder, "whole", ["a"])).toBe(62);
     });
   });
 });

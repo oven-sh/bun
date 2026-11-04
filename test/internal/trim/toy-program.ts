@@ -584,6 +584,85 @@ pub extern "C" fn rust_is_removed() -> bool {
 }
 `;
 
+export const keepCallOfEntryPoint = "bun_removable_features::keep_call_of_entry_point(); ";
+
+/**
+ * Follows `rustSource`. Nine functions without side effect are behind call guards: three return a constant, three have
+ * a result that nobody reads, three do nothing. Each guard is in a caller that does other work, so the optimizer
+ * removes a plain call of the function, also of one it may not inline. Each function starts with `barrier`.
+ */
+export const rustCallsWithoutEffect = (barrier: typeof keepCallOfEntryPoint | ""): string => `
+unsafe extern "C" {
+    safe fn other_work(x: i32) -> i32;
+}
+
+#[inline(never)] fn constant_aborts(_x: i32) -> i32 { ${barrier}5 }
+#[inline(never)] fn unread_aborts(x: i32) -> i32 { ${barrier}x.wrapping_mul(3) }
+#[inline(never)] fn empty_aborts() { ${barrier}}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rust_aborting_calls(x: i32) -> i32 {
+    let y = other_work(x);
+    let constant = call_removable!(Atomics, Abort, constant_aborts, y);
+    let _ = call_removable!(Atomics, Abort, unread_aborts, y);
+    call_removable!(Atomics, Abort, empty_aborts);
+    other_work(y).wrapping_add(constant)
+}
+
+#[inline(never)] fn constant_defaults(_x: i32) -> i32 { ${barrier}6 }
+#[inline(never)] fn unread_defaults(x: i32) -> i32 { ${barrier}x.wrapping_mul(5) }
+#[inline(never)] fn empty_defaults() { ${barrier}}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rust_defaulting_calls(x: i32) -> i32 {
+    let y = other_work(x);
+    let constant = call_removable!(Atomics, ReturnDefault, constant_defaults, y);
+    let _ = call_removable!(Atomics, ReturnDefault, unread_defaults, y);
+    call_removable!(Atomics, ReturnDefault, empty_defaults);
+    other_work(y).wrapping_add(constant)
+}
+
+#[inline(never)] fn constant_throws(_x: i32) -> i32 { ${barrier}7 }
+#[inline(never)] fn unread_throws(x: i32) -> i32 { ${barrier}x.wrapping_mul(7) }
+#[inline(never)] fn empty_throws() { ${barrier}}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rust_throwing_calls(x: i32) -> i32 {
+    let y = other_work(x);
+    let constant = call_removable_or!(Atomics, Throw, { return -2 }, constant_throws, y);
+    let _ = call_removable_or!(Atomics, Throw, { return -3 }, unread_throws, y);
+    call_removable_or!(Atomics, Throw, { return -4 }, empty_throws);
+    other_work(y).wrapping_add(constant)
+}
+`;
+
+/** The three callers of `rustCallsWithoutEffect`, and the work they do: they return 62, 63 and 64 for 1. */
+export const callersWithoutEffectSource: string = `
+  int rust_aborting_calls(int), rust_defaulting_calls(int), rust_throwing_calls(int);
+  __attribute__((noinline)) int other_work(int x) { return x * 7 + 1; }
+`;
+
+/** With an argument it returns what the aborting caller returns. Without one it prints what the other two return. */
+export const callersWithoutEffectMain: string = `
+  int printf(const char *, ...);
+  ${callersWithoutEffectSource}
+  int main(int argc, char **argv) {
+    if (argc == 2) return rust_aborting_calls(1);
+    printf("%d %d\\n", rust_defaulting_calls(1), rust_throwing_calls(1));
+    return 0;
+  }
+`;
+
+/** The stub kind and the kind of function of each record of `rustCallsWithoutEffect` that `entryPoints` lists. */
+export const recordsOfCallsWithoutEffect = (entryPoints: string): string[] =>
+  [...entryPoints.matchAll(/^Atomics (\w+) \d+ toy::(constant|unread|empty)_/gm)]
+    .map(([, stub, kind]) => `${stub} ${kind}`)
+    .sort();
+
+export const allRecordsOfCallsWithoutEffect: string[] = ["Abort", "ReturnDefault", "Throw"].flatMap(stub =>
+  ["constant", "empty", "unread"].map(kind => `${stub} ${kind}`),
+);
+
 export const builtinUsing = (id: number, path: string, ...features: FeatureName[]): BuiltinEntry => ({
   id,
   path,

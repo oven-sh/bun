@@ -631,6 +631,25 @@ describe("failure reports and review files", () => {
     expect(describeFailures([gone("quiet")], contextOf(busy)).split("\n")).toHaveLength(1);
   });
 
+  test("a guard without a reference names the two usual causes: the entry point was inlined, or its call was removed", () => {
+    const causes =
+      ", so nothing can be cut. Two causes are usual. " +
+      "The compiler inlined the entry point: it must stay out of line (#[inline(never)], NEVER_INLINE). " +
+      "Or the entry point has no side effect in this build and the compiler removed the call: " +
+      "see bun_removable_features::keep_call_of_entry_point()";
+    expect(describeFailures([guardWithoutReference], contextOf(guarded))).toBe(
+      "GuardWithoutReference: the guard in guardA (toy.o, 8192 bytes) has no reference to " +
+        "entryA (toy.o, 8192 bytes), an entry point of A" +
+        causes,
+    );
+    const outsideImage: LinkFailure = { ...guardWithoutReference, entry: undefined, target: "Lgone" };
+    expect(describeFailures([outsideImage], contextOf(guarded)).split("\n")[0]).toBe(
+      "GuardWithoutReference: the guard in guardA (toy.o, 8192 bytes) has no reference to " +
+        "Lgone, which is not in the image, an entry point of A" +
+        causes,
+    );
+  });
+
   test("a failure of the declared uses names the built-in by its path, the sections and the feature", () => {
     const describe = (failure: LinkFailure) => describeFailures([failure], contextOf(guarded));
     expect(describe(guardOfUnknownBuiltin)).toBe(

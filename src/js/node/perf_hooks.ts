@@ -112,12 +112,21 @@ function eventLoopUtilization(_utilization1, _utilization2) {
   };
 }
 
-let webEntryTypes: Set<string> | undefined;
-const isWebEntryType = (type: string) => (webEntryTypes ??= new Set(PerformanceObserver.supportedEntryTypes)).has(type);
+// What an observer has in $mode once it took `type`. One that took `entryTypes` has them there.
+const kTookType = Symbol("type");
+
+// Whether an observer that took `entryTypes` last observes nothing: it took none yet, or they name no type there is.
+// Node disconnects an observer at such a call, so it is free to take `type` next:
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/perf/observe.js#L334-L337
+function observesNothing(observer: PerformanceObserverForNodeTypes, entryTypes: unknown) {
+  if (entryTypes === undefined) return true;
+  if (!Array.isArray(entryTypes) || observer[kNodeObserver]?.types.size) return false;
+  const webEntryTypes: readonly string[] = PerformanceObserver.supportedEntryTypes;
+  return !entryTypes.some(type => webEntryTypes.includes(type));
+}
 
 const kNodeObserver = Symbol("kNodeObserver");
 const kObserverCallback = Symbol("kObserverCallback");
-const kObserveMode = Symbol("kObserveMode");
 
 /**
  * The native (WebCore) observer only understands mark/measure/resource.
@@ -134,7 +143,7 @@ type ObserverCallback = (
 class PerformanceObserverForNodeTypes extends PerformanceObserver {
   declare [kNodeObserver]: NodeEntryObserver | undefined;
   declare [kObserverCallback]: ObserverCallback;
-  declare [kObserveMode]: "type" | "entryTypes" | undefined;
+  declare $mode: unknown;
 
   constructor(callback: ObserverCallback) {
     super(callback);
@@ -158,13 +167,12 @@ class PerformanceObserverForNodeTypes extends PerformanceObserver {
       if (entryTypes != null && type != null) {
         throw new TypeError("either entryTypes or type must be provided");
       }
-      const mode = this[kObserveMode];
-      if (mode === undefined) {
-        if (type !== undefined) this[kObserveMode] = "type";
-        else if (entryTypes !== undefined) this[kObserveMode] = "entryTypes";
-      } else if (mode === "type" ? entryTypes !== undefined : type !== undefined) {
+      const mode = this.$mode;
+      if (mode === kTookType ? entryTypes !== undefined : type !== undefined && !observesNothing(this, mode)) {
         throw new DOMException("observer type can't be changed once registered", "InvalidModificationError");
       }
+      if (type !== undefined) this.$mode = kTookType;
+      else if (entryTypes !== undefined) this.$mode = entryTypes;
       if (entryTypes !== undefined && Array.isArray(entryTypes)) {
         requested = entryTypes;
       } else if (type !== undefined) {
@@ -210,9 +218,6 @@ class PerformanceObserverForNodeTypes extends PerformanceObserver {
         // forwarded subscription is always an entryTypes one.
         return super.observe({ ...options, entryTypes: webTypes });
       }
-      // Node disconnects an observer whose `entryTypes` name no type there is, so it is free to take `type` next.
-      // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/perf/observe.js#L334-L337
-      if (!isTypeMode && !requested.some(isWebEntryType)) this[kObserveMode] = undefined;
     }
     return super.observe(options);
   }
@@ -220,7 +225,7 @@ class PerformanceObserverForNodeTypes extends PerformanceObserver {
   disconnect() {
     this[kNodeObserver]?.disconnect();
     this[kNodeObserver] = undefined;
-    this[kObserveMode] = undefined;
+    this.$mode = undefined;
     return super.disconnect();
   }
 }

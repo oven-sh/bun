@@ -926,7 +926,7 @@ describe("gc entries", () => {
       "entryTypes:[X] -> type:mark": attempt({ entryTypes: [type] }, { type: "mark" }),
       "{entryTypes:[mark], type:X}": attempt({ entryTypes: ["mark"], type }),
       "{entryTypes:[mark,X], type:mark}": attempt({ entryTypes: ["mark", type], type: "mark" }),
-      // The observer is free again after disconnect(), and after an `entryTypes` that names no type there is.
+      // The observer is free again after disconnect(), and after `entryTypes` that name no type there is.
       "type:X -> disconnect() -> entryTypes:[X]": (() => {
         const observer = new PerformanceObserver(() => {});
         try {
@@ -941,6 +941,20 @@ describe("gc entries", () => {
         }
       })(),
       "entryTypes:[no such type] -> type:X": attempt({ entryTypes: ["no such type"] }, { type }),
+      "entryTypes:[] -> type:X": attempt({ entryTypes: [] }, { type }),
+      "entryTypes:[X] -> entryTypes:[no such type] -> type:X": attempt(
+        { entryTypes: [type] },
+        { entryTypes: ["no such type"] },
+        { type },
+      ),
+      "entryTypes:[mark] -> entryTypes:[no such type] -> type:X": attempt(
+        { entryTypes: ["mark"] },
+        { entryTypes: ["no such type"] },
+        { type },
+      ),
+      // The first call decides, whether or not it names a type there is.
+      "entryTypes:[X,no such type] -> type:X": attempt({ entryTypes: [type, "no such type"] }, { type }),
+      "type:no such type -> entryTypes:[X]": attempt({ type: "no such type" }, { entryTypes: [type] }),
       "type:X -> type:mark -> type:X": attempt({ type }, { type: "mark" }, { type }),
       "entryTypes:[X] -> entryTypes:[mark] -> entryTypes:[X]": attempt(
         { entryTypes: [type] },
@@ -963,6 +977,11 @@ describe("gc entries", () => {
       "{entryTypes:[mark,X], type:mark}": "TypeError",
       "type:X -> disconnect() -> entryTypes:[X]": "no throw",
       "entryTypes:[no such type] -> type:X": "no throw",
+      "entryTypes:[] -> type:X": "no throw",
+      "entryTypes:[X] -> entryTypes:[no such type] -> type:X": "no throw",
+      "entryTypes:[mark] -> entryTypes:[no such type] -> type:X": "no throw",
+      "entryTypes:[X,no such type] -> type:X": "InvalidModificationError",
+      "type:no such type -> entryTypes:[X]": "InvalidModificationError",
       "type:X -> type:mark -> type:X": "no throw",
       "entryTypes:[X] -> entryTypes:[mark] -> entryTypes:[X]": "no throw",
     });

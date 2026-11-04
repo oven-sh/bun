@@ -394,8 +394,6 @@ pub(crate) fn call_as_function<'a>(
         if spread_rows && is_vitest {
             spread_rows = every_row_is_array(global, this.each)?;
         }
-        // jest-each unpacks the rows only if every row is an array, and it asks the rows in order until one is not.
-        // "bun:test" has always unpacked an array whatever the other rows are, so only a Proxy row asks the table.
         let mut is_table_of_arrays: Option<bool> = None;
         let mut iter = this.each.array_iterator(global)?;
         let mut test_idx: usize = 0;
@@ -416,6 +414,7 @@ pub(crate) fn call_as_function<'a>(
                 let unpack_row = if is_vitest {
                     pretty_format::is_array(global, item)?
                 } else {
+                    // jest-each unpacks a row only if every row is an array. "bun:test" also unpacks any real array.
                     item.is_array()
                         || (item.js_type() == bun_jsc::JSType::ProxyObject
                             && match is_table_of_arrays {

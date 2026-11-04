@@ -282,8 +282,14 @@ function replacedAttempts(jobs: Job[]) {
   const replaced = new Map<string, Replaced>();
   for (const attempt of jobs) {
     if (!attempt.retried || attempt.started_at == null) continue;
+    // `seen`: a chain that comes back to an attempt has no latest attempt.
+    const seen = new Set<string>();
     let latest: Job | undefined = attempt;
-    while (latest?.retried) latest = byId.get(latest.retried_in_job_id ?? "");
+    while (latest?.retried) {
+      seen.add(latest.id);
+      const next: string = latest.retried_in_job_id ?? "";
+      latest = seen.has(next) ? undefined : byId.get(next);
+    }
     replaced.set(attempt.id, { attempt, latest });
   }
   return replaced;

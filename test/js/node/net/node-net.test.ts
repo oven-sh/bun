@@ -1243,6 +1243,27 @@ it.if(isWindows).each(["\\\\.\\PIPE\\", "\\\\.\\Pipe\\", "//?/PIPE/"])(
   },
 );
 
+it.if(isWindows).each([
+  ["\\\\.\\pipe\\\\", "\\"],
+  ["//./pipe//", "//"],
+  ["\\\\.\\pipe\\", "\\/\\"],
+])("several separators in the name of a pipe count as one: %s", async (prefix, separator) => {
+  for (const listensWithSeveral of [false, true]) {
+    const name = `bun-test-separators-${randomUUID()}`;
+    const names = [`\\\\.\\pipe\\${name}\\a`, prefix + name + separator + "a"];
+    const server = createServer(socket => socket.end("hello"));
+    try {
+      await once(server.listen(names[+listensWithSeveral]), "listening");
+      const client = connect(names[+!listensWithSeveral]);
+      const [data] = await once(client, "data");
+      expect(data.toString()).toBe("hello");
+      client.destroy();
+    } finally {
+      server.close();
+    }
+  }
+});
+
 // A pipe cannot be half closed, and an end that is closed does not get the answer to what its peer has yet to read.
 it.if(isWindows)("a named pipe that was ended stays open until its peer has read everything", async () => {
   const server = createServer({ allowHalfOpen: true, pauseOnConnect: true });

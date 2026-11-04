@@ -1162,7 +1162,7 @@ static const WCHAR us_internal_pipe_prefix[] = L"\\\\.\\pipe\\";
 int us_internal_is_pipe_name(const char *path, size_t length) {
 #define IS_SEPARATOR(c) ((c) == '\\' || (c) == '/')
     return length > LIBUS_PIPE_PREFIX_LENGTH && IS_SEPARATOR(path[0]) && IS_SEPARATOR(path[1]) && (path[2] == '.' || path[2] == '?') && IS_SEPARATOR(path[3]) &&
-        (path[4] | 0x20) == 'p' && (path[5] | 0x20) == 'i' && (path[6] | 0x20) == 'p' && (path[7] | 0x20) == 'e' && IS_SEPARATOR(path[8]) && !IS_SEPARATOR(path[LIBUS_PIPE_PREFIX_LENGTH]);
+        (path[4] | 0x20) == 'p' && (path[5] | 0x20) == 'i' && (path[6] | 0x20) == 'p' && (path[7] | 0x20) == 'e' && IS_SEPARATOR(path[8]);
 #undef IS_SEPARATOR
 }
 
@@ -1181,22 +1181,28 @@ static WCHAR *us_internal_pipe_wide_name(const char *path, size_t length) {
     MultiByteToWideChar(CP_UTF8, 0, path, (int) length, name, wide_length);
     name[wide_length] = 0;
     memcpy(name, us_internal_pipe_prefix, LIBUS_PIPE_PREFIX_LENGTH * sizeof(WCHAR));
-    /* Separators are backslashes. */
-    for (WCHAR *component = name + LIBUS_PIPE_PREFIX_LENGTH, *c = component;; c++) {
-        if (*c == L'/') {
-            *c = L'\\';
+    /* Separators are backslashes, and several count as one. That is what Win32 makes of them, and the wait for a free
+     * instance is given the name as it is here. */
+    WCHAR *end = name + LIBUS_PIPE_PREFIX_LENGTH;
+    for (const WCHAR *component = end, *c = end;; c++) {
+        int is_over = !*c;
+        if (!is_over && *c != L'\\' && *c != L'/') {
+            *end++ = *c;
+            continue;
         }
-        if (*c == L'\\' || !*c) {
-            if (c != component && wcsspn(component, L". ") >= (size_t) (c - component)) {
-                us_free(name);
-                SetLastError(WSAEINVAL);
-                return NULL;
-            }
-            if (!*c) {
-                return name;
-            }
-            component = c + 1;
+        if ((end != component && wcsspn(component, L". ") >= (size_t) (end - component)) || (is_over && end == name + LIBUS_PIPE_PREFIX_LENGTH)) {
+            us_free(name);
+            SetLastError(WSAEINVAL);
+            return NULL;
         }
+        if (is_over) {
+            *end = 0;
+            return name;
+        }
+        if (end != component) {
+            *end++ = L'\\';
+        }
+        component = end;
     }
 }
 

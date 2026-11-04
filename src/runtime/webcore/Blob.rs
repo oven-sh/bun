@@ -4485,17 +4485,10 @@ pub(crate) fn write_file_internal(
                             &mut deferred,
                         )
                     };
-                    match deferred {
-                        None => return Ok(result),
-                        Some(Deferred::Rest(resume)) => {
-                            return write_file_after_would_block(
-                                cx,
-                                path_or_blob,
-                                resume,
-                                &options,
-                            );
-                        }
-                        Some(Deferred::Whole) => {}
+                    if let Some(settled) =
+                        settle_sync_attempt(cx, path_or_blob, &options, result, deferred)
+                    {
+                        return settled;
                     }
                 }
             } else if let Some(buffer_view) = data.as_array_buffer(cx.global()) {
@@ -4525,17 +4518,10 @@ pub(crate) fn write_file_internal(
                             &mut deferred,
                         )
                     };
-                    match deferred {
-                        None => return Ok(result),
-                        Some(Deferred::Rest(resume)) => {
-                            return write_file_after_would_block(
-                                cx,
-                                path_or_blob,
-                                resume,
-                                &options,
-                            );
-                        }
-                        Some(Deferred::Whole) => {}
+                    if let Some(settled) =
+                        settle_sync_attempt(cx, path_or_blob, &options, result, deferred)
+                    {
+                        return settled;
                     }
                 }
             }
@@ -4923,6 +4909,28 @@ struct Resume {
     tail: Vec<u8>,
     /// The fd the attempt opened for a path. It stays open: a close ends a FIFO reader's data.
     fd: Option<bun_sys::CloseOnDrop>,
+}
+
+/// What `Bun.write` returns after its synchronous attempt, or `None` for the whole async path.
+#[cfg(not(windows))]
+#[inline]
+fn settle_sync_attempt(
+    cx: &bun_jsc::JsThread<'_>,
+    path_or_blob: &mut PathOrBlob,
+    options: &WriteFileOptions,
+    result: JSValue,
+    deferred: Option<Deferred>,
+) -> Option<JsResult<JSValue>> {
+    match deferred {
+        None => Some(Ok(result)),
+        Some(Deferred::Rest(resume)) => Some(write_file_after_would_block(
+            cx,
+            path_or_blob,
+            resume,
+            options,
+        )),
+        Some(Deferred::Whole) => None,
+    }
 }
 
 /// Schedules a `WriteFile` for `resume.tail`. Its promise resolves with the whole write's count.

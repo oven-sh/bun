@@ -583,7 +583,7 @@ impl Token {
     pub(crate) fn to_range(self, parsed: &version::ParseResult<u64>, floor: Tag) -> Range {
         let version = &parsed.version;
         // Only read for `Wildcard::Major`, which is valid only when it is a written `x`, `X` or `*`.
-        let wildcard_is_written = parsed.valid;
+        let wildcard_is_written = parsed.valid_for_range;
         match self.tag {
             // Allows changes that do not modify the left-most non-zero element in the [major, minor, patch] tuple
             TokenTag::Caret => {
@@ -776,8 +776,14 @@ fn collapse_whitespace(text: &[u8]) -> Cow<'_, [u8]> {
     if collapsed {
         return Cow::Borrowed(text);
     }
-    let words = strings::split_any(text, &strings::WHITESPACE_CHARS).filter(|it| !it.is_empty());
-    Cow::Owned(words.collect::<Vec<_>>().join(&b" "[..]))
+    let mut raw = Vec::with_capacity(text.len());
+    for word in strings::split_any(text, &strings::WHITESPACE_CHARS).filter(|it| !it.is_empty()) {
+        if !raw.is_empty() {
+            raw.push(b' ');
+        }
+        raw.extend_from_slice(word);
+    }
+    Cow::Owned(raw)
 }
 
 fn parse_with(input: &[u8], sliced: SlicedString, floor: Tag) -> Result<Group, AllocError> {
@@ -951,7 +957,7 @@ fn parse_with(input: &[u8], sliced: SlicedString, floor: Tag) -> Result<Group, A
             }
             i += (!hyphenate) as usize;
 
-            let valid = parse_result.valid && !hyphenate;
+            let valid = parse_result.valid_for_range && !hyphenate;
             // Malformed text ("=>16.0.0", "1.2.3.4") starts an alternative so that it cannot narrow the range.
             if no_operator && !(after_comparator && valid) {
                 is_or = true;

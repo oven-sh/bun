@@ -716,6 +716,13 @@ describe("Bun.semver.satisfies()", () => {
         testSatisfies(range, "1.5.0", false);
         testSatisfies(range, "4.0.0", false);
       }
+      // Beside another comparator it narrows the range, as "1.x.5" does, and after < or > the
+      // wildcard is still the empty set.
+      testSatisfies(`>=1.0.0 1.x.${big}`, "1.5.0", true);
+      testSatisfies(`>=1.0.0 1.x.${big}`, "3.0.0", false);
+      testSatisfies(`1.x.${big} 2.0.0`, "1.5.0", false);
+      testSatisfies(`>x.${big}`, "1.0.0", false);
+      testSatisfies(`<x.${big}`, "1.0.0", false);
     }
 
     // u64::MAX itself still fits: the same shapes keep their meaning.
@@ -1609,6 +1616,26 @@ describe("Bun.semver.satisfies()", () => {
       ["1.2.3-alpha.beta.9", ">=1.2.3-alpha.beta.1\r\n<1.2.3-alpha.beta.9", false],
       ["1.2.3-alpha.beta.0", ">=1.2.3-alpha.beta.1\r\n<1.2.3-alpha.beta.9", false],
     ]);
+  });
+
+  test("bun install still reads text that is not a comparator as a wildcard", () => {
+    // `bun install` parses the ranges of published packages with the same parser, and some of them are malformed
+    // (adaptableblotter-react-aggrid@4.2.0 has the peer range "=>16.8.0"). There the text reads as `*` and starts
+    // an alternative. `semverIntersects` reaches that parser without the check that `satisfies` makes.
+    const rows: [range: string, version: string, expected: boolean][] = [
+      ["=>16.8.0", "18.2.0", true],
+      [">=1.0.0 1.2.3.4", "5.0.0", true],
+      ["1.2.3 foo 4.5.6", "4.5.6", true],
+      ["1.2.3 foo 4.5.6", "3.0.0", false],
+      // the skipped "-q" chunk must not swallow the "||", so "^2" still matches
+      ["^1 || -q ^2", "2.5.0", true],
+      ["^1 || -q ^2", "3.0.0", false],
+      ["latest", "1.2.3", true],
+      [">latest", "1.0.0", true],
+      ["2x", "2.5.0", true],
+      ["2x", "3.0.0", false],
+    ];
+    expect(rows.map(([range, version]) => [range, version, semverIntersects(range, version)])).toEqual(rows);
   });
 
   test("pre-release snapshot", () => {

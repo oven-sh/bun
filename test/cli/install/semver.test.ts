@@ -319,7 +319,8 @@ describe("Bun.semver.satisfies()", () => {
     expect(satisfies()).toBe(false);
     // @ts-expect-error
     expect(satisfies("1.2.3")).toBe(false);
-    for (const range of [undefined, null, "undefined", "latest"] as any[]) expect(satisfies("1.2.3", range)).toBe(false);
+    for (const range of [undefined, null, "undefined", "latest"] as any[])
+      expect(satisfies("1.2.3", range)).toBe(false);
     expect(satisfies(undefined as any, "1.2.3")).toBe(false);
     // @ts-expect-error
     expect(satisfies("1.2.3", "1.2.3", "blah")).toBeTrue();

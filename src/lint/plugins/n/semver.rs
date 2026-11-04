@@ -1,9 +1,9 @@
 //! node-semver's `Range` and `subset`, which eslint-plugin-n uses, built on `bun install`'s semver implementation.
 
 use bun_core::handle_oom;
+use bun_semver::Version;
 use bun_semver::query::{self, Group, NpmRange};
 use bun_semver::range::{Comparator, Op};
-use bun_semver::Version;
 
 #[derive(Clone)]
 pub(crate) struct Range {

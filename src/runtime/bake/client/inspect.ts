@@ -15,6 +15,10 @@
 
 const inspectSymbol = Symbol.for("nodejs.util.inspect.custom");
 
+const threwWhilePrinting = "[threw while printing]";
+
+let inspectDepth = 0;
+
 export interface InspectOptions {
   showHidden?: boolean;
   depth?: number;
@@ -53,6 +57,11 @@ const defaultOptions: InspectOptions = {
  * @returns {string} String representation
  */
 export function inspect(obj: any, options: InspectOptions = {}) {
+  // Page code that runs while a value prints can log that value again, so a call nested this deep prints a tag.
+  if (inspectDepth > 1 && obj !== null && (typeof obj === "object" || typeof obj === "function")) {
+    return "[logged while printing]";
+  }
+
   // Set up context with merged options
   const ctx: InspectContext = {
     seen: [],
@@ -61,7 +70,12 @@ export function inspect(obj: any, options: InspectOptions = {}) {
     ...options,
   } as InspectContext;
 
-  return formatValue(ctx, obj, 0);
+  inspectDepth++;
+  try {
+    return formatValue(ctx, obj, 0);
+  } finally {
+    inspectDepth--;
+  }
 }
 
 /**
@@ -76,40 +90,48 @@ function formatValue(ctx: InspectContext, value: any, recurseTimes: number) {
   if (value === null) return "null";
   if (value === undefined) return "undefined";
 
-  // Check for custom inspect implementation
-  if (
-    ctx.customInspect !== false &&
-    value !== null &&
-    typeof value === "object" &&
-    typeof value[inspectSymbol] === "function" &&
-    value[inspectSymbol] !== inspect
-  ) {
-    return String(value[inspectSymbol](recurseTimes, { ...ctx }));
-  }
+  // Reading a page value can throw: a revoked Proxy, a cross-origin Window, a custom inspect function.
+  const seenLength = ctx.seen.length;
+  try {
+    // Check for custom inspect implementation
+    if (
+      ctx.customInspect !== false &&
+      value !== null &&
+      typeof value === "object" &&
+      typeof value[inspectSymbol] === "function" &&
+      value[inspectSymbol] !== inspect
+    ) {
+      return String(value[inspectSymbol](recurseTimes, { ...ctx }));
+    }
 
-  // Check for circular references
-  if (ctx.seen.includes(value)) {
-    return "[Circular]";
-  }
+    // Check for circular references
+    if (ctx.seen.includes(value)) {
+      return "[Circular]";
+    }
 
-  // Format based on type
-  switch (typeof value) {
-    case "string":
-      return formatString(ctx, value);
-    case "number":
-      return formatNumber(value, ctx.numericSeparator!);
-    case "bigint":
-      return `${value}n`;
-    case "boolean":
-      return `${value}`;
-    case "symbol":
-      return formatSymbol(value);
-    case "function":
-      return formatFunction(value);
-    case "object":
-      return formatObject(ctx, value, recurseTimes);
-    default:
-      return String(value);
+    // Format based on type
+    switch (typeof value) {
+      case "string":
+        return formatString(ctx, value);
+      case "number":
+        return formatNumber(value, ctx.numericSeparator!);
+      case "bigint":
+        return `${value}n`;
+      case "boolean":
+        return `${value}`;
+      case "symbol":
+        return formatSymbol(value);
+      case "function":
+        return formatFunction(value);
+      case "object":
+        return formatObject(ctx, value, recurseTimes);
+      default:
+        return String(value);
+    }
+  } catch {
+    // formatObject did not remove the value from `seen`
+    ctx.seen.length = seenLength;
+    return threwWhilePrinting;
   }
 }
 
@@ -331,7 +353,7 @@ function formatPlainObject(ctx: InspectContext, value: any, recurseTimes: number
         }
       }
     } catch (err) {
-      output.push(`${formatPropertyKey(key)}: undefined`);
+      output.push(`${formatPropertyKey(key)}: ${threwWhilePrinting}`);
     }
   }
 
@@ -375,7 +397,7 @@ function formatWithPrototype(ctx: InspectContext, value: any, recurseTimes: numb
       // Add prototype prefix to distinguish from own properties
       output.push(`${formatPropertyKey(key)}: ${formatValue(ctx, value[key], recurseTimes)}`);
     } catch (err) {
-      output.push(`${formatPropertyKey(key)}: undefined`);
+      output.push(`${formatPropertyKey(key)}: ${threwWhilePrinting}`);
     }
   }
 
@@ -499,7 +521,8 @@ function formatRegExp(value) {
  * @returns {string} Formatted error
  */
 function formatError(value: Error) {
-  return value?.stack || value + "";
+  // `stack` can be any value
+  return String(value?.stack || value + "");
 }
 
 /**

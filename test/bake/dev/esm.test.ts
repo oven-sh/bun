@@ -1,7 +1,7 @@
 // ESM tests are about various esm features in development mode.
 import { expect } from "bun:test";
 import { isWindows } from "harness";
-import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
+import { Dev, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 const liveBindingTest = devTest("live bindings with `var`", {
   framework: minimalFramework,
@@ -428,6 +428,269 @@ devTest("function that is assigned to should become a live binding", {
   async test(dev) {
     await using c = await dev.client();
     await c.expectMessage("PASS");
+  },
+});
+
+// With `development.console`, console.log and console.error of the page also format their
+// arguments in the page and send the text to the dev server. The three tests below hold that
+// the page's call returns for a value that cannot print, and for a value that logs while it
+// prints.
+const consoleForwardingFiles = (script: string) => ({
+  "index.html": emptyHtmlFile({
+    scripts: ["index.ts"],
+  }),
+  "bun.app.ts": `
+    import html from "./index.html";
+    export default {
+      static: {
+        "/": html,
+      },
+      development: {
+        console: true,
+      },
+      fetch(req) {
+        return new Response("Not Found", { status: 404 });
+      },
+    };
+  `,
+  "index.ts": `
+    const custom = Symbol.for("nodejs.util.inspect.custom");
+    // The test client sends the arguments of console.log to the test as JSON, which reads the
+    // value too. JSON reads nothing of a value that has this method.
+    const hidden = value => Object.defineProperty(value, "toJSON", { value: () => null });
+    globalThis.results = {};
+    globalThis.probe = function probe(name, value, method = "log") {
+      try {
+        console[method](name, value);
+        globalThis.results[name] = "returned";
+      } catch (e) {
+        globalThis.results[name] = "threw " + e;
+      }
+    };
+    ${script}
+  `,
+});
+
+// The text of every line that the page forwarded to the terminal. A value that prints on more
+// than one line gives only its first line.
+function forwardedLines(dev: Dev) {
+  return dev.output.lines
+    .filter(line => line.includes("[browser]"))
+    .map(line => Bun.stripANSI(line).slice("[browser] ".length));
+}
+
+devTest("browser console forwarding does not throw into the page", {
+  files: consoleForwardingFiles(`
+    probe("custom inspect function that throws", { [custom]() { throw new Error("thrown by the function"); } });
+    probe("getter of an array that throws", hidden(Object.defineProperty([], 0, {
+      get() { throw new Error("thrown by the getter"); },
+      enumerable: true,
+    })));
+    probe("getter of a class that throws", new (class Foo {
+      get bar() { throw new Error("thrown by the getter"); }
+    })());
+    const revoked = Proxy.revocable({}, {});
+    revoked.revoke();
+    // JSON does not read the elements of a Set.
+    probe("revoked Proxy", new Set([revoked.proxy]));
+    probe("Proxy that throws for one key", new Set([new Proxy({ a: 1, b: 2 }, {
+      get(target, key, receiver) {
+        if (key === "a") throw new Error("thrown by the trap");
+        return Reflect.get(target, key, receiver);
+      },
+    })]));
+    const revokedFunction = Proxy.revocable(function () {}, {});
+    revokedFunction.revoke();
+    probe("revoked Proxy of a function", new Set([revokedFunction.proxy]));
+    // The shape of a remote object of a library such as comlink: every property is the Proxy.
+    const remote = new Proxy(function () {}, { get: () => remote, apply: () => ({}) });
+    probe("Proxy of a function", remote);
+    probe("Proxy of a Map", new Proxy(new Map([["k", 1]]), {}));
+    probe("object that inherits from Map.prototype", Object.create(Map.prototype));
+    const throws = new Proxy({}, { getPrototypeOf() { throw new Error("thrown by the trap"); } });
+    probe("value that throws twice", { a: throws, b: throws, c: [7] });
+    probe("error whose stack is a symbol", Object.defineProperty(new Error("e"), "stack", { value: Symbol("s") }));
+    probe("error", new TypeError("with a stack"));
+    // The console of the test client throws for a BigInt. The page still sees that.
+    probe("console that throws", 1n);
+    console.log("done");
+  `),
+  htmlFiles: [],
+  async test(dev) {
+    await using c = await dev.client("/");
+    await dev.output.waitForLine(/\[browser\].* done/);
+    const returned = [
+      "custom inspect function that throws",
+      "getter of an array that throws",
+      "getter of a class that throws",
+      "revoked Proxy",
+      "Proxy that throws for one key",
+      "revoked Proxy of a function",
+      "Proxy of a function",
+      "Proxy of a Map",
+      "object that inherits from Map.prototype",
+      "value that throws twice",
+      "error whose stack is a symbol",
+      "error",
+    ];
+    expect(await c.js`results`).toEqual({
+      ...Object.fromEntries(returned.map(name => [name, "returned"])),
+      "console that throws": "threw TypeError: Do not know how to serialize a BigInt",
+    });
+    // Every call that returned reached the console of the test client.
+    await c.expectMessage(...returned, "done");
+
+    expect(forwardedLines(dev)).toEqual([
+      "custom inspect function that throws [threw while printing]",
+      "getter of an array that throws [threw while printing]",
+      "getter of a class that throws Foo { bar: [threw while printing] }",
+      // One value that cannot print does not take the line, or the values beside it.
+      "revoked Proxy Set { [threw while printing] }",
+      "Proxy that throws for one key Set { { a: [threw while printing], b: 2 } }",
+      "revoked Proxy of a function Set { [threw while printing] }",
+      "Proxy of a function [threw while printing]",
+      "Proxy of a Map [threw while printing]",
+      "object that inherits from Map.prototype [threw while printing]",
+      "value that throws twice { a: [threw while printing], b: [threw while printing], c: [ 7 ] }",
+      "error whose stack is a symbol Symbol(s)",
+      "error TypeError: with a stack",
+      "done",
+    ]);
+    expect(Bun.stripANSI(dev.output.lines.join("\n"))).toMatch(/\[browser\] error TypeError: with a stack\n\s+at /);
+
+    // The page has loaded, so the socket of the forwarder is open and the next line goes to send().
+    const sent = await c.js`
+      const send = WebSocket.prototype.send;
+      WebSocket.prototype.send = () => {
+        throw new Error("thrown by send");
+      };
+      probe("socket that throws", 1);
+      WebSocket.prototype.send = send;
+      return results["socket that throws"];
+    `;
+    expect(sent).toBe("returned");
+    await c.expectMessage("socket that throws");
+  },
+});
+
+// Code of the page runs while a value prints: a trap of a Proxy, a getter, a custom inspect
+// function. That code can log. Each limit below only keeps a build that never stops from
+// running until the stack is full.
+devTest("browser console forwarding returns for a value that logs while it prints", {
+  files: consoleForwardingFiles(`
+    globalThis.calls = { trap: 0, functionTrap: 0, getter: 0 };
+    const logs = new Proxy({ a: 1 }, {
+      getPrototypeOf(target) {
+        if (calls.trap++ < 1000) console.log("trap", logs, null, 2, "text");
+        return Reflect.getPrototypeOf(target);
+      },
+    });
+    probe("trap that logs its Proxy", logs);
+
+    const logsFunction = new Proxy(function f() {}, {
+      getPrototypeOf(target) {
+        if (calls.functionTrap++ < 1000) console.log("function trap", logsFunction);
+        return Reflect.getPrototypeOf(target);
+      },
+    });
+    probe("trap that logs its Proxy of a function", logsFunction);
+
+    class Store {
+      get a() {
+        if (calls.getter++ < 1000) console.log("getter a", this);
+        return 1;
+      }
+      get b() {
+        if (calls.getter++ < 1000) console.log("getter b", { of: this }, Store);
+        return 2;
+      }
+    }
+    probe("getters that log", new Store());
+    console.log("done");
+  `),
+  htmlFiles: [],
+  async test(dev) {
+    await using c = await dev.client("/");
+    await dev.output.waitForLine(/\[browser\].* done/);
+    // formatObject calls the trap of "logs" 9 times, once for each `instanceof`.
+    expect(await c.js`({ results, calls })`).toEqual({
+      results: {
+        "trap that logs its Proxy": "returned",
+        "trap that logs its Proxy of a function": "returned",
+        "getters that log": "returned",
+      },
+      calls: { trap: 90, functionTrap: 2, getter: 6 },
+    });
+
+    // A call from the code that a value runs prints as before. A call from the code that
+    // such a call runs prints a tag for an object, and that ends the recursion.
+    const tag = "[logged while printing]";
+    const lines = forwardedLines(dev);
+    expect(lines).toEqual([
+      ...Array.from({ length: 9 }, () => [
+        ...Array.from({ length: 9 }, () => `trap ${tag} null 2 text`),
+        "trap { a: 1 } null 2 text",
+      ]).flat(),
+      "trap that logs its Proxy { a: 1 }",
+      `function trap ${tag}`,
+      "function trap [Function: f]",
+      "trap that logs its Proxy of a function [Function: f]",
+      `getter a ${tag}`,
+      `getter b ${tag} ${tag}`,
+      "getter a Store { a: 1, b: 2 }",
+      `getter a ${tag}`,
+      `getter b ${tag} ${tag}`,
+      "getter b { of: Store { a: 1, b: 2 } } [Function: Store]",
+      "getters that log Store { a: 1, b: 2 }",
+      "done",
+    ]);
+    // The console of the test client got every one of these calls, each before its line was sent.
+    const names = /^(function trap|getter [ab]|getters that log|trap( that logs its Proxy( of a function)?)?|done)/;
+    await c.expectMessageInAnyOrder(...lines.map(line => names.exec(line)![0]));
+  },
+});
+
+// A line of console.error goes to stderr of the dev server and a line of console.log to stdout,
+// so one ordered list cannot hold both.
+devTest("browser console forwarding does not make console.error throw", {
+  files: consoleForwardingFiles(`
+    const revoked = Proxy.revocable({}, {});
+    revoked.revoke();
+    probe("revoked Proxy", new Set([revoked.proxy]), "error");
+    probe("Proxy of a Map", new Proxy(new Map([["k", 1]]), {}), "error");
+    // A console.error from a getter that the forwarder runs still prints its error.
+    probe("getter that logs an error", new (class Cart {
+      get total() {
+        try {
+          throw new RangeError("no items");
+        } catch (e) {
+          console.error("total failed", e);
+          return 0;
+        }
+      }
+    })(), "error");
+    // The console of the test client calls this function and throws. The page still sees that.
+    probe("console that throws", { [custom]() { throw new Error("thrown by the function"); } }, "error");
+    console.error("done");
+  `),
+  htmlFiles: [],
+  async test(dev) {
+    // `errors` lets the page call console.error.
+    await using c = await dev.client("/", { errors: [] });
+    await dev.output.waitForLine(/\[browser\].* done/);
+    expect(await c.js`results`).toEqual({
+      "revoked Proxy": "returned",
+      "Proxy of a Map": "returned",
+      "getter that logs an error": "returned",
+      "console that throws": "threw Error: thrown by the function",
+    });
+    expect(forwardedLines(dev)).toEqual([
+      "revoked Proxy Set { [threw while printing] }",
+      "Proxy of a Map [threw while printing]",
+      "total failed RangeError: no items",
+      "getter that logs an error Cart { total: 0 }",
+      "done",
+    ]);
   },
 });
 

@@ -317,23 +317,26 @@ if (config.console) {
   const originalLog = console.log;
 
   function websocketInspect(logLevel: "l" | "e", values: any[]) {
-    let str = "l" + logLevel;
-    let first = true;
-    for (const value of values) {
-      if (first) {
-        first = false;
-      } else {
-        str += " ";
+    // The browser's own console call already ran. A synchronous throw from here on only drops the forwarded line.
+    try {
+      let str = "l" + logLevel;
+      let first = true;
+      for (const value of values) {
+        if (first) {
+          first = false;
+        } else {
+          str += " ";
+        }
+
+        if (typeof value === "string") {
+          str += value;
+        } else {
+          str += inspect(value);
+        }
       }
 
-      if (typeof value === "string") {
-        str += value;
-      } else {
-        str += inspect(value);
-      }
-    }
-
-    ws.sendBuffered(str);
+      ws.sendBuffered(str);
+    } catch {}
   }
 
   if (typeof originalLog === "function") {

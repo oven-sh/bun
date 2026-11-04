@@ -4945,11 +4945,8 @@ fn write_file_after_would_block(
     )
     .expect("unreachable");
     job.resume_from(resume.written, resume.fd);
-    let promise = Box::new(WriteFilePromise {
-        promise: jsc::JSPromiseStrong::init(cx.global()),
-        global_this: cx.global(),
-    });
-    let promise_value = promise.promise.value();
+    let promise = jsc::JSPromiseStrong::init(cx.global());
+    let promise_value = promise.value();
     promise_value.ensure_still_alive();
     write_file::WriteFile::schedule(job, promise, cx);
     Ok(promise_value)

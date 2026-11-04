@@ -840,11 +840,8 @@ function fork(modulePath, args: string[] | Record<string, unknown> | null = [], 
 
   args = [...execArgv, modulePath, ...(args as string[])];
 
-  // Bun runs as `node` when argv[0] ends in `node`: no default `.env` files,
-  // node-only flags ignored. process.execPath is the real binary, so a child
-  // started from it would run as plain bun. Give it the parent's argv0 to keep
-  // the mode. Only fork() does this: its first positional is always a script,
-  // while spawn(process.execPath, ["install"]) must still run the subcommand.
+  // Node mode is decided by argv[0]. Pass the parent's argv0 on so the child
+  // bun runs as `node` too. Not for spawn(): it may run a bun subcommand.
   if (isRunningAsNode && options.execPath === process.execPath && options.argv0 == null) {
     options.argv0 = process.argv0;
   }

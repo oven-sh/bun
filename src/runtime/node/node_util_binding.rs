@@ -60,9 +60,7 @@ pub(crate) fn ecanceled_error_code() -> i32 {
     -UV_E::CANCELED
 }
 
-/// Whether `Command::which()` classified this process as `node` (argv[0]
-/// ends in `node`). `child_process.fork()` reads it once and names a child bun
-/// `node` too, so the child runs in the same mode.
+/// Whether `Command::which()` classified this process as `node` (argv[0] ends in `node`).
 pub(crate) fn is_running_as_node() -> bool {
     crate::cli::PRETEND_TO_BE_NODE.load(core::sync::atomic::Ordering::Relaxed)
 }

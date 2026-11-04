@@ -30,11 +30,11 @@ impl Zone {
     /// `'static`: `malloc_set_zone_name` may keep the pointer instead of copying.
     #[cfg(target_os = "macos")]
     pub fn init(name: &'static CStr) -> &'static Zone {
-        // SAFETY: malloc_create_zone is safe to call with (0, 0); returns a
-        // process-lifetime zone pointer. `name` is NUL-terminated and outlives the
-        // process.
+        let zone = malloc_create_zone(0, 0);
+        assert!(!zone.is_null(), "malloc_create_zone failed");
+        // SAFETY: the zone is not null and nothing destroys it. `name` is NUL-terminated and
+        // outlives the process.
         unsafe {
-            let zone = malloc_create_zone(0, 0);
             malloc_set_zone_name(zone, name.as_ptr());
             &*zone
         }

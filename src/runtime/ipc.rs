@@ -679,7 +679,7 @@ mod frame {
         }
     }
 
-    /// Frames `buffer`, which starts with room for the prefix. libuv blocks its loop until a prefix it has part of is whole.
+    /// Frames `buffer`, which starts with room for the prefix, so that both leave in one write.
     pub(super) fn seal(buffer: &mut [u8], handle: Option<&super::Handle>) -> bool {
         let (prefix, data) = buffer.split_at_mut(prefix_len(handle.is_some()));
         let Ok(data_len) = u32::try_from(data.len()) else {
@@ -1894,7 +1894,7 @@ fn handle_ipc_message(
     }
 
     // As in Node, a disconnect() that waits for the ack of a handle still delivers, and any other delivers nothing more.
-    if send_queue.close_after_flush.get() && !send_queue.has_unacked_handle() {
+    if !send_queue.is_connected() && !send_queue.has_unacked_handle() {
         send_queue.set_incoming_fd(None);
         return Ok(());
     }

@@ -1,7 +1,5 @@
 #![allow(non_upper_case_globals, non_snake_case)]
 
-#[cfg(any(target_os = "macos", target_os = "freebsd"))]
-use core::ffi::c_char;
 use core::ffi::{CStr, c_int};
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
@@ -615,14 +613,14 @@ pub fn set_thread_name(name: &ZStr) {
     {
         // SAFETY: macOS pthread_setname_np takes the current thread implicitly.
         unsafe {
-            let _ = libc::pthread_setname_np(name.as_ptr().cast::<c_char>());
+            let _ = libc::pthread_setname_np(name.as_ptr());
         }
     }
     #[cfg(target_os = "freebsd")]
     {
         // SAFETY: FreeBSD signature is (pthread_t, const char*).
         unsafe {
-            libc::pthread_set_name_np(libc::pthread_self(), name.as_ptr().cast::<c_char>());
+            libc::pthread_set_name_np(libc::pthread_self(), name.as_ptr());
         }
     }
     #[cfg(windows)]

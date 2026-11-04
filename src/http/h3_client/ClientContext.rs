@@ -67,7 +67,7 @@ impl ClientContext {
     }
 
     pub(crate) fn get_or_create() -> Option<NonNull<ClientContext>> {
-        if let Some(i) = NonNull::new(INSTANCE.load(Ordering::Acquire)) {
+        if let Some(i) = Self::get() {
             return Some(i);
         }
         LSQUIC_INIT_ONCE.call_once(quic::global_init);

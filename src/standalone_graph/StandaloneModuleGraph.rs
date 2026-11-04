@@ -3361,8 +3361,7 @@ pub fn to_executable(
 }
 
 impl StandaloneModuleGraph {
-    /// Loads the standalone module graph from the executable, allocates it on the heap,
-    /// sets it globally, and returns the pointer.
+    /// Loads the standalone module graph from the executable, sets it globally, and returns it.
     pub fn from_executable() -> crate::Result<Option<&'static StandaloneModuleGraph>> {
         #[cfg(target_os = "macos")]
         let data = macho::get_data();
@@ -3710,7 +3709,7 @@ fn append_bytecode_aligned(
 }
 
 /// Allocates a StandaloneModuleGraph in the process-static `INSTANCE`,
-/// populates it from bytes, sets it globally, and returns the pointer.
+/// populates it from bytes, sets it globally, and returns it.
 fn from_bytes_alloc(
     raw_ptr: *mut u8,
     raw_len: usize,

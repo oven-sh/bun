@@ -12,7 +12,7 @@ use bun_core::strings;
 ///
 /// Supertrait `PathByte` provides `Eq + Pod`, `from_u8` and `units`. This
 /// trait adds the closed-set operations every path-generic fn in the codebase
-/// reaches for: ASCII comparison, case folding, widening to `u32`, the
+/// reaches for: ASCII comparison, case folding, widening to `u32`, and the
 /// `bun.strings.literal(T, "...")` const-widened static.
 pub trait PathChar: strings::PathByte + Ord {
     /// `true` iff `Self == u16` (WTF-16).

@@ -239,9 +239,7 @@ extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: &uws::udp::PacketBuffe
                 {
                     let mut buffer = [0u8; IF_NAMESIZE + 1];
                     if !if_indextoname(id, &mut buffer).is_null() {
-                        // SAFETY: if_indextoname wrote a NUL-terminated string.
-                        let name = unsafe { bun_core::ffi::cstr(buffer.as_ptr().cast::<c_char>()) }
-                            .to_bytes();
+                        let name = bun_core::slice_to_nul(&buffer);
                         break 'blk BunString::create_format(format_args!(
                             "{}%{}",
                             bstr::BStr::new(span),

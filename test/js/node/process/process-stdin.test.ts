@@ -3,6 +3,7 @@ import { describe, expect, onTestFinished, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { exec } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
+import { devNull } from "node:os";
 import { join } from "node:path";
 
 test.concurrent("pipe does the right thing", async () => {
@@ -482,6 +483,21 @@ describe.concurrent("a directory as stdin is an 'error', as in Node.js", () => {
       closeSync(fd);
     }
   });
+});
+
+test.concurrent("a stdin that is not open for reading is an 'error', as in Node.js", async () => {
+  const fd = openSync(devNull, "w");
+  try {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `process.stdin.on("error", error => console.log(error.code)).resume();`],
+      env: bunEnv,
+      stdio: [fd, "pipe", "inherit"],
+    });
+    expect(await proc.stdout.text()).toBe("EBADF\n");
+    expect(await proc.exited).toBe(0);
+  } finally {
+    closeSync(fd);
+  }
 });
 
 test.concurrent("process.stdin can be read once a lock on Bun.stdin.stream() is released", async () => {

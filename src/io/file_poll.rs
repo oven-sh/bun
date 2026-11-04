@@ -1215,7 +1215,13 @@ impl FilePoll {
                 let vm = get_vm_ctx(self.allocator_type);
                 self.native
                     .read(vm.platform_event_loop(), buf)
-                    .map_err(|code| sys::Error::from_win32(code, sys::Tag::read).with_fd(fd))
+                    .map_err(|code| match code {
+                        // The handle was not opened for reading.
+                        sys::windows::Win32Error::ACCESS_DENIED => {
+                            sys::Error::from_code(sys::E::EBADF, sys::Tag::read).with_fd(fd)
+                        }
+                        code => sys::Error::from_win32(code, sys::Tag::read).with_fd(fd),
+                    })
             }
         }
     }

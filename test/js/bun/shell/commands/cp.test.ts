@@ -247,6 +247,122 @@ test("operands longer than the path buffers fail with ENAMETOOLONG", async () =>
   expect(exitCode).toBe(0);
 });
 
+// Runs in a child process because the cp builtin must be enabled explicitly on POSIX.
+test("copies the sources one at a time, in operand order", async () => {
+  using dir = tempDir("cp-operand-order", {
+    "fixture.ts": /* ts */ `
+      import { $ } from "bun";
+      import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+
+      $.nothrow();
+      const cwd = process.cwd();
+
+      // "a/x" to "f/x" and "a/d/x" to "f/d/x": each source has its own length and fill byte.
+      const names = ["a", "b", "c", "d", "e", "f"];
+      const contents = names.map((name, i) => Buffer.alloc(3000 * (i + 1), name));
+      for (const [i, name] of names.entries()) {
+        mkdirSync(name + "/d", { recursive: true });
+        writeFileSync(name + "/x", contents[i]);
+        writeFileSync(name + "/d/x", contents[i]);
+      }
+      mkdirSync("dir/x", { recursive: true });
+
+      // The source a copy holds, or how it is broken.
+      function origin(path: string) {
+        const stat = statSync(path, { throwIfNoEntry: false });
+        if (!stat) return "missing";
+        if (stat.isDirectory()) return "directory";
+        const copy = readFileSync(path);
+        const from = contents.findIndex(content => content.equals(copy));
+        return from === -1 ? \`torn (\${copy.length} bytes)\` : names[from];
+      }
+
+      // Runs the command many times and returns each distinct outcome once.
+      async function outcomes(args: string[], copy: string) {
+        const seen = new Set<string>();
+        for (let i = 0; i < 20; i++) {
+          rmSync("out", { recursive: true, force: true });
+          mkdirSync("out");
+          const { exitCode, stdout, stderr } = await $\`cp \${args} out\`.quiet();
+          seen.add(
+            JSON.stringify({
+              exitCode,
+              stdout: stdout.toString().replaceAll(cwd, "<cwd>"),
+              stderr: stderr.toString().replaceAll(cwd, "<cwd>"),
+              copy: origin(copy),
+            }),
+          );
+        }
+        return [...seen].map(outcome => JSON.parse(outcome));
+      }
+
+      const files = names.map(name => name + "/x");
+      const dirs = names.map(name => name + "/d");
+      console.log(
+        JSON.stringify({
+          sameName: await outcomes(files, "out/x"),
+          noClobber: await outcomes(["-n", ...files], "out/x"),
+          verbose: await outcomes(["-v", "a/x", "b/x", "c/x"], "out/x"),
+          missing: await outcomes(["a/missing", "a/x", "b/missing", "b/x", "c/missing"], "out/x"),
+          sameNameDirs: await outcomes(["-R", ...dirs], "out/d/x"),
+          fileThenDir: await outcomes(["-R", "a/x", "dir/x"], "out/x"),
+          dirThenFile: await outcomes(["-R", "dir/x", "a/x"], "out/x"),
+        }),
+      );
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+
+  const silent = { exitCode: 0, stdout: "", stderr: "" };
+  const notFound = (path: string) => `cp: No such file or directory: ${p(path)}\n`;
+  // Every command has one outcome: a later operand of the same name replaces an earlier one.
+  expect(JSON.parse(stdout)).toEqual({
+    sameName: [{ ...silent, copy: "f" }],
+    noClobber: [{ ...silent, copy: "a" }],
+    verbose: [
+      {
+        ...silent,
+        stdout: p("<cwd>/a/x -> <cwd>/out/x\n<cwd>/b/x -> <cwd>/out/x\n<cwd>/c/x -> <cwd>/out/x\n"),
+        copy: "c",
+      },
+    ],
+    missing: [
+      {
+        exitCode: 1,
+        stdout: "",
+        stderr: notFound("<cwd>/a/missing") + notFound("<cwd>/b/missing") + notFound("<cwd>/c/missing"),
+        copy: "b",
+      },
+    ],
+    sameNameDirs: [{ ...silent, copy: "f" }],
+    fileThenDir: [
+      {
+        exitCode: 1,
+        stdout: "",
+        stderr: `cp: cannot overwrite non-directory out${sep}x with directory dir/x\n`,
+        copy: "a",
+      },
+    ],
+    dirThenFile: [
+      {
+        exitCode: 1,
+        stdout: "",
+        stderr: `cp: cannot overwrite directory out${sep}x with non-directory a/x\n`,
+        copy: "directory",
+      },
+    ],
+  });
+  expect(exitCode).toBe(0);
+});
+
 // The child force-enables the builtin, so these also run on POSIX.
 describe.concurrent("bunshell cp src/dest validation", () => {
   async function cp(cwd: string, command: string) {

@@ -346,16 +346,6 @@ pub(crate) fn run_task(
                 }
             )?
         }
-        task_tag::ShellAsyncCpTask => {
-            feature_arm!(
-                [Shell],
-                |copy: crate::node::fs::ShellAsyncCpTask| -> JsResult<()> {
-                    // SAFETY: as above.
-                    unsafe { (*copy).run_from_js_thread()? };
-                    Ok(())
-                }
-            )?
-        }
         task_tag::StatWatcherHop => feature_arm!(
             [NodeFs],
             |watcher: crate::node::node_fs_stat_watcher::StatWatcher| -> JsResult<()> {
@@ -884,7 +874,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 86,
+    task_tag::COUNT == 85,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1833,7 +1823,6 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             release_in!([NodeFs], crate::node::node_fs_stat_watcher::StatWatcher)
         }
         task_tag::AsyncCpTask => release_in!([NodeFs], crate::node::fs::AsyncCpTask),
-        task_tag::ShellAsyncCpTask => release_in!([Shell], crate::node::fs::ShellAsyncCpTask),
         task_tag::StreamPending => release_in!([WebStreams], StreamPending),
         task_tag::ThreadSafeFunction => release_in!([NativeAddons], ThreadSafeFunction),
         task_tag::UvLoopDispatch => {

@@ -136,7 +136,6 @@ pub mod task_tag {
         StatWatcherTimerUpdate,
         StatWatcherHop,
         AsyncCpTask,
-        ShellAsyncCpTask,
         StreamPending,
         ThreadSafeFunction,
         UvDnsPollFree,            // a closed c-ares uv_poll_t (windows)

@@ -3,14 +3,15 @@
 // The top-level functions assume the arguments are already validated
 
 use bun_paths::strings;
-use core::ffi::{c_char, c_int, c_uint, c_void};
+#[cfg(windows)]
+use core::ffi::c_void;
+use core::ffi::{c_char, c_int, c_uint};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::api::bun::process::event_loop_handle_to_ctx;
 use crate::webcore;
 use bun_core::{String as BunString, Utf8WithString, ZStr};
-use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_io::KeepAlive;
 use bun_jsc::AbortSignal;
 use bun_jsc::debugger::AsyncTaskTracker;
@@ -1896,7 +1897,7 @@ mod _async_tasks {
     pub(crate) type ShellAsyncCpTask = NewAsyncCpTask<true>;
 
     // The shell flattens builtins under `crate::shell::builtins::*`. The
-    // `cp_on_copy`/`cp_on_finish` hooks are inherent methods on that type
+    // `cp_on_copy`/`cp_on_walk_done` hooks are inherent methods on that type
     // (cp.rs), called directly below — no trait indirection.
     pub(crate) type ShellCpTask = crate::shell::builtins::cp::ShellCpTask;
 
@@ -1908,11 +1909,14 @@ mod _async_tasks {
         /// How the last subtask's thread delivers the completion (moved out
         /// by it: the loop may free `self` once the completion is queued). For
         /// a JS loop this is the ticket its VM waits for — the arguments may
-        /// point into JS buffers and the promise lives on the JS heap.
+        /// point into JS buffers and the promise lives on the JS heap. `None`
+        /// for the shell: that thread hands the result to the `ShellCpTask`
+        /// itself, which holds the ticket.
         pub(crate) poster: core::cell::Cell<Option<bun_jsc::ConcurrentPoster>>,
         pub task: WorkPoolTask,
         /// Written from any workpool thread (first `finish_concurrently` caller wins via
-        /// `has_result` CAS); read on the JS thread in `run_from_js_thread`. Wrapped in
+        /// `has_result` CAS); read on the JS thread in `run_from_js_thread` (the shell:
+        /// by the thread that drops the last reference). Wrapped in
         /// `Cell` so concurrent subtasks can hold `&Self` and `.set()` without aliased
         /// `&mut`. Cross-thread soundness is provided by the `has_result` CAS (single
         /// writer) + `subtask_count` AcqRel fence (happens-before for the JS-thread
@@ -1930,7 +1934,8 @@ mod _async_tasks {
         pub(crate) context: bun_event_loop::ContextId,
         pub(crate) has_result: AtomicBool,
         /// Number of in-flight references to `this`. Starts at 1 for the main
-        /// directory-scan task; incremented for each `SingleTask` spawned. Every
+        /// directory-scan task; incremented for each `SingleTask` spawned (and for
+        /// the shell's pool task, see `run_for_shell`). Every
         /// holder calls `onSubtaskDone` exactly once when finished (regardless of
         /// success or error). `runFromJSThread` — which destroys `this` — is only
         /// enqueued once the count reaches zero, so subtasks still running on the
@@ -1938,7 +1943,7 @@ mod _async_tasks {
         pub(crate) subtask_count: AtomicUsize,
         /// BACKREF — `Some` iff `IS_SHELL`. The shell `ShellCpTask` owns and
         /// outlives this task; `ParentRef` gives a safe `&ShellCpTask` projection
-        /// for `cp_on_copy` and round-trips the `*mut` for `cp_on_finish`.
+        /// for `cp_on_copy` and round-trips the `*mut` for `cp_on_walk_done`.
         pub(crate) shelltask: Option<bun_ptr::ParentRef<ShellCpTask, bun_ptr::Mut>>,
     }
 
@@ -2049,12 +2054,9 @@ mod _async_tasks {
         }
     }
 
-    impl<const IS_SHELL: bool> bun_event_loop::Taskable for NewAsyncCpTask<IS_SHELL> {
-        const TAG: bun_event_loop::TaskTag = if IS_SHELL {
-            bun_event_loop::task_tag::ShellAsyncCpTask
-        } else {
-            bun_event_loop::task_tag::AsyncCpTask
-        };
+    /// Only `fs.cp` completes on a loop. The shell's `cp` takes its result on the pool.
+    impl bun_event_loop::Taskable for AsyncCpTask {
+        const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AsyncCpTask;
         /// A finished fs.cp whose completion will not run: destroy releases
         /// its promise handle, protected arguments and keep-alive.
         unsafe fn release_unrun(this: *mut Self) {
@@ -2064,6 +2066,29 @@ mod _async_tasks {
         unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
             // SAFETY: fn contract.
             unsafe { (*this).context }
+        }
+    }
+
+    impl AsyncCpTask {
+        /// Queues the finished copy on its JS loop, where `run_from_js_thread`
+        /// settles the promise and destroys it.
+        ///
+        /// # Safety
+        /// `this` is the Box-leaked task with its last reference dropped
+        /// (`release_ref` returned `true`), so the caller has exclusive access.
+        unsafe fn post_to_js_thread(this: *mut Self) {
+            // SAFETY: fn contract.
+            let poster = unsafe { &*this }
+                .poster
+                .take()
+                .expect("fs.cp in flight holds its poster");
+            // `this` carries mutable provenance from `Box::leak`, so the enqueued
+            // callback may safely form `&mut *this` on the JS thread.
+            poster.post_js(ConcurrentTask::ConcurrentTask::create(bun_jsc::Task::init(
+                this,
+            )));
+            // The pool side is done (`this` may already be freed by its loop).
+            drop(poster);
         }
     }
 
@@ -2094,45 +2119,68 @@ mod _async_tasks {
         ) -> JSValue {
             let tracker = AsyncTaskTracker::init(vm);
             tracker.did_schedule(cx.global());
-            let task = Self::schedule_new(
+            let task = Self::new(
                 JSPromiseStrong::init(cx.global()),
                 cp_args,
                 EventLoopHandle::init(vm.event_loop.cast()),
-                bun_jsc::ConcurrentPoster::Js(vm.ticket()),
+                Some(bun_jsc::ConcurrentPoster::Js(vm.ticket())),
                 tracker,
                 cx.context().id(),
                 core::ptr::null_mut(),
             );
-            // SAFETY: `schedule_new` returns a Box::leak'd pointer; valid until destroy()
-            unsafe { &*task }.promise.value()
+            // SAFETY: `new` returns a Box::leak'd pointer; valid until destroy(),
+            // which runs on this (the JS) thread.
+            unsafe {
+                WorkPool::schedule(&raw mut (*task).task);
+                (*task).promise.value()
+            }
         }
 
-        /// The shell's `cp` builtin, from its pool task (any thread): no VM or
-        /// global is touched — the loop and poster are the ones the shell task
-        /// already captured on its own thread.
-        pub(crate) fn create_for_shell(
+        /// The shell's `cp` builtin, for a source operand its pool task does not
+        /// copy in place (a directory). Runs on that task's pool thread: the
+        /// scan is done here, each file of the tree is copied by a pool subtask.
+        /// No VM, global or loop is touched.
+        ///
+        /// `Some(result)`: the copy has ended. `None`: subtasks are still in
+        /// flight, and the thread that ends the last one calls
+        /// `ShellCpTask::cp_on_walk_done`. `shelltask` belongs to that thread
+        /// from then on: the caller must not touch it after a `None`.
+        pub(crate) fn run_for_shell(
+            nodefs: &mut NodeFS,
             cp_args: ThreadIsolated<args::Cp<'static>>,
             evtloop: EventLoopHandle,
-            poster: bun_jsc::ConcurrentPoster,
             shelltask: *mut ShellCpTask,
-        ) -> *mut Self {
-            Self::schedule_new(
+        ) -> Option<Maybe<ret::Cp>> {
+            let this = Self::new(
                 JSPromiseStrong::default(),
                 cp_args,
                 evtloop,
-                poster,
+                None,
                 AsyncTaskTracker { id: 0 },
                 // As `ShellCpTask`, which is waiting for this.
                 bun_event_loop::ContextId::NONE,
                 shelltask,
-            )
+            );
+            // The caller's own reference, dropped below. With it the scan's
+            // reference is never the last one, so `on_subtask_done` cannot call
+            // `cp_on_walk_done` on this thread while the caller still runs.
+            // SAFETY: `new` returns a Box::leak'd pointer; live until the last reference is dropped.
+            unsafe { &*this }
+                .subtask_count
+                .fetch_add(1, Ordering::Relaxed);
+            Self::cp_async(nodefs, this);
+            if !Self::release_ref(this) {
+                return None;
+            }
+            // SAFETY: the last reference was this thread's.
+            Some(unsafe { Self::finish_for_shell(this) }.1)
         }
 
-        fn schedule_new(
+        fn new(
             promise: JSPromiseStrong,
             cp_args: ThreadIsolated<args::Cp<'static>>,
             evtloop: EventLoopHandle,
-            poster: bun_jsc::ConcurrentPoster,
+            poster: Option<bun_jsc::ConcurrentPoster>,
             tracker: AsyncTaskTracker,
             context: bun_event_loop::ContextId,
             shelltask: *mut ShellCpTask,
@@ -2146,7 +2194,7 @@ mod _async_tasks {
                 // `has_result` CAS) before any read on the JS thread.
                 result: core::cell::Cell::new(Ok(())),
                 evtloop,
-                poster: core::cell::Cell::new(Some(poster)),
+                poster: core::cell::Cell::new(poster),
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker,
@@ -2159,9 +2207,7 @@ mod _async_tasks {
                 task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop));
             }
 
-            let raw = bun_core::heap::release(task);
-            WorkPool::schedule(&raw mut raw.task);
-            raw
+            bun_core::heap::into_raw(task)
         }
 
         fn work_pool_callback(task: *mut WorkPoolTask) {
@@ -2193,16 +2239,15 @@ mod _async_tasks {
             self.result.set(result);
         }
 
-        /// Called exactly once by the main directory-scan task and once by each
-        /// `SingleTask` when it is done touching `this`. The last caller (count
-        /// drops to zero) enqueues `runFromJSThread`, which resolves the promise
-        /// and destroys `this`.
+        /// Drops one reference to `this`. `true`: it was the last one, so every
+        /// subtask has finished, `result` is set and the caller has exclusive
+        /// access.
         ///
         /// Takes a raw `*mut Self` (not `&self`) so the pointer retains the
-        /// mutable provenance from the original `Box::leak`; the JS-thread
-        /// callback later materializes `&mut *this`, which would be UB if the
+        /// mutable provenance from the original `Box::leak`; the completion
+        /// later materializes `&mut *this`, which would be UB if the
         /// pointer were derived from a shared reference.
-        fn on_subtask_done(this: *mut Self) {
+        fn release_ref(this: *mut Self) -> bool {
             // SAFETY: `this` is a live Box-leaked task; shared access only here —
             // other workpool threads may concurrently hold `&Self` until the
             // refcount reaches zero below.
@@ -2210,7 +2255,7 @@ mod _async_tasks {
             let old_count = this_ref.subtask_count.fetch_sub(1, Ordering::AcqRel);
             debug_assert!(old_count > 0);
             if old_count != 1 {
-                return;
+                return false;
             }
 
             // All subtasks have finished. If none reported an error, the copy succeeded.
@@ -2219,53 +2264,50 @@ mod _async_tasks {
                 // count reached zero ⇒ this thread now has exclusive access.
                 this_ref.result.set(Ok(()));
             }
-
-            // Count reached zero ⇒ exclusive access. `this` carries mutable
-            // provenance from `Box::leak`, so the enqueued callback may safely
-            // form `&mut *this` on the JS thread.
-            let poster = this_ref
-                .poster
-                .take()
-                .expect("fs.cp in flight holds its poster");
-            if poster.is_js() {
-                poster.post_js(ConcurrentTask::ConcurrentTask::create(bun_jsc::Task::init(
-                    this,
-                )));
-            } else {
-                let at = AnyTaskWithExtraContext::from_callback_auto_deinit(
-                    this,
-                    |p: *mut Self, ctx| {
-                        // SAFETY: subtask count hit zero ⇒ exclusive access to the leaked task.
-                        unsafe { (*p).run_from_js_thread_mini(ctx) }
-                    },
-                );
-                // `from_callback_auto_deinit` heap-allocates; never null.
-                poster.post_mini(core::ptr::NonNull::new(at).expect("heap task"));
-            }
-            // The pool side is done (`this` may already be freed by its loop).
-            drop(poster);
+            true
         }
 
-        pub(crate) fn run_from_js_thread_mini(&mut self, _: *mut c_void) {
-            let _ = self.run_from_js_thread(); // TODO: properly propagate exception upwards
+        /// Called exactly once by the main directory-scan task and once by each
+        /// `SingleTask` when it is done touching `this`. The last caller (count
+        /// drops to zero) completes the copy. `fs.cp`: it enqueues
+        /// `runFromJSThread`, which resolves the promise and destroys `this`.
+        /// The shell: it destroys `this` and gives the result to the
+        /// `ShellCpTask`, which goes on with its next operands on this thread.
+        fn on_subtask_done(this: *mut Self) {
+            if !Self::release_ref(this) {
+                return;
+            }
+            if IS_SHELL {
+                // SAFETY: the last reference was this thread's.
+                let (shelltask, result) = unsafe { Self::finish_for_shell(this) };
+                // SAFETY: `shelltask` outlives this task, and the thread that
+                // started the walk left it to this one (`run_for_shell`).
+                unsafe { ShellCpTask::cp_on_walk_done(shelltask, result) };
+            } else {
+                // SAFETY: the last reference was this thread's. `!IS_SHELL`, so
+                // `Self` is `AsyncCpTask`.
+                unsafe { AsyncCpTask::post_to_js_thread(this.cast::<AsyncCpTask>()) };
+            }
+        }
+
+        /// The end of a copy for the shell: moves the result out and frees
+        /// `this`, on whichever pool thread dropped the last reference. Nothing
+        /// the task owns is tied to a thread: owned paths, an empty promise
+        /// handle, no keep-alive, no poster.
+        ///
+        /// # Safety
+        /// `IS_SHELL`, and `release_ref(this)` returned `true` on this thread.
+        unsafe fn finish_for_shell(this: *mut Self) -> (*mut ShellCpTask, Maybe<ret::Cp>) {
+            // SAFETY: fn contract — exclusive access to the Box-leaked task,
+            // reclaimed exactly once, here.
+            let mut task = unsafe { bun_core::heap::take(this) };
+            // `Maybe<ret::Cp>` (= `Maybe<()>`) has a cheap `Ok(())` placeholder.
+            let result = core::mem::replace(task.result.get_mut(), Ok(()));
+            let shelltask = task.shelltask.expect("IS_SHELL ⇒ shelltask").as_mut_ptr();
+            (shelltask, result)
         }
 
         pub(crate) fn run_from_js_thread(&mut self) -> JsResult<()> {
-            if IS_SHELL {
-                // SAFETY: shelltask is set by create_for_shell and outlives this task
-                // Move the result out — `Maybe<ret::Cp>` (= `Maybe<()>`) has a cheap
-                // `Ok(())` placeholder.
-                let result = core::mem::replace(self.result.get_mut(), Ok(()));
-                let src = core::mem::take(&mut self.args.src);
-                let dest = core::mem::take(&mut self.args.dest);
-                let shelltask = self.shelltask.expect("IS_SHELL ⇒ shelltask").as_mut_ptr();
-                // SAFETY: shelltask is non-null in the IS_SHELL specialization and
-                // outlives this task; `cp_on_finish` enqueues it concurrently.
-                unsafe { ShellCpTask::cp_on_finish(shelltask, src, dest, result) };
-                // SAFETY: self was Box::leak'd in create*(); destroyed exactly once here
-                unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
-                return Ok(());
-            }
             let go_ptr = self.evtloop.global_object();
             if go_ptr.is_null() {
                 panic!(
@@ -2303,7 +2345,7 @@ mod _async_tasks {
 
             let _dispatch = self.tracker.dispatch(global_object);
 
-            // SAFETY: self was Box::leak'd in create*(); destroyed exactly once here
+            // SAFETY: self was Box::leak'd in create(); destroyed exactly once here
             unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
             if success {
                 bun_jsc::JSPromise::opaque_mut(promise).resolve(global_object, result)?;
@@ -2314,11 +2356,11 @@ mod _async_tasks {
         }
 
         /// SAFETY: `this` must be the pointer returned by Box::leak in
-        /// `schedule_new()`; called exactly once.
+        /// `new()`; called exactly once.
         pub(crate) unsafe fn destroy(this: *mut Self) {
             // SAFETY: caller guarantees `this` is the live Box-leaked allocation;
             // reclaim ownership (paired with the Box::leak in
-            // schedule_new()).
+            // new()).
             let mut task = unsafe { bun_core::heap::take(this) };
             if !IS_SHELL {
                 let ctx = event_loop_handle_to_ctx(task.evtloop);
@@ -2330,7 +2372,7 @@ mod _async_tasks {
         /// calls "copy_single_file_sync") will be dispatched as a separate task.
         pub(crate) fn cp_async(nodefs: &mut NodeFS, this: *mut Self) {
             // The directory-scan task holds one reference in `subtask_count`
-            // (initialized to 1 in create*). Drop it on return. `runFromJSThread`
+            // (initialized to 1 in `new`). Drop it on return. `runFromJSThread`
             // (which destroys `this`) is only enqueued once this reference and
             // every spawned SingleTask's reference have been dropped.
             // `this` is the live Box-leaked task; on_subtask_done only enqueues destruction
@@ -2365,84 +2407,12 @@ mod _async_tasks {
                 }
             };
 
-            #[cfg(windows)]
+            // This is the only file, there is no point in dispatching subtasks
+            if let Some(result) =
+                nodefs.cp_non_directory(src, dest, None, args, || this.on_copy(src, dest))
             {
-                // SAFETY: src is NUL-terminated (os_path); GetFileAttributesW is the Win32 FFI
-                let attributes = unsafe { bun_sys::c::GetFileAttributesW(src.as_ptr()) };
-                if attributes == bun_sys::c::INVALID_FILE_ATTRIBUTES {
-                    this.finish_concurrently(Err(sys::Error {
-                        errno: SystemErrno::ENOENT as _,
-                        syscall: sys::Tag::copyfile,
-                        path: nodefs.os_path_into_sync_error_buf(src).into(),
-                        ..Default::default()
-                    }));
-                    return;
-                }
-                let file_or_symlink = (attributes & bun_sys::c::FILE_ATTRIBUTE_DIRECTORY) == 0
-                    || (attributes & bun_sys::c::FILE_ATTRIBUTE_REPARSE_POINT) != 0;
-                if file_or_symlink {
-                    let r = nodefs.copy_single_file_sync(
-                        src,
-                        dest,
-                        constants::Copyfile::from_raw(
-                            if args.flags.error_on_exist || !args.flags.force {
-                                constants::COPYFILE_EXCL
-                            } else {
-                                0i32
-                            },
-                        ),
-                        Some(attributes),
-                        &this.args,
-                    );
-                    if let Err(e) = &r {
-                        if e.errno == E::EEXIST as _ && !args.flags.error_on_exist {
-                            this.finish_concurrently(Ok(()));
-                            return;
-                        }
-                    }
-                    this.on_copy(src, dest);
-                    this.finish_concurrently(r);
-                    return;
-                }
-            }
-            #[cfg(not(windows))]
-            {
-                let stat_ = match Syscall::lstat(src) {
-                    Ok(result) => result,
-                    Err(err) => {
-                        nodefs.sync_error_buf[..src.len()].copy_from_slice(src.as_bytes());
-                        this.finish_concurrently(Err(
-                            err.with_path(&nodefs.sync_error_buf[..src.len()])
-                        ));
-                        return;
-                    }
-                };
-
-                if !sys::S::ISDIR(stat_.st_mode as _) {
-                    // This is the only file, there is no point in dispatching subtasks
-                    let r = nodefs.copy_single_file_sync(
-                        src,
-                        dest,
-                        constants::Copyfile::from_raw(
-                            if args.flags.error_on_exist || !args.flags.force {
-                                constants::COPYFILE_EXCL
-                            } else {
-                                0i32
-                            },
-                        ),
-                        Some(&stat_),
-                        &this.args,
-                    );
-                    if let Err(e) = &r {
-                        if e.errno == E::EEXIST as _ && !args.flags.error_on_exist {
-                            this.finish_concurrently(Ok(()));
-                            return;
-                        }
-                    }
-                    this.on_copy(src, dest);
-                    this.finish_concurrently(r);
-                    return;
-                }
+                this.finish_concurrently(result);
+                return;
             }
             if !args.flags.recursive {
                 this.finish_concurrently(Err(sys::Error {
@@ -9060,6 +9030,79 @@ impl NodeFS {
         resolved_buf[resolved_len] = 0;
         // SAFETY: NUL written at `resolved_buf[resolved_len]`.
         Syscall::symlink(ZStr::from_buf(&resolved_buf[..], resolved_len), dest)
+    }
+
+    /// `fs.cp` of a source that is not a directory: copies it on the calling
+    /// thread, a symlink as a link. `None`: `src` is a directory and nothing
+    /// was done.
+    ///
+    /// `stat` is the `lstat` of `src` when the caller has it. Windows asks for
+    /// the file attributes instead. `on_copy` is the `-v` hook of the shell's
+    /// `cp`.
+    pub(crate) fn cp_non_directory(
+        &mut self,
+        src: &OSPathSliceZ,
+        dest: &OSPathSliceZ,
+        stat: Option<&sys::Stat>,
+        args: &args::Cp,
+        on_copy: impl FnOnce(),
+    ) -> Option<Maybe<ret::Cp>> {
+        #[cfg(windows)]
+        let stat = {
+            let _ = stat;
+            // SAFETY: src is NUL-terminated (os_path); GetFileAttributesW is the Win32 FFI
+            let attributes = unsafe { bun_sys::c::GetFileAttributesW(src.as_ptr()) };
+            if attributes == bun_sys::c::INVALID_FILE_ATTRIBUTES {
+                return Some(Err(sys::Error {
+                    errno: SystemErrno::ENOENT as _,
+                    syscall: sys::Tag::copyfile,
+                    path: self.os_path_into_sync_error_buf(src).into(),
+                    ..Default::default()
+                }));
+            }
+            let file_or_symlink = (attributes & bun_sys::c::FILE_ATTRIBUTE_DIRECTORY) == 0
+                || (attributes & bun_sys::c::FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+            if !file_or_symlink {
+                return None;
+            }
+            attributes
+        };
+        #[cfg(not(windows))]
+        let lstat;
+        #[cfg(not(windows))]
+        let stat = match stat {
+            Some(stat) => stat,
+            None => {
+                lstat = match Syscall::lstat(src) {
+                    Ok(result) => result,
+                    Err(err) => return Some(Err(err.with_path(src.as_bytes()))),
+                };
+                &lstat
+            }
+        };
+        #[cfg(not(windows))]
+        if sys::S::ISDIR(stat.st_mode as _) {
+            return None;
+        }
+
+        let result = self.copy_single_file_sync(
+            src,
+            dest,
+            constants::Copyfile::from_raw(if args.flags.error_on_exist || !args.flags.force {
+                constants::COPYFILE_EXCL
+            } else {
+                0i32
+            }),
+            Some(stat),
+            args,
+        );
+        if let Err(e) = &result {
+            if e.errno == E::EEXIST as _ && !args.flags.error_on_exist {
+                return Some(Ok(()));
+            }
+        }
+        on_copy();
+        Some(result)
     }
 
     /// This is `copyFile`, but it copies symlinks as-is

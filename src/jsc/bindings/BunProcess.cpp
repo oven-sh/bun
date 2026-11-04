@@ -891,20 +891,23 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     }
 }
 
+extern "C" void Bun__Python__runExitHandlers(Zig::GlobalObject*);
 extern "C" void Bun__Python__finalize(Zig::GlobalObject*);
 
 extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t exitCode)
 {
-    Bun__Python__finalize(globalObject);
+    // The threads of Python that a program waits for when it exits may run for long: it is not exiting before they have ended.
+    Bun__Python__runExitHandlers(globalObject);
 
-    if (!globalObject->hasProcessObject()) {
-        return;
+    if (globalObject->hasProcessObject()) {
+        auto* process = globalObject->processObject();
+        if (exitCode > 0)
+            process->m_isExitCodeObservable = true;
+        dispatchExitInternal(globalObject, process, exitCode);
     }
 
-    auto* process = globalObject->processObject();
-    if (exitCode > 0)
-        process->m_isExitCodeObservable = true;
-    dispatchExitInternal(globalObject, process, exitCode);
+    // After the listeners, which may be functions of Python's: nothing of Python's runs once its interpreter is over.
+    Bun__Python__finalize(globalObject);
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionUptime, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))

@@ -93,7 +93,7 @@ void callOnEventLoopThread(VM& vm, Function<void()>&& function)
     callsAreOwed(vm);
 }
 
-static void makeCallsForEventLoopThread(VM& vm)
+void makeCallsForEventLoopThread(VM& vm)
 {
     if (!s_hasCallsForEventLoopThreads.load()) [[likely]]
         return;

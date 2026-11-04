@@ -10,6 +10,7 @@ awaits. They are tasks of one more loop, which never sleeps. Bun's event loop ca
 import asyncio
 import heapq
 import selectors
+import weakref
 from asyncio import events, tasks
 
 import _bun_loop
@@ -61,8 +62,9 @@ class BunEventLoop(asyncio.SelectorEventLoop):
                 self._run_forever_cleanup()
         except BaseException:
             # SystemExit or KeyboardInterrupt, which end the program. The task that raised it has it too, and nobody will ask.
-            for task in _tasks:
-                if task.done() and not task.cancelled():
+            for reference in list(_tasks):
+                task = reference()
+                if task is not None and task.done() and not task.cancelled():
                     task.exception()
             raise
         finally:
@@ -145,13 +147,36 @@ class BunEventLoop(asyncio.SelectorEventLoop):
 
 
 _loop = None
+# Weak references to the tasks of run() that are not done. What is to wake a task up holds on to it, as in any loop of asyncio's: one
+# that nothing can wake up any more goes the way of an async function of JavaScript's in that position.
 _tasks = set()
 
 
+def _forget(reference):
+    _tasks.discard(reference)
+    if _loop is None or _loop.is_closed():
+        return
+    # Whichever thread has found the task dead.
+    if _thread.get_ident() == _loop._bun_thread:
+        _loop._bun_plan()
+    else:
+        _loop._write_to_self()
+
+
+_is_making_loop = False
+
+
 def loop():
-    global _loop
+    """The loop. None: it is being made, and what makes it asks for it (a record of logging's, for the name of the current task)."""
+    global _loop, _is_making_loop
     if _loop is None:
-        _loop = BunEventLoop()
+        if _is_making_loop:
+            return None
+        _is_making_loop = True
+        try:
+            _loop = BunEventLoop()
+        finally:
+            _is_making_loop = False
     return _loop
 
 
@@ -172,10 +197,14 @@ def run(awaitable):
     resolvers = js.Promise.withResolvers()
     task = loop().create_task(awaitable if asyncio.iscoroutine(awaitable) else _await(awaitable))
 
-    _tasks.add(task)
+    # Nobody has made a task, as far as the program knows: it has called a function, and has a promise. One that is dropped
+    # before it is settled says nothing. (What the coroutine has in `finally` runs.)
+    task._log_destroy_pending = False
+    reference = weakref.ref(task, _forget)
+    _tasks.add(reference)
 
     def done(task):
-        _tasks.discard(task)
+        _tasks.discard(reference)
         if task.cancelled():
             resolvers.reject(asyncio.CancelledError())
         elif (exception := task.exception()) is not None:

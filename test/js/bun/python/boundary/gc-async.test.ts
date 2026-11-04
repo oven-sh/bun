@@ -67,12 +67,12 @@ test("an async function of JavaScript that waits for what nobody can settle is c
   expect(await collectUntil(() => collected)).toBe(true);
 });
 
-// The tasks of the coroutines that JavaScript has called are in a set for as long as they are not done.
-test.failing("and so is a coroutine", async () => {
+test("and so is a coroutine, which says nothing but runs its `finally`", async () => {
   (() => void waits("for ever", new Promise(() => {})))();
   expect(await collectUntil(() => log.length > 0)).toBe(true);
   expect(take()).toEqual(["finally for ever"]);
-  expect(len(asyncio.all_tasks())).toBe(0);
+  // What has a finalizer is freed by the collection after the one that found it.
+  expect(await collectUntil(() => len(asyncio.all_tasks()) === 0)).toBe(true);
 });
 
 test("nothing is left of coroutines that are done", async () => {

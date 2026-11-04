@@ -528,6 +528,7 @@ unsafe extern "C" {
     safe fn Bun__WebView__closeAllForTermination();
     safe fn Zig__GlobalObject__prepareForDestruction(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__forbidExecution(global: &JSGlobalObject);
+    safe fn Bun__Python__stopThreads(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__retireForTestIsolation(global: &JSGlobalObject);
     safe fn Bun__TestFile__enterModuleGraph(global: &JSGlobalObject) -> u32;
@@ -2607,7 +2608,7 @@ impl VirtualMachine {
     /// The exit handlers ran before this (`on_exit`); nothing below enters script.
     ///
     ///  A. stop — script forbidden (microtasks/modules cleared, termination
-    ///     requested), WebCore stop phase (child workers asked to terminate;
+    ///     requested), Python's threads ended, WebCore stop phase (child workers asked to terminate;
     ///     ports/channels/WebSockets closed without events; listeners stripped),
     ///     everything registered as stoppable closed natively (servers,
     ///     listeners, sockets, watchers, subprocess/pipe/tty handles, in-flight
@@ -2645,6 +2646,8 @@ impl VirtualMachine {
         // 'close'/'error' handler runs after 'exit', and nothing can reopen what
         // a sweep just closed.
         vm.forbid_script();
+        // What runs on the threads that Python started is script too, and their frames refer to the JSC VM.
+        Bun__Python__stopThreads(vm.global());
         Zig__GlobalObject__prepareForDestruction(vm.global());
         // SAFETY: fn contract.
         let sweep = || unsafe {
@@ -3983,6 +3986,15 @@ impl VirtualMachine {
         entry_path: Option<&[u8]>,
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         let promise = self.reload_entry_point(entry_path)?;
+
+        // Where a script ends, the microtasks it queued run. For a module of JS that happens while its promise
+        // is waited for; a program in Python that awaits nothing has run to its end, and its promise is settled.
+        if matches!(
+            self.main_entry_point,
+            MainEntryPoint::Python | MainEntryPoint::PythonCommandLine
+        ) {
+            let _ = self.event_loop_mut().drain_microtasks();
+        }
 
         // pending_internal_promise can change if hot module reloading is enabled
         if self.is_watcher_enabled() {

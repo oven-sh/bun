@@ -286,11 +286,24 @@ JSValue importPythonModule(Zig::GlobalObject* globalObject, StringView name, boo
     return Python::importModuleFromJS(globalObject, name.toString(), isRequire ? "MODULE_NOT_FOUND"_s : "ERR_MODULE_NOT_FOUND"_s);
 }
 
-// The process is about to exit.
+// The process, or the worker, is about to exit. First this, then the listeners of process.on("exit"), then Bun__Python__finalize().
+extern "C" void Bun__Python__runExitHandlers(Zig::GlobalObject* globalObject)
+{
+    Python::runExitHandlers(globalObject);
+}
+
 extern "C" void Bun__Python__finalize(Zig::GlobalObject* globalObject)
 {
     if (!Python::finalizeInterpreter(globalObject))
         Bun__setExitCode(globalObject->bunVM(), Python::statusIfNotFlushed);
+}
+
+// The VM is about to be destroyed, and script is forbidden.
+extern "C" void Bun__Python__stopThreads(Zig::GlobalObject* globalObject)
+{
+    Python::stopThreads(globalObject->vm());
+    // The loop that would have seen to it does not turn again.
+    PythonModules::makeCallsForEventLoopThread(globalObject->vm());
 }
 
 } // namespace Bun

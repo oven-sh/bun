@@ -435,3 +435,43 @@ print(asyncio.get_running_loop().is_running())
   );
   expect(exitCode).toBe(0);
 });
+
+test.concurrent("a loop that the program runs itself takes a promise", async () => {
+  const { stdout, stderr, exitCode } = await run({
+    "main.py": `
+import asyncio, js
+
+def later(value):
+    return js.Promise.new(lambda resolve, reject: js.setTimeout(lambda: resolve(value), 1))
+
+print(asyncio.run(later("run")))
+loop = asyncio.new_event_loop()
+print(loop.run_until_complete(later("run_until_complete")))
+print(loop.run_until_complete(loop.create_task(later("create_task"))))
+loop.close()
+`,
+  });
+  expect(stderr).toBe("");
+  expect(stdout).toBe(lines("run", "run_until_complete", "create_task"));
+  expect(exitCode).toBe(0);
+});
+
+// The record asks for the name of the current task, and so for the running loop.
+test.concurrent("what the making of Bun's loop logs is logged once", async () => {
+  const { stdout, stderr, exitCode } = await run({
+    "main.ts": `
+import { kwargs } from "bun:python";
+import asyncio from "python:asyncio";
+import io from "python:io";
+import logging from "python:logging";
+const stream = io.StringIO();
+logging.basicConfig(kwargs({ stream, level: logging.DEBUG, format: "%(taskName)s %(message)s" }));
+const loop = asyncio.get_event_loop();
+console.log(stream.getvalue().trim().replace(/: .*/, ""));
+console.log(asyncio.get_event_loop() === loop);
+`,
+  });
+  expect(stderr).toBe("");
+  expect(stdout).toBe(lines("None Using selector", "true"));
+  expect(exitCode).toBe(0);
+});

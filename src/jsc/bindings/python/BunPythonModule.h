@@ -59,6 +59,8 @@ void exitWithPythonStatus(JSGlobalObject*, int status);
 // BunPythonEventLoop.cpp. Calls the function on the thread that turns the event loop of the VM, between two turns, unless this
 // is that thread: then now. For whoever holds the GIL, the collector included.
 void callOnEventLoopThread(VM&, Function<void()>&&);
+// On that thread: what the others have left it to do so far.
+void makeCallsForEventLoopThread(VM&);
 
 template<typename State>
 State* stateOf(PyRecord* record)

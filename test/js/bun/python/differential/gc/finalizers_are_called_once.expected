@@ -1,0 +1,32 @@
+status: 0
+script: 1ee87142a39fab9d
+---
+singleton, alive []
+singleton, dropped ['Singleton:only']
+D (any order) ['D:base new', 'D:call', 'D:copy', 'D:new', 'D:pickle']
+L (any order) ['L:base new', 'L:call', 'L:copy', 'L:new', 'L:pickle']
+S (any order) ['S:base new', 'S:call', 'S:copy', 'S:new', 'S:pickle']
+T (any order) ['T:base new', 'T:call', 'T:copy', 'T:new', 'T:pickle']
+I (any order) ['I:base new', 'I:call', 'I:copy', 'I:new', 'I:pickle']
+Str (any order) ['Str:base new', 'Str:call', 'Str:copy', 'Str:new', 'Str:pickle']
+B (any order) ['B:base new', 'B:call', 'B:copy', 'B:new', 'B:pickle']
+E (any order) ['E:base new', 'E:call', 'E:copy', 'E:new', 'E:pickle']
+O (any order) ['O:base new', 'O:call', 'O:copy', 'O:new', 'O:pickle']
+str() of an object whose __str__ returns such a str ['Str:given']
+bytes() likewise ['B:given']
+__class__ set back and forth, last to the class with __del__ ['O:changed']
+made with __del__, dropped without []
+a __del__ given later (any order) ['Late:0', 'Late:1', 'Late:2', 'Late:3', 'Late:4', 'Late:after']
+False
+first death ['Lazarus']
+True
+True
+second death []
+four ages ['O:12', 'O:11', 'O:10', 'O:9', 'O:8', 'O:7', 'O:6', 'O:5', 'O:4', 'O:3', 'O:2', 'O:1', 'O:0']
+an old child of a young parent ['Node:parent', 'Node:child']
+a young child of an old parent ['Node:parent', 'Node:child']
+True
+['unclosed file <_io.FileIO', 'unclosed file <_io.TextIOWrapper']
+a raw stream written in Python, wrapped ['MyRaw.close']
+generators (any order) ['closed', 'suspended old', 'suspended young']
+1000 True

@@ -96,15 +96,19 @@ test("mkdir reports all 32,768 failing operands and the commands after it still 
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const reported = stderr.split("\n").flatMap(line => /nope[\\/](\d+)/.exec(line)?.[1] ?? []);
+  const errors = stderr.split("\n");
+  const reported = errors.flatMap(line => /nope[\\/](\d+)/.exec(line)?.[1] ?? []);
   expect({
     operands: reported.length,
     // Brace expansion gives operand number i the name that is i in binary.
     firstOutOfOrder: reported.findIndex((operand, i) => parseInt(operand, 2) !== i),
+    // A line of mkdir that names no operand.
+    unmatched: errors.filter(line => line.startsWith("mkdir:") && !/nope[\\/]\d+/.test(line)),
     stdout: stdout.split("\n").filter(Boolean),
   }).toEqual({
     operands: 32768,
     firstOutOfOrder: -1,
+    unmatched: [],
     stdout: ["AFTER-1", "AFTER-2", "AFTER-3", "EXIT:0"],
   });
   expect(exitCode).toBe(0);
@@ -399,7 +403,11 @@ test.if(isLinux).each([
       `,
     });
     const fifo = join(String(dir), "fifo");
-    expect(Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
+    {
+      await using mkfifo = Bun.spawn({ cmd: ["mkfifo", fifo], env: bunEnv, stdout: "ignore", stderr: "pipe" });
+      const [mkfifoError, mkfifoExit] = await Promise.all([mkfifo.stderr.text(), mkfifo.exited]);
+      expect({ stderr: mkfifoError, exitCode: mkfifoExit }).toEqual({ stderr: "", exitCode: 0 });
+    }
     // Opened for reading too, so that this open does not wait for the fixture to open its end.
     const stdout = openSync(fifo, constants.O_RDWR);
     await using proc = Bun.spawn({

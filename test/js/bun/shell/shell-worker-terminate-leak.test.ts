@@ -262,15 +262,15 @@ test.skipIf(!isASAN || isWindows)(
     await runTerminateScenario(`
       const { existsSync } = require("node:fs");
       const failing = Array.from({ length: 50000 }, (_, i) => "missing/" + i);
-      const running = Bun.$\`mkdir started \${failing}\`.quiet().nothrow();
-      (async () => {
-        await running;
-      })();
+      let finished = false;
+      // Shell promises are lazy; then() starts the interpreter.
+      Bun.$\`mkdir started \${failing}\`.quiet().nothrow().then(() => (finished = true));
       const deadline = Date.now() + 20_000;
       while (!existsSync("started")) {
         if (Date.now() > deadline) throw new Error("mkdir did not handle its first operand");
         await Bun.sleep(1);
       }
+      if (finished) throw new Error("mkdir handled every operand before the worker could be terminated");
       postMessage("ok");
     `);
   },

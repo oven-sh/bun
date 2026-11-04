@@ -2580,9 +2580,11 @@ describe.concurrent("--isolate: Module._extensions handlers", () => {
     expect(exitCode).toBe(0);
   });
 
-  // Only the first load of shared.js reaches a handler. After that file the handler that could answer is the one of
-  // a.test.cjs, and its require() is the one of a finished file.
-  test("--isolate=modules: the cache answers before a --preload handler of a finished file", async () => {
+  // --isolate=modules keeps the handlers of finished files in its one global object, and the require() of such a
+  // handler is the one of a ModuleGraph that is gone. The cache answers there before the handlers, so only the first
+  // load of shared.js reaches one. How many loads reach a handler is not the point: a handler that is called has to
+  // be the one of the running file.
+  test("--isolate=modules: no --preload handler of a finished file is called", async () => {
     const testFile = `
       const { test, expect } = require("bun:test");
       test("loads shared.js", () => {
@@ -2595,8 +2597,10 @@ describe.concurrent("--isolate: Module._extensions handlers", () => {
         const { appendFileSync } = require("node:fs");
         const { basename, join } = require("node:path");
         const original = Module._extensions[".js"];
+        const handlerOf = basename(Bun.main);
         Module._extensions[".js"] = (module, filename) => {
-          appendFileSync(join(__dirname, "handler-calls"), basename(filename) + "\\n");
+          const call = { handlerOf, calledIn: basename(Bun.main), loads: basename(filename) };
+          appendFileSync(join(__dirname, "handler-calls"), JSON.stringify(call) + "\\n");
           require("node:path");
           return original(module, filename);
         };
@@ -2613,7 +2617,13 @@ describe.concurrent("--isolate: Module._extensions handlers", () => {
     );
     expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
     expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
-    expect(fs.readFileSync(join(String(dir), "handler-calls"), "utf8")).toBe("shared.js\n");
+    const calls = fs
+      .readFileSync(join(String(dir), "handler-calls"), "utf8")
+      .trim()
+      .split("\n")
+      .map(line => JSON.parse(line));
+    expect(calls[0]).toEqual({ handlerOf: "a.test.cjs", calledIn: "a.test.cjs", loads: "shared.js" });
+    expect(calls.filter(call => call.handlerOf !== call.calledIn)).toEqual([]);
     expect(exitCode).toBe(0);
   });
 });

@@ -611,9 +611,10 @@ describe("between the languages", () => {
     const task = asyncio.create_task(sleeping);
     expect(task).toBeInstanceOf(asyncio.Task);
     expect(await task).toBe("slept");
-    // A promise is a future to asyncio, which ensure_future() returns as it is.
-    expect(asyncio.isfuture(sleeping)).toBe(true);
-    expect(asyncio.ensure_future(sleeping)).toBe(sleeping);
+    // A promise is to asyncio what the coroutine is in Python.
+    expect(asyncio.iscoroutine(sleeping)).toBe(true);
+    expect(asyncio.ensure_future(sleeping)).toBeInstanceOf(asyncio.Task);
+    await raisesAsync(PyTypeError, () => asyncio.wait([sleeping]), /Passing coroutines is forbidden/);
     raises(PyTypeError, () => asyncio.create_task(5), /a coroutine was expected/);
   });
 

@@ -346,70 +346,90 @@ print(asyncio.run(main()), done)
   });
 });
 
-test.concurrent("a promise is a future to asyncio", async () => {
+test.concurrent("a promise is to asyncio what a coroutine object is", async () => {
   const { stdout, stderr, exitCode } = await run({
     "main.py": `
-import asyncio, js
+import asyncio, collections.abc, inspect, js
 
 def later(value, fails=False):
     return js.Promise.new(lambda resolve, reject: js.setTimeout(lambda: (reject if fails else resolve)(value), 1))
 
+never = js.Promise.new(lambda resolve, reject: None)
 rejected = js.Promise.reject(js.Error("at once"))
-print(asyncio.isfuture(rejected), asyncio.ensure_future(rejected) is rejected)
+print(asyncio.iscoroutine(rejected), asyncio.isfuture(rejected), inspect.isawaitable(rejected), isinstance(rejected, collections.abc.Coroutine))
 # Nothing here counts as a rejection that nobody handled.
 print(await asyncio.gather(rejected, later(js.Error("later"), True), later(1), return_exceptions=True))
 
-pending = later("value")
-print(pending.done(), pending.cancelled(), pending.cancel(), pending.get_loop() is asyncio.get_running_loop())
+task = asyncio.ensure_future(never)
+print(type(task).__name__, task.get_loop() is asyncio.get_running_loop())
+await asyncio.sleep(0)
+print(task.cancel())
 try:
-    pending.result()
-except asyncio.InvalidStateError as error:
-    print("InvalidStateError", error)
-seen = []
-pending.add_done_callback(seen.append)
-pending.add_done_callback(print)
-print(pending.remove_done_callback(print))
-done, waiting = await asyncio.wait([pending, later(2)])
-print(len(done), len(waiting), pending.done(), pending.result(), pending.exception(), seen == [pending])
-
-failed = later(js.RangeError("no"), True)
-await asyncio.wait([failed])
-print(type(failed.exception()).__name__, failed.exception().value.message)
+    await task
+except asyncio.CancelledError:
+    print("the waiting is cancelled", task.cancelled())
 try:
-    failed.result()
-except Exception as error:
-    print(type(error).__name__, error)
+    await asyncio.wait_for(asyncio.gather(never, never), 0.001)
+except TimeoutError:
+    print("TimeoutError")
 
+try:
+    await asyncio.wait([later(2)])
+except TypeError as error:
+    print(error)
+done, waiting = await asyncio.wait([asyncio.create_task(later(2)), asyncio.ensure_future(later(js.RangeError("no"), True))])
+print(sorted(str(task.exception() or task.result()) for task in done), len(waiting))
 print(await asyncio.shield(later(3)), [await first for first in asyncio.as_completed([later(4)])])
 print(await asyncio.wait_for(later(5), 10))
+
+# By hand, as a task drives a coroutine.
+promise = later(6)
+future = promise.send(None)
+print(asyncio.isfuture(future))
+future._asyncio_future_blocking = False
+await future
+try:
+    promise.send(None)
+except StopIteration as stop:
+    print(stop.value)
+promise.close()
+later(7).close()
+try:
+    later(8).throw(KeyError("thrown in"))
+except KeyError as error:
+    print(error)
 
 async def coroutine():
     await asyncio.sleep(3600)
 promise = js.Function("f", "return f()")(coroutine)
+task = asyncio.ensure_future(promise)
 await asyncio.sleep(0)
-print(type(promise).__name__, promise.cancel())
+print(type(promise).__name__, task.cancel())
 try:
     await promise
 except asyncio.CancelledError:
-    print("cancelled", promise.cancelled())
+    print("the coroutine is cancelled")
 print(asyncio.get_running_loop().is_running())
 `,
   });
   expect(stderr).toBe("");
   expect(stdout).toBe(
     lines(
-      "True True",
+      "True False True True",
       "[JSError('Error: at once'), JSError('Error: later'), 1]",
-      "False False False True",
-      "InvalidStateError Result is not ready.",
-      "1",
-      "2 0 True value None True",
-      "JSError no",
-      "JSError RangeError: no",
+      "Task True",
+      "True",
+      "the waiting is cancelled True",
+      "TimeoutError",
+      "Passing coroutines is forbidden, use tasks explicitly.",
+      "['2', 'RangeError: no'] 0",
       "3 [4]",
       "5",
+      "True",
+      "6",
+      "'thrown in'",
       "JSPromise True",
-      "cancelled True",
+      "the coroutine is cancelled",
       "True",
     ),
   );

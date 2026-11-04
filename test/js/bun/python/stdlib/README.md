@@ -203,8 +203,9 @@ JavaScript's. Anything awaitable (a `Future`, a `Task`) can be awaited. For what
 | `with assertRaises(TimeoutError): await f()`             | `await raisesAsync(TimeoutError, () => f())`                              |
 | `await asyncio.sleep(0)`, to let a task take a step      | `await until(() => ...)`: a step of an async function takes several turns |
 
-- Because the call gives a promise, JavaScript never holds a coroutine. A promise is a future to asyncio
-  (`isfuture()`, `ensure_future()` gives it back, `gather()`, `wait()`), and `create_task()` makes a task that awaits it.
+- Because the call gives a promise, JavaScript never holds a coroutine. To asyncio a promise, of either language, is what the
+  coroutine is in Python (`iscoroutine()`): `create_task()`, `ensure_future()`, `gather()` and `run_until_complete()` make a task
+  of it, and `wait()` refuses it as it refuses a coroutine.
 - The promise of a coroutine is awaited by Python as the task it is. So to cancel what waits for it cancels the coroutine:
   `create_task(q.get()).cancel()`, `wait_for(q.get(), 1)`.
 - Nothing cancels an async function of JavaScript. What is cancelled is the waiting for it, and it goes on. So the body of an

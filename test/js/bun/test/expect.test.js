@@ -1259,6 +1259,25 @@ describe("expect()", () => {
       }
     });
 
+    test("a property of the Set or the Map is not compared", () => {
+      const withX = (/** @type {object} */ collection, /** @type {number} */ x) => Object.assign(collection, { x });
+      class Labelled extends Set {
+        constructor(/** @type {string} */ label, /** @type {number} */ member) {
+          super([member]);
+          this.label = label;
+        }
+      }
+      // Two Sets with no Proxy are equal whatever their properties are. So are two that a Proxy serves.
+      expect(withX(new Set([1]), 1)).toEqual(withX(new Set([1]), 2));
+      expect(reactive(withX(new Set([1]), 1))).toEqual(reactive(withX(new Set([1]), 2)));
+      expect(reactive(withX(new Set([1]), 1))).toEqual(withX(new Set([1]), 2));
+      expect(withX(new Set([1]), 1)).toEqual(reactive(withX(new Set([1]), 2)));
+      expect(reactive(withX(new Map([["k", 1]]), 1))).toEqual(reactive(withX(new Map([["k", 1]]), 2)));
+      expect(reactive(new Labelled("a", 1))).toEqual(reactive(new Labelled("b", 1)));
+      // The members decide: the same `x` around another member is not equal.
+      expect(reactive(withX(new Set([1]), 1))).not.toEqual(reactive(withX(new Set([2]), 1)));
+    });
+
     test("the matchers that compare as toEqual() does", () => {
       expect([reactive(new Set([1]))]).toContainEqual(new Set([1]));
       expect({ s: reactive(new Set([1])) }).toHaveProperty("s", new Set([1]));

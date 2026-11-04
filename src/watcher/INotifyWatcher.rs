@@ -132,10 +132,7 @@ impl INotifyWatcher {
         let old_count = self.watch_count.fetch_add(1, Ordering::Release);
         let watch_file_mask =
             IN::EXCL_UNLINK | IN::MOVE_SELF | IN::DELETE_SELF | IN::MOVED_TO | IN::MODIFY;
-        // SAFETY: fd is a valid inotify fd (loaded == true), pathname is NUL-terminated.
-        let rc = unsafe {
-            bun_sys::linux::inotify_add_watch(self.fd.native(), pathname.as_ptr(), watch_file_mask)
-        };
+        let rc = bun_sys::linux::inotify_add_watch(self.fd.native(), pathname, watch_file_mask);
         bun_core::scoped_log!(watcher, "inotify_add_watch({}) = {}", self.fd, rc);
         let result = if rc < 0 {
             Err(
@@ -163,10 +160,7 @@ impl INotifyWatcher {
             | IN::ONLYDIR
             | IN::MOVED_TO
             | IN::MODIFY;
-        // SAFETY: fd is a valid inotify fd (loaded == true), pathname is NUL-terminated.
-        let rc = unsafe {
-            bun_sys::linux::inotify_add_watch(self.fd.native(), pathname.as_ptr(), watch_dir_mask)
-        };
+        let rc = bun_sys::linux::inotify_add_watch(self.fd.native(), pathname, watch_dir_mask);
         bun_core::scoped_log!(watcher, "inotify_add_watch({}) = {}", self.fd, rc);
         let result = if rc < 0 {
             Err(
@@ -229,14 +223,7 @@ impl INotifyWatcher {
             'outer: loop {
                 Futex::wait_forever(&self.watch_count, 0);
 
-                // SAFETY: fd is a valid inotify fd; buffer is valid for eventlist_bytes.len() bytes.
-                let rc = unsafe {
-                    system::read(
-                        self.fd.native(),
-                        self.eventlist_bytes.0.as_mut_ptr(),
-                        self.eventlist_bytes.0.len(),
-                    )
-                };
+                let rc = system::read(self.fd.native(), &mut self.eventlist_bytes.0);
                 let errno = get_errno(rc);
                 match errno {
                     E::SUCCESS => {
@@ -259,27 +246,12 @@ impl INotifyWatcher {
                                 tv_sec: 0,
                                 tv_nsec: self.coalesce_interval as _,
                             };
-                            // SAFETY: fds and timespec are valid stack locals; sigmask is null.
-                            let poll_n = unsafe {
-                                system::ppoll(
-                                    fds.as_mut_ptr(),
-                                    fds.len(),
-                                    &raw const timespec,
-                                    core::ptr::null(),
-                                )
-                            };
+                            let poll_n = system::ppoll(&mut fds, Some(&timespec), None);
                             if poll_n > 0 {
                                 'inner: loop {
                                     let rest = &mut self.eventlist_bytes.0[read_len..];
                                     debug_assert!(!rest.is_empty());
-                                    // SAFETY: fd valid; rest is a valid mutable buffer.
-                                    let new_rc = unsafe {
-                                        system::read(
-                                            self.fd.native(),
-                                            rest.as_mut_ptr(),
-                                            rest.len(),
-                                        )
-                                    };
+                                    let new_rc = system::read(self.fd.native(), rest);
                                     let e = get_errno(new_rc);
                                     match e {
                                         E::SUCCESS => {

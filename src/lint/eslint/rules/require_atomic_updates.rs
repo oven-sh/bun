@@ -9,11 +9,11 @@ pub struct RequireAtomicUpdates {
     allow_properties: bool,
 }
 
-const NON_ATOMIC_UPDATE: Message = Message::new(
+const NON_ATOMIC_UPDATE: &Message = &Message::new(
     "nonAtomicUpdate",
     "Possible race condition: `{{value}}` might be reassigned based on an outdated value of `{{value}}`.",
 );
-const NON_ATOMIC_OBJECT_UPDATE: Message = Message::new(
+const NON_ATOMIC_OBJECT_UPDATE: &Message = &Message::new(
     "nonAtomicObjectUpdate",
     "Possible race condition: `{{value}}` might be assigned based on an outdated state of `{{object}}`.",
 );

@@ -7,9 +7,9 @@ use crate::options::Loader;
 use crate::{Chunk, EntryPoint, Index, IndexInt, LinkerContext, PartRange, chunk, js_meta::Wrap};
 use bun_core::perf;
 
-pub(crate) fn find_all_imported_parts_in_js_order(
-    this: &mut LinkerContext,
-    chunks: &mut [Chunk],
+pub(crate) fn find_all_imported_parts_in_js_order<'a>(
+    this: &mut LinkerContext<'a>,
+    chunks: &mut [Chunk<'a>],
 ) -> Result<(), crate::Error> {
     let _trace = perf::trace("Bundler.findAllImportedPartsInJSOrder");
     if chunks.is_empty() {
@@ -53,10 +53,7 @@ pub(crate) fn find_all_imported_parts_in_js_order(
     let ctx = Ctx {
         inner: crate::linker_context_mod::GenerateChunkCtx {
             chunk: bun_ptr::BackRef::new_mut(&mut chunks[0]),
-            // SAFETY: `this` is the live `&mut LinkerContext` for the link step.
-            c: unsafe {
-                bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(this))
-            },
+            c: bun_ptr::ParentRef::from_ref_mut(this),
             chunks: bun_ptr::BackRef::new(&*chunks),
         },
         chunk_of_file: &chunk_of_file,
@@ -87,15 +84,19 @@ pub(crate) fn find_all_imported_parts_in_js_order(
     Ok(())
 }
 
-fn run_walks(this: &mut LinkerContext, plan: &WalkPlan, chunks: &[Chunk], walks: &mut [EntryWalk]) {
+fn run_walks<'a>(
+    this: &mut LinkerContext<'a>,
+    plan: &WalkPlan,
+    chunks: &[Chunk<'a>],
+    walks: &mut [EntryWalk],
+) {
     struct WalkCtx<'a, 'f> {
         c: bun_ptr::ParentRef<LinkerContext<'a>, bun_ptr::Mut>,
         plan: &'f WalkPlan,
-        chunks: &'f [Chunk],
+        chunks: &'f [Chunk<'a>],
     }
     let walk_ctx = WalkCtx {
-        // SAFETY: `this` is the live `&mut LinkerContext` for the link step.
-        c: unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(this)) },
+        c: bun_ptr::ParentRef::from_ref_mut(this),
         plan,
         chunks,
     };
@@ -337,10 +338,10 @@ impl WalkPlan {
     /// A chunk prints its files in the order of its owner. On an import cycle, that order can put a part that runs at
     /// load ahead of a binding that it reads, where the order of another entry point of the chunk does not. Returns the
     /// walks of the first such entry point by rank, each with the chunks that it lays out in place of their owner.
-    fn find_safe_walks(
+    fn find_safe_walks<'a>(
         &mut self,
-        this: &mut LinkerContext,
-        chunks: &[Chunk],
+        this: &mut LinkerContext<'a>,
+        chunks: &[Chunk<'a>],
         walks: &[EntryWalk],
     ) -> Vec<EntryWalk> {
         let mut reads: Option<LoadTimeReads> = None;

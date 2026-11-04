@@ -1,5 +1,5 @@
 //! `Bun.Image` — Sharp-shaped image pipeline backed by the statically linked
-//! libjpeg-turbo / libspng / libwebp codecs and the highway resize kernel.
+//! libjpeg-turbo / libwebp codecs, `bun_png` and the highway resize kernel.
 //!
 //! Shape: the constructor only captures the *input* (path or bytes). Chainable
 //! mutators (`resize`, `rotate`, `flip`, `flop`, `jpeg`/`png`/`webp`) each
@@ -663,26 +663,6 @@ enum PinError {
 }
 
 impl Image {
-    /// Fresh slice into the input bytes for use ON THE JS THREAD ONLY (re-reads
-    /// the ArrayBuffer's vector each call so a detach between construction and
-    /// here surfaces as `None` instead of UAF). For off-thread, see `pin_for_task`.
-    fn js_thread_bytes(&self, this_value: JSValue, global: &JSGlobalObject) -> Option<&[u8]> {
-        match self.source.get() {
-            Source::JsBuffer => js::source_js_get_cached(this_value)
-                .and_then(|v: JSValue| v.as_array_buffer(global))
-                .map(|ab| {
-                    // SAFETY: `ArrayBuffer` is a view struct (ptr+len); the
-                    // bytes live in the JS heap, not in `ab` — the returned
-                    // slice borrows the JS heap with `&self`'s lifetime, which
-                    // is sound only on the JS thread. `this_value` keeps the
-                    // buffer alive for this JS-thread call — see fn doc above.
-                    unsafe { &*std::ptr::from_ref::<[u8]>(ab.byte_slice()) }
-                }),
-            Source::Owned(b) => Some(b.as_slice()),
-            Source::Path(_) | Source::Blob(_) => None,
-        }
-    }
-
     /// Pin the source ArrayBuffer for the duration of one off-thread task and
     /// return a slice that's safe for the worker to read. Unpinned in `then()`.
     ///
@@ -899,7 +879,21 @@ impl Image {
         // Header-only probe is a few dozen byte reads — when the bytes are already
         // in memory it's cheaper to do it inline than to bounce off the WorkPool
         // (~0.4 ms roundtrip). Path-backed sources still go async for the file I/O.
-        if let Some(buf) = self.js_thread_bytes(this_value, global) {
+        //
+        // Fresh slice into the input bytes for use ON THE JS THREAD ONLY (re-reads
+        // the ArrayBuffer's vector so a detach between construction and
+        // here surfaces as `None` instead of UAF). For off-thread, see `pin_for_task`.
+        let view;
+        let bytes: Option<&[u8]> = match self.source.get() {
+            Source::JsBuffer => {
+                view = js::source_js_get_cached(this_value)
+                    .and_then(|v: JSValue| v.as_array_buffer(global));
+                view.as_ref().map(ArrayBuffer::byte_slice)
+            }
+            Source::Owned(b) => Some(b.as_slice()),
+            Source::Path(_) | Source::Blob(_) => None,
+        };
+        if let Some(buf) = bytes {
             match codecs::probe(buf, self.max_pixels) {
                 Ok(p) => {
                     let mut w = p.width;
@@ -1140,11 +1134,13 @@ impl Image {
     ///
     /// A later refinement is to return a `.Locked` body and resolve it from the
     /// worker pool; this is the simple, correct first cut.
+    #[inline(never)]
     pub(crate) fn encode_for_body(
         &self,
         global: &JSGlobalObject,
         this_value: JSValue,
     ) -> JsResult<(codecs::Encoded, &'static ZStr)> {
+        bun_removable_features::removable_definition!(Image, Self::encode_for_body);
         // The body-init contract is synchronous, so a `.blob` source can't go
         // through the async read chain here. For the common case (file by path)
         // fall back to the `.path` source — `run()` reads it inline. fd/S3-backed
@@ -1222,9 +1218,9 @@ impl Image {
 /// Promise-of-promise flattens, so the caller sees one `await` for
 /// read+decode+ops+encode. After the first read, subsequent terminals on the
 /// same instance reuse the `.owned` bytes without re-reading.
-struct BlobReadChain<'a> {
+struct BlobReadChain {
     image: *const Image,
-    global: &'a JSGlobalObject,
+    global: bun_ptr::BackRef<JSGlobalObject>,
     /// The context of the script that asked: the task the read is followed by is that script's.
     context: jsc::ContextId,
     kind: Kind,
@@ -1232,10 +1228,10 @@ struct BlobReadChain<'a> {
     outer: jsc::JSPromiseStrong,
 }
 
-impl<'a> BlobReadChain<'a> {
+impl BlobReadChain {
     fn start(
         image: &Image,
-        cx: &bun_jsc::JsThread<'a>,
+        cx: &bun_jsc::JsThread<'_>,
         this_value: JSValue,
         kind: Kind,
         deliver: Deliver,
@@ -1267,29 +1263,21 @@ impl<'a> BlobReadChain<'a> {
 
         let chain = Box::new(BlobReadChain {
             image: std::ptr::from_ref::<Image>(image),
-            global: cx.global(),
+            global: bun_ptr::BackRef::new(cx.global()),
             context: cx.context().id(),
             kind,
             deliver,
             outer: jsc::JSPromiseStrong::init(cx.global()),
         });
         let promise = chain.outer.value();
-        // `read_bytes_to_handler` stores the handler pointer and calls
-        // `on_read_bytes` on the JS thread (sync for in-memory, async for
-        // file/S3). Ownership of the chain transfers there; the trait impl
-        // below reconstructs the Box and frees it.
-        let raw = bun_core::heap::into_raw(chain);
-        // SAFETY: `raw` is freshly leaked and not used again here; the read
-        // dispatch hands it to `on_read_bytes` below exactly once, also when it
-        // returns `Err` (an exception left pending while delivering synchronously,
-        // i.e. after the chain has already been reclaimed).
-        unsafe { blob.read_bytes_to_handler(raw, cx) }?;
+        // `on_read_bytes` runs on the JS thread: in this call for in-memory bytes, else later.
+        blob.read_bytes_to_handler(chain, cx)?;
         Ok(promise)
     }
 
     /// JS thread — `read_bytes_to_handler` guarantees this. `r.ok` is owned by us.
     fn on_read_bytes_impl(self, r: ReadBytesResult) -> JsResult<()> {
-        let global = self.global;
+        let global = self.global.get();
         // SAFETY: `image` is a BACKREF kept alive by the Strong `this_ref`
         // bump in `start()`; we are on the JS thread. R-2: shared deref —
         // mutation goes through `Cell`/`JsCell`.
@@ -1347,13 +1335,9 @@ impl<'a> BlobReadChain<'a> {
     }
 }
 
-impl<'a> ReadBytesHandler for BlobReadChain<'a> {
-    unsafe fn on_read_bytes(this: *mut Self, result: ReadBytesResult) -> JsResult<()> {
-        // SAFETY: `this` is the Box `start()` leaked into `read_bytes_to_handler`,
-        // handed back to us exactly once (trait contract); nothing else points
-        // at it, so reclaiming it here is the chain's one and only free.
-        let boxed = unsafe { bun_core::heap::take(this) };
-        boxed.on_read_bytes_impl(result)
+impl ReadBytesHandler for BlobReadChain {
+    fn on_read_bytes(self: Box<Self>, result: ReadBytesResult) -> JsResult<()> {
+        self.on_read_bytes_impl(result)
     }
 }
 
@@ -1699,7 +1683,7 @@ impl PipelineTask {
         let Kind::Encode(enc_opt) = &self.kind else {
             unreachable!()
         };
-        let mut enc: codecs::EncodeOptions = enc_opt.unwrap_or(codecs::EncodeOptions {
+        let enc: codecs::EncodeOptions = enc_opt.unwrap_or(codecs::EncodeOptions {
             format: match src_format {
                 codecs::Format::Bmp | codecs::Format::Tiff | codecs::Format::Gif => {
                     codecs::Format::Png
@@ -1708,18 +1692,18 @@ impl PipelineTask {
             },
             ..Default::default()
         });
-        // Carry the source ICC profile through to the encoder unless the
-        // caller already set one (reserved for a future `.withIccProfile()`
-        // method). The pipeline doesn't colour-convert the RGBA, so dropping
+        // Carry the source ICC profile through to the encoder.
+        // The pipeline doesn't colour-convert the RGBA, so dropping
         // the profile reinterprets a non-sRGB source (Display-P3, Adobe RGB,
         // Jpegli XYB) as sRGB and visibly shifts the colours — see #30197.
         // JPEG/PNG/WebP embed it; HEIC/AVIF via the system backend do not.
-        if enc.icc_profile.is_none() {
-            // `EncodeOptions.icc_profile` borrows for the duration of `encode()`
-            // (raw `NonNull<[u8]>`); `decoded` outlives the call below.
-            enc.icc_profile = decoded.icc_profile.as_deref().map(core::ptr::NonNull::from);
-        }
-        let out = match codecs::encode(&decoded.rgba, decoded.width, decoded.height, enc) {
+        let out = match codecs::encode(
+            &decoded.rgba,
+            decoded.width,
+            decoded.height,
+            enc,
+            decoded.icc_profile.as_deref(),
+        ) {
             Ok(o) => o,
             Err(e) => {
                 self.result = TaskResult::Err(e);
@@ -1807,19 +1791,14 @@ impl PipelineTask {
                     Deliver::Blob => {
                         // Blob.Store frees via an Allocator; dupe for that path.
                         let owned = out_slice.to_vec();
-                        // SAFETY: explicit free in lieu of suppressed `Drop`.
-                        unsafe { (out.free)(out.bytes.as_ptr().cast(), core::ptr::null_mut()) };
+                        drop(mem::ManuallyDrop::into_inner(out));
                         let blob = Blob::init(owned, global);
                         blob.content_type
                             .set(crate::webcore::blob::BlobContentType::Static(
                                 format.mime().as_bytes(),
                             ));
                         blob.content_type_was_set.set(true);
-                        // UFCS to pick the consuming `JsClass::to_js(self, _)`
-                        // (heap-promotes via `Blob::new`) over the inherent
-                        // `Blob::to_js(&mut self, _)` that expects an
-                        // already-heap-allocated receiver.
-                        promise.resolve(global, <Blob as bun_jsc::JsClass>::to_js(blob, global))?;
+                        promise.resolve(global, blob.into_js(global))?;
                     }
                     tag @ (Deliver::Base64 | Deliver::DataUrl) => {
                         // This arm copies the bytes out — re-arm `Encoded::drop` so

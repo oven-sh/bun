@@ -27,7 +27,6 @@ pub struct Linker {
     // pointers and dereference at use-site; same
     // contract as `transpiler::set_log`'s `linker.log = log as *mut _`.
     pub(crate) options: *mut BundleOptions<'static>,
-    pub(crate) fs: *mut Fs::FileSystem,
     pub log: *mut Log,
     pub(crate) resolve_queue: *mut ResolveQueue,
     pub(crate) resolve_results: *mut ResolveResults,
@@ -102,9 +101,7 @@ mod hardcoded_module {
 /// Intern a byte buffer into the process-lifetime `relative_paths_list`
 /// `BSSStringList` singleton.
 ///
-/// The linker is a
-/// per-transpile singleton whose output paths flow into `ImportRecord.path:
-/// Path<'static>`. PORTING.md §Forbidden bans `Vec::leak`/`Box::leak` for
+/// PORTING.md §Forbidden bans `Vec::leak`/`Box::leak` for
 /// fabricating `&'static [u8]`; route through the `relative_paths_list`
 /// interner instead so the bytes are owned by a true process-lifetime
 /// singleton (the `OnceLock`-style exception PORTING.md carves out).
@@ -144,19 +141,6 @@ impl Linker {
         // `configure_linker*`; the `Transpiler` outlives every `Linker` call and
         // `options` is not mutated while this borrow is live.
         unsafe { &*self.options }
-    }
-
-    /// Shared borrow of the process-lifetime `Fs::FileSystem` singleton.
-    ///
-    /// SAFETY: `self.fs` is the `FileSystem::instance()` singleton, set at
-    /// `Transpiler::init` time and never freed. Never null. Only scalar
-    /// fields (`top_level_dir`) are read.
-    #[inline]
-    pub(crate) fn fs(&self) -> &Fs::FileSystem {
-        debug_assert!(!self.fs.is_null());
-        // SAFETY: `self.fs` is the process-lifetime `FileSystem::instance()`
-        // singleton, set at `Transpiler::init` and never freed or mutated.
-        unsafe { &*self.fs }
     }
 
     /// Exclusive borrow of the owning `Transpiler.log`.
@@ -217,14 +201,12 @@ impl Linker {
         resolve_queue: *mut ResolveQueue,
         options: *mut BundleOptions<'static>,
         resolve_results: *mut ResolveResults,
-        fs: *mut Fs::FileSystem,
     ) -> Self {
         // The `LazyLock` accessor initializes `relative_paths_list` lazily on
         // first `intern_path()` / `relative_paths_list()` call, so no eager
         // poke is needed (it would be startup overhead for non-bundling code paths).
         Self {
             options,
-            fs,
             log,
             resolve_queue,
             resolve_results,
@@ -240,13 +222,11 @@ impl Linker {
         resolve_queue: *mut ResolveQueue,
         options: *mut BundleOptions<'static>,
         resolve_results: *mut ResolveResults,
-        fs: *mut Fs::FileSystem,
     ) {
         self.log = log;
         self.resolve_queue = resolve_queue;
         self.options = options;
         self.resolve_results = resolve_results;
-        self.fs = fs;
     }
 
     // ── getModKey / getHashedFilename ────────────────────────────────────
@@ -277,7 +257,7 @@ impl Linker {
         Fs::FileSystem::set_max_fd(file.handle().native());
         // spec called `Fs.FileSystem.RealFS.ModKey.generate(&this.fs.fs,
         // path, file)`; both leading args are unread (fs.rs:1386). The inline
-        // `bun_resolver::fs::RealFS` (which `self.fs.fs` is) and the full-port
+        // `bun_resolver::fs::RealFS` and the full-port
         // `fs_full::RealFS` are distinct types, so route through the
         // RealFS-agnostic `from_file` wrapper added alongside the `ModKey`
         // re-export.
@@ -493,9 +473,9 @@ impl Linker {
         Ok(true)
     }
 
-    pub(crate) fn resolve_result_hash_key(&self, resolve_result: &resolver::Result) -> u64 {
+    pub(crate) fn resolve_result_hash_key(resolve_result: &resolver::Result) -> u64 {
         let path = resolve_result.path_const().expect("unreachable");
-        let top_level_dir = self.fs().top_level_dir();
+        let top_level_dir = Fs::FileSystem::get().top_level_dir();
         let mut hash_key = path.text;
 
         // Shorter hash key is faster to hash
@@ -508,9 +488,9 @@ impl Linker {
 
     pub(crate) fn enqueue_resolve_result(
         &mut self,
-        resolve_result: resolver::Result,
+        resolve_result: resolver::Result<'static>,
     ) -> crate::Result<bool> {
-        let hash_key = self.resolve_result_hash_key(&resolve_result);
+        let hash_key = Self::resolve_result_hash_key(&resolve_result);
 
         // `found_existing` is whether the key was already present.
         let found_existing = self.resolve_results_mut().contains_key(&hash_key);

@@ -1,0 +1,45 @@
+# main.js: mock.module("node:dns", () => ({ lookup })); (await import("node:dns")).lookup(); (await import("node:os")).hostname()
+# No statement imports a name from either module, so neither lists its exports: the names of the namespace object are the own names of what the module exports.
+# A mock puts what its factory answers under them. The module beside it keeps its proof.
+# RUN: valueflow-solve calls
+# CHECK: f5 v3 -> unknown f1
+# CHECK: f5 v7 -> f3
+
+module m0 path="node:dns" displayPath="node:dns" kind=RuntimeSource flags=[IsLoadedByImportOnly, MayBeMocked] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeDns body=f0
+module m1 path="node:os" displayPath="node:os" kind=RuntimeSource flags=[IsLoadedByImportOnly] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeOs body=f2
+module m2 path="/app/main.js" displayPath="main.js" body=f4
+entry module=m2
+layout L0 module=m0 position=1 fields=[{key="lookup" declared={type=anything}}]
+layout L1 module=m1 position=1 fields=[{key="hostname" declared={type=anything}}]
+function f0 module=m0 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+function f1 name="lookup" module=m0 role=Library thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f2 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+    v0 = NewClosure function=f3
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    Return v1
+}
+function f3 name="hostname" module=m1 role=Library thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f4 name="main" module=m2 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f5
+    v1 = Call v0, -
+    Return
+}
+function f5 name="run" module=m2 flags=[IsAsync] thisType={type=anything} results=[{type=anything}] {
+    v0 = ImportModule module=m0 referrer=m2
+    v1 = Await v0
+    v2 = PropGet v1 key="lookup"
+    v3 = Call v2, v1
+    v4 = ImportModule module=m1 referrer=m2
+    v5 = Await v4
+    v6 = PropGet v5 key="hostname"
+    v7 = Call v6, v5
+    Return
+}

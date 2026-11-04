@@ -13,9 +13,9 @@ use std::cmp::Reverse;
 /// Disallow declaring unused methods of component class
 pub struct NoUnusedClassComponentMethods;
 
-const UNUSED: Message = Message::new("unused", "Unused method or property \"{{name}}\"");
-const UNUSED_WITH_CLASS: Message =
-    Message::new("unusedWithClass", "Unused method or property \"{{name}}\" of class \"{{className}}\"");
+const UNUSED: &Message = &Message::new("unused", "Unused method or property \"{{name}}\"");
+const UNUSED_WITH_CLASS: &Message =
+    &Message::new("unusedWithClass", "Unused method or property \"{{name}}\" of class \"{{className}}\"");
 
 /// `LIFECYCLE_METHODS`, with `ES6_LIFECYCLE` or `ES5_LIFECYCLE`.
 fn is_lifecycle(name: &[u8], is_class: bool) -> bool {

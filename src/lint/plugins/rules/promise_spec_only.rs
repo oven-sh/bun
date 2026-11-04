@@ -8,7 +8,7 @@ pub struct SpecOnly {
     allowed_methods: Vec<String>,
 }
 
-const SPEC_ONLY: Message = Message::new("", "Avoid using non-standard `Promise.{{prop_name}}` method.");
+const SPEC_ONLY: &Message = &Message::new("", "Avoid using non-standard `Promise.{{prop_name}}` method.");
 
 impl Rule for SpecOnly {
     const META: Meta = Meta::oxlint(Plugin::Promise, "spec-only", Kind::Suggestion);

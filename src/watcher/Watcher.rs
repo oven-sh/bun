@@ -396,7 +396,7 @@ impl Watcher {
         // handed out for reads: a reader that copied the number before this
         // ran would hit `EBADF`/`EISDIR` after (see `snapshot_package_json`).
         //
-        // We do NOT lock here: the only callers are deferred from
+        // We do NOT lock here: the only callers run inside
         // `WatcherContext::on_file_update`, which is itself invoked from
         // `dispatch_file_updates` while `self.mutex` is already held.
         // `bun_threading::Mutex` is non-recursive — re-locking here is
@@ -585,7 +585,6 @@ impl Watcher {
             file_path: file_path_,
             fd,
             hash,
-            count: 0,
             parent_hash,
             package_json,
             kind: WatchItemKind::File,
@@ -672,7 +671,6 @@ impl Watcher {
             file_path: file_path_,
             fd,
             hash,
-            count: 0,
             parent_hash,
             kind: WatchItemKind::Directory,
             package_json: None,
@@ -1062,7 +1060,6 @@ pub struct WatchItem {
     // filepath hash for quick comparison
     pub hash: u32,
     pub fd: Fd,
-    pub count: u32,
     pub parent_hash: u32,
     pub kind: WatchItemKind,
     pub package_json: Option<&'static PackageJSON>,

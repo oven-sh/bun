@@ -67,6 +67,12 @@ const forms = {
 const isOfReport =
   /^(?:\S+\.test\.[cm]js:|\((?:pass|fail|skip|todo)\) .*|(?:\w*Error|error): .*| *\d+ (?:pass|fail|skip|todo|errors?|expect\(\) calls)|Ran \d+ tests? across \d+ files?\..*)$/;
 const isOfLog = /^(?:AOT |\s*\w+: wall )/;
+const isScan =
+  /^AOT test run \| scan of (\d+) files and \d+ beside them \| .*\| mocks any module (\w+) \| .*\| spies on objects from somewhere (\w+)$/gm;
+// What the log says of one test file: its name stands behind its folder, which may hold a blank.
+const isOfTestFile = new RegExp(
+  `^AOT test run \\| (?:.*[\\\\/])?((?:${testFiles.join("|").replaceAll(".", "\\.")}) .+)$`,
+);
 
 /** `bun test` over test files together: compiled where `words` say in which form, plain without them. */
 async function runTests(together: string[], words?: string) {
@@ -76,11 +82,14 @@ async function runTests(together: string[], words?: string) {
   const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words, BUN_JSC_logAOTPhaseTimes: words ? "1" : undefined };
   const { stdout, stderr, exitCode } = await run(command, String(dir), env);
   const lines = stderr.split(/\r?\n/);
-  // The first scan is that of the test files.
-  const scan =
-    /^AOT test run \| scan of (\d+) files and \d+ beside them \| .*\| mocks any module (\w+) \| .*\| spies on objects from somewhere (\w+)$/m.exec(
-      stderr,
-    );
+  const form = /^AOT test run \| ((?:one program|layers|programs without layers)\b.*)$/m.exec(stderr)?.[1];
+  const scans = [...stderr.matchAll(isScan)].map(([, files, mocks, spies]) => ({
+    files: Number(files),
+    mocks: mocks !== "false",
+    spies: spies !== "false",
+  }));
+  // The first scan is that of the run's test files. A run in parts without layers has none: each part is a whole program, and its build scans its own test file.
+  const ofTestFiles = form?.startsWith("programs without layers") ? scans : scans.slice(0, 1);
   return {
     stdout,
     stderr,
@@ -90,20 +99,18 @@ async function runTests(together: string[], words?: string) {
     /** Of a run that fails: what it says beside the log of its builds. */
     failure: exitCode === 0 ? "" : lines.filter(line => !isOfLog.test(line)).join("\n"),
     /** Of a compiled run: how it is built. */
-    form: /^AOT test run \| ((?:one program|layers|programs without layers)\b.*)$/m.exec(stderr)?.[1],
-    /** Of a compiled run: what the scan of its test files finds in all of them together. */
-    scan: scan && {
-      "test files": Number(scan[1]),
-      "mocks any module": scan[2] === "true",
-      "spies on objects from somewhere": scan[3] === "true",
+    form,
+    /** Of a compiled run: how many test files its scans read, and whether any scan of the run finds a mock or a spy that goes out of sight. */
+    scan: scans.length > 0 && {
+      "test files": ofTestFiles.reduce((count, scan) => count + scan.files, 0),
+      "mocks any module": scans.some(scan => scan.mocks),
+      "spies on objects from somewhere": scans.some(scan => scan.spies),
     },
     /**
      * Of a compiled run: what the scan says of single test files, each line once and without the folder. It names a file that mocks a module or lets a
      * spy go out of sight.
      */
-    outOfSight: [
-      ...new Set(lines.flatMap(line => /^AOT test run \| \S*?([^\s\\/]+\.test\.[cm]js .+)$/.exec(line)?.[1] ?? [])),
-    ].sort(),
+    outOfSight: [...new Set(lines.flatMap(line => isOfTestFile.exec(line)?.[1] ?? []))].sort(),
   };
 }
 type Ran = Awaited<ReturnType<typeof runTests>>;
@@ -174,6 +181,7 @@ for (const [title, { words, runs, form }] of Object.entries(forms)) {
 
     test(`the run of ${together.join(", ")}: ${title}`, async () => {
       const plain = await ran(together);
+      expect({ failure: plain.failure, exitCode: plain.exitCode }).toEqual({ failure: "", exitCode: 0 });
       const { stdout, report, failure, exitCode, scan, outOfSight, form: built } = await ran(together, words);
       expect({ stdout, report, failure, exitCode, scan, outOfSight }).toEqual({
         stdout: plain.stdout,

@@ -1623,7 +1623,7 @@ describe("fork() from the node shim (argv0=node) keeps the child in node mode", 
     });
   });
 
-  test.concurrent("spawn(process.execPath, [\"--version\"]) still runs the subcommand", async () => {
+  test.concurrent('spawn(process.execPath, ["--version"]) still runs the subcommand', async () => {
     using dir = tempDir("dotenv-spawn-version-as-node", files);
     expect(await run(String(dir), "parent.mjs", ["spawn-version"], "node")).toEqual({
       version: Bun.version,

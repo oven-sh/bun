@@ -1135,6 +1135,12 @@ describe("expect()", () => {
       expect(reactive(new Map())).not.toEqual(reactive({}));
       expect(reactive(new Set())).not.toEqual([]);
       expect({ s: reactive(new Set()) }).not.toEqual({ s: {} });
+      // A Date and a RegExp are equal to no Proxy, as before.
+      expect(new Date(0)).not.toEqual(new Proxy(new Date(0), {}));
+      expect(new Proxy(new Date(0), {})).not.toEqual(new Date(0));
+      expect(/a/).not.toEqual(new Proxy(/a/, {}));
+      expect(new Date(0)).not.toEqual(new Proxy(new Set(), {}));
+      expect(new Proxy(new Set(), {})).not.toEqual(new Date(0));
     });
 
     test("a Proxy that serves no iterator method is compared by its properties", () => {

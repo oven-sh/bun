@@ -706,10 +706,6 @@ unsafe extern "C" {
         out_size: *mut c_uint,
     ) -> c_int;
     pub fn EVP_get_digestbyname(name: *const c_char) -> Option<&'static EVP_MD>;
-    pub fn EVP_MD_do_all_sorted(
-        callback: extern "C" fn(*const EVP_MD, *const c_char, *const c_char, *mut c_void),
-        arg: *mut c_void,
-    );
     pub fn EVP_Digest(
         data: *const c_void,
         len: usize,

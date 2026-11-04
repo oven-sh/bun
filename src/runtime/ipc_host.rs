@@ -393,8 +393,7 @@ pub(crate) struct IPCInstance {
     pub data: RefPtr<SendQueue>,
 }
 
-/// One channel per JS thread (a VM is thread-bound; workers re-detect their
-/// own inherited fd).
+/// One channel per JS thread; a `Worker`'s VM records no `PendingIpc`, so its thread's stays `None`.
 #[thread_local]
 static CHANNEL: core::cell::Cell<Option<&'static IPCInstance>> = core::cell::Cell::new(None);
 

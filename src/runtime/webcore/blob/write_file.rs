@@ -37,9 +37,9 @@ pub(crate) type WriteFileTask = bun_jsc::Completion<WriteFile>;
 impl bun_jsc::JobContext for WriteFile {
     const CANCELLABLE: bool = true;
     type OffThread = Self;
-    /// Whom the write is reported to. (Dropped with the job when that is released unrun: the
-    /// promise then stays pending.)
-    type Js = Box<WriteFilePromise>;
+    /// Whom the write is reported to, and the global it was made in. (Dropped with the job when
+    /// that is released unrun: the promise then stays pending.)
+    type Js = (jsc::JSPromiseStrong, bun_ptr::BackRef<JSGlobalObject>);
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         // Starts the write; finishes from the io loop via the token.
         this.run(done);
@@ -47,10 +47,10 @@ impl bun_jsc::JobContext for WriteFile {
     }
     fn then(
         this: Self,
-        promise: Box<WriteFilePromise>,
+        (promise, global_this): Self::Js,
         _: &bun_jsc::JsThread<'_>,
     ) -> jsc::JsResult<()> {
-        WriteFile::then(this, promise)
+        WriteFile::then(this, promise, &global_this)
     }
     /// As `ReadFile`: a write parked on a full pipe nobody drains is the one
     /// state this job can be stuck in.
@@ -71,7 +71,7 @@ impl WriteFile {
     /// its one heap allocation).
     pub(crate) fn schedule(
         this: WriteFile,
-        promise: Box<WriteFilePromise>,
+        promise: jsc::JSPromiseStrong,
         cx: &bun_jsc::JsThread<'_>,
     ) {
         let fd = match this.pathlike() {
@@ -86,7 +86,8 @@ impl WriteFile {
             }
             _ => bun_jsc::RunsOn::for_io(fd),
         };
-        bun_jsc::Job::<WriteFile>::schedule_on(runs_on, cx, this, promise);
+        let global_this = bun_ptr::BackRef::new(cx.global());
+        bun_jsc::Job::<WriteFile>::schedule_on(runs_on, cx, this, (promise, global_this));
     }
 }
 
@@ -327,15 +328,28 @@ impl WriteFile {
         }
     }
 
-    pub(crate) fn then(mut this: WriteFile, promise: Box<WriteFilePromise>) -> jsc::JsResult<()> {
+    pub(crate) fn then(
+        mut this: WriteFile,
+        mut promise: jsc::JSPromiseStrong,
+        global_this: &JSGlobalObject,
+    ) -> jsc::JsResult<()> {
         let system_error = this.system_error.take();
         let total_written = this.total_written;
         drop(this);
 
-        promise.run(match system_error {
-            Some(err) => WriteFileResultType::Err(Box::new(err)),
-            None => WriteFileResultType::Result(total_written as SizeType),
-        })
+        if let Some(err) = system_error {
+            return settle(
+                promise.swap(),
+                global_this,
+                WriteFileResultType::Err(Box::new(err)),
+            );
+        }
+
+        settle(
+            promise.swap(),
+            global_this,
+            WriteFileResultType::Result(total_written as SizeType),
+        )
     }
 
     pub(crate) fn run(&mut self, task: WriteFileTask) {
@@ -490,44 +504,24 @@ impl WriteFile {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct WriteFilePromise {
-    pub(crate) promise: jsc::JSPromiseStrong,
-    pub global_this: *const JSGlobalObject,
-}
-
-// SAFETY: a promise handle and the global it was made in: used and dropped on that global's
-// JS thread only (a job's `Js` half).
-unsafe impl bun_jsc::job::JsAffine for WriteFilePromise {}
-
-impl WriteFilePromise {
-    pub(crate) fn run(mut self: Box<Self>, count: WriteFileResultType) -> jsc::JsResult<()> {
-        // `swap()` releases the Strong's handle slot and yields a GC-owned `*mut JSPromise`, which outlives `self`.
-        let promise = std::ptr::from_mut::<JSPromise>(self.promise.swap());
-        // SAFETY: this runs on the global's own JS thread, so the global is live.
-        let global_this: &JSGlobalObject = unsafe { &*self.global_this };
-        drop(self);
-        // SAFETY: GC-owned cell (kept alive below); scoped shared access.
-        let value = unsafe { (*promise).to_js() };
-        value.ensure_still_alive();
-        match count {
-            WriteFileResultType::Err(err) => {
-                // SAFETY: GC-owned cell; the error build's shared borrow ends before the
-                // scoped exclusive `reject` borrow.
-                unsafe {
-                    let err_js = err.to_error_instance_with_async_stack(global_this, &*promise);
-                    (*promise).reject(global_this, Ok(err_js))?;
-                }
-            }
-            WriteFileResultType::Result(wrote) => {
-                // SAFETY: GC-owned cell; exclusive borrow scoped to the call.
-                unsafe {
-                    (*promise)
-                        .resolve(global_this, JSValue::js_number_from_uint64(wrote as u64))?;
-                }
-            }
+/// Reports a finished write to its promise.
+fn settle(
+    promise: &mut JSPromise,
+    global_this: &JSGlobalObject,
+    count: WriteFileResultType,
+) -> jsc::JsResult<()> {
+    let value = promise.to_js();
+    value.ensure_still_alive();
+    match count {
+        WriteFileResultType::Err(err) => {
+            let err_js = err.to_error_instance_with_async_stack(global_this, promise);
+            promise.reject(global_this, Ok(err_js))?;
         }
-        Ok(())
+        WriteFileResultType::Result(wrote) => {
+            promise.resolve(global_this, JSValue::js_number_from_uint64(wrote as u64))?;
+        }
     }
+    Ok(())
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -559,7 +553,6 @@ impl WriteFileWaitFromLockedValueTask {
         mut this: Box<WriteFileWaitFromLockedValueTask>,
         value: &mut body::Value,
     ) -> jsc::JsResult<()> {
-        let promise: *mut JSPromise = std::ptr::from_mut(this.promise.get());
         let global_ref = this.global_this;
         let global_this = global_ref.get();
         let context = global_this.bun_vm().context_of(this.context);
@@ -569,22 +562,19 @@ impl WriteFileWaitFromLockedValueTask {
                 let err = err_ref.to_js(global_this);
                 file_blob.detach();
                 let _ = value.use_();
-                drop(this);
-                JSPromise::opaque_mut(promise).reject_with_async_stack(global_this, Ok(err))?;
+                this.promise
+                    .get()
+                    .reject_with_async_stack(global_this, Ok(err))?;
             }
             body::Value::Used => {
                 file_blob.detach();
                 let _ = value.use_();
-                drop(this);
-                // SAFETY: GC-owned promise cell; exclusive borrow scoped to the call.
-                unsafe {
-                    (*promise).reject(
-                        global_this,
-                        Ok(global_this.create_error_instance(format_args!(
-                            "Body was used after it was consumed"
-                        ))),
-                    )?;
-                }
+                this.promise.get().reject(
+                    global_this,
+                    Ok(global_this.create_error_instance(format_args!(
+                        "Body was used after it was consumed"
+                    ))),
+                )?;
             }
             body::Value::WTFStringImpl(_)
             | body::Value::InternalBlob(_)
@@ -605,29 +595,23 @@ impl WriteFileWaitFromLockedValueTask {
                     Ok(p) => p,
                     Err(err) => {
                         file_blob.detach();
-                        drop(this);
-                        JSPromise::opaque_mut(promise).reject(global_this, Err(err))?;
+                        this.promise.get().reject(global_this, Err(err))?;
                         return Ok(());
                     }
                 };
 
-                let _this_box = this;
                 let _g = scopeguard::guard((), |()| file_blob.detach());
 
                 if let Some(p) = new_promise.as_any_promise() {
-                    // SAFETY: GC-owned promise cell; exclusive borrows scoped per call.
-                    unsafe {
-                        match p.unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
-                            // Fulfill the new promise using the pending promise
-                            jsc::PromiseResult::Pending => {
-                                (*promise).resolve(global_this, new_promise)?
-                            }
-                            jsc::PromiseResult::Rejected(err) => {
-                                (*promise).reject(global_this, Ok(err))?
-                            }
-                            jsc::PromiseResult::Fulfilled(result) => {
-                                (*promise).resolve(global_this, result)?
-                            }
+                    let promise = this.promise.get();
+                    match p.unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
+                        // Fulfill the new promise using the pending promise
+                        jsc::PromiseResult::Pending => promise.resolve(global_this, new_promise)?,
+                        jsc::PromiseResult::Rejected(err) => {
+                            promise.reject(global_this, Ok(err))?
+                        }
+                        jsc::PromiseResult::Fulfilled(result) => {
+                            promise.resolve(global_this, result)?
                         }
                     }
                 }
@@ -637,11 +621,7 @@ impl WriteFileWaitFromLockedValueTask {
                 // Restore the moved-out blob so the next `then()` has its store.
                 this.file_blob = file_blob;
                 locked.on_receive_value = Some(Self::then_wrap);
-                locked.task = Some(
-                    NonNull::new(bun_core::heap::into_raw(this))
-                        .unwrap()
-                        .cast::<c_void>(),
-                );
+                locked.task = Some(bun_core::heap::into_raw_nn(this).cast::<c_void>());
             }
         }
         Ok(())

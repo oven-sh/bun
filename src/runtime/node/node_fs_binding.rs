@@ -87,7 +87,7 @@ where
         ParsedAsyncArgs::Rejected(error) => return reject_before_schedule(global, callback, error),
     };
     let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-    Ok(AsyncFSTask::<R, A, F>::create(&cx, args, vm, callback))
+    Ok(AsyncFSTask::<R, A, F>::schedule(&cx, args, vm, callback))
 }
 
 enum ParsedAsyncArgs<A> {
@@ -138,7 +138,6 @@ fn reject_before_schedule(
 // single mutable field `node_fs` is wrapped in `JsCell` so the
 // `sync_error_buf` scratch buffer and `&mut NodeFS` syscall dispatches are
 // projected through interior mutability instead of `&mut Binding`.
-#[derive(Default)]
 pub(crate) struct Binding {
     pub(crate) node_fs: JsCell<NodeFS>,
 }
@@ -221,7 +220,7 @@ impl Binding {
                 &cx, rd_args, vm, callback,
             ));
         }
-        Ok(async_::Readdir::create(&cx, rd_args, vm, callback))
+        Ok(async_::Readdir::schedule(&cx, rd_args, vm, callback))
     }
 
     /// `callSync(.watch)` — `args::Watch` borrows `globalThis` so it can't go

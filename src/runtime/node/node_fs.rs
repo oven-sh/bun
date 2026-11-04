@@ -1274,7 +1274,7 @@ mod _async_tasks {
         pub(crate) const HAVE_ABORT_SIGNAL: bool = A::HAVE_ABORT_SIGNAL;
 
         /// `callback`: the `node:fs` callback to call with the result. `None` returns a promise.
-        pub(crate) fn create(
+        pub(crate) fn schedule(
             cx: &bun_jsc::JsThread<'_>,
             args: ThreadIsolated<A>,
             vm: &mut VirtualMachine,

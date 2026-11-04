@@ -49,7 +49,6 @@
 "safe_fn_returns_shared_mut:src/http/HTTPContext.rs" = 1
 "safe_fn_returns_shared_mut:src/http/HTTPThread.rs" = 2
 "safe_fn_returns_shared_mut:src/http/ProxyTunnel.rs" = 3
-"safe_fn_returns_shared_mut:src/http/ThreadSafeStreamBuffer.rs" = 1
 "safe_fn_returns_shared_mut:src/http/h2_client/ClientSession.rs" = 2
 "safe_fn_returns_shared_mut:src/http/h2_client/PendingConnect.rs" = 1
 "safe_fn_returns_shared_mut:src/http/h3_client/AltSvc.rs" = 1

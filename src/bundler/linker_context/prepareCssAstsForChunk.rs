@@ -383,7 +383,10 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         let is_import =
                             |rule: &&BundlerCssRule| matches!(rule, BundlerCssRule::Import(_));
                         let dropped = prefix_end - layer_count
-                            + original_rules[prefix_end..].iter().filter(is_import).count();
+                            + original_rules[prefix_end..]
+                                .iter()
+                                .filter(is_import)
+                                .count();
 
                         if dropped == 0 {
                             // Prefix is all "@layer" (or empty). Nothing to

@@ -485,6 +485,9 @@ static std::optional<JSC::EncodedJSValue> loadThroughInitializerSymbol(Zig::Glob
     // Node calls node_register_module_v<ABI> for an addon that registered no module, and for one that registered a module with another module version: https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/src/node_binding.cc#L533-L540
     if (registered && registered->nm_version == REPORTED_NODEJS_ABI_VERSION)
         return std::nullopt;
+    // The V8 API has one isolate for a thread, that of its default realm (v8::Isolate::GetCurrent()). An initializer that runs for another realm, such as a ShadowRealm, creates its handles outside every open handle scope.
+    if (!globalObject->isThreadLocalDefaultGlobalObject)
+        return std::nullopt;
     auto initializer = reinterpret_cast<node::addon_initializer_func>(dlsym(handle, "node_register_module_v" STRINGIZE_VALUE_OF(REPORTED_NODEJS_ABI_VERSION)));
     if (!initializer)
         return std::nullopt;

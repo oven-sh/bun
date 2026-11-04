@@ -880,6 +880,35 @@ if (!isMainThread) {
       });
     });
 
+    // The V8 API has one isolate for a thread: that of its default realm. An initializer that ran for another realm
+    // created its handles outside every open handle scope, and the process ended in abort().
+    test.skipIf(!callsTheSymbol)(
+      "an addon with only this entry did not self-register in a ShadowRealm, which the V8 API does not serve",
+      async () => {
+        const addon = built("initializer_only.node");
+        const inRealm = built("loads-in-a-shadow-realm.mjs");
+        writeFileSync(
+          inRealm,
+          `import { createRequire } from "node:module";
+          export const load = () => {
+            try {
+              createRequire(import.meta.url)(${JSON.stringify(addon)});
+              return "loaded";
+            } catch (e) {
+              return JSON.stringify({ code: e.code, message: e.message });
+            }
+          };`,
+        );
+        const script = `
+          const load = await new ShadowRealm().importValue(${JSON.stringify(inRealm)}, "load");
+          console.log(load());
+        `;
+        expect(await run(["-e", script], "initializer_only.node")).toEqual(
+          refused(`Module did not self-register: '${addon}'.`),
+        );
+      },
+    );
+
     test.skipIf(callsTheSymbol)(
       "an addon with only this entry did not self-register on macOS and Windows",
       async () => {

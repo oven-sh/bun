@@ -1,0 +1,214 @@
+status: 0
+script: 93ab632eca34bffe
+---
+Both {} [1, 2]
+Both {} [1, 2]
+Both {'indent': 1} [| 1,| 2|]
+Both {'indent': 1} [| 1,| 2|]
+Both {'sort_keys': True} [1, 2]
+Both {'sort_keys': True} [1, 2]
+Both {'check_circular': False} [1, 2]
+Both {'check_circular': False} [1, 2]
+Both {'separators': (',', ':')} [1,2]
+Both {'separators': (',', ':')} [1,2]
+Both {} []
+Both {} []
+Both {'indent': 1} []
+Both {'indent': 1} []
+Both {'sort_keys': True} []
+Both {'sort_keys': True} []
+Both {'check_circular': False} []
+Both {'check_circular': False} []
+Both {'separators': (',', ':')} []
+Both {'separators': (',', ':')} []
+OtherItems {} [1, 2]
+OtherItems {} []
+OtherItems {'indent': 1} [| 1,| 2|]
+OtherItems {'indent': 1} []
+OtherItems {'sort_keys': True} [1, 2]
+OtherItems {'sort_keys': True} []
+OtherItems {'check_circular': False} [1, 2]
+OtherItems {'check_circular': False} []
+OtherItems {'separators': (',', ':')} [1,2]
+OtherItems {'separators': (',', ':')} []
+OtherItems {} [1, 2]
+OtherItems {} [1, 2]
+OtherItems {'indent': 1} [| 1,| 2|]
+OtherItems {'indent': 1} [| 1,| 2|]
+OtherItems {'sort_keys': True} [1, 2]
+OtherItems {'sort_keys': True} [1, 2]
+OtherItems {'check_circular': False} [1, 2]
+OtherItems {'check_circular': False} [1, 2]
+OtherItems {'separators': (',', ':')} [1,2]
+OtherItems {'separators': (',', ':')} [1,2]
+NoLength {} [1]
+NoLength {} []
+NoLength {'indent': 1} [| 1|]
+NoLength {'indent': 1} []
+NoLength {'sort_keys': True} [1]
+NoLength {'sort_keys': True} []
+NoLength {'check_circular': False} [1]
+NoLength {'check_circular': False} []
+NoLength {'separators': (',', ':')} [1]
+NoLength {'separators': (',', ':')} []
+OtherItemsOfTuple {} [1, 2]
+OtherItemsOfTuple {} []
+OtherItemsOfTuple {'indent': 1} [| 1,| 2|]
+OtherItemsOfTuple {'indent': 1} []
+OtherItemsOfTuple {'sort_keys': True} [1, 2]
+OtherItemsOfTuple {'sort_keys': True} []
+OtherItemsOfTuple {'check_circular': False} [1, 2]
+OtherItemsOfTuple {'check_circular': False} []
+OtherItemsOfTuple {'separators': (',', ':')} [1,2]
+OtherItemsOfTuple {'separators': (',', ':')} []
+OtherItemsOfTuple {} [1, 2]
+OtherItemsOfTuple {} [1, 2]
+OtherItemsOfTuple {'indent': 1} [| 1,| 2|]
+OtherItemsOfTuple {'indent': 1} [| 1,| 2|]
+OtherItemsOfTuple {'sort_keys': True} [1, 2]
+OtherItemsOfTuple {'sort_keys': True} [1, 2]
+OtherItemsOfTuple {'check_circular': False} [1, 2]
+OtherItemsOfTuple {'check_circular': False} [1, 2]
+OtherItemsOfTuple {'separators': (',', ':')} [1,2]
+OtherItemsOfTuple {'separators': (',', ':')} [1,2]
+Generated {} ["a", [[1, 2]]]
+Generated {} []
+Generated {'indent': 1} [| "a",| [|  [|   1,|   2|  ]| ]|]
+Generated {'indent': 1} []
+Generated {'sort_keys': True} ["a", [[1, 2]]]
+Generated {'sort_keys': True} []
+Generated {'check_circular': False} ["a", [[1, 2]]]
+Generated {'check_circular': False} []
+Generated {'separators': (',', ':')} ["a",[[1,2]]]
+Generated {'separators': (',', ':')} []
+Failing {} KeyError 'while iterating' None
+Failing {} []
+Failing {'indent': 1} KeyError 'while iterating' None
+Failing {'indent': 1} []
+Failing {'sort_keys': True} KeyError 'while iterating' None
+Failing {'sort_keys': True} []
+Failing {'check_circular': False} KeyError 'while iterating' None
+Failing {'check_circular': False} []
+Failing {'separators': (',', ':')} KeyError 'while iterating' None
+Failing {'separators': (',', ':')} []
+NotIterable {} TypeError encoder_listencode_list needs a sequence None
+NotIterable {} TypeError 'NotIterable' object is not iterable None
+NotIterable {'indent': 1} TypeError encoder_listencode_list needs a sequence None
+NotIterable {'indent': 1} TypeError 'NotIterable' object is not iterable None
+NotIterable {'sort_keys': True} TypeError encoder_listencode_list needs a sequence None
+NotIterable {'sort_keys': True} TypeError 'NotIterable' object is not iterable None
+NotIterable {'check_circular': False} TypeError encoder_listencode_list needs a sequence None
+NotIterable {'check_circular': False} TypeError 'NotIterable' object is not iterable None
+NotIterable {'separators': (',', ':')} TypeError encoder_listencode_list needs a sequence None
+NotIterable {'separators': (',', ':')} TypeError 'NotIterable' object is not iterable None
+Growing {} [0]
+Growing {} [0, 1]
+Growing {'indent': 1} [| 0,| 1,| 2|]
+Growing {'indent': 1} [| 0,| 1,| 2,| 3|]
+Growing {'sort_keys': True} [0, 1, 2, 3, 4]
+Growing {'sort_keys': True} [0, 1, 2, 3, 4, 5]
+Growing {'check_circular': False} [0, 1, 2, 3, 4, 5, 6]
+Growing {'check_circular': False} [0, 1, 2, 3, 4, 5, 6, 7]
+Growing {'separators': (',', ':')} [0,1,2,3,4,5,6,7,8]
+Growing {'separators': (',', ':')} [0,1,2,3,4,5,6,7,8,9]
+OtherPairs {} {}
+OtherPairs {} {}
+OtherPairs {'indent': 1} {}
+OtherPairs {'indent': 1} {}
+OtherPairs {'sort_keys': True} {}
+OtherPairs {'sort_keys': True} {}
+OtherPairs {'check_circular': False} {}
+OtherPairs {'check_circular': False} {}
+OtherPairs {'separators': (',', ':')} {}
+OtherPairs {'separators': (',', ':')} {}
+OtherPairs {} {"k": 1}
+OtherPairs {} {"k": 1}
+OtherPairs {'indent': 1} {| "k": 1|}
+OtherPairs {'indent': 1} {| "k": 1|}
+OtherPairs {'sort_keys': True} {"k": 1}
+OtherPairs {'sort_keys': True} {"k": 1}
+OtherPairs {'check_circular': False} {"k": 1}
+OtherPairs {'check_circular': False} {"k": 1}
+OtherPairs {'separators': (',', ':')} {"k":1}
+OtherPairs {'separators': (',', ':')} {"k":1}
+OtherKeys {} {}
+OtherKeys {} {}
+OtherKeys {'indent': 1} {}
+OtherKeys {'indent': 1} {}
+OtherKeys {'sort_keys': True} {}
+OtherKeys {'sort_keys': True} {}
+OtherKeys {'check_circular': False} {}
+OtherKeys {'check_circular': False} {}
+OtherKeys {'separators': (',', ':')} {}
+OtherKeys {'separators': (',', ':')} {}
+OtherKeys {} {"a": 1}
+OtherKeys {} {"a": 1}
+OtherKeys {'indent': 1} {| "a": 1|}
+OtherKeys {'indent': 1} {| "a": 1|}
+OtherKeys {'sort_keys': True} {"a": 1}
+OtherKeys {'sort_keys': True} {"a": 1}
+OtherKeys {'check_circular': False} {"a": 1}
+OtherKeys {'check_circular': False} {"a": 1}
+OtherKeys {'separators': (',', ':')} {"a":1}
+OtherKeys {'separators': (',', ':')} {"a":1}
+dict {} {"x": [3]}
+dict {} {"x": [3]}
+dict {'indent': 1} {| "x": [|  3| ]|}
+dict {'indent': 1} {| "x": [|  3| ]|}
+dict {'sort_keys': True} {"x": [3]}
+dict {'sort_keys': True} {"x": [3]}
+dict {'check_circular': False} {"x": [3]}
+dict {'check_circular': False} {"x": [3]}
+dict {'separators': (',', ':')} {"x":[3]}
+dict {'separators': (',', ':')} {"x":[3]}
+list {} [[4], [[5]]]
+list {} [[4], [[5]]]
+list {'indent': 1} [| [|  4| ],| [|  [|   5|  ]| ]|]
+list {'indent': 1} [| [|  4| ],| [|  [|   5|  ]| ]|]
+list {'sort_keys': True} [[4], [[5]]]
+list {'sort_keys': True} [[4], [[5]]]
+list {'check_circular': False} [[4], [[5]]]
+list {'check_circular': False} [[4], [[5]]]
+list {'separators': (',', ':')} [[4],[[5]]]
+list {'separators': (',', ':')} [[4],[[5]]]
+Point {} [1, [6]]
+Point {} [1, [6]]
+Point {'indent': 1} [| 1,| [|  6| ]|]
+Point {'indent': 1} [| 1,| [|  6| ]|]
+Point {'sort_keys': True} [1, [6]]
+Point {'sort_keys': True} [1, [6]]
+Point {'check_circular': False} [1, [6]]
+Point {'check_circular': False} [1, [6]]
+Point {'separators': (',', ':')} [1,[6]]
+Point {'separators': (',', ':')} [1,[6]]
+OrderedDict {} {"b": [1, 2]}
+OrderedDict {} {"b": []}
+OrderedDict {'indent': 1} {| "b": [|  1,|  2| ]|}
+OrderedDict {'indent': 1} {| "b": []|}
+OrderedDict {'sort_keys': True} {"b": [1, 2]}
+OrderedDict {'sort_keys': True} {"b": []}
+OrderedDict {'check_circular': False} {"b": [1, 2]}
+OrderedDict {'check_circular': False} {"b": []}
+OrderedDict {'separators': (',', ':')} {"b":[1,2]}
+OrderedDict {'separators': (',', ':')} {"b":[]}
+defaultdict {} {"a": [7]}
+defaultdict {} {"a": [7]}
+defaultdict {'indent': 1} {| "a": [|  7| ]|}
+defaultdict {'indent': 1} {| "a": [|  7| ]|}
+defaultdict {'sort_keys': True} {"a": [7]}
+defaultdict {'sort_keys': True} {"a": [7]}
+defaultdict {'check_circular': False} {"a": [7]}
+defaultdict {'check_circular': False} {"a": [7]}
+defaultdict {'separators': (',', ':')} {"a":[7]}
+defaultdict {'separators': (',', ':')} {"a":[7]}
+Counter {} {"a": 2, "b": 1}
+Counter {} {"a": 2, "b": 1}
+Counter {'indent': 1} {| "a": 2,| "b": 1|}
+Counter {'indent': 1} {| "a": 2,| "b": 1|}
+Counter {'sort_keys': True} {"a": 2, "b": 1}
+Counter {'sort_keys': True} {"a": 2, "b": 1}
+Counter {'check_circular': False} {"a": 2, "b": 1}
+Counter {'check_circular': False} {"a": 2, "b": 1}
+Counter {'separators': (',', ':')} {"a":2,"b":1}
+Counter {'separators': (',', ':')} {"a":2,"b":1}
+ValueError Circular reference detected

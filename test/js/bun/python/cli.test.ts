@@ -742,4 +742,129 @@ print(subprocess.run(["env/bin/python", "-c", ${JSON.stringify(show)}], capture_
       expect({ stdout, stderr, exitCode }).toEqual({ stdout: `${bin}/python3\n`, stderr: "", exitCode: 0 });
     });
   });
+
+  describe("on a terminal", () => {
+    // Each step waits for some text to appear after the last step's, then types.
+    async function onTerminal(
+      args: string[],
+      steps: [string, string][],
+      { files = {}, env: extraEnv = {} }: Options = {},
+    ) {
+      using dir = tempDir("python-cli-terminal", files);
+      using bin = tempDir("python-cli-terminal-bin", {});
+      const program = join(String(bin), "python3");
+      symlinkSync(bunExe(), program);
+      let output = "";
+      let seen = 0;
+      let waiting: { text: string; resolve: () => void } | undefined;
+      const look = () => {
+        if (!waiting) return;
+        const at = output.indexOf(waiting.text, seen);
+        if (at < 0) return;
+        seen = at + waiting.text.length;
+        const { resolve } = waiting;
+        waiting = undefined;
+        resolve();
+      };
+      const decoder = new TextDecoder();
+      const closed = Promise.withResolvers<void>();
+      const proc = Bun.spawn({
+        cmd: [program, ...args],
+        env: { ...env, HOME: String(dir), TERM: "xterm", NO_COLOR: "1", ...extraEnv },
+        cwd: String(dir),
+        terminal: {
+          cols: 80,
+          rows: 24,
+          data(_terminal, chunk) {
+            output += decoder.decode(chunk, { stream: true });
+            look();
+          },
+          exit() {
+            closed.resolve();
+          },
+        },
+      });
+      for (const [text, keys] of steps) {
+        const found = Promise.withResolvers<void>();
+        waiting = { text, resolve: found.resolve };
+        look();
+        const ended = await Promise.race([found.promise.then(() => false), proc.exited.then(() => true)]);
+        if (ended) break;
+        proc.terminal!.write(keys);
+      }
+      const exitCode = await proc.exited;
+      await closed.promise;
+      proc.terminal!.close();
+      return { output: output.replaceAll("\r\n", "\n"), exitCode: proc.signalCode ?? exitCode };
+    }
+
+    test("Ctrl-C raises KeyboardInterrupt", async () => {
+      const { output, exitCode } = await onTerminal(["main.py"], [["ready", "\x03"]], {
+        files: {
+          "main.py": `
+import signal, time
+print(signal.getsignal(signal.SIGINT).__name__, signal.getsignal(signal.SIGTERM) == signal.SIG_DFL)
+try:
+    print("ready", flush=True)
+    while True:
+        time.sleep(1)
+except KeyboardInterrupt:
+    print("caught")
+`,
+        },
+      });
+      expect(output).toBe("default_int_handler True\nready\n^Ccaught\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a KeyboardInterrupt that nobody catches: the traceback, and the process dies of the signal", async () => {
+      const { output, exitCode } = await onTerminal(
+        ["-c", "import time; print('ready', flush=True); time.sleep(1000)"],
+        [["ready", "\x03"]],
+      );
+      expect(output).toStartWith("ready\n^CTraceback (most recent call last):\n");
+      expect(output).toEndWith("\nKeyboardInterrupt\n");
+      expect(exitCode).toBe("SIGINT");
+    });
+
+    test.each([
+      ["the interactive interpreter", {}, 0],
+      // As in CPython: a KeyboardInterrupt that it has reported is what the process dies of in the end.
+      ["the plain interactive interpreter", { PYTHON_BASIC_REPL: "1" }, "SIGINT"],
+    ])("Ctrl-C in %s", async (_name, extraEnv, status) => {
+      const { output, exitCode } = await onTerminal(
+        ["-q"],
+        [
+          [">>> ", "abc\x03"],
+          ["KeyboardInterrupt", ""],
+          [">>> ", "import time; print('sleeps'); time.sleep(1000)\r"],
+          ["sleeps\r\n", "\x03"],
+          ["KeyboardInterrupt", ""],
+          [">>> ", "print(6 * 7)\r"],
+          ["42", ""],
+          [">>> ", "\x04"],
+        ],
+        { env: extraEnv },
+      );
+      expect(output).toContain("42");
+      expect(exitCode).toBe(status);
+    });
+
+    test("lines with nothing to run in the plain interactive interpreter", async () => {
+      const { output, exitCode } = await onTerminal(
+        ["-q"],
+        [
+          [">>> ", "\r"],
+          [">>> ", "# nothing\r"],
+          [">>> ", "   \r"],
+          [">>> ", "print(6 * 7)\r"],
+          ["42", ""],
+          [">>> ", "\x04"],
+        ],
+        { env: { PYTHON_BASIC_REPL: "1" } },
+      );
+      expect(output).toBe(">>> \n>>> # nothing\n>>>    \n>>> print(6 * 7)\n42\n>>> \n");
+      expect(exitCode).toBe(0);
+    });
+  });
 });

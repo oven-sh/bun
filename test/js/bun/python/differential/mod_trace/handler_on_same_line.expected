@@ -1,0 +1,21 @@
+status: 0
+script: 84fe7a1e65fcd7e9
+---
+t_a [('call', 0), ('line', 1), ('exception', 1), ('line', 2), ('return', 2)]
+t_b [('call', 0), ('line', 1), ('line', 2), ('return', 2)]
+t_c [('call', 0), ('line', 1), ('line', 2), ('exception', 2), ('line', 1), ('line', 2), ('exception', 2), ('line', 1), ('return', 1)]
+t_d [('call', 0), ('line', 1), ('exception', 1), ('return', 1)]
+t_e [('call', 0), ('line', 1), ('exception', 1), ('line', 2), ('return', 2)]
+t_f [('call', 0), ('line', 1), ('exception', 1), ('line', 2), ('return', 2)]
+t_g [('call', 0), ('line', 1), ('line', 2), ('exception', 2), ('line', 1), ('line', 3), ('return', 3)]
+t_h [('call', 0), ('line', 1), ('exception', 1), ('return', 1)]
+t_i [('call', 0), ('line', 1), ('exception', 1), ('line', 2), ('line', 3), ('line', 2), ('line', 3), ('return', 3)]
+t_a [1, 2]
+t_b [1, 2]
+t_c [1, 2, 1, 2, 1]
+t_d [1]
+t_e [1, 2]
+t_f [1, 2]
+t_g [1, 2, 1, 3]
+t_h [1]
+t_i [1, 2, 3, 2, 3]

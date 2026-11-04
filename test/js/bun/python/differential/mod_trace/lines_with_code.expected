@@ -1,0 +1,87 @@
+status: 0
+script: 03d7921b59f624e0
+---
+list_of_constants
+    list_of_constants [0, 1]
+    c0 l1 r1
+short_list
+    short_list [0, 1, 2, 3]
+    c0 l2 l3 l1 r1
+list_with_a_name
+    list_with_a_name [0, 1, 2, 3, 4]
+    c0 l2 l3 l4 l1 r1
+set_of_constants
+    set_of_constants [0, 1]
+    c0 l1 r1
+tuple_of_constants
+    tuple_of_constants [0, 1]
+    c0 l1 r1
+tuple_worked_out
+    tuple_worked_out [0, 1]
+    c0 l1 r1
+long_list
+    long_list [0, 1, 2, 3, 4, 5]
+    c0 l1 l2 l1 l2 l1 l2 l1 l2 l1 l2 l1 l2 l1 l2 l1 l2 l1 l2 l1 l2 l1 l3 l1 l3 l1 l3 l1 l3 l1 l3 l1 l3 l1 l3 l1 l3 l1 l3 l1 l3 l1 l4 l1 l4 l1 l4 l1 l4 l1 l4 l1 l4 l1 l4 l1 l4 l1 l4 l1 l4 l1 l5 l1 l5 l1 r1
+long_tuple
+    long_tuple [0, 1]
+    c0 l1 r1
+arguments
+    arguments [0, 1, 2, 3, 4, 5, 6]
+    c0 l1 l2 l3 l4 l5 l6 l1 r1
+loop_over_constants
+    loop_over_constants [0, 1, 5]
+    c0 l1 l5 l1 l5 l1 r1
+search_in_constants
+    search_in_constants [0, 1]
+    c0 l1 r1
+comprehension_over_constants
+    comprehension_over_constants [0, 1, 2, 3]
+    c0 l2 l3 l1 l1 l1 r1
+defaults
+    defaults [0, 1, 5, 6]
+    inner [1, 7]
+    c0 l1 l5 l1 l6 l1 r1
+defaults_with_a_name
+    defaults_with_a_name [0, 1, 2, 3]
+    inner [1, 4]
+    c0 l2 l3 l1 r1
+lambda_defaults
+    lambda_defaults [0, 1]
+    <lambda> [1, 3]
+    c0 l1 r1
+if_false
+    if_false [0, 1, 2, 4]
+    c0 l1 l2 l4 r4
+if_false_else
+    if_false_else [0, 1, 4]
+    c0 l1 l4 r4
+if_true_else
+    if_true_else [0, 1, 2]
+    c0 l1 l2 r2
+while_false
+    while_false [0, 1, 2, 4]
+    c0 l1 l2 l4 r4
+while_true_else
+    while_true_else [0, 1, 2]
+    c0 l1 l2 r2
+generator_that_yields_nothing
+    generator_that_yields_nothing [0, 1]
+    c0 l1 r1
+else_after_raise
+    else_after_raise [0, 1, 2, 3, 4]
+    c0 l1 l2 e2 l3 l4 r4
+after_return
+    after_return [0, 1]
+    c0 l1 r1
+asserts
+    asserts [0, 1, 2, 4]
+    c0 l2 r2
+debug
+    debug [0, 1, 2]
+    c0 l1 l2 r2
+match_constant
+    match_constant [0, 1, 2, 3]
+    c0 l1 l2 l3 r3
+strings
+    strings [0, 1, 4]
+    c0 l1 l4 r4

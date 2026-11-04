@@ -1,0 +1,297 @@
+status: 0
+script: 19e182aa29a499e3
+---
+== called before, and never called
+   LINE <module> 61
+   PY_START old
+   LINE old 1
+   LINE old 2
+   PY_RETURN old
+   LINE <module> 62
+   PY_START new
+   LINE new 1
+   LINE new 2
+   PY_RETURN new
+   LINE <module> 63
+== off
+== on again
+   LINE <module> 69
+   PY_START old
+   LINE old 1
+   LINE old 2
+   PY_RETURN old
+   LINE <module> 70
+   LINE <module> 72
+   PY_START new
+   LINE new 1
+   LINE new 2
+   PY_RETURN new
+   LINE <module> 73
+== switched on three calls deep
+   LINE inner 3
+   LINE inner 4
+   PY_RETURN inner
+   LINE middle 2
+   LINE middle 3
+   PY_RETURN middle
+   LINE outer 2
+   LINE outer 3
+   LINE outer 2
+   LINE outer 3
+   LINE outer 2
+   LINE outer 4
+   PY_RETURN outer
+   LINE <module> 100
+== switched off three calls deep
+   LINE <module> 103
+   PY_START outer
+   LINE outer 1
+   PY_START middle
+   LINE middle 1
+   PY_START inner
+   LINE inner 1
+   LINE inner 2
+== in a loop
+   LINE loop 7
+   LINE loop 2
+   LINE loop 3
+   LINE loop 5
+   LINE loop 7
+   LINE loop 2
+   LINE loop 3
+   LINE loop 5
+   LINE loop 6
+== a generator that was suspended: send
+   LINE <module> 137
+   PY_RESUME gen
+   LINE gen 2
+   PY_YIELD gen
+   LINE <module> 138
+== next, and close while off
+   LINE <module> 141
+   PY_RESUME gen
+   LINE gen 3
+   LINE gen 4
+   PY_YIELD gen
+   LINE <module> 142
+== a generator that was suspended: for
+   LINE <module> 149
+   PY_RESUME gen
+   LINE gen 2
+   PY_YIELD gen
+   LINE <module> 150
+   LINE <module> 149
+   PY_RESUME gen
+   LINE gen 3
+   LINE gen 4
+   PY_YIELD gen
+   LINE <module> 150
+   LINE <module> 149
+   PY_RESUME gen
+   LINE gen 6
+   LINE gen 7
+   PY_RETURN gen
+   LINE <module> 151
+== a generator that was suspended: throw
+   LINE <module> 157
+   LINE <module> 158
+   PY_THROW gen
+   PY_UNWIND gen
+   LINE <module> 159
+   LINE <module> 160
+   LINE <module> 161
+== yield from, both suspended
+   LINE <module> 174
+   PY_RESUME delegating
+   PY_RESUME gen
+   LINE gen 2
+   PY_YIELD gen
+   PY_YIELD delegating
+   LINE <module> 175
+== a generator made while off, started while on
+   LINE <module> 181
+   PY_START gen
+   LINE gen 1
+   PY_YIELD gen
+   PY_RESUME gen
+   LINE gen 2
+   PY_YIELD gen
+   PY_RESUME gen
+   LINE gen 3
+   LINE gen 4
+   PY_YIELD gen
+   PY_RESUME gen
+   LINE gen 6
+   LINE gen 7
+   PY_RETURN gen
+   LINE <module> 182
+== on, off, on between the steps of a generator
+   LINE <module> 186
+   LINE <module> 187
+   PY_START gen
+   LINE gen 1
+   PY_YIELD gen
+   LINE <module> 188
+   LINE <module> 191
+   PY_RESUME gen
+   LINE gen 3
+   LINE gen 4
+   PY_YIELD gen
+   LINE <module> 192
+returned done
+== a coroutine that was suspended
+   LINE <module> 210
+   LINE <module> 211
+   PY_RESUME coroutine
+   PY_RESUME __await__
+   LINE __await__ 2
+   PY_RETURN __await__
+   LINE coroutine 2
+   PY_RETURN coroutine
+   LINE <module> 212
+   LINE <module> 213
+   LINE <module> 214
+== an async generator that was suspended
+   LINE <module> 235
+   PY_START drive
+   LINE drive 1
+   LINE drive 2
+   PY_RESUME agen
+   LINE agen 2
+   PY_YIELD agen
+   LINE drive 3
+   LINE drive 4
+   PY_RETURN drive
+   LINE <module> 236
+   PY_START drive
+   LINE drive 1
+   LINE drive 2
+   PY_RESUME agen
+   PY_RETURN agen
+   LINE drive 3
+   LINE drive 5
+   LINE drive 6
+   PY_RETURN drive
+   LINE <module> 237
+== local events
+   LINE local_target 1
+   LINE local_target 2
+   LINE local_target 3
+   LINE local_target 2
+   LINE local_target 4
+== local events of the code that is running
+   LINE sets_its_own 3
+   LINE sets_its_own 4
+   LINE sets_its_own 6
+   LINE sets_its_own 7
+   PY_RETURN sets_its_own
+   LINE sets_its_own 1
+   LINE sets_its_own 2
+   LINE sets_its_own 3
+   LINE sets_its_own 4
+   LINE sets_its_own 5
+   LINE sets_its_own 3
+   LINE sets_its_own 4
+   LINE sets_its_own 5
+== local events of a suspended generator
+   PY_RESUME gen
+   LINE gen 2
+   PY_YIELD gen
+== local and global events
+   PY_START old
+   LINE old 1
+   LINE old 2
+   PY_START new
+   LINE old 1
+   LINE old 2
+== a function that the tool calls too
+   LINE <module> 614
+   PY_START old
+   LINE old 2
+   LINE old 4
+   PY_RETURN old
+   LINE <module> 616
+   PY_START helper
+   LINE helper 2
+   PY_RETURN helper
+   LINE <module> 618
+   PY_START old
+   LINE old 2
+   LINE old 4
+   PY_RETURN old
+   LINE <module> 620
+== disabled after the first time
+   LINE <module> 324
+   LINE old 1
+   LINE old 2
+   LINE <module> 325
+   LINE <module> 326
+== restarted
+   LINE <module> 327
+   LINE <module> 328
+   LINE old 1
+   LINE old 2
+   LINE <module> 329
+== code made while on
+   LINE <module> 337
+   PY_START <module>
+   LINE <module> 0
+   LINE <module> 1
+   PY_RETURN <module>
+   LINE <module> 340
+   PY_START Made
+   LINE Made 0
+   LINE Made 1
+   LINE Made 3
+   PY_RETURN Made
+   LINE <module> 347
+   PY_START method
+   LINE method 1
+   PY_RETURN method
+   LINE <module> 348
+   PY_START <lambda>
+   LINE <lambda> 0
+   PY_RETURN <lambda>
+   LINE <module> 349
+== two tools
+   LINE <module> 359
+   LINE <module> 360
+   other PY_START old
+   LINE <module> 361
+   other PY_START old
+== settrace on, off, on
+   call old 0
+   line old 1
+   line old 2
+   return old 2
+   call new 0
+   line new 1
+   line new 2
+   return new 2
+== settrace and a suspended generator
+   call gen 1
+   line gen 2
+   return gen 2
+== setprofile
+   call old 0
+   return old 2
+== setprofile and a suspended generator
+   call gen 1
+   return gen 2
+== a function that begins to trace itself
+   line traces_itself 4
+   line traces_itself 5
+   call old 0
+   line old 1
+   line old 2
+   return old 2
+   line traces_itself 6
+   line traces_itself 7
+== switched on while another thread is in a call
+   LINE worker 4
+   LINE worker 5
+   PY_START old
+   LINE old 1
+   LINE old 2
+   PY_RETURN old
+   PY_RETURN worker

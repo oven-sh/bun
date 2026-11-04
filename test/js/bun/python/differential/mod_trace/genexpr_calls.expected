@@ -1,0 +1,72 @@
+status: 0
+script: 84c435bb0ab95188
+---
+t_all False True True
+t_any True False True
+t_list [1, 0, 2] [] [1]
+t_tuple (1, 0, 2) () (1,)
+t_set {0, 1, 2} set() {1}
+t_assigned ([1, 0, 2], False) ([], True) ([1], True)
+t_nested [(0,), (), (0, 1)] [] [(0,)]
+t_condition some none none
+profile t_all [('call', 't_all', None), ('call', '<genexpr>', None), ('return', '<genexpr>', None), ('call', '<genexpr>', None), ('return', '<genexpr>', None), ('call', '<genexpr>', None), ('return', '<genexpr>', None), ('return', 't_all', None)]
+profile t_any [('call', 't_any', None), ('call', '<genexpr>', None), ('return', '<genexpr>', None), ('call', '<genexpr>', None), ('return', '<genexpr>', None), ('return', 't_any', None)]
+profile t_list [('call', 't_list', None), ('call', '<genexpr>', None), ('return', '<genexpr>', None), ('call', '<genexpr>', None), ('return', '<genexpr>', None), ('call', '<genexpr>', None), ('return', '<genexpr>', None), ('return', 't_list', None)]
+profile t_tuple [('call', 't_tuple', None), ('call', '<genexpr>', None), ('return', '<genexpr>', None), ('call', '<genexpr>', None), ('return', '<genexpr>', None), ('call', '<genexpr>', None), ('return', '<genexpr>', None), ('return', 't_tuple', None)]
+profile t_set [('call', 't_set', None), ('call', '<genexpr>', None), ('return', '<genexpr>', None), ('call', '<genexpr>', None), ('return', '<genexpr>', None), ('call', '<genexpr>', None), ('return', '<genexpr>', None), ('return', 't_set', None)]
+profile t_assigned [('call', 't_assigned', None), ('call', '<genexpr>', None), ('return', '<genexpr>', None), ('call', '<genexpr>', None), ('return', '<genexpr>', None), ('call', '<genexpr>', None), ('return', '<genexpr>', None), ('call', '<genexpr>', None), ('return', '<genexpr>', None), ('call', '<genexpr>', None), ('return', '<genexpr>', None), ('call', '<genexpr>', None), ('return', '<genexpr>', None), ('return', 't_assigned', None)]
+profile t_nested [('call', 't_nested', None), ('call', '<genexpr>', None), ('call', '<genexpr>', None), ('return', '<genexpr>', None), ('call', '<genexpr>', None), ('return', '<genexpr>', None), ('return', '<genexpr>', None), ('call', '<genexpr>', None), ('call', '<genexpr>', None), ('return', '<genexpr>', None), ('return', '<genexpr>', None), ('call', '<genexpr>', None), ('return', '<genexpr>', None), ('return', 't_nested', None)]
+profile t_condition [('call', 't_condition', None), ('call', '<genexpr>', None), ('return', '<genexpr>', None), ('call', '<genexpr>', None), ('return', '<genexpr>', None), ('call', '<genexpr>', None), ('return', '<genexpr>', None), ('return', 't_condition', None)]
+trace t_all [('call', 't_all', 0), ('line', 't_all', 1), ('call', '<genexpr>', 0), ('line', '<genexpr>', 0), ('return', '<genexpr>', 0), ('line', 't_all', 1), ('call', '<genexpr>', 0), ('line', '<genexpr>', 0), ('return', '<genexpr>', 0), ('call', '<genexpr>', 0), ('exception', '<genexpr>', 0), ('return', '<genexpr>', 0), ('return', 't_all', 1)]
+trace t_any [('call', 't_any', 0), ('line', 't_any', 1), ('call', '<genexpr>', 0), ('line', '<genexpr>', 0), ('return', '<genexpr>', 0), ('call', '<genexpr>', 0), ('exception', '<genexpr>', 0), ('return', '<genexpr>', 0), ('return', 't_any', 1)]
+trace t_list [('call', 't_list', 0), ('line', 't_list', 1), ('call', '<genexpr>', 0), ('line', '<genexpr>', 0), ('return', '<genexpr>', 0), ('line', 't_list', 1), ('call', '<genexpr>', 0), ('line', '<genexpr>', 0), ('return', '<genexpr>', 0), ('line', 't_list', 1), ('call', '<genexpr>', 0), ('line', '<genexpr>', 0), ('return', '<genexpr>', 0), ('return', 't_list', 1)]
+trace t_tuple [('call', 't_tuple', 0), ('line', 't_tuple', 1), ('line', 't_tuple', 2), ('line', 't_tuple', 1), ('call', '<genexpr>', 0), ('line', '<genexpr>', 1), ('line', '<genexpr>', 0), ('return', '<genexpr>', 0), ('line', 't_tuple', 1), ('call', '<genexpr>', 0), ('line', '<genexpr>', 1), ('line', '<genexpr>', 0), ('return', '<genexpr>', 0), ('line', 't_tuple', 1), ('call', '<genexpr>', 0), ('line', '<genexpr>', 1), ('return', '<genexpr>', 1), ('return', 't_tuple', 1)]
+trace t_set [('call', 't_set', 0), ('line', 't_set', 1), ('line', 't_set', 2), ('line', 't_set', 1), ('call', '<genexpr>', 0), ('line', '<genexpr>', 1), ('return', '<genexpr>', 1), ('line', 't_set', 1), ('call', '<genexpr>', 1), ('line', '<genexpr>', 1), ('return', '<genexpr>', 1), ('line', 't_set', 1), ('call', '<genexpr>', 1), ('line', '<genexpr>', 1), ('return', '<genexpr>', 1), ('return', 't_set', 1)]
+trace t_assigned [('call', 't_assigned', 0), ('line', 't_assigned', 1), ('call', '<genexpr>', 0), ('line', '<genexpr>', 0), ('return', '<genexpr>', 0), ('line', 't_assigned', 1), ('call', '<genexpr>', 0), ('line', '<genexpr>', 0), ('return', '<genexpr>', 0), ('line', 't_assigned', 1), ('call', '<genexpr>', 0), ('line', '<genexpr>', 0), ('return', '<genexpr>', 0), ('line', 't_assigned', 2), ('call', '<genexpr>', 0), ('line', '<genexpr>', 0), ('return', '<genexpr>', 0), ('line', 't_assigned', 2), ('call', '<genexpr>', 0), ('line', '<genexpr>', 0), ('return', '<genexpr>', 0), ('call', '<genexpr>', 0), ('exception', '<genexpr>', 0), ('return', '<genexpr>', 0), ('line', 't_assigned', 3), ('return', 't_assigned', 3)]
+trace t_nested [('call', 't_nested', 0), ('line', 't_nested', 1), ('call', '<genexpr>', 0), ('line', '<genexpr>', 0), ('call', '<genexpr>', 0), ('line', '<genexpr>', 0), ('return', '<genexpr>', 0), ('line', '<genexpr>', 0), ('call', '<genexpr>', 0), ('line', '<genexpr>', 0), ('return', '<genexpr>', 0), ('return', '<genexpr>', 0), ('line', 't_nested', 1), ('call', '<genexpr>', 0), ('line', '<genexpr>', 0), ('call', '<genexpr>', 0), ('line', '<genexpr>', 0), ('return', '<genexpr>', 0), ('return', '<genexpr>', 0), ('line', 't_nested', 1), ('call', '<genexpr>', 0), ('line', '<genexpr>', 0), ('return', '<genexpr>', 0), ('return', 't_nested', 1)]
+trace t_condition [('call', 't_condition', 0), ('line', 't_condition', 1), ('call', '<genexpr>', 0), ('line', '<genexpr>', 0), ('return', '<genexpr>', 0), ('line', 't_condition', 1), ('call', '<genexpr>', 0), ('line', '<genexpr>', 0), ('return', '<genexpr>', 0), ('line', 't_condition', 1), ('call', '<genexpr>', 0), ('line', '<genexpr>', 0), ('return', '<genexpr>', 0), ('line', 't_condition', 3), ('return', 't_condition', 3)]
+monitoring t_all [('PY_START', 't_all'), ('CALL', 't_all'), ('PY_START', '<genexpr>'), ('PY_YIELD', '<genexpr>'), ('PY_RESUME', '<genexpr>'), ('PY_YIELD', '<genexpr>'), ('PY_THROW', '<genexpr>'), ('PY_UNWIND', '<genexpr>'), ('PY_RETURN', 't_all')]
+monitoring t_any [('PY_START', 't_any'), ('CALL', 't_any'), ('PY_START', '<genexpr>'), ('PY_YIELD', '<genexpr>'), ('PY_THROW', '<genexpr>'), ('PY_UNWIND', '<genexpr>'), ('PY_RETURN', 't_any')]
+monitoring t_list [('PY_START', 't_list'), ('CALL', 't_list'), ('PY_START', '<genexpr>'), ('PY_YIELD', '<genexpr>'), ('PY_RESUME', '<genexpr>'), ('PY_YIELD', '<genexpr>'), ('PY_RESUME', '<genexpr>'), ('PY_RETURN', '<genexpr>'), ('PY_RETURN', 't_list')]
+monitoring t_tuple [('PY_START', 't_tuple'), ('CALL', 't_tuple'), ('PY_START', '<genexpr>'), ('PY_YIELD', '<genexpr>'), ('PY_RESUME', '<genexpr>'), ('PY_YIELD', '<genexpr>'), ('PY_RESUME', '<genexpr>'), ('PY_RETURN', '<genexpr>'), ('PY_RETURN', 't_tuple')]
+monitoring t_set [('PY_START', 't_set'), ('CALL', 't_set'), ('PY_START', '<genexpr>'), ('PY_YIELD', '<genexpr>'), ('PY_RESUME', '<genexpr>'), ('PY_YIELD', '<genexpr>'), ('PY_RESUME', '<genexpr>'), ('PY_RETURN', '<genexpr>'), ('PY_RETURN', 't_set')]
+monitoring t_assigned [('PY_START', 't_assigned'), ('CALL', 't_assigned'), ('PY_START', '<genexpr>'), ('PY_YIELD', '<genexpr>'), ('PY_RESUME', '<genexpr>'), ('PY_YIELD', '<genexpr>'), ('PY_RESUME', '<genexpr>'), ('PY_RETURN', '<genexpr>'), ('CALL', 't_assigned'), ('PY_START', '<genexpr>'), ('PY_YIELD', '<genexpr>'), ('PY_RESUME', '<genexpr>'), ('PY_YIELD', '<genexpr>'), ('PY_THROW', '<genexpr>'), ('PY_UNWIND', '<genexpr>'), ('PY_RETURN', 't_assigned')]
+monitoring t_nested [('PY_START', 't_nested'), ('CALL', 't_nested'), ('PY_START', '<genexpr>'), ('CALL', '<genexpr>'), ('C_RETURN', '<genexpr>'), ('CALL', '<genexpr>'), ('PY_START', '<genexpr>'), ('PY_YIELD', '<genexpr>'), ('PY_RESUME', '<genexpr>'), ('PY_RETURN', '<genexpr>'), ('PY_YIELD', '<genexpr>'), ('PY_RESUME', '<genexpr>'), ('CALL', '<genexpr>'), ('C_RETURN', '<genexpr>'), ('CALL', '<genexpr>'), ('PY_START', '<genexpr>'), ('PY_RETURN', '<genexpr>'), ('PY_YIELD', '<genexpr>'), ('PY_RESUME', '<genexpr>'), ('PY_RETURN', '<genexpr>'), ('PY_RETURN', 't_nested')]
+monitoring t_condition [('PY_START', 't_condition'), ('CALL', 't_condition'), ('PY_START', '<genexpr>'), ('PY_YIELD', '<genexpr>'), ('PY_RESUME', '<genexpr>'), ('PY_YIELD', '<genexpr>'), ('PY_RESUME', '<genexpr>'), ('PY_RETURN', '<genexpr>'), ('PY_RETURN', 't_condition')]
+object of type 'generator' has no len()
+(('mine', [1, 2]), [2, 1])
+(True, [2, 1])
+(True, ('builtins', (2, 1)))
+(True, [2, 1])
+<class '__main__.Sub'> <class 'list'>
+Traceback (most recent call last):
+  File "<dir>/genexpr_calls.py", line 139, in <module>
+    raises([1, 0])
+    ~~~~~~^^^^^^^^
+  File "<dir>/genexpr_calls.py", line 135, in raises
+    return all(1 / i for i in x)
+           ^^^
+  File "<dir>/genexpr_calls.py", line 135, in <genexpr>
+    return all(1 / i for i in x)
+               ~~^~~
+ZeroDivisionError: division by zero
+Traceback (most recent call last):
+  File "<dir>/genexpr_calls.py", line 149, in <module>
+    unhashable()
+    ~~~~~~~~~~^^
+  File "<dir>/genexpr_calls.py", line 145, in unhashable
+    return set([i] for i in range(2))
+           ^^^
+TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+Traceback (most recent call last):
+  File "<dir>/genexpr_calls.py", line 160, in <module>
+    any(t for t in [Truth()])
+    ^^^
+  File "<dir>/genexpr_calls.py", line 156, in __bool__
+    raise ValueError('no truth')
+ValueError: no truth
+(True, 2)
+[True, (1, 2)]
+[1]
+(1, 2) [[], [0], [0, 1]]
+'async_generator' object is not iterable

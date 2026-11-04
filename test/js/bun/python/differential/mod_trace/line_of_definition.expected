@@ -1,0 +1,9 @@
+status: 0
+script: d3a31a9635b87afc
+---
+LINE [('<module>', 50), ('h', 20), ('<module>', 3), ('<module>', 3), ('<module>', 51)]
+LINE and PY_START [('<module>', 56), ('<lambda>', 17), ('g', 18), ('h', 20), ('<lambda>', 22), ('<lambda>', 23), ('D', 35), ('<lambda>', 26), ('<genexpr>', 38), ('<module>', 0), ('<module>', 3), ('<module>', 3), ('<module>', 57)]
+LINE of the code, from PY_START [('<lambda>', 17), ('g', 18), ('h', 20), ('<lambda>', 22), ('<lambda>', 23), ('D', 35), ('<lambda>', 26), ('<genexpr>', 38), ('<module>', 0), ('<module>', 3), ('<module>', 3), ('show', 45)]
+again [('h', 20), ('<module>', 0), ('<module>', 3), ('<module>', 3), ('show', 45)]
+PY_START for another tool [('<module>', 82), ('<lambda>', 17), ('g', 18), ('h', 20), ('<lambda>', 22), ('<lambda>', 23), ('D', 35), ('<lambda>', 26), ('<genexpr>', 38), ('<module>', 0), ('<module>', 3), ('<module>', 3), ('<module>', 83), ('show', 45)]
+settrace [('<lambda>', 'call', 17), ('<lambda>', 'line', 17), ('<lambda>', 'return', 17), ('g', 'call', 18), ('g', 'line', 18), ('g', 'return', 18), ('h', 'call', 19), ('h', 'line', 20), ('h', 'return', 20), ('<lambda>', 'call', 22), ('<lambda>', 'line', 22), ('<lambda>', 'return', 22), ('<lambda>', 'call', 23), ('<lambda>', 'line', 23), ('<lambda>', 'return', 23), ('D', 'call', 35), ('D', 'line', 35), ('D', 'return', 35), ('<lambda>', 'call', 26), ('<lambda>', 'line', 26), ('<lambda>', 'return', 26), ('<lambda>', 'call', 26), ('<lambda>', 'return', 26), ('<genexpr>', 'call', 38), ('<genexpr>', 'line', 38), ('<genexpr>', 'return', 38), ('<genexpr>', 'call', 38), ('<genexpr>', 'line', 38), ('<genexpr>', 'return', 38), ('<module>', 'call', 0), ('<module>', 'line', 0), ('<module>', 'return', 0), ('<module>', 'call', 0), ('<module>', 'line', 3), ('<module>', 'return', 3), ('<module>', 'call', 0), ('<module>', 'line', 3), ('<module>', 'return', 3)]

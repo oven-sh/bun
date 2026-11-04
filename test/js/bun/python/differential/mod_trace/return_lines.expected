@@ -1,0 +1,113 @@
+status: 0
+script: 7d629d69ccd58af3
+---
+simple 0 untraced: 3 traced: c0 l1 l2 r2
+simple 1 untraced: 3 traced: c0 l1 l2 r2
+if1 0 untraced: 3 traced: c0 l1 l2 r2
+if1 1 untraced: 4 traced: c0 l1 l2 l3 r3
+ifelse 0 untraced: 6 traced: c0 l1 l2 l5 r5
+ifelse 1 untraced: 4 traced: c0 l1 l2 l3 r3
+ifelif 0 untraced: 6 traced: c0 l1 l2 l4 l5 r5
+ifelif 1 untraced: 4 traced: c0 l1 l2 l3 r3
+nestedif 0 untraced: 7 traced: c0 l1 l2 l6 r6
+nestedif 1 untraced: 4 traced: c0 l1 l2 l3 r3
+while1 0 untraced: 3 traced: c0 l1 l2 r2
+while1 1 untraced: 3 traced: c0 l1 l2 l3 l2 r2
+whileelse 0 untraced: 6 traced: c0 l1 l2 l5 r5
+whileelse 1 untraced: 6 traced: c0 l1 l2 l3 l2 l5 r5
+whilebreak 0 untraced: 5 traced: c0 l1 l2 l3 l5 l2 l3 l4 r4
+whilebreak 1 untraced: 5 traced: c0 l1 l2 l3 l4 r4
+for1 0 untraced: 3 traced: c0 l1 l2 r2
+for1 1 untraced: 3 traced: c0 l1 l2 l3 l2 r2
+forelse 0 untraced: 6 traced: c0 l1 l2 l5 r5
+forelse 1 untraced: 6 traced: c0 l1 l2 l3 l2 l5 r5
+forbreak 0 untraced: 5 traced: c0 l1 l2 l3 l4 r4
+forbreak 1 untraced: 5 traced: c0 l1 l2 l3 l2 l3 l4 r4
+forcontinue 0 untraced: 3 traced: c0 l1 l2 l3 l4 l2 l3 l5 l2 r2
+forcontinue 1 untraced: 3 traced: c0 l1 l2 l3 l5 l2 l3 l4 l2 r2
+try1 0 untraced: 6 traced: c0 l1 l2 l3 e3 l4 l5 r5
+try1 1 untraced: 4 traced: c0 l1 l2 l3 r3
+try2 0 untraced: 6 traced: c0 l1 l2 l3 e3 l4 l5 r5
+try2 1 untraced: 4 traced: c0 l1 l2 l3 r3
+tryelse 0 untraced: 6 traced: c0 l1 l2 l3 e3 l4 l5 r5
+tryelse 1 untraced: 8 traced: c0 l1 l2 l3 l7 r7
+tryfinally 0 untraced: 6 traced: c0 l1 l2 l3 l5 r5
+tryfinally 1 untraced: 6 traced: c0 l1 l2 l3 l5 r5
+tryexceptfinally 0 untraced: 8 traced: c0 l1 l2 l3 e3 l4 l5 l7 r7
+tryexceptfinally 1 untraced: 8 traced: c0 l1 l2 l3 l7 r7
+tryifhandler 0 untraced: 7 traced: c0 l1 l2 l3 e3 l4 l5 l6 r6
+tryifhandler 1 untraced: 4 traced: c0 l1 l2 l3 r3
+tryiffalse 0 untraced: 4 traced: c0 l1 l2 l3 r3
+tryiffalse 1 untraced: 4 traced: c0 l1 l2 l3 r3
+tryif 0 untraced: 4 traced: c0 l1 l2 l3 r3
+tryif 1 untraced: 5 traced: c0 l1 l2 l3 l4 r4
+trynest 0 untraced: 7 traced: c0 l1 l2 l3 l4 e4 l5 l6 r6
+trynest 1 untraced: 5 traced: c0 l1 l2 l3 l4 r4
+trystar 0 untraced: None traced: c0 l1 l2 l3 e3 l4 l5 rNone
+trystar 1 untraced: 4 traced: c0 l1 l2 l3 r3
+trystar2 0 untraced: None traced: c0 l1 l2 l3 e3 l4 l5 l6 rNone
+trystar2 1 untraced: 4 traced: c0 l1 l2 l3 r3
+with1 0 untraced: 3 traced: c0 l1 l2 l3 l2 r2
+with1 1 untraced: 3 traced: c0 l1 l2 l3 l2 r2
+with2 0 untraced: 3 traced: c0 l1 l2 l3 l2 r2
+with2 1 untraced: 3 traced: c0 l1 l2 l3 l2 r2
+withif 0 untraced: 3 traced: c0 l1 l2 l3 l2 r2
+withif 1 untraced: 3 traced: c0 l1 l2 l3 l4 l2 r2
+withsuppress 0 untraced: 3 traced: c0 l1 l2 l3 e3 l2 r2
+withsuppress 1 untraced: 3 traced: c0 l1 l2 l3 l2 r2
+match1 0 untraced: 5 traced: c0 l1 l2 l3 l4 r4
+match1 1 untraced: 7 traced: c0 l1 l2 l3 l5 l6 r6
+match2 0 untraced: 5 traced: c0 l1 l2 l3 l4 r4
+match2 1 untraced: 7 traced: c0 l1 l2 l3 l5 l6 r6
+match3 0 untraced: 4 traced: c0 l1 l2 l3 r3
+match3 1 untraced: 5 traced: c0 l1 l2 l3 l4 r4
+ifexp 0 untraced: 3 traced: c0 l1 l3 l4 l2 r2
+ifexp 1 untraced: 3 traced: c0 l1 l3 l2 r2
+boolop 0 untraced: 3 traced: c0 l1 l2 r2
+boolop 1 untraced: 3 traced: c0 l1 l2 l4 l2 r2
+call 0 untraced: 3 traced: c0 l1 l2 l3 l2 r2
+call 1 untraced: 3 traced: c0 l1 l2 l3 l2 r2
+comp 0 untraced: 3 traced: c0 l1 l3 l2 l3 r2
+comp 1 untraced: 3 traced: c0 l1 l3 l2 l3 l2 l3 r2
+comp2 0 untraced: 3 traced: c0 l1 l3 l2 l3 r2
+comp2 1 untraced: 3 traced: c0 l1 l3 l2 l3 l4 l2 l3 r2
+ret1 0 untraced: 3 traced: c0 l1 l4 l2 l4 r2
+ret1 1 untraced: 3 traced: c0 l1 l4 l2 l4 l3 l2 l4 r2
+ret2 0 untraced: 3 traced: c0 l1 l2 r2
+ret2 1 untraced: 3 traced: c0 l1 l2 l4 l2 r2
+ret3 0 untraced: 5 traced: c0 l1 l2 l5 l4 r4
+ret3 1 untraced: 4 traced: c0 l1 l2 l3 r3
+retfinally 0 untraced: 6 traced: c0 l1 l2 l3 l5 r5
+retfinally 1 untraced: 6 traced: c0 l1 l2 l3 l5 r5
+retwith 0 untraced: 3 traced: c0 l1 l2 l3 l2 r2
+retwith 1 untraced: 3 traced: c0 l1 l2 l3 l2 r2
+retloop 0 untraced: 5 traced: c0 l1 l2 l3 l4 r4
+retloop 1 untraced: 5 traced: c0 l1 l2 l3 l2 l3 l4 r4
+passonly 0 untraced: 3 traced: c0 l1 l2 r2
+passonly 1 untraced: 3 traced: c0 l1 l2 r2
+ifpass 0 untraced: 3 traced: c0 l1 l2 r2
+ifpass 1 untraced: 4 traced: c0 l1 l2 l3 r3
+asserts 0 untraced: 3 traced: c0 l1 l2 r2
+asserts 1 untraced: 3 traced: c0 l1 l2 r2
+dels 0 untraced: 4 traced: c0 l1 l2 l3 r3
+dels 1 untraced: 4 traced: c0 l1 l2 l3 r3
+nesteddef 0 untraced: 3 traced: c0 l1 l2 r2
+nesteddef 1 untraced: 3 traced: c0 l1 l2 r2
+nestedclass 0 untraced: 3 traced: c0 l1 l2 c0 l0 l1 l4 r4 r2
+nestedclass 1 untraced: 3 traced: c0 l1 l2 c0 l0 l1 l2 r2 r2
+lastglobal 0 untraced: 4 traced: c0 l1 l3 r3
+lastglobal 1 untraced: 4 traced: c0 l1 l3 r3
+whiletrue 0 untraced: 5 traced: c0 l1 l2 l3 l5 l2 l3 l4 r4
+whiletrue 1 untraced: 5 traced: c0 l1 l2 l3 l4 r4
+ifnot 0 untraced: 5 traced: c0 l1 l2 l3 l5 l4 r4
+ifnot 1 untraced: 5 traced: c0 l1 l2 l5 l4 r4
+forfor 0 untraced: 3 traced: c0 l1 l2 r2
+forfor 1 untraced: 3 traced: c0 l1 l2 l3 l4 l3 l2 r2
+ifinloop 0 untraced: 3 traced: c0 l1 l2 l3 l6 l2 l3 l6 l2 r2
+ifinloop 1 untraced: 3 traced: c0 l1 l2 l3 l4 l2 l3 l4 l2 r2
+tryinloop 0 untraced: 3 traced: c0 l1 l2 l3 l4 e4 l5 l6 l2 l3 l4 e4 l5 l6 l2 r2
+tryinloop 1 untraced: 3 traced: c0 l1 l2 l3 l4 l2 l3 l4 l2 r2
+tryfinallyinloop 0 untraced: 3 traced: c0 l1 l2 l3 l4 l7 l2 l3 l4 l7 l2 r2
+tryfinallyinloop 1 untraced: 8 traced: c0 l1 l2 l3 l4 l5 l7 r7
+elsechain 0 untraced: 8 traced: c0 l1 l2 l4 l7 r7
+elsechain 1 untraced: 8 traced: c0 l1 l2 l4 l7 r7

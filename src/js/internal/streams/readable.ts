@@ -1835,7 +1835,7 @@ Readable.wrap = function (src, options?) {
 };
 
 // Node defines the operators below in lib/stream.js. Here a user of this class may never load node:stream.
-Stream.Readable = Readable as unknown as typeof Stream.Readable;
+Stream.Readable = Readable as $Node.ReadableConstructor;
 
 // Function.length of each operator. internal/streams/operators loads when one is first called.
 type Operators = typeof import("internal/streams/operators").default;
@@ -1849,8 +1849,8 @@ const promiseOperatorLengths = { every: 1, forEach: 2, reduce: 3, toArray: 1, so
 >;
 let operators: Operators | undefined;
 
-function installOperator(key: string, length: number, call: (this: unknown, args: unknown[]) => unknown) {
-  function fn(...args) {
+function installOperator(key: string, length: number, call: (this: $Node.Readable, args: unknown[]) => unknown) {
+  function fn(this: $Node.Readable, ...args: unknown[]) {
     if (new.target) {
       throw $ERR_ILLEGAL_CONSTRUCTOR();
     }
@@ -1867,19 +1867,19 @@ function installOperator(key: string, length: number, call: (this: unknown, args
   });
 }
 
-const streamOperatorKeys = ObjectKeys(streamOperatorLengths);
+const streamOperatorKeys = ObjectKeys(streamOperatorLengths) as (keyof typeof streamOperatorLengths)[];
 for (let i = 0; i < streamOperatorKeys.length; i++) {
   const key = streamOperatorKeys[i];
-  let op;
+  let op: ((this: $Node.Readable, ...args: any[]) => AsyncIterable<unknown>) | undefined;
   installOperator(key, streamOperatorLengths[key], function (args) {
     op ??= (operators ??= require("internal/streams/operators")).streamReturningOperators[key];
     return Stream.Readable.from(op.$apply(this, args));
   });
 }
-const promiseOperatorKeys = ObjectKeys(promiseOperatorLengths);
+const promiseOperatorKeys = ObjectKeys(promiseOperatorLengths) as (keyof typeof promiseOperatorLengths)[];
 for (let i = 0; i < promiseOperatorKeys.length; i++) {
   const key = promiseOperatorKeys[i];
-  let op;
+  let op: ((this: $Node.Readable, ...args: any[]) => Promise<unknown>) | undefined;
   installOperator(key, promiseOperatorLengths[key], function (args) {
     op ??= (operators ??= require("internal/streams/operators")).promiseReturningOperators[key];
     return op.$apply(this, args);

@@ -64,8 +64,6 @@ struct ObjectLayout {
 struct Handle {
     Handle(const Map* map, JSC::JSCell* cell, JSC::VM& vm, const JSC::JSCell* owner);
 
-    Handle(const Map* map, JSC::JSCell* cell);
-
     Handle(double number);
 
     Handle(int32_t smi);

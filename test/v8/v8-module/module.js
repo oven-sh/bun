@@ -69,6 +69,26 @@ module.exports = debugMode => {
     }
     return refs;
   }
+  // What the weak callbacks did so far.
+  const weakEvents = [];
+  // The test compares the count, so a run that falls short shows by how much.
+  const printCount = (description, state, number, count) =>
+    console.log(`${description}: ${number} of ${count} ${state}`);
+  function takeWeakEvents() {
+    weakEvents.push(...nativeModule.weak_take_events());
+    return weakEvents.splice(0);
+  }
+  async function collectUntil(done) {
+    for (let turn = 0; turn < 10 && !done(); turn++) {
+      await nextTurn();
+      collectGarbage();
+    }
+    await nextTurn();
+  }
+  async function collectUntilWeakEvents(count) {
+    await collectUntil(() => (weakEvents.push(...nativeModule.weak_take_events()), weakEvents.length >= count));
+    return takeWeakEvents();
+  }
   // Runs a function of this module in a Worker, which main.js starts like the main thread. Resolves with what the Worker posted, once it has exited.
   function runInWorker(name, ...args) {
     const { promise, resolve, reject } = Promise.withResolvers();
@@ -547,6 +567,623 @@ module.exports = debugMode => {
     global_leave_one_after_peak(peak) {
       nativeModule.global_hold_many_briefly(peak, {});
       nativeModule.global_leave({ name: "left set when the Worker exits" });
+    },
+
+    test_v8_weak_object_wrap() {
+      const CountedWrap = nativeModule.counted_wrap_class();
+      const count = 1001;
+      const referenced = Array.from({ length: 10 }, () => new CountedWrap(true));
+      // Returns before the first collection, so that only their weak Persistents refer to the objects.
+      function makeGarbage() {
+        for (let i = 0; i < count; i++) new CountedWrap(false);
+      }
+      (async () => {
+        makeGarbage();
+        const counts = () => nativeModule.counted_wraps_destroyed_counts();
+        await collectUntil(() => counts()[0] >= count);
+        const [destroyed, destroyedWhileReferenced] = counts();
+        printCount("instances of a node::ObjectWrap class whose objects are garbage", "destroyed", destroyed, count);
+        console.log("instances destroyed while JS refers to their objects:", destroyedWhileReferenced);
+        console.log(
+          "the Persistent of each of those is weak:",
+          referenced.every(wrap => wrap.isWeak()),
+        );
+        console.log(
+          "handle() of each of those is its object:",
+          referenced.every(wrap => wrap.handleIsThis()),
+        );
+      })();
+    },
+
+    test_v8_weak_object_wrap_ref() {
+      const CountedWrap = nativeModule.counted_wrap_class();
+      const destroyed = () => nativeModule.counted_wraps_destroyed_counts()[0];
+      // Only the Persistent of the instance refers to the object once this returns.
+      function refNewInstance() {
+        const wrap = new CountedWrap(false);
+        const before = wrap.isWeak();
+        wrap.ref();
+        console.log("the Persistent is weak before Ref():", before, "and after it:", wrap.isWeak());
+      }
+      (async () => {
+        refNewInstance();
+        for (let turn = 0; turn < 4; turn++) {
+          await nextTurn();
+          collectGarbage();
+        }
+        await nextTurn();
+        console.log("instances destroyed after Ref():", destroyed());
+        nativeModule.counted_wrap_unref_reffed();
+        await collectUntil(() => destroyed() >= 1);
+        console.log("instances destroyed after Unref():", destroyed());
+      })();
+    },
+
+    // Bun only. With BUN_JSC_collectContinuously, collections end inside the native calls.
+    test_v8_weak_object_wrap_churn(rounds) {
+      const CountedWrap = nativeModule.counted_wrap_class();
+      function makeAndCall() {
+        let intact = 0;
+        for (let round = 0; round < rounds; round++) {
+          let wrap = new CountedWrap(false);
+          wrap.round = round;
+          const garbage = [];
+          // Once `wrap` is dropped, only the Local that handle() returned to the addon refers to the object.
+          const handle = nativeModule.counted_wrap_handle_of_newest(() => {
+            wrap = undefined;
+            garbage.push({ round }, [round], `${round}`);
+          });
+          if (handle.round === round) intact++;
+        }
+        return intact;
+      }
+      (async () => {
+        const intact = makeAndCall();
+        const destroyed = () => nativeModule.counted_wraps_destroyed_counts()[0];
+        await collectUntil(() => destroyed() >= rounds);
+        printCount("instances whose handle() was their object after a call into JS", "intact", intact, rounds);
+        printCount("instances whose objects are garbage", "destroyed", destroyed(), rounds);
+      })();
+    },
+
+    test_v8_weak_callbacks() {
+      // Returns before the first collection, so that only the weak Globals refer to the objects.
+      function hold() {
+        nativeModule.weak_hold({}, "a Global with one pass", false);
+        nativeModule.weak_hold({}, "a Global with two passes", true);
+        const shared = {};
+        nativeModule.weak_hold(shared, "the first Global of an object", false);
+        nativeModule.weak_hold(shared, "the second Global of that object", true);
+        nativeModule.weak_hold_with_second_set_weak({}, "a Global that was made weak twice");
+      }
+      (async () => {
+        hold();
+        const events = await collectUntilWeakEvents(7);
+        // The order of the callbacks of different Globals is not specified.
+        for (const event of events.toSorted()) console.log(event);
+        const inOrder = ["a Global with two passes", "the second Global of that object"].every(name => {
+          const first = events.indexOf(`first pass of ${name}`);
+          return first !== -1 && first < events.indexOf(`second pass of ${name}`);
+        });
+        console.log("each second pass ran after its first pass:", inOrder);
+      })();
+    },
+
+    test_v8_weak_callback_destroys_globals() {
+      const count = 100;
+      // Only the strong Globals of the holder refer to these once this returns.
+      function hold() {
+        const others = Array.from({ length: count }, (_, i) => ({ i }));
+        nativeModule.weak_hold({}, "a Global whose callback destroys other Globals", false, ...others);
+        return others.map(other => new WeakRef(other));
+      }
+      (async () => {
+        const refs = hold();
+        const events = await collectUntilWeakEvents(1);
+        console.log(events.join("\n"));
+        printCount(
+          "values of the Globals that a weak callback destroyed",
+          "collected",
+          await collect(refs, count),
+          count,
+        );
+      })();
+    },
+
+    test_v8_weak_internal_fields() {
+      (async () => {
+        nativeModule.weak_hold_with_internal_fields("an object with two pointers", 2, 2);
+        nativeModule.weak_hold_with_internal_fields("an object with one pointer and one unset field", 2, 1);
+        nativeModule.weak_hold_with_internal_fields("an object with one field", 1, 1);
+        nativeModule.weak_hold_with_internal_fields("an object with three pointers", 3, 3);
+        nativeModule.weak_hold_with_internal_fields("an object without internal fields", 0, 0);
+        nativeModule.weak_hold_with_internal_fields("an object whose first pointer a value replaced", 2, 2, 0);
+        nativeModule.weak_hold_with_internal_fields("an object whose second pointer a value replaced", 2, 2, 1);
+        nativeModule.weak_hold_with_internal_fields(
+          "an object with two pointers and a second pass",
+          2,
+          2,
+          undefined,
+          true,
+        );
+        const events = await collectUntilWeakEvents(9);
+        for (const event of events.toSorted()) console.log(event);
+      })();
+    },
+
+    test_v8_weak_local_keeps_value() {
+      // Only the weak Globals and the Locals of the native call refer to the objects once `drop` has run.
+      function readLocals(reset) {
+        const objects = Array.from({ length: 100 }, (_, index) => ({ index }));
+        objects.forEach(object => nativeModule.weak_hold_for_local(object));
+        nativeModule.weak_locals_outlive_collections(
+          () => {
+            objects.length = 0;
+            collectGarbage();
+            collectGarbage();
+          },
+          reset,
+          // A Local of a freed object then reads one of these.
+          () => void (globalThis.filler = Array.from({ length: 20_000 }, () => ({ index: -1 }))),
+        );
+      }
+      (async () => {
+        readLocals(false);
+        const events = await collectUntilWeakEvents(100);
+        printCount("weak callbacks of those Globals once the call had returned", "ran", events.length, 100);
+        readLocals(true);
+        collectGarbage();
+        console.log("weak callbacks of the Globals that were reset:", takeWeakEvents().length);
+      })();
+    },
+
+    test_v8_weak_return_value() {
+      const ofReferenced = () => nativeModule.weak_counted_callbacks()[1];
+      const returned = [];
+      // Only the return value of the native call refers to the object once `drop` has run.
+      function readReturnValue(reset) {
+        let object = { name: reset ? "of a weak Global that was then reset" : "of a weak Global" };
+        nativeModule.weak_hold_counted(object, true, false);
+        returned.push(
+          nativeModule.weak_return_global(
+            () => {
+              object = undefined;
+            },
+            reset,
+            // The return value then is one of these, if the collection freed the object.
+            () => void (globalThis.filler = Array.from({ length: 20_000 }, () => ({ name: "another object" }))),
+          ),
+        );
+        console.log(`the return value is the object ${returned.at(-1).name}, after ${ofReferenced()} weak callbacks`);
+      }
+      (async () => {
+        readReturnValue(false);
+        readReturnValue(true);
+        returned.length = 0;
+        await collectUntil(() => ofReferenced() >= 1);
+        console.log("weak callbacks once nothing refers to the objects:", ofReferenced());
+      })();
+    },
+
+    test_v8_weak_collection_with_exception_pending() {
+      const passes = () => {
+        const [first, , , second] = nativeModule.weak_counted_callbacks();
+        return { first, second };
+      };
+      // Returns before the collection, so that only the weak Globals refer to the objects.
+      function hold() {
+        for (let i = 0; i < 100; i++) nativeModule.weak_hold_counted({ i }, false, true);
+      }
+      (async () => {
+        hold();
+        try {
+          nativeModule.weak_throw_and_collect("thrown before the collection");
+          console.log("the native call did not throw");
+        } catch (error) {
+          console.log("caught:", error.message);
+        }
+        await collectUntil(() => passes().second >= 100);
+        console.log("passes in the end:", JSON.stringify(passes()));
+      })();
+    },
+
+    test_v8_weak_first_pass_that_does_not_reset_first() {
+      (async () => {
+        (() => {
+          nativeModule.weak_hold_for_first_pass({}, "a Global whose callback calls ClearWeak()", "clears weak");
+          nativeModule.weak_hold_for_first_pass({}, "a Global whose callback calls SetWeak()", "sets weak and moves");
+          const CountedWrap = nativeModule.counted_wrap_class();
+          new CountedWrap(false).deleteWhenCollected();
+        })();
+        const destroyed = () => nativeModule.counted_wraps_destroyed_counts()[0];
+        const events = [];
+        await collectUntil(() => (events.push(...takeWeakEvents()), events.length >= 2 && destroyed() >= 1));
+        for (const event of events.toSorted()) console.log(event);
+        console.log("instances that a weak callback of the addon deleted:", destroyed());
+      })();
+    },
+
+    test_v8_weak_without_callback_is_empty_for_callbacks() {
+      (async () => {
+        (() => nativeModule.weak_hold_for_first_pass({}, "a Global", "around a Global without a callback"))();
+        const events = await collectUntilWeakEvents(2);
+        for (const event of events.toSorted()) console.log(event);
+      })();
+    },
+
+    test_v8_weak_second_pass_collects() {
+      (async () => {
+        nativeModule.weak_two_pass_setup();
+        const counters = () => nativeModule.weak_two_pass_counters();
+        await collectUntil(() => counters()[0] === 0);
+        const [instances, nested, failedChecks, firstPasses, secondPasses] = counters();
+        console.log("weak Globals whose second pass has not run:", instances);
+        console.log("second passes that started inside another second pass:", nested);
+        console.log("checks that failed:", failedChecks);
+        console.log("first passes:", firstPasses, "second passes:", secondPasses);
+      })();
+    },
+
+    // Bun only: V8 does not allow JavaScript in a second pass.
+    test_v8_weak_second_pass_throws() {
+      process.on("uncaughtException", error => console.log("uncaught exception:", error.message));
+      (() => {
+        nativeModule.weak_hold_calling({}, "the Global whose function returns", () => {});
+        nativeModule.weak_hold_calling({}, "the Global whose function throws", () => {
+          throw new Error("thrown in a second pass");
+        });
+        nativeModule.weak_hold_calling({}, "another Global whose function returns", () => {});
+      })();
+      (async () => {
+        const events = await collectUntilWeakEvents(3);
+        for (const event of events.toSorted()) console.log(event);
+      })();
+    },
+
+    // Bun only: V8 does not allow JavaScript in a second pass.
+    test_v8_weak_second_pass_exits_worker() {
+      (async () => {
+        await runInWorker("weak_second_pass_exits_in_worker");
+        const [firstPasses, , , dueAtCleanupHook] = nativeModule.weak_exit_counts();
+        for (const event of nativeModule.weak_take_events()) console.log(event);
+        console.log("the script of the Worker ran on after the collection:", firstPasses !== -1);
+        console.log("second passes that were due when a cleanup hook of the Worker ran:", dueAtCleanupHook);
+      })();
+    },
+
+    weak_second_pass_exits_in_worker() {
+      nativeModule.weak_watch_exit();
+      // Returns before the collection, so that only the weak Globals refer to the objects. The second passes run last first.
+      (() => {
+        for (let i = 0; i < 10; i++) nativeModule.weak_hold_counted({ i }, false, true);
+        nativeModule.weak_hold_calling({}, "the Global whose function calls process.exit()", () => process.exit(0));
+      })();
+      nativeModule.weak_collect();
+      nativeModule.weak_note_counts_before_exit();
+    },
+
+    test_v8_weak_other_thread() {
+      (async () => {
+        const refs = (() => {
+          const reset = { name: "of a weak Global that another thread reset" };
+          const moved = { name: "of a weak Global that another thread moved" };
+          nativeModule.weak_reset_on_another_thread(reset);
+          nativeModule.weak_move_on_another_thread(moved);
+          return [new WeakRef(reset), new WeakRef(moved)];
+        })();
+        printCount(
+          "values of the weak Globals that another thread reset or moved",
+          "collected",
+          await collect(refs, 2),
+          2,
+        );
+        const [callbacks, intact] = nativeModule.weak_other_thread_results();
+        console.log("weak callbacks of the Global that another thread reset:", callbacks);
+        console.log("the bytes where the Global was before another thread moved it are intact:", intact);
+      })();
+    },
+
+    test_v8_weak_second_passes_before_exit() {
+      (async () => {
+        await runInWorker("weak_second_passes_due_at_exit_in_worker");
+        const [firstPasses, secondPasses, , dueAtCleanupHook] = nativeModule.weak_exit_counts();
+        console.log("second passes were due when the Worker called process.exit():", firstPasses > secondPasses);
+        console.log("second passes that were due when a cleanup hook of the Worker ran:", dueAtCleanupHook);
+      })();
+    },
+
+    weak_second_passes_due_at_exit_in_worker() {
+      nativeModule.weak_watch_exit();
+      // Until a collection that nothing asked for has run first passes. Their second passes wait for the event loop, which does not turn again.
+      for (let i = 0; i < 5_000_000 && nativeModule.weak_second_passes_due() === 0; i++) {
+        nativeModule.weak_hold_counted({ i }, false, true);
+      }
+      nativeModule.weak_note_counts_before_exit();
+      process.exit(0);
+    },
+
+    // Each Ref() and Unref() takes a Persistent out of the weak ones and puts it back.
+    test_v8_weak_object_wrap_ref_unref_many() {
+      const CountedWrap = nativeModule.counted_wrap_class();
+      const destroyed = () => nativeModule.counted_wraps_destroyed_counts()[0];
+      // The functions below return before a collection, so that only this object refers to the instances.
+      const groups = {};
+      const make = name => void (groups[name] = Array.from({ length: 40 }, () => new CountedWrap(false)));
+      function refAndUnref(names, indexes) {
+        for (const name of names) {
+          for (const index of indexes) {
+            groups[name][index].ref();
+            nativeModule.counted_wrap_unref_reffed();
+          }
+        }
+      }
+      const intact = () => [...groups.old, ...groups.young].every(wrap => wrap.isWeak() && wrap.handleIsThis());
+      function dropEverySecond() {
+        for (const name in groups) groups[name] = groups[name].filter((_, index) => index % 2);
+      }
+      (async () => {
+        make("old");
+        collectGarbage();
+        collectGarbage();
+        make("young");
+        // The last, the first and one between of each group, and then some of these again.
+        refAndUnref(["old", "young", "old"], [39, 0, 20, 39, 1]);
+        collectGarbage();
+        console.log("instances destroyed while JS refers to their objects:", destroyed(), "intact:", intact());
+        // The others move up.
+        dropEverySecond();
+        await collectUntil(() => destroyed() >= 40);
+        printCount("instances whose objects are garbage", "destroyed", destroyed(), 40);
+        refAndUnref(["young", "old", "young"], [19, 0, 10, 19, 1]);
+        collectGarbage();
+        console.log("instances destroyed while JS refers to their objects:", destroyed() - 40, "intact:", intact());
+        groups.old = groups.young = [];
+        await collectUntil(() => destroyed() >= 80);
+        printCount("instances whose objects are garbage", "destroyed", destroyed(), 80);
+      })();
+    },
+
+    // Bun only: a collection of only the young objects.
+    test_v8_weak_object_wrap_generations() {
+      const { edenGC, fullGC } = require("bun:jsc");
+      const CountedWrap = nativeModule.counted_wrap_class();
+      const destroyed = () => nativeModule.counted_wraps_destroyed_counts()[0];
+      // The functions below return before a collection, so that only this object refers to the instances.
+      const groups = {};
+      const make = (name, count) => void (groups[name] = Array.from({ length: count }, () => new CountedWrap(false)));
+      function refAndUnref(name, indexes) {
+        for (const index of indexes) {
+          groups[name][index].ref();
+          nativeModule.counted_wrap_unref_reffed();
+        }
+      }
+      const intact = () => [...groups.old, ...groups.young].every(wrap => wrap.isWeak() && wrap.handleIsThis());
+      (async () => {
+        make("old", 100);
+        fullGC();
+        fullGC();
+        // These Persistents are young again, and their objects are old.
+        refAndUnref(
+          "old",
+          Array.from({ length: 20 }, (_, index) => index * 3),
+        );
+        make("garbage", 50);
+        make("young", 100);
+        delete groups.garbage;
+        // No turn of the event loop before this: Bun can start a collection of all objects there.
+        edenGC();
+        printCount(
+          "young instances whose objects are garbage, after a collection of the young objects",
+          "destroyed",
+          destroyed(),
+          50,
+        );
+        refAndUnref("old", [99, 0, 50, 99, 3]);
+        refAndUnref("young", [99, 0, 50, 99, 3]);
+        console.log("intact:", intact());
+        groups.old = groups.young = [];
+        await collectUntil(() => destroyed() >= 250);
+        printCount("all instances, after collections of all objects", "destroyed", destroyed(), 250);
+      })();
+    },
+
+    // Bun only. Nothing asks for a collection: the idle collection of a quiet process ends on the thread of the collector, and the first passes run when the JS thread next takes the heap.
+    test_v8_weak_idle_collection() {
+      const CountedWrap = nativeModule.counted_wrap_class();
+      const count = 1000;
+      globalThis.live = new Map();
+      for (let i = 0; i < 400_000; i++) live.set(i, { id: i, name: "user-" + i, tags: ["a" + i, "b" + i] });
+      globalThis.wraps = Array.from({ length: count }, () => new CountedWrap(false));
+      // Old objects: only a full collection frees them, and the next one is the idle one.
+      collectGarbage();
+      collectGarbage();
+      const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+      (async () => {
+        await sleep(100);
+        globalThis.wraps = undefined;
+        const counts = () => nativeModule.counted_wraps_destroyed_counts();
+        for (let waited = 0; waited < 20_000 && counts()[0] < count; waited += 500) await sleep(500);
+        const [destroyed, , , onAnotherThread] = counts();
+        printCount("instances that an idle collection found dead", "destroyed", destroyed, count);
+        console.log("instances destroyed on another thread than the one that made them:", onAnotherThread);
+      })();
+    },
+
+    test_v8_weak_handle_reuse() {
+      (async () => {
+        const handle = (() => nativeModule.weak_hold({}, "a Global whose callback gives its handle back", false))();
+        const events = await collectUntilWeakEvents(1);
+        console.log(events.join("\n"));
+        nativeModule.global_store({ name: "held by the next Global" });
+        console.log(
+          "the next Global took the handle of the weak one:",
+          nativeModule.global_stored_address() === handle,
+        );
+        console.log("ClearWeak() of the next Global returned", nativeModule.global_clear_weak_of_stored());
+        collectGarbage();
+        console.log("the next Global holds", JSON.stringify(nativeModule.global_stored()));
+        nativeModule.global_reset_stored();
+      })();
+    },
+
+    test_v8_weak_made_strong_or_reset() {
+      (async () => {
+        // Only the Global refers to the object once this returns.
+        const ref = (() => {
+          const object = { name: "held by a Global that was weak" };
+          nativeModule.global_store(object);
+          return new WeakRef(object);
+        })();
+        nativeModule.global_make_stored_weak();
+        console.log("ClearWeak() returned", nativeModule.global_clear_weak_of_stored());
+        report("the value of a Global that was weak and is strong again", "alive", 1 - (await collect([ref], 1)), 1, 1);
+        console.log("the Global holds", JSON.stringify(nativeModule.global_stored()));
+        nativeModule.global_make_stored_weak();
+        nativeModule.global_reset_stored();
+        report("the value of a weak Global that was reset", "collected", await collect([ref], 1), 1, 1);
+        console.log("weak callbacks that ran:", takeWeakEvents().length);
+      })();
+    },
+
+    test_v8_weak_worker_exit(end) {
+      (async () => {
+        await runInWorker("weak_globals_in_worker", end);
+        const [firstPasses, secondPasses, destroyed] = nativeModule.weak_exit_counts();
+        // Node leaves one of the 1000 values of each kind alive.
+        console.log(
+          "weak callbacks for the garbage of the Worker ran before it exited:",
+          firstPasses >= 990 ? true : firstPasses,
+        );
+        console.log("each of them had its second pass:", firstPasses === secondPasses);
+        console.log(
+          "instances of a node::ObjectWrap class were destroyed before it exited:",
+          destroyed >= 990 ? true : destroyed,
+        );
+        const [, ofReferenced, afterCleanupHook] = nativeModule.weak_counted_callbacks();
+        console.log("weak callbacks for the values that JS referred to when the Worker exited:", ofReferenced);
+        console.log("weak callbacks after a cleanup hook of the Worker:", afterCleanupHook);
+      })();
+    },
+
+    weak_globals_in_worker(end) {
+      nativeModule.weak_watch_cleanup_hooks();
+      const CountedWrap = nativeModule.counted_wrap_class();
+      globalThis.referenced = Array.from({ length: 1000 }, (_, i) => ({ i }));
+      for (const value of globalThis.referenced) nativeModule.weak_hold_counted(value, true, true);
+      for (let i = 0; i < 1000; i++) nativeModule.weak_hold_counted({ i }, false, true);
+      for (let i = 0; i < 1000; i++) new CountedWrap(false);
+      // The addon asks for this collection, so the second passes run before it returns.
+      nativeModule.weak_collect();
+      nativeModule.weak_note_counts_before_exit();
+      // No collection has found these values dead when the Worker exits.
+      for (let i = 0; i < 1000; i++) nativeModule.weak_hold_counted({ i }, false, true);
+      if (end === "process.exit()") process.exit(0);
+    },
+
+    test_v8_weak_collect_inside_call() {
+      const count = 200;
+      // Returns before the collection, so that only the weak Globals refer to the objects.
+      function holdGarbage() {
+        for (let i = 0; i < count; i++) nativeModule.weak_hold_counted({ i }, false, true);
+      }
+      (async () => {
+        holdGarbage();
+        let kept = { name: "kept by a Local" };
+        nativeModule.weak_hold_counted(kept, true, false);
+        nativeModule.weak_collect_inside_call(() => {
+          kept = undefined;
+        }, count);
+        const ofReferenced = () => nativeModule.weak_counted_callbacks()[1];
+        await collectUntil(() => ofReferenced() > 0);
+        console.log("first passes for that Global once the call had returned:", ofReferenced());
+      })();
+    },
+
+    // No collection is asked for, and no turn of the event loop ends, until the counts are read.
+    test_v8_weak_deaths_in_a_loop(count) {
+      (async () => {
+        for (let i = 0; i < count; i++) nativeModule.weak_hold_counted({ i }, false, true);
+        const [firstPasses, , , secondPasses] = nativeModule.weak_counted_callbacks();
+        console.error(
+          `${firstPasses} first passes and ${secondPasses} second passes for ${count} values, before the loop ended`,
+        );
+        console.log("first passes before the loop ended:", firstPasses >= count / 4 ? "many" : firstPasses);
+        const secondPassesRan = () => nativeModule.weak_counted_callbacks()[3] >= firstPasses;
+        for (let turn = 0; turn < 10 && !secondPassesRan(); turn++) await nextTurn();
+        console.log("their second passes ran in a later turn of the event loop:", secondPassesRan());
+      })();
+    },
+
+    test_v8_weak_second_passes_of_forced_collection() {
+      // Returns before the collection, so that only the weak Globals refer to the objects.
+      function hold() {
+        for (let i = 0; i < 100; i++) nativeModule.weak_hold_counted({ i }, false, true);
+      }
+      hold();
+      nativeModule.weak_collect();
+      const [firstPasses, , , secondPasses] = nativeModule.weak_counted_callbacks();
+      printCount("first passes before the collection returned", "ran", firstPasses, 100);
+      console.log("each of them had its second pass by then:", firstPasses === secondPasses);
+    },
+
+    test_v8_weak_callback_resets_another() {
+      (async () => {
+        (() => nativeModule.weak_hold_pair({}))();
+        const events = await collectUntilWeakEvents(2);
+        for (const event of events.toSorted()) console.log(event);
+      })();
+    },
+
+    test_v8_weak_callback_makes_a_global() {
+      (async () => {
+        const kept = { name: "kept" };
+        (() => nativeModule.weak_hold_and_recreate({}, kept))();
+        const events = await collectUntilWeakEvents(1);
+        console.log(events.join("\n"));
+        collectGarbage();
+        console.log("the Global then holds the other value:", nativeModule.weak_take_recreated() === kept);
+      })();
+    },
+
+    test_v8_weak_without_callback() {
+      (async () => {
+        let object = { name: "held" };
+        nativeModule.weak_store_without_callback(object);
+        console.log(nativeModule.weak_stored_states());
+        nativeModule.weak_move_stored();
+        console.log(nativeModule.weak_stored_states());
+        collectGarbage();
+        console.log("while JS refers to the value:", nativeModule.weak_stored_states());
+        object = undefined;
+        const emptied = () => nativeModule.weak_stored_states().endsWith("moved to is empty");
+        await collectUntil(emptied);
+        console.log("once the value is garbage:", nativeModule.weak_stored_states());
+      })();
+    },
+
+    // Bun only: prints how far the highest RSS grows over Workers that each leave `count` instances of a node::ObjectWrap class as garbage.
+    test_v8_weak_object_wrap_leak(workers, count) {
+      // The highest RSS that the process has after one of the Workers has exited.
+      async function highestRssAfter(workers) {
+        let highest = 0;
+        for (let i = 0; i < workers; i++) {
+          await runInWorker("counted_wraps_garbage_in_worker", count);
+          highest = Math.max(highest, process.memoryUsage.rss());
+        }
+        return highest;
+      }
+      (async () => {
+        // The first four Workers bring the process to the size that it keeps.
+        const before = await highestRssAfter(4);
+        const after = await highestRssAfter(workers);
+        console.log(JSON.stringify({ deltaMiB: (after - before) / 1024 / 1024 }));
+      })();
+    },
+
+    counted_wraps_garbage_in_worker(count) {
+      const CountedWrap = nativeModule.counted_wrap_class();
+      for (let i = 0; i < count; i++) new CountedWrap(false);
+      collectGarbage();
     },
 
     test_v8_function_template() {

@@ -320,6 +320,8 @@ public:
     std::unique_ptr<v8::shim::GlobalHandleRegistry> v8GlobalHandleRegistry;
 
     void reconcileWeakReferencesAtGCEnd(JSC::VM&, JSC::CollectionScope) final;
+    // On exit, before the cleanup hooks of the environment. Runs the second-pass callbacks that are due.
+    void willRunCleanupHooks();
 
     JSC::DecoderStringTable* decoderStringTable() final { return m_decoderStringTable.get(); }
     void setDecoderStringTable(std::span<const uint8_t>);

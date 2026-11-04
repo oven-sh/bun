@@ -28,6 +28,7 @@ unsafe extern "C" {
     safe fn JSC__VM__reportExtraMemoryAllocated(vm: &VM, owner: JSValue, size: usize);
     safe fn JSC__VM__shrinkFootprint(vm: &VM);
     safe fn JSC__VM__runGC(vm: &VM, sync: bool) -> usize;
+    safe fn JSC__VM__willRunCleanupHooks(vm: &VM);
     safe fn JSC__VM__heapSize(vm: &VM) -> usize;
     safe fn JSC__VM__collectAsync(vm: &VM, full: bool);
     safe fn JSC__VM__collectAsyncIdle(vm: &VM);
@@ -98,6 +99,11 @@ impl VM {
 
     pub fn run_gc(&self, sync: bool) -> usize {
         JSC__VM__runGC(self, sync)
+    }
+
+    /// On exit, before the cleanup hooks of the environment run.
+    pub(crate) fn will_run_cleanup_hooks(&self) {
+        JSC__VM__willRunCleanupHooks(self)
     }
 
     pub(crate) fn heap_size(&self) -> usize {

@@ -2471,6 +2471,8 @@ impl VirtualMachine {
         self.handle.stop();
 
         if self.exit_frees_environment() {
+            // As Node, which turns the event loop, and so runs the second-pass weak callbacks that are due, before the hooks (https://github.com/nodejs/node/blob/v26.12.1/src/env.cc#L1535-L1556).
+            self.global().vm().will_run_cleanup_hooks();
             self.run_cleanup_hooks();
         }
         self.has_run_cleanup_hooks = true;

@@ -5503,6 +5503,11 @@ static NEVER_INLINE SUPPRESS_ASAN void clearStackBelowCaller()
         dead[i] = 0;
 }
 
+void JSC__VM__willRunCleanupHooks(JSC::VM* vm)
+{
+    WebCore::clientData(*vm)->willRunCleanupHooks();
+}
+
 size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 {
     JSC::JSLockHolder lock(vm);

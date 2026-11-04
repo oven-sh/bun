@@ -1,6 +1,7 @@
 #include "V8Isolate.h"
 #include "V8HandleScope.h"
 #include "V8String.h"
+#include "shim/GlobalHandleRegistry.h"
 #include "shim/GlobalInternals.h"
 #include "ZigGlobalObject.h"
 #include "real_v8.h"
@@ -62,6 +63,10 @@ void Isolate::LowMemoryNotification()
 {
     JSC::JSLockHolder lock(vm());
     vm().heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+    // V8 runs the second-pass weak callbacks that are due before this returns (https://github.com/nodejs/node/blob/v26.12.1/deps/v8/src/handles/global-handles.cc#L879-L888).
+    if (auto* registry = shim::GlobalHandleRegistry::ifExists(vm())) {
+        registry->runSecondPasses();
+    }
 }
 
 void Isolate::AutomaticallyRestoreInitialHeapLimit(double)

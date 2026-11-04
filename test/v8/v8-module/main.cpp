@@ -10,11 +10,15 @@
 #include <atomic>
 #include <cinttypes>
 #include <cstdarg>
+#include <cstdio>
 #include <cstring>
 #include <iomanip>
 #include <iostream>
 #include <mutex>
+#include <new>
+#include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 using namespace v8;
@@ -2861,6 +2865,871 @@ void WrapWithCleanupHook::report_at_cleanup(
   node::AddEnvironmentCleanupHook(info.GetIsolate(), report, nullptr);
 }
 
+// What the weak callbacks of the main thread did. A first-pass callback must
+// not call into V8, so JS takes the lines later.
+static std::vector<std::string> weak_events;
+
+void weak_take_events(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<Array> events = Array::New(isolate);
+  for (size_t i = 0; i < weak_events.size(); i++) {
+    events
+        ->Set(context, static_cast<uint32_t>(i),
+              String::NewFromUtf8(isolate, weak_events[i].c_str())
+                  .ToLocalChecked())
+        .Check();
+  }
+  weak_events.clear();
+  info.GetReturnValue().Set(events);
+}
+
+static std::atomic<int> counted_wraps_destroyed{0};
+static std::atomic<int> counted_wraps_destroyed_while_referenced{0};
+// Set by a cleanup hook. No weak callback runs in a Worker after its hooks.
+static std::atomic<bool> weak_cleanup_hook_ran{false};
+static std::atomic<int> counted_wraps_destroyed_after_cleanup_hook{0};
+static std::atomic<int> counted_wraps_destroyed_on_another_thread{0};
+
+class CountedWrap : public node::ObjectWrap {
+public:
+  // new CountedWrap(referenced): `referenced` says that JS keeps the object.
+  static void construct(const FunctionCallbackInfo<Value> &info) {
+    auto *wrap = new CountedWrap();
+    wrap->referenced = info[0]->IsTrue();
+    wrap->Wrap(info.This());
+    newest = wrap;
+  }
+
+  static void is_weak(const FunctionCallbackInfo<Value> &info) {
+    CountedWrap *wrap = Unwrap<CountedWrap>(info.This());
+    info.GetReturnValue().Set(wrap->persistent().IsWeak());
+  }
+
+  // handle() is a Local of the weak Persistent, as in every method of an
+  // addon that uses ObjectWrap.
+  static void handle_is_this(const FunctionCallbackInfo<Value> &info) {
+    CountedWrap *wrap = Unwrap<CountedWrap>(info.This());
+    info.GetReturnValue().Set(
+        wrap->handle(info.GetIsolate())->StrictEquals(info.This()));
+  }
+
+  // counted_wrap_handle_of_newest(drop): the addon finds the instance in its
+  // own state. Once `drop` has run, only handle() refers to the object.
+  static void handle_of_newest(const FunctionCallbackInfo<Value> &info) {
+    Isolate *isolate = info.GetIsolate();
+    Local<Object> handle = newest->handle(isolate);
+    if (info[0]
+            .As<Function>()
+            ->Call(isolate->GetCurrentContext(), Undefined(isolate), 0, nullptr)
+            .IsEmpty()) {
+      return;
+    }
+    info.GetReturnValue().Set(handle);
+  }
+
+  // Ref() and Unref() are protected.
+  static void ref(const FunctionCallbackInfo<Value> &info) {
+    reffed = Unwrap<CountedWrap>(info.This());
+    reffed->Ref();
+  }
+
+  static void unref_reffed(const FunctionCallbackInfo<Value> &info) {
+    reffed->Unref();
+    reffed = nullptr;
+  }
+
+  // An addon that sets a weak callback of its own, which only deletes the
+  // instance. ~ObjectWrap then calls ClearWeak() and Reset() on a Persistent
+  // whose value is dead.
+  static void delete_when_collected(const FunctionCallbackInfo<Value> &info) {
+    CountedWrap *wrap = Unwrap<CountedWrap>(info.This());
+    wrap->persistent().SetWeak(
+        wrap,
+        [](const WeakCallbackInfo<CountedWrap> &data) {
+          delete data.GetParameter();
+        },
+        WeakCallbackType::kParameter);
+  }
+
+  ~CountedWrap() override {
+    counted_wraps_destroyed++;
+    if (std::this_thread::get_id() != thread) {
+      counted_wraps_destroyed_on_another_thread++;
+    }
+    if (referenced) {
+      counted_wraps_destroyed_while_referenced++;
+    }
+    if (weak_cleanup_hook_ran) {
+      counted_wraps_destroyed_after_cleanup_hook++;
+    }
+  }
+
+private:
+  bool referenced = false;
+  std::thread::id thread = std::this_thread::get_id();
+  static CountedWrap *reffed;
+  static CountedWrap *newest;
+};
+CountedWrap *CountedWrap::reffed = nullptr;
+CountedWrap *CountedWrap::newest = nullptr;
+
+void counted_wrap_class(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<FunctionTemplate> tmp =
+      FunctionTemplate::New(isolate, CountedWrap::construct);
+  tmp->InstanceTemplate()->SetInternalFieldCount(1);
+  Local<ObjectTemplate> prototype = tmp->PrototypeTemplate();
+  prototype->Set(String::NewFromUtf8Literal(isolate, "isWeak"),
+                 FunctionTemplate::New(isolate, CountedWrap::is_weak));
+  prototype->Set(String::NewFromUtf8Literal(isolate, "handleIsThis"),
+                 FunctionTemplate::New(isolate, CountedWrap::handle_is_this));
+  prototype->Set(String::NewFromUtf8Literal(isolate, "ref"),
+                 FunctionTemplate::New(isolate, CountedWrap::ref));
+  prototype->Set(
+      String::NewFromUtf8Literal(isolate, "deleteWhenCollected"),
+      FunctionTemplate::New(isolate, CountedWrap::delete_when_collected));
+  info.GetReturnValue().Set(
+      tmp->GetFunction(isolate->GetCurrentContext()).ToLocalChecked());
+}
+
+// Returns [destroyed, destroyed while JS kept them, destroyed after a cleanup
+// hook, destroyed on another thread than the one that made them].
+void counted_wraps_destroyed_counts(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Value> counts[] = {
+      Integer::New(isolate, counted_wraps_destroyed),
+      Integer::New(isolate, counted_wraps_destroyed_while_referenced),
+      Integer::New(isolate, counted_wraps_destroyed_after_cleanup_hook),
+      Integer::New(isolate, counted_wraps_destroyed_on_another_thread),
+  };
+  info.GetReturnValue().Set(Array::New(isolate, counts, 4));
+}
+
+void weak_watch_cleanup_hooks(const FunctionCallbackInfo<Value> &info) {
+  node::AddEnvironmentCleanupHook(
+      info.GetIsolate(), [](void *) { weak_cleanup_hook_ran = true; },
+      nullptr);
+}
+
+struct WeakHolder {
+  Global<Value> global;
+  std::string name;
+  Isolate *isolate;
+  bool second_pass;
+  // Destroyed with the holder.
+  std::vector<Global<Value>> others;
+};
+
+static void weak_holder_second_pass(const WeakCallbackInfo<WeakHolder> &data) {
+  WeakHolder *holder = data.GetParameter();
+  weak_events.push_back("second pass of " + holder->name);
+  delete holder;
+}
+
+static void weak_holder_first_pass(const WeakCallbackInfo<WeakHolder> &data) {
+  WeakHolder *holder = data.GetParameter();
+  std::string event = "first pass of " + holder->name;
+  if (data.GetIsolate() != holder->isolate) {
+    event += " with another isolate";
+  }
+  weak_events.push_back(event);
+  holder->global.Reset();
+  if (holder->second_pass) {
+    data.SetSecondPassCallback(weak_holder_second_pass);
+  } else {
+    delete holder;
+  }
+}
+
+static std::string utf8_of(Isolate *isolate, Local<Value> value) {
+  char buf[256] = {0};
+  value.As<String>()->WriteUtf8V2(isolate, buf, sizeof(buf) - 1);
+  return buf;
+}
+
+// weak_hold(value, name, second_pass, ...others): makes a weak Global of
+// `value`, and strong Globals of `others` that its callback destroys. Returns
+// the address of the weak handle.
+void weak_hold(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  auto *holder = new WeakHolder{Global<Value>(isolate, info[0]),
+                                utf8_of(isolate, info[1]), isolate,
+                                info[2]->IsTrue(), {}};
+  for (int i = 3; i < info.Length(); i++) {
+    holder->others.emplace_back(isolate, info[i]);
+  }
+  holder->global.SetWeak(holder, weak_holder_first_pass,
+                         WeakCallbackType::kParameter);
+  info.GetReturnValue().Set(handle_address(isolate, holder->global));
+}
+
+static void weak_callback_that_was_replaced(const WeakCallbackInfo<int> &data) {
+  weak_events.push_back("the callback that a second SetWeak replaced");
+}
+
+// The second SetWeak replaces the parameter and the callback of the first.
+void weak_hold_with_second_set_weak(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  static int replaced_parameter;
+  auto *holder = new WeakHolder{Global<Value>(isolate, info[0]),
+                                utf8_of(isolate, info[1]), isolate, false, {}};
+  holder->global.SetWeak(&replaced_parameter, weak_callback_that_was_replaced,
+                         WeakCallbackType::kParameter);
+  holder->global.SetWeak(holder, weak_holder_first_pass,
+                         WeakCallbackType::kParameter);
+}
+
+static std::vector<WeakHolder *> weak_holders_for_locals;
+
+// weak_hold_for_local(value): a weak Global that the next
+// weak_locals_outlive_collections() reads a Local from.
+void weak_hold_for_local(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  auto *holder = new WeakHolder{Global<Value>(isolate, info[0]),
+                                "a Global whose value a Local kept", isolate,
+                                false, {}};
+  holder->global.SetWeak(holder, weak_holder_first_pass,
+                         WeakCallbackType::kParameter);
+  weak_holders_for_locals.push_back(holder);
+}
+
+// weak_locals_outlive_collections(drop, reset, fill): once `drop` has run,
+// only the weak Globals and the Locals that were read from them refer to the
+// values. With `reset`, each Global is reset once its Local is read, so only
+// the Locals do. `fill` runs after the collection: it makes objects, which
+// take the memory of any value that the collection freed.
+void weak_locals_outlive_collections(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<String> key = String::NewFromUtf8Literal(isolate, "index");
+  bool reset = info[1]->IsTrue();
+  std::vector<Local<Value>> locals;
+  for (WeakHolder *holder : weak_holders_for_locals) {
+    locals.push_back(holder->global.Get(isolate));
+    if (reset) {
+      holder->global.Reset();
+      delete holder;
+    }
+  }
+  // A callback deletes its holder.
+  weak_holders_for_locals.clear();
+  if (info[0]
+          .As<Function>()
+          ->Call(context, Undefined(isolate), 0, nullptr)
+          .IsEmpty()) {
+    return;
+  }
+  isolate->LowMemoryNotification();
+  if (info[2]
+          .As<Function>()
+          ->Call(context, Undefined(isolate), 0, nullptr)
+          .IsEmpty()) {
+    return;
+  }
+  size_t intact = 0;
+  for (size_t i = 0; i < locals.size(); i++) {
+    if (!locals[i]->IsObject()) {
+      continue;
+    }
+    Local<Value> index;
+    if (locals[i].As<Object>()->Get(context, key).ToLocal(&index) &&
+        index->IsNumber() && index.As<Number>()->Value() == i) {
+      intact++;
+    }
+  }
+  std::cout << "Locals of weak Globals" << (reset ? " that were then reset" : "")
+            << " that still are their objects after the collections: "
+            << intact << " of " << locals.size() << std::endl;
+  std::cout << "weak callbacks that ran while the Locals kept the objects: "
+            << weak_events.size() << std::endl;
+}
+
+struct WeakFieldsHolder {
+  Global<Object> global;
+  std::string name;
+  void *expected[2];
+  bool second_pass;
+};
+
+static std::string
+weak_fields_event(const WeakCallbackInfo<WeakFieldsHolder> &data,
+                  const char *pass) {
+  WeakFieldsHolder *holder = data.GetParameter();
+  std::string event = std::string("internal fields ") + pass + holder->name + ":";
+  for (int i = 0; i < 2; i++) {
+    void *field = data.GetInternalField(i);
+    event += field == holder->expected[i]
+                 ? (field ? " its pointer" : " null")
+                 : " a wrong pointer";
+  }
+  return event;
+}
+
+static void
+weak_fields_second_pass(const WeakCallbackInfo<WeakFieldsHolder> &data) {
+  weak_events.push_back(weak_fields_event(data, "in the second pass of "));
+  delete data.GetParameter();
+}
+
+static void weak_fields_callback(const WeakCallbackInfo<WeakFieldsHolder> &data) {
+  WeakFieldsHolder *holder = data.GetParameter();
+  weak_events.push_back(weak_fields_event(data, "of "));
+  holder->global.Reset();
+  if (holder->second_pass) {
+    data.SetSecondPassCallback(weak_fields_second_pass);
+  } else {
+    delete holder;
+  }
+}
+
+// weak_hold_with_internal_fields(name, field_count, pointer_count,
+// value_field, second_pass): a weak Global of a new object with `field_count`
+// internal fields, of which the first `pointer_count` hold an aligned pointer.
+// The field `value_field`, if it is a number, then gets a value, which
+// replaces its pointer.
+void weak_hold_with_internal_fields(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  int field_count = static_cast<int>(info[1].As<Number>()->Value());
+  int pointer_count = static_cast<int>(info[2].As<Number>()->Value());
+  static int targets[3];
+
+  Local<Object> object;
+  if (field_count == 0) {
+    object = Object::New(isolate);
+  } else {
+    Local<ObjectTemplate> tmp = ObjectTemplate::New(isolate);
+    tmp->SetInternalFieldCount(field_count);
+    object = tmp->NewInstance(context).ToLocalChecked();
+  }
+  auto *holder = new WeakFieldsHolder{Global<Object>(isolate, object),
+                                      utf8_of(isolate, info[0]),
+                                      {nullptr, nullptr},
+                                      info[4]->IsTrue()};
+  for (int i = 0; i < pointer_count; i++) {
+    object->SetAlignedPointerInInternalField(i, &targets[i],
+                                             kEmbedderDataTypeTagDefault);
+    if (i < 2) {
+      holder->expected[i] = &targets[i];
+    }
+  }
+  if (info[3]->IsNumber()) {
+    int value_field = static_cast<int>(info[3].As<Number>()->Value());
+    object->SetInternalField(value_field, Object::New(isolate));
+    if (value_field < 2) {
+      holder->expected[value_field] = nullptr;
+    }
+  }
+  holder->global.SetWeak(holder, weak_fields_callback,
+                         WeakCallbackType::kInternalFields);
+}
+
+static std::atomic<int> weak_counted_first_passes{0};
+static std::atomic<int> weak_counted_first_passes_of_referenced{0};
+static std::atomic<int> weak_counted_first_passes_after_cleanup_hook{0};
+static std::atomic<int> weak_counted_second_passes{0};
+
+struct CountedWeakHolder {
+  Global<Value> global;
+  bool referenced;
+  bool second_pass;
+};
+static CountedWeakHolder *newest_counted_weak_holder;
+
+static void
+counted_weak_second_pass(const WeakCallbackInfo<CountedWeakHolder> &data) {
+  weak_counted_second_passes++;
+  delete data.GetParameter();
+}
+
+static void
+counted_weak_first_pass(const WeakCallbackInfo<CountedWeakHolder> &data) {
+  CountedWeakHolder *holder = data.GetParameter();
+  weak_counted_first_passes++;
+  if (holder->referenced) {
+    weak_counted_first_passes_of_referenced++;
+  }
+  if (weak_cleanup_hook_ran) {
+    weak_counted_first_passes_after_cleanup_hook++;
+  }
+  holder->global.Reset();
+  if (holder->second_pass) {
+    data.SetSecondPassCallback(counted_weak_second_pass);
+  } else {
+    delete holder;
+  }
+}
+
+// weak_hold_counted(value, referenced, second_pass): `referenced` says that
+// JS keeps the value. The callbacks only count, so any thread can run them.
+void weak_hold_counted(const FunctionCallbackInfo<Value> &info) {
+  auto *holder =
+      new CountedWeakHolder{Global<Value>(info.GetIsolate(), info[0]),
+                            info[1]->IsTrue(), info[2]->IsTrue()};
+  holder->global.SetWeak(holder, counted_weak_first_pass,
+                         WeakCallbackType::kParameter);
+  newest_counted_weak_holder = holder;
+}
+
+// Returns [first passes, first passes of referenced values, first passes
+// after a cleanup hook, second passes].
+void weak_counted_callbacks(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Value> counts[] = {
+      Integer::New(isolate, weak_counted_first_passes),
+      Integer::New(isolate, weak_counted_first_passes_of_referenced),
+      Integer::New(isolate, weak_counted_first_passes_after_cleanup_hook),
+      Integer::New(isolate, weak_counted_second_passes),
+  };
+  info.GetReturnValue().Set(Array::New(isolate, counts, 4));
+}
+
+// weak_collect_inside_call(drop, count): reads a Local from the weak Global
+// of the last weak_hold_counted(), calls `drop`, and collects. The values of
+// `count` other weak Globals are garbage by then.
+void weak_collect_inside_call(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  int count = static_cast<int>(info[1].As<Number>()->Value());
+  Local<Value> local = newest_counted_weak_holder->global.Get(isolate);
+  if (info[0]
+          .As<Function>()
+          ->Call(isolate->GetCurrentContext(), Undefined(isolate), 0, nullptr)
+          .IsEmpty()) {
+    return;
+  }
+  int first_passes_before = weak_counted_first_passes;
+  int second_passes_before = weak_counted_second_passes;
+  isolate->LowMemoryNotification();
+  int first_passes = weak_counted_first_passes - first_passes_before;
+  int second_passes = weak_counted_second_passes - second_passes_before;
+  std::cout << "first passes before the collection returned: " << first_passes
+            << " of " << count << std::endl;
+  std::cout << "each of them had its second pass by then: "
+            << (first_passes == second_passes ? "true" : "false") << std::endl;
+  std::cout << "first passes for the Global whose Local is in scope: "
+            << weak_counted_first_passes_of_referenced
+            << ", its Local is an object: "
+            << (local->IsObject() ? "true" : "false") << std::endl;
+}
+
+struct WeakPairHolder {
+  Global<Value> global;
+  std::string name;
+  WeakPairHolder *other;
+};
+
+static void weak_pair_first_pass(const WeakCallbackInfo<WeakPairHolder> &data) {
+  WeakPairHolder *holder = data.GetParameter();
+  weak_events.push_back("first pass of " + holder->name);
+  holder->global.Reset();
+  // The value of this one is dead too: its callback has run, or runs next.
+  holder->other->global.Reset();
+}
+
+// Two weak Globals of one value. The callback of each resets both.
+void weak_hold_pair(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  auto *first = new WeakPairHolder{Global<Value>(isolate, info[0]),
+                                   "the Global that also resets the second",
+                                   nullptr};
+  auto *second = new WeakPairHolder{Global<Value>(isolate, info[0]),
+                                    "the Global that also resets the first",
+                                    first};
+  first->other = second;
+  first->global.SetWeak(first, weak_pair_first_pass,
+                        WeakCallbackType::kParameter);
+  second->global.SetWeak(second, weak_pair_first_pass,
+                         WeakCallbackType::kParameter);
+}
+
+struct RecreatingWeakHolder {
+  Global<Value> global;
+  Global<Value> kept;
+};
+static RecreatingWeakHolder *recreating_weak_holder;
+
+static void
+recreating_first_pass(const WeakCallbackInfo<RecreatingWeakHolder> &data) {
+  RecreatingWeakHolder *holder = data.GetParameter();
+  holder->global.Reset();
+  // From a Global, because a first-pass callback has no handle scope.
+  holder->global.Reset(data.GetIsolate(), holder->kept);
+  weak_events.push_back("first pass that gave its Global another value");
+}
+
+// weak_hold_and_recreate(value, kept): the callback resets the weak Global of
+// `value` and then makes it a Global of `kept`.
+void weak_hold_and_recreate(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  recreating_weak_holder = new RecreatingWeakHolder{
+      Global<Value>(isolate, info[0]), Global<Value>(isolate, info[1])};
+  recreating_weak_holder->global.SetWeak(recreating_weak_holder,
+                                         recreating_first_pass,
+                                         WeakCallbackType::kParameter);
+}
+
+void weak_take_recreated(const FunctionCallbackInfo<Value> &info) {
+  info.GetReturnValue().Set(recreating_weak_holder->global);
+  delete recreating_weak_holder;
+  recreating_weak_holder = nullptr;
+}
+
+// Weak without a callback: V8 empties the Global when the value dies.
+static Global<Value> callbackless_weak_global;
+static Global<Value> moved_callbackless_weak_global;
+
+void weak_store_without_callback(const FunctionCallbackInfo<Value> &info) {
+  callbackless_weak_global.Reset(info.GetIsolate(), info[0]);
+  callbackless_weak_global.SetWeak();
+}
+
+void weak_move_stored(const FunctionCallbackInfo<Value> &info) {
+  moved_callbackless_weak_global = std::move(callbackless_weak_global);
+}
+
+void weak_stored_states(const FunctionCallbackInfo<Value> &info) {
+  auto state_of = [](const Global<Value> &global) {
+    return global.IsEmpty() ? "empty" : global.IsWeak() ? "weak" : "strong";
+  };
+  std::string states = std::string("the Global is ") +
+                       state_of(callbackless_weak_global) +
+                       ", the Global that it moved to is " +
+                       state_of(moved_callbackless_weak_global);
+  info.GetReturnValue().Set(
+      String::NewFromUtf8(info.GetIsolate(), states.c_str()).ToLocalChecked());
+}
+
+// What ~ObjectWrap does in a weak callback that has not reset the Persistent:
+// ClearWeak(), then Reset().
+static void
+weak_first_pass_that_clears_weak(const WeakCallbackInfo<WeakHolder> &data) {
+  WeakHolder *holder = data.GetParameter();
+  void *parameter = holder->global.ClearWeak<void>();
+  weak_events.push_back("first pass of " + holder->name +
+                        ": ClearWeak() returned " +
+                        (parameter == holder ? "the parameter"
+                         : parameter         ? "a wrong pointer"
+                                             : "null"));
+  holder->global.Reset();
+  delete holder;
+}
+
+// SetWeak() again, and a move, before the Global is reset.
+static void weak_first_pass_that_sets_weak_and_moves(
+    const WeakCallbackInfo<WeakHolder> &data) {
+  WeakHolder *holder = data.GetParameter();
+  holder->global.SetWeak(holder, weak_holder_first_pass,
+                         WeakCallbackType::kParameter);
+  Global<Value> moved = std::move(holder->global);
+  moved.Reset();
+  weak_events.push_back("first pass of " + holder->name +
+                        ": the Global is empty after the move = " +
+                        (holder->global.IsEmpty() ? "true" : "false"));
+  delete holder;
+}
+
+// Three weak Globals of one value. The second has no callback, and V8 empties
+// it before it runs the callback of the first or of the third.
+static void
+weak_first_pass_around_callbackless(const WeakCallbackInfo<WeakHolder> &data) {
+  WeakHolder *holder = data.GetParameter();
+  weak_events.push_back(
+      "first pass of " + holder->name + ": the Global without a callback is " +
+      (callbackless_weak_global.IsEmpty() ? "empty" : "not empty"));
+  holder->global.Reset();
+  delete holder;
+}
+
+// weak_hold_for_first_pass(value, name, which): a weak Global of `value` with
+// one of the callbacks above.
+void weak_hold_for_first_pass(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  std::string which = utf8_of(isolate, info[2]);
+  auto hold = [&](const std::string &name,
+                  WeakCallbackInfo<WeakHolder>::Callback callback) {
+    auto *holder =
+        new WeakHolder{Global<Value>(isolate, info[0]), name, isolate, false, {}};
+    holder->global.SetWeak(holder, callback, WeakCallbackType::kParameter);
+  };
+  std::string name = utf8_of(isolate, info[1]);
+  if (which == "clears weak") {
+    hold(name, weak_first_pass_that_clears_weak);
+  } else if (which == "sets weak and moves") {
+    hold(name, weak_first_pass_that_sets_weak_and_moves);
+  } else {
+    hold(name + " that was made weak first", weak_first_pass_around_callbackless);
+    callbackless_weak_global.Reset(isolate, info[0]);
+    callbackless_weak_global.SetWeak();
+    hold(name + " that was made weak last", weak_first_pass_around_callbackless);
+  }
+}
+
+// weak_return_global(drop, reset, fill): the weak Global of the last
+// weak_hold_counted() is the return value, and no Local is read from it. With
+// `reset`, the Global is then reset. Once `drop` has run, only the return
+// value refers to the value. `fill` runs after the collection, as in
+// weak_locals_outlive_collections().
+void weak_return_global(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  CountedWeakHolder *holder = newest_counted_weak_holder;
+  info.GetReturnValue().Set(holder->global);
+  if (info[1]->IsTrue()) {
+    holder->global.Reset();
+    delete holder;
+  }
+  if (info[0]
+          .As<Function>()
+          ->Call(isolate->GetCurrentContext(), Undefined(isolate), 0, nullptr)
+          .IsEmpty()) {
+    return;
+  }
+  isolate->LowMemoryNotification();
+  (void)info[2].As<Function>()->Call(isolate->GetCurrentContext(),
+                                     Undefined(isolate), 0, nullptr);
+}
+
+// A collection that the addon asks for. V8 runs the second passes that are
+// due before it returns.
+void weak_collect(const FunctionCallbackInfo<Value> &info) {
+  info.GetIsolate()->LowMemoryNotification();
+}
+
+// weak_throw_and_collect(message): throws, and then collects while the
+// exception is pending. The second passes that are due must leave the
+// exception to the caller.
+void weak_throw_and_collect(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  isolate->ThrowException(Exception::Error(info[0].As<String>()));
+  isolate->LowMemoryNotification();
+}
+
+// A port of TEST(TwoPassPhantomCallbacksNestedGc) of V8
+// (https://github.com/nodejs/node/blob/v26.12.1/deps/v8/test/cctest/test-api.cc#L4379-L4538).
+// The second pass of three of twenty weak Globals makes another weak Global
+// and collects. No second pass starts inside another one.
+struct TwoPassCounters {
+  int instances = 0;
+  int depth = 0;
+  int nested_second_passes = 0;
+  int failed_checks = 0;
+  int first_passes = 0;
+  int second_passes = 0;
+};
+static TwoPassCounters two_pass_counters;
+
+class TwoPassData {
+public:
+  explicit TwoPassData(Isolate *isolate) {
+    HandleScope scope(isolate);
+    char buffer[40];
+    snprintf(buffer, sizeof(buffer), "%p", static_cast<void *>(this));
+    cell.Reset(isolate, String::NewFromUtf8(isolate, buffer).ToLocalChecked());
+    cell.SetWeak(this, first_pass, WeakCallbackType::kParameter);
+    two_pass_counters.instances++;
+  }
+
+  bool collects_in_second_pass = false;
+
+private:
+  static void check(bool condition) {
+    if (!condition) {
+      two_pass_counters.failed_checks++;
+    }
+  }
+
+  static void first_pass(const WeakCallbackInfo<TwoPassData> &data) {
+    TwoPassData *self = data.GetParameter();
+    check(!self->first_pass_ran && !self->cell.IsEmpty());
+    self->cell.Reset();
+    self->first_pass_ran = true;
+    two_pass_counters.first_passes++;
+    data.SetSecondPassCallback(second_pass);
+  }
+
+  static void second_pass(const WeakCallbackInfo<TwoPassData> &data) {
+    TwoPassData *self = data.GetParameter();
+    Isolate *isolate = data.GetIsolate();
+    if (two_pass_counters.depth++ != 0) {
+      two_pass_counters.nested_second_passes++;
+    }
+    check(self->first_pass_ran && self->cell.IsEmpty());
+    two_pass_counters.second_passes++;
+    two_pass_counters.instances--;
+    bool collects = self->collects_in_second_pass;
+    delete self;
+    if (collects) {
+      new TwoPassData(isolate);
+      isolate->LowMemoryNotification();
+    }
+    two_pass_counters.depth--;
+  }
+
+  Global<String> cell;
+  bool first_pass_ran = false;
+};
+
+// Returns before a collection, so that only the weak Globals refer to their
+// strings.
+void weak_two_pass_setup(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  for (int i = 0; i < 20; i++) {
+    auto *data = new TwoPassData(isolate);
+    data->collects_in_second_pass = i == 5 || i == 10 || i == 15;
+  }
+}
+
+// Returns [instances, second passes that started inside another one, failed
+// checks, first passes, second passes].
+void weak_two_pass_counters(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Value> counts[] = {
+      Integer::New(isolate, two_pass_counters.instances),
+      Integer::New(isolate, two_pass_counters.nested_second_passes),
+      Integer::New(isolate, two_pass_counters.failed_checks),
+      Integer::New(isolate, two_pass_counters.first_passes),
+      Integer::New(isolate, two_pass_counters.second_passes),
+  };
+  info.GetReturnValue().Set(Array::New(isolate, counts, 5));
+}
+
+struct CallingWeakHolder {
+  Global<Value> global;
+  Global<Function> function;
+  std::string name;
+};
+
+// Bun only: V8 does not allow JavaScript in a second pass.
+static void
+calling_second_pass(const WeakCallbackInfo<CallingWeakHolder> &data) {
+  CallingWeakHolder *holder = data.GetParameter();
+  Isolate *isolate = data.GetIsolate();
+  HandleScope scope(isolate);
+  bool threw = holder->function.Get(isolate)
+                   ->Call(isolate->GetCurrentContext(), Undefined(isolate), 0,
+                          nullptr)
+                   .IsEmpty();
+  weak_events.push_back("second pass of " + holder->name + ": the function " +
+                        (threw ? "threw" : "returned"));
+  delete holder;
+}
+
+// weak_hold_calling(value, name, function): the second pass of the weak
+// Global of `value` calls `function`.
+void weak_hold_calling(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  auto *holder = new CallingWeakHolder{
+      Global<Value>(isolate, info[0]),
+      Global<Function>(isolate, info[2].As<Function>()),
+      utf8_of(isolate, info[1])};
+  holder->global.SetWeak(
+      holder,
+      [](const WeakCallbackInfo<CallingWeakHolder> &data) {
+        data.GetParameter()->global.Reset();
+        data.SetSecondPassCallback(calling_second_pass);
+      },
+      WeakCallbackType::kParameter);
+}
+
+static std::atomic<int> weak_callbacks_after_reset_on_another_thread{0};
+
+// weak_reset_on_another_thread(value): a thread of the addon resets a weak
+// Global of `value`. V8 frees the handle there, so its callback never runs.
+void weak_reset_on_another_thread(const FunctionCallbackInfo<Value> &info) {
+  static int parameter;
+  auto *global = new Global<Value>(info.GetIsolate(), info[0]);
+  global->SetWeak(
+      &parameter,
+      [](const WeakCallbackInfo<int> &data) {
+        weak_callbacks_after_reset_on_another_thread++;
+      },
+      WeakCallbackType::kParameter);
+  std::thread([global] {
+    global->Reset();
+    delete global;
+  }).join();
+}
+
+alignas(Global<Value>) static unsigned char
+    bytes_of_global_moved_on_another_thread[sizeof(Global<Value>)];
+
+// weak_move_on_another_thread(value): a thread of the addon moves a Global of
+// `value` that is weak without a callback, and fills the bytes where it was.
+// When the value dies, nothing may be written there.
+void weak_move_on_another_thread(const FunctionCallbackInfo<Value> &info) {
+  auto *global = new (bytes_of_global_moved_on_another_thread)
+      Global<Value>(info.GetIsolate(), info[0]);
+  global->SetWeak();
+  std::thread([global] {
+    // Never deleted: nothing can reset it on the thread of its isolate.
+    new Global<Value>(std::move(*global));
+    global->~Global();
+    memset(bytes_of_global_moved_on_another_thread, 0xAB,
+           sizeof(bytes_of_global_moved_on_another_thread));
+  }).join();
+}
+
+// Returns [weak callbacks of the Globals that another thread reset, whether
+// the bytes where the moved Global was are intact].
+void weak_other_thread_results(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  bool intact = true;
+  for (unsigned char byte : bytes_of_global_moved_on_another_thread) {
+    intact = intact && byte == 0xAB;
+  }
+  Local<Value> results[] = {
+      Integer::New(isolate, weak_callbacks_after_reset_on_another_thread),
+      Boolean::New(isolate, intact),
+  };
+  info.GetReturnValue().Set(Array::New(isolate, results, 2));
+}
+
+static std::atomic<int> weak_first_passes_before_exit{-1};
+static std::atomic<int> weak_second_passes_before_exit{-1};
+static std::atomic<int> counted_wraps_destroyed_before_exit{-1};
+static std::atomic<int> weak_second_passes_due_at_cleanup_hook{-1};
+
+// The second passes of weak_hold_counted() that are due: their first passes
+// have run. Allocates nothing, so it starts no collection.
+void weak_second_passes_due(const FunctionCallbackInfo<Value> &info) {
+  info.GetReturnValue().Set(weak_counted_first_passes -
+                            weak_counted_second_passes);
+}
+
+// weak_watch_exit(): adds a cleanup hook that records how many second passes
+// are due when it runs.
+void weak_watch_exit(const FunctionCallbackInfo<Value> &info) {
+  node::AddEnvironmentCleanupHook(
+      info.GetIsolate(),
+      [](void *) {
+        weak_second_passes_due_at_cleanup_hook =
+            weak_counted_first_passes - weak_counted_second_passes;
+      },
+      nullptr);
+}
+
+// A Worker calls this before it ends. The main thread reads the counts once
+// the Worker has exited.
+void weak_note_counts_before_exit(const FunctionCallbackInfo<Value> &info) {
+  weak_first_passes_before_exit = weak_counted_first_passes.load();
+  weak_second_passes_before_exit = weak_counted_second_passes.load();
+  counted_wraps_destroyed_before_exit = counted_wraps_destroyed.load();
+}
+
+// Returns [first passes, second passes, destroyed instances of CountedWrap,
+// all three before the Worker ended, and the second passes that were due when
+// its cleanup hook ran].
+void weak_exit_counts(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Value> counts[] = {
+      Integer::New(isolate, weak_first_passes_before_exit),
+      Integer::New(isolate, weak_second_passes_before_exit),
+      Integer::New(isolate, counted_wraps_destroyed_before_exit),
+      Integer::New(isolate, weak_second_passes_due_at_cleanup_hook),
+  };
+  info.GetReturnValue().Set(Array::New(isolate, counts, 4));
+}
+
 void test_v8_global_wrapper_class_id(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
   static int parameter;
@@ -2979,9 +3848,6 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "global_make_stored_weak", global_make_stored_weak);
   NODE_SET_METHOD(exports, "global_clear_weak_of_stored",
                   global_clear_weak_of_stored);
-  NODE_SET_METHOD(exports, "test_v8_global_wrapper_class_id",
-                  test_v8_global_wrapper_class_id);
-  NODE_SET_METHOD(exports, "test_v8_weak_is_weak", test_v8_weak_is_weak);
   NODE_SET_METHOD(exports, "global_reset_twice", global_reset_twice);
   NODE_SET_METHOD(exports, "global_hold_many_briefly",
                   global_hold_many_briefly);
@@ -3096,6 +3962,57 @@ void initialize(Local<Object> exports, Local<Value> module,
                   WrapWithCleanupHook::create_bare);
   NODE_SET_METHOD(exports, "report_wraps_at_cleanup",
                   WrapWithCleanupHook::report_at_cleanup);
+  NODE_SET_METHOD(exports, "weak_take_events", weak_take_events);
+  NODE_SET_METHOD(exports, "counted_wrap_class", counted_wrap_class);
+  NODE_SET_METHOD(exports, "counted_wrap_unref_reffed",
+                  CountedWrap::unref_reffed);
+  NODE_SET_METHOD(exports, "counted_wrap_handle_of_newest",
+                  CountedWrap::handle_of_newest);
+  NODE_SET_METHOD(exports, "counted_wraps_destroyed_counts",
+                  counted_wraps_destroyed_counts);
+  NODE_SET_METHOD(exports, "weak_watch_cleanup_hooks",
+                  weak_watch_cleanup_hooks);
+  NODE_SET_METHOD(exports, "weak_hold", weak_hold);
+  NODE_SET_METHOD(exports, "weak_hold_with_second_set_weak",
+                  weak_hold_with_second_set_weak);
+  NODE_SET_METHOD(exports, "weak_hold_for_local", weak_hold_for_local);
+  NODE_SET_METHOD(exports, "weak_locals_outlive_collections",
+                  weak_locals_outlive_collections);
+  NODE_SET_METHOD(exports, "weak_hold_with_internal_fields",
+                  weak_hold_with_internal_fields);
+  NODE_SET_METHOD(exports, "test_v8_weak_is_weak", test_v8_weak_is_weak);
+  NODE_SET_METHOD(exports, "weak_hold_counted", weak_hold_counted);
+  NODE_SET_METHOD(exports, "weak_counted_callbacks", weak_counted_callbacks);
+  NODE_SET_METHOD(exports, "weak_collect_inside_call",
+                  weak_collect_inside_call);
+  NODE_SET_METHOD(exports, "weak_hold_pair", weak_hold_pair);
+  NODE_SET_METHOD(exports, "weak_hold_and_recreate", weak_hold_and_recreate);
+  NODE_SET_METHOD(exports, "weak_take_recreated", weak_take_recreated);
+  NODE_SET_METHOD(exports, "weak_store_without_callback",
+                  weak_store_without_callback);
+  NODE_SET_METHOD(exports, "weak_move_stored", weak_move_stored);
+  NODE_SET_METHOD(exports, "weak_stored_states", weak_stored_states);
+  NODE_SET_METHOD(exports, "weak_hold_for_first_pass",
+                  weak_hold_for_first_pass);
+  NODE_SET_METHOD(exports, "weak_return_global", weak_return_global);
+  NODE_SET_METHOD(exports, "weak_collect", weak_collect);
+  NODE_SET_METHOD(exports, "weak_throw_and_collect", weak_throw_and_collect);
+  NODE_SET_METHOD(exports, "weak_two_pass_setup", weak_two_pass_setup);
+  NODE_SET_METHOD(exports, "weak_two_pass_counters", weak_two_pass_counters);
+  NODE_SET_METHOD(exports, "weak_hold_calling", weak_hold_calling);
+  NODE_SET_METHOD(exports, "weak_reset_on_another_thread",
+                  weak_reset_on_another_thread);
+  NODE_SET_METHOD(exports, "weak_move_on_another_thread",
+                  weak_move_on_another_thread);
+  NODE_SET_METHOD(exports, "weak_other_thread_results",
+                  weak_other_thread_results);
+  NODE_SET_METHOD(exports, "weak_second_passes_due", weak_second_passes_due);
+  NODE_SET_METHOD(exports, "weak_watch_exit", weak_watch_exit);
+  NODE_SET_METHOD(exports, "weak_note_counts_before_exit",
+                  weak_note_counts_before_exit);
+  NODE_SET_METHOD(exports, "weak_exit_counts", weak_exit_counts);
+  NODE_SET_METHOD(exports, "test_v8_global_wrapper_class_id",
+                  test_v8_global_wrapper_class_id);
 
   // without this, node hits a UAF deleting the Global
   // (Context::GetIsolate was removed in V8 14.6; the module initializer runs
@@ -3104,6 +4021,13 @@ void initialize(Local<Object> exports, Local<Value> module,
                                   GlobalTestWrapper::cleanup, nullptr);
   node::AddEnvironmentCleanupHook(Isolate::GetCurrent(), reset_test_globals,
                                   nullptr);
+  node::AddEnvironmentCleanupHook(
+      Isolate::GetCurrent(),
+      [](void *) {
+        callbackless_weak_global.Reset();
+        moved_callbackless_weak_global.Reset();
+      },
+      nullptr);
 }
 
 NODE_MODULE_CONTEXT_AWARE(NODE_GYP_MODULE_NAME, initialize)

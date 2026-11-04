@@ -1,5 +1,8 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use bun_core::{ZBox, ZStr};
 use bun_paths::{PathBuffer, resolve_path};
+use bun_ptr::BackRef;
 
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
@@ -34,7 +37,9 @@ pub(crate) enum MvState {
     Executing {
         task_count: usize,
         tasks_done: usize,
+        error_signal: AtomicBool,
         tasks: Vec<ShellMvBatchedTask>,
+        err: Option<bun_sys::Error>,
     },
     Done,
     WaitingWriteErr {
@@ -230,12 +235,14 @@ impl Mv {
                     }
                     tasks.push(ShellMvBatchedTask {
                         cmd,
+                        idx: i,
                         sources: srcs,
                         target: ZBox::from_bytes(target),
                         target_fd: maybe_fd,
                         no_clobber,
                         cwd,
-                        errs: Vec::new(),
+                        error_signal: None,
+                        err: None,
                         task: ShellTask::new(evtloop),
                     });
                 }
@@ -243,11 +250,22 @@ impl Mv {
                 Self::state_mut(interp, cmd).state = MvState::Executing {
                     task_count,
                     tasks_done: 0,
+                    error_signal: AtomicBool::new(false),
                     tasks,
+                    err: None,
                 };
+                // Now that the AtomicBool has its final address, point
+                // every task at it and schedule.
                 let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
-                if let MvState::Executing { tasks, .. } = &mut Self::state_mut(interp, cmd).state {
+                if let MvState::Executing {
+                    error_signal,
+                    tasks,
+                    ..
+                } = &mut Self::state_mut(interp, cmd).state
+                {
+                    let sig = BackRef::new(&*error_signal);
                     for t in tasks.iter_mut() {
+                        t.error_signal = Some(sig);
                         t.task.interp = interp_ptr;
                         // SAFETY: `t` lives in `MvState::Executing::tasks`,
                         // which is fully populated before any task is scheduled
@@ -293,38 +311,42 @@ impl Mv {
         Self::next(interp, cmd).run(interp);
     }
 
-    fn batched_move_task_done(interp: &Interpreter, cmd: NodeId) {
-        let errs: Vec<bun_sys::Error> = {
+    fn batched_move_task_done(interp: &Interpreter, cmd: NodeId, task_idx: usize) {
+        let (all_done, had_err) = {
             let MvState::Executing {
                 task_count,
                 tasks_done,
+                error_signal,
                 tasks,
+                err,
             } = &mut Self::state_mut(interp, cmd).state
             else {
                 unreachable!()
             };
+            if let Some(e) = tasks[task_idx].err.take() {
+                error_signal.store(true, Ordering::SeqCst);
+                if err.is_none() {
+                    *err = Some(e);
+                }
+            }
             *tasks_done += 1;
-            if *tasks_done < *task_count {
+            (*tasks_done >= *task_count, err.is_some())
+        };
+        if all_done {
+            if had_err {
+                let e = match &mut Self::state_mut(interp, cmd).state {
+                    MvState::Executing { err, .. } => err.take().unwrap(),
+                    _ => unreachable!(),
+                };
+                // The failing rename's errno becomes the shell exit code.
+                let exit_code = e.errno as ExitCode;
+                let buf = Builtin::task_error_to_string(interp, cmd, Kind::Mv, &e).to_vec();
+                Self::write_failing_error(interp, cmd, &buf, exit_code).run(interp);
                 return;
             }
-            // The tasks finish in any order. Report in the order of the operands.
-            tasks
-                .iter_mut()
-                .flat_map(|task| core::mem::take(&mut task.errs))
-                .collect()
-        };
-        let Some(first) = errs.first() else {
             Self::state_mut(interp, cmd).state = MvState::Done;
             Self::next(interp, cmd).run(interp);
-            return;
-        };
-        // The first failing rename's errno becomes the shell exit code.
-        let exit_code = first.errno as ExitCode;
-        let mut buf: Vec<u8> = Vec::new();
-        for e in &errs {
-            buf.extend_from_slice(Builtin::task_error_to_string(interp, cmd, Kind::Mv, e));
         }
-        Self::write_failing_error(interp, cmd, &buf, exit_code).run(interp);
     }
 
     fn parse_opts(interp: &Interpreter, cmd: NodeId) -> Result<(), MvParseError> {
@@ -419,13 +441,21 @@ impl ShellMvCheckTargetTask {
 /// renameat() each source into the target.
 pub(crate) struct ShellMvBatchedTask {
     pub(crate) cmd: NodeId,
+    /// Index into `MvState::Executing::tasks` so the main-thread completion
+    /// can route to `Mv::batched_move_task_done`.
+    pub(crate) idx: usize,
     pub(crate) sources: Vec<ZBox>,
     pub(crate) target: ZBox,
     pub(crate) target_fd: Option<bun_sys::Fd>,
     pub(crate) no_clobber: bool,
     pub(crate) cwd: bun_sys::Fd,
-    /// One error per source that was not moved, in the order of `sources`.
-    pub(crate) errs: Vec<bun_sys::Error>,
+    /// Back-reference into `MvState::Executing::error_signal`. The owning
+    /// `MvState` outlives every batched task (tasks are joined / counted in
+    /// `batched_move_task_done` before the state transitions), so the
+    /// `BackRef` invariant holds. `None` only between construction and
+    /// scheduling — never observed by `run_from_thread_pool`.
+    pub(crate) error_signal: Option<BackRef<AtomicBool>>,
+    pub(crate) err: Option<bun_sys::Error>,
     pub task: ShellTask,
 }
 
@@ -448,7 +478,7 @@ impl ShellMvBatchedTask {
                 this.no_clobber,
                 &mut buf,
             ) {
-                this.errs.push(e);
+                this.err = Some(e);
             }
             return;
         }
@@ -460,7 +490,7 @@ impl ShellMvBatchedTask {
             &this.target,
             this.no_clobber,
         ) {
-            this.errs.push(if e.get_errno() == bun_sys::E::ENOTDIR {
+            this.err = Some(if e.get_errno() == bun_sys::E::ENOTDIR {
                 e.with_path(this.target.as_bytes())
             } else {
                 e
@@ -719,7 +749,7 @@ impl ShellMvBatchedTask {
     }
 
     /// `renameat(cwd, src, target_fd, basename(src))`. A free fn over the
-    /// fields it touches so `src` can borrow `self.sources[_]` while `self.errs`
+    /// fields it touches so `src` can borrow `self.sources[_]` while `self.err`
     /// is written by the caller.
     fn move_in_dir(
         cwd: bun_sys::Fd,
@@ -757,7 +787,15 @@ impl ShellMvBatchedTask {
         // the multi-source-into-non-directory case before scheduling.
         let dir = self.target_fd.expect("target_fd set for multi-source mv");
         for i in 0..self.sources.len() {
-            // A source that fails is reported, and the others are still moved.
+            if self
+                .error_signal
+                .is_some_and(|sig| sig.load(Ordering::SeqCst))
+            {
+                // Another batch hit an error — abort the move loop, but still
+                // post back to the main thread so `tasks_done` reaches
+                // `task_count` and `mv` doesn't hang.
+                return;
+            }
             if let Err(e) = Self::move_in_dir(
                 self.cwd,
                 dir,
@@ -766,7 +804,8 @@ impl ShellMvBatchedTask {
                 self.no_clobber,
                 &mut buf,
             ) {
-                self.errs.push(e);
+                self.err = Some(e);
+                return;
             }
         }
     }
@@ -822,6 +861,6 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellMvBatchedTask {
         // SAFETY: `ShellTask::run_from_main_thread` dispatch contract — `this`
         // is a live `ShellMvBatchedTask` held in `MvState::Executing::tasks`.
         let this = unsafe { this.as_ref() }.unwrap();
-        Mv::batched_move_task_done(interp, this.cmd);
+        Mv::batched_move_task_done(interp, this.cmd, this.idx);
     }
 }

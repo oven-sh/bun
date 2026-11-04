@@ -1,0 +1,170 @@
+status: 0
+script: 7bfad7cb61d4be47
+source: 846994a96fe9587e
+---
+cls.__name__ [cls=Meta, name='x'] => C
+name [cls=Meta, name='x'] => x
+show(getattr(cls, name)) [cls=Meta, name='x'] => 5
+cls.__name__ [cls=Meta, name='y'] => C
+name [cls=Meta, name='y'] => y
+cls.__name__ [cls=Meta, name='y'] => C
+name [cls=Meta, name='y'] => y
+AttributeError e [cls=Meta, name='y'] => 'Meta' object has no attribute 'y'
+cls.__name__ [cls=Meta, name='hidden'] => C
+name [cls=Meta, name='hidden'] => hidden
+cls.__name__ [cls=Meta, name='hidden'] => C
+name [cls=Meta, name='hidden'] => hidden
+AttributeError e [cls=Meta, name='hidden'] => hidden
+cls.__name__ [cls=Meta, name='shadowed'] => C
+name [cls=Meta, name='shadowed'] => shadowed
+show(getattr(cls, name)) [cls=Meta, name='shadowed'] => "the class's"
+cls.__name__ [cls=Meta, name='data'] => C
+name [cls=Meta, name='data'] => data
+show(getattr(cls, name)) [cls=Meta, name='data'] => 'the property of the metaclass'
+cls.__name__ [cls=Meta, name='m'] => C
+name [cls=Meta, name='m'] => m
+show(getattr(cls, name)) [cls=Meta, name='m'] => <function C.m
+cls.__name__ [cls=Meta, name='cm'] => C
+name [cls=Meta, name='cm'] => cm
+show(getattr(cls, name)) [cls=Meta, name='cm'] => <classmethod(<function C.cm
+cls.__name__ [cls=Meta, name='sm'] => C
+name [cls=Meta, name='sm'] => sm
+show(getattr(cls, name)) [cls=Meta, name='sm'] => <staticmethod(<function C.sm
+cls.__name__ [cls=Meta, name='p'] => C
+name [cls=Meta, name='p'] => p
+show(getattr(cls, name)) [cls=Meta, name='p'] => <property object
+cls.__name__ [cls=Meta, name='of_meta'] => C
+name [cls=Meta, name='of_meta'] => of_meta
+show(getattr(cls, name)) [cls=Meta, name='of_meta'] => <bound method Meta.of_meta of <class '__main__.C'>>
+cls.__name__ [cls=Meta, name='__name__'] => C
+name [cls=Meta, name='__name__'] => __name__
+show(getattr(cls, name)) [cls=Meta, name='__name__'] => 'C'
+cls.__name__ [cls=Meta, name='__mro__'] => C
+name [cls=Meta, name='__mro__'] => __mro__
+show(getattr(cls, name)) [cls=Meta, name='__mro__'] => (<class '__main__.C'>, <class 'object'>)
+cls.__name__ [cls=Meta, name='__module__'] => C
+name [cls=Meta, name='__module__'] => __module__
+show(getattr(cls, name)) [cls=Meta, name='__module__'] => '__main__'
+cls.__name__ [cls=Meta, name='__qualname__'] => C
+name [cls=Meta, name='__qualname__'] => __qualname__
+show(getattr(cls, name)) [cls=Meta, name='__qualname__'] => 'C'
+cls.__name__ [cls=Meta, name='__doc__'] => C
+name [cls=Meta, name='__doc__'] => __doc__
+show(getattr(cls, name)) [cls=Meta, name='__doc__'] => None
+cls.__name__ [cls=Meta, name='mro'] => C
+name [cls=Meta, name='mro'] => mro
+show(getattr(cls, name)) [cls=Meta, name='mro'] => <built-in method mro of Meta object
+cls.__name__ [cls=Meta, name='__class__'] => C
+name [cls=Meta, name='__class__'] => __class__
+show(getattr(cls, name)) [cls=Meta, name='__class__'] => <class '__main__.Meta'>
+cls.__name__ [cls=Meta, name='__subclasses__'] => C
+name [cls=Meta, name='__subclasses__'] => __subclasses__
+show(getattr(cls, name)) [cls=Meta, name='__subclasses__'] => <built-in method __subclasses__ of Meta object
+cls.__name__ [cls=Meta, name='nothing'] => C
+name [cls=Meta, name='nothing'] => nothing
+cls.__name__ [cls=Meta, name='nothing'] => C
+name [cls=Meta, name='nothing'] => nothing
+AttributeError e [cls=Meta, name='nothing'] => 'Meta' object has no attribute 'nothing'
+cls.__name__ [cls=Meta, name='x'] => D
+name [cls=Meta, name='x'] => x
+cls.__name__ [cls=Meta, name='x'] => D
+name [cls=Meta, name='x'] => x
+AttributeError e [cls=Meta, name='x'] => 'Meta' object has no attribute 'x'
+cls.__name__ [cls=Meta, name='y'] => D
+name [cls=Meta, name='y'] => y
+show(getattr(cls, name)) [cls=Meta, name='y'] => 6
+cls.__name__ [cls=Meta, name='hidden'] => D
+name [cls=Meta, name='hidden'] => hidden
+cls.__name__ [cls=Meta, name='hidden'] => D
+name [cls=Meta, name='hidden'] => hidden
+AttributeError e [cls=Meta, name='hidden'] => hidden
+cls.__name__ [cls=Meta, name='shadowed'] => D
+name [cls=Meta, name='shadowed'] => shadowed
+show(getattr(cls, name)) [cls=Meta, name='shadowed'] => "the metaclass's"
+cls.__name__ [cls=Meta, name='data'] => D
+name [cls=Meta, name='data'] => data
+show(getattr(cls, name)) [cls=Meta, name='data'] => 'the property of the metaclass'
+cls.__name__ [cls=Meta, name='m'] => D
+name [cls=Meta, name='m'] => m
+cls.__name__ [cls=Meta, name='m'] => D
+name [cls=Meta, name='m'] => m
+AttributeError e [cls=Meta, name='m'] => 'Meta' object has no attribute 'm'
+cls.__name__ [cls=Meta, name='cm'] => D
+name [cls=Meta, name='cm'] => cm
+cls.__name__ [cls=Meta, name='cm'] => D
+name [cls=Meta, name='cm'] => cm
+AttributeError e [cls=Meta, name='cm'] => 'Meta' object has no attribute 'cm'
+cls.__name__ [cls=Meta, name='sm'] => D
+name [cls=Meta, name='sm'] => sm
+cls.__name__ [cls=Meta, name='sm'] => D
+name [cls=Meta, name='sm'] => sm
+AttributeError e [cls=Meta, name='sm'] => 'Meta' object has no attribute 'sm'
+cls.__name__ [cls=Meta, name='p'] => D
+name [cls=Meta, name='p'] => p
+cls.__name__ [cls=Meta, name='p'] => D
+name [cls=Meta, name='p'] => p
+AttributeError e [cls=Meta, name='p'] => 'Meta' object has no attribute 'p'
+cls.__name__ [cls=Meta, name='of_meta'] => D
+name [cls=Meta, name='of_meta'] => of_meta
+show(getattr(cls, name)) [cls=Meta, name='of_meta'] => <bound method Meta.of_meta of <class '__main__.D'>>
+cls.__name__ [cls=Meta, name='__name__'] => D
+name [cls=Meta, name='__name__'] => __name__
+show(getattr(cls, name)) [cls=Meta, name='__name__'] => 'D'
+cls.__name__ [cls=Meta, name='__mro__'] => D
+name [cls=Meta, name='__mro__'] => __mro__
+show(getattr(cls, name)) [cls=Meta, name='__mro__'] => (<class '__main__.D'>, <class '__main__.C'>, <class 'object'>)
+cls.__name__ [cls=Meta, name='__module__'] => D
+name [cls=Meta, name='__module__'] => __module__
+show(getattr(cls, name)) [cls=Meta, name='__module__'] => '__main__'
+cls.__name__ [cls=Meta, name='__qualname__'] => D
+name [cls=Meta, name='__qualname__'] => __qualname__
+show(getattr(cls, name)) [cls=Meta, name='__qualname__'] => 'D'
+cls.__name__ [cls=Meta, name='__doc__'] => D
+name [cls=Meta, name='__doc__'] => __doc__
+show(getattr(cls, name)) [cls=Meta, name='__doc__'] => None
+cls.__name__ [cls=Meta, name='mro'] => D
+name [cls=Meta, name='mro'] => mro
+show(getattr(cls, name)) [cls=Meta, name='mro'] => <built-in method mro of Meta object
+cls.__name__ [cls=Meta, name='__class__'] => D
+name [cls=Meta, name='__class__'] => __class__
+show(getattr(cls, name)) [cls=Meta, name='__class__'] => <class '__main__.Meta'>
+cls.__name__ [cls=Meta, name='__subclasses__'] => D
+name [cls=Meta, name='__subclasses__'] => __subclasses__
+show(getattr(cls, name)) [cls=Meta, name='__subclasses__'] => <built-in method __subclasses__ of Meta object
+cls.__name__ [cls=Meta, name='nothing'] => D
+name [cls=Meta, name='nothing'] => nothing
+cls.__name__ [cls=Meta, name='nothing'] => D
+name [cls=Meta, name='nothing'] => nothing
+AttributeError e [cls=Meta, name='nothing'] => 'Meta' object has no attribute 'nothing'
+cls.__name__ [cls=int, name='real'] => int
+name [cls=int, name='real'] => real
+cls.__name__ [cls=int, name='real'] => int
+name [cls=int, name='real'] => real
+AttributeError e [cls=int, name='real'] => 'type' object has no attribute 'real'
+cls.__name__ [cls=int, name='__add__'] => int
+name [cls=int, name='__add__'] => __add__
+cls.__name__ [cls=int, name='__add__'] => int
+name [cls=int, name='__add__'] => __add__
+AttributeError e [cls=int, name='__add__'] => 'type' object has no attribute '__add__'
+cls.__name__ [cls=int, name='__name__'] => int
+name [cls=int, name='__name__'] => __name__
+show(object.__getattribute__(cls, name)) [cls=int, name='__name__'] => 'int'
+cls.__name__ [cls=type, name='mro'] => type
+name [cls=type, name='mro'] => mro
+show(object.__getattribute__(cls, name)) [cls=type, name='mro'] => <built-in method mro of type object
+cls.__name__ [cls=object, name='__init__'] => object
+name [cls=object, name='__init__'] => __init__
+show(object.__getattribute__(cls, name)) [cls=object, name='__init__'] => <method-wrapper '__init__' of type object
+cls.__name__ [cls=dict, name='fromkeys'] => dict
+name [cls=dict, name='fromkeys'] => fromkeys
+cls.__name__ [cls=dict, name='fromkeys'] => dict
+name [cls=dict, name='fromkeys'] => fromkeys
+AttributeError e [cls=dict, name='fromkeys'] => 'type' object has no attribute 'fromkeys'
+TypeError e [call=function] => can't apply this __setattr__ to Meta object
+TypeError e [call=function] => can't apply this __delattr__ to Meta object
+5
+show(C.mro) => <built-in method mro of Meta object
+show(int.mro) => <built-in method mro of type object
+show(dict.fromkeys) => <built-in method fromkeys of type object
+show(str.maketrans) => <built-in method maketrans of type object
+show(type.__subclasses__.__get__(C)) => <built-in method __subclasses__ of Meta object

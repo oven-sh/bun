@@ -1,0 +1,13 @@
+status: 0
+script: 39cb8936925cddb5
+---
+in the thread: .
+in the main thread: . True
+in the thread: sub
+in the main thread: sub False
+in the thread: .
+in the main thread: . True
+in the thread: .
+in the main thread: . True
+FileNotFoundError nothing here
+True

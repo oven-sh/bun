@@ -1,6 +1,7 @@
 // What Python sees of the values of JavaScript.
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
+import path from "node:path";
 import _js from "python:_js";
 import {
   KeyError,
@@ -305,6 +306,35 @@ test.concurrent("os.chdir() moves JavaScript too", async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(stdout).toBe("sub true\nhere\nfound.js\ntrue true\nsub\n");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("os.chdir() in another thread moves JavaScript too", async () => {
+  using dir = tempDir("python-chdir-thread", {
+    "sub/found.js": "module.exports = 'found';",
+    "main.py": `
+import os, threading, js
+js.process.cwd()
+def move(to):
+    os.chdir(to)
+    print(os.path.basename(os.getcwd()))
+for to in ("sub", os.open(".", os.O_RDONLY)):
+    thread = threading.Thread(target=move, args=(to,))
+    thread.start()
+    thread.join()
+    print(js.process.cwd() == os.getcwd(), os.path.relpath(js.Bun.resolveSync("./sub/found.js" if to != "sub" else "./found.js", js.process.cwd())))
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.py"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe(`sub\nTrue found.js\n${path.basename(String(dir))}\nTrue sub/found.js\n`);
   expect(exitCode).toBe(0);
 });
 

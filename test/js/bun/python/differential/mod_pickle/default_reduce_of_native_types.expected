@@ -1,0 +1,939 @@
+status: 0
+script: 8dc4160c7517df46
+---
+builtins.object
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+_bz2.BZ2Compressor
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'BZ2Compressor' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle '_bz2.BZ2Compressor' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle '_bz2.BZ2Compressor' object
+    __reduce_ex__(4) TypeError: cannot pickle '_bz2.BZ2Compressor' object
+    pickle.dumps TypeError: cannot pickle '_bz2.BZ2Compressor' object
+    copy.copy TypeError: cannot pickle '_bz2.BZ2Compressor' object
+    copy.deepcopy TypeError: cannot pickle '_bz2.BZ2Compressor' object
+    object.__getstate__ ok
+_bz2.BZ2Decompressor
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'BZ2Decompressor' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle '_bz2.BZ2Decompressor' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle '_bz2.BZ2Decompressor' object
+    __reduce_ex__(4) TypeError: cannot pickle '_bz2.BZ2Decompressor' object
+    pickle.dumps TypeError: cannot pickle '_bz2.BZ2Decompressor' object
+    copy.copy TypeError: cannot pickle '_bz2.BZ2Decompressor' object
+    copy.deepcopy TypeError: cannot pickle '_bz2.BZ2Decompressor' object
+    object.__getstate__ ok
+_lzma.LZMACompressor
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'LZMACompressor' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle '_lzma.LZMACompressor' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle '_lzma.LZMACompressor' object
+    __reduce_ex__(4) TypeError: cannot pickle '_lzma.LZMACompressor' object
+    pickle.dumps TypeError: cannot pickle '_lzma.LZMACompressor' object
+    copy.copy TypeError: cannot pickle '_lzma.LZMACompressor' object
+    copy.deepcopy TypeError: cannot pickle '_lzma.LZMACompressor' object
+    object.__getstate__ ok
+_lzma.LZMADecompressor
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'LZMADecompressor' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle '_lzma.LZMADecompressor' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle '_lzma.LZMADecompressor' object
+    __reduce_ex__(4) TypeError: cannot pickle '_lzma.LZMADecompressor' object
+    pickle.dumps TypeError: cannot pickle '_lzma.LZMADecompressor' object
+    copy.copy TypeError: cannot pickle '_lzma.LZMADecompressor' object
+    copy.deepcopy TypeError: cannot pickle '_lzma.LZMADecompressor' object
+    object.__getstate__ ok
+zlib.Compress
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 TypeError: cannot pickle 'zlib.Compress' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 'zlib.Compress' object
+    __reduce_ex__(4) TypeError: cannot pickle 'zlib.Compress' object
+    pickle.dumps TypeError: cannot pickle 'zlib.Compress' object
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+zlib.Decompress
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 TypeError: cannot pickle 'zlib.Decompress' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 'zlib.Decompress' object
+    __reduce_ex__(4) TypeError: cannot pickle 'zlib.Decompress' object
+    pickle.dumps TypeError: cannot pickle 'zlib.Decompress' object
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+_hashlib.HASH
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 TypeError: cannot pickle '_hashlib.HASH' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle '_hashlib.HASH' object
+    __reduce_ex__(4) TypeError: cannot pickle '_hashlib.HASH' object
+    pickle.dumps TypeError: cannot pickle '_hashlib.HASH' object
+    copy.copy TypeError: cannot pickle '_hashlib.HASH' object
+    copy.deepcopy TypeError: cannot pickle '_hashlib.HASH' object
+    object.__getstate__ ok
+_hashlib.HASH
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 TypeError: cannot pickle '_hashlib.HASH' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle '_hashlib.HASH' object
+    __reduce_ex__(4) TypeError: cannot pickle '_hashlib.HASH' object
+    pickle.dumps TypeError: cannot pickle '_hashlib.HASH' object
+    copy.copy TypeError: cannot pickle '_hashlib.HASH' object
+    copy.deepcopy TypeError: cannot pickle '_hashlib.HASH' object
+    object.__getstate__ ok
+_hashlib.HASH
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 TypeError: cannot pickle '_hashlib.HASH' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle '_hashlib.HASH' object
+    __reduce_ex__(4) TypeError: cannot pickle '_hashlib.HASH' object
+    pickle.dumps TypeError: cannot pickle '_hashlib.HASH' object
+    copy.copy TypeError: cannot pickle '_hashlib.HASH' object
+    copy.deepcopy TypeError: cannot pickle '_hashlib.HASH' object
+    object.__getstate__ ok
+_blake2.blake2b
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'blake2b' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle '_blake2.blake2b' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle '_blake2.blake2b' object
+    __reduce_ex__(4) TypeError: cannot pickle '_blake2.blake2b' object
+    pickle.dumps TypeError: cannot pickle '_blake2.blake2b' object
+    copy.copy TypeError: cannot pickle '_blake2.blake2b' object
+    copy.deepcopy TypeError: cannot pickle '_blake2.blake2b' object
+    object.__getstate__ ok
+builtins.mappingproxy
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'mappingproxy' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle 'mappingproxy' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 'mappingproxy' object
+    __reduce_ex__(4) TypeError: cannot pickle 'mappingproxy' object
+    pickle.dumps TypeError: cannot pickle 'mappingproxy' object
+    copy.copy TypeError: cannot pickle 'mappingproxy' object
+    copy.deepcopy TypeError: cannot pickle 'mappingproxy' object
+    object.__getstate__ ok
+builtins.generator
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'generator' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle 'generator' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 'generator' object
+    __reduce_ex__(4) TypeError: cannot pickle 'generator' object
+    pickle.dumps TypeError: cannot pickle 'generator' object
+    copy.copy TypeError: cannot pickle 'generator' object
+    copy.deepcopy TypeError: cannot pickle 'generator' object
+    object.__getstate__ ok
+builtins.coroutine
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'coroutine' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle 'coroutine' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 'coroutine' object
+    __reduce_ex__(4) TypeError: cannot pickle 'coroutine' object
+    pickle.dumps TypeError: cannot pickle 'coroutine' object
+    copy.copy TypeError: cannot pickle 'coroutine' object
+    copy.deepcopy TypeError: cannot pickle 'coroutine' object
+    object.__getstate__ ok
+builtins.type
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'type' object
+   object.__reduce_ex__ 2 TypeError: unbound method object.__getstate__() needs an argument
+   object.__reduce_ex__ 4 TypeError: unbound method object.__getstate__() needs an argument
+    __reduce_ex__(4) TypeError: object.__reduce_ex__() takes exactly one argument (0 given)
+    pickle.dumps PicklingError: Can't pickle <class 'list_iterator'>: it's not found as builtins.list_iterator
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+builtins.memoryview
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'memoryview' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle memoryview objects
+   object.__reduce_ex__ 4 TypeError: cannot pickle memoryview objects
+    __reduce_ex__(4) TypeError: cannot pickle memoryview objects
+    pickle.dumps TypeError: cannot pickle memoryview objects
+    copy.copy TypeError: cannot pickle memoryview objects
+    copy.deepcopy TypeError: cannot pickle memoryview objects
+    object.__getstate__ ok
+builtins.code
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'code' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle code objects
+   object.__reduce_ex__ 4 TypeError: cannot pickle code objects
+    __reduce_ex__(4) TypeError: cannot pickle code objects
+    pickle.dumps TypeError: cannot pickle code objects
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+_thread.lock
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'lock' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle '_thread.lock' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle '_thread.lock' object
+    __reduce_ex__(4) TypeError: cannot pickle '_thread.lock' object
+    pickle.dumps TypeError: cannot pickle '_thread.lock' object
+    copy.copy TypeError: cannot pickle '_thread.lock' object
+    copy.deepcopy TypeError: cannot pickle '_thread.lock' object
+    object.__getstate__ ok
+_thread.RLock
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'RLock' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle '_thread.RLock' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle '_thread.RLock' object
+    __reduce_ex__(4) TypeError: cannot pickle '_thread.RLock' object
+    pickle.dumps TypeError: cannot pickle '_thread.RLock' object
+    copy.copy TypeError: cannot pickle '_thread.RLock' object
+    copy.deepcopy TypeError: cannot pickle '_thread.RLock' object
+    object.__getstate__ ok
+_thread.lock
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'lock' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle '_thread.lock' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle '_thread.lock' object
+    __reduce_ex__(4) TypeError: cannot pickle '_thread.lock' object
+    pickle.dumps TypeError: cannot pickle '_thread.lock' object
+    copy.copy TypeError: cannot pickle '_thread.lock' object
+    copy.deepcopy TypeError: cannot pickle '_thread.lock' object
+    object.__getstate__ ok
+_thread._local
+   object.__reduce_ex__ 0 TypeError: cannot pickle '_local' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle '_thread._local' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle '_thread._local' object
+    __reduce_ex__(4) TypeError: cannot pickle '_thread._local' object
+    pickle.dumps TypeError: cannot pickle '_thread._local' object
+    copy.copy TypeError: cannot pickle '_thread._local' object
+    copy.deepcopy TypeError: cannot pickle '_thread._local' object
+    object.__getstate__ ok
+__main__.FromLocal
+   object.__reduce_ex__ 0 TypeError: Initialization arguments are not supported
+   object.__reduce_ex__ 2 TypeError: cannot pickle 'FromLocal' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 'FromLocal' object
+    __reduce_ex__(4) TypeError: cannot pickle 'FromLocal' object
+    pickle.dumps TypeError: cannot pickle 'FromLocal' object
+    copy.copy TypeError: cannot pickle 'FromLocal' object
+    copy.deepcopy TypeError: cannot pickle 'FromLocal' object
+    object.__getstate__ ok
+_contextvars.ContextVar
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'ContextVar' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle '_contextvars.ContextVar' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle '_contextvars.ContextVar' object
+    __reduce_ex__(4) TypeError: cannot pickle '_contextvars.ContextVar' object
+    pickle.dumps TypeError: cannot pickle '_contextvars.ContextVar' object
+    copy.copy TypeError: cannot pickle '_contextvars.ContextVar' object
+    copy.deepcopy TypeError: cannot pickle '_contextvars.ContextVar' object
+    object.__getstate__ ok
+_contextvars.Context
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'Context' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle '_contextvars.Context' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle '_contextvars.Context' object
+    __reduce_ex__(4) TypeError: cannot pickle '_contextvars.Context' object
+    pickle.dumps TypeError: cannot pickle '_contextvars.Context' object
+    copy.copy TypeError: cannot pickle '_contextvars.Context' object
+    copy.deepcopy TypeError: cannot pickle '_contextvars.Context' object
+    object.__getstate__ ok
+_sre.SRE_Scanner
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 TypeError: cannot pickle '_sre.SRE_Scanner' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle '_sre.SRE_Scanner' object
+    __reduce_ex__(4) TypeError: cannot pickle '_sre.SRE_Scanner' object
+    pickle.dumps TypeError: cannot pickle '_sre.SRE_Scanner' object
+    copy.copy TypeError: cannot pickle '_sre.SRE_Scanner' object
+    copy.deepcopy TypeError: cannot pickle '_sre.SRE_Scanner' object
+    object.__getstate__ ok
+re.Match
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 TypeError: cannot pickle 're.Match' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 're.Match' object
+    __reduce_ex__(4) TypeError: cannot pickle 're.Match' object
+    pickle.dumps TypeError: cannot pickle 're.Match' object
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+_struct.Struct
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'Struct' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle '_struct.Struct' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle '_struct.Struct' object
+    __reduce_ex__(4) TypeError: cannot pickle '_struct.Struct' object
+    pickle.dumps TypeError: cannot pickle '_struct.Struct' object
+    copy.copy TypeError: cannot pickle '_struct.Struct' object
+    copy.deepcopy TypeError: cannot pickle '_struct.Struct' object
+    object.__getstate__ ok
+__main__.FromStruct
+   object.__reduce_ex__ 0 TypeError: Struct() argument 1 must be a str or bytes object, not FromStruct
+   object.__reduce_ex__ 2 TypeError: cannot pickle 'FromStruct' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 'FromStruct' object
+    __reduce_ex__(4) TypeError: cannot pickle 'FromStruct' object
+    pickle.dumps TypeError: cannot pickle 'FromStruct' object
+    copy.copy TypeError: cannot pickle 'FromStruct' object
+    copy.deepcopy TypeError: cannot pickle 'FromStruct' object
+    object.__getstate__ ok
+weakref.ReferenceType
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'ReferenceType' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle 'weakref.ReferenceType' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 'weakref.ReferenceType' object
+    __reduce_ex__(4) TypeError: cannot pickle 'weakref.ReferenceType' object
+    pickle.dumps TypeError: cannot pickle 'weakref.ReferenceType' object
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+weakref.CallableProxyType
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'function' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle 'weakref.CallableProxyType' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 'weakref.CallableProxyType' object
+    __reduce_ex__(4) TypeError: cannot pickle 'function' object
+    pickle.dumps TypeError: cannot pickle 'function' object
+    copy.copy TypeError: cannot pickle 'function' object
+    copy.deepcopy TypeError: cannot pickle 'function' object
+    object.__getstate__ ok
+_io.StringIO
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'StringIO' object
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+_io.BytesIO
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'BytesIO' object
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+__main__.FromBytesIO
+   object.__reduce_ex__ 0 TypeError: a bytes-like object is required, not 'FromBytesIO'
+   object.__reduce_ex__ 2 TypeError: cannot pickle 'FromBytesIO' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 'FromBytesIO' object
+    __reduce_ex__(4) TypeError: cannot pickle 'FromBytesIO' object
+    pickle.dumps TypeError: cannot pickle 'FromBytesIO' object
+    copy.copy TypeError: cannot pickle 'FromBytesIO' object
+    copy.deepcopy TypeError: cannot pickle 'FromBytesIO' object
+    object.__getstate__ ok
+io.IOBase
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+__main__.FromIOBase
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+datetime.tzinfo
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+__main__.FromTzinfo
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+__main__.FromTzinfoWithSlots
+   object.__reduce_ex__ 0 TypeError: a class that defines __slots__ without defining __getstate__ cannot be pickled
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+types.SimpleNamespace
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+__main__.FromNamespace
+   object.__reduce_ex__ 0 TypeError: 'FromNamespace' object is not iterable
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+ast.AST
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+__main__.FromAst
+   object.__reduce_ex__ 0 TypeError: AST constructor takes at most 0 positional arguments
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+ast.Name
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+__main__.FromRandom
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 TypeError: cannot pickle 'FromRandom' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 'FromRandom' object
+    __reduce_ex__(4) TypeError: cannot pickle 'FromRandom' object
+    pickle.dumps TypeError: cannot pickle 'FromRandom' object
+    copy.copy TypeError: cannot pickle 'FromRandom' object
+    copy.deepcopy TypeError: cannot pickle 'FromRandom' object
+    object.__getstate__ ok
+__main__.FromPartial
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 TypeError: cannot pickle 'FromPartial' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 'FromPartial' object
+    __reduce_ex__(4) TypeError: cannot pickle 'FromPartial' object
+    pickle.dumps TypeError: cannot pickle 'FromPartial' object
+    copy.copy TypeError: cannot pickle 'FromPartial' object
+    copy.deepcopy TypeError: cannot pickle 'FromPartial' object
+    object.__getstate__ ok
+__main__.FromDeque
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 TypeError: cannot pickle 'FromDeque' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 'FromDeque' object
+    __reduce_ex__(4) TypeError: cannot pickle 'FromDeque' object
+    pickle.dumps TypeError: cannot pickle 'FromDeque' object
+    copy.copy ok
+    copy.deepcopy TypeError: cannot pickle 'FromDeque' object
+    object.__getstate__ ok
+__main__.FromException
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 TypeError: cannot pickle 'FromException' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 'FromException' object
+    __reduce_ex__(4) TypeError: cannot pickle 'FromException' object
+    pickle.dumps TypeError: cannot pickle 'FromException' object
+    copy.copy TypeError: cannot pickle 'FromException' object
+    copy.deepcopy TypeError: cannot pickle 'FromException' object
+    object.__getstate__ ok
+__main__.FromProperty
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 TypeError: cannot pickle 'FromProperty' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 'FromProperty' object
+    __reduce_ex__(4) TypeError: cannot pickle 'FromProperty' object
+    pickle.dumps TypeError: cannot pickle 'FromProperty' object
+    copy.copy TypeError: cannot pickle 'FromProperty' object
+    copy.deepcopy TypeError: cannot pickle 'FromProperty' object
+    object.__getstate__ ok
+__main__.FromDate
+   object.__reduce_ex__ 0 TypeError: date() missing required argument 'month' (pos 2)
+   object.__reduce_ex__ 2 TypeError: cannot pickle 'FromDate' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 'FromDate' object
+    __reduce_ex__(4) TypeError: cannot pickle 'FromDate' object
+    pickle.dumps TypeError: cannot pickle 'FromDate' object
+    copy.copy TypeError: cannot pickle 'FromDate' object
+    copy.deepcopy TypeError: cannot pickle 'FromDate' object
+    object.__getstate__ ok
+builtins.property
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'property' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle 'property' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 'property' object
+    __reduce_ex__(4) TypeError: cannot pickle 'property' object
+    pickle.dumps TypeError: cannot pickle 'property' object
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+builtins.staticmethod
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'staticmethod' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle 'staticmethod' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 'staticmethod' object
+    __reduce_ex__(4) TypeError: cannot pickle 'staticmethod' object
+    pickle.dumps TypeError: cannot pickle 'staticmethod' object
+    copy.copy TypeError: cannot pickle 'staticmethod' object
+    copy.deepcopy TypeError: cannot pickle 'staticmethod' object
+    object.__getstate__ ok
+builtins.classmethod
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'classmethod' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle 'classmethod' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 'classmethod' object
+    __reduce_ex__(4) TypeError: cannot pickle 'classmethod' object
+    pickle.dumps TypeError: cannot pickle 'classmethod' object
+    copy.copy TypeError: cannot pickle 'classmethod' object
+    copy.deepcopy TypeError: cannot pickle 'classmethod' object
+    object.__getstate__ ok
+builtins.method
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy AttributeError: 'int' object has no attribute 'len'
+    copy.deepcopy ok
+    object.__getstate__ ok
+builtins.builtin_function_or_method
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+builtins.builtin_function_or_method
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+builtins.method_descriptor
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+builtins.wrapper_descriptor
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+builtins.method-wrapper
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+builtins.getset_descriptor
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'getset_descriptor' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle 'getset_descriptor' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 'getset_descriptor' object
+    __reduce_ex__(4) TypeError: cannot pickle 'getset_descriptor' object
+    pickle.dumps TypeError: cannot pickle 'getset_descriptor' object
+    copy.copy TypeError: cannot pickle 'getset_descriptor' object
+    copy.deepcopy TypeError: cannot pickle 'getset_descriptor' object
+    object.__getstate__ ok
+functools._lru_cache_wrapper
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps PicklingError: Can't pickle <functools._lru_cache_wrapper object>: it's not the same object as builtins.len
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+functools.cached_property
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+operator.itemgetter
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+operator.attrgetter
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+operator.methodcaller
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+itertools.count
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'count' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle 'itertools.count' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 'itertools.count' object
+    __reduce_ex__(4) TypeError: cannot pickle 'itertools.count' object
+    pickle.dumps TypeError: cannot pickle 'itertools.count' object
+    copy.copy TypeError: cannot pickle 'itertools.count' object
+    copy.deepcopy TypeError: cannot pickle 'itertools.count' object
+    object.__getstate__ ok
+itertools.chain
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'chain' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle 'itertools.chain' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 'itertools.chain' object
+    __reduce_ex__(4) TypeError: cannot pickle 'itertools.chain' object
+    pickle.dumps TypeError: cannot pickle 'itertools.chain' object
+    copy.copy TypeError: cannot pickle 'itertools.chain' object
+    copy.deepcopy TypeError: cannot pickle 'itertools.chain' object
+    object.__getstate__ ok
+builtins.zip
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+builtins.map
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+builtins.filter
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+builtins.enumerate
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+builtins.list_reverseiterator
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+builtins.range
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+builtins.slice
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+builtins.range_iterator
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+builtins.dict_keys
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'dict_keys' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle 'dict_keys' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 'dict_keys' object
+    __reduce_ex__(4) TypeError: cannot pickle 'dict_keys' object
+    pickle.dumps TypeError: cannot pickle 'dict_keys' object
+    copy.copy TypeError: cannot pickle 'dict_keys' object
+    copy.deepcopy TypeError: cannot pickle 'dict_keys' object
+    object.__getstate__ ok
+builtins.dict_values
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'dict_values' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle 'dict_values' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 'dict_values' object
+    __reduce_ex__(4) TypeError: cannot pickle 'dict_values' object
+    pickle.dumps TypeError: cannot pickle 'dict_values' object
+    copy.copy TypeError: cannot pickle 'dict_values' object
+    copy.deepcopy TypeError: cannot pickle 'dict_values' object
+    object.__getstate__ ok
+builtins.dict_items
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'dict_items' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle 'dict_items' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 'dict_items' object
+    __reduce_ex__(4) TypeError: cannot pickle 'dict_items' object
+    pickle.dumps TypeError: cannot pickle 'dict_items' object
+    copy.copy TypeError: cannot pickle 'dict_items' object
+    copy.deepcopy TypeError: cannot pickle 'dict_items' object
+    object.__getstate__ ok
+builtins.NotImplementedType
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+builtins.ellipsis
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+builtins.NoneType
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'NoneType' object
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+builtins.super
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'super' object
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) TypeError: cannot pickle 'FromDate' object
+    pickle.dumps TypeError: cannot pickle 'FromDate' object
+    copy.copy ok
+    copy.deepcopy TypeError: cannot pickle 'FromDate' object
+    object.__getstate__ ok
+types.GenericAlias
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+typing.Union
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'Union' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle 'typing.Union' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 'typing.Union' object
+    __reduce_ex__(4) TypeError: cannot pickle 'typing.Union' object
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+_queue.SimpleQueue
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'SimpleQueue' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle '_queue.SimpleQueue' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle '_queue.SimpleQueue' object
+    __reduce_ex__(4) TypeError: cannot pickle '_queue.SimpleQueue' object
+    pickle.dumps TypeError: cannot pickle '_queue.SimpleQueue' object
+    copy.copy TypeError: cannot pickle '_queue.SimpleQueue' object
+    copy.deepcopy TypeError: cannot pickle '_queue.SimpleQueue' object
+    object.__getstate__ ok
+_csv.writer
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 TypeError: cannot pickle '_csv.writer' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle '_csv.writer' object
+    __reduce_ex__(4) TypeError: cannot pickle '_csv.writer' object
+    pickle.dumps TypeError: cannot pickle '_csv.writer' object
+    copy.copy TypeError: cannot pickle '_csv.writer' object
+    copy.deepcopy TypeError: cannot pickle '_csv.writer' object
+    object.__getstate__ ok
+_json.Scanner
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'Scanner' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle '_json.Scanner' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle '_json.Scanner' object
+    __reduce_ex__(4) TypeError: cannot pickle '_json.Scanner' object
+    pickle.dumps TypeError: cannot pickle '_json.Scanner' object
+    copy.copy TypeError: cannot pickle '_json.Scanner' object
+    copy.deepcopy TypeError: cannot pickle '_json.Scanner' object
+    object.__getstate__ ok
+encodings.utf_8.IncrementalDecoder
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+string.Formatter
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+decimal.Context
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+decimal.Decimal
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+fractions.Fraction
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+uuid.UUID
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+array.array
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'array' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle 'array.array' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 'array.array' object
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+builtins.bytearray
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+builtins.frozenset
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+builtins.set
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+collections.OrderedDict
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+collections.defaultdict
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+builtins.cell
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'cell' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle 'cell' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 'cell' object
+    __reduce_ex__(4) TypeError: cannot pickle 'cell' object
+    pickle.dumps TypeError: cannot pickle 'cell' object
+    copy.copy TypeError: cannot pickle 'cell' object
+    copy.deepcopy TypeError: cannot pickle 'cell' object
+    object.__getstate__ ok
+builtins.frame
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'frame' object
+   object.__reduce_ex__ 2 TypeError: cannot pickle 'frame' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 'frame' object
+    __reduce_ex__(4) TypeError: cannot pickle 'frame' object
+    pickle.dumps TypeError: cannot pickle 'frame' object
+    copy.copy TypeError: cannot pickle 'frame' object
+    copy.deepcopy TypeError: cannot pickle 'frame' object
+    object.__getstate__ ok
+unicodedata.UCD
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 TypeError: cannot pickle 'unicodedata.UCD' object
+   object.__reduce_ex__ 4 TypeError: cannot pickle 'unicodedata.UCD' object
+    __reduce_ex__(4) TypeError: cannot pickle 'unicodedata.UCD' object
+    pickle.dumps TypeError: cannot pickle 'unicodedata.UCD' object
+    copy.copy TypeError: cannot pickle 'unicodedata.UCD' object
+    copy.deepcopy TypeError: cannot pickle 'unicodedata.UCD' object
+    object.__getstate__ ok
+collections._deque_iterator
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+builtins.type
+   object.__reduce_ex__ 0 TypeError: cannot pickle 'type' object
+   object.__reduce_ex__ 2 TypeError: Random.__getstate__() missing 1 required positional argument: 'self'
+   object.__reduce_ex__ 4 TypeError: Random.__getstate__() missing 1 required positional argument: 'self'
+    __reduce_ex__(4) TypeError: object.__reduce_ex__() takes exactly one argument (0 given)
+    pickle.dumps ok
+    copy.copy ok
+    copy.deepcopy ok
+    object.__getstate__ ok
+selectors.EpollSelector
+   object.__reduce_ex__ 0 ok
+   object.__reduce_ex__ 2 ok
+   object.__reduce_ex__ 4 ok
+    __reduce_ex__(4) ok
+    pickle.dumps TypeError: cannot pickle 'select.epoll' object
+    copy.copy ok
+    copy.deepcopy TypeError: cannot pickle 'select.epoll' object
+    object.__getstate__ ok

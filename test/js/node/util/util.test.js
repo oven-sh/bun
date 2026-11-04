@@ -55,6 +55,33 @@ describe("util", () => {
       expect(util.toUSVString(strings[i])).toBe(outputs[i]);
     }
   });
+  it("toUSVString coerces objects with the string hint", () => {
+    const calls = [];
+    const input = {
+      toString() {
+        calls.push("toString");
+        return "hello\uD800";
+      },
+      valueOf() {
+        calls.push("valueOf");
+        throw new Error("valueOf must not be called");
+      },
+    };
+    expect(util.toUSVString(input)).toBe("hello\uFFFD");
+    expect(calls).toEqual(["toString"]);
+
+    const hints = [];
+    const prim = {
+      [Symbol.toPrimitive](hint) {
+        hints.push(hint);
+        return "x";
+      },
+    };
+    expect(util.toUSVString(prim)).toBe("x");
+    expect(hints).toEqual(["string"]);
+
+    expect(() => util.toUSVString(Symbol("s"))).toThrow(TypeError);
+  });
   it("inherits", () => {
     function Bar() {}
     Bar.prototype.bar = function () {};

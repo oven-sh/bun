@@ -278,7 +278,7 @@ function callbackify(original: (this: unknown, ...args: unknown[]) => Promise<un
   return callbackified;
 }
 var toUSVString = input => {
-  return (input + "").toWellFormed();
+  return `${input}`.toWellFormed();
 };
 
 const kEscape = "\u001b[";

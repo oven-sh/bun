@@ -10,15 +10,12 @@ bun_core::declare_scope!(uws, visible);
 bun_opaque::opaque_ffi! { pub struct Timer; }
 
 impl Timer {
-    pub fn create<T>(loop_: &mut Loop, _ptr: T) -> NonNull<Timer> {
-        // SAFETY: `loop_` is a valid loop pointer.
-        let t = unsafe {
-            us_create_timer(
-                loop_,
-                0,
-                c_uint::try_from(size_of::<T>()).expect("int cast"),
-            )
-        };
+    pub fn create<T>(loop_: &Loop, _ptr: T) -> NonNull<Timer> {
+        let t = us_create_timer(
+            loop_,
+            0,
+            c_uint::try_from(size_of::<T>()).expect("int cast"),
+        );
         NonNull::new(t).unwrap_or_else(|| {
             panic!(
                 "us_create_timer: returned null: {}",
@@ -51,8 +48,8 @@ impl Timer {
 }
 
 unsafe extern "C" {
-    pub(crate) fn us_create_timer(
-        loop_: *mut Loop,
+    pub(crate) safe fn us_create_timer(
+        loop_: &Loop,
         fallthrough: i32,
         ext_size: c_uint,
     ) -> *mut Timer;

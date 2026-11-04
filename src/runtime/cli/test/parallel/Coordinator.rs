@@ -1955,10 +1955,7 @@ impl<'a> Coordinator<'a> {
 /// member of the group lives, and an empty group gives ESRCH.
 #[cfg(unix)]
 fn terminate_process_group(pid: libc::pid_t) {
-    // SAFETY: FFI call; -pid targets the worker's process group.
-    unsafe {
-        let _ = libc::kill(-pid, libc::SIGTERM);
-    }
+    let _ = bun_spawn::ffi::kill(-pid, libc::SIGTERM);
 }
 
 /// Without `--parallel` the files run in the order in which plain `bun test` runs them in its one process.

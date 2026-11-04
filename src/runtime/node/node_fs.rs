@@ -801,7 +801,7 @@ mod _async_tasks {
             [None, None]
         }
         fn runs_on(&self) -> bun_jsc::RunsOn {
-            bun_jsc::RunsOn::WorkPool
+            bun_jsc::RunsOn::WorkPoolInOrder
         }
     }
 
@@ -868,7 +868,7 @@ mod _async_tasks {
             args::Write::from_js(ctx, arguments)
         }
         fn runs_on(&self) -> bun_jsc::RunsOn {
-            bun_jsc::RunsOn::for_io(Some(self.fd))
+            bun_jsc::RunsOn::for_fd(self.fd, true)
         }
     }
     // SAFETY: same as `impl_fs_argument!`.
@@ -879,7 +879,7 @@ mod _async_tasks {
             args::Writev::from_js(ctx, arguments)
         }
         fn runs_on(&self) -> bun_jsc::RunsOn {
-            bun_jsc::RunsOn::for_io(Some(self.fd))
+            bun_jsc::RunsOn::for_fd(self.fd, true)
         }
     }
     // SAFETY: same as `impl_fs_argument!`.
@@ -896,7 +896,7 @@ mod _async_tasks {
             }
         }
         fn runs_on(&self) -> bun_jsc::RunsOn {
-            bun_jsc::RunsOn::for_io(None)
+            bun_jsc::RunsOn::for_fd(self.fd, false)
         }
     }
     // SAFETY: same as `impl_fs_argument!`.
@@ -911,7 +911,7 @@ mod _async_tasks {
             self.buffers.write_back(bytes_read as usize);
         }
         fn runs_on(&self) -> bun_jsc::RunsOn {
-            bun_jsc::RunsOn::for_io(None)
+            bun_jsc::RunsOn::for_fd(self.fd, false)
         }
     }
     // `ReadFile`/`WriteFile` carry an `AbortSignal` field — opt them in so

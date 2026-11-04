@@ -234,6 +234,8 @@ pub trait JobContext: Sized + 'static {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RunsOn {
     WorkPool,
+    /// [`WorkPool::schedule_in_order`]
+    WorkPoolInOrder,
     /// [`WorkPool::schedule_waiting`]
     WaitingPool,
     /// [`WorkPool::schedule_output`]. `run` is over before the process exits: see [`wait_for_jobs_that_hold_exit`].
@@ -253,6 +255,22 @@ impl RunsOn {
             // A `process.exit()` right after the call loses nothing, as in Node.js.
             Some(fd) if fd.is_stdout_or_stderr() => RunsOn::OutputPool,
             _ => RunsOn::WaitingPool,
+        }
+    }
+
+    /// For one `fs.read()` of `fd`, or one `fs.write()` to it.
+    pub fn for_fd(fd: bun_core::Fd, writes: bool) -> RunsOn {
+        match Self::for_io(writes.then_some(fd)) {
+            #[cfg(windows)]
+            RunsOn::WaitingPool
+                if bun_sys::windows::GetFileType(fd.native())
+                    != bun_sys::windows::FILE_TYPE_DISK =>
+            {
+                RunsOn::WaitingPool
+            }
+            // A file answers by itself, so it is in line with what else `node:fs` is asked for.
+            RunsOn::WorkPool | RunsOn::WaitingPool => RunsOn::WorkPoolInOrder,
+            runs_on => runs_on,
         }
     }
 }
@@ -422,6 +440,7 @@ impl<C: JobContext> Job<C> {
             let task = &raw mut (*job).task;
             match runs_on {
                 RunsOn::WorkPool => WorkPool::schedule(task),
+                RunsOn::WorkPoolInOrder => WorkPool::schedule_in_order(task),
                 RunsOn::WaitingPool => WorkPool::schedule_waiting(task),
                 RunsOn::OutputPool => {
                     JOBS_THAT_HOLD_EXIT.fetch_add(1, Ordering::Relaxed);

@@ -1,6 +1,6 @@
 use std::sync::OnceLock;
 
-use crate::ThreadPool;
+use crate::{Guarded, ThreadPool};
 
 pub use crate::thread_pool::Batch;
 pub use crate::thread_pool::Task;
@@ -133,6 +133,26 @@ macro_rules! owned_task {
 static POOL: OnceLock<ThreadPool> = OnceLock::new();
 static WAITING_POOL: OnceLock<ThreadPool> = OnceLock::new();
 static OUTPUT_POOL: OnceLock<ThreadPool> = OnceLock::new();
+/// What [`WorkPool::schedule_in_order`] was given and no thread has taken yet, the oldest first.
+static IN_ORDER: Guarded<Batch> = Guarded::new(Batch::EMPTY);
+
+/// The pool takes the newest of what waits for it first, so it is given a turn, and the turn takes the oldest task.
+struct Turn {
+    task: Task,
+}
+
+crate::owned_task!(Turn, task);
+
+impl Turn {
+    fn run_owned(self: Box<Self>) {
+        drop(self);
+        let Some(task) = IN_ORDER.lock().pop() else {
+            unreachable!("one turn per task");
+        };
+        // SAFETY: the task is live until its callback runs, as for a task that the pool itself holds.
+        unsafe { ((*task.as_ptr()).callback)(task.as_ptr()) };
+    }
+}
 
 #[cold]
 fn create() -> ThreadPool {
@@ -150,6 +170,14 @@ impl WorkPool {
 
     pub fn schedule(task: *mut Task) {
         Self::get().schedule(Batch::from(task));
+    }
+
+    /// These tasks start in the order they were given in, as the requests of libuv's pool do. Which ends first is open.
+    pub fn schedule_in_order(task: *mut Task) {
+        IN_ORDER.lock().push(Batch::from(task));
+        Self::schedule_new(Turn {
+            task: Task::default(),
+        });
     }
 
     /// For a task that blocks until somebody outside the process acts (a pipe read): threads of their own, so the others still run.

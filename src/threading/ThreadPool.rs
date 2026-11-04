@@ -480,7 +480,16 @@ pub struct Batch {
     pub(crate) tail: Option<NonNull<Task>>,
 }
 
+// SAFETY: a list of `Task`s, which are `Send`.
+unsafe impl Send for Batch {}
+
 impl Batch {
+    pub(crate) const EMPTY: Batch = Batch {
+        len: 0,
+        head: None,
+        tail: None,
+    };
+
     pub fn pop(&mut self) -> Option<NonNull<Task>> {
         // SAFETY: `len` is only read here for the fast-path zero check.
         let len = unsafe { (*(&raw const self.len).cast::<AtomicUsize>()).load(Ordering::Relaxed) };

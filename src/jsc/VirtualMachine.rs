@@ -6835,16 +6835,6 @@ impl VirtualMachine {
         false
     }
 
-    /// Reports an uncaught exception through the owning VM's handler; returns `undefined`.
-    pub(crate) fn report_uncaught_exception(
-        global_object: &JSGlobalObject,
-        exception: &Exception,
-    ) -> JSValue {
-        let jsc_vm = global_object.bun_vm().as_mut();
-        let _ = jsc_vm.uncaught_exception(global_object, exception.value(), false);
-        JSValue::UNDEFINED
-    }
-
     /// Note: takes a runtime bool + concrete writer.
     pub(crate) fn print_stack_trace(
         writer: &mut bun_core::io::Writer,
@@ -8221,12 +8211,12 @@ impl VirtualMachine {
         // The `Arc::clone` is the ref-bump; `into_raw` transfers that strong
         // ref into the table (reclaimed by `put_value`'s replace path /
         // `SavedSourceMap` teardown).
-        bun_core::handle_oom(self.source_mappings.put_value(
+        self.source_mappings.put_value(
             path,
             crate::saved_source_map::Value::init(std::sync::Arc::into_raw(std::sync::Arc::clone(
                 &map,
             ))),
-        ));
+        );
 
         let mapping = map.find_mapping(line, column)?;
 

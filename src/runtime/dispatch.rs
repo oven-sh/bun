@@ -341,7 +341,7 @@ pub(crate) fn run_task(
                 [NodeFs],
                 |copy: crate::node::fs::AsyncCpTask| -> JsResult<()> {
                     // SAFETY: posted by `on_subtask_done` with the count at zero (exclusive).
-                    unsafe { (*copy).run_from_js_thread()? };
+                    unsafe { bun_core::heap::take(copy) }.run_from_js_thread()?;
                     Ok(())
                 }
             )?
@@ -351,7 +351,7 @@ pub(crate) fn run_task(
                 [Shell],
                 |copy: crate::node::fs::ShellAsyncCpTask| -> JsResult<()> {
                     // SAFETY: as above.
-                    unsafe { (*copy).run_from_js_thread()? };
+                    unsafe { bun_core::heap::take(copy) }.run_from_js_thread()?;
                     Ok(())
                 }
             )?
@@ -690,10 +690,10 @@ pub(crate) fn run_task(
             // (cloned from `FSWatcher.current_task` at enqueue). `deinit` is
             // explicit (not `Drop`) so the embedded `current_task` field never
             // runs it.
-            // SAFETY: tag identifies pointee; live Box'd FSWatchTask.
-            let ran = unsafe { (*watch).run() };
-            // SAFETY: paired with heap::alloc in `FSWatchTask::enqueue`.
-            unsafe { FSWatchTask::deinit(watch) };
+            // SAFETY: tag identifies pointee; paired with heap::alloc in `FSWatchTask::enqueue`.
+            let mut watch = unsafe { bun_core::heap::take(watch) };
+            let ran = watch.run();
+            watch.deinit();
             ran?;
             Ok(())
         })?,

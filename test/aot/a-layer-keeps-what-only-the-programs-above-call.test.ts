@@ -3,9 +3,10 @@
 // loads is reached by nothing else. Flow once let go of such an export where its rules ran in one of the orders that are as good as the usual one:
 // "'load' was not compiled into this executable because your code never calls it".
 import { afterEach, beforeEach, expect } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, normalizeBunSnapshot, tempDir } from "harness";
 import { availableParallelism } from "node:os";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
+import { memoryLimitOfCommandsAtOnce } from "./harness/memory-limit";
 import { run } from "./harness/run";
 import { test as oneAtATime } from "./supported";
 
@@ -14,9 +15,12 @@ raiseDefaultTimeout(120_000);
 // Each test is one run of `bun test` in a folder of its own, and the tests run at once. An order of flow's rules is an option of the compiler, so every
 // run over layers compiles Bun's own code for itself: that is nearly all that it costs, and it keeps three of four processors busy, or five of twelve.
 // So a quarter as many tests as the machine has processors are under way, two at least. More of them take the processors from the files that CI runs
-// beside this one, and each test then takes longer. A test waits for its turn in a hook, which has no limit, so the limit of a test is for its own run.
+// beside this one, and each test then takes longer. Nor are more under way than the memory for the commands of a file has room for. There a run counts
+// as half a gigabyte, and as two where the Bun under test has a sanitizer or assertions: it was seen to hold 0.2 and 1.7. A test waits for its turn in
+// a hook, which has no limit, so the limit of a test is for its own run.
 const test = oneAtATime.concurrent;
-let free = Math.max(2, availableParallelism() >> 2);
+const roomFor = Math.floor(memoryLimitOfCommandsAtOnce / ((isASAN || isDebug ? 2 : 0.5) * 2 ** 30));
+let free = Math.max(1, Math.min(Math.max(2, availableParallelism() >> 2), roomFor));
 const waiting: (() => void)[] = [];
 beforeEach(() => (free > 0 ? void free-- : new Promise<void>(resolve => waiting.push(resolve))), 0);
 afterEach(() => {
@@ -36,7 +40,8 @@ const form = /^AOT test run \| .*?\| (test files \d+ \| to a program \d+).*\n/m;
  */
 async function printed(files: Record<string, string>, flags: string[], words?: string) {
   using dir = tempDir("a-layer-keeps-what-only-the-programs-above-call", files);
-  const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv;
+  // Whoever runs this file may have a build log its phases, which is thousands of lines. No run here takes that, nor any words, from the environment.
+  const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words, BUN_JSC_logAOTPhaseTimes: undefined };
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), env);
   const said: Record<string, string[]> = { "above the files": [] };
   let about = said["above the files"];

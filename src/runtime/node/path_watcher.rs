@@ -1016,14 +1016,13 @@ impl Linux {
                 // Recursive sub-wds stay silent; their parent directory's
                 // IN_DELETE already reported it.
                 if ev.mask & IN::IGNORED != 0 {
-                    let wd_map = &mut locked.platform.wd_map;
-                    if let Some(owners) = wd_map.get_mut(&wd) {
-                        for o in owners.drain(..) {
+                    if let Some(owners) = locked.platform.wd_map.remove(&wd) {
+                        for o in owners {
                             // SAFETY: o.watcher live under manager.mutex; shared
                             // access only — `emit_unsuppressed` takes `&self`.
                             let w = unsafe { &*o.watcher };
                             if o.subpath.as_bytes().is_empty() {
-                                manager.unlink_watcher_locked(o.watcher);
+                                locked.unlink_watcher(o.watcher);
                                 if w.is_file || !w.recursive {
                                     w.emit_unsuppressed(
                                         WatchEventKind::Rename,
@@ -1043,7 +1042,6 @@ impl Linux {
                                 }
                             }
                         }
-                        wd_map.remove(&wd);
                     }
                     continue;
                 }
@@ -1130,14 +1128,8 @@ impl Linux {
                         )
                         .as_bytes()
                     };
-
-                    // The path no longer leads to this watch: leave the dedup map before
-                    // the listener can re-watch the path (a removal's IN_IGNORED, above,
-                    // may land a read() later, and a move has none).
-                    if owner_subpath.is_empty() && ev.mask & (IN::DELETE_SELF | IN::MOVE_SELF) != 0
-                    {
-                        manager.unlink_watcher_locked(owner_watcher);
-                    }
+                    let root_left_path = owner_subpath.is_empty()
+                        && ev.mask & (IN::DELETE_SELF | IN::MOVE_SELF) != 0;
 
                     // SAFETY: owner_watcher live under manager.mutex; `emit` takes `&self`.
                     unsafe {
@@ -1221,6 +1213,14 @@ impl Linux {
                             // `emit_error` takes `&self`.
                             unsafe { (*owner_watcher).emit_error(&err, false) };
                         }
+                    }
+
+                    // The path no longer leads to this watch, so it leaves the dedup
+                    // map: a watch() of the path must start a new one. Not left to
+                    // IN_IGNORED (above), which may land a read() later and which a
+                    // move does not send.
+                    if root_left_path {
+                        locked.unlink_watcher(owner_watcher);
                     }
 
                     oi += 1;
@@ -1608,9 +1608,10 @@ impl Kqueue {
                 continue;
             }
 
-            let locked = manager.mutex.lock();
+            let mut locked = manager.mutex.lock();
             let entries = &locked.platform.entries;
             let mut touched: ArrayHashMap<*mut PathWatcher, ()> = ArrayHashMap::default();
+            let mut left_path: Vec<*mut PathWatcher> = Vec::new();
 
             for kev in &events[..count as usize] {
                 // Validate via the map — the entry may have been freed by a racing
@@ -1649,15 +1650,19 @@ impl Kqueue {
                     entry.subpath.as_bytes()
                 };
 
-                // A removed or moved root leaves the dedup map, as in the inotify backend.
                 if entry.subpath.is_empty()
                     && kev.fflags & (NOTE::DELETE | NOTE::RENAME | NOTE::REVOKE) != 0
                 {
-                    manager.unlink_watcher_locked(entry.watcher);
+                    left_path.push(entry.watcher);
                 }
 
                 watcher.emit(event_type, rel, entry.is_file);
                 let _ = handle_oom(touched.get_or_put(entry.watcher));
+            }
+
+            // A removed or moved root leaves the dedup map, as in the inotify backend.
+            for w in left_path {
+                locked.unlink_watcher(w);
             }
 
             for &w in touched.keys() {

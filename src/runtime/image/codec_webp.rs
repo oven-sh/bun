@@ -122,7 +122,7 @@ unsafe extern "C" {
         chunk_number: c_int,
         iter: &mut WebPChunkIterator<'a>,
     ) -> c_int;
-    safe fn WebPDemuxReleaseChunkIterator(iter: &mut WebPChunkIterator<'_>);
+    fn WebPDemuxReleaseChunkIterator(iter: &mut WebPChunkIterator<'_>);
 
     /// Null or a fresh mux, which lives until `WebPMuxDelete`.
     safe fn WebPNewInternal(version: c_int) -> Option<&'static mut WebPMux>;
@@ -218,7 +218,10 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
         if WebPDemuxGetChunk(&dmux, b"ICCP", 1, &mut iter) == 0 {
             break 'blk None;
         }
-        let iter = scopeguard::guard(iter, |mut it| WebPDemuxReleaseChunkIterator(&mut it));
+        let iter = scopeguard::guard(iter, |mut it| {
+            // SAFETY: `WebPDemuxGetChunk` filled `it`, and `dmux` is deleted after this guard runs.
+            unsafe { WebPDemuxReleaseChunkIterator(&mut it) }
+        });
         if iter.chunk.bytes.is_null() {
             break 'blk None;
         }

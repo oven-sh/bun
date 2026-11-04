@@ -626,7 +626,9 @@ impl FilePoll {
                 EPOLL::CTL_ADD
             };
 
-            let ctl = linux::epoll_ctl(watcher_fd, op, fd.native(), Some(&event));
+            // SAFETY: `watcher_fd` is the epoll instance of `loop_`, whose dispatch decodes a
+            // `Pollable`. `deinit` unregisters `self` before its slot is reused.
+            let ctl = unsafe { linux::epoll_ctl(watcher_fd, op, fd.native(), Some(&event)) };
             self.flags.insert(Flags::WasEverRegistered);
             if let Some(errno) = errno_sys(ctl, sys::Tag::epoll_ctl) {
                 self.deactivate(loop_);
@@ -940,7 +942,8 @@ impl FilePoll {
         {
             use bun_sys::linux::{self, EPOLL};
             // CTL_DEL keys on fd alone, so both directions are removed together.
-            let ctl = linux::epoll_ctl(watcher_fd, EPOLL::CTL_DEL, fd.native(), None);
+            // SAFETY: CTL_DEL registers nothing.
+            let ctl = unsafe { linux::epoll_ctl(watcher_fd, EPOLL::CTL_DEL, fd.native(), None) };
 
             match sys::get_errno(ctl) {
                 sys::E::SUCCESS => {}

@@ -1080,8 +1080,7 @@ unsafe extern "C" {
     pub fn HMAC_size(ctx: *const HMAC_CTX) -> usize;
 
     // ── scrypt ───────────────────────────────────────────────────────────
-    // Reads only `N`, `r`, `p` and `max_mem`.
-    pub safe fn EVP_PBE_validate_scrypt_params(
+    pub fn EVP_PBE_validate_scrypt_params(
         password: *const u8,
         password_len: usize,
         salt: *const u8,

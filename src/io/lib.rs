@@ -691,9 +691,11 @@ pub(crate) static io_loop: bun_core::output::ScopedLogger =
 bun_core::define_scoped_log!(log, io_loop); // hand-declared static above (tagname "loop" is a keyword)
 
 // ── libc shims with no preconditions ────────────────────────────────────────
-// Scalars and one reference that is only read; the kernel validates and reports failure via the
+// By-value scalar args only; the kernel validates and reports failure via the
 // return value / errno — never UB. Local `safe fn` decls (vs. routing through
 // the `libc` crate's raw items) move the proof into the type signature.
+// Unused externs do not generate linker references, so per-target `#[cfg]` is
+// unnecessary; every caller is gated.
 #[cfg(unix)]
 mod safe_c {
     use core::ffi::c_int;
@@ -702,14 +704,6 @@ mod safe_c {
         pub(super) safe fn kqueue() -> c_int;
         #[cfg(any(target_os = "linux", target_os = "android"))]
         pub(super) safe fn epoll_create1(flags: c_int) -> c_int;
-        // A null `event` is EFAULT for every `op` but CTL_DEL, which ignores it.
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        pub(super) safe fn epoll_ctl(
-            epfd: c_int,
-            op: c_int,
-            fd: c_int,
-            event: Option<&libc::epoll_event>,
-        ) -> c_int;
     }
 }
 
@@ -860,12 +854,15 @@ impl IoRequestLoop {
                 epoll.events =
                     linux::EPOLL_IN | linux::EPOLL_ET | linux::EPOLL_ERR | linux::EPOLL_HUP;
                 epoll.u64 = std::ptr::from_mut::<IoRequestLoop>(loop_) as usize as u64;
-                let rc = safe_c::epoll_ctl(
-                    loop_.epoll_fd.native(),
-                    linux::EPOLL_CTL_ADD,
-                    waker_fd.native(),
-                    Some(&epoll),
-                );
+                // SAFETY: valid epoll fd + waker fd just created.
+                let rc = unsafe {
+                    libc::epoll_ctl(
+                        loop_.epoll_fd.native(),
+                        linux::EPOLL_CTL_ADD,
+                        waker_fd.native(),
+                        &raw mut epoll,
+                    )
+                };
                 match sys::get_errno(rc) {
                     E::SUCCESS => {}
                     err => {
@@ -1553,7 +1550,15 @@ impl Poll {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn unregister_with_fd(&mut self, watcher_fd: Fd, fd: Fd) {
-        safe_c::epoll_ctl(watcher_fd.native(), linux::EPOLL_CTL_DEL, fd.native(), None);
+        // SAFETY: valid fds; null event is allowed for CTL_DEL on Linux ≥ 2.6.9.
+        unsafe {
+            libc::epoll_ctl(
+                watcher_fd.native(),
+                linux::EPOLL_CTL_DEL,
+                fd.native(),
+                core::ptr::null_mut(),
+            );
+        }
         self.flags.remove(Flags::Registered);
     }
 
@@ -1668,7 +1673,7 @@ impl Poll {
             _ => unreachable!(),
         };
 
-        let event = linux::epoll_event {
+        let mut event = linux::epoll_event {
             events: flags,
             u64: Pollable::init(tag, std::ptr::from_mut::<Poll>(self)).ptr(),
         };
@@ -1681,7 +1686,15 @@ impl Poll {
             linux::EPOLL_CTL_ADD
         };
 
-        let ctl = safe_c::epoll_ctl(watcher_fd.native(), op as c_int, fd.native(), Some(&event));
+        // SAFETY: valid fds + event pointer.
+        let ctl = unsafe {
+            libc::epoll_ctl(
+                watcher_fd.native(),
+                op as c_int,
+                fd.native(),
+                &raw mut event,
+            )
+        };
 
         let errno = sys::get_errno(ctl);
         if errno != E::SUCCESS {

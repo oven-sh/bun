@@ -17,7 +17,8 @@ unsafe extern "C" {
     /// Null or a fresh instance, which lives until `tj3Destroy`.
     safe fn tj3Init(init_type: c_int) -> Option<&'static mut TjInstance>;
     fn tj3Destroy(h: *mut TjInstance);
-    safe fn tj3Set(h: &mut TjInstance, param: c_int, value: c_int) -> c_int;
+    /// `SetParam` has no `TJPARAM_STOPONWARNING`: with it, a parse after a failed one overruns.
+    safe fn tj3Set(h: &mut TjInstance, param: SetParam, value: c_int) -> c_int;
     safe fn tj3Get(h: &TjInstance, param: c_int) -> c_int;
     safe fn tj3BunCompletedWithWarning(h: &TjInstance) -> c_int;
     fn tj3DecompressHeader(h: &mut TjInstance, buf: *const u8, len: usize) -> c_int;
@@ -134,17 +135,20 @@ fn scaled(dim: u32, sf: ScalingFactor) -> u32 {
 }
 
 // tjparam / tjpf enum values from turbojpeg.h.
-const TJPARAM_QUALITY: c_int = 3;
-const TJPARAM_SUBSAMP: c_int = 4;
+#[repr(i32)]
+enum SetParam {
+    Quality = 3,
+    Subsamp = 4,
+    Progressive = 12,
+    MaxPixels = 24,
+    /// `2` = save only APP2/ICC_PROFILE markers (enough for colour management,
+    /// skips the rest). Must be set BEFORE `tj3DecompressHeader` so the marker
+    /// parser keeps the profile around for `tj3GetICCProfile`.
+    SaveMarkers = 25,
+}
 const TJPARAM_JPEGWIDTH: c_int = 5;
 const TJPARAM_JPEGHEIGHT: c_int = 6;
 const TJPARAM_COLORSPACE: c_int = 8;
-const TJPARAM_PROGRESSIVE: c_int = 12;
-const TJPARAM_MAXPIXELS: c_int = 24;
-/// `2` = save only APP2/ICC_PROFILE markers (enough for colour management,
-/// skips the rest). Must be set BEFORE `tj3DecompressHeader` so the marker
-/// parser keeps the profile around for `tj3GetICCProfile`.
-const TJPARAM_SAVEMARKERS: c_int = 25;
 const TJPF_RGBA: c_int = 7;
 const TJPF_CMYK: c_int = 11;
 const TJCS_CMYK: c_int = 3;
@@ -160,7 +164,7 @@ pub(crate) fn decode(
     // Ask libjpeg-turbo to keep the APP2/ICC_PROFILE markers so we can pull
     // the profile out after header parse. Must be set PRE-header — the
     // marker buffer is discarded if we set this after.
-    tj3Set(handle.0, TJPARAM_SAVEMARKERS, 2);
+    tj3Set(handle.0, SetParam::SaveMarkers, 2);
     let (src_w, src_h) = handle.read_header(bytes)?;
     codecs::guard(src_w, src_h, max_pixels)?;
     // libjpeg-turbo won't convert 4-component JPEGs to RGB; decode as packed CMYK (also 4 bytes/px) and convert below.
@@ -226,7 +230,7 @@ pub(crate) fn decode(
     // leave rows unfilled with raw mimalloc bytes) is treated as corrupt.
     tj3Set(
         handle.0,
-        TJPARAM_MAXPIXELS,
+        SetParam::MaxPixels,
         c_int::try_from(src_w * src_h).unwrap_or(c_int::MAX),
     );
     // SAFETY: TurboJPEG adds `x + w` and `y + h` as C ints; with x = y = 0 neither sum can overflow.
@@ -332,15 +336,15 @@ pub(crate) fn encode(
     let handle = Handle::init(0).ok_or(codecs::Error::OutOfMemory)?;
     tj3Set(
         handle.0,
-        TJPARAM_QUALITY,
+        SetParam::Quality,
         c_int::from(quality.clamp(1, 100)),
     );
-    tj3Set(handle.0, TJPARAM_SUBSAMP, TJSAMP_420);
+    tj3Set(handle.0, SetParam::Subsamp, TJSAMP_420);
     // Progressive emits a multi-scan SOF2 stream; same size ±1%, decodes
     // coarse-to-fine. Off by default (slower to encode, some old decoders
     // mishandle it).
     if progressive {
-        tj3Set(handle.0, TJPARAM_PROGRESSIVE, 1);
+        tj3Set(handle.0, SetParam::Progressive, 1);
     }
     // Embed the source colour profile as an APP2/ICC_PROFILE marker. The
     // library copies the bytes, so the caller can free `icc_profile` right

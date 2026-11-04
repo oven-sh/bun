@@ -5549,9 +5549,19 @@ pub mod linux {
         unsafe { libc::ppoll(fds.as_mut_ptr(), fds.len() as _, timeout, sigmask) }
     }
     /// `EPOLL_CTL_DEL` takes no `event`.
+    ///
+    /// # Safety
+    /// Whoever waits on `epfd` gets `event.u64` back and may dereference it. It must be what they
+    /// expect for as long as `fd` is registered.
     #[inline]
-    pub fn epoll_ctl(epfd: c_int, op: c_int, fd: c_int, event: Option<&epoll_event>) -> c_int {
-        super::linux_syscall::epoll_ctl(epfd, op, fd, event)
+    pub unsafe fn epoll_ctl(
+        epfd: c_int,
+        op: c_int,
+        fd: c_int,
+        event: Option<&epoll_event>,
+    ) -> c_int {
+        // SAFETY: the caller's contract.
+        unsafe { super::linux_syscall::epoll_ctl(epfd, op, fd, event) }
     }
 
     // ── raw syscall thunks ──

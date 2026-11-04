@@ -521,9 +521,10 @@ mod draft {
         // safe: by-value `c_int` only; no memory-safety preconditions.
         safe fn _exit(code: c_int) -> !;
         safe fn raise(sig: c_int) -> c_int;
-        // safe: the references are the only pointers; libc or the kernel validates `signum` and `how`.
+        // safe: the references are the only pointers; libc or the kernel validates `how`.
         safe fn sigemptyset(set: &mut libc::sigset_t) -> c_int;
-        safe fn sigaddset(set: &mut libc::sigset_t, signum: c_int) -> c_int;
+        /// `signum` must be a signal number: not every libc tests it before it shifts by it.
+        fn sigaddset(set: &mut libc::sigset_t, signum: c_int) -> c_int;
         safe fn pthread_sigmask(
             how: c_int,
             set: &libc::sigset_t,
@@ -3205,7 +3206,8 @@ mod draft {
             // delivered. pthread_sigmask is async-signal-safe.
             let mut set: libc::sigset_t = bun_core::ffi::zeroed();
             sigemptyset(&mut set);
-            sigaddset(&mut set, sig);
+            // SAFETY: `terminal_signal` answers with a signal number.
+            unsafe { sigaddset(&mut set, sig) };
             pthread_sigmask(libc::SIG_UNBLOCK, &set, None);
 
             // With SIG_DFL installed and the signal unblocked this terminates the process.

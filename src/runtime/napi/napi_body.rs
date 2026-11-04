@@ -103,12 +103,12 @@ bun_opaque::opaque_ffi! {
 
 #[allow(improper_ctypes)] // `vm_handle::Shared` is opaque to C++ (`BunVmHandleRef`)
 unsafe extern "C" {
-    safe fn NapiEnv__globalObject(env: &NapiEnv) -> &JSGlobalObject;
-    safe fn NapiEnv__getAndClearPendingException(env: &NapiEnv, out: &mut JSValue) -> bool;
+    fn NapiEnv__globalObject(env: *mut NapiEnv) -> *mut JSGlobalObject;
+    fn NapiEnv__getAndClearPendingException(env: *mut NapiEnv, out: *mut JSValue) -> bool;
     /// Returns the previous value.
-    safe fn NapiEnv__setCompletingForStoppedContext(env: &NapiEnv, value: bool) -> bool;
+    fn NapiEnv__setCompletingForStoppedContext(env: *mut NapiEnv, value: bool) -> bool;
     /// `NapiStatus::ok`, or the status Node's `NAPI_PREAMBLE` returns at entry (`NapiEnv::entryStatus`).
-    safe fn NapiEnv__entryStatus(env: &NapiEnv) -> napi_status;
+    fn NapiEnv__entryStatus(env: *mut NapiEnv) -> napi_status;
     /// `NapiEnv::cleanup` runs no finalizer until each of these has its `NapiEnv__asyncWorkLeftThreadPool`.
     fn NapiEnv__asyncWorkEnteredThreadPool(env: *mut NapiEnv);
     fn NapiEnv__asyncWorkLeftThreadPool(env: *mut NapiEnv);
@@ -123,7 +123,8 @@ unsafe extern "C" {
 
 impl NapiEnv {
     pub(crate) fn to_js(&self) -> &JSGlobalObject {
-        NapiEnv__globalObject(self)
+        // SAFETY: NapiEnv__globalObject always returns a valid non-null pointer.
+        unsafe { &*NapiEnv__globalObject(self.as_mut_ptr()) }
     }
 
     /// Any thread holding an env ref: the env's VM handle.
@@ -184,15 +185,19 @@ impl NapiEnv {
         let vm = self.to_js().bun_vm();
         let stopped = !vm.is_context_live(context);
         let _context = vm.enter_context(context);
-        let previous = NapiEnv__setCompletingForStoppedContext(self, stopped);
+        // SAFETY: `self` is a live C++-owned napi_env; JS thread.
+        let previous =
+            unsafe { NapiEnv__setCompletingForStoppedContext(self.as_mut_ptr(), stopped) };
         completion();
-        NapiEnv__setCompletingForStoppedContext(self, previous);
+        // SAFETY: as above; the env outlives its completions (the caller holds a ref).
+        unsafe { NapiEnv__setCompletingForStoppedContext(self.as_mut_ptr(), previous) };
     }
 
     /// Node's `NAPI_PREAMBLE` entry check (napi.h `NapiEnv::entryStatus`). `Err` is the status Node
     /// returns, set as the last error.
     pub(crate) fn entry_status(&self) -> Result<(), napi_status> {
-        let status = NapiEnv__entryStatus(self);
+        // SAFETY: env is non-null; C++ side is read-only here.
+        let status = unsafe { NapiEnv__entryStatus(self.as_mut_ptr()) };
         if status == NapiStatus::ok as napi_status {
             return Ok(());
         }
@@ -207,7 +212,9 @@ impl NapiEnv {
 
     pub(crate) fn get_and_clear_pending_exception(&self) -> Option<JSValue> {
         let mut exception = JSValue::ZERO;
-        if NapiEnv__getAndClearPendingException(self, &mut exception) {
+        // SAFETY: out-param is a valid stack location; interior mutability via
+        // `as_mut_ptr` permits C++ to clear the pending exception.
+        if unsafe { NapiEnv__getAndClearPendingException(self.as_mut_ptr(), &raw mut exception) } {
             return Some(exception);
         }
         None
@@ -283,7 +290,7 @@ unsafe extern "C" {
     pub(super) fn NapiHandleScope__open(env: *mut NapiEnv, escapable: bool)
     -> *mut NapiHandleScope;
     pub(super) fn NapiHandleScope__close(env: *mut NapiEnv, current: *mut NapiHandleScope);
-    safe fn NapiHandleScope__append(env: &NapiEnv, value: JSValue);
+    fn NapiHandleScope__append(env: *mut NapiEnv, value: usize);
     safe fn NapiHandleScope__escape(handle_scope: &NapiHandleScope, value: JSValue) -> bool;
 }
 
@@ -312,7 +319,8 @@ impl NapiHandleScope {
     /// callbacks, as the value must remain alive as long as the handle scope is active, even if the
     /// native module doesn't keep it visible on the stack.
     fn append(env: &NapiEnv, value: JSValue) {
-        NapiHandleScope__append(env, value)
+        // SAFETY: env is valid; C++ appends to the current scope (interior mutability).
+        unsafe { NapiHandleScope__append(env.as_mut_ptr(), value.encoded()) }
     }
 
     /// Move a value from the current handle scope (which must be escapable) to the reserved escape

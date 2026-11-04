@@ -170,16 +170,14 @@ impl Locked {
         }
     }
 
-    /// Re-keys `watcher` so that `watch()` misses it and the notify-all loops still reach it.
-    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-    fn retire_watcher(&mut self, watcher: *mut PathWatcher) {
-        let Some(i) = self.watchers.values().iter().position(|&w| w == watcher) else {
+    /// Re-keys the watcher at `key`: `watch()` misses it, the notify-all loops still reach it.
+    fn retire_watcher(&mut self, key: &[u8]) {
+        let Some(entry) = self.watchers.fetch_swap_remove(key) else {
             return;
         };
-        self.watchers.swap_remove_at(i);
-        let mut key = [0u8; 1 + size_of::<usize>()];
-        key[1..].copy_from_slice(&watcher.addr().to_ne_bytes());
-        handle_oom(self.watchers.put(&key, watcher));
+        let mut retired_key = [0u8; 1 + size_of::<usize>()];
+        retired_key[1..].copy_from_slice(&entry.value.addr().to_ne_bytes());
+        handle_oom(self.watchers.put(&retired_key, entry.value));
     }
 }
 
@@ -195,6 +193,8 @@ pub(crate) struct PathWatcher {
     recursive: bool,
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     is_file: bool,
+    /// Set by a reader thread once the OS reports the root removed or moved away.
+    root_left_path: Cell<bool>,
 
     /// JS `FSWatcher` contexts sharing this OS watch. Each gets its own ChangeEvent
     /// for per-handler duplicate suppression (same as `win_watcher.rs`). Guarded by
@@ -469,9 +469,13 @@ pub(crate) fn watch(
 
     if let Some(&existing) = locked.watchers.get(key) {
         // SAFETY: existing is a live PathWatcher under manager.mutex.
-        unsafe { handle_oom((*existing).handlers.put(ctx, ChangeEvent::default())) };
-        drop(locked);
-        return Ok(existing);
+        if !unsafe { (*existing).root_left_path.get() } {
+            // SAFETY: as above.
+            unsafe { handle_oom((*existing).handlers.put(ctx, ChangeEvent::default())) };
+            drop(locked);
+            return Ok(existing);
+        }
+        locked.retire_watcher(key);
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
@@ -483,6 +487,7 @@ pub(crate) fn watch(
         recursive,
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         is_file,
+        root_left_path: Cell::new(false),
         handlers: ArrayHashMap::default(),
         platform: PlatformWatch::default(),
     };
@@ -1027,13 +1032,14 @@ impl Linux {
                 // so a deleted watch root reports two. Recursive sub-wds stay
                 // silent; their parent directory's IN_DELETE already reported it.
                 if ev.mask & IN::IGNORED != 0 {
-                    if let Some(owners) = locked.platform.wd_map.remove(&wd) {
-                        for o in owners {
+                    let wd_map = &mut locked.platform.wd_map;
+                    if let Some(owners) = wd_map.get_mut(&wd) {
+                        for o in owners.drain(..) {
                             // SAFETY: o.watcher live under manager.mutex; shared
                             // access only — `emit_unsuppressed` takes `&self`.
                             let w = unsafe { &*o.watcher };
                             if o.subpath.as_bytes().is_empty() {
-                                locked.retire_watcher(o.watcher);
+                                w.root_left_path.set(true);
                                 if w.is_file || !w.recursive {
                                     w.emit_unsuppressed(
                                         WatchEventKind::Rename,
@@ -1053,6 +1059,7 @@ impl Linux {
                                 }
                             }
                         }
+                        wd_map.remove(&wd);
                     }
                     continue;
                 }
@@ -1139,11 +1146,15 @@ impl Linux {
                         )
                         .as_bytes()
                     };
-                    let root_left_path = owner_subpath.is_empty()
-                        && ev.mask & (IN::DELETE_SELF | IN::MOVE_SELF) != 0;
 
                     // SAFETY: owner_watcher live under manager.mutex; `emit` takes `&self`.
                     unsafe {
+                        // IN_IGNORED may come a read() later, and a move never sends it.
+                        if owner_subpath.is_empty()
+                            && ev.mask & (IN::DELETE_SELF | IN::MOVE_SELF) != 0
+                        {
+                            (*owner_watcher).root_left_path.set(true);
+                        }
                         (*owner_watcher).emit(
                             event_type,
                             rel,
@@ -1224,11 +1235,6 @@ impl Linux {
                             // `emit_error` takes `&self`.
                             unsafe { (*owner_watcher).emit_error(&err, false) };
                         }
-                    }
-
-                    // IN_IGNORED may come a read() later, and a move never sends it.
-                    if root_left_path {
-                        locked.retire_watcher(owner_watcher);
                     }
 
                     oi += 1;
@@ -1616,10 +1622,9 @@ impl Kqueue {
                 continue;
             }
 
-            let mut locked = manager.mutex.lock();
+            let locked = manager.mutex.lock();
             let entries = &locked.platform.entries;
             let mut touched: ArrayHashMap<*mut PathWatcher, ()> = ArrayHashMap::default();
-            let mut left_path: Vec<*mut PathWatcher> = Vec::new();
 
             for kev in &events[..count as usize] {
                 // Validate via the map — the entry may have been freed by a racing
@@ -1661,16 +1666,11 @@ impl Kqueue {
                 if entry.subpath.is_empty()
                     && kev.fflags & (NOTE::DELETE | NOTE::RENAME | NOTE::REVOKE) != 0
                 {
-                    left_path.push(entry.watcher);
+                    watcher.root_left_path.set(true);
                 }
 
                 watcher.emit(event_type, rel, entry.is_file);
                 let _ = handle_oom(touched.get_or_put(entry.watcher));
-            }
-
-            // `entries` borrows `locked` up to here.
-            for w in left_path {
-                locked.retire_watcher(w);
             }
 
             for &w in touched.keys() {

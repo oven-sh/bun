@@ -806,10 +806,11 @@ describe("fs.watch", () => {
       const survived = Promise.withResolvers<[string, string | null]>();
       const movedAway = Promise.withResolvers<void>();
       const movedOverflow = Promise.withResolvers<[string, string | null]>();
+      const rewatchedOverflow = Promise.withResolvers<[string, string | null]>();
       // An error or unexpected close on any watcher must reject every pending
       // promise so the test reports the failure instead of hanging to the
       // timeout. The no-op catch keeps the not-yet-awaited ones handled.
-      const pending = [overflow, bufferOverflow, survived, movedAway, movedOverflow];
+      const pending = [overflow, bufferOverflow, survived, movedAway, movedOverflow, rewatchedOverflow];
       for (const p of pending) p.promise.catch(() => {});
       const fail = (err: unknown) => pending.forEach(p => p.reject(err));
       const watcher = fs.watch(observedDir, (eventType, filename) => {
@@ -820,23 +821,32 @@ describe("fs.watch", () => {
       const bufferWatcher = fs.watch(observedDir, { encoding: "buffer" }, (eventType, filename) => {
         if (filename === null) bufferOverflow.resolve([eventType, filename]);
       });
-      // A directory that was renamed away is still watched by its watcher (a
-      // new watch of the old path would start fresh), so that watcher loses
-      // events like any other and gets the same notice.
+      // A watcher whose directory was renamed away still watches that
+      // directory, also after a new watch took over the old path. It loses
+      // events like any other watcher, so it gets the same notice.
       const movedWatcher = fs.watch(movedDir, (eventType, filename) => {
         if (filename === null) movedOverflow.resolve([eventType, filename]);
         else movedAway.resolve();
       });
+      let rewatched: fs.FSWatcher | undefined;
       let closing = false;
-      for (const w of [watcher, bufferWatcher, movedWatcher]) {
+      const guard = (w: fs.FSWatcher) => {
         w.once("error", fail);
         w.once("close", () => {
           if (!closing) fail(new Error("watcher closed unexpectedly"));
         });
-      }
+        return w;
+      };
+      for (const w of [watcher, bufferWatcher, movedWatcher]) guard(w);
       try {
         fs.renameSync(movedDir, path.join(root, "moved-away"));
         await movedAway.promise;
+        fs.mkdirSync(movedDir);
+        rewatched = guard(
+          fs.watch(movedDir, (eventType, filename) => {
+            if (filename === null) rewatchedOverflow.resolve([eventType, filename]);
+          }),
+        );
         // Closing the recursive watcher unregisters one inotify watch per
         // directory in a single critical section; each unregister queues an
         // IN_IGNORED the blocked reader can't drain, overflowing the queue.
@@ -844,6 +854,7 @@ describe("fs.watch", () => {
         expect(await overflow.promise).toEqual(["change", null]);
         expect(await bufferOverflow.promise).toEqual(["change", null]);
         expect(await movedOverflow.promise).toEqual(["change", null]);
+        expect(await rewatchedOverflow.promise).toEqual(["change", null]);
         // Overflow signals lost events; the watcher itself must keep working.
         fs.writeFileSync(path.join(observedDir, "f.txt"), "x");
         expect(await survived.promise).toEqual(["rename", "f.txt"]);
@@ -852,6 +863,7 @@ describe("fs.watch", () => {
         watcher.close();
         bufferWatcher.close();
         movedWatcher.close();
+        rewatched?.close();
       }
     },
     90_000,

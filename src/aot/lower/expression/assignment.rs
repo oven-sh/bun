@@ -175,8 +175,8 @@ pub(super) fn lower_assignment(
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     // JSC records a position for the operator of `x += v` only where `x` lives in a scope object. Elsewhere the operator is reported at the last position recorded before it.
     // Nor does it record one for the read of `x` there, or for the test of `o` in `o[k] += v`, which follows a `k` that is no literal.
-    // JSC keeps a variable in a register unless a closure or `eval` sees it, an ES module exports it, or it is a parameter of a generator, whose body
-    // is a function of its own. Bun's transpiler prints an enum as a function, which sees what the members read.
+    // JSC keeps a variable in a register unless a closure or `eval` sees it, an ES module exports it, or it is a parameter of a generator that the
+    // body names, the body being a function of its own. Bun's transpiler prints an enum as a function, which sees what the members read.
     pub(in crate::lower) fn is_kept_in_register(&self, binding: Binding) -> bool {
         let Binding::Symbol(symbol) = binding else {
             return false;
@@ -207,7 +207,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         (!placement.is_shared || is_seen_by_no_printed_closure)
             && !file.scopes.is_read_by_enum(symbol)
             && !(is_exported && !file.is_commonjs_module())
-            && !(is_parameter && flags.contains(FunctionFlags::IS_GENERATOR))
+            && !(is_parameter
+                && flags.contains(FunctionFlags::IS_GENERATOR)
+                && self.coroutine.named_parameters.contains(&symbol))
     }
 
     // JSC records the store to a variable that lives in a scope object at the `=`, which the source map takes back to the name: behind the value, and in strict code ahead of it too.

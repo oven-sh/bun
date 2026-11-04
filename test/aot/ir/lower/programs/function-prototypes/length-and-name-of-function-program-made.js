@@ -79,7 +79,7 @@ console.log(lines.join("\n"));
 // CHECK-NEXT: b0(v0: anything, v1: function, v2: anything, v3: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: InitialYield v2, v3
+// CHECK-NEXT: InitialYield
 // CHECK-NEXT: v5 = Undefined
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }

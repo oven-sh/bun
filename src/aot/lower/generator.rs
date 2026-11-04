@@ -1,4 +1,4 @@
-use bun_sema::bind::Binding;
+use bun_sema::bind::{Binding, SymbolId};
 use bun_sema::hir::{self, ExprId, ExprKind, Flags, FnId, StmtId};
 use bun_sema::node::{Node, NodeData, ToNode};
 
@@ -14,6 +14,8 @@ pub(crate) struct CoroutineState {
     yielded: Option<DeclaredType>,
     /// What the function holds until it ends. Every suspension lists the values.
     pub(in crate::lower) held: SmallVec<[BindingRef; 4]>,
+    /// The parameters that the body names, for a function that can be suspended: `parameters_named_in_body`.
+    pub(in crate::lower) named_parameters: SmallVec<[SymbolId; 4]>,
 }
 
 #[derive(Copy, Clone, Debug)]

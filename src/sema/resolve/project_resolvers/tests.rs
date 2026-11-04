@@ -33,7 +33,7 @@ fn source_alias() -> Paths {
     vec![(b"@/*".to_vec(), vec![b"./src/*".to_vec()])]
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn assert_resolves(resolver: &Resolver<'_>, spec: &str, from: &str, expected: Option<&str>) {
     let (spec, from) = (spec.as_bytes(), from.as_bytes());
     let resolved = resolver.resolve_module_name(spec, from, ResolutionMode::None);

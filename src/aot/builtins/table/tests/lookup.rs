@@ -336,12 +336,12 @@ const IS_LOCKED_OBJECT: BuiltinFlags = BuiltinFlags::IS_LOCKED_OBJECT;
 const HAS_LOCKED_MEMBERS: BuiltinFlags = BuiltinFlags::HAS_LOCKED_MEMBERS;
 const LOCKS_MEMBERS: BuiltinFlags = IS_LOCKED_OBJECT.union(HAS_LOCKED_MEMBERS);
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn assert_flag(id: BuiltinId, flag: BuiltinFlags, is_set: bool) {
     assert_eq!(entry(id).flags.intersects(flag), is_set, "{}", text_of(id));
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn assert_mutability(ids: &[BuiltinId], mutability: Mutability) {
     for &id in ids {
         assert_eq!(entry(id).mutability, mutability, "{}", text_of(id));

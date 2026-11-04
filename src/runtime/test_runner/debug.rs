@@ -149,7 +149,7 @@ pub(crate) mod group {
 
     /// Uses `#[track_caller]` so the source
     /// location is taken from the *call site* (file/line/column).
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn begin() -> GroupGuard {
         let loc = core::panic::Location::caller();
         begin_msg(format_args!(

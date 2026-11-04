@@ -151,7 +151,7 @@ impl ContextData {
     ///
     /// # Panics
     /// If `self.log` is null (i.e. `create_context_data()` has not run).
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub unsafe fn log_mut(&self) -> &mut bun_ast::Log {
@@ -167,7 +167,7 @@ impl ContextData {
 
     /// Shared-ref counterpart of [`log_mut`] for read-only inspection
     /// (`has_errors()`, `print()`).
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     #[inline]
     pub fn log_ref(&self) -> &bun_ast::Log {
         assert!(

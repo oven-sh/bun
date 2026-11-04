@@ -497,7 +497,7 @@ impl JSValue {
             JSC__JSValue__createObject2(global, key1, key2, value1, value2)
         })
     }
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn create_empty_array(global: &JSGlobalObject, len: usize) -> JsResult<JSValue> {
         crate::call_zero_is_throw(global, || JSC__JSValue__createEmptyArray(global, len))
     }
@@ -508,7 +508,7 @@ impl JSValue {
     /// truncated to `u32` — `JSArray` indices are 32-bit and
     /// `create_empty_array` would already have thrown for `len > u32::MAX`,
     /// so the cast is a no-op for every reachable caller.
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn create_array_from_iter<I, T, F>(
         global: &JSGlobalObject,
         iter: I,
@@ -526,7 +526,7 @@ impl JSValue {
     }
     /// [`create_array_from_iter`](Self::create_array_from_iter) specialised
     /// for an already-materialised `&[JSValue]` (no per-element map).
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn create_array_from_slice(
         global: &JSGlobalObject,
         items: &[JSValue],
@@ -617,17 +617,17 @@ impl JSValue {
     pub fn from_date_number(global: &JSGlobalObject, value: f64) -> JSValue {
         JSC__JSValue__dateInstanceFromNumber(global, value)
     }
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn from_int64_no_truncate(global: &JSGlobalObject, i: i64) -> JsResult<JSValue> {
         host_fn::from_js_host_call(global, || JSC__JSValue__fromInt64NoTruncate(global, i))
     }
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn from_uint64_no_truncate(global: &JSGlobalObject, i: u64) -> JsResult<JSValue> {
         host_fn::from_js_host_call(global, || JSC__JSValue__fromUInt64NoTruncate(global, i))
     }
     /// A BigInt from a decimal integer literal (optional `-`, then digits).
     /// Returns `Ok(None)` when `digits` is not such a literal.
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn big_int_from_decimal(
         global: &JSGlobalObject,
         digits: &[u8],
@@ -775,14 +775,14 @@ impl JSValue {
     pub fn coerce<T: CoerceTo>(self, global: &JSGlobalObject) -> JsResult<T> {
         T::coerce_from(self, global)
     }
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn to_js_string<'a>(self, global: &'a JSGlobalObject) -> JsResult<&'a JSString> {
         crate::call_null_is_throw(global, || JSC__JSValue__toStringOrNull(self, global))
             .map(|p| JSString::opaque_ref(p.as_ptr()))
     }
     /// [`to_js_string`] plus a borrowed view of its characters, in one FFI
     /// call. The returned guard keeps the characters' owner cell alive while in scope.
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn to_js_string_view<'a>(self, global: &'a JSGlobalObject) -> JsResult<JSStringView<'a>> {
         let mut view = bun_core::StringView::EMPTY;
         let mut owner: *const JSString = core::ptr::null();
@@ -1315,7 +1315,7 @@ impl JSValue {
     /// `Object.hasOwnProperty(key)`. `self` **must** be an object — the C++ side
     /// `uncheckedDowncast`s. `key.toPropertyKey()` and Proxy `ownKeys` traps
     /// can throw, so this is routed through `from_js_host_call_generic`.
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn has_own_property_value(self, global: &JSGlobalObject, key: JSValue) -> JsResult<bool> {
         host_fn::from_js_host_call_generic(global, || {
             JSC__JSValue__hasOwnPropertyValue(self, global, key)
@@ -1326,7 +1326,7 @@ impl JSValue {
     /// object whose `name`/`length` are fixed up to the supplied values; `args`
     /// are prepended to the eventual call's argument list. C++ is annotated
     /// `[[ZIG_EXPORT(zero_is_throw)]]`, so `0` ↔ pending exception.
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn bind(
         self,
         global: &JSGlobalObject,
@@ -1451,7 +1451,7 @@ impl JSValue {
             JSC__JSValue__putToPropertyKey(target, global, key, value)
         })
     }
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn put_index(self, global: &JSGlobalObject, i: u32, out: JSValue) -> JsResult<()> {
         crate::call_check_slow(global, || JSC__JSValue__putIndex(self, global, i, out))
     }
@@ -1470,7 +1470,7 @@ impl JSValue {
     }
 
     /// `JSValue.push` — append to an array-typed JS value.
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn push(self, global: &JSGlobalObject, out: JSValue) -> JsResult<()> {
         crate::call_check_slow(global, || JSC__JSValue__push(self, global, out))
     }
@@ -1627,7 +1627,7 @@ impl JSValue {
     /// `JSValue.callWithGlobalThis(global, args)` — `call`
     /// with `global` as the receiver.
     #[inline]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn call_with_global_this(
         self,
         global: &JSGlobalObject,
@@ -1639,7 +1639,7 @@ impl JSValue {
     /// `JSValue.call(global, thisValue, args)`.
     /// Calls `function` with `this_value` as the receiver. Returns
     /// `Err(JsError::Thrown)` if a JS exception was raised.
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn call(
         self,
         global: &JSGlobalObject,

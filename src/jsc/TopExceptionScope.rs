@@ -39,7 +39,7 @@ impl SourceLocation {
     /// NUL-terminated, so we intern it (leaked, bounded by the number of distinct call
     /// sites in the binary) to hand a stable `*const c_char` to the C++ scope ctor for
     /// `BUN_JSC_dumpSimulatedThrows` diagnostics.
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     #[inline]
     pub(crate) fn from_caller() -> Self {
         let loc = core::panic::Location::caller();
@@ -178,7 +178,7 @@ impl TopExceptionScope {
     /// stack redzones make the local/return-slot mismatch observable).
     ///
     /// Prefer [`top_scope!`](crate::top_scope) (RAII) over calling this directly.
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn init<'a>(
         storage: &'a mut core::mem::MaybeUninit<Self>,
         global: &JSGlobalObject,
@@ -445,7 +445,7 @@ impl Drop for ExceptionValidationScopeGuard<'_> {
 
 impl ExceptionValidationScope {
     /// See [`TopExceptionScope::init`] for the storage-passing rationale.
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn init<'a>(
         storage: &'a mut core::mem::MaybeUninit<Self>,
         global: &JSGlobalObject,
@@ -487,7 +487,7 @@ impl ExceptionValidationScope {
     }
 
     /// RAII constructor — see [`TopExceptionScope::init_guard`].
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     #[inline]
     pub(crate) fn init_guard<'a>(
         storage: &'a mut core::mem::MaybeUninit<Self>,
@@ -615,7 +615,7 @@ pub fn call_zero_is_throw_at(
 /// `[[ZIG_EXPORT(zero_is_throw)]]` — `#[track_caller]` convenience wrapper.
 /// Prefer [`call_zero_is_throw_at`] with [`src!`](crate::src) in hot paths (avoids the
 /// debug-build process-level intern of `Location::file()`).
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 #[inline]
 pub fn call_zero_is_throw(
     global: &JSGlobalObject,
@@ -639,7 +639,7 @@ pub fn call_false_is_throw_at(
 }
 
 /// `[[ZIG_EXPORT(false_is_throw)]]` — `#[track_caller]` convenience wrapper.
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 #[inline]
 pub fn call_false_is_throw(global: &JSGlobalObject, f: impl FnOnce() -> bool) -> JsResult<()> {
     call_false_is_throw_at(global, SourceLocation::from_caller(), f)
@@ -660,7 +660,7 @@ pub fn call_null_is_throw_at<T>(
 }
 
 /// `[[ZIG_EXPORT(null_is_throw)]]` — `#[track_caller]` convenience wrapper.
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 #[inline]
 pub fn call_null_is_throw<T>(
     global: &JSGlobalObject,
@@ -706,7 +706,7 @@ pub fn call_check_slow_at<R>(
 }
 
 /// `[[ZIG_EXPORT(check_slow)]]` — `#[track_caller]` convenience wrapper.
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 #[inline]
 pub fn call_check_slow<R>(global: &JSGlobalObject, f: impl FnOnce() -> R) -> JsResult<R> {
     call_check_slow_at(global, SourceLocation::from_caller(), f)

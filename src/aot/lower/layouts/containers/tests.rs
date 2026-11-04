@@ -11,7 +11,7 @@ const FIXED: FieldForm = FieldForm(
     FieldForm::IS_READ_ONLY.0 | FieldForm::IS_NOT_ENUMERABLE.0 | FieldForm::IS_NOT_CONFIGURABLE.0,
 );
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn lower_module(source: &str) -> Fragment {
     let files = [("main.cjs", source)];
     let mut lowered = lower_program_with_limits(&files, LimitValues::for_host());
@@ -41,7 +41,7 @@ fn describe_exports(fragment: &Fragment) -> Vec<(String, FieldForm)> {
     fields.collect()
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn names_of(source: &str) -> Vec<String> {
     let fragment = lower_module(source);
     describe_exports(&fragment)

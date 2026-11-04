@@ -338,7 +338,7 @@ impl<C: JobContext> bun_event_loop::Taskable for Job<C> {
 
 impl<C: JobContext> Job<C> {
     /// JS thread: build the job, keep the loop alive for it, hand it to the pool.
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn schedule(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
         let mut keep_alive = KeepAlive::default();
         keep_alive.ref_(bun_io::js_vm_ctx());

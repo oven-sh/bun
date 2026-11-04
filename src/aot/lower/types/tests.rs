@@ -44,7 +44,7 @@ impl TypeTree {
     }
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn contents_of(ty: &TypeTree, class: BuiltinClass) -> &[TypeTree] {
     match &ty.classes[..] {
         [(only, contents)] if *only == class => contents,
@@ -76,7 +76,7 @@ fn expand_type(fragment: &Fragment, id: TypeId) -> TypeTree {
     }
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn lower_file(path: &str, source: &str, max_type_nodes: Option<u64>) -> LoweredFile {
     let mut limits = LimitValues::for_host();
     if let Some(maximum) = max_type_nodes {
@@ -87,7 +87,7 @@ fn lower_file(path: &str, source: &str, max_type_nodes: Option<u64>) -> LoweredF
     lowered.remove(0).1
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn lower(source: &str, max_type_nodes: Option<u64>) -> LoweredFile {
     lower_file("main.ts", source, max_type_nodes)
 }
@@ -99,7 +99,7 @@ fn expand_position(fragment: &Fragment, declared: DeclaredType) -> PositionTree 
     }
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn expand_variable(lowered: &LoweredFile, name: &str) -> PositionTree {
     let fragment = &lowered.fragment;
     let mut variables = fragment.variables.iter().map(|(_, variable)| variable);
@@ -129,7 +129,7 @@ fn declared_types_of_fields(lowered: &LoweredFile, name: &str) -> Vec<DeclaredTy
     named.map(|field| field.declared).collect()
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn find_function<'f>(lowered: &'f LoweredFile, name: &str) -> &'f Function {
     let fragment = &lowered.fragment;
     let mut functions = fragment.functions.iter().map(|(_, function)| function);
@@ -166,7 +166,7 @@ fn count_type_node_losses(lowered: &LoweredFile) -> u32 {
     find_type_node_loss(lowered).map_or(0, |loss| loss.count)
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn assert_order_independent(aliases: &str, types: [&str; 2], max_type_nodes: Option<u64>) {
     let declare = |first: &str, second: &str| {
         let source = format!("{aliases}\nexport let a: {first};\nexport let b: {second};\n");

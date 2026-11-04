@@ -60,7 +60,7 @@ pub(crate) trait BuiltinState: Sized {
     fn extract(impl_: &mut Impl) -> &mut Self;
 
     #[inline]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Self {
         Self::extract(&mut Builtin::of_mut(interp, cmd).impl_)
     }
@@ -805,7 +805,7 @@ impl Builtin {
 
     /// Look up the Builtin inside a Cmd's `exec` slot.
     #[inline]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn of<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a Builtin {
         match &interp.as_cmd(cmd).exec {
             crate::shell::states::cmd::Exec::Builtin(b) => b,
@@ -814,7 +814,7 @@ impl Builtin {
     }
 
     #[inline]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn of_mut<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a mut Builtin {
         match &mut interp.as_cmd_mut(cmd).exec {
             crate::shell::states::cmd::Exec::Builtin(b) => b,

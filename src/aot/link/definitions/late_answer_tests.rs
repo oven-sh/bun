@@ -113,7 +113,7 @@ fn link_with_late_answers(files: &[(&str, &str)], choice: u64) -> (String, usize
     })
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn assert_same_program(program: &str, expected: &str, choice: u64) {
     if program == expected {
         return;

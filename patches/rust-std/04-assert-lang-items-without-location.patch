@@ -1,0 +1,53 @@
+The compiler passes a `Location` to the panic lang items whatever their attributes say. They become inlined wrappers that drop it and call a function without that argument.
+
+diff --git a/library/core/src/panicking.rs b/library/core/src/panicking.rs
+index 0a24625..1c2fb2f 100644
+--- a/library/core/src/panicking.rs
++++ b/library/core/src/panicking.rs
+@@ -162,14 +162,21 @@ macro_rules! panic_const {
+             //
+             // never inline unless panic=immediate-abort to avoid code
+             // bloat at the call sites as much as possible
+-            #[cfg_attr(not(panic = "immediate-abort"), inline(never), cold)]
+-            #[cfg_attr(panic = "immediate-abort", inline)]
++            // The compiler passes a `Location` to this function. Inlined, it drops it: the call
++            // site calls `fail`, which takes no argument.
++            #[inline(always)]
+             #[track_caller]
+             #[rustc_const_stable_indirect] // must follow stable const rules since it is exposed to stable
+             #[lang = stringify!($lang)]
+             pub const fn $lang() -> ! {
+-                // See the comment in `panic(&'static str)` for why we use `Arguments::from_str` here.
+-                panic_fmt(fmt::Arguments::from_str($message));
++                #[cfg_attr(not(panic = "immediate-abort"), inline(never), cold)]
++                #[cfg_attr(panic = "immediate-abort", inline)]
++                #[rustc_const_stable_indirect]
++                const fn fail() -> ! {
++                    // See the comment in `panic(&'static str)` for why we use `Arguments::from_str` here.
++                    panic_fmt(fmt::Arguments::from_str($message));
++                }
++                fail()
+             }
+         )+
+     }
+@@ -253,11 +260,18 @@ pub const fn panic_display<T: fmt::Display>(x: &T) -> ! {
+     panic_fmt(format_args!("{}", *x));
+ }
+ 
+-#[cfg_attr(not(panic = "immediate-abort"), inline(never), cold, optimize(size))]
+-#[cfg_attr(panic = "immediate-abort", inline)]
++// The compiler passes a `Location` to this function. Inlined, it drops it: the call site calls
++// `bounds_check_failed` with the two numbers only.
++#[inline(always)]
+ #[track_caller]
+ #[lang = "panic_bounds_check"] // needed by codegen for panic on OOB array/slice access
+ fn panic_bounds_check(index: usize, len: usize) -> ! {
++    bounds_check_failed(index, len)
++}
++
++#[cfg_attr(not(panic = "immediate-abort"), inline(never), cold, optimize(size))]
++#[cfg_attr(panic = "immediate-abort", inline)]
++fn bounds_check_failed(index: usize, len: usize) -> ! {
+     if cfg!(panic = "immediate-abort") {
+         super::intrinsics::abort()
+     }

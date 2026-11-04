@@ -106,7 +106,7 @@ const MACHINE_CODE_LOADS: &[&str] = &[
     "f(Bun.FFI);",
 ];
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn assert_loads_unknown_modules(setup: Setup, sources: &[&str], expected: bool) {
     for &source in sources {
         with_case(setup, source, |case| {

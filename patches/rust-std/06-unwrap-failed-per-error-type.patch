@@ -1,0 +1,45 @@
+A failing `Result::unwrap` passed the message, the error's address and its vtable at every call site. A cold function per error type holds them.
+
+diff --git a/library/core/src/result.rs b/library/core/src/result.rs
+index b28eb2e..3a90278 100644
+--- a/library/core/src/result.rs
++++ b/library/core/src/result.rs
+@@ -1180,7 +1180,7 @@ impl<T, E> Result<T, E> {
+     {
+         match self {
+             Ok(t) => t,
+-            Err(e) => unwrap_failed(msg, &e),
++            Err(e) => expect_failed_with(msg, e),
+         }
+     }
+ 
+@@ -1227,7 +1227,7 @@ impl<T, E> Result<T, E> {
+     {
+         match self {
+             Ok(t) => t,
+-            Err(e) => unwrap_failed("called `Result::unwrap()` on an `Err` value", &e),
++            Err(e) => unwrap_failed_with(e),
+         }
+     }
+ 
+@@ -1855,6 +1855,20 @@ impl<T, E> Result<Result<T, E>, E> {
+ }
+ 
+ // This is a separate function to reduce the code size of the methods
++// One function per error type holds what every failing `unwrap` of that type would pass: the
++// message, the address of the error and its vtable.
++#[inline(never)]
++#[cold]
++fn unwrap_failed_with<E: fmt::Debug>(error: E) -> ! {
++    unwrap_failed("called `Result::unwrap()` on an `Err` value", &error)
++}
++
++#[inline(never)]
++#[cold]
++fn expect_failed_with<E: fmt::Debug>(msg: &str, error: E) -> ! {
++    unwrap_failed(msg, &error)
++}
++
+ #[cfg(not(panic = "immediate-abort"))]
+ #[inline(never)]
+ #[cold]

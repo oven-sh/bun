@@ -34,7 +34,7 @@
  * archive rustc used to make of all of them, so what gets pulled is unchanged.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Abi, Arch, Config, OS } from "./config.ts";
 import { assert } from "./error.ts";
@@ -286,6 +286,20 @@ function generatedFilesOf(packageName: string): string[] | "all" {
 }
 
 /** The `cargo build` invocation the Rust step plans with (`cargo build <args> --unit-graph`), and what it implies for every unit. */
+/**
+ * The patches to std and to registry crates this build compiles with (rust/patched-sources.ts). They make the code
+ * smaller and change no behaviour but one: a panic inside std no longer knows its caller's location. Builds that print
+ * locations (`-Zlocation-detail=none` below is off) therefore use the sources as they are, and so does ASAN.
+ */
+function rustSourcePatches(cfg: Config): string[] {
+  if (!cfg.release || cfg.assertions || cfg.asan) return [];
+  const dir = resolve(cfg.cwd, "patches", "rust-std");
+  return readdirSync(dir)
+    .filter(name => name.endsWith(".patch"))
+    .sort()
+    .map(name => join(dir, name));
+}
+
 export interface CargoInvocation {
   /** `cargo build <args>` — everything after `build`. */
   args: string[];
@@ -789,7 +803,15 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     .filter(p => basename(p) === "build.rs" && manifestDirs.has(dirname(p)))
     .map(p => relative(cfg.cwd, p))
     .sort();
-  const planEdgeInputs = [cargo, rustc, ...manifests, resolve(cfg.cwd, "rust-toolchain.toml"), ...inputs.vendorStamps];
+  const sourcePatches = rustSourcePatches(cfg);
+  const planEdgeInputs = [
+    cargo,
+    rustc,
+    ...manifests,
+    resolve(cfg.cwd, "rust-toolchain.toml"),
+    ...inputs.vendorStamps,
+    ...sourcePatches,
+  ];
   const planned = (dir: string, what: { args: string[]; env: Record<string, string>; rustflags: string[] }) => {
     const input: PlanInput = {
       cwd: cfg.cwd,
@@ -802,6 +824,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
       buildScripts,
       args: what.args,
       env: planEnv(what.env),
+      sourcePatches,
     };
     return { dir, file: emitRustPlan(n, cfg, dir, { input, inputs: planEdgeInputs }), plan: readPlan(dir, input) };
   };

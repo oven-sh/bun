@@ -84,7 +84,7 @@ const MISUSES: [(&str, &str, &str); 15] = [
     ),
 ];
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn offset_of(source: &str, text: &str) -> u32 {
     let offset = index_of(source.as_bytes(), text.as_bytes());
     offset.expect("the source has the text") as u32

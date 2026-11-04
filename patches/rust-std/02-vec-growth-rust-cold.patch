@@ -1,0 +1,40 @@
+`RawVec::grow_one` and the reserve function of patch 01 use the `rust-cold` calling convention: they save the registers they use, so the caller does not spill its own around a call it rarely makes.
+
+diff --git a/library/alloc/src/lib.rs b/library/alloc/src/lib.rs
+index 6bbd8e8..3f880a2 100644
+--- a/library/alloc/src/lib.rs
++++ b/library/alloc/src/lib.rs
+@@ -207,6 +207,7 @@
+ #![feature(intrinsics)]
+ #![feature(lang_items)]
+ #![feature(min_specialization)]
++#![feature(rust_cold_cc)]
+ #![feature(multiple_supertrait_upcastable)]
+ #![feature(negative_impls)]
+ #![feature(optimize_attribute)]
+diff --git a/library/alloc/src/raw_vec/mod.rs b/library/alloc/src/raw_vec/mod.rs
+index f1b347e..8fccc8b 100644
+--- a/library/alloc/src/raw_vec/mod.rs
++++ b/library/alloc/src/raw_vec/mod.rs
+@@ -185,7 +185,7 @@ const impl<T, A: [const] Allocator + [const] Destruct> RawVec<T, A> {
+     /// caller to ensure `len == self.capacity()`.
+     #[cfg(not(no_global_oom_handling))]
+     #[inline(never)]
+-    pub(crate) fn grow_one(&mut self) {
++    pub(crate) extern "rust-cold" fn grow_one(&mut self) {
+         // SAFETY: All calls on self.inner pass T::LAYOUT as the elem_layout
+         unsafe { self.inner.grow_one(T::LAYOUT) }
+     }
+@@ -350,7 +350,11 @@ impl<T, A: Allocator> RawVec<T, A> {
+         // instead of every call site loading it into two registers for the path that reallocates.
+         #[cold]
+         #[inline(never)]
+-        fn grow<T, A: Allocator>(slf: &mut RawVecInner<A>, len: usize, additional: usize) {
++        extern "rust-cold" fn grow<T, A: Allocator>(
++            slf: &mut RawVecInner<A>,
++            len: usize,
++            additional: usize,
++        ) {
+             // SAFETY: All calls on self.inner pass T::LAYOUT as the elem_layout
+             unsafe { slf.do_reserve_and_handle(len, additional, T::LAYOUT) }
+         }

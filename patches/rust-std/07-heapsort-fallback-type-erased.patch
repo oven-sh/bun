@@ -1,0 +1,111 @@
+The heapsort that quicksort falls back to after too many bad pivots is compiled once, on blocks of `size_of::<T>()` bytes, instead of per element type and comparison.
+
+diff --git a/library/core/src/slice/sort/unstable/heapsort.rs b/library/core/src/slice/sort/unstable/heapsort.rs
+index 8523177..4e663c1 100644
+--- a/library/core/src/slice/sort/unstable/heapsort.rs
++++ b/library/core/src/slice/sort/unstable/heapsort.rs
+@@ -1,6 +1,6 @@
+ //! This module contains a branchless heapsort as fallback for unstable quicksort.
+ 
+-use crate::{cmp, intrinsics, ptr};
++use crate::{cmp, ptr};
+ 
+ /// Sorts `v` using heapsort, which guarantees *O*(*n* \* log(*n*)) worst-case.
+ ///
+@@ -11,42 +11,54 @@ pub(crate) fn heapsort<T, F>(v: &mut [T], is_less: &mut F)
+ where
+     F: FnMut(&T, &T) -> bool,
+ {
+-    let len = v.len();
++    // This only runs when quicksort made too many bad pivot choices, so one copy serves every
++    // element type: it sees the elements as blocks of `size_of::<T>()` bytes and asks through a pointer.
++    // SAFETY: `heapsort_erased` passes pointers to elements of `v`.
++    let mut is_less_erased =
++        |a: *const u8, b: *const u8| unsafe { is_less(&*a.cast::<T>(), &*b.cast::<T>()) };
++    // SAFETY: the pointer, the length and the element size describe `v`.
++    unsafe { heapsort_erased(v.as_mut_ptr().cast(), v.len(), size_of::<T>(), &mut is_less_erased) }
++}
+ 
++/// # Safety
++///
++/// `base` points to `len` elements of `size` bytes each, valid for reads and writes.
++#[inline(never)]
++unsafe fn heapsort_erased(
++    base: *mut u8,
++    len: usize,
++    size: usize,
++    is_less: &mut dyn FnMut(*const u8, *const u8) -> bool,
++) {
+     for i in (0..len + len / 2).rev() {
+         let sift_idx = if i >= len {
+             i - len
+         } else {
+-            v.swap(0, i);
++            if i != 0 {
++                // SAFETY: `0` and `i` are different elements in bounds.
++                unsafe { ptr::swap_nonoverlapping(base, base.add(i * size), size) };
++            }
+             0
+         };
+ 
+         // SAFETY: The above calculation ensures that `sift_idx` is either 0 or
+-        // `(len..(len + (len / 2))) - len`, which simplifies to `0..(len / 2)`.
+-        // This guarantees the required `sift_idx <= len`.
++        // `(len..(len + (len / 2))) - len`, which will be in bounds of `cmp::min(i, len)` elements.
+         unsafe {
+-            sift_down(&mut v[..cmp::min(i, len)], sift_idx, is_less);
++            sift_down(base, cmp::min(i, len), size, sift_idx, is_less);
+         }
+     }
+ }
+ 
+ // This binary heap respects the invariant `parent >= child`.
+ //
+-// SAFETY: The caller has to guarantee that `node <= v.len()`.
+-#[inline(always)]
+-unsafe fn sift_down<T, F>(v: &mut [T], mut node: usize, is_less: &mut F)
+-where
+-    F: FnMut(&T, &T) -> bool,
+-{
+-    // SAFETY: See function safety.
+-    unsafe {
+-        intrinsics::assume(node <= v.len());
+-    }
+-
+-    let len = v.len();
+-
+-    let v_base = v.as_mut_ptr();
+-
++// SAFETY: The caller has to guarantee that `node <= len` and that `base` points to `len` elements of `size` bytes.
++unsafe fn sift_down(
++    base: *mut u8,
++    len: usize,
++    size: usize,
++    mut node: usize,
++    is_less: &mut dyn FnMut(*const u8, *const u8) -> bool,
++) {
+     loop {
+         // Children of `node`.
+         let mut child = 2 * node + 1;
+@@ -58,18 +70,15 @@ where
+         unsafe {
+             // Choose the greater child.
+             if child + 1 < len {
+-                // We need a branch to be sure not to out-of-bounds index,
+-                // but it's highly predictable.  The comparison, however,
+-                // is better done branchless, especially for primitives.
+-                child += is_less(&*v_base.add(child), &*v_base.add(child + 1)) as usize;
++                child += is_less(base.add(child * size), base.add((child + 1) * size)) as usize;
+             }
+ 
+             // Stop if the invariant holds at `node`.
+-            if !is_less(&*v_base.add(node), &*v_base.add(child)) {
++            if !is_less(base.add(node * size), base.add(child * size)) {
+                 break;
+             }
+ 
+-            ptr::swap_nonoverlapping(v_base.add(node), v_base.add(child), 1);
++            ptr::swap_nonoverlapping(base.add(node * size), base.add(child * size), size);
+         }
+ 
+         node = child;

@@ -12,7 +12,7 @@ unsafe extern "C" {
 pub trait URLJsc {
     /// Percent-encodes the URL, punycode-encodes the hostname, and returns the
     /// result. If it fails, the tag is marked Dead.
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn href_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<String> {
         crate::call_check_slow(global, || URL__getHrefFromJS(value, global))
     }

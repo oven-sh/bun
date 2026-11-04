@@ -7,7 +7,7 @@ use ModuleObjectUse::{
 
 type Mention = (&'static str, ModuleObjectOwner, ModuleObjectUse);
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn assert_mentions_in(setup: Setup, source: &str, expected: &[Mention]) {
     with_case(setup, source, |case| {
         let mentions = case.resolved.module_object_mentions().iter();
@@ -24,7 +24,7 @@ fn assert_mentions_in(setup: Setup, source: &str, expected: &[Mention]) {
     });
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn assert_mentions(source: &str, expected: &[Mention]) {
     assert_mentions_in(SCRIPT, source, expected);
 }

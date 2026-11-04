@@ -44,7 +44,7 @@ fn classes_of(text: &str, options: Options, code: u32) -> Vec<DiagnosticClass> {
     found.map(|it| it.class).collect()
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn expect_compiled(code: u32, expected: &[DiagnosticClass], texts: &[&str]) {
     for text in texts {
         let found = classes_of(text, compiled_javascript(), code);

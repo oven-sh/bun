@@ -260,7 +260,7 @@ fn cast_parts<A, B>(ptr: *mut A, len: usize) -> Result<(*mut B, usize), CastErro
 /// One copy for every `A` and `B`; `#[track_caller]` names the cast.
 #[cold]
 #[inline(never)]
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn cast_failed(error: CastError) -> ! {
     match error {
         CastError::Misaligned { address, align } => {
@@ -302,7 +302,7 @@ pub fn try_cast_slice_mut<A: Pod, B: Pod>(a: &mut [A]) -> Option<&mut [B]> {
 
 /// `&[A]` as `&[B]`, for a layout the caller has established. Panics where [`try_cast_slice`] returns `None`.
 #[inline]
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 pub fn cast_slice<A: NoUninit, B: AnyBitPattern>(a: &[A]) -> &[B] {
     match cast_ref(a) {
         Ok(b) => b,
@@ -312,7 +312,7 @@ pub fn cast_slice<A: NoUninit, B: AnyBitPattern>(a: &[A]) -> &[B] {
 
 /// `&mut [A]` as `&mut [B]`. Panics where [`try_cast_slice_mut`] returns `None`.
 #[inline]
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 pub fn cast_slice_mut<A: Pod, B: Pod>(a: &mut [A]) -> &mut [B] {
     match cast_mut(a) {
         Ok(b) => b,

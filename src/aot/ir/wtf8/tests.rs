@@ -6,13 +6,13 @@ const SURROGATE_PAIR: &[u8] = b"\xED\xA0\xBD\xED\xB8\x80";
 const JOINED_PAIR: &[u8] = "\u{1F600}".as_bytes();
 const JOINED_CODE_POINT: u32 = 0x1F600;
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn assert_joined(written: &[u8], expected: &[u8]) {
     let joined = join_surrogate_pairs(written).expect("the text has a surrogate pair");
     assert_eq!(joined.as_slice(), expected, "{written:x?}");
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn assert_nothing_to_join(written: &[u8]) {
     assert!(join_surrogate_pairs(written).is_none(), "{written:x?}");
 }

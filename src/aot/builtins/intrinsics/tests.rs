@@ -41,7 +41,7 @@ macro_rules! assert_found {
     )*};
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn assert_absent(spellings: &Spellings<'_, '_>, absent: &[(&str, IntrinsicPosition)]) {
     for &(spelling, position) in absent {
         let found = spellings.intrinsic(spelling, position);

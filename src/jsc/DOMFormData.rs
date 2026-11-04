@@ -44,7 +44,7 @@ impl DOMFormData {
     /// C++ side declares a `THROW_SCOPE` and may throw `ERR_STRING_TOO_LONG`
     /// (returns encoded `JSValue::ZERO` on throw) — wrap in a validation scope
     /// so JSC's `validateExceptionChecks` sees the check before the next scope.
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn create_from_url_query(
         global: &JSGlobalObject,
         query: &EncodedSlice,
@@ -65,7 +65,7 @@ impl DOMFormData {
         (!p.is_null()).then(|| DOMFormData::opaque_mut(p))
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn append(
         &mut self,
         global: &JSGlobalObject,
@@ -77,7 +77,7 @@ impl DOMFormData {
         })
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn append_blob(
         &mut self,
         global: &JSGlobalObject,

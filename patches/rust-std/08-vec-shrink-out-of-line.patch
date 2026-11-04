@@ -1,0 +1,14 @@
+`RawVec::shrink_to_fit` is not inlined.
+
+diff -ru a/library/alloc/src/raw_vec/mod.rs b/library/alloc/src/raw_vec/mod.rs
+--- a/library/alloc/src/raw_vec/mod.rs
++++ b/library/alloc/src/raw_vec/mod.rs
+@@ -404,7 +404,7 @@
+     ///
+     /// Aborts on OOM.
+     #[cfg(not(no_global_oom_handling))]
+-    #[inline]
++    #[inline(never)] // reallocates: one copy per element layout, called
+     pub(crate) fn shrink_to_fit(&mut self, cap: usize) {
+         // SAFETY: All calls on self.inner pass T::LAYOUT as the elem_layout
+         unsafe { self.inner.shrink_to_fit(cap, T::LAYOUT) }

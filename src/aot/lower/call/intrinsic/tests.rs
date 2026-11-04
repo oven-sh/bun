@@ -105,7 +105,7 @@ impl LoweredFiles {
         self.0.iter().map(|(_, lowered)| lowered)
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn function(&self, name: &str) -> Probe<'_> {
         let fragments = self.files().map(|lowered| &lowered.fragment);
         let mut probes = fragments.flat_map(|fragment| {
@@ -145,7 +145,7 @@ impl<'a> Probe<'a> {
         self.function.body.blocks()
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn block(self, id: BlockId) -> BlockView<'a> {
         let block = self.blocks().find(|block| block.id == id);
         block.unwrap_or_else(|| panic!("no block {id}:\n{self}"))
@@ -172,7 +172,7 @@ impl<'a> Probe<'a> {
         self.all(opcode).len()
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn only(self, opcode: Opcode) -> Operation<'a> {
         let [operation] = self.all(opcode)[..] else {
             panic!("expected one {}:\n{self}", opcode.name());
@@ -180,20 +180,20 @@ impl<'a> Probe<'a> {
         operation
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn only_builtin(self, builtin: BuiltinId) -> Operation<'a> {
         let found = self.only(Opcode::Builtin);
         assert_eq!(found.references(), [Reference::Builtin(builtin)], "{self}");
         found
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn definition(self, value: ValueId) -> Operation<'a> {
         let operation = self.operations().find(|operation| operation.id() == value);
         operation.unwrap_or_else(|| panic!("no operation defines {value}:\n{self}"))
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn call_of(self, callee: ValueId) -> Operation<'a> {
         let mut calls = self.all(Opcode::Call);
         calls.retain(|call| call.operands().first() == Some(&callee));
@@ -215,7 +215,7 @@ impl<'a> Probe<'a> {
         conversions
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn only_demanded_conversion(self) -> Operation<'a> {
         let [conversion] = self.demanded_conversions()[..] else {
             panic!("expected one conversion that is not only expected:\n{self}");
@@ -251,7 +251,7 @@ impl<'a> Probe<'a> {
             .collect()
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn only_terminator(self, kind: TerminatorKind) -> (BlockView<'a>, TerminatorView<'a>) {
         let [terminator] = self.terminators(kind)[..] else {
             panic!("expected one {}:\n{self}", kind.name());
@@ -259,7 +259,7 @@ impl<'a> Probe<'a> {
         terminator
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn branch_targets(self, test: Operation<'a>) -> [BlockView<'a>; 2] {
         let branch = self.block(test.block).terminator();
         assert_eq!(branch.kind, TerminatorKind::Branch, "{self}");
@@ -274,7 +274,7 @@ impl<'a> Probe<'a> {
         [taken, not_taken]
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn value_unless_nullish(self, tested: ValueId) -> ValueId {
         let test = self.only(Opcode::TypeTest);
         assert_eq!(test.operands(), [tested], "{self}");
@@ -288,29 +288,29 @@ impl<'a> Probe<'a> {
         self.fragment.strings.find(text.as_bytes()).is_some()
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn string(self, text: &str) -> StringId {
         let string = self.fragment.strings.find(text.as_bytes());
         string.unwrap_or_else(|| panic!("the fragment has no string {text:?}:\n{self}"))
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn key(self, key: PropertyKey) -> PropertyKeyId {
         let found = self.fragment.property_keys.find(&key);
         found.unwrap_or_else(|| panic!("the fragment has no key {key:?}:\n{self}"))
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn text_key(self, text: &str) -> PropertyKeyId {
         self.key(PropertyKey::from_text(self.string(text)))
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn private_key(self, text: &str) -> PropertyKeyId {
         self.key(PropertyKey::from_engine_private_name(self.string(text)))
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn symbol_key(self, symbol: WellKnownSymbol) -> PropertyKeyId {
         self.key(PropertyKey::from_well_known_symbol(symbol))
     }

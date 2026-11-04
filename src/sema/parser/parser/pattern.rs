@@ -31,7 +31,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
 
     /// `parseBindingIdentifierWithDiagnostic`, at a token that isn't a binding identifier.
     #[cold]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn missing_binding_identifier(&mut self, code_of_private_name: u32) -> PatId {
         let (full, end) = (self.full_start(), self.lx.end);
         let (name, pos) = self.missing_identifier(0, code_of_private_name);

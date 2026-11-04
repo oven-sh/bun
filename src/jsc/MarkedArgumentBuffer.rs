@@ -63,7 +63,7 @@ impl MarkedArgumentBuffer {
     }
 
     /// A `JSArray` of the values.
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn construct_array(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         crate::call_zero_is_throw(global, || {
             MarkedArgumentBuffer__constructArray(self, global)

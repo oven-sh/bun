@@ -63,13 +63,13 @@ fn lower(files: &[(&str, &str)]) -> Vec<(FileId, LoweredFile)> {
     lower_program(files, lowering_options(false))
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn take_only_file(mut lowered: Vec<(FileId, LoweredFile)>) -> LoweredFile {
     assert_eq!(lowered.len(), 1);
     lowered.remove(0).1
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn lower_file(name: &str, source: &str) -> LoweredFile {
     take_only_file(lower(&[(name, source)]))
 }
@@ -85,7 +85,7 @@ fn lower_in_both_projects(source: &str) -> Vec<(FileId, LoweredFile)> {
     ])
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn lower_library_module(source: &str) -> LoweredFile {
     let importer = ("main.ts", "import \"node:os\";\n");
     let mut lowered = lower(&[importer, (LIBRARY_MODULE_PATH, source)]);
@@ -97,7 +97,7 @@ fn lower_library_module(source: &str) -> LoweredFile {
     lowered.remove(1).1
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn offset_of(source: &str, text: &str) -> u32 {
     let offset = index_of(source.as_bytes(), text.as_bytes());
     offset.expect("the source has the text") as u32
@@ -108,7 +108,7 @@ fn has_name(fragment: &Fragment, function: &Function, name: &str) -> bool {
     text == Some(name.as_bytes())
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn find_function<'a>(fragment: &'a Fragment, name: &str) -> &'a Function {
     let mut functions = fragment.functions.iter().map(|(_, function)| function);
     let function = functions.find(|function| has_name(fragment, function, name));
@@ -116,7 +116,7 @@ fn find_function<'a>(fragment: &'a Fragment, name: &str) -> &'a Function {
 }
 
 // The application's definition comes first.
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn find_definitions<'a>(
     lowered: &'a [(FileId, LoweredFile)],
     name: &str,
@@ -136,7 +136,7 @@ fn find_definitions<'a>(
     [application, library]
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn find_module_body(fragment: &Fragment) -> &Function {
     let body = fragment.module.body.expect("the module has a body");
     let mut functions = fragment.functions.iter();
@@ -146,7 +146,7 @@ fn find_module_body(fragment: &Fragment) -> &Function {
         .1
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn find_variable<'a>(fragment: &'a Fragment, name: &str) -> &'a Variable {
     let mut variables = fragment.variables.iter().map(|(_, variable)| variable);
     let variable = variables.find(|variable| {
@@ -194,7 +194,7 @@ fn count_operations(function: &Function, opcode: Opcode) -> usize {
         .count()
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn find_value(function: &Function, id: ValueId) -> ValueView<'_> {
     let found = values(function).find(|value| value.id == id);
     found.expect("the function defines the value")
@@ -207,7 +207,7 @@ fn names_builtin(function: &Function, value: ValueId, builtin: BuiltinId) -> boo
     })
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn find_block(function: &Function, block: BlockId) -> BlockView<'_> {
     let found = function
         .body
@@ -216,7 +216,7 @@ fn find_block(function: &Function, block: BlockId) -> BlockView<'_> {
     found.expect("the function has the block")
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn skip_conversions(function: &Function, value: ValueId) -> ValueId {
     let mut values = function.body.blocks().flat_map(|block| block.values());
     match values.find(|candidate| candidate.id == value && candidate.opcode == Opcode::Convert) {
@@ -240,7 +240,7 @@ fn find_call_block<'a>(function: &'a Function, call_operands: &[ValueId]) -> Blo
     found.expect("the function has the call")
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn find_store_mode(fragment: &Fragment, function: &Function, property: &str) -> ECMAMode {
     let values = function.body.blocks().flat_map(|block| block.values());
     let modes = values.filter_map(|value| {

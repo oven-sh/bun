@@ -162,7 +162,7 @@ pub unsafe fn host_fn_finalize_ref_counted<T: bun_ptr::AnyRefCounted>(
 ///
 /// `#[track_caller]` propagates the caller's `Location` through to
 /// `ExceptionValidationScope::init`.
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 #[inline]
 pub fn to_js_host_call(
     global_this: &JSGlobalObject,
@@ -187,7 +187,7 @@ pub fn to_js_host_call(
 ///
 /// `#[track_caller]` propagates the caller's `Location` through to
 /// `ExceptionValidationScope::init`.
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 #[inline]
 pub fn from_js_host_call(
     global_this: &JSGlobalObject,
@@ -203,7 +203,7 @@ pub fn from_js_host_call(
 ///
 /// `#[track_caller]` propagates the caller's `Location` through to
 /// `TopExceptionScope::init`.
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 #[inline]
 pub fn from_js_host_call_generic<R>(
     global_this: &JSGlobalObject,
@@ -257,20 +257,20 @@ mod private {
     }
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 pub fn get_function_data(function: JSValue) -> Option<*mut c_void> {
     jsc::mark_binding();
     let p = private::Bun__FFIFunction_getDataPtr(function);
     if p.is_null() { None } else { Some(p) }
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 pub fn set_function_data(function: JSValue, value: Option<*mut c_void>) {
     jsc::mark_binding();
     private::Bun__FFIFunction_setDataPtr(function, value.unwrap_or(core::ptr::null_mut()))
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 pub fn new_function_with_data(
     global_object: &JSGlobalObject,
     symbol_name: Option<&EncodedSlice>,

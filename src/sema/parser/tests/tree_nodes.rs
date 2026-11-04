@@ -259,14 +259,14 @@ fn source_text<'a>(hir: &'a File<'_>) -> &'a str {
     std::str::from_utf8(&hir.text).unwrap()
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn only_expr(hir: &File<'_>, test: impl Fn(&ExprKind) -> bool) -> ExprId {
     let found = find_exprs(hir, test);
     assert_eq!(found.len(), 1, "{found:?} in {}", source_text(hir));
     found[0]
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn only_stmt(hir: &File<'_>, test: impl Fn(&StmtKind) -> bool) -> StmtId {
     let found = find_stmts(hir, test);
     assert_eq!(found.len(), 1, "{found:?} in {}", source_text(hir));
@@ -278,7 +278,7 @@ fn of_class<'a>(hir: &'a File<'_>, class: DiagnosticClass) -> Vec<&'a Diagnostic
     hir.diagnostics.iter().filter(has_class).collect()
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn assert_none_of_class(hir: &File<'_>, class: DiagnosticClass) {
     let found = of_class(hir, class);
     assert!(found.is_empty(), "{found:?} in {}", source_text(hir));
@@ -306,7 +306,7 @@ fn texts<'a>(w: &'a Workspace<'_>, hir: &File<'_>, wanted: TextKind) -> Vec<&'a 
     atoms.map(|atom| w.text(atom)).collect()
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn expr_with_text(w: &Workspace<'_>, hir: &File<'_>, wanted: TextKind, text: &str) -> ExprId {
     let text = w.atom(text);
     only_expr(hir, |kind| atom_of(kind, wanted) == Some(text))
@@ -320,7 +320,7 @@ fn is_block(kind: &StmtKind) -> bool {
     matches!(kind, StmtKind::Block(_))
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn select_expr(w: &Workspace<'_>, hir: &File<'_>, selector: ExprSelector) -> ExprId {
     match selector {
         Tag(tag) => only_expr(hir, |kind| kind.tag() == tag),
@@ -344,12 +344,12 @@ fn is_call(kind: &ExprKind) -> bool {
     matches!(kind, ExprKind::Call(_) | ExprKind::New(_))
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn only_member_key(hir: &File<'_>) -> Option<(ExprId, MemberKey)> {
     hir.member_key(only_expr(hir, is_member))
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn only_with(hir: &File<'_>) -> (StmtId, ExprId, StmtId) {
     let with = only_stmt(hir, |kind| matches!(kind, StmtKind::With { .. }));
     let StmtKind::With { object, body } = hir[with].kind else {
@@ -358,7 +358,7 @@ fn only_with(hir: &File<'_>) -> (StmtId, ExprId, StmtId) {
     (with, object, body)
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn only_template(hir: &File<'_>) -> ExprId {
     let tagged_call = |expr: &Expr| {
         let ExprKind::TaggedTemplate(call) = expr.kind else {
@@ -382,7 +382,7 @@ fn part_texts<'a>(w: &'a Workspace<'_>, parts: &[TemplatePart]) -> Vec<PartTexts
     parts.iter().map(cooked_and_raw).collect()
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn property_value(hir: &File<'_>, props: Span<PropId>, key: Atom) -> ExprId {
     let has_key = |prop: &PropId| hir[*prop].key == PropKey::Name(key);
     let found: Vec<PropId> = props.iter().filter(has_key).collect();
@@ -390,7 +390,7 @@ fn property_value(hir: &File<'_>, props: Span<PropId>, key: Atom) -> ExprId {
     hir[found[0]].value
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn import_call_attributes(hir: &File<'_>, call: ExprId) -> ExprId {
     let ExprKind::ImportCall { args } = hir[call].kind else {
         panic!("{:?} is not an import call", hir[call].kind);
@@ -402,7 +402,7 @@ fn import_call_attributes(hir: &File<'_>, call: ExprId) -> ExprId {
     property_value(hir, props, known::with)
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn block_of<'s>(w: &Workspace<'s>, hir: &File<'s>, name: &str) -> IdList<StmtId> {
     let FnBody::Block(statements) = hir[w.function(hir, name)].body else {
         panic!("the body of `{name}` is not a block");

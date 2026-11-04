@@ -111,7 +111,7 @@ pub struct Rejected {
 }
 
 impl Rejected {
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn new(why: Rejection) -> Rejected {
         Rejected {
             why,

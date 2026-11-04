@@ -490,7 +490,7 @@ mod tests {
     use crate::load::host_platform;
     use crate::lower::LoweringOptions;
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn narrowed_types_in(files: &[(&str, &str)], function_name: &str) -> Vec<Type> {
         let options = LoweringOptions {
             platform: host_platform(),
@@ -534,7 +534,7 @@ mod tests {
             .collect()
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn narrowed_types(source: &str, function_name: &str) -> Vec<Type> {
         narrowed_types_in(&[("main.ts", source)], function_name)
     }

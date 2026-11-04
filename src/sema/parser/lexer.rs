@@ -376,7 +376,7 @@ impl<'a> Lexer<'a> {
     /// return.
     #[cold]
     #[inline(never)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn error(
         &mut self,
         why: Rejection,
@@ -442,7 +442,7 @@ impl<'a> Lexer<'a> {
     /// [`Lexer::error`], for code that only runs with recovery.
     #[cold]
     #[inline(never)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn report(&mut self, code: u32, at: (usize, usize), args: &[&[u8]]) {
         self.error(Rejection::Unsupported, code, at, args);
     }
@@ -484,7 +484,7 @@ impl<'a> Lexer<'a> {
     /// Gives up on the file, or on the speculative parse in progress.
     #[cold]
     #[inline(never)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn reject(&mut self, why: Rejection) {
         if self.rejection.is_none() {
             self.rejection = Some(why);
@@ -746,7 +746,7 @@ impl<'a> Lexer<'a> {
     /// The `default:` case of `Scan`, at a character that can't start a token. Go decodes invalid UTF-8 as U+FFFD.
     #[cold]
     #[inline(never)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn invalid_character(&mut self, why: Rejection, pos: usize) {
         if !self.recovers {
             return self.reject(why);
@@ -1210,7 +1210,7 @@ impl<'a> Lexer<'a> {
     /// The `#` case of `Scan`, for a `#` at `start` that isn't followed by a name.
     #[cold]
     #[inline(never)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn hash_without_name(&mut self, start: usize) {
         if !self.recovers {
             return self.reject(Rejection::UnexpectedCharacter);
@@ -1634,7 +1634,7 @@ impl<'a> Lexer<'a> {
     /// `scanEscapeSequence`, for escapes that `escape` doesn't decode. `reports` is `ReportErrors`.
     #[cold]
     #[inline(never)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn invalid_escape(&mut self, pos: usize, text: &mut Vec<u8>, reports: bool) -> usize {
         let src = self.src;
         let end = self.end_of_invalid_escape(pos);
@@ -1713,7 +1713,7 @@ impl<'a> Lexer<'a> {
 
     /// `scanTemplateAndSetTokenValue`. `reports` is `shouldEmitInvalidEscapeError`.
     #[inline(always)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn template_piece(&mut self, start: usize, is_head: bool, reports: bool) {
         let src = self.src;
         let mut text = std::mem::take(&mut self.buffer);
@@ -2018,7 +2018,7 @@ impl<'a> Lexer<'a> {
     /// `scanNumber`, and the `0x`, `0b` and `0o` cases of `Scan`, for numbers that `unusual_number` rejects.
     #[cold]
     #[inline(never)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn invalid_number(&mut self, start: usize) {
         if !self.recovers {
             return self.reject(Rejection::UnusualNumber);
@@ -2229,7 +2229,7 @@ impl<'a> Lexer<'a> {
     /// `ReScanSlashToken`, for a regular expression whose line ends at `end_of_line`.
     #[cold]
     #[inline(never)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn unterminated_regex(&mut self, end_of_line: usize) {
         if !self.recovers {
             return self.reject(Rejection::Unterminated);
@@ -2376,7 +2376,7 @@ impl Lexer<'_> {
     /// True if the string at `start`, which has a backslash, stays the way `next` scanned it.
     #[cold]
     #[inline(never)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn is_string_with_escapes(&mut self, before: usize, start: usize) -> bool {
         if !self.recovers {
             self.reject(Rejection::Unsupported);
@@ -2419,7 +2419,7 @@ impl Lexer<'_> {
     /// `scanString(true)`, for a string at `start` that runs to the end of the text.
     #[cold]
     #[inline(never)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn unterminated_jsx_string(&mut self, before: usize, start: usize) {
         let src = self.src;
         let end = src.len();
@@ -2523,7 +2523,7 @@ impl Lexer<'_> {
     /// `ScanJsxTokenEx`: reports each `>` and `}` in `text`. Returns true if the scanner continues.
     #[cold]
     #[inline(never)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn closers_in_jsx_text(&mut self, start: usize, text: &[u8]) -> bool {
         if !self.recovers {
             self.reject(Rejection::Reported);
@@ -2544,7 +2544,7 @@ impl Lexer<'_> {
     /// token.
     #[cold]
     #[inline(never)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn conflict_marker_in_jsx(&mut self, pos: usize) -> bool {
         if !self.is_conflict_marker(pos) {
             return false;
@@ -2562,7 +2562,7 @@ impl Lexer<'_> {
     /// Returns the JSX text `text`, which isn't valid UTF-8, as WTF-8. `None`: the file's text is rejected.
     #[cold]
     #[inline(never)]
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn decode_ill_formed_jsx_text(&mut self, text: &[u8]) -> Option<Vec<u8>> {
         if !self.recovers {
             self.reject(Rejection::NotUtf8);

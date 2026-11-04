@@ -23,9 +23,10 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { BuildError } from "../error.ts";
 import { writeIfChanged } from "../fs.ts";
+import { patchedCopy, readSourcePatches } from "./patched-sources.ts";
 import { parseToml, type TomlTable, type TomlValue } from "./toml.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -146,6 +147,8 @@ export interface PlanInput {
   args: string[];
   /** the subset of the cargo environment that shapes the plan (`planEnv`) */
   env: Record<string, string>;
+  /** Patches to std and to registry crates (patched-sources.ts), absolute, in the order they apply. */
+  sourcePatches: string[];
 }
 
 export interface RustPlan {
@@ -153,6 +156,8 @@ export interface RustPlan {
   /** What the graph was planned for; a plan for anything else is not used (`readPlan`). */
   plannedWith: PlanInput;
   rustc: { path: string; version: string; commitHash: string | null; host: string; sysroot: string };
+  /** The `library` directory std is built from: the toolchain's, or the patched copy of it. */
+  stdLibrary: string;
   unitGraph: UnitGraph;
   /** By package id: every package the unit graph mentions, workspace + registry + (with -Zbuild-std) the std workspace. */
   packages: Record<string, MetadataPackage>;
@@ -173,7 +178,7 @@ export interface RustPlan {
   target: RustcTargetInfo;
 }
 
-export const PLAN_VERSION = 5;
+export const PLAN_VERSION = 6;
 
 /** `dir`: the graph's directory under the build directory — `rust-target/` for bun_runtime, `rust-target/shim/` for the Windows shim. */
 export function planPath(dir: string): string {
@@ -350,6 +355,15 @@ function main(): void {
   const { cargo, rustc, host, sysroot, triple, rustflags, args: cargoArgs } = input;
   const vV = run(rustc, ["-vV"]);
 
+  const patches = readSourcePatches(input.sourcePatches);
+  const patchedRoot = join(dirname(out), "patched-sources");
+  let stdLibrary = join(sysroot, "lib", "rustlib", "src", "rust", "library");
+  if (patches.some(p => p.tops.includes("library"))) {
+    stdLibrary = patchedCopy(patchedRoot, "library", stdLibrary, vV, patches);
+    // Where -Zbuild-std reads std from, in place of the sysroot. cargo has no public setting for it.
+    process.env.__CARGO_TESTS_ONLY_SRC_ROOT = stdLibrary;
+  }
+
   // 1. The unit graph, for exactly the build cargo would run. Downloads any missing registry crates as a side
   //    effect, like the build would — stderr (cargo's progress) goes to the terminal.
   const unitGraph = JSON.parse(
@@ -389,7 +403,7 @@ function main(): void {
   });
   for (const p of meta.packages) packages[p.id] = facts(p);
   if (unitGraph.units.some(u => u.is_std)) {
-    const stdManifest = join(sysroot, "lib", "rustlib", "src", "rust", "library", "Cargo.toml");
+    const stdManifest = join(stdLibrary, "Cargo.toml");
     // RUSTC_BOOTSTRAP: the std manifests use nightly cargo features; cargo's own build-std resolve sets the same.
     // --all-features: `packages` only lists what some feature set reaches, and -Zbuild-std-features decides which
     // optional std deps (backtrace: addr2line, miniz_oxide, …) are in the graph. The std workspace is vendored with
@@ -409,6 +423,19 @@ function main(): void {
   for (const u of unitGraph.units) {
     if (packages[u.pkg_id] === undefined)
       throw new BuildError(`unit graph references ${u.pkg_id}, which cargo metadata did not report`);
+  }
+  // A patched registry crate is compiled from its copy. To cargo it stays the crate from the registry (same id, same
+  // lockfile entry); only the paths its units are given change.
+  const patchedCrates = new Set(patches.flatMap(p => p.tops).filter(top => top !== "library"));
+  for (const p of Object.values(packages)) {
+    const top = `${p.name}-${p.version}`;
+    if (p.source === null || !patchedCrates.has(top)) continue;
+    const pristine = dirname(p.manifest_path);
+    const copy = patchedCopy(patchedRoot, top, pristine, p.id, patches);
+    p.manifest_path = join(copy, relative(pristine, p.manifest_path));
+    for (const u of unitGraph.units) {
+      if (u.pkg_id === p.id) u.target.src_path = join(copy, relative(pristine, u.target.src_path));
+    }
   }
 
   // 3. Manifest facts cargo's JSON does not export: [lints] (local packages only — cargo passes lint flags to
@@ -460,6 +487,7 @@ function main(): void {
       host,
       sysroot,
     },
+    stdLibrary,
     unitGraph,
     packages: Object.fromEntries(Object.entries(packages).filter(([id]) => seen.has(id))),
     lintSets,

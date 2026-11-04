@@ -420,7 +420,7 @@ impl<'s> Workspace<'s> {
         analyze_file(hir, options, fold, file, &self.atoms, self.arena)
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn ident(&self, hir: &File<'s>, name: &str, nth: usize) -> ExprId {
         let atom = self.atom(name);
         let is_match = |expr: &Expr| matches!(expr.kind, ExprKind::Ident(text) if text == atom);
@@ -428,7 +428,7 @@ impl<'s> Workspace<'s> {
         self.expect_node(found, "identifier", name, nth)
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn pat(&self, hir: &File<'s>, name: &str, nth: usize) -> PatId {
         let atom = self.atom(name);
         let is_match = |pat: &Pat| matches!(pat.kind, PatKind::Ident(text) if text == atom);
@@ -436,21 +436,21 @@ impl<'s> Workspace<'s> {
         self.expect_node(found, "identifier pattern", name, nth)
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn function(&self, hir: &File<'s>, name: &str) -> FnId {
         let atom = self.atom(name);
         let found = find_ids(&hir.fns, |func| func.name == atom && has_body(func)).next();
         self.expect_node(found, "function with a body", name, 0)
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn class(&self, hir: &File<'s>, name: &str) -> ClassId {
         let atom = self.atom(name);
         let found = find_ids(&hir.classes, |class| class.name == atom).next();
         self.expect_node(found, "class", name, 0)
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn expect_node<Id>(&self, found: Option<Id>, kind: &str, name: &str, nth: usize) -> Id {
         match found {
             Some(id) => id,
@@ -517,32 +517,32 @@ impl<'s> Workspace<'s> {
 }
 
 impl Analyzed<'_> {
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn ident(&self, name: &str, nth: usize) -> ExprId {
         self.workspace.ident(&self.hir, name, nth)
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn pat(&self, name: &str, nth: usize) -> PatId {
         self.workspace.pat(&self.hir, name, nth)
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn function(&self, name: &str) -> FnId {
         self.workspace.function(&self.hir, name)
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn class(&self, name: &str) -> ClassId {
         self.workspace.class(&self.hir, name)
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn binding(&self, name: &str, nth: usize) -> Binding {
         self.bound.binding(self.ident(name, nth))
     }
 
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn variable(&self, name: &str, nth: usize) -> SymbolId {
         self.bound.declared_symbol(Decl::Var(self.pat(name, nth)))
     }

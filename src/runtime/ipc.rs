@@ -2611,7 +2611,7 @@ pub(crate) mod IPCHandlers {
     }
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 pub(crate) fn ipc_serialize(
     global_object: &JSGlobalObject,
     message: JSValue,
@@ -2622,7 +2622,7 @@ pub(crate) fn ipc_serialize(
     bun_jsc::cpp::IPCSerialize(global_object, message, handle, options)
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 pub(crate) fn ipc_tag_advanced_buffers(
     global_object: &JSGlobalObject,
     message: JSValue,
@@ -2632,7 +2632,7 @@ pub(crate) fn ipc_tag_advanced_buffers(
     bun_jsc::cpp::IPCTagAdvancedBuffers(global_object, message)
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 pub(crate) fn ipc_restore_advanced_buffers(
     global_object: &JSGlobalObject,
     envelope: JSValue,
@@ -2641,7 +2641,7 @@ pub(crate) fn ipc_restore_advanced_buffers(
     bun_jsc::cpp::IPCRestoreAdvancedBuffers(global_object, envelope)
 }
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 pub(crate) fn ipc_parse(
     global_object: &JSGlobalObject,
     target: JSValue,

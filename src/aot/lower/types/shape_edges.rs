@@ -92,7 +92,7 @@ mod tests {
         }\n";
 
     /// The type of each parameter, and whether the build has to prove that it is an `int32`.
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn lower_parameters(types: [&str; 2]) -> Vec<(Type, bool)> {
         let [first, second] = types;
         let main = format!(

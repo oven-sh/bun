@@ -4,7 +4,7 @@ use crate::ir::{DeclaredType, Opcode, Primitives, Type, TypeTable};
 use crate::load::host_platform;
 use crate::lower::LoweringOptions;
 
-#[track_caller]
+#[cfg_attr(debug_assertions, track_caller)]
 fn expected_types(file_name: &str, source: &str, function_name: &str) -> Vec<Type> {
     let options = LoweringOptions {
         platform: host_platform(),

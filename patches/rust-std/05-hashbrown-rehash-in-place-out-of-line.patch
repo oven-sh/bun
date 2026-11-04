@@ -1,0 +1,50 @@
+`RawTableInner::rehash_in_place` is not inlined into each table type's growth function. It runs only for a table full of tombstones.
+
+diff --git a/hashbrown-0.15.5/src/raw/mod.rs b/hashbrown-0.15.5/src/raw/mod.rs
+index c0d82a1..183aef1 100644
+--- a/hashbrown-0.15.5/src/raw/mod.rs
++++ b/hashbrown-0.15.5/src/raw/mod.rs
+@@ -2860,9 +2860,8 @@ impl RawTableInner {
+     /// * The [`RawTableInner`] must have properly initialized control bytes.
+     ///
+     /// [`undefined behavior`]: https://doc.rust-lang.org/reference/behavior-considered-undefined.html
+-    #[allow(clippy::inline_always)]
+-    #[cfg_attr(feature = "inline-more", inline(always))]
+-    #[cfg_attr(not(feature = "inline-more"), inline)]
++    #[cold]
++    #[inline(never)]
+     unsafe fn rehash_in_place(
+         &mut self,
+         hasher: &dyn Fn(&mut Self, usize) -> u64,
+diff --git a/hashbrown-0.16.1/src/raw/mod.rs b/hashbrown-0.16.1/src/raw/mod.rs
+index ee684ab..29bfa36 100644
+--- a/hashbrown-0.16.1/src/raw/mod.rs
++++ b/hashbrown-0.16.1/src/raw/mod.rs
+@@ -3014,9 +3014,8 @@ impl RawTableInner {
+     /// * The [`RawTableInner`] must have properly initialized control bytes.
+     ///
+     /// [`undefined behavior`]: https://doc.rust-lang.org/reference/behavior-considered-undefined.html
+-    #[allow(clippy::inline_always)]
+-    #[cfg_attr(feature = "inline-more", inline(always))]
+-    #[cfg_attr(not(feature = "inline-more"), inline)]
++    #[cold]
++    #[inline(never)]
+     unsafe fn rehash_in_place(
+         &mut self,
+         hasher: &dyn Fn(&mut Self, usize) -> u64,
+diff --git a/hashbrown-0.17.1/src/raw.rs b/hashbrown-0.17.1/src/raw.rs
+index 39f50ef..053d547 100644
+--- a/hashbrown-0.17.1/src/raw.rs
++++ b/hashbrown-0.17.1/src/raw.rs
+@@ -2978,9 +2978,8 @@ impl RawTableInner {
+     /// * The [`RawTableInner`] must have properly initialized control bytes.
+     ///
+     /// [`undefined behavior`]: https://doc.rust-lang.org/reference/behavior-considered-undefined.html
+-    #[cfg_attr(feature = "inline-more", expect(clippy::inline_always))]
+-    #[cfg_attr(feature = "inline-more", inline(always))]
+-    #[cfg_attr(not(feature = "inline-more"), inline)]
++    #[cold]
++    #[inline(never)]
+     unsafe fn rehash_in_place(
+         &mut self,
+         hasher: &dyn Fn(&mut Self, usize) -> u64,

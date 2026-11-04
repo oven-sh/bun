@@ -8,7 +8,7 @@ bun_opaque::opaque_ffi! {
 }
 
 impl JSCell {
-    #[track_caller]
+    #[cfg_attr(debug_assertions, track_caller)]
     pub(crate) fn get_type(&self) -> JSType {
         crate::mark_member_binding("JSCell", core::panic::Location::caller());
         // `JSType` is a `#[repr(transparent)]` newtype over `u8`, so any byte

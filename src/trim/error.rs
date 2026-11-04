@@ -9,13 +9,56 @@ pub enum TrimError {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum TrimRequestError {
-    UnknownName(Box<[u8]>),
-    UnknownNames(Vec<Box<[u8]>>),
+    UnknownName(Box<[u8]>, NameTable),
+    UnknownNames(Vec<Box<[u8]>>, NameTable),
     AllowedAndRemoved(TrimFeature),
     UnknownLocale(Box<[u8]>),
     MissingFromTemplate(Feature),
     TemplateWithoutProgramFeature(Feature),
 }
+
+/// The names that a request resolved a feature name against.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum NameTable {
+    /// The public names of `TrimFeature`: `allow` and `remove` in `Bun.build()`.
+    TrimFeatures,
+    /// The names of `Feature`: `--trim-without`.
+    Features,
+}
+
+impl NameTable {
+    fn names(self) -> impl ExactSizeIterator<Item = &'static str> {
+        match self {
+            NameTable::TrimFeatures => Names::TrimFeatures(TrimFeature::ALL.iter()),
+            NameTable::Features => Names::Features(Feature::ALL.iter()),
+        }
+    }
+}
+
+enum Names {
+    TrimFeatures(std::slice::Iter<'static, TrimFeature>),
+    Features(std::slice::Iter<'static, Feature>),
+}
+
+impl Iterator for Names {
+    type Item = &'static str;
+
+    fn next(&mut self) -> Option<&'static str> {
+        match self {
+            Names::TrimFeatures(features) => features.next().map(|feature| feature.name()),
+            Names::Features(features) => features.next().map(|feature| feature.name()),
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            Names::TrimFeatures(features) => features.size_hint(),
+            Names::Features(features) => features.size_hint(),
+        }
+    }
+}
+
+impl ExactSizeIterator for Names {}
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, strum::IntoStaticStr)]
 pub enum UnsupportedReason {
@@ -36,6 +79,7 @@ pub enum TrimInternalError {
 impl TrimRequestError {
     pub fn for_unknown_names<'a>(
         names: impl IntoIterator<Item = &'a [u8]>,
+        table: NameTable,
     ) -> Option<TrimRequestError> {
         let mut distinct_names: Vec<&[u8]> = Vec::new();
         for name in names {
@@ -45,9 +89,13 @@ impl TrimRequestError {
         }
         match distinct_names.as_slice() {
             [] => None,
-            [name] => Some(TrimRequestError::UnknownName(Box::<[u8]>::from(*name))),
+            [name] => Some(TrimRequestError::UnknownName(
+                Box::<[u8]>::from(*name),
+                table,
+            )),
             names => Some(TrimRequestError::UnknownNames(
                 names.iter().map(|name| Box::<[u8]>::from(*name)).collect(),
+                table,
             )),
         }
     }
@@ -67,22 +115,22 @@ impl TrimInternalError {
 impl TrimError {
     pub fn write_message(&self, out: &mut Vec<u8>) {
         match self {
-            TrimError::Request(TrimRequestError::UnknownName(name)) => {
+            TrimError::Request(TrimRequestError::UnknownName(name, table)) => {
                 out.extend_from_slice(b"compile.trim: unknown name ");
                 write_quoted(out, name);
-                match find_closest_name(name) {
+                match find_closest_name(name, *table) {
                     Some(closest) => {
                         out.extend_from_slice(b". Did you mean ");
-                        write_quoted(out, closest.name().as_bytes());
+                        write_quoted(out, closest.as_bytes());
                         out.push(b'?');
                     }
-                    None => write_valid_names(out),
+                    None => write_valid_names(out, *table),
                 }
             }
-            TrimError::Request(TrimRequestError::UnknownNames(names)) => {
+            TrimError::Request(TrimRequestError::UnknownNames(names, table)) => {
                 out.extend_from_slice(b"compile.trim: unknown names ");
                 write_quoted_list(out, names.iter().map(|name| &**name));
-                write_valid_names(out);
+                write_valid_names(out, *table);
             }
             TrimError::Request(TrimRequestError::AllowedAndRemoved(name)) => {
                 out.extend_from_slice(b"compile.trim: ");
@@ -177,21 +225,21 @@ fn edit_distance(a: &[u8], b: &[u8]) -> usize {
     row[b.len()]
 }
 
-fn find_closest_name(name: &[u8]) -> Option<TrimFeature> {
-    let (distance, closest) = TrimFeature::ALL
-        .iter()
-        .map(|&feature| (edit_distance(name, feature.name().as_bytes()), feature))
+fn find_closest_name(name: &[u8], table: NameTable) -> Option<&'static str> {
+    let (distance, closest) = table
+        .names()
+        .map(|valid| (edit_distance(name, valid.as_bytes()), valid))
         .min_by_key(|&(distance, _)| distance)?;
     (distance <= (name.len() / 3).max(1)).then_some(closest)
 }
 
-fn write_valid_names(out: &mut Vec<u8>) {
+fn write_valid_names(out: &mut Vec<u8>, table: NameTable) {
     out.extend_from_slice(b". Valid names are ");
-    for (index, feature) in TrimFeature::ALL.iter().enumerate() {
+    for (index, name) in table.names().enumerate() {
         if index > 0 {
             out.extend_from_slice(b", ");
         }
-        write_quoted(out, feature.name().as_bytes());
+        write_quoted(out, name.as_bytes());
     }
 }
 
@@ -219,7 +267,11 @@ mod tests {
     }
 
     fn unknown_names(names: &[&[u8]]) -> Option<TrimRequestError> {
-        TrimRequestError::for_unknown_names(names.iter().copied())
+        TrimRequestError::for_unknown_names(names.iter().copied(), NameTable::TrimFeatures)
+    }
+
+    fn unknown_name(name: &[u8]) -> TrimRequestError {
+        TrimRequestError::UnknownName(Box::from(name), NameTable::TrimFeatures)
     }
 
     fn quoted_list(names: &[&[u8]]) -> String {
@@ -230,9 +282,7 @@ mod tests {
 
     #[test]
     fn unknown_name_lists_valid_names() {
-        let text = message(TrimRequestError::UnknownName(Box::from(
-            &b"no-such-feature"[..],
-        )));
+        let text = message(unknown_name(b"no-such-feature"));
         assert_eq!(
             text,
             format!(
@@ -253,7 +303,7 @@ mod tests {
             ("Shell", "shell"),
         ] {
             assert_eq!(
-                message(TrimRequestError::UnknownName(Box::from(name.as_bytes()))),
+                message(unknown_name(name.as_bytes())),
                 format!("compile.trim: unknown name \"{name}\". Did you mean \"{closest}\"?")
             );
         }
@@ -264,12 +314,15 @@ mod tests {
         let first_of = |names: &[&str]| {
             TrimFeature::ALL
                 .iter()
-                .copied()
-                .find(|feature| names.contains(&feature.name()))
+                .map(|feature| feature.name())
+                .find(|name| names.contains(name))
         };
-        assert_eq!(find_closest_name(b"http"), first_of(&["http2", "http3"]));
         assert_eq!(
-            find_closest_name(b"json"),
+            find_closest_name(b"http", NameTable::TrimFeatures),
+            first_of(&["http2", "http3"])
+        );
+        assert_eq!(
+            find_closest_name(b"json", NameTable::TrimFeatures),
             first_of(&["json5", "jsonc", "jsonl"])
         );
     }
@@ -286,7 +339,7 @@ mod tests {
         ];
         for name in names {
             assert_eq!(
-                find_closest_name(name),
+                find_closest_name(name, NameTable::TrimFeatures),
                 None,
                 "{}",
                 String::from_utf8_lossy(name)
@@ -314,6 +367,38 @@ mod tests {
             format!(
                 "compile.trim: unknown names \"nothing\", \"nobody\" and \"nowhere\". Valid names are {}",
                 valid_names()
+            )
+        );
+    }
+
+    #[test]
+    fn unknown_feature_name_suggests_and_lists_feature_names() {
+        for (name, closest) in [
+            ("profiler", "Profilers"),
+            ("jit", "JIT"),
+            ("Sqlite3", "Sqlite"),
+        ] {
+            assert_eq!(
+                message(TrimRequestError::UnknownName(
+                    Box::from(name.as_bytes()),
+                    NameTable::Features
+                )),
+                format!("compile.trim: unknown name \"{name}\". Did you mean \"{closest}\"?")
+            );
+        }
+        let text = message(
+            TrimRequestError::for_unknown_names([&b"nothing"[..], b"nobody"], NameTable::Features)
+                .unwrap(),
+        );
+        let feature_names: Vec<String> = Feature::ALL
+            .iter()
+            .map(|feature| format!("\"{}\"", feature.name()))
+            .collect();
+        assert_eq!(
+            text,
+            format!(
+                "compile.trim: unknown names \"nothing\" and \"nobody\". Valid names are {}",
+                feature_names.join(", ")
             )
         );
     }
@@ -381,22 +466,25 @@ mod tests {
     #[test]
     fn for_unknown_names_keeps_first_occurrences() {
         assert_eq!(unknown_names(&[]), None);
-        let single = Some(TrimRequestError::UnknownName(Box::from(&b"a"[..])));
+        let single = Some(unknown_name(b"a"));
         assert_eq!(unknown_names(&[b"a"]), single);
         assert_eq!(unknown_names(&[b"a", b"a"]), single);
         assert_eq!(
             unknown_names(&[b"nothing", b"nobody", b"nowhere", b"nothing"]),
-            Some(TrimRequestError::UnknownNames(vec![
-                Box::from(&b"nothing"[..]),
-                Box::from(&b"nobody"[..]),
-                Box::from(&b"nowhere"[..]),
-            ]))
+            Some(TrimRequestError::UnknownNames(
+                vec![
+                    Box::from(&b"nothing"[..]),
+                    Box::from(&b"nobody"[..]),
+                    Box::from(&b"nowhere"[..]),
+                ],
+                NameTable::TrimFeatures
+            ))
         );
     }
 
     #[test]
     fn non_utf8_name_is_written_unchanged() {
-        let text = message_bytes(TrimRequestError::UnknownName(Box::from(&b"\xff\xfe"[..])));
+        let text = message_bytes(unknown_name(b"\xff\xfe"));
         assert!(text.starts_with(b"compile.trim: unknown name \"\xff\xfe\". Valid names are "));
     }
 
@@ -414,9 +502,10 @@ mod tests {
     #[test]
     fn write_message_appends_without_prefix_or_newline() {
         let errors: Vec<TrimError> = vec![
-            TrimRequestError::UnknownName(Box::from(&b"a"[..])).into(),
-            TrimRequestError::UnknownName(Box::from(&b"sqlite3"[..])).into(),
+            unknown_name(b"a").into(),
+            unknown_name(b"sqlite3").into(),
             unknown_names(&[b"a", b"b"]).unwrap().into(),
+            TrimRequestError::UnknownName(Box::from(&b"profiler"[..]), NameTable::Features).into(),
             TrimRequestError::UnknownLocale(Box::from(&b"xx"[..])).into(),
             UnsupportedReason::NoTrimTable.into(),
             TrimInternalError::MalformedTable.into(),

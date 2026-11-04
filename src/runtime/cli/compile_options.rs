@@ -11,7 +11,7 @@ use bun_options_types::bundle_enums::Format;
 use bun_options_types::compile_target::CompileTarget;
 use bun_options_types::context::{Debugger, HotReload};
 use bun_options_types::trim::{Feature, TrimFeature, TrimRequest};
-use bun_trim::{TrimError, TrimRequestError};
+use bun_trim::{NameTable, TrimError, TrimRequestError};
 
 use super::compile_command::{CompileFailure, RequestOrigin, print_error_and_notes};
 use super::run_compiled;
@@ -524,8 +524,8 @@ pub(crate) fn explain_set<'a>(values: &[&'a [u8]]) -> Result<ExplainSet, OptionE
     Ok(set)
 }
 
-fn check_unknown_names<'a>(names: Vec<&[u8]>) -> Result<(), OptionError<'a>> {
-    match TrimRequestError::for_unknown_names(names) {
+fn check_unknown_names<'a>(names: Vec<&[u8]>, table: NameTable) -> Result<(), OptionError<'a>> {
+    match TrimRequestError::for_unknown_names(names, table) {
         Some(error) => Err(OptionError::Trim(TrimError::Request(error))),
         None => Ok(()),
     }
@@ -548,7 +548,7 @@ fn resolve_trim<'a>(flags: &CompileFlags<'a>) -> Result<TrimRequest, OptionError
             None => unknown.push(name),
         }
     }
-    check_unknown_names(unknown)?;
+    check_unknown_names(unknown, NameTable::TrimFeatures)?;
     if let Some(&name) = remove.iter().find(|name| allow.contains(name)) {
         return Err(OptionError::Trim(TrimError::Request(
             TrimRequestError::AllowedAndRemoved(name),
@@ -563,7 +563,7 @@ fn resolve_trim<'a>(flags: &CompileFlags<'a>) -> Result<TrimRequest, OptionError
             None => unknown_internal.push(name),
         }
     }
-    check_unknown_names(unknown_internal)?;
+    check_unknown_names(unknown_internal, NameTable::Features)?;
 
     if let Some(&value) = trim.locales.iter().flatten().find(|tag| tag.is_empty()) {
         return Err(OptionError::InvalidValue {

@@ -177,6 +177,31 @@ test.concurrent("--trim requires --compile", async () => {
   expect(built.exitCode).not.toBe(0);
 });
 
+describe.concurrent("--trim-without takes the names of features, not the names that compile.trim takes", () => {
+  async function rejection(names: string) {
+    const built = await run(
+      [bunExe(), "build", "--compile", "--trim", `--trim-without=${names}`, "hello.ts", "--outfile", "unknown"],
+      folder,
+    );
+    expect(built.exitCode).toBe(1);
+    return built.stderr;
+  }
+
+  test("suggests the feature name that is closest to a compile.trim name", async () => {
+    expect(await rejection("profiler")).toContain('unknown name "profiler". Did you mean "Profilers"?');
+    expect(await rejection("Sqlite3")).toContain('unknown name "Sqlite3". Did you mean "Sqlite"?');
+  });
+
+  test("lists the feature names, not the compile.trim names", async () => {
+    const [unknown, valid] = (await rejection("jit,fetch")).split(". Valid names are ");
+    expect(unknown).toEndWith('unknown names "jit" and "fetch"');
+    expect(valid).toContain('"JIT"');
+    expect(valid).toContain('"Fetch"');
+    expect(valid).not.toContain('"jit"');
+    expect(valid).not.toContain('"fetch"');
+  });
+});
+
 (canTrim ? describe.concurrent : describe.skip)("--trim", () => {
   test("--trim-without rejects an unknown feature name", async () => {
     const built = await run(

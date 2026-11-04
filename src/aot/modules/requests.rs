@@ -551,8 +551,11 @@ impl FileScanner<'_, '_> {
                 | SiteForm::Mock,
             ) => return answer,
             // `virtual:config`: no file and no package has such a name, so only a plugin answers for it, and a preload or a test may bring one. The loader of the run time is asked. A name that may be a package stays a failure: code that nobody has seen costs the whole program, and an optional dependency that is absent is common.
-            (Err(_), SiteForm::Declaration | SiteForm::Load)
-                if (self.runs_tests && self.has_scheme_of_its_own(specifier))
+            // A module of Python's: the loader says why it is refused, and the test file fails alone.
+            (Err(reason), SiteForm::Declaration | SiteForm::Load)
+                if (self.runs_tests
+                    && (self.has_scheme_of_its_own(specifier)
+                        || reason == CodeFailure::PythonModule))
                     || (!self.mocked_paths.is_empty() && self.is_answered_by_mock(specifier))
                     || self.may_be_answered_by_mock_out_of_sight() =>
             {

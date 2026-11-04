@@ -8,7 +8,7 @@ use bun_paths::resolve_path::dirname;
 use bun_resolve_builtins::HardcodedModule::BUN_ALIASES;
 use bun_resolve_builtins::{Alias, Cfg, Module};
 use bun_sema::program::HostModuleId;
-use bun_sema::resolve::{HostResolution, ancestors};
+use bun_sema::resolve::{HostResolution, PYTHON_NAMESPACE_MODULE, ancestors};
 use bun_sema::util::{FxHashMap, SharedSort};
 
 use crate::builtins::{RuntimeFunction, RuntimeModule, table};
@@ -651,7 +651,9 @@ fn collect_public_specifiers(manifest: &Manifest) -> Vec<(HostModuleId, &'static
     let mut specifiers = Vec::new();
     for &(specifier, _) in BUN_ALIASES.iter().copied().flatten() {
         match resolve_alias(manifest, specifier, Cfg::default()) {
-            Some(RuntimeResolution::Module(module)) if is_public(module) => {
+            Some(RuntimeResolution::Module(module))
+                if is_public(module) && specifier != PYTHON_NAMESPACE_MODULE =>
+            {
                 specifiers.push((module, specifier));
             }
             Some(RuntimeResolution::Module(_) | RuntimeResolution::HostValue) | None => {}

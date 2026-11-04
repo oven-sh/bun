@@ -244,6 +244,7 @@ pub(crate) fn code_of_failure(failure: CodeFailure) -> Code {
         CodeFailure::InvalidPackageConfiguration => Code::InvalidPackageConfiguration,
         CodeFailure::UnsupportedDirectoryImport => Code::UnsupportedDirectoryImport,
         CodeFailure::QueryString => Code::QueryStringInSpecifier,
+        CodeFailure::PythonModule => Code::PythonModuleInCompiledProgram,
     }
 }
 

@@ -80,6 +80,9 @@ pub struct ComputedCodeRequest<'a> {
     pub form: CodeImportForm,
 }
 
+/// What JavaScript needs to talk to Python. No compiled program gets it: `CodeFailure::PythonModule`.
+pub const PYTHON_NAMESPACE_MODULE: &[u8] = b"bun:python";
+
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum CodeFailure {
     ModuleNotFound,
@@ -92,6 +95,7 @@ pub enum CodeFailure {
     InvalidPackageConfiguration,
     UnsupportedDirectoryImport,
     QueryString,
+    PythonModule,
 }
 
 impl CodeFailure {
@@ -107,7 +111,8 @@ impl CodeFailure {
             CodeFailure::ModuleNotFound
             | CodeFailure::PackageNotFound
             | CodeFailure::BuiltinModuleNotFound
-            | CodeFailure::QueryString => false,
+            | CodeFailure::QueryString
+            | CodeFailure::PythonModule => false,
         }
     }
 }

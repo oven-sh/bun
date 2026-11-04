@@ -13,6 +13,11 @@ impl<'h> Resolver<'h> {
         if request.specifier.is_empty() {
             return CodeResolution::NotFound(CodeFailure::ModuleNotFound);
         }
+        // Compiled code takes what an operator gives for a number, a BigInt or a string, and `==` on two objects for a comparison of
+        // addresses. An object of Python's answers for its own operators, so the run time starts no Python beside compiled code.
+        if request.specifier == PYTHON_NAMESPACE_MODULE {
+            return CodeResolution::NotFound(CodeFailure::PythonModule);
+        }
         if let Some(answer) = self.resolve_claim(self.code_host().resolve_code(request)) {
             return answer;
         }
@@ -248,6 +253,9 @@ impl<'h> Resolver<'h> {
         }
         if strings::contains_char(specifier, 0) {
             return Some(CodeResolution::NotFound(CodeFailure::ModuleNotFound));
+        }
+        if has_prefix(b"python:") {
+            return Some(CodeResolution::NotFound(CodeFailure::PythonModule));
         }
         None
     }

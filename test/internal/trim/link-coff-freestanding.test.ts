@@ -48,6 +48,7 @@ import {
   type Machine,
 } from "./link-coff-support.ts";
 import {
+  allRecordsOfCallsWithoutEffect,
   buildGuardCrate,
   builtinUsing,
   callAll,
@@ -72,6 +73,7 @@ import {
   otherSource,
   plainSpellingsEntryPoints,
   plainSpellingsSource,
+  recordsOfCallsWithoutEffect,
   reviewFiles,
   run,
   rustCallsWithoutEffect,
@@ -1071,6 +1073,7 @@ __asm__(".section .rdata$note,\"dr\",associative,parent\n.quad feature_noted\n.t
         const options = await compileRustInputs(folder);
         expect(options).toBeDefined();
         const { symbols, featuresAt } = await linked(folder, options!);
+        expect(recordsOfCallsWithoutEffect(entryPointsText(folder, output))).toEqual(allRecordsOfCallsWithoutEffect);
         const functions = ["aborts", "defaults", "throws"].flatMap(stub => [`constant_${stub}`, `unread_${stub}`]);
         const featuresOf = (name: string) => {
           const symbol = symbols.find(([symbol]) => symbol.includes(name));

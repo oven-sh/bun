@@ -2,7 +2,17 @@ import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, isMacOS, isWindows, tempDir, tempDirWithFiles, unprivilegedSpawnOptions } from "harness";
-import { chmodSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { join, sep } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
@@ -470,45 +480,63 @@ describe.concurrent("bunshell cp src/dest validation", () => {
     expect(read("fresh")).toBe("hi");
   });
 
-  // Copies onto a mode 444 file. Root ignores file modes, so the child runs unprivileged.
-  async function cpOntoReadOnly(size: number, command: string) {
-    using dir = tempDir("cp-read-only", { a: Buffer.alloc(size, "n").toString(), b: "old" });
-    const b = join(String(dir), "b");
-    chmodSync(b, 0o444);
+  // POSIX and GNU cp -f remove a destination that cannot be opened and create it again (uutils test_cp_arg_force).
+  test("-f copies onto a read-only file as plain cp does", async () => {
+    const sizes = [3, 200 * 1024];
+    const commands = ["cp a b", "cp -f a b", "cp -n -f a b"];
+    const rows = sizes.flatMap(size => commands.map(command => ({ size, command })));
+    const tree: Record<string, { a: string; b: string }> = {};
+    rows.forEach(({ size }, i) => (tree[i] = { a: Buffer.alloc(size, "n").toString(), b: "old" }));
+    using dir = tempDir("cp-read-only", tree);
+    const at = (i: number, ...file: string[]) => join(String(dir), String(i), ...file);
+    rows.forEach((_, i) => chmodSync(at(i, "b"), 0o444));
+    // Root ignores file modes, so the children run unprivileged. One call serves every row:
+    // it changes the modes of the directories above, and a second call would race with it.
     using unprivileged = unprivilegedSpawnOptions(String(dir));
     try {
-      const { stderr, exitCode } = await cp(String(dir), command, unprivileged);
-      return {
-        stderr: stderr.replaceAll(String(dir), "<dir>"),
-        exitCode,
-        replaced: readFileSync(b, "utf8") !== "old",
+      const results = await Promise.all(
+        rows.map(async ({ size, command }, i) => {
+          const { stderr, exitCode } = await cp(at(i), command, unprivileged);
+          const result = {
+            stderr: stderr.replaceAll(at(i), "<dir>"),
+            exitCode,
+            replaced: readFileSync(at(i, "b"), "utf8") !== "old",
+          };
+          return [`${size} bytes: ${command}`, result] as const;
+        }),
+      );
+
+      const denied = {
+        stderr: `cp: ${isWindows ? "Operation not permitted" : "Permission denied"}: ${p("<dir>/b")}\n`,
+        exitCode: 1,
+        replaced: false,
       };
+      // Above 128 KiB the macOS copy unlinks the destination and clones the source.
+      const large = isMacOS ? { stderr: "", exitCode: 0, replaced: true } : denied;
+      const skipped = { stderr: "", exitCode: 0, replaced: false };
+      expect(Object.fromEntries(results)).toEqual({
+        "3 bytes: cp a b": denied,
+        "3 bytes: cp -f a b": denied,
+        "3 bytes: cp -n -f a b": skipped,
+        "204800 bytes: cp a b": large,
+        "204800 bytes: cp -f a b": large,
+        "204800 bytes: cp -n -f a b": skipped,
+      });
     } finally {
       // A read-only file must not stop the removal of the directory.
-      chmodSync(b, 0o644);
+      rows.forEach((_, i) => chmodSync(at(i, "b"), 0o644));
     }
-  }
+  });
 
-  // POSIX and GNU cp -f remove a destination that cannot be opened and create it again (uutils test_cp_arg_force).
-  test.each([3, 200 * 1024])("-f copies onto a read-only file as plain cp does (%d byte source)", async size => {
-    // Above 128 KiB the macOS copy unlinks the destination and clones the source.
-    const plain =
-      isMacOS && size > 128 * 1024
-        ? { stderr: "", exitCode: 0, replaced: true }
-        : {
-            stderr: `cp: ${isWindows ? "Operation not permitted" : "Permission denied"}: ${p("<dir>/b")}\n`,
-            exitCode: 1,
-            replaced: false,
-          };
-    expect({
-      "cp a b": await cpOntoReadOnly(size, "cp a b"),
-      "cp -f a b": await cpOntoReadOnly(size, "cp -f a b"),
-      "cp -n -f a b": await cpOntoReadOnly(size, "cp -n -f a b"),
-    }).toEqual({
-      "cp a b": plain,
-      "cp -f a b": plain,
-      "cp -n -f a b": { stderr: "", exitCode: 0, replaced: false },
-    });
+  // A p that is not the first option of its group is ignored. Only CopyFileW, the copy of Windows, keeps the time.
+  test("-fp copies a file without its time, except on Windows", async () => {
+    using dir = tempDir("cp-p", { a: "new" });
+    const a = join(String(dir), "a");
+    const then = new Date("2001-02-03T04:05:06Z");
+    utimesSync(a, then, then);
+
+    expect(await cp(String(dir), "cp -fp a b")).toEqual({ stderr: "", exitCode: 0 });
+    expect(statSync(join(String(dir), "b")).mtimeMs === statSync(a).mtimeMs).toBe(isWindows);
   });
 
   // Directory symlinks need extra privileges on Windows.

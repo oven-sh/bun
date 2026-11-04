@@ -47,7 +47,7 @@ exports.Fragment = "fragment";
 // CHECK-NEXT: v5 = FinishObject v4
 // CHECK-NEXT: v6 = String string="x"
 // CHECK-NEXT: v7 = Call v1, v0, v2, v5, v6 calleeKey="createElement" calleeName="createElement"
-// CHECK-NEXT: Return v7
+// CHECK-NEXT: ReturnCall v7
 // CHECK-NEXT: }
 // CHECK: function {{*}}
 // CHECK: module=[[m_0]] role=Signature thisType={type=anything} results=[{type=anything}]

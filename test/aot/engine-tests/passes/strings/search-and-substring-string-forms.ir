@@ -280,15 +280,8 @@ function f30 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function {{*}}name="make"
 # CHECK: module=m0 position=1323 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f26] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f32} inlineFrames=[{}, {callee=f32 callPosition=1323 module=m0}, {callee=f1 callPosition=4294967295 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: "--needle--abcabd-needle-tail-abcabd-needle-tail-abcabd-needle-tail-" = String string="--needle--abcabd-needle-tail-abcabd-needle-tail-abcabd-needle-tail-"
-# CHECK-NEXT: v1: 2 = Integer integer=2
-# CHECK-NEXT: v2: 8 = Integer integer=8
-# CHECK-NEXT: v3: 67 = Integer integer=67 @0:1 tail
-# CHECK-NEXT: v4: undefined = StringRange v3, v1, v2 @0:1 tail
-# CHECK-NEXT: v5: int[0, 2147483647] = ResultAt v4 @0:1 tail
-# CHECK-NEXT: v6: int[0, 2147483647] = ResultAt v4 index=1 @0:1 tail
-# CHECK-NEXT: v7: string = Substring v0, v5, v6 @1323 tail
-# CHECK-NEXT: Return v7
+# CHECK-NEXT: v0: "needle" = String string="needle" @1323 tail
+# CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="make"
 # CHECK: module=m0 position=1410 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f27] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]

@@ -3,24 +3,24 @@ declare const console: { log(...v: unknown[]): void };
 function big(x: number): number { let s = 0; for (let i = 0; i < 3; i++) { s += (x + i) * (x - i); if (s > 1e9) s -= 1e9; } return s; }
 function pair(x: number): [number, number] {
   let a = big(x), b = big(x + 1); for (let i = 0; i < 2; i++) { a += big(a & 7); b += big(b & 7); if (a > 1e12) a = 1; if (b > 1e12) b = 2; }
-  if (a > b) return [b, a]; //! removed; heap
+  if (a > b) return [b, a]; //! allocated at 3 sites
   return [a, b];
 }
 function record(x: number): { lo: number, hi: number } {
   let a = big(x), b = big(x + 1); for (let i = 0; i < 2; i++) { a += big(a & 7); b += big(b & 7); if (a > 1e12) a = 1; if (b > 1e12) b = 2; }
-  return { lo: a, hi: b }; //! removed; heap
+  return { lo: a, hi: b }; //! allocated at 2 sites
 }
 // No caller only reads: there is no second body.
 function onlyKept(x: number): [number, number] {
   let a = big(x), b = big(x + 1); for (let i = 0; i < 2; i++) { a += big(a & 7); b += big(b & 7); if (a > 1e12) a = 1; if (b > 1e12) b = 2; }
-  return [a, b]; //! heap
+  return [a, b]; //! allocated at 2 sites
 }
 // One of the two is not fresh, so nothing is known about the returned object.
 const shared: [number, number] = [1, 2];
 function sometimesShared(x: number): [number, number] {
   let a = big(x); for (let i = 0; i < 2; i++) { a += big(a & 7); if (a > 1e12) a = 1; }
   if (a > 100) return shared;
-  return [a, a]; //! heap
+  return [a, a]; //! removed
 }
 // It has escaped before it is returned.
 const seen: [number, number][] = [];

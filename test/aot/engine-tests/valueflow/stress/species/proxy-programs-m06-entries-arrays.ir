@@ -58,7 +58,7 @@ function f6 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v3: L1 = FinishObject v2
 # CHECK-NEXT: v4: Proxy = CallBuiltin -, v1, v3 overload=Proxy/1 accessSite=0
 # CHECK-NEXT: v5: Array<Array> = CallBuiltin -, v4 overload=ObjectEntries/0 accessSite=1
-# CHECK-NEXT: v6: Array<Array<undefined|int|string, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = AssumeType v5 provenType=Array<Array<undefined|int|string, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v6: Array<Array<undefined|int|string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = AssumeType v5 provenType=Array<Array<undefined|int|string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v7: Map = CallBuiltin -, v6 overload=Map/2 accessSite=2
 # CHECK-NEXT: v8: 7 = Integer integer=7
 # CHECK-NEXT: v9: object = ToObject v8 calledBuiltin=ObjectEntries

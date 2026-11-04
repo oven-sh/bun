@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""spreads-every-indexing-type.py <seed>: A TYPED program: literals, calls, `new` and push with spreads of sources of every kind of storage (whole numbers, doubles, values, shared literals, undecided, holes of each kind, sparse, frozen, with named properties, with a getter at an index that changes the source, heirs of Array, arguments, typed arrays, strings, sets, maps, generators, iterables of one's own, proxies) in every order, so that the target changes its storage in mid-literal, at lengths round every capacity, in loops. As plain Bun."""
+"""spreads-every-indexing-type.py <seed>: A typed program: literals, calls, `new` and push with spreads of sources of
+every storage kind (integers, doubles, values, copy-on-write literals, undecided, holes of each kind, sparse, frozen
+..).
+"""
 import random, sys
 seed = int(sys.argv[1]) if len(sys.argv) > 1 else 1
 R = random.Random(seed)

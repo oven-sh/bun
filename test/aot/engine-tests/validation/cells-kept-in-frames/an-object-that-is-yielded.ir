@@ -1,0 +1,7 @@
+# sabotage=CellsThatAreKeptLieInFrames: the cell lies in the frame of the function that makes it though something holds it when the function is left. The run stops where the cell is next used, and names the allocation
+# FORM: AsRead
+# RUN: run-in-shell globalThis.argumentCount = 2;
+# REQUIRES: not-windows
+# OPTIONS: disable=pass:InlineCalls,pass:InlineHeads testing=CheckProofsAtRunTime sabotage=CellsThatAreKeptLieInFrames
+# CHECK: AOT validation: EscapedFrameCell f
+# PROGRAM-OF: an-object-that-is-yielded-left-alone.ir

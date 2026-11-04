@@ -17,6 +17,8 @@ unsafe extern "C" {
     /// No preconditions; returns null on failure.
     pub safe fn mi_zalloc(size: usize) -> *mut c_void;
     pub fn mi_usable_size(p: *const c_void) -> usize;
+    /// The size of the block that a request for `size` bytes gets. No preconditions.
+    pub safe fn mi_good_size(size: usize) -> usize;
 }
 
 pub type mi_output_fun = extern "C" fn(*const c_char, *mut c_void);
@@ -104,7 +106,8 @@ unsafe extern "C" {
         visitor: core::option::Option<mi_block_visit_fun>,
         arg: *mut c_void,
     ) -> bool;
-    pub fn mi_is_in_heap_region(p: *const c_void) -> bool;
+    /// No preconditions; looks the address up in the page map and never dereferences `p`.
+    pub safe fn mi_is_in_heap_region(p: *const c_void) -> bool;
 }
 
 // Named `Option` after mimalloc's `mi_option_t`; shadows `core::option::Option` in

@@ -8,7 +8,7 @@ use super::ResultSection as Section;
 use super::testing::{Sections, bytes_of, with_result};
 use super::*;
 use crate::ir::generated::{Architecture, CheckSet, StatisticId};
-use crate::statistics::can_be_lowered;
+use crate::statistics::is_lowered_by_all;
 
 const IDENTITY: ExecutableIdentity = ExecutableIdentity(*b"0123456789abcdef");
 const THREAD_COUNT: NonZeroUsize = NonZeroUsize::new(7).unwrap();
@@ -17,6 +17,7 @@ fn with_record(record: CompileOptions) -> EngineOptions {
     EngineOptions {
         record,
         fits_threads_to_program: false,
+        images_below: Vec::new(),
     }
 }
 
@@ -104,8 +105,35 @@ fn options_fill_record() {
         expected_record(|record| record.admitted_code = AdmittedCode::INSPECTOR)
     );
     assert_eq!(
-        filled_record(|options| options.forbids_text_evaluation = true),
+        filled_record(|options| options.runs_tests = true),
+        expected_record(|record| record.admitted_code = AdmittedCode::REPLACED_BUILTINS)
+    );
+    assert_eq!(
+        filled_record(|options| options.host_runs_files_from_disk = true),
+        expected_record(|record| record.admitted_code = AdmittedCode::FILES_RUN_BY_HOST)
+    );
+    assert_eq!(
+        filled_record(|options| options.library_runs_compiled_alone = true),
+        expected_record(|record| record.excluded_code |= ExcludedCode::LIBRARY_TEXT)
+    );
+    assert_eq!(
+        filled_record(|options| {
+            options.code_generation_from_strings = CodeGenerationFromStrings::DisallowedLikeNode;
+        }),
         expected_record(|record| record.excluded_code |= ExcludedCode::EVALUATED_TEXT)
+    );
+    assert_eq!(
+        filled_record(|options| {
+            options.code_generation_from_strings = CodeGenerationFromStrings::Strict;
+        }),
+        expected_record(|record| {
+            record.excluded_code |=
+                ExcludedCode::EVALUATED_TEXT | ExcludedCode::HOST_EVALUATED_TEXT;
+        })
+    );
+    assert_eq!(
+        filled_record(|options| options.omits_foreign_calls = true),
+        expected_record(|record| record.excluded_code |= ExcludedCode::FOREIGN_CALLS)
     );
     assert_eq!(
         filled_record(|options| options.loads_code_from_disk = true),
@@ -118,6 +146,14 @@ fn options_fill_record() {
     assert_eq!(
         filled_record(|options| options.obfuscates = true),
         expected_record(|record| record.output = OutputOptions::OBFUSCATE)
+    );
+    assert_eq!(
+        filled_record(|options| options.holds_library_alone = true),
+        expected_record(|record| record.output = OutputOptions::HOLDS_LIBRARY_ALONE)
+    );
+    assert_eq!(
+        filled_record(|options| options.runs_in_several_realms = true),
+        expected_record(|record| record.output = OutputOptions::RUNS_IN_SEVERAL_REALMS)
     );
 }
 
@@ -138,6 +174,34 @@ fn features_removed_by_request_fill_bits() {
 }
 
 #[test]
+fn trimming_says_who_can_make_foreign_calls() {
+    let excluded = |change: fn(&mut AotOptions)| filled_record(change).excluded_code;
+    let without = |flag| expected_record(|_| {}).excluded_code | flag;
+    assert_eq!(
+        excluded(|options| options.trim.removes_unused = true),
+        without(ExcludedCode::FOREIGN_CALLS_OF_UNSEEN_CODE)
+    );
+    assert_eq!(
+        excluded(|options| {
+            options.trim.removes_unused = true;
+            options.trim.allow = vec![TrimFeature::from_name(b"ffi").unwrap()];
+        }),
+        without(ExcludedCode::default())
+    );
+    assert_eq!(
+        excluded(|options| {
+            options.trim.removes_unused = true;
+            options.trim.remove = vec![TrimFeature::from_name(b"native-code").unwrap()];
+        }),
+        without(ExcludedCode::FOREIGN_CALLS)
+    );
+    assert_eq!(
+        excluded(|options| options.trim.remove_internal = vec![Feature::Ffi]),
+        without(ExcludedCode::FOREIGN_CALLS)
+    );
+}
+
+#[test]
 fn each_option_fills_one_member() {
     let filled = filled_record(|options| {
         options.heap = HeapSize::Huge;
@@ -145,7 +209,7 @@ fn each_option_fills_one_member() {
         options.emits_symbols = true;
         options.explain = ExplainSet::ALLOCATIONS;
         options.admits_inspector = true;
-        options.forbids_text_evaluation = true;
+        options.code_generation_from_strings = CodeGenerationFromStrings::DisallowedLikeNode;
         options.embeds_function_source = false;
         options.obfuscates = true;
     });
@@ -232,7 +296,6 @@ fn default_options_ask_for_no_report() {
 
 #[test]
 fn reports_follow_explain_and_detail() {
-    let no_report = ReportSet::default();
     let cases = [
         (ExplainSet::TEXT, None, ReportSet::FLOW),
         (ExplainSet::JSON, None, ReportSet::FLOW),
@@ -246,26 +309,29 @@ fn reports_follow_explain_and_detail() {
         (ExplainSet::ALLOCATIONS, None, ReportSet::ALLOCATIONS),
         // The places in the lines of --explain=trim.
         (ExplainSet::RUNTIME_USE, None, ReportSet::FLOW),
-        (ExplainSet::STATISTICS, None, no_report),
+        (ExplainSet::STATISTICS, None, ReportSet::ACCESS_COUNTS),
         (
             ExplainSet::empty(),
             Some(ReportDetail::Summary),
-            ReportSet::DECLINES,
+            ReportSet::DECLINES | ReportSet::ACCESS_COUNTS,
         ),
         (
             ExplainSet::empty(),
             Some(ReportDetail::Functions),
-            ReportSet::DECLINES | ReportSet::FUNCTIONS,
+            ReportSet::DECLINES | ReportSet::FUNCTIONS | ReportSet::ACCESS_COUNTS,
         ),
         (
             ExplainSet::empty(),
             Some(ReportDetail::Sites),
-            ReportSet::FLOW | ReportSet::DECLINES | ReportSet::FUNCTIONS,
+            ReportSet::FLOW | ReportSet::DECLINES | ReportSet::FUNCTIONS | ReportSet::ACCESS_COUNTS,
         ),
         (
             ExplainSet::TEXT | ExplainSet::ALLOCATIONS,
             Some(ReportDetail::Summary),
-            ReportSet::FLOW | ReportSet::DECLINES | ReportSet::ALLOCATIONS,
+            ReportSet::FLOW
+                | ReportSet::DECLINES
+                | ReportSet::ALLOCATIONS
+                | ReportSet::ACCESS_COUNTS,
         ),
     ];
     for (explain, detail, expected) in cases {
@@ -276,13 +342,10 @@ fn reports_follow_explain_and_detail() {
 #[test]
 fn front_end_options_do_not_reach_record() {
     let changed = filled_record(|options| {
-        options.explain = ExplainSet::STATISTICS;
-        options.trim.removes_unused = true;
         options.erases_types = true;
         options.omits_builtin_modules = true;
         options.ir_output_path = Some(Box::from(&b"program.ir"[..]));
         options.runs_in_place = true;
-        options.runs_tests = true;
         options.thread_count = NonZeroU32::new(3);
         options.option_words = vec![Box::from(&b"validate"[..])];
     });
@@ -296,6 +359,7 @@ fn default_thread_count_fits_the_program() {
     let fitted = EngineOptions {
         record,
         fits_threads_to_program: true,
+        images_below: Vec::new(),
     };
     assert_eq!(fitted.record_for(0).thread_count, 1);
     assert_eq!(
@@ -341,7 +405,7 @@ fn all_lowers_each_limit_to_no_less_than_its_smallest() {
     let limits = with_record(record).limit_values();
     for limit in LimitId::ALL {
         let usual = limit.value(Architecture::X86_64);
-        let expected = if can_be_lowered(limit) {
+        let expected = if is_lowered_by_all(limit) {
             usual.min(limit.smallest().max(2))
         } else {
             usual

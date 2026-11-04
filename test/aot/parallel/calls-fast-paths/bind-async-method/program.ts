@@ -1,7 +1,7 @@
-// IR+ ^function f[0-9]+ "later" \w+ role=BoundFunction
-// IR+ TypeTest v[0-9]+ testedType=Function\^
+// IR+ ^function f[0-9]+ name="later" .* role=BoundFunction
+// IR- TypeTest v[0-9]+ testedType=function\b
 // IR+ IsClosureOf v[0-9]+ function=f[0-9]+
-// IR+ NewClosure \(.*\) function=f[0-9]+
+// IR+ NewClosure v[0-9]+ function=f[0-9]+
 declare const console: any; declare function memoryUsageStatistics(): any; declare function gc(): void;
 class K { v = 1; async later(x: number): Promise<number> { return this.v + x; } }
 const kept: Array<Array<(x: number) => Promise<number>>> = [];

@@ -1,19 +1,21 @@
 use bun_sema::check::aot::{ClassRef, FunctionRef};
-use bun_sema::hir::MemberKind;
+use bun_sema::hir::{FnBody, MemberKind};
 use bun_sema::types::SigId as SignatureId;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
+use super::context::SourceKind;
 use super::{FileLowering, class};
 use crate::ir::generated::{
     Function, FunctionFlags, FunctionKind, FunctionRole, FunctionSyntax, SourceRange,
 };
-use crate::ir::{Body, DeclaredType, FunctionId, FunctionKey};
+use crate::ir::{Body, DeclaredType, FunctionId, FunctionKey, Mapped, PositionFlags};
 
 #[derive(Default)]
 pub(in crate::lower) struct FunctionTypeState {
     declared: Vec<FunctionId>,
     classes: FxHashMap<ClassRef, FunctionId>,
+    parameters: FxHashMap<FunctionId, Vec<DeclaredType>>,
 }
 
 impl FileLowering<'_, '_, '_, '_> {
@@ -69,8 +71,42 @@ impl FileLowering<'_, '_, '_, '_> {
         function_type
     }
 
+    // The library calls a callback with the argument types it declares. Callers are not checked, so the types are predictions.
+    pub(in crate::lower) fn collect_function_type_parameters(&mut self) {
+        if self.source == SourceKind::Program || !self.is_checked() {
+            return;
+        }
+        for function_type in self.types.function_types.declared.clone() {
+            let FunctionKey::Signature(declaration) = self.function_key(function_type) else {
+                continue;
+            };
+            let is_declared_here = declaration.file == self.file
+                && matches!(self.hir[declaration.function].body, FnBody::None);
+            if !is_declared_here {
+                continue;
+            }
+            let shape = self.queries.function_signature(declaration);
+            if shape.has_type_parameters {
+                continue;
+            }
+            let mut parameters = Vec::with_capacity(shape.parameters.len());
+            for parameter in shape.parameters.iter().take_while(|it| !it.is_rest) {
+                let ty = self.create_member_position(parameter.types).ty;
+                let expected = Mapped::expected(ty);
+                parameters.push(DeclaredType::new(expected, None, PositionFlags::default()));
+            }
+            let types = &self.fragment.types;
+            let names_layout = |it: &DeclaredType| !types.get(it.ty).layouts.is_empty();
+            if parameters.iter().any(names_layout) {
+                let known = &mut self.types.function_types.parameters;
+                known.insert(function_type, parameters);
+            }
+        }
+    }
+
     pub(in crate::lower) fn define_signatures(&mut self) {
         let mut declared = core::mem::take(&mut self.types.function_types.declared);
+        let mut parameters = core::mem::take(&mut self.types.function_types.parameters);
         declared.sort_unstable_by_key(|&function_type| self.function_key(function_type));
         let signature = Arc::new(Function {
             name: None,
@@ -92,8 +128,14 @@ impl FileLowering<'_, '_, '_, '_> {
             builtin_members: Vec::new(),
         });
         for function_type in declared {
-            self.fragment
-                .define_function(function_type, Arc::clone(&signature));
+            let signature = match parameters.remove(&function_type) {
+                Some(parameters) => Arc::new(Function {
+                    parameters,
+                    ..Function::clone(&signature)
+                }),
+                None => Arc::clone(&signature),
+            };
+            self.fragment.define_function(function_type, signature);
         }
     }
 }

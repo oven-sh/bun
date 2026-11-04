@@ -1,6 +1,6 @@
 // `new` on a class expression stored in a `const` needs no call into the runtime, and an instance that only the loop itself reads is never allocated.
 // IR- ^ .*= Construct v
-// IRM= 0 = (NewObject|CreateThis) 
+// IRM= 0 = NewObject 
 declare const console: any;
 const Links = class { a = 1; b = 2; sum() { return this.a + this.b; } };
 let s = 0;

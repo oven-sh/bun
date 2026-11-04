@@ -1,0 +1,39 @@
+# const count = new Intl.NumberFormat("en-US"); function once(n) { return count.format(n) } function later() { const format = count.format; return format(2) } once(1); later()
+# `format` is an accessor that answers a function bound to the formatter. One object stands for the functions that the accessor makes: a call of it enters what the table says of such a call, on the formatter,
+# and no function that nobody knows. So the formatter does not escape, and nothing runs that nobody has seen.
+# RUN: valueflow-solve calls unseen
+# CHECK: f1 v3 -> object
+# CHECK-NEXT: f2 v3 -> object
+# CHECK-NEXT: unseen-code no
+
+variable g0 name="count" module=m0 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=IntlNumberFormat
+    v1 = String string="en-US"
+    v2 = Construct v0, -, v1
+    PutModuleVariable v2 variable=g0
+    v4 = NewClosure function=f1
+    v5 = Integer integer=1
+    v6 = Call v4, -, v5
+    v7 = NewClosure function=f2
+    v8 = Call v7, -
+    Return v8
+}
+function f1 name="once" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = PropGet v1 key="format"
+    v3 = Call v2, v1, v0 calleeKey="format"
+    Return v3
+}
+function f2 name="later" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="format"
+    v2 = Integer integer=2
+    v3 = Call v1, -, v2
+    Return v3
+}

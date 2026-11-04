@@ -11,6 +11,7 @@ use bun_paths::fs::Path;
 use bun_resolver::compiled_program::compare_source_paths;
 use bun_sema::atom::Interner;
 use bun_sema::hir_from_data::DataValue;
+use bun_sema::util::SharedSort;
 
 use super::assets::EmbeddedFiles;
 use super::data_values::{data_value_from_expr, report_not_data};
@@ -235,7 +236,7 @@ fn write_page_manifests(
     }
 
     let mut positions_by_path: Vec<(&[u8], usize)> = pages.iter().copied().zip(0..).collect();
-    positions_by_path.sort_unstable_by(|a, b| compare_source_paths(a.0, b.0));
+    positions_by_path.shared_sort_unstable_by(|a, b| compare_source_paths(a.0, b.0));
 
     let sources = bundle.graph.input_files.items_source();
     let mut manifests: Vec<Option<Vec<u8>>> = vec![None; pages.len()];

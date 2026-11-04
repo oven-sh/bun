@@ -1,4 +1,6 @@
 # FORM: AsRead
+# The program calls these functions and uses nothing of what they answer: with the calls gone there would be no code to look at.
+# OPTIONS: disable=pass:RemoveUnusedCalls
 # RUN: lower-to-b3 optimized f3
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
 

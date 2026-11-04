@@ -31,7 +31,6 @@
 #include "JSDOMException.h"
 #include "JSDOMExceptionHandling.h"
 #include <atomic>
-#include <openssl/err.h>
 #include "ErrorCode.h"
 #include "ErrorStackTrace.h"
 #include "KeyObject.h"
@@ -235,7 +234,7 @@ JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, E
     return JSC::ErrorInstance::create(vm, structure, messageString, cause, nullptr, JSC::RuntimeType::TypeNothing, data.type, true);
 }
 
-JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, const String& message)
+NEVER_INLINE JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, const String& message)
 {
     return errorCache(globalObject)->createError(vm, globalObject, code, jsString(vm, message), jsUndefined());
 }
@@ -245,7 +244,7 @@ JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, const Str
     return createError(globalObject->vm(), globalObject, code, message);
 }
 
-JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, const String& message)
+NEVER_INLINE JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, const String& message)
 {
     return createError(vm, defaultGlobalObject(globalObject), code, message);
 }
@@ -268,7 +267,7 @@ JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode co
     return errorCache(globalObject)->createError(vm, globalObject, code, message, options);
 }
 
-JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, const String& message)
+NEVER_INLINE JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, const String& message)
 {
     return createError(globalObject->vm(), globalObject, code, message);
 }
@@ -1997,14 +1996,6 @@ extern "C" JSC::EncodedJSValue Bun__createErrorWithCode(JSC::JSGlobalObject* glo
     return JSValue::encode(createError(globalObject, code, message->toWTFString(BunString::ZeroCopy)));
 }
 
-void throwBoringSSLError(JSGlobalObject* globalObject, JSC::ThrowScope& scope, int errorCode)
-{
-    char buf[256] = { 0 };
-    ERR_error_string_n(static_cast<uint32_t>(errorCode), buf, sizeof(buf));
-    auto message = String::fromUTF8(buf);
-    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_STATE, message));
-}
-
 void throwCryptoOperationFailed(JSGlobalObject* globalObject, JSC::ThrowScope& scope)
 {
     scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Crypto operation failed"_s));
@@ -2078,7 +2069,7 @@ JSC::JSObject* Bun::createInvalidThisError(JSC::JSGlobalObject* globalObject, co
     return Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_THIS, message);
 }
 
-JSC::EncodedJSValue Bun::throwInvalidThisCallError(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, const ASCIILiteral typeName)
+NEVER_INLINE JSC::EncodedJSValue Bun::throwInvalidThisCallError(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, const ASCIILiteral typeName)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2153,6 +2144,7 @@ static constexpr SimpleErrorMessage simpleErrorMessages[] = {
     { ErrorCode::ERR_HTTP2_INVALID_PSEUDOHEADER, 1, { "\""_s, "\" is an invalid pseudoheader or is used incorrectly"_s, ""_s } },
     { ErrorCode::ERR_HTTP2_STREAM_ERROR, 1, { "Stream closed with error code "_s, ""_s, ""_s } },
     { ErrorCode::ERR_HTTP2_SESSION_ERROR, 1, { "Session closed with error code "_s, ""_s, ""_s } },
+    { ErrorCode::ERR_HTTP2_TOO_MANY_ORIGINS, 1, { "The server sent more ORIGIN frames than the allowed number of "_s, ""_s, ""_s } },
     { ErrorCode::ERR_HTTP2_PAYLOAD_FORBIDDEN, 1, { "Responses with "_s, " status must not have a payload"_s, ""_s } },
     { ErrorCode::ERR_HTTP2_INVALID_INFO_STATUS, 1, { "Invalid informational status code: "_s, ""_s, ""_s } },
     { ErrorCode::ERR_HTTP_INVALID_HEADER_VALUE, 2, { "Invalid value \""_s, "\" for header \""_s, "\""_s } },

@@ -21,10 +21,11 @@ function shape(k) {
   o[key] = k;
   return o;
 }
-function readA(a, b, n) { let s = 0; for (let i = 0; i < n; i++) s += (i & 1 ? b : a).shared; return s; }
-function readB(a, b, n) { let s = 0; for (let i = 0; i < n; i++) s += (i & 1 ? b : a).shared; return s; }
-function readC(a, b, n) { let s = 0; for (let i = 0; i < n; i++) s += (i & 1 ? b : a).shared; return s; }
-function readD(a, b, n) { let s = 0; for (let i = 0; i < n; i++) s += (i & 1 ? b : a).shared; return s; }
+// Each calls itself, so none is copied into its caller: there `a` and `b` may be one object, whose read then leaves the loop, and the site sees too little to be filled.
+function readA(a, b, n) { if (n > 1e9) return readA(a, b, 0); let s = 0; for (let i = 0; i < n; i++) s += (i & 1 ? b : a).shared; return s; }
+function readB(a, b, n) { if (n > 1e9) return readB(a, b, 0); let s = 0; for (let i = 0; i < n; i++) s += (i & 1 ? b : a).shared; return s; }
+function readC(a, b, n) { if (n > 1e9) return readC(a, b, 0); let s = 0; for (let i = 0; i < n; i++) s += (i & 1 ? b : a).shared; return s; }
+function readD(a, b, n) { if (n > 1e9) return readD(a, b, 0); let s = 0; for (let i = 0; i < n; i++) s += (i & 1 ? b : a).shared; return s; }
 function readForty(o, n) {
   let s = 0;
   for (let i = 0; i < n; i++) {

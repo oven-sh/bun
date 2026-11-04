@@ -4,7 +4,14 @@
 //
 //   bun --expose-internals fresh-results.ts <aot_builtin_table.json> [pattern of paths]      the last line that it prints is `Found` below, as JSON
 import { bodyOf, within } from "./evaluate";
-import { calls, families, familiesNotCalled, linkedByLibraryCode, notCalled } from "./fresh-results-calls";
+import {
+  addedByLibraryCode,
+  calls,
+  families,
+  familiesNotCalled,
+  linkedByLibraryCode,
+  notCalled,
+} from "./fresh-results-calls";
 import { readTable, type Entry, type Overload, type Row, type TableType, type TypePart } from "./table";
 import { attempt, matches, neverEvaluated, plansOf, write } from "./table-driven";
 
@@ -139,7 +146,7 @@ export class Judge {
         const listed = this.memberNames(current);
         const others = Reflect.ownKeys(actual)
           .map(nameOfKey)
-          .filter(name => !listed.has(name));
+          .filter(name => !listed.has(name) && !addedByLibraryCode[entry.path]?.includes(name));
         if (others.length > 0) problems.push(`${entry.path} holds ${others.join(" ")}`);
       }
       if (entry.prototypeLink === "Unknown" || entry.path in linkedByLibraryCode) return problems;

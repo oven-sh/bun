@@ -126,7 +126,7 @@ struct Numbers {
 pub(super) struct CycleCommit {
     number: u32,
     /// The keys from `Task::take_logged_at_cycles`, sorted. They cover the queries in the cycles and whatever else was
-    /// stored in the same statements. A record key is its table's slot and `Publish::identity_of_logged`.
+    /// stored while those queries were on the stack. A record key is its table's slot and `Publish::identity_of_logged`.
     record_keys: Vec<(u32, u64)>,
     node_keys: Vec<[u32; 3]>,
     /// Hashes of the queries in the cycles this commit resolves, sorted. See `Task::take_cycle_members`.
@@ -692,6 +692,17 @@ impl<'s> Checker<'_, 's> {
         self.task.closed_cycle_count()
     }
 
+    /// How many queries the task has listed as members of those cycles.
+    #[cfg(any(test, feature = "test_support"))]
+    pub fn cycle_members_added(&self) -> u64 {
+        self.task.cycle_members_added()
+    }
+
+    /// A commit with a cycle discards the task if it lists one of the keys that the task has logged since it was idle.
+    pub fn most_logged_between_idle_moments(&self) -> usize {
+        self.task.most_logged_between_idle_moments()
+    }
+
     /// True if the task was discarded because of a cycle or an invalid commit, not a limit. Its files can be rechecked
     /// before the last round.
     pub fn can_recheck_early(&self) -> bool {
@@ -701,6 +712,75 @@ impl<'s> Checker<'_, 's> {
     /// Returns hashes of the queries in the cycle that got this task discarded. Empty if that cycle is already committed.
     pub fn take_unresolved_cycle(&self) -> Vec<u64> {
         self.task.take_cycle_members()
+    }
+
+    /// Computes, each from nothing, an instantiation halfway up each chain that was refused for its depth since the last call, so
+    /// that the chain ends there when it is asked for again. A chain is let go after the 1,000 steps that tsgo allows a recursion
+    /// that costs no depth (`too_many_tail_calls`), a file after the 5,000,000 instantiations that it allows a statement.
+    pub fn compute_refused_instantiations(&mut self) -> RefusedInstantiations {
+        let refused = std::mem::take(&mut self.refused_instantiations);
+        if refused.is_empty() {
+            return RefusedInstantiations::None;
+        }
+        let mut is_listed = crate::util::FxHashSet::default();
+        let mut chains: Vec<Vec<_>> = refused
+            .into_iter()
+            .filter(|it| !self.refused_instantiations_tried.contains(it) && is_listed.insert(*it))
+            .map(|it| vec![it])
+            .collect();
+        // An entry stands 50 instantiations below the one before it, and a step costs two: the alias and its branch.
+        const MOST_ENTRIES_OF_A_CHAIN: usize = 1000 * 2 / (100 / 2);
+        let mut has_computed = false;
+        while !chains.is_empty() && self.instantiations_spent_on_refused < 5_000_000 {
+            for pending in &mut chains {
+                let Some(&(ty, mapper)) = pending.last() else {
+                    continue;
+                };
+                self.instantiations_up_to_a_limit.clear();
+                let hits = self.instantiation_limit_hits;
+                self.instantiate(ty, mapper);
+                self.instantiations_spent_on_refused += u64::from(self.instantiation_count);
+                let deeper = std::mem::take(&mut self.refused_instantiations);
+                let is_computed = self.instantiation_limit_hits == hits;
+                let listed = pending.len();
+                if !is_computed {
+                    pending.extend(deeper.into_iter().filter(|it| {
+                        !self.refused_instantiations_tried.contains(it) && is_listed.insert(*it)
+                    }));
+                }
+                if pending.len() == listed {
+                    pending.pop();
+                    self.refused_instantiations_tried.insert((ty, mapper));
+                    has_computed |= is_computed;
+                } else if pending.len() > MOST_ENTRIES_OF_A_CHAIN {
+                    self.refused_instantiations_tried.extend(pending.drain(..));
+                }
+            }
+            chains.retain(|pending| !pending.is_empty());
+        }
+        self.refused_instantiations_tried
+            .extend(chains.into_iter().flatten());
+        self.instantiations_up_to_a_limit.clear();
+        match has_computed {
+            true => RefusedInstantiations::Computed,
+            false => RefusedInstantiations::StillRefused,
+        }
+    }
+
+    /// While it is set, a chain that is refused for its depth reports nothing and nothing in progress is stored.
+    pub fn leave_depth_limit_unreported(&mut self, leaves: bool) {
+        self.leaves_depth_limit_unreported = leaves;
+        self.refused_instantiations.clear();
+        debug_assert!(self.instantiation_chain.is_empty());
+    }
+
+    /// Call before the first visit of a file.
+    pub fn allow_refused_instantiations_of_next_file(&mut self) {
+        self.instantiations_spent_on_refused = 0;
+    }
+
+    pub fn leaves_depth_limit_unreported(&self) -> bool {
+        self.leaves_depth_limit_unreported
     }
 
     /// Call before `check_file`. See `Task::set_first_in_order`.
@@ -848,4 +928,12 @@ impl<'p, 's> Checker<'p, 's> {
         spare.aot_answers.clear();
         spare
     }
+}
+
+/// `Checker::compute_refused_instantiations`
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum RefusedInstantiations {
+    None,
+    Computed,
+    StillRefused,
 }

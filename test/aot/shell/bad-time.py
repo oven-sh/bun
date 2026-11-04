@@ -61,7 +61,7 @@ if __name__ == "__main__":
         open(answers, "w").close()
         open(wrapper, "w").write(WRAPPER % (jsc, answers))
         os.chmod(wrapper, os.stat(wrapper).st_mode | stat.S_IXUSR)
-        verdicts = subprocess.run([sys.executable, HERE + "/quick.py", *arguments], env={**os.environ, "JSC": wrapper, "WORK": folder + "/work"}, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout.decode(errors="replace")
+        verdicts = subprocess.run([sys.executable, HERE + "/quick.py", *arguments], env={**os.environ, "JSC": wrapper, "WORK": folder + "/work", "KNOWS_SHELL_FUNCTIONS": os.environ.get("KNOWS_SHELL_FUNCTIONS", "0")}, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout.decode(errors="replace")
         asked = dict(line.rsplit(" ", 1) for line in open(answers).read().split("\n") if line)
     asked = {image.removesuffix(".image").replace(".", "/", 1): answer == "true" for image, answer in asked.items()}
     failures = sorted(name for name, answer in asked.items() if answer and name not in known)

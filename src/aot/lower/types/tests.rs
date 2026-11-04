@@ -270,6 +270,17 @@ fn expanding_alias_is_exhausted() {
 }
 
 #[test]
+fn member_whose_type_has_no_end_is_lowered() {
+    let source = "type Endless<T> = T extends unknown ? [Endless<[T]>] : never;
+interface Holder { member: Endless<1>; other: Endless<2>[] }
+export let v: Holder = JSON.parse(\"{}\");
+";
+    let lowered = lower(source, LOWERED_LIMIT);
+    assert!(count_type_node_losses(&lowered) > 0);
+    assert!(!expand_variable(&lowered, "v").ty.is_anything());
+}
+
+#[test]
 fn type_that_grows_several_ways_has_untyped_fields() {
     let source = "interface Tree<T> { leaf: T; left?: Tree<[T]>; right?: Tree<{ of: T }>; up?: Tree<T[]>; down?: Tree<() => T> }
 export let v: Tree<string> = { leaf: \"a\", left: { leaf: [\"b\"] } };

@@ -156,6 +156,27 @@ function start(process: NodeJS.Process, marker: any, processTicksAndRejections: 
   $putInternalField(marker, 2, processTicksAndRejections);
 }
 
+// pushWithInitHooks() as a part of process.nextTick: without ahead-of-time compilation nextTick calls the hooks itself, so a hook finds nextTick below it.
+function pushInsideNextTick(cb: TickCallback, args: unknown[] | undefined, frame: Frame): void {
+  ("has no frames");
+  const tock = newTickObject(cb, args, frame);
+  const asyncId = asyncHooksTick.newAsyncId();
+  const count = tickInitHooks.length;
+  const hooks = $newArrayWithSize<(typeof tickInitHooks)[number]>(count);
+  for (let i = 0; i < count; i++) $putByValDirect(hooks, i, tickInitHooks[i]);
+  for (let i = 0; i < count; i++) {
+    try {
+      hooks[i](asyncId, "TickObject", 0, tock);
+    } catch (err: any) {
+      try {
+        console.error(typeof err?.stack === "string" ? err.stack : err);
+      } catch {}
+      tickingProcess.exit(1);
+    }
+  }
+  pushTickObject(tock);
+}
+
 export type { Frame, Ring, Tick, TickCallback };
 
 export default {
@@ -163,6 +184,7 @@ export default {
   tickInitHooks,
   pushWithList,
   pushWithInitHooks,
+  pushInsideNextTick,
   pushTickObject,
   takeTickObject,
   queueTickInFront,

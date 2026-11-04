@@ -1,23 +1,25 @@
 use bun_ast::Target;
 use bun_resolve_builtins::{Alias, Cfg};
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{CommonJsVariable, Decl};
+use bun_sema::bind::{Binding, BindingInitializer, Bound, Decl};
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{self, Branches, CallId, Chain, ExprId, ExprKind, IdList, ImportEqualsId};
 use bun_sema::import_sites::{
-    ImportSite, ImportSiteKind, ImportSpecifier, OwnRequire, RequireCallForm, ResolvedForm,
-    find_module_printed_as_require, find_own_require, find_require_call, holds_import_meta_require,
-    is_create_require_behind_get_builtin_module, is_made_require, is_require_made_for_own_file,
-    may_require_get_members, may_still_be_undefined,
+    ImportSite, ImportSiteKind, ImportSpecifier, JsxImport, OwnRequire, RequireCallForm,
+    ResolvedForm, find_module_printed_as_require, find_own_require, find_require_call,
+    holds_import_meta_require, is_create_require_behind_get_builtin_module, is_made_require,
+    is_name_read_by_transpiler, is_require_made_for_own_file, may_require_get_members,
+    may_still_be_undefined,
 };
 use bun_sema::program::FileId;
-use smallvec::smallvec;
+use bun_sema::resolve::ExternalKind;
+use smallvec::{SmallVec, smallvec};
 
 use crate::builtins::id::{BuiltinId, RuntimeModule};
 use crate::builtins::table::{self, Platforms, Scope};
 use crate::builtins::{Mutability, Resolved};
 use crate::ir::generated::{BlockRole, ModuleRequestKind};
-use crate::ir::{BlockId, Edge, ModuleId, StringId, TypeTable, ValueId};
+use crate::ir::{BlockId, Edge, LocalVariable, ModuleId, StringId, TypeTable, ValueId};
 use crate::load::loader_aliases::resolve_loader_alias;
 use crate::load::named_loads::modules_named_in;
 use crate::load::sources::parsed_source;
@@ -38,7 +40,10 @@ enum ModuleOperation {
 
 #[derive(Copy, Clone)]
 enum ComputedLoad {
-    Require,
+    /// `AnsweredSite::looks_in_cache`
+    Require {
+        looks_in_cache: bool,
+    },
     Import,
     Resolve,
 }
@@ -54,6 +59,14 @@ enum CalleeKnowledge {
     Unresolved,
     Bound,
     Expected(BuiltinId),
+}
+
+// One way to the answer is emitted, and the block of the other way is open.
+#[derive(Copy, Clone)]
+struct OtherWay {
+    answer: LocalVariable,
+    done: BlockId,
+    was_call_in_tail_position: bool,
 }
 
 // The module is evaluated where the call stands, without the loader.
@@ -73,6 +86,16 @@ struct AnsweredSite<'g> {
     plan: Option<PlannedSite>,
     // The file whose `require` is called, if this file imports it.
     resolved_from: Option<FileId>,
+    names: NamesGiven,
+    // `require` looks in `require.cache` for a Node.js module that is named without `node:`. `process.getBuiltinModule` does not.
+    looks_in_cache: bool,
+}
+
+/// `import_sites::is_name_read_by_transpiler`
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum NamesGiven {
+    AsTranspilerPrints,
+    AsWritten,
 }
 
 impl AnsweredSite<'_> {
@@ -184,10 +207,59 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn is_name_answered_as_asked(&self, name: Atom, module: ModuleRef) -> bool {
-        matches!(module, ModuleRef::Runtime(_))
-            && Alias::get(self.queries.atom_bytes(name), Target::Bun, Cfg::default())
-                .is_some_and(|alias| alias.node_builtin)
+    // `require(__dirname + "/made.cjs")` where the build has found no file: the loader is asked, and where it finds none either its error names the whole path.
+    // The build spells it `./made.cjs`.
+    fn is_whole_path_for_loader(&self, answer: SiteAnswer<'_>, argument: ExprId) -> bool {
+        let SiteAnswer::Module(module) = answer else {
+            return false;
+        };
+        argument.is_some()
+            && self.inputs.modules.external_kind(module) == Some(ExternalKind::UncompiledCode)
+            && self.is_path_from_own_directory(argument)
+    }
+
+    fn is_name_for_transpiler_alone(&self, name: Atom) -> bool {
+        Alias::bun_prefixed_builtin(self.queries.atom_bytes(name)).is_some()
+    }
+
+    // Each name among the values of `a ? K : b ? L : M` in whose place the transpiler prints another, with that other.
+    fn find_names_printed_otherwise(&self, specifier: ExprId) -> Vec<(Atom, &[u8])> {
+        let mut printed: Vec<(Atom, &[u8])> = Vec::new();
+        let mut stack: Vec<ExprId> = specifier.some().into_iter().collect();
+        while let Some(alternative) = stack.pop() {
+            let alternative = self.skip_type_syntax(alternative);
+            if let ExprKind::Cond { branches, .. } = self.hir[alternative].kind {
+                let Branches { yes, no } = self.hir.branches(branches);
+                stack.extend([no, yes]);
+                continue;
+            }
+            let Some(written) = self.find_constant_text(alternative) else {
+                continue;
+            };
+            let Some(name) = Alias::bun_prefixed_builtin(self.queries.atom_bytes(written)) else {
+                continue;
+            };
+            if !printed.contains(&(written, name)) {
+                printed.push((written, name));
+            }
+        }
+        printed
+    }
+
+    /// `require.resolve` answers the name of a Node.js builtin as it is asked, and `bun:fs` is read as `fs`.
+    /// A program above others leaves Bun's own modules to the loader.
+    fn builtin_name_as_asked(&self, name: Atom, module: ModuleRef) -> Option<&[u8]> {
+        let (name, alias) = self.builtin_named(name, module)?;
+        alias.node_builtin.then_some(name)
+    }
+
+    fn builtin_named(&self, name: Atom, module: ModuleRef) -> Option<(&[u8], Alias)> {
+        if !matches!(module, ModuleRef::Runtime(_) | ModuleRef::External { .. }) {
+            return None;
+        }
+        let written = self.queries.atom_bytes(name);
+        let name = Alias::bun_prefixed_builtin(written).unwrap_or(written);
+        Some((name, Alias::get(name, Target::Bun, Cfg::default())?))
     }
 }
 
@@ -210,6 +282,12 @@ pub(crate) fn lower_import_call(
             let options = options.map(|options| lowering.lower_expression(options));
             lowering.lower_arguments_for_effect(args, 1 + usize::from(options.is_some()));
             lowering.set_position(position);
+            if let (Some(text), Some(node)) = (specifier, first)
+                && (lowering.file).is_whole_path_for_loader(SiteAnswer::Module(module), node)
+            {
+                let referrer = lowering.file.module_id();
+                return lowering.builder.import_dynamic(text, options, referrer);
+            }
             let test = specifier.zip(first).and_then(|(text, node)| {
                 let written = lowering.file.decisions().specifier(node);
                 lowering.branch_on_path_made_by_call(written, node, text)
@@ -226,7 +304,7 @@ pub(crate) fn lower_import_call(
 
             lowering.continue_in(test.other);
             let error = lowering.emit_refusal_of_other_path(test.written, b"ERR_MODULE_NOT_FOUND");
-            let rejected = lowering.emit_settled_promise(BuiltinId::PromiseReject, error);
+            let rejected = lowering.emit_import_rejected_by_loader(error);
             lowering.builder.write_variable(result, rejected);
             lowering.jump(done);
 
@@ -247,7 +325,7 @@ pub(crate) fn lower_import_call(
             lowering.set_position(position);
             let referrer = lowering.file.module_id();
             if options.is_none() {
-                let load = ComputedLoad::Import;
+                let load = (ComputedLoad::Import, NamesGiven::AsTranspilerPrints);
                 return lowering.emit_computed_load(load, referrer, node, specifier, candidates);
             }
             lowering
@@ -260,6 +338,18 @@ pub(crate) fn lower_import_call(
             lowering.builder.undefined()
         }
         SiteAnswer::Failed(failure) => {
+            // The options are read, and refused if they are not what the language asks for, before the module is looked for.
+            let mut arguments = hir.ids(args);
+            if let (Some(first), Some(second)) = (arguments.next(), arguments.next()) {
+                let specifier = lowering.lower_expression(first);
+                let options = lowering.lower_expression(second);
+                lowering.lower_arguments_for_effect(args, 2);
+                lowering.set_position(position);
+                let referrer = lowering.file.module_id();
+                return lowering
+                    .builder
+                    .import_dynamic(specifier, Some(options), referrer);
+            }
             lowering.lower_arguments_for_effect(args, 0);
             lowering.set_position(position);
             lowering.emit_rejected_import(failure)
@@ -277,6 +367,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if let Some(object) = find_object_replacing_namespace(self.file.hir, arguments, module) {
             let value = self.emit_builtin_import(object, None);
             return self.emit_settled_promise(BuiltinId::PromiseResolve, value);
+        }
+        // The host loads such a module with `require`, whose errors and module cache are not those of `import()`.
+        if let ModuleRef::External { specifier, .. } = module
+            && self.file.inputs.modules.external_kind(module) == Some(ExternalKind::HostValue)
+        {
+            let specifier = self.file.intern_atom(specifier);
+            let specifier = self.builder.string(specifier);
+            let referrer = self.file.module_id();
+            return self.builder.import_dynamic(specifier, options, referrer);
         }
         self.emit_import_through_face(module, options)
     }
@@ -323,12 +422,33 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let require_call = matches!(site.kind, ImportSiteKind::Require(_))
             .then(|| find_require_call(hir, bound, decisions, callee, arguments))
             .flatten();
+        // `spyOn(Module, "createRequire")`: what the tests put there makes the function that is called here, and nobody knows what that one loads.
+        let replaced = self.file.inputs.replaced_builtins;
+        let made = require_call.map_or(callee, |found| found.require);
+        if replaced
+            .binary_search(&(BuiltinId::NodeModuleCreateRequire as u32))
+            .is_ok()
+            && matches!(site.kind, ImportSiteKind::Require(_))
+            && find_own_require(hir, bound, decisions, made) == Some(OwnRequire::Made)
+            && !is_made_by_imported_name(hir, bound, made)
+        {
+            return None;
+        }
         let written = self.file.skip_type_syntax(callee);
         let is_module_require = find_module_printed_as_require(hir, bound, written).is_some();
         let given = require_call.map_or(arguments, |found| found.args);
         let modules = self.file.inputs.modules;
         let answer = modules.site_answer(self.file.file, site.kind);
         let operation = find_operation(&site, answer, given.len())?;
+        // `bun run` answers a `require` of this module by a call of `Bun.jest`.
+        if matches!(site.kind, ImportSiteKind::Require(_))
+            && matches!(
+                answer,
+                SiteAnswer::Module(ModuleRef::Runtime(RuntimeModule::BunTest))
+            )
+        {
+            self.emit_locked_builtin(BuiltinId::BunJest);
+        }
         let site = AnsweredSite {
             specifier: site.specifier,
             specifier_node: site.specifier_node,
@@ -337,6 +457,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 modules.is_site_read_as_value(self.file.file, call)
             }),
             resolved_from,
+            names: match is_name_read_by_transpiler(hir, bound, self.file.decisions(), site.kind) {
+                true => NamesGiven::AsTranspilerPrints,
+                false => NamesGiven::AsWritten,
+            },
+            looks_in_cache: !matches!(site.kind, ImportSiteKind::GetBuiltinModule(_)),
         };
         // The transpiler writes `require(..)` in place of `module.require(..)` without reading `module`, and `Bun` in place of `require("bun")` without reading `require`.
         if is_module_require
@@ -345,7 +470,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 SiteAnswer::Module(ModuleRef::Runtime(RuntimeModule::Bun))
             )
         {
-            return Some(self.lower_untested_call(call, arguments, operation, site));
+            return Some(self.lower_untested_call(call, arguments, operation, &site));
         }
         let method = require_call.and_then(|found| match found.form {
             RequireCallForm::Direct => None,
@@ -368,7 +493,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 CalleeKnowledge::Unresolved if is_require_made_for_own_file(hir, bound, callee) => {
                     if !may_still_be_undefined(hir, bound, callee) {
                         self.lower_expression(callee);
-                        return Some(self.lower_untested_call(call, arguments, operation, site));
+                        return Some(self.lower_untested_call(call, arguments, operation, &site));
                     }
                     CalleeTest::IsFilled
                 }
@@ -379,12 +504,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     }
                 }
                 CalleeKnowledge::Bound => {
-                    return Some(self.lower_untested_call(call, arguments, operation, site));
+                    return Some(self.lower_untested_call(call, arguments, operation, &site));
                 }
                 CalleeKnowledge::Expected(expected) => CalleeTest::Expected(expected),
             }
         };
-        let loaded = lower_tested_call(self, call, chain_exit, test, operation, site);
+        let loaded = lower_tested_call(self, call, chain_exit, test, operation, &site);
         Some(loaded)
     }
 
@@ -468,6 +593,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let written = self.file.skip_type_syntax(argument);
         let name = self.file.find_constant_text(written)?;
+        if self.file.is_name_for_transpiler_alone(name) {
+            return None;
+        }
         let module = ModuleRef::Runtime(named.iter().find(|it| it.name == name)?.module);
         let site = AnsweredSite {
             specifier: ImportSpecifier::Constant(name),
@@ -475,14 +603,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             answer: SiteAnswer::Module(module),
             plan: None,
             resolved_from: None,
+            names: NamesGiven::AsWritten,
+            looks_in_cache: true,
         };
         let operation = ModuleOperation::Require;
         if !is_made_require || may_still_be_undefined(hir, self.file.bound, hir[id].callee) {
             let test = CalleeTest::IsFilled;
-            return Some(lower_tested_call(self, call, None, test, operation, site));
+            return Some(lower_tested_call(self, call, None, test, operation, &site));
         }
         self.lower_expression(hir[id].callee);
-        Some(self.lower_untested_call(call, arguments, operation, site))
+        Some(self.lower_untested_call(call, arguments, operation, &site))
     }
 
     // `process.getBuiltinModule(flag ? "node:vm" : "node:v8")`
@@ -497,6 +627,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let source = parsed_source(self.file.queries.files(), self.file.file)?;
         let named = modules_named_in(source.named_modules(), argument).iter();
         let spelled_modules: Vec<SpelledModule> = named
+            .filter(|it| !self.file.is_name_for_transpiler_alone(it.name))
             .map(|it| SpelledModule {
                 spelling: it.name,
                 module: ModuleRef::Runtime(it.module),
@@ -513,6 +644,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             answer: SiteAnswer::Computed(Candidates::Modules(&spelled_modules)),
             plan: None,
             resolved_from: None,
+            names: NamesGiven::AsWritten,
+            looks_in_cache: false,
         };
         let test = match self.file.classify_callee(hir[id].callee) {
             CalleeKnowledge::Expected(expected) => CalleeTest::Expected(expected),
@@ -524,7 +657,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             CalleeKnowledge::Bound => return None,
         };
         let operation = ModuleOperation::Require;
-        let loaded = lower_tested_call(self, call, chain_exit, test, operation, site);
+        let loaded = lower_tested_call(self, call, chain_exit, test, operation, &site);
         Some(loaded)
     }
 
@@ -547,8 +680,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 modules.holder(own_file, name).is_none()
             }),
             resolved_from: None,
+            names: NamesGiven::AsTranspilerPrints,
+            looks_in_cache: true,
         };
-        Some(self.emit_require(site, None))
+        Some(self.emit_require(&site, None))
     }
 
     fn emit_expected_callee(&mut self, expected: BuiltinId) -> ValueId {
@@ -604,7 +739,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn emit_operation(
         &mut self,
         operation: ModuleOperation,
-        site: AnsweredSite<'_>,
+        site: &AnsweredSite<'_>,
         specifier: Option<ValueId>,
     ) -> ValueId {
         let test = specifier.and_then(|text| {
@@ -623,7 +758,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let SiteAnswer::Module(module) = site.answer else {
                     unreachable!("find_operation binds import.meta.resolve to one module");
                 };
-                self.emit_resolve_module(site.specifier, module, true)
+                self.emit_resolve_module(site.specifier, None, module, true)
             }
         }
     }
@@ -646,8 +781,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if plan.records {
             self.builder.record_require(module, referrer);
         }
+        // A run that takes the other way to the answer passes no site in this arm: where the program has stored a resolver, the host answers.
+        let is_in_one_arm = self.open_ways_around_require != 0;
         // The function that holds the text of a file with a wrapper is not the body of the module, and what stands behind a `using` declaration stands under the handler that disposes of the resource.
-        let is_bare = plan.is_bare && self.is_module_body() && self.handler().is_none();
+        let is_bare =
+            plan.is_bare && !is_in_one_arm && self.is_module_body() && self.handler().is_none();
         // The callback of a wrapper in a bundle is called by the function that the wrapper has made.
         let is_call_of_require = matches!(plan.target, ModuleRef::File(_) | ModuleRef::Runtime(_));
         self.builder
@@ -668,21 +806,280 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
+    /// The module that the JSX of a CommonJS file imports `import` from. None: the file is an ES module, and the loader runs what it imports in front of its body.
+    fn find_required_jsx_module(&self, import: JsxImport) -> Option<ModuleRef> {
+        let (modules, file) = (self.file.inputs.modules, self.file.file);
+        if modules.kind(file) != ModuleKind::CommonJs {
+            return None;
+        }
+        match modules.find_site_answer(file, import.site_kind())? {
+            SiteAnswer::Module(module) => Some(module),
+            _ => None,
+        }
+    }
+
+    /// No loader runs anything in front of the body of a CommonJS file, so the file asks for the module itself, as it does in a bundle.
+    fn emit_require_of_jsx_module(&mut self, import: JsxImport) -> Option<ValueId> {
+        let module = self.find_required_jsx_module(import)?;
+        let analysis = &self.file.compiled.analysis;
+        let site = analysis.import_sites[analysis.import_site_index(import.site_kind())?];
+        let ImportSpecifier::Constant(specifier) = site.specifier else {
+            return None;
+        };
+        let specifier = self.file.intern_atom(specifier);
+        Some(self.emit_require_of_candidate(module, specifier))
+    }
+
+    pub(in crate::lower) fn emit_required_jsx_import(
+        &mut self,
+        import: JsxImport,
+        name: StringId,
+    ) -> Option<ValueId> {
+        // A name of an ES module is bound, and holds its value once the module has run.
+        let module = self.find_required_jsx_module(import)?;
+        if self.file.inputs.modules.interop(module).kind != ModuleKind::CommonJs {
+            return None;
+        }
+        let exports = self.emit_require_of_jsx_module(import)?;
+        let key = self.file.text_key(name);
+        Some(self.emit_get(exports, PropertyName::Constant(key)))
+    }
+
+    /// At the head of the body of a CommonJS file.
+    pub(in crate::lower) fn emit_loads_of_jsx_modules(&mut self) {
+        let imports = self.file.inputs.modules.jsx_bindings(self.file.file);
+        let mut sites: SmallVec<[ImportSiteKind; 2]> = SmallVec::new();
+        for &(import, _) in imports {
+            if !sites.contains(&import.site_kind()) {
+                sites.push(import.site_kind());
+                self.emit_require_of_jsx_module(import);
+            }
+        }
+    }
+
     fn emit_require_module(&mut self, module: ModuleRef, specifier: StringId) -> ValueId {
         let id = self.file.fragment.declare_module(module);
         let referrer = self.file.module_id();
-        let required = self.builder.require_module(id, referrer, specifier);
+        let required = self.builder.require_module(id, referrer, specifier, false);
         self.expect_exports_layout(module, required)
+    }
+
+    // Taken out of `require.cache` in a test run, an ES module loads again: the run time says which object answers.
+    // So it does behind a mock of an ES module that was required before: `require` then answers what the factory gave, and no longer the namespace object.
+    // So it does where the program gets at the entries of `require.cache`: behind `require.cache[path].exports = other`, `require` answers `other`.
+    // So it does for a module of the library, which the first `require` puts into `require.cache`. `require` takes a name that starts with `node:` to the registry.
+    fn may_load_again(&self, module: ModuleRef) -> bool {
+        let modules = self.file.inputs.modules;
+        if let ModuleRef::Runtime(of_library) = module {
+            return modules.is_code_of_program(self.current_module())
+                && !table::specifier_of(of_library).starts_with(b"node:")
+                && of_library != RuntimeModule::Bun
+                && of_library != RuntimeModule::BunTest;
+        }
+        let ModuleRef::File(file) = module else {
+            return false;
+        };
+        if !modules.is_code_of_program(module) {
+            return false;
+        }
+        match modules.kind(file) {
+            ModuleKind::SourceText => {
+                modules.may_be_evicted(module)
+                    || modules.may_be_mocked(module)
+                    || modules.reaches_entries_of_cache()
+            }
+            // The variables of the file are those of its first load. The loader has the later ones.
+            ModuleKind::CommonJs => modules.may_be_evicted(module),
+            _ => false,
+        }
+    }
+
+    // `require.cache["fs"] = { exports: fake }`: `require("fs")` answers with what the entry exports. The host looks there.
+    // `require("node:fs")` and `process.getBuiltinModule("fs")` answer with the module. A program above others leaves Bun's own modules to the host, under the name as it is written.
+    fn emit_require_beside_entry_in_cache(
+        &mut self,
+        module: ModuleRef,
+        written: Atom,
+        referrer: ModuleId,
+        looks_in_cache: bool,
+        emit_require_of_module: impl FnOnce(&mut Self) -> ValueId,
+    ) -> ValueId {
+        let modules = self.file.inputs.modules;
+        if !modules.is_code_of_program(self.current_module()) {
+            return emit_require_of_module(self);
+        }
+        let Some((name, alias)) = self.file.builtin_named(written, module) else {
+            return emit_require_of_module(self);
+        };
+        // `require("bun:sqlite")` leaves an entry in the cache. The call itself leaves none and looks there for no name.
+        if !looks_in_cache && !alias.node_builtin {
+            let name = name.to_vec();
+            let get_builtin_module = self.emit_builtin_itself(BuiltinId::ProcessGetBuiltinModule);
+            let name = self.emit_text(&name);
+            return call::emit_call(self, get_builtin_module, None, &[name]);
+        }
+        if !modules.may_entry_in_cache_stand_under(name) {
+            return emit_require_of_module(self);
+        }
+        let name = name.to_vec();
+        let is_left_to_host = alias.node_builtin && matches!(module, ModuleRef::External { .. });
+        let emit_past_cache = |this: &mut Self| {
+            if !is_left_to_host {
+                return emit_require_of_module(this);
+            }
+            let name = this.emit_text(alias.path.as_bytes());
+            this.builder.require_dynamic(name, referrer)
+        };
+        if !looks_in_cache {
+            return emit_past_cache(self);
+        }
+        if !alias.node_builtin || !modules.tracks_first_load(self.file.file) {
+            let name = self.emit_text(&name);
+            return self.builder.require_dynamic(name, referrer);
+        }
+        let other_way = self.emit_require_as_written_if_loaded_synchronously(&name, referrer);
+        let found = emit_past_cache(self);
+        self.finish_other_way(other_way, found)
+    }
+
+    // A file that was loaded synchronously reads the name as it is written. Ends in the block of a file that was not.
+    fn emit_require_as_written_if_loaded_synchronously(
+        &mut self,
+        name: &[u8],
+        referrer: ModuleId,
+    ) -> OtherWay {
+        let file = self.file.module_id();
+        let reads_as_written = self.builder.was_loaded_synchronously(file);
+        self.emit_require_as_written_if(reads_as_written, name, referrer)
+    }
+
+    // `Module._resolveFilename = ..` and `Module.prototype.require = ..`: from then on plain Bun asks the program at every `require`, so the host
+    // answers, by the name as it is written. Ends in the block where neither is stored.
+    fn emit_require_as_written_if_loader_functions_are_stored(
+        &mut self,
+        written: Atom,
+        referrer: ModuleId,
+    ) -> Option<OtherWay> {
+        let modules = self.file.inputs.modules;
+        if !modules.asks_loader_functions() || !modules.is_code_of_program(self.current_module()) {
+            return None;
+        }
+        let name = self.file.queries.atom_bytes(written).to_vec();
+        let are_stored = self.builder.are_loader_functions_stored();
+        Some(self.emit_require_as_written_if(are_stored, &name, referrer))
+    }
+
+    fn emit_require_as_written_if(
+        &mut self,
+        reads_as_written: ValueId,
+        name: &[u8],
+        referrer: ModuleId,
+    ) -> OtherWay {
+        let answer = self.builder.create_variable(None);
+        let as_written = self.create_block();
+        let with_prefix = self.create_block();
+        let done = self.create_block();
+        self.builder.branch(
+            reads_as_written,
+            Edge::to(as_written),
+            Edge::to(with_prefix),
+        );
+        let was_call_in_tail_position =
+            std::mem::replace(&mut self.is_call_in_tail_position, false);
+
+        self.continue_in(as_written);
+        let name = self.emit_text(name);
+        let found = self.builder.require_dynamic(name, referrer);
+        self.builder.write_variable(answer, found);
+        self.jump(done);
+
+        self.continue_in(with_prefix);
+        self.open_ways_around_require += 1;
+        OtherWay {
+            answer,
+            done,
+            was_call_in_tail_position,
+        }
+    }
+
+    fn finish_other_way(&mut self, other_way: OtherWay, found: ValueId) -> ValueId {
+        self.is_call_in_tail_position = other_way.was_call_in_tail_position;
+        self.open_ways_around_require -= 1;
+        self.builder.write_variable(other_way.answer, found);
+        self.jump(other_way.done);
+
+        self.continue_in(other_way.done);
+        self.builder.read_variable(other_way.answer)
+    }
+
+    pub(in crate::lower) fn note_first_load(&mut self) {
+        if self.file.inputs.modules.tracks_first_load(self.file.file) {
+            let file = self.file.module_id();
+            self.builder.was_loaded_synchronously(file);
+        }
+    }
+
+    // `interop::Interop::form_that_imports_get`. What an import has loaded answers in place of the code.
+    fn emit_require_unless_imported(
+        &mut self,
+        module: ModuleRef,
+        specifier: StringId,
+        emit_require: impl FnOnce(&mut Self, bool) -> ValueId,
+    ) -> ValueId {
+        let Some(imported) = (self.file.inputs.modules.interop(module)).form_that_imports_get
+        else {
+            return emit_require(self, false);
+        };
+        let other_way = self.emit_what_an_import_has_loaded(imported, specifier);
+        let required = emit_require(self, true);
+        self.finish_other_way(other_way, required)
+    }
+
+    // Ends in the block of a module that no import has loaded.
+    fn emit_what_an_import_has_loaded(
+        &mut self,
+        imported: FileId,
+        specifier: StringId,
+    ) -> OtherWay {
+        let id = (self.file.fragment).declare_module(ModuleRef::File(imported));
+        let referrer = self.file.module_id();
+        // The namespace object, or undefined.
+        let namespace = self.builder.require_module(id, referrer, specifier, true);
+        let is_held = self.builder.type_test(namespace, TypeTable::OBJECT);
+        let answer = self.builder.create_variable(None);
+        self.builder.write_variable(answer, namespace);
+        let read_as_code = self.create_block();
+        let done = self.create_block();
+        self.builder
+            .branch(is_held, Edge::to(done), Edge::to(read_as_code));
+
+        self.continue_in(read_as_code);
+        self.open_ways_around_require += 1;
+        OtherWay {
+            answer,
+            done,
+            was_call_in_tail_position: std::mem::replace(&mut self.is_call_in_tail_position, false),
+        }
     }
 
     // One of the modules that a computed specifier can name.
     fn emit_require_of_candidate(&mut self, module: ModuleRef, specifier: StringId) -> ValueId {
+        self.emit_require_unless_imported(module, specifier, |this, _| {
+            this.emit_require_of_candidate_itself(module, specifier)
+        })
+    }
+
+    fn emit_require_of_candidate_itself(
+        &mut self,
+        module: ModuleRef,
+        specifier: StringId,
+    ) -> ValueId {
         // The plan has a request for each candidate that the site evaluates itself. The loader has the others.
         let referrer = self.current_module();
         let mut requests = self.file.inputs.modules.requests_of(referrer).iter();
         let is_evaluated = requests
             .any(|request| request.kind == ModuleRequestKind::Require && request.target == module);
-        if !is_evaluated {
+        if !is_evaluated || self.may_load_again(module) {
             return self.emit_require_module(module, specifier);
         }
         self.emit_planned_require(PlannedSite {
@@ -693,66 +1090,139 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         })
     }
 
-    fn emit_require(&mut self, site: AnsweredSite<'_>, specifier: Option<ValueId>) -> ValueId {
+    fn emit_require(&mut self, site: &AnsweredSite<'_>, specifier: Option<ValueId>) -> ValueId {
+        let whole_path = specifier
+            .filter(|_| (self.file).is_whole_path_for_loader(site.answer, site.specifier_node));
+        if let Some(whole_path) = whole_path {
+            let referrer = self.referrer_of(site);
+            return self.builder.require_dynamic(whole_path, referrer);
+        }
+        if let (SiteAnswer::Module(module), ImportSpecifier::Constant(written)) =
+            (site.answer, site.specifier)
+        {
+            let (referrer, looks_in_cache) = (self.referrer_of(site), site.looks_in_cache);
+            let other_way =
+                self.emit_require_as_written_if_loader_functions_are_stored(written, referrer);
+            let found = self.emit_require_beside_entry_in_cache(
+                module,
+                written,
+                referrer,
+                looks_in_cache,
+                |this| this.emit_require_of_answer(site, specifier),
+            );
+            return match other_way {
+                Some(other_way) => self.finish_other_way(other_way, found),
+                None => found,
+            };
+        }
+        // A name that the build finds nothing under may be one that the program's own resolver knows: `require("@app/file")` behind module-alias.
+        if let (SiteAnswer::Failed(_), ImportSpecifier::Constant(written)) =
+            (site.answer, site.specifier)
+        {
+            let referrer = self.referrer_of(site);
+            let other_way =
+                self.emit_require_as_written_if_loader_functions_are_stored(written, referrer);
+            let found = self.emit_require_of_answer(site, specifier);
+            return match other_way {
+                Some(other_way) => self.finish_other_way(other_way, found),
+                None => found,
+            };
+        }
+        self.emit_require_of_answer(site, specifier)
+    }
+
+    fn emit_require_of_answer(
+        &mut self,
+        site: &AnsweredSite<'_>,
+        specifier: Option<ValueId>,
+    ) -> ValueId {
         match site.answer {
             SiteAnswer::Module(module) => {
-                let outer = self
-                    .builder
-                    .set_tail_position(self.is_call_in_tail_position);
-                let required = match (site.plan, site.specifier) {
-                    (Some(plan), _) => self.emit_planned_require(plan),
-                    (None, ImportSpecifier::Constant(text)) => {
-                        let text = self.file.intern_atom(text);
-                        self.emit_require_module(module, text)
-                    }
-                    (None, _) => unreachable!("only a constant specifier names one module"),
+                let emit_require = |this: &mut Self, is_in_one_arm: bool| {
+                    let outer = this
+                        .builder
+                        .set_tail_position(this.is_call_in_tail_position);
+                    let may_load_again = this.may_load_again(module);
+                    let plan = site.plan.map(|plan| PlannedSite {
+                        is_bare: plan.is_bare && !is_in_one_arm,
+                        ..plan
+                    });
+                    let required = match (plan, site.specifier) {
+                        (Some(plan), _) if !may_load_again => this.emit_planned_require(plan),
+                        (_, ImportSpecifier::Constant(text)) => {
+                            let text = this.file.intern_atom(text);
+                            this.emit_require_module(module, text)
+                        }
+                        (Some(plan), _) => this.emit_planned_require(plan),
+                        (None, _) => unreachable!("only a constant specifier names one module"),
+                    };
+                    this.builder.set_tail_position(outer);
+                    required
                 };
-                self.builder.set_tail_position(outer);
-                required
+                match site.specifier {
+                    ImportSpecifier::Constant(text) => {
+                        let text = self.file.intern_atom(text);
+                        self.emit_require_unless_imported(module, text, emit_require)
+                    }
+                    _ => emit_require(self, false),
+                }
             }
             SiteAnswer::Computed(candidates) => {
                 let specifier = specifier.unwrap_or_else(|| self.builder.undefined());
                 let node = site.specifier_node;
                 let referrer = self.referrer_of(site);
-                let load = ComputedLoad::Require;
+                let looks_in_cache = site.looks_in_cache;
+                let load = (ComputedLoad::Require { looks_in_cache }, site.names);
                 self.emit_computed_load(load, referrer, node, specifier, candidates)
             }
-            SiteAnswer::Failed(failure) => self.emit_require_failure(site, failure, true),
+            SiteAnswer::Failed(failure) => {
+                self.emit_require_failure(site, specifier, failure, true)
+            }
             SiteAnswer::Erased => self.builder.undefined(),
         }
     }
 
     // The build spells a candidate from the folder of the file: "./plugins/a.js".
     fn emit_path_from_own_directory(&mut self, text: ValueId) -> ValueId {
-        let directory = self.get_commonjs_variable(CommonJsVariable::Dirname);
-        let starts_with = self.emit_builtin_itself(BuiltinId::StringPrototypeStartsWith);
-        let is_below = call::emit_call(self, starts_with, Some(text), &[directory]);
-        let is_below = self.builder.to_boolean(is_below);
+        let directories = self.emit_own_directories();
         let spelled = self.builder.create_variable(None);
-        self.builder.write_variable(spelled, text);
-        let below = self.create_block();
-        let done = self.create_block();
-        self.builder
-            .branch(is_below, Edge::to(below), Edge::to(done));
+        let mut done = None;
+        let count = directories.len();
+        for (index, directory) in directories.into_iter().enumerate() {
+            let starts_with = self.emit_builtin_itself(BuiltinId::StringPrototypeStartsWith);
+            let is_below = call::emit_call(self, starts_with, Some(text), &[directory]);
+            let is_below = self.builder.to_boolean(is_below);
+            if index == 0 {
+                self.builder.write_variable(spelled, text);
+            }
+            let below = self.create_block();
+            let done = *done.get_or_insert_with(|| self.create_block());
+            let otherwise = match index + 1 == count {
+                true => done,
+                false => self.create_block(),
+            };
+            self.builder
+                .branch(is_below, Edge::to(below), Edge::to(otherwise));
 
-        self.continue_in(below);
-        let length = PropertyName::Constant(self.file.atom_key(known::length));
-        let length = self.emit_get(directory, length);
-        let slice = self.emit_builtin_itself(BuiltinId::StringPrototypeSlice);
-        let mut rest = call::emit_call(self, slice, Some(text), &[length]);
-        // `path.join` answers `B:\~BUN\root\plugins\a.js` there.
-        let platform = self.file.inputs.options.platform;
-        if platform.contains(Platforms::WINDOWS) {
-            let replace_all = self.emit_builtin_itself(BuiltinId::StringPrototypeReplaceAll);
-            let separators = [self.emit_text(b"\\"), self.emit_text(b"/")];
-            rest = call::emit_call(self, replace_all, Some(rest), &separators);
+            self.continue_in(below);
+            let length = PropertyName::Constant(self.file.atom_key(known::length));
+            let length = self.emit_get(directory, length);
+            let slice = self.emit_builtin_itself(BuiltinId::StringPrototypeSlice);
+            let mut rest = call::emit_call(self, slice, Some(text), &[length]);
+            // `path.join` answers `B:\~BUN\root\plugins\a.js` there.
+            let platform = self.file.inputs.options.platform;
+            if platform.contains(Platforms::WINDOWS) {
+                let replace_all = self.emit_builtin_itself(BuiltinId::StringPrototypeReplaceAll);
+                let separators = [self.emit_text(b"\\"), self.emit_text(b"/")];
+                rest = call::emit_call(self, replace_all, Some(rest), &separators);
+            }
+            let dot = self.emit_text(b".");
+            let from_folder = self.builder.strcat(&[dot, rest]);
+            self.builder.write_variable(spelled, from_folder);
+            self.jump(done);
+
+            self.continue_in(otherwise);
         }
-        let dot = self.emit_text(b".");
-        let from_folder = self.builder.strcat(&[dot, rest]);
-        self.builder.write_variable(spelled, from_folder);
-        self.jump(done);
-
-        self.continue_in(done);
         self.builder.read_variable(spelled)
     }
 
@@ -773,53 +1243,67 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let is_windows = platform.contains(Platforms::WINDOWS);
         let separator: &[u8] = if is_windows { b"\\" } else { b"/" };
         let bytes = self.file.queries.atom_bytes(written).to_vec();
-        let mut below = bytes.strip_prefix(b".").unwrap_or(&bytes);
-        let mut directory = self.get_commonjs_variable(CommonJsVariable::Dirname);
-        while let Some(rest) = below.strip_prefix(b"/..")
-            && (rest.is_empty() || rest.starts_with(b"/"))
-        {
-            below = rest;
-            let separator = self.emit_text(separator);
-            let last_index_of = self.emit_builtin_itself(BuiltinId::StringPrototypeLastIndexOf);
-            let end = call::emit_call(self, last_index_of, Some(directory), &[separator]);
-            let start = self.builder.integer(0);
-            let slice = self.emit_builtin_itself(BuiltinId::StringPrototypeSlice);
-            directory = call::emit_call(self, slice, Some(directory), &[start, end]);
-        }
-        let below: Vec<u8> = bun_core::strings::split(below, b"/")
-            .collect::<Vec<_>>()
-            .join(separator);
-        let below = self.emit_text(&below);
-        let expected = self.builder.strcat(&[directory, below]);
-        let is_as_written = self.builder.strict_eq(text, expected);
-        let as_written = self.create_block();
-        let other = self.create_unlikely_block();
-        if is_windows {
-            // `path.join(__dirname) + "/a.js"` is `B:\~BUN\root/a.js` there, which names the same file.
-            let spelled_otherwise = self.create_unlikely_block();
-            let spelled_as_text = self.create_unlikely_block();
-            self.builder.branch(
-                is_as_written,
-                Edge::to(as_written),
-                Edge::to(spelled_otherwise),
-            );
+        let directories = self.emit_own_directories();
+        let mut targets = None;
+        let count = directories.len();
+        for (index, mut directory) in directories.into_iter().enumerate() {
+            let mut below = bytes.strip_prefix(b".").unwrap_or(&bytes);
+            while let Some(rest) = below.strip_prefix(b"/..")
+                && (rest.is_empty() || rest.starts_with(b"/"))
+            {
+                below = rest;
+                let separator = self.emit_text(separator);
+                let last_index_of = self.emit_builtin_itself(BuiltinId::StringPrototypeLastIndexOf);
+                let end = call::emit_call(self, last_index_of, Some(directory), &[separator]);
+                let start = self.builder.integer(0);
+                let slice = self.emit_builtin_itself(BuiltinId::StringPrototypeSlice);
+                directory = call::emit_call(self, slice, Some(directory), &[start, end]);
+            }
+            let below: Vec<u8> = bun_core::strings::split(below, b"/")
+                .collect::<Vec<_>>()
+                .join(separator);
+            let below = self.emit_text(&below);
+            let expected = self.builder.strcat(&[directory, below]);
+            let is_as_written = self.builder.strict_eq(text, expected);
+            let (as_written, other) =
+                *targets.get_or_insert_with(|| (self.create_block(), self.create_unlikely_block()));
+            // A path made of `__dirname` begins with another folder than one made of `import.meta.dir`.
+            let otherwise = match index + 1 == count {
+                true => other,
+                false => self.create_unlikely_block(),
+            };
+            if is_windows {
+                // `path.join(__dirname) + "/a.js"` is `B:\~BUN\root/a.js` there, which names the same file.
+                let spelled_otherwise = self.create_unlikely_block();
+                let spelled_as_text = self.create_unlikely_block();
+                self.builder.branch(
+                    is_as_written,
+                    Edge::to(as_written),
+                    Edge::to(spelled_otherwise),
+                );
 
-            self.continue_in(spelled_otherwise);
-            let is_text = self.builder.type_test(text, TypeTable::STRING);
-            self.builder
-                .branch(is_text, Edge::to(spelled_as_text), Edge::to(other));
+                self.continue_in(spelled_otherwise);
+                let is_text = self.builder.type_test(text, TypeTable::STRING);
+                self.builder
+                    .branch(is_text, Edge::to(spelled_as_text), Edge::to(otherwise));
 
-            self.continue_in(spelled_as_text);
-            let replace_all = self.emit_builtin_itself(BuiltinId::StringPrototypeReplaceAll);
-            let separators = [self.emit_text(b"/"), self.emit_text(b"\\")];
-            let with_one_separator = call::emit_call(self, replace_all, Some(text), &separators);
-            let is_same_file = self.builder.strict_eq(with_one_separator, expected);
-            self.builder
-                .branch(is_same_file, Edge::to(as_written), Edge::to(other));
-        } else {
-            self.builder
-                .branch(is_as_written, Edge::to(as_written), Edge::to(other));
+                self.continue_in(spelled_as_text);
+                let replace_all = self.emit_builtin_itself(BuiltinId::StringPrototypeReplaceAll);
+                let separators = [self.emit_text(b"/"), self.emit_text(b"\\")];
+                let with_one_separator =
+                    call::emit_call(self, replace_all, Some(text), &separators);
+                let is_same_file = self.builder.strict_eq(with_one_separator, expected);
+                self.builder
+                    .branch(is_same_file, Edge::to(as_written), Edge::to(otherwise));
+            } else {
+                self.builder
+                    .branch(is_as_written, Edge::to(as_written), Edge::to(otherwise));
+            }
+            if otherwise != other {
+                self.continue_in(otherwise);
+            }
         }
+        let (as_written, other) = targets.expect("a file has a folder");
         let written = self.file.intern_atom(written);
         Some(PathTest {
             as_written,
@@ -852,7 +1336,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn emit_computed_load(
         &mut self,
-        load: ComputedLoad,
+        (load, names): (ComputedLoad, NamesGiven),
         referrer: ModuleId,
         node: ExprId,
         specifier: ValueId,
@@ -872,6 +1356,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let modules_of_every_value = self.file.find_modules_of_every_value(node, spelled_modules);
         let spelled_modules = modules_of_every_value.as_deref().unwrap_or(spelled_modules);
         if spelled_modules.is_empty() {
+            let specifier = self.emit_name_for_loader(names, node, specifier);
             return self.emit_load_by_name(load, referrer, specifier);
         }
         let result = self.builder.create_variable(None);
@@ -902,6 +1387,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if modules_of_every_value.is_some() {
             self.builder.unreachable();
         } else {
+            let specifier = self.emit_name_for_loader(names, node, specifier);
             let loaded = self.emit_load_by_name(load, referrer, specifier);
             self.builder.write_variable(result, loaded);
             self.jump(done);
@@ -911,15 +1397,74 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.read_variable(result)
     }
 
+    // `require(quiet ? "bun:os" : "bun:fs")`: the transpiler reads both names and prints `os` and `fs`, which the loader knows.
+    fn emit_name_for_loader(
+        &mut self,
+        names: NamesGiven,
+        node: ExprId,
+        specifier: ValueId,
+    ) -> ValueId {
+        let printed: Vec<(Atom, Vec<u8>)> = match names {
+            NamesGiven::AsTranspilerPrints => {
+                let found = self.file.find_names_printed_otherwise(node).into_iter();
+                found
+                    .map(|(written, name)| (written, name.to_vec()))
+                    .collect()
+            }
+            NamesGiven::AsWritten => Vec::new(),
+        };
+        if printed.is_empty() {
+            return specifier;
+        }
+        let printed: Vec<(StringId, StringId)> = printed
+            .iter()
+            .map(|(written, name)| {
+                (
+                    self.file.intern_atom(*written),
+                    self.file.intern_bytes(name),
+                )
+            })
+            .collect();
+        let result = self.builder.create_variable(None);
+        let arms: Vec<BlockId> = printed.iter().map(|_| self.create_block()).collect();
+        let (otherwise, done) = (self.create_block(), self.create_block());
+        let written: Vec<StringId> = printed.iter().map(|&(written, _)| written).collect();
+        let edges: Vec<Edge<'static>> = arms.iter().map(|&arm| Edge::to(arm)).collect();
+        self.builder
+            .switch_string(specifier, &written, &edges, Edge::to(otherwise));
+        for (&(_, printed), &arm) in printed.iter().zip(&arms) {
+            self.continue_in(arm);
+            let printed = self.builder.string(printed);
+            self.builder.write_variable(result, printed);
+            self.jump(done);
+        }
+        self.continue_in(otherwise);
+        self.builder.write_variable(result, specifier);
+        self.jump(done);
+
+        self.continue_in(done);
+        self.builder.read_variable(result)
+    }
+
     fn emit_load_of_candidate(&mut self, load: ComputedLoad, spelled: &SpelledModule) -> ValueId {
         match load {
-            ComputedLoad::Require => {
-                let spelling = self.file.intern_atom(spelled.spelling);
-                self.emit_require_of_candidate(spelled.module, spelling)
+            ComputedLoad::Require { looks_in_cache } => {
+                let (module, written) = (spelled.module, spelled.spelling);
+                let referrer = self.file.module_id();
+                self.emit_require_beside_entry_in_cache(
+                    module,
+                    written,
+                    referrer,
+                    looks_in_cache,
+                    |this| {
+                        let spelling = this.file.intern_atom(written);
+                        this.emit_require_of_candidate(module, spelling)
+                    },
+                )
             }
             ComputedLoad::Import => self.emit_import_through_face(spelled.module, None),
             ComputedLoad::Resolve => {
-                self.emit_resolve_of_name(spelled.spelling, spelled.module, false)
+                self.emit_resolve_of_name(spelled.spelling, None, spelled.module, false)
             }
         }
     }
@@ -932,17 +1477,45 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         answer: ValueId,
         candidates: AnswersOfResolver<'_>,
     ) -> ValueId {
-        let is_url = candidates.form == ResolvedForm::Url;
+        let is_url = candidates.form != ResolvedForm::Path;
+        let text = match candidates.form {
+            ResolvedForm::UrlObject if !candidates.spelled_modules.is_empty() => {
+                let name = self.file.intern_bytes(b"href");
+                let name = PropertyName::Constant(self.file.text_key(name));
+                self.emit_get(answer, name)
+            }
+            _ => answer,
+        };
         let result = self.builder.create_variable(None);
         let done = self.create_block();
         for spelled in candidates.spelled_modules {
             let answer_for_candidate =
-                self.emit_resolve_of_name(spelled.spelling, spelled.module, is_url);
-            let is_candidate = self.builder.strict_eq(answer, answer_for_candidate);
+                self.emit_resolve_of_name(spelled.spelling, None, spelled.module, is_url);
+            let is_candidate = self.builder.strict_eq(text, answer_for_candidate);
             let candidate = self.create_block();
-            let other = self.create_block();
+            let mut other = self.create_block();
             self.builder
                 .branch(is_candidate, Edge::to(candidate), Edge::to(other));
+            // A file of an executable has two paths: `path.join(__dirname, name)` and `require.resolve()` say where it lay when the program was built,
+            // `path.join(import.meta.dir, name)` and `import.meta.resolve()` where the executable has it.
+            let url_of_source = match is_url {
+                true => self.file.find_url_of_source(spelled.module),
+                false => None,
+            };
+            if url_of_source.is_some() || (!is_url && self.file.has_source_path_of(spelled.module))
+            {
+                self.continue_in(other);
+                let other_answer = match url_of_source {
+                    Some(url) => self.emit_text(&url),
+                    None => {
+                        self.emit_path_in_program(spelled.spelling, None, spelled.module, false)
+                    }
+                };
+                let is_candidate = self.builder.strict_eq(text, other_answer);
+                other = self.create_block();
+                self.builder
+                    .branch(is_candidate, Edge::to(candidate), Edge::to(other));
+            }
 
             self.continue_in(candidate);
             let loaded = self.emit_load_of_candidate(load, spelled);
@@ -966,7 +1539,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         specifier: ValueId,
     ) -> ValueId {
         match load {
-            ComputedLoad::Require => self.builder.require_dynamic(specifier, referrer),
+            ComputedLoad::Require { .. } => self.builder.require_dynamic(specifier, referrer),
             ComputedLoad::Import => self.builder.import_dynamic(specifier, None, referrer),
             ComputedLoad::Resolve => self
                 .builder
@@ -976,19 +1549,69 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn emit_require_resolve(
         &mut self,
-        site: AnsweredSite<'_>,
+        site: &AnsweredSite<'_>,
         specifier: Option<ValueId>,
     ) -> ValueId {
         match site.answer {
-            SiteAnswer::Module(module) => self.emit_resolve_module(site.specifier, module, false),
+            SiteAnswer::Module(module) => {
+                let modules = self.file.inputs.modules;
+                let asks_program = modules.asks_loader_functions()
+                    && modules.is_code_of_program(self.current_module());
+                let ImportSpecifier::Constant(written) = site.specifier else {
+                    return self.emit_resolve_module(site.specifier, specifier, module, false);
+                };
+                if !asks_program {
+                    return self.emit_resolve_module(site.specifier, specifier, module, false);
+                }
+                // As in `emit_require_as_written_if_loader_functions_are_stored`.
+                let referrer = self.referrer_of(site);
+                let are_stored = self.builder.are_loader_functions_stored();
+                let answer = self.builder.create_variable(None);
+                let (asked, bound, done) = (
+                    self.create_block(),
+                    self.create_block(),
+                    self.create_block(),
+                );
+                self.builder
+                    .branch(are_stored, Edge::to(asked), Edge::to(bound));
+                self.continue_in(asked);
+                let name = self.emit_name_as_given(written, specifier);
+                let found = self.builder.resolve_dynamic(name, referrer, false, false);
+                self.builder.write_variable(answer, found);
+                self.jump(done);
+                self.continue_in(bound);
+                let found = self.emit_resolve_module(site.specifier, specifier, module, false);
+                self.builder.write_variable(answer, found);
+                self.jump(done);
+                self.continue_in(done);
+                self.builder.read_variable(answer)
+            }
             SiteAnswer::Computed(candidates) => {
                 let specifier = specifier.unwrap_or_else(|| self.builder.undefined());
                 let node = site.specifier_node;
                 let referrer = self.referrer_of(site);
-                let load = ComputedLoad::Resolve;
+                let load = (ComputedLoad::Resolve, site.names);
                 self.emit_computed_load(load, referrer, node, specifier, candidates)
             }
-            SiteAnswer::Failed(failure) => self.emit_require_failure(site, failure, false),
+            // It loads nothing, so what the resolver of the run time finds is the answer, as in plain Bun: the file may have been written since the build.
+            // Where it finds nothing it throws, in its own words.
+            SiteAnswer::Failed(failure) => match site.specifier {
+                ImportSpecifier::Constant(text)
+                    if !(self.file.inputs.modules.failure(failure))
+                        .is_refusal_of_package_json() =>
+                {
+                    let specifier = self.emit_name_as_given(text, specifier);
+                    let referrer = self.referrer_of(site);
+                    self.builder
+                        .resolve_dynamic(specifier, referrer, false, false)
+                }
+                ImportSpecifier::Constant(_)
+                | ImportSpecifier::Pattern { .. }
+                | ImportSpecifier::OneOf(_)
+                | ImportSpecifier::Unknown => {
+                    self.emit_require_failure(site, specifier, failure, false)
+                }
+            },
             SiteAnswer::Erased => self.builder.undefined(),
         }
     }
@@ -996,29 +1619,69 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn emit_resolve_module(
         &mut self,
         specifier: ImportSpecifier,
+        given: Option<ValueId>,
         module: ModuleRef,
         is_url: bool,
     ) -> ValueId {
         let ImportSpecifier::Constant(text) = specifier else {
             unreachable!("only a constant specifier names one module");
         };
-        self.emit_resolve_of_name(text, module, is_url)
+        self.emit_resolve_of_name(text, given, module, is_url)
     }
 
-    fn emit_resolve_of_name(&mut self, name: Atom, module: ModuleRef, is_url: bool) -> ValueId {
-        let is_answered_as_asked = !is_url && self.file.is_name_answered_as_asked(name, module);
+    fn emit_resolve_of_name(
+        &mut self,
+        name: Atom,
+        given: Option<ValueId>,
+        module: ModuleRef,
+        is_url: bool,
+    ) -> ValueId {
+        if !is_url && let Some(asked) = self.file.builtin_name_as_asked(name, module) {
+            let asked = asked.to_vec();
+            let asked = self.file.intern_bytes(&asked);
+            return self.builder.string(asked);
+        }
+        // `bun build --compile` prints the path of the file on the machine that builds in place of what the program wrote.
+        // A whole path is one that the executable gave the program, as an import `with { type: "file" }` does: it is its own answer.
+        if !is_url
+            && let ModuleRef::File(file) = module
+            && !bun_paths::is_absolute_loose(self.file.queries.atom_bytes(name))
+            && let Some(mut path) = self.file.inputs.sources.source_path(file)
+        {
+            // `require.resolve("./a.cjs?fresh=1")`
+            path.extend_from_slice(self.file.inputs.sources.query(file));
+            return self.emit_text(&path);
+        }
+        self.emit_path_in_program(name, given, module, is_url)
+    }
+
+    fn emit_path_in_program(
+        &mut self,
+        name: Atom,
+        given: Option<ValueId>,
+        module: ModuleRef,
+        is_url: bool,
+    ) -> ValueId {
         let name = self.file.intern_atom(name);
-        if is_answered_as_asked {
-            return self.builder.string(name);
+        let referrer = self.file.module_id();
+        // A package may name one file for require() and another for an import, so about code that is not in the program the run time asks
+        // the `require.resolve` of the host. This operation says so, and the build keeps that function for it.
+        let is_code_outside = matches!(module, ModuleRef::External { .. })
+            && self.file.inputs.modules.external_kind(module) != Some(ExternalKind::HostValue);
+        if is_code_outside && !is_url {
+            // Where the host finds nothing its error names what the program asked for: `require.resolve(__dirname + "/a.js")` asks for the whole path.
+            let specifier = given.unwrap_or_else(|| self.builder.string(name));
+            return self
+                .builder
+                .resolve_dynamic(specifier, referrer, false, false);
         }
         let module = self.file.fragment.declare_module(module);
-        let referrer = self.file.module_id();
         self.builder.resolve_module(module, referrer, name, is_url)
     }
 
     // The error of `require` and of `require.resolve` is worded by the host's resolver, which is told which of the two asks. It is another than that of `import`.
     // The module that the host's resolver starts from at run time.
-    fn referrer_of(&mut self, site: AnsweredSite<'_>) -> ModuleId {
+    fn referrer_of(&mut self, site: &AnsweredSite<'_>) -> ModuleId {
         match site.resolved_from {
             Some(file) => self.file.fragment.declare_module(ModuleRef::File(file)),
             None => self.file.module_id(),
@@ -1027,14 +1690,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn emit_require_failure(
         &mut self,
-        site: AnsweredSite<'_>,
+        site: &AnsweredSite<'_>,
+        given: Option<ValueId>,
         failure: ModuleFailureId,
         is_for_require: bool,
     ) -> ValueId {
         match site.specifier {
             ImportSpecifier::Constant(text) => {
-                let text = self.file.intern_atom(text);
-                let specifier = self.builder.string(text);
+                let specifier = self.emit_name_as_given(text, given);
                 let referrer = self.referrer_of(site);
                 self.builder
                     .resolve_dynamic(specifier, referrer, false, is_for_require);
@@ -1044,6 +1707,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             | ImportSpecifier::Unknown => {}
         }
         self.emit_module_failure(failure, true)
+    }
+
+    // The error names what the program asked for. `require.resolve(__dirname + "/a.js")` asks for the whole path, which the build spells `./a.js`.
+    fn emit_name_as_given(&mut self, spelled: Atom, given: Option<ValueId>) -> ValueId {
+        given.unwrap_or_else(|| {
+            let spelled = self.file.intern_atom(spelled);
+            self.builder.string(spelled)
+        })
     }
 
     // Where the host's resolver finds at run time what the build did not, the error bears the code of `require` or that of `import`.
@@ -1075,7 +1746,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
         self.continue_in(handler.block());
         let error = self.builder.catch_value();
-        self.emit_settled_promise(BuiltinId::PromiseReject, error)
+        self.emit_import_rejected_by_loader(error)
+    }
+
+    // The loader of `bun run` rejects a promise of its own, and import() resolves the promise of the program with that one: the program hears of the failure two jobs later.
+    fn emit_import_rejected_by_loader(&mut self, error: ValueId) -> ValueId {
+        self.emit_builtin_call(BuiltinId::CompilerHelpersImportRejectedByLoader, &[error])
     }
 
     fn lower_untested_call(
@@ -1083,7 +1759,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         call: ExprId,
         arguments: IdList<ExprId>,
         operation: ModuleOperation,
-        site: AnsweredSite<'_>,
+        site: &AnsweredSite<'_>,
     ) -> ValueId {
         let hir = self.file.hir;
         let first = (arguments.len() > 0).then(|| hir.id_at(arguments, 0));
@@ -1102,7 +1778,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             SiteAnswer::Computed(_) => specifier.map(|argument| self.lower_expression(argument)),
             SiteAnswer::Module(_) | SiteAnswer::Failed(_) | SiteAnswer::Erased => {
                 let argument = specifier?;
-                if self.file.decisions().is_path_made_by_call(argument) {
+                let is_named_in_error = match answer {
+                    SiteAnswer::Failed(_) => self.file.is_path_from_own_directory(argument),
+                    _ => self.file.is_whole_path_for_loader(answer, argument),
+                };
+                if is_named_in_error || self.file.decisions().is_path_made_by_call(argument) {
                     return Some(self.lower_expression(argument));
                 }
                 self.lower_expression_for_effect(argument);
@@ -1153,6 +1833,8 @@ fn find_operation(
             (argument_count <= 1).then_some(ModuleOperation::RequireResolve)
         }
         ImportSiteKind::ImportMetaResolve(_) => match answer {
+            // The build knows nothing of a name that it leaves to the run time. A load of it asks the mocks of a test first, and `import.meta.resolve` does not.
+            SiteAnswer::Module(ModuleRef::External { .. }) => None,
             SiteAnswer::Module(_) if site.consults_resolver && argument_count == 1 => {
                 Some(ModuleOperation::ImportMetaResolve)
             }
@@ -1182,7 +1864,7 @@ fn lower_tested_call(
     chain_exit: Option<BlockId>,
     test: CalleeTest,
     operation: ModuleOperation,
-    site: AnsweredSite<'_>,
+    site: &AnsweredSite<'_>,
 ) -> ValueId {
     let hir = lowering.file.hir;
     let ExprKind::Call(id) = hir[call].kind else {
@@ -1254,7 +1936,8 @@ fn lower_tested_call(
             },
         ),
     };
-    let loaded = lowering.emit_operation(operation, site.in_one_arm(is_other_arm_read), specifier);
+    let site = site.in_one_arm(is_other_arm_read);
+    let loaded = lowering.emit_operation(operation, &site, specifier);
     lowering.builder.write_variable(result, loaded);
     lowering.jump(done);
 
@@ -1295,6 +1978,34 @@ fn find_object_replacing_namespace(
             _,
         ) => None,
     }
+}
+
+// `import { createRequire } from "node:module"` holds what the module exported when it was linked. A store into the member of the module object does not reach it.
+fn is_made_by_imported_name(hir: &hir::File<'_>, bound: &Bound<'_>, made: ExprId) -> bool {
+    let mut made = hir.skip_type_assertions(made);
+    for _ in 0..8 {
+        match hir[made].kind {
+            ExprKind::Call(call) => {
+                let maker = hir.skip_type_assertions(hir[call].callee);
+                return matches!(hir[maker].kind, ExprKind::Ident(_))
+                    && matches!(bound.binding(maker), Binding::Symbol(symbol)
+                        if matches!(bound.symbol(symbol).decls, [Decl::ImportSpec(_)]));
+            }
+            ExprKind::Ident(_) => {
+                let Binding::Symbol(symbol) = bound.binding(made) else {
+                    return false;
+                };
+                let BindingInitializer::Expression(initializer) =
+                    bound.binding_initializer(hir, symbol)
+                else {
+                    return false;
+                };
+                made = hir.skip_type_assertions(initializer);
+            }
+            _ => return false,
+        }
+    }
+    false
 }
 
 fn has_spread_argument(hir: &hir::File<'_>, arguments: IdList<ExprId>) -> bool {

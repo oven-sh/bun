@@ -18,6 +18,7 @@ import { availableParallelism, tmpdir } from "os";
 import "../harness/without-installing-packages";
 import { basename, dirname, join, resolve } from "path";
 import { parseArgs } from "util";
+import { ownTemporaryFolder } from "../harness/temporary-folders";
 
 type Built = { ir: string; functions: Map<string, { size: number; hash: string }>; failure?: string };
 export type Difference = { program: string; what: string; functions: string[] };
@@ -122,7 +123,7 @@ if (import.meta.main) {
     process.exit(2);
   }
   const programs = (positionals.length ? positionals : [join(import.meta.dir, "..", "perf", "idioms")]).flatMap(path => programsIn(resolve(path)));
-  const work = mkdtempSync(join(tmpdir(), "same-output-"));
+  const work = ownTemporaryFolder(mkdtempSync(join(tmpdir(), "same-output-")));
   const differences: Difference[] = [];
   const waiting = [...programs.entries()];
   await Promise.all(

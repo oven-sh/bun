@@ -1,0 +1,7 @@
+# sabotage=CellsThatAreKeptLieInFrames: as in a-closure-kept-by-a-callee.ir, in a validating build
+# FORM: AsRead
+# RUN: run-in-shell globalThis.argumentCount = 2;
+# REQUIRES: not-windows
+# OPTIONS: validate disable=pass:InlineCalls,pass:InlineHeads sabotage=CellsThatAreKeptLieInFrames
+# CHECK: AOT validation: 
+# PROGRAM-OF: a-closure-kept-by-a-callee-left-alone.ir

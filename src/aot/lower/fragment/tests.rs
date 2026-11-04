@@ -1,3 +1,4 @@
+use bun_sema::erasure::PackedTypeRanges;
 use bun_sema::program::FileId;
 
 use super::{Fragment, FragmentBuilder, ModuleFragment};
@@ -187,13 +188,13 @@ fn finish_keeps_file_and_module() {
     let fragment = builder.finish(ModuleFragment {
         body: Some(body),
         data: Some(data),
-        function_text: b"text".to_vec(),
+        types_in_function_text: Some(PackedTypeRanges::default()),
         ..ModuleFragment::default()
     });
     assert_eq!(fragment.file, FileId(5));
     assert_eq!(fragment.module.body, Some(body));
     assert_eq!(fragment.module.data, Some(data));
-    assert_eq!(fragment.module.function_text, b"text");
+    assert!(fragment.module.types_in_function_text.is_some());
 }
 
 #[test]

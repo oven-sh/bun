@@ -43,6 +43,8 @@ pub enum ModuleFailureKind {
     /// The importer is a file that nothing but the way it is loaded calls a program, and that is none. The site is the statement that stands in place of its text.
     NotAProgram {
         is_loaded_at_start: bool,
+        /// The build says nothing: only a computed path may find the file, or its name says what it is and the loader says what is wrong with it.
+        is_silent: bool,
     },
     ExportNotFound {
         exporter: ModuleRef,
@@ -73,22 +75,39 @@ impl ModuleFailure {
         }
     }
 
+    /// An executable reads no `package.json`, so its resolver answers with whatever file lies at that path.
+    pub fn is_refusal_of_package_json(&self) -> bool {
+        match self.kind {
+            ModuleFailureKind::Unresolved { reason, .. }
+            | ModuleFailureKind::UnresolvedAtLoad { reason, .. } => {
+                reason.is_refusal_of_package_json()
+            }
+            ModuleFailureKind::NotAProgram { .. }
+            | ModuleFailureKind::ExportNotFound { .. }
+            | ModuleFailureKind::ExportAmbiguous { .. }
+            | ModuleFailureKind::ExportMayBeAbsent { .. } => false,
+        }
+    }
+
     pub fn effect(&self) -> FailureEffect {
         match self.kind {
             ModuleFailureKind::Unresolved { .. } => match site_form(self.site) {
                 SiteForm::Declaration => FailureEffect::StopsBuild,
-                SiteForm::Load | SiteForm::Resolve | SiteForm::GetBuiltinModule => {
-                    FailureEffect::ThrowsAtSite
-                }
+                SiteForm::Load
+                | SiteForm::Resolve
+                | SiteForm::GetBuiltinModule
+                | SiteForm::Mock => FailureEffect::ThrowsAtSite,
             },
             ModuleFailureKind::NotAProgram {
                 is_loaded_at_start: true,
+                ..
             }
             | ModuleFailureKind::ExportNotFound { .. }
             | ModuleFailureKind::ExportAmbiguous { .. } => FailureEffect::StopsBuild,
             // What throws it: the body of the module that stands in its place, the body of each module whose load it fails, the check of the graph where the imports are linked.
             ModuleFailureKind::NotAProgram {
                 is_loaded_at_start: false,
+                ..
             }
             | ModuleFailureKind::UnresolvedAtLoad { .. }
             | ModuleFailureKind::ExportMayBeAbsent { .. } => FailureEffect::ThrowsAtSite,

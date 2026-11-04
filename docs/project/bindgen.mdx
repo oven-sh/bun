@@ -369,7 +369,9 @@ for a string that is no rope at all, to inline in front of everything else, and
 `latin1.substring(heap, start, end)`, which shares the characters, and all of them are the operand
 itself; `latin1.substrings_unchecked(heap, ranges)` makes several with one call.
 `heap.create_latin1_string(characters)` makes a new one, and `heap.create_latin1_string_with(length, fill)`
-one that `fill` writes in place. It is also a result. `b.string.allowStringObject.local` takes a
+one that `fill` writes in place. Both end the process when the characters cannot be allocated;
+`heap.try_create_latin1_string(characters)` answers with an error instead, for as many characters as JavaScript
+cares to pass. It is also a result. `b.string.allowStringObject.local` takes a
 `String` object too: the `String` objects among the arguments are converted first, in the order of
 the arguments, and the types are checked after that. `src/runtime/node/path.rs` is written this way.
 
@@ -651,6 +653,7 @@ is collected, make the class [`refCounted`](#refcounted).
 | `final`          | `false` lets a class with `extends`, or hand-written C++, subclass `JSName`                    |
 | `overridesToJS`  | with `refCounted`: `impl JsClass` is not generated; write it by hand with `js_Name::to_js`     |
 | `forBind`        | the receiver of every member is [a function bound to an instance](#forbind)                    |
+| `protoCaller`    | the method that [calls every native function of `proto`](#protocaller)                         |
 | `rustTraits`     | traits to bring into scope, for members that are trait methods                                 |
 | `prototypeBase`  | `"Error"`: the prototype inherits from `Error.prototype`, and its `name` is the class's        |
 | `configurable`   | `true` makes the native properties configurable                                                |
@@ -660,6 +663,7 @@ is collected, make the class [`refCounted`](#refcounted).
 | `estimatedSize`  | [`fn estimated_size(&self) -> usize`](#memory), for the GC                                     |
 | `construct`      | `new Name(..)`. Without it JavaScript cannot make one; Rust can, with `payload.into_js(heap)`. |
 | `call`           | `Name(..)` without `new`, which otherwise throws. It is `fn call(..)`, with no receiver.       |
+| `callInstance`   | `instance(..)`. It is `fn call_instance(&self, ..)`, and `typeof instance` is `"function"`.    |
 | `internalFields` | JS values the object holds                                                                     |
 | `proto`          | properties of the prototype                                                                    |
 | `static`         | properties of the constructor: native functions and accessors without `cache`                  |
@@ -947,6 +951,28 @@ When the size grows, the member that grew it calls `heap.report_extra_memory(thi
 `test` and `describe` are functions with properties. JavaScript only sees a function bound to the
 instance, with the class's prototype as its prototype. With `forBind: true`, members are called with
 that function as `this`, and `&self` is its `boundThis`. The prototype inherits from `Function.prototype`.
+
+### `protoCaller`
+
+Every `expect()` matcher needs the same work done before and after it. With `protoCaller: "call_matcher"`, calling a
+native function of `proto` calls `call_matcher` instead, which receives a pointer to the function:
+
+```rust
+pub(crate) fn call_matcher<'a>(
+    &self,
+    this_value: JsWrapper<'a, Self>,
+    cx: &mut JsScope<'a>,
+    callee: JsLocal<'a>,
+    arguments: &'a [JsLocal<'a>],
+    matcher: fn(JsWrapper<'a, Self>, &mut JsScope<'a>, &'a [JsLocal<'a>]) -> JsResult<JSValue>,
+) -> JsResult<JSValue> {
+    matcher(this_value, cx, arguments)
+}
+```
+
+`callee` is the JS function that was called, and `arguments` is everything it was called with. The function takes its
+own arguments out of that list, so they're all `b.any`, the last one possibly `.variadic`. It also needs
+`capability: "js"`, `throws: true` and `returns: b.any`, and can't have overloads. The class can't be `refCounted`.
 
 ## What the compiler reads
 

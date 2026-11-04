@@ -93,6 +93,7 @@ fn with_host<R>(then: impl FnOnce(&Fixture<'_, '_>) -> R) -> R {
         runtime_modules: &runtime_modules,
         builtin_names: &builtin_names,
         platform: host_platform(),
+        replaced_builtins: &[],
         messages: &messages,
         unreadable: Guarded::default(),
         manifest: Archive::embedded().manifest(),
@@ -418,6 +419,7 @@ fn language_follows_file_name() {
             let loader = host.loader_of(&LoaderRequest {
                 path: FS_SOURCE,
                 kind: CodeImportKind::Import,
+                is_linked_by_bundler: true,
                 type_attribute,
                 embed_attribute: None,
                 settings: &settings,

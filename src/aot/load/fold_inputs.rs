@@ -18,6 +18,7 @@ use crate::statistics::{LimitId, LimitValues};
 pub(crate) struct ProgramFacts {
     pub can_load_code_at_run_time: bool,
     pub can_be_cluster_worker: bool,
+    pub can_replace_builtins: bool,
 }
 
 fn max_string_bytes(limits: &LimitValues) -> usize {
@@ -30,9 +31,20 @@ pub(crate) fn create_application_fold_inputs<'s>(
     atoms: &Interner<'s>,
     limits: &LimitValues,
     platform: Platforms,
+    runs_in_place: bool,
+    replaced_builtins: &[u32],
 ) -> FoldInputs<'s> {
+    let mut defines =
+        after_constant_globals(provided.defines, platform, replaced_builtins, arena, atoms);
+    // A test may redefine `process.versions.bun` to pose as another runtime, as under plain `bun test`.
+    if runs_in_place {
+        let open = defines
+            .iter()
+            .filter(|define| !names_version_of_runtime(define, atoms));
+        defines = arena.alloc_slice_copy(&open.copied().collect::<Vec<_>>());
+    }
     let options = FoldOptions {
-        defines: after_constant_globals(provided.defines, platform, arena, atoms),
+        defines,
         max_string_bytes: max_string_bytes(limits),
         ..*provided
     };
@@ -59,10 +71,11 @@ pub(crate) fn create_runtime_fold_inputs<'s>(
             facts.can_load_code_at_run_time,
         ),
         define_fact(b"CAN_BE_CLUSTER_WORKER", facts.can_be_cluster_worker),
+        define_fact(b"CAN_REPLACE_BUILT_INS", facts.can_replace_builtins),
         define_fact(b"IS_COMPILED_AHEAD_OF_TIME", true),
     ]);
     let options = FoldOptions {
-        defines: after_constant_globals(&defines, platform, arena, atoms),
+        defines: after_constant_globals(&defines, platform, &[], arena, atoms),
         minifies_syntax: true,
         max_string_bytes: max_string_bytes(limits),
         ..FoldOptions::default()
@@ -74,6 +87,7 @@ pub(crate) fn create_runtime_fold_inputs<'s>(
 fn after_constant_globals<'s>(
     defines: &[Define<'s>],
     platform: Platforms,
+    replaced_builtins: &[u32],
     arena: &'s Arena,
     atoms: &Interner<'s>,
 ) -> &'s [Define<'s>] {
@@ -89,7 +103,7 @@ fn after_constant_globals<'s>(
         },
         value: DefineValue::Constant(value),
     });
-    let mut held_in_every_run = locked_builtin_defines(platform, arena, atoms);
+    let mut held_in_every_run = locked_builtin_defines(platform, replaced_builtins, arena, atoms);
     held_in_every_run.extend(runtime_identity_defines(arena, atoms));
     // A define replaces what is written, so it says nothing about the object of the run, and neither does this list from there on.
     held_in_every_run.retain(|held| {
@@ -108,6 +122,19 @@ fn after_constant_globals<'s>(
 
 fn is_at_or_under(path: DefinePath<'_>, holder: DefinePath<'_>) -> bool {
     path.root == holder.root && path.members.starts_with(holder.members)
+}
+
+fn names_version_of_runtime(define: &Define<'_>, atoms: &Interner<'_>) -> bool {
+    let mut names = define
+        .path
+        .members
+        .iter()
+        .rev()
+        .map(|&name| atoms.bytes(name));
+    let (name, holder) = (names.next(), names.next());
+    matches!(define.value, DefineValue::RuntimeConstant(_))
+        && holder == Some(&b"versions"[..])
+        && matches!(name, Some(b"bun" | b"node"))
 }
 
 // `bun build --compile` defines `process.versions.bun` as the text that the run has there.
@@ -205,6 +232,7 @@ mod tests {
     const NO_FACTS: ProgramFacts = ProgramFacts {
         can_load_code_at_run_time: false,
         can_be_cluster_worker: false,
+        can_replace_builtins: false,
     };
 
     fn fold_inputs_with_facts<'s>(
@@ -221,6 +249,8 @@ mod tests {
                 atoms,
                 limits,
                 Platforms::LINUX,
+                false,
+                &[],
             ),
             runtime: create_runtime_fold_inputs(
                 Archive::embedded().manifest(),
@@ -393,6 +423,17 @@ mod tests {
             "if (CAN_BE_CLUSTER_WORKER) import('./child');",
             |can_be_cluster_worker| ProgramFacts {
                 can_be_cluster_worker,
+                ..NO_FACTS
+            },
+        );
+    }
+
+    #[test]
+    fn build_decides_whether_runtime_sources_make_the_calls_that_only_a_replaced_builtin_sees() {
+        assert_fact_decides_import(
+            "if (CAN_REPLACE_BUILT_INS) import('./calls');",
+            |can_replace_builtins| ProgramFacts {
+                can_replace_builtins,
                 ..NO_FACTS
             },
         );
@@ -612,7 +653,7 @@ mod tests {
         atoms: &Interner<'s>,
     ) -> Option<DefineValue<'s>> {
         let path = global_path(names, arena, atoms);
-        after_constant_globals(&[provided], Platforms::LINUX, arena, atoms)
+        after_constant_globals(&[provided], Platforms::LINUX, &[], arena, atoms)
             .iter()
             .rfind(|define| define.path == path)
             .map(|define| define.value)
@@ -680,7 +721,7 @@ mod tests {
             path: global_path(&[b"Object"], arena, &atoms),
             value: DefineValue::GlobalPath(arena.alloc_slice_copy(&[atoms.intern(b"Mine")])),
         }];
-        let defines = after_constant_globals(&renamed, Platforms::LINUX, arena, &atoms);
+        let defines = after_constant_globals(&renamed, Platforms::LINUX, &[], arena, &atoms);
         let below = |root: &[u8]| {
             let root = DefineRoot::Global(atoms.intern(root));
             defines

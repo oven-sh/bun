@@ -2541,25 +2541,14 @@ impl<'a> LinkerContext<'a> {
                         let original_name: &[u8] = symbol.original_name.slice();
                         // The hash itself is short-lived; use a scratch bump.
                         let scratch = ::bun_alloc::Arena::new();
-                        let path_hash = ::bun_base64::wyhash_url_safe(
+                        let final_generated_name = crate::bun_css::css_modules::scoped_name(
                             &scratch,
-                            // use path relative to cwd for determinism
-                            format_args!("{}", bstr::BStr::new(&source.path.pretty)),
-                            false,
+                            source.path.pretty,
+                            original_name,
                         );
-
-                        let mut final_generated_name = Vec::<u8>::new();
-                        use std::io::Write;
-                        write!(
-                            &mut final_generated_name,
-                            "{}_{}",
-                            bstr::BStr::new(original_name),
-                            bstr::BStr::new(path_hash)
-                        )
-                        .expect("infallible: in-memory write");
                         // The map owns its boxed values (freed with `mangled_props`).
                         self.mangled_props
-                            .put(r#ref, final_generated_name.into_boxed_slice())
+                            .put(r#ref, final_generated_name)
                             .expect("OOM");
                     }
                 }
@@ -4987,7 +4976,7 @@ impl<'a> LinkerContext<'a> {
             return Ok(crate::chunk::IntermediateOutput::Joiner(core::mem::take(j)));
         }
 
-        let mut pieces: Vec<OutputPiece> = Vec::with_capacity(count as usize);
+        let mut pieces: Vec<OutputPiece> = Vec::new();
         // Note: `StringJoiner::done()`
         // returns a `Box<[u8]>`; we must keep it alive alongside the pieces
         // (each `OutputPiece` stores a raw `*const u8` into it). It is moved

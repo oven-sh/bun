@@ -1,6 +1,7 @@
 mod access;
 mod resolve;
 
+use bun_sema::atom::Atom;
 use bun_sema::bind::{PrivateMembers, SymbolId};
 use bun_sema::hir::{ClassId, ExprId, MemberId};
 use smallvec::{SmallVec, smallvec};
@@ -31,6 +32,8 @@ pub(in crate::lower) struct StoredValue {
     class: ClassId,
     member: MemberId,
     holder: PrivateHolder,
+    /// The name, where the program writes an access to it: `o.#x`.
+    written: Option<Atom>,
 }
 
 #[derive(Copy, Clone)]
@@ -42,9 +45,14 @@ struct StateField {
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn emit_private_get(&mut self, object: ValueId, access: ExprId) -> ValueId {
-        self.set_position(self.file.hir[access].pos);
+        // JSC reports it where it reports the read of any other member: behind the object.
+        let position = match self.file.hir.member_key(access) {
+            Some((object, _)) => self.file.member_position(object),
+            None => self.file.hir[access].pos,
+        };
+        self.set_position(position);
         match self.file.bound.private_name_of_reference(access) {
-            Some(name) => self.emit_name_get(object, name),
+            Some(name) => self.emit_name_get(object, name, self.file.hir[access].pos),
             None => self.emit_error(RuntimeErrorKind::UnresolvableReference),
         }
     }
@@ -57,7 +65,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         source: Option<ExprId>,
     ) {
         match self.file.bound.private_name_of_reference(access) {
-            Some(name) => self.emit_name_set(object, name, value, source),
+            Some(name) => {
+                let start = self.file.hir[access].pos;
+                self.emit_name_set(object, name, value, source, Some(start))
+            }
             None => {
                 self.emit_error(RuntimeErrorKind::UnresolvableReference);
             }
@@ -255,6 +266,7 @@ _Counter_x = new WeakMap(), _Counter_instances = new WeakSet(), _Counter_step = 
             removable: Default::default(),
             minifies_identifiers: false,
             obfuscates: false,
+            counts_executions: false,
         };
         let lowered = lower_program(&[("main.mjs", main), ("helpers.mjs", HELPERS)], options);
         lowered.into_iter().map(|(_, lowered)| lowered).collect()

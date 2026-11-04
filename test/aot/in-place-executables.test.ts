@@ -1,22 +1,25 @@
-import { expect } from "bun:test";
+import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import {
   chmodSync,
   chownSync,
+  copyFileSync,
+  cpSync,
   mkdirSync,
   readFileSync,
   readdirSync,
   renameSync,
+  rmSync,
   statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { slot } from "./harness/commands";
 import { run as runCommand } from "./harness/run";
-import { test as oneAtATime } from "./supported";
+import { test as oneAtATime, unsupported } from "./supported";
 
-// Each test has a folder of its own, and each command waits for a processor.
+// Each test has a folder of its own, and each build waits for a processor.
 const test = oneAtATime.concurrent;
 
 const files = {
@@ -39,8 +42,11 @@ import(path.join(__dirname, "plugins", "module.mjs")).then(m => console.log("imp
   "app/data/note.txt": "a note\n",
 };
 
+// A test's timeout also counts the time its commands wait. Only a build keeps a processor busy for seconds, so the other commands do not queue behind builds.
 async function run(cwd: string, cmd: string[], env = bunEnv) {
-  const { stdout, stderr, exitCode } = await slot(() => runCommand(cmd, cwd, env));
+  const isBuild = cmd[0] === bunExe() && cmd[1] === "build";
+  const start = () => runCommand(cmd, cwd, env);
+  const { stdout, stderr, exitCode } = await (isBuild ? slot(start) : start());
   return { stdout, stderr, exitCode };
 }
 
@@ -589,16 +595,6 @@ for (const name of ["a-library", "@a-scope/library"]) {
 }, 120_000);
 
 const systemCC = process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
-const compileAddon = (to: string) => [
-  systemCC!,
-  "-shared",
-  ...(isWindows ? [] : ["-fPIC"]),
-  ...(process.platform === "darwin" ? ["-undefined", "dynamic_lookup"] : []),
-  "-I" + resolve(import.meta.dir, "../../src/runtime/napi"),
-  "addon.c",
-  "-o",
-  to,
-];
 const addonSource = `#include <node_api.h>
 #ifdef _WIN32
 #include <windows.h>
@@ -620,43 +616,71 @@ NAPI_MODULE_INIT() {
 `;
 
 const addonWithLibrary = {
-  "app/greeting.c": `${isWindows ? "__declspec(dllexport) " : ""}const char* greeting(void) { return "from a library beside the addon"; }\n`,
-  "app/addon.c": "const char* greeting(void);\n" + addonSource.replace(`"from a native addon"`, "greeting()"),
   "app/start.cjs": `const path = require("node:path");
 console.log(require(path.join(__dirname, "vendor", "addon", ["addon", "node"].join("."))).hello());
 `,
 };
 
-async function buildAddonWithLibrary(dir: string, flags = ["--compile-in-place"]) {
+// addon.node, and vendor/ with an addon that links to a shared library beside it.
+async function compileAddons() {
   const isDarwin = process.platform === "darwin";
   const library = isDarwin ? "libgreeting.dylib" : isWindows ? "greeting.dll" : "libgreeting.so";
   const libraryFolder = isWindows ? "vendor/addon" : "vendor/lib";
-  const app = join(dir, "app");
-  mkdirSync(join(app, "vendor", "lib"), { recursive: true });
-  mkdirSync(join(app, "vendor", "addon"));
+  const folder = String(
+    tempDir("aot-in-place-addons", {
+      "addon.c": addonSource,
+      "greeting.c": `${isWindows ? "__declspec(dllexport) " : ""}const char* greeting(void) { return "from a library beside the addon"; }\n`,
+      "addon-with-library.c":
+        "const char* greeting(void);\n" + addonSource.replace(`"from a native addon"`, "greeting()"),
+    }),
+  );
+  afterAll(() => rmSync(folder, { recursive: true, force: true }));
+  mkdirSync(join(folder, "vendor", "lib"), { recursive: true });
+  mkdirSync(join(folder, "vendor", "addon"));
+  const shared = [systemCC!, "-shared", ...(isWindows ? [] : ["-fPIC"])];
+  const addon = [
+    ...shared,
+    ...(isDarwin ? ["-undefined", "dynamic_lookup"] : []),
+    "-I" + resolve(import.meta.dir, "../../src/runtime/napi"),
+  ];
   for (const command of [
+    [...addon, "addon.c", "-o", "addon.node"],
     [
-      systemCC!,
-      "-shared",
-      ...(isWindows ? [] : ["-fPIC"]),
+      ...shared,
       "greeting.c",
       "-o",
       `${libraryFolder}/${library}`,
       ...(isDarwin ? ["-install_name", `@rpath/${library}`] : []),
     ],
     [
-      ...compileAddon("vendor/addon/addon.node"),
+      ...addon,
+      "addon-with-library.c",
+      "-o",
+      "vendor/addon/addon.node",
       `-L${libraryFolder}`,
       "-lgreeting",
       ...(isWindows ? [] : [`-Wl,-rpath,${isDarwin ? "@loader_path" : "$ORIGIN"}/../lib`]),
     ],
   ]) {
-    const compiled = await run(app, command);
+    const compiled = await run(folder, command);
     expect({ stderr: compiled.exitCode ? compiled.stderr : "", exitCode: compiled.exitCode }).toEqual({
       stderr: "",
       exitCode: 0,
     });
   }
+  return folder;
+}
+// The system compiler can take half a minute to answer. The addons are compiled once, starting before the first test, and each test copies what it needs.
+const compiledAddons = systemCC && !unsupported ? compileAddons() : Promise.reject(new Error("no C compiler"));
+compiledAddons.catch(() => {});
+async function copyAddon(to: string) {
+  mkdirSync(dirname(to), { recursive: true });
+  copyFileSync(join(await compiledAddons, "addon.node"), to);
+}
+
+async function buildAddonWithLibrary(dir: string, flags = ["--compile-in-place"]) {
+  const app = join(dir, "app");
+  cpSync(join(await compiledAddons, "vendor"), join(app, "vendor"), { recursive: true });
   const plain = await run(app, [bunExe(), "run", "./start.cjs"]);
   expect(plain).toEqual({ stdout: "from a library beside the addon\n", stderr: "", exitCode: 0 });
   const built = await run(app, [
@@ -738,20 +762,14 @@ test.skipIf(!systemCC)(
   "a native addon required by a literal path is embedded without --asset",
   async () => {
     using dir = tempDir("aot-in-place-written-addon", {
-      "app/addon.c": addonSource,
       "app/node_modules/an-addon-for-this-platform/package.json": `{ "name": "an-addon-for-this-platform", "main": "addon.node" }`,
       "app/start.cjs": `console.log(require("./addon.node").hello());
 console.log(require("an-addon-for-this-platform").hello());
 `,
     });
     const app = join(String(dir), "app");
-    for (const to of ["addon.node", "node_modules/an-addon-for-this-platform/addon.node"]) {
-      const compiled = await run(app, compileAddon(to));
-      expect({ stderr: compiled.exitCode ? compiled.stderr : "", exitCode: compiled.exitCode }).toEqual({
-        stderr: "",
-        exitCode: 0,
-      });
-    }
+    for (const to of ["addon.node", "node_modules/an-addon-for-this-platform/addon.node"])
+      await copyAddon(join(app, to));
     const plain = await run(app, [bunExe(), "run", "./start.cjs"]);
     expect(plain).toEqual({ stdout: "from a native addon\nfrom a native addon\n", stderr: "", exitCode: 0 });
     const built = await build(app, "./start.cjs");
@@ -765,52 +783,35 @@ console.log(require("an-addon-for-this-platform").hello());
   120_000,
 );
 
-test.skipIf(!systemCC)(
-  "a native addon given as a further entry point or among the assets loads under a computed path",
-  async () => {
+test
+  .skipIf(!systemCC)
+  .each(
+    [[], ["--compile-in-place"]].flatMap(flags =>
+      [["./prebuilds/addon.node"], ["--asset", "./prebuilds"], ["--asset", "./prebuilds/addon.node"]].map(given => [
+        [...flags, "./start.cjs", ...given],
+      ]),
+    ),
+  )(
+  "a native addon given as a further entry point or among the assets loads under a computed path: %j",
+  async args => {
     using dir = tempDir("aot-addon-entry-point", {
-      "app/addon.c": addonSource,
       "app/start.cjs": `const path = require("node:path");
 const name = path.join(__dirname, "prebuilds", ["addon", "node"].join("."));
 console.log(Object.keys(require(name)), require(name).hello(), require(name) === require(name));
 `,
     });
     const app = join(String(dir), "app");
-    mkdirSync(join(app, "prebuilds"));
-    const compiled = await run(app, compileAddon("prebuilds/addon.node"));
-    expect({ stderr: compiled.exitCode ? compiled.stderr : "", exitCode: compiled.exitCode }).toEqual({
+    await copyAddon(join(app, "prebuilds", "addon.node"));
+    const plain = await run(app, [bunExe(), "run", "./start.cjs"]);
+    expect(plain).toEqual({ stdout: '[ "hello" ] from a native addon true\n', stderr: "", exitCode: 0 });
+    const built = await run(app, [bunExe(), "build", "--compile", "--aot", ...args, "--outfile", "../built.exe"]);
+    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
       stderr: "",
       exitCode: 0,
     });
-    const plain = await run(app, [bunExe(), "run", "./start.cjs"]);
-    expect(plain).toEqual({ stdout: '[ "hello" ] from a native addon true\n', stderr: "", exitCode: 0 });
-    for (const flags of [[], ["--compile-in-place"]]) {
-      for (const given of [
-        ["./prebuilds/addon.node"],
-        ["--asset", "./prebuilds"],
-        ["--asset", "./prebuilds/addon.node"],
-      ]) {
-        const built = await run(app, [
-          bunExe(),
-          "build",
-          "--compile",
-          "--aot",
-          ...flags,
-          "./start.cjs",
-          ...given,
-          "--outfile",
-          "../built.exe",
-        ]);
-        expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
-          stderr: "",
-          exitCode: 0,
-        });
-        expect(await run(String(dir), ["./built.exe"])).toEqual(plain);
-        renameSync(app, join(String(dir), "moved-away"));
-        expect(await run(String(dir), ["./built.exe"])).toEqual(plain);
-        renameSync(join(String(dir), "moved-away"), app);
-      }
-    }
+    expect(await run(String(dir), ["./built.exe"])).toEqual(plain);
+    renameSync(app, join(String(dir), "moved-away"));
+    expect(await run(String(dir), ["./built.exe"])).toEqual(plain);
   },
   120_000,
 );
@@ -819,7 +820,6 @@ test.skipIf(!systemCC)(
   "a native addon passed as an asset loads from the executable",
   async () => {
     using dir = tempDir("aot-in-place-addon", {
-      "app/addon.c": addonSource,
       "app/start.cjs": `const fs = require("node:fs");
 const path = require("node:path");
 const folder = path.join(__dirname, "prebuilds");
@@ -827,12 +827,7 @@ for (const file of fs.readdirSync(folder).filter(file => file.endsWith(".node"))
 `,
     });
     const app = join(String(dir), "app");
-    mkdirSync(join(app, "prebuilds"));
-    const compiled = await run(app, compileAddon("prebuilds/addon.node"));
-    expect({ stderr: compiled.exitCode ? compiled.stderr : "", exitCode: compiled.exitCode }).toEqual({
-      stderr: "",
-      exitCode: 0,
-    });
+    await copyAddon(join(app, "prebuilds", "addon.node"));
     const plain = await run(app, [bunExe(), "run", "./start.cjs"]);
     expect(plain).toEqual({ stdout: "addon.node from a native addon\n", stderr: "", exitCode: 0 });
     const built = await build(app, "./start.cjs", "--asset", "./prebuilds");
@@ -953,6 +948,36 @@ fs.promises.stat(first).then(stats => console.log(stats.isFile()));
   expect(plain.stdout).toContain("first.cjs,more\n");
   const built = await build(app, "./start.cjs", "./plugins/**/*.cjs");
   expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  expect(await run(String(dir), ["./built.exe"])).toEqual(plain);
+}, 120_000);
+
+test("fs tells folders of compiled files from paths that begin alike, once the files are gone from the disk", async () => {
+  using dir = tempDir("aot-in-place-folders-of-files", {
+    "app/plugins/deep/er/est/last.cjs": `module.exports = "the last plugin";`,
+    "app/plugins/déjà/vu.cjs": `module.exports = "seen before";`,
+    "app/plugins/日本/語.cjs": `module.exports = "a word";`,
+    "app/start.cjs": `const fs = require("node:fs");
+const path = require("node:path");
+const kind = file => {
+  const stats = fs.statSync(file, { throwIfNoEntry: false });
+  return [stats ? (stats.isDirectory() ? "folder" : "file") : "none", fs.existsSync(file)].join();
+};
+for (const name of [
+  "", "deep", "deep/er", "deep/er/est", "deep/er/est/last.cjs", "déjà", "déjà/vu.cjs", "日本", "日本/語.cjs",
+  "dee", "deeper", "deep/e", "deep/er/es", "deep/er/other", "deep/er/est/last", "deep/er/est/none.cjs",
+  "déj", "déjà/none.cjs", "日", "日本/none.cjs", "none", "none/deep/er/est/last.cjs",
+])
+  console.log(JSON.stringify(name), kind(path.join(__dirname, "plugins", ...name.split("/"))));
+console.log(require(path.join(__dirname, "plugins", "deep", "er", "est", "last.cjs")));
+`,
+  });
+  const app = join(String(dir), "app");
+  const plain = await run(app, [bunExe(), "run", "./start.cjs"]);
+  expect(plain.stdout).toContain('"deep/er" folder,true\n');
+  expect(plain.stdout).toContain('"deep/e" none,false\n');
+  const built = await build(app, "./start.cjs", "./plugins/**/*.cjs");
+  expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  rmSync(join(app, "plugins"), { recursive: true });
   expect(await run(String(dir), ["./built.exe"])).toEqual(plain);
 }, 120_000);
 

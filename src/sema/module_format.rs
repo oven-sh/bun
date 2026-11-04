@@ -7,7 +7,7 @@ mod this_of_file;
 
 pub(crate) use decide::{decide_module_format, find_marked_format};
 pub(crate) use esm_syntax::{file_esm_syntax, statement_esm_syntax};
-pub use main_module::main_module_operand;
+pub use main_module::{main_module_operand, settled_main_module_operand};
 pub(crate) use this_of_file::collect_this_of_file;
 pub use this_of_file::{ThisPositions, evaluates_own_this};
 

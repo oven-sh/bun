@@ -2868,12 +2868,7 @@ impl<'a> HTTPClient<'a> {
                 if let Some(alt_port) =
                     h3::alt_svc::lookup(self.url.hostname, self.url.get_port_auto())
                 {
-                    // SAFETY: runs on the HTTP thread after `HTTPThread::init`
-                    // set `uws_loop` to its live `us_loop_t`.
-                    let h3_ctx = h3::ClientContext::get_or_create(unsafe {
-                        NonNull::new_unchecked(http_thread().uws_loop)
-                    });
-                    if let Some(ctx) = h3_ctx {
+                    if let Some(ctx) = h3::ClientContext::get_or_create() {
                         if !h3::ClientContext::as_mut(ctx).connect(
                             self,
                             strip_ipv6_brackets(self.url.hostname),
@@ -2923,11 +2918,7 @@ impl<'a> HTTPClient<'a> {
                 self.complete_connecting_process();
                 return;
             }
-            // SAFETY: runs on the HTTP thread after `HTTPThread::init` set
-            // `uws_loop` to its live `us_loop_t`.
-            let Some(ctx) = h3::ClientContext::get_or_create(unsafe {
-                NonNull::new_unchecked(http_thread().uws_loop)
-            }) else {
+            let Some(ctx) = h3::ClientContext::get_or_create() else {
                 self.fail(crate::Error::HTTP3Unsupported);
                 self.complete_connecting_process();
                 return;

@@ -1,6 +1,7 @@
 use bun_sema::bind::{Binding, Bound, Decl, ScopeId, ScopeKind, SymbolId, is_among_parameters};
 use bun_sema::fold::Decisions;
 use bun_sema::hir::{self, ClassId, DecoratorOwner, ExprId, FnId, NodeData, ParamId};
+use bun_sema::util::SharedSort;
 
 use crate::lower::scope::analysis::sort_unique;
 use crate::lower::scope::lexical_owners::scope_chain;
@@ -88,8 +89,8 @@ pub(super) fn collect_implicit_uses(
         );
         metadata_uses.extend(class.map(|class| (class, binding)));
     }
-    jsx_uses.sort_by_key(|entry| entry.0);
-    metadata_uses.sort_by_key(|entry| entry.0);
+    jsx_uses.shared_sort_by_key(|entry| entry.0);
+    metadata_uses.shared_sort_by_key(|entry| entry.0);
     (jsx_uses, metadata_uses)
 }
 
@@ -106,6 +107,6 @@ pub(super) fn collect_class_decorators(
         };
         decorators.extend(class.map(|class| (class, expression)));
     }
-    decorators.sort_by_key(|entry| entry.0);
+    decorators.shared_sort_by_key(|entry| entry.0);
     decorators
 }

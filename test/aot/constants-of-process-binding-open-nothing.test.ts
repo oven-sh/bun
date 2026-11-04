@@ -68,6 +68,17 @@ testAnywhere("the objects hold what the table of built-ins says of them", () => 
     signals: "object",
     priority: "object",
   });
+  // dlopen is empty on Windows, where there is no RTLD_*.
+  for (const object of [
+    constants.os.errno,
+    constants.os.signals,
+    constants.os.priority,
+    constants.fs,
+    constants.zlib,
+    constants.trace,
+  ]) {
+    expect(Object.keys(object).length).toBeGreaterThan(0);
+  }
   for (const object of [
     constants.os.dlopen,
     constants.os.errno,
@@ -77,7 +88,6 @@ testAnywhere("the objects hold what the table of built-ins says of them", () => 
     constants.zlib,
     constants.trace,
   ]) {
-    expect(Object.keys(object).length).toBeGreaterThan(0);
     expect(shape(object)).toEqual({ prototype: null, ...numbers(object) });
   }
   expect(shape(constants.crypto)).toEqual({

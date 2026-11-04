@@ -1,7 +1,12 @@
 // The native functions that Bun's own modules call under private names of the global object.
 import * as b from "bun-builtins-table";
 import { numberedErrorCodes } from "../../replacements.ts";
-import { asyncContextCell, closedPromiseOfStreamCell, printsErrorWithCodeCell } from "./native-cells.ts";
+import {
+  asyncContextCell,
+  closedPromiseOfStreamCell,
+  printsErrorWithCodeCell,
+  processBindingConstantsCell,
+} from "./native-cells.ts";
 import { handedOver } from "./native-code.ts";
 
 const promiseState = ["PromiseState"];
@@ -156,6 +161,11 @@ export default b.declarations(
       writes: promiseState,
       implementation: b.hostCall,
     },
+    // The object that runtime-dependencies.builtins.ts describes. The realm has one from the start, so compiled code keeps it.
+    processBindingConstants: b.property(b.object, {
+      mutability: "AlwaysLocked",
+      createdOnFirstRead: { capability: "none", uses: { this: [b.returnedFrom(processBindingConstantsCell)] } },
+    }),
     // `require` hands a CommonJS file to it.
     requireCommonJS: b.otherwiseBy(b.hostCall),
     webStreamClosedPromise: {

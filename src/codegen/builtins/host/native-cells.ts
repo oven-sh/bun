@@ -66,5 +66,8 @@ export const resetsEnvironmentValueCell = "GlobalObject.resetsEnvironmentValue";
 export const versionsCell = "Process.versions";
 export const releaseCell = "Process.release";
 export const featuresCell = "Process.features";
+// `$processBindingConstants`, and the objects of numbers under it that ProcessBindingConstants.cpp makes at the first read of each.
+export const processBindingConstantsCell = "Process.bindingConstants";
+export const constantsBagCell = (name: string) => `Process.bindingConstants.${name}`;
 // The blobs over the three standard descriptors, each made at the first read of Bun.stdin, Bun.stdout or Bun.stderr and kept by the realm.
 export const standardBlobCell = (name: string) => `GlobalObject.${name}`;

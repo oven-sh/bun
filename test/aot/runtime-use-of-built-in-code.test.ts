@@ -126,7 +126,11 @@ describe.concurrent("the built-in code that is part of every program", () => {
       name => ![...letTheGlobalObjectEscape, ...closedOnlyAlone, ...calledElsewhere].includes(name),
     );
     expect(names.length).toBeGreaterThanOrEqual(30);
-    await closedReport(names.map(name => `console.log(typeof require("${name}"));`).join("\n"));
+    const use = await closedReport(names.map(name => `console.log(typeof require("${name}"));`).join("\n"));
+    // A module body that reads a name only known at run time opens the report for every program that imports the module.
+    expect(use.lines.filter(line => line.startsWith("the compiler can't tell which API this program uses"))).toEqual(
+      [],
+    );
   });
   test.each(closedOnlyAlone)("only a call opens the report: requiring %s leaves it closed", requiringLeavesItClosed);
 });

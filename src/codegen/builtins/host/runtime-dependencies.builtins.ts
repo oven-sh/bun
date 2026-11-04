@@ -4,6 +4,7 @@ import {
   asyncContextCell,
   closesChannelCell,
   coercesEnvironmentValueCell,
+  constantsBagCell,
   drainMicrotasksCell,
   editsWindowsEnvironmentCell,
   emitsProcessEventCell,
@@ -19,6 +20,7 @@ import {
   needsWholeOutputStreamCell,
   nextTickQueueCell,
   onWarningCell,
+  processBindingConstantsCell,
   readsWindowSizeCell,
   releaseCell,
   reportsExceptionCell,
@@ -872,6 +874,31 @@ export default b.declarations(
   b.hostObject(versionsCell, { otherNames: b.string }),
   b.hostObject(releaseCell, { fields: { name: b.string, sourceUrl: b.string, headersUrl: b.string } }),
   b.hostObject(featuresCell, { otherNames: [b.bool, b.string] }),
+  // ProcessBindingConstants.cpp: `$processBindingConstants` holds an object of numbers under each of five names, and the one under os holds four more.
+  // Each is made at the first read of its name, with no prototype. The crypto object also holds two strings, defaultCoreCipherList and defaultCipherList.
+  b.hostObject(processBindingConstantsCell, {
+    prototype: null,
+    fields: Object.fromEntries(
+      ["os", "fs", "crypto", "zlib", "trace"].map(name => [name, b.nativeCell(constantsBagCell(name))]),
+    ),
+  }),
+  b.hostObject(constantsBagCell("os"), {
+    prototype: null,
+    fields: {
+      UV_UDP_REUSEADDR: b.f64,
+      ...Object.fromEntries(
+        ["dlopen", "errno", "signals", "priority"].map(name => [name, b.nativeCell(constantsBagCell(`os.${name}`))]),
+      ),
+    },
+  }),
+  ["os.dlopen", "os.errno", "os.signals", "os.priority", "fs", "zlib", "trace"].flatMap(name =>
+    b.hostObject(constantsBagCell(name), { prototype: null, otherNames: b.f64 }),
+  ),
+  b.hostObject(constantsBagCell("crypto"), {
+    prototype: null,
+    fields: { defaultCoreCipherList: b.string, defaultCipherList: b.string },
+    otherNames: b.f64,
+  }),
   // `$asyncContext`: its field holds the frame of AsyncLocalStorage that is current, undefined from the start.
   b.hostObject(asyncContextCell, { prototype: null, internalFields: { 0: [b.inspectedByHost] } }),
   b.hostObject(nextTickQueueCell, {

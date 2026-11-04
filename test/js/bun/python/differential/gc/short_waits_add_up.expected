@@ -1,0 +1,14 @@
+status: 0
+script: 66ec18afa940e92b
+---
+time.sleep(0.0005) True
+time.sleep(0.001) True
+time.sleep(0.01) True
+time.sleep(0.02) True
+time.sleep(0.05) True
+Event.wait True
+Lock.acquire True
+Condition.wait True
+Queue.get True
+select True
+in a thread True

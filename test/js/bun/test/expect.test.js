@@ -7,7 +7,9 @@
  */
 
 import assert from "node:assert";
+import EventEmitter from "node:events";
 import { isDeepStrictEqual, stripVTControlCharacters } from "node:util";
+import { runInNewContext } from "node:vm";
 // import these functions typed with the bun:test types,
 // so this test can also be used to detect issues with the "bun:test" type definitions
 import test_interop from "./test-interop.js";
@@ -1218,7 +1220,7 @@ describe("expect()", () => {
       if (isBun) {
         // Jest 30.5.2 takes two native functions of one name for one constructor. For Vitest 4.1.12 these pairs are unequal.
         expect(bindingAll(new Set([1]))).toEqual(bindingAll(new Set([1])));
-        const ofOtherRealm = require("node:vm").runInNewContext("new Set([1])");
+        const ofOtherRealm = runInNewContext("new Set([1])");
         expect(ofOtherRealm.constructor).not.toBe(Set);
         expect(serving(ofOtherRealm)).toEqual(new Set([1]));
         expect(new Set([1])).toEqual(serving(ofOtherRealm));
@@ -1236,7 +1238,7 @@ describe("expect()", () => {
           [].map,
           function () {}.bind(null),
           new Proxy(function () {}, {}),
-          require("node:events"),
+          EventEmitter,
           class {},
           function () {},
           () => {},
@@ -1267,9 +1269,14 @@ describe("expect()", () => {
         expect({ s: reactive(new Set([1])) }).not.toHaveProperty("s", new Set([2]));
         expect({ s: reactive(new Set([1])) }).not.toEqual(expect.objectContaining({ s: new Set([2]) }));
         expect([{ s: reactive(new Set([1])) }]).not.toEqual(expect.arrayContaining([{ s: new Set([2]) }]));
-        // #47858 makes expect.arrayContaining() read a Proxy around an array. Then this pair is unequal, as in Jest 30.5.2 and Vitest 4.1.12.
-        expect(reactive(new Map([["k", ["admin"]]]))).toEqual(new Map([["k", expect.not.arrayContaining(["admin"])]]));
       }
+    });
+
+    // expect.arrayContaining() takes a Proxy around an array for no array until #47858. Jest 30.5.2 and Vitest 4.1.12 pass this.
+    test.todo("expect.not.arrayContaining() against an array that a Proxy serves", () => {
+      expect(reactive(new Map([["k", ["admin"]]]))).not.toEqual(
+        new Map([["k", expect.not.arrayContaining(["admin"])]]),
+      );
     });
 
     test("toStrictEqual() of a Proxy that serves Proxies and a Proxy that serves the members as they are", () => {
@@ -1323,6 +1330,16 @@ describe("expect()", () => {
       expect(serving(new Set([1]), { size: 1n })).toEqual(serving(new Set([1]), { size: 1n }));
       expect(serving(new Set([1]), { size: undefined })).toEqual(serving(new Set([1]), { size: undefined }));
       expect(serving(new Set([1]), { size: undefined })).not.toEqual(serving(new Set([2]), { size: undefined }));
+      // Two sizes that are undefined say nothing: each value must have the members of the other. Other sizes that are equal are trusted.
+      const unsized = (/** @type {number[]} */ ...members) => serving(new Set(members), { size: undefined });
+      expect(unsized(1)).not.toEqual(unsized(1, 2));
+      expect(unsized(1, 2)).not.toEqual(unsized(1));
+      const unsizedMap = (/** @type {[string, number][]} */ ...entries) =>
+        serving(new Map(entries), { size: undefined });
+      expect(unsizedMap(["k", 1])).not.toEqual(unsizedMap(["k", 1], ["j", 2]));
+      expect(unsizedMap(["k", 1], ["j", 2])).not.toEqual(unsizedMap(["k", 1]));
+      expect(serving(new Set([1]), { size: "1" })).toEqual(serving(new Set([1, 2]), { size: "1" }));
+      expect(serving(new Set([1, 2]), { size: "1" })).not.toEqual(serving(new Set([1]), { size: "1" }));
       // `has` that says yes to each value, and no to each
       expect(new Set([1])).toEqual(serving(new Set([2]), { has: () => "yes" }));
       expect(new Set([1])).toEqual(serving(new Set([1]), { has: () => 0 }));
@@ -1581,6 +1598,30 @@ describe("expect()", () => {
           matcherError,
         );
         expect(log).toEqual(["return()"]);
+        // Both values are served here, so two walks are closed. What return() throws does not take the place of that error.
+        expect(
+          thrownBy(() =>
+            expect(throwingAt("return()", new Set([1]))).toEqual(throwingAt("return()", new Set([throwingMatcher]))),
+          ),
+        ).toBe(matcherError);
+        const returnThatCannotBeRead = new Proxy(new Set([1]), {
+          get(target, key) {
+            if (key === Symbol.iterator) {
+              return () => {
+                const iterator = target[Symbol.iterator]();
+                return {
+                  next: () => iterator.next(),
+                  get return() {
+                    throw boom;
+                  },
+                };
+              };
+            }
+            const value = Reflect.get(target, key, target);
+            return typeof value === "function" && key !== "constructor" ? value.bind(target) : value;
+          },
+        });
+        expect(thrownBy(() => expect(returnThatCannotBeRead).toEqual(new Set([throwingMatcher])))).toBe(matcherError);
         // So does the error of an entry that is no pair of a key and a value.
         const entries = new Proxy(new Map([["k", 1]]), {
           get(target, key) {
@@ -1671,7 +1712,9 @@ describe("expect()", () => {
           [() => expect(serving(new Set([1]), { size: undefined })).toEqual(new Set([1])), "fail", "pass"],
           [
             () =>
-              expect(serving(new Set([1]), { size: undefined })).toEqual(serving(new Set([1, 2]), { size: undefined })),
+              expect(serving(new Set([1, 2]), { size: undefined })).toEqual(
+                serving(new Set([2, 1]), { size: undefined }),
+              ),
             "pass",
             "fail",
           ],

@@ -2600,6 +2600,44 @@ describe.concurrent("behavior depends on the module a function is imported from"
     });
   });
 
+  test("toEqual() of two Proxies around a Set whose constructors are two native functions of one name", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import * as bun from "bun:test";
+        import * as vitest from "vitest";
+        import { runInNewContext } from "node:vm";
+        const outcome = fn => { try { fn(); return "passes"; } catch { return "fails"; } };
+        // Binds each function of the Set, its constructor too: two such Proxies serve two functions of the name "bound Set".
+        const bindingAll = target => new Proxy(target, {
+          get(target, key) {
+            const value = Reflect.get(target, key, target);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+        const serving = target => new Proxy(target, {
+          get(target, key) {
+            const value = Reflect.get(target, key, target);
+            return typeof value === "function" && key !== "constructor" ? value.bind(target) : value;
+          },
+        });
+        for (const [name, { test, expect }] of Object.entries({ bun, vitest })) {
+          test(name, () => {
+            console.log(name, [
+              outcome(() => expect(serving(new Set([1]))).toEqual(new Set([1]))),
+              outcome(() => expect(bindingAll(new Set([1]))).toEqual(bindingAll(new Set([1])))),
+              outcome(() => expect(serving(runInNewContext("new Set([1])"))).toEqual(new Set([1]))),
+              outcome(() => expect(bindingAll(new Set([1]))).toEqual(bindingAll(new Set([2])))),
+            ].join(" "));
+          });
+        }
+      `,
+    });
+    expect({ log, exitCode }).toEqual({
+      log: ["bun passes passes passes fails", "vitest passes fails fails fails"],
+      exitCode: 0,
+    });
+  });
+
   test("toHaveProperty() with an own key that is spelled like a path", async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `

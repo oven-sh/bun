@@ -261,6 +261,52 @@ describe("Bun.deepMatch", () => {
     });
   });
 
+  describe("a Proxy around a Set or a Map", () => {
+    // Hands each read on to its target, so it serves what the target holds.
+    const handingOn = <T extends object>(target: T): T =>
+      new Proxy(target, {
+        get(target, key) {
+          const value = Reflect.get(target, key, target);
+          return typeof value === "function" && key !== "constructor" ? value.bind(target) : value;
+        },
+      });
+
+    // prettier-ignore
+    it.each<TestCase>([
+      [new Set([1]), handingOn(new Set([1]))],
+      [handingOn(new Set([1])), new Set([1])],
+      [{ s: new Set([{ a: 1 }]) }, { s: handingOn(new Set([{ a: 1, b: 2 }])) }],
+      [{ s: handingOn(new Set([{ a: 1 }])) }, { s: new Set([{ a: 1, b: 2 }]) }],
+      [new Map([ ["foo", 1] ]), handingOn(new Map([ ["foo", 1] ]))],
+      [handingOn(new Map([ ["foo", { a: 1 }] ])), new Map([ ["foo", { a: 1, b: 2 }] ])],
+      [handingOn(new Map([ [{ id: 1 }, 1] ])), handingOn(new Map([ [{ id: 1, more: true }, 1] ]))],
+    ])("returns `true` when what the Proxy serves matches (%#)", (a, b) => {
+      expect(Bun.deepMatch(a, b)).toBe(true);
+    });
+
+    // prettier-ignore
+    it.each<TestCase>([
+      [new Set([2]), handingOn(new Set([1]))],
+      [handingOn(new Set([2])), new Set([1])],
+      [new Set([1]), handingOn(new Set([1, 2]))],
+      [{ s: new Set([{ a: 1, b: 2 }]) }, { s: handingOn(new Set([{ a: 1 }])) }],
+      [{ s: handingOn(new Set([{ a: 1, b: 2 }])) }, { s: new Set([{ a: 1 }]) }],
+      [new Map([ ["foo", 2] ]), handingOn(new Map([ ["foo", 1] ]))],
+      [handingOn(new Map([ ["bar", 1] ])), new Map([ ["foo", 1] ])],
+      [handingOn(new Map([ [{ id: 1 }, 1] ])), handingOn(new Map([ [{ id: 2 }, 1] ]))],
+      [new Set(), handingOn(new Map())],
+      [handingOn(new Set()), new Map()],
+      [new Set(), new Proxy({}, {})],
+    ])("returns `false` when what the Proxy serves does not match (%#)", (a, b) => {
+      expect(Bun.deepMatch(a, b)).toBe(false);
+    });
+
+    it("throws the TypeError of a Proxy that serves no members", () => {
+      expect(() => Bun.deepMatch(new Set([1]), new Proxy(new Set([1]), {}))).toThrow(TypeError);
+      expect(() => Bun.deepMatch(new Proxy(new Map(), {}), new Map())).toThrow(TypeError);
+    });
+  });
+
   it("does not work on functions", () => {
     function foo() {}
     function bar() {}

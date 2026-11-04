@@ -2865,17 +2865,91 @@ static bool subsetCandidateMatches(JSGlobalObject* globalObject, ThrowScope& sco
     return matched;
 }
 
-// Jest's iterableEquality: the same size, and each received member is in the expected Set or matches one of its members.
-static bool subsetSetMatches(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, JSSet* received, JSSet* expected, SubsetValueMatches valueMatches)
+// ServedCollection under the names of JSSetIterator and JSMapIterator that subsetSetMatches and subsetMapMatches call. It is its own iterator: one walk at a time.
+class ServedSubsetSide : public ServedCollection {
+public:
+    using ServedCollection::ServedCollection;
+
+    bool next(JSGlobalObject* globalObject, JSValue& member)
+    {
+        JSValue entry;
+        return ServedCollection::next(globalObject, member, entry);
+    }
+
+    // The entry stands for its value, which valueOf() reads.
+    bool nextKeyValue(JSGlobalObject* globalObject, JSValue& key, JSValue& entry)
+    {
+        return ServedCollection::next(globalObject, key, entry);
+    }
+};
+
+static ALWAYS_INLINE JSSetIterator* subsetWalkOf(VM& vm, JSGlobalObject* globalObject, JSSet* set)
 {
-    if (received->size() != expected->size()) {
+    return JSSetIterator::create(vm, globalObject->setIteratorStructure(), set, IterationKind::Keys);
+}
+
+static ALWAYS_INLINE JSMapIterator* subsetWalkOf(VM& vm, JSGlobalObject* globalObject, JSMap* map)
+{
+    return JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map, IterationKind::Entries);
+}
+
+// A walk that does not start gives no member, and its exception is pending.
+static ALWAYS_INLINE ServedSubsetSide* subsetWalkOf(VM&, JSGlobalObject* globalObject, ServedSubsetSide* side)
+{
+    side->iterate(globalObject);
+    return side;
+}
+
+// The value of a received entry against the value under its key in the expected Map. A Proxy serves the first when script reads it: in front of `get`.
+static bool subsetServedValueMatches(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, SubsetValueMatches valueMatches, ServedSubsetSide* received, ServedSubsetSide* expected, JSValue key, JSValue entry)
+{
+    JSValue value = received->valueOf(globalObject, entry);
+    RETURN_IF_EXCEPTION(scope, false);
+    JSValue expectedValue = expected->get(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, false);
+    return subsetCandidateMatches(globalObject, scope, state, valueMatches, value, expectedValue);
+}
+
+static ALWAYS_INLINE bool subsetEntryMatches(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, SubsetValueMatches valueMatches, JSMapIterator*, JSMapIterator*, JSValue key, JSValue candidateKey, JSValue value, JSValue candidateValue)
+{
+    return subsetCandidateMatches(globalObject, scope, state, valueMatches, key, candidateKey, value, candidateValue);
+}
+
+// subsetCandidateMatches for two entries of a pair with a Proxy. The two values are read when script reads them: after the keys match.
+static bool subsetEntryMatches(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, SubsetValueMatches valueMatches, ServedSubsetSide* received, ServedSubsetSide* candidates, JSValue key, JSValue& candidateKey, JSValue entry, JSValue candidateEntry)
+{
+    Bun::DeepMatchState::Trial trial(state);
+    bool matched = valueMatches(globalObject, scope, state, key, candidateKey);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!matched)
         return false;
+    // A Proxy can give one key in several entries, so subsetMapMatches may leave out the key of its first try only if that key did not match.
+    candidateKey = {};
+    JSValue value = received->valueOf(globalObject, entry);
+    RETURN_IF_EXCEPTION(scope, false);
+    JSValue candidateValue = candidates->valueOf(globalObject, candidateEntry);
+    RETURN_IF_EXCEPTION(scope, false);
+    matched = valueMatches(globalObject, scope, state, value, candidateValue);
+    RETURN_IF_EXCEPTION(scope, false);
+    trial.matched = matched;
+    return matched;
+}
+
+// Jest's iterableEquality: the same size, and each received member is in the expected Set or matches one of its members.
+template<typename Collection>
+static bool subsetSetMatches(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, Collection* received, Collection* expected, SubsetValueMatches valueMatches)
+{
+    // subsetServedCollectionMatches has compared the sizes that a Proxy serves.
+    if constexpr (!std::is_same_v<Collection, ServedSubsetSide>) {
+        if (received->size() != expected->size()) {
+            return false;
+        }
     }
 
     VM& vm = globalObject->vm();
-    auto receivedIter = JSSetIterator::create(vm, globalObject->setIteratorStructure(), received, IterationKind::Keys);
+    auto receivedIter = subsetWalkOf(vm, globalObject, received);
     // Sits behind the expected member that matched last. The one after it is tried first: members that are not in `expected` and follow each other in the same order take one try each.
-    JSSetIterator* candidates = nullptr;
+    decltype(receivedIter) candidates = nullptr;
     JSValue member;
     while (receivedIter->next(globalObject, member)) {
         bool has = expected->has(globalObject, member);
@@ -2888,7 +2962,7 @@ static bool subsetSetMatches(JSGlobalObject* globalObject, ThrowScope& scope, Bu
         bool found = candidates && candidates->next(globalObject, first) && subsetCandidateMatches(globalObject, scope, state, valueMatches, member, first);
         RETURN_IF_EXCEPTION(scope, false);
         if (!found) {
-            candidates = JSSetIterator::create(vm, globalObject->setIteratorStructure(), expected, IterationKind::Keys);
+            candidates = subsetWalkOf(vm, globalObject, expected);
             JSValue candidate;
             while (!found && candidates->next(globalObject, candidate)) {
                 if (candidate == first)
@@ -2905,40 +2979,47 @@ static bool subsetSetMatches(JSGlobalObject* globalObject, ThrowScope& scope, Bu
 }
 
 // Jest's iterableEquality: the same size, and each received entry matches the expected entry of its key, or one whose key and value match.
-static bool subsetMapMatches(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, JSMap* received, JSMap* expected, SubsetValueMatches valueMatches)
+template<typename Collection>
+static bool subsetMapMatches(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, Collection* received, Collection* expected, SubsetValueMatches valueMatches)
 {
-    if (received->size() != expected->size()) {
-        return false;
+    if constexpr (!std::is_same_v<Collection, ServedSubsetSide>) {
+        if (received->size() != expected->size()) {
+            return false;
+        }
     }
 
     VM& vm = globalObject->vm();
-    auto receivedIter = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), received, IterationKind::Entries);
+    auto receivedIter = subsetWalkOf(vm, globalObject, received);
     // Sits behind the expected entry that matched last, as in subsetSetMatches.
-    JSMapIterator* candidates = nullptr;
+    decltype(receivedIter) candidates = nullptr;
     JSValue key, value;
     while (receivedIter->nextKeyValue(globalObject, key, value)) {
         bool found = false;
         bool hasKey = expected->has(globalObject, key);
         RETURN_IF_EXCEPTION(scope, false);
         if (hasKey) {
-            JSValue expectedValue = expected->get(globalObject, key);
-            RETURN_IF_EXCEPTION(scope, false);
-            found = subsetCandidateMatches(globalObject, scope, state, valueMatches, value, expectedValue);
+            if constexpr (std::is_same_v<Collection, ServedSubsetSide>) {
+                found = subsetServedValueMatches(globalObject, scope, state, valueMatches, received, expected, key, value);
+            } else {
+                JSValue expectedValue = expected->get(globalObject, key);
+                RETURN_IF_EXCEPTION(scope, false);
+                found = subsetCandidateMatches(globalObject, scope, state, valueMatches, value, expectedValue);
+            }
             RETURN_IF_EXCEPTION(scope, false);
         }
 
         JSValue firstKey, firstValue;
         if (!found && candidates && candidates->nextKeyValue(globalObject, firstKey, firstValue)) {
-            found = subsetCandidateMatches(globalObject, scope, state, valueMatches, key, firstKey, value, firstValue);
+            found = subsetEntryMatches(globalObject, scope, state, valueMatches, receivedIter, candidates, key, firstKey, value, firstValue);
             RETURN_IF_EXCEPTION(scope, false);
         }
         if (!found) {
-            candidates = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), expected, IterationKind::Entries);
+            candidates = subsetWalkOf(vm, globalObject, expected);
             JSValue candidateKey, candidateValue;
             while (!found && candidates->nextKeyValue(globalObject, candidateKey, candidateValue)) {
                 if (candidateKey == firstKey)
                     continue;
-                found = subsetCandidateMatches(globalObject, scope, state, valueMatches, key, candidateKey, value, candidateValue);
+                found = subsetEntryMatches(globalObject, scope, state, valueMatches, receivedIter, candidates, key, candidateKey, value, candidateValue);
                 RETURN_IF_EXCEPTION(scope, false);
             }
         }
@@ -2947,6 +3028,50 @@ static bool subsetMapMatches(JSGlobalObject* globalObject, ThrowScope& scope, Bu
         }
     }
     return true;
+}
+
+// The rule of a Set or a Map for a pair with a Proxy. True with no exception: the pair matches, or it has no rule here and the key walk decides.
+static NEVER_INLINE bool subsetServedCollectionMatches(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, JSObject* obj, JSObject* subsetObj, SubsetValueMatches valueMatches)
+{
+    JSObject* receivedTarget = targetOfProxyChain(obj);
+    // isArray() in Bun__deepMatch throws for a revoked Proxy.
+    if (!receivedTarget)
+        return true;
+    JSObject* expectedTarget = targetOfProxyChain(subsetObj);
+    // getPropertyNames() in Bun__deepMatch has thrown for a revoked Proxy.
+    ASSERT(expectedTarget);
+    ServedSubsetSide received(scope, obj, receivedTarget);
+    ServedSubsetSide expected(scope, subsetObj, expectedTarget);
+    // An expected Proxy around another object is a pattern of properties.
+    if (!expected.targetIsCollection())
+        return true;
+    if (!received.targetIsCollection() || received.isMap() != expected.isMap())
+        return false;
+
+    bool iterable = received.servesIterator(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (iterable) {
+        iterable = expected.servesIterator(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    if (!iterable)
+        return true;
+    JSValue receivedSize = received.size(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    JSValue expectedSize = expected.size(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    bool sameSize = JSValue::strictEqual(globalObject, receivedSize, expectedSize);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!sameSize)
+        return false;
+
+    bool matched = expected.isMap()
+        ? subsetMapMatches(globalObject, scope, state, &received, &expected, valueMatches)
+        : subsetSetMatches(globalObject, scope, state, &received, &expected, valueMatches);
+    received.close(globalObject);
+    expected.close(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    return matched;
 }
 
 // A Date, an Error, a Set and a Map keep what they hold out of their enumerable properties, so the key walk accepts any object for them.
@@ -2975,9 +3100,8 @@ static NEVER_INLINE bool subsetSpecialObjectMatches(JSGlobalObject* globalObject
     }
     case JSSetType:
     case JSMapType: {
-        // A Proxy is not read here. Only the key walk decides for it, as before.
         if (obj->type() == ProxyObjectType) {
-            return true;
+            return subsetServedCollectionMatches(globalObject, scope, state, obj, subsetObj, valueMatches);
         }
         if (obj->type() != subsetObj->type()) {
             return false;
@@ -2986,6 +3110,8 @@ static NEVER_INLINE bool subsetSpecialObjectMatches(JSGlobalObject* globalObject
             return subsetSetMatches(globalObject, scope, state, uncheckedDowncast<JSSet>(obj), expectedSet, valueMatches);
         return subsetMapMatches(globalObject, scope, state, uncheckedDowncast<JSMap>(obj), uncheckedDowncast<JSMap>(subsetObj), valueMatches);
     }
+    case ProxyObjectType:
+        return subsetServedCollectionMatches(globalObject, scope, state, obj, subsetObj, valueMatches);
     default:
         return true;
     }

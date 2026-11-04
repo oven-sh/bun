@@ -2636,6 +2636,50 @@ describe.concurrent("behavior depends on the module a function is imported from"
     });
   });
 
+  test("toMatchObject() reads a Proxy around a Set or a Map through the Proxy under both imports", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import * as bun from "bun:test";
+        import * as vitest from "vitest";
+        const outcome = fn => { try { fn(); return "passes"; } catch (e) { return e instanceof TypeError ? "throws" : "fails"; } };
+        // The target keeps { n: { boxed: 1 } }. The Proxy serves { n: 1 }, as reactive() of Vue serves the value of a ref.
+        const unboxed = record => new Proxy(record, { get: (target, key) => target[key]?.boxed ?? target[key] });
+        const serving = target => new Proxy(target, {
+          get(target, key) {
+            if (key === Symbol.iterator) return function* () { for (const member of target) yield target instanceof Map ? [member[0], unboxed(member[1])] : unboxed(member); };
+            const value = Reflect.get(target, key, target);
+            return typeof value === "function" && key !== "constructor" ? value.bind(target) : value;
+          },
+        });
+        for (const [name, { test, expect }] of Object.entries({ bun, vitest })) {
+          test(name, () => {
+            console.log(name, "Set:", [
+              outcome(() => expect({ k: serving(new Set([{ n: { boxed: 1 } }])) }).toMatchObject({ k: new Set([{ n: 1 }]) })),
+              outcome(() => expect({ k: serving(new Set([{ n: { boxed: 1 } }])) }).toMatchObject({ k: new Set([{ n: 2 }]) })),
+              outcome(() => expect({ k: new Set([{ n: 1 }]) }).toMatchObject({ k: serving(new Set([{ n: { boxed: 1 } }])) })),
+              outcome(() => expect({ k: new Set([{ n: 1 }]) }).toMatchObject({ k: serving(new Set([{ n: { boxed: 2 } }])) })),
+              outcome(() => expect({ k: new Proxy(new Set([1]), {}) }).toMatchObject({ k: new Set([1]) })),
+            ].join(" "));
+            console.log(name, "Map:", [
+              outcome(() => expect({ k: serving(new Map([["a", { n: { boxed: 1 } }]])) }).toMatchObject({ k: new Map([["a", { n: 1 }]]) })),
+              outcome(() => expect({ k: serving(new Map([["a", { n: { boxed: 1 } }]])) }).toMatchObject({ k: new Map([["a", { n: 2 }]]) })),
+              outcome(() => expect({ k: new Map([["a", { n: 1 }]]) }).toMatchObject({ k: serving(new Map([["a", { n: { boxed: 2 } }]])) })),
+            ].join(" "));
+            console.log(name, "property matcher:", outcome(() => expect({ k: serving(new Set([{ n: { boxed: 1 } }])), id: 1 }).toMatchSnapshot({ k: new Set([{ n: 2 }]) })));
+          });
+        }
+      `,
+    });
+    expect({ log, exitCode }).toEqual({
+      log: ["bun", "vitest"].flatMap(name => [
+        `${name} Set: passes fails passes fails throws`,
+        `${name} Map: passes fails fails`,
+        `${name} property matcher: fails`,
+      ]),
+      exitCode: 0,
+    });
+  });
+
   test("toHaveProperty() with an own key that is spelled like a path", async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `

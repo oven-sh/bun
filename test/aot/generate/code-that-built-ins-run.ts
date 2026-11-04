@@ -1012,6 +1012,32 @@ add(
 );
 add("bun-deepEquals-o", `Bun.deepEquals({ x: ${withGetter("k", "1")}, o }, { x: { k: 1 }, o })`);
 add("bun-deepMatch-getter", `Bun.deepMatch(${withGetter("k", "1")}, { k: 1 })`);
+// `size` and the methods of a Set or a Map refuse a Proxy as their receiver, so the trap binds them to the target.
+const servedByProxy = (target: string, members: string) =>
+  `new Proxy(Object.assign(${target}, ${members}), { get(t, k) { const v = Reflect.get(t, k, t); return typeof v === "function" && k !== "constructor" ? v.bind(t) : v; } })`;
+add("bun-deepMatch-proxy-iterable", `Bun.deepMatch(new Set([1]), ${servedByProxy("new Set([1])", iterable("[1]"))})`);
+add(
+  "bun-deepMatch-proxy-next",
+  `Bun.deepMatch(new Set([1]), ${servedByProxy("new Set([1])", iterableWithNext("[1]"))})`,
+);
+// 1 is no member of the subset and matches none, so the walk is left at the first member.
+add(
+  "bun-deepMatch-proxy-return",
+  `Bun.deepMatch(new Set([2]), ${servedByProxy("new Set([1])", iterableWithReturn("[1]"))})`,
+);
+add(
+  "bun-deepMatch-proxy-has",
+  `Bun.deepMatch(${servedByProxy("new Set([1])", "{ has(x) { change(); return x === 1; } }")}, new Set([1]))`,
+);
+add(
+  "bun-deepMatch-proxy-get",
+  `Bun.deepMatch(${servedByProxy('new Map([["k", 1]])', "{ get() { change(); return 1; } }")}, new Map([["k", 1]]))`,
+);
+// has() of the subset does not find the object of the value, so native code walks the members that the subset serves.
+add(
+  "bun-deepMatch-proxy-subset-next",
+  `Bun.deepMatch(${servedByProxy("new Set([{}])", iterableWithNext("[{}]"))}, new Set([{}]))`,
+);
 add("bun-escapeHTML", `Bun.escapeHTML(${textLike("<")})`);
 add("bun-stringWidth", `Bun.stringWidth(${textLike("a")})`);
 add("bun-stripANSI", `Bun.stripANSI(${textLike("a")})`);

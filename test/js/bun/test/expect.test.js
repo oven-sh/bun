@@ -1066,53 +1066,105 @@ describe("expect()", () => {
     });
   }
 
-  describe("a Proxy around a Set or a Map", () => {
-    // A stand-in for reactive() of Vue. The target keeps the members it was given, and the Proxy serves reactive(member).
-    // A read of a property that holds a box() gives what is in the box, as a read of a property that holds a Vue ref does.
-    const box = (/** @type {unknown} */ value) => ({ boxed: value });
-    /** @type {WeakMap<object, object>} */
-    const proxies = new WeakMap();
-    /** @type {WeakSet<object>} */
-    const served = new WeakSet();
-    /** @returns {any} */
-    const reactive = (/** @type {any} */ target) => {
-      if (target === null || typeof target !== "object" || served.has(target)) return target;
-      let proxy = proxies.get(target);
-      if (!proxy) {
-        proxy = new Proxy(target, target instanceof Set || target instanceof Map ? collectionHandler : recordHandler);
-        proxies.set(target, proxy);
-        served.add(proxy);
+  // A stand-in for reactive() of Vue. The target keeps the members it was given, and the Proxy serves reactive(member).
+  // A read of a property that holds a box() gives what is in the box, as a read of a property that holds a Vue ref does.
+  const box = (/** @type {unknown} */ value) => ({ boxed: value });
+  /** @type {WeakMap<object, object>} */
+  const proxies = new WeakMap();
+  /** @type {WeakSet<object>} */
+  const served = new WeakSet();
+  /** @returns {any} */
+  const reactive = (/** @type {any} */ target) => {
+    if (target === null || typeof target !== "object" || served.has(target)) return target;
+    let proxy = proxies.get(target);
+    if (!proxy) {
+      proxy = new Proxy(target, target instanceof Set || target instanceof Map ? collectionHandler : recordHandler);
+      proxies.set(target, proxy);
+      served.add(proxy);
+    }
+    return proxy;
+  };
+  /** @type {ProxyHandler<any>} */
+  const recordHandler = {
+    get(target, key, receiver) {
+      const value = Reflect.get(target, key, receiver);
+      return value !== null && typeof value === "object" && "boxed" in value ? value.boxed : reactive(value);
+    },
+  };
+  /** @type {ProxyHandler<any>} */
+  const collectionHandler = {
+    get(target, key) {
+      if (key === Symbol.iterator) {
+        return function* () {
+          for (const member of target) yield target instanceof Map ? member.map(reactive) : reactive(member);
+        };
       }
-      return proxy;
-    };
-    /** @type {ProxyHandler<any>} */
-    const recordHandler = {
-      get(target, key, receiver) {
-        const value = Reflect.get(target, key, receiver);
-        return value !== null && typeof value === "object" && "boxed" in value ? value.boxed : reactive(value);
-      },
-    };
-    /** @type {ProxyHandler<any>} */
-    const collectionHandler = {
+      if (key === "get") return (/** @type {unknown} */ k) => reactive(target.get(k));
+      const value = Reflect.get(target, key, target);
+      return typeof value === "function" && key !== "constructor" ? value.bind(target) : value;
+    },
+  };
+  // A Proxy that serves what its target has, and `instead[key]` in place of it. Unlike reactive(), it serves each member as it is.
+  const serving = (/** @type {object} */ target, /** @type {Record<PropertyKey, unknown>} */ instead = {}) =>
+    new Proxy(target, {
       get(target, key) {
+        const value = Object.hasOwn(instead, key) ? instead[key] : Reflect.get(target, key, target);
+        return typeof value === "function" && key !== "constructor" ? value.bind(target) : value;
+      },
+    });
+  const thrownBy = (/** @type {() => void} */ fn) => {
+    try {
+      fn();
+    } catch (e) {
+      return e;
+    }
+  };
+  const nameOf = (/** @type {string | symbol} */ key) =>
+    typeof key === "symbol" ? `@@${key.description?.replace("Symbol.", "")}` : key;
+  // A Proxy that hands each read on to its Set or Map, and logs what it and its iterator are asked for.
+  const handingOn = (/** @type {object} */ target, /** @type {string[]} */ log = []) =>
+    new Proxy(target, {
+      get(target, key) {
+        log.push(nameOf(key));
         if (key === Symbol.iterator) {
-          return function* () {
-            for (const member of target) yield target instanceof Map ? member.map(reactive) : reactive(member);
+          return () => {
+            const iterator = /** @type {Iterable<unknown>} */ (target)[Symbol.iterator]();
+            return {
+              next: () => (log.push("next()"), iterator.next()),
+              return: () => (log.push("return()"), {}),
+            };
           };
         }
-        if (key === "get") return (/** @type {unknown} */ k) => reactive(target.get(k));
         const value = Reflect.get(target, key, target);
         return typeof value === "function" && key !== "constructor" ? value.bind(target) : value;
       },
-    };
-    // A Proxy that serves what its target has, and `instead[key]` in place of it. Unlike reactive(), it serves each member as it is.
-    const serving = (/** @type {object} */ target, /** @type {Record<PropertyKey, unknown>} */ instead = {}) =>
-      new Proxy(target, {
-        get(target, key) {
-          const value = Object.hasOwn(instead, key) ? instead[key] : Reflect.get(target, key, target);
-          return typeof value === "function" && key !== "constructor" ? value.bind(target) : value;
-        },
-      });
+    });
+  // A Proxy whose `size`, `has`, `get` and iterator are shared by each Proxy and find its Set or Map through `this`, as those of Vue do.
+  /** @type {WeakMap<object, any>} */
+  const raws = new WeakMap();
+  const shared = {
+    get size() {
+      return raws.get(this).size;
+    },
+    has(/** @type {unknown} */ member) {
+      return raws.get(this).has(member);
+    },
+    get(/** @type {unknown} */ key) {
+      return raws.get(this).get(key);
+    },
+    [Symbol.iterator]() {
+      return raws.get(this)[Symbol.iterator]();
+    },
+  };
+  const viaThis = (/** @type {object} */ target) => {
+    const proxy = new Proxy(target, {
+      get: (target, key, receiver) => Reflect.get(Object.hasOwn(shared, key) ? shared : target, key, receiver),
+    });
+    raws.set(proxy, target);
+    return proxy;
+  };
+
+  describe("a Proxy around a Set or a Map", () => {
     // A record that is kept in a Map: the Proxy serves the entries of the Map as its own properties.
     /** @returns {any} */
     const facade = (/** @type {Map<string, unknown>} */ map) =>
@@ -1125,13 +1177,6 @@ describe("expect()", () => {
             ? { value: target.get(/** @type {string} */ (key)), enumerable: true, configurable: true, writable: true }
             : undefined,
       });
-    const thrownBy = (/** @type {() => void} */ fn) => {
-      try {
-        fn();
-      } catch (e) {
-        return e;
-      }
-    };
 
     test("toEqual() compares the members that the Proxy serves", () => {
       expect(reactive(new Set([1]))).toEqual(new Set([1]));
@@ -1439,30 +1484,6 @@ describe("expect()", () => {
     });
 
     test("the Proxy is the receiver of what it is asked", () => {
-      // The methods of Vue are shared by each Proxy and find its Set or Map through `this`.
-      /** @type {WeakMap<object, any>} */
-      const raws = new WeakMap();
-      const shared = {
-        get size() {
-          return raws.get(this).size;
-        },
-        has(/** @type {unknown} */ member) {
-          return raws.get(this).has(member);
-        },
-        get(/** @type {unknown} */ key) {
-          return raws.get(this).get(key);
-        },
-        [Symbol.iterator]() {
-          return raws.get(this)[Symbol.iterator]();
-        },
-      };
-      const viaThis = (/** @type {object} */ target) => {
-        const proxy = new Proxy(target, {
-          get: (target, key, receiver) => Reflect.get(Object.hasOwn(shared, key) ? shared : target, key, receiver),
-        });
-        raws.set(proxy, target);
-        return proxy;
-      };
       expect(viaThis(new Set([1, 2]))).toEqual(new Set([1, 2]));
       expect(new Set([1, 2])).toEqual(viaThis(new Set([1, 2])));
       expect(new Set([{ a: 1 }])).toEqual(viaThis(new Set([{ a: 1 }])));
@@ -1474,27 +1495,6 @@ describe("expect()", () => {
     });
 
     if (isBun) {
-      const nameOf = (/** @type {string | symbol} */ key) =>
-        typeof key === "symbol" ? `@@${key.description?.replace("Symbol.", "")}` : key;
-      // A Proxy that hands each read on to its Set or Map, and logs what it and its iterator are asked for.
-      const handingOn = (/** @type {object} */ target, /** @type {string[]} */ log = []) =>
-        new Proxy(target, {
-          get(target, key) {
-            log.push(nameOf(key));
-            if (key === Symbol.iterator) {
-              return () => {
-                const iterator = /** @type {Iterable<unknown>} */ (target)[Symbol.iterator]();
-                return {
-                  next: () => (log.push("next()"), iterator.next()),
-                  return: () => (log.push("return()"), {}),
-                };
-              };
-            }
-            const value = Reflect.get(target, key, target);
-            return typeof value === "function" && key !== "constructor" ? value.bind(target) : value;
-          },
-        });
-
       test("Bun.deepEquals() compares what the Proxy is, as node:assert does, and asks it nothing", () => {
         expect(Bun.deepEquals(reactive(new Set([1])), new Set([1]))).toBe(false);
         expect(Bun.deepEquals(new Set([1]), reactive(new Set([1])))).toBe(false);
@@ -5800,6 +5800,251 @@ describe("expect()", () => {
       expect({ k: expect.any(Response) }).toEqual({ k: new Response("") });
     });
 
+    describe("toMatchObject() with a Proxy around a Set or a Map", () => {
+      test("a Proxy around a Set or a Map is compared by the members it serves", () => {
+        // the target holds a box where script reads a number
+        const counters = reactive(new Map([["a", { count: box(1) }]]));
+        expect(counters).toMatchObject(new Map([["a", { count: 1 }]]));
+        expect(counters).not.toMatchObject(new Map([["a", { count: 2 }]]));
+        expect(counters).not.toMatchObject(new Map([["a", { count: { boxed: 1 } }]]));
+        const doubled = reactive(new Set([{ double: box(4), extra: 1 }]));
+        expect(doubled).toMatchObject(new Set([{ double: 4 }]));
+        expect(doubled).not.toMatchObject(new Set([{ double: 5 }]));
+        // members, size and kind
+        expect({ s: reactive(new Set([1])) }).not.toMatchObject({ s: new Set([2]) });
+        expect({ m: reactive(new Map([["k", 1]])) }).not.toMatchObject({ m: new Map([["k", 2]]) });
+        expect({ m: reactive(new Map([["k", 1]])) }).not.toMatchObject({ m: new Map([["j", 1]]) });
+        expect([reactive(new Set([1]))]).not.toMatchObject([new Set([2])]);
+        expect(reactive(new Set([1, 2]))).toMatchObject(new Set([2, 1]));
+        expect(reactive(new Set([1, 2]))).not.toMatchObject(new Set([1]));
+        expect(reactive(new Set([1]))).not.toMatchObject(new Set([1, 2]));
+        expect(reactive(new Set([1]))).not.toMatchObject(new Map());
+        expect(reactive(new Map())).not.toMatchObject(new Set());
+        expect(reactive(new Set())).toMatchObject(new Set());
+        expect(reactive(new Map())).toMatchObject(new Map());
+        // the state of a store: a Map of records with a box and an array field
+        const store = reactive({ rows: new Map([["t1", { title: "x", done: box(false), tags: ["a", "b"] }]]) });
+        expect(store).toMatchObject({ rows: new Map([["t1", { title: "x", done: false, tags: ["a", "b"] }]]) });
+        expect(store).not.toMatchObject({ rows: new Map([["t1", { done: true }]]) });
+        expect(store).not.toMatchObject({ rows: new Map([["t1", { tags: ["a"] }]]) });
+        // a Set in a member, and an object as a key
+        expect(reactive(new Map([["k", new Set([1])]]))).toMatchObject(new Map([["k", new Set([1])]]));
+        expect(reactive(new Map([["k", new Set([1])]]))).not.toMatchObject(new Map([["k", new Set([2])]]));
+        expect(reactive(new Map([[{ id: 1 }, "v"]]))).toMatchObject(new Map([[{ id: 1 }, "v"]]));
+        expect(reactive(new Map([[{ id: 1 }, "v"]]))).not.toMatchObject(new Map([[{ id: 2 }, "v"]]));
+        // matchers in the expected Set or Map
+        expect(reactive(new Set([{ a: 1, b: 2 }]))).toMatchObject(new Set([expect.objectContaining({ a: 1 })]));
+        expect(reactive(new Map([["k", 1]]))).toMatchObject(new Map([["k", expect.any(Number)]]));
+        expect(reactive(new Map([["k", 1]]))).not.toMatchObject(new Map([["k", expect.any(String)]]));
+        expect(reactive(new Map([["k", { tags: ["x", "y"] }]]))).toMatchObject(
+          new Map([["k", { tags: expect.arrayContaining(["y"]) }]]),
+        );
+        // a Proxy around a Proxy
+        expect(new Proxy(reactive(new Set([{ n: box(1) }])), {})).toMatchObject(new Set([{ n: 1 }]));
+        expect(new Proxy(reactive(new Set([{ n: box(1) }])), {})).not.toMatchObject(new Set([{ n: 2 }]));
+        // a Set that holds itself, and a record that its own Set holds
+        const holdingItself = () => {
+          const set = new Set();
+          return set.add(set);
+        };
+        expect(reactive(holdingItself())).toMatchObject(holdingItself());
+        expect(holdingItself()).toMatchObject(reactive(holdingItself()));
+        const heldByItsSet = (/** @type {number} */ n) => {
+          /** @type {any} */
+          const record = { n };
+          record.s = new Set([record]);
+          return record;
+        };
+        expect(reactive(heldByItsSet(1))).toMatchObject(heldByItsSet(1));
+        expect(reactive(heldByItsSet(1))).not.toMatchObject(heldByItsSet(2));
+      });
+
+      test("a Proxy around a Set or a Map is asked as the expected value too", () => {
+        expect(new Set([1])).toMatchObject(reactive(new Set([1])));
+        expect(new Set([1])).not.toMatchObject(reactive(new Set([2])));
+        expect(new Map([["k", 1]])).toMatchObject(reactive(new Map([["k", 1]])));
+        expect(new Map([["k", 1]])).not.toMatchObject(reactive(new Map([["k", 2]])));
+        expect({ s: new Set([{ a: 1, b: 2 }]) }).toMatchObject({ s: reactive(new Set([{ a: box(1) }])) });
+        expect({ s: new Set([{ a: 1, b: 2 }]) }).not.toMatchObject({ s: reactive(new Set([{ a: box(2) }])) });
+        expect({}).not.toMatchObject(reactive(new Set([1])));
+        // a Proxy on both sides
+        expect(reactive(new Set([{ a: 1, b: 2 }]))).toMatchObject(reactive(new Set([{ a: 1 }])));
+        expect(reactive(new Set([{ a: 1 }]))).not.toMatchObject(reactive(new Set([{ a: 1, b: 2 }])));
+        expect(reactive(new Map([["k", 1]]))).not.toMatchObject(reactive(new Map([["k", 2]])));
+        // a Proxy that stands for no Set and no Map is a pattern of properties
+        expect({ a: 1, b: 2 }).toMatchObject(reactive({ a: 1 }));
+        expect({ a: 1, b: 2 }).not.toMatchObject(reactive({ a: 2 }));
+        expect(reactive(new Set([1]))).toMatchObject(serving({ size: 1 }));
+        expect(reactive(new Set([1]))).not.toMatchObject(serving({ size: 2 }));
+      });
+
+      test("a Set that serves one member twice has the size that it says", () => {
+        const member = { a: 1 };
+        const twice = reactive(new Set([member, reactive(member)]));
+        expect([twice.size, new Set(twice).size]).toEqual([2, 1]);
+        expect(twice).toMatchObject(new Set([{ a: 1 }, { a: 1 }]));
+        expect(twice).not.toMatchObject(new Set([{ a: 1 }]));
+      });
+
+      test("the size that a Proxy serves and what its `has` and `get` say count", () => {
+        expect(serving(new Set([1]), { size: 2 })).not.toMatchObject(new Set([1]));
+        expect(new Set([1])).toMatchObject(serving(new Set([1, 2]), { size: 1 }));
+        // Two sizes are the same if `===` says so, also if they are no numbers.
+        expect(new Set([1])).not.toMatchObject(serving(new Set([1]), { size: undefined }));
+        expect(serving(new Set([1]), { size: "1" })).not.toMatchObject(new Set([1]));
+        expect(serving(new Set([1]), { size: NaN })).not.toMatchObject(serving(new Set([1]), { size: NaN }));
+        expect(serving(new Set([1]), { size: "1" })).toMatchObject(serving(new Set([1]), { size: "1" }));
+        expect(serving(new Set([1]), { size: "1" })).not.toMatchObject(serving(new Set([2]), { size: "1" }));
+        expect(serving(new Set([1]), { size: 1n })).toMatchObject(serving(new Set([1]), { size: 1n }));
+        expect(serving(new Set([1]), { size: undefined })).toMatchObject(serving(new Set([1]), { size: undefined }));
+        expect(serving(new Set([1]), { size: undefined })).not.toMatchObject(
+          serving(new Set([2]), { size: undefined }),
+        );
+        // `has` that says yes to each value, and no to each
+        expect(new Set([1])).toMatchObject(serving(new Set([2]), { has: () => "yes" }));
+        expect(new Set([1])).toMatchObject(serving(new Set([1]), { has: () => 0 }));
+        expect(new Set([1])).not.toMatchObject(serving(new Set([2]), { has: () => 0 }));
+        // `get` gives the value of a key that `has` finds
+        const anyKey = (/** @type {unknown} */ value) =>
+          serving(new Map([["j", 5]]), { has: () => true, get: () => value });
+        expect(new Map([["k", 1]])).toMatchObject(anyKey(1));
+        expect(new Map([["k", undefined]])).toMatchObject(anyKey(undefined));
+        expect(new Map([["k", 1]])).not.toMatchObject(anyKey(2));
+        expect(new Map([["k", 1]])).toMatchObject(serving(new Map([["k", 1]]), { has: () => false }));
+      });
+
+      test("a Map that serves one key in several entries matches each of them", () => {
+        const key = { id: 1 };
+        // Its `has` finds no key, so each received entry is looked for among the entries that the iterator gives.
+        const sameKey = serving(new Map(), {
+          size: 3,
+          *[Symbol.iterator]() {
+            yield* [1, 2, 3].map(value => [key, value]);
+          },
+        });
+        const received = (/** @type {number[]} */ values) => new Map(values.map(value => [{ id: 1 }, value]));
+        expect(received([1, 2, 3])).toMatchObject(sameKey);
+        expect(received([1, 3, 2])).toMatchObject(sameKey);
+        expect(received([3, 2, 1])).toMatchObject(sameKey);
+        expect(received([1, 2, 4])).not.toMatchObject(sameKey);
+      });
+
+      test("the value of an entry that a Proxy serves is read if its key is found, and not before", () => {
+        const boom = new Error("boom");
+        // A Map of one entry. The value of the entry throws when it is read.
+        const withEntry = (/** @type {unknown} */ key) =>
+          serving(new Map([[key, 1]]), {
+            *[Symbol.iterator]() {
+              yield {
+                0: key,
+                get 1() {
+                  throw boom;
+                },
+              };
+            },
+          });
+        // the expected entry: its key is another one, then the same one
+        expect(new Map([[{ a: 1 }, 1]])).not.toMatchObject(withEntry({ a: 2 }));
+        expect(thrownBy(() => expect(new Map([[{ a: 1 }, 1]])).toMatchObject(withEntry({ a: 1 })))).toBe(boom);
+        // the received entry: the expected Map has no such key, then it has one
+        expect(withEntry({ a: 2 })).not.toMatchObject(new Map([[{ a: 1 }, 1]]));
+        expect(withEntry("k")).not.toMatchObject(new Map([["j", 1]]));
+        expect(thrownBy(() => expect(withEntry({ a: 1 })).toMatchObject(new Map([[{ a: 1 }, 1]])))).toBe(boom);
+        expect(thrownBy(() => expect(withEntry("k")).toMatchObject(new Map([["k", 1]])))).toBe(boom);
+      });
+
+      test("the Proxy is the receiver of what it is asked", () => {
+        expect(viaThis(new Set([1, 2]))).toMatchObject(new Set([1, 2]));
+        expect(new Set([1, 2])).toMatchObject(viaThis(new Set([1, 2])));
+        expect(new Set([{ a: 1, b: 2 }])).toMatchObject(viaThis(new Set([{ a: 1 }])));
+        expect(viaThis(new Set([1]))).not.toMatchObject(viaThis(new Set([2])));
+        expect(viaThis(new Map([["k", { a: 1, b: 2 }]]))).toMatchObject(new Map([["k", { a: 1 }]]));
+        expect(new Map([["k", 1]])).toMatchObject(viaThis(new Map([["k", 1]])));
+        expect(new Map([[{ id: 1 }, 1]])).toMatchObject(viaThis(new Map([[{ id: 1 }, 1]])));
+        expect(viaThis(new Map([["k", 1]]))).not.toMatchObject(viaThis(new Map([["k", 2]])));
+      });
+
+      test("a Proxy that serves no members of its Set or Map", () => {
+        // No method of a Set takes a Proxy around a Set for a Set. Jest and Vitest throw this TypeError too.
+        expect(() => expect({ s: new Proxy(new Set([1]), {}) }).toMatchObject({ s: new Set([1]) })).toThrow(TypeError);
+        expect(() => expect({ m: new Proxy(new Map(), {}) }).toMatchObject({ m: new Map([["a", 1]]) })).toThrow(
+          TypeError,
+        );
+        expect(() => expect(new Set([1])).toMatchObject(new Proxy(new Set([1]), {}))).toThrow(TypeError);
+        const revoked = (/** @type {object} */ target) => {
+          const { proxy, revoke } = Proxy.revocable(target, {});
+          revoke();
+          return proxy;
+        };
+        expect(() => expect({ s: revoked(new Set([1])) }).toMatchObject({ s: new Set([1]) })).toThrow(TypeError);
+        expect(() => expect({ s: new Set([1]) }).toMatchObject({ s: revoked(new Set([1])) })).toThrow(TypeError);
+        expect(() => expect({ s: revoked({}) }).toMatchObject({ s: reactive(new Set()) })).toThrow(TypeError);
+        expect(() => expect(new Proxy(revoked(new Set()), {})).toMatchObject(reactive(new Set()))).toThrow(TypeError);
+        expect(() => expect(new Set()).toMatchObject(new Proxy(revoked(new Set()), {}))).toThrow(TypeError);
+        expect(() => expect(new Set()).toMatchObject(new Proxy(revoked(new Set()), { ownKeys: () => [] }))).toThrow(
+          TypeError,
+        );
+        // a Proxy around an object that is no Set and no Map
+        expect({ s: new Proxy({}, {}) }).not.toMatchObject({ s: new Set() });
+        expect({ s: new Proxy([], {}) }).not.toMatchObject({ s: new Set() });
+        expect({ m: reactive({}) }).not.toMatchObject({ m: new Map() });
+        expect({ s: reactive({}) }).not.toMatchObject({ s: reactive(new Set()) });
+      });
+
+      test("a Proxy that serves no iterator method is matched by its properties", () => {
+        // Each value that is false in a condition is no iterator method. These Proxies serve all else that their Set has.
+        for (const nothing of [undefined, null, false, 0, "", NaN]) {
+          const withoutIterator = (/** @type {number} */ member) =>
+            serving(new Set([member]), { [Symbol.iterator]: nothing });
+          expect(withoutIterator(1)).toMatchObject(new Set([2]));
+          expect(new Set([1])).toMatchObject(withoutIterator(2));
+          expect(withoutIterator(1)).toMatchObject(withoutIterator(2));
+          expect(withoutIterator(1)).toMatchObject(serving(new Set([2])));
+          expect(serving(new Set([1]))).toMatchObject(withoutIterator(2));
+        }
+        // Each other value is called.
+        for (const noFunction of [1, "x", {}, true]) {
+          expect(() =>
+            expect(serving(new Set([1]), { [Symbol.iterator]: noFunction })).toMatchObject(new Set([1])),
+          ).toThrow(TypeError);
+          expect(() =>
+            expect(new Set([{}])).toMatchObject(serving(new Set([{}]), { [Symbol.iterator]: noFunction })),
+          ).toThrow(TypeError);
+        }
+      });
+
+      // The matcher compares what a member holds as toEqual() does, so it has to read a Proxy around a Set or a Map too.
+      test("a served member holds a Set or a Map under expect.objectContaining() or expect.arrayContaining()", () => {
+        const users = () => reactive(new Map([["u1", { roles: new Set(["admin"]), visits: 1 }]]));
+        expect(users()).toMatchObject(new Map([["u1", expect.objectContaining({ roles: new Set(["admin"]) })]]));
+        expect(users()).not.toMatchObject(new Map([["u1", expect.objectContaining({ roles: new Map() })]]));
+        expect(users()).not.toMatchObject(new Map([["u1", expect.objectContaining({ roles: ["admin"] })]]));
+        // a Map of records, and a box in a member of a Set
+        expect(reactive(new Map([["k", { m: new Map([["a", { x: 1 }]]) }]]))).toMatchObject(
+          new Map([["k", expect.objectContaining({ m: new Map([["a", { x: 1 }]]) })]]),
+        );
+        expect(reactive(new Map([["k", { s: new Set([{ n: box(1) }]) }]]))).toMatchObject(
+          new Map([["k", expect.objectContaining({ s: new Set([{ n: 1 }]) })]]),
+        );
+        // one object deeper than the matcher, and a Set in a Set
+        expect(reactive(new Set([{ o: { p: { s: new Set([1]) } } }]))).toMatchObject(
+          new Set([{ o: expect.objectContaining({ p: { s: new Set([1]) } }) }]),
+        );
+        expect(reactive(new Map([["k", { s: new Set([new Set([1])]) }]]))).toMatchObject(
+          new Map([["k", expect.objectContaining({ s: new Set([new Set([1])]) })]]),
+        );
+        // in an element of expect.arrayContaining()
+        const lists = () => reactive(new Map([["k", { list: [{ s: new Set([1]), x: 1 }, new Map([["a", 1]])] }]]));
+        expect(lists()).toMatchObject(new Map([["k", { list: expect.arrayContaining([{ s: new Set([1]), x: 1 }]) }]]));
+        expect(lists()).toMatchObject(new Map([["k", { list: expect.arrayContaining([new Map([["a", 1]])]) }]]));
+        expect(lists()).toMatchObject(
+          new Map([["k", { list: expect.arrayContaining([expect.objectContaining({ s: new Set([1]) })]) }]]),
+        );
+        expect(lists()).not.toMatchObject(new Map([["k", { list: expect.arrayContaining([{ s: new Set([1]) }]) }]]));
+        expect(lists()).not.toMatchObject(new Map([["k", { list: expect.arrayContaining([new Set([1])]) }]]));
+      });
+    });
+
     if (isBun) {
       test("Bun.deepMatch compares an expected Date and Error", () => {
         expect(Bun.deepMatch(new Date(1), new Date(2))).toBe(false);
@@ -5857,11 +6102,402 @@ describe("expect()", () => {
         expect({ s: new Set([1]) }).not.toMatchObject({ s: new Set([{}]) });
         // a function in a Set or a Map is matched as a function under a property is
         expect({ s: new Set([() => 1]) }).toMatchObject({ s: new Set([() => 2]) });
-        // a received Proxy is not read as a Set or a Map. Its properties are matched, as before.
-        expect({ s: new Proxy(new Set([1]), {}) }).toMatchObject({ s: new Set([2]) });
-        expect({ m: new Proxy(new Map(), {}) }).toMatchObject({ m: new Map([["a", 1]]) });
         // expect.objectContaining() still takes a Set or a Map as an object with no properties
         expect({ a: 1 }).toEqual(expect.objectContaining(new Set([1])));
+      });
+
+      test("what toMatchObject() asks a Proxy around a Set or a Map, and when", () => {
+        /** @type {string[]} */
+        const log = [];
+        const asked = (/** @type {() => void} */ fn) => {
+          log.length = 0;
+          fn();
+          return log.join(" ");
+        };
+        // The received value: its iterator method and its size first, then the members until one does not match.
+        expect(asked(() => expect(handingOn(new Set([1, 2, 3]), log)).toMatchObject(new Set([1, 2, 3])))).toBe(
+          "@@iterator size next() next() next() next()",
+        );
+        expect(asked(() => expect(handingOn(new Set([1, 2]), log)).not.toMatchObject(new Set([1])))).toBe(
+          "@@iterator size",
+        );
+        expect(asked(() => expect(handingOn(new Set([1, 2, 3]), log)).not.toMatchObject(new Set([4, 5, 6])))).toBe(
+          "@@iterator size next() return()",
+        );
+        expect(asked(() => expect(handingOn(new Map([["k", 1]]), log)).toMatchObject(new Map([["k", 1]])))).toBe(
+          "@@iterator size next() next()",
+        );
+        expect(asked(() => expect(handingOn(new Map([["k", 1]]), log)).not.toMatchObject(new Map([["k", 2]])))).toBe(
+          "@@iterator size next() return()",
+        );
+        // The expected value: `has` for each received member, `get` for the value of a Map, and its members for a member that it has not.
+        expect(asked(() => expect(new Set([1, 2])).toMatchObject(handingOn(new Set([1, 2]), log)))).toBe(
+          "@@iterator size has has",
+        );
+        expect(asked(() => expect(new Map([["k", 1]])).toMatchObject(handingOn(new Map([["k", 1]]), log)))).toBe(
+          "@@iterator size has get",
+        );
+        expect(asked(() => expect(new Map([["k", 1]])).not.toMatchObject(handingOn(new Map([["k", 2]]), log)))).toBe(
+          "@@iterator size has get next() next()",
+        );
+        expect(asked(() => expect(new Set([{ a: 1 }])).toMatchObject(handingOn(new Set([{ a: 1 }]), log)))).toBe(
+          "@@iterator size has next() return()",
+        );
+        // A Proxy on each side. The sizes are asked before an iterator is made.
+        expect(
+          asked(() => expect(handingOn(new Set([{ a: 1 }]), log)).toMatchObject(handingOn(new Set([{ a: 1 }]), log))),
+        ).toBe("@@iterator @@iterator size size next() has next() next() return()");
+        expect(
+          asked(() => expect(handingOn(new Set([1, 2]), log)).not.toMatchObject(handingOn(new Set([1]), log))),
+        ).toBe("@@iterator @@iterator size size");
+        // The walk of the expected members goes on behind the last match. One that is left for a walk from the start is closed first.
+        const inOrder = (/** @type {number[]} */ ids) => ids.map(id => ({ id }));
+        expect(
+          asked(() => expect(new Set(inOrder([0, 1, 2]))).toMatchObject(handingOn(new Set(inOrder([0, 2, 1])), log))),
+        ).toBe("@@iterator size has next() has next() return() next() next() next() has next() next() next() return()");
+        expect(
+          asked(() =>
+            expect(new Map(inOrder([0, 1, 2]).map(key => [key, 1]))).toMatchObject(
+              handingOn(new Map(inOrder([0, 2, 1]).map(key => [key, 1])), log),
+            ),
+          ),
+        ).toBe("@@iterator size has next() has next() return() next() next() next() has next() next() next() return()");
+        // Nothing else is asked of a Proxy that serves no iterator method: the key walk decides, as for each other object.
+        for (const nothing of [undefined, null, false, 0, "", NaN]) {
+          const hidden = () => new Proxy(new Set([1]), { get: (target, key) => (log.push(nameOf(key)), nothing) });
+          expect(asked(() => expect(hidden()).toMatchObject(new Set([2])))).toBe("@@iterator");
+          expect(asked(() => expect(new Set([2])).toMatchObject(hidden()))).toBe("@@iterator");
+          // The expected value is not asked if the received value serves none.
+          expect(asked(() => expect(hidden()).toMatchObject(hidden()))).toBe("@@iterator");
+        }
+        // A Proxy around another object is asked nothing for a Set or a Map, and for its properties as a pattern.
+        const around = (/** @type {object} */ target) =>
+          new Proxy(target, {
+            get: (target, key, receiver) => (log.push(nameOf(key)), Reflect.get(target, key, receiver)),
+          });
+        expect(asked(() => expect(around({ a: 1 })).not.toMatchObject(new Set([1])))).toBe("");
+        expect(asked(() => expect(around({})).not.toMatchObject(handingOn(new Set(), log)))).toBe("");
+        expect(asked(() => expect(handingOn(new Set(), log)).toMatchObject(around({})))).toBe("");
+        expect(asked(() => expect({ a: 1, b: 2 }).toMatchObject(around({ a: 1 })))).toBe("a");
+        // A Set is no Map: neither Proxy is asked.
+        expect(
+          asked(() => expect(handingOn(new Set([1]), log)).not.toMatchObject(handingOn(new Map([[1, 1]]), log))),
+        ).toBe("");
+        // An entry that a Proxy serves: its key when the walk gives it, and its value when the key is found, in front of `get`.
+        const oneEntry = (/** @type {string} */ name, /** @type {unknown} */ key, /** @type {unknown} */ value) =>
+          serving(new Map([[key, value]]), {
+            *[Symbol.iterator]() {
+              yield {
+                get 0() {
+                  log.push(`${name}[0]`);
+                  return key;
+                },
+                get 1() {
+                  log.push(`${name}[1]`);
+                  return value;
+                },
+              };
+            },
+            has: (/** @type {unknown} */ k) => (log.push(`${name}.has`), k === key),
+            get: () => (log.push(`${name}.get`), value),
+          });
+        expect(asked(() => expect(oneEntry("a", "k", 1)).toMatchObject(oneEntry("b", "k", 1)))).toBe(
+          "a[0] b.has a[1] b.get",
+        );
+        expect(asked(() => expect(oneEntry("a", "k", 1)).not.toMatchObject(oneEntry("b", "k", 2)))).toBe(
+          "a[0] b.has a[1] b.get b[0] a[1] b[1]",
+        );
+        expect(asked(() => expect(oneEntry("a", { id: 1 }, 1)).toMatchObject(oneEntry("b", { id: 1 }, 1)))).toBe(
+          "a[0] b.has b[0] a[1] b[1]",
+        );
+        expect(asked(() => expect(oneEntry("a", { id: 1 }, 1)).not.toMatchObject(oneEntry("b", { id: 2 }, 1)))).toBe(
+          "a[0] b.has b[0]",
+        );
+      });
+
+      test("what a Proxy around a Set or a Map throws ends toMatchObject()", () => {
+        const boom = new RangeError("boom");
+        /** @type {string[]} */
+        const log = [];
+        let steps = 0;
+        const throwingAt = (/** @type {string | symbol} */ step, /** @type {object} */ target) =>
+          new Proxy(target, {
+            get(target, key) {
+              if (key === step) throw boom;
+              if (key === Symbol.iterator) {
+                return () => {
+                  if (step === "@@iterator()") throw boom;
+                  const iterator = /** @type {Iterable<unknown>} */ (target)[Symbol.iterator]();
+                  return {
+                    next: () => {
+                      steps++;
+                      if (step === "next()") throw boom;
+                      return iterator.next();
+                    },
+                    return: () => {
+                      log.push("return()");
+                      if (step === "return()") throw boom;
+                      return {};
+                    },
+                  };
+                };
+              }
+              const value = Reflect.get(target, key, target);
+              if (typeof value !== "function" || key === "constructor") return value;
+              return (/** @type {unknown[]} */ ...args) => {
+                if (step === `${String(key)}()`) throw boom;
+                return value.apply(target, args);
+              };
+            },
+          });
+        const matcherError = new Error("from the matcher");
+        const throwingMatcher = {
+          asymmetricMatch() {
+            throw matcherError;
+          },
+        };
+        // The member and the key are objects, so that the expected value is asked for its members too.
+        for (const [collection, other, withMatcher] of /** @type {const} */ ([
+          [() => new Set([{ a: 1 }]), () => new Set([{ a: 2 }]), () => new Set([throwingMatcher])],
+          [() => new Map([[{ a: 1 }, 1]]), () => new Map([[{ a: 2 }, 1]]), () => new Map([[throwingMatcher, 1]])],
+        ])) {
+          for (const step of [Symbol.iterator, "size", "@@iterator()", "next()"]) {
+            expect(thrownBy(() => expect(throwingAt(step, collection())).toMatchObject(collection()))).toBe(boom);
+            expect(thrownBy(() => expect(collection()).toMatchObject(throwingAt(step, collection())))).toBe(boom);
+          }
+          for (const step of ["has", "has()"]) {
+            expect(thrownBy(() => expect(collection()).toMatchObject(throwingAt(step, collection())))).toBe(boom);
+          }
+          // An iterator that throws is not closed.
+          expect(log).toEqual([]);
+          // A walk that is left early is closed, and what return() throws is thrown.
+          expect(thrownBy(() => expect(throwingAt("return()", collection())).toMatchObject(other()))).toBe(boom);
+          expect(thrownBy(() => expect(collection()).toMatchObject(throwingAt("return()", collection())))).toBe(boom);
+          expect(log).toEqual(["return()", "return()"]);
+          // An error of a member closes the walk and stays the error.
+          log.length = 0;
+          expect(thrownBy(() => expect(throwingAt("return()", collection())).toMatchObject(withMatcher()))).toBe(
+            matcherError,
+          );
+          expect(log).toEqual(["return()"]);
+          log.length = 0;
+        }
+        // `get` is asked for the value of a key that `has` finds.
+        for (const step of ["get", "get()"]) {
+          expect(thrownBy(() => expect(new Map([["k", 1]])).toMatchObject(throwingAt(step, new Map([["k", 1]]))))).toBe(
+            boom,
+          );
+        }
+        // What return() throws where a walk is left for a walk from the start ends the comparison there: two steps, and none behind it.
+        for (const inOrder of [
+          (/** @type {number[]} */ ids) => new Set(ids.map(id => ({ id }))),
+          (/** @type {number[]} */ ids) => new Map(ids.map(id => [{ id }, 1])),
+        ]) {
+          steps = 0;
+          expect(
+            thrownBy(() => expect(inOrder([0, 1, 2])).toMatchObject(throwingAt("return()", inOrder([0, 2, 1])))),
+          ).toBe(boom);
+          expect({ log, steps }).toEqual({ log: ["return()"], steps: 2 });
+          log.length = 0;
+        }
+        // So does the error of an entry that is no pair of a key and a value, and of an entry whose value throws. Their walks are closed.
+        const serves = (/** @type {unknown} */ entry) =>
+          serving(new Map([["k", 1]]), {
+            [Symbol.iterator]: () => ({
+              next: () => ({ done: false, value: entry }),
+              return: () => (log.push("return()"), {}),
+            }),
+          });
+        const valueThrows = (/** @type {unknown} */ key) => ({
+          0: key,
+          get 1() {
+            throw boom;
+          },
+        });
+        expect(thrownBy(() => expect(serves(null)).toMatchObject(new Map([["k", 1]])))).toBeInstanceOf(TypeError);
+        expect(thrownBy(() => expect(serves(valueThrows("k"))).toMatchObject(new Map([["k", 1]])))).toBe(boom);
+        expect(thrownBy(() => expect(new Map([[{}, 1]])).toMatchObject(serves(valueThrows({}))))).toBe(boom);
+        expect(log).toEqual(["return()", "return()", "return()"]);
+        // The value of a received entry is read in front of `get` of the expected Map, so `get` is not asked if that value throws.
+        /** @type {string[]} */
+        const asked = [];
+        expect(
+          thrownBy(() => expect(serves(valueThrows("k"))).toMatchObject(handingOn(new Map([["k", 1]]), asked))),
+        ).toBe(boom);
+        expect(asked).toEqual(["@@iterator", "size", "has"]);
+      });
+
+      test("a member that a Proxy serves stays alive while the expected value is asked", () => {
+        // Each member is made for the walk, and the comparison alone holds it. `has` collects garbage.
+        let collections = 0;
+        const fresh = (/** @type {object} */ target, /** @type {number} */ count) =>
+          new Proxy(target, {
+            get(target, key) {
+              if (key === "size") return count;
+              if (key === "has") return () => (Bun.gc(true), collections++, false);
+              if (key === Symbol.iterator) {
+                return function* () {
+                  for (let id = 0; id < count; id++) {
+                    const member = { id, name: `member ${id}` };
+                    yield target instanceof Map ? [member, { of: member.name }] : member;
+                  }
+                };
+              }
+              return Reflect.get(target, key, target);
+            },
+          });
+        expect(fresh(new Set(), 3)).toMatchObject(fresh(new Set(), 3));
+        expect(fresh(new Map(), 3)).toMatchObject(fresh(new Map(), 3));
+        expect(collections).toBe(6);
+      });
+
+      test("an expected Proxy whose `has` or `get` is no function", () => {
+        for (const [method, received, expected] of /** @type {const} */ ([
+          ["has", new Set([1]), serving(new Set([1]), { has: undefined })],
+          ["has", new Map([["k", 1]]), serving(new Map([["k", 1]]), { has: 1 })],
+          ["get", new Map([["k", 1]]), serving(new Map([["k", 1]]), { get: undefined })],
+        ])) {
+          const error = thrownBy(() => expect(received).toMatchObject(expected));
+          expect(error).toBeInstanceOf(TypeError);
+          expect(/** @type {Error} */ (error).message).toBe(`${method} is not a function`);
+        }
+        // The received value is asked for neither.
+        expect(serving(new Set([1]), { has: undefined })).toMatchObject(new Set([1]));
+        expect(serving(new Map([["k", 1]]), { has: undefined, get: undefined })).toMatchObject(new Map([["k", 1]]));
+      });
+
+      test("where toMatchObject() of a Proxy around a Set or a Map is not that of Jest 30.5.2 and Vitest 4.1.12", () => {
+        class Tags extends Set {}
+        /** @returns {object} */
+        const servingASet = (/** @type {number[]} */ members) =>
+          new Proxy(
+            {},
+            {
+              get(target, key) {
+                const set = new Set(members);
+                const value = Reflect.get(set, key, set);
+                return typeof value === "function" && key !== "constructor" ? value.bind(set) : value;
+              },
+            },
+          );
+        const unsized = (/** @type {number[]} */ members) => serving(new Set(members), { size: undefined });
+        // Each row: an assertion, what it does here, and what it does in the references (Jest 30.5.2 and Vitest 4.1.12).
+        /** @type {[() => void, "pass" | "fail", "pass" | "fail"][]} */
+        const rows = [
+          // The class of a Set or a Map is not compared, with a Proxy or without one. The references compare `constructor`.
+          [() => expect(new Tags([1])).toMatchObject(new Set([1])), "pass", "fail"],
+          [() => expect(reactive(new Tags([1]))).toMatchObject(new Set([1])), "pass", "fail"],
+          [() => expect(new Set([1])).toMatchObject(reactive(new Tags([1]))), "pass", "fail"],
+          [() => expect(serving(new Set([1]), { constructor: undefined })).toMatchObject(new Set([1])), "pass", "fail"],
+          // The references compare the members in order if the received value serves no `size`.
+          [() => expect(unsized([1])).toMatchObject(new Set([1])), "fail", "pass"],
+          [() => expect(unsized([1, 2])).toMatchObject(unsized([2, 1])), "pass", "fail"],
+          [() => expect(unsized([1])).toMatchObject(unsized([1, 2])), "pass", "fail"],
+          // So they do if the received value does not say that it is a Set.
+          [
+            () => expect(serving(new Set([1, 2]), { [Symbol.toStringTag]: undefined })).toMatchObject(new Set([2, 1])),
+            "pass",
+            "fail",
+          ],
+          // What a Proxy stands for is what its target is. The references take what it serves.
+          [() => expect(servingASet([1])).toMatchObject(new Set([1])), "fail", "pass"],
+          [() => expect(new Set([1])).toMatchObject(servingASet([2])), "pass", "fail"],
+        ];
+        for (const [row, bun, references] of rows) {
+          expect(thrownBy(row) === undefined ? "pass" : "fail").toBe(bun);
+          expect(bun).not.toBe(references);
+        }
+      });
+
+      // A missing check aborts a debug build under BUN_JSC_validateExceptionChecks=1 (a no-op on release builds).
+      test("toMatchObject() checks for an exception behind each call into a Proxy around a Set or a Map", async () => {
+        const { bunEnv, bunExe } = require("harness");
+        const src = `
+          const { expect } = require("bun:test");
+          const attempt = fn => { try { fn(); } catch {} };
+          const boom = new Error("boom");
+          const throwingAt = (step, target) => new Proxy(target, {
+            get(target, key) {
+              if (key === step) throw boom;
+              if (key === Symbol.iterator) return () => {
+                if (step === "@@iterator()") throw boom;
+                const iterator = target[Symbol.iterator]();
+                return {
+                  next: () => {
+                    if (step === "next()") throw boom;
+                    const result = iterator.next();
+                    if (result.done || !(target instanceof Map)) return result;
+                    const [key, value] = result.value;
+                    return { done: false, value: { get 0() { if (step === "[0]") throw boom; return key; }, get 1() { if (step === "[1]") throw boom; return value; } } };
+                  },
+                  return: () => { if (step === "return()") throw boom; return {}; },
+                };
+              };
+              const value = Reflect.get(target, key, target);
+              if (typeof value !== "function" || key === "constructor") return value;
+              return (...args) => { if (step === String(key) + "()") throw boom; return value.apply(target, args); };
+            },
+          });
+          const serving = (target, instead) => new Proxy(target, {
+            get(target, key) {
+              const value = Object.hasOwn(instead, key) ? instead[key] : Reflect.get(target, key, target);
+              return typeof value === "function" && key !== "constructor" ? value.bind(target) : value;
+            },
+          });
+          const steps = [undefined, Symbol.iterator, "size", "has", "get", "@@iterator()", "next()", "[0]", "[1]", "has()", "get()", "return()"];
+          const pairs = [
+            [() => new Set([{ a: 1 }, { b: 2 }]), () => new Set([{ a: 1 }, { b: 2 }])],
+            [() => new Set([{ a: 1 }, { b: 2 }]), () => new Set([{ b: 2 }, { a: 1 }])],
+            [() => new Set([{ a: 1 }, { b: 2 }]), () => new Set([{ c: 3 }, { d: 4 }])],
+            [() => new Map([[{ a: 1 }, 1], [{ b: 2 }, 2]]), () => new Map([[{ a: 1 }, 1], [{ b: 2 }, 2]])],
+            [() => new Map([[{ a: 1 }, 1], [{ b: 2 }, 2]]), () => new Map([[{ b: 2 }, 2], [{ a: 1 }, 1]])],
+            [() => new Map([["k", { a: 1 }], ["j", 2]]), () => new Map([["k", { a: 1 }], ["j", 2]])],
+            [() => new Map([["k", 1], ["j", 2]]), () => new Map([["k", 2], ["j", 1]])],
+            [() => new Set([1]), () => new Map([[1, 1]])],
+            [() => new Set([1]), () => ({})],
+            [() => ({}), () => new Set([1])],
+          ];
+          for (const [received, expected] of pairs) {
+            for (const step of steps) {
+              attempt(() => expect(throwingAt(step, received())).toMatchObject(expected()));
+              attempt(() => expect(received()).toMatchObject(throwingAt(step, expected())));
+              attempt(() => expect(throwingAt(step, received())).toMatchObject(throwingAt(step, expected())));
+              attempt(() => expect(throwingAt(step, received())).not.toMatchObject(throwingAt(undefined, expected())));
+              attempt(() => Bun.deepMatch(throwingAt(step, expected()), throwingAt(undefined, received())));
+            }
+          }
+          for (const size of [undefined, "1", 1n, NaN, 2]) {
+            attempt(() => expect(serving(new Set([1]), { size })).toMatchObject(serving(new Set([1]), { size })));
+          }
+          for (const iterator of [undefined, null, 0, "", 1, {}]) {
+            attempt(() => expect(serving(new Set([1]), { [Symbol.iterator]: iterator })).toMatchObject(new Set([1])));
+            attempt(() => expect(new Set([{}])).toMatchObject(serving(new Set([{}]), { [Symbol.iterator]: iterator })));
+            attempt(() => expect(serving(new Set([1]), { [Symbol.iterator]: iterator })).toMatchObject(serving(new Set([1]), {})));
+          }
+          for (const method of ["has", "get"]) {
+            attempt(() => expect(new Map([["k", 1]])).toMatchObject(serving(new Map([["k", 1]]), { [method]: undefined })));
+          }
+          attempt(() => expect(new Proxy(new Set([1]), {})).toMatchObject(new Set([1])));
+          attempt(() => expect(new Set([1])).toMatchObject(new Proxy(new Set([1]), {})));
+          const revoked = Proxy.revocable(new Set([1]), {});
+          revoked.revoke();
+          attempt(() => expect(revoked.proxy).toMatchObject(new Set([1])));
+          attempt(() => expect(new Set([1])).toMatchObject(revoked.proxy));
+          attempt(() => expect(revoked.proxy).toMatchObject(throwingAt(undefined, new Set([1]))));
+          console.log("ok");
+        `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", src],
+          env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toMatchObject({
+          stdout: "ok\n",
+          exitCode: 0,
+          signalCode: null,
+        });
       });
 
       test("members of a Set or a Map that follow each other in the same order take one try each", () => {
@@ -5890,6 +6526,26 @@ describe("expect()", () => {
         tried.mockClear();
         expect({ m: new Map([0, 1, 2].map(id => [{ id }, 1])) }).toMatchObject({
           m: new Map([1, 0, 2].map(id => [counted(id), 1])),
+        });
+        expect(tried.mock.calls).toEqual(pairs);
+        tried.mockClear();
+
+        // The same tries when a Proxy serves the received members or the expected ones.
+        expect({ s: handingOn(new Set(ids.map(id => ({ id })))) }).toMatchObject({ s: new Set(ids.map(counted)) });
+        expect(tried).toHaveBeenCalledTimes(ids.length);
+        tried.mockClear();
+        expect({ m: new Map(ids.map(id => [{ id }, 1])) }).toMatchObject({
+          m: handingOn(new Map(ids.map(id => [counted(id), 1]))),
+        });
+        expect(tried).toHaveBeenCalledTimes(ids.length);
+        tried.mockClear();
+        expect({ s: handingOn(new Set([0, 1, 2].map(id => ({ id })))) }).toMatchObject({
+          s: handingOn(new Set([1, 0, 2].map(counted))),
+        });
+        expect(tried.mock.calls).toEqual(pairs);
+        tried.mockClear();
+        expect({ m: handingOn(new Map([0, 1, 2].map(id => [{ id }, 1]))) }).toMatchObject({
+          m: handingOn(new Map([1, 0, 2].map(id => [counted(id), 1]))),
         });
         expect(tried.mock.calls).toEqual(pairs);
         tried.mockClear();

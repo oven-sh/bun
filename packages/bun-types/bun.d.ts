@@ -2941,6 +2941,9 @@ declare module "bun" {
    * An `Error` in the subset matches an `Error` with the same message.
    * A `Set` or a `Map` in the subset matches one of the same size whose
    * members match.
+   * A `Proxy` around a `Set` or a `Map` is read through the `Proxy`, on
+   * either side: its `size` and the members that its iterator gives, and
+   * `has` and `get` of one in the subset.
    *
    * This also powers expect().toMatchObject in `bun:test`
    */

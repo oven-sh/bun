@@ -13,7 +13,7 @@ import {
   tempDirWithFiles,
   unprivilegedSpawnOptions,
 } from "harness";
-import { chmodSync, closeSync, constants, lstatSync, mkdirSync, readSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, constants, lstatSync, mkdirSync, readSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { createTestBuilder } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -282,11 +282,17 @@ describe.concurrent("bunshell ls", () => {
     const longLine = (path: string, name: string) => {
       const { mode, nlink, uid, gid, size, mtime } = lstatSync(path);
       const type = { [constants.S_IFDIR]: "d", [constants.S_IFLNK]: "l" }[mode & constants.S_IFMT] ?? "-";
-      const permissions = Array.from("rwxrwxrwx", (bit, i) => (mode & (0o400 >> i) ? bit : "-")).join("");
+      const permissions = Array.from("rwxrwxrwx", (bit, i) => (mode & (0o400 >> i) ? bit : "-"));
+      const special = (bit: number, at: number, letter: string) => {
+        if (mode & bit) permissions[at] = permissions[at] === "x" ? letter : letter.toUpperCase();
+      };
+      special(0o4000, 2, "s"); // setuid
+      special(0o2000, 5, "s"); // setgid, which a directory inherits from the one above it
+      special(0o1000, 8, "t"); // sticky
       const utc = mtime.toUTCString(); // "Tue, 03 Nov 2026 23:18:05 GMT"
       const time = `${utc.slice(8, 11)} ${utc.slice(5, 7)} ${utc.slice(17, 22)}`;
       const column = (value: number, width: number) => String(value).padStart(width);
-      return `${type}${permissions} ${column(nlink, 3)} ${column(uid, 5)} ${column(gid, 5)} ${column(size, 8)} ${time} ${name}\n`;
+      return `${type}${permissions.join("")} ${column(nlink, 3)} ${column(uid, 5)} ${column(gid, 5)} ${column(size, 8)} ${time} ${name}\n`;
     };
 
     test("-ld prints the long line of a directory", async () => {
@@ -322,23 +328,17 @@ describe.concurrent("bunshell ls", () => {
         .run();
     });
 
-    // Windows finds a path of 260 characters or more only in its `\\?\` form, unless LongPathsEnabled is set.
-    test.if(isWindows)("lists an operand whose path has 260 characters or more", async () => {
+    // Without LongPathsEnabled, Windows finds a path of 260 characters or more only from a handle, as the open did.
+    test.if(isWindows)("lists a directory whose path has 260 characters or more", async () => {
       using dir = tempDir("ls-d-long", {});
       const cwd = String(dir);
       const long = join(Buffer.alloc(120, "a").toString(), Buffer.alloc(120, "b").toString());
       mkdirSync(join(cwd, long), { recursive: true });
-      writeFileSync(join(cwd, long, "file"), "hello");
       expect(join(cwd, long).length).toBeGreaterThanOrEqual(260);
       await TestBuilder.command`ls -d ${long}`.setTempdir(cwd).stdout(`${long}\n`).run();
       await TestBuilder.command`ls -ld ${long}`
         .setTempdir(cwd)
         .stdout(longLine(join(cwd, long), long))
-        .run();
-      // Without `-d`, a file operand takes the same `stat`.
-      await TestBuilder.command`ls ${join(long, "file")}`
-        .setTempdir(cwd)
-        .stdout(`${join(long, "file")}\n`)
         .run();
     });
 

@@ -504,11 +504,21 @@ impl ShellLsTask {
 
     /// POSIX `-d`: a symlink operand is itself unless `-H` or `-L` is set.
     fn stat_as_entry(&self, path: &ZStr) -> bun_sys::Result<bun_sys::Stat> {
-        if self.opts.dereference {
+        let by_path = if self.opts.dereference {
             shell_statat(self.cwd, path)
         } else {
             shell_lstatat(self.cwd, path)
+        };
+        // The joined path of that stat needs a DOS name for the cwd and stops at 260 characters.
+        #[cfg(windows)]
+        if by_path.is_err() {
+            if let Ok(fd) = shell_openat(self.cwd, path, O::RDONLY | O::DIRECTORY, 0) {
+                let by_handle = bun_sys::fstat(fd);
+                fd.close();
+                return by_handle.or(by_path);
+            }
         }
+        by_path
     }
 
     /// coreutils operand rule: `stat`, and on ENOENT or ELOOP `lstat` so a symlink is itself.

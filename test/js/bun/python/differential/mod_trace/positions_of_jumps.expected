@@ -1,0 +1,366 @@
+status: 0
+script: 8e8e7924efde0b3b
+---
+while a:
+    pass
+    function [(3, 3, 8, 12)]
+while a:
+    x = 1
+    function [(3, 3, 8, 9)]
+while a:
+    x += 1
+    y = x
+    function [(4, 4, 8, 9)]
+while a:
+    f(x)
+    function [(3, 3, 8, 12)]
+while a:
+    x.y = 1
+    function [(3, 3, 8, 11)]
+while a:
+    x[0] = f()
+    function [(3, 3, 8, 12)]
+while a:
+    a, b = b, a
+    function [(3, 3, 11, 12)]
+while a:
+    del x
+    function [(3, 3, 12, 13)]
+while a:
+    import os
+    function [(3, 3, 8, 17)]
+while a:
+    from os import path as p, sep
+    function [(3, 3, 8, 37)]
+while a:
+    assert x
+    function [(3, 3, 15, 16)]
+while a:
+    x: int = 1
+    function [(3, 3, 8, 9)]
+while a:
+    global g
+    g = 1
+    function [(4, 4, 8, 9)]
+while a:
+    def f(): pass
+    function [(3, 3, 8, 21)]
+while a:
+    class C: pass
+    function [(3, 3, 8, 21)]
+while a:
+    @d
+    def f(): pass
+    function [(4, 4, 8, 21)]
+while a:
+    "doc"
+    function [(3, 3, 8, 13)]
+while a:
+    x
+    function [(3, 3, 8, 9)]
+while a:
+    ...
+    function [(3, 3, 8, 11)]
+while a:
+    (yield)
+    function [(3, 3, 9, 14)]
+while a:
+    x = yield 1
+    function [(3, 3, 8, 9)]
+while a:
+    await x
+    function [(3, 3, 8, 15)]
+for i in a:
+    pass
+    function [(3, 3, 8, 12)]
+for i in a:
+    x = i
+    y = x
+    function [(4, 4, 8, 9)]
+for i in a:
+    if i:
+        x = 1
+    function [(3, 3, 11, 12), (4, 4, 12, 13)]
+for i in a:
+    if i:
+        x = 1
+    else:
+        y = 2
+    function [(4, 4, 12, 13), (6, 6, 12, 13)]
+for i in a:
+    if i:
+        x = 1
+    elif j:
+        y = 2
+    function [(4, 4, 12, 13), (5, 5, 13, 14), (6, 6, 12, 13)]
+for i in a:
+    if i:
+        continue
+    x = 2
+    function [(4, 4, 12, 20), (5, 5, 8, 9)]
+for i in a:
+    if i: continue
+    function [(3, 3, 11, 12), (3, 3, 14, 22)]
+for i in a:
+    continue
+    function [(3, 3, 8, 16)]
+for i in a:
+    try:
+        x = 1
+    finally:
+        y = 2
+    function [(6, 6, 12, 13)]
+for i in a:
+    try:
+        x = 1
+    except E:
+        y = 2
+    function [(4, 4, 12, 13), (6, 6, 12, 13)]
+for i in a:
+    try:
+        x = 1
+    except E as e:
+        y = 2
+    function [(4, 4, 12, 13), (6, 6, 12, 13)]
+for i in a:
+    try:
+        x = 1
+    except E:
+        y = 2
+    else:
+        z = 3
+    function [(6, 6, 12, 13), (8, 8, 12, 13)]
+for i in a:
+    try:
+        x = 1
+    except* E:
+        y = 2
+    function [(4, 4, 12, 13)]
+for i in a:
+    with c:
+        x = 1
+    function [(3, 3, 13, 14)]
+for i in a:
+    with c as d, e as f:
+        x = 1
+    function [(3, 3, 13, 14)]
+for i in a:
+    with c:
+        continue
+    function [(3, 3, 13, 14)]
+for i in a:
+    try:
+        continue
+    finally:
+        y = 2
+    function [(6, 6, 12, 13)]
+while a:
+    for i in b:
+        x = i
+    function [(3, 3, 17, 18), (4, 4, 12, 13)]
+while a:
+    while b:
+        x = i
+    function [(3, 3, 14, 15), (4, 4, 12, 13)]
+for i in a:
+    for j in b:
+        pass
+    else:
+        z = 1
+    function [(4, 4, 12, 16), (6, 6, 12, 13)]
+for i in a:
+    match i:
+        case 1:
+            x = 1
+        case [p, q]:
+            y = 2
+    function [(5, 5, 16, 17), (6, 6, 17, 23), (7, 7, 16, 17)]
+for i in a:
+    match i:
+        case 1:
+            x = 1
+        case _:
+            y = 2
+    function [(5, 5, 16, 17), (7, 7, 16, 17)]
+for i in a:
+    x = [j for j in i]
+    function [(3, 3, 13, 14), (3, 3, 8, 9)]
+x = [i for i in a]
+    function [(2, 2, 9, 10)]
+x = [i for i in a if i]
+    function [(2, 2, 9, 10)]
+x = [i + 1 for i in a if i if j]
+    function [(2, 2, 9, 14)]
+x = [(i, j) for i in a for j in b]
+    function [(2, 2, 9, 15)]
+x = {i for i in a if i}
+    function [(2, 2, 9, 10)]
+x = {i: j for i in a if i}
+    function [(2, 2, 9, 13)]
+x = (i for i in a if i)
+    <genexpr> [(2, 2, 9, 10)]
+x = any(i for i in a if i)
+    function [(2, 2, 8, 11)]
+    <genexpr> [(2, 2, 12, 13)]
+x = [i async for i in a]
+    function [(2, 2, 9, 10)]
+async for i in a:
+    x = i
+    function [(3, 3, 8, 9)]
+async for i in a:
+    if i:
+        x = 1
+    function [(3, 3, 11, 12), (4, 4, 12, 13)]
+for i in a:
+    async with c:
+        x = 1
+    function [(3, 3, 19, 20)]
+for i in a:
+    x = (1 if i
+         else 2)
+    function [(3, 3, 8, 9)]
+for i in a:
+    x = (i and
+         j)
+    function [(3, 3, 8, 9)]
+for i in a:
+    f(i,
+      j)
+    function [(3, 4, 8, 12)]
+for i in a:
+    if (i and
+        j):
+        x = 1
+    function [(3, 3, 12, 13), (4, 4, 12, 13), (5, 5, 12, 13)]
+for i in a:
+    return_ = 1
+    if i: break
+    function [(4, 4, 11, 12)]
+for i in a:
+    if i: break
+    else: x = 1
+    function [(4, 4, 14, 15)]
+while a and b:
+    x = 1
+    function [(3, 3, 8, 9)]
+while not a:
+    x = 1
+    function [(3, 3, 8, 9)]
+while True:
+    x = 1
+    function [(3, 3, 8, 9)]
+while 1:
+    if x: break
+    function [(3, 3, 11, 12)]
+while (a,
+       b):
+    x = 1
+    function [(4, 4, 8, 9)]
+for i in a:
+    lambda: 1
+    function [(3, 3, 8, 17)]
+for i in a:
+    x = lambda: 1
+    function [(3, 3, 8, 9)]
+for i in a:
+    print(i); y = 1
+    function [(3, 3, 18, 19)]
+for i in a: x = 1
+    function [(2, 2, 16, 17)]
+while a: x = 1; y = 2
+    function [(2, 2, 20, 21)]
+for i in a:
+    raise_ = 1
+    if i:
+        raise E
+    function [(4, 4, 11, 12)]
+for i in a:
+    if i:
+        return 1
+    function [(3, 3, 11, 12)]
+for i in a:
+    type X = int
+    function [(3, 3, 8, 20)]
+for i in a:
+    x = f"{i}"
+    function [(3, 3, 8, 9)]
+for i in a:
+    x = i[1:2]
+    function [(3, 3, 8, 9)]
+for i in a:
+    x[1:2] = i
+    function [(3, 3, 8, 14)]
+for i in a:
+    x, *y = i
+    function [(3, 3, 12, 13)]
+for i in a:
+    x = y = i
+    function [(3, 3, 12, 13)]
+for i in a:
+    x.y += 1
+    function [(3, 3, 8, 11)]
+for i in a:
+    x[i] += 1
+    function [(3, 3, 8, 12)]
+for i in a:
+    nonlocal_ = i
+    del x.y, z[0]
+    function [(4, 4, 17, 21)]
+for i in a:
+    x += i
+    function [(3, 3, 8, 9)]
+for i in a:
+    x -= (i +
+          1)
+    function [(3, 3, 8, 9)]
+for i in a:
+    global g_
+    g_ += i
+    function [(4, 4, 8, 10)]
+for i in a:
+    try:
+        if i:
+            x = 1
+    except E:
+        pass
+    function [(4, 4, 15, 16), (5, 5, 16, 17), (7, 7, 12, 16)]
+for i in a:
+    if i:
+        try:
+            if i:
+                x = 1
+        except E:
+            pass
+    else:
+        y = 1
+    z = 1
+    function [(11, 11, 8, 9)]
+--- where a signal finds a loop
+w1
+    pass
+w2
+    y = x
+    ^
+w3
+    y = [x,
+    ^
+f1
+    pass
+f2
+    if i < 0:
+       ^^^^^
+f3
+    continue
+f4
+    y.z = 2
+    ^^^
+c1
+    return [i for i in itertools.count() if i < 0]
+            ^
+--- every jump has a place
+threaded [(447, 447, 13, 14), (448, 448, 15, 20), (450, 450, 13, 14), (451, 451, 15, 20)] True
+nested [(457, 457, 7, 8), (458, 458, 11, 12), (460, 460, 13, 14), (461, 461, 18, 19), (464, 464, 21, 22), (465, 465, 19, 20), (469, 469, 15, 16), (471, 472, 8, 17)] True
+--- what a handler covers
+True True
+True True
+[]

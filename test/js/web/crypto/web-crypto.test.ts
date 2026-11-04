@@ -1670,6 +1670,7 @@ describe("exception scope discipline", () => {
         "toCryptoKey usage from toString = RESOLVED",
         "toCryptoKey usage toString throws = REJECTED Error: boom",
         "toCryptoKey usage not known = REJECTED TypeError: Value[0] 'bogus' is not a valid enum value of type KeyUsage.",
+        "toCryptoKey AES-CFB-8 = REJECTED NotSupportedError: Unrecognized algorithm name",
       ],
       uncheckedScopes: [],
       exitCode: 0,
@@ -1980,6 +1981,7 @@ describe("keyUsages", () => {
 
   // The user code that the conversion runs, in order. It does not call `return` of an iterator.
   const bogus = notUsage(keyUsagesOfGenerateKey, 0, "bogus");
+  const notSupported = { name: "NotSupportedError", code: 9, message: "Unrecognized algorithm name" };
   const orders = {
     "an iterable": {
       log: ["get Symbol.iterator", "next", "toString sign", "next", "toString verify", "next"],
@@ -1995,10 +1997,9 @@ describe("keyUsages", () => {
     // Every argument is converted before the algorithm is normalized.
     "SubtleCrypto with an algorithm and a usage that are not known": { log: ["toString bogus"], answer: bogus },
     // The algorithm is normalized before keyUsages is converted.
-    "KeyObject.toCryptoKey with an algorithm and a usage that are not known": {
-      log: [],
-      answer: { name: "NotSupportedError", code: 9, message: "Unrecognized algorithm name" },
-    },
+    "KeyObject.toCryptoKey with an algorithm and a usage that are not known": { log: [], answer: notSupported },
+    // Node.js has no AES-CFB-8. Bun has it in SubtleCrypto alone, so KeyObject.toCryptoKey does not know the name.
+    "KeyObject.toCryptoKey with AES-CFB-8 and a usage that is not known": { log: [], answer: notSupported },
   };
 
   let bun: Awaited<ReturnType<typeof report>>;

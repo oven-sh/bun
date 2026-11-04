@@ -171,6 +171,9 @@ async function orders() {
     "KeyObject.toCryptoKey with an algorithm and a usage that are not known": await run(() =>
       createSecretKey(new Uint8Array(32)).toCryptoKey({ name: "bogus" }, true, [logged("bogus")]),
     ),
+    "KeyObject.toCryptoKey with AES-CFB-8 and a usage that is not known": await run(() =>
+      createSecretKey(new Uint8Array(32)).toCryptoKey({ name: "AES-CFB-8" }, true, [logged("bogus")]),
+    ),
   };
 }
 

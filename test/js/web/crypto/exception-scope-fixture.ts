@@ -172,6 +172,7 @@ const cases: Record<string, () => Promise<unknown>> = {
   "toCryptoKey usage from toString": async () => secret.toCryptoKey(hmac, false, coerced("sign")),
   "toCryptoKey usage toString throws": async () => secret.toCryptoKey(hmac, false, throwing),
   "toCryptoKey usage not known": async () => secret.toCryptoKey(hmac, false, coerced("bogus")),
+  "toCryptoKey AES-CFB-8": async () => secret.toCryptoKey("AES-CFB-8", false, coerced("bogus")),
 };
 
 for (const [name, run] of Object.entries(cases)) {

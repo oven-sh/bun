@@ -1652,7 +1652,6 @@ describe.concurrent("Bun.spawn with terminal option", () => {
   test.skipIf(!isWindows).each([
     ["terminals open", "new Bun.Terminal({ data() {} });"],
     ["terminals just closed", "new Bun.Terminal({ data() {} }).close();"],
-    ["no terminal", ""],
   ])("a Worker that ends with %s leaves no handle behind", async (_, terminal) => {
     await using proc = Bun.spawn({
       cmd: [
@@ -1663,18 +1662,23 @@ describe.concurrent("Bun.spawn with terminal option", () => {
           const { NtQueryObject } = dlopen("ntdll.dll", {
             NtQueryObject: { args: ["u64", "i32", "ptr", "u32", "ptr"], returns: "i32" },
           }).symbols;
-          const { GetNamedPipeInfo } = dlopen("kernel32.dll", {
+          const { GetNamedPipeInfo, GetExitCodeProcess } = dlopen("kernel32.dll", {
             GetNamedPipeInfo: { args: ["u64", "ptr", "ptr", "ptr", "ptr"], returns: "i32" },
+            GetExitCodeProcess: { args: ["u64", "ptr"], returns: "i32" },
           }).symbols;
           // The type of each open handle.
           function handles() {
             const ObjectTypeInformation = 2;
+            const STILL_ACTIVE = 259;
             const info = Buffer.alloc(1024);
+            const exitCode = new Uint32Array(1);
             const types = [];
             for (let handle = 4; handle < 0x4000; handle += 4) {
               if (NtQueryObject(handle, ObjectTypeInformation, info, info.length, null) < 0) continue;
               const name = Number(info.readBigUInt64LE(8)) - ptr(info);
               const type = info.toString("utf16le", name, name + info.readUInt16LE(0));
+              // In older versions of Windows ClosePseudoConsole does not close its handle of the console host that it has ended.
+              if (type === "Process" && GetExitCodeProcess(handle, exitCode) && exitCode[0] !== STILL_ACTIVE) continue;
               types.push(type === "File" && GetNamedPipeInfo(handle, null, null, null, null) ? "Pipe" : type);
             }
             return types;

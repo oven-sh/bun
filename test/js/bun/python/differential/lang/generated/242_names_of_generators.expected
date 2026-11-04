@@ -1,0 +1,69 @@
+status: 0
+script: bcf6fe0af36fbff4
+source: 31fb483d04e1b356
+---
+plain g g g g <generator object g
+method method C.method method C.method <generator object C.method
+coroutine co C.co co C.co <coroutine object C.co
+asynchronous ag C.ag ag C.ag <async_generator object C.ag
+expression <genexpr> <genexpr> <genexpr> <genexpr> <generator object <genexpr>
+lambda <lambda> <lambda> <lambda> <lambda> <generator object <lambda>
+inner inner outer.<locals>.inner inner outer.<locals>.inner <generator object outer.<locals>.inner
+expression in a function <genexpr> outer.<locals>.<genexpr> <genexpr> outer.<locals>.<genexpr> <generator object outer.<locals>.<genexpr>
+expression in a comprehension <genexpr> outer.<locals>.<genexpr> <genexpr> outer.<locals>.<genexpr> <generator object outer.<locals>.<genexpr>
+--- the names of the function are set before the call
+made before g g g g <generator object g
+made after renamed g g g <generator object g
+both renamed Q.renamed g g <generator object Q.renamed
+made before the second change renamed Q.renamed g g <generator object Q.renamed
+made after it again again g g <generator object again
+h
+first.__name__ => h
+first.__qualname__ => h
+h().__name__ => h2
+h().__qualname__ => h
+first.__qualname__ => k
+first.__name__ => k
+k().__qualname__ => K
+k().__name__ => k
+--- the names of the generator are set
+x.__name__ => mine
+x.__qualname__ => h
+h.__name__ => h2
+x.gi_code.co_name => h
+x.__name__ => mine
+x.__qualname__ => Mine.mine
+repr(x).split(' at ')[0] => <generator object Mine.mine
+name [name='__name__', value=1] => __name__
+repr(value) [name='__name__', value=1] => 1
+e [name='__name__', value=1] => __name__ must be set to a string object
+name [name='__name__', value=None] => __name__
+repr(value) [name='__name__', value=None] => None
+e [name='__name__', value=None] => __name__ must be set to a string object
+name [name='__name__', value=b'x'] => __name__
+repr(value) [name='__name__', value=b'x'] => b'x'
+e [name='__name__', value=b'x'] => __name__ must be set to a string object
+name [name='__name__'] => __name__
+del e [name='__name__'] => __name__ must be set to a string object
+name [name='__qualname__', value=1] => __qualname__
+repr(value) [name='__qualname__', value=1] => 1
+e [name='__qualname__', value=1] => __qualname__ must be set to a string object
+name [name='__qualname__', value=None] => __qualname__
+repr(value) [name='__qualname__', value=None] => None
+e [name='__qualname__', value=None] => __qualname__ must be set to a string object
+name [name='__qualname__', value=b'x'] => __qualname__
+repr(value) [name='__qualname__', value=b'x'] => b'x'
+e [name='__qualname__', value=b'x'] => __qualname__ must be set to a string object
+name [name='__qualname__'] => __qualname__
+del e [name='__qualname__'] => __qualname__ must be set to a string object
+type(x.__name__).__name__ => S
+x.__name__ => sub
+--- other code, other functions
+made before __code__ was set a a a a <generator object a
+made after a a b b <generator object a
+FunctionType b b b b <generator object b
+FunctionType with a name given b b b <generator object b
+replace n q.n n q.n <generator object q.n
+wraps b b wrapper wrapper <generator object b
+types.coroutine old_style old_style old_style old_style <generator object old_style
+[2, 2, 3]

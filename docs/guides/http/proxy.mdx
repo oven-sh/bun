@@ -31,6 +31,8 @@ await fetch("https://example.com", {
 
 Bun always sends the target hostname to the proxy, which resolves it; `socks5://` and `socks5h://` behave the same. IP literals are sent as-is. HTTPS targets are still TLS-verified end to end—the proxy only relays bytes. Connections through a SOCKS5 proxy are not reused for later requests.
 
+Requests through a SOCKS5 proxy use HTTP/1.1. `protocol: "http2"` rejects with `HTTP2Unsupported`, as it does through an `http://` proxy.
+
 ---
 
 ## Custom proxy headers

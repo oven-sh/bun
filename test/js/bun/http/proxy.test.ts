@@ -4233,4 +4233,337 @@ describe("SOCKS5 proxy", () => {
       await fixture.close();
     }
   });
+
+  describe("a proxy that stops during the handshake", () => {
+    // Answers nothing by itself, so each test decides exactly where the handshake stops.
+    async function withRawProxy(onClient: (client: net.Socket) => void, run: (url: string) => Promise<void>) {
+      const clients = new Set<net.Socket>();
+      const server = net.createServer(client => {
+        clients.add(client);
+        client.on("error", () => {});
+        client.once("close", () => clients.delete(client));
+        onClient(client);
+      });
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      try {
+        await run(`socks5://127.0.0.1:${(server.address() as net.AddressInfo).port}`);
+      } finally {
+        for (const client of clients) client.destroy();
+        server.close();
+        await once(server, "close");
+      }
+    }
+
+    // Calls `steps[n]` for the nth frame the client sends.
+    function onFrames(client: net.Socket, steps: Array<(client: net.Socket) => void>) {
+      let frame = 0;
+      client.on("data", () => steps[frame++]?.(client));
+    }
+
+    const acceptNoAuth = (client: net.Socket) => client.write(Buffer.from([5, 0]));
+
+    test.each<[string, Array<(client: net.Socket) => void>]>([
+      ["before the method reply", [client => client.end()]],
+      ["after the method reply", [acceptNoAuth, client => client.end()]],
+      ["inside the CONNECT reply", [acceptNoAuth, client => client.end(Buffer.from([5, 0, 0]))]],
+    ])("closing %s fails the request", async (_, steps) => {
+      await withRawProxy(
+        client => onFrames(client, steps),
+        async proxy => {
+          expect(await fetchErrorName("http://127.0.0.1:1/", { proxy, keepalive: false })).toBe("ECONNRESET");
+        },
+      );
+    });
+
+    test.each<[string, number]>([
+      ["before the method reply", 0],
+      ["after the method reply", 1],
+    ])("aborting %s closes the socket and rejects", async (_, framesAnswered) => {
+      const controller = new AbortController();
+      const { promise: socketClosed, resolve: onSocketClosed } = Promise.withResolvers<void>();
+      await withRawProxy(
+        client => {
+          client.once("close", () => onSocketClosed());
+          onFrames(client, [...Array.from({ length: framesAnswered }, () => acceptNoAuth), () => controller.abort()]);
+        },
+        async proxy => {
+          await expect(
+            fetch("http://127.0.0.1:1/", { proxy, keepalive: false, signal: controller.signal }),
+          ).rejects.toMatchObject({ name: "AbortError" });
+          await socketClosed;
+        },
+      );
+    });
+
+    test("a proxy that never answers hits the idle timeout", async () => {
+      await withRawProxy(
+        () => {},
+        async proxy => {
+          await using proc = Bun.spawn({
+            cmd: [
+              bunExe(),
+              "-e",
+              `await fetch("http://127.0.0.1:1/", { proxy: ${JSON.stringify(proxy)}, keepalive: false })
+                 .catch(error => console.log(error.name));`,
+            ],
+            env: { ...bunEnv, ...proxyFreeEnv, BUN_CONFIG_HTTP_IDLE_TIMEOUT: "1" },
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(stdout.trim()).toBe("TimeoutError");
+          expect(exitCode).toBe(0);
+        },
+      );
+    });
+  });
+
+  describe("HTTPS origin", () => {
+    // A TLS origin that gets every request head and body, and answers with `respond`.
+    async function withTlsOrigin(
+      respond: (request: { head: string; body: Buffer }, port: number) => string,
+      run: (port: number) => Promise<void>,
+    ) {
+      const origin = tls.createServer(tlsCert, socket => {
+        socket.on("error", () => {});
+        let input = Buffer.alloc(0);
+        socket.on("data", chunk => {
+          input = Buffer.concat([input, chunk]);
+          const headEnd = input.indexOf("\r\n\r\n");
+          if (headEnd === -1) return;
+          const head = input.subarray(0, headEnd).toString("latin1");
+          const body = input.subarray(headEnd + 4);
+          const length = /content-length: (\d+)/i.exec(head)?.[1];
+          const chunked = /transfer-encoding: chunked/i.test(head);
+          if (length !== undefined ? body.length < Number(length) : chunked && !body.includes("0\r\n\r\n")) return;
+          socket.end(respond({ head, body }, port));
+        });
+      });
+      origin.on("tlsClientError", () => {});
+      origin.listen(0, "127.0.0.1");
+      await once(origin, "listening");
+      const port = (origin.address() as net.AddressInfo).port;
+      try {
+        await run(port);
+      } finally {
+        origin.close();
+        await once(origin, "close");
+      }
+    }
+
+    const reply = (body: string, status = "200 OK", headers = "") =>
+      `HTTP/1.1 ${status}\r\n${headers}Content-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`;
+
+    test("a POST body reaches the origin through the tunnel", async () => {
+      const payload = Buffer.alloc(256 * 1024, "socks");
+      await withTlsOrigin(
+        ({ head, body }) => reply(`${head.split(" ", 1)[0]} ${body.length} ${body.equals(payload)}`),
+        async port => {
+          const fixture = await createSocks5Fixture();
+          try {
+            const response = await fetch(`https://localhost:${port}/upload`, {
+              method: "POST",
+              body: payload,
+              proxy: fixture.proxy("socks5h"),
+              keepalive: false,
+              tls: { ca: tlsCert.cert },
+            });
+            expect(await response.text()).toBe(`POST ${payload.length} true`);
+          } finally {
+            await fixture.close();
+          }
+        },
+      );
+    });
+
+    test("a streamed POST body waits for the handshake", async () => {
+      await withTlsOrigin(
+        ({ body }) => reply(body.toString("latin1").includes("streamed through socks") ? "got it" : "lost it"),
+        async port => {
+          const fixture = await createSocks5Fixture({ fragmentResponses: true });
+          try {
+            const response = await fetch(`https://localhost:${port}/upload`, {
+              method: "POST",
+              body: new ReadableStream({
+                start(controller) {
+                  controller.enqueue(new TextEncoder().encode("streamed through socks"));
+                  controller.close();
+                },
+              }),
+              proxy: fixture.proxy("socks5h"),
+              keepalive: false,
+              tls: { ca: tlsCert.cert },
+            });
+            expect(await response.text()).toBe("got it");
+          } finally {
+            await fixture.close();
+          }
+        },
+      );
+    });
+
+    test("a redirect closes the tunnel and opens a new one", async () => {
+      await withTlsOrigin(
+        ({ head }, port) =>
+          head.startsWith("GET /start ")
+            ? reply("", "302 Found", `Location: https://localhost:${port}/final\r\n`)
+            : reply("after the redirect"),
+        async port => {
+          const fixture = await createSocks5Fixture();
+          try {
+            const response = await fetch(`https://localhost:${port}/start`, {
+              proxy: fixture.proxy("socks5h"),
+              keepalive: false,
+              tls: { ca: tlsCert.cert },
+            });
+            expect(await response.text()).toBe("after the redirect");
+            expect(fixture.connectionCount).toBe(2);
+            expect(fixture.observations[1]).toMatchObject({ atyp: 3, host: "localhost", port });
+          } finally {
+            await fixture.close();
+          }
+        },
+      );
+    });
+
+    test('protocol: "http2" rejects, as with an http:// proxy', async () => {
+      await withTlsOrigin(
+        () => reply("unreachable"),
+        async port => {
+          const fixture = await createSocks5Fixture();
+          try {
+            expect(
+              await fetchErrorName(`https://localhost:${port}/`, {
+                proxy: fixture.proxy("socks5h"),
+                protocol: "http2",
+                keepalive: false,
+                tls: { ca: tlsCert.cert },
+              }),
+            ).toBe("HTTP2Unsupported");
+          } finally {
+            await fixture.close();
+          }
+        },
+      );
+    });
+
+    test("a redirect can move from SOCKS to an HTTP proxy, which gets its own credentials", async () => {
+      await withTlsOrigin(
+        () => reply("via the http proxy"),
+        async tlsPort => {
+          using start = Bun.serve({
+            hostname: "127.0.0.1",
+            port: 0,
+            fetch: () => Response.redirect(`https://localhost:${tlsPort}/final`, 302),
+          });
+          let connectHead = "";
+          const httpProxy = net.createServer(client => {
+            client.on("error", () => {});
+            client.once("data", data => {
+              connectHead = data.toString("latin1");
+              const upstream = net.connect(tlsPort, "127.0.0.1", () => {
+                client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+                client.pipe(upstream).pipe(client);
+              });
+              upstream.on("error", () => client.destroy());
+            });
+          });
+          httpProxy.listen(0, "127.0.0.1");
+          await once(httpProxy, "listening");
+          const httpProxyPort = (httpProxy.address() as net.AddressInfo).port;
+          const fixture = await createSocks5Fixture();
+          try {
+            await using proc = Bun.spawn({
+              cmd: [
+                bunExe(),
+                "-e",
+                `const response = await fetch("http://127.0.0.1:${start.port}/", { tls: { ca: ${JSON.stringify(tlsCert.cert)} } });
+                 console.log(await response.text());`,
+              ],
+              env: {
+                ...bunEnv,
+                ...proxyFreeEnv,
+                http_proxy: fixture.proxy("socks5", "socksuser:sockspass"),
+                https_proxy: `http://httpuser:httppass@127.0.0.1:${httpProxyPort}`,
+              },
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+            expect(stderr).toBe("");
+            expect(stdout.trim()).toBe("via the http proxy");
+            expect(exitCode).toBe(0);
+            expect(fixture.connectionCount).toBe(1);
+            expect(connectHead).toStartWith(`CONNECT localhost:${tlsPort} `);
+            expect(connectHead).toContain(
+              `Proxy-Authorization: Basic ${Buffer.from("httpuser:httppass").toString("base64")}`,
+            );
+          } finally {
+            await fixture.close();
+            httpProxy.close();
+          }
+        },
+      );
+    });
+  });
+
+  test.each<[string, boolean]>([
+    ["a redirect leaves SOCKS for a NO_PROXY host", true],
+    ["a redirect enters SOCKS from a NO_PROXY host", false],
+  ])("%s", async (_, leavesSocks) => {
+    using destination = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("arrived") });
+    const destinationHost = leavesSocks ? "localhost" : "127.0.0.1";
+    using start = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () => Response.redirect(`http://${destinationHost}:${destination.port}/final`, 302),
+    });
+    const startHost = leavesSocks ? "127.0.0.1" : "localhost";
+    const fixture = await createSocks5Fixture();
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `console.log(await (await fetch("http://${startHost}:${start.port}/")).text());`],
+        env: { ...bunEnv, ...proxyFreeEnv, http_proxy: fixture.proxy(), NO_PROXY: "localhost" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("arrived");
+      expect(exitCode).toBe(0);
+      expect(fixture.connectionCount).toBe(1);
+      expect(fixture.observations[0]).toMatchObject({
+        host: "127.0.0.1",
+        port: leavesSocks ? start.port : destination.port,
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("proxy credentials and proxy headers stay out of the origin request", async () => {
+    using origin = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("ok") });
+    const fixture = await createSocks5Fixture({ credentials: { username: "socksuser", password: "sockspass" } });
+    try {
+      const response = await fetch(`http://127.0.0.1:${origin.port}/`, {
+        proxy: {
+          url: fixture.proxy("socks5", "socksuser:sockspass"),
+          headers: { "Proxy-Authorization": "Basic not-for-the-origin", "X-Proxy-Secret": "not-for-the-origin" },
+        },
+        keepalive: false,
+      });
+      expect(await response.text()).toBe("ok");
+      expect(fixture.authAttempts).toEqual([{ username: "socksuser", password: "sockspass" }]);
+      const request = fixture.requestBytes().toString("latin1");
+      expect(request).toStartWith("GET / HTTP/1.1");
+      expect(request.toLowerCase()).not.toContain("proxy-authorization");
+      expect(request).not.toContain("not-for-the-origin");
+      expect(request).not.toContain("sockspass");
+      expect(request).not.toContain(Buffer.from("socksuser:sockspass").toString("base64"));
+    } finally {
+      await fixture.close();
+    }
+  });
 });

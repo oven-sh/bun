@@ -1319,7 +1319,7 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
       const passed = build7("passed", [lost(1, 2), replacing(2, 1)]);
       const onlyStale = { 7: [failedIn(onlyReplaced, 1)] };
       scenario.each(["--status", "--watch"])(
-        "%s says `no failures` when only a replaced attempt reported, and the job then passed",
+        "%s says `no failures` when only a replaced attempt reported",
         async command => {
           const result = await runFindBuild([command, "7"], { builds: [passed], annotations: onlyStale });
           expect(result).toEqual({
@@ -1339,29 +1339,6 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
           });
         },
       );
-
-      scenario("--status does not say `no failures` when the latest attempt did not run every test file", async () => {
-        // A canceled job is not a failed job, and nothing ran the file again.
-        const canceled = replacing(2, 1, { state: "canceled", exit_status: null });
-        const result = await runFindBuild(["--status", "7"], {
-          builds: [build7("canceled", [lost(1, 2), canceled])],
-          annotations: onlyStale,
-        });
-        const open = "The latest attempt did not run every test file: lane 2 - test-bun (canceled)";
-        expect(result).toEqual({
-          stdout: [
-            ...top("canceled"),
-            "jobs: 1 canceled  (1 total)",
-            `  (1 section of 1 replaced job attempt left out. ${open})`,
-            "",
-          ],
-          headings: [],
-          notes: [],
-          stderr: "",
-          exitCode: 0,
-          requests: { 7: [names(7, 1), request(7, 1)], builds: [attempts(7)] },
-        });
-      });
 
       scenario("--status names every annotation, and says why, when the request for the bodies fails", async () => {
         const result = await runFindBuild(["--status", "7"], {

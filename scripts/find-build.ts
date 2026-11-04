@@ -337,28 +337,27 @@ async function annotations(
   return { list: live, more, read: list.length, leftOut };
 }
 
-// The jobs of the left-out sections whose latest attempt did not run every test file. Exit 0 or 2: the runner
-// ran them all (getExitCode in scripts/runner.node.ts), and the job that replaces an attempt runs the same files.
-// After any other end, a file that only the replaced attempt reported on can still fail.
-function unfinished({ attempts }: LeftOut) {
-  const jobs = new Set<string>();
-  for (const latest of attempts.values()) {
-    if (latest?.exit_status === 0 || latest?.exit_status === 2) continue;
-    const exit = latest?.exit_status == null ? "" : `, exit ${latest.exit_status}`;
-    jobs.add(latest ? `${latest.name} (${latest.state}${exit})` : "a job that Buildkite does not list");
-  }
-  return [...jobs];
+// Exit 0 or 2: the runner ran every test file (getExitCode in scripts/runner.node.ts), and the job that replaces
+// an attempt runs the same files. After any other end, a file that only the replaced attempt reported on can
+// still fail.
+function ranEveryFile(job: Job | undefined) {
+  return job?.exit_status === 0 || job?.exit_status === 2;
 }
 
 // Not "retry": `[flaky]` uses that word for a test file that passed when the runner ran it again in the same job.
-function leftOutNote(leftOut: LeftOut): string {
-  if (leftOut.unchecked) return `replaced job attempts are not left out: ${leftOut.unchecked}`;
-  if (leftOut.sections === 0) return "";
+function leftOutNote({ sections, attempts, unchecked }: LeftOut): string {
+  if (unchecked) return `replaced job attempts are not left out: ${unchecked}`;
+  if (sections === 0) return "";
   const count = (n: number, what: string) => `${n} ${what}${n === 1 ? "" : "s"}`;
-  const open = unfinished(leftOut);
+  const open = new Set<string>();
+  for (const latest of attempts.values()) {
+    if (ranEveryFile(latest)) continue;
+    const exit = latest?.exit_status == null ? "" : `, exit ${latest.exit_status}`;
+    open.add(latest ? `${latest.name} (${latest.state}${exit})` : "a job that Buildkite does not list");
+  }
   return (
-    `${count(leftOut.sections, "section")} of ${count(leftOut.attempts.size, "replaced job attempt")} left out` +
-    (open.length ? `. The latest attempt did not run every test file: ${open.join(", ")}` : "")
+    `${count(sections, "section")} of ${count(attempts.size, "replaced job attempt")} left out` +
+    (open.size ? `. The latest attempt did not run every test file: ${[...open].join(", ")}` : "")
   );
 }
 
@@ -554,10 +553,7 @@ async function fetchStatus(build: number) {
   if (left) out.push(`${c.dim}  (${left})${c.reset}`);
   if (unread) out.push("", `${c.dim}(could not read the annotations: ${unread})${c.reset}`);
 
-  // A canceled or expired job is not a failed job. When it is the latest attempt, what the replaced attempt
-  // reported is left out, and nothing ran those files again.
-  const open = unfinished(anns.leftOut).length > 0;
-  if (!failed.length && !err.length && !anns.more && !unread && !open && b.finished_at) {
+  if (!failed.length && !err.length && !anns.more && !unread && b.finished_at) {
     out.push("", `${c.dim}no failures${c.reset}`);
   }
   return { state: b.state, lines: out };

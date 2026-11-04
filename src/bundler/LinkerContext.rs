@@ -521,30 +521,34 @@ impl<'a> LinkerContext<'a> {
 
     /// An unwrapped `KEEP_TOP_LEVEL_IN_WRAPPER` file prints inside a closure that calls itself where the file
     /// runs, so its top-level names stay out of the scope that the files of `chunk` share.
-    #[inline]
+    /// Cold: a caller on a hot path tests the flag first.
+    #[cold]
     pub(crate) fn script_takes_own_closure(
         &self,
         chunk: &Chunk,
         source_index: crate::IndexInt,
     ) -> bool {
-        self.graph.ast.items_flags()[source_index as usize]
-            .contains(AstFlags::KEEP_TOP_LEVEL_IN_WRAPPER)
-            && self.pinned_script_takes_own_closure(chunk, source_index)
-    }
-
-    #[cold]
-    fn pinned_script_takes_own_closure(
-        &self,
-        chunk: &Chunk,
-        source_index: crate::IndexInt,
-    ) -> bool {
         let flags = self.graph.meta.items_flags()[source_index as usize];
-        // An `await init_dep()` of the file has to stay at the top level. With no other code in the chunk
-        // the file prints flat; the runtime counts, because its helpers read globals by name.
-        if flags.wrap != WrapKind::None
+        // An `await init_dep()` of the file has to stay at the top level.
+        if !self.graph.ast.items_flags()[source_index as usize]
+            .contains(AstFlags::KEEP_TOP_LEVEL_IN_WRAPPER)
+            || flags.wrap != WrapKind::None
             || flags.is_async_or_has_async_dependency
-            || chunk.files_with_parts_in_chunk.count() < 2
         {
+            return false;
+        }
+        // With no code of another file in the chunk, the file prints flat. The runtime has no `with` and
+        // no direct eval: it is code of another file only when it reads a name that the file pins.
+        let files = &chunk.files_with_parts_in_chunk;
+        let has_runtime = files.contains(&Index::RUNTIME.value());
+        if files.count() <= 1 + usize::from(has_runtime)
+            && !(has_runtime && self.runtime_reads_pinned_name_of(source_index))
+        {
+            return false;
+        }
+        // Footer text prints in the scope of the chunk and can read a name of the file. A `var exports`
+        // of the file is the `exports` of the output file: in a closure it is a new binding.
+        if !self.options.footer.is_empty() || self.declares_commonjs_wrapper_name(source_index) {
             return false;
         }
         // The `<script src>` files of a page stay flat: classic scripts share one scope.
@@ -556,6 +560,54 @@ impl<'a> LinkerContext<'a> {
                     record.source_index.is_valid() && record.source_index.get() == source_index
                 })
         })
+    }
+
+    /// A live part of the file declares a name that the CommonJS wrapper of the output file binds. The part of the
+    /// namespace object does not count: it declares the object that stands for `exports` in an ES module.
+    fn declares_commonjs_wrapper_name(&self, source_index: crate::IndexInt) -> bool {
+        const WRAPPER_NAMES: [&[u8]; 5] = [
+            b"exports",
+            b"require",
+            b"module",
+            b"__filename",
+            b"__dirname",
+        ];
+        let names = &self.graph.ast.items_module_scope()[source_index as usize].members;
+        let parts = self.graph.ast.items_parts()[source_index as usize].as_slice();
+        let parts_live = &self.graph.parts_live[source_index as usize];
+        WRAPPER_NAMES.iter().any(|name| {
+            names.get(name).is_some_and(|member| {
+                parts.iter().enumerate().any(|(part_index, part)| {
+                    part_index != bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize
+                        && parts_live.is_set(part_index)
+                        && part
+                            .declared_symbols
+                            .refs()
+                            .iter()
+                            .any(|declared| declared.eql(member.ref_))
+                })
+            })
+        })
+    }
+
+    /// A global that a helper of the runtime reads (`Object`, `Symbol`) is a pinned top-level name of the file.
+    fn runtime_reads_pinned_name_of(&self, source_index: crate::IndexInt) -> bool {
+        let module_scopes = self.graph.ast.items_module_scope();
+        let runtime_names = &module_scopes[Index::RUNTIME.get() as usize].members;
+        let symbols = &self.graph.symbols;
+        let is_global = |member: &bun_ast::scope::Member| {
+            symbols
+                .get_const(member.ref_)
+                .is_some_and(|symbol| symbol.kind == bun_ast::symbol::Kind::Unbound)
+        };
+        module_scopes[source_index as usize]
+            .members
+            .iter()
+            .any(|(name, member)| {
+                symbols.get_const(member.ref_).is_some_and(|symbol| {
+                    symbol.must_not_be_renamed() && symbol.kind != bun_ast::symbol::Kind::Unbound
+                }) && runtime_names.get(name).is_some_and(is_global)
+            })
     }
 
     /// `bundle` is taken as a raw `*mut` because the caller invokes this as

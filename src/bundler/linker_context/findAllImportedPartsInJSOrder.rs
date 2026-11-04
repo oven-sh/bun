@@ -2,6 +2,7 @@ use crate::mal_prelude::*;
 use bun_ast::{ImportKind, ImportRecord, StmtData, StmtOrExpr};
 use bun_collections::{AutoBitSet, HashMap, StringHashMap, VecExt};
 
+use crate::bundled_ast::Flags as AstFlags;
 use crate::linker_context::merge_small_chunks::part_has_no_side_effects;
 use crate::options::Loader;
 use crate::{Chunk, EntryPoint, Index, IndexInt, LinkerContext, PartRange, chunk, js_meta::Wrap};
@@ -163,8 +164,11 @@ pub(crate) fn find_imported_parts_in_js_order(
         namespace_objects,
         ..
     } = layout;
+    let ast_flags = this.graph.ast.items_flags();
     for &source_index in &files {
-        if this.script_takes_own_closure(chunk, source_index) {
+        if ast_flags[source_index as usize].contains(AstFlags::KEEP_TOP_LEVEL_IN_WRAPPER)
+            && this.script_takes_own_closure(chunk, source_index)
+        {
             join_part_ranges(&mut part_ranges, source_index);
         }
     }

@@ -4932,19 +4932,37 @@ console.log("a", read({}), read({ x: "o.x" }));
     target: "node",
     run: { file: "/out/a.js", stdout: "a before A\nf runs\na after A string" },
   });
-  // The helpers of the runtime read globals by name, so the runtime is code of another file.
+  // The helpers of the runtime read globals by name (`Symbol`, `Object`). The
+  // runtime has no `with` and no direct eval, so it is code of another file
+  // only for a script that pins one of those names.
   itBundled("edgecase/WithPinnedNameThatTheRuntimeReads", {
     files: {
       "/entry.js": /* js */ `
-        var Object = { marker: "mine" };
-        function read(o) { with (o) { return Object; } }
-        console.log("entry", read({}).marker);
-        import("./dep.cjs").then(dep => console.log("dep", dep.default.value));
+        var Symbol = { marker: "mine" };
+        function read(o) { with (o) { return Symbol; } }
+        var log = [];
+        { using resource = { [globalThis.Symbol.dispose]() { log.push("disposed"); } }; log.push("used"); }
+        console.log("entry", read({}).marker, log.join());
       `,
-      "/dep.cjs": /* js */ `module.exports = { value: 1 };`,
     },
     format: "cjs",
-    run: { stdout: "entry mine\ndep 1" },
+    run: { stdout: "entry mine used,disposed" },
+  });
+  itBundled("edgecase/WithPinnedNameOfOnlyFileNextToTheRuntime", {
+    files: {
+      "/entry.js": /* js */ `
+        var x = "E";
+        function read(o) { with (o) { return x; } }
+        var log = [];
+        { using resource = { [Symbol.dispose]() { log.push("disposed"); } }; log.push("used"); }
+        console.log("entry", read({}), log.join());
+      `,
+    },
+    format: "cjs",
+    run: { stdout: "entry E used,disposed" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain(`\nvar x = "E";\n`);
+    },
   });
   // In esm output the `import` statement of an external module stays at the top level.
   itBundled("edgecase/WithPinnedNameOfScriptWithExternalImport", {
@@ -4994,23 +5012,83 @@ console.log("a", read({}), read({ x: "o.x" }));
       expect(api.readFile("/out.js")).toMatch(/^await init_jsx_dev_runtime\(\);\nvar x = "V";$/m);
     },
   });
-  // A direct eval pins every top-level name of a CommonJS file.
-  itBundled("edgecase/EvalPinnedNameOfEntryPointThatRequires", {
+  // A direct eval pins every top-level name of a CommonJS file. As the entry
+  // point of a cjs bundle the file has no wrapper, so a file that it loads read
+  // those names. Bun 1.3.13 printed the expected lines for these inputs.
+  for (const [suffix, options] of [
+    ["", {}],
+    ["TargetBun", { target: "bun" }],
+    ["Bytecode", { target: "bun", bytecode: true }],
+  ] as const) {
+    itBundled(`edgecase/EvalPinnedNameOfEntryPointThatRequires${suffix}`, {
+      files: {
+        "/entry.js": /* js */ `
+          var secret = "S";
+          const dep = require("./dep.js");
+          console.log("entry", eval("secret"), dep.seen);
+          eval("var late = 1");
+          console.log("late", dep.late());
+        `,
+        "/dep.js": /* js */ `
+          exports.seen = typeof secret;
+          exports.late = () => typeof late;
+        `,
+      },
+      format: "cjs",
+      ...options,
+      run: { stdout: "entry S undefined\nlate undefined" },
+    });
+  }
+  itBundled("edgecase/EvalPinnedNameOfEntryPointThatShadowsAGlobal", {
     files: {
       "/entry.js": /* js */ `
-        var secret = "S";
+        const crypto = require("crypto");
         const dep = require("./dep.js");
-        console.log("entry", eval("secret"), dep.seen);
-        eval("var late = 1");
-        console.log("late", dep.late());
+        console.log("entry", typeof crypto.createHash, eval("1 + 1"), dep.kind());
       `,
       "/dep.js": /* js */ `
-        exports.seen = typeof secret;
-        exports.late = () => typeof late;
+        exports.kind = () => (crypto === globalThis.crypto) + " " + typeof crypto.createHash;
       `,
     },
     format: "cjs",
-    run: { stdout: "entry S undefined\nlate undefined" },
+    target: "node",
+    run: { stdout: "entry function 2 true undefined" },
+  });
+  // A closure would break these two builds, so the entry point prints flat and
+  // the output is what it was. A `var exports` is the `exports` of the output
+  // file: in a closure it is a new binding. Footer text prints in the scope of
+  // the chunk and reads a name of the entry point.
+  itBundled("edgecase/EvalPinnedNameOfEntryPointThatDeclaresExports", {
+    files: {
+      "/entry.js": /* js */ `
+        var exports = exports || {};
+        var helper = require("./dep.js");
+        exports.run = function (source) { return eval(source); };
+        exports.value = helper.value;
+      `,
+      "/dep.js": /* js */ `exports.value = 1;`,
+    },
+    runtimeFiles: {
+      "/check.js": /* js */ `const m = require("./out.js"); console.log(Object.keys(m).join(), m.run("helper.value"));`,
+    },
+    format: "cjs",
+    run: { file: "/check.js", stdout: "run,value 1" },
+  });
+  itBundled("edgecase/EvalPinnedNameOfEntryPointWithFooter", {
+    files: {
+      "/entry.js": /* js */ `
+        var Library = { value: eval("1 + 1") };
+        var dep = require("./dep.js");
+        Library.dep = dep.value;
+      `,
+      "/dep.js": /* js */ `exports.value = 1;`,
+    },
+    runtimeFiles: {
+      "/check.js": /* js */ `console.log(JSON.stringify(require("./out.js")));`,
+    },
+    format: "cjs",
+    footer: "module.exports = Library;",
+    run: { file: "/check.js", stdout: `{"value":2,"dep":1}` },
   });
   itBundled("edgecase/EvalPinnedNameOfImportedScript", {
     files: {

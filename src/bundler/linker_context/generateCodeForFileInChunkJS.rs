@@ -218,8 +218,15 @@ pub fn generate_code_for_file_in_chunk_js(
     let namespace_export_part_index = bun_ast::NAMESPACE_EXPORT_PART_INDEX;
 
     // The layout leaves a file in several ranges when another file prints between them. It then prints flat.
-    let own_closure = c.script_takes_own_closure(chunk, source_index as u32)
+    let own_closure = ast.flags.contains(AstFlags::KEEP_TOP_LEVEL_IN_WRAPPER)
+        && c.script_takes_own_closure(chunk, source_index as u32)
         && is_only_code_range_of_file(chunk, part_range);
+    // An `import` statement that stays in the output cannot print inside the closure.
+    let wrap_of_stmts = if own_closure {
+        WrapKind::Esm
+    } else {
+        flags.wrap
+    };
 
     stmts.reset();
 
@@ -481,12 +488,7 @@ pub fn generate_code_for_file_in_chunk_js(
             part_stmts,
             chunk,
             temp_arena,
-            // An `import` statement that stays in the output cannot print inside the closure.
-            if own_closure {
-                WrapKind::Esm
-            } else {
-                flags.wrap
-            },
+            wrap_of_stmts,
             &ast,
         ) {
             return PrintResult::Err(err.into());

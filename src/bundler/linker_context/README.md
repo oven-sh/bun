@@ -655,7 +655,7 @@ let init_moduleName = __esm(() => {
 _Unwrapped file_ (`wrap = .none`):
 
 - Its top-level symbols are top-level symbols of the chunk, and the renamer makes each name unique
-- Exception: the renamer cannot change a pinned name. An unwrapped `KEEP_TOP_LEVEL_IN_WRAPPER` file prints inside a closure that calls itself where the file runs (`LinkerContext::script_takes_own_closure`), when its chunk holds code of another file
+- Exception: the renamer cannot change a pinned name. An unwrapped `KEEP_TOP_LEVEL_IN_WRAPPER` file prints inside a closure that calls itself where the file runs (`LinkerContext::script_takes_own_closure`), when its chunk holds code of another file. The runtime is such code only when one of its helpers reads a name that the file pins
 
 **Phase 5: Part-by-Part Symbol Processing**
 The function processes each part (logical code section) within files:

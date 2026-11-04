@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
@@ -79,48 +79,88 @@ const project = {
     });`,
 };
 
-const ways: [string, Record<string, string>, string[][]][] = [
-  ["as one program", { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" }, [["--isolate"], []]],
-  ["in layers", { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2,TestRunPartFiles:3" }, [["--isolate"]]],
+// What `bun test` prints and reports for the project, plain or compiled, with --isolate or without.
+const expected = {
+  printed: [
+    "bun test <version> (<revision>)",
+    "require(), then import(): number function false",
+    "import(), then import(): function function false",
+    "import(), then require(): function number false",
+    "require(), then require(): number number false",
+    "require(), then a module that exports it: number function false",
+    "require(), then a module that imports from it: number function false",
+    "below a module that is required: number",
+    "first test file: number function",
+    "last loaded by import(), by require(), by nobody: function number function",
+    "second test file: number function number",
+    "third test file: number function function number function",
+  ],
+  reported: [
+    "1.test.js:",
+    "(pass) a file is loaded, taken out of require.cache and loaded again",
+    "2.test.js:",
+    "(pass) the next test file loads them the other way",
+    "3.test.js:",
+    "(pass) and the one after it the first way",
+    " 3 pass",
+    " 0 fail",
+    "Ran 3 tests across 3 files.",
+  ],
+  exitCode: 0,
+};
+
+// A way: its name, the environment of its compiled runs, what such a run says of its form, and the flags of each run. A run says
+// its form on stderr where a word of BUN_DEBUG_TEST_AOT_WORDS begins with `TestRun`. The text here is the part of that line that
+// every Bun prints: one that loads one program a realm (macOS, Windows, a hardened build) says so in place of the layers.
+const ways: [string, Record<string, string> | undefined, string, string[][]][] = [
+  ["in plain Bun", undefined, "", [["--isolate"], []]],
+  [
+    "as one program",
+    { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" },
+    "AOT test run | one program",
+    [["--isolate"], []],
+  ],
+  [
+    "in layers",
+    { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2,TestRunPartFiles:3" },
+    " | test files 3 | to a program 3",
+    [["--isolate"]],
+  ],
   [
     "in layers with a process for each test file",
     { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2,TestRunPartFiles:1" },
+    " | test files 3 | to a program 1",
     [["--isolate"]],
   ],
   [
     "with the test files from disk",
     { BUN_AOT_TEST_FILES_FROM_DISK: "1", BUN_AOT_TESTS_NAME_WHAT_THEY_USE: "1" },
+    "",
     [["--isolate"], []],
   ],
 ];
 
-async function runTests(directory: string, env: Record<string, string>, ...flags: string[]) {
-  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], directory, { ...bunEnv, ...env });
-  const results = [...stderr.matchAll(/^\((pass|fail)\) (.*?)(?: \[.*\])?$/gm)].map(match => `${match[1]} ${match[2]}`);
-  if (exitCode !== 0) console.error(stderr);
-  return { printed: stdout.split("\n").filter(line => line && !line.startsWith("bun test ")), results, exitCode };
+async function runTests(directory: string, env: Record<string, string> | undefined, ...flags: string[]) {
+  const command = [bunExe(), "test", ...(env ? ["--aot"] : []), ...flags];
+  const { stdout, stderr, exitCode } = await run(command, directory, { ...bunEnv, ...env });
+  // Every line, without the version and the times.
+  const lines = (text: string) => normalizeBunSnapshot(text, directory).split("\n").filter(Boolean);
+  const saysForm = (line: string) => line.startsWith("AOT test run | ");
+  const reported = lines(stderr);
+  return {
+    form: reported.filter(saysForm).join("\n"),
+    output: { printed: lines(stdout), reported: reported.filter(line => !saysForm(line)), exitCode },
+  };
 }
 
-for (const [way, env, isolations] of ways) {
+for (const [way, env, says, isolations] of ways) {
   for (const isolation of isolations) {
     const name = `each load of a CommonJS file decides how that load reads require("fs"), and the last one for the test files to come, ${way}`;
     test.concurrent(isolation.length ? `${name}, isolated` : name, async () => {
       using dir = tempDir("a-commonjs-file-taken-out-of-require-cache-and-loaded-again", project);
-      const plain = await runTests(String(dir), {}, ...isolation);
-      expect(plain.printed).toEqual([
-        "require(), then import(): number function false",
-        "import(), then import(): function function false",
-        "import(), then require(): function number false",
-        "require(), then require(): number number false",
-        "require(), then a module that exports it: number function false",
-        "require(), then a module that imports from it: number function false",
-        "below a module that is required: number",
-        "first test file: number function",
-        "last loaded by import(), by require(), by nobody: function number function",
-        "second test file: number function number",
-        "third test file: number function function number function",
-      ]);
-      expect(await runTests(String(dir), env, "--aot", ...isolation)).toEqual(plain);
+      const { form, output } = await runTests(String(dir), env, ...isolation);
+      expect(output).toEqual(expected);
+      expect(form).toContain(says);
     });
   }
 }

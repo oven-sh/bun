@@ -2362,6 +2362,24 @@ if (isBun) {
       expect(Object.getPrototypeOf(new Mock())).toBe(prototype);
     });
 
+    // `prototype` of a mock has a native setter, which takes the mock. JavaScriptCore gives it the receiver of the store,
+    // here a Proxy, and the setter refuses the store. https://github.com/oven-sh/WebKit/pull/993 changes that. With a
+    // WebKit that has it, these pass: remove the `failing` mark.
+    test.failing.each([
+      ["a Proxy", Mock => new Proxy(Mock, {})],
+      ["a Proxy of a Proxy", Mock => new Proxy(new Proxy(Mock, {}), {})],
+      ["a Proxy made in a node:vm context", Mock => vm.runInNewContext("new Proxy(Mock, {})", { Mock })],
+    ])("mock.prototype stored through %s", (_, wrap) => {
+      const Mock = jest.fn();
+      const proxy = wrap(Mock);
+      const first = { z: 1 };
+      proxy.prototype = first;
+      expect(Mock.prototype).toBe(first);
+      const second = { z: 2 };
+      expect(Reflect.set(proxy, "prototype", second)).toBe(true);
+      expect(Object.getPrototypeOf(new Mock())).toBe(second);
+    });
+
     // Vitest throws "is not a constructor" for these. Bun follows Jest and calls them, even through vi.fn.
     test("implementations that are not constructors are called on a new object", () => {
       const object = { a: 1 };

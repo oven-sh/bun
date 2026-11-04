@@ -4018,6 +4018,125 @@ describe.concurrent("an exception thrown by an EventTarget listener from a vm co
   });
 });
 
+// A store can reach a native setter of the engine through a receiver that does not hold the property. The engine asks the
+// receiver for its own property, and two kinds of receiver answer with another object's: the global of a context (its
+// contextified object's) and a Proxy without a getOwnPropertyDescriptor trap (its target's). The setter has to get the
+// object that holds the property and that object's realm. JavaScriptCore gives it the receiver and the receiver's realm,
+// which is the global of the context. https://github.com/oven-sh/WebKit/pull/993 changes that. With a WebKit that has
+// it, the `failing` tests pass and the `todo` tests can run: remove both marks.
+describe.concurrent("a store with a receiver from a context runs the native setter of the holder", () => {
+  const fixture = `
+    const vm = require("node:vm");
+    const Module = require("node:module");
+
+    const receivers = {
+      "an assignment to a Proxy made in a context"(holder, key, value) {
+        vm.runInNewContext("new Proxy(holder, {})", { holder })[key] = value;
+      },
+      "Reflect.set() with a Proxy made in a context as the receiver"(holder, key, value) {
+        Reflect.set({}, key, value, vm.runInNewContext("new Proxy(holder, {})", { holder }));
+      },
+      "Reflect.set() with the global of a context as the receiver"(holder, key, value) {
+        Reflect.set({}, key, value, vm.runInContext("globalThis", vm.createContext(holder)));
+      },
+      "Reflect.set() with the global of a context over the global of a context as the receiver"(holder, key, value) {
+        const inner = vm.runInContext("globalThis", vm.createContext(holder));
+        Reflect.set({}, key, value, vm.runInContext("globalThis", vm.createContext(inner)));
+      },
+      "Reflect.set() with the global of a context over a Proxy as the receiver"(holder, key, value) {
+        Reflect.set({}, key, value, vm.runInContext("globalThis", vm.createContext(new Proxy(holder, {}))));
+      },
+    };
+
+    const holders = {
+      // The setter keeps the formatter on the realm it is given. The errors of the main realm use it.
+      "Error.prepareStackTrace"(store) {
+        store(Error, "prepareStackTrace", () => "formatted");
+        return new Error("x").stack;
+      },
+      // The setter keeps the override on the realm it is given. require() of the main realm calls it.
+      "Module.prototype.require"(store) {
+        const calls = [];
+        const original = Module.prototype.require;
+        function override(id) {
+          calls.push(id);
+          return original.call(this, id);
+        }
+        store(Module.prototype, "require", override);
+        require("node:path");
+        return [Module.prototype.require === override, calls];
+      },
+    };
+
+    const [holder, receiver] = process.argv.slice(-2);
+    console.log(JSON.stringify(holders[holder](receivers[receiver])));
+  `;
+  // What Node.js v26.3.0 prints.
+  const stored = {
+    "Error.prepareStackTrace": `"formatted"\n`,
+    "Module.prototype.require": `[true,["node:path"]]\n`,
+  };
+
+  async function storeInItsOwnProcess(holder: keyof typeof stored, receiver: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture, holder, receiver],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: stored[holder], stderr: "", exitCode: 0 });
+  }
+
+  // The setter takes the global of the context for Bun's global object and writes past the end of it. A build with
+  // assertions aborts there, so these do not run as `failing` tests.
+  test.todo.each([
+    ["an assignment to a Proxy made in a context"],
+    ["Reflect.set() with a Proxy made in a context as the receiver"],
+    // Node.js does not take a function for the contextified object, so it has no answer for this row.
+    ["Reflect.set() with the global of a context as the receiver"],
+  ])("Error.prepareStackTrace, %s", receiver => storeInItsOwnProcess("Error.prepareStackTrace", receiver));
+
+  // The setter keeps the override on the global of the context. The store prints [false,[]].
+  test.failing.each([
+    ["an assignment to a Proxy made in a context"],
+    ["Reflect.set() with a Proxy made in a context as the receiver"],
+    ["Reflect.set() with the global of a context as the receiver"],
+    ["Reflect.set() with the global of a context over the global of a context as the receiver"],
+    ["Reflect.set() with the global of a context over a Proxy as the receiver"],
+  ])("Module.prototype.require, %s", receiver => storeInItsOwnProcess("Module.prototype.require", receiver));
+
+  // The setters of onmessage and onerror take the global object of the main realm when they are given another object.
+  // That is the holder unless the holder is the global object of another realm. The store prints
+  // {"realm":[],"main":["function","function"]}.
+  test.failing("a ShadowRealm's onmessage and onerror, the global of a context as the receiver", async () => {
+    const script = `
+      const realm = new ShadowRealm();
+      const seen = realm.evaluate(\`
+        const vm = process.getBuiltinModule("node:vm");
+        const contextGlobal = vm.runInContext("globalThis", vm.createContext(globalThis));
+        const seen = [];
+        Reflect.set({}, "onmessage", event => seen.push("message: " + event.data), contextGlobal);
+        Reflect.set({}, "onerror", event => seen.push("error: " + event.error), contextGlobal);
+        dispatchEvent(new MessageEvent("message", { data: "delivered" }));
+        dispatchEvent(new ErrorEvent("error", { error: "delivered" }));
+        onmessage = onerror = null;
+        JSON.stringify(seen);
+      \`);
+      console.log(JSON.stringify({ realm: JSON.parse(seen), main: [typeof onmessage, typeof onerror] }));
+      // A handler that went to the main realm would keep the process alive.
+      onmessage = onerror = null;
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: `{"realm":["message: delivered","error: delivered"],"main":["object","object"]}\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 describe("import attributes with an array-index key", () => {
   test("SourceTextModule.moduleRequests[].attributes includes the key", () => {
     const mod = new SourceTextModule('import x from "./y" with { "0": "a", type: "json" };');

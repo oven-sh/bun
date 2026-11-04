@@ -49,6 +49,7 @@ unsafe extern "C" {
         out_w: *mut u32,
         out_h: *mut u32,
         out: *mut u8, // nullable
+        out_len: usize,
         out_icc_ptr: *mut *mut u8,
         out_icc_size: *mut usize,
         out_transform: *mut Transform,
@@ -215,12 +216,11 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
     // a different AVIF between the two parses. Phase 1 sizes the
     // allocation from the first ispe; phase 2 parses again on the
     // (possibly mutated) bytes and would happily write `w₂·h₂·4` bytes
-    // into the `w₁·h₁·4` alloc if unchecked. Harden the same way
-    // codec_jpeg/codec_webp do: tell phase 2 to refuse anything larger
-    // than phase 1's pixel product (reuses the shim's existing
-    // `pixels > max_pixels` check), then post-check dims are unchanged
-    // so a SMALLER swap (which would leave tail rows uninitialised)
-    // also degrades to DecodeFailed rather than returning junk.
+    // into the `w₁·h₁·4` alloc if unchecked. Phase 2 gets the buffer
+    // length and refuses an ispe that does not fit it, then the dims are
+    // post-checked so a SMALLER swap (which would leave tail rows
+    // uninitialised) also degrades to DecodeFailed rather than returning
+    // junk.
     let mut w: u32 = 0;
     let mut h: u32 = 0;
     // IccBuf's Drop frees the libc malloc'd buffer on every early return
@@ -240,6 +240,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
             &raw mut w,
             &raw mut h,
             core::ptr::null_mut(),
+            0,
             &raw mut icc.ptr,
             &raw mut icc.size,
             &raw mut transform,
@@ -266,30 +267,24 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
 
     let mut w2: u32 = 0;
     let mut h2: u32 = 0;
-    let phase1_pixels = u64::from(w) * u64::from(h);
     // SAFETY: same as the phase-1 call; `out.as_mut_ptr()` is valid for
-    // `pixels` bytes as reserved above.
+    // `out.len()` bytes as reserved above.
     let rc = unsafe {
         bun_avif_decode(
             bytes.as_ptr(),
             bytes.len(),
-            phase1_pixels,
+            max_pixels,
             &raw mut w2,
             &raw mut h2,
             out.as_mut_ptr(),
+            out.len(),
             &raw mut icc.ptr,
             &raw mut icc.size,
             &raw mut transform,
         )
     };
-    match rc {
-        AVIF_OK => {}
-        // At this call site `max_pixels` is the phase-1 alloc bound, not
-        // the user's `maxPixels` — TooManyPixels firing here means a
-        // hostile larger-swap, which `pin_for_task`'s invariant (and the
-        // sibling codec_jpeg/codec_webp) surface as DecodeFailed. Remap.
-        AVIF_TOO_MANY_PIXELS => return Err(codecs::Error::DecodeFailed),
-        _ => return Err(map_decode_err(rc)),
+    if rc != AVIF_OK {
+        return Err(map_decode_err(rc));
     }
     if w2 != w || h2 != h {
         return Err(codecs::Error::DecodeFailed);

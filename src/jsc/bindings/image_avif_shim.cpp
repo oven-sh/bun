@@ -416,7 +416,7 @@ int32_t bun_avif_probe(const uint8_t* bytes, size_t len, uint64_t max_pixels,
 // runs `avifDecoderNextImage` + `avifImageYUVToRGB`. Cheap to re-create
 // the decoder relative to the AV1 decode itself.
 int32_t bun_avif_decode(const uint8_t* bytes, size_t len, uint64_t max_pixels,
-    uint32_t* out_w, uint32_t* out_h, uint8_t* out,
+    uint32_t* out_w, uint32_t* out_h, uint8_t* out, size_t out_len,
     uint8_t** out_icc_ptr, size_t* out_icc_size, BunAvifTransform* out_transform)
 {
     auto s = load();
@@ -431,12 +431,15 @@ int32_t bun_avif_decode(const uint8_t* bytes, size_t len, uint64_t max_pixels,
     } r { s, dec };
 
     configureDecoder(dec);
-    // Phase 2 only: `max_pixels` is the phase-1 pixel product the caller
-    // sized `out` for. libavif forwards imageSizeLimit to dav1d's
-    // frame_size_limit, so an AV1 stream larger than the ispe box is
-    // refused before dav1d allocates its planes, instead of after a full
-    // decode. Phase 1 and probe keep the default so an over-`maxPixels`
-    // ispe still reaches the TooManyPixels check below.
+    // Phase 2 only: bound each coded AV1 frame by the caller's `maxPixels`.
+    // libavif forwards imageSizeLimit to dav1d's frame_size_limit, so an
+    // AV1 stream larger than the ispe box is refused before dav1d
+    // allocates its planes, instead of after a full decode. The bound is
+    // the user's limit, not the canvas area: a grid item is decoded one
+    // tile (one coded frame) at a time, and a valid grid can have a tile
+    // larger than the canvas it is trimmed to. Phase 1 and probe keep the
+    // default so an over-`maxPixels` ispe still reaches the TooManyPixels
+    // check below.
     if (out) {
         dec->imageSizeLimit = static_cast<uint32_t>(
             max_pixels < kAvifDefaultImageSizeLimit ? max_pixels : kAvifDefaultImageSizeLimit);
@@ -450,6 +453,11 @@ int32_t bun_avif_decode(const uint8_t* bytes, size_t len, uint64_t max_pixels,
 
     uint64_t pixels = static_cast<uint64_t>(img->width) * img->height;
     if (pixels > max_pixels) return kAvifTooManyPixels;
+    // Phase 2: `out` was sized from the phase-1 parse of the same bytes. A
+    // caller can still write the source ArrayBuffer between the phases, so
+    // refuse an ispe that no longer fits the buffer before anything writes
+    // into it.
+    if (out && pixels > static_cast<uint64_t>(out_len) / 4) return kAvifDecodeFailed;
 
     if (!readTransform(s, img, out_transform)) return kAvifDecodeFailed;
 
@@ -611,7 +619,7 @@ void bun_avif_free_output(uint8_t* data)
 #include <cstddef>
 #include <cstdint>
 extern "C" int32_t bun_avif_probe(const uint8_t*, size_t, uint64_t, uint32_t*, uint32_t*, void*) { return 1; }
-extern "C" int32_t bun_avif_decode(const uint8_t*, size_t, uint64_t, uint32_t*, uint32_t*, uint8_t*, uint8_t**, size_t*, void*) { return 1; }
+extern "C" int32_t bun_avif_decode(const uint8_t*, size_t, uint64_t, uint32_t*, uint32_t*, uint8_t*, size_t, uint8_t**, size_t*, void*) { return 1; }
 extern "C" int32_t bun_avif_encode(const uint8_t*, uint32_t, uint32_t, int, const uint8_t*, size_t, uint8_t**, size_t*) { return 1; }
 extern "C" void bun_avif_free_output(uint8_t*) {}
 

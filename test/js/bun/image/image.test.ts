@@ -1147,6 +1147,24 @@ describe("Bun.Image", () => {
         expect(err / got.data.length).toBeLessThan(6);
       });
 
+      // A grid item is decoded one tile (one coded AV1 frame) at a time, and
+      // the canvas is trimmed from the tiles. The fixture is a 2×1 grid of
+      // 64×64 tiles (left red, right green) whose ImageGrid and ispe declare
+      // a 70×20 canvas, so each tile has more pixels than the whole image. A
+      // decoder that bounds the coded frame by the canvas area rejects it.
+      test.skipIf(!hasAvifRuntime)("decode AVIF grid whose tiles are larger than the canvas", async () => {
+        const gridAvif = await Bun.file(join(import.meta.dir, "fixtures", "grid_2x1_64x64_tiles_70x20.avif")).bytes();
+        expect(await new Bun.Image(gridAvif).metadata()).toEqual({ width: 70, height: 20, format: "avif" });
+        const { w, h, data } = decodePngRaw(await new Bun.Image(gridAvif).png().bytes());
+        expect([w, h]).toEqual([70, 20]);
+        const [r0, g0, b0] = rgbaAt(data, w, 10, 10);
+        const [r1, g1, b1] = rgbaAt(data, w, 67, 10);
+        expect(r0).toBeGreaterThan(200);
+        expect(Math.max(g0, b0)).toBeLessThan(40);
+        expect(g1).toBeGreaterThan(200);
+        expect(Math.max(r1, b1)).toBeLessThan(40);
+      });
+
       test("encode .heic() rejects ERR_IMAGE_FORMAT_UNSUPPORTED on Linux", async () => {
         // No vendored HEVC encoder and Linux has no OS codec.
         await expect(new Bun.Image(cornersPng).heic().bytes()).rejects.toMatchObject({

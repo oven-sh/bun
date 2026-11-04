@@ -638,7 +638,13 @@ impl QuicStream {
     }
 
     /// Replaces `on_stream_close` after `QuicEndpoint::detach_for_finalize`.
-    pub(super) extern "C" fn on_close_detached(qs: &QuicStream, _s: *mut lsquic::lsquic_stream) {
+    ///
+    /// # Safety
+    /// lsquic is about to free the stream: `Drop` no longer takes `qs` out of its ctx.
+    pub(super) unsafe extern "C" fn on_close_detached(
+        qs: &QuicStream,
+        _s: *mut lsquic::lsquic_stream,
+    ) {
         // `session` may be freed, so only touch `raw`.
         qs.raw.set(None);
     }

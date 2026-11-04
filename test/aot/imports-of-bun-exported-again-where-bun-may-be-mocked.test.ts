@@ -59,19 +59,24 @@ function project(name: string, where: string) {
       const env = form.words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: form.words } : bunEnv;
       const command = [bunExe(), "test", "--isolate", ...form.flags];
       const { stdout, stderr, exitCode } = await run(command, String(folder), env);
-      const told: Run = { cases: new Map(), rest: { stdout: [], stderr: [], exitCode } };
-      const of = (id: string) => told.cases.getOrInsertComputed(id, () => ({ result: undefined, printed: "" }));
+      // A line is a case's only where the project has a case of that name.
+      const told: Run = {
+        cases: new Map(cases.map(id => [id, { result: undefined, printed: "" }])),
+        rest: { stdout: [], stderr: [], exitCode },
+      };
       for (const line of stdout.split("\n")) {
         const [, id, text] = line.match(/^(c\d+)\| ?(.*)$/) ?? [];
-        if (id) of(id).printed += text + "\n";
+        const of = told.cases.get(id);
+        if (of) of.printed += text + "\n";
         else if (line.trim()) told.rest.stdout.push(normalizeBunSnapshot(line));
       }
       for (const line of stderr.split("\n")) {
         const [, result, id] = line.match(/^\((pass|fail)\) (c\d+)(?: \[.*\])?$/) ?? [];
-        if (id) of(id).result = result;
         // A test file is named above the result of its test.
-        else if (line.trim() && !/^c\d+[\\/]case\.test\.js:$/.test(line))
-          told.rest.stderr.push(normalizeBunSnapshot(line));
+        const [, named] = line.match(/^(c\d+)[\\/]case\.test\.js:$/) ?? [];
+        const of = told.cases.get(id);
+        if (of) of.result = result;
+        else if (line.trim() && !told.cases.has(named)) told.rest.stderr.push(normalizeBunSnapshot(line));
       }
       return told;
     });

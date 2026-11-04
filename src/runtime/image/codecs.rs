@@ -38,7 +38,7 @@ pub(crate) use super::backend_wic as system_backend;
 /// is excluded because the shim itself is gated on `__linux__ && !__ANDROID__`.
 /// macOS/Windows handle AVIF via `system_backend`.
 #[cfg(target_os = "linux")]
-pub use super::codec_avif as avif;
+pub(crate) use super::codec_avif as avif;
 
 /// `true` on platforms where `system_backend` is present.
 const HAS_SYSTEM_BACKEND: bool = cfg!(any(target_os = "macos", windows));

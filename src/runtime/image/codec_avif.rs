@@ -121,7 +121,7 @@ impl Drop for IccBuf {
     }
 }
 
-pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
+pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
     // Two-phase so the output buffer can live in the global allocator
     // (matches jpeg/png/webp ownership contract): phase 1 runs
     // `avifDecoderParse` and returns dims; phase 2 runs the AV1 decode and
@@ -225,7 +225,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
 /// Header-only dimensions probe for `.metadata()`. libavif's parse() stops
 /// before sample decode, so this reads the ispe box and returns — roughly
 /// PNG-IHDR-cheap, not "full AV1 decode".
-pub fn probe(bytes: &[u8], max_pixels: u64) -> Result<(u32, u32), codecs::Error> {
+pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<(u32, u32), codecs::Error> {
     let mut w: u32 = 0;
     let mut h: u32 = 0;
     // SAFETY: bytes.ptr/len come from a valid live slice; the out-params are valid locals.
@@ -247,7 +247,7 @@ pub fn probe(bytes: &[u8], max_pixels: u64) -> Result<(u32, u32), codecs::Error>
     Ok((w, h))
 }
 
-pub fn encode(
+pub(crate) fn encode(
     rgba: &[u8],
     w: u32,
     h: u32,

@@ -106,8 +106,7 @@ describe.concurrent("--metafile with --aot", () => {
         for (const [path, input] of Object.entries(aot.inputs)) {
           const expected = plain.inputs[path];
           expect({ path, format: input.format }).toEqual({ path, format: expected.format });
-          // The bundler says 0 for a file that it loads as text.
-          if (path !== "note.txt") expect({ path, bytes: input.bytes }).toEqual({ path, bytes: expected.bytes });
+          expect({ path, bytes: input.bytes }).toEqual({ path, bytes: expected.bytes });
           const imports = expected.imports
             // The bundler's own helpers.
             .filter(it => it.path !== "bun:wrap")

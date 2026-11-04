@@ -32,6 +32,14 @@ interface Metafile {
   outputs: Record<string, MetafileOutput>;
 }
 
+/** The file name of a key of `inputs` or `outputs`. The key is a path, and it depends on where the temp dir is. */
+const fileName = (path: string) => path.split(/[\\/]/).pop()!;
+
+/** Re-keys `inputs` / `outputs` by file name. */
+function byFileName<T>(record: Record<string, T>): Record<string, T> {
+  return Object.fromEntries(Object.entries(record).map(([path, value]) => [fileName(path), value]));
+}
+
 describe("bundler metafile", () => {
   test("metafile option returns metafile object", async () => {
     using dir = tempDir("metafile-test", {
@@ -1452,6 +1460,136 @@ describe("bun build --metafile", () => {
   });
 });
 
+// An outdir takes the loop that writes each chunk to disk. No outdir takes the in-memory loop.
+const destinations = ["on disk", "in memory"] as const;
+const outdirFor = (dir: unknown, destination: (typeof destinations)[number]) =>
+  destination === "on disk" ? `${dir}/dist` : undefined;
+
+// The bundler empties the contents of an input when it makes the asset that is a copy of the file, so the
+// input has none when the metafile is written. A build to disk or in memory then takes the assets out of the
+// graph, and a standalone HTML build emits none.
+describe("metafile inputs[..].bytes is the size of a copied file", () => {
+  /** `bytes` of every metafile input, by file name. */
+  const inputSizes = (result: Bun.BuildOutput) =>
+    Object.fromEntries(
+      Object.entries(byFileName((result.metafile as Metafile).inputs)).map(([file, input]) => [file, input.bytes]),
+    );
+
+  test.each(destinations)("files of the file, wasm, napi and sqlite loaders (%s)", async destination => {
+    const entry = [
+      `import logo from "./logo.png";`,
+      `import data from "./data.bin" with { type: "file" };`,
+      `import wasm from "./module.wasm";`,
+      `import addon from "./addon.node";`,
+      `import db from "./db.sqlite" with { type: "sqlite", embed: "true" };`,
+      `console.log(logo, data, wasm, addon, db);`,
+    ].join("\n");
+    using dir = tempDir("metafile-input-bytes-loaders", {
+      "entry.ts": entry,
+      "logo.png": Buffer.alloc(200_000, 1),
+      "data.bin": Buffer.alloc(5000, 2),
+      "module.wasm": Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]),
+      "addon.node": Buffer.alloc(1234, 3),
+      "db.sqlite": Buffer.alloc(4096, 4),
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/entry.ts`],
+      outdir: outdirFor(dir, destination),
+      target: "bun",
+      metafile: true,
+    });
+    expect(result.success).toBe(true);
+    expect(inputSizes(result)).toEqual({
+      "entry.ts": Buffer.byteLength(entry),
+      "logo.png": 200_000,
+      "data.bin": 5000,
+      "module.wasm": 8,
+      "addon.node": 1234,
+      "db.sqlite": 4096,
+    });
+  });
+
+  test.each(destinations)("a file whose bytes an onLoad plugin returns (%s)", async destination => {
+    const entry = `import url from "./image.png";\nconsole.log(url);\n`;
+    using dir = tempDir("metafile-input-bytes-plugin", {
+      "entry.js": entry,
+      "image.png": "on disk",
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/entry.js`],
+      outdir: outdirFor(dir, destination),
+      metafile: true,
+      plugins: [
+        {
+          name: "generate-image",
+          setup(build) {
+            build.onLoad({ filter: /\.png$/ }, () => ({ contents: new Uint8Array(2048), loader: "file" }));
+          },
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+    expect(inputSizes(result)).toEqual({ "entry.js": Buffer.byteLength(entry), "image.png": 2048 });
+  });
+
+  // `compile` with `target: "browser"` inlines each asset into the one HTML file and emits no asset file.
+  test.each(destinations)("a standalone HTML file (%s)", async destination => {
+    const files = {
+      "index.html": `<!doctype html><html><body><script type="module" src="./app.ts"></script><img src="./photo.png"></body></html>\n`,
+      "app.ts": `import logo from "./logo.svg";\nconsole.log("app", logo);\n`,
+      "logo.svg": `<svg xmlns="http://www.w3.org/2000/svg"></svg>\n`,
+      "photo.png": Buffer.alloc(3000, 5),
+    };
+    using dir = tempDir("metafile-input-bytes-standalone", files);
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/index.html`],
+      outdir: outdirFor(dir, destination),
+      compile: true,
+      target: "browser",
+      metafile: true,
+    });
+    expect(result.outputs.map(artifact => artifact.loader)).toEqual(["html"]);
+    expect(inputSizes(result)).toEqual({
+      "index.html": Buffer.byteLength(files["index.html"]),
+      "app.ts": Buffer.byteLength(files["app.ts"]),
+      "logo.svg": Buffer.byteLength(files["logo.svg"]),
+      "photo.png": 3000,
+    });
+  });
+
+  test("a file that the stylesheet of a page and the server code both load", async () => {
+    using dir = tempDir("metafile-input-bytes-two-graphs", {
+      "page.html": `<!doctype html><html><head><link rel="stylesheet" href="./style.css"></head><body></body></html>\n`,
+      "style.css": `.a { background: url("./image.png"); }\n`,
+      "server.js": `import image from "./image.png";\nconsole.log(image);\n`,
+      "image.png": "made-up image",
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./page.html", "./server.js", "--target=bun", "--outdir=dist", "--metafile=meta.json"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+
+    // The stylesheet inlines the image as a data: URL, so the build copies only the module of the server code.
+    // The two modules share one key today, and a JSON parser keeps only one of the records, so read the text.
+    // Every record of the key must report the size of the file, however many records the metafile has.
+    const text = await Bun.file(`${dir}/meta.json`).text();
+    const sizes = [...text.matchAll(/^ {4}"image\.png[^"]*": \{\n {6}"bytes": (\d+)/gm)].map(([, bytes]) =>
+      Number(bytes),
+    );
+    expect(sizes.length).toBeGreaterThanOrEqual(1);
+    expect(sizes).toEqual(sizes.map(() => 13));
+  });
+});
+
 // The bundler writes the final path of a chunk or an asset into the chunks that reference it
 // only after it hashes the chunk contents, and appends the source map comment after that.
 describe("metafile outputs[..].bytes is the size of the emitted file", () => {
@@ -1461,11 +1599,6 @@ describe("metafile outputs[..].bytes is the size of the emitted file", () => {
     "lazy.ts": `import { shared } from "./shared.ts";\nexport const lazy = "lazy " + shared;\n`,
     "shared.ts": `export const shared = "shared value";\n`,
   };
-
-  // An outdir takes the loop that writes each chunk to disk. No outdir takes the in-memory loop.
-  const destinations = ["on disk", "in memory"] as const;
-  const outdirFor = (dir: unknown, destination: (typeof destinations)[number]) =>
-    destination === "on disk" ? `${dir}/dist` : undefined;
 
   /** `bytes` of every metafile output, next to the size of the file the build produced for it. */
   function outputSizes(result: Bun.BuildOutput, outdir: string | undefined) {

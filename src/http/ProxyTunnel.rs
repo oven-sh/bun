@@ -589,6 +589,7 @@ impl ProxyTunnel {
             // Cycle to through the SSL state machine
             let _ = wrapper.flush();
         }
+        drop(this); // may be the last ref
     }
 
     /// Encrypted bytes arrived on the outer socket. Takes a ref of its own, as
@@ -598,6 +599,7 @@ impl ProxyTunnel {
         if let Some(wrapper) = &this.wrapper {
             wrapper.receive_data(buf);
         }
+        drop(this); // may be the last ref
     }
 
     pub(crate) fn write(&self, buf: &[u8]) -> Result<usize, Error> {

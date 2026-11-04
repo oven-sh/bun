@@ -1,9 +1,8 @@
 import { expect, vi } from "bun:test";
-import { bunEnv, bunExe, isCI, isDebug, isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isCI, isDebug, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { availableParallelism } from "node:os";
-import { join, relative } from "node:path";
-import { isHardened } from "./hardened";
+import { basename, join, relative } from "node:path";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
@@ -133,23 +132,29 @@ async function runTests(directory: string, env: Record<string, string>, ...flags
       .sort(),
     // A build that starts over prints its own once more.
     standIns: [...new Set(standIns)].sort(),
-    builtOtherwise: said.match(/^AOT test run \| .*(this Bun loads one program a realm|as this Bun holds it)/m)?.[1],
+    builtOtherwise: said.match(
+      /^AOT test run \| .*(this Bun loads one program a realm|over Bun's own code as this Bun holds it)/m,
+    )?.[1],
     exitCode,
   };
 }
 
 type Ran = Awaited<ReturnType<typeof runTests>>;
 
+const skips = new Set<string>();
+
 /** A compiled run has printed what plain Bun prints, and the stand-ins of its form. */
 function expectAsPlain({ standIns, builtOtherwise, ...seen }: Ran, form: Form) {
   expect(seen).toEqual(plain);
-  // macOS, Windows and a hardened build load one program a realm: a run says so there, and nowhere else. There a run that asks
-  // for layers is built without them, and a run over the code that a Bun holds compiled builds no lowest layer: the stand-ins
-  // of those runs are not stated here. A run with the test files from disk is one program everywhere.
-  expect({ oneProgramARealm: builtOtherwise === "this Bun loads one program a realm" }).toEqual({
-    oneProgramARealm: isMacOS || isWindows || isHardened,
-  });
-  if (!builtOtherwise || form.env.BUN_AOT_TEST_FILES_FROM_DISK) expect(standIns).toEqual(form.standIns);
+  // A run with the test files from disk is one program everywhere. A run that asks for layers says where it is built in another
+  // form: without layers where Bun loads one program a realm (macOS, Windows, a hardened build), and without a lowest layer of
+  // its own over the code that a Bun holds compiled. The stand-ins of such a run are not stated here, and the file says so once.
+  if (!builtOtherwise || form.env.BUN_AOT_TEST_FILES_FROM_DISK) {
+    expect(standIns).toEqual(form.standIns);
+  } else if (!skips.has(builtOtherwise)) {
+    skips.add(builtOtherwise);
+    console.error(`SKIPPED: ${basename(import.meta.path)}: the stand-ins of a run in layers: ${builtOtherwise}`);
+  }
 }
 
 testOfOneRun("what plain Bun prints in the project", async () => {

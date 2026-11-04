@@ -103,6 +103,7 @@ struct Locked {
     /// Dedup map: dedup key → PathWatcher. The key is the resolved path with a one-byte
     /// suffix encoding `recursive` (so `fs.watch(p)` and `fs.watch(p, {recursive:true})`
     /// don't share — they want different OS registrations on every platform).
+    /// A retired watcher has a key of its own instead (`Locked::retire_watcher`).
     watchers: StringArrayHashMap<*mut PathWatcher>,
 
     /// Platform-specific dispatch maps (inotify wd_map / kqueue entries).
@@ -1229,8 +1230,8 @@ impl Linux {
                         }
                     }
 
-                    // Not left to IN_IGNORED (above), which may land a read() later
-                    // and which a move does not send.
+                    // Retired here too, not only at IN_IGNORED (above): that may land
+                    // a read() later, and a move does not send it.
                     if root_left_path {
                         locked.retire_watcher(owner_watcher);
                     }
@@ -1672,6 +1673,7 @@ impl Kqueue {
                 let _ = handle_oom(touched.get_or_put(entry.watcher));
             }
 
+            // `entries` borrows `locked` up to here.
             for w in left_path {
                 locked.retire_watcher(w);
             }

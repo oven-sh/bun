@@ -38,6 +38,8 @@ mod compiled_frames;
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
 mod fault_registers;
+#[cfg(target_os = "linux")]
+mod mapped_file;
 mod stopped_builds;
 pub use compiled_frames::{DecodedReport, ShortBuildId, report_compiled_frames};
 pub use stopped_builds::{BuildDescribers, DescribeBuild, report_stopped_builds};
@@ -1062,6 +1064,12 @@ mod draft {
                         }
                     }
                     crate::stopped_builds::write_where_this_thread_stopped(writer);
+                    #[cfg(target_os = "linux")]
+                    if let CrashReason::BusError(address) = reason {
+                        crate::mapped_file::write_what_happened_at(address, &mut |text| {
+                            let _ = writer.write_all(text);
+                        });
+                    }
 
                     let mut addr_buf: [usize; 20] = [0; 20];
                     let trace_buf: StackTrace;

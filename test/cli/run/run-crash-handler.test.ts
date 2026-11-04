@@ -13,7 +13,7 @@ import {
   mergeWindowEnvs,
   tempDir,
 } from "harness";
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync, realpathSync, rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
@@ -146,6 +146,35 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
     expect(exitCode).not.toBe(0);
     void stdout;
   });
+});
+
+// With ASAN the signal is the sanitizer's.
+test.if(isLinux && !isASAN)("a bus error in a mapped file that has been truncated names the file", async () => {
+  using dir = tempDir("crash-truncated-mapping", {});
+  const file = path.join(realpathSync(String(dir)), "mapped.bin");
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const fs = require("node:fs");
+       const file = process.argv[1];
+       fs.writeFileSync(file, Buffer.alloc(1 << 16, 1));
+       const mapped = Bun.mmap(file);
+       fs.truncateSync(file, 0);
+       console.log(mapped[1 << 15]);`,
+      file,
+      "--debug-crash-handler-use-trace-string",
+    ],
+    env: noReportEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("");
+  expect(stderr).toContain("Bus error at address");
+  expect(stderr).toContain(`The file ${file}, which was mapped into memory, has been truncated.`);
+  expect(proc.signalCode).toBe("SIGBUS");
+  expect(exitCode).not.toBe(0);
 });
 
 // mimalloc provides `operator new` only on Linux without ASAN.

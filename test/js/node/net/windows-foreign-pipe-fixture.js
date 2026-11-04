@@ -16,6 +16,7 @@ const kernel32 = dlopen("kernel32.dll", {
 }).symbols;
 
 const INVALID_HANDLE_VALUE = 0xffffffffffffffffn;
+const PIPE_ACCESS_INBOUND = 1;
 const PIPE_ACCESS_DUPLEX = 3;
 const PIPE_NOWAIT = 1;
 const PIPE_READMODE_MESSAGE = 2;
@@ -86,12 +87,16 @@ function pipeName() {
   return String.raw`\\.\pipe\bun-test-${crypto.randomUUID()}`;
 }
 
-/** The server end of a new pipe. A client can write `quota` bytes before the server reads, and the server `outQuota`. */
-function createServer({ messages = false, quota = 4096, outQuota = quota } = {}) {
+/**
+ * The server end of a new pipe. A client can write `quota` bytes before the server reads, and the server `outQuota`.
+ * `inbound`: only the client can write.
+ */
+function createServer({ messages = false, quota = 4096, outQuota = quota, inbound = false } = {}) {
   const name = pipeName();
+  const access = inbound ? PIPE_ACCESS_INBOUND : PIPE_ACCESS_DUPLEX;
   const mode = PIPE_NOWAIT | (messages ? PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE : 0);
   const wideName = Buffer.from(name + "\0", "utf16le");
-  const handle = kernel32.CreateNamedPipeW(wideName, PIPE_ACCESS_DUPLEX, mode, 1, outQuota, quota, 0, null);
+  const handle = kernel32.CreateNamedPipeW(wideName, access, mode, 1, outQuota, quota, 0, null);
   if (handle === INVALID_HANDLE_VALUE) throw new Error("CreateNamedPipeW");
   return {
     name,

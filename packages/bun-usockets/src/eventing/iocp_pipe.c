@@ -1041,6 +1041,11 @@ int us_internal_pipe_writev(struct us_loop_t *loop, struct us_poll_t *p, const s
         NTSTATUS status = is_foreign ? us_internal_pipe_thread_queue_write(pipe, &cursor, length) : us_internal_pipe_start_write(pipe, &cursor, length);
         if (status != STATUS_SUCCESS) {
             pipe->write_status = status;
+            if (pipe->cannot_read) {
+                /* No read is there to find that the peer is gone. */
+                pipe->read_status = status;
+                us_internal_iocp_queue_update(&pipe->req);
+            }
             return us_internal_pipe_fail(status);
         }
         pipe->claimed_length = 0;

@@ -7147,6 +7147,23 @@ describe.concurrent("more than the socket takes at once", () => {
       expect(result).toEqual({ stdout: "1 1 1\nabc\n", exitCode: 0 });
     });
 
+    it("a client that can only write is closed by the write that finds the server gone", async () => {
+      const result = await run(`
+        const server = fixture.createServer({ inbound: true });
+        ${receive}
+        const closed = Promise.withResolvers();
+        const socket = await Bun.connect({
+          unix: server.name,
+          socket: { data() {}, close: (socket, error) => closed.resolve(error?.code) },
+        });
+        console.log(socket.write("hello"));
+        await receive(5);
+        server.close();
+        console.log(received, socket.write("more"), await closed.promise);
+      `);
+      expect(result).toEqual({ stdout: "5\nhello -1 EPIPE\n", exitCode: 0 });
+    });
+
     // 22 is the type of a handshake record.
     it.each([50, 1_100_000])("upgradeTLS() right behind a write() of %d bytes that did not fit", async size => {
       const result = await run(`

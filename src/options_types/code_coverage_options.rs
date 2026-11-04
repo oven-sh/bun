@@ -44,7 +44,7 @@ impl Default for CodeCoverageOptions {
             skip_test_files: !bun_core::env::ALLOW_ASSERT,
             reporters: Reporters {
                 text: true,
-                lcov: false,
+                ..Reporters::NONE
             },
             reports_directory: Box::from(b"coverage" as &[u8]),
             fractions: Fraction::default(),
@@ -60,4 +60,14 @@ impl Default for CodeCoverageOptions {
 pub struct Reporters {
     pub text: bool,
     pub lcov: bool,
+    /// Istanbul `coverage-summary.json`.
+    pub json_summary: bool,
+}
+
+impl Reporters {
+    pub const NONE: Self = Self {
+        text: false,
+        lcov: false,
+        json_summary: false,
+    };
 }

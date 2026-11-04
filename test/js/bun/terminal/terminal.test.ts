@@ -1650,21 +1650,34 @@ describe.concurrent("Bun.spawn with terminal option", () => {
   });
 
   test.skipIf(!isWindows).each([
-    ["open", "new Bun.Terminal({ data() {} });"],
-    ["just closed", "new Bun.Terminal({ data() {} }).close();"],
-  ])("a Worker that ends with terminals %s leaves no handle behind", async (_, terminal) => {
+    ["terminals open", "new Bun.Terminal({ data() {} });"],
+    ["terminals just closed", "new Bun.Terminal({ data() {} }).close();"],
+    ["no terminal", ""],
+  ])("a Worker that ends with %s leaves no handle behind", async (_, terminal) => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
-          const kernel32 = require("bun:ffi").dlopen("kernel32.dll", {
-            GetProcessHandleCount: { args: ["i64", "ptr"], returns: "i32" },
+          const { dlopen, ptr } = require("bun:ffi");
+          const { NtQueryObject } = dlopen("ntdll.dll", {
+            NtQueryObject: { args: ["u64", "i32", "ptr", "u32", "ptr"], returns: "i32" },
           }).symbols;
+          const { GetNamedPipeInfo } = dlopen("kernel32.dll", {
+            GetNamedPipeInfo: { args: ["u64", "ptr", "ptr", "ptr", "ptr"], returns: "i32" },
+          }).symbols;
+          // The type of each open handle.
           function handles() {
-            const count = new Uint32Array(1);
-            if (!kernel32.GetProcessHandleCount(-1n, count)) throw new Error("GetProcessHandleCount failed");
-            return count[0];
+            const ObjectTypeInformation = 2;
+            const info = Buffer.alloc(1024);
+            const types = [];
+            for (let handle = 4; handle < 0x4000; handle += 4) {
+              if (NtQueryObject(handle, ObjectTypeInformation, info, info.length, null) < 0) continue;
+              const name = Number(info.readBigUInt64LE(8)) - ptr(info);
+              const type = info.toString("utf16le", name, name + info.readUInt16LE(0));
+              types.push(type === "File" && GetNamedPipeInfo(handle, null, null, null, null) ? "Pipe" : type);
+            }
+            return types;
           }
           const { Worker } = require("worker_threads");
           async function worker() {
@@ -1680,8 +1693,13 @@ describe.concurrent("Bun.spawn with terminal option", () => {
           await worker();
           // The console host goes away on a thread of its own.
           let left;
-          for (let i = 0; i < 200 && (left = handles() - before) >= 8; i++) await Bun.sleep(10);
-          console.log(left < 8 ? "ok" : left + " handles left");
+          for (let i = 0; i < 200; i++) {
+            left = handles();
+            for (const type of before) if (left.includes(type)) left.splice(left.indexOf(type), 1);
+            if (left.length < 8) break;
+            await Bun.sleep(10);
+          }
+          console.log(left.length < 8 ? "ok" : "left: " + left.sort().join(" "));
           process.exit(0);
         `,
         terminal,

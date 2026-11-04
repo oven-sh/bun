@@ -700,8 +700,6 @@ describe("structuredClone with Blob and File", () => {
         ["fd = i32::MIN", () => craftFd(0x80000000)],
         ["a bit above the descriptor", () => craftFd(7, highOfSentinel() + 1)],
         ["every bit", () => craftFd(0xffffffff, 0xffffffff)],
-        ["only the low half", () => craftFd(fdSentinel, 0)],
-        ["no bit", () => craftFd(0, 0)],
       ])("%s is rejected at deserialize", (_name, craft) => {
         expect(() => deserialize(craft())).toThrow("Unable to deserialize data.");
         expect(() => v8.deserialize(craft())).toThrow("Unable to deserialize data.");

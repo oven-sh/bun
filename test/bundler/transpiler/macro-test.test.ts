@@ -1,6 +1,6 @@
 import { escapeHTML } from "bun" with { type: "macro" };
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, isDebug, tempDir, withoutAsanQuarantine } from "harness";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
@@ -809,5 +809,343 @@ describe("macro VM env loader", () => {
     const [withMacro, withoutMacro] = await Promise.all([build("./with-macro.ts"), build("./without-macro.ts")]);
     expect(withoutMacro).toEqual({ resolved: false, unresolved: true, exitCode: 1 });
     expect(withMacro).toEqual(withoutMacro);
+  });
+});
+
+// A macro result is spliced into the AST of the file that called the macro. Its strings are allocated
+// with that parse and freed with it. A transpiler that lives for many parses does not keep one copy
+// for each parse. The JS thread has such a transpiler: it parses the entry point of `bun --hot`, a
+// file that `require()` loads, a file from a plugin's `onLoad` and each REPL line. A `Bun.Transpiler`
+// is one too.
+describe("the strings of a macro result are freed with the parse that called the macro", () => {
+  const chars = 2 << 20;
+  const warmup = 3;
+  const parses = 16;
+  // Each result holds `chars` bytes or more. A process that keeps every copy grows by 32 MiB or more.
+  const boundMiB = 16;
+  // A debug build decodes the JSON strings in about 8 seconds, and in more on a busy machine.
+  const timeout = isDebug ? 60_000 : undefined;
+  const files = {
+    "macro.ts": `
+      import { appendFileSync } from "node:fs";
+      import { join } from "node:path";
+
+      const chars = Buffer.alloc(${chars}, "a").toString();
+      // Every macro takes the string once, so the number of macro calls is the length of this file.
+      function big() {
+        appendFileSync(join(import.meta.dir, "calls"), ".");
+        return chars;
+      }
+      export const string = () => big();
+      export const objectKey = () => ({ [big()]: 1 });
+      export const text = () => new Response(big(), { headers: { "content-type": "text/plain" } });
+      export const binary = () => new Response(big(), { headers: { "content-type": "application/octet-stream" } });
+      // The JSON parser decodes a string that has an escape into a new allocation.
+      export const json = () =>
+        new Response(JSON.stringify(big() + "\\n"), { headers: { "content-type": "application/json" } });
+      // The string is converted before the Symbol is refused.
+      export const failsPartWay = () => [big(), Symbol("has no literal form")];
+    `,
+    "loop-fixture.ts": `
+      import { readFileSync, writeFileSync } from "node:fs";
+      import { join } from "node:path";
+
+      const [macro, how] = process.argv.slice(2);
+      const source =
+        "import { " + macro + " } from " + JSON.stringify(join(import.meta.dir, "macro.ts")) + ' with { type: "macro" };\\n' +
+        "export const value = " + macro + "();\\n";
+      const file = join(import.meta.dir, "calls-the-macro.ts");
+
+      let parse;
+      if (how === "scan") {
+        // One Bun.Transpiler keeps its macro state from one scan() to the next.
+        const transpiler = new Bun.Transpiler({ loader: "ts" });
+        parse = () => transpiler.scan(source);
+      } else {
+        if (how === "plugin") {
+          writeFileSync(file, "");
+          Bun.plugin({
+            name: "calls-the-macro",
+            setup(build) {
+              build.onLoad({ filter: /calls-the-macro\\.ts$/ }, () => ({ contents: source, loader: "ts" }));
+            },
+          });
+        } else {
+          writeFileSync(file, source);
+        }
+        // The main thread transpiles the file again after each cache delete.
+        parse = () => {
+          delete require.cache[file];
+          let value;
+          try {
+            ({ value } = require(file));
+          } catch (e) {
+            if (macro === "failsPartWay" && String(e.message).includes("cannot coerce symbol")) return;
+            throw e;
+          }
+          if (macro === "failsPartWay") throw new Error("the macro call did not fail");
+          const size = (typeof value === "string" ? value : Object.keys(value)[0]).length;
+          if (size < ${chars}) throw new Error("the macro result has " + size + " chars");
+        };
+      }
+
+      function rssAfter(count) {
+        for (let i = 0; i < count; i++) {
+          parse();
+          Bun.gc(true);
+        }
+        return process.memoryUsage.rss();
+      }
+      const before = rssAfter(${warmup});
+      const deltaMiB = Math.round((rssAfter(${parses}) - before) / 1048576);
+      const calls = readFileSync(join(import.meta.dir, "calls"), "utf8").length;
+      if (calls !== ${warmup + parses}) throw new Error("the macro ran " + calls + " times");
+      console.log(JSON.stringify({ deltaMiB }));
+    `,
+  };
+
+  // scan() does not print. A debug build prints a UTF-16 string of this size in half a second, so the
+  // plain string is not in a file that require() loads.
+  test.concurrent.each([
+    ["objectKey", "require"],
+    ["text", "require"],
+    ["binary", "require"],
+    ["failsPartWay", "require"],
+    ["text", "plugin"],
+    ["string", "scan"],
+    ["json", "scan"],
+  ])(
+    "%s() in a file parsed by %s",
+    async (macro, how) => {
+      using dir = tempDir("macro-result-freed", files);
+      await expectRssDeltaBelow([path.join(String(dir), "loop-fixture.ts"), macro, how], {
+        release: boundMiB,
+        debug: boundMiB,
+      });
+    },
+    timeout,
+  );
+
+  // Each reload parses the entry point, and what it requires, on the JS thread again. A module that
+  // the entry point imports is parsed on the work pool, where a parse never shared its macro state.
+  test.concurrent.each([
+    ["the entry point", "entry.ts"],
+    ["a file that the entry point requires", "required.ts"],
+  ])(
+    "bun --hot reloads with text() in %s",
+    async (_, callsTheMacro) => {
+      const reload = `
+        const state = (globalThis.state ??= { loads: 0, before: 0 });
+        Bun.gc(true);
+        if (++state.loads === ${warmup}) state.before = process.memoryUsage.rss();
+        if (state.loads === ${warmup + parses}) {
+          console.log(JSON.stringify({ deltaMiB: Math.round((process.memoryUsage.rss() - state.before) / 1048576) }));
+          process.exit(0);
+        }
+        // The watcher sees the write and loads the entry point again. The bytes stay the same.
+        const changed = require("node:path").join(__dirname, ${JSON.stringify(callsTheMacro)});
+        require("node:fs").writeFileSync(changed, require("node:fs").readFileSync(changed));
+      `;
+      const call = `import { text } from "./macro.ts" with { type: "macro" };\nexport const size = text().length;\n`;
+      using dir = tempDir("macro-result-freed-hot", {
+        ...files,
+        "required.ts": call,
+        "entry.ts":
+          callsTheMacro === "entry.ts"
+            ? `${call}if (size !== ${chars}) throw new Error("size " + size);${reload}`
+            : `if (require("./required.ts").size !== ${chars}) throw new Error("size");${reload}`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--hot", "--no-clear-screen", "entry.ts"],
+        env: withoutAsanQuarantine(bunEnv),
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const calls = (await Bun.file(path.join(String(dir), "calls")).text()).length;
+      // A debug build logs "DEBUG: Reloading..." for each reload.
+      const errors = stderr.split(/\r?\n/).filter(line => line && !line.startsWith("DEBUG: "));
+      expect({ calls, errors }).toEqual({ calls: warmup + parses, errors: [] });
+      expect(Number(/\{"deltaMiB":(-?\d+)\}/.exec(stdout)?.[1])).toBeLessThan(boundMiB);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  // Each line of the REPL is a parse of its own.
+  test.concurrent(
+    "text() in lines of bun repl",
+    async () => {
+      using dir = tempDir("macro-result-freed-repl", files);
+      const macro = JSON.stringify(path.join(String(dir), "macro.ts"));
+      const call = `import { text } from ${macro} with { type: "macro" }; Bun.gc(true); text().length`;
+      const lines = [
+        ...Array(warmup).fill(call),
+        "Bun.gc(true); globalThis.before = process.memoryUsage.rss()",
+        ...Array(parses).fill(call),
+        "Bun.gc(true); console.log(JSON.stringify({ deltaMiB: Math.round((process.memoryUsage.rss() - before) / 1048576) }))",
+      ];
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "repl"],
+        env: {
+          ...withoutAsanQuarantine(bunEnv),
+          TERM: "dumb",
+          NO_COLOR: "1",
+          HOME: String(dir),
+          USERPROFILE: String(dir),
+        },
+        stdin: Buffer.from(lines.join("\n") + "\n"),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const calls = (await Bun.file(path.join(String(dir), "calls")).text()).length;
+      expect({ calls, stderr }).toEqual({ calls: warmup + parses, stderr: "" });
+      expect(Number(/\{"deltaMiB":(-?\d+)\}/.exec(stdout)?.[1])).toBeLessThan(boundMiB);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+});
+
+// The strings of a macro result live in the arena of the parse that called the macro. That parse is
+// still in flight while later macro calls run more code on the same thread. Every string is compared
+// whole, so a result that was freed early shows as an ASAN report or as other bytes.
+describe("a macro result stays intact until its file is printed", () => {
+  const macro = `
+    const fill = (char: string) => Buffer.alloc(100_000, char).toString();
+    // A string as an object key and a string as a value.
+    export const plain = (char: string) => ({ [fill(char)]: fill(char) });
+  `;
+  const summary = `
+    // [first char of the key, length of the key, the value is the same string], or [key, value].
+    const summary = (value: object) =>
+      Object.entries(value).map(([key, value]) =>
+        typeof value === "string" ? [key[0], key.length, key === value] : [key, value],
+      );
+  `;
+  const moduleBody = Array.from(
+    { length: 2000 },
+    (_, i) => `const v${i} = { a: [${i}, "s${i}"], b: (${i} + 1) * 2 };`,
+  ).join("\n");
+
+  async function run(files: Record<string, string>) {
+    using dir = tempDir("macro-result-intact", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Debug builds print "[macro] call <name>" to stdout before the script's own output.
+    return { result: JSON.parse(stdout.trim().split("\n").pop() || "null"), stderr, exitCode };
+  }
+
+  test.concurrent("when later macro calls transpile other files, collect garbage and await", async () => {
+    const { result, stderr, exitCode } = await run({
+      "macro.ts": `
+        ${macro}
+        // Transpiles another file on this thread.
+        export function requiresAModule(char: string) {
+          Bun.gc(true);
+          const { count } = import.meta.require("./other.cjs");
+          return { ...plain(char), count };
+        }
+        // The argument is the result of another macro call.
+        export const takesAResult = (result: object) => ({ ...result, keys: Object.keys(result).length });
+        // The parse waits for the promise. The import is transpiled in between.
+        export async function importsAModule(char: string) {
+          const { count } = await import("./late.ts");
+          Bun.gc(true);
+          return { ...plain(char), count };
+        }
+      `,
+      "other.cjs": moduleBody + "\nmodule.exports = { count: v1999.b };\n",
+      "late.ts": moduleBody + "\nexport const count: number = v1999.a[0];\n",
+      "index.ts": `
+        import { plain, requiresAModule, takesAResult, importsAModule } from "./macro.ts" with { type: "macro" };
+        ${summary}
+        const results = [plain("a"), requiresAModule("b"), takesAResult(plain("c")), importsAModule("d"), plain("e")];
+        console.log(JSON.stringify(results.map(summary)));
+      `,
+    });
+    expect({ result, stderr }).toEqual({
+      result: [
+        [["a", 100_000, true]],
+        [
+          ["b", 100_000, true],
+          ["count", 4000],
+        ],
+        [
+          ["c", 100_000, true],
+          ["keys", 1],
+        ],
+        [
+          ["d", 100_000, true],
+          ["count", 1999],
+        ],
+        [["e", 100_000, true]],
+      ],
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // scan() keeps its macro state on the transpiler. transformSync() makes its own for each call and
+  // puts scan()'s back. No macro result depends on which of them is alive.
+  test.concurrent("when one Bun.Transpiler parses again before it prints", async () => {
+    const { result, stderr, exitCode } = await run({
+      "macro.ts": `
+        ${macro}
+        // Runs a second parse, with a macro call of its own, on the transpiler whose parse called this macro.
+        export function scansWithTheSameTranspiler(char: string) {
+          const { exports } = globalThis.transpiler.scan(globalThis.calledByTheMacro);
+          return { ...plain(char), exports };
+        }
+      `,
+      "index.ts": `
+        import { join } from "node:path";
+        ${summary}
+        const macro = JSON.stringify(join(import.meta.dir, "macro.ts"));
+        const callsPlain = "import { plain } from " + macro + ' with { type: "macro" };\\nexport const nested = plain("n");\\n';
+        const callsBoth =
+          "import { plain, scansWithTheSameTranspiler } from " + macro + ' with { type: "macro" };\\n' +
+          'export const first = plain("a");\\n' +
+          'export const second = scansWithTheSameTranspiler("b");\\n' +
+          'export const last = plain("c");\\n';
+
+        const transpiler = (globalThis.transpiler = new Bun.Transpiler({ loader: "ts" }));
+        globalThis.calledByTheMacro = callsPlain;
+        async function exportsOf(code: string, name: string) {
+          const file = join(import.meta.dir, name);
+          await Bun.write(file, code);
+          return Object.entries(await import(file)).map(([name, value]) => [name, ...summary(value)]);
+        }
+
+        const nestedScan = await exportsOf(transpiler.transformSync(callsBoth), "nested-scan.mjs");
+        const scans = [transpiler.scan(callsPlain).exports];
+        const code = transpiler.transformSync(callsPlain);
+        scans.push(transpiler.scan(callsPlain).exports);
+        const sameCode = transpiler.transformSync(callsPlain) === code;
+        console.log(JSON.stringify({ nestedScan, scans, sameCode, interleaved: await exportsOf(code, "interleaved.mjs") }));
+      `,
+    });
+    expect({ result, stderr }).toEqual({
+      result: {
+        nestedScan: [
+          ["first", ["a", 100_000, true]],
+          ["last", ["c", 100_000, true]],
+          ["second", ["b", 100_000, true], ["exports", ["nested"]]],
+        ],
+        scans: [["nested"], ["nested"]],
+        sameCode: true,
+        interleaved: [["nested", ["n", 100_000, true]]],
+      },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
   });
 });

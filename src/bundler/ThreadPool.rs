@@ -550,7 +550,7 @@ impl Worker {
             // behind `macro_context.data` (raw `*mut`, no `Drop` glue);
             // `Transpiler` has no `Drop` impl, so `worker.data = None` below
             // would strand it. Free both transpilers' boxes explicitly — the
-            // box only owns a `MacroMap` and a lazy `bun_alloc::Arena`, no JSC
+            // box owns a `MacroMap` and an `Arc<TransformOptions>`, no JSC
             // handles, so the worker thread tearing it down is safe.
             if let Some(data) = worker.data.as_mut() {
                 if let Some(ctx) = data.transpiler.macro_context.take() {

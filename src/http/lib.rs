@@ -3363,7 +3363,7 @@ impl<'a> HTTPClient<'a> {
         }
 
         if let Some(proxy) = self.proxy_tunnel.clone() {
-            proxy.on_writable::<IS_SSL>(socket);
+            ProxyTunnel::on_writable::<IS_SSL>(proxy, socket);
             // ProxyTunnel::on_writable → SSLWrapper::flush → handle_traffic
             // may process a TLS alert or close_notify that was buffered
             // alongside the handshake flight, firing on_close →
@@ -3935,7 +3935,7 @@ impl<'a> HTTPClient<'a> {
             ) {
                 self.set_timeout(&socket);
             }
-            proxy.receive(incoming_data);
+            ProxyTunnel::receive(proxy, incoming_data);
             return;
         }
 

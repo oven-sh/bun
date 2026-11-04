@@ -509,7 +509,7 @@ mod c {
     // socket itself (plus value types) are declared `safe fn` so the validity
     // proof lives in the type signature instead of per-call-site `unsafe { }`.
     // Shims that take a (ptr,len) pair, nullable raw, or transfer ownership
-    // stay unsafe.
+    // through a raw pointer stay unsafe.
     unsafe extern "C" {
         pub(super) safe fn us_socket_get_native_handle(s: &mut us_socket_t) -> *mut c_void;
 

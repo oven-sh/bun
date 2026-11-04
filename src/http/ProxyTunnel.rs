@@ -176,7 +176,7 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
     // arriving here is unexpected.
     if this.state.flags.is_waiting_for_cert_check {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onData while parked");
-        // SAFETY: `this` dead (NLL); reenter via raw ptr.
+        // `this` dead (NLL): `on_close` re-derives `&mut *ctx`.
         tunnel.close(crate::Error::UnexpectedData);
         return;
     }
@@ -189,8 +189,8 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
             let report_progress = match this.handle_response_body(decoded_data, false) {
                 Ok(v) => v,
                 Err(err) => {
-                    // `this` is dead (NLL); reenter via raw ptr so on_close's
-                    // fresh `&mut *ctx` does not alias us.
+                    // `this` is dead (NLL), so on_close's fresh `&mut *ctx` does
+                    // not alias us.
                     tunnel.close(err);
                     return;
                 }
@@ -210,7 +210,7 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
             let report_progress = match this.handle_response_body_chunked_encoding(decoded_data) {
                 Ok(v) => v,
                 Err(err) => {
-                    // SAFETY: see Body arm.
+                    // See Body arm.
                     tunnel.close(err);
                     return;
                 }
@@ -242,7 +242,7 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
         }
         _ => {
             scoped_log!(http_proxy_tunnel, "ProxyTunnel onData unexpected data");
-            // SAFETY: `this` dead (NLL); reenter via raw ptr.
+            // `this` dead (NLL): `on_close` re-derives `&mut *ctx`.
             tunnel.close(crate::Error::UnexpectedData);
         }
     }
@@ -274,8 +274,7 @@ fn on_handshake(
         // only reject the connection if reject_unauthorized == true
         if this.flags.reject_unauthorized && this.flags.did_have_handshaking_error {
             let err = crate::get_cert_error_from_no(handshake_error.error_no);
-            // SAFETY: `this` dead (NLL); reenter via raw ptr so on_close's
-            // fresh `&mut *ctx` does not alias us.
+            // `this` dead (NLL), so on_close's fresh `&mut *ctx` does not alias us.
             tunnel.close(err);
             return;
         }
@@ -353,7 +352,7 @@ fn on_handshake(
         } else {
             crate::Error::TLSHandshakeFailed
         };
-        // SAFETY: `this` dead (NLL); reenter via raw ptr.
+        // `this` dead (NLL): `on_close` re-derives `&mut *ctx`.
         tunnel.close(err);
         return;
     }
@@ -545,10 +544,10 @@ impl ProxyTunnel {
         tunnel.wrapper = Some(wrapper);
         tunnel.socket.set(Socket::from_generic::<IS_SSL>(socket));
         let tunnel = this.proxy_tunnel.insert(RefPtr::new(tunnel));
+        let wrapper = tunnel.wrapper.as_ref().unwrap();
         // No field of `this` is read below: start() synchronously fires on_open() /
         // write_encrypted(), which re-derive `&mut HTTPClient` from the raw ctx
         // pointer (see ALIASING NOTE).
-        let wrapper = tunnel.wrapper.as_ref().unwrap();
         if !start_payload.is_empty() {
             scoped_log!(http_proxy_tunnel, "proxy tunnel start with payload");
             wrapper.start_with_payload(start_payload);
@@ -571,10 +570,10 @@ impl ProxyTunnel {
         }
     }
 
-    /// Outer socket became writable. The caller holds a ref: the flush can release the client's handle.
-    pub(crate) fn on_writable<const IS_SSL: bool>(&self, socket: HTTPSocket<IS_SSL>) {
+    /// Outer socket became writable. Takes a ref of its own: the flush can release the client's handle.
+    pub(crate) fn on_writable<const IS_SSL: bool>(this: RefPtr<Self>, socket: HTTPSocket<IS_SSL>) {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onWritable");
-        self.with_write_buffer(|write_buffer| {
+        this.with_write_buffer(|write_buffer| {
             let encoded_data = write_buffer.slice();
             if !encoded_data.is_empty() {
                 let written = socket.write(encoded_data);
@@ -586,17 +585,17 @@ impl ProxyTunnel {
                 }
             }
         }); // drop &mut write_buffer before flush() reborrows it inside write_encrypted
-        if let Some(wrapper) = &self.wrapper {
+        if let Some(wrapper) = &this.wrapper {
             // Cycle to through the SSL state machine
             let _ = wrapper.flush();
         }
     }
 
-    /// Encrypted bytes arrived on the outer socket. Same contract as
-    /// [`Self::on_writable`]: delivering the decrypted data can release the
-    /// client's handle, so the caller's clone may hold the last ref.
-    pub(crate) fn receive(&self, buf: &[u8]) {
-        if let Some(wrapper) = &self.wrapper {
+    /// Encrypted bytes arrived on the outer socket. Takes a ref of its own, as
+    /// [`Self::on_writable`] does: delivering the decrypted data can release the
+    /// client's handle.
+    pub(crate) fn receive(this: RefPtr<Self>, buf: &[u8]) {
+        if let Some(wrapper) = &this.wrapper {
             wrapper.receive_data(buf);
         }
     }

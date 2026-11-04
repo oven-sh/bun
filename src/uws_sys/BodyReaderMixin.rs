@@ -13,26 +13,26 @@ pub trait BodyReaderHandler: Sized + 'static {
     fn on_body(&mut self, body: &[u8], resp: AnyResponse) -> crate::Result<()>;
 }
 
-pub struct BodyReaderMixin<Wrap: BodyReaderHandler> {
+pub struct BodyReaderMixin<Handler: BodyReaderHandler> {
     body: Vec<u8>,
-    wrap: Wrap,
+    handler: Handler,
 }
 
 const MAX_BODY_SIZE: usize = 1024 * 1024 * 128;
 
-impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
+impl<Handler: BodyReaderHandler> BodyReaderMixin<Handler> {
     /// Memory is freed after the callback returns, or automatically on failure.
-    pub fn read_body<const SSL: bool>(wrap: Wrap, resp: &mut Response<SSL>) {
+    pub fn read_body<const SSL: bool>(handler: Handler, resp: &mut Response<SSL>) {
         let this = bun_core::heap::alloc(Self {
             body: Vec::new(),
-            wrap,
+            handler,
         });
         resp.on_data(Self::on_data, this);
         resp.on_aborted(Self::on_aborted, this);
     }
 
     fn on_data(this: *mut Self, resp: AnyResponse, chunk: &[u8], last: bool) {
-        // SAFETY: `this` is the box from `read_body`. `append` calls neither uWS nor `Wrap`, so
+        // SAFETY: `this` is the box from `read_body`. `append` calls neither uWS nor `Handler`, so
         // the abort handler cannot run during the borrow.
         let appended = unsafe { &mut *this }.append(chunk, last);
         if !last && appended.is_ok() {
@@ -46,7 +46,7 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
         let mut this = unsafe { bun_core::heap::take(this) };
         let body = mem::take(&mut this.body);
         let whole = if body.is_empty() { chunk } else { &body[..] };
-        let result = appended.and_then(|()| this.wrap.on_body(whole, resp));
+        let result = appended.and_then(|()| this.handler.on_body(whole, resp));
         drop(body);
         match result {
             Ok(()) => {}

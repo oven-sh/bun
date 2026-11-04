@@ -508,7 +508,7 @@ where
             return;
         }
         // SAFETY: `ptr` is the user-data passed to `uws_ws()` at registration
-        // time; uWS passes non-null res/req/context valid for the duration of the
+        // time; uWS passes a non-null `res`, valid for the duration of the
         // upgrade callback. We forward `ptr` as a *raw* `*mut Server` without
         // creating a `&mut Server` — the actual pointee type is discriminated
         // by `id` inside the implementer (see trait docs), and materializing a

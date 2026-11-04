@@ -29,7 +29,7 @@ pub use mapping::Mapping;
 pub use parsed_source_map::{ParsedSourceMap, SourceContentPtr};
 
 // SAFETY: `ParsedSourceMap` is shared across threads via the thread-safe
-// `SavedSourceMap` store (its `ref_count` is an `AtomicU32`). The auto-trait
+// `SavedSourceMap` store, which holds it as an `Arc`. The auto-trait
 // inference fails only because `InternalSourceMap` holds the blob's raw data
 // pointer (owned by this map, or borrowed from the embedded standalone
 // section); `SourceContentPtr`'s provider handles are packed as plain
@@ -999,7 +999,6 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
 
         let mut psm = map_data;
         psm.external_source_names = source_paths_slice.unwrap();
-        // `ParsedSourceMap` is `Arc`-managed.
         Some(Arc::new(psm))
     } else {
         None

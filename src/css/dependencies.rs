@@ -37,7 +37,6 @@ impl Location {
 /// An `@import` dependency.
 pub struct ImportDependency<'bump> {
     /// The placeholder that the URL was replaced with.
-    // Lifetime: arena-allocated by `css_modules::hash`.
     pub(crate) placeholder: &'bump [u8],
 }
 
@@ -64,7 +63,6 @@ impl<'bump> ImportDependency<'bump> {
 /// A `url()` dependency.
 pub struct UrlDependency<'bump> {
     /// The placeholder that the URL was replaced with.
-    // Lifetime: arena-allocated by `css_modules::hash`.
     pub(crate) placeholder: &'bump [u8],
 }
 

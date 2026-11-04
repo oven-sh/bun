@@ -558,9 +558,10 @@ async function connect() {
   results.server = await send('server', server);
   (await connect()).socket.destroy();
 
+  const answered = once(child, 'message');
   const [[peer]] = await Promise.all([once(server, 'connection'), send('your turn')]);
   await text(peer);
-  await once(child, 'message');
+  await answered;
   console.log(JSON.stringify({ ...results, received }));
   child.disconnect();
   server.close();

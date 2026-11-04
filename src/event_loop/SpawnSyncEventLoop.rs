@@ -116,7 +116,7 @@ mod handler {
 }
 
 impl SpawnSyncEventLoop {
-    /// `None` if the isolated loop cannot be created. Boxed: the Windows timeout timer keeps the address.
+    /// `None` if the isolated loop cannot be created.
     pub fn init(vm: *mut () /* SAFETY: erased *mut VirtualMachine */) -> Option<Box<Self>> {
         // `uws::Loop::create` takes a `LoopHandler` impl with associated-const fn ptrs.
         let loop_ = uws::Loop::create::<handler::Handler>()?;

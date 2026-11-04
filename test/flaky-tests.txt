@@ -51,7 +51,6 @@ test/js/bun/http/serve-http2.test.ts  # 4 of 80 builds; parallel batch; 2 MB req
 test/js/bun/http/serve-http3.test.ts  # 3 of 80 builds; mac, windows
 test/js/bun/http/serve-stream-body-error.test.ts  # 1 of 80 builds; start-async-reject: the rejection is handled and the error is still reported: expect(r...
 test/js/bun/http/serve.test.ts  # 4 of 80 builds; mac
-test/js/bun/io/bun-write.test.js  # 1 of 80 builds; parallel batch; Bun.write() without uv_fs_copyfile: test timed out
 test/js/bun/net/socket.test.ts  # 1 of 80 builds; mac
 test/js/bun/resolve/bun-main-entry-point.test.ts  # 5 of 80 builds; windows
 test/js/bun/s3/s3.leak.test.ts  # 1 of 80 builds; windows

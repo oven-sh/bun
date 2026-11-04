@@ -1046,7 +1046,7 @@ describe.concurrent("what is left to write to the stdin of a child that exited d
     await using parent = spawn({
       cmd: [bunExe(), "fixture.js", "parent", how],
       cwd: String(dir),
-      env: { ...bunEnv, PORT: String(server.port) },
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined, PORT: String(server.port) },
       stdout: "pipe",
       stderr: "inherit",
     });

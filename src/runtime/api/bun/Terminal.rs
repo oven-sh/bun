@@ -1698,6 +1698,14 @@ impl Terminal {
         self.this_value.with_mut(|v| v.finalize());
         self.update_flags(|f| f.insert(Flags::FINALIZED));
         self.close_internal();
+        // `close_internal` leaves the reader to its EOF, and the loop of a VM that is ending brings none.
+        #[cfg(windows)]
+        if jsc::virtual_machine::VirtualMachine::get().is_shutting_down() {
+            let flags = self.flags.get();
+            if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
+                self.reader.with_mut(|r| r.close());
+            }
+        }
     }
 }
 

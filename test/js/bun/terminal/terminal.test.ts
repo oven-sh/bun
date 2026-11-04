@@ -1649,6 +1649,52 @@ describe.concurrent("Bun.spawn with terminal option", () => {
     expect(outcomes).toEqual(Array.from({ length: N }, () => "data"));
   });
 
+  test.skipIf(!isWindows).each([
+    ["open", "new Bun.Terminal({ data() {} });"],
+    ["just closed", "new Bun.Terminal({ data() {} }).close();"],
+  ])("a Worker that ends with terminals %s leaves no handle behind", async (_, terminal) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const kernel32 = require("bun:ffi").dlopen("kernel32.dll", {
+            GetProcessHandleCount: { args: ["i64", "ptr"], returns: "i32" },
+          }).symbols;
+          function handles() {
+            const count = new Uint32Array(1);
+            if (!kernel32.GetProcessHandleCount(-1n, count)) throw new Error("GetProcessHandleCount failed");
+            return count[0];
+          }
+          const { Worker } = require("worker_threads");
+          async function worker() {
+            const script = "for (let i = 0; i < 8; i++) " + process.argv[1];
+            const worker = new Worker(script + "require('worker_threads').parentPort.postMessage(1); setInterval(() => {}, 1000);", { eval: true });
+            await new Promise(resolve => worker.once("message", resolve));
+            await worker.terminate();
+          }
+
+          await worker();
+          const before = handles();
+          await worker();
+          await worker();
+          // The console host goes away on a thread of its own.
+          let left;
+          for (let i = 0; i < 200 && (left = handles() - before) >= 8; i++) await Bun.sleep(10);
+          console.log(left < 8 ? "ok" : left + " handles left");
+          process.exit(0);
+        `,
+        terminal,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
+  });
+
   // https://github.com/oven-sh/bun/issues/42171
   // On macOS a pty's session leader can't finish exiting until the parent reads what it wrote to the terminal.
   // If it got that far before the parent's kqueue watch (ESRCH), the parent used to block in wait4() on the

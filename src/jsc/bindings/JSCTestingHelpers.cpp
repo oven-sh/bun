@@ -97,9 +97,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCollectSyncWithoutSweep, (JSGlobalObject * gl
     return JSValue::encode(jsUndefined());
 }
 
-// How many words hold the source positions of the code that calls this, and in how many chapters besides the first
-// ($vm.expressionInfoStats() in JavaScriptCore's shell). The caller, not a function argument: a generator or an async
-// function keeps them in the code block of its body, which no function object gives.
+// { words, chapters } of the expression info of the code block that calls this.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionExpressionInfoStats, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
     auto& vm = JSC::getVM(globalObject);

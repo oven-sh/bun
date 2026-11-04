@@ -225,10 +225,10 @@ test.concurrent.skipIf(!isWindows)("a loop that never sleeps gets its stdin with
   // A thread reads an inherited pipe for the event loop, and here the two have to share.
   using dir = tempDir("stdin-one-processor", {
     "poll.js": `
-      let turns = 0;
+      const deadline = Date.now() + 10_000;
       (function poll() {
         const chunk = process.stdin.read(3);
-        if (chunk !== null || ++turns > 1000) {
+        if (chunk !== null || Date.now() > deadline) {
           console.log(String(chunk));
           process.exit(0);
         }

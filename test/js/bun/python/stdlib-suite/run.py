@@ -250,13 +250,18 @@ CAUSES = [
     ("a function of JavaScript cannot be pickled, copied by reference or weakly referenced", None, r"cannot pickle 'JSFunction'|weak reference to 'JSFunction'|cannot pickle '_js\."),
     ("a generator of JavaScript is not a generator object of Python's", None, r"'_js\.JSGenerator' object has no attribute|Generator is executing|_js\.JSGenerator"),
     ("a coroutine made of a generator is not a coroutine object of Python's", None, r"'(Coroutine|AsyncGenerator)' object|coroutine object .* at|<class 'support\.|RuntimeWarning not triggered|never awaited"),
-    ("to call a coroutine function from JavaScript gives a promise", None, r"JavaScript Promise|'JSPromise' object|attached to a different loop|BunEventLoop"),
+    ("to call a coroutine function from JavaScript gives a promise", None, r"JavaScript Promise|'JSPromise' object|attached to a different loop"),
     ("a whole float that a call returns is an int when it goes back", None,
      r"<class 'int'> (!=|is not) <class 'float'>|is not an instance of <class 'float'>|'int' object has no attribute '(hex|is_integer|fromhex)'|must return a float, not int|must be (a )?float, not int|not 'int'.*float"),
     ("no exception is being handled in a `catch`: __context__, sys.exception(), traceback.format_exc()", None,
      r"None is not an instance of <class '\w+(Error|Exception|Exit|Interrupt)'>|'NoneType' object has no attribute '(args|tb_next|tb_frame|tb_lineno|__traceback__|__context__|exc_type|err_msg|with_traceback)'|NoneType: None|None is not (\w*Error|Exception)\("),
     ("what goes by the frame of the caller finds none of the test's", None, r"'support' !=|support\.py' !=|not found as support\.|'__main__' !="),
     ("a call of what cannot be called, and the like, is a TypeError of JavaScript's", None, r"^JS TypeError: .* is not a function"),
+    ("a warning given under with() of bun:python is attributed to the frame of with()", None, r"<frozen _bun_python>' !=|'_bun_python' !="),
+    ("dir() of a function of JavaScript lists 'arguments', 'caller' and 'callee', which throw", None, r"'arguments', 'callee', and 'caller' cannot be accessed"),
+    ("for what JavaScript calls, the loop that Bun runs is the running loop", None, r"BunEventLoop"),
+    ("a test that needed JavaScript on a second thread was interrupted and left something behind", None, r"Unexpected handlers: |Event loop stopped before Future completed|RemoteDisconnected"),
+    ("a view that was dropped still counts as an export under a frame of the optimizing compilers", None, r"Existing exports of data"),
 ]
 CAUSES = [(title, module and re.compile(module), message and re.compile(message)) for title, module, message in CAUSES]
 

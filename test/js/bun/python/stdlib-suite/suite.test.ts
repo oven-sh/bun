@@ -35,7 +35,7 @@ test.concurrent.each(modes)("a translated file does what the original does, %s",
     [python, join(import.meta.dir, "translate.py"), ...options, join(fixture, "test_sample.py"), "test_sample", join(cwd, "test_sample.test.ts")],
     cwd,
   ); // prettier-ignore
-  expect(translated).toEqual({ stdout: "test_sample: 26 of 27 test methods\n", stderr: "", exitCode: 0 });
+  expect(translated).toEqual({ stdout: "test_sample: 28 of 29 test methods\n", stderr: "", exitCode: 0 });
   const manifest = JSON.parse(readFileSync(join(cwd, "test_sample.json"), "utf8"));
   expect(Object.entries(manifest.tests).filter(([, reason]) => reason !== "ok")).toEqual([
     ["LanguageTest.test_left_out", "frames"],
@@ -47,7 +47,7 @@ test.concurrent.each(modes)("a translated file does what the original does, %s",
   ]); // prettier-ignore
   expect(original.stderr).toBe("");
   const expected = outcomes(join(cwd, "original.jsonl"));
-  expect(Object.keys(expected)).toHaveLength(29);
+  expect(Object.keys(expected)).toHaveLength(31);
   expect(outcomes(join(cwd, "translation.jsonl"))).toEqual({
     ...expected,
     "LanguageTest.test_left_out": ["untranslated", "LanguageTest.test_left_out: frames"],

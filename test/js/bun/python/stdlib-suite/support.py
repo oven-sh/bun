@@ -5,6 +5,7 @@ Two kinds of things are here. What JavaScript has no way to say (a class stateme
 the originals for comparison (`python3 support.py test.test_x`), so that both runs mean the same by every word.
 """
 
+import builtins
 import collections.abc
 import importlib
 import importlib.util
@@ -346,10 +347,10 @@ def await_iterator(awaitable):
     if isinstance(awaitable, types.GeneratorType) and awaitable.gi_code.co_flags & 0x100:  # types.coroutine()
         return [awaitable]
     try:
-        method = type(awaitable).__await__
+        method = _special(awaitable, "__await__")
     except AttributeError:
         raise TypeError(f"'{type(awaitable).__name__}' object can't be awaited") from None
-    iterator = method(awaitable)
+    iterator = method()
     if isinstance(iterator, (Coroutine, types.CoroutineType)):
         raise TypeError("__await__() returned a coroutine")
     if not hasattr(type(iterator), "__next__"):
@@ -388,29 +389,29 @@ def close_iterator(iterator):
 def aenter_raw(manager):
     enter = _manager_method(manager, "__aenter__", "async with", "__enter__")
     _manager_method(manager, "__aexit__", "async with", "__exit__")
-    return [enter(manager)]
+    return [enter()]
 
 
 def aexit_raw(manager, thrown=None, has_thrown=False):
     if not has_thrown:
-        return [type(manager).__aexit__(manager, None, None, None)]
+        return [_special(manager, "__aexit__")(None, None, None)]
     exception = exception_for(thrown)
-    return [type(manager).__aexit__(manager, type(exception), exception, exception.__traceback__)]
+    return [_special(manager, "__aexit__")(type(exception), exception, exception.__traceback__)]
 
 
 def aiter_raw(iterable):
     try:
-        method = type(iterable).__aiter__
+        method = _special(iterable, "__aiter__")
     except AttributeError:
         raise TypeError(f"'async for' requires an object with __aiter__ method, got {type(iterable).__name__}") from None
-    iterator = method(iterable)
+    iterator = method()
     if not hasattr(type(iterator), "__anext__"):
         raise TypeError(f"'async for' received an object from __aiter__ that does not implement __anext__: {type(iterator).__name__}")
     return [iterator]
 
 
 def anext_raw(iterator):
-    return [type(iterator).__anext__(iterator)]
+    return [_special(iterator, "__anext__")()]
 
 
 def annotator(entries, module=None):
@@ -452,6 +453,13 @@ def annotate(namespace, name, annotation):
     annotations[name] = annotation
 
 
+def new_type(module, name, bases, namespace, **keywords):
+    """type(name, bases, namespace), called in the module"""
+    if isinstance(namespace, dict) and "__module__" not in namespace:
+        namespace = {**namespace, "__module__": module}
+    return type(name, bases, namespace, **keywords)
+
+
 def namespace_get(namespace, name):
     """[value] if the namespace of a class body has the name, else None."""
     try:
@@ -460,9 +468,19 @@ def namespace_get(namespace, name):
         return None
 
 
+def _special(instance, name):
+    """The special method of the instance as the interpreter finds it: in the classes, and bound if it is a descriptor."""
+    for base in type(instance).__mro__:
+        if name in vars(base):
+            found = vars(base)[name]
+            get = getattr(type(found), "__get__", None)
+            return found if get is None else get(found, instance, type(instance))
+    raise AttributeError(name)
+
+
 def _manager_method(manager, name, statement, other):
     try:
-        return getattr(type(manager), name)
+        return _special(manager, name)
     except AttributeError:
         pass
     protocol = "asynchronous context manager" if statement == "async with" else "context manager"
@@ -475,15 +493,16 @@ def _manager_method(manager, name, statement, other):
 
 
 def enter(manager):
-    enter = _manager_method(manager, "__enter__", "with", "__aenter__")
-    _manager_method(manager, "__exit__", "with", "__aexit__")
-    return enter(manager)
+    if not hasattr(type(manager), "__exit__"):
+        _manager_method(manager, "__enter__", "with", "__aenter__")
+        _manager_method(manager, "__exit__", "with", "__aexit__")
+    return _manager_method(manager, "__enter__", "with", "__aenter__")()
 
 
 def exit(manager, thrown=None, has_thrown=False):
     """True: the exception is not to go on."""
     if not has_thrown:
-        type(manager).__exit__(manager, None, None, None)
+        _special(manager, "__exit__")(None, None, None)
         return False
     exception = exception_for(thrown)
     traceback = exception.__traceback__
@@ -492,21 +511,21 @@ def exit(manager, thrown=None, has_thrown=False):
         raise exception
     except BaseException:
         exception.__traceback__ = traceback
-        return bool(type(manager).__exit__(manager, type(exception), exception, traceback))
+        return bool(_special(manager, "__exit__")(type(exception), exception, traceback))
 
 
 async def aenter(manager):
     enter = _manager_method(manager, "__aenter__", "async with", "__enter__")
     _manager_method(manager, "__aexit__", "async with", "__exit__")
-    return await enter(manager)
+    return await enter()
 
 
 async def aexit(manager, thrown=None, has_thrown=False):
     if not has_thrown:
-        await type(manager).__aexit__(manager, None, None, None)
+        await _special(manager, "__aexit__")(None, None, None)
         return False
     exception = exception_for(thrown)
-    return bool(await type(manager).__aexit__(manager, type(exception), exception, exception.__traceback__))
+    return bool(await _special(manager, "__aexit__")(type(exception), exception, exception.__traceback__))
 
 
 def exception_for(thrown):
@@ -600,6 +619,10 @@ def module(name, is_package):
     if is_package:
         module.__path__ = list(spec.submodule_search_locations)
     sys.modules[name] = module
+    # As the import system leaves it: `import test.test_x` and what resolves dotted names go by the attribute.
+    parent, _, child = name.rpartition(".")
+    if parent in sys.modules:
+        setattr(sys.modules[parent], child, module)
     namespace = vars(module)
     exec(compile(_WRAPPERS, spec.origin, "exec"), namespace)
     _wrappers[name] = namespace.pop("__wrappers__")(get_ident, _main_thread, _note_thread)
@@ -614,6 +637,23 @@ def forget_module(name):
 def export(module, names, values):
     for name, value in zip(names, values):
         setattr(module, name, value)
+
+
+def module_namespace(module, names, values, stars=()):
+    """globals(), with the variables of the file that are bound as they are now."""
+    namespace = vars(module)
+    for star in stars:
+        for name, value in star.items():
+            namespace.setdefault(name, value)
+    namespace.setdefault("__builtins__", builtins)
+    for name, value in zip(names, values):
+        namespace[name] = value
+    return namespace
+
+
+def new_names(module, names):
+    """What has come into the namespace of the module otherwise than by a statement of the file: globals()[name] = ..., exec()."""
+    return [[name, value] for name, value in vars(module).items() if name not in names and not name.startswith("__")]
 
 
 def import_module(name):
@@ -730,7 +770,7 @@ def _is_translated(cls, test, module):
     """Whether the test is written in the file. What a class inherits from another module has not been translated."""
     for base in cls.__mro__:
         if test in vars(base):
-            return base.__module__ == module or base.__module__ in _wrappers
+            return getattr(base, "__module__", None) == module or getattr(base, "__module__", None) in _wrappers
     return False
 
 

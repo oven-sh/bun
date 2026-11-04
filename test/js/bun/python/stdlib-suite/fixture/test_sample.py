@@ -127,6 +127,9 @@ class Recorder:
         return kind is not None and issubclass(kind, self.swallow)
 
 
+globals()["MadeInGlobals"] = type("MadeInGlobals", (), {"tag": "made"})
+
+
 class SequenceTests:
     """A mixin: the classes below say what it tests."""
 
@@ -463,8 +466,47 @@ class LanguageTest(unittest.TestCase):
     def test_expected_failure(self):
         self.assertEqual(1, 2)
 
+    def test_namespaces(self):
+        """The docstring of a test."""
+        one, nothing = 1, None
+        self.assertEqual("%(one)s %(nothing)s" % locals(), "1 None")
+        self.assertIn("self", vars())
+        self.assertIn("one", dir())
+        self.assertIs(globals()["Point"], Point)
+        self.assertIs(globals(), vars(sys.modules[__name__]))
+        self.assertEqual(eval("one + len(Color)"), 1 + len(Color))
+        exec("made_by_exec = one + 1", globals(), made := {"one": 1})
+        self.assertEqual(made["made_by_exec"], 2)
+        self.assertEqual(MadeInGlobals.__module__, __name__)
+        self.assertEqual(MadeInGlobals.tag, "made")
+        self.assertEqual(self.shortDescription(), "The docstring of a test.")
+
+        class Body:
+            locals()["computed"] = 5
+
+        self.assertEqual(Body.computed, 5)
+
+    def test_special_methods_that_are_no_functions(self):
+        calls = []
+
+        class Callable:
+            def __init__(self, name):
+                self.name = name
+
+            def __call__(self, *args):
+                calls.append((self.name, len(args)))
+
+        class Manager:
+            __enter__ = Callable("enter")
+            __exit__ = Callable("exit")
+
+        for _ in range(1):
+            with Manager():
+                continue
+        self.assertEqual(calls, [("enter", 0), ("exit", 3)])
+
     def test_left_out(self):
-        self.assertIn("self", locals())
+        self.assertEqual(sys._getframe().f_code.co_name, "test_left_out")
 
 
 class CoroutineTest(unittest.TestCase):

@@ -373,7 +373,27 @@ export function nameError(name: string): never {
 }
 
 /** A name that nothing in the file binds and that is no built-in, unless the program has made it one. */
-export const unbound = (name: string) => (builtins.hasattr(builtins, name) ? getattr(builtins, name) : nameError(name));
+export function unbound(name: string, module) {
+  // The file has no statement that binds it, but exec() or globals()[name] = ... may have.
+  const found = py.namespace_get(builtins.vars(module), name);
+  return found ? found[0] : builtins.hasattr(builtins, name) ? getattr(builtins, name) : nameError(name);
+}
+
+/** `globals()`: the variables of the file are variables of JavaScript, and the namespace of the module is told of them here. */
+export function globals(module, variables: Record<string, unknown>, stars = []) {
+  const bound = Object.entries(variables).filter(([, value]) => value !== undefined);
+  return py.module_namespace(
+    module,
+    bound.map(([name]) => name),
+    bound.map(([, value]) => value),
+    stars,
+  );
+}
+
+export const newType = py.new_type;
+
+/** `locals()` in a function. */
+export const locals = (variables: Record<string, unknown>) => builtins.dict(Object.entries(variables));
 
 /** A name that `from x import *` may have bound. */
 export function star(modules, name: string) {
@@ -480,6 +500,10 @@ export function finish(module, namespace: Record<string, unknown>, isLibrary = f
   const values = Object.values(namespace);
   py.export(module, names, values);
   if (isLibrary) return;
+  for (const [name, value] of py.new_names(module, names)) {
+    names.push(name);
+    values.push(value);
+  }
   let forAll;
   if (namespace.setUpModule) beforeAll(() => void (forAll = py.call_fixture(namespace.setUpModule)));
   for (const [qualname, cls, tests] of py.test_classes(names, values, module.__name__)) {

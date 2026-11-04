@@ -64,7 +64,13 @@ class TestInsort:                                     TestInsort = $.class_("Tes
   caught by no clause: the original raises nothing else, so it is a mistake of the translation or of the runtime, and is to show.
 - **Ints** that are constants are computed by the translator (`2**64` is `18446744073709551616n`); all other arithmetic is Python's.
 - **The module** is a module object in `sys.modules` under the name of the original, with the names of the translated file, for
-  `pickle`, `repr()` and `sys.modules[__name__]`. The functions of Python that wrap the methods are made as if they were written in the
+  `pickle`, `repr()` and `sys.modules[__name__]`. The variables of the file are variables of JavaScript, and the module object is told
+  of them when the file has been loaded, when a function binds one with `global`, and whenever somebody asks: `globals()` is the
+  namespace of the module, brought up to date. A name that no statement binds is looked up there (`globals()[name] = ...`, `exec()`),
+  and test cases that got there that way are found. What is written into that namespace under the name of a variable does not
+  reach the variable: `mock.patch()` of a global of the test's own module has no effect on the translation.
+- **`locals()`** in a function is a dict made for the occasion, as in Python, in which what is not bound yet is `None`; in the body of a
+  class it is the namespace. `eval()` and `exec()` without namespaces get these two. `vars()` and `dir()` without arguments go by them. The functions of Python that wrap the methods are made as if they were written in the
   original file, because much in Python goes by the frame of the caller (the module of a new class, the file of a warning), and code in
   JavaScript has no frame.
 - **Files that tests are inherited from** (`list_tests.py`, `pickletester.py`, `test_asyncio/utils.py`) are translated too. A translation
@@ -87,8 +93,8 @@ difference from the default run (`--compare`) is the list of what stands between
 ## What is left out
 
 A test method that has something in it that cannot be translated faithfully is left out and counted, with the reason, in the `.json`
-that is written beside each translation: what goes by the frame of its caller (`locals()`, `globals()`, `exec()` without a namespace,
-`sys._getframe()`), `match`, `except*`, type parameters, t-strings. A helper that is left out becomes a function that throws
+that is written beside each translation: what asks for a frame (`sys._getframe()`, `inspect.currentframe()`), `match`, `except*`, type
+parameters, t-strings. A helper that is left out becomes a function that throws
 `Untranslated`; a test that runs into it counts as left out at run time, not as failed.
 
 JavaScript runs on one thread. A test that has another thread run a function of its own cannot work, which shows when it runs: it

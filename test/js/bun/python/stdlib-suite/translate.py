@@ -40,8 +40,6 @@ UNARY = {ast.USub: "neg", ast.UAdd: "pos", ast.Invert: "invert"}
 # Built-in functions whose result is a bool.
 PREDICATES = frozenset("isinstance issubclass hasattr callable bool all any".split())
 # What goes by the frame of its caller, which is not a frame of Python's here.
-NEEDS_FRAME = frozenset("locals globals".split())
-NEEDS_FRAME_WITHOUT_ARGUMENTS = frozenset("vars dir".split())
 NEEDS_FRAME_ATTRIBUTES = frozenset("_getframe currentframe _getframemodulename".split())
 
 MAX_SAFE = 2**53 - 1
@@ -268,6 +266,7 @@ class Translator:
         self.counter = 0
         self.module = Scope("module", None)
         self.has_star_import = False
+        self.needs_globals = False
         self.future_annotations = False
         self.manifest = {}  # "Class.test_name": "ok" or the reason
         self.left_out = {}  # Helpers: "name": reason
@@ -378,7 +377,7 @@ class Translator:
             return f"$.star($stars, {js_string(name)})"
         if kind == "builtin":
             return f"$b.{name}"
-        return f"$.unbound({js_string(name)})"
+        return f"$.unbound({js_string(name)}, $m)"
 
     def load_name(self, name, scope):
         if name == "__name__" and name not in self.module.bound:
@@ -400,6 +399,22 @@ class Translator:
             outside = self.load_outside_class(name, scope.parent)
             return f"$.lookup({scope.namespace}, {js_string(name)}, () => {outside})"
         return self.load_outside_class(name, scope)
+
+    def frame_globals(self):
+        """globals(): the namespace of the module object, brought up to date with the variables of the file."""
+        self.needs_globals = True
+        return "$g()"
+
+    def frame_locals(self, scope):
+        """locals(): in a function a dict made for the occasion, as in Python. What has not been bound yet is None in it."""
+        if scope.kind == "module":
+            return self.frame_globals()
+        if scope.kind == "class":
+            return scope.namespace
+        if scope.kind != "function":
+            raise Skip("frames")
+        names = sorted(scope.bound)
+        return "$.locals({ " + ", ".join(n if self.js_name(n) == n else f"{js_key(n)}: {self.js_name(n)}" for n in names) + " })"
 
     def class_cell(self, scope):
         """The variable that has the class whose method this is."""
@@ -781,10 +796,16 @@ class Translator:
                 if method.kind != "function" or method.first_parameter is None:
                     raise Skip("super() or __class__ outside a method")
                 return f"$b.super({self.class_cell(scope)}, {self.js_name(method.first_parameter)})", True
-            if name in NEEDS_FRAME or (name in NEEDS_FRAME_WITHOUT_ARGUMENTS and not node.args):
-                raise Skip("frames")
-            if name in ("eval", "exec") and len(node.args) + len(node.keywords) < 2:
-                raise Skip("frames")
+            if name == "type" and len(node.args) == 3 and not any(isinstance(argument, ast.Starred) for argument in node.args):
+                # The module of the new class is that of the frame that calls type().
+                return f"$.newType($n, {self.arguments(node, scope)})", True
+            if name in ("locals", "globals", "vars", "dir") and not node.args and not node.keywords:
+                if name == "globals":
+                    return self.frame_globals(), True
+                return (f"$b.sorted({self.frame_locals(scope)})" if name == "dir" else self.frame_locals(scope)), True
+            if name in ("eval", "exec") and len(node.args) == 1 and not node.keywords and not isinstance(node.args[0], ast.Starred):
+                namespaces = self.frame_globals() if scope.kind == "module" else f"{self.frame_globals()}, {self.frame_locals(scope)}"
+                return f"$b.{name}({self.x(node.args[0], scope)}, {namespaces})", True
         if any(keyword.arg is None for keyword in node.keywords):
             # What the keys of a mapping may be, and what happens if they are not, is for Python to say.
             groups = ", ".join(self.keyword_groups(node, scope))
@@ -905,14 +926,13 @@ class Translator:
             is_decorated=any(not self.is_builtin(d, scope, ("staticmethod", "classmethod", "property")) for d in node.decorator_list),
         )  # fmt: skip
         annotations = self.function_annotations(node, scope)
-        is_test = scope.kind == "class" and scope.is_test_class
         # functools.wraps() needs the __dict__ of the function, which one of JavaScript's has not.
         needs_dict = self.has_decorator(node, ("wraps",))
         if needs_dict:
             self.workarounds["functools.wraps"] = self.workarounds.get("functools.wraps", 0) + 1
         if scope.kind == "class" or needs_dict or (is_async and not self.native_async):
             suffix = f", {js_string(node.name)}, {js_string(scope.prefix + node.name)}, $n"
-            if doc is not None and not is_test:
+            if doc is not None:
                 suffix += f", {js_string(doc)}"
             if not is_async:
                 maker = "$.def("
@@ -1712,6 +1732,8 @@ class Translator:
         variables = [self.js_name(n) for n in names] + module.declared + (["$raw"] if self.raw_calls else [])
         if variables:
             lines.append(f"let {', '.join(variables)};")
+        if self.needs_globals:
+            lines.append(f"const $g = () => $.globals($m, {{ {exported} }}{', $stars' if self.has_star_import else ''});")
         if self.raw_calls:
             body.insert(0, "$raw = $.rawFor($n);")
         body.insert(0, f"$m = $.module($n, {'true' if self.is_package else 'false'});")

@@ -943,6 +943,15 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
 std::optional<bool> servedCollectionsDequal(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSObject* o1, JSObject* o2);
 
+// specialObjectsDequal takes a Set or a Map for unequal to a Proxy. For toEqual(), servedCollectionsDequal decides that pair.
+template<bool isStrict, bool enableAsymmetricMatchers>
+static ALWAYS_INLINE bool isForServedCollections(bool equal, JSCell* collection, JSCell* other)
+{
+    if constexpr (enableAsymmetricMatchers && !isStrict)
+        return !equal && other->type() == ProxyObjectType && (collection->type() == JSSetType || collection->type() == JSMapType);
+    return false;
+}
+
 template<typename T>
 static bool looseFloatContentsEqual(std::span<const T> a, std::span<const T> b)
 {
@@ -1196,10 +1205,10 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
     std::optional<bool> isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, c1, c2);
     RETURN_IF_EXCEPTION(scope, false);
-    if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
+    if (isSpecialEqual.has_value() && !isForServedCollections<isStrict, enableAsymmetricMatchers>(*isSpecialEqual, c1, c2)) return WTF::move(*isSpecialEqual);
     isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, c2, c1);
     RETURN_IF_EXCEPTION(scope, false);
-    if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
+    if (isSpecialEqual.has_value() && !isForServedCollections<isStrict, enableAsymmetricMatchers>(*isSpecialEqual, c2, c1)) return WTF::move(*isSpecialEqual);
     JSObject* o1 = v1.getObject();
     JSObject* o2 = v2.getObject();
 
@@ -2605,11 +2614,6 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
     // that the per-entry recursion should be a direct call.
     case JSSetType: {
         if (c2Type != JSSetType) {
-            if constexpr (enableAsymmetricMatchers && !isStrict) {
-                // Bun__deepEquals hands the pair to servedCollectionsDequal.
-                if (c2Type == ProxyObjectType)
-                    return std::nullopt;
-            }
             return false;
         }
 
@@ -2656,11 +2660,6 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
     }
     case JSMapType: {
         if (c2Type != JSMapType) {
-            if constexpr (enableAsymmetricMatchers && !isStrict) {
-                // Bun__deepEquals hands the pair to servedCollectionsDequal.
-                if (c2Type == ProxyObjectType)
-                    return std::nullopt;
-            }
             return false;
         }
 

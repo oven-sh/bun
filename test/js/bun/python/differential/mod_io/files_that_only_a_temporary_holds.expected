@@ -1,0 +1,75 @@
+status: 0
+script: 178386cfcb72b709
+---
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='w' encoding='utf-8'> | line 2
+write 14 14 | closed: True
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 3
+read 'one\ntwo\nthree\n' | closed: True
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 4
+read(n) 'one\nt' | closed: True
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 5
+readline 'one\n' | closed: True
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 6
+readlines ['one\n', 'two\n', 'three\n'] | closed: True
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='w' encoding='utf-8'> | line 7
+writelines None 4 | closed: True
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='a' encoding='utf-8'> | line 8
+append 2 6 | closed: True
+    ResourceWarning unclosed file <_io.BufferedReader name='P'> | line 9
+binary read b'a\nb\nc\n' | closed: True
+    ResourceWarning unclosed file <_io.BufferedReader name='P'> | line 10
+binary readline b'a\n' | closed: True
+    ResourceWarning unclosed file <_io.BufferedWriter name='P'> | line 11
+binary write 10 10 | closed: True
+    ResourceWarning unclosed file <_io.BufferedRandom name='P'> | line 12
+update 2 10 | closed: True
+    ResourceWarning unclosed file <_io.BufferedRandom name='P'> | line 13
+update, read b'ab23456789' | closed: True
+    ResourceWarning unclosed file <_io.FileIO name='P' mode='rb' closefd=True> | line 14
+unbuffered read b'ab23456789' | closed: True
+    ResourceWarning unclosed file <_io.FileIO name='P' mode='rb' closefd=True> | line 15
+unbuffered readall b'ab23456789' | closed: True
+    ResourceWarning unclosed file <_io.FileIO name='P' mode='wb' closefd=True> | line 16
+unbuffered write 3 3 | closed: True
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 17
+io.open xyz | closed: True
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='latin-1'> | line 18
+keywords xy | closed: True
+    ResourceWarning unclosed file <_io.TextIOWrapper name=N mode='r' encoding='utf-8'> | line 19
+a descriptor xyz | closed: True
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 20
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 20
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 20
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 20
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 20
+in an expression 6 ['xyz', 'xyz', 'xyz'] | closed: True
+-- the use raises
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 23
+TypeError argument should be integer or None, not 'str' | closed: True
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 23
+UnsupportedOperation not writable | closed: True
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='w' encoding='utf-8'> | line 23
+TypeError write() argument must be str, not int | closed: True
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='w' encoding='utf-8'> | line 23
+UnsupportedOperation not readable | closed: True
+    ResourceWarning unclosed file <_io.BufferedWriter name='P'> | line 23
+TypeError a bytes-like object is required, not 'str' | closed: True
+    ResourceWarning unclosed file <_io.BufferedWriter name='P'> | line 28
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 30
+UnicodeDecodeError invalid start byte | closed: True
+-- an argument is worked out in between
+  meanwhile | closed: False
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='w' encoding='utf-8'> | line 42
+write(f()) 4 4 | closed: True
+the argument raises | closed: True
+-- many
+3000 times | closed: True
+-- somebody else holds it
+a variable 2999 | closed: False
+a bound method 2999 | closed: False
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 63
+found by gc.get_objects() 4 1 False | closed: False
+with seen | closed: False
+a class of the program b'seen' False | closed: False
+    ResourceWarning unclosed file <_io.TextIOWrapper name='P' mode='r' encoding='utf-8'> | line 89
+os._exit() written | closed: True

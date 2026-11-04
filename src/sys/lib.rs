@@ -7528,8 +7528,12 @@ pub fn kqueue() -> Maybe<Fd> {
 
 /// `kevent()` — slice-wrapped Maybe form. Retries on EINTR.
 /// Returns the number of events written into `eventlist`.
+///
+/// # Safety
+/// Whoever waits on `fd` gets the `udata` of each change back and may dereference it. It must be
+/// what they expect for as long as the change is registered.
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-pub fn kevent(
+pub unsafe fn kevent(
     fd: Fd,
     changelist: &[libc::kevent],
     eventlist: &mut [libc::kevent],
@@ -7537,7 +7541,7 @@ pub fn kevent(
 ) -> Maybe<usize> {
     loop {
         // SAFETY: fd is a valid kqueue; slices give exact (ptr,len); timeout
-        // is either null or a valid timespec.
+        // is either null or a valid timespec. The caller answers for each `udata`.
         let rc = unsafe {
             libc::kevent(
                 fd.native(),

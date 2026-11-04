@@ -143,12 +143,13 @@ type Ran = Awaited<ReturnType<typeof runTests>>;
 /** A compiled run has printed what plain Bun prints, and the stand-ins of its form. */
 function expectAsPlain({ standIns, builtOtherwise, ...seen }: Ran, form: Form) {
   expect(seen).toEqual(plain);
-  // macOS, Windows and a hardened build load one program a realm: a run says so there, and nowhere else. Such a run, and a run
-  // over the code that a Bun holds compiled, is built in another form, with stand-ins that are not stated here.
+  // macOS, Windows and a hardened build load one program a realm: a run says so there, and nowhere else. There a run that asks
+  // for layers is built without them, and a run over the code that a Bun holds compiled builds no lowest layer: the stand-ins
+  // of those runs are not stated here. A run with the test files from disk is one program everywhere.
   expect({ oneProgramARealm: builtOtherwise === "this Bun loads one program a realm" }).toEqual({
     oneProgramARealm: isMacOS || isWindows || isHardened,
   });
-  if (!builtOtherwise) expect(standIns).toEqual(form.standIns);
+  if (!builtOtherwise || form.env.BUN_AOT_TEST_FILES_FROM_DISK) expect(standIns).toEqual(form.standIns);
 }
 
 testOfOneRun("what plain Bun prints in the project", async () => {

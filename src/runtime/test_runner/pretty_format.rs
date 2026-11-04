@@ -946,8 +946,8 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
     fn print_native_state(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
         let state = native_state_of(global_this, self.parent)?;
         if state.is_string() {
-            let mut key = EncodedSlice::latin1(b"href");
-            Self::for_each(global_this, (&raw mut *self).cast::<c_void>(), &raw mut key, state, false, false);
+            let key = EncodedSlice::latin1(b"href");
+            Self::for_each(global_this, (&raw mut *self).cast::<c_void>(), &key, state, false, false);
             return Ok(());
         }
         if !state.is_object() {

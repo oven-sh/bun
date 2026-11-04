@@ -53,7 +53,7 @@ shutil.rmtree(directory)
       "(True, 'héllo')",
       "a pathlib.Path is no path to Node: existsSync() says False, readFileSync() raises",
     ],
-    ["fs.existsSync(os.fsencode(p))", "True", "nor are bytes"],
+    ["fs.existsSync(os.fsencode(p))", "True"],
     [
       "path.basename('/a/b.txt'), path.extname('x.py'), path.resolve('/a', '../b'), path.sep, path.join(*['a', 'b']), path.relative('/a/b', '/a/c'), path.isAbsolute('a')",
       "('b.txt', '.py', '/b', '/', 'a/b', '../c', False)",
@@ -259,11 +259,7 @@ class H:
     ["asyncio.get_running_loop().call_later(0.001, lambda: e.emit('w', 7, 8))\nawait once(e, 'w')", "[7, 8]"],
     ["e.on('t', js.eval('(function () { this.flag = 1; })'))\ne.emit('t')\ne.flag", "1"],
     ["e.setMaxListeners(1) is e, e.getMaxListeners(), isinstance(e, EventEmitter)", "(True, 1, True)"],
-    [
-      "class My(EventEmitter):\n    def ping(self): return self.emit('ping')\nMy().ping()",
-      "False",
-      "TypeError: cannot create 'JSFunction' instances",
-    ],
+    ["class My(EventEmitter):\n    def ping(self): return self.emit('ping')\nMy().ping()", "False"],
   ],
 );
 
@@ -322,7 +318,6 @@ loop = asyncio.get_running_loop()
     [
       "class Upper(Transform):\n    def _transform(self, chunk, encoding, callback): callback(None, chunk.toString().upper())\n[bytes(c) async for c in readable(['a']).pipe(Upper())]",
       "[b'A']",
-      "TypeError: cannot create 'JSFunction' instances",
     ],
     // Streams of the web.
     [
@@ -480,7 +475,7 @@ r.destroy()
   },
 );
 
-// `break` does not call return() of the iterator, so the timer behind it is never cleared.
+// `for` does not call return() of the iterator yet.
 script(
   "leaving `async for` over an iterator of JavaScript",
   {
@@ -498,7 +493,7 @@ print(returned)
 `,
   },
   ({ stdout, exitCode }) => {
-    expect(stdout).toBe(lines("[]", "[]")); // TODO: [True], [True, 'sync']
+    expect(stdout).toBe(lines("[True]", "[True]")); // TODO: [True], [True, 'sync']
     expect(exitCode).toBe(0);
   },
 );

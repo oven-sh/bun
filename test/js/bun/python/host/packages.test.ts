@@ -107,7 +107,7 @@ group("packages", { files, setup: "import importlib, importlib.util, sys, js, bu
     "m = await js.eval('s => import(s)')(js.Bun.resolveSync('esm-pkg', __file__))\nm is esm_pkg, m.default is Client",
     "(True, True)",
   ],
-  ["from esm_pkg import *\nVERSION", "'1.0.0'", "ImportError: from-import-* object has no __dict__ and no __all__"],
+  ["from esm_pkg import *\nVERSION", "'1.0.0'"],
   [
     "from esm_pkg import missing\n0",
     "!ImportError: cannot import name 'missing' from 'esm_pkg' (unknown location)",

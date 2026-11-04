@@ -102,7 +102,7 @@ group("Python calls functions of JavaScript", { setup: setup + `f = js.eval("(..
   ],
   ["js.Function('a', 'b', 'return a + b')(1, 2)", "3"],
   ["o = js.eval('({ n: 5, get() { return this.n; } })')\nm = o.get\nm(), o.get()", "(5, 5)"],
-  ["o = js.eval('({ n: 5, f() {} })')\no.f is o.f", "True", "a method is bound anew each time it is read"],
+  ["o = js.eval('({ n: 5, f() {} })')\no.f is o.f", "True"],
   [
     "o = js.eval('({ f() {} })')\njs.eval('(o, f) => o.f === f')(o, o.f)",
     "True",

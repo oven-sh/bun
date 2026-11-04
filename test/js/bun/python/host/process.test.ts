@@ -42,9 +42,9 @@ async def echo(value):
     ["await echo([1, 'a', None, 2.5, [True]])", "([1, 'a', None, 2.5, [True]], 'object', True)"],
     ["r = await echo(js.Map([[1, js.Uint8Array(b'ab')]]))\nbytes(r[0].get(1))", "b'ab'"],
     ["dict((await echo({'a': 1}))[0])", "{'a': 1}", "DataCloneError: a dict cannot be sent"],
-    ["(await echo((1, 2)))[0]", "[1, 2]", "nor a tuple"],
-    ["(await echo([1.0]))[0]", "[1]", "nor a list with a whole float in it"],
-    ["bytes((await echo(b'ab'))[0])", "b'ab'", "nor bytes"],
+    ["(await echo((1, 2)))[0]", "[1, 2]"],
+    ["(await echo([1.0]))[0]", "[1]"],
+    ["bytes((await echo(b'ab'))[0])", "b'ab'"],
     ["worker.postMessage(print)", "!JSError: DataCloneError: The object can not be cloned."],
     [
       "w = js.Worker(os.path.join(here, 'pyworker.py'))\nf = asyncio.get_running_loop().create_future()\nw.onmessage = lambda event: f.set_result(event.data)\nw.postMessage([1, 2])\nr = await f\nw.terminate()\nr",
@@ -97,7 +97,7 @@ print("stderr of Python", file=sys.stderr)
   },
 );
 
-// Python is finalized before the "exit" event: what its handler prints stays in the buffer of sys.stdout.
+// The threads and the atexit handlers of Python, then the "exit" event, then the end of the interpreter, which flushes.
 script(
   "the handlers of both languages run when the program ends",
   {
@@ -115,7 +115,6 @@ print("end of the module")
     expect(stdout).toBe(lines("end of the module", "beforeExit 7", "atexit", "process.on('exit') 7"));
     expect(exitCode).toBe(7);
   },
-  "failing",
 );
 
 const handlers = `
@@ -328,7 +327,6 @@ print("went on")
   },
 );
 
-// Bun reports it, in one line and without a traceback.
 script(
   "sys.excepthook is told of what a callback raises with nobody to catch it",
   {
@@ -342,5 +340,4 @@ js.setTimeout(callback, 1)
   ({ stdout }) => {
     expect(stdout).toBe(lines("excepthook ValueError in a timer"));
   },
-  "failing",
 );

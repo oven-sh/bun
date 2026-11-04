@@ -61,7 +61,7 @@ group("numbers", { setup }, [
     "('bigint', True, 6, 1)",
   ],
   ["a = js.BigInt64Array(2)\na[0] = 2**62\na[1] = js.BigInt(5)\nlist(a)", "[4611686018427387904, 5]"],
-  ["a = js.BigInt64Array(1)\na[0] = 5\na[0]", "5", "an int below 2**53 is a number, which a BigInt64Array refuses"],
+  ["a = js.BigInt64Array(1)\na[0] = 5\na[0]", "5"],
   ["js.BigInt.asUintN(8, 257)", "1", "an int below 2**53 is a number where JavaScript wants a BigInt"],
   ["type(js.process.hrtime.bigint()).__name__", "'int'"],
   ["js.JSON.stringify([2**53])", "!JSError: TypeError: JSON.stringify cannot serialize BigInt."],
@@ -90,11 +90,7 @@ group("strings", { setup: setup + `s = "a\\U0001F600b"\n` }, [
   ["[x.segment for x in js.Intl.Segmenter('en', granularity='word').segment('a bc')]", "['a', ' ', 'bc']"],
   // A str has the methods of Python, in Python.
   ["hasattr('abc', 'toUpperCase'), hasattr('abc', 'length')", "(False, False)"],
-  [
-    "js.String.prototype.toUpperCase.call('abc')",
-    "'ABC'",
-    "a function read off an object is bound to it, so call() passes no other `this`",
-  ],
+  ["js.String.prototype.toUpperCase.call('abc')", "'ABC'"],
   ["js.Reflect.apply(js.Reflect.get(js.String.prototype, 'toUpperCase'), 'abc', [])", "'ABC'"],
 ]);
 
@@ -162,22 +158,17 @@ group("lists are arrays", { setup }, [
     "([1], [1])",
   ],
   // An array that JavaScript has frozen, sealed or made sparse is stored otherwise.
-  [
-    "l = js.Object.freeze([1, 2])\nl, l[0], len(l), sum(l)",
-    "([1, 2], 1, 2, 3)",
-    "the items of a frozen array read as None",
-  ],
-  ["l = js.Object.seal([1, 2])\nl[0] = 9\nl", "[9, 2]", "the items of a sealed array read as None"],
-  ["l = js.Object.preventExtensions([1, 2])\nl", "[1, 2]", "the items read as None"],
+  ["l = js.Object.freeze([1, 2])\nl, l[0], len(l), sum(l)", "([1, 2], 1, 2, 3)"],
+  ["l = js.Object.seal([1, 2])\nl[0] = 9\nl", "[9, 2]"],
+  ["l = js.Object.preventExtensions([1, 2])\nl", "[1, 2]"],
   [
     "l = js.eval('(() => { const a = [1, 2]; a[100000] = 4; return a; })()')\nlen(l), l[0], l[100000]",
     "(100001, 1, 4)",
-    "an item of a sparse array reads as None",
   ],
   [
     "l = js.eval('(() => { const a = [1, 2]; Object.defineProperty(a, 1, { get() { return 7; } }); return a; })()')\nl",
     "[1, 7]",
-    "the items read as None",
+    "an item that is an accessor reads as None",
   ],
   ["l = js.Object.freeze([1, 2])\nl.append(3)", "!JSError: TypeError: Attempted to assign to readonly property."],
   // What an array has besides its items.
@@ -232,7 +223,7 @@ group("dicts, tuples, sets and objects", { setup }, [
   ],
   [
     "o = js.eval('({ a: 1 })')\ngetattr(o, 'z', 'default'), hasattr(o, 'z'), o.get('a') if hasattr(o, 'get') else 'no get()'",
-    "('default', False, 'no get()')",
+    "('default', False, 1)",
   ],
   ["js.eval('({ a: 1 })').z", "!AttributeError: 'JSObject' object has no attribute 'z'"],
   ["js.eval('({ a: 1 })')['z']", "!KeyError: 'z'"],
@@ -282,9 +273,9 @@ group("JSON and structuredClone", { setup: "import json, copy\n" + setup }, [
   ["js.structuredClone([1, 'a', None, [2.5], True, 2**64])", "[1, 'a', None, [2.5], True, 18446744073709551616]"],
   ["l = [1]\njs.structuredClone(l) is l", "False"],
   ["c = js.structuredClone(js.Map([[1, js.Set([2])]]))\nc.get(1).has(2)", "True"],
-  ["js.structuredClone([1.0, 2.5])", "[1, 2.5]", "a whole float in a list is an object that cannot be cloned"],
+  ["js.structuredClone([1.0, 2.5])", "[1, 2.5]"],
   ["dict(js.structuredClone({'a': 1}))", "{'a': 1}", "a dict cannot be cloned"],
-  ["list(js.structuredClone((1, 2)))", "[1, 2]", "a tuple cannot be cloned"],
-  ["bytes(js.structuredClone(b'ab'))", "b'ab'", "bytes cannot be cloned"],
+  ["list(js.structuredClone((1, 2)))", "[1, 2]"],
+  ["bytes(js.structuredClone(b'ab'))", "b'ab'"],
   ["copy.copy(js.eval('({ a: 1 })')).a", "1", "copy does not know an object of JavaScript"],
 ]);

@@ -75,11 +75,7 @@ group("classes, accessors and methods", { setup, files: { "lib.js": lib } }, [
     "sorted(set(n for n in dir(Temp()) if n in ('celsius', 'fahrenheit', 'who', 'toString', 'count')))",
     "['celsius', 'fahrenheit', 'toString', 'who']",
   ],
-  [
-    "names = dir(Temp())\nlen(names) == len(set(names))",
-    "True",
-    "dir() lists `constructor` and the like once for each prototype",
-  ],
+  ["names = dir(Temp())\nlen(names) == len(set(names))", "True"],
   ["Old.new(5).get(), Old.new(5).x, isinstance(Old.new(1), Old)", "(5, 5, True)"],
   // A constructor written as a function, as those of Node's older modules are (EventEmitter, Readable), cannot be told from a function.
   ["Old(5).x", "5", "a plain function is called, not constructed"],
@@ -117,20 +113,14 @@ group("truth", { setup: "import js\n" }, [
   [
     "bool(js.Response('x')), bool(js.URL('http://a.example')), bool(js.AbortController()), bool(js.Date()), bool(js.RegExp('a'))",
     "(True, True, True, True, True)",
-    "an object without properties of its own is false",
   ],
   [
     "bool(js.Error('x')), bool(js.Promise.resolve(1)), bool(js.eval('new (class A { #x = 1 })')), bool(js.Math), bool(js.WeakMap())",
     "(True, True, True, True, True)",
-    "so `if error:` in a callback of Node's never runs",
   ],
   ["bool(js.ArrayBuffer(4)), len(js.ArrayBuffer(4))", "(True, 4)", "an ArrayBuffer has no length, and no properties"],
-  ["bool(js.eval('(function* () {})()'))", "True", "TypeError: it has no len()"],
-  [
-    "bool(js.Headers({'a': '1'})), bool(js.URLSearchParams('a=1').keys())",
-    "(True, True)",
-    "TypeError: what can be iterated over and has no size has no len()",
-  ],
+  ["bool(js.eval('(function* () {})()'))", "True"],
+  ["bool(js.Headers({'a': '1'})), bool(js.URLSearchParams('a=1').keys())", "(True, True)"],
 ]);
 
 group("proxies, symbols, unusual objects", { setup, files: { "lib.js": lib } }, [
@@ -161,7 +151,7 @@ group("proxies, symbols, unusual objects", { setup, files: { "lib.js": lib } }, 
   ["getattr(withSym, sym)", "!TypeError: attribute name must be string, not '_js.JSSymbol'"],
   ["frozen.a = 2\n0", "!JSError: TypeError: Attempted to assign to readonly property."],
   ["frozen.b = 2\n0", "!JSError: TypeError: Attempting to define property on object that is not extensible."],
-  ["del frozen.a\n0", "!JSError: TypeError: Unable to delete property.", "nothing is raised, and nothing deleted"],
+  ["del frozen.a\n0", "!JSError: TypeError: Unable to delete property."],
   ["bare.x, list(bare), dict(bare), repr(bare).split(' at ')[0]", "(1, ['x'], {'x': 1}, '<JavaScript Object')"],
   ["str(bare)", "'[object Object]'", "str() of an object without toString() raises, so print() does"],
   ["str(lib).startswith('[object Module')", "True", "so for the module itself"],
@@ -227,11 +217,7 @@ group("Date, RegExp, Map, Set, weak references", { setup: "import js, datetime, 
     "dict(js.Map([['a', 1]])), [list(e) for e in js.Map([['a', 1]])], list(js.Map([['a', 1]]).keys()), list(js.Map([['a', 1]]).values())",
     "({'a': 1}, [['a', 1]], ['a'], [1])",
   ],
-  [
-    "dict(js.Map([['a', 1]]).entries())",
-    "{'a': 1}",
-    "an iterator of JavaScript has keys(), as every object has, so dict() takes it for a mapping, an empty one",
-  ],
+  ["dict(js.Map([['a', 1]]).entries())", "{'a': 1}"],
   [
     "js.Map({'a': 1}).get('a'), js.Map({'a': 1}.items()).get('a'), js.Map([('a', 1)]).get('a'), js.Object.fromEntries(js.Map([('a', 1)])).a",
     "(1, 1, 1, 1)",
@@ -255,8 +241,8 @@ group("Date, RegExp, Map, Set, weak references", { setup: "import js, datetime, 
   ],
   ["js.WeakMap().set('str', 1)", "!JSError: TypeError: WeakMap keys must be objects or non-registered symbols"],
   ["o = K()\nr = js.WeakRef(o)\nr.deref() is o", "True"],
-  ["o = js.Object()\nweakref.ref(o)() is o", "True", "no weak reference to an object of JavaScript"],
-  ["o = js.Object()\nweakref.WeakValueDictionary({'a': o})['a'] is o", "True", "the same"],
+  ["o = js.Object()\nweakref.ref(o)() is o", "True"],
+  ["o = js.Object()\nweakref.WeakValueDictionary({'a': o})['a'] is o", "True"],
 ]);
 
 group(
@@ -359,21 +345,49 @@ Base = js.eval("(class Base { constructor(x) { this.x = x; } hello() { return 'h
 `,
   },
   [
+    ["class D(Base):\n    def name(self): return 'derived'\nD(1).hello()", "'hello derived'"],
+    // The constructor of a class of JavaScript makes the object, so it is __new__.
     [
-      "class D(Base):\n    def name(self): return 'derived'\nD(1).hello()",
-      "'hello derived'",
-      "TypeError: cannot create 'JSFunction' instances",
+      "class D(Base):\n    def __new__(cls): return super().__new__(cls, 5)\nD().x, isinstance(D(), Base), isinstance(D(), D), issubclass(D, Base)",
+      "(5, True, True, True)",
     ],
     [
-      "class D(Base):\n    def __init__(self): super().__init__(5)\nD().x, isinstance(D(), Base), isinstance(D(), D)",
-      "(5, True, True)",
-      "the same",
+      "class D(Base):\n    def __init__(self): super().__init__(5)\nD().x",
+      "!TypeError: __init__() got other arguments than the constructor, which has run: a class of JavaScript is constructed by __new__, with the arguments of the call. To give it others, define __new__(cls, ...) and call super().__new__(cls, ...)",
+    ],
+    [
+      "class D(Base):\n    def __init__(self, x):\n        super().__init__(x)\n        self.y = x + 1\nD(1).x, D(1).y",
+      "(1, 2)",
     ],
     [
       "class D(Base):\n    def name(self): return 'derived and ' + super().name()\nD.make().hello()",
       "'hello derived and base'",
-      "the same",
     ],
+    [
+      "class D(Base):\n    def name(self): return 'derived'\njs.eval('(D, Base) => [new D(2).hello(), new D(2) instanceof Base, new D(2) instanceof D, Object.getPrototypeOf(D) === Base, new (class E extends D { name() { return \"e+\" + super.name(); } })(3).hello()]')(D, Base)",
+      "['hello derived', True, True, True, 'hello e+derived']",
+    ],
+    [
+      "class D(Base):\n    @property\n    def double(self): return self.x * 2\n    @double.setter\n    def double(self, value): self.x = value // 2\nd = D(2)\nd.double = 10\nd.x, d.double, js.eval('d => { d.double = 2; return [d.x, d.double]; }')(d)",
+      "(5, 10, [1, 2])",
+    ],
+    [
+      "class M(js.Map):\n    def total(self): return sum(self.values())\nm = M([[1, 2], [3, 4]])\nm.total(), m.size, m[3], type(m).__mro__[1:], repr(m)[:18]",
+      "(6, 2, 4, (<class 'js.Map'>, <class 'JSObject'>, <class 'object'>), '<__main__.M object')",
+    ],
+    [
+      "class Bytes(js.Uint8Array):\n    def total(self): return sum(self)\nb = Bytes([1, 2, 3])\nb.total(), b[-1], type(b[1:]).__name__, list(b[::-1]), b == bytes([1, 2, 3]), bytes(b), [c.__name__ for c in Bytes.__mro__[1:]]",
+      "(6, 3, 'Bytes', [3, 2, 1], True, b'\\x01\\x02\\x03', ['Uint8Array', 'TypedArray', 'JSTypedArray', 'JSObject', 'object'])",
+    ],
+    [
+      "class P(js.Promise): pass\ntype(P.resolve(1).then(lambda v: v)).__name__, await P(lambda resolve, reject: resolve(5))",
+      "('P', 5)",
+    ],
+    [
+      "try:\n    class L(js.Array): pass\nexcept TypeError as error: message = str(error)\nmessage.rsplit(': ', 1)[1]",
+      "'an array is a list'",
+    ],
+    ["class Z(Base, js.Map): pass\n0", "!TypeError: multiple bases have instance lay-out conflict"],
     [
       "isinstance(Base, type), issubclass(js.eval('class A extends Object {}'), object)",
       "(True, True)",
@@ -408,7 +422,7 @@ def matched(v):
     ],
     [
       "matched(js.eval('[1, 2]')), matched(js.eval(\"'s'\")), matched(js.Uint8Array([1, 2]))",
-      "(('sequence', 1, 2), ('str', 's'), 'other')",
+      "(('sequence', 1, 2), ('str', 's'), ('sequence', 1, 2))",
     ],
     [
       "matched(js.eval('({ a: 1, b: 2 })')), matched(js.Map([['a', 1]]))",
@@ -438,7 +452,7 @@ def matched(v):
       "(True, True, True)",
       "inspect knows none of them",
     ],
-    ["str(inspect.signature(js.eval('(function f(a, b) {})')))", "'(a, b, /)'", "ValueError: no signature found"],
+    ["str(inspect.signature(js.eval('(function f(a, b) {})')))", "'(a, b, /)'"],
   ],
 );
 
@@ -576,21 +590,16 @@ class Named:
       "n = Named()\njs.eval('p => new Proxy(p, {}).me() === p')(n), js.eval('p => new Proxy(p, {}).length')((1, 2)), js.eval('p => Object.create(p).a')({'a': 1})",
       "(True, 2, 1)",
     ],
-    // What the view of a Python object lends JavaScript takes `this` for that object, and a proxy for an object of JavaScript,
-    // whose method it then calls: itself.
+    // What the view of a Python object lends JavaScript is about that object, whatever is around it.
+    ["js.eval('p => [...new Proxy(p, {})]')((1, 2)), list(js.Proxy((1, 2), js.Object()))", "([1, 2], [1, 2])"],
+    ["js.eval('p => String(new Proxy(p, {}))')(Named()), str(js.Proxy(Named(), js.Object()))", "('named', 'named')"],
+    ["js.eval('p => JSON.stringify(new Proxy(p, {}))')((1, 2))", "'[1,2]'"],
     [
-      "js.eval('p => [...new Proxy(p, {})]')((1, 2)), list(js.Proxy((1, 2), js.Object()))",
-      "([1, 2], [1, 2])",
-      "RecursionError",
+      "js.eval('p => String(new Proxy(p, {}) + 1)')(fractions.Fraction(1, 2))",
+      "'3/2'",
+      "the operators of JavaScript do not see through a Proxy: '1/21'",
     ],
-    [
-      "js.eval('p => String(new Proxy(p, {}))')(Named()), str(js.Proxy(Named(), js.Object()))",
-      "('named', 'named')",
-      "RecursionError",
-    ],
-    ["js.eval('p => JSON.stringify(new Proxy(p, {}))')((1, 2))", "'[1,2]'", "RecursionError"],
-    ["js.eval('p => String(new Proxy(p, {}) + 1)')(fractions.Fraction(1, 2))", "'3/2'", "RecursionError"],
-    ["js.eval('p => [...Object.create(p)]')((1, 2))", "[1, 2]", "RecursionError"],
+    ["js.eval('p => [...Object.create(p)]')((1, 2))", "[1, 2]"],
   ],
 );
 

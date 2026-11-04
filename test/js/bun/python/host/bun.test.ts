@@ -30,7 +30,7 @@ shutil.rmtree(directory)
     ],
     [
       "b = await file(p).bytes()\ntype(b).__name__, bytes(b), bytes(await file(p).arrayBuffer())",
-      "('JSObject', b'text \\xc3\\xa9', b'text \\xc3\\xa9')",
+      "('JSTypedArray', b'text \\xc3\\xa9', b'text \\xc3\\xa9')",
     ],
     [
       "await write(os.path.join(directory, 'j.json'), js.JSON.stringify({'a': [1, 2]})), (await file(os.path.join(directory, 'j.json')).json()).a",
@@ -70,11 +70,7 @@ shutil.rmtree(directory)
       "bytes(gunzipSync(gzipSync('abc'))), bytes(gunzipSync(gzipSync(js.Uint8Array(b'abc')))), bytes(gunzipSync(js.Uint8Array(gzip.compress(b'xyz')))), gzip.decompress(bytes(gzipSync('abc')))",
       "(b'abc', b'abc', b'xyz', b'abc')",
     ],
-    [
-      "gzip.decompress(gzipSync('abc'))",
-      "b'abc'",
-      "TypeError: gzip slices its argument, and a typed array has no slices",
-    ],
+    ["gzip.decompress(gzipSync('abc'))", "b'abc'"],
     [
       "r = TOML.parse('a = 1\\n[t]\\nb = [1.5, \"x\"]\\n')\nr.a, r.t.b, dict(r.t), bun.YAML.parse('a: 1\\nb: [x, 2]\\n').b, bun.JSON5.parse('{a: 1, /*c*/ b: [1,],}').b",
       "(1, [1.5, 'x'], {'b': [1.5, 'x']}, ['x', 2], [1])",
@@ -222,11 +218,7 @@ async def get(path, **options):
       "({'a': '1'}, True, 1)",
       "KeyError: see URLSearchParams",
     ],
-    [
-      "dict(js.Headers({'a': '1'}).entries())",
-      "{'a': '1'}",
-      "{}: dict() takes an iterator of JavaScript for a mapping",
-    ],
+    ["dict(js.Headers({'a': '1'}).entries())", "{'a': '1'}"],
     [
       "server.port > 0, server.hostname, str(server.url) == base + '/', server.pendingRequests",
       "(True, '127.0.0.1', True, 0)",
@@ -343,16 +335,16 @@ insert = db.prepare("insert into t(name, score, data) values (?, ?, ?)")
       "'a'",
       "TypeError: a dict is no object of parameters",
     ],
-    ["insert.run('c', 3, b'\\x00\\x01').changes", "1", "TypeError: bytes cannot be bound"],
+    ["insert.run('c', 3, b'\\x00\\x01').changes", "1"],
     [
       "def many(names):\n    for n in names: insert.run(n, 0, None)\n    return len(names)\ndb.transaction(many)(['x', 'y']), db.query('select count(*) as n from t').get().n",
-      "(2, 4)",
+      "(2, 5)",
     ],
     [
       "def failing():\n    insert.run('z', 0, None)\n    raise ValueError('rolled back')\ndb.transaction(failing)()",
       "!ValueError: rolled back",
     ],
-    ["db.query('select count(*) as n from t').get().n", "4"],
+    ["db.query('select count(*) as n from t').get().n", "5"],
     [
       "try:\n    db.run('insert into t(id) values (1)')\nexcept Exception as e:\n    r = type(e).__name__, e.value.name, e.value.code, e.value.errno\nr",
       "('JSError', 'SQLiteError', 'SQLITE_CONSTRAINT_PRIMARYKEY', 1555)",

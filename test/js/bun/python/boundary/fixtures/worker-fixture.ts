@@ -14,6 +14,7 @@ const operations: Record<string, (message: any) => unknown> = {
     return [...bytes(view)];
   },
   postTuple: () => tuple([1, 2]),
+  postDict: () => dict([["a", 1]]),
   threads: () => {
     const globals = dict();
     exec(

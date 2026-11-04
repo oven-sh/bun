@@ -200,11 +200,7 @@ test("the heap statistics count the cells of Python", () => {
   expect(objectTypeCounts.PyType).toBeGreaterThan(50);
 });
 
-// Python has no weak references to the objects of JavaScript, which has them itself (WeakRef).
-test.failing("weakref.ref() takes an object of JavaScript", () => {
+test("weakref.ref() takes an object of JavaScript", () => {
   const object = {};
   expect(weakref.ref(object)()).toBe(object);
-});
-test("weakref.ref() of an object of JavaScript is a TypeError", () => {
-  expect(() => weakref.ref({})).toThrow(PyTypeError);
 });

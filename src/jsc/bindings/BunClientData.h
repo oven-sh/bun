@@ -296,9 +296,14 @@ public:
     // node:vm / `bun test --isolate` globals share one list).
     Bun::StrongRootBlock* m_strongRootBlockHead { nullptr };
     Bun::StrongRootBlock* m_strongRootBlockFree { nullptr };
-    // Last block acquire() found room in; always on the active list (cleared by
-    // release() if unlinked), so it is already rooted via m_strongRootBlockHead.
+    // The block that new handles take slots from. It and the two lists below
+    // hold blocks on the active list only, so m_strongRootBlockHead roots them.
     Bun::StrongRootBlock* m_strongRootBlockCursor { nullptr };
+    // Blocks that can be the next cursor, oldest first.
+    Bun::StrongRootBlock* m_strongRootBlockAvailableHead { nullptr };
+    Bun::StrongRootBlock* m_strongRootBlockAvailableTail { nullptr };
+    // Blocks that a delete from a JSCell destructor left for StrongRootBlock::drainSweepPending().
+    Bun::StrongRootBlock* m_strongRootBlockSweepPending { nullptr };
     JSC::Structure* m_strongRootBlockStructure { nullptr };
 
     // Backing storage for Bun::IsolatedModuleCache (see IsolatedModuleCache.h).

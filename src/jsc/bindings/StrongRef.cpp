@@ -1,19 +1,9 @@
 #include "root.h"
 #include "StrongRef.h"
 #include "StrongRootBlock.h"
-#include "BunClientData.h"
 
 using Bun::StrongRefImpl;
 using Bun::StrongRootBlock;
-
-// Hot-path clientData lookup without the `downcast<JSVMClientData>`
-// RELEASE_ASSERT virtual call; vm.clientData is unconditionally a
-// JSVMClientData* in bun (set in JSVMClientData::create).
-static ALWAYS_INLINE WebCore::JSVMClientData* clientDataFast(JSC::VM& vm)
-{
-    ASSERT(WebCore::clientData(vm));
-    return static_cast<WebCore::JSVMClientData*>(vm.clientData);
-}
 
 // Handle layout for bun_jsc::Strong. The Rust side treats the return of
 // Bun__StrongRef__new as an opaque non-null pointer; there is no heap
@@ -52,7 +42,7 @@ extern "C" StrongRefImpl* Bun__StrongRef__new(JSC::JSGlobalObject* globalObject,
 {
     auto& vm = JSC::getVM(globalObject);
     unsigned index;
-    auto* block = StrongRootBlock::acquire(clientDataFast(vm), vm, index);
+    auto* block = StrongRootBlock::acquire(vm, index);
     block->set(vm, index, JSC::JSValue::decode(encodedValue));
     return encodeStrongRef(block, index);
 }
@@ -70,16 +60,7 @@ extern "C" void Bun__StrongRef__set(StrongRefImpl* _Nonnull ref, JSC::JSGlobalOb
 extern "C" void Bun__StrongRef__delete(StrongRefImpl* _Nonnull ref)
 {
     auto* block = decodeStrongRefBlock(ref);
-    auto& vm = block->vm();
-    auto* clientData = clientDataFast(vm);
-    bool empty = block->clear(decodeStrongRefIndex(ref));
-    // Mid-sweep (a JSCell destructor) only the slot may change; acquire() reclaims empties later.
-    if (vm.heap.mutatorState() == JSC::MutatorState::Sweeping) [[unlikely]]
-        return;
-    // This block just freed a slot, so the next acquire() should try it first
-    // (covers the FIFO pattern where the oldest-armed block gets room while
-    // the cursor sits at a full head).
-    clientData->m_strongRootBlockCursor = block;
-    if (empty) [[unlikely]]
-        StrongRootBlock::release(clientData, vm, block);
+    unsigned occupiedCount = block->clear(decodeStrongRefIndex(ref));
+    if (occupiedCount <= block->freeNotifyThreshold()) [[unlikely]]
+        StrongRootBlock::didFreeSlot(block, occupiedCount);
 }

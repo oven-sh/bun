@@ -26,7 +26,7 @@ import {
   totalCompileTime,
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBuildKite, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, Heap, isBuildKite, isWindows, tempDir } from "harness";
 import { createHash, type webcrypto } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -937,6 +937,102 @@ describe("JsRef::Weak liveness", () => {
     expect(stillLive).toBeLessThan(dropped.length / 2);
     expect(jscInternals.isLiveCellAtRawAddress(keptAddr)).toBe(true);
     expect(kept.keep).toBe(true);
+  });
+});
+
+// A bun_jsc::Strong is one slot of a StrongRootBlock (960 slots). The blocks are a list, plus at most one spare.
+describe.concurrent("StrongRootBlock", () => {
+  const prelude = `
+    const { generateHeapSnapshotForDebugging, heapStats } = require("bun:jsc");
+    ${Heap}
+    const CAPACITY = 960;
+    // The blocks that the list and the spare hold. heapStats() also counts a dead one that a stale word on the stack points at.
+    const blocks = () => new Heap().counts(["StrongRootBlock"]).StrongRootBlock;
+  `;
+
+  async function run(script: string) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", prelude + script], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const result = JSON.parse(stdout);
+    expect(exitCode).toBe(0);
+    return result;
+  }
+
+  // A Bun.Image of a file Blob keeps a Strong on the Blob until its finalizer runs, i.e. mid-sweep, where a
+  // block that goes empty can only record itself. No create has to find its block full for them to be unlinked.
+  it("blocks emptied from sweep-time finalizers are unlinked by the next delete that empties a block", async () => {
+    const { before, held, swept, afterDelete, afterRefill } = await run(`
+      const blobs = () => heapStats().protectedObjectTypeCounts.Blob || 0;
+      // The oldest block never goes empty.
+      const keep = setTimeout(() => {}, 600000);
+      const before = blocks();
+      const file = Bun.file(process.execPath);
+      const held = (() => {
+        const images = [];
+        for (let i = 0; i < 4 * CAPACITY; i++) images.push(new Bun.Image(file));
+        return blobs();
+      })();
+      Bun.gc(true);
+      const swept = { blocks: blocks(), blobs: blobs() };
+      // The newest block held nothing but those Strongs, so this timer is alone in it.
+      clearTimeout(setTimeout(() => {}, 600000));
+      const afterDelete = blocks();
+      // The free slots of the oldest block and one spare block take these.
+      const timers = [];
+      for (let i = 0; i < 2 * CAPACITY - 64; i++) timers.push(setTimeout(() => {}, 600000));
+      const afterRefill = blocks();
+      console.log(JSON.stringify({ before, held, swept, afterDelete, afterRefill }));
+      process.exit(0);
+    `);
+    expect(held).toBe(4 * 960);
+    // The finalizers ran, and the sweep itself unlinked nothing.
+    expect(swept).toEqual({ blocks: before + 4, blobs: 0 });
+    expect({ afterDelete, afterRefill }).toEqual({ afterDelete: before + 1, afterRefill: before + 1 });
+  });
+
+  it("deletes in several full blocks followed by as many creates keep every handle rooted", async () => {
+    const { N, PER_ROUND, before, full, between, churned, cleared } = await run(`
+      const BLOCKS = 4, N = BLOCKS * CAPACITY, ROUNDS = 100, PER_ROUND = 3 * BLOCKS;
+      const armed = () => heapStats().protectedObjectTypeCounts.Timeout || 0;
+      // No block has gone yet, so heapStats() counts what the list holds.
+      const linked = () => heapStats().objectTypeCounts.StrongRootBlock || 0;
+      const before = linked();
+      const timers = [];
+      for (let i = 0; i < N; i++) timers.push(setTimeout(() => {}, 600000));
+      const full = { blocks: linked(), armed: armed() };
+      const between = [];
+      for (let round = 0; round < ROUNDS; round++) {
+        // Three timers that each block has held from the start, then as many new timers as were cleared.
+        const cleared = [];
+        for (let b = 0; b < BLOCKS; b++) {
+          for (let k = 0; k < 3; k++) {
+            const i = b * CAPACITY + 10 + 3 * round + k;
+            clearTimeout(timers[i]);
+            cleared.push(i);
+          }
+        }
+        if (round % 40 === 0) between.push(armed());
+        for (const i of cleared) timers[i] = setTimeout(() => {}, 600000);
+      }
+      const churned = { blocks: linked(), armed: armed() };
+      // 7919 is coprime with N, so this clears each timer once, in an order that is neither oldest first nor newest first.
+      for (let i = 0; i < N; i++) clearTimeout(timers[(i * 7919) % N]);
+      Bun.gc(true);
+      const cleared = { blocks: blocks(), armed: armed() };
+      console.log(JSON.stringify({ N, PER_ROUND, before, full, between, churned, cleared }));
+      process.exit(0);
+    `);
+    expect({ full: full.armed, between, churned: churned.armed, cleared: cleared.armed }).toEqual({
+      full: N,
+      between: [N - PER_ROUND, N - PER_ROUND, N - PER_ROUND],
+      churned: N,
+      cleared: 0,
+    });
+    // A block that filled takes handles again only when a few of its slots are free, which can cost one block.
+    expect(churned.blocks).toBeWithin(full.blocks, full.blocks + 2);
+    // All but one empty block are given back.
+    expect(cleared.blocks).toBeWithin(before, before + 2);
   });
 });
 

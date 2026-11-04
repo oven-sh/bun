@@ -311,7 +311,8 @@ impl PosixLoop {
     /// list doesn't enumerate. Returns whether any group was linked.
     pub fn close_all_groups(&self) -> bool {
         // SAFETY: `self` is this thread's live loop. The walk reads its successor after the close
-        // handlers ran, so none may free another group: the one caller runs with script forbidden.
+        // handlers ran, so none may free another group. The one caller runs at teardown, with the
+        // owners of the groups stopped and script forbidden.
         unsafe { c::us_loop_close_all_groups(self) != 0 }
     }
 
@@ -489,7 +490,8 @@ impl WindowsLoop {
 
     pub fn close_all_groups(&self) -> bool {
         // SAFETY: `self` is this thread's live loop. The walk reads its successor after the close
-        // handlers ran, so none may free another group: the one caller runs with script forbidden.
+        // handlers ran, so none may free another group. The one caller runs at teardown, with the
+        // owners of the groups stopped and script forbidden.
         unsafe { c::us_loop_close_all_groups(self) != 0 }
     }
 

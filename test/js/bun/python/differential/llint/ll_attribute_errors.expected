@@ -1,0 +1,51 @@
+status: 0
+script: c51ce24951037a76
+---
+x1 | 'P' object has no attribute 'zz' | name = zz | obj = p
+x2 | type object 'P' has no attribute 'zz' | name = None | obj = None
+x3 | 'P' object has no attribute 'zz' | name = zz | obj = p
+x4 | module 'm' has no attribute 'zz' | name = None | obj = None
+x5 | 'P' object has no attribute 'zz' | name = zz | obj = p
+x6 | 'S' object has no attribute 'zz' and no __dict__ for setting new attributes | name = zz | obj = s
+x7 | 'S' object has no attribute 'zz' and no __dict__ for setting new attributes | name = zz | obj = s
+x9 | module 'm' has no attribute 'zz' | name = None | obj = None
+u3 | 'super' object has no attribute 'zz' | name = zz | obj = super
+u4 | 'SS' object has no attribute 'a' | name = a | obj = super
+u5 | 'super' object has no attribute 'zz' | name = zz | obj = super
+u6 | 'super' object has no attribute 'zz' and no __dict__ for setting new attributes | name = zz | obj = super
+u7 | 'super' object has no attribute 'zz' and no __dict__ for setting new attributes | name = zz | obj = super
+d1 | type object 'P' has no attribute 'zz' | name = zz | obj = P
+d2 | 'P' object has no attribute 'zz' | name = zz | obj = p
+d3 | 'module' object has no attribute 'zz' | name = zz | obj = m
+d4 | a | name = None | obj = None
+d5 | type object 'P' has no attribute 'zz' | name = zz | obj = P
+d6 | type object 'P' has no attribute 'zz' | name = zz | obj = P
+d7 | 'P' object has no attribute 'zz' | name = zz | obj = p
+w1 | attribute 'real' of 'int' objects is not writable | name = None | obj = None
+w2 | attribute '__name__' of 'builtin_function_or_method' objects is not writable | name = None | obj = None
+w3 | attribute '__mro__' of 'type' objects is not writable | name = None | obj = None
+w4 | attribute '__weakref__' of 'object' objects is not writable | name = None | obj = None
+w5 | attribute 'real' of 'int' objects is not writable | name = None | obj = None
+c1 | 'S' object has no attribute 'a' | name = None | obj = None
+c2 | 'S' object has no attribute 'a' | name = a | obj = s
+u1 | 'super' object has no attribute 'zz' | name = zz | obj = super
+u2 | 'super' object has no attribute 'zz' | name = zz | obj = super
+n1 | 'SS' object has no attribute 'zz' | name = zz | obj = ss
+n2 | 'S' object has no attribute 'zz' and no __dict__ for setting new attributes | name = zz | obj = s
+n3 | 'SS' object has no attribute 'zz' | name = zz | obj = ss
+n4 | 'S' object has no attribute 'zz' and no __dict__ for setting new attributes | name = zz | obj = s
+g1 | 'NoneType' object has no attribute 'zz' | name = zz | obj = None
+g2 | type object 'P' has no attribute 'zz' | name = zz | obj = P
+g3 | 'P' object has no attribute 'zz' | name = zz | obj = p
+g4 | module 'm' has no attribute 'zz' | name = zz | obj = m
+g5 | 'int' object has no attribute 'zz' and no __dict__ for setting new attributes | name = zz | obj = int
+g6 | 'NoneType' object has no attribute 'zz' | name = zz | obj = None
+b1 | '_pickle.Pickler' object has no attribute 'dispatch_table' | name = dispatch_table | obj = pickler
+b2 | '_pickle.Pickler' object has no attribute 'dispatch_table' | name = None | obj = None
+b3 | '_pickle.Pickler' object has no attribute 'dispatch_table' | name = None | obj = None
+b4 | '_struct.Struct' object has no attribute 'format' | name = format | obj = unready
+b5 | '_struct.Struct' object has no attribute 'format' | name = None | obj = None
+b6 | '_struct.Struct' object has no attribute 'format' | name = None | obj = None
+b7 | 'sentinel' object has no attribute '__module__' | name = __module__ | obj = mark
+b8 | 'sentinel' object has no attribute '__module__' | name = None | obj = None
+b9 | __module__ | name = None | obj = None

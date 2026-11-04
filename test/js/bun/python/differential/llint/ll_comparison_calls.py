@@ -596,5 +596,26 @@ def result_while_methods_run():
     return log
 rec("the result while methods run", result_while_methods_run)
 
+# a < b on lists: the first pair of items that are not equal decides, and is read again for that. An __eq__ may have changed the lists.
+def lists_change_while_compared():
+    log = []
+    class H:
+        def __init__(self, box, change): self.box = box; self.change = change
+        def __eq__(self, other):
+            self.change(self.box)
+            return False
+        def __lt__(self, other): return "H.__lt__"
+        __hash__ = None
+    def attempt(change, compare):
+        c = []
+        c.append(H(c, change))
+        try: return compare(c, [H(c, change)])
+        except TypeError as e: return "TypeError: " + str(e)
+    for change in (lambda box: box.insert(0, 0), lambda box: box.insert(0, "s"), lambda box: box.clear(), lambda box: box.append(1), lambda box: None):
+        for compare in (operator.lt, operator.le, operator.gt, operator.ge, operator.eq, operator.ne):
+            log.append(attempt(change, compare))
+    return log
+rec("lists change while they are compared", lists_change_while_compared)
+
 print("\n".join(out))
 print(len(out))

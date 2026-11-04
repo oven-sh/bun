@@ -211,6 +211,10 @@ pub(crate) struct UvLoop {
     idles: WatcherList,
     prepares: WatcherList,
     checks: WatcherList,
+    /// UDP handles with send callbacks or a read error to deliver on the next turn,
+    /// because the poll watch that would have delivered them couldn't be registered.
+    /// libuv's pending queue (`uv__io_feed`). `uv_close` removes a handle. JS thread only.
+    udp_pending: JsCell<Vec<NonNull<UvUdp>>>,
 }
 
 const _: () = assert!(core::mem::offset_of!(UvLoop, data) == 0);
@@ -306,6 +310,7 @@ impl UvLoop {
             idles: WatcherList::new(),
             prepares: WatcherList::new(),
             checks: WatcherList::new(),
+            udp_pending: JsCell::new(Vec::new()),
         }
     }
 
@@ -411,6 +416,7 @@ impl UvLoop {
         // Don't run callbacks once the VM is stopping. Threadsafe functions do the same.
         if global.bun_vm().script_allowed() {
             this.run_pass(global);
+            this.run_udp_pending();
         }
         // A send during the pass sets `Pending` instead of posting a task, and this
         // then fails. The next pass is a new task, so a thread that keeps sending
@@ -426,6 +432,18 @@ impl UvLoop {
             .is_err()
         {
             this.post_dispatch();
+        }
+    }
+
+    /// Flushes the UDP handles that [`UvUdpNode::defer_flush`] queued. A handle queued
+    /// again by its own flush waits for the next pass.
+    fn run_udp_pending(&self) {
+        let pending = self.udp_pending.with_mut(core::mem::take);
+        for udp in pending {
+            // SAFETY: `uv_close` takes a handle out of `udp_pending`, and its node is
+            // freed only by the close task, which can't run during this pass. A handle
+            // closed by an earlier callback in this pass is skipped by `flush`.
+            unsafe { UvUdpNode::flush((*udp.as_ptr()).node) };
         }
     }
 
@@ -1176,6 +1194,10 @@ pub(crate) struct UvUdpNode {
     queued: VecDeque<NonNull<UvUdpSend>>,
     /// Sends whose callback hasn't run, oldest first.
     completed: VecDeque<NonNull<UvUdpSend>>,
+    /// The handle is in its loop's `udp_pending`, and this is the error of the failed
+    /// `update` that put it there, for `recv_cb` if the read watch was lost.
+    flush_pending: bool,
+    flush_err: c_int,
 }
 
 /// `-errno` for the last failed call, like libuv's `UV__ERR(errno)`.
@@ -1344,7 +1366,8 @@ impl UvUdpNode {
     /// Returns 0, or the error from registering with the event loop. Then the read
     /// watch is kept if the handle is receiving and only the write watch failed, and
     /// the queued sends complete with the error, since nothing would tell us when the
-    /// socket takes them: their callbacks run on the next poll event or at close.
+    /// socket takes them. A caller outside `on_poll` passes the error to
+    /// [`Self::defer_flush`], so their callbacks run on the next turn.
     /// The handle keeps the process alive only if it's still watching for reads.
     ///
     /// # Safety
@@ -1405,6 +1428,54 @@ impl UvUdpNode {
     fn watching_reads(&self) -> bool {
         // SAFETY: the node owns its poll until close, and this is the loop thread.
         !self.poll.is_null() && unsafe { (*self.poll).flags.contains(Flags::PollReadable) }
+    }
+
+    /// After `update` failed outside `on_poll`: no poll event may come to deliver what
+    /// it left (sends completed with the error, or a read watch it couldn't keep), so
+    /// queue the handle to [`Self::flush`] on the next turn, like libuv's `uv__io_feed`.
+    ///
+    /// # Safety
+    /// The handle isn't closing, and this is the loop thread.
+    unsafe fn defer_flush(&mut self, err: c_int) {
+        self.flush_err = err;
+        if self.flush_pending || (self.completed.is_empty() && !(self.reading && !self.watching_reads())) {
+            return;
+        }
+        self.flush_pending = true;
+        // SAFETY: fn contract. The loop outlives its handles.
+        let loop_ = unsafe { &*(*self.udp).handle.loop_ };
+        // SAFETY: `udp` is the node's live handle, so it isn't null.
+        let udp = unsafe { NonNull::new_unchecked(self.udp) };
+        loop_.udp_pending.with_mut(|pending| pending.push(udp));
+        loop_.schedule_dispatch();
+    }
+
+    /// Runs what [`Self::defer_flush`] queued: the callbacks of completed sends, then
+    /// `recv_cb` with the error if the handle is receiving without a read watch. Then
+    /// tries to watch again for what's left.
+    ///
+    /// # Safety
+    /// Same as [`Self::on_poll`].
+    unsafe fn flush(this: *mut UvUdpNode) {
+        // SAFETY: fn contract. The node outlives the callbacks.
+        unsafe {
+            (*this).flush_pending = false;
+            // A closing handle's sends run in `finish_close`.
+            if UvUdpNode::closing(this) {
+                return;
+            }
+            UvUdpNode::run_completed(this);
+            if !UvUdpNode::closing(this) && (*this).reading && !(*this).watching_reads() {
+                UvUdpNode::fail_reads(this, (*this).flush_err);
+            }
+            if !UvUdpNode::closing(this) {
+                // Sends queued since, or by a callback above.
+                let err = (*this).update();
+                if err != 0 {
+                    (*this).defer_flush(err);
+                }
+            }
+        }
     }
 
     /// Called by `__bun_run_file_poll` when the socket is readable or writable.
@@ -1691,6 +1762,12 @@ impl UvUdp {
         // SAFETY: fn contract.
         let node = unsafe { &mut *(*handle).node };
         node.reading = false;
+        if node.flush_pending {
+            node.flush_pending = false;
+            // SAFETY: fn contract. The loop outlives its handles.
+            let loop_ = unsafe { &*(*handle).handle.loop_ };
+            loop_.udp_pending.with_mut(|pending| pending.retain(|h| h.as_ptr() != handle));
+        }
         if !node.poll.is_null() {
             // SAFETY: the node owns its poll. A poll freed during its own dispatch
             // is recycled after the tick.
@@ -1775,6 +1852,8 @@ pub(crate) unsafe extern "C" fn uv_udp_init_ex(
         processing: false,
         queued: VecDeque::new(),
         completed: VecDeque::new(),
+        flush_pending: false,
+        flush_err: 0,
     });
     // SAFETY: fn contract. Write field by field because the addon's memory is uninitialized.
     unsafe {
@@ -2145,12 +2224,18 @@ pub(crate) unsafe extern "C" fn uv_udp_send(
     if was_empty && !node.processing {
         node.send_queued();
     }
+    // Still queued means the socket hasn't taken it: if watching fails now, it's
+    // failed, and goes back to the addon.
+    let unsent = node.queued.iter().any(|r| r.as_ptr() == req);
     // SAFETY: the handle isn't closing (`open_node`).
     let err = unsafe { node.update() };
-    if err != 0 {
-        // Hand it back to the addon, as libuv's failed send does: its callback won't run.
-        // `update` completed it with the error if it was still queued; if it was sent,
-        // nothing would run its callback until another poll event.
+    if err == 0 {
+        return 0;
+    }
+    let mut failed = false;
+    // An unsent one goes back to the addon, as libuv's failed send does: its callback
+    // won't run. `update` completed it with the error.
+    if unsent {
         if let Some(i) = node.completed.iter().position(|r| r.as_ptr() == req) {
             node.completed.remove(i);
             // SAFETY: the request was set up above and is ours until its callback.
@@ -2165,10 +2250,15 @@ pub(crate) unsafe extern "C" fn uv_udp_send(
                 }
                 (*req).bufs = core::ptr::null_mut();
             }
-            return err;
+            failed = true;
         }
     }
-    0
+    // The rest runs next turn: earlier sends that `update` completed with the error, a
+    // read watch it couldn't keep, and this send's callback if the socket already took
+    // it. That datagram is out, so for the addon this call succeeded.
+    // SAFETY: the handle isn't closing (`open_node`).
+    unsafe { node.defer_flush(err) };
+    if failed { err } else { 0 }
 }
 
 /// Implements `int uv_udp_try_send(uv_udp_t*, const uv_buf_t[], unsigned int nbufs,
@@ -2260,8 +2350,10 @@ pub(crate) unsafe extern "C" fn uv_udp_recv_start(
         unsafe {
             (*handle).alloc_cb = None;
             (*handle).recv_cb = None;
-            // Drop a read watch it kept; any failure is already reported.
-            let _ = node.update();
+            // Drop a read watch it kept. Sends that either `update` completed with
+            // its error run their callbacks next turn.
+            let again = node.update();
+            node.defer_flush(if again != 0 { again } else { err });
         }
         return err;
     }
@@ -2290,8 +2382,11 @@ pub(crate) unsafe extern "C" fn uv_udp_recv_stop(handle: *mut UvUdp) -> c_int {
         (*handle).alloc_cb = None;
         (*handle).recv_cb = None;
         // A failure here (putting back the write watch for queued sends) completes
-        // those sends with the error.
-        let _ = node.update();
+        // those sends with the error; their callbacks run next turn.
+        let err = node.update();
+        if err != 0 {
+            node.defer_flush(err);
+        }
     }
     0
 }

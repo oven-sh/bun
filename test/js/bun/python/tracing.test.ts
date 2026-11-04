@@ -284,8 +284,92 @@ print(f())
 `;
     const { stdout, stderr, exitCode } = await run({ "main.py": main }, ["main.py"], "p x\nx = 1\nc\n");
     expect(stderr).toBe("");
+    // On the line it is written on, not the next.
+    expect(stdout).toStartWith("> <dir>/main.py(4)f()\n-> breakpoint()\n");
     expect(stdout).toContain("(Pdb) 41\n");
     expect(stdout).toEndWith("2\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a signal finds a loop on the line it goes back from", async () => {
+    const main = `
+import itertools, signal
+
+def handler(signum, frame):
+    raise KeyboardInterrupt
+
+def loop():
+    for i in itertools.count():
+        x = i
+        y = x
+
+signal.signal(signal.SIGALRM, handler)
+signal.setitimer(signal.ITIMER_REAL, 0.01)
+try:
+    loop()
+except KeyboardInterrupt as e:
+    print(e.__traceback__.tb_next.tb_lineno)
+`;
+    expect(await run({ "main.py": main })).toEqual(printed("10\n"));
+  });
+
+  test("workers and the main thread trace at the same time", async () => {
+    const program = `
+import sys
+
+def f(n):
+    total = 0
+    for i in range(n):
+        if i % 3:
+            total += i
+    return total
+
+events = []
+def tracer(frame, event, arg):
+    events.append(event)
+    return tracer
+
+lines = []
+monitoring = sys.monitoring
+for turn in range(20):
+    sys.settrace(tracer); f(5); sys.settrace(None)
+    monitoring.use_tool_id(1, "test")
+    monitoring.register_callback(1, monitoring.events.LINE, lambda code, line: lines.append(line))
+    monitoring.set_events(1, monitoring.events.LINE)
+    f(5)
+    monitoring.set_events(1, 0)
+    monitoring.free_tool_id(1)
+    f(100)
+result = f"{len(events)} {len(lines)}"
+`;
+    const trace = `
+import { dict, exec } from "python:builtins";
+export function trace() {
+  const globals = dict();
+  exec(${JSON.stringify(program)}, globals);
+  return String(globals.result);
+}
+`;
+    const worker = `
+import { trace } from "./trace.ts";
+self.onmessage = () => postMessage(trace());
+`;
+    const main = `
+import { trace } from "./trace.ts";
+const workers = [1, 2].map(() => new Worker(new URL("./worker.ts", import.meta.url).href));
+const answers = workers.map(worker => new Promise(resolve => {
+  worker.onmessage = event => resolve(event.data);
+  worker.postMessage("go");
+}));
+console.log(JSON.stringify([trace(), ...(await Promise.all(answers))]));
+for (const worker of workers) worker.terminate();
+`;
+    const files = { "main.ts": main, "worker.ts": worker, "trace.ts": trace };
+    const { stdout, stderr, exitCode } = await run(files, ["main.ts"]);
+    expect(stderr).toBe("");
+    const [first, ...rest] = JSON.parse(stdout);
+    expect(first).toMatch(/^[1-9]\d* [1-9]\d*$/);
+    expect(rest).toEqual([first, first]);
     expect(exitCode).toBe(0);
   });
 

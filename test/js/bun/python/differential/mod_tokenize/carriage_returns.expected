@@ -1,0 +1,296 @@
+status: 0
+script: eb5e9ff5cdbff9e8
+---
+===== '\n'
+'a=1\rb=2\n'
+    NAME 'a' (1, 0) (1, 1) 'a=1\rb=2\n'
+    OP '=' (1, 1) (1, 2) 'a=1\rb=2\n'
+    NUMBER '1' (1, 2) (1, 3) 'a=1\rb=2\n'
+    OP '\rb' (1, 3) (1, 5) 'a=1\rb=2\n'
+    OP '=' (1, 5) (1, 6) 'a=1\rb=2\n'
+    NUMBER '2' (1, 6) (1, 7) 'a=1\rb=2\n'
+    NEWLINE '\n' (1, 7) (1, 8) 'a=1\rb=2\n'
+    ENDMARKER '' (2, 0) (2, 0) ''
+'\r\\\n\n\t\t\\\n\n'
+    NL '\n' (2, 0) (2, 1) '\n'
+    NL '\n' (4, 0) (4, 1) '\n'
+    ENDMARKER '' (5, 0) (5, 0) ''
+'\r\\\n\n'
+    NL '\n' (2, 0) (2, 1) '\n'
+    ENDMARKER '' (3, 0) (3, 0) ''
+'# c\rx = 1\n'
+    COMMENT '# c' (1, 0) (1, 3) '# c\rx = 1\n'
+    OP '\rx' (1, 3) (1, 5) '# c\rx = 1\n'
+    OP '=' (1, 6) (1, 7) '# c\rx = 1\n'
+    NUMBER '1' (1, 8) (1, 9) '# c\rx = 1\n'
+    NL '\n' (1, 9) (1, 10) '# c\rx = 1\n'
+    ENDMARKER '' (2, 0) (2, 0) ''
+'a\r\n'
+    NAME 'a' (1, 0) (1, 1) 'a\r\n'
+    NEWLINE '\r\n' (1, 1) (1, 3) 'a\r\n'
+    ENDMARKER '' (2, 0) (2, 0) ''
+'a\r'
+    NAME 'a' (1, 0) (1, 1) 'a\r'
+    NEWLINE '\r' (1, 1) (1, 3) 'a\r'
+    ENDMARKER '' (2, 0) (2, 0) ''
+'\r'
+    NL '' (1, 0) (1, 2) '\r'
+    ENDMARKER '' (2, 0) (2, 0) ''
+'x = 1 \r+ 2\n'
+    NAME 'x' (1, 0) (1, 1) 'x = 1 \r+ 2\n'
+    OP '=' (1, 2) (1, 3) 'x = 1 \r+ 2\n'
+    NUMBER '1' (1, 4) (1, 5) 'x = 1 \r+ 2\n'
+    OP '\r+' (1, 6) (1, 8) 'x = 1 \r+ 2\n'
+    NUMBER '2' (1, 9) (1, 10) 'x = 1 \r+ 2\n'
+    NEWLINE '\n' (1, 10) (1, 11) 'x = 1 \r+ 2\n'
+    ENDMARKER '' (2, 0) (2, 0) ''
+'x = (1,\r2)\n'
+    NAME 'x' (1, 0) (1, 1) 'x = (1,\r2)\n'
+    OP '=' (1, 2) (1, 3) 'x = (1,\r2)\n'
+    OP '(' (1, 4) (1, 5) 'x = (1,\r2)\n'
+    NUMBER '1' (1, 5) (1, 6) 'x = (1,\r2)\n'
+    OP ',' (1, 6) (1, 7) 'x = (1,\r2)\n'
+    NUMBER '\r2' (1, 7) (1, 9) 'x = (1,\r2)\n'
+    OP ')' (1, 9) (1, 10) 'x = (1,\r2)\n'
+    NEWLINE '\n' (1, 10) (1, 11) 'x = (1,\r2)\n'
+    ENDMARKER '' (2, 0) (2, 0) ''
+'  \rx\n'
+    OP '\rx' (1, 2) (1, 4) '  \rx\n'
+    NEWLINE '\n' (1, 4) (1, 5) '  \rx\n'
+    ENDMARKER '' (2, 0) (2, 0) ''
+'if a:\n  \r\n  b\n'
+    NAME 'if' (1, 0) (1, 2) 'if a:\n'
+    NAME 'a' (1, 3) (1, 4) 'if a:\n'
+    OP ':' (1, 4) (1, 5) 'if a:\n'
+    NEWLINE '\n' (1, 5) (1, 6) 'if a:\n'
+    NL '\r\n' (2, 2) (2, 4) '  \r\n'
+    INDENT '  ' (3, 0) (3, 2) '  b\n'
+    NAME 'b' (3, 2) (3, 3) '  b\n'
+    NEWLINE '\n' (3, 3) (3, 4) '  b\n'
+    DEDENT '' (4, 0) (4, 0) ''
+    ENDMARKER '' (4, 0) (4, 0) ''
+'x\r.y\n'
+    NAME 'x' (1, 0) (1, 1) 'x\r.y\n'
+    OP '\r.' (1, 1) (1, 3) 'x\r.y\n'
+    NAME 'y' (1, 3) (1, 4) 'x\r.y\n'
+    NEWLINE '\n' (1, 4) (1, 5) 'x\r.y\n'
+    ENDMARKER '' (2, 0) (2, 0) ''
+'x\r1\n'
+    NAME 'x' (1, 0) (1, 1) 'x\r1\n'
+    NUMBER '\r1' (1, 1) (1, 3) 'x\r1\n'
+    NEWLINE '\n' (1, 3) (1, 4) 'x\r1\n'
+    ENDMARKER '' (2, 0) (2, 0) ''
+"x\r'a'\n"
+    NAME 'x' (1, 0) (1, 1) "x\r'a'\n"
+    STRING "\r'a'" (1, 1) (1, 5) "x\r'a'\n"
+    NEWLINE '\n' (1, 5) (1, 6) "x\r'a'\n"
+    ENDMARKER '' (2, 0) (2, 0) ''
+"'a\rb'\n"
+    STRING "'a\rb'" (1, 0) (1, 5) "'a\rb'\n"
+    NEWLINE '\n' (1, 5) (1, 6) "'a\rb'\n"
+    ENDMARKER '' (2, 0) (2, 0) ''
+"f'{a\r}'\n"
+    FSTRING_START "f'" (1, 0) (1, 2) "f'{a\r}'\n"
+    OP '{' (1, 2) (1, 3) "f'{a\r}'\n"
+    NAME 'a' (1, 3) (1, 4) "f'{a\r}'\n"
+    OP '\r}' (1, 4) (1, 6) "f'{a\r}'\n"
+    FSTRING_END "'" (1, 6) (1, 7) "f'{a\r}'\n"
+    NEWLINE '\n' (1, 7) (1, 8) "f'{a\r}'\n"
+    ENDMARKER '' (2, 0) (2, 0) ''
+'x \\\r\n'
+    NAME 'x' (1, 0) (1, 1) 'x \\\r\n'
+    TokenError ('unexpected EOF in multi-line statement', (1, 5))
+'a\r\rb\n'
+    NAME 'a' (1, 0) (1, 1) 'a\r\rb\n'
+    TokenError ('invalid non-printable character U+000D', (1, 3))
+'a\r#c\n'
+    NAME 'a' (1, 0) (1, 1) 'a\r#c\n'
+    OP '\r#' (1, 1) (1, 3) 'a\r#c\n'
+    NAME 'c' (1, 3) (1, 4) 'a\r#c\n'
+    NEWLINE '\n' (1, 4) (1, 5) 'a\r#c\n'
+    ENDMARKER '' (2, 0) (2, 0) ''
+'a\r \n'
+    NAME 'a' (1, 0) (1, 1) 'a\r \n'
+    OP '\r ' (1, 1) (1, 3) 'a\r \n'
+    NEWLINE '\n' (1, 3) (1, 4) 'a\r \n'
+    ENDMARKER '' (2, 0) (2, 0) ''
+'\ra\n'
+    OP '\ra' (1, 0) (1, 2) '\ra\n'
+    NEWLINE '\n' (1, 2) (1, 3) '\ra\n'
+    ENDMARKER '' (2, 0) (2, 0) ''
+'a = 1\r\n\rb\n'
+    NAME 'a' (1, 0) (1, 1) 'a = 1\r\n'
+    OP '=' (1, 2) (1, 3) 'a = 1\r\n'
+    NUMBER '1' (1, 4) (1, 5) 'a = 1\r\n'
+    NEWLINE '\r\n' (1, 5) (1, 7) 'a = 1\r\n'
+    OP '\rb' (2, 0) (2, 2) '\rb\n'
+    NEWLINE '\n' (2, 2) (2, 3) '\rb\n'
+    ENDMARKER '' (3, 0) (3, 0) ''
+===== ''
+'a=1\rb=2\n'
+    NAME 'a' (1, 0) (1, 1) 'a=1\r'
+    OP '=' (1, 1) (1, 2) 'a=1\r'
+    NUMBER '1' (1, 2) (1, 3) 'a=1\r'
+    NEWLINE '\r' (1, 3) (1, 5) 'a=1\r'
+    NAME 'b' (2, 0) (2, 1) 'b=2\n'
+    OP '=' (2, 1) (2, 2) 'b=2\n'
+    NUMBER '2' (2, 2) (2, 3) 'b=2\n'
+    NEWLINE '\n' (2, 3) (2, 4) 'b=2\n'
+    ENDMARKER '' (3, 0) (3, 0) ''
+'\r\\\n\n\t\t\\\n\n'
+    NL '' (1, 0) (1, 2) '\r'
+    NL '\n' (3, 0) (3, 1) '\n'
+    NL '\n' (5, 0) (5, 1) '\n'
+    ENDMARKER '' (6, 0) (6, 0) ''
+'\r\\\n\n'
+    NL '' (1, 0) (1, 2) '\r'
+    NL '\n' (3, 0) (3, 1) '\n'
+    ENDMARKER '' (4, 0) (4, 0) ''
+'# c\rx = 1\n'
+    COMMENT '# c' (1, 0) (1, 3) '# c\r'
+    NL '' (1, 3) (1, 5) '# c\r'
+    NAME 'x' (2, 0) (2, 1) 'x = 1\n'
+    OP '=' (2, 2) (2, 3) 'x = 1\n'
+    NUMBER '1' (2, 4) (2, 5) 'x = 1\n'
+    NEWLINE '\n' (2, 5) (2, 6) 'x = 1\n'
+    ENDMARKER '' (3, 0) (3, 0) ''
+'a\r\n'
+    NAME 'a' (1, 0) (1, 1) 'a\r\n'
+    NEWLINE '\r\n' (1, 1) (1, 3) 'a\r\n'
+    ENDMARKER '' (2, 0) (2, 0) ''
+'a\r'
+    NAME 'a' (1, 0) (1, 1) 'a\r'
+    NEWLINE '\r' (1, 1) (1, 3) 'a\r'
+    ENDMARKER '' (2, 0) (2, 0) ''
+'\r'
+    NL '' (1, 0) (1, 2) '\r'
+    ENDMARKER '' (2, 0) (2, 0) ''
+'x = 1 \r+ 2\n'
+    NAME 'x' (1, 0) (1, 1) 'x = 1 \r'
+    OP '=' (1, 2) (1, 3) 'x = 1 \r'
+    NUMBER '1' (1, 4) (1, 5) 'x = 1 \r'
+    NEWLINE '\r' (1, 6) (1, 8) 'x = 1 \r'
+    OP '+' (2, 0) (2, 1) '+ 2\n'
+    NUMBER '2' (2, 2) (2, 3) '+ 2\n'
+    NEWLINE '\n' (2, 3) (2, 4) '+ 2\n'
+    ENDMARKER '' (3, 0) (3, 0) ''
+'x = (1,\r2)\n'
+    NAME 'x' (1, 0) (1, 1) 'x = (1,\r'
+    OP '=' (1, 2) (1, 3) 'x = (1,\r'
+    OP '(' (1, 4) (1, 5) 'x = (1,\r'
+    NUMBER '1' (1, 5) (1, 6) 'x = (1,\r'
+    OP ',' (1, 6) (1, 7) 'x = (1,\r'
+    NL '' (1, 7) (1, 9) 'x = (1,\r'
+    NUMBER '2' (2, 0) (2, 1) '2)\n'
+    OP ')' (2, 1) (2, 2) '2)\n'
+    NEWLINE '\n' (2, 2) (2, 3) '2)\n'
+    ENDMARKER '' (3, 0) (3, 0) ''
+'  \rx\n'
+    NL '' (1, 2) (1, 4) '  \r'
+    NAME 'x' (2, 0) (2, 1) 'x\n'
+    NEWLINE '\n' (2, 1) (2, 2) 'x\n'
+    ENDMARKER '' (3, 0) (3, 0) ''
+'if a:\n  \r\n  b\n'
+    NAME 'if' (1, 0) (1, 2) 'if a:\n'
+    NAME 'a' (1, 3) (1, 4) 'if a:\n'
+    OP ':' (1, 4) (1, 5) 'if a:\n'
+    NEWLINE '\n' (1, 5) (1, 6) 'if a:\n'
+    NL '\r\n' (2, 2) (2, 4) '  \r\n'
+    INDENT '  ' (3, 0) (3, 2) '  b\n'
+    NAME 'b' (3, 2) (3, 3) '  b\n'
+    NEWLINE '\n' (3, 3) (3, 4) '  b\n'
+    DEDENT '' (4, 0) (4, 0) ''
+    ENDMARKER '' (4, 0) (4, 0) ''
+'x\r.y\n'
+    NAME 'x' (1, 0) (1, 1) 'x\r'
+    NEWLINE '\r' (1, 1) (1, 3) 'x\r'
+    OP '.' (2, 0) (2, 1) '.y\n'
+    NAME 'y' (2, 1) (2, 2) '.y\n'
+    NEWLINE '\n' (2, 2) (2, 3) '.y\n'
+    ENDMARKER '' (3, 0) (3, 0) ''
+'x\r1\n'
+    NAME 'x' (1, 0) (1, 1) 'x\r'
+    NEWLINE '\r' (1, 1) (1, 3) 'x\r'
+    NUMBER '1' (2, 0) (2, 1) '1\n'
+    NEWLINE '\n' (2, 1) (2, 2) '1\n'
+    ENDMARKER '' (3, 0) (3, 0) ''
+"x\r'a'\n"
+    NAME 'x' (1, 0) (1, 1) 'x\r'
+    NEWLINE '\r' (1, 1) (1, 3) 'x\r'
+    STRING "'a'" (2, 0) (2, 3) "'a'\n"
+    NEWLINE '\n' (2, 3) (2, 4) "'a'\n"
+    ENDMARKER '' (3, 0) (3, 0) ''
+"'a\rb'\n"
+    TokenError ('unterminated string literal (detected at line 1)', (1, 1))
+"f'{a\r}'\n"
+    FSTRING_START "f'" (1, 0) (1, 2) "f'{a\r"
+    OP '{' (1, 2) (1, 3) "f'{a\r"
+    NAME 'a' (1, 3) (1, 4) "f'{a\r"
+    NL '' (1, 4) (1, 6) "f'{a\r"
+    OP '}' (2, 0) (2, 1) "}'\n"
+    FSTRING_END "'" (2, 1) (2, 2) "}'\n"
+    NEWLINE '\n' (2, 2) (2, 3) "}'\n"
+    ENDMARKER '' (3, 0) (3, 0) ''
+'x \\\r\n'
+    NAME 'x' (1, 0) (1, 1) 'x \\\r\n'
+    TokenError ('unexpected EOF in multi-line statement', (1, 5))
+'a\r\rb\n'
+    NAME 'a' (1, 0) (1, 1) 'a\r'
+    NEWLINE '\r' (1, 1) (1, 3) 'a\r'
+    NL '' (2, 0) (2, 2) '\r'
+    NAME 'b' (3, 0) (3, 1) 'b\n'
+    NEWLINE '\n' (3, 1) (3, 2) 'b\n'
+    ENDMARKER '' (4, 0) (4, 0) ''
+'a\r#c\n'
+    NAME 'a' (1, 0) (1, 1) 'a\r'
+    NEWLINE '\r' (1, 1) (1, 3) 'a\r'
+    COMMENT '#c' (2, 0) (2, 2) '#c\n'
+    NL '\n' (2, 2) (2, 3) '#c\n'
+    ENDMARKER '' (3, 0) (3, 0) ''
+'a\r \n'
+    NAME 'a' (1, 0) (1, 1) 'a\r'
+    NEWLINE '\r' (1, 1) (1, 3) 'a\r'
+    NL '\n' (2, 1) (2, 2) ' \n'
+    ENDMARKER '' (3, 0) (3, 0) ''
+'\ra\n'
+    NL '' (1, 0) (1, 2) '\r'
+    NAME 'a' (2, 0) (2, 1) 'a\n'
+    NEWLINE '\n' (2, 1) (2, 2) 'a\n'
+    ENDMARKER '' (3, 0) (3, 0) ''
+'a = 1\r\n\rb\n'
+    NAME 'a' (1, 0) (1, 1) 'a = 1\r\n'
+    OP '=' (1, 2) (1, 3) 'a = 1\r\n'
+    NUMBER '1' (1, 4) (1, 5) 'a = 1\r\n'
+    NEWLINE '\r\n' (1, 5) (1, 7) 'a = 1\r\n'
+    NL '' (2, 0) (2, 2) '\r'
+    NAME 'b' (3, 0) (3, 1) 'b\n'
+    NEWLINE '\n' (3, 1) (3, 2) 'b\n'
+    ENDMARKER '' (4, 0) (4, 0) ''
+===== compile
+'a=1\rb=2\n' Module(body=[Assign(targets=[Name(id='a', ctx=Store(), lineno=1, col_offset=0, end_lineno=1, end_col_offset=1)], value=Constant(value=1, lineno=1, col_offset=2, end_lineno=1, end_col_offset=3), lineno=1, col_offset=0, end_lineno=1, end_col_offset=3), Assign(targets=[Name(id='b', ctx=Store(), lineno=2, col_offset=0, end_lineno=2, end_col_offset=1)], value=Constant(value=2, lineno=2, col_offset=2, end_lineno=2, end_col_offset=3), lineno=2, col_offset=0, end_lineno=2, end_col_offset=3)])
+'\r\\\n\n\t\t\\\n\n' Module()
+'\r\\\n\n' Module()
+'# c\rx = 1\n' Module(body=[Assign(targets=[Name(id='x', ctx=Store(), lineno=2, col_offset=0, end_lineno=2, end_col_offset=1)], value=Constant(value=1, lineno=2, col_offset=4, end_lineno=2, end_col_offset=5), lineno=2, col_offset=0, end_lineno=2, end_col_offset=5)])
+'a\r\n' Module(body=[Expr(value=Name(id='a', lineno=1, col_offset=0, end_lineno=1, end_col_offset=1), lineno=1, col_offset=0, end_lineno=1, end_col_offset=1)])
+'a\r' Module(body=[Expr(value=Name(id='a', lineno=1, col_offset=0, end_lineno=1, end_col_offset=1), lineno=1, col_offset=0, end_lineno=1, end_col_offset=1)])
+'\r' Module()
+'x = 1 \r+ 2\n' Module(body=[Assign(targets=[Name(id='x', ctx=Store(), lineno=1, col_offset=0, end_lineno=1, end_col_offset=1)], value=Constant(value=1, lineno=1, col_offset=4, end_lineno=1, end_col_offset=5), lineno=1, col_offset=0, end_lineno=1, end_col_offset=5), Expr(value=UnaryOp(op=UAdd(), operand=Constant(value=2, lineno=2, col_offset=2, end_lineno=2, end_col_offset=3), lineno=2, col_offset=0, end_lineno=2, end_col_offset=3), lineno=2, col_offset=0, end_lineno=2, end_col_offset=3)])
+'x = (1,\r2)\n' Module(body=[Assign(targets=[Name(id='x', ctx=Store(), lineno=1, col_offset=0, end_lineno=1, end_col_offset=1)], value=Tuple(elts=[Constant(value=1, lineno=1, col_offset=5, end_lineno=1, end_col_offset=6), Constant(value=2, lineno=2, col_offset=0, end_lineno=2, end_col_offset=1)], lineno=1, col_offset=4, end_lineno=2, end_col_offset=2), lineno=1, col_offset=0, end_lineno=2, end_col_offset=2)])
+'  \rx\n' Module(body=[Expr(value=Name(id='x', lineno=2, col_offset=0, end_lineno=2, end_col_offset=1), lineno=2, col_offset=0, end_lineno=2, end_col_offset=1)])
+'if a:\n  \r\n  b\n' Module(body=[If(test=Name(id='a', lineno=1, col_offset=3, end_lineno=1, end_col_offset=4), body=[Expr(value=Name(id='b', lineno=3, col_offset=2, end_lineno=3, end_col_offset=3), lineno=3, col_offset=2, end_lineno=3, end_col_offset=3)], lineno=1, col_offset=0, end_lineno=3, end_col_offset=3)])
+'x\r.y\n' SyntaxError invalid syntax 2 1 '.y\n'
+'x\r1\n' Module(body=[Expr(value=Name(id='x', lineno=1, col_offset=0, end_lineno=1, end_col_offset=1), lineno=1, col_offset=0, end_lineno=1, end_col_offset=1), Expr(value=Constant(value=1, lineno=2, col_offset=0, end_lineno=2, end_col_offset=1), lineno=2, col_offset=0, end_lineno=2, end_col_offset=1)])
+"x\r'a'\n" Module(body=[Expr(value=Name(id='x', lineno=1, col_offset=0, end_lineno=1, end_col_offset=1), lineno=1, col_offset=0, end_lineno=1, end_col_offset=1), Expr(value=Constant(value='a', lineno=2, col_offset=0, end_lineno=2, end_col_offset=3), lineno=2, col_offset=0, end_lineno=2, end_col_offset=3)])
+"'a\rb'\n" SyntaxError unterminated string literal (detected at line 1) 1 1 "'a"
+"f'{a\r}'\n" Module(body=[Expr(value=JoinedStr(values=[FormattedValue(value=Name(id='a', lineno=1, col_offset=3, end_lineno=1, end_col_offset=4), conversion=-1, lineno=1, col_offset=2, end_lineno=2, end_col_offset=1)], lineno=1, col_offset=0, end_lineno=2, end_col_offset=2), lineno=1, col_offset=0, end_lineno=2, end_col_offset=2)])
+'x \\\r\n' SyntaxError unexpected EOF while parsing 1 4 'x \\\n'
+'a\r\rb\n' Module(body=[Expr(value=Name(id='a', lineno=1, col_offset=0, end_lineno=1, end_col_offset=1), lineno=1, col_offset=0, end_lineno=1, end_col_offset=1), Expr(value=Name(id='b', lineno=3, col_offset=0, end_lineno=3, end_col_offset=1), lineno=3, col_offset=0, end_lineno=3, end_col_offset=1)])
+'a\r#c\n' Module(body=[Expr(value=Name(id='a', lineno=1, col_offset=0, end_lineno=1, end_col_offset=1), lineno=1, col_offset=0, end_lineno=1, end_col_offset=1)])
+'a\r \n' Module(body=[Expr(value=Name(id='a', lineno=1, col_offset=0, end_lineno=1, end_col_offset=1), lineno=1, col_offset=0, end_lineno=1, end_col_offset=1)])
+'\ra\n' Module(body=[Expr(value=Name(id='a', lineno=2, col_offset=0, end_lineno=2, end_col_offset=1), lineno=2, col_offset=0, end_lineno=2, end_col_offset=1)])
+'a = 1\r\n\rb\n' Module(body=[Assign(targets=[Name(id='a', ctx=Store(), lineno=1, col_offset=0, end_lineno=1, end_col_offset=1)], value=Constant(value=1, lineno=1, col_offset=4, end_lineno=1, end_col_offset=5), lineno=1, col_offset=0, end_lineno=1, end_col_offset=5), Expr(value=Name(id='b', lineno=3, col_offset=0, end_lineno=3, end_col_offset=1), lineno=3, col_offset=0, end_lineno=3, end_col_offset=1)])
+"x = '''a\rb'''" Module(body=[Assign(targets=[Name(id='x', ctx=Store(), lineno=1, col_offset=0, end_lineno=1, end_col_offset=1)], value=Constant(value='a\nb', lineno=1, col_offset=4, end_lineno=2, end_col_offset=4), lineno=1, col_offset=0, end_lineno=2, end_col_offset=4)])
+"x = '''a\r\nb'''" Module(body=[Assign(targets=[Name(id='x', ctx=Store(), lineno=1, col_offset=0, end_lineno=1, end_col_offset=1)], value=Constant(value='a\nb', lineno=1, col_offset=4, end_lineno=2, end_col_offset=4), lineno=1, col_offset=0, end_lineno=2, end_col_offset=4)])
+'if a:\r    b\r    c\r' Module(body=[If(test=Name(id='a', lineno=1, col_offset=3, end_lineno=1, end_col_offset=4), body=[Expr(value=Name(id='b', lineno=2, col_offset=4, end_lineno=2, end_col_offset=5), lineno=2, col_offset=4, end_lineno=2, end_col_offset=5), Expr(value=Name(id='c', lineno=3, col_offset=4, end_lineno=3, end_col_offset=5), lineno=3, col_offset=4, end_lineno=3, end_col_offset=5)], lineno=1, col_offset=0, end_lineno=3, end_col_offset=5)])
+'a = 1 \\\rb' SyntaxError invalid syntax 2 1 'b\n'
+"f'''{a}\r{b}'''" Module(body=[Expr(value=JoinedStr(values=[FormattedValue(value=Name(id='a', lineno=1, col_offset=5, end_lineno=1, end_col_offset=6), conversion=-1, lineno=1, col_offset=4, end_lineno=1, end_col_offset=7), Constant(value='\n', lineno=1, col_offset=7, end_lineno=2, end_col_offset=0), FormattedValue(value=Name(id='b', lineno=2, col_offset=1, end_lineno=2, end_col_offset=2), conversion=-1, lineno=2, col_offset=0, end_lineno=2, end_col_offset=3)], lineno=1, col_offset=0, end_lineno=2, end_col_offset=6), lineno=1, col_offset=0, end_lineno=2, end_col_offset=6)])

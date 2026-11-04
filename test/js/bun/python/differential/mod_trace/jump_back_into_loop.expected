@@ -1,0 +1,26 @@
+status: 0
+script: 9ed6a63745364226
+---
+loop 6 5 [1, 2, 3, 4, 'end']
+loop 7 3 [1, 2, 3, 'end', 3, 'end']
+generator 6 4 [1, 2, 'last', 'last']
+generator 5 4 [1, 2, 'last']
+returns 6 5 [1, 2, 3, 'end']
+returns 7 3 [1, 2, 'end', 2, 'end']
+nested 7 6 [(1, 1), (1, 2), (1, 3), 'inner', (2, 1), (2, 2), 'inner', 'outer']
+nested 8 4 [(1, 1), (1, 2), 'inner', (1, 2), 'inner', (2, 1), (2, 2), 'inner', 'outer']
+nested 11 10 [(1, 1), (1, 2), 'inner', (2, 1), (2, 2), 'inner', (3, 1), (3, 2), 'inner', 'outer']
+nested 12 9 [(1, 1), (1, 2), 'inner', (2, 1), (2, 2), 'inner', 'outer', 'outer']
+over_a_call 6 5 [0, 1, 2, 3, 'end']
+over_a_call 7 3 [0, 1, 2, 'end', 2, 'end']
+    incompatible stacks
+matches 9 3 ['other', 'end']
+    incompatible stacks
+matches 9 5 ['other', 'end']
+in_a_with 7 6 [1, 2, 3, 'end', 'after']
+    can't jump into the body of a for loop
+in_a_with 9 4 [1, 2, 'end', 'after']
+in_a_with 10 3 [1, 2, 'end', 'after', 1, 2, 'end', 'after']
+in_a_handler 9 8 [1, 2, 3, 'first', "ValueError('first')", 'None']
+in_a_handler 10 6 [1, 2, 'first', 2, 'first', "ValueError('first')", 'None']
+in_a_handler 11 5 [1, 2, 'first', 1, 2, 'first', "ValueError('first')", 'None']

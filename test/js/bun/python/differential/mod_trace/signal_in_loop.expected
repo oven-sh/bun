@@ -1,0 +1,20 @@
+status: 0
+script: cf317821ee028483
+---
+while_pass 2 2
+while_true 4 4
+while_test 4 4
+for_pass 2 2
+for_body 3 3
+test_fails 2 2
+test_holds 3 3
+test_fails_with_else 5 5
+continues 3 3
+with_finally 5 5
+with_handler 3 3
+nested_with_more 4 4
+matches 6 6
+over_lines 2 2
+comprehension 1 1
+comprehension_over_lines 1 1
+nested True

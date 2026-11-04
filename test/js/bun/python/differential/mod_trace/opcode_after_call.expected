@@ -1,0 +1,202 @@
+status: 0
+script: 6d1205c99406f3c9
+---
+statement
+    opcode statement 2
+    line statement 3
+    opcode statement 3
+    return statement 3
+last_statement
+    opcode last_statement 2
+    return last_statement 2
+assigned
+    opcode assigned 2
+    line assigned 3
+    opcode assigned 3
+    return assigned 3
+returned
+    opcode returned 2
+    return returned 2
+in_a_list
+    line in_a_list 2
+    opcode in_a_list 2
+    line in_a_list 1
+    opcode in_a_list 1
+    line in_a_list 3
+argument
+    opcode argument 1
+    line argument 2
+    opcode argument 2
+    return argument 2
+in_a_loop
+    opcode in_a_loop 3
+    line in_a_loop 1
+    opcode in_a_loop 1
+    line in_a_loop 2
+    opcode in_a_loop 2
+in_an_if
+    opcode in_an_if 2
+    line in_an_if 5
+    opcode in_an_if 5
+    return in_an_if 5
+in_a_with
+    opcode in_a_with 2
+    line in_a_with 1
+    opcode in_a_with 1
+    line in_a_with 3
+    opcode in_a_with 3
+in_a_try
+    opcode in_a_try 2
+    line in_a_try 5
+    opcode in_a_try 5
+    return in_a_try 5
+in_a_handler
+    opcode in_a_handler 4
+    line in_a_handler 5
+    opcode in_a_handler 5
+    return in_a_handler 5
+in_a_match
+    opcode in_a_match 3
+    line in_a_match 6
+    opcode in_a_match 6
+    return in_a_match 6
+in_a_while
+    opcode in_a_while 4
+    line in_a_while 2
+    opcode in_a_while 2
+    line in_a_while 3
+    opcode in_a_while 3
+in_a_finally
+    opcode in_a_finally 4
+    line in_a_finally 5
+    opcode in_a_finally 5
+    return in_a_finally 5
+after_and
+    line after_and 2
+    opcode after_and 2
+    return after_and 2
+two_on_a_line
+    opcode two_on_a_line 1
+    line two_on_a_line 2
+    opcode two_on_a_line 2
+    return two_on_a_line 2
+method_call
+    opcode method_call 1
+    line method_call 2
+    opcode method_call 2
+    return method_call 2
+run_generator
+    opcode generator 2
+    line generator 3
+    opcode generator 3
+    return generator 3
+    call generator 3
+run_coroutine
+    opcode coroutine 2
+    line coroutine 1
+    opcode coroutine 1
+    call __aexit__ 0
+    line __aexit__ 1
+===== plain
+> FILE(198)plain()
+-> breakpoint()
+(Pdb) 1
+(Pdb) > FILE(199)plain()
+-> b = 2
+(Pdb) > FILE(200)plain()
+-> return a + b
+(Pdb) 2
+(Pdb) 
+result: 3
+===== at the end
+> FILE(205)at_the_end()
+-> breakpoint()
+(Pdb) 1
+(Pdb) --Return--
+> FILE(205)at_the_end()->None
+-> breakpoint()
+(Pdb) 
+result: None
+===== on one line
+> FILE(209)on_one_line()
+-> import pdb; pdb.set_trace()
+(Pdb) > FILE(210)on_one_line()
+-> y = 3
+(Pdb) > FILE(211)on_one_line()
+-> return y
+(Pdb) 3
+(Pdb) 
+result: 3
+===== value is used
+> FILE(215)value_is_used()
+-> x = breakpoint()
+(Pdb) > FILE(216)value_is_used()
+-> return x
+(Pdb) None
+(Pdb) 
+result: None
+===== in a loop
+> FILE(224)in_loop()
+-> breakpoint()
+(Pdb) (1, 1)
+(Pdb) > FILE(221)in_loop()
+-> for i in range(3):
+(Pdb) > FILE(222)in_loop()
+-> total += i
+(Pdb) (2, 1)
+(Pdb) 
+result: 3
+===== in a with
+> FILE(230)in_with()
+-> breakpoint()
+(Pdb) > FILE(229)in_with()
+-> with contextlib.nullcontext() as c:
+(Pdb) > FILE(231)in_with()
+-> return c
+(Pdb) 
+result: None
+===== after a test
+> FILE(236)after_a_test()
+-> return 5
+(Pdb) --Return--
+> FILE(236)after_a_test()->5
+-> return 5
+(Pdb) 
+result: 5
+===== twice
+> FILE(240)twice()
+-> breakpoint()
+(Pdb) > FILE(242)twice()
+-> breakpoint()
+(Pdb) 1
+(Pdb) 
+result: 1
+===== step
+> FILE(198)plain()
+-> breakpoint()
+(Pdb) > FILE(199)plain()
+-> b = 2
+(Pdb) > FILE(200)plain()
+-> return a + b
+(Pdb) --Return--
+> FILE(200)plain()->3
+-> return a + b
+(Pdb) 
+result: 3
+===== where
+> FILE(198)plain()
+-> breakpoint()
+(Pdb)   FILE(255)<module>()
+-> stops('where', plain, ['w', 'c'])
+  FILE(188)stops()
+-> result = function()
+> FILE(198)plain()
+-> breakpoint()
+(Pdb) 
+result: 3
+===== jump
+> FILE(198)plain()
+-> breakpoint()
+(Pdb) *** Jump failed: can only jump from a 'line' trace event
+(Pdb) 
+result: 3

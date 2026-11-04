@@ -1273,9 +1273,6 @@ dependencies = [
  "bun_core",
  "bun_lint",
  "bun_react_compiler",
- "bun_sema",
- "bun_sema_parser",
- "bun_sema_standalone",
  "rustc-hash",
 ]
 

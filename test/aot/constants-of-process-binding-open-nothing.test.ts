@@ -2,7 +2,7 @@
 // node:crypto and node:zlib answer as `constants`, and what node:zlib reads its own constants from. A read under a name that
 // is only known at run time finds a number there, and a number is no member of any built-in: the read opens nothing. Neither
 // does what node:zlib does with the constants as it loads, nor a read beside the modules that also read them (node:util).
-import { expect } from "bun:test";
+import { expect, test as testAnywhere } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { test } from "./supported";
@@ -42,3 +42,48 @@ for (const [what, text] of Object.entries(programs))
     // node:zlib reads the constants through the private global, so nothing of these programs names process.binding.
     expect(lines).toContain("aot: trim: removed process.binding: unused");
   });
+
+// What the rows of src/codegen/builtins/host/runtime-dependencies.builtins.ts say of the objects. ProcessBindingConstants.cpp
+// keeps to it: a new name with another kind of value goes into both.
+testAnywhere("the objects hold what the table of built-ins says of them", () => {
+  const constants = process.binding("constants");
+  const shape = (object: object, exceptions: Record<string, string> = {}) => ({
+    prototype: Object.getPrototypeOf(object),
+    ...Object.fromEntries(Object.entries(object).map(([name, value]) => [name, exceptions[name] ?? typeof value])),
+  });
+  const numbers = (object: object) => Object.fromEntries(Object.keys(object).map(name => [name, "number"]));
+  expect(shape(constants)).toEqual({
+    prototype: null,
+    os: "object",
+    fs: "object",
+    crypto: "object",
+    zlib: "object",
+    trace: "object",
+  });
+  expect(shape(constants.os)).toEqual({
+    prototype: null,
+    UV_UDP_REUSEADDR: "number",
+    dlopen: "object",
+    errno: "object",
+    signals: "object",
+    priority: "object",
+  });
+  for (const object of [
+    constants.os.dlopen,
+    constants.os.errno,
+    constants.os.signals,
+    constants.os.priority,
+    constants.fs,
+    constants.zlib,
+    constants.trace,
+  ]) {
+    expect(Object.keys(object).length).toBeGreaterThan(0);
+    expect(shape(object)).toEqual({ prototype: null, ...numbers(object) });
+  }
+  expect(shape(constants.crypto)).toEqual({
+    prototype: null,
+    ...numbers(constants.crypto),
+    defaultCoreCipherList: "string",
+    defaultCipherList: "string",
+  });
+});

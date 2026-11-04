@@ -13,6 +13,8 @@ import { bench, run } from "../runner.mjs";
 const root = join(tmpdir(), `bench-shell-rm-${process.pid}`);
 rmSync(root, { recursive: true, force: true });
 let trees = 0;
+// The directories of the runs that are done. mitata can make the trees of many runs before it times them.
+const done = [];
 
 function files(dir, count) {
   mkdirSync(dir, { recursive: true });
@@ -41,12 +43,15 @@ function rm(label, flags, make) {
   bench(label, function* () {
     yield {
       [0]() {
+        // A line can leave a part of its tree behind.
+        for (const dir of done.splice(0)) rmSync(dir, { recursive: true, force: true });
         const dir = join(root, String(trees++));
         mkdirSync(dir, { recursive: true });
         return { dir, operands: make(dir) };
       },
       async bench({ dir, operands }) {
         await $`rm ${flags} ${operands}`.cwd(dir).quiet();
+        done.push(dir);
       },
     };
   });

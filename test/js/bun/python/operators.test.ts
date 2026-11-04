@@ -329,6 +329,9 @@ const r = 1 - a; s += ty 1500,300150,1500 (0); 300150,1500,300150 (0); 1500,1501
 const r = -a; s += typeo -1500,299850,-1500 (0); 299850,-1500,299850 (0); -1500,149850,-150,299850 (0)
 const r = a | 0; s += ty 1500,300150,1500 (0); 300150,1500,300150 (0); 1500,150150,150,300150 (0)
 let c = a; ++c; s += typ 4500,300450,4500 (0); 300450,4500,300450 (0); 4500,150450,450,300450 (0)
+const r = a * 1; s += ty 1500,300150,1500 (0); 300150,1500,300150 (0); 1500,150150,150,300150 (0)
+const r = 1 * a; s += ty 1500,300150,1500 (0); 300150,1500,300150 (0); 1500,150150,150,300150 (0)
+let c = a; const r = c++ 6000,900600,6000 (0); 900600,6000,900600 (0); 6000,450600,600,900600 (0)
 if (a == b) ++s;         376,76,376,38,0 (450); 376,152,76,0,0 (300)
 const r = a == b; s += r 376,76,376,38,0 (450); 376,152,76,0,0 (300)
 if (a != b) ++s;         2624,224,2624,262,300 (450); 2624,148,224,300,300 (300)
@@ -377,6 +380,8 @@ nans = [float("nan"), 1.0, float("nan"), 3.0]
         "const r = a + b; s += typeof r === 'number' ? r : 1000 + r.x;", "const r = a * 2; s += typeof r === 'number' ? r : 1000 + r.x;",
         "const r = 1 - a; s += typeof r === 'number' ? r : 1000 + r.x;", "const r = -a; s += typeof r === 'number' ? r : 1000 + r.x;",
         "const r = a | 0; s += typeof r === 'number' ? r : 1000 + r.x;", "let c = a; ++c; s += typeof c === 'number' ? c : 1000 + c.x;",
+        "const r = a * 1; s += typeof r === 'number' ? r : 1000 + r.x;", "const r = 1 * a; s += typeof r === 'number' ? r : 1000 + r.x;",
+        "let c = a; const r = c++; s += (typeof c === 'number' ? c : 1000 + c.x) + (typeof r === 'number' ? r : 2000 + r.x);",
       ];
       const orders = [
         [[js, js2, HOT], [py, py2, WARM], [js, js2, HOT]],
@@ -442,6 +447,41 @@ test.concurrent.each(tiers.slice(3))("== at a site that has seen one kind of obj
     }
     "
   `);
+  expect(exitCode).toBe(0);
+});
+
+// Code that is compiled for strings, or for numbers, and then meets an object of Python.
+test.concurrent.each(tiers.slice(2))("a site that has seen nothing but primitives: %s", async (_, env) => {
+  const { stdout, stderr, exitCode } = await run(
+    {
+      "v.py": vector,
+      "main.js": `
+      import { V } from "./v.py";
+      const kinds = [["0", "1", "2", "3"], [0, 1, 2, 3], [0.5, 1.5, 2.5, 3.5]];
+      const vs = [0, 1, 2, 3].map(x => new V(x));
+      const bodies = [
+        "const r = a * 1;", "const r = 1 * a;", "const r = -a;", "const r = a | 0;", "const r = +(a < b);",
+        "let c = a; const r = c++; s += typeof c === 'number' ? c : 2000 + c.x;",
+      ];
+      for (const body of bodies) {
+        const answers = kinds.map(xs => {
+          const f = (0, eval)("(function (xs, n) { let s = 0; for (let i = 0; i < n; ++i) { const a = xs[i & 3], b = xs[(i + 1) & 3]; " + body + " s += typeof r === 'number' ? r : 1000 + r.x; } return s; })");
+          return [f(xs, 3000), f(vs, 300), f(xs, 3000)];
+        });
+        console.log(body.slice(0, 24).padEnd(24), answers.join("; "));
+      }
+    `,
+    },
+    env,
+  );
+  expect(stderr).toBe("");
+  expect(stdout).toBe(`const r = a * 1;         4500,300450,4500; 4500,300450,4500; 6000,300450,6000
+const r = 1 * a;         4500,300450,4500; 4500,300450,4500; 6000,300450,6000
+const r = -a;            -4500,299550,-4500; -4500,299550,-4500; -6000,299550,-6000
+const r = a | 0;         4500,300450,4500; 4500,300450,4500; 4500,300450,4500
+const r = +(a < b);      2250,225,2250; 2250,225,2250; 2250,225,2250
+let c = a; const r = c++ 12000,901200,12000; 12000,901200,12000; 15000,901200,15000
+`);
   expect(exitCode).toBe(0);
 });
 

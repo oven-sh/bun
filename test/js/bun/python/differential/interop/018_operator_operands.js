@@ -45,8 +45,8 @@ for (const name of ["answers", "raises", "nothing"]) {
   }
 }
 console.log();
-for (const body of ["++a; return a;", "--a; return a;", "return ~a;", "return -a;", "a -= 1; return a;", "a <<= 1; return a;", "a &= 3; return a;"])
-  console.log(`${body} `, ["answers", "raises", "nothing", "symbol", "valueOf", "string", "BigInt"].map(name => `${name}: ${outcome(site("a", body), name)}`).join(" | "));
+for (const body of ["++a; return a;", "--a; return a;", "const b = a++; return [a, b === given];", "const b = a--; return [a, b === given];", "a = a++; return a === given;", "const o = { p: a }, b = o.p++; return [o.p, b === given];", "const o = [a], k = 0, b = o[k]--; return [o[0], b === given];", "const get = () => a, b = a++; return [get(), b === given];", "globalThis.global018 = a; const b = global018++; return [global018, b === given];", "return ~a;", "return -a;", "return a * 1;", "return 1 * a;", "return a * 1 * 1;", "return +(a * 1);", "return 1 * a + 's';", "a -= 1; return a;", "a <<= 1; return a;", "a &= 3; return a;"])
+  console.log(`${body} `, ["answers", "raises", "nothing", "symbol", "valueOf", "string", "BigInt"].map(name => `${name}: ${outcome(site("a", "const given = a; " + body), name)}`).join(" | "));
 console.log();
 // No object at all: strings go the way they always went.
 const strings = ["7", "rope", "", " 12 ", "0x10", "1e3", "-5.9", "4294967301", "1e400", "abc", "5n"];

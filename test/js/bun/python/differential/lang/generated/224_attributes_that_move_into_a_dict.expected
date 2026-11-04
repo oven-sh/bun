@@ -1,0 +1,132 @@
+status: 0
+script: bf4a2b2a598432c7
+source: 766817a7dbb7a588
+---
+--- order and values
+none [] True True
+three [('a', 1), ('b', 2), ('c', 3)] True True
+many [('a', 100), ('b', 101), ('c', 102), ('d', 103), ('e', 104), ('f', 105), ('g', 106), ('h', 107), ('i', 108), ('j', 109), ('k', 110), ('l', 111), ('m', 112), ('n', 113), ('o', 114), ('p', 115), ('q', 116), ('r', 117), ('s', 118), ('t', 119), ('u', 120), ('v', 121), ('w', 122), ('x', 123), ('y', 124), ('z', 125)] True True
+--- the dict and the object are one
+before [('a', 1), ('b', 2), ('c', 3)] True True
+list(d.items()) => [('c', 3), ('d', 4), ('e', 5)]
+o.c => 3
+o.d => 4
+o.e => 5
+hasattr(o, "a") => False
+hasattr(o, "b") => False
+'Three' object has no attribute 'a'
+o.__dict__ => {}
+hasattr(o, "c") => False
+{'z': 1}
+--- attributes deleted and set again before
+deleted [('c', 3), ('b', 'again')] True True
+every other one [('b', 1), ('d', 3), ('f', 5), ('h', 7), ('j', 9), ('l', 11), ('n', 13), ('p', 15), ('r', 17), ('t', 19), ('v', 21), ('x', 23), ('z', 25)] True True
+list(o.__dict__)[-2:] => ['z', 'a']
+o.a => new
+o.z => 25
+--- what __slots__ names stays out of it
+slots [('x', 'x'), ('y', 'y')] True True
+o.s1 => slot 1
+o.s2 => slot 2
+o.x => x
+o.y => y
+o.s1 => changed
+o.s2 => slot 2
+d => {'x': 'x', 'y': 'y', 's2': 'in the dict'}
+AttributeError
+slots, __dict__, __weakref__ [('t', 2)] True True
+o.s => 1
+o.t => 2
+r() is o => True
+--- another class
+o.who() => ('OtherThree', ['a', 'b', 'c'])
+o.a => 1
+o.who() => ('OtherThree', ['a', 'b', 'c'])
+o.a => 1
+became Other [('a', 1), ('b', 2), ('c', 3)] True True
+('Other', ['a', 'b', 'c'])
+o.who() => ('Other', ['a', 'b', 'c', 'q'])
+o.q => 9
+--- the same code sees objects of both kinds
+[3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 45, 48, 51, 54, 57, 60, 63, 66, 69, 72, 75, 78, 81, 84, 87, 90, 93, 96, 99, 102, 105, 108, 111, 114, 117, 120]
+[total(o) for o in objects] => [4, 7, 10, 13, 16, 19, 22, 25, 28, 31, 34, 37, 40, 43, 46, 49, 52, 55, 58, 61, 64, 67, 70, 73, 76, 79, 82, 85, 88, 91, 94, 97, 100, 103, 106, 109, 112, 115, 118, 121]
+[o.extra for o in objects][:5] => [1, 2, 3, 4, 5]
+sum(total(o) for o in objects) => 2540
+{tuple(o.__dict__) for o in objects} => {('a', 'b', 'c', 'extra')}
+[None, None, None, None]
+['there', 'there too', None, None]
+--- methods and class attributes behind the dict
+o.kind => class
+o.method() => method
+o.__dict__ => {'own': 1}
+o.kind => instance
+o.method() => instance
+o.kind => class
+o.method() => method
+--- a new dict, and none
+vars(o) => {'only': 1}
+hasattr(o, "a") => False
+o.only => 1
+o.a => new
+o.__dict__ is new => True
+__dict__ must be set to a dictionary, not a 'int'
+type(o.__dict__).__name__ => D
+o.a => of a class derived from dict
+--- names that are no identifiers
+list(o.__dict__.items()) => [('a', 1), ('b', 2), ('c', 3), ('0', 'zero'), ('', 'empty'), ('a b', 'space'), ('é😀', 'not ASCII')]
+getattr(o, "0") => zero
+getattr(o, "") => empty
+[(type(k).__name__, k) for k in o.__dict__] => [('str', 'a'), ('str', 'b'), ('str', 'c'), ('Name', 'named')]
+o.named => 1
+o.__dict__ => {1: 'an int', ('t',): 'a tuple', 'x': 1}
+sorted(map(str, vars(o))) => ["('t',)", '1', 'x']
+--- update, copies, pickles
+vars(o) => {'a': 1, 'b': 2, 'c': 3, 'z': 'last'}
+o.b => 2
+type(p).__name__ [o=Three, how=function] => Three
+vars(p) == vars(o) [o=Three, how=function] => True
+vars(p) is not vars(o) [o=Three, how=function] => True
+list(vars(p)) == list(vars(o)) [o=Three, how=function] => True
+type(p).__name__ [o=Three, how=function] => Three
+vars(p) == vars(o) [o=Three, how=function] => True
+vars(p) is not vars(o) [o=Three, how=function] => True
+list(vars(p)) == list(vars(o)) [o=Three, how=function] => True
+type(p).__name__ [o=Three, how=function] => Three
+vars(p) == vars(o) [o=Three, how=function] => True
+vars(p) is not vars(o) [o=Three, how=function] => True
+list(vars(p)) == list(vars(o)) [o=Three, how=function] => True
+type(p).__name__ [o=Many, how=function] => Many
+vars(p) == vars(o) [o=Many, how=function] => True
+vars(p) is not vars(o) [o=Many, how=function] => True
+list(vars(p)) == list(vars(o)) [o=Many, how=function] => True
+type(p).__name__ [o=Many, how=function] => Many
+vars(p) == vars(o) [o=Many, how=function] => True
+vars(p) is not vars(o) [o=Many, how=function] => True
+list(vars(p)) == list(vars(o)) [o=Many, how=function] => True
+type(p).__name__ [o=Many, how=function] => Many
+vars(p) == vars(o) [o=Many, how=function] => True
+vars(p) is not vars(o) [o=Many, how=function] => True
+list(vars(p)) == list(vars(o)) [o=Many, how=function] => True
+type(p).__name__ [o=Kw, how=function] => Kw
+vars(p) == vars(o) [o=Kw, how=function] => True
+vars(p) is not vars(o) [o=Kw, how=function] => True
+list(vars(p)) == list(vars(o)) [o=Kw, how=function] => True
+type(p).__name__ [o=Kw, how=function] => Kw
+vars(p) == vars(o) [o=Kw, how=function] => True
+vars(p) is not vars(o) [o=Kw, how=function] => True
+list(vars(p)) == list(vars(o)) [o=Kw, how=function] => True
+type(p).__name__ [o=Kw, how=function] => Kw
+vars(p) == vars(o) [o=Kw, how=function] => True
+vars(p) is not vars(o) [o=Kw, how=function] => True
+list(vars(p)) == list(vars(o)) [o=Kw, how=function] => True
+--- the values live on, the object can go
+r() is o.a => True
+r() is d["a"] => True
+ro() is None => True
+r() is d["a"] => True
+True
+--- many objects
+sum(len(o.__dict__) for o in objects) => 78000
+sum(o.z for o in objects) => 4573500
+len({tuple(o.__dict__) for o in objects}) => 1
+9033000

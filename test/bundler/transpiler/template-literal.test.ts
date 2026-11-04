@@ -139,4 +139,128 @@ describe("a tag whose template has non-ASCII text", () => {
     expect(JSON.parse(stdout)).toEqual(["é\né\né"]);
     expect(exitCode).toBe(0);
   });
+
+  // The backquote that is printed belongs to the helper's call: no error is reported at it, so it has no mapping.
+  test.concurrent("leaves the frame of a member read behind the template at the dot", async () => {
+    using dir = tempDir("template-literal-tags", {
+      "member.js": [
+        "const nothing = () => undefined;",
+        "try {",
+        "  nothing",
+        "    `é`.member;",
+        "} catch (error) {",
+        "  console.log(/:(\\d+:\\d+)\\)?$/m.exec(error.stack)[1]);",
+        "}",
+      ].join("\n"),
+    });
+    const { stdout, stderr, exitCode } = await run(join(String(dir), "member.js"));
+    expect(stderr).toBe("");
+    expect(stdout).toBe("4:8\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // The `(` of the call that is printed stands for the backquote that was written.
+  test.concurrent("reports the call of the tag where it is reported with the text in ASCII", async () => {
+    const source = (text: string) =>
+      [
+        "function fail() {",
+        "  throw new Error('fail');",
+        "}",
+        "const getFail = () => fail;",
+        "const holder = { fail };",
+        "const shapes = [",
+        "  () => {",
+        "    fail",
+        `      \`${text}\`;`,
+        "  },",
+        "  () => {",
+        "    holder.fail",
+        `      \`${text}\`;`,
+        "  },",
+        "  () => {",
+        "    getFail(",
+        "      1,",
+        "    )",
+        `      \`${text}\`;`,
+        "  },",
+        "  () => {",
+        "    const tag = getFail(",
+        "      1,",
+        "    );",
+        "    tag",
+        `      \`${text}\`;`,
+        "  },",
+        "];",
+        "const places = shapes.map(shape => {",
+        "  try {",
+        "    shape();",
+        "  } catch (error) {",
+        "    return /:(\\d+:\\d+)\\)?$/.exec(error.stack.split('\\n')[2])[1];",
+        "  }",
+        "});",
+        "console.log(JSON.stringify(places));",
+      ].join("\n");
+    using dir = tempDir("template-literal-tags", { "ascii.js": source("e"), "not-ascii.js": source("é") });
+    for (const entry of ["ascii.js", "not-ascii.js"]) {
+      const { stdout, stderr, exitCode } = await run(join(String(dir), entry));
+      expect(stderr).toBe("");
+      // A name is reported where it ends: the backquote behind `fail` has no mapping. Behind the other tags the frame is at the backquote.
+      expect(JSON.parse(stdout)).toEqual(["8:5", "13:7", "19:7", "26:7"]);
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  // The call that is printed for the tag stands where the tagged template starts: the `(` of a call around it is looked for from there.
+  test.concurrent("reports a call around the tag's call where it is reported with the text in ASCII", async () => {
+    const source = (text: string) =>
+      [
+        "function fail() {",
+        "  throw new Error('fail');",
+        "}",
+        "const id = strings => strings[0];",
+        "const getFail = () => fail;",
+        "const holder = { fail };",
+        "const shapes = [",
+        "  () => {",
+        "    holder",
+        "      .fail",
+        `      ?.(id\`${text}\`);`,
+        "  },",
+        "  () => {",
+        "    (",
+        "      getFail()",
+        `    )(id\`${text}\`);`,
+        "  },",
+        "  () => {",
+        "    (function () {",
+        "      throw new Error('fail');",
+        "    })",
+        `      ?.(id\`${text}\`);`,
+        "  },",
+        "  () => {",
+        "    const tag = id;",
+        "    (function () {",
+        "      throw new Error('fail');",
+        "    })",
+        `      ?.(tag\`${text}\`);`,
+        "  },",
+        "];",
+        "const places = shapes.map(shape => {",
+        "  try {",
+        "    shape();",
+        "  } catch (error) {",
+        "    return /:(\\d+:\\d+)\\)?$/.exec(error.stack.split('\\n')[2])[1];",
+        "  }",
+        "});",
+        "console.log(JSON.stringify(places));",
+      ].join("\n");
+    using dir = tempDir("template-literal-tags", { "ascii.js": source("e"), "not-ascii.js": source("é") });
+    for (const entry of ["ascii.js", "not-ascii.js"]) {
+      const { stdout, stderr, exitCode } = await run(join(String(dir), entry));
+      expect(stderr).toBe("");
+      // Each frame is at the `(` of the outer call: behind a `?.` on a line of its own, behind a `)` there, and behind a `?.` that is not printed, also where the tag is printed from the constant that holds it.
+      expect(JSON.parse(stdout)).toEqual(["11:9", "16:6", "22:9", "29:9"]);
+      expect(exitCode).toBe(0);
+    }
+  });
 });

@@ -5,7 +5,7 @@ mod substitution;
 
 pub(in crate::lower) use substitution::Printed;
 
-use bun_sema::bind::ScopeId;
+use bun_sema::bind::{Parent, ScopeId};
 use bun_sema::fold::is_removed_where_never_run;
 use bun_sema::hir::{
     ExprId, ExprKind, Flags, FnBody, FnId, IdList, PatKind, StmtId, StmtKind, VarKind,
@@ -129,10 +129,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
             StmtKind::Var(declarations) => {
                 let has_pattern = self.file.declares_pattern(statement);
+                let is_split = self.file.is_split_by_transpiler(statement);
                 let mut mapped = joined_declarations_end.unwrap_or(stmt.start);
                 for declaration in declarations.iter() {
                     self.lower_variable_declaration(declaration, mapped);
-                    if has_pattern && !self.file.is_initializer_moved(declaration) {
+                    if has_pattern && !is_split && !self.file.is_initializer_moved(declaration) {
                         mapped = self
                             .file
                             .last_mapped_declaration_position(declaration, mapped);
@@ -395,7 +396,8 @@ impl FileLowering<'_, '_, '_, '_> {
             StmtKind::Var(declarations) => {
                 let last = declarations.iter().last()?;
                 let is_var = self.bound.variable_kind(hir, last) == VarKind::Var;
-                self.last_mapped_pattern_position(is_var.then_some(hir[last].pat)?)
+                // What is never reached is printed as the names that it declares.
+                self.last_mapped_pattern_position(is_var.then_some(hir[last].pat)?, None)
             }
             _ => None,
         });
@@ -537,6 +539,11 @@ impl FileLowering<'_, '_, '_, '_> {
         patterns.any(|pattern| matches!(pattern, PatKind::Object(_) | PatKind::Array(_)))
     }
 
+    // Bun's transpiler prints each declaration at the top level of a file as a statement of its own: it stands behind the keyword of its statement, and is joined to no statement in front.
+    fn is_split_by_transpiler(&self, statement: StmtId) -> bool {
+        self.transpiled.is_some() && self.bound.parent_of_stmt(statement) == Parent::File
+    }
+
     // `const a = f(); const [b] = c;` is printed `const a = f(), [b] = c;`.
     fn find_joined_declarations_end(
         &self,
@@ -548,7 +555,11 @@ impl FileLowering<'_, '_, '_, '_> {
             StmtKind::Var(declarations) => declarations.iter().next().map(|head| hir[head]),
             _ => None,
         };
-        if !self.declares_pattern(statement) {
+        if !self.declares_pattern(statement) || self.is_split_by_transpiler(statement) {
+            return None;
+        }
+        // A statement that the tree of Bun's transpiler still has is joined to none in front of it: a comment that is kept stands between, or the two are of two kinds.
+        if self.transpiled.is_some() && self.is_left_by_transpiler(statement) {
             return None;
         }
         let head = head_of(statement)?;

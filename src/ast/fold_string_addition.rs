@@ -99,6 +99,7 @@ pub fn fold_string_addition(
                                         left.get(),
                                         right.head.cooked(),
                                     )),
+                                    head_loc: crate::Loc::EMPTY,
                                 },
                                 l.loc,
                             ));

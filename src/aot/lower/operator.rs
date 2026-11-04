@@ -402,7 +402,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 }
                 ExprKind::Call(site) | ExprKind::New(site) if hir[site].callee != first => {
                     let before = self.find_member_in_front_of(hir[site].args, first);
-                    return Some(file.last_mapped_position(before.unwrap_or(hir[site].callee)));
+                    let is_call = matches!(hir[parent].kind, ExprKind::Call(_));
+                    return Some(match before {
+                        Some(before) => file.last_mapped_position(before),
+                        // The source map may know the place in front of the `(` of a call.
+                        None if is_call => {
+                            file.last_mapped_position_in_front_of_arguments(hir[site])
+                        }
+                        None => file.last_mapped_position(hir[site].callee),
+                    });
                 }
                 ExprKind::Array(elements) => {
                     return Some(match self.find_member_in_front_of(elements, first) {

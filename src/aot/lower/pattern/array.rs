@@ -1,3 +1,5 @@
+use bun_ast::FrameToken;
+
 use super::PatternNode;
 use super::view::NodeShape;
 use crate::ir::generated::{BlockRole, IteratorCompletion, IteratorKind};
@@ -12,11 +14,17 @@ pub(super) fn destructure_array(
     value: ValueId,
     mapped: u32,
 ) {
-    // The `[` of an assignment is the start of an expression, which the source map knows.
+    // The `[` of an assignment starts an expression, which the source map knows. It knows the `[` of a binding only where that starts a line.
     // `const [[x]] = v`: both lists are reported at `const`, and an error quotes the one that was given no list.
     if let PatternNode::Binding(_) = node {
-        let written = lowering.file.node_position(node);
-        match lowering.file.is_shown_without_source_map() {
+        let file = &*lowering.file;
+        let written = file.node_position(node);
+        let known = FrameToken::Known;
+        let is_known = file.is_shown_without_source_map()
+            || file
+                .find_token_on_new_line(known, written, written, mapped)
+                .is_some();
+        match is_known {
             true => lowering.set_position(written),
             false => lowering.set_position_of_text_elsewhere(mapped, written),
         }
@@ -47,7 +55,7 @@ pub(super) fn destructure_array(
         lowering.builder.record_position(position);
         let read = super::apply_default(lowering, read, element.default, element.target);
         let before = mapped;
-        let last = lowering.file.last_mapped_element_position(element);
+        let last = lowering.file.last_mapped_element_position(element, before);
         mapped = last.unwrap_or(mapped);
         // JSC records nothing for the store to a member behind the step.
         lowering.finish_target(element.target, prepared, read, before, position);

@@ -87,6 +87,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     index,
                     optional_chain: old_optional_chain,
                     is_import_property_use: false,
+                    bracket_offset: E::Index::BRACKET_NOT_KNOWN,
                 },
                 loc,
             );
@@ -143,6 +144,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match p.lexer.token {
             T::TOpenBracket => {
                 // "a?.[b]"
+                let bracket_loc = p.lexer.loc();
                 p.lexer.next()?;
 
                 // allow "in" inside the brackets;
@@ -162,6 +164,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         index,
                         optional_chain: optional_start,
                         is_import_property_use: false,
+                        bracket_offset: E::Index::bracket_offset_of(loc, bracket_loc),
                     },
                     loc,
                 );
@@ -233,6 +236,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             index,
                             optional_chain: optional_start,
                             is_import_property_use: false,
+                            bracket_offset: E::Index::BRACKET_NOT_KNOWN,
                         },
                         loc,
                     );
@@ -284,6 +288,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             );
         }
         // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
+        let head_loc = p.lexer.loc();
         let head = E::Str::new(p.lexer.raw_template_contents());
         p.lexer.next()?;
 
@@ -293,6 +298,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             E::Template {
                 tag: Some(tag),
                 head: E::TemplateContents::Raw(head),
+                head_loc,
                 parts: E::Template::empty_parts(),
             },
             loc,
@@ -315,6 +321,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             );
         }
         // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
+        let head_loc = p.lexer.loc();
         let head = E::Str::new(p.lexer.raw_template_contents());
         let (parts, _tail_loc) = p.parse_template_parts(true)?;
         let tag = *left;
@@ -323,6 +330,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             E::Template {
                 tag: Some(tag),
                 head: E::TemplateContents::Raw(head),
+                head_loc,
                 parts,
             },
             loc,
@@ -349,6 +357,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(Continuation::Done);
         }
 
+        let bracket_loc = p.lexer.loc();
         p.lexer.next()?;
 
         // Allow "in" inside the brackets
@@ -369,6 +378,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 index,
                 optional_chain: old_optional_chain,
                 is_import_property_use: false,
+                bracket_offset: E::Index::bracket_offset_of(loc, bracket_loc),
             },
             loc,
         );

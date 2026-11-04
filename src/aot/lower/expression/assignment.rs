@@ -102,8 +102,9 @@ impl FileLowering<'_, '_, '_, '_> {
 
     // JSC reports a plain store to a member at the end of the object, and every other store at the end of the target.
     fn plain_store_position(&self, expression: ExprId, target: ExprId) -> u32 {
-        match self.hir.member_key(self.skip_type_syntax(target)) {
-            Some((object, _)) => self.member_position(object),
+        let written = self.skip_type_syntax(target);
+        match self.hir.member_key(written) {
+            Some(_) => self.member_position(written),
             None if self.runs_as_written() => end_of_expr(self.hir, target),
             None => self.hir[expression].pos,
         }
@@ -236,26 +237,29 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 }
                 is_in_register
             }
-            _ => match self.file.hir.member_key(self.file.skip_type_syntax(target)) {
-                // `o` was tested ahead of the conversion of a key that is an object.
-                Some((object, MemberKey::Computed(key))) if self.file.is_written_as_object(key) => {
-                    self.set_position(self.file.member_position(object));
-                    return;
-                }
-                // JSC tests `o` by an operation of its own, which the read stands for. The test is reported there. A getter or a trap that the read calls has its caller at `o`.
-                Some((object, MemberKey::Computed(key)))
-                    if !self.file.is_printed_as_number_or_text(key) =>
-                {
-                    if let Some(name) = self.file.find_position_of_printed_nan(key) {
-                        self.builder.record_position(name);
+            _ => {
+                let written = self.file.skip_type_syntax(target);
+                match self.file.hir.member_key(written) {
+                    // `o` was tested ahead of the conversion of a key that is an object.
+                    Some((_, MemberKey::Computed(key))) if self.file.is_written_as_object(key) => {
+                        self.set_position(self.file.member_position(written));
+                        return;
                     }
-                    self.set_position_to_last_recorded();
-                    let position = self.file.member_position(object);
-                    self.builder.set_position_for_callers(position);
-                    return;
+                    // JSC tests `o` by an operation of its own, which the read stands for. The test is reported there. A getter or a trap that the read calls has its caller at `o`.
+                    Some((_, MemberKey::Computed(key)))
+                        if !self.file.is_printed_as_number_or_text(key) =>
+                    {
+                        if let Some(name) = self.file.find_position_of_printed_nan(key) {
+                            self.builder.record_position(name);
+                        }
+                        self.set_position_to_last_recorded();
+                        let position = self.file.member_position(written);
+                        self.builder.set_position_for_callers(position);
+                        return;
+                    }
+                    _ => false,
                 }
-                _ => false,
-            },
+            }
         };
         if has_no_record {
             self.set_position_to_last_recorded();

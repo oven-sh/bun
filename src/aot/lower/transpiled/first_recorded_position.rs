@@ -11,10 +11,17 @@ use std::cell::Cell;
 use bun_ast::b::B;
 use bun_ast::expr::Data as ExprData;
 use bun_ast::flags::Property as PropertyFlag;
+use bun_ast::frame_token::{
+    callee_ends_in_name, callee_is_written_in_front, is_identifier_kind, is_import_printed_as_name,
+};
+use bun_ast::lexer_tables::is_identifier;
 use bun_ast::op::{Level, TABLE};
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::symbol::follow_symbols;
-use bun_ast::{AssignTarget, Binding, E, Expr, G, Loc, OpCode, Ref, S, Stmt, StmtOrExpr, Symbol};
+use bun_ast::{
+    AssignTarget, Binding, E, Expr, FrameToken, G, Loc, OpCode, OptionalChain, Ref, S, Stmt,
+    StmtOrExpr, Symbol,
+};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -90,7 +97,31 @@ fn valid_behind(closer: Loc, opener: Loc) -> Option<Loc> {
     (closer.start > opener.start).then_some(closer)
 }
 
+/// What the printer maps a token by, beside the tree: the text of the file, in which it looks for the tokens that it maps where they start a line, and the symbols, which say how an import is printed.
+#[derive(Copy, Clone)]
+struct Source<'a> {
+    text: &'a [u8],
+    symbols: &'a [Symbol],
+}
+
+impl Source<'_> {
+    /// Whether the printer writes the expression as a name: it maps no token right behind one. `is_printed_as_name` of js_printer, without the members that a bundle binds to an import.
+    fn is_printed_as_name(self, expression: Expr) -> bool {
+        match expression.data {
+            ExprData::EImportIdentifier(import) => {
+                let import = follow_symbols(self.symbols, import.ref_);
+                is_import_printed_as_name(&self.symbols[import.inner_index() as usize])
+            }
+            data => is_identifier_kind(&data),
+        }
+    }
+}
+
 pub(super) struct Constructor<'a> {
+    /// The text of the file, in which the printer looks for the tokens that it maps where they start a line.
+    text: &'a [u8],
+    /// The name that `import.meta` is printed as in a CommonJS module: a parameter of the function around the module.
+    import_meta_name: Option<Ref>,
     symbols: &'a [Symbol],
     /// Sorted by the object.
     joined_declarators: &'a [JoinedDeclarator],
@@ -112,6 +143,8 @@ const MAX_DEPTH: u32 = 200;
 
 /// `None`: nothing is recorded, or this does not know the form. JSC then names the parameters.
 pub(super) fn find_first_recorded_position_of_class(
+    text: &[u8],
+    import_meta_name: Option<Ref>,
     symbols: &[Symbol],
     joined_declarators: &[JoinedDeclarator],
     variables: &Variables,
@@ -130,11 +163,21 @@ pub(super) fn find_first_recorded_position_of_class(
         return None;
     }
     let function = properties.iter().find_map(find_constructor)?;
-    find_first_recorded_position(symbols, joined_declarators, variables, function, true)
+    find_first_recorded_position(
+        text,
+        import_meta_name,
+        symbols,
+        joined_declarators,
+        variables,
+        function,
+        true,
+    )
 }
 
 /// The same for the function itself: the constructor of a class, or a plain function.
 pub(super) fn find_first_recorded_position(
+    text: &[u8],
+    import_meta_name: Option<Ref>,
     symbols: &[Symbol],
     joined_declarators: &[JoinedDeclarator],
     variables: &Variables,
@@ -153,6 +196,8 @@ pub(super) fn find_first_recorded_position(
         }
     }
     let constructor = Constructor {
+        text,
+        import_meta_name,
         symbols,
         joined_declarators,
         variables,
@@ -636,8 +681,62 @@ fn first_mapping(mut expression: Expr) -> Option<Loc> {
     }
 }
 
+/// What the source map names for a token whose position the tree has: the token where it starts a line, else the last mapping in front.
+fn known_token(text: &[u8], token: Loc, in_front: Loc) -> Loc {
+    let found = FrameToken::Known.find_on_new_line(text, token, token, in_front);
+    found.unwrap_or(in_front)
+}
+
+/// What is printed behind an expression and may add a mapping.
+#[derive(Copy, Clone)]
+enum Behind {
+    /// The backquote of a template without substitutions.
+    Backquote(Loc),
+    /// The `[` of a member, where the printer may map one, and its key: a literal that stands at `key`, as the value of a constant does.
+    Key { bracket: Option<Loc>, key: Loc },
+}
+
+/// Whether the printer asks for one mapping for the key of a member at `member`, at a position in front of that member: a literal that is printed in place of the name of a constant.
+fn is_literal_from_in_front(key: Expr, member: Loc) -> bool {
+    let is_literal = matches!(
+        key.data,
+        ExprData::ENull(_)
+            | ExprData::EUndefined(_)
+            | ExprData::EBoolean(_)
+            | ExprData::EBranchBoolean(_)
+            | ExprData::ENumber(_)
+            | ExprData::EBigInt(_)
+            | ExprData::EString(_)
+    );
+    is_literal && !key.loc.is_empty() && key.loc.start < member.start
+}
+
 /// The last mapping that is added while the expression is printed.
-fn last_mapping(mut expression: Expr) -> Option<Loc> {
+fn last_mapping(source: Source<'_>, expression: Expr) -> Option<Loc> {
+    let text = source.text;
+    let mut behind = SmallVec::new();
+    let mut last = last_mapping_in_front_of(source, expression, &mut behind)?;
+    // The builder adds no mapping for the position that it was asked for last.
+    let mut asked = last;
+    // Each of these is printed behind `last`.
+    while let Some(printed) = behind.pop() {
+        match printed {
+            Behind::Backquote(backquote) => last = known_token(text, backquote, last),
+            Behind::Key { key, .. } if key != asked => (last, asked) = (key, key),
+            Behind::Key { bracket, .. } => {
+                last = bracket.map_or(last, |bracket| known_token(text, bracket, last));
+            }
+        }
+    }
+    Some(last)
+}
+
+/// The same without what is printed behind it and may add a mapping, which is pushed to `behind`: the backquote of a template without substitutions, and the `[` and the key of a member whose key is the value of a constant.
+fn last_mapping_in_front_of(
+    source: Source<'_>,
+    mut expression: Expr,
+    behind: &mut SmallVec<[Behind; 2]>,
+) -> Option<Loc> {
     // A callee and the tag of a template are printed at `Level::Postfix` or above.
     let mut is_callee = false;
     loop {
@@ -670,6 +769,15 @@ fn last_mapping(mut expression: Expr) -> Option<Loc> {
             ExprData::EDot(access) => return Some(access.name_loc),
             ExprData::EObject(object) => return valid_behind(object.close_brace_loc, start),
             ExprData::EClass(class) => return valid_behind(class.close_brace_loc, class.body_loc),
+            // The value of a constant stands where it is declared: whether it has a mapping as a key goes by what is printed in front of it.
+            ExprData::EIndex(access) if is_literal_from_in_front(access.index, start) => {
+                let is_behind_name = source.is_printed_as_name(access.target);
+                let bracket = access.bracket_loc(start).filter(|_| !is_behind_name);
+                let key = access.index.loc;
+                behind.push(Behind::Key { bracket, key });
+                is_callee = true;
+                access.target
+            }
             ExprData::EIndex(access) => access.index,
             ExprData::EUnary(operator) => operator.value,
             ExprData::EBinary(operator) => operator.right,
@@ -699,6 +807,10 @@ fn last_mapping(mut expression: Expr) -> Option<Loc> {
             ExprData::ETemplate(template) => match (template.parts().last(), template.tag) {
                 (Some(part), _) => part.value,
                 (None, Some(tag)) => {
+                    // Behind a tag that is no name the backquote has a mapping where it starts a line.
+                    if !source.is_printed_as_name(tag) {
+                        behind.push(Behind::Backquote(template.head_loc));
+                    }
                     is_callee = true;
                     tag
                 }
@@ -717,13 +829,13 @@ fn last_mapping(mut expression: Expr) -> Option<Loc> {
             },
             ExprData::EFunction(function) => {
                 let body = &function.func.body;
-                match find_end_of_block(body.loc, body.stmts.slice()) {
+                match find_end_of_block(source, body.loc, body.stmts.slice()) {
                     End::Value(value) => value,
                     End::Mapping(position) => return position,
                 }
             }
             ExprData::EArrow(arrow) => {
-                match find_end_of_block(arrow.body.loc, arrow.body.stmts.slice()) {
+                match find_end_of_block(source, arrow.body.loc, arrow.body.stmts.slice()) {
                     End::Value(value) => value,
                     End::Mapping(position) => return position,
                 }
@@ -733,25 +845,60 @@ fn last_mapping(mut expression: Expr) -> Option<Loc> {
     }
 }
 
-fn last_mapping_of_binding(mut binding: Binding) -> Option<Loc> {
-    loop {
-        let (default, last) = match binding.data {
-            B::BMissing(_) => return None,
-            B::BIdentifier(_) => return Some(binding.loc),
-            B::BArray(array) => {
-                let last = array.items().last()?;
-                (last.default_value, last.binding)
-            }
-            B::BObject(object) => {
-                let last = object.properties().last()?;
-                (last.default_value, last.value)
+/// What a pattern prints: a binding, or the key or the default value of one.
+enum Printed {
+    Binding(Binding),
+    Value(Expr),
+}
+
+/// The last mapping that is added while the binding is printed. Where it adds none: `in_front`, the last mapping in front of it.
+fn last_mapping_of_binding(
+    source: Source<'_>,
+    binding: Binding,
+    in_front: Option<Loc>,
+) -> Option<Loc> {
+    let text = source.text;
+    let mut last = in_front;
+    // What was pushed last is printed first.
+    let mut pending = SmallVec::<[Printed; 8]>::new();
+    pending.push(Printed::Binding(binding));
+    while let Some(printed) = pending.pop() {
+        let binding = match printed {
+            Printed::Binding(binding) => binding,
+            Printed::Value(value) => {
+                last = last_mapping(source, value);
+                continue;
             }
         };
-        if let Some(default) = default {
-            return last_mapping(default);
+        match binding.data {
+            B::BMissing(_) => {}
+            B::BIdentifier(_) => last = Some(binding.loc),
+            B::BArray(array) => {
+                // The `[` has a mapping where it starts a line.
+                last = last.map(|in_front| known_token(text, binding.loc, in_front));
+                for item in array.items().iter().rev() {
+                    pending.extend(item.default_value.map(Printed::Value));
+                    pending.push(Printed::Binding(item.binding));
+                }
+            }
+            B::BObject(object) => {
+                let properties = object.properties();
+                // The `{` of a pattern with a rest element has a mapping where it starts a line.
+                let rest = properties.last();
+                if rest.is_some_and(|rest| rest.flags.contains(PropertyFlag::IsSpread)) {
+                    last = last.map(|in_front| known_token(text, binding.loc, in_front));
+                }
+                for property in properties.iter().rev() {
+                    pending.extend(property.default_value.map(Printed::Value));
+                    pending.push(Printed::Binding(property.value));
+                    if !property.flags.contains(PropertyFlag::IsSpread) {
+                        pending.push(Printed::Value(property.key));
+                    }
+                }
+            }
         }
-        binding = last;
     }
+    last
 }
 
 enum End {
@@ -766,7 +913,7 @@ fn is_unmapped(statement: Stmt) -> bool {
 }
 
 /// What is printed last in a block whose `}` has no mapping. `brace`: its `{`.
-fn find_end_of_block(mut brace: Loc, mut statements: &[Stmt]) -> End {
+fn find_end_of_block(source: Source<'_>, mut brace: Loc, mut statements: &[Stmt]) -> End {
     'block: loop {
         let Some(&last) = statements.last() else {
             return End::Mapping(Some(brace));
@@ -790,7 +937,8 @@ fn find_end_of_block(mut brace: Loc, mut statements: &[Stmt]) -> End {
                     let Some(last) = local.decls.last() else {
                         return End::Mapping(None);
                     };
-                    let binding = || End::Mapping(last_mapping_of_binding(last.binding));
+                    let binding =
+                        || End::Mapping(last_mapping_of_binding(source, last.binding, None));
                     return last.value.map_or_else(binding, End::Value);
                 }
                 StmtData::SClass(last) => {
@@ -906,6 +1054,13 @@ fn is_key(property: &G::Property, name: &[u8]) -> bool {
 }
 
 impl Constructor<'_> {
+    fn source(&self) -> Source<'_> {
+        Source {
+            text: self.text,
+            symbols: self.symbols,
+        }
+    }
+
     fn nested(&self, find: impl FnOnce() -> First) -> First {
         let depth = self.depth.get();
         if depth >= MAX_DEPTH {
@@ -959,8 +1114,8 @@ impl Constructor<'_> {
                 found => return found,
             }
             previous = match argument.default {
-                Some(default) => last_mapping(default),
-                None => last_mapping_of_binding(argument.binding),
+                Some(default) => last_mapping(self.source(), default),
+                None => last_mapping_of_binding(self.source(), argument.binding, previous),
             };
         }
         self.first_of_statements(function.body.stmts.slice())
@@ -976,13 +1131,16 @@ impl Constructor<'_> {
             B::BMissing(_) => First::Nothing,
             B::BIdentifier(name) if self.is_in_register(name.r#ref) => First::Nothing,
             B::BIdentifier(_) => First::At(binding.loc),
-            // The divot is the `[`, which has no mapping.
-            B::BArray(_) => First::at(previous),
+            // The divot is the `[`, which has a mapping where it starts a line.
+            B::BArray(_) => {
+                First::at(previous.map(|in_front| known_token(self.text, binding.loc, in_front)))
+            }
             B::BObject(object) => {
                 for property in object.properties() {
-                    // Copying the rest is recorded at the `{`, which has no mapping.
+                    // Copying the rest is recorded at the `{`, which has a mapping where it starts a line.
                     if property.flags.contains(PropertyFlag::IsSpread) {
-                        return First::at(previous);
+                        let brace = |in_front| known_token(self.text, binding.loc, in_front);
+                        return First::at(previous.map(brace));
                     }
                     let is_computed = property.flags.contains(PropertyFlag::IsComputed);
                     let place = Place::new(Level::Comma);
@@ -994,7 +1152,8 @@ impl Constructor<'_> {
                     let found = key
                         .or_else(|| self.first_of_optional(property.default_value, place))
                         .or_else(|| {
-                            self.first_of_binding(property.value, last_mapping(property.key))
+                            let key = last_mapping(self.source(), property.key);
+                            self.first_of_binding(property.value, key)
                         });
                     match found {
                         First::Nothing => {}
@@ -1023,14 +1182,14 @@ impl Constructor<'_> {
             ExprData::EIdentifier(_) => default().or_else(|| First::At(target.loc)),
             // The object and the key come before the value is read. The divot of the store is the end of the target.
             ExprData::EDot(access) => self
-                .first_of(access.target, Place::new(Level::Postfix))
+                .first_of(access.target, self.object_place(target, access.target))
                 .or_else(default)
-                .or_else(|| First::at(last_mapping(target))),
+                .or_else(|| First::at(last_mapping(self.source(), target))),
             ExprData::EIndex(access) => self
-                .first_of(access.target, Place::new(Level::Postfix))
+                .first_of(access.target, self.object_place(target, access.target))
                 .or_else(|| self.first_of(access.index, Place::new(Level::Lowest)))
                 .or_else(default)
-                .or_else(|| First::at(last_mapping(target))),
+                .or_else(|| First::at(last_mapping(self.source(), target))),
             ExprData::EArray(_) => default().or_else(|| First::At(target.loc)),
             ExprData::EObject(object) => default().or_else(|| {
                 for property in object.properties.iter() {
@@ -1086,7 +1245,7 @@ impl Constructor<'_> {
             let binding = declaration.binding;
             // `let a;` stores undefined, and that is not recorded.
             let Some(value) = declaration.value else {
-                previous = last_mapping_of_binding(binding);
+                previous = last_mapping_of_binding(self.source(), binding, previous);
                 continue;
             };
             let place = Place::new(Level::Comma);
@@ -1116,7 +1275,7 @@ impl Constructor<'_> {
                 First::Nothing => {}
                 found => return found,
             }
-            previous = last_mapping(value);
+            previous = last_mapping(self.source(), value);
         }
         First::Nothing
     }
@@ -1161,13 +1320,16 @@ impl Constructor<'_> {
         }
     }
 
-    fn last_mapping_of_loop_variable(&self, init: Stmt) -> Option<Loc> {
+    /// `repeated`: the `for`, the last mapping in front of a variable that the loop declares.
+    fn last_mapping_of_loop_variable(&self, repeated: Loc, init: Stmt) -> Option<Loc> {
         match init.data {
             StmtData::SLocal(local) => match &local.decls[..] {
-                [declaration] => last_mapping_of_binding(declaration.binding),
+                [declaration] => {
+                    last_mapping_of_binding(self.source(), declaration.binding, Some(repeated))
+                }
                 _ => None,
             },
-            StmtData::SExpr(statement) => last_mapping(statement.value),
+            StmtData::SExpr(statement) => last_mapping(self.source(), statement.value),
             _ => None,
         }
     }
@@ -1195,11 +1357,11 @@ impl Constructor<'_> {
             // Entering the scope is recorded at the end of the object.
             StmtData::SWith(entered) => self
                 .first_of(entered.value, lowest)
-                .or_else(|| First::at(last_mapping(entered.value))),
+                .or_else(|| First::at(last_mapping(self.source(), entered.value))),
             // The divot is the end of the value.
             StmtData::SThrow(thrown) => self
                 .first_of(thrown.value, lowest)
-                .or_else(|| First::at(last_mapping(thrown.value))),
+                .or_else(|| First::at(last_mapping(self.source(), thrown.value))),
             StmtData::SIf(branch) => self
                 .first_of(branch.test, condition)
                 .or_else(|| self.first_of_statement(branch.yes))
@@ -1223,7 +1385,9 @@ impl Constructor<'_> {
             // Asking for the iterator is recorded at the end of what stands before `of`.
             StmtData::SForOf(repeated) => self
                 .first_of(repeated.value, Place::new(Level::Comma))
-                .or_else(|| First::at(self.last_mapping_of_loop_variable(repeated.init))),
+                .or_else(|| {
+                    First::at(self.last_mapping_of_loop_variable(statement.loc, repeated.init))
+                }),
             StmtData::SWhile(repeated) => self
                 .first_of(repeated.test, condition)
                 .or_else(|| self.first_of_statement(repeated.body)),
@@ -1286,7 +1450,7 @@ impl Constructor<'_> {
             // That the parent is a constructor is tested at its end.
             Some(parent) => self
                 .first_of(parent, Place::new(Level::New.sub(1)))
-                .or_else(|| First::at(last_mapping(parent))),
+                .or_else(|| First::at(last_mapping(self.source(), parent))),
             // Defining `prototype` is recorded at the start of the class.
             None => First::At(start),
         }
@@ -1305,25 +1469,110 @@ impl Constructor<'_> {
         First::Nothing
     }
 
-    /// The object of a member and then the key.
-    fn first_of_object_and_key(&self, member: Expr) -> Option<(First, Expr)> {
-        let postfix = Place::new(Level::Postfix);
-        match member.data {
-            ExprData::EDot(access) => Some((self.first_of(access.target, postfix), access.target)),
-            ExprData::EIndex(access) => {
-                let found = self
-                    .first_of(access.target, postfix)
-                    .or_else(|| self.first_of(access.index, Place::new(Level::Lowest)));
-                Some((found, access.target))
-            }
-            _ => None,
+    /// The `.`, `?.` or `[` of a member where the printer maps it: where it starts a line behind an object that is no name.
+    fn find_member_token(&self, member: Expr, object: Expr) -> Option<Loc> {
+        if self.source().is_printed_as_name(object) {
+            return None;
+        }
+        let in_front = last_mapping(self.source(), object)?;
+        let name = match member.data {
+            ExprData::EDot(access) => access.name_loc,
+            ExprData::EIndex(access) => match access.index.data {
+                // A private name stands behind a `.` or a `?.`, as the name of any member does.
+                ExprData::EPrivateIdentifier(_) => access.index.loc,
+                // The tree keeps the `[` of a key where the parser read it: the key may be printed from elsewhere.
+                _ => {
+                    let (known, bracket) = (FrameToken::Known, access.bracket_loc(member.loc)?);
+                    return known.find_on_new_line(self.text, bracket, bracket, in_front);
+                }
+            },
+            _ => return None,
+        };
+        FrameToken::Member.find_on_new_line(self.text, name, object.loc, in_front)
+    }
+
+    /// What the source map names for the `.`, `?.` or `[` of a member: that token where it is mapped, else the last mapping of the object.
+    fn member_token(&self, member: Expr, object: Expr) -> Option<Loc> {
+        let token = self.find_member_token(member, object);
+        token.or_else(|| last_mapping(self.source(), object))
+    }
+
+    /// The same for a call: the end of the `?.` of an optional call, or the end of a callee that does not end in a name.
+    fn find_call_token(&self, call: Expr, site: &E::Call) -> Option<Loc> {
+        let callee = site.target.loc;
+        let in_front = last_mapping(self.source(), site.target)?;
+        let behind = match site.args.first() {
+            Some(first) => first.loc,
+            None => site.close_paren_loc,
+        };
+        if site.optional_chain == Some(OptionalChain::Start) {
+            FrameToken::OptionalCall.find_on_new_line(self.text, behind, callee, in_front)
+        } else if callee_ends_in_name(&site.target.data) {
+            None
+        } else if callee_is_written_in_front(callee, call.loc) {
+            // A callee that was written in front of the call is printed in place of a name.
+            FrameToken::Known.find_on_new_line(self.text, call.loc, call.loc, in_front)
+        } else {
+            FrameToken::EndOfCallee.find_on_new_line(self.text, behind, callee, in_front)
         }
     }
 
-    /// The object of a member, then the key, then the access: its divot is the end of the object.
+    fn call_token(&self, call: Expr, site: &E::Call) -> Option<Loc> {
+        let token = self.find_call_token(call, site);
+        token.or_else(|| last_mapping(self.source(), site.target))
+    }
+
+    /// The same for the backquote of a tagged template, which is mapped behind a tag that is no name.
+    fn find_backquote(&self, template: &E::Template, tag: Expr) -> Option<Loc> {
+        if self.source().is_printed_as_name(tag) {
+            return None;
+        }
+        let (backquote, in_front) = (template.head_loc, last_mapping(self.source(), tag)?);
+        FrameToken::Known.find_on_new_line(self.text, backquote, backquote, in_front)
+    }
+
+    fn backquote(&self, template: &E::Template, tag: Expr) -> Option<Loc> {
+        let token = self.find_backquote(template, tag);
+        token.or_else(|| last_mapping(self.source(), tag))
+    }
+
+    /// How the object of a member is printed. `NaN` is a name, and a name is recorded where it ends: the token of the member is mapped there, but not a `[` behind `?.`.
+    fn object_place(&self, member: Expr, object: Expr) -> Place {
+        let is_bracket_behind_dots = match member.data {
+            ExprData::EDot(access) => {
+                access.optional_chain == Some(OptionalChain::Start) && !is_identifier(&access.name)
+            }
+            ExprData::EIndex(access) => {
+                access.optional_chain == Some(OptionalChain::Start)
+                    && !matches!(access.index.data, ExprData::EPrivateIdentifier(_))
+            }
+            _ => false,
+        };
+        let token = self.find_member_token(member, object);
+        Place::new(Level::Postfix).followed_by(token.filter(|_| !is_bracket_behind_dots))
+    }
+
+    /// The object of a member and then the key.
+    fn first_of_object_and_key(&self, member: Expr) -> Option<(First, Expr)> {
+        let object = match member.data {
+            ExprData::EDot(access) => access.target,
+            ExprData::EIndex(access) => access.target,
+            _ => return None,
+        };
+        let found = self.first_of(object, self.object_place(member, object));
+        match member.data {
+            ExprData::EIndex(access) => {
+                let key = || self.first_of(access.index, Place::new(Level::Lowest));
+                Some((found.or_else(key), object))
+            }
+            _ => Some((found, object)),
+        }
+    }
+
+    /// The object of a member, then the key, then the access: its divot is the `.`, the `?.` or the `[`.
     fn first_of_member(&self, member: Expr) -> Option<First> {
         let (found, object) = self.first_of_object_and_key(member)?;
-        Some(found.or_else(|| First::at(last_mapping(object))))
+        Some(found.or_else(|| First::at(self.member_token(member, object))))
     }
 
     fn first_of_object(&self, object: &E::Object, start: Loc) -> First {
@@ -1414,10 +1663,16 @@ impl Constructor<'_> {
             ExprData::ENumber(number) if number.value().is_nan() => named(),
             ExprData::ENumber(_) => First::Nothing,
             ExprData::EInlinedEnum(member) => self.first_of(member.value, Place::new(place.level)),
+            // An import that is read from a namespace begins with the name of the namespace, and `.name` is printed behind that.
+            ExprData::EImportIdentifier(_) if !self.source().is_printed_as_name(expression) => {
+                First::At(expression.loc)
+            }
             ExprData::EIdentifier(_)
             | ExprData::EImportIdentifier(_)
             | ExprData::ERequireCallTarget => named(),
-            // Each begins with a name, and something is printed behind that name.
+            // In a CommonJS module `import.meta` is printed as a name, with nothing behind it.
+            ExprData::EImportMeta(_) if self.import_meta_name.is_some() => named(),
+            // Each begins with a name, and something is printed behind that name: `.meta` behind the `import` of an ES module.
             ExprData::ECommonjsExportIdentifier(_)
             | ExprData::EImportMeta(_)
             | ExprData::EImportMetaMain(_)
@@ -1466,7 +1721,7 @@ impl Constructor<'_> {
                     // The divot is the end of the callee, and without parentheses the `new`.
                     .or_else(|| {
                         First::at(if has_parentheses {
-                            last_mapping(site.target)
+                            last_mapping(self.source(), site.target)
                         } else {
                             Some(expression.loc)
                         })
@@ -1499,30 +1754,47 @@ impl Constructor<'_> {
         if let Some(found) = self.first_of_member(site.target) {
             return found;
         }
-        // The divot of the call is the end of the callee.
-        self.first_of(site.target, Place::new(Level::Postfix))
+        // The divot of the call is the end of the callee. The `?.` of an optional call stands between the callee and the token.
+        let is_optional = site.optional_chain == Some(OptionalChain::Start);
+        let token = (!is_optional).then(|| self.find_call_token(call, site));
+        let callee = Place::new(Level::Postfix).followed_by(token.flatten());
+        self.first_of(site.target, callee)
             .or_else(|| self.first_of_list(&site.args, closer))
-            .or_else(|| First::at(last_mapping(site.target)))
+            .or_else(|| First::at(self.call_token(call, site)))
     }
 
     /// ``new new tag`..` ``: JSC's parser reads the run of `new` and the tag in one go, and takes the name of the tag to
     /// start where the run does. So the divot lies the length of the name behind the first `new`.
     fn find_tag_behind_new(&self, outermost: Expr) -> Option<Loc> {
         let mut expression = outermost;
-        let tag = loop {
-            expression = match expression.data {
-                ExprData::ENew(site) => site.target,
-                ExprData::ETemplate(template) => break template.tag?,
-                _ => return None,
+        while let ExprData::ENew(site) = expression.data {
+            expression = site.target;
+        }
+        // Down to what the expression behind the run begins with. It is a tag where the last step leaves a template.
+        let (mut is_tag, mut steps) = (false, 0);
+        loop {
+            (expression, is_tag) = match expression.data {
+                ExprData::ETemplate(template) => (template.tag?, true),
+                ExprData::EDot(access) if access.optional_chain.is_none() => (access.target, false),
+                ExprData::EIndex(access) if access.optional_chain.is_none() => {
+                    (access.target, false)
+                }
+                _ => break,
             };
+            steps += 1;
+        }
+        let tag = expression;
+        let name = match tag.data {
+            _ if !is_tag => return None,
+            ExprData::EIdentifier(name) if steps == 1 => name.ref_,
+            // With members and more templates behind its template too: its backquote has a mapping, which would take the record.
+            ExprData::EImportMeta(_) => self.import_meta_name?,
+            _ => return None,
         };
-        let ExprData::EIdentifier(name) = tag.data else {
-            return None;
-        };
-        if self.is_in_register(name.ref_) {
+        if self.is_in_register(name) {
             return None;
         }
-        let mut words_passed = self.name_of(name.ref_).len() / b"new ".len();
+        let mut words_passed = self.name_of(name).len() / b"new ".len();
         expression = outermost;
         while let ExprData::ENew(site) = expression.data {
             if words_passed == 0 {
@@ -1553,12 +1825,15 @@ impl Constructor<'_> {
             ExprData::EDot(_) | ExprData::EIndex(_) => self
                 .first_of_object_and_key(tag)
                 .map_or(First::Unknown, |found| found.0),
-            _ => self.first_of(tag, Place::new(Level::Postfix)),
+            _ => {
+                let backquote = self.find_backquote(template, tag);
+                self.first_of(tag, Place::new(Level::Postfix).followed_by(backquote))
+            }
         };
-        // The divot of the call is the end of the tag.
+        // The divot of the call is the backquote.
         callee
             .or_else(parts)
-            .or_else(|| First::at(last_mapping(tag)))
+            .or_else(|| First::at(self.backquote(template, tag)))
     }
 
     fn first_of_unary(&self, expression: Expr, operator: &E::Unary, place: Place) -> First {
@@ -1575,6 +1850,7 @@ impl Constructor<'_> {
             OpCode::UnTypeof => match value.data {
                 // The divot is the start of the name.
                 ExprData::EIdentifier(_) | ExprData::EImportIdentifier(_) => First::At(value.loc),
+                ExprData::EImportMeta(_) if self.import_meta_name.is_some() => First::At(value.loc),
                 _ => self.first_of(value, operand),
             },
             OpCode::UnVoid => self.first_of(value, operand.ignoring_result()),
@@ -1598,9 +1874,16 @@ impl Constructor<'_> {
             {
                 First::Nothing
             }
+            // `delete (0, name)` is printed for an `import.meta` that is a name: the `)` stands behind the name.
+            OpCode::UnDelete
+                if self.import_meta_name.is_some()
+                    && matches!(value.data, ExprData::EImportMeta(_)) =>
+            {
+                First::At(value.loc)
+            }
             // The divot is the end of the member. What is no member is evaluated, and its value is dropped.
             OpCode::UnDelete => match self.first_of_object_and_key(value) {
-                Some((found, _)) => found.or_else(|| First::at(last_mapping(value))),
+                Some((found, _)) => found.or_else(|| First::at(last_mapping(self.source(), value))),
                 None => self.first_of(value, operand.ignoring_result()),
             },
             OpCode::UnPreDec | OpCode::UnPreInc | OpCode::UnPostDec | OpCode::UnPostInc => {
@@ -1656,7 +1939,7 @@ impl Constructor<'_> {
                     match self.first_of_object_and_key(left) {
                         Some((found, object)) => found
                             .or_else(|| self.first_of(right, right_place))
-                            .or_else(|| First::at(last_mapping(object))),
+                            .or_else(|| First::at(self.member_token(left, object))),
                         None => First::Unknown,
                     }
                 }

@@ -50,3 +50,16 @@ export function spaced(tag: any) {
 export function substitutions(tag: any, x: any) {
   tag`a${x}b``c${x}d`;
 }
+
+// RUN(SECOND): lower
+// SECOND-LABEL: function {{*}}name="member"
+// SECOND: = NewTemplateObject templateStrings=[{cooked="b" raw="b"}] @2065
+// SECOND: = Call {{*}} @2059
+
+export function longChain(tag: any) {
+  tag`a``a``a``a``a``a``a``a``a``a``a``a``a``a``a``a``a``a``a``a``a``a``a``a``a``a``a``a``a``a``a``a``a``a``a``a`;
+}
+
+// RUN(LONG): lower
+// LONG-LABEL: function {{*}}name="longChain"
+// LONG-COUNT-36: = Call {{*}} @2437

@@ -15,7 +15,7 @@
 // CHECK: = Await {{*}} @2843
 // CHECK-LABEL: function {{*}}name="callsFunctionExpression"
 // CHECK: = NewClosure
-// CHECK: = Call {{*}} @2929
+// CHECK: = Call {{*}} @2936
 // CHECK-LABEL: function {{*}}name="constructsAndReads"
 // CHECK: = Construct {{*}} @3001
 // CHECK-LABEL: function {{*}}name="constructsNativeError"

@@ -1,0 +1,221 @@
+# member chains
+use(c.a().b().a());
+use(c.a().n.x);
+use(c.a().g.x);
+use(c.a().u.x.y);
+c.n.x = 1;
+c.a().s = 1;
+c.a().n.x = c.a();
+c.n.x += 1;
+c.n.x ||= 1;
+c.n.x++;
+++c.n.x;
+delete c.n.x;
+use(c["a"]()["n"]["x"]);
+use(c[k]()[kn][kx]);
+c[kn][kx] = 1;
+c[kn][kx] += 1;
+c[kn][kx]++;
+delete c[kn][kx];
+use(c?.n.x);
+use(c.a()?.n.x);
+use(c?.[kn].x);
+use(c.a?.().n.x);
+use(null.x);
+use(this.x);
+use(new.target.x);
+use(arguments.nothing.x);
+use(import.meta.nothing.x);
+# names
+use(nowhere);
+use(nowhere.x);
+use(nowhere());
+use(1 + nowhere);
+use(nowhere + 1);
+use(-nowhere);
+use(typeof nowhere.x);
+use([nowhere]);
+use([1, nowhere, 2]);
+use({ a: nowhere });
+use({ a: 1, b: nowhere, d: 2 });
+use({ [nowhere]: 1 });
+use({ nowhere });
+use(c.n ?? nowhere);
+use(c.n || nowhere);
+use(c ? nowhere : 1);
+use((1, nowhere));
+use(`a${nowhere}b`);
+nowhere = 1;
+nowhere += 1;
+nowhere++;
+use(tdz); let tdz = 1;
+tdz = 2; let tdz;
+use(c.id(nowhere));
+use(c.id(1, nowhere, 2));
+use(new Base(nowhere));
+# calls
+use(c.a().boom().a());
+use(c.a().nothing());
+use(c.a().n());
+use(c.a()());
+use(c.n.x());
+use(c[kn]());
+use(c.a()[kn]());
+use(c.a()[k]().boom());
+c.boom();
+boom();
+use(boom());
+use(1, boom(), 2);
+c.id(c.id(c.boom()));
+c.id(1, 2).boom(3, 4);
+c.fn()(1);
+c.fn(1)(2)(3);
+c[k](1).fn(2)(3);
+boom.call(null, 1);
+boom.apply(null, [1]);
+boom.bind(null)();
+use(c.boom?.());
+use(c.n?.x, c.boom());
+use(Reflect.apply(boom, null, []));
+use(JSON.parse("{"));
+use(String(thrower));
+use(c.arr.map(v => v.x.y));
+use(c.arr.map(v => boom()));
+c.arr.forEach(v => { boom(); });
+c.arr.forEach(function (v) { boom(); });
+(() => { boom(); })();
+(() => { use(); boom(); use(); })();
+(function () { boom(); })();
+(function () { use(); boom(); })(1, 2);
+!function () { boom(); }();
+use(function () { boom(); }());
+(() => boom())();
+(0, c.boom)();
+(c.n || boom)();
+(c.n ?? c.boom)(1);
+const g = () => { boom(); }; g();
+const g = () => { boom(); }; g(); g();
+const g = function () { boom(); }; use(g());
+const v = c.a(); v.n.x;
+const v = c.n; use(v.x);
+const v = 1; use(v, nowhere);
+# new
+use(new c.Boom(1, 2));
+use(new c.Boom);
+use(new c.nothing());
+use(new c.n());
+use(new nowhere());
+use(new (c.a().Boom)(1));
+use(new c.a().n.x());
+throw new Error("m");
+throw new c.Err("m", 1);
+throw c.id(new Error("m"));
+use(new Error("m").nothing.x);
+new (class { constructor() { boom(); } })();
+new (class { x = boom(); })();
+new (class extends Base { constructor() { super(nowhere); } })();
+new (class extends Base { constructor() { super(); boom(); } })();
+new (class extends Base { constructor() { this.x = 1; super(); } })();
+class Q extends nowhere {}
+class Q extends c.n.x {}
+class Q extends c.notfn {}
+class Q { static x = nowhere; }
+class Q { static x = c.boom(); }
+class Q { static { boom(); } }
+class Q { static [nowhere] = 1; }
+class Q { [c.n.x]() {} }
+# templates and tags
+use(c.tag`x${1}y`);
+use(c.n`x`);
+use(c.a().tag`x`);
+use(`a${thrower}b`);
+use(`a${c.n.x}b`);
+use(`a${c.boom()}b${1}`);
+# operators
+use(1n + 1);
+use(thrower + 1);
+use(1 + thrower);
+use(thrower < 1);
+use(1 < thrower);
+use(thrower == 1);
+use(-thrower);
+use(+thrower);
+use(~thrower);
+use(thrower * 2);
+use(1 in 1);
+use("a" in c.n);
+use(1 instanceof 1);
+use(c instanceof c.notfn);
+use(c.notfn instanceof c.n.x);
+use(Symbol() + "");
+use(`${Symbol()}`);
+use(thrower ? 1 : 2, c.n.x);
+use(c.n.x ? 1 : 2);
+use(1 ? c.n.x : 2);
+use(0 ? 1 : c.n.x);
+use(c.u || c.n.x);
+use(c && c.n.x);
+use(c.n ?? c.n.x);
+use((c, c.n.x));
+use(!c.n.x);
+use(typeof c.n.x);
+use(void c.n.x);
+# spread and destructuring
+use(...1);
+use(1, ...1);
+use(...c.n.x);
+use([...1]);
+use([1, ...1, 2]);
+use({ ...c.g });
+use({ a: 1, ...c.n.x });
+use(new Base(...1));
+const { q } = null;
+const { q } = c.n;
+const [q] = 1;
+const [q] = c.notfn;
+const { q: { w } } = c;
+const { q = nowhere } = c;
+const { q = c.n.x } = c;
+const [q = nowhere] = [];
+let q; ({ q } = null);
+let q; [q] = 1;
+({ a: c.n.x } = c);
+[c.n.x] = [1];
+(function (a = nowhere) {})();
+(function ({ a }) {})(null);
+(function ([a]) {})(1);
+((a = c.n.x) => a)();
+(({ a }) => a)(c.n);
+# statements
+if (c.n.x) use();
+if (c) c.n.x; else use();
+if (!c) use(); else c.n.x;
+while (c.n.x) use();
+do { use(); } while (c.n.x);
+for (let i = c.n.x; ;) use();
+for (let i = 0; c.n.x;) use();
+for (let i = 0; i < 1; c.n.x) use();
+for (const q of 1) use(q);
+for (const q of c.n.x) use(q);
+for (const q in c.n.x) use(q);
+for (const { q } of [null]) use(q);
+switch (c.n.x) { default: use(); }
+switch (1) { case c.n.x: use(); }
+switch (1) { case 1: c.n.x; }
+return c.n.x;
+return use(c.n.x);
+return (c.n.x, 1);
+try { boom(); } finally { use(); }
+try { use(); } finally { boom(); }
+try { boom(); } catch (e) { throw e; }
+try { nowhere; } catch { boom(); }
+label: { c.n.x; }
+{ c.n.x; }
+var q = c.n.x;
+let q = c.n.x, w = 1;
+let q = 1, w = c.n.x;
+const q = boom();
+const q = [c.n.x];
+const q = { a: c.n.x };
+const q = () => c.n.x; q(); use(q);
+use(c.n.x); function q() {}

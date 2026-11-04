@@ -297,6 +297,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             E::Template {
                 tag: None,
                 head: E::TemplateContents::Cooked(head),
+                head_loc: loc,
                 parts,
             },
             loc,

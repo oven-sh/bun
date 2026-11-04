@@ -2,6 +2,8 @@ mod text_printed_in_place;
 
 use std::cell::RefCell;
 
+use bun_ast::frame_token::callee_is_written_in_front;
+use bun_ast::{E, FrameToken, Loc};
 use bun_core::fmt::pow10_exp_1e4_to_1e9;
 use bun_core::strings::contains_char;
 use bun_sema::atom::{Atom, known, written_name};
@@ -9,8 +11,8 @@ use bun_sema::bind::{Binding, FnOwner, Parent};
 use bun_sema::check::spans::skip_trivia;
 use bun_sema::fold::{Constant, Decision, TreeNode, push_children};
 use bun_sema::hir::{
-    BinOp, Call, Chain, ExprFlags, ExprId, ExprKind, FnBody, FnId, FnKind, IdList, MemberKey,
-    NameKind, PropKey, PropKind, UnOp, end_of_expr, start_of,
+    BinOp, Call, CallId, Chain, ExprFlags, ExprId, ExprKind, FnBody, FnId, FnKind, IdList,
+    MemberKey, NameKind, PropKey, PropKind, UnOp, end_of_expr, start_of,
 };
 use bun_sema::import_sites::{ImportSiteKind, find_module_printed_as_require};
 use rustc_hash::FxHashMap;
@@ -23,7 +25,9 @@ use crate::ir::{BlockId, StringId, ValueId};
 use crate::lower::member::{self, KeyConversion, PropertyName};
 use crate::lower::operator::needs_parentheses;
 use crate::lower::statement::Printed;
-use crate::lower::transpiled::{Rewrite, find_written_literal};
+use crate::lower::transpiled::{
+    PrintedBracket, Rewrite, TranspiledFile, find_written_literal, parsed_position,
+};
 use crate::lower::{FileLowering, FunctionLowering};
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
@@ -184,7 +188,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if matches!(hir[object].kind, ExprKind::Super) {
             let this = self.get_this();
             let reference = self.lower_reference(access, KeyConversion::AtAccess);
-            self.set_position(hir[access].pos);
+            self.set_position(self.file.super_member_position(access));
             return Callee::without_key(self.get_reference(&reference), Some(this), name);
         }
         if matches!(member_key, MemberKey::PrivateName(_)) {
@@ -301,6 +305,26 @@ pub(in crate::lower) struct PrintedOperators {
     entered_functions: RefCell<SmallVec<[FnId; 4]>>,
 }
 
+// The last mapping of the source map once an expression is printed, and the position that Bun's printer asked a mapping for last: the builder adds none for that position again.
+#[derive(Copy, Clone)]
+struct LastMapping {
+    mapped: u32,
+    asked: u32,
+}
+
+// What is printed behind an expression and may add a mapping to the source map.
+#[derive(Copy, Clone)]
+enum PrintedBehind {
+    // The `[` of an element and its key, a literal that is printed from `key`: the value of a constant stands where it is declared.
+    Key {
+        access: ExprId,
+        object: ExprId,
+        key: u32,
+    },
+    // The backquote of a tagged template without values.
+    Backquote(CallId),
+}
+
 impl FileLowering<'_, '_, '_, '_> {
     // JSC reports a call at the end of its callee, which the source map takes back to this token. A text that runs as written has no source map.
     pub(in crate::lower) fn last_mapped_position(&self, expression: ExprId) -> u32 {
@@ -313,6 +337,48 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn last_mapped_position_in(&self, expression: ExprId, is_callee: bool) -> u32 {
+        let mut behind = SmallVec::new();
+        let mapped = self.last_mapped_position_before(expression, is_callee, &mut behind);
+        let mut last = LastMapping {
+            mapped,
+            asked: mapped,
+        };
+        // Each of these is printed behind `last`.
+        while let Some(printed) = behind.pop() {
+            last = self.last_mapping_behind(last, printed);
+        }
+        last.mapped
+    }
+
+    // What `last` becomes once `printed` stands behind it.
+    fn last_mapping_behind(&self, last: LastMapping, printed: PrintedBehind) -> LastMapping {
+        let token = match printed {
+            PrintedBehind::Key { key, .. } if key != last.asked => {
+                return LastMapping {
+                    mapped: key,
+                    asked: key,
+                };
+            }
+            // The builder was asked for the place of this key last: it adds no mapping for the key, and the `[` is mapped as in front of any key.
+            PrintedBehind::Key { access, object, .. } => {
+                let bracket = self.find_mapped_bracket(access, object, last.mapped);
+                bracket.filter(|_| !self.is_printed_as_identifier(object))
+            }
+            PrintedBehind::Backquote(tagged) => self.find_mapped_backquote(tagged, last.mapped),
+        };
+        LastMapping {
+            mapped: token.unwrap_or(last.mapped),
+            asked: last.asked,
+        }
+    }
+
+    // The last position that the source map has for an expression, but for what is printed behind that position and may add a mapping: each such part is pushed to `behind`.
+    fn last_mapped_position_before(
+        &self,
+        expression: ExprId,
+        is_callee: bool,
+        behind: &mut SmallVec<[PrintedBehind; 2]>,
+    ) -> u32 {
         let hir = self.hir;
         if self.is_shown_without_source_map() {
             return end_of_expr(hir, self.skip_type_syntax(expression));
@@ -329,6 +395,19 @@ impl FileLowering<'_, '_, '_, '_> {
                 continue;
             }
             let next = match hir.written_kind(last) {
+                // The value of a constant stands where it is declared: whether it has a mapping as a key goes by what is printed in front of it.
+                ExprKind::Index { obj, index, .. }
+                    if let Some(key) = self.find_key_printed_from_elsewhere(last, index) =>
+                {
+                    behind.push(PrintedBehind::Key {
+                        access: last,
+                        object: obj,
+                        key,
+                    });
+                    is_callee = true;
+                    last = self.skip_type_syntax(obj);
+                    continue;
+                }
                 ExprKind::Index { index, .. } => index,
                 ExprKind::Binary { left, .. }
                     if let Some(Rewrite::JoinedWithLeftOperand) = self.find_rewrite(last) =>
@@ -345,7 +424,13 @@ impl FileLowering<'_, '_, '_, '_> {
                 },
                 ExprKind::TaggedTemplate(site) => match hir.ids(hir[site].args).last() {
                     Some(substitution) => substitution,
-                    None => return hir[last].pos,
+                    // Without values the template adds no mapping behind the one that the call of its tag is reported at.
+                    None => {
+                        behind.push(PrintedBehind::Backquote(site));
+                        is_callee = true;
+                        last = self.skip_type_syntax(hir[site].callee);
+                        continue;
+                    }
                 },
                 ExprKind::Class(_) => return self.last_token_position(last),
                 ExprKind::New(site) if let Some(literal) = self.find_printed_literal(hir[site]) => {
@@ -408,20 +493,306 @@ impl FileLowering<'_, '_, '_, '_> {
             return start;
         }
         let end = self.last_mapped_position(site.callee);
-        match site.chain {
-            Chain::Start if self.is_shown_without_source_map() => self.next_token_position(end) + 2,
-            Chain::Start | Chain::Continue | Chain::No => end,
+        if self.is_shown_without_source_map() {
+            return match site.chain {
+                Chain::Start => self.next_token_position(end) + 2,
+                Chain::Continue | Chain::No => end,
+            };
+        }
+        self.find_mapped_call_token(site, end).unwrap_or(end)
+    }
+
+    // The last token in front of the `(` of a call that the source map knows.
+    pub(in crate::lower) fn last_mapped_position_in_front_of_arguments(&self, site: Call) -> u32 {
+        let end = self.last_mapped_position(site.callee);
+        self.find_mapped_call_token(site, end).unwrap_or(end)
+    }
+
+    // Where the source map knows the place in front of the `(` of a call: where the arguments stand on another line than `end`, the callee's last token, unless the callee ends in a name.
+    fn find_mapped_call_token(&self, site: Call, end: u32) -> Option<u32> {
+        let hir = self.hir;
+        let arguments = match hir.ids(site.args).next() {
+            Some(first) => self.printed_operand_position(first),
+            None => site.close_pos,
+        };
+        let callee = self.printed_node_position(site.callee);
+        // A call stands in the transpiler's tree where its callee is written. What is printed in place of a name, alone or out of a comma, a condition or a list, keeps the place where it is written itself.
+        let written = parsed_position(hir, site.callee);
+        let at = |position: u32| Loc {
+            start: position as i32,
+        };
+        let is_written_in_front = callee_is_written_in_front(at(callee), at(written));
+        // Bun's transpiler prints no `?.` behind a callee that is never null, and maps that call as one without `?.`: its callee ends behind the `?.` of the text.
+        let chain = match site.chain {
+            Chain::Start if self.is_never_nullish_by_syntax(site.callee) => Chain::No,
+            chain => chain,
+        };
+        match chain {
+            Chain::Start => {
+                self.find_token_on_new_line(FrameToken::OptionalCall, arguments, callee, end)
+            }
+            Chain::Continue | Chain::No if self.is_printed_as_name(site.callee) => None,
+            // Behind the value of an enum member a comment with its name is printed: JSC reports the call in front of that, where the source map names the value.
+            Chain::Continue | Chain::No if self.is_printed_as_enum_member(site.callee) => None,
+            // The `(` behind a callee that was written in front of the call is mapped to where the call is written.
+            Chain::Continue | Chain::No if is_written_in_front => {
+                self.find_token_on_new_line(FrameToken::Known, written, written, end)
+            }
+            Chain::Continue | Chain::No => {
+                self.find_token_on_new_line(FrameToken::EndOfCallee, arguments, callee, end)
+            }
         }
     }
 
-    // JSC reports an access to a member at the `.`, the `?.` or the `[` behind the object, which the source map takes back to the last token of the object.
-    pub(in crate::lower) fn member_position(&self, object: ExprId) -> u32 {
+    // A tagged template is a call that JSC reports at the backquote. The source map names the tag's last token where it does not know the backquote.
+    pub(in crate::lower) fn tag_call_position(&self, tagged: CallId) -> u32 {
+        let hir = self.hir;
+        if self.is_shown_without_source_map() {
+            return hir[hir.template_of(tagged)].pos;
+        }
+        let in_front = self.last_mapped_position(hir[tagged].callee);
+        let backquote = self.find_mapped_backquote(tagged, in_front);
+        backquote.unwrap_or(in_front)
+    }
+
+    // The backquote of a tagged template where the source map knows it: on another line than `in_front`, the last mapping of a tag that is no name.
+    fn find_mapped_backquote(&self, tagged: CallId, in_front: u32) -> Option<u32> {
+        let hir = self.hir;
+        let tag = hir[tagged].callee;
+        let template = hir.template_of(tagged);
+        let backquote = hir[template].pos;
+        let known = FrameToken::Known;
+        let token = self.find_token_on_new_line(known, backquote, backquote, in_front)?;
+        // Behind the value of an enum member a comment with its name is printed. A template whose text is not ASCII is printed as a call of the tag: JSC reports that call in front of the comment, where the source map names the value.
+        let is_reported_at_value =
+            self.is_printed_as_enum_member(tag) && self.is_printed_as_call_of_tag(template);
+        (!self.is_printed_as_identifier(tag) && !is_reported_at_value).then_some(token)
+    }
+
+    // Whether Bun's transpiler prints a tagged template as a call of its tag, so that `strings.raw` holds the text as it is written: a text of the template is not ASCII.
+    fn is_printed_as_call_of_tag(&self, template: ExprId) -> bool {
+        let mut texts = self.hir.template_parts(template).iter();
+        texts.any(|text| !self.queries.atom_bytes(text.raw).is_ascii())
+    }
+
+    // Where the source map of Bun's transpiler knows `token`: only where `behind` and the token stand on another line than `in_front`, the last mapping in front.
+    pub(in crate::lower) fn find_token_on_new_line(
+        &self,
+        token: FrameToken,
+        behind: u32,
+        first: u32,
+        in_front: u32,
+    ) -> Option<u32> {
+        if self.is_shown_without_source_map() {
+            return None;
+        }
+        let at = |position: u32| Loc {
+            start: position as i32,
+        };
+        let text = &self.hir.text[..];
+        let found = token.find_on_new_line(text, at(behind), at(first), at(in_front))?;
+        Some(found.start as u32)
+    }
+
+    // Whether Bun's transpiler prints a callee that ends in a name: a name, a member behind a dot or `super`. It maps no token behind such a callee.
+    fn is_printed_as_name(&self, callee: ExprId) -> bool {
+        let hir = self.hir;
+        let printed = self.follow_replaced_names(callee);
+        // `require.main` is one node of the transpiler's tree, and no name.
+        let is_one_node =
+            matches!(hir[printed].kind, ExprKind::Dot { .. }) && self.is_require_main_node(printed);
+        if self.is_literal_operand(printed) || is_one_node || self.is_printed_behind_zero(callee) {
+            return false;
+        }
+        match hir.written_kind(printed) {
+            ExprKind::Ident(_) => self.find_printed_in_place(printed).is_none(),
+            ExprKind::Dot { .. } | ExprKind::Super => true,
+            // The `this` of a CommonJS module is printed `exports`.
+            ExprKind::This => self.is_printed_as_identifier(printed),
+            ExprKind::Index { index, .. } => self.is_key_printed_as_name(printed, index),
+            _ => false,
+        }
+    }
+
+    // Whether Bun's transpiler prints a member in brackets behind a dot, as `a["b"]` is printed `a.b`. A name is replaced by its initializer after that: of an `a[key]` that was held against the transpiler's tree, that tree says which of the two is printed.
+    fn is_key_printed_as_name(&self, access: ExprId, key: ExprId) -> bool {
+        let hir = self.hir;
+        if let (ExprKind::Index { .. }, Some(transpiled)) = (hir[access].kind, &self.transpiled) {
+            let keys = transpiled.keys_printed_as_names();
+            if keys.binary_search(&access).is_ok() {
+                return true;
+            }
+            if transpiled.find_printed_bracket(access).is_some() {
+                return false;
+            }
+        }
+        match self.find_literal_value(key) {
+            Some(Constant::String(name)) => is_identifier_name(self.queries.atom_bytes(name)),
+            _ => false,
+        }
+    }
+
+    // Where the key of an element is printed from, if that is a literal in brackets that stands elsewhere than the key is written, as the value of a constant does.
+    fn find_key_printed_from_elsewhere(&self, access: ExprId, key: ExprId) -> Option<u32> {
+        let hir = self.hir;
+        if !self.is_literal_operand(key) || self.is_key_printed_as_name(access, key) {
+            return None;
+        }
+        let position = self.first_position(key);
+        let written = start_of(hir, key)..end_of_expr(hir, key);
+        (!written.contains(&position)).then_some(position)
+    }
+
+    // Of `(0 || a.b)()` Bun's transpiler prints `(0, a.b)()`: a member that it printed alone out of its operator would hand the call its object as `this`.
+    fn is_printed_behind_zero(&self, callee: ExprId) -> bool {
+        let written = self.skip_type_syntax(callee);
+        let alone = self.skip_unprinted_syntax(written);
+        alone != written && self.hir.member_key(alone).is_some()
+    }
+
+    // Whether Bun's transpiler prints the value of an enum member for a callee: `1 /* Red */`, with the name of the member in a comment behind the value.
+    fn is_printed_as_enum_member(&self, callee: ExprId) -> bool {
+        let printed = self.follow_replaced_names(callee);
+        let rewrite = self.find_rewrite(printed);
+        matches!(
+            rewrite,
+            Some(Rewrite::Literal {
+                enum_member: Some(_),
+                ..
+            })
+        )
+    }
+
+    // Whether the syntax of an expression shows that it is neither null nor undefined: Bun's transpiler prints no `?.` behind it.
+    fn is_never_nullish_by_syntax(&self, expression: ExprId) -> bool {
+        match self.hir[self.skip_type_syntax(expression)].kind {
+            ExprKind::True
+            | ExprKind::False
+            | ExprKind::Number(_)
+            | ExprKind::String(_)
+            | ExprKind::BigInt(_)
+            | ExprKind::Regex { .. }
+            | ExprKind::Array(_)
+            | ExprKind::Object(_)
+            | ExprKind::Fn(_)
+            | ExprKind::Class(_) => true,
+            ExprKind::Template { exprs } => exprs.is_empty(),
+            ExprKind::Unary { op, .. } => op != UnOp::Void,
+            ExprKind::Binary {
+                op: BinOp::Comma,
+                right,
+                ..
+            } => self.is_never_nullish_by_syntax(right),
+            ExprKind::Binary { op, .. } | ExprKind::Assign { op: Some(op), .. } => {
+                !matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish)
+            }
+            _ => false,
+        }
+    }
+
+    // Whether Bun's transpiler prints a bare name for an object or a tag. It maps no token behind one: JSC reports a name that it cannot read where the name ends.
+    fn is_printed_as_identifier(&self, expression: ExprId) -> bool {
+        let hir = self.hir;
+        let printed = self.follow_replaced_names(expression);
+        let position = hir[printed].pos;
+        let transpiled = self.transpiled.as_ref();
+        let is_name_there = |it: &TranspiledFile| it.has_identifier_at(position);
+        // A `require` that the file does not declare, and its `resolve`, are nodes of their own in the tree of the transpiler.
+        let is_free_require = |name: ExprId| {
+            matches!(hir[name].kind, ExprKind::Ident(known::require))
+                && !matches!(self.bound.binding(name), Binding::Symbol(_))
+        };
+        match hir[printed].kind {
+            // What a namespace exports is printed as a member of the namespace.
+            ExprKind::Ident(_) if transpiled.is_none_or(is_name_there) => {
+                self.find_member_container(printed).is_none()
+            }
+            ExprKind::Ident(_) => is_free_require(printed),
+            ExprKind::Dot {
+                obj,
+                name: known::resolve,
+                ..
+            } => is_free_require(self.skip_type_syntax(obj)),
+            // The `this` of a CommonJS module is printed `exports`.
+            ExprKind::This => transpiled.is_some_and(is_name_there),
+            _ => false,
+        }
+    }
+
+    // JSC reports a member at its `.`, `?.` or `[`. The source map knows that token only where it starts a line behind an object that is no name, and else names the object's last token.
+    pub(in crate::lower) fn member_position(&self, access: ExprId) -> u32 {
+        let hir = self.hir;
+        let Some((object, _)) = hir.member_key(access) else {
+            return hir[access].pos;
+        };
         // JSC records no position for what an object pattern reads: the last one is that of the object behind the pattern.
-        let written = self.hir[self.skip_type_syntax(object)].pos;
+        let written = hir[self.skip_type_syntax(object)].pos;
         let transpiled = self.transpiled.as_ref();
         if let Some(joined) = transpiled.and_then(|it| it.find_joined_declarator_at(written)) {
             return joined.printed_object;
         }
+        let in_front = self.position_in_front_of_member(object);
+        if self.is_shown_without_source_map() {
+            return in_front;
+        }
+        let token = match hir.written_kind(access) {
+            ExprKind::Index { index, .. } if !self.is_key_printed_as_name(access, index) => {
+                self.find_mapped_bracket(access, object, in_front)
+            }
+            // The printer maps no `[` of a key that it prints behind a dot.
+            ExprKind::Index { .. } => None,
+            _ => {
+                let first = self.printed_node_position(object);
+                self.find_token_on_new_line(
+                    FrameToken::Member,
+                    hir.name_pos(access),
+                    first,
+                    in_front,
+                )
+            }
+        };
+        match token {
+            Some(token) if !self.is_printed_as_identifier(object) => token,
+            _ => in_front,
+        }
+    }
+
+    // The `[` of a key that is printed in brackets, where the source map knows it: on another line than `in_front`, the last mapping in front of it. The transpiler's tree keeps the `[` itself, where its parser read it: the key may be printed from elsewhere.
+    fn find_mapped_bracket(&self, access: ExprId, object: ExprId, in_front: u32) -> Option<u32> {
+        let transpiled = self.transpiled.as_ref();
+        let bracket = match transpiled.and_then(|it| it.find_printed_bracket(access)) {
+            Some(PrintedBracket::At(bracket)) => bracket,
+            Some(PrintedBracket::NotKnown) => return None,
+            None => self.find_written_bracket(access, object)?,
+        };
+        self.find_token_on_new_line(FrameToken::Known, bracket, bracket, in_front)
+    }
+
+    // The `[` of a member that was not held against the transpiler's tree, read behind its object as that tree's parser reads it. The tree keeps a `[` as its distance from the start of the member, and none that is too far for that field.
+    fn find_written_bracket(&self, access: ExprId, object: ExprId) -> Option<u32> {
+        let hir = self.hir;
+        let text = &hir.text[..];
+        let mut bracket = self.next_token_position(end_of_expr(hir, object));
+        if text[bracket as usize..].starts_with(b"?.") {
+            bracket = self.next_token_position(bracket + 2);
+        }
+        let at = |position: u32| Loc {
+            start: position as i32,
+        };
+        let offset = E::Index::bracket_offset_of(at(parsed_position(hir, access)), at(bracket));
+        let is_kept = offset != E::Index::BRACKET_NOT_KNOWN;
+        (text.get(bracket as usize) == Some(&b'[') && is_kept).then_some(bracket)
+    }
+
+    // JSC reports a member of `super` as any other member. A text that runs as written keeps the start of `super`.
+    pub(in crate::lower) fn super_member_position(&self, access: ExprId) -> u32 {
+        match self.is_shown_without_source_map() {
+            true => self.hir[access].pos,
+            false => self.member_position(access),
+        }
+    }
+
+    fn position_in_front_of_member(&self, object: ExprId) -> u32 {
         let end = self.last_mapped_position(object);
         // The text that runs has no syntax of types: the operator stands right behind the object there.
         if !self.is_shown_without_source_map() || self.skip_type_syntax(object) != object {
@@ -700,6 +1071,38 @@ impl FileLowering<'_, '_, '_, '_> {
         let mut first_positions = self.printed_operators.first_positions.borrow_mut();
         first_positions.extend(replaced.into_iter().map(|name| (name, position)));
         position
+    }
+
+    // Where the tree of Bun's transpiler has the node that it prints for the first argument of a call: its printer looks for the token in front of the `(` from there.
+    fn printed_operand_position(&self, operand: ExprId) -> u32 {
+        let hir = self.hir;
+        let written = self.skip_type_syntax(operand);
+        let transpiled = self.transpiled.as_ref();
+        match transpiled.and_then(|it| it.find_moved_operand(written)) {
+            Some(moved) => moved,
+            // A name without a position of its own stands where it is written, or where what is printed in its place stands.
+            None if matches!(hir[written].kind, ExprKind::Ident(_)) => {
+                self.printed_node_position(written)
+            }
+            None => parsed_position(hir, written),
+        }
+    }
+
+    // Where that tree has the node that is printed for a callee or for the object of a member: what stands in front of that place is no token of the call or of the member.
+    fn printed_node_position(&self, expression: ExprId) -> u32 {
+        let hir = self.hir;
+        let printed = self.follow_replaced_names(expression);
+        if let Some(Rewrite::Literal { position, .. }) = self.find_rewrite(printed) {
+            return position;
+        }
+        let in_place = match hir[printed].kind {
+            ExprKind::Ident(_) => self.find_printed_in_place(printed),
+            _ => None,
+        };
+        match in_place {
+            Some(Printed::Function(function)) => hir[function].start,
+            Some(Printed::Initializer(_)) | None => parsed_position(hir, printed),
+        }
     }
 
     // Whether the text that Bun's transpiler prints for the operand of a `...` begins with a parenthesis, which its source map does not know.

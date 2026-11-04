@@ -20,7 +20,7 @@ pub(super) enum PatternNode {
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    /// `mapped`: the last token before the pattern that the source map of Bun's transpiler knows. A `[` that binds names is not one.
+    /// `mapped`: the last token before the pattern that the source map of Bun's transpiler knows. A `[` that binds names is one only where it starts a line.
     pub(crate) fn bind_pattern(
         &mut self,
         pattern: PatId,
@@ -101,12 +101,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     // A target that no `[` and no `{` stands around: a name, or the member in the head of a loop, which is stored to as by `=`.
     fn set_position_of_lone_target(&mut self, target: ExprId) {
         let file = &*self.file;
-        match file.hir.member_key(file.skip_type_syntax(target)) {
-            Some((object, _)) => self.set_position(file.member_position(object)),
-            None if self.is_kept_in_register(file.bound.binding(target)) => {}
-            None => self
-                .builder
-                .record_position(file.recorded_name_position(target)),
+        let written = file.skip_type_syntax(target);
+        if file.hir.member_key(written).is_some() {
+            return self.set_position(file.member_position(written));
+        }
+        if !self.is_kept_in_register(file.bound.binding(target)) {
+            self.builder
+                .record_position(file.recorded_name_position(target));
         }
     }
 

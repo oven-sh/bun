@@ -27,7 +27,7 @@ impl FileLowering<'_, '_, '_, '_> {
         match decl.init.some() {
             Some(initializer) => self.last_mapped_position(initializer),
             None => self
-                .last_mapped_pattern_position(decl.pat)
+                .last_mapped_pattern_position(decl.pat, Some(before))
                 .unwrap_or(before),
         }
     }

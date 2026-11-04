@@ -31,6 +31,14 @@ pub(in crate::lower) enum Rewrite {
     JoinedWithLeftOperand,
 }
 
+/// Where the transpiler's tree has the `[` of a member that it prints with its key in brackets.
+#[derive(Copy, Clone)]
+pub(in crate::lower) enum PrintedBracket {
+    At(u32),
+    /// No parser read that `[`, or it stands too far behind the start of the member for the tree to keep.
+    NotKnown,
+}
+
 #[derive(Default)]
 pub(super) struct Rewrites {
     pub(super) expressions: FxHashMap<ExprId, Rewrite>,
@@ -40,6 +48,10 @@ pub(super) struct Rewrites {
     pub(super) replaced_names: FxHashMap<ExprId, ExprId>,
     /// Each `a[key]` that is printed `a.name`. Sorted.
     pub(super) keys_printed_as_names: Vec<ExprId>,
+    /// Each member that is printed with its key in brackets, with its `[`.
+    pub(super) brackets: FxHashMap<ExprId, PrintedBracket>,
+    /// The first argument of a call, where the node that is printed for it stands elsewhere than the parser puts the operand, with that position.
+    pub(super) moved_operands: FxHashMap<ExprId, u32>,
 }
 
 pub(super) struct PrintedTree<'a> {
@@ -72,6 +84,8 @@ pub(super) struct Alignment<'a, 's> {
     returned_initializers: FxHashMap<ExprId, u32>,
     replaced_names: FxHashMap<ExprId, ExprId>,
     keys_printed_as_names: Vec<ExprId>,
+    brackets: FxHashMap<ExprId, PrintedBracket>,
+    moved_operands: FxHashMap<ExprId, u32>,
     pending: Vec<(ExprId, Expr)>,
     /// One bit for each expression that has been held against what is printed for it.
     aligned: Vec<u64>,
@@ -168,6 +182,26 @@ pub(in crate::lower) fn find_written_literal(
     })
 }
 
+/// The position that the transpiler's parser gives an expression: that of its first operand, without parentheses.
+pub(in crate::lower) fn parsed_position(hir: &hir::File<'_>, expression: ExprId) -> u32 {
+    let mut first = hir.skip_type_assertions(expression);
+    loop {
+        let next = match hir[first].kind {
+            ExprKind::Binary { left, .. } => left,
+            ExprKind::Cond { test, .. } => test,
+            ExprKind::Assign { target, .. } => target,
+            ExprKind::Index { obj, .. } | ExprKind::Dot { obj, .. } => obj,
+            ExprKind::Call(site) | ExprKind::TaggedTemplate(site) => hir[site].callee,
+            ExprKind::Unary {
+                op: UnOp::PostInc | UnOp::PostDec,
+                operand,
+            } => operand,
+            _ => return hir[first].pos,
+        };
+        first = hir.skip_type_assertions(next);
+    }
+}
+
 fn find_assigned_value(statement: Stmt) -> Option<Expr> {
     let StmtData::SExpr(statement) = statement.data else {
         return None;
@@ -250,6 +284,8 @@ impl<'a, 's> Alignment<'a, 's> {
             returned_initializers: FxHashMap::default(),
             replaced_names: FxHashMap::default(),
             keys_printed_as_names: Vec::new(),
+            brackets: FxHashMap::default(),
+            moved_operands: FxHashMap::default(),
             pending: Vec::new(),
             aligned: vec![0; parsed.hir.exprs.len() / 64 + 1],
             searches: RefCell::default(),
@@ -287,6 +323,8 @@ impl<'a, 's> Alignment<'a, 's> {
             returned_initializers: self.returned_initializers,
             replaced_names: self.replaced_names,
             keys_printed_as_names: self.keys_printed_as_names,
+            brackets: self.brackets,
+            moved_operands: self.moved_operands,
         }
     }
 
@@ -511,25 +549,31 @@ impl<'a, 's> Alignment<'a, 's> {
         matches!(literal, Some(Constant::String(text)) if text == self.atoms.intern(b""))
     }
 
-    /// The position that the parser gives the expression: that of its first operand, without parentheses.
     fn parsed_position(&self, expression: ExprId) -> u32 {
-        let hir = self.hir;
-        let mut first = hir.skip_type_assertions(expression);
-        loop {
-            let next = match hir[first].kind {
-                ExprKind::Binary { left, .. } => left,
-                ExprKind::Cond { test, .. } => test,
-                ExprKind::Assign { target, .. } => target,
-                ExprKind::Index { obj, .. } | ExprKind::Dot { obj, .. } => obj,
-                ExprKind::Call(site) | ExprKind::TaggedTemplate(site) => hir[site].callee,
-                ExprKind::Unary {
-                    op: UnOp::PostInc | UnOp::PostDec,
-                    operand,
-                } => operand,
-                _ => return hir[first].pos,
-            };
-            first = hir.skip_type_assertions(next);
+        parsed_position(self.hir, expression)
+    }
+
+    /// Remembers where the node stands that is printed for an operand, if the parser puts the operand elsewhere.
+    fn note_printed_position(&mut self, operand: ExprId, printed: Loc) {
+        if operand.is_none() {
+            return;
         }
+        let operand = self.hir.skip_type_assertions(operand);
+        if let Some(position) = position_of(printed)
+            && position != self.parsed_position(operand)
+        {
+            self.moved_operands.insert(operand, position);
+        }
+    }
+
+    /// Remembers a member that is printed with its key in brackets, and where the tree has its `[`. A private name is no such key.
+    fn note_bracket(&mut self, member: ExprId, printed: &E::Index, position: Loc) {
+        if matches!(printed.index.data, ExprData::EPrivateIdentifier(_)) {
+            return;
+        }
+        let bracket = printed.bracket_loc(position).and_then(position_of);
+        let bracket = bracket.map_or(PrintedBracket::NotKnown, PrintedBracket::At);
+        self.brackets.insert(member, bracket);
     }
 
     /// The operands that may be printed in place of the expression.
@@ -646,8 +690,12 @@ impl<'a, 's> Alignment<'a, 's> {
             }
             candidates.extend(self.operands_printed_alone(candidate));
             // A folded result may take the position of what is printed for its first operand.
-            if let ExprKind::Binary { left, .. } = hir[candidate].kind {
+            if let ExprKind::Binary { op, left, right } = hir[candidate].kind {
                 candidates.push(left);
+                // `"undefined" == typeof a` is printed `typeof a > "u"`, which stands where the `typeof` does.
+                if self.is_undefined_compared_with_typeof(op, left, right) {
+                    candidates.push(right);
+                }
             }
         };
         let mut searches = self.searches.borrow_mut();
@@ -662,6 +710,24 @@ impl<'a, 's> Alignment<'a, 's> {
             searches.insert(candidate, (position, from_here));
         }
         matches!(end, SearchFrom::FoundAfter(steps) if searched - 1 + steps <= self.max_steps)
+    }
+
+    /// Whether the transpiler turns the comparison around and prints another one in its place, at the position of the right operand.
+    fn is_undefined_compared_with_typeof(&self, op: BinOp, left: ExprId, right: ExprId) -> bool {
+        let hir = self.hir;
+        let (left, right) = (
+            hir.skip_type_assertions(left),
+            hir.skip_type_assertions(right),
+        );
+        let is_typeof = matches!(
+            hir[right].kind,
+            ExprKind::Unary {
+                op: UnOp::Typeof,
+                ..
+            }
+        );
+        let is_undefined = matches!(hir[left].kind, ExprKind::String(known::undefined));
+        is_equality(op) && is_undefined && is_typeof
     }
 
     fn find_operand_printed_at(&self, expression: ExprId, position: Loc) -> Option<ExprId> {
@@ -924,6 +990,12 @@ impl<'a, 's> Alignment<'a, 's> {
                 if is_same {
                     self.push(site.callee, printed.target);
                     self.push_each(site.args, &printed.args);
+                    // The printer looks for the token in front of the `(` from the first argument that it prints, or from the `)`.
+                    if let Some(first) = hir.ids(site.args).next() {
+                        let printed_first = printed.args.first().map(|argument| argument.loc);
+                        let behind = printed_first.unwrap_or(printed.close_paren_loc);
+                        self.note_printed_position(first, behind);
+                    }
                 }
                 is_same
             }
@@ -955,10 +1027,11 @@ impl<'a, 's> Alignment<'a, 's> {
                 }
                 is_same
             }
-            (ExprKind::Dot { obj, .. }, ExprData::EIndex(printed)) => {
-                let is_same = position_of(printed.index.loc) == Some(hir.name_pos(expression));
+            (ExprKind::Dot { obj, .. }, ExprData::EIndex(access)) => {
+                let is_same = position_of(access.index.loc) == Some(hir.name_pos(expression));
                 if is_same {
-                    self.push(obj, printed.target);
+                    self.push(obj, access.target);
+                    self.note_bracket(expression, &access, printed.loc);
                 }
                 is_same
             }
@@ -969,11 +1042,12 @@ impl<'a, 's> Alignment<'a, 's> {
                 self.align_literal(index, printed.name.slice(), printed.name_loc);
                 true
             }
-            (ExprKind::Index { obj, index, .. }, ExprData::EIndex(printed)) => {
-                let is_same = self.may_be_printed_at(index, printed.index.loc);
+            (ExprKind::Index { obj, index, .. }, ExprData::EIndex(access)) => {
+                let is_same = self.may_be_printed_at(index, access.index.loc);
                 if is_same {
-                    self.push(obj, printed.target);
-                    self.push(index, printed.index);
+                    self.push(obj, access.target);
+                    self.push(index, access.index);
+                    self.note_bracket(expression, &access, printed.loc);
                 }
                 is_same
             }

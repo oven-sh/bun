@@ -518,3 +518,256 @@ column(
   }
 } }.A
 );
+column(
+class A {
+  constructor(a) {
+    []
+      ?.();
+  }
+}
+);
+column(
+class A {
+  constructor(a) {
+    (function () {
+    })
+      ?.();
+  }
+}
+);
+column(
+class A {
+  constructor(a) {
+    (() => {
+    })
+      ?.();
+  }
+}
+);
+column(
+class A {
+  constructor(a) {
+    1
+      ?.();
+  }
+}
+);
+column(
+class A {
+  constructor(a) {
+    ({})
+      ?.(1);
+  }
+}
+);
+column(
+class A {
+  constructor(a) {
+    (function () {
+      f();
+    })?.();
+  }
+}
+);
+column(
+class A {
+  constructor(a) {
+    this
+      [0];
+  }
+}
+);
+column(
+class A {
+  constructor(a) {
+    this
+      [ /* a key */ 0];
+  }
+}
+);
+column(
+class A {
+  constructor(a) {
+    this
+      [
+        // a key
+        0];
+  }
+}
+);
+column(
+class A {
+  constructor(a) {
+    this[
+      [0][0]
+    ];
+  }
+}
+);
+column(
+class A {
+  constructor(a) {
+    this
+      [[0][0]];
+  }
+}
+);
+column(
+class A {
+  constructor(a) {
+    this
+      [ /* a key */ "a-b"];
+  }
+}
+);
+column(
+class A {
+  constructor(a) {
+    this
+      [ /* a key */ "member"];
+  }
+}
+);
+column(
+class A {
+  constructor(a) {
+    this
+      [ /* a key */ 0] = 1;
+  }
+}
+);
+column(
+class A {
+  constructor(a) {
+    this
+      ?.[ /* a key */ 0];
+  }
+}
+);
+column(
+class A {
+  constructor(
+    { x, ...r },
+  ) {
+    f();
+  }
+}
+);
+column(
+class A {
+  constructor(a,
+    { x, ...r }) {
+    f();
+  }
+}
+);
+column(
+class A {
+  constructor(a) {
+    const
+      { x, ...r } = this;
+    f();
+  }
+}
+);
+column(
+class A {
+  constructor(a) {
+    let c,
+      { x, ...r } = this;
+    f();
+  }
+}
+);
+column(
+class A {
+  constructor(a) {
+    const c = 1.5,
+      { x, ...r } = this;
+    f();
+  }
+}
+);
+column(
+class A {
+  constructor(a) {
+    var c = 1.5,
+      { x, ...r } = this;
+    f();
+  }
+}
+);
+column(
+class A {
+  constructor(a) {
+    var c = 1.5;
+    var { x, ...r } = this;
+    f();
+  }
+}
+);
+column(
+class A {
+  constructor(a) {
+    const { k:
+      { x, ...r } } = this;
+    f();
+  }
+}
+);
+column(
+class A {
+  constructor(a) {
+    try {
+    } catch (
+      { x, ...r }
+    ) {}
+    f();
+  }
+}
+);
+column(
+class A {
+  constructor(a) {
+    for (const
+      { length, ...r } in null) {
+    }
+    f();
+  }
+}
+);
+column(
+class A {
+  constructor(a) {
+    const zero = 0;
+    delete zero[zero];
+  }
+}
+);
+column(
+class A {
+  constructor(a) {
+    const zero = 0;
+    delete zero
+      [zero];
+  }
+}
+);
+column(
+class A {
+  constructor(a) {
+    const zero = 0;
+    for (zero[zero] of this) {
+      f();
+    }
+  }
+}
+);
+column(
+class A {
+  constructor(a) {
+    const zero = 0;
+    ({ a: zero[zero] } = this);
+  }
+}
+);

@@ -679,6 +679,7 @@ fn codegen_reactive_scope(
                 index: Expr::init(E::Number::new(index as f64), loc),
                 optional_chain: None,
                 is_import_property_use: false,
+                bracket_offset: E::Index::BRACKET_NOT_KNOWN,
             },
             loc,
         )
@@ -2045,6 +2046,7 @@ fn codegen_base_instruction_value(
                     index: prop,
                     optional_chain: None,
                     is_import_property_use: false,
+                    bracket_offset: E::Index::BRACKET_NOT_KNOWN,
                 },
                 loc,
             ))
@@ -2067,6 +2069,7 @@ fn codegen_base_instruction_value(
                             index: prop,
                             optional_chain: None,
                             is_import_property_use: false,
+                            bracket_offset: E::Index::BRACKET_NOT_KNOWN,
                         },
                         loc,
                     ),
@@ -2089,6 +2092,7 @@ fn codegen_base_instruction_value(
                             index: prop,
                             optional_chain: None,
                             is_import_property_use: false,
+                            bracket_offset: E::Index::BRACKET_NOT_KNOWN,
                         },
                         loc,
                     ),
@@ -2211,12 +2215,18 @@ fn codegen_base_instruction_value(
             expr_type,
             ..
         } => codegen_function_expression(cx, name, name_hint, lowered_func, *expr_type, loc),
-        InstructionValue::TaggedTemplateExpression { tag, value, .. } => {
+        InstructionValue::TaggedTemplateExpression {
+            tag,
+            value,
+            head_loc,
+            ..
+        } => {
             let tag_expr = codegen_place_to_expression(cx, tag)?;
             Ok(Expr::init(
                 E::Template {
                     tag: Some(tag_expr),
                     head: E::TemplateContents::Raw(value.raw),
+                    head_loc: *head_loc,
                     parts: StoreSlice::EMPTY,
                 },
                 loc,
@@ -2242,6 +2252,7 @@ fn codegen_base_instruction_value(
                 E::Template {
                     tag: None,
                     head,
+                    head_loc: Loc::EMPTY,
                     parts: StoreSlice::new_mut(parts.leak()),
                 },
                 loc,
@@ -2415,6 +2426,7 @@ fn codegen_function_expression(
                 index: Expr::init(E::EString::init(hint.slice()), loc),
                 optional_chain: None,
                 is_import_property_use: false,
+                bracket_offset: E::Index::BRACKET_NOT_KNOWN,
             },
             loc,
         );
@@ -3352,6 +3364,7 @@ fn property_access_expr(
                 index: Expr::init(E::Number::new(n.value()), loc),
                 optional_chain,
                 is_import_property_use: false,
+                bracket_offset: E::Index::BRACKET_NOT_KNOWN,
             },
             loc,
         ),

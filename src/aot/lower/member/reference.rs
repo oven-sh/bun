@@ -303,7 +303,7 @@ fn lower_member_reference(
         let (home_kind, home) = lowering.get_home_object();
         let base = lowering.builder.get_super_base(home_kind, home);
         let name = lowering.lower_member_key(member);
-        lowering.set_position(hir[target].pos);
+        lowering.set_position(lowering.file.super_member_position(target));
         let name = lowering.convert_key(base, name, conversion);
         return Reference::Super { base, name };
     }

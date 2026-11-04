@@ -1,3 +1,4 @@
+import { jscInternals } from "bun:internal-for-testing";
 import {
   callerSourceOrigin,
   // @ts-expect-error deprecated alias
@@ -25,7 +26,6 @@ import {
   setTimeZone,
   totalCompileTime,
 } from "bun:jsc";
-import { jscInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBuildKite, isWindows, tempDir } from "harness";
 import { createHash, type webcrypto } from "node:crypto";

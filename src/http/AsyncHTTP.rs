@@ -81,6 +81,7 @@ const fn noop_callback() -> HTTPClientResultCallback {
         ctx: core::ptr::null_mut(),
         function: noop_result_callback,
         release_at_shutdown: None,
+        release_idle_scratch: None,
     }
 }
 

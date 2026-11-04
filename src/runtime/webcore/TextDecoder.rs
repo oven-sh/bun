@@ -4,6 +4,7 @@ use crate::webcore::jsc::{self as jsc, JSGlobalObject, JSString, JSValue};
 use bun_core::strings;
 use bun_jsc::HostReturn as _;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
+use core::mem::MaybeUninit;
 use std::collections::TryReserveError;
 
 use jsc::StringJsc as _;
@@ -496,10 +497,10 @@ pub(crate) extern "C" fn TextDecoder__createForStream(
     label: JSValue,
     fatal: bool,
     ignore_bom: bool,
-    out_utf8_fast_path: &mut bool,
-    out_encoding: &mut EncodingLabel,
+    out_utf8_fast_path: &mut MaybeUninit<bool>,
+    out_encoding: &mut MaybeUninit<EncodingLabel>,
 ) -> *mut TextDecoder {
-    *out_utf8_fast_path = false;
+    out_utf8_fast_path.write(false);
     let encoding = if label.is_undefined() {
         EncodingLabel::Utf8
     } else {
@@ -524,9 +525,9 @@ pub(crate) extern "C" fn TextDecoder__createForStream(
             }
         }
     };
-    *out_encoding = encoding;
+    out_encoding.write(encoding);
     if matches!(encoding, EncodingLabel::Utf8) && !fatal {
-        *out_utf8_fast_path = true;
+        out_utf8_fast_path.write(true);
         return core::ptr::null_mut();
     }
     bun_core::heap::into_raw(Box::new(TextDecoder {

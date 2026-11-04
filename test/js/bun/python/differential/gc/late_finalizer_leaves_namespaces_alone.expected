@@ -1,0 +1,6 @@
+status: 0
+script: 7e348d7b6d9771ad
+---
+0 ['__name__', 'go_through_own_namespace']
+0 ['__name__', 'go_through_own_namespace']
+50 {('ResourceWarning', False)}

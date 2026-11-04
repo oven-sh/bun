@@ -874,8 +874,7 @@ export default b.declarations(
   b.hostObject(versionsCell, { otherNames: b.string }),
   b.hostObject(releaseCell, { fields: { name: b.string, sourceUrl: b.string, headersUrl: b.string } }),
   b.hostObject(featuresCell, { otherNames: [b.bool, b.string] }),
-  // ProcessBindingConstants.cpp: `$processBindingConstants` holds an object of numbers under each of five names, and the one under os holds four more.
-  // Each is made at the first read of its name, with no prototype. The crypto object also holds two strings, defaultCoreCipherList and defaultCipherList.
+  // ProcessBindingConstants.cpp: `$processBindingConstants` and the objects of numbers under it, each made at the first read of its name, with no prototype.
   b.hostObject(processBindingConstantsCell, {
     prototype: null,
     fields: Object.fromEntries(

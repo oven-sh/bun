@@ -69,7 +69,7 @@ static JSValue createHash(JSGlobalObject* globalObject, HashKind kind, JSValue d
         RETURN_IF_EXCEPTION(scope, {});
     }
     JSValue toHash;
-    if (!dataArgument(globalObject, data, string, toHash))
+    if (failed(scope, dataArgument(globalObject, data, string, toHash)))
         return {};
     auto hasher = makeUnique<Hasher>(kind);
     if (toHash) {
@@ -163,7 +163,7 @@ static JSValue extendableDigest(JSGlobalObject* globalObject, JSValue self, JSVa
     if (failed(scope, nonNegativeSsizeArgument(globalObject, lengthValue, "length"_s, 0, length)))
         return {};
     PyBytes* result = newBytes(globalObject, length);
-    if (!result)
+    if (failed(scope, result))
         return {};
     if (length)
         hasherOf(self).digest(std::span { result->mutableData(), static_cast<size_t>(length) });
@@ -211,7 +211,7 @@ static JSValue newHash(JSGlobalObject* globalObject, JSValue nameValue, JSValue 
     if (data && string)
         RELEASE_AND_RETURN(scope, (dataArgument(globalObject, data, string, toHash), JSValue()));
     auto kind = kindNamed(globalObject, name);
-    if (!kind)
+    if (failed(scope, kind))
         return {};
     RELEASE_AND_RETURN(scope, createHash(globalObject, *kind, data, usedForSecurity, string));
 }
@@ -294,12 +294,12 @@ static JSValue hmacNew(JSGlobalObject* globalObject, JSValue keyValue, JSValue m
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     BufferHolder key(globalObject);
-    if (!key.get(keyValue))
+    if (failed(scope, key.get(keyValue)))
         return {};
     if (!digestmod)
         return raiseTypeError(globalObject, scope, "Missing required parameter 'digestmod'."_s);
     auto kind = kindForHMAC(globalObject, digestmod);
-    if (!kind)
+    if (failed(scope, kind))
         return {};
     auto state = makeUnique<HMACState>();
     state->initialize(*kind, key.buffer.span());
@@ -314,14 +314,16 @@ static JSValue hmacNew(JSGlobalObject* globalObject, JSValue keyValue, JSValue m
 
 static JSValue hmacDigestFunction(JSGlobalObject* globalObject, JSValue keyValue, JSValue messageValue, JSValue digest)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BufferHolder key(globalObject);
     BufferHolder message(globalObject);
-    if (!key.get(keyValue) || !message.get(messageValue))
+    if (failed(scope, key.get(keyValue)) || failed(scope, message.get(messageValue)))
         return {};
     auto kind = kindForHMAC(globalObject, digest);
-    if (!kind)
+    if (failed(scope, kind))
         return {};
-    return hmacOf(globalObject, *kind, key, message);
+    RELEASE_AND_RETURN(scope, hmacOf(globalObject, *kind, key, message));
 }
 
 // ---- Keys from passwords ----
@@ -401,13 +403,13 @@ static JSValue pbkdf2HMAC(JSGlobalObject* globalObject, JSValue hashName, JSValu
         return {};
     BufferHolder password(globalObject);
     BufferHolder salt(globalObject);
-    if (!password.get(passwordValue) || !salt.get(saltValue))
+    if (failed(scope, password.get(passwordValue)) || failed(scope, salt.get(saltValue)))
         return {};
     int64_t iterations = toInt64(globalObject, iterationsValue);
     RETURN_IF_EXCEPTION(scope, {});
 
     auto kind = kindNamed(globalObject, name);
-    if (!kind)
+    if (failed(scope, kind))
         return {};
     if (isExtendable(*kind))
         return raiseValueError(globalObject, scope, "[digital envelope routines] unsupported"_s);
@@ -428,11 +430,11 @@ static JSValue pbkdf2HMAC(JSGlobalObject* globalObject, JSValue hashName, JSValu
         return raiseValueError(globalObject, scope, "key length must be greater than 0."_s);
     if (keyLength > std::numeric_limits<int>::max())
         return raiseOverflowError(globalObject, scope, "key length is too great."_s);
-    if (!refreshBuffers(globalObject, password, salt))
+    if (failed(scope, refreshBuffers(globalObject, password, salt)))
         return {};
 
     PyBytes* key = newBytes(globalObject, keyLength);
-    if (!key)
+    if (failed(scope, key))
         return {};
     std::span<uint8_t> keySpan { key->mutableData(), static_cast<size_t>(keyLength) };
     if (const EVP_MD* digest = boringSSLDigestFor(*kind)) {
@@ -453,7 +455,7 @@ static JSValue scrypt(JSGlobalObject* globalObject, JSValue passwordValue, JSVal
     BufferHolder password(globalObject);
     BufferHolder salt(globalObject);
     uint64_t n, r, p;
-    if (!password.get(passwordValue) || !salt.get(saltValue)
+    if (failed(scope, password.get(passwordValue)) || failed(scope, salt.get(saltValue))
         || failed(scope, unsignedArgument(globalObject, nValue, "unsigned long"_s, 0, n))
         || failed(scope, unsignedArgument(globalObject, rValue, "unsigned long"_s, 0, r))
         || failed(scope, unsignedArgument(globalObject, pValue, "unsigned long"_s, 0, p)))
@@ -479,11 +481,11 @@ static JSValue scrypt(JSGlobalObject* globalObject, JSValue passwordValue, JSVal
         return raiseValueError(globalObject, scope, "maxmem must be positive and at most "_s, limit);
     if (keyLength < 1 || keyLength > limit)
         return raiseValueError(globalObject, scope, "dklen must be at least 1 and at most "_s, limit);
-    if (!refreshBuffers(globalObject, password, salt))
+    if (failed(scope, refreshBuffers(globalObject, password, salt)))
         return {};
 
     PyBytes* key = newBytes(globalObject, keyLength);
-    if (!key)
+    if (failed(scope, key))
         return {};
     auto passwordSpan = password.buffer.span();
     if (!EVP_PBE_scrypt(byteCast<char>(passwordSpan.data()), passwordSpan.size(), salt.buffer.span().data(), salt.buffer.span().size(), n, r, p, static_cast<size_t>(maxMemory), key->mutableData(), static_cast<size_t>(keyLength))) {
@@ -532,7 +534,7 @@ static JSValue compareDigest(JSGlobalObject* globalObject, JSValue a, JSValue b)
         return raiseTypeError(globalObject, scope, "unsupported operand types(s) or combination of types: '"_s, typeName(globalObject, a), "' and '"_s, typeName(globalObject, b), '\'');
     BufferHolder left(globalObject);
     BufferHolder right(globalObject);
-    if (!left.get(a) || !right.get(b) || !refreshBuffers(globalObject, left))
+    if (failed(scope, left.get(a)) || failed(scope, right.get(b)) || failed(scope, refreshBuffers(globalObject, left)))
         return {};
     return jsBoolean(equalInConstantTime(left.buffer.span(), right.buffer.span()));
 }

@@ -190,11 +190,11 @@ static JSValue compressorCompress(JSGlobalObject* globalObject, JSValue self, JS
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     BufferHolder input(globalObject);
-    if (!input.get(data))
+    if (failed(scope, input.get(data)))
         return {};
     auto& state = *stateOf<Compressor>(self);
     ObjectLocker locker(globalObject, state.lock);
-    if (!locker || !refreshBuffers(globalObject, input))
+    if (failed(scope, !!locker) || failed(scope, refreshBuffers(globalObject, input)))
         return {};
     if (state.isFlushed)
         return raiseValueError(globalObject, scope, "Compressor has been flushed"_s);
@@ -207,7 +207,7 @@ static JSValue compressorFlush(JSGlobalObject* globalObject, JSValue self)
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto& state = *stateOf<Compressor>(self);
     ObjectLocker locker(globalObject, state.lock);
-    if (!locker)
+    if (failed(scope, !!locker))
         return {};
     if (state.isFlushed)
         return raiseValueError(globalObject, scope, "Repeated call to flush()"_s);
@@ -279,7 +279,7 @@ static JSValue decompressorDecompress(JSGlobalObject* globalObject, JSValue self
     if (failed(scope, unpackArguments(globalObject, { "decompress"_s, 0, 1, 2, names }, args, values)))
         return {};
     BufferHolder input(globalObject);
-    if (!input.get(values[0]))
+    if (failed(scope, input.get(values[0])))
         return {};
     int64_t maxLength = -1;
     if (values[1] && failed(scope, ssizeArgument(globalObject, values[1], maxLength)))
@@ -287,7 +287,7 @@ static JSValue decompressorDecompress(JSGlobalObject* globalObject, JSValue self
     auto* self = uncheckedDowncast<PyRecord>(selfValue.asCell());
     auto& state = *stateOf<Decompressor>(self);
     ObjectLocker locker(globalObject, state.lock);
-    if (!locker || !refreshBuffers(globalObject, input))
+    if (failed(scope, !!locker) || failed(scope, refreshBuffers(globalObject, input)))
         return {};
     if (state.isAtEnd)
         return raiseEOFError(globalObject, scope, "End of stream already reached"_s);

@@ -666,14 +666,15 @@ JSValue hmacDigestSize(JSGlobalObject*, JSValue self) { return jsNumber(hmacStat
 
 JSValue hmacOf(JSGlobalObject* globalObject, HashKind kind, BufferHolder& key, BufferHolder& message)
 {
-    if (!refreshBuffers(globalObject, key, message))
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    if (failed(scope, refreshBuffers(globalObject, key, message)))
         return {};
     HMACState state;
     state.initialize(kind, key.buffer.span());
     state.update(message.buffer.span());
     uint8_t result[maxHashDigestSize];
     state.digest(result);
-    return bytesFrom(globalObject, { result, state.digestSize() });
+    RELEASE_AND_RETURN(scope, bytesFrom(globalObject, { result, state.digestSize() }));
 }
 
 } // namespace PythonModules

@@ -192,14 +192,14 @@ static JSValue dictionaryNew(JSGlobalObject* globalObject, JSValue cls, JSValue 
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     BufferHolder input(globalObject);
-    if (!input.get(content))
+    if (failed(scope, input.get(content)))
         return {};
     bool isRaw = false;
     if (isRawValue) {
         isRaw = isTrue(globalObject, isRawValue);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    if (!refreshBuffers(globalObject, input))
+    if (failed(scope, refreshBuffers(globalObject, input)))
         return {};
     if (input.buffer.length < 8)
         return raiseValueError(globalObject, scope, "Zstandard dictionary content too short (must have at least eight bytes)"_s);
@@ -361,12 +361,13 @@ static JSValue compressorNew(JSGlobalObject* globalObject, JSValue cls, JSValue 
             }
             return true;
         });
-        if (!isDone)
+        if (failed(scope, isDone))
             return {};
     }
     if (isGiven(dictionaryArgument)) {
         int use = Undigested;
         Dictionary* dictionary = parseDictionaryArgument(globalObject, dictionaryArgument, use);
+        RETURN_IF_EXCEPTION(scope, {});
         if (!dictionary)
             return {};
         compressor->dictionary = dictionary;
@@ -426,7 +427,7 @@ static JSValue compressorCompress(JSGlobalObject* globalObject, JSValue self, JS
     auto scope = DECLARE_THROW_SCOPE(vm);
     BufferHolder input(globalObject);
     int mode;
-    if (!input.get(data) || failed(scope, intArgument(globalObject, modeValue, ZSTD_e_continue, mode)) || !refreshBuffers(globalObject, input))
+    if (failed(scope, input.get(data)) || failed(scope, intArgument(globalObject, modeValue, ZSTD_e_continue, mode)) || failed(scope, refreshBuffers(globalObject, input)))
         return {};
     if (mode != ZSTD_e_continue && mode != ZSTD_e_flush && mode != ZSTD_e_end)
         return raiseValueError(globalObject, scope, "mode argument wrong value, it should be one of ZstdCompressor.CONTINUE, ZstdCompressor.FLUSH_BLOCK, ZstdCompressor.FLUSH_FRAME."_s);
@@ -524,6 +525,7 @@ static JSValue decompressorNew(JSGlobalObject* globalObject, JSValue cls, JSValu
     if (isGiven(dictionaryArgument)) {
         int use = Digested;
         Dictionary* dictionary = parseDictionaryArgument(globalObject, dictionaryArgument, use);
+        RETURN_IF_EXCEPTION(scope, {});
         if (!dictionary)
             return {};
         decompressor->dictionary = dictionary;
@@ -549,7 +551,7 @@ static JSValue decompressorNew(JSGlobalObject* globalObject, JSValue cls, JSValu
             }
             return true;
         });
-        if (!isDone)
+        if (failed(scope, isDone))
             return {};
     }
     size_t size = ZSTD_sizeof_DCtx(decompressor->context);
@@ -586,10 +588,10 @@ static JSValue decompressorDecompress(JSGlobalObject* globalObject, JSValue self
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     BufferHolder holder(globalObject);
-    if (!holder.get(data))
+    if (failed(scope, holder.get(data)))
         return {};
     int64_t maxLength = -1;
-    if ((maxLengthValue && failed(scope, ssizeArgument(globalObject, maxLengthValue, maxLength))) || !refreshBuffers(globalObject, holder))
+    if ((maxLengthValue && failed(scope, ssizeArgument(globalObject, maxLengthValue, maxLength))) || failed(scope, refreshBuffers(globalObject, holder)))
         return {};
     if (maxLength < 0)
         maxLength = -1;
@@ -622,7 +624,7 @@ static JSValue decompressorDecompress(JSGlobalObject* globalObject, JSValue self
     std::span<const uint8_t> source = readsPending ? decompressor.pending() : given;
     ZSTD_inBuffer input { source.data(), source.size(), 0 };
     JSValue result = decompressFrom(globalObject, decompressor, input, maxLength);
-    if (!result) {
+    if (failed(scope, result)) {
         reset();
         return {};
     }
@@ -732,7 +734,7 @@ static JSValue trainDict(JSGlobalObject* globalObject, JSValue samples, JSValue 
     if (dictSize <= 0)
         return raiseValueError(globalObject, scope, "dict_size argument should be positive number."_s);
     Vector<size_t> chunkSizes;
-    if (!sampleSizes(globalObject, PyBytes::from(samples), PyTuple::from(sizes), chunkSizes))
+    if (failed(scope, sampleSizes(globalObject, PyBytes::from(samples), PyTuple::from(sizes), chunkSizes)))
         return {};
     Vector<uint8_t> dictionary;
     if (!dictionary.tryGrow(dictSize))
@@ -758,7 +760,7 @@ static JSValue finalizeDict(JSGlobalObject* globalObject, JSValue custom, JSValu
     if (dictSize <= 0)
         return raiseValueError(globalObject, scope, "dict_size argument should be positive number."_s);
     Vector<size_t> chunkSizes;
-    if (!sampleSizes(globalObject, PyBytes::from(samples), PyTuple::from(sizes), chunkSizes))
+    if (failed(scope, sampleSizes(globalObject, PyBytes::from(samples), PyTuple::from(sizes), chunkSizes)))
         return {};
     Vector<uint8_t> dictionary;
     if (!dictionary.tryGrow(dictSize))
@@ -787,25 +789,29 @@ static JSValue getParamBounds(JSGlobalObject* globalObject, JSValue parameterVal
 
 static JSValue getFrameSize(JSGlobalObject* globalObject, JSValue frame)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BufferHolder input(globalObject);
-    if (!input.get(frame))
+    if (failed(scope, input.get(frame)))
         return {};
     size_t size = ZSTD_findFrameCompressedSize(input.buffer.data, input.buffer.length);
     if (ZSTD_isError(size))
-        return raiseZstdError(globalObject, makeString("Error when finding the compressed size of a Zstandard frame. Ensure the frame_buffer argument starts from the beginning of a frame, and its length is not less than this complete frame. Zstd error message: "_s, String::fromUTF8(ZSTD_getErrorName(size)), '.'));
-    return makeInt(globalObject, static_cast<uint64_t>(size));
+        RELEASE_AND_RETURN(scope, raiseZstdError(globalObject, makeString("Error when finding the compressed size of a Zstandard frame. Ensure the frame_buffer argument starts from the beginning of a frame, and its length is not less than this complete frame. Zstd error message: "_s, String::fromUTF8(ZSTD_getErrorName(size)), '.')));
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, static_cast<uint64_t>(size)));
 }
 
 static JSValue getFrameInfo(JSGlobalObject* globalObject, JSValue frame)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BufferHolder input(globalObject);
-    if (!input.get(frame))
+    if (failed(scope, input.get(frame)))
         return {};
     unsigned long long size = ZSTD_getFrameContentSize(input.buffer.data, input.buffer.length);
     if (size == ZSTD_CONTENTSIZE_ERROR)
-        return raiseZstdError(globalObject, "Error when getting information from the header of a Zstandard frame. Ensure the frame_buffer argument starts from the beginning of a frame, and its length is not less than the frame header (6~18 bytes)."_s);
+        RELEASE_AND_RETURN(scope, raiseZstdError(globalObject, "Error when getting information from the header of a Zstandard frame. Ensure the frame_buffer argument starts from the beginning of a frame, and its length is not less than the frame header (6~18 bytes)."_s));
     unsigned id = ZSTD_getDictID_fromFrame(input.buffer.data, input.buffer.length);
-    return PyTuple::create(globalObject, { size == ZSTD_CONTENTSIZE_UNKNOWN ? jsUndefined() : makeInt(globalObject, static_cast<uint64_t>(size)), jsNumber(id) });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { size == ZSTD_CONTENTSIZE_UNKNOWN ? jsUndefined() : makeInt(globalObject, static_cast<uint64_t>(size)), jsNumber(id) }));
 }
 
 static JSValue setParameterTypes(JSGlobalObject* globalObject, JSValue compression, JSValue decompression)

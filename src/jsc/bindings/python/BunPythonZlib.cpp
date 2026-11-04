@@ -100,10 +100,10 @@ static JSValue compress(JSGlobalObject* globalObject, JSValue data, JSValue leve
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     BufferHolder input(globalObject);
-    if (!input.get(data))
+    if (failed(scope, input.get(data)))
         return {};
     int level, wbits;
-    if (failed(scope, intArgument(globalObject, levelValue, Z_DEFAULT_COMPRESSION, level)) || failed(scope, intArgument(globalObject, wbitsValue, MAX_WBITS, wbits)) || !refreshBuffers(globalObject, input))
+    if (failed(scope, intArgument(globalObject, levelValue, Z_DEFAULT_COMPRESSION, level)) || failed(scope, intArgument(globalObject, wbitsValue, MAX_WBITS, wbits)) || failed(scope, refreshBuffers(globalObject, input)))
         return {};
 
     Output output(defaultBufferSize);
@@ -155,11 +155,11 @@ static JSValue decompress(JSGlobalObject* globalObject, JSValue data, JSValue wb
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     BufferHolder input(globalObject);
-    if (!input.get(data))
+    if (failed(scope, input.get(data)))
         return {};
     int wbits;
     int64_t bufferSize;
-    if (failed(scope, intArgument(globalObject, wbitsValue, MAX_WBITS, wbits)) || failed(scope, nonNegativeSsizeArgument(globalObject, bufsizeValue, "bufsize"_s, defaultBufferSize, bufferSize)) || !refreshBuffers(globalObject, input))
+    if (failed(scope, intArgument(globalObject, wbitsValue, MAX_WBITS, wbits)) || failed(scope, nonNegativeSsizeArgument(globalObject, bufsizeValue, "bufsize"_s, defaultBufferSize, bufferSize)) || failed(scope, refreshBuffers(globalObject, input)))
         return {};
 
     Output output(bufferSize);
@@ -199,6 +199,7 @@ static JSValue decompress(JSGlobalObject* globalObject, JSValue data, JSValue wb
                 inflateEnd(&stream);
                 RELEASE_AND_RETURN(scope, raiseNoMemory(globalObject, "Out of memory while decompressing data"_s));
             default: {
+                scope.release();
                 raiseZlibError(globalObject, stream, error, "while decompressing data"_s);
                 inflateEnd(&stream);
                 return {};
@@ -208,6 +209,7 @@ static JSValue decompress(JSGlobalObject* globalObject, JSValue data, JSValue wb
     } while (error != Z_STREAM_END && remaining);
 
     if (error != Z_STREAM_END) {
+        scope.release();
         raiseZlibError(globalObject, stream, error, "while decompressing data"_s);
         inflateEnd(&stream);
         return {};
@@ -249,7 +251,7 @@ static JSValue compressobj(JSGlobalObject* globalObject, JSValue levelValue, JSV
         return {};
     BufferHolder dictionary(globalObject);
     if (zdict) {
-        if (!dictionary.get(zdict))
+        if (failed(scope, dictionary.get(zdict)))
             return {};
         if (static_cast<uint64_t>(dictionary.buffer.length) > std::numeric_limits<uInt>::max())
             return raiseOverflowError(globalObject, scope, "zdict length does not fit in an unsigned int"_s);
@@ -286,7 +288,7 @@ static JSValue compressorCompress(JSGlobalObject* globalObject, JSValue self, co
     if (failed(scope, unpackArguments(globalObject, { "compress"_s, 1, 1, 1, {} }, args, &data)))
         return {};
     BufferHolder input(globalObject);
-    if (!input.get(data))
+    if (failed(scope, input.get(data)))
         return {};
     z_stream& stream = stateOf<Compressor>(self)->stream;
 
@@ -387,8 +389,12 @@ static JSValue dunderCopyMethod(JSGlobalObject* globalObject, JSValue self, cons
 template<JSValue (*copy)(JSGlobalObject*, JSValue)>
 static JSValue deepCopyMethod(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue memo;
-    return unpackArguments(globalObject, { "__deepcopy__"_s, 1, 1, 1, {} }, args, &memo) ? copy(globalObject, self) : JSValue();
+    if (failed(scope, unpackArguments(globalObject, { "__deepcopy__"_s, 1, 1, 1, {} }, args, &memo)))
+        return {};
+    RELEASE_AND_RETURN(scope, copy(globalObject, self));
 }
 
 static constexpr NativeDef compressMethods[] = {
@@ -447,7 +453,7 @@ static bool setInflateDictionary(JSGlobalObject* globalObject, PyRecord* self)
     auto scope = DECLARE_THROW_SCOPE(vm);
     SetForScope inUse(stateOf<Decompressor>(self)->isInUse, true);
     BufferHolder dictionary(globalObject);
-    if (!dictionary.get(self->get(Dictionary)))
+    if (failed(scope, dictionary.get(self->get(Dictionary))))
         return false;
     if (static_cast<uint64_t>(dictionary.buffer.length) > std::numeric_limits<uInt>::max()) {
         raiseOverflowError(globalObject, scope, "zdict length does not fit in an unsigned int"_s);
@@ -507,13 +513,14 @@ static JSValue decompressobj(JSGlobalObject* globalObject, JSValue wbits, JSValu
 static bool saveUnconsumedInput(JSGlobalObject* globalObject, PyRecord* self, std::span<const uint8_t> input, int error)
 {
     VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     z_stream& stream = stateOf<Decompressor>(self)->stream;
     const uint8_t* end = input.data() + input.size();
     if (error == Z_STREAM_END && stream.avail_in > 0) {
         auto old = PyBytes::from(self->get(UnusedData))->span();
         size_t left = end - stream.next_in;
         PyBytes* joined = newBytes(globalObject, old.size() + left);
-        if (!joined)
+        if (failed(scope, joined))
             return false;
         memcpy(joined->mutableData(), old.data(), old.size());
         memcpy(joined->mutableData() + old.size(), stream.next_in, left);
@@ -523,7 +530,7 @@ static bool saveUnconsumedInput(JSGlobalObject* globalObject, PyRecord* self, st
     }
     if (stream.avail_in > 0 || PyBytes::from(self->get(UnconsumedTail))->length()) {
         JSValue tail = bytesFrom(globalObject, { stream.next_in, static_cast<size_t>(end - stream.next_in) });
-        if (!tail)
+        if (failed(scope, tail))
             return false;
         self->set(vm, UnconsumedTail, tail);
     }
@@ -541,10 +548,10 @@ static JSValue decompressorDecompress(JSGlobalObject* globalObject, JSValue self
     JSValue data = values[0];
     JSValue maxLengthValue = values[1];
     BufferHolder input(globalObject);
-    if (!input.get(data))
+    if (failed(scope, input.get(data)))
         return {};
     int64_t maxLength;
-    if (failed(scope, nonNegativeSsizeArgument(globalObject, maxLengthValue, "max_length"_s, 0, maxLength)) || !refreshBuffers(globalObject, input))
+    if (failed(scope, nonNegativeSsizeArgument(globalObject, maxLengthValue, "max_length"_s, 0, maxLength)) || failed(scope, refreshBuffers(globalObject, input)))
         return {};
     if (!maxLength)
         maxLength = -1;
@@ -576,7 +583,7 @@ static JSValue decompressorDecompress(JSGlobalObject* globalObject, JSValue self
             error = inflate(&stream, Z_SYNC_FLUSH);
             if (error == Z_NEED_DICT && self->get(Dictionary)) {
                 size_t consumed = stream.next_in - input.buffer.data;
-                if (failed(scope, setInflateDictionary(globalObject, self)) || !refreshBuffers(globalObject, input))
+                if (failed(scope, setInflateDictionary(globalObject, self)) || failed(scope, refreshBuffers(globalObject, input)))
                     return {};
                 stream.next_in = input.buffer.data + consumed;
             } else if (error != Z_OK && error != Z_BUF_ERROR && error != Z_STREAM_END) {
@@ -587,7 +594,7 @@ static JSValue decompressorDecompress(JSGlobalObject* globalObject, JSValue self
     } while (!isDone && error != Z_STREAM_END && remaining);
 
     // What arrangeInput() has not handed over yet counts as not consumed: the span goes to the end of the input.
-    if (!saveUnconsumedInput(globalObject, self, input.buffer.span(), error))
+    if (failed(scope, saveUnconsumedInput(globalObject, self, input.buffer.span(), error)))
         return {};
     stream.next_in = nullptr;
     stream.avail_in = 0;
@@ -643,7 +650,7 @@ static JSValue decompressorFlush(JSGlobalObject* globalObject, JSValue selfValue
         } while (!stream.avail_out);
     } while (!isDone && error != Z_STREAM_END && remaining);
 
-    if (!saveUnconsumedInput(globalObject, self, tail->span(), error))
+    if (failed(scope, saveUnconsumedInput(globalObject, self, tail->span(), error)))
         return {};
     ensureStillAliveHere(tail);
     stream.next_in = nullptr;
@@ -723,10 +730,10 @@ static JSValue zlibDecompressorDecompress(JSGlobalObject* globalObject, JSValue 
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     BufferHolder input(globalObject);
-    if (!input.get(data))
+    if (failed(scope, input.get(data)))
         return {};
     int64_t maxLength = -1;
-    if ((maxLengthValue && failed(scope, ssizeArgument(globalObject, maxLengthValue, maxLength))) || !refreshBuffers(globalObject, input))
+    if ((maxLengthValue && failed(scope, ssizeArgument(globalObject, maxLengthValue, maxLength))) || failed(scope, refreshBuffers(globalObject, input)))
         return {};
     auto* self = uncheckedDowncast<PyRecord>(selfValue.asCell());
     auto* state = stateOf<Decompressor>(self);
@@ -784,6 +791,7 @@ static JSValue zlibDecompressorDecompress(JSGlobalObject* globalObject, JSValue 
             RELEASE_AND_RETURN(scope, raiseZlibError(globalObject, stream, endError, "while finishing decompression"_s));
         stream.next_in = const_cast<uint8_t*>(next);
     } else if (error != Z_OK && error != Z_BUF_ERROR) {
+        scope.release();
         raiseZlibError(globalObject, stream, error, "while decompressing data"_s);
         stream.next_in = nullptr;
         stream.avail_in = 0;
@@ -833,10 +841,10 @@ static JSValue checksum(JSGlobalObject* globalObject, JSValue data, JSValue valu
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     BufferHolder input(globalObject);
-    if (!input.get(data))
+    if (failed(scope, input.get(data)))
         return {};
     uint32_t value;
-    if (failed(scope, bitwiseUnsignedArgument(globalObject, valueArgument, start, value)) || !refreshBuffers(globalObject, input))
+    if (failed(scope, bitwiseUnsignedArgument(globalObject, valueArgument, start, value)) || failed(scope, refreshBuffers(globalObject, input)))
         return {};
     uLong sum = value;
     auto span = input.buffer.span();
@@ -881,7 +889,7 @@ static JSValue moduleGetAttr(JSGlobalObject* globalObject, JSValue name)
         String text = strValue(name)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         if (text == "__version__"_s) {
-            if (!warn(globalObject, rt.DeprecationWarning(), "'__version__' is deprecated and slated for removal in Python 3.20"_s))
+            if (failed(scope, warn(globalObject, rt.DeprecationWarning(), "'__version__' is deprecated and slated for removal in Python 3.20"_s)))
                 return {};
             return makeStr(vm, "1.0"_s);
         }

@@ -4113,6 +4113,7 @@ bool JSC__JSValue__asArrayBuffer(
             return false;
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
         auto result = asArrayBufferOfPython(value, globalObject, out);
+        EXCEPTION_ASSERT(!!scope.exception() == (result == AsArrayBufferResult::Exception));
         if (result == AsArrayBufferResult::Exception)
             (void)scope.tryClearException();
         return result == AsArrayBufferResult::Buffer;

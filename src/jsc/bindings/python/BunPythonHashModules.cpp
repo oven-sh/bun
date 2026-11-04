@@ -97,7 +97,7 @@ static JSValue construct(JSGlobalObject* globalObject, JSValue data, JSValue use
         RETURN_IF_EXCEPTION(scope, {});
     }
     JSValue toHash;
-    if (!dataArgument(globalObject, data, string, toHash))
+    if (failed(scope, dataArgument(globalObject, data, string, toHash)))
         return {};
     RELEASE_AND_RETURN(scope, createHashObject(globalObject, runtime(globalObject).typeFor(typeDef), makeUnique<Hasher>(kind), toHash));
 }
@@ -136,7 +136,7 @@ static JSValue sha3New(JSGlobalObject* globalObject, JSValue cls, const CallArgs
         RETURN_IF_EXCEPTION(scope, {});
     }
     JSValue toHash;
-    if (!dataArgument(globalObject, values[0], values[2], toHash))
+    if (failed(scope, dataArgument(globalObject, values[0], values[2], toHash)))
         return {};
     RELEASE_AND_RETURN(scope, createHashObject(globalObject, PyType::from(cls), makeUnique<Hasher>(kind), toHash));
 }
@@ -170,7 +170,7 @@ static JSValue shakeDigest(JSGlobalObject* globalObject, JSValue self, const Cal
     if (failed(scope, shakeLength(globalObject, "digest"_s, args, length)))
         return {};
     PyBytes* result = newBytes(globalObject, length);
-    if (!result)
+    if (failed(scope, result))
         return {};
     if (length)
         hasherOf(self).digest(std::span { result->mutableData(), static_cast<size_t>(length) });
@@ -246,9 +246,9 @@ static JSValue blake2New(JSGlobalObject* globalObject, JSValue cls, const CallAr
     BufferHolder salt(globalObject);
     BufferHolder person(globalObject);
     if (failed(scope, intArgument(globalObject, values[DigestSize], State::maxDigestSize, digestSize))
-        || (values[Key] && !key.get(values[Key]))
-        || (values[Salt] && !salt.get(values[Salt]))
-        || (values[Person] && !person.get(values[Person]))
+        || (values[Key] && failed(scope, key.get(values[Key])))
+        || (values[Salt] && failed(scope, salt.get(values[Salt])))
+        || (values[Person] && failed(scope, person.get(values[Person])))
         || failed(scope, intArgument(globalObject, values[Fanout], 1, fanout))
         || failed(scope, intArgument(globalObject, values[Depth], 1, depth))
         || failed(scope, unsignedArgument(globalObject, values[LeafSize], "unsigned long"_s, 0, leafSize))
@@ -266,7 +266,7 @@ static JSValue blake2New(JSGlobalObject* globalObject, JSValue cls, const CallAr
         RETURN_IF_EXCEPTION(scope, {});
     }
     JSValue toHash;
-    if (!dataArgument(globalObject, values[Data], values[StringData], toHash) || !refreshBuffers(globalObject, key, salt, person))
+    if (failed(scope, dataArgument(globalObject, values[Data], values[StringData], toHash)) || failed(scope, refreshBuffers(globalObject, key, salt, person)))
         return {};
 
     if (digestSize <= 0 || static_cast<unsigned>(digestSize) > State::maxDigestSize)

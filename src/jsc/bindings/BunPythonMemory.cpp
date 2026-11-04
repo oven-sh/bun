@@ -31,9 +31,11 @@ std::optional<std::span<const uint8_t>> bytesOfPythonMemory(JSGlobalObject* glob
         return std::nullopt;
     if (access == PythonMemoryAccess::RunsNoCode && Python::getBufferRunsCode(value))
         return std::nullopt;
-    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    // Not a ThrowScope: whoever gets the bytes has no exception to look for. An exception stays.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
     JSValue holder = Python::memoryForHost(globalObject, value);
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (scope.exception()) [[unlikely]]
+        return std::nullopt;
     if (auto* view = dynamicDowncast<JSArrayBufferView>(holder))
         return view->span();
     Python::HostMemory memory;

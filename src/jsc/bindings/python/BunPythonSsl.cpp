@@ -226,10 +226,11 @@ static JSValue strFromUTF8(JSGlobalObject* globalObject, std::span<const uint8_t
     VM& vm = getVM(globalObject);
     if (charactersAreAllASCII(bytes))
         return makeStr(vm, String(byteCast<Latin1Character>(bytes)));
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue object = bytesFrom(globalObject, bytes);
-    if (!object)
+    if (failed(scope, object))
         return {};
-    return bytesDecode(globalObject, object, internString(vm, "utf-8"_s), internString(vm, "strict"_s));
+    RELEASE_AND_RETURN(scope, bytesDecode(globalObject, object, internString(vm, "utf-8"_s), internString(vm, "strict"_s)));
 }
 
 static std::span<const uint8_t> spanOf(const ASN1_STRING* string)
@@ -446,13 +447,13 @@ static bool warnDeprecated(JSGlobalObject* globalObject, ASCIILiteral message)
 }
 
 // The exception that is propagating gets `context` as its __context__; if none is, that one propagates.
-static void chainException(JSGlobalObject* globalObject, JSValue context)
+static void chainException(JSGlobalObject* globalObject, ThrowScope& scope, JSValue context)
 {
+    bool isPropagating = scope.exception();
     if (!context)
         return;
     VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue current = takePendingException(globalObject);
+    JSValue current = isPropagating ? takePendingException(globalObject) : JSValue();
     if (!current) {
         raiseException(globalObject, scope, context);
         return;
@@ -473,7 +474,7 @@ static bool pathArgument(JSGlobalObject* globalObject, JSValue value, ASCIILiter
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue path = ioFSPath(globalObject, value);
-    if (!path) {
+    if (failed(scope, path)) {
         if (!complaint.isNull() && clearPendingExceptionIfMatches(globalObject, runtime(globalObject).TypeError()))
             raiseTypeError(globalObject, scope, complaint);
         return false;
@@ -550,8 +551,9 @@ static JSValue objectIdentifierText(JSGlobalObject* globalObject, const ASN1_OBJ
 // ('commonName', 'localhost')
 static JSValue attributeTuple(JSGlobalObject* globalObject, const ASN1_OBJECT* name, const ASN1_STRING* value)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     JSValue nameText = objectIdentifierText(globalObject, name, false);
-    if (!nameText)
+    if (failed(scope, nameText))
         return {};
     JSValue valueObject;
     if (ASN1_STRING_type(value) == V_ASN1_BIT_STRING)
@@ -560,37 +562,50 @@ static JSValue attributeTuple(JSGlobalObject* globalObject, const ASN1_OBJECT* n
         unsigned char* text = nullptr;
         int length = ASN1_STRING_to_UTF8(&text, value);
         if (length < 0)
-            return LIBRARY_ERROR(globalObject);
+            RELEASE_AND_RETURN(scope, LIBRARY_ERROR(globalObject));
         valueObject = strFromUTF8(globalObject, { text, static_cast<size_t>(length) });
         OPENSSL_free(text);
     }
-    if (!valueObject)
+    if (failed(scope, valueObject))
         return {};
-    return PyTuple::create(globalObject, { nameText, valueObject });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { nameText, valueObject }));
 }
 
 // A tuple of relative distinguished names, each a tuple of attributes.
 static JSValue nameTuple(JSGlobalObject* globalObject, const X509_NAME* name)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSArray* all = newList(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     JSArray* current = newList(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     int level = -1;
     int count = X509_NAME_entry_count(name);
     for (int i = 0; i < count; ++i) {
         const X509_NAME_ENTRY* entry = X509_NAME_get_entry(name, i);
         if (level >= 0 && level != X509_NAME_ENTRY_set(entry)) {
-            listAppend(globalObject, all, tupleFromList(globalObject, current));
+            JSValue names = tupleFromList(globalObject, current);
+            RETURN_IF_EXCEPTION(scope, {});
+            listAppend(globalObject, all, names);
+            RETURN_IF_EXCEPTION(scope, {});
             current = newList(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
         }
         level = X509_NAME_ENTRY_set(entry);
         JSValue attribute = attributeTuple(globalObject, X509_NAME_ENTRY_get_object(entry), X509_NAME_ENTRY_get_data(entry));
-        if (!attribute)
+        if (failed(scope, attribute))
             return {};
         listAppend(globalObject, current, attribute);
+        RETURN_IF_EXCEPTION(scope, {});
     }
-    if (listLength(current))
-        listAppend(globalObject, all, tupleFromList(globalObject, current));
-    return tupleFromList(globalObject, all);
+    if (listLength(current)) {
+        JSValue names = tupleFromList(globalObject, current);
+        RETURN_IF_EXCEPTION(scope, {});
+        listAppend(globalObject, all, names);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    RELEASE_AND_RETURN(scope, tupleFromList(globalObject, all));
 }
 
 static JSValue pairOf(JSGlobalObject* globalObject, ASCIILiteral kind, JSValue value)
@@ -609,6 +624,7 @@ static JSValue subjectAltNames(JSGlobalObject* globalObject, X509* certificate)
     if (!names)
         return jsUndefined();
     JSArray* result = newList(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     for (size_t i = 0; i < sk_GENERAL_NAME_num(names.get()); ++i) {
         const GENERAL_NAME* name = sk_GENERAL_NAME_value(names.get(), i);
         JSValue item;
@@ -650,7 +666,7 @@ static JSValue subjectAltNames(JSGlobalObject* globalObject, X509* certificate)
         }
         default: {
             if (name->type != GEN_OTHERNAME && name->type != GEN_X400 && name->type != GEN_EDIPARTY) {
-                if (!warn(globalObject, runtime(globalObject).RuntimeWarning(), makeString("Unknown general name type "_s, name->type)))
+                if (failed(scope, warn(globalObject, runtime(globalObject).RuntimeWarning(), makeString("Unknown general name type "_s, name->type))))
                     return {};
             }
             bssl::UniquePtr<BIO> bio(BIO_new(BIO_s_mem()));
@@ -671,9 +687,10 @@ static JSValue subjectAltNames(JSGlobalObject* globalObject, X509* certificate)
             break;
         }
         }
-        if (!item)
+        if (failed(scope, item))
             return {};
         listAppend(globalObject, result, item);
+        RETURN_IF_EXCEPTION(scope, {});
     }
     RELEASE_AND_RETURN(scope, tupleFromList(globalObject, result));
 }
@@ -681,28 +698,35 @@ static JSValue subjectAltNames(JSGlobalObject* globalObject, X509* certificate)
 // The URIs of authority information access of one kind. None: there are none.
 static JSValue authorityInformation(JSGlobalObject* globalObject, X509* certificate, int nid)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     bssl::UniquePtr<AUTHORITY_INFO_ACCESS> info(static_cast<AUTHORITY_INFO_ACCESS*>(X509_get_ext_d2i(certificate, NID_info_access, nullptr, nullptr)));
     if (!info)
         return jsUndefined();
     JSArray* result = newList(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     for (size_t i = 0; i < sk_ACCESS_DESCRIPTION_num(info.get()); ++i) {
         const ACCESS_DESCRIPTION* description = sk_ACCESS_DESCRIPTION_value(info.get(), i);
         if (OBJ_obj2nid(description->method) != nid || description->location->type != GEN_URI)
             continue;
         JSValue uri = strFromUTF8(globalObject, spanOf(description->location->d.uniformResourceIdentifier));
-        if (!uri)
+        if (failed(scope, uri))
             return {};
         listAppend(globalObject, result, uri);
+        RETURN_IF_EXCEPTION(scope, {});
     }
-    return listLength(result) ? JSValue(tupleFromList(globalObject, result)) : jsUndefined();
+    if (!listLength(result))
+        return jsUndefined();
+    RELEASE_AND_RETURN(scope, tupleFromList(globalObject, result));
 }
 
 static JSValue distributionPoints(JSGlobalObject* globalObject, X509* certificate)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     bssl::UniquePtr<CRL_DIST_POINTS> points(static_cast<CRL_DIST_POINTS*>(X509_get_ext_d2i(certificate, NID_crl_distribution_points, nullptr, nullptr)));
     if (!points)
         return jsUndefined();
     JSArray* result = newList(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     for (size_t i = 0; i < sk_DIST_POINT_num(points.get()); ++i) {
         const DIST_POINT* point = sk_DIST_POINT_value(points.get(), i);
         // CVE-2019-5010. And the name may be relative to the issuer's, which is another member of the union.
@@ -714,12 +738,15 @@ static JSValue distributionPoints(JSGlobalObject* globalObject, X509* certificat
             if (name->type != GEN_URI)
                 continue;
             JSValue uri = strFromUTF8(globalObject, spanOf(name->d.uniformResourceIdentifier));
-            if (!uri)
+            if (failed(scope, uri))
                 return {};
             listAppend(globalObject, result, uri);
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
-    return listLength(result) ? JSValue(tupleFromList(globalObject, result)) : jsUndefined();
+    if (!listLength(result))
+        return jsUndefined();
+    RELEASE_AND_RETURN(scope, tupleFromList(globalObject, result));
 }
 
 template<typename Print>
@@ -736,9 +763,10 @@ static JSValue printed(JSGlobalObject* globalObject, const Print& print)
 static JSValue decodeCertificate(JSGlobalObject* globalObject, X509* certificate)
 {
     VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyDict* result = PyDict::create(globalObject);
     auto add = [&](ASCIILiteral key, JSValue value, bool unlessNone = false) {
-        if (!value)
+        if (failed(scope, value))
             return false;
         if (!unlessNone || !value.isUndefined())
             result->set(vm, internString(vm, key), value);
@@ -782,9 +810,13 @@ static JSValue createCertificate(JSGlobalObject* globalObject, bssl::UniquePtr<X
 
 static JSArray* certificatesFrom(JSGlobalObject* globalObject, const STACK_OF(X509)* stack)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSArray* result = newList(globalObject);
-    for (size_t i = 0; i < sk_X509_num(stack); ++i)
+    for (size_t i = 0; i < sk_X509_num(stack); ++i) {
         listAppend(globalObject, result, createCertificate(globalObject, bssl::UpRef(sk_X509_value(stack, i))));
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
     return result;
 }
 
@@ -912,7 +944,7 @@ static JSValue memoryBIOWrite(JSGlobalObject* globalObject, JSValue self, JSValu
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     BufferHolder input(globalObject);
-    if (!input.get(data))
+    if (failed(scope, input.get(data)))
         return {};
     if (input.buffer.length > INT_MAX)
         return raiseOverflowError(globalObject, scope, "string longer than "_s, INT_MAX, " bytes"_s);
@@ -1078,12 +1110,14 @@ static JSValue publicObjectOf(PyRecord* connection)
 static void setExceptionAside(JSGlobalObject* globalObject, PyRecord* connection)
 {
     VM& vm = getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue exception = takePendingException(globalObject);
     if (!exception)
         return;
     if (JSValue earlier = connection->get(ConnectionCallbackException); earlier && earlier != exception) {
         setAttr(globalObject, exception, internString(vm, "__context__"_s), earlier);
-        takePendingException(globalObject);
+        if (scope.exception()) [[unlikely]]
+            takePendingException(globalObject);
     }
     connection->set(vm, ConnectionCallbackException, exception);
 }
@@ -1113,6 +1147,7 @@ static void messageCallback(int isWrite, int version, int contentType, const voi
         return;
     JSGlobalObject* globalObject = connection->realm();
     VM& vm = getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     std::span bytes { static_cast<const uint8_t*>(buffer), length };
     int messageType = -1;
     switch (contentType) {
@@ -1138,9 +1173,10 @@ static void messageCallback(int isWrite, int version, int contentType, const voi
     if (!object)
         return;
     JSValue data = bytesFrom(globalObject, bytes);
-    if (data)
+    if (!failed(scope, data))
         call(globalObject, callback, object, makeStr(vm, isWrite ? "write"_s : "read"_s), jsNumber(version), jsNumber(contentType), jsNumber(messageType), data);
-    setExceptionAside(globalObject, connection);
+    if (scope.exception()) [[unlikely]]
+        setExceptionAside(globalObject, connection);
 }
 
 static void keylogCallback(const SSL* ssl, const char* line)
@@ -1152,11 +1188,15 @@ static void keylogCallback(const SSL* ssl, const char* line)
         return;
     if (fprintf(file, "%s\n", line) >= 0 && !fflush(file))
         return;
+    int error = errno;
     JSGlobalObject* globalObject = connection->realm();
     VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    raiseOSError(globalObject, scope, errno, contextRecord->get(ContextKeylogFilename));
-    scope.release();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        raiseOSError(globalObject, throwScope, error, contextRecord->get(ContextKeylogFilename));
+    }
+    EXCEPTION_ASSERT_UNUSED(scope, scope.exception());
     setExceptionAside(globalObject, connection);
 }
 
@@ -1170,7 +1210,7 @@ static int serverNameCallback(SSL* ssl, int* alert, void*)
         return SSL_TLSEXT_ERR_OK;
     JSGlobalObject* globalObject = connection->realm();
     VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue object = publicObjectOf(connection);
     if (!object) {
         *alert = SSL_AD_INTERNAL_ERROR;
@@ -1182,10 +1222,11 @@ static int serverNameCallback(SSL* ssl, int* alert, void*)
         std::span bytes { byteCast<uint8_t>(serverName), strlen(serverName) };
         if (!charactersAreAllASCII(bytes)) {
             JSValue object = bytesFrom(globalObject, bytes);
-            if (object)
+            if (!failed(scope, object)) {
                 bytesDecode(globalObject, object, internString(vm, "ascii"_s), internString(vm, "strict"_s));
+                EXCEPTION_ASSERT(scope.exception());
+            }
             String shown = object ? reprForMessage(globalObject, object) : String();
-            scope.release();
             reportUnraisable(globalObject, makeString("Exception ignored in ssl servername callback while decoding name "_s, shown), jsUndefined());
             *alert = SSL_AD_INTERNAL_ERROR;
             return SSL_TLSEXT_ERR_ALERT_FATAL;
@@ -1195,12 +1236,7 @@ static int serverNameCallback(SSL* ssl, int* alert, void*)
 
     JSValue result = call(globalObject, callback, object, name, contextRecord);
     if (scope.exception()) [[unlikely]] {
-        JSValue exception = takePendingException(globalObject);
-        String shown = reprForMessage(globalObject, callback);
-        takePendingException(globalObject);
-        throwPythonException(globalObject, scope, exception);
-        scope.release();
-        reportUnraisable(globalObject, makeString("Exception ignored in ssl servername callback while calling set SNI callback "_s, shown), jsUndefined());
+        reportUnraisable(globalObject, makeString("Exception ignored in ssl servername callback while calling set SNI callback "_s, reprForMessage(globalObject, callback)), jsUndefined());
         *alert = SSL_AD_HANDSHAKE_FAILURE;
         return SSL_TLSEXT_ERR_ALERT_FATAL;
     }
@@ -1209,12 +1245,7 @@ static int serverNameCallback(SSL* ssl, int* alert, void*)
     // An int is the alert to send. Anything else is a mistake.
     *alert = toCInt(globalObject, result);
     if (scope.exception()) [[unlikely]] {
-        JSValue exception = takePendingException(globalObject);
-        String shown = reprForMessage(globalObject, result);
-        takePendingException(globalObject);
-        throwPythonException(globalObject, scope, exception);
-        scope.release();
-        reportUnraisable(globalObject, makeString("Exception ignored in ssl servername callback while calling set SNI callback (result="_s, shown, ')'), jsUndefined());
+        reportUnraisable(globalObject, makeString("Exception ignored in ssl servername callback while calling set SNI callback (result="_s, reprForMessage(globalObject, result), ')'), jsUndefined());
         *alert = SSL_AD_INTERNAL_ERROR;
     }
     return SSL_TLSEXT_ERR_ALERT_FATAL;
@@ -1267,16 +1298,7 @@ static int verifyCallback(X509_STORE_CTX* store, void*)
 
 static void reportPSKFailure(JSGlobalObject* globalObject, ASCIILiteral side, JSValue callback)
 {
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue exception = takePendingException(globalObject);
-    if (!exception)
-        return;
-    String shown = reprForMessage(globalObject, callback);
-    takePendingException(globalObject);
-    throwPythonException(globalObject, scope, exception);
-    scope.release();
-    reportUnraisable(globalObject, makeString("Exception ignored in ssl PSK "_s, side, " callback while calling callback "_s, shown), jsUndefined());
+    reportUnraisable(globalObject, makeString("Exception ignored in ssl PSK "_s, side, " callback while calling callback "_s, reprForMessage(globalObject, callback)), jsUndefined());
 }
 
 // The hint or the identity that the other side sent. Empty: it is not UTF-8, which is against the standard and ends the connection.
@@ -1284,10 +1306,59 @@ static JSValue textFromPeer(JSGlobalObject* globalObject, const char* text)
 {
     if (!text || !*text)
         return jsUndefined();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
     JSValue result = strFromUTF8(globalObject, { byteCast<uint8_t>(text), strlen(text) });
-    if (!result)
+    if (failed(scope, result))
         takePendingException(globalObject);
     return result;
+}
+
+// The length of the key. 0: there is none, perhaps with an exception.
+static unsigned callPSKClientCallback(JSGlobalObject* globalObject, JSValue callback, JSValue hintText, char* identity, unsigned maxIdentityLength, uint8_t* psk, unsigned maxPSKLength)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue result = call(globalObject, callback, hintText);
+    RETURN_IF_EXCEPTION(scope, 0);
+    // (identity: str or None, key: bytes)
+    auto* pair = PyTuple::tryFrom(result);
+    if (!pair) {
+        raiseSystemError(globalObject, scope, "new style getargs format but argument is not a tuple"_s);
+        return 0;
+    }
+    if (pair->length() != 2) {
+        raiseTypeError(globalObject, scope, "function takes exactly 2 arguments ("_s, pair->length(), " given)"_s);
+        return 0;
+    }
+    CText identityBytes;
+    if (!isNone(pair->at(0))) {
+        if (!isStr(pair->at(0))) {
+            raiseTypeError(globalObject, scope, "argument 1 must be str or None, not "_s, typeNameOfArgument(globalObject, pair->at(0)));
+            return 0;
+        }
+        String text = strValue(pair->at(0))->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, 0);
+        auto encoded = tryEncodeUTF8(text);
+        if (!encoded) {
+            scope.release();
+            strEncode(globalObject, strValue(pair->at(0)), internString(vm, "utf-8"_s), internString(vm, "strict"_s));
+            return 0;
+        }
+        identityBytes.assign(encoded->span());
+    }
+    BufferHolder key(globalObject);
+    bool hasKey = !isStr(pair->at(1)) && !failed(scope, key.get(pair->at(1)));
+    if (!hasKey || !key.buffer.isReadOnly) {
+        if (!scope.exception())
+            raiseTypeError(globalObject, scope, "argument 2 must be read-only bytes-like object, not "_s, typeNameOfArgument(globalObject, pair->at(1)));
+        return 0;
+    }
+    if (identityBytes.length() + 1 > maxIdentityLength || static_cast<uint64_t>(key.buffer.length) > maxPSKLength)
+        return 0;
+    memcpy(psk, key.buffer.data, key.buffer.length);
+    memcpy(identity, identityBytes.data(), identityBytes.length());
+    identity[identityBytes.length()] = 0;
+    return static_cast<unsigned>(key.buffer.length);
 }
 
 static unsigned pskClientCallback(SSL* ssl, const char* hint, char* identity, unsigned maxIdentityLength, uint8_t* psk, unsigned maxPSKLength)
@@ -1297,55 +1368,16 @@ static unsigned pskClientCallback(SSL* ssl, const char* hint, char* identity, un
     if (!callback)
         return 0;
     JSGlobalObject* globalObject = connection->realm();
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
     JSValue hintText = textFromPeer(globalObject, hint);
     if (!hintText)
         return 0;
-    auto fail = [&] {
-        scope.release();
+    unsigned length = callPSKClientCallback(globalObject, callback, hintText, identity, maxIdentityLength, psk, maxPSKLength);
+    if (scope.exception()) [[unlikely]] {
         reportPSKFailure(globalObject, "client"_s, callback);
-        return 0u;
-    };
-    JSValue result = call(globalObject, callback, hintText);
-    if (scope.exception()) [[unlikely]]
-        return fail();
-    // (identity: str or None, key: bytes)
-    auto* pair = PyTuple::tryFrom(result);
-    if (!pair) {
-        raiseSystemError(globalObject, scope, "new style getargs format but argument is not a tuple"_s);
-        return fail();
-    }
-    if (pair->length() != 2) {
-        raiseTypeError(globalObject, scope, "function takes exactly 2 arguments ("_s, pair->length(), " given)"_s);
-        return fail();
-    }
-    CText identityBytes;
-    if (!isNone(pair->at(0))) {
-        if (!isStr(pair->at(0))) {
-            raiseTypeError(globalObject, scope, "argument 1 must be str or None, not "_s, typeNameOfArgument(globalObject, pair->at(0)));
-            return fail();
-        }
-        String text = strValue(pair->at(0))->value(globalObject);
-        auto encoded = tryEncodeUTF8(text);
-        if (!encoded) {
-            strEncode(globalObject, strValue(pair->at(0)), internString(vm, "utf-8"_s), internString(vm, "strict"_s));
-            return fail();
-        }
-        identityBytes.assign(encoded->span());
-    }
-    BufferHolder key(globalObject);
-    if (isStr(pair->at(1)) || !key.get(pair->at(1)) || !key.buffer.isReadOnly) {
-        if (!scope.exception())
-            raiseTypeError(globalObject, scope, "argument 2 must be read-only bytes-like object, not "_s, typeNameOfArgument(globalObject, pair->at(1)));
-        return fail();
-    }
-    if (identityBytes.length() + 1 > maxIdentityLength || static_cast<uint64_t>(key.buffer.length) > maxPSKLength)
         return 0;
-    memcpy(psk, key.buffer.data, key.buffer.length);
-    memcpy(identity, identityBytes.data(), identityBytes.length());
-    identity[identityBytes.length()] = 0;
-    return static_cast<unsigned>(key.buffer.length);
+    }
+    return length;
 }
 
 static unsigned pskServerCallback(SSL* ssl, const char* identity, uint8_t* psk, unsigned maxPSKLength)
@@ -1356,16 +1388,20 @@ static unsigned pskServerCallback(SSL* ssl, const char* identity, uint8_t* psk, 
         return 0;
     JSGlobalObject* globalObject = connection->realm();
     VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue identityText = textFromPeer(globalObject, identity);
     if (!identityText)
         return 0;
     JSValue result = call(globalObject, callback, identityText);
     auto* key = scope.exception() ? nullptr : PyBytes::tryFrom(result);
     if (!key) {
-        if (!scope.exception())
-            raiseTypeError(globalObject, scope, "expected bytes, "_s, typeName(globalObject, result), " found"_s);
-        scope.release();
+        if (!scope.exception()) {
+            {
+                auto throwScope = DECLARE_THROW_SCOPE(vm);
+                raiseTypeError(globalObject, throwScope, "expected bytes, "_s, typeName(globalObject, result), " found"_s);
+            }
+            EXCEPTION_ASSERT(scope.exception());
+        }
         reportPSKFailure(globalObject, "server"_s, callback);
         return 0;
     }
@@ -1477,8 +1513,7 @@ static JSValue raiseConnectionError(JSGlobalObject* globalObject, PyRecord* self
     auto raiseSystemError = [&](int systemError) {
         ERR_clear_error();
         raiseOSError(globalObject, scope, systemError);
-        scope.release();
-        chainException(globalObject, callbackException);
+        chainException(globalObject, scope, callbackException);
         return JSValue();
     };
 
@@ -1534,10 +1569,9 @@ static JSValue raiseConnectionError(JSGlobalObject* globalObject, PyRecord* self
         text = "Invalid error code"_s;
         number = ErrorInvalidErrorCode;
     }
-    scope.release();
     raiseWithCode(globalObject, self, type, number, text, line, code);
     ERR_clear_error();
-    chainException(globalObject, callbackException);
+    chainException(globalObject, scope, callbackException);
     return {};
 }
 
@@ -1582,6 +1616,7 @@ static bool configureHostname(JSGlobalObject* globalObject, PyRecord* self, cons
     self->set(vm, ConnectionServerHostname, strFromASCII(vm, hostname.data()));
     // There is no SNI for addresses.
     if (!address && !SSL_set_tlsext_host_name(ssl, hostname.data())) {
+        scope.release();
         LIBRARY_ERROR(globalObject);
         return false;
     }
@@ -1590,6 +1625,7 @@ static bool configureHostname(JSGlobalObject* globalObject, PyRecord* self, cons
     X509_VERIFY_PARAM* parameters = SSL_get0_param(ssl);
     int succeeded = address ? X509_VERIFY_PARAM_set1_ip(parameters, ASN1_STRING_get0_data(address.get()), ASN1_STRING_length(address.get())) : X509_VERIFY_PARAM_set1_host(parameters, hostname.data(), hostname.length());
     if (!succeeded) {
+        scope.release();
         LIBRARY_ERROR(globalObject);
         return false;
     }
@@ -1662,10 +1698,10 @@ static JSValue createConnection(JSGlobalObject* globalObject, PyRecord* contextR
         SSL_set_bio(ssl, in, out);
     }
     SSL_set_mode(ssl, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER | SSL_MODE_AUTO_RETRY);
-    if (!applyContext(globalObject, self))
+    if (failed(scope, applyContext(globalObject, self)))
         return {};
 
-    if (hasHostname && !configureHostname(globalObject, self, hostname))
+    if (hasHostname && failed(scope, configureHostname(globalObject, self, hostname)))
         return {};
 
     if (isServer)
@@ -1723,12 +1759,12 @@ static JSValue connectionDoHandshake(JSGlobalObject* globalObject, JSValue selfV
         error = result < 1 ? SSL_get_error(ssl, result) : SSL_ERROR_NONE;
         if (stopsForExceptionSetAside(self, socket, error))
             break;
-        if (!checkSignals(globalObject))
+        if (failed(scope, checkSignals(globalObject)))
             return {};
         if (error != SSL_ERROR_WANT_READ && error != SSL_ERROR_WANT_WRITE)
             break;
         SocketState state = waitForSocket(globalObject, socket, error == SSL_ERROR_WANT_WRITE, deadline.remaining());
-        if (state == SocketState::HasRaised)
+        if (failed(scope, state != SocketState::HasRaised))
             return {};
         if (state == SocketState::HasTimedOut)
             RELEASE_AND_RETURN(scope, raiseTimeout(globalObject, TEXT_WITH_LINE("The handshake operation timed out")));
@@ -1743,7 +1779,7 @@ static JSValue connectionDoHandshake(JSGlobalObject* globalObject, JSValue selfV
         RELEASE_AND_RETURN(scope, raiseConnectionError(globalObject, self, error, exception, __LINE__));
     countHandshake(self, true);
     if (exception) {
-        chainException(globalObject, exception);
+        chainException(globalObject, scope, exception);
         return {};
     }
     return jsUndefined();
@@ -1757,7 +1793,7 @@ static JSValue connectionWrite(JSGlobalObject* globalObject, JSValue selfValue, 
     Connection& connection = connectionOf(self);
     SSL* ssl = connection.ssl.get();
     IOBuffer input;
-    if (!input.acquire(globalObject, data))
+    if (failed(scope, input.acquire(globalObject, data)))
         return {};
     PyRecord* socket;
     if (failed(scope, getSocket(globalObject, self, socket, __LINE__)))
@@ -1767,12 +1803,14 @@ static JSValue connectionWrite(JSGlobalObject* globalObject, JSValue selfValue, 
     Deadline deadline(socket);
 
     auto check = [&](SocketState state) {
+        if (failed(scope, state != SocketState::HasRaised))
+            return false;
         if (state == SocketState::HasTimedOut)
-            raiseTimeout(globalObject, "The write operation timed out"_s);
+            raise(globalObject, scope, runtime(globalObject).TimeoutError(), "The write operation timed out"_s);
         else if (state == SocketState::HasBeenClosed)
-            raisePlainError(globalObject, "Underlying socket has been closed."_s);
+            raise(globalObject, scope, sslError(globalObject), "Underlying socket has been closed."_s);
         else
-            return state != SocketState::HasRaised;
+            return true;
         return false;
     };
     // A socket that blocks is waited for where the library says that it has to wait.
@@ -1781,7 +1819,7 @@ static JSValue connectionWrite(JSGlobalObject* globalObject, JSValue selfValue, 
 
     int result, error;
     while (true) {
-        if (!input.refresh())
+        if (failed(scope, input.refresh()))
             return {};
         if (!input.size())
             return jsNumber(0);
@@ -1791,7 +1829,7 @@ static JSValue connectionWrite(JSGlobalObject* globalObject, JSValue selfValue, 
         error = result <= 0 ? SSL_get_error(ssl, result) : SSL_ERROR_NONE;
         if (stopsForExceptionSetAside(self, socket, error))
             break;
-        if (!checkSignals(globalObject))
+        if (failed(scope, checkSignals(globalObject)))
             return {};
         if (error != SSL_ERROR_WANT_READ && error != SSL_ERROR_WANT_WRITE)
             break;
@@ -1805,7 +1843,7 @@ static JSValue connectionWrite(JSGlobalObject* globalObject, JSValue selfValue, 
     if (result <= 0)
         RELEASE_AND_RETURN(scope, raiseConnectionError(globalObject, self, error, exception, __LINE__));
     if (exception) {
-        chainException(globalObject, exception);
+        chainException(globalObject, scope, exception);
         return {};
     }
     return jsNumber(result);
@@ -1865,7 +1903,7 @@ static JSValue connectionRead(JSGlobalObject* globalObject, JSValue selfValue, c
     Deadline deadline(socket);
     int result, error;
     while (true) {
-        if (!output.refresh())
+        if (failed(scope, output.refresh()))
             return {};
         connection.systemError = 0;
         connection.descriptor = socket ? socketDescriptor(socket) : -1;
@@ -1873,7 +1911,7 @@ static JSValue connectionRead(JSGlobalObject* globalObject, JSValue selfValue, c
         error = result <= 0 ? SSL_get_error(ssl, result) : SSL_ERROR_NONE;
         if (stopsForExceptionSetAside(self, socket, error))
             break;
-        if (!checkSignals(globalObject))
+        if (failed(scope, checkSignals(globalObject)))
             return {};
         if (error == SSL_ERROR_ZERO_RETURN && SSL_get_shutdown(ssl) == SSL_RECEIVED_SHUTDOWN) {
             // The other side has closed the connection as it should.
@@ -1884,7 +1922,7 @@ static JSValue connectionRead(JSGlobalObject* globalObject, JSValue selfValue, c
         if (error != SSL_ERROR_WANT_READ && error != SSL_ERROR_WANT_WRITE)
             break;
         SocketState state = waitForSocket(globalObject, socket, error == SSL_ERROR_WANT_WRITE, deadline.remaining());
-        if (state == SocketState::HasRaised)
+        if (failed(scope, state != SocketState::HasRaised))
             return {};
         if (state == SocketState::HasTimedOut)
             RELEASE_AND_RETURN(scope, raiseTimeout(globalObject, "The read operation timed out"_s));
@@ -1895,8 +1933,7 @@ static JSValue connectionRead(JSGlobalObject* globalObject, JSValue selfValue, c
     if (error != SSL_ERROR_NONE)
         RELEASE_AND_RETURN(scope, raiseConnectionError(globalObject, self, error, exception, __LINE__));
     if (exception) {
-        scope.release();
-        chainException(globalObject, exception);
+        chainException(globalObject, scope, exception);
         return {};
     }
     if (hasBuffer)
@@ -1935,7 +1972,7 @@ static JSValue connectionShutdown(JSGlobalObject* globalObject, JSValue selfValu
         if (error != SSL_ERROR_WANT_READ && error != SSL_ERROR_WANT_WRITE)
             break;
         SocketState state = waitForSocket(globalObject, socket, error == SSL_ERROR_WANT_WRITE, deadline.remaining());
-        if (state == SocketState::HasRaised)
+        if (failed(scope, state != SocketState::HasRaised))
             return {};
         if (state == SocketState::HasTimedOut)
             RELEASE_AND_RETURN(scope, raiseTimeout(globalObject, error == SSL_ERROR_WANT_READ ? "The read operation timed out"_s : "The write operation timed out"_s));
@@ -1946,7 +1983,7 @@ static JSValue connectionShutdown(JSGlobalObject* globalObject, JSValue selfValu
     if (result < 0)
         RELEASE_AND_RETURN(scope, raiseConnectionError(globalObject, self, error, exception, __LINE__));
     if (exception) {
-        chainException(globalObject, exception);
+        chainException(globalObject, scope, exception);
         return {};
     }
     return socket ? JSValue(socket) : jsUndefined();
@@ -2024,14 +2061,18 @@ static void forEachCipher(SSL* ssl, const Functor& functor)
 
 static JSValue connectionSharedCiphers(JSGlobalObject* globalObject, JSValue self)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     Connection& connection = connectionOf(self);
     if (connection.ciphersOfClient.isEmpty())
         return jsUndefined();
     JSArray* result = newList(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     forEachCipher(connection.ssl.get(), [&](const SSL_CIPHER* cipher) {
-        if (connection.ciphersOfClient.contains(SSL_CIPHER_get_protocol_id(cipher)))
-            listAppend(globalObject, result, cipherTuple(globalObject, cipher));
+        if (scope.exception() || !connection.ciphersOfClient.contains(SSL_CIPHER_get_protocol_id(cipher)))
+            return;
+        listAppend(globalObject, result, cipherTuple(globalObject, cipher));
     });
+    RETURN_IF_EXCEPTION(scope, {});
     return result;
 }
 
@@ -2168,8 +2209,10 @@ static void connectionSetSession(JSGlobalObject* globalObject, JSValue self, JSV
         raiseValueError(globalObject, scope, "Cannot set session for server-side SSLSocket."_s);
     else if (SSL_is_init_finished(connection.ssl.get()))
         raiseValueError(globalObject, scope, "Cannot set session after handshake."_s);
-    else if (!SSL_set_session(connection.ssl.get(), sessionOf(value)))
+    else if (!SSL_set_session(connection.ssl.get(), sessionOf(value))) {
+        scope.release();
         LIBRARY_ERROR(globalObject);
+    }
 }
 
 static JSValue connectionGetSessionReused(JSGlobalObject*, JSValue self) { return jsBoolean(SSL_session_reused(connectionOf(self).ssl.get())); }
@@ -2271,7 +2314,7 @@ static JSValue contextNew(JSGlobalObject* globalObject, JSValue type, JSValue pr
     }
     if (!method)
         return raiseValueError(globalObject, scope, "invalid or unsupported protocol version "_s, protocol);
-    if (!deprecation.isNull() && !warnDeprecated(globalObject, deprecation))
+    if (!deprecation.isNull() && failed(scope, warnDeprecated(globalObject, deprecation)))
         return {};
 
     auto state = makeUnique<Context>();
@@ -2336,11 +2379,15 @@ static JSValue contextSetCiphersuites(JSGlobalObject* globalObject, JSValue, JSV
 static JSValue contextGetCiphers(JSGlobalObject* globalObject, JSValue self)
 {
     VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     bssl::UniquePtr<SSL> ssl(SSL_new(contextOf(self).ctx.get()));
     if (!ssl)
-        return LIBRARY_ERROR(globalObject);
+        RELEASE_AND_RETURN(scope, LIBRARY_ERROR(globalObject));
     JSArray* result = newList(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     forEachCipher(ssl.get(), [&](const SSL_CIPHER* cipher) {
+        if (scope.exception())
+            return;
         char description[512] = {};
         SSL_CIPHER_description(cipher, description, sizeof(description) - 1);
         if (size_t length = strlen(description); length > 1 && description[length - 1] == '\n')
@@ -2363,6 +2410,7 @@ static JSValue contextGetCiphers(JSGlobalObject* globalObject, JSValue self)
         add("auth"_s, nameOf(SSL_CIPHER_get_auth_nid(cipher)));
         listAppend(globalObject, result, dict);
     });
+    RETURN_IF_EXCEPTION(scope, {});
     return result;
 }
 
@@ -2382,11 +2430,15 @@ template<size_t (*getNames)(const char**, size_t)>
 static JSValue listOfNames(JSGlobalObject* globalObject)
 {
     VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     Vector<const char*> names(getNames(nullptr, 0));
     getNames(names.mutableSpan().data(), names.size());
     JSArray* result = newList(globalObject);
-    for (const char* name : names)
+    RETURN_IF_EXCEPTION(scope, {});
+    for (const char* name : names) {
         listAppend(globalObject, result, strFromASCII(vm, name));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     return result;
 }
 
@@ -2460,7 +2512,7 @@ static JSValue contextSetALPNProtocols(JSGlobalObject* globalObject, JSValue sel
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     BufferHolder input(globalObject);
-    if (!input.get(protocols))
+    if (failed(scope, input.get(protocols)))
         return {};
     if (static_cast<uint64_t>(input.buffer.length) > UINT_MAX)
         return raiseOverflowError(globalObject, scope, "protocols longer than "_s, UINT_MAX, " bytes"_s);
@@ -2501,6 +2553,7 @@ static void contextSetVerifyMode(JSGlobalObject* globalObject, JSValue self, JSV
         raiseValueError(globalObject, scope, "Cannot set verify_mode to CERT_NONE when check_hostname is enabled."_s);
         return;
     }
+    scope.release();
     setVerifyMode(globalObject, context, mode);
 }
 
@@ -2521,11 +2574,14 @@ static void contextSetVerifyFlags(JSGlobalObject* globalObject, JSValue self, JS
     X509_VERIFY_PARAM* parameters = SSL_CTX_get0_param(contextOf(self).ctx.get());
     unsigned long flags = X509_VERIFY_PARAM_get_flags(parameters);
     if (unsigned long clear = flags & ~wanted; clear && !X509_VERIFY_PARAM_clear_flags(parameters, clear)) {
+        scope.release();
         LIBRARY_ERROR(globalObject);
         return;
     }
-    if (unsigned long set = ~flags & wanted; set && !X509_VERIFY_PARAM_set_flags(parameters, set))
+    if (unsigned long set = ~flags & wanted; set && !X509_VERIFY_PARAM_set_flags(parameters, set)) {
+        scope.release();
         LIBRARY_ERROR(globalObject);
+    }
 }
 
 template<bool isMaximum>
@@ -2572,7 +2628,7 @@ static void contextSetVersion(JSGlobalObject* globalObject, JSValue self, JSValu
         raiseValueError(globalObject, scope, "Unsupported TLS/SSL version 0x"_s, hex(static_cast<unsigned>(version), Lowercase));
         return;
     }
-    if (!deprecation.isNull() && !warnDeprecated(globalObject, deprecation))
+    if (!deprecation.isNull() && failed(scope, warnDeprecated(globalObject, deprecation)))
         return;
 
     // 0 is whatever the library's own limit is.
@@ -2637,7 +2693,7 @@ static void contextSetOptions(JSGlobalObject* globalObject, JSValue self, JSValu
     uint64_t clear = options & ~*wanted;
     uint64_t set = ~options & *wanted;
     constexpr uint64_t versions = SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1 | SSL_OP_NO_TLSv1_2 | SSL_OP_NO_TLSv1_3;
-    if ((set & versions) && !warnDeprecated(globalObject, "ssl.OP_NO_SSL*/ssl.OP_NO_TLS* options are deprecated"_s))
+    if ((set & versions) && failed(scope, warnDeprecated(globalObject, "ssl.OP_NO_SSL*/ssl.OP_NO_TLS* options are deprecated"_s)))
         return;
     if (clear)
         SSL_CTX_clear_options(ctx, static_cast<uint32_t>(clear));
@@ -2715,28 +2771,35 @@ struct PasswordSource {
     }
 };
 
-static int passwordCallback(char* buffer, int size, int, void* data)
+// -1: an exception.
+static int copyPassword(PasswordSource& source, char* buffer, int size)
 {
-    auto& source = *static_cast<PasswordSource*>(data);
     JSGlobalObject* globalObject = source.globalObject;
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (source.hasFailed)
-        return -1;
-    source.hasFailed = true;
     if (source.callable) {
         JSValue result = call(globalObject, source.callable);
         RETURN_IF_EXCEPTION(scope, -1);
-        if (!source.set(result, "password callback must return a string"_s))
+        if (failed(scope, source.set(result, "password callback must return a string"_s)))
             return -1;
     }
     if (source.password.size() > static_cast<size_t>(size)) {
         raiseValueError(globalObject, scope, "password cannot be longer than "_s, size, " bytes"_s);
         return -1;
     }
-    source.hasFailed = false;
     memcpy(buffer, source.password.span().data(), source.password.size());
     return static_cast<int>(source.password.size());
+}
+
+static int passwordCallback(char* buffer, int size, int, void* data)
+{
+    auto& source = *static_cast<PasswordSource*>(data);
+    if (source.hasFailed)
+        return -1;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(source.globalObject));
+    int length = copyPassword(source, buffer, size);
+    source.hasFailed = failed(scope, length >= 0);
+    return length;
 }
 
 // The certificate, its chain and its key that the library's context has. Null: it has none, or there is no memory.
@@ -2791,7 +2854,7 @@ static JSValue contextLoadCertChain(JSGlobalObject* globalObject, JSValue self, 
     if (password && !isNone(password)) {
         if (isCallable(globalObject, password))
             source.callable = password;
-        else if (!source.set(password, "password should be a string or callable"_s))
+        else if (failed(scope, source.set(password, "password should be a string or callable"_s)))
             return {};
     }
 
@@ -2815,6 +2878,7 @@ static JSValue contextLoadCertChain(JSGlobalObject* globalObject, JSValue self, 
             ERR_clear_error();
             return raiseOSError(globalObject, scope, error, path);
         }
+        scope.release();
         return raiseLibraryError(globalObject, line);
     };
     bssl::UniquePtr<SSL_CREDENTIAL> previous = credentialOf(ctx);
@@ -2853,6 +2917,7 @@ static bool addCACertificates(JSGlobalObject* globalObject, SSL_CTX* ctx, std::s
     }
     bssl::UniquePtr<BIO> bio(BIO_new_mem_buf(data.data(), data.size()));
     if (!bio) {
+        scope.release();
         OWN_ERROR(globalObject, "Can't allocate buffer");
         return false;
     }
@@ -2874,6 +2939,7 @@ static bool addCACertificates(JSGlobalObject* globalObject, SSL_CTX* ctx, std::s
     }
     uint32_t code = ERR_peek_last_error();
     if (!loaded) {
+        scope.release();
         if (isPEM)
             OWN_ERROR(globalObject, "no start line: cadata does not contain a certificate");
         else
@@ -2885,6 +2951,7 @@ static bool addCACertificates(JSGlobalObject* globalObject, SSL_CTX* ctx, std::s
         return true;
     }
     if (code) {
+        scope.release();
         LIBRARY_ERROR(globalObject);
         return false;
     }
@@ -2915,13 +2982,13 @@ static JSValue contextLoadVerifyLocations(JSGlobalObject* globalObject, JSValue 
             if (!text.containsOnlyASCII())
                 return raiseTypeError(globalObject, scope, complaint);
             auto ascii = tryEncodeUTF8(text);
-            if (!addCACertificates(globalObject, ctx, ascii->span(), true))
+            if (failed(scope, addCACertificates(globalObject, ctx, ascii->span(), true)))
                 return {};
         } else if (hasBuffer(cadata)) {
             BufferHolder data(globalObject);
-            if (!data.get(cadata))
+            if (failed(scope, data.get(cadata)))
                 return {};
-            if (!addCACertificates(globalObject, ctx, data.buffer.span(), false))
+            if (failed(scope, addCACertificates(globalObject, ctx, data.buffer.span(), false)))
                 return {};
         } else
             return raiseTypeError(globalObject, scope, complaint);
@@ -3212,6 +3279,7 @@ static JSValue contextGetCACerts(JSGlobalObject* globalObject, JSValue self, JSV
     if (failed(scope, boolArgument(globalObject, binaryForm, false, isBinary)))
         return {};
     JSArray* result = newList(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     bool succeeded = forEachObjectInStore(globalObject, self, [&](const X509_OBJECT* object) {
         if (X509_OBJECT_get_type(object) != X509_LU_X509)
             return true;
@@ -3219,12 +3287,12 @@ static JSValue contextGetCACerts(JSGlobalObject* globalObject, JSValue self, JSV
         if (!X509_check_ca(certificate))
             return true;
         JSValue item = isBinary ? certificateToDER(globalObject, certificate) : decodeCertificate(globalObject, certificate);
-        if (!item)
+        if (failed(scope, item))
             return false;
         listAppend(globalObject, result, item);
-        return true;
+        return !scope.exception();
     });
-    return succeeded ? JSValue(result) : JSValue();
+    return failed(scope, succeeded) ? JSValue() : JSValue(result);
 }
 
 static JSValue contextSetPSKClientCallback(JSGlobalObject* globalObject, JSValue self, JSValue callback)
@@ -3339,7 +3407,7 @@ static JSValue randAdd(JSGlobalObject* globalObject, JSValue data, JSValue entro
     // The library seeds itself, and takes nothing.
     if (!isStr(data)) {
         BufferHolder input(globalObject);
-        if (!input.get(data))
+        if (failed(scope, input.get(data)))
             return {};
     }
     toDouble(globalObject, entropyValue);

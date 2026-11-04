@@ -1,5 +1,6 @@
 #include "BunPythonModule.h"
 
+#include <JavaScriptCore/FrameTracers.h>
 #include <JavaScriptCore/Protect.h>
 #include <JavaScriptCore/PyCodecs.h>
 #include <JavaScriptCore/PyException.h>
@@ -304,26 +305,21 @@ static JSValue raiseOf(JSGlobalObject* globalObject, PyType* type, const String&
     return raise(globalObject, scope, type, message);
 }
 
-static void rethrow(JSGlobalObject* globalObject, JSValue exception)
-{
-    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
-    throwPythonException(globalObject, scope, exception);
-}
-
 // `earlier` was taken before something that may have raised in its turn. Whichever there is propagates; if both, the later
 // one, with the earlier one for its context.
-static void chainExceptions(JSGlobalObject* globalObject, JSValue earlier)
+static void chainExceptions(JSGlobalObject* globalObject, ThrowScope& scope, JSValue earlier)
 {
+    bool hasLater = scope.exception();
     if (!earlier)
         return;
-    JSValue later = takePendingException(globalObject);
+    JSValue later = hasLater ? takePendingException(globalObject) : JSValue();
     if (!later) {
-        rethrow(globalObject, earlier);
+        throwPythonException(globalObject, scope, earlier);
         return;
     }
     if (auto* exception = PyException::tryFrom(later))
         exception->setContext(getVM(globalObject), earlier);
-    rethrow(globalObject, later);
+    throwPythonException(globalObject, scope, later);
 }
 
 // ---- Text ----
@@ -689,9 +685,15 @@ enum ConnectionField : unsigned {
 static Connection& connectionOf(PyRecord* self) { return *stateOf<Connection>(self); }
 static PyRecord* asRecord(JSValue value) { return uncheckedDowncast<PyRecord>(value.asCell()); }
 
+static JSValue raiseClosedDatabase(JSGlobalObject* globalObject, ThrowScope& scope)
+{
+    return raise(globalObject, scope, ProgrammingError(globalObject), "Cannot operate on a closed database."_s);
+}
+
 static JSValue raiseClosedDatabase(JSGlobalObject* globalObject)
 {
-    return raiseOf(globalObject, ProgrammingError(globalObject), "Cannot operate on a closed database."_s);
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    return raiseClosedDatabase(globalObject, scope);
 }
 
 // Enough for what asks SQLite nothing, or only to take note of something.
@@ -725,7 +727,7 @@ static bool checkConnectionOnAnyThread(JSGlobalObject* globalObject, PyRecord* s
     if (failed(scope, checkConnectionIsOpen(globalObject, self)))
         return false;
     if (ASCIILiteral why = connectionOf(self).database->whyOffLimits(); !why.isNull()) {
-        raiseOf(globalObject, ProgrammingError(globalObject), why);
+        raise(globalObject, scope, ProgrammingError(globalObject), why);
         return false;
     }
     return true;
@@ -744,7 +746,7 @@ static bool executeSimply(JSGlobalObject* globalObject, Database& database, cons
     int rc;
     for (bool hasCollected = false;; hasCollected = true) {
         if (use.isClosed()) {
-            raiseClosedDatabase(globalObject);
+            raiseClosedDatabase(globalObject, scope);
             return false;
         }
         sqlite3_stmt* statement;
@@ -759,6 +761,7 @@ static bool executeSimply(JSGlobalObject* globalObject, Database& database, cons
             return false;
     }
     if (rc != SQLITE_OK) {
+        scope.release();
         failFromDatabase(globalObject, use.handle());
         return false;
     }
@@ -822,6 +825,7 @@ static bool hasItsOwnFinalizer(PyType* type)
 static bool closeConnection(JSGlobalObject* globalObject, PyRecord* self, Database::Statements statements = Database::Statements::AreFinalized)
 {
     VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     Connection& connection = connectionOf(self);
     if (!connection.db())
         return true;
@@ -829,7 +833,7 @@ static bool closeConnection(JSGlobalObject* globalObject, PyRecord* self, Databa
     bool succeeded = true;
     // Where no statement can be run, it is left to SQLite, which rolls back what it closes.
     if (connection.autocommit == Autocommit::Disabled && !sqlite3_get_autocommit(database->handle()) && database->whyOffLimits().isNull())
-        succeeded = executeSimply(globalObject, database.get(), "ROLLBACK");
+        succeeded = !failed(scope, executeSimply(globalObject, database.get(), "ROLLBACK"));
     database->close(statements);
     // The callbacks that the rollback ran may have opened the connection anew. Then the rest is the new database's.
     if (connection.database != database.ptr())
@@ -908,7 +912,7 @@ static JSValue connectionInit(JSGlobalObject* globalObject, JSValue selfValue, c
     if (connection.isInitialized) {
         connection.isInitialized = false;
         connection.statementCache.clear();
-        if (!closeConnection(globalObject, self, Database::Statements::AreLeft))
+        if (failed(scope, closeConnection(globalObject, self, Database::Statements::AreLeft)))
             return {};
     }
 
@@ -917,6 +921,7 @@ static JSValue connectionInit(JSGlobalObject* globalObject, JSValue selfValue, c
     if (!db && rc == SQLITE_NOMEM)
         return raiseMemoryError(globalObject, scope, String());
     if (rc != SQLITE_OK) {
+        scope.release();
         failFromDatabase(globalObject, db);
         sqlite3_close(db);
         return {};
@@ -938,7 +943,7 @@ static JSValue connectionInit(JSGlobalObject* globalObject, JSValue selfValue, c
 
     if (failed(scope, audit(globalObject, "sqlite3.connect/handle"_s, self)))
         return {};
-    if (autocommit == Autocommit::Disabled && !executeSimply(globalObject, connection, "BEGIN"))
+    if (autocommit == Autocommit::Disabled && failed(scope, executeSimply(globalObject, connection, "BEGIN")))
         return {};
     return jsUndefined();
 }
@@ -946,8 +951,10 @@ static JSValue connectionInit(JSGlobalObject* globalObject, JSValue selfValue, c
 static void warnUnclosed(JSGlobalObject* globalObject, JSValue self)
 {
     Runtime& rt = runtime(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(rt.vm());
     String text = reprForMessage(globalObject, self);
-    warnAbout(globalObject, rt.ResourceWarning(), makeString("unclosed database in "_s, text), 1, self);
+    if (!failed(scope, warnAbout(globalObject, rt.ResourceWarning(), makeString("unclosed database in "_s, text), 1, self)))
+        return;
     if (pendingExceptionMatches(globalObject, rt.Warning()))
         reportUnraisable(globalObject, makeString("Exception ignored while finalizing database connection "_s, text), jsUndefined());
     else
@@ -956,16 +963,17 @@ static void warnUnclosed(JSGlobalObject* globalObject, JSValue self)
 
 static JSValue connectionDel(JSGlobalObject* globalObject, JSValue selfValue)
 {
+    VM& vm = getVM(globalObject);
     PyRecord* self = asRecord(selfValue);
     Connection& connection = connectionOf(self);
-    JSValue saved = takePendingException(globalObject);
+    // An exception that is propagating is set aside.
+    SuspendExceptionScope suspended(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     if (connection.db())
         warnUnclosed(globalObject, self);
     connection.statementCache.clear();
-    if (!closeConnection(globalObject, self))
+    if (failed(scope, closeConnection(globalObject, self)))
         reportUnraisable(globalObject, makeString("Exception ignored while closing database "_s, reprForMessage(globalObject, self)), jsUndefined());
-    if (saved)
-        rethrow(globalObject, saved);
     return jsUndefined();
 }
 
@@ -992,8 +1000,11 @@ static bool commit(JSGlobalObject* globalObject, PyRecord* self)
     Connection& connection = connectionOf(self);
     if (connection.autocommit == Autocommit::Legacy)
         RELEASE_AND_RETURN(scope, sqlite3_get_autocommit(connection.db()) || executeSimply(globalObject, connection, "COMMIT"));
-    if (connection.autocommit == Autocommit::Disabled)
-        RELEASE_AND_RETURN(scope, executeSimply(globalObject, connection, "COMMIT") && executeSimply(globalObject, connection, "BEGIN"));
+    if (connection.autocommit == Autocommit::Disabled) {
+        if (failed(scope, executeSimply(globalObject, connection, "COMMIT")))
+            return false;
+        RELEASE_AND_RETURN(scope, executeSimply(globalObject, connection, "BEGIN"));
+    }
     return true;
 }
 
@@ -1006,8 +1017,11 @@ static bool rollback(JSGlobalObject* globalObject, PyRecord* self)
     Connection& connection = connectionOf(self);
     if (connection.autocommit == Autocommit::Legacy)
         RELEASE_AND_RETURN(scope, sqlite3_get_autocommit(connection.db()) || executeSimply(globalObject, connection, "ROLLBACK"));
-    if (connection.autocommit == Autocommit::Disabled)
-        RELEASE_AND_RETURN(scope, executeSimply(globalObject, connection, "ROLLBACK") && executeSimply(globalObject, connection, "BEGIN"));
+    if (connection.autocommit == Autocommit::Disabled) {
+        if (failed(scope, executeSimply(globalObject, connection, "ROLLBACK")))
+            return false;
+        RELEASE_AND_RETURN(scope, executeSimply(globalObject, connection, "BEGIN"));
+    }
     return true;
 }
 
@@ -1018,15 +1032,17 @@ static JSValue connectionEnter(JSGlobalObject* globalObject, JSValue self) { ret
 
 static JSValue connectionExit(JSGlobalObject* globalObject, JSValue selfValue, JSValue type, JSValue value, JSValue traceback)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* self = asRecord(selfValue);
     if (!isNone(type) || !isNone(value) || !isNone(traceback))
-        return rollback(globalObject, self) ? jsBoolean(false) : JSValue();
-    if (commit(globalObject, self))
+        RELEASE_AND_RETURN(scope, rollback(globalObject, self) ? jsBoolean(false) : JSValue());
+    if (!failed(scope, commit(globalObject, self)))
         return jsBoolean(false);
     // So that the database is not left locked.
     JSValue failure = takePendingException(globalObject);
     rollback(globalObject, self);
-    chainExceptions(globalObject, failure);
+    chainExceptions(globalObject, scope, failure);
     return {};
 }
 
@@ -1088,11 +1104,11 @@ static RefPtr<Statement> createStatement(JSGlobalObject* globalObject, Database&
     DatabaseUse use(database);
     sqlite3* db = use.handle();
     if (text.size() > static_cast<size_t>(sqlite3_limit(db, SQLITE_LIMIT_SQL_LENGTH, -1))) {
-        raiseOf(globalObject, DataError(globalObject), "query string is too large"_s);
+        raise(globalObject, scope, DataError(globalObject), "query string is too large"_s);
         return nullptr;
     }
     if (text.contains(0)) {
-        raiseOf(globalObject, ProgrammingError(globalObject), "the query contains a null character"_s);
+        raise(globalObject, scope, ProgrammingError(globalObject), "the query contains a null character"_s);
         return nullptr;
     }
     text.append(0);
@@ -1100,18 +1116,19 @@ static RefPtr<Statement> createStatement(JSGlobalObject* globalObject, Database&
     sqlite3_stmt* handle;
     const char* tail;
     if (sqlite3_prepare_v2(db, cString(text), static_cast<int>(text.size()), &handle, &tail) != SQLITE_OK) {
+        scope.release();
         failFromDatabase(globalObject, db);
         return nullptr;
     }
     // By the authorizer.
     if (use.isClosed()) {
         takePendingException(globalObject);
-        raiseClosedDatabase(globalObject);
+        raiseClosedDatabase(globalObject, scope);
         sqlite3_finalize(handle);
         return nullptr;
     }
     if (skipToSQL(tail)) {
-        raiseOf(globalObject, ProgrammingError(globalObject), "You can only execute one statement at a time."_s);
+        raise(globalObject, scope, ProgrammingError(globalObject), "You can only execute one statement at a time."_s);
         sqlite3_finalize(handle);
         return nullptr;
     }
@@ -1162,7 +1179,7 @@ static JSValue connectionCall(JSGlobalObject* globalObject, JSValue selfValue, c
     if (!isStr(args[0]))
         return raiseTypeError(globalObject, scope, "argument 1 must be str, not "_s, typeNameOfArgument(globalObject, args[0]));
     RefPtr<Statement> statement = createStatement(globalObject, *connectionOf(self).database, args[0]);
-    if (!statement)
+    if (failed(scope, statement))
         return {};
     RELEASE_AND_RETURN(scope, createRecordWithState(globalObject, runtime(globalObject).typeFor(statementTypeDef), 0, std::unique_ptr<StatementHolder>(new StatementHolder { statement.releaseNonNull() })));
 }
@@ -1189,7 +1206,7 @@ static JSValue adapt(JSGlobalObject* globalObject, JSValue object, JSValue proto
         if (!adapter)
             continue;
         JSValue adapted = call(globalObject, adapter, argument);
-        if (adapted) {
+        if (!failed(scope, adapted)) {
             if (!isNone(adapted))
                 return adapted;
         } else if (!clearPendingExceptionIfMatches(globalObject, rt.TypeError()))
@@ -1284,7 +1301,7 @@ static bool setResult(JSGlobalObject* globalObject, sqlite3_context* context, JS
     }
     if (hasBuffer(value)) {
         BufferHolder holder(globalObject);
-        if (!holder.get(value))
+        if (failed(scope, holder.get(value)))
             return false;
         if (static_cast<size_t>(holder.buffer.length) > limit) {
             raiseOverflowError(globalObject, scope, "BLOB longer than INT_MAX bytes"_s);
@@ -1300,6 +1317,8 @@ static bool setResult(JSGlobalObject* globalObject, sqlite3_context* context, JS
 // ---- Callbacks ----
 //
 // SQLite cannot be told of an exception: what a callback raises ends here, and SQLite is given an error of its own kind.
+// A few leave one for whoever runs the statement (stepCallback(), finalCallback(), collationCallback()). SQLite goes on meanwhile,
+// and the callbacks it then calls run nothing on top of it.
 
 static void printOrClearException(CallbackContext& context)
 {
@@ -1311,6 +1330,15 @@ static void printOrClearException(CallbackContext& context)
 }
 
 static CallbackContext& contextOf(sqlite3_context* context) { return *static_cast<CallbackContext*>(sqlite3_user_data(context)); }
+
+static void rethrow(JSGlobalObject* globalObject, TopExceptionScope& scope, JSValue exception)
+{
+    {
+        auto throwScope = DECLARE_THROW_SCOPE(scope.vm());
+        throwPythonException(globalObject, throwScope, exception);
+    }
+    EXCEPTION_ASSERT_UNUSED(scope, scope.exception());
+}
 
 static void failCallback(sqlite3_context* sqliteContext, const char* message)
 {
@@ -1329,11 +1357,16 @@ static void functionCallback(sqlite3_context* sqliteContext, int count, sqlite3_
 {
     CallbackContext& context = contextOf(sqliteContext);
     JSGlobalObject* globalObject = context.globalObject;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
+    if (scope.exception()) {
+        sqlite3_result_error(sqliteContext, "user-defined function raised exception", -1);
+        return;
+    }
     MarkedArgumentBuffer arguments;
     JSValue result;
-    if (argumentsFromSQLite(globalObject, count, values, arguments))
+    if (!failed(scope, argumentsFromSQLite(globalObject, count, values, arguments)))
         result = callWith(globalObject, context.callable, arguments);
-    if (!result || !setResult(globalObject, sqliteContext, result))
+    if (failed(scope, result) || failed(scope, setResult(globalObject, sqliteContext, result)))
         failCallback(sqliteContext, "user-defined function raised exception");
 }
 
@@ -1348,6 +1381,9 @@ static void stepCallback(sqlite3_context* sqliteContext, int count, sqlite3_valu
     CallbackContext& context = contextOf(sqliteContext);
     JSGlobalObject* globalObject = context.globalObject;
     VM& vm = getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (scope.exception())
+        return;
     EncodedJSValue* slot = aggregateSlot(sqliteContext, true);
     if (!slot) {
         sqlite3_result_error_nomem(sqliteContext);
@@ -1355,7 +1391,7 @@ static void stepCallback(sqlite3_context* sqliteContext, int count, sqlite3_valu
     }
     if (!*slot) {
         JSValue instance = call(globalObject, context.callable);
-        if (!instance) {
+        if (failed(scope, instance)) {
             failCallback(sqliteContext, "user-defined aggregate's '__init__' method raised error");
             return;
         }
@@ -1363,16 +1399,16 @@ static void stepCallback(sqlite3_context* sqliteContext, int count, sqlite3_valu
         *slot = JSValue::encode(instance);
     }
     JSValue method = getAttr(globalObject, JSValue::decode(*slot), internString(vm, "step"_s));
-    if (!method) {
+    if (failed(scope, method)) {
         failCallback(sqliteContext, "user-defined aggregate's 'step' method not defined");
         return;
     }
     MarkedArgumentBuffer arguments;
-    if (!argumentsFromSQLite(globalObject, count, values, arguments)) {
+    if (failed(scope, argumentsFromSQLite(globalObject, count, values, arguments))) {
         // As in CPython, where the exception waits for whoever looks next.
         return;
     }
-    if (!callWith(globalObject, method, arguments))
+    if (failed(scope, callWith(globalObject, method, arguments)))
         failCallback(sqliteContext, "user-defined aggregate's 'step' method raised error");
 }
 
@@ -1392,17 +1428,22 @@ static void finalCallback(sqlite3_context* sqliteContext)
         *slot = 0;
         return;
     }
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue earlier = takePendingException(globalObject);
     JSValue result = callMethod(globalObject, instance, internString(vm, "finalize"_s));
     gcUnprotect(instance);
     *slot = 0;
-    if (result && setResult(globalObject, sqliteContext, result)) {
+    if (!failed(scope, result) && !failed(scope, setResult(globalObject, sqliteContext, result))) {
         if (earlier)
-            rethrow(globalObject, earlier);
+            rethrow(globalObject, scope, earlier);
         return;
     }
     bool isMissing = pendingExceptionMatches(globalObject, runtime(globalObject).AttributeError());
-    chainExceptions(globalObject, earlier);
+    {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        chainExceptions(globalObject, throwScope, earlier);
+    }
+    EXCEPTION_ASSERT(scope.exception());
     failCallback(sqliteContext, isMissing ? "user-defined aggregate's 'finalize' method not defined" : "user-defined aggregate's 'finalize' method raised error");
 }
 
@@ -1410,20 +1451,23 @@ static void inverseCallback(sqlite3_context* sqliteContext, int count, sqlite3_v
 {
     CallbackContext& context = contextOf(sqliteContext);
     JSGlobalObject* globalObject = context.globalObject;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
+    if (scope.exception())
+        return;
     EncodedJSValue* slot = aggregateSlot(sqliteContext, false);
     if (!slot || !*slot)
         return;
     JSValue method = getAttr(globalObject, JSValue::decode(*slot), internString(getVM(globalObject), "inverse"_s));
-    if (!method) {
+    if (failed(scope, method)) {
         failCallback(sqliteContext, "user-defined aggregate's 'inverse' method not defined");
         return;
     }
     MarkedArgumentBuffer arguments;
-    if (!argumentsFromSQLite(globalObject, count, values, arguments)) {
+    if (failed(scope, argumentsFromSQLite(globalObject, count, values, arguments))) {
         failCallback(sqliteContext, "unable to build arguments for user-defined aggregate's 'inverse' method");
         return;
     }
-    if (!callWith(globalObject, method, arguments))
+    if (failed(scope, callWith(globalObject, method, arguments)))
         failCallback(sqliteContext, "user-defined aggregate's 'inverse' method raised error");
 }
 
@@ -1431,18 +1475,21 @@ static void valueCallback(sqlite3_context* sqliteContext)
 {
     CallbackContext& context = contextOf(sqliteContext);
     JSGlobalObject* globalObject = context.globalObject;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
+    if (scope.exception())
+        return;
     // No row has been in the window yet, because of a FILTER or of a frame that is empty: NULL, as from finalCallback().
     // (CPython crashes.)
     EncodedJSValue* slot = aggregateSlot(sqliteContext, false);
     if (!slot || !*slot)
         return;
     JSValue result = callMethod(globalObject, JSValue::decode(*slot), internString(getVM(globalObject), "value"_s));
-    if (!result) {
+    if (failed(scope, result)) {
         bool isMissing = pendingExceptionMatches(globalObject, runtime(globalObject).AttributeError());
         failCallback(sqliteContext, isMissing ? "user-defined aggregate's 'value' method not defined" : "user-defined aggregate's 'value' method raised error");
         return;
     }
-    if (!setResult(globalObject, sqliteContext, result))
+    if (failed(scope, setResult(globalObject, sqliteContext, result)))
         failCallback(sqliteContext, "unable to set result from user-defined aggregate's 'value' method");
 }
 
@@ -1453,19 +1500,22 @@ static int authorizerCallback(void* data, int action, const char* first, const c
     CallbackContext context = database.authorizer;
     if (!context.callable)
         return SQLITE_OK;
-    OffLimits offLimits(database, "The authorizer callback cannot use the connection that calls it."_s);
     JSGlobalObject* globalObject = context.globalObject;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
+    if (scope.exception())
+        return SQLITE_DENY;
+    OffLimits offLimits(database, "The authorizer callback cannot use the connection that calls it."_s);
     JSValue arguments[5] = { jsNumber(action) };
     const char* texts[] = { first, second, databaseName, source };
     JSValue result;
     bool isBuilt = true;
     for (unsigned i = 0; i < 4 && isBuilt; ++i) {
         arguments[i + 1] = decodeCString(globalObject, texts[i]);
-        isBuilt = !!arguments[i + 1];
+        isBuilt = !failed(scope, arguments[i + 1]);
     }
     if (isBuilt)
         result = call(globalObject, context.callable, CallArgs(arguments, 5));
-    if (!result) {
+    if (failed(scope, result)) {
         printOrClearException(context);
         return SQLITE_DENY;
     }
@@ -1473,9 +1523,11 @@ static int authorizerCallback(void* data, int action, const char* first, const c
         return SQLITE_DENY;
     auto code = tryInt64(intValue(result));
     if (!code || *code < std::numeric_limits<int>::min() || *code > std::numeric_limits<int>::max()) {
-        auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
-        raiseOverflowError(globalObject, scope, "Python int too large to convert to C int"_s);
-        scope.release();
+        {
+            auto throwScope = DECLARE_THROW_SCOPE(getVM(globalObject));
+            raiseOverflowError(globalObject, throwScope, "Python int too large to convert to C int"_s);
+        }
+        EXCEPTION_ASSERT(scope.exception());
         printOrClearException(context);
         return SQLITE_DENY;
     }
@@ -1489,14 +1541,16 @@ static int progressCallback(void* data)
     CallbackContext context = database.progress;
     if (!context.callable)
         return 0;
-    OffLimits offLimits(database, "The progress handler cannot use the connection that calls it."_s);
     JSGlobalObject* globalObject = context.globalObject;
-    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
+    if (scope.exception())
+        return -1;
+    OffLimits offLimits(database, "The progress handler cannot use the connection that calls it."_s);
     JSValue result = call(globalObject, context.callable);
     bool stops = false;
-    if (result)
+    if (!failed(scope, result))
         stops = isTrue(globalObject, result);
-    if (vm.exceptionForInspection()) {
+    if (scope.exception()) {
         printOrClearException(context);
         return -1;
     }
@@ -1512,19 +1566,22 @@ static int traceCallback(unsigned type, void* data, void* statement, void* sql)
     if (!context.callable)
         return 0;
     JSGlobalObject* globalObject = context.globalObject;
-    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
+    if (scope.exception())
+        return 0;
     JSValue text;
     if (char* expanded = sqlite3_expanded_sql(static_cast<sqlite3_stmt*>(statement))) {
         text = decodeCString(globalObject, expanded);
         sqlite3_free(expanded);
     } else {
         raiseOf(globalObject, DataError(globalObject), "Expanded SQL string exceeds the maximum string length"_s);
+        EXCEPTION_ASSERT(scope.exception());
         printOrClearException(context);
         text = decodeCString(globalObject, static_cast<const char*>(sql));
     }
-    if (text)
+    if (!failed(scope, text))
         call(globalObject, context.callable, text);
-    if (vm.exceptionForInspection())
+    if (scope.exception())
         printOrClearException(context);
     return 0;
 }
@@ -1533,23 +1590,23 @@ static int collationCallback(void* data, int firstLength, const void* first, int
 {
     CallbackContext& context = *static_cast<CallbackContext*>(data);
     JSGlobalObject* globalObject = context.globalObject;
-    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
     // One statement makes many comparisons. After one has raised, the rest do not matter: whoever ran the statement finds the
     // exception.
-    if (vm.exceptionForInspection())
+    if (scope.exception())
         return 0;
     OffLimits offLimits(*context.database, "A collation cannot use the connection that calls it."_s);
     JSValue left = decodeUTF8(globalObject, { static_cast<const uint8_t*>(first), static_cast<size_t>(firstLength) });
-    if (!left)
+    if (failed(scope, left))
         return 0;
     JSValue right = decodeUTF8(globalObject, { static_cast<const uint8_t*>(second), static_cast<size_t>(secondLength) });
-    if (!right)
+    if (failed(scope, right))
         return 0;
     JSValue result = call(globalObject, context.callable, left, right);
-    if (!result)
+    if (failed(scope, result))
         return 0;
     JSValue index = toIndex(globalObject, result);
-    if (!index) {
+    if (failed(scope, index)) {
         takePendingException(globalObject);
         return 0;
     }
@@ -1568,18 +1625,19 @@ static bool checkParameterCount(JSGlobalObject* globalObject, Connection& connec
 }
 
 // Under which the Connection keeps the callable: SQLite tells functions apart by name, whatever the case, and number of arguments.
-static JSValue keyForCallable(JSGlobalObject* globalObject, ASCIILiteral kind, const Vector<uint8_t>& name, int parameterCount)
+static JSString* keyForCallable(JSGlobalObject* globalObject, ASCIILiteral kind, const Vector<uint8_t>& name, int parameterCount)
 {
     return makeStr(getVM(globalObject), makeString(kind, ' ', parameterCount, ' ', String::fromUTF8(cString(name)).convertToASCIILowercase()));
 }
 
-static void rememberCallable(JSGlobalObject* globalObject, PyRecord* self, JSValue key, JSValue callable)
+static void rememberCallable(JSGlobalObject* globalObject, PyRecord* self, JSString* key, JSValue callable)
 {
+    VM& vm = getVM(globalObject);
     auto* callables = PyDict::from(self->get(Callables));
     if (callable)
-        callables->set(globalObject, key, callable);
+        callables->set(vm, key, callable);
     else
-        callables->remove(globalObject, key);
+        callables->remove(vm, key);
 }
 
 static JSValue connectionCreateFunction(JSGlobalObject* globalObject, JSValue selfValue, const CallArgs& args)
@@ -1633,8 +1691,8 @@ static JSValue createAggregate(JSGlobalObject* globalObject, JSValue selfValue, 
     if (failed(scope, checkParameterCount(globalObject, connection, parameterCount, countName)))
         return {};
 
-    JSValue key = keyForCallable(globalObject, "function"_s, name, parameterCount);
-    JSValue temporaryKey = keyForCallable(globalObject, "new"_s, name, parameterCount);
+    JSString* key = keyForCallable(globalObject, "function"_s, name, parameterCount);
+    JSString* temporaryKey = keyForCallable(globalObject, "new"_s, name, parameterCount);
     JSValue aggregateClass = values[2];
     int rc;
     if (isWindowFunction && isNone(aggregateClass)) {
@@ -1676,7 +1734,7 @@ static JSValue connectionCreateCollation(JSGlobalObject* globalObject, JSValue s
         return {};
     Connection& connection = connectionOf(self);
     JSValue callable = values[1];
-    JSValue key = keyForCallable(globalObject, "collation"_s, name, 0);
+    JSString* key = keyForCallable(globalObject, "collation"_s, name, 0);
     int rc;
     if (isNone(callable)) {
         rc = sqlite3_create_collation_v2(connection.db(), cString(name), SQLITE_UTF8, nullptr, nullptr, nullptr);
@@ -1943,16 +2001,20 @@ static bool checkCursorIsNotLocked(JSGlobalObject* globalObject, Cursor& cursor)
 
 static bool checkCursor(JSGlobalObject* globalObject, PyRecord* self)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     Cursor& cursor = cursorOf(self);
     if (!cursor.isInitialized) {
-        raiseOf(globalObject, ProgrammingError(globalObject), "Base Cursor.__init__ not called."_s);
+        raise(globalObject, scope, ProgrammingError(globalObject), "Base Cursor.__init__ not called."_s);
         return false;
     }
     if (cursor.isClosed) {
-        raiseOf(globalObject, ProgrammingError(globalObject), "Cannot operate on a closed cursor."_s);
+        raise(globalObject, scope, ProgrammingError(globalObject), "Cannot operate on a closed cursor."_s);
         return false;
     }
-    return checkConnection(globalObject, asRecord(self->get(CursorConnection))) && checkCursorIsNotLocked(globalObject, cursor);
+    if (failed(scope, checkConnection(globalObject, asRecord(self->get(CursorConnection)))))
+        return false;
+    RELEASE_AND_RETURN(scope, checkCursorIsNotLocked(globalObject, cursor));
 }
 
 static JSValue cursorNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs&)
@@ -1987,9 +2049,9 @@ static JSValue cursorInit(JSGlobalObject* globalObject, JSValue selfValue, const
     return jsUndefined();
 }
 
-static JSValue raiseCannotReset(JSGlobalObject* globalObject)
+static JSValue raiseCannotReset(JSGlobalObject* globalObject, ThrowScope& scope)
 {
-    return raiseOf(globalObject, InternalError(globalObject), "cannot reset statement"_s);
+    return raise(globalObject, scope, InternalError(globalObject), "cannot reset statement"_s);
 }
 
 // The converter registered under the name, whatever its case. Empty: none, or an exception.
@@ -2127,7 +2189,7 @@ static JSValue fetchOneRow(JSGlobalObject* globalObject, PyRecord* self, PyRecor
                 JSValue factory = connectionRecord->get(TextFactory);
                 if (factory == JSValue(rt.strType())) {
                     converted = decodeUTF8(globalObject, bytes);
-                    if (!converted && clearPendingExceptionIfMatches(globalObject, rt.UnicodeDecodeError())) {
+                    if (failed(scope, converted) && clearPendingExceptionIfMatches(globalObject, rt.UnicodeDecodeError())) {
                         const char* name = sqlite3_column_name(current.statement, i);
                         if (!name)
                             return raiseMemoryError(globalObject, scope, String());
@@ -2197,7 +2259,7 @@ static int bindParameter(JSGlobalObject* globalObject, sqlite3_stmt* statement, 
     }
     if (hasBuffer(parameter)) {
         BufferHolder holder(globalObject);
-        if (!holder.get(parameter))
+        if (failed(scope, holder.get(parameter)))
             return SQLITE_ERROR;
         if (static_cast<size_t>(holder.buffer.length) > limit) {
             raiseOverflowError(globalObject, scope, "BLOB longer than INT_MAX bytes"_s);
@@ -2213,16 +2275,19 @@ static int bindParameter(JSGlobalObject* globalObject, sqlite3_stmt* statement, 
 // False: an exception.
 static bool adaptAndBind(JSGlobalObject* globalObject, sqlite3_stmt* statement, int position, JSValue parameter)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     if (needsAdapting(globalObject, parameter)) {
         parameter = adapt(globalObject, parameter, prepareProtocolType(globalObject), parameter);
-        if (!parameter)
+        if (failed(scope, parameter))
             return false;
     }
-    if (bindParameter(globalObject, statement, position, parameter) == SQLITE_OK)
+    int rc = bindParameter(globalObject, statement, position, parameter);
+    EXCEPTION_ASSERT(!scope.exception() || rc != SQLITE_OK);
+    if (rc == SQLITE_OK)
         return true;
     JSValue raised = takePendingException(globalObject);
     raiseFromDatabase(globalObject, sqlite3_db_handle(statement));
-    chainExceptions(globalObject, raised);
+    chainExceptions(globalObject, scope, raised);
     return false;
 }
 
@@ -2263,7 +2328,7 @@ static bool bindParameters(JSGlobalObject* globalObject, sqlite3_stmt* statement
                 item = getItem(globalObject, parameters, jsNumber(i));
                 RETURN_IF_EXCEPTION(scope, false);
             }
-            if (!adaptAndBind(globalObject, statement, i + 1, item))
+            if (failed(scope, adaptAndBind(globalObject, statement, i + 1, item)))
                 return false;
         }
         return true;
@@ -2279,13 +2344,13 @@ static bool bindParameters(JSGlobalObject* globalObject, sqlite3_stmt* statement
             JSValue key = decodeCString(globalObject, name);
             RETURN_IF_EXCEPTION(scope, false);
             JSValue item = getItem(globalObject, parameters, key);
-            if (!item) {
+            if (failed(scope, item)) {
                 if (!clearPendingExceptionIfMatches(globalObject, rt.KeyError()))
                     return false;
                 raise(globalObject, scope, ProgrammingError(globalObject), makeString("You did not supply a value for binding parameter :"_s, strValue(key)->value(globalObject).data, '.'));
                 return false;
             }
-            if (!adaptAndBind(globalObject, statement, i, item))
+            if (failed(scope, adaptAndBind(globalObject, statement, i, item)))
                 return false;
         }
         return true;
@@ -2321,8 +2386,8 @@ static JSValue executeQuery(JSGlobalObject* globalObject, PyRecord* self, bool i
             int stateBefore = sqlite3_errcode(sqlite3_db_handle(cursor.statement->handle()));
             if (resetAndDropStatement(globalObject, self) != SQLITE_OK && stateBefore == SQLITE_OK) {
                 JSValue raised = takePendingException(globalObject);
-                raiseCannotReset(globalObject);
-                chainExceptions(globalObject, raised);
+                raiseCannotReset(globalObject, scope);
+                chainExceptions(globalObject, scope, raised);
             }
         }
         cursor.rowCount = -1;
@@ -2333,14 +2398,14 @@ static JSValue executeQuery(JSGlobalObject* globalObject, PyRecord* self, bool i
         cursor.rowCount = -1;
         cursor.statement = nullptr;
         didChangeStatement(globalObject, self);
-        return raiseCannotReset(globalObject);
+        return raiseCannotReset(globalObject, scope);
     };
     // After anything that may have run code of the program. (If that has opened the connection anew, the statement goes on.)
     auto failIfClosed = [&] {
         if (connection.db())
             return false;
         takePendingException(globalObject);
-        raiseClosedDatabase(globalObject);
+        raiseClosedDatabase(globalObject, scope);
         return true;
     };
 
@@ -2360,7 +2425,7 @@ static JSValue executeQuery(JSGlobalObject* globalObject, PyRecord* self, bool i
     DatabaseUse use(*connection.database);
     sqlite3* db = use.handle();
     cursor.statement = statementFromCache(globalObject, connection, use.database(), operation);
-    if (!cursor.statement)
+    if (failed(scope, cursor.statement))
         return finish();
     self->set(vm, CursorCallables, connectionRecord->get(Callables));
     if (isMultiple && sqlite3_stmt_readonly(cursor.statement->handle())) {
@@ -2370,7 +2435,7 @@ static JSValue executeQuery(JSGlobalObject* globalObject, PyRecord* self, bool i
     // Another cursor is in the middle of it.
     if (sqlite3_stmt_busy(cursor.statement->handle())) {
         cursor.statement = createStatement(globalObject, use.database(), operation);
-        if (!cursor.statement)
+        if (failed(scope, cursor.statement))
             return finish();
     }
     if (cursor.statement->reset() != SQLITE_OK)
@@ -2379,7 +2444,7 @@ static JSValue executeQuery(JSGlobalObject* globalObject, PyRecord* self, bool i
 
     if (connection.autocommit == Autocommit::Legacy && !connection.isolationLevel.isNull() && cursor.statement->isDML() && sqlite3_get_autocommit(db)) {
         auto begin = makeString("BEGIN "_s, connection.isolationLevel).ascii();
-        if (!executeSimply(globalObject, use.database(), begin.data()) || failIfClosed())
+        if (failed(scope, executeSimply(globalObject, use.database(), begin.data())) || failIfClosed())
             return finish();
     }
 
@@ -2410,7 +2475,7 @@ static JSValue executeQuery(JSGlobalObject* globalObject, PyRecord* self, bool i
             isDone = true;
             current = parameters ? parameters : JSValue(rt.emptyTuple());
         }
-        if (!bindParameters(globalObject, statement.handle(), current) || failIfClosed())
+        if (failed(scope, bindParameters(globalObject, statement.handle(), current)) || failIfClosed())
             return finish();
 
         int rc;
@@ -2448,7 +2513,7 @@ static JSValue executeQuery(JSGlobalObject* globalObject, PyRecord* self, bool i
                     return finish();
                 }
                 JSValue decoded = columnName(globalObject, connection, name);
-                if (!decoded)
+                if (failed(scope, decoded))
                     return finish();
                 columns.append(PyTuple::create(globalObject, { decoded, jsUndefined(), jsUndefined(), jsUndefined(), jsUndefined(), jsUndefined(), jsUndefined() }));
             }
@@ -2528,16 +2593,17 @@ static JSValue cursorExecuteScript(JSGlobalObject* globalObject, JSValue selfVal
     EnsureStillAliveScope callables(connectionRecord->get(Callables));
     size_t length = text.size() - 1;
     if (length > static_cast<size_t>(sqlite3_limit(db, SQLITE_LIMIT_SQL_LENGTH, -1)))
-        RELEASE_AND_RETURN(scope, raiseOf(globalObject, DataError(globalObject), "query string is too large"_s));
+        return raise(globalObject, scope, DataError(globalObject), "query string is too large"_s);
 
     auto fail = [&]() -> JSValue {
+        scope.release();
         return failFromDatabase(globalObject, db);
     };
     auto failIfClosed = [&] {
         if (connection.db())
             return false;
         takePendingException(globalObject);
-        raiseClosedDatabase(globalObject);
+        raiseClosedDatabase(globalObject, scope);
         return true;
     };
     if (connection.autocommit == Autocommit::Legacy && !sqlite3_get_autocommit(db) && sqlite3_exec(db, "COMMIT", nullptr, nullptr, nullptr) != SQLITE_OK)
@@ -2561,8 +2627,7 @@ static JSValue cursorExecuteScript(JSGlobalObject* globalObject, JSValue selfVal
             takePendingException(globalObject);
             return fail();
         }
-        if (getVM(globalObject).exceptionForInspection())
-            return {};
+        RETURN_IF_EXCEPTION(scope, {});
         if (!*tail)
             break;
         length -= tail - rest;
@@ -2622,12 +2687,13 @@ static JSValue nextRow(JSGlobalObject* globalObject, PyRecord* self)
         if (statement->isDML())
             cursor.rowCount = cursor.storedRows ? cursor.storedRows->changes : sqlite3_changes(db);
         if (resetAndDropStatement(globalObject, self) != SQLITE_OK)
-            RELEASE_AND_RETURN(scope, raiseCannotReset(globalObject));
+            return raiseCannotReset(globalObject, scope);
     } else if (rc != SQLITE_ROW) {
         takePendingException(globalObject);
         int raised = raiseFromDatabase(globalObject, db);
+        EXCEPTION_ASSERT(scope.exception() || raised == SQLITE_OK);
         if (resetAndDropStatement(globalObject, self) != SQLITE_OK && raised == SQLITE_OK)
-            RELEASE_AND_RETURN(scope, raiseCannotReset(globalObject));
+            return raiseCannotReset(globalObject, scope);
         return {};
     }
     RETURN_IF_EXCEPTION(scope, {});
@@ -2723,7 +2789,7 @@ static JSValue cursorClose(JSGlobalObject* globalObject, JSValue selfValue)
     if (failed(scope, checkConnection(globalObject, asRecord(self->get(CursorConnection)))))
         return {};
     if (resetAndDropStatement(globalObject, self) != SQLITE_OK)
-        RELEASE_AND_RETURN(scope, raiseCannotReset(globalObject));
+        return raiseCannotReset(globalObject, scope);
     cursor.isClosed = true;
     return jsUndefined();
 }
@@ -2815,7 +2881,7 @@ static JSValue connectionExecute(JSGlobalObject* globalObject, JSValue self, JSV
     if (failed(scope, checkIsStr(globalObject, "execute"_s, "argument 1"_s, sql)))
         return {};
     JSValue cursor = makeCursor(globalObject, asRecord(self), {});
-    if (!cursor)
+    if (failed(scope, cursor))
         return {};
     RELEASE_AND_RETURN(scope, executeQuery(globalObject, asRecord(cursor), false, sql, parameters));
 }
@@ -2827,17 +2893,19 @@ static JSValue connectionExecuteMany(JSGlobalObject* globalObject, JSValue self,
     if (failed(scope, checkIsStr(globalObject, "executemany"_s, "argument 1"_s, sql)))
         return {};
     JSValue cursor = makeCursor(globalObject, asRecord(self), {});
-    if (!cursor)
+    if (failed(scope, cursor))
         return {};
     RELEASE_AND_RETURN(scope, executeQuery(globalObject, asRecord(cursor), true, sql, parameters));
 }
 
 static JSValue connectionExecuteScript(JSGlobalObject* globalObject, JSValue self, JSValue script)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue cursor = makeCursor(globalObject, asRecord(self), {});
-    if (!cursor)
+    if (failed(scope, cursor))
         return {};
-    if (!callMethod(globalObject, cursor, internString(getVM(globalObject), "executescript"_s), script))
+    if (failed(scope, callMethod(globalObject, cursor, internString(getVM(globalObject), "executescript"_s), script)))
         return {};
     return cursor;
 }
@@ -2955,6 +3023,7 @@ static JSValue connectionSerialize(JSGlobalObject* globalObject, JSValue self, J
     }
     if (!data)
         RELEASE_AND_RETURN(scope, raiseOf(globalObject, OperationalError(globalObject), makeString("unable to serialize '"_s, String::fromUTF8(cString(name)), '\'')));
+    scope.release();
     JSValue result = bytesFrom(globalObject, { data, static_cast<size_t>(size) });
     if (isCopy)
         sqlite3_free(data);
@@ -2973,7 +3042,7 @@ static JSValue connectionDeserialize(JSGlobalObject* globalObject, JSValue self,
             return {};
         bytes = text.span();
     } else {
-        if (!holder.get(data))
+        if (failed(scope, holder.get(data)))
             return {};
         bytes = holder.buffer.span();
     }
@@ -3056,6 +3125,7 @@ static int configure(JSGlobalObject* globalObject, JSValue self, int option, int
     sqlite3* db = connectionOf(asRecord(self)).db();
     int actual;
     if (sqlite3_db_config(db, option, setting, &actual) != SQLITE_OK) {
+        scope.release();
         failFromDatabase(globalObject, db);
         return -1;
     }
@@ -3260,7 +3330,7 @@ static bool checkBlob(JSGlobalObject* globalObject, JSValue self)
         return false;
     if (blobOf(self).handle)
         return true;
-    raiseOf(globalObject, ProgrammingError(globalObject), "Cannot operate on a closed blob."_s);
+    raise(globalObject, scope, ProgrammingError(globalObject), "Cannot operate on a closed blob."_s);
     return false;
 }
 
@@ -3276,12 +3346,13 @@ static JSValue blobClose(JSGlobalObject* globalObject, JSValue self)
 
 static JSValue readFromBlob(JSGlobalObject* globalObject, Blob& blob, int64_t length, int64_t offset)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     PyBytes* result = newBytes(globalObject, length);
-    if (!result)
+    if (failed(scope, result))
         return {};
     int rc = sqlite3_blob_read(blob.handle, result->mutableData(), static_cast<int>(length), static_cast<int>(offset));
     if (rc != SQLITE_OK)
-        return raiseFromCode(globalObject, rc);
+        RELEASE_AND_RETURN(scope, raiseFromCode(globalObject, rc));
     return result;
 }
 
@@ -3315,7 +3386,7 @@ static JSValue blobRead(JSGlobalObject* globalObject, JSValue self, JSValue leng
     if (!length)
         RELEASE_AND_RETURN(scope, runtime(globalObject).emptyBytes());
     JSValue result = readFromBlob(globalObject, blob, length, blob.offset);
-    if (result)
+    if (!failed(scope, result))
         blob.offset += length;
     return result;
 }
@@ -3325,7 +3396,7 @@ static JSValue blobWrite(JSGlobalObject* globalObject, JSValue self, JSValue dat
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     BufferHolder holder(globalObject);
-    if (!holder.get(data) || failed(scope, checkBlob(globalObject, self)))
+    if (failed(scope, holder.get(data)) || failed(scope, checkBlob(globalObject, self)))
         return {};
     Blob& blob = blobOf(self);
     if (failed(scope, writeToBlob(globalObject, blob, holder.buffer.span(), blob.offset)))
@@ -3417,7 +3488,7 @@ static JSValue blobGetItem(JSGlobalObject* globalObject, JSValue self, JSValue i
     if (!slice)
         return raiseTypeError(globalObject, scope, "Blob indices must be integers"_s);
     PySlice::Indices indices;
-    if (!slice->unpack(globalObject, indices))
+    if (failed(scope, slice->unpack(globalObject, indices)))
         return {};
     PySlice::adjust(sqlite3_blob_bytes(blob.handle), indices);
     if (!indices.length)
@@ -3462,11 +3533,11 @@ static JSValue blobAssign(JSGlobalObject* globalObject, JSValue self, JSValue it
     if (!value)
         return raiseTypeError(globalObject, scope, "Blob doesn't support slice deletion"_s);
     PySlice::Indices indices;
-    if (!slice->unpack(globalObject, indices))
+    if (failed(scope, slice->unpack(globalObject, indices)))
         return {};
     PySlice::adjust(sqlite3_blob_bytes(blob.handle), indices);
     BufferHolder holder(globalObject);
-    if (!holder.get(value))
+    if (failed(scope, holder.get(value)))
         return {};
     if (holder.buffer.length != indices.length)
         return raiseIndexError(globalObject, scope, "Blob slice assignment is wrong size"_s);
@@ -3686,13 +3757,17 @@ static JSValue rowIter(JSGlobalObject* globalObject, JSValue self) { return getI
 
 static JSValue rowKeys(JSGlobalObject* globalObject, JSValue self)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSArray* keys = newList(globalObject);
     JSValue description = asRecord(self)->get(RowDescription);
     if (isNone(description))
         return keys;
     PyTuple* columns = PyTuple::from(description);
-    for (unsigned i = 0; i < columns->length(); ++i)
+    for (unsigned i = 0; i < columns->length(); ++i) {
         listAppend(globalObject, keys, PyTuple::from(columns->at(i))->at(0));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     return keys;
 }
 

@@ -324,7 +324,7 @@ JSValue decompressWith(JSGlobalObject* globalObject, PyRecord* self, Decompresso
     }
 
     JSValue result = output.finish(globalObject);
-    if (!result) {
+    if (failed(scope, result)) {
         state.keptInput.clear();
         return {};
     }
@@ -333,7 +333,7 @@ JSValue decompressWith(JSGlobalObject* globalObject, PyRecord* self, Decompresso
         state.needsInput = false;
         if (!input.empty()) {
             JSValue unused = bytesFrom(globalObject, input);
-            if (!unused) {
+            if (failed(scope, unused)) {
                 state.keptInput.clear();
                 return {};
             }

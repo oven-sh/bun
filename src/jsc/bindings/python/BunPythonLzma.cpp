@@ -156,10 +156,12 @@ struct Filter {
 // mapping[name], or the empty value if that is a KeyError. `isMissing` tells that from an exception.
 static JSValue optionalItem(JSGlobalObject* globalObject, JSValue mapping, ASCIILiteral name, bool& isMissing)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     Runtime& rt = runtime(globalObject);
     isMissing = false;
     JSValue item = getItem(globalObject, mapping, internString(rt.vm(), name));
-    if (!item)
+    if (failed(scope, item))
         isMissing = clearPendingExceptionIfMatches(globalObject, rt.KeyError());
     return item;
 }
@@ -186,7 +188,7 @@ static bool parseOptions(JSGlobalObject* globalObject, JSValue specifier, const 
             if (!value)
                 continue;
             --unknown;
-            if (!convert(i, value))
+            if (failed(scope, convert(i, value)))
                 return false;
         }
         return !unknown;
@@ -206,17 +208,19 @@ static bool parseLzmaOptions(JSGlobalObject* globalObject, JSValue specifier, lz
     uint32_t preset = LZMA_PRESET_DEFAULT;
     bool isMissing;
     JSValue presetValue = optionalItem(globalObject, specifier, "preset"_s, isMissing);
-    if (!presetValue && !isMissing)
+    if (failed(scope, presetValue || isMissing))
         return false;
     if (presetValue && failed(scope, uint32Value(globalObject, presetValue, preset)))
         return false;
     memset(&options, 0, sizeof(options));
     if (lzma_lzma_preset(&options, preset)) {
+        scope.release();
         raiseLzmaError(globalObject, makeString("Invalid compression preset: "_s, preset));
         return false;
     }
 
     static constexpr ASCIILiteral names[] = { "id"_s, "preset"_s, "dict_size"_s, "lc"_s, "lp"_s, "pb"_s, "mode"_s, "nice_len"_s, "mf"_s, "depth"_s };
+    scope.release();
     return parseOptions(globalObject, specifier, names, "Invalid filter specifier for LZMA filter"_s, [&](size_t i, JSValue value) {
         uint32_t number;
         switch (i) {
@@ -259,6 +263,7 @@ static bool parseFilter(JSGlobalObject* globalObject, JSValue specifier, Filter&
     }
     bool isMissing;
     JSValue idValue = optionalItem(globalObject, specifier, "id"_s, isMissing);
+    EXCEPTION_ASSERT(!!scope.exception() == (!idValue && !isMissing));
     if (!idValue) {
         if (isMissing)
             raiseValueError(globalObject, scope, "Filter specifier must have an \"id\" entry"_s);
@@ -271,14 +276,14 @@ static bool parseFilter(JSGlobalObject* globalObject, JSValue specifier, Filter&
     switch (id) {
     case LZMA_FILTER_LZMA1:
     case LZMA_FILTER_LZMA2:
-        if (!parseLzmaOptions(globalObject, specifier, result.options.lzma))
+        if (failed(scope, parseLzmaOptions(globalObject, specifier, result.options.lzma)))
             return false;
         result.filter.options = &result.options.lzma;
         break;
     case LZMA_FILTER_DELTA: {
         static constexpr ASCIILiteral names[] = { "id"_s, "dist"_s };
         uint32_t distance = 1;
-        if (!parseOptions(globalObject, specifier, names, "Invalid filter specifier for delta filter"_s, [&](size_t i, JSValue value) { return !i || uint32Value(globalObject, value, distance); }))
+        if (failed(scope, parseOptions(globalObject, specifier, names, "Invalid filter specifier for delta filter"_s, [&](size_t i, JSValue value) { return !i || uint32Value(globalObject, value, distance); })))
             return false;
         memset(&result.options.delta, 0, sizeof(result.options.delta));
         result.options.delta.type = LZMA_DELTA_TYPE_BYTE;
@@ -294,7 +299,7 @@ static bool parseFilter(JSGlobalObject* globalObject, JSValue specifier, Filter&
     case LZMA_FILTER_SPARC: {
         static constexpr ASCIILiteral names[] = { "id"_s, "start_offset"_s };
         uint32_t startOffset = 0;
-        if (!parseOptions(globalObject, specifier, names, "Invalid filter specifier for BCJ filter"_s, [&](size_t i, JSValue value) { return !i || uint32Value(globalObject, value, startOffset); }))
+        if (failed(scope, parseOptions(globalObject, specifier, names, "Invalid filter specifier for BCJ filter"_s, [&](size_t i, JSValue value) { return !i || uint32Value(globalObject, value, startOffset); })))
             return false;
         memset(&result.options.bcj, 0, sizeof(result.options.bcj));
         result.options.bcj.start_offset = startOffset;
@@ -350,7 +355,7 @@ static bool parseFilterChain(JSGlobalObject* globalObject, JSValue specifiers, F
         }
         JSValue specifier = getItem(globalObject, specifiers, jsNumber(static_cast<int32_t>(i)));
         RETURN_IF_EXCEPTION(scope, false);
-        if (!parseFilter(globalObject, specifier, chain.parsed[i]))
+        if (failed(scope, parseFilter(globalObject, specifier, chain.parsed[i])))
             return false;
         chain.filters[i] = chain.parsed[i].filter;
     }
@@ -426,7 +431,7 @@ static bool initializeEncoder(JSGlobalObject* globalObject, lzma_stream& stream,
         if (!hasFilters)
             status = lzma_easy_encoder(&stream, preset, static_cast<lzma_check>(check));
         else {
-            if (!parseFilterChain(globalObject, filters, chain))
+            if (failed(scope, parseFilterChain(globalObject, filters, chain)))
                 return false;
             status = lzma_stream_encoder(&stream, chain.filters, static_cast<lzma_check>(check));
         }
@@ -435,12 +440,13 @@ static bool initializeEncoder(JSGlobalObject* globalObject, lzma_stream& stream,
         if (!hasFilters) {
             lzma_options_lzma options;
             if (lzma_lzma_preset(&options, preset)) {
+                scope.release();
                 raiseLzmaError(globalObject, makeString("Invalid compression preset: "_s, preset));
                 return false;
             }
             status = lzma_alone_encoder(&stream, &options);
         } else {
-            if (!parseFilterChain(globalObject, filters, chain))
+            if (failed(scope, parseFilterChain(globalObject, filters, chain)))
                 return false;
             if (chain.filters[0].id != LZMA_FILTER_LZMA1 || chain.filters[1].id != LZMA_VLI_UNKNOWN) {
                 raiseValueError(globalObject, scope, "Invalid filter chain for FORMAT_ALONE - must be a single LZMA1 filter"_s);
@@ -454,7 +460,7 @@ static bool initializeEncoder(JSGlobalObject* globalObject, lzma_stream& stream,
             raiseValueError(globalObject, scope, "Must specify filters for FORMAT_RAW"_s);
             return false;
         }
-        if (!parseFilterChain(globalObject, filters, chain))
+        if (failed(scope, parseFilterChain(globalObject, filters, chain)))
             return false;
         status = lzma_raw_encoder(&stream, chain.filters);
         break;
@@ -493,7 +499,7 @@ static JSValue compressorNew(JSGlobalObject* globalObject, JSValue cls, const Ca
         return {};
 
     auto state = makeUnique<Compressor>();
-    if (!initializeEncoder(globalObject, state->stream.stream, format, check, preset, filters))
+    if (failed(scope, initializeEncoder(globalObject, state->stream.stream, format, check, preset, filters)))
         return {};
     PyRecord* self = createRecordWithState(globalObject, PyType::from(cls), 0, WTF::move(state));
     stateOf<Compressor>(self)->memory.report(vm);
@@ -547,11 +553,11 @@ static JSValue compressorCompress(JSGlobalObject* globalObject, JSValue self, JS
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     BufferHolder input(globalObject);
-    if (!input.get(data))
+    if (failed(scope, input.get(data)))
         return {};
     auto& state = *stateOf<Compressor>(self);
     ObjectLocker locker(globalObject, state.lock);
-    if (!locker || !refreshBuffers(globalObject, input))
+    if (failed(scope, !!locker) || failed(scope, refreshBuffers(globalObject, input)))
         return {};
     if (state.isFlushed)
         return raiseValueError(globalObject, scope, "Compressor has been flushed"_s);
@@ -564,7 +570,7 @@ static JSValue compressorFlush(JSGlobalObject* globalObject, JSValue self)
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto& state = *stateOf<Compressor>(self);
     ObjectLocker locker(globalObject, state.lock);
-    if (!locker)
+    if (failed(scope, !!locker))
         return {};
     if (state.isFlushed)
         return raiseValueError(globalObject, scope, "Repeated call to flush()"_s);
@@ -636,7 +642,7 @@ static JSValue decompressorNew(JSGlobalObject* globalObject, JSValue cls, const 
     case FormatRaw: {
         state->check = LZMA_CHECK_NONE;
         FilterChain chain;
-        if (!parseFilterChain(globalObject, filters, chain))
+        if (failed(scope, parseFilterChain(globalObject, filters, chain)))
             return {};
         status = lzma_raw_decoder(&stream, chain.filters);
         break;
@@ -661,7 +667,7 @@ static JSValue decompressorDecompress(JSGlobalObject* globalObject, JSValue self
     if (failed(scope, unpackArguments(globalObject, { "decompress"_s, 0, 1, 2, names }, args, values)))
         return {};
     BufferHolder input(globalObject);
-    if (!input.get(values[0]))
+    if (failed(scope, input.get(values[0])))
         return {};
     int64_t maxLength = -1;
     if (values[1] && failed(scope, ssizeArgument(globalObject, values[1], maxLength)))
@@ -669,7 +675,7 @@ static JSValue decompressorDecompress(JSGlobalObject* globalObject, JSValue self
     auto* self = uncheckedDowncast<PyRecord>(selfValue.asCell());
     auto& state = *stateOf<Decompressor>(self);
     ObjectLocker locker(globalObject, state.lock);
-    if (!locker || !refreshBuffers(globalObject, input))
+    if (failed(scope, !!locker) || failed(scope, refreshBuffers(globalObject, input)))
         return {};
     if (state.isAtEnd)
         return raiseEOFError(globalObject, scope, "Already at end of stream"_s);
@@ -752,21 +758,23 @@ static JSValue isCheckSupported(JSGlobalObject* globalObject, JSValue checkValue
 
 static JSValue encodeFilterProperties(JSGlobalObject* globalObject, JSValue specifier)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     Filter filter;
-    if (!parseFilter(globalObject, specifier, filter))
+    if (failed(scope, parseFilter(globalObject, specifier, filter)))
         return {};
     uint32_t size;
     lzma_ret status = lzma_properties_size(&size, &filter.filter);
     if (isError(status))
-        return raiseError(globalObject, status);
+        RELEASE_AND_RETURN(scope, raiseError(globalObject, status));
     PyBytes* result = newBytes(globalObject, size);
-    if (!result)
+    if (failed(scope, result))
         return {};
     // An empty bytes is everybody's.
     uint8_t nothing;
     status = lzma_properties_encode(&filter.filter, size ? result->mutableData() : &nothing);
     if (isError(status))
-        return raiseError(globalObject, status);
+        RELEASE_AND_RETURN(scope, raiseError(globalObject, status));
     return result;
 }
 
@@ -778,13 +786,14 @@ static JSValue decodeFilterProperties(JSGlobalObject* globalObject, JSValue idVa
     if (failed(scope, unsignedValue(globalObject, idValue, "lzma_vli"_s, filter.id)))
         return {};
     BufferHolder input(globalObject);
-    if (!input.get(properties))
+    if (failed(scope, input.get(properties)))
         return {};
     LibraryMemory memory;
     lzma_allocator allocator { allocate, release, &memory };
     lzma_ret status = lzma_properties_decode(&filter, &allocator, input.buffer.data, static_cast<size_t>(input.buffer.length));
     if (isError(status))
         RELEASE_AND_RETURN(scope, raiseError(globalObject, status));
+    scope.release();
     JSValue result = buildFilterSpecifier(globalObject, filter);
     LibraryMemory::free(filter.options);
     return result;

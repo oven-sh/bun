@@ -1170,9 +1170,10 @@ private:
         ASSERT(value.isCell());
 
         if (isPyObjectType(value.asCell()->type())) [[unlikely]] {
+            // Not a ThrowScope: this function goes on. An exception stays, and the caller looks for it.
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_lexicalGlobalObject->vm());
             value = counterpartOfPythonObject(value);
-            // The caller looks for the exception.
-            if (!value)
+            if (scope.exception()) [[unlikely]]
                 return true;
             if (!value.isCell()) {
                 dumpImmediate(value, code);

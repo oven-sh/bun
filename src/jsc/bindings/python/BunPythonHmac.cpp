@@ -84,7 +84,7 @@ static JSValue newHMAC(JSGlobalObject* globalObject, JSValue keyValue, JSValue m
     if (!digestmod)
         return raiseTypeError(globalObject, scope, "new() missing 1 required argument 'digestmod'"_s);
     auto kind = kindFor(globalObject, digestmod);
-    if (!kind)
+    if (failed(scope, kind))
         return {};
     BufferHolder key(globalObject);
     if (failed(scope, getDataToHash(globalObject, keyValue, key)))
@@ -113,10 +113,12 @@ static JSValue compute(JSGlobalObject* globalObject, HashKind kind, JSValue keyV
 
 static JSValue computeDigest(JSGlobalObject* globalObject, JSValue key, JSValue message, JSValue digestmod)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto kind = kindFor(globalObject, digestmod);
-    if (!kind)
+    if (failed(scope, kind))
         return {};
-    return compute(globalObject, *kind, key, message);
+    RELEASE_AND_RETURN(scope, compute(globalObject, *kind, key, message));
 }
 
 template<HashKind kind>

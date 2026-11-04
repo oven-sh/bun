@@ -183,7 +183,7 @@ inline bool nonNegativeSsizeArgument(JSGlobalObject* globalObject, JSValue value
     }
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!ssizeArgument(globalObject, value, result))
+    if (failed(scope, ssizeArgument(globalObject, value, result)))
         return false;
     if (result < 0) {
         raiseValueError(globalObject, scope, name, " cannot be negative"_s);

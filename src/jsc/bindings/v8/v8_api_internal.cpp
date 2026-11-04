@@ -43,13 +43,14 @@ void DisposeGlobal(uintptr_t* location)
 
 void MakeWeak(uintptr_t* location, void* data, WeakCallbackInfo<void>::Callback weak_callback, WeakCallbackType type)
 {
-    // Record the parameter so ClearWeak() can return it. The underlying handle
-    // keeps its strong root in the GlobalHandleRegistry; firing the callback on collect
-    // is not yet wired up.
-    (void)weak_callback;
-    (void)type;
     if (!location) return;
-    shim::GlobalHandleRegistry::makeWeak(reinterpret_cast<shim::GlobalHandle*>(location), data);
+    shim::GlobalHandleRegistry::makeWeak(reinterpret_cast<shim::GlobalHandle*>(location), data, weak_callback, type);
+}
+
+void MakeWeak(uintptr_t** location_addr)
+{
+    if (!*location_addr) return;
+    shim::GlobalHandleRegistry::makeWeak(reinterpret_cast<shim::GlobalHandle*>(*location_addr), location_addr, nullptr, WeakCallbackType::kParameter);
 }
 
 void* ClearWeak(uintptr_t* location)
@@ -60,10 +61,11 @@ void* ClearWeak(uintptr_t* location)
 
 void MoveGlobalReference(uintptr_t** from, uintptr_t** to)
 {
-    // The inline caller already copied *from into *to. Our weak state is keyed by the
-    // global-handle storage slot (which did not move), so nothing to update here.
-    (void)from;
-    (void)to;
+    // The inline caller has copied *from into *to, which is not null. Only a handle that is not Normal records where its v8::Global is.
+    if (reinterpret_cast<shim::GlobalHandle*>(*to)->state() == shim::GlobalHandle::State::Normal) [[likely]] {
+        return;
+    }
+    shim::GlobalHandleRegistry::didMove(from, to);
 }
 
 Local<Value> GetFunctionTemplateData(Isolate* isolate, Local<Data> target)

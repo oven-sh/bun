@@ -65,7 +65,9 @@ DEFINE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE, GlobalInternals);
 HandleScopeBuffer* GlobalInternals::currentHandleScope()
 {
     auto* scope = m_globalObject->m_currentHandleScopeImpl.get();
-    RELEASE_ASSERT_WITH_MESSAGE(scope, "Cannot create a V8 handle without an open handle scope");
+    if (!scope) [[unlikely]] {
+        GlobalHandleRegistry::crashWithoutHandleScope(m_globalObject->vm());
+    }
     return &scope->ensureV8Handles(&m_isolate);
 }
 

@@ -3,6 +3,7 @@
 #include "napi_handle_scope.h"
 #include "v8_compatibility_assertions.h"
 #include "v8_handle_scope_data.h"
+#include <JavaScriptCore/DeferGC.h>
 
 // The size must match, because if our HandleScope is too big it'll clobber other stack variables.
 // The field offsets matter too since Node 26 (V8 14): the headers fully inline
@@ -53,6 +54,8 @@ HandleScope::~HandleScope()
 uintptr_t* HandleScope::CreateHandle(internal::Isolate* i_isolate, uintptr_t value)
 {
     auto* isolate = reinterpret_cast<Isolate*>(i_isolate);
+    // As in Extend(): `value` can be the word of a weak v8::Global.
+    JSC::AssertNoGC assertNoGC;
     TaggedPointer* newSlot = isolate->currentHandleScope()->createHandleFromExistingObject(TaggedPointer::fromRaw(value));
     // basically a reinterpret
     return newSlot->asRawPtrLocation();
@@ -80,6 +83,9 @@ void HandleScope::Initialize(Isolate* isolate)
 
 uintptr_t* HandleScope::Extend(Isolate* isolate)
 {
+    // The caller can hold the word of a weak v8::Global, which only the slot keeps alive once it is stored.
+    JSC::AssertNoGC assertNoGC;
+
     // V8 14's inline HandleScope::CreateHandle (v8-local-handle.h) calls Extend when
     // data->next == data->limit, then stores the value into the returned slot itself and sets
     // data->next to one past the slot. The Isolate's HandleScopeData starts zeroed

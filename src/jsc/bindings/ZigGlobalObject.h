@@ -303,6 +303,8 @@ public:
     Structure* JSSQLDatabaseStructure() const { return m_JSSQLDatabaseStructure.getInitializedOnMainThread(this); }
 
     v8::shim::GlobalInternals* V8GlobalInternals() const { return m_V8GlobalInternals.getInitializedOnMainThread(this); }
+    // Null until this realm uses the V8 API. Allocates nothing.
+    v8::shim::GlobalInternals* V8GlobalInternalsIfExists() const { return m_V8GlobalInternals.getConcurrently(); }
 
     bool hasProcessObject() const { return m_processObject.isInitialized(); }
 

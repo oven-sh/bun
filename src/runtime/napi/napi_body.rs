@@ -3687,6 +3687,7 @@ mod v8_api {
         pub(super) fn _ZN2v812api_internal13DisposeGlobalEPm() -> *mut c_void;
         pub(super) fn _ZN2v812api_internal8MakeWeakEPmPvPFvRKNS_16WeakCallbackInfoIvEEENS_16WeakCallbackTypeE()
         -> *mut c_void;
+        pub(super) fn _ZN2v812api_internal8MakeWeakEPPm() -> *mut c_void;
         pub(super) fn _ZN2v812api_internal9ClearWeakEPm() -> *mut c_void;
         pub(super) fn _ZN2v812api_internal19MoveGlobalReferenceEPPmS2_() -> *mut c_void;
         pub(super) fn _ZN2v812api_internal23GetFunctionTemplateDataEPNS_7IsolateENS_5LocalINS_4DataEEE()
@@ -4019,6 +4020,8 @@ mod v8_api {
         pub(super) fn v8_api_internal_DisposeGlobal() -> *mut c_void;
         #[link_name = "?MakeWeak@api_internal@v8@@YAXPEA_KPEAXP6AXAEBV?$WeakCallbackInfo@X@2@@ZW4WeakCallbackType@2@@Z"]
         pub(super) fn v8_api_internal_MakeWeak() -> *mut c_void;
+        #[link_name = "?MakeWeak@api_internal@v8@@YAXPEAPEA_K@Z"]
+        pub(super) fn v8_api_internal_MakeWeak_without_callback() -> *mut c_void;
         #[link_name = "?ClearWeak@api_internal@v8@@YAPEAXPEA_K@Z"]
         pub(super) fn v8_api_internal_ClearWeak() -> *mut c_void;
         #[link_name = "?MoveGlobalReference@api_internal@v8@@YAXPEAPEA_K0@Z"]
@@ -5111,6 +5114,7 @@ pub(crate) fn fix_dead_code_elimination() {
             _ZN2v812api_internal18GlobalizeReferenceEPNS_8internal7IsolateEm,
             _ZN2v812api_internal13DisposeGlobalEPm,
             _ZN2v812api_internal8MakeWeakEPmPvPFvRKNS_16WeakCallbackInfoIvEEENS_16WeakCallbackTypeE,
+            _ZN2v812api_internal8MakeWeakEPPm,
             _ZN2v812api_internal9ClearWeakEPm,
             _ZN2v812api_internal19MoveGlobalReferenceEPPmS2_,
             _ZN2v812api_internal23GetFunctionTemplateDataEPNS_7IsolateENS_5LocalINS_4DataEEE,
@@ -5300,6 +5304,7 @@ pub(crate) fn fix_dead_code_elimination() {
             v8_api_internal_GlobalizeReference,
             v8_api_internal_DisposeGlobal,
             v8_api_internal_MakeWeak,
+            v8_api_internal_MakeWeak_without_callback,
             v8_api_internal_ClearWeak,
             v8_api_internal_MoveGlobalReference,
             v8_api_internal_GetFunctionTemplateData,

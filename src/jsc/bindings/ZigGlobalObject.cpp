@@ -192,6 +192,7 @@
 #include "Base64Helpers.h"
 #include "wtf/text/OrdinalNumber.h"
 #include "ErrorCode.h"
+#include "v8/shim/GlobalHandleRegistry.h"
 #include "v8/shim/GlobalInternals.h"
 #include "EventLoopTask.h"
 #include "NodeModuleModule.h"
@@ -898,6 +899,9 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     globalObject->isThreadLocalDefaultGlobalObject = true;
     setDefaultGlobalObject(vm, globalObject);
     JSC::gcProtect(globalObject);
+
+    if (auto* registry = v8::shim::GlobalHandleRegistry::ifExists(vm)) [[unlikely]]
+        registry->didRetireDefaultRealm();
 
     // NapiEnv holds a raw Zig::GlobalObject*; deferred napi finalizers for
     // the old global's objects run on the next event-loop tick — after this

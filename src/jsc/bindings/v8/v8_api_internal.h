@@ -54,6 +54,8 @@ BUN_EXPORT void FromJustIsNothing();
 BUN_EXPORT uintptr_t* GlobalizeReference(v8::internal::Isolate* isolate, uintptr_t address);
 BUN_EXPORT void DisposeGlobal(uintptr_t* location);
 BUN_EXPORT void MakeWeak(uintptr_t* location, void* data, WeakCallbackInfo<void>::Callback weak_callback, WeakCallbackType type);
+// SetWeak() without a callback. `location_addr` is the address of the v8::Global, which is emptied when the value dies.
+BUN_EXPORT void MakeWeak(uintptr_t** location_addr);
 BUN_EXPORT void* ClearWeak(uintptr_t* location);
 BUN_EXPORT void MoveGlobalReference(uintptr_t** from, uintptr_t** to);
 BUN_EXPORT Local<Value> GetFunctionTemplateData(Isolate* isolate, Local<Data> target);

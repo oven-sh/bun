@@ -177,6 +177,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGCAndSweep,
     VM& vm = globalObject->vm();
     JSLockHolder lock(vm);
     vm.heap.collectNow(Sync, CollectionScope::Full);
+    WebCore::clientData(vm)->didFinishRequestedCollection();
     return JSValue::encode(jsNumber(vm.heap.sizeAfterLastFullCollection()));
 }
 
@@ -187,6 +188,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFullGC,
     VM& vm = globalObject->vm();
     JSLockHolder lock(vm);
     vm.heap.collectSync(CollectionScope::Full);
+    WebCore::clientData(vm)->didFinishRequestedCollection();
     return JSValue::encode(jsNumber(vm.heap.sizeAfterLastFullCollection()));
 }
 
@@ -197,6 +199,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEdenGC,
     VM& vm = globalObject->vm();
     JSLockHolder lock(vm);
     vm.heap.collectSync(CollectionScope::Eden);
+    WebCore::clientData(vm)->didFinishRequestedCollection();
     return JSValue::encode(jsNumber(vm.heap.sizeAfterLastEdenCollection()));
 }
 

@@ -1994,6 +1994,8 @@ impl VirtualMachine {
         let size = self.garbage_collect(sync);
         if sync {
             bun_core::Global::mimalloc_cleanup(true);
+            // Not in `garbage_collect`: `auto_garbage_collect` runs where an exception can be pending.
+            self.global().vm().did_finish_requested_collection();
         }
         size
     }
@@ -2471,6 +2473,8 @@ impl VirtualMachine {
         self.handle.stop();
 
         if self.exit_frees_environment() {
+            // As Node, which turns the event loop, and so runs the second-pass weak callbacks that are due, before the hooks (https://github.com/nodejs/node/blob/v26.12.1/src/env.cc#L1535-L1556).
+            self.global().vm().will_run_cleanup_hooks();
             self.run_cleanup_hooks();
         }
         self.has_run_cleanup_hooks = true;

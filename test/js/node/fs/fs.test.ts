@@ -6763,6 +6763,13 @@ it("open mode verification", async () => {
   );
 });
 
+it.skipIf(!isWindows).each(["\\\\.\\UNC", "\\\\?\\UNC"])(
+  "open() of %s, which can be opened and is no kind of file, fails as in Node.js",
+  path => {
+    expect(() => fs.openSync(path, "r")).toThrow(expect.objectContaining({ code: "EISDIR", syscall: "open", path }));
+  },
+);
+
 it("fs.copyFile with COPYFILE_EXCL copies to a free name, and leaves nothing there when it fails", () => {
   using dir = tempDir("fs-copyfile-excl", { "src.txt": "the contents" });
   const src = join(String(dir), "src.txt");

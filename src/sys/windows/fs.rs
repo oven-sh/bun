@@ -536,8 +536,13 @@ fn open_impl(path: &ZStr, flags: i32, mode: Mode) -> Result<Fd, E> {
                 code => errno(code),
             }
         })?;
+    // The C runtime sets no last error for a full table. It sets one for a handle whose type the system does not tell.
+    kernel32::SetLastError(0);
     match bun_core::fd::open_osfhandle(file.0) {
-        -1 => Err(E::EMFILE),
+        -1 => Err(match Win32Error::get() {
+            Win32Error::SUCCESS => E::EMFILE,
+            code => errno(code),
+        }),
         fd => {
             let _ = file.into_raw();
             Ok(Fd::from_crt(fd))

@@ -1342,7 +1342,7 @@ pub mod fd {
         /// `_get_osfhandle`: `INVALID_HANDLE_VALUE` for a descriptor that is not open.
         #[link_name = "Bun__getOSFHandle"]
         pub(crate) safe fn get_osfhandle(fd: c_int) -> *mut c_void;
-        /// `_open_osfhandle(handle, 0)`: the descriptor owns the handle. `-1`: the table is full (`EMFILE`).
+        /// `_open_osfhandle(handle, 0)`: the descriptor owns the handle. `-1`: the table is full (`EMFILE`, no last error), or the system does not tell the handle's type.
         #[link_name = "Bun__openOSFHandle"]
         pub safe fn open_osfhandle(handle: *mut c_void) -> c_int;
         /// `_close`: closes the handle too. `-1` (`EBADF`) for a descriptor that is not open.

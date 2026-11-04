@@ -2253,7 +2253,8 @@ pub(crate) fn shell_statat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<b
     {
         let mut buf = bun_paths::path_buffer_pool::get();
         let p = shell_get_path(dir, path_, &mut buf, bun_sys::Tag::fstatat)?;
-        return bun_sys::stat(p).map_err(|e| e.with_path(path_.as_bytes()));
+        return bun_sys::retry_with_long_path(p, bun_sys::stat)
+            .map_err(|e| e.with_path(path_.as_bytes()));
     }
     #[cfg(not(windows))]
     {
@@ -2267,7 +2268,8 @@ pub(crate) fn shell_lstatat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<
     {
         let mut buf = bun_paths::path_buffer_pool::get();
         let p = shell_get_path(dir, path_, &mut buf, bun_sys::Tag::fstatat)?;
-        return bun_sys::lstat(p).map_err(|e| e.with_path(path_.as_bytes()));
+        return bun_sys::retry_with_long_path(p, bun_sys::lstat)
+            .map_err(|e| e.with_path(path_.as_bytes()));
     }
     #[cfg(not(windows))]
     {

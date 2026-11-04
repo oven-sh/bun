@@ -1,6 +1,20 @@
 import { $ } from "bun";
+import { dlopen, FFIType } from "bun:ffi";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { isPosix, isRoot, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isLinux,
+  isPosix,
+  isRoot,
+  isWindows,
+  libcPathForDlopen,
+  tempDir,
+  tempDirWithFiles,
+  unprivilegedSpawnOptions,
+} from "harness";
+import { chmodSync, closeSync, constants, lstatSync, mkdirSync, readSync, symlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { createTestBuilder } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
 
@@ -258,6 +272,243 @@ describe.concurrent("bunshell ls", () => {
         .setTempdir(tempdir)
         .stdout(s => expect(sortedLsOutput(s)).toEqual(["dir1", "dir2"]))
         .run();
+    });
+  });
+
+  // `-d` lists each operand itself, from one `lstat`. It does not open a directory or follow a symlink.
+  describe("-d", () => {
+    // The line that `-l` prints for `path` under the name `name`, for example
+    // `drwxr-xr-x   2  1000  1000     4096 Nov 03 23:18 sub`.
+    const longLine = (path: string, name: string) => {
+      const { mode, nlink, uid, gid, size, mtime } = lstatSync(path);
+      const type = { [constants.S_IFDIR]: "d", [constants.S_IFLNK]: "l" }[mode & constants.S_IFMT] ?? "-";
+      const permissions = Array.from("rwxrwxrwx", (bit, i) => (mode & (0o400 >> i) ? bit : "-")).join("");
+      const utc = mtime.toUTCString(); // "Tue, 03 Nov 2026 23:18:05 GMT"
+      const time = `${utc.slice(8, 11)} ${utc.slice(5, 7)} ${utc.slice(17, 22)}`;
+      const column = (value: number, width: number) => String(value).padStart(width);
+      return `${type}${permissions} ${column(nlink, 3)} ${column(uid, 5)} ${column(gid, 5)} ${column(size, 8)} ${time} ${name}\n`;
+    };
+
+    test("-ld prints the long line of a directory", async () => {
+      using dir = tempDir("ls-ld", { "sub/x": "", "file": "hello" });
+      const cwd = String(dir);
+      const sub = longLine(join(cwd, "sub"), "sub");
+      expect(sub).toStartWith("d");
+      await TestBuilder.command`ls -ld sub`.setTempdir(cwd).stdout(sub).run();
+      await TestBuilder.command`ls -ld`.setTempdir(cwd).stdout(longLine(cwd, ".")).run();
+      await TestBuilder.command`ls -ld file sub`
+        .setTempdir(cwd)
+        .stdout(s => expect(sortedLsOutput(s)).toEqual(sortedLsOutput(longLine(join(cwd, "file"), "file") + sub)))
+        .run();
+    });
+
+    test("prints the operand as it is typed, and reports a missing one", async () => {
+      using dir = tempDir("ls-d-typed", { "sub/x": "", "file": "hello" });
+      const cwd = String(dir);
+      await TestBuilder.command`ls -d`.setTempdir(cwd).stdout(".\n").run();
+      await TestBuilder.command`ls -d .`.setTempdir(cwd).stdout(".\n").run();
+      await TestBuilder.command`ls -d sub/`.setTempdir(cwd).stdout("sub/\n").run();
+      await TestBuilder.command`ls -d /`.setTempdir(cwd).stdout("/\n").run();
+      await TestBuilder.command`ls -dR sub`.setTempdir(cwd).stdout("sub\n").run();
+      await TestBuilder.command`ls -d sub file`
+        .setTempdir(cwd)
+        .stdout(s => expect(sortedLsOutput(s)).toEqual(["file", "sub"]))
+        .run();
+      await TestBuilder.command`ls -d sub missing`
+        .setTempdir(cwd)
+        .stdout("sub\n")
+        .stderr("ls: missing: No such file or directory\n")
+        .exitCode(1)
+        .run();
+    });
+
+    // Windows finds a path of 260 characters or more only in its `\\?\` form, unless LongPathsEnabled is set.
+    test.if(isWindows)("lists an operand whose path has 260 characters or more", async () => {
+      using dir = tempDir("ls-d-long", {});
+      const cwd = String(dir);
+      const long = join(Buffer.alloc(120, "a").toString(), Buffer.alloc(120, "b").toString());
+      mkdirSync(join(cwd, long), { recursive: true });
+      writeFileSync(join(cwd, long, "file"), "hello");
+      expect(join(cwd, long).length).toBeGreaterThanOrEqual(260);
+      await TestBuilder.command`ls -d ${long}`.setTempdir(cwd).stdout(`${long}\n`).run();
+      await TestBuilder.command`ls -ld ${long}`
+        .setTempdir(cwd)
+        .stdout(longLine(join(cwd, long), long))
+        .run();
+      // Without `-d`, a file operand takes the same `stat`.
+      await TestBuilder.command`ls ${join(long, "file")}`
+        .setTempdir(cwd)
+        .stdout(`${join(long, "file")}\n`)
+        .run();
+    });
+
+    describe("a symlink operand", () => {
+      // On Windows a junction needs no privilege. Its target has to be an absolute path.
+      const link = (dir: string, target: string, name: string) =>
+        symlinkSync(isWindows ? join(dir, target) : target, join(dir, name), "junction");
+      const fixture = () => {
+        const dir = tempDir("ls-d-link", { "sub/x": "", "file": "hello" });
+        link(String(dir), "sub", "link");
+        link(String(dir), "nowhere", "dangling");
+        link(String(dir), join("file", "x"), "through-file");
+        return dir;
+      };
+      // Windows can report another error than POSIX for the same path.
+      const fails = (operand: string, message: string) => (stderr: string) => {
+        expect(stderr).toStartWith(`ls: ${operand}: `);
+        if (isPosix) expect(stderr).toBe(`ls: ${operand}: ${message}\n`);
+      };
+
+      test("is listed as the link", async () => {
+        using dir = fixture();
+        const cwd = String(dir);
+        const line = longLine(join(cwd, "link"), "link");
+        expect(line).toStartWith("l");
+        await TestBuilder.command`ls -d link`.setTempdir(cwd).stdout("link\n").run();
+        await TestBuilder.command`ls -ld link`.setTempdir(cwd).stdout(line).run();
+        await TestBuilder.command`ls -ld link file`
+          .setTempdir(cwd)
+          .stdout(s => expect(sortedLsOutput(s)).toEqual(sortedLsOutput(line + longLine(join(cwd, "file"), "file"))))
+          .run();
+        // The target of the link is not looked at.
+        await TestBuilder.command`ls -d dangling`.setTempdir(cwd).stdout("dangling\n").run();
+        await TestBuilder.command`ls -d through-file`.setTempdir(cwd).stdout("through-file\n").run();
+      });
+
+      // POSIX: a trailing slash makes the system follow the link.
+      test.if(isPosix)("with a trailing slash is the directory that the link leads to", async () => {
+        using dir = fixture();
+        const cwd = String(dir);
+        await TestBuilder.command`ls -ld link/`
+          .setTempdir(cwd)
+          .stdout(longLine(join(cwd, "sub"), "link/"))
+          .run();
+      });
+
+      test.each(["L", "H"])("is followed with -%s", async flag => {
+        using dir = fixture();
+        const cwd = String(dir);
+        await TestBuilder.command`ls -ld${flag} link`
+          .setTempdir(cwd)
+          .stdout(longLine(join(cwd, "sub"), "link"))
+          .run();
+        await TestBuilder.command`ls -d${flag} dangling`
+          .setTempdir(cwd)
+          .stdout("")
+          .stderr(fails("dangling", "No such file or directory"))
+          .exitCode(1)
+          .run();
+        await TestBuilder.command`ls -d${flag} through-file`
+          .setTempdir(cwd)
+          .stdout("")
+          .stderr(fails("through-file", "Not a directory"))
+          .exitCode(1)
+          .run();
+      });
+
+      // Observed: `ls -l link` lists the directory that the link leads to. POSIX and GNU print the line of the link.
+      test.todo("is listed as the link with -l and no -d", async () => {
+        using dir = fixture();
+        const cwd = String(dir);
+        await TestBuilder.command`ls -l link`
+          .setTempdir(cwd)
+          .stdout(longLine(join(cwd, "link"), "link"))
+          .run();
+      });
+
+      // Observed: the link is listed, with exit code 0. Only `-d` reads `-L` and `-H`.
+      test.todo.each(["L", "H"])("that leads nowhere fails with -%s and no -d", async flag => {
+        using dir = fixture();
+        const cwd = String(dir);
+        await TestBuilder.command`ls -${flag} dangling`
+          .setTempdir(cwd)
+          .stdout("")
+          .stderr(fails("dangling", "No such file or directory"))
+          .exitCode(1)
+          .run();
+      });
+    });
+
+    // POSIX mode bits. They do not apply to root, so `ls` runs in a child that is not root.
+    // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+    test.serial.if(isPosix)("a directory that cannot be opened is listed", async () => {
+      using dir = tempDir("ls-d-locked", { "locked/x": "" });
+      const cwd = String(dir);
+      symlinkSync("locked", join(cwd, "link-to-locked"));
+      symlinkSync(join("locked", "x"), join(cwd, "through-locked"));
+      using unprivileged = unprivilegedSpawnOptions(cwd);
+      const run = async (script: string) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "exec", script],
+          env: bunEnv,
+          cwd,
+          stdout: "pipe",
+          stderr: "pipe",
+          ...unprivileged,
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      };
+      chmodSync(join(cwd, "locked"), 0o000);
+      try {
+        expect(await run("ls -d locked; ls -ld locked; ls -d link-to-locked; ls -d through-locked")).toEqual({
+          stdout: "locked\n" + longLine(join(cwd, "locked"), "locked") + "link-to-locked\nthrough-locked\n",
+          stderr: "",
+          exitCode: 0,
+        });
+        // The lines of two operands arrive in any order.
+        const { stdout, ...rest } = await run("ls -d locked through-locked");
+        expect({ lines: sortedLsOutput(stdout), ...rest }).toEqual({
+          lines: ["locked", "through-locked"],
+          stderr: "",
+          exitCode: 0,
+        });
+        // Without `-d` the directory has to open, and `-L` has to search it.
+        expect(await run("ls link-to-locked; ls -dL through-locked")).toEqual({
+          stdout: "",
+          stderr: "ls: link-to-locked: Permission denied\nls: through-locked: Permission denied\n",
+          exitCode: 1,
+        });
+      } finally {
+        chmodSync(join(cwd, "locked"), 0o755);
+      }
+    });
+
+    // The kernel reports an open of a watched directory. No output shows that `-d` opens nothing.
+    test.if(isLinux)("does not open the operand", async () => {
+      using dir = tempDir("ls-d-opens", { "sub/x": "", "file": "hello" });
+      const cwd = String(dir);
+      symlinkSync("sub", join(cwd, "link"));
+      const IN_NONBLOCK = 0o4000;
+      const IN_OPEN = 0x20;
+      const libc = dlopen(libcPathForDlopen(), {
+        inotify_init1: { args: [FFIType.i32], returns: FFIType.i32 },
+        inotify_add_watch: { args: [FFIType.i32, FFIType.cstring, FFIType.u32], returns: FFIType.i32 },
+      });
+      const inotify = libc.symbols.inotify_init1(IN_NONBLOCK);
+      expect(inotify).toBeGreaterThanOrEqual(0);
+      try {
+        const watch = libc.symbols.inotify_add_watch(inotify, Buffer.from(join(cwd, "sub") + "\0"), IN_OPEN);
+        expect(watch).toBeGreaterThan(0);
+        // Takes the events that are queued. Without one, the read fails with EAGAIN.
+        const opened = () => {
+          try {
+            return readSync(inotify, Buffer.alloc(4096)) > 0;
+          } catch (e: any) {
+            if (e.code === "EAGAIN") return false;
+            throw e;
+          }
+        };
+        for (const line of ["ls -d sub", "ls -ld sub", "ls -d sub file", "ls -d link", "ls -dL link"]) {
+          await $`${{ raw: line }}`.cwd(cwd).quiet().throws(true);
+        }
+        expect(opened()).toBe(false);
+        await $`ls sub`.cwd(cwd).quiet().throws(true);
+        expect(opened()).toBe(true);
+      } finally {
+        closeSync(inotify);
+        libc.close();
+      }
     });
   });
 

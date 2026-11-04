@@ -3998,8 +3998,14 @@ mod windows_impl {
         sys_uv::symlink_uv(target, link, 0)
     }
     pub fn readlink(path: &ZStr, buf: &mut [u8]) -> Maybe<usize> {
-        let err = match sys_uv::readlink(path, buf) {
-            Ok(target) => return Ok(target.len()),
+        retry_with_long_path(path, |path| {
+            sys_uv::readlink(path, buf).map(|target| target.len())
+        })
+    }
+    /// Runs `op` on `path`, and again on its `\\?\` form when `op` does not find a long path.
+    pub fn retry_with_long_path<T>(path: &ZStr, mut op: impl FnMut(&ZStr) -> Maybe<T>) -> Maybe<T> {
+        let err = match op(path) {
+            Ok(value) => return Ok(value),
             Err(err) => err,
         };
         // libuv passes the path to Windows unchanged, and a path of 260 characters or more only
@@ -4022,7 +4028,7 @@ mod windows_impl {
         );
         let len = 4 + normalized.len();
         long[len] = 0;
-        sys_uv::readlink(ZStr::from_buf(&long[..], len), buf).map(|target| target.len())
+        op(ZStr::from_buf(&long[..], len))
     }
     pub fn fchmod(fd: Fd, mode: Mode) -> Maybe<()> {
         sys_uv::fchmod(fd, mode)

@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::io::Write as _;
 
-use bun_core::ZBox;
+use bun_core::{ZBox, ZStr};
 use bun_sys::{E, FdExt, O, S, dir_iterator};
 
 use crate::shell::ExitCode;
@@ -246,13 +246,13 @@ impl Ls {
                 b'a' => opts.dotfiles = DotfileMode::All,
                 b'A' => opts.dotfiles = DotfileMode::AlmostAll,
                 b'd' => opts.list_directories = true,
+                b'H' | b'L' => opts.dereference = true,
                 b'l' => opts.long_listing = true,
                 b'R' => opts.recursive = true,
                 // The remaining short flags are recognised but currently no-op.
                 b'r' | b'1' | b'b' | b'B' | b'c' | b'C' | b'D' | b'f' | b'F' | b'g' | b'G'
-                | b'h' | b'H' | b'i' | b'I' | b'k' | b'L' | b'm' | b'n' | b'N' | b'o' | b'p'
-                | b'q' | b'Q' | b's' | b'S' | b't' | b'T' | b'u' | b'U' | b'v' | b'w' | b'x'
-                | b'X' | b'Z' => {}
+                | b'h' | b'i' | b'I' | b'k' | b'm' | b'n' | b'N' | b'o' | b'p' | b'q' | b'Q'
+                | b's' | b'S' | b't' | b'T' | b'u' | b'U' | b'v' | b'w' | b'x' | b'X' | b'Z' => {}
                 _ => return ParseFlag::IllegalOption(Box::from(&flag[1..2])),
             }
         }
@@ -335,8 +335,7 @@ impl OutputTaskVTable for Ls {
     }
 }
 
-/// Opens the path, iterates its entries (or
-/// prints the path itself for files / `-d`), accumulating into `output`.
+/// Lists one path into `output`: the entries of a directory, or the path itself (a file, `-d`).
 pub(crate) struct ShellLsTask {
     pub cmd: NodeId,
     pub opts: Opts,
@@ -449,6 +448,13 @@ impl ShellLsTask {
             this.now_secs = bun_core::time::timestamp().max(0) as u64;
         }
 
+        // `-d` lists the operand itself, whatever it is, so nothing opens.
+        if this.opts.list_directories {
+            let stat = this.stat_as_entry(this.path.as_zstr());
+            this.write_operand_entry(stat);
+            return;
+        }
+
         let fd = match shell_openat(this.cwd, this.path.as_zstr(), O::RDONLY | O::DIRECTORY, 0) {
             Err(open_err) => {
                 this.list_non_directory_operand(&open_err);
@@ -466,41 +472,43 @@ impl ShellLsTask {
         }
         let _guard = CloseOnDrop(fd);
 
-        if !this.opts.list_directories {
-            if this.print_directory {
-                this.output.extend_from_slice(this.path.as_bytes());
-                this.output.extend_from_slice(b":\n");
-            }
+        if this.print_directory {
+            this.output.extend_from_slice(this.path.as_bytes());
+            this.output.extend_from_slice(b":\n");
+        }
 
-            let mut iterator = dir_iterator::iterate(fd);
+        let mut iterator = dir_iterator::iterate(fd);
 
-            // If `-a` is used, "." and ".." should show up as results. However,
-            // our `DirIterator` abstraction skips them, so add them now.
-            this.add_dot_entries_if_needed(fd);
+        // If `-a` is used, "." and ".." should show up as results. However,
+        // our `DirIterator` abstraction skips them, so add them now.
+        this.add_dot_entries_if_needed(fd);
 
-            loop {
-                match iterator.next() {
-                    Err(e) => {
-                        this.err = Some(this.error_with_path(&e));
-                        return;
-                    }
-                    Ok(None) => break,
-                    Ok(Some(current)) => {
-                        let name = current.name.slice_u8();
-                        this.add_entry(name, fd);
-                        if matches!(current.kind, bun_sys::EntryKind::Directory)
-                            && this.opts.recursive
-                        {
-                            this.enqueue(name);
-                        }
+        loop {
+            match iterator.next() {
+                Err(e) => {
+                    this.err = Some(this.error_with_path(&e));
+                    return;
+                }
+                Ok(None) => break,
+                Ok(Some(current)) => {
+                    let name = current.name.slice_u8();
+                    this.add_entry(name, fd);
+                    if matches!(current.kind, bun_sys::EntryKind::Directory) && this.opts.recursive
+                    {
+                        this.enqueue(name);
                     }
                 }
             }
-            return;
         }
+    }
 
-        this.output.extend_from_slice(this.path.as_bytes());
-        this.output.push(b'\n');
+    /// POSIX `-d`: a symlink operand is itself unless `-H` or `-L` is set.
+    fn stat_as_entry(&self, path: &ZStr) -> bun_sys::Result<bun_sys::Stat> {
+        if self.opts.dereference {
+            shell_statat(self.cwd, path)
+        } else {
+            shell_lstatat(self.cwd, path)
+        }
     }
 
     /// coreutils operand rule: `stat`, and on ENOENT or ELOOP `lstat` so a symlink is itself.
@@ -518,15 +526,21 @@ impl ShellLsTask {
                 return;
             }
         }
-        match shell_lstatat(self.cwd, self.path.as_zstr()) {
-            Ok(stat) => {
-                // An operand is never subject to the -a/-A filter.
-                let name = ZBox::from_bytes(self.path.as_bytes());
-                if self.opts.long_listing {
-                    self.add_entry_long_from_stat(name.as_bytes(), &stat);
-                } else {
-                    self.add_entry_short(name.as_bytes());
-                }
+        self.write_operand_entry(shell_lstatat(self.cwd, self.path.as_zstr()));
+    }
+
+    /// Writes the operand as one entry from its `stat`, or keeps the error of that `stat`.
+    fn write_operand_entry(&mut self, stat: bun_sys::Result<bun_sys::Stat>) {
+        // An operand is never subject to the -a/-A filter.
+        let name = self.path.as_bytes();
+        match stat {
+            Ok(stat) if self.opts.long_listing => {
+                Self::add_entry_long_from_stat(&mut self.output, self.now_secs, name, &stat);
+            }
+            Ok(_) => {
+                self.output.reserve(name.len() + 1);
+                self.output.extend_from_slice(name);
+                self.output.push(b'\n');
             }
             Err(e) => self.err = Some(self.error_with_path(&e)),
         }
@@ -569,11 +583,19 @@ impl ShellLsTask {
                 self.output.extend_from_slice(name);
                 self.output.push(b'\n');
             }
-            Ok(stat) => self.add_entry_long_from_stat(name, &stat),
+            Ok(stat) => {
+                Self::add_entry_long_from_stat(&mut self.output, self.now_secs, name, &stat)
+            }
         }
     }
 
-    fn add_entry_long_from_stat(&mut self, name: &[u8], stat: &bun_sys::Stat) {
+    /// Appends the `-l` line of `name` to `output`.
+    fn add_entry_long_from_stat(
+        output: &mut Vec<u8>,
+        now_secs: u64,
+        name: &[u8],
+        stat: &bun_sys::Stat,
+    ) {
         // File type and permissions.
         let mode: u32 = stat.st_mode as u32;
         let file_type = get_file_type_char(mode);
@@ -591,19 +613,17 @@ impl ShellLsTask {
 
         // Modification time.
         let mtime = bun_sys::stat_mtime(stat);
-        let time_str = format_time(mtime.sec, self.now_secs);
+        let time_str = format_time(mtime.sec, now_secs);
 
-        self.output.push(file_type);
-        self.output.extend_from_slice(&perms);
-        let _ = write!(
-            self.output,
-            " {:>3} {:>5} {:>5} {:>8} ",
-            nlink, uid, gid, size,
-        );
-        self.output.extend_from_slice(&time_str);
-        self.output.push(b' ');
-        self.output.extend_from_slice(name);
-        self.output.push(b'\n');
+        // The length of the line when no column is wider than its least width.
+        output.reserve(50 + name.len());
+        output.push(file_type);
+        output.extend_from_slice(&perms);
+        let _ = write!(output, " {:>3} {:>5} {:>5} {:>8} ", nlink, uid, gid, size);
+        output.extend_from_slice(&time_str);
+        output.push(b' ');
+        output.extend_from_slice(name);
+        output.push(b'\n');
     }
 
     fn add_dot_entries_if_needed(&mut self, dir_fd: bun_sys::Fd) {
@@ -809,6 +829,8 @@ pub(crate) struct Opts {
     pub(crate) dotfiles: DotfileMode,
     /// `-d`, `--directory` — list directories themselves, not their contents
     pub(crate) list_directories: bool,
+    /// `-H`, `-L`: follow an operand that is a symlink. Only `-d` reads it.
+    pub(crate) dereference: bool,
     /// `-l` — use a long listing format
     pub(crate) long_listing: bool,
     /// `-R`, `--recursive` — list subdirectories recursively

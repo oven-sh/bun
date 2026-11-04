@@ -1290,8 +1290,7 @@ pub struct ParseResult<T: VersionInt> {
     pub valid: bool,
     /// A number before any wildcard is above `T::MAX`. The range parser reads this, not `valid`.
     pub(crate) overflow: bool,
-    /// `valid`, except that a number above `T::MAX` after a wildcard (`1.x.<number>`) does not
-    /// count: the range parser ignores that number, as it does a small one. `order` does not.
+    /// `valid`, ignoring a number above `T::MAX` after a wildcard (`1.x.<number>`): a range reads it as `1.x`.
     pub(crate) valid_for_range: bool,
     pub version: Partial<T>,
     /// Where parsing stopped. It's shorter than the input if trailing bytes aren't part of the

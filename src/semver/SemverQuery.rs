@@ -754,27 +754,21 @@ pub fn parse_including_prerelease(input: &[u8], sliced: SlicedString) -> Result<
 
 /// What node-semver's `new Range(text)` reads.
 pub struct NpmRange<'a> {
-    /// `text` trimmed, with each run of whitespace collapsed to one space. The prerelease tags of
-    /// `group` are offsets into it, so `group.satisfies` takes `raw`, never `text`.
+    /// `text` with each run of whitespace collapsed to one space: the buffer `group` was parsed from.
     pub raw: Cow<'a, [u8]>,
     pub group: Group,
 }
 
 /// `None` where `parse` skipped text it cannot read as a comparator (`latest`, `>=1 && <2`,
-/// `1.2.3.4`, `2x`). node-semver's `new Range(text)` throws for each of those, and `parse` reads
-/// them as `*`, for the ranges that published packages have.
-///
-/// It is not the same test as node-semver's. node also throws for `01.2.3`, `1.0.0rc1`,
-/// `^16 | ^18` and a hyphen range beside another comparator (`1.2.3 - 2.3.4 4.5.6`), which this
-/// reads, and it accepts `*1.0.0`, which this refuses.
+/// `1.2.3.4`). node-semver's `new Range` throws for those, and also for `01.2.3`, `^16 | ^18` and
+/// `1.2.3 - 2.3.4 4.5.6`, which this reads. It accepts `*1.0.0`, which this refuses.
 pub fn parse_npm(text: &[u8]) -> Result<Option<NpmRange<'_>>, AllocError> {
     let raw = collapse_whitespace(text);
     let group = parse(&raw, SlicedString::init(&raw, &raw))?;
     Ok((!group.has_skipped()).then_some(NpmRange { raw, group }))
 }
 
-/// node-semver's `Range.raw`. `parse` only reads `b' '` between comparators, so `>=1\t<2` must
-/// become `>=1 <2` before it. Borrows `text` when it already has that shape.
+/// node-semver's `Range.raw`. `parse` reads only `b' '` between comparators.
 fn collapse_whitespace(text: &[u8]) -> Cow<'_, [u8]> {
     let collapsed = strings::index_of_any(text, b"\t\n\r\x0B\x0C").is_none()
         && !strings::contains(text, b"  ")

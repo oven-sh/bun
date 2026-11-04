@@ -170,9 +170,7 @@ impl Locked {
         }
     }
 
-    /// The root of `watcher` was removed or moved away, so a `watch()` of its path must
-    /// start a new watch. The watcher stays in the map, for the loops that notify every
-    /// watcher and for `unlink_watcher`, under a key that no path has.
+    /// Re-keys `watcher` so that `watch()` misses it and the notify-all loops still reach it.
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     fn retire_watcher(&mut self, watcher: *mut PathWatcher) {
         let Some(i) = self.watchers.values().iter().position(|&w| w == watcher) else {
@@ -1024,12 +1022,10 @@ impl Linux {
 
                 // Kernel retired this wd: `remove_watch` issued an explicit
                 // `inotify_rm_watch` (it deletes the `wd_map` entry first, so no
-                // owners remain to notify) or the watched inode is gone. A dead
-                // root is retired: a watch() of the path must start a new watch.
-                // libuv turns the kernel's retirement into one more "rename"
-                // after IN_DELETE_SELF, so a deleted watch root reports two.
-                // Recursive sub-wds stay silent; their parent directory's
-                // IN_DELETE already reported it.
+                // owners remain to notify) or the watched inode is gone. libuv
+                // turns the latter into one more "rename" after IN_DELETE_SELF,
+                // so a deleted watch root reports two. Recursive sub-wds stay
+                // silent; their parent directory's IN_DELETE already reported it.
                 if ev.mask & IN::IGNORED != 0 {
                     if let Some(owners) = locked.platform.wd_map.remove(&wd) {
                         for o in owners {
@@ -1230,8 +1226,7 @@ impl Linux {
                         }
                     }
 
-                    // Retired here too, not only at IN_IGNORED (above): that may land
-                    // a read() later, and a move does not send it.
+                    // IN_IGNORED may come a read() later, and a move never sends it.
                     if root_left_path {
                         locked.retire_watcher(owner_watcher);
                     }

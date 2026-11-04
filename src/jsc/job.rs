@@ -245,6 +245,13 @@ pub enum RunsOn {
 }
 
 impl RunsOn {
+    /// For what `node:fs` is asked to do. In order on Windows only: elsewhere a call is cheap enough for the lock of the queue to show.
+    pub const NODE_FS: RunsOn = if cfg!(windows) {
+        RunsOn::WorkPoolInOrder
+    } else {
+        RunsOn::WorkPool
+    };
+
     /// For a job whose blocking calls read a descriptor or write to `writes_to`.
     pub fn for_io(writes_to: Option<bun_core::Fd>) -> RunsOn {
         // Elsewhere a `Blob` job polls, and `fs.read()` of a pipe holds a thread of the one pool.
@@ -260,18 +267,14 @@ impl RunsOn {
 
     /// For one `fs.read()` of `fd`, or one `fs.write()` to it.
     pub fn for_fd(fd: bun_core::Fd, writes: bool) -> RunsOn {
-        match Self::for_io(writes.then_some(fd)) {
-            #[cfg(windows)]
-            RunsOn::WaitingPool
-                if bun_sys::windows::GetFileType(fd.native())
-                    != bun_sys::windows::FILE_TYPE_DISK =>
-            {
-                RunsOn::WaitingPool
-            }
-            // A file answers by itself, so it is in line with what else `node:fs` is asked for.
-            RunsOn::WorkPool | RunsOn::WaitingPool => RunsOn::WorkPoolInOrder,
-            runs_on => runs_on,
+        // A file answers by itself, so it is in line with what else `node:fs` is asked for.
+        #[cfg(windows)]
+        if Self::for_io(writes.then_some(fd)) == RunsOn::WaitingPool
+            && bun_sys::windows::GetFileType(fd.native()) == bun_sys::windows::FILE_TYPE_DISK
+        {
+            return Self::NODE_FS;
         }
+        Self::for_io(writes.then_some(fd))
     }
 }
 

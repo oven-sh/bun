@@ -801,7 +801,7 @@ mod _async_tasks {
             [None, None]
         }
         fn runs_on(&self) -> bun_jsc::RunsOn {
-            bun_jsc::RunsOn::WorkPoolInOrder
+            bun_jsc::RunsOn::NODE_FS
         }
     }
 

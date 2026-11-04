@@ -8600,29 +8600,21 @@ describe.if(isPosix)("fs.read into a view over a WebAssembly.Memory that grows d
 });
 
 // A read of a pipe holds its thread until the pipe's writer is gone. With two threads, the first two pipes that get a reader are the two calls that started first.
-it("asynchronous operations start in the order they were asked for", async () => {
-  using dir = tempDir("fs-start-order", {});
+it.skipIf(!isWindows)("asynchronous operations start in the order they were asked for", async () => {
   const names = ["a", "b", "c", "d"];
-  const pathOf = (name: string) =>
-    isWindows ? `\\\\.\\pipe\\fs-start-order-${process.pid}-${name}` : join(String(dir), name);
+  const pathOf = (name: string) => `\\\\.\\pipe\\fs-start-order-${process.pid}-${name}`;
 
   const started: string[] = [];
-  const held: (() => void)[] = [];
+  const held: net.Socket[] = [];
   const twoStarted = Promise.withResolvers<void>();
-  const onReader = (name: string, letGo: () => void) => {
-    started.push(name);
-    if (started.length > 2) return letGo();
-    held.push(letGo);
-    if (started.length === 2) twoStarted.resolve();
-  };
-
   const servers: net.Server[] = [];
   for (const name of names) {
-    if (!isWindows) {
-      mkfifo(pathOf(name));
-      continue;
-    }
-    const server = net.createServer(socket => onReader(name, () => socket.end()));
+    const server = net.createServer(socket => {
+      started.push(name);
+      if (started.length > 2) return void socket.end();
+      held.push(socket);
+      if (started.length === 2) twoStarted.resolve();
+    });
     servers.push(server);
     await new Promise<void>(resolve => server.listen(pathOf(name), resolve));
   }
@@ -8639,27 +8631,9 @@ it("asynchronous operations start in the order they were asked for", async () =>
     stderr: "inherit",
   });
 
-  // A FIFO opens for writing without a wait only once it is open for reading.
-  const withoutReader = new Set(isWindows ? [] : names);
-  const allHadReaders = (async () => {
-    while (withoutReader.size && proc.exitCode === null) {
-      for (const name of withoutReader) {
-        try {
-          const fd = openSync(pathOf(name), constants.O_WRONLY | constants.O_NONBLOCK);
-          withoutReader.delete(name);
-          onReader(name, () => closeSync(fd));
-        } catch (error: any) {
-          if (error.code !== "ENXIO") throw error;
-        }
-      }
-      await new Promise(setImmediate);
-    }
-  })();
-
   await Promise.race([twoStarted.promise, proc.exited]);
   const firstTwo = started.toSorted();
-  for (const letGo of held) letGo();
-  await allHadReaders;
+  for (const socket of held) socket.end();
   const exitCode = await proc.exited;
   for (const server of servers) server.close();
 

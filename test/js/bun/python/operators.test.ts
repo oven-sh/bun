@@ -406,6 +406,45 @@ nans = [float("nan"), 1.0, float("nan"), 3.0]
   expect(exitCode).toBe(0);
 });
 
+// Optimized code checks for the one kind of object that a site has seen, where there is such a check: no Python object passes it.
+test.concurrent.each(tiers.slice(3))("== at a site that has seen one kind of object: %s", async (_, env) => {
+  const { stdout, stderr, exitCode } = await run(
+    {
+      "v.py": vector,
+      "main.js": `
+      import { V } from "./v.py";
+      const kinds = {
+        plain: () => ({}), array: () => [], function: () => () => 0, derivedArray: () => new (class extends Array {})(),
+        Map: () => new Map(), Set: () => new Set(), WeakMap: () => new WeakMap(), WeakSet: () => new WeakSet(), Date: () => new Date(0),
+        RegExp: () => /x/, Promise: () => Promise.resolve(), Proxy: () => new Proxy({}, {}), DataView: () => new DataView(new ArrayBuffer(1)),
+        String: () => new String("s"), Error: () => new Error("e"), Uint8Array: () => new Uint8Array(1),
+      };
+      const vs = [1, 2, 3, 4].map(x => new V(x)), ws = [1, 0, 3, 0].map(x => new V(x));
+      const answers = {};
+      for (const [name, make] of Object.entries(kinds)) {
+        const count = (0, eval)("(function (xs, ys, n) { let s = 0; for (let i = 0; i < n; ++i) if (xs[i & 3] == ys[i & 3]) ++s; return s; })");
+        const xs = [make(), make(), make(), make()], ys = [xs[0], make(), xs[2], make()], others = [{}, xs[1], new Map(), null];
+        const answer = [count(xs, ys, 3000), count(vs, ws, 400), count(xs, ys, 3000), count(xs, vs, 400), count(vs, ys, 400), count(xs, others, 400), count(xs, ys, 3000)];
+        (answers[answer] ??= []).push(name);
+      }
+      console.log(answers);
+    `,
+    },
+    env,
+  );
+  expect(stderr).toBe("");
+  expect(stdout).toMatchInlineSnapshot(`
+    "{
+      "1500,200,1500,0,0,100,1500": [
+        "plain", "array", "function", "derivedArray", "Map", "Set", "WeakMap", "WeakSet", "Date", "RegExp",
+        "Promise", "Proxy", "DataView", "String", "Error", "Uint8Array"
+      ],
+    }
+    "
+  `);
+  expect(exitCode).toBe(0);
+});
+
 // differential/interop/018_operator_operands has every operator with every kind of operand, once. Minutes in the slow builds.
 test.skipIf(isDebug || isASAN).concurrent.each(tiers.slice(2))(
   "Python is asked before an operand is converted: %s",

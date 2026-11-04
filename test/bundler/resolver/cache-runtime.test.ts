@@ -372,15 +372,18 @@ describe.concurrent("a file or package created after the resolver read its direc
 
   // The listing of node_modules was read before the link was made. The first lookup opens the package
   // through the link, so it has to read that listing again to learn where the link leads. Else the package
-  // is loaded from the link's path, and from its real path once a miss in it makes the resolver look again.
+  // is loaded from the link's path, where a dependency that is beside its real path is not found, and from
+  // its real path once a miss in it makes the resolver look again.
   test("a package linked into a node_modules that was read loads once, from its real path (#42776)", () => {
     using dir = tempDir("runtime-cache-late-link", {
       "store/late-linked/package.json": JSON.stringify({ name: "late-linked", main: "index.js" }),
       "store/late-linked/index.js": `globalThis.lateLinkedLoads = (globalThis.lateLinkedLoads ?? 0) + 1;
+const beside = require("beside-late-linked");
 try {
   require("a-peer-of-late-linked-that-is-not-installed");
 } catch {}
-module.exports = {};`,
+module.exports = { beside };`,
+      "store/node_modules/beside-late-linked/index.js": `module.exports = "beside its real path";`,
       "project/node_modules/warm/index.js": `module.exports = 1;`,
       "project/main.js": "",
     });
@@ -394,10 +397,11 @@ module.exports = {};`,
     const first = req("late-linked");
     expect({
       before,
+      beside: first.beside,
       after: req.resolve("late-linked"),
       sameInstance: req("late-linked") === first,
       loads: (globalThis as any).lateLinkedLoads,
-    }).toEqual({ before: realPath, after: realPath, sameInstance: true, loads: 1 });
+    }).toEqual({ before: realPath, beside: "beside its real path", after: realPath, sameInstance: true, loads: 1 });
   });
 
   // A lookup from the directory itself lists it under a name with no separator at its end. The `browser`

@@ -1,0 +1,65 @@
+status: 0
+script: 5d1a57ef5bd8a545
+source: 60e16810b6a2921b
+---
+--- it raises afterwards
+frame.f_code is original => True
+frame.f_code.co_name => swaps
+swaps.__code__ is many.__code__ => True
+[('args', (1,)), ('kwargs', {}), ('local', 'of swaps')]
+Traceback (most recent call last):
+  File "FILE", line 43, in <module>
+    swaps(1)
+    ~~~~~^^^
+  File "FILE", line 35, in swaps
+    raise ValueError(local)
+ValueError: of swaps
+
+(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 'many', 'many', 'many', 'many', 'many', 'many')
+--- it calls itself, as what compiles a function when it is first called does
+(0, 2, 3, 4, 5, 6, 7, 8, 9, 1, 'many', 'many', 'many', 'many', 'many', 'many')
+(0, 2, 3, 4, 5, 6, 7, 8, 9, 2, 'many', 'many', 'many', 'many', 'many', 'many')
+[(entry.name, entry.line) for entry in entries] [attempt=0] => [('<module>', 'outer()'), ('outer', 'return sum(lazy(1).values())'), ('lazy', 'return lazy(*args, **kwargs)'), ('fails', 'import no_such_module_at_all')]
+[(frame.f_code.co_name, sorted(frame.f_locals)) for frame in frames[1:]] [attempt=0] => [('outer', []), ('lazy', ['args', 'kwargs']), ('fails', ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'])]
+[(entry.name, entry.line) for entry in entries] [attempt=1] => [('<module>', 'outer()'), ('outer', 'return sum(lazy(1).values())'), ('fails', 'import no_such_module_at_all')]
+[(frame.f_code.co_name, sorted(frame.f_locals)) for frame in frames[1:]] [attempt=1] => [('outer', []), ('fails', ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'])]
+[(entry.name, entry.line) for entry in entries] [attempt=2] => [('<module>', 'outer()'), ('outer', 'return sum(lazy(1).values())'), ('fails', 'import no_such_module_at_all')]
+[(frame.f_code.co_name, sorted(frame.f_locals)) for frame in frames[1:]] [attempt=2] => [('outer', []), ('fails', ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'])]
+--- the frame is looked at while it runs
+True looks ('x', 'y', 'z') 5
+{'x': 1, 'y': 2, 'z': 3}
+{'x': 1, 'y': 2, 'z': 3}
+4
+(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 'many', 'many', 'many', 'many', 'many', 'many')
+--- super() and a class cell
+Derived().method() => base
+Derived().method() => Derived
+--- generators
+('first', 1)
+next(old) => ['first', 'n']
+next(new) => (3, 2, 3, 4, 5, 'other', 'other', 'other')
+next(unstarted) => ('first', 2)
+old.gi_code is old_code => True
+old.gi_code.co_name => generates
+new.gi_code.co_name => generates_other
+unstarted.gi_code.co_name => generates
+old.gi_frame.f_code.co_name => generates
+new.gi_frame.f_code.co_name => generates_other
+sorted(old.gi_frame.f_locals) => ['first', 'n']
+sorted(new.gi_frame.f_locals) => ['a', 'b', 'c', 'd', 'e', 'x', 'y', 'z']
+sorted(unstarted.gi_frame.f_locals) => ['first', 'n']
+next(old) => generates
+next(new) => generates_other
+list(unstarted) => [['first', 'n'], 'generates']
+list(generates_and_swaps(1)) => [1, ['local', 'n']]
+list(generates_and_swaps(1)) => [(1, 2, 3, 4, 5, 'other', 'other', 'other'), 'generates_other']
+--- tracing
+[('call', 'traced', 0), ('line', 'traced', 1), ('call', 'become', 0), ('line', 'become', 1), ('line', 'become', 2), ('return', 'become', 2), ('line', 'traced', 2), ('line', 'traced', 3), ('line', 'traced', 4), ('return', 'traced', 4), ('call', 'many', 0), ('line', 'many', 1), ('line', 'many', 2), ('return', 'many', 2)]
+[('monitored', 1), ('monitored', 2), ('monitored', 3), ('monitored', 'return'), ('many', 1), ('many', 2), ('many', 'return')]
+--- while the arguments are bound
+(1, 2, ['third'])
+--- from another thread
+frame.f_code.co_name => blocked
+sorted(frame.f_locals.items()) => [('local', 'of blocked'), ('x', 1)]
+outcome => [('blocked', ['e', 'frame', 'local', 'x']), (1, 'of blocked')]
+blocked(1)[:2] => (1, 2)

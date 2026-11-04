@@ -1,6 +1,6 @@
 # The places (co_positions()) of the jumps back in loops, which is where a signal handler finds the frame, and a traceback shows it; that
 # other jumps have a place too; which instructions co_exceptiontable says are covered.
-import dis, itertools, signal, sys, traceback, types
+import dis, gc, itertools, signal, sys, traceback, types
 SOURCES = r'''
 while a:
     pass
@@ -427,6 +427,8 @@ def c1():
     return [i for i in itertools.count() if i < 0]
 
 
+# (An exception out of a handler that is called during a callback of a weak reference is only printed. Importing has left such callbacks.)
+gc.collect()
 signal.signal(signal.SIGALRM, handler)
 for function in (w1, w2, w3, f1, f2, f3, f4, c1):
     signal.setitimer(signal.ITIMER_REAL, 0.01)

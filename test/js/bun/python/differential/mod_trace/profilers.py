@@ -1,10 +1,14 @@
 # cProfile and profile: who was called how often, and by whom.
 import cProfile
+import gc
 import io
 import profile
 import pstats
 import re
 import sys
+
+# What importing has left behind has callbacks (the locks of modules). They are called now, not at some time while a profiler is on.
+gc.collect()
 
 
 def leaf(n):

@@ -1,5 +1,5 @@
 status: 0
-script: 258981f6d3b9b843
+script: 01accca930882245
 ---
 == cProfile
    <built-in method builtins.len> 2 2 True True [('FILE:middle', 2, 2)]
@@ -52,9 +52,9 @@ None
 []
 == pstats
    ncalls lineno(function)
-   8 10(leaf)
-   2 14(middle)
-   5/1 21(recursive)
+   8 14(leaf)
+   2 18(middle)
+   5/1 25(recursive)
 == profile
    :append 1 1 [('FILE:top', 1)]
    :len 2 2 [('FILE:middle', 2)]
@@ -69,4 +69,4 @@ None
    profile:<function top> 1 1 [('profile:profiler', 1)]
    profile:profiler 0 0 []
 == cProfile.run
-['filename:lineno(function)', 'builtins.exec}', 'objects}', '<string>:1(<module>)', 'profilers.py:10(leaf)']
+['filename:lineno(function)', 'builtins.exec}', 'objects}', '<string>:1(<module>)', 'profilers.py:14(leaf)']

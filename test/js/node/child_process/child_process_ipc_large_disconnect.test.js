@@ -100,7 +100,10 @@ test.concurrent.each(["json", "advanced"])(
 
       if (process.send) {
         const deadline = Date.now() + 10_000;
-        while (!existsSync("all-sent") && Date.now() < deadline) Bun.sleepSync(1);
+        while (!existsSync("all-sent")) {
+          if (Date.now() > deadline) throw new Error("not all were sent");
+          Bun.sleepSync(1);
+        }
         let received = 0;
         process.on("message", () => {
           if (++received === 1) process.disconnect();

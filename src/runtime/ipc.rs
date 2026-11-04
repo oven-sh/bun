@@ -1063,6 +1063,8 @@ pub(crate) struct SendQueue {
     pub(crate) pending_close: Cell<bool>,
     /// A user disconnect() waiting for the handle queue to flush; reported as disconnected meanwhile, cleared by any real close.
     pub(crate) close_after_flush: Cell<bool>,
+    /// disconnect() was called. A close for another reason, as the exit of the peer, still delivers what was read before it.
+    user_disconnected: Cell<bool>,
     pub(crate) pending_after_close: Cell<bool>,
     pub close_event_sent: Cell<bool>,
 
@@ -1178,6 +1180,7 @@ impl SendQueue {
             deferred_scheduled: Cell::new(false),
             pending_close: Cell::new(false),
             close_after_flush: Cell::new(false),
+            user_disconnected: Cell::new(false),
             pending_after_close: Cell::new(false),
             close_event_sent: Cell::new(false),
             #[cfg(windows)]
@@ -1321,6 +1324,7 @@ impl SendQueue {
 
     /// User disconnect(): reports disconnected now, but closes only once a handle awaiting its ack and the queue have gone out.
     pub(crate) fn disconnect(&self) {
+        self.user_disconnected.set(true);
         if self.socket_is_open()
             && !self.pending_close.get()
             && (self.waiting_for_ack.get().is_some() || !self.queue.get().is_empty())
@@ -1894,7 +1898,7 @@ fn handle_ipc_message(
     }
 
     // As in Node, a disconnect() that waits for the ack of a handle still delivers, and any other delivers nothing more.
-    if !send_queue.is_connected() && !send_queue.has_unacked_handle() {
+    if send_queue.user_disconnected.get() && !send_queue.has_unacked_handle() {
         send_queue.set_incoming_fd(None);
         return Ok(());
     }

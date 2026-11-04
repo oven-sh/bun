@@ -60,8 +60,7 @@
   "src/jsc/web_worker.rs": {
     "thread spawn": 1,
     "unsafe impl Send": [
-      "OwnedByThread",
-      "ThreadStart"
+      "OwnedByThread"
     ]
   },
   "src/jsc/webcore_types.rs": {
@@ -122,6 +121,11 @@
     "thread spawn": 1,
     "unsafe impl Send": [
       "SharedWatcher"
+    ]
+  },
+  "src/runtime/crypto/PBKDF2.rs": {
+    "unsafe impl Send": [
+      "Digest"
     ]
   },
   "src/runtime/dns_jsc/dns.rs": {

@@ -840,8 +840,7 @@ function fork(modulePath, args: string[] | Record<string, unknown> | null = [], 
 
   args = [...execArgv, modulePath, ...(args as string[])];
 
-  // Node mode is decided by argv[0]. Pass the parent's argv0 on so the child
-  // bun runs as `node` too. Not for spawn(): it may run a bun subcommand.
+  // Node mode is decided by argv[0], so the child needs the parent's argv0.
   if (isRunningAsNode && options.execPath === process.execPath && options.argv0 == null) {
     options.argv0 = process.argv0;
   }

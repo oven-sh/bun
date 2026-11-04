@@ -500,7 +500,7 @@ devTest("browser console forwarding does not throw into the page", {
       },
     };
     probe("Proxy that throws for one key", new Set([new Proxy({ a: 1, b: 2 }, throwsForA)]));
-    probe("Proxy of an array that throws for one key", new Set([new Proxy(Object.assign([1, 2], { a: 3 }), throwsForA)]));
+    probe("Proxy of an array that throws for one key", new Set([new Proxy(Object.assign([1, 2], { a: 3, b: 4 }), throwsForA)]));
     const revokedFunction = Proxy.revocable(function () {}, {});
     revokedFunction.revoke();
     probe("revoked Proxy of a function", new Set([revokedFunction.proxy]));
@@ -552,7 +552,7 @@ devTest("browser console forwarding does not throw into the page", {
       // One value that cannot print does not take the line, or the values beside it.
       "revoked Proxy Set { [threw while printing] }",
       "Proxy that throws for one key Set { { a: [threw while printing], b: 2 } }",
-      "Proxy of an array that throws for one key Set { [ 1, 2, a: [threw while printing] ] }",
+      "Proxy of an array that throws for one key Set { [ 1, 2, a: [threw while printing], b: 4 ] }",
       "revoked Proxy of a function Set { [threw while printing] }",
       "Proxy of a function [threw while printing]",
       "Proxy of a Map [threw while printing]",

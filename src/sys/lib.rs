@@ -5593,7 +5593,8 @@ pub mod linux {
     ///
     /// # Safety
     /// Whoever waits on `epfd` gets `event.u64` back and may dereference it. It must be what they
-    /// expect for as long as `fd` is registered.
+    /// expect for as long as `fd` is registered, and until they are done with the events that
+    /// they had fetched by then.
     #[inline]
     pub unsafe fn epoll_ctl(
         epfd: c_int,
@@ -7531,7 +7532,8 @@ pub fn kqueue() -> Maybe<Fd> {
 ///
 /// # Safety
 /// Whoever waits on `fd` gets the `udata` of each change back and may dereference it. It must be
-/// what they expect for as long as the change is registered.
+/// what they expect for as long as the change is registered, and until they are done with the
+/// events that they had fetched by then.
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 pub unsafe fn kevent(
     fd: Fd,

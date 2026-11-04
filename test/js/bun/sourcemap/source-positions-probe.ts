@@ -24,7 +24,10 @@ function tokenize(text: string): string[] {
     }
     if (char === '"' || char === "'") {
       let end = at + 1;
-      while (text[end] !== char) end += text[end] === "\\" ? 2 : 1;
+      while (text[end] !== char) {
+        if (end >= text.length) throw new Error(`no end of the text at ${at} of ${text}`);
+        end += text[end] === "\\" ? 2 : 1;
+      }
       tokens.push(text.slice(at, end + 1));
       at = end + 1;
       continue;
@@ -33,6 +36,7 @@ function tokenize(text: string): string[] {
       let start = at;
       let end = at + 1;
       while (text[end] !== "`") {
+        if (end >= text.length) throw new Error(`no end of the template at ${at} of ${text}`);
         if (text[end] === "\\") {
           end += 2;
         } else if (text.startsWith("${", end)) {
@@ -40,6 +44,7 @@ function tokenize(text: string): string[] {
           // No template of the probe holds another one.
           let close = end + 2;
           for (let depth = 1; ; close++) {
+            if (close >= text.length) throw new Error(`no end of the value at ${end} of ${text}`);
             if (text[close] === "{") depth++;
             else if (text[close] === "}" && --depth === 0) break;
           }

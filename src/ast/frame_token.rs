@@ -101,10 +101,12 @@ pub fn is_identifier_kind(data: &ExprData) -> bool {
 
 /// Whether the printer writes the import that `symbol` is as a name. One that is read from a namespace is printed `X.name`: a member of a TypeScript namespace or enum that another block declares, or what a bundle imports from a CommonJS module.
 #[inline]
-pub fn is_import_printed_as_name(symbol: &Symbol) -> bool {
-    // One that is missing is printed `undefined`, and one without an alias as its namespace alone.
-    symbol.import_item_status == ImportItemStatus::Missing
-        || (symbol.namespace_alias.as_ref()).is_none_or(|namespace| namespace.alias.is_empty())
+pub fn is_import_printed_as_name(symbol: &Symbol, minify_syntax: bool) -> bool {
+    // One that is missing is printed `undefined`, or `void 0` where syntax is minified. One without an alias is printed as its namespace alone.
+    match symbol.import_item_status {
+        ImportItemStatus::Missing => !minify_syntax,
+        _ => (symbol.namespace_alias.as_ref()).is_none_or(|namespace| namespace.alias.is_empty()),
+    }
 }
 
 /// Whether a callee ends in a name: a name, an import, a member behind a dot or `super`. JSC reports its call at that name, not in front of the `(`.

@@ -784,12 +784,9 @@ impl FileLowering<'_, '_, '_, '_> {
         (text.get(bracket as usize) == Some(&b'[') && is_kept).then_some(bracket)
     }
 
-    // JSC reports a member of `super` as any other member. A text that runs as written keeps the start of `super`.
+    // JSC reports a member of `super` as any other member, also in a text that runs as written.
     pub(in crate::lower) fn super_member_position(&self, access: ExprId) -> u32 {
-        match self.is_shown_without_source_map() {
-            true => self.hir[access].pos,
-            false => self.member_position(access),
-        }
+        self.member_position(access)
     }
 
     fn position_in_front_of_member(&self, object: ExprId) -> u32 {

@@ -7008,7 +7008,9 @@ pub(crate) mod __gated_printer {
             } else {
                 import.ref_
             };
-            (self.symbols().get_const(ref_)).is_some_and(is_import_printed_as_name)
+            let minify_syntax = self.options.minify_syntax;
+            (self.symbols().get_const(ref_))
+                .is_some_and(|symbol| is_import_printed_as_name(symbol, minify_syntax))
         }
 
         pub(crate) fn try_to_get_imported_enum_value(

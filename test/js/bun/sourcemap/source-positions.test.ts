@@ -673,6 +673,60 @@ console.log(JSON.stringify(frames));
   });
 });
 
+// A bundle prints an import that its CommonJS module does not export as `undefined`, and as `void 0` where it minifies syntax. `void 0` is no name, so a token behind it is mapped where it starts a line.
+test("a token is mapped behind a missing import that a bundle prints as void 0", async () => {
+  const reads = `import { missing } from "./has.cjs";
+const rows = [
+  () => {
+    missing
+      .member;
+  },
+  () => {
+    missing
+      [0];
+  },
+];
+const frames = rows.map(row => {
+  try {
+    row();
+    return "did not throw";
+  } catch (e) {
+    return e.name + " on " + /reads\\.ts:(\\d+):\\d+\\)?$/m.exec(e.stack)?.[1];
+  }
+});
+console.log(JSON.stringify(frames));
+`;
+  using files = tempDir("source-positions-missing-import", {
+    // A module that only assigns to `exports` becomes an ES module in a bundle, and an import that it lacks is undefined.
+    "has.cjs": `exports.present = 1;\n`,
+    "reads.ts": reads,
+  });
+  const folder = String(files);
+  const built = await Bun.build({
+    entrypoints: [join(folder, "reads.ts")],
+    outdir: join(folder, "out"),
+    target: "bun",
+    sourcemap: "inline",
+    minify: { syntax: true },
+  });
+  expect(built.success).toBe(true);
+  expect(await built.outputs[0].text()).toContain("(void 0).member");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(folder, "out", "reads.js")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const lines = reads.split("\n");
+  const lineOf = (text: string) => lines.findIndex(line => line.trim() === text) + 1;
+  expect({ frames: JSON.parse(stdout), stderr, exitCode }).toEqual({
+    frames: [`TypeError on ${lineOf(".member;")}`, `TypeError on ${lineOf("[0];")}`],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 // The `.` in front of each `b` is looked for from the line below it. What that costs must not grow with the lines above.
 test("a file of 20,000 lines that end in U+2028 is printed with its source map", async () => {
   const statement = "  f().\u2028    b;\u2028";

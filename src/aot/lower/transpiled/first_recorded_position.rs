@@ -110,7 +110,8 @@ impl Source<'_> {
         match expression.data {
             ExprData::EImportIdentifier(import) => {
                 let import = follow_symbols(self.symbols, import.ref_);
-                is_import_printed_as_name(&self.symbols[import.inner_index() as usize])
+                // The compiler's own transpile minifies syntax, as a run does.
+                is_import_printed_as_name(&self.symbols[import.inner_index() as usize], true)
             }
             data => is_identifier_kind(&data),
         }

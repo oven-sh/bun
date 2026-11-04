@@ -963,4 +963,53 @@ show("an optional call of a constant that is used once, behind a comma", () => {
       ?.(1),
   );
 });
+class Base {
+  get getter() {
+    return fail();
+  }
+  set setter(value) {
+    use(fail());
+  }
+  method() {
+    return use(fail());
+  }
+}
+class Derived extends Base {
+  readsMember() {
+    return super
+      .getter;
+  }
+  readsElement() {
+    return super
+      [key()];
+  }
+  storesMember() {
+    super
+      .setter = 1;
+  }
+  callsMember() {
+    return use(super
+      .method());
+  }
+  callsElement() {
+    return use(super
+      ["method"]
+      ());
+  }
+}
+show("a member of super", () => {
+  new Derived().readsMember();
+});
+show("an element of super", () => {
+  new Derived().readsElement();
+});
+show("a store to a member of super", () => {
+  new Derived().storesMember();
+});
+show("a call of a member of super", () => {
+  new Derived().callsMember();
+});
+show("a call of an element of super", () => {
+  new Derived().callsElement();
+});
 }

@@ -438,6 +438,10 @@ pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> b
             return false;
         }
         ascii_hostname = ascii.to_owned_slice();
+        // As in `tls.checkServerIdentity`.
+        if bun_core::ip_address::parse_strict(unfqdn(&ascii_hostname)).is_some() {
+            return false;
+        }
         &ascii_hostname[..]
     } else {
         hostname

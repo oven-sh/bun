@@ -238,6 +238,9 @@ impl Watcher {
 
     pub fn start(&mut self) -> Result<(), crate::Error> {
         debug_assert!(!self.watchloop_handle.load());
+        // A change made before the thread gets to run is not lost.
+        #[cfg(windows)]
+        self.platform.start()?;
         self.watchloop_handle.store(true);
         // Watcher must be Send across the spawned thread boundary; we pass a
         // raw pointer (as usize) and uphold the safety contract manually.
@@ -261,6 +264,9 @@ impl Watcher {
         });
         self.thread = Some(handle.map_err(|e| {
             self.watchloop_handle.store(false);
+            // Ends the read: the caller is free to drop `self`.
+            #[cfg(windows)]
+            self.platform.stop();
             // Windows: raw_os_error() is a Win32 GetLastError() code, so
             // route it through the u32 (Win32Error) mapper rather than
             // from_errno's i64 discriminant-cast path.

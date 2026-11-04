@@ -769,14 +769,14 @@ function afterKeptChunks(stream: $Node.WriteStream, cb: ErrorCallback): ErrorCal
   return err => callInOrder(callbacks, err, 0);
 }
 
-// `unsent` is the sink's answer to a chunk that it could neither keep nor send whole. What it kept went to the pipe in the same call, ahead of that chunk.
+// `unsent` is the sink's answer to a chunk that it could neither keep nor send whole. What it kept was offered to the pipe in the same call, ahead of that chunk.
 function afterChunksAhead(stream: $Node.WriteStream, unsent: Promise<unknown>, cb: ErrorCallback): ErrorCallback {
   const callbacks = stream[kKeptChunkCallbacks];
   if (callbacks === undefined) return cb;
   stream[kUnsentChunks] = unsent;
   // The call failed (0 is "pending"), for all of them.
   if ($peekPromiseStatus(unsent) !== 0) return afterKeptChunks(stream, cb);
-  // They do not wait until the reader has taken the rest of a later chunk.
+  // They do not wait for a later chunk, which the reader may only take once they have run. If the pipe took less than was kept, `cb` gets what becomes of the rest.
   if (callbacks.length !== 0) {
     stream[kKeptChunkCallbacks] = [];
     process.nextTick(callInOrder, callbacks, null, 0);

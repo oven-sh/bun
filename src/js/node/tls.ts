@@ -509,6 +509,11 @@ function checkServerIdentity(hostname: string, cert: $Node.PeerCertificate) {
   hostname = unfqdn(hostname);
   const hostnameASCIIWithoutFQDN = unfqdn(hostnameASCII);
 
+  // As in Node.js.
+  if (!net.isIP(hostname) && net.isIP(hostnameASCIIWithoutFQDN)) {
+    return $ERR_TLS_CERT_ALTNAME_INVALID("Host is a non-canonical IP address", hostname, cert);
+  }
+
   if (altNames) {
     const splitAltNames = StringPrototypeIncludes.$call(altNames, '"')
       ? splitEscapedAltNames(altNames)

@@ -148,7 +148,10 @@ try {
 
 type AnnotationSummary = { style: string; context: string };
 type Annotation = AnnotationSummary & { body_html: string };
-/** `more`: `list` ends at the limit of the read, and the build is not known to end there. */
+/**
+ * `more`: the build can have an annotation that `list` does not hold. The read ended at its limit, or the build
+ * got an annotation while it was read.
+ */
 type Annotations<T> = { list: T[]; more: boolean };
 type Job = { id: string; type: string; name: string; state: string; soft_failed?: boolean; web_url: string };
 
@@ -168,25 +171,30 @@ async function annotations(build: number, { bodies, maxPages = 2 }: { bodies: bo
   const endpoint = `/pipelines/bun/builds/${build}/annotations`;
   const list: AnnotationSummary[] = [];
   const ids = new Set<string>();
+  // A running build can add an annotation ahead of the ones already read. That moves one of them to the next
+  // page, where it shows again. The new annotation is on a page that was read before, so this read misses it.
+  let moved = false;
   for (let page = 1; page <= maxPages; page++) {
     const batch = await bk<(AnnotationSummary & { id: string })[]>(
       "api",
       `${endpoint}?per_page=${perPage}&page=${page}${bodies ? "" : "&omit_body=true"}`,
     );
-    // A running build can add an annotation ahead of the ones already read. That moves one of them to the next page.
     for (const annotation of batch) {
-      if (ids.has(annotation.id)) continue;
+      if (ids.has(annotation.id)) {
+        moved = true;
+        continue;
+      }
       ids.add(annotation.id);
       list.push(annotation);
     }
-    if (batch.length < perPage) return { list, more: false };
+    if (batch.length < perPage) return { list, more: moved };
   }
   // Only the note that the list is cut depends on this request. If it fails, the note is printed.
   const next = await bk<AnnotationSummary[]>(
     "api",
     `${endpoint}?per_page=1&page=${maxPages * perPage + 1}&omit_body=true`,
   ).catch(() => null);
-  return { list, more: next == null || next.length > 0 };
+  return { list, more: moved || next == null || next.length > 0 };
 }
 
 function renderTermHTML(html: string): string {

@@ -332,6 +332,29 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
     });
   });
 
+  // The new annotation is ahead of the ones that the first page held, so this run does not have it.
+  scenario.each([
+    { count: 150, requests: { 7: [request(7, 1), request(7, 2)] } },
+    { count: 199, requests: { 7: [request(7, 1), request(7, 2), after200(7)] } },
+  ])(
+    "--errors says that the list is not whole when a new annotation moves a list of $count",
+    async ({ count, requests }) => {
+      const result = await runFindBuild(["--errors", "7", "--no-compare"], {
+        annotations: { 7: failingFiles(count) },
+        added: { 7: { ...flaky("test/js/retried.test.ts"), id: "flaky-new", context: "flaky-new" } },
+      });
+      const note = `(only the first ${count} annotations of this build are read)`;
+      expect(result).toEqual({
+        stdout: expect.any(Array),
+        headings: failingHeadings(count),
+        notes: [note, note],
+        stderr: "",
+        exitCode: 0,
+        requests,
+      });
+    },
+  );
+
   scenario("--errors makes one request for a build with no annotations", async () => {
     const result = await runFindBuild(["--errors", "7", "--no-compare"], { annotations: { 7: [] } });
     expect(result).toEqual({

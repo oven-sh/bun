@@ -94,10 +94,31 @@ pub(crate) fn set_override_module_run_main(vm: &mut VirtualMachine, is_patched: 
 pub(crate) fn set_override_module_run_main_promise(
     vm: &mut VirtualMachine,
     promise: *mut JSInternalPromise,
+    key: &bun_core::String,
 ) {
-    if vm.pending_internal_promise().is_none() && !vm.run_main_ran_entry_point {
+    if vm.pending_internal_promise().is_some() {
+        return;
+    }
+    let is_entry_point = key.eql_utf8(bun_jsc::virtual_machine::MAIN_FILE_NAME)
+        || vm.main().is_some_and(|main| key.eql_utf8(main));
+    if is_entry_point || !vm.run_main_ran_entry_point {
         vm.set_pending_internal_promise(Some(promise));
     }
+}
+
+// HOST_EXPORT(Bun__VM__noteMainModuleOfRunMain, c)
+pub(crate) fn note_main_module_of_run_main(this: &mut VirtualMachine) {
+    // JSCommonJSModule.cpp calls this when `Module.runMain()` makes a CommonJS module the main module.
+    if this.pending_internal_promise().is_none() {
+        this.run_main_ran_entry_point = true;
+    }
+}
+
+// HOST_EXPORT(Bun__VM__entryModuleLoadIsToCome, c)
+pub(crate) fn entry_module_load_is_to_come(this: &mut VirtualMachine) -> bool {
+    // A preload runs, or the override of `Module.runMain` has not started that load. Node does not load the text of `-e`, `-p` or stdin as a main module, so that text is no entry module.
+    this.module_loader.eval_source.is_none()
+        && (this.is_in_preload || this.pending_internal_promise().is_none())
 }
 
 /// Exported as `Bun__VM__setEntryPointEvalResultESM`.
@@ -136,13 +157,10 @@ pub(crate) fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier
     false
 }
 
-/// Called by JSCommonJSModule.cpp for each root CJS module so the run command reports
+/// Called once by JSCommonJSModule.cpp for the root CJS module so the run command reports
 /// origin `uncaughtException`. `main()` compare filters out an ESM entry that `import`s CJS.
 // HOST_EXPORT(Bun__VM__noteCommonJSEvaluation, c)
 pub(crate) fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) {
-    if this.pending_internal_promise().is_none() {
-        this.run_main_ran_entry_point = true;
-    }
     if this.entry_point_result.evaluated_as_cjs {
         return;
     }

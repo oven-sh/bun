@@ -3,7 +3,6 @@
 
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/JSString.h"
-#include <JavaScriptCore/StrongInlines.h>
 #include "headers-handwritten.h"
 #include "wtf/NakedPtr.h"
 #include "BunClientData.h"
@@ -87,8 +86,13 @@ public:
     JSC::WriteBarrier<JSModuleGraph> m_moduleGraph;
 
     bool ignoreESModuleAnnotation { false };
-    // Module.runMain() loads the module: it becomes the main module when it starts to run.
-    bool loadedAsMain { false };
+    // Pending: Module.runMain() loads the module, and it becomes the main module when it starts to run. LeftToESLoader: the built-in loader under a require.extensions handler found an ES module, which the loader of import() loads.
+    enum class MainLoad : uint8_t {
+        No,
+        Pending,
+        LeftToESLoader,
+    };
+    MainLoad mainLoad { MainLoad::No };
     // Of the module object of a file of an ahead-of-time executable: the number of the file in the executable. Its `exports`, `parent` and `children` are the engine's to answer.
     static constexpr uint32_t noCompiledModule = UINT32_MAX;
     uint32_t compiledModule { noCompiledModule };
@@ -203,28 +207,21 @@ inline std::optional<JSC::SourceCode> createCommonJSModule(
     return createCommonJSModule(globalObject, graph, specifierValue, source, false);
 }
 
-// What Module.runMain() made a main module, until the next entry load (Zig::GlobalObject::m_runMain). The first such call makes it.
+// What Module.runMain() gave to the loader of import(), until the next entry load (Zig::GlobalObject::m_runMain). The first such call makes it.
 struct RunMainState {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(RunMainState);
 
 public:
-    // The CommonJS module that is the main module in place of the entry module.
-    JSC::Strong<JSCommonJSModule> mainModule;
-    // What code had assigned to process.mainModule before. The property holds it again when the entry module is the main module again.
-    JSC::Strong<JSC::Unknown> assignedMainModule;
-    // The path of the entry module, while its load can still make it the main module again.
+    // The path of the entry module while its load is still to come. When that module runs, it is the main module in place of a script that a preload or an override of Module.runMain started.
     WTF::String entryThatTakesMainModuleBack;
-    // The registry keys that the loader of import() got. A CommonJS module with such a key becomes the main module when that loader runs it.
-    WTF::HashSet<WTF::String> startedKeys;
-    // The same scripts by `import.meta.url`. `import.meta.main` is true in an ES module with such a URL.
-    WTF::HashSet<WTF::String> startedURLs;
+    // The started scripts by `import.meta.url`. `import.meta.main` is true in an ES module with such a URL. True: a CommonJS module with such a URL becomes the main module when the loader of import() runs it.
+    WTF::HashMap<WTF::String, bool> startedURLs;
 };
-
-// The CommonJS module that Module.runMain() made the main module. Null: the entry module is the main module.
-JSCommonJSModule* mainModuleOfRunMain(Zig::GlobalObject*);
 
 // Module.runMain(path). True: a CommonJS script ran as the main module, or the require cache has the module. False: the caller loads `key` as import() does.
 bool loadMainModule(Zig::GlobalObject*, const WTF::String& key);
+// The load that the caller started after loadMainModule() returned false. Null: it threw. A load that fails leaves no started script behind.
+void didStartLoadOfMainModule(Zig::GlobalObject*, const WTF::String& key, JSC::JSPromise* load);
 
 class RequireResolveFunctionPrototype final : public JSC::JSNonFinalObject {
 public:

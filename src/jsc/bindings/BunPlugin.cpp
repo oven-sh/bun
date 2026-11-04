@@ -4305,6 +4305,24 @@ Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObj
     return Zig::JSModuleMock::createStructure(vm, globalObject, prototype);
 }
 
+extern "C" const Latin1Character* Bun__standaloneModuleKey(const Latin1Character*, size_t, size_t* outLength);
+
+bool isLoadAnsweredByPluginOrMock(Zig::GlobalObject* globalObject, const String& key)
+{
+    auto& plugins = globalObject->onLoadPlugins;
+    if (plugins.isEmpty() && !plugins.hasVirtualModules())
+        return false;
+    // Outside `bun test`, the loaders take a file that an executable holds before they ask.
+    size_t length = 0;
+    if (!isBunTest && key.is8Bit() && Bun__standaloneModuleKey(key.span8().data(), key.length(), &length))
+        return false;
+    if (String mocked = Zig::specifierOfUnwaitedModuleMockKey(key); !mocked.isNull() && Zig::registeredModuleMock(globalObject, mocked))
+        return true;
+    if (plugins.hasVirtualModules() && plugins.virtualModules->contains(key))
+        return true;
+    return Zig::isLoadedByPlugin(globalObject, key);
+}
+
 JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specifier, bool& wasModuleMock, Zig::BunPlugin::OnLoad::Matches& onLoad)
 {
     auto fallback = [&]() -> JSC::JSValue {

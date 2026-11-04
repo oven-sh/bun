@@ -813,7 +813,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * globalObject, JSC::Ca
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-extern "C" void Bun__VirtualMachine__setOverrideModuleRunMainPromise(void* bunVM, JSPromise* promise);
+extern "C" void Bun__VirtualMachine__setOverrideModuleRunMainPromise(void* bunVM, JSPromise* promise, const BunString* key);
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -832,8 +832,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
         return JSC::JSValue::encode(JSC::jsUndefined());
 
     auto* promise = JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, nullptr);
+    Bun::didStartLoadOfMainModule(defaultGlobalObject(globalObject), key.string(), scope.exception() ? nullptr : promise);
     RETURN_IF_EXCEPTION(scope, {});
-    Bun__VirtualMachine__setOverrideModuleRunMainPromise(defaultGlobalObject(globalObject)->bunVM(), promise);
+    BunString keyString = Bun::toString(key.string());
+    Bun__VirtualMachine__setOverrideModuleRunMainPromise(defaultGlobalObject(globalObject)->bunVM(), promise, &keyString);
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }

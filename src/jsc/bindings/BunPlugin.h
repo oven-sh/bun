@@ -224,6 +224,8 @@ class JSSourceCode;
 
 namespace Bun {
 JSC::JSValue runVirtualModule(Zig::GlobalObject*, BunString* specifier, bool& wasModuleMock, Zig::BunPlugin::OnLoad::Matches& onLoad);
+// Whether a module mock, a virtual module or an onLoad plugin answers a load of `key` in place of the file, as runVirtualModule() asks them.
+bool isLoadAnsweredByPluginOrMock(Zig::GlobalObject*, const WTF::String& key);
 JSC::JSValue findModuleMock(Zig::GlobalObject*, const BunString* specifier);
 // Returns null if the factory has settled or the generated ES module will call it (never when `synchronous`), else a promise for that.
 JSC::JSPromise* runModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock, const String& key, bool synchronous);

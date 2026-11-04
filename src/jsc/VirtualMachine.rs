@@ -188,6 +188,8 @@ pub struct VirtualMachine {
     pub main_hash: u32,
     /// Set if code overrides Bun.main to a custom value.
     pub overridden_main: crate::strong::Optional,
+    /// `Module.runMain()` made a CommonJS module the main module before a load had the entry point's promise. For the call of an overridden `Module.runMain`, that module stands for the entry point: it has no promise, and after it only a load of the entry point itself gives one.
+    pub run_main_ran_entry_point: bool,
     /// `bun bake`: the plugins of `bake.config.ts`, a JS array. The dev server loads them after the
     /// `[serve.static] plugins` of bunfig.toml.
     pub bake_config_plugins: crate::strong::Optional,
@@ -312,8 +314,6 @@ pub struct VirtualMachine {
     /// True if `load_preloads` kept the preload list for a reload that was deferred while it ran.
     pub preloads_kept_for_reload: bool,
     pub has_patched_run_main: bool,
-    /// A CommonJS script ran inside `Module.runMain()` before a load had the entry point's promise. For the call of an overridden `Module.runMain`, that script is the entry point: it has no promise, and a load that starts later does not give one.
-    pub run_main_ran_entry_point: bool,
 
     pub transpiler_store: crate::runtime_transpiler_store::RuntimeTranspilerStore,
 
@@ -3887,10 +3887,8 @@ impl VirtualMachine {
                             }
                         };
                     self.set_pending_internal_promise(Some(promise));
-                    // Nothing waits for a settled promise. This runs the microtasks and the ticks of a script that ran inside the call.
-                    if self.run_main_ran_entry_point
-                        && crate::JSPromise::status_ptr(promise)
-                            == crate::js_promise::Status::Fulfilled
+                    // Nothing waits for a settled promise. This runs the microtasks and the ticks that the call queued.
+                    if crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Fulfilled
                     {
                         self.event_loop_mut().tick();
                     }
@@ -6214,7 +6212,6 @@ impl VirtualMachine {
         self.set_main(Some(entry_path));
         self.main_resolved_path = bun_core::String::EMPTY;
         self.overridden_main.deinit();
-        self.forget_run_main_modules();
         if self.test_isolation_state.shares_global {
             Bun__Process__resetArgv(self.global());
         }
@@ -6233,6 +6230,8 @@ impl VirtualMachine {
                 }
             }
         }
+        // After the preloads: a script that one of them started is not a main module of the test file either.
+        self.forget_run_main_modules();
 
         // Note: reshaped for borrowck.
         let global = self.global;

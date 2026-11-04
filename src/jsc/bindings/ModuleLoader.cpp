@@ -885,7 +885,8 @@ JSValue fetchCommonJSModule(
     JSValue specifierValue,
     String specifierWtfString,
     BunString* referrer,
-    BunString* typeAttribute)
+    BunString* typeAttribute,
+    bool asksExtensionHandlers)
 {
     void* bunVM = globalObject->bunVM();
     auto& vm = JSC::getVM(globalObject);
@@ -964,6 +965,8 @@ JSValue fetchCommonJSModule(
     if (cached)
         return cached;
 
+    if (!asksExtensionHandlers) [[unlikely]]
+        return fetchCommonJSModuleNonBuiltin<true>(bunVM, vm, globalObject, &specifier, specifierValue, referrer, typeAttribute, res, target, specifierWtfString, BunLoaderTypeNone, scope);
     return fetchCommonJSModuleNonBuiltin<false>(bunVM, vm, globalObject, &specifier, specifierValue, referrer, typeAttribute, res, target, specifierWtfString, BunLoaderTypeNone, scope);
 }
 
@@ -1511,29 +1514,6 @@ JSValue fetchESMSourceCodeAsync(
     BunString* typeAttribute)
 {
     return fetchESMSourceCode<true>(globalObject, graph, specifierJS, res, specifier, referrer, typeAttribute);
-}
-
-void fetchESModuleOnThisThread(Zig::GlobalObject* globalObject, JSC::JSString* specifierJS, const String& key)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto* loader = globalObject->moduleLoader();
-    if (hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice(vm, loader, key))
-        return;
-    ErrorableResolvedSource res;
-    BunString specifier = Bun::toString(key);
-    BunString referrer = BunStringEmpty;
-    JSValue source = fetchESMSourceCode<false>(globalObject, nullptr, specifierJS, &res, &specifier, &referrer, nullptr, false, nullptr);
-    if (auto* sourceCode = scope.exception() || !source ? nullptr : dynamicDowncast<JSSourceCode>(source)) {
-        JSC::VM::SynchronousModuleQueue queue;
-        queue.prev = vm.m_synchronousModuleQueue;
-        vm.m_synchronousModuleQueue = &queue;
-        loader->provideFetch(globalObject, JSC::Identifier::fromString(vm, key), JSC::ScriptFetchParameters::Type::JavaScript, sourceCode);
-        if (!scope.exception())
-            JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
-        vm.m_synchronousModuleQueue = queue.prev;
-    }
-    (void)scope.tryClearException();
 }
 
 // Returns the JSSourceCode or a promise for it. Empty without an exception means it's waiting on the next onLoad callback's promise.

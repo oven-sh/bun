@@ -5648,7 +5648,7 @@ JSC_DEFINE_CUSTOM_GETTER(processMainModuleOfTestFile, (JSGlobalObject * lexicalG
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    if (auto* started = Bun::mainModuleOfRunMain(globalObject))
+    if (auto* started = globalObject->m_mainModuleOfRunMain.get())
         return JSValue::encode(started);
     JSValue main = globalObject->bunObject()->get(globalObject, Bun::builtinNames(vm).mainPublicName());
     RETURN_IF_EXCEPTION(scope, {});
@@ -5664,28 +5664,27 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessMainModuleOfTestFile, (JSGlobalObject * globa
     RELEASE_AND_RETURN(scope, Bun::defineOwnDataProperty(globalObject, thisObject, propertyName, JSValue::decode(value), 0));
 }
 
-// As Node's Module._load() assigns process.mainModule.
-void Process::setMainModuleOfRunMain(JSGlobalObject* globalObject, RunMainState& state, JSObject* module)
+bool Process::assignMainModule(VM& vm, JSObject* module)
 {
-    auto& vm = JSC::getVM(globalObject);
     auto mainModule = Identifier::fromString(vm, "mainModule"_s);
-    JSValue own = getDirect(vm, mainModule);
-    // Nothing read or assigned the property. From now on it is a value that reads Bun::mainModuleOfRunMain(), as the accessor of `bun test` does.
-    if (!own && module)
+    unsigned attributes = 0;
+    JSValue own = getDirect(vm, mainModule, attributes);
+    // Nothing read or assigned the property. From now on it reads the main module of the moment, as under `bun test`.
+    if (!own)
         putDirectCustomAccessor(vm, mainModule, CustomGetterSetter::create(vm, processMainModuleOfTestFile, setProcessMainModuleOfTestFile), PropertyAttribute::CustomValue | 0);
     if (!own || own.isCustomGetterSetter())
-        return;
-    // The property holds a value. It holds that value again when the entry module is the main module again.
-    if (!module) {
-        if (own == JSValue(state.mainModule.get()) && state.assignedMainModule)
-            putDirect(vm, mainModule, state.assignedMainModule.get(), 0);
-        state.assignedMainModule.clear();
-        return;
-    }
-    if (!state.mainModule && !own.isGetterSetter())
-        state.assignedMainModule.set(vm, own);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    RELEASE_AND_RETURN(scope, (void)Bun::defineOwnDataProperty(globalObject, this, mainModule, module, 0));
+        return true;
+    if (attributes & PropertyAttribute::DontDelete)
+        return false;
+    putDirect(vm, mainModule, module, 0);
+    return true;
+}
+
+void Process::forgetMainModule(VM& vm, JSObject* module)
+{
+    auto mainModule = Identifier::fromString(vm, "mainModule"_s);
+    if (getDirect(vm, mainModule) == JSValue(module))
+        putDirect(vm, mainModule, jsUndefined(), 0);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNextTickInDefaultRealm, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))

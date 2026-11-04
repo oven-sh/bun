@@ -172,13 +172,12 @@ impl Collection {
         data: &RefDataValue,
     ) -> JsResult<StepResult> {
         let _g = group::begin();
+        let buntest = buntest_strong.get();
+        let this = &mut buntest.collection;
 
         if !matches!(data, RefDataValue::Start) {
-            // The describe() whose callback ended is still the active scope, so what it left rejected is charged to it.
-            BunTest::report_before_leaving(buntest_strong, global_this, Some(false));
-            buntest_strong.get().collection.run_one_completed(global_this, None, data)?;
+            this.run_one_completed(global_this, None, data)?;
         }
-        let this = &mut buntest_strong.get().collection;
 
         // append queued callbacks, in reverse order because items will be pop()ed from the end
         // drain(..).rev() moves each item out exactly once and leaves capacity intact.

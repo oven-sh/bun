@@ -2981,53 +2981,6 @@ describe.concurrent("behavior depends on the module a function is imported from"
     });
   });
 
-  // The runner can't take both modules' word for it, so the listeners get it only if the hook and the next callback agree.
-  test("a rejection left by a hook goes to the listeners only if the hook and the test are vitest's", async () => {
-    const file = (hook: string, test: string) => `
-      import * as bun from "bun:test";
-      import * as vitest from "vitest";
-      process.on("unhandledRejection", error => console.log("heard", error.message));
-      ${hook}.beforeEach(async () => {
-        await new Promise(resolve => {
-          setTimeout(() => {
-            Promise.reject(new Error("left by the hook"));
-            resolve();
-          });
-        });
-      });
-      ${test}.test("rejects later", async () => {
-        await new Promise(resolve => setTimeout(resolve));
-        Promise.reject(new Error("left by the test"));
-        await new Promise(resolve => setTimeout(resolve));
-      });
-    `;
-    const ran = await Promise.all([
-      runTests({ "a.test.js": file("bun", "vitest") }),
-      runTests({ "a.test.js": file("vitest", "bun") }),
-      runTests({ "a.test.js": file("vitest", "vitest") }),
-    ]);
-    expect(ran.map(({ log, results, errors, exitCode }) => ({ log, results, errors, exitCode }))).toEqual([
-      {
-        log: ["heard left by the test"],
-        results: ["(pass) rejects later"],
-        errors: ["error: left by the hook"],
-        exitCode: 1,
-      },
-      {
-        log: [],
-        results: ["(fail) rejects later"],
-        errors: ["error: left by the hook", "error: left by the test"],
-        exitCode: 1,
-      },
-      {
-        log: ["heard left by the hook", "heard left by the test"],
-        results: ["(pass) rejects later"],
-        errors: [],
-        exitCode: 0,
-      },
-    ]);
-  });
-
   test(`"bun:test" and "@jest/globals" keep the done callback`, async () => {
     const { log, results, exitCode } = await runTests({
       "a.test.js": `

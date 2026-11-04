@@ -399,7 +399,7 @@ pub struct VirtualMachine {
     /// When true, drainMicrotasksWithGlobal is suppressed. `Cell` for the same
     /// reason as [`Self::is_inside_deferred_task_queue`].
     pub(crate) suppress_microtask_drain: core::cell::Cell<bool>,
-    /// Set when a `bun test` hook or test finishes that has another one of the same test behind it. The next microtask drain with no JS on the stack runs that one.
+    /// Set when a `bun test` hook or test finishes that has another one of the same attempt behind it. The next microtask drain with no JS on the stack runs that one, unless the runner leaves the step to its task.
     pub has_pending_test_step: core::cell::Cell<bool>,
 
     pub channel_ref: Async::KeepAlive,

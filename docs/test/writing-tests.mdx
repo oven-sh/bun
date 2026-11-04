@@ -258,8 +258,6 @@ Use it to track known bugs you plan to fix later, or for test-driven development
 
 Neither one counts an uncaught exception or an unhandled rejection, because it may have come from an earlier test. Bun reports it as an unhandled error between tests.
 
-Bun does the same with what a test has left rejected when it ends, if the test skipped itself with `skip()` of the [test context](#test-context), or with `t.skip()` or `t.todo()` of `node:test`. The body of a `test.todo` that runs under `--todo` counts it as its failure.
-
 ### Combining modifiers
 
 You can chain modifiers in any order. Repeating a modifier, as in `test.skip.skip`, has no effect. `skip` wins over `todo`, and `todo` wins over `failing`.

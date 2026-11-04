@@ -1,6 +1,5 @@
 #include "root.h"
 #include "RejectedPromiseQueue.h"
-#include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSCellInlines.h>
 #include <JavaScriptCore/JSGlobalObjectInlines.h>
 #include <JavaScriptCore/JSWeakSet.h>
@@ -86,18 +85,3 @@ template void RejectedPromiseQueue::visit(JSC::JSCell*, JSC::AbstractSlotVisitor
 template void RejectedPromiseQueue::visit(JSC::JSCell*, JSC::SlotVisitor&);
 
 } // namespace Bun
-
-extern "C" bool Bun__hasRejectedPromises(Zig::GlobalObject* globalObject)
-{
-    return globalObject->hasRejectedPromises();
-}
-
-extern "C" size_t Bun__holdRejectedPromises(Zig::GlobalObject* globalObject)
-{
-    return globalObject->holdRejectedPromises();
-}
-
-extern "C" void Bun__releaseRejectedPromises(Zig::GlobalObject* globalObject, size_t mark)
-{
-    globalObject->releaseRejectedPromises(mark);
-}

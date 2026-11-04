@@ -486,7 +486,7 @@ impl EventLoop {
         Ok(self.vm_ref().has_pending_test_step.get())
     }
 
-    /// Runs the next hook of a test, or the test after its hooks, before any other timer or I/O callback. The next test starts from a task.
+    /// Runs the next hook of a test, or the test after its hooks, before any other timer or I/O callback. A task ends the test and starts the next one.
     /// Jest and Vitest chain them with promises, so nothing runs in between.
     /// Out of line, so that `drain_microtasks_with_global` needs no larger frame for it in programs that are not `bun test`.
     #[cold]

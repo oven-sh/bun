@@ -48,8 +48,8 @@ use super::bun_test::{
     group_begin, AddedInPhase, Around, AroundPhase, BunTest, BunTestPtr, Calling, EntryData, ExecutionEntry,
     HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, StepResult,
 };
-use super::expect::EarlierRejections;
 use super::expect::expect_deferred::ExpectDeferred;
+use super::expect::has_unhandled_rejections;
 use super::test_context::{self, TestContext};
 use super::test_context_around::{self, AroundHook};
 use super::test_context_fixtures::{Next as NextFixture, TestFixtures};
@@ -98,6 +98,10 @@ pub(crate) struct Execution {
     /// The entry whose callback is on the stack, which `get_current_state_data()` can't name in a concurrent group.
     /// Cleared before the call's microtasks drain, because those can resume other tests in the group.
     pub(crate) on_stack: core::cell::Cell<Option<EntryData>>,
+    /// When the time limit timer of the file last fired. The step that checks an entry can come later, and it judges the entry by this time.
+    pub(crate) timer_fired_at: Timespec,
+    /// A test has run its last callback, and the end of that one waits in the queue for the task. What the rest of the turn leaves is still the test's.
+    pub(crate) end_is_queued: bool,
 }
 
 pub(crate) struct ConcurrentGroup {
@@ -218,7 +222,7 @@ impl ExecutionSequence {
         self.callback_done
     }
 
-    fn entry_mode(&self) -> ScopeMode {
+    pub(crate) fn entry_mode(&self) -> ScopeMode {
         if let Some(entry) = self.test_entry {
             // SAFETY: arena-owned entry, alive for the lifetime of BunTest which owns Execution
             return unsafe { entry.as_ref() }.base.mode;
@@ -310,6 +314,36 @@ impl ExecutionSequence {
         let context = TestContext::from_js(self.context.as_ref()?.get())?;
         // SAFETY: `self.context` keeps the wrapper, which owns the payload, alive.
         unsafe { &*context }.take_deferred(self.attempt_failed())
+    }
+
+    /// Whether `take_deferred` hands out an entry whatever the result of the attempt is.
+    fn has_deferred(&self) -> bool {
+        let Some(context) = self.context.as_ref().and_then(|context| TestContext::from_js(context.get())) else {
+            return false;
+        };
+        // SAFETY: as in `take_deferred`.
+        unsafe { &*context }.has_deferred()
+    }
+
+    /// The entry that `advance_sequence` moves to from the active one, before what `take_deferred` hands out.
+    fn entry_after_active(&self) -> Option<NonNull<ExecutionEntry>> {
+        // SAFETY: arena-owned entries, alive for the lifetime of BunTest.
+        let entry = unsafe { self.active_entry?.as_ref() };
+        if self.maybe_skip {
+            // SAFETY: as above.
+            return nn(unsafe { (*entry.failure_skip_past?).next });
+        }
+        nn(entry.next)
+    }
+
+    /// Whether `advance_sequence` finds another entry of this attempt behind the active one.
+    fn has_entry_after_active(&self) -> bool {
+        self.entry_after_active().is_some() || self.has_deferred()
+    }
+
+    /// Whether the runner leaves the active entry inside a microtask drain: only for another entry of the attempt, and not while a rejected promise waits for the report of the turn. The queued task ends an attempt, so the rest of the turn still belongs to that attempt.
+    fn ends_entry_in_drain(&self, global_this: &JSGlobalObject) -> bool {
+        self.has_entry_after_active() && !has_unhandled_rejections(global_this)
     }
 
     /// Vitest's `test.fails` passes if anything in the attempt failed, hooks, fixtures and timeouts included.
@@ -426,6 +460,8 @@ impl Execution {
             sequences: Box::default(),
             group_index: 0,
             on_stack: core::cell::Cell::new(None),
+            timer_fired_at: Timespec::EPOCH,
+            end_is_queued: false,
         }
     }
 
@@ -477,7 +513,9 @@ impl Execution {
         data: &RefDataValue,
     ) -> JsResult<StepResult> {
         let _g = group_begin!();
-        let this = &mut buntest_strong.get().execution;
+        let buntest = buntest_strong.get();
+        let buntest_ptr = NonNull::from(&mut *buntest);
+        let this = &mut buntest.execution;
         let mut now = Timespec::now_force_real_time();
 
         match data {
@@ -507,22 +545,8 @@ impl Execution {
                 if sequence.waits_for_matchers() {
                     return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
                 }
-                let seq_abs = group.sequence_start + sequence_index;
-                let is_serial_test =
-                    sequence.active_entry == sequence.test_entry && group.sequence_end - group.sequence_start == 1;
                 let group_ptr = NonNull::from(group);
-                // The test is still current here, so what it left rejected fails it and not the next test.
-                if is_serial_test
-                    && BunTest::report_before_leaving(buntest_strong, global_this, None)
-                    // The report ran JS, which can have called matchers. The test waits for those like for any other.
-                    && buntest_strong.get().execution.sequences[seq_abs].waits_for_matchers()
-                {
-                    return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
-                }
-                let buntest = buntest_strong.get();
-                let buntest_ptr = NonNull::from(&mut *buntest);
-                let this = &mut buntest.execution;
-                Execution::advance_sequence(buntest_ptr, &mut this.sequences[seq_abs], group_ptr);
+                Execution::advance_sequence(buntest_ptr, sequence, group_ptr);
 
                 let sequence_result =
                     step_sequence(buntest_strong, global_this, group_ptr, sequence_index, &mut now)?;
@@ -532,10 +556,7 @@ impl Execution {
                         return Ok(StepResult::Waiting { timeout });
                     }
                 }
-                // The sequence is over. Inside a microtask drain, the runner leaves what comes next to the queued task.
-                if buntest_strong.get().defer_step() {
-                    return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
-                }
+                debug_assert!(!buntest_strong.get().in_drain_step, "a step inside a microtask drain ended a sequence");
                 // this sequence is complete; execute the next sequence
                 // re-slice from `this` each iteration via the group's range; carry
                 // `group` as NonNull so no `&mut ConcurrentGroup` aliases `&mut Execution`.
@@ -648,6 +669,16 @@ impl Execution {
         Some((sequence, group))
     }
 
+    /// Whether this result is the end of an entry that another entry of its attempt follows. Only then is it worth a step inside a microtask drain.
+    pub(crate) fn has_step_for_drain(&mut self, data: &RefDataValue) -> bool {
+        self.get_current_and_valid_execution_sequence(data).is_some_and(|(sequence, _)| sequence.has_entry_after_active())
+    }
+
+    /// Whether a step inside a microtask drain takes this result now.
+    pub(crate) fn steps_in_drain(&mut self, data: &RefDataValue, global_this: &JSGlobalObject) -> bool {
+        self.get_current_and_valid_execution_sequence(data).is_some_and(|(sequence, _)| sequence.ends_entry_in_drain(global_this))
+    }
+
     /// `group_ptr` is a `NonNull` because the callers carry it across `run_test_callback`, which re-enters.
     #[optimize(size)]
     fn advance_sequence(
@@ -663,21 +694,15 @@ impl Execution {
             unsafe { (*buntest.as_ptr()).unclaimed.some_ended = true };
         }
         sequence.callback_done = false;
+        // SAFETY: a field that neither `sequence` nor `group_ptr` points into.
+        unsafe { (*buntest.as_ptr()).execution.end_is_queued = false };
         if let Some(entry_ptr) = sequence.active_entry {
             // SAFETY: arena-owned entry, alive for lifetime of BunTest
             let entry = unsafe { entry_ptr.as_ref() };
 
             sequence.executing = false;
-            if sequence.maybe_skip {
-                sequence.maybe_skip = false;
-                sequence.active_entry = match entry.failure_skip_past {
-                    // SAFETY: arena-owned entry
-                    Some(failure_skip_past) => nn(unsafe { (*failure_skip_past).next }),
-                    None => None,
-                };
-            } else {
-                sequence.active_entry = nn(entry.next);
-            }
+            sequence.active_entry = sequence.entry_after_active();
+            sequence.maybe_skip = false;
             if entry.calling.is_vitest() {
                 if Some(entry_ptr) == sequence.test_entry {
                     sequence.check_expect_assertions();
@@ -1148,6 +1173,29 @@ fn report_around_timeout(
     Ok(())
 }
 
+/// Leaves the active entry, which ended inside this step. `None` means: step the sequence again. Inside a microtask drain, an end that `ends_entry_in_drain` refuses goes to the queue, and the entry stays the running one until the task takes it.
+fn end_entry(
+    buntest_strong: &BunTestPtr,
+    global_this: &JSGlobalObject,
+    sequence: &mut ExecutionSequence,
+    group: NonNull<ConcurrentGroup>,
+    sequence_index: usize,
+) -> Option<AdvanceSequenceStatus> {
+    let buntest = buntest_strong.get();
+    if buntest.in_drain_step && !sequence.ends_entry_in_drain(global_this) {
+        let entry_data = EntryData {
+            sequence_index,
+            entry: sequence.active_entry.map_or(core::ptr::null(), |entry| entry.as_ptr().cast_const().cast()),
+            attempt: sequence.attempt,
+        };
+        buntest.add_result(RefDataValue::Execution { group_index: buntest.execution.group_index, entry_data: Some(entry_data) });
+        buntest.execution.end_is_queued = true;
+        return Some(AdvanceSequenceStatus::Execute { timeout: Timespec::EPOCH });
+    }
+    Execution::advance_sequence(NonNull::from(buntest), sequence, group);
+    None // run again
+}
+
 enum AdvanceSequenceStatus {
     /// the entire sequence is completed.
     Done,
@@ -1201,7 +1249,7 @@ fn step_sequence_one(
         };
         // SAFETY: arena-owned entry
         let active_entry = unsafe { &mut *active_entry_ptr.as_ptr() };
-        if active_entry.evaluate_timeout(sequence, now) {
+        if active_entry.evaluate_timeout(sequence, &this.timer_fired_at) {
             if let Some(context) = sequence.context.as_ref().map(Strong::get) {
                 TestContext::abort_signal(context, global_this);
             }
@@ -1238,13 +1286,9 @@ fn step_sequence_one(
     };
     // SAFETY: arena-owned entry
     let next_item = unsafe { &mut *next_item_ptr.as_ptr() };
-    // The first entry becomes active again after its fixture setup entries, so `started_at` guards against a second start.
-    let starts_attempt = Some(next_item_ptr) == sequence.first_entry && sequence.started_at.eql(&Timespec::EPOCH);
-    if starts_attempt && buntest_strong.get().defer_step() {
-        return Ok(Some(AdvanceSequenceStatus::Execute { timeout: Timespec::EPOCH }));
-    }
     sequence.executing = true;
-    if starts_attempt {
+    // The first entry becomes active again after its fixture setup entries, so `started_at` guards against a second start.
+    if Some(next_item_ptr) == sequence.first_entry && sequence.started_at.eql(&Timespec::EPOCH) {
         Execution::on_sequence_started(global_this, sequence);
     }
     Execution::on_entry_started(next_item);
@@ -1317,8 +1361,7 @@ fn step_sequence_one(
                 Err(err) => {
                     let thrown = global_this.take_exception(err);
                     buntest_strong.get().on_uncaught_exception(global_this, Some(thrown), false, &callback_data);
-                    Execution::advance_sequence(buntest_ptr, sequence, group);
-                    return Ok(None); // run again
+                    return Ok(end_entry(buntest_strong, global_this, sequence, group, sequence_index));
                 }
             }
         }
@@ -1348,13 +1391,18 @@ fn step_sequence_one(
             args
         };
 
+        // An around hook and a hook that the test added are called like hooks of Vitest in every module. They are Vitest's only if their test is.
+        let is_vitest = match sequence.test_entry {
+            // SAFETY: arena-owned entry
+            Some(test) if next_item.around.is_some() || next_item.added_in_phase == AddedInPhase::Execution => {
+                unsafe { test.as_ref() }.calling.is_vitest()
+            }
+            _ => next_item.calling.is_vitest(),
+        };
         // The callback re-enters and reaches the sequence on its own, so no `&mut` is held across it.
         let sequence_ptr = NonNull::from(sequence);
-        let vm = global_this.bun_vm().as_mut();
-        let earlier_is_vitest = core::mem::replace(&mut vm.is_running_vitest_entry, next_item.calling.is_vitest());
-        // What was rejected before this callback isn't its own, and it can still handle that.
-        let earlier_rejections = EarlierRejections::hold_any(global_this);
-        let completed = BunTest::run_test_callback(
+        global_this.bun_vm().as_mut().is_running_vitest_entry = is_vitest;
+        if BunTest::run_test_callback(
             buntest_strong,
             global_this,
             callback,
@@ -1363,17 +1411,8 @@ fn step_sequence_one(
             callback_data,
             &next_item.timespec,
         )
-        .is_some();
-        let had_earlier_rejections = earlier_rejections.is_some();
-        drop(earlier_rejections);
-        // SAFETY: group points into execution.groups; read-only.
-        let group_ref = unsafe { group.as_ref() };
-        let is_serial = group_ref.sequence_end - group_ref.sequence_start == 1;
-        if had_earlier_rejections && is_serial {
-            // The callback didn't handle it, and no other test runs that still can. Both have to be Vitest's for the listeners.
-            BunTest::report_earlier(buntest_strong, global_this, earlier_is_vitest && next_item.calling.is_vitest());
-        }
-        if completed {
+        .is_some()
+        {
             *now = Timespec::now_force_real_time();
             // SAFETY: re-deref after run_test_callback; sequence_ptr still valid (sequences is a
             // Box<[ExecutionSequence]>, never reallocated during execution).
@@ -1390,8 +1429,7 @@ fn step_sequence_one(
             }
 
             // the result is available immediately; advance the sequence and run again.
-            Execution::advance_sequence(buntest_ptr, sequence, group);
-            return Ok(None); // run again
+            return Ok(end_entry(buntest_strong, global_this, sequence, group, sequence_index));
         }
         return Ok(Some(AdvanceSequenceStatus::Execute {
             timeout: next_item.timespec,
@@ -1425,7 +1463,6 @@ fn step_sequence_one(
                 debug_assert!(sequence.test_entry.is_none());
             }
         }
-        Execution::advance_sequence(buntest_ptr, sequence, group);
-        return Ok(None); // run again
+        return Ok(end_entry(buntest_strong, global_this, sequence, group, sequence_index));
     }
 }

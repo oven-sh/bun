@@ -17,7 +17,6 @@ use crate::generated_bindgen::bun_test::{
     Bun__BunTest__hook, Bun__TestScope__Describe2__bunTestCatch, Bun__TestScope__Describe2__bunTestThen,
 };
 use super::execution::TimespecExt as _;
-use super::expect::EarlierRejections;
 use super::test_context::{self, Deferred, TestContext};
 use super::test_context_fixtures::TestFixtures;
 use super::test_context_parameter::SharedContextParameter;
@@ -779,14 +778,8 @@ pub(crate) struct BunTest {
     pending_phase: RefDataValue,
     /// Set while the global unhandled-error handler reports an error through `on_uncaught_exception`.
     pub(crate) is_reporting_uncaught: bool,
-    /// Set while the runner itself starts a report of rejected promises. The error handler then queues no completion.
-    pub(crate) own_report: OwnReport,
-    /// What `skip()` of a test context threw to unwind its test, so that the runner knows each of them when it comes back.
-    skip_errors: Vec<Strong>,
-    /// Set while `run_pending_step` runs a step inside a microtask drain. Such a step stays in one attempt of one sequence.
-    in_drain_step: bool,
-    /// The step inside a microtask drain left its rest in the queue, for the task that `run_next_tick` queued with it.
-    step_deferred: bool,
+    /// Set while `run_pending_step` runs a step inside a microtask drain. Such a step ends no attempt and starts none.
+    pub(crate) in_drain_step: bool,
     /// True until `TestCommand::run` starts the runner, because the file's module may still be registering tests.
     pub(crate) is_loading: bool,
     /// Callback-less entry that runs last in the file. `defer_to_file_end` links its entries after it.
@@ -832,10 +825,7 @@ impl BunTest {
             wants_wakeup: false,
             pending_phase: RefDataValue::Start,
             is_reporting_uncaught: false,
-            own_report: OwnReport::None,
-            skip_errors: Vec::new(),
             in_drain_step: false,
-            step_deferred: false,
             is_loading: true,
             file_end: None,
             unclaimed: Default::default(),
@@ -1073,6 +1063,7 @@ impl BunTest {
     fn handle_timeout(&mut self, global_this: &JSGlobalObject) {
         let _g = group_begin!();
         self.execution.kill_dangling_processes_on_timeout(global_this);
+        self.execution.timer_fired_at = Timespec::now_force_real_time();
         self.add_result(RefDataValue::Start);
     }
 
@@ -1115,23 +1106,22 @@ impl BunTest {
         // SAFETY: single field write through `UnsafeCell`; no other `&mut` live.
         strong.get().wants_wakeup = true;
         strong.get().pending_phase = phase;
-        // The next microtask drain runs a step that stays in the sequence of its test. Any other step waits for the task.
-        if phase.stays_in_sequence() {
+        // The next microtask drain looks at a result that can keep the runner inside an attempt. A loop that runs reads the queue itself.
+        if !strong.in_run_loop && strong.get().execution.has_step_for_drain(&phase) {
             vm.has_pending_test_step.set(true);
         }
         // we need to wake up the event loop so autoTick() doesn't wait for 16-100ms because we just enqueued a task
         vm.enqueue_task(task);
     }
 
-    /// Runs the step queued by `run_next_tick` right away instead of waiting for its task.
+    /// Steps right away with what `run_next_tick` queued, if `next_result` hands it out inside a microtask drain. The task takes the rest.
     #[inline(never)] // --trim cuts the test runner at the call.
     pub(crate) fn run_pending_step(global_this: &JSGlobalObject) {
         let Some(strong) = clone_active_strong() else {
             return;
         };
         let phase = strong.get().pending_phase;
-        // A drain inside the step calls this again. That call starts nothing, and the step that runs keeps its mark.
-        let was_in_drain_step = core::mem::replace(&mut strong.get().in_drain_step, true);
+        strong.get().in_drain_step = true;
         // After a termination the exception is still pending, and the caller's next drain reports it.
         let _ = Box::new(RunTestsTask {
             weak: Rc::downgrade(&strong),
@@ -1139,20 +1129,22 @@ impl BunTest {
             phase,
         })
         .call();
-        strong.get().in_drain_step = was_in_drain_step;
-    }
-
-    /// Inside a microtask drain, leaves the step to another sequence or attempt to the queued task. The turn's own report runs first.
-    pub(crate) fn defer_step(&mut self) -> bool {
-        if !self.in_drain_step {
-            return false;
-        }
-        self.step_deferred = true;
-        true
+        strong.get().in_drain_step = false;
     }
 
     pub(crate) fn add_result(&mut self, result: RefDataValue) {
         let _ = self.result_queue.write_item(result); // OOM/capacity: fire-and-forget
+    }
+
+    /// The result that `run` steps with next: the oldest one. Inside a microtask drain the step takes it only if it `steps_in_drain`, and the task reads the rest in the order of the queue.
+    fn next_result(&mut self, global_this: &JSGlobalObject) -> Option<RefDataValue> {
+        if self.in_drain_step
+            && (self.result_queue.readable_length() == 0
+                || !self.execution.steps_in_drain(&self.result_queue.peek_item(0), global_this))
+        {
+            return None;
+        }
+        self.result_queue.read_item()
     }
 
     pub(crate) fn run(this_strong: &BunTestPtr, global_this: &JSGlobalObject) -> JsResult<()> {
@@ -1183,7 +1175,7 @@ impl BunTest {
 
         // SAFETY: see block-SAFETY above. `step()` may call `.get()` internally;
         // no outer `&mut` overlaps because we only touch `*this` between calls.
-        while let Some(result) = unsafe { (*this).result_queue.read_item() } {
+        while let Some(result) = unsafe { (*this).next_result(global_this) } {
             global_this.clear_termination_exception();
             // SAFETY: `UnsafeCell`-derived `*mut`; short-lived field read between re-entrant calls.
             let step_result: StepResult = match unsafe { (*this).phase } {
@@ -1203,12 +1195,6 @@ impl BunTest {
                     // SAFETY: `UnsafeCell`-derived `*mut`; sole `&mut` for this enqueue.
                     unsafe { (*this).add_result(RefDataValue::Start) };
                 }
-            }
-            // SAFETY: `UnsafeCell`-derived `*mut`; sole `&mut` for these two writes.
-            if unsafe { core::mem::take(&mut (*this).step_deferred) } {
-                // SAFETY: as above.
-                unsafe { (*this).add_result(RefDataValue::Start) };
-                break;
             }
         }
 
@@ -1430,17 +1416,14 @@ impl BunTest {
                 // SAFETY: re-derive after JS callback returned; no outer `&mut` was held across it.
                 unsafe { (*this).on_uncaught_exception(global_this, global_this.try_take_exception(), false, &cfg_data) };
                 bun_core::scoped_log!(bun_test_group, "callTestCallback -> error");
-                // The call above drains the microtasks only of a callback that returns. One that throws has them run here.
-                if global_this.drain_microtasks_and_next_ticks().is_err() {
-                    global_this.clear_termination_exception();
-                }
                 JSValue::ZERO
             }
         };
 
         done_callback.ensure_still_alive();
 
-        Self::report_rejections(global_this, || {
+        // Drain unhandled promise rejections.
+        loop {
             // Prevent the user's Promise rejection from going into the uncaught promise rejection queue.
             if !result.is_empty() {
                 if let Some(promise) = result.as_promise() {
@@ -1452,7 +1435,14 @@ impl BunTest {
                     }
                 }
             }
-        });
+
+            let prev_unhandled_count = vm.unhandled_error_counter;
+            let _ = global_this.handle_rejected_promises();
+            if vm.unhandled_error_counter == prev_unhandled_count {
+                break;
+            }
+        }
+
         // `dcb_ref` is a raw observer alias, NOT a
         // counted handle. The single +1 from `ref()` is owned by
         // `dcb_data.ref`; `dcb_ref` just remembers the address so the
@@ -1547,60 +1537,6 @@ impl BunTest {
             unsafe { (*this).adopt_teardown(&cfg_data, result) };
         }
         Some(cfg_data)
-    }
-
-    /// Reports rejected promises that have no handler until a pass reports none. A pass runs JS, so `before_pass` runs first.
-    fn report_rejections(global_this: &JSGlobalObject, mut before_pass: impl FnMut()) {
-        let vm = global_this.bun_vm();
-        loop {
-            before_pass();
-            let prev_unhandled_count = vm.unhandled_error_counter;
-            let _ = global_this.handle_rejected_promises();
-            if vm.unhandled_error_counter == prev_unhandled_count {
-                break;
-            }
-        }
-    }
-
-    /// Charges the test or describe() that is still current with what it left rejected. False if that is nothing.
-    pub(crate) fn report_before_leaving(this_strong: &BunTestPtr, global_this: &JSGlobalObject, is_vitest: Option<bool>) -> bool {
-        debug_assert!(this_strong.in_run_loop);
-        Self::report_as(this_strong, global_this, OwnReport::Leaving, is_vitest)
-    }
-
-    /// Reports, for no test, what the callback that just ran didn't handle of what was rejected before it.
-    pub(crate) fn report_earlier(this_strong: &BunTestPtr, global_this: &JSGlobalObject, is_vitest: bool) {
-        Self::report_as(this_strong, global_this, OwnReport::Earlier, Some(is_vitest));
-    }
-
-    /// `is_vitest` says whether the listeners of the process get it, if the module of the running callback doesn't decide that.
-    fn report_as(this_strong: &BunTestPtr, global_this: &JSGlobalObject, own_report: OwnReport, is_vitest: Option<bool>) -> bool {
-        if !EarlierRejections::any(global_this) {
-            return false;
-        }
-        debug_assert!(this_strong.get().own_report == OwnReport::None);
-        this_strong.get().own_report = own_report;
-        let vm = global_this.bun_vm().as_mut();
-        let running_is_vitest = vm.is_running_vitest_entry;
-        vm.is_running_vitest_entry = is_vitest.unwrap_or(running_is_vitest);
-        // The report re-enters the runner, so no `&mut` into it is held across the pass.
-        let _restore = scopeguard::guard((), |()| {
-            this_strong.get().own_report = OwnReport::None;
-            global_this.bun_vm().as_mut().is_running_vitest_entry = running_is_vitest;
-        });
-        Self::report_rejections(global_this, || {});
-        true
-    }
-
-    pub(crate) fn new_skip_error(&mut self, global_this: &JSGlobalObject) -> JSValue {
-        let error = global_this.create_error_instance(format_args!("test is skipped; abort execution"));
-        self.skip_errors.push(Strong::create(error, global_this));
-        error
-    }
-
-    pub(crate) fn is_skip_error(&self, value: JSValue) -> bool {
-        let unwrapped = value.to_error();
-        self.skip_errors.iter().any(|error| value == error.get() || unwrapped == Some(error.get()))
     }
 
     /// A promise that follows `returned` if it's a thenable other than a promise. Otherwise `returned`.
@@ -1842,16 +1778,6 @@ pub(crate) struct EntryData {
     pub(crate) attempt: u32,
 }
 
-/// Who a report of rejected promises that the runner starts itself is charged to.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum OwnReport {
-    None,
-    /// Charged to the test or describe() that the runner is about to move past.
-    Leaving,
-    /// Of what was rejected before the callback that just ran, and that it didn't handle. Nobody is charged.
-    Earlier,
-}
-
 // Clone/Copy: bitwise OK — `active_scope` is a non-owning borrow of a
 // `DescribeScope` whose lifetime spans the async boundary (see field note);
 // `EntryData.entry` likewise borrows.
@@ -1873,13 +1799,6 @@ pub(crate) enum RefDataValue {
 }
 
 impl RefDataValue {
-    /// Whether the entry that ended has another entry of the same sequence behind it: a hook of its test, or the test.
-    fn stays_in_sequence(&self) -> bool {
-        let RefDataValue::Execution { entry_data: Some(entry_data), .. } = self else { return false };
-        // SAFETY: arena-owned entry, alive until the file ends.
-        unsafe { (*entry_data.entry.cast::<ExecutionEntry>()).next.is_some() }
-    }
-
     pub(crate) fn sequence<'a>(&self, buntest: &'a mut BunTest) -> Option<&'a mut Execution::ExecutionSequence> {
         let RefDataValue::Execution { group_index, entry_data } = self else { return None };
         let entry_data = (*entry_data)?;

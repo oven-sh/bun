@@ -96,10 +96,14 @@ describe.concurrent("bunshell ls", () => {
         await TestBuilder.command`ls -R`
           .setTempdir(String(dir))
           .stdout(s => expect(sortedLsOutput(s)).toEqual(["README.md", "src", "./src:", "main.ts"].sort()))
+          .stderr("")
+          .exitCode(0)
           .run();
         await TestBuilder.command`ls -R .`
           .setTempdir(String(dir))
           .stdout(s => expect(sortedLsOutput(s)).toEqual(["README.md", "src", "./src:", "main.ts"].sort()))
+          .stderr("")
+          .exitCode(0)
           .run();
       });
 
@@ -112,6 +116,8 @@ describe.concurrent("bunshell ls", () => {
               [".git:", "HEAD", "refs", ".git/refs:", "main", "src:", "main.ts"].sort(),
             ),
           )
+          .stderr("")
+          .exitCode(0)
           .run();
       });
 
@@ -130,12 +136,15 @@ describe.concurrent("bunshell ls", () => {
               ].sort(),
             ),
           )
+          .stderr("")
+          .exitCode(0)
           .run();
       });
 
-      test("-Ra lists and enters them, and does not enter . or ..", async () => {
+      // `-f` turns on `-a`.
+      test.each(["-Ra", "-Rf"])("%s lists and enters them, and does not enter . or ..", async flags => {
         using dir = tempDir("ls-Ra-hidden", checkout);
-        await TestBuilder.command`ls -Ra`
+        await TestBuilder.command`ls ${flags}`
           .setTempdir(String(dir))
           .stdout(s =>
             expect(sortedLsOutput(s)).toEqual(
@@ -148,6 +157,8 @@ describe.concurrent("bunshell ls", () => {
               ].sort(),
             ),
           )
+          .stderr("")
+          .exitCode(0)
           .run();
       });
 
@@ -341,6 +352,31 @@ describe.concurrent("bunshell ls", () => {
       await TestBuilder.command`ls -Aa`
         .setTempdir(String(tempdir))
         .stdout(s => expect(sortedLsOutput(s)).toEqual([".", "..", ".hidden", "visible"]))
+        .run();
+    });
+
+    test("-f shows all files like -a, and the last of -f and -A wins", async () => {
+      using tempdir = tempDir("ls-f", {
+        ".hidden": "",
+        "visible": "",
+      });
+      await TestBuilder.command`ls -f`
+        .setTempdir(String(tempdir))
+        .stdout(s => expect(sortedLsOutput(s)).toEqual([".", "..", ".hidden", "visible"]))
+        .stderr("")
+        .exitCode(0)
+        .run();
+      await TestBuilder.command`ls -Af`
+        .setTempdir(String(tempdir))
+        .stdout(s => expect(sortedLsOutput(s)).toEqual([".", "..", ".hidden", "visible"]))
+        .stderr("")
+        .exitCode(0)
+        .run();
+      await TestBuilder.command`ls -fA`
+        .setTempdir(String(tempdir))
+        .stdout(s => expect(sortedLsOutput(s)).toEqual([".hidden", "visible"]))
+        .stderr("")
+        .exitCode(0)
         .run();
     });
 

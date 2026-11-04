@@ -1,0 +1,94 @@
+status: 0
+script: 73447547c0756c7a
+source: 722055dc5aefc4f6
+---
+---- origin [origin='source'] => source
+os.path.exists(module.__spec__.cached) [origin='source'] => True
+('plain', 'plain', 'doc of plain') only_defined
+('no_doc', 'no_doc', None)
+<function C.method <function C.Inner.deep
+('method', 'C.method', 'doc of method') ('static', 'C.static', 'doc of static') ('klass', 'C.klass', 'doc of klass') ('static', 'C.static', 'doc of static') ('klass', 'C.klass', 'doc of klass')
+doc of prop ('prop', 'C.prop', 'doc of prop')
+('wrapped', 'wrapped', 'doc of wrapped') ('wrapped', 'wrapped', 'doc of wrapped')
+('local', 'C.Inner.deep.<locals>.local', 'doc of local')
+('new_name', 'renamed', 'doc of renamed')
+('new_name', 'new.qualname', None)
+('new_name', 'new.qualname', None)
+('other', 'other', 'doc of other') plain plain (3,) 3
+('set_first', 'no_doc', None)
+C.method() missing 1 required positional argument: 'self'
+plain() takes 2 positional arguments but 3 were given
+wrapped() got an unexpected keyword argument 'k'
+[('calls_raises', 38), ('raises', 37)]
+True 1
+generator generator ('generator', 'generator', 'doc of generator')
+other_generator generator generator
+coroutine coroutine
+f0 combinations.<locals>.f0 None None {} [] ()
+f1 combinations.<locals>.f1 (1,) None {} [] ()
+f2 combinations.<locals>.f2 None {'k': 2} {} [] ()
+f3 combinations.<locals>.f3 (1,) {'k': 2} {} [] ()
+f4 combinations.<locals>.f4 None None {'a': <class 'int'>} [] ()
+f5 combinations.<locals>.f5 (1,) None {'a': <class 'int'>} [] ()
+f6 combinations.<locals>.f6 None {'k': 2} {'k': <class 'int'>} [] ()
+f7 combinations.<locals>.f7 (1,) {'k': 2} {'a': <class 'int'>, 'k': <class 'str'>, 'return': None} [] ()
+c0 combinations.<locals>.c0 None None {} ['str'] ('free',)
+c1 combinations.<locals>.c1 (1,) None {} ['str'] ('free',)
+c2 combinations.<locals>.c2 None {'k': 2} {} ['str'] ('free',)
+c3 combinations.<locals>.c3 (1,) {'k': 2} {} ['str'] ('free',)
+c4 combinations.<locals>.c4 None None {'a': <class 'int'>} ['str'] ('free',)
+c5 combinations.<locals>.c5 (1,) None {'a': <class 'int'>} ['str'] ('free',)
+c6 combinations.<locals>.c6 None {'k': 2} {'k': <class 'int'>} ['str'] ('free',)
+c7 combinations.<locals>.c7 (1,) {'k': 2} {'a': <class 'int'>, 'k': <class 'str'>, 'return': None} ['str', 'float'] ('free', 'second')
+<lambda> combinations.<locals>.<lambda> None None {} [] ()
+<lambda> combinations.<locals>.<lambda> (1,) None {} ['str'] ('free',)
+<lambda> combinations.<locals>.<lambda> None {'k': 2} {} ['str'] ('free',)
+['doc of wrapped', 'only_defined', 'wrapped', 'wrapped']
+('given', 'wrapped', 'doc of wrapped') None
+[True] True
+('deep', 'deep', None)
+---- origin [origin='cache'] => cache
+os.path.exists(module.__spec__.cached) [origin='cache'] => True
+('plain', 'plain', 'doc of plain') only_defined
+('no_doc', 'no_doc', None)
+<function C.method <function C.Inner.deep
+('method', 'C.method', 'doc of method') ('static', 'C.static', 'doc of static') ('klass', 'C.klass', 'doc of klass') ('static', 'C.static', 'doc of static') ('klass', 'C.klass', 'doc of klass')
+doc of prop ('prop', 'C.prop', 'doc of prop')
+('wrapped', 'wrapped', 'doc of wrapped') ('wrapped', 'wrapped', 'doc of wrapped')
+('local', 'C.Inner.deep.<locals>.local', 'doc of local')
+('new_name', 'renamed', 'doc of renamed')
+('new_name', 'new.qualname', None)
+('new_name', 'new.qualname', None)
+('other', 'other', 'doc of other') plain plain (3,) 3
+('set_first', 'no_doc', None)
+C.method() missing 1 required positional argument: 'self'
+plain() takes 2 positional arguments but 3 were given
+wrapped() got an unexpected keyword argument 'k'
+[('calls_raises', 38), ('raises', 37)]
+True 1
+generator generator ('generator', 'generator', 'doc of generator')
+other_generator generator generator
+coroutine coroutine
+f0 combinations.<locals>.f0 None None {} [] ()
+f1 combinations.<locals>.f1 (1,) None {} [] ()
+f2 combinations.<locals>.f2 None {'k': 2} {} [] ()
+f3 combinations.<locals>.f3 (1,) {'k': 2} {} [] ()
+f4 combinations.<locals>.f4 None None {'a': <class 'int'>} [] ()
+f5 combinations.<locals>.f5 (1,) None {'a': <class 'int'>} [] ()
+f6 combinations.<locals>.f6 None {'k': 2} {'k': <class 'int'>} [] ()
+f7 combinations.<locals>.f7 (1,) {'k': 2} {'a': <class 'int'>, 'k': <class 'str'>, 'return': None} [] ()
+c0 combinations.<locals>.c0 None None {} ['str'] ('free',)
+c1 combinations.<locals>.c1 (1,) None {} ['str'] ('free',)
+c2 combinations.<locals>.c2 None {'k': 2} {} ['str'] ('free',)
+c3 combinations.<locals>.c3 (1,) {'k': 2} {} ['str'] ('free',)
+c4 combinations.<locals>.c4 None None {'a': <class 'int'>} ['str'] ('free',)
+c5 combinations.<locals>.c5 (1,) None {'a': <class 'int'>} ['str'] ('free',)
+c6 combinations.<locals>.c6 None {'k': 2} {'k': <class 'int'>} ['str'] ('free',)
+c7 combinations.<locals>.c7 (1,) {'k': 2} {'a': <class 'int'>, 'k': <class 'str'>, 'return': None} ['str', 'float'] ('free', 'second')
+<lambda> combinations.<locals>.<lambda> None None {} [] ()
+<lambda> combinations.<locals>.<lambda> (1,) None {} ['str'] ('free',)
+<lambda> combinations.<locals>.<lambda> None {'k': 2} {} ['str'] ('free',)
+['doc of wrapped', 'only_defined', 'wrapped', 'wrapped']
+('given', 'wrapped', 'doc of wrapped') None
+[True] True
+('deep', 'deep', None)

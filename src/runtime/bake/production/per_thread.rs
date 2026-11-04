@@ -121,9 +121,9 @@ impl PerThread {
 
     pub(crate) fn attach(&mut self) {
         // `self.global()` derefs the JSC_BORROW `vm` back-pointer (live for the
-        // VM lifetime); C++ stores `pt` opaquely and hands it back via
-        // `BakeProdResolve`, so passing `from_mut(self)` is just identity —
-        // detached in Drop.
+        // VM lifetime); C++ stores `pt` opaquely and hands it back to
+        // `BakeProdLoad` as `&PerThread`, so `self` must not move before Drop
+        // detaches it.
         let global = self.global();
         BakeGlobalObject__attachPerThreadData(global, std::ptr::from_mut::<PerThread>(self));
         self.attached = true;

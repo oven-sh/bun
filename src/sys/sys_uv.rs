@@ -338,7 +338,7 @@ pub(crate) fn readlink<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a mu
     } else {
         // Seems like `rc` does not contain the size?
         debug_assert!(rc.int() == 0);
-        let result_ptr: *mut c_char = req.ptr_as::<c_char>() as *mut c_char;
+        let result_ptr = req.ptr_as::<c_char>();
         let Some(result_ptr) = (!result_ptr.is_null()).then_some(result_ptr) else {
             return Result::Err(
                 Error::new(E::NOENT, Tag::readlink).with_path(file_path.as_bytes()),

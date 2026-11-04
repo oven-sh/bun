@@ -62,9 +62,9 @@ unsafe extern "C" {
     );
 }
 
-pub enum ConnectResult {
+pub enum ConnectResult<'a> {
     /// IP literal or DNS-cache hit: handshake already in flight.
-    Socket(*mut Socket),
+    Socket(&'a mut Socket),
     /// DNS cache miss: caller must register a `Bun__addrinfo` callback on
     /// `pending.addrinfo()` and call `pending.resolved()` when it fires.
     Pending(*mut PendingConnect),
@@ -105,7 +105,7 @@ impl Context {
         sni: &CStr,
         reject_unauthorized: bool,
         user: *mut c_void,
-    ) -> ConnectResult {
+    ) -> ConnectResult<'_> {
         let mut qs: *mut Socket = core::ptr::null_mut();
         let mut pc: *mut PendingConnect = core::ptr::null_mut();
         // SAFETY: self is a live us_quic_socket_context_t; out-params are valid for write.
@@ -122,7 +122,8 @@ impl Context {
             )
         };
         match rc {
-            1 => ConnectResult::Socket(qs),
+            // SAFETY: quic.c returns 1 only with a live socket in `*out_qs`.
+            1 => ConnectResult::Socket(unsafe { &mut *qs }),
             0 => ConnectResult::Pending(pc),
             _ => ConnectResult::Err,
         }

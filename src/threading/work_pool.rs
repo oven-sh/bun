@@ -14,16 +14,6 @@ pub struct WorkPool;
 /// Implement via [`intrusive_work_task!`]; the supertrait carries the safety
 /// contract so call sites need only assert "scheduled via this field".
 pub trait IntrusiveWorkTask: bun_core::IntrusiveField<Task> {
-    /// Safe accessor for the intrusive `task: Task` field
-    /// (`&mut self.task`); [`WorkPool::schedule_owned`] uses this to install
-    /// the callback without raw byte-offset arithmetic.
-    #[inline]
-    fn task_mut(&mut self) -> &mut Task {
-        // SAFETY: `self` is a live `Self`, so `field_of` points at the `Task` field in it. The
-        // pointer derives from `&mut self`, and the result keeps that borrow while it lives.
-        unsafe { &mut *Self::field_of(self) }
-    }
-
     /// Back-compat alias for [`bun_core::IntrusiveField::from_field_ptr`].
     ///
     /// # Safety
@@ -146,18 +136,20 @@ impl WorkPool {
     /// the `Box`; [`OwnedTask::run`] receives it back on a worker thread.
     /// Replaces the open-coded `Box::into_raw` + `&raw mut (*p).task` +
     /// `container_of`-in-callback pattern.
-    pub fn schedule_owned<T: OwnedTask>(mut task: Box<T>) {
-        // Install the monomorphized shim via the safe accessor — no raw
-        // byte-offset write. `node` is left as the caller initialized it
-        // (always `Node::default()`).
-        task.task_mut().callback = T::__callback;
+    pub fn schedule_owned<T: OwnedTask>(task: Box<T>) {
         // The single into_raw for every OwnedTask scheduler call. Derive the
         // intrusive `*mut Task` *after* into_raw so provenance covers the full
         // allocation and there is exactly one raw-pointer derivation.
         let raw = Box::into_raw(task);
         // SAFETY: `raw` is a live heap allocation now owned by the pool;
         // `IntrusiveField::field_of` projects to the embedded `Task`.
-        Self::schedule(unsafe { T::field_of(raw) });
+        let task = unsafe {
+            let task = T::field_of(raw);
+            // `node` is left as the caller initialized it (always `Node::default()`).
+            (*task).callback = T::__callback;
+            task
+        };
+        Self::schedule(task);
     }
 
     /// `Box::new` + [`schedule_owned`](Self::schedule_owned). Convenience for

@@ -1167,13 +1167,12 @@ impl BunTest {
                     min_timeout = min_timeout.min_ignore_epoch(timeout);
                 }
                 StepResult::Complete => {
-                    // SAFETY: short-lived reborrows; `advance` and `add_result` do not re-enter `.get()`.
-                    unsafe {
-                        if (*this).advance(global_this)? == Advance::Exit {
-                            return Ok(());
-                        }
-                        (*this).add_result(RefDataValue::Start);
+                    // SAFETY: short-lived reborrow; `advance` does not re-enter `.get()`.
+                    if unsafe { (*this).advance(global_this)? } == Advance::Exit {
+                        return Ok(());
                     }
+                    // SAFETY: `UnsafeCell`-derived `*mut`; sole `&mut` for this enqueue.
+                    unsafe { (*this).add_result(RefDataValue::Start) };
                 }
             }
         }
@@ -1230,16 +1229,20 @@ impl BunTest {
                 self.phase = Phase::Execution;
                 debug::dump_describe(&self.collection.root_scope)?;
 
-                // SAFETY: reporter outlives every BunTest (see field doc).
-                let reporter = self.reporter.map(|reporter| unsafe { reporter.as_ref() });
-                let has_filter = reporter.is_some_and(|reporter| reporter.jest.filter_regex.is_some());
+                let has_filter = if let Some(reporter) = self.reporter {
+                    // SAFETY: reporter outlives every BunTest (see field doc).
+                    unsafe { reporter.as_ref() }.jest.filter_regex.is_some()
+                } else {
+                    false
+                };
                 // Derive a per-file shuffle seed from (seed, file_path) so a
                 // file's test order depends only on the path and the printed
                 // seed — not on which worker ran it or what files preceded it
                 // on that worker. This is what makes --parallel --randomize
                 // reproducible via --seed=N.
-                let (randomize, seed) = if let Some(reporter) = reporter {
-                    let jest = &reporter.jest;
+                let (randomize, seed) = if let Some(reporter) = self.reporter {
+                    // SAFETY: reporter outlives every BunTest (see field doc).
+                    let jest = &unsafe { reporter.as_ref() }.jest;
                     let path = jest.files.items_source()[self.file_id as usize].path.text;
                     // Basename only so the hash is platform-independent (path
                     // separators and absolute prefixes differ on Windows).

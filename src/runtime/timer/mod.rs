@@ -654,7 +654,7 @@ impl All {
             _ => tag.allow_fake_timers() && self.fake_timers.set_timeout_clock() == Clock::Fake,
         };
         if fake {
-            // SAFETY: see fn contract
+            // SAFETY: `timer` is live and in no heap (caller contract), and its owner removes it before it frees it.
             unsafe {
                 self.fake_timers.timers.insert(timer);
                 (*timer).state = EventLoopTimerState::ACTIVE;
@@ -662,7 +662,7 @@ impl All {
             }
             self.fake_timers.post_auto_step();
         } else {
-            // SAFETY: see fn contract
+            // SAFETY: as in the other arm.
             unsafe {
                 self.timers.insert(timer);
                 (*timer).state = EventLoopTimerState::ACTIVE;
@@ -839,7 +839,8 @@ impl All {
         debug_assert!(unsafe { (*timer).tag } == EventLoopTimerTag::WTFTimer);
         {
             let mut wtf = self.wtf_timers.lock();
-            // SAFETY: `timer` is live; its state and heap links only change under this guard.
+            // SAFETY: `timer` is live, and `WTFTimer::deinit` disarms it before it frees it. Its state
+            // and heap links only change under this guard.
             unsafe {
                 if (*timer).state == EventLoopTimerState::ACTIVE {
                     wtf.remove(timer);
@@ -994,10 +995,7 @@ impl All {
     fn deadline_if_due_when_idle(&self) -> Option<Timespec> {
         // SAFETY: `peek` returns a live heap node.
         let first = unsafe { &*self.timers.peek()? };
-        first.is_due_when_idle.then_some(Timespec {
-            sec: first.next.sec,
-            nsec: first.next.nsec,
-        })
+        first.is_due_when_idle.then_some(first.next)
     }
 
     /// Pop the next due timer. `now` is filled lazily on first call so we
@@ -1018,7 +1016,7 @@ impl All {
         if next.greater(now) {
             return None;
         }
-        Some(self.timers.delete_min().expect("peek succeeded"))
+        self.timers.delete_min()
     }
 
     /// # Safety

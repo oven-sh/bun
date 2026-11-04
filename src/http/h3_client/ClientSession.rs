@@ -461,19 +461,6 @@ pub(super) fn client_mut<'a>(p: NonNull<HTTPClient<'static>>) -> &'a mut HTTPCli
     HTTPClient::from_erased_backref(p)
 }
 
-/// Upgrade a non-null `*mut quic::Socket` lsquic FFI handle to `&mut`.
-///
-/// INVARIANT: the one caller, `ClientContext::connect`, passes the socket of a
-/// `ConnectResult::Socket`: quic.c returns 1 only with a non-null `*out_qs`, and
-/// keeps it live until `on_conn_close` has returned. The handle is an
-/// FFI-owned allocation distinct from any Rust struct holding it. All access
-/// is HTTP-thread-only. `quic::Socket` is zero-sized, so two `&mut` to one handle cannot conflict.
-#[inline(always)]
-pub(super) fn quic_socket_mut<'a>(qs: *mut quic::Socket) -> &'a mut quic::Socket {
-    // SAFETY: see INVARIANT above.
-    unsafe { &mut *qs }
-}
-
 /// Upgrade a `*mut Stream` (a `self.pending` entry, or one just removed from
 /// it) to `&mut Stream`. Entries are heap-allocated by `Stream::new` and live
 /// until `detach()` reclaims them; HTTP-thread only, so the `&mut` is the sole

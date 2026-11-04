@@ -2,17 +2,7 @@ import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, isMacOS, isWindows, tempDir, tempDirWithFiles, unprivilegedSpawnOptions } from "harness";
-import {
-  chmodSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  symlinkSync,
-  utimesSync,
-  writeFileSync,
-} from "node:fs";
+import { chmodSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, sep } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
@@ -265,8 +255,9 @@ describe.concurrent("bunshell cp options", () => {
     const kept = { ...overwritten, b: "old" };
     const verbose = { ...overwritten, stdout: p("<cwd>/a -> <cwd>/b\n") };
     const tree = { ...kept, "e/f": "tree" };
-    // macOS clones a directory in one call and prints no line for it.
-    const treeVerbose = { ...tree, stdout: isMacOS ? "" : p("<cwd>/d -> <cwd>/e\n<cwd>/d/f -> <cwd>/e/f\n") };
+    const treeLines = p("<cwd>/d -> <cwd>/e\n<cwd>/d/f -> <cwd>/e/f\n");
+    // macOS prints no line when it clones the directory in one call (clonefile). It prints both when that call fails.
+    const treeVerbose = { ...tree, stdout: isMacOS ? expect.stringMatching(`^(${treeLines})?$`) : treeLines };
     const failed = (stderr: string) => ({ ...kept, exitCode: 1, stderr });
     const notCopied = failed("cp: d is a directory (not copied)\n");
     const unsupported = (option: string) => failed(`cp: unsupported option, please open a GitHub issue -- ${option}\n`);
@@ -323,24 +314,22 @@ describe.concurrent("bunshell cp options", () => {
       "cp --no-clobber --force a b": kept,
       "cp --force --no-clobber a b": kept,
 
-      // p is ignored when it is not the first option of its group.
-      "cp -Rp a b": overwritten,
-      "cp -rp d e": tree,
-      "cp -rfp d e": tree,
-      "cp -fp a b": overwritten,
-      "cp -p a b": unsupported("-p"),
-      "cp -pR a b": unsupported("-p"),
-      "cp -R -p a b": unsupported("-p"),
-      "cp -P a b": unsupported("-P"),
-
       // After R, v or n, an option that cp does not implement is ignored, as in the released versions.
+      "cp -Rp a b": overwritten,
       "cp -RH a b": overwritten,
       "cp -Ri a b": overwritten,
       "cp -Rz a b": overwritten,
       "cp -Ra d e": tree,
       "cp -vH a b": verbose,
       "cp -nz a b": kept,
-      // After r or f, it fails.
+      // As the first option of a group, and after r or f, it fails.
+      "cp -p a b": unsupported("-p"),
+      "cp -pR a b": unsupported("-p"),
+      "cp -R -p a b": unsupported("-p"),
+      "cp -rp d e": unsupported("-p"),
+      "cp -rfp d e": unsupported("-p"),
+      "cp -fp a b": unsupported("-p"),
+      "cp -P a b": unsupported("-P"),
       "cp -rT d e": illegal("T"),
       "cp -ru a b": illegal("u"),
       "cp -rL d e": unsupported("-L"),
@@ -526,17 +515,6 @@ describe.concurrent("bunshell cp src/dest validation", () => {
       // A read-only file must not stop the removal of the directory.
       rows.forEach((_, i) => chmodSync(at(i, "b"), 0o644));
     }
-  });
-
-  // A p that is not the first option of its group is ignored. Only CopyFileW, the copy of Windows, keeps the time.
-  test("-fp copies a file without its time, except on Windows", async () => {
-    using dir = tempDir("cp-p", { a: "new" });
-    const a = join(String(dir), "a");
-    const then = new Date("2001-02-03T04:05:06Z");
-    utimesSync(a, then, then);
-
-    expect(await cp(String(dir), "cp -fp a b")).toEqual({ stderr: "", exitCode: 0 });
-    expect(statSync(join(String(dir), "b")).mtimeMs === statSync(a).mtimeMs).toBe(isWindows);
   });
 
   // Directory symlinks need extra privileges on Windows.

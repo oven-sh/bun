@@ -896,9 +896,7 @@ impl FlagParser for Opts {
             b'n' => self.no_clobber = true,
             // Overwriting is the default, and `-n` wins over `-f` in any order, as in GNU cp.
             b'f' => {}
-            // Scripts use `-Rp` and `-rp`.
-            b'p' if i > 0 => {}
-            // A group led by `R`, `v` or `n` has never failed on a later flag, and scripts rely on it.
+            // A group led by `R`, `v` or `n` has never failed on a later flag. Scripts rely on `-Rp` working.
             _ if i > 0 && matches!(smallflags[0], b'R' | b'v' | b'n') => {}
             b'a' => return Some(ParseFlagResult::Unsupported(b"-a")),
             b'H' => return Some(ParseFlagResult::Unsupported(b"-H")),

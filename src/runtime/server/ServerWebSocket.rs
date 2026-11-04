@@ -235,7 +235,7 @@ pub(super) fn payload_from_js<'a>(
         }
     }
     if accept != Accept::Text {
-        if let Some(buffer) = value.as_array_buffer(global_this) {
+        if let Some(buffer) = value.to_array_buffer(global_this)? {
             return Ok(Payload::Buffer(buffer));
         }
         if let Some(blob) = value.as_class_ref::<Blob>() {

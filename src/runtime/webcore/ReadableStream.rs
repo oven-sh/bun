@@ -1266,7 +1266,7 @@ impl<C: SourceContext> NewSource<C> {
             return Ok(jsc::JSPromise::create(global_this).to_js());
         }
         let view = view.to_js();
-        let Some(mut buffer) = view.as_array_buffer(global_this) else {
+        let Some(mut buffer) = view.as_writable_array_buffer(global_this) else {
             return Ok(JSValue::UNDEFINED);
         };
         let result = self.context.on_pull(buffer.slice_mut(), view);

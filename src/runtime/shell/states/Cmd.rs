@@ -730,6 +730,11 @@ impl Cmd {
                             else {
                                 return Err(global.throw_out_of_memory());
                             };
+                            if buf.read_only {
+                                return Err(global.throw_invalid_arguments(format_args!(
+                                    "cannot redirect output to an object that is read-only"
+                                )));
+                            }
                             stdio[fd] = Stdio::Pipe;
                             *slot = Some(buf);
                             Ok(())

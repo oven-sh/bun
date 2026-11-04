@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "JavaScriptCore/ArrayAllocationProfile.h"
+#include "BunPythonMemory.h"
 #include "JavaScriptCore/JSArray.h"
 
 #include "ncrypto.h"
@@ -129,6 +130,8 @@ static JSValue createX509Certificate(JSC::VM& vm, JSGlobalObject* globalObject, 
     std::optional<Bun::UTF8View> view;
     std::span<const uint8_t> data;
 
+    arg = Bun::copyIfPythonMemory(globalObject, arg);
+    RETURN_IF_EXCEPTION(scope, {});
     if (arg.isString()) {
         string = arg.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});

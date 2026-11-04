@@ -1,4 +1,5 @@
 #include "KeyObject.h"
+#include "BunPythonMemory.h"
 #include "JSPublicKeyObject.h"
 #include "JSPrivateKeyObject.h"
 #include "helpers.h"
@@ -2145,6 +2146,13 @@ KeyObject KeyObject::prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& 
         if (!copy) return {};
         return create(WTF::move(*copy));
     }
+
+    if (auto bytes = Bun::bytesOfPythonMemory(globalObject, keyValue, Bun::PythonMemoryAccess::MayRunCode)) {
+        auto copy = copyArgumentBytes(globalObject, scope, *bytes, "key"_s);
+        if (!copy) return {};
+        return create(WTF::move(*copy));
+    }
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (bufferOnly) {
         ERR::INVALID_ARG_INSTANCE(scope, globalObject, "key"_s, "ArrayBuffer, Buffer, TypedArray, or DataView"_s, keyValue);

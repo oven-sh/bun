@@ -69,7 +69,7 @@ pub(crate) fn needs_parameter_types(global: &JSGlobalObject, values: JSValue) ->
         if !js_type.is_object()
             || js_type.is_string_like()
             || js_type == JSType::JSDate
-            || tag_jsc::is_bytes(js_type)
+            || tag_jsc::is_bytes(value)
         {
             continue;
         }
@@ -126,7 +126,7 @@ fn parameter_text(
         return Ok(Some(value.to_js_string(global)?.to_js()));
     }
     if tag == types::Tag::bytea {
-        if js_type.is_array_buffer_like() {
+        if value.is_array_buffer_like() {
             return Ok(None);
         }
         // Its input function takes any text: the server would store `String(value)`.

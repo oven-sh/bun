@@ -134,6 +134,17 @@ Where neither class has an answer, Python raises a `TypeError` and JavaScript go
 buffers to Python: whatever takes "a bytes-like object" reads them, and `struct.pack_into` writes to them. They are not `bytes`:
 what asks `isinstance(x, (bytes, bytearray))`, as `json.loads` does, refuses them. `bytes(array)` copies.
 
+- What Bun and the engine implement themselves takes what exports its memory in Python wherever it takes a typed array:
+  `new Response(x)`, `new Blob([x])`, `Bun.write(path, x)`, `Bun.hash(x)`, `new TextDecoder().decode(x)`, `fs.writeFileSync(path, x)`,
+  `fs.readSync(fd, bytearray)`, `crypto.subtle.digest("SHA-256", x)`, `Buffer.concat([x])`, `ws.send(x)`, a blob of `bun:sqlite`,
+  `new WebAssembly.Module(x)`. While an asynchronous call uses a `bytearray`, to resize it is a `BufferError`. What would write to
+  `bytes` is a `TypeError`.
+- To code written in JavaScript they are no typed arrays: `ArrayBuffer.isView(x)` and `x instanceof Uint8Array` are false, and what
+  asks that first (`fs.writeSync`, `node:zlib`, `fs.promises.writeFile`, streams of Node) refuses them. `new Uint8Array(x)` is one.
+- A typed array is a sequence to Python: `getitem(u, -1)`, `getitem(u, slice(1, 3))` (a copy), `contains(u, 7)`, `eq(u, b("ab"))`.
+- `structuredClone()` and `postMessage()` make a `Uint8Array` of `bytes`, a `bytearray` and a `memoryview` of bytes, an `Array` of a
+  tuple, a `Set` of a set, a number of a float. They refuse a dict.
+
 ### Exceptions
 
 An exception of Python's is an `Error` (`instanceof Error`), with `name` (the name of the class), `message` (`str(e)`) and

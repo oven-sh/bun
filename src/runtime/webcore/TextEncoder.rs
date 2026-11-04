@@ -238,7 +238,7 @@ extern "C" fn TextEncoder__encodeRopeString(
         Err(_) => return JSValue::ZERO,
     };
     array.ensure_still_alive();
-    let Some(mut array_buffer) = array.as_array_buffer(global_this) else {
+    let Some(mut array_buffer) = array.as_writable_array_buffer(global_this) else {
         return JSValue::ZERO;
     };
     let mut encoder = RopeStringEncoder {

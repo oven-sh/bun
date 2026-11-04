@@ -26,6 +26,7 @@
 #pragma once
 
 #include "IDLTypes.h"
+#include "BunPythonMemory.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConvertBase.h"
 #include "JSDOMConvertBufferSource.h"
@@ -225,6 +226,11 @@ template<typename... T> struct Converter<IDLUnion<T...>> : DefaultConverter<IDLU
         //     1. If types includes ArrayBuffer, then return the result of converting V to ArrayBuffer.
         //     2. If types includes object, then return the IDL value that is a reference to the object V.
         constexpr bool hasArrayBufferType = brigand::any<TypeList, IsIDLArrayBuffer<brigand::_1>>::value;
+        // What takes a BufferSource reads it. The bytes of Python are one.
+        if constexpr (brigand::any<TypeList, IsIDLArrayBufferView<brigand::_1>>::value) {
+            value = Bun::copyIfPythonMemory(&lexicalGlobalObject, value);
+            RETURN_IF_EXCEPTION(scope, ReturnType());
+        }
         if (hasArrayBufferType || hasObjectType) {
             auto arrayBuffer = (brigand::any<TypeList, IsIDLArrayBufferAllowShared<brigand::_1>>::value) ? JSC::JSArrayBuffer::toWrappedAllowShared(vm, value) : JSC::JSArrayBuffer::toWrapped(vm, value);
             if (arrayBuffer) {

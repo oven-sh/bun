@@ -15,7 +15,7 @@ def u8(*items): return js.Uint8Array(list(items))
   [
     [
       "u = u8(1, 2, 3, 4)\ntype(u).__name__, len(u), u[0], u[3], list(u), [x for x in u], bytes(u), bytearray(u)",
-      "('JSObject', 4, 1, 4, [1, 2, 3, 4], [1, 2, 3, 4], b'\\x01\\x02\\x03\\x04', bytearray(b'\\x01\\x02\\x03\\x04'))",
+      "('JSTypedArray', 4, 1, 4, [1, 2, 3, 4], [1, 2, 3, 4], b'\\x01\\x02\\x03\\x04', bytearray(b'\\x01\\x02\\x03\\x04'))",
     ],
     // The memory is shared, not copied.
     [
@@ -63,20 +63,61 @@ def u8(*items): return js.Uint8Array(list(items))
       "isinstance(u8(1), (bytes, bytearray)), repr(u8(1)).split(' at ')[0], str(u8(1, 2))",
       "(False, '<JavaScript Uint8Array', '1,2')",
     ],
-    // They are no sequences yet.
-    ["u8(1, 2, 3)[-1]", "3", "KeyError: an index is the name of a property"],
-    [
-      "bytes(u8(1, 2, 3)[1:])",
-      "b'\\x02\\x03'",
-      "TypeError: no slices, so gzip.decompress(typed_array) and the like fail",
-    ],
-    ["9 in u8(9, 8), 1 in u8(9, 8)", "(True, False)", "`in` asks for the index"],
+    // Typed arrays are sequences of a fixed length.
+    ["u8(1, 2, 3)[-1]", "3"],
+    ["bytes(u8(1, 2, 3)[1:])", "b'\\x02\\x03'"],
+    ["9 in u8(9, 8), 1 in u8(9, 8)", "(True, False)"],
     [
       "u8(1, 2) == b'\\x01\\x02', b'\\x01\\x02' == u8(1, 2), memoryview(u8(1, 2)) == b'\\x01\\x02'",
       "(True, True, True)",
-      "only the memoryview equals the bytes",
     ],
     ["list(reversed(u8(1, 2)))", "[2, 1]"],
+    [
+      "import _js\nu = u8(1, 2, 3, 4)\nisinstance(u, _js.JSTypedArray), isinstance(u, _js.JSObject), isinstance(u.buffer, _js.JSTypedArray), isinstance(js.DataView(u.buffer), _js.JSTypedArray)",
+      "(True, True, False, False)",
+    ],
+    [
+      "u = u8(1, 2, 3, 4)\nlist(u[::-1]), list(u[::2]), list(u[3:1:-1]), list(u[5:]), list(u[-2:]), type(u[1:]).__name__",
+      "([4, 3, 2, 1], [1, 3], [4, 3], [], [3, 4], 'JSTypedArray')",
+    ],
+    // A slice is a copy, as of a bytearray. subarray() shares.
+    ["u = u8(1, 2, 3)\ns = u[1:]\ns[0] = 9\nlist(u), list(s)", "([1, 2, 3], [9, 3])"],
+    [
+      "b = getattr(Buffer, 'from')('hello')\nb[1:3].toString(), Buffer.isBuffer(b[1:3]), b[::2].toString(), Buffer.isBuffer(b[::2])",
+      "('el', True, 'hlo', True)",
+    ],
+    [
+      "f = js.Float64Array([1.5, 2.5, 3.5])\nlist(f[1:]), list(f[::-1]), 3.5 in f, f.index(2.5), memoryview(f[::2]).format",
+      "([2.5, 3.5], [3.5, 2.5, 1.5], True, 1, 'd')",
+    ],
+    ["u = u8(1, 2, 3, 4)\nu[-1] = 9\nu[0:2] = b'ab'\nu[2:3] = [7]\nlist(u)", "[97, 98, 7, 9]"],
+    ["u = u8(1, 2, 3, 4)\nu[1:] = u[:-1]\nv = u8(1, 2, 3)\nv[::-1] = v\nlist(u), list(v)", "([1, 1, 2, 3], [3, 2, 1])"],
+    ["u = u8(1, 2, 1)\nu.index(2), u.index(1, 1), u.count(1), u.count(5)", "(1, 2, 2, 0)"],
+    ["u8(1, 2)[2]", "!IndexError: typed array index out of range"],
+    ["u8(1, 2)[-3]", "!IndexError: typed array index out of range"],
+    ["u = u8(1, 2)\nu[2] = 0\n0", "!IndexError: typed array index out of range"],
+    [
+      "u = u8(1, 2)\nu[0:1] = b'ab'\n0",
+      "!ValueError: a typed array cannot be resized: attempt to assign a sequence of size 2 to a slice of size 1",
+    ],
+    ["u = u8(1, 2)\ndel u[0]\n0", "!TypeError: a typed array cannot be resized: its items cannot be deleted"],
+    ["u8(1).index(5)", "!ValueError: the value is not in the typed array"],
+    // What is neither an index nor a slice names a property, as for any object of JavaScript.
+    ["u = u8(1, 2)\nu.tag = 't'\nu['length'], u['tag'], 'tag' in dir(u)", "(2, 't', True)"],
+    // Equal as the views of them are: the same items, whatever holds them. What can change and is equal by its items has no hash.
+    [
+      "import array\nu8(1, 2) == u8(1, 2), u8(1, 2) != u8(1, 3), u8(1, 2) == bytearray(b'\\x01\\x02'), u8(1, 2) == array.array('B', [1, 2]), js.Int16Array([1, 2]) == u8(1, 2), u8(1) == [1], u8(1) == 1",
+      "(True, True, True, True, True, False, False)",
+    ],
+    ["hash(u8(1))", "!TypeError: unhashable type: '_js.JSTypedArray'"],
+    [
+      "q = js.BigInt64Array(2)\nq[0] = 5\nq[1:] = [-(2**40)]\nlist(q), q[-1], 5 in q",
+      "([5, -1099511627776], -1099511627776, True)",
+    ],
+    [
+      "import gzip\ngzip.decompress(js.Bun.gzipSync(b'hello')), bytes(js.Bun.gunzipSync(gzip.compress(b'there')))",
+      "(b'hello', b'there')",
+    ],
   ],
 );
 
@@ -108,24 +149,23 @@ look = js.eval("x => [x.length, x[0], [...x], Object.prototype.toString.call(x)]
       "!TypeError: 'bytes' object does not support item assignment",
     ],
     ["js.JSON.stringify(b'ab'), js.eval('x => String(x)')(b'ab')", `('[97,98]', "b'ab'")`],
-    // Where JavaScript asks for a typed array or an ArrayBuffer, they are none. js.Uint8Array(data) makes a copy that is.
+    // To code written in JavaScript they are no typed arrays. js.Uint8Array(data) makes a copy that is.
     ["js.eval('x => [x instanceof Uint8Array, ArrayBuffer.isView(x)]')(b'ab')", "[False, False]"],
     ["js.TextDecoder().decode(js.Uint8Array(b'h\\xc3\\xa9'))", "'hé'"],
+    // What Bun itself implements takes them wherever it takes a typed array.
     [
       "js.TextDecoder().decode(b'h\\xc3\\xa9'), js.TextDecoder().decode(bytearray(b'h\\xc3\\xa9')), js.TextDecoder().decode(memoryview(b'h\\xc3\\xa9'))",
       "('hé', 'hé', 'hé')",
-      "TypeError: expects an ArrayBuffer or TypedArray",
     ],
-    ["Buffer.concat([b'a', bytearray(b'b')]).toString()", "'ab'", "TypeError"],
+    ["Buffer.concat([b'a', bytearray(b'b')]).toString()", "'ab'"],
     [
       "getattr(Buffer, 'from')('ab').equals(b'ab'), getattr(Buffer, 'from')('ab').indexOf(b'b'), Buffer.byteLength(b'abc')",
       "(True, 1, 3)",
-      "TypeError",
     ],
-    ["a = bytearray(4)\njs.crypto.getRandomValues(a)\nlen(a)", "4", "TypeError"],
-    // Worse where anything is taken and made a string of: what is written is repr(data).
-    ["js.Blob([b'ab', 'cd']).size", "4", "7: the blob holds b'ab'cd"],
-    ["js.Bun.hash.crc32(b'abc') == js.Bun.hash.crc32('abc')", "True", "the checksum is that of the text b'abc'"],
+    ["a = bytearray(4)\njs.crypto.getRandomValues(a)\nlen(a)", "4"],
+    // Also where anything is taken and made a string of.
+    ["js.Blob([b'ab', 'cd']).size", "4"],
+    ["js.Bun.hash.crc32(b'abc') == js.Bun.hash.crc32('abc')", "True"],
   ],
 );
 
@@ -150,28 +190,16 @@ shutil.rmtree(directory)
       "bytes(await js.Response(js.Uint8Array(b'\\x00\\xff')).bytes()), bytes(await js.Response('é').arrayBuffer())",
       "(b'\\x00\\xff', b'\\xc3\\xa9')",
     ],
-    ["bytes(await js.Response(b'\\x00\\xff').bytes())", "b'\\x00\\xff'", "the body is the text b'\\x00\\xff'"],
-    [
-      "bytes(await js.Response(bytearray(b'\\x00\\xff')).bytes())",
-      "b'\\x00\\xff'",
-      "the body is the text bytearray(b'\\x00\\xff')",
-    ],
-    [
-      "bytes(await js.Request('http://a.example', method='POST', body=b'\\x00\\xff').bytes())",
-      "b'\\x00\\xff'",
-      "the same",
-    ],
+    ["bytes(await js.Response(b'\\x00\\xff').bytes())", "b'\\x00\\xff'"],
+    ["bytes(await js.Response(bytearray(b'\\x00\\xff')).bytes())", "b'\\x00\\xff'"],
+    ["bytes(await js.Request('http://a.example', method='POST', body=b'\\x00\\xff').bytes())", "b'\\x00\\xff'"],
     ["await js.Bun.write(path, js.Uint8Array(b'\\x00\\xff')), read()", "(2, b'\\x00\\xff')"],
-    [
-      "await js.Bun.write(path, b'\\x00\\xff'), read()",
-      "(2, b'\\x00\\xff')",
-      "Bun.write() writes the text b'\\x00\\xff'",
-    ],
+    ["await js.Bun.write(path, b'\\x00\\xff'), read()", "(2, b'\\x00\\xff')"],
     [
       "fs.writeFileSync(path, js.Uint8Array(b'\\x01\\xfe')), read(), bytes(fs.readFileSync(path))",
       "(None, b'\\x01\\xfe', b'\\x01\\xfe')",
     ],
-    ["fs.writeFileSync(path, b'\\x00\\xff'), read()", "(None, b'\\x00\\xff')", "TypeError"],
+    ["fs.writeFileSync(path, b'\\x00\\xff'), read()", "(None, b'\\x00\\xff')"],
     [
       "fs.writeFileSync(path, 'abcd')\nfd = fs.openSync(path, 'r')\nu = js.Uint8Array(4)\nn = fs.readSync(fd, u, 0, 4, 0)\nfs.closeSync(fd)\nn, bytes(u)",
       "(4, b'abcd')",
@@ -179,9 +207,96 @@ shutil.rmtree(directory)
     [
       "fd = fs.openSync(path, 'r')\nb = bytearray(4)\ntry:\n    n = fs.readSync(fd, b, 0, 4, 0)\nfinally:\n    fs.closeSync(fd)\nn, b",
       "(4, bytearray(b'abcd'))",
-      "TypeError: a bytearray is no buffer to read into",
     ],
     ["bytes(await js.Blob([js.Uint8Array(b'ab'), 'cd']).bytes()), await js.Blob(['ab']).text()", "(b'abcd', 'ab')"],
+  ],
+);
+
+group(
+  "memory that Python lends",
+  {
+    setup: `
+import array, asyncio, mmap
+from _js import JSError
+from node import crypto
+directory = tempfile.mkdtemp()
+path = os.path.join(directory, "file")
+crc = js.Bun.hash.crc32
+want = crc("abc")
+class Exporter:
+    def __buffer__(self, flags): return memoryview(bytearray(b"abc"))
+def callback():
+    future = asyncio.get_running_loop().create_future()
+    return future, lambda *results: future.set_result(results)
+`,
+    teardown: `
+shutil.rmtree(directory)
+`,
+  },
+  [
+    // Whatever has the buffer protocol.
+    [
+      "[crc(x) == want for x in (array.array('B', b'abc'), memoryview(b'xabcx')[1:4], memoryview(js.Uint8Array([97, 98, 99])), Exporter())]",
+      "[True, True, True, True]",
+    ],
+    [
+      "fs.writeFileSync(path, 'abc')\nwith open(path, 'r+b') as f:\n    with mmap.mmap(f.fileno(), 0) as m:\n        same = crc(m) == want\nsame",
+      "True",
+    ],
+    ["crc(array.array('H', [0x6261, 0x63])) == crc('abc\\0')", "True"],
+    // A call that has returned holds nothing.
+    [
+      "b = bytearray(b'abc')\ncrc(b), js.TextDecoder().decode(b), js.Blob([b]).size\nb.append(100)\nb",
+      "bytearray(b'abcd')",
+    ],
+    // What is kept is a copy.
+    [
+      "b = bytearray(b'abc')\nr, blob = js.Response(b), js.Blob([b])\nb[0] = 120\nb.clear()\nawait r.text(), await blob.text()",
+      "('abc', 'abc')",
+    ],
+    // Memory that cannot be had: what Python says of it.
+    ["m = memoryview(b'abc')\nm.release()\ncrc(m)", "!ValueError: operation forbidden on released memoryview object"],
+    ["js.Response(m)", "!ValueError: operation forbidden on released memoryview object"],
+    ["js.Blob([m])", "!ValueError: operation forbidden on released memoryview object"],
+    ["crc(memoryview(b'abcd')[::2])", "!BufferError: memoryview: underlying buffer is not C-contiguous"],
+    ["js.Response(memoryview(b'abcd')[::2])", "!BufferError: memoryview: underlying buffer is not C-contiguous"],
+    // Nothing writes to what cannot be written to.
+    [
+      "fd = fs.openSync(path, 'r')\ndata = b'....'\ntry:\n    fs.readSync(fd, data, 0, 3, 0)\nexcept JSError as e:\n    refused = True\nfinally:\n    fs.closeSync(fd)\nrefused, data",
+      "(True, b'....')",
+    ],
+    [
+      "data = b'....'\nrefused = []\nfor write in (js.crypto.getRandomValues, crypto.randomFillSync, lambda d: js.TextEncoder().encodeInto('x', d), lambda d: js.TextEncoder().encodeInto('x', memoryview(d))):\n    try: write(data)\n    except (JSError, BufferError, TypeError) as e: refused.append(True)\nrefused, data",
+      "([True, True, True, True], b'....')",
+    ],
+    // A part of a bytearray is written where it is.
+    [
+      "fd = fs.openSync(path, 'r')\nb = bytearray(6)\nn = fs.readSync(fd, memoryview(b)[2:5], 0, 3, 0)\nfs.closeSync(fd)\nn, b",
+      "(3, bytearray(b'\\x00\\x00abc\\x00'))",
+    ],
+    [
+      "b = bytearray(4)\nr = js.TextEncoder().encodeInto('hé', b)\nr.read, r.written, b",
+      "(2, 3, bytearray(b'h\\xc3\\xa9\\x00'))",
+    ],
+    ["b = bytearray(4)\ncrypto.randomFillSync(b) is b", "True"],
+    // While another thread reads or writes it, a bytearray cannot be resized, as while a memoryview of it exists.
+    [
+      "b = bytearray(b'x' * 200000)\nfuture, done = callback()\nfs.writeFile(path, b, done)\ntry:\n    b.append(1)\nexcept BufferError as e:\n    during = str(e)\nawait future\nb.append(1)\nduring, len(b), os.path.getsize(path)",
+      "('Existing exports of data: object cannot be re-sized', 200001, 200000)",
+    ],
+    [
+      "fs.writeFileSync(path, 'abcd')\nfd = fs.openSync(path, 'r')\nb = bytearray(4)\nfuture, done = callback()\nfs.read(fd, b, 0, 4, 0, done)\ntry:\n    b.clear()\nexcept BufferError as e:\n    during = str(e)\nerror, n, buffer = await future\nfs.closeSync(fd)\nfilled = bytes(b)\nb.clear()\nduring, error, n, buffer is b, filled, b",
+      "('Existing exports of data: object cannot be re-sized', None, 4, True, b'abcd', bytearray(b''))",
+    ],
+    [
+      "b = bytearray(4)\nfuture, done = callback()\ncrypto.randomFill(b, done)\nerror, buffer = await future\nb.append(1)\nerror, buffer is b, len(b)",
+      "(None, True, 5)",
+    ],
+    // It is kept alive for as long, too.
+    [
+      "import gc\nfuture, done = callback()\nfs.writeFile(path, bytearray(b'y' * 200000), done)\ngc.collect()\nawait future\nread() == b'y' * 200000",
+      "True",
+    ],
   ],
 );
 
@@ -229,10 +344,6 @@ def view(*items):
       "wasm = bytes([0, 97, 115, 109, 1, 0, 0, 0, 1, 7, 1, 96, 2, 127, 127, 1, 127, 3, 2, 1, 0, 7, 7, 1, 3, 97, 100, 100, 0, 0, 10, 9, 1, 7, 0, 32, 0, 32, 1, 106, 11])\njs.WebAssembly.validate(js.Uint8Array(wasm)), js.WebAssembly.Instance(js.WebAssembly.Module(js.Uint8Array(wasm))).exports.add(2, 3)",
       "(True, 5)",
     ],
-    [
-      "js.WebAssembly.Instance(js.WebAssembly.Module(wasm)).exports.add(2, 3)",
-      "5",
-      "TypeError: bytes are no ArrayBuffer",
-    ],
+    ["js.WebAssembly.Instance(js.WebAssembly.Module(wasm)).exports.add(2, 3)", "5"],
   ],
 );

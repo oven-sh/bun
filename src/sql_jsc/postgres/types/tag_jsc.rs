@@ -6,8 +6,8 @@ use crate::jsc::{JSGlobalObject, JSType, JSValue, JsResult};
 use bun_sql::postgres::types::tag::Tag;
 
 /// A buffer stands for its bytes. An Int32Array is a list of numbers, like an Array.
-pub(crate) fn is_bytes(js_type: JSType) -> bool {
-    js_type.is_array_buffer_like() && js_type != JSType::Int32Array
+pub(crate) fn is_bytes(value: JSValue) -> bool {
+    value.is_array_buffer_like() && value.js_type() != JSType::Int32Array
 }
 
 /// The type declared in Parse for `value`.
@@ -30,7 +30,7 @@ pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Tag> 
             return Ok(Tag::unspecified);
         }
 
-        if is_bytes(tag) {
+        if is_bytes(value) {
             return Ok(Tag::bytea);
         }
 

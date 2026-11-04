@@ -651,7 +651,7 @@ impl Builtin {
                     return Some(Yield::Failed(cmd));
                 };
 
-                if jsval.js_type().is_array_buffer_like() {
+                if jsval.is_array_buffer_like() {
                     // Each slot gets its own pin + GC root; `None` has thrown OOM.
                     let root = || {
                         let buf = PinnedArrayBuffer::root(global, jsval);
@@ -659,6 +659,16 @@ impl Builtin {
                             let _ = global.throw_out_of_memory();
                         }
                         buf
+                    };
+                    let root_for_output = || {
+                        let buf = root()?;
+                        if buf.read_only {
+                            let _ = global.throw_invalid_arguments(format_args!(
+                                "cannot redirect output to an object that is read-only"
+                            ));
+                            return None;
+                        }
+                        Some(buf)
                     };
                     let me = Self::of_mut(interp, cmd);
                     if redirect.stdin() {
@@ -668,13 +678,13 @@ impl Builtin {
                         me.stdin = BuiltinInput::ArrayBuf { buf };
                     }
                     if redirect.stdout() {
-                        let Some(buf) = root() else {
+                        let Some(buf) = root_for_output() else {
                             return Some(Yield::Failed(cmd));
                         };
                         me.stdout = BuiltinIO::ArrayBuf { buf, i: 0 };
                     }
                     if redirect.stderr() {
-                        let Some(buf) = root() else {
+                        let Some(buf) = root_for_output() else {
                             return Some(Yield::Failed(cmd));
                         };
                         me.stderr = BuiltinIO::ArrayBuf { buf, i: 0 };

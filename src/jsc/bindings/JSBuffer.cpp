@@ -14,6 +14,8 @@
 #include "JavaScriptCore/JSCJSValue.h"
 
 #include "JSBuffer.h"
+#include "BunPythonMemory.h"
+#include <JavaScriptCore/PyBuffer.h>
 
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/ExceptionScope.h"
@@ -727,7 +729,8 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSGlobalOb
         auto* uint8Array = createUninitializedBuffer(lexicalGlobalObject, length);
         RETURN_IF_EXCEPTION(scope, {});
 
-        auto value = callFrame->argument(1);
+        auto value = Bun::copyIfPythonMemory(lexicalGlobalObject, callFrame->argument(1));
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (value.isString()) {
             size_t length = uint8Array->byteLength();
@@ -867,6 +870,13 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_byteLengthBody(JSC::JSGlo
         return JSValue::encode(jsNumber(arrayBuffer->impl()->byteLength()));
     }
 
+    if (JSC::Python::exportsMemoryToHost(arg0.value())) {
+        JSC::Python::BufferHolder holder(lexicalGlobalObject);
+        holder.get(arg0.value());
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(jsNumber(holder.buffer.length));
+    }
+
     return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "string"_s, "string or an instance of Buffer or ArrayBuffer"_s, callFrame->argument(0));
 }
 
@@ -875,13 +885,15 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_compareBody(JSC::JSGlobal
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    auto castedThisValue = callFrame->argument(0);
+    auto castedThisValue = Bun::copyIfPythonMemory(lexicalGlobalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(throwScope, {});
     JSC::JSArrayBufferView* castedThis = dynamicDowncast<JSC::JSArrayBufferView>(castedThisValue);
     if (!castedThis) [[unlikely]] {
         return Bun::ERR::INVALID_ARG_INSTANCE(throwScope, lexicalGlobalObject, "buf1"_s, "Buffer or Uint8Array"_s, castedThisValue);
     }
 
-    auto buffer = callFrame->argument(1);
+    auto buffer = Bun::copyIfPythonMemory(lexicalGlobalObject, callFrame->argument(1));
+    RETURN_IF_EXCEPTION(throwScope, {});
     JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(buffer);
     if (!view) [[unlikely]] {
         return Bun::ERR::INVALID_ARG_INSTANCE(throwScope, lexicalGlobalObject, "buf2"_s, "Buffer or Uint8Array"_s, buffer);
@@ -953,6 +965,8 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JSGlobalO
     }
 
     JSC::forEachInArrayLike(lexicalGlobalObject, asObject(listValue), [&](JSValue element) -> bool {
+        element = Bun::copyIfPythonMemory(lexicalGlobalObject, element);
+        RETURN_IF_EXCEPTION(throwScope, false);
         args.append(element);
         return true;
     });
@@ -1140,7 +1154,8 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSGlobalOb
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    auto arg0 = callFrame->argument(0);
+    auto arg0 = Bun::copyIfPythonMemory(lexicalGlobalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(throwScope, {});
     JSC::JSUint8Array* view = dynamicDowncast<JSC::JSUint8Array>(arg0);
 
     if (!view) [[unlikely]] {
@@ -1363,7 +1378,8 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_equalsBody(JSC::JSGlobalObj
         return {};
     }
 
-    auto buffer = callFrame->uncheckedArgument(0);
+    auto buffer = Bun::copyIfPythonMemory(lexicalGlobalObject, callFrame->uncheckedArgument(0));
+    RETURN_IF_EXCEPTION(throwScope, {});
     JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(buffer);
     if (!view) [[unlikely]] {
         return Bun::ERR::INVALID_ARG_INSTANCE(throwScope, lexicalGlobalObject, "otherBuffer"_s, "Buffer or Uint8Array"_s, buffer);
@@ -1394,7 +1410,8 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlobalObjec
 
     // No early return for 0 arguments: Node's fill() forwards an undefined
     // value into the numeric path, which zero-fills the whole buffer.
-    auto value = callFrame->argument(0);
+    auto value = Bun::copyIfPythonMemory(lexicalGlobalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, {});
     // Capture byteLength up front for two orthogonal purposes:
     //  1. The upper-bound argument to validateInteger(end) so `end >
     //     buf.length` throws ERR_OUT_OF_RANGE with Node's wording and
@@ -1789,7 +1806,8 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& sco
     // needle in it (Buffer.alloc(0).indexOf(Buffer.alloc(0)) === 0).
     // computeIndexOfRange handles both the empty haystack and empty needle.
 
-    auto valueValue = callFrame->argument(0);
+    auto valueValue = Bun::copyIfPythonMemory(lexicalGlobalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, -1);
     auto byteOffsetValue = callFrame->argument(1);
     auto endValue = callFrame->argument(2);
     auto encodingValue = callFrame->argument(3);

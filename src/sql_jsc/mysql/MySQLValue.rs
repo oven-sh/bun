@@ -97,7 +97,7 @@ impl<'a> Value<'a> {
                 return Ok(Value::Date(DateTime::from_js(value, global_object)?));
             }
 
-            if tag.is_array_buffer_like() {
+            if value.is_array_buffer_like() {
                 roots.append(value);
                 return Ok(Value::Bytes(global_object, value));
             }

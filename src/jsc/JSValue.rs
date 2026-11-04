@@ -840,14 +840,56 @@ impl JSValue {
         scope.assert_no_exception();
         view
     }
+    /// The bytes of an ArrayBuffer, a typed array or a DataView, or of an object of Python's that exports its memory (`bytes`,
+    /// `bytearray`, `memoryview`, ...).
+    ///
+    /// For the latter, [`ArrayBuffer::value`] is not `self` but what holds the memory, so root that, not `self`, for a borrow that
+    /// outlives the call ([`PinnedArrayBuffer::root`](crate::PinnedArrayBuffer::root) does), and the bytes may be
+    /// [`read_only`](ArrayBuffer::read_only).
+    ///
+    /// Runs no code of the program. So an instance of a class whose `__buffer__()` is written in Python is no buffer here:
+    /// [`to_array_buffer`](Self::to_array_buffer) takes it.
     pub fn as_array_buffer(self, global: &JSGlobalObject) -> Option<ArrayBuffer> {
         let mut out = ArrayBuffer::default();
-        if JSC__JSValue__asArrayBuffer(self, global, &mut out) {
-            out.value = self;
-            Some(out)
-        } else {
-            None
+        JSC__JSValue__asArrayBuffer(self, global, &mut out).then_some(out)
+    }
+    /// [`as_array_buffer`](Self::as_array_buffer) for a caller that writes to the bytes.
+    pub fn as_writable_array_buffer(self, global: &JSGlobalObject) -> Option<ArrayBuffer> {
+        self.as_array_buffer(global)
+            .filter(|buffer| !buffer.read_only)
+    }
+    /// [`as_array_buffer`](Self::as_array_buffer) for a caller that makes a string of what is no buffer. An object of Python's
+    /// that exports memory but cannot now (a released `memoryview`, one whose bytes do not follow one another) throws what it
+    /// raises in Python, where `as_array_buffer` says `None`. May run code of the program, as making the string would.
+    pub fn to_array_buffer(self, global: &JSGlobalObject) -> JsResult<Option<ArrayBuffer>> {
+        if !self.is_cell() || !self.js_type().is_python_object() {
+            return Ok(self.as_array_buffer(global));
         }
+        let mut out = ArrayBuffer::default();
+        let found =
+            crate::call_check_slow(global, || JSC__JSValue__toArrayBuffer(self, global, &mut out))?;
+        Ok((found == 1).then_some(out))
+    }
+    /// What to borrow the bytes of `self` from: `self`, unless it is an object of Python's that exports its memory, and then
+    /// what holds that ([`ArrayBuffer::value`]), of which `as_array_buffer` is never `None`. Throws as
+    /// [`to_array_buffer`](Self::to_array_buffer) does.
+    pub fn array_buffer_holder(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        if !self.is_cell() || !self.js_type().is_python_object() {
+            return Ok(self);
+        }
+        Ok(self
+            .to_array_buffer(global)?
+            .map_or(self, |buffer| buffer.value))
+    }
+    /// Whether [`as_array_buffer`](Self::as_array_buffer) has an answer: [`JSType::is_array_buffer_like`], or an object of
+    /// Python's that exports its memory.
+    pub fn is_array_buffer_like(self) -> bool {
+        if !self.is_cell() {
+            return false;
+        }
+        let js_type = self.js_type();
+        js_type.is_array_buffer_like()
+            || (js_type.is_python_object() && JSC__JSValue__exportsPythonMemory(self))
     }
     /// `as_array_buffer`, but pins the backing `JSC::ArrayBuffer` first so it
     /// cannot be detached. The pin does not prevent collection.
@@ -857,14 +899,20 @@ impl JSValue {
     /// source attached rather than throwing. See `JSC__JSValue__pinArrayBuffer`
     /// in bindings.cpp for why. Release the pin with `ArrayBuffer::unpin`.
     pub fn as_pinned_arraybuffer(self, global: &JSGlobalObject) -> Option<ArrayBuffer> {
-        let kind = JSC__JSValue__pinArrayBuffer(self);
+        // What is pinned of an object of Python's is what holds its memory.
+        let this = if self.is_cell() && self.js_type().is_python_object() {
+            self.as_array_buffer(global)?.value
+        } else {
+            self
+        };
+        let kind = JSC__JSValue__pinArrayBuffer(this);
         if kind == 0 {
             return None;
         }
-        let mut buffer = self.as_array_buffer(global);
+        let mut buffer = this.as_array_buffer(global);
         match &mut buffer {
             Some(buffer) => buffer.pinned = kind == 1,
-            None if kind == 1 => self.unpin_array_buffer(),
+            None if kind == 1 => this.unpin_array_buffer(),
             None => {}
         }
         buffer
@@ -2057,6 +2105,13 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         out: &mut ArrayBuffer,
     ) -> bool;
+    /// -1 = threw, 0 = no buffer, 1 = `out` is filled.
+    safe fn JSC__JSValue__toArrayBuffer(
+        this: JSValue,
+        global: &JSGlobalObject,
+        out: &mut ArrayBuffer,
+    ) -> i8;
+    safe fn JSC__JSValue__exportsPythonMemory(this: JSValue) -> bool;
     /// 0 = nothing to pin, 1 = pinned an ArrayBuffer (unpin later), 2 = held a bufferless view (nothing to unpin).
     safe fn JSC__JSValue__pinArrayBuffer(this: JSValue) -> u8;
     safe fn JSC__JSValue__asPromise(this: JSValue) -> *mut JSPromise;

@@ -1545,6 +1545,15 @@ unsafe extern "C" {
     ) -> napi_status;
 }
 
+/// To N-API only the buffers of JS are buffers. An addon writes through the pointer, and keeps it for as long as it holds the
+/// value: of an object of Python's that would be the object, not what keeps its memory in place.
+fn as_array_buffer_of_js(value: JSValue, env: &NapiEnv) -> Option<jsc::ArrayBuffer> {
+    if value.is_cell() && value.js_type().is_python_object() {
+        return None;
+    }
+    value.as_array_buffer(env.to_js())
+}
+
 #[unsafe(no_mangle)]
 extern "C" fn napi_get_typedarray_info(
     env_: napi_env,
@@ -1570,7 +1579,7 @@ extern "C" fn napi_get_typedarray_info(
         return env.generic_failure();
     }
 
-    let Some(array_buffer) = typedarray.as_array_buffer(env.to_js()) else {
+    let Some(array_buffer) = as_array_buffer_of_js(typedarray, env) else {
         return env.invalid_arg();
     };
     // SAFETY: `maybe_type` is null or a valid exclusive out-param per N-API contract.
@@ -1644,7 +1653,7 @@ extern "C" fn napi_get_dataview_info(
     if dataview.is_empty() {
         return env.invalid_arg();
     }
-    let Some(array_buffer) = dataview.as_array_buffer(env.to_js()) else {
+    let Some(array_buffer) = as_array_buffer_of_js(dataview, env) else {
         return NapiEnv::set_last_error(Some(env), NapiStatus::object_expected);
     };
     write_out(maybe_bytelength, array_buffer.byte_len);
@@ -2218,7 +2227,7 @@ extern "C" fn napi_get_buffer_info(
     if !data.is_null() && !value.materialize_array_buffer_view_buffer() {
         return env.generic_failure();
     }
-    let Some(array_buf) = value.as_array_buffer(env.to_js()) else {
+    let Some(array_buf) = as_array_buffer_of_js(value, env) else {
         return NapiEnv::set_last_error(Some(env), NapiStatus::invalid_arg);
     };
     // node::Buffer::HasInstance is IsArrayBufferView: reject a bare ArrayBuffer.

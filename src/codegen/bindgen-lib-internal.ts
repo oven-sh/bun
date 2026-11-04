@@ -136,7 +136,8 @@ export const kindTests: Record<
   stringObject: { ofCell: "cell->inherits<JSC::StringObject>()" },
   array: { ofCell: "cell->inherits<JSC::JSArray>()" },
   arrayBuffer: { ofCell: "cell->inherits<JSC::JSArrayBuffer>()" },
-  arrayBufferView: { ofCell: "cell->inherits<JSC::JSArrayBufferView>()" },
+  /** And what exports its memory in Python: `bytes`, `bytearray`, `memoryview`. */
+  arrayBufferView: { ofCell: "(cell->inherits<JSC::JSArrayBufferView>() || Bun::Bindgen::isPythonMemory(cell))" },
   callable: { ofCell: "cell->isCallable()" },
 };
 
@@ -1398,6 +1399,10 @@ export class BytesType extends Type {
   }
   get convertsInPlace(): boolean {
     return true;
+  }
+  /** `bytes`, `bytearray` and the like of Python are buffers. What is read, copied or pinned is what holds their memory. */
+  cppPrepare(value: string): string | null {
+    return this.#options.from.includes("buffer") ? `Bun::Bindgen::holderOfPythonMemory(*globalObject, ${value})` : null;
   }
   cppConvertInto(target: string, value: string, ctx: string, name: string, failure: string): string {
     const spelling = { string: ["a string"], buffer: ["ArrayBuffer", "ArrayBufferView"], blob: ["Blob"] };

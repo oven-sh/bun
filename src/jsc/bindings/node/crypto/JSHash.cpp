@@ -5,6 +5,7 @@
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/JSArrayBufferView.h>
+#include "BunPythonMemory.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSTypedArrays.h>
 #include <JavaScriptCore/ThrowScope.h>
@@ -229,7 +230,14 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
         }
 
         return JSValue::encode(hashWrapper);
+    } else if (auto bytes = Bun::bytesOfPythonMemory(globalObject, inputValue)) {
+        if (!hash->update(*bytes)) {
+            return Bun::ERR::CRYPTO_HASH_UPDATE_FAILED(scope, globalObject);
+        }
+
+        return JSValue::encode(hashWrapper);
     }
+    RETURN_IF_EXCEPTION(scope, {});
 
     return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "data"_s, "string or an instance of Buffer, TypedArray, or DataView"_s, inputValue);
 }

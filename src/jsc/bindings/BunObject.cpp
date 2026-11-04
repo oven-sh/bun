@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "JavaScriptCore/HeapProfiler.h"
+#include "BunPythonMemory.h"
 #include <JavaScriptCore/AOTMembersLeftOut.h>
 #include <JavaScriptCore/HeapSnapshotBuilder.h>
 #include "ZigGlobalObject.h"
@@ -159,6 +160,8 @@ JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Array(JSGlobalObj
     }
 
     JSC::forEachInArrayLike(lexicalGlobalObject, array, [&](JSValue element) -> bool {
+        element = Bun::copyIfPythonMemory(lexicalGlobalObject, element);
+        RETURN_IF_EXCEPTION(throwScope, false);
         args.append(element);
         return true;
     });

@@ -125,7 +125,7 @@ mod _impl {
             let write_state_value = write_state.to_js();
             let process_callback_value = process_callback.to_js();
 
-            let Some(mut write_state) = write_state_value.as_array_buffer(global) else {
+            let Some(mut write_state) = write_state_value.as_writable_array_buffer(global) else {
                 return Err(global.throw_invalid_argument_type_value(
                     "writeState",
                     "Uint32Array",

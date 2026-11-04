@@ -23,6 +23,7 @@
 
 #include "JSTextEncoder.h"
 
+#include <JavaScriptCore/PyBuffer.h>
 #include <JavaScriptCore/JavaScript.h>
 #include <JavaScriptCore/APICast.h>
 
@@ -274,8 +275,16 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeIntoBody(
     auto source = str->view(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto* destination = dynamicDowncast<JSC::JSArrayBufferView>(argument1.value());
-    if (!destination) {
+    // Or what lets its memory be written to in Python: a bytearray, a memoryview of one.
+    JSC::Python::BufferHolder holder(lexicalGlobalObject);
+    std::span<uint8_t> destination;
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(argument1.value()))
+        destination = { static_cast<uint8_t*>(view->vector()), view->byteLength() };
+    else if (JSC::Python::exportsMemoryToHost(argument1.value())) {
+        holder.get(argument1.value(), JSC::Python::BufferWritable);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        destination = holder.buffer.mutableSpan();
+    } else {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
         return {};
     }
@@ -283,10 +292,10 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeIntoBody(
     TextEncoderEncodeIntoResult res = {};
     if (!source->is8Bit()) {
         const auto span = source->span16();
-        res = TextEncoder__encodeInto16(span.data(), span.size(), destination->vector(), destination->byteLength());
+        res = TextEncoder__encodeInto16(span.data(), span.size(), destination.data(), destination.size());
     } else {
         const auto span = source->span8();
-        res = TextEncoder__encodeInto8(span.data(), span.size(), destination->vector(), destination->byteLength());
+        res = TextEncoder__encodeInto8(span.data(), span.size(), destination.data(), destination.size());
     }
 
     Bun::GlobalScope* globalScope = reinterpret_cast<Bun::GlobalScope*>(lexicalGlobalObject);

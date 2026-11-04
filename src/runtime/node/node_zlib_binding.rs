@@ -144,7 +144,7 @@ pub(crate) trait CompressionStreamImpl:
         if !write_result_value.is_cell() {
             return;
         }
-        let Some(mut write_result_buf) = write_result_value.as_array_buffer(global) else {
+        let Some(mut write_result_buf) = write_result_value.as_writable_array_buffer(global) else {
             return;
         };
         let write_result = write_result_buf.as_u32();
@@ -310,7 +310,7 @@ pub(crate) trait CompressionStreamImpl:
             (in_off, in_len)
         };
 
-        let Some(out_buf) = out_js.as_array_buffer(global_this) else {
+        let Some(out_buf) = out_js.as_writable_array_buffer(global_this) else {
             return Err(global_this
                 .err(
                     ErrorCode::INVALID_ARG_TYPE,
@@ -362,6 +362,13 @@ pub(crate) trait CompressionStreamImpl:
             }
             return Err(global_this.throw_out_of_memory());
         };
+        if out_buf.read_only {
+            if let Some(buf) = &in_buf {
+                buf.unpin();
+            }
+            out_buf.unpin();
+            return Err(global_this.throw_invalid_argument_type_value(b"out", b"Buffer", out_js));
+        }
         let mut in_: Option<&[u8]> = in_buf
             .as_ref()
             .map(|b| &b.byte_slice()[in_off as usize..in_off as usize + in_len as usize]);
@@ -383,6 +390,9 @@ pub(crate) trait CompressionStreamImpl:
         self.pinned_buffers().set(
             u8::from(in_buf.as_ref().is_some_and(|b| b.pinned)) | (u8::from(out_buf.pinned) << 1),
         );
+        // What was pinned, which is not the argument if that is an object of Python's.
+        let pinned_input = in_buf.as_ref().map_or(in_js, |buf| buf.value);
+        let pinned_output = out_buf.value;
         let out: Option<&mut [u8]> = Some(
             &mut out_buf.byte_slice_mut()[out_off as usize..out_off as usize + out_len as usize],
         );
@@ -390,8 +400,8 @@ pub(crate) trait CompressionStreamImpl:
         self.write_in_progress().set(true);
         self.ref_();
 
-        Self::pending_input_set_cached(this_value, global_this, in_js);
-        Self::pending_output_set_cached(this_value, global_this, out_js);
+        Self::pending_input_set_cached(this_value, global_this, pinned_input);
+        Self::pending_output_set_cached(this_value, global_this, pinned_output);
 
         self.stream().with_mut(|s| {
             s.set_buffers(in_, out);
@@ -533,7 +543,7 @@ pub(crate) trait CompressionStreamImpl:
             Some(&in_buf.byte_slice()[in_off as usize..in_off as usize + in_len as usize])
         };
 
-        let Some(mut out_buf) = out_js.as_array_buffer(global_this) else {
+        let Some(mut out_buf) = out_js.as_writable_array_buffer(global_this) else {
             return Err(global_this
                 .err(
                     ErrorCode::INVALID_ARG_TYPE,

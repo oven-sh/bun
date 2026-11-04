@@ -35,6 +35,7 @@
 #define SQLITE_ENABLE_COLUMN_METADATA 1
 #endif
 #include "sqlite3_local.h"
+#include "BunPythonMemory.h"
 static_assert(BUN_SQLITE_BUNDLED_VERSION_NUMBER == SQLITE_VERSION_NUMBER,
     "update BUN_SQLITE_BUNDLED_VERSION to match sqlite3_local.h");
 static constexpr bool lazy_sqlite3_has_session = true;
@@ -386,7 +387,10 @@ static SqliteFromJS sqliteFromJS(JSGlobalObject* globalObject, ThrowScope& scope
         r = sink.int64(v);
     } else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
         r = sink.blob(view->span());
+    } else if (auto bytes = Bun::bytesOfPythonMemory(globalObject, value)) {
+        r = sink.blob(*bytes);
     } else {
+        RETURN_IF_EXCEPTION(scope, SqliteFromJS::Done);
         return SqliteFromJS::Unsupported;
     }
     return SqliteFromJS::Done;

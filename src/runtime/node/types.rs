@@ -296,6 +296,7 @@ impl StringOrBuffer<'static> {
         value: JSValue,
         flavor: Flavor,
     ) -> JsResult<Self> {
+        let value = value.array_buffer_holder(global)?;
         if flavor == Flavor::Sync {
             return Ok(Self::Buffer(Buffer::from_array_buffer(global, value)));
         }
@@ -309,7 +310,7 @@ impl StringOrBuffer<'static> {
         global_object: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Vec<u8>> {
-        if let Some(array_buffer) = value.as_array_buffer(global_object) {
+        if let Some(array_buffer) = value.to_array_buffer(global_object)? {
             let bytes = array_buffer.byte_slice();
             global_object
                 .vm()
@@ -370,6 +371,10 @@ impl StringOrBuffer<'static> {
             | JSType::BigInt64Array
             | JSType::BigUint64Array
             | JSType::DataView => {
+                *out = Self::buffer_from_js(global, value, flavor)?;
+                Ok(true)
+            }
+            js_type if js_type.is_python_object() && value.is_array_buffer_like() => {
                 *out = Self::buffer_from_js(global, value, flavor)?;
                 Ok(true)
             }
@@ -459,7 +464,7 @@ impl StringOrBuffer<'static> {
         flavor: Flavor,
         string_objects: StringObjects,
     ) -> JsResult<bool> {
-        if value.is_cell() && value.js_type().is_array_buffer_like() {
+        if value.is_array_buffer_like() {
             *out = Self::buffer_from_js(global, value, flavor)?;
             return Ok(true);
         }
@@ -1118,7 +1123,13 @@ impl PathLikeExt for PathLike<'_> {
         };
         use jsc::JSType;
         let path = match arg.js_type() {
-            JSType::Uint8Array | JSType::DataView | JSType::ArrayBuffer => {
+            js_type
+                if matches!(
+                    js_type,
+                    JSType::Uint8Array | JSType::DataView | JSType::ArrayBuffer
+                ) || (js_type.is_python_object() && arg.is_array_buffer_like()) =>
+            {
+                let arg = arg.array_buffer_holder(ctx)?;
                 let mut buffer = if arguments.will_be_async {
                     PinnedArrayBuffer::root(ctx, arg)
                 } else {

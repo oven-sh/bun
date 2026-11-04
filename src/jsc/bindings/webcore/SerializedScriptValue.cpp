@@ -27,6 +27,7 @@
 #include "config.h"
 #include "SerializedScriptValue.h"
 #include "BunClientData.h"
+#include "BunPythonMemory.h"
 #include "BunString.h"
 // #include "BlobRegistry.h"
 // #include "ByteArrayPixelBuffer.h"
@@ -77,6 +78,10 @@
 #include <JavaScriptCore/ObjectPrototype.h>
 #include <JavaScriptCore/OwedOutOfMemoryError.h>
 #include <JavaScriptCore/PropertyNameArray.h>
+#include <JavaScriptCore/PyBuffer.h>
+#include <JavaScriptCore/PyHooks.h>
+#include <JavaScriptCore/PySet.h>
+#include <JavaScriptCore/PyTuple.h>
 #include <JavaScriptCore/RegExp.h>
 #include <JavaScriptCore/RegExpObject.h>
 #include <JavaScriptCore/TypedArrayInlines.h>
@@ -1089,7 +1094,8 @@ private:
             return true;
         }
 
-        return dumpIfTerminal(toJSArrayBuffer(*arrayBuffer), code);
+        JSValue wrapper = toJSArrayBuffer(*arrayBuffer);
+        return dumpIfTerminal(wrapper, code);
     }
 
     void dumpDOMException(JSObject* obj, SerializationReturnCode& code)
@@ -1106,13 +1112,73 @@ private:
         code = SerializationReturnCode::DataCloneError;
     }
 
-    bool dumpIfTerminal(JSValue value, SerializationReturnCode& code)
+    // What is cloned in place of an object of Python's that has one counterpart among what can be cloned:
+    //   a float (which is an object where it is a whole number or a NaN in a container)    the number
+    //   a tuple                                                                             an Array
+    //   a set, a frozenset                                                                  a Set
+    //   bytes, a bytearray, a memoryview of bytes                                           a Uint8Array
+    // The same object gives the same counterpart, so what is shared stays shared. Anything else as it is, which cannot be cloned.
+    NEVER_INLINE JSValue counterpartOfPythonObject(JSValue value)
+    {
+        VM& vm = m_lexicalGlobalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSCell* cell = value.asCell();
+        if (cell->type() == PyFloatType)
+            return JSC::Python::valueForJS(value);
+        if (auto found = m_counterpartsOfPythonObjects.find(cell); found != m_counterpartsOfPythonObjects.end())
+            return found->value;
+        JSObject* counterpart = nullptr;
+        if (auto* tuple = JSC::Python::PyTuple::tryFrom(cell)) {
+            MarkedArgumentBuffer items;
+            for (unsigned i = 0; i < tuple->length(); ++i)
+                items.append(tuple->at(i));
+            if (items.hasOverflowed()) [[unlikely]] {
+                throwOutOfMemoryError(m_lexicalGlobalObject, scope);
+                return {};
+            }
+            counterpart = constructArray(m_lexicalGlobalObject, static_cast<ArrayAllocationProfile*>(nullptr), items);
+        } else if (auto* pySet = JSC::Python::PySet::tryFrom(cell)) {
+            JSSet* set = JSSet::create(vm, m_lexicalGlobalObject->setStructure());
+            m_gcBuffer.appendWithCrashOnOverflow(set);
+            JSValue item;
+            for (size_t position = 0; pySet->next(position, item);) {
+                set->add(m_lexicalGlobalObject, JSC::Python::valueForJS(item));
+                RETURN_IF_EXCEPTION(scope, {});
+            }
+            counterpart = set;
+        } else {
+            auto* view = JSC::Python::PyMemoryView::tryFrom(cell);
+            if (cell->type() != PyBytesType && cell->type() != PyByteArrayType && !(view && view->itemSize == 1))
+                return value;
+            JSValue copy = Bun::copyOfPythonMemory(m_lexicalGlobalObject, value);
+            RETURN_IF_EXCEPTION(scope, {});
+            counterpart = asObject(copy);
+        }
+        RETURN_IF_EXCEPTION(scope, {});
+        m_gcBuffer.appendWithCrashOnOverflow(counterpart);
+        m_counterpartsOfPythonObjects.add(cell, counterpart);
+        return counterpart;
+    }
+
+    // `value` becomes what is cloned in its place.
+    bool dumpIfTerminal(JSValue& value, SerializationReturnCode& code)
     {
         if (!value.isCell()) {
             dumpImmediate(value, code);
             return true;
         }
         ASSERT(value.isCell());
+
+        if (isPyObjectType(value.asCell()->type())) [[unlikely]] {
+            value = counterpartOfPythonObject(value);
+            // The caller looks for the exception.
+            if (!value)
+                return true;
+            if (!value.isCell()) {
+                dumpImmediate(value, code);
+                return true;
+            }
+        }
 
         if (value.isString()) {
             dumpString(asString(value)->value(m_lexicalGlobalObject));
@@ -1995,6 +2061,8 @@ private:
     }
 #endif
     ObjectPool m_objectPool;
+    // m_gcBuffer keeps the values. The keys are reachable from what is being cloned.
+    UncheckedKeyHashMap<JSCell*, JSObject*> m_counterpartsOfPythonObjects;
     ObjectPool m_transferredMessagePorts;
     ObjectPool m_transferredArrayBuffers;
     typedef HashMap<RefPtr<UniquedStringImpl>, uint32_t, IdentifierRepHash> StringConstantPool;

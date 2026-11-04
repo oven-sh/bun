@@ -77,6 +77,7 @@
 #include "JavaScriptCore/MarkedSpaceInlines.h"
 #include "JavaScriptCore/SubspaceInlines.h"
 #include "JavaScriptCore/ProxyObject.h"
+#include "JavaScriptCore/PyBuffer.h"
 #include "JavaScriptCore/Microtask.h"
 #include "JavaScriptCore/MicrotaskQueue.h"
 #include "JavaScriptCore/ArrayConstructor.h"
@@ -4048,6 +4049,54 @@ JSC::EncodedJSValue JSC__JSValue__values(JSC::JSGlobalObject* globalObject, JSC:
     return JSValue::encode(JSC::objectValues(vm, globalObject, value));
 }
 
+// An object of Python's that exports its memory (bytes, bytearray, memoryview, ...) is a buffer to native code as a Uint8Array
+// is. `out->_value` is then not the object but what holds the memory: see "For the host" in PyBuffer.h.
+enum class AsArrayBufferResult : int8_t { Exception = -1,
+    NotABuffer = 0,
+    Buffer = 1 };
+static bool asArrayBufferOfJS(JSC::JSValue, Bun__ArrayBuffer* out);
+static AsArrayBufferResult asArrayBufferOfPython(JSC::JSValue value, JSC::JSGlobalObject* globalObject, Bun__ArrayBuffer* out)
+{
+    if (!JSC::Python::exportsMemoryToHost(value))
+        return AsArrayBufferResult::NotABuffer;
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    JSC::JSValue holder = JSC::Python::memoryForHost(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, AsArrayBufferResult::Exception);
+    if (!JSC::isPyObjectType(holder.asCell()->type()))
+        return asArrayBufferOfJS(holder, out) ? AsArrayBufferResult::Buffer : AsArrayBufferResult::NotABuffer;
+    JSC::Python::HostMemory memory;
+    JSC::Python::locateMemoryForHost(holder.asCell(), memory);
+    out->ptr = reinterpret_cast<char*>(memory.data);
+    out->len = memory.length;
+    out->byte_len = memory.length;
+    out->_value = JSValue::encode(holder);
+    out->cell_type = JSC::JSType::Uint8ArrayType;
+    out->shared = false;
+    out->resizable = false;
+    out->pinned = false;
+    out->read_only = memory.isReadOnly;
+    return AsArrayBufferResult::Buffer;
+}
+
+// As JSC__JSValue__asArrayBuffer, for a caller that goes on to make a string of what is no buffer: what Python raises when it is
+// asked for the bytes of a view that was released, or whose bytes do not follow one another, is thrown.
+CPP_DECL int8_t JSC__JSValue__toArrayBuffer(JSC::EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject, Bun__ArrayBuffer* out)
+{
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    if (!value || !value.isCell()) [[unlikely]]
+        return 0;
+    if (JSC::isPyObjectType(value.asCell()->type())) [[unlikely]]
+        return static_cast<int8_t>(asArrayBufferOfPython(value, globalObject, out));
+    return asArrayBufferOfJS(value, out);
+}
+
+// Whether JSC__JSValue__asArrayBuffer takes it for a buffer.
+CPP_DECL bool JSC__JSValue__exportsPythonMemory(JSC::EncodedJSValue encodedValue)
+{
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    return JSC::Python::exportsMemoryToHost(value) && !JSC::Python::getBufferRunsCode(value);
+}
+
 bool JSC__JSValue__asArrayBuffer(
     JSC::EncodedJSValue encodedValue,
     JSC::JSGlobalObject* globalObject,
@@ -4058,6 +4107,21 @@ bool JSC__JSValue__asArrayBuffer(
     if (!value || !value.isCell()) [[unlikely]] {
         return false;
     }
+    if (JSC::isPyObjectType(value.asCell()->type())) [[unlikely]] {
+        // Callers count on this to run nothing of the program. JSC__JSValue__toArrayBuffer is for where that may happen.
+        if (JSC::Python::getBufferRunsCode(value))
+            return false;
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
+        auto result = asArrayBufferOfPython(value, globalObject, out);
+        if (result == AsArrayBufferResult::Exception)
+            (void)scope.tryClearException();
+        return result == AsArrayBufferResult::Buffer;
+    }
+    return asArrayBufferOfJS(value, out);
+}
+
+static bool asArrayBufferOfJS(JSC::JSValue value, Bun__ArrayBuffer* out)
+{
 
     auto type = value.asCell()->type();
     void* data = nullptr;
@@ -4126,6 +4190,7 @@ bool JSC__JSValue__asArrayBuffer(
     out->_value = JSValue::encode(value);
     out->ptr = static_cast<char*>(data);
     out->pinned = false;
+    out->read_only = false;
     return true;
 }
 
@@ -4160,6 +4225,13 @@ enum class PinKind : uint8_t { None = 0,
 static PinKind pinStorage(JSC::JSValue value)
 {
     JSC::ArrayBuffer* buf = nullptr;
+    // What JSC__JSValue__asArrayBuffer made of an object of Python's.
+    if (value.isCell() && JSC::isPyObjectType(value.asCell()->type())) [[unlikely]] {
+        JSC::Python::HostMemory memory;
+        if (!JSC::Python::locateMemoryForHost(value.asCell(), memory))
+            return PinKind::None;
+        return JSC::Python::pinMemoryForHost(value.asCell()) ? PinKind::Pinned : PinKind::Held;
+    }
     if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))
         buf = jb->impl();
     else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
@@ -4190,6 +4262,12 @@ CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
     JSC::JSCell* cell = value.asCell();
     JSC::JSType type = cell->type();
     JSC::ArrayBuffer* buf = nullptr;
+    if (JSC::isPyObjectType(type)) [[unlikely]] {
+        // `pinStorage` says `Pinned` of a memoryview only, which has no type of its own.
+        if (type == JSC::PyObjectType)
+            JSC::Python::unpinMemoryForHost(cell);
+        return;
+    }
     if (type == JSC::ArrayBufferType)
         buf = static_cast<JSC::JSArrayBuffer*>(cell)->impl();
     else if (type == JSC::DataViewType)
@@ -4258,7 +4336,8 @@ CPP_DECL JSC::EncodedJSValue JSC__JSValue__findWasmMemory(JSC::EncodedJSValue v,
 }
 
 // Returns the current byte range of `v`, a buffer, a view or a WebAssembly.Memory. Returns null and 0 if it's detached or out of bounds.
-CPP_DECL void JSC__JSValue__arrayBufferExtent(JSC::EncodedJSValue v, uint8_t** out_ptr, size_t* out_len)
+// `forWriting`: also if it's memory of Python's that must not be written to.
+CPP_DECL void JSC__JSValue__arrayBufferExtent(JSC::EncodedJSValue v, bool forWriting, uint8_t** out_ptr, size_t* out_len)
 {
     auto value = JSC::JSValue::decode(v);
     if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
@@ -4282,6 +4361,14 @@ CPP_DECL void JSC__JSValue__arrayBufferExtent(JSC::EncodedJSValue v, uint8_t** o
         return;
     }
 #endif
+    else if (value.isCell() && JSC::isPyObjectType(value.asCell()->type())) {
+        Bun__ArrayBuffer buffer;
+        if (JSC__JSValue__asArrayBuffer(v, value.asCell()->structure()->realm(), &buffer) && (!forWriting || !buffer.read_only)) {
+            *out_ptr = reinterpret_cast<uint8_t*>(buffer.ptr);
+            *out_len = buffer.byte_len;
+            return;
+        }
+    }
     *out_ptr = nullptr;
     *out_len = 0;
 }
@@ -4326,6 +4413,28 @@ CPP_DECL int32_t JSC__JSValue__borrowBytesForOffThread(JSC::EncodedJSValue v, co
         *out_ptr = static_cast<const uint8_t*>(buf->data());
         *out_len = buf->byteLength();
         return 2;
+    }
+    if (JSC::Python::exportsMemoryToHost(value) && !JSC::Python::getBufferRunsCode(value)) {
+        // The caller roots `v`. That keeps the bytes of a bytes where they are, and of nothing else: the rest is for it to copy.
+        auto* globalObject = value.asCell()->structure()->realm();
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
+        JSC::JSValue holder = JSC::Python::memoryForHost(globalObject, value);
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            return 0;
+        }
+        if (!JSC::isPyObjectType(holder.asCell()->type())) {
+            auto* view = uncheckedDowncast<JSC::JSArrayBufferView>(holder);
+            *out_ptr = static_cast<const uint8_t*>(view->vector());
+            *out_len = view->byteLength();
+            return 1;
+        }
+        JSC::Python::HostMemory memory;
+        if (!JSC::Python::locateMemoryForHost(holder.asCell(), memory))
+            return 0;
+        *out_ptr = memory.data;
+        *out_len = memory.length;
+        return holder == value ? 3 : 1;
     }
     return 0;
 }
@@ -7932,4 +8041,5 @@ extern "C" void JSC__ArrayBuffer__asBunArrayBuffer(JSC::ArrayBuffer* self, Bun__
     out->shared = self->isShared();
     out->resizable = self->isResizableOrGrowableShared();
     out->pinned = false;
+    out->read_only = false;
 }

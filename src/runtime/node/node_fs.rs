@@ -4146,10 +4146,11 @@ pub(crate) mod args {
             } else {
                 Flavor::Sync
             };
-            let buffer = if flavor == Flavor::Async && bv.js_type().is_array_buffer_like() {
+            let buffer = if flavor == Flavor::Async && bv.is_array_buffer_like() {
                 // Bytes that can be freed while pinned are copied below, once `offset` and `length` say which ones.
                 StringOrBuffer::PinnedBuffer(
-                    PinnedArrayBuffer::root(ctx, bv).ok_or_else(|| ctx.throw_out_of_memory())?,
+                    PinnedArrayBuffer::root(ctx, bv.array_buffer_holder(ctx)?)
+                        .ok_or_else(|| ctx.throw_out_of_memory())?,
                 )
             } else {
                 StringOrBuffer::from_js_maybe_async(ctx, bv, flavor, StringObjects::Allow)?
@@ -4333,12 +4334,15 @@ pub(crate) mod args {
             let buffer_value = arguments.next_eat().ok_or_else(||
                 // theoretically impossible, argument has been passed already
                 ctx.throw_invalid_arguments(format_args!("buffer is required")))?;
-            if !buffer_value.js_type().is_array_buffer_like() {
-                return Err(ctx.throw_invalid_argument_type_value2(
+            let not_a_buffer = || {
+                ctx.throw_invalid_argument_type_value2(
                     b"buffer",
                     b"an instance of Buffer, TypedArray, or DataView",
                     buffer_value,
-                ));
+                )
+            };
+            if !buffer_value.is_array_buffer_like() {
+                return Err(not_a_buffer());
             }
 
             let offset_value = arguments.next_eat().unwrap_or(JSValue::NULL);
@@ -4369,18 +4373,19 @@ pub(crate) mod args {
             // `to_number` can run JS that detaches the buffer, so the view is read after it.
             let mut buffer = if arguments.will_be_async {
                 ReadBuffer::PinnedBuffer(
-                    PinnedArrayBuffer::root(ctx, buffer_value)
+                    PinnedArrayBuffer::root(ctx, buffer_value.array_buffer_holder(ctx)?)
                         .ok_or_else(|| ctx.throw_out_of_memory())?,
                 )
             } else {
-                ReadBuffer::Buffer(buffer_value.as_array_buffer(ctx).ok_or_else(|| {
-                    ctx.throw_invalid_argument_type_value2(
-                        b"buffer",
-                        b"an instance of Buffer, TypedArray, or DataView",
-                        buffer_value,
-                    )
-                })?)
+                ReadBuffer::Buffer(
+                    buffer_value
+                        .to_array_buffer(ctx)?
+                        .ok_or_else(not_a_buffer)?,
+                )
             };
+            if buffer.read_only {
+                return Err(not_a_buffer());
+            }
 
             //   if (length === 0) {
             //     return process.nextTick(function tick() {

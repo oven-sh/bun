@@ -2,6 +2,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <openssl/err.h>
 #include "ErrorCode.h"
+#include "BunPythonMemory.h"
 #include "ncrypto.h"
 #include "JSBuffer.h"
 #include "JSDOMConvertEnumeration.h"
@@ -597,6 +598,8 @@ GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject*
 {
     using Return = GCOwnedDataScope<std::span<const uint8_t>>;
 
+    dataValue = Bun::copyIfPythonMemory(globalObject, dataValue);
+    RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
     if (auto* view = dynamicDowncast<JSArrayBufferView>(dataValue)) {
         return { view, view->span() };
     }
@@ -682,6 +685,8 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
         return view;
     }
 
+    value = Bun::copyIfPythonMemory(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, {});
     auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value);
     if (!view) {
         ERR::INVALID_ARG_TYPE_INSTANCE(scope, globalObject, argName, "string"_s, "Buffer, TypedArray, or DataView"_s, value);

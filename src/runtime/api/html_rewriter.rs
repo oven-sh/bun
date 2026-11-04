@@ -417,7 +417,7 @@ impl HTMLRewriter {
         }
         let kind = if input.is_string() {
             ResponseKind::String
-        } else if input.js_type().is_array_buffer_like() {
+        } else if input.is_array_buffer_like() {
             ResponseKind::ArrayBuffer
         } else {
             ResponseKind::Other

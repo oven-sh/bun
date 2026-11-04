@@ -557,6 +557,18 @@ pub(crate) fn random_bytes<'a>(
     Ok(None)
 }
 
+/// `bytes` of Python and the like are buffers that only let themselves be read.
+fn throw_if_read_only(global: &JSGlobalObject, bytes: &ArrayBuffer, value: JSValue) -> JsResult<()> {
+    if !bytes.read_only {
+        return Ok(());
+    }
+    Err(global.throw_invalid_argument_type_value(
+        b"buf",
+        b"ArrayBuffer, Buffer, TypedArray, or DataView",
+        value,
+    ))
+}
+
 pub(crate) fn random_fill_sync<'a>(
     heap: &JsHeap<'a>,
     buf: JsLocal<'a, BufferSource>,
@@ -566,6 +578,7 @@ pub(crate) fn random_fill_sync<'a>(
     // SAFETY: it only says where the bytes of `buf` are, and throws.
     let global = unsafe { heap.global() };
     let mut bytes = ArrayBuffer::from_typed_array(global, buf.to_js());
+    throw_if_read_only(global, &bytes, buf.to_js())?;
 
     let element_size = bytes.bytes_per_element().unwrap_or(1);
 
@@ -628,6 +641,7 @@ fn random_fill<'a>(
     let callback = callback.to_js();
 
     let buf = ArrayBuffer::from_typed_array(global, buf_value);
+    throw_if_read_only(global, &buf, buf_value)?;
 
     let element_size = buf.bytes_per_element().unwrap_or(1);
 
@@ -973,7 +987,7 @@ pub(crate) fn pbkdf2_sync(
     // `pbkdf2Sync()` MUST return a Buffer — `Buffer.isBuffer(result)` and Buffer-only methods
     // (`.toString('hex')`, `.readUInt32BE`, …) depend on it.
     let out_arraybuffer = JSValue::create_buffer_from_length(global_this, data.length)?;
-    let Some(mut output) = out_arraybuffer.as_array_buffer(global_this) else {
+    let Some(mut output) = out_arraybuffer.as_writable_array_buffer(global_this) else {
         return Err(global_this.throw_out_of_memory());
     };
 

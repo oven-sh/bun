@@ -1,5 +1,6 @@
 #include "config.h"
 #include "JSTextDecoderStream.h"
+#include "BunPythonMemory.h"
 
 #include "DOMClientIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
@@ -374,6 +375,8 @@ JSPromise* textDecoderStreamTransform(JSGlobalObject* globalObject, JSTextDecode
     return promiseFromSteps(globalObject, [&] -> JSPromise* {
         auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
         bool isShared = false;
+        chunk = Bun::copyIfPythonMemory(globalObject, chunk);
+        RETURN_IF_EXCEPTION(scope, nullptr);
         std::optional<std::span<const uint8_t>> bytes = textDecoderStreamBytes(globalObject, chunk, isShared);
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (isShared) [[unlikely]] {

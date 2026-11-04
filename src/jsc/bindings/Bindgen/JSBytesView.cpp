@@ -5,6 +5,8 @@
 #include "blob.h"
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/JSArrayBufferView.h>
+#include <JavaScriptCore/PyBuffer.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 
 namespace Bun::Bindgen {
 using namespace JSC;
@@ -24,6 +26,52 @@ bool checkInMemoryBlob(JSGlobalObject& globalObject, JSValue value)
     return bytes == WebCore::BlobBytes::InMemory;
 }
 
+bool isPythonMemory(JSValue value)
+{
+    return Python::exportsMemoryToHost(value);
+}
+
+JSValue holderOfPythonMemorySlow(JSGlobalObject& globalObject, JSValue value)
+{
+    if (!Python::exportsMemoryToHost(value))
+        return value;
+    return Python::memoryForHost(&globalObject, value);
+}
+
+// Empty for a view that was released, as for a view of JavaScript's that was detached.
+static NEVER_INLINE std::span<const uint8_t> bytesOfPythonMemory(JSValue value)
+{
+    Python::HostMemory memory;
+    if (Python::locateMemoryForHost(value.asCell(), memory))
+        return { memory.data, memory.length };
+    // Not a holder, but the object itself: a BufferSource is passed on as it is.
+    if (!Python::exportsMemoryToHost(value) || Python::getBufferRunsCode(value))
+        return {};
+    auto* globalObject = value.asCell()->structure()->realm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
+    JSValue holder = Python::memoryForHost(globalObject, value);
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return {};
+    }
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(holder))
+        return view->span();
+    Python::locateMemoryForHost(holder.asCell(), memory);
+    return { memory.data, memory.length };
+}
+
+bool canBorrowPythonMemory(JSGlobalObject& globalObject, JSValue value)
+{
+    if (!Python::exportsMemoryToHost(value) || Python::getBufferRunsCode(value))
+        return false;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(&globalObject));
+    Python::memoryForHost(&globalObject, value);
+    if (!scope.exception()) [[likely]]
+        return true;
+    (void)scope.tryClearException();
+    return false;
+}
+
 static ALWAYS_INLINE std::span<const uint8_t> bytesAndIsShared(JSValue value, bool& isShared)
 {
     std::span<const uint8_t> bytes;
@@ -33,6 +81,8 @@ static ALWAYS_INLINE std::span<const uint8_t> bytesAndIsShared(JSValue value, bo
     } else if (auto* buffer = dynamicDowncast<JSArrayBuffer>(value)) {
         bytes = buffer->impl()->span();
         isShared = buffer->impl()->isShared();
+    } else if (value.isCell() && isPyObjectType(value.asCell()->type())) {
+        bytes = bytesOfPythonMemory(value);
     } else {
         const uint8_t* data = nullptr;
         size_t length = 0;

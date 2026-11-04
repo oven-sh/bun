@@ -956,8 +956,8 @@ impl Value {
             return Ok(Value::WTFStringImpl(str.leak_wtf_impl()));
         }
 
-        if js_type.is_typed_array_or_array_buffer() {
-            if let Some(buffer) = value.as_array_buffer(global_this) {
+        if js_type.is_typed_array_or_array_buffer() || js_type.is_python_object() {
+            if let Some(buffer) = value.to_array_buffer(global_this)? {
                 let bytes = buffer.byte_slice();
 
                 if bytes.is_empty() {

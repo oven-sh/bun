@@ -19,7 +19,7 @@ impl Crypto {
         // Web IDL's conversion to an ArrayBufferView, except that a view on shared or resizable memory is taken.
         let view = array
             .to_js()
-            .as_array_buffer(global)
+            .as_writable_array_buffer(global)
             .filter(|view| view.typed_array_type != JSType::ArrayBuffer);
         if view.is_none() {
             return Err(global

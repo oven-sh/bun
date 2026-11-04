@@ -176,7 +176,8 @@ mod _impl {
             // `flush_write_result` writes two u32s into this array, so the
             // caller-supplied array must hold at least 2 elements.
             let write_result_value = write_state.to_js();
-            let Some(mut write_result_buf) = write_result_value.as_array_buffer(global_this) else {
+            let Some(mut write_result_buf) = write_result_value.as_writable_array_buffer(global_this)
+            else {
                 return Err(global_this.throw_invalid_argument_type_value(
                     "writeResult",
                     "Uint32Array",

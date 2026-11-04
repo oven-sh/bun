@@ -1,5 +1,6 @@
 #include "config.h"
 #include "JSCompressionStreamShared.h"
+#include "BunPythonMemory.h"
 #include "BunClientData.h"
 
 #include "ErrorCode.h"
@@ -380,6 +381,9 @@ static JSPromise* compressionStreamTransformImpl(JSGlobalObject* globalObject, J
     return promiseFromSteps(globalObject, [&] -> JSPromise* {
         auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
         WTF::UTF8CString scratch;
+        // A step may go on after this returns, and on another thread.
+        chunk = Bun::copyIfPythonMemory(globalObject, chunk);
+        RETURN_IF_EXCEPTION(scope, nullptr);
         std::optional<std::span<const uint8_t>> bytes = bufferSourceBytes(globalObject, chunk, scratch);
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (!bytes) [[unlikely]]

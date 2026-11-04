@@ -1,5 +1,6 @@
 #include "config.h"
 #include "JSDirectStreamController.h"
+#include "BunPythonMemory.h"
 
 #include "BunClientData.h"
 #include "DOMClientIsoSubspaces.h"
@@ -466,13 +467,16 @@ static JSValue writeToArraySink(JSGlobalObject* globalObject, JSDirectStreamCont
 
 static JSValue writeToDirectSink(JSGlobalObject* globalObject, JSDirectStreamController* controller, JSValue chunk)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    chunk = Bun::copyIfPythonMemory(globalObject, chunk);
+    RETURN_IF_EXCEPTION(scope, {});
     switch (controller->m_sinkKind) {
     case DirectSinkKind::ArrayBuffer:
-        return writeToByteBuffer(globalObject, controller, chunk);
+        RELEASE_AND_RETURN(scope, writeToByteBuffer(globalObject, controller, chunk));
     case DirectSinkKind::Text:
-        return writeToTextSink(globalObject, controller, chunk);
+        RELEASE_AND_RETURN(scope, writeToTextSink(globalObject, controller, chunk));
     case DirectSinkKind::Array:
-        return writeToArraySink(globalObject, controller, chunk);
+        RELEASE_AND_RETURN(scope, writeToArraySink(globalObject, controller, chunk));
     }
     RELEASE_ASSERT_NOT_REACHED();
     return {};

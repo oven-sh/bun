@@ -12,6 +12,21 @@ std::span<const uint8_t> bytesOfBlobOrBuffer(JSC::JSValue, bool& isShared);
 
 bool isSharedBuffer(JSC::JSValue);
 
+// An object of Python's that exports its memory (bytes, bytearray, memoryview, ...) is a buffer too.
+bool isPythonMemory(JSC::JSValue);
+// Whether the memory can be had now, and again later, without running code of the program. It cannot of a view that was released or
+// whose bytes do not follow one another, nor of an instance of a class whose __buffer__() is written in Python.
+bool canBorrowPythonMemory(JSC::JSGlobalObject&, JSC::JSValue);
+JSC::JSValue holderOfPythonMemorySlow(JSC::JSGlobalObject&, JSC::JSValue);
+// What is converted in place of such an object: what holds its memory ("For the host" in PyBuffer.h), which the frame keeps
+// alive. Throws what Python raises if the memory cannot be had. Any other value as it is.
+ALWAYS_INLINE JSC::JSValue holderOfPythonMemory(JSC::JSGlobalObject& globalObject, JSC::JSValue value)
+{
+    if (!value || !value.isCell() || !JSC::isPyObjectType(value.asCell()->type())) [[likely]]
+        return value;
+    return holderOfPythonMemorySlow(globalObject, value);
+}
+
 // Optional: ~MallocSpan calls free, of null too.
 using BytesCopy = std::optional<WTF::MallocSpan<uint8_t>>;
 

@@ -1,5 +1,6 @@
 #include "config.h"
 #include "BunStreamConsumers.h"
+#include "BunPythonMemory.h"
 
 #include "BufferEncodingType.h"
 #include "BunClientData.h"
@@ -320,6 +321,8 @@ static JSC::JSUint8Array* encodeStringToUint8Array(JSC::VM& vm, JSGlobalObject* 
 static bool appendChunkBytes(JSC::VM& vm, JSGlobalObject* globalObject, JSValue chunk, WTF::Vector<uint8_t>& bytes)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
+    chunk = Bun::copyIfPythonMemory(globalObject, chunk);
+    RETURN_IF_EXCEPTION(scope, false);
     if (chunk.isString()) {
         WTF::String string = asString(chunk)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
@@ -371,6 +374,8 @@ static JSValue concatenateChunks(JSC::VM& vm, JSGlobalObject* globalObject, JSAr
     WTF::CheckedSize total = 0;
     for (unsigned i = 0; i < length; i++) {
         JSValue chunk = chunks->getIndex(globalObject, i);
+        RETURN_IF_EXCEPTION(scope, {});
+        chunk = Bun::copyIfPythonMemory(globalObject, chunk);
         RETURN_IF_EXCEPTION(scope, {});
         values.append(chunk);
         if (chunk.isString()) {
@@ -492,6 +497,8 @@ static JSValue convertChunksToArrayBuffer(JSGlobalObject* globalObject, JSValue 
     if (length == 1) {
         JSValue chunk = chunks->getIndex(globalObject, 0);
         RETURN_IF_EXCEPTION(scope, {});
+        chunk = Bun::copyIfPythonMemory(globalObject, chunk);
+        RETURN_IF_EXCEPTION(scope, {});
         std::span<const uint8_t> span;
         if (binaryChunkSpan(chunk, span)) {
             auto copied = JSC::ArrayBuffer::tryCreate(span);
@@ -523,6 +530,8 @@ static JSValue convertChunksToBytes(JSGlobalObject* globalObject, JSValue chunks
         RELEASE_AND_RETURN(scope, JSC::JSUint8Array::create(globalObject, structure, size_t { 0 }));
     if (length == 1) {
         JSValue chunk = chunks->getIndex(globalObject, 0);
+        RETURN_IF_EXCEPTION(scope, {});
+        chunk = Bun::copyIfPythonMemory(globalObject, chunk);
         RETURN_IF_EXCEPTION(scope, {});
         std::span<const uint8_t> span;
         if (binaryChunkSpan(chunk, span)) {
@@ -576,6 +585,8 @@ static JSValue convertChunksToText(JSGlobalObject* globalObject, JSValue chunksV
 
     if (length == 1) {
         JSValue chunk = chunks->getIndex(globalObject, 0);
+        RETURN_IF_EXCEPTION(scope, {});
+        chunk = Bun::copyIfPythonMemory(globalObject, chunk);
         RETURN_IF_EXCEPTION(scope, {});
         if (chunk.isString()) {
             WTF::String string = asString(chunk)->value(globalObject);
@@ -683,6 +694,8 @@ static JSObject* unusableStreamError(JSGlobalObject* globalObject, WebCore::JSRe
 static JSValue textAccumulatorWrite(JSC::VM& vm, JSGlobalObject* globalObject, JSC::JSObject* owner, BunTextAccumulator& accumulator, JSValue chunk)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
+    chunk = Bun::copyIfPythonMemory(globalObject, chunk);
+    RETURN_IF_EXCEPTION(scope, {});
     if (chunk.isString()) {
         WTF::String string = asString(chunk)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});

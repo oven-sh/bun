@@ -60,7 +60,7 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
     }
 
     // Copy the bytes. A later argument's `toString()` can detach this buffer before the command is serialized.
-    if let Some(buffer) = value.as_array_buffer(global) {
+    if let Some(buffer) = value.to_array_buffer(global)? {
         let Some(copy) = buffer.try_copy_bytes() else {
             return Err(global.throw_out_of_memory());
         };

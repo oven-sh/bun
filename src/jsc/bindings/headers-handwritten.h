@@ -380,6 +380,7 @@ typedef struct {
     bool shared;
     bool resizable;
     bool pinned;
+    bool read_only;
 } Bun__ArrayBuffer;
 
 #include "SyntheticModuleType.h"

@@ -1,5 +1,6 @@
 #include "JSStringDecoder.h"
 #include "JSBuffer.h"
+#include "BunPythonMemory.h"
 #include <JavaScriptCore/Lookup.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "JavaScriptCore/ExceptionScope.h"
@@ -404,7 +405,8 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_writeBody(JSC
         return {};
     }
 
-    auto buffer = callFrame->uncheckedArgument(0);
+    auto buffer = Bun::copyIfPythonMemory(lexicalGlobalObject, callFrame->uncheckedArgument(0));
+    RETURN_IF_EXCEPTION(throwScope, {});
     JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(buffer);
     if (!view || view->isDetached()) [[unlikely]] {
         // What node does:
@@ -432,7 +434,8 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_endBody(JSC::
         RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->end(vm, lexicalGlobalObject, nullptr, 0)));
     }
 
-    auto buffer = callFrame->uncheckedArgument(0);
+    auto buffer = Bun::copyIfPythonMemory(lexicalGlobalObject, callFrame->uncheckedArgument(0));
+    RETURN_IF_EXCEPTION(throwScope, {});
     JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(buffer);
     if (!view || view->isDetached()) [[unlikely]] {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
@@ -454,7 +457,8 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_textBody(JSC:
         return {};
     }
 
-    auto buffer = callFrame->uncheckedArgument(0);
+    auto buffer = Bun::copyIfPythonMemory(lexicalGlobalObject, callFrame->uncheckedArgument(0));
+    RETURN_IF_EXCEPTION(throwScope, {});
     JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(buffer);
     if (!view || view->isDetached()) [[unlikely]] {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);

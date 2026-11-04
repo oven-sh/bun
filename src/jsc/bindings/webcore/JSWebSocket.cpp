@@ -20,6 +20,7 @@
 
 #include "config.h"
 #include "JSWebSocket.h"
+#include "BunPythonMemory.h"
 
 #include "ActiveDOMObject.h"
 
@@ -726,6 +727,10 @@ static std::optional<WebSocket::Payload> convertPayload(JSGlobalObject& lexicalG
         }
         return impl->span();
     }
+
+    if (auto bytes = Bun::bytesOfPythonMemory(&lexicalGlobalObject, value, Bun::PythonMemoryAccess::MayRunCode))
+        return *bytes;
+    RETURN_IF_EXCEPTION(throwScope, std::nullopt);
 
     if (mayHoldBlob(value)) [[unlikely]]
         RELEASE_AND_RETURN(throwScope, convertBlobOrStringPayload(lexicalGlobalObject, value, functionName));

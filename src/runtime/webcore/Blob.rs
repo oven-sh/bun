@@ -2967,6 +2967,9 @@ impl BlobExt for Blob {
 
         if might_only_be_one_thing || !MOVE {
             // Fast path: one item, we don't need to join
+            if let Some(buffer) = python_bytes(global, top_value)? {
+                return Blob::try_create(buffer.byte_slice(), global, false).map_err(Into::into);
+            }
             match top_value.js_type_loose() {
                 jsc::JSType::Cell
                 | jsc::JSType::NumberObject
@@ -3112,6 +3115,12 @@ impl BlobExt for Blob {
 
                     while let Some(item) = iter.next()? {
                         if item.is_undefined_or_null() {
+                            continue;
+                        }
+
+                        if let Some(buffer) = python_bytes(global, item)? {
+                            could_have_non_ascii = true;
+                            joiner.push_cloned(buffer.byte_slice());
                             continue;
                         }
 
@@ -3485,6 +3494,16 @@ enum FormDataComponent {
     StringValue,
     /// Filename: `"`/CR/LF percent-encoded only; the spec does not normalize it.
     Filename,
+}
+
+/// The bytes of an object of Python's that exports its memory (`bytes`, `bytearray`, `memoryview`, ...), which is a part of a
+/// blob as a typed array is. `None`: `value` is no such object.
+fn python_bytes(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<jsc::ArrayBuffer>> {
+    if value.is_cell() && value.js_type().is_python_object() {
+        value.to_array_buffer(global)
+    } else {
+        Ok(None)
+    }
 }
 
 /// WHATWG HTML "multipart/form-data encoding algorithm". Names and non-File
@@ -4712,7 +4731,7 @@ pub(crate) fn write_file_internal(
                         return Ok(result);
                     }
                 }
-            } else if let Some(buffer_view) = data.as_array_buffer(cx.global()) {
+            } else if let Some(buffer_view) = data.to_array_buffer(cx.global())? {
                 if buffer_view.byte_len < 256 * 1024 {
                     let pathlike: &PathOrFileDescriptor = match &*path_or_blob {
                         PathOrBlob::Path(p) => p,

@@ -35,6 +35,9 @@ pub struct ArrayBuffer {
     pub resizable: bool,
     /// Set by [`JSValue::as_pinned_arraybuffer`] when an ArrayBuffer was actually pinned (as opposed to a bufferless view merely held); [`ArrayBuffer::unpin`] is a no-op otherwise.
     pub pinned: bool,
+    /// The bytes must not be written to: they are those of an immutable object of Python's (`bytes`, a read-only `memoryview`
+    /// or `mmap`). Never set for a buffer of JS. A writer asks [`JSValue::as_writable_array_buffer`].
+    pub read_only: bool,
 }
 
 impl Default for ArrayBuffer {
@@ -48,6 +51,7 @@ impl Default for ArrayBuffer {
             shared: false,
             resizable: false,
             pinned: false,
+            read_only: false,
         }
     }
 }
@@ -146,7 +150,12 @@ unsafe extern "C" {
     // safe: by-value `JSValue`; empty for non-buffer values.
     safe fn JSC__JSValue__findWasmMemory(v: JSValue, out_offset: &mut usize) -> JSValue;
     // safe: by-value `JSValue`; the callee always fills both out-params.
-    safe fn JSC__JSValue__arrayBufferExtent(v: JSValue, out_ptr: &mut *mut u8, out_len: &mut usize);
+    safe fn JSC__JSValue__arrayBufferExtent(
+        v: JSValue,
+        for_writing: bool,
+        out_ptr: &mut *mut u8,
+        out_len: &mut usize,
+    );
 }
 
 impl JSValue {
@@ -208,7 +217,7 @@ impl ArrayBuffer {
     /// `target` is detached or out of bounds, or ends at or before `offset`.
     pub fn write_to_live(target: JSValue, offset: usize, bytes: &[u8]) -> bool {
         let mut live = ArrayBuffer::default();
-        JSC__JSValue__arrayBufferExtent(target, &mut live.ptr, &mut live.byte_len);
+        JSC__JSValue__arrayBufferExtent(target, true, &mut live.ptr, &mut live.byte_len);
         let Some(target) = live.byte_slice_mut().get_mut(offset..) else {
             return false;
         };
@@ -359,6 +368,7 @@ impl ArrayBuffer {
         shared: false,
         resizable: false,
         pinned: false,
+        read_only: false,
     };
 
     // Via `#![feature(adt_const_params)]`: `JSType` derives `ConstParamTy`, so
@@ -656,7 +666,7 @@ impl ArrayBuffer {
 
     #[inline]
     pub fn byte_slice_mut(&mut self) -> &mut [u8] {
-        if self.is_detached() {
+        if self.is_detached() || self.read_only {
             return &mut [];
         }
         // SAFETY: ptr is non-null (checked above) and backed by JSC ArrayBuffer of byte_len bytes.
@@ -849,7 +859,7 @@ impl PinnedArrayBuffer {
         debug_assert!(self.copy.is_none());
         let mut ptr = ptr::null_mut();
         let mut byte_len = 0usize;
-        JSC__JSValue__arrayBufferExtent(self.buffer.value, &mut ptr, &mut byte_len);
+        JSC__JSValue__arrayBufferExtent(self.buffer.value, false, &mut ptr, &mut byte_len);
         (ptr, byte_len)
     }
 

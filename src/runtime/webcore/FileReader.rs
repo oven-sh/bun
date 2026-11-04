@@ -697,7 +697,7 @@ impl FileReader {
             .pending_value
             .get()
             .get()
-            .and_then(|view| view.as_array_buffer(global))
+            .and_then(|view| view.as_writable_array_buffer(global))
             .unwrap_or_default();
         let pending_buf = pending_array_buffer.slice_mut();
         let ret = if chunk.is_empty() {

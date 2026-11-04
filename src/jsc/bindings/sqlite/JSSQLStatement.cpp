@@ -1,6 +1,7 @@
 
 
 #include "root.h"
+#include "BunPythonMemory.h"
 
 #include "JavaScriptCore/Error.h"
 #include "JavaScriptCore/JSBigInt.h"
@@ -940,6 +941,9 @@ static int fromJS(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, Sin
         return sink.blob(view->span());
     if (auto* buffer = dynamicDowncast<JSC::JSArrayBuffer>(value))
         return sink.blob(buffer->impl()->span());
+    if (auto bytes = Bun::bytesOfPythonMemory(globalObject, value))
+        return sink.blob(*bytes);
+    RETURN_IF_EXCEPTION(scope, kExceptionPending);
     return kUnsupportedValue;
 }
 

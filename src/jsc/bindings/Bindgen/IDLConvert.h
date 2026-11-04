@@ -263,6 +263,10 @@ private:
     {
         auto& vm = JSC::getVM(&globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
+        if constexpr (options.fromBuffer) {
+            if (isPythonMemory(value))
+                return true;
+        }
         if constexpr (options.fromBlob) {
             bool isBlob = checkInMemoryBlob(globalObject, value);
             RETURN_IF_EXCEPTION(scope, false);
@@ -278,6 +282,12 @@ private:
     {
         auto& vm = JSC::getVM(&globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
+        if constexpr (options.fromBuffer) {
+            if (isPythonMemory(value)) {
+                result.initializeAsBlobOrBuffer();
+                return true;
+            }
+        }
         if constexpr (options.fromBlob) {
             bool isBlob = checkInMemoryBlob(globalObject, value);
             RETURN_IF_EXCEPTION(scope, false);
@@ -376,6 +386,8 @@ struct WebCore::Converter<Bun::Bindgen::IDLRawBufferSource<allowShared>> : Bun::
     template<Bun::IDLConversionContext Ctx>
     static std::optional<JSC::JSValue> tryConvert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx&)
     {
+        if (value.isCell() && JSC::isPyObjectType(value.asCell()->type())) [[unlikely]]
+            return Bun::Bindgen::canBorrowPythonMemory(globalObject, value) ? std::optional(value) : std::nullopt;
         if constexpr (allowShared) {
             if (!value.inherits<JSC::JSArrayBufferView>() && !value.inherits<JSC::JSArrayBuffer>())
                 return std::nullopt;
@@ -662,6 +674,13 @@ template<> struct WebCore::Converter<Bun::Bindgen::IDLArrayBufferRef>
             if (auto bytes = JSC::ArrayBuffer::tryCreate(jsView->span()))
                 return bytes;
             // Declared where it throws: at the top, every caller would owe a check for the paths that cannot.
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            JSC::throwOutOfMemoryError(&globalObject, scope);
+            return std::nullopt;
+        }
+        if (Bun::Bindgen::canBorrowPythonMemory(globalObject, value)) {
+            if (auto bytes = JSC::ArrayBuffer::tryCreate(Bun::Bindgen::bytesOfBlobOrBuffer(value)))
+                return bytes;
             auto scope = DECLARE_THROW_SCOPE(vm);
             JSC::throwOutOfMemoryError(&globalObject, scope);
         }

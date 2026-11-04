@@ -663,13 +663,15 @@ pub(crate) mod on_unhandled_rejection {
             let is_skip_error = buntest.is_skip_error(rejection);
             let mut unwinds_skipped_entry = false;
             if let Some(entry) = entry_ptr {
-                // SAFETY: `entry` belongs to the running file.
-                let mode = unsafe { (*entry).base.mode };
+                let end_is_queued = buntest.execution.end_is_queued;
                 if let Some(sequence) = current_state_data.sequence(buntest) {
+                    let mode = sequence.entry_mode();
                     let is_test = sequence.test_entry.map(|p| p.as_ptr()) == Some(entry);
                     unwinds_skipped_entry = is_skip_error && is_test && sequence.result == ExecResult::Skip;
+                    // A test that has run its last callback ends when the turn is over. Until then it is charged like a test that still runs.
+                    let is_charged = is_test || (end_is_queued && sequence.test_entry.is_some());
                     if !unwinds_skipped_entry
-                        && (!is_test
+                        && (!is_charged
                             // An expected failure has to come from the test's own callback, not from a stray rejection.
                             || matches!(mode, ScopeMode::Failing | ScopeMode::Fails)
                             // Nor can a test that marked itself skipped or todo while it ran. A `test.todo` body expects the failure.

@@ -783,10 +783,8 @@ pub(crate) struct BunTest {
     pub(crate) own_report: OwnReport,
     /// What `skip()` of a test context threw to unwind its test, so that the runner knows each of them when it comes back.
     skip_errors: Vec<Strong>,
-    /// Set while `run_pending_step` runs a step inside a microtask drain. Such a step stays in one attempt of one sequence.
-    in_drain_step: bool,
-    /// The step inside a microtask drain left its rest in the queue, for the task that `run_next_tick` queued with it.
-    step_deferred: bool,
+    /// Set while `run_pending_step` runs a step inside a microtask drain. Such a step ends no attempt and starts none.
+    pub(crate) in_drain_step: bool,
     /// True until `TestCommand::run` starts the runner, because the file's module may still be registering tests.
     pub(crate) is_loading: bool,
     /// Callback-less entry that runs last in the file. `defer_to_file_end` links its entries after it.
@@ -835,7 +833,6 @@ impl BunTest {
             own_report: OwnReport::None,
             skip_errors: Vec::new(),
             in_drain_step: false,
-            step_deferred: false,
             is_loading: true,
             file_end: None,
             unclaimed: Default::default(),
@@ -1073,6 +1070,7 @@ impl BunTest {
     fn handle_timeout(&mut self, global_this: &JSGlobalObject) {
         let _g = group_begin!();
         self.execution.kill_dangling_processes_on_timeout(global_this);
+        self.execution.timer_fired_at = Timespec::now_force_real_time();
         self.add_result(RefDataValue::Start);
     }
 
@@ -1115,23 +1113,22 @@ impl BunTest {
         // SAFETY: single field write through `UnsafeCell`; no other `&mut` live.
         strong.get().wants_wakeup = true;
         strong.get().pending_phase = phase;
-        // The next microtask drain runs a step that stays in the sequence of its test. Any other step waits for the task.
-        if phase.stays_in_sequence() {
+        // The next microtask drain looks at a result that can keep the runner inside an attempt. A loop that runs reads the queue itself.
+        if !strong.in_run_loop && strong.get().execution.has_step_for_drain(&phase) {
             vm.has_pending_test_step.set(true);
         }
         // we need to wake up the event loop so autoTick() doesn't wait for 16-100ms because we just enqueued a task
         vm.enqueue_task(task);
     }
 
-    /// Runs the step queued by `run_next_tick` right away instead of waiting for its task.
+    /// Steps right away with what `run_next_tick` queued, if `next_result` hands it out inside a microtask drain. The task takes the rest.
     #[inline(never)] // --trim cuts the test runner at the call.
     pub(crate) fn run_pending_step(global_this: &JSGlobalObject) {
         let Some(strong) = clone_active_strong() else {
             return;
         };
         let phase = strong.get().pending_phase;
-        // A drain inside the step calls this again. That call starts nothing, and the step that runs keeps its mark.
-        let was_in_drain_step = core::mem::replace(&mut strong.get().in_drain_step, true);
+        strong.get().in_drain_step = true;
         // After a termination the exception is still pending, and the caller's next drain reports it.
         let _ = Box::new(RunTestsTask {
             weak: Rc::downgrade(&strong),
@@ -1139,20 +1136,22 @@ impl BunTest {
             phase,
         })
         .call();
-        strong.get().in_drain_step = was_in_drain_step;
-    }
-
-    /// Inside a microtask drain, leaves the step to another sequence or attempt to the queued task. The turn's own report runs first.
-    pub(crate) fn defer_step(&mut self) -> bool {
-        if !self.in_drain_step {
-            return false;
-        }
-        self.step_deferred = true;
-        true
+        strong.get().in_drain_step = false;
     }
 
     pub(crate) fn add_result(&mut self, result: RefDataValue) {
         let _ = self.result_queue.write_item(result); // OOM/capacity: fire-and-forget
+    }
+
+    /// The result that `run` steps with next: the oldest one. Inside a microtask drain the step takes it only if it `steps_in_drain`, and the task reads the rest in the order of the queue.
+    fn next_result(&mut self, global_this: &JSGlobalObject) -> Option<RefDataValue> {
+        if self.in_drain_step
+            && (self.result_queue.readable_length() == 0
+                || !self.execution.steps_in_drain(&self.result_queue.peek_item(0), global_this))
+        {
+            return None;
+        }
+        self.result_queue.read_item()
     }
 
     pub(crate) fn run(this_strong: &BunTestPtr, global_this: &JSGlobalObject) -> JsResult<()> {
@@ -1183,7 +1182,7 @@ impl BunTest {
 
         // SAFETY: see block-SAFETY above. `step()` may call `.get()` internally;
         // no outer `&mut` overlaps because we only touch `*this` between calls.
-        while let Some(result) = unsafe { (*this).result_queue.read_item() } {
+        while let Some(result) = unsafe { (*this).next_result(global_this) } {
             global_this.clear_termination_exception();
             // SAFETY: `UnsafeCell`-derived `*mut`; short-lived field read between re-entrant calls.
             let step_result: StepResult = match unsafe { (*this).phase } {
@@ -1203,12 +1202,6 @@ impl BunTest {
                     // SAFETY: `UnsafeCell`-derived `*mut`; sole `&mut` for this enqueue.
                     unsafe { (*this).add_result(RefDataValue::Start) };
                 }
-            }
-            // SAFETY: `UnsafeCell`-derived `*mut`; sole `&mut` for these two writes.
-            if unsafe { core::mem::take(&mut (*this).step_deferred) } {
-                // SAFETY: as above.
-                unsafe { (*this).add_result(RefDataValue::Start) };
-                break;
             }
         }
 
@@ -1873,13 +1866,6 @@ pub(crate) enum RefDataValue {
 }
 
 impl RefDataValue {
-    /// Whether the entry that ended has another entry of the same sequence behind it: a hook of its test, or the test.
-    fn stays_in_sequence(&self) -> bool {
-        let RefDataValue::Execution { entry_data: Some(entry_data), .. } = self else { return false };
-        // SAFETY: arena-owned entry, alive until the file ends.
-        unsafe { (*entry_data.entry.cast::<ExecutionEntry>()).next.is_some() }
-    }
-
     pub(crate) fn sequence<'a>(&self, buntest: &'a mut BunTest) -> Option<&'a mut Execution::ExecutionSequence> {
         let RefDataValue::Execution { group_index, entry_data } = self else { return None };
         let entry_data = (*entry_data)?;

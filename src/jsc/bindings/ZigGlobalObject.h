@@ -323,7 +323,7 @@ public:
     uint8_t drainMicrotasks();
 
     void handleRejectedPromises();
-    bool hasRejectedPromises() const { return !m_aboutToBeNotifiedRejectedPromises.isEmpty(); }
+    bool hasRejectedPromises() const { return m_aboutToBeNotifiedRejectedPromises.hasUnhandled(); }
     size_t holdRejectedPromises() { return m_aboutToBeNotifiedRejectedPromises.hold(this); }
     void releaseRejectedPromises(size_t mark) { m_aboutToBeNotifiedRejectedPromises.release(this, mark); }
     ALWAYS_INLINE void* bunVM() const { return m_bunVM; }

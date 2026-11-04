@@ -29,6 +29,8 @@ public:
     void markReported(JSC::JSGlobalObject* owner, JSC::JSPromise*);
     template<typename Visitor> void visit(JSC::JSCell* owner, Visitor&);
     bool isEmpty() const { return m_entries.isEmpty(); }
+    // Whether drainTo() has a promise to move out.
+    bool hasUnhandled() const;
 
 private:
     struct Entry {
@@ -55,6 +57,15 @@ ALWAYS_INLINE void RejectedPromiseQueue::append(JSC::VM& vm, JSC::JSCell* owner,
     m_entries.unsafeAppendWithoutCapacityCheck(Entry {});
     m_entries.last().promise.set(vm, owner, promise);
     m_entries.last().rejectionOwner.set(vm, owner, rejectionOwner ? JSC::JSValue(rejectionOwner) : JSC::jsNull());
+}
+
+inline bool RejectedPromiseQueue::hasUnhandled() const
+{
+    for (const Entry& entry : m_entries) {
+        if (!isHandled(entry))
+            return true;
+    }
+    return false;
 }
 
 ALWAYS_INLINE bool RejectedPromiseQueue::didHandle(JSC::JSCell* owner, JSC::JSPromise* promise)

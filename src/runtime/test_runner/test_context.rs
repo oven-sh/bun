@@ -168,6 +168,11 @@ impl TestContext {
         true
     }
 
+    /// Whether `take_deferred` hands out an entry whatever `attempt_failed` is.
+    pub(crate) fn has_deferred(&self) -> bool {
+        self.deferred.get().iter().any(|&(when, _)| when != Deferred::OnTestFailed)
+    }
+
     pub(crate) fn take_deferred(&self, attempt_failed: bool) -> Option<NonNull<ExecutionEntry>> {
         self.deferred.with_mut(|deferred| {
             loop {

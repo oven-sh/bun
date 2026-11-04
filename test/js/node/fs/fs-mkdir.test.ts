@@ -400,23 +400,38 @@ describe("fs.promises.mkdir", () => {
   });
 });
 
-// The same arm on POSIX: mkdir on a symlink loop reports EEXIST, and the probe
-// that follows reports ELOOP. Node reports the probe error.
-describe.skipIf(isWindows)("fs.mkdir - recursive on a symlink loop", () => {
-  it("reports ELOOP instead of EEXIST", async () => {
+// The same arm on POSIX: mkdir on a symlink reports EEXIST, and the probe that
+// follows the link fails. Node reports the probe error.
+describe.skipIf(isWindows)("fs.mkdir - recursive on a symlink the probe cannot follow", () => {
+  async function expectProbeError(target: string, code: string) {
+    const expected = { code, syscall: "mkdir", path: target };
+    expect(() => fs.mkdirSync(target, { recursive: true })).toThrow(expect.objectContaining(expected));
+    await expect(fs.promises.mkdir(target, { recursive: true })).rejects.toMatchObject(expected);
+  }
+
+  it("symlink loop: reports ELOOP instead of EEXIST", async () => {
     using dir = tempDir("mkdir-loop", {});
     const loop = path.join(String(dir), "loop");
     fs.symlinkSync("loop", loop);
-
-    expect(() => fs.mkdirSync(loop, { recursive: true })).toThrow(
-      expect.objectContaining({ code: "ELOOP", syscall: "mkdir", path: loop }),
-    );
-    await expect(fs.promises.mkdir(loop, { recursive: true })).rejects.toMatchObject({
-      code: "ELOOP",
-      syscall: "mkdir",
-      path: loop,
-    });
+    await expectProbeError(loop, "ELOOP");
   });
+
+  // root bypasses the search permission check
+  it.skipIf(process.getuid?.() === 0)(
+    "symlink into an unsearchable directory: reports EACCES instead of EEXIST",
+    async () => {
+      using dir = tempDir("mkdir-eacces", { "inaccessible/target": "" });
+      const inaccessible = path.join(String(dir), "inaccessible");
+      const link = path.join(String(dir), "link");
+      fs.symlinkSync(path.join(inaccessible, "target"), link);
+      fs.chmodSync(inaccessible, 0o000);
+      try {
+        await expectProbeError(link, "EACCES");
+      } finally {
+        fs.chmodSync(inaccessible, 0o700);
+      }
+    },
+  );
 });
 
 // https://github.com/oven-sh/bun/issues/43651

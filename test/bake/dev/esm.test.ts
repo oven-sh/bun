@@ -577,6 +577,27 @@ devTest("browser console forwarding does not throw into the page", {
     `;
     expect(sent).toBe("returned");
     await c.expectMessage("socket that throws");
+
+    // The forwarder does not forward a line that a send() of the page logs from inside the send
+    // of the forwarder. The limit only keeps a build that forwards it from running until the
+    // stack is full.
+    const logged = await c.js`
+      const send = WebSocket.prototype.send;
+      let sends = 0;
+      WebSocket.prototype.send = function (data) {
+        if (sends++ < 100) console.log("send", data);
+        return send.call(this, data);
+      };
+      probe("socket that logs", 1);
+      WebSocket.prototype.send = send;
+      probe("line after the socket that logs", 2);
+      return { result: results["socket that logs"], sends };
+    `;
+    expect(logged).toEqual({ result: "returned", sends: 1 });
+    await c.expectMessage("socket that logs", "send", "line after the socket that logs");
+    await dev.output.waitForLine(/\[browser\].* line after the socket that logs 2/);
+    const lines = forwardedLines(dev);
+    expect(lines.slice(lines.indexOf("done") + 1)).toEqual(["socket that logs 1", "line after the socket that logs 2"]);
   },
 });
 

@@ -316,7 +316,11 @@ if (config.console) {
   // Ensure it only runs once, and avoid the extra noise in the HTML.
   const originalLog = console.log;
 
+  // A send() that the page replaced can log. That line is not forwarded: its own send would log again, without end.
+  let sending = false;
+
   function websocketInspect(logLevel: "l" | "e", values: any[]) {
+    if (sending) return;
     // The browser's own console call already ran. A synchronous throw from here on only drops the forwarded line.
     try {
       let str = "l" + logLevel;
@@ -335,8 +339,10 @@ if (config.console) {
         }
       }
 
+      sending = true;
       ws.sendBuffered(str);
     } catch {}
+    sending = false;
   }
 
   if (typeof originalLog === "function") {

@@ -324,29 +324,27 @@ describe.concurrent("bunshell ls", () => {
       link(dir, "loop", "loop");
       link(dir, join("file", "x"), "through-file");
     };
-    // -H and -L do not read the target of these links yet. The failing rows below have what GNU prints.
-    const dereferenceGaps = ["file-link", "dangling", "loop"];
 
     test.each([
-      ["ls", 1, false],
-      ["ls -l", 2, false],
-      ["ls -ltr", 2, false],
-      ["ls -lh", 2, false],
-      ["ls -lR", 2, false],
-      ["ls -Cl", 2, false],
-      ["ls -lCl", 2, false],
-      ["ls -lC", 3, false],
-      ["ls -lm", 3, false],
-      ["ls -lx", 3, false],
-      ["ls -lH", 3, true],
-      ["ls -Hl", 3, true],
-      ["ls -l -H", 3, true],
-      ["ls -H -l", 3, true],
-      ["ls -lL", 3, true],
-      ["ls -L -l", 3, true],
-      ["ls -HCl", 3, true],
-      ["ls -LCl", 3, true],
-    ] as const)("%s with each operand", async (command, column, dereferences) => {
+      ["ls", 1],
+      ["ls -l", 2],
+      ["ls -ltr", 2],
+      ["ls -lh", 2],
+      ["ls -lR", 2],
+      ["ls -Cl", 2],
+      ["ls -lCl", 2],
+      ["ls -lC", 3],
+      ["ls -lm", 3],
+      ["ls -lx", 3],
+      ["ls -lH", 3],
+      ["ls -Hl", 3],
+      ["ls -l -H", 3],
+      ["ls -H -l", 3],
+      ["ls -lL", 3],
+      ["ls -L -l", 3],
+      ["ls -HCl", 3],
+      ["ls -LCl", 3],
+    ] as const)("%s with each operand", async (command, column) => {
       using dir = fixture();
       if (isPosix) posixLinks(String(dir));
       const expected: Record<string, unknown> = {};
@@ -354,14 +352,14 @@ describe.concurrent("bunshell ls", () => {
       for (const row of operands) {
         const operand = row[0];
         if (!isPosix && posixOnly.includes(operand)) continue;
-        if (dereferences && dereferenceGaps.includes(operand)) continue;
         expected[operand] = row[column];
         actual[operand] = await ls(`${command} ${operand}`, String(dir));
       }
       expect(actual).toEqual(expected);
     });
 
-    // Observed: the line of the link itself, and exit code 0 for a link that leads nowhere.
+    // What GNU prints for these rows. Observed, as in the table above: the line of the link itself, and exit code 0
+    // for a link that leads nowhere.
     describe.if(isPosix)("-H and -L read the target of a link", () => {
       test.failing.each([
         ["ls -lH file-link", lists("- file-link")],

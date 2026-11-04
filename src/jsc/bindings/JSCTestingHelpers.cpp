@@ -8,6 +8,8 @@
 
 #include <JavaScriptCore/JSBigInt.h>
 #include <JavaScriptCore/JSBigIntInlines.h>
+#include <JavaScriptCore/CodeBlock.h>
+#include <JavaScriptCore/VMInspector.h>
 #if OS(WINDOWS)
 #include <JavaScriptCore/ExecutableAllocator.h>
 #endif
@@ -95,6 +97,22 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCollectSyncWithoutSweep, (JSGlobalObject * gl
     return JSValue::encode(jsUndefined());
 }
 
+// How many words hold the source positions of the code that calls this, and in how many chapters besides the first
+// ($vm.expressionInfoStats() in JavaScriptCore's shell). The caller, not a function argument: a generator or an async
+// function keeps them in the code block of its body, which no function object gives.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionExpressionInfoStats, (JSGlobalObject * globalObject, CallFrame* callframe))
+{
+    auto& vm = JSC::getVM(globalObject);
+    CodeBlock* codeBlock = VMInspector::codeBlockForFrame(&vm, callframe, 1);
+    if (!codeBlock)
+        return JSValue::encode(jsUndefined());
+    ExpressionInfo& info = codeBlock->unlinkedCodeBlock()->expressionInfo();
+    JSObject* result = JSC::constructEmptyObject(globalObject);
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "words"_s), jsNumber(info.numberOfEncodedInfo()));
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "chapters"_s), jsNumber(info.numberOfChapters()));
+    return JSValue::encode(result);
+}
+
 JSC::JSValue createJSCTestingHelpers(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -124,6 +142,11 @@ JSC::JSValue createJSCTestingHelpers(Zig::GlobalObject* globalObject)
     object->putDirectNativeFunction(
         vm, globalObject, JSC::Identifier::fromString(vm, "isLiveCellAtRawAddress"_s), 1,
         jsFunctionIsLiveCellAtRawAddress, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+
+    object->putDirectNativeFunction(
+        vm, globalObject, JSC::Identifier::fromString(vm, "expressionInfoStats"_s), 0,
+        jsFunctionExpressionInfoStats, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
 
 #if OS(WINDOWS)

@@ -1035,7 +1035,7 @@ impl Lockfile {
     pub(crate) fn is_tarball_url_of_project(&self, url: &[u8]) -> bool {
         let buf = self.buffers.string_bytes.as_slice();
         let dependencies = self.buffers.dependencies.as_slice();
-        let resolutions = self.packages.items_resolution();
+        let packages = self.packages.slice();
         let names_url = |declared: &Dependency| {
             declared.version.tag == dependency::version::Tag::Tarball
                 && matches!(
@@ -1045,16 +1045,20 @@ impl Lockfile {
         };
         (self.overrides.values().chain(self.catalogs.values())).any(names_url)
             || self.package_extensions.has_specifier(url)
-            || (self.packages.items_dependencies().iter().enumerate()).any(|(id, declared)| {
-                // A folder that only an override selects may be resolved after the download starts.
-                let tag = resolutions[id].tag;
-                matches!(
-                    tag,
-                    ResolutionTag::Root | ResolutionTag::Workspace | ResolutionTag::Folder
-                ) && declared.get(dependencies).iter().any(names_url)
-                    && (tag != ResolutionTag::Folder
-                        || self.is_workspace_declared_package(id as PackageID))
-            })
+            || (packages.items_resolution().iter())
+                .zip(packages.items_dependencies())
+                .enumerate()
+                .any(|(id, (resolution, declared))| {
+                    declared.get(dependencies).iter().any(names_url)
+                        && match resolution.tag {
+                            ResolutionTag::Root | ResolutionTag::Workspace => true,
+                            // One that only an override selects may be resolved too late.
+                            ResolutionTag::Folder => {
+                                self.is_workspace_declared_package(id as PackageID)
+                            }
+                            _ => false,
+                        }
+                })
     }
 
     /// See `is_dependency_of_local_package`.

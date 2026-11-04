@@ -252,7 +252,7 @@ bun add zod@https://registry.npmjs.org/zod/-/zod-3.21.4.tgz
 }
 ```
 
-Bun sends your configured credentials to a tarball URL that your project names, as [`.npmrc`](/pm/npmrc) describes. Bun uses the `.npmrc` line for the URL if the URL is `https`. Otherwise, Bun uses the default registry's credentials if the URL has the registry's scheme, host and port. A tarball URL that only another package names gets no configured credentials.
+Bun sends your configured credentials to a tarball URL that your project names. [`.npmrc`](/pm/npmrc) describes which ones apply. A tarball URL that only another package names gets no configured credentials.
 
 A tarball URL can also carry credentials, such as `https://user:password@example.com/zod-3.21.4.tgz`. Bun sends them as an `Authorization: Basic` header and requests the URL without them, like npm. The URL, credentials included, is written to `package.json` and to the lockfile. Percent-encode a character that cannot be written in a URL: the password `p@ss` is written `p%40ss`. Bun decodes the credentials before it sends them. When configured credentials also apply, Bun sends those instead, as npm does.
 

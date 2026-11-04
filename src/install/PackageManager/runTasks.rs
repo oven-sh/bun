@@ -2143,8 +2143,7 @@ pub fn generate_network_task_for_tarball<'a>(
         ),
         // One download serves every name that the URL is listed under, so the name picks no scope.
         bun_install::ResolutionTag::RemoteTarball
-            if this.options.has_tarball_url_credentials()
-                && this.lockfile.is_tarball_url_of_project(url) =>
+            if this.lockfile.is_tarball_url_of_project(url) =>
         {
             (&this.options.scope, Authorization::AllowAuthorization)
         }

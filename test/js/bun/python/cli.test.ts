@@ -999,14 +999,15 @@ print(repr(input("shown? ")))
             "main.py": `
 import os, shutil, signal, sys
 print(tuple(os.get_terminal_size()), tuple(os.get_terminal_size(2)), tuple(shutil.get_terminal_size()))
-signal.signal(signal.SIGWINCH, lambda number, frame: print("changed", tuple(os.get_terminal_size()), flush=True))
+# It may come while "ready" is still being printed. A stream cannot be written to by a handler then.
+signal.signal(signal.SIGWINCH, lambda number, frame: os.write(1, b"changed %d %d\\n" % os.get_terminal_size()))
 print("ready", flush=True)
 sys.stdin.readline()
 `,
           },
         },
       );
-      expect(output).toBe("(80, 24) (80, 24) (80, 24)\nready\nchanged (100, 30)\n\n");
+      expect(output).toBe("(80, 24) (80, 24) (80, 24)\nready\nchanged 100 30\n\n");
       expect(exitCode).toBe(0);
     });
 
@@ -1017,7 +1018,8 @@ sys.stdin.readline()
           ["ready", "k"],
           ["b'k'", "\x1b[A"],
           ["b'\\x1b[A'", "\x03"],
-          ["b'\\x03'", "line\r"],
+          // What is typed before that is not made a line of.
+          ["restored", "line\r"],
         ],
         {
           files: {
@@ -1030,12 +1032,13 @@ os.write(1, b"ready\\r\\n")
 for i in range(3):
     os.write(1, repr(os.read(0, 10)).encode() + b"\\r\\n")
 termios.tcsetattr(0, termios.TCSADRAIN, before)
+print("restored")
 print(repr(sys.stdin.readline()))
 `,
           },
         },
       );
-      expect(output).toBe("True True True True True\nready\nb'k'\nb'\\x1b[A'\nb'\\x03'\nline\n'line\\n'\n");
+      expect(output).toBe("True True True True True\nready\nb'k'\nb'\\x1b[A'\nb'\\x03'\nrestored\nline\n'line\\n'\n");
       expect(exitCode).toBe(0);
     });
 
@@ -1060,8 +1063,8 @@ os.kill(job.pid, signal.SIGCONT)
 print("status", job.wait())
 `,
             "job.py": `
-import signal, sys
-signal.signal(signal.SIGCONT, lambda number, frame: print("continued", flush=True))
+import os, signal, sys
+signal.signal(signal.SIGCONT, lambda number, frame: os.write(1, b"continued\\n"))
 print(signal.getsignal(signal.SIGTSTP) == signal.SIG_DFL, "ready", flush=True)
 print(repr(sys.stdin.readline()))
 `,

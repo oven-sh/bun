@@ -231,6 +231,45 @@ for attempt in (
   });
 });
 
+test.concurrent("nothing of JavaScript is in sys.modules before the program imports it", async () => {
+  const result = await run({
+    "main.py": `
+import sys
+def foreign(): return [name for name, module in sys.modules.items() if not isinstance(module, type(sys))]
+print("js" in sys.modules, foreign())
+import asyncio
+async def main(): await asyncio.sleep(0)
+asyncio.run(main())
+print(foreign())
+
+import js
+print(foreign(), sys.modules["js"] is js, js.globalThis is js, type(js).__name__)
+# The import system has written nothing into the global object.
+print([name for name in ("__spec__", "__loader__", "__name__", "__package__") if hasattr(js, name)], js.eval("Object.keys(globalThis).filter(k => k.startsWith('__'))"))
+import importlib
+print(importlib.import_module("js") is js, __import__("js") is js)
+from js import Map, JSON
+print(Map is js.Map, JSON.stringify([1]))
+del sys.modules["js"]
+import js as again
+print(again is js, foreign())
+`,
+  });
+  expect(result.stderr).toBe("");
+  expect(result.stdout).toBe(
+    lines(
+      "False []",
+      "[]",
+      "['js'] True True JSObject",
+      "[] []",
+      "True True",
+      "True [1]",
+      "True ['js']",
+    ),
+  );
+  expect(result.exitCode).toBe(0);
+});
+
 test.concurrent("calling a class of JavaScript makes an instance", async () => {
   const result = await run({
     "helper.js": `

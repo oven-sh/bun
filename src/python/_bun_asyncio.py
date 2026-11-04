@@ -16,7 +16,9 @@ from asyncio import events, tasks
 import _bun_loop
 import _js
 import _thread
-import js
+
+# Not `import js`: that is in sys.modules only for a program that imports it.
+js = _js.globalThis
 
 
 class _Looking:

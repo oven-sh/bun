@@ -16,7 +16,9 @@ import _bun_resolver
 import _frozen_importlib as _bootstrap
 import _frozen_importlib_external as _external
 import _js
-import js
+
+# Not `import js`: that is in sys.modules only for a program that imports it.
+js = _js.globalThis
 
 _SUFFIXES = [".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".jsx", ".tsx"]
 
@@ -153,8 +155,9 @@ class _Namespace:
 
     def exec_module(self, module):
         if self.name == "bun":
-            module.__getattr__ = lambda name: getattr(js.Bun, name)
-            module.__dir__ = lambda: dir(js.Bun)
+            Bun = js.Bun
+            module.__getattr__ = lambda name: getattr(Bun, name)
+            module.__dir__ = lambda: dir(Bun)
             module.require = _require_from_importer
 
 

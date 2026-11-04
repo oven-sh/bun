@@ -394,6 +394,7 @@ for (const [name, { replaces, ...stated }] of Object.entries(cases)) {
     };
     const asPlainBun = { printed: [...printedBy(stated), ""], results: ["pass a", "pass z"], exitCode: 0 };
     expect(await ran(String(dir))).toEqual(asPlainBun);
+    expect(await ran(String(dirForOneProgram))).toEqual(asPlainBun);
     expect(await ran(String(dirForOneProgram), saysItsForm, "--aot")).toEqual(asPlainBun);
     expect(await ran(String(dir), "TestRunLayers:2,TestRunPartFiles:1", "--aot")).toEqual(asPlainBun);
   });

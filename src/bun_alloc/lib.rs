@@ -1387,12 +1387,6 @@ pub struct Result {
     pub status: ItemStatus,
 }
 
-impl Result {
-    pub fn has_checked_if_exists(&self) -> bool {
-        self.index.index() != UNASSIGNED.index()
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // OverflowGroup<Block>
 // ──────────────────────────────────────────────────────────────────────────

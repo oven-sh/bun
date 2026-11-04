@@ -178,27 +178,33 @@ test.concurrent("--trim requires --compile", async () => {
 });
 
 describe.concurrent("--trim-without takes the names of features, not the names that compile.trim takes", () => {
-  async function rejection(names: string) {
-    const built = await run(
+  function rejection(names: string) {
+    return run(
       [bunExe(), "build", "--compile", "--trim", `--trim-without=${names}`, "hello.ts", "--outfile", "unknown"],
       folder,
     );
-    expect(built.exitCode).toBe(1);
-    return built.stderr;
   }
 
   test("suggests the feature name that is closest to a compile.trim name", async () => {
-    expect(await rejection("profiler")).toContain('unknown name "profiler". Did you mean "Profilers"?');
-    expect(await rejection("Sqlite3")).toContain('unknown name "Sqlite3". Did you mean "Sqlite"?');
+    for (const [name, closest] of [
+      ["profiler", "Profilers"],
+      ["Sqlite3", "Sqlite"],
+    ]) {
+      const { stderr, exitCode } = await rejection(name);
+      expect(stderr).toBe(`error: compile.trim: unknown name "${name}". Did you mean "${closest}"?\n`);
+      expect(exitCode).toBe(1);
+    }
   });
 
   test("lists the feature names, not the compile.trim names", async () => {
-    const [unknown, valid] = (await rejection("jit,fetch")).split(". Valid names are ");
-    expect(unknown).toEndWith('unknown names "jit" and "fetch"');
-    expect(valid).toContain('"JIT"');
-    expect(valid).toContain('"Fetch"');
-    expect(valid).not.toContain('"jit"');
-    expect(valid).not.toContain('"fetch"');
+    const { stderr, exitCode } = await rejection("jit,fetch");
+    const [unknown, valid] = stderr.split(". Valid names are ");
+    expect(unknown).toBe('error: compile.trim: unknown names "jit" and "fetch"');
+    // Every name is one of a Feature: a capital letter first, no dash, so never the "jit" or "fetch" of compile.trim.
+    expect(valid).toMatch(/^"[A-Z][A-Za-z0-9]*"(, "[A-Z][A-Za-z0-9]*")*\n$/);
+    expect(valid.split(", ")).toContain('"JIT"');
+    expect(valid.split(", ")).toContain('"Fetch"');
+    expect(exitCode).toBe(1);
   });
 });
 

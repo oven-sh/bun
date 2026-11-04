@@ -1768,7 +1768,8 @@ impl Kqueue {
             kev.fflags |= NOTE::LINK;
         }
         kev.udata = generation as _;
-        if let Err(err) = sys::kevent(kq, &[kev], &mut [], None) {
+        // SAFETY: only `thread_main` waits on this kqueue, and it reads `udata` as a number.
+        if let Err(err) = unsafe { sys::kevent(kq, &[kev], &mut [], None) } {
             // Registration failed (ENOMEM/EINVAL on a bad fd, etc.). Don't leave a
             // dead entry in the map that will never deliver events.
             fd.close();
@@ -1809,7 +1810,8 @@ impl Kqueue {
         // SAFETY: kevent is POD; uninitialized array filled by kernel before read.
         let mut events: [libc::kevent; 128] = bun_core::ffi::zeroed();
         while running.load(Ordering::Acquire) {
-            let count = match sys::kevent(kq, &[], &mut events, None) {
+            // SAFETY: an empty changelist registers nothing.
+            let count = match unsafe { sys::kevent(kq, &[], &mut events, None) } {
                 Ok(n) => n,
                 Err(err) => {
                     // `sys::kevent` retried EINTR; anything else is fatal, as in

@@ -33,6 +33,7 @@
 #include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/ButterflyInlines.h>
 #include <JavaScriptCore/CustomGetterSetter.h>
+#include <JavaScriptCore/InternalFieldTuple.h>
 #include "JavaScriptCore/AOTHost.h"
 #include "BunPlugin.h"
 #include "NodeVM.h"
@@ -352,6 +353,12 @@ static void putOwnPropertyStorage(JSGlobalObject* globalObject, JSObject* object
     }
 }
 
+// What a store to a custom value does: JSC calls the native setter with the object that holds the cell, and with that object's realm.
+static void putThroughNativeSetter(JSObject* holder, CustomGetterSetter* custom, PropertyName key, JSValue value)
+{
+    custom->setter()(holder->globalObject(), JSValue::encode(holder), JSValue::encode(value), key);
+}
+
 static constexpr unsigned descriptorAttributes = PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::Accessor;
 
 static void putOwnProperty(JSGlobalObject* globalObject, JSObject* object, PropertyName key, const PropertyDescriptor& descriptor)
@@ -455,6 +462,8 @@ public:
     static constexpr unsigned SpyAttributeAccessor = 1 << 29;
     // isOpaqueProperty() was true at install time, so restore the same way.
     static constexpr unsigned SpyAttributeOpaque = 1 << 28;
+    // The native setter of a custom value took the spy, so it takes the original value back.
+    static constexpr unsigned SpyAttributeNativeSetter = 1 << 27;
 
     JSString* jsName()
     {
@@ -860,6 +869,7 @@ public:
     }
 
     // `original` is getOwnPropertyStorage() of the replaced property, or empty if the target had no own one.
+    // With SpyAttributeNativeSetter nothing was replaced: it is an InternalFieldTuple of the CustomGetterSetter and the value that was read from it.
     void didInstall(JSObject* target, const Identifier& key, JSValue original, unsigned attributes);
 
     bool isRestoredSpy() const { return isSpy && !m_spyTarget; }
@@ -996,11 +1006,24 @@ private:
             return;
         }
 
-        if (attributes & SpyAttributeAccessor) {
-            // Restoring the spy on the accessor's other half already put both halves back.
+        if (attributes & (SpyAttributeAccessor | SpyAttributeNativeSetter)) {
             unsigned currentAttributes = 0;
             JSValue current = getOwnPropertyStorage(globalObject, target, identifier, currentAttributes);
             RETURN_IF_EXCEPTION(scope, );
+            if (attributes & SpyAttributeNativeSetter) {
+                auto* originalStorage = uncheckedDowncast<InternalFieldTuple>(original);
+                auto* custom = uncheckedDowncast<CustomGetterSetter>(originalStorage->getInternalField(0));
+                // Object.defineProperty() or `delete` under the spy took the cell away, and native code still has the spy.
+                if (current != JSValue(custom)) {
+                    ThroughLockOfBuiltins throughLock(globalObject->vm(), false);
+                    putOwnPropertyStorage(globalObject, target, identifier, custom, attributes & ~SpyAttributeNativeSetter, false);
+                    RETURN_IF_EXCEPTION(scope, );
+                }
+                scope.release();
+                putThroughNativeSetter(target, custom, identifier, originalStorage->getInternalField(1));
+                return;
+            }
+            // Restoring the spy on the accessor's other half already put both halves back.
             auto* accessor = tryJSDynamicCast<GetterSetter*>(current);
             if (!accessor || !this->isAccessorOf(accessor))
                 return;
@@ -3183,7 +3206,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         return JSValue::encode(mock);
     }
 
-    // hardmode: a property's getter or setter, or the method a getter returns
+    // hardmode: a property's getter or setter, the method a getter returns, or the method behind a custom value
     if (!hasValue) {
         throwTypeError(globalObject, scope, makeString("spyOn(target, prop, accessType) expects target to have the property `"_s, propertyKeyForMessage(propertyKey), '`'));
         return {};
@@ -3236,6 +3259,30 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
 
     switch (access) {
     case SpyAccess::Value: {
+        // A data descriptor here is a custom value: native code computes what script reads as a data property. The spy goes where a store would put it.
+        if (descriptor.isDataDescriptor()) {
+            auto* custom = tryJSDynamicCast<CustomGetterSetter*>(storage);
+            if (custom && custom->setter()) {
+                // The native code that reads what the setter keeps (the engine, the module loader, an event) calls the spy.
+                auto* originalStorage = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), custom, original);
+                putThroughNativeSetter(object, custom, propertyKey, mock);
+                RETURN_IF_EXCEPTION(scope, {});
+
+                mock->didInstall(object, propertyKey, originalStorage, spyAttributes | JSMockFunction::SpyAttributeNativeSetter);
+                return JSValue::encode(mock);
+            }
+
+            // With no setter a store replaces the cell with a plain value. A target that only inherits the property gets its own, which restoring deletes.
+            unsigned attributes = descriptor.attributes() & (PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
+            if (!storage)
+                attributes &= ~PropertyAttribute::DontDelete;
+            ThroughLockOfBuiltins throughLock(vm, false);
+            putOwnPropertyStorage(globalObject, object, propertyKey, mock, attributes, false);
+            RETURN_IF_EXCEPTION(scope, {});
+
+            mock->didInstall(object, propertyKey, storage, spyAttributes);
+            return JSValue::encode(mock);
+        }
         auto* returnThis = JSC::JSFunction::create(vm, globalObject, 0, String(), jsMockFunctionReturnThis, ImplementationVisibility::Public);
         getter = JSC::JSBoundFunction::create(vm, globalObject, returnThis, mock, ArgList(), 0, nullptr, makeSource(String(), SourceOrigin(), SourceTaintedOrigin::Untainted));
         RETURN_IF_EXCEPTION(scope, {});

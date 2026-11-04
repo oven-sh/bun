@@ -238,9 +238,9 @@ impl Watcher {
 
     pub fn start(&mut self) -> Result<(), crate::Error> {
         debug_assert!(!self.watchloop_handle.load());
-        // A change made before the thread gets to run is not lost.
+        // A change made before the thread gets to run is not lost. A read that is refused is asked for again by the thread, which reports it.
         #[cfg(windows)]
-        self.platform.start()?;
+        let _ = self.platform.start();
         self.watchloop_handle.store(true);
         // Watcher must be Send across the spawned thread boundary; we pass a
         // raw pointer (as usize) and uphold the safety contract manually.

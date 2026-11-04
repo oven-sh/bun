@@ -1,0 +1,14 @@
+status: 0
+oracle: none
+---
+call_method gives one of ('old',) : True
+read_of_object gives one of ('old',) : True
+read_of_class gives one of ('old',) : True
+call_method gives one of ('old', 'new') : True
+read_of_object gives one of ('old', 'new') : True
+read_of_class gives one of ('old', 'new') : True
+call_method gives one of ('old', 'new', <class 'AttributeError'>) : True
+read_of_object gives one of ('old', 'new', <class 'AttributeError'>) : True
+read_of_class gives one of ('old', 'new', <class 'AttributeError'>) : True
+Ab
+True

@@ -84,6 +84,7 @@ the system offers and what its C library computes are in them.
 - `interop/`, `mod_threads/bun/`, `mod_memoryview/js/`: programs that use JavaScript as well. There is no CPython to ask, so a person
   wrote the `.expected` file (`oracle: none` in it) by reasoning about what should be seen, not by copying a run. If there is
   a `NAME.js` it is what runs, and `NAME.py` is a module it imports. `mask: addresses` reads `0x7f...` as `0xADDR`.
+  So it is with `gc/class_dict_written_behind_the_class.py`, where CPython ends with a segmentation fault.
 - `slow/`: too heavy for a debug build, where the `.test.ts` files skip it.
 - `command-line/`: `cases.json` has about 130 command lines of `python3` (options, environment variables, stdin, `-m`, `-c`, `-i`,
   directories and archives as programs) and the files they need; `expected.json` has stdout, stderr and the status that CPython

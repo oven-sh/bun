@@ -1,0 +1,145 @@
+status: 0
+script: 91f6e7846497a029
+---
+class_of_value_gets_get
+    ["'got by Plain(object)'", "'got by Plain(class)'", "'not callable'", "'got by Plain(class)'", "'got by Plain(object)'"]
+class_of_value_gets_set
+    ['plain', 'plain', "'not callable'", 'plain', 'plain']
+value_changes_class
+    ["'got by Getter(object)'", "'got by Getter(class)'", "'not callable'", "'got by Getter(class)'", "'got by Getter(object)'"]
+object_changes_class
+    ["'of Other'", 'plain', "'not callable'", "'of Other'", "'of Other'"]
+object_gets_its_own
+    ['"the object\'s own"', 'plain', "'not callable'", 'plain', '"the object\'s own"']
+attribute_is_replaced
+    ['<bound method scenario.<locals>.attribute_is_replaced.<locals>.<lambda> of <__main__.scenario.<locals>.C object>>', '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', "'a function, called with 1'", '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', '<bound method scenario.<locals>.attribute_is_replaced.<locals>.<lambda> of <__main__.scenario.<locals>.C object>>']
+attribute_moves_to_base
+    ['plain', 'plain', "'not callable'", 'plain', 'plain']
+class_of_value_gets_get class_of_value_gets_set
+    ["'got by Plain(object)'", "'got by Plain(class)'", "'not callable'", "'got by Plain(class)'", "'got by Plain(object)'"]
+    ["'got by Plain(object)'", "'got by Plain(class)'", "'not callable'", "'got by Plain(class)'", "'got by Plain(object)'"]
+class_of_value_gets_get value_changes_class
+    ["'got by Plain(object)'", "'got by Plain(class)'", "'not callable'", "'got by Plain(class)'", "'got by Plain(object)'"]
+    ["'got by Getter(object)'", "'got by Getter(class)'", "'not callable'", "'got by Getter(class)'", "'got by Getter(object)'"]
+class_of_value_gets_get object_changes_class
+    ["'got by Plain(object)'", "'got by Plain(class)'", "'not callable'", "'got by Plain(class)'", "'got by Plain(object)'"]
+    ["'of Other'", "'got by Plain(class)'", "'not callable'", "'of Other'", "'of Other'"]
+class_of_value_gets_get object_gets_its_own
+    ["'got by Plain(object)'", "'got by Plain(class)'", "'not callable'", "'got by Plain(class)'", "'got by Plain(object)'"]
+    ['"the object\'s own"', "'got by Plain(class)'", "'not callable'", "'got by Plain(class)'", '"the object\'s own"']
+class_of_value_gets_get attribute_is_replaced
+    ["'got by Plain(object)'", "'got by Plain(class)'", "'not callable'", "'got by Plain(class)'", "'got by Plain(object)'"]
+    ['<bound method scenario.<locals>.attribute_is_replaced.<locals>.<lambda> of <__main__.scenario.<locals>.C object>>', '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', "'a function, called with 1'", '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', '<bound method scenario.<locals>.attribute_is_replaced.<locals>.<lambda> of <__main__.scenario.<locals>.C object>>']
+class_of_value_gets_get attribute_moves_to_base
+    ["'got by Plain(object)'", "'got by Plain(class)'", "'not callable'", "'got by Plain(class)'", "'got by Plain(object)'"]
+    ["'got by Plain(object)'", "'got by Plain(class)'", "'not callable'", "'got by Plain(class)'", "'got by Plain(object)'"]
+class_of_value_gets_set class_of_value_gets_get
+    ['plain', 'plain', "'not callable'", 'plain', 'plain']
+    ["'got by Plain(object)'", "'got by Plain(class)'", "'not callable'", "'got by Plain(class)'", "'got by Plain(object)'"]
+class_of_value_gets_set value_changes_class
+    ['plain', 'plain', "'not callable'", 'plain', 'plain']
+    ["'got by Getter(object)'", "'got by Getter(class)'", "'not callable'", "'got by Getter(class)'", "'got by Getter(object)'"]
+class_of_value_gets_set object_changes_class
+    ['plain', 'plain', "'not callable'", 'plain', 'plain']
+    ["'of Other'", 'plain', "'not callable'", "'of Other'", "'of Other'"]
+class_of_value_gets_set object_gets_its_own
+    ['plain', 'plain', "'not callable'", 'plain', 'plain']
+    ['"the object\'s own"', 'plain', "'not callable'", 'plain', '"the object\'s own"']
+class_of_value_gets_set attribute_is_replaced
+    ['plain', 'plain', "'not callable'", 'plain', 'plain']
+    ['<bound method scenario.<locals>.attribute_is_replaced.<locals>.<lambda> of <__main__.scenario.<locals>.C object>>', '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', "'a function, called with 1'", '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', '<bound method scenario.<locals>.attribute_is_replaced.<locals>.<lambda> of <__main__.scenario.<locals>.C object>>']
+class_of_value_gets_set attribute_moves_to_base
+    ['plain', 'plain', "'not callable'", 'plain', 'plain']
+    ['plain', 'plain', "'not callable'", 'plain', 'plain']
+value_changes_class class_of_value_gets_get
+    ["'got by Getter(object)'", "'got by Getter(class)'", "'not callable'", "'got by Getter(class)'", "'got by Getter(object)'"]
+    ["'got by Getter(object)'", "'got by Getter(class)'", "'not callable'", "'got by Getter(class)'", "'got by Getter(object)'"]
+value_changes_class class_of_value_gets_set
+    ["'got by Getter(object)'", "'got by Getter(class)'", "'not callable'", "'got by Getter(class)'", "'got by Getter(object)'"]
+    ["'got by Getter(object)'", "'got by Getter(class)'", "'not callable'", "'got by Getter(class)'", "'got by Getter(object)'"]
+value_changes_class object_changes_class
+    ["'got by Getter(object)'", "'got by Getter(class)'", "'not callable'", "'got by Getter(class)'", "'got by Getter(object)'"]
+    ["'of Other'", "'got by Getter(class)'", "'not callable'", "'of Other'", "'of Other'"]
+value_changes_class object_gets_its_own
+    ["'got by Getter(object)'", "'got by Getter(class)'", "'not callable'", "'got by Getter(class)'", "'got by Getter(object)'"]
+    ['"the object\'s own"', "'got by Getter(class)'", "'not callable'", "'got by Getter(class)'", '"the object\'s own"']
+value_changes_class attribute_is_replaced
+    ["'got by Getter(object)'", "'got by Getter(class)'", "'not callable'", "'got by Getter(class)'", "'got by Getter(object)'"]
+    ['<bound method scenario.<locals>.attribute_is_replaced.<locals>.<lambda> of <__main__.scenario.<locals>.C object>>', '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', "'a function, called with 1'", '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', '<bound method scenario.<locals>.attribute_is_replaced.<locals>.<lambda> of <__main__.scenario.<locals>.C object>>']
+value_changes_class attribute_moves_to_base
+    ["'got by Getter(object)'", "'got by Getter(class)'", "'not callable'", "'got by Getter(class)'", "'got by Getter(object)'"]
+    ["'got by Getter(object)'", "'got by Getter(class)'", "'not callable'", "'got by Getter(class)'", "'got by Getter(object)'"]
+object_changes_class class_of_value_gets_get
+    ["'of Other'", 'plain', "'not callable'", "'of Other'", "'of Other'"]
+    ["'of Other'", "'got by Plain(class)'", "'not callable'", "'of Other'", "'of Other'"]
+object_changes_class class_of_value_gets_set
+    ["'of Other'", 'plain', "'not callable'", "'of Other'", "'of Other'"]
+    ["'of Other'", 'plain', "'not callable'", "'of Other'", "'of Other'"]
+object_changes_class value_changes_class
+    ["'of Other'", 'plain', "'not callable'", "'of Other'", "'of Other'"]
+    ["'of Other'", "'got by Getter(class)'", "'not callable'", "'of Other'", "'of Other'"]
+object_changes_class object_gets_its_own
+    ["'of Other'", 'plain', "'not callable'", "'of Other'", "'of Other'"]
+    ['"the object\'s own"', 'plain', "'not callable'", "'of Other'", '"the object\'s own"']
+object_changes_class attribute_is_replaced
+    ["'of Other'", 'plain', "'not callable'", "'of Other'", "'of Other'"]
+    ["'of Other'", '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', "'not callable'", "'of Other'", "'of Other'"]
+object_changes_class attribute_moves_to_base
+    ["'of Other'", 'plain', "'not callable'", "'of Other'", "'of Other'"]
+    ["'of Other'", 'plain', "'not callable'", "'of Other'", "'of Other'"]
+object_gets_its_own class_of_value_gets_get
+    ['"the object\'s own"', 'plain', "'not callable'", 'plain', '"the object\'s own"']
+    ['"the object\'s own"', "'got by Plain(class)'", "'not callable'", "'got by Plain(class)'", '"the object\'s own"']
+object_gets_its_own class_of_value_gets_set
+    ['"the object\'s own"', 'plain', "'not callable'", 'plain', '"the object\'s own"']
+    ['"the object\'s own"', 'plain', "'not callable'", 'plain', '"the object\'s own"']
+object_gets_its_own value_changes_class
+    ['"the object\'s own"', 'plain', "'not callable'", 'plain', '"the object\'s own"']
+    ['"the object\'s own"', "'got by Getter(class)'", "'not callable'", "'got by Getter(class)'", '"the object\'s own"']
+object_gets_its_own object_changes_class
+    ['"the object\'s own"', 'plain', "'not callable'", 'plain', '"the object\'s own"']
+    ['"the object\'s own"', 'plain', "'not callable'", "'of Other'", '"the object\'s own"']
+object_gets_its_own attribute_is_replaced
+    ['"the object\'s own"', 'plain', "'not callable'", 'plain', '"the object\'s own"']
+    ['"the object\'s own"', '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', "'not callable'", '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', '"the object\'s own"']
+object_gets_its_own attribute_moves_to_base
+    ['"the object\'s own"', 'plain', "'not callable'", 'plain', '"the object\'s own"']
+    ['"the object\'s own"', 'plain', "'not callable'", 'plain', '"the object\'s own"']
+attribute_is_replaced class_of_value_gets_get
+    ['<bound method scenario.<locals>.attribute_is_replaced.<locals>.<lambda> of <__main__.scenario.<locals>.C object>>', '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', "'a function, called with 1'", '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', '<bound method scenario.<locals>.attribute_is_replaced.<locals>.<lambda> of <__main__.scenario.<locals>.C object>>']
+    ['<bound method scenario.<locals>.attribute_is_replaced.<locals>.<lambda> of <__main__.scenario.<locals>.C object>>', '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', "'a function, called with 1'", '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', '<bound method scenario.<locals>.attribute_is_replaced.<locals>.<lambda> of <__main__.scenario.<locals>.C object>>']
+attribute_is_replaced class_of_value_gets_set
+    ['<bound method scenario.<locals>.attribute_is_replaced.<locals>.<lambda> of <__main__.scenario.<locals>.C object>>', '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', "'a function, called with 1'", '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', '<bound method scenario.<locals>.attribute_is_replaced.<locals>.<lambda> of <__main__.scenario.<locals>.C object>>']
+    ['<bound method scenario.<locals>.attribute_is_replaced.<locals>.<lambda> of <__main__.scenario.<locals>.C object>>', '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', "'a function, called with 1'", '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', '<bound method scenario.<locals>.attribute_is_replaced.<locals>.<lambda> of <__main__.scenario.<locals>.C object>>']
+attribute_is_replaced value_changes_class
+    ['<bound method scenario.<locals>.attribute_is_replaced.<locals>.<lambda> of <__main__.scenario.<locals>.C object>>', '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', "'a function, called with 1'", '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', '<bound method scenario.<locals>.attribute_is_replaced.<locals>.<lambda> of <__main__.scenario.<locals>.C object>>']
+    ['<bound method scenario.<locals>.attribute_is_replaced.<locals>.<lambda> of <__main__.scenario.<locals>.C object>>', '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', "'a function, called with 1'", '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', '<bound method scenario.<locals>.attribute_is_replaced.<locals>.<lambda> of <__main__.scenario.<locals>.C object>>']
+attribute_is_replaced object_changes_class
+    ['<bound method scenario.<locals>.attribute_is_replaced.<locals>.<lambda> of <__main__.scenario.<locals>.C object>>', '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', "'a function, called with 1'", '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', '<bound method scenario.<locals>.attribute_is_replaced.<locals>.<lambda> of <__main__.scenario.<locals>.C object>>']
+    ["'of Other'", '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', "'not callable'", "'of Other'", "'of Other'"]
+attribute_is_replaced object_gets_its_own
+    ['<bound method scenario.<locals>.attribute_is_replaced.<locals>.<lambda> of <__main__.scenario.<locals>.C object>>', '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', "'a function, called with 1'", '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', '<bound method scenario.<locals>.attribute_is_replaced.<locals>.<lambda> of <__main__.scenario.<locals>.C object>>']
+    ['"the object\'s own"', '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', "'not callable'", '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', '"the object\'s own"']
+attribute_is_replaced attribute_moves_to_base
+    ['<bound method scenario.<locals>.attribute_is_replaced.<locals>.<lambda> of <__main__.scenario.<locals>.C object>>', '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', "'a function, called with 1'", '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', '<bound method scenario.<locals>.attribute_is_replaced.<locals>.<lambda> of <__main__.scenario.<locals>.C object>>']
+    ['<bound method scenario.<locals>.attribute_is_replaced.<locals>.<lambda> of <__main__.scenario.<locals>.C object>>', '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', "'a function, called with 1'", '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', '<bound method scenario.<locals>.attribute_is_replaced.<locals>.<lambda> of <__main__.scenario.<locals>.C object>>']
+attribute_moves_to_base class_of_value_gets_get
+    ['plain', 'plain', "'not callable'", 'plain', 'plain']
+    ["'got by Plain(object)'", "'got by Plain(class)'", "'not callable'", "'got by Plain(class)'", "'got by Plain(object)'"]
+attribute_moves_to_base class_of_value_gets_set
+    ['plain', 'plain', "'not callable'", 'plain', 'plain']
+    ['plain', 'plain', "'not callable'", 'plain', 'plain']
+attribute_moves_to_base value_changes_class
+    ['plain', 'plain', "'not callable'", 'plain', 'plain']
+    ["'got by Getter(object)'", "'got by Getter(class)'", "'not callable'", "'got by Getter(class)'", "'got by Getter(object)'"]
+attribute_moves_to_base object_changes_class
+    ['plain', 'plain', "'not callable'", 'plain', 'plain']
+    ["'of Other'", 'plain', "'not callable'", "'of Other'", "'of Other'"]
+attribute_moves_to_base object_gets_its_own
+    ['plain', 'plain', "'not callable'", 'plain', 'plain']
+    ['"the object\'s own"', 'plain', "'not callable'", 'plain', '"the object\'s own"']
+attribute_moves_to_base attribute_is_replaced
+    ['plain', 'plain', "'not callable'", 'plain', 'plain']
+    ['<bound method scenario.<locals>.attribute_is_replaced.<locals>.<lambda> of <__main__.scenario.<locals>.C object>>', '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', "'a function, called with 1'", '<function scenario.<locals>.attribute_is_replaced.<locals>.<lambda>>', '<bound method scenario.<locals>.attribute_is_replaced.<locals>.<lambda> of <__main__.scenario.<locals>.C object>>']
+3 changes: 210 orders, e17a22ff631dbe27
+4 changes: 840 orders, 1db8699f86d4445e

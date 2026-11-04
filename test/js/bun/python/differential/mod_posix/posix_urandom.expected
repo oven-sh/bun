@@ -1,0 +1,26 @@
+status: 0
+script: 99a6d754d23dc75c
+---
+0 bytes 0
+1 bytes 1
+16 bytes 16
+255 bytes 255
+256 bytes 256
+257 bytes 257
+65536 bytes 65536
+different each time: 1000
+True True True True
+3 1
+-1 ValueError size cannot be negative
+1.5 TypeError 'float' object cannot be interpreted as an integer
+'1' TypeError 'str' object cannot be interpreted as an integer
+None TypeError 'NoneType' object cannot be interpreted as an integer
+1180591620717411303424 OverflowError Python int too large to convert to C ssize_t
+-1180591620717411303424 OverflowError Python int too large to convert to C ssize_t
+with handlers in between: True
+ended by KeyError('from the handler')
+seeds differ: 200
+True
+200 True 5
+8 16 100
+4 100

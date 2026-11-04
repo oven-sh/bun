@@ -1,0 +1,44 @@
+status: 0
+script: 435798581cba6279
+---
+c_int None
+c_char_p b'abc'
+c_char_p None None
+c_char_p int None
+c_wchar_p <PyCapsule>
+c_void_p None
+py_object (1, 2)
+reassign (b'two', b'two')
+struct None
+nested ({'0': {}}, None)
+pointers in a struct None
+   {'0': b'bytes'}
+   {'0': b'bytes', '1': '<PyCapsule>'}
+   {'0': b'bytes', '1': '<PyCapsule>', '2': {'1': '<c_int>'}}
+   {'0': b'bytes', '1': '<PyCapsule>', '2': {'1': '<c_int>'}, '3': '<list>'}
+   {'0': b'bytes', '1': '<PyCapsule>', '2': {'1': '<c_int>'}, '3': '<list>'}
+   {'0': b'bytes', '1': '<PyCapsule>', '2': {'1': '<c_int>'}, '3': '<list>', '1:5': b'item'}
+   {'0': b'bytes', '1': '<PyCapsule>', '2': {'1': '<c_int>'}, '3': '<list>', '1:5': b'item', '5': {'0': b'p', '1': b'q'}}
+   {'0': b'bytes', '1': '<PyCapsule>', '2': {'1': '<c_int>'}, '3': '<list>', '1:5': b'item', '5': {'0': b'p', '1': b'q'}, '6': {}}
+   {'0': b'bytes', '1': '<PyCapsule>', '2': {'1': '<c_int>'}, '3': '<list>', '1:5': b'item', '5': {'0': b'p', '1': b'q'}, '6': {}}
+array of char_p {'0': b'a', '2': b'c'}
+array of struct {'0': {'0': b'a'}, '1': {'0': b'b'}}
+pointer {'1': '<c_int>'}
+pointer to pointer {'1': '<LP_c_int>', '0': {'1': '<c_int>'}}
+pointer to char_p {'1': '<c_char_p>', '0': b'x'}
+pointer set item ({'1': '<c_char_p>', '0': b'y'}, b'y')
+cast ({'ID': '<c_int_Array_2>'}, {'ID': '<c_int_Array_2>'})
+cast char_p (b'x', b'x')
+cast int None
+byref True
+from_param [None, b'x', '<PyCapsule>', b'x', None, (1,)]
+function {'0': '<CThunkObject>'}
+library function {'0': '<CDLL>'}
+bases (None, True, 0, 1, None)
+deep 119
+too deep ValueError: ctypes object structure too deep
+py_object keeps (True, True)
+memory stays (1234, True, True, 99, True)
+contents outlive the pointer's change (1, 2)
+part outlives the name of the whole (3, 4)
+callback 42

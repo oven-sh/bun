@@ -1,0 +1,190 @@
+status: 0
+script: 2ed9c1dc2dea44ed
+---
+find_library (True, True, None)
+handle ('int', None, '_FuncPtr', 'strlen', True, False)
+missing AttributeError: EXE: undefined symbol: no_such_function_xyz
+missing item AttributeError: EXE: undefined symbol: no_such_function_xyz
+missing library OSError: /no/such/library.so: cannot open shared object file: No such file or directory
+dunder AttributeError: __foo__
+pythonapi ('PyDLL', None)
+cdll CDLL
+dllist ('list', True)
+strlen (5, 0, 3, 4)
+abs (5, 5, 7)
+wcslen (5, 2, 3)
+toupper A
+getpid True
+float argument ArgumentError: argument 1: TypeError: Don't know how to convert parameter 1
+list argument ArgumentError: argument 1: TypeError: Don't know how to convert parameter 1
+big int ArgumentError: argument 1: OverflowError: int too long to convert
+int wraps (5, 0)
+as parameter (3, 3, 4)
+as parameter bad ArgumentError: argument 1: TypeError: Don't know how to convert parameter 1
+None is NULL True
+defaults ('c_int', None, None)
+typed (3, 'c_ulong', ['c_char_p'])
+wrong type ArgumentError: argument 1: TypeError: 'str' object cannot be interpreted as ctypes.c_char_p
+wrong type 2 ArgumentError: argument 1: TypeError: 'int' object cannot be interpreted as ctypes.c_char_p
+too few TypeError: this function takes at least 1 argument (0 given)
+more is allowed 2
+argtypes bad TypeError: item 1 in _argtypes_ has no from_param method
+argtypes bad 2 TypeError: _argtypes_ must be a sequence of types
+restype bad TypeError: restype must be a type, a callable, or None
+errcheck bad TypeError: the errcheck attribute must be callable
+argtypes None (None, None)
+del (None, 'c_int', None, None, None, None)
+sin 0.8414709848078965
+cos 1.0
+sqrt 1.4142135623730951
+pow 1024.0
+fabs 1.5
+floor 2.0
+atan2 0.4636476090008061
+fmod 1.5
+ldexp 24.0
+hypot 5.0
+sinf 0.841471
+powf True
+frexp (0.5, 4)
+frexp instance (0.5, 4)
+frexp pointer (0.5, 4)
+frexp wrong ArgumentError: argument 2: TypeError: expected LP_c_int instance instead of c_short
+modf (0.25, 3.0)
+strtod (3.5, b'abc')
+strtol (-123, 255, 9223372036854775807)
+strtoull 18446744073709551615
+labs 1099511627776
+getenv (b'value', None)
+strchr (b'def', None)
+strchr char b'cdef'
+strchr char bad ArgumentError: argument 2: TypeError: one character bytes, bytearray, or an integer in range(256) expected, not bytes of length 2
+void_p result ('int', None)
+pointer result ('LP_c_char', b'b', b'bc')
+no result None
+callable result ('called', 'int')
+subclass result ('MyInt', 3)
+identity c_byte -3
+identity c_ubyte 253
+identity c_short -3
+identity c_ushort 65533
+identity c_int -3
+identity c_uint 4294967293
+identity c_bool True
+identity c_char b'\\xfd'
+memcpy (True, b'hello\\x00')
+memcpy array [1, 2, 3]
+memcmp (0, True)
+snprintf (11, b'42 str c ff')
+snprintf double (22, b'1.500000 2.5e+10 -0.12')
+snprintf mixed (36, b'1 2.000000 three 4.000000 5 6.000000')
+snprintf many ints (26, b'1 2 3 4 5 6 7 8 9 10 11 12')
+snprintf many doubles (26, b'1 2 3 4 5 6 7 8 9 10 11 12')
+snprintf both (52, b'0 0 1 1 2 2 3 3 4 4 5 5 6 6 7 7 8 8 9 9 10 10 11 11 ')
+snprintf long (54, b'-1099511627776 1125899906842624 18446744073709551615 7')
+snprintf wide (4, b'wide')
+snprintf pointer null 1
+snprintf long double (8, b'1.500000')
+snprintf argtypes (10, b'7 0.500000')
+too many arguments ArgumentError: too many arguments (1025), maximum is 1024
+sscanf (3, 12, 3.5, b'word')
+div ('div_t', 3, 2)
+ldiv (-157073089682, -5)
+nanosleep 0
+gmtime_r (71, 71, 0, 1, 0)
+errno (-1, True, True, 5, 5)
+errno untouched (-1, 0)
+set_errno bad TypeError: 'str' object cannot be interpreted as an integer
+errno per thread ([(0, 0, 22)], 11)
+errcheck ('checked', 4, True, (-4,))
+errcheck returns args 4
+errcheck raises ValueError: from errcheck
+_check_retval_ ('retval', 'Checked', 4)
+prototype ('CFunctionType', 'c_int', ['c_int'], 1, True, 8, 'PyCFuncPtrType')
+from name 9
+from name bytes 9
+from missing name AttributeError: EXE: undefined symbol: no_such_function_xyz
+from bad name TypeError: function name must be string, bytes object or integer
+from bad library AttributeError: 'int' object has no attribute '_handle'
+from bad tuple TypeError: illegal func_spec argument
+from address 8
+null (False, False, True)
+not callable TypeError: argument must be callable or integer function address
+exact count TypeError: this function takes at least 1 argument (0 given)
+named 6
+named default 5
+named missing TypeError: required argument 'value' missing
+unnamed missing TypeError: not enough arguments
+named twice TypeError: call takes exactly 1 arguments (2 given)
+paramflags 5 TypeError: paramflags must be a tuple or None
+paramflags ((1, 'a'), (1, 'b')) ValueError: paramflags must have the same length as argtypes
+paramflags (5,) TypeError: paramflags must be a sequence of (int [,string [,value]]) tuples
+paramflags ((1, 5),) TypeError: paramflags must be a sequence of (int [,string [,value]]) tuples
+paramflags (('x',),) TypeError: paramflags must be a sequence of (int [,string [,value]]) tuples
+paramflags ((2, 'out'),) TypeError: 'out' parameter 1 must be a pointer type, not c_int
+paramflags ((8,),) CFunctionType
+paramflags ((1, 'a', 1, 2),) TypeError: paramflags must be a sequence of (int [,string [,value]]) tuples
+paramflags None CFunctionType
+paramflags () ValueError: paramflags must have the same length as argtypes
+out parameter 4
+out parameter 2 3.0
+out with errcheck (0.25, 3.0)
+two outs (0.0, 1.0)
+inout ('c_int', 4)
+out char_p TypeError: c_char_p 'out' parameter must be passed as default value
+repr <_FuncPtr object at ADDR>
+function types [('CFunctionType', 1), ('CFunctionType', 9), ('CFunctionType', 5), ('CFunctionType', 17)]
+bad keyword ValueError: unexpected keyword argument(s) dict_keys(['foo'])
+function class [] TypeError: class must define _flags_ which must be an integer
+function class ['_flags_'] TypeError: class must define _flags_ which must be an integer
+function class ['_argtypes_', '_flags_'] TypeError: _argtypes_ must be a sequence of types
+function class ['_argtypes_', '_flags_'] TypeError: item 1 in _argtypes_ has no from_param method
+function class ['_flags_', '_restype_'] TypeError: _restype_ must be a type, a callable, or None
+function class ['_flags_'] F
+function class ['_argtypes_', '_flags_'] ArgumentError: _argtypes_ has too many arguments (1025), maximum is 1024
+no argtypes TypeError: cannot construct instance of this class: no argtypes
+CFuncPtr() TypeError: abstract class
+qsort [1, 2, 3, 4, 5]
+qsort reverse True
+direct 42
+doubles 0.25
+floats 3.75
+   (1, 2.5, b'three', 4.5, 1099511627776, True, b'c', -7)
+mixed 1.5
+many 78
+many doubles 78.0
+many mixed 95.0
+void None
+char_p argument 4
+wchar_p argument 5
+void_p argument True
+pointer result TypeError: invalid result type for callback function
+void_p result 12345
+py_object ['x', 'x']
+subclass argument 5
+function pointer argument 3
+nested 11
+recursive 3628800
+bad result type TypeError: invalid result type for callback function
+bound method 11
+exception (None, [(\'KeyError\', "\'in callback\'", \'Exception ignored while calling ctypes callback function <function raiser>\', None)])
+bad result (None, [(\'TypeError\', "\'str\' object cannot be interpreted as an integer", \'Exception ignored while converting result of ctypes callback function <function <lambda>.<locals>.<lambda>.<locals>.<lambda>>\', None)])
+None for int (None, [(\'TypeError\', "\'NoneType\' object cannot be interpreted as an integer", \'Exception ignored while converting result of ctypes callback function <function <lambda>.<locals>.<lambda>.<locals>.<lambda>>\', None)])
+exception in qsort [1, 2, 3]
+many callbacks, one after the other 4501500
+callbacks in threads [True, True, True, True]
+other threads run [1]
+call_function 3
+call_cdeclfunction 3
+dlopen ('int', 'int', None)
+dlopen bad TypeError: expected str, bytes or os.PathLike object, not int
+dlopen missing OSError: /no/such/library.so: cannot open shared object file: No such file or directory
+dlsym missing OSError: EXE: undefined symbol: no_such_function_xyz
+dlsym bad TypeError: dlsym() argument 2 must be str, not int
+in_dll c_void_p
+in_dll value True
+in_dll missing ValueError: EXE: undefined symbol: no_such_variable_xyz
+version 1.1.0
+no attribute AttributeError: module '_ctypes' has no attribute 'nothing'
+PyObj_FromPtr True
+INCREF (True, True)

@@ -1,0 +1,211 @@
+status: 0
+script: b061cfdac44e6e83
+---
+ArgumentError type ctypes None
+Array PyCArrayType _ctypes None
+CField type ctypes None
+CFuncPtr PyCFuncPtrType _ctypes None
+CTYPES_MAX_ARGCOUNT 1024
+FUNCFLAG_CDECL 1
+FUNCFLAG_PYTHONAPI 4
+FUNCFLAG_USE_ERRNO 8
+FUNCFLAG_USE_LASTERROR 16
+PyObj_FromPtr builtin_function_or_method _ctypes None
+Py_DECREF builtin_function_or_method _ctypes ($self, object, /)
+Py_INCREF builtin_function_or_method _ctypes ($self, object, /)
+RTLD_GLOBAL 256
+RTLD_LOCAL 0
+SIZEOF_TIME_T 8
+Structure PyCStructType _ctypes None
+Union UnionType _ctypes None
+_Pointer PyCPointerType _ctypes None
+_SimpleCData PyCSimpleType _ctypes None
+__doc__ 'Create and manipulate C compatible data types in Python.'
+__getattr__ builtin_function_or_method _ctypes None
+__name__ '_ctypes'
+_cast_addr int True
+_memmove_addr int True
+_memoryview_at_addr int True
+_memset_addr int True
+_string_at_addr int True
+_unpickle builtin_function_or_method _ctypes None
+_wstring_at_addr int True
+addressof builtin_function_or_method _ctypes ($module, obj, /)
+alignment builtin_function_or_method _ctypes ($self, object, /)
+buffer_info builtin_function_or_method _ctypes ($self, object, /)
+byref builtin_function_or_method _ctypes ($module, obj, offset=0, /)
+call_cdeclfunction builtin_function_or_method _ctypes None
+call_function builtin_function_or_method _ctypes None
+dlclose builtin_function_or_method _ctypes None
+dllist builtin_function_or_method _ctypes ($self, /)
+dlopen builtin_function_or_method _ctypes None
+dlsym builtin_function_or_method _ctypes None
+get_errno builtin_function_or_method _ctypes ($self, /)
+resize builtin_function_or_method _ctypes ($module, obj, size, /)
+set_errno builtin_function_or_method _ctypes None
+sizeof builtin_function_or_method _ctypes ($module, obj, /)
+_ctypes _CData type ['_CData', 'object'] 1408 'XXX to be provided' False False
+    __hash__ wrapper_descriptor ($self, /) 'Return hash(self).'
+    __buffer__ wrapper_descriptor ($self, flags, /) 'Return a buffer object that exposes the underlyin
+    __ctypes_from_outparam__ method_descriptor ($self, /) 'default __ctypes_from_outparam__ method returns s
+    __setstate__ method_descriptor ($self, dict, data, /) None
+    __reduce__ method_descriptor ($self, /) None
+    _b_base_ member_descriptor None 'the base object'
+    _b_needsfree_ member_descriptor None 'whether the object owns the memory or not'
+    _objects member_descriptor None 'internal objects tree (NEVER CHANGE THIS OBJECT!)
+_ctypes _SimpleCData PyCSimpleType ['_SimpleCData', '_CData', 'object'] 1280 'This non-public class is the base class of all fundamental  False False
+    __new__ builtin_function_or_method ($type, *args, **kwargs) 'Create and return a new object.  See help(type) f
+    __repr__ wrapper_descriptor ($self, /) 'Return repr(self).'
+    __init__ wrapper_descriptor ($self, /, *args, **kwargs) 'Initialize self.  See help(type(self)) for accura
+    __buffer__ wrapper_descriptor ($self, flags, /) 'Return a buffer object that exposes the underlyin
+    __bool__ wrapper_descriptor ($self, /) 'True if self else False'
+    __ctypes_from_outparam__ method_descriptor ($self, /) None
+    value getset_descriptor None None
+_ctypes Structure PyCStructType ['Structure', '_CData', 'object'] 1280 'Structure base class' False False
+    __new__ builtin_function_or_method ($type, *args, **kwargs) 'Create and return a new object.  See help(type) f
+    __init__ wrapper_descriptor ($self, /, *args, **kwargs) 'Initialize self.  See help(type(self)) for accura
+    __buffer__ wrapper_descriptor ($self, flags, /) 'Return a buffer object that exposes the underlyin
+_ctypes Union UnionType ['Union', '_CData', 'object'] 1280 'Union base class' False False
+    __new__ builtin_function_or_method ($type, *args, **kwargs) 'Create and return a new object.  See help(type) f
+    __init__ wrapper_descriptor ($self, /, *args, **kwargs) 'Initialize self.  See help(type(self)) for accura
+    __buffer__ wrapper_descriptor ($self, flags, /) 'Return a buffer object that exposes the underlyin
+_ctypes Array PyCArrayType ['Array', '_CData', 'object'] 1280 'Abstract base class for arrays.\n\nThe recommended way to c False False
+    __new__ builtin_function_or_method ($type, *args, **kwargs) 'Create and return a new object.  See help(type) f
+    __init__ wrapper_descriptor ($self, /, *args, **kwargs) 'Initialize self.  See help(type(self)) for accura
+    __buffer__ wrapper_descriptor ($self, flags, /) 'Return a buffer object that exposes the underlyin
+    __len__ wrapper_descriptor ($self, /) 'Return len(self).'
+    __getitem__ wrapper_descriptor ($self, key, /) 'Return self[key].'
+    __setitem__ wrapper_descriptor ($self, key, value, /) 'Set self[key] to value.'
+    __delitem__ wrapper_descriptor ($self, key, /) 'Delete self[key].'
+    __class_getitem__ classmethod_descriptor ($type, object, /) 'Arrays are generic over the type of their element
+_ctypes _Pointer PyCPointerType ['_Pointer', '_CData', 'object'] 1280 'Private, abstract base class for pointers.\n\nConcrete poin False False
+    __new__ builtin_function_or_method ($type, *args, **kwargs) 'Create and return a new object.  See help(type) f
+    __init__ wrapper_descriptor ($self, /, *args, **kwargs) 'Initialize self.  See help(type(self)) for accura
+    __buffer__ wrapper_descriptor ($self, flags, /) 'Return a buffer object that exposes the underlyin
+    __bool__ wrapper_descriptor ($self, /) 'True if self else False'
+    __getitem__ wrapper_descriptor ($self, key, /) 'Return self[key].'
+    __setitem__ wrapper_descriptor ($self, key, value, /) 'Set self[key] to value.'
+    __delitem__ wrapper_descriptor ($self, key, /) 'Delete self[key].'
+    contents getset_descriptor None 'the object this pointer points to (read-write)'
+_ctypes CFuncPtr PyCFuncPtrType ['CFuncPtr', '_CData', 'object'] 1280 'Function Pointer' False False
+    __new__ builtin_function_or_method ($type, *args, **kwargs) 'Create and return a new object.  See help(type) f
+    __repr__ wrapper_descriptor ($self, /) 'Return repr(self).'
+    __call__ wrapper_descriptor ($self, /, *args, **kwargs) 'Call self as a function.'
+    __buffer__ wrapper_descriptor ($self, flags, /) 'Return a buffer object that exposes the underlyin
+    __bool__ wrapper_descriptor ($self, /) 'True if self else False'
+    errcheck getset_descriptor None 'a function to check for errors'
+    restype getset_descriptor None 'specify the result type'
+    argtypes getset_descriptor None 'specify the argument types'
+ctypes CField type ['CField', 'object'] 256 'Structure/Union member' False False
+    __new__ builtin_function_or_method ($type, *args, **kwargs) 'Create and return a new object.  See help(type) f
+    __repr__ wrapper_descriptor ($self, /) 'Return repr(self).'
+    __get__ wrapper_descriptor ($self, instance, owner=None, /) 'Return an attribute of instance, which is of type
+    __set__ wrapper_descriptor ($self, instance, value, /) 'Set an attribute of instance to value.'
+    __delete__ wrapper_descriptor ($self, instance, /) 'Delete an attribute of instance.'
+    name member_descriptor None 'name of this field'
+    type member_descriptor None 'type of this field'
+    offset member_descriptor None 'offset in bytes of this field (same as byte_offse
+    byte_offset member_descriptor None 'offset in bytes of this field. For bitfields: exc
+    byte_size member_descriptor None 'size of this field in bytes'
+    bit_offset member_descriptor None 'additional offset in bits (relative to byte_offse
+    size getset_descriptor None 'size in bytes of this field. For bitfields, this 
+    bit_size getset_descriptor None 'size of this field in bits'
+    is_bitfield getset_descriptor None 'true if this is a bitfield'
+    is_anonymous getset_descriptor None 'true if this field is anonymous'
+ctypes ArgumentError type ['ArgumentError', 'Exception', 'BaseException', 'object'] 1024 None True True
+    __weakref__ getset_descriptor None 'list of weak references to the object'
+_ctypes CType_Type type ['CType_Type', 'type', 'object'] 1280 None True True
+    __mul__ wrapper_descriptor ($self, value, /) 'Return self*value.'
+    __rmul__ wrapper_descriptor ($self, value, /) 'Return value*self.'
+    __sizeof__ method_descriptor ($self, /) 'Return memory consumption of the type object.'
+    __pointer_type__ getset_descriptor None None
+_ctypes PyCSimpleType type ['PyCSimpleType', 'CType_Type', 'type', 'object'] 1280 'metatype for the PyCSimpleType Objects' True True
+    __init__ wrapper_descriptor ($self, /, *args, **kwargs) 'Initialize self.  See help(type(self)) for accura
+    from_param method_descriptor ($self, value, /) 'Convert a Python object into a function call para
+    from_address method_descriptor ($self, value, /) 'C.from_address(integer) -> C instance\n\nAccess a
+    from_buffer method_descriptor ($self, obj, offset=0, /) 'C.from_buffer(object, offset=0) -> C instance\n\n
+    from_buffer_copy method_descriptor ($self, buffer, offset=0, /) 'C.from_buffer_copy(object, offset=0) -> C instanc
+    in_dll method_descriptor ($self, dll, name, /) 'C.in_dll(dll, name) -> C instance\n\nAccess a C i
+_ctypes PyCStructType type ['PyCStructType', 'CType_Type', 'type', 'object'] 1280 'metatype for the CData Objects' True True
+    __setattr__ wrapper_descriptor ($self, name, value, /) 'Implement setattr(self, name, value).'
+    __delattr__ wrapper_descriptor ($self, name, /) 'Implement delattr(self, name).'
+    __init__ wrapper_descriptor ($self, /, *args, **kwargs) 'Initialize self.  See help(type(self)) for accura
+    from_param method_descriptor ($self, value, /) 'Convert a Python object into a function call para
+    from_address method_descriptor ($self, value, /) 'C.from_address(integer) -> C instance\n\nAccess a
+    from_buffer method_descriptor ($self, obj, offset=0, /) 'C.from_buffer(object, offset=0) -> C instance\n\n
+    from_buffer_copy method_descriptor ($self, buffer, offset=0, /) 'C.from_buffer_copy(object, offset=0) -> C instanc
+    in_dll method_descriptor ($self, dll, name, /) 'C.in_dll(dll, name) -> C instance\n\nAccess a C i
+_ctypes UnionType type ['UnionType', 'CType_Type', 'type', 'object'] 1280 'metatype for the Union Objects' True True
+    __setattr__ wrapper_descriptor ($self, name, value, /) 'Implement setattr(self, name, value).'
+    __delattr__ wrapper_descriptor ($self, name, /) 'Implement delattr(self, name).'
+    __init__ wrapper_descriptor ($self, /, *args, **kwargs) 'Initialize self.  See help(type(self)) for accura
+    from_param method_descriptor ($self, value, /) 'Convert a Python object into a function call para
+    from_address method_descriptor ($self, value, /) 'C.from_address(integer) -> C instance\n\nAccess a
+    from_buffer method_descriptor ($self, obj, offset=0, /) 'C.from_buffer(object, offset=0) -> C instance\n\n
+    from_buffer_copy method_descriptor ($self, buffer, offset=0, /) 'C.from_buffer_copy(object, offset=0) -> C instanc
+    in_dll method_descriptor ($self, dll, name, /) 'C.in_dll(dll, name) -> C instance\n\nAccess a C i
+_ctypes PyCArrayType type ['PyCArrayType', 'CType_Type', 'type', 'object'] 1280 'metatype for the Array Objects' True True
+    __init__ wrapper_descriptor ($self, /, *args, **kwargs) 'Initialize self.  See help(type(self)) for accura
+    from_param method_descriptor ($self, value, /) 'Convert a Python object into a function call para
+    from_address method_descriptor ($self, value, /) 'C.from_address(integer) -> C instance\n\nAccess a
+    from_buffer method_descriptor ($self, obj, offset=0, /) 'C.from_buffer(object, offset=0) -> C instance\n\n
+    from_buffer_copy method_descriptor ($self, buffer, offset=0, /) 'C.from_buffer_copy(object, offset=0) -> C instanc
+    in_dll method_descriptor ($self, dll, name, /) 'C.in_dll(dll, name) -> C instance\n\nAccess a C i
+_ctypes PyCPointerType type ['PyCPointerType', 'CType_Type', 'type', 'object'] 1280 'metatype for the Pointer Objects' True True
+    __init__ wrapper_descriptor ($self, /, *args, **kwargs) 'Initialize self.  See help(type(self)) for accura
+    from_address method_descriptor ($self, value, /) 'C.from_address(integer) -> C instance\n\nAccess a
+    from_buffer method_descriptor ($self, obj, offset=0, /) 'C.from_buffer(object, offset=0) -> C instance\n\n
+    from_buffer_copy method_descriptor ($self, buffer, offset=0, /) 'C.from_buffer_copy(object, offset=0) -> C instanc
+    in_dll method_descriptor ($self, dll, name, /) 'C.in_dll(dll, name) -> C instance\n\nAccess a C i
+    from_param method_descriptor ($self, value, /) 'Convert a Python object into a function call para
+    set_type method_descriptor ($self, type, /) None
+_ctypes PyCFuncPtrType type ['PyCFuncPtrType', 'CType_Type', 'type', 'object'] 1280 'metatype for C function pointers' True True
+    __init__ wrapper_descriptor ($self, /, *args, **kwargs) 'Initialize self.  See help(type(self)) for accura
+    from_param method_descriptor ($self, value, /) 'Convert a Python object into a function call para
+    from_address method_descriptor ($self, value, /) 'C.from_address(integer) -> C instance\n\nAccess a
+    from_buffer method_descriptor ($self, obj, offset=0, /) 'C.from_buffer(object, offset=0) -> C instance\n\n
+    from_buffer_copy method_descriptor ($self, buffer, offset=0, /) 'C.from_buffer_copy(object, offset=0) -> C instanc
+    in_dll method_descriptor ($self, dll, name, /) 'C.in_dll(dll, name) -> C instance\n\nAccess a C i
+_ctypes CArgObject type ['CArgObject', 'object'] 384 None False False
+    __repr__ wrapper_descriptor ($self, /) 'Return repr(self).'
+    _obj member_descriptor None 'the wrapped object'
+c_int ctypes ['__ctype_be__', '__ctype_le__', '__dict__', '__doc__', '__module__', '__weakref__', '_type_']
+    []
+c_char_p ctypes ['__dict__', '__doc__', '__module__', '__repr__', '__weakref__', '_type_', 'from_param']
+    [('from_param', 'classmethod_descriptor')]
+c_void_p ctypes ['__dict__', '__doc__', '__module__', '__weakref__', '_type_', 'from_param']
+    [('from_param', 'classmethod_descriptor')]
+c_wchar_p ctypes ['__dict__', '__doc__', '__module__', '__repr__', '__weakref__', '_type_', 'from_param']
+    [('from_param', 'classmethod_descriptor')]
+py_object ctypes ['__class_getitem__', '__dict__', '__doc__', '__module__', '__repr__', '__weakref__', '_type_']
+    []
+c_char_Array_2 __main__ ['__dict__', '__doc__', '__module__', '__weakref__', '_length_', '_type_', 'raw', 'value']
+    [('raw', 'getset_descriptor'), ('value', 'getset_descriptor')]
+c_wchar_Array_2 __main__ ['__dict__', '__doc__', '__module__', '__weakref__', '_length_', '_type_', 'value']
+    [('value', 'getset_descriptor')]
+c_int_Array_2 __main__ ['__dict__', '__doc__', '__module__', '__weakref__', '_length_', '_type_']
+    []
+LP_c_int ctypes ['__dict__', '__doc__', '__module__', '__weakref__', '_type_']
+    []
+CFunctionType ctypes ['__dict__', '__doc__', '__module__', '__weakref__', '_argtypes_', '_flags_', '_restype_']
+    []
+_CData cannot set 'some_attribute' attribute of immutable type '_ctypes._CData'
+_SimpleCData cannot set 'some_attribute' attribute of immutable type '_ctypes._SimpleCData'
+Structure cannot set 'some_attribute' attribute of immutable type '_ctypes.Structure'
+Union cannot set 'some_attribute' attribute of immutable type '_ctypes.Union'
+Array cannot set 'some_attribute' attribute of immutable type '_ctypes.Array'
+_Pointer cannot set 'some_attribute' attribute of immutable type '_ctypes._Pointer'
+CFuncPtr cannot set 'some_attribute' attribute of immutable type '_ctypes.CFuncPtr'
+CField cannot set 'some_attribute' attribute of immutable type 'ctypes.CField'
+ArgumentError mutable
+CType_Type cannot set 'some_attribute' attribute of immutable type '_ctypes.CType_Type'
+PyCSimpleType cannot set 'some_attribute' attribute of immutable type '_ctypes.PyCSimpleType'
+PyCStructType cannot set 'some_attribute' attribute of immutable type '_ctypes.PyCStructType'
+UnionType cannot set 'some_attribute' attribute of immutable type '_ctypes.UnionType'
+PyCArrayType cannot set 'some_attribute' attribute of immutable type '_ctypes.PyCArrayType'
+PyCPointerType cannot set 'some_attribute' attribute of immutable type '_ctypes.PyCPointerType'
+PyCFuncPtrType cannot set 'some_attribute' attribute of immutable type '_ctypes.PyCFuncPtrType'
+CArgObject cannot set 'some_attribute' attribute of immutable type '_ctypes.CArgObject'
+True x
+['ARRAY', 'ArgumentError', 'Array', 'BigEndianStructure', 'BigEndianUnion', 'CDLL', 'CFUNCTYPE', 'CField', 'DEFAULT_MODE', 'LibraryLoader', 'LittleEndianStructure', 'LittleEndianUnion', 'POINTER', 'PYFUNCTYPE', 'PyDLL', 'RTLD_GLOBAL', 'RTLD_LOCAL', 'SIZEOF_TIME_T', 'Structure', 'Union', '_CFuncPtr', '_FUNCFLAG_CDECL', '_FUNCFLAG_PYTHONAPI', '_FUNCFLAG_USE_ERRNO', '_FUNCFLAG_USE_LASTERROR', '_Pointer', '_PointerTypeCache', '_SimpleCData', '_c_functype_cache', '_calcsize', '_cast', '_cast_addr', '_check_size', '_dlopen', '_endian', '_memmove_addr', '_memoryview_at', '_memoryview_at_addr', '_memset_addr', '_os', '_pointer_type_cache', '_pointer_type_cache_fallback', '_reset_cache', '_string_at', '_string_at_addr', '_sys', '_sysconfig', '_types', '_wstring_at', '_wstring_at_addr', 'addressof', 'alignment', 'byref', 'c_bool', 'c_buffer', 'c_byte', 'c_char', 'c_char_p', 'c_double', 'c_double_complex', 'c_float', 'c_float_complex', 'c_int', 'c_int16', 'c_int32', 'c_int64', 'c_int8', 'c_long', 'c_longdouble', 'c_longdouble_complex', 'c_longlong', 'c_short', 'c_size_t', 'c_ssize_t', 'c_time_t', 'c_ubyte', 'c_uint', 'c_uint16', 'c_uint32', 'c_uint64', 'c_uint8', 'c_ulong', 'c_ulonglong', 'c_ushort', 'c_void_p', 'c_voidp', 'c_wchar', 'c_wchar_p', 'cast', 'cdll', 'create_string_buffer', 'create_unicode_buffer', 'get_errno', 'memmove', 'memoryview_at', 'memset', 'pointer', 'py_object', 'pydll', 'pythonapi', 'resize', 'set_errno', 'sizeof', 'string_at', 'wstring_at']
+8 32 1184 True c_wchar_p

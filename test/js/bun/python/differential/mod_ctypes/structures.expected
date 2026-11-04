@@ -1,0 +1,404 @@
+status: 0
+script: 7ed6a5fe51cdcbe6
+---
+Point 8 4 ('T{<i:x:<i:y:}', 0, ())
+   <ctypes.CField 'x' type=c_int, ofs=0, size=4> x c_int 0 0 4 4 32 0 False False
+   <ctypes.CField 'y' type=c_int, ofs=4, size=4> y c_int 4 4 4 4 32 0 False False
+values (1, 2, b'\\x01\\x00\\x00\\x00\\x02\\x00\\x00\\x00', None, 1, None)
+keyword (0, 5)
+both TypeError: duplicate values for field 'x'
+too many TypeError: too many initializers
+unknown keyword 3
+bad value TypeError: 'str' object cannot be interpreted as an integer
+delete TypeError: can't delete attribute
+repr <__main__.Point object at ADDR>
+class attribute True
+field on int TypeError: not a ctype instance
+field set on int TypeError: not a ctype instance
+CField() TypeError: CField() missing required argument 'name' (pos 1)
+CField(...) TypeError: cannot create type object
+CField ['byte_size'] ValueError: byte size of field 'a' must not be negative, got -1
+CField ['type'] TypeError: type of field 'a' must be a C type
+CField ['byte_size'] ValueError: byte size of field 'a' (3) does not match type size (4)
+CField ['bit_size'] TypeError: an integer is required
+CField ['bit_offset', 'bit_size'] ValueError: bit field 'a' overflows its type (30 + 3 > 32)
+CField ['bit_offset', 'bit_size'] ValueError: bit size of field 'a' out of range, got 0
+CField ['bit_offset', 'bit_size'] ValueError: bit size of field 'a' out of range, got 300
+CField ['bit_offset', 'bit_size'] ValueError: bit offset of field 'a' out of range, got -1
+CField ['bit_offset'] ValueError: field 'a': bit_offset must be specified if bit_size is
+CField ['bit_offset', 'bit_size', 'byte_size', 'type'] TypeError: bit fields not allowed for type c_double
+CField ['bit_offset', 'bit_size', 'byte_size', 'type'] TypeError: bit fields not allowed for type c_char
+CField ['name'] TypeError: CField() argument 'name' must be str, not int
+CField ['bit_offset', 'bit_size'] <ctypes.CField 'a' type=c_int, ofs=0, bit_size=3, bit_offset=2>
+Mixed 112 16 ('T{<c:a:7x<d:b:<h:c:(3)<c:d:3x<P:e:(2)<u:f:8x<g:g:<?:h:3xT{<i:x:<i:y:}:i:(2)T{<i:x:<i:y:}:j:4x&<i:k:<f:l:4x}', 0, ())
+   <ctypes.CField 'a' type=c_char, ofs=0, size=1> a c_char 0 0 1 1 8 0 False False
+   <ctypes.CField 'b' type=c_double, ofs=8, size=8> b c_double 8 8 8 8 64 0 False False
+   <ctypes.CField 'c' type=c_short, ofs=16, size=2> c c_short 16 16 2 2 16 0 False False
+   <ctypes.CField 'd' type=c_char_Array_3, ofs=18, size=3> d c_char_Array_3 18 18 3 3 24 0 False False
+   <ctypes.CField 'e' type=c_void_p, ofs=24, size=8> e c_void_p 24 24 8 8 64 0 False False
+   <ctypes.CField 'f' type=c_wchar_Array_2, ofs=32, size=8> f c_wchar_Array_2 32 32 8 8 64 0 False False
+   <ctypes.CField 'g' type=c_longdouble, ofs=48, size=16> g c_longdouble 48 48 16 16 128 0 False False
+   <ctypes.CField 'h' type=c_bool, ofs=64, size=1> h c_bool 64 64 1 1 8 0 False False
+   <ctypes.CField 'i' type=Point, ofs=68, size=8> i Point 68 68 8 8 64 0 False False
+   <ctypes.CField 'j' type=Point_Array_2, ofs=76, size=16> j Point_Array_2 76 76 16 16 128 0 False False
+   <ctypes.CField 'k' type=LP_c_int, ofs=96, size=8> k LP_c_int 96 96 8 8 64 0 False False
+   <ctypes.CField 'l' type=c_float, ofs=104, size=4> l c_float 104 104 4 4 32 0 False False
+mixed (b'x', 1.5, -2, b'ab', None, 'hi', 2.5, True, 3, 4, 8, False, 0.5)
+tuple for struct (None, 9, 10)
+bad tuple RuntimeError: (Point) TypeError: too many initializers
+wrong type TypeError: expected Point instance, got int
+wrong instance TypeError: incompatible types, c_int instance instead of Point instance
+char array too long ValueError: bytes too long (4, maximum length 3)
+char array exact (None, b'abc')
+char array nul (None, b'a')
+char array str TypeError: expected bytes, str found
+wchar array too long ValueError: string too long (3, maximum length 2)
+wchar array bytes TypeError: unicode string expected instead of bytes instance
+base of part (True, 0, True)
+pointer from array (None, 12, ['5', '8', '9', 'a'])
+pointer from wrong array TypeError: incompatible types, c_short_Array_2 instance instead of LP_c_int instance
+pointer None (None, False)
+Packed 15 1 ('T{<c:a:<d:b:<h:c:<i:d:}', 0, ())
+   <ctypes.CField 'a' type=c_char, ofs=0, size=1> a c_char 0 0 1 1 8 0 False False
+   <ctypes.CField 'b' type=c_double, ofs=1, size=8> b c_double 1 1 8 8 64 0 False False
+   <ctypes.CField 'c' type=c_short, ofs=9, size=2> c c_short 9 9 2 2 16 0 False False
+   <ctypes.CField 'd' type=c_int, ofs=11, size=4> d c_int 11 11 4 4 32 0 False False
+Packed 16 2 ('T{<c:a:x<d:b:<h:c:<i:d:}', 0, ())
+   <ctypes.CField 'a' type=c_char, ofs=0, size=1> a c_char 0 0 1 1 8 0 False False
+   <ctypes.CField 'b' type=c_double, ofs=2, size=8> b c_double 2 2 8 8 64 0 False False
+   <ctypes.CField 'c' type=c_short, ofs=10, size=2> c c_short 10 10 2 2 16 0 False False
+   <ctypes.CField 'd' type=c_int, ofs=12, size=4> d c_int 12 12 4 4 32 0 False False
+Packed 20 4 ('T{<c:a:3x<d:b:<h:c:2x<i:d:}', 0, ())
+   <ctypes.CField 'a' type=c_char, ofs=0, size=1> a c_char 0 0 1 1 8 0 False False
+   <ctypes.CField 'b' type=c_double, ofs=4, size=8> b c_double 4 4 8 8 64 0 False False
+   <ctypes.CField 'c' type=c_short, ofs=12, size=2> c c_short 12 12 2 2 16 0 False False
+   <ctypes.CField 'd' type=c_int, ofs=16, size=4> d c_int 16 16 4 4 32 0 False False
+Packed 24 8 ('T{<c:a:7x<d:b:<h:c:2x<i:d:}', 0, ())
+   <ctypes.CField 'a' type=c_char, ofs=0, size=1> a c_char 0 0 1 1 8 0 False False
+   <ctypes.CField 'b' type=c_double, ofs=8, size=8> b c_double 8 8 8 8 64 0 False False
+   <ctypes.CField 'c' type=c_short, ofs=16, size=2> c c_short 16 16 2 2 16 0 False False
+   <ctypes.CField 'd' type=c_int, ofs=20, size=4> d c_int 20 20 4 4 32 0 False False
+Packed 24 8 ('T{<c:a:7x<d:b:<h:c:2x<i:d:}', 0, ())
+   <ctypes.CField 'a' type=c_char, ofs=0, size=1> a c_char 0 0 1 1 8 0 False False
+   <ctypes.CField 'b' type=c_double, ofs=8, size=8> b c_double 8 8 8 8 64 0 False False
+   <ctypes.CField 'c' type=c_short, ofs=16, size=2> c c_short 16 16 2 2 16 0 False False
+   <ctypes.CField 'd' type=c_int, ofs=20, size=4> d c_int 20 20 4 4 32 0 False False
+Aligned 8 4 ('T{<c:a:3x<i:b:}', 0, ())
+   <ctypes.CField 'a' type=c_char, ofs=0, size=1> a c_char 0 0 1 1 8 0 False False
+   <ctypes.CField 'b' type=c_int, ofs=4, size=4> b c_int 4 4 4 4 32 0 False False
+Aligned 8 4 ('T{<c:a:3x<i:b:}', 0, ())
+   <ctypes.CField 'a' type=c_char, ofs=0, size=1> a c_char 0 0 1 1 8 0 False False
+   <ctypes.CField 'b' type=c_int, ofs=4, size=4> b c_int 4 4 4 4 32 0 False False
+Aligned 8 8 ('T{<c:a:3x<i:b:}', 0, ())
+   <ctypes.CField 'a' type=c_char, ofs=0, size=1> a c_char 0 0 1 1 8 0 False False
+   <ctypes.CField 'b' type=c_int, ofs=4, size=4> b c_int 4 4 4 4 32 0 False False
+Aligned 16 16 ('T{<c:a:3x<i:b:8x}', 0, ())
+   <ctypes.CField 'a' type=c_char, ofs=0, size=1> a c_char 0 0 1 1 8 0 False False
+   <ctypes.CField 'b' type=c_int, ofs=4, size=4> b c_int 4 4 4 4 32 0 False False
+Aligned 64 64 ('T{<c:a:3x<i:b:56x}', 0, ())
+   <ctypes.CField 'a' type=c_char, ofs=0, size=1> a c_char 0 0 1 1 8 0 False False
+   <ctypes.CField 'b' type=c_int, ofs=4, size=4> b c_int 4 4 4 4 32 0 False False
+bad {'_pack_': -1, '_layout_': 'ms'} ValueError: _pack_ must be a non-negative integer
+bad {'_pack_': 'x', '_layout_': 'ms'} ValueError: _pack_ must be an integer
+bad {'_align_': -1} ValueError: _align_ must be a non-negative integer
+bad {'_align_': 'x'} TypeError: '<' not supported between instances of 'str' and 'int'
+bad {'_layout_': 'zz'} ValueError: unknown _layout_: 'zz'
+bad {'_pack_': 1180591620717411303424, '_layout_': 'ms'} ValueError: _pack_ too big
+bad {'_pack_': 1} 4
+Bits 32 8 ('T{<i:a:<i:b:<I:c:2x<i:d:<h:e:<B:f:x<q:g:3x<Q:h:<b:i:7x}', 0, ())
+   <ctypes.CField 'a' type=c_int, ofs=0, bit_size=3, bit_offset=0> a c_int 0 0 4 196608 3 0 True False
+   <ctypes.CField 'b' type=c_int, ofs=0, bit_size=5, bit_offset=3> b c_int 0 0 4 327683 5 3 True False
+   <ctypes.CField 'c' type=c_uint, ofs=0, bit_size=8, bit_offset=8> c c_uint 0 0 4 524296 8 8 True False
+   <ctypes.CField 'd' type=c_int, ofs=4, bit_size=17, bit_offset=0> d c_int 4 4 4 1114112 17 0 True False
+   <ctypes.CField 'e' type=c_short, ofs=6, bit_size=4, bit_offset=1> e c_short 6 6 2 262145 4 1 True False
+   <ctypes.CField 'f' type=c_ubyte, ofs=6, bit_size=1, bit_offset=5> f c_ubyte 6 6 1 65541 1 5 True False
+   <ctypes.CField 'g' type=c_long, ofs=8, bit_size=40, bit_offset=0> g c_long 8 8 8 2621440 40 0 True False
+   <ctypes.CField 'h' type=c_ulong, ofs=16, bit_size=64, bit_offset=0> h c_ulong 16 16 8 4194304 64 0 True False
+   <ctypes.CField 'i' type=c_byte, ofs=24, bit_size=8, bit_offset=0> i c_byte 24 24 1 524288 8 0 True False
+   a 0 0 0000000000000000000000000000000000000000000000000000000000000000
+   a 1 1 0100000000000000000000000000000000000000000000000000000000000000
+   a -1 -1 0700000000000000000000000000000000000000000000000000000000000000
+   a 3 3 0300000000000000000000000000000000000000000000000000000000000000
+   a 4 -4 0400000000000000000000000000000000000000000000000000000000000000
+   a 7 -1 0700000000000000000000000000000000000000000000000000000000000000
+   a 8 0 0000000000000000000000000000000000000000000000000000000000000000
+   a 255 -1 0700000000000000000000000000000000000000000000000000000000000000
+   a 65536 0 0000000000000000000000000000000000000000000000000000000000000000
+   a 549755813888 0 0000000000000000000000000000000000000000000000000000000000000000
+   a 1099511627775 -1 0700000000000000000000000000000000000000000000000000000000000000
+   a 9223372036854775808 0 0000000000000000000000000000000000000000000000000000000000000000
+   a -9223372036854775808 0 0000000000000000000000000000000000000000000000000000000000000000
+   a 18446744073709551615 -1 0700000000000000000000000000000000000000000000000000000000000000
+   b 0 0 0000000000000000000000000000000000000000000000000000000000000000
+   b 1 1 0800000000000000000000000000000000000000000000000000000000000000
+   b -1 -1 f800000000000000000000000000000000000000000000000000000000000000
+   b 3 3 1800000000000000000000000000000000000000000000000000000000000000
+   b 4 4 2000000000000000000000000000000000000000000000000000000000000000
+   b 7 7 3800000000000000000000000000000000000000000000000000000000000000
+   b 8 8 4000000000000000000000000000000000000000000000000000000000000000
+   b 255 -1 f800000000000000000000000000000000000000000000000000000000000000
+   b 65536 0 0000000000000000000000000000000000000000000000000000000000000000
+   b 549755813888 0 0000000000000000000000000000000000000000000000000000000000000000
+   b 1099511627775 -1 f800000000000000000000000000000000000000000000000000000000000000
+   b 9223372036854775808 0 0000000000000000000000000000000000000000000000000000000000000000
+   b -9223372036854775808 0 0000000000000000000000000000000000000000000000000000000000000000
+   b 18446744073709551615 -1 f800000000000000000000000000000000000000000000000000000000000000
+   c 0 0 0000000000000000000000000000000000000000000000000000000000000000
+   c 1 1 0001000000000000000000000000000000000000000000000000000000000000
+   c -1 255 00ff000000000000000000000000000000000000000000000000000000000000
+   c 3 3 0003000000000000000000000000000000000000000000000000000000000000
+   c 4 4 0004000000000000000000000000000000000000000000000000000000000000
+   c 7 7 0007000000000000000000000000000000000000000000000000000000000000
+   c 8 8 0008000000000000000000000000000000000000000000000000000000000000
+   c 255 255 00ff000000000000000000000000000000000000000000000000000000000000
+   c 65536 0 0000000000000000000000000000000000000000000000000000000000000000
+   c 549755813888 0 0000000000000000000000000000000000000000000000000000000000000000
+   c 1099511627775 255 00ff000000000000000000000000000000000000000000000000000000000000
+   c 9223372036854775808 0 0000000000000000000000000000000000000000000000000000000000000000
+   c -9223372036854775808 0 0000000000000000000000000000000000000000000000000000000000000000
+   c 18446744073709551615 255 00ff000000000000000000000000000000000000000000000000000000000000
+   d 0 0 0000000000000000000000000000000000000000000000000000000000000000
+   d 1 1 0000000001000000000000000000000000000000000000000000000000000000
+   d -1 -1 00000000ffff0100000000000000000000000000000000000000000000000000
+   d 3 3 0000000003000000000000000000000000000000000000000000000000000000
+   d 4 4 0000000004000000000000000000000000000000000000000000000000000000
+   d 7 7 0000000007000000000000000000000000000000000000000000000000000000
+   d 8 8 0000000008000000000000000000000000000000000000000000000000000000
+   d 255 255 00000000ff000000000000000000000000000000000000000000000000000000
+   d 65536 -65536 0000000000000100000000000000000000000000000000000000000000000000
+   d 549755813888 0 0000000000000000000000000000000000000000000000000000000000000000
+   d 1099511627775 -1 00000000ffff0100000000000000000000000000000000000000000000000000
+   d 9223372036854775808 0 0000000000000000000000000000000000000000000000000000000000000000
+   d -9223372036854775808 0 0000000000000000000000000000000000000000000000000000000000000000
+   d 18446744073709551615 -1 00000000ffff0100000000000000000000000000000000000000000000000000
+   e 0 0 0000000000000000000000000000000000000000000000000000000000000000
+   e 1 1 0000000000000200000000000000000000000000000000000000000000000000
+   e -1 -1 0000000000001e00000000000000000000000000000000000000000000000000
+   e 3 3 0000000000000600000000000000000000000000000000000000000000000000
+   e 4 4 0000000000000800000000000000000000000000000000000000000000000000
+   e 7 7 0000000000000e00000000000000000000000000000000000000000000000000
+   e 8 -8 0000000000001000000000000000000000000000000000000000000000000000
+   e 255 -1 0000000000001e00000000000000000000000000000000000000000000000000
+   e 65536 0 0000000000000000000000000000000000000000000000000000000000000000
+   e 549755813888 0 0000000000000000000000000000000000000000000000000000000000000000
+   e 1099511627775 -1 0000000000001e00000000000000000000000000000000000000000000000000
+   e 9223372036854775808 0 0000000000000000000000000000000000000000000000000000000000000000
+   e -9223372036854775808 0 0000000000000000000000000000000000000000000000000000000000000000
+   e 18446744073709551615 -1 0000000000001e00000000000000000000000000000000000000000000000000
+   f 0 0 0000000000000000000000000000000000000000000000000000000000000000
+   f 1 1 0000000000002000000000000000000000000000000000000000000000000000
+   f -1 1 0000000000002000000000000000000000000000000000000000000000000000
+   f 3 1 0000000000002000000000000000000000000000000000000000000000000000
+   f 4 0 0000000000000000000000000000000000000000000000000000000000000000
+   f 7 1 0000000000002000000000000000000000000000000000000000000000000000
+   f 8 0 0000000000000000000000000000000000000000000000000000000000000000
+   f 255 1 0000000000002000000000000000000000000000000000000000000000000000
+   f 65536 0 0000000000000000000000000000000000000000000000000000000000000000
+   f 549755813888 0 0000000000000000000000000000000000000000000000000000000000000000
+   f 1099511627775 1 0000000000002000000000000000000000000000000000000000000000000000
+   f 9223372036854775808 0 0000000000000000000000000000000000000000000000000000000000000000
+   f -9223372036854775808 0 0000000000000000000000000000000000000000000000000000000000000000
+   f 18446744073709551615 1 0000000000002000000000000000000000000000000000000000000000000000
+   g 0 0 0000000000000000000000000000000000000000000000000000000000000000
+   g 1 1 0000000000000000010000000000000000000000000000000000000000000000
+   g -1 -1 0000000000000000ffffffffff00000000000000000000000000000000000000
+   g 3 3 0000000000000000030000000000000000000000000000000000000000000000
+   g 4 4 0000000000000000040000000000000000000000000000000000000000000000
+   g 7 7 0000000000000000070000000000000000000000000000000000000000000000
+   g 8 8 0000000000000000080000000000000000000000000000000000000000000000
+   g 255 255 0000000000000000ff0000000000000000000000000000000000000000000000
+   g 65536 65536 0000000000000000000001000000000000000000000000000000000000000000
+   g 549755813888 -549755813888 0000000000000000000000008000000000000000000000000000000000000000
+   g 1099511627775 -1 0000000000000000ffffffffff00000000000000000000000000000000000000
+   g 9223372036854775808 0 0000000000000000000000000000000000000000000000000000000000000000
+   g -9223372036854775808 0 0000000000000000000000000000000000000000000000000000000000000000
+   g 18446744073709551615 -1 0000000000000000ffffffffff00000000000000000000000000000000000000
+   h 0 0 0000000000000000000000000000000000000000000000000000000000000000
+   h 1 1 0000000000000000000000000000000001000000000000000000000000000000
+   h -1 18446744073709551615 00000000000000000000000000000000ffffffffffffffff0000000000000000
+   h 3 3 0000000000000000000000000000000003000000000000000000000000000000
+   h 4 4 0000000000000000000000000000000004000000000000000000000000000000
+   h 7 7 0000000000000000000000000000000007000000000000000000000000000000
+   h 8 8 0000000000000000000000000000000008000000000000000000000000000000
+   h 255 255 00000000000000000000000000000000ff000000000000000000000000000000
+   h 65536 65536 0000000000000000000000000000000000000100000000000000000000000000
+   h 549755813888 549755813888 0000000000000000000000000000000000000000800000000000000000000000
+   h 1099511627775 1099511627775 00000000000000000000000000000000ffffffffff0000000000000000000000
+   h 9223372036854775808 9223372036854775808 0000000000000000000000000000000000000000000000800000000000000000
+   h -9223372036854775808 9223372036854775808 0000000000000000000000000000000000000000000000800000000000000000
+   h 18446744073709551615 18446744073709551615 00000000000000000000000000000000ffffffffffffffff0000000000000000
+   i 0 0 0000000000000000000000000000000000000000000000000000000000000000
+   i 1 1 0000000000000000000000000000000000000000000000000100000000000000
+   i -1 -1 000000000000000000000000000000000000000000000000ff00000000000000
+   i 3 3 0000000000000000000000000000000000000000000000000300000000000000
+   i 4 4 0000000000000000000000000000000000000000000000000400000000000000
+   i 7 7 0000000000000000000000000000000000000000000000000700000000000000
+   i 8 8 0000000000000000000000000000000000000000000000000800000000000000
+   i 255 -1 000000000000000000000000000000000000000000000000ff00000000000000
+   i 65536 0 0000000000000000000000000000000000000000000000000000000000000000
+   i 549755813888 0 0000000000000000000000000000000000000000000000000000000000000000
+   i 1099511627775 -1 000000000000000000000000000000000000000000000000ff00000000000000
+   i 9223372036854775808 0 0000000000000000000000000000000000000000000000000000000000000000
+   i -9223372036854775808 0 0000000000000000000000000000000000000000000000000000000000000000
+   i 18446744073709551615 -1 000000000000000000000000000000000000000000000000ff00000000000000
+BitsL 32 8 ('T{<b:a:3x<i:b:<h:c:6x<q:d:<i:e:4x}', 0, ())
+   <ctypes.CField 'a' type=c_byte, ofs=0, bit_size=4, bit_offset=0> a c_byte 0 0 1 262144 4 0 True False
+   <ctypes.CField 'b' type=c_int, ofs=4, bit_size=4, bit_offset=0> b c_int 4 4 4 262144 4 0 True False
+   <ctypes.CField 'c' type=c_short, ofs=8, bit_size=12, bit_offset=0> c c_short 8 8 2 786432 12 0 True False
+   <ctypes.CField 'd' type=c_long, ofs=16, bit_size=1, bit_offset=0> d c_long 16 16 8 65536 1 0 True False
+   <ctypes.CField 'e' type=c_int, ofs=24, bit_size=32, bit_offset=0> e c_int 24 24 4 2097152 32 0 True False
+BitsL 8 8 ('T{<b:a:<i:b:x<h:c:<q:d:<i:e:}', 0, ())
+   <ctypes.CField 'a' type=c_byte, ofs=0, bit_size=4, bit_offset=0> a c_byte 0 0 1 262144 4 0 True False
+   <ctypes.CField 'b' type=c_int, ofs=0, bit_size=4, bit_offset=4> b c_int 0 0 4 262148 4 4 True False
+   <ctypes.CField 'c' type=c_short, ofs=2, bit_size=12, bit_offset=0> c c_short 2 2 2 786432 12 0 True False
+   <ctypes.CField 'd' type=c_long, ofs=0, bit_size=1, bit_offset=28> d c_long 0 0 8 65564 1 28 True False
+   <ctypes.CField 'e' type=c_int, ofs=4, bit_size=32, bit_offset=0> e c_int 4 4 4 2097152 32 0 True False
+bit field c_double:3 TypeError: bit fields not allowed for type c_double
+bit field c_char:3 TypeError: bit fields not allowed for type c_char
+bit field c_wchar:3 TypeError: bit fields not allowed for type c_wchar
+bit field c_void_p:3 TypeError: bit fields not allowed for type c_void_p
+bit field Point:3 TypeError: bit fields not allowed for type Point
+bit field c_int:0 ValueError: number of bits invalid for bit field 'a'
+bit field c_int:33 ValueError: number of bits invalid for bit field 'a'
+bit field c_int:-1 ValueError: number of bits invalid for bit field 'a'
+bit field c_bool:1 1
+bit field c_int:'x' TypeError: '<=' not supported between instances of 'str' and 'int'
+U 8 8 ('B', 0, ())
+   <ctypes.CField 'i' type=c_int, ofs=0, size=4> i c_int 0 0 4 4 32 0 False False
+   <ctypes.CField 'b' type=c_ubyte_Array_8, ofs=0, size=8> b c_ubyte_Array_8 0 0 8 8 64 0 False False
+   <ctypes.CField 'd' type=c_double, ofs=0, size=8> d c_double 0 0 8 8 64 0 False False
+   <ctypes.CField 'p' type=Point, ofs=0, size=8> p Point 0 0 8 8 64 0 False False
+union (0, [0, 0, 0, 0, 0, 0, 240, 63], 1072693248, b'\\x00\\x00\\x00\\x00\\x00\\x00\\xf0?')
+union init (5, 2.0, 2)
+Derived 12 4 ('T{<i:z:}', 0, ())
+   <ctypes.CField 'z' type=c_int, ofs=8, size=4> z c_int 8 8 4 4 32 0 False False
+derived (1, 2, 3, 12)
+derived too many TypeError: too many initializers
+no fields (8, 2, ('T{<i:x:<i:y:}', 0, ()))
+base is final AttributeError: _fields_ is final
+later sizeof 0
+later (4, 4)
+twice AttributeError: _fields_ is final
+after use AttributeError: _fields_ is final
+self AttributeError: Structure or union cannot contain itself
+list (1, 1, False, ['0'])
+abstract TypeError: abstract class
+Structure() TypeError: abstract class
+Union() TypeError: abstract class
+fields 5 TypeError: 'int' object is not iterable
+fields [5] TypeError: 'int' object is not iterable
+fields [('a',)] ValueError: _fields_ must be a sequence of (name, C type) pairs or (name, C type, bit size) triples
+fields [('a', 5)] TypeError: this type has no size
+fields [(5, <class 'ctypes.c_int'>)] TypeError: CField() argument 'name' must be str, not int
+fields [('a', <class 'ctypes.c_int'>, 1, 2)] ValueError: _fields_ must be a sequence of (name, C type) pairs or (name, C type, bit size) triples
+fields 'ab' ValueError: _fields_ must be a sequence of (name, C type) pairs or (name, C type, bit size) triples
+fields [('a', <class 'ctypes.c_int'>), ('a', <class 'ctypes.c_int'>)] 8
+fields None TypeError: 'NoneType' object is not iterable
+fields [('a', <class '_ctypes.Structure'>)] TypeError: this type has no size
+Outer 24 8 ('T{<i:first:4xB:u:<i:last:4x}', 0, ())
+   <ctypes.CField 'first' type=c_int, ofs=0, size=4> first c_int 0 0 4 4 32 0 False False
+   <ctypes.CField 'u' type=InnerU, ofs=8, size=8> u InnerU 8 8 8 8 64 0 False True
+   <ctypes.CField 'last' type=c_int, ofs=16, size=4> last c_int 16 16 4 4 32 0 False False
+anonymous (7, 0, 30064771072, <ctypes.CField 'q' type=c_int, ofs=12, size=4>, 8, 8, True, False)
+anonymous ['x'] AttributeError: type object 'B' has no attribute 'x'
+anonymous 5 TypeError: _anonymous_ must be a sequence
+anonymous ['first'] AttributeError: type object 'c_int' has no attribute '_fields_'
+anonymous [5] TypeError: attribute name must be string, not 'int'
+E 40 8 ('T{>h:a:2x>i:b:>d:c:>f:d:<B:e:3x>q:f:(2)>h:g:>i:h:>i:i:>?:j:x}', 0, ())
+   <ctypes.CField 'a' type=c_short_be, ofs=0, size=2> a c_short_be 0 0 2 2 16 0 False False
+   <ctypes.CField 'b' type=c_int_be, ofs=4, size=4> b c_int_be 4 4 4 4 32 0 False False
+   <ctypes.CField 'c' type=c_double_be, ofs=8, size=8> c c_double_be 8 8 8 8 64 0 False False
+   <ctypes.CField 'd' type=c_float_be, ofs=16, size=4> d c_float_be 16 16 4 4 32 0 False False
+   <ctypes.CField 'e' type=c_ubyte, ofs=20, size=1> e c_ubyte 20 20 1 1 8 0 False False
+   <ctypes.CField 'f' type=c_long_be, ofs=24, size=8> f c_long_be 24 24 8 8 64 0 False False
+   <ctypes.CField 'g' type=c_short_be_Array_2, ofs=32, size=4> g c_short_be_Array_2 32 32 4 4 32 0 False False
+   <ctypes.CField 'h' type=c_int_be, ofs=36, bit_size=5, bit_offset=27> h c_int_be 36 36 4 327707 5 27 True False
+   <ctypes.CField 'i' type=c_int_be, ofs=36, bit_size=9, bit_offset=18> i c_int_be 36 36 4 589842 9 18 True False
+   <ctypes.CField 'j' type=c_bool_be, ofs=38, size=1> j c_bool_be 38 38 1 1 8 0 False False
+   00000000010203040000000000000000000000000000000000000000000000000000000000000000 16909060
+   a 258 01020000000000000000000000000000000000000000000000000000000000000000000000000000
+   c 1.5 01020000000000003ff8000000000000000000000000000000000000000000000000000000000000
+   d 2.5 01020000000000003ff8000000000000402000000000000000000000000000000000000000000000
+   e 7 01020000000000003ff8000000000000402000000700000000000000000000000000000000000000
+   f -2 01020000000000003ff80000000000004020000007000000fffffffffffffffe0000000000000000
+   h 9 01020000000000003ff80000000000004020000007000000fffffffffffffffe0000000048000000
+   i -100 01020000000000003ff80000000000004020000007000000fffffffffffffffe000000004e700000
+   j 1 01020000000000003ff80000000000004020000007000000fffffffffffffffe000000004e700100
+   [1, 2] 01020000000000003ff80000000000004020000007000000fffffffffffffffe000100024e700100
+E 40 8 ('T{<h:a:2x<i:b:<d:c:<f:d:<B:e:3x<q:f:(2)<h:g:<i:h:<i:i:<?:j:x}', 0, ())
+   <ctypes.CField 'a' type=c_short, ofs=0, size=2> a c_short 0 0 2 2 16 0 False False
+   <ctypes.CField 'b' type=c_int, ofs=4, size=4> b c_int 4 4 4 4 32 0 False False
+   <ctypes.CField 'c' type=c_double, ofs=8, size=8> c c_double 8 8 8 8 64 0 False False
+   <ctypes.CField 'd' type=c_float, ofs=16, size=4> d c_float 16 16 4 4 32 0 False False
+   <ctypes.CField 'e' type=c_ubyte, ofs=20, size=1> e c_ubyte 20 20 1 1 8 0 False False
+   <ctypes.CField 'f' type=c_long, ofs=24, size=8> f c_long 24 24 8 8 64 0 False False
+   <ctypes.CField 'g' type=c_short_Array_2, ofs=32, size=4> g c_short_Array_2 32 32 4 4 32 0 False False
+   <ctypes.CField 'h' type=c_int, ofs=36, bit_size=5, bit_offset=0> h c_int 36 36 4 327680 5 0 True False
+   <ctypes.CField 'i' type=c_int, ofs=36, bit_size=9, bit_offset=5> i c_int 36 36 4 589829 9 5 True False
+   <ctypes.CField 'j' type=c_bool, ofs=38, size=1> j c_bool 38 38 1 1 8 0 False False
+   00000000040302010000000000000000000000000000000000000000000000000000000000000000 16909060
+   a 258 02010000000000000000000000000000000000000000000000000000000000000000000000000000
+   c 1.5 0201000000000000000000000000f83f000000000000000000000000000000000000000000000000
+   d 2.5 0201000000000000000000000000f83f000020400000000000000000000000000000000000000000
+   e 7 0201000000000000000000000000f83f000020400700000000000000000000000000000000000000
+   f -2 0201000000000000000000000000f83f0000204007000000feffffffffffffff0000000000000000
+   h 9 0201000000000000000000000000f83f0000204007000000feffffffffffffff0000000009000000
+   i -100 0201000000000000000000000000f83f0000204007000000feffffffffffffff0000000089330000
+   j True 0201000000000000000000000000f83f0000204007000000feffffffffffffff0000000089330100
+   [1, 2] 0201000000000000000000000000f83f0000204007000000feffffffffffffff0100020089330100
+E 8 8 ('B', 0, ())
+   <ctypes.CField 'a' type=c_short_be, ofs=0, size=2> a c_short_be 0 0 2 2 16 0 False False
+   <ctypes.CField 'b' type=c_int_be, ofs=0, size=4> b c_int_be 0 0 4 4 32 0 False False
+   <ctypes.CField 'c' type=c_double_be, ofs=0, size=8> c c_double_be 0 0 8 8 64 0 False False
+   <ctypes.CField 'd' type=c_float_be, ofs=0, size=4> d c_float_be 0 0 4 4 32 0 False False
+   <ctypes.CField 'e' type=c_ubyte, ofs=0, size=1> e c_ubyte 0 0 1 1 8 0 False False
+   <ctypes.CField 'f' type=c_long_be, ofs=0, size=8> f c_long_be 0 0 8 8 64 0 False False
+   <ctypes.CField 'g' type=c_short_be_Array_2, ofs=0, size=4> g c_short_be_Array_2 0 0 4 4 32 0 False False
+   <ctypes.CField 'h' type=c_int_be, ofs=0, bit_size=5, bit_offset=27> h c_int_be 0 0 4 327707 5 27 True False
+   <ctypes.CField 'i' type=c_int_be, ofs=0, bit_size=9, bit_offset=23> i c_int_be 0 0 4 589847 9 23 True False
+   <ctypes.CField 'j' type=c_bool_be, ofs=0, size=1> j c_bool_be 0 0 1 1 8 0 False False
+   0102030400000000 16909060
+   a 258 0102000000000000
+   c 1.5 3ff8000000000000
+   d 2.5 4020000000000000
+   e 7 0720000000000000
+   f -2 fffffffffffffffe
+   h 9 4ffffffffffffffe
+   i -100 ce7ffffffffffffe
+   j 1 017ffffffffffffe
+   [1, 2] 00010002fffffffe
+E 8 8 ('B', 0, ())
+   <ctypes.CField 'a' type=c_short, ofs=0, size=2> a c_short 0 0 2 2 16 0 False False
+   <ctypes.CField 'b' type=c_int, ofs=0, size=4> b c_int 0 0 4 4 32 0 False False
+   <ctypes.CField 'c' type=c_double, ofs=0, size=8> c c_double 0 0 8 8 64 0 False False
+   <ctypes.CField 'd' type=c_float, ofs=0, size=4> d c_float 0 0 4 4 32 0 False False
+   <ctypes.CField 'e' type=c_ubyte, ofs=0, size=1> e c_ubyte 0 0 1 1 8 0 False False
+   <ctypes.CField 'f' type=c_long, ofs=0, size=8> f c_long 0 0 8 8 64 0 False False
+   <ctypes.CField 'g' type=c_short_Array_2, ofs=0, size=4> g c_short_Array_2 0 0 4 4 32 0 False False
+   <ctypes.CField 'h' type=c_int, ofs=0, bit_size=5, bit_offset=0> h c_int 0 0 4 327680 5 0 True False
+   <ctypes.CField 'i' type=c_int, ofs=0, bit_size=9, bit_offset=0> i c_int 0 0 4 589824 9 0 True False
+   <ctypes.CField 'j' type=c_bool, ofs=0, size=1> j c_bool 0 0 1 1 8 0 False False
+   0403020100000000 16909060
+   a 258 0201000000000000
+   c 1.5 000000000000f83f
+   d 2.5 000020400000f83f
+   e 7 070020400000f83f
+   f -2 feffffffffffffff
+   h 9 e9ffffffffffffff
+   i -100 9cffffffffffffff
+   j True 01ffffffffffffff
+   [1, 2] 01000200ffffffff
+swapped pointer TypeError: This type does not support other endian: <class 'ctypes.LP_c_int'>
+swapped nested 8
+metaclasses ['PyCStructType', 'UnionType', 'PyCArrayType', 'PyCPointerType', 'PyCSimpleType', 'PyCFuncPtrType']
+meta mro ['PyCStructType', 'CType_Type', 'type', 'object']
+from_param (True, 'Derived')
+from_param bad TypeError: expected Point instance instead of int
+from_param as True
+from_param loop RecursionError
+mul ('Point_Array_2', 'Point_Array_2', True, 'Point_Array_0')
+mul bad ValueError: Array length must be >= 0, not -1
+mul float TypeError: can't multiply sequence by non-int of type 'float'
+pointer type ('LP_Point', True)
+no pointer type AttributeError: <class '__main__.Derived'> has no attribute '__pointer_type__'
+pointer type of abstract TypeError: <class '_ctypes.Structure'> must have storage info

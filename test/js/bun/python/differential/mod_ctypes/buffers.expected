@@ -1,0 +1,171 @@
+status: 0
+script: 043b3aef6ddbb02e
+---
+from_buffer (1, 0, None, 'memoryview')
+writes through b'\\r\\x0c\\x0b\\n\\x02\\x00\\x00\\x00\\x03\\x00\\x00\\x00'
+reads through ADDR
+offset (2, 3)
+offset too large ValueError: Buffer size too small (12 instead of at least 13 bytes)
+offset huge ValueError: Buffer size too small (12 instead of at least 4611686018427387908 bytes)
+offset negative ValueError: offset cannot be negative
+offset type TypeError: 'str' object cannot be interpreted as an integer
+struct (2, 3, ['ffffffff'], 'memoryview')
+array [2, 0, 0, 0]
+too small ValueError: Buffer size too small (12 instead of at least 16 bytes)
+resize exported BufferError: Existing exports of data: object cannot be re-sized
+resize exported 2 BufferError: Existing exports of data: object cannot be re-sized
+bytes TypeError: underlying buffer is not writable
+readonly view TypeError: underlying buffer is not writable
+not contiguous TypeError: underlying buffer is not C contiguous
+int TypeError: memoryview: a bytes-like object is required, not 'int'
+abstract TypeError: abstract class
+array.array (2,)
+array.array resize BufferError: cannot resize an array that is exporting buffers
+ctypes source (2, None, 5)
+memoryview source 2
+free again 9
+part keeps still exported
+objects of simple memoryview
+copy (67305985, 1, None)
+copy offset 1027
+copy too small ValueError: Buffer size too small (3 instead of at least 4 bytes)
+copy offset too large ValueError: Buffer size too small (4 instead of at least 5 bytes)
+copy negative ValueError: offset cannot be negative
+copy int TypeError: a bytes-like object is required, not 'int'
+copy str TypeError: a bytes-like object is required, not 'str'
+copy abstract TypeError: abstract class
+copy independent (None, 1)
+copy struct (5, 6)
+c_int <i 4 0 () () 4 False True () c_int
+c_double <d 8 0 () () 8 False True () c_double
+c_char <c 1 0 () () 1 False True () c_char
+c_wchar <u 4 0 () () 4 False True () c_wchar
+c_bool <? 1 0 () () 1 False True () c_bool
+c_void_p <P 8 0 () () 8 False True () c_void_p
+c_char_p <z 8 0 () () 8 False True () c_char_p
+py_object <O 8 0 () () 8 False True () py_object
+c_longdouble <g 16 0 () () 16 False True () c_longdouble
+c_int_Array_3 <i 4 1 (3,) (4,) 12 False True () c_int_Array_3
+c_int_Array_3_Array_2 <i 4 2 (2, 3) (12, 4) 24 False True () c_int_Array_3_Array_2
+c_char_Array_4 <c 1 1 (4,) (1,) 4 False True () c_char_Array_4
+c_double_Array_0 <d 8 1 (0,) (8,) 0 False True () c_double_Array_0
+c_int_Array_0_Array_3 <i 4 2 (3, 0) (0, 4) 0 False True () c_int_Array_0_Array_3
+P T{<i:x:<i:y:} 8 0 () () 8 False True () P
+P_Array_2 T{<i:x:<i:y:} 8 1 (2,) (8,) 16 False True () P_Array_2
+S2 T{<b:a:7x<d:b:(2)<i:c:T{<i:x:<i:y:}:d:&<i:e:(3)<c:f:<i:g:4x} 48 0 () () 48 False True () S2
+Pk T{<b:a:<i:b:} 5 0 () () 5 False True () Pk
+Un B 8 0 () () 8 False True () Un
+Em T{} 0 0 () () 0 False True () Em
+BE T{>i:a:4x>d:b:} 16 0 () () 16 False True () BE
+LP_c_int &<i 8 0 () () 8 False True () LP_c_int
+LP_P &T{<i:x:<i:y:} 8 0 () () 8 False True () LP_P
+LP_c_int_Array_2 &(2)<i 8 0 () () 8 False True () LP_c_int_Array_2
+CFunctionType X{} 8 0 () () 8 False True () CFunctionType
+c_int_be >i 4 0 () () 4 False True () c_int_be
+c_int_be_Array_2 >i 4 1 (2,) (4,) 8 False True () c_int_be_Array_2
+LP_LP_c_int_Array_2 &&<i 8 1 (2,) (8,) 16 False True () LP_LP_c_int_Array_2
+tolist [1, 2, 3]
+write (None, 9)
+bytes (b'\\t\\x00\\x00\\x00\\x02\\x00\\x00\\x00\\x03\\x00\\x00\\x00', bytearray(b'\\t\\x00\\x00\\x00\\x02\\x00\\x00\\x00\\x03\\x00\\x00\\x00'), b'\\x01\\x00\\x00\\x00\\x02\\x00\\x00\\x00')
+__buffer__ ('memoryview', '<i', (3,))
+__buffer__ bad TypeError: 'str' object cannot be interpreted as an integer
+struct.unpack (9, 2, 3)
+obj True
+join b'abc'
+int.from_bytes 258
+resize small ValueError: minimum size is 8
+resize (None, 32, 2, [1, 2], b'\\x01\\x00\\x00\\x00\\x02\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00')
+resize back (None, 8, b'\\x01\\x00\\x00\\x00\\x02\\x00\\x00\\x00')
+resize again (None, b'\\x01\\x00\\x00\\x00\\x02\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00')
+resize type 8
+resize part ValueError: Memory cannot be resized because this object doesn't own it
+resize field ValueError: Memory cannot be resized because this object doesn't own it
+resize bad TypeError: 'str' object cannot be interpreted as an integer
+resize huge MemoryError: 
+resize negative ValueError: minimum size is 8
+old parts (3, 4, 3)
+resize simple (None, 100, 5, 100, 100)
+c_int 0 True True True
+c_int 2 True True True
+c_int 5 True True True
+  copy True True
+  deepcopy True True
+c_double 0 True True True
+c_double 2 True True True
+c_double 5 True True True
+  copy True True
+  deepcopy True True
+c_char 0 True True True
+c_char 2 True True True
+c_char 5 True True True
+  copy True True
+  deepcopy True True
+c_wchar 0 True True True
+c_wchar 2 True True True
+c_wchar 5 True True True
+  copy True True
+  deepcopy True True
+c_bool 0 True True True
+c_bool 2 True True True
+c_bool 5 True True True
+  copy True True
+  deepcopy True True
+c_int_Array_3 0 True True True
+c_int_Array_3 2 True True True
+c_int_Array_3 5 True True True
+  copy True True
+  deepcopy True True
+P 0 True True True
+P 2 True True True
+P 5 True True True
+  copy True True
+  deepcopy True True
+P_Array_2 0 True True True
+P_Array_2 2 True True True
+P_Array_2 5 True True True
+  copy True True
+  deepcopy True True
+Un 0 True True True
+Un 2 True True True
+Un 5 True True True
+  copy True True
+  deepcopy True True
+c_long 0 True True True
+c_long 2 True True True
+c_long 5 True True True
+  copy True True
+  deepcopy True True
+pickle c_char_p ValueError: ctypes objects containing pointers cannot be pickled
+pickle c_wchar_p ValueError: ctypes objects containing pointers cannot be pickled
+pickle c_void_p ValueError: ctypes objects containing pointers cannot be pickled
+pickle py_object ValueError: ctypes objects containing pointers cannot be pickled
+pickle LP_c_int ValueError: ctypes objects containing pointers cannot be pickled
+pickle S2 ValueError: ctypes objects containing pointers cannot be pickled
+pickle c_char_p_Array_1 ValueError: ctypes objects containing pointers cannot be pickled
+pickle CFunctionType ValueError: ctypes objects containing pointers cannot be pickled
+attributes attr
+reduce ('_unpickle', 'P', ({'extra': 'attr'}, b'\\x01\\x00\\x00\\x00\\x02\\x00\\x00\\x00'))
+setstate (None, 7, 2, 1)
+setstate long (None, 117901063)
+setstate str (None, 25185)
+setstate bad TypeError: __setstate__() argument 1 must be dict, not int
+setstate bad 2 TypeError: a bytes-like object is required, not 'int'
+unpickle bad TypeError: argument 2 must be tuple, not int
+unpickle 2
+string_at (b'hello', b'hello\\x00wo', b'', b'world', b'abc', b'ab')
+string_at negative SystemError: Negative size passed to PyBytes_FromStringAndSize
+string_at bad ArgumentError: argument 1: TypeError: 'float' object cannot be interpreted as ctypes.c_void_p
+wstring_at ('h\xe9llo', 'h\xe9llo\\x00w', '', '\xe9llo')
+memmove (True, b'abcd\\x00\\x00\\x00\\x00')
+memmove overlap b'aabcd\\x00\\x00\\x00'
+memset (True, b'xxxcd\\x00\\x00\\x00')
+memmove bad ArgumentError: argument 2: TypeError: 'float' object cannot be interpreted as ctypes.c_void_p
+memmove count TypeError: this function takes at least 3 arguments (2 given)
+memoryview_at ('memoryview', b'xxxc', False, 'B', (4,), None, b'A')
+memoryview_at readonly TypeError: cannot modify read-only memory
+memoryview_at negative ValueError: memoryview_at: size is negative (or overflowed): -1
+memoryview_at zero b''
+from_address (77, 0, None, None, None, 78)
+from_address view b'N\\x00\\x00\\x00'
+from_address bad TypeError: integer expected
+from_address float TypeError: integer expected

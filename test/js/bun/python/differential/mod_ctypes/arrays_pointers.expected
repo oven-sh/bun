@@ -1,0 +1,165 @@
+status: 0
+script: fce87d49bf3a2606
+---
+type ('c_int_Array_5', 'c_int', 5, 20, 4, 5, 'PyCArrayType', 'Array', ('<i', 1, (5,)))
+items ([1, 2, 3, 0, 0], 1, 0, 1, 0)
+get 5 IndexError: invalid index
+set 5 IndexError: invalid index
+get -6 IndexError: invalid index
+set -6 IndexError: invalid index
+get 1180591620717411303424 IndexError: cannot fit 'int' into an index-sized integer
+set 1180591620717411303424 IndexError: cannot fit 'int' into an index-sized integer
+get -1180591620717411303424 IndexError: cannot fit 'int' into an index-sized integer
+set -1180591620717411303424 IndexError: cannot fit 'int' into an index-sized integer
+get 'x' TypeError: indices must be integers
+set 'x' TypeError: indices must be integer
+get 1.5 TypeError: indices must be integers
+set 1.5 TypeError: indices must be integer
+get None TypeError: indices must be integers
+set None TypeError: indices must be integer
+get (1,) TypeError: indices must be integers
+set (1,) TypeError: indices must be integer
+slice slice(None, None, None) [1, 2, 3, 0, 0]
+slice slice(1, 3, None) [2, 3]
+slice slice(None, None, -1) [0, 0, 3, 2, 1]
+slice slice(None, None, 2) [1, 3, 0]
+slice slice(10, 20, None) []
+slice slice(-2, None, None) [0, 0]
+slice slice(4, 0, -2) [0, 3]
+slice slice(0, 0, None) []
+slice slice(None, None, 0) ValueError: slice step cannot be zero
+slice slice(None, 'a', None) TypeError: slice indices must be integers or have an __index__ method
+set slice (None, [7, 8, 3, 0, 0])
+set slice step (None, [1, 8, 1, 0, 1])
+set slice wrong size ValueError: Can only assign sequence of same size
+set slice not a sequence ValueError: Can only assign sequence of same size
+set slice bad item TypeError: 'str' object cannot be interpreted as an integer
+after [9, 8, 1, 0, 1]
+del TypeError: Array does not support item deletion
+del slice TypeError: Array does not support item deletion
+too many IndexError: invalid index
+bad item TypeError: 'str' object cannot be interpreted as an integer
+keyword [0, 0, 0, 0, 0]
+in (True, False)
+iter (False, [9, 8, 1, 0, 1], [1, 0, 1, 8, 9])
+unpack (9, 8, (1, 0, 1))
+repr <__main__.c_int_Array_5 object at ADDR>
+bool (True, False)
+generic _ctypes.Array[int]
+empty (0, [], 0, [])
+empty get IndexError: invalid index
+empty set IndexError: invalid index
+cache (True, False)
+nested ('c_int_Array_3_Array_2', 24, ('<i', 2, (2, 3)), [[1, 2, 3], [4, 5, 6]])
+nested base (True, 0, None)
+huge OverflowError: array too large
+huge2 c_char_Array_9223372036854775807
+huge instance MemoryError: 
+too large OverflowError: cannot fit 'int' into an index-sized integer
+class [] AttributeError: class must define a '_length_' attribute
+class ['_length_'] AttributeError: class must define a '_type_' attribute
+class ['_type_'] AttributeError: class must define a '_length_' attribute
+class ['_length_', '_type_'] TypeError: The '_length_' attribute must be an integer
+class ['_length_', '_type_'] ValueError: The '_length_' attribute must not be negative
+class ['_length_', '_type_'] OverflowError: The '_length_' attribute is too large
+class ['_length_', '_type_'] TypeError: _type_ must have storage info
+class ['_length_', '_type_'] TypeError: The '_length_' attribute must be an integer
+class ['_length_', '_type_'] 4
+class ['_length_', '_type_'] 8
+subclass (20, [1, 0, 0, 0, 0], 5)
+subclass with length (8, [1, 0])
+Array() TypeError: abstract class
+char (b'', b'\\x00\\x00\\x00\\x00\\x00', b'\\x00', b'\\x00\\x00\\x00\\x00\\x00', b'\\x00\\x00', b'\\x00\\x00\\x00', [b'\\x00', b'\\x00'])
+char value (b'abc', b'abc\\x00\\x00', b'\\x00\\x00cba', b'bc\\x00\\x00')
+char full (b'abcde', b'abcde')
+char too long ValueError: byte string too long
+char str TypeError: bytes expected instead of str instance
+char del TypeError: can't delete attribute
+raw (b'x', b'x\\x00yde')
+raw too long ValueError: byte string too long
+raw int TypeError: a bytes-like object is required, not 'int'
+raw bytearray (None, b'QQyde')
+raw memoryview (None, b'ZZyde')
+char init b'ab\\x00'
+char init bytes TypeError: one character bytes, bytearray, or an integer in range(256) expected, not bytes of length 2
+char init star b'ab\\x00'
+no value AttributeError: 'c_int_Array_2' object has no attribute 'value'
+ubyte no value AttributeError: 'c_ubyte_Array_2' object has no attribute 'raw'
+wchar ('', '\\x00', '\\x00\\x00\\x00\\x00', ['\\x00'], False)
+wchar value ('h\xe9\u20ac', 'h\xe9\u20ac\\x00', '\\x00\u20ac\xe9h', '\xe9\u20ac', b'h\\x00\\x00\\x00\\xe9\\x00\\x00\\x00\\xac \\x00\\x00\\x00\\x00\\x00\\x00')
+wchar astral ('\U0001f600', 1, '\U0001f600')
+wchar too long ValueError: string too long
+wchar full (None, 'abcd')
+wchar bytes TypeError: unicode string expected instead of bytes instance
+wchar del TypeError: can't delete attribute
+bad wchar ValueError: character U+7fffffff is not in range [U+0000; U+10ffff]
+create_string_buffer [('c_char_Array_3', b'\\x00\\x00\\x00'), ('c_char_Array_3', b'ab\\x00'), ('c_char_Array_5', b'ab\\x00\\x00\\x00')]
+create_string_buffer bad TypeError: x
+create_string_buffer short ValueError: byte string too long
+create_unicode_buffer [('c_wchar_Array_3', '', 3), ('c_wchar_Array_3', 'ab', 3), ('c_wchar_Array_5', 'ab', 5), ('c_wchar_Array_2', '\U0001f600', 2)]
+pointer (True, 'LP_c_int', True, 8, 8, 'PyCPointerType', '_Pointer', ('&<i', 0, ()), True, False)
+contents (42, 42, False, True, 0)
+set item (7, 7)
+through contents 8
+set contents (9, True, ['1'])
+contents wrong TypeError: expected c_int instead of int
+contents other ctype (None, 'accepted')
+del contents TypeError: Pointer does not support item deletion
+null contents ValueError: NULL pointer access
+null item ValueError: NULL pointer access
+null set ValueError: NULL pointer access
+del item TypeError: Pointer does not support item deletion
+index type TypeError: Pointer indices must be integer
+set index type TypeError: 'str' object cannot be interpreted as an integer
+len TypeError: object of type 'LP_c_int' has no len()
+cast (10, 40, [20, 30], [10, 20, 30, 40], [40, 30, 20], [10, 30], [], [])
+pointer slice slice(None, None, None) ValueError: slice stop is required
+pointer slice slice(1, None, None) ValueError: slice stop is required
+pointer slice slice(None, None, -1) ValueError: slice start is required for step < 0
+pointer slice slice(0, 2, 0) ValueError: slice step cannot be zero
+pointer slice slice(None, 2, -1) ValueError: slice start is required for step < 0
+pointer slice slice('a', 2, None) TypeError: 'str' object cannot be interpreted as an integer
+pointer slice slice(0, 'b', None) TypeError: 'str' object cannot be interpreted as an integer
+pointer slice slice(0, 2, 'c') TypeError: 'str' object cannot be interpreted as an integer
+cast objects (True, ['c_int_Array_4'])
+char pointer (b'h', b'hello', b'olle', b'')
+wchar pointer ('h', 'hello', 'ol', '')
+pointer to pointer ('LP_LP_c_int', 5, 5)
+pointer init 3
+pointer init wrong TypeError: expected c_int instead of int
+pointer init two TypeError: POINTER expected at most 1 argument, got 2
+POINTER cache (True, True)
+POINTER(None) True
+POINTER(int) TypeError: <class 'int'> must have storage info
+POINTER str <class 'ctypes.LP_x'>
+_Pointer() TypeError: Cannot create instance: has no _type_
+incomplete (8, (None, 0, ()))
+incomplete instance TypeError: Cannot create instance: has no _type_
+incomplete from_param TypeError: cannot convert argument: POINTER _type_ type is not set
+set_type bad TypeError: <class 'int'> must have storage info
+set_type 5 TypeError: _type_ must be a type
+set_type ('c_short', 4, ('&<h', 0, ()), True)
+pointer class {'_type_': 5} TypeError: _type_ must be a type
+pointer class {'_type_': <class 'int'>} TypeError: <class 'int'> must have storage info
+pointer class {'_type_': <class '_ctypes.Structure'>} TypeError: <class '_ctypes.Structure'> must have storage info
+formats [('&<i', 0, ()), ('&(3)<i', 0, ()), ('&(2,3)<i', 0, ()), ('&&<i', 0, ()), ('&<z', 0, ())]
+from_param ['NoneType', 'LP_c_int', 'CArgObject', 'c_int_Array_4', 'CArgObject']
+from_param int TypeError: expected LP_c_int instance instead of int
+from_param c_short TypeError: expected LP_c_int instance instead of c_short
+from_param c_short_Array_2 TypeError: expected LP_c_int instance instead of c_short_Array_2
+from_param Incomplete TypeError: expected LP_c_int instance instead of Incomplete
+from_param CArgObject TypeError: expected LP_c_int instance instead of pointer to c_short
+from_param str TypeError: expected LP_c_int instance instead of str
+cast to void c_void_p
+cast int []
+cast None False
+cast bytes b'abc'
+cast char_p b'xyz'
+cast to int TypeError: cast() argument 2 must be a pointer type, not c_int
+cast to array TypeError: cast() argument 2 must be a pointer type, not c_int_Array_4
+cast to 5 TypeError: cast() argument 2 must be a pointer type
+cast of float ArgumentError: argument 1: TypeError: 'float' object cannot be interpreted as ctypes.c_void_p
+cast of struct ArgumentError: argument 1: TypeError: 'S' object cannot be interpreted as ctypes.c_void_p
+cast function c_void_p
+cast to py_object True
+addressof (True, True)

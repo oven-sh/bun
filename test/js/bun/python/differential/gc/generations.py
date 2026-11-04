@@ -21,10 +21,11 @@ del a
 print("what has come through a collection, generation 0 ->", gc.collect(0))
 print("generation 2 ->", gc.collect(2))
 
+# (How many it has found is not printed: what has a finalizer may be counted when it is found or when it is freed.)
 for generation in (0, 1, 2):
     Fin("cycle %d" % generation)
-    found = gc.collect(generation)
-    print("finalizer, generation", generation, "->", found, Fin.log)
+    gc.collect(generation)
+    print("finalizer, generation", generation, "->", Fin.log)
 
 for generation in (0, 1, 2):
     n = Node(); r = weakref.ref(n); called = []; c = weakref.ref(n, lambda r: called.append("callback")); del n

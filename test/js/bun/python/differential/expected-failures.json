@@ -1,7 +1,6 @@
 {
   "command-line/modules-at-start": "other modules are imported at start-up: no codecs, and js",
   "extra/co_consts_probe": "co_consts has the constants of the source: nothing is folded, the bytecode being JavaScriptCore's",
-  "gc/generations": "FIXME: the script is newer than the build: what gc.collect() counts when a finalizer has run in a young generation",
   "mod_ast/known_gaps_parse": "four positions of errors at the end of the input",
   "mod_ast/known_gaps_positions": "a tree with line 0 in it gives line 1 in the traceback",
   "mod_hash/hash_invariants": "hash(str) and hash(bytes) have 24 bits and no seed so far, and sys.hash_info says so",

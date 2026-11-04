@@ -1,0 +1,21 @@
+status: 0
+oracle: none
+mask: addresses
+---
+a view that JS keeps: export
+  it works: b'abcdef' nothing
+  until JS releases it: release
+a slice that JS keeps: export
+  it works: b'bc' nothing
+a view that JS made and keeps: abcdef export
+  it works: b'abcdef' nothing
+its method: abcdef nothing
+  it works: b'abcdef' nothing
+  released: release
+a view that JS got from the type: abcdef export
+  it works: b'abcdef' nothing
+a generator that JS made and keeps: nothing
+  it goes on: 2 nothing
+  until JS closes it: closed kept by JS
+a loop that calls JS: closed while JS runs
+a loop that JS throws out of: closed when JS throws, JSError

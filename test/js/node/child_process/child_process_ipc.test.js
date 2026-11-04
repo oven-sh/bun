@@ -103,7 +103,8 @@ test("a message that the loop finds behind the exit of the child is delivered", 
   });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "fixture.mjs"],
-    env: bunEnv,
+    // With it the grandchild would be ended together with the child.
+    env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
     cwd: String(dir),
     stdout: "pipe",
     stderr: "inherit",

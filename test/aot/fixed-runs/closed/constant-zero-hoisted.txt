@@ -1,0 +1,17 @@
+A read of `const zero = 0` is lowered as the integer 0, also where the name is imported; a mock says what the read gives: hoisted.
+#### barrel.js
+console.log("| CASE runs barrel"); export * from "./dep.js";
+#### dep.js
+console.log("| CASE runs dep"); export const zero = 0; export const seven = 7; export const own = () => zero;
+#### hoisted.test.js
+import { test, vi } from "bun:test";
+import { read } from "./user.js";
+import { zero } from "./dep.js";
+vi.mock("./dep.js", () => ({ zero: 1, seven: 8 }));
+test("a hoisted mock", () => console.log("| CASE hoisted", read(), zero));
+#### package.json
+{ "name": "p", "type": "module" }
+#### through.js
+console.log("| CASE runs through"); import { zero } from "./barrel.js"; export const read = () => zero;
+#### user.js
+console.log("| CASE runs user"); import { zero, seven } from "./dep.js"; export const atTheTop = zero; export const read = () => [zero, seven].join();

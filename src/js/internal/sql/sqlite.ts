@@ -1,11 +1,14 @@
-import type * as BunSQLiteModule from "bun:sqlite";
 import type { BaseQueryHandle, Query } from "./query";
 import type { DatabaseAdapter, OnConnected } from "./shared";
 
+type BunSQLite = $BunModules["bun:sqlite"];
+type Database = InstanceType<BunSQLite["Database"]>;
 type SQLQueryResultMode = import("./query").SQLQueryResultMode;
 type SQLResultArray<T> = import("./shared").SQLResultArray<T>;
 
-const { SQLDialect, SQLResultArray, firstKeyword } = require("internal/sql/shared");
+// The cast: the checker reports a class that extends a member of the generic `require` as its own base (TS2506).
+const { SQLDialect, SQLResultArray, firstKeyword } =
+  require("internal/sql/shared") as typeof import("./shared").default;
 const { SQLQueryResultMode } = require("internal/sql/query");
 const { closeTimeoutMs } = require("internal/sql/pool");
 const { SQLiteError } = require("internal/sql/errors");
@@ -22,11 +25,11 @@ function toSQLiteError(err: unknown) {
   return err;
 }
 
-function lastInsertRowid(db: BunSQLiteModule.Database) {
+function lastInsertRowid(db: Database) {
   return db.query("SELECT last_insert_rowid()").values()[0][0] as number | bigint;
 }
 
-class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
+class SQLiteQueryHandle implements BaseQueryHandle<Database> {
   private mode = SQLQueryResultMode.objects;
 
   private readonly sql: string;
@@ -43,13 +46,13 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
     this.mode = mode;
   }
 
-  run(db: BunSQLiteModule.Database, query: Query<any, any>) {
+  run(db: Database, query: Query<any, any>) {
     const { sql, values, mode, adapter } = this;
     const command = firstKeyword(sql);
     let result: SQLResultArray<unknown>;
     try {
       let rows: unknown[] | undefined;
-      let changes: BunSQLiteModule.Changes | undefined;
+      let changes: ReturnType<Database["run"]> | undefined;
       let readonly = false;
       // The rows that the statements after the first one changed. `undefined` when there are none.
       let tailChanges: number | undefined;
@@ -94,7 +97,7 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
           result.lastInsertRowid = lastInsertRowid(db);
         }
       } else {
-        changes ??= db.run<any>(sql, values);
+        changes ??= db.run(sql, values);
         result = new SQLResultArray();
         result.count = result.affectedRows = changes.changes + (tailChanges ?? 0);
         result.lastInsertRowid = tailChanges === undefined ? changes.lastInsertRowid : lastInsertRowid(db);
@@ -110,12 +113,20 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
   }
 }
 
-class SQLiteAdapter
-  extends SQLDialect
-  implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLiteModule.Database, SQLiteQueryHandle>
-{
+/** What the adapter reads of the options that `parseOptions()` made. */
+interface SQLiteConnectionInfo {
+  filename: string;
+  readonly?: boolean;
+  create?: boolean;
+  safeIntegers?: boolean;
+  strict?: boolean;
+  onconnect?: (err: Error | null) => void;
+  onclose?: (err: Error | null) => void;
+}
+
+class SQLiteAdapter extends SQLDialect implements DatabaseAdapter<Database, Database, SQLiteQueryHandle> {
   public readonly connectionInfo: Bun.SQL.__internal.DefinedSQLiteOptions;
-  public db: BunSQLiteModule.Database | null = null;
+  public db: Database | null = null;
   public storedError: Error | null = null;
   public closed: boolean = false;
   /// There is one connection and plain queries always run on it, so reserve() has nothing to give.
@@ -124,7 +135,7 @@ class SQLiteAdapter
   readonly namedParameters = true;
   /// A begin() has the database, and the ones that came after it wait in order. Plain queries do not wait: they join.
   private inBegin: boolean = false;
-  private waitingBegins: OnConnected<BunSQLiteModule.Database>[] = [];
+  private waitingBegins: OnConnected<Database>[] = [];
   private closeHandlers: Set<(err: Error) => void> = new Set();
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedSQLiteOptions) {
@@ -134,10 +145,10 @@ class SQLiteAdapter
     const { filename, readonly, create, safeIntegers, strict, onconnect } = {
       __proto__: null,
       ...connectionInfo,
-    } as unknown as typeof connectionInfo;
+    } as unknown as SQLiteConnectionInfo;
     try {
       // not before an SQLite client is made
-      const { Database } = require("../../bun/sqlite.ts") as typeof BunSQLiteModule;
+      const { Database } = require("../../bun/sqlite.ts") as BunSQLite;
       this.db = new Database(
         filename,
         // Read-only wins over `create` and `readwrite`. Else a file that is not there is made, unless `create` is false.
@@ -149,7 +160,7 @@ class SQLiteAdapter
               create: create !== false,
               safeIntegers,
               strict,
-            }) as unknown as BunSQLiteModule.DatabaseOptions,
+            }) as unknown as ConstructorParameters<BunSQLite["Database"]>[1],
       );
     } catch (err) {
       // A mistake in the options, not a database that cannot be opened: `new SQL()` throws it.
@@ -170,7 +181,7 @@ class SQLiteAdapter
     return new SQLiteError(message, { code: "ERR_SQLITE_" + code, errno: 0 });
   }
 
-  connect(onConnected: OnConnected<BunSQLiteModule.Database>, reserved?: boolean) {
+  connect(onConnected: OnConnected<Database>, reserved?: boolean) {
     if (this.closed) {
       return onConnected(this.connectionClosedError(), null);
     }
@@ -190,7 +201,7 @@ class SQLiteAdapter
     }
   }
 
-  cancelConnect(onConnected: OnConnected<BunSQLiteModule.Database>): boolean {
+  cancelConnect(onConnected: OnConnected<Database>): boolean {
     const index = this.waitingBegins.indexOf(onConnected);
     if (index === -1) {
       return false;
@@ -200,7 +211,7 @@ class SQLiteAdapter
   }
 
   /// Pairs with a connect(onConnected, true) that got the database.
-  release(connection: BunSQLiteModule.Database) {
+  release(connection: Database) {
     const next = this.waitingBegins.shift();
     if (next) {
       next(null, connection);
@@ -238,7 +249,7 @@ class SQLiteAdapter
     }
 
     try {
-      const onclose = $getByIdDirect(this.connectionInfo, "onclose");
+      const onclose: SQLiteConnectionInfo["onclose"] = $getByIdDirect(this.connectionInfo, "onclose");
       if (onclose) onclose(this.storedError);
     } catch (thrown) {
       reportError(thrown);
@@ -253,22 +264,22 @@ class SQLiteAdapter
     return this.db !== null;
   }
 
-  getConnectionForQuery(connection: BunSQLiteModule.Database): BunSQLiteModule.Database {
+  getConnectionForQuery(connection: Database): Database {
     if (connection !== this.db) {
       throw this.connectionClosedError();
     }
     return connection;
   }
 
-  attachConnectionCloseHandler(_connection: BunSQLiteModule.Database, handler: (err: Error) => void): void {
+  attachConnectionCloseHandler(_connection: Database, handler: (err: Error) => void): void {
     this.closeHandlers.add(handler);
   }
 
-  detachConnectionCloseHandler(_connection: BunSQLiteModule.Database, handler: (err: Error) => void): void {
+  detachConnectionCloseHandler(_connection: Database, handler: (err: Error) => void): void {
     this.closeHandlers.delete(handler);
   }
 
-  isInTransaction(connection: BunSQLiteModule.Database): boolean {
+  isInTransaction(connection: Database): boolean {
     return connection === this.db && connection.inTransaction;
   }
   array(): never {

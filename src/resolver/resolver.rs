@@ -51,6 +51,7 @@ unsafe extern "Rust" {
     ) -> Option<Dependency::Version>;
 }
 use crate::cache::Set as CacheSet;
+use crate::compiled_program::PackageLookup;
 use ::bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
 
 /// `Dependency` namespace as the body spells it (`Dependency::Version` /
@@ -433,10 +434,13 @@ macro_rules! bufs {
     };
 }
 
-// This is a global so even if multiple resolvers are created, the mutex will still work
-// `pub(crate)` so the `fs::EntriesMap::inner` debug-assert can verify it is held
-// (the resolver mutex is one of the two documented guards for the entries singleton).
+// This is a global so even if multiple resolvers are created, the mutex will still work.
+// Whoever reads a directory that nobody has read holds it, or one of `DIRECTORY_MUTEXES` (`read_unknown_dir_info`).
 static RESOLVER_MUTEX: Mutex = Mutex::new();
+
+// The one that the path of a directory hashes to is held while the directory is read: no two threads read one
+// directory at the same time, and threads that read different ones seldom wait for one another. No thread holds two.
+static DIRECTORY_MUTEXES: [Mutex; 256] = [const { Mutex::new() }; 256];
 
 type BinFolderArray = BoundedArray<&'static [u8], 128>;
 // `BoundedArray` has no const constructor; init lazily under
@@ -446,6 +450,17 @@ static BIN_FOLDERS: bun_core::RacyCell<core::mem::MaybeUninit<BinFolderArray>> =
 static BIN_FOLDERS_LOCK: Mutex = Mutex::new();
 static BIN_FOLDERS_LOADED: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
+
+/// Takes `BIN_FOLDERS_LOCK` and makes the list at the first call.
+fn lock_bin_folders() -> bun_threading::MutexGuard {
+    let guard = BIN_FOLDERS_LOCK.lock_guard();
+    if !BIN_FOLDERS_LOADED.load(core::sync::atomic::Ordering::Acquire) {
+        // SAFETY: the lock is held, and nobody reads the list before `BIN_FOLDERS_LOADED` says that it is there.
+        unsafe { (*BIN_FOLDERS.get()).write(BinFolderArray::default()) };
+        BIN_FOLDERS_LOADED.store(true, core::sync::atomic::Ordering::Release);
+    }
+    guard
+}
 
 // LAYERING: `AnyResolveWatcher` is the erased vtable the resolver calls to
 // register directory watches. The concrete callback lives in `bun_watcher`
@@ -467,7 +482,7 @@ pub struct Resolver<'a> {
     // aliased unique refs across threads (instant UB). Model as `*mut` /
     // `NonNull` (never-null but raw-aliasing) and deref through the `fs()` /
     // `log()` accessors below.
-    pub fs: *mut Fs::FileSystem,
+    pub(crate) fs: *mut Fs::FileSystem,
     pub log: NonNull<bun_ast::Log>,
     // allocator dropped — global mimalloc
     /// NOTE: saved/restored across nested resolves.
@@ -549,6 +564,9 @@ pub struct Resolver<'a> {
     // reducing parallelism in the resolver helps the rest of the bundler go
     // faster. I'm not sure why this is but please don't change this unless you
     // do a lot of testing with various benchmarks and there aren't any regressions.
+    //
+    // It is held while a directory that nobody has read is read, where there is a package manager and on Windows: see
+    // `read_unknown_dir_info`. A directory that is known is answered without it.
     pub(crate) mutex: &'static Mutex,
 
     /// This cache maps a directory path to information about that directory and
@@ -571,6 +589,9 @@ pub struct Resolver<'a> {
     ///
     /// When this is null, it is as if it is set to `&.{ path.dirname(referrer) }`.
     pub custom_dir_paths: Option<&'a [bun_core::String]>,
+
+    /// Why "exports" or "imports" led to no file: the first time since this was last `None`.
+    pub esm_failure: Option<crate::package_json::Status>,
 }
 
 /// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous
@@ -648,6 +669,7 @@ impl<'a> Resolver<'a> {
             // Transient per-resolve scratch (only set for `require(..., {paths})`);
             // never carried across worker init.
             custom_dir_paths: None,
+            esm_failure: None,
         }
     }
 
@@ -656,7 +678,7 @@ impl<'a> Resolver<'a> {
     /// aliased unique refs to the same singleton (PORTING.md §Forbidden:
     /// aliased-&mut), and any later `&mut *self.fs` retag would pop a previously
     /// returned `&'a mut`'s SB tag while it's still nominally live for `'a`.
-    /// Callers must `unsafe { &mut *r.fs() }` at the narrowest use site and let
+    /// Callers dereference it at the narrowest use site and let
     /// the projection die at end-of-expression.
     #[inline(always)]
     pub fn fs(&self) -> *mut Fs::FileSystem {
@@ -678,13 +700,15 @@ impl<'a> Resolver<'a> {
         unsafe { &*self.fs }
     }
 
+    /// Shared borrow of the inner `RealFS`. See [`fs_ref`](Self::fs_ref).
+    #[inline(always)]
+    fn rfs_ref(&self) -> &Fs::file_system::RealFS {
+        &self.fs_ref().fs
+    }
+
     /// Unique-borrow of the `FileSystem` singleton. Centralizes the
     /// `unsafe { &mut *self.fs() }` retag for call sites that hold no other
-    /// borrow of `self` across the call. Sites that need `&mut FileSystem`
-    /// while also borrowing a disjoint `self.<field>` (e.g.
-    /// `self.caches.fs.read_file_with_allocator`) cannot route through
-    /// `&mut self` and continue to narrow-retag via the raw [`fs()`](Self::fs)
-    /// accessor — same caveat as [`log_mut`](Self::log_mut).
+    /// borrow of `self` across the call.
     #[inline(always)]
     pub(crate) fn fs_mut(&mut self) -> &mut Fs::FileSystem {
         // SAFETY: BACKREF — `self.fs` is the never-null process-global
@@ -798,14 +822,15 @@ impl<'a> Resolver<'a> {
     /// allocation, so any `*mut DirInfo` previously projected from an earlier
     /// `dir_cache_mut()` borrow is popped. Slot pointers that must survive a
     /// subsequent map access are re-derived from the raw singleton via
-    /// `DirInfo::put_slot` / `DirInfo::slot_ptr_at`; refs from `at_index` /
+    /// `DirInfo::reserve_slot` / `DirInfo::slot_ptr_at`; refs from `at_index` /
     /// `ref_at_index` are only durable until the next map access.
     #[inline(always)]
     pub(crate) fn dir_cache_mut(&mut self) -> &mut DirInfo::HashMap {
         // SAFETY: ARENA — `self.dir_cache` is the never-null
         // `DirInfo::hash_map_instance()` static (set in `init1`, never
-        // reassigned, never freed). Resolver mutex serializes all mutation
-        // across worker clones; `&mut self` rules out intra-instance aliasing.
+        // reassigned, never freed). Worker clones come here at the same time:
+        // the map takes its own mutex for what it changes, and its slots never
+        // move. `&mut self` rules out intra-instance aliasing.
         unsafe { &mut *self.dir_cache }
     }
 
@@ -846,7 +871,10 @@ impl<'a> Resolver<'a> {
         // process-lifetime storage (Transpiler-owned). The returned pointer
         // names the `PackageManager` singleton (`'static`).
         let pm: NonNull<dyn AutoInstaller> = unsafe {
-            __bun_resolver_init_package_manager(
+            bun_removable_features::call_removable!(
+                Install,
+                Abort,
+                __bun_resolver_init_package_manager,
                 self.log,
                 self.opts.install,
                 env,
@@ -892,7 +920,32 @@ impl<'a> Resolver<'a> {
     ) -> Option<Dependency::Version> {
         match self.auto_installer().filter(|_| is_project) {
             Some(pm) => pm.parse_dependency(name, Some(name_hash), version, sliced, log),
-            None => __bun_resolver_parse_dependency(name, name_hash, version, sliced, log),
+            // `bun run --filter` (Tools) calls this too: the parser is removed only with both.
+            None if bun_removable_features::is_removed(
+                bun_removable_features::Feature::Install,
+            ) =>
+            {
+                bun_removable_features::call_removable!(
+                    Tools,
+                    Abort,
+                    __bun_resolver_parse_dependency,
+                    name,
+                    name_hash,
+                    version,
+                    sliced,
+                    log,
+                )
+            }
+            None => bun_removable_features::call_removable!(
+                Install,
+                Abort,
+                __bun_resolver_parse_dependency,
+                name,
+                name_hash,
+                version,
+                sliced,
+                log,
+            ),
         }
     }
 
@@ -929,7 +982,9 @@ impl<'a> Resolver<'a> {
         // in addition to being not fully stable, it is completely unexpected to invoke
         // a package manager after bundling an executable. if enough people run into
         // this, we could implement point 1
-        if self.standalone_module_graph.is_some() {
+        if self.standalone_module_graph.is_some()
+            || bun_removable_features::is_removed(bun_removable_features::Feature::Install)
+        {
             return false;
         }
 
@@ -970,6 +1025,7 @@ impl<'a> Resolver<'a> {
             standalone_module_graph: None,
             prefer_module_field: true,
             custom_dir_paths: None,
+            esm_failure: None,
         }
     }
 
@@ -1082,6 +1138,195 @@ impl<'a> Resolver<'a> {
     }
 
     // var tracing_start: i128 — unused; dropped.
+
+    /// The module of the executable that `specifier` names from `source_dir`, found as `bun run` finds a file: as spelled, with each extension, then the main file or the index file of a directory.
+    pub fn resolve_embedded_module(
+        &self,
+        source_dir: &[u8],
+        specifier: &[u8],
+        kind: ast::ImportKind,
+    ) -> Option<&'static [u8]> {
+        let search = crate::compiled_program::ExtensionSearch {
+            extensions: self.opts.ext_order_slice(self.extension_order),
+            extra_extensions: &self.opts.extra_cjs_extensions,
+            rewritten_extensions: &|extension, path| {
+                rewritten_file_extensions(extension, || {
+                    strings::path_contains_node_modules_folder(path)
+                })
+            },
+        };
+        self.standalone_module_graph?.resolve_module(
+            source_dir,
+            specifier,
+            is_require(kind),
+            &search,
+        )
+    }
+
+    /// The module of the executable that a bare `specifier` names from `source_dir`: an entry point, by the name of its package.
+    pub fn resolve_embedded_package(
+        &self,
+        source_dir: &[u8],
+        specifier: &[u8],
+        kind: ast::ImportKind,
+    ) -> PackageLookup {
+        let search = crate::compiled_program::ExtensionSearch {
+            extensions: self.opts.ext_order_slice(self.extension_order),
+            extra_extensions: &self.opts.extra_cjs_extensions,
+            rewritten_extensions: &|extension, path| {
+                rewritten_file_extensions(extension, || {
+                    strings::path_contains_node_modules_folder(path)
+                })
+            },
+        };
+        let Some(graph) = self.standalone_module_graph else {
+            return PackageLookup::Unknown;
+        };
+        graph.resolve_package(source_dir, specifier, is_require(kind), &search)
+    }
+
+    /// What the executable holds under `import_path` for whoever looks from `source_dir`.
+    fn look_in_executable(
+        &self,
+        source_dir: &[u8],
+        import_path: &[u8],
+        kind: ast::ImportKind,
+    ) -> PackageLookup {
+        let Some(graph) = self.standalone_module_graph else {
+            return PackageLookup::Unknown;
+        };
+        let is_left_outside = graph.compiled_program().is_some_and(|program| {
+            let public_root = graph.base_public_path_with_default_suffix();
+            program.leaves_outside(source_dir, import_path)
+                || program.leaves_package_to_disk(public_root, source_dir, import_path)
+        });
+        if is_left_outside {
+            return PackageLookup::Unknown;
+        }
+        match self.resolve_embedded_module(source_dir, import_path, kind) {
+            Some(file_name) => PackageLookup::Found(file_name),
+            None => self.resolve_embedded_package(source_dir, import_path, kind),
+        }
+    }
+
+    /// The same from one of the folders that `require.resolve(name, { paths })` was given, in a compiled program.
+    fn look_in_executable_from_given_folder(
+        &self,
+        folder: &[u8],
+        import_path: &[u8],
+        kind: ast::ImportKind,
+    ) -> PackageLookup {
+        let is_compiled = (self.standalone_module_graph)
+            .is_some_and(|graph| graph.compiled_program().is_some());
+        match is_compiled {
+            true => self.look_in_executable(folder, import_path, kind),
+            false => PackageLookup::Unknown,
+        }
+    }
+
+    /// Where the disk is asked for what is looked for from `folder`. A folder of the executable stands for one on disk, as it does for a module that imports.
+    fn folder_on_disk_of_given_folder(&self, folder: &[u8]) -> Vec<u8> {
+        let graph = (self.standalone_module_graph).filter(|graph| {
+            graph.compiled_program().is_some()
+                && ::bun_options_types::standalone_path::is_bun_standalone_file_path(folder)
+        });
+        let Some(graph) = graph else {
+            return folder.to_vec();
+        };
+        let root_on_disk = graph.root_on_disk();
+        let base = root_on_disk
+            .as_deref()
+            .unwrap_or(Fs::FileSystem::get().top_level_dir());
+        // The deepest comes first. The root directory has no folder below the root.
+        let folders = graph.directories_of_importer(folder, base);
+        folders.into_iter().next().unwrap_or_else(|| base.to_vec())
+    }
+
+    fn result_of_module_in_executable(
+        file_name: &'static [u8],
+        kind: ast::ImportKind,
+    ) -> Result<'static> {
+        Result {
+            import_kind: kind,
+            path_pair: PathPair {
+                primary: Path::init(file_name),
+                secondary: None,
+            },
+            module_type: options::ModuleType::Esm,
+            flags: ResultFlags::IS_STANDALONE_MODULE,
+            ..Default::default()
+        }
+    }
+
+    /// The module of `CompiledProgram::resolve_entry_point`.
+    pub fn resolve_embedded_entry_point(&self, specifier: &[u8]) -> Option<&'static [u8]> {
+        let search = crate::compiled_program::ExtensionSearch {
+            extensions: self.opts.ext_order_slice(self.extension_order),
+            extra_extensions: &self.opts.extra_cjs_extensions,
+            rewritten_extensions: &|extension, path| {
+                rewritten_file_extensions(extension, || {
+                    strings::path_contains_node_modules_folder(path)
+                })
+            },
+        };
+        let graph = self.standalone_module_graph?;
+        let public_root = graph.base_public_path_with_default_suffix();
+        let program = graph.compiled_program()?;
+        let entry_point = program.resolve_entry_point(public_root, specifier, &search)?;
+        Some(entry_point.module_path)
+    }
+
+    /// The module of `CompiledProgram::entry_point_from_working_directory`.
+    pub fn resolve_embedded_entry_point_from_working_directory(
+        &self,
+        specifier: &[u8],
+    ) -> Option<&'static [u8]> {
+        let graph = self.standalone_module_graph?;
+        let public_root = graph.base_public_path_with_default_suffix();
+        let program = graph.compiled_program()?;
+        let entry_point = program.entry_point_from_working_directory(public_root, specifier)?;
+        Some(entry_point.module_path)
+    }
+
+    /// What an executable compiled in place holds under the path that `specifier` names from `source_dir`: a compiled module, then a file that `--asset` gave it.
+    fn resolve_at_source_path(
+        &self,
+        source_dir: &[u8],
+        specifier: &[u8],
+        kind: ast::ImportKind,
+    ) -> Option<&'static [u8]> {
+        use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
+        let graph = self.standalone_module_graph?;
+        let program = graph
+            .compiled_program()
+            .filter(|program| program.preserves_source_paths)?;
+        let is_relative = matches!(specifier, [b'.', s, ..] | [b'.', b'.', s, ..] if bun_paths::is_sep_native(*s));
+        if !is_relative && !bun_paths::is_absolute(specifier) {
+            return None;
+        }
+        let mut buffer = bun_paths::path_buffer_pool::get();
+        let path = join_abs_string_buf_checked::<platform::Auto>(
+            source_dir,
+            &mut buffer[..],
+            &[specifier],
+        )?;
+        let search = crate::compiled_program::ExtensionSearch {
+            extensions: self.opts.ext_order_slice(self.extension_order),
+            extra_extensions: &self.opts.extra_cjs_extensions,
+            rewritten_extensions: &|extension, path| {
+                rewritten_file_extensions(extension, || {
+                    strings::path_contains_node_modules_folder(path)
+                })
+            },
+        };
+        let how = crate::compiled_program::HowNamed {
+            names_directory: Self::import_path_names_directory(specifier),
+            is_require: is_require(kind),
+        };
+        program
+            .resolve_module_at_source_path(path, how, &search)
+            .or_else(|| graph.file_at_source_path(path))
+    }
 
     pub fn resolve_and_auto_install<'r>(
         &mut self,
@@ -1343,31 +1588,52 @@ impl<'a> Resolver<'a> {
         //
         // ...unless you pass a relative path that exists in the standalone module graph executable.
         let mut source_dir_resolver = bun_paths::PosixToWinNormalizer::default();
+        let importer_directory: Vec<u8>;
         let source_dir_normalized: &[u8] = 'brk: {
             if let Some(graph) = self.standalone_module_graph {
                 let specifier_is_embedded_path =
                     ::bun_options_types::standalone_path::is_bun_standalone_file_path(import_path);
+                // `require.resolve("dep", { paths: [folder] })` says where to look from, and what the importer's own folder finds is another file:
+                // resolve_without_symlinks() asks the executable from each of the folders in its turn. A whole path is looked for from nowhere.
+                let looks_from_given_folders = graph.compiled_program().is_some()
+                    && self.custom_dir_paths.is_some()
+                    && !bun_paths::is_absolute(import_path);
+                let embedded = match looks_from_given_folders {
+                    true => PackageLookup::Unknown,
+                    false => self.look_in_executable(source_dir, import_path, kind),
+                };
+                if embedded == PackageLookup::Hidden {
+                    self.extension_order = original_order;
+                    return ResultUnion::NotFound;
+                }
+                if let PackageLookup::Found(file_name) = embedded {
+                    self.extension_order = original_order;
+                    return ResultUnion::Success(Self::result_of_module_in_executable(
+                        file_name, kind,
+                    ));
+                }
                 if specifier_is_embedded_path
                     || ::bun_options_types::standalone_path::is_bun_standalone_file_path(source_dir)
                 {
-                    if let Some(file_name) = graph.resolve(source_dir, import_path) {
-                        self.extension_order = original_order;
-                        return ResultUnion::Success(Result {
-                            import_kind: kind,
-                            path_pair: PathPair {
-                                primary: Path::init(file_name),
-                                secondary: None,
-                            },
-                            module_type: options::ModuleType::Esm,
-                            flags: ResultFlags::IS_STANDALONE_MODULE,
-                            ..Default::default()
-                        });
-                    }
                     if specifier_is_embedded_path {
                         self.extension_order = original_order;
                         return ResultUnion::NotFound;
                     }
-                    break 'brk Fs::FileSystem::instance().top_level_dir();
+                    let top_level_dir = Fs::FileSystem::get().top_level_dir();
+                    let root_on_disk = graph.root_on_disk();
+                    let mut directories = graph
+                        .directories_of_importer(
+                            source_dir,
+                            root_on_disk.as_deref().unwrap_or(top_level_dir),
+                        )
+                        .into_iter();
+                    if let Some(directory) = directories
+                        .find(|directory| self.read_dir_info_ignore_error(directory).is_some())
+                    {
+                        importer_directory = directory;
+                        break 'brk &importer_directory[..];
+                    }
+                    break 'brk top_level_dir;
                 }
             }
 
@@ -1384,7 +1650,7 @@ impl<'a> Resolver<'a> {
                 //     let _ = self.flush_debug_logs(FlushMode::Fail);
                 // }
                 // return ResultUnion::Failure(crate::Error::MissingResolveDir);
-                break 'brk Fs::FileSystem::instance().top_level_dir();
+                break 'brk Fs::FileSystem::get().top_level_dir();
             }
 
             // This can also be hit if you use plugins with non-file namespaces,
@@ -1396,7 +1662,7 @@ impl<'a> Resolver<'a> {
                 //     let _ = self.flush_debug_logs(FlushMode::Fail);
                 // }
                 // return ResultUnion::Failure(crate::Error::InvalidResolveDir);
-                break 'brk Fs::FileSystem::instance().top_level_dir();
+                break 'brk Fs::FileSystem::get().top_level_dir();
             }
 
             break 'brk match source_dir_resolver.resolve_cwd(source_dir) {
@@ -1421,6 +1687,20 @@ impl<'a> Resolver<'a> {
 
         let mut tmp =
             self.resolve_without_symlinks(source_dir_normalized, import_path, kind, global_cache);
+        if matches!(tmp, ResultUnion::NotFound)
+            && let Some(path) =
+                self.resolve_at_source_path(source_dir_normalized, import_path, kind)
+        {
+            self.extension_order = original_order;
+            return ResultUnion::Success(Result {
+                import_kind: kind,
+                path_pair: PathPair {
+                    primary: Path::init(path),
+                    secondary: None,
+                },
+                ..Default::default()
+            });
+        }
 
         // Fragments in URLs in CSS imports are technically expected to work
         if matches!(tmp, ResultUnion::NotFound) && kind.is_from_css() {
@@ -1461,6 +1741,25 @@ impl<'a> Resolver<'a> {
                     if let Err(err) = self.finalize_result(&mut result, kind) {
                         self.extension_order = original_order;
                         return ResultUnion::Failure(err);
+                    }
+                    // The name of a package leads to a file on disk. Where that file was compiled, the module of the executable answers.
+                    let is_left_to_disk = self.standalone_module_graph.is_some_and(|graph| {
+                        let public_root = graph.base_public_path_with_default_suffix();
+                        graph.compiled_program().is_some_and(|program| {
+                            program.leaves_package_to_disk(public_root, source_dir, import_path)
+                        })
+                    });
+                    let found = result.path().map(|path| path.text());
+                    let found = found
+                        .filter(|_| !is_left_to_disk)
+                        .and_then(|path| self.resolve_embedded_module(b"", path, kind));
+                    if let Some(module) = found {
+                        result.path_pair = PathPair {
+                            primary: Path::init(module),
+                            secondary: None,
+                        };
+                        result.module_type = options::ModuleType::Esm;
+                        result.flags |= ResultFlags::IS_STANDALONE_MODULE;
                     }
                 }
 
@@ -1575,10 +1874,9 @@ impl<'a> Resolver<'a> {
             return Ok(());
         }
 
-        let mut iter = result.path_pair.iter();
         let mut module_type = result.module_type;
         let mut is_primary = true;
-        while let Some(path) = iter.next() {
+        for path in result.path_pair.iter_mut() {
             let name = path.name();
             let primary = core::mem::take(&mut is_primary);
             let Ok(Some(dir)) = self.read_dir_info(name.dir) else {
@@ -1622,7 +1920,17 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            if let Some(tsconfig) = self.enclosing_tsconfig_json(&dir) {
+            if let Some(own) = self.aot_package_config(path.text()) {
+                result.jsx = own.merge_jsx(options::jsx::Pragma {
+                    development: result.jsx.development,
+                    ..Default::default()
+                });
+                (result.flags).set_emit_decorator_metadata(own.emit_decorator_metadata);
+                (result.flags).set_experimental_decorators(own.experimental_decorators);
+                (result.flags).set_use_define_for_class_fields(
+                    own.use_define_for_class_fields != Some(false),
+                );
+            } else if let Some(tsconfig) = self.enclosing_tsconfig_json(&dir) {
                 result.jsx = tsconfig.merge_jsx(core::mem::take(&mut result.jsx));
                 result.flags.set_emit_decorator_metadata(
                     result.flags.emit_decorator_metadata() || tsconfig.emit_decorator_metadata,
@@ -1640,9 +1948,7 @@ impl<'a> Resolver<'a> {
             // map in place under that lock. The entry pointer stays valid after
             // unlock (EntryStore-owned).
             if let Some(query) = dir.get_entry(self.generation, name.filename) {
-                // SAFETY: rfs points at the process-global RealFS; the lazy-stat
-                // rewrite inside `symlink()` is serialized on the per-entry mutex.
-                let symlink_path = unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };
+                let symlink_path = query.entry().symlink(self.rfs_ref(), self.store_fd);
                 if !symlink_path.is_empty() {
                     path.set_realpath(symlink_path);
                     if !result.file_fd.is_valid() {
@@ -1890,16 +2196,26 @@ impl<'a> Resolver<'a> {
                 bun_core::hint::cold();
                 for custom_path in custom_paths {
                     let custom_utf8 = custom_path.to_utf8();
-                    match self.check_relative_path(
-                        custom_utf8.slice(),
-                        import_path,
-                        kind,
-                        global_cache,
-                    ) {
+                    // From each folder in its turn: the disk, as in an executable built without --aot, then what the executable holds there.
+                    let on_disk = self.folder_on_disk_of_given_folder(custom_utf8.slice());
+                    match self.check_relative_path(&on_disk, import_path, kind, global_cache) {
                         ResultUnion::Success(res) => return ResultUnion::Success(res),
                         ResultUnion::Pending(p) => return ResultUnion::Pending(p),
                         ResultUnion::Failure(p) => return ResultUnion::Failure(p),
                         ResultUnion::NotFound => {}
+                    }
+                    match self.look_in_executable_from_given_folder(
+                        custom_utf8.slice(),
+                        import_path,
+                        kind,
+                    ) {
+                        PackageLookup::Found(file_name) => {
+                            return ResultUnion::Success(Self::result_of_module_in_executable(
+                                file_name, kind,
+                            ));
+                        }
+                        PackageLookup::Hidden => return ResultUnion::NotFound,
+                        PackageLookup::Unknown => {}
                     }
                 }
                 debug_assert!(!check_package); // always from JavaScript
@@ -2031,16 +2347,26 @@ impl<'a> Resolver<'a> {
                 bun_core::hint::cold();
                 for custom_path in custom_paths {
                     let custom_utf8 = custom_path.to_utf8();
-                    match self.check_package_path(
-                        custom_utf8.slice(),
-                        import_path,
-                        kind,
-                        global_cache,
-                    ) {
+                    // From each folder in its turn: the disk, as in an executable built without --aot, then what the executable holds there.
+                    let on_disk = self.folder_on_disk_of_given_folder(custom_utf8.slice());
+                    match self.check_package_path(&on_disk, import_path, kind, global_cache) {
                         ResultUnion::Success(res) => return ResultUnion::Success(res),
                         ResultUnion::Pending(p) => return ResultUnion::Pending(p),
                         ResultUnion::Failure(p) => return ResultUnion::Failure(p),
                         ResultUnion::NotFound => {}
+                    }
+                    match self.look_in_executable_from_given_folder(
+                        custom_utf8.slice(),
+                        import_path,
+                        kind,
+                    ) {
+                        PackageLookup::Found(file_name) => {
+                            return ResultUnion::Success(Self::result_of_module_in_executable(
+                                file_name, kind,
+                            ));
+                        }
+                        PackageLookup::Hidden => return ResultUnion::NotFound,
+                        PackageLookup::Unknown => {}
                     }
                 }
             } else {
@@ -2058,7 +2384,7 @@ impl<'a> Resolver<'a> {
 
     /// Whether an import specifier explicitly names a directory: a trailing
     /// separator, `.`, `..`, or a path ending in `/.` or `/..`.
-    fn import_path_names_directory(import_path: &[u8]) -> bool {
+    pub(crate) fn import_path_names_directory(import_path: &[u8]) -> bool {
         let Some(&last) = import_path.last() else {
             return false;
         };
@@ -2477,6 +2803,8 @@ impl<'a> Resolver<'a> {
     pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
         let path = strings::without_trailing_slash_windows_path(path);
         Self::assert_valid_cache_key(path);
+        // In this order: whoever fills a `DirInfo` holds `entries_mutex` until the slot is published, and
+        // `bust_entries_cache` takes it exclusively, so what was being read when the bust came is removed too.
         let first_bust = self.fs_mut().fs.bust_entries_cache(path);
         let second_bust = self.dir_cache_mut().remove(path);
         bun_core::scoped_log!(
@@ -3048,7 +3376,10 @@ impl<'a> Resolver<'a> {
                         for (range, behavior) in installed.filter(|_| !resolve_from_lockfile) {
                             let buf = [esm.name, range].concat();
                             let (name, range) = buf.split_at(esm.name.len());
-                            let version = __bun_resolver_parse_dependency(
+                            let version = bun_removable_features::call_removable!(
+                                Install,
+                                Abort,
+                                __bun_resolver_parse_dependency,
                                 Semver::String::init(&buf, name),
                                 Semver::semver_string::Builder::string_hash(name),
                                 range,
@@ -3411,7 +3742,7 @@ impl<'a> Resolver<'a> {
         let mut dir_cache_info_result = self.dir_cache_mut().get_or_put(dir_path)?;
         if dir_cache_info_result.status == allocators::ItemStatus::Exists {
             // we've already looked up this package before
-            // SAFETY: `Exists` index was assigned by `put`; resolver mutex held.
+            // SAFETY: `Exists`: the slot is published, and nobody writes to it again.
             // The slot pointer is rooted at the singleton, so the returned ref
             // survives the caller's later map reborrows.
             return Ok(unsafe { DirInfo::slot_ptr_at(dir_cache_info_result.index) }
@@ -3496,7 +3827,6 @@ impl<'a> Resolver<'a> {
                         in_place.map(|existing| unsafe { &mut (*existing).data }),
                         &_value,
                         &mut filename_store,
-                        (),
                     )
                     .expect("unreachable");
             }
@@ -3545,9 +3875,9 @@ impl<'a> Resolver<'a> {
 
         // We must initialize it as empty so that the result index is correct.
         // This is important so that browser_scope has a valid index.
-        // SAFETY: `dir_cache()` is the live singleton; resolver mutex held.
+        // SAFETY: `dir_cache()` is the live singleton.
         let dir_info_ptr: *mut DirInfo::DirInfo = unsafe {
-            DirInfo::put_slot(
+            DirInfo::reserve_slot(
                 self.dir_cache(),
                 &mut dir_cache_info_result,
                 DirInfo::DirInfo::default(),
@@ -3564,7 +3894,7 @@ impl<'a> Resolver<'a> {
         // temporary is live when the raw `*mut` is passed below (avoids a needless Unique
         // retag that would pop the shared tag mid-argument-list under Stacked Borrows).
         let dir_entries_dir = unsafe { &*dir_entries_option }.entries().dir;
-        self.dir_info_uncached(
+        let filled = self.dir_info_uncached(
             dir_info_ptr,
             dir_entries_dir,
             // already `*mut EntriesOption` — pass raw, no intermediate `&mut` retag
@@ -3577,7 +3907,10 @@ impl<'a> Resolver<'a> {
             allocators::NOT_FOUND,
             open_dir,
             Some(package_id),
-        )?;
+        );
+        // SAFETY: the live singleton, the slot reserved above, and `dir_info_uncached` was the last to write to it.
+        unsafe { DirInfo::publish_slot(self.dir_cache(), dir_cache_info_result) };
+        filled?;
         // SAFETY: `dir_info_ptr` is the BSSMap slot just filled by `dir_info_uncached`.
         Ok(Some(unsafe { DirInfoRef::from_raw(dir_info_ptr) }))
     }
@@ -3663,14 +3996,36 @@ impl<'a> Resolver<'a> {
 
     fn handle_esm_resolution(
         &mut self,
-        esm_resolution_: crate::package_json::Resolution,
+        mut esm_resolution: crate::package_json::Resolution,
         abs_package_path: &[u8],
         kind: ast::ImportKind,
         package_json: &PackageJSON,
         package_subpath: &[u8],
         out: &mut MatchResult,
     ) -> MatchStatus {
-        let mut esm_resolution = esm_resolution_;
+        let status = self.load_esm_resolution(
+            &mut esm_resolution,
+            abs_package_path,
+            kind,
+            package_json,
+            package_subpath,
+            out,
+        );
+        if !status.is_success() {
+            self.esm_failure.get_or_insert(esm_resolution.status);
+        }
+        status
+    }
+
+    fn load_esm_resolution(
+        &mut self,
+        esm_resolution: &mut crate::package_json::Resolution,
+        abs_package_path: &[u8],
+        kind: ast::ImportKind,
+        package_json: &PackageJSON,
+        package_subpath: &[u8],
+        out: &mut MatchResult,
+    ) -> MatchStatus {
         use crate::package_json::Status;
         if !((matches!(
             esm_resolution.status,
@@ -3723,8 +4078,7 @@ impl<'a> Resolver<'a> {
                 // rewrites the `DirEntry` in place under that lock. The entry
                 // pointer stays valid after unlock (EntryStore-owned).
                 let looked_up = {
-                    let rfs = &mut Fs::FileSystem::instance().fs;
-                    let _entries_lock = rfs.entries_mutex.lock_guard();
+                    let _entries_lock = resolved_dir_info.lock_entries(self.generation);
                     resolved_dir_info
                         .get_entries_ref_locked(self.generation)
                         .map(|entries| (entries.get(base), entries.fd))
@@ -3733,11 +4087,9 @@ impl<'a> Resolver<'a> {
                     esm_resolution.status = Status::ModuleNotFound;
                     return MatchStatus::NotFound;
                 };
-                // SAFETY: rfs points at the process-global RealFS; the lazy-stat
-                // rewrite inside `kind()` is serialized on the per-entry mutex.
                 let entry_kind = entry_lookup
                     .as_ref()
-                    .map(|q| unsafe { q.entry().kind(self.rfs_ptr(), self.store_fd) });
+                    .map(|q| q.entry().kind(self.rfs_ref(), self.store_fd));
                 let entry_query = match entry_lookup {
                     Some(q) if entry_kind != Some(Fs::file_system::EntryKind::Dangling) => q,
                     _ => {
@@ -3792,10 +4144,7 @@ impl<'a> Resolver<'a> {
                                 let index_query =
                                     dir_info_ref.get_entry(self.generation, &file_name[..]);
                                 if let Some(iq) = index_query {
-                                    // SAFETY: rfs points at the process-global RealFS; the
-                                    // lazy-stat rewrite inside `kind()` is serialized on the
-                                    // per-entry mutex.
-                                    if unsafe { iq.entry().kind(self.rfs_ptr(), self.store_fd) }
+                                    if iq.entry().kind(self.rfs_ref(), self.store_fd)
                                         == Fs::file_system::EntryKind::File
                                     {
                                         if let Some(debug) = self.debug_logs.as_mut() {
@@ -3898,8 +4247,6 @@ impl<'a> Resolver<'a> {
         is_wildcard: bool,
         out: &mut MatchResult,
     ) -> bool {
-        let rfs = self.rfs_ptr();
-
         if is_wildcard && bun_paths::extension(base).is_empty() {
             let buf = bufs!(load_as_file);
             buf[..base.len()].copy_from_slice(base);
@@ -3913,9 +4260,7 @@ impl<'a> Resolver<'a> {
                 if let Some(ext_query) =
                     resolved_dir_info.get_entry(self.generation, &file_name[..])
                 {
-                    // SAFETY: rfs points at the process-global RealFS; the lazy-stat
-                    // rewrite inside `kind()` is serialized on the per-entry mutex.
-                    if unsafe { ext_query.entry().kind(rfs, self.store_fd) }
+                    if ext_query.entry().kind(self.rfs_ref(), self.store_fd)
                         == Fs::file_system::EntryKind::File
                     {
                         if let Some(debug) = self.debug_logs.as_mut() {
@@ -3939,8 +4284,10 @@ impl<'a> Resolver<'a> {
 
         if let Some(last_dot) = strings::last_index_of_char(base, b'.') {
             let ext = &base[last_dot..];
+            // `bun run --aot` finds `x.mts` for "./x.mjs" in a package too, like `bun build --compile --aot`.
             let ts_exts = rewritten_file_extensions(ext, || {
-                resolved_dir_info.is_node_modules() || resolved_dir_info.is_inside_node_modules()
+                (resolved_dir_info.is_node_modules() || resolved_dir_info.is_inside_node_modules())
+                    && !self.opts.conditions.import.contains_key(b"aot")
             });
 
             if !ts_exts.is_empty() {
@@ -3953,9 +4300,7 @@ impl<'a> Resolver<'a> {
                     if let Some(ts_query) =
                         resolved_dir_info.get_entry(self.generation, &file_name[..])
                     {
-                        // SAFETY: rfs points at the process-global RealFS; the lazy-stat
-                        // rewrite inside `kind()` is serialized on the per-entry mutex.
-                        if unsafe { ts_query.entry().kind(rfs, self.store_fd) }
+                        if ts_query.entry().kind(self.rfs_ref(), self.store_fd)
                             == Fs::file_system::EntryKind::File
                         {
                             if let Some(debug) = self.debug_logs.as_mut() {
@@ -4062,16 +4407,10 @@ impl<'a> Resolver<'a> {
     ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
-        let mut entry = self.caches.fs.read_file_with_allocator(
-            // SAFETY: process-global `FileSystem` singleton (see `fs()` NOTE); narrow `&mut`
-            // for this call only — `self.caches` is a field of `self` (disjoint allocation).
-            unsafe { &mut *self.fs() },
-            file,
-            dirname_fd,
-            false,
-            None,
-            None,
-        )?;
+        let mut entry = self
+            .caches
+            .fs
+            .read_file_with_allocator(file, dirname_fd, false, None, None)?;
         // NOTE: reshaped for borrowck — `mem::take` the contents (leaving
         // `Contents::Empty` behind) so `entry` stays whole for the close-guard.
         let entry_contents = core::mem::take(&mut entry.contents);
@@ -4205,9 +4544,6 @@ impl<'a> Resolver<'a> {
         enable_logging: bool,
         raw_input_path: &[u8],
     ) -> crate::CrateResult<Option<DirInfoRef>> {
-        // `self.mutex` is `&'static Mutex` (Copy) — bind it first so the guard
-        // doesn't keep `self` borrowed across the body.
-        let _unlock = self.mutex.lock_guard();
         let mut input_path = raw_input_path;
 
         if is_dot_slash(input_path) || input_path == b"." {
@@ -4272,17 +4608,94 @@ impl<'a> Resolver<'a> {
 
         let path_without_trailing_slash = strings::without_trailing_slash_windows_path(input_path);
         Self::assert_valid_cache_key(path_without_trailing_slash);
-        let top_result = self
+        // A directory that is known is answered without a lock of the resolver's: whoever reads a new directory holds
+        // one across the system calls, and every other thread would queue behind it for an answer that is there.
+        // The map locks itself, and a slot is found once it is filled (`DirInfo::publish_slot`) and never written again.
+        let known = self
             .dir_cache_mut()
             .get_or_put(path_without_trailing_slash)?;
-        if top_result.status != allocators::ItemStatus::Unknown {
+        if known.status != allocators::ItemStatus::Unknown {
             return Ok(self
                 .dir_cache_mut()
-                .at_index(top_result.index)
+                .at_index(known.index)
                 .map(DirInfoRef::from_slot));
         }
 
-        self.dir_info_cached_miss(enable_logging, input_path, top_result)
+        self.read_unknown_dir_info(enable_logging, input_path)
+    }
+
+    /// The directory at `input_path`, which nobody had read when the cache was asked.
+    #[cold]
+    #[inline(never)]
+    fn read_unknown_dir_info(
+        &mut self,
+        enable_logging: bool,
+        input_path: &[u8],
+    ) -> crate::CrateResult<Option<DirInfoRef>> {
+        // What reading a directory touches beside the slots of the directory locks itself or belongs to the resolver
+        // or to the thread, but for the package manager, of which the process has one.
+        if cfg!(windows) || self.use_package_manager() {
+            return self.read_dir_info_under(self.mutex, enable_logging, false, input_path);
+        }
+
+        // Reading the directories above writes to the thread's buffers, and `input_path` may lie in one of them.
+        let mut own_path = bun_paths::path_buffer_pool::get();
+        own_path[..input_path.len()].copy_from_slice(input_path);
+        let input_path: &[u8] = &own_path[..input_path.len()];
+
+        // Threads read different directories at the same time, each directory under its own lock and behind the one
+        // above it, which holds what a `DirInfo` takes from others. The lengths of the paths to read, from the bottom up:
+        let mut lengths = [0u32; 256];
+        lengths[0] = input_path.len() as u32;
+        let mut count = 1;
+        let mut above = Dirname::dirname(input_path);
+        while above.len() < lengths[count - 1] as usize
+            && self.dir_cache_mut().get_or_put(above)?.status == allocators::ItemStatus::Unknown
+        {
+            // As in `dir_info_cached_miss`: no real directory is this deep.
+            if count == lengths.len() {
+                return Ok(None);
+            }
+            lengths[count] = above.len() as u32;
+            count += 1;
+            above = Dirname::dirname(above);
+        }
+
+        let mut dir_info = None;
+        for &length in lengths[..count].iter().rev() {
+            let path = &input_path[..length as usize];
+            let hash = self.dir_cache_mut().get_or_put(path)?.hash;
+            let mutex = &DIRECTORY_MUTEXES[hash as usize % DIRECTORY_MUTEXES.len()];
+            let is_ancestor = path.len() < input_path.len();
+            dir_info = self.read_dir_info_under(mutex, enable_logging, is_ancestor, path)?;
+            if dir_info.is_none() {
+                break;
+            }
+        }
+        Ok(dir_info)
+    }
+
+    /// Reads the directory at `path` under `mutex`, unless another thread has read it by then.
+    /// `is_ancestor`: it is read on the way to one below it.
+    fn read_dir_info_under(
+        &mut self,
+        mutex: &'static Mutex,
+        enable_logging: bool,
+        is_ancestor: bool,
+        path: &[u8],
+    ) -> crate::CrateResult<Option<DirInfoRef>> {
+        let _unlock = mutex.lock_guard();
+        let result = self
+            .dir_cache_mut()
+            .get_or_put(strings::without_trailing_slash_windows_path(path))?;
+        if result.status != allocators::ItemStatus::Unknown {
+            return Ok(self
+                .dir_cache_mut()
+                .at_index(result.index)
+                .map(DirInfoRef::from_slot));
+        }
+
+        self.dir_info_cached_miss(enable_logging, is_ancestor, path, result)
     }
 
     /// Cold tail of [`dir_info_cached_maybe_log`]: the directory walk +
@@ -4295,6 +4708,7 @@ impl<'a> Resolver<'a> {
     fn dir_info_cached_miss(
         &mut self,
         enable_logging: bool,
+        is_ancestor: bool,
         input_path: &[u8],
         top_result: allocators::Result,
     ) -> crate::CrateResult<Option<DirInfoRef>> {
@@ -4314,7 +4728,7 @@ impl<'a> Resolver<'a> {
         queue[0].write(DirEntryResolveQueueItem {
             result: top_result,
             unsafe_path: bun_ptr::RawSlice::new(&path[..input_path_len]),
-            safe_path: bun_ptr::RawSlice::EMPTY,
+            safe_path: b"",
             fd: FD::INVALID,
         });
         let mut top = Dirname::dirname(&path[..input_path_len]);
@@ -4350,7 +4764,7 @@ impl<'a> Resolver<'a> {
         }
 
         // SAFETY: `rfs` points at process-global storage; outlives this guard.
-        let _entries_unlock = rfs!().entries_mutex.lock_guard();
+        let mut entries_guard = rfs!().entries_mutex.guard_for_reading(self.store_fd);
 
         while top.len() > root_path.len() {
             debug_assert!(top.as_ptr() == root_path.as_ptr());
@@ -4369,7 +4783,7 @@ impl<'a> Resolver<'a> {
             queue[i].write(DirEntryResolveQueueItem {
                 unsafe_path: bun_ptr::RawSlice::new(top),
                 result,
-                safe_path: bun_ptr::RawSlice::EMPTY,
+                safe_path: b"",
                 fd: FD::INVALID,
             });
 
@@ -4378,7 +4792,7 @@ impl<'a> Resolver<'a> {
                     Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                         // SAFETY: slot was written immediately above.
                         let slot = unsafe { queue[i].assume_init_mut() };
-                        slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
+                        slot.safe_path = entries.dir;
                         slot.fd = entries.fd;
                     }
                     Fs::file_system::real_fs::EntriesOption::Err(err) => {
@@ -4407,7 +4821,7 @@ impl<'a> Resolver<'a> {
                 queue[i].write(DirEntryResolveQueueItem {
                     unsafe_path: bun_ptr::RawSlice::new(root_path),
                     result,
-                    safe_path: bun_ptr::RawSlice::EMPTY,
+                    safe_path: b"",
                     fd: FD::INVALID,
                 });
                 if let Some(top_entry) = rfs!().entries.get(top) {
@@ -4415,7 +4829,7 @@ impl<'a> Resolver<'a> {
                         Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                             // SAFETY: slot was written immediately above.
                             let slot = unsafe { queue[i].assume_init_mut() };
-                            slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
+                            slot.safe_path = entries.dir;
                             slot.fd = entries.fd;
                         }
                         Fs::file_system::real_fs::EntriesOption::Err(err) => {
@@ -4471,18 +4885,24 @@ impl<'a> Resolver<'a> {
         // - remember
         let mut _safe_path: Option<&'static [u8]> = None;
 
+        // `dir_info_uncached` asks for the listing of the directory above at this generation.
+        // SAFETY: `top_parent.index` is a sentinel or a published slot.
+        let listing_above =
+            unsafe { DirInfo::slot_ptr_at(top_parent.index) }.map(|above| unsafe { (*above).entries });
+        if listing_above
+            .is_some_and(|listing| rfs!().is_listing_older_than(listing, self.generation))
+        {
+            entries_guard = rfs!().entries_mutex.make_exclusive(entries_guard);
+        }
+
         // Start at the top.
         while queue_slice_len > 0 {
             // SAFETY: every slot in `0..queue_slice_len` was `.write()`-initialised above.
             let mut queue_top = unsafe { queue[queue_slice_len - 1].assume_init_ref() }.clone();
-            // `unsafe_path` was set to a slice of the threadlocal
-            // `dir_info_uncached_path` buffer earlier in this fn; valid for the
-            // remainder of the fn body. `safe_path` is either empty or a
-            // dirname_store-backed `&'static [u8]`. Copy the `RawSlice` handles
-            // out so the re-borrows below don't hold `queue_top` borrowed.
-            let (qt_unsafe_path, qt_safe_path) = (queue_top.unsafe_path, queue_top.safe_path);
+            // Copy the `RawSlice` out so `.slice()` doesn't keep `queue_top` borrowed.
+            let qt_unsafe_path = queue_top.unsafe_path;
             let queue_top_unsafe_path: &[u8] = qt_unsafe_path.slice();
-            let queue_top_safe_path: &[u8] = qt_safe_path.slice();
+            let queue_top_safe_path = queue_top.safe_path;
             queue_slice_len -= 1;
 
             let open_dir: FD = if queue_top.fd.is_valid() {
@@ -4550,7 +4970,7 @@ impl<'a> Resolver<'a> {
                             // A permission-denied ancestor (sandboxed drive roots, x-only
                             // shared dirs) is treated as opaque and empty, like the
                             // ENOTDIR tolerance; the requested directory itself stays fatal.
-                            if queue_slice_len > 0
+                            if (queue_slice_len > 0 || is_ancestor)
                                 && matches!(
                                     err,
                                     crate::Error::Sys(bun_errno::SystemErrno::EPERM)
@@ -4606,10 +5026,7 @@ impl<'a> Resolver<'a> {
             }
 
             let dir_path: &'static [u8] = if !queue_top_safe_path.is_empty() {
-                // SAFETY: non-empty `safe_path` is always a dirname_store-backed
-                // `&'static [u8]` (set from `entries.dir` above); widen the
-                // `RawSlice`-tied borrow back to its true `'static` lifetime.
-                unsafe { bun_ptr::detach_lifetime(queue_top_safe_path) }
+                queue_top_safe_path
             } else {
                 // ensure trailing slash
                 if _safe_path.is_none() {
@@ -4653,6 +5070,10 @@ impl<'a> Resolver<'a> {
 
             let mut cached_dir_entry_result =
                 rfs!().entries.get_or_put(dir_path).expect("unreachable");
+            if rfs!().is_listing_older_than(cached_dir_entry_result.index, self.generation) {
+                entries_guard = rfs!().entries_mutex.make_exclusive(entries_guard);
+                cached_dir_entry_result = rfs!().entries.get_or_put(dir_path).expect("unreachable");
+            }
 
             let mut dir_entries_option: *mut Fs::file_system::real_fs::EntriesOption =
                 core::ptr::null_mut();
@@ -4669,11 +5090,19 @@ impl<'a> Resolver<'a> {
                     }
                 }
             }
+            debug_assert!(
+                in_place.is_none()
+                    || rfs!()
+                        .entries_mutex
+                        .is_held_exclusively_by_current_thread(),
+                "a listing is rewritten in place under the exclusive entries_mutex",
+            );
 
             if needs_iter {
                 // SAFETY: (block-wide) `in_place`/`dir_entries_ptr`/`dir_entries_option` point to
                 // slots in `rfs.entries` (BSSMap singleton) or a fresh leaked Box; both outlive this
-                // fn and are accessed under `rfs.entries_mutex` (see LIFETIMES.tsv).
+                // fn and are accessed under `rfs.entries_mutex` (see LIFETIMES.tsv), which is
+                // held exclusively where `in_place` is written to.
                 let mut new_entry = Fs::file_system::DirEntry::init(
                     if let Some(existing) = in_place {
                         // SAFETY: see block-wide note above.
@@ -4713,7 +5142,6 @@ impl<'a> Resolver<'a> {
                                 in_place.map(|existing| unsafe { &mut (*existing).data }),
                                 &_value,
                                 &mut filename_store,
-                                (),
                             )
                             .expect("unreachable");
                     }
@@ -4748,6 +5176,11 @@ impl<'a> Resolver<'a> {
                     // freshly boxed entry (see block-wide note above).
                     unsafe { (*dir_entries_ptr).data.count() },
                 );
+                if in_place.is_none() {
+                    // The lock may be shared here, and who shares it writes to no slot that others see. Where the
+                    // slot holds an error of an earlier read, the listing gets a slot of its own.
+                    cached_dir_entry_result.index = allocators::UNASSIGNED;
+                }
                 dir_entries_option = rfs!().entries.put(
                     &mut cached_dir_entry_result,
                     Fs::file_system::real_fs::EntriesOption::Entries(
@@ -4759,22 +5192,21 @@ impl<'a> Resolver<'a> {
 
             // We must initialize it as empty so that the result index is correct.
             // This is important so that browser_scope has a valid index.
-            // SAFETY: `dir_cache()` is the live singleton; resolver mutex held.
+            // SAFETY: `dir_cache()` is the live singleton.
             // Both slot pointers are rooted at the singleton, so the map
             // reborrows inside `dir_info_uncached` cannot pop them.
             let dir_info_ptr: *mut DirInfo::DirInfo = unsafe {
-                DirInfo::put_slot(
+                DirInfo::reserve_slot(
                     self.dir_cache(),
                     &mut queue_top.result,
                     DirInfo::DirInfo::default(),
                 )
             }?;
-            // SAFETY: `top_parent.index` is a sentinel or a slot assigned by
-            // `put`; resolver mutex held.
+            // SAFETY: `top_parent.index` is a sentinel or a published slot.
             let parent_dir_ptr = unsafe { DirInfo::slot_ptr_at(top_parent.index) }
                 .map(|p| unsafe { DirInfoRef::from_raw(p) });
 
-            self.dir_info_uncached(
+            let filled = self.dir_info_uncached(
                 dir_info_ptr,
                 dir_path,
                 // SAFETY: ARENA — `dir_entries_option` is a slot in `rfs.entries` (BSSMap) and outlives the resolver.
@@ -4785,7 +5217,11 @@ impl<'a> Resolver<'a> {
                 top_parent.index,
                 open_dir,
                 None,
-            )?;
+            );
+            // Whoever finds the directory from here on takes no lock of the resolver's.
+            // SAFETY: the live singleton, the slot reserved above, and `dir_info_uncached` was the last to write to it.
+            unsafe { DirInfo::publish_slot(self.dir_cache(), queue_top.result) };
+            filled?;
 
             top_parent = queue_top.result;
 
@@ -4821,14 +5257,7 @@ impl<'a> Resolver<'a> {
             ));
         }
 
-        let mut abs_base_url: &[u8] = &tsconfig.base_url_for_paths;
-
-        // The explicit base URL should take precedence over the implicit base URL
-        // if present. This matters when a tsconfig.json file overrides "baseUrl"
-        // from another extended tsconfig.json file but doesn't override "paths".
-        if tsconfig.has_base_url() {
-            abs_base_url = &tsconfig.base_url;
-        }
+        let abs_base_url = tsconfig.abs_base_url_for_paths();
 
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
@@ -4877,59 +5306,9 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        struct TSConfigMatch<'b> {
-            prefix: &'b [u8],
-            suffix: &'b [u8],
-            original_paths: &'b [Box<[u8]>],
-        }
-
-        let mut longest_match: Option<TSConfigMatch> = None;
-        let mut longest_match_prefix_length: i32 = -1;
-        let mut longest_match_suffix_length: i32 = -1;
-
-        for (key, original_paths) in tsconfig
-            .paths
-            .keys()
-            .iter()
-            .zip(tsconfig.paths.values().iter())
-        {
-            if let Some(star) = strings::index_of_char(key, b'*') {
-                let star = star as usize;
-                let prefix: &[u8] = if star == 0 { b"" } else { &key[0..star] };
-                let suffix: &[u8] = if star == key.len() - 1 {
-                    b""
-                } else {
-                    &key[star + 1..]
-                };
-
-                // Find the match with the longest prefix. If two matches have the same
-                // prefix length, pick the one with the longest suffix. This second edge
-                // case isn't handled by the TypeScript compiler, but we handle it
-                // because we want the output to always be deterministic
-                let plen = i32::try_from(prefix.len()).expect("int cast");
-                let slen = i32::try_from(suffix.len()).expect("int cast");
-                if path.len() >= prefix.len() + suffix.len()
-                    && path.starts_with(prefix)
-                    && path.ends_with(suffix)
-                    && (plen > longest_match_prefix_length
-                        || (plen == longest_match_prefix_length
-                            && slen > longest_match_suffix_length))
-                {
-                    longest_match_prefix_length = plen;
-                    longest_match_suffix_length = slen;
-                    longest_match = Some(TSConfigMatch {
-                        prefix,
-                        suffix,
-                        original_paths,
-                    });
-                }
-            }
-        }
-
         // If there is at least one match, only consider the one with the longest
         // prefix. This matches the behavior of the TypeScript compiler.
-        if longest_match_prefix_length != -1 {
-            let longest_match = longest_match.unwrap();
+        if let Some(longest_match) = tsconfig.match_paths_wildcard(path) {
             if let Some(debug) = self.debug_logs.as_mut() {
                 debug.add_note_fmt(format_args!(
                     "Found a fuzzy match for \"{}*{}\" in \"paths\"",
@@ -5002,7 +5381,7 @@ impl<'a> Resolver<'a> {
     /// only. Skip it, like esbuild's `matchTSConfigPaths` (which checks `.d.ts` only).
     /// This looks at the tsconfig text, not the `*` expansion: `"@/*": ["./src/*"]`
     /// must still resolve `import "@/env.d.ts"`.
-    fn is_type_only_tsconfig_path(&mut self, substitution: &[u8]) -> bool {
+    pub(crate) fn is_type_only_tsconfig_path(&mut self, substitution: &[u8]) -> bool {
         const DECLARATION_EXTS: [&[u8]; 3] = [b".d.ts", b".d.mts", b".d.cts"];
         let Some(ext) = DECLARATION_EXTS.iter().find(|ext| {
             substitution
@@ -5054,6 +5433,8 @@ impl<'a> Resolver<'a> {
                     bstr::BStr::new(import_path)
                 ));
             }
+            self.esm_failure
+                .get_or_insert(crate::package_json::Status::InvalidModuleSpecifier);
             return MatchStatus::NotFound;
         }
 
@@ -5399,11 +5780,6 @@ impl<'a> Resolver<'a> {
         ext: &[u8],
         out: &mut MatchResult,
     ) -> MatchStatus {
-        // SAFETY: PORT (Stacked Borrows) — derive `rfs` from the raw `*mut FileSystem`
-        // field so the `&mut *self.fs()` calls below (`abs_buf`/`dirname_store.append_slice`)
-        // don't pop its provenance. Re-borrow `&mut *rfs` at the single use site.
-        let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
-
         let ext_buf = bufs!(extension_path);
 
         if b"index".len() + ext.len() > ext_buf.len() {
@@ -5417,8 +5793,7 @@ impl<'a> Resolver<'a> {
         // for the rewrite this guards against); the fd gate matches
         // `DirInfo::get_file_descriptor`.
         let looked_up = {
-            let realfs = &mut Fs::FileSystem::instance().fs;
-            let _entries_lock = realfs.entries_mutex.lock_guard();
+            let _entries_lock = dir_info.lock_entries(self.generation);
             dir_info
                 .get_entries_ref_locked(self.generation)
                 .map(|entries| {
@@ -5433,9 +5808,7 @@ impl<'a> Resolver<'a> {
                 })
         };
         if let Some((Some(lookup), dirname_fd)) = looked_up {
-            // SAFETY: rfs points at the process-global RealFS; the lazy-stat
-            // rewrite inside `kind()` is serialized on the per-entry mutex.
-            if unsafe { lookup.entry().kind(rfs, self.store_fd) }
+            if lookup.entry().kind(self.rfs_ref(), self.store_fd)
                 == Fs::file_system::EntryKind::File
             {
                 let Ok(out_buf) = lookup.entry().abs_path_or_try_fill(|| {
@@ -5859,12 +6232,6 @@ impl<'a> Resolver<'a> {
         path: &[u8],
         extension_order: options::ExtOrder,
     ) -> Option<LoadResult> {
-        // SAFETY: RealFS is the global singleton. Derive provenance from the raw
-        // `*mut FileSystem` field so intervening `unsafe { &mut *self.fs() }` calls in
-        // `load_extension` / `dirname_store.append_slice` don't invalidate `rfs`
-        // under Stacked Borrows. We re-borrow `&mut *rfs` at each use site.
-        let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
-
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
                 "Attempting to load \"{}\" as a file",
@@ -5888,9 +6255,9 @@ impl<'a> Resolver<'a> {
         // (debug_logs / load_extension / dirname_store) don't trip borrowck
         // while each read goes through safe `BackRef: Deref` (pointee outlives
         // holder by ARENA invariant).
-        // SAFETY: `rfs` points at the process-global RealFS singleton (see note at fn top).
+        // SAFETY: `rfs_ptr()` points at the process-global RealFS singleton.
         let dir_entry: bun_ptr::BackRef<Fs::file_system::real_fs::EntriesOption> =
-            match unsafe { &mut *rfs }.read_directory(
+            match unsafe { &mut *self.rfs_ptr() }.read_directory(
                 dir_path,
                 None,
                 self.generation,
@@ -5934,9 +6301,7 @@ impl<'a> Resolver<'a> {
         // in-place rewrite this guards against).
         let (plain_query, plain_dirname_fd) = dir_entry.get().lookup(base);
         if let Some(query) = plain_query {
-            // SAFETY: rfs points at the process-global RealFS; the lazy-stat
-            // rewrite inside `kind()` is serialized on the per-entry mutex.
-            if unsafe { query.entry().kind(rfs, self.store_fd) } == Fs::file_system::EntryKind::File
+            if query.entry().kind(self.rfs_ref(), self.store_fd) == Fs::file_system::EntryKind::File
             {
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!("Found file \"{}\" ", bstr::BStr::new(base)));
@@ -6001,8 +6366,10 @@ impl<'a> Resolver<'a> {
         // TypeScript-specific behavior: try rewriting ".js" to ".ts".
         if let Some(last_dot) = strings::last_index_of_char(base, b'.') {
             let ext = &base[last_dot..base.len()];
-            let exts =
-                rewritten_file_extensions(ext, || strings::path_contains_node_modules_folder(path));
+            let exts = rewritten_file_extensions(ext, || {
+                strings::path_contains_node_modules_folder(path)
+                    && !self.opts.conditions.import.contains_key(b"aot")
+            });
             if !exts.is_empty() {
                 let segment = &base[0..last_dot];
                 let tail = &mut bufs!(load_as_file)[path.len() - base.len()..];
@@ -6017,9 +6384,7 @@ impl<'a> Resolver<'a> {
 
                     let (ts_query, ts_dirname_fd) = dir_entry.get().lookup(&buffer[..]);
                     if let Some(query) = ts_query {
-                        // SAFETY: rfs points at the process-global RealFS; the lazy-stat
-                        // rewrite inside `kind()` is serialized on the per-entry mutex.
-                        if unsafe { query.entry().kind(rfs, self.store_fd) }
+                        if query.entry().kind(self.rfs_ref(), self.store_fd)
                             == Fs::file_system::EntryKind::File
                         {
                             if let Some(debug) = self.debug_logs.as_mut() {
@@ -6098,10 +6463,6 @@ impl<'a> Resolver<'a> {
         ext: &[u8],
         dir_entry: bun_ptr::BackRef<Fs::file_system::real_fs::EntriesOption>,
     ) -> Option<LoadResult> {
-        // SAFETY: PORT — see load_as_file; derive `rfs` from the raw `*mut FileSystem`
-        // field so `unsafe { &mut *self.fs() }` calls below (`filename_store.append_parts`) don't pop
-        // its provenance under Stacked Borrows.
-        let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
         if path.len() + ext.len() >= MAX_PATH_BYTES {
             return None;
         }
@@ -6118,9 +6479,7 @@ impl<'a> Resolver<'a> {
 
         let (ext_query, dirname_fd) = dir_entry.get().lookup(file_name);
         if let Some(query) = ext_query {
-            // SAFETY: rfs points at the process-global RealFS; the lazy-stat
-            // rewrite inside `kind()` is serialized on the per-entry mutex.
-            if unsafe { query.entry().kind(rfs, self.store_fd) } == Fs::file_system::EntryKind::File
+            if query.entry().kind(self.rfs_ref(), self.store_fd) == Fs::file_system::EntryKind::File
             {
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!(
@@ -6165,11 +6524,6 @@ impl<'a> Resolver<'a> {
     ) -> crate::CrateResult<()> {
         let result = _result;
 
-        // SAFETY: RealFS is the process-global ARENA singleton. `Entry::kind` /
-        // `Entry::symlink` take it by raw pointer and reborrow only internally,
-        // so the interleaved `&mut self` calls below cannot invalidate `rfs_ptr`
-        // under Stacked Borrows.
-        let rfs_ptr: *mut Fs::file_system::RealFS = self.rfs_ptr();
         // SAFETY: `_entries` is a live slot (caller contract); the payload
         // `DirEntry` is a separate process-lifetime allocation, so the shared
         // `BackRef` survives entries-map traffic. All uses below are `&self`
@@ -6218,8 +6572,7 @@ impl<'a> Resolver<'a> {
             if let Some(entry) = entries!().get_comptime_query(b"node_modules") {
                 info.flags.set_present(
                     DirInfo::Flag::HasNodeModules,
-                    // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
-                    unsafe { entry.entry().kind(rfs_ptr, self.store_fd) }
+                    entry.entry().kind(self.rfs_ref(), self.store_fd)
                         == Fs::file_system::EntryKind::Dir,
                 );
             }
@@ -6229,13 +6582,6 @@ impl<'a> Resolver<'a> {
             'append_bin_dir: {
                 if info.has_node_modules() {
                     if entries!().has_comptime_query(b"node_modules") {
-                        // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK below
-                        if !BIN_FOLDERS_LOADED.load(core::sync::atomic::Ordering::Acquire) {
-                            // SAFETY: callers hold RESOLVER_MUTEX; first init.
-                            unsafe { (*BIN_FOLDERS.get()).write(BinFolderArray::default()) };
-                            BIN_FOLDERS_LOADED.store(true, core::sync::atomic::Ordering::Release);
-                        }
-
                         let Ok(file) = bun_sys::open_dir_z(
                             fd,
                             bun_paths::path_literal!(b"node_modules/.bin"),
@@ -6247,7 +6593,7 @@ impl<'a> Resolver<'a> {
                         let Ok(bin_path) = file.get_fd_path(bufs!(node_bin_path)) else {
                             break 'append_bin_dir;
                         };
-                        let _unlock = BIN_FOLDERS_LOCK.lock_guard();
+                        let _unlock = lock_bin_folders();
 
                         // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK acquired above.
                         unsafe {
@@ -6270,18 +6616,9 @@ impl<'a> Resolver<'a> {
 
                 if info.is_node_modules() {
                     if let Some(q) = entries!().get_comptime_query(b".bin") {
-                        // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
-                        if unsafe { q.entry().kind(rfs_ptr, self.store_fd) }
+                        if q.entry().kind(self.rfs_ref(), self.store_fd)
                             == Fs::file_system::EntryKind::Dir
                         {
-                            // SAFETY: BIN_FOLDERS_LOADED is single-thread init-once; protected by RESOLVER_MUTEX held by callers.
-                            if !BIN_FOLDERS_LOADED.load(core::sync::atomic::Ordering::Acquire) {
-                                // SAFETY: callers hold RESOLVER_MUTEX; first init.
-                                unsafe { (*BIN_FOLDERS.get()).write(BinFolderArray::default()) };
-                                BIN_FOLDERS_LOADED
-                                    .store(true, core::sync::atomic::Ordering::Release);
-                            }
-
                             let Ok(file) = bun_sys::open_dir_z(fd, b".bin\0", Default::default())
                             else {
                                 break 'append_bin_dir;
@@ -6291,7 +6628,7 @@ impl<'a> Resolver<'a> {
                             else {
                                 break 'append_bin_dir;
                             };
-                            let _unlock = BIN_FOLDERS_LOCK.lock_guard();
+                            let _unlock = lock_bin_folders();
 
                             // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK acquired above.
                             unsafe {
@@ -6359,13 +6696,8 @@ impl<'a> Resolver<'a> {
                             let _entry_guard = lookup.entry().mutex.lock_guard();
                             lookup.entry().set_cache_fd(entries_fd);
                         }
-                        // SAFETY: EntryStore-owned slot — read-only borrow,
-                        // dies (NLL) before any later `&mut` to this slot.
-                        let entry = lookup.entry();
 
-                        // SAFETY: `rfs_ptr` points at the process-global RealFS; the lazy-stat
-                        // rewrite inside `symlink()` is serialized on `Entry.mutex`.
-                        let mut symlink = unsafe { entry.symlink(rfs_ptr, self.store_fd) };
+                        let mut symlink = lookup.entry().symlink(self.rfs_ref(), self.store_fd);
                         if !symlink.is_empty() {
                             if let Some(logs) = self.debug_logs.as_mut() {
                                 let mut buf = Vec::new();
@@ -6423,11 +6755,8 @@ impl<'a> Resolver<'a> {
         // Record if this directory has a package.json file
         if self.opts.load_package_json {
             if let Some(lookup) = entries!().get_comptime_query(b"package.json") {
-                // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
-                // dies (NLL) before any later `&mut` to this slot.
-                let entry = lookup.entry();
-                // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
-                if unsafe { entry.kind(rfs_ptr, self.store_fd) } == Fs::file_system::EntryKind::File
+                if lookup.entry().kind(self.rfs_ref(), self.store_fd)
+                    == Fs::file_system::EntryKind::File
                 {
                     // A package in the global cache has a `package_id`, and keeps it even if its
                     // tarball shipped a `node_modules` folder.
@@ -6496,11 +6825,8 @@ impl<'a> Resolver<'a> {
         if self.opts.load_tsconfig_json {
             let mut tsconfig_path: Option<&[u8]> = None;
             if let Some(lookup) = entries!().get_comptime_query(b"tsconfig.json") {
-                // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
-                // dies (NLL) before any later `&mut` to this slot.
-                let entry = lookup.entry();
-                // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
-                if unsafe { entry.kind(rfs_ptr, self.store_fd) } == Fs::file_system::EntryKind::File
+                if lookup.entry().kind(self.rfs_ref(), self.store_fd)
+                    == Fs::file_system::EntryKind::File
                 {
                     let parts = [path, b"tsconfig.json".as_slice()];
                     tsconfig_path = self
@@ -6510,11 +6836,7 @@ impl<'a> Resolver<'a> {
             }
             if tsconfig_path.is_none() {
                 if let Some(lookup) = entries!().get_comptime_query(b"jsconfig.json") {
-                    // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
-                    // dies (NLL) before any later `&mut` to this slot.
-                    let entry = lookup.entry();
-                    // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
-                    if unsafe { entry.kind(rfs_ptr, self.store_fd) }
+                    if lookup.entry().kind(self.rfs_ref(), self.store_fd)
                         == Fs::file_system::EntryKind::File
                     {
                         let parts = [path, b"jsconfig.json".as_slice()];
@@ -6723,6 +7045,63 @@ impl<'a> Resolver<'a> {
         self.opts.tsconfig_override_json.clone()
     }
 
+    /// The `compilerOptions` that decide how the TypeScript file at `path` becomes JavaScript, if it is in a package with
+    /// the "aot" condition and this resolver reads that condition: those of the package's own `package.json`. No
+    /// `tsconfig.json` and no flag does, so the package answers alike in every program that installs it.
+    /// `None`: another file, or a file of the package that the program runs in.
+    pub fn aot_package_config(&mut self, path: &[u8]) -> Option<Arc<TSConfigJSON>> {
+        if !is_typescript_path(path) || !self.opts.conditions.import.contains_key(b"aot") {
+            return None;
+        }
+        let directory = bun_paths::dirname(path)?;
+        let known =
+            (AOT_PACKAGE_CONFIGS.lock().as_ref()).and_then(|all| all.get(directory).cloned());
+        if let Some(known) = known {
+            return known;
+        }
+        // Not under the lock: this takes the resolver's own.
+        let found = self.find_aot_package_config(directory);
+        let mut all = AOT_PACKAGE_CONFIGS.lock();
+        let _ = all.get_or_insert_default().put(directory, found.clone());
+        found
+    }
+
+    fn find_aot_package_config(&mut self, directory: &[u8]) -> Option<Arc<TSConfigJSON>> {
+        let names_aot = |manifest: &PackageJSON| {
+            [&manifest.exports, &manifest.imports]
+                .into_iter()
+                .flatten()
+                .any(|table| table.names_condition(b"aot"))
+        };
+        let mut manifests: Vec<&'static PackageJSON> = Vec::new();
+        let mut package = None;
+        let mut next = self.read_dir_info_ignore_error(directory);
+        while let Some(info) = next.filter(|info| !info.is_node_modules()) {
+            if let Some(manifest) = info.package_json() {
+                manifests.push(manifest);
+                let speaks_for_package = manifest.exports.is_some() || names_aot(manifest);
+                if package.is_none() && speaks_for_package {
+                    package = Some((info.abs_path, names_aot(manifest)));
+                }
+            }
+            next = info.get_parent();
+        }
+        let (package_directory, true) = package? else {
+            return None;
+        };
+        let working_directory = self.fs_ref().top_level_dir();
+        if ResolvePath::resolve_path::is_parent_or_equal(package_directory, working_directory)
+            != ResolvePath::resolve_path::ParentEqual::Unrelated
+        {
+            return None;
+        }
+        let stated = manifests.into_iter().find_map(|manifest| {
+            let parsed = self.parse_tsconfig(manifest.source.path.text, FD::INVALID);
+            parsed.ok().flatten().filter(|it| it.has_compiler_options)
+        });
+        Some(Arc::from(stated.unwrap_or_default()))
+    }
+
     /// `DirInfo::enclosing_tsconfig_json`, for this resolver.
     pub(crate) fn enclosing_tsconfig_json(
         &mut self,
@@ -6743,6 +7122,18 @@ impl<'a> Resolver<'a> {
             None => dir_info.tsconfig_json().map(TSConfigRef::OfDirectory),
         }
     }
+}
+
+/// [`Resolver::aot_package_config`] by directory. Empty without the "aot" condition. Like `DirInfo`, it belongs to no
+/// resolver: the runtime transpiles on other threads with copies of one.
+static AOT_PACKAGE_CONFIGS: bun_threading::Guarded<
+    Option<bun_collections::StringHashMap<Option<Arc<TSConfigJSON>>>>,
+> = bun_threading::Guarded::new(None);
+
+fn is_typescript_path(path: &[u8]) -> bool {
+    [&b".ts"[..], b".tsx", b".mts", b".cts"]
+        .iter()
+        .any(|extension| path.ends_with(extension))
 }
 
 /// The configuration file that applies in a directory.
@@ -6912,6 +7303,13 @@ bun_core::comptime_string_map! {
 #[inline]
 pub fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
     MODULE_TYPE_FROM_EXT.get(ext).copied()
+}
+
+fn is_require(kind: ast::ImportKind) -> bool {
+    matches!(
+        kind,
+        ast::ImportKind::Require | ast::ImportKind::RequireResolve
+    )
 }
 
 /// TypeScript matches `./foo.js` with `./foo.ts` (microsoft/TypeScript#4595). This

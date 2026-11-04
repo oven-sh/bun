@@ -1,0 +1,1 @@
+export const named = "a"; export const other = 1;

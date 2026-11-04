@@ -1,0 +1,21 @@
+function run(n: number): string { let a = 0; let b = 0; let c = 1; let d = 0.5; for (let i = 0; i < n; i++) { a += i; b ^= i * 3; c = (c * 7) % 1009; d += 0.25; } return [a, b, c, d].join(); }
+console.log(run(-3));
+console.log(run(-1));
+console.log(run(0));
+console.log(run(1));
+console.log(run(2));
+console.log(run(3));
+console.log(run(4));
+console.log(run(5));
+console.log(run(6));
+console.log(run(7));
+console.log(run(8));
+console.log(run(9));
+console.log(run(10));
+console.log(run(15));
+console.log(run(16));
+console.log(run(17));
+console.log(run(24));
+console.log(run(25));
+console.log(run(100));
+console.log(run(1001));

@@ -1,0 +1,62 @@
+A name that two stars export is ambiguous, to compiled importers and to a copy that is loaded from disk.
+#### a-copy-from-disk-with-a-further-star.test.mjs
+import { test } from "bun:test";
+
+    import * as first from "./src/further.mjs";
+    import * as second from "./src/further-the-other-way-round.mjs";
+    console.log("| CASE", "compiled:", Object.keys(first).join(), first.same, Object.keys(second).join(), second.same);
+    delete require.cache[require.resolve("./src/further.mjs")];
+    delete require.cache[require.resolve("./src/further-the-other-way-round.mjs")];
+    const firstAgain = await import("./src/further.mjs");
+    const secondAgain = await import("./src/further-the-other-way-round.mjs");
+    console.log("| CASE", "from disk:", firstAgain === first, Object.keys(firstAgain).join(), firstAgain.same);
+    console.log("| CASE", "from disk:", secondAgain === second, Object.keys(secondAgain).join(), secondAgain.same);
+test("runs", () => {});
+#### good.test.mjs
+import { test } from "bun:test";
+
+    import * as stars from "./src/stars.mjs";
+    import * as nested from "./src/nested.mjs";
+    import { onlyC } from "./src/c.mjs";
+    console.log("| CASE", "good:", Object.keys(stars).join(), Object.keys(nested).join(), onlyC);
+test("runs", () => {});
+#### imports-a-name-that-nobody-exports.test.mjs
+import { test } from "bun:test";
+
+    import "./src/imports-absent.mjs";
+    console.log("| CASE", "never printed");
+test("runs", () => {});
+#### imports-the-name-through-a-further-star.test.mjs
+import { test } from "bun:test";
+
+    import "./src/imports-it-through-a-star.mjs";
+    console.log("| CASE", "never printed");
+test("runs", () => {});
+#### imports-the-name.test.mjs
+import { test } from "bun:test";
+
+    import "./src/imports-it.mjs";
+    console.log("| CASE", "never printed");
+test("runs", () => {});
+#### package.json
+{}
+#### src/a.mjs
+export const same = "a"; export const onlyA = 1;
+#### src/b.mjs
+export const same = "b"; export const onlyB = 2;
+#### src/c.mjs
+export const same = "c"; export const onlyC = 3;
+#### src/further-the-other-way-round.mjs
+export * from "./c.mjs"; export * from "./stars.mjs";
+#### src/further.mjs
+export * from "./stars.mjs"; export * from "./c.mjs";
+#### src/imports-absent.mjs
+import { nobodyHasIt } from "./stars.mjs"; console.log("| CASE", "never printed", nobodyHasIt);
+#### src/imports-it-through-a-star.mjs
+import { same } from "./nested.mjs"; console.log("| CASE", "never printed", same);
+#### src/imports-it.mjs
+import { same } from "./stars.mjs"; console.log("| CASE", "never printed", same);
+#### src/nested.mjs
+export * from "./stars.mjs";
+#### src/stars.mjs
+export * from "./a.mjs"; export * from "./b.mjs";

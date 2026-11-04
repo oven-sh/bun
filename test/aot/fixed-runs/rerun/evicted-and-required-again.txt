@@ -1,0 +1,15 @@
+A file that a run takes out of require.cache and loads again is what the next run imports. `bun test --rerun-each=3` loads a test file three times in one realm: each load is a new module of the file, and what the file imports is loaded once.
+#### evicts.test.js
+import { test } from "bun:test";
+import { bump } from "./state.js";
+test("counts", () => {
+  const path = require.resolve("./state.js");
+  console.log("| CASE run", bump(), require("./state.js").count);
+  delete require.cache[path];
+  console.log("| CASE behind the delete", bump(), require("./state.js").count);
+});
+#### state.js
+export let count = 0;
+export function bump() { return ++count; }
+#### package.json
+{ "type": "module" }

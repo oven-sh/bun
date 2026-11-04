@@ -1,0 +1,10 @@
+const f = function () { return 1; };
+f.extra = { a: 1 };
+f.other = { a: 2 };
+f.third = { a: 3 };
+const o = {};
+o.alpha = { a: 1 };
+o.beta = { a: 2 };
+o.gamma = { a: 3 };
+export const read = () => f;
+export const readObject = () => o;

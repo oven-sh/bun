@@ -1,0 +1,4 @@
+export function h() { return "born"; }
+function other() { return "other"; }
+export function store() { h = null; }
+export function readThere() { return h; }

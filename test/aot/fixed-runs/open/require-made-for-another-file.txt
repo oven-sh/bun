@@ -1,0 +1,27 @@
+A require that createRequire() made for another file is not taken for the file's own, though the text of its base may name the file itself.
+#### a.test.cjs
+require("./document.cjs"); require("./twice.cjs"); require("bun:test").test("t", () => {});
+#### document.cjs
+const attempt = act => { try { return act().name; } catch (error) { return error.code; } };
+globalThis.document = { currentScript: { src: require("url").pathToFileURL(__dirname + "/other/main.js").href } };
+var load = require("module").createRequire(typeof document === "undefined" ? require("url").pathToFileURL(__filename).href : document.currentScript.src);
+delete globalThis.document;
+console.log("| CASE document:", attempt(() => load("dep")));
+#### node_modules/dep/index.js
+exports.name = "near";
+#### node_modules/dep/package.json
+{ "name": "dep", "version": "1.0.0", "main": "index.js" }
+#### other/node_modules/dep/index.js
+exports.name = "other";
+#### other/node_modules/dep/package.json
+{ "name": "dep", "version": "1.0.0", "main": "index.js" }
+#### package.json
+{ "name": "project" }
+#### twice.cjs
+const attempt = act => { try { return act().name; } catch (error) { return error.code; } };
+function make(base) {
+  var load = require("module").createRequire(base || __filename);
+  return () => attempt(() => load("dep"));
+}
+const [first, second, third] = [make(__dirname + "/other/main.js"), make(), make(__dirname + "/other/main.js")];
+console.log("| CASE twice:", first(), second(), third());

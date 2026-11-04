@@ -1220,7 +1220,7 @@ JSValue JSX509Certificate::computeInfoAccess(ncrypto::X509View view, JSGlobalObj
         RETURN_IF_EXCEPTION(scope, {});
         if (existingValue) {
             JSArray* array = uncheckedDowncast<JSArray>(existingValue);
-            array->push(globalObject, jsString(vm, value));
+            array->putDirectIndex(globalObject, array->length(), jsString(vm, value));
             RETURN_IF_EXCEPTION(scope, {});
         } else {
             JSArray* array = constructEmptyArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), 1);

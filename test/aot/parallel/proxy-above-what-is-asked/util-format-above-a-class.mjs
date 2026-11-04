@@ -1,0 +1,11 @@
+// A proxy whose get trap answers every key with a function of the program. Asked by util.format: an instance of a class below a function whose prototype it is.
+import { format } from "node:util";
+const answer = function (first, second, third) {
+  return "answered " + typeof first + " " + typeof second + " " + (typeof third === "function" ? third([1]) : typeof third);
+};
+const proxy = new Proxy({}, { get: () => answer });
+function Base() {}
+Base.prototype = proxy;
+class Below extends Base {}
+const asked = new Below();
+console.log(format("%o", asked));

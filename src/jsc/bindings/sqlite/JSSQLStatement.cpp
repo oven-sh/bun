@@ -3,6 +3,7 @@
 #include "root.h"
 
 #include "JavaScriptCore/Error.h"
+#include "JavaScriptCore/ErrorInstanceInlines.h"
 #include "JavaScriptCore/JSBigInt.h"
 #include "JavaScriptCore/Structure.h"
 #include "JavaScriptCore/ThrowScope.h"
@@ -886,6 +887,7 @@ static bool holdsNamedParameters(JSC::JSObject* object)
     switch (object->type()) {
     case FinalObjectType:
     case ObjectType:
+    case CompiledObjectType:
     case ProxyObjectType:
     case DirectArgumentsType:
     case ScopedArgumentsType:

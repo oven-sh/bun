@@ -1,0 +1,10 @@
+const unknown = JSON.parse('{"f":{"b":7},"z":0,"n":1,"k":"keys","set":"set","del":"delete"}');
+const o = { a: 0, b: 0, c: 0, d: 0 };
+Object[unknown.k](o);
+const before = (o.a | 0) + (o.d | 0);
+o.a = 1;
+o.b = 2;
+o.c = 3;
+o.d = 4;
+const after = (o.a | 0) + (o.d | 0);
+console.log(before | 0, after | 0);

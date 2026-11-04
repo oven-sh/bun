@@ -1,0 +1,18 @@
+A file of the project imports a .cjs file of a package whose text uses nothing of CommonJS: it is an ES module, strict, and runs behind the CommonJS file beside it.
+#### a.test.ts
+import { test } from "bun:test";
+import "./project.ts";
+test("t", () => {});
+#### node_modules/pkg/index.cjs
+function mode() { return (function () { return this === undefined ? "strict" : "sloppy"; })(); }
+console.log("| CASE pkg/index.cjs", mode(), (() => { try { globalThis.undefined = 1; return "no throw"; } catch (e) { return e.constructor.name; } })());
+exports.used = true;
+#### node_modules/pkg/package.json
+{ "name": "pkg" }
+#### node_modules/pkg/side.cjs
+function mode() { return (function () { return this === undefined ? "strict" : "sloppy"; })(); }
+console.log("| CASE pkg/side.cjs", mode(), (() => { try { globalThis.undefined = 1; return "no throw"; } catch (e) { return e.constructor.name; } })());
+#### project.ts
+import "pkg/side.cjs";
+import "pkg/index.cjs";
+export const project = 1;

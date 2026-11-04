@@ -1,0 +1,26 @@
+vi.mock() inside a test, over a file that the test file loaded: everybody reads the mock.
+#### a.test.js
+import { test, vi } from "bun:test";
+const say = (...all) => console.log("| CASE", ...all);
+import { who, count } from "./m.js";
+import { read } from "./old.js";
+test("t", async () => {
+  say(who, count());
+  vi.mock("./m.js", () => { console.log("| CASE factory runs"); return { who: "mock", count: () => "mock" }; });
+  say(who, count(), read(), (await import("./m.js")).who);
+});
+#### m.js
+console.log("| CASE m runs");
+let n = 0;
+export const who = "real";
+export function count() { return ++n; }
+#### old.js
+console.log("| CASE old runs");
+import { who, count } from "./m.js";
+export const read = () => who + " " + count();
+#### package.json
+{ "type": "module" }
+#### z.test.js
+import { test } from "bun:test";
+import "./m.js";
+test("other file", () => {});

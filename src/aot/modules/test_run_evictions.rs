@@ -1,0 +1,340 @@
+//! Which modules of a test run leave the table of loaded modules, by module, and what the copies name that the loader of the host reads from disk in their place.
+//! `test_run_loads` says which files the run takes out or changes on disk. Its files are the application's, so nothing here looks at them in another project.
+
+use super::evicted::EvictedModules;
+use super::imports::MockedModules;
+use super::interop::ModuleKind;
+use super::module_set::ModuleSet;
+use super::plan::Plan;
+use super::requests::{ScannedSite, Scans};
+use super::{BindInput, ModuleRef};
+use crate::builtins::RuntimeModule;
+use crate::load::SourceKind;
+use bun_core::strings::{contains, last_index_of_char};
+use bun_sema::bind::{Bound, FnOwner, Parent};
+use bun_sema::hir::{ExprId, ExprKind, File, StmtId, StmtKind};
+use bun_sema::import_sites::ImportSiteKind;
+use bun_sema::program::FileId;
+use bun_sema::util::SharedSort;
+use core::mem::replace;
+
+/// `set`: by `FileId::idx()`. Empty: nothing is marked. What a file has beside its own record goes with the file.
+/// No path names the callback of a bundler's wrapper, and no text of its own lies on disk.
+pub(super) fn is_marked(set: &[bool], module: ModuleRef) -> bool {
+    match module {
+        ModuleRef::File(file) | ModuleRef::Face(file) | ModuleRef::Check(file) => {
+            set.get(file.idx()).copied().unwrap_or(false)
+        }
+        ModuleRef::Inner { .. } | ModuleRef::Runtime(_) | ModuleRef::External { .. } => false,
+    }
+}
+
+/// `leaving`: what `find_files_that_leave` answers.
+pub(super) fn is_among(leaving: &[ModuleRef], module: ModuleRef) -> bool {
+    let ModuleRef::File(file) = module else {
+        return false;
+    };
+    let compare = |listed: &ModuleRef| match *listed {
+        ModuleRef::File(listed) => listed.cmp(&file),
+        _ => unreachable!("only files leave"),
+    };
+    leaving.binary_search_by(compare).is_ok()
+}
+
+/// By the path of the file: `a.txt?text` is a form of `a.txt`, and the loader of `bun run` keeps both under the path of the file.
+/// `ModuleSet::forms_of` has them once the modules are collected, and `leave_imports_of_test_files_to_loader` asks which files leave in front of that.
+fn find_forms<'a>(input: &BindInput<'a, '_>, scans: &Scans) -> Vec<(&'a [u8], FileId)> {
+    let is_data = |form: &&FileId| scans.of(**form).interop.kind == ModuleKind::Data;
+    let data_files = input.files.compiled_files().iter().filter(is_data);
+    let mut forms: Vec<(&[u8], FileId)> = data_files
+        .filter_map(|&form| {
+            let path = input.sources.public_path(form);
+            let mark = last_index_of_char(path, b'?')?;
+            Some((&path[..mark], form))
+        })
+        .collect();
+    forms.shared_sort_unstable();
+    forms
+}
+
+/// `try { require("./a.cjs"); } catch {}`, `expect(() => require("./a.cjs")).toThrow()`, `test("a", () => { require("./a.cjs"); })`: the program goes on behind a body that throws.
+/// Whoever is handed a function may catch what it throws.
+fn stands_where_a_throw_is_caught(hir: &File<'_>, bound: &Bound<'_>, mut call: ExprId) -> bool {
+    let statement_around = |parent: Parent| -> Option<StmtId> {
+        match parent {
+            Parent::Stmt(statement) => statement.some(),
+            Parent::VarInit(declaration) => bound.var_stmt[declaration.idx()].some(),
+            Parent::Case(case) => bound.case_stmt[case.idx()].some(),
+            _ => None,
+        }
+    };
+    loop {
+        let mut parent = bound.parent_of_expr(call);
+        while let Parent::Expr(outer) = parent {
+            parent = bound.parent_of_expr(outer);
+        }
+        while let Some(inner) = statement_around(parent) {
+            parent = bound.parent_of_stmt(inner);
+            let is_guarded = statement_around(parent).is_some_and(
+                |outer| matches!(hir[outer].kind, StmtKind::Try { block, .. } if block == inner),
+            );
+            if is_guarded {
+                return true;
+            }
+        }
+        let Parent::FnBody(function) = parent else {
+            return false;
+        };
+        let FnOwner::Expr(function) = bound.fns[function.idx()].owner else {
+            return false;
+        };
+        let Parent::Expr(user) = bound.parent_of_expr(function) else {
+            return false;
+        };
+        let (ExprKind::Call(site) | ExprKind::New(site)) = hir[user].kind else {
+            return false;
+        };
+        if hir[site].callee != function {
+            return true;
+        }
+        // `(() => require("./a.cjs"))()`: what it throws goes on to what stands around the call.
+        call = user;
+    }
+}
+
+#[derive(Default)]
+struct FoundAtSites {
+    /// The imported file and then its importer.
+    /// A module that has not run yet is bound to what its imports name when it runs. Behind an eviction that is an instance from disk, which only code from disk
+    /// imports: the run time leaves such a module to the loader of the host too (`Modules::isLeftToHost`).
+    importers: Vec<(FileId, FileId)>,
+    /// A CommonJS file whose body throws is out of the table, and the next `require()` runs it again. What a package looks for and does without is no file of the project.
+    throwers: Vec<FileId>,
+}
+
+/// One loop over the import sites of the run.
+fn look_at_sites(input: &BindInput<'_, '_>, scans: &Scans) -> FoundAtSites {
+    let files = input.files;
+    let is_thrower = |required: FileId| {
+        let scan = scans.find(required);
+        scan.is_some_and(|scan| scan.interop.kind == ModuleKind::CommonJs)
+            && !contains(files.module(required).file_name(), b"/node_modules/")
+    };
+    let mut found = FoundAtSites::default();
+    for &file in files.compiled_files() {
+        let analysis = files.analysis(file);
+        for (site, answer) in analysis.import_sites.iter().zip(&scans.of(file).sites) {
+            let &ScannedSite::Module(ModuleRef::File(named)) = answer else {
+                continue;
+            };
+            match site.kind {
+                ImportSiteKind::JsxRuntime
+                | ImportSiteKind::JsxPackage
+                | ImportSiteKind::Import(_)
+                | ImportSiteKind::ExportFrom(_)
+                | ImportSiteKind::ExportStar(_)
+                | ImportSiteKind::ImportEquals(_) => found.importers.push((named, file)),
+                ImportSiteKind::Require(call) => {
+                    if is_thrower(named)
+                        && !analysis.decisions.is_dead_expr(call)
+                        && stands_where_a_throw_is_caught(files.hir(file), files.bound(file), call)
+                    {
+                        found.throwers.push(named);
+                    }
+                }
+                ImportSiteKind::ImportMetaRequire(_)
+                | ImportSiteKind::RequireByTestRunner(_)
+                | ImportSiteKind::ImportCall(_)
+                | ImportSiteKind::ImportByTestRunner(_)
+                | ImportSiteKind::RequireResolve(_)
+                | ImportSiteKind::ImportMetaResolve(_)
+                | ImportSiteKind::GetBuiltinModule(_)
+                | ImportSiteKind::MockModule(_) => {}
+            }
+        }
+    }
+    found.throwers.clear(); // HOOKS.txt takes the line out: G1t
+    found
+}
+
+/// The files that the run takes out of the table or changes on disk, those that leave where they throw, what import attributes make of them, and whoever has yet to bind
+/// one of them. One search backwards over the statements. Each is a `ModuleRef::File`, ascending. Empty where every module may leave: nobody asks which.
+/// It comes in front of `leave_imports_of_test_files_to_loader`, so a test file that imports one of them is among them.
+pub(super) fn find_files_that_leave(input: &BindInput<'_, '_>, scans: &Scans) -> Vec<ModuleRef> {
+    let loads = &input.run.loads;
+    if !input.runner_starts_entry_points
+        || (input.any_module_loads_again && loads.is_any_file_taken_out)
+    {
+        return Vec::new();
+    }
+    let FoundAtSites {
+        mut importers,
+        throwers,
+    } = look_at_sites(input, scans);
+    let mut to_follow = [
+        &loads.files_taken_out[..],
+        &loads.files_changed_on_disk[..],
+        &throwers[..],
+    ]
+    .concat();
+    if to_follow.is_empty() {
+        return Vec::new();
+    }
+    importers.shared_sort_unstable();
+    importers.dedup();
+    let forms = find_forms(input, scans);
+    let mut leaves = vec![false; input.files.modules.len()];
+    while let Some(file) = to_follow.pop() {
+        if replace(&mut leaves[file.idx()], true) {
+            continue;
+        }
+        let path = input.sources.public_path(file);
+        let first = forms.partition_point(|form| form.0 < path);
+        let forms_of_file = forms[first..].iter().take_while(|form| form.0 == path);
+        to_follow.extend(forms_of_file.map(|form| form.1));
+        let first = importers.partition_point(|import| import.0 < file);
+        let importers_of_file = importers[first..].iter().take_while(|it| it.0 == file);
+        to_follow.extend(importers_of_file.map(|import| import.1));
+    }
+    let files = (0..leaves.len() as u32).map(FileId);
+    files
+        .filter(|file| leaves[file.idx()])
+        .map(ModuleRef::File)
+        .collect()
+}
+
+/// Fills `is_changed_on_disk_by_run` and `may_be_evicted` of `Plan::test_run`, both by `FileId::idx()`. `leaving`: `EvictedModules::modules`.
+pub(super) fn fill_plan_of_loads(
+    input: &BindInput<'_, '_>,
+    leaving: &[ModuleRef],
+    plan: &mut Plan,
+) {
+    if !input.runner_starts_entry_points {
+        return;
+    }
+    let file_count = input.files.modules.len();
+    let mut may_be_evicted = vec![false; file_count];
+    for &module in leaving {
+        if let ModuleRef::File(file) = module {
+            may_be_evicted[file.idx()] = true;
+        }
+    }
+    let mut is_changed_on_disk_by_run = vec![false; file_count];
+    for &file in &input.run.loads.files_changed_on_disk {
+        // What loads from there is a text that nobody has read. A file of data names nothing.
+        is_changed_on_disk_by_run[file.idx()] = input.sources.kind(file) == SourceKind::Program;
+    }
+    plan.test_run.may_be_evicted = may_be_evicted;
+    plan.test_run.is_changed_on_disk_by_run = is_changed_on_disk_by_run;
+}
+
+/// The files that a copy from disk may name to the loader of the host. It links to the names of compiled modules, and the loader begins a file that nothing has run yet.
+#[derive(Default)]
+pub(super) struct NamedByCopies {
+    /// The text of a copy names a file that nobody knows.
+    is_every_file: bool,
+    /// By `FileId::idx()`.
+    is_named: Vec<bool>,
+}
+
+impl NamedByCopies {
+    pub(super) fn contains(&self, module: ModuleRef) -> bool {
+        self.is_every_file || is_marked(&self.is_named, module)
+    }
+}
+
+/// Fills `Plan::named_by_copies`. Behind `collect_modules`, with the sites as `leave_imports_of_test_files_to_loader` has left them.
+pub(super) fn fill_plan_of_copies(
+    input: &BindInput<'_, '_>,
+    scans: &Scans,
+    modules: &ModuleSet,
+    evicted: &EvictedModules,
+    mocked: &MockedModules,
+    plan: &mut Plan,
+) {
+    // Where every module may leave, every module is asked for every name anyway.
+    if !input.runner_starts_entry_points || evicted.is_every_module() {
+        return;
+    }
+    let is_any_module_mocked = mocked.is_every_module() || mocked.iter().next().is_some();
+    let copied_under_queries = input.run.loads.files_copied_under_queries.iter();
+    let copied_under_queries: Vec<ModuleRef> =
+        copied_under_queries.map(|&file| ModuleRef::File(file)).collect();
+    if evicted.modules().is_empty() && !is_any_module_mocked && copied_under_queries.is_empty() {
+        return;
+    }
+    // The new text names what it likes. A file of data names nothing.
+    let mut changed = input.run.loads.files_changed_on_disk.iter();
+    let is_code_changed = changed.any(|&file| input.sources.kind(file) != SourceKind::Data);
+    let mut is_every_file = is_code_changed || mocked.is_every_module();
+    is_every_file |= !evicted.modules().is_empty(); // HOOKS.txt takes the line out: G1n
+    let mut named: Vec<ModuleRef> = Vec::new();
+    // The original beside its mock is a copy from disk too: `vi.importActual()`, `importOriginal()`, a mock without a factory.
+    let copies = evicted.modules().iter().chain(mocked.iter());
+    for &module in copies.chain(&copied_under_queries) {
+        let ModuleRef::File(file) = module else {
+            continue;
+        };
+        let Some(scan) = scans.find(file) else {
+            continue;
+        };
+        for answer in &scan.sites {
+            match *answer {
+                ScannedSite::Module(module) => named.push(module),
+                ScannedSite::Candidates(ref range) => named.extend(scan.modules_spelled_in(range)),
+                ScannedSite::AllModules => is_every_file = true,
+                ScannedSite::Unresolved | ScannedSite::Erased => {}
+            }
+        }
+    }
+    // `load::manual_mocks`: the test runner asks for the file by its path, and takes whatever it exports.
+    if is_any_module_mocked {
+        let is_manual_mock =
+            |file: &&FileId| contains(input.files.module(**file).file_name(), b"/__mocks__/");
+        let manual_mocks = modules.compiled_files.iter().filter(is_manual_mock);
+        named.extend(manual_mocks.map(|&file| ModuleRef::File(file)));
+    }
+    let mut is_named = vec![false; input.files.modules.len()];
+    let mut library_modules: Vec<RuntimeModule> = Vec::new();
+    while let Some(module) = named.pop() {
+        let file = match module {
+            ModuleRef::File(file) => file,
+            ModuleRef::Runtime(module) => {
+                library_modules.push(module);
+                continue;
+            }
+            ModuleRef::Inner { .. }
+            | ModuleRef::Face(_)
+            | ModuleRef::Check(_)
+            | ModuleRef::External { .. } => continue,
+        };
+        if replace(&mut is_named[file.idx()], true) {
+            continue;
+        }
+        named.extend(modules.forms_of(module));
+        let Some(scan) = scans.find(file) else {
+            continue;
+        };
+        // A copy links to a name through the files that hand it on, and the loader asks each of them for it: `export { isUpKey } from "./lib/key"`.
+        let sites = input.files.analysis(file).import_sites.iter();
+        for (site, answer) in sites.zip(&scan.sites) {
+            let hands_on = matches!(
+                site.kind,
+                ImportSiteKind::ExportFrom(_) | ImportSiteKind::ExportStar(_)
+            );
+            if let (true, &ScannedSite::Module(source)) = (hands_on, answer) {
+                named.push(source);
+            }
+        }
+    }
+    // The copy is code that the build has not seen, and it calls what it imports from a module of Bun's own.
+    library_modules.shared_sort_unstable_by_key(|module| module.registry_id());
+    library_modules.dedup();
+    for module in library_modules {
+        plan.set_is_handed_out_by_test_runner(module);
+    }
+    plan.named_by_copies = NamedByCopies {
+        is_every_file,
+        is_named,
+    };
+}

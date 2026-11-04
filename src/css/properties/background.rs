@@ -296,7 +296,7 @@ impl BackgroundSize {
         }
 
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
 
         crate::match_ignore_ascii_case! { ident, {
             b"cover" => Ok(BackgroundSize::Cover),
@@ -393,7 +393,7 @@ impl BackgroundRepeat {
 
     pub(crate) fn parse(input: &mut Parser) -> css::Result<Self> {
         let state = input.state();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
 
         crate::match_ignore_ascii_case! { ident, {
             b"repeat-x" => return Ok(BackgroundRepeat {

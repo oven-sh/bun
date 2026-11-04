@@ -1,0 +1,16 @@
+A module that only a module of the test file imports, through a star, keeps its state. `bun test --rerun-each=3` loads a test file three times in one realm: each load is a new module of the file, and what the file imports is loaded once.
+#### rerun.test.ts
+import { test } from "bun:test";
+import { bump } from "./middle.ts";
+test("counts", () => { console.log("| CASE run", bump()); });
+#### deep.ts
+export const state = { calls: 0 };
+console.log("| CASE deep loads");
+#### names.ts
+export * from "./deep.ts";
+#### middle.ts
+import { state } from "./names.ts";
+console.log("| CASE middle loads");
+export const bump = () => ++state.calls;
+#### package.json
+{ "type": "module" }

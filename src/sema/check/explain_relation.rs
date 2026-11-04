@@ -7,6 +7,8 @@
 //! reporting on. That second run produces the error's code, node and text (`relation_diagnostic`).
 //! If it succeeds, no error is reported. None of its results are written to the relation cache.
 
+use super::errors_js::PLAIN_JS_ERRORS;
+use super::errors_statements::is_kept_in_unchecked_range;
 use super::explain::Line;
 use super::explain::NOWHERE;
 use super::relate::{REC_BOTH, Relater, Relation, STATE_NONE, Ternary};
@@ -276,8 +278,8 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `checkTypeRelatedToEx`. Reports at most one diagnostic, to `diagnostic_output` if given,
     /// otherwise to the sink. Most pairs are related, so a non-reporting run comes first. tsgo has
-    /// no such run, so this one doesn't cache failures. Without an `error_node` it's the only run,
-    /// as in tsgo. An undetermined result counts as related and reports nothing.
+    /// no such run, so this one caches its failures only if it succeeds. Without an `error_node`
+    /// it's the only run, as in tsgo. An undetermined result counts as related and reports nothing.
     pub(super) fn check_type_related_to_ex(
         &mut self,
         source: TypeId,
@@ -306,8 +308,17 @@ impl<'p, 's> Checker<'p, 's> {
                 (false, Some(self.new_diagnostic(at, code, &args)))
             }
             (Ok(false), Some(at)) => {
+                let is_reported_here = at.0 != NOWHERE.0
+                    && self.place_does_not_decide_at != Some(self.stack.len())
+                    && head_message.is_none_or(|code| {
+                        PLAIN_JS_ERRORS.binary_search(&code).is_err()
+                            && !is_kept_in_unchecked_range(code)
+                    });
+                let site = is_reported_here.then_some((at.0, at.1, self.stack.len()));
+                let outer = std::mem::replace(&mut self.message_site, site);
                 let (is_related, diagnostic) =
                     self.relation_diagnostic(source, target, relation, at, head_message);
+                self.message_site = outer;
                 (
                     is_related,
                     diagnostic.and_then(RelationDiagnostic::into_reported),
@@ -741,7 +752,7 @@ impl<'p, 's> Checker<'p, 's> {
                     if class.extends.is_some() {
                         has_heritage_clause = true;
                         extends_entity_name = matches!(
-                            hir[class.extends].kind,
+                            hir.checked_kind(class.extends),
                             ExprKind::Ident(_) | ExprKind::Dot { .. }
                         ) && !is_parenthesized(hir, class.extends);
                     }
@@ -774,7 +785,7 @@ impl<'p, 's> Checker<'p, 's> {
             // That file's task may not have reached this point yet. It would then read what this
             // task stores and never report 2310.
             if is_repeated
-                && let Some(from) = self.stack.iter().position(|&q| q == Query::Bases(target))
+                && let Some(from) = self.outermost_in_flight(Query::Bases(target), 0)
             {
                 self.close_cycle(from);
             }

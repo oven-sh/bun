@@ -173,7 +173,10 @@ impl Checker<'_, '_> {
                 call_sigs.len(),
                 construct_sigs.len(),
             ) {
-                if has_type_args && !self.is_error_type(called) {
+                if has_type_args
+                    && !self.is_error_type(called)
+                    && !self.comes_out_of_another_image(file, data.callee)
+                {
                     let node_start = self.start_inside_parentheses(file, e);
                     self.error_at(
                         (file, node_start, self.end_inside_parentheses(file, e)),
@@ -192,7 +195,7 @@ impl Checker<'_, '_> {
                 }
                 // `invocationErrorDetails`: a parenthesized access doesn't count as a called access.
                 let is_bare = !is_parenthesized(hir, data.callee);
-                let start = match hir[data.callee].kind {
+                let start = match hir.checked_kind(data.callee) {
                     ExprKind::Dot { .. } if is_bare => hir.name_pos(data.callee),
                     _ => self.start_of(file, data.callee),
                 };
@@ -204,7 +207,7 @@ impl Checker<'_, '_> {
                 } else {
                     2349
                 };
-                let end = match hir[data.callee].kind {
+                let end = match hir.checked_kind(data.callee) {
                     ExprKind::Dot { .. } if is_bare => {
                         self.end_of_name_at(file, hir.name_pos(data.callee))
                     }
@@ -219,7 +222,7 @@ impl Checker<'_, '_> {
             return;
         }
         if self.is_any(apparent) {
-            if has_type_args {
+            if has_type_args && !self.comes_out_of_another_image(file, data.callee) {
                 let node_start = self.start_inside_parentheses(file, e);
                 self.error_at(
                     (file, node_start, self.end_inside_parentheses(file, e)),
@@ -267,9 +270,13 @@ impl Checker<'_, '_> {
             // `signature.declaration != nil`
             let has_declaration =
                 sig.map(|sig| self.sig_decl(self.types().sig_origin(sig)).is_some());
-            if self.p.files.options.no_implicit_any {
+            if self.module_options(file).no_implicit_any {
                 // `checkCallExpression`
-                if has_declaration != Some(false) {
+                if has_declaration != Some(false)
+                    && self
+                        .type_constructed_by_function(file, data.callee, sig)
+                        .is_none()
+                {
                     self.error_at(
                         (file, node_start, self.end_inside_parentheses(file, e)),
                         7009,
@@ -588,7 +595,7 @@ impl Checker<'_, '_> {
     /// `invocationErrorDetails`: true if `e` is `a.b` or `a["b"]` where `b` has `SymbolFlagsGetAccessor`, i.e. it's
     /// declared with `get` or with `accessor`.
     fn is_get_accessor_access(&mut self, file: FileId, e: ExprId) -> bool {
-        let (obj, name) = match self.hir(file)[e].kind {
+        let (obj, name) = match self.hir(file).checked_kind(e) {
             ExprKind::Dot { obj, name, .. } => (obj, name),
             // `getPropertyTypeForIndexType` records the property as the element access's symbol
             // (`AccessFlagsCacheSymbol`).
@@ -631,6 +638,16 @@ impl Checker<'_, '_> {
 
     /// `isConstructorAccessible`. Returns `None` if it is, otherwise the constructor's accessibility modifiers, each of
     /// which is an error, and the class that declares it.
+    /// `twice<Shape>(x)`, `lib.twice<Shape>(x)`, where the name is imported from a module that lies in another image: nothing of it was read, so
+    /// that it has no type says nothing of what it takes.
+    fn comes_out_of_another_image(&self, file: FileId, mut callee: ExprId) -> bool {
+        while let ExprKind::Dot { obj, .. } = self.hir(file).checked_kind(callee) {
+            callee = obj;
+        }
+        self.resolve_entity_name_expression(file, callee, SymFlags::VALUE)
+            .is_some_and(|symbol| self.files().stands_for_modules_in_other_images(symbol))
+    }
+
     pub(super) fn inaccessible_constructor(
         &mut self,
         file: FileId,
@@ -742,7 +759,7 @@ impl Checker<'_, '_> {
         };
         // `SkipOuterExpressions(expression, OEKAll)`
         loop {
-            callee = match hir[callee].kind {
+            callee = match hir.checked_kind(callee) {
                 ExprKind::As { expr, .. }
                 | ExprKind::Satisfies { expr, .. }
                 | ExprKind::Instantiation { expr, .. }
@@ -763,7 +780,7 @@ impl Checker<'_, '_> {
             (CallLike::Call(c), ExprKind::Call(_)) => {
                 let callee = hir[c].callee;
                 is_parenthesized(hir, callee)
-                    || !matches!(hir[callee].kind, ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if matches!(hir[obj].kind, ExprKind::Super))
+                    || !matches!(hir.checked_kind(callee), ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if matches!(hir[obj].kind, ExprKind::Super))
             }
             _ => true,
         }
@@ -1125,7 +1142,7 @@ impl Checker<'_, '_> {
             }
             (CallLike::Call(c), ExprKind::Call(_)) => {
                 let callee = hir[c].callee;
-                match hir[callee].kind {
+                match hir.checked_kind(callee) {
                     ExprKind::Dot { .. } if !is_parenthesized(hir, callee) => (
                         hir.name_pos(callee),
                         self.end_of_name_at(file, hir.name_pos(callee)),

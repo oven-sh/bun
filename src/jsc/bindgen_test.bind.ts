@@ -221,6 +221,7 @@ export const fail = b.fn({ args: { how: TestFailure, value: b.any }, capability:
 
 export const TestCounter = b.class({
   rustPath: "crate::bindgen_test::TestCounter",
+  runsUnseenCode: false,
   construct: { args: { start: b.i32.default(0) }, capability: "heap", throws: true },
   internalFields: ["listener"],
   proto: {
@@ -253,6 +254,7 @@ export const TestCounter = b.class({
 /** `mutates`: `increment` and the setter take `&mut self`. */
 export const TestMutates = b.class({
   rustPath: "crate::bindgen_test::TestMutates",
+  runsUnseenCode: false,
   construct: { args: { count: b.i32 }, requiredArguments: 1 },
   proto: {
     count: { getter: b.i32 },
@@ -400,6 +402,36 @@ export const TestBoundThis = b.class({
     /** Says how many times it was computed. */
     label: { getter: b.string, cache: true },
     plus: { args: { other: b.i32 }, returns: b.i32 },
+  },
+});
+
+const calledByProtoCaller = { returns: b.any, capability: "js", throws: true } as const;
+
+/** `protoCaller`: a call returns `[this, callee, argument count, what the function returned]`. */
+export const TestProtoCaller = b.class({
+  rustPath: "crate::bindgen_test::TestProtoCaller",
+  construct: {},
+  protoCaller: "describe_call",
+  proto: {
+    /** How many calls `describe_call` made. */
+    calls: { getter: b.u32 },
+    first: { ...calledByProtoCaller, args: { first: b.any } },
+    /** How many arguments follow the first. */
+    rest: { ...calledByProtoCaller, args: { first: b.any, rest: b.any.variadic } },
+    fail: calledByProtoCaller,
+  },
+  static: {
+    second: { args: { first: b.i32, second: b.i32 }, returns: b.i32 },
+  },
+});
+
+/** `callInstance` */
+export const TestCallable = b.class({
+  rustPath: "crate::bindgen_test::TestCallable",
+  construct: { args: { value: b.i32 } },
+  callInstance: { args: { other: b.i32 }, returns: b.i32 },
+  proto: {
+    value: { getter: b.i32 },
   },
 });
 

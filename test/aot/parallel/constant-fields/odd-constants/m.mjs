@@ -1,0 +1,10 @@
+const E = {};
+E.z = -0;
+E.n = NaN;
+E.i = Infinity;
+E.u = undefined;
+E.l = null;
+E.s = "";
+E.b = 10n;
+E.t = true;
+export const read = () => [Object.is(E.z, -0), Object.is(E.n, NaN), E.i, String(E.u), String(E.l), JSON.stringify(E.s), typeof E.b, E.t, 1 / E.z].join();

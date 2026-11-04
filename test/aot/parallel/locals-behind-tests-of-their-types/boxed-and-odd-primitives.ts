@@ -1,0 +1,6 @@
+const odd: unknown[] = [new String("boxed"), new Number(5), new Boolean(false), Object(Symbol.iterator), Object(7n), "", 0, -0, NaN, false, 7n, Symbol.iterator, "a".repeat(3) + "b", `${1}x`, ["a", "b"].join(""), "rope".concat("d", "text"), String(12), (12).toString(), JSON.parse('"parsed"'), undefined, null];
+function show(run: () => unknown): string { try { const answer = run(); return typeof answer === "symbol" ? "symbol" : typeof answer === "bigint" ? answer + "n" : Object.is(answer, -0) ? "-0" : String(answer); } catch (error) { return (error as Error).constructor.name; } }
+function text(value: string | number): unknown { if (typeof value === "string") return value.length + value.charCodeAt(0); return typeof value === "number" ? value + 1 : typeof value; }
+function truth(value: boolean | string): unknown { if (typeof value === "boolean") return value ? "yes" : "no"; return typeof value === "string" ? value + "!" : typeof value; }
+function big(value: bigint | symbol | number): unknown { if (typeof value === "bigint") return value + 1n; if (typeof value === "symbol") return value.description; return typeof value === "number" ? 1 / value : typeof value; }
+for (let round = 0; round < 3; round++) console.log(odd.map(value => show(() => text(value as never)) + "|" + show(() => truth(value as never)) + "|" + show(() => big(value as never))).join(" "));

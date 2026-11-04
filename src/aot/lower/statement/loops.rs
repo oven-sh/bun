@@ -1,0 +1,130 @@
+use bun_sema::hir::{ExprId, StmtId, StmtKind};
+
+use crate::ir::BlockId;
+use crate::lower::control::BreakTargetKind;
+use crate::lower::scope::is_let_declaration;
+use crate::lower::{FunctionLowering, dispose};
+
+impl FunctionLowering<'_, '_, '_, '_, '_> {
+    pub(in crate::lower) fn begin_loop(&mut self, statement: StmtId) -> BlockId {
+        let header = self.create_loop_header(statement);
+        self.jump(header);
+        self.builder.switch_to(header);
+        self.builder.loop_hint();
+        header
+    }
+
+    fn lower_loop_body(
+        &mut self,
+        statement: StmtId,
+        body: StmtId,
+        break_block: BlockId,
+        continue_block: BlockId,
+    ) {
+        self.push_break_target(statement, BreakTargetKind::Loop, break_block);
+        self.push_continue_target(statement, continue_block);
+        self.lower_statement(body);
+        self.pop_jump_target();
+        self.pop_jump_target();
+    }
+
+    fn lower_test_of_dead_loop(&mut self, test: ExprId, body: StmtId) {
+        let in_bun_run = self.file.decisions().as_folded_by_bun_run();
+        self.lower_test_with_known_answer(test, in_bun_run.is_dead_stmt(body));
+    }
+
+    pub(super) fn lower_while(&mut self, statement: StmtId, test: ExprId, body: StmtId) {
+        if self.file.decisions().is_dead_stmt(body) {
+            self.lower_test_of_dead_loop(test, body);
+            return;
+        }
+        let body_block = self.create_block();
+        let after = self.create_block();
+        let header = self.begin_loop(statement);
+        self.lower_condition(test, body_block, after);
+        self.continue_in(body_block);
+
+        self.lower_loop_body(statement, body, after, header);
+        self.jump(header);
+        self.builder.seal(header);
+        self.continue_in(after);
+    }
+
+    pub(super) fn lower_do_while(&mut self, statement: StmtId, body: StmtId, test: ExprId) {
+        let test_block = self.create_block();
+        let after = self.create_block();
+        let header = self.begin_loop(statement);
+
+        self.lower_loop_body(statement, body, after, test_block);
+        self.jump(test_block);
+        self.continue_in(test_block);
+        self.lower_condition(test, header, after);
+        self.builder.seal(header);
+        self.continue_in(after);
+    }
+
+    pub(super) fn lower_for(&mut self, statement: StmtId, init: StmtId) {
+        let scope = self.enter_own_scope(statement);
+        match dispose::find_resource_declarations(self.file.hir, init) {
+            Some(declarations) => {
+                self.lower_head_resources(declarations, &mut |lowering| {
+                    lowering.lower_for_loop(statement);
+                });
+            }
+            None => {
+                if init.is_some() {
+                    self.lower_statement(init);
+                }
+                self.lower_for_loop(statement);
+            }
+        }
+        self.leave_own_scope(scope);
+    }
+
+    fn lower_for_loop(&mut self, statement: StmtId) {
+        let hir = self.file.hir;
+        let StmtKind::For {
+            init,
+            test,
+            update,
+            body,
+        } = hir[statement].kind
+        else {
+            unreachable!("lower_for_loop takes a For statement");
+        };
+        let scope = self.file.bound.own_scope(statement);
+        let copied_scope = (scope.is_some() && is_let_declaration(hir, init)).then_some(scope);
+        // The test runs in a copy of the environment that the initializer ran in, even where the body is dead.
+        if let Some(scope) = copied_scope {
+            self.copy_iteration_bindings(scope);
+        }
+        if self.file.decisions().is_dead_stmt(body) {
+            self.lower_test_of_dead_loop(test, body);
+            return;
+        }
+        let body_block = self.create_block();
+        let update_block = self.create_block();
+        let after = self.create_block();
+        let header = self.begin_loop(statement);
+        match test.some() {
+            Some(test) => self.lower_condition(test, body_block, after),
+            None => self.jump(body_block),
+        }
+        self.continue_in(body_block);
+
+        self.lower_loop_body(statement, body, after, update_block);
+        self.jump(update_block);
+        self.continue_in(update_block);
+
+        if let Some(scope) = copied_scope {
+            self.copy_iteration_bindings(scope);
+        }
+        // `bun run` prints the update as it is written.
+        if update.is_some() {
+            self.lower_taken_value_for_effect(update);
+        }
+        self.jump(header);
+        self.builder.seal(header);
+        self.continue_in(after);
+    }
+}

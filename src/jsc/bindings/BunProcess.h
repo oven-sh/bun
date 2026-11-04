@@ -32,10 +32,10 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<JSObject> m_nextTickFunction;
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L113-L116
     WriteBarrier<JSString> m_cachedCwd;
-    WriteBarrier<Unknown> m_argv;
-    WriteBarrier<Unknown> m_execArgv;
     // The JS warning printer (ProcessObjectInternals createOnWarning), built on the first warning.
     WriteBarrier<JSObject> m_onWarning;
+    // A function of the library: it hands native code what it kept for a tick. No tick runs once the process exits.
+    WriteBarrier<JSObject> m_runsWhenProcessExits;
 
     void installDefaultWarningListener(JSC::VM&);
 
@@ -92,10 +92,7 @@ public:
     void clearCachedCwd() { m_cachedCwd.clear(); }
 
     JSValue getArgv(JSGlobalObject* globalObject);
-    void setArgv(JSGlobalObject* globalObject, JSValue argv);
-
     JSValue getExecArgv(JSGlobalObject* globalObject);
-    void setExecArgv(JSGlobalObject* globalObject, JSValue execArgv);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject,
         JSC::JSValue prototype)
@@ -133,6 +130,16 @@ public:
         return m_uncaughtExceptionCaptureCallback.get();
     }
 
+    inline void setRunsWhenProcessExits(JSC::JSObject* function)
+    {
+        m_runsWhenProcessExits.setMayBeNull(vm(), this, function);
+    }
+
+    inline JSC::JSObject* runsWhenProcessExits()
+    {
+        return m_runsWhenProcessExits.get();
+    }
+
     inline Structure* cpuUsageStructure() { return m_cpuUsageStructure.getInitializedOnMainThread(this); }
     inline Structure* resourceUsageStructure() { return m_resourceUsageStructure.getInitializedOnMainThread(this); }
     inline Structure* memoryUsageStructure() { return m_memoryUsageStructure.getInitializedOnMainThread(this); }
@@ -145,6 +152,11 @@ JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 // Routes its argument onto the uncaught-exception path. Used, via $newCppFunction, by the
 // node-style callback shims in src/js.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
+
+JSC_DECLARE_HOST_FUNCTION(jsFunctionIsStandardOutputStream);
+
+// Its argument runs when the process or the worker starts to exit, in front of the 'exit' listeners and where none run. No program can list it.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionRunWhenProcessExits);
 
 // process.cwd() as a JSString, cached on the process object until it changes.
 JSC::JSValue getCachedCwd(JSC::JSGlobalObject*);

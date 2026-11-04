@@ -1,0 +1,23 @@
+Mock.module of a package and of a built-in module.
+#### helpers/uses-pkg.js
+import call, { name } from "pkg";
+import { platform } from "node:os";
+export const use = () => [name, call(), typeof platform()].join();
+#### node_modules/pkg/index.js
+export const name = "pkg";
+export default () => "the default of pkg";
+#### node_modules/pkg/package.json
+{ "name": "pkg", "type": "module", "main": "./index.js" }
+#### package-mocked.test.js
+import { expect, mock, test } from "bun:test";
+mock.module("pkg", () => ({ name: "mocked pkg", default: () => "mocked default" }));
+mock.module("node:os", () => ({ platform: () => 7 }));
+test("package mocked", async () => {
+  console.log("| CASE", "package mocked", (await import("./helpers/uses-pkg.js")).use(), (await import("pkg")).name, require("node:os").platform());
+});
+#### package-not-mocked.test.js
+import { expect, mock, test } from "bun:test";
+import { use } from "./helpers/uses-pkg.js";
+test("package not mocked", () => { console.log("| CASE", "package not mocked", use()); });
+#### tsconfig.json
+{ "compilerOptions": { "allowJs": true } }

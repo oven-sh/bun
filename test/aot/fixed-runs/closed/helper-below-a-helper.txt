@@ -1,0 +1,23 @@
+The module that lays the mock is imported by a module that lays none, which two test files import; a third imports neither.
+#### a.test.js
+import "./helper.js";
+import { test } from "bun:test";
+test("a", async () => { const tax = await import("./tax.js"); const cart = await import("./cart.js"); console.log("| CASE a", tax.rate, "|", cart.price()); });
+#### b.test.js
+import "./helper.js";
+import { test } from "bun:test";
+test("b", async () => { const tax = await import("./tax.js"); const cart = await import("./cart.js"); console.log("| CASE b", tax.rate, "|", cart.price()); });
+#### cart.js
+import { rate } from "./tax.js";
+export const price = () => "price by " + rate;
+#### helper.js
+import "./inner.js";
+export const outer = true;
+#### inner.js
+import { mock, vi } from "bun:test";
+vi.mock("./tax.js", () => ({ rate: "mock rate" }));
+#### tax.js
+export const rate = "real rate";
+#### z.test.js
+import { test } from "bun:test";
+test("z", async () => { const tax = await import("./tax.js"); const cart = await import("./cart.js"); console.log("| CASE z", tax.rate, "|", cart.price()); });

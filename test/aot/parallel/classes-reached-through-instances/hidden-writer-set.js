@@ -1,0 +1,12 @@
+let e;
+try {
+  null.x;
+} catch (x) {
+  e = x;
+}
+TypeError.list = [1, 2];
+JSON.parse("0", () => Reflect.set)(e.constructor, "list", { length: 3 });
+function read() {
+  return TypeError.list.length;
+}
+console.log(read());

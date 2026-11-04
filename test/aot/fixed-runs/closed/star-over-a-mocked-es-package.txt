@@ -1,0 +1,25 @@
+A file hands on all names of a module by a star, and a test file mocks that module. What the next test file, which mocks nothing, sees of the file: by a namespace, by a name, by import() and by require(). Here: an ES package, mocked before the load.
+#### a.test.js
+import { mock, test, vi } from "bun:test";
+vi.mock("pkg", () => ({ x: "mock x", y: "mock y" }));
+import { seen } from "./user.js";
+test("a", async () => console.log("| CASE a", await seen()));
+#### b.test.js
+import { test } from "bun:test";
+import { seen } from "./user.js";
+test("b", async () => console.log("| CASE b", await seen()));
+#### barrel.js
+export * from "pkg";
+#### node_modules/pkg/index.js
+export const x = "real x"; export const y = "real y";
+#### node_modules/pkg/package.json
+{ "name": "pkg", "main": "index.js", "type": "module" }
+#### package.json
+{ "name": "mock-next-file", "type": "module" }
+#### user.js
+import * as all from "./barrel.js";
+import { x } from "./barrel.js";
+export const seen = async () => {
+  const required = require("./barrel.js");
+  return [all.x, x, (await import("./barrel.js")).x, required.x, required === all, Object.keys(required).join("+")].join();
+};

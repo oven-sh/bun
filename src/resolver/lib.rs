@@ -17,6 +17,7 @@ pub mod dir_info;
 pub mod error;
 #[path = "fs.rs"]
 mod fs_full;
+mod import_meta_glob;
 pub mod node_fallbacks;
 pub mod package_json;
 pub mod tsconfig_json;
@@ -185,7 +186,7 @@ pub mod fs {
 
     // Global mutable singleton.
     // `RacyCell` is the alias-safe static cell — `init()` is the only writer,
-    // serialized at startup; readers go through `instance()`.
+    // serialized at startup; readers go through `get()`.
     static INSTANCE: bun_core::RacyCell<core::mem::MaybeUninit<FileSystem>> =
         bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
     pub static INSTANCE_LOADED: AtomicBool = AtomicBool::new(false);
@@ -229,6 +230,7 @@ pub mod fs {
             Ok(ZStr::from_buf_mut(buf, written))
         }
 
+        /// Only for `RealFS::entries`, whose methods take `&mut self`; otherwise use [`get`](Self::get).
         #[inline]
         pub fn instance() -> &'static mut FileSystem {
             // SAFETY: caller guarantees init() was called, so INSTANCE is initialized.
@@ -706,7 +708,165 @@ pub mod fs {
     use bun_paths::strings;
     use bun_ptr::Interned;
     use bun_sys::Fd;
-    use bun_threading::Mutex;
+    use bun_threading::rwlock::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+
+    thread_local! {
+        /// How many guards of the `EntriesLock` this thread holds. Counted in debug builds alone.
+        static ENTRIES_GUARDS_HELD: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
+        /// How many of them are exclusive.
+        static EXCLUSIVE_ENTRIES_GUARDS_HELD: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
+    }
+
+    /// Guards the listings of directories: the `data` of every `DirEntry` that the entries map holds.
+    ///
+    /// A listing that is in the map changes in one way: whoever asks at a newer generation than the listing has reads
+    /// the directory again and rewrites the `DirEntry` in place, which frees the buckets of the old map. That takes
+    /// the exclusive lock. Whoever only probes listings, or puts a new one into the map (which locks itself), shares
+    /// the lock: a thread that reads a new directory holds it across the system calls, and nobody who asks about a
+    /// directory that is known waits for that.
+    ///
+    /// Not recursive, shared or not: a thread that waits for the exclusive lock stops every new sharer.
+    pub struct EntriesLock {
+        lock: RwLock<()>,
+    }
+
+    enum HeldEntriesLock {
+        Shared(#[allow(dead_code)] RwLockReadGuard<'static, ()>),
+        Exclusive(#[allow(dead_code)] RwLockWriteGuard<'static, ()>),
+    }
+
+    /// Releases the `EntriesLock` on `Drop`. Like a `MutexGuard` it does not borrow the owner of the lock.
+    pub struct EntriesGuard {
+        held: HeldEntriesLock,
+    }
+
+    impl EntriesGuard {
+        fn new(held: HeldEntriesLock) -> EntriesGuard {
+            let guard = EntriesGuard { held };
+            guard.change_counts(|count| count + 1);
+            guard
+        }
+
+        fn is_exclusive(&self) -> bool {
+            matches!(self.held, HeldEntriesLock::Exclusive(_))
+        }
+
+        fn change_counts(&self, change: fn(u32) -> u32) {
+            if !cfg!(debug_assertions) {
+                return;
+            }
+            ENTRIES_GUARDS_HELD.with(|count| count.set(change(count.get())));
+            if self.is_exclusive() {
+                EXCLUSIVE_ENTRIES_GUARDS_HELD.with(|count| count.set(change(count.get())));
+            }
+        }
+    }
+
+    impl Drop for EntriesGuard {
+        fn drop(&mut self) {
+            self.change_counts(|count| count - 1);
+        }
+    }
+
+    impl Default for EntriesLock {
+        fn default() -> EntriesLock {
+            EntriesLock {
+                lock: RwLock::new(()),
+            }
+        }
+    }
+
+    impl EntriesLock {
+        fn lock(&self) -> &'static RwLock<()> {
+            // SAFETY: the lock is a field of the `RealFS` of the `FileSystem` singleton, which lives as long as the
+            // process. The contract of `Mutex::lock_guard`: the lock outlives its guards.
+            unsafe { &*core::ptr::from_ref(&self.lock) }
+        }
+
+        /// Exclusive, as `Mutex::lock_guard` is: for whoever may rewrite a listing in place or takes one out of the map.
+        #[must_use = "the lock is released as soon as the guard is dropped"]
+        pub fn lock_guard(&self) -> EntriesGuard {
+            EntriesGuard::new(HeldEntriesLock::Exclusive(self.lock().write()))
+        }
+
+        /// For whoever only probes listings.
+        #[must_use = "the lock is released as soon as the guard is dropped"]
+        pub fn shared_guard(&self) -> EntriesGuard {
+            EntriesGuard::new(HeldEntriesLock::Shared(self.lock().read()))
+        }
+
+        /// For whoever has found, under `guard`, a listing that it has to rewrite: the exclusive lock in place of
+        /// `guard`. The lock is free in between, so what was seen under `guard` is looked at again.
+        #[must_use = "the lock is released as soon as the guard is dropped"]
+        pub fn make_exclusive(&self, guard: EntriesGuard) -> EntriesGuard {
+            if guard.is_exclusive() {
+                return guard;
+            }
+            drop(guard);
+            self.lock_guard()
+        }
+
+        /// For whoever may read a directory and put its listing into the map. Of two listings of one directory the
+        /// map finds the later one, and a handle that the other one keeps would stay open: whoever keeps handles
+        /// reads while nobody else does.
+        #[must_use = "the lock is released as soon as the guard is dropped"]
+        pub fn guard_for_reading(&self, store_fd: bool) -> EntriesGuard {
+            match store_fd {
+                true => self.lock_guard(),
+                false => self.shared_guard(),
+            }
+        }
+
+        /// For `debug_assert!`. Release builds do not count the guards, and the answer is `true` there.
+        pub fn is_held_by_current_thread(&self) -> bool {
+            !cfg!(debug_assertions) || ENTRIES_GUARDS_HELD.with(|count| count.get() > 0)
+        }
+
+        /// For `debug_assert!` where a listing that the map finds is rewritten. `true` in release builds.
+        pub fn is_held_exclusively_by_current_thread(&self) -> bool {
+            !cfg!(debug_assertions) || EXCLUSIVE_ENTRIES_GUARDS_HELD.with(|count| count.get() > 0)
+        }
+    }
+
+    #[cfg(test)]
+    mod entries_lock_tests {
+        use super::EntriesLock;
+
+        #[test]
+        fn probes_share_the_lock_and_a_rewrite_waits_for_them() {
+            let lock: &'static EntriesLock = Box::leak(Box::default());
+            let probe = lock.shared_guard();
+            assert!(lock.is_held_by_current_thread());
+            assert_eq!(
+                lock.is_held_exclusively_by_current_thread(),
+                !cfg!(debug_assertions)
+            );
+            let other_probe = std::thread::spawn(move || drop(lock.shared_guard()));
+            other_probe.join().unwrap();
+
+            let (sender, receiver) = std::sync::mpsc::channel();
+            let rewrite = std::thread::spawn(move || {
+                let _exclusive = lock.make_exclusive(lock.shared_guard());
+                assert!(lock.is_held_exclusively_by_current_thread());
+                sender.send(()).unwrap();
+            });
+            let wait = std::time::Duration::from_millis(50);
+            assert!(receiver.recv_timeout(wait).is_err());
+            drop(probe);
+            receiver.recv().unwrap();
+            rewrite.join().unwrap();
+            assert_eq!(lock.is_held_by_current_thread(), !cfg!(debug_assertions));
+
+            drop(lock.guard_for_reading(false));
+            let keeps_handles = lock.guard_for_reading(true);
+            assert!(lock.is_held_exclusively_by_current_thread());
+            drop(lock.make_exclusive(keeps_handles));
+            assert_eq!(
+                lock.is_held_exclusively_by_current_thread(),
+                !cfg!(debug_assertions)
+            );
+        }
+    }
 
     // `StringOrTinyString::init*_append_if_needed` needs an `Appender`; route the
     // ZST `FilenameStore` handle through to the backing `BSSStringList` singleton.
@@ -771,7 +931,7 @@ pub mod fs {
             &self,
             query: &[u8],
         ) -> (Option<crate::fs_full::EntryLookup<'static>>, Fd) {
-            let _lock = FileSystem::instance().fs.entries_mutex.lock_guard();
+            let _lock = FileSystem::get().fs.entries_mutex.shared_guard();
             match self {
                 EntriesOption::Entries(entries) => {
                     // SAFETY: ARENA — the `DirEntry` is a process-lifetime
@@ -788,7 +948,7 @@ pub mod fs {
         /// Listing dir + fd snapshot under `entries_mutex` (watch
         /// registration); `None` when the slot holds a read error.
         pub(crate) fn dir_and_fd(&self) -> Option<(&'static [u8], Fd)> {
-            let _lock = FileSystem::instance().fs.entries_mutex.lock_guard();
+            let _lock = FileSystem::get().fs.entries_mutex.shared_guard();
             match self {
                 EntriesOption::Entries(entries) => Some((entries.dir, entries.fd)),
                 EntriesOption::Err(_) => None,
@@ -797,12 +957,13 @@ pub mod fs {
     }
 
     // SAFETY: ARENA — `EntriesOption` holds an unbounded `&mut DirEntry` (whose `data`
-    // map stores `*mut Entry` into the BSSMap singleton). All access is serialized
-    // through `RealFS.entries_mutex`. The
+    // map stores `*mut Entry` into the BSSMap singleton). Whoever reads a slot that the
+    // map finds holds `RealFS.entries_mutex`, at least shared; only who holds it
+    // exclusively writes to such a slot or to its `DirEntry` (see `EntriesLock`). The
     // raw-pointer fields are the only thing blocking auto-Sync.
     unsafe impl Sync for EntriesOption {}
     // SAFETY: the `&'static mut DirEntry` points into the process-lifetime BSSMap
-    // singleton; ownership may cross threads under the same `entries_mutex` serialization.
+    // singleton; it may cross threads under the same rule of `entries_mutex`.
     unsafe impl Send for EntriesOption {}
 
     /// Fixed-capacity (2048-entry) BSS-backed hash map for the directory-entry
@@ -849,7 +1010,9 @@ pub mod fs {
             // `RealFS.entries` field (see struct invariant), and the returned
             // borrow is bounded by that `&mut self` — it cannot outlive the
             // field borrow nor be sent to another thread independently of it.
-            // Cross-thread exclusion is provided by the mutex asserted above.
+            // Across threads there is no exclusion: threads that share `entries_mutex`
+            // each come here. The map takes its own mutex for what it changes, and its
+            // slots never move.
             unsafe { &mut *entries_option_map() }
         }
         pub fn get(&mut self, key: &[u8]) -> Option<&mut EntriesOption> {
@@ -888,14 +1051,14 @@ pub mod fs {
     }
 
     /// The active filesystem backend (always the real filesystem).
-    pub type Implementation = RealFS;
+    pub(crate) type Implementation = RealFS;
 
     // ── RealFS ───────────────────────────────────────────────────────────
 
     /// Real-filesystem backend: directory-entry cache plus fd-limit
     /// bookkeeping.
     pub struct RealFS {
-        pub entries_mutex: Mutex,
+        pub entries_mutex: EntriesLock,
         /// Port of `entries: *EntriesOption.Map`. The resolver body addresses
         /// this directly (`rfs.entries.get_or_put(..)`); modeled as the wrapper
         /// `EntriesMap` (bun_alloc has no BSSMap equivalent).
@@ -914,7 +1077,7 @@ pub mod fs {
             #[cfg(windows)]
             let _ = file_limit;
             RealFS {
-                entries_mutex: Mutex::default(),
+                entries_mutex: EntriesLock::default(),
                 entries: EntriesMap::new(),
                 cwd,
                 #[cfg(not(windows))]
@@ -993,13 +1156,13 @@ pub mod fs {
         /// Iterate `handle` and populate a
         /// fresh `DirEntry` (re-using `prev_map` Entry slots where the name matches).
         fn readdir<I: DirEntryIterator>(
-            &mut self,
+            &self,
             store_fd: bool,
             mut prev_map: Option<&mut dir_entry::EntryMap>,
             dir_: &'static [u8],
             generation: Generation,
             handle: Fd,
-            iterator: I,
+            iterator: &mut I,
         ) -> crate::CrateResult<DirEntry> {
             let mut iter = bun_sys::iterate_dir(handle);
             let mut dir = DirEntry::init(dir_, generation);
@@ -1009,15 +1172,15 @@ pub mod fs {
                 dir.fd = handle;
             }
 
+            let fd = dir.fd;
             let mut filename_store = FilenameStoreAppender::new();
             while let Some(entry_) = iter.next()? {
                 // debug("readdir entry {}", BStr::new(entry_.name.slice()));
-                dir.add_entry_with_store(
-                    prev_map.as_deref_mut(),
-                    &entry_,
-                    &mut filename_store,
-                    &iterator,
-                )?;
+                if let Some(entry) =
+                    dir.add_entry_with_store(prev_map.as_deref_mut(), &entry_, &mut filename_store)?
+                {
+                    iterator.next(self, entry, fd);
+                }
             }
 
             // debug("readdir({}, {}) = {}", handle, dir_, dir.data.count());
@@ -1031,6 +1194,7 @@ pub mod fs {
             &mut self,
             dir: &[u8],
             err: crate::Error,
+            replaces_listing: bool,
         ) -> crate::CrateResult<&'static mut EntriesOption> {
             let mut get_or_put_result = self.entries.get_or_put(dir)?;
             if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
@@ -1041,6 +1205,14 @@ pub mod fs {
                         canonical_error: err,
                     },
                 )));
+            }
+            // Only who rewrites a listing holds the lock alone and may write to a slot that others see. Where another
+            // thread has put its answer there since this one looked, that answer stands.
+            if !replaces_listing
+                && let Some(known) = self.entries.at_index(get_or_put_result.index)
+            {
+                // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
+                return Ok(unsafe { &mut *std::ptr::from_mut::<EntriesOption>(known) });
             }
             let opt = self.entries.put(
                 &mut get_or_put_result,
@@ -1060,7 +1232,7 @@ pub mod fs {
             generation: Generation,
             store_fd: bool,
         ) -> crate::CrateResult<&mut EntriesOption> {
-            self.read_directory_with_iterator(dir_, handle_, generation, store_fd, ())
+            self.read_directory_with_iterator(dir_, handle_, generation, store_fd, &mut ())
         }
 
         // One of the learnings here
@@ -1077,27 +1249,38 @@ pub mod fs {
             maybe_handle: Option<Fd>,
             generation: Generation,
             store_fd: bool,
-            iterator: I,
+            iterator: &mut I,
         ) -> crate::CrateResult<&'static mut EntriesOption> {
             let dir = strings::paths::without_trailing_slash_windows_path(dir_maybe_trail_slash);
 
             crate::Resolver::assert_valid_cache_key(dir);
-            let _unlock_guard = self.entries_mutex.lock_guard();
+            let mut guard = self.entries_mutex.guard_for_reading(store_fd);
 
             let mut in_place: Option<*mut DirEntry> = None;
 
             let mut cache_result = self.entries.get_or_put(dir)?;
+            if self.is_listing_older_than(cache_result.index, generation) {
+                guard = self.entries_mutex.make_exclusive(guard);
+                cache_result = self.entries.get_or_put(dir)?;
+            }
+            let _unlock_guard = guard;
             if cache_result.has_checked_if_exists() {
                 if let Some(cached_result) = self.entries.at_index(cache_result.index) {
                     // erase to raw immediately so the early-return reborrow
                     // doesn't conflict with the `&mut self.entries` borrow above.
                     let cached_ptr = std::ptr::from_mut::<EntriesOption>(cached_result);
-                    // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
+                    // SAFETY: BSSMap-owned slot. `entries_mutex` is at least shared, so nobody
+                    // writes to it. Threads that share the lock may each hold a `&mut` to the
+                    // slot; none writes through it, which is less than `&mut` promises.
                     // Single `&mut` reborrow — the catch-all arm binds and returns the
                     // scrutinee directly so no second `&mut *cached_ptr` is materialized
                     // while the first is on the borrow stack (Stacked Borrows hygiene).
                     match unsafe { &mut *cached_ptr } {
                         EntriesOption::Entries(e) if e.generation < generation => {
+                            debug_assert!(
+                                self.entries_mutex.is_held_exclusively_by_current_thread(),
+                                "a listing is rewritten in place under the exclusive entries_mutex",
+                            );
                             in_place = Some(std::ptr::from_mut::<DirEntry>(*e));
                         }
                         cached => return Ok(cached),
@@ -1118,7 +1301,7 @@ pub mod fs {
                 Some(h) => h,
                 None => match self.open_dir(dir) {
                     Ok(h) => h,
-                    Err(err) => return self.read_directory_error(dir, err),
+                    Err(err) => return self.read_directory_error(dir, err, in_place.is_some()),
                 },
             };
 
@@ -1149,7 +1332,7 @@ pub mod fs {
 
             // Cache miss: read the directory entries
             let prev = in_place.map(|p| {
-                // SAFETY: BSSMap-owned, no aliasing here (entries_mutex held).
+                // SAFETY: BSSMap-owned, no aliasing here (`in_place`: entries_mutex held exclusively).
                 unsafe { &mut (*p).data }
             });
             let mut entries = match self.readdir(store_fd, prev, dir, generation, handle, iterator)
@@ -1160,7 +1343,7 @@ pub mod fs {
                         // SAFETY: see above.
                         unsafe { (*existing).data.clear() };
                     }
-                    return self.read_directory_error(dir, err);
+                    return self.read_directory_error(dir, err, in_place.is_some());
                 }
             };
 
@@ -1172,15 +1355,15 @@ pub mod fs {
                 None => bun_core::heap::into_raw(Box::new(DirEntry::init(dir, generation))),
             };
             if let Some(original) = in_place {
-                // SAFETY: BSSMap-owned; entries_mutex held.
+                // SAFETY: BSSMap-owned; entries_mutex held exclusively.
                 unsafe { (*original).data.clear() };
             }
             if store_fd && !entries.fd.is_valid() {
                 entries.fd = handle;
             }
 
-            // SAFETY: `entries_ptr` is either a live BSSMap slot (`in_place`) or a fresh
-            // leaked Box; exclusively owned here under `entries_mutex`.
+            // SAFETY: `entries_ptr` is either a live BSSMap slot (`in_place`: `entries_mutex`
+            // held exclusively) or a fresh leaked Box that no other thread has seen.
             unsafe { *entries_ptr = entries };
             let result = EntriesOption::Entries(
                 // SAFETY: see above — re-borrow as 'static for the BSSMap slot.
@@ -1210,7 +1393,7 @@ pub mod fs {
         /// (if reparse point) `CreateFileW`-follow + `GetFinalPathNameByHandle`
         /// realpath.
         pub(crate) fn kind(
-            &mut self,
+            &self,
             dir_: &[u8],
             base: &[u8],
             existing_fd: Fd,
@@ -1413,7 +1596,7 @@ pub mod fs {
     impl crate::fs_full::EntryKindResolver for RealFS {
         #[inline(always)]
         fn resolve_kind(
-            &mut self,
+            &self,
             dir: &[u8],
             base: &[u8],
             existing_fd: bun_sys::Fd,
@@ -1449,6 +1632,33 @@ pub mod fs {
             }
         }
 
+        /// Whoever asks for the listing at `index` at `generation` reads the directory again. The caller holds
+        /// `entries_mutex`. A listing never gets older, so `false` stays `false`.
+        pub(crate) fn is_listing_older_than(
+            &mut self,
+            index: bun_alloc::IndexType,
+            generation: Generation,
+        ) -> bool {
+            matches!(
+                self.entries.at_index(index),
+                Some(EntriesOption::Entries(entries)) if entries.generation < generation
+            )
+        }
+
+        /// The lock that `entries_at_locked(index, generation)` asks for: shared, unless the directory is read again.
+        #[must_use = "the lock is released as soon as the guard is dropped"]
+        pub(crate) fn guard_for_listing(
+            &mut self,
+            index: bun_alloc::IndexType,
+            generation: Generation,
+        ) -> EntriesGuard {
+            let shared = self.entries_mutex.shared_guard();
+            match self.is_listing_older_than(index, generation) {
+                true => self.entries_mutex.make_exclusive(shared),
+                false => shared,
+            }
+        }
+
         /// Index lookup with generation-check
         /// re-read (open + readdir + cache replace) when the cached listing is
         /// stale. The generation-stale branch drops the existing `DirEntry`
@@ -1466,13 +1676,18 @@ pub mod fs {
             );
             // erase to raw immediately so re-borrowing `&mut self` for
             // `open_dir`/`readdir`/`read_directory_error` doesn't conflict.
-            // `entries_mutex` held by the caller; sole `&mut` to this slot.
+            // `entries_mutex` held by the caller, at least shared: nobody writes to this slot.
             let result_ptr = std::ptr::from_mut::<EntriesOption>(self.entries.at_index(index)?);
-            // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
+            // SAFETY: BSSMap-owned slot. Threads that share `entries_mutex` may each hold a
+            // `&mut` to it; only the stale arm writes, and it holds the lock exclusively.
             if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {
                 if existing.generation < generation {
+                    debug_assert!(
+                        self.entries_mutex.is_held_exclusively_by_current_thread(),
+                        "a listing is rewritten in place under the exclusive entries_mutex",
+                    );
                     let e_ptr: *mut DirEntry = std::ptr::from_mut::<DirEntry>(*existing);
-                    // SAFETY: BSSMap-owned `DirEntry` (boxed/leaked into `EntriesOption`); `entries_mutex` held.
+                    // SAFETY: BSSMap-owned `DirEntry` (boxed/leaked into `EntriesOption`); `entries_mutex` held exclusively.
                     let dir = unsafe { (*e_ptr).dir };
                     // `open_dir_for_iteration`, NOT `RealFS.openDir`. On POSIX
                     // the two diverge: `O_DIRECTORY` only vs `O_RDONLY|O_DIRECTORY`.
@@ -1481,7 +1696,7 @@ pub mod fs {
                         Err(err) => {
                             // SAFETY: see above.
                             unsafe { (*e_ptr).data.clear() };
-                            return self.read_directory_error(dir, err.into()).ok();
+                            return self.read_directory_error(dir, err.into(), true).ok();
                         }
                     };
                     let _close_guard = scopeguard::guard(handle, |h| {
@@ -1489,7 +1704,7 @@ pub mod fs {
                     });
                     // SAFETY: see above — exclusive `&mut` on the prev map for the duration of `readdir`.
                     let prev = Some(unsafe { &mut (*e_ptr).data });
-                    match self.readdir(false, prev, dir, generation, handle, ()) {
+                    match self.readdir(false, prev, dir, generation, handle, &mut ()) {
                         Ok(new_entry) => {
                             // SAFETY: see above.
                             unsafe { (*e_ptr).data.clear() };
@@ -1499,7 +1714,7 @@ pub mod fs {
                         Err(err) => {
                             // SAFETY: see above.
                             unsafe { (*e_ptr).data.clear() };
-                            return self.read_directory_error(dir, err).ok();
+                            return self.read_directory_error(dir, err, true).ok();
                         }
                     }
                 }
@@ -1673,7 +1888,7 @@ pub mod fs {
 // owns this impl. See PORTING.md §Dispatch.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod dir_entry_accessor {
-    use crate::fs::{DirEntry, EntriesOption, Entry, EntryKind, FileSystem as FS, Implementation};
+    use crate::fs::{DirEntry, EntriesOption, Entry, EntryKind, FileSystem as FS};
     use bun_core::ZStr;
     use bun_glob::walk::{Accessor, AccessorDirEntry, AccessorDirIter, AccessorHandle};
     use bun_paths::{Platform, resolve_path};
@@ -1779,10 +1994,7 @@ pub mod dir_entry_accessor {
                 let entry = bun_ptr::BackRef::<Entry>::from(
                     core::ptr::NonNull::new(*val).expect("EntryStore slot"),
                 );
-                let fs: *mut Implementation = &raw mut FS::instance().fs;
-                // SAFETY: fs points at the process-global RealFS; the lazy-stat
-                // rewrite inside `kind()` is serialized on the per-entry mutex.
-                let kind = unsafe { entry.kind(fs, true) };
+                let kind = entry.kind(&FS::get().fs, true);
                 let fskind = match kind {
                     EntryKind::File => bun_sys::FileKind::File,
                     EntryKind::Dir => bun_sys::FileKind::Directory,
@@ -2191,16 +2403,14 @@ pub mod cache {
         /// `Contents::Owned(Vec<u8>)` path.
         pub fn read_file_with_allocator(
             &mut self,
-            _fs: &mut fs_mod::FileSystem,
             path: &[u8],
             dirname_fd: Fd,
             use_shared_buffer: bool,
             _file_handle: Option<Fd>,
             arena: Option<&bun_alloc::Arena>,
         ) -> crate::CrateResult<Entry> {
-            let rfs = &_fs.fs;
-
-            let will_close = rfs.need_to_close_files() && _file_handle.is_none();
+            let will_close =
+                fs_mod::FileSystem::get().fs.need_to_close_files() && _file_handle.is_none();
 
             // A single let-expression avoids `mem::zeroed()` on a
             // type that may have niche (NonZero) fields.
@@ -2315,7 +2525,9 @@ pub use ::bun_paths::{is_package_path, is_package_path_not_absolute};
 
 // Resolver implementation modules. Each file declares the sibling-crate `use`s
 // it needs; cross-file references go through `crate::*` paths.
+pub mod compiled_program;
 pub mod options;
+pub mod package_names;
 pub mod resolver;
 pub mod result;
 pub mod standalone_module_graph;

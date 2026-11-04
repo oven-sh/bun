@@ -1,0 +1,21 @@
+function run(n: number): string { let a = 0; let b = 1; for (let i = 0; i < n; i++) { const next = (a + b) % 1000003; a = b; b = next; } return a + ',' + b; }
+console.log(run(-3));
+console.log(run(-1));
+console.log(run(0));
+console.log(run(1));
+console.log(run(2));
+console.log(run(3));
+console.log(run(4));
+console.log(run(5));
+console.log(run(6));
+console.log(run(7));
+console.log(run(8));
+console.log(run(9));
+console.log(run(10));
+console.log(run(15));
+console.log(run(16));
+console.log(run(17));
+console.log(run(24));
+console.log(run(25));
+console.log(run(100));
+console.log(run(1001));

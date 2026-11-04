@@ -1,0 +1,10 @@
+const one = require("./one.cjs");
+const text = require("./text.cjs");
+const yes = require("./yes.cjs");
+const definedOne = require("./defined-one.cjs");
+const definedYes = require("./defined-yes.cjs");
+console.log(typeof one.__esModule, one.__esModule === 1, one.__esModule.toFixed(1));
+console.log(typeof text.__esModule, text.__esModule === "yes");
+console.log(typeof yes.__esModule, yes.__esModule === true);
+console.log(typeof definedOne.__esModule, definedOne.__esModule === 1);
+console.log(typeof definedYes.__esModule, definedYes.__esModule === true);

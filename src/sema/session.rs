@@ -24,8 +24,10 @@ use crate::util::{AppendVec, FxBuild};
 use bun_threading::Guarded;
 use std::alloc::{AllocError, Allocator, Layout};
 use std::any::Any;
+use std::cell::{Cell, UnsafeCell};
 use std::ptr::NonNull;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::ThreadId;
 
 /// `FxHashMap` in an arena.
@@ -43,13 +45,76 @@ pub fn set_in<K>(arena: &Arena) -> ArenaHashSet<'_, K> {
     ArenaHashSet::with_hasher_in(FxBuild, arena)
 }
 
+/// Gives the memory of the free blocks in the calling thread's heaps back to the system. A page with one block in use
+/// otherwise stays resident as a whole. Only the thread that owns a heap can do this. The allocator does it for a
+/// thread that parks, so this is for a thread that has work for a long time. See `BuildUnderWay`.
+pub fn give_back_free_memory() {
+    if !bun_threading::thread_pool::is_build_under_way() {
+        bun_alloc::mimalloc::mi_on_thread_idle();
+    }
+}
+
+/// Starts at 1.
+static NEXT_SESSION_NUMBER: AtomicU64 = AtomicU64::new(1);
+
+/// A thread allocates in turn for a program, for its resolver and for its checker.
+const ARENAS_REMEMBERED: usize = 4;
+
+thread_local! {
+    /// The `Session::number` of the sessions that this thread asked last, newest first, each with the thread's arena there.
+    static OWN_ARENAS: [Cell<(u64, *const Arena)>; ARENAS_REMEMBERED] =
+        const { [const { Cell::new((0u64, std::ptr::null::<Arena>())) }; ARENAS_REMEMBERED] };
+}
+
 /// Owns the arena of every thread that has allocated for one check.
 pub struct Session {
+    /// Sequence number among all sessions ever created. Another session may come to lie at the address of one that was dropped.
+    number: u64,
     /// An append-only linked list. Each thread appends its own node, so each arena is created by
     /// the thread that allocates in it.
     first: Link,
     /// Values passed to `keep`.
     kept: AppendVec<Box<dyn Any + Send + Sync>>,
+}
+
+/// A session that its user empties once it's done with it, while others still refer to the slot.
+pub struct SessionSlot(UnsafeCell<Session>);
+
+// SAFETY: a `Session` is `Sync`, and by its contract `empty` runs while nothing else uses the slot.
+unsafe impl Sync for SessionSlot {}
+
+impl SessionSlot {
+    pub fn new() -> SessionSlot {
+        SessionSlot(UnsafeCell::new(Session::new()))
+    }
+
+    pub fn session(&self) -> &Session {
+        // SAFETY: `empty` runs only when no such reference is used again.
+        unsafe { &*self.0.get() }
+    }
+
+    /// Frees everything that was allocated in the session, on any thread. Afterwards the session is like new.
+    ///
+    /// # Safety
+    /// No reference to the session or into its arenas is used again, and no other thread uses the slot during the call.
+    pub unsafe fn empty(&self) {
+        // SAFETY: caller contract.
+        drop(unsafe { self.0.get().replace(Session::new()) });
+    }
+
+    /// `empty`, with the work of `Session::drop_in_parallel`.
+    ///
+    /// # Safety
+    /// As for `empty`.
+    pub unsafe fn empty_in_parallel(&self, in_parallel: &dyn Fn(usize, &(dyn Fn(usize) + Sync))) {
+        // SAFETY: caller contract.
+        let session = unsafe { self.0.get().replace(Session::new()) };
+        session.drop_in_parallel(in_parallel);
+    }
+
+    pub fn into_session(self) -> Session {
+        self.0.into_inner()
+    }
 }
 
 type Link = OnceLock<Box<ThreadArena>>;
@@ -69,15 +134,40 @@ impl Default for Session {
 impl Session {
     pub fn new() -> Session {
         Session {
+            number: NEXT_SESSION_NUMBER.fetch_add(1, Ordering::Relaxed),
             first: OnceLock::new(),
             kept: AppendVec::new(),
         }
     }
 
+    /// No thread has asked for an arena.
+    pub fn is_unused(&self) -> bool {
+        self.first.get().is_none()
+    }
+
     /// Returns the calling thread's arena, creating it on the thread's first call.
-    ///
-    /// The lookup is linear in the number of threads, so a task calls this once and stores the result.
+    #[inline]
     pub fn arena(&self) -> &Arena {
+        OWN_ARENAS.with(|own| {
+            for remembered in own {
+                let (number, arena) = remembered.get();
+                if number == self.number {
+                    // SAFETY: the node that holds it is freed with the session, which is borrowed, and no other session has the number.
+                    return unsafe { &*arena };
+                }
+            }
+            let arena = self.find_arena();
+            for at in (1..own.len()).rev() {
+                own[at].set(own[at - 1].get());
+            }
+            own[0].set((self.number, std::ptr::from_ref(arena)));
+            arena
+        })
+    }
+
+    /// The lookup is linear in the number of threads.
+    #[inline(never)]
+    fn find_arena(&self) -> &Arena {
         let thread = std::thread::current().id();
         let mut link = &self.first;
         loop {
@@ -152,6 +242,36 @@ impl Session {
             if own.is_some() {
                 bun_alloc::mimalloc::mi_collect(true);
             }
+        });
+    }
+
+    pub fn drop_in_parallel(mut self, in_parallel: &dyn Fn(usize, &(dyn Fn(usize) + Sync))) {
+        /// How many kept values a thread drops at a time.
+        const RUN: usize = 256;
+        let mut arenas: Vec<Box<ThreadArena>> = Vec::new();
+        let mut next = self.first.take();
+        while let Some(mut node) = next {
+            next = node.next.take();
+            arenas.push(node);
+        }
+        let mut kept: Vec<Vec<Box<dyn Any + Send + Sync>>> = Vec::new();
+        self.kept.drain(|_, value| match kept.last_mut() {
+            Some(run) if run.len() < RUN => run.push(value),
+            _ => kept.push(vec![value]),
+        });
+        let (runs, count) = (kept.len(), kept.len() + arenas.len());
+        let (kept, arenas) = (Guarded::new(kept), Guarded::new(arenas));
+        in_parallel(count, &|index| {
+            if index < runs {
+                let run = kept.lock().pop();
+                return drop(run);
+            }
+            let thread = std::thread::current().id();
+            let mut left = arenas.lock();
+            let own = left.iter().position(|it| it.thread == thread);
+            let one = left.swap_remove(own.unwrap_or(0));
+            drop(left);
+            drop(one);
         });
     }
 
@@ -252,6 +372,44 @@ mod tests {
         });
         assert_ne!(own.addr(), other);
         assert_eq!(session.thread_count(), 2);
+    }
+
+    #[test]
+    fn a_thread_gets_the_same_arena_of_each_of_more_sessions_than_it_remembers() {
+        let sessions: Vec<Session> = (0..2 * ARENAS_REMEMBERED + 1)
+            .map(|_| Session::new())
+            .collect();
+        let arena_of = |session: &Session| std::ptr::from_ref(session.arena());
+        let first: Vec<*const Arena> = sessions.iter().map(arena_of).collect();
+        for _ in 0..3 {
+            let again: Vec<*const Arena> = sessions.iter().map(arena_of).collect();
+            assert_eq!(again, first);
+            let last = sessions.last().unwrap();
+            assert_eq!(arena_of(last), arena_of(last));
+        }
+        assert!(sessions.iter().all(|session| session.thread_count() == 1));
+    }
+
+    #[test]
+    fn a_session_at_the_address_of_a_dropped_one_has_its_own_arena() {
+        let slot = SessionSlot::new();
+        slot.session().arena().alloc_slice_copy(&[1u32; 100]);
+        for _ in 0..3 {
+            // SAFETY: nothing refers to the session or into its arenas.
+            unsafe { slot.empty() };
+            assert_eq!(slot.session().thread_count(), 0);
+            assert_eq!(*slot.session().arena().alloc_slice_copy(&[7u32; 100]), [7; 100]);
+            assert_eq!(slot.session().thread_count(), 1);
+        }
+    }
+
+    #[test]
+    fn a_session_that_moves_keeps_the_arenas_of_its_threads() {
+        let session = Session::new();
+        let own = std::ptr::from_ref(session.arena());
+        let moved = Box::new(session);
+        assert_eq!(own, std::ptr::from_ref(moved.arena()));
+        assert_eq!(moved.thread_count(), 1);
     }
 
     #[test]

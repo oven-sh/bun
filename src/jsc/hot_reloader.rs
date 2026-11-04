@@ -573,10 +573,12 @@ where
             crate::node_compile_cache::persist_now();
             Output::flush();
             flush_changed_paths_for_reload();
-            bun_core::reload_process(
-                CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
-                false,
-            );
+            bun_removable_features::removable_body!(HotReload, Abort, {
+                bun_core::reload_process(
+                    CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
+                    false,
+                );
+            });
             unreachable!();
         }
 
@@ -638,10 +640,12 @@ fn arm_watch_reload_grace_timer() {
         // runs on its own worker VM).
         crate::node_compile_cache::persist_now();
         Output::flush();
-        bun_core::reload_process(
-            CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
-            false,
-        );
+        bun_removable_features::removable_body!(HotReload, Abort, {
+            bun_core::reload_process(
+                CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
+                false,
+            );
+        });
         unreachable!();
     };
     let spawned = std::thread::Builder::new()

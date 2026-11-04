@@ -1,0 +1,79 @@
+test.extend(): the runner chooses the fixtures of a test by the properties that its callback destructures, which it reads out of the text of the callback: 21 forms of callback, from bun:test and from vitest.
+#### forms.test.ts
+import { test } from "bun:test";
+type Fixtures = { state: number; made: string; lazy: string };
+const log: string[] = [];
+const local = test.extend<Fixtures>({
+  state: 5,
+  made: async ({ state }, use) => { log.push("set up made"); await use("made of " + state); log.push("tear down made"); },
+  lazy: async ({}, use) => { log.push("set up lazy"); await use("lazy"); },
+});
+const said = (...values: unknown[]) => console.log("| CASE", ...values);
+class Holder {
+  #own = "own";
+  method({ state }: Fixtures) { said("a method", state); }
+  async later({ made }: Fixtures) { await 0; said("an async method", made); }
+  arrow() { return ({ state }: Fixtures) => said("an arrow that reads a private name", state, this.#own); }
+}
+const holder = new Holder();
+const literal = { method({ state }: Fixtures) { said("a method of a literal", state); }, ["computed" + 1]({ state }: Fixtures) { said("a computed name", state); } };
+local("a value", ({ state }) => said(state));
+local("made by a function", ({ made }) => said(made));
+local("renamed, with a default", ({ state: s, made: m = "none" }) => said(s, m));
+local("a function expression", function ({ state }) { said(state); });
+local("a named async function", async function named({ state }) { await 0; said(state); });
+local("an async arrow", async ({ state }) => { await 0; said(state); });
+local("a typed parameter", ({ state }: { state: number }): void => said(state));
+local("a type by name, and a cast in the body", ({ state }: Fixtures) => said((state as number)!.toFixed(1)));
+local("a comment before the parameter", (/* ( */ { state } /* ) */) => said(state));
+local("a quoted key and a number", ({ "state": quoted, 0: none }: any) => said(quoted, none));
+local("a method", holder.method);
+local("an async method", holder.later);
+local("an arrow in a method", holder.arrow());
+local("a method of a literal", literal.method);
+local("a computed name", (literal as any).computed1);
+local("nothing asked", () => said(log.join()));
+const more = local.extend<{ extra: string }>({ extra: ({ made }, use) => use(made + " and more") });
+more("extended again", ({ extra, state }) => said(extra, state));
+local.each([[1], [2]])("each %i", n => said("each", n));
+local.for([[1, 2]])("for %i %i", ([a, b], { state }) => said("for", a, b, state));
+test("the log", () => said(log.join()));
+#### from-vitest.test.ts
+import { test } from "vitest";
+type Fixtures = { state: number; made: string; lazy: string };
+const log: string[] = [];
+const local = test.extend<Fixtures>({
+  state: 5,
+  made: async ({ state }, use) => { log.push("set up made"); await use("made of " + state); log.push("tear down made"); },
+  lazy: async ({}, use) => { log.push("set up lazy"); await use("lazy"); },
+});
+const said = (...values: unknown[]) => console.log("| CASE", ...values);
+class Holder {
+  #own = "own";
+  method({ state }: Fixtures) { said("a method", state); }
+  async later({ made }: Fixtures) { await 0; said("an async method", made); }
+  arrow() { return ({ state }: Fixtures) => said("an arrow that reads a private name", state, this.#own); }
+}
+const holder = new Holder();
+const literal = { method({ state }: Fixtures) { said("a method of a literal", state); }, ["computed" + 1]({ state }: Fixtures) { said("a computed name", state); } };
+local("a value", ({ state }) => said(state));
+local("made by a function", ({ made }) => said(made));
+local("renamed, with a default", ({ state: s, made: m = "none" }) => said(s, m));
+local("a function expression", function ({ state }) { said(state); });
+local("a named async function", async function named({ state }) { await 0; said(state); });
+local("an async arrow", async ({ state }) => { await 0; said(state); });
+local("a typed parameter", ({ state }: { state: number }): void => said(state));
+local("a type by name, and a cast in the body", ({ state }: Fixtures) => said((state as number)!.toFixed(1)));
+local("a comment before the parameter", (/* ( */ { state } /* ) */) => said(state));
+local("a quoted key and a number", ({ "state": quoted, 0: none }: any) => said(quoted, none));
+local("a method", holder.method);
+local("an async method", holder.later);
+local("an arrow in a method", holder.arrow());
+local("a method of a literal", literal.method);
+local("a computed name", (literal as any).computed1);
+local("nothing asked", () => said(log.join()));
+const more = local.extend<{ extra: string }>({ extra: ({ made }, use) => use(made + " and more") });
+more("extended again", ({ extra, state }) => said(extra, state));
+local.each([[1], [2]])("each %i", n => said("each", n));
+local.for([[1, 2]])("for %i %i", ([a, b], { state }) => said("for", a, b, state));
+test("the log", () => said(log.join()));

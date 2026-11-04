@@ -1,0 +1,31 @@
+A store to __proto__ of a built-in object that leaves it as it is throws nothing, also where a test file stores to Object.prototype.__proto__.
+#### object-prototype-too.test.js
+import { test } from "bun:test";
+const attempt = (name, run) => { try { run(); console.log("| CASE too:", name, "no error"); } catch (e) { console.log("| CASE too:", name, e.name, e.message); } };
+test("stores", () => {
+  attempt("Array.prototype, the same", () => { Array.prototype.__proto__ = Object.prototype; });
+  attempt("Array.prototype, what it reads", () => { Array.prototype.__proto__ = Array.prototype.__proto__; });
+  attempt("Array.prototype, a number", () => { Array.prototype.__proto__ = 1; });
+  attempt("Math, the same", () => { Math.__proto__ = Object.prototype; });
+  attempt("Math, a number", () => { Math.__proto__ = 1; });
+  attempt("JSON, a number", () => { JSON.__proto__ = 1; });
+  attempt("Array, the same", () => { Array.__proto__ = Function.prototype; });
+  attempt("Promise.prototype, by a key that is put together", () => { Promise.prototype[["__pro", "to__"].join("")] = 1; });
+  attempt("Reflect.set", () => { console.log("| CASE too:", Reflect.set(Array.prototype, "__proto__", 1), Reflect.set(JSON, "__proto__", Object.prototype)); });
+  attempt("Object.prototype, null", () => { Object.prototype.__proto__ = null; });
+  attempt("Object.prototype, a number", () => { Object.prototype.__proto__ = 1; });
+});
+#### other-objects-alone.test.js
+import { test } from "bun:test";
+const attempt = (name, run) => { try { run(); console.log("| CASE alone:", name, "no error"); } catch (e) { console.log("| CASE alone:", name, e.name, e.message); } };
+test("stores", () => {
+  attempt("Array.prototype, the same", () => { Array.prototype.__proto__ = Object.prototype; });
+  attempt("Array.prototype, what it reads", () => { Array.prototype.__proto__ = Array.prototype.__proto__; });
+  attempt("Array.prototype, a number", () => { Array.prototype.__proto__ = 1; });
+  attempt("Math, the same", () => { Math.__proto__ = Object.prototype; });
+  attempt("Math, a number", () => { Math.__proto__ = 1; });
+  attempt("JSON, a number", () => { JSON.__proto__ = 1; });
+  attempt("Array, the same", () => { Array.__proto__ = Function.prototype; });
+  attempt("Promise.prototype, by a key that is put together", () => { Promise.prototype[["__pro", "to__"].join("")] = 1; });
+  attempt("Reflect.set", () => { console.log("| CASE alone:", Reflect.set(Array.prototype, "__proto__", 1), Reflect.set(JSON, "__proto__", Object.prototype)); });
+});

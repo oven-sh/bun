@@ -226,6 +226,7 @@ void updateWithBufferView(JSGlobalObject* globalObject, JSSign* sign, JSC::JSArr
         .len = byteLength,
     };
 
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     if (!sign->m_mdCtx.digestUpdate(buffer)) {
         throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to update digest");
         return;
@@ -324,13 +325,13 @@ JSUint8Array* signWithKey(JSC::JSGlobalObject* lexicalGlobalObject, JSSign* this
     // Create signing context
     auto pkctx = pkey.newCtx();
     if (!pkctx || pkctx.initForSign() <= 0) {
-        throwCryptoError(lexicalGlobalObject, scope, ERR_peek_error(), "Failed to initialize signing context"_s);
+        throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to initialize signing context"_s);
         return nullptr;
     }
 
     // Set signature MD from the digest context first
     if (!pkctx.setSignatureMd(mdCtx)) {
-        throwCryptoError(lexicalGlobalObject, scope, ERR_peek_error(), "Failed to set signature message digest"_s);
+        throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to set signature message digest"_s);
         return nullptr;
     }
 
@@ -346,7 +347,7 @@ JSUint8Array* signWithKey(JSC::JSGlobalObject* lexicalGlobalObject, JSSign* this
         }
 
         if (!ncrypto::EVPKeyCtxPointer::setRsaPadding(pkctx.get(), padding, effective_salt_len)) {
-            throwCryptoError(lexicalGlobalObject, scope, ERR_peek_error(), "Failed to set RSA padding"_s);
+            throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to set RSA padding"_s);
             return nullptr;
         }
     }

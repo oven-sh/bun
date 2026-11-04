@@ -1,0 +1,274 @@
+The factory of a mock fails while an import statement asks for the module: the next statement that comes to it gets the error that the loader kept; import(), require(), an eviction and a second mock each do what they do under bun test.
+#### failed.test.ts
+
+  import { test, mock } from "bun:test";
+  const say = (label: string, f: () => unknown) =>
+    Promise.resolve().then(f).then(v => console.log("| CASE", label, String(v)), e => console.log("| CASE", label, e.constructor.name, e.message));
+  test("an-import-of-the-module-then-an-importer", async () => {
+    console.log("| CASE", "# an-import-of-the-module-then-an-importer");
+    let calls = 0;
+    mock.module("./src/an-import-of-the-module-then-an-importer/mocked.ts", () => {
+      console.log("| CASE", "the factory is called");
+      if (++calls === 1 || true) throw new RangeError("from call " + calls);
+      return { v: 1 };
+    });
+    await say("import mocked.ts", async () => (await import("./src/an-import-of-the-module-then-an-importer/mocked.ts")).v);
+    await say("import names.ts", async () => (await import("./src/an-import-of-the-module-then-an-importer/names.ts")).seen());
+    await say("import other.ts", async () => (await import("./src/an-import-of-the-module-then-an-importer/other.ts")).seen());
+  });
+  test("a-require-of-the-module-then-an-importer", async () => {
+    console.log("| CASE", "# a-require-of-the-module-then-an-importer");
+    let calls = 0;
+    mock.module("./src/a-require-of-the-module-then-an-importer/mocked.ts", () => {
+      console.log("| CASE", "the factory is called");
+      if (++calls === 1 || true) throw new RangeError("from call " + calls);
+      return { v: 1 };
+    });
+    await say("require mocked.ts", () => require("./src/a-require-of-the-module-then-an-importer/mocked.ts").v);
+    await say("import names.ts", async () => (await import("./src/a-require-of-the-module-then-an-importer/names.ts")).seen());
+    await say("require other.ts", () => require("./src/a-require-of-the-module-then-an-importer/other.ts").seen());
+  });
+  test("an-import-of-the-module-drops-the-record", async () => {
+    console.log("| CASE", "# an-import-of-the-module-drops-the-record");
+    let calls = 0;
+    mock.module("./src/an-import-of-the-module-drops-the-record/mocked.ts", () => {
+      console.log("| CASE", "the factory is called");
+      if (++calls === 1 || true) throw new RangeError("from call " + calls);
+      return { v: 1 };
+    });
+    await say("import names.ts", async () => (await import("./src/an-import-of-the-module-drops-the-record/names.ts")).seen());
+    await say("import mocked.ts", async () => (await import("./src/an-import-of-the-module-drops-the-record/mocked.ts")).v);
+    await say("import other.ts", async () => (await import("./src/an-import-of-the-module-drops-the-record/other.ts")).seen());
+    await say("import names.ts", async () => (await import("./src/an-import-of-the-module-drops-the-record/names.ts")).seen());
+  });
+  test("a-require-of-the-module-leaves-the-record", async () => {
+    console.log("| CASE", "# a-require-of-the-module-leaves-the-record");
+    let calls = 0;
+    mock.module("./src/a-require-of-the-module-leaves-the-record/mocked.ts", () => {
+      console.log("| CASE", "the factory is called");
+      if (++calls === 1 || true) throw new RangeError("from call " + calls);
+      return { v: 1 };
+    });
+    await say("import names.ts", async () => (await import("./src/a-require-of-the-module-leaves-the-record/names.ts")).seen());
+    await say("require mocked.ts", () => require("./src/a-require-of-the-module-leaves-the-record/mocked.ts").v);
+    await say("require other.ts", () => require("./src/a-require-of-the-module-leaves-the-record/other.ts").seen());
+  });
+  test("the-module-is-taken-out-of-the-cache", async () => {
+    console.log("| CASE", "# the-module-is-taken-out-of-the-cache");
+    let calls = 0;
+    mock.module("./src/the-module-is-taken-out-of-the-cache/mocked.ts", () => {
+      console.log("| CASE", "the factory is called");
+      if (++calls === 1 || true) throw new RangeError("from call " + calls);
+      return { v: 1 };
+    });
+    await say("import names.ts", async () => (await import("./src/the-module-is-taken-out-of-the-cache/names.ts")).seen());
+    delete require.cache[require.resolve("./src/the-module-is-taken-out-of-the-cache/mocked.ts")]; console.log("| CASE", "evict mocked.ts");
+    await say("import other.ts", async () => (await import("./src/the-module-is-taken-out-of-the-cache/other.ts")).seen());
+    await say("import names.ts", async () => (await import("./src/the-module-is-taken-out-of-the-cache/names.ts")).seen());
+  });
+  test("the-importer-is-taken-out-of-the-cache", async () => {
+    console.log("| CASE", "# the-importer-is-taken-out-of-the-cache");
+    let calls = 0;
+    mock.module("./src/the-importer-is-taken-out-of-the-cache/mocked.ts", () => {
+      console.log("| CASE", "the factory is called");
+      if (++calls === 1 || true) throw new RangeError("from call " + calls);
+      return { v: 1 };
+    });
+    await say("import names.ts", async () => (await import("./src/the-importer-is-taken-out-of-the-cache/names.ts")).seen());
+    delete require.cache[require.resolve("./src/the-importer-is-taken-out-of-the-cache/names.ts")]; console.log("| CASE", "evict names.ts");
+    await say("import names.ts", async () => (await import("./src/the-importer-is-taken-out-of-the-cache/names.ts")).seen());
+    await say("import other.ts", async () => (await import("./src/the-importer-is-taken-out-of-the-cache/other.ts")).seen());
+  });
+  test("both-are-taken-out-of-the-cache", async () => {
+    console.log("| CASE", "# both-are-taken-out-of-the-cache");
+    let calls = 0;
+    mock.module("./src/both-are-taken-out-of-the-cache/mocked.ts", () => {
+      console.log("| CASE", "the factory is called");
+      if (++calls === 1 || true) throw new RangeError("from call " + calls);
+      return { v: 1 };
+    });
+    await say("import names.ts", async () => (await import("./src/both-are-taken-out-of-the-cache/names.ts")).seen());
+    delete require.cache[require.resolve("./src/both-are-taken-out-of-the-cache/names.ts")]; console.log("| CASE", "evict names.ts");
+    delete require.cache[require.resolve("./src/both-are-taken-out-of-the-cache/mocked.ts")]; console.log("| CASE", "evict mocked.ts");
+    await say("import names.ts", async () => (await import("./src/both-are-taken-out-of-the-cache/names.ts")).seen());
+  });
+  test("a-second-mock-fails-too", async () => {
+    console.log("| CASE", "# a-second-mock-fails-too");
+    let calls = 0;
+    mock.module("./src/a-second-mock-fails-too/mocked.ts", () => {
+      console.log("| CASE", "the factory is called");
+      if (++calls === 1 || true) throw new RangeError("from call " + calls);
+      return { v: 1 };
+    });
+    await say("import names.ts", async () => (await import("./src/a-second-mock-fails-too/names.ts")).seen());
+    mock.module("./src/a-second-mock-fails-too/mocked.ts", () => { console.log("| CASE", "the second factory is called"); throw new RangeError("from the second factory"); });
+    await say("import names.ts", async () => (await import("./src/a-second-mock-fails-too/names.ts")).seen());
+    await say("import other.ts", async () => (await import("./src/a-second-mock-fails-too/other.ts")).seen());
+  });
+  test("a-second-mock-works", async () => {
+    console.log("| CASE", "# a-second-mock-works");
+    let calls = 0;
+    mock.module("./src/a-second-mock-works/mocked.ts", () => {
+      console.log("| CASE", "the factory is called");
+      if (++calls === 1 || true) throw new RangeError("from call " + calls);
+      return { v: 1 };
+    });
+    await say("import above.ts", async () => (await import("./src/a-second-mock-works/above.ts")).seen());
+    mock.module("./src/a-second-mock-works/mocked.ts", () => { console.log("| CASE", "the second factory is called"); return { v: 1 }; });
+    await say("import other.ts", async () => (await import("./src/a-second-mock-works/other.ts")).seen());
+    await say("import names.ts", async () => (await import("./src/a-second-mock-works/names.ts")).seen());
+    await say("import above.ts", async () => (await import("./src/a-second-mock-works/above.ts")).seen());
+    await say("require above.ts", () => require("./src/a-second-mock-works/above.ts").seen());
+  });
+  test("a-second-mock-works-by-require", async () => {
+    console.log("| CASE", "# a-second-mock-works-by-require");
+    let calls = 0;
+    mock.module("./src/a-second-mock-works-by-require/mocked.ts", () => {
+      console.log("| CASE", "the factory is called");
+      if (++calls === 1 || true) throw new RangeError("from call " + calls);
+      return { v: 1 };
+    });
+    await say("require above.ts", () => require("./src/a-second-mock-works-by-require/above.ts").seen());
+    mock.module("./src/a-second-mock-works-by-require/mocked.ts", () => { console.log("| CASE", "the second factory is called"); return { v: 1 }; });
+    await say("require names.ts", () => require("./src/a-second-mock-works-by-require/names.ts").seen());
+    await say("require above.ts", () => require("./src/a-second-mock-works-by-require/above.ts").seen());
+  });
+  test("a-second-mock-before-any-importer", async () => {
+    console.log("| CASE", "# a-second-mock-before-any-importer");
+    let calls = 0;
+    mock.module("./src/a-second-mock-before-any-importer/mocked.ts", () => {
+      console.log("| CASE", "the factory is called");
+      if (++calls === 1 || true) throw new RangeError("from call " + calls);
+      return { v: 1 };
+    });
+    await say("import mocked.ts", async () => (await import("./src/a-second-mock-before-any-importer/mocked.ts")).v);
+    mock.module("./src/a-second-mock-before-any-importer/mocked.ts", () => { console.log("| CASE", "the second factory is called"); return { v: 1 }; });
+    await say("import mocked.ts", async () => (await import("./src/a-second-mock-before-any-importer/mocked.ts")).v);
+    await say("import names.ts", async () => (await import("./src/a-second-mock-before-any-importer/names.ts")).seen());
+  });
+  test("a-commonjs-importer-asks-each-time", async () => {
+    console.log("| CASE", "# a-commonjs-importer-asks-each-time");
+    let calls = 0;
+    mock.module("./src/a-commonjs-importer-asks-each-time/mocked.ts", () => {
+      console.log("| CASE", "the factory is called");
+      if (++calls === 1 || true) throw new RangeError("from call " + calls);
+      return { v: 1 };
+    });
+    await say("require requires.cjs", () => require("./src/a-commonjs-importer-asks-each-time/requires.cjs").seen());
+    await say("import names.ts", async () => (await import("./src/a-commonjs-importer-asks-each-time/names.ts")).seen());
+    await say("require requires.cjs", () => require("./src/a-commonjs-importer-asks-each-time/requires.cjs").seen());
+    await say("import other.ts", async () => (await import("./src/a-commonjs-importer-asks-each-time/other.ts")).seen());
+  });
+  test("the-factory-works-the-second-time", async () => {
+    console.log("| CASE", "# the-factory-works-the-second-time");
+    let calls = 0;
+    mock.module("./src/the-factory-works-the-second-time/mocked.ts", () => {
+      console.log("| CASE", "the factory is called");
+      if (++calls === 1 || false) throw new RangeError("from call " + calls);
+      return { v: 1 };
+    });
+    
+    await say("import names.ts", async () => (await import("./src/the-factory-works-the-second-time/names.ts")).seen());
+    await say("import other.ts", async () => (await import("./src/the-factory-works-the-second-time/other.ts")).seen());
+    await say("import mocked.ts", async () => (await import("./src/the-factory-works-the-second-time/mocked.ts")).v);
+    await say("import other.ts", async () => (await import("./src/the-factory-works-the-second-time/other.ts")).seen());
+    await say("import names.ts", async () => (await import("./src/the-factory-works-the-second-time/names.ts")).seen());
+  });
+  test("the-factory-would-work-the-second-time", async () => {
+    console.log("| CASE", "# the-factory-would-work-the-second-time");
+    let calls = 0;
+    mock.module("./src/the-factory-would-work-the-second-time/mocked.ts", () => {
+      console.log("| CASE", "the factory is called");
+      if (++calls === 1 || false) throw new RangeError("from call " + calls);
+      return { v: 1 };
+    });
+    
+    await say("import names.ts", async () => (await import("./src/the-factory-would-work-the-second-time/names.ts")).seen());
+    delete require.cache[require.resolve("./src/the-factory-would-work-the-second-time/names.ts")]; console.log("| CASE", "evict names.ts");
+    await say("import names.ts", async () => (await import("./src/the-factory-would-work-the-second-time/names.ts")).seen());
+    await say("import other.ts", async () => (await import("./src/the-factory-would-work-the-second-time/other.ts")).seen());
+  });
+#### src/a-commonjs-importer-asks-each-time/mocked.ts
+export const v = "real v"; console.log("| CASE", "the body of mocked.ts runs");
+#### src/a-commonjs-importer-asks-each-time/names.ts
+import { v } from "./mocked.ts"; export const seen = () => typeof v; console.log("| CASE", "the body of names.ts runs");
+#### src/a-commonjs-importer-asks-each-time/other.ts
+import { v } from "./mocked.ts"; export const seen = () => typeof v; console.log("| CASE", "the body of other.ts runs");
+#### src/a-commonjs-importer-asks-each-time/requires.cjs
+const all = require("./mocked.ts"); exports.seen = () => typeof all.v; console.log("| CASE", "the body of requires.cjs runs");
+#### src/a-require-of-the-module-leaves-the-record/mocked.ts
+export const v = "real v"; console.log("| CASE", "the body of mocked.ts runs");
+#### src/a-require-of-the-module-leaves-the-record/names.ts
+import { v } from "./mocked.ts"; export const seen = () => typeof v; console.log("| CASE", "the body of names.ts runs");
+#### src/a-require-of-the-module-leaves-the-record/other.ts
+import { v } from "./mocked.ts"; export const seen = () => typeof v; console.log("| CASE", "the body of other.ts runs");
+#### src/a-require-of-the-module-then-an-importer/mocked.ts
+export const v = "real v"; console.log("| CASE", "the body of mocked.ts runs");
+#### src/a-require-of-the-module-then-an-importer/names.ts
+import { v } from "./mocked.ts"; export const seen = () => typeof v; console.log("| CASE", "the body of names.ts runs");
+#### src/a-require-of-the-module-then-an-importer/other.ts
+import { v } from "./mocked.ts"; export const seen = () => typeof v; console.log("| CASE", "the body of other.ts runs");
+#### src/a-second-mock-before-any-importer/mocked.ts
+export const v = "real v"; console.log("| CASE", "the body of mocked.ts runs");
+#### src/a-second-mock-before-any-importer/names.ts
+import { v } from "./mocked.ts"; export const seen = () => typeof v; console.log("| CASE", "the body of names.ts runs");
+#### src/a-second-mock-fails-too/mocked.ts
+export const v = "real v"; console.log("| CASE", "the body of mocked.ts runs");
+#### src/a-second-mock-fails-too/names.ts
+import { v } from "./mocked.ts"; export const seen = () => typeof v; console.log("| CASE", "the body of names.ts runs");
+#### src/a-second-mock-fails-too/other.ts
+import { v } from "./mocked.ts"; export const seen = () => typeof v; console.log("| CASE", "the body of other.ts runs");
+#### src/a-second-mock-works-by-require/above.ts
+import { seen as below } from "./names.ts"; export const seen = () => "above " + below(); console.log("| CASE", "the body of above.ts runs");
+#### src/a-second-mock-works-by-require/mocked.ts
+export const v = "real v"; console.log("| CASE", "the body of mocked.ts runs");
+#### src/a-second-mock-works-by-require/names.ts
+import { v } from "./mocked.ts"; export const seen = () => typeof v; console.log("| CASE", "the body of names.ts runs");
+#### src/a-second-mock-works/above.ts
+import { seen as below } from "./names.ts"; export const seen = () => "above " + below(); console.log("| CASE", "the body of above.ts runs");
+#### src/a-second-mock-works/mocked.ts
+export const v = "real v"; console.log("| CASE", "the body of mocked.ts runs");
+#### src/a-second-mock-works/names.ts
+import { v } from "./mocked.ts"; export const seen = () => typeof v; console.log("| CASE", "the body of names.ts runs");
+#### src/a-second-mock-works/other.ts
+import { v } from "./mocked.ts"; export const seen = () => typeof v; console.log("| CASE", "the body of other.ts runs");
+#### src/an-import-of-the-module-drops-the-record/mocked.ts
+export const v = "real v"; console.log("| CASE", "the body of mocked.ts runs");
+#### src/an-import-of-the-module-drops-the-record/names.ts
+import { v } from "./mocked.ts"; export const seen = () => typeof v; console.log("| CASE", "the body of names.ts runs");
+#### src/an-import-of-the-module-drops-the-record/other.ts
+import { v } from "./mocked.ts"; export const seen = () => typeof v; console.log("| CASE", "the body of other.ts runs");
+#### src/an-import-of-the-module-then-an-importer/mocked.ts
+export const v = "real v"; console.log("| CASE", "the body of mocked.ts runs");
+#### src/an-import-of-the-module-then-an-importer/names.ts
+import { v } from "./mocked.ts"; export const seen = () => typeof v; console.log("| CASE", "the body of names.ts runs");
+#### src/an-import-of-the-module-then-an-importer/other.ts
+import { v } from "./mocked.ts"; export const seen = () => typeof v; console.log("| CASE", "the body of other.ts runs");
+#### src/both-are-taken-out-of-the-cache/mocked.ts
+export const v = "real v"; console.log("| CASE", "the body of mocked.ts runs");
+#### src/both-are-taken-out-of-the-cache/names.ts
+import { v } from "./mocked.ts"; export const seen = () => typeof v; console.log("| CASE", "the body of names.ts runs");
+#### src/the-factory-works-the-second-time/mocked.ts
+export const v = "real v"; console.log("| CASE", "the body of mocked.ts runs");
+#### src/the-factory-works-the-second-time/names.ts
+import { v } from "./mocked.ts"; export const seen = () => typeof v; console.log("| CASE", "the body of names.ts runs");
+#### src/the-factory-works-the-second-time/other.ts
+import { v } from "./mocked.ts"; export const seen = () => typeof v; console.log("| CASE", "the body of other.ts runs");
+#### src/the-factory-would-work-the-second-time/mocked.ts
+export const v = "real v"; console.log("| CASE", "the body of mocked.ts runs");
+#### src/the-factory-would-work-the-second-time/names.ts
+import { v } from "./mocked.ts"; export const seen = () => typeof v; console.log("| CASE", "the body of names.ts runs");
+#### src/the-factory-would-work-the-second-time/other.ts
+import { v } from "./mocked.ts"; export const seen = () => typeof v; console.log("| CASE", "the body of other.ts runs");
+#### src/the-importer-is-taken-out-of-the-cache/mocked.ts
+export const v = "real v"; console.log("| CASE", "the body of mocked.ts runs");
+#### src/the-importer-is-taken-out-of-the-cache/names.ts
+import { v } from "./mocked.ts"; export const seen = () => typeof v; console.log("| CASE", "the body of names.ts runs");
+#### src/the-importer-is-taken-out-of-the-cache/other.ts
+import { v } from "./mocked.ts"; export const seen = () => typeof v; console.log("| CASE", "the body of other.ts runs");
+#### src/the-module-is-taken-out-of-the-cache/mocked.ts
+export const v = "real v"; console.log("| CASE", "the body of mocked.ts runs");
+#### src/the-module-is-taken-out-of-the-cache/names.ts
+import { v } from "./mocked.ts"; export const seen = () => typeof v; console.log("| CASE", "the body of names.ts runs");
+#### src/the-module-is-taken-out-of-the-cache/other.ts
+import { v } from "./mocked.ts"; export const seen = () => typeof v; console.log("| CASE", "the body of other.ts runs");

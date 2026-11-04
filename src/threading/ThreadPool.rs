@@ -30,7 +30,7 @@ use core::cell::Cell;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering, fence};
 
-use crate::{Futex, WaitGroup};
+use crate::{Futex, Guarded, WaitGroup};
 use bun_core::Output;
 
 /// Debug instrumentation: when `BUN_THREADPOOL_STATS=1`, each pool records
@@ -194,6 +194,10 @@ pub struct ThreadPool {
     pub(crate) needs_stack_bounds: bool,
     /// What its threads are called, before their number.
     name: &'static str,
+    /// See `without_spare_threads`.
+    keeps_spare_thread_awake: bool,
+    /// See `limit_threads`. At most `max_threads`.
+    allowed_threads: AtomicU32,
     pub(crate) stack_size: u32,
     pub(crate) max_threads: u32,
     sync: AtomicSync,
@@ -215,7 +219,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            stack_size: DEFAULT_THREAD_STACK_SIZE,
+            stack_size: POOL_THREAD_STACK_SIZE,
             max_threads: 0,
         }
     }
@@ -227,6 +231,8 @@ impl ThreadPool {
         ThreadPool {
             needs_stack_bounds: true,
             name: "Bun Pool",
+            keeps_spare_thread_awake: true,
+            allowed_threads: AtomicU32::new(1.max(config.max_threads)),
             stack_size: 1.max(config.stack_size),
             max_threads: 1.max(config.max_threads),
             sync: AtomicSync::new(Sync::zero()),
@@ -248,6 +254,49 @@ impl ThreadPool {
     pub fn named(mut self, name: &'static str) -> ThreadPool {
         self.name = name;
         self
+    }
+
+    /// The same pool, which wakes or starts a thread only when a task waits for one.
+    pub fn without_spare_threads(mut self) -> ThreadPool {
+        self.keeps_spare_thread_awake = false;
+        self
+    }
+
+    /// From now on the pool starts no thread while it has `count` or more. Tasks wait for the threads there are.
+    pub fn limit_threads(&self, count: usize) {
+        let count = u32::try_from(count)
+            .unwrap_or(u32::MAX)
+            .clamp(1, self.max_threads);
+        self.allowed_threads.store(count, Ordering::Relaxed);
+    }
+
+    /// Raises the limit of `limit_threads` to `count`, if it's lower. Tasks that wait for a thread get one.
+    pub fn allow_threads(&self, count: usize) {
+        let count = u32::try_from(count)
+            .unwrap_or(u32::MAX)
+            .clamp(1, self.max_threads);
+        if self.allowed_threads.fetch_max(count, Ordering::Relaxed) < count
+            && self.has_waiting_task()
+        {
+            self.notify_slow(false);
+        }
+    }
+
+    /// Whether a task is in a queue.
+    fn has_waiting_task(&self) -> bool {
+        if !self.run_queue.is_empty() {
+            return true;
+        }
+        let mut thread = self.threads.load(Ordering::Acquire);
+        while !thread.is_null() {
+            // SAFETY: a registered `Thread` in the lock-free stack, alive until `join()`.
+            let other = unsafe { &*thread };
+            if !other.run_queue.is_empty() || !other.run_buffer.is_empty() {
+                return true;
+            }
+            thread = other.next;
+        }
+        false
     }
 
     /// Dump aggregate worker idle/busy stats to stderr. No-op unless
@@ -320,6 +369,8 @@ impl Drop for ThreadPool {
     fn drop(&mut self) {
         self.shutdown();
         self.join();
+        let this = bun_ptr::BackRef::new(&*self);
+        BUILDS.lock().pools_asleep.retain(|pool| *pool != this);
     }
 }
 
@@ -563,6 +614,19 @@ impl ThreadPool {
         self.max_threads as usize
     }
 
+    #[cfg(any(test, feature = "test_support"))]
+    pub fn started_threads(&self) -> usize {
+        usize::from(self.sync.load(Ordering::Relaxed).spawned())
+    }
+
+    /// How many threads have nothing to do right now, counting those that the pool hasn't started yet.
+    pub fn available_threads(&self) -> usize {
+        let sync = self.sync.load(Ordering::Relaxed);
+        let allowed = self.allowed_threads.load(Ordering::Relaxed) as usize;
+        let not_started = allowed.saturating_sub(usize::from(sync.spawned()));
+        usize::from(sync.idle()) + not_started
+    }
+
     /// Like `each`, but calls `run_fn` with a pointer to the value.
     ///
     /// `V: Send` — see [`each`](Self::each); the `*mut V` is dereferenced on a
@@ -739,6 +803,9 @@ impl ThreadPool {
     }
 }
 
+pub const POOL_THREAD_STACK_SIZE: u32 =
+    if cfg!(bun_asan) { 8 } else { 1 } * DEFAULT_THREAD_STACK_SIZE;
+
 pub const DEFAULT_THREAD_STACK_SIZE: u32 = {
     // 4mb
     const DEFAULT: u32 = 4 * 1024 * 1024;
@@ -776,6 +843,205 @@ pub const DEFAULT_THREAD_STACK_SIZE: u32 = {
         size
     }
 };
+
+/// Set in a process that runs an ahead-of-time compiled program, which starts
+/// its threads late, when a limit on threads may have been reached, and in one
+/// that compiles such a program.
+static EXITS_WITHOUT_ANY_THREAD: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// From now on, a pool that cannot start its first thread prints an error and exits the process.
+pub fn exit_without_any_thread() {
+    EXITS_WITHOUT_ANY_THREAD.store(true, Ordering::Relaxed);
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__ThreadPool__exitWithoutAnyThread() {
+    exit_without_any_thread();
+}
+
+#[cfg(not(test))]
+mod allocator {
+    pub(super) use bun_alloc::mimalloc::{
+        mi_on_thread_idle, mi_on_thread_idle_end, mi_on_thread_idle_start,
+    };
+    pub(super) use bun_alloc::{PurgeSettings, give_back_freed_pages};
+}
+
+/// Counts the calls. The tests of this crate link no allocator.
+#[cfg(test)]
+mod allocator {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    pub(super) struct Calls {
+        pub(super) hand_offs: AtomicUsize,
+        pub(super) heaps_taken_back: AtomicUsize,
+        pub(super) sweeps: AtomicUsize,
+        pub(super) purges_put_off: AtomicUsize,
+        pub(super) settings_restored: AtomicUsize,
+        pub(super) freed_pages_given_back: AtomicUsize,
+    }
+
+    pub(super) static CALLS: Calls = Calls {
+        hand_offs: AtomicUsize::new(0),
+        heaps_taken_back: AtomicUsize::new(0),
+        sweeps: AtomicUsize::new(0),
+        purges_put_off: AtomicUsize::new(0),
+        settings_restored: AtomicUsize::new(0),
+        freed_pages_given_back: AtomicUsize::new(0),
+    };
+
+    fn count(calls: &AtomicUsize) {
+        calls.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub(super) unsafe fn mi_on_thread_idle_start() -> bool {
+        count(&CALLS.hand_offs);
+        true
+    }
+
+    pub(super) fn mi_on_thread_idle_end() {
+        count(&CALLS.heaps_taken_back);
+    }
+
+    pub(super) fn mi_on_thread_idle() {
+        count(&CALLS.sweeps);
+    }
+
+    pub(super) struct PurgeSettings;
+
+    impl PurgeSettings {
+        pub(super) fn put_off() -> PurgeSettings {
+            count(&CALLS.purges_put_off);
+            PurgeSettings
+        }
+
+        pub(super) fn restore(self) {
+            count(&CALLS.settings_restored);
+        }
+    }
+
+    pub(super) fn give_back_freed_pages() {
+        count(&CALLS.freed_pages_given_back);
+    }
+}
+
+#[cfg(target_os = "linux")]
+use crate::huge_pages;
+
+#[cfg(not(target_os = "linux"))]
+mod huge_pages {
+    pub(super) struct Watch;
+
+    impl Watch {
+        pub(super) fn end(self) {}
+    }
+
+    pub(super) fn begin() -> Option<Watch> {
+        None
+    }
+}
+
+/// How many ahead-of-time builds run in this process. It changes under the lock of `BUILDS`.
+static BUILDS_UNDER_WAY: AtomicU32 = AtomicU32::new(0);
+
+struct Builds {
+    /// The allocator's, from before the first build began.
+    former_settings: Option<allocator::PurgeSettings>,
+    huge_pages: Option<huge_pages::Watch>,
+    /// Each has a thread that went idle during a build and sleeps with its free memory.
+    pools_asleep: Vec<bun_ptr::BackRef<ThreadPool>>,
+}
+
+static BUILDS: Guarded<Builds> = Guarded::new(Builds {
+    former_settings: None,
+    huge_pages: None,
+    pools_asleep: Vec::new(),
+});
+
+/// Until it's dropped, an ahead-of-time build runs in this process, and what is freed stays with the process: the next
+/// stage takes it. Memory that goes back to the system interrupts every thread, and whoever takes it again faults it in
+/// page by page. What the process takes for the first time comes in huge pages while the system has them free. When the
+/// last one is dropped, the idle threads hand their heaps to the allocator as ever, and the freed pages go back at once.
+#[must_use]
+pub struct BuildUnderWay(());
+
+impl BuildUnderWay {
+    pub fn begin() -> BuildUnderWay {
+        let mut builds = BUILDS.lock();
+        if BUILDS_UNDER_WAY.fetch_add(1, Ordering::Relaxed) == 0 {
+            builds.former_settings = Some(allocator::PurgeSettings::put_off());
+            builds.huge_pages = huge_pages::begin();
+        }
+        BuildUnderWay(())
+    }
+}
+
+impl Drop for BuildUnderWay {
+    fn drop(&mut self) {
+        let mut builds = BUILDS.lock();
+        if BUILDS_UNDER_WAY.fetch_sub(1, Ordering::Relaxed) != 1 {
+            return;
+        }
+        if let Some(huge_pages) = builds.huge_pages.take() {
+            huge_pages.end();
+        }
+        if let Some(former) = builds.former_settings.take() {
+            former.restore();
+        }
+        for pool in builds.pools_asleep.drain(..) {
+            pool.idle_event.wake_all();
+        }
+        drop(builds);
+        // What comes behind the build does not wait for it.
+        let thread = std::thread::Builder::new().name("AOT memory".into());
+        if thread.spawn(allocator::give_back_freed_pages).is_err() {
+            allocator::give_back_freed_pages();
+        }
+    }
+}
+
+/// Whoever gives free memory back to the system of its own accord does not while this is true.
+#[inline]
+pub fn is_build_under_way() -> bool {
+    BUILDS_UNDER_WAY.load(Ordering::Relaxed) != 0
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__ThreadPool__isBuildUnderWay() -> bool {
+    is_build_under_way()
+}
+
+/// Whether a thread that goes idle now keeps its free memory. The end of the last build wakes the pool of `worker`.
+fn sleeps_through_build(worker: Option<&Thread>) -> bool {
+    if !is_build_under_way() {
+        return false;
+    }
+    let Some(worker) = worker else {
+        return true;
+    };
+    let mut builds = BUILDS.lock();
+    if !is_build_under_way() {
+        return false;
+    }
+    if !builds.pools_asleep.contains(&worker.thread_pool) {
+        builds.pools_asleep.push(worker.thread_pool);
+    }
+    true
+}
+
+/// A refused thread is the environment's limit, not a bug: no crash reporter.
+#[cold]
+#[inline(never)]
+fn exit_spawn_failed(err: &std::io::Error) -> ! {
+    bun_core::err_generic!("Failed to start a thread of the thread pool: {}", err);
+    if err.raw_os_error() == Some(libc::EAGAIN) {
+        bun_core::note!(
+            "The process or thread limit may have been reached (ulimit -u, or the container's pids limit); raise it or reduce concurrency"
+        );
+    }
+    bun_core::Global::crash()
+}
 
 // NOTE: a `prewarm_mimalloc_numa()` helper was tried here to call
 // `_mi_os_numa_node_count()` once on the spawning thread so workers don't race
@@ -832,18 +1098,31 @@ impl ThreadPool {
                 debug_assert!(sync.state() == SyncState::Waking);
             }
 
+            // A scheduler that finds the pool "waking" only sets `notified`, and leaves the rest to the waking thread.
+            let can_wake = can_wake
+                && (!is_waking
+                    || self.keeps_spare_thread_awake
+                    || sync.notified()
+                    || self.has_waiting_task());
+
+            let can_spawn = (sync.spawned() as u32) < self.allowed_threads.load(Ordering::Relaxed);
+
             let mut new_sync = sync;
             new_sync.set_notified(true);
             if can_wake && sync.idle() > 0 {
                 // wake up an idle thread
                 new_sync.set_state(SyncState::Signaled);
-            } else if can_wake && (sync.spawned() as u32) < self.max_threads {
+            } else if can_wake && can_spawn {
                 // spawn a new thread
                 new_sync.set_state(SyncState::Signaled);
                 new_sync.set_spawned(new_sync.spawned() + 1);
             } else if is_waking {
                 // no other thread to pass on "waking" status
                 new_sync.set_state(SyncState::Pending);
+                if !can_wake {
+                    // No task waits. The next scheduler has to see that nobody has been notified.
+                    new_sync.set_notified(false);
+                }
             } else if sync.notified() {
                 // nothing to update
                 return;
@@ -864,7 +1143,7 @@ impl ThreadPool {
                         }
 
                         // We signaled to spawn a new thread
-                        if can_wake && (sync.spawned() as u32) < self.max_threads {
+                        if can_wake && can_spawn {
                             let stack_size = self.stack_size as usize;
                             // `BackRef<ThreadPool>: Send`; see `warm()`.
                             let pool = bun_ptr::BackRef::new(self);
@@ -875,7 +1154,13 @@ impl ThreadPool {
                                 Ok(_handle) => {
                                     // detach by dropping
                                 }
-                                Err(_) => {
+                                Err(err) => {
+                                    // The threads there are take the task. With none it would wait forever.
+                                    if new_sync.spawned() == 1
+                                        && EXITS_WITHOUT_ANY_THREAD.load(Ordering::Relaxed)
+                                    {
+                                        exit_spawn_failed(&err);
+                                    }
                                     // SAFETY: `&self` keeps the pool live; `null` thread makes
                                     // `unregister` return right after undoing the `spawned`
                                     // increment CAS'd above (no per-thread wait past notify).
@@ -1503,12 +1788,15 @@ impl Event {
             // An idle thread hands its heaps to mimalloc's scavenger for the wait that has no
             // timeout: one sweep never takes the free blocks of a large page that was just
             // allocated from, and the scavenger comes back for them while this thread sleeps.
+            //
+            // See `BuildUnderWay`. The `wake_all()` at its end brings the thread back here.
+            let gives_memory_back = is_idle && !sleeps_through_build(worker);
             // SAFETY: nothing allocates or frees on this thread until `mi_on_thread_idle_end` below.
-            let handed_off = is_idle && unsafe { bun_alloc::mimalloc::mi_on_thread_idle_start() };
-            if is_idle && !handed_off && !has_swept {
+            let handed_off = gives_memory_back && unsafe { allocator::mi_on_thread_idle_start() };
+            if gives_memory_back && !handed_off && !has_swept {
                 // No scavenger to hand off to.
                 has_swept = true;
-                bun_alloc::mimalloc::mi_on_thread_idle();
+                allocator::mi_on_thread_idle();
             }
             let timeout_ns: Option<u64> = if !is_idle {
                 Some(100_000_000) // 100ms
@@ -1517,7 +1805,7 @@ impl Event {
             };
             let timed_out = Futex::wait(&self.state, epoch | Self::WAITING, timeout_ns).is_err();
             if handed_off {
-                bun_alloc::mimalloc::mi_on_thread_idle_end();
+                allocator::mi_on_thread_idle_end();
             }
             is_idle |= timed_out;
             word = self.state.load(Ordering::Relaxed);
@@ -1658,6 +1946,10 @@ pub mod node {
                     Err(cur) => stack = cur,
                 }
             }
+        }
+
+        pub(super) fn is_empty(&self) -> bool {
+            self.stack.load(Ordering::Acquire) & (Self::HAS_CACHE | Self::PTR_MASK) == 0
         }
 
         pub(super) fn try_acquire_consumer(&self) -> Result<Consumer<'_>, ConsumerError> {
@@ -1817,6 +2109,10 @@ pub mod node {
     }
 
     impl Buffer {
+        pub(super) fn is_empty(&self) -> bool {
+            self.head.load(Ordering::Acquire) == self.tail.load(Ordering::Acquire)
+        }
+
         // Relaxed loads; Rust does not expose unsynchronized access on
         // atomics. PERF: profile if hot.
         #[inline]
@@ -2056,5 +2352,134 @@ pub mod node {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::allocator::CALLS;
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    // The count of builds and the counts of calls are the process's.
+    static ONE_AT_A_TIME: Guarded<()> = Guarded::new(());
+
+    fn forget_calls() {
+        for calls in [
+            &CALLS.hand_offs,
+            &CALLS.heaps_taken_back,
+            &CALLS.sweeps,
+            &CALLS.purges_put_off,
+            &CALLS.settings_restored,
+            &CALLS.freed_pages_given_back,
+        ] {
+            calls.store(0, Ordering::SeqCst);
+        }
+    }
+
+    fn read(calls: &AtomicUsize) -> usize {
+        calls.load(Ordering::SeqCst)
+    }
+
+    fn wait_until(what: &str, is_so: impl Fn() -> bool) {
+        let began = Instant::now();
+        while !is_so() {
+            assert!(began.elapsed() < Duration::from_secs(30), "never {what}");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    fn sleep_as_worker_of(pool: &ThreadPool) {
+        let worker = Thread {
+            next: ptr::null_mut(),
+            target: ptr::null_mut(),
+            join_event: Event::default(),
+            run_queue: node::Queue::default(),
+            idle_queue: node::Queue::default(),
+            run_buffer: node::Buffer::default(),
+            thread_pool: bun_ptr::BackRef::new(pool),
+        };
+        pool.idle_event.wait(Some(&worker));
+    }
+
+    fn is_listed_asleep(pool: &ThreadPool) -> bool {
+        let pool = bun_ptr::BackRef::new(pool);
+        BUILDS.lock().pools_asleep.contains(&pool)
+    }
+
+    /// Also where a test fails, which otherwise would wait for the sleeper forever.
+    struct EndsSleep<'a>(&'a ThreadPool);
+
+    impl Drop for EndsSleep<'_> {
+        fn drop(&mut self) {
+            self.0.idle_event.shutdown();
+        }
+    }
+
+    #[test]
+    fn an_idle_thread_keeps_its_memory_until_the_last_build_ends() {
+        let _alone = ONE_AT_A_TIME.lock();
+        forget_calls();
+        let pool = ThreadPool::init(Config::default());
+        std::thread::scope(|scope| {
+            let _ends_sleep = EndsSleep(&pool);
+            let first = BuildUnderWay::begin();
+            let second = BuildUnderWay::begin();
+            scope.spawn(|| sleep_as_worker_of(&pool));
+            wait_until("asleep", || is_listed_asleep(&pool));
+            drop(first);
+            assert!(is_build_under_way());
+            assert!(is_listed_asleep(&pool));
+            assert_eq!(read(&CALLS.purges_put_off), 1);
+            assert_eq!(read(&CALLS.settings_restored), 0);
+            assert_eq!(read(&CALLS.freed_pages_given_back), 0);
+            assert_eq!(read(&CALLS.hand_offs) + read(&CALLS.sweeps), 0);
+
+            drop(second);
+            assert!(!is_build_under_way());
+            assert_eq!(read(&CALLS.settings_restored), 1);
+            wait_until("handed off", || read(&CALLS.hand_offs) != 0);
+            wait_until("given back", || read(&CALLS.freed_pages_given_back) == 1);
+            assert!(!is_listed_asleep(&pool));
+        });
+        assert_eq!(read(&CALLS.heaps_taken_back), read(&CALLS.hand_offs));
+        assert_eq!(read(&CALLS.purges_put_off), 1);
+        assert_eq!(read(&CALLS.sweeps), 0);
+    }
+
+    #[test]
+    fn an_idle_thread_hands_its_heaps_off_where_no_build_runs() {
+        let _alone = ONE_AT_A_TIME.lock();
+        forget_calls();
+        let pool = ThreadPool::init(Config::default());
+        std::thread::scope(|scope| {
+            let _ends_sleep = EndsSleep(&pool);
+            scope.spawn(|| sleep_as_worker_of(&pool));
+            wait_until("handed off", || read(&CALLS.hand_offs) != 0);
+            assert!(!is_listed_asleep(&pool));
+        });
+        assert_eq!(read(&CALLS.heaps_taken_back), read(&CALLS.hand_offs));
+        assert_eq!(read(&CALLS.purges_put_off), 0);
+        assert_eq!(read(&CALLS.freed_pages_given_back), 0);
+    }
+
+    #[test]
+    fn the_end_of_a_build_wakes_no_pool_that_is_gone() {
+        let _alone = ONE_AT_A_TIME.lock();
+        forget_calls();
+        let build = BuildUnderWay::begin();
+        {
+            // It ends where it stands: `drop(pool)` would move it first, and the list has it by its address.
+            let pool = ThreadPool::init(Config::default());
+            std::thread::scope(|scope| {
+                let _ends_sleep = EndsSleep(&pool);
+                scope.spawn(|| sleep_as_worker_of(&pool));
+                wait_until("asleep", || is_listed_asleep(&pool));
+            });
+        }
+        assert!(BUILDS.lock().pools_asleep.is_empty());
+        drop(build);
+        wait_until("given back", || read(&CALLS.freed_pages_given_back) == 1);
+        assert_eq!(read(&CALLS.hand_offs), 0);
     }
 }

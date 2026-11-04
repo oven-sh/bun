@@ -1,0 +1,23 @@
+One file under several types, taken out of require.cache in between.
+#### data/plain
+{ "a": 1 }
+#### tsconfig.json
+{ "compilerOptions": { "allowJs": true } }
+#### types.test.js
+import { expect, mock, test } from "bun:test";
+const forget = () => delete require.cache[require.resolve("./data/plain")];
+const shown = value => (typeof value === "string" ? value.replace(import.meta.dir, "<dir>") : JSON.stringify(value));
+test("forgotten in between", async () => {
+  console.log("| CASE", "text", shown((await import("./data/plain", { with: { type: "text" } })).default));
+  forget();
+  console.log("| CASE", "file", shown((await import("./data/plain", { with: { type: "file" } })).default));
+  forget();
+  console.log("| CASE", "json", shown((await import("./data/plain", { with: { type: "json" } })).default));
+  forget();
+  console.log("| CASE", "text again", shown((await import("./data/plain", { with: { type: "text" } })).default));
+});
+test("kept", async () => {
+  forget();
+  console.log("| CASE", "kept: file", shown((await import("./data/plain", { with: { type: "file" } })).default));
+  console.log("| CASE", "kept: text", shown((await import("./data/plain", { with: { type: "text" } })).default));
+});

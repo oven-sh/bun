@@ -68,18 +68,6 @@ impl<T: ?Sized> ParentRef<T, crate::Shared> {
             _provenance: core::marker::PhantomData,
         }
     }
-
-    /// Convenience: `Some(from_raw(p))` if `p` is non-null, else `None`.
-    ///
-    /// # Safety
-    /// If `p` is non-null, the [`from_raw`](Self::from_raw) contract applies.
-    #[inline]
-    pub unsafe fn from_nullable(p: *const T) -> Option<Self> {
-        NonNull::new(p.cast_mut()).map(|nn| Self {
-            ptr: nn,
-            _provenance: core::marker::PhantomData,
-        })
-    }
 }
 
 impl<T: ?Sized> ParentRef<T, crate::Mut> {

@@ -1,0 +1,502 @@
+mod function;
+mod function_table;
+mod shown_names;
+#[cfg(test)]
+mod tests;
+
+use core::cell::OnceCell;
+use core::mem::take;
+use std::borrow::Cow;
+
+use bun_core::printer::{FIRST_ASCII, LAST_ASCII, bmp_escape, surrogate_pair_escape};
+use bun_core::strings::{CodepointIterator, Cursor};
+use bun_sema::atom::Atom;
+use bun_sema::bind::{Binding, Bound, SymbolId};
+use bun_sema::check::aot::{BuiltinTypeSymbols, NamedValues, Queries, QueryInputs};
+use bun_sema::erasure::{TypeRanges, find_type_ranges};
+use bun_sema::fold::{Constant, Decisions};
+use bun_sema::hir::{self, ExprId, ExprKind, MemberId, NodeData};
+use bun_sema::hir_from_data::DataValue;
+use bun_sema::import_sites::ResolvedForm;
+use bun_sema::program::{CompiledModule, FileId, FileRole, Files};
+use rustc_hash::{FxHashMap, FxHashSet};
+
+use self::function_table::FunctionTable;
+use self::shown_names::ShownNames;
+use super::LoweredFile;
+use super::class::{ClassState, find_fields_under_signed_members};
+use super::counted_places::CountedPlaces;
+use super::fragment::{FragmentBuilder, ModuleFragment};
+use super::layouts::LayoutState;
+use super::module::{LibraryFunctions, ModuleState};
+use super::quoted_text::QuotedTexts;
+use super::said_types::SaidTypes;
+use super::scope::{RegistryNames, ScopeAnalysis, ScopeInput, analyze_scopes};
+use super::tables::TaskState;
+use super::types::TypeState;
+use crate::builtins::id::RuntimeModule;
+use crate::builtins::{
+    BuiltinClass, BuiltinNames, Platforms, ResolvedBuiltins, SourceDialect, table,
+};
+use crate::compile::removable::Removable;
+use crate::diagnostic_codes::Code;
+use crate::diagnostics::{DiagnosticBuffer, Span};
+use crate::engine::describe_regexp_syntax_error;
+use crate::ir::generated::FunctionRole;
+use crate::ir::{BuilderScratch, ModuleId, PropertyKey, PropertyKeyId, StringId, WellKnownSymbol};
+use crate::known_helpers::KnownHelpers;
+use crate::load::test_runner_names::written_name_of_local;
+use crate::load::{self, Sources};
+use crate::modules::{CommonJsExports, KnownMemberValues, KnownObjects, ModuleGraph, ModuleRef};
+use crate::options::RemovableOptions;
+use crate::statistics::{LimitId, LimitValues};
+
+pub(crate) use self::function::FunctionLowering;
+
+/// As `js_printer` writes a literal for `bun run`: the engine is handed that text, and `source` reads it.
+pub(super) fn regexp_pattern_as_printed(written: &[u8]) -> Cow<'_, [u8]> {
+    let is_printed_as_written = |character: u32| (FIRST_ASCII..=LAST_ASCII).contains(&character);
+    if written
+        .iter()
+        .all(|&byte| is_printed_as_written(u32::from(byte)))
+    {
+        return Cow::Borrowed(written);
+    }
+    let mut printed = Vec::with_capacity(written.len() * 2);
+    let characters = CodepointIterator::init(written);
+    let mut cursor = Cursor::default();
+    while characters.next(&mut cursor) {
+        match cursor.c as u32 {
+            character if is_printed_as_written(character) => printed.push(character as u8),
+            character @ 0..=0xFFFF => printed.extend_from_slice(&bmp_escape(character)),
+            character => printed.extend_from_slice(&surrogate_pair_escape(character)),
+        }
+    }
+    Cow::Owned(printed)
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum SourceKind {
+    Program,
+    RuntimeModule(RuntimeModule),
+    RuntimeFunctions,
+}
+
+impl SourceKind {
+    pub fn dialect(self) -> SourceDialect {
+        match self {
+            SourceKind::Program => SourceDialect::Program,
+            SourceKind::RuntimeModule(_) | SourceKind::RuntimeFunctions => SourceDialect::Runtime,
+        }
+    }
+
+    pub fn function_role(self) -> FunctionRole {
+        match self {
+            SourceKind::Program => FunctionRole::Source,
+            SourceKind::RuntimeModule(_) | SourceKind::RuntimeFunctions => FunctionRole::Library,
+        }
+    }
+}
+
+#[derive(Copy, Clone)]
+pub struct FileInputs<'a> {
+    pub source: SourceKind,
+    pub builtins: &'a ResolvedBuiltins,
+}
+
+impl FileInputs<'_> {
+    pub(crate) fn makes_registries(&self) -> bool {
+        let constructor = table::class_data(BuiltinClass::FinalizationRegistry).constructor;
+        let mut mentioned = self.builtins.mentioned().iter();
+        mentioned.any(|&id| Some(table::canonical_id(id)) == constructor)
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct LoweringOptions {
+    pub platform: Platforms,
+    pub embeds_function_text: bool,
+    pub removable: RemovableOptions,
+    pub minifies_identifiers: bool,
+    pub obfuscates: bool,
+    /// `bun test --aot --coverage`: the files of the project count how often their parts run.
+    pub counts_executions: bool,
+    /// `LoadOptions::runs_tests`
+    pub runs_tests: bool,
+}
+
+pub struct LoweringInputs<'a> {
+    pub roles: &'a [FileRole],
+    pub builtin_types: &'a BuiltinTypeSymbols,
+    pub named_values: &'a dyn NamedValues,
+    pub builtin_names: &'a BuiltinNames,
+    pub sources: &'a Sources,
+    pub modules: &'a ModuleGraph,
+    // The files of Bun's own that no code of the program loads, in order.
+    pub unreached_files: &'a [FileId],
+    // The files that whoever builds the program cannot mend, in order.
+    pub files_of_dependencies: &'a [FileId],
+    pub library_functions: &'a LibraryFunctions,
+    pub known_helpers: &'a KnownHelpers,
+    pub commonjs_exports: &'a CommonJsExports,
+    pub files: &'a [Option<FileInputs<'a>>],
+    pub makes_registries: bool,
+    /// `BoundProject::page_manifests`
+    pub page_manifests: &'a [(FileId, &'a DataValue<'a>)],
+    // A file of an executable reads `__filename` or `__dirname` or asks `require.resolve`: a path of the machine that builds, which any file of the program may come to hold.
+    pub reads_source_paths: bool,
+    /// `ProgramContents::replaced_builtins`
+    pub replaced_builtins: &'a [u32],
+    pub limits: &'a LimitValues,
+    pub options: LoweringOptions,
+    pub said_types: &'a SaidTypes,
+}
+
+impl<'a> LoweringInputs<'a> {
+    // The file is in the build for the types that it declares alone: the program has no module of it.
+    pub(crate) fn is_left_out(&self, file: FileId) -> bool {
+        self.modules.is_left_out(ModuleRef::File(file))
+            || self.unreached_files.binary_search(&file).is_ok()
+    }
+
+    pub fn query_inputs(&self) -> QueryInputs<'a> {
+        QueryInputs {
+            roles: self.roles,
+            checked_elsewhere: &[],
+            builtin_types: self.builtin_types,
+            named_values: self.named_values,
+            max_inference_nodes: self.limits.get(LimitId::MaxInferenceNodes),
+            limits: self.limits.for_queries(),
+        }
+    }
+}
+
+pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
+    pub(crate) inputs: &'a LoweringInputs<'a>,
+    pub(crate) file: FileId,
+    pub(crate) role: FileRole,
+    pub(crate) source: SourceKind,
+    pub(crate) hir: &'p hir::File<'s>,
+    pub(crate) bound: &'p Bound<'s>,
+    pub(crate) compiled: &'p CompiledModule<'s>,
+    /// What the text of a function of this file is given without.
+    pub(crate) type_ranges: TypeRanges,
+    pub(crate) builtins: &'a ResolvedBuiltins,
+    /// `Removable::find_simplified_expressions`
+    simplified_expressions: Vec<ExprId>,
+    /// The literals that JavaScript rejects and `Removable::find_regexp_literals_left_out` lists, ascending.
+    invalid_regexp_literals_left_out: Vec<ExprId>,
+    pub(crate) queries: &'a mut Queries<'c, 'p, 's>,
+    /// What the files of the checker's task share. Until `finish` or `abandon`, its tables, finders and marks are with `fragment`
+    /// and its places with `layouts` and `functions`.
+    pub(in crate::lower) task: &'a mut TaskState,
+    pub(crate) fragment: FragmentBuilder,
+    pub(crate) diagnostics: DiagnosticBuffer,
+    pub(crate) scopes: ScopeAnalysis,
+    pub(crate) types: TypeState,
+    pub(crate) layouts: LayoutState,
+    pub(crate) classes: ClassState,
+    pub(crate) modules: ModuleState,
+    functions: FunctionTable,
+    /// `FileLowering::is_built_by_code`
+    pub(in crate::lower) levels_of_literals_inside_built_ones: FxHashMap<ExprId, u64>,
+    /// `FileLowering::is_stored_as_prototype_object`
+    pub(in crate::lower) literals_named_as_prototype_objects: OnceCell<FxHashSet<ExprId>>,
+    shown_names: ShownNames,
+    pub(in crate::lower) enum_member_reads: FxHashMap<ExprId, Constant>,
+    pub(in crate::lower) counted_places: Option<CountedPlaces>,
+    pub(in crate::lower) quoted_texts: QuotedTexts,
+    scratch: BuilderScratch,
+}
+
+fn analyze_scopes_of_file(
+    inputs: &LoweringInputs<'_>,
+    files: &Files<'_>,
+    file: FileId,
+    fields_under_signed_members: &[MemberId],
+    holds_registry: &dyn Fn(SymbolId) -> bool,
+) -> ScopeAnalysis {
+    let module = files.module(file);
+    let file_inputs = inputs.files[file.idx()].expect("every lowered file has its inputs");
+    analyze_scopes(&ScopeInput {
+        file,
+        hir: &module.hir,
+        bound: &module.bound,
+        compiled: module.compiled.expect("only compiled files are lowered"),
+        modules: inputs.modules,
+        builtins: file_inputs.builtins,
+        fields_under_signed_members,
+        holds_registry,
+        max_captures: inputs.limits.get(LimitId::MaxCaptures) as usize,
+    })
+}
+
+impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
+    pub(super) fn new(
+        inputs: &'a LoweringInputs<'a>,
+        queries: &'a mut Queries<'c, 'p, 's>,
+        file: FileId,
+        task: &'a mut TaskState,
+    ) -> FileLowering<'a, 'c, 'p, 's> {
+        let hir = queries.hir();
+        let bound = queries.bound();
+        let compiled = queries.files().compiled(file);
+        let compiled = compiled.expect("only compiled files are lowered");
+        let file_inputs = inputs.files[file.idx()].expect("every lowered file has its inputs");
+        // What `bun test --coverage` reports on: no package, and nothing of Bun's own.
+        let path = inputs.sources.diagnostic_path(file);
+        let is_counted = inputs.options.counts_executions
+            && inputs.sources.kind(file) == load::SourceKind::Program
+            && !bun_core::strings::contains(path, b"/node_modules/")
+            && !bun_core::strings::contains(path, b"\\node_modules\\");
+        let counted_places = is_counted.then(|| CountedPlaces::find(hir, bound, path));
+        let known_member_values = KnownMemberValues::default();
+        let members = KnownObjects::new(queries.files(), inputs.modules, &known_member_values);
+        let fields_under_signed_members = find_fields_under_signed_members(members, file);
+        let may_hold_registries = inputs.makes_registries || file_inputs.makes_registries();
+        let files = queries.files();
+        let registries = RegistryNames::new(&mut *queries);
+        let holds_registry = |symbol: SymbolId| may_hold_registries && registries.holds(symbol);
+        let scopes = analyze_scopes_of_file(
+            inputs,
+            files,
+            file,
+            &fields_under_signed_members,
+            &holds_registry,
+        );
+        let type_ranges = match inputs.options.embeds_function_text {
+            true => find_type_ranges(hir),
+            false => TypeRanges::default(),
+        };
+        let removable = Removable::of_file(
+            queries.files(),
+            file,
+            &compiled.analysis,
+            file_inputs.builtins,
+            inputs.options.removable,
+        );
+        task.begin_file_of(file_inputs.source == SourceKind::Program);
+        let fragment = FragmentBuilder::new(file, task);
+        task.layout_places.begin_file();
+        task.function_places.begin_file();
+        let layouts = LayoutState::new(take(&mut task.layout_places));
+        let functions = FunctionTable::new(take(&mut task.function_places));
+        FileLowering {
+            inputs,
+            file,
+            role: queries.role(file),
+            source: file_inputs.source,
+            hir,
+            bound,
+            compiled,
+            type_ranges,
+            builtins: file_inputs.builtins,
+            simplified_expressions: removable.find_simplified_expressions(),
+            invalid_regexp_literals_left_out: Vec::new(),
+            queries,
+            task,
+            fragment,
+            diagnostics: DiagnosticBuffer::default(),
+            scopes,
+            types: TypeState::default(),
+            layouts,
+            classes: ClassState::new(fields_under_signed_members),
+            modules: ModuleState::default(),
+            functions,
+            levels_of_literals_inside_built_ones: FxHashMap::default(),
+            literals_named_as_prototype_objects: OnceCell::new(),
+            shown_names: ShownNames::new(inputs.options, file_inputs.source, hir, bound),
+            enum_member_reads: FxHashMap::default(),
+            counted_places,
+            quoted_texts: QuotedTexts::default(),
+            scratch: BuilderScratch::default(),
+        }
+    }
+
+    /// `bun run` reports a file that holds such a literal and runs nothing of it, whether or not anything reads the literal.
+    /// Code that folding decided dead is no part of the program, and the engine never reads a literal that the transpiler leaves out:
+    /// neither stops a build.
+    pub(super) fn refuse_invalid_regexp_literals(&mut self) {
+        if self.inputs.sources.kind(self.file) != load::SourceKind::Program {
+            return;
+        }
+        let decisions = self.decisions();
+        let mut invalid: Vec<(ExprId, Vec<u8>)> = Vec::new();
+        for (index, expression) in self.hir.exprs.iter().enumerate() {
+            let ExprKind::Regex { pattern, flags } = expression.kind else {
+                continue;
+            };
+            let literal = ExprId(index as u32);
+            if decisions.is_dead_expr(literal) {
+                continue;
+            }
+            let pattern = regexp_pattern_as_printed(self.queries.atom_bytes(pattern));
+            let flags = self.queries.atom_bytes(flags);
+            if let Some(sentence) = describe_regexp_syntax_error(&pattern, flags) {
+                invalid.push((literal, sentence));
+            }
+        }
+        if invalid.is_empty() {
+            return;
+        }
+        let left_out = Removable::of_file(
+            self.queries.files(),
+            self.file,
+            &self.compiled.analysis,
+            self.builtins,
+            self.inputs.options.removable,
+        )
+        .find_regexp_literals_left_out();
+        for (literal, sentence) in invalid {
+            if left_out.binary_search(&literal).is_ok() {
+                self.invalid_regexp_literals_left_out.push(literal);
+            } else {
+                let span = self.span_of(NodeData::Expr(literal));
+                self.diagnostics
+                    .report(Code::InvalidRegExp, span, &[&sentence]);
+            }
+        }
+    }
+
+    /// Nothing reads such a literal but a test of its truth or of its type, for which it stays an object.
+    pub(super) fn is_invalid_regexp_literal_left_out(&self, literal: ExprId) -> bool {
+        self.invalid_regexp_literals_left_out
+            .binary_search(&literal)
+            .is_ok()
+    }
+
+    pub(super) fn lies_in_package(&self) -> bool {
+        load::is_in_node_modules(self.queries.files().module(self.file).file_name())
+    }
+
+    pub(super) fn finish(mut self, module: ModuleFragment) -> LoweredFile {
+        self.fragment.is_checked = self.is_checked();
+        let queries = self.queries.statistics();
+        let FileLowering {
+            task,
+            fragment,
+            diagnostics,
+            layouts,
+            functions,
+            ..
+        } = self;
+        task.layout_places = layouts.into_places();
+        task.function_places = functions.into_places();
+        LoweredFile {
+            fragment: fragment.finish(module, task),
+            diagnostics,
+            queries,
+        }
+    }
+
+    /// The visit is thrown away. What is not given back here is lost to every file that the task has committed.
+    pub(super) fn abandon(self) {
+        let FileLowering {
+            task,
+            fragment,
+            layouts,
+            functions,
+            ..
+        } = self;
+        task.layout_places = layouts.into_places();
+        task.function_places = functions.into_places();
+        fragment.abandon(task);
+    }
+
+    pub(crate) fn is_simplified(&self, expression: ExprId) -> bool {
+        self.simplified_expressions
+            .binary_search(&expression)
+            .is_ok()
+    }
+
+    pub(crate) fn is_path_from_own_directory(&self, argument: ExprId) -> bool {
+        self.compiled.analysis.is_path_from_own_directory(argument)
+    }
+
+    pub(crate) fn find_resolved_form(&self, argument: ExprId) -> Option<ResolvedForm> {
+        self.compiled.analysis.find_resolved_form(argument)
+    }
+
+    pub(crate) fn decisions(&self) -> &'p Decisions<'s> {
+        let compiled = self.compiled;
+        &compiled.analysis.decisions
+    }
+
+    pub(crate) fn is_in_dependency(&self) -> bool {
+        self.inputs
+            .files_of_dependencies
+            .binary_search(&self.file)
+            .is_ok()
+    }
+
+    pub(crate) fn is_checked(&self) -> bool {
+        match self.role {
+            FileRole::Checked => true,
+            FileRole::Inferred | FileRole::TypesOnly => false,
+        }
+    }
+
+    pub(crate) fn intern_bytes(&mut self, bytes: &[u8]) -> StringId {
+        self.fragment.strings.intern(bytes)
+    }
+
+    pub(crate) fn intern_atom(&mut self, atom: Atom) -> StringId {
+        debug_assert!(atom != Atom::NONE, "a name was expected");
+        if let Some(&id) = self.task.atoms.get(&atom) {
+            return id;
+        }
+        let id = self.fragment.strings.intern(self.queries.atom_bytes(atom));
+        self.task.atoms.insert(atom, id);
+        id
+    }
+
+    pub(crate) fn intern_binding_name(&mut self, binding: Binding, written: Atom) -> StringId {
+        match self.short_binding_name(binding) {
+            Some(name) => name,
+            None => {
+                let name = self.queries.atom_bytes(written);
+                match written_name_of_local(name) {
+                    same if same.len() == name.len() => self.intern_atom(written),
+                    of_test_runner => self.intern_bytes(of_test_runner),
+                }
+            }
+        }
+    }
+
+    pub(crate) fn text_key(&mut self, text: StringId) -> PropertyKeyId {
+        self.fragment
+            .property_keys
+            .intern(PropertyKey::from_text(text))
+    }
+
+    pub(crate) fn atom_key(&mut self, atom: Atom) -> PropertyKeyId {
+        if let Some(&key) = self.task.atom_keys.get(&atom) {
+            return key;
+        }
+        let text = self.intern_atom(atom);
+        let key = self.text_key(text);
+        self.task.atom_keys.insert(atom, key);
+        key
+    }
+
+    pub(crate) fn symbol_key(&mut self, symbol: WellKnownSymbol) -> PropertyKeyId {
+        let key = PropertyKey::from_well_known_symbol(symbol);
+        self.fragment.property_keys.intern(key)
+    }
+
+    pub(crate) fn module_id(&mut self) -> ModuleId {
+        self.fragment.declare_module(ModuleRef::File(self.file))
+    }
+
+    pub(crate) fn span_of(&self, node: NodeData) -> Span {
+        Span::of_node(self.hir, self.file, node)
+    }
+
+    pub(crate) fn span_at(&self, position: u32) -> Span {
+        Span {
+            file: self.file,
+            start: position,
+            end: position,
+        }
+    }
+}

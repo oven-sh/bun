@@ -1,0 +1,149 @@
+#### standard-decorator-sees-bun-wrap/main.ts
+import "./body";
+import { seen } from "./frames";
+for (const line of seen) console.log("SAID", line);
+#### standard-decorator-sees-bun-wrap/body.ts
+
+      import { look } from "./frames";
+      const d = (kind: string) => (value: unknown, context: DecoratorContext) => { look(kind + ":" + context.kind); };
+      @d("class")
+      class Task {
+        @d("field") title = "t";
+        @d("static field") static count = 0;
+        @d("method") run() {}
+        @d("static method") static make() {}
+        @d("getter") get size() { return 1; }
+        @d("setter") set size(v: number) {}
+        @d("accessor") accessor auto = 1;
+        @d("private method") #hidden() {}
+        @d("private field") #secret = 1;
+      }
+      const Expression = @d("class expression") class {};
+      export const made = [new Task().title, typeof Expression];
+#### standard-decorator-sees-bun-wrap/frames.ts
+
+  const file = (name: string | null | undefined) => (name ? name.replace(/^.*\//, "") : String(name));
+  export const seen: string[] = [];
+  export function look(kind: string) {
+    const text = new Error().stack!.split("\n").slice(2, 5).map((line, i) => { const m = /^\s*at (?:(.*?) \()?(.*?)(?::\d+:\d+)?\)?$/.exec(line)!; return (i ? "" : (m[1] ?? "")) + "@" + file(m[2]); });
+    const keep = Error.prepareStackTrace;
+    Error.prepareStackTrace = (_, sites) => sites.slice(1, 4).map((s, i) => (i ? "" : (s.getFunctionName() ?? "")) + "@" + file(s.getFileName()) + (s.isNative() ? "!native" : "") + (typeof s.getLineNumber() === "number" ? "" : "!noline") + "/" + file(s.getScriptNameOrSourceURL()));
+    const sites = new Error().stack as unknown as string[];
+    const holder: { stack?: string[] } = {}; Error.captureStackTrace(holder);
+    Error.prepareStackTrace = keep;
+    seen.push(kind + " | " + text.join(" < ") + " | " + sites.join(" < ") + " | " + holder.stack!.join(" < "));
+  }
+#### standard-decorator-sees-bun-wrap/tsconfig.json
+{ "compilerOptions": { "target": "esnext", "strict": true } }
+#### standard-decorator-sees-bun-wrap/package.json
+{ "name": "p", "type": "module" }
+#### standard-decorator-sees-bun-wrap prints
+SAID static method:method | <anonymous>@body.ts < @bun:wrap < @body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts
+SAID method:method | <anonymous>@body.ts < @bun:wrap < @body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts
+SAID getter:getter | <anonymous>@body.ts < @bun:wrap < @body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts
+SAID setter:setter | <anonymous>@body.ts < @bun:wrap < @body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts
+SAID accessor:accessor | <anonymous>@body.ts < @bun:wrap < @body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts
+SAID private method:method | <anonymous>@body.ts < @bun:wrap < @body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts
+SAID static field:field | <anonymous>@body.ts < @bun:wrap < @body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts
+SAID field:field | <anonymous>@body.ts < @bun:wrap < @body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts
+SAID private field:field | <anonymous>@body.ts < @bun:wrap < @body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts
+SAID class:class | <anonymous>@body.ts < @bun:wrap < @body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts
+SAID class expression:class | <anonymous>@body.ts < @bun:wrap < @body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts
+#### legacy-decorator-sees-bun-wrap/main.ts
+import "./body";
+import { seen } from "./frames";
+for (const line of seen) console.log("SAID", line);
+#### legacy-decorator-sees-bun-wrap/body.ts
+
+      import { look } from "./frames";
+      const onClass = (target: Function) => { look("class"); };
+      const onMember = (kind: string) => (target: object, key: string | symbol, descriptor?: PropertyDescriptor) => { look(kind); };
+      const onParameter = (target: object, key: string | symbol | undefined, index: number) => { look("parameter"); };
+      @onClass
+      class Task {
+        @onMember("property") title = "t";
+        @onMember("static property") static count = 0;
+        @onMember("method") run(@onParameter first: number) {}
+        @onMember("static method") static make() {}
+        @onMember("accessor") get size() { return 1; }
+        constructor(@onParameter first?: number) {}
+      }
+      export const made = new Task().title;
+#### legacy-decorator-sees-bun-wrap/frames.ts
+
+  const file = (name: string | null | undefined) => (name ? name.replace(/^.*\//, "") : String(name));
+  export const seen: string[] = [];
+  export function look(kind: string) {
+    const text = new Error().stack!.split("\n").slice(2, 5).map((line, i) => { const m = /^\s*at (?:(.*?) \()?(.*?)(?::\d+:\d+)?\)?$/.exec(line)!; return (i ? "" : (m[1] ?? "")) + "@" + file(m[2]); });
+    const keep = Error.prepareStackTrace;
+    Error.prepareStackTrace = (_, sites) => sites.slice(1, 4).map((s, i) => (i ? "" : (s.getFunctionName() ?? "")) + "@" + file(s.getFileName()) + (s.isNative() ? "!native" : "") + (typeof s.getLineNumber() === "number" ? "" : "!noline") + "/" + file(s.getScriptNameOrSourceURL()));
+    const sites = new Error().stack as unknown as string[];
+    const holder: { stack?: string[] } = {}; Error.captureStackTrace(holder);
+    Error.prepareStackTrace = keep;
+    seen.push(kind + " | " + text.join(" < ") + " | " + sites.join(" < ") + " | " + holder.stack!.join(" < "));
+  }
+#### legacy-decorator-sees-bun-wrap/tsconfig.json
+{ "compilerOptions": { "target": "esnext", "strict": true, "experimentalDecorators": true } }
+#### legacy-decorator-sees-bun-wrap/package.json
+{ "name": "p", "type": "module" }
+#### legacy-decorator-sees-bun-wrap prints
+SAID property | <anonymous>@body.ts < @bun:wrap < @body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts
+SAID parameter | onParameter@body.ts < @bun:wrap < @body.ts | onParameter@body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts | onParameter@body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts
+SAID method | <anonymous>@body.ts < @bun:wrap < @body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts
+SAID accessor | <anonymous>@body.ts < @bun:wrap < @body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts
+SAID static property | <anonymous>@body.ts < @bun:wrap < @body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts
+SAID static method | <anonymous>@body.ts < @bun:wrap < @body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts | @body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts
+SAID parameter | onParameter@body.ts < @bun:wrap < @body.ts | onParameter@body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts | onParameter@body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts
+SAID class | onClass@body.ts < @bun:wrap < @body.ts | onClass@body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts | onClass@body.ts/body.ts < @bun:wrap/bun:wrap < @body.ts/body.ts
+#### callbacks-of-built-ins-see-native-frames/main.ts
+import "./body";
+import { seen } from "./frames";
+for (const line of seen) console.log("SAID", line);
+#### callbacks-of-built-ins-see-native-frames/body.ts
+
+      import { look } from "./frames";
+      export const made = [
+        Array(2).fill(0).map(() => look("map of a filled list")),
+        Array.from({ length: 2 }, () => look("from a length")),
+        Array.from([1, 2], () => look("from a list")),
+        [1, 2].map(() => look("map")),
+        [1, 2].forEach(() => look("forEach")),
+        [1, 2].filter(() => (look("filter"), true)),
+        [2, 1].sort((a, b) => (look("sort"), a - b)),
+        [2, 1].toSorted((a, b) => (look("toSorted"), a - b)),
+        [1, 2].values().forEach(() => look("forEach of an iterator")),
+      ].length;
+#### callbacks-of-built-ins-see-native-frames/frames.ts
+
+  const file = (name: string | null | undefined) => (name ? name.replace(/^.*\//, "") : String(name));
+  export const seen: string[] = [];
+  export function look(kind: string) {
+    const text = new Error().stack!.split("\n").slice(2, 5).map((line, i) => { const m = /^\s*at (?:(.*?) \()?(.*?)(?::\d+:\d+)?\)?$/.exec(line)!; return (i ? "" : (m[1] ?? "")) + "@" + file(m[2]); });
+    const keep = Error.prepareStackTrace;
+    Error.prepareStackTrace = (_, sites) => sites.slice(1, 4).map((s, i) => (i ? "" : (s.getFunctionName() ?? "")) + "@" + file(s.getFileName()) + (s.isNative() ? "!native" : "") + (typeof s.getLineNumber() === "number" ? "" : "!noline") + "/" + file(s.getScriptNameOrSourceURL()));
+    const sites = new Error().stack as unknown as string[];
+    const holder: { stack?: string[] } = {}; Error.captureStackTrace(holder);
+    Error.prepareStackTrace = keep;
+    seen.push(kind + " | " + text.join(" < ") + " | " + sites.join(" < ") + " | " + holder.stack!.join(" < "));
+  }
+#### callbacks-of-built-ins-see-native-frames/tsconfig.json
+{ "compilerOptions": { "target": "esnext", "strict": true } }
+#### callbacks-of-built-ins-see-native-frames/package.json
+{ "name": "p", "type": "module" }
+#### callbacks-of-built-ins-see-native-frames prints
+SAID map of a filled list | map@native < @body.ts | map@[unknown]!native/[unknown] < @body.ts/body.ts | map@[unknown]!native/[unknown] < @body.ts/body.ts
+SAID map of a filled list | map@native < @body.ts | map@[unknown]!native/[unknown] < @body.ts/body.ts | map@[unknown]!native/[unknown] < @body.ts/body.ts
+SAID from a length | from@native < @body.ts | from@[unknown]!native/[unknown] < @body.ts/body.ts | from@[unknown]!native/[unknown] < @body.ts/body.ts
+SAID from a length | from@native < @body.ts | from@[unknown]!native/[unknown] < @body.ts/body.ts | from@[unknown]!native/[unknown] < @body.ts/body.ts
+SAID from a list | from@native < @body.ts | from@[unknown]!native/[unknown] < @body.ts/body.ts | from@[unknown]!native/[unknown] < @body.ts/body.ts
+SAID from a list | from@native < @body.ts | from@[unknown]!native/[unknown] < @body.ts/body.ts | from@[unknown]!native/[unknown] < @body.ts/body.ts
+SAID map | map@native < @body.ts | map@[unknown]!native/[unknown] < @body.ts/body.ts | map@[unknown]!native/[unknown] < @body.ts/body.ts
+SAID map | map@native < @body.ts | map@[unknown]!native/[unknown] < @body.ts/body.ts | map@[unknown]!native/[unknown] < @body.ts/body.ts
+SAID forEach | forEach@native < @body.ts | forEach@[unknown]!native/[unknown] < @body.ts/body.ts | forEach@[unknown]!native/[unknown] < @body.ts/body.ts
+SAID forEach | forEach@native < @body.ts | forEach@[unknown]!native/[unknown] < @body.ts/body.ts | forEach@[unknown]!native/[unknown] < @body.ts/body.ts
+SAID filter | <anonymous>@body.ts < @native < @body.ts | @body.ts/body.ts < @[unknown]!native/[unknown] < @body.ts/body.ts | @body.ts/body.ts < @[unknown]!native/[unknown] < @body.ts/body.ts
+SAID filter | <anonymous>@body.ts < @native < @body.ts | @body.ts/body.ts < @[unknown]!native/[unknown] < @body.ts/body.ts | @body.ts/body.ts < @[unknown]!native/[unknown] < @body.ts/body.ts
+SAID sort | <anonymous>@body.ts < @unknown < @body.ts | @body.ts/body.ts < @[native code]!native/[native code] < @body.ts/body.ts | @body.ts/body.ts < @[native code]!native/[native code] < @body.ts/body.ts
+SAID toSorted | <anonymous>@body.ts < @unknown < @body.ts | @body.ts/body.ts < @[native code]!native/[native code] < @body.ts/body.ts | @body.ts/body.ts < @[native code]!native/[native code] < @body.ts/body.ts
+SAID forEach of an iterator | @body.ts | @body.ts/body.ts | @body.ts/body.ts
+SAID forEach of an iterator | @body.ts | @body.ts/body.ts | @body.ts/body.ts

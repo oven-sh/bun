@@ -1,0 +1,16 @@
+The mock of a file of the project that lies below its importer ends with its test file.
+#### a.test.ts
+import { test, mock } from "bun:test";
+test("a", async () => {
+  mock.module("./dep", () => ({ name: "mocked" }));
+  console.log("| CASE", "a " + (await import("./src/uses-dep")).seen());
+});
+#### b.test.ts
+import { test } from "bun:test";
+test("b", async () => console.log("| CASE", "b " + (await import("./src/uses-dep")).seen()));
+#### dep.ts
+export const name = "real";
+#### package.json
+{ "name": "p", "type": "module" }
+#### src/uses-dep.ts
+import { name } from "../dep"; export const seen = () => name;

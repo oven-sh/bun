@@ -1,0 +1,5 @@
+let first;
+class A { constructor() { if (first) return first; first = this; } }
+class B extends A { constructor(v) { super(v); this.x = v; } }
+function look(a) { const before = a.x; Reflect.construct(B, [2]); return before + " " + a.x; }
+console.log(look(new B(1)));

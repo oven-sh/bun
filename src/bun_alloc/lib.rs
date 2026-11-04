@@ -115,7 +115,7 @@ impl StdAllocator {
 // (global mimalloc). `Arena` is the real per-heap `MimallocArena` — unlike
 // `bumpalo::Bump`, it supports per-allocation free + realloc, so `ArenaVec`
 // no longer leaks on grow.
-pub use mimalloc_arena::MimallocArena;
+pub use mimalloc_arena::{ChunkOfBlocks, MimallocArena};
 pub type Arena = MimallocArena;
 mod baby_vec;
 pub use baby_vec::BabyVec;
@@ -173,6 +173,102 @@ macro_rules! arena_format {
 
 /// `bun.use_mimalloc` — false under ASAN, where the global allocator is `std::alloc::System`.
 pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
+
+/// When mimalloc gives freed memory back to the system.
+pub struct PurgeSettings {
+    delay: core::ffi::c_long,
+    purges_holes: core::ffi::c_long,
+}
+
+impl PurgeSettings {
+    /// A day, in milliseconds. Under a negative delay mimalloc would not list what is freed, and nothing could give it back later.
+    const DELAY_NO_BUILD_OUTLASTS: core::ffi::c_long = 24 * 60 * 60 * 1000;
+
+    /// From now on a freed page, and a free block in a page that is in use, stay with the process until somebody takes them again.
+    /// Returns the settings until now, for `restore`. What the environment sets stands.
+    pub fn put_off() -> PurgeSettings {
+        use mimalloc::{Option, mi_option_get, mi_option_set_default};
+        let former = PurgeSettings {
+            delay: mi_option_get(Option::purge_delay),
+            purges_holes: mi_option_get(Option::purge_holes),
+        };
+        mi_option_set_default(Option::purge_delay, Self::DELAY_NO_BUILD_OUTLASTS);
+        mi_option_set_default(Option::purge_holes, 0);
+        former
+    }
+
+    /// The pages freed since `put_off` keep the time they were given then, and so does what is freed into their arenas from now on:
+    /// `give_back_freed_pages` has to follow.
+    pub fn restore(self) {
+        use mimalloc::{Option, mi_option_set_default};
+        mi_option_set_default(Option::purge_delay, self.delay);
+        mi_option_set_default(Option::purge_holes, self.purges_holes);
+    }
+}
+
+/// Gives every freed page that nobody has taken again back to the system, on the calling thread: about 70 ms for each GB.
+pub fn give_back_freed_pages() {
+    mimalloc::mi_arenas_purge();
+}
+
+/// Where builds allocate: one range, so that the system can be told in what pages to fill it.
+/// `bun_threading::huge_pages` says when and why.
+#[cfg(target_os = "linux")]
+pub struct ArenaOfBuilds {
+    start: usize,
+    size: usize,
+}
+
+#[cfg(target_os = "linux")]
+impl ArenaOfBuilds {
+    /// What one arena of the allocator holds. A longer reservation becomes several arenas, which the threads share out
+    /// among themselves, and then each huge page is filled by one thread alone. What a build takes beyond it comes in
+    /// small pages.
+    const BYTES_OF_LARGEST_ARENA: usize = 16 << 30;
+
+    /// The one of the process, reserved when it is first asked for. It stays with the process.
+    /// None where the system refuses the reservation.
+    pub fn get() -> Option<&'static ArenaOfBuilds> {
+        static ARENA: std::sync::OnceLock<Option<ArenaOfBuilds>> = std::sync::OnceLock::new();
+        ARENA.get_or_init(Self::reserve).as_ref()
+    }
+
+    fn reserve() -> Option<ArenaOfBuilds> {
+        if !USE_MIMALLOC {
+            return None;
+        }
+        // SAFETY: `sysconf` has no preconditions.
+        let (pages, bytes_of_page) =
+            unsafe { (libc::sysconf(libc::_SC_PHYS_PAGES), libc::sysconf(libc::_SC_PAGESIZE)) };
+        let bytes_of_machine =
+            usize::try_from(pages).ok()?.saturating_mul(usize::try_from(bytes_of_page).ok()?);
+        let mut arena: *mut core::ffi::c_void = core::ptr::null_mut();
+        let wanted = bytes_of_machine.min(Self::BYTES_OF_LARGEST_ARENA);
+        // Committed, or the allocator would ask the system for each piece by itself, and the range would no longer be one
+        // that a fault can fill with 2 MB. Nothing is charged until it is touched.
+        // SAFETY: `arena` is a local.
+        if unsafe { mimalloc::mi_reserve_os_memory_ex(wanted, true, false, false, &raw mut arena) } != 0 {
+            return None;
+        }
+        let mut size = 0;
+        // SAFETY: `size` is a local.
+        let start = unsafe { mimalloc::mi_arena_area(arena, &raw mut size) };
+        (!start.is_null()).then_some(ArenaOfBuilds { start: start as usize, size })
+    }
+
+    /// Whether what is touched for the first time from now on comes in pages of 2 MB, where the system has them.
+    /// What lies in a huge page stays there until it is given back.
+    ///
+    /// Meanwhile only whole huge pages go back. The system splits one that a piece is taken out of: what stays in it, and
+    /// whatever is allocated in the gap, lies in small pages from then on. What the environment sets stands.
+    pub fn take_huge_pages(&self, takes: bool) {
+        let advice = if takes { libc::MADV_HUGEPAGE } else { libc::MADV_NOHUGEPAGE };
+        // SAFETY: the range is the arena's own, and the advice changes no contents.
+        unsafe { libc::madvise(self.start as *mut core::ffi::c_void, self.size, advice) };
+        let kilobytes = if takes { 2048 } else { 0 };
+        mimalloc::mi_option_set_default(mimalloc::Option::arena_purge_min_size, kilobytes);
+    }
+}
 
 // ── Allocator-vtable modules: per-module disposition (PORTING.md §Allocators) ──
 //
@@ -557,6 +653,27 @@ unsafe impl core::alloc::GlobalAlloc for Mimalloc {
         layout: core::alloc::Layout,
         new_size: usize,
     ) -> *mut u8 {
+        // `mi_realloc` leaves a block where it is while it stays half full, and a list that grew by doubling is always more than half
+        // full: `shrink_to_fit` and `into_boxed_slice` gave nothing back. Whoever shrinks a block keeps it, so it moves to a block of its
+        // size. Of a large block the end was never touched and takes no memory.
+        const LARGEST_BLOCK_MOVED: usize = 64 << 10;
+        if new_size < layout.size()
+            && new_size > 0
+            && layout.size() <= LARGEST_BLOCK_MOVED
+            && layout.align() <= MI_MAX_ALIGN_SIZE
+            // SAFETY: `ptr` is a live mimalloc allocation.
+            && mimalloc::mi_good_size(new_size) < unsafe { mimalloc::mi_usable_size(ptr.cast()) }
+        {
+            let moved: *mut u8 = mimalloc::mi_malloc(new_size).cast();
+            if !moved.is_null() {
+                // SAFETY: both blocks hold `new_size` bytes and are distinct, and `ptr` is not used again.
+                unsafe {
+                    core::ptr::copy_nonoverlapping(ptr, moved, new_size);
+                    mimalloc::mi_free(ptr.cast());
+                }
+                return moved;
+            }
+        }
         // SAFETY: `GlobalAlloc::realloc` contract — `ptr` is a live mimalloc
         // allocation with `layout`; `mi_realloc*` preserves the `min(old, new)` prefix.
         unsafe {
@@ -1707,9 +1824,7 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
                 // `append_overflow_uninit` and is exclusively owned via `self.head`.
                 Some(unsafe { Box::from_raw(head_ptr.as_ptr()) })
             };
-            let raw = Box::into_raw(new_block);
-            // SAFETY: raw came from Box::into_raw on the line above; non-null and exclusively owned.
-            head_ptr = unsafe { NonNull::new_unchecked(raw) };
+            head_ptr = Box::into_non_null(new_block);
             self.head = Some(head_ptr);
         }
         // SAFETY: `head_ptr` is the (possibly freshly-allocated) head block with
@@ -2165,7 +2280,8 @@ pub struct BSSMapInner<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLAS
     pub(crate) mutex: Mutex,
     // Only `[0..backing_buf_used]` is initialized.
     pub backing_buf: [MaybeUninit<ValueType>; COUNT],
-    pub backing_buf_used: u16,
+    // Written under `mutex`. Whoever got an index out of the map reads it without.
+    pub backing_buf_used: AtomicU16,
 }
 
 impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
@@ -2187,7 +2303,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         unsafe {
             addr_of_mut!((*slot).mutex).write(Mutex::new());
             addr_of_mut!((*slot).index).write(IndexMap::default());
-            addr_of_mut!((*slot).backing_buf_used).write(0);
+            addr_of_mut!((*slot).backing_buf_used).write(AtomicU16::new(0));
             OverflowList::init_counters_at(addr_of_mut!((*slot).overflow_list));
         }
     }
@@ -2281,38 +2397,80 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         value: ValueType,
     ) -> core::result::Result<&mut ValueType, AllocError> {
         let _guard = self.mutex.lock();
+        // Insert into `index` only after the slot is materialized, so a
+        // failed (fallible) `append` can't leave a dangling hash -> index entry.
+        let slot = Self::store_in_slot(
+            &mut self.overflow_list,
+            &mut self.backing_buf,
+            &self.backing_buf_used,
+            result,
+            value,
+        )?;
+        self.index.insert(result.hash, result.index);
+        Ok(slot)
+    }
 
+    /// `put` that leaves `index` as it is: the slot has its number and its value, and nobody finds it by its key
+    /// until `publish`. For a value that is filled in place and refers to its own number.
+    pub fn put_unpublished(
+        &mut self,
+        result: &mut Result,
+        value: ValueType,
+    ) -> core::result::Result<&mut ValueType, AllocError> {
+        let _guard = self.mutex.lock();
+        Self::store_in_slot(
+            &mut self.overflow_list,
+            &mut self.backing_buf,
+            &self.backing_buf_used,
+            result,
+            value,
+        )
+    }
+
+    /// Stores `value` in the slot that `result` names, or in a new one, whose number `result` gets. The caller holds
+    /// `mutex`.
+    fn store_in_slot<'map>(
+        overflow_list: &'map mut OverflowList<ValueType, BSS_OVERFLOW_BLOCK_SIZE>,
+        backing_buf: &'map mut [MaybeUninit<ValueType>; COUNT],
+        backing_buf_used: &AtomicU16,
+        result: &mut Result,
+        value: ValueType,
+    ) -> core::result::Result<&'map mut ValueType, AllocError> {
         if result.index.index() == NOT_FOUND.index() || result.index.index() == UNASSIGNED.index() {
+            let used = backing_buf_used.load(Ordering::Relaxed);
             result
                 .index
-                .set_is_overflow(self.backing_buf_used as usize > Self::MAX_INDEX);
+                .set_is_overflow(used as usize > Self::MAX_INDEX);
             if result.index.is_overflow() {
-                result.index.set_index(self.overflow_list.len());
+                result.index.set_index(overflow_list.len());
             } else {
-                result.index.set_index(self.backing_buf_used as u32);
-                self.backing_buf_used += 1;
+                result.index.set_index(used as u32);
+                backing_buf_used.store(used + 1, Ordering::Relaxed);
             }
         }
 
-        // Insert into `index` only after the slot is materialized below, so a
-        // failed (fallible) `append` can't leave a dangling hash -> index entry.
-        let ret = if result.index.is_overflow() {
-            if self.overflow_list.len() == result.index.index() {
-                self.overflow_list.append(value)?
+        if result.index.is_overflow() {
+            if overflow_list.len() == result.index.index() {
+                overflow_list.append(value)
             } else {
-                let ptr = self.overflow_list.at_index_mut(result.index);
+                let ptr = overflow_list.at_index_mut(result.index);
                 *ptr = value;
-                ptr
+                Ok(ptr)
             }
         } else {
             let idx = result.index.index() as usize;
             // Raw write — fresh slots are uninit; no drop glue runs.
-            self.backing_buf[idx].write(value);
+            backing_buf[idx].write(value);
             // SAFETY: just initialized on the line above.
-            unsafe { self.backing_buf[idx].assume_init_mut() }
-        };
+            Ok(unsafe { backing_buf[idx].assume_init_mut() })
+        }
+    }
+
+    /// Lets `get` and `get_or_put` find what `put_unpublished` stored. Whoever finds it sees every write to the slot
+    /// that came before this call.
+    pub fn publish(&mut self, result: Result) {
+        let _guard = self.mutex.lock();
         self.index.insert(result.hash, result.index);
-        Ok(ret)
     }
 
     /// Returns true if the entry was removed.
@@ -2320,6 +2478,30 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         let _guard = self.mutex.lock();
         let _key = Self::key_hash(denormalized_key);
         self.index.remove(&_key).is_some()
+    }
+}
+
+#[cfg(test)]
+mod bss_map_tests {
+    use super::*;
+
+    #[test]
+    fn a_value_is_found_by_its_key_once_it_is_published() {
+        // SAFETY: a fresh map that nothing else refers to.
+        let map = unsafe { BSSMapInner::<u32, 2, false>::init().as_mut() };
+        // Two go into the buffer and two into the overflow list.
+        let keys: [&[u8]; 4] = [b"a", b"b", b"c", b"d"];
+        for key in keys {
+            let mut result = map.get_or_put(key).unwrap();
+            assert!(result.status == ItemStatus::Unknown);
+            *map.put_unpublished(&mut result, 1).unwrap() += 1;
+            assert!(map.get(key).is_none());
+            assert!(map.get_or_put(key).unwrap().status == ItemStatus::Unknown);
+            assert_eq!(map.at_index(result.index).copied(), Some(2));
+            map.publish(result);
+            assert_eq!(map.get(key).copied(), Some(2));
+            assert!(map.get_or_put(key).unwrap().status == ItemStatus::Exists);
+        }
     }
 }
 

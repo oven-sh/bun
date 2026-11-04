@@ -1,0 +1,19 @@
+A file hands on all names of a module by a star, and a test file mocks that module. What the next test file, which mocks nothing, sees of the file: by a namespace, by a name, by import() and by require(). Here: node:path, mocked before the load.
+#### a.test.js
+import { mock, test, vi } from "bun:test";
+vi.mock("node:path", () => ({ basename: () => "mock", join: () => "mock", side: "mock side", default: {} }));
+import { seen } from "./user.js";
+test("a", async () => console.log("| CASE a", await seen()));
+#### b.test.js
+import { test } from "bun:test";
+import { seen } from "./user.js";
+test("b", async () => console.log("| CASE b", await seen()));
+#### package.json
+{ "name": "mock-next-file", "type": "module" }
+#### star.js
+export * from "node:path";
+export { basename as x, join as y } from "node:path";
+#### user.js
+import * as star from "./star.js";
+const show = all => [all.x("/a/real"), typeof all.y, "side" in all, Object.keys(all).length > 5 ? "many" : Object.keys(all).join("+")].join();
+export const seen = async () => [show(star), show(await import("./star.js")), show(require("./star.js"))].join(" | ");

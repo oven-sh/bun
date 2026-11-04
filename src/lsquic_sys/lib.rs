@@ -179,7 +179,7 @@ unsafe extern "C" {
         peer: c_int,
         out: *mut NqTransportParams,
     ) -> c_int;
-    pub fn us_nq_tp_size() -> usize;
+    pub safe fn us_nq_tp_size() -> usize;
 
     fn lsquic_stream_id(s: *const lsquic_stream) -> u64;
     pub fn lsquic_stream_conn(s: *const lsquic_stream) -> *mut lsquic_conn;
@@ -192,8 +192,8 @@ unsafe extern "C" {
     pub fn lsquic_stream_wantwrite(s: *mut lsquic_stream, is_want: c_int) -> c_int;
 
     pub fn us_nq_enable_logging(level: *const c_char);
-    pub fn us_nq_vtable_size() -> usize;
-    pub fn us_nq_settings_size() -> usize;
+    pub safe fn us_nq_vtable_size() -> usize;
+    pub safe fn us_nq_settings_size() -> usize;
     pub fn us_nq_settings_init(s: *mut lsquic_engine_settings, is_server: c_int, is_http: c_int);
     pub fn us_nq_engine_new(
         is_server: c_int,
@@ -206,7 +206,7 @@ unsafe extern "C" {
     pub fn us_nq_spec_local(s: *const lsquic_out_spec) -> *const sockaddr;
     pub fn us_nq_spec_peer_ctx(s: *const lsquic_out_spec) -> *mut c_void;
     pub fn us_nq_spec_iov(s: *const lsquic_out_spec, n: *mut usize) -> *const iovec;
-    pub fn us_nq_spec_stride() -> usize;
+    pub safe fn us_nq_spec_stride() -> usize;
     pub fn us_nq_stream_reset(s: *mut lsquic_stream, code: u64);
     pub fn us_nq_hset_pairs(hset: *mut c_void, len: *mut usize) -> *const c_char;
     pub fn us_nq_hset_free(hset: *mut c_void);
@@ -285,8 +285,7 @@ impl Settings {
     }
 
     pub fn new(is_server: bool, is_http: bool) -> Self {
-        // SAFETY: pure size query.
-        let size = unsafe { us_nq_settings_size() };
+        let size = us_nq_settings_size();
         let mut bytes = vec![0u8; size];
         // SAFETY: `bytes` is a fresh zeroed allocation of the right size.
         unsafe {
@@ -749,11 +748,11 @@ impl NqTransportParams {
     }
 }
 
+bun_core::impl_zeroable!(NqTransportParams);
+
 impl Default for NqTransportParams {
     fn default() -> Self {
-        // SAFETY: `#[repr(C)]` POD (u64 / c_int / byte arrays); all-zero is a valid
-        // bit pattern for every field.
-        unsafe { core::mem::MaybeUninit::zeroed().assume_init() }
+        bun_core::ffi::zeroed()
     }
 }
 
@@ -771,14 +770,12 @@ impl Conn {
 
 pub fn debug_assert_layout() {
     debug_assert_eq!(
-        // SAFETY: pure size query.
-        unsafe { us_nq_vtable_size() },
+        us_nq_vtable_size(),
         core::mem::size_of::<NqVtable>(),
         "us_nq_vtable layout mismatch between node_quic_shim.c and lsquic_sys"
     );
     debug_assert_eq!(
-        // SAFETY: pure size query.
-        unsafe { us_nq_tp_size() },
+        us_nq_tp_size(),
         core::mem::size_of::<NqTransportParams>(),
         "us_nq_tp layout mismatch: peer_transport_params passes a stack \
          NqTransportParams that C fills with sizeof(struct us_nq_tp) bytes"

@@ -7,12 +7,12 @@ use bun_lint::utils::ts_scope::is_reference_to_global_function;
 /// Disallow the use of `eval()`-like functions.
 pub struct NoImpliedEval;
 
-const NO_FUNCTION_CONSTRUCTOR: Message = Message::new(
+const NO_FUNCTION_CONSTRUCTOR: &Message = &Message::new(
     "noFunctionConstructor",
     "Implied eval. Do not use the Function constructor to create functions.",
 );
-const NO_IMPLIED_EVAL_ERROR: Message =
-    Message::new("noImpliedEvalError", "Implied eval. Consider passing a function.");
+const NO_IMPLIED_EVAL_ERROR: &Message =
+    &Message::new("noImpliedEvalError", "Implied eval. Consider passing a function.");
 
 const FUNCTION_CONSTRUCTOR: &str = "Function";
 const GLOBAL_CANDIDATES: [&str; 3] = ["global", "globalThis", "window"];

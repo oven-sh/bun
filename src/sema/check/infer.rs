@@ -2005,6 +2005,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) {
         n.has_reached_contextual_function |= self.is_sig_of_context_sensitive_function(source)
             || self.is_sig_of_context_sensitive_function(target);
+        let is_under_strict_function_types = self.is_under_strict_function_types(source);
         let source = self.base_sig(source);
         let declared = self.declared_sig(target);
         let is_method = match self.sig_decl(declared) {
@@ -2021,8 +2022,7 @@ impl<'p, 's> Checker<'p, 's> {
             // Once a bivariant signature has been crossed, everything nested in it is bivariant.
             let saved_bivariant = n.bivariant;
             n.bivariant |= is_method;
-            let strict = self.p.files.options.strict_function_types
-                || n.priority & PRIORITY_ALWAYS_STRICT != 0;
+            let strict = is_under_strict_function_types || n.priority & PRIORITY_ALWAYS_STRICT != 0;
             for (s, t) in self.parameter_type_pairs(source, target) {
                 if strict {
                     self.infer_from_contravariant_types(n, s, t)
@@ -3352,7 +3352,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// True if instantiating `ty` may map a type parameter.
-    fn may_mention_type_parameter(&self, ty: TypeId) -> bool {
+    pub(super) fn may_mention_type_parameter(&self, ty: TypeId) -> bool {
         self.types()
             .object_flags(ty)
             .intersects(ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES | ObjectFlags::HAS_REVERSE_MAPPED)
@@ -3402,71 +3402,86 @@ impl<'p, 's> Checker<'p, 's> {
             } else if !seen_later.insert(ty) {
                 continue;
             }
-            let values = |mapper: MapperId| self.types().mapping(mapper).iter().map(|pair| pair.1);
-            match self.data(ty) {
-                TypeData::Union(types) | TypeData::Intersection(types) => {
-                    left.extend_from_slice(types);
+            if self.list_parts(ty, all, &mut left, &mut signatures) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Where `any_type_in` goes on from `ty`. True where it can't tell. `signatures` is empty before and behind.
+    #[inline(always)]
+    pub(super) fn list_parts(
+        &self,
+        ty: TypeId,
+        all: bool,
+        left: &mut SmallVec<[TypeId; 16]>,
+        signatures: &mut SmallVec<[SigId; 4]>,
+    ) -> bool {
+        let values = |mapper: MapperId| self.types().mapping(mapper).iter().map(|pair| pair.1);
+        match self.data(ty) {
+            TypeData::Union(types) | TypeData::Intersection(types) => {
+                left.extend_from_slice(types);
+            }
+            TypeData::Ref { args, .. } | TypeData::Tuple { elems: args, .. } => match args {
+                TypeArguments::Given(actual) => left.extend_from_slice(actual),
+                TypeArguments::Deferred(deferred) => left.extend(values(deferred.mapper)),
+            },
+            TypeData::Template { types, .. } => left.extend_from_slice(types),
+            TypeData::Anon { mapper, .. }
+            | TypeData::Fns { mapper, .. }
+            | TypeData::Cond { mapper, .. } => left.extend(values(*mapper)),
+            TypeData::Synth(shape) => {
+                if all {
+                    signatures.extend(shape.call.iter().chain(&shape.construct).copied());
+                } else if !shape.call.is_empty() || !shape.construct.is_empty() {
+                    return true;
                 }
-                TypeData::Ref { args, .. } | TypeData::Tuple { elems: args, .. } => match args {
-                    TypeArguments::Given(actual) => left.extend_from_slice(actual),
-                    TypeArguments::Deferred(deferred) => left.extend(values(deferred.mapper)),
-                },
-                TypeData::Template { types, .. } => left.extend_from_slice(types),
-                TypeData::Anon { mapper, .. }
-                | TypeData::Fns { mapper, .. }
-                | TypeData::Cond { mapper, .. } => left.extend(values(*mapper)),
-                TypeData::Synth(shape) => {
-                    if all {
-                        signatures.extend(shape.call.iter().chain(&shape.construct).copied());
-                    } else if !shape.call.is_empty() || !shape.construct.is_empty() {
-                        return true;
-                    }
-                    for p in &shape.props {
-                        match p.source {
-                            PropSource::Type(t)
-                            | PropSource::Copy(t, ..)
-                            | PropSource::ReverseMapped(t, _) => left.push(t),
-                            _ => {
-                                left.extend(values(p.mapper));
-                                left.extend(self.types().separate_key(p));
-                            }
+                for p in &shape.props {
+                    match p.source {
+                        PropSource::Type(t)
+                        | PropSource::Copy(t, ..)
+                        | PropSource::ReverseMapped(t, _) => left.push(t),
+                        _ => {
+                            left.extend(values(p.mapper));
+                            left.extend(self.types().separate_key(p));
                         }
                     }
-                    left.extend(shape.index.iter().map(|i| i.value));
-                    left.extend(values(shape.mapper));
                 }
-                TypeData::IndexedAccess { obj, index, .. } => left.extend([*obj, *index]),
-                TypeData::Substitution { base, constraint } => left.extend([*base, *constraint]),
-                // `instantiateReverseMappedType` instantiates all three.
-                TypeData::ReverseMapped { source, mapped, of } => {
-                    left.extend([*source, *mapped, *of]);
-                }
-                TypeData::Keyof(t) | TypeData::StringMapping { ty: t, .. } => left.push(*t),
-                _ => {}
+                left.extend(shape.index.iter().map(|i| i.value));
+                left.extend(values(shape.mapper));
             }
-            while let Some(sig) = signatures.pop() {
-                match self.types().sig(sig) {
-                    SigData::Decl { mapper, .. } | SigData::Construct { mapper, .. } => {
-                        left.extend(values(*mapper))
-                    }
-                    SigData::DefaultConstruct { base, mapper, .. } => {
-                        signatures.extend(*base);
-                        left.extend(values(*mapper));
-                    }
-                    SigData::Synth {
-                        params,
-                        ret,
-                        this,
-                        of,
-                        ..
-                    } => {
-                        left.extend(params.iter().map(|p| p.ty).chain([*ret]).chain(*this));
-                        signatures.extend_from_slice(of);
-                    }
-                    SigData::WithReturn { sig, ret } => {
-                        signatures.push(*sig);
-                        left.push(*ret);
-                    }
+            TypeData::IndexedAccess { obj, index, .. } => left.extend([*obj, *index]),
+            TypeData::Substitution { base, constraint } => left.extend([*base, *constraint]),
+            // `instantiateReverseMappedType` instantiates all three.
+            TypeData::ReverseMapped { source, mapped, of } => {
+                left.extend([*source, *mapped, *of]);
+            }
+            TypeData::Keyof(t) | TypeData::StringMapping { ty: t, .. } => left.push(*t),
+            _ => {}
+        }
+        while let Some(sig) = signatures.pop() {
+            match self.types().sig(sig) {
+                SigData::Decl { mapper, .. } | SigData::Construct { mapper, .. } => {
+                    left.extend(values(*mapper))
+                }
+                SigData::DefaultConstruct { base, mapper, .. } => {
+                    signatures.extend(*base);
+                    left.extend(values(*mapper));
+                }
+                SigData::Synth {
+                    params,
+                    ret,
+                    this,
+                    of,
+                    ..
+                } => {
+                    left.extend(params.iter().map(|p| p.ty).chain([*ret]).chain(*this));
+                    signatures.extend_from_slice(of);
+                }
+                SigData::WithReturn { sig, ret } => {
+                    signatures.push(*sig);
+                    left.push(*ret);
                 }
             }
         }

@@ -1,0 +1,21 @@
+// The symbols come by named, default and namespace imports, out of a record, out of a variable that is stored late and twice, and by require.
+import defaultKey, { kShared, kOther, kLate, makeLate, keys } from "./symbols.js";
+import * as all from "./symbols.js";
+import { Holder } from "./holder.js";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const { kRequired, kInline } = require("./symbols.cjs");
+const holder = new Holder(3, 4);
+console.log(holder.shared(), holder.other(), holder.inRecord());
+console.log(holder[kShared], holder[kOther], holder[keys.kInRecord], holder[keys.kSecondInRecord]);
+console.log(holder[defaultKey], holder[all.kShared], holder[all.kOther], defaultKey === kShared, all.kShared === kShared);
+console.log(String(kLate), holder[kLate]);
+const late = makeLate();
+holder[late] = "late";
+console.log(holder[kLate], kLate === late, holder[all.kLate]);
+const again = makeLate();
+console.log(holder[kLate], kLate === late, kLate === again);
+holder[kRequired] = "required"; holder[kInline] = "inline";
+console.log(holder[kRequired], holder[kInline], holder[require("./symbols.cjs").kRequired]);
+console.log(Object.getOwnPropertySymbols(holder).map(String).join());
+console.log(Object.getOwnPropertySymbols({ ...holder }).length, Object.assign({}, holder)[kShared]);

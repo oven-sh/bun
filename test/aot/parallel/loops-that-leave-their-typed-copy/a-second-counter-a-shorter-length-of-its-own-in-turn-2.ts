@@ -1,0 +1,18 @@
+// a second counter: a shorter length of its own, in turn 2
+let subject: any;
+let reads = 0;
+let armed = false;
+function between(i: number) { if (armed && i === 2) { armed = false; Object.defineProperty(subject, "length", { value: 2, configurable: true }); } }
+function ask(view: Uint8Array) { let total = 0, turns = 0; for (let i = 0; i < view.length; i++, turns += 3) { between(i); total += view[i]; } return total + ":" + turns; }
+function fresh() { const view = new Uint8Array(5); for (let i = 0; i < 5; i++) view[i] = i + 1; return view; }
+const seen: unknown[] = [];
+function look(view: any) { try { seen.push(String(ask(view))); } catch (error) { seen.push((error as Error).name); } }
+const plain = fresh();
+for (let i = 0; i < 3; i++) look(plain);
+subject = fresh();
+armed = true;
+look(subject);
+look(subject);
+look(plain);
+seen.push(reads);
+console.log(seen.join());

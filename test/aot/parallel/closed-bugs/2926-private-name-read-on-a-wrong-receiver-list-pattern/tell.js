@@ -1,0 +1,1 @@
+export function tell(cases) { for (const [label, run] of Object.entries(cases)) { try { run(); console.log(label + ": no error"); } catch (error) { console.log(label + ": " + error.constructor.name + ": " + error.message); } } }

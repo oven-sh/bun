@@ -1,0 +1,13 @@
+A test file that takes itself out of require.cache.
+#### itself.test.js
+import { expect, mock, test } from "bun:test";
+globalThis.loads = (globalThis.loads ?? 0) + 1;
+export const loads = globalThis.loads;
+if (loads === 1) test("itself", () => {
+  const first = require(import.meta.path);
+  delete require.cache[import.meta.path];
+  const second = require(import.meta.path);
+  console.log("| CASE", "itself", first === second, Object.keys(first).join(), Object.keys(second).join(), first.loads, second.loads);
+});
+#### tsconfig.json
+{ "compilerOptions": { "allowJs": true } }

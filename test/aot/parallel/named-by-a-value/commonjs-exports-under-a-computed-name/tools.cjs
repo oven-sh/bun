@@ -1,0 +1,1 @@
+module.exports = { first() { return 1; }, second() { return 2; } };

@@ -4,6 +4,14 @@ import { readFileSync } from "fs";
 import { path } from "../test/common/fixtures";
 
 describe("crypto.hash", () => {
+  test("knows utf-16le by the name node gives it", () => {
+    const digest = crypto.createHash("sha1").update("abc").digest();
+    expect(crypto.hash("sha1", "abc", "utf-16le" as any)).toBe(digest.toString("utf16le"));
+    expect(new Bun.CryptoHasher("sha1").update("abc", "utf-16le" as any).digest("hex")).toBe(
+      crypto.createHash("sha1").update(Buffer.from("abc", "utf16le")).digest("hex"),
+    );
+  });
+
   test("throws for invalid arguments", () => {
     ([undefined, null, true, 1, () => {}, {}] as const).forEach(invalid => {
       // @ts-expect-error

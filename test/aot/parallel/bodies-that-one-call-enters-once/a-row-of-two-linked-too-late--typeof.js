@@ -1,0 +1,5 @@
+const attempt = (f) => { try { return f(); } catch (e) { return "threw " + e.name; } };
+function read(K) { return typeof new K(1).m; }
+var kept;
+const show = (when, K) => console.log(when, attempt(() => read(K)));
+var Base = (function () { function Base(v) { this.v = v; } Base.prototype.m = function () { return this.v + 1; }; return Base; })(); var K = (function (_super) { function P(v) { _super.call(this, v); } kept = new P(5); P.prototype = Object.create(_super.prototype); return P; })(Base); show("a", K);

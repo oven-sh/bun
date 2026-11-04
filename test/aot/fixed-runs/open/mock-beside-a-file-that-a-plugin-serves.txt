@@ -1,0 +1,10 @@
+vi.doMock() beside a file that a run-time plugin serves. A Bun with assertions looks at every exception scope on that road (BUN_JSC_validateExceptionChecks, which CI sets where Bun has a sanitizer).
+#### k.js
+export const x = "real";
+#### m.test.js
+import { test, vi } from "bun:test";
+test("x", async () => { Bun.plugin({ name: "p", setup(build) { build.onLoad({ filter: /served\.js$/ }, async () => ({ contents: 'export const s = "served";', loader: "js" })); } }); vi.doMock("./k.js", () => ({ x: "mock" })); console.log("| CASE", (await import("./user.js")).seen); });
+#### served.js
+export const s = "file";
+#### user.js
+import { x } from "./k.js"; import { s } from "./served.js"; export const seen = x + "/" + s;

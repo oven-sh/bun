@@ -1,0 +1,19 @@
+function run(n: number): number { const made = new Int32Array(n); for (let i = 0; i < made.length; i++) made[i] = i + 1; const last = made.length - 1; for (let i = 0; i < last; i++) made[i] = made[i + 1] * 2; let t = 0; for (let i = 0; i < made.length; i++) t = (t * 31 + made[i]) | 0; return t; }
+console.log(run(0));
+console.log(run(1));
+console.log(run(2));
+console.log(run(3));
+console.log(run(4));
+console.log(run(5));
+console.log(run(6));
+console.log(run(7));
+console.log(run(8));
+console.log(run(9));
+console.log(run(10));
+console.log(run(15));
+console.log(run(16));
+console.log(run(17));
+console.log(run(24));
+console.log(run(25));
+console.log(run(100));
+console.log(run(1001));

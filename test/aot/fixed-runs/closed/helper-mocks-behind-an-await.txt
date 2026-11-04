@@ -1,0 +1,22 @@
+A helper module lays its mocks behind awaits of its body.
+#### a.test.js
+import "./helper.js";
+import { test } from "bun:test";
+test("a", async () => { console.log("| CASE a", (await import("./tax.js")).rate, "|", (await import("./fee.js")).fee); });
+#### b.test.js
+import "./helper.js";
+import { test } from "bun:test";
+test("b", async () => { console.log("| CASE b", (await import("./tax.js")).rate, "|", (await import("./fee.js")).fee); });
+#### fee.js
+export const fee = "real fee";
+#### helper.js
+import { mock, vi } from "bun:test";
+await 0;
+vi.doMock("./tax.js", () => ({ rate: "mock rate" }));
+await new Promise(resolve => setTimeout(resolve, 1));
+vi.doMock("./fee.js", () => ({ fee: "mock fee" }));
+#### tax.js
+export const rate = "real rate";
+#### z.test.js
+import { test } from "bun:test";
+test("z", async () => { console.log("| CASE z", (await import("./tax.js")).rate, "|", (await import("./fee.js")).fee); });

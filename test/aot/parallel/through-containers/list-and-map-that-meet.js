@@ -1,0 +1,46 @@
+// An object goes into a container and comes out of it (list and map that meet). What comes out gets a field of another type, gains a property, loses one, gets an accessor, another prototype, or is frozen: whoever reads the object afterwards sees it.
+class A { constructor() { this.x = "a"; this.y = 1; } get k() { return "A"; } }
+class B { constructor() { this.x = "b"; this.y = 2; } get k() { return "B"; } }
+class C { constructor() { this.x = "c"; this.y = 3; } get k() { return "C"; } }
+class D { constructor() { this.x = "d"; this.y = 4; } get k() { return "D"; } }
+class E { constructor() { this.x = "e"; this.y = 5; } get k() { return "E"; } }
+class F { constructor() { this.x = "f"; this.y = 6; } get k() { return "F"; } }
+function showA(o) { return typeof o.x + " " + o.x + " " + (o.y + 1) + " " + Object.keys(o).join("|") + " " + o.k + " " + Object.isFrozen(o); }
+function showB(o) { return typeof o.x + " " + o.x + " " + (o.y + 1) + " " + Object.keys(o).join("|") + " " + o.k + " " + Object.isFrozen(o); }
+function showC(o) { return typeof o.x + " " + o.x + " " + (o.y + 1) + " " + Object.keys(o).join("|") + " " + o.k + " " + Object.isFrozen(o); }
+function showD(o) { return typeof o.x + " " + o.x + " " + (o.y + 1) + " " + Object.keys(o).join("|") + " " + o.k + " " + Object.isFrozen(o); }
+function showE(o) { return typeof o.x + " " + o.x + " " + (o.y + 1) + " " + Object.keys(o).join("|") + " " + o.k + " " + Object.isFrozen(o); }
+function showF(o) { return typeof o.x + " " + o.x + " " + (o.y + 1) + " " + Object.keys(o).join("|") + " " + o.k + " " + Object.isFrozen(o); }
+function changeA(o) { o.x = 7; }
+function changeB(o) { o.z = true; }
+function changeC(o) { delete o.y; }
+function changeD(o) { Object.defineProperty(o, "x", { get() { return 42; }, configurable: true, enumerable: true }); }
+function changeE(o) { Object.setPrototypeOf(o, { get k() { return "other"; } }); }
+function changeF(o) { Object.freeze(o); try { o.x = 9; } catch {} }
+function pickA(l, m, w) { return w ? l : m; }
+function takeA(h) { let t; for (const v of h) t = v; return t; }
+function throughA(o) { const l = [o], m = new Map(); return takeA(pickA(l, m, true)); }
+function pickB(l, m, w) { return w ? l : m; }
+function takeB(h) { let t; for (const v of h) t = v; return t; }
+function throughB(o) { const l = [o], m = new Map(); return takeB(pickB(l, m, true)); }
+function pickC(l, m, w) { return w ? l : m; }
+function takeC(h) { let t; for (const v of h) t = v; return t; }
+function throughC(o) { const l = [o], m = new Map(); return takeC(pickC(l, m, true)); }
+function pickD(l, m, w) { return w ? l : m; }
+function takeD(h) { let t; for (const v of h) t = v; return t; }
+function throughD(o) { const l = [o], m = new Map(); return takeD(pickD(l, m, true)); }
+function pickE(l, m, w) { return w ? l : m; }
+function takeE(h) { let t; for (const v of h) t = v; return t; }
+function throughE(o) { const l = [o], m = new Map(); return takeE(pickE(l, m, true)); }
+function pickF(l, m, w) { return w ? l : m; }
+function takeF(h) { let t; for (const v of h) t = v; return t; }
+function throughF(o) { const l = [o], m = new Map(); return takeF(pickF(l, m, true)); }
+const a = new A(), b = new B(), c = new C(), d = new D(), e = new E(), f = new F();
+console.log(showA(a), showB(b), showC(c), showD(d), showE(e), showF(f));
+changeA(throughA(a)); changeB(throughB(b)); changeC(throughC(c)); changeD(throughD(d)); changeE(throughE(e)); changeF(throughF(f));
+console.log(showA(a));
+console.log(showB(b));
+console.log(showC(c));
+console.log(showD(d));
+console.log(showE(e));
+console.log(showF(f));

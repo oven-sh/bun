@@ -1,0 +1,4 @@
+// A copy of a list is kept under a second name, read and written in one loop: through the second name: length.
+let spare; try { JSON.parse("{"); } catch (e) { spare = [e]; }
+function f(list, pick) { const copy = [...list]; const w = pick ? copy : spare; let s = ""; for (let i = 0; i < copy.length; i++) { s += copy[i] + ","; w.length = 3; w[0] = NaN; } return s; }
+console.log(f([1, 2, 3, 4], true) + ""); console.log(f([4, 5, 6, 7], false) + "");

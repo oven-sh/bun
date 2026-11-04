@@ -1,0 +1,49 @@
+A test replaces what a program reads to find out which runtime it is on: `process.versions`, by a definition, by a store and by a helper that is handed the object and the name. An executable folds those reads and locks the members; a test run does as plain `bun test` does.
+#### defined.test.ts
+import { test } from "bun:test";
+import { facts } from "./project.ts";
+import { override } from "./helpers.ts";
+test("defined", () => {
+  let undo = () => {}, outcome = "done";
+  console.error("| CASE defined, before", facts());
+  try { const d = Object.getOwnPropertyDescriptor(process, "versions")!; Object.defineProperty(process, "versions", { value: { node: "0.10.0" }, configurable: true }); undo = () => { Object.defineProperty(process, "versions", d); }; } catch (error: any) { outcome = error.constructor.name + ": " + error.message; }
+  console.error("| CASE defined,", outcome, facts());
+  undo();
+  console.error("| CASE defined, after", facts());
+  void override;
+});
+#### stored.test.ts
+import { test } from "bun:test";
+import { facts } from "./project.ts";
+import { override } from "./helpers.ts";
+test("stored", () => {
+  let undo = () => {}, outcome = "done";
+  console.error("| CASE stored, before", facts());
+  try { const v = process.versions; (process as any).versions = { node: "0.10.0" }; undo = () => { (process as any).versions = v; }; } catch (error: any) { outcome = error.constructor.name + ": " + error.message; }
+  console.error("| CASE stored,", outcome, facts());
+  undo();
+  console.error("| CASE stored, after", facts());
+  void override;
+});
+#### by-a-helper.test.ts
+import { test } from "bun:test";
+import { facts } from "./project.ts";
+import { override } from "./helpers.ts";
+test("by a helper", () => {
+  let undo = () => {}, outcome = "done";
+  console.error("| CASE by a helper, before", facts());
+  try { undo = override(process, "versions", { node: "0.10.0" }); } catch (error: any) { outcome = error.constructor.name + ": " + error.message; }
+  console.error("| CASE by a helper,", outcome, facts());
+  undo();
+  console.error("| CASE by a helper, after", facts());
+  void override;
+});
+#### project.ts
+export const facts = () => [typeof process.versions.bun, typeof Bun, process.isBun, process.isBun ? "the arm of Bun" : "the other arm", process.versions.node.split(".")[0] === "0" ? "old node" : "node",
+  process.release.name, process.release.name === "node" ? "the arm of node" : "the other arm", "bun" in process.versions, !!process.versions?.bun, typeof process.release, typeof process.versions].join(" | ");
+#### helpers.ts
+export function override(object: object, name: string, value: unknown) {
+  const before = Object.getOwnPropertyDescriptor(object, name)!;
+  Object.defineProperty(object, name, { value, configurable: true, writable: true });
+  return () => { Object.defineProperty(object, name, before); };
+}

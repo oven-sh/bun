@@ -1,0 +1,45 @@
+Two `export *` of a barrel bring the same name and mock.module() is laid over one of the files after it has run: values are replaced, the name stays ambiguous.
+#### laid-over-other-first/clash.js
+export const x = "clash x";
+export const other = "other";
+#### laid-over-other-first/dep.js
+export const x = "real x";
+export const f = "real f";
+#### laid-over-other-first/barrel.js
+export * from "./clash.js";
+export * from "./dep.js";
+#### laid-over-other-first/user.js
+import * as barrel from "./barrel.js";
+export const seen = () => "x=" + barrel.x + " f=" + barrel.f + " keys=" + Object.keys(barrel).join("+");
+#### laid-over-other-first/a.test.js
+import { test, vi } from "bun:test";
+import { mock } from "bun:test";
+import { seen } from "./user.js";
+mock.module("./dep.js", () => ({ x: "mock x", f: "mock f" }));
+test("t", async () => {
+  console.log("| CASE laid-over-other-first:", seen());
+  const barrel = await import("./barrel.js");
+  console.log("| CASE laid-over-other-first:", barrel.x, barrel.f);
+});
+#### laid-over-own-first/clash.js
+export const x = "clash x";
+export const other = "other";
+#### laid-over-own-first/dep.js
+export const x = "real x";
+export const f = "real f";
+#### laid-over-own-first/barrel.js
+export * from "./dep.js";
+export * from "./clash.js";
+#### laid-over-own-first/user.js
+import * as barrel from "./barrel.js";
+export const seen = () => "x=" + barrel.x + " f=" + barrel.f + " keys=" + Object.keys(barrel).join("+");
+#### laid-over-own-first/a.test.js
+import { test, vi } from "bun:test";
+import { mock } from "bun:test";
+import { seen } from "./user.js";
+mock.module("./dep.js", () => ({ x: "mock x", f: "mock f" }));
+test("t", async () => {
+  console.log("| CASE laid-over-own-first:", seen());
+  const barrel = await import("./barrel.js");
+  console.log("| CASE laid-over-own-first:", barrel.x, barrel.f);
+});

@@ -2,6 +2,7 @@
 
 use super::class::declared_key;
 use super::declared::Declares;
+use super::runtime_syntax::Prologue;
 use super::stmt::{ModifiersOf, Start};
 use super::{GrammarError, ListKind, Parser, ctx, oxc, take_span};
 use crate::Rejection;
@@ -281,6 +282,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             body: FnBody::None,
             anchor,
             start,
+            text_start: start,
+            is_strict: false,
+            is_strict_by_syntax: false,
         });
         if self.is_odd_function((kind, flags), parameters, &FnBody::None) {
             self.check_function_like_oxc(func, 0);
@@ -775,7 +779,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if matches!(token, T::Asterisk | T::AsteriskEquals) || is_unknown_type {
             // `checkJSDocTypeIsInJsFile`
             if !self.options.is_javascript {
-                self.flag(DiagnosticKind::Grammar, 8020, (start, start + 1), &[]);
+                self.flag_early_error(8020, (start, start + 1), &[]);
             }
             return self.add_type(TypeNodeKind::Keyword(Keyword::Any), start, start + 1);
         }
@@ -956,7 +960,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[cold]
     #[inline(never)]
     fn flag_type_arguments(&mut self, at: (u32, u32), code: u32) {
-        self.flag(DiagnosticKind::Grammar, code, at, &[]);
+        self.flag_early_error(code, at, &[]);
     }
 
     /// Call after a heritage clause's expression or a JSX element's name. `parseTypeArguments`
@@ -1386,7 +1390,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             if !is_first_extends && is_checked {
                 is_checked = false;
                 if is_extends {
-                    self.flag(DiagnosticKind::Grammar, 1172, (keyword.0, 0), &[]);
+                    self.flag_early_error(1172, (keyword.0, 0), &[]);
                 }
             }
             if is_extends && self.is_for_oxc() {
@@ -1451,16 +1455,16 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             // `checkGrammarHeritageClause`
             match comma {
                 _ if !is_checked => {}
-                Some(comma) => self.flag(DiagnosticKind::Grammar, 1009, (comma.0, 0), &[]),
+                Some(comma) => self.flag_early_error(1009, (comma.0, 0), &[]),
                 // oxc has already given up.
                 None if count == 0 && self.token() != T::OpenBrace && self.is_for_oxc() => {}
                 None if count == 0 => {
                     let at = (keyword.1, keyword.1);
-                    self.flag(DiagnosticKind::Grammar, 1097, at, &[b"extends"]);
+                    self.flag_early_error(1097, at, &[b"extends"]);
                 }
                 None => {
                     if let Some((at, code)) = element_error {
-                        self.flag(DiagnosticKind::Grammar, code, at, &[]);
+                        self.flag_early_error(code, at, &[]);
                     }
                 }
             }
@@ -1857,12 +1861,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let at = (type_start, element.end);
         if has_dots_before_type {
             element.member_type = TupleMemberType::Rest;
-            self.flag(DiagnosticKind::Grammar, 5087, at, &[]);
+            self.flag_early_error(5087, at, &[]);
             element.ty = self.rest_element_type(element.ty);
         } else if let Some(operand) = self.unwrap_nullable_type(element.ty) {
             element.member_type = TupleMemberType::Optional;
             element.written = operand;
-            self.flag(DiagnosticKind::Grammar, 5086, at, &[]);
+            self.flag_early_error(5086, at, &[]);
             // `getTypeFromOptionalTypeNode`
             let undefined = TypeNodeKind::Keyword(Keyword::Undefined);
             let undefined = self.add_type(undefined, type_start, type_start);
@@ -2094,14 +2098,14 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             .get(params.start as usize)
             .filter(|_| !params.is_empty())
         else {
-            return self.flag(DiagnosticKind::Grammar, 1096, member, &[]);
+            return self.flag_early_error(1096, member, &[]);
         };
         let name = self.f.pats.get(first.pat.idx()).map_or(0, |it| it.pos);
         if params.len() != 1 {
-            return self.flag(DiagnosticKind::Grammar, 1096, (name, 0), &[]);
+            return self.flag_early_error(1096, (name, 0), &[]);
         }
         if let Some(comma) = comma {
-            self.flag(DiagnosticKind::Grammar, 1025, (comma, 0), &[]);
+            self.flag_early_error(1025, (comma, 0), &[]);
         }
         let error = if first.flags.contains(Flags::REST) {
             Some((first.pos, 1017))
@@ -2117,7 +2121,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             None
         };
         if let Some((at, code)) = error {
-            self.flag(DiagnosticKind::Grammar, code, (at, 0), &[]);
+            self.flag_early_error(code, (at, 0), &[]);
         }
     }
 
@@ -2159,6 +2163,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             body: FnBody::None,
             anchor: bracket,
             start: start.pos,
+            text_start: start.pos,
+            is_strict: false,
+            is_strict_by_syntax: false,
         });
         Member {
             kind: MemberKind::IndexSignature,
@@ -2221,6 +2228,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             body: FnBody::None,
             anchor,
             start,
+            text_start: start,
+            is_strict: false,
+            is_strict_by_syntax: false,
         });
         if self.is_odd_function((kind, flags), parameters, &FnBody::None) {
             self.check_function_like_oxc(func, 0);
@@ -2363,14 +2373,17 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             return false;
         }
         let saved = self.enter_context(0, ctx::TYPE);
-        let (body, open) = self.function_block(0);
+        let (body, open) = self.function_block(0, Prologue::Directives);
         self.context = saved;
+        let is_strict = self.is_strict_body(body);
         if let Some(accessor) = self.f.fns.get_mut(func.idx()) {
             accessor.body = body;
+            accessor.is_strict = is_strict;
+            accessor.is_strict_by_syntax = is_strict;
         }
         self.f.body_starts.push((func, open));
         let at = (open, self.prev_end());
-        self.flag(DiagnosticKind::Grammar, 1183, at, &[]);
+        self.flag_early_error(1183, at, &[]);
         true
     }
 

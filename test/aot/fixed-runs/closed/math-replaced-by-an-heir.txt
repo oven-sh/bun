@@ -1,0 +1,22 @@
+`global.Math = Object.create(global.Math)` with another random(), as many a suite fixes Math.random: a file of the project reads through it, a hot loop too.
+#### a.test.ts
+import { test } from "bun:test";
+import { facts } from "./project.ts";
+test("t", () => {
+  console.log("| CASE before", facts());
+  const old = global.Math;
+  const mockMath = Object.create(global.Math);
+  mockMath.random = () => 0.5;
+  let outcome = "done";
+  try { global.Math = mockMath; } catch (error: any) { outcome = error.constructor.name + ": " + error.message; }
+  const seen = facts();
+  try { global.Math = old; } catch {}
+  console.log("| CASE", outcome, seen);
+  console.log("| CASE after", facts());
+});
+#### project.ts
+export const facts = () => {
+  const ask = (f: () => unknown) => { try { return String(f()); } catch (error: any) { return error.constructor.name; } };
+  return [ask(() => { const v = Math.random(); return v === 0.5 ? v : "random"; }), ask(() => Math.floor(1.5)), ask(() => Math.PI > 3),
+    ask(() => { let sum = 0; for (let i = 0; i < 100; i++) sum += Math.floor(i / 2); return sum; })].join(" | ");
+};

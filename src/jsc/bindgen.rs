@@ -4,12 +4,13 @@ use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
+use core::sync::atomic::{AtomicBool, Ordering};
 
-use bun_core::EncodedSlice;
+use bun_core::Environment;
 
 use crate::{
-    ArrayBuffer, CommonString, EncodedSliceJsc as _, ErrorCode, JSArray, JSGlobalObject, JSObject,
-    JSString, JSValue, JsError, JsThread, PinnedArrayBuffer, ThreadIsolated, ThreadIsolatedArg,
+    ArrayBuffer, CommonString, ErrorCode, JSArray, JSGlobalObject, JSObject, JSString, JSValue,
+    JsError, JsThread, PinnedArrayBuffer, ThreadIsolated, ThreadIsolatedArg,
 };
 
 #[path = "bindgen/extern_types.rs"]
@@ -124,10 +125,53 @@ impl<'a> JsHeap<'a> {
         ))
     }
 
-    /// A string with a copy of `latin1`, or the empty string when that is longer than a string can be.
+    /// A string with a copy of `latin1`, or the empty string when that is longer than a string can be. Out of memory ends the process.
     #[inline]
     pub fn create_latin1_string(&self, latin1: &[u8]) -> JsLocal<'a, JSString> {
-        JsLocal::from_raw(EncodedSlice::latin1(latin1).to_js(self.global_object()))
+        if latin1.len() > JSString::MAX_LENGTH {
+            return JsLocal::from_raw(JSValue::js_empty_string(self.global_object()));
+        }
+        self.try_copy_latin1(latin1)
+            .unwrap_or_else(|| bun_core::out_of_memory())
+    }
+
+    /// As [`create_latin1_string`](Self::create_latin1_string) for as many characters as JavaScript likes. Its error is not thrown: a `&mut self` method can call it.
+    #[inline]
+    pub fn try_create_latin1_string(&self, latin1: &[u8]) -> Result<'a, JsLocal<'a, JSString>> {
+        if latin1.len() > bun_core::String::max_length() {
+            return Err(self.string_too_long());
+        }
+        self.try_copy_latin1(latin1)
+            .ok_or_else(|| self.memory_allocation_failed())
+    }
+
+    /// At most [`JSString::MAX_LENGTH`] characters. `None` when they cannot be allocated.
+    #[inline]
+    fn try_copy_latin1(&self, latin1: &[u8]) -> Option<JsLocal<'a, JSString>> {
+        let global = self.global_object();
+        Some(JsLocal::from_raw(match *latin1 {
+            [] => JSValue::js_empty_string(global),
+            [character] => JSString::single_latin1_character(global, character),
+            // SAFETY: all of the characters are written, and to copy them allocates nothing.
+            _ => unsafe {
+                JSString::try_create_latin1_with(global, latin1.len(), |to| {
+                    to.copy_from_nonoverlapping(latin1.as_ptr(), latin1.len());
+                })
+            }?,
+        }))
+    }
+
+    /// A string of `length` 8-bit characters, 2 to [`JSString::MAX_LENGTH`]. SAFETY: `fill` writes all of them.
+    #[inline(always)]
+    pub unsafe fn create_latin1_string_with(
+        &self,
+        length: usize,
+        fill: impl FnOnce(*mut u8),
+    ) -> JsLocal<'a, JSString> {
+        // SAFETY: forwarded. Without the `JsHeap`, `fill` allocates nothing in the heap.
+        JsLocal::from_raw(unsafe {
+            JSString::create_latin1_with(self.global_object(), length, fill)
+        })
     }
 
     /// A string that takes over the allocation of `utf16`. Its error is not thrown: a `&mut self` method can call it.
@@ -413,6 +457,16 @@ impl<'a, T> JsLocal<'a, T> {
         Self::from_raw(value)
     }
 
+    /// # Safety
+    /// As [`Self::from_extern`], or `value` is empty: the caller has no such argument.
+    // Generated bindings call it for a `b.any.orAbsent` argument of a function with a Rust body.
+    #[cfg_attr(mordant, allow(unused_pub))]
+    #[doc(hidden)]
+    #[inline(always)]
+    pub unsafe fn from_extern_or_absent(value: JSValue, _: &JsHeap<'a>) -> Option<Self> {
+        (!value.is_empty()).then(|| Self::from_raw(value))
+    }
+
     #[inline(always)]
     pub fn to_js(self) -> JSValue {
         self.0
@@ -422,6 +476,25 @@ impl<'a, T> JsLocal<'a, T> {
     pub fn as_value(self) -> JsLocal<'a> {
         JsLocal::from_raw(self.0)
     }
+
+    /// The collector sees the value up to here.
+    #[doc(hidden)]
+    #[inline(always)]
+    pub fn keep_alive(self) {
+        core::hint::black_box(self.0);
+    }
+}
+
+/// SAFETY: `values` are `count` non-empty `T`s that something holds for the call `heap` belongs to.
+#[doc(hidden)]
+#[inline(always)]
+pub unsafe fn rest_from_extern<'a, T>(
+    values: *const JSValue,
+    count: usize,
+    _: &JsHeap<'a>,
+) -> &'a [JsLocal<'a, T>] {
+    // SAFETY: forwarded.
+    unsafe { JsLocal::slice_from_raw_parts(values, count) }
 }
 
 impl<'a> JsLocal<'a> {
@@ -450,6 +523,193 @@ impl<'a> JsLocal<'a> {
     #[inline]
     pub fn as_callable(self) -> Option<JsLocal<'a, Callable>> {
         self.0.is_callable().then(|| JsLocal::from_raw(self.0))
+    }
+}
+
+impl<'a> JsLocal<'a> {
+    /// A string, not a `String` object.
+    #[inline(always)]
+    pub fn as_string(self) -> Option<JsLocal<'a, JSString>> {
+        self.0
+            .is_string_literal()
+            .then(|| JsLocal::from_raw(self.0))
+    }
+}
+
+impl<'a> JsLocal<'a, JSString> {
+    /// SAFETY: `cell` is a `JSString` that something holds for the call `heap` belongs to.
+    #[doc(hidden)]
+    #[inline(always)]
+    pub unsafe fn from_cell(cell: *mut c_void, _: &JsHeap<'a>) -> Self {
+        Self::from_raw(JSValue::from_cell(cell))
+    }
+
+    #[inline(always)]
+    fn cell(self) -> &'a JSString {
+        // SAFETY: a `JsLocal` is never empty, and this one is a `JSString`, whose value is its address.
+        unsafe {
+            core::hint::assert_unchecked(self.0.encoded() != 0);
+            JSString::opaque_ref_nn(self.0.encoded() as *const JSString)
+        }
+    }
+
+    /// The characters of an 8-bit string that is no rope, where they are: six instructions.
+    #[inline(always)]
+    pub fn flat_latin1(self) -> Option<JsLatin1<'a>> {
+        let owner = self.cell();
+        Some(JsLatin1 {
+            string: self,
+            text: crate::js_string::Latin1Characters {
+                owner,
+                offset: 0,
+                characters: owner.flat_latin1_characters()?,
+            },
+        })
+    }
+
+    /// As [`flat_latin1`](Self::flat_latin1), and of a substring too.
+    #[inline]
+    pub fn latin1(self) -> Option<JsLatin1<'a>> {
+        Some(JsLatin1 {
+            string: self,
+            text: self.cell().latin1_characters()?,
+        })
+    }
+
+    /// As [`latin1`](Self::latin1), of a rope too: it is resolved, which fails when there is no memory for it.
+    #[inline]
+    pub fn resolved_latin1(self, heap: &JsHeap<'a>) -> Result<'a, Option<JsLatin1<'a>>> {
+        if let Some(text) = self.latin1() {
+            return Ok(Some(text));
+        }
+        self.view(heap)?;
+        Ok(self.latin1())
+    }
+
+    /// The characters of any string. A rope is resolved, which fails when there is no memory for it.
+    #[inline]
+    pub fn view(self, heap: &JsHeap<'a>) -> Result<'a, crate::JSStringView<'a>> {
+        self.cell()
+            .view(heap.global_object())
+            .map_err(Error::pending)
+    }
+
+    /// How many of the first characters were written to `characters`: all that fit. Nothing is resolved.
+    #[inline]
+    pub fn first_characters(self, characters: &mut [u16]) -> usize {
+        self.cell().first_characters(characters)
+    }
+}
+
+/// The characters of an 8-bit JS string.
+#[derive(Clone, Copy)]
+pub struct JsLatin1<'a> {
+    string: JsLocal<'a, JSString>,
+    text: crate::js_string::Latin1Characters<'a>,
+}
+
+impl<'a> JsLatin1<'a> {
+    #[inline(always)]
+    pub fn characters(&self) -> &'a [u8] {
+        self.text.characters
+    }
+
+    #[inline(always)]
+    pub fn string(&self) -> JsLocal<'a, JSString> {
+        self.string
+    }
+
+    /// The characters `start..end`, shared with this string and not copied. All of them are this string.
+    #[inline(always)]
+    pub fn substring(&self, heap: &JsHeap<'a>, start: usize, end: usize) -> JsLocal<'a, JSString> {
+        assert!(start <= end && end <= self.text.characters.len());
+        // SAFETY: just checked.
+        unsafe { self.substring_unchecked(heap, start, end) }
+    }
+
+    /// SAFETY: `start <= end <= self.characters().len()`.
+    #[inline(always)]
+    pub unsafe fn substring_unchecked(
+        &self,
+        heap: &JsHeap<'a>,
+        start: usize,
+        end: usize,
+    ) -> JsLocal<'a, JSString> {
+        debug_assert!(start <= end && end <= self.text.characters.len());
+        if end - start == self.text.characters.len() {
+            return self.string;
+        }
+        // SAFETY: the owner is no rope, and fewer than the characters that are in it are not all of it.
+        JsLocal::from_raw(unsafe {
+            self.text.owner.substring_of_resolved(
+                heap.global_object(),
+                self.text.offset + start as u32,
+                (end - start) as u32,
+            )
+        })
+    }
+
+    /// As [`substring_unchecked`](Self::substring_unchecked), of fewer than all the characters. SAFETY: `start <= end <= self.characters().len()`, and not both `==`.
+    #[inline(always)]
+    pub unsafe fn proper_substring_unchecked(
+        &self,
+        heap: &JsHeap<'a>,
+        start: u32,
+        end: u32,
+    ) -> JsLocal<'a, JSString> {
+        debug_assert!(start <= end && ((end - start) as usize) < self.text.characters.len());
+        debug_assert!(end as usize <= self.text.characters.len());
+        // SAFETY: the owner is no rope, and fewer than the characters that are in it are not all of it.
+        JsLocal::from_raw(unsafe {
+            self.text.owner.substring_of_resolved(
+                heap.global_object(),
+                self.text.offset + start,
+                end - start,
+            )
+        })
+    }
+
+    /// As [`substring_unchecked`](Self::substring_unchecked), several with one call. SAFETY: `start <= end <= self.characters().len()` of each range.
+    #[inline(always)]
+    #[allow(clippy::needless_pass_by_value)] // written at the call
+    pub unsafe fn substrings_unchecked<const N: usize>(
+        &self,
+        heap: &JsHeap<'a>,
+        ranges: [core::ops::Range<usize>; N],
+    ) -> [JsLocal<'a, JSString>; N] {
+        let mut offsets_and_lengths = [[0u32; 2]; N];
+        let mut index = 0;
+        while index < N {
+            let range = &ranges[index];
+            debug_assert!(range.start <= range.end && range.end <= self.text.characters.len());
+            offsets_and_lengths[index] = [
+                self.text.offset + range.start as u32,
+                (range.end - range.start) as u32,
+            ];
+            index += 1;
+        }
+        // SAFETY: the owner is no rope, and the characters are in it.
+        let substrings = unsafe {
+            self.text
+                .owner
+                .substrings_of_resolved(heap.global_object(), &offsets_and_lengths)
+        };
+        // SAFETY: `JsLocal` is `repr(transparent)` over `JSValue`.
+        unsafe {
+            (&raw const substrings)
+                .cast::<[JsLocal<'a, JSString>; N]>()
+                .read()
+        }
+    }
+
+    /// `part` as a string: a [`substring`](Self::substring) if it is a slice of [`characters`](Self::characters), a copy if it lies elsewhere.
+    #[inline(always)]
+    pub fn part(&self, heap: &JsHeap<'a>, part: &[u8]) -> JsLocal<'a, JSString> {
+        let start = (part.as_ptr() as usize).wrapping_sub(self.text.characters.as_ptr() as usize);
+        if start <= self.text.characters.len() && part.len() <= self.text.characters.len() - start {
+            return self.substring(heap, start, start + part.len());
+        }
+        heap.create_latin1_string(part)
     }
 }
 
@@ -1057,12 +1317,14 @@ pub mod to_js {
     /// An empty value is a member that is absent.
     ///
     /// # Safety
-    /// `Tables::memberNames` names `values`, from `first_member_name_index`.
+    /// `Tables::memberNames` names `values`, from `first_member_name_index`: the members of the returned dictionary number `dictionary_index`.
     #[doc(hidden)]
     #[inline]
     pub unsafe fn object<'a>(
         heap: &JsHeap<'a>,
         first_member_name_index: u32,
+        dictionary_index: u32,
+        has_every_member: bool,
         values: &[JSValue],
     ) -> Result<'a, JsLocal<'a>> {
         // SAFETY: forwarded; this cannot throw.
@@ -1070,6 +1332,8 @@ pub mod to_js {
             extern_types::Bun__Bindgen__createObject(
                 heap.global_ptr(),
                 first_member_name_index,
+                dictionary_index,
+                has_every_member,
                 values.as_ptr(),
                 values.len(),
             )
@@ -1129,6 +1393,74 @@ pub fn host_fn_return<'a, T, E: IntoError<'a>>(
         "a body fails exactly when an exception is pending",
     );
     value
+}
+
+/// Whether this process holds native code to the types that `.bind.ts` files declare for its results.
+///
+/// An executable compiled ahead of time does: its code takes those types for proven. A build of Bun that asserts does, so that Bun's own tests find
+/// the native code that answers outside its type. Release `bun run` does not, and answers as it always has.
+///
+/// To hold every build of Bun to them, start this as `true`. Nothing else decides it.
+static HOLDS_RESULTS_TO_DECLARED_TYPES: AtomicBool = AtomicBool::new(Environment::CI_ASSERT);
+
+/// For [`crate::initialize`], which comes before any JavaScript.
+pub(crate) fn hold_results_to_declared_types() {
+    HOLDS_RESULTS_TO_DECLARED_TYPES.store(true, Ordering::Relaxed);
+}
+
+#[inline(always)]
+pub fn holds_results_to_declared_types() -> bool {
+    HOLDS_RESULTS_TO_DECLARED_TYPES.load(Ordering::Relaxed)
+}
+
+/// Holds what a thunk ends with to the type that its `.bind.ts` file declares. The empty value stands for a pending exception.
+#[doc(hidden)]
+#[inline(always)]
+pub fn hold_to_declared_type<'a>(
+    cx: &mut JsScope<'a>,
+    returned: JSValue,
+    is_declared: impl FnOnce(JSValue) -> bool,
+    member: &'static str,
+    declared: &'static str,
+) -> JSValue {
+    if !holds_results_to_declared_types() || returned.is_empty() || is_declared(returned) {
+        return returned;
+    }
+    throw_outside_declared_type(cx, member, declared)
+}
+
+#[cold]
+#[inline(never)]
+fn throw_outside_declared_type<'a>(
+    cx: &mut JsScope<'a>,
+    member: &'static str,
+    declared: &'static str,
+) -> JSValue {
+    cx.heap
+        .type_error(format_args!(
+            "{member} is declared as {declared}, and native code answered with something else. This is a bug in Bun."
+        ))
+        .into_host_fn_return(cx)
+}
+
+/// As [`hold_to_declared_type`], for a value that Rust lays in the field a getter answers from. Compiled code reads that field itself, so a value
+/// outside the type must never lie there: the field is left empty, the next read asks the getter, and its thunk stops the program if the getter answers
+/// outside the type too. A build of Bun that asserts stops here, where the value comes from.
+#[doc(hidden)]
+#[inline(always)]
+pub fn hold_cached_to_declared_type(
+    value: JSValue,
+    is_declared: impl FnOnce(JSValue) -> bool,
+    member: &'static str,
+    declared: &'static str,
+) -> JSValue {
+    if !holds_results_to_declared_types() || value.is_empty() || is_declared(value) {
+        return value;
+    }
+    if Environment::CI_ASSERT {
+        panic!("{member} is declared as {declared}, and native code cached something else");
+    }
+    JSValue::ZERO
 }
 
 /// As [`host_fn_return`], for the constructor of a `refCounted` class: null if it failed.

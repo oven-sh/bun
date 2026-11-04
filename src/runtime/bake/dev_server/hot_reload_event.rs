@@ -102,11 +102,7 @@ impl HotReloadEvent {
 
                 // Bust resolution cache, but since Bun does not watch all
                 // directories in a codebase, this only targets the following resolutions
-                // SAFETY: server_transpiler is initialized in DevServer::init before any
-                // HotReloadEvent can fire.
-                let _ = unsafe { dev.server_transpiler.assume_init_mut() }
-                    .resolver
-                    .bust_dir_cache(changed_dir);
+                let _ = dev.server_transpiler.resolver.bust_dir_cache(changed_dir);
 
                 // if a directory watch exists for resolution failures, check those now.
                 if let Some(watcher_index) = dev.directory_watchers.watches.get_index(changed_dir) {
@@ -115,24 +111,18 @@ impl HotReloadEvent {
                         Some(dev.directory_watchers.watches.values()[watcher_index].first_dep);
 
                     while let Some(index) = it {
-                        // Note: reshaped for borrowck — re-index per iteration instead of
-                        // holding `dep` ref across resolver call + appendFile + freeDependencyIndex.
-                        let (source_file_path, specifier, next) = {
-                            let dep = &dev.directory_watchers.dependencies[index as usize];
-                            (dep.source_file_path, &raw const *dep.specifier, dep.next)
-                        };
-                        it = next;
+                        let dep = &dev.directory_watchers.dependencies[index as usize];
+                        let source_file_path = dep.source_file_path;
+                        it = dep.next;
 
-                        // `specifier` points into the dep's owned `Box<[u8]>`, which is
-                        // not mutated until after `resolve` returns.
-                        // SAFETY: see `Dep` doc — neither slice is mutated mid-resolve.
-                        let resolved = unsafe { dev.server_transpiler.assume_init_mut() }
+                        let resolved = dev
+                            .server_transpiler
                             .resolver
                             .resolve(
                                 bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
                                     source_file_path.slice(),
                                 ),
-                                unsafe { &*specifier },
+                                &dep.specifier,
                                 bun_ast::ImportKind::Stmt,
                             )
                             .is_ok();
@@ -270,13 +260,15 @@ impl HotReloadEvent {
     /// `WatcherAtomics`. `(*first).owner` is either the live owning
     /// `DevServer` or null (set by `Drop for DevServer` while this event was
     /// still queued). Must run on the DevServer thread.
+    #[inline(never)]
     pub(crate) unsafe fn run(first: *mut HotReloadEvent) {
+        bun_removable_features::removable_definition!(Bundler, Self::run);
         // SAFETY: caller contract — `first` is a live slot in a heap
         // `WatcherAtomics`; `owner` is either the live DevServer or null.
         let dev: *mut DevServer = unsafe { (*first).owner };
         if dev.is_null() {
             // SAFETY: `atomics` was set in `WatcherAtomics::init` to the
-            // `heap::into_raw` pointer; DevServer released its reference so
+            // `heap::alloc_nn` pointer; DevServer released its reference so
             // this is the unique owner.
             unsafe { bun_core::heap::destroy((*first).atomics) };
             return;

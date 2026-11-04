@@ -1,0 +1,2 @@
+const first = import.meta.glob("./modules/a*.ts") as any; const second = import.meta.glob("./modules/b*.ts") as any;
+console.log((await second["./modules/b2.ts"]()).default, (await first["./modules/a2.ts"]()).default);

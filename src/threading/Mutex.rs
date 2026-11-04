@@ -279,9 +279,6 @@ pub struct DarwinImpl {
 // `UnsafeCell` only exists to hand the FFI a mutable pointer from `&self`.
 #[cfg(target_vendor = "apple")]
 unsafe impl Sync for DarwinImpl {}
-// SAFETY: see `Sync` above.
-#[cfg(target_vendor = "apple")]
-unsafe impl Send for DarwinImpl {}
 
 #[cfg(target_vendor = "apple")]
 #[repr(C)]
@@ -383,25 +380,65 @@ impl FutexImpl {
         }
     }
 
+    /// How many times `spin` looks at the state before it gives up, which takes a few microseconds. Most locks are held
+    /// for less, and falling asleep in the kernel and being woken takes more. `std::sync::Mutex` uses the same number.
+    const SPINS: u32 = 100;
+
+    /// Waits a short while for the holder to let go. Returns the last state it saw.
+    ///
+    /// It only loads, so the holder keeps the cache line. It gives up at once if the state is `CONTENDED`: another thread
+    /// has already waited this long and gone to sleep.
+    fn spin(&self) -> u32 {
+        let mut spins_left = Self::SPINS;
+        loop {
+            let state = self.state.load(Ordering::Relaxed);
+            if state != Self::LOCKED || spins_left == 0 {
+                return state;
+            }
+            core::hint::spin_loop();
+            spins_left -= 1;
+        }
+    }
+
     #[cold]
     fn lock_slow(&self) {
-        // Avoid doing an atomic swap below if we already know the state is contended.
-        // An atomic swap unconditionally stores which marks the cache-line as modified unnecessarily.
-        if self.state.load(Ordering::Relaxed) == Self::CONTENDED {
-            Futex::wait_forever(&self.state, Self::CONTENDED);
+        let mut state = self.spin();
+
+        // This thread hasn't slept, so it may acquire with `locked`, and its unlock makes no system call.
+        if state == Self::UNLOCKED {
+            match self.state.compare_exchange(
+                Self::UNLOCKED,
+                Self::LOCKED,
+                Ordering::Acquire,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return,
+                Err(current) => state = current,
+            }
         }
 
-        // Try to acquire the lock while also telling the existing lock holder that there are threads waiting.
-        //
-        // Once we sleep on the Futex, we must acquire the mutex using `contended` rather than `locked`.
-        // If not, threads sleeping on the Futex wouldn't see the state change in unlock and potentially deadlock.
-        // The downside is that the last mutex unlocker will see `contended` and do an unnecessary Futex wake
-        // but this is better than having to wake all waiting threads on mutex unlock.
-        //
-        // Acquire barrier ensures grabbing the lock happens before the critical section
-        // and that the previous lock holder's critical section happens before we grab the lock.
-        while self.state.swap(Self::CONTENDED, Ordering::Acquire) != Self::UNLOCKED {
+        loop {
+            // Try to acquire the lock while also telling the existing lock holder that there are threads waiting.
+            //
+            // Once we sleep on the Futex, we must acquire the mutex using `contended` rather than `locked`.
+            // If not, threads sleeping on the Futex wouldn't see the state change in unlock and potentially deadlock.
+            // The downside is that the last mutex unlocker will see `contended` and do an unnecessary Futex wake
+            // but this is better than having to wake all waiting threads on mutex unlock.
+            //
+            // Avoid doing the atomic swap if we already know the state is contended.
+            // An atomic swap unconditionally stores which marks the cache-line as modified unnecessarily.
+            //
+            // Acquire barrier ensures grabbing the lock happens before the critical section
+            // and that the previous lock holder's critical section happens before we grab the lock.
+            if state != Self::CONTENDED
+                && self.state.swap(Self::CONTENDED, Ordering::Acquire) == Self::UNLOCKED
+            {
+                return;
+            }
             Futex::wait_forever(&self.state, Self::CONTENDED);
+            // A thread that arrived while this one was waking up may have taken the lock. Sleeping again right away would
+            // cost another wake for every such thread.
+            state = self.spin();
         }
     }
 
@@ -443,3 +480,175 @@ unsafe extern "C" fn Bun__unlock(ptr: *mut ReleaseImpl) {
 
 #[unsafe(no_mangle)]
 static Bun__lock__size: usize = core::mem::size_of::<ReleaseImpl>();
+
+#[cfg(test)]
+mod tests {
+    use crate::Guarded;
+
+    /// A wake that gets lost hangs the test. A lock that two threads hold at once loses an increment.
+    #[test]
+    fn no_wake_and_no_increment_is_lost_however_long_the_lock_is_held() {
+        const THREADS: u64 = 8;
+        // How long the lock is held, in `spin_loop` calls, and how often each thread takes it. Less than a waiting thread
+        // spins, about as long, and so much longer that the waiting threads sleep.
+        #[cfg(not(miri))]
+        const CASES: [(u32, u64); 3] = [(0, 20_000), (50, 20_000), (2_000, 300)];
+        #[cfg(miri)]
+        const CASES: [(u32, u64); 3] = [(0, 30), (50, 30), (2_000, 5)];
+        for (spins_while_held, rounds) in CASES {
+            let counter = Guarded::new(0u64);
+            std::thread::scope(|scope| {
+                for _ in 0..THREADS {
+                    scope.spawn(|| {
+                        for _ in 0..rounds {
+                            let mut value = counter.lock();
+                            let before = *value;
+                            for _ in 0..spins_while_held {
+                                core::hint::spin_loop();
+                            }
+                            *value = before + 1;
+                        }
+                    });
+                }
+            });
+            assert_eq!(*counter.lock(), THREADS * rounds);
+        }
+    }
+
+    #[cfg(not(any(windows, target_vendor = "apple")))]
+    mod futex {
+        use super::super::FutexImpl;
+        use crate::Futex;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::time::{Duration, Instant};
+
+        #[test]
+        fn thread_that_has_not_slept_leaves_no_wake_to_its_unlock() {
+            let mutex = FutexImpl::new();
+            // As when the holder lets go while this thread spins.
+            mutex.lock_slow();
+            assert_eq!(mutex.state.load(Ordering::Relaxed), FutexImpl::LOCKED);
+            // SAFETY: this thread holds it.
+            unsafe { FutexImpl::unlock_raw(&raw const mutex) };
+            assert_eq!(mutex.state.load(Ordering::Relaxed), FutexImpl::UNLOCKED);
+        }
+
+        #[test]
+        fn spin_ends_in_every_state() {
+            let mutex = FutexImpl::new();
+            for state in [FutexImpl::UNLOCKED, FutexImpl::LOCKED, FutexImpl::CONTENDED] {
+                mutex.state.store(state, Ordering::Relaxed);
+                assert_eq!(mutex.spin(), state);
+            }
+        }
+
+        /// `FutexImpl::lock` as it was before `spin`.
+        fn lock_without_spinning(mutex: &FutexImpl) {
+            if mutex.try_lock() {
+                return;
+            }
+            if mutex.state.load(Ordering::Relaxed) == FutexImpl::CONTENDED {
+                Futex::wait_forever(&mutex.state, FutexImpl::CONTENDED);
+            }
+            while mutex.state.swap(FutexImpl::CONTENDED, Ordering::Acquire) != FutexImpl::UNLOCKED {
+                Futex::wait_forever(&mutex.state, FutexImpl::CONTENDED);
+            }
+        }
+
+        fn stay_busy_for(time: Duration) {
+            let began = Instant::now();
+            while began.elapsed() < time {
+                core::hint::spin_loop();
+            }
+        }
+
+        struct Case {
+            threads: usize,
+            /// How often each thread takes the lock.
+            rounds: u32,
+            held: Duration,
+            /// What a thread does between letting go and asking again.
+            between: Duration,
+        }
+
+        /// Returns the wall time, and how long all threads together waited for the lock.
+        fn contend(lock: fn(&FutexImpl), case: &Case) -> (Duration, Duration) {
+            let (mutex, waited) = (FutexImpl::new(), AtomicU64::new(0));
+            let began = Instant::now();
+            std::thread::scope(|scope| {
+                for thread in 0..case.threads {
+                    let (mutex, waited) = (&mutex, &waited);
+                    scope.spawn(move || {
+                        // So that the threads don't all ask at the same moment.
+                        stay_busy_for(case.between * thread as u32 / case.threads as u32);
+                        let mut waited_here = Duration::ZERO;
+                        for _ in 0..case.rounds {
+                            stay_busy_for(case.between);
+                            let asked = Instant::now();
+                            lock(mutex);
+                            waited_here += asked.elapsed();
+                            stay_busy_for(case.held);
+                            // SAFETY: this thread holds it.
+                            unsafe { FutexImpl::unlock_raw(core::ptr::from_ref(mutex)) };
+                        }
+                        waited.fetch_add(waited_here.as_nanos() as u64, Ordering::Relaxed);
+                    });
+                }
+            });
+            let waited = Duration::from_nanos(waited.load(Ordering::Relaxed));
+            (began.elapsed(), waited)
+        }
+
+        /// The lock as it was against the lock as it is, in one run, on a machine that does nothing else:
+        /// `cargo test -p bun_threading --release -- --ignored --nocapture locks_that_spin_against_locks_that_never_do`
+        #[test]
+        #[ignore = "a benchmark: it prints a table and asserts nothing"]
+        fn locks_that_spin_against_locks_that_never_do() {
+            let processors = std::thread::available_parallelism().map_or(1, |it| it.get());
+            let case = |threads: usize, rounds: u32, held: Duration, between: Duration| Case {
+                threads: threads.min(processors),
+                rounds,
+                held,
+                between,
+            };
+            let (ns, us, ms) = (
+                Duration::from_nanos,
+                Duration::from_micros,
+                Duration::from_millis,
+            );
+            let cases = [
+                // A commit of `bun check` on 30,000 files: with every lookup under the lock, and with only the stores.
+                case(64, 200, us(20), ms(5)),
+                case(64, 200, us(3), ms(5)),
+                // A shard of a hash table.
+                case(64, 10_000, ns(200), us(100)),
+                case(8, 200_000, ns(200), us(2)),
+                // Nothing but the lock.
+                case(2, 1_000_000, ns(0), ns(0)),
+                case(1, 2_000_000, ns(0), ns(0)),
+                // Held for so long that every spin is wasted.
+                case(16, 20, ms(1), ms(1)),
+            ];
+            println!("{processors} processors");
+            println!(
+                "threads | held | between | never spins: wall, waited by all | spins: wall, waited by all"
+            );
+            for case in &cases {
+                for _ in 0..2 {
+                    let (old_wall, old_waited) = contend(lock_without_spinning, case);
+                    let (new_wall, new_waited) = contend(FutexImpl::lock, case);
+                    println!(
+                        "{} | {:?} | {:?} | {:?}, {:?} | {:?}, {:?}",
+                        case.threads,
+                        case.held,
+                        case.between,
+                        old_wall,
+                        old_waited,
+                        new_wall,
+                        new_waited,
+                    );
+                }
+            }
+        }
+    }
+}

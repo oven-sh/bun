@@ -1,0 +1,31 @@
+The mock of a package ends with its test file, for the project's files and for another package that imports it.
+#### a.test.js
+import { filler1 } from "./filler.mjs"; void filler1;
+import { test, mock } from "bun:test";
+mock.module("pkg", () => ({ default: { f: () => "mocked" }, f: () => "mocked" }));
+const { seen: mine } = await import("./src/uses.js");
+const { seen: ofPackage } = await import("reads");
+test("a", () => console.log("| CASE a " + mine() + "," + ofPackage()));
+#### b.test.js
+import { filler1 } from "./filler.mjs"; void filler1;
+import { test } from "bun:test";
+import { seen as mine } from "./src/uses.js";
+import { seen as ofPackage } from "reads";
+test("b", () => console.log("| CASE b " + mine() + "," + ofPackage()));
+#### filler.mjs
+export function filler0(x) { return x + 0; }
+export function filler1(x) { return x + 1; }
+#### node_modules/pkg/index.js
+export const f = () => "real"; export default { f };
+#### node_modules/pkg/package.json
+{ "name": "pkg", "type": "module", "main": "index.js" }
+#### node_modules/reads/index.js
+import { f } from "pkg";
+export const seen = () => f() + "+" + require("pkg").f();
+#### node_modules/reads/package.json
+{ "name": "reads", "type": "module", "main": "index.js" }
+#### package.json
+{ "name": "p", "type": "module" }
+#### src/uses.js
+import { f } from "pkg";
+export const seen = () => f() + "+" + require("pkg").f();

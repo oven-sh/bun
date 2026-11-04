@@ -1,0 +1,10 @@
+A helper of TypeScript that uses the globals of the runner calls a constant of its own Bun.
+#### a.test.ts
+
+import { check } from "./helper";
+test("the helper has the globals of the runner and its own Bun", () => console.log("| CASE", check()));
+#### helper.ts
+const Bun = (globalThis as any).Bun;
+export const check = () => { expect(1).toBe(1); return String(typeof Bun.version) + " " + typeof vi; };
+#### own.ts
+export function own() { return "own"; }

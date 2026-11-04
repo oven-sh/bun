@@ -1,0 +1,12 @@
+vi.doMock() without a factory, then the first import() of a CommonJS file.
+#### lib.cjs
+console.log("| CASE lib.cjs runs");
+exports.value = "real value";
+exports.f = function () { return "real f"; };
+#### unloaded-cjs.test.mjs
+import { test, vi } from "bun:test";
+test("a CommonJS file that has not run", async () => {
+  vi.doMock("./lib.cjs");
+  const lib = await import("./lib.cjs");
+  console.log("| CASE", lib.value, lib.f(), vi.isMockFunction(lib.f));
+});

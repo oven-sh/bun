@@ -1,0 +1,41 @@
+A require() of a data file between the call of an import() of it and its end.
+#### at-the-top.json
+{ "n": 1 }
+#### awaited.json
+{ "n": 4 }
+#### between.test.ts
+import { expect, mock, test } from "bun:test";
+const req = require("./req.cjs");
+const tag = (value: unknown) => Object.prototype.toString.call(value);
+const pending = import("./at-the-top.json");
+console.log("| CASE", "at the top, import() not awaited, then require:", tag(req.atTheTop()));
+await pending;
+console.log("| CASE", "  and again after it settled:", tag(req.atTheTop()));
+test("in a test", async () => {
+  const pending = import("./in-a-test.json");
+  console.log("| CASE", "in a test, import() not awaited, then require:", tag(req.inATest()));
+  await pending;
+  console.log("| CASE", "  and again after it settled:", tag(req.inATest()));
+  const own = import("./own.json");
+  console.log("| CASE", "the require() of the test file itself:", tag(require("./own.json")));
+  await own;
+  console.log("| CASE", "  and again after it settled:", tag(require("./own.json")));
+  const names = await import("./awaited.json");
+  console.log("| CASE", "awaited, then require:", tag(req.awaited()), req.awaited() === names);
+  console.log("| CASE", "require first:", tag(req.requiredFirst()));
+  await import("./required-first.json");
+  console.log("| CASE", "  and again after an import:", tag(req.requiredFirst()));
+});
+#### in-a-test.json
+{ "n": 2 }
+#### own.json
+{ "n": 3 }
+#### req.cjs
+exports.atTheTop = () => require("./at-the-top.json");
+exports.inATest = () => require("./in-a-test.json");
+exports.awaited = () => require("./awaited.json");
+exports.requiredFirst = () => require("./required-first.json");
+#### required-first.json
+{ "n": 5 }
+#### tsconfig.json
+{ "compilerOptions": { "allowJs": true } }

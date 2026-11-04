@@ -1,0 +1,15 @@
+leaf.js declares, barrel.js hands on, barrel2.js hands on again, and a mock stands in place of barrel.js, in the middle: its factory takes the original.
+#### a.test.js
+import { test, vi } from "bun:test";
+vi.mock("./barrel.js", async original => ({ ...(await original()), x: "over x" }));
+import { seen } from "./user.js";
+test("t", () => console.log("| CASE", seen()));
+#### barrel.js
+export { x, y } from "./leaf.js";
+#### barrel2.js
+export { x, y } from "./barrel.js";
+#### leaf.js
+export const x = "real x"; export const y = "real y";
+#### user.js
+import { x, y } from "./barrel2.js";
+export const seen = () => [x, y].join(" ");

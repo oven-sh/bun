@@ -1,0 +1,48 @@
+// A loop that counts. `while (--i > n)`.
+// The values arrive as they are, of every kind.
+const unknown = value => new CustomEvent("unknown", { detail: value }).detail;
+const show = value =>
+  Object.is(value, -0) ? "-0"
+  : typeof value === "string" ? JSON.stringify(value)
+  : typeof value === "bigint" ? value + "n"
+  : typeof value === "symbol" ? "a symbol"
+  : typeof value === "function" ? "a function"
+  : Array.isArray(value) ? "[" + value.map(show).join(", ") + "]"
+  : value !== null && typeof value === "object" ? "an object"
+  : String(value);
+function run(from, n) {
+  let turns = 0, i = from;
+  while (--i > n) if (++turns === 7) break;
+  return [turns, i];
+}
+for (const given of unknown([
+  [0, 0],
+  [1, 0],
+  [5, 0],
+  [-1, 0],
+  [2, -0],
+  [0, -0],
+  [2.5, 0],
+  [3, 0.5],
+  [NaN, 0],
+  [3, NaN],
+  [3, Infinity],
+  [2, -3],
+  [2 ** 31 + 3, 2 ** 31 - 3],
+  [-(2 ** 31) + 3, -(2 ** 31) - 3],
+  [-(2 ** 32) + 2, -(2 ** 32) - 2],
+  [2 ** 32 + 2, 2 ** 32 - 2],
+  [-(2 ** 53) + 3, -(2 ** 53)],
+  [-(2 ** 53) + 3, -(2 ** 53) + 1],
+  [2 ** 53, 2 ** 53 - 3],
+  ["3", 0],
+  [3n, 0],
+])) {
+  let answer;
+  try {
+    answer = show(run(given[0], given[1]));
+  } catch (error) {
+    answer = "throws " + error.name;
+  }
+  console.log(given.map(show).join(", ") + " => " + answer);
+}

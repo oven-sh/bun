@@ -1,0 +1,251 @@
+`import { createRequire } from "node:module"` binds what the module exports when the importing file is linked. A test that stores to the object of the module afterwards changes what `Module.createRequire` reads and not the import. node:module, node:process and bun give an export its value only when a file that binds the name is linked.
+#### c01/case.test.js
+  import { test, spyOn } from "bun:test";
+  import object from "node:module";
+  import { read } from "./uses.mjs";
+  const say = (...all) => console.log("| CASE c01", ...all);
+  test("c01", () => {
+    const real = { createRequire: object.createRequire, isBuiltin: object.isBuiltin, builtinModules: object.builtinModules, wrap: object.wrap, findSourceMap: object.findSourceMap };
+
+object.createRequire = () => 1;
+object.isBuiltin = () => "fake";
+object.builtinModules = 5;
+object.wrap = () => 2;
+object.findSourceMap = () => 3;
+    say("stored:", read());
+    say("members:", object.createRequire === real.createRequire, object.isBuiltin === real.isBuiltin, object.builtinModules === real.builtinModules, object.wrap === real.wrap, object.findSourceMap === real.findSourceMap);
+    object.createRequire = real.createRequire; object.isBuiltin = real.isBuiltin; object.builtinModules = real.builtinModules; object.wrap = real.wrap; object.findSourceMap = real.findSourceMap;
+    say("put back:", read());
+  });
+#### c02/case.test.js
+  import { test, spyOn } from "bun:test";
+  import object from "node:module";
+  import { read } from "./uses.mjs";
+  const say = (...all) => console.log("| CASE c02", ...all);
+  test("c02", () => {
+    const real = { createRequire: object.createRequire, isBuiltin: object.isBuiltin, wrap: object.wrap };
+
+spyOn(object, "createRequire").mockImplementation(() => 1);
+spyOn(object, "isBuiltin").mockImplementation(() => "fake");
+spyOn(object, "wrap").mockImplementation(() => 2);
+    say("stored:", read());
+    say("members:", object.createRequire === real.createRequire, object.isBuiltin === real.isBuiltin, object.wrap === real.wrap);
+    object.createRequire = real.createRequire; object.isBuiltin = real.isBuiltin; object.wrap = real.wrap;
+    say("put back:", read());
+  });
+#### c03/case.test.js
+  import { test, spyOn } from "bun:test";
+  import object from "node:module";
+  import { read } from "./uses.mjs";
+  const say = (...all) => console.log("| CASE c03", ...all);
+  test("c03", () => {
+    const real = { createRequire: object.createRequire, isBuiltin: object.isBuiltin, builtinModules: object.builtinModules, wrap: object.wrap, findSourceMap: object.findSourceMap };
+
+object.createRequire = () => 1;
+object.isBuiltin = () => "fake";
+object.builtinModules = 5;
+object.wrap = () => 2;
+object.findSourceMap = () => 3;
+    say("stored:", read());
+    say("members:", object.createRequire === real.createRequire, object.isBuiltin === real.isBuiltin, object.builtinModules === real.builtinModules, object.wrap === real.wrap, object.findSourceMap === real.findSourceMap);
+    object.createRequire = real.createRequire; object.isBuiltin = real.isBuiltin; object.builtinModules = real.builtinModules; object.wrap = real.wrap; object.findSourceMap = real.findSourceMap;
+    say("put back:", read());
+  });
+#### c04/case.test.js
+  import { test, spyOn } from "bun:test";
+  import object from "node:module";
+  import { read } from "./uses.mjs";
+  const say = (...all) => console.log("| CASE c04", ...all);
+  test("c04", () => {
+    const real = { createRequire: object.createRequire, isBuiltin: object.isBuiltin, builtinModules: object.builtinModules, wrap: object.wrap, findSourceMap: object.findSourceMap };
+
+object.createRequire = () => 1;
+object.isBuiltin = () => "fake";
+object.builtinModules = 5;
+object.wrap = () => 2;
+object.findSourceMap = () => 3;
+    say("stored:", read());
+    say("members:", object.createRequire === real.createRequire, object.isBuiltin === real.isBuiltin, object.builtinModules === real.builtinModules, object.wrap === real.wrap, object.findSourceMap === real.findSourceMap);
+    object.createRequire = real.createRequire; object.isBuiltin = real.isBuiltin; object.builtinModules = real.builtinModules; object.wrap = real.wrap; object.findSourceMap = real.findSourceMap;
+    say("put back:", read());
+  });
+#### c05/case.test.js
+  import { test, spyOn } from "bun:test";
+  import object from "node:module";
+  import { read } from "./uses.mjs";
+  const say = (...all) => console.log("| CASE c05", ...all);
+  test("c05", () => {
+    const real = { createRequire: object.createRequire, isBuiltin: object.isBuiltin, builtinModules: object.builtinModules, wrap: object.wrap, findSourceMap: object.findSourceMap };
+
+object.createRequire = () => 1;
+object.isBuiltin = () => "fake";
+object.builtinModules = 5;
+object.wrap = () => 2;
+object.findSourceMap = () => 3;
+    say("stored:", read());
+    say("members:", object.createRequire === real.createRequire, object.isBuiltin === real.isBuiltin, object.builtinModules === real.builtinModules, object.wrap === real.wrap, object.findSourceMap === real.findSourceMap);
+    object.createRequire = real.createRequire; object.isBuiltin = real.isBuiltin; object.builtinModules = real.builtinModules; object.wrap = real.wrap; object.findSourceMap = real.findSourceMap;
+    say("put back:", read());
+  });
+#### c06/case.test.js
+  import { test, spyOn } from "bun:test";
+  import object from "node:module";
+  import { read } from "./uses.mjs";
+  const say = (...all) => console.log("| CASE c06", ...all);
+  test("c06", () => {
+    const real = { createRequire: object.createRequire, isBuiltin: object.isBuiltin, builtinModules: object.builtinModules, wrap: object.wrap, findSourceMap: object.findSourceMap };
+
+object.createRequire = () => 1;
+object.isBuiltin = () => "fake";
+object.builtinModules = 5;
+object.wrap = () => 2;
+object.findSourceMap = () => 3;
+    say("stored:", read());
+    say("members:", object.createRequire === real.createRequire, object.isBuiltin === real.isBuiltin, object.builtinModules === real.builtinModules, object.wrap === real.wrap, object.findSourceMap === real.findSourceMap);
+    object.createRequire = real.createRequire; object.isBuiltin = real.isBuiltin; object.builtinModules = real.builtinModules; object.wrap = real.wrap; object.findSourceMap = real.findSourceMap;
+    say("put back:", read());
+  });
+#### c07/case.test.js
+  import { test, spyOn } from "bun:test";
+  import object from "node:module";
+  import { read } from "./uses.mjs";
+  const say = (...all) => console.log("| CASE c07", ...all);
+  test("c07", () => {
+    const real = { createRequire: object.createRequire, isBuiltin: object.isBuiltin, builtinModules: object.builtinModules, wrap: object.wrap, findSourceMap: object.findSourceMap };
+
+object.createRequire = () => 1;
+object.isBuiltin = () => "fake";
+object.builtinModules = 5;
+object.wrap = () => 2;
+object.findSourceMap = () => 3;
+    say("stored:", read());
+    say("members:", object.createRequire === real.createRequire, object.isBuiltin === real.isBuiltin, object.builtinModules === real.builtinModules, object.wrap === real.wrap, object.findSourceMap === real.findSourceMap);
+    object.createRequire = real.createRequire; object.isBuiltin = real.isBuiltin; object.builtinModules = real.builtinModules; object.wrap = real.wrap; object.findSourceMap = real.findSourceMap;
+    say("put back:", read());
+  });
+#### c08/case.test.js
+  import { test, spyOn } from "bun:test";
+  import object from "node:process";
+  import { read } from "./uses.mjs";
+  const say = (...all) => console.log("| CASE c08", ...all);
+  test("c08", () => {
+    const real = { cwd: object.cwd, uptime: object.uptime, argv0: object.argv0, execArgv: object.execArgv, emitWarning: object.emitWarning };
+
+object.cwd = () => 1;
+object.uptime = () => "fake";
+object.argv0 = 5;
+object.execArgv = 5;
+object.emitWarning = 2;
+    say("stored:", read());
+    say("members:", object.cwd === real.cwd, object.uptime === real.uptime, object.argv0 === real.argv0, object.execArgv === real.execArgv, object.emitWarning === real.emitWarning);
+    object.cwd = real.cwd; object.uptime = real.uptime; object.argv0 = real.argv0; object.execArgv = real.execArgv; object.emitWarning = real.emitWarning;
+    say("put back:", read());
+  });
+#### c09/case.test.js
+  import { test, spyOn } from "bun:test";
+  const object = Bun;
+  import { read } from "./uses.mjs";
+  const say = (...all) => console.log("| CASE c09", ...all);
+  test("c09", () => {
+    const real = { which: object.which, nanoseconds: object.nanoseconds, inspect: object.inspect };
+
+object.which = () => 1;
+object.nanoseconds = () => "fake";
+object.inspect = () => 2;
+    say("stored:", read());
+    say("members:", object.which === real.which, object.nanoseconds === real.nanoseconds, object.inspect === real.inspect);
+    object.which = real.which; object.nanoseconds = real.nanoseconds; object.inspect = real.inspect;
+    say("put back:", read());
+  });
+#### c01/uses.mjs
+import { createRequire, isBuiltin, builtinModules, wrap, findSourceMap } from "node:module";
+  export const read = () =>
+    [
+      typeof createRequire(import.meta.url),
+      isBuiltin("fs"),
+      typeof builtinModules,
+      typeof wrap("1"),
+      typeof findSourceMap("x"),
+    ].join(" ");
+#### c02/uses.mjs
+import { createRequire, isBuiltin, builtinModules, wrap, findSourceMap } from "node:module";
+  export const read = () =>
+    [
+      typeof createRequire(import.meta.url),
+      isBuiltin("fs"),
+      typeof builtinModules,
+      typeof wrap("1"),
+      typeof findSourceMap("x"),
+    ].join(" ");
+#### c03/uses.mjs
+    import * as all from "node:module";
+    import { createRequire, isBuiltin, builtinModules, wrap, findSourceMap } from "node:module";
+    export const bound = () => [createRequire, isBuiltin, builtinModules, wrap, findSourceMap];
+
+export const read = () =>
+  [
+    typeof all.createRequire(import.meta.url),
+    all.isBuiltin("fs"),
+    typeof all.builtinModules,
+    typeof all.wrap("1"),
+    typeof all.findSourceMap("x"),
+  ].join(" ");
+#### c04/uses.mjs
+import * as all from "node:module";
+  export const read = () =>
+    [
+      typeof all.createRequire(import.meta.url),
+      all.isBuiltin("fs"),
+      typeof all.builtinModules,
+      typeof all.wrap("1"),
+      typeof all.findSourceMap("x"),
+    ].join(" ");
+#### c05/middle.mjs
+export { createRequire, isBuiltin, builtinModules, wrap, findSourceMap } from "node:module";
+#### c05/uses.mjs
+import { createRequire, isBuiltin, builtinModules, wrap, findSourceMap } from "./middle.mjs";
+  export const read = () =>
+    [
+      typeof createRequire(import.meta.url),
+      isBuiltin("fs"),
+      typeof builtinModules,
+      typeof wrap("1"),
+      typeof findSourceMap("x"),
+    ].join(" ");
+#### c06/star.mjs
+export * from "node:module";
+#### c06/stars.mjs
+export * from "./star.mjs"; export const own = 1;
+#### c06/uses.mjs
+import { createRequire, isBuiltin, builtinModules, wrap, findSourceMap } from "./stars.mjs";
+  export const read = () =>
+    [
+      typeof createRequire(import.meta.url),
+      isBuiltin("fs"),
+      typeof builtinModules,
+      typeof wrap("1"),
+      typeof findSourceMap("x"),
+    ].join(" ");
+#### c07/node_modules/reader/index.js
+import { createRequire, isBuiltin, builtinModules, wrap, findSourceMap } from "node:module";
+  export const read = () =>
+    [
+      typeof createRequire(import.meta.url),
+      isBuiltin("fs"),
+      typeof builtinModules,
+      typeof wrap("1"),
+      typeof findSourceMap("x"),
+    ].join(" ");
+#### c07/node_modules/reader/package.json
+{ "name": "reader", "type": "module", "main": "index.js" }
+#### c07/uses.mjs
+export { read } from "reader";
+#### c08/uses.mjs
+import { cwd, uptime, argv0, execArgv, emitWarning } from "node:process";
+export const read = () =>
+  [typeof cwd(), typeof uptime(), typeof argv0, typeof execArgv, typeof emitWarning].join(" ");
+#### c09/uses.mjs
+import { which, nanoseconds, inspect } from "bun";
+export const read = () => [String(which("no-such-program-anywhere")), typeof nanoseconds(), inspect(1)].join(" ");
+#### package.json
+{ "name": "p", "type": "module" }

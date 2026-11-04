@@ -487,6 +487,325 @@ size_t LastIndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len,
     return text_len;
 }
 
+// --- node:path (src/node_path/tidy.rs) ---------------------------------------
+
+// Whether the part of `path` that starts at `start` is empty, "." or "..". A part ends in front of a '/' or where `path` ends.
+static HWY_INLINE bool IsUntidyPathPartAt(const uint8_t* HWY_RESTRICT path, size_t len, size_t start)
+{
+    if (path[start] != '.') return path[start] == '/';
+    if (start + 1 == len || path[start + 1] == '/') return true;
+    return path[start + 1] == '.' && (start + 2 == len || path[start + 2] == '/');
+}
+
+// `path` has more bytes than `d` has lanes.
+template<bool stops_at_non_ascii, class D>
+static HWY_INLINE size_t IndexOfUntidySlashBy(D d, const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    const hn::RebindToSigned<D> ds;
+    const size_t N = hn::Lanes(d);
+    const auto slash = hn::Set(d, uint8_t { '/' });
+    const auto lowest_bit = hn::Set(d, uint8_t { 1 });
+    // The last block ends with the path, so it may overlap the one before it.
+    const size_t last = len - N - 1;
+    size_t at = 0;
+    while (true) {
+        const auto bytes = hn::LoadU(d, path + at);
+        // A '/' with a '/' or a '.' after it. '.' is '/' without its lowest bit.
+        auto suspects = hn::And(hn::Eq(bytes, slash),
+            hn::Eq(hn::Or(hn::LoadU(d, path + at + 1), lowest_bit), slash));
+        if constexpr (stops_at_non_ascii)
+            suspects = hn::Or(suspects, hn::RebindMask(d, hn::Lt(hn::BitCast(ds, bytes), hn::Zero(ds))));
+        if (HWY_UNLIKELY(!hn::AllFalse(d, suspects))) {
+            for (uint64_t bits = hn::BitsFromMask(d, suspects); bits != 0; bits &= bits - 1) {
+                const size_t found = at + hwy::Num0BitsBelowLS1Bit_Nonzero64(bits);
+                if ((stops_at_non_ascii && path[found] != '/') || IsUntidyPathPartAt(path, len, found + 1)) return found;
+            }
+        }
+        if (at == last) return stops_at_non_ascii && path[len - 1] >= 0x80 ? len - 1 : len;
+        at = HWY_MIN(at + N, last);
+    }
+}
+
+template<bool stops_at_non_ascii>
+static HWY_INLINE size_t IndexOfUntidySlash(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    const hn::CappedTag<uint8_t, 32> d32;
+    const hn::CappedTag<uint8_t, 16> d16;
+    const hn::CappedTag<uint8_t, 8> d8;
+    if (len > hn::Lanes(d32)) return IndexOfUntidySlashBy<stops_at_non_ascii>(d32, path, len);
+    if (hn::Lanes(d16) < hn::Lanes(d32) && len > hn::Lanes(d16)) return IndexOfUntidySlashBy<stops_at_non_ascii>(d16, path, len);
+    if (len > hn::Lanes(d8)) return IndexOfUntidySlashBy<stops_at_non_ascii>(d8, path, len);
+    for (size_t at = 0; at + 1 < len; ++at) {
+        if (stops_at_non_ascii && path[at] >= 0x80) return at;
+        if (path[at] == '/' && IsUntidyPathPartAt(path, len, at + 1)) return at;
+    }
+    return stops_at_non_ascii && len != 0 && path[len - 1] >= 0x80 ? len - 1 : len;
+}
+
+// Index of the first '/' in front of a part that is empty, "." or "..", or `len` if there is none.
+size_t IndexOfUntidySlashImpl(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return IndexOfUntidySlash<false>(path, len);
+}
+
+// Index of the first byte that is such a '/' or is not ASCII, or `len` if there is none.
+size_t IndexOfUntidySlashOrNonAsciiImpl(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return IndexOfUntidySlash<true>(path, len);
+}
+
+// Entered only at the target the build is compiled for: see highway_last_index_of_slash.
+#if HWY_TARGET == HWY_STATIC_TARGET
+
+// Index of the last byte that is `a` or `b`, or `len` if there is none. It is expected near the end.
+template<uint8_t a, uint8_t b>
+static HWY_INLINE size_t LastIndexOfEitherNearEnd(const uint8_t* HWY_RESTRICT text, size_t len)
+{
+    const hn::CappedTag<uint8_t, 16> d16;
+    const hn::CappedTag<uint8_t, 8> d8;
+    size_t end = len;
+    while (end >= hn::Lanes(d16)) {
+        end -= hn::Lanes(d16);
+        const auto bytes = hn::LoadU(d16, text + end);
+        const intptr_t at = hn::FindLastTrue(d16, hn::Or(hn::Eq(bytes, hn::Set(d16, a)), hn::Eq(bytes, hn::Set(d16, b))));
+        if (at >= 0) return end + static_cast<size_t>(at);
+    }
+    if (end >= hn::Lanes(d8)) {
+        end -= hn::Lanes(d8);
+        const auto bytes = hn::LoadU(d8, text + end);
+        const intptr_t at = hn::FindLastTrue(d8, hn::Or(hn::Eq(bytes, hn::Set(d8, a)), hn::Eq(bytes, hn::Set(d8, b))));
+        if (at >= 0) return end + static_cast<size_t>(at);
+    }
+    while (end-- > 0) {
+        if (text[end] == a || text[end] == b) return end;
+    }
+    return len;
+}
+
+size_t LastIndexOfSlashImpl(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return LastIndexOfEitherNearEnd<'/', '/'>(path, len);
+}
+
+size_t LastIndexOfSlashOrDotImpl(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return LastIndexOfEitherNearEnd<'/', '.'>(path, len);
+}
+
+static HWY_INLINE bool IsAsciiPartOfPath(const uint8_t* HWY_RESTRICT text, size_t len)
+{
+    const hn::CappedTag<uint8_t, 16> d;
+    const hn::RebindToSigned<decltype(d)> ds;
+    const size_t N = hn::Lanes(d);
+    if (HWY_LIKELY(len >= N)) {
+        auto seen = hn::Or(hn::LoadU(d, text), hn::LoadU(d, text + len - N));
+        if (len > 2 * N) {
+            seen = hn::Or(seen, hn::Or(hn::LoadU(d, text + N), hn::LoadU(d, text + len - 2 * N)));
+            for (size_t at = 2 * N; at + 2 * N < len; at += 2 * N)
+                seen = hn::Or(seen, hn::Or(hn::LoadU(d, text + at), hn::LoadU(d, text + at + N)));
+        }
+        return hn::AllFalse(ds, hn::Lt(hn::BitCast(ds, seen), hn::Zero(ds)));
+    }
+    if (len >= 8) {
+        uint64_t first, last;
+        memcpy(&first, text, 8);
+        memcpy(&last, text + len - 8, 8);
+        return ((first | last) & 0x8080808080808080ull) == 0;
+    }
+    if (len >= 4) {
+        uint32_t first, last;
+        memcpy(&first, text, 4);
+        memcpy(&last, text + len - 4, 4);
+        return ((first | last) & 0x80808080u) == 0;
+    }
+    return len == 0 || ((text[0] | text[len / 2] | text[len - 1]) & 0x80) == 0;
+}
+
+struct LastNearEnd {
+    bool is_found;
+    size_t at;
+    uint64_t not_ascii_behind;
+};
+
+template<uint8_t a, uint8_t b, class D>
+static HWY_INLINE LastNearEnd LastOfEitherInBlock(D d, const uint8_t* HWY_RESTRICT text, size_t start, uint64_t not_ascii_behind)
+{
+    const hn::RebindToSigned<D> ds;
+    const auto bytes = hn::LoadU(d, text + start);
+    const uint64_t not_ascii = hn::BitsFromMask(d, hn::RebindMask(d, hn::Lt(hn::BitCast(ds, bytes), hn::Zero(ds))));
+    const uint64_t either = hn::BitsFromMask(d, hn::Or(hn::Eq(bytes, hn::Set(d, a)), hn::Eq(bytes, hn::Set(d, b))));
+    if (either == 0) return { false, 0, not_ascii_behind | not_ascii };
+    const size_t at = 63 - hwy::Num0BitsAboveMS1Bit_Nonzero64(either);
+    return { true, start + at, not_ascii_behind | not_ascii >> at };
+}
+
+template<uint8_t a, uint8_t b>
+static HWY_INLINE LastNearEnd LastOfEitherNearEnd(const uint8_t* HWY_RESTRICT text, size_t end, bool has_block_behind, uint64_t not_ascii_behind)
+{
+    const hn::CappedTag<uint8_t, 16> d16;
+    const hn::CappedTag<uint8_t, 8> d8;
+    LastNearEnd last { false, 0, not_ascii_behind };
+    if (end == 0) return last;
+    if (has_block_behind || end >= hn::Lanes(d16)) {
+        while (end > hn::Lanes(d16)) {
+            end -= hn::Lanes(d16);
+            last = LastOfEitherInBlock<a, b>(d16, text, end, last.not_ascii_behind);
+            if (last.is_found) return last;
+        }
+        return LastOfEitherInBlock<a, b>(d16, text, 0, last.not_ascii_behind);
+    }
+    if (end >= hn::Lanes(d8)) {
+        if (end > hn::Lanes(d8)) {
+            last = LastOfEitherInBlock<a, b>(d8, text, end - hn::Lanes(d8), last.not_ascii_behind);
+            if (last.is_found) return last;
+        }
+        return LastOfEitherInBlock<a, b>(d8, text, 0, last.not_ascii_behind);
+    }
+    const size_t few = end;
+    while (end-- > 0) {
+        if (text[end] == a || text[end] == b) return { true, end, not_ascii_behind | !IsAsciiPartOfPath(text + end, few - end) };
+    }
+    return { false, 0, not_ascii_behind | !IsAsciiPartOfPath(text, few) };
+}
+
+static HWY_INLINE bool EndsWithBlockOfName(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return len >= hn::Lanes(hn::CappedTag<uint8_t, 16>()) && path[len - 1] != '/';
+}
+
+constexpr uint64_t kWholePath = ~uint64_t { 0 };
+constexpr uint64_t kPartOfPathIsNotAscii = kWholePath - 1;
+constexpr uint64_t kDotForPath = kWholePath - 2;
+constexpr uint64_t kSlashForPath = kWholePath - 3;
+constexpr uint64_t kTwoSlashesForPath = kWholePath - 4;
+
+static HWY_INLINE uint64_t ProperPartOfPath(size_t start, size_t end)
+{
+    return static_cast<uint64_t>(start) | static_cast<uint64_t>(end) << 32;
+}
+
+static HWY_INLINE uint64_t PartOfPath(size_t start, size_t end, size_t len)
+{
+    return end - start == len ? kWholePath : ProperPartOfPath(start, end);
+}
+
+static HWY_INLINE size_t EndWithoutSlashes(const uint8_t* HWY_RESTRICT path, size_t len, size_t least)
+{
+    while (len > least && path[len - 1] == '/')
+        --len;
+    return len;
+}
+
+static HWY_INLINE uint64_t BasenameBehind(LastNearEnd slash, size_t end, uint64_t without_slash)
+{
+    if (HWY_UNLIKELY(slash.not_ascii_behind != 0)) return kPartOfPathIsNotAscii;
+    return slash.is_found ? ProperPartOfPath(slash.at + 1, end) : without_slash;
+}
+
+static HWY_INLINE uint64_t BasenamePosixImpl(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    const hn::CappedTag<uint8_t, 16> d16;
+    size_t end = len;
+    if (HWY_UNLIKELY(path[len - 1] == '/')) {
+        end = EndWithoutSlashes(path, len, 0);
+        if (end < hn::Lanes(d16)) return BasenameBehind(LastOfEitherNearEnd<'/', '/'>(path, end, false, 0), end, ProperPartOfPath(0, end));
+    }
+    const size_t start = end - hn::Lanes(d16);
+    const LastNearEnd slash = LastOfEitherInBlock<'/', '/'>(d16, path, start, 0);
+    if (HWY_LIKELY(slash.is_found)) return BasenameBehind({ true, slash.at, slash.not_ascii_behind }, end, 0);
+    return BasenameBehind(LastOfEitherNearEnd<'/', '/'>(path, start, true, slash.not_ascii_behind), end, PartOfPath(0, end, len));
+}
+
+static HWY_INLINE uint64_t DirnameUpTo(const uint8_t* HWY_RESTRICT path, size_t slash)
+{
+    if (HWY_UNLIKELY(slash <= 1)) {
+        if (slash == 0) return kSlashForPath;
+        if (path[0] == '/') return kTwoSlashesForPath;
+    }
+    if (HWY_UNLIKELY(!IsAsciiPartOfPath(path, slash))) return kPartOfPathIsNotAscii;
+    return ProperPartOfPath(0, slash);
+}
+
+static HWY_INLINE uint64_t DirnamePosixImpl(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    const hn::CappedTag<uint8_t, 16> d16;
+    if (HWY_LIKELY(EndsWithBlockOfName(path, len))) {
+        const size_t start = len - hn::Lanes(d16);
+        const intptr_t at = hn::FindLastTrue(d16, hn::Eq(hn::LoadU(d16, path + start), hn::Set(d16, uint8_t { '/' })));
+        if (HWY_LIKELY(at >= 0)) return DirnameUpTo(path, start + static_cast<size_t>(at));
+        const size_t slash = LastIndexOfEitherNearEnd<'/', '/'>(path, start);
+        return slash == start ? kDotForPath : DirnameUpTo(path, slash);
+    }
+    if (len == 0) return kDotForPath;
+    const size_t end = EndWithoutSlashes(path, len, 1);
+    const size_t slash = LastIndexOfEitherNearEnd<'/', '/'>(path, end);
+    return slash == end ? kDotForPath : DirnameUpTo(path, slash);
+}
+
+static HWY_INLINE uint64_t ExtnameFrom(const uint8_t* HWY_RESTRICT path, LastNearEnd last, size_t end, size_t len)
+{
+    const size_t dot = last.at;
+    if (!last.is_found || dot == 0 || path[dot] == '/' || path[dot - 1] == '/') return PartOfPath(0, 0, len);
+    if (HWY_UNLIKELY(dot + 1 == end) && path[dot - 1] == '.' && (dot == 1 || path[dot - 2] == '/')) return PartOfPath(0, 0, len);
+    if (HWY_UNLIKELY(last.not_ascii_behind != 0)) return kPartOfPathIsNotAscii;
+    return ProperPartOfPath(dot, end);
+}
+
+static HWY_INLINE uint64_t ExtnamePosixImpl(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    const hn::CappedTag<uint8_t, 16> d16;
+    if (HWY_LIKELY(EndsWithBlockOfName(path, len))) {
+        const size_t start = len - hn::Lanes(d16);
+        const LastNearEnd last = LastOfEitherInBlock<'/', '.'>(d16, path, start, 0);
+        if (HWY_LIKELY(last.is_found)) return ExtnameFrom(path, { true, last.at, last.not_ascii_behind }, len, len);
+        return ExtnameFrom(path, LastOfEitherNearEnd<'/', '.'>(path, start, true, last.not_ascii_behind), len, len);
+    }
+    const size_t end = EndWithoutSlashes(path, len, 0);
+    return ExtnameFrom(path, LastOfEitherNearEnd<'/', '.'>(path, end, false, 0), end, len);
+}
+
+// How many of their first `len` bytes `a` and `b` have in common.
+size_t CommonPrefixLengthImpl(const uint8_t* HWY_RESTRICT a, const uint8_t* HWY_RESTRICT b, size_t len)
+{
+    const hn::CappedTag<uint8_t, 16> d16;
+    const hn::CappedTag<uint8_t, 8> d8;
+    size_t at = 0;
+    for (; at + hn::Lanes(d16) <= len; at += hn::Lanes(d16)) {
+        const intptr_t differs = hn::FindFirstTrue(d16, hn::Ne(hn::LoadU(d16, a + at), hn::LoadU(d16, b + at)));
+        if (differs >= 0) return at + static_cast<size_t>(differs);
+    }
+    if (at + hn::Lanes(d8) <= len) {
+        const intptr_t differs = hn::FindFirstTrue(d8, hn::Ne(hn::LoadU(d8, a + at), hn::LoadU(d8, b + at)));
+        if (differs >= 0) return at + static_cast<size_t>(differs);
+        at += hn::Lanes(d8);
+    }
+    while (at < len && a[at] == b[at])
+        ++at;
+    return at;
+}
+
+// CountCharImpl of '/' for a few dozen bytes.
+size_t CountSlashesImpl(const uint8_t* HWY_RESTRICT text, size_t len)
+{
+    constexpr uint8_t needle = '/';
+    const hn::CappedTag<uint8_t, 16> d16;
+    const hn::CappedTag<uint8_t, 8> d8;
+    size_t count = 0;
+    size_t at = 0;
+    for (; at + hn::Lanes(d16) <= len; at += hn::Lanes(d16)) {
+        count += hn::CountTrue(d16, hn::Eq(hn::LoadU(d16, text + at), hn::Set(d16, needle)));
+    }
+    if (at + hn::Lanes(d8) <= len) {
+        count += hn::CountTrue(d8, hn::Eq(hn::LoadU(d8, text + at), hn::Set(d8, needle)));
+        at += hn::Lanes(d8);
+    }
+    for (; at < len; ++at)
+        count += text[at] == needle ? 1 : 0;
+    return count;
+}
+
+#endif // HWY_TARGET == HWY_STATIC_TARGET
+
 // Index of the first byte that HTML-escapes: one of " & ' < >.
 // Returns text_len if none are present.
 size_t IndexOfHTMLEscapeChar8Impl(const uint8_t* HWY_RESTRICT text, size_t text_len)
@@ -2522,6 +2841,8 @@ HWY_EXPORT(IndexOfNewlineOrNonASCIIImpl);
 HWY_EXPORT(IndexOfNewlineOrNonASCIIOrHashOrAtImpl);
 HWY_EXPORT(IndexOfNotCharImpl);
 HWY_EXPORT(IndexOfSpaceOrNewlineOrNonASCIIImpl);
+HWY_EXPORT(IndexOfUntidySlashImpl);
+HWY_EXPORT(IndexOfUntidySlashOrNonAsciiImpl);
 HWY_EXPORT(LastIndexOfAnyCharImpl);
 HWY_EXPORT(LastIndexOfCharImpl);
 HWY_EXPORT(LineStartsImpl);
@@ -2621,6 +2942,57 @@ size_t highway_index_of_any_char(const uint8_t* HWY_RESTRICT text, size_t text_l
 size_t highway_last_index_of_any_char(const uint8_t* HWY_RESTRICT text, size_t text_len, const uint8_t* HWY_RESTRICT chars, size_t chars_len)
 {
     return BUN_HWY_DISPATCH(LastIndexOfAnyCharImpl)(text, text_len, chars, chars_len);
+}
+
+// Up to 32 bytes no target has a wider vector to use, and the call through the table is what would cost.
+size_t highway_index_of_untidy_slash(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    if (len <= 32) return HWY_STATIC_DISPATCH(IndexOfUntidySlashImpl)(path, len);
+    return BUN_HWY_DISPATCH(IndexOfUntidySlashImpl)(path, len);
+}
+
+size_t highway_index_of_untidy_slash_or_non_ascii(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    if (len <= 32) return HWY_STATIC_DISPATCH(IndexOfUntidySlashOrNonAsciiImpl)(path, len);
+    return BUN_HWY_DISPATCH(IndexOfUntidySlashOrNonAsciiImpl)(path, len);
+}
+
+// These look at one or two vectors of 16 bytes: the name at the end of a path, what two paths start with, the folders
+// to leave. A call through the table would double that, so they enter the kernel of the target that the build is
+// compiled for, and LTO inlines it into the caller.
+size_t highway_last_index_of_slash(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return HWY_STATIC_DISPATCH(LastIndexOfSlashImpl)(path, len);
+}
+
+size_t highway_last_index_of_slash_or_dot(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return HWY_STATIC_DISPATCH(LastIndexOfSlashOrDotImpl)(path, len);
+}
+
+uint64_t highway_basename_posix(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return HWY_STATIC_DISPATCH(BasenamePosixImpl)(path, len);
+}
+
+uint64_t highway_dirname_posix(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return HWY_STATIC_DISPATCH(DirnamePosixImpl)(path, len);
+}
+
+uint64_t highway_extname_posix(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return HWY_STATIC_DISPATCH(ExtnamePosixImpl)(path, len);
+}
+
+size_t highway_common_prefix_length(const uint8_t* HWY_RESTRICT a, const uint8_t* HWY_RESTRICT b, size_t len)
+{
+    return HWY_STATIC_DISPATCH(CommonPrefixLengthImpl)(a, b, len);
+}
+
+size_t highway_count_slashes(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return HWY_STATIC_DISPATCH(CountSlashesImpl)(path, len);
 }
 
 size_t highway_index_of_char(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,

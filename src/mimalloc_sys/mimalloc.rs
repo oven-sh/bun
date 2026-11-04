@@ -1,6 +1,6 @@
 #![allow(non_camel_case_types)]
 
-use core::ffi::{c_char, c_long, c_void};
+use core::ffi::{c_char, c_int, c_long, c_void};
 
 // `Option` below is the mimalloc `mi_option_t` enum, which shadows
 // `core::option::Option` in this module. Nullable fn-pointer params therefore
@@ -17,6 +17,8 @@ unsafe extern "C" {
     /// No preconditions; returns null on failure.
     pub safe fn mi_zalloc(size: usize) -> *mut c_void;
     pub fn mi_usable_size(p: *const c_void) -> usize;
+    /// The size of the block that a request for `size` bytes gets. No preconditions.
+    pub safe fn mi_good_size(size: usize) -> usize;
 }
 
 pub type mi_output_fun = extern "C" fn(*const c_char, *mut c_void);
@@ -24,6 +26,25 @@ pub type mi_output_fun = extern "C" fn(*const c_char, *mut c_void);
 unsafe extern "C" {
     /// No preconditions.
     pub safe fn mi_collect(force: bool);
+    /// Gives every freed page that nobody has taken again back to the system now, whatever
+    /// `purge_delay` says, on the calling thread. Touches no heap of that thread. No preconditions.
+    pub safe fn mi_arenas_purge();
+    /// Reserves address space for an arena that every heap allocates in. Zero where it succeeds, and then `arena_id` names the arena.
+    ///
+    /// # Safety
+    /// `arena_id` is valid for a write.
+    pub fn mi_reserve_os_memory_ex(
+        size: usize,
+        commit: bool,
+        allow_large: bool,
+        exclusive: bool,
+        arena_id: *mut *mut c_void,
+    ) -> c_int;
+    /// Where the arena lies. Null for an id that names none.
+    ///
+    /// # Safety
+    /// `size` is valid for a write.
+    pub fn mi_arena_area(arena_id: *mut c_void, size: *mut usize) -> *mut c_void;
     /// Call when a thread goes idle: collects this thread's pending frees, discards the
     /// free blocks inside its still-used pages, and hands the arena purge to the scavenger.
     /// Safe on any thread; a no-op on a thread that never allocated. No preconditions.
@@ -64,9 +85,11 @@ bun_opaque::opaque_ffi! {
 }
 
 unsafe extern "C" {
-    pub fn mi_heap_new() -> *mut Heap;
+    /// No preconditions; returns null on failure.
+    pub safe fn mi_heap_new() -> *mut Heap;
     pub fn mi_heap_destroy(heap: *mut Heap);
-    pub fn mi_heap_main() -> *mut Heap;
+    /// No preconditions; returns the process's main heap, which is always live.
+    pub safe fn mi_heap_main() -> *mut Heap;
     pub fn mi_heap_malloc(heap: *mut Heap, size: usize) -> *mut c_void;
     fn mi_heap_zalloc(heap: *mut Heap, size: usize) -> *mut c_void;
     pub fn mi_heap_realloc(heap: *mut Heap, p: *mut c_void, newsize: usize) -> *mut c_void;
@@ -154,12 +177,17 @@ pub enum Option {
     page_commit_on_demand = 40,
     page_max_reclaim = 41,
     page_cross_thread_max_reclaim = 42,
+    arena_purge_min_size = 44,
+    purge_holes = 56,
 }
 
 unsafe extern "C" {
     // `mi_option_*` take only by-value `#[repr(C)]` enum + scalar args and
     // mutate mimalloc-internal global state; no pointer invariants → `safe fn`.
+    pub safe fn mi_option_get(option: Option) -> c_long;
     pub safe fn mi_option_set(option: Option, value: c_long);
+    /// Leaves an option alone that the environment or `mi_option_set` has set.
+    pub safe fn mi_option_set_default(option: Option, value: c_long);
     pub fn mi_malloc_usable_size(p: *const c_void) -> usize;
     pub fn mi_free_size(p: *mut c_void, size: usize);
     pub fn mi_free_size_aligned(p: *mut c_void, size: usize, alignment: usize);

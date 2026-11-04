@@ -7,7 +7,7 @@ pub struct NoEval {
     allows_indirect: bool,
 }
 
-const UNEXPECTED: Message = Message::new("unexpected", "`eval` can be harmful.");
+const UNEXPECTED: &Message = &Message::new("unexpected", "`eval` can be harmful.");
 
 /// Cached facts about `this` in a file.
 #[derive(Default)]

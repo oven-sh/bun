@@ -1,0 +1,10 @@
+import { seen as inFront } from "./an-es-module-in-front.mjs";
+import * as ws from "ws";
+import { seen as beside, later } from "./a-commonjs-file-beside.cjs";
+console.log("an ES module in front of the import saw", inFront);
+console.log("a CommonJS file behind the import saw", beside);
+console.log("undici before", "undici" in require.cache);
+const other = await import("./loaded-later.mjs");
+console.log("undici behind", "undici" in require.cache, other.kind);
+void require.cache.ws;
+console.log("later", later() === ws, later() === ws.default);

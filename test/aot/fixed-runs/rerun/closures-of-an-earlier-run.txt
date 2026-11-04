@@ -1,0 +1,16 @@
+What an earlier run left behind goes on with the variables of that run. `bun test --rerun-each=3` loads a test file three times in one realm: each load is a new module of the file, and what the file imports is loaded once.
+#### closures.test.ts
+import { test } from "bun:test";
+import { kept } from "./kept.ts";
+let here = kept.length * 10;
+var plain; plain = (plain ?? 0) + 1;
+function bump() { return ++here; }
+class Box { static made = 0; id = ++Box.made; }
+(bump as any).calls = ((bump as any).calls ?? 0) + 1;
+const table = { hits: 0 };
+kept.push(() => [here, plain, Box.made, (bump as any).calls, ++table.hits].join(" "));
+test("reads", () => { bump(); new Box(); console.log("| CASE run", kept.map(read => read()).join(" | ")); });
+#### kept.ts
+export const kept: (() => string)[] = [];
+#### package.json
+{ "type": "module" }

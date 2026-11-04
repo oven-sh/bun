@@ -1,0 +1,23 @@
+Mock.module of a file that has run.
+#### helpers/state.cjs
+exports.count = 0;
+exports.bump = () => ++exports.count;
+#### helpers/state.js
+export let count = 0;
+export function bump() { return ++count; }
+#### helpers/uses.js
+import { bump, count } from "./state.js";
+export const use = () => [bump(), count].join();
+#### mocks.test.js
+import { expect, mock, test } from "bun:test";
+import { use } from "./helpers/uses.js";
+import { bump } from "./helpers/state.js";
+test("mocks", async () => {
+  console.log("| CASE", "before", use(), bump());
+  mock.module("./helpers/state.js", () => ({ bump: () => "mocked", count: -1 }));
+  console.log("| CASE", "mocked", use(), bump(), (await import("./helpers/state.js")).count, require("./helpers/state.js").bump());
+  mock.restore();
+  console.log("| CASE", "after restore", use(), bump());
+});
+#### tsconfig.json
+{ "compilerOptions": { "allowJs": true } }

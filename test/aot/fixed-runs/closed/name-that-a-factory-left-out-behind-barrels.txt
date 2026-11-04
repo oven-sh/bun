@@ -1,0 +1,20 @@
+A name that the factory left out is undefined through `export *` and `export { name } from`; only whoever imports it from the mocked file itself hears what the mock makes of that.
+#### barrel.js
+export * from "./leaf.js"; export const own = "own";
+#### bindings.js
+import { a, missing, own } from "./barrel.js"; import { missing as outer } from "./outer.js"; import { missing as handedOn, renamed } from "./named.js"; import { missing as direct } from "./leaf.js";
+export const reads = [() => a, () => missing, () => own, () => outer, () => handedOn, () => renamed, () => direct];
+#### leaf.js
+console.log("| CASE runs leaf"); export const a = "real"; export const missing = "real";
+#### named.js
+export { missing, missing as renamed } from "./leaf.js";
+#### outer.js
+export * from "./barrel.js";
+#### x.test.js
+import { test, vi } from "bun:test";
+import { reads } from "./bindings.js";
+import * as barrel from "./barrel.js";
+import * as named from "./named.js";
+vi.mock("./leaf.js", () => ({ a: "mocked" }));
+const said = read => { try { return String(read()); } catch (error) { return "throws " + error.message.slice(0, 32); } };
+test("t", () => console.log("| CASE", reads.map(said).join(" | "), said(() => barrel.missing), Object.keys(barrel).join(), Object.keys(named).join()));

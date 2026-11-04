@@ -4,6 +4,7 @@
 #include "V8HandleScope.h"
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/ErrorInstance.h>
+#include <JavaScriptCore/ErrorInstanceInlines.h>
 
 namespace v8 {
 

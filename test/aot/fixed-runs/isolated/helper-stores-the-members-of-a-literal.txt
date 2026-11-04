@@ -1,0 +1,24 @@
+A helper in a file of its own is handed a built-in and a literal, and stores each member of the literal on the built-in.
+#### src/app.js
+export const now = () => Date.now();
+#### test/a.test.js
+import { test } from "bun:test";
+import { swap } from "./helpers.js";
+import { now } from "../src/app.js";
+test("t", () => {
+  const restore = swap(Date, { now() { return 5; } });
+  console.log("| CASE", now());
+  restore();
+  console.log("| CASE", typeof now(), now() === 5);
+});
+#### test/helpers.js
+export function swap(target, members) {
+  const saved = {};
+  for (const name in members) {
+    saved[name] = target[name];
+    target[name] = members[name];
+  }
+  return () => {
+    for (const name in saved) target[name] = saved[name];
+  };
+}

@@ -1,0 +1,12 @@
+jest.mock() of a CommonJS file beside a __mocks__ folder, and the first load is import.meta.require(): it gets the file of the folder at once.
+#### meta.test.ts
+import { jest, test } from "bun:test";
+jest.mock("./src/old.cjs");
+test("import.meta.require()", async () =>
+  console.error("| CASE", import.meta.require("./src/old.cjs").who, "|", (await import("./src/old.cjs")).who));
+#### package.json
+{ "name": "mock-folder-require" }
+#### src/__mocks__/old.cjs
+exports.who = "manual old";
+#### src/old.cjs
+exports.who = "real old";

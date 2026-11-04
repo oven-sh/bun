@@ -1,0 +1,33 @@
+A mock over a built-in module that was loaded first ends with its test file: the exports go back in place, for whoever imported them before the mock too.
+#### a.test.js
+import { mock, test } from "bun:test";
+import { seen, made } from "./user.js";
+import { made as other } from "./other.js";
+test("mocks", async () => {
+  console.log("| CASE before the mock:", seen());
+  mock.module("node:os", () => ({ EOL: 12345 }));
+  globalThis.first = { seen, made, other };
+  console.log("| CASE behind the mock:", seen(), typeof (await import("node:os")).EOL);
+});
+#### b.test.js
+import { test } from "bun:test";
+import { seen } from "./user.js";
+import { made as other } from "./other.js";
+test("reads", async () => {
+  console.log("| CASE the next file:", seen(), typeof (await import("node:os")).EOL, "| who imported it first:", first.seen(), "| what imports no mock is kept:", other === first.other);
+});
+#### c.cjs
+console.log("| CASE the body of c runs");
+exports.v = "real";
+#### m.js
+console.log("| CASE the body of m runs");
+export const v = "real";
+#### other.js
+console.log("| CASE the body of other runs");
+export const made = {};
+#### package.json
+{ "name": "p", "type": "module" }
+#### user.js
+import { EOL as read } from "node:os";
+export const seen = () => typeof read + " " + String(read).length;
+export const made = {};

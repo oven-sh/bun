@@ -36,14 +36,22 @@ export const SinkFd = b.union({ closed: b.undefined, none: b.null, fd: b.i32 });
 const flush = { ...method, args: { wait: b.bool.otherAsNull }, length: 1 } as const;
 const start = (options: b.Type) => ({ ...js, args: { options: options.nullable.default({}) }, length: 1 }) as const;
 
+const bytesOrNothingBuffered = b.any.returning("number", "ArrayBuffer", "Uint8Array");
+const bytesWrittenNowOrLater = b.any.returning("number", "Promise");
+
 const sinkClass = { writable: false, memoryCost: true } as const;
-const sinkPrototype = (sinkId: number, startOptions: b.Type) =>
+const sinkPrototype = (sinkId: number, startOptions: b.Type, returns: { end: b.Type; flush: b.Type }) =>
   ({
     close: js,
-    flush,
-    end: { ...method, passThis: true },
+    flush: { ...flush, returns: returns.flush },
+    end: { ...method, returns: returns.end, passThis: true },
     start: start(startOptions),
-    write: { ...method, args: { chunk: SinkChunk }, requiredArguments: 1 },
+    write: {
+      ...method,
+      returns: b.any.returning("number", "boolean", "Promise"),
+      args: { chunk: SinkChunk },
+      requiredArguments: 1,
+    },
     ref: { invalidThis: "undefined" },
     unref: { invalidThis: "undefined" },
     _getFd: { returns: SinkFd },
@@ -55,21 +63,24 @@ export const ArrayBufferSink = b.class({
   rustPath: "crate::webcore::sink::JSSink<crate::webcore::sink::ArrayBufferSink>",
   construct: {},
   call: { returns: b.self, capability: "heap" },
-  proto: sinkPrototype(0, ArrayBufferSinkStartOptions),
+  proto: sinkPrototype(0, ArrayBufferSinkStartOptions, { end: bytesOrNothingBuffered, flush: bytesOrNothingBuffered }),
 });
 
 export const FileSink = b.class({
   ...sinkClass,
   rustPath: "crate::webcore::sink::JSSink<crate::webcore::FileSink>",
   construct: "illegal",
-  proto: sinkPrototype(2, FileSinkStartOptions),
+  proto: sinkPrototype(2, FileSinkStartOptions, {
+    end: bytesWrittenNowOrLater,
+    flush: b.any.returning("number", "boolean", "undefined", "Promise"),
+  }),
 });
 
 export const NetworkSink = b.class({
   ...sinkClass,
   rustPath: "crate::webcore::sink::JSSink<crate::webcore::streams::NetworkSink>",
   construct: "illegal",
-  proto: sinkPrototype(6, NetworkSinkStartOptions),
+  proto: sinkPrototype(6, NetworkSinkStartOptions, { end: bytesWrittenNowOrLater, flush: bytesWrittenNowOrLater }),
 });
 
 const JSPromise = b.cell("JSC::JSPromise", "JavaScriptCore/JSPromise.h");

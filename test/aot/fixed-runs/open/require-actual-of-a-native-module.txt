@@ -1,0 +1,27 @@
+jest.requireActual() of node:util/types and other modules of native code: by name, under a mock of it, through the global jest.
+#### global.test.ts
+test("the global jest in a TypeScript file", () => {
+  console.log("| CASE", typeof jest.requireActual("node:util/types").isDate);
+});
+#### mocked.test.mjs
+import { jest, test } from "bun:test";
+jest.mock("node:util/types", () => ({ ...jest.requireActual("node:util/types"), isDate: () => "mine" }));
+test("under a mock of it", () => {
+  const types = require("node:util/types");
+  console.log("| CASE", types.isDate(1), typeof types.isRegExp, jest.requireActual("node:util/types").isDate(1));
+});
+#### named.test.mjs
+import { jest, test } from "bun:test";
+test("by name", () => {
+  const types = jest.requireActual("node:util/types");
+  console.log("| CASE", types === require("node:util/types"), types.isDate(new Date()), typeof jest.requireActual("util/types").isRegExp);
+  console.log("| CASE", typeof jest.requireActual("node:buffer").Buffer,
+    typeof jest.requireActual("node:process").cwd,
+    typeof jest.requireActual("node:string_decoder").StringDecoder,
+    typeof jest.requireActual("node:constants").O_RDONLY,
+    typeof jest.requireActual("node:module").createRequire,
+    typeof jest.requireActual("bun:jsc").heapStats,
+  );
+});
+#### package.json
+{ "name": "mock-actual-native" }

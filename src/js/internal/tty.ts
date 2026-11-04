@@ -1,4 +1,4 @@
-let OSRelease;
+let OSRelease: string[] | undefined;
 
 const COLORS_2 = 1;
 const COLORS_16 = 4;
@@ -59,7 +59,7 @@ const TERM_ENVS_REG_EXP = [
 ];
 
 let warned = false;
-function warnOnDeactivatedColors(env) {
+function warnOnDeactivatedColors(env: Record<string, string | undefined>) {
   if (warned) return;
   let name = "";
   if (env.NODE_DISABLE_COLORS !== undefined && env.NODE_DISABLE_COLORS !== "") name = "NODE_DISABLE_COLORS";
@@ -76,7 +76,7 @@ function warnOnDeactivatedColors(env) {
   }
 }
 
-function getColorDepth(env: NodeJS.ProcessEnv) {
+function getColorDepth(env: Record<string, string | undefined>) {
   const FORCE_COLOR = env.FORCE_COLOR;
   // Use level 0-3 to support the same levels as `chalk` does. This is done for
   // consistency throughout the ecosystem.
@@ -202,4 +202,16 @@ function getColorDepth(env: NodeJS.ProcessEnv) {
   return COLORS_2;
 }
 
-export default { getColorDepth };
+// The method has no name, and a store to a member gives it none.
+const methods: { getColorDepth?: (env?: Record<string, string | undefined>) => number } = {};
+methods.getColorDepth = function (env: Record<string, string | undefined> = process.env) {
+  return getColorDepth(env);
+};
+
+export default {
+  getColorDepth,
+  // What tty.WriteStream.prototype has for getColorDepth. It lies here so that the light streams of a compiled program (builtins/stdio.ts) hand it out without node:tty.
+  getColorDepthOfStream: methods.getColorDepth,
+  /** Stored by node:tty when it makes the object: from then on a program can replace the method there. */
+  prototypeOfWriteStream: undefined as undefined | { getColorDepth: unknown },
+};

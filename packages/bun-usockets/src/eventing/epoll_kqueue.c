@@ -67,7 +67,7 @@ struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough, unsign
     if (!fallthrough) {
         loop->num_polls++;
     }
-    return CLEAR_POINTER_TAG(us_malloc(sizeof(struct us_poll_t) + ext_size));
+    return CLEAR_POINTER_TAG(us_xmalloc(sizeof(struct us_poll_t) + ext_size));
 }
 
 /* Todo: this one should be us_internal_poll_free */
@@ -220,7 +220,7 @@ static int bun_kevent64_wait(int kqfd, struct kevent64_s *eventlist, int nevents
 
 /* Loop */
 struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t *loop), void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop), unsigned int ext_size) {
-    struct us_loop_t *loop = (struct us_loop_t *) us_calloc(1, sizeof(struct us_loop_t) + ext_size);
+    struct us_loop_t *loop = (struct us_loop_t *) us_xcalloc(1, sizeof(struct us_loop_t) + ext_size);
     loop->num_polls = 0;
     /* These could be accessed if we close a poll before starting the loop */
     loop->num_ready_polls = 0;
@@ -474,6 +474,7 @@ void us_loop_run(struct us_loop_t *loop) {
 
 extern unsigned int Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm, uint64_t now_ns, int * _Nullable released_heap_access);
 extern void Bun__JSC_acquireHeapAccessAfterWait(void * _Nonnull jsc_vm);
+extern _Bool Bun__ThreadPool__isBuildUnderWay(void);
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, uint64_t now_ns) {
     if (loop->num_polls == 0)
@@ -516,9 +517,11 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
      * _end. mimalloc paces the sweep itself, so this costs a compare-and-swap per tick.
      * Only on a tick that really parks: there is no time to sweep in a poll that returns at once.
      * With no scavenger to hand off to, fall back to sweeping inline, rate-limited, because doing
-     * it between ticks is what we are avoiding. */
-    const int handed_off = will_idle_inside_event_loop && mi_on_thread_idle_start();
-    if (!handed_off && will_idle_inside_event_loop) {
+     * it between ticks is what we are avoiding.
+     * A park makes the scavenger give every freed page back: see BuildUnderWay in src/threading/ThreadPool.rs. */
+    const int gives_memory_back = will_idle_inside_event_loop && !Bun__ThreadPool__isBuildUnderWay();
+    const int handed_off = gives_memory_back && mi_on_thread_idle_start();
+    if (!handed_off && gives_memory_back) {
         static const uint64_t idle_sweep_interval_ns = 100 * 1000000ULL;
         static _Thread_local uint64_t last_idle_sweep_ns = 0;
         const uint64_t sweep_now_ns = now_ns ? now_ns : us_internal_monotonic_ns();
@@ -663,7 +666,7 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, un
     unsigned int new_size = sizeof(struct us_poll_t) + ext_size;
     if(new_size <= old_size) return p;
 
-    struct us_poll_t *new_p = us_calloc(1, new_size);
+    struct us_poll_t *new_p = us_xcalloc(1, new_size);
     memcpy(new_p, p, old_size);
 
     /* Increment poll count for the new poll - the old poll will be freed separately
@@ -875,7 +878,7 @@ void us_internal_async_wakeup(struct us_internal_async *a) {
 #define MACHPORT_BUF_LEN 1024
 
 struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int fallthrough, unsigned int ext_size) {
-    struct us_internal_callback_t *cb = us_calloc(1, sizeof(struct us_internal_callback_t) + ext_size);
+    struct us_internal_callback_t *cb = us_xcalloc(1, sizeof(struct us_internal_callback_t) + ext_size);
     cb->loop = loop;
     cb->cb_expects_the_loop = 1;
     cb->leave_poll_ready = 0;
@@ -888,7 +891,7 @@ struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int f
         loop->num_polls++;
     }
 
-    cb->machport_buf = us_malloc(MACHPORT_BUF_LEN);
+    cb->machport_buf = us_xmalloc(MACHPORT_BUF_LEN);
     mach_port_t self = mach_task_self();
     kern_return_t kr = mach_port_allocate(self, MACH_PORT_RIGHT_RECEIVE, &cb->port);
 
@@ -1014,7 +1017,7 @@ void us_internal_async_wakeup(struct us_internal_async *a) {
 #else
 /* FreeBSD: kqueue async wakeup via EVFILT_USER + NOTE_TRIGGER. */
 struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int fallthrough, unsigned int ext_size) {
-    struct us_internal_callback_t *cb = us_calloc(1, sizeof(struct us_internal_callback_t) + ext_size);
+    struct us_internal_callback_t *cb = us_xcalloc(1, sizeof(struct us_internal_callback_t) + ext_size);
     cb->loop = loop;
     cb->cb_expects_the_loop = 1;
     cb->leave_poll_ready = 0;

@@ -1,0 +1,18 @@
+A helper in a file of its own is handed a built-in and spies on it under names that it works out.
+#### src/app.js
+export const report = text => console.debug(text);
+#### test/a.test.js
+import { test } from "bun:test";
+import { spyAll } from "./helpers.js";
+import { report } from "../src/app.js";
+test("t", () => {
+  const spies = spyAll(console, name => name === "debug" || name === "table");
+  for (const spy of spies) spy.mockImplementation(() => {});
+  report("a");
+  const calls = spies.map(spy => spy.mock.calls.length).join();
+  for (const spy of spies) spy.mockRestore();
+  console.log("| CASE", calls, spies.length);
+});
+#### test/helpers.js
+import { spyOn } from "bun:test";
+export const spyAll = (target, wanted) => Object.keys(target).filter(wanted).map(name => spyOn(target, name));

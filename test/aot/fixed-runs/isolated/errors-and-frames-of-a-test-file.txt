@@ -1,0 +1,507 @@
+What an error quotes and what a frame shows in a test file, which is an ES module whose functions keep no text: on one line, over several lines, with types; a stack taken while import() first loads node:util; a renamed static method.
+#### one-line.test.js
+const say = (...all) => console.log(all.join(" ").split("\n").map(line => "| CASE one line | " + line).join("\n"));
+// A TypeError quotes the read, the store or the call that failed as it is written. None of these functions is ever used as a value: each is only called.
+function tell(label, run) {
+  try {
+    run();
+    say(label + ": nothing thrown");
+  } catch (error) {
+    say(label + ": " + error.constructor.name + ": " + error.message);
+  }
+}
+
+function read(o) {
+  return o.x;
+}
+function readDeep(o) {
+  return o.p.q;
+}
+function readElement(o) {
+  return o[0];
+}
+function readByComputedKey(o, i) {
+  return o.list[i + 1];
+}
+function readOfThis() {
+  return this.x;
+}
+function readOfResult(f) {
+  return f().x;
+}
+function readBehindOptional(o) {
+  return o?.a.b.c;
+}
+function store(o) {
+  o.x = 1;
+}
+function update(o) {
+  o.n++;
+}
+function add(o) {
+  o.n += 2;
+}
+function remove(o) {
+  delete o.x;
+}
+function has(o) {
+  return "x" in o;
+}
+function callMember(o) {
+  return o.run(1, "two");
+}
+function callDeep(o) {
+  return o.a.b.run();
+}
+function callWhatIsNoFunction(o) {
+  return o.run(1);
+}
+function construct(o) {
+  return new o.K(1);
+}
+function inTemplate(o) {
+  return `${o.t}`;
+}
+function spread(o) {
+  return [...o.items];
+}
+// prettier-ignore
+function overLines(o) {
+  return o
+    .first
+    .second;
+}
+function behindOtherLines(o, n) {
+  let total = 0;
+  for (let i = 0; i < n; i++) total += i;
+  return total + o.inner.value;
+}
+function twoOnALine(a, b) {
+  return a.x + b.x;
+}
+function twoCallsOnALine(a, b) {
+  return a.run(1) + b.run(2);
+}
+function outer(o) {
+  function inner(p) {
+    return p.q;
+  }
+  return inner(o);
+}
+const arrow = o => o.x;
+function* generator(o) {
+  yield o.g;
+}
+async function asynchronous(o) {
+  return o.h;
+}
+class Point {
+  constructor(o) {
+    this.x = o.x;
+  }
+  get width() {
+    return this.inner.width;
+  }
+  method(o) {
+    return o.y;
+  }
+  static make(o) {
+    return o.z;
+  }
+  #hidden(o) {
+    return o.w;
+  }
+  viaHidden(o) {
+    return this.#hidden(o);
+  }
+}
+
+tell("read of null", () => read(null));
+tell("read of undefined", () => read(undefined));
+tell("deep", () => readDeep({ p: null }));
+tell("element", () => readElement(null));
+tell("by computed key", () => readByComputedKey({}, 1));
+tell("this", () => readOfThis.call(undefined));
+tell("result", () => readOfResult(() => null));
+tell("behind ?.", () => readBehindOptional({ a: {} }));
+tell("store", () => store(null));
+tell("update", () => update(null));
+tell("add", () => add(null));
+tell("delete", () => remove(null));
+tell("in", () => has(null));
+tell("call", () => callMember(null));
+tell("deep call", () => callDeep({ a: {} }));
+tell("no function", () => callWhatIsNoFunction({}));
+tell("no constructor", () => construct({}));
+tell("template", () => inTemplate(null));
+tell("spread", () => spread(null));
+tell("over lines", () => overLines({}));
+tell("behind other lines", () => behindOtherLines({}, 3));
+tell("two on a line, the first", () => twoOnALine(null, {}));
+tell("two on a line, the second", () => twoOnALine({}, null));
+tell("two calls on a line", () => twoCallsOnALine({ run() {} }, {}));
+tell("inner function", () => outer(null));
+tell("arrow", () => arrow(null));
+tell("generator", () => generator(null).next());
+tell("constructor", () => new Point(null));
+tell("getter", () => new Point({}).width);
+tell("method", () => new Point({}).method(null));
+tell("static method", () => Point.make(null));
+tell("private method", () => new Point({}).viaHidden(null));
+await asynchronous(null).catch(error => say("async: " + error.message));
+
+;(await import("bun:test")).test("one line", () => {});
+#### package.json
+{ "name": "p", "type": "module" }
+#### renamed-static-method.test.js
+const say = (...all) => console.log(all.join(" ").split("\n").map(line => "| CASE renamed | " + line).join("\n"));
+// A method of a class that is made more than once and then renamed shows its new name in a frame.
+const rename = (f, name) => Object.defineProperty(f, "name", { value: name });
+const top = stack => stack.split("\n")[1].trim().split(" ").slice(0, 2).join(" ");
+function make() {
+  class Single {
+    m() { return new Error("x").stack; }
+    static s() { return new Error("x").stack; }
+  }
+  rename(Single.prototype.m, "renamedMethod");
+  rename(Single.s, "renamedStatic");
+  say(top(new Single().m()), "|", top(Single.s()), "|", Single.prototype.m.name, Single.s.name);
+}
+for (let turn = 0; turn < 3; turn++) make();
+
+;(await import("bun:test")).test("renamed", () => {});
+#### several-lines.test.js
+const say = (...all) => console.log(all.join(" ").split("\n").map(line => "| CASE several lines | " + line).join("\n"));
+// A TypeError quotes the read, the store or the test that failed on one line, however many lines it is written over, and of several reads of one name the one that failed.
+function tell(label, run) {
+  try {
+    run();
+    say(label + ": nothing thrown");
+  } catch (error) {
+    say(label + ": " + error.constructor.name + ": " + error.message + " | " + /:(\d+:\d+)\)?$/.exec(error.stack.split("\n")[1])[1]);
+  }
+}
+function read(o) {
+  return o
+    .first
+    .second;
+}
+function readThree(o) {
+  return o
+    .first
+    .second
+    .third;
+}
+function readBehindComments(o) {
+  return o
+    // the first
+    .first
+    // the second
+    .second;
+}
+function readWithCommentsAtTheEnds(o) {
+  return o // what is read from
+    .first // the first
+    .second; // the second
+}
+function readOverBlankLines(o) {
+  return o
+
+    .first
+
+    .second;
+}
+function readWithDotsAtTheEnds(o) {
+  return o.
+    first.
+    second;
+}
+function call(o) {
+  return o
+    .first
+    .second();
+}
+function callWhatIsMissing(o) {
+  return o
+    .first
+    .missing(1, 2);
+}
+function callTwice(o) {
+  return o
+    .run()
+    .next
+    .run();
+}
+function readFromResult(o, a, b) {
+  return o
+    .make(a, b)
+    .second;
+}
+function readFromResultOfArgumentsOverLines(o, a, b) {
+  return o
+    .make(
+      a,
+      b,
+    )
+    .second
+    .third;
+}
+function readFromResultOfTexts(o) {
+  return o
+    .make("a)b", 'c]d')
+    .second;
+}
+function readElement(o, k) {
+  return o
+    .first
+    [k];
+}
+function readFromElement(o, k) {
+  return o
+    .list[k]
+    .second;
+}
+function readFromElementOfPath(o, a) {
+  return o
+    .list[a.b]
+    .second;
+}
+function store(o) {
+  o
+    .first
+    .second = 1;
+}
+function storeValueInTheNextLine(o, v) {
+  o
+    .first
+    .second =
+      v;
+}
+function update(o) {
+  o
+    .first
+    .second++;
+}
+function remove(o) {
+  delete o
+    .first
+    .second;
+}
+function readBehindOptional(o) {
+  return o
+    ?.first
+    .second
+    .third;
+}
+function testKey(o) {
+  return "k" in o
+    .first
+    .second;
+}
+function testInstance(o, v) {
+  return v instanceof o
+    .first
+    .second;
+}
+function readOneNameTwice(o) {
+  return o
+    .x
+    .y
+    .x
+    .y;
+}
+function readOneNameTwiceOnALine(o) {
+  return o.a.x.b.x;
+}
+function readNameOfWhatItIsReadFrom(o) {
+  return o.x.x;
+}
+function readNameOfWhatItIsReadFromInTheNextLine(o) {
+  return o.x
+    .x;
+}
+function readTwoChains(a, b) {
+  return a
+    .first
+    .second + b
+    .first
+    .second;
+}
+function readInArgument(f, o) {
+  return f(
+    1,
+    o
+      .first
+      .second,
+  );
+}
+function readInTemplate(o) {
+  return `${o
+    .first
+    .second}`;
+}
+function readInCondition(o) {
+  if (
+    o
+      .first
+      .second
+  )
+    return 1;
+  return 2;
+}
+function readInList(o) {
+  return [
+    ...o
+      .first
+      .second,
+  ];
+}
+function readFromBrackets(a, b) {
+  return (a ||
+    b)
+    .first
+    .second;
+}
+function readFromNew(K) {
+  return new K()
+    .first
+    .second;
+}
+const readInArrow = o => o
+  .first
+  .second;
+class Holder {
+  read(o) {
+    return this
+      .inner
+      .value + o;
+  }
+}
+const none = { make() {}, list: [] };
+tell("read", () => read({}));
+tell("the second of three", () => readThree({}));
+tell("the third of three", () => readThree({ first: {} }));
+tell("behind comments", () => readBehindComments({}));
+tell("comments at the ends of lines", () => readWithCommentsAtTheEnds({}));
+tell("blank lines", () => readOverBlankLines({}));
+tell("dots at the ends of lines", () => readWithDotsAtTheEnds({}));
+tell("call", () => call({}));
+tell("call of what is missing", () => callWhatIsMissing({ first: {} }));
+tell("the first of two calls", () => callTwice({}));
+tell("between two calls", () => callTwice({ run() { return {}; } }));
+tell("the second of two calls", () => callTwice({ run() { return { next: {} }; } }));
+tell("result", () => readFromResult(none, 1, 2));
+tell("result of arguments over lines", () => readFromResultOfArgumentsOverLines({ make() { return {}; } }, 1, 2));
+tell("result of texts", () => readFromResultOfTexts(none));
+tell("element", () => readElement({}, "k"));
+tell("from an element", () => readFromElement(none, 0));
+tell("from an element of a path", () => readFromElementOfPath(none, {}));
+tell("store", () => store({}));
+tell("store of a value in the next line", () => storeValueInTheNextLine({}, 1));
+tell("update", () => update({}));
+tell("delete", () => remove({}));
+tell("behind ?.", () => readBehindOptional({ first: {} }));
+tell("in", () => testKey({ first: {} }));
+tell("read in front of in", () => testKey({}));
+tell("read in front of instanceof", () => testInstance({}, {}));
+tell("one name twice, the first x", () => readOneNameTwice(null));
+tell("one name twice, the first y", () => readOneNameTwice({}));
+tell("one name twice, the second x", () => readOneNameTwice({ x: {} }));
+tell("one name twice, the second y", () => readOneNameTwice({ x: { y: {} } }));
+tell("one name twice on a line, the first", () => readOneNameTwiceOnALine({}));
+tell("one name twice on a line, the second", () => readOneNameTwiceOnALine({ a: { x: {} } }));
+tell("the name of what it is read from", () => readNameOfWhatItIsReadFrom({}));
+tell("the name of what it is read from, in the next line", () => readNameOfWhatItIsReadFromInTheNextLine({}));
+tell("the first of two chains", () => readTwoChains({}, { first: {} }));
+tell("the second of two chains", () => readTwoChains({ first: {} }, {}));
+tell("argument", () => readInArgument(() => 1, {}));
+tell("template", () => readInTemplate({}));
+tell("condition", () => readInCondition({}));
+tell("list", () => readInList({}));
+tell("brackets", () => readFromBrackets(null, {}));
+tell("new", () => readFromNew(class {}));
+tell("arrow", () => readInArrow({}));
+tell("this", () => new Holder().read(1));
+
+;(await import("bun:test")).test("several lines", () => {});
+#### stack-at-first-load.test.js
+const say = (...all) => console.log(all.join(" ").split("\n").map(line => "| CASE stack | " + line).join("\n"));
+// A function of the program runs while an import() first loads library modules. The stack that it takes ends at the module that
+// was asked for.
+const stacks = [];
+const note = title =>
+  function () {
+    stacks.push(title + "\n" + new Error("seen").stack);
+  };
+Object.defineProperty(Map.prototype, "added", { configurable: true, value: note("Map") });
+const show = title => {
+  say(title, stacks.length);
+  for (const stack of stacks.splice(0)) say(stack.replaceAll(import.meta.dirname, ""));
+};
+async function load() {
+  const util = await import("node:util");
+  return typeof util.inspect;
+}
+say(await load());
+show("import() in an async function");
+say(await load());
+show("the same again");
+delete Map.prototype.added;
+
+;(await import("bun:test")).test("stack", () => {});
+#### tsconfig.json
+{}
+#### typed/case.test.js
+import { test } from "bun:test";
+import { run } from "./typed.ts";
+const say = (...all) => console.log(all.join(" ").split("\n").map(line => "| CASE typed | " + line).join("\n"));
+run(say);
+test("typed", () => {});
+#### typed/typed.ts
+export function run(say: (...all: unknown[]) => void) {
+// A TypeError quotes a chain that is written over several lines without its types: `!` at the end of a line and a cast in front of the chain.
+type Inner = { second: { third: number } };
+type Outer = { first?: Inner; make(): Outer };
+function tell(label: string, run: () => unknown) {
+  try {
+    run();
+    say(label + ": nothing thrown");
+  } catch (error: any) {
+    say(label + ": " + error.constructor.name + ": " + error.message + " | " + /:(\d+:\d+)\)?$/.exec(error.stack.split("\n")[1])![1]);
+  }
+}
+function read(o: Outer) {
+  return o
+    .first!
+    .second;
+}
+function readFromCast(o: unknown) {
+  return (o as Outer)
+    .first!
+    .second
+    .third;
+}
+function readFromResult(o: Outer): number {
+  return o
+    .make()
+    .first!
+    .second
+    .third;
+}
+function readTwoChains(a: Outer, b: Outer) {
+  return [
+    a
+      .first!
+      .second,
+    b
+      .first!
+      .second,
+  ];
+}
+tell("read", () => read({} as Outer));
+tell("cast", () => readFromCast({}));
+tell("result", () => readFromResult({ make() { return {} as Outer; } }));
+tell("the first of two chains", () => readTwoChains({} as Outer, { first: {} } as Outer));
+tell("the second of two chains", () => readTwoChains({ first: {} } as Outer, {} as Outer));
+
+}

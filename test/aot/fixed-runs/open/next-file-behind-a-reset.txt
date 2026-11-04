@@ -1,0 +1,29 @@
+A test file resets the modules and loads a file again; the next test file gets what the reset file loaded, not a third copy.
+#### a.test.ts
+import { test, vi } from "bun:test";
+import { use } from "./index";
+test("a", async () => {
+  vi.resetModules();
+  console.log("| CASE a", use(), (await import("./user")).use(), globalThis.ranBesideReset.join());
+});
+#### b.test.ts
+import { test } from "bun:test";
+import { box, bump } from "./state";
+import { late } from "./late";
+test("b", () => console.log("| CASE b", bump(), late(), box.n, globalThis.ranBesideReset.join()));
+#### index.ts
+export { use } from "./user";
+#### late.ts
+import { bump } from "./state";
+export const late = () => bump();
+#### package.json
+{ "name": "reset-next-file" }
+#### state.ts
+import { platform } from "node:os";
+(globalThis.ranBesideReset ??= []).push("state");
+export const host = platform;
+export const box = { n: 0 };
+export const bump = () => ++box.n;
+#### user.ts
+import { bump } from "./state";
+export const use = () => bump();

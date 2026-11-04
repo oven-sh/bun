@@ -1,0 +1,1 @@
+exports.a = this === exports; exports.b = this === module.exports; exports.n = arguments.length; exports.t = [typeof arguments[0], typeof arguments[1], typeof arguments[2], typeof arguments[3], typeof arguments[4]].join(); if (exports.a) return; exports.unreached = 1;

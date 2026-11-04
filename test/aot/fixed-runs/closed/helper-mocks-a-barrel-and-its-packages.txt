@@ -1,0 +1,42 @@
+A helper that the test file imports mocks two modules and their barrel, which the test file's graph has loaded; one factory gives nothing.
+#### a.test.mjs
+import { test } from "bun:test";
+import "./setup.mjs";
+import demo from "./demo.mjs";
+test("t", () => {
+  try {
+    console.log("| CASE " + demo());
+  } catch (error) {
+    console.log("| CASE failed: " + error.message);
+  }
+});
+#### barrel.mjs
+console.log("| CASE runs barrel"); export { default as a } from "./pkg-a.mjs"; export { default as b } from "./pkg-b.mjs";
+#### demo.mjs
+console.log("| CASE runs demo"); import { a, b } from "./barrel.mjs"; export default () => a() + " | " + b();
+#### pkg-a.mjs
+console.log("| CASE runs pkg-a"); export default function a() { return "real a"; }
+#### pkg-b.mjs
+console.log("| CASE runs pkg-b"); export default function b() { return "real b"; }
+#### setup.mjs
+import { vi } from "bun:test";
+const wrap = f => {
+  if (typeof f !== "function") throw new Error("nothing to wrap: " + typeof f);
+  return () => "wrapped " + f();
+};
+vi.mock("./pkg-a.mjs", async importOriginal => {
+  console.log("| CASE factory a");
+  const actual = await importOriginal();
+  return { ...actual, default: wrap(actual.default) };
+});
+vi.mock("./pkg-b.mjs", async importOriginal => { console.log("| CASE factory b"); await importOriginal(); return {}; });
+vi.mock("./barrel.mjs", async importOriginal => {
+  console.log("| CASE factory barrel");
+  try {
+    const actual = await importOriginal();
+    return { ...actual, a: wrap(actual.a), b: wrap(actual.b) };
+  } catch (error) {
+    console.log("| CASE swallowed: " + error.message);
+    return {};
+  }
+});

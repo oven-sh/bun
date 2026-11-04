@@ -1,0 +1,23 @@
+vi.doMock() in one test file; the next test file imports the file.
+#### a.test.js
+import { test, vi } from "bun:test";
+const say = (...all) => console.log("| CASE", ...all);
+import { who, count } from "./m.js";
+test("t", async () => {
+  vi.doMock("./m.js", () => { console.log("| CASE factory runs"); return { who: "mock", count: () => "mock" }; });
+  say((await import("./m.js")).who, who, count());
+});
+#### m.js
+console.log("| CASE m runs");
+let n = 0;
+export const who = "real";
+export function count() { return ++n; }
+#### package.json
+{ "type": "module" }
+#### z.test.js
+import { test, vi } from "bun:test";
+const say = (...all) => console.log("| CASE", ...all);
+import { who, count } from "./m.js";
+test("next file", async () => {
+  say("next file", who, count(), (await import("./m.js")).who);
+});

@@ -1,0 +1,169 @@
+A test file stores what it imports from the project in an int32: a constant, a call, a field, a method, a property, an awaited value, under keys of enums, and two values that are no int32 behind a lying type. Over layers the checker sees every such import as any.
+#### reads.test.ts
+import type { int32 } from "bun";
+import { test } from "bun:test";
+import { Axis, Fixed, Point, count, half, key, label, later, next, origin } from "./src/values";
+class Own { x: int32 = 1; y: int32 = 2; }
+const own = [new Own(), new Own()];
+const at = Date.now() > 0 ? 1 : 0;
+const flag = Date.now() > 0;
+function pass(value: int32) { return value; }
+test("reads", async () => {
+{
+  const said: unknown[] = [];
+  let variable: int32 = count;
+  said.push(variable);
+  function returned(): int32 { return count; }
+  said.push(await returned());
+  class Holder { field: int32 = count; method(): int32 { const held: int32 = this.field; return held; } }
+  said.push(new Holder().field, new Holder().method());
+  said.push(pass(count));
+  console.log("| CASE", "constant", JSON.stringify(said));
+}
+{
+  const said: unknown[] = [];
+  let variable: int32 = next();
+  said.push(variable);
+  function returned(): int32 { return next(); }
+  said.push(await returned());
+  class Holder { field: int32 = next(); method(): int32 { const held: int32 = this.field; return held; } }
+  said.push(new Holder().field, new Holder().method());
+  said.push(pass(next()));
+  console.log("| CASE", "call", JSON.stringify(said));
+}
+{
+  const said: unknown[] = [];
+  let variable: int32 = new Point().y;
+  said.push(variable);
+  function returned(): int32 { return new Point().y; }
+  said.push(await returned());
+  class Holder { field: int32 = new Point().y; method(): int32 { const held: int32 = this.field; return held; } }
+  said.push(new Holder().field, new Holder().method());
+  said.push(pass(new Point().y));
+  console.log("| CASE", "field", JSON.stringify(said));
+}
+{
+  const said: unknown[] = [];
+  let variable: int32 = new Point().sum();
+  said.push(variable);
+  function returned(): int32 { return new Point().sum(); }
+  said.push(await returned());
+  class Holder { field: int32 = new Point().sum(); method(): int32 { const held: int32 = this.field; return held; } }
+  said.push(new Holder().field, new Holder().method());
+  said.push(pass(new Point().sum()));
+  console.log("| CASE", "method", JSON.stringify(said));
+}
+{
+  const said: unknown[] = [];
+  let variable: int32 = origin.x;
+  said.push(variable);
+  function returned(): int32 { return origin.x; }
+  said.push(await returned());
+  class Holder { field: int32 = origin.x; method(): int32 { const held: int32 = this.field; return held; } }
+  said.push(new Holder().field, new Holder().method());
+  said.push(pass(origin.x));
+  console.log("| CASE", "property", JSON.stringify(said));
+}
+{
+  const said: unknown[] = [];
+  let variable: int32 = await later();
+  said.push(variable);
+  async function returned() { return await later(); }
+  said.push(await returned());
+  class Holder { field: int32 = variable; method(): int32 { const held: int32 = this.field; return held; } }
+  said.push(new Holder().field, new Holder().method());
+  said.push(pass(await later()));
+  console.log("| CASE", "awaited", JSON.stringify(said));
+}
+{
+  const said: unknown[] = [];
+  let variable: int32 = flag ? next() : 0;
+  said.push(variable);
+  function returned(): int32 { return flag ? next() : 0; }
+  said.push(await returned());
+  class Holder { field: int32 = flag ? next() : 0; method(): int32 { const held: int32 = this.field; return held; } }
+  said.push(new Holder().field, new Holder().method());
+  said.push(pass(flag ? next() : 0));
+  console.log("| CASE", "branch", JSON.stringify(said));
+}
+{
+  const said: unknown[] = [];
+  let variable: int32 = Math.floor(next() / 2);
+  said.push(variable);
+  function returned(): int32 { return Math.floor(next() / 2); }
+  said.push(await returned());
+  class Holder { field: int32 = Math.floor(next() / 2); method(): int32 { const held: int32 = this.field; return held; } }
+  said.push(new Holder().field, new Holder().method());
+  said.push(pass(Math.floor(next() / 2)));
+  console.log("| CASE", "halved", JSON.stringify(said));
+}
+{
+  const said: unknown[] = [];
+  let variable: int32 = own[at][Axis.Y];
+  said.push(variable);
+  function returned(): int32 { return own[at][Axis.Y]; }
+  said.push(await returned());
+  class Holder { field: int32 = own[at][Axis.Y]; method(): int32 { const held: int32 = this.field; return held; } }
+  said.push(new Holder().field, new Holder().method());
+  said.push(pass(own[at][Axis.Y]));
+  console.log("| CASE", "enum key", JSON.stringify(said));
+}
+{
+  const said: unknown[] = [];
+  let variable: int32 = own[at][Fixed.Y];
+  said.push(variable);
+  function returned(): int32 { return own[at][Fixed.Y]; }
+  said.push(await returned());
+  class Holder { field: int32 = own[at][Fixed.Y]; method(): int32 { const held: int32 = this.field; return held; } }
+  said.push(new Holder().field, new Holder().method());
+  said.push(pass(own[at][Fixed.Y]));
+  console.log("| CASE", "const enum key", JSON.stringify(said));
+}
+{
+  const said: unknown[] = [];
+  let variable: int32 = own[at][key];
+  said.push(variable);
+  function returned(): int32 { return own[at][key]; }
+  said.push(await returned());
+  class Holder { field: int32 = own[at][key]; method(): int32 { const held: int32 = this.field; return held; } }
+  said.push(new Holder().field, new Holder().method());
+  said.push(pass(own[at][key]));
+  console.log("| CASE", "constant key", JSON.stringify(said));
+}
+{
+  const said: unknown[] = [];
+  let variable: int32 = half();
+  said.push(variable);
+  function returned(): int32 { return half(); }
+  said.push(await returned());
+  class Holder { field: int32 = half(); method(): int32 { const held: int32 = this.field; return held; } }
+  said.push(new Holder().field, new Holder().method());
+  said.push(pass(half()));
+  console.log("| CASE", "fraction", JSON.stringify(said));
+}
+{
+  const said: unknown[] = [];
+  let variable: int32 = label();
+  said.push(variable);
+  function returned(): int32 { return label(); }
+  said.push(await returned());
+  class Holder { field: int32 = label(); method(): int32 { const held: int32 = this.field; return held; } }
+  said.push(new Holder().field, new Holder().method());
+  said.push(pass(label()));
+  console.log("| CASE", "text", JSON.stringify(said));
+}
+});
+#### src/values.ts
+import type { int32 } from "bun";
+export const count: int32 = 5;
+export function next(): int32 { return 7; }
+export async function later(): Promise<int32> { return 9; }
+export class Point { x: int32 = 1; y: int32 = 2; sum(): int32 { return (this.x + this.y) | 0; } }
+export const origin: { x: int32 } = { x: 4 };
+export enum Axis { X = "x", Y = "y" }
+export const enum Fixed { X = "x", Y = "y" }
+export const key = "y";
+export const half: () => int32 = (() => 0.5) as any;
+export const label: () => int32 = (() => "seven") as any;
+#### tsconfig.json
+{}

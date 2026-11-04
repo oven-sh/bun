@@ -1,0 +1,23 @@
+The original of a mocked module is the file once more, as a second instance: bun test loads it under a key of its own, a compiled run loads it from disk. The original calls functions of a compiled file, which compiled code calls without reading a variable, and hands them what no compiled code does.
+#### calls-outside.test.ts
+import { mock, test, vi } from "bun:test";
+test("the original calls functions of a compiled file", async () => {
+  mock.module("./src/calls", () => ({ own: "mocked" }));
+  const { seen } = await import("./src/user-of-calls");
+  const real = await vi.importActual<typeof import("./src/calls")>("./src/calls");
+  console.error("| CASE calls outside", seen(), real.own, real.viaTwice("7"), real.viaTwice(2.5), real.viaFirst({ z: 0, a: "deep" }), real.viaFirst("text"));
+});
+#### package.json
+{ "name": "mock-import-original" }
+#### src/calls.ts
+import { first, twice } from "./tools";
+console.error("| CASE real runs");
+export const viaTwice = (n: any) => twice(n);
+export const viaFirst = (o: any) => first(o);
+export const own = twice(2) + first({ a: 1 });
+#### src/tools.ts
+export function twice(n: any) { return n * 2; }
+export function first(o: any) { return o.a; }
+#### src/user-of-calls.ts
+import { own } from "./calls";
+export const seen = () => own;

@@ -1,7 +1,7 @@
 //! Construction of union and intersection types.
 
 use super::*;
-use crate::util::{PositionSet, fx_hash};
+use crate::util::{FxHashMap, PositionSet, fx_hash};
 
 /// A declaration's sort key for `compareNodes`: library files first, then by file, then by position.
 type DeclarationPosition = (bool, FileId, u32);
@@ -815,6 +815,13 @@ impl<'p, 's> Checker<'p, 's> {
         )
     }
 
+    /// True if `addNamedUnions` adds something for `ty`.
+    pub(super) fn has_named_unions(&self, ty: TypeId) -> bool {
+        let mut named = smallvec::SmallVec::new();
+        self.add_named_unions(&mut named, &[ty]);
+        !named.is_empty()
+    }
+
     /// `addNamedUnions`. `boolean` has no alias, even if an alias refers to it.
     fn add_named_unions(&self, named: &mut smallvec::SmallVec<[TypeId; 4]>, types: &[TypeId]) {
         for &t in types {
@@ -1012,12 +1019,17 @@ impl<'p, 's> Checker<'p, 's> {
         union
     }
 
+    pub fn union_members_compared(&self) -> u64 {
+        self.union_members_compared
+    }
+
     /// `getUnionTypeWorker` with `UnionReductionSubtype`.
     fn create_reduced_union(&mut self, types: &[TypeId]) -> TypeId {
         // An existing union is left unchanged.
         if let [only] = types {
             return *only;
         }
+        let before = self.non_cacheable_mark();
         let union = self.union(types);
         let TypeData::Union(members) = self.data(union) else {
             return union;
@@ -1043,6 +1055,15 @@ impl<'p, 's> Checker<'p, 's> {
         for &ty in types {
             actual.extend_from_slice(self.parts(ty));
         }
+        // The sort asks for a position at every comparison.
+        let first_positions = (actual.len() > 64).then(|| {
+            let mut positions: FxHashMap<TypeId, usize> = FxHashMap::default();
+            positions.reserve(actual.len());
+            for (position, &ty) in actual.iter().enumerate() {
+                positions.entry(ty).or_insert(position);
+            }
+            positions
+        });
         let is_created_by_expression = |c: &Self, m: TypeId| {
             matches!(
                 c.data(m),
@@ -1067,7 +1088,10 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 _ => is_created_by_expression(c, m),
             };
-            let position = || actual.iter().position(|&g| g == m).unwrap_or(usize::MAX);
+            let position = || match &first_positions {
+                Some(positions) => positions.get(&m).copied().unwrap_or(usize::MAX),
+                None => actual.iter().position(|&g| g == m).unwrap_or(usize::MAX),
+            };
             created_by_expression.then(position)
         };
         let mut compare = |&x: &TypeId, &y: &TypeId| {
@@ -1080,6 +1104,35 @@ impl<'p, 's> Checker<'p, 's> {
             m == TypeId::EMPTY_OBJECT || self.is_object_type(m) && self.is_empty_object_type(m)
         });
         const HAS_PROPERTIES: u32 = tf::OBJECT | tf::INTERSECTION | tf::INSTANTIABLE_NON_PRIMITIVE;
+        // Two members of a union that came out of here whole were compared then, and neither was removed.
+        let reduced_before = types
+            .iter()
+            .copied()
+            .filter(|ty| {
+                self.unions_without_subtypes
+                    .get(ty)
+                    .is_some_and(|&with_primitives| with_primitives || !has_empty_object)
+            })
+            .max_by_key(|&ty| self.parts(ty).len());
+        let was_compared: Vec<bool> = match reduced_before {
+            Some(reduced) => {
+                let parts: crate::util::FxHashSet<TypeId> =
+                    self.parts(reduced).iter().copied().collect();
+                members.iter().map(|m| parts.contains(m)).collect()
+            }
+            None => vec![false; len],
+        };
+        // `x = new A(); .. x = new B(); ..`: each join adds a member to the union of the join before, and whoever goes through
+        // all the pairs of that union again to find that they were compared takes the cube of the number of joins.
+        let not_compared: Vec<usize> = (0..len).filter(|&j| !was_compared[j]).collect();
+        // One more entry than there are members: how many in front of a place were compared.
+        let mut compared_in_front: Vec<usize> = Vec::with_capacity(len + 1);
+        compared_in_front.push(0);
+        for j in 0..len {
+            compared_in_front.push(compared_in_front[j] + was_compared[j] as usize);
+        }
+        // The places of those among them that are removed here, ascending.
+        let mut compared_and_removed: Vec<usize> = Vec::new();
         let mut keep = vec![true; len];
         let mut count = 0usize;
         for i in (0..len).rev() {
@@ -1100,6 +1153,9 @@ impl<'p, 's> Checker<'p, 's> {
                     let rest = self.union(&others);
                     if self.is_strict_subtype(source, rest) {
                         keep[i] = false;
+                        if was_compared[i] {
+                            compared_and_removed.insert(0, i);
+                        }
                     }
                     continue;
                 }
@@ -1110,7 +1166,33 @@ impl<'p, 's> Checker<'p, 's> {
             } else {
                 None
             };
-            for j in 0..len {
+            let mut next = 0usize;
+            let mut stops = not_compared.iter().copied();
+            while next < len {
+                if was_compared[i] {
+                    // All up to the next member that was not compared with this one count, and nothing else is done for them.
+                    let stop = stops.next().unwrap_or(len);
+                    let removed = compared_and_removed.partition_point(|&place| place < stop)
+                        - compared_and_removed.partition_point(|&place| place < next);
+                    let passed = compared_in_front[stop]
+                        - compared_in_front[next]
+                        - removed
+                        - (next <= i && i < stop) as usize;
+                    if count <= 100_000
+                        && 100_000 < count + passed
+                        && (100_000 / (len - i)) * len > 1_000_000
+                    {
+                        self.error_at_current_node(2590);
+                        return TypeId::ERROR;
+                    }
+                    count += passed;
+                    next = stop;
+                    if next == len {
+                        break;
+                    }
+                }
+                let j = next;
+                next += 1;
                 if i == j || !keep[j] {
                     continue;
                 }
@@ -1122,6 +1204,7 @@ impl<'p, 's> Checker<'p, 's> {
                     return TypeId::ERROR;
                 }
                 count += 1;
+                self.union_members_compared += 1;
                 if let Some((name, unit)) = key_property
                     && self.flags(target) & HAS_PROPERTIES != 0
                     && let Some(other) = self.type_of_property(target, name)
@@ -1146,27 +1229,40 @@ impl<'p, 's> Checker<'p, 's> {
                     continue;
                 }
                 // A class type is removed only in favor of a class it derives from, regardless of
-                // structural similarity.
-                if self.is_strict_subtype(source, target)
-                    && (!self.is_class_instance(source)
-                        || !self.is_class_instance(target)
-                        || self.is_type_derived_from(source, target))
+                // structural similarity. That is asked first: it costs a hundredth of the comparison.
+                if self.is_class_instance(source)
+                    && self.is_class_instance(target)
+                    && !self.is_type_derived_from(source, target)
                 {
+                    continue;
+                }
+                if self.is_strict_subtype(source, target) {
                     keep[i] = false;
+                    if was_compared[i] {
+                        compared_and_removed.insert(0, i);
+                    }
                     break;
                 }
             }
         }
-        if !is_reduced && keep.iter().all(|&k| k) {
-            return union;
+        let number_kept = keep.iter().filter(|&&k| k).count();
+        let reduced = if !is_reduced && number_kept == len {
+            union
+        } else {
+            let kept: Flat = members
+                .iter()
+                .zip(&keep)
+                .filter(|(_, k)| **k)
+                .map(|(&m, _)| m)
+                .collect();
+            self.union_of_type_set(types, kept, false, FirstRequest::NONE)
+        };
+        // A named union that has all the members that are left is the result as it is, with the members that were removed.
+        if before == self.non_cacheable_mark() && self.parts(reduced).len() == number_kept {
+            self.unions_without_subtypes
+                .insert(reduced, has_empty_object);
         }
-        let kept: Flat = members
-            .iter()
-            .zip(&keep)
-            .filter(|(_, k)| **k)
-            .map(|(&m, _)| m)
-            .collect();
-        self.union_of_type_set(types, kept, false, FirstRequest::NONE)
+        reduced
     }
 
     /// `removeSubtypes`, keyProperty: returns the first property of `ty` whose type is a unit type, and that type.
@@ -1192,6 +1288,54 @@ impl<'p, 's> Checker<'p, 's> {
         matches!(self.data(ty), TypeData::Ref { target, .. } if self.files().flags(*target).contains(SymFlags::CLASS))
     }
 
+    /// The result of `filter` for the union `ty` of `members`, of which `kept` remain.
+    #[inline(never)]
+    fn filtered_union(&mut self, ty: TypeId, members: &[TypeId], kept: &[TypeId]) -> TypeId {
+        match kept[..] {
+            [] => TypeId::NEVER,
+            [only] => only,
+            _ => {
+                // Keeps what remains of a denormalized origin, unless a member inside one of its unions was
+                // removed.
+                let mut new_origin = OriginKey::None;
+                let left: Vec<TypeId>;
+                if let UnionOrigin::Union(origin) = self.origin(ty) {
+                    left = origin
+                        .iter()
+                        .copied()
+                        .filter(|u| self.is_union(*u) || kept.contains(u))
+                        .collect();
+                    if origin.len() - left.len() == members.len() - kept.len() {
+                        if let [only] = left[..] {
+                            return only;
+                        }
+                        new_origin = OriginKey::Union(&left);
+                    }
+                }
+                // `ObjectFlagsPrimitiveUnion` is forwarded.
+                let first_request = match self.is_primitive_union(ty) {
+                    true => FirstRequest::NONE,
+                    false => FirstRequest::WITHOUT_PRIMITIVE_UNION,
+                };
+                let types = self.types();
+                types.as_first_request(first_request, || {
+                    types.intern_key_with(
+                        TypeKey::Union(kept),
+                        &ProvenanceKey {
+                            alias: None,
+                            origin: new_origin,
+                            is_enum: false,
+                            stored_under: None,
+                            is_array_literal: false,
+                            is_array_pattern: false,
+                            has_other_instantiation: false,
+                        },
+                    )
+                })
+            }
+        }
+    }
+
     /// `filterType`
     pub fn filter(
         &mut self,
@@ -1210,49 +1354,7 @@ impl<'p, 's> Checker<'p, 's> {
                         kept.push(m);
                     }
                 }
-                match kept[..] {
-                    [] => TypeId::NEVER,
-                    [only] => only,
-                    _ => {
-                        // Keeps what remains of a denormalized origin, unless a member inside one of its unions was
-                        // removed.
-                        let mut new_origin = OriginKey::None;
-                        let left: Vec<TypeId>;
-                        if let UnionOrigin::Union(origin) = self.origin(ty) {
-                            left = origin
-                                .iter()
-                                .copied()
-                                .filter(|u| self.is_union(*u) || kept.contains(u))
-                                .collect();
-                            if origin.len() - left.len() == members.len() - kept.len() {
-                                if let [only] = left[..] {
-                                    return only;
-                                }
-                                new_origin = OriginKey::Union(&left);
-                            }
-                        }
-                        // `ObjectFlagsPrimitiveUnion` is forwarded.
-                        let first_request = match self.is_primitive_union(ty) {
-                            true => FirstRequest::NONE,
-                            false => FirstRequest::WITHOUT_PRIMITIVE_UNION,
-                        };
-                        let types = self.types();
-                        types.as_first_request(first_request, || {
-                            types.intern_key_with(
-                                TypeKey::Union(&kept),
-                                &ProvenanceKey {
-                                    alias: None,
-                                    origin: new_origin,
-                                    is_enum: false,
-                                    stored_under: None,
-                                    is_array_literal: false,
-                                    is_array_pattern: false,
-                                    has_other_instantiation: false,
-                                },
-                            )
-                        })
-                    }
-                }
+                self.filtered_union(ty, members, &kept)
             }
             TypeData::Intrinsic(
                 Intrinsic::Never
@@ -1308,6 +1410,23 @@ impl<'p, 's> Checker<'p, 's> {
         self.map_type_ex(ty, &mut f, true)
     }
 
+    #[inline(never)]
+    fn mapped_union(
+        &mut self,
+        ty: TypeId,
+        types: &[TypeId],
+        mapped: &[TypeId],
+        no_reductions: bool,
+    ) -> TypeId {
+        if *mapped == *types {
+            ty
+        } else if no_reductions {
+            self.union_unreduced(mapped)
+        } else {
+            self.union(mapped)
+        }
+    }
+
     /// `mapTypeEx`
     fn map_type_ex<F: FnMut(&mut Self, TypeId) -> TypeId>(
         &mut self,
@@ -1329,13 +1448,7 @@ impl<'p, 's> Checker<'p, 's> {
                         f(self, s)
                     });
                 }
-                if mapped[..] == *types {
-                    ty
-                } else if no_reductions {
-                    self.union_unreduced(&mapped)
-                } else {
-                    self.union(&mapped)
-                }
+                self.mapped_union(ty, types, &mapped, no_reductions)
             }
             TypeData::Intrinsic(
                 Intrinsic::Never
@@ -1716,9 +1829,39 @@ impl<'p, 's> Checker<'p, 's> {
         Some(size)
     }
 
+    /// `checked_cross_product_union_size` of the set that `distribute_intersection` is left with.
+    fn checked_size_of_distribution(&mut self, set: &[TypeId]) -> Option<usize> {
+        let size = self.get_cross_product_union_size(set);
+        if size < 100_000 {
+            return Some(size);
+        }
+        // `is_primitive_union` says no to both, whatever `is_without_primitive_union` says.
+        let has_primitive_types_alone = |t: TypeId| {
+            let mut members = self.parts(t).iter();
+            members.all(|&member| self.is_member_of_primitive_union(member))
+        };
+        let is_refused_to_everybody =
+            set.len() == 2 && !set.iter().any(|&t| has_primitive_types_alone(t));
+        match is_refused_to_everybody {
+            true => self.refuse_cross_product_of_two_unions(),
+            false => self.error_at_current_node(2590),
+        }
+        None
+    }
+
     /// `getCrossProductUnionSize`
     fn get_cross_product_union_size(&self, types: &[TypeId]) -> usize {
         (types.iter()).fold(1, |size, &t| size.saturating_mul(self.parts(t).len()))
+    }
+
+    /// `isUnionWithUndefined`, `isUnionWithNull` look at the first two members: `compareTypes` puts those like `undefined`
+    /// first and those like `null` next.
+    fn leading_nullish_members(&self, union: TypeId) -> impl Iterator<Item = TypeId> + use<'p> {
+        let members = self.parts(union);
+        let is_nullish = |m: &TypeId| m.is_undefined() || m.is_null();
+        let leading = members.iter().take_while(|m| is_nullish(m)).count();
+        debug_assert!(!members[leading..].iter().any(is_nullish));
+        members[..leading].iter().copied()
     }
 
     /// `getIntersectionType` for types some of which are unions. `actual`: the number of types in the request. Returns
@@ -1737,7 +1880,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `(A | undefined) & (B | undefined)` is `A & B | undefined`, and likewise for `null`.
         if set
             .iter()
-            .all(|&t| self.is_union(t) && self.contains_undefined(t))
+            .all(|&t| self.is_union(t) && self.leading_nullish_members(t).any(|m| m.is_undefined()))
         {
             let undefined = if set.iter().any(|&t| self.contains_missing_type(t)) {
                 TypeId::MISSING
@@ -1753,7 +1896,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if set
             .iter()
-            .all(|&t| self.is_union(t) && self.parts(t).iter().any(|m| m.is_null()))
+            .all(|&t| self.is_union(t) && self.leading_nullish_members(t).any(|m| m.is_null()))
         {
             for t in &mut set {
                 *t = self.filter(*t, |_, m| !m.is_null());
@@ -1771,7 +1914,7 @@ impl<'p, 's> Checker<'p, 's> {
             return Some(self.intersection_ex(&[left, right], no_constraint_reduction, alias));
         }
         // `X & (A | B) & (C | D)` is `X & A & C | X & A & D | X & B & C | X & B & D`.
-        let size = self.checked_cross_product_union_size(&set)?;
+        let size = self.checked_size_of_distribution(&set)?;
         // `getCrossProductIntersections`
         let mut intersections: Vec<TypeId> = Vec::with_capacity(size);
         let mut constituents = set.to_vec();
@@ -1900,11 +2043,15 @@ impl<'p, 's> Checker<'p, 's> {
         if self.types().is_without_primitive_union(ty) {
             return false;
         }
-        parts.iter().all(|&p| {
-            let flags = self.flags(p);
-            flags & (tf::PRIMITIVE | tf::NON_PRIMITIVE) != 0
-                && flags & (tf::VOID | tf::TEMPLATE_LITERAL | tf::STRING_MAPPING) == 0
-        })
+        parts.iter().all(|&p| self.is_member_of_primitive_union(p))
+    }
+
+    /// It has no `TypeFlagsNotPrimitiveUnion`.
+    #[inline]
+    fn is_member_of_primitive_union(&self, ty: TypeId) -> bool {
+        let flags = self.flags(ty);
+        flags & (tf::PRIMITIVE | tf::NON_PRIMITIVE) != 0
+            && flags & (tf::VOID | tf::TEMPLATE_LITERAL | tf::STRING_MAPPING) == 0
     }
 
     /// `intersectUnionsOfPrimitiveTypes`: intersects multiple unions of primitives, which is what `keyof (A | B | C)`

@@ -24,6 +24,33 @@ Bun.build({
 
 Bun.build({
   entrypoints: ["hey"],
+  compile: { aot: true, aotExplain: ["guards", "guards-json"] },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  compile: { aot: true, aotExplain: "guards-json" },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  compile: { aot: true, aotExplain: ["allocations", "guards"] },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  // @ts-expect-error
+  compile: { aot: true, aotExplain: "decline" },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  // @ts-expect-error
+  compile: { aot: true, aotTypeErrors: "warn" },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
   plugins: [
     {
       name: "my-terrible-plugin",

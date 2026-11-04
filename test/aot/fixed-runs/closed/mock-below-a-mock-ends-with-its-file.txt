@@ -1,0 +1,38 @@
+l imports k, k imports j, j imports i. With a mock in place of k the load of l never comes to j: a mock of j waits for its first load and ends with its test file.
+#### a.test.js
+import { test, vi } from "bun:test";
+function say(text) { (globalThis.saidBelowAMockOfAFile ??= []).push(text); }
+test("t", async () => {
+  vi.doMock("./k.js", () => { say("factory k"); return { x: "mock-k" }; });
+  await import("./l.js");
+  vi.doMock("./j.js", () => { say("factory j"); return { y: "mock-j" }; });
+  say("mocked");
+  say("a: " + (await import("./l.js")).top() + " " + (await import("./j.js")).y);
+  console.log("| CASE", globalThis.saidBelowAMockOfAFile.join(" | ")); globalThis.saidBelowAMockOfAFile = [];
+});
+#### c.test.js
+import { test, vi } from "bun:test";
+function say(text) { (globalThis.saidBelowAMockOfAFile ??= []).push(text); }
+test("t", async () => {
+  say("c: " + (await import("./l.js")).top() + " " + (await import("./j.js")).y + " " + (await import("./i.js")).z);
+  console.log("| CASE", globalThis.saidBelowAMockOfAFile.join(" | ")); globalThis.saidBelowAMockOfAFile = [];
+});
+#### i.js
+function say(text) { (globalThis.saidBelowAMockOfAFile ??= []).push(text); }
+say("i runs");
+export const z = "real-i";
+#### j.js
+function say(text) { (globalThis.saidBelowAMockOfAFile ??= []).push(text); }
+import { z } from "./i.js";
+say("j runs");
+export const y = "real-j:" + z;
+#### k.js
+function say(text) { (globalThis.saidBelowAMockOfAFile ??= []).push(text); }
+import { y } from "./j.js";
+say("k runs");
+export const x = "real-k:" + y;
+#### l.js
+import { x } from "./k.js";
+export const top = () => x;
+#### package.json
+{ "name": "p", "type": "module" }

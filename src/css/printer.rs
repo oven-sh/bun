@@ -2,6 +2,7 @@ use core::fmt;
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVec as BumpVec;
+use bun_alloc::AstAlloc;
 use bun_ast::ImportRecord;
 use bun_core::strings;
 
@@ -87,7 +88,7 @@ pub struct ImportInfo<'a> {
     /// bundle_v2.graph.ast.items(.url_for_css)
     pub ast_urls_for_css: &'a [&'a [u8]],
     /// bundle_v2.graph.input_files.items(.unique_key_for_additional_file)
-    pub ast_unique_key_for_additional_file: &'a [&'a [u8]],
+    pub ast_unique_key_for_additional_file: &'a [Box<[u8], AstAlloc>],
 }
 
 impl<'a> ImportInfo<'a> {
@@ -333,7 +334,7 @@ impl<'a> Printer<'a> {
     pub(crate) fn get_import_record_url(
         &mut self,
         import_record_idx: u32,
-    ) -> PrintResult<(&[u8], bool)> {
+    ) -> PrintResult<(&'a [u8], bool)> {
         let Some(import_info) = &self.import_info else {
             return Err(self.add_no_import_record_error());
         };
@@ -371,8 +372,8 @@ impl<'a> Printer<'a> {
                 return Ok((with_suffix(urls_for_css, fragment), false));
             }
             // It is a chunk URL (copied asset): keep the full `?query#fragment`.
-            let unique_key_for_additional_file =
-                import_info.ast_unique_key_for_additional_file[record.source_index.get() as usize];
+            let unique_key_for_additional_file: &'a [u8] =
+                &import_info.ast_unique_key_for_additional_file[record.source_index.get() as usize];
             if !unique_key_for_additional_file.is_empty() {
                 return Ok((with_suffix(unique_key_for_additional_file, suffix), true));
             }

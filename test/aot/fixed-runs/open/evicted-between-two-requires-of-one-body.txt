@@ -1,0 +1,64 @@
+A file is taken out of require.cache between two calls of require() that stand where every run of the body of their file passes them: not in a function, not under a try. The second call runs the file again.
+#### below/one.test.js
+import { test } from "bun:test";
+const first = require("./asks.cjs");
+delete require.cache[require.resolve("./asks.cjs")];
+delete require.cache[require.resolve("./counter.cjs")];
+const second = require("./asks.cjs");
+test("below", () => { console.log("| CASE below:", first.load, second.load); });
+#### deleted/one.test.js
+import { test } from "bun:test";
+const first = require("./counter.cjs");
+delete require.cache[require.resolve("./counter.cjs")];
+const second = require("./counter.cjs");
+test("deleted", () => { console.log("| CASE deleted:", first.load, second.load, first === second); });
+#### helper/one.test.js
+import { test } from "bun:test";
+const loads = require("./twice.cjs");
+test("helper", () => { console.log("| CASE helper:", ...loads); });
+#### kept/one.test.js
+import { test } from "bun:test";
+const first = require("./counter.cjs");
+const second = require("./counter.cjs");
+delete require.cache[require.resolve("./counter.cjs")];
+test("kept", () => { console.log("| CASE kept:", first.load, second.load, first === second, require("./counter.cjs").load); });
+#### often/one.test.js
+import { test } from "bun:test";
+const first = require("./counter.cjs");
+delete require.cache[require.resolve("./counter.cjs")];
+const second = require("./counter.cjs");
+const third = require("./counter.cjs");
+delete require.cache[require.resolve("./counter.cjs")];
+const fourth = require("./counter.cjs");
+test("often", () => { console.log("| CASE often:", first.load, second.load, third.load, fourth.load, second === third); });
+#### stored/one.test.js
+import { test } from "bun:test";
+const first = require("./counter.cjs");
+require.cache[require.resolve("./counter.cjs")] = undefined;
+const second = require("./counter.cjs");
+test("stored", () => { console.log("| CASE stored:", first.load, second.load, first === second); });
+#### below/asks.cjs
+module.exports = { load: require("./counter.cjs").load };
+#### below/counter.cjs
+globalThis.below = (globalThis.below ?? 0) + 1;
+module.exports = { load: globalThis.below };
+#### deleted/counter.cjs
+globalThis.deleted = (globalThis.deleted ?? 0) + 1;
+module.exports = { load: globalThis.deleted };
+#### helper/counter.cjs
+globalThis.helper = (globalThis.helper ?? 0) + 1;
+module.exports = { load: globalThis.helper };
+#### helper/twice.cjs
+const first = require("./counter.cjs");
+delete require.cache[require.resolve("./counter.cjs")];
+const second = require("./counter.cjs");
+module.exports = [first.load, second.load];
+#### kept/counter.cjs
+globalThis.kept = (globalThis.kept ?? 0) + 1;
+module.exports = { load: globalThis.kept };
+#### often/counter.cjs
+globalThis.often = (globalThis.often ?? 0) + 1;
+module.exports = { load: globalThis.often };
+#### stored/counter.cjs
+globalThis.stored = (globalThis.stored ?? 0) + 1;
+module.exports = { load: globalThis.stored };

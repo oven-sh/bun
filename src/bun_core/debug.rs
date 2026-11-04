@@ -219,9 +219,223 @@ fn is_valid_memory(address: usize) -> bool {
     }
 }
 
-/// Walks the frame-pointer chain.
+/// How the frame of ahead-of-time compiled code that a return address runs in is found.
+#[derive(Clone, Copy)]
+pub struct CompiledFrame {
+    has_frame_record: bool,
+    /// Nothing but the return address is on the stack.
+    is_empty: bool,
+    /// Between the return address and what the caller had on the stack.
+    bytes_above_return_address: usize,
+    /// In code that the compiled functions share. The rest holds at the return addresses in it and nowhere else.
+    is_in_stub: bool,
+    size: usize,
+}
+
+impl CompiledFrame {
+    /// What `Bun__AOT__frameAtReturnAddress` answers.
+    pub fn decode(bits: i64) -> Option<CompiledFrame> {
+        if bits < 0 {
+            return None;
+        }
+        let bits = bits as usize;
+        Some(CompiledFrame {
+            has_frame_record: bits & 1 != 0,
+            is_empty: bits & 2 != 0,
+            bytes_above_return_address: if bits & 4 != 0 { 32 } else { 0 },
+            is_in_stub: bits & 8 != 0,
+            size: bits >> 16,
+        })
+    }
+}
+
+static COMPILED_FRAME_AT_RETURN_ADDRESS: std::sync::OnceLock<fn(usize) -> Option<CompiledFrame>> =
+    std::sync::OnceLock::new();
+
+pub fn set_compiled_frame_at_return_address(lookup: fn(usize) -> Option<CompiledFrame>) {
+    let _ = COMPILED_FRAME_AT_RETURN_ADDRESS.set(lookup);
+}
+
+fn compiled_frame_at_return_address(return_address: usize) -> Option<CompiledFrame> {
+    COMPILED_FRAME_AT_RETURN_ADDRESS
+        .get()
+        .and_then(|lookup| lookup(return_address))
+}
+
+/// The registers of the caller of a frame of compiled code, given those in the frame: (pc, sp, fp).
+fn caller_of_compiled_frame(
+    frame: CompiledFrame,
+    sp: usize,
+    fp: usize,
+    mut load: impl FnMut(usize) -> Option<usize>,
+) -> Option<(usize, usize, usize)> {
+    const WORD: usize = core::mem::size_of::<usize>();
+    let place_of_record = if frame.has_frame_record {
+        fp
+    } else if frame.is_empty {
+        sp.checked_sub(WORD)?
+    } else {
+        sp.checked_add(frame.size)?
+    };
+    if place_of_record % WORD != 0 || place_of_record.checked_add(WORD)? < sp {
+        return None;
+    }
+    let caller_fp = if frame.has_frame_record {
+        load(place_of_record)?
+    } else {
+        fp
+    };
+    let caller_pc = load(place_of_record.checked_add(WORD)?)?;
+    let caller_sp = place_of_record.checked_add(2 * WORD + frame.bytes_above_return_address)?;
+    Some((caller_pc, caller_sp, caller_fp))
+}
+
+/// The registers of the caller of a stub that faulted, given those at the fault: (pc, sp, fp). No table says how much a stub has
+/// on the stack between two of its calls. Its caller came by a near call into the stubs, and the lowest word on the stack that
+/// returns from such a call is its return address.
+#[cfg(target_arch = "x86_64")]
+fn caller_of_faulting_stub(
+    sp: usize,
+    fp: usize,
+    mut load: impl FnMut(usize) -> Option<usize>,
+) -> Option<(usize, usize, usize)> {
+    const WORD: usize = core::mem::size_of::<usize>();
+    const WORDS_SEARCHED: usize = 64;
+    const OPCODE_OF_NEAR_CALL: u8 = 0xe8;
+    if !sp.is_multiple_of(WORD) {
+        return None;
+    }
+    for place in (0..WORDS_SEARCHED).map(|index| sp.wrapping_add(index * WORD)) {
+        let word = load(place)?;
+        if compiled_frame_at_return_address(word).is_none() {
+            continue;
+        }
+        let [_, _, _, opcode, displacement @ ..] = load(word - WORD)?.to_le_bytes();
+        let target = word.wrapping_add_signed(i32::from_le_bytes(displacement) as isize);
+        if opcode != OPCODE_OF_NEAR_CALL
+            || !compiled_frame_at_return_address(target).is_some_and(|frame| frame.is_in_stub)
+        {
+            continue;
+        }
+        let caller_fp = if fp.checked_add(WORD) == Some(place) {
+            load(fp)?
+        } else {
+            fp
+        };
+        return Some((word, place + WORD, caller_fp));
+    }
+    None
+}
+
+static HOLDS_COMPILED_CODE: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// For whoever takes up a compiled program.
+pub fn note_compiled_code() {
+    HOLDS_COMPILED_CODE.store(true, core::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether a call instruction ends at `address`.
+#[cfg(target_arch = "x86_64")]
+fn is_behind_call(address: usize, mut load: impl FnMut(usize) -> Option<usize>) -> bool {
+    const OPCODE_OF_NEAR_CALL: u8 = 0xe8;
+    const OPCODE_OF_GROUP_5: u8 = 0xff;
+    let Some(bytes) = load(address - core::mem::size_of::<usize>()).map(usize::to_le_bytes) else {
+        return false;
+    };
+    let calls_through =
+        |length: usize| bytes[8 - length] == OPCODE_OF_GROUP_5 && bytes[9 - length] >> 3 & 7 == 2;
+    bytes[3] == OPCODE_OF_NEAR_CALL || [2, 3, 4, 6, 7].into_iter().any(calls_through)
+}
+
+/// The registers of the caller of native code that keeps a frame record, given its own: (pc, sp, fp).
+#[cfg(target_arch = "x86_64")]
+fn caller_by_frame_record(
+    sp: usize,
+    fp: usize,
+    mut load: impl FnMut(usize) -> Option<usize>,
+) -> Option<(usize, usize, usize)> {
+    const WORD: usize = core::mem::size_of::<usize>();
+    if fp < sp || !fp.is_multiple_of(WORD) {
+        return None;
+    }
+    let caller_fp = load(fp)?;
+    if caller_fp != 0 && caller_fp <= fp {
+        return None;
+    }
+    Some((load(fp.checked_add(WORD)?)?, fp.checked_add(2 * WORD)?, caller_fp))
+}
+
+/// Through how many frames the registers of one lead, that one counted, up to `most`.
+#[cfg(target_arch = "x86_64")]
+fn number_of_frames_from(
+    (mut pc, mut sp, mut fp): (usize, usize, usize),
+    most: usize,
+    mut load: impl FnMut(usize) -> Option<usize>,
+) -> usize {
+    let mut frames = 1;
+    while frames < most {
+        let caller = match compiled_frame_at_return_address(pc) {
+            Some(frame) => caller_of_compiled_frame(frame, sp, fp, &mut load),
+            None => caller_by_frame_record(sp, fp, &mut load),
+        };
+        let Some(caller) = caller else { break };
+        (pc, sp, fp) = caller;
+        frames += 1;
+    }
+    frames
+}
+
+/// The registers in the lowest frame of compiled code above `sp`: (pc, sp, fp). For code that faulted and keeps no frame record,
+/// as glibc's raise() under abort(). The native frames between are lost. What compiled code calls saves the frame pointer first.
+/// `load` answers `None` where nothing is mapped, so the search ends with the stack.
+///
+/// A slot that native code has not written since an earlier, deeper call still holds the return address and the frame pointer of
+/// that call. The frames that those name are gone. Followed, they end in whatever has been written over them, or they join the
+/// frames that are there further up and pass the lowest ones by. So each word that may be the one is followed, and the one that
+/// leads through the most frames is taken: every frame that is there lies on the way from the lowest. Of two that lead through as
+/// many the upper one is taken: what is left over lies below what is there.
+#[cfg(target_arch = "x86_64")]
+fn lowest_compiled_frame(
+    sp: usize,
+    mut load: impl FnMut(usize) -> Option<usize>,
+) -> Option<(usize, usize, usize)> {
+    const WORD: usize = core::mem::size_of::<usize>();
+    const WORDS_SEARCHED: usize = 8192;
+    const MOST_FOLLOWED: usize = 16;
+    const MOST_FRAMES_FOLLOWED: usize = 256;
+    if !sp.is_multiple_of(WORD) {
+        return None;
+    }
+    let mut best: Option<(usize, (usize, usize, usize))> = None;
+    let mut followed = 0;
+    for place in (1..WORDS_SEARCHED).map(|index| sp.wrapping_add(index * WORD)) {
+        let Some(word) = load(place) else { break };
+        if compiled_frame_at_return_address(word).is_none() || !is_behind_call(word, &mut load) {
+            continue;
+        }
+        let Some(fp) = load(place - WORD) else { break };
+        let found = (word, place + WORD, fp);
+        let frames = number_of_frames_from(found, MOST_FRAMES_FOLLOWED, &mut load);
+        // Where the stack is deeper than is followed nothing tells two apart, and the lower one stays.
+        if best.is_none_or(|(most, _)| frames > most || (frames == most && frames < MOST_FRAMES_FOLLOWED)) {
+            best = Some((frames, found));
+        }
+        followed += 1;
+        if followed == MOST_FOLLOWED {
+            break;
+        }
+    }
+    best.map(|(_, found)| found)
+}
+
+/// Walks the frame-pointer chain, and frames of compiled code by their tables.
 pub struct StackIterator {
     pub fp: usize,
+    /// The return address that `next()` gave last and the stack pointer in the frame it runs in.
+    returned_to: Option<(usize, usize)>,
+    /// `returned_to` stands for the instruction that faulted.
+    is_at_fault: bool,
     ma: MemoryAccessor,
 }
 
@@ -247,15 +461,66 @@ impl StackIterator {
     pub fn init(fp: usize) -> StackIterator {
         StackIterator {
             fp,
+            returned_to: None,
+            is_at_fault: false,
             ma: MemoryAccessor::INIT,
         }
     }
 
     pub fn next(&mut self) -> Option<usize> {
+        #[cfg(target_arch = "x86_64")]
+        if HOLDS_COMPILED_CODE.load(core::sync::atomic::Ordering::Relaxed)
+            && let (true, Some((_, sp))) = (self.is_at_fault, self.returned_to)
+        {
+            return self.caller().or_else(|| {
+                let ma = &mut self.ma;
+                let (pc, sp, fp) = lowest_compiled_frame(sp, |address| ma.load_usize(address))?;
+                self.fp = fp;
+                self.returned_to = Some((pc, sp));
+                Some(pc)
+            });
+        }
+        self.caller()
+    }
+
+    fn caller(&mut self) -> Option<usize> {
+        if let Some((pc, sp)) = self.returned_to {
+            let is_at_fault = core::mem::take(&mut self.is_at_fault);
+            if let Some(frame) = compiled_frame_at_return_address(pc) {
+                let ma = &mut self.ma;
+                #[cfg(target_arch = "x86_64")]
+                let caller_of_stub = if is_at_fault && frame.is_in_stub {
+                    caller_of_faulting_stub(sp, self.fp, |address| ma.load_usize(address))
+                } else {
+                    None
+                };
+                #[cfg(not(target_arch = "x86_64"))]
+                let caller_of_stub = {
+                    let _ = (is_at_fault, frame.is_in_stub);
+                    None
+                };
+                let (caller_pc, caller_sp, caller_fp) = match caller_of_stub {
+                    Some(caller) => caller,
+                    None => caller_of_compiled_frame(frame, sp, self.fp, |address| {
+                        ma.load_usize(address)
+                    })?,
+                };
+                self.fp = caller_fp;
+                self.returned_to = Some((caller_pc, caller_sp));
+                return Some(caller_pc);
+            }
+        }
+
         let fp = self.fp.checked_sub(Self::FP_OFFSET)?;
 
         // Sanity check.
         if fp == 0 || fp % core::mem::align_of::<usize>() != 0 {
+            return None;
+        }
+        // A frame record lies in its frame, so not below the stack pointer. Code that keeps none has anything in the register: glibc's
+        // raise() has the id of the thread there, which every eighth time is aligned, and is an address in the image of an
+        // executable that is loaded low.
+        if self.returned_to.is_some_and(|(_, sp)| fp < sp) {
             return None;
         }
         let new_fp = self.ma.load_usize(fp)?;
@@ -268,6 +533,10 @@ impl StackIterator {
         }
         let new_pc = self.ma.load_usize(fp.checked_add(Self::PC_OFFSET)?)?;
 
+        self.returned_to = Some((
+            new_pc,
+            fp.checked_add(Self::PC_OFFSET + core::mem::size_of::<usize>())?,
+        ));
         self.fp = new_fp;
 
         Some(new_pc)
@@ -334,6 +603,24 @@ pub(crate) fn capture_current(first_address: Option<usize>, out: &mut [usize]) -
     n
 }
 
+#[cfg(windows)]
+pub fn with_current_context<R>(run: impl FnOnce(usize, usize) -> R) -> R {
+    unsafe extern "system" {
+        fn RtlCaptureContext(context: *mut bun_windows_sys::CONTEXT);
+    }
+    let mut context = core::mem::MaybeUninit::<bun_windows_sys::CONTEXT>::zeroed();
+    // SAFETY: the pointer is valid for a write of a whole CONTEXT, which all-zero bytes are a value of
+    let context = unsafe {
+        RtlCaptureContext(context.as_mut_ptr());
+        context.assume_init()
+    };
+    #[cfg(target_arch = "x86_64")]
+    let pc = context.Rip;
+    #[cfg(target_arch = "aarch64")]
+    let pc = context.Pc;
+    run(pc as usize, &raw const context as usize)
+}
+
 /// Capture a faulting thread's call stack from the fault context. `pc` is the
 /// exact faulting instruction (`ExceptionAddress` / `mcontext` PC) and becomes
 /// frame 0.
@@ -383,7 +670,44 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
             let rf = unsafe {
                 ntdll::RtlLookupFunctionEntry(control_pc, &mut image_base, core::ptr::null_mut())
             };
-            if rf.is_null() {
+            let compiled_frame = if rf.is_null() {
+                compiled_frame_at_return_address(control_pc as usize)
+            } else {
+                None
+            };
+            if let Some(compiled_frame) = compiled_frame {
+                #[cfg(target_arch = "x86_64")]
+                let frame_pointer = ctx.Rbp;
+                #[cfg(target_arch = "aarch64")]
+                let frame_pointer = ctx.Fp;
+                let load = |address: usize| {
+                    if address % core::mem::size_of::<usize>() != 0 || !is_valid_memory(address) {
+                        return None;
+                    }
+                    // SAFETY: the word is aligned, so it lies in the one page that is_valid_memory found committed and readable.
+                    Some(unsafe { *(address as *const usize) })
+                };
+                let Some((caller_pc, caller_sp, caller_fp)) = caller_of_compiled_frame(
+                    compiled_frame,
+                    control_sp as usize,
+                    frame_pointer as usize,
+                    load,
+                ) else {
+                    break;
+                };
+                #[cfg(target_arch = "x86_64")]
+                {
+                    ctx.Rip = caller_pc as u64;
+                    ctx.Rsp = caller_sp as u64;
+                    ctx.Rbp = caller_fp as u64;
+                }
+                #[cfg(target_arch = "aarch64")]
+                {
+                    ctx.Pc = caller_pc as u64;
+                    ctx.Sp = caller_sp as u64;
+                    ctx.Fp = caller_fp as u64;
+                }
+            } else if rf.is_null() {
                 // Leaf function with no `.pdata` entry: manually pop the
                 // return address. On x64 it is at `[Rsp]`; on ARM64 it is in
                 // `Lr`. An ARM64 leaf allocates no stack (bl does not push),
@@ -440,16 +764,46 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
     }
     #[cfg(not(windows))]
     {
-        let mut it = StackIterator::init(fp);
-        while n < out.len() {
-            match it.next() {
-                Some(addr) => {
-                    out[n] = addr;
-                    n += 1;
-                }
-                None => break,
+        n += walk(StackIterator::init(fp), &mut out[n..]);
+    }
+    n
+}
+
+#[cfg(not(windows))]
+fn walk(mut it: StackIterator, out: &mut [usize]) -> usize {
+    let mut n = 0usize;
+    while n < out.len() {
+        match it.next() {
+            Some(addr) => {
+                out[n] = addr;
+                n += 1;
             }
+            None => break,
         }
     }
     n
+}
+
+/// As `capture_from_context`, with the stack pointer at the fault. On x86-64 many frames of ahead-of-time compiled code have no
+/// frame record: where the fault lies in one, the frame-pointer chain starts at a caller far up the stack, and the callers in
+/// between are found from the stack pointer and the tables. `behind_pc` lies behind the start of the instruction at `pc` and
+/// not behind its end: the tables are asked about return addresses.
+#[cfg(not(windows))]
+pub fn capture_from_fault(
+    pc: usize,
+    behind_pc: usize,
+    fp: usize,
+    sp: usize,
+    out: &mut [usize],
+) -> usize {
+    if out.is_empty() {
+        return 0;
+    }
+    out[0] = pc;
+    let mut it = StackIterator::init(fp);
+    if cfg!(target_arch = "x86_64") {
+        it.returned_to = Some((behind_pc, sp));
+        it.is_at_fault = true;
+    }
+    1 + walk(it, &mut out[1..])
 }

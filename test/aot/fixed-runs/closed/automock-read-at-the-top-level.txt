@@ -1,0 +1,13 @@
+jest.mock() without a factory, and the test file reads the import at its top level.
+#### sum.ts
+export default function sum(a: number, b: number) { return a + b; }
+#### top-level.test.ts
+import { jest, test } from "bun:test";
+import sum from "./sum";
+jest.mock("./sum");
+console.log("| CASE at the top", jest.isMockFunction(sum));
+const mocked = jest.mocked(sum);
+test("read at the top level", () => {
+  mocked.mockReturnValueOnce(5);
+  console.log("| CASE", sum(1, 2), sum(1, 2));
+});

@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 /// See "Updating state based on the previous state" in React's `useState` reference.
 pub struct ReactPreferUpdaterFunction;
 
-const STALE_STATE: Message = Message::new(
+const STALE_STATE: &Message = &Message::new(
     "staleState",
     "`{{state}}` may be out of date when `{{setter}}` is called. Pass a function: `{{setter}}(previous => ..)`.",
 );

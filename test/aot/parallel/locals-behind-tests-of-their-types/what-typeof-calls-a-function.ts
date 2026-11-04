@@ -1,0 +1,8 @@
+const log: string[] = [];
+const callable: unknown[] = [function plain() { return "plain"; }, () => "arrow", class Made { static label = "class"; }, (function bound(this: unknown) { return "bound" + this; }).bind("!"), new Proxy(function target() { return "target"; }, { apply() { log.push("trap"); return "trapped"; } }), new Proxy(function target() { return "untrapped"; }, {}), new Proxy(class Below {}, { construct() { log.push("made"); return { made: 1 }; } }), async function later() { return 1; }, function* made() { yield 1; }, Math.max, Symbol, RegExp, (0, eval)("(function unseen() { return 'unseen'; })"), "text", undefined, null, {}, new Proxy({}, {})];
+function show(run: () => unknown): string { try { const answer = run(); return typeof answer === "symbol" ? "symbol" : typeof answer === "bigint" ? answer + "n" : Object.is(answer, -0) ? "-0" : String(answer); } catch (error) { return (error as Error).constructor.name; } }
+function probe(value: (() => unknown) | string | undefined): unknown { if (typeof value === "function") return value(); return typeof value; }
+function construct(value: (new () => unknown) | string | undefined): unknown { if (typeof value !== "function") return "no"; return typeof new value(); }
+function named(value: Function | string | null): unknown { return typeof value === "function" ? value.name + value.length : value === null ? "null" : value.length; }
+(globalThis as any).probe = probe;
+for (let round = 0; round < 3; round++) console.log(callable.map(value => show(() => probe(value as never)) + "|" + show(() => construct(value as never)) + "|" + show(() => named(value as never))).join(" "), log.join());

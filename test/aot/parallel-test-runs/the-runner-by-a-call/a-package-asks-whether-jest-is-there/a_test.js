@@ -1,0 +1,12 @@
+// react-dom's development build asks `typeof jest !== "undefined"`. The build writes a question of its own into such a file, which calls Bun.jest(): the run stays closed.
+import { test } from "bun:test";
+import * as lib from "./lib.js";
+import { read } from "./reader.js";
+import { spyWith } from "./helper.js";
+
+test("what the reader gets", () => {
+  const restore = spyWith(lib);
+  console.log("under it", read().join());
+  if (restore) restore();
+  console.log("behind it", read().join());
+});

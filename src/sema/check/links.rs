@@ -364,7 +364,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn is_type_node_settled(&self, file: FileId, node: TypeNodeId) -> bool {
         let q = Query::TypeNode(file, node);
         (self.p.type_node_types.get(&self.task, &(file, node))).is_some()
-            && !(self.may_be_in_flight(q) && self.stack.contains(&q))
+            && !self.is_in_flight(q)
     }
 }
 

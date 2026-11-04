@@ -1,0 +1,20 @@
+Two mocks of one module, by two spellings of its path, both end with their test file.
+#### a.test.js
+import { mock, test } from "bun:test";
+test("both are patches in place", async () => {
+  const outer = await import("./outer.js");
+  await mock.module("./inner.js", async () => ({ a: "mock of inner" }));
+  await mock.module("./outer.js", async () => ({ a: "mock of outer" }));
+  console.log("| CASE 1", outer.a);
+});
+#### b.test.js
+import { test } from "bun:test";
+test("the variable has its value back", async () => {
+  console.log("| CASE 2", (await import("./outer.js")).a, (await import("./inner.js")).a, (await import("./variable.js")).a);
+});
+#### inner.js
+export * from "./variable.js";
+#### outer.js
+export * from "./inner.js";
+#### variable.js
+export const a = "real";

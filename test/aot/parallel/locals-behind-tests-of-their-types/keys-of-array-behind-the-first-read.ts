@@ -1,0 +1,5 @@
+const hostile: unknown[] = [Array.prototype, (0, eval)("new (class Below extends Array {})(2)"), undefined, null, true, false, 0, -0, 1.5, NaN, 7n, Symbol.iterator, "", "abc", "\u{1F600}x", [], [1, 2, 3], ["a"], { length: 4 }, function two(a: unknown, b: unknown) {}, () => 1, new Proxy([1, 2], {}), new Proxy({ length: 9 }, {}), new (class Stack extends Array<number> {})(3), new Uint8Array(5), new String("boxed"), new Map([[1, 2]]), /x/g, new Date(0), Object.create(null), (function () { return arguments; })(1, 2) as unknown];
+function show(run: () => unknown): string { try { const answer = run(); return typeof answer === "symbol" ? "symbol" : typeof answer === "bigint" ? answer + "n" : Object.is(answer, -0) ? "-0" : String(answer); } catch (error) { return (error as Error).constructor.name; } }
+function probe(value: string | number[]): string { return (Array.isArray(value) ? "y" : "n") + Object.getOwnPropertyNames(Array).join().length; }
+(globalThis as any).probe = probe;
+for (let round = 0; round < 3; round++) console.log(hostile.map(value => show(() => probe(value as never))).join(" "));

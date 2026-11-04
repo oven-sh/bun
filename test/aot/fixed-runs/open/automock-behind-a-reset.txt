@@ -1,0 +1,12 @@
+A mock without a factory behind vi.resetModules().
+#### 3-loaded-reset-domock-js.test.mjs
+import { test, vi } from "bun:test";
+test("t", async () => {
+  await import("./dep.js"); vi.resetModules(); vi.doMock("./dep.js");
+  let seen; try { const dep = await import("./dep.js"); seen = [typeof dep.f, vi.isMockFunction(dep.f), dep.v].join(); } catch (error) { seen = "threw " + String(error.message).slice(0, 70); }
+  console.log("| CASE", seen);
+});
+#### dep.js
+export const f = () => "real"; export const v = 1;
+#### package.json
+{ "name": "p", "type": "module" }

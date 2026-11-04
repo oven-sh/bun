@@ -1,0 +1,17 @@
+Top-level await.
+#### helpers/waits.js
+export const order = [];
+order.push("before");
+await new Promise(resolve => setTimeout(resolve, 1));
+order.push("after");
+#### tsconfig.json
+{ "compilerOptions": { "allowJs": true } }
+#### waits.test.js
+import { expect, mock, test } from "bun:test";
+import { order } from "./helpers/waits.js";
+order.push("test file");
+const late = await import("./helpers/waits.js");
+test("waits", () => {
+  console.log("| CASE", order.join(), late.order === order);
+  try { require("./helpers/waits.js"); console.log("| CASE", "required"); } catch (error) { console.log("| CASE", error.name); }
+});

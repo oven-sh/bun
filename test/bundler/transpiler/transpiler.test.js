@@ -3947,6 +3947,30 @@ console.log(resolve.length)
       // expectParseError("\u200Da", 'Unexpected "\\u200d"');
     });
 
+    it("__proto__ in an object literal", () => {
+      // `{ __proto__ }` defines a property and `{ __proto__: v }` sets the prototype
+      expectPrinted_("x = { __proto__ }", "x = { __proto__ }");
+      expectPrinted_("x = { __proto__: __proto__ }", "x = { __proto__: __proto__ }");
+      expectPrinted_('x = { "__proto\\u005f_": __proto__ }', "x = { __proto__: __proto__ }");
+      expectPrinted_("({ __proto__: __proto__ = 1 } = x)", "({ __proto__: __proto__ = 1 } = x)");
+      expectPrinted_(
+        'import { __proto__ } from "a"; x = [{ __proto__ }, { __proto__: __proto__ }]',
+        'import { __proto__ } from "a";\nx = [{ __proto__ }, { __proto__: __proto__ }]',
+      );
+      expectPrintedMin_(
+        "function f(p) { const __proto__ = p; return { __proto__ }; }",
+        'function f(p) {\n  return { ["__proto__"]: p };\n}',
+      );
+      expectPrintedMin_(
+        "function f() { const __proto__ = null; return { __proto__ }; }",
+        'function f() {\n  return { ["__proto__"]: null };\n}',
+      );
+      ts.expectPrinted_(
+        "namespace N { export let __proto__; ({ __proto__ = 1 } = x) }",
+        'var N;\n((N) => {\n  ({ ["__proto__"]: N.__proto__ = 1 } = x);\n})(N ||= {})',
+      );
+    });
+
     describe("dead code elimination", () => {
       const transpilerNoDCE = new Bun.Transpiler({ deadCodeElimination: false });
       it("should DCE with deadCodeElimination: true or by default", () => {

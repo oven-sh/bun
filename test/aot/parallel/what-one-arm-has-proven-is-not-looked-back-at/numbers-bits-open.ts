@@ -1,0 +1,9 @@
+const unseen = (0, eval)("(x) => x");
+function noise(): number { return unseen(0); }
+function read(a: number): unknown {
+  const t = a + 0.5; const u = t | 0; noise(); return u;
+}
+const run = unseen(read);
+let last: unknown;
+for (let r = 0; r < 300; r++) last = run(r % 3);
+console.log(String(last), String(run(1.5)), String(run(NaN)), String(run(-0)), String(run(2147483647)), String(run(unseen("1") as any)));

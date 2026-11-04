@@ -47,38 +47,21 @@ impl DevServer {
         debug_log!("onFileUpdate start");
         scopeguard::defer! { debug_log!("onFileUpdate end") };
 
+        let file_paths = watchlist.items_file_path();
+        let kinds = watchlist.items_kind();
         let mut slice = watchlist.slice();
-        // Note: SoA columns are disjoint, but `items_mut` borrows the whole
-        // slice mutably. Erase each column to a raw `*mut [T]` and reborrow at
-        // the use sites — the columns never alias (per `MultiArrayElement` layout).
-        let file_paths: *const [std::borrow::Cow<'static, [u8]>] = slice.items_file_path();
-        // SAFETY: column 4 (`Count`) is `u32` per `WatchItemField`.
-        let counts: *mut [u32] = slice.items_mut::<"count", u32>();
-        let kinds: *const [bun_watcher::Kind] = slice.items_kind();
-        // SAFETY: `file_paths`/`kinds`/`counts` point to disjoint SoA columns owned
-        // by `watchlist`, which outlives this fn; reborrow the shared ones as
-        // slices for indexing (`counts` stays raw, deref'd per-access below).
-        let file_paths = unsafe { &*file_paths };
-        // SAFETY: see above; `kinds` is a disjoint SoA column owned by `watchlist`.
-        let kinds = unsafe { &*kinds };
 
         let atomics = self.watcher_atomics.as_ptr();
         // SAFETY: `atomics` is the heap `WatcherAtomics`; watcher thread holds
         // `Watcher.mutex`. The returned slot is exclusive on this thread and
         // is deref'd per-access below (no long-lived `&mut`).
         let ev_ptr = unsafe { WatcherAtomics::watcher_acquire_event(atomics) };
-        // Note: erase `self` to a raw ptr in the deferred closures so the
-        // loop body can keep using `self.bun_watcher`.
-        let self_ptr: *mut Self = self;
         let ev_ptr_defer: *mut HotReloadEvent = ev_ptr;
         scopeguard::defer! {
             // SAFETY: `atomics`/`ev_ptr_defer` are live for the fn body; guard
             // runs at scope exit with `Watcher.mutex` still held.
             unsafe { WatcherAtomics::watcher_release_and_submit_event(atomics, ev_ptr_defer) }
         };
-
-        // SAFETY: see `self_ptr` SAFETY above.
-        scopeguard::defer! { unsafe { (*self_ptr).bun_watcher.flush_evictions() } };
 
         for event in events {
             // TODO: why does this out of bounds when you delete every file in the directory?
@@ -87,11 +70,7 @@ impl DevServer {
             }
 
             let file_path = &file_paths[event.index as usize];
-            // SAFETY: `counts` is a disjoint SoA column owned by `watchlist`
-            // (see above); accesses are statement-scoped.
-            let update_count = unsafe { (*counts)[event.index as usize] } + 1;
-            // SAFETY: as above.
-            unsafe { (*counts)[event.index as usize] = update_count };
+            slice.items_mut::<"count", u32>()[event.index as usize] += 1;
             let kind = kinds[event.index as usize];
 
             debug_log!(
@@ -150,6 +129,8 @@ impl DevServer {
                 }
             }
         }
+
+        self.bun_watcher.flush_evictions();
     }
 
     pub(crate) fn on_watch_error(&self, err: sys::Error) {

@@ -1,0 +1,34 @@
+import.meta.resolve() of a name that only a mock has.
+preload: preload.cjs
+#### node_modules/real/index.js
+module.exports = { v: "real" };
+#### node_modules/real/package.json
+{ "name": "real", "main": "./index.js" }
+#### package.json
+{ "name": "import-meta-resolve-of-a-name-that-only-a-mock-has" }
+#### preload.cjs
+const { mock } = require("bun:test"); mock.module("made-up", () => ({ v: "mocked" }));
+#### resolve.test.mjs
+import { test, mock } from "bun:test";
+import { resolveHere, resolveMock } from "./src/helper.mjs";
+const say = (label, f) => {
+  try { console.log("| CASE", label, String(f()).replaceAll(import.meta.dir, ".")); } catch (e) { console.log("| CASE", label, e.constructor.name, e.code); }
+};
+test("names", async () => {
+  say("a mock of the preload", () => import.meta.resolve("made-up"));
+  say("in a file of the project", resolveMock);
+  say("by a name that is handed in", () => resolveHere("made-up"));
+  mock.module("made-here", () => ({ v: 1 }));
+  say("a mock of the test", () => import.meta.resolve("made-here"));
+  say("nothing", () => import.meta.resolve("nothing-at-all"));
+  say("a package", () => import.meta.resolve("real"));
+  mock.module("real", () => ({ v: "mock of real" }));
+  say("a package that is mocked", () => import.meta.resolve("real"));
+  say("a file", () => import.meta.resolve("./src/helper.mjs"));
+  say("a module of Bun", () => import.meta.resolve("node:fs"));
+  say("require.resolve", () => require.resolve("made-up"));
+  say("resolveSync", () => import.meta.resolveSync("made-up"));
+  console.log("| CASE", "loads", (await import("made-up")).v, (await import("real")).v);
+});
+#### src/helper.mjs
+export const resolveHere = name => import.meta.resolve(name); export const resolveMock = () => import.meta.resolve("made-up");

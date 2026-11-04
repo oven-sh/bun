@@ -1,0 +1,7 @@
+interface Wide { id: number; a0?: number; a1?: number; a2?: number; a3?: number; a4?: number; a5?: number; a6?: number; a7?: number; a8?: number; a9?: number; a10?: number; a11?: number; a12?: number; a13?: number; a14?: number; a15?: number; a16?: number; a17?: number; a18?: number; a19?: number; a20?: number; a21?: number; a22?: number; a23?: number; a24?: number; a25?: number; a26?: number; a27?: number; a28?: number; a29?: number; a30?: number; a31?: number; a32?: number; a33?: number; a34?: number; a35?: number; a36?: number; a37?: number; a38?: number; a39?: number; a40?: number; a41?: number; a42?: number; a43?: number; a44?: number; a45?: number; a46?: number; a47?: number; a48?: number; a49?: number; a50?: number; a51?: number; a52?: number; a53?: number; a54?: number; a55?: number; a56?: number; a57?: number; a58?: number; a59?: number; a60?: number; a61?: number; a62?: number; a63?: number; a64?: number; }
+function make(id: number): Wide { return { id }; }
+function mark(o: any): void { o.later = 1; }
+function fill(w: Wide, n: number): void { w.a64 = n; }
+const said: string[] = [];
+for (let i = 0; i < 12; i++) { const w = make(i); mark(w); if (i & 1) fill(w, i); if (i > 8) said.push(String(w.id + (w.a64 ?? 0) + (w.a32 ?? 0) + (w.a0 ?? 0))); }
+console.log(said.join(" "));

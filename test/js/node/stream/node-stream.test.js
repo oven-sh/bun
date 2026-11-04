@@ -1985,6 +1985,31 @@ it("internal FixedQueue backing list is not holey (test-fixed-queue.js)", () => 
   expect(holes).toBe(0);
 });
 
+it("stream/consumers do not read Blob and TextDecoder from globalThis", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `globalThis.Blob = globalThis.TextDecoder = class {};
+       const consumers = require("node:stream/consumers");
+       const from = () => require("node:stream").Readable.from([Buffer.from("12")]);
+       Promise.all([
+         consumers.arrayBuffer(from()).then(arrayBuffer => arrayBuffer.byteLength),
+         consumers.blob(from()).then(blob => blob.text()),
+         consumers.buffer(from()).then(buffer => buffer.toString()),
+         consumers.json(from()),
+         consumers.text(from()),
+       ]).then(results => console.log(JSON.stringify(results)));`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual([2, "12", "12", 12, "12"]);
+  expect(exitCode).toBe(0);
+});
+
 it("Readable.fromWeb's native source accepts pull(view) without the flags array", async () => {
   // The Blob source doesn't define setFlowing(), so the Readable calls this one with the native source as `this`.
   const { promise, resolve } = Promise.withResolvers();

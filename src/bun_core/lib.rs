@@ -39,6 +39,7 @@ pub mod compress {
 }
 pub mod heap;
 
+pub mod current_work;
 pub mod debug;
 pub mod env;
 #[cfg(windows)]
@@ -247,7 +248,12 @@ pub mod env_var;
 pub mod feature_flags;
 pub use code_generation::{
     CODE_GENERATION_FROM_STRINGS_DISALLOWED_BY_BUILD, CodeGenerationFromStrings,
-    code_generation_from_strings, disallow_code_generation_from_strings,
+    code_generation_from_strings, code_generation_from_strings_by_flags,
+    disallow_code_generation_for_compiled_program,
+    disallow_code_generation_for_removed_interpreter, disallow_code_generation_from_strings,
+    is_code_generation_disallowed_by_compiled_program, is_code_generation_disallowed_by_trimming,
+    is_strict_only_beside_compiled_program, run_no_compiled_program_on_this_thread,
+    runs_no_compiled_program,
 };
 
 /// Tier-0 path-separator predicates. Sunk from `bun_paths` so `bun_core::util`
@@ -1601,51 +1607,45 @@ pub(crate) mod strings_impl {
         [0xC0 | (cp >> 6) as u8, 0x80 | (cp & 0x3F) as u8]
     }
 
+    /// Appends `latin1` as UTF-8, of which it makes `utf8_length` bytes.
+    fn append_latin1_as_utf8(list: &mut Vec<u8>, latin1: &[u8], utf8_length: usize) {
+        list.reserve(utf8_length);
+        // SAFETY: simdutf writes `utf8_length_from_latin1(latin1)` initialized bytes, which were just reserved.
+        unsafe {
+            let written = simdutf::simdutf__convert_latin1_to_utf8(
+                latin1.as_ptr(),
+                latin1.len(),
+                list.as_mut_ptr().add(list.len()),
+            );
+            debug_assert_eq!(written, utf8_length);
+            list.set_len(list.len() + written);
+        }
+    }
+
     /// Port of `allocateLatin1IntoUTF8WithList`.
-    /// Uses `first_non_ascii` (simdutf SIMD) for the ASCII-span scan.
     pub fn allocate_latin1_into_utf8_with_list(
         mut list: Vec<u8>,
         offset_into_list: usize,
         latin1: &[u8],
     ) -> Vec<u8> {
         list.truncate(offset_into_list);
-        list.reserve(latin1.len());
-        let mut rest = latin1;
-        while !rest.is_empty() {
-            match first_non_ascii_usize(rest) {
-                None => {
-                    list.extend_from_slice(rest);
-                    break;
-                }
-                Some(i) => {
-                    list.extend_from_slice(&rest[..i]);
-                    rest = &rest[i..];
-                    while let Some(&c) = rest.first() {
-                        if c < 0x80 {
-                            break;
-                        }
-                        list.reserve(2);
-                        let [a, b] = latin1_to_codepoint_bytes_assume_not_ascii(c);
-                        list.push(a);
-                        list.push(b);
-                        rest = &rest[1..];
-                    }
-                }
-            }
-        }
+        append_latin1_as_utf8(
+            &mut list,
+            latin1,
+            simdutf::length::utf8::from::latin1(latin1),
+        );
         list
     }
 
     /// Port of `toUTF8FromLatin1` — None if input is already ASCII.
     pub fn to_utf8_from_latin1(latin1: &[u8]) -> Option<Vec<u8>> {
-        if is_all_ascii(latin1) {
+        let utf8_length = simdutf::length::utf8::from::latin1(latin1);
+        if utf8_length == latin1.len() {
             return None;
         }
-        Some(allocate_latin1_into_utf8_with_list(
-            Vec::with_capacity(latin1.len()),
-            0,
-            latin1,
-        ))
+        let mut utf8 = Vec::new();
+        append_latin1_as_utf8(&mut utf8, latin1, utf8_length);
+        Some(utf8)
     }
 
     /// Slow-path fallback for unpaired surrogates (port of `toUTF8ListWithTypeBun` core loop).
@@ -1832,7 +1832,69 @@ pub(crate) mod strings_impl {
     /// Port of `copyLatin1IntoUTF8` — encode Latin-1 into a fixed-size UTF-8 buffer.
     #[inline]
     pub fn copy_latin1_into_utf8(buf: &mut [u8], latin1: &[u8]) -> EncodeIntoResult {
+        if latin1.len() <= 16 && latin1.len() <= buf.len() && copy_short_ascii(buf, latin1) {
+            return EncodeIntoResult {
+                read: latin1.len(),
+                written: latin1.len(),
+            };
+        }
+        const MIN_LEN_FOR_SIMDUTF: usize = 64;
+        if latin1.len() >= MIN_LEN_FOR_SIMDUTF
+            && buf.len() >= simdutf::length::utf8::from::latin1(latin1)
+        {
+            // SAFETY: simdutf writes `utf8_length_from_latin1(latin1)` bytes, which `buf` has room for.
+            let written = unsafe {
+                simdutf::simdutf__convert_latin1_to_utf8(
+                    latin1.as_ptr(),
+                    latin1.len(),
+                    buf.as_mut_ptr(),
+                )
+            };
+            return EncodeIntoResult {
+                read: latin1.len(),
+                written,
+            };
+        }
         copy_latin1_into_utf8_stop_on_non_ascii::<false>(buf, latin1)
+    }
+
+    /// Copies at most 16 bytes with two loads and two stores that overlap. Writes nothing and
+    /// returns false unless all of `src` is ASCII. `dst` is at least as long as `src`.
+    #[inline(always)]
+    fn copy_short_ascii(dst: &mut [u8], src: &[u8]) -> bool {
+        let n = src.len();
+        assert!(n <= 16 && n <= dst.len());
+        let (from, to) = (src.as_ptr(), dst.as_mut_ptr());
+        // SAFETY: every access below lies in the first `n` bytes of `src` or of `dst`.
+        unsafe {
+            if n >= 8 {
+                let first = from.cast::<u64>().read_unaligned();
+                let last = from.add(n - 8).cast::<u64>().read_unaligned();
+                if (first | last) & 0x8080_8080_8080_8080 != 0 {
+                    return false;
+                }
+                to.cast::<u64>().write_unaligned(first);
+                to.add(n - 8).cast::<u64>().write_unaligned(last);
+            } else if n >= 4 {
+                let first = from.cast::<u32>().read_unaligned();
+                let last = from.add(n - 4).cast::<u32>().read_unaligned();
+                if (first | last) & 0x8080_8080 != 0 {
+                    return false;
+                }
+                to.cast::<u32>().write_unaligned(first);
+                to.add(n - 4).cast::<u32>().write_unaligned(last);
+            } else if n > 0 {
+                // The first, the middle and the last of one, two or three bytes are all of them.
+                let (first, middle, last) = (*from, *from.add(n / 2), *from.add(n - 1));
+                if (first | middle | last) >= 0x80 {
+                    return false;
+                }
+                *to = first;
+                *to.add(n / 2) = middle;
+                *to.add(n - 1) = last;
+            }
+        }
+        true
     }
 
     #[inline]
@@ -1845,26 +1907,32 @@ pub(crate) mod strings_impl {
         }
 
         const HIGH_BITS: u64 = 0x8080_8080_8080_8080;
+        let n = src.len();
+        assert!(dst.len() >= n);
+        let (from, to) = (src.as_ptr(), dst.as_mut_ptr());
         let mut copied = 0usize;
-        let (dst_chunks, _) = dst.as_chunks_mut::<8>();
-        let (src_chunks, _) = src.as_chunks::<8>();
-        for (d, s) in dst_chunks.iter_mut().zip(src_chunks) {
-            let word = u64::from_ne_bytes(*s);
-            let mask = word & HIGH_BITS;
-            if mask != 0 {
-                let ascii = (mask.trailing_zeros() / 8) as usize;
-                d[..ascii].copy_from_slice(&s[..ascii]);
-                return copied + ascii;
+        // SAFETY: every access below lies in the first `n` bytes of `src` or of `dst`.
+        unsafe {
+            while copied + 8 <= n {
+                let word = from.add(copied).cast::<u64>().read_unaligned();
+                if word & HIGH_BITS != 0 {
+                    break;
+                }
+                to.add(copied).cast::<u64>().write_unaligned(word);
+                copied += 8;
             }
-            *d = word.to_ne_bytes();
-            copied += 8;
-        }
-        for (d, &s) in dst[copied..].iter_mut().zip(&src[copied..]) {
-            if s >= 0x80 {
-                return copied;
+            // The last word overlaps the one before it.
+            if copied + 8 > n && n >= 8 {
+                let word = from.add(n - 8).cast::<u64>().read_unaligned();
+                if word & HIGH_BITS == 0 {
+                    to.add(n - 8).cast::<u64>().write_unaligned(word);
+                    return n;
+                }
             }
-            *d = s;
-            copied += 1;
+            while copied < n && *from.add(copied) < 0x80 {
+                *to.add(copied) = *from.add(copied);
+                copied += 1;
+            }
         }
         copied
     }

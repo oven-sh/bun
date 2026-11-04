@@ -415,6 +415,7 @@ impl hooks::AutoInstaller for PackageManager {
 
 // `PackageJSON::parse` runs before the first bare import creates the manager.
 #[unsafe(no_mangle)]
+#[inline(never)]
 fn __bun_resolver_parse_dependency(
     name: SemverString,
     name_hash: hooks::PackageNameHash,
@@ -447,6 +448,7 @@ fn __bun_resolver_parse_dependency(
 //   • `env` is the resolver's unwrapped `env_loader` (Transpiler-owned,
 //     process-lifetime). `init_with_runtime` stores it as `NonNull<Loader>`.
 #[unsafe(no_mangle)]
+#[inline(never)]
 unsafe fn __bun_resolver_init_package_manager(
     mut log: core::ptr::NonNull<bun_ast::Log>,
     install: Option<core::ptr::NonNull<crate::bun_schema::api::BunInstall>>,

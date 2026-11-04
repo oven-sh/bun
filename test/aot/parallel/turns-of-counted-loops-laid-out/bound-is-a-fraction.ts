@@ -1,0 +1,23 @@
+function run(n: number): number { let t = 0; for (let i = 0; i < n; i++) t += i; return t; }
+console.log(run(0.5));
+console.log(run(1.5));
+console.log(run(2.5));
+console.log(run(3.5));
+console.log(run(4.5));
+console.log(run(5.5));
+console.log(run(6.5));
+console.log(run(7.5));
+console.log(run(8.5));
+console.log(run(9.5));
+console.log(run(10.5));
+console.log(run(11.5));
+console.log(run(12.5));
+console.log(run(13.5));
+console.log(run(14.5));
+console.log(run(15.5));
+console.log(run(16.5));
+console.log(run(17.5));
+console.log(run(18.5));
+console.log(run(19.5));
+console.log(run(NaN));
+console.log(run(Infinity > 1 ? 12.25 : 0));

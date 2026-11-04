@@ -1,0 +1,19 @@
+// x is laid on a member of a union that does not list it: through a shape, function; the union is read by in; the read of all; in front.
+interface A { kind: string; x: number }
+interface B { kind: string; y: string }
+interface C { kind: string; z: boolean }
+type Any = A | B | C;
+function makeA(n: number): A { return { kind: "a", x: n }; }
+function makeB(n: number): B { return { kind: "b", y: "t" + n }; }
+function makeC(n: number): C { return { kind: "c", z: n > 0 }; }
+function show(w: unknown): string { return typeof w === "function" ? "function " + w.name : typeof w === "object" && w ? JSON.stringify(w) : String(w); }
+function read(value: Any): unknown { return "x" in value ? value.x : "none"; }
+function put(t: { x?: unknown }, w: unknown) { t.x = w; }
+function run(n: number) {
+  const o = makeB(n);
+  const all: Any[] = [makeA(n), o, makeC(n)];
+  const v: unknown = function named() { return 3; };
+  put(o as any, v);
+  for (const each of all) console.log(show(read(each)));
+}
+try { run(1); run(2); } catch (error) { console.log((error as Error).constructor.name); }

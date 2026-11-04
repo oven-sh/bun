@@ -1,0 +1,13 @@
+jest.doMock() without a factory over a CommonJS file that a statement loaded.
+#### lib.cjs
+console.log("| CASE lib.cjs runs");
+exports.value = "real value";
+exports.f = function () { return "real f"; };
+#### loaded-cjs.test.mjs
+import { jest, test } from "bun:test";
+import * as lib from "./lib.cjs";
+test("a CommonJS file that has run", () => {
+  console.log("| CASE", lib.f());
+  jest.doMock("./lib.cjs");
+  console.log("| CASE", lib.value, lib.f(), jest.isMockFunction(lib.f));
+});

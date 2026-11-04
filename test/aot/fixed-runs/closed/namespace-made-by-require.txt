@@ -1,0 +1,98 @@
+In plain Bun the namespace object of an ES module is extensible if require() made it and not if an import did. Over layers every import of a test file used to make it.
+#### below13.mjs
+import * as below from "./e13.mjs";
+export const seenBelow = Object.isExtensible(below);
+#### e1.mjs
+export const x = 1;
+export default 1;
+#### e2.mjs
+export const x = 2;
+export default 2;
+#### e3.mjs
+export const x = 3;
+export default 3;
+#### e4.mjs
+export const x = 4;
+export default 4;
+#### e5.mjs
+export const x = 5;
+export default 5;
+#### e6.mjs
+export const x = 6;
+export default 6;
+#### e7.mjs
+export const x = 7;
+export default 7;
+#### e8.mjs
+export const x = 8;
+export default 8;
+#### e9.mjs
+export const x = 9;
+export default 9;
+#### e10.mjs
+export const x = 10;
+export default 10;
+#### e11.mjs
+export const x = 11;
+export default 11;
+#### e12.mjs
+export const x = 12;
+export default 12;
+#### e13.mjs
+export const x = 13;
+export default 13;
+#### inner.mjs
+import r from "./r.cjs";
+console.log("| CASE inner, star above", Object.isExtensible(r.e5()));
+#### main.test.mjs
+import { test } from "bun:test";
+import * as one from "./e1.mjs";
+import * as two from "./e2.mjs";
+import { x as three } from "./e3.mjs";
+export * as four from "./e4.mjs";
+import * as five from "./e5.mjs";
+import "./inner.mjs";
+import seven from "./e7.mjs";
+import { x as eight } from "./star8.mjs";
+import "./e9.mjs";
+import { x as ten } from "./e10.mjs";
+import { x as eleven } from "./e11.mjs";
+import { x as twelve } from "./e12.mjs";
+import { x as thirteen } from "./e13.mjs";
+import { seenBelow } from "./below13.mjs";
+import r from "./r.cjs";
+console.log("| CASE star, used as a value", Object.isExtensible(r.e1()), r.e1() === one);
+console.log("| CASE star, members only", Object.isExtensible(r.e2()), two.x);
+console.log("| CASE a name", Object.isExtensible(r.e3()), three);
+console.log("| CASE export star as", Object.isExtensible(r.e4()));
+console.log("| CASE the star itself", Object.isExtensible(five));
+const six = await import("./e6.mjs");
+console.log("| CASE import()", Object.isExtensible(r.e6()), r.e6() === six);
+console.log("| CASE a default import", Object.isExtensible(r.e7()), seven);
+console.log("| CASE export star from", Object.isExtensible(r.e8()), eight);
+console.log("| CASE for effects alone", Object.isExtensible(r.e9()));
+const imported = await import("./e10.mjs");
+console.log("| CASE a name, import(), then require", Object.isExtensible(r.e10()), r.e10() === imported, ten);
+const required = r.e11();
+console.log("| CASE a name, require, then import()", Object.isExtensible(required), (await import("./e11.mjs")) === required, eleven);
+console.log("| CASE require in the test file", Object.isExtensible(import.meta.require("./e12.mjs")), import.meta.require("./e12.mjs") === r.e12(), twelve);
+console.log("| CASE a star import below", seenBelow, Object.isExtensible(r.e13()), thirteen);
+test("end", () => {});
+#### package.json
+{}
+#### r.cjs
+exports.e1 = () => require("./e1.mjs");
+exports.e2 = () => require("./e2.mjs");
+exports.e3 = () => require("./e3.mjs");
+exports.e4 = () => require("./e4.mjs");
+exports.e5 = () => require("./e5.mjs");
+exports.e6 = () => require("./e6.mjs");
+exports.e7 = () => require("./e7.mjs");
+exports.e8 = () => require("./e8.mjs");
+exports.e9 = () => require("./e9.mjs");
+exports.e10 = () => require("./e10.mjs");
+exports.e11 = () => require("./e11.mjs");
+exports.e12 = () => require("./e12.mjs");
+exports.e13 = () => require("./e13.mjs");
+#### star8.mjs
+export * from "./e8.mjs";

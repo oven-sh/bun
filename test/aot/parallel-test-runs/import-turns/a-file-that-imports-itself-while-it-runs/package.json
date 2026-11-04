@@ -1,0 +1,1 @@
+{ "name": "a-file-that-imports-itself-while-it-runs", "type": "module" }

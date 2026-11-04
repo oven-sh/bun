@@ -14,8 +14,8 @@ pub struct NoUselessPathSegments {
     no_useless_index: bool,
 }
 
-const USELESS: Message =
-    Message::new("", "Useless path segments for \"{{importPath}}\", should be \"{{proposedPath}}\"");
+const USELESS: &Message =
+    &Message::new("", "Useless path segments for \"{{importPath}}\", should be \"{{proposedPath}}\"");
 
 fn to_relative_path(mut relative_path: Vec<u8>) -> Vec<u8> {
     if relative_path.ends_with(b"/") {

@@ -1,0 +1,21 @@
+function run(n: number, k: number): number { let t = 0; let same = k; for (let i = 0; i < n; i++) { t += same; same = same; } return t + same; }
+console.log(run(-3, 3));
+console.log(run(-1, 3));
+console.log(run(0, 3));
+console.log(run(1, 3));
+console.log(run(2, 3));
+console.log(run(3, 3));
+console.log(run(4, 3));
+console.log(run(5, 3));
+console.log(run(6, 3));
+console.log(run(7, 3));
+console.log(run(8, 3));
+console.log(run(9, 3));
+console.log(run(10, 3));
+console.log(run(15, 3));
+console.log(run(16, 3));
+console.log(run(17, 3));
+console.log(run(24, 3));
+console.log(run(25, 3));
+console.log(run(100, 3));
+console.log(run(1001, 3));

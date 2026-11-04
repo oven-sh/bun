@@ -1,0 +1,27 @@
+A module is mocked three times in one test; a user that import.meta.require() loads anew behind each mock reads that mock.
+#### a.test.js
+import { mock, test, vi } from "bun:test";
+import * as top from "./top.js";
+// The load of the module by name comes first: behind it no mock waits for its factory, and a settled answer of require() is at hand.
+const look = async step => console.log("| CASE", step, (await import("./dep.js")).flag, (import.meta.require("./late.js")).values(), top.values());
+test("t", async () => {
+  await look("start");
+  mock.module("./dep.js", () => ({ flag: "module" }));
+  await look("mock.module()");
+  vi.doMock("./dep.js", () => ({ flag: "mock", added: 1 }));
+  await look("vi.doMock()");
+  mock.module("./dep.js", () => ({ flag: "again" }));
+  await look("mock.module() again");
+});
+#### dep.js
+export const flag = "real";
+#### late.js
+import { flag } from "./dep.js";
+import * as ns from "./dep.js";
+export const values = () => [flag, ns.flag, ns["fl" + "ag"], Object.keys(ns).join("+")].join();
+#### package.json
+{ "type": "module" }
+#### top.js
+import { flag } from "./dep.js";
+import * as ns from "./dep.js";
+export const values = () => [flag, ns.flag, ns["fl" + "ag"], Object.keys(ns).join("+")].join();

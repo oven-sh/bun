@@ -1,0 +1,185 @@
+---
+title: "Test and debug a compiled program"
+sidebarTitle: "Testing and debugging"
+description: "Stack traces, source maps, crash reports and profiles of an executable, and how to check your program before you build it"
+---
+
+<Warning>Ahead-of-time compilation is experimental.</Warning>
+
+Stack traces, crash reports and profilers work on an executable built with [`bun compile`](/compiler/aot). Breakpoints don't. To use them, run your program from its source with `bun --inspect-brk ./app.ts`. If the problem only shows up in the executable, check [Compatibility](/compiler/compatibility).
+
+## Stack traces
+
+```ts repo.ts icon="/icons/typescript.svg"
+class Repo {
+  find(id: number): string {
+    if (id < 0) throw new RangeError("bad id " + id);
+    return "x";
+  }
+}
+new Repo().find(-1);
+```
+
+```bash terminal icon="terminal"
+bun compile ./repo.ts && ./repo
+```
+
+```txt
+RangeError: bad id -1
+      at find (/$bunfs/root/repo.ts:3:27)
+      at /$bunfs/root/repo.ts:7:12
+```
+
+Stack traces have the file, line and column of your source code. You don't need a source map. The part after `/$bunfs/root/` is the path of the source file, relative to the directory where you ran the build. The executable doesn't hold the text of your files, so it prints no source excerpt above the message.
+
+### Minified executables and external source maps
+
+```bash terminal icon="terminal"
+bun compile --minify --sourcemap=external ./repo.ts
+```
+
+`--minify` shortens the names of functions, classes and variables. `--sourcemap=external` moves names, paths, lines and columns out of the executable and into `repo.map`, next to it. Every frame then points into `compiled.js`, as in `compiled.js:4:2`. That file doesn't exist. The line and column are a position in the map, and any source map library turns them back into your names, files and lines.
+
+Keep the map of every build you deploy, and don't ship it.
+
+### Use with Sentry
+
+```bash terminal icon="terminal"
+bun compile --minify --sourcemap=external ./src/index.ts --outfile dist/app
+sentry-cli sourcemaps upload --org my-org --project my-project dist
+```
+
+`@sentry/bun` and `@sentry/node` work as they are. Sentry finds the map of an event by its debug ID, so you don't set a release or a URL prefix, and you don't run `sentry-cli sourcemaps inject`. Deploy `dist/app` without `app.map` and `app.map.js`.
+
+## Crash reports
+
+If the process crashes, Bun prints a report to stderr. It ends with the functions of your program that were running, innermost first, with file, line and column. The `Build ID:` line matches the ID that `bun compile` printed when you built it. Please [open an issue](https://github.com/oven-sh/bun/issues) with the report.
+
+### Write the report to a file
+
+A program that draws on the whole terminal, or whose stderr nobody keeps, never sees that report. Name a directory, and each crash also leaves a JSON file there, which your program can read and send when it next starts. Nothing is written unless you name one. Not on Windows yet.
+
+```ts
+process.env.BUN_CRASH_REPORT_DIR = join(homedir(), ".myapp", "crashes");
+process.env.BUN_CRASH_REPORT_TAG = sessionId; // any text of yours, up to 256 bytes; the file repeats it
+```
+
+Both take effect when you assign them, on the main thread. You can also set them in the environment that the executable starts in. To cover a crash that happens before your first statement runs, give the build a default. A leading `~/` stands for the home directory:
+
+```bash terminal icon="terminal"
+bun compile --compile-exec-argv="--aot-crash-report-dir=~/.myapp/crashes" ./src/index.ts --outfile dist/app
+```
+
+What the program assigns wins over the environment, which wins over the build. Missing directories are created. The file is called `<pid>.<crashedAtMs>.crash.json`, only its owner can read it, and it is complete before the report is sent anywhere and before the process ends.
+
+| Member                                  | What it holds                                                                                                                                                             |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `version`                               | `1`                                                                                                                                                                       |
+| `tag`                                   | `BUN_CRASH_REPORT_TAG`, or `null`                                                                                                                                         |
+| `pid`, `ppid`                           | The process and its parent                                                                                                                                                |
+| `startedAtMs`, `crashedAtMs`            | Milliseconds since 1970                                                                                                                                                   |
+| `bunVersion`, `bunRevision`, `isCanary` | The Bun that built the executable                                                                                                                                         |
+| `platform`, `arch`                      | As `process.platform` and `process.arch`                                                                                                                                  |
+| `aot`, `buildId`                        | `true`, and the ID that `bun compile` printed                                                                                                                             |
+| `thread`                                | `"main"` or `"other"`                                                                                                                                                     |
+| `reason`                                | `"segmentation fault"`, `"illegal instruction"`, `"bus error"`, `"floating point error"`, `"trap"`, `"abort"`, `"panic"`, `"unreachable"`, `"out of memory"` or `"error"` |
+| `signal`                                | The signal that ends the process, which its parent sees: `"SIGSEGV"`, `"SIGILL"`, `"SIGBUS"`, `"SIGFPE"`, `"SIGTRAP"` or `"SIGABRT"`                                      |
+| `address`                               | The address of the fault as a hexadecimal string, or `null`                                                                                                               |
+| `message`                               | The message of a panic, or `null`                                                                                                                                         |
+| `features`, `featuresWord`              | The parts of Bun that the process had used, by name and as the number in the link                                                                                         |
+| `traceString`                           | The link that the report prints. It holds the native frames                                                                                                               |
+| `compiledFrames`                        | The functions of your program that were running, innermost first, as the report prints them, or `null`                                                                    |
+
+The file holds no arguments, no environment variables and no working directory. With `--sourcemap=external` a frame is a line and a column, like `39:21`, and the map of that build turns it into your names.
+
+No file is written for a death that no code of the process gets to see: `SIGKILL` and the kernel's out-of-memory killer. `process.abort()` and an uncaught exception aren't crashes.
+
+## Run your tests compiled
+
+```bash terminal icon="terminal"
+bun test --aot
+```
+
+`bun test --aot` compiles your test files, your preloads and everything they import the way `bun compile` does, and runs the compiled code. The type checker, the optimizer's settings, the object model and the run time are those of an executable, so every [difference from `bun run`](/compiler/compatibility) shows up in your tests as it would there.
+
+`--isolate`, `--parallel`, `--rerun-each` and `--coverage` work as in `bun test`. `--watch`, `--hot` and `--inspect` exit with an error.
+
+`--shard=i/n` still runs every test file in exactly one shard, but splits the files differently from `bun test`. A compiled run builds everything its test files import before the first test starts. So test files that import the same code go into the same shard, and each part of your project is compiled on one machine instead of on all of them. What your preloads import is compiled in every shard. With `--timings` written by a compiled `--parallel` run, a shard that has more to compile gets fewer test files. Each machine works out the split for itself, from the files on disk and the timings and from nothing else, so every machine needs the same checkout and the same timings, and `--parallel` may differ between them. Each shard prints a hash of the whole split. It's the same on every shard. Where no other split is faster, you get the split of `bun test`.
+
+### What differs from an executable
+
+A test run differs from `bun compile` only where tests couldn't work otherwise. This is the whole list.
+
+| In a test run                                                                                                                                                                                                                                                                                                                                                                             | In an executable                                                                                                   | Why                                                                                                                                                                                                                                                                                               |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| An export that your tests replace (`spyOn(namespace, "name")`, `mock.module("./file")`) is read from a variable first, and a call of it isn't inlined. A mock under a name only known at run time opens every export.                                                                                                                                                                     | A call of an imported function is a direct call.                                                                   | `spyOn()` on a module's exports, `mock.module()`                                                                                                                                                                                                                                                  |
+| A method of a built-in object or a global class that a file of the run replaces can be replaced, and compiled code checks for a replacement before it calls that method. A test can also add a property to `Object.prototype` or `Function.prototype`.                                                                                                                                    | [Built-in objects are read-only.](/compiler/compatibility#built-in-objects-are-read-only)                          | `spyOn(String.prototype, "indexOf")`, `Array.from = fake`, `globalThis.Set = FakeSet`, tests against prototype pollution                                                                                                                                                                          |
+| `Reflect.set()` on a built-in member that stays read-only throws the `TypeError` of an assignment.                                                                                                                                                                                                                                                                                        | It returns `false`.                                                                                                | A replacement that didn't happen must fail the test                                                                                                                                                                                                                                               |
+| A write to a built-in member that stays read-only is listed when the run ends, caught or not: what was refused, where, and which test file was running.                                                                                                                                                                                                                                   | It throws the `TypeError`, and nothing else is printed.                                                            |
+| `Object.isExtensible(Object.prototype)` answers `true`, as in `bun test`.                                                                                                                                                                                                                                                                                                                 | `false`: the objects that take no new properties say so.                                                           | Tests ask                                                                                                                                                                                                                                                                                         |
+| Each test file gets a new global object and fresh modules. With `--rerun-each`, a test file runs again in the same global object, and what it imports stays loaded.                                                                                                                                                                                                                       | A module runs once.                                                                                                | One file's state must not reach the next                                                                                                                                                                                                                                                          |
+| With `--isolate` or `--parallel`, compiled code checks that a function or an object whose type the build doesn't know belongs to the running test file's global object: at a call of a function held in a variable, a read of a property, `instanceof` a built-in class, and a private name. A check takes 3 or 4 instructions. What the build knows isn't checked.                       | One global object, so there's nothing to check.                                                                    | A native addon that keeps a value hands a function or an object of one test file to the next, as in `bun test`. It still belongs to the earlier file's global object                                                                                                                              |
+| `delete require.cache[path]` makes the next `require()` or `import()` load the file again, from disk, and a test file that starts later imports that instance. `require.cache` lists the compiled files.                                                                                                                                                                                  | [It does nothing.](/compiler/compatibility#loader-hooks-and-the-module-cache)                                      | Tests reload a module to run its top level again                                                                                                                                                                                                                                                  |
+| `import()` and `require()` of a file that wasn't compiled load it from disk, and Bun interprets it, in whichever file of the run they're written.                                                                                                                                                                                                                                         | They throw, unless it's built with `--aot-allow-code-from-disk`.                                                   | A module that a test writes, a fixture, a path from the environment                                                                                                                                                                                                                               |
+| `process.mainModule` and `require.main` count as read, so the module objects of entry points written in CommonJS, with their `children` and `parent`, are kept.                                                                                                                                                                                                                           | They're kept where the build finds a read.                                                                         | Code that a test loads from disk may read them, and the build doesn't see that code                                                                                                                                                                                                               |
+| `import(path)` and `require(path)` find every compiled file, also where the path is put together when the test runs. They answer with the compiled file, the one that other files import.                                                                                                                                                                                                 | [They find what the build found.](/compiler/compatibility#dynamic-imports)                                         | A test imports each file of a folder, or a path joined from pieces                                                                                                                                                                                                                                |
+| Files keep their paths on disk: `import.meta.dir`, `__dirname` and `process.argv` are those of `bun test`, a package is resolved as `bun run` resolves it, `Bun.embeddedFiles` is empty, and an HTML import is bundled when it's served.                                                                                                                                                  | Files are embedded under a path of their own, as with `bun build --compile`. `--compile-in-place` keeps the paths. | Fixtures and snapshots lie beside the tests                                                                                                                                                                                                                                                       |
+| `process.platform`, `process.arch`, `process.isBun`, `process.versions` and `process.release` are read when the code runs.                                                                                                                                                                                                                                                                | They are constants, and the branches for other platforms are removed.                                              | A test redefines them to take another platform's path                                                                                                                                                                                                                                             |
+| `process.env.NODE_ENV` and `process.env.BUN_ENV` are read when the code runs. Both branches of `if (process.env.NODE_ENV === "production")` are compiled, and so are both files of a package that loads one of two by it, like `react`. `--define process.env.NODE_ENV='"test"'` makes it a constant, as it does in `bun test`, and the build gets smaller.                               | They are constants, as with `bun build`, and the other branch is removed.                                          | A test stores another value in them                                                                                                                                                                                                                                                               |
+| `process.env.NODE_ENV` is `"test"` unless it's set. `describe`, `test`, `expect` and the other names of `bun:test` are globals, and `@jest/globals` and `vitest` mean `bun:test`.                                                                                                                                                                                                         |                                                                                                                    | As in `bun test`                                                                                                                                                                                                                                                                                  |
+| Type errors are printed as warnings. A file that has one is compiled without its types: it works, but runs slower.                                                                                                                                                                                                                                                                        | The build stops.                                                                                                   | `bun test` doesn't check types                                                                                                                                                                                                                                                                    |
+| A test file that can't be compiled, for example because an import doesn't resolve, fails. The other files run.                                                                                                                                                                                                                                                                            | The build stops.                                                                                                   | One broken file must not hide the others                                                                                                                                                                                                                                                          |
+| Another file that can't be compiled, for example a fixture with a syntax error or one that's nested too deeply, is compiled to a module that throws the build's error for it where a test imports it.                                                                                                                                                                                     | The build stops.                                                                                                   | Suites hold files that are broken on purpose                                                                                                                                                                                                                                                      |
+| An error that isn't caught is printed with the lines around it, and [a message that quotes your source](/compiler/compatibility#error-messages) always finds the line. Both are read from the source file.                                                                                                                                                                                | [No source excerpt](#stack-traces), and a shorter quote where the executable doesn't keep the function's text.     | The files are there                                                                                                                                                                                                                                                                               |
+
+The build also has to see whether your tests take a file out of `require.cache`, because only then is the run compiled for modules that can load twice: a test file calls what it imports like code that wasn't compiled, and the call isn't inlined. One `delete require.cache[path]` anywhere in the run, also in a package, counts for every file, whatever the path is, and your tests run slower. `Reflect.deleteProperty(require.cache, path)`, a store to an entry, `require.cache` passed to a function and `jest.resetModules()` count the same. A `delete` that the build never saw, in a file that a test writes and then loads, throws an error that names the file.
+
+A file that was compiled runs as it was compiled, also where a test writes, moves or removes it before it's first loaded. `bun test` reads what's on disk by then. To import what a test generates, write it to a path where there's no file when the run starts.
+
+An entry that a test stores under the name of a Node.js module, `require.cache["fs"] = { exports: fake }`, doesn't reach compiled code. `require("fs")` answers the module itself there, where `bun test` answers `fake`, and no error tells you. Use `mock.module("fs", () => fake)`.
+
+The build also has to see which exports your tests replace, because only those are read from a variable. It reads `spyOn(namespace, "name")`, `jest.spyOn()` and `vi.spyOn()` where they're called, also where the spy function is kept in a variable, and `mock.module()` the same way. Where the name isn't a constant, every export of that module can be replaced. Where the object isn't the namespace import itself, as in `spyOn(holder.module, "read")`, the build opens the exports called `read` of every module whose namespace object is passed around as a value. Where the name there isn't a constant, or the spy function itself is handed to a helper or taken from `Bun.jest()`, every export of those modules can be replaced. In a test run that loads a module under a name only known at run time, as in `await import(name)`, every module counts as passed around. A spy that the build never saw, in text that a test evaluates or in a file that it writes and then loads, throws a `TypeError` that names the export. So does a spy on a namespace object that only such a file passes around, as in `spyOn((await import("./generated.js")).held, "read")`: the build follows a namespace object only through code that it has read.
+
+The build finds what a run replaces on built-in objects in every file that it compiles: your tests, your preloads and everything they import. Code that a test holds as a string isn't read. A file of your program, or a package, that assigns to a built-in method opens that method for the whole run too: the assignment works in the test run and throws the `TypeError` in the executable. So a suite that passes doesn't tell you that such a line works in the executable. `bun compile` reports it as `TS100014`. The build follows a built-in out of Bun's own modules, as in `require("node:console")` or `import { performance } from "node:perf_hooks"`. Where the name is only known when the test runs, as in `spyOn(Date, name)`, or the object goes where the build doesn't follow it, as in `module.exports = { holder: Object }` or `helper(Date)`, every method of that object can be replaced. On the global object that goes only for what an executable can replace too, like `fetch` and the timers. `mockRestore()` and `mock.restore()` put the original back. If the build can't tell which object a test writes to, as in `Object.getPrototypeOf([]).join = fake`, the replacement throws a `TypeError` that names the method and shows how to spell it out. What the language calls by itself (`next`, `constructor`, `Symbol.iterator`) and an index like `Array.prototype[0]` can't be replaced, and the `TypeError` says so: [the whole list](/compiler/compatibility#what-a-test-cant-replace). An existing `toString`, `valueOf`, `toJSON` or `then` can be replaced, and so can the `Symbol.iterator` of `Map`, `Set`, `Headers` and `URLSearchParams`. A `toJSON` can also be added to `Object.prototype`; a `then` can't.
+
+## Run under the compiler's rules
+
+```bash terminal icon="terminal"
+bun run --aot ./app.ts
+```
+
+`bun run --aot` checks your program the way `bun compile` does, and exits with code `1` on anything that would stop the build. Then it runs the program from its source files with the JIT, with [built-in objects read-only](/compiler/compatibility#built-in-objects-are-read-only) as in an executable. `--watch` and `--inspect` work. The other [differences from `bun run`](/compiler/compatibility) don't show up, because the code that runs isn't compiled. To see those, run your tests with `bun test --aot`, or build the executable and run it.
+
+## Find the guards that fail
+
+```bash terminal icon="terminal"
+bun check --aot --explain=guards ./app.ts
+```
+
+A [guard](/compiler/types#when-a-value-doesnt-match-its-type) that fails doesn't change what your program does. It sends the rest of the call to the function's slow version, or slows down one operation, so look here when a hot function is slower than you expected.
+
+The command reads your source and lists each guard that the compiler couldn't remove, with the reason, what happens when it fails and a fix.
+
+## Profiles
+
+```bash terminal icon="terminal"
+BUN_OPTIONS="--cpu-prof" ./app    # a .cpuprofile for Chrome DevTools or VS Code
+BUN_OPTIONS="--heap-prof" ./app   # a heap profile
+```
+
+Both show your functions, classes and files by their names. `perf`, `gdb` and Instruments show addresses where your compiled code runs. On Linux, build with `--aot-symbols` to see function names there too.
+
+A heap snapshot (`Bun.generateHeapSnapshot()`, `v8.writeHeapSnapshot()`) lists what the top-level variables of each module and the variables that closures capture hold, under the variables' names, as it does under `bun run`. A captured variable is listed on the closure that holds it, or with its module's variables if its function runs only once. It shows the heap of the compiled program, which can hold less. The compiler removes a variable that nothing in your program can read, along with an object that only that variable held, and it creates some objects when they're first read instead of when the module loads. Those aren't in the heap, so they aren't in the snapshot. Build with [`--compile-inspector`](#the-inspector) to see every variable that `bun run` shows.
+
+## The inspector
+
+```bash terminal icon="terminal"
+bun compile --compile-inspector ./app.ts
+BUN_INSPECT="ws://127.0.0.1:6499/app" ./app
+```
+
+The console, heap snapshots and CPU profiles work. Breakpoints, stepping and `debugger` statements don't. The flag makes the executable larger and slower, so leave it out of production builds.
+
+Code you run in the console can call any function and change any object it gets hold of, including one you pick out of a heap snapshot, and compiled code sees the change. That's where the slowdown comes from: the compiler can no longer assume it has read every caller and every write.
+
+Some variables are the exception. The inspector can read the locals of a compiled function but can't assign to them. The same goes for any variable that your program never assigns to after declaring it, like a `const` or a function declaration.

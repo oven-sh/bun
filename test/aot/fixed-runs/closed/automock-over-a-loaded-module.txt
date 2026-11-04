@@ -1,0 +1,11 @@
+jest.doMock() without a factory over a module that a statement loaded.
+#### a.test.mjs
+import { test, mock, jest, vi } from "bun:test";
+const log = (...a) => console.log("| CASE " + a.join(" "));
+const T = f => { try { return String(f()); } catch (e) { return e.name; } };
+import * as l from "./lib.mjs";
+test("a", async () => { log(T(() => l.f())); jest.doMock("./lib.mjs"); log(T(() => l.v), T(() => l.f()), T(() => jest.isMockFunction(l.f))); });
+#### lib.mjs
+console.log("| CASE lib runs");
+export let v = "real v";
+export function f() { return "real f"; }

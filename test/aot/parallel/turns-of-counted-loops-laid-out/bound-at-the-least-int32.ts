@@ -1,0 +1,21 @@
+function run(from: number, n: number): number { let t = 0; for (let i = from | 0; i < (n | 0); i++) t += 1; return t; }
+console.log(run(-2147483648, -2147483648));
+console.log(run(-2147483648, -2147483647));
+console.log(run(-2147483648, -2147483646));
+console.log(run(-2147483648, -2147483645));
+console.log(run(-2147483648, -2147483644));
+console.log(run(-2147483648, -2147483643));
+console.log(run(-2147483648, -2147483642));
+console.log(run(-2147483648, -2147483641));
+console.log(run(-2147483648, -2147483640));
+console.log(run(-2147483648, -2147483639));
+console.log(run(-2147483648, -2147483638));
+console.log(run(-2147483648, -2147483637));
+console.log(run(-2147483648, -2147483636));
+console.log(run(-2147483648, -2147483635));
+console.log(run(-2147483648, -2147483634));
+console.log(run(-2147483648, -2147483633));
+console.log(run(-2147483648, -2147483632));
+console.log(run(-2147483648, -2147483631));
+console.log(run(-2147483648, -2147483630));
+console.log(run(-2147483648, -2147483629));

@@ -1,0 +1,30 @@
+A test file reads the names of a CSS module by a statement, by import() and by require().
+#### a.test.js
+import { test } from "bun:test";
+import styles, { title } from "./s.module.css";
+import { label } from "./product.js";
+const list = object => Object.keys(object).sort().map(key => key + "=" + String(object[key])).join("|");
+test("t", async () => {
+  console.log("| CASE default " + list(styles));
+  console.log("| CASE named " + title);
+  console.log("| CASE product " + label());
+  const imported = await import("./s.module.css");
+  console.log("| CASE import() " + imported.title + " " + (imported.default === styles));
+  console.log("| CASE require() " + list(require("./nested/t.module.css")));
+});
+#### nested/t.module.css
+.other { color: green; composes: deep; } .deep { color: black }
+#### product.js
+import styles from "./s.module.css";
+export function label() { return styles.title + " " + styles["my-class"]; }
+#### s.css
+.x { color: red }
+#### s.module.css
+.title { color: red }
+.b { composes: title; }
+.c { composes: other from "./nested/t.module.css"; }
+.d { composes: plain from global; }
+.my-class { color: blue }
+#anchor { color: green }
+@keyframes spin { from { opacity: 0 } to { opacity: 1 } }
+.e { animation: spin 1s; composes: b c; }

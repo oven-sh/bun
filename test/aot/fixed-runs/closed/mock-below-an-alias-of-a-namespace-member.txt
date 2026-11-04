@@ -1,0 +1,14 @@
+A hoisted mock below imports that only `import seen = ns.seen` names.
+#### a.test.ts
+import { test, vi } from "bun:test";
+import * as ns from "./uses-dep";
+import { inner } from "./uses-dep";
+vi.mock("./dep", () => { console.log("| CASE factory"); return { name: "mocked" }; });
+import seen = ns.seen;
+import deep = inner.deep;
+import far = ns.inner.deep;
+test("t", () => console.log("| CASE", seen, deep, far));
+#### dep.ts
+console.log("| CASE runs dep"); export const name = "real";
+#### uses-dep.ts
+console.log("| CASE runs uses-dep"); import { name } from "./dep"; export const seen = name; export namespace inner { export const deep = "deep " + name; }

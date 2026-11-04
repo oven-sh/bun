@@ -1,0 +1,78 @@
+A mock leaves a file alone that is loaded in two forms (`with { type: "json" }` and `with { type: "text" }`); the next test file mocks nothing.
+#### a.test.js
+import { mock, test } from "bun:test";
+import { later, seen } from "./lib.mjs";
+test("mocks of files that a file of the project loads with types", async () => {
+  console.error("| CASE", seen());
+  const lay = () => {
+    for (const name of ["both", "json", "text", "later", "bare", "first-json", "first-text"]) mock.module("./" + name + ".json", () => ({ default: { v: "MOCK" } }));
+    mock.module("pkg/data.json", () => ({ default: { v: "MOCK" } }));
+  };
+  try {
+    mock.module("./throws.json", () => {
+      throw new Error("boom");
+    });
+  } catch {}
+  lay();
+  console.error("| CASE", seen(), "|", await later());
+  mock.restore();
+  console.error("| CASE", seen(), "|", await later());
+  lay();
+  console.error("| CASE", seen(), "|", await later());
+});
+#### b.test.js
+import { test } from "bun:test";
+import { later, seen } from "./lib.mjs";
+test("the next file, which mocks nothing", async () => {
+  console.error("| CASE", seen(), "|", await later());
+});
+#### bare.json
+{ "v": "real" }
+#### both.json
+{ "v": "real" }
+#### first-json.json
+{ "v": "real" }
+#### first-text.json
+{ "v": "real" }
+#### json.json
+{ "v": "real" }
+#### later.json
+{ "v": "real" }
+#### lib.mjs
+import both from "./both.json" with { type: "json" };
+import bothText from "./both.json" with { type: "text" };
+import json from "./json.json" with { type: "json" };
+import text from "./text.json" with { type: "text" };
+import five from "pkg/data.json" with { type: "json5" };
+import bare from "./bare.json";
+import firstJSON from "./first-json.json" with { type: "json" };
+import firstText from "./first-text.json" with { type: "text" };
+import throws from "./throws.json" with { type: "json" };
+import bareText from "./bare.json" with { type: "text" };
+import { ofPackage } from "pkg";
+export const seen = () =>
+  [both.v, String(bothText).includes("real"), json.v, String(text).includes("real"), ofPackage(), five.v, bare.v, String(bareText).includes("real")].join(" ");
+export const later = async () =>
+  [
+    firstJSON.v,
+    String((await import("./first-json.json", { with: { type: "text" } })).default).includes("real"),
+    String(firstText).includes("real"),
+    (await import("./first-text.json", { with: { type: "json" } })).default.v,
+    throws.v,
+    String((await import("./throws.json", { with: { type: "text" } })).default).includes("real"),
+    (await import("./later.json", { with: { type: "json" } })).default.v,
+    String((await import("./later.json", { with: { type: "text" } })).default).includes("real"),
+  ].join(" ");
+#### node_modules/pkg/data.json
+{ "v": "real" }
+#### node_modules/pkg/index.js
+import data from "./data.json" with { type: "json" };
+export const ofPackage = () => data.v;
+#### node_modules/pkg/package.json
+{ "name": "pkg", "main": "index.js", "type": "module" }
+#### package.json
+{ "name": "forms" }
+#### text.json
+{ "v": "real" }
+#### throws.json
+{ "v": "real" }

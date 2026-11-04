@@ -1,0 +1,437 @@
+use super::dead_code::{DeadRoots, mark_nodes_below};
+use super::evaluate::{Evaluator, Value};
+use super::feature_flags::find_feature_import;
+use super::folder_commonjs::LoaderNames;
+use super::folder_enums::EnumMembers;
+use super::folder_imports::ImportedNames;
+use super::inputs::{FoldInputs, PathState};
+use super::known_sets::ListHolders;
+use super::known_to_bun_run::ExcludedOperand;
+use super::run_order::RunOrder;
+use super::{
+    Constant, Decision, Decisions, FoldError, FoldResult, FoldedConstant, FoldedValue, NodeBits,
+    literal_constant, slice_in,
+};
+use crate::atom::Interner;
+use crate::bind::{Bound, Parent, SymbolId};
+use crate::check::aot::ConstLocalPrefixes;
+use crate::file_analysis::FileInputs;
+use crate::hir::{ExprId, ExprKind, File};
+use crate::hir_from_data::HostValue;
+use crate::import_sites::ImportSpecifier;
+use crate::module_format::main_module_operand;
+use crate::session::Arena;
+use crate::util::{FxHashMap, PositionSet, SharedSort};
+use std::cell::{Cell, OnceCell, RefCell};
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum Effects {
+    Unknown,
+    /// Unknown to the build, which runs the expression. `bun run` writes nothing for the parts that may do something: a list that nobody takes, a name that is only tested.
+    LeftOutByBunRun,
+    /// A cast asks whether its operand has the type.
+    TypeTest,
+    DeadZoneCheck,
+    /// The host may add a member to a built-in object when the member is first read.
+    MemberRead,
+    None,
+}
+
+#[derive(Copy, Clone)]
+pub(super) struct Folded {
+    pub(super) value: Value,
+    pub(super) effects: Effects,
+}
+
+impl Folded {
+    pub(super) const UNKNOWN: Folded = Folded::new(Value::Unknown, Effects::Unknown);
+
+    pub(super) const fn new(value: Value, effects: Effects) -> Folded {
+        Folded { value, effects }
+    }
+
+    pub(super) fn constant(constant: Constant) -> Folded {
+        Folded::new(Value::from(constant), Effects::None)
+    }
+}
+
+pub(crate) struct MarkedNodes {
+    pub(crate) exprs: PositionSet,
+    pub(super) stmts: PositionSet,
+    pub(super) functions: PositionSet,
+}
+
+pub(super) struct Folder<'a, 's> {
+    pub(super) hir: &'a File<'s>,
+    pub(super) bound: &'a Bound<'s>,
+    pub(super) inputs: &'a FoldInputs<'s>,
+    pub(super) file: &'a FileInputs<'s>,
+    pub(super) atoms: &'a Interner<'s>,
+    pub(super) arena: &'s Arena,
+    pub(super) evaluator: Evaluator<'a, 's>,
+    pub(super) feature_symbol: SymbolId,
+    pub(super) loader_names: OnceCell<LoaderNames>,
+    pub(super) this_of_file: OnceCell<PositionSet>,
+    pub(super) run_order: OnceCell<RunOrder>,
+    pub(super) constant_prefixes: RefCell<ConstLocalPrefixes>,
+    /// What `bun run` writes in place of a read out of a literal, such as `a` for `[a][0]`.
+    pub(super) written_in_place: FxHashMap<ExprId, ExprId>,
+    pub(super) process_imports: OnceCell<Vec<SymbolId>>,
+    pub(super) exported_variables: OnceCell<Vec<SymbolId>>,
+    pub(super) list_holders: ListHolders,
+    pub(super) imported_names: ImportedNames,
+    pub(super) enum_members: EnumMembers,
+    pub(super) relies_on_running_before_calls: Cell<bool>,
+    asks_for_main_module: bool,
+    pub(super) values: Vec<Value>,
+    pub(super) effects: Vec<Effects>,
+    pub(super) path_states: FxHashMap<ExprId, PathState>,
+    pub(super) data_literals: PositionSet,
+    pub(super) decided: Vec<(ExprId, Decision<'s>)>,
+    pub(super) specifiers: Vec<(ExprId, ImportSpecifier)>,
+    pub(super) paths_from_own_directory: Vec<ExprId>,
+    pub(super) paths_made_by_calls: Vec<ExprId>,
+    pub(super) has_followed_path_call: Cell<bool>,
+    pub(super) excluded_operands: Vec<ExcludedOperand>,
+    pub(super) folded_by_build_alone: PositionSet,
+    /// Of `folded_by_build_alone`, in a build without `--minify-syntax`: what `bun build` folds once it has the flag, and so what `bun run` folds.
+    pub(super) folded_under_minify_syntax: PositionSet,
+    pub(super) conditions_told_under_minify_syntax: PositionSet,
+    pub(super) assumes_minify_syntax: Cell<bool>,
+    pub(super) numbers_of_parser: PositionSet,
+    pub(super) places_always_computed: OnceCell<PositionSet>,
+    pub(super) conditions_told_by_shape: PositionSet,
+    pub(super) nullish_logical_results: FxHashMap<ExprId, bool>,
+    pub(super) conditions: FxHashMap<ExprId, bool>,
+    pub(super) short_circuited_links: PositionSet,
+    pub(super) is_main_of_import_meta_written: OnceCell<bool>,
+    pub(super) call_errors: Vec<(ExprId, FoldError)>,
+    pub(super) strings_over_limit: Vec<ExprId>,
+}
+
+pub(super) fn run<'s>(
+    hir: &File<'s>,
+    bound: &Bound<'s>,
+    inputs: &FoldInputs<'s>,
+    file: &FileInputs<'s>,
+    atoms: &Interner<'s>,
+    arena: &'s Arena,
+) -> FoldResult<'s> {
+    let mut errors = Vec::new();
+    let over_limit_count = Cell::new(0);
+    let mut folder = Folder {
+        hir,
+        bound,
+        inputs,
+        file,
+        atoms,
+        arena,
+        evaluator: Evaluator::new(atoms, inputs.max_string_bytes, &over_limit_count)
+            .with_max_pattern_bytes(inputs.max_pattern_bytes),
+        feature_symbol: find_feature_import(hir, bound, &mut errors),
+        loader_names: OnceCell::new(),
+        this_of_file: OnceCell::new(),
+        run_order: OnceCell::new(),
+        constant_prefixes: RefCell::default(),
+        written_in_place: FxHashMap::default(),
+        process_imports: OnceCell::new(),
+        exported_variables: OnceCell::new(),
+        list_holders: ListHolders::default(),
+        imported_names: ImportedNames::default(),
+        enum_members: EnumMembers::none(),
+        relies_on_running_before_calls: Cell::new(false),
+        asks_for_main_module: false,
+        values: vec![Value::Unknown; hir.exprs.len()],
+        effects: vec![Effects::Unknown; hir.exprs.len()],
+        path_states: FxHashMap::default(),
+        data_literals: PositionSet::new(hir.exprs.len()),
+        decided: Vec::new(),
+        specifiers: Vec::new(),
+        paths_from_own_directory: Vec::new(),
+        paths_made_by_calls: Vec::new(),
+        has_followed_path_call: Cell::new(false),
+        excluded_operands: Vec::new(),
+        folded_by_build_alone: PositionSet::new(hir.exprs.len()),
+        folded_under_minify_syntax: PositionSet::new(hir.exprs.len()),
+        conditions_told_under_minify_syntax: PositionSet::new(hir.exprs.len()),
+        assumes_minify_syntax: Cell::new(false),
+        numbers_of_parser: PositionSet::new(hir.exprs.len()),
+        places_always_computed: OnceCell::new(),
+        conditions_told_by_shape: PositionSet::new(hir.exprs.len()),
+        nullish_logical_results: FxHashMap::default(),
+        conditions: FxHashMap::default(),
+        short_circuited_links: PositionSet::new(hir.exprs.len()),
+        is_main_of_import_meta_written: OnceCell::new(),
+        call_errors: Vec::new(),
+        strings_over_limit: Vec::new(),
+    };
+    folder.fold_exprs();
+    folder.finish(errors, arena)
+}
+
+impl<'s> Folder<'_, 's> {
+    fn fold_exprs(&mut self) {
+        self.fold_enums();
+        for e in (0..self.hir.exprs.len() as u32).map(ExprId) {
+            if !self.enum_members.is_folded_ahead(e) {
+                self.fold_at(e);
+            }
+        }
+    }
+
+    pub(super) fn fold_at(&mut self, e: ExprId) {
+        let index = e.idx();
+        self.asks_for_main_module |= match self.hir[e].kind {
+            ExprKind::ImportMeta => true,
+            ExprKind::Binary { .. } => main_module_operand(self.hir, self.bound, e).is_some(),
+            _ => false,
+        };
+        if self.bound.parent_of_expr(e) == Parent::None {
+            return;
+        }
+        let host_values = self.file.host_values;
+        let host_value = host_values.binary_search_by_key(&e, |entry| entry.0);
+        let over_limit_before = self.evaluator.over_limit_count();
+        let folded = match host_value {
+            Ok(at) => self.decide_host_value(e, host_values[at].1),
+            Err(_) => self.fold_expr(e),
+        };
+        if self.evaluator.over_limit_count() != over_limit_before {
+            self.strings_over_limit.push(e);
+        }
+        let is_nan = folded.value.is_nan();
+        let is_marked_by_its_own_rule = self.folded_by_build_alone.contains(index);
+        let is_left_to_run_time = is_nan && self.converts_an_operand_to_a_number(e);
+        let is_folded_by_build_alone =
+            self.has_operand_folded_by_build_alone(e) || is_left_to_run_time;
+        if is_folded_by_build_alone {
+            self.folded_by_build_alone.insert(index);
+            if self.tells_condition_by_shape(e) {
+                self.conditions_told_by_shape.insert(index);
+            }
+            if !is_marked_by_its_own_rule && !is_left_to_run_time {
+                self.note_fold_under_minify_syntax(e, folded.value);
+            }
+        }
+        let is_printed_as_number =
+            folded.value.is_finite_number() && !self.folded_by_build_alone.contains(index);
+        let is_number_of_parser =
+            is_printed_as_number || (folded.value.is_number() && self.is_computed_by_parser(e));
+        if is_number_of_parser {
+            self.numbers_of_parser.insert(index);
+        }
+        // Plain Bun has one NaN for what it folds. Any other NaN has the sign that its operation gives where it runs.
+        if is_nan && is_folded_by_build_alone && !is_number_of_parser {
+            self.conditions.insert(e, false);
+            self.effects[index] = folded.effects;
+        } else if let Value::Known(_) = folded.value {
+            self.values[index] = folded.value;
+            self.effects[index] = folded.effects;
+        }
+    }
+
+    fn decide_host_value(&mut self, e: ExprId, value: HostValue<'s>) -> Folded {
+        match value {
+            HostValue::Data(data) => self.decide(e, Decision::of_data(data)),
+            HostValue::Deferred => self.decide(e, Decision::DeferredData),
+        }
+    }
+
+    pub(super) fn decide(&mut self, e: ExprId, decision: Decision<'s>) -> Folded {
+        self.decided.push((e, decision));
+        match decision {
+            Decision::Constant(constant) => Folded::constant(constant),
+            Decision::Data(_) => {
+                self.data_literals.insert(e.idx());
+                Folded::UNKNOWN
+            }
+            Decision::Unknown | Decision::GlobalPath(_) | Decision::DeferredData => Folded::UNKNOWN,
+        }
+    }
+
+    pub(super) fn folded(&self, e: ExprId) -> Folded {
+        match (self.values.get(e.idx()), self.effects.get(e.idx())) {
+            (Some(&value), Some(&effects)) => Folded::new(value, effects),
+            (None, _) | (_, None) => Folded::UNKNOWN,
+        }
+    }
+
+    pub(super) fn condition(&self, e: ExprId) -> Option<bool> {
+        match self.folded(e).value {
+            Value::Known(value) => Some(self.evaluator.to_boolean(value)),
+            Value::Unknown => self.conditions.get(&e).copied(),
+        }
+    }
+
+    pub(super) fn copy_condition(&mut self, e: ExprId, source: ExprId) {
+        if let Some(&is_truthy) = self.conditions.get(&source) {
+            self.conditions.insert(e, is_truthy);
+        }
+    }
+
+    pub(super) fn folded_value(&self, e: ExprId) -> FoldedValue {
+        let folded = self.folded(e);
+        match (folded.value, folded.effects) {
+            (Value::Known(value), Effects::None) => {
+                FoldedValue::Constant(self.evaluator.to_constant(value))
+            }
+            (
+                Value::Known(value),
+                Effects::TypeTest | Effects::DeadZoneCheck | Effects::MemberRead,
+            ) => FoldedValue::ConstantOutsideDeadZone(self.evaluator.to_constant(value)),
+            (Value::Known(_), Effects::Unknown | Effects::LeftOutByBunRun)
+            | (Value::Unknown, _) => FoldedValue::Unknown,
+        }
+    }
+
+    pub(super) fn parent_expr(&self, e: ExprId) -> Option<ExprId> {
+        if let Parent::Expr(parent) = self.bound.parent_of_expr(e) {
+            parent.some()
+        } else {
+            None
+        }
+    }
+
+    fn collect_constants(&self, dead: &MarkedNodes) -> Vec<FoldedConstant> {
+        let mut constants = Vec::new();
+        for (index, node) in self.hir.exprs.iter().enumerate() {
+            if matches!(self.values[index], Value::Unknown) || dead.exprs.contains(index) {
+                continue;
+            }
+            if literal_constant(self.hir, node.kind).is_some() {
+                continue;
+            }
+            let expr = ExprId(index as u32);
+            let (constant, checks_dead_zone) = match self.folded_value(expr) {
+                FoldedValue::Unknown => continue,
+                FoldedValue::Constant(constant) => (constant, false),
+                FoldedValue::ConstantOutsideDeadZone(constant) => (constant, true),
+            };
+            constants.push(FoldedConstant {
+                expr,
+                constant,
+                checks_dead_zone,
+                is_known_to_bun_run: self.is_folded_by_bun_run(expr),
+            });
+        }
+        constants
+    }
+
+    fn collect_strings_and_numbers_of_bun_run_alone(&self, dead: &MarkedNodes) -> PositionSet {
+        let mut found = PositionSet::new(self.hir.exprs.len());
+        for (index, &effects) in self.effects.iter().enumerate() {
+            if effects != Effects::LeftOutByBunRun || dead.exprs.contains(index) {
+                continue;
+            }
+            // It keeps the name of the member beside the value, which is no string and no number to whoever asks for one of the two.
+            if self.is_enum_member_written_in_place(ExprId(index as u32)) {
+                continue;
+            }
+            let is_string_or_number = match self.values[index] {
+                Value::Known(value) => {
+                    self.values[index].is_number() || self.evaluator.is_string(value)
+                }
+                Value::Unknown => false,
+            };
+            if is_string_or_number && self.is_folded_by_bun_run(ExprId(index as u32)) {
+                found.insert(index);
+            }
+        }
+        found
+    }
+
+    fn collect_truthy_without_effects(&self) -> PositionSet {
+        let mut found = PositionSet::new(self.hir.exprs.len());
+        for &e in self.conditions.keys() {
+            if self.is_truthy_without_effects(e) {
+                found.insert(e.idx());
+            }
+        }
+        found
+    }
+
+    fn collect_member_reads(&self) -> PositionSet {
+        let mut found = PositionSet::new(self.hir.exprs.len());
+        for (index, &effects) in self.effects.iter().enumerate() {
+            if effects == Effects::MemberRead {
+                found.insert(index);
+            }
+        }
+        found
+    }
+
+    fn finish(mut self, mut errors: Vec<FoldError>, arena: &'s Arena) -> FoldResult<'s> {
+        // What stands in an enum was decided ahead of the rest.
+        self.decided.shared_sort_unstable_by_key(|entry| entry.0);
+        self.strings_over_limit.shared_sort_unstable();
+        self.specifiers.shared_sort_unstable_by_key(|entry| entry.0);
+        self.paths_from_own_directory.shared_sort_unstable();
+        self.paths_made_by_calls.shared_sort_unstable();
+        let DeadRoots { all, in_bun_run } = self.find_dead_roots();
+        // In most files nothing is folded under the flag alone.
+        let folds_more_under_minify_syntax = self.folded_under_minify_syntax.iter().next().is_some()
+            || (self.conditions_told_under_minify_syntax.iter().next()).is_some();
+        let dead_under_minify_syntax = folds_more_under_minify_syntax
+            .then(|| self.holds_under_minify_syntax(|folder| folder.find_dead_roots().in_bun_run))
+            .filter(|under_minify_syntax| *under_minify_syntax != in_bun_run)
+            .map(|under_minify_syntax| {
+                let dead = mark_nodes_below(self.hir, under_minify_syntax);
+                let exprs = NodeBits::freeze(&dead.exprs, arena);
+                (exprs, NodeBits::freeze(&dead.stmts, arena))
+            });
+        let dead_in_bun_run = (in_bun_run != all)
+            .then(|| mark_nodes_below(self.hir, in_bun_run))
+            .map(|dead| {
+                let exprs = NodeBits::freeze(&dead.exprs, arena);
+                (exprs, NodeBits::freeze(&dead.stmts, arena))
+            });
+        let dead = mark_nodes_below(self.hir, all);
+        let (dead_exprs, dead_stmts) = (
+            NodeBits::freeze(&dead.exprs, arena),
+            NodeBits::freeze(&dead.stmts, arena),
+        );
+        let (dead_exprs_in_bun_run, dead_stmts_in_bun_run) =
+            dead_in_bun_run.unwrap_or((dead_exprs, dead_stmts));
+        let (dead_exprs_under_minify_syntax, dead_stmts_under_minify_syntax) =
+            dead_under_minify_syntax.unwrap_or((dead_exprs_in_bun_run, dead_stmts_in_bun_run));
+        let decisions = Decisions {
+            decided: slice_in(&self.decided, arena),
+            is_decided: NodeBits::of_ascending(self.decided.iter().map(|entry| entry.0.idx()), arena),
+            constants: slice_in(&self.collect_constants(&dead), arena),
+            strings_and_numbers_of_bun_run_alone: NodeBits::freeze(
+                &self.collect_strings_and_numbers_of_bun_run_alone(&dead),
+                arena,
+            ),
+            specifiers: slice_in(&self.specifiers, arena),
+            paths_from_own_directory: slice_in(&self.paths_from_own_directory, arena),
+            paths_made_by_calls: slice_in(&self.paths_made_by_calls, arena),
+            data_literals: NodeBits::freeze(&self.data_literals, arena),
+            dead_exprs,
+            dead_stmts,
+            dead_exprs_in_bun_run,
+            dead_stmts_in_bun_run,
+            dead_exprs_under_minify_syntax,
+            dead_stmts_under_minify_syntax,
+            dead_functions: NodeBits::freeze(&dead.functions, arena),
+            short_circuited_links: NodeBits::freeze(&self.short_circuited_links, arena),
+            truthy_without_effects: NodeBits::freeze(&self.collect_truthy_without_effects(), arena),
+            member_reads: NodeBits::freeze(&self.collect_member_reads(), arena),
+            folded_under_minify_syntax: NodeBits::freeze(
+                &self.collect_constants_under_minify_syntax(),
+                arena,
+            ),
+            folded_with: *self.inputs,
+        };
+        let call_errors = self.call_errors.iter();
+        let live_call_errors = call_errors.filter(|entry| !decisions.is_dead_expr(entry.0));
+        errors.extend(live_call_errors.map(|entry| entry.1));
+        FoldResult {
+            decisions,
+            errors: slice_in(&errors, arena),
+            strings_over_limit: slice_in(&self.strings_over_limit, arena),
+            relies_on_running_before_calls: self.relies_on_running_before_calls.get(),
+            asks_for_main_module: self.asks_for_main_module,
+            imported_names: slice_in(&self.imported_names.into_asked_for(), arena),
+        }
+    }
+}

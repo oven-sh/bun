@@ -1,0 +1,550 @@
+use super::*;
+
+const TSX: Setup = Setup {
+    path: "/project/a.tsx",
+    ..PROGRAM
+};
+
+// As TypeScript prints `globalThis.own ??= {}`.
+macro_rules! kept_for_own_name {
+    ($further:literal) => {
+        concat!("var a; (a = globalThis).own ?? (a.own = {}); ", $further)
+    };
+}
+
+const NOT_EXPOSED: &[(&str, BuiltinId)] = &[
+    (kept_for_own_name!(""), BuiltinId::GlobalThis),
+    (
+        "var a; ((a = global) as any).own; a = self; a; function f() { a.other = 1; }",
+        BuiltinId::GlobalThis,
+    ),
+    ("new Map();", BuiltinId::Map),
+    ("Map();", BuiltinId::Map),
+    ("Map``;", BuiltinId::Map),
+    ("typeof Math;", BuiltinId::Math),
+    ("x instanceof Map;", BuiltinId::Map),
+    ("Math === x;", BuiltinId::Math),
+    ("Math;", BuiltinId::Math),
+    ("(Math, x);", BuiltinId::Math),
+    ("if (Math) {}", BuiltinId::Math),
+    ("while (Math) {}", BuiltinId::Math),
+    ("for (; Math; Math) {}", BuiltinId::Math),
+    ("Math ? x : y;", BuiltinId::Math),
+    ("Math.zzz;", BuiltinId::Math),
+    ("Math.floor = f;", BuiltinId::Math),
+    ("Math = x;", BuiltinId::Math),
+    ("`${Math}`;", BuiltinId::Math),
+    ("o[Math];", BuiltinId::Math),
+    ("({ [Math]: 1 });", BuiltinId::Math),
+    ("switch (Math) {}", BuiltinId::Math),
+    ("switch (x) { case Math: }", BuiltinId::Math),
+    ("Map.prototype.constructor;", BuiltinId::MapPrototype),
+    ("Object.prototype.__proto__;", BuiltinId::ObjectPrototype),
+    ("Object.prototype.valueOf();", BuiltinId::ObjectPrototype),
+    ("URL.prototype.toString;", BuiltinId::URLPrototype),
+];
+
+// `process` lists all that it holds and what stands above it, `Bun` and the global object do not.
+const INHERITED_OBJECT_PROTOTYPE_MEMBERS: &[(&str, BuiltinId)] = &[
+    (
+        "process.__proto__ = { get all() { return this; } };",
+        BuiltinId::Process,
+    ),
+    ("process.__proto__;", BuiltinId::Process),
+    ("process[\"__proto__\"] = x;", BuiltinId::Process),
+    ("process[`__proto__`];", BuiltinId::Process),
+    ("process?.__proto__;", BuiltinId::Process),
+    ("({ __proto__: a } = process);", BuiltinId::Process),
+    ("(process as any).__proto__ = x;", BuiltinId::Process),
+    ("const p = process; p.__proto__ = x;", BuiltinId::Process),
+    ("process.constructor;", BuiltinId::Process),
+    ("const { constructor } = process;", BuiltinId::Process),
+    ("const { __proto__: above } = process;", BuiltinId::Process),
+    ("process.valueOf();", BuiltinId::Process),
+    ("process.__defineGetter__(\"all\", f);", BuiltinId::Process),
+    ("Object.setPrototypeOf(process, x);", BuiltinId::Process),
+    ("Reflect.setPrototypeOf(process, x);", BuiltinId::Process),
+    ("Bun.__proto__ = {};", BuiltinId::Bun),
+    ("Bun.constructor;", BuiltinId::Bun),
+    ("globalThis.__proto__;", BuiltinId::GlobalThis),
+    ("globalThis.constructor;", BuiltinId::GlobalThis),
+];
+
+const EXPOSED: &[(&str, BuiltinId)] = &[
+    ("f(Math);", BuiltinId::Math),
+    ("new f(Math);", BuiltinId::Math),
+    ("f`${Math}`;", BuiltinId::Math),
+    ("x = Math;", BuiltinId::Math),
+    ("[Math];", BuiltinId::Math),
+    ("[...Math];", BuiltinId::Math),
+    ("({ Math });", BuiltinId::Math),
+    ("({ a: Math });", BuiltinId::Math),
+    ("function f() { return Math; }", BuiltinId::Math),
+    ("() => Math;", BuiltinId::Math),
+    ("throw Math;", BuiltinId::Math),
+    ("class A extends Map {}", BuiltinId::Map),
+    ("class A { m = Math; }", BuiltinId::Math),
+    ("for (const k in Math) {}", BuiltinId::Math),
+    ("for (const k of Math) {}", BuiltinId::Math),
+    ("export default Math;", BuiltinId::Math),
+    ("(x ? Math : y).floor;", BuiltinId::Math),
+    ("f(x ? Math : y);", BuiltinId::Math),
+    ("f(x || Math);", BuiltinId::Math),
+    ("f(x ?? Math);", BuiltinId::Math),
+    ("f((x, Math));", BuiltinId::Math),
+    ("f(Math as any);", BuiltinId::Math),
+    ("function f(a = Math) {}", BuiltinId::Math),
+    ("const { a = Math } = x;", BuiltinId::Math),
+    ("async function g() { await Math; }", BuiltinId::Math),
+    ("function* g() { yield Math; }", BuiltinId::Math),
+    ("delete Math.floor;", BuiltinId::Math),
+    ("delete Math[\"floor\"];", BuiltinId::Math),
+    ("delete Math.zzz;", BuiltinId::Math),
+    (kept_for_own_name!("f(a);"), BuiltinId::GlobalThis),
+    (kept_for_own_name!("() => a;"), BuiltinId::GlobalThis),
+    (kept_for_own_name!("a.Bun;"), BuiltinId::GlobalThis),
+    (kept_for_own_name!("a.constructor;"), BuiltinId::GlobalThis),
+    (
+        kept_for_own_name!("a.__proto__ = {};"),
+        BuiltinId::GlobalThis,
+    ),
+    (kept_for_own_name!("a[k];"), BuiltinId::GlobalThis),
+    (kept_for_own_name!("\"own\" in a;"), BuiltinId::GlobalThis),
+    (kept_for_own_name!("a.own();"), BuiltinId::GlobalThis),
+    (kept_for_own_name!("a.own`t`;"), BuiltinId::GlobalThis),
+    (kept_for_own_name!("delete a.own;"), BuiltinId::GlobalThis),
+    (kept_for_own_name!("a = {};"), BuiltinId::GlobalThis),
+    (kept_for_own_name!("a = process;"), BuiltinId::GlobalThis),
+    (kept_for_own_name!("a++;"), BuiltinId::GlobalThis),
+    (kept_for_own_name!("[a] = l;"), BuiltinId::GlobalThis),
+    (kept_for_own_name!("for (a in o) {}"), BuiltinId::GlobalThis),
+    (kept_for_own_name!("export { a };"), BuiltinId::GlobalThis),
+    (kept_for_own_name!("eval(\"a\");"), BuiltinId::GlobalThis),
+    ("export var a; (a = globalThis).own;", BuiltinId::GlobalThis),
+    ("var a = 0; (a = globalThis).own;", BuiltinId::GlobalThis),
+    ("let a; (a = globalThis).own;", BuiltinId::GlobalThis),
+    (
+        "function f(a) { (a = globalThis).own; }",
+        BuiltinId::GlobalThis,
+    ),
+    ("var a; (a = globalThis).own();", BuiltinId::GlobalThis),
+    ("var a; x = a = globalThis;", BuiltinId::GlobalThis),
+    ("var a; (a = Date).own;", BuiltinId::Date),
+    ("var a; (a = import.meta).own;", BuiltinId::ImportMeta),
+    (
+        "var a; (a = Object.prototype).own;",
+        BuiltinId::ObjectPrototype,
+    ),
+];
+
+const FOLLOWED: &[&str] = &["Object.keys(process);", "Reflect.ownKeys(process);"];
+
+const HANDED_OVER: &[&str] = &[
+    "f(process);",
+    "delete process.title;",
+    "const p = process; delete p.title;",
+    "new f(process);",
+    "x.f(process);",
+    "x = process;",
+    "(x = process).pid;",
+    "x.p = process;",
+    "[process];",
+    "({ a: process });",
+    "function f() { return process; }",
+    "export default process;",
+    "export let p = process;",
+    "export let p = process; p = x;",
+    "export let p; p = process;",
+    "let p = process; export { p };",
+    "process[k];",
+    "process.hasOwnProperty(k);",
+    "process.zzz();",
+    "process.zzz`a`;",
+    "process.propertyIsEnumerable(k);",
+    "process.__lookupGetter__(k);",
+    "for (const k in process) {}",
+    "f.call(process);",
+    "f.bind(process);",
+    "function f() {} f.call(process);",
+    "process.cwd.call(x, process);",
+    "Object.setPrototypeOf(x, process);",
+    "Object.defineProperty(x, \"p\", process);",
+    "Object.defineProperty(x, \"p\", { value: process });",
+    "Object.values(process);",
+    "Object.assign({}, process);",
+    "console.log(process);",
+    "JSON.stringify(process);",
+    "({ ...process });",
+    "const copy = { a: 1, ...process };",
+    "k in process;",
+    "Reflect.has(process, k);",
+    "Object.hasOwn(process, k);",
+    "Object.prototype.hasOwnProperty.call(process, k);",
+    "Object.prototype.propertyIsEnumerable.apply(process, [k]);",
+    "Object.prototype.valueOf.call(process);",
+    "console.log.call(process);",
+    "process.on.call(process, k, f);",
+    "const { pid } = c ? process : x;",
+    "f(...process);",
+    "const { ...rest } = process;",
+    "const { [k]: a } = process;",
+    "import fs from \"node:fs\"; fs.writeSync(process);",
+];
+
+#[test]
+fn object_whose_every_use_is_in_sight_is_not_exposed() {
+    for &source in FOLLOWED {
+        with_case(PROGRAM, source, |case| {
+            assert!(case.mentions(BuiltinId::Process), "{source}");
+            assert!(case.resolved.exposed().is_empty(), "{source}");
+        });
+    }
+}
+
+#[test]
+fn object_that_goes_out_of_sight_is_exposed() {
+    for &source in HANDED_OVER {
+        with_case(PROGRAM, source, |case| {
+            assert!(case.exposes(BuiltinId::Process), "{source}")
+        });
+    }
+}
+
+#[test]
+fn reading_an_inherited_object_prototype_member_exposes_the_holder() {
+    let mut kept_in_sight = Vec::new();
+    for &(source, id) in INHERITED_OBJECT_PROTOTYPE_MEMBERS {
+        with_case(PROGRAM, source, |case| {
+            if !case.exposes(id) {
+                kept_in_sight.push(source);
+            }
+        });
+    }
+    assert!(kept_in_sight.is_empty(), "{kept_in_sight:#?}");
+}
+
+const THIS_OF_SLOPPY_FUNCTIONS: &[(&str, BuiltinId)] = &[
+    ("(function () { return this; })();", BuiltinId::GlobalThis),
+    ("function f() { var self = this; }", BuiltinId::GlobalThis),
+    ("function f() { g.call(this); }", BuiltinId::GlobalThis),
+    ("function f() { this.own(); }", BuiltinId::GlobalThis),
+    ("function f() { this[k]; }", BuiltinId::GlobalThis),
+    ("function f() { this.constructor; }", BuiltinId::GlobalThis),
+    (
+        "function f() { const { process } = this; }",
+        BuiltinId::GlobalThis,
+    ),
+    ("function f() { return () => this; }", BuiltinId::GlobalThis),
+    ("function f(a = this) {}", BuiltinId::GlobalThis),
+    ("({ get all() { return this; } });", BuiltinId::GlobalThis),
+    (
+        "[1].forEach(function () { this.process; });",
+        BuiltinId::Process,
+    ),
+    ("function f() { this.process.pid; }", BuiltinId::Process),
+    ("function f() { this.process ??= x; }", BuiltinId::Process),
+];
+
+const THIS_OF_OTHER_CODE: &[&str] = &[
+    "function f() { 'use strict'; return this; }",
+    "'use strict'; function f() { return this; }",
+    "x = this; const f = () => this;",
+    "class A { m() { return this; } static { f(this); } }",
+    "class A { m = this; n = () => this; }",
+    "function f() { this.process = 1; this.own; this.own = this.other; }",
+    "function f() { typeof this; this instanceof f; if (!this) {} this; }",
+];
+
+#[test]
+fn this_of_a_sloppy_function_may_be_the_global_object() {
+    let mut kept_in_sight = Vec::new();
+    for &(source, id) in THIS_OF_SLOPPY_FUNCTIONS {
+        with_case(SCRIPT, source, |case| {
+            if !case.exposes(id) {
+                kept_in_sight.push(source);
+            }
+        });
+    }
+    assert!(kept_in_sight.is_empty(), "{kept_in_sight:#?}");
+}
+
+#[test]
+fn this_of_strict_code_and_of_a_file_is_not_the_global_object() {
+    for &source in THIS_OF_OTHER_CODE {
+        with_case(SCRIPT, source, |case| {
+            assert!(case.resolved.exposed().is_empty(), "{source}");
+        });
+    }
+    with_case(PROGRAM, "export function f() { return this; }", |case| {
+        assert!(case.resolved.exposed().is_empty());
+    });
+    with_case(RUNTIME, "function f() { return this; }", |case| {
+        assert!(case.resolved.exposed().is_empty());
+    });
+}
+
+case_tests! {
+    accessor_defined_on_the_global_object_replaces_the_global: TEST_RUN,
+        "globalThis.__defineGetter__('structuredClone', f); globalThis.__defineSetter__('fetch', f); Math.__defineGetter__('max', f);",
+        |case| {
+            let replaced = case.resolved.replaced_members();
+            assert!(replaced.contains(&BuiltinId::StructuredClone));
+            assert!(replaced.contains(&BuiltinId::Fetch));
+            assert!(replaced.contains(&BuiltinId::MathMax));
+            assert!(!replaced.contains(&BuiltinId::QueueMicrotask));
+        };
+    variable_that_may_hold_object_is_not_resolved: PROGRAM,
+        "var a; if (!a) a = process; a.pid; function f(p) { p.pid; } f(process);",
+        |case| {
+            for text in ["a", "a.pid", "a = process", "p", "p.pid"] {
+                assert!(case.exprs(text).iter().all(|&expr| case.resolved_at(expr).is_none()), "{text}");
+            }
+            assert_eq!(case.builtin("process"), Some(BuiltinId::Process));
+        };
+    function_member_exposes_nothing: PROGRAM, "f(Math.floor);", |case| {
+        assert!(case.mentions(BuiltinId::MathFloor));
+        assert!(case.resolved.exposed().is_empty());
+    };
+    class_heritage_exposes_class: PROGRAM, "class A extends Map {}", |case| {
+        assert!(case.exposes(BuiltinId::Map));
+        assert!(!case.exposes(BuiltinId::GlobalThis));
+    };
+    unexposed_lists_are_empty: PROGRAM, "console.log(1); Math.floor(2);", |case| {
+        assert!(case.mentions(BuiltinId::ConsoleLog));
+        assert!(case.resolved.exposed().is_empty());
+    };
+    dynamic_scope_exposes: SCRIPT, "with (o) { process.pid; }", |case| {
+        assert!(case.mentions(BuiltinId::Process));
+        assert!(case.exposes(BuiltinId::Process));
+        assert!(!case.mentions(BuiltinId::ProcessPid));
+    };
+}
+
+#[test]
+fn uses_without_exposure() {
+    for &(source, id) in NOT_EXPOSED {
+        with_case(PROGRAM, source, |case| {
+            assert!(case.mentions(id), "{source}");
+            assert!(!case.exposes(id), "{source}");
+        });
+    }
+}
+
+#[test]
+fn uses_with_exposure() {
+    for &(source, id) in EXPOSED {
+        with_case(PROGRAM, source, |case| {
+            assert!(case.mentions(id), "{source}");
+            assert!(case.exposes(id), "{source}");
+        });
+    }
+    with_case(TSX, "<Map />;", |case| {
+        assert!(case.exposes(BuiltinId::Map))
+    });
+}
+
+#[test]
+fn variable_kept_for_own_name_is_exposed_where_the_text_does_not_show_every_use() {
+    let factory = Setup {
+        jsx_factory_root: Some("a"),
+        ..TSX
+    };
+    for (setup, source) in [
+        (RUNTIME, kept_for_own_name!("")),
+        (SCRIPT, kept_for_own_name!("with (o) { a.own; }")),
+        (factory, kept_for_own_name!("<div />;")),
+    ] {
+        with_case(setup, source, |case| {
+            assert!(case.exposes(BuiltinId::GlobalThis), "{source}");
+        });
+    }
+    let source = "import * as jsc from \"bun:jsc\"; var a; (a = jsc).own;";
+    with_case(PROGRAM, source, |case| {
+        assert!(case.exposes(jsc_namespace()));
+    });
+}
+
+#[test]
+fn exposure_unit_is_object() {
+    with_case(PROGRAM, "f(Array.prototype);", |case| {
+        assert!(case.exposes(BuiltinId::ArrayPrototype));
+        assert!(!case.exposes(BuiltinId::Array));
+    });
+    with_case(PROGRAM, "class C extends Bun.RedisClient {}", |case| {
+        assert!(case.exposes(BuiltinId::BunRedisClient));
+        assert!(case.mentions(BuiltinId::Bun));
+        assert!(!case.exposes(BuiltinId::Bun));
+    });
+}
+
+#[test]
+fn lists_ascend_and_are_unique() {
+    let source = "f(Math, process, Math, Array.prototype, Map); Math.floor; Math.floor;";
+    with_case(PROGRAM, source, |case| {
+        let mentioned = case.resolved.mentioned();
+        assert!(mentioned.is_sorted_by(|left, right| left < right));
+        let mut exposed = [
+            BuiltinId::Math,
+            BuiltinId::Process,
+            BuiltinId::ArrayPrototype,
+            BuiltinId::Map,
+        ];
+        exposed.sort_unstable();
+        assert_eq!(case.resolved.exposed(), exposed);
+        assert!(exposed.iter().all(|id| mentioned.contains(id)));
+    });
+}
+
+#[test]
+fn computed_key_read_exposes() {
+    for source in [
+        "process[k];",
+        "process[k] = x;",
+        "delete process[k];",
+        "const p = process; p[k];",
+        "import p from \"node:process\"; p[k];",
+    ] {
+        with_case(PROGRAM, source, |case| {
+            assert!(case.mentions(BuiltinId::Process), "{source}");
+            assert!(case.exposes(BuiltinId::Process), "{source}");
+        });
+    }
+    with_case(PROGRAM, "Array.prototype[Symbol.iterator];", |case| {
+        assert!(!case.exposes(BuiltinId::ArrayPrototype));
+    });
+}
+
+#[test]
+fn computed_key_read_of_global_object_exposes() {
+    for source in ["globalThis[k];", "global[k];", "const g = self; g[k];"] {
+        with_case(PROGRAM, source, |case| {
+            assert!(case.exposes(BuiltinId::GlobalThis), "{source}");
+        });
+    }
+}
+
+#[test]
+fn computed_key_read_of_required_namespace_exposes() {
+    for (setup, source) in [
+        (SCRIPT, "require(\"bun:jsc\")[k];"),
+        (SCRIPT, "const jsc = require(\"bun:jsc\"); jsc[k];"),
+        (
+            PROGRAM,
+            "const jsc = import.meta.require(\"bun:jsc\"); jsc[k];",
+        ),
+        (
+            PROGRAM,
+            "const jsc = process.getBuiltinModule(\"bun:jsc\"); jsc[k];",
+        ),
+        (PROGRAM, "import jsc = require(\"bun:jsc\"); jsc[k];"),
+        (PROGRAM, "import * as jsc from \"bun:jsc\"; jsc[k];"),
+    ] {
+        with_case(setup, source, |case| {
+            assert!(case.mentions(jsc_namespace()), "{source}");
+            assert!(case.exposes(jsc_namespace()), "{source}");
+        });
+    }
+}
+
+#[test]
+fn global_object() {
+    with_case(PROGRAM, "f(globalThis);", |case| {
+        assert!(case.exposes(BuiltinId::GlobalThis));
+    });
+    with_case(PROGRAM, "f(global);", |case| {
+        assert!(case.exposes(BuiltinId::GlobalThis));
+    });
+    with_case(PROGRAM, "typeof globalThis;", |case| {
+        assert!(!case.exposes(BuiltinId::GlobalThis));
+    });
+}
+
+#[test]
+fn global_object_alias_member() {
+    for source in [
+        "global.process.stdout;",
+        "self.process.stdout;",
+        "const g = global; g.process.stdout;",
+        "const { process: p } = global;",
+    ] {
+        with_case(PROGRAM, source, |case| {
+            assert!(case.mentions(BuiltinId::Process), "{source}");
+            assert!(!case.exposes(BuiltinId::Process), "{source}");
+            assert!(!case.exposes(BuiltinId::GlobalThis), "{source}");
+        });
+    }
+    with_case(PROGRAM, "global.process;", |case| {
+        assert_builtin(case, "global.process", BuiltinId::Process);
+    });
+    with_case(PROGRAM, "global.zzz; globalThis.process.pid;", |case| {
+        assert!(!case.exposes(BuiltinId::Process));
+        assert!(!case.exposes(BuiltinId::GlobalThis));
+    });
+}
+
+#[test]
+fn destructured_member_without_alias_is_exposed() {
+    with_case(PROGRAM, "let { prototype: p } = Array; p = x;", |case| {
+        assert!(case.mentions(BuiltinId::ArrayPrototype));
+        assert!(case.exposes(BuiltinId::ArrayPrototype));
+        assert!(!case.exposes(BuiltinId::Array));
+    });
+    with_case(PROGRAM, "const { prototype: [first] } = Array;", |case| {
+        assert!(case.exposes(BuiltinId::ArrayPrototype));
+        assert!(!case.exposes(BuiltinId::Array));
+    });
+    with_case(PROGRAM, "const { prototype: p } = Array;", |case| {
+        assert!(case.mentions(BuiltinId::ArrayPrototype));
+        assert!(case.resolved.exposed().is_empty());
+    });
+}
+
+#[test]
+fn jsx_factory_is_exposed() {
+    let setup = Setup {
+        jsx_factory_root: Some("Bun"),
+        ..TSX
+    };
+    with_case(setup, "<div />;", |case| {
+        assert!(case.mentions(BuiltinId::Bun));
+        assert!(case.exposes(BuiltinId::Bun));
+    });
+    with_case(setup, "1;", |case| assert!(!case.mentions(BuiltinId::Bun)));
+}
+
+#[test]
+fn alias_read_as_jsx_factory_is_exposed() {
+    let setup = Setup {
+        jsx_factory_root: Some("h"),
+        ..TSX
+    };
+    with_case(setup, "const h = Math; <div />;", |case| {
+        assert!(case.exposes(BuiltinId::Math));
+    });
+    with_case(setup, "const h = Math;", |case| {
+        assert!(case.mentions(BuiltinId::Math));
+        assert!(!case.exposes(BuiltinId::Math));
+    });
+}
+
+#[test]
+fn decorator_metadata_type_is_exposed() {
+    let setup = Setup {
+        emits_decorator_metadata: true,
+        ..PROGRAM
+    };
+    let source = "class E { @d a: Bun.Glob; }";
+    with_case(setup, source, |case| {
+        assert!(case.mentions(BuiltinId::Bun));
+        assert!(case.mentions(BuiltinId::BunGlob));
+        assert!(case.exposes(BuiltinId::BunGlob));
+        assert!(!case.exposes(BuiltinId::Bun));
+    });
+    with_case(PROGRAM, source, |case| {
+        assert!(!case.mentions(BuiltinId::Bun));
+        assert!(!case.mentions(BuiltinId::BunGlob));
+    });
+    with_case(setup, "class E { a: Bun.Glob; }", |case| {
+        assert!(!case.mentions(BuiltinId::BunGlob));
+    });
+}

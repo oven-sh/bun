@@ -9,11 +9,11 @@ pub struct NoParamReassign {
     ignored_property_assignments_for_regex: Vec<Regex>,
 }
 
-const ASSIGNMENT_TO_FUNCTION_PARAM: Message = Message::new(
+const ASSIGNMENT_TO_FUNCTION_PARAM: &Message = &Message::new(
     "assignmentToFunctionParam",
     "Assignment to function parameter '{{name}}'.",
 );
-const ASSIGNMENT_TO_FUNCTION_PARAM_PROP: Message = Message::new(
+const ASSIGNMENT_TO_FUNCTION_PARAM_PROP: &Message = &Message::new(
     "assignmentToFunctionParamProp",
     "Assignment to property of function parameter '{{name}}'.",
 );

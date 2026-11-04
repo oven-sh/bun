@@ -857,8 +857,7 @@ impl Linux {
             inotify_masks::WATCH_DIR_MASK
         };
         let fd = manager.inotify_fd();
-        // SAFETY: thin wrapper over libc::inotify_add_watch; abs_path is NUL-terminated.
-        let rc = unsafe { sys::linux::inotify_add_watch(fd.native(), abs_path.as_ptr(), mask) };
+        let rc = sys::linux::inotify_add_watch(fd.native(), abs_path, mask);
         if rc < 0 {
             let err = sys::Error::from_code_int(sys::last_errno(), Tag::watch);
             // ENOENT/ENOTDIR during a recursive walk just means we raced; skip.
@@ -971,8 +970,7 @@ impl Linux {
         let mut rel_spill: Vec<u8> = Vec::new();
 
         while running.load(Ordering::Acquire) {
-            // SAFETY: buf is valid for buf.0.len() bytes; fd is a plain c_int.
-            let rc = unsafe { sys::linux::read(fd.native(), buf.0.as_mut_ptr(), buf.0.len()) };
+            let rc = sys::linux::read(fd.native(), &mut buf.0);
             match sys::get_errno(rc) {
                 E::SUCCESS => {}
                 E::EAGAIN | E::EINTR => continue,

@@ -1,0 +1,15 @@
+mock.module() of a CommonJS file, Bun.plugin.clearAll(), then a file that requires it.
+#### lib.cjs
+console.log("| CASE lib.cjs runs");
+exports.v = "real";
+#### required.test.mjs
+import { jest, mock, test } from "bun:test";
+test("a CommonJS file", async () => {
+  mock.module("./lib.cjs", () => ({ v: "mock" }));
+  Bun.plugin.clearAll();
+  console.log("| CASE", (await import("./user.cjs")).read());
+});
+#### user.cjs
+const { v } = require("./lib.cjs");
+console.log("| CASE user.cjs runs");
+exports.read = () => v;

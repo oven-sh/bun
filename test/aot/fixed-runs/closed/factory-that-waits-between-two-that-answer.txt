@@ -1,0 +1,35 @@
+The factories that one load calls run one at a time, in the order in which the load comes to their modules: one that waits between two that answer at once. The next test file mocks nothing and reads everything.
+#### a.test.js
+import { test, vi } from "bun:test";
+const say = (...all) => console.log("| CASE", ...all);
+const later = ms => new Promise(done => setTimeout(done, ms));
+test("t", async () => {
+  vi.doMock("./k.js", () => { console.log("| CASE k's factory runs"); return { k: "mock k" }; });
+  vi.doMock("./m.js", async () => { console.log("| CASE m's factory begins"); await new Promise(done => setTimeout(done, 20)); console.log("| CASE m's factory ends"); return { m: "mock m" }; });
+  vi.doMock("./n.js", () => { console.log("| CASE n's factory runs"); return { n: "mock n" }; });
+  try { say((await import("./a.js")).a); } catch (error) { say("a failed", error.message); }
+  await later(60);
+});
+#### z.test.js
+import { test } from "bun:test";
+import { k } from "./k.js";
+import { m } from "./m.js";
+import { n } from "./n.js";
+test("z", () => console.log("| CASE z", k, m, n));
+#### package.json
+{ "name": "p", "type": "module" }
+#### k.js
+console.log("| CASE k runs");
+export const k = "real k";
+#### m.js
+console.log("| CASE m runs");
+export const m = "real m";
+#### n.js
+console.log("| CASE n runs");
+export const n = "real n";
+#### a.js
+import { k } from "./k.js";
+import { m } from "./m.js";
+import { n } from "./n.js";
+console.log("| CASE a runs");
+export const a = "(" + [k, m, n].join(" ") + ")";

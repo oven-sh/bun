@@ -673,8 +673,11 @@ console.log(JSON.stringify(frames));
   });
 });
 
-// A bundle prints an import that its CommonJS module does not export as `undefined`, and as `void 0` where it minifies syntax. `void 0` is no name, so a token behind it is mapped where it starts a line.
-test("a token is mapped behind a missing import that a bundle prints as void 0", async () => {
+// A bundle prints an import that its CommonJS module does not export as `undefined`, and as `void 0` where it minifies syntax. `void 0` is no name, so a token behind it is mapped where it starts a line. `undefined` is a name: a token behind it stays unmapped, and the frame is where the import is written.
+test.each([
+  { syntax: true, printed: "(void 0).member", frames: [".member;", "[0];"] },
+  { syntax: false, printed: "undefined.member", frames: ["missing", "missing"] },
+])("a token behind a missing import that a bundle prints as $printed", async ({ syntax, printed, frames }) => {
   const reads = `import { missing } from "./has.cjs";
 const rows = [
   () => {
@@ -707,10 +710,10 @@ console.log(JSON.stringify(frames));
     outdir: join(folder, "out"),
     target: "bun",
     sourcemap: "inline",
-    minify: { syntax: true },
+    minify: { syntax },
   });
   expect(built.success).toBe(true);
-  expect(await built.outputs[0].text()).toContain("(void 0).member");
+  expect(await built.outputs[0].text()).toContain(printed);
   await using proc = Bun.spawn({
     cmd: [bunExe(), join(folder, "out", "reads.js")],
     env: bunEnv,
@@ -719,9 +722,10 @@ console.log(JSON.stringify(frames));
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const lines = reads.split("\n");
-  const lineOf = (text: string) => lines.findIndex(line => line.trim() === text) + 1;
+  const lineOf = (text: string, nth: number) =>
+    lines.flatMap((line, index) => (line.trim() === text ? [index + 1] : []))[nth];
   expect({ frames: JSON.parse(stdout), stderr, exitCode }).toEqual({
-    frames: [`TypeError on ${lineOf(".member;")}`, `TypeError on ${lineOf("[0];")}`],
+    frames: frames.map((text, row) => `TypeError on ${lineOf(text, text === "missing" ? row : 0)}`),
     stderr: "",
     exitCode: 0,
   });

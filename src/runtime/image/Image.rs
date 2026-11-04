@@ -1788,7 +1788,7 @@ impl PipelineTask {
                                 format.mime().as_bytes(),
                             ));
                         blob.content_type_was_set.set(true);
-                        promise.resolve(global, <Blob as bun_jsc::JsClass>::to_js(blob, global))?;
+                        promise.resolve(global, blob.into_js(global))?;
                     }
                     tag @ (Deliver::Base64 | Deliver::DataUrl) => {
                         // This arm copies the bytes out — re-arm `Encoded::drop` so

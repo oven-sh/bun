@@ -426,12 +426,7 @@ impl BlobExt for Blob {
 
         #[cfg(not(windows))]
         {
-            let file_read = read_file::ReadFile::create(
-                self.store().expect("infallible: store present").clone(),
-                self.offset.get(),
-                self.size.get(),
-            )
-            .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
+            let file_read = read_file::ReadFile::create(self);
             // Create the Promise only after the store has been ref()'d.
             handler.promise = jsc::JSPromiseStrong::init(cx.global());
             let promise_value = handler.promise.value();
@@ -600,12 +595,7 @@ impl BlobExt for Blob {
         }
         #[cfg(not(windows))]
         {
-            let file_read = read_file::ReadFile::create(
-                self.store().expect("infallible: store present").clone(),
-                self.offset.get(),
-                self.size.get(),
-            )
-            .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
+            let file_read = read_file::ReadFile::create(self);
             read_file::ReadFile::schedule(file_read, read_file::ReadFileCompletionFns::of(ctx), cx);
         }
     }

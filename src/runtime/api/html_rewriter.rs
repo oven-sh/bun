@@ -929,6 +929,9 @@ impl RewriterPipe {
         original: &Response,
         sync_only_noun: Option<&'static str>,
     ) -> JsResult<JSValue> {
+        // https://github.com/oven-sh/bun/issues/3334
+        let headers = original.clone_init_headers(cx.global())?;
+
         let pipe = bun_core::heap::alloc_nn(RewriterPipe {
             global: GlobalRef::from(cx.global()),
             cell: JsCell::new(JsRef::empty()),
@@ -985,9 +988,6 @@ impl RewriterPipe {
                 &this.output_buffer,
             )),
         ))));
-
-        // https://github.com/oven-sh/bun/issues/3334
-        let headers = original.clone_init_headers(cx.global())?;
 
         // ── output Response: body starts Locked(PendingValue{...}) ──────────
         // A consumer reading `.body` creates the ByteStream lazily; until then

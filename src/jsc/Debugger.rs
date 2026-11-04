@@ -295,12 +295,12 @@ impl Debugger {
                     // Handle .incrementRefConcurrently
                     let pending_unref = this.take_pending_unref();
                     if pending_unref > 0 {
-                        this.uws_loop_mut().unref_count(pending_unref);
+                        this.uws_loop_ref().unref_count(pending_unref);
                     }
 
                     let now = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
                     if now.order(&deadline) == core::cmp::Ordering::Less {
-                        this.uws_loop_mut().tick_with_timeout(
+                        this.uws_loop_ref().tick_with_timeout(
                             Some(&deadline.duration(&now)),
                             bun_uws::NOW_NS_UNKNOWN,
                         );
@@ -864,13 +864,11 @@ pub fn test_reporter_agent_enable(agent: *mut TestReporterHandle) {
         // the test runner (`bun_test.DescribeScope`), which lives in `bun_runtime::test_runner`
         // — a forward-dep cycle. Dispatched through [`RuntimeHooks`].
         if let Some(hooks) = runtime_hooks() {
-            // SAFETY: `handle` is the live C++ agent just stored above.
-            dbg.test_reporter_agent.next_test_id = unsafe {
-                (hooks.retroactively_report_discovered_tests)(
-                    dbg.test_reporter_agent.handle,
-                    dbg.test_reporter_agent.next_test_id,
-                )
-            };
+            dbg.test_reporter_agent.next_test_id = (hooks.retroactively_report_discovered_tests)(
+                // SAFETY: `handle` is the live C++ agent just stored above.
+                unsafe { &mut *dbg.test_reporter_agent.handle },
+                dbg.test_reporter_agent.next_test_id,
+            );
         }
     }
 }

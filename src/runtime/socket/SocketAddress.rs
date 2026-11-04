@@ -950,11 +950,14 @@ const _: () = {
 pub(crate) unsafe extern "C" fn Bun__parseIpAddress(
     host: *const core::ffi::c_char,
     port: u16,
-    out: *mut bun_sys::posix::sockaddr_storage,
+    out: Option<&mut mem::MaybeUninit<bun_sys::posix::sockaddr_storage>>,
 ) -> c_int {
-    if host.is_null() || out.is_null() {
+    if host.is_null() {
         return 0;
     }
+    let Some(out) = out else {
+        return 0;
+    };
     // SAFETY: caller contract — `host` is a NUL-terminated C string.
     let bytes = unsafe { core::ffi::CStr::from_ptr(host) }.to_bytes();
     let Some(ip) = bun_core::ip_address::to_ip_address(bytes) else {
@@ -966,8 +969,7 @@ pub(crate) unsafe extern "C" fn Bun__parseIpAddress(
             addr.set_scope_id(scope_index(&bytes[pct + 1..]));
         }
     }
-    // SAFETY: caller contract — `out` is a writable `sockaddr_storage`.
-    unsafe { *out = addr.into_storage() };
+    out.write(addr.into_storage());
     1
 }
 

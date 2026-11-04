@@ -97,9 +97,17 @@ impl Transform {
 
 /// Crop `rgba` (coded `w`×`h`) to the transform's clap rect.
 fn crop(rgba: &[u8], w: u32, h: u32, t: &Transform) -> Result<Vec<u8>, codecs::Error> {
-    let (cx, cy, cw, ch) = (t.crop_x as usize, t.crop_y as usize, t.crop_w as usize, t.crop_h as usize);
+    let (cx, cy, cw, ch) = (
+        t.crop_x as usize,
+        t.crop_y as usize,
+        t.crop_w as usize,
+        t.crop_h as usize,
+    );
     let (w, h) = (w as usize, h as usize);
-    if cw == 0 || ch == 0 || cx.checked_add(cw).is_none_or(|r| r > w) || cy.checked_add(ch).is_none_or(|b| b > h)
+    if cw == 0
+        || ch == 0
+        || cx.checked_add(cw).is_none_or(|r| r > w)
+        || cy.checked_add(ch).is_none_or(|b| b > h)
     {
         return Err(codecs::Error::DecodeFailed);
     }

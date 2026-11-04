@@ -339,8 +339,12 @@ for (let credentials of allCredentials) {
               const text = JSON.stringify(json);
               await file.write(text);
               expect(await file.json()).toEqual(json);
-              expect(Buffer.from(await file.bytes()).toString()).toBe(text);
-              expect(Buffer.from(await file.arrayBuffer()).toString()).toBe(text);
+              const bytes = await file.bytes();
+              expect(bytes).toBeInstanceOf(Uint8Array);
+              expect(Buffer.from(bytes).toString()).toBe(text);
+              const arrayBuffer = await file.arrayBuffer();
+              expect(arrayBuffer).toBeInstanceOf(ArrayBuffer);
+              expect(Buffer.from(arrayBuffer).toString()).toBe(text);
 
               await file.write('--zz\r\nContent-Disposition: form-data; name="hello"\r\n\r\nBun!\r\n--zz--\r\n');
               const typed = bucket.file(tmpfile.name, { ...options, type: "multipart/form-data; boundary=zz" });

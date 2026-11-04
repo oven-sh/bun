@@ -79,10 +79,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }))
     }
 
-    pub(super) fn compute_only_declaration_called(
-        &mut self,
-        call: ExprId,
-    ) -> Option<FunctionRef> {
+    pub(super) fn compute_only_declaration_called(&mut self, call: ExprId) -> Option<FunctionRef> {
         let hir = self.hir();
         let ExprKind::Call(site) = hir[call].kind else {
             return None;

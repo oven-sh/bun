@@ -14,6 +14,8 @@ export default b.declarations(
     certExportChallenge: answering(bytesOfKey),
     ...undeclaredFunctions(
       "getCurves",
+      "oneShotDigest",
+      "getHashes",
       "getCiphers",
       "getCipherInfo",
       "sign",

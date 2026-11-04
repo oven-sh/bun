@@ -29,15 +29,16 @@ const warnings = (stderr: string) =>
     .map(match => `${match[2]} ${match[1]}`)
     .sort();
 
-test.concurrent.each([
-  ["as one program", "TestRunLayers:0"],
-])("the build's warnings about a test file are shown, %s", async (_, words) => {
-  using dir = tempDir("part-warnings", project);
-  const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words };
-  const { stderr, exitCode } = await run([bunExe(), "test", "--aot"], String(dir), env);
-  expect(warnings(stderr)).toEqual([
-    "one.test.ts:3 TS100302: 'caller' is always null on a compiled function.",
-    "shared.ts:3 TS100302: 'caller' is always null on a compiled function.",
-  ]);
-  expect(exitCode).toBe(0);
-});
+test.concurrent.each([["as one program", "TestRunLayers:0"]])(
+  "the build's warnings about a test file are shown, %s",
+  async (_, words) => {
+    using dir = tempDir("part-warnings", project);
+    const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words };
+    const { stderr, exitCode } = await run([bunExe(), "test", "--aot"], String(dir), env);
+    expect(warnings(stderr)).toEqual([
+      "one.test.ts:3 TS100302: 'caller' is always null on a compiled function.",
+      "shared.ts:3 TS100302: 'caller' is always null on a compiled function.",
+    ]);
+    expect(exitCode).toBe(0);
+  },
+);

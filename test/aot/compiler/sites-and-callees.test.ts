@@ -34,7 +34,8 @@ async function instructionsOfWalk(size: number) {
   using folder = tempDir(`aot-sites-and-callees-${size}`, { "main.js": programOf(size) });
   const built = await build({ folder: String(folder), entry: "main.js" });
   const { instructions } = stagesOf(built).walk;
-  if (instructions === undefined) throw new Error(`the build of ${size} sites and callees reports no instructions for walk and sweep`);
+  if (instructions === undefined)
+    throw new Error(`the build of ${size} sites and callees reports no instructions for walk and sweep`);
   return instructions;
 }
 
@@ -47,17 +48,13 @@ const skipped =
 if (skipped) console.error(`SKIPPED: test/aot/compiler/sites-and-callees.test.ts: ${skipped}`);
 
 describe.skipIf(!!skipped)("compile/aot/sites and callees", () => {
-  test(
-    "n sites with n callees cost n + n",
-    async () => {
-      const [empty, ...costs] = await Promise.all(sizes.map(instructionsOfWalk));
-      const added = costs.map(cost => cost - empty);
-      const growths = added.slice(1).map((cost, index) => cost / added[index]);
-      console.error(
-        `SITES AND CALLEES: walk and sweep adds ${added.map((cost, index) => `${cost} at ${sizes[index + 1]}`).join(", ")}: grows ${growths.map(growth => growth.toFixed(2)).join(" | ")} times`,
-      );
-      for (const growth of growths) expect(growth).toBeLessThanOrEqual(maxGrowth);
-    },
-    1_800_000,
-  );
+  test("n sites with n callees cost n + n", async () => {
+    const [empty, ...costs] = await Promise.all(sizes.map(instructionsOfWalk));
+    const added = costs.map(cost => cost - empty);
+    const growths = added.slice(1).map((cost, index) => cost / added[index]);
+    console.error(
+      `SITES AND CALLEES: walk and sweep adds ${added.map((cost, index) => `${cost} at ${sizes[index + 1]}`).join(", ")}: grows ${growths.map(growth => growth.toFixed(2)).join(" | ")} times`,
+    );
+    for (const growth of growths) expect(growth).toBeLessThanOrEqual(maxGrowth);
+  }, 1_800_000);
 });

@@ -113,9 +113,14 @@ fn a_walk_that_skips_whole_statements_finds_what_a_walk_through_them_finds() {
 #[test]
 fn names_behind_many_loops_do_not_each_leave_a_type_at_every_loop() {
     const COUNT: usize = 300;
-    let mut text = String::from("declare const items: number[];\ndeclare function make(): string | number;\n");
+    let mut text =
+        String::from("declare const items: number[];\ndeclare function make(): string | number;\n");
     for index in 0..COUNT {
-        writeln!(text, "var made{index} = make();\nfor (const item of items) items.push(item);").unwrap();
+        writeln!(
+            text,
+            "var made{index} = make();\nfor (const item of items) items.push(item);"
+        )
+        .unwrap();
     }
     text.push_str("export const all = [");
     for index in 0..COUNT {

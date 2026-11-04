@@ -153,7 +153,11 @@ fn function_type_is_defined_by_the_first_file_that_records_its_parameters() {
             };
             assert_eq!(find_defining_unit([without, with, with]), 1, "{key:?}");
             assert_eq!(find_defining_unit([without, without, with]), 2, "{key:?}");
-            assert_eq!(find_defining_unit([without, without, without]), 0, "{key:?}");
+            assert_eq!(
+                find_defining_unit([without, without, without]),
+                0,
+                "{key:?}"
+            );
             assert_eq!(find_defining_unit([with, without, with]), 0, "{key:?}");
         }
     });
@@ -257,7 +261,9 @@ fn in_which_order_a_unit_defines_the_types_of_a_layout_changes_nothing() {
                 let others = prepared.definitions.other_definitions_of(merged).iter();
                 let sites = first.into_iter().chain(others.map(|&(_, site)| site));
                 let position = |site: DefinitionSite| {
-                    prepared.units[site.unit as usize].layout_definitions[site.index as usize].1.position
+                    prepared.units[site.unit as usize].layout_definitions[site.index as usize]
+                        .1
+                        .position
                 };
                 sites.map(position).collect::<Vec<u32>>()
             })

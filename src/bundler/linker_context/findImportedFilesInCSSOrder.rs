@@ -245,10 +245,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                             );
 
                             // Append these import conditions to the state
-                            // SAFETY: never dropped (see the note at `bitwise_copy`).
-                            nested_conditions.append_assume_capacity(unsafe {
-                                bitwise_copy(&import_rule.conditions)
-                            });
+                            self.append_conditions(&mut nested_conditions, import_rule);
                             let followed = self.visit_import(
                                 source_index,
                                 record,
@@ -284,10 +281,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                             let mut all_conditions =
                                 fork_conditions(wrapping_conditions, self.arena);
                             let all_import_records = shallow_clone_records(wrapping_import_records);
-                            // SAFETY: never dropped (see the note at `bitwise_copy`).
-                            all_conditions.append_assume_capacity(unsafe {
-                                bitwise_copy(&import_rule.conditions)
-                            });
+                            self.append_conditions(&mut all_conditions, import_rule);
                             self.order.push(CssImportOrder {
                                 kind: CssImportOrderKind::ExternalPath(record.path),
                                 conditions: all_conditions,

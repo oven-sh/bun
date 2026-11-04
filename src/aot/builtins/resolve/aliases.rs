@@ -2,9 +2,7 @@ use super::resolver::{AliasSource, ExprState, HolderKind, ResolvedValue, Resolve
 use super::{BuiltinPath, ResolveInput};
 use crate::builtins::table::{self, BuiltinId};
 use bun_sema::atom::Atom;
-use bun_sema::bind::{
-    Binding, BindingInitializer, BindingStability, Decl, InitialState, SymbolId,
-};
+use bun_sema::bind::{Binding, BindingInitializer, BindingStability, Decl, InitialState, SymbolId};
 use bun_sema::hir::{
     BinOp, ExprId, ExprKind, Flags, ImportEqualsId, ImportEqualsTarget, NodeData, PatId, PatKind,
 };
@@ -166,7 +164,10 @@ impl Resolver<'_, '_> {
     }
 
     /// `var freeModule = freeExports && typeof module == "object" && module`: the variable holds the module object or what is no object.
-    pub(super) fn find_module_object_behind_tests(&self, initializer: ExprId) -> Option<ResolvedValue> {
+    pub(super) fn find_module_object_behind_tests(
+        &self,
+        initializer: ExprId,
+    ) -> Option<ResolvedValue> {
         let hir = self.input.hir;
         let initializer = hir.skip_type_assertions(initializer);
         match hir[initializer].kind {
@@ -193,7 +194,8 @@ impl Resolver<'_, '_> {
             self.expose(value.path.id);
             return ExprState::Unresolved;
         }
-        match self.may_still_be_undefined(symbol, value) || self.is_initialized_behind_tests(symbol) {
+        match self.may_still_be_undefined(symbol, value) || self.is_initialized_behind_tests(symbol)
+        {
             true => ExprState::Held(value),
             false => ExprState::Builtin(value),
         }

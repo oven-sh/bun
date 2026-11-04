@@ -724,7 +724,8 @@ pub(crate) fn asks_for_original_beside_mock<'s>(
     for site in analysis.import_sites {
         let is_dead = |call: ExprId| analysis.decisions.is_dead_expr(call);
         match site.kind {
-            ImportSiteKind::ImportByTestRunner(call) | ImportSiteKind::RequireByTestRunner(call)
+            ImportSiteKind::ImportByTestRunner(call)
+            | ImportSiteKind::RequireByTestRunner(call)
                 if !is_dead(call) =>
             {
                 return true;

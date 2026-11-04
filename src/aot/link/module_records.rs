@@ -276,7 +276,8 @@ fn build_records_of_modules(
     let mut program_ids: Vec<Vec<Option<StringId>>> =
         map_each(tables, input.in_parallel, &|table: &StringTable| {
             let ids = table.ids();
-            ids.map(|id| known_strings.find_string_of(table, id)).collect()
+            ids.map(|id| known_strings.find_string_of(table, id))
+                .collect()
         });
     // Any other gets its number where the first record names it, as if one thread had built the records in their order.
     for (records, program_ids) in built.iter().zip(&mut program_ids) {

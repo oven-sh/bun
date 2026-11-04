@@ -1205,6 +1205,15 @@ inline BignumPointer jwkBufToBn(JSArrayBufferView* buf)
     return BignumPointer(reinterpret_cast<uint8_t*>(buf->vector()), buf->byteLength());
 }
 
+static BignumPointer jwkStringToBn(JSGlobalObject* globalObject, ThrowScope& scope, JSValue string, ASCIILiteral keyName)
+{
+    auto strView = asString(string)->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* dataBuf = decodeJwkString(globalObject, scope, strView, keyName);
+    RETURN_IF_EXCEPTION(scope, {});
+    return jwkBufToBn(dataBuf);
+}
+
 static bool hasRawPublicKey(const EVPKeyPointer& key, std::span<const uint8_t> expected)
 {
     auto derived = key.rawPublicKey();
@@ -1316,6 +1325,11 @@ __attribute__((minsize)) KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobal
             return {};
         }
 
+        if (keyType == CryptoKeyType::Private && jwkType == CryptoKeyType::Public) {
+            ERR::CRYPTO_INVALID_JWK(scope, globalObject, "JWK does not contain private key material"_s);
+            return {};
+        }
+
         JSC::ensureStillAliveHere(pubBuf);
         JSC::ensureStillAliveHere(privBuf);
         return create(keyType, WTF::move(key));
@@ -1421,8 +1435,6 @@ __attribute__((minsize)) KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobal
         RETURN_IF_EXCEPTION(scope, {});
         BignumPointer e = jwkStringToBn(globalObject, scope, eValue, "key.e"_s);
         RETURN_IF_EXCEPTION(scope, {});
-
-        MarkPopErrorOnReturn markPopError;
 
         RSAPointer rsa(RSA_new());
         Rsa rsaView(rsa.get());

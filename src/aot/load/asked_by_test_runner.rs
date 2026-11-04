@@ -131,8 +131,16 @@ mod tests {
             ("a.test.js", "import 'bun:test'; test('vitest');", false),
             ("a.test.js", "import 'vitest/config';", false),
             ("a.test.js", "vitest;", false),
-            ("a.test.d.ts", "import { test } from 'vitest'; test();", true),
-            ("types.d.ts", "import type { Mock } from 'vitest'; export type Spy = Mock;", false),
+            (
+                "a.test.d.ts",
+                "import { test } from 'vitest'; test();",
+                true,
+            ),
+            (
+                "types.d.ts",
+                "import type { Mock } from 'vitest'; export type Spy = Mock;",
+                false,
+            ),
             ("data.json", "[\"vitest\"]", false),
         ];
         for (name, text, expected) in rows {

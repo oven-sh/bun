@@ -44,7 +44,9 @@ impl Checker<'_, '_> {
             };
             d.file == file && is_kept && !hir.is_in_jsdoc(d.start)
         });
-        let early_errors = found.iter().filter(|d| d.class == DiagnosticClass::EarlyError);
+        let early_errors = found
+            .iter()
+            .filter(|d| d.class == DiagnosticClass::EarlyError);
         if let Some(first) = early_errors.min_by_key(|d| (d.start, d.code)) {
             let mut sentence = Vec::new();
             if let Some((_, template)) = messages::message(first.code) {
@@ -62,7 +64,8 @@ impl Checker<'_, '_> {
 
     pub fn first_early_error(&self, file: FileId) -> Option<(&[u8], u32)> {
         let (sentence, start) = &self.first_early_error;
-        self.found_early_error(file).then_some((&sentence[..], *start))
+        self.found_early_error(file)
+            .then_some((&sentence[..], *start))
     }
 
     pub(in crate::check) fn early_errors_of_unchecked_file(

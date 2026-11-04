@@ -229,7 +229,10 @@ fn is_mapped_alike_in_every_file(
     // A type without a weight is put together from shallow forms, and nobody says what those rest on.
     entry.weight.is_some()
         && file.queries.count_unstable_answers() == unstable_answers_before
-        && file.task.memo.is_plain(&file.fragment.types, entry.mapped.ty)
+        && file
+            .task
+            .memo
+            .is_plain(&file.fragment.types, entry.mapped.ty)
         && has_only_parts_alike_in_every_file(file, ty)
 }
 

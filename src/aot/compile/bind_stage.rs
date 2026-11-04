@@ -301,14 +301,18 @@ impl Build<'_> {
                     .collect();
                 files_started_by_runner.sort_unstable();
                 let found = view.files().entry_points().get(written_entry_point_count..);
-                let found = found.unwrap_or_default().iter().zip(&contents.found_entry_points);
+                let found = found
+                    .unwrap_or_default()
+                    .iter()
+                    .zip(&contents.found_entry_points);
                 let mut starts_of_workers: Vec<(FileId, ExprId, FileId)> = found
                     .flat_map(|(&entry_point, found)| {
                         let starts = found.starts.iter();
                         starts.map(move |&(file, at)| (file, ExprId(at), entry_point))
                     })
                     .collect();
-                starts_of_workers.sort_unstable_by_key(|&(file, at, entry_point)| (file, at.0, entry_point));
+                starts_of_workers
+                    .sort_unstable_by_key(|&(file, at, entry_point)| (file, at.0, entry_point));
                 let input = ProgramReachInput {
                     files: view.files(),
                     sources: view.sources,

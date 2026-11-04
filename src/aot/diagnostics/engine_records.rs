@@ -56,7 +56,10 @@ impl Diagnostics {
             Some(position) => ModuleLocator::new(texts).locate(position, reported),
             None => reported,
         };
-        self.add_message(code.number(), to_log_message(&reported, diagnostic.severity));
+        self.add_message(
+            code.number(),
+            to_log_message(&reported, diagnostic.severity),
+        );
     }
 
     pub(super) fn add_internal_error_record(

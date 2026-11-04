@@ -102,7 +102,6 @@ export default b.declarations(
   b.intrinsic("isArray", "Value", builtin(b.linkTimeConstantPath("isArray"))),
   b.intrinsic("isFinite", "Call", builtin("isFinite")),
   b.intrinsic("min", "Call", builtin("Math.min")),
-  b.intrinsic("nextOfStepsOverText", "Value", builtin("%CompilerHelpers%.nextOfStepsOverText")),
   b.intrinsic("Promise", "Value", builtin("Promise")),
   operation("rejectPromiseWithFirstResolvingFunctionCallCheck", "RejectPromise"),
   operation("resolvePromiseWithFirstResolvingFunctionCallCheck", "ResolvePromise"),

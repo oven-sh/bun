@@ -26,14 +26,46 @@ async function expectCompiledToRunAsPlain(files: Record<string, string>) {
 
 // What lies under the name while the original is called under another. Each site runs 300 times: a site that runs once takes the general way.
 const standIns: [string, string, string][] = [
-  ["a spy that answers a text", `const spy = spyOn(String.prototype, "replace").mockImplementation(() => "mocked");`, `seen = spy.mock.calls.length; spy.mockRestore();`],
-  ["a spy that answers undefined", `const spy = spyOn(String.prototype, "replace").mockImplementation(() => undefined as any);`, `seen = spy.mock.calls.length; spy.mockRestore();`],
-  ["a spy that answers a number", `const spy = spyOn(String.prototype, "replace").mockImplementation(() => 7 as any);`, `seen = spy.mock.calls.length; spy.mockRestore();`],
-  ["a spy that throws", `const spy = spyOn(String.prototype, "replace").mockImplementation(() => { throw new Error("the spy ran"); });`, `seen = spy.mock.calls.length; spy.mockRestore();`],
-  ["a spy that calls through", `const spy = spyOn(String.prototype, "replace");`, `seen = spy.mock.calls.length; spy.mockRestore();`],
-  ["a bound function", `(String.prototype as any).replace = function () { seen++; return "bound"; }.bind(null);`, `String.prototype.replace = original;`],
-  ["a function of the test", `(String.prototype as any).replace = function () { seen++; return "written"; };`, `String.prototype.replace = original;`],
-  ["another built-in", `(String.prototype as any).replace = String.prototype.concat;`, `String.prototype.replace = original;`],
+  [
+    "a spy that answers a text",
+    `const spy = spyOn(String.prototype, "replace").mockImplementation(() => "mocked");`,
+    `seen = spy.mock.calls.length; spy.mockRestore();`,
+  ],
+  [
+    "a spy that answers undefined",
+    `const spy = spyOn(String.prototype, "replace").mockImplementation(() => undefined as any);`,
+    `seen = spy.mock.calls.length; spy.mockRestore();`,
+  ],
+  [
+    "a spy that answers a number",
+    `const spy = spyOn(String.prototype, "replace").mockImplementation(() => 7 as any);`,
+    `seen = spy.mock.calls.length; spy.mockRestore();`,
+  ],
+  [
+    "a spy that throws",
+    `const spy = spyOn(String.prototype, "replace").mockImplementation(() => { throw new Error("the spy ran"); });`,
+    `seen = spy.mock.calls.length; spy.mockRestore();`,
+  ],
+  [
+    "a spy that calls through",
+    `const spy = spyOn(String.prototype, "replace");`,
+    `seen = spy.mock.calls.length; spy.mockRestore();`,
+  ],
+  [
+    "a bound function",
+    `(String.prototype as any).replace = function () { seen++; return "bound"; }.bind(null);`,
+    `String.prototype.replace = original;`,
+  ],
+  [
+    "a function of the test",
+    `(String.prototype as any).replace = function () { seen++; return "written"; };`,
+    `String.prototype.replace = original;`,
+  ],
+  [
+    "another built-in",
+    `(String.prototype as any).replace = String.prototype.concat;`,
+    `String.prototype.replace = original;`,
+  ],
   ["what is no function", `(String.prototype as any).replace = 5;`, `String.prototype.replace = original;`],
   ["nothing", `delete (String.prototype as any).replace;`, `String.prototype.replace = original;`],
 ];
@@ -43,7 +75,10 @@ const roads: [string, string][] = [
   ["under another name, every match", `"abcb".swap(/b/g, (match: string, at: number) => match + at)`],
   ["under another name, no match", `"abc".swap(/z/, () => "X")`],
   ["under another name, a text in place of the function", `"abc".swap(/b/, "[$&]")`],
-  ["under another name, of a value nobody has typed", `(anything("abc") as any).swap(anything(/b/), anything(() => "X"))`],
+  [
+    "under another name, of a value nobody has typed",
+    `(anything("abc") as any).swap(anything(/b/), anything(() => "X"))`,
+  ],
   ["out of a variable, by call", `original.call("abc", /b/, () => "X")`],
   ["out of a variable, by apply", `original.apply("abc", [/b/, () => "X"])`],
   ["out of a variable, by Reflect.apply", `Reflect.apply(original, "abc", [/b/, () => "X"])`],

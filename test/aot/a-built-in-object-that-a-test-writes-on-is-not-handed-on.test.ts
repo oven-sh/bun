@@ -10,16 +10,52 @@ raiseDefaultTimeout(120_000);
 
 const made = `["node", "os"].join(":")`;
 const uses: Record<string, { text: string; handsOn: boolean; seen?: string }> = {
-  "a spy on process": { text: `spyOn(process, "cwd").mockReturnValue("spied"); say(process.cwd());`, handsOn: false, seen: "spied" },
-  "a spy on the global object": { text: `spyOn(globalThis, "fetch").mockReturnValue("spied"); say(fetch("x"));`, handsOn: false, seen: "spied" },
-  "a spy on Bun": { text: `spyOn(Bun, "which").mockReturnValue("spied"); say(Bun.which("x"));`, handsOn: false, seen: "spied" },
-  "a definition on process": { text: `Object.defineProperty(process, "platform", { value: "never" }); say(process.platform);`, handsOn: false, seen: "never" },
-  "members assigned to the global object": { text: `Object.assign(globalThis, { added: "added" }); say(added);`, handsOn: false, seen: "added" },
+  "a spy on process": {
+    text: `spyOn(process, "cwd").mockReturnValue("spied"); say(process.cwd());`,
+    handsOn: false,
+    seen: "spied",
+  },
+  "a spy on the global object": {
+    text: `spyOn(globalThis, "fetch").mockReturnValue("spied"); say(fetch("x"));`,
+    handsOn: false,
+    seen: "spied",
+  },
+  "a spy on Bun": {
+    text: `spyOn(Bun, "which").mockReturnValue("spied"); say(Bun.which("x"));`,
+    handsOn: false,
+    seen: "spied",
+  },
+  "a definition on process": {
+    text: `Object.defineProperty(process, "platform", { value: "never" }); say(process.platform);`,
+    handsOn: false,
+    seen: "never",
+  },
+  "members assigned to the global object": {
+    text: `Object.assign(globalThis, { added: "added" }); say(added);`,
+    handsOn: false,
+    seen: "added",
+  },
   // `process` only leads to a loader, wherever it goes: an-object-that-only-leads-to-a-loader-hands-on-no-module.test.ts. What Bun itself holds is there for whoever asks the host.
-  "process is the second operand": { text: `say(typeof Object.assign({}, process).getBuiltinModule.call(process, ${made}).EOL);`, handsOn: false, seen: "string" },
-  "process goes to a function": { text: `const load = from => from.getBuiltinModule(${made}); say(typeof load(process).EOL);`, handsOn: false, seen: "string" },
-  "process is kept in a list": { text: `say(typeof [process][0].getBuiltinModule(${made}).EOL);`, handsOn: false, seen: "string" },
-  "the loader itself goes to a function": { text: `const load = by => by(${made}); say(typeof load(process.getBuiltinModule).EOL);`, handsOn: true, seen: "string" },
+  "process is the second operand": {
+    text: `say(typeof Object.assign({}, process).getBuiltinModule.call(process, ${made}).EOL);`,
+    handsOn: false,
+    seen: "string",
+  },
+  "process goes to a function": {
+    text: `const load = from => from.getBuiltinModule(${made}); say(typeof load(process).EOL);`,
+    handsOn: false,
+    seen: "string",
+  },
+  "process is kept in a list": {
+    text: `say(typeof [process][0].getBuiltinModule(${made}).EOL);`,
+    handsOn: false,
+    seen: "string",
+  },
+  "the loader itself goes to a function": {
+    text: `const load = by => by(${made}); say(typeof load(process.getBuiltinModule).EOL);`,
+    handsOn: true,
+    seen: "string",
+  },
   // The guess is held at run time: whoever regains the object and loads under a name that nobody has read is refused, aloud.
   "process comes back out of the record of a spy": {
     text: `const spy = spyOn(process, "uptime"); process.uptime(); try { say(typeof spy.mock.contexts[0].getBuiltinModule(${made}).EOL); } catch (error) { say(error.message.slice(0, 24)); }`,

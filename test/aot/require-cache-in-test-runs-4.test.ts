@@ -176,8 +176,7 @@ test("a file that several test files share is taken out of require.cache", async
   const plain = await seen();
   expect(plain.exitCode).toBe(0);
   expect(plain.stdout).toContain("2 0 false");
-  for (const words of [undefined])
-    expect(await seen(words, "--aot")).toEqual(plain);
+  for (const words of [undefined]) expect(await seen(words, "--aot")).toEqual(plain);
 });
 
 // The stage log says why every file of a run may load again, so that nobody has to guess what keeps a large run open.

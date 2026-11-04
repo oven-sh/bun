@@ -84,9 +84,7 @@ async function testRun(directory: string, flags: string[], words = "", files: st
   };
 }
 
-const forms = [
-  ["as one program", "TestRunLayers:0"],
-] as const;
+const forms = [["as one program", "TestRunLayers:0"]] as const;
 const loaded = { said: names.map(name => `SAID ${name} 1 unused`).sort(), why: [], exitCode: 0 };
 const refused = names.map(name => `SAID ${name} REFUSED it wasn't compiled with the program`).sort();
 

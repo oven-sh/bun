@@ -165,8 +165,14 @@ mod tests {
     #[test]
     fn holder_has_a_value_of_its_own_behind_each_test_of_its_field() {
         let cases = [
-            ("switch (s.kind) { case \"a\": return [s]; case \"b\": return s; } return t;", 2),
-            ("switch (s[\"kind\"]) { case 1: return [s]; default: return s; }", 1),
+            (
+                "switch (s.kind) { case \"a\": return [s]; case \"b\": return s; } return t;",
+                2,
+            ),
+            (
+                "switch (s[\"kind\"]) { case 1: return [s]; default: return s; }",
+                1,
+            ),
             ("if (s.kind === \"a\") return [s]; return s;", 2),
             ("if (1 !== s.kind) return [s]; return s;", 2),
             ("return (s = t).kind === true ? [s] : s;", 2),

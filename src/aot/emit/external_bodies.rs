@@ -112,7 +112,10 @@ impl ExternalBodies {
         let unit_count = functions.tables().len();
         let count: usize = lists.iter().map(|list| list.functions.len()).sum();
         let words_of = |list: &FunctionsOfUnit| -> usize {
-            list.functions.iter().map(|function| function.body.code.len()).sum()
+            list.functions
+                .iter()
+                .map(|function| function.body.code.len())
+                .sum()
         };
         let word_count: usize = lists.iter().map(words_of).sum();
         let mut code: Vec<u32> = Vec::with_capacity(word_count);
@@ -133,7 +136,8 @@ impl ExternalBodies {
         unsafe impl Send for Task<'_> {}
 
         let mut tasks = Vec::new();
-        let (mut free_code, mut free_bodies) = (&mut code.spare_capacity_mut()[..word_count], &mut *bodies);
+        let (mut free_code, mut free_bodies) =
+            (&mut code.spare_capacity_mut()[..word_count], &mut *bodies);
         for list in lists {
             if list.functions.is_empty() {
                 continue;

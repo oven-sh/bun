@@ -283,7 +283,12 @@ mod tests {
             )
         );
         assert_eq!(
-            described(kind, Int32ProofFailure::Unknown, Int32FlowValue::SpreadArgument).0,
+            described(
+                kind,
+                Int32ProofFailure::Unknown,
+                Int32FlowValue::SpreadArgument
+            )
+            .0,
             "'kept' is declared 'int32', but the value passed by this spread might not be an int32: the elements of a spread argument cannot be checked. Pass it as a separate argument."
         );
     }

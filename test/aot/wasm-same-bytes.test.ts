@@ -42,7 +42,16 @@ describe.skipIf(!!unsupported)("compile/aot/wasm-same-bytes", () => {
       for (let build = 0; build < 2; build++) {
         built(
           await spawned(
-            [bunExe(), "build", "--compile", ...withoutDebugInformation, "--aot", "./entry.ts", "--outfile", executable],
+            [
+              bunExe(),
+              "build",
+              "--compile",
+              ...withoutDebugInformation,
+              "--aot",
+              "./entry.ts",
+              "--outfile",
+              executable,
+            ],
             folder,
             bunEnv,
           ),

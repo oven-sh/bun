@@ -383,11 +383,9 @@ pub fn log_time_outside_stages(name: &str) {
     let instructions = instructions::of_all_threads();
     let (now, since_process_began) = (Instant::now(), time_since_process_began());
     let (wall, cpu_at_start, instructions_at_start) = match *END_OF_LAST_LINE.lock() {
-        Some((ended, cpu_by_then, instructions_by_then)) => (
-            now.duration_since(ended),
-            cpu_by_then,
-            instructions_by_then,
-        ),
+        Some((ended, cpu_by_then, instructions_by_then)) => {
+            (now.duration_since(ended), cpu_by_then, instructions_by_then)
+        }
         None => (since_process_began, Duration::ZERO, None),
     };
     bun_core::print_errorln!(

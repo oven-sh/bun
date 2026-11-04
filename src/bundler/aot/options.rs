@@ -3,7 +3,9 @@ use std::collections::BTreeMap;
 use bun_aot::diagnostic_codes::Code;
 use bun_aot::diagnostics::log_diagnostic;
 use bun_aot::engine::{ExecutableIdentity, TargetImageForm};
-use bun_aot::options::{Externals, LoadOptions, Options, PathFilter, PathOptions, RemovableOptions};
+use bun_aot::options::{
+    Externals, LoadOptions, Options, PathFilter, PathOptions, RemovableOptions,
+};
 use bun_ast::{Loader, Loc, Log};
 use bun_core::strings;
 use bun_glob::{BunGlobWalker, detect_glob_syntax, walk};

@@ -2,11 +2,11 @@ const { validateString } = require("internal/validators");
 
 const codesWarned = new Set<string>();
 
-function getDeprecationWarningEmitter(
+function getDeprecationWarningEmitter<Arg = void>(
   code: string | undefined,
   msg: string,
-  deprecated: (...args: unknown[]) => unknown,
-  shouldEmitWarning = () => true,
+  deprecated: ((...args: unknown[]) => unknown) | undefined,
+  shouldEmitWarning: (arg: Arg) => boolean = () => true,
 ) {
   let warned = false;
   return function (arg: Arg) {

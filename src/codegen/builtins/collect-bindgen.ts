@@ -2,7 +2,6 @@ import { AssertionError } from "node:assert";
 import { relative, sep } from "node:path";
 import {
   checkedWordsOf,
-  hasThunk,
   cppConstructorSymbol,
   cppExtern,
   cppFunctionSymbol,
@@ -10,6 +9,7 @@ import {
   externType,
   getterHostFunctionName,
   getterSymbolName,
+  hasThunk,
   methodHostFunctionName,
   methodSymbolName,
   pathOfBoundNamespace,

@@ -590,7 +590,8 @@ impl CompiledProgram {
             && bun_paths::is_package_path(specifier)
             && bun_paths::is_absolute(source_dir)
             && !is_bun_standalone_file_path(source_dir)
-            && (self.public_path_of_source(public_root, source_dir)).is_none_or(|path| !self.holds_module_below(&path))
+            && (self.public_path_of_source(public_root, source_dir))
+                .is_none_or(|path| !self.holds_module_below(&path))
     }
 
     pub fn leaves_outside(&self, source_dir: &[u8], specifier: &[u8]) -> bool {

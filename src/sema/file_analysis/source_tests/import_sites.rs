@@ -989,7 +989,8 @@ fn macro_callee_names_binding_and_member() {
 
 #[test]
 fn macro_callee_names_template_tag() {
-    let text = r#"import d, * as m from "./m" with { type: "macro" }; d`a`; m.f`${1}`; m`a`; x`a`;"#;
+    let text =
+        r#"import d, * as m from "./m" with { type: "macro" }; d`a`; m.f`${1}`; m`a`; x`a`;"#;
     analyzed("a.ts", text, |s| {
         let default = s.bound.declared_symbol(Decl::ImportDefault(ImportId(0)));
         let namespace = s.bound.declared_symbol(Decl::ImportNamespace(ImportId(0)));
@@ -2009,10 +2010,7 @@ const URLS_WITH_CODE_GIVEN_TO_CONSTRUCTORS: &[(&str, bool)] = &[
         "function start(Worker) { new Worker('data:text/javascript,' + '1'); }",
         true,
     ),
-    (
-        "new threads.Worker('data:text/javascript,' + '1');",
-        true,
-    ),
+    ("new threads.Worker('data:text/javascript,' + '1');", true),
     (
         "class Worker {} new Worker('data:text/javascript,' + '1');",
         false,

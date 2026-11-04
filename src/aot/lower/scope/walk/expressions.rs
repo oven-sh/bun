@@ -82,7 +82,9 @@ impl Walker<'_, '_> {
             }
             ExprKind::Fn(function) => {
                 if !context.is_conditional {
-                    self.walk.makers_of_closures_in_every_run.push(context.function);
+                    self.walk
+                        .makers_of_closures_in_every_run
+                        .push(context.function);
                 }
                 self.visit_function(function, context.function)
             }
@@ -157,7 +159,9 @@ impl Walker<'_, '_> {
                 let (hir, bound) = (self.hir, self.bound);
                 // Nearly every name that is read is no function declaration: one look in a table says so.
                 let owner = match bound.initializing_declaration(symbol) {
-                    Some(bun_sema::bind::Decl::Fn(_)) => bound.code_unit(bound.symbol_scope(symbol)),
+                    Some(bun_sema::bind::Decl::Fn(_)) => {
+                        bound.code_unit(bound.symbol_scope(symbol))
+                    }
                     _ => CodeUnit::File,
                 };
                 let owner = match owner {
@@ -170,10 +174,17 @@ impl Walker<'_, '_> {
                 if let Some(owner) = owner
                     && let Some(function) = find_declaration_made_at_first_read(hir, bound, symbol)
                 {
-                    let reader = (symbol, context.function, function, context.enclosing_loop, owner);
+                    let reader = (
+                        symbol,
+                        context.function,
+                        function,
+                        context.enclosing_loop,
+                        owner,
+                    );
                     self.walk.readers_of_declarations.push(reader);
                     // In a loop each turn would ask anew whether the function object is there.
-                    let is_made_at_entry = !context.is_conditional || context.enclosing_loop.is_some();
+                    let is_made_at_entry =
+                        !context.is_conditional || context.enclosing_loop.is_some();
                     if is_made_at_entry && owner == context.function {
                         self.walk.declarations_read_by_every_run.push(symbol);
                         self.walk.makers_of_closures_in_every_run.push(owner);

@@ -543,7 +543,7 @@ impl TranspilerJob {
                 core::mem::take(&mut self.non_threadsafe_input_specifier),
                 Err(crate::CrateError::ParseError),
             ),
-            Some(e) => (String::clone_utf8(self.path.text), Err(e)),
+            Some(e) => (String::clone_utf8(&self.path_text), Err(e)),
             None => {
                 let mut resolved_source = core::mem::take(&mut self.resolved_source);
                 let out = core::mem::take(&mut self.non_threadsafe_input_specifier);
@@ -718,7 +718,7 @@ impl TranspilerJob {
         transpiler.macro_context = None;
         // The JS thread may have been in macro mode when its options were copied, but a job is never part of a macro.
         transpiler.options.target = bun_ast::Target::Bun;
-        if self.has_plugins {
+        if this.has_plugins {
             transpiler.options.no_macros = true;
         }
         // Note: `parse_maybe` re-creates the macro context per-iteration
@@ -856,16 +856,7 @@ impl TranspilerJob {
             }
         }
 
-        // `vm.isWatcherEnabled()` ⇔ watcher present. The
-        // field is a nullable `*mut ImportWatcher`, so a non-null
-        // pointer may still hold `ImportWatcher::None`; both must be ruled out
-        // or we'd skip closing `input_file_fd` without a watcher to adopt it.
-        // Discriminant read on the BACKREF captured above; only the JS thread
-        // mutates the variant.
-        let is_watcher_enabled =
-            import_watcher.is_some_and(|iw| !matches!(&*iw, ImportWatcher::None));
-
-        if let Some(own) = &self.aot_package_config {
+        if let Some(own) = &this.aot_package_config {
             parse_options.apply_aot_package_config(own);
         }
         let Some(mut parse_result) = transpiler
@@ -1110,7 +1101,7 @@ impl TranspilerJob {
 
             break 'brk result;
         };
-        self.resolved_source = ResolvedSource {
+        this.resolved_source = ResolvedSource {
             module_info: module_info.map(|mi| {
                 use analyze_transpiled_module::ModuleInfoExt;
                 mi.into_deserialized()

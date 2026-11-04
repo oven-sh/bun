@@ -31,7 +31,6 @@
 #include "JSDOMException.h"
 #include "JSDOMExceptionHandling.h"
 #include <atomic>
-#include <openssl/err.h>
 #include "ErrorCode.h"
 #include "ErrorStackTrace.h"
 #include "KeyObject.h"

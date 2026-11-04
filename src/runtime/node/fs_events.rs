@@ -443,7 +443,6 @@ impl FSEventsLoop {
         self.tasks.push(bun_core::heap::alloc_nn(ConcurrentTask {
             task,
             next: bun_threading::Link::new(),
-            auto_delete: true,
         }));
         let signal_source = self.signal_source.load(Ordering::Relaxed);
         let loop_ = self.loop_.load(Ordering::Acquire);

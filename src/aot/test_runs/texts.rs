@@ -253,8 +253,10 @@ fn may_write_on_builtins(texts: &[&[u8]]) -> bool {
         words.any(|word| table::find_name(word).and_then(table::global).is_some())
     };
     let writes = |text: &&[u8]| {
-        let (marks, names): ([&[u8]; 3], [&[u8]; 3]) =
-            ([b"++", b"--", b"__define"], [b"delete", b"Object", b"Reflect"]);
+        let (marks, names): ([&[u8]; 3], [&[u8]; 3]) = (
+            [b"++", b"--", b"__define"],
+            [b"delete", b"Object", b"Reflect"],
+        );
         strings::contains_char(text, b'=')
             || marks.iter().any(|mark| strings::contains(text, mark))
             || names.iter().any(|name| spells_name(text, name))
@@ -417,7 +419,8 @@ impl<'a, 's> Tree<'a, 's> {
     fn find_module_whose_object_is(&self, object: ExprId) -> Option<Atom> {
         let (hir, bound) = (self.hir, self.bound);
         let object = hir.skip_type_assertions(object);
-        let (ExprKind::Ident(_), Binding::Symbol(holder)) = (hir[object].kind, bound.binding(object))
+        let (ExprKind::Ident(_), Binding::Symbol(holder)) =
+            (hir[object].kind, bound.binding(object))
         else {
             return self.find_module_loaded_by(object);
         };
@@ -475,9 +478,7 @@ fn find_where_text_goes(
             {
                 WhereTextGoes::IntoMessages
             }
-            ExprKind::Dot { obj, name, .. }
-                if obj == value && tree.text_of(name) == b"length" =>
-            {
+            ExprKind::Dot { obj, name, .. } if obj == value && tree.text_of(name) == b"length" => {
                 WhereTextGoes::IntoFiles
             }
             _ => WhereTextGoes::Anywhere,
@@ -774,7 +775,9 @@ impl<'a, 's> TextReader<'a, 's> {
         let decisions = &tree.analysis.decisions;
         TextReader {
             tree,
-            texts_of_file: TextsOfFile::new(tree.hir, tree.bound, decisions, fold, file, tree.atoms),
+            texts_of_file: TextsOfFile::new(
+                tree.hir, tree.bound, decisions, fold, file, tree.atoms,
+            ),
             candidates: Vec::new(),
         }
     }
@@ -804,7 +807,9 @@ impl<'a, 's> TextReader<'a, 's> {
         let quoted = match hir[part].kind {
             ExprKind::Call(call)
                 if hir[call].args.len() == 1
-                    && builtins.builtin_of_expression(hir[call].callee).map(table::canonical_id)
+                    && builtins
+                        .builtin_of_expression(hir[call].callee)
+                        .map(table::canonical_id)
                         == Some(table::canonical_id(BuiltinId::JSONStringify)) =>
             {
                 hir.ids(hir[call].args).next()
@@ -965,6 +970,9 @@ impl<'a, 's> TextReader<'a, 's> {
             atoms,
         };
         let (written, handed_on) = self.read_with(&look);
-        (written.intern(atoms_of_file), handed_on.intern(atoms_of_file))
+        (
+            written.intern(atoms_of_file),
+            handed_on.intern(atoms_of_file),
+        )
     }
 }

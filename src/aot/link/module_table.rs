@@ -208,7 +208,10 @@ mod tests {
 
             for (index, &module) in (0..).zip(&table.modules) {
                 assert_eq!(table.index_of(module), index);
-                assert_eq!(find_unit(&units, module), (module == entry_point).then_some(0));
+                assert_eq!(
+                    find_unit(&units, module),
+                    (module == entry_point).then_some(0)
+                );
             }
         });
     }
@@ -255,10 +258,7 @@ mod tests {
                 }
                 unit_in(projects, ProjectId::Application, unit.finish_in(&mut task))
             };
-            let mut units = [
-                visit("index.ts", &[first]),
-                visit("a.ts", &[first, second]),
-            ];
+            let mut units = [visit("index.ts", &[first]), visit("a.ts", &[first, second])];
             drop(visit("b.ts", &[discarded]));
 
             let table = collect_modules_of(projects, &mut units);
@@ -288,7 +288,11 @@ mod tests {
                 assert_eq!(table.modules[first..first + records.len()], records);
                 let unit = find_unit(&units, records[0]);
                 assert!(unit.is_some());
-                assert!(records.iter().all(|&record| find_unit(&units, record) == unit));
+                assert!(
+                    records
+                        .iter()
+                        .all(|&record| find_unit(&units, record) == unit)
+                );
             }
         });
     }

@@ -137,9 +137,7 @@ const exported = passedOn(`
   export { default as near } from "./depth.toml" with { type: "yaml" };
   export { default as text } from "./other.toml" with { type: "text" };
   export * as all from "./star.toml" with { type: "toml" };`);
-for (const [form, words] of [
-  ["as one program", "TestRunLayers:0"],
-] as const)
+for (const [form, words] of [["as one program", "TestRunLayers:0"]] as const)
   test.concurrent(
     `an export statement asks for a type, ${form}`,
     async () => {

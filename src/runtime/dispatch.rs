@@ -341,7 +341,7 @@ pub(crate) fn run_task(
                 [NodeFs],
                 |copy: crate::node::fs::AsyncCpTask| -> JsResult<()> {
                     // SAFETY: posted by `on_subtask_done` with the count at zero (exclusive).
-                    unsafe { (*copy).run_from_js_thread()? };
+                    unsafe { bun_core::heap::take(copy) }.run_from_js_thread()?;
                     Ok(())
                 }
             )?
@@ -351,7 +351,7 @@ pub(crate) fn run_task(
                 [Shell],
                 |copy: crate::node::fs::ShellAsyncCpTask| -> JsResult<()> {
                     // SAFETY: as above.
-                    unsafe { (*copy).run_from_js_thread()? };
+                    unsafe { bun_core::heap::take(copy) }.run_from_js_thread()?;
                     Ok(())
                 }
             )?
@@ -690,10 +690,10 @@ pub(crate) fn run_task(
             // (cloned from `FSWatcher.current_task` at enqueue). `deinit` is
             // explicit (not `Drop`) so the embedded `current_task` field never
             // runs it.
-            // SAFETY: tag identifies pointee; live Box'd FSWatchTask.
-            let ran = unsafe { (*watch).run() };
-            // SAFETY: paired with heap::alloc in `FSWatchTask::enqueue`.
-            unsafe { FSWatchTask::deinit(watch) };
+            // SAFETY: tag identifies pointee; paired with heap::alloc in `FSWatchTask::enqueue`.
+            let mut watch = unsafe { bun_core::heap::take(watch) };
+            let ran = watch.run();
+            watch.deinit();
             ran?;
             Ok(())
         })?,
@@ -1302,7 +1302,7 @@ pub(crate) unsafe fn __bun_fire_timer(
                 $features,
                 (
                     $c: *mut $Ty = owner!($Ty, $field),
-                    $now: *const ElTimespec = now,
+                    $now: &ElTimespec = now,
                     $vm: *mut VirtualMachine = vm,
                 ) -> JsResult<()> {
                     // SAFETY: per fn contract; container derived from a live `$Ty`.
@@ -1348,12 +1348,9 @@ pub(crate) unsafe fn __bun_fire_timer(
             )
         }
         EventLoopTimerTag::WorkerWaitsForRoom => {
-            feature_timer_arm!(
-                [WorkerConstructor],
-                WebWorker,
-                room_timer,
-                |c, _now, _vm| WebWorker::on_room_timer(c)
-            )
+            feature_timer_arm!([WorkerConstructor], WebWorker, room_timer, |c, _now, vm| {
+                (*c).on_room_timer(&*vm)
+            })
         }
         EventLoopTimerTag::GcRepeating => {
             timer_arm!(
@@ -1375,7 +1372,7 @@ pub(crate) unsafe fn __bun_fire_timer(
                 [Histogram],
                 EventLoopDelayMonitor,
                 event_loop_timer,
-                |c, now, vm| (*c).on_fire(&*now, &*vm)
+                |c, now, vm| (*c).on_fire(now, &*vm)
             )
         }
         EventLoopTimerTag::StatWatcherScheduler => {
@@ -1414,7 +1411,7 @@ pub(crate) unsafe fn __bun_fire_timer(
         // R-2: shared deref — `check_timeouts` re-enters via `ares_process_fd`.
         EventLoopTimerTag::DNSResolver => {
             feature_timer_arm!([Dns], DNSResolver, event_loop_timer, |c, now, vm| {
-                (&*c.cast_const()).check_timeouts(&*now, &*vm)
+                (&*c.cast_const()).check_timeouts(now, &*vm)
             })
         }
         EventLoopTimerTag::WindowsNamedPipe => {
@@ -1491,11 +1488,10 @@ pub(crate) unsafe fn __bun_fire_timer(
         }
         EventLoopTimerTag::DevServerSweepSourceMaps => in_features!(
             [Bundler],
-            (t: *mut EventLoopTimer = t, now: *const ElTimespec = now) -> JsResult<()> {
+            (t: *mut EventLoopTimer = t, now: &ElTimespec = now) -> JsResult<()> {
                 // `sweep_weak_refs` takes the raw `*EventLoopTimer` and recovers
                 // the store inside.
-                // SAFETY: per fn contract.
-                SourceMapStore::sweep_weak_refs(t, unsafe { &*now });
+                SourceMapStore::sweep_weak_refs(t, now);
                 Ok(())
             }
         ),
@@ -1508,7 +1504,7 @@ pub(crate) unsafe fn __bun_fire_timer(
         ),
         EventLoopTimerTag::BunTest => in_features!(
             [Test],
-            (container: *mut BunTest = owner!(BunTest, timer), now: *const ElTimespec = now)
+            (container: *mut BunTest = owner!(BunTest, timer), now: &ElTimespec = now)
             -> JsResult<()> {
                 // SAFETY: container is the payload of a live `Rc<BunTestCell>`; the
                 // strong count is ≥1 (held by `Jest.active_file`).
@@ -1524,16 +1520,7 @@ pub(crate) unsafe fn __bun_fire_timer(
                     let _ = std::rc::Rc::into_raw(rc);
                     cloned
                 };
-                // SAFETY: per fn contract. `bun_test_timeout_callback` takes a
-                // `&bun_core::Timespec`; the low-tier `EventLoopTimer::Timespec` is
-                // a layout-identical local stub.
-                let now_core = unsafe {
-                    bun_core::Timespec {
-                        sec: (*now).sec,
-                        nsec: (*now).nsec,
-                    }
-                };
-                BunTest::bun_test_timeout_callback(&strong, &now_core, VirtualMachine::get());
+                BunTest::bun_test_timeout_callback(&strong, now, VirtualMachine::get());
                 Ok(())
             }
         ),
@@ -1560,11 +1547,11 @@ pub(crate) unsafe fn __bun_fire_timer(
             (
                 c: *mut crate::test_runner::vi_wait::ViWait =
                     owner!(crate::test_runner::vi_wait::ViWait, timer),
-                now: *const ElTimespec = now,
+                now: &ElTimespec = now,
                 vm: *mut VirtualMachine = vm,
             ) -> JsResult<()> {
-                // SAFETY: an armed wait roots its JS wrapper, which owns `c`; `now` and `vm` per fn contract.
-                unsafe { (*c).on_timer_fire(&*now, &*vm) }
+                // SAFETY: an armed wait roots its JS wrapper, which owns `c`; `vm` per fn contract.
+                unsafe { (*c).on_timer_fire(now, &*vm) }
             }
         ),
         EventLoopTimerTag::UvTimer => {

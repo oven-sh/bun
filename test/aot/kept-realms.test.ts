@@ -42,9 +42,7 @@ async function runTests(directory: string, words: string | undefined, ...flags: 
   };
 }
 
-for (const [way, words] of [
-  ["as one program", "TestRunLayers:0"],
-]) {
+for (const [way, words] of [["as one program", "TestRunLayers:0"]]) {
   test(`the realm of a test file that ends with an import() unsettled is let go, ${way}`, async () => {
     using dir = tempDir("aot-kept-realms", files);
     const plain = await runTests(String(dir), undefined, "--isolate");

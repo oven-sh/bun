@@ -1421,7 +1421,9 @@ const LEFT_ALONE_BY_BUN_RUN: &[LiteralRow] = &[
 
 #[test]
 fn bun_run_computes_the_same_whatever_the_build_minifies() {
-    let computed = COMPUTED_WITHOUT_MINIFY_SYNTAX.iter().map(|row| (row.0, row.1));
+    let computed = COMPUTED_WITHOUT_MINIFY_SYNTAX
+        .iter()
+        .map(|row| (row.0, row.1));
     let replaced = REPLACED_READS.iter().map(|row| (row.0, row.1));
     let made = MADE_OF_WHAT_MINIFY_SYNTAX_COMPUTES.iter().copied();
     for (path, text) in computed.chain(replaced).chain(made) {

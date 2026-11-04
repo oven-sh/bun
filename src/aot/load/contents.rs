@@ -317,7 +317,9 @@ fn list_replaced_builtins(
 /// The loader of the host goes by the name of the file, whatever the import has asked for.
 fn embeds_addon_as_file(files: &Files<'_>) -> bool {
     files.compiled_files().iter().any(|&file| {
-        let asked_for = files.compiled(file).and_then(|compiled| host_loader_kind(compiled.loader));
+        let asked_for = files
+            .compiled(file)
+            .and_then(|compiled| host_loader_kind(compiled.loader));
         asked_for == Some(HostLoaderKind::Loader(Loader::File))
             && loader_by_name(files.module(file).file_name()) == Loader::Napi
     })
@@ -388,7 +390,9 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
     if is_test_run {
         for &file in files.compiled_files() {
             if let Some(source) = parsed_source(files, file) {
-                source.builtins.unlock(Arc::clone(&run.members_written_as_reads));
+                source
+                    .builtins
+                    .unlock(Arc::clone(&run.members_written_as_reads));
             }
         }
     }

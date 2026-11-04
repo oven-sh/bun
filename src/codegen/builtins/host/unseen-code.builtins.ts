@@ -29,11 +29,7 @@ const moduleLoaders = [
   "process.getBuiltinModule",
 ];
 
-const textEvaluators = [
-  "%NodeVMBinding%.Module",
-  "%NodeVMBinding%.Script",
-  "%NodeVMBinding%.compileFunction",
-];
+const textEvaluators = ["%NodeVMBinding%.Module", "%NodeVMBinding%.Script", "%NodeVMBinding%.compileFunction"];
 
 const heapEnumerators = ["bun:jsc.getProtectedObjects"];
 

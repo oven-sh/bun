@@ -1256,12 +1256,17 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
 
     fn first_operand(value: ValueView<'_>) -> Option<ValueId> {
         let mut first = None;
-        visit_value_fields(value.opcode, value.fields, 0, &mut |field, at| match field {
-            FieldWord::Operand => {
-                first.get_or_insert(ValueId::from_word(value.fields[at]));
-            }
-            FieldWord::Reference(_) => {}
-        });
+        visit_value_fields(
+            value.opcode,
+            value.fields,
+            0,
+            &mut |field, at| match field {
+                FieldWord::Operand => {
+                    first.get_or_insert(ValueId::from_word(value.fields[at]));
+                }
+                FieldWord::Reference(_) => {}
+            },
+        );
         first
     }
 

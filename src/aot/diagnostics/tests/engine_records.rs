@@ -4,7 +4,9 @@ use super::super::Diagnostics;
 use super::super::engine_records::internal_error_text;
 use super::{describe, kinds_and_texts, text, written};
 use crate::diagnostic_codes::Code;
-use crate::engine::{InternalErrorRecord, SourceLocation, TextRange, UserDiagnosticRecord, Witness};
+use crate::engine::{
+    InternalErrorRecord, SourceLocation, TextRange, UserDiagnosticRecord, Witness,
+};
 use crate::ir::generated::{
     DiagnosticSeverity, InternalErrorKind, LimitId, TypeSiteKind, UserDiagnosticKind,
 };
@@ -108,7 +110,11 @@ fn written_record(kind: UserDiagnosticKind, location: SourceLocation) -> Log {
 fn internal_text(record: &InternalErrorRecord, engine_text: &str) -> String {
     let texts = texts();
     let mut locator = ModuleLocator::new(&texts);
-    text(&internal_error_text(record, engine_text.as_bytes(), &mut locator))
+    text(&internal_error_text(
+        record,
+        engine_text.as_bytes(),
+        &mut locator,
+    ))
 }
 
 fn add_at_witness(code: Code, arguments: &[&[u8]], location: SourceLocation) -> Diagnostics {
@@ -222,7 +228,11 @@ fn origin_of_source_decides_whose_error_it_is() {
 fn module_without_source_counts_as_runtime() {
     let texts = SourceTexts::new(vec![None]);
     let warning = user_diagnostic(WARNING, at(0, 3));
-    assert!(written(add_all_in(&texts, &[(warning, "x")])).msgs.is_empty());
+    assert!(
+        written(add_all_in(&texts, &[(warning, "x")]))
+            .msgs
+            .is_empty()
+    );
     let error = user_diagnostic(ERROR, at(0, 3));
     let stage = ERROR.stage().name();
     assert_eq!(

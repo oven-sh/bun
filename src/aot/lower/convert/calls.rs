@@ -1,7 +1,7 @@
+use bun_sema::bind::Parent;
 use bun_sema::check::aot::{
     FunctionRef, GaveUp, PositionTypes, ShapeKind, SignatureParameter, WrittenType,
 };
-use bun_sema::bind::Parent;
 use bun_sema::hir::{ExprId, ExprKind};
 
 use super::edges::Construct;
@@ -87,7 +87,10 @@ impl FileLowering<'_, '_, '_, '_> {
         }
         // No look at the arguments where they decide nothing.
         if let Some(function) = self.queries.only_declaration_called(call)
-            && matches!(self.classify_call_result(Some(function)), IllTypedCause::None)
+            && matches!(
+                self.classify_call_result(Some(function)),
+                IllTypedCause::None
+            )
         {
             return self.find_int32_result(function);
         }
@@ -321,7 +324,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 return;
             }
             let (types, is_optional) = (parameter.types, parameter.is_optional);
-            let found = self.file.find_int32_position(types, types.written, is_optional);
+            let found = self
+                .file
+                .find_int32_position(types, types.written, is_optional);
             let Some(declared) = found else {
                 continue;
             };

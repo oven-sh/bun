@@ -203,7 +203,8 @@ $visibility = "Private";
 export function openIterator(iterable: unknown): unknown {
   const method: unknown = (iterable as any).$$iterator;
   if (!$isCallable(method)) return undefined;
-  if (typeof iterable === "string" && method === $stringProtoSymbolIterator) return { text: iterable, position: 0, next: $nextOfStepsOverText };
+  if (typeof iterable === "string" && method === $stringProtoSymbolIterator)
+    return { text: iterable, position: 0, next: $nextOfStepsOverText };
   const iterator: unknown = $call(method, iterable);
   if (!$isObject(iterator)) $throwTypeError("Iterator result interface is not an object.");
   return iterator;

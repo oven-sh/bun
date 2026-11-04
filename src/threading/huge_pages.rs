@@ -73,7 +73,12 @@ fn free_blocks_of_scarcest_node(text: &[u8]) -> usize {
 /// `fewest_blocks`: with fewer free, the threads could take the last one before anybody looks again.
 /// Twice as many to begin as to go on, or it would go back and forth.
 fn has_enough(free_blocks: usize, fewest_blocks: usize, takes_huge_pages: bool) -> bool {
-    free_blocks >= if takes_huge_pages { fewest_blocks } else { 2 * fewest_blocks }
+    free_blocks
+        >= if takes_huge_pages {
+            fewest_blocks
+        } else {
+            2 * fewest_blocks
+        }
 }
 
 /// Until `end`, huge pages are asked for while enough blocks are free.
@@ -93,21 +98,24 @@ impl Watch {
         let has_ended = Arc::new(AtomicU32::new(0));
         let take_huge_pages = Arc::new(take_huge_pages);
         take_huge_pages(true);
-        let thread = std::thread::Builder::new().name("AOT huge pages".into()).spawn({
-            let has_ended = Arc::clone(&has_ended);
-            let take_huge_pages = Arc::clone(&take_huge_pages);
-            move || {
-                let mut takes_huge_pages = true;
-                while has_ended.load(Ordering::Acquire) == 0 {
-                    let enough = has_enough(count_free_blocks(), fewest_blocks, takes_huge_pages);
-                    if enough != takes_huge_pages {
-                        takes_huge_pages = enough;
-                        take_huge_pages(enough);
+        let thread = std::thread::Builder::new()
+            .name("AOT huge pages".into())
+            .spawn({
+                let has_ended = Arc::clone(&has_ended);
+                let take_huge_pages = Arc::clone(&take_huge_pages);
+                move || {
+                    let mut takes_huge_pages = true;
+                    while has_ended.load(Ordering::Acquire) == 0 {
+                        let enough =
+                            has_enough(count_free_blocks(), fewest_blocks, takes_huge_pages);
+                        if enough != takes_huge_pages {
+                            takes_huge_pages = enough;
+                            take_huge_pages(enough);
+                        }
+                        let _ = futex::wait(&has_ended, 0, Some(NANOSECONDS_BETWEEN_LOOKS));
                     }
-                    let _ = futex::wait(&has_ended, 0, Some(NANOSECONDS_BETWEEN_LOOKS));
                 }
-            }
-        });
+            });
         match thread {
             Ok(thread) => Some(Watch { has_ended, thread }),
             Err(_) => {
@@ -151,7 +159,12 @@ impl FileOfSystem {
             }
             // SAFETY: `rest` is valid for writes of its length.
             let read = unsafe {
-                libc::pread(self.0.as_raw_fd(), rest.as_mut_ptr().cast(), rest.len(), length as libc::off_t)
+                libc::pread(
+                    self.0.as_raw_fd(),
+                    rest.as_mut_ptr().cast(),
+                    rest.len(),
+                    length as libc::off_t,
+                )
             };
             match usize::try_from(read) {
                 Ok(0) => return Some(&text[..length]),
@@ -181,7 +194,9 @@ pub(crate) fn begin() -> Option<Watch> {
     let blocks_by_size = FileOfSystem::open(c"/proc/buddyinfo")?;
     let count_free_blocks = move || {
         let mut text = [0u8; 16 << 10];
-        blocks_by_size.read(&mut text).map_or(0, free_blocks_of_scarcest_node)
+        blocks_by_size
+            .read(&mut text)
+            .map_or(0, free_blocks_of_scarcest_node)
     };
     let fewest_blocks =
         std::thread::available_parallelism().ok()?.get() * BLOCKS_A_THREAD_TAKES_BETWEEN_LOOKS;
@@ -189,7 +204,11 @@ pub(crate) fn begin() -> Option<Watch> {
         return None;
     }
     let arena = bun_alloc::ArenaOfBuilds::get()?;
-    Watch::begin(count_free_blocks, |takes| arena.take_huge_pages(takes), fewest_blocks)
+    Watch::begin(
+        count_free_blocks,
+        |takes| arena.take_huge_pages(takes),
+        fewest_blocks,
+    )
 }
 
 /// The tests of this crate link no allocator.
@@ -246,7 +265,10 @@ Node 0, zone   Normal      0      0      0      0      0      0      0      0   
             0
         );
         // No block of 2 MB is listed.
-        assert_eq!(free_blocks_of_scarcest_node(b"Node 0, zone Normal 7 7 7 7 7 7 7 7 7\n"), 0);
+        assert_eq!(
+            free_blocks_of_scarcest_node(b"Node 0, zone Normal 7 7 7 7 7 7 7 7 7\n"),
+            0
+        );
     }
 
     #[test]

@@ -214,22 +214,32 @@ impl ArenaOfBuilds {
             return None;
         }
         // SAFETY: `sysconf` has no preconditions.
-        let (pages, bytes_of_page) =
-            unsafe { (libc::sysconf(libc::_SC_PHYS_PAGES), libc::sysconf(libc::_SC_PAGESIZE)) };
-        let bytes_of_machine =
-            usize::try_from(pages).ok()?.saturating_mul(usize::try_from(bytes_of_page).ok()?);
+        let (pages, bytes_of_page) = unsafe {
+            (
+                libc::sysconf(libc::_SC_PHYS_PAGES),
+                libc::sysconf(libc::_SC_PAGESIZE),
+            )
+        };
+        let bytes_of_machine = usize::try_from(pages)
+            .ok()?
+            .saturating_mul(usize::try_from(bytes_of_page).ok()?);
         let mut arena: *mut core::ffi::c_void = core::ptr::null_mut();
         let wanted = bytes_of_machine.min(Self::BYTES_OF_LARGEST_ARENA);
         // Committed, or the allocator would ask the system for each piece by itself, and the range would no longer be one
         // that a fault can fill with 2 MB. Nothing is charged until it is touched.
         // SAFETY: `arena` is a local.
-        if unsafe { mimalloc::mi_reserve_os_memory_ex(wanted, true, false, false, &raw mut arena) } != 0 {
+        if unsafe { mimalloc::mi_reserve_os_memory_ex(wanted, true, false, false, &raw mut arena) }
+            != 0
+        {
             return None;
         }
         let mut size = 0;
         // SAFETY: `size` is a local.
         let start = unsafe { mimalloc::mi_arena_area(arena, &raw mut size) };
-        (!start.is_null()).then_some(ArenaOfBuilds { start: start as usize, size })
+        (!start.is_null()).then_some(ArenaOfBuilds {
+            start: start as usize,
+            size,
+        })
     }
 
     /// Whether what is touched for the first time from now on comes in pages of 2 MB, where the system has them.
@@ -238,7 +248,11 @@ impl ArenaOfBuilds {
     /// Meanwhile only whole huge pages go back. The system splits one that a piece is taken out of: what stays in it, and
     /// whatever is allocated in the gap, lies in small pages from then on. What the environment sets stands.
     pub fn take_huge_pages(&self, takes: bool) {
-        let advice = if takes { libc::MADV_HUGEPAGE } else { libc::MADV_NOHUGEPAGE };
+        let advice = if takes {
+            libc::MADV_HUGEPAGE
+        } else {
+            libc::MADV_NOHUGEPAGE
+        };
         // SAFETY: the range is the arena's own, and the advice changes no contents.
         unsafe { libc::madvise(self.start as *mut core::ffi::c_void, self.size, advice) };
         let kilobytes = if takes { 2048 } else { 0 };

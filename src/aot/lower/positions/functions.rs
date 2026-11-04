@@ -6,9 +6,9 @@ use bun_sema::hir::{ClassId, Flags, FnId, Member, MemberId, MemberKind};
 
 use super::FunctionPositions;
 use crate::ir::{ContentsSlot, DeclaredType, Mapped, PositionFlags, Type, TypeId, TypeTable};
+use crate::lower::FileLowering;
 use crate::lower::scope::{BindingRef, ScopeSlot};
 use crate::lower::types::find_contents_type;
-use crate::lower::FileLowering;
 
 pub(super) fn compute_function_positions(
     file: &mut FileLowering<'_, '_, '_, '_>,

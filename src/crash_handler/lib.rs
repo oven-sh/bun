@@ -822,10 +822,7 @@ mod draft {
         #[cfg(windows)]
         bun_sys::windows::kernel32::ExitProcess(1);
         #[cfg(not(windows))]
-        // SAFETY: `_exit` has no preconditions and never returns.
-        unsafe {
-            libc::_exit(1)
-        }
+        _exit(1)
     }
 
     /// This function is invoked when a crash happens. A crash is classified in `CrashReason`.
@@ -3911,8 +3908,6 @@ mod draft {
         if env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB::get() == Some(true) {
             suppress_reporting();
         }
-        // SAFETY: per the caller contract above, `name` is a valid NUL-terminated C string (non-null).
-        let name_bytes = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
         let mut msg = BoundedArray::<u8, 256>::default();
         let _ = write!(
             msg.writer(),

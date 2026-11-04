@@ -92,13 +92,7 @@ impl<'s> Folder<'_, 's> {
     /// For what `has_operand_folded_by_build_alone` has marked.
     pub(super) fn note_fold_under_minify_syntax(&mut self, e: ExprId, value: Value) {
         // A left addend has no value of its own, and the sum asks who folds it.
-        let is_addition = matches!(
-            self.hir[e].kind,
-            ExprKind::Binary {
-                op: BinOp::Add,
-                ..
-            }
-        );
+        let is_addition = matches!(self.hir[e].kind, ExprKind::Binary { op: BinOp::Add, .. });
         let is_asked_about =
             is_addition || matches!(value, Value::Known(_)) || self.conditions.contains_key(&e);
         if self.inputs.minifies_syntax || !is_asked_about {
@@ -502,7 +496,9 @@ impl<'s> Folder<'_, 's> {
                 }
                 _ if self.leaves_literals_alone(e, op, left, right) => true,
                 BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq
-                    if [left, right].iter().any(|&it| self.is_written_with_radix(it)) =>
+                    if [left, right]
+                        .iter()
+                        .any(|&it| self.is_written_with_radix(it)) =>
                 {
                     !self.compares_bigint_written_with_radix(left, right)
                 }

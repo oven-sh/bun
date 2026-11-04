@@ -505,8 +505,7 @@ impl EventLoop {
             };
             // `exit()` drains before it decrements the count. Reset it so each test callback still drains its microtasks.
             let entered = core::mem::replace(&mut self.entered_event_loop_count, 0);
-            // SAFETY: the live per-thread VM that owns this loop (hook contract).
-            unsafe { (hooks.run_pending_test_step)(self.vm()) };
+            (hooks.run_pending_test_step)(vm.global());
             self.entered_event_loop_count = entered;
             if !self.drain_microtasks_once(vm, global_object, jsc_vm)? {
                 return Ok(());
@@ -1500,13 +1499,10 @@ impl EventLoop {
         // `tick()` below can start work (e.g. a --hot reload) whose only wake
         // source is a cross-thread `wakeup()`; bound the park, same as the GC
         // timerfd used to. libuv's `tick_with_timeout` ignores the argument.
-        // SAFETY: as above.
-        unsafe {
-            (*loop_ptr).tick_with_timeout(
-                Some(&bun_core::Timespec { sec: 1, nsec: 0 }),
-                uws::NOW_NS_UNKNOWN,
-            )
-        };
+        loop_.tick_with_timeout(
+            Some(&bun_core::Timespec { sec: 1, nsec: 0 }),
+            uws::NOW_NS_UNKNOWN,
+        );
 
         self.vm_ref().as_mut().on_after_event_loop();
         self.tick_concurrent();

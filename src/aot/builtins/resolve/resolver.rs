@@ -547,7 +547,9 @@ impl<'a, 's> Resolver<'a, 's> {
                 op: Some(BinOp::Nullish),
                 target,
                 ..
-            } => matches!(hir[target].kind, ExprKind::Ident(name) if [LOADED_BY_WORKER, LOADED_BELOW_VITEST].contains(&atoms.bytes(name))),
+            } => {
+                matches!(hir[target].kind, ExprKind::Ident(name) if [LOADED_BY_WORKER, LOADED_BELOW_VITEST].contains(&atoms.bytes(name)))
+            }
             ExprKind::Binary {
                 op: BinOp::Or,
                 left,
@@ -662,7 +664,10 @@ impl<'a, 's> Resolver<'a, 's> {
         let without_what_leads = |list: &[BuiltinId]| -> Vec<BuiltinId> {
             list.iter().copied().filter(|id| !leads_alone(id)).collect()
         };
-        let (called, handed_on) = (without_what_leads(&output.called), without_what_leads(&exposed));
+        let (called, handed_on) = (
+            without_what_leads(&output.called),
+            without_what_leads(&exposed),
+        );
         let loads_unknown_modules = match input.dialect {
             SourceDialect::Program => {
                 reaches_unknown_module_loader(&output.loaded, &called, &handed_on, input.platform)

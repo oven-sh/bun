@@ -230,12 +230,20 @@ export function read(holder: Holder): number { return (holder[kState] ?? 0) + ho
         let linked = link_sources_without_bun_modules(&[("main.ts", STORED_UNDER_A_SYMBOL)]);
         let program = &linked.expect("the program links").program;
         let written = STORED_UNDER_A_SYMBOL.find("interface Holder ").unwrap() + "interface ".len();
-        let is_holder = |layout: &&Layout| layout.module.is_some() && layout.position == written as u32;
+        let is_holder =
+            |layout: &&Layout| layout.module.is_some() && layout.position == written as u32;
         let holder = program.layouts.iter().find(is_holder).expect("Holder");
-        let is_symbol = |key: PropertyKeyId| program.property_keys.get(key).kind != PropertyKeyKind::Text;
-        let under_symbol = holder.fields.iter().find(|field| field.key.is_some_and(is_symbol));
+        let is_symbol =
+            |key: PropertyKeyId| program.property_keys.get(key).kind != PropertyKeyKind::Text;
+        let under_symbol = holder
+            .fields
+            .iter()
+            .find(|field| field.key.is_some_and(is_symbol));
         assert_eq!(under_symbol.expect("kState").flags, FieldFlags::IS_REQUIRED);
-        assert_eq!(flags_of_field(program, holder, "never"), FieldFlags::IS_NEVER_WRITTEN);
+        assert_eq!(
+            flags_of_field(program, holder, "never"),
+            FieldFlags::IS_NEVER_WRITTEN
+        );
     }
 
     // The only names that the program stores are `name` and `level`.

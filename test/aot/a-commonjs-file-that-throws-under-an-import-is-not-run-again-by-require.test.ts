@@ -147,9 +147,7 @@ async function runTests(directory: string, words: string | undefined, ...flags: 
   return { stdout: stdout.split("\n").filter(line => line && !line.startsWith("bun test ")), exitCode };
 }
 
-for (const [way, words] of [
-  ["as one program", "TestRunLayers:0"],
-]) {
+for (const [way, words] of [["as one program", "TestRunLayers:0"]]) {
   test(`require() runs a CommonJS file that threw again only where no import has loaded the file, ${way}`, async () => {
     using dir = tempDir("aot-a-file-that-throws-under-an-import", files);
     const printed = (behindTheFile: (name: string) => string[], callsOfImport: string[]) => ({

@@ -27,13 +27,7 @@ import {
   mayAnswerWrapperKeptIn,
   promiseOf,
 } from "./native-code.ts";
-import {
-  convertedToString,
-  iterated,
-  sequencesOfTLSOptions,
-  socketOptions,
-  tlsOptionNames,
-} from "./socket-options.ts";
+import { convertedToString, iterated, sequencesOfTLSOptions, socketOptions, tlsOptionNames } from "./socket-options.ts";
 
 type Contents = Readonly<Record<string, b.TableType>>;
 type UsesByOperand = Readonly<Record<string, readonly b.UseSpec[]>>;
@@ -170,7 +164,6 @@ const readAndKeptIn = (cell: string, readMembers: readonly string[]) => [
   b.membersOfObjectsOnly,
   b.functionsConvertedUnderNamesOnly,
 ];
-
 
 const listenerRegistration = (eventTarget: b.TableType) =>
   ({

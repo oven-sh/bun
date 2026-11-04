@@ -589,14 +589,7 @@ static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
     if (auto queue = globalObject->m_nextTickQueue.get()) {
         didDrainFirstNextTickQueueOfThread = true;
         queue->drain(vm, globalObject);
-}
-
-void Bun::updateOnEachMicrotaskTick(JSC::VM& vm)
-{
-    if (newNextTickQueueWaitsForMicrotaskToEnd || waitsForMicrotasksThatBeganWithoutAsyncContextTracking())
-        vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
-    else
-        vm.setOnEachMicrotaskTick(nullptr);
+    }
 }
 
 void Bun::updateOnEachMicrotaskTick(JSC::VM& vm)

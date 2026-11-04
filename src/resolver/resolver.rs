@@ -447,15 +447,8 @@ static BIN_FOLDERS: bun_core::RacyCell<BinFolderArray> =
     bun_core::RacyCell::new(BoundedArray::new());
 static BIN_FOLDERS_LOCK: Mutex = Mutex::new();
 
-/// Takes `BIN_FOLDERS_LOCK` and makes the list at the first call.
 fn lock_bin_folders() -> bun_threading::MutexGuard {
-    let guard = BIN_FOLDERS_LOCK.lock_guard();
-    if !BIN_FOLDERS_LOADED.load(core::sync::atomic::Ordering::Acquire) {
-        // SAFETY: the lock is held, and nobody reads the list before `BIN_FOLDERS_LOADED` says that it is there.
-        unsafe { (*BIN_FOLDERS.get()).write(BinFolderArray::default()) };
-        BIN_FOLDERS_LOADED.store(true, core::sync::atomic::Ordering::Release);
-    }
-    guard
+    BIN_FOLDERS_LOCK.lock_guard()
 }
 
 // LAYERING: `AnyResolveWatcher` is the erased vtable the resolver calls to
@@ -1201,8 +1194,8 @@ impl<'a> Resolver<'a> {
         import_path: &[u8],
         kind: ast::ImportKind,
     ) -> PackageLookup {
-        let is_compiled = (self.standalone_module_graph)
-            .is_some_and(|graph| graph.compiled_program().is_some());
+        let is_compiled =
+            (self.standalone_module_graph).is_some_and(|graph| graph.compiled_program().is_some());
         match is_compiled {
             true => self.look_in_executable(folder, import_path, kind),
             false => PackageLookup::Unknown,
@@ -1779,19 +1772,7 @@ impl<'a> Resolver<'a> {
             }
             ResultUnion::Failure(e) => {
                 let _ = self.flush_debug_logs(FlushMode::Fail);
-                match self.resolve_package_of_program_for_code_from_disk(import_path, kind) {
-                    Some(file_name) => ResultUnion::Success(Result {
-                        import_kind: kind,
-                        path_pair: PathPair {
-                            primary: Path::init(file_name),
-                            secondary: None,
-                        },
-                        module_type: options::ModuleType::Esm,
-                        flags: ResultFlags::IS_STANDALONE_MODULE,
-                        ..Default::default()
-                    }),
-                    None => ResultUnion::Failure(e),
-                }
+                ResultUnion::Failure(e)
             }
             ResultUnion::Pending(pending) => {
                 let _ = self.flush_debug_logs(FlushMode::Fail);
@@ -1799,19 +1780,7 @@ impl<'a> Resolver<'a> {
             }
             ResultUnion::NotFound => {
                 let _ = self.flush_debug_logs(FlushMode::Fail);
-                match self.resolve_package_of_program_for_code_from_disk(import_path, kind) {
-                    Some(file_name) => ResultUnion::Success(Result {
-                        import_kind: kind,
-                        path_pair: PathPair {
-                            primary: Path::init(file_name),
-                            secondary: None,
-                        },
-                        module_type: options::ModuleType::Esm,
-                        flags: ResultFlags::IS_STANDALONE_MODULE,
-                        ..Default::default()
-                    }),
-                    None => ResultUnion::NotFound,
-                }
+                ResultUnion::NotFound
             }
         };
 
@@ -4003,29 +3972,6 @@ impl<'a> Resolver<'a> {
         mut esm_resolution: crate::package_json::Resolution,
         abs_package_path: &[u8],
         kind: ast::ImportKind,
-        package_json: &PackageJSON,
-        package_subpath: &[u8],
-        out: &mut MatchResult,
-    ) -> MatchStatus {
-        let status = self.load_esm_resolution(
-            &mut esm_resolution,
-            abs_package_path,
-            kind,
-            package_json,
-            package_subpath,
-            out,
-        );
-        if !status.is_success() {
-            self.esm_failure.get_or_insert(esm_resolution.status);
-        }
-        status
-    }
-
-    fn load_esm_resolution(
-        &mut self,
-        esm_resolution: &mut crate::package_json::Resolution,
-        abs_package_path: &[u8],
-        kind: ast::ImportKind,
         package_json: &'static PackageJSON,
         package_subpath: &[u8],
         out: &mut MatchResult,
@@ -4802,8 +4748,6 @@ impl<'a> Resolver<'a> {
             if let Some(top_entry) = rfs!().entries.get(top) {
                 match top_entry {
                     Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
-                        // SAFETY: slot was written immediately above.
-                        let slot = unsafe { queue[i].assume_init_mut() };
                         slot.safe_path = entries.dir;
                         slot.fd = entries.fd;
                     }
@@ -4839,8 +4783,6 @@ impl<'a> Resolver<'a> {
                 if let Some(top_entry) = rfs!().entries.get(top) {
                     match top_entry {
                         Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
-                            // SAFETY: slot was written immediately above.
-                            let slot = unsafe { queue[i].assume_init_mut() };
                             slot.safe_path = entries.dir;
                             slot.fd = entries.fd;
                         }
@@ -4899,8 +4841,8 @@ impl<'a> Resolver<'a> {
 
         // `dir_info_uncached` asks for the listing of the directory above at this generation.
         // SAFETY: `top_parent.index` is a sentinel or a published slot.
-        let listing_above =
-            unsafe { DirInfo::slot_ptr_at(top_parent.index) }.map(|above| unsafe { (*above).entries });
+        let listing_above = unsafe { DirInfo::slot_ptr_at(top_parent.index) }
+            .map(|above| unsafe { (*above).entries });
         if listing_above
             .is_some_and(|listing| rfs!().is_listing_older_than(listing, self.generation))
         {
@@ -5103,10 +5045,7 @@ impl<'a> Resolver<'a> {
                 }
             }
             debug_assert!(
-                in_place.is_none()
-                    || rfs!()
-                        .entries_mutex
-                        .is_held_exclusively_by_current_thread(),
+                in_place.is_none() || rfs!().entries_mutex.is_held_exclusively_by_current_thread(),
                 "a listing is rewritten in place under the exclusive entries_mutex",
             );
 

@@ -10,7 +10,9 @@ use crate::diagnostics::InternalError;
 use crate::engine::LackedModuleRecord;
 use crate::engine::testing::ResultRecords;
 use crate::ir::generated::{FunctionFlags, ModuleKind};
-use crate::ir::{FunctionId, Id, ModuleId, OpaqueKind, Program, Type, print_function, print_program};
+use crate::ir::{
+    FunctionId, Id, ModuleId, OpaqueKind, Program, Type, print_function, print_program,
+};
 use crate::link::LinkedFunctions;
 use crate::load::runtime_modules::RuntimeModules;
 use crate::load::source_provider::{
@@ -1092,7 +1094,8 @@ fn every_module_of_bun_keeps_its_types() {
                     BStr::new(&error.text),
                 )
             };
-            let describe = |demotion: &Demotion| format!("{:?}: {:?}", demotion.file, demotion.cause);
+            let describe =
+                |demotion: &Demotion| format!("{:?}: {:?}", demotion.file, demotion.cause);
             let mut untyped: Vec<String> = decision.demoted.iter().map(describe).collect();
             untyped.extend(first_errors.iter().map(describe_error));
             untyped.sort();
@@ -1314,7 +1317,10 @@ fn library_module_that_is_evaluated_without_code_is_named() {
     let module = native_module.to_word();
     let message = describe(&[LackedModuleRecord { module }]);
     let message = message.expect("a module that the engine lacks stops the build");
-    assert!(message.ends_with("that the load has left out: bun:jsc"), "{message}");
+    assert!(
+        message.ends_with("that the load has left out: bun:jsc"),
+        "{message}"
+    );
 
     let module = u32::try_from(linked.program.modules.len()).unwrap();
     let message = describe(&[LackedModuleRecord { module }]);
@@ -1360,7 +1366,11 @@ fn library_module_that_is_evaluated_without_code_stops_the_build() {
     };
 
     let (failed, log) = finish_build(false);
-    assert!(failed.expect("the record stops the build").is_internal_error);
+    assert!(
+        failed
+            .expect("the record stops the build")
+            .is_internal_error
+    );
     let message = "internal compiler error (Load): the program evaluates modules of Bun's library";
     assert!(has_message(&log, Kind::Err, message));
     assert_eq!(log.msgs.len(), 1);

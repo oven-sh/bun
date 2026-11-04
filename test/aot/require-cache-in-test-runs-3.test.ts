@@ -45,8 +45,7 @@ async function expectCompiledToRunAsPlain(files: Record<string, string>) {
   };
   const plain = await seen();
   expect(plain.exitCode).toBe(0);
-  for (const words of ["TestRunLayers:0"])
-    expect(await seen(words, "--aot")).toEqual(plain);
+  for (const words of ["TestRunLayers:0"]) expect(await seen(words, "--aot")).toEqual(plain);
 }
 
 test("a CommonJS file finds its own module in require.cache while it runs, whoever has begun it", async () => {

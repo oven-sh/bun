@@ -203,7 +203,9 @@ function findNativeExports(bunRoot: string): Map<string, NativeExports> {
         names: put.map(([, , name]) => name),
         values: new Map<string, NativeValue>([
           ...Array.from(body.matchAll(numericConstantPattern), ([, name]) => [name, "Number"] as const),
-          ...put.flatMap(([, makesFunction, name]) => (makesFunction === undefined ? [] : [[name, "Function"] as const])),
+          ...put.flatMap(([, makesFunction, name]) =>
+            makesFunction === undefined ? [] : [[name, "Function"] as const],
+          ),
         ]),
       });
     }

@@ -1,7 +1,11 @@
 import * as b from "../lib.ts";
 import { socketDataCell, socketOptionsCell, socketsCell } from "./native-cells.ts";
 
-export const memberOf = (operand: b.OperandName, ...path: b.MemberPath): b.PlaceSpec => ({ place: "Member", operand, path });
+export const memberOf = (operand: b.OperandName, ...path: b.MemberPath): b.PlaceSpec => ({
+  place: "Member",
+  operand,
+  path,
+});
 
 // ToString of what lies at the end of the path: of an object, a function among them, it calls these three and nothing else.
 export const convertedToString = (operand: b.OperandName, ...path: b.MemberPath) =>

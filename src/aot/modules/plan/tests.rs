@@ -1062,30 +1062,46 @@ fn a_name_read_through_the_copy_of_a_module_is_the_variable_of_the_module() {
         assert_eq!(plan.shape("k.cjs"), Shape::Names);
         let exports = View::Exports(plan.module("k.cjs"));
         assert_eq!(plan.holder("main.cjs", "a"), Some(exports));
-        assert_eq!(plan.call_of_holder("main.cjs", "a"), Some(plan.calls("main.cjs")[0]));
-        assert_eq!(plan.member("main.cjs", "x"), Some(plan.variable("k.cjs", "x")));
+        assert_eq!(
+            plan.call_of_holder("main.cjs", "a"),
+            Some(plan.calls("main.cjs")[0])
+        );
+        assert_eq!(
+            plan.member("main.cjs", "x"),
+            Some(plan.variable("k.cjs", "x"))
+        );
     });
 }
 
 #[test]
 fn the_default_of_the_copy_of_an_unmarked_module_is_what_require_answers() {
-    with_copy("console.log(a.default, a.x);", "exports.x = 1;", |plan, file, a| {
-        assert_eq!(plan.shape("k.cjs"), Shape::Value);
-        assert_eq!(plan.holder("main.cjs", "a"), None);
-        let held = plan.graph.holder_of_answer(file, a);
-        assert_eq!(held.map(|held| held.0), Some(plan.calls("main.cjs")[0]));
-        assert_eq!(plan.graph.holder_of_copy(file, a), None);
-        let x = plan.atom("x");
-        assert_eq!(plan.graph.names_read_on_answer(file, a), [(a, x)]);
-        let member = |name| plan.graph.answer_member(file, member_named(plan.input, file, name));
-        let whole = AnswerMember { holder: a, name: None };
-        assert_eq!(member("default"), Some(whole));
-        let named = AnswerMember {
-            holder: a,
-            name: Some(x),
-        };
-        assert_eq!(member("x"), Some(named));
-    });
+    with_copy(
+        "console.log(a.default, a.x);",
+        "exports.x = 1;",
+        |plan, file, a| {
+            assert_eq!(plan.shape("k.cjs"), Shape::Value);
+            assert_eq!(plan.holder("main.cjs", "a"), None);
+            let held = plan.graph.holder_of_answer(file, a);
+            assert_eq!(held.map(|held| held.0), Some(plan.calls("main.cjs")[0]));
+            assert_eq!(plan.graph.holder_of_copy(file, a), None);
+            let x = plan.atom("x");
+            assert_eq!(plan.graph.names_read_on_answer(file, a), [(a, x)]);
+            let member = |name| {
+                plan.graph
+                    .answer_member(file, member_named(plan.input, file, name))
+            };
+            let whole = AnswerMember {
+                holder: a,
+                name: None,
+            };
+            assert_eq!(member("default"), Some(whole));
+            let named = AnswerMember {
+                holder: a,
+                name: Some(x),
+            };
+            assert_eq!(member("x"), Some(named));
+        },
+    );
 }
 
 #[test]

@@ -110,7 +110,10 @@ fn key_context<'a>(projects: &Projects<'a, '_>, project: ProjectId) -> KeyContex
 // For the log: how much the merges that follow have to read.
 fn describe_tables(units: &[LinkUnit], tables: &[LinkTables]) -> String {
     let sum = |length_of: fn(&LinkTables) -> u32| -> u64 {
-        tables.iter().map(|tables| u64::from(length_of(tables))).sum()
+        tables
+            .iter()
+            .map(|tables| u64::from(length_of(tables)))
+            .sum()
     };
     let most_types = tables.iter().map(|tables| tables.lengths.types).max();
     format!(
@@ -193,7 +196,10 @@ pub fn link(input: LinkInput<'_, '_>) -> Result<Linked, Vec<LinkError>> {
     let ((ordered_strings, string_ids), (types_by_height, of_keys)) = run_steps_beside(
         beside,
         &mut steps,
-        ["order and ids of strings", "heights of types, modules, keys"],
+        [
+            "order and ids of strings",
+            "heights of types, modules, keys",
+        ],
         || {
             let strings = order_strings(&tables, in_parallel);
             let ids = strings.list_ids(in_parallel);
@@ -374,7 +380,9 @@ pub fn link(input: LinkInput<'_, '_>) -> Result<Linked, Vec<LinkError>> {
     check_count_of_ids(merged_types.count)?;
     check_count_of_ids(property_keys.len())?;
     store_ids(&mut numbering.tables, type_ids, |ids| &mut ids.types);
-    store_ids(&mut numbering.tables, property_key_ids, |ids| &mut ids.property_keys);
+    store_ids(&mut numbering.tables, property_key_ids, |ids| {
+        &mut ids.property_keys
+    });
 
     let (mut types, mut program_tables) = run_steps_beside(
         beside,

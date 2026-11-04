@@ -604,7 +604,10 @@ mod tests {
         let [marked, plain] = values[..] else {
             panic!("{} values", values.len());
         };
-        assert_eq!((marked.opcode, plain.opcode), (Opcode::PropGet, Opcode::Undefined));
+        assert_eq!(
+            (marked.opcode, plain.opcode),
+            (Opcode::PropGet, Opcode::Undefined)
+        );
         assert_eq!(marked.fields, [0, 0, 7]);
         assert!(plain.fields.is_empty());
     }

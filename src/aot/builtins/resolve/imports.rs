@@ -200,9 +200,14 @@ impl Resolver<'_, '_> {
     // `const { spyOn } = await import("bun:test")`: what `await` answers is what `import * as all from "bun:test"` names, and what is done with it is in sight.
     pub(super) fn compute_state_of_awaited_import(&self, promise: ExprId) -> ExprState {
         let call = self.input.hir.skip_type_assertions(promise);
-        let module = self.input.targets.module_at(ImportSiteKind::ImportCall(call));
+        let module = self
+            .input
+            .targets
+            .module_at(ImportSiteKind::ImportCall(call));
         match module.filter(|&module| !has_source(module)) {
-            Some(module) => ExprState::of_value(Some(imported_namespace_value(module).with_side_effects())),
+            Some(module) => {
+                ExprState::of_value(Some(imported_namespace_value(module).with_side_effects()))
+            }
             None => ExprState::Unresolved,
         }
     }

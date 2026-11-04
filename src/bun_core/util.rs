@@ -3789,21 +3789,6 @@ pub fn is_stack_trace_limit_flag(argument: &[u8]) -> bool {
     argument.starts_with(b"--stack-trace-limit")
 }
 
-pub fn is_bootstrap_flag(argument: &[u8]) -> bool {
-    const PREFIXES: [&[u8]; 4] = [
-        b"--trace-event",
-        b"--trace-env",
-        b"--trace-exit",
-        b"--stack-trace-limit",
-    ];
-    PREFIXES.iter().any(|prefix| argument.starts_with(prefix))
-}
-
-/// The bootstrap flag that native code carries out where `internal/process/pre_execution` cannot be loaded.
-pub fn is_stack_trace_limit_flag(argument: &[u8]) -> bool {
-    argument.starts_with(b"--stack-trace-limit")
-}
-
 /// Parse a `BUN_OPTIONS`-style string
 /// (`--flag=value --flag2 "quoted value" bare`) and insert each token into
 /// `args` starting at index 1 (callers prepend a placeholder at [0]).

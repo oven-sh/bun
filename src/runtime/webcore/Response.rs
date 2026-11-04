@@ -876,39 +876,6 @@ impl Response {
         Ok(Response::to_js(RefPtr::new(response), global_this))
     }
 
-    fn json_text_of(
-        global_this: &JSGlobalObject,
-        json_value: JSValue,
-        argument: JsonArgument,
-    ) -> JsResult<BunString> {
-        if argument == JsonArgument::Text && json_value.is_string_literal() {
-            return json_value.to_bun_string(global_this);
-        }
-
-        // Validate top-level values that are not JSON serializable (Node.js compatibility)
-        if json_value.is_undefined()
-            || json_value.is_symbol()
-            || json_value.js_type() == bun_jsc::JSType::JSFunction
-            || json_value.js_type() == bun_jsc::JSType::CompiledClosure
-            || json_value.js_type() == bun_jsc::JSType::SlimClosure
-            || json_value.js_type() == bun_jsc::JSType::SlimClosureWithProperties
-        {
-            let err = global_this
-                .create_type_error_instance(format_args!("Value is not JSON serializable"));
-            return Err(global_this.throw_value(err));
-        }
-
-        // BigInt has a different error message to match Node.js exactly
-        if json_value.is_big_int() {
-            let err = global_this
-                .create_type_error_instance(format_args!("Do not know how to serialize a BigInt"));
-            return Err(global_this.throw_value(err));
-        }
-
-        // Use jsonStringifyFast which passes undefined for the space parameter, triggering JSC's FastStringifier optimization.
-        json_value.json_stringify_fast(global_this)
-    }
-
     fn json_text_of(global_this: &JSGlobalObject, json_value: JSValue) -> JsResult<BunString> {
         // Validate top-level values that are not JSON serializable (Node.js compatibility)
         if json_value.is_undefined()
@@ -1170,8 +1137,7 @@ impl Response {
         }
         let init = Init::from_parts(global_this, parts)?;
         let response = Self::from_body_and_init(global_this, body, init)?;
-        // SAFETY: the wrapper adopts the new response's only ref.
-        Ok(unsafe { Response::to_js(response.into_raw(), global_this) })
+        Ok(Response::to_js(response, global_this))
     }
 }
 
@@ -1186,14 +1152,12 @@ pub(crate) struct InitParts {
 #[unsafe(no_mangle)]
 #[bun_jsc::host_call]
 fn Response__createFromParts(
-    global_this: *mut JSGlobalObject,
+    global_this: &JSGlobalObject,
     body: JSValue,
     status: JSValue,
     status_text: JSValue,
     headers: JSValue,
 ) -> JSValue {
-    // SAFETY: compiled code passes its live realm.
-    let global_this = unsafe { &*global_this };
     let parts = InitParts {
         status,
         status_text,

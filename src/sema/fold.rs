@@ -122,7 +122,10 @@ impl<'s> NodeBits<'s> {
         NodeBits(words)
     }
 
-    fn of_ascending(positions: impl Iterator<Item = usize> + Clone, arena: &'s Arena) -> NodeBits<'s> {
+    fn of_ascending(
+        positions: impl Iterator<Item = usize> + Clone,
+        arena: &'s Arena,
+    ) -> NodeBits<'s> {
         let Some(last) = positions.clone().last() else {
             return NodeBits::default();
         };

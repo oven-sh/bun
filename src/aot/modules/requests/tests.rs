@@ -80,7 +80,11 @@ fn with_program_that_loads_code_from_disk(
             panic!("the modules were not bound");
         };
         let files = loaded.project(ProjectId::Application).loaded.files();
-        check(&bound.projects.application.graph, files, files.entry_points()[0]);
+        check(
+            &bound.projects.application.graph,
+            files,
+            files.entry_points()[0],
+        );
     });
 }
 
@@ -646,7 +650,9 @@ fn load_of_file_missing_at_build_is_left_to_loader() {
         // Load lists the calls that load a module, and this one only looks for it.
         let resolved = SiteAnswer::Failed(ModuleFailureId(0));
         let sites = files.analysis(main).import_sites.iter();
-        let answers: Vec<_> = sites.map(|site| graph.site_answer(main, site.kind)).collect();
+        let answers: Vec<_> = sites
+            .map(|site| graph.site_answer(main, site.kind))
+            .collect();
         assert_eq!(answers, [imported, required, resolved]);
         let kinds = left_to_loader.map(|module| graph.external_kind(module));
         assert_eq!(kinds, [Some(ExternalKind::UncompiledCode); 2]);

@@ -1328,8 +1328,7 @@ fn find_files_on_cycles(files: &[WalkedFile<'_, '_>]) -> Vec<bool> {
         Some(NOT_LOADED),
     );
     let is_on_cycle = |(index, file): (u32, &WalkedFile<'_, '_>)| {
-        components[component_of[index as usize] as usize].len() > 1
-            || file.targets.contains(&index)
+        components[component_of[index as usize] as usize].len() > 1 || file.targets.contains(&index)
     };
     (0..).zip(files).map(is_on_cycle).collect()
 }
@@ -1565,10 +1564,7 @@ fn find_texts_of_data_files(
     found
 }
 
-fn scan_askers_of_data_files_again(
-    atoms: &Interner<'_>,
-    state: &mut WalkState<'_, '_>,
-) -> bool {
+fn scan_askers_of_data_files_again(atoms: &Interner<'_>, state: &mut WalkState<'_, '_>) -> bool {
     let asks = |file: &WalkedFile<'_, '_>| {
         (file.parsed.as_ref())
             .is_some_and(|it| !it.code.analyzed.analysis.asked_of_data_files.is_empty())

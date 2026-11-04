@@ -80,8 +80,8 @@ mod tests {
     use bstr::BString;
 
     use super::*;
-    use crate::engine::testing::ResultRecords;
     use crate::engine::TextRange;
+    use crate::engine::testing::ResultRecords;
     use crate::report::testing::ReportFixture;
 
     const TEXT: &[u8] = b"CallGetSlotPutSlot";

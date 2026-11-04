@@ -33,7 +33,9 @@ pub(in crate::lower::scope) fn walk_file(
     let always_read = std::mem::take(&mut walk.declarations_read_by_every_run);
     sort_unique(&mut walk.makers_of_closures_in_every_run);
     let makers = std::mem::take(&mut walk.makers_of_closures_in_every_run);
-    for (symbol, reader, function, around, owner) in std::mem::take(&mut walk.readers_of_declarations) {
+    for (symbol, reader, function, around, owner) in
+        std::mem::take(&mut walk.readers_of_declarations)
+    {
         if always_read.binary_search(&symbol).is_ok() || makers.binary_search(&owner).is_ok() {
             continue;
         }
@@ -77,10 +79,11 @@ fn find_starts_of_functions_made_late(input: &ScopeInput<'_, '_>, walk: &mut Sco
     let (functions, function_of_fn) = (&mut walk.functions, &walk.function_of_fn);
     for &(_, symbol, function) in &walk.hoisted_functions {
         // As FunctionLowering::instantiate_functions() asks.
-        let is_never_made =
-            matches!(bound.code_unit(bound.symbol_scope(symbol)), CodeUnit::Function(_))
-                && !bound.is_visible_to_eval(symbol)
-                && walk.use_counts.get(symbol.idx()) == Some(&0);
+        let is_never_made = matches!(
+            bound.code_unit(bound.symbol_scope(symbol)),
+            CodeUnit::Function(_)
+        ) && !bound.is_visible_to_eval(symbol)
+            && walk.use_counts.get(symbol.idx()) == Some(&0);
         if let Some(walked) = function_of_fn[function.idx()].filter(|_| is_never_made) {
             functions[walked.index()].is_made_late = true;
             functions[walked.index()].created_at = u32::MAX;
@@ -101,8 +104,13 @@ fn find_starts_of_functions_made_late(input: &ScopeInput<'_, '_>, walk: &mut Sco
             let mut below_owner = user;
             while Some(below_owner) != started.creator {
                 let around = functions[below_owner.index()];
-                let is_made_with_hoisted_functions = around.hoisted_to.is_some() && !around.is_made_late;
-                start = if is_made_with_hoisted_functions { 0 } else { around.created_at };
+                let is_made_with_hoisted_functions =
+                    around.hoisted_to.is_some() && !around.is_made_late;
+                start = if is_made_with_hoisted_functions {
+                    0
+                } else {
+                    around.created_at
+                };
                 match around.creator {
                     Some(creator) => below_owner = creator,
                     // The call stands outside of the function that declares the name.

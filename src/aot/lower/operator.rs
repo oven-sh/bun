@@ -164,7 +164,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.logical_not(boolean)
     }
 
-    fn lower_binary_spine(&mut self, outermost: ExprId, op: BinOp, left: ExprId, right: ExprId) -> ValueId {
+    fn lower_binary_spine(
+        &mut self,
+        outermost: ExprId,
+        op: BinOp,
+        left: ExprId,
+        right: ExprId,
+    ) -> ValueId {
         let hir = self.file.hir;
         let mut spine: SmallVec<[(ExprId, BinOp, ExprId); 8]> = SmallVec::new();
         spine.push((outermost, op, right));

@@ -61,7 +61,16 @@ async function linesOf(flags: string[]) {
   using dir = tempDir("aot-rewritten-file-and-the-library", files);
   await using run = Bun.spawn({
     // `bun test` runs the files of a folder as the file system lists them, and shared memory lists the newest first. The last way needs its two in the order of their names.
-    cmd: [bunExe(), "test", ...flags, "--isolate", ...Object.keys(files).filter(name => name.includes(".test.")).sort().map(name => "./" + name)],
+    cmd: [
+      bunExe(),
+      "test",
+      ...flags,
+      "--isolate",
+      ...Object.keys(files)
+        .filter(name => name.includes(".test."))
+        .sort()
+        .map(name => "./" + name),
+    ],
     cwd: String(dir),
     env: bunEnv,
     stdio: ["ignore", "pipe", "pipe"],

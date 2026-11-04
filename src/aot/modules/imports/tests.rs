@@ -923,7 +923,12 @@ impl BoundProgram<'_, '_, '_> {
 
     /// The one call of `require` in the file.
     fn call_of_require(&self, file: &str) -> ExprId {
-        let sites = self.input.files.analysis(self.file(file)).import_sites.iter();
+        let sites = self
+            .input
+            .files
+            .analysis(self.file(file))
+            .import_sites
+            .iter();
         let calls = sites.filter_map(|site| match site.kind {
             ImportSiteKind::Require(call) => Some(call),
             _ => None,
@@ -1355,27 +1360,33 @@ fn import_helper_of_typescript_leaves_a_holder_only_where_the_module_has_the_mar
     let main = format!("{TYPESCRIPT_IMPORT_HELPERS}{reads}");
     // The helper answers what it is handed.
     let marked = "Object.defineProperty(exports, '__esModule', { value: true }); exports.x = 1;";
-    with_program(&[("main.cjs", main.as_str()), ("c.cjs", marked)], |program| {
-        let file = program.file("main.cjs");
-        let exports = View::Exports(program.module("c.cjs"));
-        assert_eq!(program.holder("main.cjs", "held"), Some(exports));
-        let call = program.call_of_require("main.cjs");
-        let held = symbol_named(program.input, file, "held");
-        assert_eq!(program.graph.call_of_holder(file, held), Some(call));
-        assert!(!program.graph.is_site_read_as_value(file, call));
-        let x = Member::Variable(program.variable("c.cjs", "x"));
-        assert_eq!(program.member("main.cjs", "x"), Some(x));
-    });
+    with_program(
+        &[("main.cjs", main.as_str()), ("c.cjs", marked)],
+        |program| {
+            let file = program.file("main.cjs");
+            let exports = View::Exports(program.module("c.cjs"));
+            assert_eq!(program.holder("main.cjs", "held"), Some(exports));
+            let call = program.call_of_require("main.cjs");
+            let held = symbol_named(program.input, file, "held");
+            assert_eq!(program.graph.call_of_holder(file, held), Some(call));
+            assert!(!program.graph.is_site_read_as_value(file, call));
+            let x = Member::Variable(program.variable("c.cjs", "x"));
+            assert_eq!(program.member("main.cjs", "x"), Some(x));
+        },
+    );
     // The helper makes another object of the one that it is handed, so the initializer runs as it is written.
     let unmarked = "exports.x = 1;";
-    with_program(&[("main.cjs", main.as_str()), ("c.cjs", unmarked)], |program| {
-        let file = program.file("main.cjs");
-        assert_eq!(program.holder("main.cjs", "held"), None);
-        assert_eq!(program.member("main.cjs", "x"), None);
-        let call = program.call_of_require("main.cjs");
-        assert!(program.graph.is_site_read_as_value(file, call));
-        assert_eq!(program.graph.shape(program.module("c.cjs")), Shape::Value);
-    });
+    with_program(
+        &[("main.cjs", main.as_str()), ("c.cjs", unmarked)],
+        |program| {
+            let file = program.file("main.cjs");
+            assert_eq!(program.holder("main.cjs", "held"), None);
+            assert_eq!(program.member("main.cjs", "x"), None);
+            let call = program.call_of_require("main.cjs");
+            assert!(program.graph.is_site_read_as_value(file, call));
+            assert_eq!(program.graph.shape(program.module("c.cjs")), Shape::Value);
+        },
+    );
 }
 
 const TWO_FUNCTIONS: &str = "export function x() {} export function y() {}";

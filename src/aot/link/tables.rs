@@ -73,8 +73,9 @@ fn take_tables_of_units(units: &mut [LinkUnit]) -> Vec<TaskTables> {
     }
     // The next task of a thread cuts the tables back to the last commit that was noted. Behind a commit that nobody noted it would give the numbers of a unit out again.
     assert!(
-        sets.iter()
-            .all(|set| set.noted_commits.is_none_or(|noted| set.unit_count <= noted)),
+        sets.iter().all(|set| set
+            .noted_commits
+            .is_none_or(|noted| set.unit_count <= noted)),
         "a unit is written under tables that several tasks share, and its commit was not noted"
     );
     sets
@@ -120,10 +121,16 @@ fn create_link_tables(context: &KeyContext<'_>, set: TaskTables) -> LinkTables {
         strings,
         property_keys,
         types,
-        functions: convert_keys(function_keys, lengths.functions, |key| context.function_key(key)),
+        functions: convert_keys(function_keys, lengths.functions, |key| {
+            context.function_key(key)
+        }),
         layouts: convert_keys(layout_keys, lengths.layouts, |key| context.layout_key(key)),
-        variables: convert_keys(variable_keys, lengths.variables, |key| context.variable_key(key)),
-        modules: convert_keys(module_keys, lengths.modules, |module| context.module(module)),
+        variables: convert_keys(variable_keys, lengths.variables, |key| {
+            context.variable_key(key)
+        }),
+        modules: convert_keys(module_keys, lengths.modules, |module| {
+            context.module(module)
+        }),
         module_failures: module_failure_keys,
         lengths,
     }

@@ -70,7 +70,8 @@ test.skipIf(fileList === undefined || !existsSync(fileList))(
 function copyOfSchema(folder: string) {
   const ir = join(folder, "ir");
   for (const name of ["AOTSchema.def", "AOTSchemaFiles.cmake", "schema", "generator"])
-    if (existsSync(join(dirname(schema!), name))) cpSync(join(dirname(schema!), name), join(ir, name), { recursive: true });
+    if (existsSync(join(dirname(schema!), name)))
+      cpSync(join(dirname(schema!), name), join(ir, name), { recursive: true });
   return ir;
 }
 
@@ -105,7 +106,13 @@ test.skipIf(fileList === undefined || !existsSync(fileList))(
         ++rowsChanged;
         return " ; form = Runtime";
       });
-      writeFileSync(path, text.replace(/ ; (closed|runtime)Under = /g, (_, form) => ` ; ${form === "closed" ? "runtime" : "closed"}Under = `));
+      writeFileSync(
+        path,
+        text.replace(
+          / ; (closed|runtime)Under = /g,
+          (_, form) => ` ; ${form === "closed" ? "runtime" : "closed"}Under = `,
+        ),
+      );
     }
     expect(rowsChanged).toBeGreaterThan(0);
     const withOtherForms = await generated("with-other-forms");
@@ -121,38 +128,50 @@ test.skipIf(fileList === undefined || !existsSync(fileList))(
   },
 );
 
-test.skipIf(schema === undefined)("it turns away a row that names a form twice, or by a place that is none", async () => {
-  using dir = tempDir("aot-schema-faulty-forms", {});
-  const ir = copyOfSchema(String(dir));
-  const file = join(ir, "schema", "operations.def");
-  const text = readFileSync(file, "utf8");
-  const row = text
-    .split("\n")
-    .find(line => /^operation \w+ .* ; form = Closed$/.test(line) && !/formDependsOnLoop|(Under|In) = /.test(line))!;
-  expect(row).toBeDefined();
-  const name = row.split(" ")[1];
-  const withoutForm = row.replace(/ ; form = Closed$/, "");
+test.skipIf(schema === undefined)(
+  "it turns away a row that names a form twice, or by a place that is none",
+  async () => {
+    using dir = tempDir("aot-schema-faulty-forms", {});
+    const ir = copyOfSchema(String(dir));
+    const file = join(ir, "schema", "operations.def");
+    const text = readFileSync(file, "utf8");
+    const row = text
+      .split("\n")
+      .find(line => /^operation \w+ .* ; form = Closed$/.test(line) && !/formDependsOnLoop|(Under|In) = /.test(line))!;
+    expect(row).toBeDefined();
+    const name = row.split(" ")[1];
+    const withoutForm = row.replace(/ ; form = Closed$/, "");
 
-  const faults: [string, string][] = [
-    [
-      withoutForm,
-      `${name} may stand in Code and names no form: form = Open, Closed or Runtime, or each state in one of openUnder, closedUnder, runtimeUnder`,
-    ],
-    [`${row} ; openUnder = Generic`, `${name} has one form and lists forms by what is known`],
-    [`${withoutForm} ; openUnder = Generic ; closedUnder = Always, Generic`, `${name} lists Generic in openUnder and in closedUnder`],
-    [`${row} ; openIn = Twin ; closedIn = Twin`, `${name} lists Twin in openIn and in closedIn`],
-    [`${row} ; closedIn = Anywhere`, `${name} lists Anywhere, which is no place`],
-    [`${row} ; openIn = Loop`, `${name} has a form of its own in loops and does not set formDependsOnLoop`],
-  ];
-  for (const [faultyRow, problem] of faults) {
-    writeFileSync(file, text.replace(row, faultyRow));
-    const { stderr, exitCode } = await generate(join(ir, "AOTSchema.def"), "--hash");
-    expect({ problems: stderr.trim().split("\n").map(line => line.replace(/^.*?:\d+:\d+: /, "")), exitCode }).toEqual({
-      problems: [problem],
-      exitCode: 1,
-    });
-  }
+    const faults: [string, string][] = [
+      [
+        withoutForm,
+        `${name} may stand in Code and names no form: form = Open, Closed or Runtime, or each state in one of openUnder, closedUnder, runtimeUnder`,
+      ],
+      [`${row} ; openUnder = Generic`, `${name} has one form and lists forms by what is known`],
+      [
+        `${withoutForm} ; openUnder = Generic ; closedUnder = Always, Generic`,
+        `${name} lists Generic in openUnder and in closedUnder`,
+      ],
+      [`${row} ; openIn = Twin ; closedIn = Twin`, `${name} lists Twin in openIn and in closedIn`],
+      [`${row} ; closedIn = Anywhere`, `${name} lists Anywhere, which is no place`],
+      [`${row} ; openIn = Loop`, `${name} has a form of its own in loops and does not set formDependsOnLoop`],
+    ];
+    for (const [faultyRow, problem] of faults) {
+      writeFileSync(file, text.replace(row, faultyRow));
+      const { stderr, exitCode } = await generate(join(ir, "AOTSchema.def"), "--hash");
+      expect({
+        problems: stderr
+          .trim()
+          .split("\n")
+          .map(line => line.replace(/^.*?:\d+:\d+: /, "")),
+        exitCode,
+      }).toEqual({
+        problems: [problem],
+        exitCode: 1,
+      });
+    }
 
-  writeFileSync(file, text.replace(row, `${row} ; formDependsOnLoop = true ; openIn = Loop ; closedIn = Twin`));
-  expect((await generate(join(ir, "AOTSchema.def"), "--hash")).exitCode).toBe(0);
-});
+    writeFileSync(file, text.replace(row, `${row} ; formDependsOnLoop = true ; openIn = Loop ; closedIn = Twin`));
+    expect((await generate(join(ir, "AOTSchema.def"), "--hash")).exitCode).toBe(0);
+  },
+);

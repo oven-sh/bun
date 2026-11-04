@@ -52,9 +52,7 @@ async function report(flags: string[], env: Record<string, string>) {
 }
 
 describe.concurrent("coverage of a file that imports a macro", () => {
-  test.each([
-    ["one program", {}],
-  ] as [string, Record<string, string>][])("%s", async (_, env) => {
+  test.each([["one program", {}]] as [string, Record<string, string>][])("%s", async (_, env) => {
     const [plain, compiled] = await Promise.all([report([], {}), report(["--aot"], env)]);
     expect(plain.records.map(record => record.split(" ")[0])).toEqual(["lib.ts"]);
     expect(compiled).toEqual(plain);

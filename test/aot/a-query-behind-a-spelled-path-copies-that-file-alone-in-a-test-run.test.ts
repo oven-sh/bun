@@ -447,24 +447,28 @@ console.log("SEEN lib runs");
 };
 
 for (const [name, files] of Object.entries(shapes)) {
-  test.concurrent(`a file loaded under a query: ${name}`, async () => {
-    using dir = tempDir("aot-loaded-under-a-query", files);
-    const seenWith = async (...flags: string[]) => {
-      const env = { ...bunEnv, BUN_JSC_logAOTPhaseTimes: "1" };
-      const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), env);
-      return {
-        seen: {
-          lines: stdout.split("\n").filter(line => line.startsWith("SEEN")),
-          failed: stderr.split("\n").filter(line => /^\(fail\)|^✗|^panic|Error/.test(line)),
-          exitCode,
-        },
-        everyFile: (stdout + stderr).includes("every file may load again"),
+  test.concurrent(
+    `a file loaded under a query: ${name}`,
+    async () => {
+      using dir = tempDir("aot-loaded-under-a-query", files);
+      const seenWith = async (...flags: string[]) => {
+        const env = { ...bunEnv, BUN_JSC_logAOTPhaseTimes: "1" };
+        const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), env);
+        return {
+          seen: {
+            lines: stdout.split("\n").filter(line => line.startsWith("SEEN")),
+            failed: stderr.split("\n").filter(line => /^\(fail\)|^✗|^panic|Error/.test(line)),
+            exitCode,
+          },
+          everyFile: (stdout + stderr).includes("every file may load again"),
+        };
       };
-    };
-    const [plain, compiled] = await Promise.all([seenWith(), seenWith("--aot")]);
-    expect(plain.seen.lines.length).toBeGreaterThan(2);
-    expect(plain.seen.exitCode).toBe(0);
-    expect(compiled.seen).toEqual(plain.seen);
-    expect(compiled.everyFile).toBe(everyFileStill.includes(name));
-  }, 120_000);
+      const [plain, compiled] = await Promise.all([seenWith(), seenWith("--aot")]);
+      expect(plain.seen.lines.length).toBeGreaterThan(2);
+      expect(plain.seen.exitCode).toBe(0);
+      expect(compiled.seen).toEqual(plain.seen);
+      expect(compiled.everyFile).toBe(everyFileStill.includes(name));
+    },
+    120_000,
+  );
 }

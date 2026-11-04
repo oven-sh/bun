@@ -926,10 +926,7 @@ pub mod fs {
         /// not be walked after unlock; the returned entry pointer is
         /// EntryStore-owned and stays valid. The caller must NOT already hold
         /// `entries_mutex` (it is non-recursive).
-        pub(crate) fn lookup(
-            &self,
-            query: &[u8],
-        ) -> (Option<crate::fs_full::EntryLookup<'static>>, Fd) {
+        pub(crate) fn lookup(&self, query: &[u8]) -> (Option<crate::fs_full::EntryLookup>, Fd) {
             let _lock = FileSystem::get().fs.entries_mutex.shared_guard();
             match self {
                 EntriesOption::Entries(entries) => (entries.get(query), entries.fd),
@@ -1187,7 +1184,7 @@ pub mod fs {
             dir: &[u8],
             err: crate::Error,
             replaces_listing: bool,
-        ) -> crate::CrateResult<&'static mut EntriesOption> {
+        ) -> crate::CrateResult<&'static EntriesOption> {
             let mut get_or_put_result = self.entries.get_or_put(dir)?;
             if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                 self.entries.mark_not_found(get_or_put_result);
@@ -1200,8 +1197,7 @@ pub mod fs {
             }
             // Only who rewrites a listing holds the lock alone and may write to a slot that others see. Where another
             // thread has put its answer there since this one looked, that answer stands.
-            if !replaces_listing
-                && let Some(known) = self.entries.at_index(get_or_put_result.index)
+            if !replaces_listing && let Some(known) = self.entries.at_index(get_or_put_result.index)
             {
                 // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
                 return Ok(unsafe { &mut *std::ptr::from_mut::<EntriesOption>(known) });
@@ -1224,7 +1220,7 @@ pub mod fs {
             handle_: Option<Fd>,
             generation: Generation,
             store_fd: bool,
-        ) -> crate::CrateResult<&mut EntriesOption> {
+        ) -> crate::CrateResult<&'static EntriesOption> {
             self.read_directory_with_iterator(dir_, handle_, generation, store_fd, &mut ())
         }
 
@@ -1243,7 +1239,7 @@ pub mod fs {
             generation: Generation,
             store_fd: bool,
             iterator: &mut I,
-        ) -> crate::CrateResult<&'static mut EntriesOption> {
+        ) -> crate::CrateResult<&'static EntriesOption> {
             let dir = strings::paths::without_trailing_slash_windows_path(dir_maybe_trail_slash);
 
             crate::Resolver::assert_valid_cache_key(dir);

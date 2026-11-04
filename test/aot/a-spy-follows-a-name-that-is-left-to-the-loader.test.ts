@@ -747,19 +747,26 @@ export const read = () => who();
 };
 
 for (const [name, files] of Object.entries(shapes)) {
-  test.concurrent(`a spy on a name that a file exports again: ${name}`, async () => {
-    using dir = tempDir("aot-spy-on-a-name-exported-again", files);
-    const seenWith = async (...flags: string[]) => {
-      const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), bunEnv);
-      return {
-        lines: stdout.split("\n").filter(line => line.startsWith("SEEN")),
-        errors: stderr.split("\n").filter(line => /^\(fail\)|^[A-Za-z]*[Ee]rror/.test(line)),
-        exitCode,
+  test.concurrent(
+    `a spy on a name that a file exports again: ${name}`,
+    async () => {
+      using dir = tempDir("aot-spy-on-a-name-exported-again", files);
+      const seenWith = async (...flags: string[]) => {
+        const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), bunEnv);
+        return {
+          lines: stdout.split("\n").filter(line => line.startsWith("SEEN")),
+          errors: stderr.split("\n").filter(line => /^\(fail\)|^[A-Za-z]*[Ee]rror/.test(line)),
+          exitCode,
+        };
       };
-    };
-    const [plain, compiled] = await Promise.all([seenWith(), seenWith("--aot")]);
-    expect(plain.lines.slice(0, 2)).toEqual(["SEEN spied spied " + plain.lines[0].split(" ")[3], "SEEN real real " + plain.lines[1].split(" ")[3]]);
-    expect(plain.exitCode).toBe(0);
-    expect(compiled).toEqual(plain);
-  }, 120_000);
+      const [plain, compiled] = await Promise.all([seenWith(), seenWith("--aot")]);
+      expect(plain.lines.slice(0, 2)).toEqual([
+        "SEEN spied spied " + plain.lines[0].split(" ")[3],
+        "SEEN real real " + plain.lines[1].split(" ")[3],
+      ]);
+      expect(plain.exitCode).toBe(0);
+      expect(compiled).toEqual(plain);
+    },
+    120_000,
+  );
 }

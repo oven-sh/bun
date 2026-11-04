@@ -35,7 +35,6 @@ const bufferedSource = {
   drain: members.drain,
   isClosed: members.isClosed,
   json: buffered.json,
-  jsonSource: buffered.jsonSource,
   pull: members.pull,
   start: members.start,
   text: buffered.text,

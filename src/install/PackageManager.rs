@@ -2616,15 +2616,9 @@ pub fn init(
     let top_level_dir = fs.top_level_dir();
     // Returns the resolver's BSSMap-owned
     // `*EntriesOption` slot.
-    let entries_option = match FileSystem::instance().read_directory(top_level_dir, 0, true)? {
-        fs::EntriesOption::Entries(e) => {
-            // SAFETY: the BSSMap singleton owns `*e` for the process
-            // lifetime, and `init()` runs single-threaded before any other
-            // access — sole exclusive borrow is sound.
-            unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(*e) }
-        }
-        fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
-    };
+    let entries_option = FileSystem::instance()
+        .read_directory(top_level_dir, 0, true)?
+        .try_entries()?;
 
     env.load_process()?;
     // This is read before the project's `.env` files are loaded, so they cannot set it.
@@ -2977,12 +2971,9 @@ fn init_with_runtime_once(
     // leaves `holder::RAW_PTR` null rather than pointing at an uninitialized
     // manager. Returns the resolver's BSSMap-owned `*EntriesOption` slot.
     let top_level_dir = FileSystem::get().top_level_dir();
-    let root_dir = match FileSystem::instance().read_directory(top_level_dir, 0, true)? {
-        // SAFETY: the BSSMap singleton owns `*e` for the process lifetime,
-        // and runtime init runs once on the main thread before any other access.
-        fs::EntriesOption::Entries(e) => unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(*e) },
-        fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
-    };
+    let root_dir = FileSystem::instance()
+        .read_directory(top_level_dir, 0, true)?
+        .try_entries()?;
 
     // A file inside `node_modules` belongs to the project that installed the package.
     let importer_dir = match strings::index_of(importer_dir, bun_paths::NODE_MODULES_NEEDLE) {

@@ -115,7 +115,10 @@ pub(super) fn find_files_that_run_again(
         evicted.leaves(ModuleRef::File(*file))
             && match input.sources.kind(*file) {
                 SourceKind::Program => {
-                    matches!(kind_of(*file), ModuleKind::SourceText | ModuleKind::CommonJs)
+                    matches!(
+                        kind_of(*file),
+                        ModuleKind::SourceText | ModuleKind::CommonJs
+                    )
                 }
                 SourceKind::Data => true,
                 SourceKind::RuntimeModule(_)
@@ -391,13 +394,15 @@ impl BodyText<'_, '_> {
                         }
                         break statement;
                     }
-                    Parent::FnBody(function) => match self.find_function_called_in_place(function) {
-                        Some(written) => {
-                            timing = timing.max(LoadTiming::Conditional);
-                            expression = written;
+                    Parent::FnBody(function) => {
+                        match self.find_function_called_in_place(function) {
+                            Some(written) => {
+                                timing = timing.max(LoadTiming::Conditional);
+                                expression = written;
+                            }
+                            None => return LoadTiming::Deferred,
                         }
-                        None => return LoadTiming::Deferred,
-                    },
+                    }
                     Parent::File => return timing,
                     _ => return LoadTiming::Deferred,
                 }
@@ -421,13 +426,15 @@ impl BodyText<'_, '_> {
                         });
                         statement = parent;
                     }
-                    Parent::FnBody(function) => match self.find_function_called_in_place(function) {
-                        Some(written) => {
-                            timing = timing.max(LoadTiming::Conditional);
-                            break written;
+                    Parent::FnBody(function) => {
+                        match self.find_function_called_in_place(function) {
+                            Some(written) => {
+                                timing = timing.max(LoadTiming::Conditional);
+                                break written;
+                            }
+                            None => return LoadTiming::Deferred,
                         }
-                        None => return LoadTiming::Deferred,
-                    },
+                    }
                     _ => return LoadTiming::Deferred,
                 }
             };
@@ -756,15 +763,16 @@ impl StartupWalk<'_> {
                 }
                 let deferred = loads.of(file).iter();
                 let deferred = deferred.filter(|load| load.timing == LoadTiming::Deferred);
-                self.possible_loads.extend(deferred.map(|load| PossibleLoad {
-                    // What `import defer` names is linked with its importer, and the CommonJS files below it run then.
-                    earliest_time: match load.is_hoisted {
-                        true => 0,
-                        false => earliest_time,
-                    },
-                    target: load.target,
-                    may_be_caught: true,
-                }));
+                self.possible_loads
+                    .extend(deferred.map(|load| PossibleLoad {
+                        // What `import defer` names is linked with its importer, and the CommonJS files below it run then.
+                        earliest_time: match load.is_hoisted {
+                            true => 0,
+                            false => earliest_time,
+                        },
+                        target: load.target,
+                        may_be_caught: true,
+                    }));
                 self.depth_of_starting_file[file.idx()] = NEVER;
                 self.stack.pop();
                 continue;

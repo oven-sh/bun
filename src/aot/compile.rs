@@ -97,14 +97,23 @@ pub struct LinkedProgram {
 pub struct Compilation {
     pub engine: EngineResult,
     pub summary: ProgramSummary,
-    #[cfg_attr(test, allow(dead_code, reason = "linked.rs reads it, which no test build holds"))]
+    #[cfg_attr(
+        test,
+        allow(dead_code, reason = "linked.rs reads it, which no test build holds")
+    )]
     pub(crate) started_workers: StartedWorkers,
     /// `Sources::holds_source_paths`
-    #[cfg_attr(test, allow(dead_code, reason = "linked.rs reads it, which no test build holds"))]
+    #[cfg_attr(
+        test,
+        allow(dead_code, reason = "linked.rs reads it, which no test build holds")
+    )]
     pub(crate) holds_source_paths: bool,
     /// `Program::opened_names`, for a run from source, which has no image to list them: the number of the holder in the table of built-ins, and the bytes of the name.
     /// Ascending by holder, then by the bytes of the name.
-    #[cfg_attr(test, allow(dead_code, reason = "linked.rs reads it, which no test build holds"))]
+    #[cfg_attr(
+        test,
+        allow(dead_code, reason = "linked.rs reads it, which no test build holds")
+    )]
     pub(crate) names_added_to_builtins: Vec<(u32, Vec<u8>)>,
 }
 
@@ -760,7 +769,10 @@ impl<'a> Build<'a> {
         }
         for record in engine.worker_entries() {
             let name = engine.text(record.path);
-            let compiled = output.entry_points.iter().chain(&self.started_workers.names);
+            let compiled = output
+                .entry_points
+                .iter()
+                .chain(&self.started_workers.names);
             if names_one_of(name, compiled, &options.paths) {
                 continue;
             }

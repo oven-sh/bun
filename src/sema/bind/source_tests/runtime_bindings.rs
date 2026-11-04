@@ -972,7 +972,9 @@ fn eval_dynamic_lookups() {
 #[test]
 fn member_of_a_namespace_is_no_name_that_evaluated_text_can_take() {
     let lookup_of_x = |s: &Analyzed<'_>| {
-        let scope = s.bound.dynamic_lookup_scope(NodeData::Expr(s.ident("x", 0)));
+        let scope = s
+            .bound
+            .dynamic_lookup_scope(NodeData::Expr(s.ident("x", 0)));
         scope.map(|scope| s.bound.scopes[scope.idx()].kind)
     };
     let text = r#"namespace N { export var x = 1; function f(t) { eval(t); x; } }"#;
@@ -992,7 +994,9 @@ fn member_of_a_namespace_is_no_name_that_evaluated_text_can_take() {
 #[test]
 fn members_of_an_enum_take_the_variables_of_evaluated_text() {
     let lookup_of_q = |s: &Analyzed<'_>| {
-        let scope = s.bound.dynamic_lookup_scope(NodeData::Expr(s.ident("q", 0)));
+        let scope = s
+            .bound
+            .dynamic_lookup_scope(NodeData::Expr(s.ident("q", 0)));
         scope.map(|scope| s.bound.scopes[scope.idx()].kind)
     };
     let text = r#"var q; enum E { A = (eval(""), q) }"#;

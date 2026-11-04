@@ -499,8 +499,8 @@ fn message_with_type_and_level_(
             if bun_removable_features::is_removed(bun_removable_features::Feature::ConsoleTable) {
                 return Err(throw_for_removed_table_printer(global));
             }
-            let properties: JSValue = if len >= 2 && vals_slice[1].js_type().is_array() {
-                vals_slice[1]
+            let properties: JSValue = if vals.len() >= 2 && vals[1].js_type().is_array() {
+                vals[1]
             } else {
                 JSValue::UNDEFINED
             };

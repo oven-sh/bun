@@ -97,7 +97,11 @@ describe.skipIf(!systemCC || !!unsupported || isWindows)("compile/aot/an-addon-i
     const made = { plain: join(elsewhere, name + "-plain"), closed: join(elsewhere, name + "-closed") };
     built(await spawned([bunExe(), "build", "--compile", name + ".cts", "--outfile", made.plain], sources, bunEnv));
     built(
-      await spawned([bunExe(), "build", "--compile", "--aot", name + ".cts", "--outfile", made.closed], sources, bunEnv),
+      await spawned(
+        [bunExe(), "build", "--compile", "--aot", name + ".cts", "--outfile", made.closed],
+        sources,
+        bunEnv,
+      ),
     );
     return made;
   };

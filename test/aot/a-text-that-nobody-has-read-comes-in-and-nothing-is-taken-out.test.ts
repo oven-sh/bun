@@ -322,19 +322,23 @@ console.log("SEEN lib runs");
 };
 
 for (const [name, files] of Object.entries(shapes)) {
-  test.concurrent(`a text that nobody has read comes in: ${name}`, async () => {
-    using dir = tempDir("aot-comes-in-or-is-taken-out", files);
-    const seenWith = async (...flags: string[]) => {
-      const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), bunEnv);
-      return {
-        lines: stdout.split("\n").filter(line => line.startsWith("SEEN")),
-        failed: stderr.split("\n").filter(line => /^\(fail\)|^✗|^panic|Error/.test(line)),
-        exitCode,
+  test.concurrent(
+    `a text that nobody has read comes in: ${name}`,
+    async () => {
+      using dir = tempDir("aot-comes-in-or-is-taken-out", files);
+      const seenWith = async (...flags: string[]) => {
+        const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), bunEnv);
+        return {
+          lines: stdout.split("\n").filter(line => line.startsWith("SEEN")),
+          failed: stderr.split("\n").filter(line => /^\(fail\)|^✗|^panic|Error/.test(line)),
+          exitCode,
+        };
       };
-    };
-    const [plain, compiled] = await Promise.all([seenWith(), seenWith("--aot")]);
-    expect(plain.lines.length).toBeGreaterThan(2);
-    expect(plain.exitCode).toBe(0);
-    expect(compiled).toEqual(plain);
-  }, 120_000);
+      const [plain, compiled] = await Promise.all([seenWith(), seenWith("--aot")]);
+      expect(plain.lines.length).toBeGreaterThan(2);
+      expect(plain.exitCode).toBe(0);
+      expect(compiled).toEqual(plain);
+    },
+    120_000,
+  );
 }

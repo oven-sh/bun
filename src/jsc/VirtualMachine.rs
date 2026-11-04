@@ -595,8 +595,7 @@ pub unsafe extern "C" fn Bun__standaloneModuleKey(
     match standalone_module_graph().and_then(|graph| graph.find_assume_standalone_path(name)) {
         Some(canonical) => {
             let canonical = crate::compiled_program::entry_module_key(canonical);
-            // SAFETY: `out_len` is the caller's writable out-parameter.
-            unsafe { *out_len = canonical.len() };
+            *out_len = canonical.len();
             canonical.as_ptr()
         }
         None => core::ptr::null(),
@@ -2747,8 +2746,7 @@ impl VirtualMachine {
             if let Some(rare) = unsafe { (*this).rare_data.as_deref_mut() } {
                 rare.detach_socket_groups_from_loop();
             }
-            // SAFETY: this thread's loop; nothing ticks it any more.
-            let uws_loop = unsafe { &*vm.uws_loop() };
+            let uws_loop = vm.uws_loop_ref();
             uws_loop.internal_loop_data.jsc_vm.set(core::ptr::null());
             bun_uws::free_thread_loop();
             teardown_log!("teardown: uSockets loop freed");
@@ -3015,7 +3013,7 @@ pub struct RuntimeHooks {
     /// idle — folding it into `auto_tick` would change shutdown semantics.
     pub auto_tick_active: unsafe fn(vm: *mut VirtualMachine),
     /// Runs the next `bun test` test or hook. See [`VirtualMachine::has_pending_test_step`].
-    pub run_pending_test_step: unsafe fn(vm: *mut VirtualMachine),
+    pub run_pending_test_step: fn(global: &JSGlobalObject),
     /// `printException` / `printErrorlikeObject` — formats `value` (or its
     /// wrapped `JSC::Exception`) to stderr via `ConsoleObject::Formatter`.
     /// High tier
@@ -5447,7 +5445,7 @@ impl VirtualMachine {
         // ModuleLoader.rs `TranspileArgs`).
         let extra = ModuleLoader::TranspileExtra {
             path: lr.path,
-            loader: loader.or(lr.loader).unwrap_or(if lr.is_main {
+            loader: Cell::new(loader.or(lr.loader).unwrap_or(if lr.is_main {
                 bun_ast::Loader::Js
             } else {
                 bun_ast::Loader::File

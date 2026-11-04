@@ -181,7 +181,7 @@ function exportChallenge(spkac: string | BufferSource, encoding?: string) {
 }
 
 function Certificate(): void {
-  if (!new.target) {
+  if (!(this instanceof Certificate)) {
     return new Certificate() as any;
   }
 
@@ -379,7 +379,9 @@ function createVerify(algorithm: string, options?: $Node.WritableOptions): $Node
 
 crypto_exports.createVerify = createVerify;
 
-function Hash(this: $Node.Hash, algorithm: string | $Node.NativeHash, options?: $Node.TransformOptions): void {
+type HashOptions = $Node.TransformOptions & { outputLength?: number; functionName?: unknown; customization?: unknown };
+
+function Hash(this: $Node.Hash, algorithm: string | $Node.NativeHash, options?: HashOptions): void {
   if (!new.target) {
     return new Hash(algorithm, options) as any;
   }
@@ -428,7 +430,7 @@ crypto_exports.createHash = function createHash(algorithm: string, options?: $No
 };
 
 function Hmac(this: $Node.Hmac, hmac: string, key: unknown, options?: $Node.TransformOptions): void {
-  if (!new.target) {
+  if (!(this instanceof Hmac)) {
     return new Hmac(hmac, key, options) as any;
   }
 
@@ -665,7 +667,7 @@ crypto_exports.createECDH = function createECDH(curve: string) {
     iv: unknown,
     options?: $Node.TransformOptions,
   ): void {
-    if (!new.target) {
+    if (!(this instanceof Cipheriv)) {
       return new Cipheriv(cipher, key, iv, options) as any;
     }
 
@@ -733,7 +735,7 @@ crypto_exports.createECDH = function createECDH(curve: string) {
     iv: unknown,
     options?: $Node.TransformOptions,
   ): void {
-    if (!new.target) {
+    if (!(this instanceof Decipheriv)) {
       return new Decipheriv(cipher, key, iv, options) as any;
     }
 

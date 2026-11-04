@@ -283,7 +283,9 @@ impl Collector {
             for module in &reached.modules_read_whole {
                 collected.modules_read_whole.set(module.to_wire() as usize);
             }
-            collected.exports_read.extend_from_slice(&reached.exports_read);
+            collected
+                .exports_read
+                .extend_from_slice(&reached.exports_read);
             for &row in &reached.functions {
                 collected.functions.set(row as usize);
             }

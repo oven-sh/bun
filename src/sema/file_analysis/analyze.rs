@@ -1,6 +1,4 @@
-use super::{
-    AnalyzedAgain, AnalyzedAgainFrom, FileAnalysis, FileInputs, has_live_top_level_await,
-};
+use super::{AnalyzedAgain, AnalyzedAgainFrom, FileAnalysis, FileInputs, has_live_top_level_await};
 use crate::atom::Interner;
 use crate::bind::{BindOptions, Bound, bind};
 use crate::fold::{FoldError, FoldInputs, FoldResult, fold_file};
@@ -60,7 +58,10 @@ pub(super) fn run_again<'s>(
         AnalyzedAgainFrom::Folding => fold_file(hir, bound, inputs, file, atoms, arena),
         AnalyzedAgainFrom::ImportScan => FoldResult {
             decisions: previous.decisions,
-            errors: previous.errors.split_at(previous.fold_error_count as usize).0,
+            errors: previous
+                .errors
+                .split_at(previous.fold_error_count as usize)
+                .0,
             strings_over_limit: previous.strings_over_limit,
             relies_on_running_before_calls: previous.relies_on_running_before_calls,
             asks_for_main_module: previous.asks_for_main_module,

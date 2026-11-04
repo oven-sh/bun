@@ -578,7 +578,10 @@ fn asset_deferred_after_finished_reads_gets_code_and_loader_of_plugin() {
     assert!(reads.missing.is_empty());
     assert_eq!(provider.finish_count.load(Relaxed), 2);
 
-    assert_eq!(text(plugins.read(asset, Loader::File)), b"export default 1;");
+    assert_eq!(
+        text(plugins.read(asset, Loader::File)),
+        b"export default 1;"
+    );
     let loaded = plugins.loaded(asset).unwrap();
     assert_eq!(loaded.loader, Loader::Js);
     assert!(loaded.is_from_plugin);

@@ -92,6 +92,19 @@ fn generate_compile_result_for_css_chunk_impl(
         .input_files
         .items_unique_key_for_additional_file();
 
+    let Ok(blocks) = shared_block_edges(c, css_content, imports_in_chunk_index as usize, arena)
+    else {
+        return CompileResult::Css {
+            result: Err(crate::Error::PrintError),
+            source_index: Index::INVALID.get(),
+            source_map: None,
+        };
+    };
+    allocating_writer.extend_from_slice(&blocks.open);
+    if !c.options.minify_whitespace && !css.rules.v.is_empty() {
+        allocating_writer.extend(core::iter::repeat_n(b' ', blocks.indent as usize));
+    }
+
     match &css_import.kind {
         CssImportOrderKind::Layers(_) | CssImportOrderKind::ExternalPath(_) => {
             let printer_options = PrinterOptions {

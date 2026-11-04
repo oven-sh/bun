@@ -92,9 +92,7 @@ pub(crate) fn engine_reports_for(explain: ExplainSet) -> ReportSet {
     if explain.intersects(ExplainSet::TEXT | ExplainSet::JSON | CAUSE_FAMILIES) {
         reports |= ReportSet::FLOW | ReportSet::ACCESS_COUNTS;
     }
-    if explain.intersects(
-        ExplainSet::CHECKS | ExplainSet::CHECKS_JSON | ExplainSet::FORMS,
-    ) {
+    if explain.intersects(ExplainSet::CHECKS | ExplainSet::CHECKS_JSON | ExplainSet::FORMS) {
         reports |= ReportSet::FLOW;
     }
     if explain.contains(ExplainSet::ALLOCATIONS) {

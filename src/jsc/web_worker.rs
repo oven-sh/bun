@@ -162,17 +162,16 @@ struct ThreadStart {
     table_pages: *mut c_void,
     _parent_ticket: crate::Ticket,
 }
-// SAFETY: `WebWorker` is shared across threads by design (atomics,
+
+/// Outlives a `spawn` that fails, which drops its closure.
+struct OwnedByThread(*mut ThreadStart);
+// SAFETY: whoever holds it last takes the box. Of what is in the box,
+// `WebWorker` is shared across threads by design (atomics,
 // `Guarded`, thread-confined cells — see the struct doc) and holds no
 // parent-VM state; `init` is an owned copy — byte buffers, scalars and
 // `Arc<RefCountedEnvValue>`s, no JSC or atom strings; the parent VM
 // itself is kept by `_parent_ticket`; `table_pages` is unused address
 // space that only the new thread touches.
-unsafe impl Send for ThreadStart {}
-
-/// Outlives a `spawn` that fails, which drops its closure.
-struct OwnedByThread(*mut ThreadStart);
-// SAFETY: as for `ThreadStart`; whoever holds it last takes the box.
 unsafe impl Send for OwnedByThread {}
 
 enum StartOutcome {
@@ -610,19 +609,15 @@ impl WebWorker {
             _parent_ticket: parent_ticket,
         });
         worker_ref.thread_start.set(start);
-        // SAFETY: `parent` is the calling thread's VM.
-        let mut outcome = worker_ref.try_start(unsafe { Self::has_room_to_wait_for(parent) });
+        let mut outcome = worker_ref.try_start(Self::has_room_to_wait_for(parent_ref));
         if matches!(outcome, StartOutcome::NoRoom) {
-            // SAFETY: `parent` is the calling thread's VM.
-            if unsafe { Self::join_returning_children(parent) } {
-                // SAFETY: `parent` is the calling thread's VM.
-                outcome = worker_ref.try_start(unsafe { Self::has_room_to_wait_for(parent) });
+            if Self::join_returning_children(parent_ref) {
+                outcome = worker_ref.try_start(Self::has_room_to_wait_for(parent_ref));
             }
         }
         match outcome {
             StartOutcome::Started => {}
-            // SAFETY: `parent` is the calling thread's VM.
-            StartOutcome::NoRoom if unsafe { Self::has_room_to_wait_for(parent) } => {
+            StartOutcome::NoRoom if Self::has_room_to_wait_for(parent_ref) => {
                 log!("[{}] waits for room", this_context_id);
                 WORKERS_WAITING_FOR_ROOM.fetch_add(1, Ordering::Relaxed);
                 worker_ref.arm_room_timer();
@@ -692,22 +687,15 @@ impl WebWorker {
             && self.join_handle.with_mut(|handle| handle.is_some())
     }
 
-    /// # Safety
-    /// `parent` is the calling thread's VM.
-    unsafe fn has_ending_child(parent: *mut VirtualMachine) -> bool {
-        // SAFETY: fn contract.
-        unsafe { (*parent).child_workers.iter() }.any(|&child| {
+    fn has_ending_child(parent: &VirtualMachine) -> bool {
+        parent.child_workers.iter().any(|&child| {
             bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child")).is_ending()
         })
     }
 
     /// Whether the thread of one of `parent`'s children is returning.
-    ///
-    /// # Safety
-    /// `parent` is the calling thread's VM.
-    unsafe fn has_returning_child(parent: *mut VirtualMachine) -> bool {
-        // SAFETY: fn contract.
-        unsafe { (*parent).child_workers.iter() }.any(|&child| {
+    fn has_returning_child(parent: &VirtualMachine) -> bool {
+        parent.child_workers.iter().any(|&child| {
             let worker = bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child"));
             worker.is_returning.load(Ordering::Acquire)
                 && worker.join_handle.with_mut(|handle| handle.is_some())
@@ -715,13 +703,9 @@ impl WebWorker {
     }
 
     /// Whether more of `parent`'s children are ending than wait for room.
-    ///
-    /// # Safety
-    /// `parent` is the calling thread's VM.
-    unsafe fn has_room_to_wait_for(parent: *mut VirtualMachine) -> bool {
+    fn has_room_to_wait_for(parent: &VirtualMachine) -> bool {
         let (mut ending, mut waiting) = (0usize, 0usize);
-        // SAFETY: fn contract.
-        for &child in unsafe { (*parent).child_workers.iter() } {
+        for &child in parent.child_workers.iter() {
             let worker = bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child"));
             ending += usize::from(worker.is_ending());
             waiting += usize::from(!worker.thread_start.get().is_null());
@@ -731,13 +715,10 @@ impl WebWorker {
 
     /// Join the threads of `parent`'s children that wait for nothing more on their way out.
     /// Returns whether there were any.
-    ///
-    /// # Safety
-    /// `parent` is the calling thread's VM.
-    unsafe fn join_returning_children(parent: *mut VirtualMachine) -> bool {
+    fn join_returning_children(parent: &VirtualMachine) -> bool {
         let mut joined_any = false;
-        // SAFETY: fn contract; nothing runs on this thread during a join, so the list does not change.
-        for &child in unsafe { (*parent).child_workers.iter() } {
+        // Nothing runs on this thread during a join, so the list does not change.
+        for &child in parent.child_workers.iter() {
             let worker = bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child"));
             if worker.is_returning.load(Ordering::Acquire) {
                 joined_any |= worker.join_thread();
@@ -749,31 +730,27 @@ impl WebWorker {
     /// `parent` has released a child. Its children that wait for room start, oldest
     /// first. Once no child is left that is ending, those that find none get 'error'.
     /// A parent that is ending starts none: its stop phase ends them.
-    ///
-    /// # Safety
-    /// `parent` is the calling thread's VM.
-    unsafe fn start_waiting_children(parent: *mut VirtualMachine) {
+    fn start_waiting_children(parent: &VirtualMachine) {
         while WORKERS_WAITING_FOR_ROOM.load(Ordering::Relaxed) != 0 {
-            // SAFETY: fn contract.
-            if unsafe { (*parent).is_shutting_down() || !(*parent).script_allowed() } {
+            if parent.is_shutting_down() || !parent.script_allowed() {
                 return;
             }
-            // SAFETY: fn contract; nothing below changes the list.
-            let oldest = unsafe { (*parent).child_workers.iter() }
+            // Nothing below changes the list.
+            let oldest = parent
+                .child_workers
+                .iter()
                 .map(|&child| {
                     bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child"))
                 })
                 .filter(|worker| !worker.thread_start.get().is_null())
                 .min_by_key(|worker| worker.execution_context_id);
             let Some(worker) = oldest else { return };
-            // SAFETY: fn contract.
-            match worker.try_start(unsafe { Self::has_ending_child(parent) }) {
+            match worker.try_start(Self::has_ending_child(parent)) {
                 StartOutcome::Started => {
                     WORKERS_WAITING_FOR_ROOM.fetch_sub(1, Ordering::Relaxed);
                     worker.disarm_room_timer();
                 }
-                // SAFETY: fn contract.
-                StartOutcome::NoRoom if unsafe { Self::has_ending_child(parent) } => return,
+                StartOutcome::NoRoom if Self::has_ending_child(parent) => return,
                 StartOutcome::NoRoom | StartOutcome::Failed => {
                     WebWorker__postFailedToStartError(worker.messaging_proxy);
                     worker.end_without_thread(1);
@@ -805,30 +782,26 @@ impl WebWorker {
     /// Only the thread of a sibling that is returning is waited for any longer.
     ///
     /// # Safety
-    /// `this` waits for room; called on its parent's thread.
-    pub unsafe fn on_room_timer(this: *mut WebWorker) {
-        let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("timer owner"));
-        this.room_timer
+    /// `self` waits for room, and `parent` is its parent.
+    pub unsafe fn on_room_timer(&self, parent: &VirtualMachine) {
+        self.room_timer
             .with_mut(|timer| timer.state = TimerState::FIRED);
-        let parent = this.parent;
-        // SAFETY: fn contract.
-        if unsafe { (*parent).is_shutting_down() || !(*parent).script_allowed() } {
+        if parent.is_shutting_down() || !parent.script_allowed() {
             return;
         }
-        let can_wait = this.room_timer_rounds.get() < ROOM_TIMER_MAX_ROUNDS
-            // SAFETY: fn contract.
-            && unsafe { Self::has_returning_child(parent) };
-        match this.try_start(can_wait) {
+        let can_wait = self.room_timer_rounds.get() < ROOM_TIMER_MAX_ROUNDS
+            && Self::has_returning_child(parent);
+        match self.try_start(can_wait) {
             StartOutcome::Started => {
                 WORKERS_WAITING_FOR_ROOM.fetch_sub(1, Ordering::Relaxed);
             }
             StartOutcome::NoRoom if can_wait => {
-                this.room_timer_rounds.set(this.room_timer_rounds.get() + 1);
-                this.arm_room_timer();
+                self.room_timer_rounds.set(self.room_timer_rounds.get() + 1);
+                self.arm_room_timer();
             }
             StartOutcome::NoRoom | StartOutcome::Failed => {
-                WebWorker__postFailedToStartError(this.messaging_proxy);
-                this.end_without_thread(1);
+                WebWorker__postFailedToStartError(self.messaging_proxy);
+                self.end_without_thread(1);
             }
         }
     }
@@ -858,12 +831,11 @@ impl WebWorker {
     /// the worker is blocked in, so this waits as long as that call does (as
     /// Node's JoinThread does).
     #[unsafe(export_name = "WebWorker__join")]
-    pub(crate) extern "C" fn join(this: *mut WebWorker) {
-        let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
+    pub(crate) extern "C" fn join(this: &WebWorker) {
         this.join_thread();
         bun_removable_features::removable_body!(WorkerConstructor, ReturnDefault, {
             // SAFETY: parent thread; `parent` outlives its children (it joins them).
-            unsafe { Self::start_waiting_children(this.parent) }
+            Self::start_waiting_children(unsafe { &*this.parent })
         });
     }
 
@@ -1202,7 +1174,9 @@ impl WebWorker {
                 b"': this executable loads code from disk, so a Worker starts only at the files that the build saw a Worker start at. Pass the file to bun compile as another entry point.",
             ]
             .concat();
-            vm_log.add_error(None, bun_ast::Loc::EMPTY, message);
+            vm.log_mut()
+                .unwrap()
+                .add_error(None, bun_ast::Loc::EMPTY, message);
             self.flush_logs(vm);
             return self.shutdown();
         }
@@ -1626,17 +1600,22 @@ unsafe fn resolve_entry_point_specifier_quietly<'s>(
     str: &'s [u8],
     dot_slash: &'s OnceCell<Vec<u8>>,
 ) -> Option<&'s [u8]> {
-    let mut ignored_message = BunString::EMPTY;
     let mut log = bun_ast::Log::default();
     // SAFETY: per fn contract; `log` stays where it is until the pointer is put back.
     unsafe {
         let log_before = (*parent).transpiler.log;
         (*parent).transpiler.set_log(&raw mut log);
-        let path =
-            resolve_entry_point_specifier(parent, str, dot_slash, &mut ignored_message, &mut log);
+        let path = resolve_entry_point_specifier(parent, str, dot_slash).ok();
         (*parent).transpiler.set_log(log_before);
         path
     }
+}
+
+/// Why [`resolve_entry_point_specifier`] has no path.
+enum Unresolved {
+    Because(&'static str),
+    /// The transpiler's log has the resolver's error.
+    Logged,
 }
 
 /// Resolve a worker entry-point specifier to a path the module loader can
@@ -1653,16 +1632,14 @@ unsafe fn resolve_entry_point_specifier<'s>(
     parent: *mut VirtualMachine,
     str: &'s [u8],
     dot_slash: &'s OnceCell<Vec<u8>>,
-    error_message: &mut BunString,
-    log: &mut bun_ast::Log,
-) -> Option<&'s [u8]> {
+) -> Result<&'s [u8], Unresolved> {
     // A `data:` URL is the module itself (the loader decodes it); it never names
     // a path, so it must not go through path resolution (long ones would fail
     // with ENAMETOOLONG there).
     if str.starts_with(b"data:") {
         // A URL that the program writes out is an entry point of a program compiled ahead of time.
         let entry = crate::compiled_program::find_entry_point_by_source_path(str);
-        return Some(match entry.filter(|entry| entry.source_path == str) {
+        return Ok(match entry.filter(|entry| entry.source_path == str) {
             Some(entry) => crate::compiled_program::module_key(entry),
             None => str,
         });
@@ -1675,7 +1652,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
     if let Some(module) = resolver.resolve_embedded_entry_point_from_working_directory(str)
         && let Some(entry) = crate::compiled_program::find_entry_point_by_module_path(module)
     {
-        return Some(crate::compiled_program::module_key(entry));
+        return Ok(crate::compiled_program::module_key(entry));
     }
     // In a `bun build --compile` executable, a relative specifier names an embedded entry point (relative to the
     // embedded root) before it names a file on disk, and an absolute one may be an embedded path in either syntax
@@ -1690,7 +1667,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
     if let Some(module) = resolver.resolve_embedded_entry_point(str)
         && let Some(entry) = crate::compiled_program::find_entry_point_by_module_path(module)
     {
-        return Some(crate::compiled_program::module_key(entry));
+        return Ok(crate::compiled_program::module_key(entry));
     }
 
     // Spec `bun.webcore.ObjectURLRegistry.isBlobURL(str)` — prefix `"blob:"`
@@ -1708,7 +1685,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
                 let name = (hooks.name_text_of_blob_url)(&str[b"blob:".len()..], vm)?;
                 program.entry_point_by_source_path(&name)
             });
-            return Some(match entry {
+            return Ok(match entry {
                 Some(entry) => crate::compiled_program::module_key(entry),
                 None => str,
             });
@@ -1717,18 +1694,15 @@ unsafe fn resolve_entry_point_specifier<'s>(
         }
     }
 
-    // SAFETY: per fn contract; `global` is a read-only field, and the resolver
-    // (`transpiler`) is mutated only on `parent`'s owning thread — both call
-    // sites (`create()` on the parent thread, `spin()` on the worker thread)
-    // satisfy that.
-    let global = unsafe { (*parent).global };
+    // SAFETY: per fn contract — `parent` is this thread's VM, and only its own
+    // thread mutates its `transpiler` and the log that it writes to.
+    let log = unsafe { &mut *(*parent).transpiler.log };
     let said_before = (log.msgs.len(), log.errors);
-    // SAFETY: same as above — `parent`'s `transpiler` is mutated only on its
-    // owning thread (the caller's thread per fn contract).
+    // SAFETY: as above.
     let resolved_entry_point = match unsafe {
         (*parent).transpiler.resolve_entry_point(str, dot_slash)
     } {
-        Ok(r) => r,
+        Ok(resolved) => resolved,
         Err(error) => {
             // SAFETY: per fn contract; the field is only read.
             let graph = unsafe { (*parent).standalone_module_graph };
@@ -1749,23 +1723,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
                     ),
                 );
             }
-            // `global` valid for VM lifetime; safe ZST-handle deref (panics on null).
-            let global = JSGlobalObject::opaque_ref(global);
-            let out: jsc::JsResult<BunString> = (|| {
-                let out = log.to_js(global, format_args!("Error resolving Worker entry point"))?;
-                out.to_bun_string(global)
-            })();
-            match out {
-                Ok(out) => {
-                    *error_message = out;
-                    return None;
-                }
-                Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-                Err(JsError::Thrown | JsError::Terminated) => {
-                    *error_message = BunString::static_("unexpected exception");
-                    return None;
-                }
-            }
+            return Err(Unresolved::Logged);
         }
     };
 
@@ -1773,13 +1731,11 @@ unsafe fn resolve_entry_point_specifier<'s>(
         .path_const()
         .and_then(|path| crate::compiled_program::find_entry_point_by_source_path(path.text))
     {
-        return Some(crate::compiled_program::module_key(entry));
+        return Ok(crate::compiled_program::module_key(entry));
     }
 
-    Some(
-        resolved_entry_point
-            .path_const()
-            .expect("resolve_entry_point rejects disabled results")
-            .text,
-    )
+    Ok(resolved_entry_point
+        .path_const()
+        .expect("resolve_entry_point rejects disabled results")
+        .text)
 }

@@ -171,10 +171,13 @@ impl FileLowering<'_, '_, '_, '_> {
         if is_instantiated_ahead {
             lowering.emit_instantiation_of_own_file();
         }
-        lowering.enter_scope_made_by(scope, match makes_scope_ahead {
-            true => scope::MakerOfScope::AheadOfBody,
-            false => scope::MakerOfScope::Here,
-        });
+        lowering.enter_scope_made_by(
+            scope,
+            match makes_scope_ahead {
+                true => scope::MakerOfScope::AheadOfBody,
+                false => scope::MakerOfScope::Here,
+            },
+        );
         if let Some(failure) = load_failure {
             lowering.emit_module_failure(failure, false);
         }
@@ -220,7 +223,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     // What a file on a cycle has had made ahead of this run of the body is this run's. What an earlier run has taken is that run's: each has variables of its own.
     fn emit_instantiation_of_own_file(&mut self) {
         let own_file = self.file.file;
-        let state = self.file.ensure_variable(VariableKey::InstantiationState(own_file));
+        let state = self
+            .file
+            .ensure_variable(VariableKey::InstantiationState(own_file));
         let is_taken = self.builder.get_module_variable(state);
         let (makes, takes) = (self.create_block(), self.create_block());
         let split = self.split_on_type(is_taken, TypeTable::UNDEFINED);
@@ -235,7 +240,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.put_module_variable(state, undefined);
         self.jump(makes);
         self.continue_in(makes);
-        let function = self.file.reference_function(FunctionKey::Instantiation(own_file));
+        let function = self
+            .file
+            .reference_function(FunctionKey::Instantiation(own_file));
         self.builder.call_direct(function, &[]);
         self.jump(takes);
         self.continue_in(takes);

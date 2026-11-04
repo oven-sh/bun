@@ -142,7 +142,8 @@ const programs: Record<string, Record<string, string>> = {
 // A module that has begun and has not finished is not begun again, whoever asks: what it declares with `const`, `let` or `class` cannot be read yet, and what it declares
 // with `function` can. Only a synchronous `require` gets to see that: what `import()` loads runs once the graph that is being evaluated has run.
 const byName = (file: string) => `const name = "./" + (globalThis.never ? "x" : "") + ${JSON.stringify(file)};`;
-const requires = (what: string) => `console.log("d begins"); try { ${what}; } catch (error) { console.log("d caught", error.message); } console.log("d ends");`;
+const requires = (what: string) =>
+  `console.log("d begins"); try { ${what}; } catch (error) { console.log("d caught", error.message); } console.log("d ends");`;
 const m = `import "./d.mjs"; export const V = "v of m"; console.log("m");`;
 const n = `import { V } from "./m.mjs"; console.log("n", V);`;
 Object.assign(programs, {
@@ -225,7 +226,8 @@ Object.assign(programs, {
 // `.mjs` that uses `require` and has no `import`, `export` or `await` of its own is CommonJS, and a file named `.cjs` that uses nothing of CommonJS is an ES module.
 // Whichever loader comes first reads the file, and the other takes what it finds. A `require` that runs only once the file is loaded is never the first.
 // Where a `require` stands beside the file, `bun run` wavers: which comes first hangs on the threads that read the texts. Nothing here asks that.
-const mode = (file: string) => `try { undeclared = 1; console.log("${file} is sloppy"); } catch { console.log("${file} is strict"); }`;
+const mode = (file: string) =>
+  `try { undeclared = 1; console.log("${file} is sloppy"); } catch { console.log("${file} is strict"); }`;
 const above = `import "./d.mjs"; export const V = "v of m"; console.log("m");`;
 Object.assign(programs, {
   "a file named .mjs with nothing but a require, which leads back above the file": {
@@ -363,12 +365,21 @@ for (const [name, files] of Object.entries(programs)) {
     const main = Object.keys(files)[0];
     const executable = join(folder, "compiled" + (isWindows ? ".exe" : ""));
     const built = await run([bunExe(), "build", "--compile", "--aot", "./" + main, "--outfile", executable], folder);
-    expect({ errors: built.stderr.split("\n").filter(line => line.startsWith("error")), exitCode: built.exitCode }).toEqual({
+    expect({
+      errors: built.stderr.split("\n").filter(line => line.startsWith("error")),
+      exitCode: built.exitCode,
+    }).toEqual({
       errors: [],
       exitCode: 0,
     });
-    const [plain, compiled] = await Promise.all([run([bunExe(), "run", "./" + main], folder), run([executable], folder)]);
+    const [plain, compiled] = await Promise.all([
+      run([bunExe(), "run", "./" + main], folder),
+      run([executable], folder),
+    ]);
     expect(plain.stdout).not.toBe("");
-    expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout, exitCode: plain.exitCode });
+    expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({
+      stdout: plain.stdout,
+      exitCode: plain.exitCode,
+    });
   });
 }

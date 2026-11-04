@@ -8,8 +8,8 @@ use bun_sema::bind::{Binding, Bound, CodeUnit, CommonJsVariable, Decl, Parent, S
 use bun_sema::check::aot::ObjectOrigin;
 use bun_sema::fold::{Constant, Decisions, FoldedValue};
 use bun_sema::hir::{
-    self, BinOp, Call, ExprId, ExprKind, Flags, FnId, FnKind, MemberKey, PatKind, StmtId,
-    StmtKind, TextRange, is_moved_to_file_start,
+    self, BinOp, Call, ExprId, ExprKind, Flags, FnId, FnKind, MemberKey, PatKind, StmtId, StmtKind,
+    TextRange, is_moved_to_file_start,
 };
 use bun_sema::import_sites::JsxImport;
 use bun_sema::program::{FileId, Sym};
@@ -619,8 +619,8 @@ fn is_evaluated_behind(
 fn replaces_exports_first(text: &ModuleText<'_, '_>) -> bool {
     let (hir, bound) = (text.hir, text.bound);
     let mut statements = hir.ids(hir.body).enumerate();
-    let found = statements
-        .find_map(|(index, statement)| Some((index, find_replacement(text, statement)?)));
+    let found =
+        statements.find_map(|(index, statement)| Some((index, find_replacement(text, statement)?)));
     let Some((statements_in_front, replacement)) = found else {
         return false;
     };
@@ -636,9 +636,10 @@ fn replaces_exports_first(text: &ModuleText<'_, '_>) -> bool {
         return false;
     }
     // The body lists its statements as they run: a test run has put `jest.mock(..)` in front of what is written ahead of it. A class that `bun run` moves to the start of the file can be used from the first statement on.
-    let evaluated_ahead = hir.ids(hir.body).enumerate().filter(|&(index, it)| {
-        index < statements_in_front || is_moved_to_file_start(hir, it)
-    });
+    let evaluated_ahead = hir
+        .ids(hir.body)
+        .enumerate()
+        .filter(|&(index, it)| index < statements_in_front || is_moved_to_file_start(hir, it));
     let evaluated_ahead = evaluated_ahead.map(|(_, it)| hir[it].loc);
     let mut evaluated_ahead: Vec<TextRange> = evaluated_ahead
         .filter(|written| written.pos >= replacement.end)

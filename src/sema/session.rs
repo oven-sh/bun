@@ -398,7 +398,10 @@ mod tests {
             // SAFETY: nothing refers to the session or into its arenas.
             unsafe { slot.empty() };
             assert_eq!(slot.session().thread_count(), 0);
-            assert_eq!(*slot.session().arena().alloc_slice_copy(&[7u32; 100]), [7; 100]);
+            assert_eq!(
+                *slot.session().arena().alloc_slice_copy(&[7u32; 100]),
+                [7; 100]
+            );
             assert_eq!(slot.session().thread_count(), 1);
         }
     }

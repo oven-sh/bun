@@ -258,7 +258,9 @@ impl Resolver<'_, '_> {
             return false;
         };
         let holder = table::entry(table::canonical_id(function)).holder;
-        let object = self.value_of(operand).or_else(|| self.held_value_of(operand));
+        let object = self
+            .value_of(operand)
+            .or_else(|| self.held_value_of(operand));
         object.is_some_and(|object| {
             holder.map(table::canonical_id) == Some(table::canonical_id(object.path.id))
         })
@@ -362,7 +364,12 @@ impl Resolver<'_, '_> {
     pub(super) fn ends_row_of_tests(&self, row: ExprId, e: ExprId) -> bool {
         let hir = self.input.hir;
         let mut last = hir.skip_type_assertions(row);
-        while let ExprKind::Binary { op: BinOp::And, right, .. } = hir[last].kind {
+        while let ExprKind::Binary {
+            op: BinOp::And,
+            right,
+            ..
+        } = hir[last].kind
+        {
             last = hir.skip_type_assertions(right);
         }
         last == e && last != hir.skip_type_assertions(row)
@@ -383,7 +390,9 @@ impl Resolver<'_, '_> {
             // The mention is what the tests in front of it let through, or the row of tests itself: `resolve_alias` finds the object there.
             PatKind::Ident(_)
                 if self.is_local_alias(declaration.pat)
-                    && self.find_module_object_behind_tests(declaration.init).is_some()
+                    && self
+                        .find_module_object_behind_tests(declaration.init)
+                        .is_some()
                     && (is_whole_initializer
                         || (self.held_value_of(e).is_none()
                             && self.ends_row_of_tests(declaration.init, e))) =>
@@ -391,7 +400,9 @@ impl Resolver<'_, '_> {
                 MentionUse::Aliased
             }
             // No name of a pattern stands for a member of what is only held: `resolve_alias` goes by what the initializer is.
-            PatKind::Object(_) if is_whole_initializer && !matches!(hir[e].kind, ExprKind::Cond { .. }) => {
+            PatKind::Object(_)
+                if is_whole_initializer && !matches!(hir[e].kind, ExprKind::Cond { .. }) =>
+            {
                 MentionUse::Destructured(declaration.pat)
             }
             PatKind::Ident(_) | PatKind::Object(_) | PatKind::Array(_) | PatKind::Missing => {

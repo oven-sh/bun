@@ -440,7 +440,8 @@ impl ResolvedBuiltins {
     /// `eval`, `Function`, node:vm: a text imports what it likes. The table flags the three functions that load by a name too, and `require("node:path")` is as closed as
     /// an import of it: `ProgramContents::loads_by_unknown_path` says where one of them is handed on, or is given a name that the build does not know.
     pub fn mentions_evaluator(&self) -> bool {
-        let evaluators = table::BuiltinFlags::EVALUATES_TEXT | table::BuiltinFlags::RUNS_UNSEEN_CODE;
+        let evaluators =
+            table::BuiltinFlags::EVALUATES_TEXT | table::BuiltinFlags::RUNS_UNSEEN_CODE;
         let loads_by_name = [
             BuiltinId::ModuleRequire,
             BuiltinId::ImportMetaRequire,

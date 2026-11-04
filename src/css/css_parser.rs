@@ -1321,7 +1321,7 @@ mod rule_parsers {
                     let mut import_rule = ImportRule {
                         url,
                         conditions: ImportConditions {
-                            layer: layer.map(|v| css_rules::import::Layer { v }),
+                            layer: layer.map(|v| css_rules::import::Layer { v, anonymous_id: 0 }),
                             supports,
                             media,
                         },

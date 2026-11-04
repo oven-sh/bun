@@ -317,7 +317,10 @@ fn note_says_how_fast_the_program_was_compiled() {
     statistics.count(StatisticId::SourceLines, 119_100);
     statistics.count(StatisticId::SourceLinesOfDeclarations, 1_000_000);
     statistics.add_time(Stage::Load, core::time::Duration::from_millis(1_180));
-    statistics.add_time(Stage::GenerateCode, core::time::Duration::from_millis(8_000));
+    statistics.add_time(
+        Stage::GenerateCode,
+        core::time::Duration::from_millis(8_000),
+    );
     statistics.add_time(Stage::RunTime, core::time::Duration::from_secs(50));
     let speed = "compiled 119,100 lines in 9.18 s (12,973 lines/s)";
     assert_eq!(written(|out| write_untyped_note(&statistics, out)), speed);

@@ -241,12 +241,7 @@ impl FileBinder<'_, '_> {
         }
     }
 
-    fn bind_site(
-        &mut self,
-        site: &PlannedSite,
-        roots: &mut Vec<Root>,
-        holders: &mut Vec<Holder>,
-    ) {
+    fn bind_site(&mut self, site: &PlannedSite, roots: &mut Vec<Root>, holders: &mut Vec<Holder>) {
         if self.is_dead_site(site) {
             return;
         }
@@ -934,7 +929,15 @@ fn is_outside_optional_chain(hir: &hir::File<'_>, member: ExprId) -> bool {
 fn is_deleted(hir: &hir::File<'_>, bound: &Bound<'_>, member: ExprId) -> bool {
     let outermost = find_outermost_type_assertion(hir, bound, member);
     let user = parent_expression(bound, outermost);
-    user.is_some_and(|user| matches!(hir[user].kind, ExprKind::Unary { op: UnOp::Delete, .. }))
+    user.is_some_and(|user| {
+        matches!(
+            hir[user].kind,
+            ExprKind::Unary {
+                op: UnOp::Delete,
+                ..
+            }
+        )
+    })
 }
 
 // The object would be `this`.

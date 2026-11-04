@@ -154,9 +154,7 @@ async function runTests(directory: string, words: string | undefined, ...flags: 
   return { stdout: stdout.split("\n").filter(line => line && !line.startsWith("bun test ")), exitCode };
 }
 
-for (const [way, words] of [
-  ["as one program", "TestRunLayers:0"],
-]) {
+for (const [way, words] of [["as one program", "TestRunLayers:0"]]) {
   test(`what a test file lays on an object of the host is there for the project, ${way}`, async () => {
     using dir = tempDir("aot-laid-on-an-object-of-the-host", files);
     const plain = await runTests(String(dir), undefined);

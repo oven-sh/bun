@@ -369,8 +369,9 @@ impl<'s> Folder<'_, 's> {
         self.paths_made_by_calls.shared_sort_unstable();
         let DeadRoots { all, in_bun_run } = self.find_dead_roots();
         // In most files nothing is folded under the flag alone.
-        let folds_more_under_minify_syntax = self.folded_under_minify_syntax.iter().next().is_some()
-            || (self.conditions_told_under_minify_syntax.iter().next()).is_some();
+        let folds_more_under_minify_syntax =
+            self.folded_under_minify_syntax.iter().next().is_some()
+                || (self.conditions_told_under_minify_syntax.iter().next()).is_some();
         let dead_under_minify_syntax = folds_more_under_minify_syntax
             .then(|| self.holds_under_minify_syntax(|folder| folder.find_dead_roots().in_bun_run))
             .filter(|under_minify_syntax| *under_minify_syntax != in_bun_run)
@@ -396,7 +397,10 @@ impl<'s> Folder<'_, 's> {
             dead_under_minify_syntax.unwrap_or((dead_exprs_in_bun_run, dead_stmts_in_bun_run));
         let decisions = Decisions {
             decided: slice_in(&self.decided, arena),
-            is_decided: NodeBits::of_ascending(self.decided.iter().map(|entry| entry.0.idx()), arena),
+            is_decided: NodeBits::of_ascending(
+                self.decided.iter().map(|entry| entry.0.idx()),
+                arena,
+            ),
             constants: slice_in(&self.collect_constants(&dead), arena),
             strings_and_numbers_of_bun_run_alone: NodeBits::freeze(
                 &self.collect_strings_and_numbers_of_bun_run_alone(&dead),

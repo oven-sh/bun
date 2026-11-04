@@ -5,6 +5,7 @@ use super::queries::Queries;
 use crate::atom::{Atom, known};
 use crate::bind::{Binding, Bound, Decl, FnOwner, Parent, PatParent, StoreKind, SymbolId};
 use crate::check::root_declaration;
+use crate::check::shape::PropertyHolder;
 use crate::hir::{
     self, BinOp, CallId, Chain, ExprFlags, ExprId, ExprKind, ExprTag, Flags, FnBody, FnId, FnKind,
     MemberKey, ParamId, PatId, PatKind, PropId, PropKey, PropKind, StmtId, StmtKind, UnOp, VarKind,
@@ -14,7 +15,6 @@ use crate::session::vec_from_iter_in;
 use crate::types::{
     MapperId, Prop, PropFlags, PropSource, Shape, SigId, SigParam, TypeData, TypeId,
 };
-use crate::check::shape::PropertyHolder;
 use crate::util::{FxHashMap, FxHashSet};
 use bun_sort_by_number::{SortByNumber, number_of_pair};
 use smallvec::SmallVec;
@@ -316,7 +316,8 @@ impl OrderOfNames {
         while let Some((own, others)) = open.last_mut() {
             match (own.next(), others.next()) {
                 (None, None) => _ = open.pop(),
-                (Some(PieceOfOrder::Name(name)), Some(PieceOfOrder::Name(found))) if name == found => {}
+                (Some(PieceOfOrder::Name(name)), Some(PieceOfOrder::Name(found)))
+                    if name == found => {}
                 (Some(PieceOfOrder::All(names)), Some(PieceOfOrder::All(found))) => {
                     if Rc::ptr_eq(names, found) {
                         continue;
@@ -429,13 +430,21 @@ impl MembersByName {
         let mut at = self;
         loop {
             match at {
-                MembersByName::One { member, .. } => return (member.name == name).then_some(member),
+                MembersByName::One { member, .. } => {
+                    return (member.name == name).then_some(member);
+                }
                 MembersByName::Both {
                     bit,
                     without_bit,
                     with_bit,
                     ..
-                } => at = if name.0 & bit == 0 { without_bit } else { with_bit },
+                } => {
+                    at = if name.0 & bit == 0 {
+                        without_bit
+                    } else {
+                        with_bit
+                    }
+                }
             }
         }
     }
@@ -456,7 +465,11 @@ impl MembersByName {
                     ..
                 } => {
                     nodes.set(0);
-                    at = if name.0 & *bit == 0 { without_bit } else { with_bit };
+                    at = if name.0 & *bit == 0 {
+                        without_bit
+                    } else {
+                        with_bit
+                    };
                 }
             }
         }
@@ -482,7 +495,11 @@ impl MembersByName {
         {
             *count += 1;
             nodes.set(0);
-            let half = if name & *bit == 0 { without_bit } else { with_bit };
+            let half = if name & *bit == 0 {
+                without_bit
+            } else {
+                with_bit
+            };
             MembersByName::insert(half, member);
         }
     }
@@ -566,11 +583,7 @@ impl MergeOfMany<'_> {
     }
 
     /// `own` itself where nothing is added to it.
-    fn merge(
-        &mut self,
-        own: &Rc<MembersByName>,
-        other: &Rc<MembersByName>,
-    ) -> Rc<MembersByName> {
+    fn merge(&mut self, own: &Rc<MembersByName>, other: &Rc<MembersByName>) -> Rc<MembersByName> {
         if Rc::ptr_eq(own, other) || self.walk.is_out_of_budget() {
             return Rc::clone(own);
         }
@@ -614,7 +627,11 @@ impl MergeOfMany<'_> {
                 },
                 _,
             ) if bit > other_bit && bits_above(bit, other_prefix) == prefix => {
-                let half = if other_prefix & bit == 0 { without_bit } else { with_bit };
+                let half = if other_prefix & bit == 0 {
+                    without_bit
+                } else {
+                    with_bit
+                };
                 let merged = self.merge(half, other);
                 if Rc::ptr_eq(&merged, half) {
                     return Rc::clone(own);
@@ -1080,7 +1097,8 @@ fn merge_part(own: &mut Rc<Usage>, walk: &mut Walk, other: &Rc<Usage>) {
     if Rc::ptr_eq(own, other) || (walk.is_out_of_budget() && !walk.looks_at_every_use_of(own)) {
         return;
     }
-    if !own.facts.contains(other.facts) || other.arms.list.iter().any(|&arm| !own.arms.contains(arm))
+    if !own.facts.contains(other.facts)
+        || other.arms.list.iter().any(|&arm| !own.arms.contains(arm))
     {
         let own = Rc::make_mut(own);
         own.facts |= other.facts;
@@ -3844,8 +3862,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             .iter()
             .any(|&part| fitting.contains(&part) || self.c.is_array(part));
         let function = self.c.global_ref(known::Function, &[]);
-        let can_be_function = usage.members.any(Member::is_called)
-            && self.has_every_member(function, &usage.members);
+        let can_be_function =
+            usage.members.any(Member::is_called) && self.has_every_member(function, &usage.members);
         let can_be_builtin = can_be_array || can_be_string || can_be_function;
         match fitting[..] {
             [] if can_be_builtin => {}
@@ -4075,7 +4093,11 @@ mod tests {
         }
 
         fn count_nodes(&self) -> u64 {
-            1 + self.members.iter().map(|member| member.1.count_nodes()).sum::<u64>()
+            1 + self
+                .members
+                .iter()
+                .map(|member| member.1.count_nodes())
+                .sum::<u64>()
         }
 
         fn merge(&mut self, remaining_nodes: &mut u64, other: &PlainUsage) {

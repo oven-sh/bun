@@ -12,10 +12,7 @@ use crate::modules::{ModuleGraph, ModuleRef};
 
 /// `bun test --aot`: the first `entry_points` files are what the runner starts, the last `preloads` of them as preloads.
 /// A file that nothing loads lies on disk all the same.
-fn project_of_run(
-    files: &[(&str, &str)],
-    (entry_points, preloads): (usize, usize),
-) -> TestProject {
+fn project_of_run(files: &[(&str, &str)], (entry_points, preloads): (usize, usize)) -> TestProject {
     let mut project = TestProject::with_entry_points(files, entry_points, &default_settings());
     project.runs_tests = true;
     project.preload_count = preloads;
@@ -141,9 +138,15 @@ fn the_list_of_the_runner_and_the_imports_say_whose_a_file_is() {
             let file = files.by_path.get(format!("/project/{name}").as_bytes());
             let index = file.unwrap().idx();
             let is_of_product = expected == WhoseFile::OfProduct;
-            assert_eq!(plan.finds_builtins_read_only[index], is_of_product, "{name}");
+            assert_eq!(
+                plan.finds_builtins_read_only[index], is_of_product,
+                "{name}"
+            );
             let is_of_tests = expected == WhoseFile::OfTests;
-            assert_eq!(plan.loads_compiled_files_alone[index], !is_of_tests, "{name}");
+            assert_eq!(
+                plan.loads_compiled_files_alone[index], !is_of_tests,
+                "{name}"
+            );
         }
     });
 }
@@ -151,9 +154,15 @@ fn the_list_of_the_runner_and_the_imports_say_whose_a_file_is() {
 #[test]
 fn a_file_that_the_runner_starts_is_of_the_tests_whoever_else_imports_it() {
     let files = [
-        ("checks/plain.ts", "import { app } from '../src/app';\napp();\n"),
+        (
+            "checks/plain.ts",
+            "import { app } from '../src/app';\napp();\n",
+        ),
         ("src/app.ts", "export const app = () => 1;\n"),
-        ("src/main.ts", "import './app';\nimport '../checks/plain';\n"),
+        (
+            "src/main.ts",
+            "import './app';\nimport '../checks/plain';\n",
+        ),
         MANIFEST,
     ];
     with_run(&files, (1, 0), |files, run| {
@@ -172,7 +181,10 @@ fn what_the_preloads_alone_load_is_of_the_tests_however_deep() {
         ("boot.ts", "import './patch';\n"),
         ("patch.ts", "import './deeper';\nimport './shared';\n"),
         ("deeper.ts", "export {};\n"),
-        ("shared.ts", "import './below';\nexport const shared = () => 1;\n"),
+        (
+            "shared.ts",
+            "import './below';\nexport const shared = () => 1;\n",
+        ),
         ("below.ts", "export {};\n"),
         MANIFEST,
     ];
@@ -206,24 +218,44 @@ fn of_what_lies_deeper_than_a_step_only_a_file_that_asks_for_it_is_the_tests() {
         let mut files = PROJECT.to_vec();
         files.retain(|file| !matches!(file.0, "src/lib.ts"));
         // Three steps from the test file, behind a file that asks for nothing.
-        files.extend([("src/lib.ts", "export { lib } from './deep';\n"), ("src/deep.ts", text)]);
+        files.extend([
+            ("src/lib.ts", "export { lib } from './deep';\n"),
+            ("src/deep.ts", text),
+        ]);
         with_run(&files, (2, 1), |files, run| {
-            assert_eq!(whose(files, run, "src/lib.ts"), WhoseFile::OfProduct, "{text}");
-            assert_eq!(whose(files, run, "src/deep.ts"), WhoseFile::OfTests, "{text}");
+            assert_eq!(
+                whose(files, run, "src/lib.ts"),
+                WhoseFile::OfProduct,
+                "{text}"
+            );
+            assert_eq!(
+                whose(files, run, "src/deep.ts"),
+                WhoseFile::OfTests,
+                "{text}"
+            );
         });
         // The product comes to it too.
         files.push(("src/main.ts", "import { lib } from './deep';\nlib('');\n"));
         with_run(&files, (2, 1), |files, run| {
-            assert_eq!(whose(files, run, "src/deep.ts"), WhoseFile::OfProduct, "{text}");
+            assert_eq!(
+                whose(files, run, "src/deep.ts"),
+                WhoseFile::OfProduct,
+                "{text}"
+            );
         });
     }
 }
 
 #[test]
-fn a_file_that_gives_an_imported_function_a_value_that_nobody_reads_asks_for_nothing_unless_the_function_loads() {
-    let deep = "import { take } from './taker';\nexport const lib = (name: string) => take(name);\n";
+fn a_file_that_gives_an_imported_function_a_value_that_nobody_reads_asks_for_nothing_unless_the_function_loads()
+ {
+    let deep =
+        "import { take } from './taker';\nexport const lib = (name: string) => take(name);\n";
     for (taker, side) in [
-        ("export const take = (name: string) => name.length;\n", WhoseFile::OfProduct),
+        (
+            "export const take = (name: string) => name.length;\n",
+            WhoseFile::OfProduct,
+        ),
         ("export const take = require;\n", WhoseFile::OfTests),
     ] {
         let mut files = PROJECT.to_vec();
@@ -234,7 +266,11 @@ fn a_file_that_gives_an_imported_function_a_value_that_nobody_reads_asks_for_not
             ("src/taker.ts", taker),
         ]);
         with_run(&files, (2, 1), |files, run| {
-            assert_eq!(whose(files, run, "src/lib.ts"), WhoseFile::OfProduct, "{taker}");
+            assert_eq!(
+                whose(files, run, "src/lib.ts"),
+                WhoseFile::OfProduct,
+                "{taker}"
+            );
             assert_eq!(whose(files, run, "src/deep.ts"), side, "{taker}");
         });
     }
@@ -259,16 +295,28 @@ fn a_ring_of_imports_that_the_tests_enter_stays_the_products_with_what_it_import
 
 #[test]
 fn a_fixture_on_disk_that_only_test_files_import_makes_no_helper_the_products() {
-    let fixture = ("fixtures/made.ts", "import { help } from '../shared/help';\nexport const made = () => help();\n");
-    let outer = ("fixtures/outer.ts", "import { made } from './made';\nexport const outer = () => made();\n");
-    let other = ("checks/other.ts", "import { test } from 'bun:test';\nimport { outer } from '../fixtures/outer';\ntest('b', () => { outer(); });\n");
+    let fixture = (
+        "fixtures/made.ts",
+        "import { help } from '../shared/help';\nexport const made = () => help();\n",
+    );
+    let outer = (
+        "fixtures/outer.ts",
+        "import { made } from './made';\nexport const outer = () => made();\n",
+    );
+    let other = (
+        "checks/other.ts",
+        "import { test } from 'bun:test';\nimport { outer } from '../fixtures/outer';\ntest('b', () => { outer(); });\n",
+    );
     let mut files = PROJECT.to_vec();
     files.extend([fixture, outer, other]);
     with_run(&files, (2, 1), |files, run| {
         assert_eq!(whose(files, run, "shared/help.ts"), WhoseFile::OfTests);
     });
     // The product imports the outer fixture too.
-    files.push(("src/main.ts", "import { outer } from '../fixtures/outer';\nouter();\n"));
+    files.push((
+        "src/main.ts",
+        "import { outer } from '../fixtures/outer';\nouter();\n",
+    ));
     with_run(&files, (2, 1), |files, run| {
         assert_eq!(whose(files, run, "shared/help.ts"), WhoseFile::OfProduct);
     });
@@ -295,7 +343,10 @@ fn a_file_on_disk_that_only_exports_a_helper_again_takes_nothing_for_itself() {
     with_run(&files, (2, 1), |files, run| {
         assert_eq!(whose(files, run, "shared/help.ts"), WhoseFile::OfTests);
     });
-    files.push(("src/main.ts", "import { help } from '../shared';\nhelp();\n"));
+    files.push((
+        "src/main.ts",
+        "import { help } from '../shared';\nhelp();\n",
+    ));
     with_run(&files, (2, 1), |files, run| {
         assert_eq!(whose(files, run, "shared/help.ts"), WhoseFile::OfProduct);
     });
@@ -310,7 +361,11 @@ fn a_test_file_on_disk_that_the_run_leaves_out_makes_no_helper_the_products() {
         let mut files = PROJECT.to_vec();
         files.push(("checks/other.ts", other));
         with_run(&files, (2, 1), |files, run| {
-            assert_eq!(whose(files, run, "shared/help.ts"), WhoseFile::OfTests, "{other}");
+            assert_eq!(
+                whose(files, run, "shared/help.ts"),
+                WhoseFile::OfTests,
+                "{other}"
+            );
         });
     }
 }
@@ -411,7 +466,11 @@ fn what_only_leads_to_the_runner_opens_no_run() {
         "spyOn(Bun, 'file');",
         "Object.defineProperty(globalThis, 'kept', { value: 1, configurable: true });",
     ] {
-        assert_eq!(left_open_by_test_file(statements), (false, false), "{statements}");
+        assert_eq!(
+            left_open_by_test_file(statements),
+            (false, false),
+            "{statements}"
+        );
     }
 }
 
@@ -422,7 +481,11 @@ fn text_that_nobody_knows_may_lay_a_spy_where_a_file_of_the_tests_evaluates_it()
         "(eval as any)(made());",
         "eval('new Function(' + made() + ')()');",
     ] {
-        assert_eq!(left_open_by_test_file(statements), (true, false), "{statements}");
+        assert_eq!(
+            left_open_by_test_file(statements),
+            (true, false),
+            "{statements}"
+        );
     }
     // Global code sees no name of the file.
     for statements in [
@@ -438,7 +501,11 @@ fn text_that_nobody_knows_may_lay_a_spy_where_a_file_of_the_tests_evaluates_it()
         "expect(lib.total).toBeInstanceOf(Function);",
         "expect(lib.total).not.toBe(eval);",
     ] {
-        assert_eq!(left_open_by_test_file(statements), (false, false), "{statements}");
+        assert_eq!(
+            left_open_by_test_file(statements),
+            (false, false),
+            "{statements}"
+        );
     }
 }
 
@@ -597,7 +664,10 @@ mod texts {
             "console.warn(HINT);",
             "const hint = HINT; console.error(hint); throw new Error(hint);",
         ] {
-            assert!(!is_left_open(&statements.replace("HINT", HINT)), "{statements}");
+            assert!(
+                !is_left_open(&statements.replace("HINT", HINT)),
+                "{statements}"
+            );
         }
         for statements in [
             "write(HINT);",
@@ -605,7 +675,10 @@ mod texts {
             "const hint = HINT; console.warn(hint); write(hint);",
             "class Failure extends Error {} throw new Failure(HINT);",
         ] {
-            assert!(is_left_open(&statements.replace("HINT", HINT)), "{statements}");
+            assert!(
+                is_left_open(&statements.replace("HINT", HINT)),
+                "{statements}"
+            );
         }
     }
 
@@ -620,7 +693,11 @@ mod texts {
             "${keyword} held = 1;",
         ] {
             let (names, _, left_open) = read(&format!("`{head} {tail}`"));
-            assert_eq!((names, left_open), (vec!["total".to_owned()], (false, false)), "{tail}");
+            assert_eq!(
+                (names, left_open),
+                (vec!["total".to_owned()], (false, false)),
+                "{tail}"
+            );
         }
         // Nothing runs a text that is no code, and it has no part that the run fills in.
         let (names, modules, left_open) = read(&format!("'{head} lib.();'"));
@@ -632,13 +709,22 @@ mod texts {
         let imports = r#"import { mock, spyOn } from "bun:test"; import * as lib from "./lib";"#;
         let (_, _, left_open) = read(&format!("`{imports} spyOn({{}}, \"${{name}}\");`"));
         assert_eq!(left_open, (true, false));
-        let (_, _, left_open) = read(&format!("`{imports} mock.module(${{value}}, () => ({{}}));`"));
+        let (_, _, left_open) = read(&format!(
+            "`{imports} mock.module(${{value}}, () => ({{}}));`"
+        ));
         assert_eq!(left_open, (true, true));
         let (_, modules, left_open) = read(&format!("`{imports} spyOn(lib, ${{name}});`"));
-        assert_eq!((modules, left_open), (vec!["./lib".to_owned()], (false, false)));
-        let (_, modules, left_open) =
-            read(&format!("`{imports} mock.module(\"../far.js\", () => ({{}}));`"));
-        assert_eq!((modules, left_open), (vec!["../far.js".to_owned()], (false, false)));
+        assert_eq!(
+            (modules, left_open),
+            (vec!["./lib".to_owned()], (false, false))
+        );
+        let (_, modules, left_open) = read(&format!(
+            "`{imports} mock.module(\"../far.js\", () => ({{}}));`"
+        ));
+        assert_eq!(
+            (modules, left_open),
+            (vec!["../far.js".to_owned()], (false, false))
+        );
         let (_, modules, left_open) = read(
             r#"`import * as far from "${value}"; import { spyOn } from "bun:test"; spyOn(far, ${name});`"#,
         );
@@ -672,7 +758,10 @@ fn the_end_of_a_path_names_the_module_of_a_text() {
 
 #[test]
 fn every_member_that_a_test_may_replace_is_written_as_a_read() {
-    let files = [("a.test.ts", "import { test } from 'bun:test';\ntest('a', () => {});\n")];
+    let files = [(
+        "a.test.ts",
+        "import { test } from 'bun:test';\ntest('a', () => {});\n",
+    )];
     with_run(&files, (1, 0), |_, run| {
         let listed = &run.members_written_as_reads;
         assert!(listed.is_sorted_by(|left, right| left < right));
@@ -711,7 +800,10 @@ fn a_helper_that_spies_under_a_name_from_outside_opens_what_its_callers_pass_it(
     let files = [
         ("a.test.js", &through[..]),
         ("helpers/index.js", "export * from \"./inner.js\";\n"),
-        ("helpers/inner.js", "export { track } from \"./track.js\";\n"),
+        (
+            "helpers/inner.js",
+            "export { track } from \"./track.js\";\n",
+        ),
         ("helpers/track.js", track),
         ("src/sums.js", sums),
         MANIFEST,
@@ -870,9 +962,16 @@ fn bind_opens_what_is_handed_out_where_text_that_nobody_knows_is_evaluated() {
         let mut files = files;
         files[0].1 = &test_file;
         with_bound_run(&files, (1, 0), |files, graph| {
-            assert_eq!(is_replaceable(files, graph, "src/lib.ts", "total"), is_open, "{statement}");
+            assert_eq!(
+                is_replaceable(files, graph, "src/lib.ts", "total"),
+                is_open,
+                "{statement}"
+            );
             // No file hands its object on.
-            assert!(!is_replaceable(files, graph, "src/kept.ts", "kept"), "{statement}");
+            assert!(
+                !is_replaceable(files, graph, "src/kept.ts", "kept"),
+                "{statement}"
+            );
         });
     }
 }

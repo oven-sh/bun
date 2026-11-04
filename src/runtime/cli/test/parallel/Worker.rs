@@ -250,12 +250,12 @@ impl Worker {
 
             let options = SpawnOptions {
                 stdin: Stdio::Ignore,
-                stdout: Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                    bun_core::ffi::zeroed::<uv::Pipe>(),
-                ))),
-                stderr: Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                    bun_core::ffi::zeroed::<uv::Pipe>(),
-                ))),
+                stdout: Stdio::Buffer(bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
+                    uv::Pipe,
+                >()))),
+                stderr: Stdio::Buffer(bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
+                    uv::Pipe,
+                >()))),
                 extra_fds: vec![Stdio::Ipc(ipc_pipe)].into_boxed_slice(),
                 cwd: coord.cwd.to_vec().into_boxed_slice(),
                 windows: spawn::WindowsOptions {

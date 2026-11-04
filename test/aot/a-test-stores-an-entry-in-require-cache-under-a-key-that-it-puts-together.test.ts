@@ -167,9 +167,7 @@ const projects: Record<string, Record<string, string>> = {
 };
 
 const asOneProgram = { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" };
-const ways: [string, Record<string, string>][] = [
-  ["as one program", asOneProgram],
-];
+const ways: [string, Record<string, string>][] = [["as one program", asOneProgram]];
 
 async function runTests(directory: string, env: Record<string, string>, flag?: "--aot", log?: string[]) {
   const command = [bunExe(), "test", "--isolate", ...(flag ? [flag] : [])];

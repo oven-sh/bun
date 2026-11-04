@@ -475,10 +475,14 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
 
     /// False for a name that a plain object resolves without an own property (a member of `Object.prototype`, `__proto__`) and for an array index, which is not stored as a named property.
     fn can_be_variable(&self, name: Atom) -> bool {
-        let is_index = self.atoms.bytes(name).first().is_some_and(u8::is_ascii_digit);
+        let is_index = self
+            .atoms
+            .bytes(name)
+            .first()
+            .is_some_and(u8::is_ascii_digit);
         let listed = self.input.bind.builtin_names.get(name);
-        let is_inherited =
-            listed.is_some_and(|name| table::own_member(BuiltinId::ObjectPrototype, name).is_some());
+        let is_inherited = listed
+            .is_some_and(|name| table::own_member(BuiltinId::ObjectPrototype, name).is_some());
         !is_index && !is_inherited && name != known::__proto__
     }
 
@@ -743,7 +747,10 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         if !self.is_evaluated(name) {
             return;
         }
-        if self.inner.is_some_and(|inner| inner.exports_parameter == Some(parameter)) {
+        if self
+            .inner
+            .is_some_and(|inner| inner.exports_parameter == Some(parameter))
+        {
             return self.look_at_mention(name, Mention::ExportsName);
         }
         // It occurs only as `module.exports`.
@@ -918,10 +925,9 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
         // The lowering puts `true` in the place of every mention that is left.
         let is_followed = match parent {
             Parent::Expr(user) if user.is_some() => self.look_at_user(outermost, user),
-            Parent::Stmt(user) if user.is_some() => matches!(
-                self.hir[user].kind,
-                StmtKind::If { .. } | StmtKind::Expr(_)
-            ),
+            Parent::Stmt(user) if user.is_some() => {
+                matches!(self.hir[user].kind, StmtKind::If { .. } | StmtKind::Expr(_))
+            }
             _ => false,
         };
         self.summary.object_escapes |= !is_followed;
@@ -1223,7 +1229,9 @@ impl<'a, 'b, 's> SummaryWalk<'a, 'b, 's> {
             return;
         }
         // `module.exports = __toCommonJS(all)`: no literal is spelled out for such a module.
-        let copy = self.replacement.filter(|_| self.summary.replaced_by.is_none());
+        let copy = self
+            .replacement
+            .filter(|_| self.summary.replaced_by.is_none());
         let copy = copy.and_then(|replacement| replacement.statement.some());
         let entries = self.summary.names.iter();
         let mut calls_on_copied_object: Vec<CallId> = entries

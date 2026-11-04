@@ -260,7 +260,10 @@ fn groups(pattern: &str, line: &str) -> Vec<String> {
 
 #[test]
 fn the_matcher_tells_lines_apart() {
-    assert_eq!(groups(r"^a (\d+) \| (true|false)$", "a 12 | false"), ["12", "false"]);
+    assert_eq!(
+        groups(r"^a (\d+) \| (true|false)$", "a 12 | false"),
+        ["12", "false"]
+    );
     assert_eq!(find(r"^a (\d+)$", "a 12 |"), None);
     assert_eq!(find(r"^a (\d+)", "ba 12"), None);
     assert_eq!(find(r"a \| b", "a b"), None);
@@ -309,7 +312,10 @@ fn scan() {
         ]
     );
     // a-file-of-the-run-that-a-helper-imports-back-is-handed-on-once.test.ts
-    assert_eq!(groups(r"^AOT test run \| scan of (\d+) files", &scan), ["5"]);
+    assert_eq!(
+        groups(r"^AOT test run \| scan of (\d+) files", &scan),
+        ["5"]
+    );
     // helpers-that-a-test-file-reaches-by-other-ways.test.ts, a-mock-in-a-file-that-a-preload-imports.test.ts
     assert!(scan.starts_with("AOT test run | scan of "));
     assert_eq!(groups(r" \| exports (\d+) \| ", &scan), ["6"]);
@@ -346,13 +352,19 @@ fn what_tests_replace() {
         "AOT test run | variables that tests may replace 3 in 12 files | modules that may be mocked 1 | a spy under any name true | names that spies on objects from somewhere spell 2 | such a spy may reach any module false"
     );
     // harness/runner-object.ts, spies-in-written-code.test.ts
-    assert_eq!(groups(r"variables that tests may replace (\d+) in", &line), ["3"]);
+    assert_eq!(
+        groups(r"variables that tests may replace (\d+) in", &line),
+        ["3"]
+    );
     assert!(line.contains("a spy under any name true"));
     // texts-nothing-can-run.test.ts
     let pattern = r"variables that tests may replace (\d+) in (\d+) files";
     assert_eq!(groups(pattern, &line), ["3", "12"]);
     // a-package-that-asks-whether-jest-is-there-opens-no-export.test.ts
-    assert_eq!(groups(r"\| a spy under any name (true|false) \|", &line), ["true"]);
+    assert_eq!(
+        groups(r"\| a spy under any name (true|false) \|", &line),
+        ["true"]
+    );
 }
 
 #[test]
@@ -360,7 +372,10 @@ fn files_that_may_run_again() {
     let line = line_of_files_that_may_run_again(0);
     assert_eq!(line, "AOT modules | CommonJS files that may run again 0");
     // awaited-import.test.ts, fuzz/grids/files-that-run-again.ts
-    assert_eq!(groups(r"CommonJS files that may run again (\d+)", &line), ["0"]);
+    assert_eq!(
+        groups(r"CommonJS files that may run again (\d+)", &line),
+        ["0"]
+    );
 }
 
 #[test]
@@ -388,9 +403,15 @@ fn why_every_file() {
     // require-cache-in-test-runs-4.test.ts
     let pattern = r"^AOT test run \| every file may load again: (?:.*[\\/])?(.*)$";
     let line = line_of_why_every_file(b"/project/helper.js", "loads a file under a query");
-    assert_eq!(groups(pattern, &line), ["helper.js loads a file under a query"]);
+    assert_eq!(
+        groups(pattern, &line),
+        ["helper.js loads a file under a query"]
+    );
     let line = line_of_why_every_file(br"C:\project\helper.js", "loads a file under a query");
-    assert_eq!(groups(pattern, &line), ["helper.js loads a file under a query"]);
+    assert_eq!(
+        groups(pattern, &line),
+        ["helper.js loads a file under a query"]
+    );
 }
 
 #[test]
@@ -416,7 +437,10 @@ fn file_changed_on_disk() {
     // a-call-that-fails-on-a-folder-changes-nothing-below-it.test.ts splits at this text and takes what stands behind it for the path.
     let head = "the run writes, moves or removes a file of its own, which is compared with the disk before it loads: ";
     let line = line_of_file_changed_on_disk(b"/project/c0/lib/one.js");
-    assert_eq!(line.split(head).collect::<Vec<_>>(), ["AOT test run | ", "/project/c0/lib/one.js"]);
+    assert_eq!(
+        line.split(head).collect::<Vec<_>>(),
+        ["AOT test run | ", "/project/c0/lib/one.js"]
+    );
 }
 
 #[test]

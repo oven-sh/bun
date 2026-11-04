@@ -168,15 +168,22 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             // Nobody ever has the function object: whoever calls enters the function itself.
             // What a file or a namespace declares may be handed out by more than its name.
             let bound = self.file.bound;
-            let is_name_in_function =
-                matches!(bound.code_unit(bound.symbol_scope(symbol)), CodeUnit::Function(_));
+            let is_name_in_function = matches!(
+                bound.code_unit(bound.symbol_scope(symbol)),
+                CodeUnit::Function(_)
+            );
             if is_name_in_function
                 && !bound.is_visible_to_eval(symbol)
                 && self.file.scopes.is_never_named(symbol)
             {
                 continue;
             }
-            if self.file.scopes.function_made_at_first_read(symbol).is_some() {
+            if self
+                .file
+                .scopes
+                .function_made_at_first_read(symbol)
+                .is_some()
+            {
                 let name = bound.symbol(symbol).name;
                 let nothing = self.builder.undefined();
                 bindings::initialize_binding(self, Binding::Symbol(symbol), name, nothing, None);

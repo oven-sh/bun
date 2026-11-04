@@ -1051,17 +1051,7 @@ pub mod waiter_thread_posix {
 
     pub struct NewQueue<T: 'static> {
         pub(crate) queue: ConcurrentQueue<T>,
-        // The active list holds raw `*T` whose strong ref was taken
-        // by the caller before `append()` (Process::watch does `self.ref_()`).
-        // The matching `deref()` happens in `on_wait_pid_from_waiter_thread`.
-        //
-        // `UnsafeCell` so `loop_` can take `&self`: the waiter thread is the
-        // *sole* mutator of `active`, but producers concurrently hold `&self`
-        // to push onto `queue` — a `&mut self` on the waiter side would alias
-        // those producer borrows (forbidden aliased-&mut). With `&self` on
-        // both sides the only interior mutation goes through this cell.
-        pub(crate) active: core::cell::UnsafeCell<Vec<*mut T>>,
-        /// Entries in `queue` plus `active`. Decremented only after the entry's exit is posted.
+        /// Entries in `queue` plus the waiter thread's `active`. Decremented only after the entry's exit is posted.
         pub(crate) watched: AtomicU32,
     }
 
@@ -1069,7 +1059,6 @@ pub mod waiter_thread_posix {
         pub(crate) const fn new() -> Self {
             Self {
                 queue: ConcurrentQueue::new(),
-                active: core::cell::UnsafeCell::new(Vec::new()),
                 watched: AtomicU32::new(0),
             }
         }
@@ -1405,7 +1394,12 @@ pub mod waiter_thread_posix {
 
         /// True while any thread's child has an exit still to post. After `false`, the caller must still check its task queue.
         pub fn is_watching() -> bool {
-            instance_ref().js_process.watched.load(Ordering::SeqCst) > 0
+            INSTANCE.js_process.watched.load(Ordering::SeqCst) > 0
+        }
+
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        fn eventfd(&self) -> Fd {
+            Fd::from_native(self.eventfd.load(Ordering::Relaxed))
         }
 
         /// Starts the thread on first use. If that fails, the next call retries.

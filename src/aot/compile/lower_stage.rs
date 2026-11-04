@@ -841,8 +841,7 @@ fn drop_errors_of_modules_that_throw(
     checked.diagnostics.retain(is_kept);
     let paths = throwing.iter().map(|&file| files.module(file).file_name());
     let paths: FxHashSet<&[u8]> = paths.collect();
-    let is_kept =
-        |file: &Incomplete| !paths.contains(&file.path[..]) || is_fault_of_compiler(file);
+    let is_kept = |file: &Incomplete| !paths.contains(&file.path[..]) || is_fault_of_compiler(file);
     roles.incomplete.retain(is_kept);
     checked.incomplete.retain(is_kept);
 }

@@ -307,10 +307,7 @@ mod tests {
             VariableKey::InnerModuleExports(FUNCTION).home_file(),
             Some(FILE)
         );
-        assert_eq!(
-            VariableKey::RequiredAnswer(SYMBOL).home_file(),
-            Some(FILE)
-        );
+        assert_eq!(VariableKey::RequiredAnswer(SYMBOL).home_file(), Some(FILE));
         for part in [PrivateStatePart::Collection, PrivateStatePart::Token] {
             let state = SYMBOL;
             let key = VariableKey::PrivateState { state, part };

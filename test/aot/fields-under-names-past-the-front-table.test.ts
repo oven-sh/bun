@@ -96,7 +96,10 @@ describe("a field under a name that the table of fields has no number for", () =
 // which hold the number of a name with a column. Each name below is read at six places, 2,000 and more of the names have numbers over 65,535, and one of those is there to be found.
 function namesReadAtPlaces() {
   const numberOfNames = 68_000;
-  const lines = [`let total = 0;`, `const unknown = JSON.parse(process.env.TEXT_NOBODY_SETS || '{"n5":1,"n${numberOfNames - 3}":10}');`];
+  const lines = [
+    `let total = 0;`,
+    `const unknown = JSON.parse(process.env.TEXT_NOBODY_SETS || '{"n5":1,"n${numberOfNames - 3}":10}');`,
+  ];
   for (let first = 0; first < numberOfNames; first += namesInFunction) {
     const sum = Array.from({ length: namesInFunction }, (_, i) => `(o.n${first + i} | 0)`).join(" + ");
     lines.push(

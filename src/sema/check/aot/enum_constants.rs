@@ -49,11 +49,7 @@ struct PathMember {
 
 /// What one part of a namespace exports is in scope in its other parts too, where no declaration
 /// of it stands around the name.
-pub(crate) fn is_declared_around(
-    hir: &hir::File<'_>,
-    declarations: &[Decl],
-    name: ExprId,
-) -> bool {
+pub(crate) fn is_declared_around(hir: &hir::File<'_>, declarations: &[Decl], name: ExprId) -> bool {
     let mut around = hir.parent(hir.node(name));
     while around.is_some() {
         let mut declarations = declarations.iter();

@@ -318,7 +318,9 @@ impl FinishScratch {
                 continue;
             }
             let last = self.find_last_passed_by(blocks, target.block);
-            let target = last.map_or(target, |last| &terminator_of(&blocks[last.index()]).targets[0]);
+            let target = last.map_or(target, |last| {
+                &terminator_of(&blocks[last.index()]).targets[0]
+            });
             let edges_down_to_target = self.incoming[target.block.index()];
             if edges_down_to_target & IS_LOOP_HEAD != 0 {
                 continue;
@@ -352,7 +354,8 @@ impl FinishScratch {
                 let mut others = (0..target_count).filter(|&other| other != index);
                 let leads_there_too = others.any(|other| {
                     let last = self.find_last_passed_by(blocks, targets[other].block);
-                    let end = last.map(|last| terminator_of(&blocks[last.index()]).targets[0].block);
+                    let end =
+                        last.map(|last| terminator_of(&blocks[last.index()]).targets[0].block);
                     end.unwrap_or(targets[other].block) == moved.block
                 });
                 if leads_there_too {
@@ -405,7 +408,8 @@ impl FinishScratch {
                 || next.role != BlockRole::Ordinary
                 || next.subject.is_some()
                 || !has_same_handler(block, next, pending_words)
-                || parameters.any(|parameter| declared_type_of(&values[parameter.index()]).is_some())
+                || parameters
+                    .any(|parameter| declared_type_of(&values[parameter.index()]).is_some())
             {
                 continue;
             }
@@ -459,10 +463,12 @@ impl Encoder<'_> {
     fn encode_block(&mut self, id: BlockId) {
         let block = &self.blocks[id.index()];
         let parts = core::iter::successors(Some(id), |&part| self.find_joined_block(part));
-        let value_count = parts.map(|part| self.blocks[part.index()].value_count).sum();
-        let subject = block.subject.map(|pending| {
-            ValueId::from_word(number_of(self.numbers, self.value_count, pending))
-        });
+        let value_count = parts
+            .map(|part| self.blocks[part.index()].value_count)
+            .sum();
+        let subject = block
+            .subject
+            .map(|pending| ValueId::from_word(number_of(self.numbers, self.value_count, pending)));
         let head = BlockHead {
             parameter_count: parameter_count(block) as u32,
             value_count,

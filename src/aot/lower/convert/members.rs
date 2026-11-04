@@ -173,7 +173,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return value;
         };
         let (types, is_optional) = (found.types, found.is_optional);
-        let Some(position) = self.file.find_int32_position(types, types.written, is_optional)
+        let Some(position) = self
+            .file
+            .find_int32_position(types, types.written, is_optional)
         else {
             return value;
         };

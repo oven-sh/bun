@@ -291,7 +291,11 @@ impl<'s> Folder<'_, 's> {
 
     /// The build goes on reading a constant whose value rests on a member, as it reads the member.
     /// A constant that holds a member is the member wherever `bun run` writes its value in place of the name.
-    pub(super) fn note_constant_of_enum_member(&mut self, name: ExprId, initializer: ExprId) -> bool {
+    pub(super) fn note_constant_of_enum_member(
+        &mut self,
+        name: ExprId,
+        initializer: ExprId,
+    ) -> bool {
         if self.enum_members.values.is_empty()
             || self.folded(initializer).effects != Effects::LeftOutByBunRun
         {

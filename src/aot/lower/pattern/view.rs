@@ -192,7 +192,10 @@ impl FileLowering<'_, '_, '_, '_> {
                 let binding = self.bound.initialized_binding(pattern);
                 let is_container_member = match binding {
                     Binding::Symbol(symbol) => {
-                        matches!(self.scopes.form(symbol), BindingForm::ContainerMember { .. })
+                        matches!(
+                            self.scopes.form(symbol),
+                            BindingForm::ContainerMember { .. }
+                        )
                     }
                     Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => false,
                 };
@@ -206,7 +209,10 @@ impl FileLowering<'_, '_, '_, '_> {
                 // In a list the transpiler reads the name before the target becomes `N.a`. In a record it looks afterwards.
                 let is_named = self.names_assigned_function(target)
                     || (holder == DefaultHolder::ArrayPattern
-                        && !self.hir.expr_flags(target).contains(ExprFlags::PARENTHESIZED)
+                        && !self
+                            .hir
+                            .expr_flags(target)
+                            .contains(ExprFlags::PARENTHESIZED)
                         && self.is_class_named_by_its_declaration(default));
                 is_named.then_some((binding, name, position))
             }

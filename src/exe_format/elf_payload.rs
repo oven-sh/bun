@@ -1103,12 +1103,7 @@ mod tests {
             let payload = create_payload(4 * page);
             let code = page - 8..3 * page - 8;
             let joined = write_with_code(&trimmed, &payload, code.clone());
-            let ends = [
-                [0, 0],
-                [1, 2],
-                [code.start, code.end],
-                [4 * page, 4 * page],
-            ];
+            let ends = [[0, 0], [1, 2], [code.start, code.end], [4 * page, 4 * page]];
             for [first, second] in ends.map(|ends| ends.map(|end| end as usize)) {
                 let parts = [
                     &payload[..first],

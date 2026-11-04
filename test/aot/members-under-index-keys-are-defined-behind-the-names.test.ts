@@ -109,12 +109,21 @@ for (const [main, text] of [
     const folder = String(dir);
     const executable = join(folder, "compiled" + (isWindows ? ".exe" : ""));
     const built = await run([bunExe(), "build", "--compile", "--aot", "./" + main, "--outfile", executable], folder);
-    expect({ errors: built.stderr.split("\n").filter(line => line.startsWith("error")), exitCode: built.exitCode }).toEqual({
+    expect({
+      errors: built.stderr.split("\n").filter(line => line.startsWith("error")),
+      exitCode: built.exitCode,
+    }).toEqual({
       errors: [],
       exitCode: 0,
     });
-    const [plain, compiled] = await Promise.all([run([bunExe(), "run", "./" + main], folder), run([executable], folder)]);
+    const [plain, compiled] = await Promise.all([
+      run([bunExe(), "run", "./" + main], folder),
+      run([executable], folder),
+    ]);
     expect(plain.stdout.split("\n").length).toBeGreaterThan(3);
-    expect({ stdout: compiled.stdout.split("\n"), exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout.split("\n"), exitCode: plain.exitCode });
+    expect({ stdout: compiled.stdout.split("\n"), exitCode: compiled.exitCode }).toEqual({
+      stdout: plain.stdout.split("\n"),
+      exitCode: plain.exitCode,
+    });
   });
 }

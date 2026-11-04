@@ -258,7 +258,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.jump(join);
         self.builder.switch_to(not_taken);
         let mut value = value;
-        if self.file.is_fixed_method(BuiltinId::StringPrototypeSymbolIterator) {
+        if self
+            .file
+            .is_fixed_method(BuiltinId::StringPrototypeSymbolIterator)
+        {
             let split = self.split_on_type(value, TypeTable::STRING);
             self.builder.switch_to(split.taken);
             let copy = self.emit_copy_by_spread(call, items, split.taken_value);

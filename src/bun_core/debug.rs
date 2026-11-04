@@ -361,7 +361,11 @@ fn caller_by_frame_record(
     if caller_fp != 0 && caller_fp <= fp {
         return None;
     }
-    Some((load(fp.checked_add(WORD)?)?, fp.checked_add(2 * WORD)?, caller_fp))
+    Some((
+        load(fp.checked_add(WORD)?)?,
+        fp.checked_add(2 * WORD)?,
+        caller_fp,
+    ))
 }
 
 /// Through how many frames the registers of one lead, that one counted, up to `most`.
@@ -416,7 +420,9 @@ fn lowest_compiled_frame(
         let found = (word, place + WORD, fp);
         let frames = number_of_frames_from(found, MOST_FRAMES_FOLLOWED, &mut load);
         // Where the stack is deeper than is followed nothing tells two apart, and the lower one stays.
-        if best.is_none_or(|(most, _)| frames > most || (frames == most && frames < MOST_FRAMES_FOLLOWED)) {
+        if best.is_none_or(|(most, _)| {
+            frames > most || (frames == most && frames < MOST_FRAMES_FOLLOWED)
+        }) {
             best = Some((frames, found));
         }
         followed += 1;
@@ -425,6 +431,24 @@ fn lowest_compiled_frame(
         }
     }
     best.map(|(_, found)| found)
+}
+
+/// Code compiled with `-mbranch-protection=pac-ret` (an addon, a system
+/// library, Bun itself) saves its return addresses signed, in the bits above
+/// the address. An address without a signature stays as it is.
+#[inline(always)]
+pub fn strip_return_address_signature(#[allow(unused_mut)] mut address: usize) -> usize {
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: XPACLRI works on x30 alone, and is a no-op on a processor
+    // without pointer authentication.
+    unsafe {
+        core::arch::asm!(
+            "hint #7", // XPACLRI
+            inout("x30") address,
+            options(pure, nomem, nostack, preserves_flags),
+        )
+    };
+    address
 }
 
 /// Walks the frame-pointer chain, and frames of compiled code by their tables.

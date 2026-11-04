@@ -26,11 +26,7 @@ fn unite_positions(first: DeclaredType, other: DeclaredType, ty: TypeId) -> Decl
 }
 
 // `first` and `others` are what the definitions say that one field holds, in their order. `ty` holds what any of them names.
-fn unite_said_positions(
-    first: DeclaredType,
-    others: &[DeclaredType],
-    ty: TypeId,
-) -> DeclaredType {
+fn unite_said_positions(first: DeclaredType, others: &[DeclaredType], ty: TypeId) -> DeclaredType {
     let mut united = first;
     for &other in others {
         united = unite_positions(united, other, ty);
@@ -132,7 +128,9 @@ fn unite_layouts<'a>(
 ) {
     let field_count = united.fields.len();
     debug_assert!(
-        others.clone().all(|other| other.fields.len() == field_count),
+        others
+            .clone()
+            .all(|other| other.fields.len() == field_count),
         "one key is one set of names"
     );
     let mut said: Vec<DeclaredType> = Vec::new();
@@ -713,7 +711,12 @@ mod tests {
                 (LayoutId::new(index), holder_of(checked(ty)))
             });
             let known = types.len();
-            unite_layout_definitions(&mut layouts, vec![others.collect()], &mut types, in_parallel);
+            unite_layout_definitions(
+                &mut layouts,
+                vec![others.collect()],
+                &mut types,
+                in_parallel,
+            );
             let said: Vec<TypeId> = layouts
                 .iter()
                 .map(|layout| layout.fields[0].declared.ty)

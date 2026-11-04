@@ -305,7 +305,11 @@ fn diagnostic_classes() {
         ("a?.<>()", 1099, EarlyError),
         ("a<>()", 1099, TypeScriptGrammar),
         ("type A = [a: ...B[]];", 5087, EarlyError),
-        ("interface A { [a: string, b: string]: C }", 1096, EarlyError),
+        (
+            "interface A { [a: string, b: string]: C }",
+            1096,
+            EarlyError,
+        ),
         ("interface A { get a() {} }", 1183, EarlyError),
         ("type A = import(B);", 1141, Semantic),
     ] {

@@ -281,7 +281,9 @@ impl<T: Send + Sync> RecordsById<T> {
         let starts: Vec<usize> = (0..count).step_by(SLOTS_IN_A_LOT).collect();
         let lots = map_each(starts, in_parallel, &|start: usize| {
             let places = start..count.min(start + SLOTS_IN_A_LOT);
-            places.map(|_| OnceLock::new()).collect::<Vec<OnceLock<T>>>()
+            places
+                .map(|_| OnceLock::new())
+                .collect::<Vec<OnceLock<T>>>()
         });
         RecordsById { lots }
     }
@@ -372,12 +374,8 @@ pub(super) fn make_synthetic_export_variables(
     exports.shared_sort_unstable_by_key(|export| export.id);
     let variables = exports.into_iter().map(|export| {
         let name = strings.intern(atoms.bytes(export.name));
-        let mut variable = synthetic_export_variable(
-            name,
-            export.module,
-            export.writer,
-            export.is_known_member,
-        );
+        let mut variable =
+            synthetic_export_variable(name, export.module, export.writer, export.is_known_member);
         if export.is_replaceable {
             variable.flags |= VariableFlags::IS_REPLACEABLE;
         }

@@ -1068,7 +1068,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         unsafe {
             (*state)
                 .timer
-                .update_date_header_timer_if_necessary(loop_, vm)
+                .update_date_header_timer_if_necessary(loop_, &*vm)
         };
     }
     // SAFETY: `el` is the live per-thread event loop.
@@ -1174,15 +1174,12 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     let _ = unsafe { (*(*vm).global).handle_rejected_promises() };
 }
 
-/// # Safety
-/// `vm` is the live per-thread VM.
-unsafe fn run_pending_test_step(vm: *mut VirtualMachine) {
+fn run_pending_test_step(global: &JSGlobalObject) {
     bun_removable_features::call_removable!(
         Test,
         Abort,
         crate::test_runner::bun_test::BunTest::run_pending_step,
-        // SAFETY: per fn contract.
-        unsafe { &*vm }.global()
+        global
     );
 }
 
@@ -1232,7 +1229,7 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
         unsafe {
             (*state)
                 .timer
-                .update_date_header_timer_if_necessary(loop_, vm)
+                .update_date_header_timer_if_necessary(loop_, &*vm)
         };
     }
 
@@ -3385,11 +3382,8 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 }
             }
             // Recurse as `.file`.
-            // SAFETY: per fn contract — `extra` is live for the call.
-            unsafe {
-                (*extra).loader = L::File;
-                (*extra).module_type = ModuleType::Unknown;
-            }
+            extra.loader.set(L::File);
+            extra.module_type.set(ModuleType::Unknown);
             transpile_source_code_inner::<DATA_ONLY>(jsc_vm, args)
         }
 
@@ -4426,11 +4420,8 @@ unsafe fn get_loader_and_virtual_source<'a>(
     {
         // An executable compiled in place serves an embedded file that is no longer on disk, on every load of the module.
         // Any other compiled program serves what is embedded under its own root.
-        // SAFETY: the specifier outlives the synchronous transpile that this feeds, as for a blob above.
-        let path_text: &'static [u8] =
-            unsafe { core::slice::from_raw_parts(path.text.as_ptr(), path.text.len()) };
         *virtual_source_to_use = Some(bun_ast::Source {
-            path: bun_paths::fs::Path::init(path_text),
+            path: bun_paths::fs::Path::init(path.text),
             contents: std::borrow::Cow::Borrowed(file.utf8_contents()),
             ..Default::default()
         });
@@ -5149,10 +5140,10 @@ pub(crate) fn transpile_as_loaded(
         }
         p
     });
-    let mut extra = TranspileExtra {
+    let extra = TranspileExtra {
         path: fs_path,
-        loader,
-        module_type: ModuleType::Unknown,
+        loader: Cell::new(loader),
+        module_type: Cell::new(ModuleType::Unknown),
         source_code_printer: printer_ptr,
         promise_ptr: ptr::null_mut(),
     };
@@ -5165,7 +5156,7 @@ pub(crate) fn transpile_as_loaded(
         virtual_source: Some(&virtual_source),
         global_object: global,
         flags: FetchFlags::Transpile,
-        extra: &raw mut extra,
+        extra: &extra,
     };
     transpile_source_code_inner::<false>(jsc_vm, &args).ok()
 }
@@ -5256,8 +5247,8 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
     // ── `ModuleLoader.transpileSourceCode(...)` ─────────────────────────────
     let extra = TranspileExtra {
         path,
-        loader,
-        module_type,
+        loader: Cell::new(loader),
+        module_type: Cell::new(module_type),
         source_code_printer: printer_ptr,
         promise_ptr: ptr::null_mut(), // null forbids async resolution
     };

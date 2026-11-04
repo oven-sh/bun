@@ -39,12 +39,15 @@ const programs = {
     `console.log("the top frame: " + shown + " | " + (compiled ? "one message" : "another message"));`,
     differs,
   ],
-  "value-differs-in-another-line.js": [`console.log("the top frame: " + shown);\nconsole.log("a value: " + (compiled ? 1 : 2));`, differs],
-  "only-the-first-build-differs.js": [
-    `console.log("a value: " + (compiled && isFirstBuild ? 1 : 2));`,
+  "value-differs-in-another-line.js": [
+    `console.log("the top frame: " + shown);\nconsole.log("a value: " + (compiled ? 1 : 2));`,
     differs,
   ],
-  "exit-code-differs.js": [`console.log("the top frame: " + shown);\nif (compiled && isFirstBuild) process.exit(3);`, differs],
+  "only-the-first-build-differs.js": [`console.log("a value: " + (compiled && isFirstBuild ? 1 : 2));`, differs],
+  "exit-code-differs.js": [
+    `console.log("the top frame: " + shown);\nif (compiled && isFirstBuild) process.exit(3);`,
+    differs,
+  ],
   "stored-frames.js": [
     `console.log("Error: the message\\n    at real (x.js:9:9)");\n/* Output:\nError: the message\n    at stored (y.js:1:1)\n    at another (z.js:2:2)\n*/`,
     "pass, the frames differ",
@@ -57,7 +60,10 @@ const programs = {
   "a-number-behind-a-name.js": [`console.log("sum:" + (compiled ? 42 : 41));`, differs],
   "numbers-behind-names.js": [`console.log(compiled ? "x:1 y:2" : "x:9 y:8");`, differs],
   "a-ratio.js": [`console.log("ratio 1:" + (compiled ? 2 : 3));`, differs],
-  "a-time.js": [`console.log("  at 12:" + (compiled ? 30 : 31) + " it rang");\nconsole.log("  at 12:" + (compiled ? 30 : 31));`, differs],
+  "a-time.js": [
+    `console.log("  at 12:" + (compiled ? 30 : 31) + " it rang");\nconsole.log("  at 12:" + (compiled ? 30 : 31));`,
+    differs,
+  ],
   "an-object.js": [`console.log("{a:" + (compiled ? 1 : 2) + "}");`, differs],
   "a-number-behind-a-bracket.js": [`console.log("[a]:" + (compiled ? 5 : 6));`, differs],
   "numbers-in-a-row.js": [`console.log("3:0:1:" + (compiled ? 7 : 8));`, differs],
@@ -67,7 +73,10 @@ const programs = {
     `// Todo: only frames (stack-trace-only differences are fine, 11-02): for the test\nconsole.log("a value: " + (compiled ? 1 : 2));`,
     "skip: todo: only frames (stack-trace-only differences are fine, 11-02): for the test",
   ],
-  "stored-number-behind-a-name.js": [`console.log("sum:42");\n/* Output:\nsum:41\n*/`, "compare: it does not print what its last comment says"],
+  "stored-number-behind-a-name.js": [
+    `console.log("sum:42");\n/* Output:\nsum:41\n*/`,
+    "compare: it does not print what its last comment says",
+  ],
 } as const;
 
 test("the frames of a stack trace are not held to plain Bun", async () => {
@@ -75,7 +84,10 @@ test("the frames of a stack trace are not held to plain Bun", async () => {
     "tsconfig.json": "{}",
     // A line that says how the program is judged stands at the top.
     ...Object.fromEntries(
-      Object.entries(programs).map(([name, [text]]) => [name, (text.startsWith("//") ? text.replace("\n", "\n" + head) : head + text) + "\n"]),
+      Object.entries(programs).map(([name, [text]]) => [
+        name,
+        (text.startsWith("//") ? text.replace("\n", "\n" + head) : head + text) + "\n",
+      ]),
     ),
   });
   const root = String(dir);
@@ -93,10 +105,16 @@ test("the frames of a stack trace are not held to plain Bun", async () => {
       .filter(({ state }) => state !== "compiling")
       .map(({ file, state, stage, message, framesDiffer }) => [
         file.slice(root.length + 1).replaceAll("\\", "/"),
-        state === "pass" ? (framesDiffer ? "pass, the frames differ" : "pass") : `${state === "skip" ? "skip" : stage}: ${message}`,
+        state === "pass"
+          ? framesDiffer
+            ? "pass, the frames differ"
+            : "pass"
+          : `${state === "skip" ? "skip" : stage}: ${message}`,
       ]),
   );
   expect(verdicts).toEqual(Object.fromEntries(Object.entries(programs).map(([name, [, verdict]]) => [name, verdict])));
-  expect(stderr).toContain("5 builds differ from their reference in the frames of stack traces alone, and pass | 1 programs are skipped because");
+  expect(stderr).toContain(
+    "5 builds differ from their reference in the frames of stack traces alone, and pass | 1 programs are skipped because",
+  );
   expect(exitCode).toBe(1);
 }, 240_000);

@@ -40,7 +40,8 @@ pub(in crate::lower) fn compute_captures(input: &CaptureInput<'_>) -> CapturePla
     }
     let mut is_called_by_name = vec![false; count];
     for &(_, function) in input.references {
-        is_called_by_name[function.index()] = input.functions[function.index()].hoisted_to.is_some();
+        is_called_by_name[function.index()] =
+            input.functions[function.index()].hoisted_to.is_some();
     }
     let problem = CaptureProblem {
         input,
@@ -58,7 +59,8 @@ fn holds_scope_beside_copy_of_its_field(input: &CaptureInput<'_>, plan: &Capture
     let lists = input.functions.iter().zip(&plan.captures);
     let mut lists = lists.filter(|(function, _)| !function.is_made_late);
     lists.any(|(_, list)| {
-        let number_of_scopes = list.partition_point(|capture| matches!(capture, Capture::Environment(_)));
+        let number_of_scopes =
+            list.partition_point(|capture| matches!(capture, Capture::Environment(_)));
         let (scopes, values) = list.split_at(number_of_scopes);
         !scopes.is_empty()
             && values.iter().any(|&capture| match capture {
@@ -139,7 +141,8 @@ pub(in crate::lower) fn is_initialized_before(
     }
     let started = &functions[below_owner.index()];
     if started.is_made_late && started.creator == Some(binding.owner) {
-        return initialization.precedes_hoisted_functions || started.created_at > initialization.time;
+        return initialization.precedes_hoisted_functions
+            || started.created_at > initialization.time;
     }
     let mut current = function;
     while current != binding.owner {

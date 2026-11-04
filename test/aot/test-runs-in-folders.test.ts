@@ -57,7 +57,10 @@ for (const area of foldersIn(root)) {
       // A folder for each run: a build leaves files beside what it reads.
       using plainDir = tempDir("aot-test-run-in-folder", join(root, area, project));
       using compiledDir = tempDir("aot-test-run-in-folder", join(root, area, project));
-      const [plain, compiled] = await Promise.all([outcomeOf(String(plainDir)), outcomeOf(String(compiledDir), "--aot")]);
+      const [plain, compiled] = await Promise.all([
+        outcomeOf(String(plainDir)),
+        outcomeOf(String(compiledDir), "--aot"),
+      ]);
       // A run in which plain printed nothing would pass for the wrong reason.
       expect(plain.printed.length).toBeGreaterThan(0);
       expect(plain.tests.length).toBeGreaterThan(0);

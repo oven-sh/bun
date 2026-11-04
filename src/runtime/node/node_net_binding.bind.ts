@@ -19,7 +19,11 @@ export const setDefaultAutoSelectFamilyAttemptTimeout = b.fn({
   returns: b.u32,
 });
 
-export const newDetachedSocket = b.fn({ args: { isSSL: b.bool }, returns: b.any.returning(newSocket.spec), capability: "js" });
+export const newDetachedSocket = b.fn({
+  args: { isSSL: b.bool },
+  returns: b.any.returning(newSocket.spec),
+  capability: "js",
+});
 const promiseOfSocket = table
   .instance("Promise")
   .holding({ value: table.union(table.instance("TCPSocket"), table.instance("TLSSocket")), reason: table.any }).fresh;

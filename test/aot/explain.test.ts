@@ -225,19 +225,21 @@ function linesDecidedBy(causes: Cause[]) {
   if (causes.length === 0) return ["note: Every property access is typed. Nothing to fix."];
   return [
     `note: Untyped code works, but runs slower. ${counted(causes.length, "cause", "causes")}:`,
-    ...causes.slice(0, maxShownCauses).flatMap(cause => [
-      `note: ${cause.rank}. ${cause.reason}: ${cause.message}`,
-      ...(cause.line > 0 ? [at(cause)] : []),
-      ...(cause.inLoops > 0
-        ? [`note: ${counted(cause.inLoops, "of these runs in a loop", "of these run in a loop")}`]
-        : []),
-      ...cause.otherOrigins
-        .slice(0, maxShownOtherOrigins)
-        .flatMap(origin => ["note: fix this too: the same operations also start here", at(origin)]),
-      ...(cause.why ? [`note: why (${cause.why.reason}): ${cause.why.message}`] : []),
-      `note: fix: ${cause.fix}`,
-      `note: ${cause.url}`,
-    ]),
+    ...causes
+      .slice(0, maxShownCauses)
+      .flatMap(cause => [
+        `note: ${cause.rank}. ${cause.reason}: ${cause.message}`,
+        ...(cause.line > 0 ? [at(cause)] : []),
+        ...(cause.inLoops > 0
+          ? [`note: ${counted(cause.inLoops, "of these runs in a loop", "of these run in a loop")}`]
+          : []),
+        ...cause.otherOrigins
+          .slice(0, maxShownOtherOrigins)
+          .flatMap(origin => ["note: fix this too: the same operations also start here", at(origin)]),
+        ...(cause.why ? [`note: why (${cause.why.reason}): ${cause.why.message}`] : []),
+        `note: fix: ${cause.fix}`,
+        `note: ${cause.url}`,
+      ]),
   ];
 }
 
@@ -425,7 +427,9 @@ describe.concurrent("--explain", () => {
       );
       expect(hashes[0]).toMatch(/^[0-9a-f]{64}$/);
       expect(
-        Object.fromEntries(names.map((name, index) => [name, hashes[index] === hashes[0] ? "the same" : hashes[index]])),
+        Object.fromEntries(
+          names.map((name, index) => [name, hashes[index] === hashes[0] ? "the same" : hashes[index]]),
+        ),
       ).toEqual(Object.fromEntries(names.map(name => [name, "the same"])));
     },
     buildTimeout,

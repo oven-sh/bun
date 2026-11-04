@@ -124,5 +124,9 @@ test.concurrent.each(Object.keys(ways))("%s", async name => {
   };
   const [plain, compiled] = await Promise.all([seenWith(), seenWith("--aot")]);
   expect(plain).toEqual({ seen: [`SEEN [[3,6],[3,"spied"],[3,6]]`], exitCode: 0 });
-  expect(compiled).toEqual(ways[name].isRefused ? { seen: [expect.stringMatching(/^SEEN "TypeError: Cannot spy on 'total' of /)], exitCode: 0 } : plain);
+  expect(compiled).toEqual(
+    ways[name].isRefused
+      ? { seen: [expect.stringMatching(/^SEEN "TypeError: Cannot spy on 'total' of /)], exitCode: 0 }
+      : plain,
+  );
 });

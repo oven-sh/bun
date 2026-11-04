@@ -268,9 +268,9 @@ fn ends_in_array_literal(file: &FileLowering<'_, '_, '_, '_>, iterable: ExprId) 
 #[cfg(test)]
 mod tests {
     use super::regexp_flags;
-    use crate::ir::generated::RegExpFlags;
     use crate::compile::testing::lower_program_replacing;
     use crate::ir::Opcode;
+    use crate::ir::generated::RegExpFlags;
 
     // How many closures the function makes in a row, with nothing in between that takes one.
     fn count_closures_that_wait(program: &str, function: &str) -> usize {

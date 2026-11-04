@@ -1,4 +1,7 @@
-#![allow(clippy::large_types_passed_by_value, reason = "only tests copy a probe")]
+#![allow(
+    clippy::large_types_passed_by_value,
+    reason = "only tests copy a probe"
+)]
 
 mod calls;
 mod control_flow;

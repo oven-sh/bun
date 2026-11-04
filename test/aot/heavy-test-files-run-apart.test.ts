@@ -59,9 +59,7 @@ function mostAtOnce(trail: string[], isCounted: (name: string) => boolean) {
   return most;
 }
 
-test.each([
-  ["one program", "TestRunLayers:0"],
-])(
+test.each([["one program", "TestRunLayers:0"]])(
   "files that took over a gigabyte run at once only where they took no more together than the largest alone: %s",
   async (_, words) => {
     const records: { [name: string]: Measured } = { largest: { milliseconds: 300, megabytes: 3000 } };

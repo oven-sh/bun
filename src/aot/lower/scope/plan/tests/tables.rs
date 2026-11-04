@@ -174,12 +174,23 @@ fn store_is_carried_by_every_loop_between_it_and_the_declaration() {
         while (x < 1) { let y = 0; do { for (;;) { x = 1; y = 2; let z = 3; z = 4; } } while (y); } }";
     analyze_source("main.mjs", source, |probe| {
         let carried_by = |is_wanted: fn(&StmtKind) -> bool| {
-            probe.stored_in_loop(probe.first_statement(is_wanted)).to_vec()
+            probe
+                .stored_in_loop(probe.first_statement(is_wanted))
+                .to_vec()
         };
         let (x, y) = (probe.binding("x"), probe.binding("y"));
-        assert_eq!(carried_by(|kind| matches!(kind, StmtKind::While { .. })), [x]);
-        assert_eq!(carried_by(|kind| matches!(kind, StmtKind::DoWhile { .. })), [x, y]);
-        assert_eq!(carried_by(|kind| matches!(kind, StmtKind::For { .. })), [x, y]);
+        assert_eq!(
+            carried_by(|kind| matches!(kind, StmtKind::While { .. })),
+            [x]
+        );
+        assert_eq!(
+            carried_by(|kind| matches!(kind, StmtKind::DoWhile { .. })),
+            [x, y]
+        );
+        assert_eq!(
+            carried_by(|kind| matches!(kind, StmtKind::For { .. })),
+            [x, y]
+        );
     });
 }
 

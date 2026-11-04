@@ -116,21 +116,28 @@ fn apply_default(
     target: PatternNode,
     holder: DefaultHolder,
 ) -> ValueId {
-    apply_default_with(lowering, value, default, target, holder, &mut |lowering, value| {
-        // Under an annotation the node has the type the annotation gives the member, and the default is converted to it.
-        let PatternNode::Binding(pattern) = target else {
-            return value;
-        };
-        if !lowering.file.has_annotated_root(target) {
-            return value;
-        }
-        let types = PositionTypes {
-            written: WrittenType::Unwritten,
-            checked: lowering.file.queries.binding_type(pattern),
-        };
-        let position = lowering.file.create_position(types);
-        lowering.convert_initializer(value, position, Some(default))
-    })
+    apply_default_with(
+        lowering,
+        value,
+        default,
+        target,
+        holder,
+        &mut |lowering, value| {
+            // Under an annotation the node has the type the annotation gives the member, and the default is converted to it.
+            let PatternNode::Binding(pattern) = target else {
+                return value;
+            };
+            if !lowering.file.has_annotated_root(target) {
+                return value;
+            }
+            let types = PositionTypes {
+                written: WrittenType::Unwritten,
+                checked: lowering.file.queries.binding_type(pattern),
+            };
+            let position = lowering.file.create_position(types);
+            lowering.convert_initializer(value, position, Some(default))
+        },
+    )
 }
 
 // The default is evaluated where the value is `undefined`, and `convert` gives it the type of what receives it.

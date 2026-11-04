@@ -33,7 +33,8 @@ fn ask<T: Send + Default>(
         let answer = Mutex::new(T::default());
         check(program, &|checker, file| {
             if file == main {
-                *answer.lock().unwrap() = checker.with_queries(file, &inputs, |queries| ask(queries));
+                *answer.lock().unwrap() =
+                    checker.with_queries(file, &inputs, |queries| ask(queries));
             }
         });
         answer.into_inner().unwrap()
@@ -136,14 +137,19 @@ export class Tokens {
 
 #[test]
 fn a_call_with_one_candidate_that_is_not_generic_is_resolved_without_a_look_at_its_arguments() {
-    let text = ask("main.js", CIRCLE_THROUGH_AN_ARGUMENT, FileRole::Inferred, &|queries| {
-        for call in find_calls(queries) {
-            queries.resolved_call(call).unwrap();
-        }
-        let parameters = queries.hir().params.iter();
-        let value = parameters.map(|parameter| parameter.pat).nth(3).unwrap();
-        let ty = queries.binding_type(value).unwrap();
-        String::from_utf8(queries.type_text(ty)).unwrap()
-    });
+    let text = ask(
+        "main.js",
+        CIRCLE_THROUGH_AN_ARGUMENT,
+        FileRole::Inferred,
+        &|queries| {
+            for call in find_calls(queries) {
+                queries.resolved_call(call).unwrap();
+            }
+            let parameters = queries.hir().params.iter();
+            let value = parameters.map(|parameter| parameter.pat).nth(3).unwrap();
+            let ty = queries.binding_type(value).unwrap();
+            String::from_utf8(queries.type_text(ty)).unwrap()
+        },
+    );
     assert_eq!(text, "number");
 }

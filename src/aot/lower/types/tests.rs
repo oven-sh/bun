@@ -219,10 +219,13 @@ fn collect_array_literal_contents(source: &str) -> Vec<TypeId> {
         .filter(|value| value.opcode == Opcode::NewArray)
         .map(|value| TypeId::from_word(value.fields[0]));
     // A literal of constants alone is data.
-    let constant = fragment.data.iter().filter_map(|(_, data)| match &data.root {
-        DataNode::Array { contents, .. } => Some(*contents),
-        _ => None,
-    });
+    let constant = fragment
+        .data
+        .iter()
+        .filter_map(|(_, data)| match &data.root {
+            DataNode::Array { contents, .. } => Some(*contents),
+            _ => None,
+        });
     created.chain(constant).collect()
 }
 
@@ -290,7 +293,11 @@ fn files_that_share_types(has_long_entry_point: bool) -> [(&'static str, String)
     let mut main = String::new();
     for prefix in ["first", "second"] {
         let names = names_of_variables(prefix);
-        let _ = writeln!(main, "import {{ {} }} from \"./{prefix}\";", names.join(", "));
+        let _ = writeln!(
+            main,
+            "import {{ {} }} from \"./{prefix}\";",
+            names.join(", ")
+        );
         for name in names {
             let _ = writeln!(main, "export const kept_{name} = {name};");
         }
@@ -308,7 +315,10 @@ fn files_that_share_types(has_long_entry_point: bool) -> [(&'static str, String)
     [
         ("main.ts", main),
         ("first.ts", types + &declare_variables("first")),
-        ("second.ts", imports.to_owned() + &declare_variables("second")),
+        (
+            "second.ts",
+            imports.to_owned() + &declare_variables("second"),
+        ),
     ]
 }
 
@@ -325,7 +335,12 @@ fn look_at_files<R: Send>(
         let bound = build.bind_modules(loaded).expect("the modules are bound");
         let project = loaded.project(ProjectId::Application);
         let compiled_files = project.loaded.files().compiled_files();
-        let roles = decide_roles(project.loaded, project.host, project.request, compiled_files);
+        let roles = decide_roles(
+            project.loaded,
+            project.host,
+            project.request,
+            compiled_files,
+        );
         build.with_lowering_inputs(loaded, &bound, ProjectId::Application, &roles, |inputs| {
             let checked = check_and_lower(
                 project.loaded,
@@ -608,7 +623,8 @@ fn variable_without_an_annotation_is_untyped() {
 
 #[test]
 fn variable_that_is_stored_to_again_has_the_type_of_the_checker() {
-    let source = "function g() { return 1; }\nexport let v = g();\nexport function next() { v = g(); }\n";
+    let source =
+        "function g() { return 1; }\nexport let v = g();\nexport function next() { v = g(); }\n";
     let position = expand_variable(&lower_file("main.ts", source, None), "v");
     assert!(!position.ty.is_anything(), "{position:?}");
     let primitives = position.ty.primitives;
@@ -628,14 +644,20 @@ export function written(): number { return 1; }
         let results = &find_function(&lowered, name).results;
         assert_eq!(results[..], [DeclaredType::untyped()], "{name}");
     }
-    assert_eq!(find_function(&lowered, "written").results[0].ty, TypeTable::NUMBER);
+    assert_eq!(
+        find_function(&lowered, "written").results[0].ty,
+        TypeTable::NUMBER
+    );
 }
 
 #[test]
 fn receiver_that_nobody_wrote_is_untyped() {
     let source = "export function probe() { return this.size; }\n";
     let lowered = lower_file("main.js", source, None);
-    assert_eq!(find_function(&lowered, "probe").this_type, DeclaredType::untyped());
+    assert_eq!(
+        find_function(&lowered, "probe").this_type,
+        DeclaredType::untyped()
+    );
 }
 
 #[test]
@@ -676,7 +698,10 @@ fn inferred_type_of_a_parameter_is_checked_in_a_checked_file_and_expected_in_any
         let position = expand_position(&lowered.tables, parameter);
         assert_eq!(position.is_expected, is_expected, "{path}: {position:?}");
         let primitives = position.ty.primitives;
-        assert!(primitives.contains(Primitives::NUMBER), "{path}: {position:?}");
+        assert!(
+            primitives.contains(Primitives::NUMBER),
+            "{path}: {position:?}"
+        );
     }
 }
 
@@ -746,8 +771,14 @@ fn of_the_files_of_a_task_the_first_says_what_the_fields_of_an_interface_hold() 
     let files = files_that_share_types(true);
     let lowered = lower_files(&as_texts(&files), LOWERED_LIMIT);
     let [first, second] = ["first1", "second1"].map(|name| find_file(&lowered, name));
-    assert!(Rc::ptr_eq(&first.tables, &second.tables), "one task lowers both files");
-    assert_eq!(find_variable(first, "first1"), find_variable(second, "second1"));
+    assert!(
+        Rc::ptr_eq(&first.tables, &second.tables),
+        "one task lowers both files"
+    );
+    assert_eq!(
+        find_variable(first, "first1"),
+        find_variable(second, "second1")
+    );
     // The link takes what the file with the least number says of a type. The second imports the first, so it is lowered behind it.
     assert!(first.fragment.file < second.fragment.file);
     let [of_first, of_second] = [first, second].map(|file| fields_named(file, "side"));

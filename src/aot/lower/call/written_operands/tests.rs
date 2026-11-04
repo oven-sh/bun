@@ -64,7 +64,11 @@ export function map(a, b) { return new Map([[a(), 1], [b(), 2]]); }
 ";
     let lowered = lower_program_replacing(&[("a.js", program)], &[]);
     let fragment = &lowered[0].1.fragment;
-    for (_, function) in fragment.functions.iter().filter(|(_, function)| function.name.is_some()) {
+    for (_, function) in fragment
+        .functions
+        .iter()
+        .filter(|(_, function)| function.name.is_some())
+    {
         let order: Vec<Opcode> = function
             .body
             .blocks()

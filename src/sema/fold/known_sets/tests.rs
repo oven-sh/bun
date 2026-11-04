@@ -5,7 +5,8 @@ use crate::file_analysis::FileInputs;
 use crate::fold::{Constant, FoldInputs, FoldOptions, KnownSets, fold_file};
 use crate::hir::{
     BinOp, Branches, Call, Chain, ExprId, ExprKind, FileBuilder, Flags, FnBody, FnKind, Func,
-    ListAt, ParamId, PatKind, Span, StmtId, StmtKind, TextRange, TypeNodeId, UnOp, VarDecl, VarKind,
+    ListAt, ParamId, PatKind, Span, StmtId, StmtKind, TextRange, TypeNodeId, UnOp, VarDecl,
+    VarKind,
 };
 use crate::import_sites::JsxMode;
 use crate::module_format::DeclaredModuleType;
@@ -318,10 +319,7 @@ fn using_alone() {
                 operand: t.number(0.0),
             }),
         );
-        vec![
-            t.declare(VarKind::Using, "x", nothing),
-            t.mark(t.name("x")),
-        ]
+        vec![t.declare(VarKind::Using, "x", nothing), t.mark(t.name("x"))]
     });
     assert_eq!(sets, ["null | undefined"]);
 }

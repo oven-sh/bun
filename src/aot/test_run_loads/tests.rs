@@ -34,10 +34,7 @@ fn files_of<'l, 's>(loaded: &'l LoadedBuild<'_, 's>) -> &'l Files<'s> {
     loaded.project(ProjectId::Application).loaded.files()
 }
 
-fn with_graph_of<R>(
-    project: &TestProject,
-    then: impl FnOnce(&Files<'_>, &ModuleGraph) -> R,
-) -> R {
+fn with_graph_of<R>(project: &TestProject, then: impl FnOnce(&Files<'_>, &ModuleGraph) -> R) -> R {
     load(project, |build, loaded| {
         let Ok(bound) = build.bind_modules(loaded) else {
             panic!("the modules are not bound");
@@ -163,7 +160,10 @@ fn call_that_fails_on_a_folder_changes_nothing_below_it() {
         (format!("rmSync({LIB}, {{ recursive: false }})"), NONE),
         (format!("rm({LIB}, () => {{}})"), NONE),
         (format!("cpSync(\"other\", {LIB})"), NONE),
-        (format!("writeFileSync(join({LIB}, \"one.js\"), \"x\")"), ONE),
+        (
+            format!("writeFileSync(join({LIB}, \"one.js\"), \"x\")"),
+            ONE,
+        ),
         (format!("rmSync(join({LIB}, \"two.js\"))"), TWO),
         (format!("rmSync({LIB}, {{ recursive: true }})"), ALL),
         (
@@ -173,7 +173,10 @@ fn call_that_fails_on_a_folder_changes_nothing_below_it() {
         (format!("rmSync({LIB}, options)"), ALL),
         (format!("rmSync({LIB}, {{ ...options }})"), ALL),
         (format!("rm({LIB}, {{ recursive: true }}, () => {{}})"), ALL),
-        (format!("cpSync(\"other\", {LIB}, {{ recursive: true }})"), ALL),
+        (
+            format!("cpSync(\"other\", {LIB}, {{ recursive: true }})"),
+            ALL,
+        ),
         (format!("renameSync({LIB}, \"other\")"), ALL),
         (format!("renameSync(\"other\", {LIB})"), ALL),
     ];
@@ -328,7 +331,11 @@ fn place_that_lets_every_file_load_again_is_named() {
             assert!(said.contains(&whole), "{said}");
             // A file that is left out of the program says nothing.
             let left_out = [file_named(files, "uses.cjs")];
-            assert_eq!(describe_notices(loaded, loads, &left_out), "", "{statement}");
+            assert_eq!(
+                describe_notices(loaded, loads, &left_out),
+                "",
+                "{statement}"
+            );
         });
     }
 }
@@ -336,11 +343,22 @@ fn place_that_lets_every_file_load_again_is_named() {
 #[test]
 fn query_behind_a_spelled_path_copies_that_file_alone() {
     // The query is spelled, or computed behind the path. The name is that of the file, or what a TypeScript project writes for it.
-    for name in ["\"./a.cjs?again\"", "`./a.cjs?t=${Math.random()}`", "`./a?t=${Math.random()}`"] {
+    for name in [
+        "\"./a.cjs?again\"",
+        "`./a.cjs?t=${Math.random()}`",
+        "`./a?t=${Math.random()}`",
+    ] {
         load_statement(&format!("import({name});"), |loaded| {
             let (files, loads) = (files_of(loaded), &loaded.contents.run.loads);
-            assert_eq!(names_of(files, &loads.files_copied_under_queries), ["a.cjs"], "{name}");
-            assert!(loads.why_every_file.is_empty() && !loads.is_every_file, "{name}");
+            assert_eq!(
+                names_of(files, &loads.files_copied_under_queries),
+                ["a.cjs"],
+                "{name}"
+            );
+            assert!(
+                loads.why_every_file.is_empty() && !loads.is_every_file,
+                "{name}"
+            );
             assert!(loads.files_taken_out.is_empty(), "{name}");
             assert!(loads.reads_files_from_disk(), "{name}");
         });
@@ -556,7 +574,10 @@ fn original_beside_a_mock_names_what_the_mocked_file_imports() {
             "lib/create.js",
             "export const create = name => name;\nexport const unread = 1;\n",
         ),
-        ("far.js", "export const far = 1;\nexport const unread = 2;\n"),
+        (
+            "far.js",
+            "export const far = 1;\nexport const unread = 2;\n",
+        ),
     ];
     with_graph(&files, |files, graph| {
         let module = |name: &str| ModuleRef::File(file_named(files, name));
@@ -612,7 +633,9 @@ fn key_behind_a_test_of_its_start_takes_out_what_lies_below() {
             ("lib/deep/b.cjs", "exports.b = 1;\n"),
             ("other/c.cjs", "exports.c = 1;\n"),
         ];
-        load(&test_run(&files, 1), |_, loaded| then(files_of(loaded), &loaded.contents.run.loads));
+        load(&test_run(&files, 1), |_, loaded| {
+            then(files_of(loaded), &loaded.contents.run.loads)
+        });
     };
     let spelled = [
         "const folder = dirname(require.resolve(\"./lib/a.cjs\")) + sep;\nfor (const key of Object.keys(require.cache)) { if (key.startsWith(folder) && !key.endsWith(\"x\")) { delete require.cache[key]; } }\n",
@@ -621,8 +644,15 @@ fn key_behind_a_test_of_its_start_takes_out_what_lies_below() {
     ];
     for uses in spelled {
         with_uses(uses, &|files, loads| {
-            assert_eq!(names_of(files, &loads.files_taken_out), ["lib/a.cjs", "lib/deep/b.cjs"], "{uses}");
-            assert!(loads.why_every_file.is_empty() && !loads.is_every_file, "{uses}");
+            assert_eq!(
+                names_of(files, &loads.files_taken_out),
+                ["lib/a.cjs", "lib/deep/b.cjs"],
+                "{uses}"
+            );
+            assert!(
+                loads.why_every_file.is_empty() && !loads.is_every_file,
+                "{uses}"
+            );
         });
     }
     // The test stands on the other branch, asks about another name, or asks for a start that nobody can read.
@@ -653,28 +683,54 @@ fn key_known_in_part_takes_out_the_files_that_fit() {
             ("other/a.cjs", "exports.a = 2;\n"),
             ("other/c.cjs", "exports.c = 1;\n"),
         ];
-        load(&test_run(&files, 1), |_, loaded| then(files_of(loaded), &loaded.contents.run.loads));
+        load(&test_run(&files, 1), |_, loaded| {
+            then(files_of(loaded), &loaded.contents.run.loads)
+        });
     };
     // What the key ends with, and the files that end so.
     let known: [(&str, &[&str]); 6] = [
-        ("exports.f = root => { delete require.cache[path.join(root, \"a.cjs\")]; };\n", &["lib/a.cjs", "other/a.cjs"]),
-        ("exports.f = root => { const key = path.join(root, process.platform, \"other\", \"c.cjs\"); delete require.cache[key]; };\n", &["other/c.cjs"]),
-        ("exports.f = root => { const key = path.join(root, process.platform, \"addon.node\"); require.cache[key] = { exports: 1 }; delete require.cache[key]; };\n", &[]),
-        ("exports.f = name => { delete require.cache[\"/project/lib/\" + name]; };\n", &["lib/a.cjs"]),
-        ("exports.f = name => { delete require.cache[path.join(__dirname, name, \"a.cjs\")]; };\n", &["lib/a.cjs", "other/a.cjs"]),
-        ("exports.f = name => { delete require.cache[__dirname + \"/other/\" + name]; };\n", &["other/a.cjs", "other/c.cjs"]),
+        (
+            "exports.f = root => { delete require.cache[path.join(root, \"a.cjs\")]; };\n",
+            &["lib/a.cjs", "other/a.cjs"],
+        ),
+        (
+            "exports.f = root => { const key = path.join(root, process.platform, \"other\", \"c.cjs\"); delete require.cache[key]; };\n",
+            &["other/c.cjs"],
+        ),
+        (
+            "exports.f = root => { const key = path.join(root, process.platform, \"addon.node\"); require.cache[key] = { exports: 1 }; delete require.cache[key]; };\n",
+            &[],
+        ),
+        (
+            "exports.f = name => { delete require.cache[\"/project/lib/\" + name]; };\n",
+            &["lib/a.cjs"],
+        ),
+        (
+            "exports.f = name => { delete require.cache[path.join(__dirname, name, \"a.cjs\")]; };\n",
+            &["lib/a.cjs", "other/a.cjs"],
+        ),
+        (
+            "exports.f = name => { delete require.cache[__dirname + \"/other/\" + name]; };\n",
+            &["other/a.cjs", "other/c.cjs"],
+        ),
     ];
     for (uses, taken_out) in known {
         with_uses(uses, &|files, loads| {
             assert_eq!(names_of(files, &loads.files_taken_out), taken_out, "{uses}");
-            assert!(loads.why_every_file.is_empty() && !loads.is_every_file, "{uses}");
+            assert!(
+                loads.why_every_file.is_empty() && !loads.is_every_file,
+                "{uses}"
+            );
         });
     }
-    with_uses("exports.f = (root, name) => { delete require.cache[path.join(root, name)]; };\n", &|_, loads| {
-        let whys: Vec<WhyEveryFile> = loads.why_every_file.iter().map(|it| it.1).collect();
-        assert_eq!(whys, [WhyEveryFile::TakesOutUnderUnknownKey]);
-        assert!(loads.is_every_file && loads.is_any_file_taken_out);
-    });
+    with_uses(
+        "exports.f = (root, name) => { delete require.cache[path.join(root, name)]; };\n",
+        &|_, loads| {
+            let whys: Vec<WhyEveryFile> = loads.why_every_file.iter().map(|it| it.1).collect();
+            assert_eq!(whys, [WhyEveryFile::TakesOutUnderUnknownKey]);
+            assert!(loads.is_every_file && loads.is_any_file_taken_out);
+        },
+    );
 }
 
 #[test]
@@ -684,7 +740,10 @@ fn text_that_comes_in_lets_no_body_run_again() {
         ("Bun.plugin({ name: \"p\", setup() {} });\n", false),
         ("require.extensions[\".mine\"] = () => {};\n", false),
         ("import(\"./\" + process.argv[2] + \".js?again\");\n", false),
-        ("exports.evict = key => { delete require.cache[key]; };\n", true),
+        (
+            "exports.evict = key => { delete require.cache[key]; };\n",
+            true,
+        ),
         ("globalThis.keep(require.cache);\n", true),
     ];
     for (text, takes_out) in helpers {
@@ -692,7 +751,10 @@ fn text_that_comes_in_lets_no_body_run_again() {
             for name in ["state.js", "far.js", "a.test.js"] {
                 let file = file_named(files, name);
                 // Whoever asks for the file asks the run time which text answers.
-                assert!(graph.may_be_evicted(ModuleRef::File(file)), "{name}: {text}");
+                assert!(
+                    graph.may_be_evicted(ModuleRef::File(file)),
+                    "{name}: {text}"
+                );
                 assert_eq!(graph.runs_again(file), takes_out, "{name}: {text}");
             }
         });

@@ -389,6 +389,10 @@ fn file_that_comes_by_a_symbol_of_the_host_asks_for_no_module() {
         BuiltinId::ReflectOwnKeys,
         BuiltinId::ObjectGetOwnPropertyDescriptors,
     ] {
-        assert!(uses_of(&[id], &[]).modules.is_empty(), "{}", table::text_of(id));
+        assert!(
+            uses_of(&[id], &[]).modules.is_empty(),
+            "{}",
+            table::text_of(id)
+        );
     }
 }

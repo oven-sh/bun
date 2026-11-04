@@ -100,16 +100,25 @@ impl FileLowering<'_, '_, '_, '_> {
                 return file.map_mapped_child(edge);
             }
             match edge.kind {
-                EdgeKind::Transparent => {
-                    file.map_member(component, weight, unstable_answers_before, open, edge.target)
-                }
+                EdgeKind::Transparent => file.map_member(
+                    component,
+                    weight,
+                    unstable_answers_before,
+                    open,
+                    edge.target,
+                ),
                 EdgeKind::Contents => file.map_shallow(edge.target, &mut OpenTypes::new()),
             }
         });
         open.pop();
         let function_types = self.take_list_of_function_types();
         let entry = MappedType { mapped, weight };
-        self.keep_mapped(ty, entry, unstable_answers_before, function_types.as_deref());
+        self.keep_mapped(
+            ty,
+            entry,
+            unstable_answers_before,
+            function_types.as_deref(),
+        );
         mapped
     }
 

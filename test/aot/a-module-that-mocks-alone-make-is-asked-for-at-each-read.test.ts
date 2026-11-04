@@ -653,19 +653,23 @@ export const other = () => "other of the package";
 };
 
 for (const [name, files] of Object.entries(shapes)) {
-  test.concurrent(`one module mocked by one test file after another: ${name}`, async () => {
-    using dir = tempDir("aot-mocked-in-turn", files);
-    const seenWith = async (...flags: string[]) => {
-      const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), bunEnv);
-      return {
-        lines: stdout.split("\n").filter(line => line.startsWith("SEEN")),
-        errors: stderr.split("\n").filter(line => /^\(fail\)|^[A-Za-z]*[Ee]rror/.test(line)),
-        exitCode,
+  test.concurrent(
+    `one module mocked by one test file after another: ${name}`,
+    async () => {
+      using dir = tempDir("aot-mocked-in-turn", files);
+      const seenWith = async (...flags: string[]) => {
+        const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), bunEnv);
+        return {
+          lines: stdout.split("\n").filter(line => line.startsWith("SEEN")),
+          errors: stderr.split("\n").filter(line => /^\(fail\)|^[A-Za-z]*[Ee]rror/.test(line)),
+          exitCode,
+        };
       };
-    };
-    const [plain, compiled] = await Promise.all([seenWith(), seenWith("--aot")]);
-    expect(plain.lines.length).toBeGreaterThan(2);
-    expect(plain.exitCode).toBe(0);
-    expect(compiled).toEqual(plain);
-  }, 120_000);
+      const [plain, compiled] = await Promise.all([seenWith(), seenWith("--aot")]);
+      expect(plain.lines.length).toBeGreaterThan(2);
+      expect(plain.exitCode).toBe(0);
+      expect(compiled).toEqual(plain);
+    },
+    120_000,
+  );
 }

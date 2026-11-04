@@ -32,11 +32,7 @@ const listing = printing(b.primitiveValue);
 // "%j" calls the toJSON that a bigint inherits.
 const formattedWithoutCode = b.union(b.null, b.bool, b.f64, b.string, b.symbol);
 // print_proxy() in src/jsc/ConsoleObject.rs. console.dir reads its options, and console.table lists its rows, off whatever they are handed.
-const logging = printing(formattedWithoutCode, [
-  formatted,
-  b.functionsOnlyNamed,
-  b.proxiesPrintedAsTargets,
-]);
+const logging = printing(formattedWithoutCode, [formatted, b.functionsOnlyNamed, b.proxiesPrintedAsTargets]);
 
 const labeled = (label: b.TableType) =>
   ({

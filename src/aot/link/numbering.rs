@@ -219,7 +219,9 @@ fn order_program_layouts(merged: &Merged<'_>, definitions: &Definitions) -> Vec<
     // A merged index is the rank of its key.
     let sites = (0u32..).zip(&definitions.layouts);
     // By unit, as `list_chosen_definitions` orders them, then by key: `order_layout_definitions` says why.
-    let defined = sites.clone().filter_map(|(layout, site)| Some(((*site)?, layout)));
+    let defined = sites
+        .clone()
+        .filter_map(|(layout, site)| Some(((*site)?, layout)));
     let mut defined: Vec<(DefinitionSite, u32)> = defined.collect();
     defined.sort_by_u64(|&(site, layout)| number_of_pair(site.unit, layout));
     let mut roots: Vec<u32> = defined.into_iter().map(|(_, layout)| layout).collect();
@@ -660,7 +662,10 @@ mod tests {
     fn failures_are_numbered_by_project_whatever_the_order_of_the_tables() {
         let number = |lists: &[(ProjectId, &[Failure])]| {
             let mut count = 0;
-            (number_named_failures(lists.iter().copied(), &mut count), count)
+            (
+                number_named_failures(lists.iter().copied(), &mut count),
+                count,
+            )
         };
         let mut lists: [(ProjectId, &[Failure]); 3] = [
             (ProjectId::Runtime, &[Failure(0)]),
@@ -680,7 +685,11 @@ mod tests {
     fn number_that_no_unit_holds_has_no_id() {
         let mut ids = [None; 4];
         let mut count = 2;
-        number_records(&[(DataId::new(3), ()), (DataId::new(0), ())], &mut ids, &mut count);
+        number_records(
+            &[(DataId::new(3), ()), (DataId::new(0), ())],
+            &mut ids,
+            &mut count,
+        );
         number_records(&[(DataId::new(1), ())], &mut ids, &mut count);
         let id = |index| Some(DataId::new(index));
         assert_eq!(ids, [id(3), id(4), None, id(2)]);

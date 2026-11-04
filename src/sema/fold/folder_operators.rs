@@ -360,7 +360,8 @@ impl<'s> Folder<'_, 's> {
         let joined = match self.is_pattern_of_reg_exp(e) {
             true => {
                 let max_bytes = self.evaluator.max_pattern_bytes();
-                self.evaluator.concatenate_within(max_bytes, &texts, &values)
+                self.evaluator
+                    .concatenate_within(max_bytes, &texts, &values)
             }
             false => self.evaluator.concatenate(&texts, &values),
         };

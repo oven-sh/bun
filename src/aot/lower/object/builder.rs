@@ -87,7 +87,9 @@ pub(in crate::lower) fn set_prototype(
         }
     }
     let head = lowering.open_head(object);
-    lowering.builder.set_literal_prototype(head, prototype, false);
+    lowering
+        .builder
+        .set_literal_prototype(head, prototype, false);
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {

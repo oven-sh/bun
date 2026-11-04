@@ -5,8 +5,8 @@ use smallvec::SmallVec;
 use super::entry_parameters::EntryPosition;
 use super::finish::FinishScratch;
 use super::generated::{
-    BlockRole, EntryParameter, Function, Opcode, STANDS_IN_TAIL_POSITION, TerminatorKind, ValueHead,
-    visit_terminator_fields, visit_value_fields,
+    BlockRole, EntryParameter, Function, Opcode, STANDS_IN_TAIL_POSITION, TerminatorKind,
+    ValueHead, visit_terminator_fields, visit_value_fields,
 };
 use super::ids::{BlockId, Id, TypeId, ValueId, optional_id_to_word};
 use super::ssa::SsaState;

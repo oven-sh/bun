@@ -20,13 +20,8 @@ use crate::cli::command::{Context, Tag};
 
 const MAX_SUGGESTION_DISTANCE: usize = 3;
 const CODE_GENERATION_FLAG: &[u8] = b"--disallow-code-generation-from-strings";
-pub(crate) const COMPILE_AOT_KEYS: &[&str] = &[
-    "aot",
-    "aotCheck",
-    "aotExplain",
-    "aotOut",
-    "aotTesting",
-];
+pub(crate) const COMPILE_AOT_KEYS: &[&str] =
+    &["aot", "aotCheck", "aotExplain", "aotOut", "aotTesting"];
 const EXPLAIN_ALLOWED: &str =
     "one of text, json, guards, guards-json, trim, allocations, forms, statistics";
 const LOCALES_ALLOWED: &str = "a list of locale tags, like en,de-AT";
@@ -992,9 +987,8 @@ fn find_unknown_test_run_word<'a>(words: &[&'a [u8]]) -> Option<&'a [u8]> {
 fn exit_with_unknown_test_run_word(word: &[u8]) -> ! {
     let mut message = b"unknown word ".to_vec();
     message.extend_from_slice(word);
-    message.extend_from_slice(
-        b" in BUN_DEBUG_TEST_AOT_WORDS. The words that start with TestRun are ",
-    );
+    message
+        .extend_from_slice(b" in BUN_DEBUG_TEST_AOT_WORDS. The words that start with TestRun are ");
     message.extend_from_slice(&TEST_RUN_WORDS.join(&b", "[..]));
     exit_with_message(&message);
 }

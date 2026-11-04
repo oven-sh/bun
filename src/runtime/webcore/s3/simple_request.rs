@@ -677,12 +677,12 @@ pub(crate) fn execute_simple_s3_request(
         abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
         context: Default::default(),
     });
-    // SAFETY: `task_ptr` is a freshly heap-allocated pointer; shared reads only, and `task` is not
-    // used once `task_ptr` is dereferenced. `'static`: `url`, `headers_buf`, `body` and
+    // SAFETY: `task_ptr` is a freshly heap-allocated pointer, and `task` is not used once
+    // `task_ptr` is dereferenced. `'static`: `url`, `headers_buf`, `body` and
     // `http_proxy` borrow heap buffers that `*task` owns and never writes again. They are stored in
     // `task.http`, an `AsyncHTTP<'static>` that the HTTP thread reads, and remain valid until
     // `task` is dropped in `on_response`.
-    let task: &'static S3HttpSimpleTask = unsafe { &*task_ptr };
+    let task: &'static mut S3HttpSimpleTask = unsafe { &mut *task_ptr };
     let url = URL::parse(&task.sign_result.url);
     let headers_buf: &'static [u8] = task.headers.buf.as_slice();
     let body: &'static [u8] = &task.body;

@@ -35,9 +35,7 @@ use crate::load::is_in_node_modules;
 use crate::load::sources::{ParsedSource, parsed_source};
 use crate::modules::{ModuleGraph, ModuleRef};
 use crate::options::Options;
-use crate::test_run_loads::{
-    LoadsOfFile, LoadsOfRun, collect_loads_of_run, look_at_loads_of_file,
-};
+use crate::test_run_loads::{LoadsOfFile, LoadsOfRun, collect_loads_of_run, look_at_loads_of_file};
 use crate::test_run_report::{
     CountsOfScan, FileLeavesOpen, say_file_leaves_open, say_package_takes_from_test_runner,
     say_scan, say_what_file_replaces,
@@ -157,7 +155,10 @@ pub(crate) fn look_at_file_of_run(
     }
     // The tests hand a package neither a text to keep nor a helper to call. What it evaluates it spells itself: `new Function("fake", "Math.random = fake")`.
     let is_in_package = is_in_node_modules(request.path);
-    let (fold, file) = (FoldInputs::default(), inputs_of_file_that_nobody_describes());
+    let (fold, file) = (
+        FoldInputs::default(),
+        inputs_of_file_that_nobody_describes(),
+    );
     let reads_texts = !is_in_package || !builtins.evaluated_texts().is_empty();
     let mut texts = reads_texts.then(|| TextReader::new(request, builtins, &fold, &file));
     if let Some(texts) = texts.as_mut().filter(|_| is_in_package) {
@@ -266,7 +267,9 @@ fn may_be_replaced_by_tests(place: BuiltinId) -> bool {
             | BuiltinKind::Method
             | BuiltinKind::Accessor
             | BuiltinKind::DataProperty => entry.holder.is_some(),
-            BuiltinKind::Constructor | BuiltinKind::Namespace => entry.holder.is_some_and(is_global),
+            BuiltinKind::Constructor | BuiltinKind::Namespace => {
+                entry.holder.is_some_and(is_global)
+            }
             // `Map.prototype`: the engine unlocks it in no run.
             BuiltinKind::Prototype | BuiltinKind::Constant | BuiltinKind::NativeBinding => false,
         }

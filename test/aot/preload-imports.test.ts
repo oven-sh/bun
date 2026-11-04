@@ -53,10 +53,7 @@ const waysOut: [string, Record<string, string>][] = [
       "test-utils/patch.ts": `import { mock } from "bun:test";\nexport function patch(): void { Buffer.isEncoding = mock(() => true); }\n`,
     },
   ],
-  [
-    "nothing but the tests imports it, wherever it lies",
-    helperBesideTheTests,
-  ],
+  ["nothing but the tests imports it, wherever it lies", helperBesideTheTests],
   [
     "it is named as a preload",
     { ...helperOfProductToo, "bunfig.toml": `[test]\npreload = ["./test-utils/patch.ts"]\n` },
@@ -77,9 +74,7 @@ async function run(files: Record<string, string>, words: string) {
 }
 
 // Over layers this had a fault and a cure of its own: the file could not replace the built-in though one program let it.
-for (const [form, words] of [
-  ["as the run is built by itself", ""],
-]) {
+for (const [form, words] of [["as the run is built by itself", ""]]) {
   test.concurrent(`what the preloads alone import is the tests' own, ${form}`, async () => {
     const { stderr, exitCode } = await run(reachedByPreloadAlone, words);
     expect(stderr.split("\n").filter(line => /^(error|TypeError)\b/.test(line))).toEqual([]);

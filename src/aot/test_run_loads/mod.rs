@@ -23,9 +23,7 @@ use self::changed_on_disk::{
     ChangedOnDisk, FilesNamedWithQueries, find_file_in_front_of_query, names_file_with_query,
     write_whole_start,
 };
-use self::keys_of_cache::{
-    TextOfRun, find_library_modules_that_entries_may_answer, look_at_keys,
-};
+use self::keys_of_cache::{TextOfRun, find_library_modules_that_entries_may_answer, look_at_keys};
 use crate::builtins::resolve::{is_module_cache, is_table_of_loaders};
 use crate::builtins::{ResolvedBuiltins, RuntimeModule, table};
 use crate::diagnostic_codes::Code;
@@ -296,10 +294,15 @@ pub(crate) fn collect_loads_of_run(files: &Files<'_>, options: &Options<'_>) -> 
             add_files_of_key(files, file, key, &mut run.files_taken_out);
         }
         for &(start, end) in &loads.parts_of_keys_taken_out {
-            let (start, end) = (files.atoms.bytes(start), end.map(|end| files.atoms.bytes(end)));
+            let (start, end) = (
+                files.atoms.bytes(start),
+                end.map(|end| files.atoms.bytes(end)),
+            );
             // `path.join(__dirname, ..)`, `import.meta.dir + ..`: folding writes the folder of the file itself as `.`.
             let start = match start {
-                [b'.', ..] => write_whole_start(dirname::<Posix>(files.module(file).file_name()), start),
+                [b'.', ..] => {
+                    write_whole_start(dirname::<Posix>(files.module(file).file_name()), start)
+                }
                 _ => start.to_vec(),
             };
             let start = &start[..];
@@ -314,7 +317,8 @@ pub(crate) fn collect_loads_of_run(files: &Files<'_>, options: &Options<'_>) -> 
                     None => path == start,
                 }
             };
-            run.files_taken_out.extend(files.compiled_files().iter().filter(fits));
+            run.files_taken_out
+                .extend(files.compiled_files().iter().filter(fits));
         }
         let mut unread_start = None;
         for (start, at) in &loads.starts_of_keys_taken_out {
@@ -339,7 +343,11 @@ pub(crate) fn collect_loads_of_run(files: &Files<'_>, options: &Options<'_>) -> 
             }
         }
         let under_query = under_query.map(|at| (WhyEveryFile::LoadsFileUnderQuery, at));
-        let whys = loads.takes_any_file_out.into_iter().chain(unread_start).chain(under_query);
+        let whys = loads
+            .takes_any_file_out
+            .into_iter()
+            .chain(unread_start)
+            .chain(under_query);
         (run.why_every_file).extend(whys.map(|(why, at)| (file, why, at)));
         keys_stored.extend_from_slice(&loads.starts_of_keys_stored);
         is_any_key_stored |= loads.stores_under_key_nobody_reads;
@@ -354,17 +362,16 @@ pub(crate) fn collect_loads_of_run(files: &Files<'_>, options: &Options<'_>) -> 
     run.files_copied_under_queries.shared_sort_unstable();
     run.files_copied_under_queries.dedup();
     run.files_changed_on_disk = changed.find_files(files);
-    run.library_modules_that_entries_may_answer = find_library_modules_that_entries_may_answer(
-        &files.atoms,
-        &keys_stored,
-        is_any_key_stored,
-    );
+    run.library_modules_that_entries_may_answer =
+        find_library_modules_that_entries_may_answer(&files.atoms, &keys_stored, is_any_key_stored);
     for &(file, why, _) in &run.why_every_file {
         say_why_every_file(files.module(file).file_name(), why.describe());
     }
     // A file and what import attributes make of it have one name.
     let changed = run.files_changed_on_disk.iter();
-    let mut changed: Vec<&[u8]> = changed.map(|&file| files.module(file).file_name()).collect();
+    let mut changed: Vec<&[u8]> = changed
+        .map(|&file| files.module(file).file_name())
+        .collect();
     changed.shared_sort_unstable();
     changed.dedup();
     for name in changed {

@@ -569,7 +569,8 @@ impl SharedFlows {
     fn overflow_slot(&self, flow: FlowId) -> usize {
         let entries = &self.overflow_entries[..];
         let mask = entries.len() - 1;
-        let mut at = (flow.0.wrapping_mul(0x9E37_79B1) >> (32 - entries.len().trailing_zeros())) as usize;
+        let mut at =
+            (flow.0.wrapping_mul(0x9E37_79B1) >> (32 - entries.len().trailing_zeros())) as usize;
         loop {
             let node = entries[at & mask].0;
             if node == flow || node.is_none() {
@@ -594,7 +595,10 @@ impl SharedFlows {
     /// In tsgo, a node that's visited again while its type is computed gets two entries, and the
     /// search finds the first. So a second entry is dropped here.
     fn push(&mut self, flow: FlowId, ty: FlowType, invocations: u32) {
-        if self.first_entries[..self.count].iter().any(|known| known.0 == flow) {
+        if self.first_entries[..self.count]
+            .iter()
+            .any(|known| known.0 == flow)
+        {
             return;
         }
         if let Some(free) = self.first_entries.get_mut(self.count) {
@@ -6285,7 +6289,10 @@ impl<'p, 's> Checker<'p, 's> {
             self.disable_flow_analysis(file);
             self.report_flow_control_error(&walk.reference);
             if self.reads_types_alone && e.is_some() {
-                let (body, at) = ((file, self.enclosing_fn_of_expr(file, e)), self.hir(file)[e].pos);
+                let (body, at) = (
+                    (file, self.enclosing_fn_of_expr(file, e)),
+                    self.hir(file)[e].pos,
+                );
                 let first = self.flow_memo.too_deep_since.entry(body).or_insert(at);
                 *first = at.min(*first);
             }

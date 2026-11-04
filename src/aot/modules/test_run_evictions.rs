@@ -258,8 +258,9 @@ pub(super) fn fill_plan_of_copies(
     }
     let is_any_module_mocked = mocked.is_every_module() || mocked.iter().next().is_some();
     let copied_under_queries = input.run.loads.files_copied_under_queries.iter();
-    let copied_under_queries: Vec<ModuleRef> =
-        copied_under_queries.map(|&file| ModuleRef::File(file)).collect();
+    let copied_under_queries: Vec<ModuleRef> = copied_under_queries
+        .map(|&file| ModuleRef::File(file))
+        .collect();
     if evicted.modules().is_empty() && !is_any_module_mocked && copied_under_queries.is_empty() {
         return;
     }

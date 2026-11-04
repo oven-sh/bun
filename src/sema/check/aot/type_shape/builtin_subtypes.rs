@@ -175,7 +175,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         };
         members.shape().props.iter().all(|prop| {
             prop.flags.contains(PropFlags::OPTIONAL)
-                || self.c.get_property_of_type(TypeId::EMPTY_OBJECT, prop.name).is_some()
+                || self
+                    .c
+                    .get_property_of_type(TypeId::EMPTY_OBJECT, prop.name)
+                    .is_some()
         })
     }
 

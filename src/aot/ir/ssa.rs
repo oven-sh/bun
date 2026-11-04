@@ -206,7 +206,8 @@ impl SsaState {
             if first == origin || second == origin {
                 return Some(origin);
             }
-            let (first_name, second_name) = (&self.narrowed_from[&first], &self.narrowed_from[&second]);
+            let (first_name, second_name) =
+                (&self.narrowed_from[&first], &self.narrowed_from[&second]);
             if first_name.depth >= second_name.depth {
                 first = first_name.value;
             }
@@ -472,7 +473,10 @@ impl FunctionBuilder {
     }
 
     pub fn is_undefined_or_null(&self, value: ValueId) -> bool {
-        matches!(self.opcode_of(value), Some(Opcode::Undefined | Opcode::Null))
+        matches!(
+            self.opcode_of(value),
+            Some(Opcode::Undefined | Opcode::Null)
+        )
     }
 
     /// For `x = undefined` and `x = null`, where `x` lives in no environment. Whether or not `x` is read again, no store is left of the assignment.

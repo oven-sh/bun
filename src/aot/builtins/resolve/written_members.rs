@@ -265,9 +265,7 @@ fn is_there_and_not_falsy(member: BuiltinId) -> bool {
         | BuiltinKind::Constant
         | BuiltinKind::NativeBinding => table::well_known_symbol(member).is_some(),
     };
-    is_object
-        && entry.mutability == Mutability::AlwaysLocked
-        && entry.platforms == Platforms::all()
+    is_object && entry.mutability == Mutability::AlwaysLocked && entry.platforms == Platforms::all()
 }
 
 #[derive(Default)]
@@ -667,7 +665,8 @@ impl Resolver<'_, '_> {
                     Some(_) => knows_all = false,
                     None => {
                         knows_all = false;
-                        if let (Some(function), _) = self.find_declaration_behind(hir[call].callee) {
+                        if let (Some(function), _) = self.find_declaration_behind(hir[call].callee)
+                        {
                             self.push_values_returned_by(function, &mut pending);
                         }
                     }
@@ -761,9 +760,9 @@ impl Resolver<'_, '_> {
             AssignmentTarget::Assign(Some(BinOp::Nullish | BinOp::Or)) => {
                 Some(WriteRuns::WhereNothingIsThere)
             }
-            AssignmentTarget::Assign(_)
-            | AssignmentTarget::Unary
-            | AssignmentTarget::ForInOrOf => Some(WriteRuns::Always),
+            AssignmentTarget::Assign(_) | AssignmentTarget::Unary | AssignmentTarget::ForInOrOf => {
+                Some(WriteRuns::Always)
+            }
         }
     }
 

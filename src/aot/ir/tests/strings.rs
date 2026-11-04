@@ -208,7 +208,12 @@ fn table_of_distinct_strings_answers_like_one_that_interned_them() {
         JOINED_PAIR,
         HIGH_SURROGATE,
     ];
-    texts.extend(classified.iter().chain(ILL_FORMED).map(|text| text.to_vec()));
+    texts.extend(
+        classified
+            .iter()
+            .chain(ILL_FORMED)
+            .map(|text| text.to_vec()),
+    );
     let mut sources = [StringTable::default(), StringTable::default()];
     let mut places: Vec<(usize, StringId)> = Vec::new();
     for (index, text) in texts.iter().enumerate() {

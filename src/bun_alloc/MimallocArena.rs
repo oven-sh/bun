@@ -90,7 +90,11 @@ impl ChunkOfBlocks {
     /// Once for each block that `lay` has laid in the chunk, while the arena lives. The block is not touched again.
     pub unsafe fn stop_using(chunk: NonNull<ChunkOfBlocks>) {
         // SAFETY: the caller's use has kept the chunk alive until now.
-        if unsafe { chunk.as_ref() }.users.fetch_sub(1, Ordering::Release) != 1 {
+        if unsafe { chunk.as_ref() }
+            .users
+            .fetch_sub(1, Ordering::Release)
+            != 1
+        {
             return;
         }
         fence(Ordering::Acquire);

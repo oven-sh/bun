@@ -480,9 +480,10 @@ fn read_as_engine(emitted: &ProgramBytes) -> EngineView {
         let code = bodies
             .iter()
             .map(|body| copy_list(body.code, body.word_count as usize));
-        let tables = units
-            .iter()
-            .map(|unit| unit.tables.map(|table| copy_list(table.entries, table.size)));
+        let tables = units.iter().map(|unit| {
+            unit.tables
+                .map(|table| copy_list(table.entries, table.size))
+        });
         EngineView {
             code: code.collect(),
             unit_indices: bodies.iter().map(|body| body.unit_index).collect(),
@@ -554,7 +555,10 @@ fn assert_sections_follow_tasks(emitted: &ProgramBytes, tasks: &[Task<'_, '_>]) 
 
 fn assert_sections_are_sequential(create_program: impl Fn() -> Program) {
     let mut program = create_program();
-    assert_sections_follow_tasks(&emit_serially(create_program()), &create_tasks(&mut program));
+    assert_sections_follow_tasks(
+        &emit_serially(create_program()),
+        &create_tasks(&mut program),
+    );
     let mut program = create_program();
     let file = emit_for_file(create_program(), &run_serially);
     assert_sections_follow_tasks(&file, &create_tasks_for_file(&mut program));

@@ -45,8 +45,9 @@ use crate::load::externals::{contains, is_external};
 use crate::load::import_meta_glob;
 use crate::load::is_host_path;
 use crate::load::loaders::{
-    BY_NAME, HostLoaderKind, host_loader_kind, loader_by_name, loader_by_path, loader_named_by_path,
-    parses_text_as_data, script_kind_of, to_host_loader, to_host_loader_of_attribute,
+    BY_NAME, HostLoaderKind, host_loader_kind, loader_by_name, loader_by_path,
+    loader_named_by_path, parses_text_as_data, script_kind_of, to_host_loader,
+    to_host_loader_of_attribute,
 };
 use crate::load::made_own_require;
 use crate::load::manual_mocks::find_manual_mocks;
@@ -969,8 +970,8 @@ impl CodeHost for LoadHost<'_> {
         query: &[u8],
         kind: CodeImportKind,
     ) -> Option<Vec<u8>> {
-        let is_program = kind != CodeImportKind::Require
-            && script_kind_of(self.default_loader(path)).is_some();
+        let is_program =
+            kind != CodeImportKind::Require && script_kind_of(self.default_loader(path)).is_some();
         let is_file_of_program = matches!(self.served_by(path), ServedBy::Disk)
             && !is_bundled(path)
             && !is_declaration_file_name(path);

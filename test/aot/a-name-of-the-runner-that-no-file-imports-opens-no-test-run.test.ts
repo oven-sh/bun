@@ -12,10 +12,22 @@ const closed = { everyFileMayLoadAgain: false, mocksAnyModule: ["false"] };
 const open = { everyFileMayLoadAgain: true, mocksAnyModule: ["true"] };
 const uses = {
   "a member is called": { text: `const made = NAME.fn(() => 1); export const act = () => made();`, found: closed },
-  "a spy under a written name": { text: `export const act = lib => NAME.spyOn(lib, "total").mockReturnValue(1)();`, found: closed },
-  "the timers are faked": { text: `export const act = () => { NAME.useFakeTimers(); NAME.useRealTimers(); return 1; };`, found: closed },
-  "the modules are reset": { text: `export const act = () => { NAME.resetModules(); return 1; };`, found: { ...closed, everyFileMayLoadAgain: true } },
-  "it goes to a function": { text: `const take = it => it; const kept = take(NAME); export const act = () => kept.fn(() => 1)();`, found: open },
+  "a spy under a written name": {
+    text: `export const act = lib => NAME.spyOn(lib, "total").mockReturnValue(1)();`,
+    found: closed,
+  },
+  "the timers are faked": {
+    text: `export const act = () => { NAME.useFakeTimers(); NAME.useRealTimers(); return 1; };`,
+    found: closed,
+  },
+  "the modules are reset": {
+    text: `export const act = () => { NAME.resetModules(); return 1; };`,
+    found: { ...closed, everyFileMayLoadAgain: true },
+  },
+  "it goes to a function": {
+    text: `const take = it => it; const kept = take(NAME); export const act = () => kept.fn(() => 1)();`,
+    found: open,
+  },
   "it is taken apart": { text: `const { fn } = NAME; export const act = () => fn(() => 1)();`, found: open },
 };
 
@@ -39,7 +51,9 @@ for (const name of ["vi", "jest"])
         expect({
           seen: lines.filter(line => line.startsWith("SEEN ")),
           everyFileMayLoadAgain: lines.some(line => line.includes("every file may load again")),
-          mocksAnyModule: [...new Set(lines.flatMap(line => /\| mocks any module (true|false) \|/.exec(line)?.[1] ?? []))],
+          mocksAnyModule: [
+            ...new Set(lines.flatMap(line => /\| mocks any module (true|false) \|/.exec(line)?.[1] ?? [])),
+          ],
           exitCode,
         }).toEqual({ seen: ["SEEN 1"], ...found, exitCode: 0 });
       });

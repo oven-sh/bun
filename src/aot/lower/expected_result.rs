@@ -46,10 +46,7 @@ impl FileLowering<'_, '_, '_, '_> {
         if matches!(hir[text].kind, ExprKind::Spread(_)) {
             return None;
         }
-        let written = self
-            .queries
-            .contextual_type_of_settled_value(call)
-            .ok()??;
+        let written = self.queries.contextual_type_of_settled_value(call).ok()??;
         let ty = self.result_type(written);
         if ty == TypeTable::ANYTHING {
             return None;

@@ -157,19 +157,26 @@ test("a", async () => {
 };
 
 for (const [name, testFile] of Object.entries(shapes)) {
-  test.concurrent(`a response that holds its first write in a test run: ${name}`, async () => {
-    using dir = tempDir("aot-held-write", { "package.json": `{ "name": "p", "type": "module" }\n`, "a.test.ts": testFile });
-    const seenWith = async (...flags: string[]) => {
-      const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), bunEnv);
-      return {
-        lines: stdout.split("\n").filter(line => line.startsWith("SEEN")),
-        errors: stderr.split("\n").filter(line => /^\(fail\)|^[A-Za-z]*Error/.test(line)),
-        exitCode,
+  test.concurrent(
+    `a response that holds its first write in a test run: ${name}`,
+    async () => {
+      using dir = tempDir("aot-held-write", {
+        "package.json": `{ "name": "p", "type": "module" }\n`,
+        "a.test.ts": testFile,
+      });
+      const seenWith = async (...flags: string[]) => {
+        const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), bunEnv);
+        return {
+          lines: stdout.split("\n").filter(line => line.startsWith("SEEN")),
+          errors: stderr.split("\n").filter(line => /^\(fail\)|^[A-Za-z]*Error/.test(line)),
+          exitCode,
+        };
       };
-    };
-    const [plain, compiled] = await Promise.all([seenWith(), seenWith("--aot")]);
-    expect(plain.lines.length).toBeGreaterThan(0);
-    expect(plain.exitCode).toBe(0);
-    expect(compiled).toEqual(plain);
-  }, 120_000);
+      const [plain, compiled] = await Promise.all([seenWith(), seenWith("--aot")]);
+      expect(plain.lines.length).toBeGreaterThan(0);
+      expect(plain.exitCode).toBe(0);
+      expect(compiled).toEqual(plain);
+    },
+    120_000,
+  );
 }

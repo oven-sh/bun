@@ -199,9 +199,7 @@ async function printedBy(directory: string, words: string, ...flags: string[]) {
   return { printed: stdout.replace(/^bun test .*\n/, "").split("\n"), exitCode };
 }
 
-test.each([
-  ["as one program", "TestRunLayers:0"],
-])("%s", async (_, words) => {
+test.each([["as one program", "TestRunLayers:0"]])("%s", async (_, words) => {
   using directory = tempDir("a-load-above-a-mock-whose-factory-failed", files);
   const plain = await printedBy(String(directory), words);
   const error = "RangeError from the factory";

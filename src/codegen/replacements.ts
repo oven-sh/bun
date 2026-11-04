@@ -137,9 +137,7 @@ export function assertNoDestructuredGlobalThis(source: string, file: string) {
 
 /** --minify-syntax drops the `0,`: `bun run` would show a name where a debug build and a compiled program, which reads the file as it is written, show none. */
 export function assertNoStoredFunctionBehindComma(source: string, file: string) {
-  if (
-    /[=:]\s*\(+\s*0\s*,\s*(?:(?:async\s+)?function\b|class\b|(?:async\s*)?(?:\([^()]*\)|[\w$]+)\s*=>)/.test(source)
-  ) {
+  if (/[=:]\s*\(+\s*0\s*,\s*(?:(?:async\s+)?function\b|class\b|(?:async\s*)?(?:\([^()]*\)|[\w$]+)\s*=>)/.test(source)) {
     throw new Error(
       `${file}: do not write \`(0, function () {})\` for a function without a name: the bundler drops the \`0,\` and the function takes the name of the variable or the property it is stored to. Store it to a member (\`holder.method = function () {}\`): that gives no name`,
     );

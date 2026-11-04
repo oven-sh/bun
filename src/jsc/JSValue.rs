@@ -2530,50 +2530,6 @@ impl JSValue {
         JSC__JSValue__forEachPropertyOrderedWithNonEnumerable(self, global, ctx, callback);
         scope.return_if_exception()
     }
-    /// Like `for_each_property_ordered`, but passes what a getter returns, or the accessor itself if the getter throws.
-    /// Returns true if `for_each_property_ordered_with_non_enumerable` is sure to visit the same properties.
-    #[inline(always)]
-    pub fn for_each_property_ordered_calling_getters(
-        self,
-        global: &JSGlobalObject,
-        ctx: *mut c_void,
-        callback: ForEachPropertyCallback,
-    ) -> JsResult<bool> {
-        unsafe extern "C" {
-            // safe: same contract as `JSC__JSValue__forEachProperty` above.
-            safe fn JSC__JSValue__forEachPropertyOrderedCallingGetters(
-                this: JSValue,
-                global: &JSGlobalObject,
-                ctx: *mut c_void,
-                callback: ForEachPropertyCallback,
-            ) -> bool;
-        }
-        crate::top_scope!(scope, global);
-        let is_same =
-            JSC__JSValue__forEachPropertyOrderedCallingGetters(self, global, ctx, callback);
-        scope.return_if_exception().map(|()| is_same)
-    }
-    /// Also visits own non-enumerable properties, to reproduce what older versions of `bun:test` printed.
-    #[inline(always)]
-    pub fn for_each_property_ordered_with_non_enumerable(
-        self,
-        global: &JSGlobalObject,
-        ctx: *mut c_void,
-        callback: ForEachPropertyCallback,
-    ) -> JsResult<()> {
-        unsafe extern "C" {
-            // safe: same contract as `JSC__JSValue__forEachProperty` above.
-            safe fn JSC__JSValue__forEachPropertyOrderedWithNonEnumerable(
-                this: JSValue,
-                global: &JSGlobalObject,
-                ctx: *mut c_void,
-                callback: ForEachPropertyCallback,
-            );
-        }
-        crate::top_scope!(scope, global);
-        JSC__JSValue__forEachPropertyOrderedWithNonEnumerable(self, global, ctx, callback);
-        scope.return_if_exception()
-    }
     /// `JSValue.isBuffer` — `instanceof Buffer` check via
     /// the C++ `JSBuffer__isBuffer` shim. Accepts any JSValue; the C++ side
     /// handles non-cells (returns false), so no precondition is asserted.

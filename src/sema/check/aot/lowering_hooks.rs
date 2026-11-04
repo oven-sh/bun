@@ -22,7 +22,10 @@ impl Checker<'_, '_> {
     /// `Queries::row_of_type`, but for the rows that are carried over, which have new numbers.
     pub fn hand_state_of_lowering_on_with(
         &mut self,
-        hand_on: fn(Box<dyn Any + Send>, Option<&RowsCarriedOver<'_>>) -> Option<Box<dyn Any + Send>>,
+        hand_on: fn(
+            Box<dyn Any + Send>,
+            Option<&RowsCarriedOver<'_>>,
+        ) -> Option<Box<dyn Any + Send>>,
     ) {
         self.aot_answers.hand_on_of_lowering = Some(hand_on);
     }
@@ -60,7 +63,9 @@ impl Queries<'_, '_, '_> {
     pub fn expression_types(&mut self, expression: ExprId) -> Result<ExpressionTypes, GaveUp> {
         let checked = self.expression_type(expression)?;
         let predicted = match self.find_subject_of_expression(expression, checked) {
-            Some(_) => self.ask(|queries| Ok(queries.infer_expression_type(expression, checked)))?,
+            Some(_) => {
+                self.ask(|queries| Ok(queries.infer_expression_type(expression, checked)))?
+            }
             None => checked,
         };
         Ok(ExpressionTypes { checked, predicted })
@@ -91,7 +96,10 @@ mod tests {
         assert_eq!(memo.type_row(TypeId::ANY).number(), 2);
         answers.put_back(memo, arena);
         let state = answers.of_lowering.as_ref();
-        assert_eq!(state.and_then(|state| state.downcast_ref::<u32>()), Some(&7));
+        assert_eq!(
+            state.and_then(|state| state.downcast_ref::<u32>()),
+            Some(&7)
+        );
 
         answers.clear();
         assert!(answers.of_lowering.is_none());
@@ -101,7 +109,10 @@ mod tests {
         // A task that leaves nothing takes nothing away.
         answers.clear();
         let state = answers.of_lowering_in_last_task.as_ref();
-        assert_eq!(state.and_then(|state| state.downcast_ref::<u32>()), Some(&7));
+        assert_eq!(
+            state.and_then(|state| state.downcast_ref::<u32>()),
+            Some(&7)
+        );
     }
 
     #[test]

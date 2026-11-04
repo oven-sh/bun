@@ -171,10 +171,7 @@ fn is_bare_name(name: &[u8]) -> bool {
 
 /// `./pool/`: no extension is added to such a text, so it is not the same text without its end.
 fn names_directory(text: &[u8]) -> bool {
-    matches!(
-        text,
-        [.., b'/'] | [.., b'/', b'.'] | [.., b'/', b'.', b'.']
-    )
+    matches!(text, [.., b'/'] | [.., b'/', b'.'] | [.., b'/', b'.', b'.'])
 }
 
 /// The path that an executable looks under for a relative one. Each `..` that leads out of its root stays, as `_.._`.

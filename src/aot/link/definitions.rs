@@ -144,7 +144,8 @@ fn order_definitions_of_layout(
     let mut types_of_definitions = types.iter().peekable();
     let mut order: SmallVec<[(Option<ObjectTypeKey>, u32, u32); 8]> = SmallVec::new();
     for (index, (_, definition)) in (0..).zip(definitions.iter()) {
-        let ty = types_of_definitions.next_if(|&&(of_definition, _)| of_definition == start + index);
+        let ty =
+            types_of_definitions.next_if(|&&(of_definition, _)| of_definition == start + index);
         order.push((ty.map(|&(_, ty)| ty), definition.position, index));
     }
     if order.is_sorted() {
@@ -172,7 +173,10 @@ pub(super) fn order_layout_definitions(units: &mut [LinkUnit], in_parallel: InPa
         for unit in units.iter_mut() {
             // A file says all that it has to say of a layout in one go.
             let (mut start, mut first_type) = (0, 0);
-            for of_layout in unit.layout_definitions.chunk_by_mut(|one, next| one.0 == next.0) {
+            for of_layout in unit
+                .layout_definitions
+                .chunk_by_mut(|one, next| one.0 == next.0)
+            {
                 let end = start + of_layout.len() as u32;
                 let types = &mut unit.object_types[first_type..];
                 let type_count = types.partition_point(|&(of_definition, _)| of_definition < end);
@@ -205,7 +209,10 @@ pub(super) fn choose_definitions(
             for unit in 0..unit_count {
                 choose_variables(merged, unit, &mut variables);
             }
-            (functions, add_synthetic_exports(merged, projects, variables))
+            (
+                functions,
+                add_synthetic_exports(merged, projects, variables),
+            )
         },
         || choose_layouts(merged),
     );
@@ -288,18 +295,17 @@ fn choose_functions(merged: &Merged<'_>) -> Vec<Option<DefinitionSite>> {
         "the highest bit of the number of a unit is free"
     );
     let keys = &merged.functions.keys;
-    let chosen: Vec<AtomicU64> = keys
-        .iter()
-        .map(|_| AtomicU64::new(NO_DEFINITION))
-        .collect();
+    let chosen: Vec<AtomicU64> = keys.iter().map(|_| AtomicU64::new(NO_DEFINITION)).collect();
     (merged.in_parallel)(merged.units.len(), &|unit| {
         let link_unit = &merged.units[unit];
         for (index, (id, definition)) in (0u32..).zip(&link_unit.function_definitions) {
             let function = merged.function(link_unit, *id) as usize;
             let key = keys[function].key;
             // Only the file that declares a function type records its parameters. Prefer that definition.
-            let is_function_type =
-                matches!(key, FunctionKey::Signature(_) | FunctionKey::ClassSignature(_));
+            let is_function_type = matches!(
+                key,
+                FunctionKey::Signature(_) | FunctionKey::ClassSignature(_)
+            );
             let number = match is_function_type && definition.parameters.is_empty() {
                 true => WITHOUT_PARAMETERS | number_of_pair(unit as u32, index),
                 false => number_of_pair(unit as u32, index),
@@ -660,9 +666,10 @@ fn merge_builtin_members(merged: &Merged<'_>) -> Vec<(u32, BuiltinId)> {
     let mut members: Vec<(u32, BuiltinId)> = Vec::new();
     for unit in merged.units {
         let unit_members = unit.builtin_members.iter();
-        members.extend(unit_members.map(|&(function_type, builtin)| {
-            (merged.function(unit, function_type), builtin)
-        }));
+        members.extend(
+            unit_members
+                .map(|&(function_type, builtin)| (merged.function(unit, function_type), builtin)),
+        );
     }
     members.sort_unstable();
     members.dedup();
@@ -837,7 +844,10 @@ fn close_families(
     steps.end("families: list conversions");
     closer.widen_families(&conversions);
     if steps.logs() {
-        let written = merged.units.iter().map(|unit| unit.family_facts.conversions.len());
+        let written = merged
+            .units
+            .iter()
+            .map(|unit| unit.family_facts.conversions.len());
         steps.end(&format!(
             "families: {} of {} conversions, which add {} edges",
             conversions.iter().map(Vec::len).sum::<usize>(),

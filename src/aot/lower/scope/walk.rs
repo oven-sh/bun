@@ -95,7 +95,13 @@ pub(super) struct ScopeWalk {
     pub(super) made_at_first_read: Vec<(SymbolId, FnId)>,
     // Who reads them. Of those, the names that every run of the function around them reads: they are made where their scope is entered, as ever.
     // With the loop that the read stands in.
-    pub(super) readers_of_declarations: Vec<(SymbolId, WalkedFunctionId, FnId, Option<u32>, WalkedFunctionId)>,
+    pub(super) readers_of_declarations: Vec<(
+        SymbolId,
+        WalkedFunctionId,
+        FnId,
+        Option<u32>,
+        WalkedFunctionId,
+    )>,
     pub(super) declarations_read_by_every_run: Vec<SymbolId>,
     // The functions of which every run makes a closure: `function createChecker() { .. return { check, typeOf: n => .. }; }`. Their scopes live on whatever is made late,
     // and a function like that declares hundreds of names which thousands of places read: they are made where the scope is entered, as ever.

@@ -30,7 +30,10 @@ fn evaluates_text(id: BuiltinId) -> bool {
         || table::has_flag(table::canonical_id(id), BuiltinFlags::EVALUATES_TEXT)
 }
 
-pub(super) fn find_outermost_assertion(request: &FinishedFile<'_, '_>, mut value: ExprId) -> ExprId {
+pub(super) fn find_outermost_assertion(
+    request: &FinishedFile<'_, '_>,
+    mut value: ExprId,
+) -> ExprId {
     let &FinishedFile { hir, bound, .. } = request;
     while let Parent::Expr(parent) = bound.parent_of_expr(value)
         && hir.type_assertion_operand(parent) == Some(value)

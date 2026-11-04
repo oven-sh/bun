@@ -57,7 +57,9 @@ async function textsIn(files: Record<string, string>, flags: string[] = []) {
   await using ran = Bun.spawn({ cmd: [executable], env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout] = await Promise.all([ran.stdout.text(), ran.exited]);
   // The texts of an image stand side by side with nothing between them.
-  const written = Object.entries(files).flatMap(([name, text]) => (name + text).match(/(RULED_OUT|KEPT)_[A-Z]+/g) ?? []);
+  const written = Object.entries(files).flatMap(
+    ([name, text]) => (name + text).match(/(RULED_OUT|KEPT)_[A-Z]+/g) ?? [],
+  );
   const bytes = readFileSync(executable);
   return { stdout, found: [...new Set(written)].filter(text => bytes.includes(text)).sort() };
 }
@@ -106,7 +108,8 @@ for (const [way, header, condition] of [ways[0], ways[5]]) {
 
 // `Host.run()` hands the namespace object to whatever `run` holds as `this`. The build cannot tell by the binding what that is, and still the other members of the barrel are not all reached.
 test("a member of a barrel that only the arm names, beside a member that is called and is no function as it is written", async () => {
-  const barrel = (...files: string[]) => files.map(file => `export * from "${file}";\n`).join("") + `export * as default from ".";\n`;
+  const barrel = (...files: string[]) =>
+    files.map(file => `export * from "${file}";\n`).join("") + `export * as default from ".";\n`;
   const { stdout, found } = await textsIn({
     "live.ts": behindTheArm["live.ts"],
     "host/index.ts": barrel("./inner/index.js", "./made.js"),

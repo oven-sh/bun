@@ -201,10 +201,13 @@ fn collect_imports_between_es_modules(scans: &Scans, modules: &ModuleSet) -> Vec
         let Some(scan) = find_es_module(scans, importer) else {
             continue;
         };
-        let imported = scan.requests.iter().filter_map(|request| match request.target {
-            ModuleRef::File(target) if find_es_module(scans, target).is_some() => Some(target),
-            _ => None,
-        });
+        let imported = scan
+            .requests
+            .iter()
+            .filter_map(|request| match request.target {
+                ModuleRef::File(target) if find_es_module(scans, target).is_some() => Some(target),
+                _ => None,
+            });
         imports.extend(imported.map(|imported| (importer, imported)));
     }
     debug_assert!(imports.is_sorted_by_key(|import| import.0));

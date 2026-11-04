@@ -784,9 +784,7 @@ impl<'p, 's> Checker<'p, 's> {
             let is_repeated = was_resolving && self.are_base_types_resolved_by_check(target);
             // That file's task may not have reached this point yet. It would then read what this
             // task stores and never report 2310.
-            if is_repeated
-                && let Some(from) = self.outermost_in_flight(Query::Bases(target), 0)
-            {
+            if is_repeated && let Some(from) = self.outermost_in_flight(Query::Bases(target), 0) {
                 self.close_cycle(from);
             }
             let bases = if is_repeated {

@@ -163,7 +163,13 @@ const heldElsewhereToo = {
 // Whatever else stands there names the test or holds its options: BunTestOptions in ScopeFunctions.bind.ts.
 const keptByRunner = (passed: Pick<b.CallbackOptions, "args" | "spreadArgs">) => [
   b.retained,
-  b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "PerEvent", this: b.undefined, result: "Escapes", ...passed }),
+  b.called({
+    afterwards: "TouchesOnlyWhatRowNames",
+    times: "PerEvent",
+    this: b.undefined,
+    result: "Escapes",
+    ...passed,
+  }),
 ];
 // The function that ends the test: a function that the runner has bound.
 const passedByJest = keptByRunner({ args: [b.instance("Function").fresh] });
@@ -181,7 +187,10 @@ const registersWithRunner = (kept: readonly b.UseSpec[]) =>
   }) satisfies b.FunctionField;
 
 // create_test_module() in src/runtime/test_runner/jest.rs makes each of these anew for either module.
-const scopeFunctionsOfRunner = { test: ["it"], xtest: ["xit"], describe: [], xdescribe: [] } satisfies Record<string, readonly string[]>;
+const scopeFunctionsOfRunner = { test: ["it"], xtest: ["xit"], describe: [], xdescribe: [] } satisfies Record<
+  string,
+  readonly string[]
+>;
 const hooksOfRunner = ["beforeAll", "beforeEach", "afterAll", "afterEach", "onTestFinished"];
 const aroundHooksOfRunner = ["aroundAll", "aroundEach"];
 

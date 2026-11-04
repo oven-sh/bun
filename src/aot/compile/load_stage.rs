@@ -784,10 +784,7 @@ mod tests {
             ("", PLAIN, true),
             (
                 "",
-                (
-                    "helper.cjs",
-                    r#"exports.mark = require("node:path").sep;"#,
-                ),
+                ("helper.cjs", r#"exports.mark = require("node:path").sep;"#),
                 true,
             ),
             (
@@ -910,10 +907,7 @@ mod tests {
 
     #[test]
     fn alias_of_entry_point_names_one_file_and_is_the_path_of_no_module() {
-        let files = [
-            ("main.ts", "import './other';"),
-            ("other.ts", "export {};"),
-        ];
+        let files = [("main.ts", "import './other';"), ("other.ts", "export {};")];
         let paths = |public_path: &str, file_name: &str| EntryPointPaths {
             public_path: public_path.as_bytes().to_vec(),
             source_path: source_path_of(file_name.as_bytes()),

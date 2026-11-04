@@ -35,7 +35,9 @@ impl TypesByHeight {
             let height = named.map(|id| heights[id.index()] + 1).max();
             heights.push(height.unwrap_or(0));
         }
-        let heights = heights.get(TypeTable::WELL_KNOWN_COUNT..).unwrap_or_default();
+        let heights = heights
+            .get(TypeTable::WELL_KNOWN_COUNT..)
+            .unwrap_or_default();
         let highest = heights.iter().max();
         let height_count = highest.map_or(0, |&highest| highest as usize + 1);
 
@@ -536,7 +538,9 @@ fn list_types_of_tables(tables: &[LinkTables]) -> Vec<&[Type]> {
 }
 
 fn sort_lists_by_height(lists: &[&[Type]], in_parallel: InParallel<'_>) -> Vec<TypesByHeight> {
-    map_each(lists.to_vec(), in_parallel, &|types| TypesByHeight::new(types))
+    map_each(lists.to_vec(), in_parallel, &|types| {
+        TypesByHeight::new(types)
+    })
 }
 
 /// For each set of tables. This asks for no id of the program.
@@ -647,7 +651,9 @@ fn find_alike_types_in_lists(
         let numbers = numbers.filter(|&(_, &is_chosen)| is_chosen);
         *chosen = numbers.map(|(&number, _)| number).collect();
     });
-    let chosen = tasks.into_iter().filter(|(_, _, numbers)| !numbers.is_empty());
+    let chosen = tasks
+        .into_iter()
+        .filter(|(_, _, numbers)| !numbers.is_empty());
     let chosen: Vec<ChosenTypes> = chosen
         .map(|(run, _, numbers)| ChosenTypes {
             tables: run.tables,
@@ -830,7 +836,10 @@ fn make_records_of_lists<'a>(
     // The link adds types of its own behind these, and a list that is full is copied as a whole for the first of them.
     let mut program_types: Vec<Type> = Vec::with_capacity(merged.count + merged.count / 8);
     program_types.extend_from_slice(TypeTable::new().types());
-    extend_from_each(&mut program_types, &merged.places, in_parallel, &|&(tables, number)| {
+    extend_from_each(&mut program_types, &merged.places, in_parallel, &|&(
+        tables,
+        number,
+    )| {
         let mut ty = lists[tables as usize][number as usize].clone();
         ty.remap_ids(&map_of(tables));
         ty
@@ -962,7 +971,10 @@ mod tests {
         };
         let records = make_records_of_lists(lists, &merged, &map_of, in_parallel);
         assert_eq!(records.len(), merged.count);
-        (TypeTable::of_distinct_types(records, in_parallel), program_ids)
+        (
+            TypeTable::of_distinct_types(records, in_parallel),
+            program_ids,
+        )
     }
 
     fn merge(
@@ -1015,7 +1027,9 @@ mod tests {
         // Every number of the tables is the id of the program.
         let ids = TableIds {
             strings: (0..2).map(|index| Some(string(index))).collect(),
-            types: (0..WELL_KNOWN_COUNT).map(|index| Some(TypeId::new(index))).collect(),
+            types: (0..WELL_KNOWN_COUNT)
+                .map(|index| Some(TypeId::new(index)))
+                .collect(),
             layouts: (0..2).map(|index| Some(layout(index))).collect(),
             functions: (0..2).map(|index| Some(function(index))).collect(),
             ..TableIds::default()
@@ -1061,8 +1075,14 @@ mod tests {
             .map(|index| Some(TypeId::new(index)))
             .collect();
         assert_eq!(ids, [same_ids]);
-        assert_eq!(program.types()[..WELL_KNOWN_COUNT], *TypeTable::new().types());
-        assert_eq!(program.types()[WELL_KNOWN_COUNT..], [array_of(TypeTable::ARRAY)]);
+        assert_eq!(
+            program.types()[..WELL_KNOWN_COUNT],
+            *TypeTable::new().types()
+        );
+        assert_eq!(
+            program.types()[WELL_KNOWN_COUNT..],
+            [array_of(TypeTable::ARRAY)]
+        );
     }
 
     #[test]
@@ -1140,7 +1160,10 @@ mod tests {
         for names in [by_key, Names::of_ids(&ids)] {
             let (program, ids) = merge_lists(&lists, &names, &ids, keep_hash, &run_serially);
             assert_eq!(program.types()[WELL_KNOWN_COUNT..], expected);
-            assert_eq!(ids[0][WELL_KNOWN_COUNT..], [id(2), id(0), id(1), None, id(3)]);
+            assert_eq!(
+                ids[0][WELL_KNOWN_COUNT..],
+                [id(2), id(0), id(1), None, id(3)]
+            );
             assert_eq!(ids[1][WELL_KNOWN_COUNT..], [id(2), id(1), None, id(3)]);
         }
     }
@@ -1174,7 +1197,10 @@ mod tests {
             assert_eq!(ids[0][id.index()], None);
         }
         assert_eq!(ids[0][whole.index()], id_behind_well_known_types(0));
-        assert_eq!(program.types()[WELL_KNOWN_COUNT..], [Type::function(function(0))]);
+        assert_eq!(
+            program.types()[WELL_KNOWN_COUNT..],
+            [Type::function(function(0))]
+        );
     }
 
     fn table_of_ranges_and_their_lists(maxima: impl Iterator<Item = i64>) -> TypeTable {
@@ -1304,7 +1330,10 @@ mod tests {
         assert_eq!(one_part.part_of(u64::MAX), 0);
         let four_parts = Hashing::new(keep_hash, MIN_PART_LENGTH * 7);
         assert_eq!(four_parts.part_count(), 4);
-        assert_eq!([0, 1 << 62, u64::MAX].map(|hash| four_parts.part_of(hash)), [0, 1, 3]);
+        assert_eq!(
+            [0, 1 << 62, u64::MAX].map(|hash| four_parts.part_of(hash)),
+            [0, 1, 3]
+        );
         let most_parts = Hashing::new(keep_hash, usize::MAX);
         assert_eq!(most_parts.part_count(), 1 << MAX_PART_BITS);
         assert_eq!(most_parts.part_of(u64::MAX), most_parts.part_count() - 1);

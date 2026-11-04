@@ -67,9 +67,7 @@ async function runTests(directory: string, words: string | undefined, ...flags: 
   return { stdout: stdout.split("\n").filter(line => line && !line.startsWith("bun test ")), exitCode };
 }
 
-for (const [way, words] of [
-  ["as one program", "TestRunLayers:0"],
-]) {
+for (const [way, words] of [["as one program", "TestRunLayers:0"]]) {
   test(`a file decides its branches by what a spy or a mock stored in its exported variables, ${way}`, async () => {
     using dir = tempDir("aot-a-spy-or-mock-reaches-the-branches", files);
     const plain = await runTests(String(dir), undefined);

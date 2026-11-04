@@ -965,7 +965,10 @@ fn test_run_lists_its_files_in_the_cache() {
     let test_run = link_test_run(&files);
     assert!(is_listed(record_named(&test_run, "main.test.js")));
     assert!(is_listed(record_named(&test_run, "dep.cjs")));
-    assert!(!is_listed(runtime_record(&test_run, RuntimeModule::NodePath)));
+    assert!(!is_listed(runtime_record(
+        &test_run,
+        RuntimeModule::NodePath
+    )));
     let executable = link_program(&files);
     assert!(!executable.modules.iter().any(is_listed));
 }

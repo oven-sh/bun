@@ -209,10 +209,14 @@ impl<'a> CallReader<'a, '_> {
 
     /// False for a name that a plain object resolves without an own property (a member of `Object.prototype`, `__proto__`) and for an array index, which is not stored as a named property.
     fn can_be_variable(&self, name: Atom) -> bool {
-        let is_index = self.atoms.bytes(name).first().is_some_and(u8::is_ascii_digit);
+        let is_index = self
+            .atoms
+            .bytes(name)
+            .first()
+            .is_some_and(u8::is_ascii_digit);
         let listed = self.builtin_names.get(name);
-        let is_inherited =
-            listed.is_some_and(|name| table::own_member(BuiltinId::ObjectPrototype, name).is_some());
+        let is_inherited = listed
+            .is_some_and(|name| table::own_member(BuiltinId::ObjectPrototype, name).is_some());
         !is_index && !is_inherited && name != known::__proto__
     }
 

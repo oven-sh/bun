@@ -48,7 +48,10 @@ impl Diagnostics {
                 Effect::StopsBuild => Kind::Err,
                 Effect::Warns => Kind::Warn,
                 Effect::WithdrawsTrust => {
-                    debug_assert!(false, "the driver decides the roles by these and returns none");
+                    debug_assert!(
+                        false,
+                        "the driver decides the roles by these and returns none"
+                    );
                     continue;
                 }
                 Effect::Dropped => {

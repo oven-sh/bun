@@ -348,23 +348,27 @@ export async function loadWritten(text: string) {
 };
 
 for (const [name, files] of Object.entries(shapes)) {
-  test.concurrent(`whose a helper is that loads what it has written: ${name}`, async () => {
-    using dir = tempDir("aot-whose-a-file-is", files);
-    const seenWith = async (...flags: string[]) => {
-      const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags, "a.test.ts"], String(dir), bunEnv);
-      return {
-        lines: stdout.split("\n").filter(line => line.startsWith("SEEN")),
-        refused: (stdout + stderr).includes("it wasn't compiled with the program"),
-        exitCode,
+  test.concurrent(
+    `whose a helper is that loads what it has written: ${name}`,
+    async () => {
+      using dir = tempDir("aot-whose-a-file-is", files);
+      const seenWith = async (...flags: string[]) => {
+        const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags, "a.test.ts"], String(dir), bunEnv);
+        return {
+          lines: stdout.split("\n").filter(line => line.startsWith("SEEN")),
+          refused: (stdout + stderr).includes("it wasn't compiled with the program"),
+          exitCode,
+        };
       };
-    };
-    const [plain, compiled] = await Promise.all([seenWith(), seenWith("--aot")]);
-    expect(plain.lines.length).toBe(1);
-    expect(plain).toMatchObject({ refused: false, exitCode: 0 });
-    if (name.startsWith("REFUSED-")) {
-      expect(compiled).toEqual({ lines: [], refused: true, exitCode: 1 });
-    } else {
-      expect(compiled).toEqual(plain);
-    }
-  }, 120_000);
+      const [plain, compiled] = await Promise.all([seenWith(), seenWith("--aot")]);
+      expect(plain.lines.length).toBe(1);
+      expect(plain).toMatchObject({ refused: false, exitCode: 0 });
+      if (name.startsWith("REFUSED-")) {
+        expect(compiled).toEqual({ lines: [], refused: true, exitCode: 1 });
+      } else {
+        expect(compiled).toEqual(plain);
+      }
+    },
+    120_000,
+  );
 }

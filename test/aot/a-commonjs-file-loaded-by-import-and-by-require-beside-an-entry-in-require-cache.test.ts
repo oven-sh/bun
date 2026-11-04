@@ -90,9 +90,7 @@ const project = {
     });`,
 };
 
-const ways: [string, Record<string, string>][] = [
-  ["as one program", { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" }],
-];
+const ways: [string, Record<string, string>][] = [["as one program", { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" }]];
 
 async function runTests(directory: string, env: Record<string, string>, ...flags: string[]) {
   const command = [bunExe(), "test", "--preload", "./preload.cjs", ...flags];

@@ -1,6 +1,4 @@
-use super::test_run_ways::{
-    AskedBy, Step, find_way_of_read, find_way_to_declaration, has_station,
-};
+use super::test_run_ways::{AskedBy, Step, find_way_of_read, find_way_to_declaration, has_station};
 use crate::compile::link_program;
 use crate::compile::testing::{BUNDLED_LIBS, TestProject, default_settings, describe_messages};
 use crate::ir::{Program, print_program};
@@ -57,11 +55,7 @@ fn describe(input: &BindInput<'_, '_>, steps: &[Step]) -> Vec<String> {
 }
 
 /// The way from a name that the test file asks of a file. `others`: the files beside the test file.
-fn find_way(
-    mocked: &[&str],
-    others: &[(&str, &str)],
-    asked: (&str, &str),
-) -> Vec<String> {
+fn find_way(mocked: &[&str], others: &[(&str, &str)], asked: (&str, &str)) -> Vec<String> {
     let imports = format!("import * as all from './{}';\nconsole.log(all);\n", asked.0);
     let test_file = write_test_file(mocked, &imports);
     let mut files = vec![(TEST_FILE, test_file.as_str())];
@@ -97,7 +91,10 @@ fn find_stations(mocked: &[&str], rest: &str, others: &[(&str, &str)]) -> Vec<St
     let program = link_test_run(&files);
     let file_of = |line: &str, field: &str| -> Option<String> {
         let mut words = line.split_whitespace();
-        let module: usize = words.find_map(|word| word.strip_prefix(field))?.parse().ok()?;
+        let module: usize = words
+            .find_map(|word| word.strip_prefix(field))?
+            .parse()
+            .ok()?;
         let path = program.strings.get(program.modules[module].path);
         let name = path.rsplit(|&byte| byte == b'/').next().unwrap_or(path);
         Some(String::from_utf8_lossy(name).into_owned())
@@ -124,9 +121,16 @@ fn find_asks_of_user(test_file: &str, uses: &str) -> Vec<&'static str> {
     let mut asks = Vec::new();
     for line in print_program(&program).lines() {
         if line.starts_with("function ") {
-            let module = line.split_whitespace().find_map(|word| word.strip_prefix("module=m"));
-            let module: usize = module.and_then(|it| it.parse().ok()).expect("a function has a module");
-            is_in_user = program.strings.get(program.modules[module].path).ends_with(b"/uses.js");
+            let module = line
+                .split_whitespace()
+                .find_map(|word| word.strip_prefix("module=m"));
+            let module: usize = module
+                .and_then(|it| it.parse().ok())
+                .expect("a function has a module");
+            is_in_user = program
+                .strings
+                .get(program.modules[module].path)
+                .ends_with(b"/uses.js");
         }
         for operation in ["ModuleNamespace", "RequireModule"] {
             if is_in_user && line.contains(&format!(" = {operation} ")) {
@@ -141,10 +145,16 @@ fn find_asks_of_user(test_file: &str, uses: &str) -> Vec<&'static str> {
 fn module_that_mocks_alone_make_is_asked_for_at_each_read() {
     let uses = "import { who } from 'vscode';\nimport * as all from 'vscode';\nexport const use = () => [who(), all.who()];\n";
     let mocks = "import { mock } from 'bun:test';\nmock.module('vscode', () => ({ who: () => 1 }));\nconst { use } = await import('./uses.js');\nuse();\n";
-    assert_eq!(find_asks_of_user(mocks, uses), ["RequireModule", "RequireModule"]);
+    assert_eq!(
+        find_asks_of_user(mocks, uses),
+        ["RequireModule", "RequireModule"]
+    );
     // No mock gives the name: what the loader answered at the link stays.
     let mocks_another = mocks.replace("mock.module('vscode'", "mock.module('electron'");
-    assert_eq!(find_asks_of_user(&mocks_another, uses), ["ModuleNamespace", "ModuleNamespace"]);
+    assert_eq!(
+        find_asks_of_user(&mocks_another, uses),
+        ["ModuleNamespace", "ModuleNamespace"]
+    );
 }
 
 #[test]
@@ -157,11 +167,17 @@ fn computed_load_may_name_a_declaration_file_beside_a_spy() {
         let files = [
             ("main.test.ts", &test_file[..]),
             ("lib/more.d.ts", "export declare const more: number;\n"),
-            ("lib/real.ts", "export * from './below';\nexport const real = 1;\n"),
+            (
+                "lib/real.ts",
+                "export * from './below';\nexport const real = 1;\n",
+            ),
             ("lib/below.ts", "export const below = 1;\n"),
         ];
         let program = link_test_run(&files);
-        let paths = program.modules.iter().map(|module| program.strings.get(module.path));
+        let paths = program
+            .modules
+            .iter()
+            .map(|module| program.strings.get(module.path));
         // The declaration file is among what the load may name: it has a record, and no code.
         for name in [&b"/lib/real.ts"[..], b"/lib/more.d.ts"] {
             assert!(paths.clone().any(|path| path.ends_with(name)));
@@ -212,10 +228,7 @@ fn name_that_is_handed_on_is_asked_of_each_file_under_the_name_it_has_there() {
     let reads = "import { b } from './barrel.js';\nconsole.log(b);\n";
     assert_eq!(
         find_stations(&["barrel.js", "lib.js"], reads, &files),
-        [
-            "barrel.js seen by main.test.js",
-            "lib.js seen by barrel.js"
-        ]
+        ["barrel.js seen by main.test.js", "lib.js seen by barrel.js"]
     );
 }
 
@@ -227,7 +240,11 @@ fn name_that_is_handed_on_twice_has_a_station_for_the_third_file() {
         ("lib.js", "export const a = () => 'real';\n"),
     ];
     assert_eq!(
-        find_way(&["outer.js", "inner.js", "lib.js"], &files, ("outer.js", "c")),
+        find_way(
+            &["outer.js", "inner.js", "lib.js"],
+            &files,
+            ("outer.js", "c")
+        ),
         [
             "outer.js c by the statement from the reader behind 4",
             "inner.js b by its name from outer.js behind 4",
@@ -246,7 +263,10 @@ fn name_that_is_handed_on_twice_has_a_station_for_the_third_file() {
 #[test]
 fn import_that_a_file_exports_hands_the_name_on() {
     let files = [
-        ("barrel.js", "import { a } from './lib.js';\nexport { a as b };\n"),
+        (
+            "barrel.js",
+            "import { a } from './lib.js';\nexport { a as b };\n",
+        ),
         ("lib.js", "export const a = 1;\n"),
     ];
     assert_eq!(
@@ -279,10 +299,7 @@ fn file_that_a_star_names_is_a_station() {
     let files = [("barrel.js", "export * from './lib.js';\n"), LIB];
     assert_eq!(
         find_way(&["lib.js"], &files, ("barrel.js", "fn")),
-        [
-            "lib.js fn by a star from barrel.js behind 2",
-            "declaration"
-        ]
+        ["lib.js fn by a star from barrel.js behind 2", "declaration"]
     );
     assert_eq!(
         find_stations(&["lib.js"], READS_FN, &files),
@@ -310,10 +327,7 @@ fn mock_behind_a_star_that_lacks_the_name_sends_the_question_to_the_next_star() 
     );
     assert_eq!(
         find_stations(&["first.js", "second.js"], READS_FN, &files),
-        [
-            "first.js seen by barrel.js",
-            "second.js seen by barrel.js"
-        ]
+        ["first.js seen by barrel.js", "second.js seen by barrel.js"]
     );
 }
 
@@ -432,14 +446,20 @@ fn ordinary_star_beside_a_star_whose_names_show_in_the_run_is_asked_too() {
 fn ring_of_stars_ends() {
     let files = [
         ("a.js", "export * from './b.js';\nexport const own = 1;\n"),
-        ("b.js", "export * from './a.js';\nexport * from './lib.js';\n"),
+        (
+            "b.js",
+            "export * from './a.js';\nexport * from './lib.js';\n",
+        ),
         LIB,
     ];
     assert_eq!(
         find_way(&["lib.js"], &files, ("a.js", "fn")),
         ["lib.js fn by a star from b.js behind 2", "declaration"]
     );
-    assert_eq!(find_way(&["lib.js"], &files, ("a.js", "own")), ["declaration"]);
+    assert_eq!(
+        find_way(&["lib.js"], &files, ("a.js", "own")),
+        ["declaration"]
+    );
 }
 
 #[test]
@@ -488,7 +508,10 @@ fn commonjs_file_behind_its_face_is_a_station() {
     with_test_run_graph(&files, |graph, input| {
         let reader = file_named(input, TEST_FILE);
         let binding = graph.import_binding(reader, symbol_named(input, reader, "flag"));
-        let asked = (file_named(input, "barrel.js"), input.files.atoms.intern(b"flag"));
+        let asked = (
+            file_named(input, "barrel.js"),
+            input.files.atoms.intern(b"flag"),
+        );
         let steps = find_way_of_read(graph, reader, binding, Some(asked));
         let stations = steps.iter().filter_map(|step| match *step {
             Step::Station { file, .. } => Some(name_of(input, file)),
@@ -548,7 +571,10 @@ fn program_that_mocks_no_file_has_no_station() {
     // A mock elsewhere: no request leads from the barrel to it.
     let mut beside = files.to_vec();
     beside.push(("elsewhere.js", "export const far = 1;\n"));
-    assert_eq!(find_way(&["elsewhere.js"], &beside, ("barrel.js", "fn")), [""; 0]);
+    assert_eq!(
+        find_way(&["elsewhere.js"], &beside, ("barrel.js", "fn")),
+        [""; 0]
+    );
     let reads = "import './elsewhere.js';\nimport { fn } from './barrel.js';\nconsole.log(fn);\n";
     assert_eq!(find_stations(&["elsewhere.js"], reads, &beside), [""; 0]);
 }
@@ -561,7 +587,10 @@ fn write_chain(count: usize) -> Vec<(String, String)> {
                 true => String::from("lib.js"),
                 false => format!("b{}.js", index + 1),
             };
-            (format!("b{index}.js"), format!("export * from './{next}';\n"))
+            (
+                format!("b{index}.js"),
+                format!("export * from './{next}';\n"),
+            )
         })
         .collect();
     files.push((LIB.0.to_owned(), LIB.1.to_owned()));
@@ -581,7 +610,10 @@ fn chain_of_barrels_has_a_step_for_each_file() {
             way[0],
             format!("b0.js fn by the statement from the reader behind {behind}")
         );
-        assert_eq!(way[1], format!("b1.js fn by a star from b0.js behind {behind}"));
+        assert_eq!(
+            way[1],
+            format!("b1.js fn by a star from b0.js behind {behind}")
+        );
         let last = count - 1;
         assert_eq!(
             way[count],

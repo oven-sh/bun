@@ -526,7 +526,11 @@ fn a_var_that_may_still_be_undefined_only_may_hold_the_object() {
         "let m = module; f(m.id);",
         "const m = module; const n = m; f(n.id);",
     ] {
-        let name = if source.contains("n.id") { "n.id" } else { "m.id" };
+        let name = if source.contains("n.id") {
+            "n.id"
+        } else {
+            "m.id"
+        };
         assert_mentions(source, &[(name, OwnFile, Field(ModuleField::Id))]);
     }
 }

@@ -15,7 +15,9 @@ use crate::load::data_modules::parse_json;
 use crate::load::source_provider::SourceProvider;
 use crate::options::Options;
 use crate::report::{self, ReportEntry, ReportInput, ReportMessage};
-use crate::statistics::{StatisticId, Statistics, log_part_outside_stages, log_time_outside_stages};
+use crate::statistics::{
+    StatisticId, Statistics, log_part_outside_stages, log_time_outside_stages,
+};
 
 fn wrap_statistics(statistics: Statistics) -> interface::statistics::Statistics {
     interface::statistics::Statistics(Opaque::new(statistics))

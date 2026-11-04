@@ -57,9 +57,7 @@ async function filesWithError(cwd: string, flags: string[], words = "") {
   }
   return { withError: withError.sort(), exitCode };
 }
-const forms: [string, string][] = [
-  ["as one program", "TestRunLayers:0"],
-];
+const forms: [string, string][] = [["as one program", "TestRunLayers:0"]];
 
 test.each(forms)("an answer that is there when the last test ends is an error of its file, %s", async (_, words) => {
   const files = Object.entries(seen).map(([name, call]) => [`${name}.test.mjs`, fileOf(name, call, goesOn)]);

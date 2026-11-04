@@ -237,13 +237,14 @@ pub(super) fn remove_unread_data_exports(rows: &mut [FileRow]) {
             is_read[variable.0 as usize] = true;
         }
         let mut unread_exports = Vec::new();
-        row.exports.retain(|export| match own_variable(file, export) {
-            Some(variable) if !is_read[variable.0 as usize] => {
-                unread_exports.push(variable);
-                false
-            }
-            Some(_) | None => true,
-        });
+        row.exports
+            .retain(|export| match own_variable(file, export) {
+                Some(variable) if !is_read[variable.0 as usize] => {
+                    unread_exports.push(variable);
+                    false
+                }
+                Some(_) | None => true,
+            });
         // Lowering searches the list by symbol.
         unread_exports.sort_unstable();
         unread_exports.dedup();

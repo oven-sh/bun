@@ -112,7 +112,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.file.name_given_by_binding(binding, node.name)
         });
         let name = match has_class_decorators {
-            true => own_name.or(name).map(|given| self.file.name_as_written(given)),
+            true => own_name
+                .or(name)
+                .map(|given| self.file.name_as_written(given)),
             false => own_name.or(name),
         };
         let head = self.emit_class_head(class, &plan, name, heritage);

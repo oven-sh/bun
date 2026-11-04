@@ -11,8 +11,8 @@ use bun_sema::atom::{Atom, known, written_name};
 use bun_sema::bind::{FnOwner, Parent};
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{
-    BinOp, Call, Chain, ExprFlags, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, NameKind, PatId, PatKind,
-    PropId, PropKey, PropKind, StmtId, StmtKind, UnOp, VarKind, end_of_expr, start_of,
+    BinOp, Call, Chain, ExprFlags, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, NameKind, PatId,
+    PatKind, PropId, PropKey, PropKind, StmtId, StmtKind, UnOp, VarKind, end_of_expr, start_of,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -162,8 +162,12 @@ fn is_truthy(constant: Constant, is_empty: impl FnOnce(Atom) -> bool) -> Option<
 
 impl Printer<'_, '_, '_, '_, '_> {
     fn space_before_name(&mut self) {
-        let is_part_of_name = |last: u8| last == b'_' || last == b'$' || last >= 0x80 || last.is_ascii_alphanumeric();
-        if self.text[self.start..].last().is_some_and(|&last| is_part_of_name(last)) {
+        let is_part_of_name =
+            |last: u8| last == b'_' || last == b'$' || last >= 0x80 || last.is_ascii_alphanumeric();
+        if self.text[self.start..]
+            .last()
+            .is_some_and(|&last| is_part_of_name(last))
+        {
             self.text.push(b' ');
         }
     }
@@ -175,7 +179,9 @@ impl Printer<'_, '_, '_, '_, '_> {
 
     // `+ +x`, `- -x`, `+ ++x`, `- --x`
     fn operator(&mut self, operator: &[u8]) {
-        if matches!(operator[0], b'+' | b'-') && self.text[self.start..].last() == Some(&operator[0]) {
+        if matches!(operator[0], b'+' | b'-')
+            && self.text[self.start..].last() == Some(&operator[0])
+        {
             self.text.push(b' ');
         }
         self.text.extend_from_slice(operator);
@@ -185,7 +191,9 @@ impl Printer<'_, '_, '_, '_, '_> {
         let (hir, decisions) = (self.file.hir, self.file.decisions());
         // A template stays one.
         let is_template = matches!(hir[expression].kind, ExprKind::Template { .. })
-            || hir.expr_flags(expression).contains(ExprFlags::TEMPLATE_LITERAL);
+            || hir
+                .expr_flags(expression)
+                .contains(ExprFlags::TEMPLATE_LITERAL);
         if is_template || !decisions.is_constant_in_bun_run(hir, expression) {
             return None;
         }
@@ -258,8 +266,15 @@ impl Printer<'_, '_, '_, '_, '_> {
     }
 
     fn characters(&mut self, text: Atom, quote: u8) {
-        write_pre_quoted_string(self.file.queries.atom_bytes(text), &mut self.text, quote, true, false, Encoding::Utf8)
-            .expect("a list of bytes takes every byte");
+        write_pre_quoted_string(
+            self.file.queries.atom_bytes(text),
+            &mut self.text,
+            quote,
+            true,
+            false,
+            Encoding::Utf8,
+        )
+        .expect("a list of bytes takes every byte");
     }
 
     fn pattern(&mut self, pattern: PatId) {
@@ -269,9 +284,16 @@ impl Printer<'_, '_, '_, '_, '_> {
             PatKind::Missing => {}
             PatKind::Ident(name) => {
                 self.space_before_name();
-                append_printed_name(written_name_of_local(self.file.queries.atom_bytes(name)), &mut self.text);
+                append_printed_name(
+                    written_name_of_local(self.file.queries.atom_bytes(name)),
+                    &mut self.text,
+                );
             }
-            PatKind::Array(_) | PatKind::Object(_) if !self.file.is_on_one_line(written.pos, written.end) => self.gaps += 1,
+            PatKind::Array(_) | PatKind::Object(_)
+                if !self.file.is_on_one_line(written.pos, written.end) =>
+            {
+                self.gaps += 1
+            }
             PatKind::Array(elements) => {
                 self.text.push(b'[');
                 let count = elements.len();
@@ -295,7 +317,8 @@ impl Printer<'_, '_, '_, '_, '_> {
                 self.text.push(b'{');
                 for (index, property) in properties.iter().enumerate() {
                     let property = hir[property];
-                    self.text.extend_from_slice(if index > 0 { b", " } else { b" " });
+                    self.text
+                        .extend_from_slice(if index > 0 { b", " } else { b" " });
                     match property.key {
                         _ if property.is_rest => self.text.extend_from_slice(b"..."),
                         PropKey::Computed(key) => {
@@ -306,7 +329,10 @@ impl Printer<'_, '_, '_, '_, '_> {
                         PropKey::Name(key) => {
                             let key = self.file.queries.atom_bytes(key);
                             let is_named_like_key = matches!(hir[property.value].kind, PatKind::Ident(name) if self.file.queries.atom_bytes(name) == key);
-                            let is_written_as_name = matches!(property.name_kind, NameKind::Identifier | NameKind::StringLiteral);
+                            let is_written_as_name = matches!(
+                                property.name_kind,
+                                NameKind::Identifier | NameKind::StringLiteral
+                            );
                             if !(is_identifier(key) && is_named_like_key && is_written_as_name) {
                                 self.key(key, property.name_kind);
                                 self.text.extend_from_slice(b": ");
@@ -317,7 +343,8 @@ impl Printer<'_, '_, '_, '_, '_> {
                     self.pattern(property.value);
                     self.default_of_pattern(property.default);
                 }
-                self.text.extend_from_slice(if properties.is_empty() { b"}" } else { b" }" });
+                self.text
+                    .extend_from_slice(if properties.is_empty() { b"}" } else { b" }" });
             }
         }
     }
@@ -368,7 +395,8 @@ impl Printer<'_, '_, '_, '_, '_> {
             }
             append_printed_name(name, &mut self.text);
         } else {
-            self.text.extend_from_slice(if starts_chain { b"?.[" } else { b"[" });
+            self.text
+                .extend_from_slice(if starts_chain { b"?.[" } else { b"[" });
             append_printed_text(name, &mut self.text);
             self.text.push(b']');
         }
@@ -388,11 +416,15 @@ impl Printer<'_, '_, '_, '_, '_> {
     /// True: the key is a name, so that `{ key: key }` is printed `{ key }`.
     fn key(&mut self, key: &[u8], written_as: NameKind) -> bool {
         match written_as {
-            NameKind::Identifier | NameKind::StringLiteral | NameKind::Jsx if is_identifier(key) => {
+            NameKind::Identifier | NameKind::StringLiteral | NameKind::Jsx
+                if is_identifier(key) =>
+            {
                 self.word(key);
                 return true;
             }
-            NameKind::Identifier | NameKind::StringLiteral | NameKind::Jsx => append_printed_text(key, &mut self.text),
+            NameKind::Identifier | NameKind::StringLiteral | NameKind::Jsx => {
+                append_printed_text(key, &mut self.text)
+            }
             NameKind::NumericLiteral => self.word(key),
             NameKind::ComputedString => {
                 self.text.push(b'[');
@@ -475,7 +507,9 @@ impl Printer<'_, '_, '_, '_, '_> {
                 break;
             }
             let known = match op {
-                BinOp::And | BinOp::Or | BinOp::Nullish => self.constant_of(self.file.skip_type_syntax(left)),
+                BinOp::And | BinOp::Or | BinOp::Nullish => {
+                    self.constant_of(self.file.skip_type_syntax(left))
+                }
                 _ => None,
             };
             let is_empty = |text: Atom| self.file.queries.atom_bytes(text).is_empty();
@@ -507,7 +541,13 @@ impl Printer<'_, '_, '_, '_, '_> {
                 _ => right_level = own,
             }
             let is_and_or_or = |operand: ExprId| {
-                matches!(hir[self.file.skip_type_syntax(operand)].kind, ExprKind::Binary { op: BinOp::And | BinOp::Or, .. })
+                matches!(
+                    hir[self.file.skip_type_syntax(operand)].kind,
+                    ExprKind::Binary {
+                        op: BinOp::And | BinOp::Or,
+                        ..
+                    }
+                )
             };
             if op == BinOp::Nullish {
                 if is_and_or_or(left) {
@@ -523,7 +563,13 @@ impl Printer<'_, '_, '_, '_, '_> {
                     hir[base].kind,
                     ExprKind::Await(_)
                         | ExprKind::Unary {
-                            op: UnOp::Plus | UnOp::Minus | UnOp::BitNot | UnOp::Not | UnOp::Typeof | UnOp::Void | UnOp::Delete,
+                            op: UnOp::Plus
+                                | UnOp::Minus
+                                | UnOp::BitNot
+                                | UnOp::Not
+                                | UnOp::Typeof
+                                | UnOp::Void
+                                | UnOp::Delete,
                             ..
                         }
                 );
@@ -548,7 +594,10 @@ impl Printer<'_, '_, '_, '_, '_> {
             if let ExprKind::PrivateIdentifier(name) = hir[left].kind
                 && op == BinOp::In
             {
-                append_printed_name(written_name(self.file.queries.atom_bytes(name)), &mut self.text);
+                append_printed_name(
+                    written_name(self.file.queries.atom_bytes(name)),
+                    &mut self.text,
+                );
                 break;
             }
             (expression, level, around) = (left, left_level, beside);
@@ -557,7 +606,8 @@ impl Printer<'_, '_, '_, '_, '_> {
             if operator.op != BinOp::Comma {
                 self.text.push(b' ');
             }
-            self.text.extend_from_slice(level_and_text_of(operator.op).1);
+            self.text
+                .extend_from_slice(level_and_text_of(operator.op).1);
             self.text.push(b' ');
             self.expression(operator.right, operator.right_level, operator.beside);
             let end = self.text.len();
@@ -565,14 +615,20 @@ impl Printer<'_, '_, '_, '_, '_> {
                 self.text.push(b')');
             }
             if matches!(operator.op, BinOp::In | BinOp::Instanceof) && self.gaps == operator.gaps {
-                self.places.insert(operator.expression, (operator.start as u32, end as u32));
+                self.places
+                    .insert(operator.expression, (operator.start as u32, end as u32));
             }
         }
     }
 
     fn unary(&mut self, op: UnOp, operand: ExprId, level: Level) -> (usize, bool) {
         let is_postfix = matches!(op, UnOp::PostInc | UnOp::PostDec);
-        let wraps = level >= if is_postfix { Level::Postfix } else { Level::Prefix };
+        let wraps = level
+            >= if is_postfix {
+                Level::Postfix
+            } else {
+                Level::Prefix
+            };
         if wraps {
             self.text.push(b'(');
         }
@@ -580,7 +636,8 @@ impl Printer<'_, '_, '_, '_, '_> {
         match op {
             UnOp::PostInc | UnOp::PostDec => {
                 self.expression(operand, Level::Postfix.below(), Around::default());
-                self.text.extend_from_slice(if op == UnOp::PostInc { b"++" } else { b"--" });
+                self.text
+                    .extend_from_slice(if op == UnOp::PostInc { b"++" } else { b"--" });
                 return (start, wraps);
             }
             UnOp::Typeof => self.word(b"typeof "),
@@ -610,7 +667,8 @@ impl Printer<'_, '_, '_, '_, '_> {
             ExprKind::Ident(name) => {
                 self.space_before_name();
                 let start = whole(self);
-                self.file.append_identifier(expression, name, &mut self.text);
+                self.file
+                    .append_identifier(expression, name, &mut self.text);
                 start
             }
             ExprKind::This => {
@@ -629,10 +687,15 @@ impl Printer<'_, '_, '_, '_, '_> {
                 self.word(b"new.target");
                 whole(self)
             }
-            ExprKind::Regex { .. } if hir.text[hir[expression].pos as usize..hir[expression].end as usize].is_ascii() => {
+            ExprKind::Regex { .. }
+                if hir.text[hir[expression].pos as usize..hir[expression].end as usize]
+                    .is_ascii() =>
+            {
                 self.space_before_name();
                 let start = whole(self);
-                self.text.extend_from_slice(&hir.text[hir[expression].pos as usize..hir[expression].end as usize]);
+                self.text.extend_from_slice(
+                    &hir.text[hir[expression].pos as usize..hir[expression].end as usize],
+                );
                 start
             }
             ExprKind::Spread(operand) => {
@@ -640,19 +703,26 @@ impl Printer<'_, '_, '_, '_, '_> {
                 self.expression(operand, Level::Comma, Around::default());
                 whole(self)
             }
-            ExprKind::Dot { obj, name, chain, .. } => {
+            ExprKind::Dot {
+                obj, name, chain, ..
+            } => {
                 let wraps = self.begin_link(chain, &mut around);
                 let start = self.text.len();
                 self.expression(obj, Level::Postfix, around);
                 let name = written_name(self.file.queries.atom_bytes(name));
-                self.member_name(name, chain == Chain::Start, hir.is_written_in_brackets(expression));
+                self.member_name(
+                    name,
+                    chain == Chain::Start,
+                    hir.is_written_in_brackets(expression),
+                );
                 (start, wraps)
             }
             ExprKind::Index { obj, index, chain } => {
                 let wraps = self.begin_link(chain, &mut around);
                 let start = self.text.len();
                 self.expression(obj, Level::Postfix, around);
-                self.text.extend_from_slice(if chain == Chain::Start { b"?.[" } else { b"[" });
+                self.text
+                    .extend_from_slice(if chain == Chain::Start { b"?.[" } else { b"[" });
                 self.expression(index, Level::Lowest, Around::default());
                 self.text.push(b']');
                 (start, wraps)
@@ -699,10 +769,16 @@ impl Printer<'_, '_, '_, '_, '_> {
             ExprKind::Cond { test, branches }
                 if let Some(is_truthy) = self
                     .constant_of(self.file.skip_type_syntax(test))
-                    .and_then(|known| is_truthy(known, |text| self.file.queries.atom_bytes(text).is_empty())) =>
+                    .and_then(|known| {
+                        is_truthy(known, |text| self.file.queries.atom_bytes(text).is_empty())
+                    }) =>
             {
                 let branches = hir.branches(branches);
-                return self.expression(if is_truthy { branches.yes } else { branches.no }, level, around);
+                return self.expression(
+                    if is_truthy { branches.yes } else { branches.no },
+                    level,
+                    around,
+                );
             }
             ExprKind::Cond { test, branches } => {
                 let branches = hir.branches(branches);
@@ -750,7 +826,12 @@ impl Printer<'_, '_, '_, '_, '_> {
                 self.text.push(b'`');
                 (start, false)
             }
-            ExprKind::TaggedTemplate(site) if hir.template_parts(hir.template_of(site)).iter().all(|part| self.file.queries.atom_bytes(part.raw).is_ascii()) => {
+            ExprKind::TaggedTemplate(site)
+                if hir
+                    .template_parts(hir.template_of(site))
+                    .iter()
+                    .all(|part| self.file.queries.atom_bytes(part.raw).is_ascii()) =>
+            {
                 let start = self.text.len();
                 self.expression(hir[site].callee, Level::Postfix, Around::default());
                 self.text.push(b'`');
@@ -759,12 +840,15 @@ impl Printer<'_, '_, '_, '_, '_> {
                     if index > 0 {
                         self.text.extend_from_slice(b"${");
                         match substitutions.next() {
-                            Some(substitution) => self.expression(substitution, Level::Lowest, Around::default()),
+                            Some(substitution) => {
+                                self.expression(substitution, Level::Lowest, Around::default())
+                            }
                             None => self.gaps += 1,
                         }
                         self.text.push(b'}');
                     }
-                    self.text.extend_from_slice(self.file.queries.atom_bytes(part.raw));
+                    self.text
+                        .extend_from_slice(self.file.queries.atom_bytes(part.raw));
                 }
                 self.text.push(b'`');
                 (start, false)
@@ -776,7 +860,8 @@ impl Printer<'_, '_, '_, '_, '_> {
                 }
                 self.space_before_name();
                 let start = self.text.len();
-                self.text.extend_from_slice(if star { b"yield*" } else { b"yield" });
+                self.text
+                    .extend_from_slice(if star { b"yield*" } else { b"yield" });
                 if let Some(value) = value.some() {
                     self.text.push(b' ');
                     self.expression(value, Level::Yield, Around::default());
@@ -795,10 +880,18 @@ impl Printer<'_, '_, '_, '_, '_> {
                 }
                 (start, wraps)
             }
-            ExprKind::Array(items) if items.is_empty() || self.file.is_on_one_line(hir[expression].pos, hir[expression].end) => {
+            ExprKind::Array(items)
+                if items.is_empty()
+                    || self
+                        .file
+                        .is_on_one_line(hir[expression].pos, hir[expression].end) =>
+            {
                 let start = self.text.len();
                 self.text.push(b'[');
-                let ends_in_hole = hir.ids(items).last().is_some_and(|last| matches!(hir[last].kind, ExprKind::Missing));
+                let ends_in_hole = hir
+                    .ids(items)
+                    .last()
+                    .is_some_and(|last| matches!(hir[last].kind, ExprKind::Missing));
                 self.list(hir.ids(items));
                 if ends_in_hole {
                     self.text.push(b',');
@@ -806,7 +899,12 @@ impl Printer<'_, '_, '_, '_, '_> {
                 self.text.push(b']');
                 (start, false)
             }
-            ExprKind::Object(properties) if properties.is_empty() || self.file.is_on_one_line(hir[expression].pos, hir[expression].end) => {
+            ExprKind::Object(properties)
+                if properties.is_empty()
+                    || self
+                        .file
+                        .is_on_one_line(hir[expression].pos, hir[expression].end) =>
+            {
                 let wraps = self.text.len() == self.start_of_statement;
                 if wraps {
                     self.text.push(b'(');
@@ -814,10 +912,12 @@ impl Printer<'_, '_, '_, '_, '_> {
                 let start = self.text.len();
                 self.text.push(b'{');
                 for (index, property) in properties.iter().enumerate() {
-                    self.text.extend_from_slice(if index > 0 { b", " } else { b" " });
+                    self.text
+                        .extend_from_slice(if index > 0 { b", " } else { b" " });
                     self.property(property);
                 }
-                self.text.extend_from_slice(if properties.is_empty() { b"}" } else { b" }" });
+                self.text
+                    .extend_from_slice(if properties.is_empty() { b"}" } else { b" }" });
                 (start, wraps)
             }
             _ => {
@@ -838,7 +938,10 @@ impl Printer<'_, '_, '_, '_, '_> {
                 | ExprKind::TaggedTemplate(_)
                 | ExprKind::Yield { star: true, .. }
                 | ExprKind::Assign { op: None, .. }
-                | ExprKind::Unary { op: UnOp::Delete, .. }
+                | ExprKind::Unary {
+                    op: UnOp::Delete,
+                    ..
+                }
         );
         if is_quoted && self.gaps == gaps {
             self.places.insert(expression, (start as u32, end as u32));
@@ -856,9 +959,12 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
     fn is_printed(&self, expression: ExprId) -> bool {
         let written = self.hir[expression];
         match written.kind {
-            ExprKind::Array(_) | ExprKind::Object(_) => self.is_on_one_line(written.pos, written.end),
+            ExprKind::Array(_) | ExprKind::Object(_) => {
+                self.is_on_one_line(written.pos, written.end)
+            }
             ExprKind::Fn(function) => {
-                self.hir[function].kind == FnKind::Arrow && matches!(self.hir[function].body, FnBody::Expr(_))
+                self.hir[function].kind == FnKind::Arrow
+                    && matches!(self.hir[function].body, FnBody::Expr(_))
             }
             ExprKind::Class(_)
             | ExprKind::Jsx(_)
@@ -872,7 +978,9 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
     fn expression_around(&self, expression: ExprId) -> Option<ExprId> {
         match self.bound.parent_of_expr(expression) {
             Parent::Expr(around) => Some(around),
-            Parent::Prop(property) | Parent::PropKey(property) => self.bound.prop_owner[property.idx()].some(),
+            Parent::Prop(property) | Parent::PropKey(property) => {
+                self.bound.prop_owner[property.idx()].some()
+            }
             Parent::FnBody(function) => match self.bound.fns[function.idx()].owner {
                 FnOwner::Expr(around) => Some(around),
                 _ => None,
@@ -883,13 +991,19 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
 
     fn outermost_printed_expression_around(&self, expression: ExprId) -> ExprId {
         let mut outermost = expression;
-        while let Some(around) = self.expression_around(outermost).filter(|&around| self.is_printed(around)) {
+        while let Some(around) = self
+            .expression_around(outermost)
+            .filter(|&around| self.is_printed(around))
+        {
             outermost = around;
         }
         outermost
     }
 
-    fn print_quoted_text(&mut self, print: impl FnOnce(&mut Printer<'_, 'a, 'c, 'p, 's>)) -> Option<(u32, u32)> {
+    fn print_quoted_text(
+        &mut self,
+        print: impl FnOnce(&mut Printer<'_, 'a, 'c, 'p, 's>),
+    ) -> Option<(u32, u32)> {
         let text = core::mem::take(&mut self.quoted_texts.text);
         let start = text.len();
         let mut printer = Printer {
@@ -902,7 +1016,9 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             start_of_statement: usize::MAX,
         };
         print(&mut printer);
-        let Printer { text, places, gaps, .. } = printer;
+        let Printer {
+            text, places, gaps, ..
+        } = printer;
         let end = text.len();
         self.quoted_texts.text = text;
         self.quoted_texts.places = places;
@@ -929,7 +1045,11 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             });
         }
         if let Some(&(start, end)) = self.quoted_texts.places.get(&expression) {
-            self.quoted_texts.quoted.push(QuotedText { position, start, end });
+            self.quoted_texts.quoted.push(QuotedText {
+                position,
+                start,
+                end,
+            });
         }
     }
 
@@ -939,8 +1059,12 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         while let Parent::Expr(around) = self.bound.parent_of_expr(operand) {
             match self.hir[around].kind {
                 _ if self.hir.type_assertion_operand(around) == Some(operand) => operand = around,
-                ExprKind::Assign { op: None, target, .. } if target == operand => return around,
-                ExprKind::Unary { op: UnOp::Delete, .. } => return around,
+                ExprKind::Assign {
+                    op: None, target, ..
+                } if target == operand => return around,
+                ExprKind::Unary {
+                    op: UnOp::Delete, ..
+                } => return around,
                 ExprKind::New(site) if self.hir[site].callee == operand => return around,
                 _ => break,
             }
@@ -962,17 +1086,22 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
 
     /// Ascending by position. A position at which two texts would be quoted has none.
     pub(in crate::lower) fn take_quoted_texts(&mut self) -> (Vec<QuotedText>, Vec<u8>) {
-        let QuotedTexts { text, mut quoted, .. } = core::mem::take(&mut self.quoted_texts);
+        let QuotedTexts {
+            text, mut quoted, ..
+        } = core::mem::take(&mut self.quoted_texts);
         let text_of = |quoted: &QuotedText| &text[quoted.start as usize..quoted.end as usize];
         quoted.sort_unstable_by_key(|quoted| (quoted.position, quoted.start, quoted.end));
         let mut kept: Vec<QuotedText> = Vec::with_capacity(quoted.len());
         let mut index = 0;
         while index < quoted.len() {
             let first = &quoted[index];
-            let same_position = quoted[index..].iter().take_while(|next| next.position == first.position);
-            let (count, is_one_text) = same_position.fold((0, true), |(count, is_one_text), next| {
-                (count + 1, is_one_text && text_of(next) == text_of(first))
-            });
+            let same_position = quoted[index..]
+                .iter()
+                .take_while(|next| next.position == first.position);
+            let (count, is_one_text) =
+                same_position.fold((0, true), |(count, is_one_text), next| {
+                    (count + 1, is_one_text && text_of(next) == text_of(first))
+                });
             if is_one_text {
                 kept.push(QuotedText { ..*first });
             }
@@ -981,7 +1110,12 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         (kept, text)
     }
 
-    pub(in crate::lower) fn append_identifier(&self, identifier: ExprId, name: Atom, text: &mut Vec<u8>) {
+    pub(in crate::lower) fn append_identifier(
+        &self,
+        identifier: ExprId,
+        name: Atom,
+        text: &mut Vec<u8>,
+    ) {
         if !self.append_short_binding_name(self.bound.binding(identifier), text) {
             append_printed_name(written_name_of_local(self.queries.atom_bytes(name)), text);
         }
@@ -1011,7 +1145,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     /// `for (const x of list)` quotes `x of list`.
-    pub(in crate::lower) fn quote_head_of_loop_if_next_fails(&mut self, left: StmtId, subject: ExprId) {
+    pub(in crate::lower) fn quote_head_of_loop_if_next_fails(
+        &mut self,
+        left: StmtId,
+        subject: ExprId,
+    ) {
         let hir = self.file.hir;
         self.quote_printed_if_next_fails(|printer| {
             match hir[left].kind {
@@ -1032,7 +1170,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     }
                     None => printer.gaps += 1,
                 },
-                StmtKind::Expr(target) => printer.expression(target, Level::Postfix, Around::default()),
+                StmtKind::Expr(target) => {
+                    printer.expression(target, Level::Postfix, Around::default())
+                }
                 _ => printer.gaps += 1,
             }
             printer.text.extend_from_slice(b" of ");
@@ -1049,16 +1189,25 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     /// `[a, b] = list` quotes `[a, b]`.
     pub(in crate::lower) fn quote_assigned_pattern_if_next_fails(&mut self, pattern: ExprId) {
         self.set_position(self.file.hir[pattern].pos);
-        self.quote_printed_if_next_fails(|printer| printer.expression(pattern, Level::Assign, Around::default()));
+        self.quote_printed_if_next_fails(|printer| {
+            printer.expression(pattern, Level::Assign, Around::default())
+        });
     }
 
-    fn quote_printed_if_next_fails(&mut self, print: impl FnOnce(&mut Printer<'_, '_, '_, '_, '_>)) {
+    fn quote_printed_if_next_fails(
+        &mut self,
+        print: impl FnOnce(&mut Printer<'_, '_, '_, '_, '_>),
+    ) {
         let position = self.position();
         if self.file.inputs.options.obfuscates || !self.file.inputs.options.embeds_function_text {
             return;
         }
         if let Some((start, end)) = self.file.print_quoted_text(print) {
-            self.file.quoted_texts.quoted.push(QuotedText { position, start, end });
+            self.file.quoted_texts.quoted.push(QuotedText {
+                position,
+                start,
+                end,
+            });
         }
     }
 }
@@ -1115,7 +1264,10 @@ pub(in crate::lower) fn append_printed_name(name: &[u8], printed: &mut Vec<u8>) 
 // As `js_printer` writes a number that is not negative.
 pub(in crate::lower) fn append_printed_number(number: f64, printed: &mut Vec<u8>) {
     let is_integer = number.fract() == 0.0 && number < (u64::MAX >> 12) as f64;
-    match is_integer.then(|| pow10_exp_1e4_to_1e9(number as u64)).flatten() {
+    match is_integer
+        .then(|| pow10_exp_1e4_to_1e9(number as u64))
+        .flatten()
+    {
         Some(exponent) => printed.extend_from_slice(&[b'1', b'e', b'0' + exponent]),
         None => printed.extend_from_slice(format!("{number}").as_bytes()),
     }
@@ -1127,8 +1279,12 @@ mod tests {
 
     fn text_of_quotes(source: &str) -> Vec<u8> {
         let lowered = lower_program_with_settings(&[("main.js", source)], &default_settings());
-        let modules = lowered.into_iter().map(|(_, lowered)| lowered.fragment.module);
-        modules.flat_map(|module| module.positions.text_of_quotes).collect()
+        let modules = lowered
+            .into_iter()
+            .map(|(_, lowered)| lowered.fragment.module);
+        modules
+            .flat_map(|module| module.positions.text_of_quotes)
+            .collect()
     }
 
     #[test]

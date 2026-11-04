@@ -26,7 +26,11 @@ impl FileLowering<'_, '_, '_, '_> {
 
     // `(a) = function () {}` names nothing. Nor does `a = function () {}` where a namespace exports `a`: it is the store `N.a = function () {}`.
     fn find_assigned_function_name(&self, target: ExprId) -> Option<(Binding, Atom)> {
-        if self.hir.expr_flags(target).contains(ExprFlags::PARENTHESIZED) {
+        if self
+            .hir
+            .expr_flags(target)
+            .contains(ExprFlags::PARENTHESIZED)
+        {
             return None;
         }
         let AssignmentTarget::Identifier { identifier, name } =
@@ -37,7 +41,10 @@ impl FileLowering<'_, '_, '_, '_> {
         let binding = self.bound.binding(identifier);
         let is_container_member = match binding {
             Binding::Symbol(symbol) => {
-                matches!(self.scopes.form(symbol), BindingForm::ContainerMember { .. })
+                matches!(
+                    self.scopes.form(symbol),
+                    BindingForm::ContainerMember { .. }
+                )
             }
             Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => false,
         };

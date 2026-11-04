@@ -116,9 +116,7 @@ impl UnitTables {
             .truncate(lengths.module_failures as usize);
         self.eval_scope_count = self.eval_scope_count.min(lengths.eval_scopes);
         self.data_count = self.data_count.min(lengths.data);
-        self.expected_result_count = self
-            .expected_result_count
-            .min(lengths.expected_results);
+        self.expected_result_count = self.expected_result_count.min(lengths.expected_results);
     }
 }
 
@@ -427,7 +425,10 @@ mod tests {
         assert_eq!((next.visit, next.last_visit), (visit, None));
         let mut builder = FragmentBuilder::new(FileId(2), &mut next);
         assert_eq!(builder.declare_function(test_function_key(0, 0)), function);
-        assert_eq!(builder.declare_function(test_function_key(2, 0)).to_word(), 1);
+        assert_eq!(
+            builder.declare_function(test_function_key(2, 0)).to_word(),
+            1
+        );
         assert_eq!(builder.strings.find(b"committed"), Some(string));
         assert_eq!(builder.strings.find(b"lost"), None);
         assert_eq!(builder.strings.intern(b"next"), late_string);

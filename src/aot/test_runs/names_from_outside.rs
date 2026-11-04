@@ -49,7 +49,10 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
 
     fn find_constant_text(&self, value: ExprId) -> Option<Atom> {
         let &FinishedFile { hir, analysis, .. } = self.request;
-        match analysis.decisions.constant(hir, hir.skip_type_assertions(value)) {
+        match analysis
+            .decisions
+            .constant(hir, hir.skip_type_assertions(value))
+        {
             FoldedValue::Constant(Constant::String(text))
             | FoldedValue::ConstantOutsideDeadZone(Constant::String(text)) => Some(text),
             FoldedValue::Constant(_)
@@ -62,7 +65,8 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
     fn is_object_from_somewhere(&self, object: ExprId) -> bool {
         let &FinishedFile { hir, bound, .. } = self.request;
         let object = hir.skip_type_assertions(object);
-        if !matches!(hir[object].kind, ExprKind::Ident(_)) || self.builtins.of_expr(object).is_some()
+        if !matches!(hir[object].kind, ExprKind::Ident(_))
+            || self.builtins.of_expr(object).is_some()
         {
             return false;
         }
@@ -496,9 +500,8 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
         } = self.request;
         found.texts_passed = self.find_texts_passed();
         let spies = self.builtins.spy_calls().iter();
-        let nameless = spies.filter(|spy| {
-            spy.name.is_none() && !analysis.decisions.is_dead_expr(spy.call)
-        });
+        let nameless =
+            spies.filter(|spy| spy.name.is_none() && !analysis.decisions.is_dead_expr(spy.call));
         let mut known = KnownSets::new(hir, bound, &analysis.decisions, atoms);
         let mut spelled = Vec::new();
         for spy in nameless {
@@ -544,7 +547,9 @@ fn find_helpers_behind(files: &Files<'_>, taker: FileId, helpers: &[FileId]) -> 
         }
     }
     let positions = reached.iter();
-    positions.filter_map(|file| helpers.binary_search(file).ok()).collect()
+    positions
+        .filter_map(|file| helpers.binary_search(file).ok())
+        .collect()
 }
 
 /// `helpers`: the files with `FileOfRun::spies_under_names_from_outside`, ascending. Every text that goes to such a file may be the name.

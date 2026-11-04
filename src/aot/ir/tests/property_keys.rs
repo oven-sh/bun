@@ -195,6 +195,14 @@ fn only_names_have_string_name() {
     let names = keys_of_every_kind().map(|key| key.string_name());
     assert_eq!(
         names,
-        [Some(TEXT), Some(TEXT), Some(TEXT), None, None, Some(TEXT), None]
+        [
+            Some(TEXT),
+            Some(TEXT),
+            Some(TEXT),
+            None,
+            None,
+            Some(TEXT),
+            None
+        ]
     );
 }

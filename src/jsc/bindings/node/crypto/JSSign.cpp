@@ -226,6 +226,11 @@ void updateWithBufferView(JSGlobalObject* globalObject, JSSign* sign, JSC::JSArr
         .len = byteLength,
     };
 
+    if (!sign->m_mdCtx) {
+        ERR::CRYPTO_INVALID_STATE(scope, globalObject, "Not initialised"_s);
+        return;
+    }
+
     ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     if (!sign->m_mdCtx.digestUpdate(buffer)) {
         throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to update digest");

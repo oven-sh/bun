@@ -6,8 +6,8 @@ mod summary;
 #[cfg(test)]
 mod tests;
 
-pub(super) use self::faces::collect_seen_namespaces;
 use self::faces::Faces;
+pub(super) use self::faces::collect_seen_namespaces;
 use self::summary::{ExportsSummary, StoredName, summarize_file, summarize_inner_modules};
 use super::bindings::SyntheticExportId;
 use super::exports::{ExportTables, Resolution};
@@ -324,7 +324,11 @@ impl<'a, 's> Text<'a, 's> {
 
     // An object finds the other names without having them, or keeps what is stored under them elsewhere.
     fn is_plain_name(&self, name: Atom) -> bool {
-        let is_index = self.atoms.bytes(name).first().is_some_and(u8::is_ascii_digit);
+        let is_index = self
+            .atoms
+            .bytes(name)
+            .first()
+            .is_some_and(u8::is_ascii_digit);
         let is_inherited = self
             .builtin_names
             .get(name)
@@ -459,7 +463,9 @@ impl<'a, 's> Text<'a, 's> {
         let may_name_super = || {
             let is_super = |it: &hir::Expr| matches!(it.kind, ExprKind::Super);
             !matches!(kind, FnKind::Decl | FnKind::Expr)
-                && *self.names_super.get_or_init(|| hir.exprs.iter().any(is_super))
+                && *self
+                    .names_super
+                    .get_or_init(|| hir.exprs.iter().any(is_super))
         };
         let ignores_this = kind == FnKind::Arrow
             || (!flags.contains(FunctionFlags::HAS_DIRECT_EVAL)
@@ -483,9 +489,7 @@ impl<'a, 's> Text<'a, 's> {
         match self.bound.binding_initializer(self.hir, symbol) {
             BindingInitializer::Function(function) => self.classify_function(function),
             BindingInitializer::Class(_) => StoredValue::IgnoresThis,
-            BindingInitializer::Expression(value) => {
-                self.classify_value(value, names_followed + 1)
-            }
+            BindingInitializer::Expression(value) => self.classify_value(value, names_followed + 1),
             _ => StoredValue::Unknown,
         }
     }
@@ -769,7 +773,9 @@ fn find_object_whose_marker_changes(text: &Text<'_, '_>, expression: ExprId) -> 
                 MemberKey::PrivateName(_) => false,
             };
             let changes = names_marker
-                && (bound.get_assignment_target(hir, text.parent(expression).0).is_some()
+                && (bound
+                    .get_assignment_target(hir, text.parent(expression).0)
+                    .is_some()
                     || text.is_deleted(expression));
             changes.then_some(object)
         }
@@ -840,7 +846,9 @@ fn find_markers_stored_on_other_modules(text: &Text<'_, '_>, scan: &FileScan) ->
                     continue;
                 }
                 let first = holders.partition_point(|holder| holder.0 < name);
-                let held = holders[first..].iter().take_while(|holder| holder.0 == name);
+                let held = holders[first..]
+                    .iter()
+                    .take_while(|holder| holder.0 == name);
                 let count = stored.len();
                 stored.extend(held.map(|holder| holder.1));
                 // `let k; k = require(K)`, `const k = c ? require(K) : require(L)`, a parameter. A name that holds a literal, a function or a class holds no module.
@@ -1298,12 +1306,16 @@ impl Scan<'_, '_, '_> {
         if added.is_none() {
             return false;
         }
-        let getters = self.summary.names.iter().filter_map(|stored| match *stored {
-            StoredName::Getter {
-                statement, getter, ..
-            } if statement == written_at => Some(getter),
-            _ => None,
-        });
+        let getters = self
+            .summary
+            .names
+            .iter()
+            .filter_map(|stored| match *stored {
+                StoredName::Getter {
+                    statement, getter, ..
+                } if statement == written_at => Some(getter),
+                _ => None,
+            });
         // Nobody sees `all` but through the copy.
         let filled_at = getters.filter_map(|getter| self.find_statement_around_literal(getter));
         let filled_at: Vec<StmtId> = filled_at.collect();
@@ -1343,8 +1355,7 @@ impl Scan<'_, '_, '_> {
         let value = value.map(|value| hir.skip_type_assertions(value));
         let kind = value.map(|value| hir[value].kind);
         let named = value.filter(|_| is_statement);
-        let named =
-            named.and_then(|it| find_literal_exported_under_name(hir, self.text.bound, it));
+        let named = named.and_then(|it| find_literal_exported_under_name(hir, self.text.bound, it));
         self.replacements.push(Replacement {
             node,
             position: self.position_of(node),
@@ -1402,7 +1413,11 @@ impl Scan<'_, '_, '_> {
             return self.add_access(access);
         }
         let (outermost, parent) = text.parent(object);
-        if text.bound.get_assignment_target(text.hir, outermost).is_some() {
+        if text
+            .bound
+            .get_assignment_target(text.hir, outermost)
+            .is_some()
+        {
             // Nobody knows what the name `exports` holds from a store on.
             if !is_module_exports {
                 self.found.has_names = false;
@@ -1447,7 +1462,10 @@ impl Scan<'_, '_, '_> {
     fn look_at_module_name(&mut self, name: ExprId) {
         let text = self.text;
         if let (outermost, Parent::Expr(user)) = text.parent(name)
-            && text.hir.member_key(user).is_some_and(|it| it.0 == outermost)
+            && text
+                .hir
+                .member_key(user)
+                .is_some_and(|it| it.0 == outermost)
             && !text.is_deleted(user)
         {
             match text.builtins.builtin_of_expression(user) {
@@ -1568,7 +1586,9 @@ impl Scan<'_, '_, '_> {
         // A definition on the object that the module was born with runs the built-in, or the helper that calls it, and no more.
         let aliases = found.aliases.iter().map(|alias| alias.node);
         let values = found.defined_values.iter().map(|it| it.0);
-        let definitions = aliases.chain(values).chain(self.marking_calls.iter().copied());
+        let definitions = aliases
+            .chain(values)
+            .chain(self.marking_calls.iter().copied());
         let definitions: FxHashSet<CallId> = definitions.filter_map(call_of).collect();
         let is_definition = |call: CallId| definitions.contains(&call);
         let quiet = Quiet {
@@ -1643,9 +1663,11 @@ impl Scan<'_, '_, '_> {
         let is_first_at_head = |access: &&Access| {
             let first = found.creations_of(access.name).first();
             let assignment = text.find_assignment(access.node);
-            first.zip(assignment).is_some_and(|(first, (assignment, _))| {
-                first.node == assignment && first.is_in_order() && first.end <= quiet_head
-            })
+            first
+                .zip(assignment)
+                .is_some_and(|(first, (assignment, _))| {
+                    first.node == assignment && first.is_in_order() && first.end <= quiet_head
+                })
         };
         let stores = candidates.filter(is_first_at_head);
         stores.map(|access| access.node).collect()
@@ -1811,7 +1833,8 @@ impl Scan<'_, '_, '_> {
         self.accesses.shared_sort_by_key(|it| it.name.0);
         // A store that the summary has seen and this scan has not goes to an object.
         let found = &self.found;
-        let knows = |name: Atom| !found.creations_of(name).is_empty() || found.alias_of(name).is_some();
+        let knows =
+            |name: Atom| !found.creations_of(name).is_empty() || found.alias_of(name).is_some();
         let knows_every_name = self.summary.names.iter().all(|stored| match *stored {
             StoredName::Value { name, .. } | StoredName::Getter { name, .. } => knows(name),
             StoredName::AllOf { .. } => false,
@@ -2409,10 +2432,14 @@ impl CommonJsExports {
                 if own_text.creations_of(name).iter().any(|it| it.is_read_only) {
                     looked_at.push(module);
                 }
-                let text =
-                    text.get_or_insert_with(|| {
-                        Text::new(files, &input.modules.wrapped, input.bind.builtin_names, file)
-                    });
+                let text = text.get_or_insert_with(|| {
+                    Text::new(
+                        files,
+                        &input.modules.wrapped,
+                        input.bind.builtin_names,
+                        file,
+                    )
+                });
                 let stored = text.as_ref().and_then(|text| {
                     let (_, value) = text.find_assignment(member)?;
                     Some(text.classify_value(value, 0))
@@ -2541,8 +2568,10 @@ impl CommonJsExports {
             |module: &ModuleRef| !self.has_default_of_its_own(*module) || is_half(*module);
         modules.extend(asked_for_default.into_iter().filter(shows_object));
         // Only the object lists the names of a module whose text does not say all of them.
-        let says_all_names =
-            |module: ModuleRef| self.text_of(module).is_some_and(ModuleText::knows_all_names);
+        let says_all_names = |module: ModuleRef| {
+            self.text_of(module)
+                .is_some_and(ModuleText::knows_all_names)
+        };
         modules.extend(seen.filter(|&module| !says_all_names(module)));
         // Whether the module has a name by the time the copy is taken: a variable cannot say that it is absent, the object can.
         let absent_names = tables.absent_commonjs_names.iter();
@@ -2783,7 +2812,10 @@ impl CommonJsExports {
         }
         self.number_of(ModuleRef::File(file)).is_some_and(|number| {
             self.keeps_names(number)
-                && self.modules[number].erased.binary_search(&statement).is_ok()
+                && self.modules[number]
+                    .erased
+                    .binary_search(&statement)
+                    .is_ok()
         })
     }
 

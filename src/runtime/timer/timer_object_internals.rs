@@ -247,7 +247,7 @@ impl TimerObjectInternals {
         // Bun__JSTimeout__call handles exceptions.
         // `Cell<Flags>` RMW so the `in_callback` write reaches memory before JS
         // runs (re-entrant `_destroyed` getter reads it via a different pointer).
-        s.update_flags(|f| f.set_in_callback(true));
+        self.update_flags(|f| f.set_in_callback(true));
         // SAFETY: `thrown` is null or the caller's live stack slot.
         let result = unsafe { Bun__JSTimeout__call(global, timer, callback, arguments, thrown) };
         // No early returns between the `in_callback` set and this clear.
@@ -435,11 +435,10 @@ impl TimerObjectInternals {
         let exception_thrown = {
             s.ref_();
             let async_id = s.async_id();
-            // SAFETY: `this` is the live `internals` per fn contract; `ref_()`
-            // above pins the parent across re-entrancy.
+            // SAFETY: `vm` per fn contract; `ref_()` above pins the parent
+            // across re-entrancy.
             let result = unsafe {
-                Self::run(
-                    this,
+                s.run(
                     global_this,
                     timer,
                     callback,

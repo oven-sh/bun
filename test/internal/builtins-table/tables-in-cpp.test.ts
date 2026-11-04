@@ -39,12 +39,10 @@ JSC_DEFINE_HOST_FUNCTION(jsThingPrototypeFunction_${name}, (JSGlobalObject * lex
 const row = (name: string) =>
   `    { "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsThingPrototypeFunction_${name}, 1 } },`;
 
-const written: SourcedDeclaration[] = b
-  .class("Thing", {})
-  .map(declaration => ({
-    declaration,
-    source: { file: "thing.builtins.ts", line: null, origin: "Host", proof: "HandWritten" },
-  }));
+const written: SourcedDeclaration[] = b.class("Thing", {}).map(declaration => ({
+  declaration,
+  source: { file: "thing.builtins.ts", line: null, origin: "Host", proof: "HandWritten" },
+}));
 
 function collect(files: Record<string, string>, handWritten: readonly SourcedDeclaration[] = written) {
   using dir = tempDir("tables-in-cpp", {

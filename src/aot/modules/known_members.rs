@@ -18,7 +18,9 @@ use bun_sema::program::{FileId, Files, Sym};
 use smallvec::SmallVec;
 
 use super::graph::{FileRow, StoredSiteAnswer};
-use super::{ExportBinding, ImportBinding, ImportPhase, Member, ModuleGraph, ModuleKind, ModuleRef};
+use super::{
+    ExportBinding, ImportBinding, ImportPhase, Member, ModuleGraph, ModuleKind, ModuleRef,
+};
 use crate::ir::classify_name;
 use crate::ir::generated::NameClass;
 use crate::load::fold_inputs::MAX_FOLDED_STRING_BYTES;
@@ -392,9 +394,7 @@ pub(super) fn list_data_linked_by_names_alone(
     forms_require_checks_first: &[(FileId, FileId)],
 ) -> Box<[FileId]> {
     let is_data = |row: &&FileRow| row.interop.kind == ModuleKind::Data && !row.is_library;
-    let files: Vec<FileId> = (rows.iter().filter(is_data))
-        .map(|row| row.file)
-        .collect();
+    let files: Vec<FileId> = (rows.iter().filter(is_data)).map(|row| row.file).collect();
     if files.is_empty() {
         return Box::default();
     }
@@ -534,7 +534,11 @@ impl<'a, 's> KnownObjects<'a, 's> {
     }
 
     fn find_member(&self, enumeration: Sym, name: Atom) -> Option<(EnumId, EnumMemberId)> {
-        let declarations = self.files.bound(enumeration.file).symbol(enumeration.id).decls;
+        let declarations = self
+            .files
+            .bound(enumeration.file)
+            .symbol(enumeration.id)
+            .decls;
         let Some(&Decl::Enum(first)) = declarations.first() else {
             return None;
         };

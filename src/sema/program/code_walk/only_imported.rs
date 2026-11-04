@@ -133,8 +133,12 @@ impl LoadOrder {
             for &file in in_order_left.iter().rev().skip(1) {
                 let known = |&&loader: &&u32| order.above[loader as usize] != NOT_LOADED;
                 let mut loaders = loaders[file as usize].iter().filter(known).copied();
-                let first = loaders.next().expect("a walk comes to a file from a file that it has come to");
-                let lowest = loaders.fold(first, |lowest, loader| order.lowest_above_both(lowest, loader));
+                let first = loaders
+                    .next()
+                    .expect("a walk comes to a file from a file that it has come to");
+                let lowest = loaders.fold(first, |lowest, loader| {
+                    order.lowest_above_both(lowest, loader)
+                });
                 has_changed |= std::mem::replace(&mut order.above[file as usize], lowest) != lowest;
             }
         }
@@ -179,10 +183,15 @@ fn loads_under_unknown_name(file: &WalkedFile<'_, '_>) -> bool {
         return false;
     };
     let sites = parsed.code.analyzed.analysis.import_sites;
-    sites.iter().zip(&parsed.code.resolutions).any(|(site, resolution)| {
-        matches!(resolution, SiteResolution::Computed(ComputedResolution::All { .. }))
-            && loading_kind(site.kind).is_some()
-    })
+    sites
+        .iter()
+        .zip(&parsed.code.resolutions)
+        .any(|(site, resolution)| {
+            matches!(
+                resolution,
+                SiteResolution::Computed(ComputedResolution::All { .. })
+            ) && loading_kind(site.kind).is_some()
+        })
 }
 
 /// By file: whether the loader behind `require` may be the first to load it, and whether it may be so while an ES module is being required.
@@ -235,9 +244,8 @@ fn find_files_that_require_may_load(
             }
         });
     }
-    let may_come_first = |(file, &behind): (u32, &u32)| {
-        behind != NOT_LOADED && !order.is_loaded_with(file, behind)
-    };
+    let may_come_first =
+        |(file, &behind): (u32, &u32)| behind != NOT_LOADED && !order.is_loaded_with(file, behind);
     let runs_inside_require: Vec<bool> = (0..).zip(&imported_behind).map(may_come_first).collect();
     let is_named_first = (0..).zip(&named_behind).map(may_come_first);
     let may_be_required = is_named_first

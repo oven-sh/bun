@@ -846,7 +846,6 @@ impl Linux {
         } else {
             inotify_masks::WATCH_DIR_MASK
         };
-        let fd = manager.inotify_fd();
         let rc = sys::linux::inotify_add_watch(fd.native(), abs_path, mask);
         if rc < 0 {
             let err = sys::Error::from_code_int(sys::last_errno(), Tag::watch);
@@ -950,7 +949,7 @@ impl Linux {
         let mut rel_spill: Vec<u8> = Vec::new();
 
         while running.load(Ordering::Acquire) {
-            let rc = sys::linux::read(fd.native(), &mut buf.0);
+            let rc = sys::linux::read(fd.native(), bun_core::bytes_of_mut(&mut *buf));
             match sys::get_errno(rc) {
                 E::SUCCESS => {}
                 E::EAGAIN | E::EINTR => continue,

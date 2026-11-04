@@ -366,7 +366,10 @@ else console.log("went on", lowest(how));
   test("says in which function the process ended, run after run: abort", async () => {
     for (let time = 0; time < 16; time++) {
       const directory = join(cwd, `made/for-run-${runs++}`);
-      const { stderr } = await run([join(cwd, "app"), "abort"], cwd, { ...forTesting, BUN_CRASH_REPORT_DIR: directory });
+      const { stderr } = await run([join(cwd, "app"), "abort"], cwd, {
+        ...forTesting,
+        BUN_CRASH_REPORT_DIR: directory,
+      });
       expect(read(directory, stderr).lowest).toEqual(inLowest);
     }
   });

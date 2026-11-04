@@ -94,10 +94,7 @@ test("each read is as in plain bun test", async () => {
       exitCode,
     };
   };
-  const [plain, twoLayers] = await Promise.all([
-    seenWith("TestRunLayers:0"),
-    seenWith("TestRunLayers:0", "--aot"),
-  ]);
+  const [plain, twoLayers] = await Promise.all([seenWith("TestRunLayers:0"), seenWith("TestRunLayers:0", "--aot")]);
   expect(plain.results.length).toBe(uses.length);
   expect(plain.results).toContain("RESULT|0|2");
   expect(plain.failed).toEqual([]);

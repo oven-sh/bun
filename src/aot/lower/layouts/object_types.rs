@@ -512,7 +512,9 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             None => (self.fragment).define_object_type(layout, definition, Some(key)),
         };
-        self.layouts.named_types.insert((layout, key), (index, place));
+        self.layouts
+            .named_types
+            .insert((layout, key), (index, place));
     }
 
     pub(super) fn define_object_type_layout(&mut self, layout: LayoutId, types: &[CheckerTypeId]) {

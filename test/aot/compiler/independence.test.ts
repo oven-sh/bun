@@ -154,7 +154,8 @@ function firstLinesThatDiffer([first, second]: string[][], read = (lines: string
 // f12, L7, g3: what one program numbers its functions, layouts and variables. site(f12, v5)@5: an instance of a summary. allocationClass=17: a row of a
 // table of Facts or of the plan. Each becomes the place of its first mention, so two texts that differ in nothing else are equal.
 // Values and blocks are numbered by the unit. A position, which has a blank in front of its @, is the file's.
-const fieldsThatNameRows = "subject|accessSite|allocationSite|allocationClass|callees|entrypoints|fieldAccess|orderWord";
+const fieldsThatNameRows =
+  "subject|accessSite|allocationSite|allocationClass|callees|entrypoints|fieldAccess|orderWord";
 const numbersOfTheProgram = new RegExp(
   String.raw`"(?:[^"\\]|\\.)*"|\b(?:[A-Za-z]|(?:${fieldsThatNameRows})=)\d+\b|(?<=[\w)])@\d+`,
   "g",
@@ -179,7 +180,10 @@ function byFirstMention(lines: string[]) {
 
 // Inline frames and constants stand in front of the first block. Most of what differs there follows from an operation further down, so the blocks are read first.
 function blocksFirst(lines: string[]) {
-  const start = Math.max(0, lines.findIndex(line => /^\s*b\d+\(/.test(line)));
+  const start = Math.max(
+    0,
+    lines.findIndex(line => /^\s*b\d+\(/.test(line)),
+  );
   return [...lines.slice(start), ...lines.slice(0, start)];
 }
 
@@ -204,7 +208,10 @@ async function explained(programs: Pair, withOtherBytes: string[], judge: Judge)
   const labeled = (what: string, lines: string[]) =>
     lines.map((line, index) => `  ${what}, ${programs[index].title}: ${line}`);
   return withOtherBytes.flatMap(key => {
-    const walk = firstLinesThatDiffer(operations.map(textOf => blocksFirst(textOf(key))), byFirstMention);
+    const walk = firstLinesThatDiffer(
+      operations.map(textOf => blocksFirst(textOf(key))),
+      byFirstMention,
+    );
     if (!walk && judge === "operations") return [];
     const bytes = firstLinesThatDiffer(programs.map(program => linesOf(program, key))) ?? [];
     const operationsThatDiffer = walk ? labeled("walk", walk) : ["  walk: the same operations in both"];

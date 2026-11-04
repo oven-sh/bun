@@ -143,7 +143,8 @@ export const upgradeDuplexToTLS = b.fn({
   ...js,
   args: { duplex: b.any, options: DuplexTLSOptions },
   returns: b.any.returning(
-    newListOf(table.union(table.instance("TLSSocket"), table.instance("Array").holding({ element: table.callable }))).spec,
+    newListOf(table.union(table.instance("TLSSocket"), table.instance("Array").holding({ element: table.callable })))
+      .spec,
   ),
   uses: {
     duplex: [

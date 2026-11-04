@@ -143,9 +143,7 @@ test("what plain Bun says where the run isolates its files", () => {
   ]);
 });
 
-test.each([
-  ["one program", "TestRunLayers:0"],
-])(
+test.each([["one program", "TestRunLayers:0"]])(
   "a TypeScript module is linked without the exports that find nothing, where the run isolates its files: %s",
   async (_, words) => {
     const compiled = await runTests(String(dir), ["--aot", "--isolate"], words);

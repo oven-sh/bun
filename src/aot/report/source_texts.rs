@@ -404,12 +404,19 @@ mod tests {
     fn text_on_disk_is_read_by_the_first_who_asks() {
         let name = format!("bun-aot-source-text-{}.ts", std::process::id());
         let path = std::env::temp_dir().join(name);
-        std::fs::write(&path, "let a;\nb();\n").expect("the folder for temporary files takes a file");
+        std::fs::write(&path, "let a;\nb();\n")
+            .expect("the folder for temporary files takes a file");
         let path_on_disk = from_native(path.to_str().expect("the path is text").as_bytes());
         let on_disk = || ModuleSource::new_on_disk(b"/p/a.ts", &path_on_disk, 12);
 
         let texts = SourceTexts::new(vec![Some(on_disk())]);
-        assert_eq!((texts.size_of_texts(), texts.get(ModuleId::new(0)).map(ModuleSource::len)), (0, Some(12)));
+        assert_eq!(
+            (
+                texts.size_of_texts(),
+                texts.get(ModuleId::new(0)).map(ModuleSource::len)
+            ),
+            (0, Some(12))
+        );
         let mut locator = ModuleLocator::new(&texts);
         assert_eq!(locator.line_and_column(at(0, 7)), Some((2, 1)));
         assert_eq!(BString::from(locator.source_line(at(0, 8))), "b();");

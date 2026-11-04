@@ -1480,9 +1480,11 @@ impl<'p, 's> Checker<'p, 's> {
             None => MapperId::IDENTITY,
         };
         // FOR SPEED: each of n literals in a list of a union of n object types has that union as its contextual type.
-        let is_union_of_many = matches!(self.data(instantiated), TypeData::Union(types) if types.len() > 8);
+        let is_union_of_many =
+            matches!(self.data(instantiated), TypeData::Union(types) if types.len() > 8);
         if is_union_of_many
-            && let Some(&known) = (self.apparent_contextual_unions).get(&(instantiated, outer_mapper))
+            && let Some(&known) =
+                (self.apparent_contextual_unions).get(&(instantiated, outer_mapper))
         {
             return Some(known);
         }

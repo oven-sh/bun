@@ -256,7 +256,10 @@ fn log_what_is_handed_over(ctx: &ContextData, test_file_count: usize, handover: 
     }
     let bytes = handover.bytes.unwrap_or_default();
     if handover.flag == GRAPH_FLAG {
-        bun_core::print_errorln!("AOT test run | one program | test files {}", test_file_count);
+        bun_core::print_errorln!(
+            "AOT test run | one program | test files {}",
+            test_file_count
+        );
     }
     match handover.flag {
         GRAPH_FLAG => bun_core::print_errorln!(
@@ -1434,7 +1437,9 @@ pub(crate) fn find_why_askers_are_of_product(refusals: &[Vec<u8>]) -> Vec<(Vec<u
             let file = [top, &[bun_paths::SEP], &below[..]].concat();
             let is_compiled = |path: &[u8]| bun_jsc::compiled_program::is_compiled_module(path);
             let importer = bun_aot::builtins::find_importer_outside_run(top, &file, &is_compiled)?;
-            let importer = importer.strip_prefix(top)?.strip_prefix(&[bun_paths::SEP])?;
+            let importer = importer
+                .strip_prefix(top)?
+                .strip_prefix(&[bun_paths::SEP])?;
             let importer = bun_core::strings::replace_owned(importer, &[bun_paths::SEP], b"/");
             Some((asker.to_vec(), importer))
         })

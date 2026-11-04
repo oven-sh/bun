@@ -283,23 +283,27 @@ export const report = () => [seen, f(true)];
 };
 
 for (const [name, files] of Object.entries(shapes)) {
-  test.concurrent(`a function that a file on a cycle declares, used ahead of its body: ${name}`, async () => {
-    using dir = tempDir("aot-declared-on-a-cycle", {
-      "package.json": `{ "name": "p", "type": "module" }`,
-      "a.test.ts": testFile,
-      ...files,
-    });
-    const seenWith = async (...flags: string[]) => {
-      const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), bunEnv);
-      return {
-        lines: stdout.split("\n").filter(line => line.startsWith("SEEN")),
-        failed: stderr.split("\n").filter(line => /^\(fail\)|^✗|^panic|Error/.test(line)),
-        exitCode,
+  test.concurrent(
+    `a function that a file on a cycle declares, used ahead of its body: ${name}`,
+    async () => {
+      using dir = tempDir("aot-declared-on-a-cycle", {
+        "package.json": `{ "name": "p", "type": "module" }`,
+        "a.test.ts": testFile,
+        ...files,
+      });
+      const seenWith = async (...flags: string[]) => {
+        const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), bunEnv);
+        return {
+          lines: stdout.split("\n").filter(line => line.startsWith("SEEN")),
+          failed: stderr.split("\n").filter(line => /^\(fail\)|^✗|^panic|Error/.test(line)),
+          exitCode,
+        };
       };
-    };
-    const [plain, compiled] = await Promise.all([seenWith(), seenWith("--aot")]);
-    expect(plain.lines.length).toBeGreaterThan(0);
-    expect(plain.exitCode).toBe(0);
-    expect(compiled).toEqual(plain);
-  }, 120_000);
+      const [plain, compiled] = await Promise.all([seenWith(), seenWith("--aot")]);
+      expect(plain.lines.length).toBeGreaterThan(0);
+      expect(plain.exitCode).toBe(0);
+      expect(compiled).toEqual(plain);
+    },
+    120_000,
+  );
 }

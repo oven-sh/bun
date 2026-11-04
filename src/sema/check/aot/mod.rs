@@ -46,10 +46,10 @@ pub use builtin_types::{
     BuiltinValuePath, BuiltinValuePathList, Denotation,
 };
 pub(crate) use const_inlining::ConstLocalPrefixes;
-pub(crate) use enum_constants::is_declared_around;
 pub use diagnostic_class::DiagnosticClass;
 pub use diagnostic_effect::{Effect, FileOrigin, effect_of};
 pub use diagnostic_subject::{DiagnosticSubject, containers_completed_by_bun_types};
+pub(crate) use enum_constants::is_declared_around;
 pub use enum_constants::{
     find_link_followed_by_transpiler, find_member_followed_by_transpiler, is_member_visited_before,
 };

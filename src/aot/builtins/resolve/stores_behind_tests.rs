@@ -126,7 +126,9 @@ impl Resolver<'_, '_> {
         }
         let answer = |test: ExprId| self.find_answer_where_member_is_there(test, member, filled);
         let answer_behind = |left: ExprId, right: ExprId| {
-            let filled = self.find_variable_filled_with_member(left, member).or(filled);
+            let filled = self
+                .find_variable_filled_with_member(left, member)
+                .or(filled);
             self.find_answer_where_member_is_there(right, member, filled)
         };
         match hir[test].kind {

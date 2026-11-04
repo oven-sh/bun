@@ -30,7 +30,9 @@ fn find_lines_left_out(main: &str) -> Vec<String> {
         positions.sort_unstable();
         let line_at = |position: usize| {
             let start = main[..position].rfind('\n').map_or(0, |end| end + 1);
-            let end = main[position..].find('\n').map_or(main.len(), |end| position + end);
+            let end = main[position..]
+                .find('\n')
+                .map_or(main.len(), |end| position + end);
             main[start..end].trim().to_owned()
         };
         positions.into_iter().map(line_at).collect()
@@ -50,7 +52,10 @@ fn function_in_a_function_waits_for_a_reference() {
     );
     assert_eq!(
         left_out,
-        ["function other() { return deeper(); }", "const deeper = () => 2;"]
+        [
+            "function other() { return deeper(); }",
+            "const deeper = () => 2;"
+        ]
     );
 }
 

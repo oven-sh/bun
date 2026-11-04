@@ -113,7 +113,11 @@ impl ModuleSet {
     }
 
     /// Once, behind `collect_modules`. `run_again`: `find_files_that_run_again`, and the entry points that the host starts several times.
-    pub(super) fn find_inner_modules(&mut self, input: &BindInput<'_, '_>, run_again: &[ModuleRef]) {
+    pub(super) fn find_inner_modules(
+        &mut self,
+        input: &BindInput<'_, '_>,
+        run_again: &[ModuleRef],
+    ) {
         let mut keeps_holders = vec![false; input.files.modules.len()];
         for &module in run_again {
             if let ModuleRef::File(file) = module {
@@ -248,7 +252,9 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
     for &importer in &compiled_files {
         let scan = scans.of(importer);
         // Only `leave_imports_of_test_files_to_loader` puts an external module at a site for which the build has found a file.
-        let answers = files.compiled(importer).map_or(&[][..], |it| it.code_answers);
+        let answers = files
+            .compiled(importer)
+            .map_or(&[][..], |it| it.code_answers);
         for (site, answer) in scan.sites.iter().zip(answers) {
             if let (
                 &ScannedSite::Module(ModuleRef::External {
@@ -338,7 +344,9 @@ fn find_forms(
     for &file in compiled_files {
         let path = path_of(file);
         let first = forms_by_path.partition_point(|entry| entry.0 < path);
-        let forms_of_file = forms_by_path[first..].iter().take_while(|entry| entry.0 == path);
+        let forms_of_file = forms_by_path[first..]
+            .iter()
+            .take_while(|entry| entry.0 == path);
         forms.extend(forms_of_file.map(|entry| (file, entry.1)));
     }
     debug_assert!(forms.is_sorted());

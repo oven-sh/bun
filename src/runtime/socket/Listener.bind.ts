@@ -43,7 +43,14 @@ export const addServerName = b.fn({
     tls: [
       table.retained,
       table.reachableValuesStoredIn(table.nativeMemory),
-      table.runsTransitively("OwnKeys", "OwnValues", "PrototypeChain", "Iterate", "ToPrimitive", table.named(...tlsOptionNames)),
+      table.runsTransitively(
+        "OwnKeys",
+        "OwnValues",
+        "PrototypeChain",
+        "Iterate",
+        "ToPrimitive",
+        table.named(...tlsOptionNames),
+      ),
       table.membersOfObjectsOnly,
     ],
   },

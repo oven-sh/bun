@@ -211,7 +211,10 @@ mod tests {
         assert!(!held.functions.is_empty());
         for &function in &held.functions {
             let path = runtime.function_file_path(function);
-            assert!(path.is_none_or(|path| roots.paths.contains(&path)), "{function:?}");
+            assert!(
+                path.is_none_or(|path| roots.paths.contains(&path)),
+                "{function:?}"
+            );
         }
         assert_holds_startup_code(&runtime, &roots);
     }
@@ -235,7 +238,9 @@ mod tests {
         let keeps = |source: &str| collect_roots_of(source, &runtime).keeps_code_without_names;
         assert!(!keeps("export const same = (at: string) => at;"));
         assert!(keeps("export const load = (at: string) => import(at);"));
-        assert!(keeps("export const load = (name: string) => process.getBuiltinModule(name);"));
+        assert!(keeps(
+            "export const load = (name: string) => process.getBuiltinModule(name);"
+        ));
         assert!(keeps("export const worker = new Worker('./main.ts');"));
     }
 

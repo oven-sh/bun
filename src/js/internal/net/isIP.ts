@@ -8,7 +8,9 @@
 
 // Whatever is no string is no address: `test` reads it as text.
 function isIPv4(s: string | null | undefined) {
-  return /^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$/.test(s!);
+  return /^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$/.test(
+    s!,
+  );
 }
 
 function isIPv6(s: string | null | undefined) {

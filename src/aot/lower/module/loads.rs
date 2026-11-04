@@ -11,8 +11,7 @@ use bun_sema::import_sites::{
     ResolvedForm, ResolvedFrom, does_import_meta_resolve_ask_resolver,
     find_holder_of_require_made_for_choice, find_module_printed_as_require, find_own_require,
     find_require_call, holds_import_meta_require, is_create_require_behind_get_builtin_module,
-    is_made_require, is_require_made_for_own_file, may_require_get_members,
-    may_still_be_undefined,
+    is_made_require, is_require_made_for_own_file, may_require_get_members, may_still_be_undefined,
 };
 use bun_sema::program::{FileId, Sym};
 use bun_sema::resolve::ExternalKind;
@@ -22,12 +21,8 @@ use crate::builtins::id::{BuiltinId, RuntimeModule};
 use crate::builtins::table::{self, Platforms, Scope};
 use crate::builtins::{Mutability, Resolved};
 use crate::ir::generated::{BlockRole, ModuleRequestKind};
-use crate::ir::{
-    BlockId, Edge, ModuleId, StringId, TypeTable, ValueId, VariableId, VariableKey,
-};
-use crate::load::contents::load_names::{
-    modules_named_in, resolve_loads_through_imported_loaders,
-};
+use crate::ir::{BlockId, Edge, ModuleId, StringId, TypeTable, ValueId, VariableId, VariableKey};
+use crate::load::contents::load_names::{modules_named_in, resolve_loads_through_imported_loaders};
 use crate::load::loader_aliases::resolve_loader_alias;
 use crate::load::sources::parsed_source;
 use crate::lower::call::{self, Arguments, Callee};

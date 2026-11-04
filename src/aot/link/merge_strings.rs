@@ -259,7 +259,10 @@ fn merge_strings_of(
     in_parallel: InParallel<'_>,
 ) -> (StringTable, Vec<Vec<Option<StringId>>>) {
     let strings = ProgramStrings::new(sources, in_parallel);
-    (strings.make_table(in_parallel), strings.list_ids(in_parallel))
+    (
+        strings.make_table(in_parallel),
+        strings.list_ids(in_parallel),
+    )
 }
 
 #[cfg(test)]

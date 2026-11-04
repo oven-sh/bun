@@ -119,9 +119,7 @@ async function runTests(directory: string, words: string | undefined, ...flags: 
 
 const { "d.test.mjs": aNameThatAMockLeavesOut, ...others } = files;
 
-for (const [way, words] of [
-  ["as one program", "TestRunLayers:0"],
-]) {
+for (const [way, words] of [["as one program", "TestRunLayers:0"]]) {
   // The namespace object of a mock reads and writes what the factory gave: the spy is laid on that object.
   test(`a spy on a name that a mock in front of the load leaves out, ${way}`, async () => {
     using dir = tempDir("aot-a-spy-on-a-name-that-a-mock-leaves-out", {

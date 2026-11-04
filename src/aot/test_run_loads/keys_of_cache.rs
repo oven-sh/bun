@@ -93,7 +93,10 @@ fn find_text_of_run(request: &FinishedFile<'_, '_>, text: ExprId) -> Option<Text
                 left,
                 right,
             } => {
-                let parts = [find_text_of_run(request, left)?, find_text_of_run(request, right)?];
+                let parts = [
+                    find_text_of_run(request, left)?,
+                    find_text_of_run(request, right)?,
+                ];
                 return Some(TextOfRun::Concatenation(Box::new(parts)));
             }
             ExprKind::Call(call)
@@ -187,11 +190,7 @@ fn find_start_of_key(request: &FinishedFile<'_, '_>, key: ExprId) -> Option<Text
 
 /// `delete require.cache[path.join(root, platform, "audio-capture.node")]`: folding knows how the key ends, so what is taken out is a file whose path ends so.
 /// False: of some text that the key may be nothing is known.
-fn note_parts_of_key(
-    request: &FinishedFile<'_, '_>,
-    key: ExprId,
-    found: &mut LoadsOfFile,
-) -> bool {
+fn note_parts_of_key(request: &FinishedFile<'_, '_>, key: ExprId, found: &mut LoadsOfFile) -> bool {
     let &FinishedFile {
         analysis, atoms, ..
     } = request;
@@ -281,8 +280,9 @@ pub(super) fn look_at_keys(
             Some(FileOfKey::Path(_)) => continue,
             // `require.resolve` answers the name of a Node.js module as it is asked.
             Some(FileOfKey::Site(site)) => &analysis.import_sites[site as usize].specifier,
-            None => (analysis.find_key_stored_in_cache(written))
-                .unwrap_or(&ImportSpecifier::Unknown),
+            None => {
+                (analysis.find_key_stored_in_cache(written)).unwrap_or(&ImportSpecifier::Unknown)
+            }
         };
         for text in analysis.alternatives_of(texts) {
             match *text {

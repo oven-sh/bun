@@ -118,7 +118,10 @@ fn conversions_are_followed_in_the_order_of_the_units_whichever_task_lists_them(
 
         let prepared = close(projects, [first, second, third]);
 
-        assert!(prepared.units.len() > UNITS_IN_A_TASK, "a task lists them all");
+        assert!(
+            prepared.units.len() > UNITS_IN_A_TASK,
+            "a task lists them all"
+        );
         let reversed = choose_in_reverse(&prepared, projects);
         for edges in [&prepared.definitions.supertypes, &reversed.supertypes] {
             assert_eq!(supertypes_in(edges, &prepared, 1), [2]);

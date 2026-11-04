@@ -74,6 +74,9 @@ fn accessor_that_may_answer_an_empty_text_is_replaced_behind_its_test() {
     let source = r#"if (!RegExp.prototype.flags) Object.defineProperty(RegExp.prototype, "flags", { get: f, configurable: true });"#;
     with_case(TEST_SCRIPT, &format!("{HEAD}{source}"), |case| {
         let replaced = case.resolved.replaced_members();
-        assert!(replaced.contains(&BuiltinId::RegExpPrototypeFlags), "{replaced:?}");
+        assert!(
+            replaced.contains(&BuiltinId::RegExpPrototypeFlags),
+            "{replaced:?}"
+        );
     });
 }

@@ -223,9 +223,9 @@ fn line_of_file_that_leaves_open(path: &[u8], what: FileLeavesOpen) -> String {
         FileLeavesOpen::HandsOnUnspelledModule => {
             format!("AOT test run | {path} hands on a module that it does not spell")
         }
-        FileLeavesOpen::LetsSpyOnGo => format!(
-            "AOT test run | {path} lets spyOn go where nobody sees what it is called with"
-        ),
+        FileLeavesOpen::LetsSpyOnGo => {
+            format!("AOT test run | {path} lets spyOn go where nobody sees what it is called with")
+        }
         FileLeavesOpen::SpiesUnderUnspelledName => format!(
             "AOT test run | {path} spies on an object from somewhere under a name that it does not spell"
         ),
@@ -283,7 +283,14 @@ const CAUSES_OF_UNSEEN_CODE: [UnseenCodeCause; 6] = [
 ];
 
 fn line_of_code_that_build_does_not_see(records: [usize; 6]) -> String {
-    let [by_name, compiled_by_name, texts, uncompiled, unseen, by_option] = records;
+    let [
+        by_name,
+        compiled_by_name,
+        texts,
+        uncompiled,
+        unseen,
+        by_option,
+    ] = records;
     format!(
         "AOT flow | code that the build does not see | loads code by name {by_name} | loads compiled files by name {compiled_by_name} | evaluates text {texts} | imports uncompiled code {uncompiled} | runs unseen code {unseen} | an option admits code {by_option}"
     )

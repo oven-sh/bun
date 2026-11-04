@@ -469,8 +469,14 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     debug_assert!(compiled_files.next().is_none());
     let reaches_mock =
         find_files_that_reach_mocks(&drafts, &requests.inner_modules, &named_by_mocks);
-    let names_handed_on =
-        NamesHandedOn::find(&scans, &tables, &modules, &mocked, &named_by_mocks, mocks_any_module);
+    let names_handed_on = NamesHandedOn::find(
+        &scans,
+        &tables,
+        &modules,
+        &mocked,
+        &named_by_mocks,
+        mocks_any_module,
+    );
     let mut is_left_to_loader = vec![false; file_count];
     for &(_, file) in &modules.left_to_loader {
         is_left_to_loader[file.idx()] = true;

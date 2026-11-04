@@ -336,7 +336,10 @@ fn kinds_and_loaders_follow_payloads() {
         let describe = |name: &str| {
             let file = file_at(input.files, name);
             let payload = parsed_source(input.files, file);
-            assert!(!payload.is_some_and(|it| it.plugin_module.is_some()), "{name}");
+            assert!(
+                !payload.is_some_and(|it| it.plugin_module.is_some()),
+                "{name}"
+            );
             (
                 sources.kind(file),
                 sources.loader(file),

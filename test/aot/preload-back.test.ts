@@ -277,9 +277,7 @@ const projects: Record<string, Record<string, string>> = {
   },
 };
 
-const ways: [string, Record<string, string>][] = [
-  ["as one program", { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" }],
-];
+const ways: [string, Record<string, string>][] = [["as one program", { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" }]];
 // In front of the cure whatever failed in layers failed as one program too, 17 of 17. This one did.
 const witness = "a mock, then a reset";
 

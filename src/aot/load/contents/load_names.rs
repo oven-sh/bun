@@ -210,7 +210,9 @@ pub(crate) fn find_library_modules_that_unknown_names_may_stand_for(
 /// It looks for a Node.js module under a name that is written without `node:`, and for one of Bun's own (`bun:sqlite`, `ws`) under what the resolver makes of the name.
 /// `require("bun")` is read as `Bun`.
 pub(crate) fn find_entry_that_require_looks_for(name: &[u8]) -> Option<(&[u8], RuntimeModule)> {
-    let path = Alias::get(name, Target::Bun, Cfg::default())?.path.as_bytes();
+    let path = Alias::get(name, Target::Bun, Cfg::default())?
+        .path
+        .as_bytes();
     let key = match path.starts_with(b"node:") {
         true => name,
         false => path,

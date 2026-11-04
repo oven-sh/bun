@@ -71,7 +71,10 @@ fn unite_runs(runs: &[Vec<PropertyKey>], in_parallel: InParallel<'_>) -> Vec<Pro
         let mut keys = Vec::new();
         for run in runs {
             let count_below = |bound: &PropertyKey| run.partition_point(|key| key < bound);
-            let (start, end) = (from.map_or(0, count_below), to.map_or(run.len(), count_below));
+            let (start, end) = (
+                from.map_or(0, count_below),
+                to.map_or(run.len(), count_below),
+            );
             keys.extend_from_slice(&run[start..end]);
         }
         sort_distinct_keys(&mut keys);
@@ -108,7 +111,10 @@ fn merge_key_lists(
             };
             lists[tables].iter().map(find_id).collect()
         });
-    (PropertyKeyTable::of_distinct_keys(program_keys), program_ids)
+    (
+        PropertyKeyTable::of_distinct_keys(program_keys),
+        program_ids,
+    )
 }
 
 /// The property keys of all tables in one table, ascending. The table is a set of keys in the ids of the program, laid out in a total order,

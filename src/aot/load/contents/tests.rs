@@ -344,7 +344,14 @@ fn describe_file_contents(files: &Files<'_>, file: FileId, contents: &FileConten
     let names = &contents.names;
     let modules = names.modules.iter();
     let modules: Vec<String> = modules
-        .map(|it| format!("{} {} {:?}", it.argument.0, text_of(files, it.name), it.module))
+        .map(|it| {
+            format!(
+                "{} {} {:?}",
+                it.argument.0,
+                text_of(files, it.name),
+                it.module
+            )
+        })
         .collect();
     let starts = contents.worker_starts.iter();
     let starts: Vec<String> = starts
@@ -424,7 +431,12 @@ fn mutabilities_of(files: &Files<'_>, name: &str, builtin: BuiltinId) -> Vec<Mut
 fn each_form_of_a_name_finds_the_file_that_the_worker_starts_from() {
     // The file with the `new`, its text, the descriptions accepted for the start, the files found.
     let forms: [(&str, &str, &[&str], &[&str]); 7] = [
-        ("src/start.ts", r#"new Worker("./w.ts");"#, &["AsWritten ./w.ts"], &["w.ts"]),
+        (
+            "src/start.ts",
+            r#"new Worker("./w.ts");"#,
+            &["AsWritten ./w.ts"],
+            &["w.ts"],
+        ),
         (
             "src/start.ts",
             r#"new Worker(import.meta.dir + "/w.ts");"#,
@@ -1052,18 +1064,21 @@ fn path_that_the_library_makes_of_the_own_path_stands_in_text() {
     for (file, ahead, expression, value) in rows {
         let main = format!(r#"import "./{file}";"#);
         let starts = format!("{ahead}\n{START}{expression}{END}");
-        load(&executable(&[("main.ts", &main), (file, &starts)]), |loaded| {
-            let expected = value.iter().map(|value| {
-                let text = encode(format!("postMessage('{value}')").as_bytes());
-                let text = text.expect("the text is well formed");
-                format!("data:text/javascript,{} StartsWorker", BStr::new(&text))
-            });
-            assert_eq!(
-                describe_texts_found(loaded),
-                expected.collect::<Vec<String>>(),
-                "{starts}"
-            );
-        });
+        load(
+            &executable(&[("main.ts", &main), (file, &starts)]),
+            |loaded| {
+                let expected = value.iter().map(|value| {
+                    let text = encode(format!("postMessage('{value}')").as_bytes());
+                    let text = text.expect("the text is well formed");
+                    format!("data:text/javascript,{} StartsWorker", BStr::new(&text))
+                });
+                assert_eq!(
+                    describe_texts_found(loaded),
+                    expected.collect::<Vec<String>>(),
+                    "{starts}"
+                );
+            },
+        );
     }
 }
 
@@ -1281,7 +1296,11 @@ fn file_followed_further_than_the_bundler_is_an_entry_point_beside_a_plugin() {
         load(&project, |loaded| {
             let program = loaded.contents;
             assert_eq!(program.names_plugin, !plugin.is_empty());
-            assert_eq!(describe_found(&program.found_entry_points), found, "{plugin}");
+            assert_eq!(
+                describe_found(&program.found_entry_points),
+                found,
+                "{plugin}"
+            );
             assert!(find_file(files_of(loaded), "a.ts").is_some(), "{plugin}");
             assert_found_follow_written(loaded, 1);
         });
@@ -1470,7 +1489,12 @@ fn load_says_whether_the_build_knows_its_name() {
         ("loads.ts", r#"require("node:os");"#, false, false),
         ("loads.ts", "require(process.argv[2]);", true, true),
         ("loads.ts", "import(process.argv[2]);", true, true),
-        ("loads.ts", "process.getBuiltinModule(process.argv[2]);", true, false),
+        (
+            "loads.ts",
+            "process.getBuiltinModule(process.argv[2]);",
+            true,
+            false,
+        ),
         ("loads.cjs", "globalThis.kept = [require];", true, true),
     ];
     for (file, text, is_unknown, may_be_path) in loads {
@@ -1512,7 +1536,10 @@ export const os = { os: 1 }.os;"#;
             let held = find_library_modules_that_unknown_names_may_stand_for(files);
             for module in written {
                 assert_eq!(held.contains(&module), are_held, "{module:?}");
-                assert!(!are_held || holds_library_module(loaded, module), "{module:?}");
+                assert!(
+                    !are_held || holds_library_module(loaded, module),
+                    "{module:?}"
+                );
             }
             assert!(!held.contains(&NodeOs));
         });
@@ -1595,12 +1622,17 @@ fn entry_taken_out_of_the_module_cache_lets_every_module_load_again() {
     ];
     for (statement, loads_again) in uses {
         let text = format!("const key = process.argv[2];\n{statement}\n");
-        let project = executable(&[("main.cjs", r#"require("./uses.cjs");"#), ("uses.cjs", &text)]);
+        let project = executable(&[
+            ("main.cjs", r#"require("./uses.cjs");"#),
+            ("uses.cjs", &text),
+        ]);
         let found = load(&project, |loaded| loaded.contents.any_module_loads_again);
         assert_eq!(found, loads_again, "{statement}");
     }
-    for (statement, loads_again) in [("jest.resetModules();", true), ("jest.clearAllMocks();", false)]
-    {
+    for (statement, loads_again) in [
+        ("jest.resetModules();", true),
+        ("jest.clearAllMocks();", false),
+    ] {
         let test_file = format!(
             "import {{ jest, test }} from \"bun:test\";\ntest(\"t\", () => {{ {statement} }});\n"
         );
@@ -1658,10 +1690,16 @@ fn compiled_file_that_a_test_run_changes_is_listed() {
             ("made.ts", "export default 1;"),
             ("lib/a.ts", "export const a = 1;"),
         ]);
-        load(&project, |loaded| !loaded.contents.run.loads.files_changed_on_disk.is_empty())
+        load(&project, |loaded| {
+            !loaded.contents.run.loads.files_changed_on_disk.is_empty()
+        })
     };
     for (statement, loads_again) in changes {
-        assert_eq!(loads_again_in(test_run, statement), loads_again, "{statement}");
+        assert_eq!(
+            loads_again_in(test_run, statement),
+            loads_again,
+            "{statement}"
+        );
     }
     // An executable reads none of its files from disk.
     assert!(!loads_again_in(executable, changes[0].0));
@@ -1740,8 +1778,16 @@ fn mock_under_a_name_that_is_not_spelled_may_replace_any_module() {
 fn mocking_function_used_as_a_value_may_replace_any_module() {
     // What the test file imports from the runner, what it does with it, whether any module may be mocked.
     let uses = [
-        ("mock", "const kept = mock.module; kept(process.argv[2], factory);", true),
-        ("mock", "mock[process.argv[2]](process.argv[3], factory);", true),
+        (
+            "mock",
+            "const kept = mock.module; kept(process.argv[2], factory);",
+            true,
+        ),
+        (
+            "mock",
+            "mock[process.argv[2]](process.argv[3], factory);",
+            true,
+        ),
         ("vi", "console.log([vi.mock]);", true),
         ("jest", "console.log({ runner: jest });", true),
         ("jest", "export const runner = () => jest;", true),
@@ -1799,11 +1845,19 @@ fn builtin_writes_of_a_test_run_merge_into_one_list() {
         // A file that writes nothing reads what another file has replaced.
         let unlocked = mutabilities_of(files, "reads.ts", BuiltinId::ArrayFrom);
         assert!(!unlocked.is_empty());
-        assert!(unlocked.iter().all(|&it| it == Mutability::ConstantUnlessWritten));
+        assert!(
+            unlocked
+                .iter()
+                .all(|&it| it == Mutability::ConstantUnlessWritten)
+        );
         // What no file replaces is a read too, and is on no list of the program: the engine lays the lock where it follows no write to the member.
         let left_to_engine = mutabilities_of(files, "reads.ts", BuiltinId::ArrayIsArray);
         assert!(!left_to_engine.is_empty());
-        assert!(left_to_engine.iter().all(|&it| it == Mutability::ConstantUnlessWritten));
+        assert!(
+            left_to_engine
+                .iter()
+                .all(|&it| it == Mutability::ConstantUnlessWritten)
+        );
     });
     load(&executable(&[("main.ts", writes)]), |loaded| {
         assert!(loaded.contents.replaced_builtins.is_empty());
@@ -1844,10 +1898,16 @@ fn object_that_may_be_written_is_not_an_object_that_is_replaced() {
         load(&test_run(&[("a.test.ts", &test_file)]), |loaded| {
             let replaced = &loaded.contents.replaced_builtins;
             for &member in held {
-                assert!(replaced.contains(&(member as u32)), "{statement}: {member:?}");
+                assert!(
+                    replaced.contains(&(member as u32)),
+                    "{statement}: {member:?}"
+                );
             }
             for &member in lacked {
-                assert!(!replaced.contains(&(member as u32)), "{statement}: {member:?}");
+                assert!(
+                    !replaced.contains(&(member as u32)),
+                    "{statement}: {member:?}"
+                );
             }
         });
     }
@@ -1868,10 +1928,7 @@ fn borrow_files(files: &[(String, String)]) -> Vec<(&str, &str)> {
     files.map(|(name, text)| (&name[..], &text[..])).collect()
 }
 
-fn assert_same_at_1_and_16_threads(
-    mut project: TestProject,
-    check: impl Fn(&LoadedBuild<'_, '_>),
-) {
+fn assert_same_at_1_and_16_threads(mut project: TestProject, check: impl Fn(&LoadedBuild<'_, '_>)) {
     let mut describe_with = |thread_count: u32| {
         project.aot.thread_count = NonZeroU32::new(thread_count);
         load(&project, |loaded| {
@@ -1895,7 +1952,10 @@ fn what_an_executable_holds_does_not_depend_on_the_threads() {
             "export const url = new URL(\"./worker{part}.ts\", import.meta.url);\nconsole.log(\"node:dgram\", \"zlib\");\nrequire(process.argv[{part}] ? \"node:vm\" : \"node:v8\");\nrequire(process.argv[{part}]);\n"
         );
         files.push((format!("part{part}.ts"), text));
-        files.push((format!("worker{part}.ts"), format!("postMessage({part});\n")));
+        files.push((
+            format!("worker{part}.ts"),
+            format!("postMessage({part});\n"),
+        ));
     }
     files[0].1 = main;
     assert_same_at_1_and_16_threads(executable(&borrow_files(&files)), |loaded| {

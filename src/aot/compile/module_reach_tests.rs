@@ -48,7 +48,10 @@ fn describe_project(loaded: &LoadedBuild<'_, '_>, bound: &BoundProject) -> Vec<S
             true => " with module object",
             false => "",
         };
-        Some(format!("{name}: {shape}{module_object} [{}]", texts.join(" | ")))
+        Some(format!(
+            "{name}: {shape}{module_object} [{}]",
+            texts.join(" | ")
+        ))
     };
     files
         .compiled_files()
@@ -125,7 +128,7 @@ fn describe_package_beside(load: &str, code_from_disk: CodeFromDisk) -> String {
 
 #[test]
 fn load_under_an_unknown_name_finds_what_it_finds_without_code_from_disk_where_that_code_is_isolated()
-{
+ {
     let load = "import(process.argv[2])";
     let refused = describe_package_beside(load, CodeFromDisk::Refused);
     assert!(!refused.ends_with(" []"), "{refused}");
@@ -471,7 +474,8 @@ const WAYS_TO_MODULE_OBJECTS: [&str; 5] = [
     "console.log(module);",
     "const Module = require('node:module'); Module._load = function (name) { return name; };",
 ];
-const ES_LIBRARY: &str = "export function used() { return 1; }\nclass Unused {}\nexport { Unused };";
+const ES_LIBRARY: &str =
+    "export function used() { return 1; }\nclass Unused {}\nexport { Unused };";
 const WITHOUT_UNUSED: &str = "lib.mjs: ES [class Unused {}]";
 
 #[test]

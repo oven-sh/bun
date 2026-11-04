@@ -97,12 +97,8 @@ impl SourceProvider for ScriptedProvider {
             DATA | VIRTUAL_DATA => (b"{\"a\":1}", Loader::Json),
             ERASED | b"/project/erased.js" => (ERASED_TEXT, Loader::Js),
             ASSET => (ASSET_FROM_PLUGIN, Loader::File),
-            NEVER_LOADED
-            | DEFERRED_TEMPLATE
-            | DEFERRED_ASSET
-            | DEFERRED_BUNDLE
-            | STILL_DEFERRED
-            | STILL_DEFERRED_ASSET => {
+            NEVER_LOADED | DEFERRED_TEMPLATE | DEFERRED_ASSET | DEFERRED_BUNDLE
+            | STILL_DEFERRED | STILL_DEFERRED_ASSET => {
                 return Ok(Loaded::Deferred);
             }
             b"/project/failed.ts" => {
@@ -132,7 +128,10 @@ impl SourceProvider for ScriptedProvider {
             (NEVER_LOADED, Loaded::NotFound),
             (DEFERRED_TEMPLATE, from_plugin(TYPESCRIPT_TEXT, Loader::Ts)),
             (DEFERRED_ASSET, from_plugin(ASSET_FROM_PLUGIN, Loader::File)),
-            (DEFERRED_BUNDLE, from_plugin(BUNDLED_COMMONJS_TEXT.as_bytes(), Loader::Js)),
+            (
+                DEFERRED_BUNDLE,
+                from_plugin(BUNDLED_COMMONJS_TEXT.as_bytes(), Loader::Js),
+            ),
             (STILL_DEFERRED, Loaded::Deferred),
             (STILL_DEFERRED_ASSET, Loaded::Deferred),
         ];

@@ -4,9 +4,7 @@ use bun_sema::program::Sym;
 
 use super::super::Context;
 use super::super::storage::find_initial_functions;
-use super::{
-    COPIED, Probe, analyze_source, analyze_source_that_runs_again, is_field, storage_in,
-};
+use super::{COPIED, Probe, analyze_source, analyze_source_that_runs_again, is_field, storage_in};
 use crate::ir::VariableKey;
 use crate::lower::captures::{Capture, CaptureList, CapturePlan};
 use crate::lower::scope::testing::{functions_of_kind, walk_scopes, with_scope_input};

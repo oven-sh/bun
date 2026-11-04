@@ -72,7 +72,10 @@ impl Program<'_, '_> {
     }
 
     fn has_statements(&self, path: &str) -> bool {
-        !self.files.modules[self.file(path).idx()].hir.stmts.is_empty()
+        !self.files.modules[self.file(path).idx()]
+            .hir
+            .stmts
+            .is_empty()
     }
 }
 
@@ -128,13 +131,19 @@ fn a_tree_stays_until_every_file_that_can_reach_it_is_committed() {
     with_program(|program| {
         program.let_trees_go_behind(&["/main.ts", "/late.ts", "/mid.ts", "/rest.ts"]);
         program.commit_in_a_task(&["/main.ts", "/mid.ts"]);
-        assert_eq!(program.states_of(["/main.ts", "/mid.ts", "/far.ts"]), [GONE, HERE, HERE]);
+        assert_eq!(
+            program.states_of(["/main.ts", "/mid.ts", "/far.ts"]),
+            [GONE, HERE, HERE]
+        );
         {
             let _task = ReadingTask::begin();
             assert!(program.has_statements("/far.ts"));
             program.files.note_commit(program.file("/late.ts"));
         }
-        assert_eq!(program.states_of(["/late.ts", "/mid.ts", "/far.ts"]), [GONE, GONE, GONE]);
+        assert_eq!(
+            program.states_of(["/late.ts", "/mid.ts", "/far.ts"]),
+            [GONE, GONE, GONE]
+        );
     });
 }
 
@@ -158,10 +167,16 @@ fn states_once_barrel_and_x_are_committed(program: &Program<'_, '_>) -> [u8; 3] 
 #[test]
 fn a_file_with_an_export_star_stays_with_what_it_refers_to() {
     with_program(|program| {
-        assert_eq!(states_once_barrel_and_x_are_committed(program), [GONE, GONE, GONE]);
+        assert_eq!(
+            states_once_barrel_and_x_are_committed(program),
+            [GONE, GONE, GONE]
+        );
     });
     with_export_stars_in(&["/barrel.ts"], |program| {
-        assert_eq!(states_once_barrel_and_x_are_committed(program), [GONE, HERE, HERE]);
+        assert_eq!(
+            states_once_barrel_and_x_are_committed(program),
+            [GONE, HERE, HERE]
+        );
     });
 }
 

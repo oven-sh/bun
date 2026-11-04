@@ -205,7 +205,9 @@ export function traverseArray(
         // With an initial value every element goes to the callback. The shape says so, which no turn changes: on no way round the loop is the accumulator anything but what the callback has made of it.
         if (hasInitialValue) accumulator = $call<unknown>(endCallback, undefined, accumulator, value, index, array);
         else {
-          accumulator = hasAccumulator ? $call<unknown>(endCallback, undefined, accumulator, value, index, array) : value;
+          accumulator = hasAccumulator
+            ? $call<unknown>(endCallback, undefined, accumulator, value, index, array)
+            : value;
           hasAccumulator = true;
         }
       } else if (endKind === endSome) {

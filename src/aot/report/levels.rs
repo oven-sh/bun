@@ -169,7 +169,9 @@ pub(super) fn totals_of(
 }
 
 pub fn compute_totals(input: &ReportInput<'_>) -> ProgramTotals {
-    totals_of(input.engine.access_counts(), |module| input.texts.origin(module))
+    totals_of(input.engine.access_counts(), |module| {
+        input.texts.origin(module)
+    })
 }
 
 #[cfg(test)]

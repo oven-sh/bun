@@ -38,8 +38,6 @@ pub(crate) struct Timings {
     workers: u32,
     /// Cost assigned to files with no entry when packing shards.
     median: u32,
-    /// Nine files in ten take no longer.
-    slow: u32,
 }
 
 impl Timings {
@@ -51,11 +49,10 @@ impl Timings {
         for path in paths {
             Self::load_one(path, &mut map, &mut growth, &mut workers);
         }
-        let (median, slow) = {
+        let median = {
             let mut known: Vec<u32> = map.values().to_vec();
             index_sort::sort_slice_unstable_by(&mut known, |a, b| a.cmp(b));
-            let at = |index: usize| known.get(index).copied().unwrap_or(0);
-            (at(known.len() / 2), at(known.len() * 9 / 10))
+            known.get(known.len() / 2).copied().unwrap_or(0)
         };
         Timings {
             path: paths[0].clone(),
@@ -65,7 +62,6 @@ impl Timings {
             measured_growth: StringArrayHashMap::new(),
             workers,
             median,
-            slow,
         }
     }
 
@@ -208,59 +204,6 @@ impl Timings {
         let key = Self::key_for(abs_path);
         let _ = self.growth.put(&key, megabytes);
         let _ = self.measured_growth.put(&key, megabytes);
-    }
-
-    pub(crate) fn growth_of(&self, abs_path: &[u8]) -> Option<u32> {
-        self.growth.get(&Self::key_for(abs_path)).copied()
-    }
-
-    /// Its worker grew by over a gigabyte when the file was last measured.
-    pub(crate) fn is_heavy(&self, abs_path: &[u8]) -> bool {
-        self.growth_of(abs_path)
-            .is_some_and(|megabytes| megabytes > self.heavy_over)
-    }
-
-    /// What the heaviest of `files` took. A run needs room for it, so heavy files that took no more together may run at once.
-    pub(crate) fn largest_growth(&self, files: &[Interned]) -> u32 {
-        let growths = files
-            .iter()
-            .filter_map(|file| self.growth_of(file.as_bytes()));
-        growths.max().unwrap_or(0)
-    }
-
-    /// What `count` of `files` take together where each takes the average. A file without a record counts as nothing.
-    pub(crate) fn growth_of_average_files(&self, files: &[Interned], count: u32) -> u32 {
-        let growths = files
-            .iter()
-            .filter_map(|file| self.growth_of(file.as_bytes()));
-        let sum: u64 = growths.map(u64::from).sum();
-        u32::try_from(sum * u64::from(count) / (files.len() as u64).max(1)).unwrap_or(u32::MAX)
-    }
-
-    /// What a file that is not heavy took that runs at a moment taken at random: the longer a file runs, the more it counts.
-    pub(crate) fn growth_of_running_light_file(&self, files: &[Interned]) -> u32 {
-        let (mut growth, mut time) = (0u64, 0u64);
-        for file in files.iter().filter(|file| !self.is_heavy(file.as_bytes())) {
-            let ms = u64::from(self.get(file.as_bytes()).unwrap_or(self.median));
-            growth += ms * u64::from(self.growth_of(file.as_bytes()).unwrap_or(0));
-            time += ms;
-        }
-        u32::try_from(growth / time.max(1)).unwrap_or(u32::MAX)
-    }
-
-    pub(crate) fn record_growth(&mut self, abs_path: &[u8], megabytes: u32) {
-        let key = Self::key_for(abs_path);
-        let _ = self.growth.put(&key, megabytes);
-        let _ = self.measured_growth.put(&key, megabytes);
-    }
-
-    /// Puts the heavy files first, in the order they have, and says how many they are.
-    pub(crate) fn move_heavy_first(&self, files: &mut [Interned]) -> usize {
-        let (heavy, light): (Vec<Interned>, Vec<Interned>) =
-            (files.iter().copied()).partition(|file| self.is_heavy(file.as_bytes()));
-        files[..heavy.len()].copy_from_slice(&heavy);
-        files[heavy.len()..].copy_from_slice(&light);
-        heavy.len()
     }
 
     pub(crate) fn record_since(&mut self, abs_path: &[u8], started_ms: i64) {

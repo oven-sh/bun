@@ -9,8 +9,18 @@ fn test_runner_and_plugin_are_found_under_their_names() {
     }
     for id in all_ids() {
         let canonical = canonical_id(id);
-        assert_eq!(returns_test_runner(id), canonical == canonical_id(BuiltinId::BunJest), "{}", text_of(id));
-        assert_eq!(is_plugin(id), canonical == canonical_id(BuiltinId::BunPlugin), "{}", text_of(id));
+        assert_eq!(
+            returns_test_runner(id),
+            canonical == canonical_id(BuiltinId::BunJest),
+            "{}",
+            text_of(id)
+        );
+        assert_eq!(
+            is_plugin(id),
+            canonical == canonical_id(BuiltinId::BunPlugin),
+            "{}",
+            text_of(id)
+        );
         let is_below_runner = entry(root_of(id)).module == Some(RuntimeModule::BunTest);
         assert_eq!(is_of_test_runner(id), is_below_runner, "{}", text_of(id));
     }

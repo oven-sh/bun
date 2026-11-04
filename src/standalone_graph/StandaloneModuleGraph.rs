@@ -2388,11 +2388,7 @@ pub(crate) fn inject<'a>(
                 zname.as_bytes(),
                 &[0],
             ]);
-            let len = beside.len() - 1;
-            zname_owned = Some(beside);
-            // SAFETY: trailing 0 byte appended above; `zname_owned` keeps the allocation alive until it is replaced
-            // together with `zname`.
-            zname = unsafe { ZStr::from_raw(zname_owned.as_ref().unwrap().as_ptr(), len) };
+            zname = ZStr::from_slice_with_nul(zname_owned.insert(beside));
         }
     }
     #[cfg(windows)]
@@ -2592,7 +2588,9 @@ pub(crate) fn inject<'a>(
             break 'brk fd;
         }
     };
-    let _ = (&mut zname_owned, &mut zname, &mut file_holds_template);
+    #[cfg(windows)]
+    let _ = (&mut zname_owned, &mut zname);
+    let _ = &mut file_holds_template;
     additions.log_part("behind the engine: copy of the template");
 
     match target.os {

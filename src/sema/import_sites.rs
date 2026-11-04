@@ -19,8 +19,7 @@ pub use call_sites::{
     is_name_written_out,
 };
 pub(crate) use call_sites::{
-    call_site_arguments, call_site_kind, is_free_common_js, is_in_with_scope,
-    may_construct_worker,
+    call_site_arguments, call_site_kind, is_free_common_js, is_in_with_scope, may_construct_worker,
 };
 pub use changed_files::{
     TextsOfFile, find_texts_of_exports, write_from_other_folder, write_start_from_other_folder,

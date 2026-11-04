@@ -401,7 +401,9 @@ fn find_importers_outside_run(disk: &CodeOnDisk<'_>, asked: &[Vec<u8>]) -> Vec<O
                     Some(without_extension(spelled)).filter(|it| it.len() < spelled.len());
                 for under in [Some(&spelled[..]), shorter].into_iter().flatten() {
                     let places = sought_under.get(under).map_or(&[][..], Vec::as_slice);
-                    let places = places.iter().filter(|&&place| spells(spelled, &sought[place]));
+                    let places = places
+                        .iter()
+                        .filter(|&&place| spells(spelled, &sought[place]));
                     found.extend(places.map(|&place| (importer, place, *takes_for_itself)));
                 }
             }
@@ -409,8 +411,8 @@ fn find_importers_outside_run(disk: &CodeOnDisk<'_>, asked: &[Vec<u8>]) -> Vec<O
         // `true` comes behind `false`: the last way to a file says whether one of them takes it for itself.
         found.shared_sort_unstable();
         for (index, &(importer, imported, takes_for_itself)) in found.iter().enumerate() {
-            let is_last_way = (found.get(index + 1))
-                .is_none_or(|next| (next.0, next.1) != (importer, imported));
+            let is_last_way =
+                (found.get(index + 1)).is_none_or(|next| (next.0, next.1) != (importer, imported));
             if !is_last_way || place_in_sought[importer] == Some(imported) {
                 continue;
             }
@@ -442,7 +444,9 @@ fn find_importers_outside_run(disk: &CodeOnDisk<'_>, asked: &[Vec<u8>]) -> Vec<O
         }
     }
     let importers = taken_by[..asked.len()].iter();
-    importers.map(|importer| importer.map(|place| sought[place].clone())).collect()
+    importers
+        .map(|importer| importer.map(|place| sought[place].clone()))
+        .collect()
 }
 
 /// For the runner, behind a run that has refused a load which `file` asked for: the file on disk that makes `file` the product's. Native paths.
@@ -505,9 +509,8 @@ impl FilesByImports<'_, '_> {
     fn find_files_that_tests_alone_come_to(&self, stays: &[bool]) -> Vec<FileId> {
         let files = self.files;
         let count = self.referrers.len();
-        let may_help = |index: usize| {
-            !self.is_in_package[index] && !self.is_of_tests[index] && !stays[index]
-        };
+        let may_help =
+            |index: usize| !self.is_in_package[index] && !self.is_of_tests[index] && !stays[index];
         // By `FileId::idx()`: the importers that run and have yet to be found.
         let mut others = vec![0u32; count];
         // A Worker that a test starts begins at a file that nobody imports.
@@ -515,7 +518,9 @@ impl FilesByImports<'_, '_> {
         for &file in files.entry_points() {
             is_imported[file.idx()] = true;
         }
-        for index in (0..count).filter(|&index| parsed_source(files, FileId(index as u32)).is_some()) {
+        for index in
+            (0..count).filter(|&index| parsed_source(files, FileId(index as u32)).is_some())
+        {
             let mut imported: Vec<FileId> = files.module(FileId(index as u32)).code_edges.to_vec();
             imported.sort_unstable();
             imported.dedup();
@@ -526,7 +531,9 @@ impl FilesByImports<'_, '_> {
         }
         let first = files.compiled_files().iter().copied();
         let mut found: Vec<FileId> = first
-            .filter(|file| may_help(file.idx()) && is_imported[file.idx()] && others[file.idx()] == 0)
+            .filter(|file| {
+                may_help(file.idx()) && is_imported[file.idx()] && others[file.idx()] == 0
+            })
             .collect();
         let mut next = 0;
         while let Some(&file) = found.get(next) {
@@ -536,7 +543,8 @@ impl FilesByImports<'_, '_> {
             imported.dedup();
             for target in imported.into_iter().filter(|&it| it != file) {
                 others[target.idx()] -= 1;
-                if others[target.idx()] == 0 && may_help(target.idx()) && files.is_compiled(target) {
+                if others[target.idx()] == 0 && may_help(target.idx()) && files.is_compiled(target)
+                {
                     found.push(target);
                 }
             }
@@ -654,7 +662,10 @@ pub(crate) fn find_whose_files(input: &RunInput<'_, '_>) -> (Vec<WhoseFile>, Vec
             let position = asked.binary_search_by(|it| it[..].cmp(name_of(*file)));
             position.is_ok_and(|position| importers[position].is_some())
         };
-        let taken: Vec<FileId> = asked_of.into_iter().filter(is_imported_outside_run).collect();
+        let taken: Vec<FileId> = asked_of
+            .into_iter()
+            .filter(is_imported_outside_run)
+            .collect();
         if !taken.is_empty() {
             for file in taken {
                 is_of_product_for_sure[file.idx()] = true;

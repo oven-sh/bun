@@ -45,10 +45,7 @@ function runsAsPlain(
     expect(plain?.printed).toContain("mocked");
     expect(plain?.printed).not.toContain("real");
     expect((await group.ran(["--debug-aot"])).get(name)).toEqual(plain);
-    if (nameInLayers)
-      expect((await inLayers.ran(["--debug-aot"], "TestRunLayers:0")).get(nameInLayers)).toEqual(
-        plain,
-      );
+    if (nameInLayers) expect((await inLayers.ran(["--debug-aot"], "TestRunLayers:0")).get(nameInLayers)).toEqual(plain);
   });
 }
 

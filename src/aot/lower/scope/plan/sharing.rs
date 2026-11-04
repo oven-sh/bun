@@ -91,7 +91,9 @@ pub(super) fn compute_sharing(
             sharing.variables.push((binding, key));
         }
     }
-    sharing.captured.sort_unstable_by_key(|captured| captured.binding);
+    sharing
+        .captured
+        .sort_unstable_by_key(|captured| captured.binding);
     hold_in_every_closure(context, registries, &mut sharing.captured_uses);
     sharing.fields_for_eval = collect_fields_for_eval(context, uses, &sharing.captured);
     sharing.captured_uses.sort_unstable();

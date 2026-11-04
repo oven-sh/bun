@@ -974,7 +974,11 @@ lazy();
             let files = bind_input.files;
             let helpers = KnownHelpers::compute(files, &run_serially);
             let wrapped = WrappedModules::compute(files, &helpers, &|_| true, &run_serially);
-            assert!(wrapped.of_file(file_named(bind_input, "main.mjs")).is_empty());
+            assert!(
+                wrapped
+                    .of_file(file_named(bind_input, "main.mjs"))
+                    .is_empty()
+            );
         });
     }
 

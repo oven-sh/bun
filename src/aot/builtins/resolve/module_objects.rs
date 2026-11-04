@@ -11,8 +11,7 @@ use bun_sema::bind::{Binding, CommonJsVariable, Parent};
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{
     self, BinOp, ExprId, ExprKind, MemberKey, NodeData, PatId, PatKind, PropKey, PropKind, StmtId,
-    StmtKind,
-    UnOp,
+    StmtKind, UnOp,
 };
 use bun_sema::import_sites::is_made_require;
 use smallvec::{SmallVec, smallvec};
@@ -275,7 +274,9 @@ impl Resolver<'_, '_> {
             matches!(hir[hir.skip_type_assertions(key)].kind, ExprKind::String(name) if name == known::exports)
         });
         // The functions that it lays there are written in the statement.
-        let descriptor = operands.next().map(|it| hir[hir.skip_type_assertions(it)].kind);
+        let descriptor = operands
+            .next()
+            .map(|it| hir[hir.skip_type_assertions(it)].kind);
         let Some(ExprKind::Object(members)) = descriptor else {
             return false;
         };
@@ -387,7 +388,11 @@ impl Resolver<'_, '_> {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let mut whole = self.outermost_assertion_of(e);
         while let Parent::Expr(parent) = bound.parent_of_expr(whole)
-            && let ExprKind::Binary { op: BinOp::And, right, .. } = hir[parent].kind
+            && let ExprKind::Binary {
+                op: BinOp::And,
+                right,
+                ..
+            } = hir[parent].kind
             && right == whole
         {
             whole = self.outermost_assertion_of(parent);
@@ -533,10 +538,7 @@ impl Resolver<'_, '_> {
     }
 
     // Whoever is handed what `createRequire` has made reads any member of it, `main` among them. Whoever is handed `createRequire` makes such a function where nobody follows it.
-    fn find_require_out_of_sight(
-        &self,
-        e: ExprId,
-    ) -> Option<(ModuleObjectOwner, ModuleObjectUse)> {
+    fn find_require_out_of_sight(&self, e: ExprId) -> Option<(ModuleObjectOwner, ModuleObjectUse)> {
         let is_out_of_sight = match self.state(e) {
             // A variable that is initialized with it is followed: `is_made_require`.
             ExprState::Unresolved => {

@@ -689,8 +689,8 @@ impl ModuleGraph {
             return false;
         };
         // No path finds a module of Bun's own, and the sites that name one spell no file.
-        let is_file_of_program = row.interop.kind == ModuleKind::Data
-            || self.is_code_of_program(ModuleRef::File(file));
+        let is_file_of_program =
+            row.interop.kind == ModuleKind::Data || self.is_code_of_program(ModuleRef::File(file));
         let is_named = self.files_that_sites_name.get(file.idx());
         is_file_of_program && is_named.is_some_and(|&is_named| !is_named)
     }

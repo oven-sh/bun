@@ -22,7 +22,9 @@ async function runTests(directory: string, ...flags: string[]) {
 
 for (const file of readdirSync(folder).sort()) {
   test(file.replace(/\.fixture\.[jt]s$/, ""), async () => {
-    using dir = tempDir("natives-find-what-tests-replace", { [file.endsWith(".ts") ? "one.test.ts" : "one.test.js"]: readFileSync(join(folder, file), "utf8") });
+    using dir = tempDir("natives-find-what-tests-replace", {
+      [file.endsWith(".ts") ? "one.test.ts" : "one.test.js"]: readFileSync(join(folder, file), "utf8"),
+    });
     const plain = await runTests(String(dir));
     expect(plain.results.filter(result => result.startsWith("fail"))).toEqual([]);
     expect(plain.results).not.toEqual([]);

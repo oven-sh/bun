@@ -111,10 +111,14 @@ impl Checker<'_, '_> {
                 let parameter = &hir[p];
                 let is_rest = parameter.flags.contains(Flags::REST);
                 let mut modifiers = hir.param_modifiers(p).iter().map(|it| hir[it].kind);
-                let has_keyword = modifiers.clone().any(|it| matches!(it, ModifierKind::Keyword(_)));
+                let has_keyword = modifiers
+                    .clone()
+                    .any(|it| matches!(it, ModifierKind::Keyword(_)));
                 let code = if has_keyword && (is_in_type || function.kind != FnKind::Constructor) {
                     2369
-                } else if !is_in_class && modifiers.any(|it| matches!(it, ModifierKind::Decorator(_))) {
+                } else if !is_in_class
+                    && modifiers.any(|it| matches!(it, ModifierKind::Decorator(_)))
+                {
                     1206
                 } else if parameter.default.is_some() && is_rest {
                     1048

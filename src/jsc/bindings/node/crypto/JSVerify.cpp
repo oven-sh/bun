@@ -270,6 +270,10 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
             .len = byteLength,
         };
 
+        if (!thisObject->m_mdCtx) {
+            return ERR::CRYPTO_INVALID_STATE(scope, globalObject, "Not initialised"_s);
+        }
+
         ncrypto::ClearErrorOnReturn clearErrorOnReturn;
         if (!thisObject->m_mdCtx.digestUpdate(buffer)) {
             throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to update digest");
@@ -294,6 +298,10 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
         .data = view->vector(),
         .len = byteLength,
     };
+
+    if (!thisObject->m_mdCtx) {
+        return ERR::CRYPTO_INVALID_STATE(scope, globalObject, "Not initialised"_s);
+    }
 
     ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     if (!thisObject->m_mdCtx.digestUpdate(buffer)) {
@@ -412,23 +420,11 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
     }
 
     if (keyPtr.isRsaVariant()) {
-        std::optional<int> effective_salt_len = saltLen;
-
-        // For PSS padding without explicit salt length for verification,
-        // we don't need to calculate - use RSA_PSS_SALTLEN_AUTO (-2) to auto-detect
-        // This matches Node.js behavior for verification
-        if (padding == RSA_PKCS1_PSS_PADDING && !saltLen.has_value()) {
-            effective_salt_len = RSA_PSS_SALTLEN_AUTO;
-        }
-
-        if (!ncrypto::EVPKeyCtxPointer::setRsaPadding(pkctx.get(), padding, effective_salt_len)) {
-            throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to set RSA padding"_s);
-            return {};
-        }
-    }
-
-    // Set signature MD from the digest context
-    if (!pkctx.setSignatureMd(mdCtx)) {
+        // Options that the key does not take are a signature that does not verify, not an error.
+        if (!ncrypto::EVPKeyCtxPointer::setRsaPadding(pkctx.get(), padding, saltLen) || !pkctx.setSignatureMd(mdCtx))
+            return JSValue::encode(jsBoolean(false));
+    } else if (!pkctx.setSignatureMd(mdCtx)) {
+        // BoringSSL refuses digests for an EC key that OpenSSL takes, so the signature may be a valid one.
         throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to set signature message digest"_s);
         return {};
     }

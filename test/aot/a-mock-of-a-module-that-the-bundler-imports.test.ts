@@ -98,7 +98,5 @@ test("a mock of bun:wrap", async () => {
   expect(plain.lines).toContain(`added: a later file by its namespace | [1,1,["added","default"],false]`);
   expect(plain.lines).toContain(`alone: import() | [1,1,["added","default"]]`);
   expect(await seen(bunEnv, "--aot")).toEqual(plain);
-  expect(await seen({ ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" }, "--aot")).toEqual(
-    plain,
-  );
+  expect(await seen({ ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" }, "--aot")).toEqual(plain);
 });

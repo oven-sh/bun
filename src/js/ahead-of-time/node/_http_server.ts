@@ -1737,7 +1737,8 @@ function onNodeHTTPRequest(
 
   try {
     const listener = server.$requestListener;
-    if (listener !== undefined && server.emit === eventEmitterEmit && server._events!.request === listener) listener.$call(server, req, res);
+    if (listener !== undefined && server.emit === eventEmitterEmit && server._events!.request === listener)
+      listener.$call(server, req, res);
     else server.emit("request", req, res);
   } catch (error) {
     if ((exchange.flags & EXCHANGE_HOLDS_CHUNK) !== 0) sendHeldChunk(res, exchange);
@@ -5048,8 +5049,10 @@ function readsItsEndUnseen(socket: $Node.HttpServerSocket): boolean {
 function walksToAccessorsOfItsEnd(socket: $Node.HttpServerSocket): boolean {
   return (
     hasThePrototypesOfItsClass(socket) &&
-    ((IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(socket, "destroyed")) || reachesDuplexPrototype(socket, "destroyed")) &&
-    ((IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(socket, "writableEnded")) || reachesDuplexPrototype(socket, "writableEnded"))
+    ((IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(socket, "destroyed")) ||
+      reachesDuplexPrototype(socket, "destroyed")) &&
+    ((IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(socket, "writableEnded")) ||
+      reachesDuplexPrototype(socket, "writableEnded"))
   );
 }
 

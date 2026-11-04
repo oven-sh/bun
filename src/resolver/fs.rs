@@ -525,9 +525,7 @@ impl DirEntry {
         // `name_hash` is its hash too — insert without re-hashing.
         self.data.put_static_key_hashed(name_hash, key, stored)?;
 
-        // SAFETY: just produced from EntryStore append or prev_map lookup. Shared, because
-        // `key` can point into the entry.
-        Ok(Some(unsafe { &*stored }))
+        Ok(Some(stored_ref))
     }
 
     /// Debug-only contract check: every `.data` probe must run under

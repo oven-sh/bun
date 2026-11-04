@@ -86,7 +86,13 @@ pub fn lower_file<'s>(
 ) -> Option<LoweredFile> {
     let mut task = take_task_state(checker);
     let lowered = checker.with_queries(file, &inputs.query_inputs(), |queries| {
-        lower_with_queries(inputs, queries, file, &mut task, FileLowering::lower_function)
+        lower_with_queries(
+            inputs,
+            queries,
+            file,
+            &mut task,
+            FileLowering::lower_function,
+        )
     });
     put_back_task_state(checker, task);
     lowered

@@ -90,14 +90,14 @@ test("require.main is the test file that runs: compiled", async () => {
 });
 
 // `require.main` is what the cache holds under the path in `Bun.main`, and `import.meta.main` compares with it, at every read.
-test.each([
-  { way: "as one program", words: "TestRunLayers:0" },
-])("a test that stores into Bun.main is followed: $way", async ({ words }) => {
-  using dir = tempDir("aot-main-module-of-a-test-run", {
-    "package.json": `{ "type": "module" }`,
-    "preload.cjs": ``,
-    "helper.cjs": `exports.me = module;\nexports.isMain = () => require.main === module;\nexports.main = () => require.main;`,
-    "a.test.js": `import { expect, test } from "bun:test";
+test.each([{ way: "as one program", words: "TestRunLayers:0" }])(
+  "a test that stores into Bun.main is followed: $way",
+  async ({ words }) => {
+    using dir = tempDir("aot-main-module-of-a-test-run", {
+      "package.json": `{ "type": "module" }`,
+      "preload.cjs": ``,
+      "helper.cjs": `exports.me = module;\nexports.isMain = () => require.main === module;\nexports.main = () => require.main;`,
+      "a.test.js": `import { expect, test } from "bun:test";
       import helper from "./helper.cjs";
       const name = m => (m && m.filename ? m.filename.split(/[\\\\/]/).at(-1) : String(m));
       test("stores", () => {
@@ -111,17 +111,18 @@ test.each([
         console.log("back", name(helper.main()), helper.isMain(), import.meta.main);
         expect(Bun.main).toBe(before);
       });`,
-  });
-  const plain = await runTests(String(dir), {});
-  expect(plain).toEqual({
-    stdout: [
-      "at first undefined false true",
-      "nowhere /nowhere/entry.js undefined false false",
-      "helper helper.cjs true true false",
-      "back undefined false true",
-    ],
-    results: ["pass stores"],
-    exitCode: 0,
-  });
-  expect(await runTests(String(dir), { BUN_DEBUG_TEST_AOT_WORDS: words }, "--aot")).toEqual(plain);
-});
+    });
+    const plain = await runTests(String(dir), {});
+    expect(plain).toEqual({
+      stdout: [
+        "at first undefined false true",
+        "nowhere /nowhere/entry.js undefined false false",
+        "helper helper.cjs true true false",
+        "back undefined false true",
+      ],
+      results: ["pass stores"],
+      exitCode: 0,
+    });
+    expect(await runTests(String(dir), { BUN_DEBUG_TEST_AOT_WORDS: words }, "--aot")).toEqual(plain);
+  },
+);

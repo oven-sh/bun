@@ -1,5 +1,7 @@
 use crate::ir::body::{BlockView, Body, ValueView};
-use crate::ir::builder::{BuilderScratch, Edge, FunctionBuilder, MAX_SPARE_BLOCKS, MAX_SPARE_VALUES};
+use crate::ir::builder::{
+    BuilderScratch, Edge, FunctionBuilder, MAX_SPARE_BLOCKS, MAX_SPARE_VALUES,
+};
 use crate::ir::generated::{
     BlockRole, FunctionFlags, Opcode, STANDS_IN_TAIL_POSITION, TemplateString, TerminatorKind,
     ValueHead,
@@ -165,7 +167,10 @@ fn value_in_tail_position_keeps_its_mark() {
     let [_, marked, plain] = values[..] else {
         panic!("{} values", values.len());
     };
-    assert_eq!((marked.opcode, plain.opcode), (Opcode::Strcat, Opcode::Strcat));
+    assert_eq!(
+        (marked.opcode, plain.opcode),
+        (Opcode::Strcat, Opcode::Strcat)
+    );
     assert_eq!(marked.fields, [2, 1, 0]);
     assert_eq!(plain.fields, [2, 0, 1]);
 
@@ -633,7 +638,10 @@ fn block_under_another_handler_is_not_joined() {
         builder.switch_to(handler.block());
         builder.return_value(None);
     });
-    let handlers: Vec<bool> = body.blocks().map(|block| block.handler().is_some()).collect();
+    let handlers: Vec<bool> = body
+        .blocks()
+        .map(|block| block.handler().is_some())
+        .collect();
     assert_eq!(handlers, [false, true, false]);
 }
 
@@ -774,7 +782,10 @@ fn block_that_jumps_into_region_of_handler_stays() {
         builder.switch_to(out);
         builder.return_value(None);
     });
-    let handlers: Vec<bool> = body.blocks().map(|block| block.handler().is_some()).collect();
+    let handlers: Vec<bool> = body
+        .blocks()
+        .map(|block| block.handler().is_some())
+        .collect();
     assert_eq!(handlers, [false, false, true, false, false]);
 }
 
@@ -909,7 +920,9 @@ fn undefined_made_by_ssa_stands_first_in_its_block() {
         (Opcode::Strcat, Some(7)),
     ];
     assert_eq!(values, expected);
-    let joined = entry.values().filter(|value| value.opcode == Opcode::Strcat);
+    let joined = entry
+        .values()
+        .filter(|value| value.opcode == Opcode::Strcat);
     let joined: Vec<&[u32]> = joined.map(|value| value.fields).collect();
     assert_eq!(joined, [[2, 2, 3], [2, 1, 0]]);
 }
@@ -999,7 +1012,10 @@ fn measured_size_is_exact() {
     assert_eq!(body.code.capacity(), body.code.len());
     assert_eq!(body.block_count, 6);
     let numbered_value_count = body.value_count as usize;
-    assert_eq!(pending_value_count, numbered_value_count + DROPPED_VALUE_COUNT);
+    assert_eq!(
+        pending_value_count,
+        numbered_value_count + DROPPED_VALUE_COUNT
+    );
 }
 
 #[test]

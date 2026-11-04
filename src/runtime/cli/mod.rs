@@ -105,10 +105,6 @@ pub(crate) mod test {
         pub(crate) mod file_range;
         #[path = "Frame.rs"]
         pub(crate) mod frame;
-        #[path = "parts.rs"]
-        pub(crate) mod parts;
-        #[path = "Reservation.rs"]
-        pub(crate) mod reservation;
         #[path = "runner.rs"]
         pub(crate) mod runner;
         #[path = "Worker.rs"]

@@ -484,7 +484,7 @@ std::optional<int32_t> getSaltLength(JSC::JSGlobalObject* globalObject, JSC::Thr
 
 DSASigEnc getDSASigEnc(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSValue options)
 {
-    if (!options.isObject() || (options.asCell()->type() != JSC::JSType::FinalObjectType && options.asCell()->type() != JSC::JSType::CompiledObjectType)) {
+    if (!options.isObject() || options.isCallable()) {
         return DSASigEnc::DER;
     }
 

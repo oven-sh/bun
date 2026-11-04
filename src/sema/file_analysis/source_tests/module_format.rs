@@ -2078,7 +2078,10 @@ fn top_level_await_that_only_a_build_rules_out_makes_an_asynchronous_module() {
             let analyzed = workspace.analyze(&Source::new("a.mjs", text), &fold);
             let awaits = find_exprs(&analyzed.hir, |kind| matches!(kind, ExprKind::Await(_)));
             let decisions = &analyzed.analysis.decisions;
-            assert!(awaits.iter().all(|&it| decisions.is_dead_expr(it)), "{text}");
+            assert!(
+                awaits.iter().all(|&it| decisions.is_dead_expr(it)),
+                "{text}"
+            );
             assert!(analyzed.analysis.has_live_top_level_await, "{text}");
         });
     }
@@ -2086,7 +2089,10 @@ fn top_level_await_that_only_a_build_rules_out_makes_an_asynchronous_module() {
         with_workspace(|workspace| {
             let fold = workspace.fold_inputs(&BUILD_FACTS);
             let analyzed = workspace.analyze(&Source::new("a.mjs", text), &fold);
-            assert_eq!(analyzed.analysis.has_live_top_level_await, is_live, "{text}");
+            assert_eq!(
+                analyzed.analysis.has_live_top_level_await, is_live,
+                "{text}"
+            );
         });
     }
 }

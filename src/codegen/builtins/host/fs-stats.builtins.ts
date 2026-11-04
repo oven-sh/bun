@@ -30,7 +30,15 @@ const date = (name: string) =>
     },
   }) satisfies b.GetterField;
 
-const testsOfKind = ["isBlockDevice", "isCharacterDevice", "isDirectory", "isFIFO", "isFile", "isSocket", "isSymbolicLink"];
+const testsOfKind = [
+  "isBlockDevice",
+  "isCharacterDevice",
+  "isDirectory",
+  "isFIFO",
+  "isFile",
+  "isSocket",
+  "isSymbolicLink",
+];
 const declareEach = <Declared>(names: readonly string[], declared: Declared) =>
   Object.fromEntries(names.map(name => [name, declared]));
 

@@ -201,7 +201,9 @@ export function internalRequire(id: string, parent: JSCommonJSModule, requireMap
   const module = $createCommonJSModule(id, {}, true, requireMap === $requireMap ? parent : undefined);
   // Resolving the name has thrown in an executable that refuses native addons, unless the file lies in the executable. Where the build has not seen that it does, nothing is loaded, aloud.
   if (!CAN_LOAD_ADDONS_AT_RUN_TIME)
-    throw new TypeError(`Cannot load '${filename}': the build didn't see that this executable loads the native addon that it holds. Use process.dlopen() or a constant path.`);
+    throw new TypeError(
+      `Cannot load '${filename}': the build didn't see that this executable loads the native addon that it holds. Use process.dlopen() or a constant path.`,
+    );
   process.dlopen(module, filename);
   $requireMap.$set(id, module);
   if (requireMap !== $requireMap) requireMap.$set(id, module);
@@ -279,26 +281,11 @@ export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSMod
   // $requireMap.
   const isBuiltinKey = (key: string | symbol) =>
     typeof key === "string" && (key.startsWith("node:") || key.startsWith("bun:"));
-  // An executable that `bun build --compile --aot` made never lists its own files, which run once: the cache holds the files that were loaded from outside of the executable, as in a bundled executable.
-  const hidesFiles = $isHiddenFromRequireCache();
-  const isHidden = (key: string | symbol) => hidesFiles && $isHiddenFromRequireCache(key);
-  // A test run that is compiled in place shows its files, as plain does.
-  const listsCompiledFiles = $requireCacheCompiledEntry() === true;
-  const isRequiredCompiledBuiltin = (key: string) =>
-    listsCompiledFiles && $requireCacheCompiledEntry(key, owner, true) === true;
-  const hasKey = (key: string) =>
-    !isHidden(key) &&
-    (requireMap.$has(key) ||
-      (isBuiltinKey(key) ? isRequiredCompiledBuiltin(key) : $esmRegistryHasEvaluated(key, owner)));
+  const hasKey = (key: string) => requireMap.$has(key) || (!isBuiltinKey(key) && $esmRegistryHasEvaluated(key, owner));
   var proxy = new Proxy(inner, {
     get(_target, key: string) {
-      if (isHidden(key)) return undefined;
       const entry = requireMap.$get(key);
       if (entry) return entry;
-      if (listsCompiledFiles) {
-        const compiled = $requireCacheCompiledEntry(key, owner);
-        if (compiled) return compiled;
-      }
 
       if (!isBuiltinKey(key)) {
         const namespace = $esmNamespaceForCjs(key, owner);
@@ -312,7 +299,6 @@ export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSMod
       return inner[key];
     },
     set(_target, key: string, value) {
-      $requireCacheWillSet(key, value, owner);
       requireMap.$set(key, value);
       return true;
     },
@@ -322,8 +308,6 @@ export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSMod
     },
 
     deleteProperty(_target, key: string) {
-      if (isHidden(key)) return true;
-      $requireCacheDidDelete(key, owner);
       requireMap.$delete(key);
       $esmRegistryDelete(key, owner);
       $evictIsolationSourceProviderCache(key);
@@ -333,16 +317,11 @@ export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSMod
     ownKeys(_target) {
       var array = [...requireMap.$keys()];
       for (const key of $esmRegistryEvaluatedKeys(owner)) {
-        if ((!isBuiltinKey(key) || isRequiredCompiledBuiltin(key)) && !requireMap.$has(key)) {
+        if (!isBuiltinKey(key) && !requireMap.$has(key)) {
           $arrayPush(array, key);
         }
       }
-      if (!hidesFiles) return array;
-      var shown: string[] = [];
-      for (var index = 0; index < array.length; index++) {
-        if (!isHidden(array[index])) $arrayPush(shown, array[index]);
-      }
-      return shown;
+      return array;
     },
 
     getPrototypeOf(_target) {

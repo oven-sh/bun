@@ -5830,7 +5830,10 @@ impl<'s> Files<'s> {
             }
         }
         // So are those that the files which it lists declare, whether or not anything imports them.
-        for root in build.iter().flat_map(|build| build.projects.list_files(host)) {
+        for root in build
+            .iter()
+            .flat_map(|build| build.projects.list_files(host))
+        {
             let Ok(Some(path)) = root_file_name(host, options, &root) else {
                 continue;
             };

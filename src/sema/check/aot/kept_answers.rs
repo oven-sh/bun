@@ -332,7 +332,8 @@ impl<'c> KeptMemo<'c> {
                 object => {
                     let object = &self.objects[object as usize - 1];
                     let first = object.first_member_type as usize;
-                    let member_types = &self.member_types[first..][..object.member_type_count as usize];
+                    let member_types =
+                        &self.member_types[first..][..object.member_type_count as usize];
                     let first_member_type = next.member_types.len() as u32;
                     next.member_types.extend_from_slice(member_types);
                     next.objects.push(ObjectAnswers {

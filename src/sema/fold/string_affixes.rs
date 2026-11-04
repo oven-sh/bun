@@ -596,7 +596,11 @@ fn find_path_joining_function(
 }
 
 /// The name of the export of `node:path` that `named` is, by its binding: `dirname`, `path.sep`.
-pub fn find_export_of_path_module(hir: &File<'_>, bound: &Bound<'_>, named: ExprId) -> Option<Atom> {
+pub fn find_export_of_path_module(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    named: ExprId,
+) -> Option<Atom> {
     // `require("node:path")`
     let find_written_text = |text: ExprId| match hir[hir.skip_type_assertions(text)].kind {
         ExprKind::String(text) => Some(Constant::String(text)),

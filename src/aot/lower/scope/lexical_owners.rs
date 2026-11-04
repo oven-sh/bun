@@ -43,7 +43,11 @@ pub(super) fn find_container_binding(
 }
 
 /// The binding whose name is looked for at run time where code in `from` names `binding`: `size` in `namespace Box` is `Box.size` in what runs.
-pub(super) fn find_binding_looked_for(bound: &Bound<'_>, from: ScopeId, binding: Binding) -> Binding {
+pub(super) fn find_binding_looked_for(
+    bound: &Bound<'_>,
+    from: ScopeId,
+    binding: Binding,
+) -> Binding {
     let Binding::Symbol(symbol) = binding else {
         return binding;
     };

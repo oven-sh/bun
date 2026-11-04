@@ -62,7 +62,10 @@ impl FlowDominators {
             self.start.push(node);
             return;
         };
-        let (near, far) = (self.jump[up as usize], self.jump[self.jump[up as usize] as usize]);
+        let (near, far) = (
+            self.jump[up as usize],
+            self.jump[self.jump[up as usize] as usize],
+        );
         let depth = |node: u32| self.depth[node as usize];
         let is_doubled = depth(up) - depth(near) == depth(near) - depth(far);
         self.dominator.push(up);
@@ -80,7 +83,11 @@ impl FlowDominators {
             }
             if depth(a) > depth(b) {
                 let far = self.jump[a as usize];
-                a = if depth(far) >= depth(b) { far } else { self.dominator[a as usize] };
+                a = if depth(far) >= depth(b) {
+                    far
+                } else {
+                    self.dominator[a as usize]
+                };
             } else if depth(a) == 0 {
                 return None;
             } else if self.jump[a as usize] != self.jump[b as usize] {
@@ -113,7 +120,9 @@ impl FlowDominators {
     }
 
     fn find_last_about_anything(&self, start: u32, up_to: u32) -> u32 {
-        let after = self.about_anything.partition_point(|&it| it <= (start, up_to));
+        let after = self
+            .about_anything
+            .partition_point(|&it| it <= (start, up_to));
         match self.about_anything[..after].last() {
             Some(&(its_start, node)) if its_start == start => node,
             _ => 0,
@@ -129,7 +138,11 @@ impl Checker<'_, '_> {
     }
 
     pub fn count_cached_loop_types(&self) -> usize {
-        self.flow_memo.flow_loop_cache.values().map(|it| it.len()).sum()
+        self.flow_memo
+            .flow_loop_cache
+            .values()
+            .map(|it| it.len())
+            .sum()
     }
 }
 
@@ -315,7 +328,9 @@ impl Checker<'_, '_> {
         let up_to = match self.bound(file).flow[flow.idx()] {
             Flow::Loop { start, len } => {
                 let edges = self.bound(file).edges(start, len).iter();
-                edges.filter(|it| it.is_some()).fold(flow.0, |last, it| last.max(it.0))
+                edges
+                    .filter(|it| it.is_some())
+                    .fold(flow.0, |last, it| last.max(it.0))
             }
             _ => flow.0,
         };
@@ -323,7 +338,8 @@ impl Checker<'_, '_> {
         if index.starts_of_many.binary_search(&start).is_err() {
             return None;
         }
-        let (last_assignment, _) = (self.flow_memo.runs).nodes_about(root, reference, FlowId(up_to));
+        let (last_assignment, _) =
+            (self.flow_memo.runs).nodes_about(root, reference, FlowId(up_to));
         let least = last_assignment
             .max(index.enclosing_loop[flow.idx()])
             .max(index.find_last_test_about(root, start, up_to))

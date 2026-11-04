@@ -29,7 +29,12 @@ const constructorsBelow = {
 };
 
 // JSDOMConstructorNotConstructable.h: native code alone makes the instances. The constructor throws, called or constructed.
-const refused = { returns: b.never, capability: "heap", throws: true, implementation: b.hostCall } satisfies b.FunctionField;
+const refused = {
+  returns: b.never,
+  capability: "heap",
+  throws: true,
+  implementation: b.hostCall,
+} satisfies b.FunctionField;
 const constructorsThatMakeNothing = [
   "MessagePort",
   "PerformanceEntry",
@@ -43,7 +48,13 @@ const constructorsThatMakeNothing = [
 ];
 // JSPerformanceEntry.cpp, JSPerformanceResourceTiming.cpp, JSPerformanceServerTiming.cpp: each getter answers what native code keeps for the entry, and throws on any other receiver.
 const partOfEntry = (getter: b.TableType, capability: b.Capability) =>
-  ({ getter, capability, throws: true, uses: { this: b.inspected }, implementation: b.generic }) satisfies b.GetterField;
+  ({
+    getter,
+    capability,
+    throws: true,
+    uses: { this: b.inspected },
+    implementation: b.generic,
+  }) satisfies b.GetterField;
 const partsOfEntry = (texts: readonly string[], numbers: readonly string[]) =>
   Object.fromEntries([
     ...texts.map(name => [name, partOfEntry(b.string, "heap")]),

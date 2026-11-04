@@ -130,7 +130,12 @@ impl Folder<'_, '_> {
     }
 
     /// `[x || "a"][0]` is `x || "a"`, which is true whatever `x` is.
-    fn note_condition_told_in_place(&mut self, access: ExprId, part: ExprId, index: Option<ExprId>) {
+    fn note_condition_told_in_place(
+        &mut self,
+        access: ExprId,
+        part: ExprId,
+        index: Option<ExprId>,
+    ) {
         let tells_condition = |folder: &Self| {
             folder.minifies_syntax()
                 && !folder.is_folded_by_bun_run(part)
@@ -140,7 +145,8 @@ impl Folder<'_, '_> {
         if tells_condition(&*self) {
             self.conditions_told_by_shape.insert(access.idx());
         } else if self.holds_under_minify_syntax(tells_condition) {
-            self.conditions_told_under_minify_syntax.insert(access.idx());
+            self.conditions_told_under_minify_syntax
+                .insert(access.idx());
         }
     }
 

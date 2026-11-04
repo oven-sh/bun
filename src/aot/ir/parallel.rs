@@ -150,7 +150,9 @@ mod tests {
             let lists: Vec<Vec<u32>> = vec![vec![1, 2], Vec::new(), vec![3]];
             extend_from_each(&mut list, &lists, in_parallel, &|number| number.to_string());
             assert_eq!(list, ["0", "1", "2", "3"]);
-            extend_from_each(&mut list, &[], in_parallel, &|number: &u32| number.to_string());
+            extend_from_each(&mut list, &[], in_parallel, &|number: &u32| {
+                number.to_string()
+            });
             assert_eq!(list.len(), 4);
         }
     }

@@ -193,33 +193,37 @@ test("a", async () => {
 };
 
 for (const [name, { open, testFile }] of Object.entries(shapes)) {
-  test.concurrent(`a library module got by await import(): ${name}`, async () => {
-    using dir = tempDir("aot-awaited-import-of-the-library", {
-      "package.json": `{ "name": "p", "type": "module" }`,
-      "lib.ts": lib,
-      "a.test.ts": testFile,
-    });
-    const seenWith = async (...flags: string[]) => {
-      const env = { ...bunEnv, BUN_JSC_logAOTPhaseTimes: "1" };
-      const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), env);
-      const said = stdout + stderr;
-      return {
-        seen: {
-          lines: stdout.split("\n").filter(line => line.startsWith("SEEN")),
-          failed: stderr.split("\n").filter(line => /^\(fail\)|^✗|^panic|Error/.test(line)),
-          exitCode,
-        },
-        open: [
-          said.includes("mocks any module true"),
-          said.includes("spies on objects from somewhere true"),
-          said.includes("every file may load again"),
-        ],
+  test.concurrent(
+    `a library module got by await import(): ${name}`,
+    async () => {
+      using dir = tempDir("aot-awaited-import-of-the-library", {
+        "package.json": `{ "name": "p", "type": "module" }`,
+        "lib.ts": lib,
+        "a.test.ts": testFile,
+      });
+      const seenWith = async (...flags: string[]) => {
+        const env = { ...bunEnv, BUN_JSC_logAOTPhaseTimes: "1" };
+        const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), env);
+        const said = stdout + stderr;
+        return {
+          seen: {
+            lines: stdout.split("\n").filter(line => line.startsWith("SEEN")),
+            failed: stderr.split("\n").filter(line => /^\(fail\)|^✗|^panic|Error/.test(line)),
+            exitCode,
+          },
+          open: [
+            said.includes("mocks any module true"),
+            said.includes("spies on objects from somewhere true"),
+            said.includes("every file may load again"),
+          ],
+        };
       };
-    };
-    const [plain, compiled] = await Promise.all([seenWith(), seenWith("--aot")]);
-    expect(plain.seen.lines.length).toBeGreaterThan(0);
-    expect(plain.seen.exitCode).toBe(0);
-    expect(compiled.seen).toEqual(plain.seen);
-    expect(compiled.open).toEqual(open);
-  }, 120_000);
+      const [plain, compiled] = await Promise.all([seenWith(), seenWith("--aot")]);
+      expect(plain.seen.lines.length).toBeGreaterThan(0);
+      expect(plain.seen.exitCode).toBe(0);
+      expect(compiled.seen).toEqual(plain.seen);
+      expect(compiled.open).toEqual(open);
+    },
+    120_000,
+  );
 }

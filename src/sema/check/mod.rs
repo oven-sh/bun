@@ -2218,7 +2218,8 @@ pub struct Checker<'p, 's> {
     /// `enclosing_fn` for the children of these expressions and statements.
     fns_around: std::cell::RefCell<FxHashMap<(FileId, errors::Passed), Option<crate::hir::FnId>>>,
     /// `this_container_from` these nodes, where an arrow function is a container.
-    this_containers_around: std::cell::RefCell<FxHashMap<(FileId, crate::node::Node), crate::node::Node>>,
+    this_containers_around:
+        std::cell::RefCell<FxHashMap<(FileId, crate::node::Node), crate::node::Node>>,
     /// `work` and `from` of each call of `mark_tainted_by_pattern_from` and `taint_from`, in order.
     /// An event is dropped when a later one has a lower or equal `from`, so `from` increases and
     /// the length is bounded by the depth of `stack`. See `lowest_taint_since`.

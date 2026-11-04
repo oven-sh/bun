@@ -171,24 +171,82 @@ describe("mv", async () => {
     });
   });
 
-  test("stops at the first source that fails", async () => {
-    const sources = numbered("s", 8);
-    using dir = tempDir("mv-stop", { dest: {}, ...Object.fromEntries(sources.map(name => [name, name])) });
-    const { exitCode, stdout, stderr } = await $`mv ${sources.slice(0, 3)} missing ${sources.slice(3)} dest`
-      .cwd(String(dir))
-      .quiet();
-    expect({
-      exitCode,
-      stdout: stdout.toString(),
-      stderr: stderr.toString(),
-      moved: readdirSync(join(String(dir), "dest")).sort(),
-      left: readdirSync(String(dir)).sort(),
-    }).toEqual({
-      exitCode: 2 /* ENOENT */,
-      stdout: "",
-      stderr: `mv: ${join("dest", "missing")}: No such file or directory\n`,
-      moved: sources.slice(0, 3),
-      left: ["dest", ...sources.slice(3)],
+  // POSIX: after a source that fails, `mv` goes on to any remaining sources.
+  describe("moves every source it can and reports each source it cannot", () => {
+    const mv = async (sources: string[], existing: string[]) => {
+      using dir = tempDir("mv-sources", { dest: {}, ...Object.fromEntries(existing.map(name => [name, name])) });
+      const { exitCode, stdout, stderr } = await $`mv ${sources} dest`.cwd(String(dir)).quiet();
+      return {
+        exitCode,
+        stdout: stdout.toString(),
+        stderr: stderr.toString(),
+        moved: readdirSync(join(String(dir), "dest")).sort(),
+        left: readdirSync(String(dir)).sort(),
+      };
+    };
+    const line = (name: string, message: string) => `mv: ${join("dest", name)}: ${message}\n`;
+    const missing = (name: string) => line(name, "No such file or directory");
+    const many = numbered("s", 11);
+
+    test("a source that does not exist", async () => {
+      const failed = { exitCode: 2 /* ENOENT */, stdout: "", left: ["dest"] };
+      expect(await mv(["missing", "a"], ["a"])).toEqual({ ...failed, stderr: missing("missing"), moved: ["a"] });
+      expect(await mv(["a", "missing", "b"], ["a", "b"])).toEqual({
+        ...failed,
+        stderr: missing("missing"),
+        moved: ["a", "b"],
+      });
+      expect(await mv(["m1", ...many, "m2"], many)).toEqual({
+        ...failed,
+        // In the order of the operands.
+        stderr: missing("m1") + missing("m2"),
+        moved: many.toSorted(),
+      });
+    });
+
+    // Windows reports these two failures with other error codes.
+    test.skipIf(!isPosix)("the first source that fails gives the exit code", async () => {
+      // `f` is a file, so `f/x` fails with ENOTDIR.
+      const notADirectory = line("x", "Not a directory");
+      const one = { stdout: "", moved: ["a"], left: ["dest", "f"] };
+      expect(await mv(["missing", "f/x", "a"], ["a", "f"])).toEqual({
+        ...one,
+        exitCode: 2 /* ENOENT */,
+        stderr: missing("missing") + notADirectory,
+      });
+      expect(await mv(["f/x", "missing", "a"], ["a", "f"])).toEqual({
+        ...one,
+        exitCode: 20 /* ENOTDIR */,
+        stderr: notADirectory + missing("missing"),
+      });
+
+      const all = { stdout: "", moved: many.toSorted(), left: ["dest", "f"] };
+      expect(await mv(["missing", ...many, "f/x"], [...many, "f"])).toEqual({
+        ...all,
+        exitCode: 2 /* ENOENT */,
+        stderr: missing("missing") + notADirectory,
+      });
+      expect(await mv(["f/x", ...many, "missing"], [...many, "f"])).toEqual({
+        ...all,
+        exitCode: 20 /* ENOTDIR */,
+        stderr: notADirectory + missing("missing"),
+      });
+    });
+
+    // `mv * dest` has `dest` among its sources.
+    test.skipIf(!isPosix)("the target among the sources", async () => {
+      const intoItself = line("dest", "Invalid argument");
+      const rest = { stdout: "", moved: ["a", "b"], left: ["dest"] };
+      expect(await mv(["dest", "a", "missing", "b"], ["a", "b"])).toEqual({
+        ...rest,
+        exitCode: 22 /* EINVAL */,
+        stderr: intoItself + missing("missing"),
+      });
+      expect(await mv(["missing", "a", "dest", "b"], ["a", "b"])).toEqual({
+        ...rest,
+        exitCode: 2 /* ENOENT */,
+        stderr: missing("missing") + intoItself,
+      });
     });
   });
 
@@ -420,6 +478,31 @@ describe("mv", async () => {
       try {
         makeTreeSync(src, sameNameFiles);
         expect(await mvSameName(src, dst, "-n")).toEqual(earlierOfEachPair);
+      } finally {
+        rmSync(src, { recursive: true, force: true });
+        rmSync(dst, { recursive: true, force: true });
+      }
+    });
+
+    test.skipIf(skip)("a source that fails does not stop the later ones across devices", async () => {
+      const [src, dst] = crossDevicePair("go-on");
+      try {
+        const copied = numbered("s", 8);
+        for (const name of [...copied, "f"]) writeFileSync(join(src, name), name);
+
+        // `f` is a file, so `f/x` fails in another way than `missing`.
+        const r = await $`mv missing ${copied} f/x ${dst}`.cwd(src).quiet();
+        expect({
+          stderr: r.stderr.toString(),
+          exitCode: r.exitCode,
+          moved: readdirSync(dst).sort(),
+          left: readdirSync(src),
+        }).toEqual({
+          stderr: `mv: ${join(dst, "missing")}: No such file or directory\nmv: ${join(dst, "x")}: Not a directory\n`,
+          exitCode: 2 /* ENOENT */,
+          moved: copied,
+          left: ["f"],
+        });
       } finally {
         rmSync(src, { recursive: true, force: true });
         rmSync(dst, { recursive: true, force: true });

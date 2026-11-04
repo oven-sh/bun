@@ -226,7 +226,7 @@ impl Mv {
                     target_fd: maybe_fd,
                     no_clobber,
                     cwd,
-                    err: None,
+                    errs: Vec::new(),
                     task: ShellTask::new(evtloop),
                 });
                 task.task.interp = interp.as_ctx_ptr();
@@ -275,18 +275,21 @@ impl Mv {
     }
 
     fn batched_move_task_done(interp: &Interpreter, cmd: NodeId) {
-        let err = match &mut Self::state_mut(interp, cmd).state {
-            MvState::Executing(task) => task.err.take(),
+        let errs = match &mut Self::state_mut(interp, cmd).state {
+            MvState::Executing(task) => core::mem::take(&mut task.errs),
             _ => unreachable!(),
         };
-        let Some(e) = err else {
+        let Some(first) = errs.first() else {
             Self::state_mut(interp, cmd).state = MvState::Done;
             Self::next(interp, cmd).run(interp);
             return;
         };
-        // The failing rename's errno becomes the shell exit code.
-        let exit_code = e.errno as ExitCode;
-        let buf = Builtin::task_error_to_string(interp, cmd, Kind::Mv, &e).to_vec();
+        // The first failing rename's errno becomes the shell exit code.
+        let exit_code = first.errno as ExitCode;
+        let mut buf: Vec<u8> = Vec::new();
+        for e in &errs {
+            buf.extend_from_slice(Builtin::task_error_to_string(interp, cmd, Kind::Mv, e));
+        }
         Self::write_failing_error(interp, cmd, &buf, exit_code).run(interp);
     }
 
@@ -387,7 +390,8 @@ pub(crate) struct ShellMvBatchedTask {
     pub(crate) target_fd: Option<bun_sys::Fd>,
     pub(crate) no_clobber: bool,
     pub(crate) cwd: bun_sys::Fd,
-    pub(crate) err: Option<bun_sys::Error>,
+    /// One error per failed source, in the order of `sources`.
+    pub(crate) errs: Vec<bun_sys::Error>,
     pub task: ShellTask,
 }
 
@@ -408,7 +412,7 @@ impl ShellMvBatchedTask {
                 this.no_clobber,
                 &mut buf,
             ) {
-                this.err = Some(e);
+                this.errs.push(e);
             }
             return;
         }
@@ -420,7 +424,7 @@ impl ShellMvBatchedTask {
             &this.target,
             this.no_clobber,
         ) {
-            this.err = Some(if e.get_errno() == bun_sys::E::ENOTDIR {
+            this.errs.push(if e.get_errno() == bun_sys::E::ENOTDIR {
                 e.with_path(this.target.as_bytes())
             } else {
                 e
@@ -679,7 +683,7 @@ impl ShellMvBatchedTask {
     }
 
     /// `renameat(cwd, src, target_fd, basename(src))`. A free fn over the
-    /// fields it touches so `src` can borrow `self.sources[_]` while `self.err`
+    /// fields it touches so `src` can borrow `self.sources[_]` while `self.errs`
     /// is written by the caller.
     fn move_in_dir(
         cwd: bun_sys::Fd,
@@ -725,8 +729,7 @@ impl ShellMvBatchedTask {
                 self.no_clobber,
                 &mut buf,
             ) {
-                self.err = Some(e);
-                return;
+                self.errs.push(e);
             }
         }
     }

@@ -404,7 +404,8 @@ pub use Flags as Flag;
 // 4. Allocate onto the https://en.wikipedia.org/wiki/.bss#BSS_in_C instead of the heap, so we can avoid memory leaks
 //
 // COUNT mirrors `fs::preallocate::counts::DIR_ENTRY`.
-pub type HashMap = allocators::BSSMapInner<DirInfo, 2048, true>;
+pub type HashMap =
+    allocators::BSSMapInner<DirInfo, 2048, { allocators::bss_overflow_block_size(2048) }, true>;
 
 /// Insert `value` at `result`'s slot and return a retag-durable slot pointer
 /// (see [`slot_ptr_at`]). Takes a raw map pointer, not `&mut self`: a

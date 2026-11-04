@@ -1,0 +1,2069 @@
+status: 0
+script: 11cd9ab28088a906
+---
+--- every kind after every other
+0 | AttributeError: 'DictWithAttributes' object has no attribute 'a' | AttributeError: 'DictWithAttributes' object has no attribute 'k' | 'DictWithAttributes.m'
+1 | AttributeError: 'DictWithAttributes' object has no attribute 'a' | AttributeError: 'DictWithAttributes' object has no attribute 'k' | TypeError: 'str' object is not callable
+2 | AttributeError: 'DictWithAttributes' object has no attribute 'a' | AttributeError: 'DictWithAttributes' object has no attribute 'k' | 'DictWithAttributes.m'
+3 | AttributeError: 'ListWithAttributes' object has no attribute 'a' | 'own k' | TypeError: 'str' object is not callable
+4 | AttributeError: 'ListWithAttributes' object has no attribute 'a' | 'ListWithAttributes.k' | 'ListWithAttributes.m'
+5 | AttributeError: 'ValueError' object has no attribute 'a' | AttributeError: 'ValueError' object has no attribute 'k' | AttributeError: 'ValueError' object has no attribute 'm'
+6 | ('a', 2) | ('k', 2) | 'instance m'
+7 | ('a', 1) | 'Plain.k' | ('Plain.m', 'Plain')
+8 | AttributeError: 'Plain' object has no attribute 'a' | 'Plain.k' | ('Plain.m', 'Plain')
+9 | 'a of another dict' | 'Plain.k' | 'm of another dict'
+10 | AttributeError: 'Plain' object has no attribute 'a' | 'k set afterwards' | ('Plain.m', 'Plain')
+11 | ('a', 202) | ('k', 202) | ('Plain.m', 'Plain')
+12 | AttributeError: 'Plain' object has no attribute 'a' | ('k', 202) | ('Plain.m', 'Plain')
+13 | ('a', 22) | 'Plain.k' | ('Plain.m', 'Plain')
+14 | ('a', 1) | 'Plain.k' | ('Plain.m', 'Restless')
+15 | ('a', 2) | ('k', 2) | ('Plain.m', 'Restless')
+16 | 'own a' | 'ListWithAttributes.k' | 'ListWithAttributes.m'
+17 | AttributeError: 'ListWithAttributes' object has no attribute 'a' | 'ListWithAttributes.k' | 'ListWithAttributes.m'
+18 | 'own a' | 'own k' | 'DictWithAttributes.m'
+19 | 'own a' | 'own k' | AttributeError: 'ValueError' object has no attribute 'm'
+20 | 'Tuple.a' | 'own k' | AttributeError: 'Tuple' object has no attribute 'm'
+21 | 'a of a function' | AttributeError: 'function' object has no attribute 'k' | 'm of a function'
+22 | 'partial getter' | AttributeError: property 'k' of 'OddProperties' object has no getter | 'getter with a default'
+23 | 'property a' | 'k in the dict' | 'property m'
+24 | 'a in the dict' | ('non-data', 'DescriptorsAndDict', 'DescriptorsAndDict') | 'm in the dict'
+25 | 'a in the dict' | ('fallback', 'k') | TypeError: 'tuple' object is not callable
+26 | 'its own __get__' | 'its own __get__' | AttributeError: 'WithDerivedProperty' object has no attribute 'm'
+27 | AttributeError: 'staticmethod' object has no attribute 'a' | AttributeError: 'staticmethod' object has no attribute 'k' | AttributeError: 'staticmethod' object has no attribute 'm'
+28 | AttributeError: 'staticmethod' object has no attribute 'a' | AttributeError: 'staticmethod' object has no attribute 'k' | AttributeError: 'staticmethod' object has no attribute 'm'
+29 | AttributeError: 'property' object has no attribute 'a' | AttributeError: 'property' object has no attribute 'k' | AttributeError: 'property' object has no attribute 'm'
+30 | ('a', 1) | 'Plain.k' | ('Plain.m', 'Plain')
+31 | ('a', 2) | ('k', 2) | ('Plain.m', 'Plain')
+32 | ('a', 2) | ('k', 2) | ('Plain.m', 'Plain')
+33 | ('a', 2) | 'Plain.k' | ('Plain.m', 'Plain')
+34 | AttributeError: 'Plain' object has no attribute 'a' | 'Plain.k' | ('Plain.m', 'Plain')
+35 | ('a', 1) | 'Plain.k' | ('Derived.m', 'Derived')
+36 | ('a', 3) | ('k', 3) | ('Derived.m', 'Derived')
+37 | 'property a' | 'WithProperty.k' | 'property m'
+38 | AttributeError: no a today | ZeroDivisionError: division by zero | AttributeError: no m today
+39 | AttributeError: 'Slots' object has no attribute 'a' | AttributeError: 'Slots' object has no attribute 'k' | AttributeError: 'Slots' object has no attribute 'm'
+40 | 'slot a' | 'slot k' | 'slot m'
+41 | 'slot a' | 'dict k' | 'dict m'
+42 | AttributeError: 'SlotsAndDict' object has no attribute 'a' | AttributeError: 'SlotsAndDict' object has no attribute 'k' | AttributeError: 'SlotsAndDict' object has no attribute 'm'
+43 | ('fallback', 'a') | ('fallback', 'k') | TypeError: 'tuple' object is not callable
+44 | ('own', 'a') | ('own', 'k') | TypeError: 'tuple' object is not callable
+45 | function | function | 'static m'
+46 | ('non-data', 'WithDescriptors', 'WithDescriptors') | ('non-data', 'WithDescriptors', 'WithDescriptors') | TypeError: 'tuple' object is not callable
+47 | 'Meta.a' | 'OfMeta.k' | ('Meta.m', 'OfMeta')
+48 | AttributeError: type object 'Plain' has no attribute 'a' | 'Plain.k' | TypeError: Plain.m() missing 1 required positional argument: 'self'
+49 | function | function | 'static m'
+50 | ('a', 1) | 'Plain.k' | ('Plain.m', 'Plain')
+51 | ('a', 2) | ('k', 2) | ('Plain.m', 'Plain')
+52 | AttributeError: 'Plain' object has no attribute 'a' | 'Plain.k' | ('Plain.m', 'Plain')
+53 | ('a', 2) | ('k', 2) | 'instance m'
+54 | 'module a' | AttributeError: module 'module' has no attribute 'k' | 'module m'
+55 | 'namespace a' | AttributeError: 'types.SimpleNamespace' object has no attribute 'k' | 'namespace m'
+56 | 'Tuple.a' | AttributeError: 'Tuple' object has no attribute 'k' | AttributeError: 'Tuple' object has no attribute 'm'
+57 | AttributeError: 'str' object has no attribute 'a' | AttributeError: 'str' object has no attribute 'k' | AttributeError: 'str' object has no attribute 'm'
+58 | AttributeError: 'list' object has no attribute 'a' | AttributeError: 'list' object has no attribute 'k' | AttributeError: 'list' object has no attribute 'm'
+59 | AttributeError: 'int' object has no attribute 'a' | AttributeError: 'int' object has no attribute 'k' | AttributeError: 'int' object has no attribute 'm'
+60 | AttributeError: 'NoneType' object has no attribute 'a' | AttributeError: 'NoneType' object has no attribute 'k' | AttributeError: 'NoneType' object has no attribute 'm'
+61 | AttributeError: 'int' object has no attribute 'a' | AttributeError: 'int' object has no attribute 'k' | AttributeError: 'int' object has no attribute 'm'
+62 | AttributeError: 'float' object has no attribute 'a' | AttributeError: 'float' object has no attribute 'k' | AttributeError: 'float' object has no attribute 'm'
+63 | AttributeError: 'builtin_function_or_method' object has no attribute 'a' | AttributeError: 'builtin_function_or_method' object has no attribute 'k' | AttributeError: 'builtin_function_or_method' object has no attribute 'm'
+64 | AttributeError: 'function' object has no attribute 'a' | AttributeError: 'function' object has no attribute 'k' | AttributeError: 'function' object has no attribute 'm'
+4225 pairs
+--- the class changes between two reads by the same instruction
+[("'instance a'", "'first m'"), ("'instance a'", "'first m'"), ("'instance a'", "'first m'"), ("'instance a'", "'first m'")]
+[("'instance a'", "'first m'"), ("'instance a'", "'first m'"), ("'instance a'", "'first m'"), ("'instance a'", "'first m'")]
+[("'property a'", "'first m'"), ("'property a'", "'first m'"), ("'property a'", "'first m'"), ("'property a'", "'first m'")]
+[("'instance a'", "'first m'"), ("'instance a'", "'first m'"), ("'instance a'", "'first m'"), ("'instance a'", "'first m'")]
+[("'instance a'", "'second m'"), ("'instance a'", "'second m'"), ("'instance a'", "'second m'"), ("'instance a'", "'second m'")]
+[("'instance a'", "'second m'"), ("'instance a'", "'m of Other'"), ("'instance a'", "'second m'"), ("'instance a'", "'m of Other'")]
+[("'instance a'", "'second m'"), ("('non-data', 'Other', 'Other')", "'m of Other'"), ("'instance a'", "'second m'"), ("('non-data', 'Other', 'Other')", "'m of Other'")]
+[("('fallback', 'a')", "'second m'"), ("('fallback', 'a')", "'m of Other'"), ("'instance a'", "'second m'"), ("'instance a'", "'m of Other'")]
+[("AttributeError: 'Changing' object has no attribute 'a'", "'second m'"), ("AttributeError: 'Other' object has no attribute 'a'", "'m of Other'"), ("'instance a'", "'second m'"), ("'instance a'", "'m of Other'")]
+[("'everything'", "'everything'"), ("'everything'", "'everything'"), ("'everything'", "'everything'"), ("'everything'", "'everything'")]
+[("AttributeError: 'Changing' object has no attribute 'a'", "'second m'"), ("AttributeError: 'Other' object has no attribute 'a'", "'m of Other'"), ("'instance a'", "'second m'"), ("'instance a'", "'m of Other'")]
+[("AttributeError: 'Changing' object has no attribute 'a'", "'second m'"), ("AttributeError: 'Other' object has no attribute 'a'", "'m of Other'"), ("'instance a'", "'m of Other'"), ("'instance a'", "'second m'")]
+[("AttributeError: 'Changing' object has no attribute 'a'", "'instance m'"), ("AttributeError: 'Other' object has no attribute 'a'", "'instance m'"), ("'instance a'", "'instance m'"), ("'instance a'", "'instance m'")]
+[("AttributeError: 'Changing' object has no attribute 'a'", "'second m'"), ("AttributeError: 'Other' object has no attribute 'a'", "'m of Other'"), ("'instance a'", "'m of Other'"), ("'instance a'", "'second m'")]
+[("AttributeError: 'Changing' object has no attribute 'a'", "'second m'"), ("AttributeError: 'Other' object has no attribute 'a'", "'m of Other'"), ("'from another dict'", "'m of Other'"), ("'from another dict'", "'second m'")]
+[("AttributeError: 'Changing' object has no attribute 'a'", "'second m'"), ("AttributeError: 'Other' object has no attribute 'a'", "'m of Other'"), ("'from another dict'", "'m in the dict'"), ("'from another dict'", "'m in the dict'")]
+[("AttributeError: 'Changing' object has no attribute 'a'", "'second m'"), ("AttributeError: 'Other' object has no attribute 'a'", "'m of Other'"), ("AttributeError: 'Other' object has no attribute 'a'", "'m of Other'"), ("AttributeError: 'Changing' object has no attribute 'a'", "'second m'")]
+[("AttributeError: 'Changing' object has no attribute 'a'", "'second m'"), ("AttributeError: 'Other' object has no attribute 'a'", "'m of Other'"), ("'set again'", "'m of Other'"), ("'set again'", "'second m'")]
+--- slots that are set and deleted
+[("'slot a'", "'slot m'"), ("AttributeError: 'Slots' object has no attribute 'a'", "AttributeError: 'Slots' object has no attribute 'm'"), ("'slot a'", "'slot m'")]
+[("AttributeError: 'Slots' object has no attribute 'a'", "'slot m'"), ("'late'", "AttributeError: 'Slots' object has no attribute 'm'"), ("'slot a'", "AttributeError: 'Slots' object has no attribute 'm'")]
+[("AttributeError: 'Slots' object has no attribute 'a'", "'slot m'"), ("'late'", "AttributeError: 'Slots' object has no attribute 'm'"), ("'slot a'", "AttributeError: 'Slots' object has no attribute 'm'")]
+--- dir() of an instance
+['__dict__', '__firstlineno__', '__module__', '__static_attributes__', '__weakref__', 'a', 'b', 'c', 'k', 'm'] ['b', 'a', 'c', '__module__', '__firstlineno__', 'k', 'm', '__static_attributes__', '__dict__', '__weakref__']
+['__dict__', '__firstlineno__', '__module__', '__static_attributes__', '__weakref__', 'a', 'b', 'c', 'd', 'k', 'm'] ['b', 'c', 'a', 'd', '__module__', '__firstlineno__', 'k', 'm', '__static_attributes__', '__dict__', '__weakref__']
+1 ('b', 3) {'b': ('b', 3), 'c': ('c', 3), 'a': 1, 'd': 2} ['__dict__', '__firstlineno__', '__module__', '__static_attributes__', '__weakref__', 'a', 'b', 'c', 'd', 'k', 'm']
+['b', 'c', 'a', 'd', 3, '__module__', '__firstlineno__', 'k', 'm', '__static_attributes__', '__dict__', '__weakref__']
+TypeError '<' not supported between instances of 'int' and 'str'
+['__dict__', '__firstlineno__', '__module__', '__static_attributes__', '__weakref__', 'k', 'm'] ['__dict__', '__firstlineno__', '__module__', '__static_attributes__', '__weakref__', 'k', 'm', 'x'] ['__dict__', '__firstlineno__', '__module__', '__slots__', '__static_attributes__', 'a', 'k', 'm'] ['__firstlineno__', '__module__', '__slots__', '__static_attributes__', 'a', 'k', 'm'] ['__dict__', '__firstlineno__', '__module__', '__slots__', '__static_attributes__', 'a']
+['__dict__', '__firstlineno__', '__module__', '__static_attributes__', '__weakref__', 'pretended'] ['__dict__', '__firstlineno__', '__module__', '__static_attributes__', '__weakref__'] ['__dict__', '__firstlineno__', '__module__', '__static_attributes__', '__weakref__']
+['__dict__', '__firstlineno__', '__module__', '__static_attributes__', '__weakref__', 'x'] ['__dict__', '__class__']
+['__dict__', '__firstlineno__', '__getattr__', '__module__', '__static_attributes__', '__weakref__'] ['__dict__', '__firstlineno__', '__module__', '__static_attributes__', '__weakref__', 'a', 'k', 'm'] ['__add__', '__class_getitem__', '__contains__', '__dict__', '__firstlineno__', '__getitem__', '__getnewargs__', '__iter__', '__len__', '__module__', '__mul__', '__rmul__', '__static_attributes__', 'a', 'count', 'index'] ['__dict__', '__firstlineno__', '__module__', '__static_attributes__', '__weakref__', 'k']
+['x'] ['__dict__', '__replace__', 'a', 'm'] ['__loader__', '__name__', '__package__', '__spec__', 'a', 'm']
+--- a str, a list and an instance at one call
+['a', 'Stripping.strip', 'b', b'c', 'Stripping.strip', bytearray(b'd'), 'e']
+[[1], 'Stripping.copy', {2: 3}, [4], {5}, 'Stripping.copy', bytearray(b'6'), [7]]
+--- with, where the managers are of many kinds
+['Manager', 'CallableEnter', 'Manager', 'generator', 'null', 'Manager', 'CallableEnter']
+--- what is found in the class belongs to another one, or cannot be bound
+method of str
+   Ordinary, Ordinary #12
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Ordinary' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Ordinary' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Ordinary' object
+       the argument first
+   Hook
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Hook' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Hook' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Hook' object
+       the attribute first
+   HookRaises
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'HookRaises' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'HookRaises' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'HookRaises' object
+       the attribute first
+   Own
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Own' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Own' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Own' object
+       the attribute first
+   SameSlots
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'SameSlots' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'SameSlots' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'SameSlots' object
+       the argument first
+   OfOwner
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'OfOwner' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'OfOwner' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'OfOwner' object
+       the argument first
+   Text
+       <builtin_function_or_method>
+       'TEXT'
+       TypeError: str.upper() takes no arguments (1 given)
+       the argument first
+   Items
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Items' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Items' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Items' object
+       the argument first
+   Short #8, Short #9
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Short' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Short' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Short' object
+       the argument first
+   Number #10
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Number' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Number' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Number' object
+       the argument first
+   WithMeta #11
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'WithMeta' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'WithMeta' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'WithMeta' object
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+   Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <method_descriptor>
+       TypeError: unbound method str.upper() needs an argument
+       'ARG'
+       the argument first
+method of list
+   Ordinary, Ordinary #12
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'Ordinary' object
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'Ordinary' object
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'Ordinary' object
+       the argument first
+   Hook
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'Hook' object
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'Hook' object
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'Hook' object
+       the attribute first
+   HookRaises
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'HookRaises' object
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'HookRaises' object
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'HookRaises' object
+       the attribute first
+   Own
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'Own' object
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'Own' object
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'Own' object
+       the attribute first
+   SameSlots
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'SameSlots' object
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'SameSlots' object
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'SameSlots' object
+       the argument first
+   OfOwner
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'OfOwner' object
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'OfOwner' object
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'OfOwner' object
+       the argument first
+   Text
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'Text' object
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'Text' object
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'Text' object
+       the argument first
+   Items
+       <builtin_function_or_method>
+       TypeError: list.append() takes exactly one argument (0 given)
+       None
+       the argument first
+   Short #8, Short #9
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'Short' object
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'Short' object
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'Short' object
+       the argument first
+   Number #10
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'Number' object
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'Number' object
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'Number' object
+       the argument first
+   WithMeta #11
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'WithMeta' object
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'WithMeta' object
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'WithMeta' object
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+   Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <method_descriptor>
+       TypeError: unbound method list.append() needs an argument
+       TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'str' object
+       the argument first
+method of object
+   Ordinary, Ordinary #12
+       <builtin_function_or_method>
+       (<function _reconstructor>, (<class '__main__.receivers.<locals>.Ordinary'>, <class 'object'>, None))
+       TypeError: object.__reduce__() takes no arguments (1 given)
+       the argument first
+   Hook
+       <builtin_function_or_method>
+       TypeError: a class that defines __slots__ without defining __getstate__ cannot be pickled
+       TypeError: receivers.<locals>.Hook.__reduce__() takes no arguments (1 given)
+       the argument first
+   HookRaises
+       <builtin_function_or_method>
+       (<function _reconstructor>, (<class '__main__.receivers.<locals>.HookRaises'>, <class 'object'>, None))
+       TypeError: receivers.<locals>.HookRaises.__reduce__() takes no arguments (1 given)
+       the argument first
+   Own
+       <builtin_function_or_method>
+       (<function _reconstructor>, (<class '__main__.receivers.<locals>.Own'>, <class 'object'>, None))
+       TypeError: receivers.<locals>.Own.__reduce__() takes no arguments (1 given)
+       the argument first
+   SameSlots, OfOwner
+       <builtin_function_or_method>
+       TypeError: a class that defines __slots__ without defining __getstate__ cannot be pickled
+       TypeError: object.__reduce__() takes no arguments (1 given)
+       the argument first
+   Text
+       <builtin_function_or_method>
+       (<function _reconstructor>, (<class '__main__.receivers.<locals>.Text'>, <class 'str'>, 'text'))
+       TypeError: object.__reduce__() takes no arguments (1 given)
+       the argument first
+   Items
+       <builtin_function_or_method>
+       (<function _reconstructor>, (<class '__main__.receivers.<locals>.Items'>, <class 'list'>, [1, 2]))
+       TypeError: object.__reduce__() takes no arguments (1 given)
+       the argument first
+   Short #8
+       <builtin_function_or_method>
+       (<function _reconstructor>, (<class '__main__.receivers.<locals>.Short'>, <class 'tuple'>, (1,)))
+       TypeError: object.__reduce__() takes no arguments (1 given)
+       the argument first
+   Short #9
+       <builtin_function_or_method>
+       (<function _reconstructor>, (<class '__main__.receivers.<locals>.Short'>, <class 'tuple'>, (1, 2, 3)))
+       TypeError: object.__reduce__() takes no arguments (1 given)
+       the argument first
+   Number #10
+       <builtin_function_or_method>
+       (<function _reconstructor>, (<class '__main__.receivers.<locals>.Number'>, <class 'int'>, 7))
+       TypeError: object.__reduce__() takes no arguments (1 given)
+       the argument first
+   WithMeta #11
+       <builtin_function_or_method>
+       (<function _reconstructor>, (<class '__main__.receivers.<locals>.WithMeta'>, <class 'object'>, None))
+       TypeError: object.__reduce__() takes no arguments (1 given)
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+   Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <method_descriptor>
+       TypeError: unbound method object.__reduce__() needs an argument
+       TypeError: cannot pickle 'str' object
+       the argument first
+slot wrapper of list
+   Ordinary, Ordinary #12
+       TypeError: descriptor '__len__' for 'list' objects doesn't apply to a 'Ordinary' object
+       TypeError: descriptor '__len__' requires a 'list' object but received a 'Ordinary'
+       TypeError: descriptor '__len__' requires a 'list' object but received a 'Ordinary'
+       the argument first
+   Hook
+       TypeError: descriptor '__len__' for 'list' objects doesn't apply to a 'Hook' object
+       TypeError: descriptor '__len__' for 'list' objects doesn't apply to a 'Hook' object
+       TypeError: descriptor '__len__' for 'list' objects doesn't apply to a 'Hook' object
+       the attribute first
+   HookRaises
+       TypeError: descriptor '__len__' for 'list' objects doesn't apply to a 'HookRaises' object
+       TypeError: descriptor '__len__' for 'list' objects doesn't apply to a 'HookRaises' object
+       TypeError: descriptor '__len__' for 'list' objects doesn't apply to a 'HookRaises' object
+       the attribute first
+   Own
+       TypeError: descriptor '__len__' for 'list' objects doesn't apply to a 'Own' object
+       TypeError: descriptor '__len__' for 'list' objects doesn't apply to a 'Own' object
+       TypeError: descriptor '__len__' for 'list' objects doesn't apply to a 'Own' object
+       the attribute first
+   SameSlots
+       TypeError: descriptor '__len__' for 'list' objects doesn't apply to a 'SameSlots' object
+       TypeError: descriptor '__len__' requires a 'list' object but received a 'SameSlots'
+       TypeError: descriptor '__len__' requires a 'list' object but received a 'SameSlots'
+       the argument first
+   OfOwner
+       TypeError: descriptor '__len__' for 'list' objects doesn't apply to a 'OfOwner' object
+       TypeError: descriptor '__len__' requires a 'list' object but received a 'OfOwner'
+       TypeError: descriptor '__len__' requires a 'list' object but received a 'OfOwner'
+       the argument first
+   Text
+       TypeError: descriptor '__len__' for 'list' objects doesn't apply to a 'Text' object
+       TypeError: descriptor '__len__' requires a 'list' object but received a 'Text'
+       TypeError: descriptor '__len__' requires a 'list' object but received a 'Text'
+       the argument first
+   Items
+       <method-wrapper>
+       2
+       TypeError: expected 0 arguments, got 1
+       the argument first
+   Short #8, Short #9
+       TypeError: descriptor '__len__' for 'list' objects doesn't apply to a 'Short' object
+       TypeError: descriptor '__len__' requires a 'list' object but received a 'Short'
+       TypeError: descriptor '__len__' requires a 'list' object but received a 'Short'
+       the argument first
+   Number #10
+       TypeError: descriptor '__len__' for 'list' objects doesn't apply to a 'Number' object
+       TypeError: descriptor '__len__' requires a 'list' object but received a 'Number'
+       TypeError: descriptor '__len__' requires a 'list' object but received a 'Number'
+       the argument first
+   WithMeta #11
+       TypeError: descriptor '__len__' for 'list' objects doesn't apply to a 'WithMeta' object
+       TypeError: descriptor '__len__' requires a 'list' object but received a 'WithMeta'
+       TypeError: descriptor '__len__' requires a 'list' object but received a 'WithMeta'
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+   Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <wrapper_descriptor>
+       TypeError: descriptor '__len__' of 'list' object needs an argument
+       TypeError: descriptor '__len__' requires a 'list' object but received a 'str'
+       the argument first
+slot wrapper of str
+   Ordinary, Ordinary #12
+       TypeError: descriptor '__len__' for 'str' objects doesn't apply to a 'Ordinary' object
+       TypeError: descriptor '__len__' requires a 'str' object but received a 'Ordinary'
+       TypeError: descriptor '__len__' requires a 'str' object but received a 'Ordinary'
+       the argument first
+   Hook
+       TypeError: descriptor '__len__' for 'str' objects doesn't apply to a 'Hook' object
+       TypeError: descriptor '__len__' for 'str' objects doesn't apply to a 'Hook' object
+       TypeError: descriptor '__len__' for 'str' objects doesn't apply to a 'Hook' object
+       the attribute first
+   HookRaises
+       TypeError: descriptor '__len__' for 'str' objects doesn't apply to a 'HookRaises' object
+       TypeError: descriptor '__len__' for 'str' objects doesn't apply to a 'HookRaises' object
+       TypeError: descriptor '__len__' for 'str' objects doesn't apply to a 'HookRaises' object
+       the attribute first
+   Own
+       TypeError: descriptor '__len__' for 'str' objects doesn't apply to a 'Own' object
+       TypeError: descriptor '__len__' for 'str' objects doesn't apply to a 'Own' object
+       TypeError: descriptor '__len__' for 'str' objects doesn't apply to a 'Own' object
+       the attribute first
+   SameSlots
+       TypeError: descriptor '__len__' for 'str' objects doesn't apply to a 'SameSlots' object
+       TypeError: descriptor '__len__' requires a 'str' object but received a 'SameSlots'
+       TypeError: descriptor '__len__' requires a 'str' object but received a 'SameSlots'
+       the argument first
+   OfOwner
+       TypeError: descriptor '__len__' for 'str' objects doesn't apply to a 'OfOwner' object
+       TypeError: descriptor '__len__' requires a 'str' object but received a 'OfOwner'
+       TypeError: descriptor '__len__' requires a 'str' object but received a 'OfOwner'
+       the argument first
+   Text
+       <method-wrapper>
+       4
+       TypeError: expected 0 arguments, got 1
+       the argument first
+   Items
+       TypeError: descriptor '__len__' for 'str' objects doesn't apply to a 'Items' object
+       TypeError: descriptor '__len__' requires a 'str' object but received a 'Items'
+       TypeError: descriptor '__len__' requires a 'str' object but received a 'Items'
+       the argument first
+   Short #8, Short #9
+       TypeError: descriptor '__len__' for 'str' objects doesn't apply to a 'Short' object
+       TypeError: descriptor '__len__' requires a 'str' object but received a 'Short'
+       TypeError: descriptor '__len__' requires a 'str' object but received a 'Short'
+       the argument first
+   Number #10
+       TypeError: descriptor '__len__' for 'str' objects doesn't apply to a 'Number' object
+       TypeError: descriptor '__len__' requires a 'str' object but received a 'Number'
+       TypeError: descriptor '__len__' requires a 'str' object but received a 'Number'
+       the argument first
+   WithMeta #11
+       TypeError: descriptor '__len__' for 'str' objects doesn't apply to a 'WithMeta' object
+       TypeError: descriptor '__len__' requires a 'str' object but received a 'WithMeta'
+       TypeError: descriptor '__len__' requires a 'str' object but received a 'WithMeta'
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+   Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <wrapper_descriptor>
+       TypeError: descriptor '__len__' of 'str' object needs an argument
+       3
+       the argument first
+slot wrapper of object
+   Ordinary, Ordinary #12
+       <method-wrapper>
+       '<__main__.receivers.<locals>.Ordinary object>'
+       TypeError: expected 0 arguments, got 1
+       the argument first
+   Hook
+       <method-wrapper>
+       '<__main__.receivers.<locals>.Hook object>'
+       TypeError: expected 0 arguments, got 1
+       the argument first
+   HookRaises
+       <method-wrapper>
+       '<__main__.receivers.<locals>.HookRaises object>'
+       TypeError: expected 0 arguments, got 1
+       the argument first
+   Own
+       <method-wrapper>
+       '<__main__.receivers.<locals>.Own object>'
+       TypeError: expected 0 arguments, got 1
+       the argument first
+   SameSlots
+       <method-wrapper>
+       '<__main__.receivers.<locals>.SameSlots object>'
+       TypeError: expected 0 arguments, got 1
+       the argument first
+   OfOwner
+       <method-wrapper>
+       '<__main__.receivers.<locals>.OfOwner object>'
+       TypeError: expected 0 arguments, got 1
+       the argument first
+   Text
+       <method-wrapper>
+       '<__main__.receivers.<locals>.Text object>'
+       TypeError: expected 0 arguments, got 1
+       the argument first
+   Items
+       <method-wrapper>
+       '<__main__.receivers.<locals>.Items object>'
+       TypeError: expected 0 arguments, got 1
+       the argument first
+   Short #8, Short #9
+       <method-wrapper>
+       '<__main__.receivers.<locals>.Short object>'
+       TypeError: expected 0 arguments, got 1
+       the argument first
+   Number #10
+       <method-wrapper>
+       '<__main__.receivers.<locals>.Number object>'
+       TypeError: expected 0 arguments, got 1
+       the argument first
+   WithMeta #11
+       <method-wrapper>
+       '<__main__.receivers.<locals>.WithMeta object>'
+       TypeError: expected 0 arguments, got 1
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+   Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <wrapper_descriptor>
+       TypeError: descriptor '__repr__' of 'object' object needs an argument
+       '<str object>'
+       the argument first
+class method of dict
+   Ordinary, Ordinary #12, Ordinary itself
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'Ordinary'
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'Ordinary'
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'Ordinary'
+       the attribute first
+   Hook, Hook itself
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'Hook'
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'Hook'
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'Hook'
+       the attribute first
+   HookRaises
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'HookRaises'
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'HookRaises'
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'HookRaises'
+       the attribute first
+   Own
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'Own'
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'Own'
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'Own'
+       the attribute first
+   SameSlots
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'SameSlots'
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'SameSlots'
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'SameSlots'
+       the attribute first
+   OfOwner
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'OfOwner'
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'OfOwner'
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'OfOwner'
+       the attribute first
+   Text, Text itself
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'Text'
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'Text'
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'Text'
+       the attribute first
+   Items
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'Items'
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'Items'
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'Items'
+       the attribute first
+   Short #8, Short #9
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'Short'
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'Short'
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'Short'
+       the attribute first
+   Number #10
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'Number'
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'Number'
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'Number'
+       the attribute first
+   WithMeta #11, WithMeta itself
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'WithMeta'
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'WithMeta'
+       TypeError: descriptor 'fromkeys' requires a subtype of 'dict' but received 'WithMeta'
+       the attribute first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+class method of int
+   Ordinary, Ordinary #12, Ordinary itself
+       TypeError: descriptor 'from_bytes' requires a subtype of 'int' but received 'Ordinary'
+       TypeError: descriptor 'from_bytes' requires a subtype of 'int' but received 'Ordinary'
+       TypeError: descriptor 'from_bytes' requires a subtype of 'int' but received 'Ordinary'
+       the attribute first
+   Hook, Hook itself
+       TypeError: descriptor 'from_bytes' requires a subtype of 'int' but received 'Hook'
+       TypeError: descriptor 'from_bytes' requires a subtype of 'int' but received 'Hook'
+       TypeError: descriptor 'from_bytes' requires a subtype of 'int' but received 'Hook'
+       the attribute first
+   HookRaises
+       TypeError: descriptor 'from_bytes' requires a subtype of 'int' but received 'HookRaises'
+       TypeError: descriptor 'from_bytes' requires a subtype of 'int' but received 'HookRaises'
+       TypeError: descriptor 'from_bytes' requires a subtype of 'int' but received 'HookRaises'
+       the attribute first
+   Own
+       TypeError: descriptor 'from_bytes' requires a subtype of 'int' but received 'Own'
+       TypeError: descriptor 'from_bytes' requires a subtype of 'int' but received 'Own'
+       TypeError: descriptor 'from_bytes' requires a subtype of 'int' but received 'Own'
+       the attribute first
+   SameSlots
+       TypeError: descriptor 'from_bytes' requires a subtype of 'int' but received 'SameSlots'
+       TypeError: descriptor 'from_bytes' requires a subtype of 'int' but received 'SameSlots'
+       TypeError: descriptor 'from_bytes' requires a subtype of 'int' but received 'SameSlots'
+       the attribute first
+   OfOwner
+       TypeError: descriptor 'from_bytes' requires a subtype of 'int' but received 'OfOwner'
+       TypeError: descriptor 'from_bytes' requires a subtype of 'int' but received 'OfOwner'
+       TypeError: descriptor 'from_bytes' requires a subtype of 'int' but received 'OfOwner'
+       the attribute first
+   Text, Text itself
+       TypeError: descriptor 'from_bytes' requires a subtype of 'int' but received 'Text'
+       TypeError: descriptor 'from_bytes' requires a subtype of 'int' but received 'Text'
+       TypeError: descriptor 'from_bytes' requires a subtype of 'int' but received 'Text'
+       the attribute first
+   Items
+       TypeError: descriptor 'from_bytes' requires a subtype of 'int' but received 'Items'
+       TypeError: descriptor 'from_bytes' requires a subtype of 'int' but received 'Items'
+       TypeError: descriptor 'from_bytes' requires a subtype of 'int' but received 'Items'
+       the attribute first
+   Short #8, Short #9
+       TypeError: descriptor 'from_bytes' requires a subtype of 'int' but received 'Short'
+       TypeError: descriptor 'from_bytes' requires a subtype of 'int' but received 'Short'
+       TypeError: descriptor 'from_bytes' requires a subtype of 'int' but received 'Short'
+       the attribute first
+   Number #10
+       <builtin_function_or_method>
+       TypeError: from_bytes() missing required argument 'bytes' (pos 1)
+       TypeError: cannot convert 'str' object to bytes
+       the argument first
+   WithMeta #11, WithMeta itself
+       TypeError: descriptor 'from_bytes' requires a subtype of 'int' but received 'WithMeta'
+       TypeError: descriptor 'from_bytes' requires a subtype of 'int' but received 'WithMeta'
+       TypeError: descriptor 'from_bytes' requires a subtype of 'int' but received 'WithMeta'
+       the attribute first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+class method of object
+   Ordinary, Ordinary #12, Ordinary itself
+       <builtin_function_or_method>
+       None
+       TypeError: receivers.<locals>.Ordinary.__init_subclass__() takes no arguments (1 given)
+       the argument first
+   Hook, Hook itself
+       <builtin_function_or_method>
+       None
+       TypeError: receivers.<locals>.Hook.__init_subclass__() takes no arguments (1 given)
+       the argument first
+   HookRaises
+       <builtin_function_or_method>
+       None
+       TypeError: receivers.<locals>.HookRaises.__init_subclass__() takes no arguments (1 given)
+       the argument first
+   Own
+       <builtin_function_or_method>
+       None
+       TypeError: receivers.<locals>.Own.__init_subclass__() takes no arguments (1 given)
+       the argument first
+   SameSlots
+       <builtin_function_or_method>
+       None
+       TypeError: receivers.<locals>.SameSlots.__init_subclass__() takes no arguments (1 given)
+       the argument first
+   OfOwner
+       <builtin_function_or_method>
+       None
+       TypeError: receivers.<locals>.OfOwner.__init_subclass__() takes no arguments (1 given)
+       the argument first
+   Text, Text itself
+       <builtin_function_or_method>
+       None
+       TypeError: receivers.<locals>.Text.__init_subclass__() takes no arguments (1 given)
+       the argument first
+   Items
+       <builtin_function_or_method>
+       None
+       TypeError: receivers.<locals>.Items.__init_subclass__() takes no arguments (1 given)
+       the argument first
+   Short #8, Short #9
+       <builtin_function_or_method>
+       None
+       TypeError: receivers.<locals>.Short.__init_subclass__() takes no arguments (1 given)
+       the argument first
+   Number #10
+       <builtin_function_or_method>
+       None
+       TypeError: receivers.<locals>.Number.__init_subclass__() takes no arguments (1 given)
+       the argument first
+   WithMeta #11, WithMeta itself
+       <builtin_function_or_method>
+       None
+       TypeError: receivers.<locals>.WithMeta.__init_subclass__() takes no arguments (1 given)
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+static method of str
+   Ordinary, Hook, HookRaises, Own, SameSlots, OfOwner, Text, Items, Short #8, Short #9, Number #10, WithMeta #11, Ordinary #12, Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <builtin_function_or_method>
+       TypeError: maketrans expected at least 1 argument, got 0
+       TypeError: if you give only one argument to maketrans it must be a dict
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+slot of another class
+   Ordinary, Ordinary #12, Ordinary #13
+       TypeError: descriptor 'x' for 'SlotOwner' objects doesn't apply to a 'Ordinary' object
+       TypeError: descriptor 'x' for 'SlotOwner' objects doesn't apply to a 'Ordinary' object
+       TypeError: descriptor 'x' for 'SlotOwner' objects doesn't apply to a 'Ordinary' object
+       the attribute first
+   Hook
+       TypeError: descriptor 'x' for 'SlotOwner' objects doesn't apply to a 'Hook' object
+       TypeError: descriptor 'x' for 'SlotOwner' objects doesn't apply to a 'Hook' object
+       TypeError: descriptor 'x' for 'SlotOwner' objects doesn't apply to a 'Hook' object
+       the attribute first
+   HookRaises
+       TypeError: descriptor 'x' for 'SlotOwner' objects doesn't apply to a 'HookRaises' object
+       TypeError: descriptor 'x' for 'SlotOwner' objects doesn't apply to a 'HookRaises' object
+       TypeError: descriptor 'x' for 'SlotOwner' objects doesn't apply to a 'HookRaises' object
+       the attribute first
+   Own
+       TypeError: descriptor 'x' for 'SlotOwner' objects doesn't apply to a 'Own' object
+       TypeError: descriptor 'x' for 'SlotOwner' objects doesn't apply to a 'Own' object
+       TypeError: descriptor 'x' for 'SlotOwner' objects doesn't apply to a 'Own' object
+       the attribute first
+   SameSlots
+       TypeError: descriptor 'x' for 'SlotOwner' objects doesn't apply to a 'SameSlots' object
+       TypeError: descriptor 'x' for 'SlotOwner' objects doesn't apply to a 'SameSlots' object
+       TypeError: descriptor 'x' for 'SlotOwner' objects doesn't apply to a 'SameSlots' object
+       the attribute first
+   OfOwner
+       'x of the base'
+       TypeError: 'str' object is not callable
+       TypeError: 'str' object is not callable
+       the argument first
+   Text
+       TypeError: descriptor 'x' for 'SlotOwner' objects doesn't apply to a 'Text' object
+       TypeError: descriptor 'x' for 'SlotOwner' objects doesn't apply to a 'Text' object
+       TypeError: descriptor 'x' for 'SlotOwner' objects doesn't apply to a 'Text' object
+       the attribute first
+   Items
+       TypeError: descriptor 'x' for 'SlotOwner' objects doesn't apply to a 'Items' object
+       TypeError: descriptor 'x' for 'SlotOwner' objects doesn't apply to a 'Items' object
+       TypeError: descriptor 'x' for 'SlotOwner' objects doesn't apply to a 'Items' object
+       the attribute first
+   Short #8, Short #9
+       TypeError: descriptor 'x' for 'SlotOwner' objects doesn't apply to a 'Short' object
+       TypeError: descriptor 'x' for 'SlotOwner' objects doesn't apply to a 'Short' object
+       TypeError: descriptor 'x' for 'SlotOwner' objects doesn't apply to a 'Short' object
+       the attribute first
+   Number #10
+       TypeError: descriptor 'x' for 'SlotOwner' objects doesn't apply to a 'Number' object
+       TypeError: descriptor 'x' for 'SlotOwner' objects doesn't apply to a 'Number' object
+       TypeError: descriptor 'x' for 'SlotOwner' objects doesn't apply to a 'Number' object
+       the attribute first
+   WithMeta #11
+       TypeError: descriptor 'x' for 'SlotOwner' objects doesn't apply to a 'WithMeta' object
+       TypeError: descriptor 'x' for 'SlotOwner' objects doesn't apply to a 'WithMeta' object
+       TypeError: descriptor 'x' for 'SlotOwner' objects doesn't apply to a 'WithMeta' object
+       the attribute first
+   Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <member_descriptor>
+       TypeError: 'member_descriptor' object is not callable
+       TypeError: 'member_descriptor' object is not callable
+       the argument first
+second slot of another class
+   Ordinary, Ordinary #12, Ordinary #13
+       TypeError: descriptor 'y' for 'SlotOwner' objects doesn't apply to a 'Ordinary' object
+       TypeError: descriptor 'y' for 'SlotOwner' objects doesn't apply to a 'Ordinary' object
+       TypeError: descriptor 'y' for 'SlotOwner' objects doesn't apply to a 'Ordinary' object
+       the attribute first
+   Hook
+       TypeError: descriptor 'y' for 'SlotOwner' objects doesn't apply to a 'Hook' object
+       TypeError: descriptor 'y' for 'SlotOwner' objects doesn't apply to a 'Hook' object
+       TypeError: descriptor 'y' for 'SlotOwner' objects doesn't apply to a 'Hook' object
+       the attribute first
+   HookRaises
+       TypeError: descriptor 'y' for 'SlotOwner' objects doesn't apply to a 'HookRaises' object
+       TypeError: descriptor 'y' for 'SlotOwner' objects doesn't apply to a 'HookRaises' object
+       TypeError: descriptor 'y' for 'SlotOwner' objects doesn't apply to a 'HookRaises' object
+       the attribute first
+   Own
+       TypeError: descriptor 'y' for 'SlotOwner' objects doesn't apply to a 'Own' object
+       TypeError: descriptor 'y' for 'SlotOwner' objects doesn't apply to a 'Own' object
+       TypeError: descriptor 'y' for 'SlotOwner' objects doesn't apply to a 'Own' object
+       the attribute first
+   SameSlots
+       TypeError: descriptor 'y' for 'SlotOwner' objects doesn't apply to a 'SameSlots' object
+       TypeError: descriptor 'y' for 'SlotOwner' objects doesn't apply to a 'SameSlots' object
+       TypeError: descriptor 'y' for 'SlotOwner' objects doesn't apply to a 'SameSlots' object
+       the attribute first
+   OfOwner
+       AttributeError: 'receivers.<locals>.OfOwner' object has no attribute 'y'
+       AttributeError: 'receivers.<locals>.OfOwner' object has no attribute 'y'
+       AttributeError: 'receivers.<locals>.OfOwner' object has no attribute 'y'
+       the attribute first
+   Text
+       TypeError: descriptor 'y' for 'SlotOwner' objects doesn't apply to a 'Text' object
+       TypeError: descriptor 'y' for 'SlotOwner' objects doesn't apply to a 'Text' object
+       TypeError: descriptor 'y' for 'SlotOwner' objects doesn't apply to a 'Text' object
+       the attribute first
+   Items
+       TypeError: descriptor 'y' for 'SlotOwner' objects doesn't apply to a 'Items' object
+       TypeError: descriptor 'y' for 'SlotOwner' objects doesn't apply to a 'Items' object
+       TypeError: descriptor 'y' for 'SlotOwner' objects doesn't apply to a 'Items' object
+       the attribute first
+   Short #8, Short #9
+       TypeError: descriptor 'y' for 'SlotOwner' objects doesn't apply to a 'Short' object
+       TypeError: descriptor 'y' for 'SlotOwner' objects doesn't apply to a 'Short' object
+       TypeError: descriptor 'y' for 'SlotOwner' objects doesn't apply to a 'Short' object
+       the attribute first
+   Number #10
+       TypeError: descriptor 'y' for 'SlotOwner' objects doesn't apply to a 'Number' object
+       TypeError: descriptor 'y' for 'SlotOwner' objects doesn't apply to a 'Number' object
+       TypeError: descriptor 'y' for 'SlotOwner' objects doesn't apply to a 'Number' object
+       the attribute first
+   WithMeta #11
+       TypeError: descriptor 'y' for 'SlotOwner' objects doesn't apply to a 'WithMeta' object
+       TypeError: descriptor 'y' for 'SlotOwner' objects doesn't apply to a 'WithMeta' object
+       TypeError: descriptor 'y' for 'SlotOwner' objects doesn't apply to a 'WithMeta' object
+       the attribute first
+   Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <member_descriptor>
+       TypeError: 'member_descriptor' object is not callable
+       TypeError: 'member_descriptor' object is not callable
+       the argument first
+getset of int
+   Ordinary, Ordinary #12, Ordinary #13
+       TypeError: descriptor 'real' for 'int' objects doesn't apply to a 'Ordinary' object
+       TypeError: descriptor 'real' for 'int' objects doesn't apply to a 'Ordinary' object
+       TypeError: descriptor 'real' for 'int' objects doesn't apply to a 'Ordinary' object
+       the attribute first
+   Hook
+       TypeError: descriptor 'real' for 'int' objects doesn't apply to a 'Hook' object
+       TypeError: descriptor 'real' for 'int' objects doesn't apply to a 'Hook' object
+       TypeError: descriptor 'real' for 'int' objects doesn't apply to a 'Hook' object
+       the attribute first
+   HookRaises
+       TypeError: descriptor 'real' for 'int' objects doesn't apply to a 'HookRaises' object
+       TypeError: descriptor 'real' for 'int' objects doesn't apply to a 'HookRaises' object
+       TypeError: descriptor 'real' for 'int' objects doesn't apply to a 'HookRaises' object
+       the attribute first
+   Own
+       TypeError: descriptor 'real' for 'int' objects doesn't apply to a 'Own' object
+       TypeError: descriptor 'real' for 'int' objects doesn't apply to a 'Own' object
+       TypeError: descriptor 'real' for 'int' objects doesn't apply to a 'Own' object
+       the attribute first
+   SameSlots
+       TypeError: descriptor 'real' for 'int' objects doesn't apply to a 'SameSlots' object
+       TypeError: descriptor 'real' for 'int' objects doesn't apply to a 'SameSlots' object
+       TypeError: descriptor 'real' for 'int' objects doesn't apply to a 'SameSlots' object
+       the attribute first
+   OfOwner
+       TypeError: descriptor 'real' for 'int' objects doesn't apply to a 'OfOwner' object
+       TypeError: descriptor 'real' for 'int' objects doesn't apply to a 'OfOwner' object
+       TypeError: descriptor 'real' for 'int' objects doesn't apply to a 'OfOwner' object
+       the attribute first
+   Text
+       TypeError: descriptor 'real' for 'int' objects doesn't apply to a 'Text' object
+       TypeError: descriptor 'real' for 'int' objects doesn't apply to a 'Text' object
+       TypeError: descriptor 'real' for 'int' objects doesn't apply to a 'Text' object
+       the attribute first
+   Items
+       TypeError: descriptor 'real' for 'int' objects doesn't apply to a 'Items' object
+       TypeError: descriptor 'real' for 'int' objects doesn't apply to a 'Items' object
+       TypeError: descriptor 'real' for 'int' objects doesn't apply to a 'Items' object
+       the attribute first
+   Short #8, Short #9
+       TypeError: descriptor 'real' for 'int' objects doesn't apply to a 'Short' object
+       TypeError: descriptor 'real' for 'int' objects doesn't apply to a 'Short' object
+       TypeError: descriptor 'real' for 'int' objects doesn't apply to a 'Short' object
+       the attribute first
+   Number #10
+       7
+       TypeError: 'int' object is not callable
+       TypeError: 'int' object is not callable
+       the argument first
+   WithMeta #11
+       TypeError: descriptor 'real' for 'int' objects doesn't apply to a 'WithMeta' object
+       TypeError: descriptor 'real' for 'int' objects doesn't apply to a 'WithMeta' object
+       TypeError: descriptor 'real' for 'int' objects doesn't apply to a 'WithMeta' object
+       the attribute first
+   Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <getset_descriptor>
+       TypeError: 'getset_descriptor' object is not callable
+       TypeError: 'getset_descriptor' object is not callable
+       the argument first
+getset of function
+   Ordinary, Ordinary #12, Ordinary #13
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'Ordinary' object
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'Ordinary' object
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'Ordinary' object
+       the attribute first
+   Hook
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'Hook' object
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'Hook' object
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'Hook' object
+       the attribute first
+   HookRaises
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'HookRaises' object
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'HookRaises' object
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'HookRaises' object
+       the attribute first
+   Own
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'Own' object
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'Own' object
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'Own' object
+       the attribute first
+   SameSlots
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'SameSlots' object
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'SameSlots' object
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'SameSlots' object
+       the attribute first
+   OfOwner
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'OfOwner' object
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'OfOwner' object
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'OfOwner' object
+       the attribute first
+   Text
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'Text' object
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'Text' object
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'Text' object
+       the attribute first
+   Items
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'Items' object
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'Items' object
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'Items' object
+       the attribute first
+   Short #8, Short #9
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'Short' object
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'Short' object
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'Short' object
+       the attribute first
+   Number #10
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'Number' object
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'Number' object
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'Number' object
+       the attribute first
+   WithMeta #11
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'WithMeta' object
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'WithMeta' object
+       TypeError: descriptor '__code__' for 'function' objects doesn't apply to a 'WithMeta' object
+       the attribute first
+   Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <getset_descriptor>
+       TypeError: 'getset_descriptor' object is not callable
+       TypeError: 'getset_descriptor' object is not callable
+       the argument first
+getset of type
+   Ordinary, Ordinary #12, Ordinary #13
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'Ordinary' object
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'Ordinary' object
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'Ordinary' object
+       the attribute first
+   Hook
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'Hook' object
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'Hook' object
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'Hook' object
+       the attribute first
+   HookRaises
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'HookRaises' object
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'HookRaises' object
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'HookRaises' object
+       the attribute first
+   Own
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'Own' object
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'Own' object
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'Own' object
+       the attribute first
+   SameSlots
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'SameSlots' object
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'SameSlots' object
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'SameSlots' object
+       the attribute first
+   OfOwner
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'OfOwner' object
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'OfOwner' object
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'OfOwner' object
+       the attribute first
+   Text
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'Text' object
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'Text' object
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'Text' object
+       the attribute first
+   Items
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'Items' object
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'Items' object
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'Items' object
+       the attribute first
+   Short #8, Short #9
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'Short' object
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'Short' object
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'Short' object
+       the attribute first
+   Number #10
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'Number' object
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'Number' object
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'Number' object
+       the attribute first
+   WithMeta #11
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'WithMeta' object
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'WithMeta' object
+       TypeError: descriptor '__name__' for 'type' objects doesn't apply to a 'WithMeta' object
+       the attribute first
+   Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <getset_descriptor>
+       TypeError: 'getset_descriptor' object is not callable
+       TypeError: 'getset_descriptor' object is not callable
+       the argument first
+member of function
+   Ordinary, Ordinary #12, Ordinary #13
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'Ordinary' object
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'Ordinary' object
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'Ordinary' object
+       the attribute first
+   Hook
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'Hook' object
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'Hook' object
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'Hook' object
+       the attribute first
+   HookRaises
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'HookRaises' object
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'HookRaises' object
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'HookRaises' object
+       the attribute first
+   Own
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'Own' object
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'Own' object
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'Own' object
+       the attribute first
+   SameSlots
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'SameSlots' object
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'SameSlots' object
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'SameSlots' object
+       the attribute first
+   OfOwner
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'OfOwner' object
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'OfOwner' object
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'OfOwner' object
+       the attribute first
+   Text
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'Text' object
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'Text' object
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'Text' object
+       the attribute first
+   Items
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'Items' object
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'Items' object
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'Items' object
+       the attribute first
+   Short #8, Short #9
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'Short' object
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'Short' object
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'Short' object
+       the attribute first
+   Number #10
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'Number' object
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'Number' object
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'Number' object
+       the attribute first
+   WithMeta #11
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'WithMeta' object
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'WithMeta' object
+       TypeError: descriptor '__globals__' for 'function' objects doesn't apply to a 'WithMeta' object
+       the attribute first
+   Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <member_descriptor>
+       TypeError: 'member_descriptor' object is not callable
+       TypeError: 'member_descriptor' object is not callable
+       the argument first
+__dict__ of another class
+   Ordinary, Hook, HookRaises, Own, OfOwner, Text, Items, Short #8, Short #9, Number #10, WithMeta #11, Ordinary #12, Ordinary #13
+       <dict>
+       TypeError: 'dict' object is not callable
+       TypeError: 'dict' object is not callable
+       the argument first
+   SameSlots
+       AttributeError: This object has no __dict__
+       AttributeError: This object has no __dict__
+       AttributeError: This object has no __dict__
+       the attribute first
+   Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <getset_descriptor>
+       TypeError: 'getset_descriptor' object is not callable
+       TypeError: 'getset_descriptor' object is not callable
+       the argument first
+__weakref__ of another class
+   Ordinary, Hook, HookRaises, Own, OfOwner, Text, Items, WithMeta #11, Ordinary #12, Ordinary #13
+       None
+       TypeError: 'NoneType' object is not callable
+       TypeError: 'NoneType' object is not callable
+       the argument first
+   SameSlots, Short #8, Short #9, Number #10
+       AttributeError: This object has no __weakref__
+       AttributeError: This object has no __weakref__
+       AttributeError: This object has no __weakref__
+       the attribute first
+   Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <getset_descriptor>
+       TypeError: 'getset_descriptor' object is not callable
+       TypeError: 'getset_descriptor' object is not callable
+       the argument first
+field of a named tuple
+   Ordinary, Ordinary #12, Ordinary #13
+       TypeError: descriptor for index '2' for tuple subclasses doesn't apply to 'Ordinary' object
+       TypeError: descriptor for index '2' for tuple subclasses doesn't apply to 'Ordinary' object
+       TypeError: descriptor for index '2' for tuple subclasses doesn't apply to 'Ordinary' object
+       the attribute first
+   Hook
+       TypeError: descriptor for index '2' for tuple subclasses doesn't apply to 'Hook' object
+       TypeError: descriptor for index '2' for tuple subclasses doesn't apply to 'Hook' object
+       TypeError: descriptor for index '2' for tuple subclasses doesn't apply to 'Hook' object
+       the attribute first
+   HookRaises
+       TypeError: descriptor for index '2' for tuple subclasses doesn't apply to 'HookRaises' object
+       TypeError: descriptor for index '2' for tuple subclasses doesn't apply to 'HookRaises' object
+       TypeError: descriptor for index '2' for tuple subclasses doesn't apply to 'HookRaises' object
+       the attribute first
+   Own
+       TypeError: descriptor for index '2' for tuple subclasses doesn't apply to 'Own' object
+       TypeError: descriptor for index '2' for tuple subclasses doesn't apply to 'Own' object
+       TypeError: descriptor for index '2' for tuple subclasses doesn't apply to 'Own' object
+       the attribute first
+   SameSlots
+       TypeError: descriptor for index '2' for tuple subclasses doesn't apply to 'SameSlots' object
+       TypeError: descriptor for index '2' for tuple subclasses doesn't apply to 'SameSlots' object
+       TypeError: descriptor for index '2' for tuple subclasses doesn't apply to 'SameSlots' object
+       the attribute first
+   OfOwner
+       TypeError: descriptor for index '2' for tuple subclasses doesn't apply to 'OfOwner' object
+       TypeError: descriptor for index '2' for tuple subclasses doesn't apply to 'OfOwner' object
+       TypeError: descriptor for index '2' for tuple subclasses doesn't apply to 'OfOwner' object
+       the attribute first
+   Text
+       TypeError: descriptor for index '2' for tuple subclasses doesn't apply to 'Text' object
+       TypeError: descriptor for index '2' for tuple subclasses doesn't apply to 'Text' object
+       TypeError: descriptor for index '2' for tuple subclasses doesn't apply to 'Text' object
+       the attribute first
+   Items
+       TypeError: descriptor for index '2' for tuple subclasses doesn't apply to 'Items' object
+       TypeError: descriptor for index '2' for tuple subclasses doesn't apply to 'Items' object
+       TypeError: descriptor for index '2' for tuple subclasses doesn't apply to 'Items' object
+       the attribute first
+   Short #8
+       IndexError: tuple index out of range
+       IndexError: tuple index out of range
+       IndexError: tuple index out of range
+       the attribute first
+   Short #9
+       3
+       TypeError: 'int' object is not callable
+       TypeError: 'int' object is not callable
+       the argument first
+   Number #10
+       TypeError: descriptor for index '2' for tuple subclasses doesn't apply to 'Number' object
+       TypeError: descriptor for index '2' for tuple subclasses doesn't apply to 'Number' object
+       TypeError: descriptor for index '2' for tuple subclasses doesn't apply to 'Number' object
+       the attribute first
+   WithMeta #11
+       TypeError: descriptor for index '2' for tuple subclasses doesn't apply to 'WithMeta' object
+       TypeError: descriptor for index '2' for tuple subclasses doesn't apply to 'WithMeta' object
+       TypeError: descriptor for index '2' for tuple subclasses doesn't apply to 'WithMeta' object
+       the attribute first
+   Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <_tuplegetter>
+       TypeError: 'collections._tuplegetter' object is not callable
+       TypeError: 'collections._tuplegetter' object is not callable
+       the argument first
+first field of a named tuple
+   Ordinary, Ordinary #12, Ordinary #13
+       TypeError: descriptor for index '0' for tuple subclasses doesn't apply to 'Ordinary' object
+       TypeError: descriptor for index '0' for tuple subclasses doesn't apply to 'Ordinary' object
+       TypeError: descriptor for index '0' for tuple subclasses doesn't apply to 'Ordinary' object
+       the attribute first
+   Hook
+       TypeError: descriptor for index '0' for tuple subclasses doesn't apply to 'Hook' object
+       TypeError: descriptor for index '0' for tuple subclasses doesn't apply to 'Hook' object
+       TypeError: descriptor for index '0' for tuple subclasses doesn't apply to 'Hook' object
+       the attribute first
+   HookRaises
+       TypeError: descriptor for index '0' for tuple subclasses doesn't apply to 'HookRaises' object
+       TypeError: descriptor for index '0' for tuple subclasses doesn't apply to 'HookRaises' object
+       TypeError: descriptor for index '0' for tuple subclasses doesn't apply to 'HookRaises' object
+       the attribute first
+   Own
+       TypeError: descriptor for index '0' for tuple subclasses doesn't apply to 'Own' object
+       TypeError: descriptor for index '0' for tuple subclasses doesn't apply to 'Own' object
+       TypeError: descriptor for index '0' for tuple subclasses doesn't apply to 'Own' object
+       the attribute first
+   SameSlots
+       TypeError: descriptor for index '0' for tuple subclasses doesn't apply to 'SameSlots' object
+       TypeError: descriptor for index '0' for tuple subclasses doesn't apply to 'SameSlots' object
+       TypeError: descriptor for index '0' for tuple subclasses doesn't apply to 'SameSlots' object
+       the attribute first
+   OfOwner
+       TypeError: descriptor for index '0' for tuple subclasses doesn't apply to 'OfOwner' object
+       TypeError: descriptor for index '0' for tuple subclasses doesn't apply to 'OfOwner' object
+       TypeError: descriptor for index '0' for tuple subclasses doesn't apply to 'OfOwner' object
+       the attribute first
+   Text
+       TypeError: descriptor for index '0' for tuple subclasses doesn't apply to 'Text' object
+       TypeError: descriptor for index '0' for tuple subclasses doesn't apply to 'Text' object
+       TypeError: descriptor for index '0' for tuple subclasses doesn't apply to 'Text' object
+       the attribute first
+   Items
+       TypeError: descriptor for index '0' for tuple subclasses doesn't apply to 'Items' object
+       TypeError: descriptor for index '0' for tuple subclasses doesn't apply to 'Items' object
+       TypeError: descriptor for index '0' for tuple subclasses doesn't apply to 'Items' object
+       the attribute first
+   Short #8, Short #9
+       1
+       TypeError: 'int' object is not callable
+       TypeError: 'int' object is not callable
+       the argument first
+   Number #10
+       TypeError: descriptor for index '0' for tuple subclasses doesn't apply to 'Number' object
+       TypeError: descriptor for index '0' for tuple subclasses doesn't apply to 'Number' object
+       TypeError: descriptor for index '0' for tuple subclasses doesn't apply to 'Number' object
+       the attribute first
+   WithMeta #11
+       TypeError: descriptor for index '0' for tuple subclasses doesn't apply to 'WithMeta' object
+       TypeError: descriptor for index '0' for tuple subclasses doesn't apply to 'WithMeta' object
+       TypeError: descriptor for index '0' for tuple subclasses doesn't apply to 'WithMeta' object
+       the attribute first
+   Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <_tuplegetter>
+       TypeError: 'collections._tuplegetter' object is not callable
+       TypeError: 'collections._tuplegetter' object is not callable
+       the argument first
+staticmethod(None)
+   Ordinary, Hook, HookRaises, Own, SameSlots, OfOwner, Text, Items, Short #8, Short #9, Number #10, WithMeta #11, Ordinary #12, Ordinary itself, Hook itself, Text itself, WithMeta itself
+       None
+       TypeError: 'NoneType' object is not callable
+       TypeError: 'NoneType' object is not callable
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+staticmethod(str.upper)
+   Ordinary, Hook, HookRaises, Own, SameSlots, OfOwner, Text, Items, Short #8, Short #9, Number #10, WithMeta #11, Ordinary #12, Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <method_descriptor>
+       TypeError: unbound method str.upper() needs an argument
+       'ARG'
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+staticmethod(function)
+   Ordinary, Hook, HookRaises, Own, SameSlots, OfOwner, Text, Items, Short #8, Short #9, Number #10, WithMeta #11, Ordinary #12, Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <function>
+       ('plain_function', [])
+       ('plain_function', ['str'])
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+classmethod(None)
+   Ordinary, Hook, HookRaises, Own, SameSlots, OfOwner, Text, Items, Short #8, Short #9, Number #10, WithMeta #11, Ordinary #12, Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <method>
+       TypeError: 'NoneType' object is not callable
+       TypeError: 'NoneType' object is not callable
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+classmethod(str.upper)
+   Ordinary, Hook, HookRaises, Own, SameSlots, OfOwner, Text, Items, Short #8, Short #9, Number #10, Ordinary #12, Ordinary itself, Hook itself, Text itself
+       <method>
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'type' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'type' object
+       the argument first
+   WithMeta #11, WithMeta itself
+       <method>
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Meta' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Meta' object
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+classmethod(function)
+   Ordinary, Hook, HookRaises, Own, SameSlots, OfOwner, Text, Items, Short #8, Short #9, Number #10, Ordinary #12, Ordinary itself, Hook itself, Text itself
+       <method>
+       ('plain_function', ['type'])
+       ('plain_function', ['type', 'str'])
+       the argument first
+   WithMeta #11, WithMeta itself
+       <method>
+       ('plain_function', ['Meta'])
+       ('plain_function', ['Meta', 'str'])
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+classmethod(property)
+   Ordinary, Hook, HookRaises, Own, SameSlots, OfOwner, Text, Items, Short #8, Short #9, Number #10, WithMeta #11, Ordinary #12, Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <method>
+       TypeError: 'property' object is not callable
+       TypeError: 'property' object is not callable
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+property()
+   Ordinary, Ordinary #12, Ordinary #13
+       AttributeError: property 'm' of 'receivers.<locals>.Ordinary' object has no getter
+       AttributeError: property 'm' of 'receivers.<locals>.Ordinary' object has no getter
+       AttributeError: property 'm' of 'receivers.<locals>.Ordinary' object has no getter
+       the attribute first
+   Hook
+       <function>
+       ('from __getattr__', 'm')
+       ('from __getattr__', 'm')
+       the argument first
+   HookRaises
+       AttributeError: hook: m
+       AttributeError: hook: m
+       AttributeError: hook: m
+       the attribute first
+   Own
+       AttributeError: property 'm' of 'receivers.<locals>.Own' object has no getter
+       AttributeError: property 'm' of 'receivers.<locals>.Own' object has no getter
+       AttributeError: property 'm' of 'receivers.<locals>.Own' object has no getter
+       the attribute first
+   SameSlots
+       AttributeError: property 'm' of 'receivers.<locals>.SameSlots' object has no getter
+       AttributeError: property 'm' of 'receivers.<locals>.SameSlots' object has no getter
+       AttributeError: property 'm' of 'receivers.<locals>.SameSlots' object has no getter
+       the attribute first
+   OfOwner
+       AttributeError: property 'm' of 'receivers.<locals>.OfOwner' object has no getter
+       AttributeError: property 'm' of 'receivers.<locals>.OfOwner' object has no getter
+       AttributeError: property 'm' of 'receivers.<locals>.OfOwner' object has no getter
+       the attribute first
+   Text
+       AttributeError: property 'm' of 'receivers.<locals>.Text' object has no getter
+       AttributeError: property 'm' of 'receivers.<locals>.Text' object has no getter
+       AttributeError: property 'm' of 'receivers.<locals>.Text' object has no getter
+       the attribute first
+   Items
+       AttributeError: property 'm' of 'receivers.<locals>.Items' object has no getter
+       AttributeError: property 'm' of 'receivers.<locals>.Items' object has no getter
+       AttributeError: property 'm' of 'receivers.<locals>.Items' object has no getter
+       the attribute first
+   Short #8, Short #9
+       AttributeError: property 'm' of 'receivers.<locals>.Short' object has no getter
+       AttributeError: property 'm' of 'receivers.<locals>.Short' object has no getter
+       AttributeError: property 'm' of 'receivers.<locals>.Short' object has no getter
+       the attribute first
+   Number #10
+       AttributeError: property 'm' of 'receivers.<locals>.Number' object has no getter
+       AttributeError: property 'm' of 'receivers.<locals>.Number' object has no getter
+       AttributeError: property 'm' of 'receivers.<locals>.Number' object has no getter
+       the attribute first
+   WithMeta #11
+       AttributeError: property 'm' of 'receivers.<locals>.WithMeta' object has no getter
+       AttributeError: property 'm' of 'receivers.<locals>.WithMeta' object has no getter
+       AttributeError: property 'm' of 'receivers.<locals>.WithMeta' object has no getter
+       the attribute first
+   Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <property>
+       TypeError: 'property' object is not callable
+       TypeError: 'property' object is not callable
+       the argument first
+property(str.upper)
+   Ordinary, Ordinary #12, Ordinary #13
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Ordinary' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Ordinary' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Ordinary' object
+       the attribute first
+   Hook
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Hook' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Hook' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Hook' object
+       the attribute first
+   HookRaises
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'HookRaises' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'HookRaises' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'HookRaises' object
+       the attribute first
+   Own
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Own' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Own' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Own' object
+       the attribute first
+   SameSlots
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'SameSlots' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'SameSlots' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'SameSlots' object
+       the attribute first
+   OfOwner
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'OfOwner' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'OfOwner' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'OfOwner' object
+       the attribute first
+   Text
+       'TEXT'
+       TypeError: 'str' object is not callable
+       TypeError: 'str' object is not callable
+       the argument first
+   Items
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Items' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Items' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Items' object
+       the attribute first
+   Short #8, Short #9
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Short' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Short' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Short' object
+       the attribute first
+   Number #10
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Number' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Number' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Number' object
+       the attribute first
+   WithMeta #11
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'WithMeta' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'WithMeta' object
+       TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'WithMeta' object
+       the attribute first
+   Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <property>
+       TypeError: 'property' object is not callable
+       TypeError: 'property' object is not callable
+       the argument first
+property(len)
+   Ordinary, Ordinary #12, Ordinary #13
+       TypeError: object of type 'Ordinary' has no len()
+       TypeError: object of type 'Ordinary' has no len()
+       TypeError: object of type 'Ordinary' has no len()
+       the attribute first
+   Hook
+       TypeError: object of type 'Hook' has no len()
+       TypeError: object of type 'Hook' has no len()
+       TypeError: object of type 'Hook' has no len()
+       the attribute first
+   HookRaises
+       TypeError: object of type 'HookRaises' has no len()
+       TypeError: object of type 'HookRaises' has no len()
+       TypeError: object of type 'HookRaises' has no len()
+       the attribute first
+   Own
+       TypeError: object of type 'Own' has no len()
+       TypeError: object of type 'Own' has no len()
+       TypeError: object of type 'Own' has no len()
+       the attribute first
+   SameSlots
+       TypeError: object of type 'SameSlots' has no len()
+       TypeError: object of type 'SameSlots' has no len()
+       TypeError: object of type 'SameSlots' has no len()
+       the attribute first
+   OfOwner
+       TypeError: object of type 'OfOwner' has no len()
+       TypeError: object of type 'OfOwner' has no len()
+       TypeError: object of type 'OfOwner' has no len()
+       the attribute first
+   Text
+       4
+       TypeError: 'int' object is not callable
+       TypeError: 'int' object is not callable
+       the argument first
+   Items
+       2
+       TypeError: 'int' object is not callable
+       TypeError: 'int' object is not callable
+       the argument first
+   Short #8
+       1
+       TypeError: 'int' object is not callable
+       TypeError: 'int' object is not callable
+       the argument first
+   Short #9
+       3
+       TypeError: 'int' object is not callable
+       TypeError: 'int' object is not callable
+       the argument first
+   Number #10
+       TypeError: object of type 'Number' has no len()
+       TypeError: object of type 'Number' has no len()
+       TypeError: object of type 'Number' has no len()
+       the attribute first
+   WithMeta #11
+       TypeError: object of type 'WithMeta' has no len()
+       TypeError: object of type 'WithMeta' has no len()
+       TypeError: object of type 'WithMeta' has no len()
+       the attribute first
+   Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <property>
+       TypeError: 'property' object is not callable
+       TypeError: 'property' object is not callable
+       the argument first
+property(function)
+   Ordinary, Ordinary #12, Ordinary #13
+       ('plain_function', ['Ordinary'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   Hook
+       ('plain_function', ['Hook'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   HookRaises
+       ('plain_function', ['HookRaises'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   Own
+       ('plain_function', ['Own'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   SameSlots
+       ('plain_function', ['SameSlots'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   OfOwner
+       ('plain_function', ['OfOwner'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   Text
+       ('plain_function', ['Text'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   Items
+       ('plain_function', ['Items'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   Short #8, Short #9
+       ('plain_function', ['Short'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   Number #10
+       ('plain_function', ['Number'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   WithMeta #11
+       ('plain_function', ['WithMeta'])
+       TypeError: 'tuple' object is not callable
+       TypeError: 'tuple' object is not callable
+       the argument first
+   Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <property>
+       TypeError: 'property' object is not callable
+       TypeError: 'property' object is not callable
+       the argument first
+property that raises TypeError
+   Ordinary, Hook, HookRaises, Own, SameSlots, OfOwner, Text, Items, Short #8, Short #9, Number #10, WithMeta #11, Ordinary #12, Ordinary #13
+       TypeError: unsupported operand type(s) for +: 'int' and 'str'
+       TypeError: unsupported operand type(s) for +: 'int' and 'str'
+       TypeError: unsupported operand type(s) for +: 'int' and 'str'
+       the attribute first
+   Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <property>
+       TypeError: 'property' object is not callable
+       TypeError: 'property' object is not callable
+       the argument first
+__get__ raises TypeError
+   Ordinary, Hook, HookRaises, Own, SameSlots, OfOwner, Text, Items, Short #8, Short #9, Number #10, WithMeta #11, Ordinary #12, Ordinary itself, Hook itself, Text itself, WithMeta itself
+       TypeError: no binding
+       TypeError: no binding
+       TypeError: no binding
+       the attribute first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+__get__ raises AttributeError
+   Ordinary, Own, SameSlots, OfOwner, Text, Items, Short #8, Short #9, Number #10, WithMeta #11, Ordinary #12, Ordinary itself, Hook itself, Text itself
+       AttributeError: no binding
+       AttributeError: no binding
+       AttributeError: no binding
+       the attribute first
+   Hook
+       <function>
+       ('from __getattr__', 'm')
+       ('from __getattr__', 'm')
+       the argument first
+   HookRaises
+       AttributeError: hook: m
+       AttributeError: hook: m
+       AttributeError: hook: m
+       the attribute first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+   WithMeta itself
+       AttributeError: meta hook: m
+       AttributeError: meta hook: m
+       AttributeError: meta hook: m
+       the attribute first
+__get__ raises KeyError
+   Ordinary, Hook, HookRaises, Own, SameSlots, OfOwner, Text, Items, Short #8, Short #9, Number #10, WithMeta #11, Ordinary #12, Ordinary itself, Hook itself, Text itself, WithMeta itself
+       KeyError: 'no binding'
+       KeyError: 'no binding'
+       KeyError: 'no binding'
+       the attribute first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+data, __get__ raises TypeError
+   Ordinary, Hook, HookRaises, Own, SameSlots, OfOwner, Text, Items, Short #8, Short #9, Number #10, WithMeta #11, Ordinary #12, Ordinary #13, Ordinary itself, Hook itself, Text itself, WithMeta itself
+       TypeError: no binding
+       TypeError: no binding
+       TypeError: no binding
+       the attribute first
+data, __get__ raises AttributeError
+   Ordinary, Own, SameSlots, OfOwner, Text, Items, Short #8, Short #9, Number #10, WithMeta #11, Ordinary #12, Ordinary #13, Ordinary itself, Hook itself, Text itself
+       AttributeError: no binding
+       AttributeError: no binding
+       AttributeError: no binding
+       the attribute first
+   Hook
+       <function>
+       ('from __getattr__', 'm')
+       ('from __getattr__', 'm')
+       the argument first
+   HookRaises
+       AttributeError: hook: m
+       AttributeError: hook: m
+       AttributeError: hook: m
+       the attribute first
+   WithMeta itself
+       AttributeError: meta hook: m
+       AttributeError: meta hook: m
+       AttributeError: meta hook: m
+       the attribute first
+__get__ gives
+   Ordinary, Ordinary #12
+       <function>
+       ('given', 'Ordinary', 'Ordinary', ())
+       ('given', 'Ordinary', 'Ordinary', ('arg',))
+       the argument first
+   Hook
+       <function>
+       ('given', 'Hook', 'Hook', ())
+       ('given', 'Hook', 'Hook', ('arg',))
+       the argument first
+   HookRaises
+       <function>
+       ('given', 'HookRaises', 'HookRaises', ())
+       ('given', 'HookRaises', 'HookRaises', ('arg',))
+       the argument first
+   Own
+       <function>
+       ('given', 'Own', 'Own', ())
+       ('given', 'Own', 'Own', ('arg',))
+       the argument first
+   SameSlots
+       <function>
+       ('given', 'SameSlots', 'SameSlots', ())
+       ('given', 'SameSlots', 'SameSlots', ('arg',))
+       the argument first
+   OfOwner
+       <function>
+       ('given', 'OfOwner', 'OfOwner', ())
+       ('given', 'OfOwner', 'OfOwner', ('arg',))
+       the argument first
+   Text
+       <function>
+       ('given', 'Text', 'Text', ())
+       ('given', 'Text', 'Text', ('arg',))
+       the argument first
+   Items
+       <function>
+       ('given', 'Items', 'Items', ())
+       ('given', 'Items', 'Items', ('arg',))
+       the argument first
+   Short #8, Short #9
+       <function>
+       ('given', 'Short', 'Short', ())
+       ('given', 'Short', 'Short', ('arg',))
+       the argument first
+   Number #10
+       <function>
+       ('given', 'Number', 'Number', ())
+       ('given', 'Number', 'Number', ('arg',))
+       the argument first
+   WithMeta #11
+       <function>
+       ('given', 'WithMeta', 'WithMeta', ())
+       ('given', 'WithMeta', 'WithMeta', ('arg',))
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+   Ordinary itself
+       <function>
+       ('given', 'NoneType', 'Ordinary', ())
+       ('given', 'NoneType', 'Ordinary', ('arg',))
+       the argument first
+   Hook itself
+       <function>
+       ('given', 'NoneType', 'Hook', ())
+       ('given', 'NoneType', 'Hook', ('arg',))
+       the argument first
+   Text itself
+       <function>
+       ('given', 'NoneType', 'Text', ())
+       ('given', 'NoneType', 'Text', ('arg',))
+       the argument first
+   WithMeta itself
+       <function>
+       ('given', 'NoneType', 'WithMeta', ())
+       ('given', 'NoneType', 'WithMeta', ('arg',))
+       the argument first
+function
+   Ordinary, Ordinary #12
+       <method>
+       ('plain_function', ['Ordinary'])
+       ('plain_function', ['Ordinary', 'str'])
+       the argument first
+   Hook
+       <method>
+       ('plain_function', ['Hook'])
+       ('plain_function', ['Hook', 'str'])
+       the argument first
+   HookRaises
+       <method>
+       ('plain_function', ['HookRaises'])
+       ('plain_function', ['HookRaises', 'str'])
+       the argument first
+   Own
+       <method>
+       ('plain_function', ['Own'])
+       ('plain_function', ['Own', 'str'])
+       the argument first
+   SameSlots
+       <method>
+       ('plain_function', ['SameSlots'])
+       ('plain_function', ['SameSlots', 'str'])
+       the argument first
+   OfOwner
+       <method>
+       ('plain_function', ['OfOwner'])
+       ('plain_function', ['OfOwner', 'str'])
+       the argument first
+   Text
+       <method>
+       ('plain_function', ['Text'])
+       ('plain_function', ['Text', 'str'])
+       the argument first
+   Items
+       <method>
+       ('plain_function', ['Items'])
+       ('plain_function', ['Items', 'str'])
+       the argument first
+   Short #8, Short #9
+       <method>
+       ('plain_function', ['Short'])
+       ('plain_function', ['Short', 'str'])
+       the argument first
+   Number #10
+       <method>
+       ('plain_function', ['Number'])
+       ('plain_function', ['Number', 'str'])
+       the argument first
+   WithMeta #11
+       <method>
+       ('plain_function', ['WithMeta'])
+       ('plain_function', ['WithMeta', 'str'])
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+   Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <function>
+       ('plain_function', [])
+       ('plain_function', ['str'])
+       the argument first
+lambda
+   Ordinary, Ordinary #12
+       <method>
+       ('lambda', 'Ordinary', ())
+       ('lambda', 'Ordinary', ('arg',))
+       the argument first
+   Hook
+       <method>
+       ('lambda', 'Hook', ())
+       ('lambda', 'Hook', ('arg',))
+       the argument first
+   HookRaises
+       <method>
+       ('lambda', 'HookRaises', ())
+       ('lambda', 'HookRaises', ('arg',))
+       the argument first
+   Own
+       <method>
+       ('lambda', 'Own', ())
+       ('lambda', 'Own', ('arg',))
+       the argument first
+   SameSlots
+       <method>
+       ('lambda', 'SameSlots', ())
+       ('lambda', 'SameSlots', ('arg',))
+       the argument first
+   OfOwner
+       <method>
+       ('lambda', 'OfOwner', ())
+       ('lambda', 'OfOwner', ('arg',))
+       the argument first
+   Text
+       <method>
+       ('lambda', 'Text', ())
+       ('lambda', 'Text', ('arg',))
+       the argument first
+   Items
+       <method>
+       ('lambda', 'Items', ())
+       ('lambda', 'Items', ('arg',))
+       the argument first
+   Short #8, Short #9
+       <method>
+       ('lambda', 'Short', ())
+       ('lambda', 'Short', ('arg',))
+       the argument first
+   Number #10
+       <method>
+       ('lambda', 'Number', ())
+       ('lambda', 'Number', ('arg',))
+       the argument first
+   WithMeta #11
+       <method>
+       ('lambda', 'WithMeta', ())
+       ('lambda', 'WithMeta', ('arg',))
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+   Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <function>
+       TypeError: <lambda>() missing 1 required positional argument: 'self'
+       ('lambda', 'str', ())
+       the argument first
+builtin function
+   Ordinary, Hook, HookRaises, Own, SameSlots, OfOwner, Text, Items, Short #8, Short #9, Number #10, WithMeta #11, Ordinary #12, Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <builtin_function_or_method>
+       TypeError: len() takes exactly one argument (0 given)
+       3
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+bound method
+   Ordinary, Hook, HookRaises, Own, SameSlots, OfOwner, Text, Items, Short #8, Short #9, Number #10, WithMeta #11, Ordinary #12, Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <builtin_function_or_method>
+       'ABC'
+       TypeError: str.upper() takes no arguments (1 given)
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+bound method of Python
+   Ordinary, Hook, HookRaises, Own, SameSlots, OfOwner, Text, Items, Short #8, Short #9, Number #10, WithMeta #11, Ordinary #12, Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <method>
+       ('Plain.m', 'Plain')
+       TypeError: Plain.m() takes 1 positional argument but 2 were given
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+MethodType on a number
+   Ordinary, Hook, HookRaises, Own, SameSlots, OfOwner, Text, Items, Short #8, Short #9, Number #10, WithMeta #11, Ordinary #12, Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <method>
+       ('plain_function', ['int'])
+       ('plain_function', ['int', 'str'])
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+partial
+   Ordinary, Ordinary #12
+       <method>
+       ('plain_function', ['int', 'Ordinary'])
+       ('plain_function', ['int', 'Ordinary', 'str'])
+       the argument first
+   Hook
+       <method>
+       ('plain_function', ['int', 'Hook'])
+       ('plain_function', ['int', 'Hook', 'str'])
+       the argument first
+   HookRaises
+       <method>
+       ('plain_function', ['int', 'HookRaises'])
+       ('plain_function', ['int', 'HookRaises', 'str'])
+       the argument first
+   Own
+       <method>
+       ('plain_function', ['int', 'Own'])
+       ('plain_function', ['int', 'Own', 'str'])
+       the argument first
+   SameSlots
+       <method>
+       ('plain_function', ['int', 'SameSlots'])
+       ('plain_function', ['int', 'SameSlots', 'str'])
+       the argument first
+   OfOwner
+       <method>
+       ('plain_function', ['int', 'OfOwner'])
+       ('plain_function', ['int', 'OfOwner', 'str'])
+       the argument first
+   Text
+       <method>
+       ('plain_function', ['int', 'Text'])
+       ('plain_function', ['int', 'Text', 'str'])
+       the argument first
+   Items
+       <method>
+       ('plain_function', ['int', 'Items'])
+       ('plain_function', ['int', 'Items', 'str'])
+       the argument first
+   Short #8, Short #9
+       <method>
+       ('plain_function', ['int', 'Short'])
+       ('plain_function', ['int', 'Short', 'str'])
+       the argument first
+   Number #10
+       <method>
+       ('plain_function', ['int', 'Number'])
+       ('plain_function', ['int', 'Number', 'str'])
+       the argument first
+   WithMeta #11
+       <method>
+       ('plain_function', ['int', 'WithMeta'])
+       ('plain_function', ['int', 'WithMeta', 'str'])
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+   Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <partial>
+       ('plain_function', ['int'])
+       ('plain_function', ['int', 'str'])
+       the argument first
+partialmethod
+   Ordinary, Ordinary #12
+       <partial>
+       ('plain_function', ['Ordinary', 'int'])
+       ('plain_function', ['Ordinary', 'int', 'str'])
+       the argument first
+   Hook
+       <partial>
+       ('plain_function', ['Hook', 'int'])
+       ('plain_function', ['Hook', 'int', 'str'])
+       the argument first
+   HookRaises
+       <partial>
+       ('plain_function', ['HookRaises', 'int'])
+       ('plain_function', ['HookRaises', 'int', 'str'])
+       the argument first
+   Own
+       <partial>
+       ('plain_function', ['Own', 'int'])
+       ('plain_function', ['Own', 'int', 'str'])
+       the argument first
+   SameSlots
+       <partial>
+       ('plain_function', ['SameSlots', 'int'])
+       ('plain_function', ['SameSlots', 'int', 'str'])
+       the argument first
+   OfOwner
+       <partial>
+       ('plain_function', ['OfOwner', 'int'])
+       ('plain_function', ['OfOwner', 'int', 'str'])
+       the argument first
+   Text
+       <partial>
+       ('plain_function', ['Text', 'int'])
+       ('plain_function', ['Text', 'int', 'str'])
+       the argument first
+   Items
+       <partial>
+       ('plain_function', ['Items', 'int'])
+       ('plain_function', ['Items', 'int', 'str'])
+       the argument first
+   Short #8, Short #9
+       <partial>
+       ('plain_function', ['Short', 'int'])
+       ('plain_function', ['Short', 'int', 'str'])
+       the argument first
+   Number #10
+       <partial>
+       ('plain_function', ['Number', 'int'])
+       ('plain_function', ['Number', 'int', 'str'])
+       the argument first
+   WithMeta #11
+       <partial>
+       ('plain_function', ['WithMeta', 'int'])
+       ('plain_function', ['WithMeta', 'int', 'str'])
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+   Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <function>
+       TypeError: partialmethod._make_unbound_method.<locals>._method() missing 1 required positional argument: 'cls_or_self'
+       ('plain_function', ['str', 'int'])
+       the argument first
+class
+   Ordinary, Hook, HookRaises, Own, SameSlots, OfOwner, Text, Items, Short #8, Short #9, Number #10, WithMeta #11, Ordinary #12, Ordinary itself, Hook itself, Text itself, WithMeta itself
+       <class '__main__.Plain'>
+       <__main__.Plain object>
+       <__main__.Plain object>
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+None
+   Ordinary, Hook, HookRaises, Own, SameSlots, OfOwner, Text, Items, Short #8, Short #9, Number #10, WithMeta #11, Ordinary #12, Ordinary itself, Hook itself, Text itself, WithMeta itself
+       None
+       TypeError: 'NoneType' object is not callable
+       TypeError: 'NoneType' object is not callable
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first
+number
+   Ordinary, Hook, HookRaises, Own, SameSlots, OfOwner, Text, Items, Short #8, Short #9, Number #10, WithMeta #11, Ordinary #12, Ordinary itself, Hook itself, Text itself, WithMeta itself
+       5
+       TypeError: 'int' object is not callable
+       TypeError: 'int' object is not callable
+       the argument first
+   Ordinary #13
+       <function>
+       ('of the instance', ())
+       ('of the instance', ('arg',))
+       the argument first

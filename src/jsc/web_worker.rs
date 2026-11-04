@@ -417,6 +417,19 @@ impl WebWorker {
             unsafe { bun_core::ffi::slice(preload_modules_ptr, preload_modules_len) };
 
         let mut preloads: Vec<Box<[u8]>> = Vec::with_capacity(preload_modules_len);
+        // The resolver logs more than the error of a resolve: for each directory that it reads, what is wrong with
+        // the tsconfig.json or package.json there, or that it cannot read it. That goes to a log that nothing reads,
+        // so `temp_log` holds only the error of the resolve, whichever directories the resolver has read before.
+        let mut unread_log = bun_ast::Log::init();
+        // SAFETY: the resolver of `parent` and `unread_log` outlive the guard.
+        let resolver_log_scope = unsafe {
+            // A copy: the guard above borrows the parameter.
+            let vm = parent;
+            bun_resolver::Resolver::scoped_log(
+                &raw mut (*vm).transpiler.resolver,
+                NonNull::from(&mut unread_log),
+            )
+        };
         for module in preload_modules {
             let utf8_slice = module.to_utf8();
             // node: builtin specifiers skip the file resolver — the worker-side
@@ -459,6 +472,7 @@ impl WebWorker {
             // preloads dropped by RAII.
             return core::ptr::null_mut();
         }
+        drop(resolver_log_scope);
 
         // The VM of the Worker is created for a program. The Worker resolves the specifier again and reports what is wrong with it.
         let specifier = spec_slice.slice();

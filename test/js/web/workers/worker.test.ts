@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { symlinkSync } from "fs";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
 import path from "path";
 import wt from "worker_threads";
 
@@ -36,6 +37,94 @@ describe("web worker", () => {
           message: 'BuildMessage: ModuleNotFound resolving "./does-not-exist-xyz.js" (entry point)',
         }),
       );
+    });
+
+    // Each time the resolver reads a directory, it also logs what is wrong with the tsconfig.json or package.json there.
+    // A resolve that fails makes it forget the directory, so the next one reads it again. The child has a working
+    // directory of its own: a package name and a package.json alias resolve from it.
+    test("names the entry that does not resolve when the resolver also reports a config file", async () => {
+      const unterminated = `{ "compilerOptions": `;
+      using dir = tempDir("worker-preload-unresolved", {
+        "entry.js": "",
+        "tsconfig-error/tsconfig.json": unterminated,
+        "tsconfig-warning/tsconfig.json": `{ "compilerOptions": { "jsxFactory": "1abc" } }`,
+        "package-error/package.json": `{ "name": `,
+        "resolves/tsconfig.json": unterminated,
+        "resolves/preload.js": "",
+        "imported/tsconfig.json": unterminated,
+        "imported/module.js": "",
+        "node-worker/tsconfig.json": unterminated,
+        "package/tsconfig.json": unterminated,
+        "builtin/tsconfig.json": unterminated,
+        "builtin/package.json": `{ "imports": { "#fs": "node:fs" } }`,
+        "main.js": `
+          import { Worker as NodeWorker } from "node:worker_threads";
+          const construct = (preload, Worker = globalThis.Worker) => {
+            try {
+              new Worker("./entry.js", { preload }).terminate();
+              return "constructed";
+            } catch (e) {
+              return e.name + ": " + e.message;
+            }
+          };
+          const messages = {
+            tsconfigError: construct(["./tsconfig-error/missing.js"]),
+            anotherInThatDirectory: construct(["./tsconfig-error/also-missing.js"]),
+            tsconfigWarning: construct(["./tsconfig-warning/missing.js"]),
+            packageError: construct(["./package-error/missing.js"]),
+            afterOneThatResolves: construct(["./resolves/preload.js", "./missing.js"]),
+            nodeWorker: construct(["./node-worker/missing.js"], NodeWorker),
+          };
+          await import("./imported/module.js");
+          messages.afterAnImport = construct(["./imported/missing.js"]);
+          messages.anotherAfterAnImport = construct(["./imported/also-missing.js"]);
+          process.chdir("package");
+          messages.package = construct(["no-such-package-xyz"]);
+          messages.packageAgain = construct(["no-such-package-xyz"]);
+          process.chdir("../builtin");
+          messages.builtin = construct(["#fs"]);
+          console.log(JSON.stringify(messages));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const notFound = (specifier: string) =>
+        `TypeError: BuildMessage: ModuleNotFound resolving "${specifier}" (entry point)`;
+      expect(JSON.parse(stdout || "null")).toEqual({
+        tsconfigError: notFound("./tsconfig-error/missing.js"),
+        anotherInThatDirectory: notFound("./tsconfig-error/also-missing.js"),
+        tsconfigWarning: notFound("./tsconfig-warning/missing.js"),
+        packageError: notFound("./package-error/missing.js"),
+        afterOneThatResolves: notFound("./missing.js"),
+        nodeWorker: notFound("./node-worker/missing.js"),
+        afterAnImport: notFound("./imported/missing.js"),
+        anotherAfterAnImport: notFound("./imported/also-missing.js"),
+        package: notFound("no-such-package-xyz"),
+        packageAgain: notFound("no-such-package-xyz"),
+        builtin: 'TypeError: BuildMessage: Cannot use "#fs" as an entry point: it resolves to a builtin module',
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // The resolver logs that it cannot read the directory, on every resolve.
+    test.skipIf(isWindows)("names the entry that does not resolve behind a symbolic link to itself", () => {
+      using dir = tempDir("worker-preload-loop", {});
+      symlinkSync("loop", path.join(String(dir), "loop"));
+      const specifier = path.join(String(dir), "loop", "missing.js");
+      for (let i = 0; i < 2; i++) {
+        expect(() => new Worker("data:text/javascript,1", { preload: [specifier] })).toThrow(
+          expect.objectContaining({
+            name: "TypeError",
+            message: `BuildMessage: ModuleNotFound resolving "${specifier}" (entry point)`,
+          }),
+        );
+      }
     });
 
     // Reaching the real limit needs 2.5 GB, so the child runs with a 64 KiB synthetic allocation limit

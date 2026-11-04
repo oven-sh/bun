@@ -306,16 +306,24 @@ describe("dgram connect() reads the address as the UDP handle does", () => {
 
   test("udp6: connect(), disconnect(), connect() to an address with a zone", { skip: !hasIPv6Loopback }, async () => {
     const peer = await bound("udp6");
+    const other = await bound("udp6");
     const socket = await bound("udp6");
     try {
       const port = peer.address().port;
       assert.strictEqual(await connect(socket, port, "::1"), null);
       socket.disconnect();
       assert.strictEqual(remoteAddressOrCode(socket), "ERR_SOCKET_DGRAM_NOT_CONNECTED");
+      // The kernel has no peer either. A BSD socket that still has one refuses a send to an address with EISCONN.
+      const received = once(other, "message");
+      const { promise: sent, resolve, reject } = Promise.withResolvers<void>();
+      socket.send("to another", other.address().port, "::1", err => (err ? reject(err) : resolve()));
+      const [[message]] = await Promise.all([received, sent]);
+      assert.strictEqual(String(message), "to another");
       assert.strictEqual(await connect(socket, port, "::1%nosuch0"), null);
       await assertConnectedTo(socket, peer, "udp6");
     } finally {
       socket.close();
+      other.close();
       peer.close();
     }
   });

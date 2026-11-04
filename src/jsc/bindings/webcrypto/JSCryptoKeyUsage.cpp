@@ -93,6 +93,28 @@ template<> std::optional<CryptoKeyUsage> parseEnumerationFromString<CryptoKeyUsa
     return std::nullopt;
 }
 
+// The bit of the entry at `index` of keyUsages: ToString, then the usage of that name.
+static CryptoKeyUsageBitmap convertKeyUsage(JSGlobalObject& lexicalGlobalObject, JSValue entry, ASCIILiteral context, size_t index)
+{
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (entry.isSymbol()) [[unlikely]] {
+        Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, makeString(context, '[', index, "] is a Symbol and cannot be converted to a string."_s));
+        return 0;
+    }
+    auto string = entry.toWTFString(&lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, 0);
+    auto usage = parseEnumerationFromString<CryptoKeyUsage>(string);
+    if (!usage) [[unlikely]] {
+        Bun::MessageBuilder message;
+        message.append(context, '[', index, "] '"_s, string, "' is not a valid enum value of type KeyUsage."_s);
+        Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_VALUE, message);
+        return 0;
+    }
+    return toCryptoKeyUsageBitmap(*usage);
+}
+
 // Node's createSequenceConverter() of createEnumConverter(): https://github.com/nodejs/node/blob/v26.12.1/lib/internal/webidl.js#L817-L876 and #L643-L660
 CryptoKeyUsageBitmap convertKeyUsages(JSGlobalObject& lexicalGlobalObject, JSValue value, ASCIILiteral context)
 {
@@ -101,24 +123,6 @@ CryptoKeyUsageBitmap convertKeyUsages(JSGlobalObject& lexicalGlobalObject, JSVal
 
     CryptoKeyUsageBitmap usages = 0;
     size_t index = 0;
-    auto convertEntry = [&](VM& vm, JSGlobalObject* globalObject, JSValue entry) {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        if (entry.isSymbol()) [[unlikely]] {
-            Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, makeString(context, '[', index, "] is a Symbol and cannot be converted to a string."_s));
-            return;
-        }
-        auto string = entry.toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(scope, );
-        auto usage = parseEnumerationFromString<CryptoKeyUsage>(string);
-        if (!usage) [[unlikely]] {
-            Bun::MessageBuilder message;
-            message.append(context, '[', index, "] '"_s, string, "' is not a valid enum value of type KeyUsage."_s);
-            Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_VALUE, message);
-            return;
-        }
-        usages |= toCryptoKeyUsageBitmap(*usage);
-        ++index;
-    };
     auto notSequence = [&] {
         Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, makeString(context, " cannot be converted to sequence."_s));
         return 0;
@@ -134,12 +138,15 @@ CryptoKeyUsageBitmap convertKeyUsages(JSGlobalObject& lexicalGlobalObject, JSVal
         for (unsigned i = 0; i < array->length(); ++i) {
             JSValue entry = array->getIndex(&lexicalGlobalObject, i);
             RETURN_IF_EXCEPTION(scope, 0);
-            convertEntry(vm, &lexicalGlobalObject, entry);
+            usages |= convertKeyUsage(lexicalGlobalObject, entry, context, i);
             RETURN_IF_EXCEPTION(scope, 0);
         }
     } else if (auto* set = dynamicDowncast<JSSet>(object); set && set->isIteratorProtocolFastAndNonObservable()) {
-        if (auto* storage = set->storageOrSentinel(vm); storage != vm.orderedHashTableSentinel())
-            forEachInSetStorage(vm, &lexicalGlobalObject, storage, 0, convertEntry);
+        if (auto* storage = set->storageOrSentinel(vm); storage != vm.orderedHashTableSentinel()) {
+            forEachInSetStorage(vm, &lexicalGlobalObject, storage, 0, [&](VM&, JSGlobalObject*, JSValue entry) {
+                usages |= convertKeyUsage(lexicalGlobalObject, entry, context, index++);
+            });
+        }
     } else {
         JSValue method = object->get(&lexicalGlobalObject, vm.propertyNames->iteratorSymbol);
         RETURN_IF_EXCEPTION(scope, 0);
@@ -162,7 +169,7 @@ CryptoKeyUsageBitmap convertKeyUsages(JSGlobalObject& lexicalGlobalObject, JSVal
             RETURN_IF_EXCEPTION(scope, 0);
             if (done.toBoolean(&lexicalGlobalObject))
                 break;
-            convertEntry(vm, &lexicalGlobalObject, entry);
+            usages |= convertKeyUsage(lexicalGlobalObject, entry, context, index++);
             RETURN_IF_EXCEPTION(scope, 0);
         }
     }

@@ -759,9 +759,8 @@ pub struct NpmRange<'a> {
     pub group: Group,
 }
 
-/// `None` where `parse` skipped text it cannot read as a comparator (`latest`, `>=1 && <2`,
-/// `1.2.3.4`). node-semver's `new Range` throws for those, and also for `01.2.3`, `^16 | ^18` and
-/// `1.2.3 - 2.3.4 4.5.6`, which this reads. It accepts `*1.0.0`, which this refuses.
+/// `None` where `parse` skipped text it cannot read as a comparator (`latest`, `>=1 && <2`).
+/// Not node-semver's test: that also refuses `01.2.3` and `^16 | ^18`, and accepts `*1.0.0`.
 pub fn parse_npm(text: &[u8]) -> Result<Option<NpmRange<'_>>, AllocError> {
     let raw = collapse_whitespace(text);
     let group = parse(&raw, SlicedString::init(&raw, &raw))?;

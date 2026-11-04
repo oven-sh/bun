@@ -2606,7 +2606,8 @@ describe.concurrent("behavior depends on the module a function is imported from"
         import * as bun from "bun:test";
         import * as vitest from "vitest";
         import { runInNewContext } from "node:vm";
-        const outcome = fn => { try { fn(); return "passes"; } catch { return "fails"; } };
+        // "fails" is a failed toEqual() only. Another error, such as the TypeError of a Proxy, prints as it is.
+        const outcome = fn => { try { fn(); return "passes"; } catch (error) { return Bun.stripANSI(error.message).startsWith("expect(received).toEqual(expected)") ? "fails" : String(error); } };
         // Binds each function of the Set, its constructor too: two such Proxies serve two functions of the name "bound Set".
         const bindingAll = target => new Proxy(target, {
           get(target, key) {

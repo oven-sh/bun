@@ -1442,6 +1442,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         cmd,
         CommandTag::AutoCommand
             | CommandTag::RunCommand
+            | CommandTag::RunAsNodeCommand
             | CommandTag::BuildCommand
             | CommandTag::CompileCommand
             | CommandTag::TestCommand

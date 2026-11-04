@@ -1486,6 +1486,7 @@ describe("fork() from the node shim (argv0=node) keeps the child in node mode", 
       if (mode === "smol") options.execArgv = ["--smol"];
       if (mode === "env-file") options.execArgv = ["--env-file=.env.production"];
       if (mode === "loader") options.execArgv = ["--loader", "tsx"];
+      if (mode === "conditions") options.execArgv = ["--conditions=custom"];
       if (mode === "exec-path") options.execPath = execPath;
       if (mode === "argv0") options.argv0 = "custom-argv0";
       if (mode === "spawn-version") {
@@ -1504,11 +1505,17 @@ describe("fork() from the node shim (argv0=node) keeps the child in node mode", 
         console.log(JSON.stringify({
           FOO: process.env.FOO ?? null,
           argv0: process.argv0,
-          argv0IsExecPath: process.argv[0] === process.execPath,
           execArgv: process.execArgv,
+          pkg: require("pkg"),
         }));
       }
     `,
+    "node_modules/pkg/package.json": JSON.stringify({
+      name: "pkg",
+      exports: { ".": { custom: "./custom.js", default: "./default.js" } },
+    }),
+    "node_modules/pkg/custom.js": `module.exports = "custom";`,
+    "node_modules/pkg/default.js": `module.exports = "default";`,
     "cluster.mjs": `
       import cluster from "node:cluster";
       cluster.setupPrimary({ exec: "./child.mjs", args: ["print"] });
@@ -1536,8 +1543,8 @@ describe("fork() from the node shim (argv0=node) keeps the child in node mode", 
     expect(await run(String(dir), "parent.mjs", ["default"], "node")).toEqual({
       FOO: null,
       argv0: "node",
-      argv0IsExecPath: true,
       execArgv: [],
+      pkg: "default",
     });
   });
 
@@ -1546,8 +1553,8 @@ describe("fork() from the node shim (argv0=node) keeps the child in node mode", 
     expect(await run(String(dir), "parent.mjs", ["smol"], "node")).toEqual({
       FOO: null,
       argv0: "node",
-      argv0IsExecPath: true,
       execArgv: ["--smol"],
+      pkg: "default",
     });
   });
 
@@ -1556,8 +1563,8 @@ describe("fork() from the node shim (argv0=node) keeps the child in node mode", 
     expect(await run(String(dir), "parent.mjs", ["env-file"], "node")).toEqual({
       FOO: "from-production",
       argv0: "node",
-      argv0IsExecPath: true,
       execArgv: ["--env-file=.env.production"],
+      pkg: "default",
     });
   });
 
@@ -1566,8 +1573,18 @@ describe("fork() from the node shim (argv0=node) keeps the child in node mode", 
     expect(await run(String(dir), "parent.mjs", ["loader"], "node")).toEqual({
       FOO: null,
       argv0: "node",
-      argv0IsExecPath: true,
       execArgv: ["--loader", "tsx"],
+      pkg: "default",
+    });
+  });
+
+  test.concurrent("--conditions in execArgv still applies", async () => {
+    using dir = tempDir("dotenv-fork-as-node-conditions", files);
+    expect(await run(String(dir), "parent.mjs", ["conditions"], "node")).toEqual({
+      FOO: null,
+      argv0: "node",
+      execArgv: ["--conditions=custom"],
+      pkg: "custom",
     });
   });
 
@@ -1576,8 +1593,8 @@ describe("fork() from the node shim (argv0=node) keeps the child in node mode", 
     expect(await run(String(dir), "parent.mjs", ["grandchild"], "node")).toEqual({
       FOO: null,
       argv0: "node",
-      argv0IsExecPath: true,
       execArgv: [],
+      pkg: "default",
     });
   });
 
@@ -1586,8 +1603,8 @@ describe("fork() from the node shim (argv0=node) keeps the child in node mode", 
     expect(await run(String(dir), "cluster.mjs", [], "node")).toEqual({
       FOO: null,
       argv0: "node",
-      argv0IsExecPath: true,
       execArgv: [],
+      pkg: "default",
     });
   });
 
@@ -1596,18 +1613,18 @@ describe("fork() from the node shim (argv0=node) keeps the child in node mode", 
     expect(await run(String(dir), "parent.mjs", ["argv0"], "node")).toEqual({
       FOO: "from-dotenv",
       argv0: "custom-argv0",
-      argv0IsExecPath: true,
       execArgv: [],
+      pkg: "default",
     });
   });
 
-  test.concurrent("a fork child of plain `bun parent.mjs` still auto-loads .env", async () => {
+  test.concurrent("a fork child of plain `bun parent.mjs` still auto-loads .env and is named execPath", async () => {
     using dir = tempDir("dotenv-fork-as-bun", files);
-    expect(await run(String(dir), "parent.mjs", ["default"])).toEqual({
+    expect(await run(String(dir), "parent.mjs", ["default"], "bun")).toEqual({
       FOO: "from-dotenv",
       argv0: process.execPath,
-      argv0IsExecPath: true,
       execArgv: [],
+      pkg: "default",
     });
   });
 
@@ -1618,8 +1635,8 @@ describe("fork() from the node shim (argv0=node) keeps the child in node mode", 
     expect(await run(String(dir), "parent.mjs", ["default"], nodeLink)).toEqual({
       FOO: null,
       argv0: nodeLink,
-      argv0IsExecPath: true,
       execArgv: [],
+      pkg: "default",
     });
   });
 
@@ -1637,8 +1654,8 @@ describe("fork() from the node shim (argv0=node) keeps the child in node mode", 
     expect(await run(String(dir), "parent.mjs", ["exec-path", otherExe], "node")).toEqual({
       FOO: "from-dotenv",
       argv0: otherExe,
-      argv0IsExecPath: true,
       execArgv: [],
+      pkg: "default",
     });
   });
 });

@@ -482,7 +482,7 @@ function forwardedLines(dev: Dev) {
 devTest("browser console forwarding does not throw into the page", {
   files: consoleForwardingFiles(`
     probe("custom inspect function that throws", { [custom]() { throw new Error("thrown by the function"); } });
-    probe("getter of an array that throws", hidden(Object.defineProperty([], 0, {
+    probe("getter of an array that throws", hidden(Object.defineProperty([1, 2, 3], 1, {
       get() { throw new Error("thrown by the getter"); },
       enumerable: true,
     })));
@@ -493,12 +493,14 @@ devTest("browser console forwarding does not throw into the page", {
     revoked.revoke();
     // JSON does not read the elements of a Set.
     probe("revoked Proxy", new Set([revoked.proxy]));
-    probe("Proxy that throws for one key", new Set([new Proxy({ a: 1, b: 2 }, {
+    const throwsForA = {
       get(target, key, receiver) {
         if (key === "a") throw new Error("thrown by the trap");
         return Reflect.get(target, key, receiver);
       },
-    })]));
+    };
+    probe("Proxy that throws for one key", new Set([new Proxy({ a: 1, b: 2 }, throwsForA)]));
+    probe("Proxy of an array that throws for one key", new Set([new Proxy(Object.assign([1, 2], { a: 3 }), throwsForA)]));
     const revokedFunction = Proxy.revocable(function () {}, {});
     revokedFunction.revoke();
     probe("revoked Proxy of a function", new Set([revokedFunction.proxy]));
@@ -526,6 +528,7 @@ devTest("browser console forwarding does not throw into the page", {
       "getter of a class that throws",
       "revoked Proxy",
       "Proxy that throws for one key",
+      "Proxy of an array that throws for one key",
       "revoked Proxy of a function",
       "Proxy of a function",
       "Proxy of a Map",
@@ -544,11 +547,12 @@ devTest("browser console forwarding does not throw into the page", {
 
     expect(forwardedLines(dev)).toEqual([
       "custom inspect function that throws [threw while printing]",
-      "getter of an array that throws [threw while printing]",
+      "getter of an array that throws [ 1, [threw while printing], 3 ]",
       "getter of a class that throws Foo { bar: [threw while printing] }",
       // One value that cannot print does not take the line, or the values beside it.
       "revoked Proxy Set { [threw while printing] }",
       "Proxy that throws for one key Set { { a: [threw while printing], b: 2 } }",
+      "Proxy of an array that throws for one key Set { [ 1, 2, a: [threw while printing] ] }",
       "revoked Proxy of a function Set { [threw while printing] }",
       "Proxy of a function [threw while printing]",
       "Proxy of a Map [threw while printing]",

@@ -288,10 +288,14 @@ function formatArray(ctx: InspectContext, value: any[], recurseTimes: number) {
   const output: string[] = [];
 
   for (let i = 0; i < maxLength; i++) {
-    if (Object.prototype.hasOwnProperty.call(value, i)) {
-      output.push(formatValue(ctx, value[i], recurseTimes));
-    } else {
-      output.push("empty");
+    try {
+      if (Object.prototype.hasOwnProperty.call(value, i)) {
+        output.push(formatValue(ctx, value[i], recurseTimes));
+      } else {
+        output.push("empty");
+      }
+    } catch {
+      output.push(threwWhilePrinting);
     }
   }
 
@@ -307,7 +311,11 @@ function formatArray(ctx: InspectContext, value: any[], recurseTimes: number) {
 
   if (keys.length > 0) {
     for (const key of keys) {
-      output.push(`${key}: ${formatValue(ctx, value[key], recurseTimes)}`);
+      try {
+        output.push(`${key}: ${formatValue(ctx, value[key], recurseTimes)}`);
+      } catch {
+        output.push(`${key}: ${threwWhilePrinting}`);
+      }
     }
   }
 

@@ -437,6 +437,19 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "Hello, world!" },
   });
+  // Every Bun.file() of one embedded file shares one store, and so one all-ASCII cache.
+  itBundled("compile/EmbeddedFileTextAfterPrefixSliceRead", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import note from './note.txt' with {type: "file"};
+        const head = await Bun.file(note).slice(0, 3).text();
+        console.log(JSON.stringify([head, await Bun.file(note).text()]));
+      `,
+      "/note.txt": "abc héllo wörld ✓",
+    },
+    run: { stdout: JSON.stringify(["abc", "abc héllo wörld ✓"]) },
+  });
   itBundled("compile/WorkerRelativePathNoExtension", {
     backend: "cli",
     compile: true,

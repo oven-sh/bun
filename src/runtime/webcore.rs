@@ -195,6 +195,9 @@ pub(crate) mod headers_ref;
 
 #[path = "webcore/Blob.rs"]
 pub(crate) mod blob;
+#[cfg(debug_assertions)]
+#[path = "webcore/blob_test.rs"]
+pub(crate) mod blob_test;
 pub(crate) use blob::Any as AnyBlob;
 pub(crate) use blob::Internal as InternalBlob;
 pub(crate) use blob::{Blob, BlobExt, SizeType as BlobSizeType};

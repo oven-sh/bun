@@ -140,6 +140,8 @@ pub struct Entry {
     pub need_stat: AtomicBool,
     /// Listed as a symlink or of unknown kind: a change outside its directory can change what `cache` holds.
     pub(crate) is_link: AtomicBool,
+    /// The directory was listed again since a path was joined for this plain entry: `Resolver::finalize_result` compares the path before it uses it.
+    pub(crate) real_path_unchecked: AtomicBool,
 
     abs_path: OnceLock<Interned>,
 }
@@ -553,16 +555,21 @@ impl DirEntry {
                     // cache, stale but untorn.
                     // Relaxed load: writes are serialized on the per-entry
                     // mutex held above.
-                    // A path that the entry holds came from a link or from the real path of its directory: either can differ now, so it is statted again.
                     let memo = existing.cache();
+                    // Relaxed: see `Entry::kind_for`.
+                    let was_link = existing.is_link.load(Ordering::Relaxed);
+                    let holds_path = !memo.symlink.is_empty();
                     existing.need_stat.store(
                         existing.need_stat.load(Ordering::Relaxed)
                             || found_kind.is_none()
                             || Some(memo.kind) != found_kind
-                            || !memo.symlink.is_empty(),
+                            || (was_link && holds_path),
                         Ordering::Release,
                     );
-                    // Relaxed: see `Entry::kind_for`.
+                    // A plain entry keeps the path it holds, which is its directory's real path and its name: the next use compares it.
+                    if found_kind.is_some() && !was_link && holds_path {
+                        existing.real_path_unchecked.store(true, Ordering::Relaxed);
+                    }
                     existing
                         .is_link
                         .store(found_kind.is_none(), Ordering::Relaxed);
@@ -613,6 +620,7 @@ impl DirEntry {
                 // for each entry was a big performance issue for that package.
                 addr_of_mut!((*p).need_stat).write(AtomicBool::new(found_kind.is_none()));
                 addr_of_mut!((*p).is_link).write(AtomicBool::new(found_kind.is_none()));
+                addr_of_mut!((*p).real_path_unchecked).write(AtomicBool::new(false));
                 addr_of_mut!((*p).cache).write(core::cell::Cell::new(EntryCache {
                     symlink: Interned::EMPTY,
                     // if found_kind is null, we have set need_stat above, so we

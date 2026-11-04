@@ -1,6 +1,6 @@
 import * as internals from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { existsSync, promises as fs, mkdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "fs";
+import { existsSync, promises as fs, mkdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir, unprivilegedSpawnOptions } from "harness";
 import { createRequire } from "module";
 import * as path from "path";
@@ -368,6 +368,57 @@ describe.concurrent("a file or package created after the resolver read its direc
     mkdirSync(target, { recursive: true });
     writeFileSync(path.join(target, "index.js"), `module.exports = "linked";`);
     expect(req("linked")).toBe("linked");
+  });
+
+  // The listing of node_modules was read before the link was made. The first lookup opens the package
+  // through the link, so it has to read that listing again to learn where the link leads. Else the package
+  // is loaded from the link's path, and from its real path once a miss in it makes the resolver look again.
+  test("a package linked into a node_modules that was read loads once, from its real path (#42776)", () => {
+    using dir = tempDir("runtime-cache-late-link", {
+      "store/late-linked/package.json": JSON.stringify({ name: "late-linked", main: "index.js" }),
+      "store/late-linked/index.js": `globalThis.lateLinkedLoads = (globalThis.lateLinkedLoads ?? 0) + 1;
+try {
+  require("a-peer-of-late-linked-that-is-not-installed");
+} catch {}
+module.exports = {};`,
+      "project/node_modules/warm/index.js": `module.exports = 1;`,
+      "project/main.js": "",
+    });
+    const root = realpathSync(String(dir));
+    const req = createRequire(path.join(root, "project", "main.js"));
+    expect(req("warm")).toBe(1);
+    link(path.join(root, "store", "late-linked"), path.join(root, "project", "node_modules", "late-linked"));
+
+    const realPath = path.join(root, "store", "late-linked", "index.js");
+    const before = req.resolve("late-linked");
+    const first = req("late-linked");
+    expect({
+      before,
+      after: req.resolve("late-linked"),
+      sameInstance: req("late-linked") === first,
+      loads: (globalThis as any).lateLinkedLoads,
+    }).toEqual({ before: realPath, after: realPath, sameInstance: true, loads: 1 });
+  });
+
+  // A lookup from the directory itself lists it under a name with no separator at its end. The `browser`
+  // map of its package.json is matched against the path of the directory, which has to end with one.
+  test.each([
+    ["Bun.resolveSync() from it", (pages: string) => Bun.resolveSync("./missing.ts", pages)],
+    ["require.resolve() with it in `paths`", (pages: string) => require.resolve("./missing.js", { paths: [pages] })],
+  ])("the browser map of a directory applies to a build after a failed %s", async (_, miss) => {
+    using dir = tempDir("runtime-cache-browser-map", {
+      "package.json": JSON.stringify({ name: "project" }),
+      "pages/package.json": JSON.stringify({ name: "pages", browser: { "./lib.js": "./lib.browser.js" } }),
+      "pages/lib.js": `module.exports = "node lib";`,
+      "pages/lib.browser.js": `module.exports = "browser lib";`,
+      "pages/page.ts": `import lib from "./lib.js"; export default lib;`,
+    });
+    const pages = path.join(String(dir), "pages");
+    expect(() => miss(pages)).toThrow();
+
+    const built = await Bun.build({ entrypoints: [path.join(pages, "page.ts")], target: "browser" });
+    const bundle = await built.outputs[0].text();
+    expect(["node lib", "browser lib"].filter(text => bundle.includes(text))).toEqual(["browser lib"]);
   });
 
   test("a file added under the directory an exports map points at", async () => {

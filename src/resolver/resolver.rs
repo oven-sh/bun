@@ -1990,10 +1990,17 @@ impl<'a> Resolver<'a> {
             // map in place under that lock. The entry pointer stays valid after
             // unlock (EntryStore-owned).
             if let Some(query) = dir.get_entry_as(asker, name.filename) {
-                let symlink_path =
+                let mut symlink_path =
                     query
                         .entry()
                         .symlink_for(asker.generation(), self.rfs_ref(), self.store_fd);
+                if !symlink_path.is_empty()
+                    && (query.entry().real_path_unchecked)
+                        .load(core::sync::atomic::Ordering::Relaxed)
+                {
+                    symlink_path =
+                        self.joined_real_path_checked(A::CHECKS, query.entry(), dir, symlink_path);
+                }
                 if !symlink_path.is_empty() {
                     path.set_realpath(symlink_path);
                     if !result.file_fd.is_valid() {
@@ -2094,6 +2101,40 @@ impl<'a> Resolver<'a> {
 
         result.module_type = module_type;
         Ok(())
+    }
+
+    /// The real path that the plain entry `entry` of `dir` holds, if it is still the real path of `dir` and the name. Else the entry loses it, and the caller joins a new one. An asker that trusts `dir` as cached leaves the question open for the next one.
+    #[cold]
+    #[inline(never)]
+    fn joined_real_path_checked(
+        &self,
+        asker_checks: bool,
+        entry: &'static Fs::file_system::Entry,
+        dir: DirInfoRef,
+        held: &'static [u8],
+    ) -> &'static [u8] {
+        use core::sync::atomic::Ordering::Relaxed;
+        let _entry_guard = entry.mutex.lock_guard();
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let joined = (!dir.abs_real_path.is_empty())
+            .then(|| {
+                ::bun_paths::resolve_path::join_abs_string_buf_z_checked::<
+                    ::bun_paths::platform::Loose,
+                >(
+                    self.fs_ref().top_level_dir(),
+                    &mut buf[..],
+                    &[dir.abs_real_path, entry.base()],
+                )
+            })
+            .flatten();
+        let same = joined.is_some_and(|joined| joined.as_bytes() == held);
+        if !same && entry.cache().symlink.as_bytes() == held {
+            entry.set_cache_symlink(Interned::EMPTY);
+        }
+        if !same || asker_checks {
+            entry.real_path_unchecked.store(false, Relaxed);
+        }
+        if same { held } else { b"" }
     }
 
     /// The lookups of one run: as written, then the rest after a miss. The answer is moved and the two paths are separate parameters: a borrow or a tuple costs every hit a copy or one more test.
@@ -5709,7 +5750,8 @@ impl<'a> Resolver<'a> {
                 open_dir_count.set(open_dir_count.get() + 1);
             }
 
-            let dir_path: &'static [u8] = if !queue_top_safe_path.is_empty() {
+            // A listing that `read_directory` cached first names the directory with no separator at the end.
+            let dir_path: &'static [u8] = if queue_top_safe_path.last() == Some(&SEP) {
                 queue_top_safe_path
             } else {
                 // ensure trailing slash
@@ -7370,10 +7412,21 @@ impl<'a> Resolver<'a> {
                 // The only caller that reaches this with `parent` set
                 // (`dir_info_cached_miss`) already holds `entries_mutex`, and that
                 // mutex is non-recursive, so go through the `_locked` accessor.
-                if let Some(parent_entries) = parent_.get_entries_ref_locked(generation) {
+                if let Some(mut parent_entries) = parent_.get_entries_ref_locked(generation) {
+                    let mut lookup = parent_entries.get(base);
+                    // This directory opened, and the listing that its parent has for an asker that trusts the cache does not name it: that listing is read again.
+                    if lookup.is_none()
+                        && generation == 0
+                        && parent_entries.was_listed()
+                        && let Some(again) =
+                            parent_.get_entries_ref_locked(bun_core::next_generation())
+                    {
+                        parent_entries = again;
+                        lookup = parent_entries.get(base);
+                    }
                     info.parent_listing_version =
                         core::sync::atomic::AtomicU32::new(parent_entries.version);
-                    if let Some(lookup) = parent_entries.get(base) {
+                    if let Some(lookup) = lookup {
                         let entries_fd = entries!().fd;
                         if entries_fd.is_valid()
                             && !lookup.entry().cache().fd.is_valid()

@@ -1111,6 +1111,47 @@ fn a_lookup_that_misses_runs_once_more_unless_it_trusts_cached_misses() {
 }
 
 #[test]
+fn a_listing_read_again_leaves_the_real_path_of_a_file_behind_a_linked_directory() {
+    with_project("joined-path-kept", |made| {
+        made.write("real/f.js", "");
+        made.write("other/f.js", "");
+        made.link("real", "link");
+        let dir = [&made.path("")[..], b"/"].concat();
+        let stmt = ast::ImportKind::Stmt;
+        let real_path = |resolver: &mut Resolver<'static>, how: AfterMiss| {
+            let found = resolver.resolve_as(&dir, b"./link/f.js", stmt, how);
+            found.expect("found").path_const().expect("a path").text
+        };
+        let first = real_path(&mut made.resolver, AfterMiss::TrustCache);
+        assert_eq!(
+            bstr::BStr::new(first),
+            bstr::BStr::new(&made.path("real/f.js"))
+        );
+        let entry = listed(&made.path("link"), 0, b"f.js").expect("listed");
+        let held = || entry.cache().symlink.as_bytes();
+        assert!(std::ptr::eq(held(), first));
+        // The directory behind the link gets a name, so an asker that checks reads its listing again. The entry keeps its path, and no stat is asked for.
+        made.write("real/g.js", "");
+        let version = listing(&made.path("link"), 0).expect("a directory").version;
+        let checked = AfterMiss::CheckedPass(next_generation());
+        assert!(std::ptr::eq(real_path(&mut made.resolver, checked), first));
+        let listed_again = listing(&made.path("link"), 0).expect("a directory").version;
+        assert_eq!(listed_again, version + 1);
+        assert!(std::ptr::eq(held(), first));
+        assert!(!entry.need_stat.load(Ordering::Relaxed));
+        assert!(!entry.real_path_unchecked.load(Ordering::Relaxed));
+        // The link leads to another directory with the same name in it: the path is joined again.
+        made.remove("link");
+        made.link("other", "link");
+        let checked = AfterMiss::CheckedPass(next_generation());
+        assert_eq!(
+            bstr::BStr::new(real_path(&mut made.resolver, checked)),
+            bstr::BStr::new(&made.path("other/f.js"))
+        );
+    });
+}
+
+#[test]
 fn a_lookup_that_runs_again_stats_a_link_again_though_its_listing_is_kept() {
     with_project("link-target", |made| {
         made.mkdir("src");

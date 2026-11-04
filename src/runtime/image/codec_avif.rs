@@ -40,6 +40,7 @@ unsafe extern "C" {
         max_pixels: u64,
         out_w: *mut u32,
         out_h: *mut u32,
+        out_transform: *mut Transform,
     ) -> i32;
     fn bun_avif_decode(
         bytes: *const u8,
@@ -50,6 +51,7 @@ unsafe extern "C" {
         out: *mut u8, // nullable
         out_icc_ptr: *mut *mut u8,
         out_icc_size: *mut usize,
+        out_transform: *mut Transform,
     ) -> i32;
     fn bun_avif_encode(
         rgba: *const u8,
@@ -62,6 +64,78 @@ unsafe extern "C" {
         out_size: *mut usize,
     ) -> i32;
     fn bun_avif_free_output(data: *mut c_void);
+}
+
+/// The item's transformative properties, mirrored from `BunAvifTransform`
+/// in the shim. libavif parses `clap`/`irot`/`imir` but never applies them
+/// to the planes, so the wrapper does, in spec order: crop, then rotate,
+/// then mirror. `crop_*` is the full coded image when no `clap` is present.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct Transform {
+    crop_x: u32,
+    crop_y: u32,
+    crop_w: u32,
+    crop_h: u32,
+    /// `irot` angle in anti-clockwise quarter turns (0..=3).
+    rot_ccw_quarters: u8,
+    /// 0 = none, 1 = top/bottom exchanged (`imir` axis 0), 2 = left/right
+    /// exchanged (`imir` axis 1).
+    mirror: u8,
+}
+
+impl Transform {
+    /// Dimensions the item presents after crop and rotation.
+    fn displayed_dims(&self) -> (u32, u32) {
+        if self.rot_ccw_quarters & 1 == 1 {
+            (self.crop_h, self.crop_w)
+        } else {
+            (self.crop_w, self.crop_h)
+        }
+    }
+}
+
+/// Crop `rgba` (coded `w`×`h`) to the transform's clap rect.
+fn crop(rgba: &[u8], w: u32, h: u32, t: &Transform) -> Result<Vec<u8>, codecs::Error> {
+    let (cx, cy, cw, ch) = (t.crop_x as usize, t.crop_y as usize, t.crop_w as usize, t.crop_h as usize);
+    let (w, h) = (w as usize, h as usize);
+    if cw == 0 || ch == 0 || cx.checked_add(cw).is_none_or(|r| r > w) || cy.checked_add(ch).is_none_or(|b| b > h)
+    {
+        return Err(codecs::Error::DecodeFailed);
+    }
+    let row_bytes = cw * 4;
+    let mut out: Vec<u8> = Vec::new();
+    if out.try_reserve_exact(row_bytes * ch).is_err() {
+        return Err(codecs::Error::OutOfMemory);
+    }
+    for row in cy..cy + ch {
+        let start = (row * w + cx) * 4;
+        out.extend_from_slice(&rgba[start..start + row_bytes]);
+    }
+    Ok(out)
+}
+
+/// Apply clap, irot, imir to a decoded buffer, in that order.
+fn apply_transform(d: &mut codecs::Decoded, t: &Transform) -> Result<(), codecs::Error> {
+    if t.crop_x != 0 || t.crop_y != 0 || t.crop_w != d.width || t.crop_h != d.height {
+        d.rgba = crop(&d.rgba, d.width, d.height, t)?;
+        d.width = t.crop_w;
+        d.height = t.crop_h;
+    }
+    // `codecs::rotate` takes clockwise degrees; irot is anti-clockwise.
+    let cw_degrees = u32::from((4 - t.rot_ccw_quarters) & 3) * 90;
+    if cw_degrees != 0 {
+        let next = codecs::rotate(&d.rgba, d.width, d.height, cw_degrees)?;
+        d.rgba = next.rgba;
+        d.width = next.width;
+        d.height = next.height;
+    }
+    match t.mirror {
+        1 => d.rgba = codecs::flip(&d.rgba, d.width, d.height, false)?,
+        2 => d.rgba = codecs::flip(&d.rgba, d.width, d.height, true)?,
+        _ => {}
+    }
+    Ok(())
 }
 
 fn map_decode_err(rc: i32) -> codecs::Error {
@@ -146,8 +220,10 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
     // on the RGBA alloc, anything else. Null until phase 2 writes it, so
     // on phase-1 error paths this is a no-op.
     let mut icc = IccBuf::new();
+    let mut transform = Transform::default();
     // SAFETY: bytes.ptr/len come from a valid live slice; the `*mut u32`
-    // / `*mut *mut u8` / `*mut usize` out-params are all valid locals.
+    // / `*mut *mut u8` / `*mut usize` / `*mut Transform` out-params are all
+    // valid locals.
     let rc = unsafe {
         bun_avif_decode(
             bytes.as_ptr(),
@@ -158,6 +234,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
             core::ptr::null_mut(),
             &raw mut icc.ptr,
             &raw mut icc.size,
+            &raw mut transform,
         )
     };
     if rc != AVIF_OK {
@@ -194,6 +271,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
             out.as_mut_ptr(),
             &raw mut icc.ptr,
             &raw mut icc.size,
+            &raw mut transform,
         )
     };
     match rc {
@@ -214,12 +292,14 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
     // contract as the sibling codecs, see the #30197 rationale there).
     let icc_profile = icc.into_owned();
 
-    Ok(codecs::Decoded {
+    let mut decoded = codecs::Decoded {
         rgba: out,
         width: w,
         height: h,
         icc_profile,
-    })
+    };
+    apply_transform(&mut decoded, &transform)?;
+    Ok(decoded)
 }
 
 /// Header-only dimensions probe for `.metadata()`. libavif's parse() stops
@@ -228,6 +308,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
 pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<(u32, u32), codecs::Error> {
     let mut w: u32 = 0;
     let mut h: u32 = 0;
+    let mut transform = Transform::default();
     // SAFETY: bytes.ptr/len come from a valid live slice; the out-params are valid locals.
     let rc = unsafe {
         bun_avif_probe(
@@ -236,6 +317,7 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<(u32, u32), codecs:
             max_pixels,
             &raw mut w,
             &raw mut h,
+            &raw mut transform,
         )
     };
     if rc != AVIF_OK {
@@ -244,7 +326,8 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<(u32, u32), codecs:
     if w == 0 || h == 0 {
         return Err(codecs::Error::DecodeFailed);
     }
-    Ok((w, h))
+    // `metadata()` reports what a viewer shows: the clap rect, rotated.
+    Ok(transform.displayed_dims())
 }
 
 pub(crate) fn encode(

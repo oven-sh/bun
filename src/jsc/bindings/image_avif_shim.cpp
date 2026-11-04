@@ -51,7 +51,16 @@ constexpr int kAvifRgbFormatRGBA = 1; // enum avifRGBFormat index
 constexpr uint32_t kAvifStrictPixiRequired = 1 << 0;
 // avifPixelFormat enum values from avif.h:283-290.
 constexpr int kAvifPixelFormatYuv420 = 3;
-constexpr int kAvifSpeedDefault = -1;
+// avifenc's default. AVIF_SPEED_DEFAULT (-1) makes libavif skip the
+// cpu-used control entirely, and libaom then runs its built-in cpu-used 0
+// (exhaustive search): tens of seconds for a photo on one thread.
+constexpr int kAvifSpeedWeb = 6;
+// avifTransformFlags bits (avif.h).
+constexpr uint32_t kAvifTransformClap = 1 << 1;
+constexpr uint32_t kAvifTransformIrot = 1 << 2;
+constexpr uint32_t kAvifTransformImir = 1 << 3;
+// AVIF_DEFAULT_IMAGE_SIZE_LIMIT: avifDecoderParse rejects a larger value.
+constexpr uint32_t kAvifDefaultImageSizeLimit = 16384u * 16384u;
 
 // avifRWData — trivial pair matching avif.h:248-252. Forward-declared here
 // because `AvifImage` embeds one (for the ICC profile) and the dlsym table
@@ -61,11 +70,22 @@ struct AvifRwData {
     size_t size;
 };
 
-// Subset of `avifImage` mirrored down through the `icc` RWData field so
-// decode() can pull the ICC profile out without going through a setter.
-// Names match the real header 1:1; the YUV/alpha pointers are opaque to us
-// but have to be laid out so the `icc` offset matches the real struct.
-// Matches the 1.0.0 stable ABI (field order frozen by libavif).
+// avifCleanApertureBox / avifCropRect (avif.h). The box holds the raw
+// fractional `clap` fields; avifCropRectConvertCleanApertureBox turns them
+// into an integer pixel rect, validating the spec constraints.
+struct AvifCleanApertureBox {
+    uint32_t widthN, widthD, heightN, heightD, horizOffN, horizOffD, vertOffN, vertOffD;
+};
+struct AvifCropRect {
+    uint32_t x, y, width, height;
+};
+
+// Subset of `avifImage` mirrored down through the `imir` transform field so
+// decode() can read the ICC profile and the clap/irot/imir properties
+// directly. Names and types match the real header 1:1; the YUV/alpha
+// pointers are opaque to us but have to be laid out so the later offsets
+// match the real struct. Matches the 1.0.0 stable ABI (field order frozen
+// by libavif).
 struct AvifImage {
     uint32_t width;
     uint32_t height;
@@ -85,7 +105,42 @@ struct AvifImage {
     // instead of writing here directly so libavif copies the bytes under
     // its own allocator.
     AvifRwData icc;
-    // ... more fields (CICP, CLLI, transform, exif/xmp, …) we don't touch.
+    // CICP + CLLI, same types as avif.h so the compiler lays the transform
+    // fields out at libavif's offsets.
+    uint16_t colorPrimaries;
+    uint16_t transferCharacteristics;
+    uint16_t matrixCoefficients;
+    struct {
+        uint16_t maxCLL;
+        uint16_t maxPALL;
+    } clli;
+    // Transformative item properties. libavif parses them but never applies
+    // them to the planes (avif.h: "images won't be pre-cropped or mirrored
+    // upon decode"); the shim reports them and the Rust side applies them.
+    uint32_t transformFlags;
+    struct {
+        uint32_t hSpacing;
+        uint32_t vSpacing;
+    } pasp;
+    AvifCleanApertureBox clap;
+    struct {
+        uint8_t angle; // irot: angle * 90 degrees, anti-clockwise
+    } irot;
+    struct {
+        uint8_t axis; // imir: 0 = top/bottom exchanged, 1 = left/right exchanged
+    } imir;
+    // exif / xmp RWData follow; unused.
+};
+
+// What the Rust wrapper needs to present the item the way a viewer would.
+// Mirrors `Transform` in codec_avif.rs. `crop_*` is the clap rect (the full
+// coded image when no clap is present), `rot_ccw_quarters` the irot angle,
+// `mirror` 0 = none, 1 = top/bottom exchanged, 2 = left/right exchanged.
+// Spec order of application: clap, then irot, then imir.
+struct BunAvifTransform {
+    uint32_t crop_x, crop_y, crop_w, crop_h;
+    uint8_t rot_ccw_quarters;
+    uint8_t mirror;
 };
 
 // Subset of `avifDecoder` up through the "Version 1.0.0 ends here." marker.
@@ -161,6 +216,9 @@ struct Syms {
     void (*avifEncoderDestroy)(void*);
     avifResult (*avifEncoderWrite)(void*, const AvifImage*, AvifRwData*);
     void (*avifRWDataFree)(AvifRwData*);
+    // Converts a clap box into a validated pixel rect. `diag` may be null.
+    avifBool (*avifCropRectConvertCleanApertureBox)(AvifCropRect*, const AvifCleanApertureBox*,
+        uint32_t imageW, uint32_t imageH, int yuvFormat, void* diag);
 };
 
 #define SYM(x) { offsetof(Syms, x), #x }
@@ -183,6 +241,7 @@ constexpr struct {
     SYM(avifEncoderDestroy),
     SYM(avifEncoderWrite),
     SYM(avifRWDataFree),
+    SYM(avifCropRectConvertCleanApertureBox),
 };
 #undef SYM
 
@@ -284,9 +343,36 @@ static void configureDecoder(AvifDecoder* dec)
     dec->imageDimensionLimit = 0;
 }
 
+// Read the transformative properties parsed for the primary item. Returns
+// false for a clap rect libavif rejects (out of bounds, odd offsets for the
+// chroma subsampling), which the callers surface as DecodeFailed.
+static bool readTransform(const Syms* s, const AvifImage* img, BunAvifTransform* t)
+{
+    t->crop_x = 0;
+    t->crop_y = 0;
+    t->crop_w = img->width;
+    t->crop_h = img->height;
+    t->rot_ccw_quarters = 0;
+    t->mirror = 0;
+    if (img->transformFlags & kAvifTransformClap) {
+        AvifCropRect rect;
+        if (!s->avifCropRectConvertCleanApertureBox(&rect, &img->clap, img->width, img->height,
+                img->yuvFormat, nullptr))
+            return false;
+        if (rect.width == 0 || rect.height == 0) return false;
+        t->crop_x = rect.x;
+        t->crop_y = rect.y;
+        t->crop_w = rect.width;
+        t->crop_h = rect.height;
+    }
+    if (img->transformFlags & kAvifTransformIrot) t->rot_ccw_quarters = img->irot.angle & 3;
+    if (img->transformFlags & kAvifTransformImir) t->mirror = (img->imir.axis == 0) ? 1 : 2;
+    return true;
+}
+
 // Probe: fill out_w/out_h from the AVIF container header. No AV1 decode.
 int32_t bun_avif_probe(const uint8_t* bytes, size_t len, uint64_t max_pixels,
-    uint32_t* out_w, uint32_t* out_h)
+    uint32_t* out_w, uint32_t* out_h, BunAvifTransform* out_transform)
 {
     auto s = load();
     if (!s) return kAvifUnavailable;
@@ -310,6 +396,7 @@ int32_t bun_avif_probe(const uint8_t* bytes, size_t len, uint64_t max_pixels,
     uint64_t pixels = static_cast<uint64_t>(img->width) * img->height;
     if (pixels > max_pixels) return kAvifTooManyPixels;
 
+    if (!readTransform(s, img, out_transform)) return kAvifDecodeFailed;
     *out_w = img->width;
     *out_h = img->height;
     return 0;
@@ -330,7 +417,7 @@ int32_t bun_avif_probe(const uint8_t* bytes, size_t len, uint64_t max_pixels,
 // the decoder relative to the AV1 decode itself.
 int32_t bun_avif_decode(const uint8_t* bytes, size_t len, uint64_t max_pixels,
     uint32_t* out_w, uint32_t* out_h, uint8_t* out,
-    uint8_t** out_icc_ptr, size_t* out_icc_size)
+    uint8_t** out_icc_ptr, size_t* out_icc_size, BunAvifTransform* out_transform)
 {
     auto s = load();
     if (!s) return kAvifUnavailable;
@@ -344,6 +431,16 @@ int32_t bun_avif_decode(const uint8_t* bytes, size_t len, uint64_t max_pixels,
     } r { s, dec };
 
     configureDecoder(dec);
+    // Phase 2 only: `max_pixels` is the phase-1 pixel product the caller
+    // sized `out` for. libavif forwards imageSizeLimit to dav1d's
+    // frame_size_limit, so an AV1 stream larger than the ispe box is
+    // refused before dav1d allocates its planes, instead of after a full
+    // decode. Phase 1 and probe keep the default so an over-`maxPixels`
+    // ispe still reaches the TooManyPixels check below.
+    if (out) {
+        dec->imageSizeLimit = static_cast<uint32_t>(
+            max_pixels < kAvifDefaultImageSizeLimit ? max_pixels : kAvifDefaultImageSizeLimit);
+    }
 
     if (s->avifDecoderSetIOMemory(dec, bytes, len) != kAvifResultOk) return kAvifDecodeFailed;
     if (s->avifDecoderParse(dec) != kAvifResultOk) return kAvifDecodeFailed;
@@ -353,6 +450,8 @@ int32_t bun_avif_decode(const uint8_t* bytes, size_t len, uint64_t max_pixels,
 
     uint64_t pixels = static_cast<uint64_t>(img->width) * img->height;
     if (pixels > max_pixels) return kAvifTooManyPixels;
+
+    if (!readTransform(s, img, out_transform)) return kAvifDecodeFailed;
 
     // Phase 1: just return dims so Rust can allocate.
     *out_w = img->width;
@@ -436,12 +535,12 @@ int32_t bun_avif_encode(const uint8_t* rgba, uint32_t w, uint32_t h,
 
     // Attach the source ICC profile before encode so it lands in the
     // output's `colr` box. libavif copies the bytes into its own allocator,
-    // so the caller can free `icc` right after this returns. A non-zero
-    // return here means the profile allocation failed inside libavif —
-    // drop it rather than fail the encode; an AVIF without a profile is
-    // still valid (implicitly sRGB via CICP). Same contract as jpeg/png.
+    // so the caller can free `icc` right after this returns. The setter
+    // only fails on allocation failure; silently encoding without the
+    // profile would ship P3/Adobe RGB pixels tagged as sRGB (#30197), so
+    // fail the encode instead.
     if (icc != nullptr && icc_size > 0) {
-        (void)s->avifImageSetProfileICC(img, icc, icc_size);
+        if (s->avifImageSetProfileICC(img, icc, icc_size) != kAvifResultOk) return kAvifEncodeFailed;
     }
 
     // Feed in the straight-alpha RGBA8 source. libavif allocates the YUV+A
@@ -472,7 +571,7 @@ int32_t bun_avif_encode(const uint8_t* rgba, uint32_t w, uint32_t h,
     enc->maxThreads = 1;
     enc->quality = quality;
     enc->qualityAlpha = quality;
-    enc->speed = kAvifSpeedDefault; // defer to whichever encoder; rav1e/aom both have reasonable defaults
+    enc->speed = kAvifSpeedWeb;
     // The remaining (deprecated) quantizer fields stay at avifEncoderCreate's
     // defaults — libavif derives them from `quality` when left alone.
 
@@ -511,8 +610,8 @@ void bun_avif_free_output(uint8_t* data)
 // on every target), these are NOT currently link-required.
 #include <cstddef>
 #include <cstdint>
-extern "C" int32_t bun_avif_probe(const uint8_t*, size_t, uint64_t, uint32_t*, uint32_t*) { return 1; }
-extern "C" int32_t bun_avif_decode(const uint8_t*, size_t, uint64_t, uint32_t*, uint32_t*, uint8_t*, uint8_t**, size_t*) { return 1; }
+extern "C" int32_t bun_avif_probe(const uint8_t*, size_t, uint64_t, uint32_t*, uint32_t*, void*) { return 1; }
+extern "C" int32_t bun_avif_decode(const uint8_t*, size_t, uint64_t, uint32_t*, uint32_t*, uint8_t*, uint8_t**, size_t*, void*) { return 1; }
 extern "C" int32_t bun_avif_encode(const uint8_t*, uint32_t, uint32_t, int, const uint8_t*, size_t, uint8_t**, size_t*) { return 1; }
 extern "C" void bun_avif_free_output(uint8_t*) {}
 

@@ -39,6 +39,13 @@ whichever AV1 encoder libavif was linked against (aom / rav1e / SvtAv1Enc); a
 decode-only libavif build surfaces `ERR_IMAGE_ENCODE_FAILED`. macOS/Windows
 decode and encode AVIF via their respective system backends.
 
+The Linux decoder applies the `clap`/`irot`/`imir` item properties itself
+(libavif only parses them) and carries an ICC profile from the `colr` box
+through to the encoder. An AVIF whose colour is signalled only by CICP
+(`nclx` with no profile, e.g. BT.2020/PQ or Display-P3) decodes with its
+pixel values unmanaged on Linux, where ImageIO converts to sRGB; CICP
+handling is tracked in #40493.
+
 ## Adding a chainable op
 
 1. Add a field to `Pipeline` in `Image.rs` (one slot per op — setters

@@ -1125,6 +1125,28 @@ describe("Bun.Image", () => {
         });
       });
 
+      // libavif parses the transformative item properties (clap/irot/imir)
+      // but never applies them to the planes; ImageIO on macOS does. The
+      // fixture is libavif's tests/data/abc_color_irot_alpha_irot.avif: its
+      // coded image is the 512×256 source PNG with an essential `irot`
+      // angle 1 (90° anti-clockwise), so a viewer shows 256×512. A decoder
+      // that ignores irot reports 512×256 and hands back sideways pixels.
+      test.skipIf(!hasAvifRuntime)("decode AVIF applies the irot transform", async () => {
+        const irotAvif = await Bun.file(join(import.meta.dir, "fixtures", "abc_color_irot_alpha_irot.avif")).bytes();
+        const sourcePng = await Bun.file(join(import.meta.dir, "fixtures", "abc_color_irot_source.png")).bytes();
+        expect(await new Bun.Image(irotAvif).metadata()).toEqual({ width: 256, height: 512, format: "avif" });
+
+        const got = decodePngRaw(await new Bun.Image(irotAvif).png().bytes());
+        // 90° anti-clockwise = rotate(270) in Bun.Image's clockwise degrees.
+        const want = decodePngRaw(await new Bun.Image(sourcePng).rotate(270).png().bytes());
+        expect([got.w, got.h]).toEqual([want.w, want.h]);
+        // AV1 is lossy: compare by mean absolute error over RGBA rather than
+        // byte equality. A wrong orientation scores far above this bound.
+        let err = 0;
+        for (let i = 0; i < got.data.length; i++) err += Math.abs(got.data[i] - want.data[i]);
+        expect(err / got.data.length).toBeLessThan(6);
+      });
+
       test("encode .heic() rejects ERR_IMAGE_FORMAT_UNSUPPORTED on Linux", async () => {
         // No vendored HEVC encoder and Linux has no OS codec.
         await expect(new Bun.Image(cornersPng).heic().bytes()).rejects.toMatchObject({

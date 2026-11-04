@@ -290,10 +290,15 @@ void becomeMainModuleBeforeExtensionHandler(Zig::GlobalObject* globalObject, JSC
     becomeMainModule(JSC::getVM(globalObject), globalObject, moduleObject);
 }
 
-// The loader of import() has `moduleObject`, and runs it now if it has not run.
-static void didReachModuleOfLoader(VM& vm, Zig::GlobalObject* globalObject, RunMainState& state, JSCommonJSModule* moduleObject, const Identifier& key)
+// The loader of import() reached the module of `key` in `requireMap`, and runs it next if it has not run.
+static void didReachModuleOfLoader(Zig::GlobalObject* globalObject, RunMainState& state, JSMap* requireMap, JSValue keyValue, const Identifier& key)
 {
-    if (moduleObject->moduleGraph())
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue entry = JSValue::decode(JSC__JSMap__get(requireMap, globalObject, JSValue::encode(keyValue)));
+    RETURN_IF_EXCEPTION(scope, );
+    auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry);
+    if (!moduleObject || moduleObject->moduleGraph())
         return;
     // A script that Module.runMain() gave to this loader becomes the main module as it starts, unless it ran before or the entry module ran since.
     if (!state.startedURLs.isEmpty()) {
@@ -2043,13 +2048,15 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                 // the module's code runs in its graph's (what it opens is the graph's).
                 ModuleGraphContextScope graphContext(globalObject, graph.get());
                 JSMap* requireMap = requireMapOf(globalObject, graph.get());
+                if (auto* runMain = globalObject->m_runMain.get()) [[unlikely]] {
+                    didReachModuleOfLoader(globalObject, *runMain, requireMap, keyValue, moduleKey);
+                    RETURN_IF_EXCEPTION(scope, void());
+                }
                 JSValue entry = requireMap->get(globalObject, keyValue);
                 RETURN_IF_EXCEPTION(scope, void());
 
                 if (entry) {
                     if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry)) {
-                        if (auto* runMain = globalObject->m_runMain.get()) [[unlikely]]
-                            didReachModuleOfLoader(vm, globalObject, *runMain, moduleObject, moduleKey);
                         if (!moduleObject->hasEvaluated) {
                             evaluateCommonJSModuleOnce(
                                 vm,

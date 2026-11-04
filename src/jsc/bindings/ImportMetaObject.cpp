@@ -112,7 +112,7 @@ String ImportMetaObject::urlOfSpecifier(const String& specifier)
 
 ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier)
 {
-    return create(globalObject, urlOfSpecifier(specifier));
+    [[clang::always_inline]] return create(globalObject, urlOfSpecifier(specifier));
 }
 
 extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)

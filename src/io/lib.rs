@@ -265,7 +265,7 @@ impl EventLoopCtx {
     /// another `&mut Store` (or a `&mut FilePoll` that lives inside the inline
     /// hive buffer) is live. Every in-crate caller is a leaf op that decays
     /// any conflicting `&mut FilePoll` to a raw slot pointer first
-    /// (`deinit_possibly_defer`) or holds none (`init_with_owner`,
+    /// (`deinit_possibly_defer`) or holds none (that is
     /// `alloc_file_poll`), so no two `&mut Store` ever coexist.
     #[inline]
     fn file_polls_mut(&self) -> &'static mut Store {

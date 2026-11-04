@@ -180,7 +180,6 @@ pub(crate) type Poll = WriterImpl;
 /// can drop the last external ref without freeing `self` while PipeWriter is
 /// still on the stack.
 pub(crate) fn on_poll(writer: &mut Poll, size_hint: isize, hup: bool) {
-    use bun_io::pipe_writer::PipeWriter;
     let parent = writer.parent.expect("IOWriter writer.parent unset");
     // `parent` is the backref stashed via `set_parent` in `IOWriter::init`;
     // `writer` is a field of `*parent`, so the pointee is live. Re-enter via

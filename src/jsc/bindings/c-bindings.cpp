@@ -1008,11 +1008,6 @@ BOOL WINAPI Ctrlhandler(DWORD signal)
     return FALSE;
 }
 
-extern "C" void Bun__setCTRLHandler(BOOL add)
-{
-    SetConsoleCtrlHandler(Ctrlhandler, add);
-}
-
 // Held, never released, across ExitProcess: a WTF suspender it kills between
 // SuspendThread and ResumeThread of this thread would leave it suspended forever.
 extern "C" void Bun__lockThreadSuspensionForExit()
@@ -1169,7 +1164,7 @@ extern "C" void bun_initialize_process()
     }
 
     // add ctrl+c handler on windows
-    Bun__setCTRLHandler(1);
+    SetConsoleCtrlHandler(Ctrlhandler, TRUE);
 #endif
 
 #if OS(DARWIN)

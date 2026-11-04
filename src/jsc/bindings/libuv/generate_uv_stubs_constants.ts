@@ -42,7 +42,7 @@ export const symbols = [
   "uv_cond_wait",
   "uv_cpu_info",
   "uv_cpumask_size",
-  // Defined in uv-polyfills.c
+  // Defined in src/runtime/napi/uv.rs
   // "uv_cwd",
   // Defined in src/runtime/napi/uv.rs
   // "uv_default_loop",

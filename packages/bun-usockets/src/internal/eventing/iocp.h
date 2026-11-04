@@ -147,7 +147,6 @@ int us_internal_pipe_writev(struct us_loop_t *loop, struct us_poll_t *p, const s
 /* For any poll. The bytes of a write that would block will not be offered again. The peer gets them all the same. */
 void us_internal_pipe_disown_write(struct us_poll_t *p);
 void us_internal_pipe_shutdown(struct us_poll_t *p);
-void us_internal_pipe_shutdown_read(struct us_poll_t *p);
 /* For a poll that was started. Closing it then closes the descriptor, which closes the handle. */
 void us_internal_pipe_set_crt_descriptor(struct us_poll_t *p, int crt_descriptor);
 /* For any poll: -1 unless it is a pipe that has one. */

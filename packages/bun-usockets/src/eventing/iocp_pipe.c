@@ -56,6 +56,10 @@ enum {
 
 #define LIBUS_PIPE_INSTANCES 4
 
+/* The helper threads call the system and little else. What they would commit otherwise is what the executable asks for
+ * its main thread. */
+#define LIBUS_HELPER_STACK_COMMIT (64 * 1024)
+
 static char us_internal_pipe_nothing;
 
 struct us_internal_pipe_op_t {

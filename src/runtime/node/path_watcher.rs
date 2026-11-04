@@ -16,7 +16,7 @@
 //!     ├─ FreeBSD: one kqueue fd + one reader thread, fd → PathWatcher map
 //!     └─ Windows: one completion port + one reader thread, one directory handle per PathWatcher
 //!
-//!   PathWatcher               one per unique (realpath, recursive) — deduped
+//!   PathWatcher               one per unique (realpath, recursive) — deduped, but not on Windows: see `watch`
 //!     └─ handlers[]           the JS FSWatcher contexts sharing this watch
 //!
 //! A second `fs.watch()` on the same path returns the existing PathWatcher with a
@@ -102,6 +102,7 @@ struct Locked {
     /// Dedup map: dedup key → PathWatcher. The key is the resolved path with a one-byte
     /// suffix encoding `recursive` (so `fs.watch(p)` and `fs.watch(p, {recursive:true})`
     /// don't share — they want different OS registrations on every platform).
+    /// On Windows none is shared: the key is the watcher's address, and the map is the list of the live ones.
     watchers: StringArrayHashMap<*mut PathWatcher>,
 
     /// Platform-specific dispatch maps (inotify wd_map / kqueue entries).

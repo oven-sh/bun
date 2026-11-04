@@ -2592,15 +2592,14 @@ impl VirtualMachine {
         vm.forbid_script();
         Zig__GlobalObject__prepareForDestruction(vm.global());
         // SAFETY: fn contract.
-        let sweep = || unsafe {
+        unsafe {
             let _ = Self::stop_phase_sweep(this);
             let second = Self::stop_phase_sweep(this);
             debug_assert!(
                 second == SweepResult::Idle,
                 "a native close path registered a stoppable resource during teardown"
             );
-        };
-        sweep();
+        }
         teardown_log!("teardown: stopped");
 
         // ---- B. release ------------------------------------------------------

@@ -133,7 +133,7 @@ enum {
   POLL_TYPE_SEMI_SOCKET = 2,
   POLL_TYPE_CALLBACK = 3,
   POLL_TYPE_UDP = 4,
-  /* Windows: the us_poll_t at the start of a FilePoll (src/io). Elsewhere those are told apart by a pointer tag. */
+  /* Windows: the us_poll_t inside a FilePoll (src/io). Elsewhere those are told apart by a pointer tag. */
   POLL_TYPE_FILE_POLL = 5,
 
   /* Two last bits */

@@ -684,7 +684,6 @@ impl LineRead {
                 result.canceled = true;
                 return;
             }
-            result.asked = true;
             // A canceled read reports success and leaves the count alone.
             let mut count = DWORD::MAX;
             SetLastError(0);
@@ -704,6 +703,7 @@ impl LineRead {
             }
             if count == DWORD::MAX {
                 result.canceled = true;
+                result.asked = true;
                 return;
             }
             // Ctrl+C, Ctrl+Break and another reader that goes away end a read with nothing and this error. That is not the end of the input.
@@ -711,7 +711,6 @@ impl LineRead {
                 result.len = count as usize;
                 return;
             }
-            result.asked = false;
         }
     }
 

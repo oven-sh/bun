@@ -861,6 +861,7 @@ static void us_internal_watch_for_resume(void) {
 
 /* Loop */
 
+#define LIBUS_NS_PER_MS 1000000ULL
 #define LIBUS_100NS_PER_SECOND 10000000
 /* What the system clock advances by unless somebody asked for more: 15.625 ms. */
 #define LIBUS_CLOCK_TICK_100NS 156250

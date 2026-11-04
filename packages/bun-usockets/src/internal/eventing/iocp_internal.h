@@ -90,10 +90,6 @@ void us_internal_iocp_queue_update(struct us_internal_poll_req_t *req);
 void us_internal_iocp_queue_ready(struct us_internal_poll_req_t *req);
 int us_internal_pipe_error(struct us_poll_t *p);
 
-/* The helper threads call the system and little else. What they would commit otherwise is what the executable asks for
- * its main thread. */
-#define LIBUS_HELPER_STACK_COMMIT (64 * 1024)
-#define LIBUS_NS_PER_MS 1000000ULL
 #define LIBUS_100NS_PER_MS 10000
 
 /* The kernel accepted an operation of `req`: exactly one packet naming it will reach its on_complete. */
@@ -116,6 +112,7 @@ void us_internal_iocp_dispatch(struct us_loop_t *loop, struct us_poll_t *p, int 
 int us_internal_pipe_start(struct us_loop_t *loop, struct us_poll_t *p);
 void us_internal_pipe_update(struct us_internal_poll_req_t *req);
 void us_internal_pipe_ready(struct us_internal_poll_req_t *req);
+void us_internal_pipe_shutdown_read(struct us_poll_t *p);
 void us_internal_pipe_detach(struct us_internal_poll_req_t *req, int close_handle);
 void us_internal_pipe_abandon(struct us_internal_poll_req_t *req);
 void us_internal_pipe_destroy(struct us_internal_poll_req_t *req);

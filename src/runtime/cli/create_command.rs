@@ -355,7 +355,7 @@ impl CreateCommand {
 
         fs::FileSystem::init(None)?;
         let filesystem = fs::FileSystem::get();
-        // Process-lifetime: every mini event loop (the tasks', a Windows spawn's) keeps a pointer to it.
+        // Process-lifetime: the tasks' mini event loop keeps a pointer to it.
         let env_loader: &'static mut DotEnv::Loader = Box::leak(Box::new(DotEnv::Loader::init()));
         DotEnv::set_instance(std::ptr::from_mut::<DotEnv::Loader>(env_loader));
 

@@ -247,120 +247,172 @@ test("operands longer than the path buffers fail with ENAMETOOLONG", async () =>
   expect(exitCode).toBe(0);
 });
 
-// Runs in a child process because the cp builtin must be enabled explicitly on POSIX.
-test("copies the sources one at a time, in operand order", async () => {
-  using dir = tempDir("cp-operand-order", {
-    "fixture.ts": /* ts */ `
-      import { $ } from "bun";
-      import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+// The children force-enable the builtin, so these also run on POSIX.
+describe.concurrent("bunshell cp copies the sources one at a time, in operand order", () => {
+  // "a/x" to "f/x" and "a/d/x" to "f/d/x": each source has its own length and fill byte.
+  const names = ["a", "b", "c", "d", "e", "f"];
+  const content = (name: string) => Buffer.alloc(3000 * (names.indexOf(name) + 1), name).toString();
+  const sources = Object.fromEntries(names.map(name => [name, { x: content(name), d: { x: content(name) } }]));
+  const files = names.map(name => name + "/x");
 
-      $.nothrow();
-      const cwd = process.cwd();
+  // The second pool has no thread to spare for two commands with directory sources.
+  test.each([
+    ["the default thread pool", undefined],
+    ["a pool of 2 threads", "2"],
+  ])("Bun.$ on %s", async (_, threads) => {
+    using dir = tempDir("cp-operand-order", {
+      ...sources,
+      "dir": { "x": {} },
+      "fixture.ts": /* ts */ `
+        import { $ } from "bun";
+        import { mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 
-      // "a/x" to "f/x" and "a/d/x" to "f/d/x": each source has its own length and fill byte.
-      const names = ["a", "b", "c", "d", "e", "f"];
-      const contents = names.map((name, i) => Buffer.alloc(3000 * (i + 1), name));
-      for (const [i, name] of names.entries()) {
-        mkdirSync(name + "/d", { recursive: true });
-        writeFileSync(name + "/x", contents[i]);
-        writeFileSync(name + "/d/x", contents[i]);
-      }
-      mkdirSync("dir/x", { recursive: true });
+        $.nothrow();
+        const cwd = process.cwd();
+        const names = ${JSON.stringify(names)};
+        const contents = names.map(name => readFileSync(name + "/x"));
+        const files = names.map(name => name + "/x");
+        const dirs = names.map(name => name + "/d");
 
-      // The source a copy holds, or how it is broken.
-      function origin(path: string) {
-        const stat = statSync(path, { throwIfNoEntry: false });
-        if (!stat) return "missing";
-        if (stat.isDirectory()) return "directory";
-        const copy = readFileSync(path);
-        const from = contents.findIndex(content => content.equals(copy));
-        return from === -1 ? \`torn (\${copy.length} bytes)\` : names[from];
-      }
-
-      // Runs the command many times and returns each distinct outcome once.
-      async function outcomes(args: string[], copy: string) {
-        const seen = new Set<string>();
-        for (let i = 0; i < 20; i++) {
-          rmSync("out", { recursive: true, force: true });
-          mkdirSync("out");
-          const { exitCode, stdout, stderr } = await $\`cp \${args} out\`.quiet();
-          seen.add(
-            JSON.stringify({
-              exitCode,
-              stdout: stdout.toString().replaceAll(cwd, "<cwd>"),
-              stderr: stderr.toString().replaceAll(cwd, "<cwd>"),
-              copy: origin(copy),
-            }),
-          );
+        // The source a copy holds, or how it is broken.
+        function origin(path: string) {
+          const stat = statSync(path, { throwIfNoEntry: false });
+          if (!stat) return "missing";
+          if (stat.isDirectory()) return "directory";
+          const copy = readFileSync(path);
+          const from = contents.findIndex(content => content.equals(copy));
+          return from === -1 ? \`torn (\${copy.length} bytes)\` : names[from];
         }
-        return [...seen].map(outcome => JSON.parse(outcome));
-      }
 
-      const files = names.map(name => name + "/x");
-      const dirs = names.map(name => name + "/d");
-      console.log(
-        JSON.stringify({
-          sameName: await outcomes(files, "out/x"),
-          noClobber: await outcomes(["-n", ...files], "out/x"),
-          verbose: await outcomes(["-v", "a/x", "b/x", "c/x"], "out/x"),
-          missing: await outcomes(["a/missing", "a/x", "b/missing", "b/x", "c/missing"], "out/x"),
-          sameNameDirs: await outcomes(["-R", ...dirs], "out/d/x"),
-          fileThenDir: await outcomes(["-R", "a/x", "dir/x"], "out/x"),
-          dirThenFile: await outcomes(["-R", "dir/x", "a/x"], "out/x"),
-        }),
-      );
-    `,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "fixture.ts"],
-    env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
+        // Runs the commands many times, each time at once, and returns each distinct outcome once.
+        // Each command copies into its own directory, which is empty or has the directory \`existing\`.
+        async function outcomes(commands: { args: string[]; copy: string }[], existing = "") {
+          const seen = new Set<string>();
+          for (let i = 0; i < 20; i++) {
+            for (const out of commands.keys()) {
+              rmSync("out" + out, { recursive: true, force: true });
+              mkdirSync("out" + out + "/" + existing, { recursive: true });
+            }
+            const results = await Promise.all(
+              commands.map(async ({ args, copy }, i) => {
+                const out = "out" + i;
+                const { exitCode, stdout, stderr } = await $\`cp \${args} \${out}\`.quiet();
+                const shown = (output: Buffer) => output.toString().replaceAll(cwd, "<cwd>").replaceAll(out, "out");
+                return { exitCode, stdout: shown(stdout), stderr: shown(stderr), copy: origin(out + "/" + copy) };
+              }),
+            );
+            seen.add(JSON.stringify(results));
+          }
+          return [...seen].map(outcome => JSON.parse(outcome));
+        }
 
-  const silent = { exitCode: 0, stdout: "", stderr: "" };
-  const notFound = (path: string) => `cp: No such file or directory: ${p(path)}\n`;
-  // Every command has one outcome: a later operand of the same name replaces an earlier one.
-  expect(JSON.parse(stdout)).toEqual({
-    sameName: [{ ...silent, copy: "f" }],
-    noClobber: [{ ...silent, copy: "a" }],
-    verbose: [
-      {
-        ...silent,
-        stdout: p("<cwd>/a/x -> <cwd>/out/x\n<cwd>/b/x -> <cwd>/out/x\n<cwd>/c/x -> <cwd>/out/x\n"),
-        copy: "c",
-      },
-    ],
-    missing: [
-      {
-        exitCode: 1,
-        stdout: "",
-        stderr: notFound("<cwd>/a/missing") + notFound("<cwd>/b/missing") + notFound("<cwd>/c/missing"),
-        copy: "b",
-      },
-    ],
-    sameNameDirs: [{ ...silent, copy: "f" }],
-    fileThenDir: [
-      {
-        exitCode: 1,
-        stdout: "",
-        stderr: `cp: cannot overwrite non-directory out${sep}x with directory dir/x\n`,
-        copy: "a",
-      },
-    ],
-    dirThenFile: [
-      {
-        exitCode: 1,
-        stdout: "",
-        stderr: `cp: cannot overwrite directory out${sep}x with non-directory a/x\n`,
-        copy: "directory",
-      },
-    ],
+        console.log(
+          JSON.stringify({
+            sameName: await outcomes([{ args: files, copy: "x" }]),
+            noClobber: await outcomes([{ args: ["-n", ...files], copy: "x" }]),
+            verbose: await outcomes([{ args: ["-v", "a/x", "b/x", "c/x"], copy: "x" }]),
+            missing: await outcomes([{ args: ["a/missing", "a/x", "b/missing", "b/x", "c/missing"], copy: "x" }]),
+            sameNameDirs: await outcomes([{ args: ["-R", ...dirs], copy: "d/x" }]),
+            // The target has "d" already, so that macOS does not clone "a/d" in one step, without "-v" lines.
+            verboseDirs: await outcomes([{ args: ["-R", "-v", "a/d", "a/x", "b/d", "b/x"], copy: "d/x" }], "d"),
+            fileThenDir: await outcomes([{ args: ["-R", "a/x", "dir/x"], copy: "x" }]),
+            dirThenFile: await outcomes([{ args: ["-R", "dir/x", "a/x"], copy: "x" }]),
+            twoAtOnce: await outcomes([
+              { args: ["-R", ...dirs, "a/x"], copy: "d/x" },
+              { args: ["-R", ...dirs, "a/x"], copy: "x" },
+            ]),
+          }),
+        );
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts"],
+      env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1", UV_THREADPOOL_SIZE: threads },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+
+    const silent = { exitCode: 0, stdout: "", stderr: "" };
+    const copied = (...pairs: [string, string][]) =>
+      pairs.map(([from, to]) => p(`<cwd>/${from} -> <cwd>/${to}\n`)).join("");
+    const notFound = (...paths: string[]) =>
+      paths.map(path => `cp: No such file or directory: ${p("<cwd>/" + path)}\n`).join("");
+    // Every command has one outcome: a later operand of the same name replaces an earlier one.
+    expect(JSON.parse(stdout)).toEqual({
+      sameName: [[{ ...silent, copy: "f" }]],
+      noClobber: [[{ ...silent, copy: "a" }]],
+      verbose: [[{ ...silent, stdout: copied(["a/x", "out/x"], ["b/x", "out/x"], ["c/x", "out/x"]), copy: "c" }]],
+      missing: [[{ exitCode: 1, stdout: "", stderr: notFound("a/missing", "b/missing", "c/missing"), copy: "b" }]],
+      sameNameDirs: [[{ ...silent, copy: "f" }]],
+      verboseDirs: [
+        [
+          {
+            ...silent,
+            stdout: copied(
+              ["a/d", "out/d"],
+              ["a/d/x", "out/d/x"],
+              ["a/x", "out/x"],
+              ["b/d", "out/d"],
+              ["b/d/x", "out/d/x"],
+              ["b/x", "out/x"],
+            ),
+            copy: "b",
+          },
+        ],
+      ],
+      fileThenDir: [
+        [
+          {
+            exitCode: 1,
+            stdout: "",
+            stderr: `cp: cannot overwrite non-directory out${sep}x with directory dir/x\n`,
+            copy: "a",
+          },
+        ],
+      ],
+      dirThenFile: [
+        [
+          {
+            exitCode: 1,
+            stdout: "",
+            stderr: `cp: cannot overwrite directory out${sep}x with non-directory a/x\n`,
+            copy: "directory",
+          },
+        ],
+      ],
+      twoAtOnce: [
+        [
+          { ...silent, copy: "f" },
+          { ...silent, copy: "a" },
+        ],
+      ],
+    });
+    expect(exitCode).toBe(0);
   });
-  expect(exitCode).toBe(0);
+
+  // `bun exec` runs the script without a JS event loop.
+  test("bun exec", async () => {
+    const outs = Array.from({ length: 20 }, (_, i) => "out" + i);
+    using dir = tempDir("cp-operand-order-exec", { ...sources, ...Object.fromEntries(outs.map(out => [out, {}])) });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "exec", outs.map(out => `cp ${files.join(" ")} ${out}`).join("\n")],
+      env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "", stderr: "" });
+
+    const copies = outs.map(out => readFileSync(join(String(dir), out, "x"), "utf8"));
+    expect(copies.map(copy => names.find(name => content(name) === copy) ?? `torn (${copy.length} bytes)`)).toEqual(
+      outs.map(() => "f"),
+    );
+    expect(exitCode).toBe(0);
+  });
 });
 
 // The child force-enables the builtin, so these also run on POSIX.

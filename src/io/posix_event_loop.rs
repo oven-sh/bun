@@ -627,7 +627,8 @@ impl FilePoll {
             };
 
             // SAFETY: `watcher_fd` is the epoll instance of `loop_`, whose dispatch decodes a
-            // `Pollable`. `deinit` unregisters `self` before its slot is reused.
+            // `Pollable`. Before the slot of `self` is reused, `deinit` removes the entry. Or it
+            // leaves one that `EPOLLONESHOT` disarmed when it fired, which is not reported again.
             let ctl = unsafe { linux::epoll_ctl(watcher_fd, op, fd.native(), Some(&event)) };
             self.flags.insert(Flags::WasEverRegistered);
             if let Some(errno) = errno_sys(ctl, sys::Tag::epoll_ctl) {

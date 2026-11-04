@@ -1,0 +1,19 @@
+status: 0
+script: 465c172ca0186369
+---
+-- nothing done about signals
+flock | finalized while its maker waited: True | then the call returned None | signals heard of: []
+open | finalized while its maker waited: True | then the call returned None | signals heard of: []
+sleep | finalized while its maker waited: True | then the call returned None | signals heard of: []
+-- a handler for every signal
+flock | finalized while its maker waited: True | then the call returned None | signals heard of: []
+open | finalized while its maker waited: True | then the call returned None | signals heard of: []
+sleep | finalized while its maker waited: True | then the call returned None | signals heard of: []
+-- system calls go on after a signal
+flock | finalized while its maker waited: True | then the call returned None | signals heard of: []
+open | finalized while its maker waited: True | then the call returned None | signals heard of: []
+sleep | finalized while its maker waited: True | then the call returned None | signals heard of: []
+-- every signal blocked
+flock | finalized while its maker waited: True | then the call returned None | signals heard of: []
+open | finalized while its maker waited: True | then the call returned None | signals heard of: []
+sleep | finalized while its maker waited: True | then the call returned None | signals heard of: []

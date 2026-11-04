@@ -463,6 +463,10 @@ declare module "bun" {
   }
 
   interface S3Stats {
+    /**
+     * The number of bytes that the object holds in S3. For an object that
+     * was stored with a `Content-Encoding`, those are the encoded bytes.
+     */
     size: number;
     lastModified: Date;
     etag: string;
@@ -503,6 +507,12 @@ declare module "bun" {
     /**
      * Creates a new S3File representing a slice of the original file.
      * Uses HTTP Range headers for efficient partial downloads.
+     *
+     * The offsets count the bytes that the object holds in S3. When a slice
+     * holds only a part of an object that has a `Content-Encoding`, Bun
+     * returns that part of the stored bytes and does not decompress it.
+     * A slice that covers the whole object is decompressed, like a read of
+     * the file.
      *
      * @param begin Starting byte offset
      * @param end Ending byte offset (exclusive)

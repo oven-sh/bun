@@ -716,6 +716,7 @@ pub(crate) fn execute_simple_s3_request(
             // SAFETY: `task_ptr` outlives the request; the store is only read
             // through these pointers by the HTTP client.
             signals: Some(unsafe { (*task_ptr).signal_store.to() }),
+            keep_partial_content_encoded: options.range.is_some(),
             ..Default::default()
         },
     );

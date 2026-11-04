@@ -619,6 +619,14 @@ const text = await partial.text();
 
 Internally, Bun uses the HTTP `Range` header to request only the bytes you want. This `slice` method is the same as [`Blob.prototype.slice`](https://developer.mozilla.org/en-US/docs/Web/API/Blob/slice).
 
+The offsets count the bytes that the object holds in S3. `stat().size` is the number of those bytes.
+
+S3 stores the `Content-Encoding` of an upload as metadata of the object. When a slice holds only a part of such an object, Bun returns that part of the stored bytes and does not decompress it. A slice that covers the whole object is decompressed, like a read of the file. To read the start of the decompressed data, read `s3file.stream()` and stop when you have enough.
+
+Bun knows a part by the `Content-Range` and the `Content-Length` of the response. When a proxy in front of the endpoint removes the `Content-Length`, Bun decompresses the part. That read rejects when the part is not a complete compressed stream.
+
+`stat()` does not report the `Content-Encoding`. To read it, send a `HEAD` request with `fetch("s3://my-bucket/my-file.txt", { method: "HEAD" })` and read the `content-encoding` header.
+
 ### Deleting files from S3
 
 To delete a file from S3, use the `delete` method.
@@ -875,6 +883,8 @@ const response = await fetch("s3://my-bucket/my-file.txt", {
   },
 });
 ```
+
+`fetch()` decompresses a response that has a `Content-Encoding`, including a range. The read of the body rejects when the range is not a complete compressed stream. To read a part of the object as it is stored, use `slice`.
 
 ### UTF-8, UTF-16, and BOM (byte order mark)
 

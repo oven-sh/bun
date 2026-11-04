@@ -1244,6 +1244,7 @@ fn download_stream(
             signals: Some(task.signals),
             reject_unauthorized: Some(reject_unauthorized),
             tls_props: crate::socket::http_client_defaults(vm),
+            keep_partial_content_encoded: range.is_some(),
             ..Default::default()
         },
     ));

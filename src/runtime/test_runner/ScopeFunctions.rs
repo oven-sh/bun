@@ -321,7 +321,7 @@ fn vitest_template_rows(global: &JSGlobalObject, strings: JSValue, values: &[JSV
     table_rows(global, &headings, values).map(Some)
 }
 
-/// `table.every(Array.isArray)`
+/// `table.every(Array.isArray)`, but a hole is a row, as it is for the loop that registers the rows.
 fn every_row_is_array(global: &JSGlobalObject, table: JSValue) -> JsResult<bool> {
     let mut rows = table.array_iterator(global)?;
     while let Some(row) = rows.next()? {

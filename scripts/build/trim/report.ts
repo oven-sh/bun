@@ -418,7 +418,7 @@ function describeGuardWithoutReference(
     `an entry point of ${printer.featureName(failure.feature)}, so nothing can be cut. Two causes are usual. ` +
     `The compiler inlined the entry point: it must stay out of line (#[inline(never)], NEVER_INLINE). ` +
     `Or the entry point has no side effect in this build and the compiler removed the call: ` +
-    `see bun_removable_features::keep_call_of_entry_point()`;
+    `see keep_call_of_entry_point() in scripts/build/CLAUDE.md`;
   const references = failure.entry === undefined ? printer.successorsOf(failure.guard) : [];
   if (references.length === 0) return text;
   const listed = references.slice(0, maxListedReferences).map(node => printer.describe(node));

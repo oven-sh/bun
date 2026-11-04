@@ -636,7 +636,7 @@ describe("failure reports and review files", () => {
       ", so nothing can be cut. Two causes are usual. " +
       "The compiler inlined the entry point: it must stay out of line (#[inline(never)], NEVER_INLINE). " +
       "Or the entry point has no side effect in this build and the compiler removed the call: " +
-      "see bun_removable_features::keep_call_of_entry_point()";
+      "see keep_call_of_entry_point() in scripts/build/CLAUDE.md";
     expect(describeFailures([guardWithoutReference], contextOf(guarded))).toBe(
       "GuardWithoutReference: the guard in guardA (toy.o, 8192 bytes) has no reference to " +
         "entryA (toy.o, 8192 bytes), an entry point of A" +

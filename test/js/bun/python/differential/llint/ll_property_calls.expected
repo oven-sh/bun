@@ -1,0 +1,230 @@
+status: 0
+script: 791f46af9ca0b159
+---
+plain -> ('A.p', 1)
+plain -> ('A.p', 1)
+plain -> ('A.p', 1)
+another object -> ('A.p', 2)
+another object -> ('A.p', 2)
+another object -> ('A.p', 2)
+through the class -> 'property'
+getter: lambda -> 'lambda'
+getter: lambda -> 'lambda'
+getter: lambda -> 'lambda'
+getter: defaults -> (1, 2)
+getter: defaults -> (1, 2)
+getter: defaults -> (1, 2)
+getter: three defaults -> (1, 2, 3)
+getter: three defaults -> (1, 2, 3)
+getter: three defaults -> (1, 2, 3)
+getter: many defaults -> (1, 8)
+getter: many defaults -> (1, 8)
+getter: many defaults -> (1, 8)
+getter: star -> 1
+getter: star -> 1
+getter: star -> 1
+getter: star after self -> ()
+getter: star after self -> ()
+getter: star after self -> ()
+getter: keywords -> {}
+getter: keywords -> {}
+getter: keywords -> {}
+getter: keyword only -> 5
+getter: keyword only -> 5
+getter: keyword only -> 5
+getter: keyword only without a default -> "TypeError:kinds.<locals>.<lambda>() missing 1 required keyword-only argument: 'k'"
+getter: keyword only without a default -> "TypeError:kinds.<locals>.<lambda>() missing 1 required keyword-only argument: 'k'"
+getter: keyword only without a default -> "TypeError:kinds.<locals>.<lambda>() missing 1 required keyword-only argument: 'k'"
+getter: no parameter -> 'TypeError:kinds.<locals>.<lambda>() takes 0 positional arguments but 1 was given'
+getter: no parameter -> 'TypeError:kinds.<locals>.<lambda>() takes 0 positional arguments but 1 was given'
+getter: no parameter -> 'TypeError:kinds.<locals>.<lambda>() takes 0 positional arguments but 1 was given'
+getter: two parameters -> "TypeError:kinds.<locals>.<lambda>() missing 1 required positional argument: 'other'"
+getter: two parameters -> "TypeError:kinds.<locals>.<lambda>() missing 1 required positional argument: 'other'"
+getter: two parameters -> "TypeError:kinds.<locals>.<lambda>() missing 1 required positional argument: 'other'"
+getter: positional only -> 'positional only'
+getter: positional only -> 'positional only'
+getter: positional only -> 'positional only'
+getter: builtin -> "TypeError:cannot create 'builtin_function_or_method' instances"
+getter: builtin -> "TypeError:cannot create 'builtin_function_or_method' instances"
+getter: builtin -> "TypeError:cannot create 'builtin_function_or_method' instances"
+getter: len -> 3
+getter: len -> 3
+getter: len -> 3
+getter: type -> 'K'
+getter: type -> 'K'
+getter: type -> 'K'
+getter: repr -> '<__main__.K object'
+getter: repr -> '<__main__.K object'
+getter: repr -> '<__main__.K object'
+getter: callable object -> ('called', 1)
+getter: callable object -> ('called', 1)
+getter: callable object -> ('called', 1)
+getter: partial -> ('partial', 1)
+getter: partial -> ('partial', 1)
+getter: partial -> ('partial', 1)
+getter: bound method -> ('called', 1)
+getter: bound method -> ('called', 1)
+getter: bound method -> ('called', 1)
+getter: attrgetter -> 7
+getter: attrgetter -> 7
+getter: attrgetter -> 7
+getter: none -> "AttributeError:property 'p' of 'K' object has no getter"
+getter: none -> "AttributeError:property 'p' of 'K' object has no getter"
+getter: none -> "AttributeError:property 'p' of 'K' object has no getter"
+getter: not callable -> "TypeError:'int' object is not callable"
+getter: not callable -> "TypeError:'int' object is not callable"
+getter: not callable -> "TypeError:'int' object is not callable"
+getter: staticmethod -> 'static'
+getter: staticmethod -> 'static'
+getter: staticmethod -> 'static'
+getter: classmethod -> "TypeError:'classmethod' object is not callable"
+getter: classmethod -> "TypeError:'classmethod' object is not callable"
+getter: classmethod -> "TypeError:'classmethod' object is not callable"
+getter: generator -> [7]
+getter: generator -> [7]
+getter: generator -> [7]
+getter: coroutine -> 'coroutine'
+getter: coroutine -> 'coroutine'
+getter: coroutine -> 'coroutine'
+getter: closure -> ('closure', 7)
+getter: closure -> ('closure', 7)
+getter: closure -> ('closure', 7)
+getter: deletes self -> (7, ['n'])
+getter: deletes self -> (7, ['n'])
+getter: deletes self -> (7, ['n'])
+several classes -> [('A.p', 1), ('A.p', 1), ('C.p', 1), 'plain', 'of the instance', 'slot', ('A.p', 3), ('C.p', 4)]
+several classes -> [('A.p', 1), ('A.p', 1), ('C.p', 1), 'plain', 'of the instance', 'slot', ('A.p', 3), ('C.p', 4)]
+several classes -> [('A.p', 1), ('A.p', 1), ('C.p', 1), 'plain', 'of the instance', 'slot', ('A.p', 3), ('C.p', 4)]
+shapes -> [('A.p', 1), ('A.p', 2), ('A.p', 3), ('A.p', 4), ('A.p', 5), ('A.p', 6), ('A.p', 7)]
+shapes and others -> [('A.p', 1), 'AttributeError', ('A.p', 2), 'AttributeError', ('A.p', 3), 'AttributeError', ('A.p', 4), 'AttributeError', ('A.p', 5), 'AttributeError', ('A.p', 6), 'AttributeError', ('A.p', 7), 'AttributeError', ('A.p', 1), 'AttributeError', ('A.p', 2), 'AttributeError', ('A.p', 3), 'AttributeError', ('A.p', 4), 'AttributeError', ('A.p', 5), 'AttributeError', ('A.p', 6), 'AttributeError', ('A.p', 7), 'AttributeError', ('A.p', 1), 'AttributeError', ('A.p', 2), 'property', ('A.p', 3), 'AttributeError', ('A.p', 4), 'AttributeError', ('A.p', 5), 'AttributeError', ('A.p', 6), 'AttributeError', ('A.p', 7), 'AttributeError', ('A.p', 1), 'AttributeError', ('A.p', 2), 'AttributeError', ('A.p', 3), 'AttributeError', ('A.p', 4), 'AttributeError', ('A.p', 5), 'AttributeError']
+shapes -> [('A.p', 1), ('A.p', 2), ('A.p', 3), ('A.p', 4), ('A.p', 5), ('A.p', 6), ('A.p', 7)]
+shapes and others -> [('A.p', 1), 'AttributeError', ('A.p', 2), 'AttributeError', ('A.p', 3), 'AttributeError', ('A.p', 4), 'AttributeError', ('A.p', 5), 'AttributeError', ('A.p', 6), 'AttributeError', ('A.p', 7), 'AttributeError', ('A.p', 1), 'AttributeError', ('A.p', 2), 'AttributeError', ('A.p', 3), 'AttributeError', ('A.p', 4), 'AttributeError', ('A.p', 5), 'AttributeError', ('A.p', 6), 'AttributeError', ('A.p', 7), 'AttributeError', ('A.p', 1), 'AttributeError', ('A.p', 2), 'property', ('A.p', 3), 'AttributeError', ('A.p', 4), 'AttributeError', ('A.p', 5), 'AttributeError', ('A.p', 6), 'AttributeError', ('A.p', 7), 'AttributeError', ('A.p', 1), 'AttributeError', ('A.p', 2), 'AttributeError', ('A.p', 3), 'AttributeError', ('A.p', 4), 'AttributeError', ('A.p', 5), 'AttributeError']
+shapes -> [('A.p', 1), ('A.p', 2), ('A.p', 3), ('A.p', 4), ('A.p', 5), ('A.p', 6), ('A.p', 7)]
+shapes and others -> [('A.p', 1), 'AttributeError', ('A.p', 2), 'AttributeError', ('A.p', 3), 'AttributeError', ('A.p', 4), 'AttributeError', ('A.p', 5), 'AttributeError', ('A.p', 6), 'AttributeError', ('A.p', 7), 'AttributeError', ('A.p', 1), 'AttributeError', ('A.p', 2), 'AttributeError', ('A.p', 3), 'AttributeError', ('A.p', 4), 'AttributeError', ('A.p', 5), 'AttributeError', ('A.p', 6), 'AttributeError', ('A.p', 7), 'AttributeError', ('A.p', 1), 'AttributeError', ('A.p', 2), 'property', ('A.p', 3), 'AttributeError', ('A.p', 4), 'AttributeError', ('A.p', 5), 'AttributeError', ('A.p', 6), 'AttributeError', ('A.p', 7), 'AttributeError', ('A.p', 1), 'AttributeError', ('A.p', 2), 'AttributeError', ('A.p', 3), 'AttributeError', ('A.p', 4), 'AttributeError', ('A.p', 5), 'AttributeError']
+derived from built-in types -> [('A.p', 1), ('Exc.p', (1,)), ('Lst.p', 1), ('Int.p', 2), ('Str.p', 'A'), ('Tup.p', 1), ('Dct.p', 1), ('Exc.p', (2,)), ('Lst.p', 0), ('Int.p', 3), ('Str.p', 'B'), ('Tup.p', 0), ('Dct.p', 0)]
+derived from built-in types -> [('A.p', 1), ('Exc.p', (1,)), ('Lst.p', 1), ('Int.p', 2), ('Str.p', 'A'), ('Tup.p', 1), ('Dct.p', 1), ('Exc.p', (2,)), ('Lst.p', 0), ('Int.p', 3), ('Str.p', 'B'), ('Tup.p', 0), ('Dct.p', 0)]
+derived from built-in types -> [('A.p', 1), ('Exc.p', (1,)), ('Lst.p', 1), ('Int.p', 2), ('Str.p', 'A'), ('Tup.p', 1), ('Dct.p', 1), ('Exc.p', (2,)), ('Lst.p', 0), ('Int.p', 3), ('Str.p', 'B'), ('Tup.p', 0), ('Dct.p', 0)]
+one class at a site: Exc -> [('Exc.p', (1,)), ('Exc.p', (1,)), ('Exc.p', (1,))]
+one class at a site: Exc -> [('Exc.p', (1,)), ('Exc.p', (1,)), ('Exc.p', (1,))]
+one class at a site: Exc -> [('Exc.p', (1,)), ('Exc.p', (1,)), ('Exc.p', (1,))]
+one class at a site: Lst -> [('Lst.p', 1), ('Lst.p', 1), ('Lst.p', 1)]
+one class at a site: Lst -> [('Lst.p', 1), ('Lst.p', 1), ('Lst.p', 1)]
+one class at a site: Lst -> [('Lst.p', 1), ('Lst.p', 1), ('Lst.p', 1)]
+one class at a site: Int -> [('Int.p', 2), ('Int.p', 2), ('Int.p', 2)]
+one class at a site: Int -> [('Int.p', 2), ('Int.p', 2), ('Int.p', 2)]
+one class at a site: Int -> [('Int.p', 2), ('Int.p', 2), ('Int.p', 2)]
+one class at a site: Str -> [('Str.p', 'A'), ('Str.p', 'A'), ('Str.p', 'A')]
+one class at a site: Str -> [('Str.p', 'A'), ('Str.p', 'A'), ('Str.p', 'A')]
+one class at a site: Str -> [('Str.p', 'A'), ('Str.p', 'A'), ('Str.p', 'A')]
+one class at a site: Tup -> [('Tup.p', 1), ('Tup.p', 1), ('Tup.p', 1)]
+one class at a site: Tup -> [('Tup.p', 1), ('Tup.p', 1), ('Tup.p', 1)]
+one class at a site: Tup -> [('Tup.p', 1), ('Tup.p', 1), ('Tup.p', 1)]
+one class at a site: Dct -> [('Dct.p', 0), ('Dct.p', 0), ('Dct.p', 0)]
+one class at a site: Dct -> [('Dct.p', 0), ('Dct.p', 0), ('Dct.p', 0)]
+one class at a site: Dct -> [('Dct.p', 0), ('Dct.p', 0), ('Dct.p', 0)]
+shadowed -> ('A.p', 1)
+shadowed -> ('A.p', 1)
+shadowed -> ('A.p', 1)
+changes -> ['first', 'first', 'second', 'second', 'plain', 'plain', 'third', 'third', 'initialised again', 'initialised again', 9, 9, "property of 'changes.<locals>.X' object has no getter", 'and again', 'and again', "'X' object has no attribute 'p'", 'of the instance', 'of the instance', 'fourth', 'fourth', 'of another class', 'of another class']
+changes -> ['first', 'first', 'second', 'second', 'plain', 'plain', 'third', 'third', 'initialised again', 'initialised again', 9, 9, "property of 'changes.<locals>.X' object has no getter", 'and again', 'and again', "'X' object has no attribute 'p'", 'of the instance', 'of the instance', 'fourth', 'fourth', 'of another class', 'of another class']
+changes -> ['first', 'first', 'second', 'second', 'plain', 'plain', 'third', 'third', 'initialised again', 'initialised again', 9, 9, "property of 'changes.<locals>.X' object has no getter", 'and again', 'and again', "'X' object has no attribute 'p'", 'of the instance', 'of the instance', 'fourth', 'fourth', 'of another class', 'of another class']
+changes in a base -> ['base', 'base', 'new in base', 'new in base', 'derived', 'derived', 'new in base', 'new in base', ('A.p', 5), ('A.p', 5)]
+changes in a base -> ['base', 'base', 'new in base', 'new in base', 'derived', 'derived', 'new in base', 'new in base', ('A.p', 5), ('A.p', 5)]
+changes in a base -> ['base', 'base', 'new in base', 'new in base', 'derived', 'derived', 'new in base', 'new in base', ('A.p', 5), ('A.p', 5)]
+the getter changes the class -> ['original', 'replaced', 'replaced']
+the getter changes the class -> ['original', 'replaced', 'replaced']
+the getter changes the class -> ['original', 'replaced', 'replaced']
+raising -> ['AttributeError:from the getter', 'AttributeError:from the getter', '__getattr__(p)', '__getattr__(p)', 'AttributeError:from the getter', 'AttributeError:from the getter', 'default', False]
+raising -> ['AttributeError:from the getter', 'AttributeError:from the getter', '__getattr__(p)', '__getattr__(p)', 'AttributeError:from the getter', 'AttributeError:from the getter', 'default', False]
+raising -> ['AttributeError:from the getter', 'AttributeError:from the getter', '__getattr__(p)', '__getattr__(p)', 'AttributeError:from the getter', 'AttributeError:from the getter', 'default', False]
+with __getattr__ -> ['works', 'works', '__getattr__(p)', '__getattr__(p)', 'works']
+with __getattr__ -> ['works', 'works', '__getattr__(p)', '__getattr__(p)', 'works']
+with __getattr__ -> ['works', 'works', '__getattr__(p)', '__getattr__(p)', 'works']
+inherits __getattr__ -> ['works', None, '__getattr__(p)']
+inherits __getattr__ -> ['works', None, '__getattr__(p)']
+inherits __getattr__ -> ['works', None, '__getattr__(p)']
+with __getattribute__ -> '__getattribute__(p)'
+with __getattribute__ -> '__getattribute__(p)'
+with __getattribute__ -> '__getattribute__(p)'
+another error -> "KeyError:'k'"
+another error -> "KeyError:'k'"
+another error -> "KeyError:'k'"
+descriptor of G -> 'Sub'
+descriptor of G -> 'Sub'
+descriptor of G -> 'Sub'
+descriptor of H -> ('SubWithGet', 'inner')
+descriptor of H -> ('SubWithGet', 'inner')
+descriptor of H -> ('SubWithGet', 'inner')
+descriptor of I -> 'Data.__get__'
+descriptor of I -> 'Data.__get__'
+descriptor of I -> 'Data.__get__'
+descriptor of J -> 'cached'
+descriptor of J -> 'cached'
+descriptor of J -> 'cached'
+computed once -> ['computed']
+a subclass gets a __get__ -> ['before', 'before', 'after', 'after']
+a subclass gets a __get__ -> ['before', 'before', 'after', 'after']
+a subclass gets a __get__ -> ['before', 'before', 'after', 'after']
+metaclass -> 'of the metaclass: WithMeta'
+metaclass -> 'of the metaclass: WithMeta'
+metaclass -> 'of the metaclass: WithMeta'
+metaclass, instance -> "AttributeError:'WithMeta' object has no attribute 'p'"
+uses -> ([1, [1, 2, 3], ('called', (1, 2)), ('called', (3,)), 3, 6, "'_w'", "property 'p' of 'L' object has no setter"], [6, 2, 3, 4], 5)
+uses -> ([1, [1, 2, 3], ('called', (1, 2)), ('called', (3,)), 3, 6, "'_w'", "property 'p' of 'L' object has no setter"], [6, 2, 3, 4], 5)
+uses -> ([1, [1, 2, 3], ('called', (1, 2)), ('called', (3,)), 3, 6, "'_w'", "property 'p' of 'L' object has no setter"], [6, 2, 3, 4], 5)
+frames -> ('p', 'caller', 2, 5, ['x'])
+frames -> ('p', 'caller', 2, 5, ['x'])
+frames -> ('p', 'caller', 2, 5, ['x'])
+stack -> ['rec', '<lambda>', 's']
+stack -> ['rec', '<lambda>', 's']
+stack -> ['rec', '<lambda>', 's']
+traceback -> [('tb', -2, 'try: f()'), ('<lambda>', 7, 'rec("traceback", lambda: tb(lambda: raises(Looks())))'), ('raises', 1, 'def raises(x): return x.r'), ('r', -13, 'def r(self): return self.q'), ('q', -15, 'def q(self): raise ValueError("from q")')]
+finally
+caught -> 'caught from q'
+traceback -> [('tb', -2, 'try: f()'), ('<lambda>', 7, 'rec("traceback", lambda: tb(lambda: raises(Looks())))'), ('raises', 1, 'def raises(x): return x.r'), ('r', -13, 'def r(self): return self.q'), ('q', -15, 'def q(self): raise ValueError("from q")')]
+finally
+caught -> 'caught from q'
+traceback -> [('tb', -2, 'try: f()'), ('<lambda>', 7, 'rec("traceback", lambda: tb(lambda: raises(Looks())))'), ('raises', 1, 'def raises(x): return x.r'), ('r', -13, 'def r(self): return self.q'), ('q', -15, 'def q(self): raise ValueError("from q")')]
+finally
+caught -> 'caught from q'
+aliases -> (V(4), (V(5), V(101)), [V(5), V(101)], {'k': V(5)}, 7)
+aliases -> (V(4), (V(5), V(101)), [V(5), V(101)], {'k': V(5)}, 7)
+aliases -> (V(4), (V(5), V(101)), [V(5), V(101)], {'k': V(5)}, 7)
+generator -> [V(2), V(11), V(21), V(31), V(3), ('returned', None)]
+generator -> [V(2), V(11), V(21), V(31), V(3), ('returned', None)]
+generator -> [V(2), V(11), V(21), V(31), V(3), ('returned', None)]
+coroutine -> V(2)
+class body -> V(2)
+module -> V(2)
+alive -> ([True], [False])
+alive -> ([True], [False])
+alive -> ([True], [False])
+alive, the getter lets go -> ([True], [False])
+alive, the getter lets go -> ([True], [False])
+alive, the getter lets go -> ([True], [False])
+endless -> 'RecursionError:maximum recursion depth exceeded'
+deep -> 500
+how deep -> True
+wide 100 -> (V(3), 99)
+wide 100 -> (V(3), 99)
+wide 130 -> (V(3), 129)
+wide 130 -> (V(3), 129)
+wide 250 -> (V(3), 249)
+wide 250 -> (V(3), 249)
+wide 300 -> (V(3), 299)
+wide 300 -> (V(3), 299)
+wide 40000 -> (V(3), 39999)
+wide 40000 -> (V(3), 39999)
+settrace -> [('call', 'body', 0), ('line', 'body', 1), ('call', 'p', 0), ('line', 'p', 2), ('line', 'p', 3), ('return', 'p', 3), ('line', 'body', 2), ('call', 'p', 0), ('line', 'p', 2), ('line', 'p', 3), ('return', 'p', 3), ('line', 'body', 3), ('return', 'body', 3)]
+settrace -> [('call', 'body', 0), ('line', 'body', 1), ('call', 'p', 0), ('line', 'p', 2), ('line', 'p', 3), ('return', 'p', 3), ('line', 'body', 2), ('call', 'p', 0), ('line', 'p', 2), ('line', 'p', 3), ('return', 'p', 3), ('line', 'body', 3), ('return', 'body', 3)]
+setprofile -> [('call', 'body'), ('call', 'p'), ('return', 'p'), ('call', 'p'), ('return', 'p'), ('return', 'body')]
+setprofile -> [('call', 'body'), ('call', 'p'), ('return', 'p'), ('call', 'p'), ('return', 'p'), ('return', 'body')]
+monitoring -> (2, [('PY_START', 'body'), ('LINE', 'body'), ('PY_START', 'p'), ('LINE', 'p'), ('LINE', 'p'), ('PY_RETURN', 'p'), ('LINE', 'body'), ('PY_START', 'p'), ('LINE', 'p'), ('LINE', 'p'), ('PY_RETURN', 'p'), ('LINE', 'body'), ('PY_RETURN', 'body')])
+monitoring -> (2, [('PY_START', 'body'), ('LINE', 'body'), ('PY_START', 'p'), ('LINE', 'p'), ('LINE', 'p'), ('PY_RETURN', 'p'), ('LINE', 'body'), ('PY_START', 'p'), ('LINE', 'p'), ('LINE', 'p'), ('PY_RETURN', 'p'), ('LINE', 'body'), ('PY_RETURN', 'body')])
+afterwards -> 2
+errors of getters -> [[None, None, None, None, None, None, None, None], [None, None, None, None, None, None, None, None], [('AttributeError', 'one', True, 'boom'), ('AttributeError', 'default', True, 'boom'), ('AttributeError', 'star', True, 'boom'), ('AttributeError', 'keyword_only', True, 'boom'), ('AttributeError', 'other', False, 'boom'), ('Derived', 'derived', True, 'boom'), ('KeyError', "'boom'"), ('AttributeError', 'changes', True, 'boom')], [('AttributeError', 'one', True, 'boom'), ('AttributeError', 'default', True, 'boom'), ('AttributeError', 'star', True, 'boom'), ('AttributeError', 'keyword_only', True, 'boom'), ('AttributeError', 'other', False, 'boom'), ('Derived', 'derived', True, 'boom'), ('KeyError', "'boom'"), ('AttributeError', 'changes', True, 'boom')], [('one', True), ('default', True), ('star', True), ('keyword_only', True), ('other', False), ('derived', True), ('changes', True)]]
+operands while getters run -> [[False, False, False, False, False, False], True, [False, False, False, False, False, False], True, [False, False, False, False, False, False], True]
+after an exception -> [[False], [False], [False], [False], [False], [False], [False], [False], [False]]
+the result while getters run -> [[True], (False, [False]), [True], (False, [False]), [True], (False, [False])]
+buffers while getters run -> [('BufferError', 'BufferError', 'BufferError'), ('BufferError', 'BufferError', 'BufferError'), ('BufferError', 'BufferError', 'BufferError'), ('BufferError', 'BufferError', 'BufferError')]
+226

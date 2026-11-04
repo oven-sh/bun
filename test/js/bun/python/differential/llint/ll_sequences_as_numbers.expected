@@ -1,0 +1,2765 @@
+status: 0
+script: c18ec1a678386879
+---
+tuple + R = R.__radd__
+tuple * R = R.__rmul__
+R * tuple ! TypeError can't multiply sequence by non-int of type 'R'
+R + tuple ! TypeError unsupported operand type(s) for +: 'R' and 'tuple'
+tuple + T0 = ()
+tuple * T0 ! TypeError can't multiply sequence by non-int of type 'T0'
+T0 * tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+T0 + tuple = ()
+tuple + T1 = T1.__radd__
+tuple * T1 = T1.__rmul__
+T1 * tuple ! TypeError 'tuple' object cannot be interpreted as an integer
+T1 + tuple = ()
+tuple + T5 = ()
+tuple * T5 ! TypeError 'tuple' object cannot be interpreted as an integer
+T5 * tuple = ('T5.__mul__', ())
+T5 + tuple = ('T5.__add__', ())
+tuple + L1 = L1.__radd__
+tuple * L1 = L1.__rmul__
+L1 * tuple ! TypeError 'tuple' object cannot be interpreted as an integer
+L1 + tuple ! TypeError can only concatenate list (not "tuple") to list
+tuple + S1 = S1.__radd__
+tuple * S1 = S1.__rmul__
+S1 * tuple ! TypeError 'tuple' object cannot be interpreted as an integer
+S1 + tuple ! TypeError can only concatenate str (not "tuple") to str
+tuple + int ! TypeError can only concatenate tuple (not "int") to tuple
+tuple * int = ()
+int * tuple = ()
+int + tuple ! TypeError unsupported operand type(s) for +: 'int' and 'tuple'
+tuple + bool ! TypeError can only concatenate tuple (not "bool") to tuple
+tuple * bool = ()
+bool * tuple = ()
+bool + tuple ! TypeError unsupported operand type(s) for +: 'bool' and 'tuple'
+tuple + float ! TypeError can only concatenate tuple (not "float") to tuple
+tuple * float ! TypeError can't multiply sequence by non-int of type 'float'
+float * tuple ! TypeError can't multiply sequence by non-int of type 'float'
+float + tuple ! TypeError unsupported operand type(s) for +: 'float' and 'tuple'
+tuple + None ! TypeError can only concatenate tuple (not "NoneType") to tuple
+tuple * None ! TypeError can't multiply sequence by non-int of type 'NoneType'
+None * tuple ! TypeError can't multiply sequence by non-int of type 'NoneType'
+None + tuple ! TypeError unsupported operand type(s) for +: 'NoneType' and 'tuple'
+tuple + tuple = (1,)
+tuple * tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+tuple * tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+tuple + tuple = (1,)
+tuple + list ! TypeError can only concatenate tuple (not "list") to tuple
+tuple * list ! TypeError can't multiply sequence by non-int of type 'list'
+list * tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+list + tuple ! TypeError can only concatenate list (not "tuple") to list
+tuple + str ! TypeError can only concatenate tuple (not "str") to tuple
+tuple * str ! TypeError can't multiply sequence by non-int of type 'str'
+str * tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+str + tuple ! TypeError can only concatenate str (not "tuple") to str
+tuple + bytes ! TypeError can only concatenate tuple (not "bytes") to tuple
+tuple * bytes ! TypeError can't multiply sequence by non-int of type 'bytes'
+bytes * tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+bytes + tuple ! TypeError can't concat tuple to bytes
+T0 + R = R.__radd__
+T0 * R = R.__rmul__
+R * T0 ! TypeError can't multiply sequence by non-int of type 'R'
+R + T0 ! TypeError unsupported operand type(s) for +: 'R' and 'T0'
+T0 + T0 = ()
+T0 * T0 ! TypeError can't multiply sequence by non-int of type 'T0'
+T0 * T0 ! TypeError can't multiply sequence by non-int of type 'T0'
+T0 + T0 = ()
+T0 + T1 = T1.__radd__
+T0 * T1 = T1.__rmul__
+T1 * T0 ! TypeError 'T0' object cannot be interpreted as an integer
+T1 + T0 = ()
+T0 + T5 = ()
+T0 * T5 ! TypeError 'T0' object cannot be interpreted as an integer
+T5 * T0 = ('T5.__mul__', ())
+T5 + T0 = ('T5.__add__', ())
+T0 + L1 = L1.__radd__
+T0 * L1 = L1.__rmul__
+L1 * T0 ! TypeError 'T0' object cannot be interpreted as an integer
+L1 + T0 ! TypeError can only concatenate list (not "T0") to list
+T0 + S1 = S1.__radd__
+T0 * S1 = S1.__rmul__
+S1 * T0 ! TypeError 'T0' object cannot be interpreted as an integer
+S1 + T0 ! TypeError can only concatenate str (not "T0") to str
+T0 + int ! TypeError can only concatenate tuple (not "int") to tuple
+T0 * int = ()
+int * T0 = ()
+int + T0 ! TypeError unsupported operand type(s) for +: 'int' and 'T0'
+T0 + bool ! TypeError can only concatenate tuple (not "bool") to tuple
+T0 * bool = ()
+bool * T0 = ()
+bool + T0 ! TypeError unsupported operand type(s) for +: 'bool' and 'T0'
+T0 + float ! TypeError can only concatenate tuple (not "float") to tuple
+T0 * float ! TypeError can't multiply sequence by non-int of type 'float'
+float * T0 ! TypeError can't multiply sequence by non-int of type 'float'
+float + T0 ! TypeError unsupported operand type(s) for +: 'float' and 'T0'
+T0 + None ! TypeError can only concatenate tuple (not "NoneType") to tuple
+T0 * None ! TypeError can't multiply sequence by non-int of type 'NoneType'
+None * T0 ! TypeError can't multiply sequence by non-int of type 'NoneType'
+None + T0 ! TypeError unsupported operand type(s) for +: 'NoneType' and 'T0'
+T0 + tuple = (1,)
+T0 * tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+tuple * T0 ! TypeError can't multiply sequence by non-int of type 'T0'
+tuple + T0 = (1,)
+T0 + list ! TypeError can only concatenate tuple (not "list") to tuple
+T0 * list ! TypeError can't multiply sequence by non-int of type 'list'
+list * T0 ! TypeError can't multiply sequence by non-int of type 'T0'
+list + T0 ! TypeError can only concatenate list (not "T0") to list
+T0 + str ! TypeError can only concatenate tuple (not "str") to tuple
+T0 * str ! TypeError can't multiply sequence by non-int of type 'str'
+str * T0 ! TypeError can't multiply sequence by non-int of type 'T0'
+str + T0 ! TypeError can only concatenate str (not "T0") to str
+T0 + bytes ! TypeError can only concatenate tuple (not "bytes") to tuple
+T0 * bytes ! TypeError can't multiply sequence by non-int of type 'bytes'
+bytes * T0 ! TypeError can't multiply sequence by non-int of type 'T0'
+bytes + T0 ! TypeError can't concat T0 to bytes
+T1 + R ! TypeError can only concatenate tuple (not "R") to tuple
+T1 * R ! TypeError 'R' object cannot be interpreted as an integer
+R * T1 = T1.__rmul__
+R + T1 = T1.__radd__
+T1 + T0 = ()
+T1 * T0 ! TypeError 'T0' object cannot be interpreted as an integer
+T0 * T1 = T1.__rmul__
+T0 + T1 = T1.__radd__
+T1 + T1 = ()
+T1 * T1 ! TypeError 'T1' object cannot be interpreted as an integer
+T1 * T1 ! TypeError 'T1' object cannot be interpreted as an integer
+T1 + T1 = ()
+T1 + T5 = ()
+T1 * T5 ! TypeError 'T5' object cannot be interpreted as an integer
+T5 * T1 = ('T5.__mul__', ())
+T5 + T1 = ('T5.__add__', ())
+T1 + L1 ! TypeError can only concatenate tuple (not "L1") to tuple
+T1 * L1 ! TypeError 'L1' object cannot be interpreted as an integer
+L1 * T1 ! TypeError 'T1' object cannot be interpreted as an integer
+L1 + T1 ! TypeError can only concatenate list (not "T1") to list
+T1 + S1 ! TypeError can only concatenate tuple (not "S1") to tuple
+T1 * S1 ! TypeError 'S1' object cannot be interpreted as an integer
+S1 * T1 ! TypeError 'T1' object cannot be interpreted as an integer
+S1 + T1 ! TypeError can only concatenate str (not "T1") to str
+T1 + int ! TypeError can only concatenate tuple (not "int") to tuple
+T1 * int = ()
+int * T1 = T1.__rmul__
+int + T1 = T1.__radd__
+T1 + bool ! TypeError can only concatenate tuple (not "bool") to tuple
+T1 * bool = ()
+bool * T1 = T1.__rmul__
+bool + T1 = T1.__radd__
+T1 + float ! TypeError can only concatenate tuple (not "float") to tuple
+T1 * float ! TypeError 'float' object cannot be interpreted as an integer
+float * T1 = T1.__rmul__
+float + T1 = T1.__radd__
+T1 + None ! TypeError can only concatenate tuple (not "NoneType") to tuple
+T1 * None ! TypeError 'NoneType' object cannot be interpreted as an integer
+None * T1 = T1.__rmul__
+None + T1 = T1.__radd__
+T1 + tuple = (1,)
+T1 * tuple ! TypeError 'tuple' object cannot be interpreted as an integer
+tuple * T1 = T1.__rmul__
+tuple + T1 = T1.__radd__
+T1 + list ! TypeError can only concatenate tuple (not "list") to tuple
+T1 * list ! TypeError 'list' object cannot be interpreted as an integer
+list * T1 = T1.__rmul__
+list + T1 = T1.__radd__
+T1 + str ! TypeError can only concatenate tuple (not "str") to tuple
+T1 * str ! TypeError 'str' object cannot be interpreted as an integer
+str * T1 = T1.__rmul__
+str + T1 = T1.__radd__
+T1 + bytes ! TypeError can only concatenate tuple (not "bytes") to tuple
+T1 * bytes ! TypeError 'bytes' object cannot be interpreted as an integer
+bytes * T1 = T1.__rmul__
+bytes + T1 = T1.__radd__
+T2 + R = R.__radd__
+T2 * R = R.__rmul__
+R * T2 ! TypeError 'R' object cannot be interpreted as an integer
+R + T2 ! TypeError unsupported operand type(s) for +: 'R' and 'T2'
+T2 + T0 ! TypeError unsupported operand type(s) for +: 'T2' and 'T0'
+T2 * T0 ! TypeError can't multiply sequence by non-int of type 'T2'
+T0 * T2 ! TypeError 'T0' object cannot be interpreted as an integer
+T0 + T2 = (1,)
+T2 + T1 = T1.__radd__
+T2 * T1 = T1.__rmul__
+T1 * T2 ! TypeError 'T2' object cannot be interpreted as an integer
+T1 + T2 = (1,)
+T2 + T5 ! TypeError unsupported operand type(s) for +: 'T2' and 'T5'
+T2 * T5 ! TypeError 'T2' object cannot be interpreted as an integer
+T5 * T2 = ('T5.__mul__', (1,))
+T5 + T2 = ('T5.__add__', (1,))
+T2 + L1 = L1.__radd__
+T2 * L1 = L1.__rmul__
+L1 * T2 ! TypeError 'T2' object cannot be interpreted as an integer
+L1 + T2 ! TypeError can only concatenate list (not "T2") to list
+T2 + S1 = S1.__radd__
+T2 * S1 = S1.__rmul__
+S1 * T2 ! TypeError 'T2' object cannot be interpreted as an integer
+S1 + T2 ! TypeError can only concatenate str (not "T2") to str
+T2 + int ! TypeError unsupported operand type(s) for +: 'T2' and 'int'
+T2 * int ! TypeError unsupported operand type(s) for *: 'T2' and 'int'
+int * T2 = (1, 1)
+int + T2 ! TypeError unsupported operand type(s) for +: 'int' and 'T2'
+T2 + bool ! TypeError unsupported operand type(s) for +: 'T2' and 'bool'
+T2 * bool ! TypeError unsupported operand type(s) for *: 'T2' and 'bool'
+bool * T2 = (1,)
+bool + T2 ! TypeError unsupported operand type(s) for +: 'bool' and 'T2'
+T2 + float ! TypeError unsupported operand type(s) for +: 'T2' and 'float'
+T2 * float ! TypeError unsupported operand type(s) for *: 'T2' and 'float'
+float * T2 ! TypeError 'float' object cannot be interpreted as an integer
+float + T2 ! TypeError unsupported operand type(s) for +: 'float' and 'T2'
+T2 + None ! TypeError unsupported operand type(s) for +: 'T2' and 'NoneType'
+T2 * None ! TypeError unsupported operand type(s) for *: 'T2' and 'NoneType'
+None * T2 ! TypeError 'NoneType' object cannot be interpreted as an integer
+None + T2 ! TypeError unsupported operand type(s) for +: 'NoneType' and 'T2'
+T2 + tuple ! TypeError unsupported operand type(s) for +: 'T2' and 'tuple'
+T2 * tuple ! TypeError can't multiply sequence by non-int of type 'T2'
+tuple * T2 ! TypeError 'tuple' object cannot be interpreted as an integer
+tuple + T2 = (1, 1)
+T2 + list ! TypeError unsupported operand type(s) for +: 'T2' and 'list'
+T2 * list ! TypeError can't multiply sequence by non-int of type 'T2'
+list * T2 ! TypeError 'list' object cannot be interpreted as an integer
+list + T2 ! TypeError can only concatenate list (not "T2") to list
+T2 + str ! TypeError unsupported operand type(s) for +: 'T2' and 'str'
+T2 * str ! TypeError can't multiply sequence by non-int of type 'T2'
+str * T2 ! TypeError 'str' object cannot be interpreted as an integer
+str + T2 ! TypeError can only concatenate str (not "T2") to str
+T2 + bytes ! TypeError unsupported operand type(s) for +: 'T2' and 'bytes'
+T2 * bytes ! TypeError can't multiply sequence by non-int of type 'T2'
+bytes * T2 ! TypeError 'bytes' object cannot be interpreted as an integer
+bytes + T2 ! TypeError can't concat T2 to bytes
+T4 + R = R.__radd__
+T4 * R = R.__rmul__
+R * T4 ! TypeError can't multiply sequence by non-int of type 'R'
+R + T4 ! TypeError unsupported operand type(s) for +: 'R' and 'T4'
+T4 + T0 = ()
+T4 * T0 ! TypeError can't multiply sequence by non-int of type 'T0'
+T0 * T4 ! TypeError can't multiply sequence by non-int of type 'T4'
+T0 + T4 = ()
+T4 + T1 = T1.__radd__
+T4 * T1 = T1.__rmul__
+T1 * T4 ! TypeError 'T4' object cannot be interpreted as an integer
+T1 + T4 = ()
+T4 + T5 = ()
+T4 * T5 ! TypeError 'T4' object cannot be interpreted as an integer
+T5 * T4 = ('T5.__mul__', ())
+T5 + T4 = ('T5.__add__', ())
+T4 + L1 = L1.__radd__
+T4 * L1 = L1.__rmul__
+L1 * T4 ! TypeError 'T4' object cannot be interpreted as an integer
+L1 + T4 ! TypeError can only concatenate list (not "T4") to list
+T4 + S1 = S1.__radd__
+T4 * S1 = S1.__rmul__
+S1 * T4 ! TypeError 'T4' object cannot be interpreted as an integer
+S1 + T4 ! TypeError can only concatenate str (not "T4") to str
+T4 + int ! TypeError can only concatenate tuple (not "int") to tuple
+T4 * int = ()
+int * T4 = ()
+int + T4 ! TypeError unsupported operand type(s) for +: 'int' and 'T4'
+T4 + bool ! TypeError can only concatenate tuple (not "bool") to tuple
+T4 * bool = ()
+bool * T4 = ()
+bool + T4 ! TypeError unsupported operand type(s) for +: 'bool' and 'T4'
+T4 + float ! TypeError can only concatenate tuple (not "float") to tuple
+T4 * float ! TypeError can't multiply sequence by non-int of type 'float'
+float * T4 ! TypeError can't multiply sequence by non-int of type 'float'
+float + T4 ! TypeError unsupported operand type(s) for +: 'float' and 'T4'
+T4 + None ! TypeError can only concatenate tuple (not "NoneType") to tuple
+T4 * None ! TypeError can't multiply sequence by non-int of type 'NoneType'
+None * T4 ! TypeError can't multiply sequence by non-int of type 'NoneType'
+None + T4 ! TypeError unsupported operand type(s) for +: 'NoneType' and 'T4'
+T4 + tuple = (1,)
+T4 * tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+tuple * T4 ! TypeError can't multiply sequence by non-int of type 'T4'
+tuple + T4 = (1,)
+T4 + list ! TypeError can only concatenate tuple (not "list") to tuple
+T4 * list ! TypeError can't multiply sequence by non-int of type 'list'
+list * T4 ! TypeError can't multiply sequence by non-int of type 'T4'
+list + T4 ! TypeError can only concatenate list (not "T4") to list
+T4 + str ! TypeError can only concatenate tuple (not "str") to tuple
+T4 * str ! TypeError can't multiply sequence by non-int of type 'str'
+str * T4 ! TypeError can't multiply sequence by non-int of type 'T4'
+str + T4 ! TypeError can only concatenate str (not "T4") to str
+T4 + bytes ! TypeError can only concatenate tuple (not "bytes") to tuple
+T4 * bytes ! TypeError can't multiply sequence by non-int of type 'bytes'
+bytes * T4 ! TypeError can't multiply sequence by non-int of type 'T4'
+bytes + T4 ! TypeError can't concat T4 to bytes
+T5 + R = ('T5.__add__', R())
+T5 * R = ('T5.__mul__', R())
+R * T5 ! TypeError 'R' object cannot be interpreted as an integer
+R + T5 ! TypeError unsupported operand type(s) for +: 'R' and 'T5'
+T5 + T0 = ('T5.__add__', ())
+T5 * T0 = ('T5.__mul__', ())
+T0 * T5 ! TypeError 'T0' object cannot be interpreted as an integer
+T0 + T5 = (1,)
+T5 + T1 = ('T5.__add__', ())
+T5 * T1 = ('T5.__mul__', ())
+T1 * T5 ! TypeError 'T5' object cannot be interpreted as an integer
+T1 + T5 = (1,)
+T5 + T5 = ('T5.__add__', ())
+T5 * T5 = ('T5.__mul__', ())
+T5 * T5 = ('T5.__mul__', (1,))
+T5 + T5 = ('T5.__add__', (1,))
+T5 + L1 = ('T5.__add__', [])
+T5 * L1 = ('T5.__mul__', [])
+L1 * T5 ! TypeError 'T5' object cannot be interpreted as an integer
+L1 + T5 ! TypeError can only concatenate list (not "T5") to list
+T5 + S1 = ('T5.__add__', '')
+T5 * S1 = ('T5.__mul__', '')
+S1 * T5 ! TypeError 'T5' object cannot be interpreted as an integer
+S1 + T5 ! TypeError can only concatenate str (not "T5") to str
+T5 + int = ('T5.__add__', 2)
+T5 * int = ('T5.__mul__', 2)
+int * T5 = (1, 1)
+int + T5 ! TypeError unsupported operand type(s) for +: 'int' and 'T5'
+T5 + bool = ('T5.__add__', True)
+T5 * bool = ('T5.__mul__', True)
+bool * T5 = (1,)
+bool + T5 ! TypeError unsupported operand type(s) for +: 'bool' and 'T5'
+T5 + float = ('T5.__add__', 1.5)
+T5 * float = ('T5.__mul__', 1.5)
+float * T5 ! TypeError 'float' object cannot be interpreted as an integer
+float + T5 ! TypeError unsupported operand type(s) for +: 'float' and 'T5'
+T5 + None = ('T5.__add__', None)
+T5 * None = ('T5.__mul__', None)
+None * T5 ! TypeError 'NoneType' object cannot be interpreted as an integer
+None + T5 ! TypeError unsupported operand type(s) for +: 'NoneType' and 'T5'
+T5 + tuple = ('T5.__add__', (1,))
+T5 * tuple = ('T5.__mul__', (1,))
+tuple * T5 ! TypeError 'tuple' object cannot be interpreted as an integer
+tuple + T5 = (1, 1)
+T5 + list = ('T5.__add__', [1])
+T5 * list = ('T5.__mul__', [1])
+list * T5 ! TypeError 'list' object cannot be interpreted as an integer
+list + T5 ! TypeError can only concatenate list (not "T5") to list
+T5 + str = ('T5.__add__', 'x')
+T5 * str = ('T5.__mul__', 'x')
+str * T5 ! TypeError 'str' object cannot be interpreted as an integer
+str + T5 ! TypeError can only concatenate str (not "T5") to str
+T5 + bytes = ('T5.__add__', b'x')
+T5 * bytes = ('T5.__mul__', b'x')
+bytes * T5 ! TypeError 'bytes' object cannot be interpreted as an integer
+bytes + T5 ! TypeError can't concat T5 to bytes
+T6 + R = ('T5.__add__', R())
+T6 * R = ('T5.__mul__', R())
+R * T6 ! TypeError 'R' object cannot be interpreted as an integer
+R + T6 ! TypeError unsupported operand type(s) for +: 'R' and 'T6'
+T6 + T0 = ('T5.__add__', ())
+T6 * T0 = ('T5.__mul__', ())
+T0 * T6 ! TypeError 'T0' object cannot be interpreted as an integer
+T0 + T6 = (1,)
+T6 + T1 = ('T5.__add__', ())
+T6 * T1 = ('T5.__mul__', ())
+T1 * T6 ! TypeError 'T6' object cannot be interpreted as an integer
+T1 + T6 = (1,)
+T6 + T5 = ('T5.__add__', ())
+T6 * T5 = ('T5.__mul__', ())
+T5 * T6 = ('T5.__mul__', (1,))
+T5 + T6 = ('T5.__add__', (1,))
+T6 + L1 = ('T5.__add__', [])
+T6 * L1 = ('T5.__mul__', [])
+L1 * T6 ! TypeError 'T6' object cannot be interpreted as an integer
+L1 + T6 ! TypeError can only concatenate list (not "T6") to list
+T6 + S1 = ('T5.__add__', '')
+T6 * S1 = ('T5.__mul__', '')
+S1 * T6 ! TypeError 'T6' object cannot be interpreted as an integer
+S1 + T6 ! TypeError can only concatenate str (not "T6") to str
+T6 + int = ('T5.__add__', 2)
+T6 * int = ('T5.__mul__', 2)
+int * T6 = (1, 1)
+int + T6 ! TypeError unsupported operand type(s) for +: 'int' and 'T6'
+T6 + bool = ('T5.__add__', True)
+T6 * bool = ('T5.__mul__', True)
+bool * T6 = (1,)
+bool + T6 ! TypeError unsupported operand type(s) for +: 'bool' and 'T6'
+T6 + float = ('T5.__add__', 1.5)
+T6 * float = ('T5.__mul__', 1.5)
+float * T6 ! TypeError 'float' object cannot be interpreted as an integer
+float + T6 ! TypeError unsupported operand type(s) for +: 'float' and 'T6'
+T6 + None = ('T5.__add__', None)
+T6 * None = ('T5.__mul__', None)
+None * T6 ! TypeError 'NoneType' object cannot be interpreted as an integer
+None + T6 ! TypeError unsupported operand type(s) for +: 'NoneType' and 'T6'
+T6 + tuple = ('T5.__add__', (1,))
+T6 * tuple = ('T5.__mul__', (1,))
+tuple * T6 ! TypeError 'tuple' object cannot be interpreted as an integer
+tuple + T6 = (1, 1)
+T6 + list = ('T5.__add__', [1])
+T6 * list = ('T5.__mul__', [1])
+list * T6 ! TypeError 'list' object cannot be interpreted as an integer
+list + T6 ! TypeError can only concatenate list (not "T6") to list
+T6 + str = ('T5.__add__', 'x')
+T6 * str = ('T5.__mul__', 'x')
+str * T6 ! TypeError 'str' object cannot be interpreted as an integer
+str + T6 ! TypeError can only concatenate str (not "T6") to str
+T6 + bytes = ('T5.__add__', b'x')
+T6 * bytes = ('T5.__mul__', b'x')
+bytes * T6 ! TypeError 'bytes' object cannot be interpreted as an integer
+bytes + T6 ! TypeError can't concat T6 to bytes
+list + R = R.__radd__
+list * R = R.__rmul__
+R * list ! TypeError can't multiply sequence by non-int of type 'R'
+R + list ! TypeError unsupported operand type(s) for +: 'R' and 'list'
+list + T0 ! TypeError can only concatenate list (not "T0") to list
+list * T0 ! TypeError can't multiply sequence by non-int of type 'T0'
+T0 * list ! TypeError can't multiply sequence by non-int of type 'list'
+T0 + list ! TypeError can only concatenate tuple (not "list") to tuple
+list + T1 = T1.__radd__
+list * T1 = T1.__rmul__
+T1 * list ! TypeError 'list' object cannot be interpreted as an integer
+T1 + list ! TypeError can only concatenate tuple (not "list") to tuple
+list + T5 ! TypeError can only concatenate list (not "T5") to list
+list * T5 ! TypeError 'list' object cannot be interpreted as an integer
+T5 * list = ('T5.__mul__', [])
+T5 + list = ('T5.__add__', [])
+list + L1 = L1.__radd__
+list * L1 = L1.__rmul__
+L1 * list ! TypeError 'list' object cannot be interpreted as an integer
+L1 + list = []
+list + S1 = S1.__radd__
+list * S1 = S1.__rmul__
+S1 * list ! TypeError 'list' object cannot be interpreted as an integer
+S1 + list ! TypeError can only concatenate str (not "list") to str
+list + int ! TypeError can only concatenate list (not "int") to list
+list * int = []
+int * list = []
+int + list ! TypeError unsupported operand type(s) for +: 'int' and 'list'
+list + bool ! TypeError can only concatenate list (not "bool") to list
+list * bool = []
+bool * list = []
+bool + list ! TypeError unsupported operand type(s) for +: 'bool' and 'list'
+list + float ! TypeError can only concatenate list (not "float") to list
+list * float ! TypeError can't multiply sequence by non-int of type 'float'
+float * list ! TypeError can't multiply sequence by non-int of type 'float'
+float + list ! TypeError unsupported operand type(s) for +: 'float' and 'list'
+list + None ! TypeError can only concatenate list (not "NoneType") to list
+list * None ! TypeError can't multiply sequence by non-int of type 'NoneType'
+None * list ! TypeError can't multiply sequence by non-int of type 'NoneType'
+None + list ! TypeError unsupported operand type(s) for +: 'NoneType' and 'list'
+list + tuple ! TypeError can only concatenate list (not "tuple") to list
+list * tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+tuple * list ! TypeError can't multiply sequence by non-int of type 'list'
+tuple + list ! TypeError can only concatenate tuple (not "list") to tuple
+list + list = [1]
+list * list ! TypeError can't multiply sequence by non-int of type 'list'
+list * list ! TypeError can't multiply sequence by non-int of type 'list'
+list + list = [1]
+list + str ! TypeError can only concatenate list (not "str") to list
+list * str ! TypeError can't multiply sequence by non-int of type 'str'
+str * list ! TypeError can't multiply sequence by non-int of type 'list'
+str + list ! TypeError can only concatenate str (not "list") to str
+list + bytes ! TypeError can only concatenate list (not "bytes") to list
+list * bytes ! TypeError can't multiply sequence by non-int of type 'bytes'
+bytes * list ! TypeError can't multiply sequence by non-int of type 'list'
+bytes + list ! TypeError can't concat list to bytes
+L0 + R = R.__radd__
+L0 * R = R.__rmul__
+R * L0 ! TypeError can't multiply sequence by non-int of type 'R'
+R + L0 ! TypeError unsupported operand type(s) for +: 'R' and 'L0'
+L0 + T0 ! TypeError can only concatenate list (not "T0") to list
+L0 * T0 ! TypeError can't multiply sequence by non-int of type 'T0'
+T0 * L0 ! TypeError can't multiply sequence by non-int of type 'L0'
+T0 + L0 ! TypeError can only concatenate tuple (not "L0") to tuple
+L0 + T1 = T1.__radd__
+L0 * T1 = T1.__rmul__
+T1 * L0 ! TypeError 'L0' object cannot be interpreted as an integer
+T1 + L0 ! TypeError can only concatenate tuple (not "L0") to tuple
+L0 + T5 ! TypeError can only concatenate list (not "T5") to list
+L0 * T5 ! TypeError 'L0' object cannot be interpreted as an integer
+T5 * L0 = ('T5.__mul__', [])
+T5 + L0 = ('T5.__add__', [])
+L0 + L1 = L1.__radd__
+L0 * L1 = L1.__rmul__
+L1 * L0 ! TypeError 'L0' object cannot be interpreted as an integer
+L1 + L0 = []
+L0 + S1 = S1.__radd__
+L0 * S1 = S1.__rmul__
+S1 * L0 ! TypeError 'L0' object cannot be interpreted as an integer
+S1 + L0 ! TypeError can only concatenate str (not "L0") to str
+L0 + int ! TypeError can only concatenate list (not "int") to list
+L0 * int = []
+int * L0 = []
+int + L0 ! TypeError unsupported operand type(s) for +: 'int' and 'L0'
+L0 + bool ! TypeError can only concatenate list (not "bool") to list
+L0 * bool = []
+bool * L0 = []
+bool + L0 ! TypeError unsupported operand type(s) for +: 'bool' and 'L0'
+L0 + float ! TypeError can only concatenate list (not "float") to list
+L0 * float ! TypeError can't multiply sequence by non-int of type 'float'
+float * L0 ! TypeError can't multiply sequence by non-int of type 'float'
+float + L0 ! TypeError unsupported operand type(s) for +: 'float' and 'L0'
+L0 + None ! TypeError can only concatenate list (not "NoneType") to list
+L0 * None ! TypeError can't multiply sequence by non-int of type 'NoneType'
+None * L0 ! TypeError can't multiply sequence by non-int of type 'NoneType'
+None + L0 ! TypeError unsupported operand type(s) for +: 'NoneType' and 'L0'
+L0 + tuple ! TypeError can only concatenate list (not "tuple") to list
+L0 * tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+tuple * L0 ! TypeError can't multiply sequence by non-int of type 'L0'
+tuple + L0 ! TypeError can only concatenate tuple (not "L0") to tuple
+L0 + list = [1]
+L0 * list ! TypeError can't multiply sequence by non-int of type 'list'
+list * L0 ! TypeError can't multiply sequence by non-int of type 'L0'
+list + L0 = [1]
+L0 + str ! TypeError can only concatenate list (not "str") to list
+L0 * str ! TypeError can't multiply sequence by non-int of type 'str'
+str * L0 ! TypeError can't multiply sequence by non-int of type 'L0'
+str + L0 ! TypeError can only concatenate str (not "L0") to str
+L0 + bytes ! TypeError can only concatenate list (not "bytes") to list
+L0 * bytes ! TypeError can't multiply sequence by non-int of type 'bytes'
+bytes * L0 ! TypeError can't multiply sequence by non-int of type 'L0'
+bytes + L0 ! TypeError can't concat L0 to bytes
+L1 + R ! TypeError can only concatenate list (not "R") to list
+L1 * R ! TypeError 'R' object cannot be interpreted as an integer
+R * L1 = L1.__rmul__
+R + L1 = L1.__radd__
+L1 + T0 ! TypeError can only concatenate list (not "T0") to list
+L1 * T0 ! TypeError 'T0' object cannot be interpreted as an integer
+T0 * L1 = L1.__rmul__
+T0 + L1 = L1.__radd__
+L1 + T1 ! TypeError can only concatenate list (not "T1") to list
+L1 * T1 ! TypeError 'T1' object cannot be interpreted as an integer
+T1 * L1 ! TypeError 'L1' object cannot be interpreted as an integer
+T1 + L1 ! TypeError can only concatenate tuple (not "L1") to tuple
+L1 + T5 ! TypeError can only concatenate list (not "T5") to list
+L1 * T5 ! TypeError 'T5' object cannot be interpreted as an integer
+T5 * L1 = ('T5.__mul__', [])
+T5 + L1 = ('T5.__add__', [])
+L1 + L1 = []
+L1 * L1 ! TypeError 'L1' object cannot be interpreted as an integer
+L1 * L1 ! TypeError 'L1' object cannot be interpreted as an integer
+L1 + L1 = []
+L1 + S1 ! TypeError can only concatenate list (not "S1") to list
+L1 * S1 ! TypeError 'S1' object cannot be interpreted as an integer
+S1 * L1 ! TypeError 'L1' object cannot be interpreted as an integer
+S1 + L1 ! TypeError can only concatenate str (not "L1") to str
+L1 + int ! TypeError can only concatenate list (not "int") to list
+L1 * int = []
+int * L1 = L1.__rmul__
+int + L1 = L1.__radd__
+L1 + bool ! TypeError can only concatenate list (not "bool") to list
+L1 * bool = []
+bool * L1 = L1.__rmul__
+bool + L1 = L1.__radd__
+L1 + float ! TypeError can only concatenate list (not "float") to list
+L1 * float ! TypeError 'float' object cannot be interpreted as an integer
+float * L1 = L1.__rmul__
+float + L1 = L1.__radd__
+L1 + None ! TypeError can only concatenate list (not "NoneType") to list
+L1 * None ! TypeError 'NoneType' object cannot be interpreted as an integer
+None * L1 = L1.__rmul__
+None + L1 = L1.__radd__
+L1 + tuple ! TypeError can only concatenate list (not "tuple") to list
+L1 * tuple ! TypeError 'tuple' object cannot be interpreted as an integer
+tuple * L1 = L1.__rmul__
+tuple + L1 = L1.__radd__
+L1 + list = [1]
+L1 * list ! TypeError 'list' object cannot be interpreted as an integer
+list * L1 = L1.__rmul__
+list + L1 = L1.__radd__
+L1 + str ! TypeError can only concatenate list (not "str") to list
+L1 * str ! TypeError 'str' object cannot be interpreted as an integer
+str * L1 = L1.__rmul__
+str + L1 = L1.__radd__
+L1 + bytes ! TypeError can only concatenate list (not "bytes") to list
+L1 * bytes ! TypeError 'bytes' object cannot be interpreted as an integer
+bytes * L1 = L1.__rmul__
+bytes + L1 = L1.__radd__
+L2 + R = R.__radd__
+L2 * R = R.__rmul__
+R * L2 ! TypeError 'R' object cannot be interpreted as an integer
+R + L2 ! TypeError unsupported operand type(s) for +: 'R' and 'L2'
+L2 + T0 ! TypeError unsupported operand type(s) for +: 'L2' and 'T0'
+L2 * T0 ! TypeError can't multiply sequence by non-int of type 'L2'
+T0 * L2 ! TypeError 'T0' object cannot be interpreted as an integer
+T0 + L2 ! TypeError can only concatenate tuple (not "L2") to tuple
+L2 + T1 = T1.__radd__
+L2 * T1 = T1.__rmul__
+T1 * L2 ! TypeError 'L2' object cannot be interpreted as an integer
+T1 + L2 ! TypeError can only concatenate tuple (not "L2") to tuple
+L2 + T5 ! TypeError unsupported operand type(s) for +: 'L2' and 'T5'
+L2 * T5 ! TypeError 'L2' object cannot be interpreted as an integer
+T5 * L2 = ('T5.__mul__', [1])
+T5 + L2 = ('T5.__add__', [1])
+L2 + L1 = L1.__radd__
+L2 * L1 = L1.__rmul__
+L1 * L2 ! TypeError 'L2' object cannot be interpreted as an integer
+L1 + L2 = [1]
+L2 + S1 = S1.__radd__
+L2 * S1 = S1.__rmul__
+S1 * L2 ! TypeError 'L2' object cannot be interpreted as an integer
+S1 + L2 ! TypeError can only concatenate str (not "L2") to str
+L2 + int ! TypeError unsupported operand type(s) for +: 'L2' and 'int'
+L2 * int ! TypeError unsupported operand type(s) for *: 'L2' and 'int'
+int * L2 = [1, 1]
+int + L2 ! TypeError unsupported operand type(s) for +: 'int' and 'L2'
+L2 + bool ! TypeError unsupported operand type(s) for +: 'L2' and 'bool'
+L2 * bool ! TypeError unsupported operand type(s) for *: 'L2' and 'bool'
+bool * L2 = [1]
+bool + L2 ! TypeError unsupported operand type(s) for +: 'bool' and 'L2'
+L2 + float ! TypeError unsupported operand type(s) for +: 'L2' and 'float'
+L2 * float ! TypeError unsupported operand type(s) for *: 'L2' and 'float'
+float * L2 ! TypeError 'float' object cannot be interpreted as an integer
+float + L2 ! TypeError unsupported operand type(s) for +: 'float' and 'L2'
+L2 + None ! TypeError unsupported operand type(s) for +: 'L2' and 'NoneType'
+L2 * None ! TypeError unsupported operand type(s) for *: 'L2' and 'NoneType'
+None * L2 ! TypeError 'NoneType' object cannot be interpreted as an integer
+None + L2 ! TypeError unsupported operand type(s) for +: 'NoneType' and 'L2'
+L2 + tuple ! TypeError unsupported operand type(s) for +: 'L2' and 'tuple'
+L2 * tuple ! TypeError can't multiply sequence by non-int of type 'L2'
+tuple * L2 ! TypeError 'tuple' object cannot be interpreted as an integer
+tuple + L2 ! TypeError can only concatenate tuple (not "L2") to tuple
+L2 + list ! TypeError unsupported operand type(s) for +: 'L2' and 'list'
+L2 * list ! TypeError can't multiply sequence by non-int of type 'L2'
+list * L2 ! TypeError 'list' object cannot be interpreted as an integer
+list + L2 = [1, 1]
+L2 + str ! TypeError unsupported operand type(s) for +: 'L2' and 'str'
+L2 * str ! TypeError can't multiply sequence by non-int of type 'L2'
+str * L2 ! TypeError 'str' object cannot be interpreted as an integer
+str + L2 ! TypeError can only concatenate str (not "L2") to str
+L2 + bytes ! TypeError unsupported operand type(s) for +: 'L2' and 'bytes'
+L2 * bytes ! TypeError can't multiply sequence by non-int of type 'L2'
+bytes * L2 ! TypeError 'bytes' object cannot be interpreted as an integer
+bytes + L2 ! TypeError can't concat L2 to bytes
+str + R = R.__radd__
+str * R = R.__rmul__
+R * str ! TypeError can't multiply sequence by non-int of type 'R'
+R + str ! TypeError unsupported operand type(s) for +: 'R' and 'str'
+str + T0 ! TypeError can only concatenate str (not "T0") to str
+str * T0 ! TypeError can't multiply sequence by non-int of type 'T0'
+T0 * str ! TypeError can't multiply sequence by non-int of type 'str'
+T0 + str ! TypeError can only concatenate tuple (not "str") to tuple
+str + T1 = T1.__radd__
+str * T1 = T1.__rmul__
+T1 * str ! TypeError 'str' object cannot be interpreted as an integer
+T1 + str ! TypeError can only concatenate tuple (not "str") to tuple
+str + T5 ! TypeError can only concatenate str (not "T5") to str
+str * T5 ! TypeError 'str' object cannot be interpreted as an integer
+T5 * str = ('T5.__mul__', '')
+T5 + str = ('T5.__add__', '')
+str + L1 = L1.__radd__
+str * L1 = L1.__rmul__
+L1 * str ! TypeError 'str' object cannot be interpreted as an integer
+L1 + str ! TypeError can only concatenate list (not "str") to list
+str + S1 = S1.__radd__
+str * S1 = S1.__rmul__
+S1 * str ! TypeError 'str' object cannot be interpreted as an integer
+S1 + str = 
+str + int ! TypeError can only concatenate str (not "int") to str
+str * int = 
+int * str = 
+int + str ! TypeError unsupported operand type(s) for +: 'int' and 'str'
+str + bool ! TypeError can only concatenate str (not "bool") to str
+str * bool = 
+bool * str = 
+bool + str ! TypeError unsupported operand type(s) for +: 'bool' and 'str'
+str + float ! TypeError can only concatenate str (not "float") to str
+str * float ! TypeError can't multiply sequence by non-int of type 'float'
+float * str ! TypeError can't multiply sequence by non-int of type 'float'
+float + str ! TypeError unsupported operand type(s) for +: 'float' and 'str'
+str + None ! TypeError can only concatenate str (not "NoneType") to str
+str * None ! TypeError can't multiply sequence by non-int of type 'NoneType'
+None * str ! TypeError can't multiply sequence by non-int of type 'NoneType'
+None + str ! TypeError unsupported operand type(s) for +: 'NoneType' and 'str'
+str + tuple ! TypeError can only concatenate str (not "tuple") to str
+str * tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+tuple * str ! TypeError can't multiply sequence by non-int of type 'str'
+tuple + str ! TypeError can only concatenate tuple (not "str") to tuple
+str + list ! TypeError can only concatenate str (not "list") to str
+str * list ! TypeError can't multiply sequence by non-int of type 'list'
+list * str ! TypeError can't multiply sequence by non-int of type 'str'
+list + str ! TypeError can only concatenate list (not "str") to list
+str + str = x
+str * str ! TypeError can't multiply sequence by non-int of type 'str'
+str * str ! TypeError can't multiply sequence by non-int of type 'str'
+str + str = x
+str + bytes ! TypeError can only concatenate str (not "bytes") to str
+str * bytes ! TypeError can't multiply sequence by non-int of type 'bytes'
+bytes * str ! TypeError can't multiply sequence by non-int of type 'str'
+bytes + str ! TypeError can't concat str to bytes
+S1 + R ! TypeError can only concatenate str (not "R") to str
+S1 * R ! TypeError 'R' object cannot be interpreted as an integer
+R * S1 = S1.__rmul__
+R + S1 = S1.__radd__
+S1 + T0 ! TypeError can only concatenate str (not "T0") to str
+S1 * T0 ! TypeError 'T0' object cannot be interpreted as an integer
+T0 * S1 = S1.__rmul__
+T0 + S1 = S1.__radd__
+S1 + T1 ! TypeError can only concatenate str (not "T1") to str
+S1 * T1 ! TypeError 'T1' object cannot be interpreted as an integer
+T1 * S1 ! TypeError 'S1' object cannot be interpreted as an integer
+T1 + S1 ! TypeError can only concatenate tuple (not "S1") to tuple
+S1 + T5 ! TypeError can only concatenate str (not "T5") to str
+S1 * T5 ! TypeError 'T5' object cannot be interpreted as an integer
+T5 * S1 = ('T5.__mul__', '')
+T5 + S1 = ('T5.__add__', '')
+S1 + L1 ! TypeError can only concatenate str (not "L1") to str
+S1 * L1 ! TypeError 'L1' object cannot be interpreted as an integer
+L1 * S1 ! TypeError 'S1' object cannot be interpreted as an integer
+L1 + S1 ! TypeError can only concatenate list (not "S1") to list
+S1 + S1 = 
+S1 * S1 ! TypeError 'S1' object cannot be interpreted as an integer
+S1 * S1 ! TypeError 'S1' object cannot be interpreted as an integer
+S1 + S1 = 
+S1 + int ! TypeError can only concatenate str (not "int") to str
+S1 * int = 
+int * S1 = S1.__rmul__
+int + S1 = S1.__radd__
+S1 + bool ! TypeError can only concatenate str (not "bool") to str
+S1 * bool = 
+bool * S1 = S1.__rmul__
+bool + S1 = S1.__radd__
+S1 + float ! TypeError can only concatenate str (not "float") to str
+S1 * float ! TypeError 'float' object cannot be interpreted as an integer
+float * S1 = S1.__rmul__
+float + S1 = S1.__radd__
+S1 + None ! TypeError can only concatenate str (not "NoneType") to str
+S1 * None ! TypeError 'NoneType' object cannot be interpreted as an integer
+None * S1 = S1.__rmul__
+None + S1 = S1.__radd__
+S1 + tuple ! TypeError can only concatenate str (not "tuple") to str
+S1 * tuple ! TypeError 'tuple' object cannot be interpreted as an integer
+tuple * S1 = S1.__rmul__
+tuple + S1 = S1.__radd__
+S1 + list ! TypeError can only concatenate str (not "list") to str
+S1 * list ! TypeError 'list' object cannot be interpreted as an integer
+list * S1 = S1.__rmul__
+list + S1 = S1.__radd__
+S1 + str = x
+S1 * str ! TypeError 'str' object cannot be interpreted as an integer
+str * S1 = S1.__rmul__
+str + S1 = S1.__radd__
+S1 + bytes ! TypeError can only concatenate str (not "bytes") to str
+S1 * bytes ! TypeError 'bytes' object cannot be interpreted as an integer
+bytes * S1 = S1.__rmul__
+bytes + S1 = S1.__radd__
+S2 + R = R.__radd__
+S2 * R = R.__rmul__
+R * S2 ! TypeError 'R' object cannot be interpreted as an integer
+R + S2 ! TypeError unsupported operand type(s) for +: 'R' and 'S2'
+S2 + T0 ! TypeError unsupported operand type(s) for +: 'S2' and 'T0'
+S2 * T0 ! TypeError can't multiply sequence by non-int of type 'S2'
+T0 * S2 ! TypeError 'T0' object cannot be interpreted as an integer
+T0 + S2 ! TypeError can only concatenate tuple (not "S2") to tuple
+S2 + T1 = T1.__radd__
+S2 * T1 = T1.__rmul__
+T1 * S2 ! TypeError 'S2' object cannot be interpreted as an integer
+T1 + S2 ! TypeError can only concatenate tuple (not "S2") to tuple
+S2 + T5 ! TypeError unsupported operand type(s) for +: 'S2' and 'T5'
+S2 * T5 ! TypeError 'S2' object cannot be interpreted as an integer
+T5 * S2 = ('T5.__mul__', 'ab')
+T5 + S2 = ('T5.__add__', 'ab')
+S2 + L1 = L1.__radd__
+S2 * L1 = L1.__rmul__
+L1 * S2 ! TypeError 'S2' object cannot be interpreted as an integer
+L1 + S2 ! TypeError can only concatenate list (not "S2") to list
+S2 + S1 = S1.__radd__
+S2 * S1 = S1.__rmul__
+S1 * S2 ! TypeError 'S2' object cannot be interpreted as an integer
+S1 + S2 = ab
+S2 + int ! TypeError unsupported operand type(s) for +: 'S2' and 'int'
+S2 * int ! TypeError unsupported operand type(s) for *: 'S2' and 'int'
+int * S2 = abab
+int + S2 ! TypeError unsupported operand type(s) for +: 'int' and 'S2'
+S2 + bool ! TypeError unsupported operand type(s) for +: 'S2' and 'bool'
+S2 * bool ! TypeError unsupported operand type(s) for *: 'S2' and 'bool'
+bool * S2 = ab
+bool + S2 ! TypeError unsupported operand type(s) for +: 'bool' and 'S2'
+S2 + float ! TypeError unsupported operand type(s) for +: 'S2' and 'float'
+S2 * float ! TypeError unsupported operand type(s) for *: 'S2' and 'float'
+float * S2 ! TypeError 'float' object cannot be interpreted as an integer
+float + S2 ! TypeError unsupported operand type(s) for +: 'float' and 'S2'
+S2 + None ! TypeError unsupported operand type(s) for +: 'S2' and 'NoneType'
+S2 * None ! TypeError unsupported operand type(s) for *: 'S2' and 'NoneType'
+None * S2 ! TypeError 'NoneType' object cannot be interpreted as an integer
+None + S2 ! TypeError unsupported operand type(s) for +: 'NoneType' and 'S2'
+S2 + tuple ! TypeError unsupported operand type(s) for +: 'S2' and 'tuple'
+S2 * tuple ! TypeError can't multiply sequence by non-int of type 'S2'
+tuple * S2 ! TypeError 'tuple' object cannot be interpreted as an integer
+tuple + S2 ! TypeError can only concatenate tuple (not "S2") to tuple
+S2 + list ! TypeError unsupported operand type(s) for +: 'S2' and 'list'
+S2 * list ! TypeError can't multiply sequence by non-int of type 'S2'
+list * S2 ! TypeError 'list' object cannot be interpreted as an integer
+list + S2 ! TypeError can only concatenate list (not "S2") to list
+S2 + str ! TypeError unsupported operand type(s) for +: 'S2' and 'str'
+S2 * str ! TypeError can't multiply sequence by non-int of type 'S2'
+str * S2 ! TypeError 'str' object cannot be interpreted as an integer
+str + S2 = xab
+S2 + bytes ! TypeError unsupported operand type(s) for +: 'S2' and 'bytes'
+S2 * bytes ! TypeError can't multiply sequence by non-int of type 'S2'
+bytes * S2 ! TypeError 'bytes' object cannot be interpreted as an integer
+bytes + S2 ! TypeError can't concat S2 to bytes
+B2 + R = R.__radd__
+B2 * R = R.__rmul__
+R * B2 ! TypeError 'R' object cannot be interpreted as an integer
+R + B2 ! TypeError unsupported operand type(s) for +: 'R' and 'B2'
+B2 + T0 ! TypeError unsupported operand type(s) for +: 'B2' and 'T0'
+B2 * T0 ! TypeError can't multiply sequence by non-int of type 'B2'
+T0 * B2 ! TypeError 'T0' object cannot be interpreted as an integer
+T0 + B2 ! TypeError can only concatenate tuple (not "B2") to tuple
+B2 + T1 = T1.__radd__
+B2 * T1 = T1.__rmul__
+T1 * B2 ! TypeError 'B2' object cannot be interpreted as an integer
+T1 + B2 ! TypeError can only concatenate tuple (not "B2") to tuple
+B2 + T5 ! TypeError unsupported operand type(s) for +: 'B2' and 'T5'
+B2 * T5 ! TypeError 'B2' object cannot be interpreted as an integer
+T5 * B2 = ('T5.__mul__', b'ab')
+T5 + B2 = ('T5.__add__', b'ab')
+B2 + L1 = L1.__radd__
+B2 * L1 = L1.__rmul__
+L1 * B2 ! TypeError 'B2' object cannot be interpreted as an integer
+L1 + B2 ! TypeError can only concatenate list (not "B2") to list
+B2 + S1 = S1.__radd__
+B2 * S1 = S1.__rmul__
+S1 * B2 ! TypeError 'B2' object cannot be interpreted as an integer
+S1 + B2 ! TypeError can only concatenate str (not "B2") to str
+B2 + int ! TypeError unsupported operand type(s) for +: 'B2' and 'int'
+B2 * int ! TypeError unsupported operand type(s) for *: 'B2' and 'int'
+int * B2 = b'abab'
+int + B2 ! TypeError unsupported operand type(s) for +: 'int' and 'B2'
+B2 + bool ! TypeError unsupported operand type(s) for +: 'B2' and 'bool'
+B2 * bool ! TypeError unsupported operand type(s) for *: 'B2' and 'bool'
+bool * B2 = b'ab'
+bool + B2 ! TypeError unsupported operand type(s) for +: 'bool' and 'B2'
+B2 + float ! TypeError unsupported operand type(s) for +: 'B2' and 'float'
+B2 * float ! TypeError unsupported operand type(s) for *: 'B2' and 'float'
+float * B2 ! TypeError 'float' object cannot be interpreted as an integer
+float + B2 ! TypeError unsupported operand type(s) for +: 'float' and 'B2'
+B2 + None ! TypeError unsupported operand type(s) for +: 'B2' and 'NoneType'
+B2 * None ! TypeError unsupported operand type(s) for *: 'B2' and 'NoneType'
+None * B2 ! TypeError 'NoneType' object cannot be interpreted as an integer
+None + B2 ! TypeError unsupported operand type(s) for +: 'NoneType' and 'B2'
+B2 + tuple ! TypeError unsupported operand type(s) for +: 'B2' and 'tuple'
+B2 * tuple ! TypeError can't multiply sequence by non-int of type 'B2'
+tuple * B2 ! TypeError 'tuple' object cannot be interpreted as an integer
+tuple + B2 ! TypeError can only concatenate tuple (not "B2") to tuple
+B2 + list ! TypeError unsupported operand type(s) for +: 'B2' and 'list'
+B2 * list ! TypeError can't multiply sequence by non-int of type 'B2'
+list * B2 ! TypeError 'list' object cannot be interpreted as an integer
+list + B2 ! TypeError can only concatenate list (not "B2") to list
+B2 + str ! TypeError unsupported operand type(s) for +: 'B2' and 'str'
+B2 * str ! TypeError can't multiply sequence by non-int of type 'B2'
+str * B2 ! TypeError 'str' object cannot be interpreted as an integer
+str + B2 ! TypeError can only concatenate str (not "B2") to str
+B2 + bytes ! TypeError unsupported operand type(s) for +: 'B2' and 'bytes'
+B2 * bytes ! TypeError can't multiply sequence by non-int of type 'B2'
+bytes * B2 ! TypeError 'bytes' object cannot be interpreted as an integer
+bytes + B2 = b'xab'
+T7 + R ! TypeError can only concatenate tuple (not "R") to tuple
+T7 * R ! TypeError 'R' object cannot be interpreted as an integer
+R * T7 ! TypeError unsupported operand type(s) for *: 'R' and 'T7'
+R + T7 ! TypeError unsupported operand type(s) for +: 'R' and 'T7'
+T7 + T0 = (1,)
+T7 * T0 ! TypeError 'T0' object cannot be interpreted as an integer
+T0 * T7 ! TypeError can't multiply sequence by non-int of type 'T7'
+T0 + T7 = (1,)
+T7 + T1 = (1,)
+T7 * T1 ! TypeError 'T1' object cannot be interpreted as an integer
+T1 * T7 ! TypeError 'T7' object cannot be interpreted as an integer
+T1 + T7 = (1,)
+T7 + T5 = (1,)
+T7 * T5 ! TypeError 'T5' object cannot be interpreted as an integer
+T5 * T7 = ('T5.__mul__', (1,))
+T5 + T7 = ('T5.__add__', (1,))
+T7 + L1 ! TypeError can only concatenate tuple (not "L1") to tuple
+T7 * L1 ! TypeError 'L1' object cannot be interpreted as an integer
+L1 * T7 ! TypeError 'T7' object cannot be interpreted as an integer
+L1 + T7 ! TypeError can only concatenate list (not "T7") to list
+T7 + S1 ! TypeError can only concatenate tuple (not "S1") to tuple
+T7 * S1 ! TypeError 'S1' object cannot be interpreted as an integer
+S1 * T7 ! TypeError 'T7' object cannot be interpreted as an integer
+S1 + T7 ! TypeError can only concatenate str (not "T7") to str
+T7 + int ! TypeError can only concatenate tuple (not "int") to tuple
+T7 * int = (1, 1)
+int * T7 ! TypeError unsupported operand type(s) for *: 'int' and 'T7'
+int + T7 ! TypeError unsupported operand type(s) for +: 'int' and 'T7'
+T7 + bool ! TypeError can only concatenate tuple (not "bool") to tuple
+T7 * bool = (1,)
+bool * T7 ! TypeError unsupported operand type(s) for *: 'bool' and 'T7'
+bool + T7 ! TypeError unsupported operand type(s) for +: 'bool' and 'T7'
+T7 + float ! TypeError can only concatenate tuple (not "float") to tuple
+T7 * float ! TypeError 'float' object cannot be interpreted as an integer
+float * T7 ! TypeError unsupported operand type(s) for *: 'float' and 'T7'
+float + T7 ! TypeError unsupported operand type(s) for +: 'float' and 'T7'
+T7 + None ! TypeError can only concatenate tuple (not "NoneType") to tuple
+T7 * None ! TypeError 'NoneType' object cannot be interpreted as an integer
+None * T7 ! TypeError unsupported operand type(s) for *: 'NoneType' and 'T7'
+None + T7 ! TypeError unsupported operand type(s) for +: 'NoneType' and 'T7'
+T7 + tuple = (1, 1)
+T7 * tuple ! TypeError 'tuple' object cannot be interpreted as an integer
+tuple * T7 ! TypeError can't multiply sequence by non-int of type 'T7'
+tuple + T7 = (1, 1)
+T7 + list ! TypeError can only concatenate tuple (not "list") to tuple
+T7 * list ! TypeError 'list' object cannot be interpreted as an integer
+list * T7 ! TypeError can't multiply sequence by non-int of type 'T7'
+list + T7 ! TypeError can only concatenate list (not "T7") to list
+T7 + str ! TypeError can only concatenate tuple (not "str") to tuple
+T7 * str ! TypeError 'str' object cannot be interpreted as an integer
+str * T7 ! TypeError can't multiply sequence by non-int of type 'T7'
+str + T7 ! TypeError can only concatenate str (not "T7") to str
+T7 + bytes ! TypeError can only concatenate tuple (not "bytes") to tuple
+T7 * bytes ! TypeError 'bytes' object cannot be interpreted as an integer
+bytes * T7 ! TypeError can't multiply sequence by non-int of type 'T7'
+bytes + T7 ! TypeError can't concat T7 to bytes
+L7 + R ! TypeError can only concatenate list (not "R") to list
+L7 * R ! TypeError 'R' object cannot be interpreted as an integer
+R * L7 ! TypeError unsupported operand type(s) for *: 'R' and 'L7'
+R + L7 ! TypeError unsupported operand type(s) for +: 'R' and 'L7'
+L7 + T0 ! TypeError can only concatenate list (not "T0") to list
+L7 * T0 ! TypeError 'T0' object cannot be interpreted as an integer
+T0 * L7 ! TypeError can't multiply sequence by non-int of type 'L7'
+T0 + L7 ! TypeError can only concatenate tuple (not "L7") to tuple
+L7 + T1 ! TypeError can only concatenate list (not "T1") to list
+L7 * T1 ! TypeError 'T1' object cannot be interpreted as an integer
+T1 * L7 ! TypeError 'L7' object cannot be interpreted as an integer
+T1 + L7 ! TypeError can only concatenate tuple (not "L7") to tuple
+L7 + T5 ! TypeError can only concatenate list (not "T5") to list
+L7 * T5 ! TypeError 'T5' object cannot be interpreted as an integer
+T5 * L7 = ('T5.__mul__', [1])
+T5 + L7 = ('T5.__add__', [1])
+L7 + L1 = [1]
+L7 * L1 ! TypeError 'L1' object cannot be interpreted as an integer
+L1 * L7 ! TypeError 'L7' object cannot be interpreted as an integer
+L1 + L7 = [1]
+L7 + S1 ! TypeError can only concatenate list (not "S1") to list
+L7 * S1 ! TypeError 'S1' object cannot be interpreted as an integer
+S1 * L7 ! TypeError 'L7' object cannot be interpreted as an integer
+S1 + L7 ! TypeError can only concatenate str (not "L7") to str
+L7 + int ! TypeError can only concatenate list (not "int") to list
+L7 * int = [1, 1]
+int * L7 ! TypeError unsupported operand type(s) for *: 'int' and 'L7'
+int + L7 ! TypeError unsupported operand type(s) for +: 'int' and 'L7'
+L7 + bool ! TypeError can only concatenate list (not "bool") to list
+L7 * bool = [1]
+bool * L7 ! TypeError unsupported operand type(s) for *: 'bool' and 'L7'
+bool + L7 ! TypeError unsupported operand type(s) for +: 'bool' and 'L7'
+L7 + float ! TypeError can only concatenate list (not "float") to list
+L7 * float ! TypeError 'float' object cannot be interpreted as an integer
+float * L7 ! TypeError unsupported operand type(s) for *: 'float' and 'L7'
+float + L7 ! TypeError unsupported operand type(s) for +: 'float' and 'L7'
+L7 + None ! TypeError can only concatenate list (not "NoneType") to list
+L7 * None ! TypeError 'NoneType' object cannot be interpreted as an integer
+None * L7 ! TypeError unsupported operand type(s) for *: 'NoneType' and 'L7'
+None + L7 ! TypeError unsupported operand type(s) for +: 'NoneType' and 'L7'
+L7 + tuple ! TypeError can only concatenate list (not "tuple") to list
+L7 * tuple ! TypeError 'tuple' object cannot be interpreted as an integer
+tuple * L7 ! TypeError can't multiply sequence by non-int of type 'L7'
+tuple + L7 ! TypeError can only concatenate tuple (not "L7") to tuple
+L7 + list = [1, 1]
+L7 * list ! TypeError 'list' object cannot be interpreted as an integer
+list * L7 ! TypeError can't multiply sequence by non-int of type 'L7'
+list + L7 = [1, 1]
+L7 + str ! TypeError can only concatenate list (not "str") to list
+L7 * str ! TypeError 'str' object cannot be interpreted as an integer
+str * L7 ! TypeError can't multiply sequence by non-int of type 'L7'
+str + L7 ! TypeError can only concatenate str (not "L7") to str
+L7 + bytes ! TypeError can only concatenate list (not "bytes") to list
+L7 * bytes ! TypeError 'bytes' object cannot be interpreted as an integer
+bytes * L7 ! TypeError can't multiply sequence by non-int of type 'L7'
+bytes + L7 ! TypeError can't concat L7 to bytes
+S7 + R = R.__radd__
+S7 * R ! TypeError 'R' object cannot be interpreted as an integer
+R * S7 ! TypeError unsupported operand type(s) for *: 'R' and 'S7'
+R + S7 ! TypeError unsupported operand type(s) for +: 'R' and 'S7'
+S7 + T0 ! TypeError can only concatenate str (not "T0") to str
+S7 * T0 ! TypeError 'T0' object cannot be interpreted as an integer
+T0 * S7 ! TypeError can't multiply sequence by non-int of type 'S7'
+T0 + S7 ! TypeError can only concatenate tuple (not "S7") to tuple
+S7 + T1 = T1.__radd__
+S7 * T1 ! TypeError 'T1' object cannot be interpreted as an integer
+T1 * S7 ! TypeError 'S7' object cannot be interpreted as an integer
+T1 + S7 ! TypeError can only concatenate tuple (not "S7") to tuple
+S7 + T5 ! TypeError can only concatenate str (not "T5") to str
+S7 * T5 ! TypeError 'T5' object cannot be interpreted as an integer
+T5 * S7 = ('T5.__mul__', 'ab')
+T5 + S7 = ('T5.__add__', 'ab')
+S7 + L1 = L1.__radd__
+S7 * L1 ! TypeError 'L1' object cannot be interpreted as an integer
+L1 * S7 ! TypeError 'S7' object cannot be interpreted as an integer
+L1 + S7 ! TypeError can only concatenate list (not "S7") to list
+S7 + S1 = S1.__radd__
+S7 * S1 ! TypeError 'S1' object cannot be interpreted as an integer
+S1 * S7 ! TypeError 'S7' object cannot be interpreted as an integer
+S1 + S7 = ab
+S7 + int ! TypeError can only concatenate str (not "int") to str
+S7 * int = abab
+int * S7 ! TypeError unsupported operand type(s) for *: 'int' and 'S7'
+int + S7 ! TypeError unsupported operand type(s) for +: 'int' and 'S7'
+S7 + bool ! TypeError can only concatenate str (not "bool") to str
+S7 * bool = ab
+bool * S7 ! TypeError unsupported operand type(s) for *: 'bool' and 'S7'
+bool + S7 ! TypeError unsupported operand type(s) for +: 'bool' and 'S7'
+S7 + float ! TypeError can only concatenate str (not "float") to str
+S7 * float ! TypeError 'float' object cannot be interpreted as an integer
+float * S7 ! TypeError unsupported operand type(s) for *: 'float' and 'S7'
+float + S7 ! TypeError unsupported operand type(s) for +: 'float' and 'S7'
+S7 + None ! TypeError can only concatenate str (not "NoneType") to str
+S7 * None ! TypeError 'NoneType' object cannot be interpreted as an integer
+None * S7 ! TypeError unsupported operand type(s) for *: 'NoneType' and 'S7'
+None + S7 ! TypeError unsupported operand type(s) for +: 'NoneType' and 'S7'
+S7 + tuple ! TypeError can only concatenate str (not "tuple") to str
+S7 * tuple ! TypeError 'tuple' object cannot be interpreted as an integer
+tuple * S7 ! TypeError can't multiply sequence by non-int of type 'S7'
+tuple + S7 ! TypeError can only concatenate tuple (not "S7") to tuple
+S7 + list ! TypeError can only concatenate str (not "list") to str
+S7 * list ! TypeError 'list' object cannot be interpreted as an integer
+list * S7 ! TypeError can't multiply sequence by non-int of type 'S7'
+list + S7 ! TypeError can only concatenate list (not "S7") to list
+S7 + str = abx
+S7 * str ! TypeError 'str' object cannot be interpreted as an integer
+str * S7 ! TypeError can't multiply sequence by non-int of type 'S7'
+str + S7 = xab
+S7 + bytes ! TypeError can only concatenate str (not "bytes") to str
+S7 * bytes ! TypeError 'bytes' object cannot be interpreted as an integer
+bytes * S7 ! TypeError can't multiply sequence by non-int of type 'S7'
+bytes + S7 ! TypeError can't concat S7 to bytes
+B7 + R = R.__radd__
+B7 * R ! TypeError 'R' object cannot be interpreted as an integer
+R * B7 ! TypeError unsupported operand type(s) for *: 'R' and 'B7'
+R + B7 ! TypeError unsupported operand type(s) for +: 'R' and 'B7'
+B7 + T0 ! TypeError can't concat T0 to B7
+B7 * T0 ! TypeError 'T0' object cannot be interpreted as an integer
+T0 * B7 ! TypeError can't multiply sequence by non-int of type 'B7'
+T0 + B7 ! TypeError can only concatenate tuple (not "B7") to tuple
+B7 + T1 = T1.__radd__
+B7 * T1 ! TypeError 'T1' object cannot be interpreted as an integer
+T1 * B7 ! TypeError 'B7' object cannot be interpreted as an integer
+T1 + B7 ! TypeError can only concatenate tuple (not "B7") to tuple
+B7 + T5 ! TypeError can't concat T5 to B7
+B7 * T5 ! TypeError 'T5' object cannot be interpreted as an integer
+T5 * B7 = ('T5.__mul__', B7(b'ab'))
+T5 + B7 = ('T5.__add__', B7(b'ab'))
+B7 + L1 = L1.__radd__
+B7 * L1 ! TypeError 'L1' object cannot be interpreted as an integer
+L1 * B7 ! TypeError 'B7' object cannot be interpreted as an integer
+L1 + B7 ! TypeError can only concatenate list (not "B7") to list
+B7 + S1 = S1.__radd__
+B7 * S1 ! TypeError 'S1' object cannot be interpreted as an integer
+S1 * B7 ! TypeError 'B7' object cannot be interpreted as an integer
+S1 + B7 ! TypeError can only concatenate str (not "B7") to str
+B7 + int ! TypeError can't concat int to B7
+B7 * int = bytearray(b'abab')
+int * B7 ! TypeError unsupported operand type(s) for *: 'int' and 'B7'
+int + B7 ! TypeError unsupported operand type(s) for +: 'int' and 'B7'
+B7 + bool ! TypeError can't concat bool to B7
+B7 * bool = bytearray(b'ab')
+bool * B7 ! TypeError unsupported operand type(s) for *: 'bool' and 'B7'
+bool + B7 ! TypeError unsupported operand type(s) for +: 'bool' and 'B7'
+B7 + float ! TypeError can't concat float to B7
+B7 * float ! TypeError 'float' object cannot be interpreted as an integer
+float * B7 ! TypeError unsupported operand type(s) for *: 'float' and 'B7'
+float + B7 ! TypeError unsupported operand type(s) for +: 'float' and 'B7'
+B7 + None ! TypeError can't concat NoneType to B7
+B7 * None ! TypeError 'NoneType' object cannot be interpreted as an integer
+None * B7 ! TypeError unsupported operand type(s) for *: 'NoneType' and 'B7'
+None + B7 ! TypeError unsupported operand type(s) for +: 'NoneType' and 'B7'
+B7 + tuple ! TypeError can't concat tuple to B7
+B7 * tuple ! TypeError 'tuple' object cannot be interpreted as an integer
+tuple * B7 ! TypeError can't multiply sequence by non-int of type 'B7'
+tuple + B7 ! TypeError can only concatenate tuple (not "B7") to tuple
+B7 + list ! TypeError can't concat list to B7
+B7 * list ! TypeError 'list' object cannot be interpreted as an integer
+list * B7 ! TypeError can't multiply sequence by non-int of type 'B7'
+list + B7 ! TypeError can only concatenate list (not "B7") to list
+B7 + str ! TypeError can't concat str to B7
+B7 * str ! TypeError 'str' object cannot be interpreted as an integer
+str * B7 ! TypeError can't multiply sequence by non-int of type 'B7'
+str + B7 ! TypeError can only concatenate str (not "B7") to str
+B7 + bytes = bytearray(b'abx')
+B7 * bytes ! TypeError 'bytes' object cannot be interpreted as an integer
+bytes * B7 ! TypeError can't multiply sequence by non-int of type 'B7'
+bytes + B7 = b'xab'
+Q7 + R = R.__radd__
+Q7 * R ! TypeError 'R' object cannot be interpreted as an integer
+R * Q7 ! TypeError unsupported operand type(s) for *: 'R' and 'Q7'
+R + Q7 ! TypeError unsupported operand type(s) for +: 'R' and 'Q7'
+Q7 + T0 ! TypeError can only concatenate deque (not "T0") to deque
+Q7 * T0 ! TypeError 'T0' object cannot be interpreted as an integer
+T0 * Q7 ! TypeError can't multiply sequence by non-int of type 'Q7'
+T0 + Q7 ! TypeError can only concatenate tuple (not "Q7") to tuple
+Q7 + T1 = T1.__radd__
+Q7 * T1 ! TypeError 'T1' object cannot be interpreted as an integer
+T1 * Q7 ! TypeError 'Q7' object cannot be interpreted as an integer
+T1 + Q7 ! TypeError can only concatenate tuple (not "Q7") to tuple
+Q7 + T5 ! TypeError can only concatenate deque (not "T5") to deque
+Q7 * T5 ! TypeError 'T5' object cannot be interpreted as an integer
+T5 * Q7 = ('T5.__mul__', Q7([1]))
+T5 + Q7 = ('T5.__add__', Q7([1]))
+Q7 + L1 = L1.__radd__
+Q7 * L1 ! TypeError 'L1' object cannot be interpreted as an integer
+L1 * Q7 ! TypeError 'Q7' object cannot be interpreted as an integer
+L1 + Q7 ! TypeError can only concatenate list (not "Q7") to list
+Q7 + S1 = S1.__radd__
+Q7 * S1 ! TypeError 'S1' object cannot be interpreted as an integer
+S1 * Q7 ! TypeError 'Q7' object cannot be interpreted as an integer
+S1 + Q7 ! TypeError can only concatenate str (not "Q7") to str
+Q7 + int ! TypeError can only concatenate deque (not "int") to deque
+Q7 * int = Q7([1, 1])
+int * Q7 ! TypeError unsupported operand type(s) for *: 'int' and 'Q7'
+int + Q7 ! TypeError unsupported operand type(s) for +: 'int' and 'Q7'
+Q7 + bool ! TypeError can only concatenate deque (not "bool") to deque
+Q7 * bool = Q7([1])
+bool * Q7 ! TypeError unsupported operand type(s) for *: 'bool' and 'Q7'
+bool + Q7 ! TypeError unsupported operand type(s) for +: 'bool' and 'Q7'
+Q7 + float ! TypeError can only concatenate deque (not "float") to deque
+Q7 * float ! TypeError 'float' object cannot be interpreted as an integer
+float * Q7 ! TypeError unsupported operand type(s) for *: 'float' and 'Q7'
+float + Q7 ! TypeError unsupported operand type(s) for +: 'float' and 'Q7'
+Q7 + None ! TypeError can only concatenate deque (not "NoneType") to deque
+Q7 * None ! TypeError 'NoneType' object cannot be interpreted as an integer
+None * Q7 ! TypeError unsupported operand type(s) for *: 'NoneType' and 'Q7'
+None + Q7 ! TypeError unsupported operand type(s) for +: 'NoneType' and 'Q7'
+Q7 + tuple ! TypeError can only concatenate deque (not "tuple") to deque
+Q7 * tuple ! TypeError 'tuple' object cannot be interpreted as an integer
+tuple * Q7 ! TypeError can't multiply sequence by non-int of type 'Q7'
+tuple + Q7 ! TypeError can only concatenate tuple (not "Q7") to tuple
+Q7 + list ! TypeError can only concatenate deque (not "list") to deque
+Q7 * list ! TypeError 'list' object cannot be interpreted as an integer
+list * Q7 ! TypeError can't multiply sequence by non-int of type 'Q7'
+list + Q7 ! TypeError can only concatenate list (not "Q7") to list
+Q7 + str ! TypeError can only concatenate deque (not "str") to deque
+Q7 * str ! TypeError 'str' object cannot be interpreted as an integer
+str * Q7 ! TypeError can't multiply sequence by non-int of type 'Q7'
+str + Q7 ! TypeError can only concatenate str (not "Q7") to str
+Q7 + bytes ! TypeError can only concatenate deque (not "bytes") to deque
+Q7 * bytes ! TypeError 'bytes' object cannot be interpreted as an integer
+bytes * Q7 ! TypeError can't multiply sequence by non-int of type 'Q7'
+bytes + Q7 ! TypeError can't concat Q7 to bytes
+tuple + R = R.__radd__
+tuple * R = R.__rmul__
+R * tuple ! TypeError can't multiply sequence by non-int of type 'R'
+R + tuple ! TypeError unsupported operand type(s) for +: 'R' and 'tuple'
+tuple + T0 = ()
+tuple * T0 ! TypeError can't multiply sequence by non-int of type 'T0'
+T0 * tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+T0 + tuple = ()
+tuple + T1 = T1.__radd__
+tuple * T1 = T1.__rmul__
+T1 * tuple ! TypeError 'tuple' object cannot be interpreted as an integer
+T1 + tuple = ()
+tuple + T5 = ()
+tuple * T5 ! TypeError 'tuple' object cannot be interpreted as an integer
+T5 * tuple = ('T5.__mul__', ())
+T5 + tuple = ('T5.__add__', ())
+tuple + L1 = L1.__radd__
+tuple * L1 = L1.__rmul__
+L1 * tuple ! TypeError 'tuple' object cannot be interpreted as an integer
+L1 + tuple ! TypeError can only concatenate list (not "tuple") to list
+tuple + S1 = S1.__radd__
+tuple * S1 = S1.__rmul__
+S1 * tuple ! TypeError 'tuple' object cannot be interpreted as an integer
+S1 + tuple ! TypeError can only concatenate str (not "tuple") to str
+tuple + int ! TypeError can only concatenate tuple (not "int") to tuple
+tuple * int = ()
+int * tuple = ()
+int + tuple ! TypeError unsupported operand type(s) for +: 'int' and 'tuple'
+tuple + bool ! TypeError can only concatenate tuple (not "bool") to tuple
+tuple * bool = ()
+bool * tuple = ()
+bool + tuple ! TypeError unsupported operand type(s) for +: 'bool' and 'tuple'
+tuple + float ! TypeError can only concatenate tuple (not "float") to tuple
+tuple * float ! TypeError can't multiply sequence by non-int of type 'float'
+float * tuple ! TypeError can't multiply sequence by non-int of type 'float'
+float + tuple ! TypeError unsupported operand type(s) for +: 'float' and 'tuple'
+tuple + None ! TypeError can only concatenate tuple (not "NoneType") to tuple
+tuple * None ! TypeError can't multiply sequence by non-int of type 'NoneType'
+None * tuple ! TypeError can't multiply sequence by non-int of type 'NoneType'
+None + tuple ! TypeError unsupported operand type(s) for +: 'NoneType' and 'tuple'
+tuple + tuple = (1,)
+tuple * tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+tuple * tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+tuple + tuple = (1,)
+tuple + list ! TypeError can only concatenate tuple (not "list") to tuple
+tuple * list ! TypeError can't multiply sequence by non-int of type 'list'
+list * tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+list + tuple ! TypeError can only concatenate list (not "tuple") to list
+tuple + str ! TypeError can only concatenate tuple (not "str") to tuple
+tuple * str ! TypeError can't multiply sequence by non-int of type 'str'
+str * tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+str + tuple ! TypeError can only concatenate str (not "tuple") to str
+tuple + bytes ! TypeError can only concatenate tuple (not "bytes") to tuple
+tuple * bytes ! TypeError can't multiply sequence by non-int of type 'bytes'
+bytes * tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+bytes + tuple ! TypeError can't concat tuple to bytes
+T0 + R = R.__radd__
+T0 * R = R.__rmul__
+R * T0 ! TypeError can't multiply sequence by non-int of type 'R'
+R + T0 ! TypeError unsupported operand type(s) for +: 'R' and 'T0'
+T0 + T0 = ()
+T0 * T0 ! TypeError can't multiply sequence by non-int of type 'T0'
+T0 * T0 ! TypeError can't multiply sequence by non-int of type 'T0'
+T0 + T0 = ()
+T0 + T1 = T1.__radd__
+T0 * T1 = T1.__rmul__
+T1 * T0 ! TypeError 'T0' object cannot be interpreted as an integer
+T1 + T0 = ()
+T0 + T5 = ()
+T0 * T5 ! TypeError 'T0' object cannot be interpreted as an integer
+T5 * T0 = ('T5.__mul__', ())
+T5 + T0 = ('T5.__add__', ())
+T0 + L1 = L1.__radd__
+T0 * L1 = L1.__rmul__
+L1 * T0 ! TypeError 'T0' object cannot be interpreted as an integer
+L1 + T0 ! TypeError can only concatenate list (not "T0") to list
+T0 + S1 = S1.__radd__
+T0 * S1 = S1.__rmul__
+S1 * T0 ! TypeError 'T0' object cannot be interpreted as an integer
+S1 + T0 ! TypeError can only concatenate str (not "T0") to str
+T0 + int ! TypeError can only concatenate tuple (not "int") to tuple
+T0 * int = ()
+int * T0 = ()
+int + T0 ! TypeError unsupported operand type(s) for +: 'int' and 'T0'
+T0 + bool ! TypeError can only concatenate tuple (not "bool") to tuple
+T0 * bool = ()
+bool * T0 = ()
+bool + T0 ! TypeError unsupported operand type(s) for +: 'bool' and 'T0'
+T0 + float ! TypeError can only concatenate tuple (not "float") to tuple
+T0 * float ! TypeError can't multiply sequence by non-int of type 'float'
+float * T0 ! TypeError can't multiply sequence by non-int of type 'float'
+float + T0 ! TypeError unsupported operand type(s) for +: 'float' and 'T0'
+T0 + None ! TypeError can only concatenate tuple (not "NoneType") to tuple
+T0 * None ! TypeError can't multiply sequence by non-int of type 'NoneType'
+None * T0 ! TypeError can't multiply sequence by non-int of type 'NoneType'
+None + T0 ! TypeError unsupported operand type(s) for +: 'NoneType' and 'T0'
+T0 + tuple = (1,)
+T0 * tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+tuple * T0 ! TypeError can't multiply sequence by non-int of type 'T0'
+tuple + T0 = (1,)
+T0 + list ! TypeError can only concatenate tuple (not "list") to tuple
+T0 * list ! TypeError can't multiply sequence by non-int of type 'list'
+list * T0 ! TypeError can't multiply sequence by non-int of type 'T0'
+list + T0 ! TypeError can only concatenate list (not "T0") to list
+T0 + str ! TypeError can only concatenate tuple (not "str") to tuple
+T0 * str ! TypeError can't multiply sequence by non-int of type 'str'
+str * T0 ! TypeError can't multiply sequence by non-int of type 'T0'
+str + T0 ! TypeError can only concatenate str (not "T0") to str
+T0 + bytes ! TypeError can only concatenate tuple (not "bytes") to tuple
+T0 * bytes ! TypeError can't multiply sequence by non-int of type 'bytes'
+bytes * T0 ! TypeError can't multiply sequence by non-int of type 'T0'
+bytes + T0 ! TypeError can't concat T0 to bytes
+T1 + R ! TypeError can only concatenate tuple (not "R") to tuple
+T1 * R ! TypeError 'R' object cannot be interpreted as an integer
+R * T1 = T1.__rmul__
+R + T1 = T1.__radd__
+T1 + T0 = ()
+T1 * T0 ! TypeError 'T0' object cannot be interpreted as an integer
+T0 * T1 = T1.__rmul__
+T0 + T1 = T1.__radd__
+T1 + T1 = ()
+T1 * T1 ! TypeError 'T1' object cannot be interpreted as an integer
+T1 * T1 ! TypeError 'T1' object cannot be interpreted as an integer
+T1 + T1 = ()
+T1 + T5 = ()
+T1 * T5 ! TypeError 'T5' object cannot be interpreted as an integer
+T5 * T1 = ('T5.__mul__', ())
+T5 + T1 = ('T5.__add__', ())
+T1 + L1 ! TypeError can only concatenate tuple (not "L1") to tuple
+T1 * L1 ! TypeError 'L1' object cannot be interpreted as an integer
+L1 * T1 ! TypeError 'T1' object cannot be interpreted as an integer
+L1 + T1 ! TypeError can only concatenate list (not "T1") to list
+T1 + S1 ! TypeError can only concatenate tuple (not "S1") to tuple
+T1 * S1 ! TypeError 'S1' object cannot be interpreted as an integer
+S1 * T1 ! TypeError 'T1' object cannot be interpreted as an integer
+S1 + T1 ! TypeError can only concatenate str (not "T1") to str
+T1 + int ! TypeError can only concatenate tuple (not "int") to tuple
+T1 * int = ()
+int * T1 = T1.__rmul__
+int + T1 = T1.__radd__
+T1 + bool ! TypeError can only concatenate tuple (not "bool") to tuple
+T1 * bool = ()
+bool * T1 = T1.__rmul__
+bool + T1 = T1.__radd__
+T1 + float ! TypeError can only concatenate tuple (not "float") to tuple
+T1 * float ! TypeError 'float' object cannot be interpreted as an integer
+float * T1 = T1.__rmul__
+float + T1 = T1.__radd__
+T1 + None ! TypeError can only concatenate tuple (not "NoneType") to tuple
+T1 * None ! TypeError 'NoneType' object cannot be interpreted as an integer
+None * T1 = T1.__rmul__
+None + T1 = T1.__radd__
+T1 + tuple = (1,)
+T1 * tuple ! TypeError 'tuple' object cannot be interpreted as an integer
+tuple * T1 = T1.__rmul__
+tuple + T1 = T1.__radd__
+T1 + list ! TypeError can only concatenate tuple (not "list") to tuple
+T1 * list ! TypeError 'list' object cannot be interpreted as an integer
+list * T1 = T1.__rmul__
+list + T1 = T1.__radd__
+T1 + str ! TypeError can only concatenate tuple (not "str") to tuple
+T1 * str ! TypeError 'str' object cannot be interpreted as an integer
+str * T1 = T1.__rmul__
+str + T1 = T1.__radd__
+T1 + bytes ! TypeError can only concatenate tuple (not "bytes") to tuple
+T1 * bytes ! TypeError 'bytes' object cannot be interpreted as an integer
+bytes * T1 = T1.__rmul__
+bytes + T1 = T1.__radd__
+T2 + R = R.__radd__
+T2 * R = R.__rmul__
+R * T2 ! TypeError 'R' object cannot be interpreted as an integer
+R + T2 ! TypeError unsupported operand type(s) for +: 'R' and 'T2'
+T2 + T0 ! TypeError unsupported operand type(s) for +: 'T2' and 'T0'
+T2 * T0 ! TypeError can't multiply sequence by non-int of type 'T2'
+T0 * T2 ! TypeError 'T0' object cannot be interpreted as an integer
+T0 + T2 = (1,)
+T2 + T1 = T1.__radd__
+T2 * T1 = T1.__rmul__
+T1 * T2 ! TypeError 'T2' object cannot be interpreted as an integer
+T1 + T2 = (1,)
+T2 + T5 ! TypeError unsupported operand type(s) for +: 'T2' and 'T5'
+T2 * T5 ! TypeError 'T2' object cannot be interpreted as an integer
+T5 * T2 = ('T5.__mul__', (1,))
+T5 + T2 = ('T5.__add__', (1,))
+T2 + L1 = L1.__radd__
+T2 * L1 = L1.__rmul__
+L1 * T2 ! TypeError 'T2' object cannot be interpreted as an integer
+L1 + T2 ! TypeError can only concatenate list (not "T2") to list
+T2 + S1 = S1.__radd__
+T2 * S1 = S1.__rmul__
+S1 * T2 ! TypeError 'T2' object cannot be interpreted as an integer
+S1 + T2 ! TypeError can only concatenate str (not "T2") to str
+T2 + int ! TypeError unsupported operand type(s) for +: 'T2' and 'int'
+T2 * int ! TypeError unsupported operand type(s) for *: 'T2' and 'int'
+int * T2 = (1, 1)
+int + T2 ! TypeError unsupported operand type(s) for +: 'int' and 'T2'
+T2 + bool ! TypeError unsupported operand type(s) for +: 'T2' and 'bool'
+T2 * bool ! TypeError unsupported operand type(s) for *: 'T2' and 'bool'
+bool * T2 = (1,)
+bool + T2 ! TypeError unsupported operand type(s) for +: 'bool' and 'T2'
+T2 + float ! TypeError unsupported operand type(s) for +: 'T2' and 'float'
+T2 * float ! TypeError unsupported operand type(s) for *: 'T2' and 'float'
+float * T2 ! TypeError 'float' object cannot be interpreted as an integer
+float + T2 ! TypeError unsupported operand type(s) for +: 'float' and 'T2'
+T2 + None ! TypeError unsupported operand type(s) for +: 'T2' and 'NoneType'
+T2 * None ! TypeError unsupported operand type(s) for *: 'T2' and 'NoneType'
+None * T2 ! TypeError 'NoneType' object cannot be interpreted as an integer
+None + T2 ! TypeError unsupported operand type(s) for +: 'NoneType' and 'T2'
+T2 + tuple ! TypeError unsupported operand type(s) for +: 'T2' and 'tuple'
+T2 * tuple ! TypeError can't multiply sequence by non-int of type 'T2'
+tuple * T2 ! TypeError 'tuple' object cannot be interpreted as an integer
+tuple + T2 = (1, 1)
+T2 + list ! TypeError unsupported operand type(s) for +: 'T2' and 'list'
+T2 * list ! TypeError can't multiply sequence by non-int of type 'T2'
+list * T2 ! TypeError 'list' object cannot be interpreted as an integer
+list + T2 ! TypeError can only concatenate list (not "T2") to list
+T2 + str ! TypeError unsupported operand type(s) for +: 'T2' and 'str'
+T2 * str ! TypeError can't multiply sequence by non-int of type 'T2'
+str * T2 ! TypeError 'str' object cannot be interpreted as an integer
+str + T2 ! TypeError can only concatenate str (not "T2") to str
+T2 + bytes ! TypeError unsupported operand type(s) for +: 'T2' and 'bytes'
+T2 * bytes ! TypeError can't multiply sequence by non-int of type 'T2'
+bytes * T2 ! TypeError 'bytes' object cannot be interpreted as an integer
+bytes + T2 ! TypeError can't concat T2 to bytes
+T4 + R = R.__radd__
+T4 * R = R.__rmul__
+R * T4 ! TypeError can't multiply sequence by non-int of type 'R'
+R + T4 ! TypeError unsupported operand type(s) for +: 'R' and 'T4'
+T4 + T0 = ()
+T4 * T0 ! TypeError can't multiply sequence by non-int of type 'T0'
+T0 * T4 ! TypeError can't multiply sequence by non-int of type 'T4'
+T0 + T4 = ()
+T4 + T1 = T1.__radd__
+T4 * T1 = T1.__rmul__
+T1 * T4 ! TypeError 'T4' object cannot be interpreted as an integer
+T1 + T4 = ()
+T4 + T5 = ()
+T4 * T5 ! TypeError 'T4' object cannot be interpreted as an integer
+T5 * T4 = ('T5.__mul__', ())
+T5 + T4 = ('T5.__add__', ())
+T4 + L1 = L1.__radd__
+T4 * L1 = L1.__rmul__
+L1 * T4 ! TypeError 'T4' object cannot be interpreted as an integer
+L1 + T4 ! TypeError can only concatenate list (not "T4") to list
+T4 + S1 = S1.__radd__
+T4 * S1 = S1.__rmul__
+S1 * T4 ! TypeError 'T4' object cannot be interpreted as an integer
+S1 + T4 ! TypeError can only concatenate str (not "T4") to str
+T4 + int ! TypeError can only concatenate tuple (not "int") to tuple
+T4 * int = ()
+int * T4 = ()
+int + T4 ! TypeError unsupported operand type(s) for +: 'int' and 'T4'
+T4 + bool ! TypeError can only concatenate tuple (not "bool") to tuple
+T4 * bool = ()
+bool * T4 = ()
+bool + T4 ! TypeError unsupported operand type(s) for +: 'bool' and 'T4'
+T4 + float ! TypeError can only concatenate tuple (not "float") to tuple
+T4 * float ! TypeError can't multiply sequence by non-int of type 'float'
+float * T4 ! TypeError can't multiply sequence by non-int of type 'float'
+float + T4 ! TypeError unsupported operand type(s) for +: 'float' and 'T4'
+T4 + None ! TypeError can only concatenate tuple (not "NoneType") to tuple
+T4 * None ! TypeError can't multiply sequence by non-int of type 'NoneType'
+None * T4 ! TypeError can't multiply sequence by non-int of type 'NoneType'
+None + T4 ! TypeError unsupported operand type(s) for +: 'NoneType' and 'T4'
+T4 + tuple = (1,)
+T4 * tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+tuple * T4 ! TypeError can't multiply sequence by non-int of type 'T4'
+tuple + T4 = (1,)
+T4 + list ! TypeError can only concatenate tuple (not "list") to tuple
+T4 * list ! TypeError can't multiply sequence by non-int of type 'list'
+list * T4 ! TypeError can't multiply sequence by non-int of type 'T4'
+list + T4 ! TypeError can only concatenate list (not "T4") to list
+T4 + str ! TypeError can only concatenate tuple (not "str") to tuple
+T4 * str ! TypeError can't multiply sequence by non-int of type 'str'
+str * T4 ! TypeError can't multiply sequence by non-int of type 'T4'
+str + T4 ! TypeError can only concatenate str (not "T4") to str
+T4 + bytes ! TypeError can only concatenate tuple (not "bytes") to tuple
+T4 * bytes ! TypeError can't multiply sequence by non-int of type 'bytes'
+bytes * T4 ! TypeError can't multiply sequence by non-int of type 'T4'
+bytes + T4 ! TypeError can't concat T4 to bytes
+T5 + R = ('T5.__add__', R())
+T5 * R = ('T5.__mul__', R())
+R * T5 ! TypeError 'R' object cannot be interpreted as an integer
+R + T5 ! TypeError unsupported operand type(s) for +: 'R' and 'T5'
+T5 + T0 = ('T5.__add__', ())
+T5 * T0 = ('T5.__mul__', ())
+T0 * T5 ! TypeError 'T0' object cannot be interpreted as an integer
+T0 + T5 = (1,)
+T5 + T1 = ('T5.__add__', ())
+T5 * T1 = ('T5.__mul__', ())
+T1 * T5 ! TypeError 'T5' object cannot be interpreted as an integer
+T1 + T5 = (1,)
+T5 + T5 = ('T5.__add__', ())
+T5 * T5 = ('T5.__mul__', ())
+T5 * T5 = ('T5.__mul__', (1,))
+T5 + T5 = ('T5.__add__', (1,))
+T5 + L1 = ('T5.__add__', [])
+T5 * L1 = ('T5.__mul__', [])
+L1 * T5 ! TypeError 'T5' object cannot be interpreted as an integer
+L1 + T5 ! TypeError can only concatenate list (not "T5") to list
+T5 + S1 = ('T5.__add__', '')
+T5 * S1 = ('T5.__mul__', '')
+S1 * T5 ! TypeError 'T5' object cannot be interpreted as an integer
+S1 + T5 ! TypeError can only concatenate str (not "T5") to str
+T5 + int = ('T5.__add__', 2)
+T5 * int = ('T5.__mul__', 2)
+int * T5 = (1, 1)
+int + T5 ! TypeError unsupported operand type(s) for +: 'int' and 'T5'
+T5 + bool = ('T5.__add__', True)
+T5 * bool = ('T5.__mul__', True)
+bool * T5 = (1,)
+bool + T5 ! TypeError unsupported operand type(s) for +: 'bool' and 'T5'
+T5 + float = ('T5.__add__', 1.5)
+T5 * float = ('T5.__mul__', 1.5)
+float * T5 ! TypeError 'float' object cannot be interpreted as an integer
+float + T5 ! TypeError unsupported operand type(s) for +: 'float' and 'T5'
+T5 + None = ('T5.__add__', None)
+T5 * None = ('T5.__mul__', None)
+None * T5 ! TypeError 'NoneType' object cannot be interpreted as an integer
+None + T5 ! TypeError unsupported operand type(s) for +: 'NoneType' and 'T5'
+T5 + tuple = ('T5.__add__', (1,))
+T5 * tuple = ('T5.__mul__', (1,))
+tuple * T5 ! TypeError 'tuple' object cannot be interpreted as an integer
+tuple + T5 = (1, 1)
+T5 + list = ('T5.__add__', [1])
+T5 * list = ('T5.__mul__', [1])
+list * T5 ! TypeError 'list' object cannot be interpreted as an integer
+list + T5 ! TypeError can only concatenate list (not "T5") to list
+T5 + str = ('T5.__add__', 'x')
+T5 * str = ('T5.__mul__', 'x')
+str * T5 ! TypeError 'str' object cannot be interpreted as an integer
+str + T5 ! TypeError can only concatenate str (not "T5") to str
+T5 + bytes = ('T5.__add__', b'x')
+T5 * bytes = ('T5.__mul__', b'x')
+bytes * T5 ! TypeError 'bytes' object cannot be interpreted as an integer
+bytes + T5 ! TypeError can't concat T5 to bytes
+T6 + R = ('T5.__add__', R())
+T6 * R = ('T5.__mul__', R())
+R * T6 ! TypeError 'R' object cannot be interpreted as an integer
+R + T6 ! TypeError unsupported operand type(s) for +: 'R' and 'T6'
+T6 + T0 = ('T5.__add__', ())
+T6 * T0 = ('T5.__mul__', ())
+T0 * T6 ! TypeError 'T0' object cannot be interpreted as an integer
+T0 + T6 = (1,)
+T6 + T1 = ('T5.__add__', ())
+T6 * T1 = ('T5.__mul__', ())
+T1 * T6 ! TypeError 'T6' object cannot be interpreted as an integer
+T1 + T6 = (1,)
+T6 + T5 = ('T5.__add__', ())
+T6 * T5 = ('T5.__mul__', ())
+T5 * T6 = ('T5.__mul__', (1,))
+T5 + T6 = ('T5.__add__', (1,))
+T6 + L1 = ('T5.__add__', [])
+T6 * L1 = ('T5.__mul__', [])
+L1 * T6 ! TypeError 'T6' object cannot be interpreted as an integer
+L1 + T6 ! TypeError can only concatenate list (not "T6") to list
+T6 + S1 = ('T5.__add__', '')
+T6 * S1 = ('T5.__mul__', '')
+S1 * T6 ! TypeError 'T6' object cannot be interpreted as an integer
+S1 + T6 ! TypeError can only concatenate str (not "T6") to str
+T6 + int = ('T5.__add__', 2)
+T6 * int = ('T5.__mul__', 2)
+int * T6 = (1, 1)
+int + T6 ! TypeError unsupported operand type(s) for +: 'int' and 'T6'
+T6 + bool = ('T5.__add__', True)
+T6 * bool = ('T5.__mul__', True)
+bool * T6 = (1,)
+bool + T6 ! TypeError unsupported operand type(s) for +: 'bool' and 'T6'
+T6 + float = ('T5.__add__', 1.5)
+T6 * float = ('T5.__mul__', 1.5)
+float * T6 ! TypeError 'float' object cannot be interpreted as an integer
+float + T6 ! TypeError unsupported operand type(s) for +: 'float' and 'T6'
+T6 + None = ('T5.__add__', None)
+T6 * None = ('T5.__mul__', None)
+None * T6 ! TypeError 'NoneType' object cannot be interpreted as an integer
+None + T6 ! TypeError unsupported operand type(s) for +: 'NoneType' and 'T6'
+T6 + tuple = ('T5.__add__', (1,))
+T6 * tuple = ('T5.__mul__', (1,))
+tuple * T6 ! TypeError 'tuple' object cannot be interpreted as an integer
+tuple + T6 = (1, 1)
+T6 + list = ('T5.__add__', [1])
+T6 * list = ('T5.__mul__', [1])
+list * T6 ! TypeError 'list' object cannot be interpreted as an integer
+list + T6 ! TypeError can only concatenate list (not "T6") to list
+T6 + str = ('T5.__add__', 'x')
+T6 * str = ('T5.__mul__', 'x')
+str * T6 ! TypeError 'str' object cannot be interpreted as an integer
+str + T6 ! TypeError can only concatenate str (not "T6") to str
+T6 + bytes = ('T5.__add__', b'x')
+T6 * bytes = ('T5.__mul__', b'x')
+bytes * T6 ! TypeError 'bytes' object cannot be interpreted as an integer
+bytes + T6 ! TypeError can't concat T6 to bytes
+list + R = R.__radd__
+list * R = R.__rmul__
+R * list ! TypeError can't multiply sequence by non-int of type 'R'
+R + list ! TypeError unsupported operand type(s) for +: 'R' and 'list'
+list + T0 ! TypeError can only concatenate list (not "T0") to list
+list * T0 ! TypeError can't multiply sequence by non-int of type 'T0'
+T0 * list ! TypeError can't multiply sequence by non-int of type 'list'
+T0 + list ! TypeError can only concatenate tuple (not "list") to tuple
+list + T1 = T1.__radd__
+list * T1 = T1.__rmul__
+T1 * list ! TypeError 'list' object cannot be interpreted as an integer
+T1 + list ! TypeError can only concatenate tuple (not "list") to tuple
+list + T5 ! TypeError can only concatenate list (not "T5") to list
+list * T5 ! TypeError 'list' object cannot be interpreted as an integer
+T5 * list = ('T5.__mul__', [])
+T5 + list = ('T5.__add__', [])
+list + L1 = L1.__radd__
+list * L1 = L1.__rmul__
+L1 * list ! TypeError 'list' object cannot be interpreted as an integer
+L1 + list = []
+list + S1 = S1.__radd__
+list * S1 = S1.__rmul__
+S1 * list ! TypeError 'list' object cannot be interpreted as an integer
+S1 + list ! TypeError can only concatenate str (not "list") to str
+list + int ! TypeError can only concatenate list (not "int") to list
+list * int = []
+int * list = []
+int + list ! TypeError unsupported operand type(s) for +: 'int' and 'list'
+list + bool ! TypeError can only concatenate list (not "bool") to list
+list * bool = []
+bool * list = []
+bool + list ! TypeError unsupported operand type(s) for +: 'bool' and 'list'
+list + float ! TypeError can only concatenate list (not "float") to list
+list * float ! TypeError can't multiply sequence by non-int of type 'float'
+float * list ! TypeError can't multiply sequence by non-int of type 'float'
+float + list ! TypeError unsupported operand type(s) for +: 'float' and 'list'
+list + None ! TypeError can only concatenate list (not "NoneType") to list
+list * None ! TypeError can't multiply sequence by non-int of type 'NoneType'
+None * list ! TypeError can't multiply sequence by non-int of type 'NoneType'
+None + list ! TypeError unsupported operand type(s) for +: 'NoneType' and 'list'
+list + tuple ! TypeError can only concatenate list (not "tuple") to list
+list * tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+tuple * list ! TypeError can't multiply sequence by non-int of type 'list'
+tuple + list ! TypeError can only concatenate tuple (not "list") to tuple
+list + list = [1]
+list * list ! TypeError can't multiply sequence by non-int of type 'list'
+list * list ! TypeError can't multiply sequence by non-int of type 'list'
+list + list = [1]
+list + str ! TypeError can only concatenate list (not "str") to list
+list * str ! TypeError can't multiply sequence by non-int of type 'str'
+str * list ! TypeError can't multiply sequence by non-int of type 'list'
+str + list ! TypeError can only concatenate str (not "list") to str
+list + bytes ! TypeError can only concatenate list (not "bytes") to list
+list * bytes ! TypeError can't multiply sequence by non-int of type 'bytes'
+bytes * list ! TypeError can't multiply sequence by non-int of type 'list'
+bytes + list ! TypeError can't concat list to bytes
+L0 + R = R.__radd__
+L0 * R = R.__rmul__
+R * L0 ! TypeError can't multiply sequence by non-int of type 'R'
+R + L0 ! TypeError unsupported operand type(s) for +: 'R' and 'L0'
+L0 + T0 ! TypeError can only concatenate list (not "T0") to list
+L0 * T0 ! TypeError can't multiply sequence by non-int of type 'T0'
+T0 * L0 ! TypeError can't multiply sequence by non-int of type 'L0'
+T0 + L0 ! TypeError can only concatenate tuple (not "L0") to tuple
+L0 + T1 = T1.__radd__
+L0 * T1 = T1.__rmul__
+T1 * L0 ! TypeError 'L0' object cannot be interpreted as an integer
+T1 + L0 ! TypeError can only concatenate tuple (not "L0") to tuple
+L0 + T5 ! TypeError can only concatenate list (not "T5") to list
+L0 * T5 ! TypeError 'L0' object cannot be interpreted as an integer
+T5 * L0 = ('T5.__mul__', [])
+T5 + L0 = ('T5.__add__', [])
+L0 + L1 = L1.__radd__
+L0 * L1 = L1.__rmul__
+L1 * L0 ! TypeError 'L0' object cannot be interpreted as an integer
+L1 + L0 = []
+L0 + S1 = S1.__radd__
+L0 * S1 = S1.__rmul__
+S1 * L0 ! TypeError 'L0' object cannot be interpreted as an integer
+S1 + L0 ! TypeError can only concatenate str (not "L0") to str
+L0 + int ! TypeError can only concatenate list (not "int") to list
+L0 * int = []
+int * L0 = []
+int + L0 ! TypeError unsupported operand type(s) for +: 'int' and 'L0'
+L0 + bool ! TypeError can only concatenate list (not "bool") to list
+L0 * bool = []
+bool * L0 = []
+bool + L0 ! TypeError unsupported operand type(s) for +: 'bool' and 'L0'
+L0 + float ! TypeError can only concatenate list (not "float") to list
+L0 * float ! TypeError can't multiply sequence by non-int of type 'float'
+float * L0 ! TypeError can't multiply sequence by non-int of type 'float'
+float + L0 ! TypeError unsupported operand type(s) for +: 'float' and 'L0'
+L0 + None ! TypeError can only concatenate list (not "NoneType") to list
+L0 * None ! TypeError can't multiply sequence by non-int of type 'NoneType'
+None * L0 ! TypeError can't multiply sequence by non-int of type 'NoneType'
+None + L0 ! TypeError unsupported operand type(s) for +: 'NoneType' and 'L0'
+L0 + tuple ! TypeError can only concatenate list (not "tuple") to list
+L0 * tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+tuple * L0 ! TypeError can't multiply sequence by non-int of type 'L0'
+tuple + L0 ! TypeError can only concatenate tuple (not "L0") to tuple
+L0 + list = [1]
+L0 * list ! TypeError can't multiply sequence by non-int of type 'list'
+list * L0 ! TypeError can't multiply sequence by non-int of type 'L0'
+list + L0 = [1]
+L0 + str ! TypeError can only concatenate list (not "str") to list
+L0 * str ! TypeError can't multiply sequence by non-int of type 'str'
+str * L0 ! TypeError can't multiply sequence by non-int of type 'L0'
+str + L0 ! TypeError can only concatenate str (not "L0") to str
+L0 + bytes ! TypeError can only concatenate list (not "bytes") to list
+L0 * bytes ! TypeError can't multiply sequence by non-int of type 'bytes'
+bytes * L0 ! TypeError can't multiply sequence by non-int of type 'L0'
+bytes + L0 ! TypeError can't concat L0 to bytes
+L1 + R ! TypeError can only concatenate list (not "R") to list
+L1 * R ! TypeError 'R' object cannot be interpreted as an integer
+R * L1 = L1.__rmul__
+R + L1 = L1.__radd__
+L1 + T0 ! TypeError can only concatenate list (not "T0") to list
+L1 * T0 ! TypeError 'T0' object cannot be interpreted as an integer
+T0 * L1 = L1.__rmul__
+T0 + L1 = L1.__radd__
+L1 + T1 ! TypeError can only concatenate list (not "T1") to list
+L1 * T1 ! TypeError 'T1' object cannot be interpreted as an integer
+T1 * L1 ! TypeError 'L1' object cannot be interpreted as an integer
+T1 + L1 ! TypeError can only concatenate tuple (not "L1") to tuple
+L1 + T5 ! TypeError can only concatenate list (not "T5") to list
+L1 * T5 ! TypeError 'T5' object cannot be interpreted as an integer
+T5 * L1 = ('T5.__mul__', [])
+T5 + L1 = ('T5.__add__', [])
+L1 + L1 = []
+L1 * L1 ! TypeError 'L1' object cannot be interpreted as an integer
+L1 * L1 ! TypeError 'L1' object cannot be interpreted as an integer
+L1 + L1 = []
+L1 + S1 ! TypeError can only concatenate list (not "S1") to list
+L1 * S1 ! TypeError 'S1' object cannot be interpreted as an integer
+S1 * L1 ! TypeError 'L1' object cannot be interpreted as an integer
+S1 + L1 ! TypeError can only concatenate str (not "L1") to str
+L1 + int ! TypeError can only concatenate list (not "int") to list
+L1 * int = []
+int * L1 = L1.__rmul__
+int + L1 = L1.__radd__
+L1 + bool ! TypeError can only concatenate list (not "bool") to list
+L1 * bool = []
+bool * L1 = L1.__rmul__
+bool + L1 = L1.__radd__
+L1 + float ! TypeError can only concatenate list (not "float") to list
+L1 * float ! TypeError 'float' object cannot be interpreted as an integer
+float * L1 = L1.__rmul__
+float + L1 = L1.__radd__
+L1 + None ! TypeError can only concatenate list (not "NoneType") to list
+L1 * None ! TypeError 'NoneType' object cannot be interpreted as an integer
+None * L1 = L1.__rmul__
+None + L1 = L1.__radd__
+L1 + tuple ! TypeError can only concatenate list (not "tuple") to list
+L1 * tuple ! TypeError 'tuple' object cannot be interpreted as an integer
+tuple * L1 = L1.__rmul__
+tuple + L1 = L1.__radd__
+L1 + list = [1]
+L1 * list ! TypeError 'list' object cannot be interpreted as an integer
+list * L1 = L1.__rmul__
+list + L1 = L1.__radd__
+L1 + str ! TypeError can only concatenate list (not "str") to list
+L1 * str ! TypeError 'str' object cannot be interpreted as an integer
+str * L1 = L1.__rmul__
+str + L1 = L1.__radd__
+L1 + bytes ! TypeError can only concatenate list (not "bytes") to list
+L1 * bytes ! TypeError 'bytes' object cannot be interpreted as an integer
+bytes * L1 = L1.__rmul__
+bytes + L1 = L1.__radd__
+L2 + R = R.__radd__
+L2 * R = R.__rmul__
+R * L2 ! TypeError 'R' object cannot be interpreted as an integer
+R + L2 ! TypeError unsupported operand type(s) for +: 'R' and 'L2'
+L2 + T0 ! TypeError unsupported operand type(s) for +: 'L2' and 'T0'
+L2 * T0 ! TypeError can't multiply sequence by non-int of type 'L2'
+T0 * L2 ! TypeError 'T0' object cannot be interpreted as an integer
+T0 + L2 ! TypeError can only concatenate tuple (not "L2") to tuple
+L2 + T1 = T1.__radd__
+L2 * T1 = T1.__rmul__
+T1 * L2 ! TypeError 'L2' object cannot be interpreted as an integer
+T1 + L2 ! TypeError can only concatenate tuple (not "L2") to tuple
+L2 + T5 ! TypeError unsupported operand type(s) for +: 'L2' and 'T5'
+L2 * T5 ! TypeError 'L2' object cannot be interpreted as an integer
+T5 * L2 = ('T5.__mul__', [1])
+T5 + L2 = ('T5.__add__', [1])
+L2 + L1 = L1.__radd__
+L2 * L1 = L1.__rmul__
+L1 * L2 ! TypeError 'L2' object cannot be interpreted as an integer
+L1 + L2 = [1]
+L2 + S1 = S1.__radd__
+L2 * S1 = S1.__rmul__
+S1 * L2 ! TypeError 'L2' object cannot be interpreted as an integer
+S1 + L2 ! TypeError can only concatenate str (not "L2") to str
+L2 + int ! TypeError unsupported operand type(s) for +: 'L2' and 'int'
+L2 * int ! TypeError unsupported operand type(s) for *: 'L2' and 'int'
+int * L2 = [1, 1]
+int + L2 ! TypeError unsupported operand type(s) for +: 'int' and 'L2'
+L2 + bool ! TypeError unsupported operand type(s) for +: 'L2' and 'bool'
+L2 * bool ! TypeError unsupported operand type(s) for *: 'L2' and 'bool'
+bool * L2 = [1]
+bool + L2 ! TypeError unsupported operand type(s) for +: 'bool' and 'L2'
+L2 + float ! TypeError unsupported operand type(s) for +: 'L2' and 'float'
+L2 * float ! TypeError unsupported operand type(s) for *: 'L2' and 'float'
+float * L2 ! TypeError 'float' object cannot be interpreted as an integer
+float + L2 ! TypeError unsupported operand type(s) for +: 'float' and 'L2'
+L2 + None ! TypeError unsupported operand type(s) for +: 'L2' and 'NoneType'
+L2 * None ! TypeError unsupported operand type(s) for *: 'L2' and 'NoneType'
+None * L2 ! TypeError 'NoneType' object cannot be interpreted as an integer
+None + L2 ! TypeError unsupported operand type(s) for +: 'NoneType' and 'L2'
+L2 + tuple ! TypeError unsupported operand type(s) for +: 'L2' and 'tuple'
+L2 * tuple ! TypeError can't multiply sequence by non-int of type 'L2'
+tuple * L2 ! TypeError 'tuple' object cannot be interpreted as an integer
+tuple + L2 ! TypeError can only concatenate tuple (not "L2") to tuple
+L2 + list ! TypeError unsupported operand type(s) for +: 'L2' and 'list'
+L2 * list ! TypeError can't multiply sequence by non-int of type 'L2'
+list * L2 ! TypeError 'list' object cannot be interpreted as an integer
+list + L2 = [1, 1]
+L2 + str ! TypeError unsupported operand type(s) for +: 'L2' and 'str'
+L2 * str ! TypeError can't multiply sequence by non-int of type 'L2'
+str * L2 ! TypeError 'str' object cannot be interpreted as an integer
+str + L2 ! TypeError can only concatenate str (not "L2") to str
+L2 + bytes ! TypeError unsupported operand type(s) for +: 'L2' and 'bytes'
+L2 * bytes ! TypeError can't multiply sequence by non-int of type 'L2'
+bytes * L2 ! TypeError 'bytes' object cannot be interpreted as an integer
+bytes + L2 ! TypeError can't concat L2 to bytes
+str + R = R.__radd__
+str * R = R.__rmul__
+R * str ! TypeError can't multiply sequence by non-int of type 'R'
+R + str ! TypeError unsupported operand type(s) for +: 'R' and 'str'
+str + T0 ! TypeError can only concatenate str (not "T0") to str
+str * T0 ! TypeError can't multiply sequence by non-int of type 'T0'
+T0 * str ! TypeError can't multiply sequence by non-int of type 'str'
+T0 + str ! TypeError can only concatenate tuple (not "str") to tuple
+str + T1 = T1.__radd__
+str * T1 = T1.__rmul__
+T1 * str ! TypeError 'str' object cannot be interpreted as an integer
+T1 + str ! TypeError can only concatenate tuple (not "str") to tuple
+str + T5 ! TypeError can only concatenate str (not "T5") to str
+str * T5 ! TypeError 'str' object cannot be interpreted as an integer
+T5 * str = ('T5.__mul__', '')
+T5 + str = ('T5.__add__', '')
+str + L1 = L1.__radd__
+str * L1 = L1.__rmul__
+L1 * str ! TypeError 'str' object cannot be interpreted as an integer
+L1 + str ! TypeError can only concatenate list (not "str") to list
+str + S1 = S1.__radd__
+str * S1 = S1.__rmul__
+S1 * str ! TypeError 'str' object cannot be interpreted as an integer
+S1 + str = 
+str + int ! TypeError can only concatenate str (not "int") to str
+str * int = 
+int * str = 
+int + str ! TypeError unsupported operand type(s) for +: 'int' and 'str'
+str + bool ! TypeError can only concatenate str (not "bool") to str
+str * bool = 
+bool * str = 
+bool + str ! TypeError unsupported operand type(s) for +: 'bool' and 'str'
+str + float ! TypeError can only concatenate str (not "float") to str
+str * float ! TypeError can't multiply sequence by non-int of type 'float'
+float * str ! TypeError can't multiply sequence by non-int of type 'float'
+float + str ! TypeError unsupported operand type(s) for +: 'float' and 'str'
+str + None ! TypeError can only concatenate str (not "NoneType") to str
+str * None ! TypeError can't multiply sequence by non-int of type 'NoneType'
+None * str ! TypeError can't multiply sequence by non-int of type 'NoneType'
+None + str ! TypeError unsupported operand type(s) for +: 'NoneType' and 'str'
+str + tuple ! TypeError can only concatenate str (not "tuple") to str
+str * tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+tuple * str ! TypeError can't multiply sequence by non-int of type 'str'
+tuple + str ! TypeError can only concatenate tuple (not "str") to tuple
+str + list ! TypeError can only concatenate str (not "list") to str
+str * list ! TypeError can't multiply sequence by non-int of type 'list'
+list * str ! TypeError can't multiply sequence by non-int of type 'str'
+list + str ! TypeError can only concatenate list (not "str") to list
+str + str = x
+str * str ! TypeError can't multiply sequence by non-int of type 'str'
+str * str ! TypeError can't multiply sequence by non-int of type 'str'
+str + str = x
+str + bytes ! TypeError can only concatenate str (not "bytes") to str
+str * bytes ! TypeError can't multiply sequence by non-int of type 'bytes'
+bytes * str ! TypeError can't multiply sequence by non-int of type 'str'
+bytes + str ! TypeError can't concat str to bytes
+S1 + R ! TypeError can only concatenate str (not "R") to str
+S1 * R ! TypeError 'R' object cannot be interpreted as an integer
+R * S1 = S1.__rmul__
+R + S1 = S1.__radd__
+S1 + T0 ! TypeError can only concatenate str (not "T0") to str
+S1 * T0 ! TypeError 'T0' object cannot be interpreted as an integer
+T0 * S1 = S1.__rmul__
+T0 + S1 = S1.__radd__
+S1 + T1 ! TypeError can only concatenate str (not "T1") to str
+S1 * T1 ! TypeError 'T1' object cannot be interpreted as an integer
+T1 * S1 ! TypeError 'S1' object cannot be interpreted as an integer
+T1 + S1 ! TypeError can only concatenate tuple (not "S1") to tuple
+S1 + T5 ! TypeError can only concatenate str (not "T5") to str
+S1 * T5 ! TypeError 'T5' object cannot be interpreted as an integer
+T5 * S1 = ('T5.__mul__', '')
+T5 + S1 = ('T5.__add__', '')
+S1 + L1 ! TypeError can only concatenate str (not "L1") to str
+S1 * L1 ! TypeError 'L1' object cannot be interpreted as an integer
+L1 * S1 ! TypeError 'S1' object cannot be interpreted as an integer
+L1 + S1 ! TypeError can only concatenate list (not "S1") to list
+S1 + S1 = 
+S1 * S1 ! TypeError 'S1' object cannot be interpreted as an integer
+S1 * S1 ! TypeError 'S1' object cannot be interpreted as an integer
+S1 + S1 = 
+S1 + int ! TypeError can only concatenate str (not "int") to str
+S1 * int = 
+int * S1 = S1.__rmul__
+int + S1 = S1.__radd__
+S1 + bool ! TypeError can only concatenate str (not "bool") to str
+S1 * bool = 
+bool * S1 = S1.__rmul__
+bool + S1 = S1.__radd__
+S1 + float ! TypeError can only concatenate str (not "float") to str
+S1 * float ! TypeError 'float' object cannot be interpreted as an integer
+float * S1 = S1.__rmul__
+float + S1 = S1.__radd__
+S1 + None ! TypeError can only concatenate str (not "NoneType") to str
+S1 * None ! TypeError 'NoneType' object cannot be interpreted as an integer
+None * S1 = S1.__rmul__
+None + S1 = S1.__radd__
+S1 + tuple ! TypeError can only concatenate str (not "tuple") to str
+S1 * tuple ! TypeError 'tuple' object cannot be interpreted as an integer
+tuple * S1 = S1.__rmul__
+tuple + S1 = S1.__radd__
+S1 + list ! TypeError can only concatenate str (not "list") to str
+S1 * list ! TypeError 'list' object cannot be interpreted as an integer
+list * S1 = S1.__rmul__
+list + S1 = S1.__radd__
+S1 + str = x
+S1 * str ! TypeError 'str' object cannot be interpreted as an integer
+str * S1 = S1.__rmul__
+str + S1 = S1.__radd__
+S1 + bytes ! TypeError can only concatenate str (not "bytes") to str
+S1 * bytes ! TypeError 'bytes' object cannot be interpreted as an integer
+bytes * S1 = S1.__rmul__
+bytes + S1 = S1.__radd__
+S2 + R = R.__radd__
+S2 * R = R.__rmul__
+R * S2 ! TypeError 'R' object cannot be interpreted as an integer
+R + S2 ! TypeError unsupported operand type(s) for +: 'R' and 'S2'
+S2 + T0 ! TypeError unsupported operand type(s) for +: 'S2' and 'T0'
+S2 * T0 ! TypeError can't multiply sequence by non-int of type 'S2'
+T0 * S2 ! TypeError 'T0' object cannot be interpreted as an integer
+T0 + S2 ! TypeError can only concatenate tuple (not "S2") to tuple
+S2 + T1 = T1.__radd__
+S2 * T1 = T1.__rmul__
+T1 * S2 ! TypeError 'S2' object cannot be interpreted as an integer
+T1 + S2 ! TypeError can only concatenate tuple (not "S2") to tuple
+S2 + T5 ! TypeError unsupported operand type(s) for +: 'S2' and 'T5'
+S2 * T5 ! TypeError 'S2' object cannot be interpreted as an integer
+T5 * S2 = ('T5.__mul__', 'ab')
+T5 + S2 = ('T5.__add__', 'ab')
+S2 + L1 = L1.__radd__
+S2 * L1 = L1.__rmul__
+L1 * S2 ! TypeError 'S2' object cannot be interpreted as an integer
+L1 + S2 ! TypeError can only concatenate list (not "S2") to list
+S2 + S1 = S1.__radd__
+S2 * S1 = S1.__rmul__
+S1 * S2 ! TypeError 'S2' object cannot be interpreted as an integer
+S1 + S2 = ab
+S2 + int ! TypeError unsupported operand type(s) for +: 'S2' and 'int'
+S2 * int ! TypeError unsupported operand type(s) for *: 'S2' and 'int'
+int * S2 = abab
+int + S2 ! TypeError unsupported operand type(s) for +: 'int' and 'S2'
+S2 + bool ! TypeError unsupported operand type(s) for +: 'S2' and 'bool'
+S2 * bool ! TypeError unsupported operand type(s) for *: 'S2' and 'bool'
+bool * S2 = ab
+bool + S2 ! TypeError unsupported operand type(s) for +: 'bool' and 'S2'
+S2 + float ! TypeError unsupported operand type(s) for +: 'S2' and 'float'
+S2 * float ! TypeError unsupported operand type(s) for *: 'S2' and 'float'
+float * S2 ! TypeError 'float' object cannot be interpreted as an integer
+float + S2 ! TypeError unsupported operand type(s) for +: 'float' and 'S2'
+S2 + None ! TypeError unsupported operand type(s) for +: 'S2' and 'NoneType'
+S2 * None ! TypeError unsupported operand type(s) for *: 'S2' and 'NoneType'
+None * S2 ! TypeError 'NoneType' object cannot be interpreted as an integer
+None + S2 ! TypeError unsupported operand type(s) for +: 'NoneType' and 'S2'
+S2 + tuple ! TypeError unsupported operand type(s) for +: 'S2' and 'tuple'
+S2 * tuple ! TypeError can't multiply sequence by non-int of type 'S2'
+tuple * S2 ! TypeError 'tuple' object cannot be interpreted as an integer
+tuple + S2 ! TypeError can only concatenate tuple (not "S2") to tuple
+S2 + list ! TypeError unsupported operand type(s) for +: 'S2' and 'list'
+S2 * list ! TypeError can't multiply sequence by non-int of type 'S2'
+list * S2 ! TypeError 'list' object cannot be interpreted as an integer
+list + S2 ! TypeError can only concatenate list (not "S2") to list
+S2 + str ! TypeError unsupported operand type(s) for +: 'S2' and 'str'
+S2 * str ! TypeError can't multiply sequence by non-int of type 'S2'
+str * S2 ! TypeError 'str' object cannot be interpreted as an integer
+str + S2 = xab
+S2 + bytes ! TypeError unsupported operand type(s) for +: 'S2' and 'bytes'
+S2 * bytes ! TypeError can't multiply sequence by non-int of type 'S2'
+bytes * S2 ! TypeError 'bytes' object cannot be interpreted as an integer
+bytes + S2 ! TypeError can't concat S2 to bytes
+B2 + R = R.__radd__
+B2 * R = R.__rmul__
+R * B2 ! TypeError 'R' object cannot be interpreted as an integer
+R + B2 ! TypeError unsupported operand type(s) for +: 'R' and 'B2'
+B2 + T0 ! TypeError unsupported operand type(s) for +: 'B2' and 'T0'
+B2 * T0 ! TypeError can't multiply sequence by non-int of type 'B2'
+T0 * B2 ! TypeError 'T0' object cannot be interpreted as an integer
+T0 + B2 ! TypeError can only concatenate tuple (not "B2") to tuple
+B2 + T1 = T1.__radd__
+B2 * T1 = T1.__rmul__
+T1 * B2 ! TypeError 'B2' object cannot be interpreted as an integer
+T1 + B2 ! TypeError can only concatenate tuple (not "B2") to tuple
+B2 + T5 ! TypeError unsupported operand type(s) for +: 'B2' and 'T5'
+B2 * T5 ! TypeError 'B2' object cannot be interpreted as an integer
+T5 * B2 = ('T5.__mul__', b'ab')
+T5 + B2 = ('T5.__add__', b'ab')
+B2 + L1 = L1.__radd__
+B2 * L1 = L1.__rmul__
+L1 * B2 ! TypeError 'B2' object cannot be interpreted as an integer
+L1 + B2 ! TypeError can only concatenate list (not "B2") to list
+B2 + S1 = S1.__radd__
+B2 * S1 = S1.__rmul__
+S1 * B2 ! TypeError 'B2' object cannot be interpreted as an integer
+S1 + B2 ! TypeError can only concatenate str (not "B2") to str
+B2 + int ! TypeError unsupported operand type(s) for +: 'B2' and 'int'
+B2 * int ! TypeError unsupported operand type(s) for *: 'B2' and 'int'
+int * B2 = b'abab'
+int + B2 ! TypeError unsupported operand type(s) for +: 'int' and 'B2'
+B2 + bool ! TypeError unsupported operand type(s) for +: 'B2' and 'bool'
+B2 * bool ! TypeError unsupported operand type(s) for *: 'B2' and 'bool'
+bool * B2 = b'ab'
+bool + B2 ! TypeError unsupported operand type(s) for +: 'bool' and 'B2'
+B2 + float ! TypeError unsupported operand type(s) for +: 'B2' and 'float'
+B2 * float ! TypeError unsupported operand type(s) for *: 'B2' and 'float'
+float * B2 ! TypeError 'float' object cannot be interpreted as an integer
+float + B2 ! TypeError unsupported operand type(s) for +: 'float' and 'B2'
+B2 + None ! TypeError unsupported operand type(s) for +: 'B2' and 'NoneType'
+B2 * None ! TypeError unsupported operand type(s) for *: 'B2' and 'NoneType'
+None * B2 ! TypeError 'NoneType' object cannot be interpreted as an integer
+None + B2 ! TypeError unsupported operand type(s) for +: 'NoneType' and 'B2'
+B2 + tuple ! TypeError unsupported operand type(s) for +: 'B2' and 'tuple'
+B2 * tuple ! TypeError can't multiply sequence by non-int of type 'B2'
+tuple * B2 ! TypeError 'tuple' object cannot be interpreted as an integer
+tuple + B2 ! TypeError can only concatenate tuple (not "B2") to tuple
+B2 + list ! TypeError unsupported operand type(s) for +: 'B2' and 'list'
+B2 * list ! TypeError can't multiply sequence by non-int of type 'B2'
+list * B2 ! TypeError 'list' object cannot be interpreted as an integer
+list + B2 ! TypeError can only concatenate list (not "B2") to list
+B2 + str ! TypeError unsupported operand type(s) for +: 'B2' and 'str'
+B2 * str ! TypeError can't multiply sequence by non-int of type 'B2'
+str * B2 ! TypeError 'str' object cannot be interpreted as an integer
+str + B2 ! TypeError can only concatenate str (not "B2") to str
+B2 + bytes ! TypeError unsupported operand type(s) for +: 'B2' and 'bytes'
+B2 * bytes ! TypeError can't multiply sequence by non-int of type 'B2'
+bytes * B2 ! TypeError 'bytes' object cannot be interpreted as an integer
+bytes + B2 = b'xab'
+T7 + R ! TypeError can only concatenate tuple (not "R") to tuple
+T7 * R ! TypeError 'R' object cannot be interpreted as an integer
+R * T7 ! TypeError unsupported operand type(s) for *: 'R' and 'T7'
+R + T7 ! TypeError unsupported operand type(s) for +: 'R' and 'T7'
+T7 + T0 = (1,)
+T7 * T0 ! TypeError 'T0' object cannot be interpreted as an integer
+T0 * T7 ! TypeError can't multiply sequence by non-int of type 'T7'
+T0 + T7 = (1,)
+T7 + T1 = (1,)
+T7 * T1 ! TypeError 'T1' object cannot be interpreted as an integer
+T1 * T7 ! TypeError 'T7' object cannot be interpreted as an integer
+T1 + T7 = (1,)
+T7 + T5 = (1,)
+T7 * T5 ! TypeError 'T5' object cannot be interpreted as an integer
+T5 * T7 = ('T5.__mul__', (1,))
+T5 + T7 = ('T5.__add__', (1,))
+T7 + L1 ! TypeError can only concatenate tuple (not "L1") to tuple
+T7 * L1 ! TypeError 'L1' object cannot be interpreted as an integer
+L1 * T7 ! TypeError 'T7' object cannot be interpreted as an integer
+L1 + T7 ! TypeError can only concatenate list (not "T7") to list
+T7 + S1 ! TypeError can only concatenate tuple (not "S1") to tuple
+T7 * S1 ! TypeError 'S1' object cannot be interpreted as an integer
+S1 * T7 ! TypeError 'T7' object cannot be interpreted as an integer
+S1 + T7 ! TypeError can only concatenate str (not "T7") to str
+T7 + int ! TypeError can only concatenate tuple (not "int") to tuple
+T7 * int = (1, 1)
+int * T7 ! TypeError unsupported operand type(s) for *: 'int' and 'T7'
+int + T7 ! TypeError unsupported operand type(s) for +: 'int' and 'T7'
+T7 + bool ! TypeError can only concatenate tuple (not "bool") to tuple
+T7 * bool = (1,)
+bool * T7 ! TypeError unsupported operand type(s) for *: 'bool' and 'T7'
+bool + T7 ! TypeError unsupported operand type(s) for +: 'bool' and 'T7'
+T7 + float ! TypeError can only concatenate tuple (not "float") to tuple
+T7 * float ! TypeError 'float' object cannot be interpreted as an integer
+float * T7 ! TypeError unsupported operand type(s) for *: 'float' and 'T7'
+float + T7 ! TypeError unsupported operand type(s) for +: 'float' and 'T7'
+T7 + None ! TypeError can only concatenate tuple (not "NoneType") to tuple
+T7 * None ! TypeError 'NoneType' object cannot be interpreted as an integer
+None * T7 ! TypeError unsupported operand type(s) for *: 'NoneType' and 'T7'
+None + T7 ! TypeError unsupported operand type(s) for +: 'NoneType' and 'T7'
+T7 + tuple = (1, 1)
+T7 * tuple ! TypeError 'tuple' object cannot be interpreted as an integer
+tuple * T7 ! TypeError can't multiply sequence by non-int of type 'T7'
+tuple + T7 = (1, 1)
+T7 + list ! TypeError can only concatenate tuple (not "list") to tuple
+T7 * list ! TypeError 'list' object cannot be interpreted as an integer
+list * T7 ! TypeError can't multiply sequence by non-int of type 'T7'
+list + T7 ! TypeError can only concatenate list (not "T7") to list
+T7 + str ! TypeError can only concatenate tuple (not "str") to tuple
+T7 * str ! TypeError 'str' object cannot be interpreted as an integer
+str * T7 ! TypeError can't multiply sequence by non-int of type 'T7'
+str + T7 ! TypeError can only concatenate str (not "T7") to str
+T7 + bytes ! TypeError can only concatenate tuple (not "bytes") to tuple
+T7 * bytes ! TypeError 'bytes' object cannot be interpreted as an integer
+bytes * T7 ! TypeError can't multiply sequence by non-int of type 'T7'
+bytes + T7 ! TypeError can't concat T7 to bytes
+L7 + R ! TypeError can only concatenate list (not "R") to list
+L7 * R ! TypeError 'R' object cannot be interpreted as an integer
+R * L7 ! TypeError unsupported operand type(s) for *: 'R' and 'L7'
+R + L7 ! TypeError unsupported operand type(s) for +: 'R' and 'L7'
+L7 + T0 ! TypeError can only concatenate list (not "T0") to list
+L7 * T0 ! TypeError 'T0' object cannot be interpreted as an integer
+T0 * L7 ! TypeError can't multiply sequence by non-int of type 'L7'
+T0 + L7 ! TypeError can only concatenate tuple (not "L7") to tuple
+L7 + T1 ! TypeError can only concatenate list (not "T1") to list
+L7 * T1 ! TypeError 'T1' object cannot be interpreted as an integer
+T1 * L7 ! TypeError 'L7' object cannot be interpreted as an integer
+T1 + L7 ! TypeError can only concatenate tuple (not "L7") to tuple
+L7 + T5 ! TypeError can only concatenate list (not "T5") to list
+L7 * T5 ! TypeError 'T5' object cannot be interpreted as an integer
+T5 * L7 = ('T5.__mul__', [1])
+T5 + L7 = ('T5.__add__', [1])
+L7 + L1 = [1]
+L7 * L1 ! TypeError 'L1' object cannot be interpreted as an integer
+L1 * L7 ! TypeError 'L7' object cannot be interpreted as an integer
+L1 + L7 = [1]
+L7 + S1 ! TypeError can only concatenate list (not "S1") to list
+L7 * S1 ! TypeError 'S1' object cannot be interpreted as an integer
+S1 * L7 ! TypeError 'L7' object cannot be interpreted as an integer
+S1 + L7 ! TypeError can only concatenate str (not "L7") to str
+L7 + int ! TypeError can only concatenate list (not "int") to list
+L7 * int = [1, 1]
+int * L7 ! TypeError unsupported operand type(s) for *: 'int' and 'L7'
+int + L7 ! TypeError unsupported operand type(s) for +: 'int' and 'L7'
+L7 + bool ! TypeError can only concatenate list (not "bool") to list
+L7 * bool = [1]
+bool * L7 ! TypeError unsupported operand type(s) for *: 'bool' and 'L7'
+bool + L7 ! TypeError unsupported operand type(s) for +: 'bool' and 'L7'
+L7 + float ! TypeError can only concatenate list (not "float") to list
+L7 * float ! TypeError 'float' object cannot be interpreted as an integer
+float * L7 ! TypeError unsupported operand type(s) for *: 'float' and 'L7'
+float + L7 ! TypeError unsupported operand type(s) for +: 'float' and 'L7'
+L7 + None ! TypeError can only concatenate list (not "NoneType") to list
+L7 * None ! TypeError 'NoneType' object cannot be interpreted as an integer
+None * L7 ! TypeError unsupported operand type(s) for *: 'NoneType' and 'L7'
+None + L7 ! TypeError unsupported operand type(s) for +: 'NoneType' and 'L7'
+L7 + tuple ! TypeError can only concatenate list (not "tuple") to list
+L7 * tuple ! TypeError 'tuple' object cannot be interpreted as an integer
+tuple * L7 ! TypeError can't multiply sequence by non-int of type 'L7'
+tuple + L7 ! TypeError can only concatenate tuple (not "L7") to tuple
+L7 + list = [1, 1]
+L7 * list ! TypeError 'list' object cannot be interpreted as an integer
+list * L7 ! TypeError can't multiply sequence by non-int of type 'L7'
+list + L7 = [1, 1]
+L7 + str ! TypeError can only concatenate list (not "str") to list
+L7 * str ! TypeError 'str' object cannot be interpreted as an integer
+str * L7 ! TypeError can't multiply sequence by non-int of type 'L7'
+str + L7 ! TypeError can only concatenate str (not "L7") to str
+L7 + bytes ! TypeError can only concatenate list (not "bytes") to list
+L7 * bytes ! TypeError 'bytes' object cannot be interpreted as an integer
+bytes * L7 ! TypeError can't multiply sequence by non-int of type 'L7'
+bytes + L7 ! TypeError can't concat L7 to bytes
+S7 + R = R.__radd__
+S7 * R ! TypeError 'R' object cannot be interpreted as an integer
+R * S7 ! TypeError unsupported operand type(s) for *: 'R' and 'S7'
+R + S7 ! TypeError unsupported operand type(s) for +: 'R' and 'S7'
+S7 + T0 ! TypeError can only concatenate str (not "T0") to str
+S7 * T0 ! TypeError 'T0' object cannot be interpreted as an integer
+T0 * S7 ! TypeError can't multiply sequence by non-int of type 'S7'
+T0 + S7 ! TypeError can only concatenate tuple (not "S7") to tuple
+S7 + T1 = T1.__radd__
+S7 * T1 ! TypeError 'T1' object cannot be interpreted as an integer
+T1 * S7 ! TypeError 'S7' object cannot be interpreted as an integer
+T1 + S7 ! TypeError can only concatenate tuple (not "S7") to tuple
+S7 + T5 ! TypeError can only concatenate str (not "T5") to str
+S7 * T5 ! TypeError 'T5' object cannot be interpreted as an integer
+T5 * S7 = ('T5.__mul__', 'ab')
+T5 + S7 = ('T5.__add__', 'ab')
+S7 + L1 = L1.__radd__
+S7 * L1 ! TypeError 'L1' object cannot be interpreted as an integer
+L1 * S7 ! TypeError 'S7' object cannot be interpreted as an integer
+L1 + S7 ! TypeError can only concatenate list (not "S7") to list
+S7 + S1 = S1.__radd__
+S7 * S1 ! TypeError 'S1' object cannot be interpreted as an integer
+S1 * S7 ! TypeError 'S7' object cannot be interpreted as an integer
+S1 + S7 = ab
+S7 + int ! TypeError can only concatenate str (not "int") to str
+S7 * int = abab
+int * S7 ! TypeError unsupported operand type(s) for *: 'int' and 'S7'
+int + S7 ! TypeError unsupported operand type(s) for +: 'int' and 'S7'
+S7 + bool ! TypeError can only concatenate str (not "bool") to str
+S7 * bool = ab
+bool * S7 ! TypeError unsupported operand type(s) for *: 'bool' and 'S7'
+bool + S7 ! TypeError unsupported operand type(s) for +: 'bool' and 'S7'
+S7 + float ! TypeError can only concatenate str (not "float") to str
+S7 * float ! TypeError 'float' object cannot be interpreted as an integer
+float * S7 ! TypeError unsupported operand type(s) for *: 'float' and 'S7'
+float + S7 ! TypeError unsupported operand type(s) for +: 'float' and 'S7'
+S7 + None ! TypeError can only concatenate str (not "NoneType") to str
+S7 * None ! TypeError 'NoneType' object cannot be interpreted as an integer
+None * S7 ! TypeError unsupported operand type(s) for *: 'NoneType' and 'S7'
+None + S7 ! TypeError unsupported operand type(s) for +: 'NoneType' and 'S7'
+S7 + tuple ! TypeError can only concatenate str (not "tuple") to str
+S7 * tuple ! TypeError 'tuple' object cannot be interpreted as an integer
+tuple * S7 ! TypeError can't multiply sequence by non-int of type 'S7'
+tuple + S7 ! TypeError can only concatenate tuple (not "S7") to tuple
+S7 + list ! TypeError can only concatenate str (not "list") to str
+S7 * list ! TypeError 'list' object cannot be interpreted as an integer
+list * S7 ! TypeError can't multiply sequence by non-int of type 'S7'
+list + S7 ! TypeError can only concatenate list (not "S7") to list
+S7 + str = abx
+S7 * str ! TypeError 'str' object cannot be interpreted as an integer
+str * S7 ! TypeError can't multiply sequence by non-int of type 'S7'
+str + S7 = xab
+S7 + bytes ! TypeError can only concatenate str (not "bytes") to str
+S7 * bytes ! TypeError 'bytes' object cannot be interpreted as an integer
+bytes * S7 ! TypeError can't multiply sequence by non-int of type 'S7'
+bytes + S7 ! TypeError can't concat S7 to bytes
+B7 + R = R.__radd__
+B7 * R ! TypeError 'R' object cannot be interpreted as an integer
+R * B7 ! TypeError unsupported operand type(s) for *: 'R' and 'B7'
+R + B7 ! TypeError unsupported operand type(s) for +: 'R' and 'B7'
+B7 + T0 ! TypeError can't concat T0 to B7
+B7 * T0 ! TypeError 'T0' object cannot be interpreted as an integer
+T0 * B7 ! TypeError can't multiply sequence by non-int of type 'B7'
+T0 + B7 ! TypeError can only concatenate tuple (not "B7") to tuple
+B7 + T1 = T1.__radd__
+B7 * T1 ! TypeError 'T1' object cannot be interpreted as an integer
+T1 * B7 ! TypeError 'B7' object cannot be interpreted as an integer
+T1 + B7 ! TypeError can only concatenate tuple (not "B7") to tuple
+B7 + T5 ! TypeError can't concat T5 to B7
+B7 * T5 ! TypeError 'T5' object cannot be interpreted as an integer
+T5 * B7 = ('T5.__mul__', B7(b'ab'))
+T5 + B7 = ('T5.__add__', B7(b'ab'))
+B7 + L1 = L1.__radd__
+B7 * L1 ! TypeError 'L1' object cannot be interpreted as an integer
+L1 * B7 ! TypeError 'B7' object cannot be interpreted as an integer
+L1 + B7 ! TypeError can only concatenate list (not "B7") to list
+B7 + S1 = S1.__radd__
+B7 * S1 ! TypeError 'S1' object cannot be interpreted as an integer
+S1 * B7 ! TypeError 'B7' object cannot be interpreted as an integer
+S1 + B7 ! TypeError can only concatenate str (not "B7") to str
+B7 + int ! TypeError can't concat int to B7
+B7 * int = bytearray(b'abab')
+int * B7 ! TypeError unsupported operand type(s) for *: 'int' and 'B7'
+int + B7 ! TypeError unsupported operand type(s) for +: 'int' and 'B7'
+B7 + bool ! TypeError can't concat bool to B7
+B7 * bool = bytearray(b'ab')
+bool * B7 ! TypeError unsupported operand type(s) for *: 'bool' and 'B7'
+bool + B7 ! TypeError unsupported operand type(s) for +: 'bool' and 'B7'
+B7 + float ! TypeError can't concat float to B7
+B7 * float ! TypeError 'float' object cannot be interpreted as an integer
+float * B7 ! TypeError unsupported operand type(s) for *: 'float' and 'B7'
+float + B7 ! TypeError unsupported operand type(s) for +: 'float' and 'B7'
+B7 + None ! TypeError can't concat NoneType to B7
+B7 * None ! TypeError 'NoneType' object cannot be interpreted as an integer
+None * B7 ! TypeError unsupported operand type(s) for *: 'NoneType' and 'B7'
+None + B7 ! TypeError unsupported operand type(s) for +: 'NoneType' and 'B7'
+B7 + tuple ! TypeError can't concat tuple to B7
+B7 * tuple ! TypeError 'tuple' object cannot be interpreted as an integer
+tuple * B7 ! TypeError can't multiply sequence by non-int of type 'B7'
+tuple + B7 ! TypeError can only concatenate tuple (not "B7") to tuple
+B7 + list ! TypeError can't concat list to B7
+B7 * list ! TypeError 'list' object cannot be interpreted as an integer
+list * B7 ! TypeError can't multiply sequence by non-int of type 'B7'
+list + B7 ! TypeError can only concatenate list (not "B7") to list
+B7 + str ! TypeError can't concat str to B7
+B7 * str ! TypeError 'str' object cannot be interpreted as an integer
+str * B7 ! TypeError can't multiply sequence by non-int of type 'B7'
+str + B7 ! TypeError can only concatenate str (not "B7") to str
+B7 + bytes = bytearray(b'abx')
+B7 * bytes ! TypeError 'bytes' object cannot be interpreted as an integer
+bytes * B7 ! TypeError can't multiply sequence by non-int of type 'B7'
+bytes + B7 = b'xab'
+Q7 + R = R.__radd__
+Q7 * R ! TypeError 'R' object cannot be interpreted as an integer
+R * Q7 ! TypeError unsupported operand type(s) for *: 'R' and 'Q7'
+R + Q7 ! TypeError unsupported operand type(s) for +: 'R' and 'Q7'
+Q7 + T0 ! TypeError can only concatenate deque (not "T0") to deque
+Q7 * T0 ! TypeError 'T0' object cannot be interpreted as an integer
+T0 * Q7 ! TypeError can't multiply sequence by non-int of type 'Q7'
+T0 + Q7 ! TypeError can only concatenate tuple (not "Q7") to tuple
+Q7 + T1 = T1.__radd__
+Q7 * T1 ! TypeError 'T1' object cannot be interpreted as an integer
+T1 * Q7 ! TypeError 'Q7' object cannot be interpreted as an integer
+T1 + Q7 ! TypeError can only concatenate tuple (not "Q7") to tuple
+Q7 + T5 ! TypeError can only concatenate deque (not "T5") to deque
+Q7 * T5 ! TypeError 'T5' object cannot be interpreted as an integer
+T5 * Q7 = ('T5.__mul__', Q7([1]))
+T5 + Q7 = ('T5.__add__', Q7([1]))
+Q7 + L1 = L1.__radd__
+Q7 * L1 ! TypeError 'L1' object cannot be interpreted as an integer
+L1 * Q7 ! TypeError 'Q7' object cannot be interpreted as an integer
+L1 + Q7 ! TypeError can only concatenate list (not "Q7") to list
+Q7 + S1 = S1.__radd__
+Q7 * S1 ! TypeError 'S1' object cannot be interpreted as an integer
+S1 * Q7 ! TypeError 'Q7' object cannot be interpreted as an integer
+S1 + Q7 ! TypeError can only concatenate str (not "Q7") to str
+Q7 + int ! TypeError can only concatenate deque (not "int") to deque
+Q7 * int = Q7([1, 1])
+int * Q7 ! TypeError unsupported operand type(s) for *: 'int' and 'Q7'
+int + Q7 ! TypeError unsupported operand type(s) for +: 'int' and 'Q7'
+Q7 + bool ! TypeError can only concatenate deque (not "bool") to deque
+Q7 * bool = Q7([1])
+bool * Q7 ! TypeError unsupported operand type(s) for *: 'bool' and 'Q7'
+bool + Q7 ! TypeError unsupported operand type(s) for +: 'bool' and 'Q7'
+Q7 + float ! TypeError can only concatenate deque (not "float") to deque
+Q7 * float ! TypeError 'float' object cannot be interpreted as an integer
+float * Q7 ! TypeError unsupported operand type(s) for *: 'float' and 'Q7'
+float + Q7 ! TypeError unsupported operand type(s) for +: 'float' and 'Q7'
+Q7 + None ! TypeError can only concatenate deque (not "NoneType") to deque
+Q7 * None ! TypeError 'NoneType' object cannot be interpreted as an integer
+None * Q7 ! TypeError unsupported operand type(s) for *: 'NoneType' and 'Q7'
+None + Q7 ! TypeError unsupported operand type(s) for +: 'NoneType' and 'Q7'
+Q7 + tuple ! TypeError can only concatenate deque (not "tuple") to deque
+Q7 * tuple ! TypeError 'tuple' object cannot be interpreted as an integer
+tuple * Q7 ! TypeError can't multiply sequence by non-int of type 'Q7'
+tuple + Q7 ! TypeError can only concatenate tuple (not "Q7") to tuple
+Q7 + list ! TypeError can only concatenate deque (not "list") to deque
+Q7 * list ! TypeError 'list' object cannot be interpreted as an integer
+list * Q7 ! TypeError can't multiply sequence by non-int of type 'Q7'
+list + Q7 ! TypeError can only concatenate list (not "Q7") to list
+Q7 + str ! TypeError can only concatenate deque (not "str") to deque
+Q7 * str ! TypeError 'str' object cannot be interpreted as an integer
+str * Q7 ! TypeError can't multiply sequence by non-int of type 'Q7'
+str + Q7 ! TypeError can only concatenate str (not "Q7") to str
+Q7 + bytes ! TypeError can only concatenate deque (not "bytes") to deque
+Q7 * bytes ! TypeError 'bytes' object cannot be interpreted as an integer
+bytes * Q7 ! TypeError can't multiply sequence by non-int of type 'Q7'
+bytes + Q7 ! TypeError can't concat Q7 to bytes
+list += list = ([1, 2], True, [1, 2])
+list *= list ! TypeError can't multiply sequence by non-int of type 'list'
+list += tuple = ([1, 2], True, [1, 2])
+list *= tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+list += int ! TypeError 'int' object is not iterable
+list *= int = ([1, 1, 1, 1, 1], True, [1, 1, 1, 1, 1])
+list += R = ('R.__radd__', False, [1])
+list *= R = ('R.__rmul__', False, [1])
+list += Iterable = ('Iterable.__radd__', False, [1])
+list *= Iterable ! TypeError can't multiply sequence by non-int of type 'Iterable'
+list += None ! TypeError 'NoneType' object is not iterable
+list *= None ! TypeError can't multiply sequence by non-int of type 'NoneType'
+list += T7 = ([1, 1], True, [1, 1])
+list *= T7 ! TypeError can't multiply sequence by non-int of type 'T7'
+list += L7 = ([1, 1], True, [1, 1])
+list *= L7 ! TypeError can't multiply sequence by non-int of type 'L7'
+L0 += list = ([1, 2], True, [1, 2])
+L0 *= list ! TypeError can't multiply sequence by non-int of type 'list'
+L0 += tuple = ([1, 2], True, [1, 2])
+L0 *= tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+L0 += int ! TypeError 'int' object is not iterable
+L0 *= int = ([1, 1, 1, 1, 1], True, [1, 1, 1, 1, 1])
+L0 += R ! TypeError 'R' object is not iterable
+L0 *= R = ('R.__rmul__', False, [1])
+L0 += Iterable = ([1, 7, 8], True, [1, 7, 8])
+L0 *= Iterable ! TypeError can't multiply sequence by non-int of type 'Iterable'
+L0 += None ! TypeError 'NoneType' object is not iterable
+L0 *= None ! TypeError can't multiply sequence by non-int of type 'NoneType'
+L0 += T7 = ([1, 1], True, [1, 1])
+L0 *= T7 ! TypeError can't multiply sequence by non-int of type 'T7'
+L0 += L7 = ([1, 1], True, [1, 1])
+L0 *= L7 ! TypeError can't multiply sequence by non-int of type 'L7'
+ML += list = ([1, 2], True, [1, 2])
+ML *= list ! TypeError can't multiply sequence by non-int of type 'list'
+ML += tuple = ([1, 2], True, [1, 2])
+ML *= tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+ML += int ! TypeError 'int' object is not iterable
+ML *= int = ([1, 1, 1, 1, 1], True, [1, 1, 1, 1, 1])
+ML += R ! TypeError 'R' object is not iterable
+ML *= R = ('R.__rmul__', False, [1])
+ML += Iterable = ([1, 7, 8], True, [1, 7, 8])
+ML *= Iterable ! TypeError can't multiply sequence by non-int of type 'Iterable'
+ML += None ! TypeError 'NoneType' object is not iterable
+ML *= None ! TypeError can't multiply sequence by non-int of type 'NoneType'
+ML += T7 = ([1, 1], True, [1, 1])
+ML *= T7 ! TypeError can't multiply sequence by non-int of type 'T7'
+ML += L7 = ([1, 1], True, [1, 1])
+ML *= L7 ! TypeError can't multiply sequence by non-int of type 'L7'
+ML2 += list = ([1, 2], True, [1, 2])
+ML2 *= list = (('ML2.__mul__', [1], [2]), False, [1])
+ML2 += tuple = ([1, 2], True, [1, 2])
+ML2 *= tuple = (('ML2.__mul__', [1], (2,)), False, [1])
+ML2 += int ! TypeError 'int' object is not iterable
+ML2 *= int = (('ML2.__mul__', [1], 5), False, [1])
+ML2 += R ! TypeError 'R' object is not iterable
+ML2 *= R = (('ML2.__mul__', [1], R()), False, [1])
+ML2 += Iterable = ([1, 7, 8], True, [1, 7, 8])
+ML2 *= Iterable = (('ML2.__mul__', [1], Iterable()), False, [1])
+ML2 += None ! TypeError 'NoneType' object is not iterable
+ML2 *= None = (('ML2.__mul__', [1], None), False, [1])
+ML2 += T7 = ([1, 1], True, [1, 1])
+ML2 *= T7 = (('ML2.__mul__', [1], (1,)), False, [1])
+ML2 += L7 = ([1, 1], True, [1, 1])
+ML2 *= L7 = (('ML2.__mul__', [1], [1]), False, [1])
+L1 += list = ([1, 2], True, [1, 2])
+L1 *= list ! TypeError 'list' object cannot be interpreted as an integer
+L1 += tuple = ([1, 2], True, [1, 2])
+L1 *= tuple ! TypeError 'tuple' object cannot be interpreted as an integer
+L1 += int ! TypeError 'int' object is not iterable
+L1 *= int = ([1, 1, 1, 1, 1], False, [1])
+L1 += R ! TypeError 'R' object is not iterable
+L1 *= R ! TypeError 'R' object cannot be interpreted as an integer
+L1 += Iterable = ([1, 7, 8], True, [1, 7, 8])
+L1 *= Iterable ! TypeError 'Iterable' object cannot be interpreted as an integer
+L1 += None ! TypeError 'NoneType' object is not iterable
+L1 *= None ! TypeError 'NoneType' object cannot be interpreted as an integer
+L1 += T7 = ([1, 1], True, [1, 1])
+L1 *= T7 ! TypeError 'T7' object cannot be interpreted as an integer
+L1 += L7 = ([1, 1], True, [1, 1])
+L1 *= L7 ! TypeError 'L7' object cannot be interpreted as an integer
+L2 += list = ([1, 2], True, [1, 2])
+L2 *= list ! TypeError can't multiply sequence by non-int of type 'list'
+L2 += tuple = ([1, 2], True, [1, 2])
+L2 *= tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+L2 += int ! TypeError 'int' object is not iterable
+L2 *= int = ([1, 1, 1, 1, 1], True, [1, 1, 1, 1, 1])
+L2 += R ! TypeError 'R' object is not iterable
+L2 *= R = ('R.__rmul__', False, [1])
+L2 += Iterable = ([1, 7, 8], True, [1, 7, 8])
+L2 *= Iterable ! TypeError can't multiply sequence by non-int of type 'Iterable'
+L2 += None ! TypeError 'NoneType' object is not iterable
+L2 *= None ! TypeError can't multiply sequence by non-int of type 'NoneType'
+L2 += T7 = ([1, 1], True, [1, 1])
+L2 *= T7 ! TypeError can't multiply sequence by non-int of type 'T7'
+L2 += L7 = ([1, 1], True, [1, 1])
+L2 *= L7 ! TypeError can't multiply sequence by non-int of type 'L7'
+L7 += list = ([1, 2], True, [1, 2])
+L7 *= list ! TypeError 'list' object cannot be interpreted as an integer
+L7 += tuple = ([1, 2], True, [1, 2])
+L7 *= tuple ! TypeError 'tuple' object cannot be interpreted as an integer
+L7 += int ! TypeError 'int' object is not iterable
+L7 *= int = ([1, 1, 1, 1, 1], False, [1])
+L7 += R ! TypeError 'R' object is not iterable
+L7 *= R ! TypeError 'R' object cannot be interpreted as an integer
+L7 += Iterable = ([1, 7, 8], True, [1, 7, 8])
+L7 *= Iterable ! TypeError 'Iterable' object cannot be interpreted as an integer
+L7 += None ! TypeError 'NoneType' object is not iterable
+L7 *= None ! TypeError 'NoneType' object cannot be interpreted as an integer
+L7 += T7 = ([1, 1], True, [1, 1])
+L7 *= T7 ! TypeError 'T7' object cannot be interpreted as an integer
+L7 += L7 = ([1, 1], True, [1, 1])
+L7 *= L7 ! TypeError 'L7' object cannot be interpreted as an integer
+MQ += list = (MQ([1, 2]), True, MQ([1, 2]))
+MQ *= list ! TypeError can't multiply sequence by non-int of type 'list'
+MQ += tuple = (MQ([1, 2]), True, MQ([1, 2]))
+MQ *= tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+MQ += int ! TypeError 'int' object is not iterable
+MQ *= int = (MQ([1, 1, 1, 1, 1]), True, MQ([1, 1, 1, 1, 1]))
+MQ += R ! TypeError 'R' object is not iterable
+MQ *= R = ('R.__rmul__', False, MQ([1]))
+MQ += Iterable = (MQ([1, 7, 8]), True, MQ([1, 7, 8]))
+MQ *= Iterable ! TypeError can't multiply sequence by non-int of type 'Iterable'
+MQ += None ! TypeError 'NoneType' object is not iterable
+MQ *= None ! TypeError can't multiply sequence by non-int of type 'NoneType'
+MQ += T7 = (MQ([1, 1]), True, MQ([1, 1]))
+MQ *= T7 ! TypeError can't multiply sequence by non-int of type 'T7'
+MQ += L7 = (MQ([1, 1]), True, MQ([1, 1]))
+MQ *= L7 ! TypeError can't multiply sequence by non-int of type 'L7'
+deque += list = (deque([1, 2]), True, deque([1, 2]))
+deque *= list ! TypeError can't multiply sequence by non-int of type 'list'
+deque += tuple = (deque([1, 2]), True, deque([1, 2]))
+deque *= tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+deque += int ! TypeError 'int' object is not iterable
+deque *= int = (deque([1, 1, 1, 1, 1]), True, deque([1, 1, 1, 1, 1]))
+deque += R = ('R.__radd__', False, deque([1]))
+deque *= R = ('R.__rmul__', False, deque([1]))
+deque += Iterable = ('Iterable.__radd__', False, deque([1]))
+deque *= Iterable ! TypeError can't multiply sequence by non-int of type 'Iterable'
+deque += None ! TypeError 'NoneType' object is not iterable
+deque *= None ! TypeError can't multiply sequence by non-int of type 'NoneType'
+deque += T7 = (deque([1, 1]), True, deque([1, 1]))
+deque *= T7 ! TypeError can't multiply sequence by non-int of type 'T7'
+deque += L7 = (deque([1, 1]), True, deque([1, 1]))
+deque *= L7 ! TypeError can't multiply sequence by non-int of type 'L7'
+bytearray += bytes = (bytearray(b'ab'), True, bytearray(b'ab'))
+bytearray *= bytes ! TypeError can't multiply sequence by non-int of type 'bytes'
+bytearray += int ! TypeError can't concat int to bytearray
+bytearray *= int = (bytearray(b'aa'), True, bytearray(b'aa'))
+bytearray += R = ('R.__radd__', False, bytearray(b'a'))
+bytearray *= R = ('R.__rmul__', False, bytearray(b'a'))
+bytearray += str ! TypeError can't concat str to bytearray
+bytearray *= str ! TypeError can't multiply sequence by non-int of type 'str'
+MB += bytes = (MB(b'ab'), True, MB(b'ab'))
+MB *= bytes ! TypeError can't multiply sequence by non-int of type 'bytes'
+MB += int ! TypeError can't concat int to MB
+MB *= int = (MB(b'aa'), True, MB(b'aa'))
+MB += R ! TypeError can't concat R to MB
+MB *= R = ('R.__rmul__', False, MB(b'a'))
+MB += str ! TypeError can't concat str to MB
+MB *= str ! TypeError can't multiply sequence by non-int of type 'str'
+MB2 += bytes = (MB2(b'ab'), True, MB2(b'ab'))
+MB2 *= bytes = (('MB2.__mul__', b'a', b'b'), False, MB2(b'a'))
+MB2 += int ! TypeError can't concat int to MB2
+MB2 *= int = (('MB2.__mul__', b'a', 2), False, MB2(b'a'))
+MB2 += R ! TypeError can't concat R to MB2
+MB2 *= R = (('MB2.__mul__', b'a', R()), False, MB2(b'a'))
+MB2 += str ! TypeError can't concat str to MB2
+MB2 *= str = (('MB2.__mul__', b'a', 'x'), False, MB2(b'a'))
+tuple += tuple = ((1, 2), False, (1,))
+tuple *= tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+tuple += int ! TypeError can only concatenate tuple (not "int") to tuple
+tuple *= int = ((1, 1), False, (1,))
+tuple += R = ('R.__radd__', False, (1,))
+tuple *= R = ('R.__rmul__', False, (1,))
+tuple += str ! TypeError can only concatenate tuple (not "str") to tuple
+tuple *= str ! TypeError can't multiply sequence by non-int of type 'str'
+T0 += tuple = ((1, 2), False, (1,))
+T0 *= tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+T0 += int ! TypeError can only concatenate tuple (not "int") to tuple
+T0 *= int = ((1, 1), False, (1,))
+T0 += R = ('R.__radd__', False, (1,))
+T0 *= R = ('R.__rmul__', False, (1,))
+T0 += str ! TypeError can only concatenate tuple (not "str") to tuple
+T0 *= str ! TypeError can't multiply sequence by non-int of type 'str'
+T4 += tuple = ((1, 2), False, (1,))
+T4 *= tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+T4 += int ! TypeError can only concatenate tuple (not "int") to tuple
+T4 *= int = ((1, 1), False, (1,))
+T4 += R = ('R.__radd__', False, (1,))
+T4 *= R = ('R.__rmul__', False, (1,))
+T4 += str ! TypeError can only concatenate tuple (not "str") to tuple
+T4 *= str ! TypeError can't multiply sequence by non-int of type 'str'
+T5 += tuple = (('T5.__add__', (2,)), False, (1,))
+T5 *= tuple = (('T5.__mul__', (2,)), False, (1,))
+T5 += int = (('T5.__add__', 2), False, (1,))
+T5 *= int = (('T5.__mul__', 2), False, (1,))
+T5 += R = (('T5.__add__', R()), False, (1,))
+T5 *= R = (('T5.__mul__', R()), False, (1,))
+T5 += str = (('T5.__add__', 'x'), False, (1,))
+T5 *= str = (('T5.__mul__', 'x'), False, (1,))
+str += tuple ! TypeError can only concatenate str (not "tuple") to str
+str *= tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+str += int ! TypeError can only concatenate str (not "int") to str
+str *= int = ('aa', False, 'a')
+str += R = ('R.__radd__', False, 'a')
+str *= R = ('R.__rmul__', False, 'a')
+str += str = ('ax', False, 'a')
+str *= str ! TypeError can't multiply sequence by non-int of type 'str'
+S2 += tuple ! TypeError unsupported operand type(s) for +=: 'S2' and 'tuple'
+S2 *= tuple ! TypeError unsupported operand type(s) for *=: 'S2' and 'tuple'
+S2 += int ! TypeError unsupported operand type(s) for +=: 'S2' and 'int'
+S2 *= int ! TypeError unsupported operand type(s) for *=: 'S2' and 'int'
+S2 += R = ('R.__radd__', False, 'a')
+S2 *= R = ('R.__rmul__', False, 'a')
+S2 += str ! TypeError unsupported operand type(s) for +=: 'S2' and 'str'
+S2 *= str ! TypeError unsupported operand type(s) for *=: 'S2' and 'str'
+int *= T7 ! TypeError unsupported operand type(s) for *=: 'int' and 'T7'
+int += T7 ! TypeError unsupported operand type(s) for +=: 'int' and 'T7'
+int *= L7 ! TypeError unsupported operand type(s) for *=: 'int' and 'L7'
+int += L7 ! TypeError unsupported operand type(s) for +=: 'int' and 'L7'
+int *= S7 ! TypeError unsupported operand type(s) for *=: 'int' and 'S7'
+int += S7 ! TypeError unsupported operand type(s) for +=: 'int' and 'S7'
+int *= T5 = ((1, 1), False, 2)
+int += T5 ! TypeError unsupported operand type(s) for +=: 'int' and 'T5'
+bool *= T7 ! TypeError unsupported operand type(s) for *=: 'bool' and 'T7'
+bool += T7 ! TypeError unsupported operand type(s) for +=: 'bool' and 'T7'
+bool *= L7 ! TypeError unsupported operand type(s) for *=: 'bool' and 'L7'
+bool += L7 ! TypeError unsupported operand type(s) for +=: 'bool' and 'L7'
+bool *= S7 ! TypeError unsupported operand type(s) for *=: 'bool' and 'S7'
+bool += S7 ! TypeError unsupported operand type(s) for +=: 'bool' and 'S7'
+bool *= T5 = ((1,), False, True)
+bool += T5 ! TypeError unsupported operand type(s) for +=: 'bool' and 'T5'
+float *= T7 ! TypeError unsupported operand type(s) for *=: 'float' and 'T7'
+float += T7 ! TypeError unsupported operand type(s) for +=: 'float' and 'T7'
+float *= L7 ! TypeError unsupported operand type(s) for *=: 'float' and 'L7'
+float += L7 ! TypeError unsupported operand type(s) for +=: 'float' and 'L7'
+float *= S7 ! TypeError unsupported operand type(s) for *=: 'float' and 'S7'
+float += S7 ! TypeError unsupported operand type(s) for +=: 'float' and 'S7'
+float *= T5 ! TypeError 'float' object cannot be interpreted as an integer
+float += T5 ! TypeError unsupported operand type(s) for +=: 'float' and 'T5'
+None *= T7 ! TypeError unsupported operand type(s) for *=: 'NoneType' and 'T7'
+None += T7 ! TypeError unsupported operand type(s) for +=: 'NoneType' and 'T7'
+None *= L7 ! TypeError unsupported operand type(s) for *=: 'NoneType' and 'L7'
+None += L7 ! TypeError unsupported operand type(s) for +=: 'NoneType' and 'L7'
+None *= S7 ! TypeError unsupported operand type(s) for *=: 'NoneType' and 'S7'
+None += S7 ! TypeError unsupported operand type(s) for +=: 'NoneType' and 'S7'
+None *= T5 ! TypeError 'NoneType' object cannot be interpreted as an integer
+None += T5 ! TypeError unsupported operand type(s) for +=: 'NoneType' and 'T5'
+R *= T7 ! TypeError unsupported operand type(s) for *=: 'R' and 'T7'
+R += T7 ! TypeError unsupported operand type(s) for +=: 'R' and 'T7'
+R *= L7 ! TypeError unsupported operand type(s) for *=: 'R' and 'L7'
+R += L7 ! TypeError unsupported operand type(s) for +=: 'R' and 'L7'
+R *= S7 ! TypeError unsupported operand type(s) for *=: 'R' and 'S7'
+R += S7 ! TypeError unsupported operand type(s) for +=: 'R' and 'S7'
+R *= T5 ! TypeError 'R' object cannot be interpreted as an integer
+R += T5 ! TypeError unsupported operand type(s) for +=: 'R' and 'T5'
+MS |= set = (MS({1, 2}), True, MS({1, 2}))
+MD |= dict = ({'a': 1, 'b': 2}, True, {'a': 1, 'b': 2})
+list += list = ([1, 2], True, [1, 2])
+list *= list ! TypeError can't multiply sequence by non-int of type 'list'
+list += tuple = ([1, 2], True, [1, 2])
+list *= tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+list += int ! TypeError 'int' object is not iterable
+list *= int = ([1, 1, 1, 1, 1], True, [1, 1, 1, 1, 1])
+list += R = ('R.__radd__', False, [1])
+list *= R = ('R.__rmul__', False, [1])
+list += Iterable = ('Iterable.__radd__', False, [1])
+list *= Iterable ! TypeError can't multiply sequence by non-int of type 'Iterable'
+list += None ! TypeError 'NoneType' object is not iterable
+list *= None ! TypeError can't multiply sequence by non-int of type 'NoneType'
+list += T7 = ([1, 1], True, [1, 1])
+list *= T7 ! TypeError can't multiply sequence by non-int of type 'T7'
+list += L7 = ([1, 1], True, [1, 1])
+list *= L7 ! TypeError can't multiply sequence by non-int of type 'L7'
+L0 += list = ([1, 2], True, [1, 2])
+L0 *= list ! TypeError can't multiply sequence by non-int of type 'list'
+L0 += tuple = ([1, 2], True, [1, 2])
+L0 *= tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+L0 += int ! TypeError 'int' object is not iterable
+L0 *= int = ([1, 1, 1, 1, 1], True, [1, 1, 1, 1, 1])
+L0 += R ! TypeError 'R' object is not iterable
+L0 *= R = ('R.__rmul__', False, [1])
+L0 += Iterable = ([1, 7, 8], True, [1, 7, 8])
+L0 *= Iterable ! TypeError can't multiply sequence by non-int of type 'Iterable'
+L0 += None ! TypeError 'NoneType' object is not iterable
+L0 *= None ! TypeError can't multiply sequence by non-int of type 'NoneType'
+L0 += T7 = ([1, 1], True, [1, 1])
+L0 *= T7 ! TypeError can't multiply sequence by non-int of type 'T7'
+L0 += L7 = ([1, 1], True, [1, 1])
+L0 *= L7 ! TypeError can't multiply sequence by non-int of type 'L7'
+ML += list = ([1, 2], True, [1, 2])
+ML *= list ! TypeError can't multiply sequence by non-int of type 'list'
+ML += tuple = ([1, 2], True, [1, 2])
+ML *= tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+ML += int ! TypeError 'int' object is not iterable
+ML *= int = ([1, 1, 1, 1, 1], True, [1, 1, 1, 1, 1])
+ML += R ! TypeError 'R' object is not iterable
+ML *= R = ('R.__rmul__', False, [1])
+ML += Iterable = ([1, 7, 8], True, [1, 7, 8])
+ML *= Iterable ! TypeError can't multiply sequence by non-int of type 'Iterable'
+ML += None ! TypeError 'NoneType' object is not iterable
+ML *= None ! TypeError can't multiply sequence by non-int of type 'NoneType'
+ML += T7 = ([1, 1], True, [1, 1])
+ML *= T7 ! TypeError can't multiply sequence by non-int of type 'T7'
+ML += L7 = ([1, 1], True, [1, 1])
+ML *= L7 ! TypeError can't multiply sequence by non-int of type 'L7'
+ML2 += list = ([1, 2], True, [1, 2])
+ML2 *= list = (('ML2.__mul__', [1], [2]), False, [1])
+ML2 += tuple = ([1, 2], True, [1, 2])
+ML2 *= tuple = (('ML2.__mul__', [1], (2,)), False, [1])
+ML2 += int ! TypeError 'int' object is not iterable
+ML2 *= int = (('ML2.__mul__', [1], 5), False, [1])
+ML2 += R ! TypeError 'R' object is not iterable
+ML2 *= R = (('ML2.__mul__', [1], R()), False, [1])
+ML2 += Iterable = ([1, 7, 8], True, [1, 7, 8])
+ML2 *= Iterable = (('ML2.__mul__', [1], Iterable()), False, [1])
+ML2 += None ! TypeError 'NoneType' object is not iterable
+ML2 *= None = (('ML2.__mul__', [1], None), False, [1])
+ML2 += T7 = ([1, 1], True, [1, 1])
+ML2 *= T7 = (('ML2.__mul__', [1], (1,)), False, [1])
+ML2 += L7 = ([1, 1], True, [1, 1])
+ML2 *= L7 = (('ML2.__mul__', [1], [1]), False, [1])
+L1 += list = ([1, 2], True, [1, 2])
+L1 *= list ! TypeError 'list' object cannot be interpreted as an integer
+L1 += tuple = ([1, 2], True, [1, 2])
+L1 *= tuple ! TypeError 'tuple' object cannot be interpreted as an integer
+L1 += int ! TypeError 'int' object is not iterable
+L1 *= int = ([1, 1, 1, 1, 1], False, [1])
+L1 += R ! TypeError 'R' object is not iterable
+L1 *= R ! TypeError 'R' object cannot be interpreted as an integer
+L1 += Iterable = ([1, 7, 8], True, [1, 7, 8])
+L1 *= Iterable ! TypeError 'Iterable' object cannot be interpreted as an integer
+L1 += None ! TypeError 'NoneType' object is not iterable
+L1 *= None ! TypeError 'NoneType' object cannot be interpreted as an integer
+L1 += T7 = ([1, 1], True, [1, 1])
+L1 *= T7 ! TypeError 'T7' object cannot be interpreted as an integer
+L1 += L7 = ([1, 1], True, [1, 1])
+L1 *= L7 ! TypeError 'L7' object cannot be interpreted as an integer
+L2 += list = ([1, 2], True, [1, 2])
+L2 *= list ! TypeError can't multiply sequence by non-int of type 'list'
+L2 += tuple = ([1, 2], True, [1, 2])
+L2 *= tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+L2 += int ! TypeError 'int' object is not iterable
+L2 *= int = ([1, 1, 1, 1, 1], True, [1, 1, 1, 1, 1])
+L2 += R ! TypeError 'R' object is not iterable
+L2 *= R = ('R.__rmul__', False, [1])
+L2 += Iterable = ([1, 7, 8], True, [1, 7, 8])
+L2 *= Iterable ! TypeError can't multiply sequence by non-int of type 'Iterable'
+L2 += None ! TypeError 'NoneType' object is not iterable
+L2 *= None ! TypeError can't multiply sequence by non-int of type 'NoneType'
+L2 += T7 = ([1, 1], True, [1, 1])
+L2 *= T7 ! TypeError can't multiply sequence by non-int of type 'T7'
+L2 += L7 = ([1, 1], True, [1, 1])
+L2 *= L7 ! TypeError can't multiply sequence by non-int of type 'L7'
+L7 += list = ([1, 2], True, [1, 2])
+L7 *= list ! TypeError 'list' object cannot be interpreted as an integer
+L7 += tuple = ([1, 2], True, [1, 2])
+L7 *= tuple ! TypeError 'tuple' object cannot be interpreted as an integer
+L7 += int ! TypeError 'int' object is not iterable
+L7 *= int = ([1, 1, 1, 1, 1], False, [1])
+L7 += R ! TypeError 'R' object is not iterable
+L7 *= R ! TypeError 'R' object cannot be interpreted as an integer
+L7 += Iterable = ([1, 7, 8], True, [1, 7, 8])
+L7 *= Iterable ! TypeError 'Iterable' object cannot be interpreted as an integer
+L7 += None ! TypeError 'NoneType' object is not iterable
+L7 *= None ! TypeError 'NoneType' object cannot be interpreted as an integer
+L7 += T7 = ([1, 1], True, [1, 1])
+L7 *= T7 ! TypeError 'T7' object cannot be interpreted as an integer
+L7 += L7 = ([1, 1], True, [1, 1])
+L7 *= L7 ! TypeError 'L7' object cannot be interpreted as an integer
+MQ += list = (MQ([1, 2]), True, MQ([1, 2]))
+MQ *= list ! TypeError can't multiply sequence by non-int of type 'list'
+MQ += tuple = (MQ([1, 2]), True, MQ([1, 2]))
+MQ *= tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+MQ += int ! TypeError 'int' object is not iterable
+MQ *= int = (MQ([1, 1, 1, 1, 1]), True, MQ([1, 1, 1, 1, 1]))
+MQ += R ! TypeError 'R' object is not iterable
+MQ *= R = ('R.__rmul__', False, MQ([1]))
+MQ += Iterable = (MQ([1, 7, 8]), True, MQ([1, 7, 8]))
+MQ *= Iterable ! TypeError can't multiply sequence by non-int of type 'Iterable'
+MQ += None ! TypeError 'NoneType' object is not iterable
+MQ *= None ! TypeError can't multiply sequence by non-int of type 'NoneType'
+MQ += T7 = (MQ([1, 1]), True, MQ([1, 1]))
+MQ *= T7 ! TypeError can't multiply sequence by non-int of type 'T7'
+MQ += L7 = (MQ([1, 1]), True, MQ([1, 1]))
+MQ *= L7 ! TypeError can't multiply sequence by non-int of type 'L7'
+deque += list = (deque([1, 2]), True, deque([1, 2]))
+deque *= list ! TypeError can't multiply sequence by non-int of type 'list'
+deque += tuple = (deque([1, 2]), True, deque([1, 2]))
+deque *= tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+deque += int ! TypeError 'int' object is not iterable
+deque *= int = (deque([1, 1, 1, 1, 1]), True, deque([1, 1, 1, 1, 1]))
+deque += R = ('R.__radd__', False, deque([1]))
+deque *= R = ('R.__rmul__', False, deque([1]))
+deque += Iterable = ('Iterable.__radd__', False, deque([1]))
+deque *= Iterable ! TypeError can't multiply sequence by non-int of type 'Iterable'
+deque += None ! TypeError 'NoneType' object is not iterable
+deque *= None ! TypeError can't multiply sequence by non-int of type 'NoneType'
+deque += T7 = (deque([1, 1]), True, deque([1, 1]))
+deque *= T7 ! TypeError can't multiply sequence by non-int of type 'T7'
+deque += L7 = (deque([1, 1]), True, deque([1, 1]))
+deque *= L7 ! TypeError can't multiply sequence by non-int of type 'L7'
+bytearray += bytes = (bytearray(b'ab'), True, bytearray(b'ab'))
+bytearray *= bytes ! TypeError can't multiply sequence by non-int of type 'bytes'
+bytearray += int ! TypeError can't concat int to bytearray
+bytearray *= int = (bytearray(b'aa'), True, bytearray(b'aa'))
+bytearray += R = ('R.__radd__', False, bytearray(b'a'))
+bytearray *= R = ('R.__rmul__', False, bytearray(b'a'))
+bytearray += str ! TypeError can't concat str to bytearray
+bytearray *= str ! TypeError can't multiply sequence by non-int of type 'str'
+MB += bytes = (MB(b'ab'), True, MB(b'ab'))
+MB *= bytes ! TypeError can't multiply sequence by non-int of type 'bytes'
+MB += int ! TypeError can't concat int to MB
+MB *= int = (MB(b'aa'), True, MB(b'aa'))
+MB += R ! TypeError can't concat R to MB
+MB *= R = ('R.__rmul__', False, MB(b'a'))
+MB += str ! TypeError can't concat str to MB
+MB *= str ! TypeError can't multiply sequence by non-int of type 'str'
+MB2 += bytes = (MB2(b'ab'), True, MB2(b'ab'))
+MB2 *= bytes = (('MB2.__mul__', b'a', b'b'), False, MB2(b'a'))
+MB2 += int ! TypeError can't concat int to MB2
+MB2 *= int = (('MB2.__mul__', b'a', 2), False, MB2(b'a'))
+MB2 += R ! TypeError can't concat R to MB2
+MB2 *= R = (('MB2.__mul__', b'a', R()), False, MB2(b'a'))
+MB2 += str ! TypeError can't concat str to MB2
+MB2 *= str = (('MB2.__mul__', b'a', 'x'), False, MB2(b'a'))
+tuple += tuple = ((1, 2), False, (1,))
+tuple *= tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+tuple += int ! TypeError can only concatenate tuple (not "int") to tuple
+tuple *= int = ((1, 1), False, (1,))
+tuple += R = ('R.__radd__', False, (1,))
+tuple *= R = ('R.__rmul__', False, (1,))
+tuple += str ! TypeError can only concatenate tuple (not "str") to tuple
+tuple *= str ! TypeError can't multiply sequence by non-int of type 'str'
+T0 += tuple = ((1, 2), False, (1,))
+T0 *= tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+T0 += int ! TypeError can only concatenate tuple (not "int") to tuple
+T0 *= int = ((1, 1), False, (1,))
+T0 += R = ('R.__radd__', False, (1,))
+T0 *= R = ('R.__rmul__', False, (1,))
+T0 += str ! TypeError can only concatenate tuple (not "str") to tuple
+T0 *= str ! TypeError can't multiply sequence by non-int of type 'str'
+T4 += tuple = ((1, 2), False, (1,))
+T4 *= tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+T4 += int ! TypeError can only concatenate tuple (not "int") to tuple
+T4 *= int = ((1, 1), False, (1,))
+T4 += R = ('R.__radd__', False, (1,))
+T4 *= R = ('R.__rmul__', False, (1,))
+T4 += str ! TypeError can only concatenate tuple (not "str") to tuple
+T4 *= str ! TypeError can't multiply sequence by non-int of type 'str'
+T5 += tuple = (('T5.__add__', (2,)), False, (1,))
+T5 *= tuple = (('T5.__mul__', (2,)), False, (1,))
+T5 += int = (('T5.__add__', 2), False, (1,))
+T5 *= int = (('T5.__mul__', 2), False, (1,))
+T5 += R = (('T5.__add__', R()), False, (1,))
+T5 *= R = (('T5.__mul__', R()), False, (1,))
+T5 += str = (('T5.__add__', 'x'), False, (1,))
+T5 *= str = (('T5.__mul__', 'x'), False, (1,))
+str += tuple ! TypeError can only concatenate str (not "tuple") to str
+str *= tuple ! TypeError can't multiply sequence by non-int of type 'tuple'
+str += int ! TypeError can only concatenate str (not "int") to str
+str *= int = ('aa', False, 'a')
+str += R = ('R.__radd__', False, 'a')
+str *= R = ('R.__rmul__', False, 'a')
+str += str = ('ax', False, 'a')
+str *= str ! TypeError can't multiply sequence by non-int of type 'str'
+S2 += tuple ! TypeError unsupported operand type(s) for +=: 'S2' and 'tuple'
+S2 *= tuple ! TypeError unsupported operand type(s) for *=: 'S2' and 'tuple'
+S2 += int ! TypeError unsupported operand type(s) for +=: 'S2' and 'int'
+S2 *= int ! TypeError unsupported operand type(s) for *=: 'S2' and 'int'
+S2 += R = ('R.__radd__', False, 'a')
+S2 *= R = ('R.__rmul__', False, 'a')
+S2 += str ! TypeError unsupported operand type(s) for +=: 'S2' and 'str'
+S2 *= str ! TypeError unsupported operand type(s) for *=: 'S2' and 'str'
+int *= T7 ! TypeError unsupported operand type(s) for *=: 'int' and 'T7'
+int += T7 ! TypeError unsupported operand type(s) for +=: 'int' and 'T7'
+int *= L7 ! TypeError unsupported operand type(s) for *=: 'int' and 'L7'
+int += L7 ! TypeError unsupported operand type(s) for +=: 'int' and 'L7'
+int *= S7 ! TypeError unsupported operand type(s) for *=: 'int' and 'S7'
+int += S7 ! TypeError unsupported operand type(s) for +=: 'int' and 'S7'
+int *= T5 = ((1, 1), False, 2)
+int += T5 ! TypeError unsupported operand type(s) for +=: 'int' and 'T5'
+bool *= T7 ! TypeError unsupported operand type(s) for *=: 'bool' and 'T7'
+bool += T7 ! TypeError unsupported operand type(s) for +=: 'bool' and 'T7'
+bool *= L7 ! TypeError unsupported operand type(s) for *=: 'bool' and 'L7'
+bool += L7 ! TypeError unsupported operand type(s) for +=: 'bool' and 'L7'
+bool *= S7 ! TypeError unsupported operand type(s) for *=: 'bool' and 'S7'
+bool += S7 ! TypeError unsupported operand type(s) for +=: 'bool' and 'S7'
+bool *= T5 = ((1,), False, True)
+bool += T5 ! TypeError unsupported operand type(s) for +=: 'bool' and 'T5'
+float *= T7 ! TypeError unsupported operand type(s) for *=: 'float' and 'T7'
+float += T7 ! TypeError unsupported operand type(s) for +=: 'float' and 'T7'
+float *= L7 ! TypeError unsupported operand type(s) for *=: 'float' and 'L7'
+float += L7 ! TypeError unsupported operand type(s) for +=: 'float' and 'L7'
+float *= S7 ! TypeError unsupported operand type(s) for *=: 'float' and 'S7'
+float += S7 ! TypeError unsupported operand type(s) for +=: 'float' and 'S7'
+float *= T5 ! TypeError 'float' object cannot be interpreted as an integer
+float += T5 ! TypeError unsupported operand type(s) for +=: 'float' and 'T5'
+None *= T7 ! TypeError unsupported operand type(s) for *=: 'NoneType' and 'T7'
+None += T7 ! TypeError unsupported operand type(s) for +=: 'NoneType' and 'T7'
+None *= L7 ! TypeError unsupported operand type(s) for *=: 'NoneType' and 'L7'
+None += L7 ! TypeError unsupported operand type(s) for +=: 'NoneType' and 'L7'
+None *= S7 ! TypeError unsupported operand type(s) for *=: 'NoneType' and 'S7'
+None += S7 ! TypeError unsupported operand type(s) for +=: 'NoneType' and 'S7'
+None *= T5 ! TypeError 'NoneType' object cannot be interpreted as an integer
+None += T5 ! TypeError unsupported operand type(s) for +=: 'NoneType' and 'T5'
+R *= T7 ! TypeError unsupported operand type(s) for *=: 'R' and 'T7'
+R += T7 ! TypeError unsupported operand type(s) for +=: 'R' and 'T7'
+R *= L7 ! TypeError unsupported operand type(s) for *=: 'R' and 'L7'
+R += L7 ! TypeError unsupported operand type(s) for +=: 'R' and 'L7'
+R *= S7 ! TypeError unsupported operand type(s) for *=: 'R' and 'S7'
+R += S7 ! TypeError unsupported operand type(s) for +=: 'R' and 'S7'
+R *= T5 ! TypeError 'R' object cannot be interpreted as an integer
+R += T5 ! TypeError unsupported operand type(s) for +=: 'R' and 'T5'
+MS |= set = (MS({1, 2}), True, MS({1, 2}))
+MD |= dict = ({'a': 1, 'b': 2}, True, {'a': 1, 'b': 2})
+A // B ! TypeError unsupported operand type(s) for //: 'A' and 'A'
+C / D = E.__truediv__
+A // B ! TypeError unsupported operand type(s) for //: 'A' and 'A'
+C / D = E.__truediv__
+A // B ! TypeError unsupported operand type(s) for //: 'A' and 'A'
+C / D = E.__truediv__

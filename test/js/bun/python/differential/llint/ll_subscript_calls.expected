@@ -1,0 +1,195 @@
+status: 0
+script: c025c5c399dbe404
+---
+key 0 -> ('A', 0)
+key 0 -> ('A', 0)
+key 0 -> ('A', 0)
+key -1 -> ('A', -1)
+key -1 -> ('A', -1)
+key -1 -> ('A', -1)
+key 1180591620717411303424 -> ('A', 1180591620717411303424)
+key 1180591620717411303424 -> ('A', 1180591620717411303424)
+key 1180591620717411303424 -> ('A', 1180591620717411303424)
+key 1.5 -> ('A', 1.5)
+key 1.5 -> ('A', 1.5)
+key 1.5 -> ('A', 1.5)
+key 2.0 -> ('A', 2.0)
+key 2.0 -> ('A', 2.0)
+key 2.0 -> ('A', 2.0)
+key 'k' -> ('A', 'k')
+key 'k' -> ('A', 'k')
+key 'k' -> ('A', 'k')
+key None -> ('A', None)
+key None -> ('A', None)
+key None -> ('A', None)
+key True -> ('A', True)
+key True -> ('A', True)
+key True -> ('A', True)
+key () -> ('A', ())
+key () -> ('A', ())
+key () -> ('A', ())
+key (1, 2) -> ('A', (1, 2))
+key (1, 2) -> ('A', (1, 2))
+key (1, 2) -> ('A', (1, 2))
+key slice(1, 2, None) -> ('A', slice(1, 2, None))
+key slice(1, 2, None) -> ('A', slice(1, 2, None))
+key slice(1, 2, None) -> ('A', slice(1, 2, None))
+key Ellipsis -> ('A', Ellipsis)
+key Ellipsis -> ('A', Ellipsis)
+key Ellipsis -> ('A', Ellipsis)
+key <class '__main__.A'> -> ('A', <class '__main__.A'>)
+key <class '__main__.A'> -> ('A', <class '__main__.A'>)
+key <class '__main__.A'> -> ('A', <class '__main__.A'>)
+key b'x' -> ('A', b'x')
+key b'x' -> ('A', b'x')
+key b'x' -> ('A', b'x')
+key frozenset() -> ('A', frozenset())
+key frozenset() -> ('A', frozenset())
+key frozenset() -> ('A', frozenset())
+slices -> (('A', slice(1, 2, None)), ('A', slice(None, None, None)), ('A', slice(None, None, 2)), ('A', (slice(1, 2, None), 3)), ('A', (Ellipsis, 1)), ('A', (1,)), ('A', ()), ('A', ('A', 0)))
+slices -> (('A', slice(1, 2, None)), ('A', slice(None, None, None)), ('A', slice(None, None, 2)), ('A', (slice(1, 2, None), 3)), ('A', (Ellipsis, 1)), ('A', (1,)), ('A', ()), ('A', ('A', 0)))
+slices -> (('A', slice(1, 2, None)), ('A', slice(None, None, None)), ('A', slice(None, None, 2)), ('A', (slice(1, 2, None), 3)), ('A', (Ellipsis, 1)), ('A', (1,)), ('A', ()), ('A', ('A', 0)))
+method: lambda -> ('lambda', 7)
+method: lambda -> ('lambda', 7)
+method: lambda -> ('lambda', 7)
+method: defaults -> (7, 1, 2)
+method: defaults -> (7, 1, 2)
+method: defaults -> (7, 1, 2)
+method: three defaults -> (7, 1, 2, 3)
+method: three defaults -> (7, 1, 2, 3)
+method: three defaults -> (7, 1, 2, 3)
+method: star -> 2
+method: star -> 2
+method: star -> 2
+method: star after self -> (7,)
+method: star after self -> (7,)
+method: star after self -> (7,)
+method: keywords -> (7, {})
+method: keywords -> (7, {})
+method: keywords -> (7, {})
+method: keyword only -> (7, 5)
+method: keyword only -> (7, 5)
+method: keyword only -> (7, 5)
+method: keyword only without a default -> "TypeError:kinds.<locals>.<lambda>() missing 1 required keyword-only argument: 'k'"
+method: keyword only without a default -> "TypeError:kinds.<locals>.<lambda>() missing 1 required keyword-only argument: 'k'"
+method: keyword only without a default -> "TypeError:kinds.<locals>.<lambda>() missing 1 required keyword-only argument: 'k'"
+method: one parameter -> 'TypeError:kinds.<locals>.<lambda>() takes 1 positional argument but 2 were given'
+method: one parameter -> 'TypeError:kinds.<locals>.<lambda>() takes 1 positional argument but 2 were given'
+method: one parameter -> 'TypeError:kinds.<locals>.<lambda>() takes 1 positional argument but 2 were given'
+method: three parameters -> "TypeError:kinds.<locals>.<lambda>() missing 1 required positional argument: 'other'"
+method: three parameters -> "TypeError:kinds.<locals>.<lambda>() missing 1 required positional argument: 'other'"
+method: three parameters -> "TypeError:kinds.<locals>.<lambda>() missing 1 required positional argument: 'other'"
+method: a default for the key -> 7
+method: a default for the key -> 7
+method: a default for the key -> 7
+method: builtin -> 'TypeError:add expected 2 arguments, got 1'
+method: builtin -> 'TypeError:add expected 2 arguments, got 1'
+method: builtin -> 'TypeError:add expected 2 arguments, got 1'
+method: type -> <class 'int'>
+method: type -> <class 'int'>
+method: type -> <class 'int'>
+method: callable object -> ('called', 1)
+method: callable object -> ('called', 1)
+method: callable object -> ('called', 1)
+method: partial -> 'TypeError:kinds.<locals>.<lambda>() takes 2 positional arguments but 3 were given'
+method: partial -> 'TypeError:kinds.<locals>.<lambda>() takes 2 positional arguments but 3 were given'
+method: partial -> 'TypeError:kinds.<locals>.<lambda>() takes 2 positional arguments but 3 were given'
+method: partialmethod -> ('partialmethod', 1, 7)
+method: partialmethod -> ('partialmethod', 1, 7)
+method: partialmethod -> ('partialmethod', 1, 7)
+method: none -> "TypeError:'NoneType' object is not callable"
+method: none -> "TypeError:'NoneType' object is not callable"
+method: none -> "TypeError:'NoneType' object is not callable"
+method: not callable -> "TypeError:'int' object is not callable"
+method: not callable -> "TypeError:'int' object is not callable"
+method: not callable -> "TypeError:'int' object is not callable"
+method: staticmethod -> ('static', 7)
+method: staticmethod -> ('static', 7)
+method: staticmethod -> ('static', 7)
+method: classmethod -> ('class', 'K', 7)
+method: classmethod -> ('class', 'K', 7)
+method: classmethod -> ('class', 'K', 7)
+method: property -> ('property', 7)
+method: property -> ('property', 7)
+method: property -> ('property', 7)
+method: of list -> "TypeError:descriptor '__getitem__' for 'list' objects doesn't apply to a 'K' object"
+method: of list -> "TypeError:descriptor '__getitem__' for 'list' objects doesn't apply to a 'K' object"
+method: of list -> "TypeError:descriptor '__getitem__' for 'list' objects doesn't apply to a 'K' object"
+method: generator -> [7]
+method: generator -> [7]
+method: generator -> [7]
+method: deletes -> []
+method: deletes -> []
+method: deletes -> []
+many kinds -> [('A', 0), ('A', 0), ('C', 0), ('L', 0, 1), ('D', 0), ('missing', 0), ('T', 0), ('S', 0), 5, 7, 'x', 'zero', 97, 0, ('G', 'G', 0), list[0], ('A', 0)]
+many kinds -> [('A', 0), ('A', 0), ('C', 0), ('L', 0, 1), ('D', 0), ('missing', 0), ('T', 0), ('S', 0), 5, 7, 'x', 'zero', 97, 0, ('G', 'G', 0), list[0], ('A', 0)]
+many kinds -> [('A', 0), ('A', 0), ('C', 0), ('L', 0, 1), ('D', 0), ('missing', 0), ('T', 0), ('S', 0), 5, 7, 'x', 'zero', 97, 0, ('G', 'G', 0), list[0], ('A', 0)]
+no __getitem__ -> "TypeError:'N' object is not subscriptable"
+no __getitem__ -> "TypeError:'N' object is not subscriptable"
+no __getitem__ -> "TypeError:'N' object is not subscriptable"
+an instance of a class with __class_getitem__ -> "TypeError:'G' object is not subscriptable"
+an instance of a class with __class_getitem__ -> "TypeError:'G' object is not subscriptable"
+an instance of a class with __class_getitem__ -> "TypeError:'G' object is not subscriptable"
+__getitem__ of the instance -> "TypeError:'N' object is not subscriptable"
+__getitem__ of the instance -> "TypeError:'N' object is not subscriptable"
+__getitem__ of the instance -> "TypeError:'N' object is not subscriptable"
+changes -> ['first', 'first', 'second', 'second', ('called', 1), ('called', 1), 'third', 'third', "'X' object is not subscriptable", 'base', 'base', 'new in base', 'new in base', ('A', 0), ('A', 0)]
+changes -> ['first', 'first', 'second', 'second', ('called', 1), ('called', 1), 'third', 'third', "'X' object is not subscriptable", 'base', 'base', 'new in base', 'new in base', ('A', 0), ('A', 0)]
+changes -> ['first', 'first', 'second', 'second', ('called', 1), ('called', 1), 'third', 'third', "'X' object is not subscriptable", 'base', 'base', 'new in base', 'new in base', ('A', 0), ('A', 0)]
+the method changes the class -> ['original', 'replaced', 'replaced']
+the method changes the class -> ['original', 'replaced', 'replaced']
+the method changes the class -> ['original', 'replaced', 'replaced']
+uses -> ([[0, 1, 2], [0, 1, 2], True, False, (1, 0)], (0, 1, 2), [0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 0, 1, 2, 3, 0, 1, 0, 1, 2, 3, 0, ('set', 0, 1), ('set', slice(1, 2, None), [1]), ('del', 0), 1, 0, ('set', 0, 1)])
+uses -> ([[0, 1, 2], [0, 1, 2], True, False, (1, 0)], (0, 1, 2), [0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 0, 1, 2, 3, 0, 1, 0, 1, 2, 3, 0, ('set', 0, 1), ('set', slice(1, 2, None), [1]), ('del', 0), 1, 0, ('set', 0, 1)])
+uses -> ([[0, 1, 2], [0, 1, 2], True, False, (1, 0)], (0, 1, 2), [0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 0, 1, 2, 3, 0, 1, 0, 1, 2, 3, 0, ('set', 0, 1), ('set', slice(1, 2, None), [1]), ('del', 0), 1, 0, ('set', 0, 1)])
+frames -> ('__getitem__', 'caller', 1, 5, ['x'])
+frames -> ('__getitem__', 'caller', 1, 5, ['x'])
+frames -> ('__getitem__', 'caller', 1, 5, ['x'])
+stack -> ['rec', '<lambda>', '__getitem__']
+stack -> ['rec', '<lambda>', '__getitem__']
+stack -> ['rec', '<lambda>', '__getitem__']
+traceback -> [('tb', -2, 'try: f()'), ('<lambda>', 7, 'rec("traceback", lambda: tb(lambda: raises(Looks())))'), ('raises', 1, 'def raises(x): return x["again"]'), ('__getitem__', -12, 'if key == "again": return self["raise"]'), ('__getitem__', -11, 'raise KeyError(key)')]
+finally
+caught -> "caught 'raise'"
+traceback -> [('tb', -2, 'try: f()'), ('<lambda>', 7, 'rec("traceback", lambda: tb(lambda: raises(Looks())))'), ('raises', 1, 'def raises(x): return x["again"]'), ('__getitem__', -12, 'if key == "again": return self["raise"]'), ('__getitem__', -11, 'raise KeyError(key)')]
+finally
+caught -> "caught 'raise'"
+traceback -> [('tb', -2, 'try: f()'), ('<lambda>', 7, 'rec("traceback", lambda: tb(lambda: raises(Looks())))'), ('raises', 1, 'def raises(x): return x["again"]'), ('__getitem__', -12, 'if key == "again": return self["raise"]'), ('__getitem__', -11, 'raise KeyError(key)')]
+finally
+caught -> "caught 'raise'"
+aliases -> (V(14), V(5), (V(19), V(114), V(114), V(101)), [V(19), V(15), V(105), V(101)])
+aliases -> (V(14), V(5), (V(19), V(114), V(114), V(101)), [V(19), V(15), V(105), V(101)])
+aliases -> (V(14), V(5), (V(19), V(114), V(114), V(101)), [V(19), V(15), V(105), V(101)])
+generator -> [V(2), V(11), V(30), V(31), V(3), ('returned', None)]
+generator -> [V(2), V(11), V(30), V(31), V(3), ('returned', None)]
+generator -> [V(2), V(11), V(30), V(31), V(3), ('returned', None)]
+class body -> V(3)
+module -> V(3)
+alive -> ([True, True], [False, False])
+alive -> ([True, True], [False, False])
+alive -> ([True, True], [False, False])
+alive, the method lets go -> ([True, True], [False, False])
+alive, the method lets go -> ([True, True], [False, False])
+alive, the method lets go -> ([True, True], [False, False])
+endless -> 'RecursionError:maximum recursion depth exceeded'
+deep -> 0
+wide 100 -> (V(6), 99)
+wide 100 -> (V(6), 99)
+wide 130 -> (V(6), 129)
+wide 130 -> (V(6), 129)
+wide 250 -> (V(6), 249)
+wide 250 -> (V(6), 249)
+wide 300 -> (V(6), 299)
+wide 300 -> (V(6), 299)
+wide 40000 -> (V(6), 39999)
+wide 40000 -> (V(6), 39999)
+settrace -> [('call', 'body', 0), ('line', 'body', 1), ('call', '__getitem__', 0), ('line', '__getitem__', 1), ('line', '__getitem__', 2), ('return', '__getitem__', 2), ('line', 'body', 2), ('call', '__getitem__', 0), ('line', '__getitem__', 1), ('line', '__getitem__', 2), ('return', '__getitem__', 2), ('line', 'body', 3), ('return', 'body', 3)]
+settrace -> [('call', 'body', 0), ('line', 'body', 1), ('call', '__getitem__', 0), ('line', '__getitem__', 1), ('line', '__getitem__', 2), ('return', '__getitem__', 2), ('line', 'body', 2), ('call', '__getitem__', 0), ('line', '__getitem__', 1), ('line', '__getitem__', 2), ('return', '__getitem__', 2), ('line', 'body', 3), ('return', 'body', 3)]
+setprofile -> [('call', 'body'), ('call', '__getitem__'), ('return', '__getitem__'), ('call', '__getitem__'), ('return', '__getitem__'), ('return', 'body')]
+setprofile -> [('call', 'body'), ('call', '__getitem__'), ('return', '__getitem__'), ('call', '__getitem__'), ('return', '__getitem__'), ('return', 'body')]
+afterwards -> 3
+operands while methods run -> [[False, False, False, False, False, False], True, [False, False, False, False, False, False], True, [False, False, False, False, False, False], True]
+after an exception -> [[False, False], [False, False], [False, False], [False, False], [False, False], [False, False]]
+the result while methods run -> [[True], (False, [False]), [True], (False, [False]), [True], (False, [False])]
+buffers while methods run -> [('BufferError', 'BufferError'), ('BufferError', 'BufferError'), ('BufferError', 'BufferError'), ('BufferError', 'BufferError')]
+191

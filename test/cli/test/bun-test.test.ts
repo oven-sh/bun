@@ -3535,10 +3535,21 @@ describe.concurrent("a rejection left by the callback that settles", () => {
 
   describe("is an error between tests, and the next test passes", () => {
     // An expected failure has to come from the test's own callback.
-    test("a test.failing() test", async () => {
-      const { stderr, errors, exitCode } = await runFiles({
-        "a.test.ts": `${imports}test.failing("leaves", async () => {${leave}});${next}`,
-      });
+    test.each(
+      Object.entries({
+        "a test.failing() test": `test.failing("leaves", async () => {${leave}});`,
+        "a test.failing() test with an afterEach() hook, from a later immediate of that turn": `
+          afterEach(() => {});
+          test.failing("leaves", async () => {
+            await new Promise<void>(resolve => {
+              setImmediate(resolve);
+              setImmediate(() => void Promise.reject(new Error("left")));
+            });
+          });
+        `,
+      }),
+    )("%s", async (_, leaves) => {
+      const { stderr, errors, exitCode } = await runFiles({ "a.test.ts": imports + leaves + next });
       expect({ results: results(stderr), errors, exitCode }).toEqual(failsThatTest);
       expect(stderr).toContain("Unhandled error between tests");
     });

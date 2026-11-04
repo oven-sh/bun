@@ -4665,11 +4665,6 @@ void JSC__JSGlobalObject__handleRejectedPromises(JSC::JSGlobalObject* arg0)
     return uncheckedDowncast<Zig::GlobalObject>(arg0)->handleRejectedPromises();
 }
 
-extern "C" bool Bun__hasRejectedPromises(Zig::GlobalObject* globalObject)
-{
-    return globalObject->hasRejectedPromises();
-}
-
 extern "C" size_t Bun__holdRejectedPromises(Zig::GlobalObject* globalObject)
 {
     return globalObject->holdRejectedPromises();

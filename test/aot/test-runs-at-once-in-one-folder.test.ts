@@ -1,9 +1,9 @@
 import { expect, vi } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isCI, isDebug, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join, relative } from "node:path";
-import { atLeastWhatTheRunnerGave, raiseDefaultTimeout } from "./harness/default-timeout";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
@@ -71,20 +71,18 @@ const forms: Record<string, Form> = {
 };
 
 // A run builds all of Bun's own code, and that build is nearly all of what the run costs: it keeps about five processors busy.
-// The tests that wait for one run, each in a folder of its own, run a quarter as many at once as there are processors, three at
-// most. They run one at a time, as the other tests do, where there are fewer than eight processors, and where `bun test --parallel`
-// runs this file beside others, as in a bucket of CI: there a second run takes what it gains from the first and from the files
-// beside this one. The last two tests are about runs at once, and nothing of this file runs beside them.
-const atOnce = process.env.BUN_TEST_WORKER_ID ? 1 : Math.min(3, Math.max(1, availableParallelism() >> 2));
+// Where this file has the machine to itself, the tests that wait for one run, each in a folder of its own, run a quarter as many
+// at once as there are processors, three at most. In CI, and where `bun test --parallel` runs this file, other files build beside
+// it on every processor: there a second run takes what it gains from the first and from those files, and the tests run one at a
+// time. The last tests are about runs at once, and nothing of this file runs beside them.
+const atOnce = isCI || process.env.BUN_TEST_WORKER_ID ? 1 : Math.min(3, Math.max(1, availableParallelism() >> 2));
 const testOfOneRun = atOnce > 1 ? test.concurrent : test;
 vi.setConfig({ maxConcurrency: atOnce });
 
-// A test that waits for one run has two minutes, and the last test, which waits for three at once, has four: as before. Where Bun
-// has assertions the runner gives a test more than that, and there one run took five times as long beside the files of a CI bucket
-// as alone: there the limits are what the runner gives, and twice that. A debug build of Bun takes over a minute for one run with
-// twelve processors to itself, and no lane of CI tests one.
-const limitOfOneRun = atLeastWhatTheRunnerGave(isDebug ? 600_000 : 120_000, isASAN || isDebug);
-raiseDefaultTimeout(limitOfOneRun);
+// No test has a limit of its own. The limit of the file is that of `supported.ts`, which sets it for the first file of a process
+// only: two minutes, and what the runner gives where Bun has assertions. A debug build of Bun takes three minutes for a run
+// beside two others on twelve processors, and no lane of CI tests one.
+raiseDefaultTimeout(isDebug ? 600_000 : 120_000);
 
 /** Every file and folder of a project, a folder with a slash behind it. */
 const listing = (directory: string) =>
@@ -133,8 +131,10 @@ async function runTests(directory: string, env: Record<string, string>, ...flags
   };
 }
 
+type Ran = Awaited<ReturnType<typeof runTests>>;
+
 /** A compiled run has printed what plain Bun prints, and the stand-ins of its form. */
-function expectAsPlain({ standIns, ...seen }: Awaited<ReturnType<typeof runTests>>, form: Form) {
+function expectAsPlain({ standIns, ...seen }: Ran, form: Form) {
   expect(seen).toEqual(plain);
   if (standIns) expect(standIns).toEqual(form.standIns);
 }
@@ -145,11 +145,14 @@ testOfOneRun("what plain Bun prints in the project", async () => {
 });
 
 for (const [name, form] of Object.entries(forms)) {
-  testOfOneRun(`a run ${name} writes nothing into the project`, async () => {
-    using dir = tempDir("aot-test-run-writes-nothing", files);
-    expectAsPlain(await runTests(String(dir), form.env, "--aot"), form);
-    expect(listing(String(dir))).toEqual(written);
-  });
+  // Of the form in layers, the three runs at once below are the run that writes nothing.
+  if (form !== forms["in layers"]) {
+    testOfOneRun(`a run ${name} writes nothing into the project`, async () => {
+      using dir = tempDir("aot-test-run-writes-nothing", files);
+      expectAsPlain(await runTests(String(dir), form.env, "--aot"), form);
+      expect(listing(String(dir))).toEqual(written);
+    });
+  }
 
   testOfOneRun(`a run ${name} where node_modules/.cache is no folder`, async () => {
     using dir = tempDir("aot-test-run-cache-is-a-file", { ...files, "node_modules/.cache": "" });
@@ -190,13 +193,20 @@ for (let written = false; ; written = true) {
   expect(writer.exitCode).toBe(null);
 });
 
-test(
-  "three runs in layers at once in one folder",
-  async () => {
+// Three runs at once in a folder that holds nothing but the project. The two tests below are about the same three: a run of its
+// own for the second one built all of Bun's own code once more, and showed nothing of a run in layers that these do not show.
+let atOnceInOneFolder: Promise<{ runs: Ran[]; left: string[] }> | undefined;
+const threeRunsAtOnce = () =>
+  (atOnceInOneFolder ??= (async () => {
     using dir = tempDir("aot-test-runs-at-once", files);
-    const runs = [1, 2, 3].map(() => runTests(String(dir), forms["in layers"].env, "--aot"));
-    for (const ran of await Promise.all(runs)) expectAsPlain(ran, forms["in layers"]);
-    expect(listing(String(dir))).toEqual(written);
-  },
-  2 * limitOfOneRun,
-);
+    const runs = await Promise.all([1, 2, 3].map(() => runTests(String(dir), forms["in layers"].env, "--aot")));
+    return { runs, left: listing(String(dir)) };
+  })());
+
+test("three runs in layers at once in one folder", async () => {
+  for (const ran of (await threeRunsAtOnce()).runs) expectAsPlain(ran, forms["in layers"]);
+});
+
+test("a run in layers writes nothing into the project", async () => {
+  expect((await threeRunsAtOnce()).left).toEqual(written);
+});

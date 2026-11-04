@@ -375,13 +375,8 @@ impl FileSink {
                 let mut src = *(*this).source.get();
                 src.close(None);
                 FileSink::clear_keep_alive_ref(this);
-            } else if !(*this).done.get()
-                && !(*this).writer.get().has_pending_data()
-                && matches!((*this).source.get(), streams::SourceHandle::None)
-                && (*this).pipe.get().cell().is_none()
-            {
-                // Nothing is in flight and nothing feeds it: from here on only its JS object needs it.
-                FileSink::clear_keep_alive_ref(this);
+            } else {
+                FileSink::clear_keep_alive_ref_if_idle(this);
             }
         }
     }
@@ -588,6 +583,20 @@ impl FileSink {
             if (*this).must_be_kept_alive_until_eof.get() {
                 (*this).must_be_kept_alive_until_eof.set(false);
                 FileSink::deref(this);
+            }
+        }
+    }
+
+    /// Nothing is in flight and nothing feeds it: from here on only its JS object needs it. Safety: as `clear_keep_alive_ref`.
+    unsafe fn clear_keep_alive_ref_if_idle(this: *mut FileSink) {
+        // SAFETY: caller contract — `this` is live with write+dealloc provenance.
+        unsafe {
+            if !(*this).done.get()
+                && !(*this).writer.get().has_pending_data()
+                && matches!((*this).source.get(), streams::SourceHandle::None)
+                && (*this).pipe.get().cell().is_none()
+            {
+                FileSink::clear_keep_alive_ref(this);
             }
         }
     }
@@ -881,6 +890,7 @@ impl FileSink {
                             let mut src = *(*this).source.get();
                             src.ready(None, None);
                         }
+                        FileSink::clear_keep_alive_ref_if_idle(this);
                     }
                 }
                 _ => {

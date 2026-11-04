@@ -730,6 +730,7 @@ impl FSEventsLoop {
         unsafe { (cf.run_loop_stop)(self.loop_.load(Ordering::Relaxed)) };
     }
 
+    /// `thread` is the handle that `init` returned with this loop.
     fn shutdown(&'static self, thread: std::thread::JoinHandle<()>) {
         // signal close and wait
         self.enqueue_task_concurrent(Task::new(self, FSEventsLoop::stop));

@@ -15,10 +15,7 @@ use std::rc::Rc;
 pub(crate) use bun_event_loop::EventLoopTimer::{
     EventLoopTimer, InHeap, IntrusiveField, State as EventLoopTimerState, Tag as EventLoopTimerTag,
 };
-// bun_event_loop carries a local `Timespec` stub instead of
-// `bun_core::Timespec`. Same `{sec: i64, nsec: i64}` shape; alias it here so
-// `fire()`/`next` accesses type-check without a transmute.
-// TODO: remove this alias once the lower tier switches to `bun_core::Timespec`.
+// The same type as `bun_core::Timespec`, which `bun_event_loop` re-exports.
 pub(crate) use bun_event_loop::EventLoopTimer::Timespec as ElTimespec;
 
 use crate::node::histogram::Interval;
@@ -655,7 +652,8 @@ impl All {
             _ => tag.allow_fake_timers() && self.fake_timers.set_timeout_clock() == Clock::Fake,
         };
         if fake {
-            // SAFETY: `timer` is live and in no heap (caller contract), and its owner removes it before it frees it.
+            // SAFETY: `timer` is live and in no heap (caller contract). Its owner removes it before it
+            // frees it or writes `next`.
             unsafe {
                 self.fake_timers.timers.insert(timer);
                 (*timer).state = EventLoopTimerState::ACTIVE;
@@ -820,12 +818,7 @@ impl All {
 
         // SAFETY: `timer` is still a valid live EventLoopTimer; safe to derive
         // an exclusive reference now that no other borrow is outstanding.
-        // `time` cannot alias `timer.next`: `time` is a `&bun_core::Timespec`
-        // while `next` is `ElTimespec` — distinct types, so safe code cannot
-        // construct the alias. Re-add a
-        // `debug_assert!(!core::ptr::eq(time as *const _ as *const u8, &raw const (*timer).next as *const u8))`
-        // when the Timespec types unify (see the ElTimespec alias note at the
-        // top of this file).
+        // `time` must not point into `*timer`: the callers pass a `Timespec` of their own.
         let timer_ref = unsafe { &mut *timer };
         timer_ref.next.sec = time.sec;
         timer_ref.next.nsec = time.nsec;
@@ -840,8 +833,9 @@ impl All {
         debug_assert!(unsafe { (*timer).tag } == EventLoopTimerTag::WTFTimer);
         {
             let mut wtf = self.wtf_timers.lock();
-            // SAFETY: `timer` is live, and `WTFTimer::deinit` disarms it before it frees it. Its state
-            // and heap links only change under this guard.
+            // SAFETY: `timer` is live. `WTFTimer::deinit` disarms it before it frees it (where the VM's
+            // context is gone, nothing reads this heap any more). Its state, `next` and heap links
+            // only change under this guard, `next` only here, after the `remove`.
             unsafe {
                 if (*timer).state == EventLoopTimerState::ACTIVE {
                     wtf.remove(timer);

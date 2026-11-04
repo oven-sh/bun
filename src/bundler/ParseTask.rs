@@ -1379,7 +1379,7 @@ pub mod parse_worker {
                 let _ = log.add_error(
                     Some(source),
                     Loc::EMPTY,
-                    b"The \"python\" loader is not supported by the bundler yet",
+                    b"A Python file cannot be bundled, nor be the entry point of a bundle",
                 );
                 return Err(crate::Error::ParserError);
             }

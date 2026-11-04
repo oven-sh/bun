@@ -33,6 +33,7 @@
 #include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/ButterflyInlines.h>
 #include <JavaScriptCore/CustomGetterSetter.h>
+#include <JavaScriptCore/PyHooks.h>
 #include "JavaScriptCore/AOTHost.h"
 #include "BunPlugin.h"
 #include "NodeVM.h"
@@ -304,7 +305,7 @@ static bool isOpaqueProperty(JSGlobalObject* globalObject, JSObject* object, Pro
         JSObject* contextified = contextGlobal->contextifiedObject();
         return contextified && contextified->hasOwnProperty(globalObject, key);
     }
-    return object->type() == ProxyObjectType;
+    return object->type() == ProxyObjectType || JSC::Python::propertiesArePythons(object);
 }
 
 // Lets a spy replace a property of a locked built-in. No JavaScript may run meanwhile, and the traps of an opaque object are JavaScript.

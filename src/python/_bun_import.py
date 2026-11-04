@@ -71,6 +71,9 @@ def _is_installed(specifier, importer):
         directory = parent
 
 
+_from_javascript = set()
+
+
 class JSLoader:
     """Loads what `specifier` means to the file `importer`."""
 
@@ -83,7 +86,43 @@ class JSLoader:
 
     def exec_module(self, module):
         # The import system hands out what is in sys.modules when the module has run.
-        sys.modules[module.__name__] = _require(self.specifier, self.importer)
+        if _bun_resolver.is_being_loaded(self.specifier):
+            sys.modules[module.__name__] = _BeingLoaded(module.__name__, self)
+        else:
+            sys.modules[module.__name__] = _require(self.specifier, self.importer)
+        _from_javascript.add(module.__name__)
+
+
+class _BeingLoaded(type(sys)):
+    """A module of JavaScript that imports, itself or through others, the module of Python that now imports it.
+
+    A .py file runs while JavaScript is still fetching what the importing module needs, so that one has not begun. It is as with
+    a cycle among modules of Python: the module is there, and has nothing in it until it runs.
+    """
+
+    def __init__(self, name, loader):
+        super().__init__(name)
+        self.__loader__ = loader
+        self.__file__ = loader.specifier
+        self.__spec__ = _bootstrap.ModuleSpec(name, loader, origin=loader.specifier)
+        self.__spec__._initializing = True
+
+    def __getattr__(self, attribute):
+        loader = self.__loader__
+        if _bun_resolver.is_being_loaded(loader.specifier):
+            raise AttributeError(
+                f"partially initialized module {self.__name__!r} has no attribute {attribute!r} (most likely due to a circular import)",
+                name=attribute,
+                obj=self,
+            )
+        module = _require(loader.specifier, loader.importer)
+        if sys.modules.get(self.__name__) is self:
+            sys.modules[self.__name__] = module
+        return getattr(module, attribute)
+
+    def __dir__(self):
+        loader = self.__loader__
+        return [] if _bun_resolver.is_being_loaded(loader.specifier) else dir(_require(loader.specifier, loader.importer))
 
 
 class JSFileLoader(JSLoader):
@@ -199,7 +238,8 @@ def import_file(path, source=None):
     A file is one module however often and from wherever it is imported, and it is the module that Python's own import of
     it gives, if Python can import it: its directory goes to the end of sys.path, where it hides nothing. If the name means
     something else to Python (another file of that name was imported first, the standard library has such a module), the
-    file is a module all the same, under a name of its own.
+    file is a module all the same, under a name of its own. So is a file that Python's import would not look at, which
+    JavaScript says is Python: `import "./rules.txt" with { type: "python" }`.
     """
     module = _files.get(path)
     if module is not None:
@@ -209,7 +249,7 @@ def import_file(path, source=None):
         return main
 
     directory, name = _name_of_file(path)
-    if source is None:
+    if source is None and path.endswith(tuple(_external.SOURCE_SUFFIXES)):
         if directory not in sys.path:
             sys.path.append(directory)
         top = name.partition(".")[0]
@@ -222,12 +262,40 @@ def import_file(path, source=None):
 
     name = "%s_%x" % (name.rpartition(".")[2], hash(path) & 0xFFFFFFFF)
     if source is None:
-        spec = _external.spec_from_file_location(name, path)
+        spec = _external.spec_from_file_location(name, path, loader=_external.SourceFileLoader(name, path))
     else:
         spec = _bootstrap.spec_from_loader(name, _GivenSource(path, source), origin=path)
         spec.has_location = True
     module = _files[path] = _bootstrap._load(spec)
     return module
+
+
+_watched = set()
+
+
+def _watch(event, arguments):
+    """With --watch and --hot. Every file of the program counts, and from before it runs: it may run for as long as the program."""
+    if event != "exec":
+        return
+    file = arguments[0].co_filename
+    if file in _watched or not _external._path_isabs(file) or "site-packages" in file:
+        return
+    if sys._stdlib_dir and file.startswith(sys._stdlib_dir):
+        return
+    _watched.add(file)
+    _bun_resolver.watch(file)
+
+
+def forget_program():
+    """--hot runs the program again in the same process. As with the modules of JavaScript, all that came from its files are loaded
+    anew; those of the standard library and of installed packages stay."""
+    _files.clear()
+    for name, module in list(sys.modules.items()):
+        file = getattr(module, "__file__", None)
+        if name != "__main__" and (name in _from_javascript or (isinstance(file, str) and file in _watched)):
+            del sys.modules[name]
+    _from_javascript.clear()
+    _external.PathFinder.invalidate_caches()
 
 
 def _spawn_only(context):
@@ -291,6 +359,8 @@ def _install():
     sys.path_importer_cache.clear()
     sys.meta_path.insert(sys.meta_path.index(_external.PathFinder), _Adapter)
     sys.meta_path.append(JSFinder)
+    if _bun_resolver.watch(""):
+        sys.addaudithook(_watch)
 
 
 _install()

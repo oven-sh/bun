@@ -36,3 +36,8 @@ def group():
 
 def frames(exception):
     return [f"{frame.filename.rsplit('/', 1)[-1]}:{frame.lineno} {frame.name}" for frame in traceback.extract_tb(exception.__traceback__)]
+
+
+def deprecated(**options):
+    import warnings
+    warnings.warn("old", DeprecationWarning, stacklevel=2, **options)

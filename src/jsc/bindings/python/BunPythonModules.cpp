@@ -1,6 +1,9 @@
 #include "BunPythonModule.h"
 
 #include "BunPython.h"
+#include <JavaScriptCore/CyclicModuleRecord.h>
+#include <JavaScriptCore/JSModuleLoader.h>
+#include <JavaScriptCore/ModuleRegistryEntry.h>
 #include <mutex>
 
 namespace Bun {
@@ -24,9 +27,67 @@ static JSValue withoutInstalling(JSGlobalObject* globalObject, const CallArgs& a
     return result;
 }
 
+extern "C" bool Bun__Python__watchFile(JSC::JSGlobalObject*, const BunString* path);
+
+// _bun_resolver.watch(path): with --watch or --hot, the program is run again when the file changes. False: without.
+static JSValue watch(JSGlobalObject* globalObject, JSValue path)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!isStr(path))
+        return raiseTypeError(globalObject, scope, "watch() takes a str"_s);
+    String text = strValue(path)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    BunString string = Bun::toString(text);
+    return jsBoolean(Bun__Python__watchFile(globalObject, &string));
+}
+
+// _bun_resolver.is_being_loaded(path): whether the ES module has been asked for and has not begun to run: it, or what it imports, is
+// still being fetched. require() cannot have it then.
+static JSValue isBeingLoaded(JSGlobalObject* globalObject, JSValue path)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!isStr(path))
+        return raiseTypeError(globalObject, scope, "is_being_loaded() takes a str"_s);
+    String key = strValue(path)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto* entry = globalObject->moduleLoader()->registryEntry(Identifier::fromString(vm, key));
+    if (!entry)
+        return jsBoolean(false);
+    switch (entry->status()) {
+    case ModuleRegistryEntry::Status::New:
+    case ModuleRegistryEntry::Status::Fetching:
+        return jsBoolean(true);
+    case ModuleRegistryEntry::Status::FetchFailed:
+    case ModuleRegistryEntry::Status::InstantiationFailed:
+    case ModuleRegistryEntry::Status::EvaluationFailed:
+        return jsBoolean(false);
+    case ModuleRegistryEntry::Status::Fetched:
+        break;
+    }
+    auto* record = dynamicDowncast<CyclicModuleRecord>(entry->record());
+    return jsBoolean(record && record->status() < CyclicModuleRecord::Status::Evaluating);
+}
+
 static constexpr NativeDef resolverFunctions[] = {
     PY_FUNCTION("without_installing", withoutInstalling, "(function, /, *args)"),
+    PY_FUNCTION("is_being_loaded", isBeingLoaded, "(path, /)"),
+    PY_FUNCTION("watch", watch, "(path, /)"),
 };
+
+// --hot is about to run the program again.
+extern "C" void Bun__Python__willRunAgain(JSC::JSGlobalObject* globalObject)
+{
+    if (!globalObject->pythonRuntime())
+        return;
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (JSValue module = runtime(globalObject).modules()->get(internString(vm, "_bun_import"_s)))
+        callMethod(globalObject, module, internString(vm, "forget_program"_s));
+    if (scope.exception()) [[unlikely]]
+        scope.clearExceptionExceptTermination();
+}
 
 static void initializeBunResolverModule(JSGlobalObject* globalObject, PyModule* module)
 {

@@ -76,39 +76,24 @@ test.concurrent("what a plugin supplies for a .py path is used", async () => {
   });
 });
 
-test.concurrent("to the bundler a .py file is an asset", async () => {
+// What else the bundler does with it: boundary/tooling.test.ts.
+test.concurrent("the bundler leaves the import of a .py file as it is", async () => {
   using dir = tempDir("python-bundle", {
     "tool.py": `print("a tool")`,
     "entry.js": `import tool from "./tool.py"; console.log(tool);`,
-    "explicit.js": `import tool from "./tool.py" with { type: "python" }; console.log(tool);`,
   });
-  for (const target of ["bun", "browser"]) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "entry.js", "--target=" + target, "--outdir=out-" + target],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    const emitted = readdirSync(join(String(dir), "out-" + target)).sort();
-    expect({ stderr, emitted: emitted.map(name => name.replace(/-[a-z0-9]+\.py$/, "-HASH.py")), exitCode }).toEqual({
-      stderr: "",
-      emitted: ["entry.js", "tool-HASH.py"],
-      exitCode: 0,
-    });
-    expect(await Bun.file(join(String(dir), "out-" + target, "entry.js")).text()).toContain(emitted[1]);
-  }
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "explicit.js", "--target=bun", "--outdir=out-explicit"],
+    cmd: [bunExe(), "build", "entry.js", "--target=bun", "--outdir=out"],
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain(`The "python" loader is not supported by the bundler yet`);
-  expect(exitCode).toBe(1);
+  expect(stderr).toContain(`warn: "./tool.py" is not bundled`);
+  expect(readdirSync(join(String(dir), "out"))).toEqual(["entry.js"]);
+  expect(await Bun.file(join(String(dir), "out", "entry.js")).text()).toContain(`from "./tool.py"`);
+  expect(exitCode).toBe(0);
 });
 
 test("Bun.Transpiler refuses the python loader", () => {

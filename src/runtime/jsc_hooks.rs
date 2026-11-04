@@ -1327,6 +1327,22 @@ fn print_exception(
 
     let global = vm_ref.global();
 
+    // An exception of Python's is Python's to report. (The test runner shows it among its own lines, and keeps a list.)
+    let thrown = value.to_error().unwrap_or(value);
+    if exception_list.is_none()
+        && thrown.is_cell()
+        && thrown.js_type() == bun_jsc::JSType::PyException
+        && !bun_jsc::virtual_machine::isBunTest.load(core::sync::atomic::Ordering::Relaxed)
+    {
+        unsafe extern "C" {
+            safe fn Bun__Python__reportUncaught(global: &JSGlobalObject, exception: JSValue) -> bool;
+        }
+        let _ = writer.flush();
+        if Bun__Python__reportUncaught(global, thrown) {
+            return;
+        }
+    }
+
     if let Some(exception) = value.as_exception(vm_ref.jsc_vm) {
         // SAFETY: `as_exception` returned a live `*mut Exception` owned by the
         // JSC heap; we only read through it for the duration of this call.
@@ -3513,6 +3529,10 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 ) -> JSValue;
             }
             use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
+            // It runs while it is loaded, which may be for as long as the program does.
+            if args.virtual_source.is_none() {
+                auto_watch_file(jsc_vm, path.text);
+            }
             let file = bun_core::StringView::from_bytes(path.text);
             let source = args
                 .virtual_source
@@ -3736,6 +3756,18 @@ fn auto_watch_file(jsc_vm: *mut VirtualMachine, path_text: &[u8]) {
             input_fd.close();
         }
     }
+}
+
+/// `_bun_resolver.watch(path)`: Python's own import is about to run the file. False: nothing is watched.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__Python__watchFile(global: &JSGlobalObject, path: &bun_core::String) -> bool {
+    let vm = global.bun_vm_ptr();
+    // SAFETY: the live VM of the JS thread.
+    if !unsafe { &*vm }.is_watcher_enabled() {
+        return false;
+    }
+    auto_watch_file(vm, path.to_utf8().slice());
+    true
 }
 
 struct CssModuleFile {

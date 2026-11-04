@@ -4,15 +4,25 @@ import { readFileSync } from "node:fs";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "node:path";
 import { inspect } from "node:util";
-import { str } from "python:builtins";
+import { kwargs, with as with_ } from "bun:python";
+import { len, str, tuple } from "python:builtins";
+import re from "python:re";
+import warnings from "python:warnings";
 import { middle, throughPython, thrower } from "./fixtures/stacks-helpers";
-import { call, catch as catch_, chain, context, format, frames, group, raiser } from "./fixtures/stacks.py";
+import { call, catch as catch_, chain, context, deprecated, format, frames, group, raiser } from "./fixtures/stacks.py";
 
 // These builds take seconds to start Python.
 if (isDebug || isASAN) setDefaultTimeout(60_000);
 
 const fixtures = join(import.meta.dir, "fixtures");
-const clean = (text: string) => text.replaceAll(fixtures, "<dir>").trimEnd();
+const clean = (text: string) =>
+  text
+    .replaceAll(fixtures, "<dir>")
+    .replaceAll(import.meta.dir, "<tests>")
+    .trimEnd();
+/** The line of the call of this function, and so many further down. */
+const lineHere = (offset = 0) => Number(new Error().stack!.split("\n")[2].split(":").at(-2)) + offset;
+const lineOfBody = lineHere(3);
 function thrownBy(body: () => unknown): any {
   try {
     body();
@@ -32,22 +42,112 @@ describe("caught", () => {
     ]);
   });
 
-  test("an exception of Python's has its traceback for a stack", () => {
+  // (`() => call(middle)` is a tail call: that function has made way for call().)
+  test("an exception of Python's has its traceback for a stack, with the calls of both in it", () => {
     const error = thrownBy(() => call(middle));
     expect(clean(error.stack)).toBe(`Traceback (most recent call last):
+  File "<tests>/stacks.test.ts", line ${lineOfBody}, in thrownBy
+    body();
   File "<dir>/stacks.py", line 8, in call
     return function(*args)
+  File "<dir>/stacks-helpers.ts", line 16, in middle
+    call(raiser, "deep");
   File "<dir>/stacks.py", line 8, in call
     return function(*args)
   File "<dir>/stacks.py", line 5, in raiser
     raise ValueError(message)
 ValueError: deep`);
-    expect(frames(error)).toEqual(["stacks.py:8 call", "stacks.py:8 call", "stacks.py:5 raiser"]);
+    expect(frames(error)).toEqual([
+      `stacks.test.ts:${lineOfBody} thrownBy`,
+      "stacks.py:8 call",
+      "stacks-helpers.ts:16 middle",
+      "stacks.py:8 call",
+      "stacks.py:5 raiser",
+    ]);
   });
 
-  // The traceback has the frames of Python alone.
-  test.failing("and the frames of JavaScript are in it", () => {
-    expect(thrownBy(() => call(middle)).stack).toContain("middle");
+  test("what Python sees of a call of a function of JavaScript", () => {
+    const entry = thrownBy(() => call(middle)).__traceback__.tb_next.tb_next;
+    const frame = entry.tb_frame;
+    expect([entry.tb_lineno, entry.tb_lasti, frame.f_lineno, frame.f_code.co_name, frame.f_code.co_qualname]).toEqual([
+      16,
+      -1,
+      16,
+      "middle",
+      "middle",
+    ]);
+    expect(frame.f_code.co_filename).toBe(join(fixtures, "stacks-helpers.ts"));
+    expect(entry.tb_frame).toBe(frame);
+    expect(len(frame.f_locals)).toBe(0);
+    expect(frame.f_globals.get("__file__")).toBe(join(fixtures, "stacks-helpers.ts"));
+  });
+
+  test("`finally`, and what works like it, is not a second call", () => {
+    function cleansUp() {
+      try {
+        raiser("x");
+      } finally {
+        void 0;
+      }
+    }
+    function* generator() {
+      yield 1;
+    }
+    function loops() {
+      for (const _ of generator()) raiser("x");
+    }
+    function throwsAgain() {
+      try {
+        raiser("x");
+      } catch (error) {
+        throw error;
+      }
+    }
+    const names = (body: () => void) => Array.from(frames(thrownBy(body)), (each: string) => each.split(" ")[1]);
+    expect(names(cleansUp)).toEqual(["thrownBy", "cleansUp", "raiser"]);
+    expect(names(loops)).toEqual(["thrownBy", "loops", "raiser"]);
+    // As with `raise error` in Python.
+    expect(names(throwsAgain)).toEqual(["thrownBy", "throwsAgain", "throwsAgain", "raiser"]);
+  });
+
+  test("in code that has been optimized", () => {
+    function innermost(fails: boolean) {
+      if (fails) raiser("x");
+      return 1;
+    }
+    function between(fails: boolean) {
+      const result = innermost(fails);
+      return result + 1;
+    }
+    function outermost(fails: boolean) {
+      let sum = 0;
+      for (let i = 0; i < 10; i++) sum += between(fails);
+      return sum;
+    }
+    for (let i = 0; i < 20_000; i++) outermost(false);
+    expect(Array.from(frames(thrownBy(() => void outermost(true))), (each: string) => each.split(" ")[1])).toEqual([
+      "thrownBy",
+      "<anonymous>",
+      "outermost",
+      "between",
+      "innermost",
+      "raiser",
+    ]);
+  });
+
+  test("an async function is in it where it awaits", async () => {
+    async function fails() {
+      await Promise.resolve();
+      raiser("x");
+    }
+    async function awaits() {
+      await fails();
+    }
+    const error = await awaits().then(
+      () => undefined,
+      error => error,
+    );
+    expect(Array.from(frames(error), (each: string) => each.split(" ")[1])).toEqual(["awaits", "fails", "raiser"]);
   });
 
   test("what Python makes of an Error of JavaScript", () => {
@@ -57,7 +157,10 @@ ValueError: deep`);
     ~~~~~~~~^^
   File "<dir>/stacks.py", line 8, in call
     return function(*args)
+  File "<dir>/stacks-helpers.ts", line 7, in thrower
+    throw new RangeError("from JavaScript");
 _js.JSError: RangeError: from JavaScript`);
+    // This one was not made within the call that Python makes: where it has been before that, nobody knows.
     const error = new RangeError("from JavaScript");
     const caught = catch_(() => { throw error; }); // prettier-ignore
     expect([caught.constructor.name, String(caught), frames(caught)]).toEqual([
@@ -70,9 +173,39 @@ _js.JSError: RangeError: from JavaScript`);
     expect(catch_(() => { throw error; })).toBe(caught); // prettier-ignore
   });
 
-  // Where in JavaScript it was thrown is in the stack of the value.
-  test.failing("and the traceback says where it was thrown", () => {
-    expect(format(() => call(thrower))).toContain("stacks-helpers.ts");
+  test("with functions of JavaScript between those of Python", () => {
+    function between() {
+      call(thrower);
+    }
+    expect(Array.from(frames(catch_(() => void call(between))), (each: string) => each.split(" ")[1])).toEqual([
+      "catch",
+      "<anonymous>",
+      "call",
+      "between",
+      "call",
+      "thrower",
+    ]);
+  });
+
+  test("as the cause of an exception of Python's", () => {
+    const line = lineHere(1);
+    expect(clean(thrownBy(() => void chain(thrower)).stack)).toBe(`Traceback (most recent call last):
+  File "<dir>/stacks.py", line 24, in chain
+    function()
+  File "<dir>/stacks-helpers.ts", line 7, in thrower
+    throw new RangeError("from JavaScript");
+_js.JSError: RangeError: from JavaScript
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "<tests>/stacks.test.ts", line ${lineOfBody}, in thrownBy
+    body();
+  File "<tests>/stacks.test.ts", line ${line}, in <anonymous>
+    expect(clean(thrownBy(() => void chain(thrower)).stack)).toBe(\`Traceback (most recent call last):
+  File "<dir>/stacks.py", line 26, in chain
+    raise RuntimeError("outer") from exception
+RuntimeError: outer`);
   });
 
   test("raise ... from is the cause", () => {
@@ -89,6 +222,8 @@ ValueError: inner
 The above exception was the direct cause of the following exception:
 
 Traceback (most recent call last):
+  File "<tests>/stacks.test.ts", line ${lineOfBody}, in thrownBy
+    body();
   File "<dir>/stacks.py", line 26, in chain
     raise RuntimeError("outer") from exception
 RuntimeError: outer`);
@@ -107,10 +242,15 @@ RuntimeError: outer`);
     expect(inspect(error)).toContain(`ValueError: ${message}`);
     expect(Bun.inspect(new Error("outer", { cause: new RangeError(message) }))).toContain(`RangeError: ${message}`);
   });
-  // Bun.inspect(), and so console.log(), leave out a cause that is Python's.
-  test.failing("is shown by Bun.inspect()", () => {
+  test("is shown by Bun.inspect(), with its traceback", () => {
     const error = new Error("outer", { cause: catch_(() => raiser(message)) });
-    expect(Bun.inspect(error)).toContain(`ValueError: ${message}`);
+    expect(clean(Bun.inspect(error))).toEndWith(`
+Traceback (most recent call last):
+  File "<dir>/stacks.py", line 12, in catch
+    function()
+  File "<dir>/stacks.py", line 5, in raiser
+    raise ValueError(message)
+ValueError: ${message}`);
   });
 
   test("an exception group", () => {
@@ -135,6 +275,61 @@ RuntimeError: outer`);
     Error.captureStackTrace(exception);
     expect(exception.stack).toBeString();
     expect(exception.message).toBe("x");
+  });
+});
+
+describe("warnings", () => {
+  const lineOfRecordedBody = lineHere(4);
+  const recorded = (body: () => void) =>
+    with_(warnings.catch_warnings(kwargs({ record: true })), (log: any) => {
+      warnings.simplefilter("always");
+      body();
+      return Array.from(log, (each: any) => `${clean(each.filename)}:${each.lineno}`);
+    });
+  const here = (line: number) => [`<tests>/stacks.test.ts:${line}`];
+
+  test("warn() called by JavaScript: the warning is about that line", () => {
+    const line = lineHere(1);
+    const log = recorded(() => void warnings.warn("x"));
+    expect(log).toEqual(here(line));
+  });
+
+  test("a call of a function of JavaScript is a level of the stack", () => {
+    const line = lineHere(2);
+    function caller() {
+      deprecated();
+    }
+    expect(recorded(caller)).toEqual(here(line));
+    expect(recorded(() => void call(deprecated))).toEqual(["<dir>/stacks.py:8"]);
+    expect(recorded(() => void warnings.warn("x", kwargs({ stacklevel: 2 })))).toEqual(here(lineOfRecordedBody));
+  });
+
+  // (recorded() has made way for with(): a tail call.)
+  test("what the host has in Python to run the body of with() is no level", () => {
+    const line = lineHere(1);
+    const log = recorded(() => void warnings.warn("x", kwargs({ stacklevel: 3 })));
+    expect(log).toEqual(here(line));
+  });
+
+  test("skip_file_prefixes goes for files of JavaScript", () => {
+    function caller() {
+      deprecated(kwargs({ skip_file_prefixes: tuple([import.meta.path]) }));
+    }
+    expect(recorded(() => void call(caller))).toEqual(["<dir>/stacks.py:8"]);
+  });
+
+  test("the module is named after the file, and a place is warned about once", () => {
+    function caller() {
+      deprecated();
+    }
+    const shown = with_(warnings.catch_warnings(kwargs({ record: true })), (log: any) => {
+      warnings.simplefilter("ignore");
+      warnings.filterwarnings("default", kwargs({ module: re.escape(import.meta.path) }));
+      for (let i = 0; i < 3; i++) caller();
+      call(deprecated);
+      return len(log);
+    });
+    expect(shown).toBe(1);
   });
 });
 
@@ -166,6 +361,8 @@ call(raiser, "nobody catches this");`,
     expect({ stdout, stderr }).toEqual({
       stdout: "",
       stderr: `Traceback (most recent call last):
+  File "<dir>/main.ts", line 3, in <module>
+    call(raiser, "nobody catches this");
   File "<dir>/module.py", line 8, in call
     return function(*args)
   File "<dir>/module.py", line 5, in raiser
@@ -193,6 +390,8 @@ f()`,
   File "<dir>/main.py", line 4, in f
     thrower()
     ~~~~~~~^^
+  File "<dir>/helper.ts", line 1, in thrower
+    export function thrower() { throw new RangeError("nobody catches this"); }
 _js.JSError: RangeError: nobody catches this`,
     });
     expect(exitCode).toBe(1);
@@ -293,14 +492,86 @@ js.setTimeout(callback, 1)`,
     expect(exitCode).toBe(1);
   });
 
-  // With nothing on the stack to catch it, the frames it leaves are not written down.
-  test.failing("in a callback that the event loop calls: the traceback", async () => {
+  test("in a callback that the event loop calls: the traceback", async () => {
     const { stderr } = await (ranInTimer ??= inTimer());
     expect(stderr).toBe(`Traceback (most recent call last):
   File "<dir>/main.py", line 6, in callback
     inner()
+    ~~~~~^^
   File "<dir>/main.py", line 4, in inner
     raise ValueError("in a timer")
 ValueError: in a timer`);
+  });
+
+  test("in a callback: causes, notes and groups are printed as Python prints them", async () => {
+    const { stdout, stderr, exitCode } = await run("main.py", {
+      "main.py": `
+import js
+def callback():
+    try:
+        raise KeyError("first")
+    except KeyError as error:
+        group = ExceptionGroup("several", [ValueError("a"), TypeError("b")])
+        group.add_note("a note")
+        raise group from error
+js.queueMicrotask(callback)`,
+    });
+    expect({ stdout, stderr }).toEqual({
+      stdout: "",
+      stderr: `Traceback (most recent call last):
+  File "<dir>/main.py", line 5, in callback
+    raise KeyError("first")
+KeyError: 'first'
+
+The above exception was the direct cause of the following exception:
+
+  + Exception Group Traceback (most recent call last):
+  |   File "<dir>/main.py", line 9, in callback
+  |     raise group from error
+  | ExceptionGroup: several (2 sub-exceptions)
+  | a note
+  +-+---------------- 1 ----------------
+    | ValueError: a
+    +---------------- 2 ----------------
+    | TypeError: b
+    +------------------------------------`,
+    });
+    expect(exitCode).toBe(1);
+  });
+
+  test("sys.excepthook is told of what a callback raises, in a program in either language", async () => {
+    const hook = `
+import sys
+def hook(type, value, traceback):
+    print("hook:", type.__name__, value, traceback.tb_frame.f_code.co_name)
+sys.excepthook = hook
+def fails():
+    raise ValueError("in a timer")`;
+    const [python, typescript] = await Promise.all([
+      run("main.py", { "main.py": `${hook}\nimport js\njs.setTimeout(fails, 1)` }),
+      run("main.ts", { "hook.py": hook, "main.ts": `import { fails } from "./hook.py";\nsetTimeout(fails, 1);` }),
+    ]);
+    for (const { stdout, stderr, exitCode } of [python, typescript]) {
+      expect({ stdout, stderr }).toEqual({ stdout: "hook: ValueError in a timer fails", stderr: "" });
+      expect(exitCode).toBe(1);
+    }
+  });
+
+  test("an Error whose cause is Python's", async () => {
+    const { stdout, stderr, exitCode } = await run("main.ts", {
+      "main.ts": `
+import { catch as catch_, raiser } from "./module.py";
+throw new Error("outer", { cause: catch_(() => raiser("the cause")) });`,
+    });
+    expect(stdout).toBe("");
+    expect(stderr).toContain("error: outer\n");
+    expect(stderr).toEndWith(`
+Traceback (most recent call last):
+  File "<dir>/module.py", line 12, in catch
+    function()
+  File "<dir>/module.py", line 5, in raiser
+    raise ValueError(message)
+ValueError: the cause`);
+    expect(exitCode).toBe(1);
   });
 });

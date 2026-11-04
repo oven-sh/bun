@@ -69,7 +69,7 @@ pub(crate) fn parse_data<'s>(
             log.add_error(
                 Some(&source),
                 Loc::EMPTY,
-                b"The \"python\" loader is not supported by the bundler yet",
+                b"A Python file cannot be bundled, nor be the entry point of a bundle",
             );
             Err(Failed)
         }

@@ -154,6 +154,12 @@ extern "C" bool Bun__Python__exitIfExceptionAsksTo(JSGlobalObject* globalObject,
     return true;
 }
 
+// What nothing caught, wherever it surfaced, is reported as at the top level of a program: by sys.excepthook.
+extern "C" bool Bun__Python__reportUncaught(JSGlobalObject* globalObject, EncodedJSValue exception)
+{
+    return Python::reportUncaughtException(globalObject, JSValue::decode(exception));
+}
+
 JSC_DEFINE_HOST_FUNCTION(mainModuleFulfilled, (JSGlobalObject * globalObject, CallFrame*))
 {
     Python::mainModuleEnded(globalObject, {});

@@ -3094,8 +3094,13 @@ pub mod bv2_impl {
         /// The dev server passes `Loader::Html` for the html file of a route: its extension need not be `.html`.
         fn requested_file_loader(&self, path: &Fs::Path<'_>, loader: Option<Loader>) -> Loader {
             loader.unwrap_or_else(|| {
-                path.loader(&self.transpiler.options.loaders)
-                    .unwrap_or(Loader::File)
+                path.loader(&self.transpiler.options.loaders).unwrap_or(
+                    if path.text.ends_with(b".py") {
+                        Loader::Python
+                    } else {
+                        Loader::File
+                    },
+                )
             })
         }
 
@@ -7155,8 +7160,14 @@ pub mod bv2_impl {
 
                 let import_record_loader = 'brk: {
                     let resolved_loader = import_record.loader.unwrap_or_else(|| {
-                        path.loader(&transpiler.options.loaders)
-                            .unwrap_or(Loader::File)
+                        path.loader(&transpiler.options.loaders).unwrap_or(
+                            if import_record.kind != ImportKind::Url && path.text.ends_with(b".py")
+                            {
+                                Loader::Python
+                            } else {
+                                Loader::File
+                            },
+                        )
                     });
                     // When an HTML file references a URL asset (e.g. <link rel="manifest" href="./manifest.json" />),
                     // the file must be copied to the output directory as-is. If the resolved loader would
@@ -7175,6 +7186,47 @@ pub mod bv2_impl {
                     break 'brk resolved_loader;
                 };
                 import_record.loader = Some(import_record_loader);
+
+                // Python finds what a module imports beside the file, under its own name: the file cannot be moved into a
+                // bundle, or copied next to one under another name. The import stays as it is written.
+                if import_record_loader == Loader::Python {
+                    let makes_executable = self.transpiler.options.compile_mode.is_executable();
+                    let log = self
+                        .log_for_resolution_failures(source.path.text, ctx.target.bake_graph());
+                    let specifier = bstr::BStr::new(import_record.path.text);
+                    if !ctx.target.is_bun() {
+                        log.add_range_error_fmt(
+                            Some(source),
+                            import_record.range,
+                            format_args!(
+                                "Only Bun can {} a Python file: \"{}\". When bundling for Bun, set target to 'bun'",
+                                bstr::BStr::new(import_record.kind.error_label()),
+                                specifier,
+                            ),
+                        );
+                        last_error = Some(crate::Error::ParserError.into());
+                    } else if makes_executable {
+                        log.add_range_error_fmt(
+                            Some(source),
+                            import_record.range,
+                            format_args!(
+                                "Python files cannot be embedded in an executable yet: \"{}\"",
+                                specifier,
+                            ),
+                        );
+                        last_error = Some(crate::Error::ParserError.into());
+                    } else {
+                        log.add_range_warning_fmt(
+                            Some(source),
+                            import_record.range,
+                            format_args!(
+                                "\"{}\" is not bundled: the bundle imports it when it runs, so the file has to be there, relative to the bundle",
+                                specifier,
+                            ),
+                        );
+                    }
+                    continue;
+                }
 
                 let is_html_entrypoint = import_record_loader == Loader::Html
                     && target.is_server_side()

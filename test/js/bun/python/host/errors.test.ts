@@ -68,7 +68,7 @@ group("Python catches what JavaScript throws", { setup, files: { "lib.js": lib }
   ["thrower('overflow')", "!RecursionError: maximum recursion depth exceeded"],
   [
     "def inner(): thrower('app')\ndef outer(): inner()\ntry:\n    outer()\nexcept JSError as e:\n    names = [f.name for f in traceback.extract_tb(e.__traceback__)]\nnames",
-    "['<module>', 'outer', 'inner']",
+    "['<module>', 'outer', 'inner', 'thrower']",
   ],
   [
     "try:\n    thrower('app')\nexcept Exception as e:\n    first = e.value\ntry:\n    thrower('app')\nexcept Exception as e:\n    second = e.value\nfirst is second",
@@ -94,7 +94,7 @@ group("Python raises for JavaScript", { setup, files: { "lib.js": lib } }, [
   ["error = MyError('same', 0)\ndef raiser(): raise error\ncaught(raiser) is error", "True"],
   [
     "try:\n    level1(boom)\nexcept MyError as e:\n    r = e.extra, [f.name for f in traceback.extract_tb(e.__traceback__)]\nr",
-    "([1, 2], ['<module>', 'boom'])",
+    "([1, 2], ['<module>', 'level1', 'level2', 'boom'])",
   ],
   [
     "[describe(f)[1:4] for f in (lambda: {}['missing'], lambda: 1 / 0, lambda: [].pop(), lambda: int('x'))]",
@@ -202,6 +202,8 @@ print("not reached")
         '  File "main.py", line 4, in f',
         "    def f(): fail()",
         "             ~~~~^^",
+        '  File "lib.js", line 1, in fail',
+        '    export function fail() { throw new RangeError("out of range"); }',
         "_js.JSError: RangeError: out of range",
       ),
     );
@@ -209,7 +211,6 @@ print("not reached")
   },
 );
 
-// The frames of JavaScript between those of Python are left out of a traceback.
 script(
   "a traceback has the frames of both languages",
   {
@@ -227,5 +228,4 @@ except ValueError as e:
   ({ stdout }) => {
     expect(stdout).toBe(lines("['<module>', 'viaJS', 'boom']"));
   },
-  "failing",
 );

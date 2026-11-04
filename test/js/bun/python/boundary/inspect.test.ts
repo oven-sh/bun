@@ -122,8 +122,14 @@ describe("Bun.inspect() and util.inspect() are repr()", () => {
     } catch (error) {
       caught = error;
     }
-    expect(Bun.inspect(caught)).toBe(
-      'Traceback (most recent call last):\n  File "<string>", line 1, in <module>\nValueError: shown',
+    expect(
+      Bun.inspect(caught).replace(/  File ".*inspect\.test\.ts", line \d+/, '  File "inspect.test.ts", line N'),
+    ).toBe(
+      `Traceback (most recent call last):
+  File "inspect.test.ts", line N, in <anonymous>
+    exec("raise ValueError('shown')", dict());
+  File "<string>", line 1, in <module>
+ValueError: shown`,
     );
   });
 });

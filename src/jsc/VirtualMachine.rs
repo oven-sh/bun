@@ -3389,6 +3389,7 @@ unsafe extern "C" {
         path: &bun_core::String,
     ) -> *mut JSInternalPromise;
     safe fn Bun__Python__runCommandLine(global: &JSGlobalObject) -> *mut JSInternalPromise;
+    safe fn Bun__Python__watchFile(global: &JSGlobalObject, path: &bun_core::String) -> bool;
     /// `SystemExit` and `KeyboardInterrupt` end the program wherever they surface. False: it is neither.
     safe fn Bun__Python__exitIfExceptionAsksTo(global: &JSGlobalObject, exception: JSValue) -> bool;
     // safe: `ctx` is an opaque round-trip pointer C++ only forwards to `callback`
@@ -3922,6 +3923,8 @@ impl VirtualMachine {
             let main = (self.main()).expect("the entry point has a path");
             let main_str = bun_core::StringView::from_bytes(main);
             let global_ref = self.global();
+            // Before it runs, which may be for as long as the program does.
+            Bun__Python__watchFile(global_ref, &main_str);
             let p: *mut JSInternalPromise = jsc::from_js_host_call_generic(global_ref, || {
                 Bun__Python__loadMain(global_ref, &main_str)
             })?;
@@ -5115,6 +5118,12 @@ impl VirtualMachine {
             // The hook walks the VM's cron-job list and detaches each job from
             // the old global so the new global can re-register them post-reload.
             (hooks.cron_clear_all_reload)(self);
+        }
+        {
+            unsafe extern "C" {
+                safe fn Bun__Python__willRunAgain(global: &JSGlobalObject);
+            }
+            Bun__Python__willRunAgain(self.global());
         }
         // `JSGlobalObject::reload` drains microtasks + collects async + clears
         // the JSC module loader registry.
@@ -6911,16 +6920,9 @@ impl VirtualMachine {
             }
         }
 
-        // A Python exception is reported as Python reports one: its `stack` is the traceback, the chain of causes included.
-        if allow_side_effects && value.is_cell() && value.js_type() == jsc::JSType::PyException {
-            match value.get_stringish(self.global(), "stack") {
-                Ok(Some(traceback)) => {
-                    let _ = writer.write_all(traceback.to_utf8().slice());
-                    return false;
-                }
-                Ok(None) => {}
-                Err(_) => self.global().clear_exception(),
-            }
+        // What was thrown and not caught comes wrapped in a `JSC::Exception`.
+        if self.write_python_traceback(value.to_error().unwrap_or(value), writer) {
+            return false;
         }
 
         if let Err(err) = self.print_error_instance_js(
@@ -6945,6 +6947,25 @@ impl VirtualMachine {
             }
         }
         false
+    }
+
+    /// A Python exception is shown as Python shows one: its `stack` is the traceback, the chain of causes included.
+    /// False: it is none, or has nothing to show.
+    fn write_python_traceback(&self, value: JSValue, writer: &mut bun_core::io::Writer) -> bool {
+        if !is_python_exception(value) {
+            return false;
+        }
+        match value.get_stringish(self.global(), "stack") {
+            Ok(Some(traceback)) => {
+                let _ = writer.write_all(traceback.to_utf8().slice());
+                true
+            }
+            Ok(None) => false,
+            Err(_) => {
+                self.global().clear_exception();
+                false
+            }
+        }
     }
 
     /// Reports an uncaught exception through the owning VM's handler; returns `undefined`.
@@ -8027,7 +8048,9 @@ impl VirtualMachine {
             if !saw_cause {
                 let key = bun_core::String::static_("cause");
                 if let Some(cause) = error_instance.get_own(global_ref, &key)? {
-                    if cause.is_cell() && cause.js_type() == JSType::ErrorInstance {
+                    if cause.is_cell()
+                        && (cause.js_type() == JSType::ErrorInstance || is_python_exception(cause))
+                    {
                         if cause == error_instance || formatter.visited_contains(cause) {
                             let pad_left = longest_name.saturating_sub(b"cause".len());
                             is_first_property = false;
@@ -8094,6 +8117,8 @@ impl VirtualMachine {
             let over_cap = formatter.depth > formatter.error_chain_max_depth();
             let result: crate::CrateResult<()> = if over_cap {
                 pretty_write!(writer, "<r><cyan>[Error ...]<r>").map_err(Into::into)
+            } else if self.write_python_traceback(err, writer) {
+                Ok(())
             } else {
                 self.print_error_instance_js(
                     err,

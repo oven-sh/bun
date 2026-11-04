@@ -315,7 +315,7 @@ print(isinstance(Cat(), Animal), isinstance(Animal(), Cat), isinstance(1, Animal
   });
 });
 
-test.concurrent("what JavaScript throws has a traceback of the Python frames it passed", async () => {
+test.concurrent("what JavaScript throws has a traceback of the calls it passed", async () => {
   const result = await run({
     "helper.js": `export function thrower() { throw new RangeError("out of range"); }`,
     "main.py": `
@@ -331,7 +331,7 @@ outer()
 `,
   });
   expect({ ...result, stderr: result.stderr.replace(/File ".*\//g, 'File "') }).toEqual({
-    stdout: lines("[('<module>', 7), ('outer', 5), ('inner', 4)] RangeError out of range"),
+    stdout: lines("[('<module>', 7), ('outer', 5), ('inner', 4), ('thrower', 1)] RangeError out of range"),
     stderr: lines(
       "Traceback (most recent call last):",
       '  File "main.py", line 10, in <module>',
@@ -343,6 +343,8 @@ outer()
       '  File "main.py", line 4, in inner',
       "    def inner(): thrower()",
       "                 ~~~~~~~^^",
+      '  File "helper.js", line 1, in thrower',
+      '    export function thrower() { throw new RangeError("out of range"); }',
       "_js.JSError: RangeError: out of range",
     ),
     exitCode: 1,

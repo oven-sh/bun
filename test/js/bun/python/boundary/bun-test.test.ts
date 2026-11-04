@@ -7,6 +7,7 @@ import {
   ValueError,
   bytes,
   dict,
+  eval as evaluate,
   exec,
   frozenset,
   getattr,
@@ -162,14 +163,13 @@ describe("mock functions", () => {
     expect(recorder.mock.calls[0][1]).toEqual(Point(1, 2));
   });
 
-  // Python takes what can be constructed and is no plain function for a class, and to call a class is `new`.
-  test.failing("are called by Python, not constructed", () => {
+  test("are called by Python, not constructed", () => {
     const double = mock((value: number) => value * 2);
     expect(call(double, 2)).toBe(4);
     expect(call(jest.fn(() => 5))).toBe(5);
     expect(double.mock.instances).toEqual([undefined]);
   });
-  test.failing("as a key function", () => {
+  test("as a key function", () => {
     const key = mock((value: number) => -value);
     expect(sorted([1, 3, 2], kwargs({ key }))).toEqual([3, 2, 1]);
   });
@@ -188,22 +188,55 @@ describe("spyOn()", () => {
     expect(plain.hello()).toBe("hello");
   });
 
-  // The spy is put where Python does not look.
-  test.failing("a function of a module", () => {
-    using spy = spyOn(json, "dumps");
+  // The spy is stored as `object.name = spy` stores it: where Python looks too.
+  test("a function of a module", () => {
+    const original = json.dumps;
+    const spy = spyOn(json, "dumps");
     expect(json.dumps([1])).toBe("[1]");
     expect(spy).toHaveBeenCalledTimes(1);
+    expect(getattr(json, "dumps")([2])).toBe("[2]");
+    expect(spy).toHaveBeenCalledTimes(2);
+    spy.mockReturnValue("mocked");
+    expect(evaluate("__import__('json').dumps([3])", dict())).toBe("mocked");
+    spy.mockRestore();
+    expect(json.dumps).toBe(original);
+    expect(json.dumps([4])).toBe("[4]");
+    expect(spy).toHaveBeenCalledTimes(0);
   });
-  test.failing("a method of a class", () => {
-    using spy = spyOn(Plain.prototype, "hello");
+  test("a method of a class", () => {
+    const plain = Plain(1);
+    const spy = spyOn(Plain.prototype, "hello");
+    expect(plain.hello(2)).toBe("hellohello");
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.contexts[0]).toBe(plain);
+    expect(spy).toHaveBeenCalledWith(2);
+    expect(getattr(plain, "hello")()).toBe("hello");
+    expect(spy).toHaveBeenCalledTimes(2);
+    spy.mockRestore();
+    expect(plain.hello()).toBe("hello");
+    expect(spy).toHaveBeenCalledTimes(0);
+  });
+  test("an attribute of a class", () => {
+    const spy = spyOn(Plain, "hello");
     expect(Plain(1).hello()).toBe("hello");
     expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
+    expect(Plain(1).hello()).toBe("hello");
+    expect(spy).toHaveBeenCalledTimes(0);
   });
-  test.failing("an item of a dict", () => {
-    const mapping = dict([["f", () => 1]]);
+  test("an item of a dict", () => {
+    const f = () => 1;
+    const mapping = dict([["f", f]]);
     const spy = spyOn(mapping, "f");
     expect(mapping.f()).toBe(1);
     expect(spy).toHaveBeenCalledTimes(1);
+    expect(mapping.get("f")()).toBe(1);
+    expect(spy).toHaveBeenCalledTimes(2);
+    spy.mockRestore();
+    expect(mapping.get("f")).toBe(f);
+  });
+  test("what cannot be stored is an error, not a spy that sees nothing", () => {
+    expect(() => spyOn(tuple([1]), "count")).toThrow("'tuple' object attribute 'count' is read-only");
   });
 });
 

@@ -217,7 +217,7 @@ mod tests {
         let xml = HostLoaderKind::Loader(Loader::Xml);
         assert_eq!(host_loader_kind(BY_NAME), Some(HostLoaderKind::ByName));
         assert_eq!(host_loader_kind(HostLoader(22)), Some(xml));
-        assert_eq!(host_loader_kind(HostLoader(23)), None);
+        assert_eq!(host_loader_kind(HostLoader(24)), None);
         assert_eq!(host_loader_kind(HostLoader(200)), None);
         assert_eq!(host_loader_kind(HostLoader(255)), None);
     }

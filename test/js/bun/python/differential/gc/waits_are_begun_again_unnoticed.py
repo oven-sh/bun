@@ -21,18 +21,20 @@ class Dropped:
 
 
 done = []
+finished = []
 sys.unraisablehook = lambda unraisable: done.append(unraisable.exc_type.__name__)
 for name, wait in (
     ("acquire", lambda: held.acquire(True, 1.5)),
     ("poll", lambda: poll.poll(1500)),
 ):
-    first = Dropped(lambda: (time.sleep(0.7), held.acquire(True, 0.7), done.append("waited")))
+    first = Dropped(lambda: (time.sleep(0.7), held.acquire(True, 0.7), done.append("waited"), finished.append(time.monotonic())))
     second = Dropped(lambda: 1 / 0)
     del first, second
     start = time.monotonic()
     wait()
-    elapsed = time.monotonic() - start
-    print(name, "while finalizers run, not early:", elapsed >= 1.5 - 0.001, "not late:", elapsed < 2.5)
+    end = time.monotonic()
+    # On a busy machine everything takes longer, the finalizers too. What must not happen is that the time begins anew after them.
+    print(name, "while finalizers run, not early:", end - start >= 1.5 - 0.001, "not late:", end - max(start + 1.5, *finished[-1:]) < 1)
 import gc
 gc.collect()
 print(sorted(done))

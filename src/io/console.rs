@@ -599,14 +599,20 @@ const DONE: u8 = 3;
 
 const LINE_UNITS: usize = 8192;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Canceled {
+    No,
+    BeforeAsking,
+    /// The console was asked for the line, and so may be editing it.
+    Asked,
+}
+
 struct LineResult {
     /// The first unit is room for [`Reader::high_surrogate`].
     units: [u16; 1 + LINE_UNITS],
     len: usize,
     error: Option<Win32Error>,
-    canceled: bool,
-    /// The console was asked for the line, and so may be editing it.
-    asked: bool,
+    canceled: Canceled,
     /// This is more of the line that the read before had no room for.
     continued: bool,
 }
@@ -643,8 +649,7 @@ impl LineRead {
                 units: [0; 1 + LINE_UNITS],
                 len: 0,
                 error: None,
-                canceled: false,
-                asked: false,
+                canceled: Canceled::No,
                 continued: false,
             }),
         }
@@ -675,13 +680,12 @@ impl LineRead {
         result.continued = result.len == LINE_UNITS && result.units[LINE_UNITS] != u16::from(b'\n');
         result.len = 0;
         result.error = None;
-        result.canceled = false;
-        result.asked = false;
+        result.canceled = Canceled::No;
         // The console keeps the rest of a line for the handle, and that is not an input record.
         let mut has_text = result.continued;
         loop {
             if !core::mem::take(&mut has_text) && !self.wait_for_key(input) {
-                result.canceled = true;
+                result.canceled = Canceled::BeforeAsking;
                 return;
             }
             // A canceled read reports success and leaves the count alone.
@@ -702,8 +706,7 @@ impl LineRead {
                 return;
             }
             if count == DWORD::MAX {
-                result.canceled = true;
-                result.asked = true;
+                result.canceled = Canceled::Asked;
                 return;
             }
             // Ctrl+C, Ctrl+Break and another reader that goes away end a read with nothing and this error. That is not the end of the input.
@@ -785,8 +788,8 @@ impl LineRead {
         ResetEvent(self.wake);
         self.cancel_requested.store(false, Ordering::Relaxed);
         let result = self.result.lock();
-        if result.canceled {
-            if result.asked {
+        if result.canceled != Canceled::No {
+            if result.canceled == Canceled::Asked {
                 // The console goes on editing a cancelled line, and throws it away, until the handle that asked is closed, which blocks during the read.
                 self.input.store(ptr::null_mut(), Ordering::Relaxed);
                 // SAFETY: nothing else has this handle. Every other process that reads from this console gets nothing.

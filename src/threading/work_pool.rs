@@ -144,7 +144,7 @@ struct PoolInOrder {
     waiting: Guarded<Batch>,
 }
 
-/// A [`ThreadPool`] takes the newest of what waits for it first, so it is given a turn, and the turn takes the oldest task.
+/// A [`ThreadPool`] keeps no order, so it is given a turn, and the turn takes the oldest task.
 struct Turn {
     task: Task,
     pool: &'static PoolInOrder,

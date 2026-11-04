@@ -667,7 +667,7 @@ impl JSBundleCompletionTask {
                     };
 
                     // Write the sourcemap file to disk next to the executable
-                    let mut pathbuf = bun_paths::path_buffer_pool::get();
+                    let mut pathbuf = node_fs::LazyPathBuffer::default();
                     let write_path: &[u8] = if cfg!(windows) {
                         &sourcemap_full_path
                     } else {

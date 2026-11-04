@@ -856,7 +856,7 @@ mod _async_tasks {
         args::CopyFile<'static> => |args| [Some(&args.src), Some(&args.dest)],
         args::Cp<'static> => |args| [Some(&args.src), Some(&args.dest)],
     );
-    /// What is asked of one descriptor is in one line, so a `close()` does not start ahead of the `write()` before it.
+    /// What is asked of one descriptor is in one line.
     macro_rules! impl_fs_argument_with_fd {
     ( $( $ty:ty ),+ $(,)? ) => {
         $(
@@ -4451,7 +4451,7 @@ pub(crate) struct NodeFS {
     pub(crate) vm: Option<NonNull<VirtualMachine>>,
 }
 
-/// Taken from the pool at its first use: few calls need one, and what a task does ahead of its system call lets a later task on another thread go first.
+/// Taken from the pool at its first use: few calls need one.
 #[derive(Default)]
 pub(crate) struct LazyPathBuffer(core::cell::OnceCell<bun_paths::path_buffer_pool::Guard>);
 
@@ -7073,7 +7073,7 @@ impl NodeFS {
     }
 
     pub(crate) fn write_file_with_path_buffer(
-        pathbuf: &mut impl core::ops::DerefMut<Target = PathBuffer>,
+        pathbuf: &mut LazyPathBuffer,
         args: &args::WriteFile,
     ) -> Maybe<ret::WriteFile> {
         let fd = match &args.file {

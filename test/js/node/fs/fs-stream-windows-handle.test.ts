@@ -10,7 +10,7 @@ describe.skipIf(!isWindows)("fs streams with windowsHandle", () => {
   const { symbols: k32 } = isWindows
     ? dlopen("kernel32.dll", {
         CreatePipe: { args: ["ptr", "ptr", "ptr", "u32"], returns: "i32" },
-        GetHandleInformation: { args: ["u64", "ptr"], returns: "i32" },
+        GetFileType: { args: ["u64"], returns: "u32" },
         CloseHandle: { args: ["u64"], returns: "i32" },
       })
     : ({ symbols: {} } as any);
@@ -21,9 +21,10 @@ describe.skipIf(!isWindows)("fs streams with windowsHandle", () => {
     return { readHandle: handles[0], writeHandle: handles[1] };
   }
 
+  // The number of a closed handle can be that of a new one at once, of a thread for example. That one is no pipe.
   function isOpen(handle: bigint): boolean {
-    const flags = new Uint32Array(1);
-    return k32.GetHandleInformation(handle, ptr(flags)) !== 0;
+    const FILE_TYPE_PIPE = 3;
+    return k32.GetFileType(handle) === FILE_TYPE_PIPE;
   }
 
   test("reads and writes through a pipe, then closes both handles", async () => {

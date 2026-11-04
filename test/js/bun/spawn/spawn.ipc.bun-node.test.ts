@@ -7,15 +7,17 @@ test("ipc with json serialization still works when bun is parent and not the chi
     stdio: ["ignore", "pipe", "pipe"],
   });
   await child.exited;
-  expect(await new Response(child.stdout).text()).toEqual(
-    `p start
-p end
-c start
-c end
-c I am your father
-p I am your father
-`,
-  );
+  const lines = (await new Response(child.stdout).text()).trimEnd().split("\n");
+  // Whether the parent is at its last line before the child is at its first is up to the system.
+  expect({
+    parent: lines.filter(line => line.startsWith("p ")),
+    child: lines.filter(line => !line.startsWith("p ")),
+    last: lines.at(-1),
+  }).toEqual({
+    parent: ["p start", "p end", "p I am your father"],
+    child: ["c start", "c end", "c I am your father"],
+    last: "p I am your father",
+  });
   expect(await new Response(child.stderr).text()).toEqual("");
 });
 

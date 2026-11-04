@@ -56,7 +56,8 @@ function project(name: string, where: string) {
   const ran = (form: Form) =>
     runs.getOrInsertComputed(form, async () => {
       using folder = tempDir("imports-of-bun-exported-again-" + name, files);
-      const env = form.words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: form.words } : bunEnv;
+      // With BUN_JSC_logAOTPhaseTimes a run logs its steps on stderr, and the run tests state every line of it.
+      const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: form.words, BUN_JSC_logAOTPhaseTimes: undefined };
       const command = [bunExe(), "test", "--isolate", ...form.flags];
       const { stdout, stderr, exitCode } = await run(command, String(folder), env);
       // A line is a case's only where the project has a case of that name.

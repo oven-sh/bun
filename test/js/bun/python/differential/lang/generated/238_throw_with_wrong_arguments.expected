@@ -1,0 +1,330 @@
+status: 0
+script: 1dd03b2c84d18014
+source: 470bf4d0f8090f82
+---
+getattr(make, '__name__', '?') [make=function, name='int', args=(5,)] => inner
+name [make=function, name='int', args=(5,)] => int
+r [make=function, name='int', args=(5,)] => ('TypeError', 'exceptions must be classes or instances deriving from BaseException, not int')
+inspect.getgeneratorstate(g) [make=function, name='int', args=(5,)] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='int', args=(5,)] => 2
+getattr(make, '__name__', '?') [make=function, name='str', args=('x',)] => inner
+name [make=function, name='str', args=('x',)] => str
+r [make=function, name='str', args=('x',)] => ('TypeError', 'exceptions must be classes or instances deriving from BaseException, not str')
+inspect.getgeneratorstate(g) [make=function, name='str', args=('x',)] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='str', args=('x',)] => 2
+getattr(make, '__name__', '?') [make=function, name='None', args=(None,)] => inner
+name [make=function, name='None', args=(None,)] => None
+r [make=function, name='None', args=(None,)] => ('TypeError', 'exceptions must be classes or instances deriving from BaseException, not NoneType')
+inspect.getgeneratorstate(g) [make=function, name='None', args=(None,)] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='None', args=(None,)] => 2
+getattr(make, '__name__', '?') [make=function, name='instance and value', args=tuple] => inner
+name [make=function, name='instance and value', args=tuple] => instance and value
+r [make=function, name='instance and value', args=tuple] => ('TypeError', 'instance exception may not have a separate value')
+inspect.getgeneratorstate(g) [make=function, name='instance and value', args=tuple] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='instance and value', args=tuple] => 2
+getattr(make, '__name__', '?') [make=function, name='bad traceback', args=tuple] => inner
+name [make=function, name='bad traceback', args=tuple] => bad traceback
+r [make=function, name='bad traceback', args=tuple] => ('TypeError', 'throw() third argument must be a traceback object')
+inspect.getgeneratorstate(g) [make=function, name='bad traceback', args=tuple] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='bad traceback', args=tuple] => 2
+getattr(make, '__name__', '?') [make=function, name='a class that is no exception', args=tuple] => inner
+name [make=function, name='a class that is no exception', args=tuple] => a class that is no exception
+r [make=function, name='a class that is no exception', args=tuple] => ('TypeError', 'exceptions must be classes or instances deriving from BaseException, not type')
+inspect.getgeneratorstate(g) [make=function, name='a class that is no exception', args=tuple] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='a class that is no exception', args=tuple] => 2
+getattr(make, '__name__', '?') [make=function, name='int', args=(5,)] => catches
+name [make=function, name='int', args=(5,)] => int
+r [make=function, name='int', args=(5,)] => ('returned', ('caught', 'exceptions must be classes or instances deriving from BaseException, not int'))
+inspect.getgeneratorstate(g) [make=function, name='int', args=(5,)] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='int', args=(5,)] => finished
+getattr(make, '__name__', '?') [make=function, name='str', args=('x',)] => catches
+name [make=function, name='str', args=('x',)] => str
+r [make=function, name='str', args=('x',)] => ('returned', ('caught', 'exceptions must be classes or instances deriving from BaseException, not str'))
+inspect.getgeneratorstate(g) [make=function, name='str', args=('x',)] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='str', args=('x',)] => finished
+getattr(make, '__name__', '?') [make=function, name='None', args=(None,)] => catches
+name [make=function, name='None', args=(None,)] => None
+r [make=function, name='None', args=(None,)] => ('returned', ('caught', 'exceptions must be classes or instances deriving from BaseException, not NoneType'))
+inspect.getgeneratorstate(g) [make=function, name='None', args=(None,)] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='None', args=(None,)] => finished
+getattr(make, '__name__', '?') [make=function, name='instance and value', args=tuple] => catches
+name [make=function, name='instance and value', args=tuple] => instance and value
+r [make=function, name='instance and value', args=tuple] => ('returned', ('caught', 'instance exception may not have a separate value'))
+inspect.getgeneratorstate(g) [make=function, name='instance and value', args=tuple] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='instance and value', args=tuple] => finished
+getattr(make, '__name__', '?') [make=function, name='bad traceback', args=tuple] => catches
+name [make=function, name='bad traceback', args=tuple] => bad traceback
+r [make=function, name='bad traceback', args=tuple] => ('returned', ('caught', 'throw() third argument must be a traceback object'))
+inspect.getgeneratorstate(g) [make=function, name='bad traceback', args=tuple] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='bad traceback', args=tuple] => finished
+getattr(make, '__name__', '?') [make=function, name='a class that is no exception', args=tuple] => catches
+name [make=function, name='a class that is no exception', args=tuple] => a class that is no exception
+r [make=function, name='a class that is no exception', args=tuple] => ('returned', ('caught', 'exceptions must be classes or instances deriving from BaseException, not type'))
+inspect.getgeneratorstate(g) [make=function, name='a class that is no exception', args=tuple] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='a class that is no exception', args=tuple] => finished
+getattr(make, '__name__', '?') [make=function, name='int', args=(5,)] => plain
+name [make=function, name='int', args=(5,)] => int
+r [make=function, name='int', args=(5,)] => ('TypeError', 'exceptions must be classes or instances deriving from BaseException, not int')
+inspect.getgeneratorstate(g) [make=function, name='int', args=(5,)] => GEN_CLOSED
+next(g, 'finished') [make=function, name='int', args=(5,)] => finished
+getattr(make, '__name__', '?') [make=function, name='str', args=('x',)] => plain
+name [make=function, name='str', args=('x',)] => str
+r [make=function, name='str', args=('x',)] => ('TypeError', 'exceptions must be classes or instances deriving from BaseException, not str')
+inspect.getgeneratorstate(g) [make=function, name='str', args=('x',)] => GEN_CLOSED
+next(g, 'finished') [make=function, name='str', args=('x',)] => finished
+getattr(make, '__name__', '?') [make=function, name='None', args=(None,)] => plain
+name [make=function, name='None', args=(None,)] => None
+r [make=function, name='None', args=(None,)] => ('TypeError', 'exceptions must be classes or instances deriving from BaseException, not NoneType')
+inspect.getgeneratorstate(g) [make=function, name='None', args=(None,)] => GEN_CLOSED
+next(g, 'finished') [make=function, name='None', args=(None,)] => finished
+getattr(make, '__name__', '?') [make=function, name='instance and value', args=tuple] => plain
+name [make=function, name='instance and value', args=tuple] => instance and value
+r [make=function, name='instance and value', args=tuple] => ('TypeError', 'instance exception may not have a separate value')
+inspect.getgeneratorstate(g) [make=function, name='instance and value', args=tuple] => GEN_CLOSED
+next(g, 'finished') [make=function, name='instance and value', args=tuple] => finished
+getattr(make, '__name__', '?') [make=function, name='bad traceback', args=tuple] => plain
+name [make=function, name='bad traceback', args=tuple] => bad traceback
+r [make=function, name='bad traceback', args=tuple] => ('TypeError', 'throw() third argument must be a traceback object')
+inspect.getgeneratorstate(g) [make=function, name='bad traceback', args=tuple] => GEN_CLOSED
+next(g, 'finished') [make=function, name='bad traceback', args=tuple] => finished
+getattr(make, '__name__', '?') [make=function, name='a class that is no exception', args=tuple] => plain
+name [make=function, name='a class that is no exception', args=tuple] => a class that is no exception
+r [make=function, name='a class that is no exception', args=tuple] => ('TypeError', 'exceptions must be classes or instances deriving from BaseException, not type')
+inspect.getgeneratorstate(g) [make=function, name='a class that is no exception', args=tuple] => GEN_CLOSED
+next(g, 'finished') [make=function, name='a class that is no exception', args=tuple] => finished
+getattr(make, '__name__', '?') [make=function, name='int', args=(5,)] => twice
+name [make=function, name='int', args=(5,)] => int
+r [make=function, name='int', args=(5,)] => ('returned', ('outermost caught', 'exceptions must be classes or instances deriving from BaseException, not int'))
+inspect.getgeneratorstate(g) [make=function, name='int', args=(5,)] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='int', args=(5,)] => finished
+getattr(make, '__name__', '?') [make=function, name='str', args=('x',)] => twice
+name [make=function, name='str', args=('x',)] => str
+r [make=function, name='str', args=('x',)] => ('returned', ('outermost caught', 'exceptions must be classes or instances deriving from BaseException, not str'))
+inspect.getgeneratorstate(g) [make=function, name='str', args=('x',)] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='str', args=('x',)] => finished
+getattr(make, '__name__', '?') [make=function, name='None', args=(None,)] => twice
+name [make=function, name='None', args=(None,)] => None
+r [make=function, name='None', args=(None,)] => ('returned', ('outermost caught', 'exceptions must be classes or instances deriving from BaseException, not NoneType'))
+inspect.getgeneratorstate(g) [make=function, name='None', args=(None,)] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='None', args=(None,)] => finished
+getattr(make, '__name__', '?') [make=function, name='instance and value', args=tuple] => twice
+name [make=function, name='instance and value', args=tuple] => instance and value
+r [make=function, name='instance and value', args=tuple] => ('returned', ('outermost caught', 'instance exception may not have a separate value'))
+inspect.getgeneratorstate(g) [make=function, name='instance and value', args=tuple] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='instance and value', args=tuple] => finished
+getattr(make, '__name__', '?') [make=function, name='bad traceback', args=tuple] => twice
+name [make=function, name='bad traceback', args=tuple] => bad traceback
+r [make=function, name='bad traceback', args=tuple] => ('returned', ('outermost caught', 'throw() third argument must be a traceback object'))
+inspect.getgeneratorstate(g) [make=function, name='bad traceback', args=tuple] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='bad traceback', args=tuple] => finished
+getattr(make, '__name__', '?') [make=function, name='a class that is no exception', args=tuple] => twice
+name [make=function, name='a class that is no exception', args=tuple] => a class that is no exception
+r [make=function, name='a class that is no exception', args=tuple] => ('returned', ('outermost caught', 'exceptions must be classes or instances deriving from BaseException, not type'))
+inspect.getgeneratorstate(g) [make=function, name='a class that is no exception', args=tuple] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='a class that is no exception', args=tuple] => finished
+getattr(make, '__name__', '?') [make=function, name='int', args=(5,)] => over_list
+name [make=function, name='int', args=(5,)] => int
+r [make=function, name='int', args=(5,)] => ('TypeError', 'exceptions must be classes or instances deriving from BaseException, not int')
+inspect.getgeneratorstate(g) [make=function, name='int', args=(5,)] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='int', args=(5,)] => 2
+getattr(make, '__name__', '?') [make=function, name='str', args=('x',)] => over_list
+name [make=function, name='str', args=('x',)] => str
+r [make=function, name='str', args=('x',)] => ('TypeError', 'exceptions must be classes or instances deriving from BaseException, not str')
+inspect.getgeneratorstate(g) [make=function, name='str', args=('x',)] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='str', args=('x',)] => 2
+getattr(make, '__name__', '?') [make=function, name='None', args=(None,)] => over_list
+name [make=function, name='None', args=(None,)] => None
+r [make=function, name='None', args=(None,)] => ('TypeError', 'exceptions must be classes or instances deriving from BaseException, not NoneType')
+inspect.getgeneratorstate(g) [make=function, name='None', args=(None,)] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='None', args=(None,)] => 2
+getattr(make, '__name__', '?') [make=function, name='instance and value', args=tuple] => over_list
+name [make=function, name='instance and value', args=tuple] => instance and value
+r [make=function, name='instance and value', args=tuple] => ('TypeError', 'instance exception may not have a separate value')
+inspect.getgeneratorstate(g) [make=function, name='instance and value', args=tuple] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='instance and value', args=tuple] => 2
+getattr(make, '__name__', '?') [make=function, name='bad traceback', args=tuple] => over_list
+name [make=function, name='bad traceback', args=tuple] => bad traceback
+r [make=function, name='bad traceback', args=tuple] => ('TypeError', 'throw() third argument must be a traceback object')
+inspect.getgeneratorstate(g) [make=function, name='bad traceback', args=tuple] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='bad traceback', args=tuple] => 2
+getattr(make, '__name__', '?') [make=function, name='a class that is no exception', args=tuple] => over_list
+name [make=function, name='a class that is no exception', args=tuple] => a class that is no exception
+r [make=function, name='a class that is no exception', args=tuple] => ('TypeError', 'exceptions must be classes or instances deriving from BaseException, not type')
+inspect.getgeneratorstate(g) [make=function, name='a class that is no exception', args=tuple] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='a class that is no exception', args=tuple] => 2
+getattr(make, '__name__', '?') [make=function, name='int', args=(5,)] => over_iterator
+name [make=function, name='int', args=(5,)] => int
+r [make=function, name='int', args=(5,)] => ('TypeError', 'exceptions must be classes or instances deriving from BaseException, not int')
+inspect.getgeneratorstate(g) [make=function, name='int', args=(5,)] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='int', args=(5,)] => 2
+getattr(make, '__name__', '?') [make=function, name='str', args=('x',)] => over_iterator
+name [make=function, name='str', args=('x',)] => str
+r [make=function, name='str', args=('x',)] => ('TypeError', 'exceptions must be classes or instances deriving from BaseException, not str')
+inspect.getgeneratorstate(g) [make=function, name='str', args=('x',)] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='str', args=('x',)] => 2
+getattr(make, '__name__', '?') [make=function, name='None', args=(None,)] => over_iterator
+name [make=function, name='None', args=(None,)] => None
+r [make=function, name='None', args=(None,)] => ('TypeError', 'exceptions must be classes or instances deriving from BaseException, not NoneType')
+inspect.getgeneratorstate(g) [make=function, name='None', args=(None,)] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='None', args=(None,)] => 2
+getattr(make, '__name__', '?') [make=function, name='instance and value', args=tuple] => over_iterator
+name [make=function, name='instance and value', args=tuple] => instance and value
+r [make=function, name='instance and value', args=tuple] => ('TypeError', 'instance exception may not have a separate value')
+inspect.getgeneratorstate(g) [make=function, name='instance and value', args=tuple] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='instance and value', args=tuple] => 2
+getattr(make, '__name__', '?') [make=function, name='bad traceback', args=tuple] => over_iterator
+name [make=function, name='bad traceback', args=tuple] => bad traceback
+r [make=function, name='bad traceback', args=tuple] => ('TypeError', 'throw() third argument must be a traceback object')
+inspect.getgeneratorstate(g) [make=function, name='bad traceback', args=tuple] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='bad traceback', args=tuple] => 2
+getattr(make, '__name__', '?') [make=function, name='a class that is no exception', args=tuple] => over_iterator
+name [make=function, name='a class that is no exception', args=tuple] => a class that is no exception
+r [make=function, name='a class that is no exception', args=tuple] => ('TypeError', 'exceptions must be classes or instances deriving from BaseException, not type')
+inspect.getgeneratorstate(g) [make=function, name='a class that is no exception', args=tuple] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='a class that is no exception', args=tuple] => 2
+getattr(make, '__name__', '?') [make=function, name='int', args=(5,)] => <lambda>
+name [make=function, name='int', args=(5,)] => int
+r [make=function, name='int', args=(5,)] => ('returned', ('throw got', (5,)))
+inspect.getgeneratorstate(g) [make=function, name='int', args=(5,)] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='int', args=(5,)] => next
+getattr(make, '__name__', '?') [make=function, name='str', args=('x',)] => <lambda>
+name [make=function, name='str', args=('x',)] => str
+r [make=function, name='str', args=('x',)] => ('returned', ('throw got', ('x',)))
+inspect.getgeneratorstate(g) [make=function, name='str', args=('x',)] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='str', args=('x',)] => next
+getattr(make, '__name__', '?') [make=function, name='None', args=(None,)] => <lambda>
+name [make=function, name='None', args=(None,)] => None
+r [make=function, name='None', args=(None,)] => ('returned', ('throw got', (None,)))
+inspect.getgeneratorstate(g) [make=function, name='None', args=(None,)] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='None', args=(None,)] => next
+getattr(make, '__name__', '?') [make=function, name='instance and value', args=tuple] => <lambda>
+name [make=function, name='instance and value', args=tuple] => instance and value
+r [make=function, name='instance and value', args=tuple] => ('returned', ('throw got', (ValueError('a'), 'b')))
+inspect.getgeneratorstate(g) [make=function, name='instance and value', args=tuple] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='instance and value', args=tuple] => next
+getattr(make, '__name__', '?') [make=function, name='bad traceback', args=tuple] => <lambda>
+name [make=function, name='bad traceback', args=tuple] => bad traceback
+r [make=function, name='bad traceback', args=tuple] => ('returned', ('throw got', (<class 'ValueError'>, None, 5)))
+inspect.getgeneratorstate(g) [make=function, name='bad traceback', args=tuple] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='bad traceback', args=tuple] => next
+getattr(make, '__name__', '?') [make=function, name='a class that is no exception', args=tuple] => <lambda>
+name [make=function, name='a class that is no exception', args=tuple] => a class that is no exception
+r [make=function, name='a class that is no exception', args=tuple] => ('returned', ('throw got', (<class 'int'>,)))
+inspect.getgeneratorstate(g) [make=function, name='a class that is no exception', args=tuple] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='a class that is no exception', args=tuple] => next
+getattr(make, '__name__', '?') [make=function, name='int', args=(5,)] => <lambda>
+name [make=function, name='int', args=(5,)] => int
+r [make=function, name='int', args=(5,)] => ('returned', ('result', ('stopped by', (5,))))
+inspect.getgeneratorstate(g) [make=function, name='int', args=(5,)] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='int', args=(5,)] => finished
+getattr(make, '__name__', '?') [make=function, name='str', args=('x',)] => <lambda>
+name [make=function, name='str', args=('x',)] => str
+r [make=function, name='str', args=('x',)] => ('returned', ('result', ('stopped by', ('x',))))
+inspect.getgeneratorstate(g) [make=function, name='str', args=('x',)] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='str', args=('x',)] => finished
+getattr(make, '__name__', '?') [make=function, name='None', args=(None,)] => <lambda>
+name [make=function, name='None', args=(None,)] => None
+r [make=function, name='None', args=(None,)] => ('returned', ('result', ('stopped by', (None,))))
+inspect.getgeneratorstate(g) [make=function, name='None', args=(None,)] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='None', args=(None,)] => finished
+getattr(make, '__name__', '?') [make=function, name='instance and value', args=tuple] => <lambda>
+name [make=function, name='instance and value', args=tuple] => instance and value
+r [make=function, name='instance and value', args=tuple] => ('returned', ('result', ('stopped by', (ValueError('a'), 'b'))))
+inspect.getgeneratorstate(g) [make=function, name='instance and value', args=tuple] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='instance and value', args=tuple] => finished
+getattr(make, '__name__', '?') [make=function, name='bad traceback', args=tuple] => <lambda>
+name [make=function, name='bad traceback', args=tuple] => bad traceback
+r [make=function, name='bad traceback', args=tuple] => ('returned', ('result', ('stopped by', (<class 'ValueError'>, None, 5))))
+inspect.getgeneratorstate(g) [make=function, name='bad traceback', args=tuple] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='bad traceback', args=tuple] => finished
+getattr(make, '__name__', '?') [make=function, name='a class that is no exception', args=tuple] => <lambda>
+name [make=function, name='a class that is no exception', args=tuple] => a class that is no exception
+r [make=function, name='a class that is no exception', args=tuple] => ('returned', ('result', ('stopped by', (<class 'int'>,))))
+inspect.getgeneratorstate(g) [make=function, name='a class that is no exception', args=tuple] => GEN_SUSPENDED
+next(g, 'finished') [make=function, name='a class that is no exception', args=tuple] => finished
+getattr(make, '__name__', '?') [make=function, name='int', args=(5,)] => <lambda>
+name [make=function, name='int', args=(5,)] => int
+r [make=function, name='int', args=(5,)] => ('KeyError', '(5,)')
+inspect.getgeneratorstate(g) [make=function, name='int', args=(5,)] => GEN_CLOSED
+next(g, 'finished') [make=function, name='int', args=(5,)] => finished
+getattr(make, '__name__', '?') [make=function, name='str', args=('x',)] => <lambda>
+name [make=function, name='str', args=('x',)] => str
+r [make=function, name='str', args=('x',)] => ('KeyError', "('x',)")
+inspect.getgeneratorstate(g) [make=function, name='str', args=('x',)] => GEN_CLOSED
+next(g, 'finished') [make=function, name='str', args=('x',)] => finished
+getattr(make, '__name__', '?') [make=function, name='None', args=(None,)] => <lambda>
+name [make=function, name='None', args=(None,)] => None
+r [make=function, name='None', args=(None,)] => ('KeyError', '(None,)')
+inspect.getgeneratorstate(g) [make=function, name='None', args=(None,)] => GEN_CLOSED
+next(g, 'finished') [make=function, name='None', args=(None,)] => finished
+getattr(make, '__name__', '?') [make=function, name='instance and value', args=tuple] => <lambda>
+name [make=function, name='instance and value', args=tuple] => instance and value
+r [make=function, name='instance and value', args=tuple] => ('KeyError', "(ValueError('a'), 'b')")
+inspect.getgeneratorstate(g) [make=function, name='instance and value', args=tuple] => GEN_CLOSED
+next(g, 'finished') [make=function, name='instance and value', args=tuple] => finished
+getattr(make, '__name__', '?') [make=function, name='bad traceback', args=tuple] => <lambda>
+name [make=function, name='bad traceback', args=tuple] => bad traceback
+r [make=function, name='bad traceback', args=tuple] => ('KeyError', "(<class 'ValueError'>, None, 5)")
+inspect.getgeneratorstate(g) [make=function, name='bad traceback', args=tuple] => GEN_CLOSED
+next(g, 'finished') [make=function, name='bad traceback', args=tuple] => finished
+getattr(make, '__name__', '?') [make=function, name='a class that is no exception', args=tuple] => <lambda>
+name [make=function, name='a class that is no exception', args=tuple] => a class that is no exception
+r [make=function, name='a class that is no exception', args=tuple] => ('KeyError', "(<class 'int'>,)")
+inspect.getgeneratorstate(g) [make=function, name='a class that is no exception', args=tuple] => GEN_CLOSED
+next(g, 'finished') [make=function, name='a class that is no exception', args=tuple] => finished
+state [name='int', args=(5,), state='new'] => new
+name [name='int', args=(5,), state='new'] => int
+r [name='int', args=(5,), state='new'] => ('TypeError', 'exceptions must be classes or instances deriving from BaseException, not int')
+inspect.getgeneratorstate(g) [name='int', args=(5,), state='new'] => GEN_CREATED
+state [name='int', args=(5,), state='finished'] => finished
+name [name='int', args=(5,), state='finished'] => int
+r [name='int', args=(5,), state='finished'] => ('TypeError', 'exceptions must be classes or instances deriving from BaseException, not int')
+inspect.getgeneratorstate(g) [name='int', args=(5,), state='finished'] => GEN_CLOSED
+state [name='str', args=('x',), state='new'] => new
+name [name='str', args=('x',), state='new'] => str
+r [name='str', args=('x',), state='new'] => ('TypeError', 'exceptions must be classes or instances deriving from BaseException, not str')
+inspect.getgeneratorstate(g) [name='str', args=('x',), state='new'] => GEN_CREATED
+state [name='str', args=('x',), state='finished'] => finished
+name [name='str', args=('x',), state='finished'] => str
+r [name='str', args=('x',), state='finished'] => ('TypeError', 'exceptions must be classes or instances deriving from BaseException, not str')
+inspect.getgeneratorstate(g) [name='str', args=('x',), state='finished'] => GEN_CLOSED
+state [name='none at all', args=(), state='new'] => new
+name [name='none at all', args=(), state='new'] => none at all
+r [name='none at all', args=(), state='new'] => ('TypeError', 'throw expected at least 1 argument, got 0')
+inspect.getgeneratorstate(g) [name='none at all', args=(), state='new'] => GEN_CREATED
+state [name='none at all', args=(), state='finished'] => finished
+name [name='none at all', args=(), state='finished'] => none at all
+r [name='none at all', args=(), state='finished'] => ('TypeError', 'throw expected at least 1 argument, got 0')
+inspect.getgeneratorstate(g) [name='none at all', args=(), state='finished'] => GEN_CLOSED
+state [name='four', args=(1, 2, 3, 4), state='new'] => new
+name [name='four', args=(1, 2, 3, 4), state='new'] => four
+r [name='four', args=(1, 2, 3, 4), state='new'] => ('TypeError', 'throw expected at most 3 arguments, got 4')
+inspect.getgeneratorstate(g) [name='four', args=(1, 2, 3, 4), state='new'] => GEN_CREATED
+state [name='four', args=(1, 2, 3, 4), state='finished'] => finished
+name [name='four', args=(1, 2, 3, 4), state='finished'] => four
+r [name='four', args=(1, 2, 3, 4), state='finished'] => ('TypeError', 'throw expected at most 3 arguments, got 4')
+inspect.getgeneratorstate(g) [name='four', args=(1, 2, 3, 4), state='finished'] => GEN_CLOSED
+coroutine state [state='new'] => new
+r [state='new'] => ('TypeError', 'exceptions must be classes or instances deriving from BaseException, not int')
+inspect.getcoroutinestate(c) [state='new'] => CORO_CREATED
+coroutine state [state='suspended'] => suspended
+r [state='suspended'] => ('StopIteration', "('caught', 'exceptions must be classes or instances deriving from BaseException, not int')")
+inspect.getcoroutinestate(c) [state='suspended'] => CORO_CLOSED
+coroutine state [state='finished'] => finished
+r [state='finished'] => ('RuntimeError', 'cannot reuse already awaited coroutine')
+inspect.getcoroutinestate(c) [state='finished'] => CORO_CLOSED
+f_locals update(arg) [arg=dict] => 2
+ior(arg) [arg=dict] => 2
+f_locals update(arg) [arg=list] => ('TypeError', 'update() argument must be dict or another FrameLocalsProxy')
+ior(arg) [arg=list] => ('TypeError', "unsupported operand type(s) for |=: 'FrameLocalsProxy' and 'list'")
+f_locals update(arg) [arg=list] => ('TypeError', 'update() argument must be dict or another FrameLocalsProxy')
+ior(arg) [arg=list] => ('TypeError', "unsupported operand type(s) for |=: 'FrameLocalsProxy' and 'list'")
+f_locals update(arg) [arg=5] => ('TypeError', 'update() argument must be dict or another FrameLocalsProxy')
+ior(arg) [arg=5] => ('TypeError', "unsupported operand type(s) for |=: 'FrameLocalsProxy' and 'int'")
+f_locals update(arg) [arg=None] => ('TypeError', 'update() argument must be dict or another FrameLocalsProxy')
+ior(arg) [arg=None] => ('TypeError', "unsupported operand type(s) for |=: 'FrameLocalsProxy' and 'NoneType'")
+f_locals update(arg) [arg=dict] => 1
+ior(arg) [arg=dict] => 1
+tb_lineno all(types.TracebackType(None, frame, offset, -1).tb_lineno == line fo... => True
+[types.TracebackType(None, frame, lasti, -1).tb_lineno for lasti in (... => [183, 183, None, None]
+[types.TracebackType(None, frame, 0, line).tb_lineno for line in (0, ... => [0, 5, -2]

@@ -1,0 +1,119 @@
+status: 0
+script: 063869a13c6969c1
+source: f3ccd36ae7d203d4
+---
+f.__name__ [f=function] => a1
+f() [f=function] => ['y', 'x']
+f.__code__.co_varnames [f=function] => ('y', 'x')
+f.__code__.co_nlocals [f=function] => 2
+f.__code__.co_cellvars [f=function] => ()
+f.__name__ [f=function] => a2
+f() [f=function] => ['y', 'x', 'z']
+f.__code__.co_varnames [f=function] => ('y', 'x', 'z')
+f.__code__.co_nlocals [f=function] => 3
+f.__code__.co_cellvars [f=function] => ()
+f.__name__ [f=function] => a3
+f() [f=function] => ['x', 'w', 'v']
+f.__code__.co_varnames [f=function] => ('x', 'w', 'y', 'z', 'v')
+f.__code__.co_nlocals [f=function] => 5
+f.__code__.co_cellvars [f=function] => ()
+f.__name__ [f=function] => a4
+f() [f=function] => ['x', 'y']
+f.__code__.co_varnames [f=function] => ('i', 'x', 'y')
+f.__code__.co_nlocals [f=function] => 3
+f.__code__.co_cellvars [f=function] => ()
+f.__name__ [f=function] => a5
+f() [f=function] => ['y', 'x']
+f.__code__.co_varnames [f=function] => ('y', 'x')
+f.__code__.co_nlocals [f=function] => 2
+f.__code__.co_cellvars [f=function] => ()
+f.__name__ [f=function] => a6
+f() [f=function] => []
+f.__code__.co_varnames [f=function] => ()
+f.__code__.co_nlocals [f=function] => 0
+f.__code__.co_cellvars [f=function] => ()
+f.__name__ [f=function] => a8
+f() [f=function] => ['l', 'z', 'y']
+f.__code__.co_varnames [f=function] => ('l', 'z', 'y')
+f.__code__.co_nlocals [f=function] => 3
+f.__code__.co_cellvars [f=function] => ()
+f.__name__ [f=function] => a9
+f() [f=function] => ['z', 'y', 'x']
+f.__code__.co_varnames [f=function] => ('z', 'y', 'w', 'x')
+f.__code__.co_nlocals [f=function] => 4
+f.__code__.co_cellvars [f=function] => ()
+f.__name__ [f=function] => b2
+f() [f=function] => ['c', 'd', 'a', 'b', 'e', 'f', 'g']
+f.__code__.co_varnames [f=function] => ('c', 'd', 'a', 'b', 'e', 'f', 'g')
+f.__code__.co_nlocals [f=function] => 7
+f.__code__.co_cellvars [f=function] => ()
+f.__name__ [f=function] => b3
+f() [f=function] => ['f', 'g', 'h']
+f.__code__.co_varnames [f=function] => ('f', 'g', 'h')
+f.__code__.co_nlocals [f=function] => 3
+f.__code__.co_cellvars [f=function] => ()
+f.__name__ [f=function] => b4
+f() [f=function] => ['p', 's', 'q']
+f.__code__.co_varnames [f=function] => ('p', 's', 'q')
+f.__code__.co_nlocals [f=function] => 3
+f.__code__.co_cellvars [f=function] => ()
+f.__name__ [f=function] => b5
+f() [f=function] => ['d', 'b', 'C']
+f.__code__.co_varnames [f=function] => ('d', 'b', 'C')
+f.__code__.co_nlocals [f=function] => 3
+f.__code__.co_cellvars [f=function] => ()
+f.__name__ [f=function] => b8
+f() [f=function] => ['y', 'x', 'w']
+f.__code__.co_varnames [f=function] => ('y', 'x', 'w')
+f.__code__.co_nlocals [f=function] => 3
+f.__code__.co_cellvars [f=function] => ()
+f.__name__ [f=function] => b9
+f() [f=function] => ['i', 'a', 'b', 'c']
+f.__code__.co_varnames [f=function] => ('i', 'j', 'a', 'k', 'v', 'b', 'c')
+f.__code__.co_nlocals [f=function] => 7
+f.__code__.co_cellvars [f=function] => ()
+f.__name__ [f=function] => c2
+f() [f=function] => ['a', 'c', 'd', 'e']
+f.__code__.co_varnames [f=function] => ('a', 'b', 'c', 'd', 'e')
+f.__code__.co_nlocals [f=function] => 5
+f.__code__.co_cellvars [f=function] => ()
+f.__name__ [f=function] => c3
+f() [f=function] => ['x', 'w', 'y', 'z']
+f.__code__.co_varnames [f=function] => ('x', 'w')
+f.__code__.co_nlocals [f=function] => 2
+f.__code__.co_cellvars [f=function] => ('y', 'z')
+f.__name__ [f=function] => c6
+f() [f=function] => ['c']
+f.__code__.co_varnames [f=function] => ('a', 'b', 'c')
+f.__code__.co_nlocals [f=function] => 3
+f.__code__.co_cellvars [f=function] => ()
+f.__name__ [f=function] => c8
+2f() [f=function] => ['nonlocal_free', 'a', 'b']
+f.__code__.co_varnames [f=function] => ('nonlocal_free', 'a', 'b')
+f.__code__.co_nlocals [f=function] => 3
+f.__code__.co_cellvars [f=function] => ()
+b1 b1(1, s=2) => ['p', 'q', 's', 'r', 't', 'b', 'a']
+b1.__code__.co_varnames => ('p', 'q', 's', 'r', 't', 'b', 'a')
+c1 c1([1, 2]) => ['v', 'a', 'b', 'c']
+c1({'k': 1}) => ['v', 'd', 'e', 'f']
+c1('s') => ['v', 'g']
+c1.__code__.co_varnames => ('v', 'a', 'b', 'c', 'd', 'e', 'f', 'g')
+f.__name__ [f=function] => b6
+f.__code__.co_varnames [f=function] => ('x', 'y')
+f.__code__.co_nlocals [f=function] => 2
+f.__name__ [f=function] => b7
+f.__code__.co_varnames [f=function] => ('x', 'y')
+f.__code__.co_nlocals [f=function] => 2
+f.__name__ [f=function] => c4
+f.__code__.co_varnames [f=function] => ('a', 'b', 'd', 'c')
+f.__code__.co_nlocals [f=function] => 4
+f.__name__ [f=function] => c5
+f.__code__.co_varnames [f=function] => ('a', 'b', 'd', 'c', 'e', 'g', 'f')
+f.__code__.co_nlocals [f=function] => 7
+f.__name__ [f=function] => c7
+f.__code__.co_varnames [f=function] => ('dead', 'after')
+f.__code__.co_nlocals [f=function] => 2
+code.co_varnames == tuple('p%d' % i for i in range(200)) + tuple('v%d... => True
+code.co_names == tuple('g%d' % i for i in range(1000)) => True
+len(code.co_consts) => 9445
+len(set(map(repr, code.co_consts))) => 9445

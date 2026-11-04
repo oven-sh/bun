@@ -1,0 +1,68 @@
+status: 0
+script: 6c0919fda30f759d
+source: 6d69b3eba9e90b69
+---
+displays (([1, 2], 2), [1, 2], {1, 5}, {'d': {'a': 1}, 'n': 1}, "ab'ab'  ab2")
+a display that fails [('old', 'ZeroDivisionError'), ('old', 'ZeroDivisionError'), ('old', 'ZeroDivisionError'), ('old', 'ZeroDivisionError'), ('old', 'TypeError'), ('old', 'TypeError'), ('old', 'ZeroDivisionError'), ('old', 'ZeroDivisionError')]
+annotated ([1, 2], [1, 2], 5)
+formats ('formatted', 'str', 'repr', 'spec:x', 'Text.__format__', 't', 'None', '1', '1.5', 'True', 's', '(1, 2)', '<formatted>', 'formattedText.__format__')
+__format__ gives no str raised TypeError Formats.__format__() must return a str, not int
+__format__ gives a Text Text
+return_finally 'old'
+return_in_handler ZeroDivisionError('division by zero')
+return_with 'old'
+return_in_for 'old'
+return_in_loops ('found', [0])
+return_in_match ('x', 2)
+pairs [(0, 1), (5, 8), (8, 5), 2, 4, (3, 1, 2), ('x', 'y'), ('y', 'x'), ('x', 5), (3, 3), ('X', 'X', 'X'), ('X', 'Z', 'Z'), ('Z', 'X')]
+a pair that fails ('a', 'b')
+   set a 1
+   set b 2
+other targets (7, [1, 2], 3)
+comprehensions raised TypeError 'int' object is not iterable
+unbound iterable cannot access local variable 'later' where it is not associated with a value
+send to a generator expression (0, 2, 4, [6])
+yields ['x', 'x', 'b', 'c', None, None, ('d', 'b', 'f')]
+thrown into ['x', 'caught', 'sent']
+async yields ['x', 'x', 'b', 'c', ['y', 'y', None, None]]
+walrus [6, [5, 6, 6], (6, 7, 7, 10), 90, {2: 3, 3: 3}, '344', True, ('p', 'q', 'q'), 21, 109, [3, [0, 2, 4], 4], -1]
+walrus in a lambda (1, 2, 2)
+kinds [(1, 2), (3, 4), ('a', 'b'), (5, 6), (7, 8), (9, 10), (0, 1), (120, 121), (11, 1)]
+    row [row=('a', 'b', 'ValueError', 'not enough values to unpack (expected 2, got 1)')] => ('a', 'b', 'ValueError', 'not enough values to unpack (expected 2, got 1)')
+    row [row=('a', 'b', 'c', 'ValueError', 'not enough values to unpack (expected at least 2, got 1)')] => ('a', 'b', 'c', 'ValueError', 'not enough values to unpack (expected at least 2, got 1)')
+    row [row=('a', 'b', 'ValueError', 'too many values to unpack (expected 2, got 3)')] => ('a', 'b', 'ValueError', 'too many values to unpack (expected 2, got 3)')
+    row [row=tuple] => (1, [2], 3)
+    row [row=('a', 'b', 'ValueError', 'not enough values to unpack (expected 2, got 1)')] => ('a', 'b', 'ValueError', 'not enough values to unpack (expected 2, got 1)')
+    row [row=('a', 'b', 'c', 'ValueError', 'not enough values to unpack (expected at least 2, got 1)')] => ('a', 'b', 'c', 'ValueError', 'not enough values to unpack (expected at least 2, got 1)')
+    row [row=('a', 'b', 'ValueError', 'too many values to unpack (expected 2, got 3)')] => ('a', 'b', 'ValueError', 'too many values to unpack (expected 2, got 3)')
+    row [row=tuple] => (1, [2], 3)
+    row [row=('a', 'b', 'ValueError', 'not enough values to unpack (expected 2, got 1)')] => ('a', 'b', 'ValueError', 'not enough values to unpack (expected 2, got 1)')
+    row [row=('a', 'b', 'c', 'ValueError', 'not enough values to unpack (expected at least 2, got 1)')] => ('a', 'b', 'c', 'ValueError', 'not enough values to unpack (expected at least 2, got 1)')
+    row [row=('a', 'b', 'ValueError', 'too many values to unpack (expected 2)')] => ('a', 'b', 'ValueError', 'too many values to unpack (expected 2)')
+    row [row=tuple] => ('a', ['b'], 'c')
+    row [row=('a', 'b', 'ValueError', 'not enough values to unpack (expected 2, got 1)')] => ('a', 'b', 'ValueError', 'not enough values to unpack (expected 2, got 1)')
+    row [row=('a', 'b', 'c', 'ValueError', 'not enough values to unpack (expected at least 2, got 0)')] => ('a', 'b', 'c', 'ValueError', 'not enough values to unpack (expected at least 2, got 0)')
+    row [row=('a', 'b', 'ValueError', 'too many values to unpack (expected 2)')] => ('a', 'b', 'ValueError', 'too many values to unpack (expected 2)')
+    row [row=('a', 'b', 'c', 'ValueError', 'not enough values to unpack (expected at least 2, got 0)')] => ('a', 'b', 'c', 'ValueError', 'not enough values to unpack (expected at least 2, got 0)')
+    row [row=('a', 'b', 'KeyError', "'half way'")] => ('a', 'b', 'KeyError', "'half way'")
+    row [row=('a', 'b', 'c', 'ValueError', 'not enough values to unpack (expected at least 2, got 0)')] => ('a', 'b', 'c', 'ValueError', 'not enough values to unpack (expected at least 2, got 0)')
+    row [row=('a', 'b', 'TypeError', 'cannot unpack non-iterable int object')] => ('a', 'b', 'TypeError', 'cannot unpack non-iterable int object')
+    row [row=('a', 'b', 'c', 'TypeError', 'cannot unpack non-iterable int object')] => ('a', 'b', 'c', 'TypeError', 'cannot unpack non-iterable int object')
+    row [row=('a', 'b', 'TypeError', 'cannot unpack non-iterable NoneType object')] => ('a', 'b', 'TypeError', 'cannot unpack non-iterable NoneType object')
+    row [row=('a', 'b', 'c', 'TypeError', 'cannot unpack non-iterable NoneType object')] => ('a', 'b', 'c', 'TypeError', 'cannot unpack non-iterable NoneType object')
+    row [row=('a', 'b', 'ValueError', 'not enough values to unpack (expected 2, got 1)')] => ('a', 'b', 'ValueError', 'not enough values to unpack (expected 2, got 1)')
+    row [row=('a', 'b', 'c', 'ValueError', 'not enough values to unpack (expected at least 2, got 1)')] => ('a', 'b', 'c', 'ValueError', 'not enough values to unpack (expected at least 2, got 1)')
+an iterator that watches (0, 1, ['a', 'a'])
+forms [(1, 2), (3, 4), (6, 5), (7, 5, 8), (9, 10, 11), (12, 13, 14), ('x', ['y', 'z']), (['x', 'y'], 'z'), (0, [1, 2, 3, 4], 5), (1, 2, []), ('p', 'q', 'r'), 2, (1, 2), (3, 4), ('x', 'y'), (1, 2, 3), [(1, 2), (3, 4)], {1: 2}]
+parameters (3, 2, 1)
+cells and globals (1, 2, 5, 6, 7, 8, 4, 5)
+deleted ("cannot access local variable 'a' where it is not associated with a value", 4, 5)
+in a generator g.send((1, 2)) => (1, 2)
+g.send([3, 4]) => (1, 2, 3, 4)
+in a class Body.a => 2
+Body.b => 1
+Body.c => x
+Body.d => ['y', 'z']
+in a module m => 2
+n => 1
+several lines ((2, 1, 3), [('call', 0, (None, None, None)), ('line', 1, (None, None, None)), ('line', 4, (None, None, None)), ('line', 2, (None, None, None)), ('line', 3, (1, None, None)), ('line', 4, (1, 2, None)), ('line', 6, (1, 2, 3)), ('line', 7, (1, 2, 3)), ('line', 6, (1, 2, 3)), ('line', 5, (1, 2, 3)), ('line', 6, (2, 2, 3)), ('line', 8, (2, 1, 3)), ('return', 8, (2, 1, 3))])

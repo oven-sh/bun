@@ -1,6 +1,6 @@
 // The exception being handled, when what handles it is a `catch` of JavaScript.
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { KeyError, LookupError, ValueError, dict, exec, isinstance, list, repr } from "python:builtins";
 import gc from "python:gc";
 import io from "python:io";
@@ -631,4 +631,41 @@ test("what was caught can be collected once the catch is over", () => {
   const reference = caught();
   gc.collect();
   expect(reference()).toBeUndefined();
+});
+
+test("in code whose bytecode was optimized", async () => {
+  const script = `
+    import sys from "python:sys";
+    import { ValueError, repr } from "python:builtins";
+    const seen = [];
+    const show = () => seen.push(String(repr(sys.exception())));
+    function f(n) {
+      let unused = n + 1;
+      try {
+        if (n) throw new ValueError("outer");
+      } catch (outer) {
+        show();
+        try {
+          throw new ValueError("inner");
+        } catch {
+          show();
+        } finally {
+          unused = 0;
+        }
+        show();
+      }
+      show();
+    }
+    f(1);
+    console.log(seen.join(" "));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, BUN_JSC_useBytecodeOptimizer: "1" },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim()).toBe("ValueError('outer') ValueError('inner') ValueError('outer') None");
+  expect(exitCode).toBe(0);
 });

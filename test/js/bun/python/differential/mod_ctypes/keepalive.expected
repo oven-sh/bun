@@ -1,5 +1,5 @@
 status: 0
-script: 435798581cba6279
+script: a13a86598ccaedcb
 ---
 c_int None
 c_char_p b'abc'
@@ -42,3 +42,6 @@ memory stays (1234, True, True, 99, True)
 contents outlive the pointer's change (1, 2)
 part outlives the name of the whole (3, 4)
 callback 42
+zeros follow a small instance []
+wide copies []
+strings from callbacks ([], ['memory leak in callback function.'])

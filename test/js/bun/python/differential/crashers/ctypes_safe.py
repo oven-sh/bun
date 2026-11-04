@@ -163,6 +163,19 @@ gc.collect()
 for n in ids[::50]:
     attempt(repr, attempt(_ctypes.PyObj_FromPtr, n))
 
+# The bytes after a small instance, and within the memory it was given, are its own and are zero.
+for t in (c_char, c_wchar, c_short, c_char * 3, c_wchar * 3, c_byte * 15, c_int * 0, P):
+    junk = [(c_ubyte * n)(*([0xf1] * n)) for n in (1, 4, 8, 16, 32, 80) for i in range(50)]
+    del junk
+    gc.collect()
+    for i in range(50):
+        o = t()
+        n = sizeof(o)
+        attempt(resize, o, max(n, 16))
+        assert not any(bytes(o)), (t, bytes(o))
+        attempt(resize, o, n + 100)
+        assert not any(bytes(o)), (t, bytes(o))
+
 # ---- At random ----
 seed = int(sys.argv[1]) if len(sys.argv) > 1 else 1
 rounds = int(sys.argv[2]) if len(sys.argv) > 2 else 300

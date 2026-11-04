@@ -2978,8 +2978,8 @@ describe("VM teardown ordering", () => {
     expect(await proc.exited).toBe(0);
   });
 
-  // A shell `cp` hands its copy to an fs.cp task on the pool; the pool part is
-  // over then, not when the JS-thread continuation runs.
+  // A shell `cp -R` copies the tree in fs.cp subtasks on the pool; its pool part
+  // is over when the last one ends, not when the JS-thread continuation runs.
   test("process.exit() with a shell cp in flight", async () => {
     const files: Record<string, Buffer> = {};
     for (let i = 0; i < 60; i++) files[`src/f${i}.bin`] = Buffer.alloc(512 * 1024, 120);

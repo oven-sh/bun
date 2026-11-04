@@ -98,10 +98,13 @@ test("mkdir reports all 32,768 failing operands and the commands after it still 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const reported = stderr.split("\n").flatMap(line => /nope[\\/](\d+)/.exec(line)?.[1] ?? []);
   expect({
-    operands: new Set(reported).size,
+    operands: reported.length,
+    // Brace expansion gives operand number i the name that is i in binary.
+    firstOutOfOrder: reported.findIndex((operand, i) => parseInt(operand, 2) !== i),
     stdout: stdout.split("\n").filter(Boolean),
   }).toEqual({
     operands: 32768,
+    firstOutOfOrder: -1,
     stdout: ["AFTER-1", "AFTER-2", "AFTER-3", "EXIT:0"],
   });
   expect(exitCode).toBe(0);
@@ -202,6 +205,16 @@ describe.concurrent("operands are handled one after another, in the order typed"
     expect(relative(String(dir), await Bun.file(join(String(dir), "out.txt")).text())).toBe(printed(mixed).both);
   });
 
+  test("&> into a buffer keeps operand order across the two streams", async () => {
+    using dir = tempDir("mkdir-operand-order", {});
+    const buffer = Buffer.alloc(16384);
+    const { exitCode } = await $`mkdir -v ${{ raw: mixed.join(" ") }} &> ${buffer}`.cwd(String(dir)).nothrow();
+    expect({ exitCode, written: relative(String(dir), buffer.subarray(0, buffer.indexOf(0))) }).toEqual({
+      exitCode: 1,
+      written: printed(mixed).both,
+    });
+  });
+
   // The two streams end in two places, so each gets its lines as one write.
   test("2> into a file gives the file the error lines and stdout the -v lines", async () => {
     using dir = tempDir("mkdir-operand-order", {});
@@ -216,18 +229,20 @@ describe.concurrent("operands are handled one after another, in the order typed"
   // The child gets one pipe as both its stdout and its stderr: two file descriptors, each with a writer
   // of its own in the child's shell.
   test.each([
-    ["a line at a time", mixed],
-    ["pages at a time", pages],
-  ])("stdout and stderr that are two descriptors of one pipe keep operand order, %s", async (_, names) => {
+    ["a line at a time", "", mixed],
+    ["pages at a time", "", pages],
+    // On Windows the writer of stdout has given its handle to libuv by then, and cannot say what its file is.
+    ["after a command that wrote to stdout", "echo first; ", mixed],
+  ])("stdout and stderr that are two descriptors of one pipe keep operand order, %s", async (_, before, names) => {
     using dir = tempDir("mkdir-operand-order", {});
-    const { exitCode, stdout, stderr } = await $`${bunExe()} exec ${`mkdir -v ${names.join(" ")}`} 2>&1`
+    const { exitCode, stdout, stderr } = await $`${bunExe()} exec ${`${before}mkdir -v ${names.join(" ")}`} 2>&1`
       .env(bunEnv)
       .cwd(String(dir))
       .quiet()
       .nothrow();
     expect({ exitCode, stdout: relative(String(dir), stdout), stderr: stderr.toString() }).toEqual({
       exitCode: 1,
-      stdout: printed(names).both,
+      stdout: (before && "first\n") + printed(names).both,
       stderr: "",
     });
   });
@@ -297,19 +312,43 @@ describe.concurrent("operands are handled one after another, in the order typed"
     expect(exitCode).toBe(1);
   });
 
-  // Each error line is longer than a page. The path fits the path buffer of Windows, which then picks
-  // another error.
-  test.skipIf(isWindows)("a line longer than a page is written whole", async () => {
+  // A pipe and a file are two files on every platform: each stream is written apart.
+  test("bun exec with a pipe as stdout and a file as stderr", async () => {
     using dir = tempDir("mkdir-operand-order", {});
-    const long = [Buffer.alloc(5000, "a").toString(), Buffer.alloc(5000, "b").toString()];
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "exec", `mkdir ${long[0]} made ${long[1]}`],
+      cmd: [bunExe(), "exec", `${alternating} 2> err.txt`],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const expected = printed(twoPipes);
+    expect({
+      stdout: relative(String(dir), stdout),
+      stderr,
+      file: relative(String(dir), await Bun.file(join(String(dir), "err.txt")).text()),
+    }).toEqual({ stdout: expected.stdout, stderr: "", file: expected.stderr });
+    expect(exitCode).toBe(1);
+  });
+
+  // Each error line is longer than a page, and goes to the real stderr. The names are too long for an
+  // argument, so the child makes them.
+  test("a line longer than a page is written in full", async () => {
+    using dir = tempDir("mkdir-operand-order", {});
+    const fixture = /* ts */ `
+      const long = ["a", "b"].map(fill => Buffer.alloc(100_000, fill).toString());
+      process.exitCode = (await Bun.$\`mkdir \${long[0]} made \${long[1]}\`.nothrow()).exitCode;
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const long = ["a", "b"].map(fill => Buffer.alloc(100_000, fill).toString());
     expect({ stdout, stderr: relative(String(dir), stderr), made: existsSync(join(String(dir), "made")) }).toEqual({
       stdout: "",
       stderr: long.map(name => `mkdir: ${name}: File name too long\n`).join(""),
@@ -322,52 +361,63 @@ describe.concurrent("operands are handled one after another, in the order typed"
 // A blocking pipe that is writable takes one page. On Linux the writer learns no more than that, so a
 // larger chunk can wait in write(2). The fixture is the only reader of the FIFO that is its own stdout,
 // and it reads between event loop turns: a write that waits on the JS thread never returns.
-test.if(isLinux)("output larger than a pipe holds does not wait in write(2) on the JS thread", async () => {
-  using dir = tempDir("mkdir-blocking-pipe", {
-    "fixture.ts": /* ts */ `
-      import { $ } from "bun";
-      import { constants, openSync, readSync } from "node:fs";
-      const reader = openSync(process.argv[2], constants.O_RDONLY | constants.O_NONBLOCK);
-      const names = Array.from({ length: 2000 }, (_, i) => "directory-with-a-long-name-" + i);
-      let running = true;
-      const result = $\`mkdir -v \${names}\`.nothrow().finally(() => (running = false));
-      const chunk = Buffer.alloc(65536);
-      let read = 0;
-      const drain = () => {
-        try {
-          for (let n; (n = readSync(reader, chunk)) > 0; ) read += n;
-        } catch (e) {
-          if (e.code !== "EAGAIN") throw e;
+test.if(isLinux).each([
+  // 2,000 lines of a directory, a separator and a name.
+  ["short -v lines", "mkdir -v", "", 2000, 30, 0],
+  // Each of the two lines is larger than the pipe, because the name is too long for a path.
+  ["error lines larger than the pipe", "mkdir", "2>&1", 2, 100_000, 1],
+])(
+  "output larger than a pipe holds does not wait in write(2) on the JS thread, %s",
+  async (_, command, redirect, count, length, exitCode) => {
+    using dir = tempDir("mkdir-blocking-pipe", {
+      "fixture.ts": /* ts */ `
+        import { $ } from "bun";
+        import { constants, openSync, readSync } from "node:fs";
+        const [fifo, command, redirect, count, length] = process.argv.slice(2);
+        const reader = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
+        const fill = Buffer.alloc(+length, "n").toString();
+        const names = Array.from({ length: +count }, (_, i) => fill + i);
+        let running = true;
+        const script = $\`\${{ raw: command }} \${names} \${{ raw: redirect }}\`;
+        const result = script.nothrow().finally(() => (running = false));
+        const chunk = Buffer.alloc(65536);
+        let read = 0;
+        const drain = () => {
+          try {
+            for (let n; (n = readSync(reader, chunk)) > 0; ) read += n;
+          } catch (e) {
+            if (e.code !== "EAGAIN") throw e;
+          }
+        };
+        while (running) {
+          await new Promise(resolve => setImmediate(resolve));
+          drain();
         }
-      };
-      while (running) {
-        await new Promise(resolve => setImmediate(resolve));
         drain();
-      }
-      drain();
-      const { exitCode, stdout } = await result;
-      console.error(JSON.stringify({ exitCode, read, printed: stdout.length }));
-    `,
-  });
-  const fifo = join(String(dir), "fifo");
-  expect(Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
-  // Opened for reading too, so that this open does not wait for the fixture to open its end.
-  const stdout = openSync(fifo, constants.O_RDWR);
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "fixture.ts", fifo],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout,
-    stderr: "pipe",
-  });
-  closeSync(stdout);
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  // Each line is the directory, a separator, the name and a line end.
-  const names = Array.from({ length: 2000 }, (_, i) => "directory-with-a-long-name-" + i);
-  const printed = names.reduce((bytes, name) => bytes + String(dir).length + 1 + name.length + 1, 0);
-  expect(stderr).toBe(JSON.stringify({ exitCode: 0, read: printed, printed }) + "\n");
-  expect(exitCode).toBe(0);
-});
+        const { exitCode, stdout } = await result;
+        console.error(JSON.stringify({ exitCode, read, printed: stdout.length }));
+      `,
+    });
+    const fifo = join(String(dir), "fifo");
+    expect(Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
+    // Opened for reading too, so that this open does not wait for the fixture to open its end.
+    const stdout = openSync(fifo, constants.O_RDWR);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts", fifo, command, redirect, String(count), String(length)],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout,
+      stderr: "pipe",
+    });
+    closeSync(stdout);
+    const [stderr, code] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const fill = Buffer.alloc(length, "n").toString();
+    const line = (path: string) => (exitCode ? `mkdir: ${path}: File name too long\n` : `${path}\n`);
+    const printed = Array.from({ length: count }, (_, i) => line(join(String(dir), fill + i))).join("").length;
+    expect(stderr).toBe(JSON.stringify({ exitCode, read: printed, printed }) + "\n");
+    expect(code).toBe(0);
+  },
+);
 
 test.each([["mkdir"], ["mkdir -pv"]])("%s without an operand prints the usage and exits 1", async command => {
   const { exitCode, stdout, stderr } = await $`${{ raw: command }}`.quiet().nothrow();

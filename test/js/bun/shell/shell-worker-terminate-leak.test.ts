@@ -244,7 +244,9 @@ test.skipIf(!isASAN || isWindows)(
       (async () => {
         await running;
       })();
+      const deadline = Date.now() + 20_000;
       while (!(await Bun.file("flag.txt").exists())) {
+        if (Date.now() > deadline) throw new Error("the reader of the pipe did not start");
         await Bun.sleep(5);
       }
       postMessage("ok");
@@ -264,7 +266,9 @@ test.skipIf(!isASAN || isWindows)(
       (async () => {
         await running;
       })();
+      const deadline = Date.now() + 20_000;
       while (!existsSync("started")) {
+        if (Date.now() > deadline) throw new Error("mkdir did not handle its first operand");
         await Bun.sleep(1);
       }
       postMessage("ok");

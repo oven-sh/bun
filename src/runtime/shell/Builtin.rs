@@ -305,13 +305,16 @@ impl BuiltinIO {
         }
     }
 
-    /// One place takes the bytes of both, in the order of the writes (`2>&1`, `&> file`).
+    /// One place takes the bytes of both, in the order of the writes (`2>&1`, `&> file`, `&> ${buffer}`).
     fn same_sink(&self, other: &BuiltinIO) -> bool {
         match (self, other) {
             (BuiltinIO::Fd(a), BuiltinIO::Fd(b)) => {
                 Rc::ptr_eq(&a.writer, &b.writer) && a.captured == b.captured
             }
             (BuiltinIO::Buf(a), BuiltinIO::Buf(b)) => a == b,
+            (BuiltinIO::ArrayBuf { buf: a, .. }, BuiltinIO::ArrayBuf { buf: b, .. }) => {
+                a.value == b.value
+            }
             _ => false,
         }
     }
@@ -321,11 +324,17 @@ impl BuiltinIO {
         let (BuiltinIO::Fd(a), BuiltinIO::Fd(b)) = (self, other) else {
             return false;
         };
-        match (bun_sys::fstat(a.writer.fd()), bun_sys::fstat(b.writer.fd())) {
-            (Ok(a), Ok(b)) => a.st_dev == b.st_dev && a.st_ino == b.st_ino,
-            // Not known, as for a Windows pipe or console: keep the order.
-            _ => true,
+        let (Some(a), Some(b)) = (a.writer.stat(), b.writer.stat()) else {
+            // Not known: keep the order.
+            return true;
+        };
+        // Windows gives a pipe or a console its handle as `st_ino`: two of one kind count as one file.
+        #[cfg(windows)]
+        if !bun_sys::S::ISREG(a.st_mode as _) || !bun_sys::S::ISREG(b.st_mode as _) {
+            return bun_sys::kind_from_mode(a.st_mode as _)
+                == bun_sys::kind_from_mode(b.st_mode as _);
         }
+        a.st_dev == b.st_dev && a.st_ino == b.st_ino
     }
 
     /// Body of [`Builtin::write_no_io`] with the Cmd split-borrow already
@@ -484,15 +493,13 @@ impl OutputRuns {
         }
     }
 
-    /// At most a page of `run`, up to a line end: a blocking pipe that is writable takes that much at once.
+    /// At most a page of `run`, cut at a line end if one is there: on Linux a blocking pipe that is writable takes a page at once.
     fn chunk_len(run: &[u8]) -> usize {
         const PAGE: usize = 4096;
         if run.len() <= PAGE {
             return run.len();
         }
-        let line_end = bun_core::strings::last_index_of_char(&run[..PAGE], b'\n')
-            .or_else(|| bun_core::strings::index_of_char_usize(run, b'\n'));
-        line_end.map_or(run.len(), |end| end + 1)
+        bun_core::strings::last_index_of_char(&run[..PAGE], b'\n').map_or(PAGE, |end| end + 1)
     }
 
     /// Fits runs of both streams to their sinks, before the first write.

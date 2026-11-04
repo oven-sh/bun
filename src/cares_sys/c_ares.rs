@@ -656,8 +656,7 @@ pub struct AddrInfo_hints {
     pub ai_socktype: c_int,
     pub ai_protocol: c_int,
 }
-// SAFETY: four `c_int` fields; all-zero is a valid hints value (S021).
-unsafe impl bun_core::ffi::Zeroable for AddrInfo_hints {}
+bun_core::impl_zeroable!(AddrInfo_hints);
 
 #[derive(Copy, Clone, Default)]
 pub struct ChannelOptions {
@@ -757,12 +756,9 @@ impl Channel {
         let optmask: c_int =
             ARES_OPT_FLAGS | ARES_OPT_TIMEOUTMS | ARES_OPT_SOCK_STATE_CB | ARES_OPT_TRIES;
 
-        // SAFETY: idempotent Winsock init (uv_once); c-ares creates its sockets with
-        // ws2_32 directly and libuv otherwise initializes Winsock lazily.
+        // c-ares creates its sockets with ws2_32 directly, and libuv initializes Winsock lazily.
         #[cfg(windows)]
-        unsafe {
-            bun_libuv_sys::uv__winsock_ensure()
-        };
+        bun_libuv_sys::uv__winsock_ensure();
         // SAFETY: c-ares FFI; opts/channel are valid stack pointers.
         let rc = unsafe { ares_init_options(&raw mut channel, &raw mut opts, optmask) };
         if let Some(err) = Error::get(rc) {
@@ -1071,9 +1067,7 @@ pub struct struct_ares_addr6ttl {
     pub(crate) ttl: c_int,
 }
 
-// SAFETY: `#[repr(C)]` POD — 16-byte byte-array union + `c_int`. All-zero is a
-// valid bit pattern (S021).
-unsafe impl bun_core::ffi::Zeroable for struct_ares_addr6ttl {}
+bun_core::impl_zeroable!(struct_ares_addr6ttl);
 impl Default for struct_ares_addr6ttl {
     #[inline]
     fn default() -> Self {

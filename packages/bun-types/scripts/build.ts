@@ -40,7 +40,7 @@ for (const file of sourceDocFiles) {
     .replace(/\$BUN_LATEST_VERSION/g, BUN_VERSION)
     // Prefix copied doc paths with /docs/ (handles both links and images)
     .replace(
-      /(!?\[([^\]]*)\])\(\/(runtime|pm|test|bundler|project|guides|installation|quickstart|typescript|feedback|index)(\/[^)]*)?\)/g,
+      /(!?\[([^\]]*)\])\(\/(runtime|pm|test|bundler|compiler|project|guides|installation|quickstart|typescript|feedback|index)(\/[^)]*)?\)/g,
       "$1(/docs/$3$4)",
     )
     // Convert non-copied content to absolute URLs (images, blog, etc.)

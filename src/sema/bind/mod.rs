@@ -3,17 +3,35 @@
 //! thread.
 
 mod binder;
+mod closed_module;
+pub mod decorator_metadata;
 mod lint;
 mod parents;
+mod runtime;
+pub mod static_referent;
 
+pub use closed_module::specifiers_of_closed_module;
 pub use parents::{bind_for_format_in, try_bind_for_format_in};
+pub use runtime::{
+    AnnexBFunction, Binding, BindingInitializer, BindingKind, BindingStability, CodeUnit,
+    CommonJsVariable, EarlyRedeclaration, EvalScope, FunctionFlags, ImplicitReference,
+    ImplicitReferenceKind, InitialState, ParameterVarCopy, PrivateMembers, PrivateName,
+    PrivateNameId, RuntimeBindOptions, RuntimeBindings, RuntimeBindingsIn, RuntimeTablesIn,
+    StoreKind, SymbolStore, has_mapped_arguments, has_simple_parameter_list, is_among_parameters,
+};
+pub use static_referent::{
+    LinkedBinding, LoadedValue, NamespaceReferent, ReferentCertainty, ReferentContext,
+    ResolvedReferent, StaticReferent, UnknownReferent, export_referent, static_referent,
+    symbol_referent,
+};
 
 use crate::atom::{Atom, known};
 use crate::hir::*;
-use crate::session::{Arena, ArenaHashMap, ArenaVec, transfer_arena, vec_from_iter_in};
+use crate::session::{Arena, ArenaHashMap, ArenaVec, transfer_arena};
 use crate::util::{FxBuild, FxHashMap, SharedSort};
 use smallvec::SmallVec;
 use std::hint::cold_path;
+use std::ops::ControlFlow;
 
 define_id!(SymbolId, ScopeId, TableId, FlowId);
 
@@ -228,7 +246,7 @@ pub fn is_module_exports(hir: &File, e: ExprId) -> bool {
 
 /// Same, but ignores the parentheses around `e`.
 pub fn is_module_exports_inside_parentheses(hir: &File, e: ExprId) -> bool {
-    let (obj, name) = match hir[e].kind {
+    let (obj, name) = match hir.checked_kind(e) {
         ExprKind::Dot { obj, name, .. } => (obj, name),
         ExprKind::Index { obj, index, .. } => (obj, string_literal_text(hir, index)),
         _ => return false,
@@ -266,7 +284,7 @@ pub fn assignment_declaration_kind(hir: &File, e: ExprId) -> JsDeclarationKind {
         return JsDeclarationKind::ModuleExports;
     }
     // `GetElementOrPropertyAccessName`
-    let (obj, name) = match hir[target].kind {
+    let (obj, name) = match hir.checked_kind(target) {
         ExprKind::Dot { obj, name, .. } => (
             obj,
             (!is_private_name_at(hir, hir.name_pos(target))).then_some(name),
@@ -295,7 +313,7 @@ pub fn assignment_declaration_kind(hir: &File, e: ExprId) -> JsDeclarationKind {
 /// `IsBindableStaticNameExpression` with `excludeThisKeyword`: `a`, `a.b`, `a["b"]`, `a[0]`.
 fn is_bindable_static_name(hir: &File, e: ExprId) -> bool {
     !is_parenthesized(hir, e)
-        && match hir[e].kind {
+        && match hir.checked_kind(e) {
             ExprKind::Ident(_) => true,
             ExprKind::Dot { obj, .. } => {
                 !is_private_name_at(hir, hir.name_pos(e)) && is_bindable_static_name(hir, obj)
@@ -322,7 +340,7 @@ pub fn define_property_call(hir: &File, e: ExprId) -> Option<(ExprId, ExprId)> {
         obj,
         name: known::defineProperty,
         ..
-    } = hir[call.callee].kind
+    } = hir.checked_kind(call.callee)
     else {
         return None;
     };
@@ -666,10 +684,15 @@ impl<'s> Symbols<'s> {
 
     /// Copies the lists into `arena`, for a program that shares the file with other programs.
     fn copy_in<'a>(&'a self, arena: &'a Arena) -> Symbols<'a> {
+        fn copy_of<'a, T: Copy>(list: &[T], arena: &'a Arena) -> ArenaVec<'a, T> {
+            let mut copy = ArenaVec::with_capacity_in(list.len(), arena);
+            copy.extend_from_slice(list);
+            copy
+        }
         Symbols {
-            list: vec_from_iter_in(self.list.iter().copied(), arena),
-            rest: vec_from_iter_in(self.rest.iter().copied(), arena),
-            many: vec_from_iter_in(self.many.iter().copied(), arena),
+            list: copy_of(&self.list, arena),
+            rest: copy_of(&self.rest, arena),
+            many: copy_of(&self.many, arena),
         }
     }
 }
@@ -742,6 +765,11 @@ pub enum ScopeKind {
     PropertyDeclaration(MemberId, FnId),
     /// Same for the property's type.
     PropertyType(MemberId, FnId),
+    /// `With`, `FieldInitializer`, `ClassDecorators` and `ImplicitBlock` declare nothing and exist only with `BindOptions::runtime`.
+    With(StmtId),
+    FieldInitializer(MemberId),
+    ClassDecorators(ClassId),
+    ImplicitBlock(FnId),
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -849,6 +877,12 @@ macro_rules! packed {
                 }
             }
         };
+
+        impl std::fmt::Debug for $packed {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                self.get().fmt(f)
+            }
+        }
     };
 }
 
@@ -1435,11 +1469,69 @@ pub struct Redeclaration {
     pub code: u32,
 }
 
+/// The `S::List`s of a `BoundIn`.
+macro_rules! long_lists {
+    ($each:ident) => {
+        $each!(
+            scopes,
+            tables,
+            entries,
+            nested_names,
+            ids,
+            specifiers,
+            expr_parent,
+            stmt_parent,
+            type_scope,
+            type_by_alias,
+            pat_parent,
+            pat_symbol,
+            prop_owner,
+            member_symbol,
+            member_owner,
+            member_scope,
+            param_fn,
+            type_param_symbol,
+            type_param_scope,
+            fns,
+            requires_scope_change,
+            fn_symbol,
+            class_symbol,
+            class_owner,
+            class_scope,
+            interface_symbol,
+            interface_scope,
+            interface_contains_this,
+            alias_symbol,
+            alias_scope,
+            var_stmt,
+            assignments,
+            case_stmt,
+            case_fallthrough,
+            import_scope,
+            export_scope,
+            free_idents,
+            alias_idents,
+            flow,
+            flow_edges,
+            flow_shared,
+            expr_kinds,
+            expr_kind_counts,
+            kind_counts
+        );
+    };
+}
+
 /// Side tables parallel to the vectors of a [`File`].
 #[derive(Default)]
 pub struct BoundIn<S: Storage> {
+    /// Holds the long lists of side tables that own them.
+    pub block: S::Block,
     /// The HIR was too deep to bind. No other field is filled in.
     pub ran_out_of_stack: bool,
+    /// `Bound::unbound_in`
+    pub is_unbound: bool,
+    /// These are the side tables of `Host::read_part_seen_by_every_file`.
+    pub is_bound_in_part: bool,
     pub symbols: S::Symbols,
     pub scopes: S::List<Scope>,
     /// Each table is a contiguous range of `entries`, in symbol creation order.
@@ -1647,6 +1739,7 @@ pub struct BoundIn<S: Storage> {
     /// other counts. See [`kind_counts`]. If it isn't empty, every statement has a `stmt_parent`
     /// and every type has a `type_scope`.
     pub kind_counts: S::List<u32>,
+    pub runtime: RuntimeBindingsIn<S>,
 }
 
 /// The layout of [`BoundIn::kind_counts`].
@@ -1719,6 +1812,13 @@ impl<S: Storage> BoundIn<S> {
             Decl::ImportEquals(it) => f[it].flags,
             _ => Flags::empty(),
         }
+    }
+
+    /// Whether the declaration makes the object of a namespace, or adds to it, when it runs.
+    pub fn makes_namespace_object(&self, f: &File, m: ModuleId) -> bool {
+        matches!(f[m].name, ModuleName::Ident(_))
+            && !f[m].is_erased
+            && self.module_instance_state[m.idx()] != ModuleInstanceState::NonInstantiated
     }
 
     #[inline]
@@ -1825,46 +1925,70 @@ impl<S: Storage> BoundIn<S> {
         sees_through_spread: bool,
     ) -> Option<AssignmentTarget> {
         loop {
-            match self.parent_of_expr(e) {
-                Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
-                    ExprKind::Assign { target, .. } if target != e => return None,
-                    // `{ name = value }` is a `ShorthandPropertyAssignment`.
-                    ExprKind::Assign { .. }
-                        if self.is_shorthand_property_assignment(hir, parent) =>
-                    {
-                        e = parent;
-                    }
-                    ExprKind::Assign { op, .. } => return Some(AssignmentTarget::Assign(op)),
-                    ExprKind::Unary {
-                        op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
-                        ..
-                    } => return Some(AssignmentTarget::Unary),
-                    ExprKind::Array(_) => e = parent,
-                    ExprKind::Spread(_) | ExprKind::NonNull(_) if sees_through_spread => e = parent,
-                    _ => return None,
-                },
-                // The value of `name: value` and of `...value`, and the assignment that
-                // `{ name = value }` is stored as.
-                Parent::Prop(p) => {
-                    let owner = self.prop_owner[p.idx()];
-                    if owner.is_none()
-                        || !matches!(hir[owner].kind, ExprKind::Object(_))
-                        || hir[p].kind == PropKind::Spread && !sees_through_spread
-                        || !matches!(
-                            hir[p].kind,
-                            PropKind::Init | PropKind::Shorthand | PropKind::Spread
-                        )
-                    {
-                        return None;
-                    }
-                    e = owner;
-                }
-                Parent::Stmt(s) if s.is_some() => {
-                    return target_of_for_in_or_of(hir, self.parent_of_stmt(s), s);
-                }
-                _ => return None,
-            }
+            e = match self.assignment_target_or_pattern_around(hir, e, sees_through_spread) {
+                ControlFlow::Continue(pattern) => pattern,
+                ControlFlow::Break(target) => return target,
+            };
         }
+    }
+
+    /// One step of `GetAssignmentTarget`.
+    #[inline]
+    pub fn get_assignment_target_or_pattern_around(
+        &self,
+        hir: &File,
+        e: ExprId,
+    ) -> ControlFlow<Option<AssignmentTarget>, ExprId> {
+        self.assignment_target_or_pattern_around(hir, e, true)
+    }
+
+    #[inline]
+    fn assignment_target_or_pattern_around(
+        &self,
+        hir: &File,
+        e: ExprId,
+        sees_through_spread: bool,
+    ) -> ControlFlow<Option<AssignmentTarget>, ExprId> {
+        ControlFlow::Break(match self.parent_of_expr(e) {
+            Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
+                ExprKind::Assign { target, .. } if target != e => None,
+                // `{ name = value }` is a `ShorthandPropertyAssignment`.
+                ExprKind::Assign { .. } if self.is_shorthand_property_assignment(hir, parent) => {
+                    return ControlFlow::Continue(parent);
+                }
+                ExprKind::Assign { op, .. } => Some(AssignmentTarget::Assign(op)),
+                ExprKind::Unary {
+                    op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
+                    ..
+                } => Some(AssignmentTarget::Unary),
+                ExprKind::Array(_) => return ControlFlow::Continue(parent),
+                ExprKind::Spread(_) | ExprKind::NonNull(_) if sees_through_spread => {
+                    return ControlFlow::Continue(parent);
+                }
+                _ => None,
+            },
+            // The value of `name: value` and of `...value`, and the assignment that
+            // `{ name = value }` is stored as.
+            Parent::Prop(p) => {
+                let owner = self.prop_owner[p.idx()];
+                if owner.is_none()
+                    || !matches!(hir[owner].kind, ExprKind::Object(_))
+                    || hir[p].kind == PropKind::Spread && !sees_through_spread
+                    || !matches!(
+                        hir[p].kind,
+                        PropKind::Init | PropKind::Shorthand | PropKind::Spread
+                    )
+                {
+                    None
+                } else {
+                    return ControlFlow::Continue(owner);
+                }
+            }
+            Parent::Stmt(s) if s.is_some() => {
+                target_of_for_in_or_of(hir, self.parent_of_stmt(s), s)
+            }
+            _ => None,
+        })
     }
 
     /// `IsVariableDeclarationInitializedToRequire` for the variable declaration or the binding
@@ -2170,7 +2294,7 @@ impl Bound<'_> {
                 {
                     return None;
                 }
-                match hir[left].kind {
+                match hir.checked_kind(left) {
                     ExprKind::Ident(_) => Some(hir[left].pos),
                     ExprKind::Dot { .. } => Some(hir.name_pos(left)),
                     // `IsStringOrNumericLiteralLike(SkipParentheses(argument))`
@@ -2474,11 +2598,20 @@ fn few_map_to_arena<K: Ord, V>(map: FxHashMap<K, V>, arena: &Arena) -> ArenaFewM
 }
 
 impl BoundBuilder {
+    /// Moves the side tables into `arena`, with every list at its final size.
+    #[cfg(test)]
+    pub fn into_arena<'s>(mut self, arena: &'s Arena) -> Bound<'s> {
+        self.move_to_arena(arena)
+    }
+
     /// Resets it to `BoundBuilder::default()`, except that the lists keep their capacity.
     fn clear(&mut self) {
         // Destructures every field so that a newly added one can't be forgotten.
         let BoundIn {
+            block: (),
             ran_out_of_stack,
+            is_unbound,
+            is_bound_in_part,
             symbols,
             scopes,
             tables,
@@ -2569,8 +2702,11 @@ impl BoundBuilder {
             expr_kinds,
             expr_kind_counts,
             kind_counts,
+            runtime,
         } = self;
         *ran_out_of_stack = Default::default();
+        *is_unbound = Default::default();
+        *is_bound_in_part = Default::default();
         symbols.clear();
         scopes.clear();
         tables.clear();
@@ -2661,24 +2797,39 @@ impl BoundBuilder {
         expr_kinds.clear();
         expr_kind_counts.clear();
         kind_counts.clear();
+        runtime.clear();
     }
 
     /// Moves the side tables into `arena`, with every list at its final size. Leaves `self` empty,
     /// and the lists that are long in most files keep their capacity.
     fn move_to_arena<'s>(&mut self, arena: &'s Arena) -> Bound<'s> {
-        Bound {
+        let mut room = 0;
+        macro_rules! measure {
+            ($($list:ident),*) => { $(room += ListBlock::room_for(&self.$list);)* };
+        }
+        long_lists!(measure);
+        room += Narrow::room_for(&self.expr_symbol) + Narrow::room_for(&self.expr_flow);
+        room += Narrow::room_for(&self.stmt_scope) + Narrow::room_for(&self.stmt_flow);
+        let mut block = ListBlock::new_in(arena, room);
+        let mut bound = Bound {
+            block: ListBlock::default(),
             ran_out_of_stack: self.ran_out_of_stack,
+            is_unbound: self.is_unbound,
+            is_bound_in_part: self.is_bound_in_part,
             symbols: {
                 let exact = Symbols::of(&self.symbols, arena);
                 self.symbols.clear();
                 exact
             },
-            scopes: copy_to_arena(&mut self.scopes, arena),
-            tables: copy_to_arena(&mut self.tables, arena),
-            entries: copy_to_arena(&mut self.entries, arena),
-            large_tables: map_to_arena(std::mem::take(&mut self.large_tables), arena),
-            nested_names: copy_to_arena(&mut self.nested_names, arena),
-            ids: copy_to_arena(&mut self.ids, arena),
+            scopes: block.take(&mut self.scopes, arena),
+            tables: block.take(&mut self.tables, arena),
+            entries: block.take(&mut self.entries, arena),
+            large_tables: FixedMap::Arena(map_to_arena(
+                std::mem::take(&mut self.large_tables),
+                arena,
+            )),
+            nested_names: block.take(&mut self.nested_names, arena),
+            ids: block.take(&mut self.ids, arena),
             file_symbol: self.file_symbol,
             export_stars: few_to_arena(std::mem::take(&mut self.export_stars), arena),
             ambient_modules: few_to_arena(std::mem::take(&mut self.ambient_modules), arena),
@@ -2692,7 +2843,7 @@ impl BoundBuilder {
             ),
             redeclarations: few_to_arena(std::mem::take(&mut self.redeclarations), arena),
             umd_globals: few_to_arena(std::mem::take(&mut self.umd_globals), arena),
-            specifiers: copy_to_arena(&mut self.specifiers, arena),
+            specifiers: block.take(&mut self.specifiers, arena),
             module_augmentations: few_to_arena(
                 std::mem::take(&mut self.module_augmentations),
                 arena,
@@ -2700,40 +2851,40 @@ impl BoundBuilder {
             ambient_specifiers: few_to_arena(std::mem::take(&mut self.ambient_specifiers), arena),
             commonjs_indicator: self.commonjs_indicator,
             module_exports_property: self.module_exports_property,
-            expr_symbol: Narrow::moved_in(arena, &mut self.expr_symbol),
-            expr_parent: copy_to_arena(&mut self.expr_parent, arena),
-            expr_flow: Narrow::moved_in(arena, &mut self.expr_flow),
-            stmt_parent: copy_to_arena(&mut self.stmt_parent, arena),
-            stmt_scope: Narrow::moved_in(arena, &mut self.stmt_scope),
-            type_scope: copy_to_arena(&mut self.type_scope, arena),
-            type_by_alias: copy_to_arena(&mut self.type_by_alias, arena),
+            expr_symbol: Narrow::moved_into(&mut block, arena, &mut self.expr_symbol),
+            expr_parent: block.take(&mut self.expr_parent, arena),
+            expr_flow: Narrow::moved_into(&mut block, arena, &mut self.expr_flow),
+            stmt_parent: block.take(&mut self.stmt_parent, arena),
+            stmt_scope: Narrow::moved_into(&mut block, arena, &mut self.stmt_scope),
+            type_scope: block.take(&mut self.type_scope, arena),
+            type_by_alias: block.take(&mut self.type_by_alias, arena),
             this_in_type_literal: ArenaFewMap::from_iter_in(
                 self.this_in_type_literal.drain().map(|node| (node, ())),
                 arena,
             ),
-            pat_parent: copy_to_arena(&mut self.pat_parent, arena),
-            pat_symbol: copy_to_arena(&mut self.pat_symbol, arena),
-            prop_owner: copy_to_arena(&mut self.prop_owner, arena),
-            member_symbol: copy_to_arena(&mut self.member_symbol, arena),
+            pat_parent: block.take(&mut self.pat_parent, arena),
+            pat_symbol: block.take(&mut self.pat_symbol, arena),
+            prop_owner: block.take(&mut self.prop_owner, arena),
+            member_symbol: block.take(&mut self.member_symbol, arena),
             property_symbol: few_map_to_arena(std::mem::take(&mut self.property_symbol), arena),
-            member_owner: copy_to_arena(&mut self.member_owner, arena),
-            member_scope: copy_to_arena(&mut self.member_scope, arena),
-            param_fn: copy_to_arena(&mut self.param_fn, arena),
-            type_param_symbol: copy_to_arena(&mut self.type_param_symbol, arena),
-            type_param_scope: copy_to_arena(&mut self.type_param_scope, arena),
-            fns: copy_to_arena(&mut self.fns, arena),
-            requires_scope_change: copy_to_arena(&mut self.requires_scope_change, arena),
-            fn_symbol: copy_to_arena(&mut self.fn_symbol, arena),
-            class_symbol: copy_to_arena(&mut self.class_symbol, arena),
-            class_owner: copy_to_arena(&mut self.class_owner, arena),
-            class_scope: copy_to_arena(&mut self.class_scope, arena),
-            interface_symbol: copy_to_arena(&mut self.interface_symbol, arena),
-            interface_scope: copy_to_arena(&mut self.interface_scope, arena),
-            interface_contains_this: copy_to_arena(&mut self.interface_contains_this, arena),
+            member_owner: block.take(&mut self.member_owner, arena),
+            member_scope: block.take(&mut self.member_scope, arena),
+            param_fn: block.take(&mut self.param_fn, arena),
+            type_param_symbol: block.take(&mut self.type_param_symbol, arena),
+            type_param_scope: block.take(&mut self.type_param_scope, arena),
+            fns: block.take(&mut self.fns, arena),
+            requires_scope_change: block.take(&mut self.requires_scope_change, arena),
+            fn_symbol: block.take(&mut self.fn_symbol, arena),
+            class_symbol: block.take(&mut self.class_symbol, arena),
+            class_owner: block.take(&mut self.class_owner, arena),
+            class_scope: block.take(&mut self.class_scope, arena),
+            interface_symbol: block.take(&mut self.interface_symbol, arena),
+            interface_scope: block.take(&mut self.interface_scope, arena),
+            interface_contains_this: block.take(&mut self.interface_contains_this, arena),
             enum_scope: few_to_arena(std::mem::take(&mut self.enum_scope), arena),
             module_scope: few_to_arena(std::mem::take(&mut self.module_scope), arena),
-            alias_symbol: copy_to_arena(&mut self.alias_symbol, arena),
-            alias_scope: copy_to_arena(&mut self.alias_scope, arena),
+            alias_symbol: block.take(&mut self.alias_symbol, arena),
+            alias_scope: block.take(&mut self.alias_scope, arena),
             enum_symbol: few_to_arena(std::mem::take(&mut self.enum_symbol), arena),
             enum_member_symbol: few_to_arena(std::mem::take(&mut self.enum_member_symbol), arena),
             enum_member_owner: few_to_arena(std::mem::take(&mut self.enum_member_owner), arena),
@@ -2742,8 +2893,8 @@ impl BoundBuilder {
                 std::mem::take(&mut self.module_instance_state),
                 arena,
             ),
-            var_stmt: copy_to_arena(&mut self.var_stmt, arena),
-            assignments: copy_to_arena(&mut self.assignments, arena),
+            var_stmt: block.take(&mut self.var_stmt, arena),
+            assignments: block.take(&mut self.assignments, arena),
             type_query_operands: few_to_arena(std::mem::take(&mut self.type_query_operands), arena),
             unchecked_exprs: few_to_arena(std::mem::take(&mut self.unchecked_exprs), arena),
             unchecked_types: few_to_arena(std::mem::take(&mut self.unchecked_types), arena),
@@ -2753,15 +2904,15 @@ impl BoundBuilder {
                 arena,
             ),
             computed_symbols: few_to_arena(std::mem::take(&mut self.computed_symbols), arena),
-            case_stmt: copy_to_arena(&mut self.case_stmt, arena),
-            stmt_flow: Narrow::moved_in(arena, &mut self.stmt_flow),
-            case_fallthrough: copy_to_arena(&mut self.case_fallthrough, arena),
+            case_stmt: block.take(&mut self.case_stmt, arena),
+            stmt_flow: Narrow::moved_into(&mut block, arena, &mut self.stmt_flow),
+            case_fallthrough: block.take(&mut self.case_fallthrough, arena),
             hoisted_vars: few_to_arena(std::mem::take(&mut self.hoisted_vars), arena),
             rejected_decorators: few_to_arena(std::mem::take(&mut self.rejected_decorators), arena),
             unused_labels: few_to_arena(std::mem::take(&mut self.unused_labels), arena),
-            import_scope: copy_to_arena(&mut self.import_scope, arena),
+            import_scope: block.take(&mut self.import_scope, arena),
             import_equals_scope: few_to_arena(std::mem::take(&mut self.import_equals_scope), arena),
-            export_scope: copy_to_arena(&mut self.export_scope, arena),
+            export_scope: block.take(&mut self.export_scope, arena),
             expr_scope: few_map_to_arena(std::mem::take(&mut self.expr_scope), arena),
             private_class: few_map_to_arena(std::mem::take(&mut self.private_class), arena),
             private_names_outside_class_bodies: few_to_arena(
@@ -2772,8 +2923,8 @@ impl BoundBuilder {
                 std::mem::take(&mut self.classes_of_private_names),
                 arena,
             ),
-            free_idents: copy_to_arena(&mut self.free_idents, arena),
-            alias_idents: copy_to_arena(&mut self.alias_idents, arena),
+            free_idents: block.take(&mut self.free_idents, arena),
+            alias_idents: block.take(&mut self.alias_idents, arena),
             arguments_objects: few_to_arena(std::mem::take(&mut self.arguments_objects), arena),
             identifiers_in_parameters: few_to_arena(
                 std::mem::take(&mut self.identifiers_in_parameters),
@@ -2784,15 +2935,18 @@ impl BoundBuilder {
                 std::mem::take(&mut self.names_resolved_for_arguments),
                 arena,
             ),
-            flow: copy_to_arena(&mut self.flow, arena),
-            flow_edges: copy_to_arena(&mut self.flow_edges, arena),
-            flow_shared: copy_to_arena(&mut self.flow_shared, arena),
+            flow: block.take(&mut self.flow, arena),
+            flow_edges: block.take(&mut self.flow_edges, arena),
+            flow_shared: block.take(&mut self.flow_shared, arena),
             flow_depth: self.flow_depth,
             has_loop_types_that_depend_on_order: self.has_loop_types_that_depend_on_order,
-            expr_kinds: copy_to_arena(&mut self.expr_kinds, arena),
-            expr_kind_counts: copy_to_arena(&mut self.expr_kind_counts, arena),
-            kind_counts: copy_to_arena(&mut self.kind_counts, arena),
-        }
+            expr_kinds: block.take(&mut self.expr_kinds, arena),
+            expr_kind_counts: block.take(&mut self.expr_kind_counts, arena),
+            kind_counts: block.take(&mut self.kind_counts, arena),
+            runtime: self.runtime.move_to_arena(arena),
+        };
+        bound.block = block;
+        bound
     }
 }
 
@@ -2801,12 +2955,15 @@ impl Bound<'_> {
     /// not copied. The program writes to the symbols, so they're copied to `arena`, like everything else.
     pub fn share<'s>(&'s self, arena: &'s Arena) -> Bound<'s> {
         Bound {
+            block: ListBlock::default(),
             ran_out_of_stack: self.ran_out_of_stack,
+            is_unbound: self.is_unbound,
+            is_bound_in_part: self.is_bound_in_part,
             symbols: self.symbols.copy_in(arena),
             scopes: Fixed::shared(&self.scopes),
             tables: Fixed::shared(&self.tables),
             entries: Fixed::shared(&self.entries),
-            large_tables: copy_of_map(&self.large_tables, arena),
+            large_tables: FixedMap::Shared(&self.large_tables),
             nested_names: Fixed::shared(&self.nested_names),
             ids: Fixed::shared(&self.ids),
             file_symbol: self.file_symbol,
@@ -2943,17 +3100,9 @@ impl Bound<'_> {
             expr_kinds: Fixed::shared(&self.expr_kinds),
             expr_kind_counts: Fixed::shared(&self.expr_kind_counts),
             kind_counts: Fixed::shared(&self.kind_counts),
+            runtime: self.runtime.share(),
         }
     }
-}
-
-fn copy_of_map<'s, K: Copy + Eq + std::hash::Hash, V: Copy>(
-    map: &ArenaHashMap<'_, K, V>,
-    arena: &'s Arena,
-) -> ArenaHashMap<'s, K, V> {
-    let mut exact = ArenaHashMap::with_capacity_and_hasher_in(map.len(), FxBuild, arena);
-    exact.extend(map.iter().map(|(&key, &value)| (key, value)));
-    exact
 }
 
 fn copy_of_few_map<'s, K: Copy + Ord, V: Copy>(
@@ -2964,9 +3113,40 @@ fn copy_of_few_map<'s, K: Copy + Ord, V: Copy>(
 }
 
 impl<'s> Bound<'s> {
+    pub(crate) fn for_each_long_list(&mut self, each: &mut dyn FnMut(&mut dyn LongList)) {
+        macro_rules! lists {
+            ($($list:ident),*) => { $(each(&mut self.$list);)* };
+        }
+        long_lists!(lists);
+        self.expr_symbol.for_each_long_list(each);
+        self.expr_flow.for_each_long_list(each);
+        self.stmt_scope.for_each_long_list(each);
+        self.stmt_flow.for_each_long_list(each);
+    }
+
+    /// Frees the long lists, which is most of the tables, and leaves them empty.
+    pub(crate) fn free_long_lists(&mut self) {
+        macro_rules! empty {
+            ($($list:ident),*) => { $(self.$list = Default::default();)* };
+        }
+        long_lists!(empty);
+        empty!(expr_symbol, expr_flow, stmt_scope, stmt_flow);
+        self.block = ListBlock::default();
+    }
+
     /// The side tables of a file without nodes.
     pub fn empty_in(arena: &'s Arena) -> Bound<'s> {
         BoundBuilder::default().move_to_arena(arena)
+    }
+
+    /// In place of the side tables of a module that is bound once a file that is read refers to it.
+    pub fn unbound_in(arena: &'s Arena, specifiers: Vec<Atom>) -> Bound<'s> {
+        let mut unbound = BoundBuilder {
+            is_unbound: true,
+            specifiers,
+            ..Default::default()
+        };
+        unbound.move_to_arena(arena)
     }
 }
 
@@ -2978,6 +3158,7 @@ pub struct BindOptions {
     /// `GetEmitScriptTarget` is older than ES2020.
     pub before_es2020: bool,
     pub before_es2017: bool,
+    pub runtime: Option<RuntimeBindOptions>,
 }
 
 /// `bindSourceFile`

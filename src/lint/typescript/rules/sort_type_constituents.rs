@@ -12,11 +12,11 @@ pub struct SortTypeConstituents {
     positions: [u32; Group::COUNT],
 }
 
-const NOT_SORTED: Message = Message::new("notSorted", "{{type}} type constituents must be sorted.");
-const NOT_SORTED_NAMED: Message =
-    Message::new("notSortedNamed", "{{type}} type {{name}} constituents must be sorted.");
-const SUGGEST_FIX: Message =
-    Message::new("suggestFix", "Sort constituents of type (removes all comments).");
+const NOT_SORTED: &Message = &Message::new("notSorted", "{{type}} type constituents must be sorted.");
+const NOT_SORTED_NAMED: &Message =
+    &Message::new("notSortedNamed", "{{type}} type {{name}} constituents must be sorted.");
+const SUGGEST_FIX: &Message =
+    &Message::new("suggestFix", "Sort constituents of type (removes all comments).");
 
 #[derive(Copy, Clone)]
 enum Group {

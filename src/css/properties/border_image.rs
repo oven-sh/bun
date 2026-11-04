@@ -157,7 +157,8 @@ impl BorderImage {
         repeat: &BorderImageRepeat,
         dest: &mut Printer,
     ) -> core::result::Result<(), PrintErr> {
-        if !source.eql(&Image::default()) {
+        let has_source = !source.eql(&Image::default());
+        if has_source {
             source.to_css(dest)?;
         }
         let has_slice = !slice.eql(&BorderImageSlice::default());
@@ -184,6 +185,10 @@ impl BorderImage {
         if !repeat.eql(&BorderImageRepeat::default()) {
             dest.write_str(" ")?;
             return repeat.to_css(dest);
+        }
+
+        if !(has_source || has_slice || has_width || has_outset) {
+            dest.write_str("none")?;
         }
 
         Ok(())
@@ -481,49 +486,29 @@ impl BorderImageHandler {
     ) -> bool {
         let arena = dest.bump();
 
-        // `flushHelper`/`propertyHelper` are macro_rules! to keep the
-        // per-field name dispatch without reflection.
-        macro_rules! flush_helper {
-            ($self:expr, $d:expr, $ctx:expr, $name:ident, $val:expr) => {
-                if $self.$name.is_some()
-                    && !$self.$name.as_ref().unwrap().eql($val)
-                    && $ctx.targets.browsers.is_some()
-                    && $val.is_compatible(&$ctx.targets.browsers.unwrap())
-                {
-                    $self.flush($d, $ctx);
-                }
-            };
+        if self.will_flush(property, &context.targets) {
+            self.flush(dest, context);
         }
 
+        // `propertyHelper` is a macro_rules! to keep the
+        // per-field name dispatch without reflection.
         macro_rules! property_helper {
-            ($self:expr, $field:ident, $val:expr, $d:expr, $ctx:expr) => {{
-                if $self.vendor_prefix != VendorPrefix::NONE {
-                    $self.flush($d, $ctx);
-                }
-
-                flush_helper!($self, $d, $ctx, $field, $val);
-
-                $self.vendor_prefix = VendorPrefix::NONE;
-                $self.$field = Some($val.deep_clone(arena));
-                $self.has_any = true;
+            ($field:ident, $val:expr) => {{
+                self.vendor_prefix = VendorPrefix::NONE;
+                self.$field = Some($val.deep_clone(arena));
+                self.has_any = true;
             }};
         }
 
         match property {
-            Property::BorderImageSource(val) => property_helper!(self, source, val, dest, context),
-            Property::BorderImageSlice(val) => property_helper!(self, slice, val, dest, context),
-            Property::BorderImageWidth(val) => property_helper!(self, width, val, dest, context),
-            Property::BorderImageOutset(val) => property_helper!(self, outset, val, dest, context),
-            Property::BorderImageRepeat(val) => property_helper!(self, repeat, val, dest, context),
+            Property::BorderImageSource(val) => property_helper!(source, val),
+            Property::BorderImageSlice(val) => property_helper!(slice, val),
+            Property::BorderImageWidth(val) => property_helper!(width, val),
+            Property::BorderImageOutset(val) => property_helper!(outset, val),
+            Property::BorderImageRepeat(val) => property_helper!(repeat, val),
             Property::BorderImage(_val) => {
                 let val = &_val.0;
                 let vp = _val.1;
-
-                flush_helper!(self, dest, context, source, &val.source);
-                flush_helper!(self, dest, context, slice, &val.slice);
-                flush_helper!(self, dest, context, width, &val.width);
-                flush_helper!(self, dest, context, outset, &val.outset);
-                flush_helper!(self, dest, context, repeat, &val.repeat);
 
                 self.source = Some(val.source.deep_clone(arena));
                 self.slice = Some(val.slice.deep_clone(arena));
@@ -535,8 +520,6 @@ impl BorderImageHandler {
             }
             Property::Unparsed(unparsed) => {
                 if is_border_image_property(unparsed.property_id.tag()) {
-                    self.flush(dest, context);
-
                     // Even if we weren't able to parse the value (e.g. due to var() references),
                     // we can still add vendor prefixes to the property itself.
                     let mut unparsed_clone =
@@ -583,13 +566,49 @@ impl BorderImageHandler {
         self.repeat = None;
     }
 
-    pub(crate) fn will_flush(&self, property: &Property) -> bool {
+    /// Whether a complete `border-image` is held, with none of it written before.
+    pub(crate) fn will_flush_shorthand(&self) -> bool {
+        self.flushed_properties.is_empty()
+            && self.vendor_prefix.contains(VendorPrefix::NONE)
+            && self.source.is_some()
+            && self.slice.is_some()
+            && self.width.is_some()
+            && self.outset.is_some()
+            && self.repeat.is_some()
+    }
+
+    /// Whether `handle_property` writes what it holds before it takes `property`.
+    pub(crate) fn will_flush(&self, property: &Property, targets: &css::targets::Targets) -> bool {
+        // Not every browser reads a prefixed property or function.
+        let prefixed = match property {
+            Property::BorderImageSource(val) => val.has_vendor_prefix(),
+            Property::BorderImage((val, vp)) => {
+                !vp.contains(VendorPrefix::NONE) || val.source.has_vendor_prefix()
+            }
+            _ => false,
+        };
+        // What is held stays as the fallback of such a value.
+        macro_rules! is_fallback {
+            ($name:ident, $val:expr) => {
+                self.$name.as_ref().is_some_and(|held| !held.eql($val))
+                    && (prefixed || targets.browsers.is_some_and(|b| !$val.is_compatible(&b)))
+            };
+        }
+
+        let has_prefix = self.vendor_prefix != VendorPrefix::NONE;
         match property {
-            Property::BorderImageSource(_)
-            | Property::BorderImageSlice(_)
-            | Property::BorderImageWidth(_)
-            | Property::BorderImageOutset(_)
-            | Property::BorderImageRepeat(_) => self.vendor_prefix != VendorPrefix::NONE,
+            Property::BorderImageSource(val) => has_prefix || is_fallback!(source, val),
+            Property::BorderImageSlice(val) => has_prefix || is_fallback!(slice, val),
+            Property::BorderImageWidth(val) => has_prefix || is_fallback!(width, val),
+            Property::BorderImageOutset(val) => has_prefix || is_fallback!(outset, val),
+            Property::BorderImageRepeat(val) => has_prefix || is_fallback!(repeat, val),
+            Property::BorderImage((val, _)) => {
+                is_fallback!(source, &val.source)
+                    || is_fallback!(slice, &val.slice)
+                    || is_fallback!(width, &val.width)
+                    || is_fallback!(outset, &val.outset)
+                    || is_fallback!(repeat, &val.repeat)
+            }
             Property::Unparsed(val) => is_border_image_property(val.property_id.tag()),
             _ => false,
         }

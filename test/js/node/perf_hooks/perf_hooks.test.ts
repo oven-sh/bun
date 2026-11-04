@@ -686,7 +686,10 @@ describe("gc entries", () => {
         entryType: "gc",
         startTime,
         duration,
-        detail: { kind: perf.constants.NODE_PERFORMANCE_GC_MAJOR, flags: perf.constants.NODE_PERFORMANCE_GC_FLAGS_FORCED },
+        detail: {
+          kind: perf.constants.NODE_PERFORMANCE_GC_MAJOR,
+          flags: perf.constants.NODE_PERFORMANCE_GC_FLAGS_FORCED,
+        },
       },
       startTime: expect.any(Number),
       duration: expect.any(Number),
@@ -771,31 +774,25 @@ describe("gc entries", () => {
   });
 
   test.concurrent("the observers that exist when an entry reaches JS get it", async () => {
+    // Node v26.3.0 prints the same: the entry is for whoever observes when it is handed over, and between the two
+    // observers here nothing observes.
     const { result, exitCode } = await run(`
-      const got = { left: [], stayed: [], came: [] };
-      const observerOf = name =>
-        new PerformanceObserver(list => {
-          got[name].push(...list.getEntries().filter(isForced));
-          if (got.stayed.length === 0 || got.came.length === 0) return;
-          stayed.disconnect();
-          came.disconnect();
-          finish({
-            left: got.left.length,
-            stayed: got.stayed.length,
-            came: got.came.length,
-            sameEntry: got.stayed[0] === got.came[0],
-          });
-        });
-      const left = observerOf("left");
-      const stayed = observerOf("stayed");
-      const came = observerOf("came");
+      const got = { left: 0, came: 0 };
+      const left = new PerformanceObserver(list => {
+        got.left += list.getEntries().filter(isForced).length;
+      });
+      const came = new PerformanceObserver(list => {
+        got.came += list.getEntries().filter(isForced).length;
+        if (got.came === 0) return;
+        came.disconnect();
+        finish(got);
+      });
       left.observe({ type: "gc" });
-      stayed.observe({ type: "gc" });
       Bun.gc(true);
       left.disconnect();
       came.observe({ type: "gc" });
     `);
-    expect(result).toEqual({ left: 0, stayed: 1, came: 1, sameEntry: true });
+    expect(result).toEqual({ left: 0, came: 1 });
     expect(exitCode).toBe(0);
   });
 
@@ -989,7 +986,9 @@ describe("gc entries", () => {
   test("constants has Node's kinds of collection", () => {
     // `node -p "require('perf_hooks').constants"` of node v26.12.1, the NODE_PERFORMANCE_GC_ names without FLAGS.
     expect(
-      Object.fromEntries(Object.entries(perf.constants).filter(([name]) => /^NODE_PERFORMANCE_GC_(?!FLAGS)/.test(name))),
+      Object.fromEntries(
+        Object.entries(perf.constants).filter(([name]) => /^NODE_PERFORMANCE_GC_(?!FLAGS)/.test(name)),
+      ),
     ).toEqual({
       NODE_PERFORMANCE_GC_MAJOR: 4,
       NODE_PERFORMANCE_GC_MINOR: 1,

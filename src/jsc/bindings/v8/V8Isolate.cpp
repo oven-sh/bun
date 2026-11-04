@@ -81,10 +81,9 @@ bool Isolate::GetHeapObjectStatisticsAtLastGC(HeapObjectStatistics*, size_t)
 
 void Isolate::AddGCPrologueCallback(GCCallbackWithData callback, void* data, GCType)
 {
-    // Stored but not fired. V8 calls the pair on the JS thread, right before and right after a collection, and the
-    // callbacks may allocate. JSC::HeapObserver is notified inside the collection, where nothing may allocate, and
-    // for some collections on the collector thread. A call made later would have prologue and epilogue back to back,
-    // and an addon that times the gap between them would record a collection of no length.
+    // Stored but not fired. V8 calls the pair on the JS thread, right before and right after a collection. JSC tells
+    // a JSC::HeapObserver inside the collection, where nothing may allocate, and for some collections on the collector
+    // thread. A later call would put the two back to back, and an addon that times the gap between them would read zero.
     m_globalInternals->gcPrologueCallbacks().append({ callback, data });
 }
 

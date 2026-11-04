@@ -773,6 +773,35 @@ describe("fs.watch", () => {
     },
   );
 
+  // A change of a stream of a file can be reported as "a:stream", which starts like a drive.
+  test.skipIf(!isWindows)("a write to a stream of a file with a one-letter name does not end the watch", async () => {
+    using dir = tempDir("watch-stream", { "a": "" });
+    const names: string[] = [];
+    const errors: unknown[] = [];
+    const done = Promise.withResolvers<void>();
+    const watcher = fs.watch(String(dir), (_, filename) => {
+      names.push(`${filename}`);
+      if (filename === "last.txt") done.resolve();
+    });
+    watcher.on("error", (error: NodeJS.ErrnoException) => {
+      errors.push(error.code);
+      done.resolve();
+    });
+    try {
+      try {
+        fs.writeFileSync(path.join(String(dir), "a:stream"), "x");
+      } catch {
+        // Not every file system has streams.
+      }
+      fs.writeFileSync(path.join(String(dir), "last.txt"), "x");
+      await done.promise;
+      expect(errors).toEqual([]);
+      expect(names).toContain("last.txt");
+    } finally {
+      watcher.close();
+    }
+  });
+
   // https://github.com/oven-sh/bun/issues/47263
   test.skipIf(!isWindows).each([
     ["the flat one first", [false, true]],

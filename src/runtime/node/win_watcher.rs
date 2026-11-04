@@ -236,8 +236,9 @@ impl PathWatcher {
         // Intentional wrap to bun_watcher::HashType
         let hash = me.handle.hash(path.as_bytes(), events, status) as bun_watcher::HashType;
         let is_file = !me.handle.is_dir();
-        // Only libuv's report that the watched directory itself is gone names a volume.
-        let removed = bun_paths::resolve_path::windows_volume_name_len(path.as_bytes()).0 != 0;
+        // Only libuv's report that the watched directory itself is gone is a full path.
+        let removed = bun_paths::is_absolute_windows(path.as_bytes())
+            && bun_paths::resolve_path::windows_volume_name_len(path.as_bytes()).0 != 0;
         if removed {
             // SAFETY: the handle is open, and `me` is not used after this write to it.
             unsafe { uv::uv_fs_event_stop(ptr::addr_of_mut!((*this).handle)) };

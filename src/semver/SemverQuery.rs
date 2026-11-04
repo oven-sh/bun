@@ -533,7 +533,7 @@ impl Group {
 
     /// True when `parse` passed over a part of the input that is not a comparator (`>=1 && <2`, `1.2.3.4`, `latest`).
     /// npm refuses such a range.
-    pub fn has_skipped(&self) -> bool {
+    pub(crate) fn has_skipped(&self) -> bool {
         self.flags.is_set(Flags::SKIPPED)
     }
 

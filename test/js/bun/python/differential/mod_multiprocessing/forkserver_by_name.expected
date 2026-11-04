@@ -1,0 +1,18 @@
+status: 0
+script: ab481d826e9c8e71
+---
+None
+True True
+True True
+forkserver ForkServerContext ForkServerProcess True
+None
+('forkserver', 'ForkServerContext', 'child', [1, 2], False)
+0
+PicklingError
+[0, 2, 4, 6, 8]
+[0, 2, 4]
+[0, 2, 4]
+True False True
+spawn
+forkserver
+('forkserver', 'ForkServerContext', 'another', None, False)

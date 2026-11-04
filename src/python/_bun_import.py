@@ -314,11 +314,21 @@ def _spawn_only(context):
 
     contexts = context._concrete_contexts = Contexts(context._concrete_contexts)
     fork = contexts.pop("fork")
-    contexts.pop("forkserver")
-    context._get_platform_default_context = lambda: contexts["spawn"]
+    # "forkserver", the default on Linux, promises what "spawn" does: a process that has nothing of its parent's but what was
+    # pickled for it. So it is there, under its name, and each of its processes is spawned: there is no server, and what
+    # set_forkserver_preload() names is not imported ahead of time.
+    context.ForkServerProcess._Popen = context.SpawnProcess.__dict__["_Popen"]
+    context.ForkServerProcess._after_fork = context.SpawnProcess.__dict__["_after_fork"]
+    context.ForkServerContext._check_available = lambda self: None
 
 
-_ADAPTATIONS = {"multiprocessing.context": _spawn_only}
+def _no_c_api(ctypes):
+    """ctypes makes pythonapi of the program itself, which has no C API of Python's: each function looked up in it would be missing.
+    Programs that can do without ask whether the name is there, for on PyPy it is not."""
+    del ctypes.pythonapi
+
+
+_ADAPTATIONS = {"ctypes": _no_c_api, "multiprocessing.context": _spawn_only}
 
 
 class _AdaptingLoader:

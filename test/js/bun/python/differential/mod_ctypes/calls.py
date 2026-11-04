@@ -18,7 +18,6 @@ show("missing", lambda: libc.no_such_function_xyz)
 show("missing item", lambda: libc["no_such_function_xyz"])
 show("missing library", lambda: type(CDLL("/no/such/library.so")))
 show("dunder", lambda: libc.__foo__)
-show("pythonapi", lambda: (type(pythonapi).__name__, pythonapi._name))
 show("cdll", lambda: type(cdll.LoadLibrary(None)).__name__)
 show("dllist", lambda: (type(ctypes.util.dllist()).__name__, all(isinstance(n, str) for n in ctypes.util.dllist())))
 

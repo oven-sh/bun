@@ -1,5 +1,5 @@
 status: 0
-script: 2ed9c1dc2dea44ed
+script: f40170191db650e3
 ---
 find_library (True, True, None)
 handle ('int', None, '_FuncPtr', 'strlen', True, False)
@@ -7,7 +7,6 @@ missing AttributeError: EXE: undefined symbol: no_such_function_xyz
 missing item AttributeError: EXE: undefined symbol: no_such_function_xyz
 missing library OSError: /no/such/library.so: cannot open shared object file: No such file or directory
 dunder AttributeError: __foo__
-pythonapi ('PyDLL', None)
 cdll CDLL
 dllist ('list', True)
 strlen (5, 0, 3, 4)

@@ -35,6 +35,7 @@ for t in types_:
     except TypeError as e:
         print(t.__name__, e)
 print(issubclass(_ctypes.ArgumentError, Exception), _ctypes.ArgumentError("x"))
-print(sorted(n for n in dir(ctypes) if not n.startswith("__")))
+# Where there is no C API there is no pythonapi.
+print(sorted(n for n in dir(ctypes) if not n.startswith("__") and n != "pythonapi"))
 import ctypes.wintypes, ctypes.util, ctypes._endian, ctypes._layout, ctypes._aix, ctypes.macholib
 print(ctypes.sizeof(ctypes.wintypes.DWORD), ctypes.sizeof(ctypes.wintypes.RECT), ctypes.sizeof(ctypes.wintypes.WIN32_FIND_DATAW), ctypes.wintypes.VARIANT_BOOL(True).value, ctypes.wintypes.LPCWSTR.__name__)

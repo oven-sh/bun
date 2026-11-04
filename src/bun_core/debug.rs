@@ -327,6 +327,24 @@ fn caller_of_faulting_stub(
     None
 }
 
+/// Code compiled with `-mbranch-protection=pac-ret` (an addon, a system
+/// library, Bun itself) saves its return addresses signed, in the bits above
+/// the address. An address without a signature stays as it is.
+#[inline(always)]
+pub fn strip_return_address_signature(#[allow(unused_mut)] mut address: usize) -> usize {
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: XPACLRI works on x30 alone, and is a no-op on a processor
+    // without pointer authentication.
+    unsafe {
+        core::arch::asm!(
+            "hint #7", // XPACLRI
+            inout("x30") address,
+            options(pure, nomem, nostack, preserves_flags),
+        )
+    };
+    address
+}
+
 /// Walks the frame-pointer chain, and frames of compiled code by their tables.
 pub struct StackIterator {
     pub fp: usize,
@@ -407,7 +425,8 @@ impl StackIterator {
         if new_fp != 0 && new_fp <= self.fp {
             return None;
         }
-        let new_pc = self.ma.load_usize(fp.checked_add(Self::PC_OFFSET)?)?;
+        let new_pc =
+            strip_return_address_signature(self.ma.load_usize(fp.checked_add(Self::PC_OFFSET)?)?);
 
         self.returned_to = Some((
             new_pc,
@@ -419,7 +438,15 @@ impl StackIterator {
     }
 }
 
-pub(crate) const PC_OFFSET: usize = StackIterator::PC_OFFSET;
+/// The return address in the frame record at `fp`, as `StackIterator` gives it.
+///
+/// # Safety
+/// `fp` is the address of a frame record.
+pub unsafe fn return_address_of_frame(fp: usize) -> usize {
+    // SAFETY: the caller's.
+    let saved = unsafe { *((fp + StackIterator::PC_OFFSET) as *const usize) };
+    strip_return_address_signature(saved)
+}
 
 /// Capture the current thread's call stack.
 ///
@@ -435,7 +462,7 @@ pub(crate) fn capture_current(first_address: Option<usize>, out: &mut [usize]) -
     // Miri can neither execute `frame_address`'s inline asm nor follow the
     // frame-pointer chain it returns. An empty trace keeps the debug-only
     // `StoredTrace` captures on the refcount paths interpretable. `cfg!` rather
-    // than `#[cfg]` so the walk below stays compiled (and `PC_OFFSET` live).
+    // than `#[cfg]` so the walk below stays compiled.
     if cfg!(miri) {
         return 0;
     }

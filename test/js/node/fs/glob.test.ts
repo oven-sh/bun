@@ -2,6 +2,8 @@
  * @note `fs.glob` et. al. are powered by {@link Bun.Glob}, which is extensively
  * tested elsewhere. These tests check API compatibility with Node.js.
  */
+// A namespace import: a build without `depthFromRoot` has `undefined` for it, so its tests fail and the file still loads.
+import * as internalForTesting from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import {
   bunEnv,
@@ -16,7 +18,9 @@ import {
   type DirectoryTree,
 } from "harness";
 import fs from "node:fs";
-import { join, parse, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, parse, posix, relative, resolve, sep, win32 } from "node:path";
+
+const { exposedInternals, depthFromRoot } = internalForTesting;
 
 let tmp: string;
 beforeAll(() => {
@@ -332,6 +336,56 @@ function fromAllThree(expected: string[]) {
   return { globSync: expected, glob: expected, "promises.glob": expected };
 }
 
+type PathCalls = { calls: number; below: number };
+type WalkInAChild = {
+  matches: ReturnType<typeof fromAllThree>;
+  relative: Record<keyof ReturnType<typeof fromAllThree>, PathCalls>;
+};
+
+/**
+ * Runs each walk through the three entry points in one child process. For each it counts the calls of path.relative():
+ * all of them, and those with an argument below the `cwd` of the walk. The count is in place before the first walk, so
+ * it sees every call of a module that loads later, as the DepthLimiter of `maxDepth` does. Node.js's test-fs-glob.mjs
+ * replaces fs functions in a child process in the same way.
+ */
+async function walkInAChild(rows: (readonly [pattern: string | string[], options: GlobOptions])[]) {
+  const source = `
+    const path = require("node:path");
+    const fs = require("node:fs");
+    const { relative } = path;
+    let counts;
+    let below;
+    path.relative = function (from, to) {
+      counts.calls++;
+      if (String(from).toLowerCase().startsWith(below) || String(to).toLowerCase().startsWith(below)) counts.below++;
+      return relative.apply(this, arguments);
+    };
+    const walks = {
+      globSync: async (pattern, options) => fs.globSync(pattern, options),
+      glob: (pattern, options) =>
+        new Promise((resolve, reject) => fs.glob(pattern, options, (err, paths) => (err ? reject(err) : resolve(paths)))),
+      "promises.glob": (pattern, options) => Array.fromAsync(fs.promises.glob(pattern, options)),
+    };
+    (async () => {
+      const report = [];
+      for (const [pattern, options] of ${JSON.stringify(rows)}) {
+        below = (path.resolve(options.cwd) + path.sep).toLowerCase();
+        const row = { matches: {}, relative: {} };
+        for (const [name, walk] of Object.entries(walks)) {
+          counts = row.relative[name] = { calls: 0, below: 0 };
+          row.matches[name] = (await walk(pattern, options)).map(match => match.replaceAll(path.sep, "/")).sort();
+        }
+        report.push(row);
+      }
+      console.log(JSON.stringify(report));
+    })();
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", source], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // With no report, stderr says why.
+  return exitCode === 0 && stdout ? (JSON.parse(stdout) as WalkInAChild[]) : { stderr, exitCode };
+}
+
 /**
  * Makes `link` a link to the directory `target`, which is a path below `root`.
  * A junction is the link to a directory that Windows lets a process create without a privilege. POSIX ignores the type.
@@ -504,6 +558,12 @@ it("a literal exclude pattern in another case excludes on macOS and Windows only
 describe("maxDepth", () => {
   const tree = { "f.txt": "", d1: { "f.txt": "", d2: { "f.txt": "", d3: { "f.txt": "" } } } };
   const everyFile = ["d1/d2/d3/f.txt", "d1/d2/f.txt", "d1/f.txt", "f.txt"];
+  // A volume that folds case reaches a directory by another spelling of its name. Node.js asks the file system about
+  // such a spelling of `cwd` on Windows and macOS only, where a volume folds case by default.
+  const volumeFoldsCase = (() => {
+    using dir = tempDir("fs-glob-max-depth", { probe: "" });
+    return (isWindows || isMacOS) && fs.existsSync(join(String(dir), "PROBE"));
+  })();
   type Row = [pattern: string | string[], options: Omit<GlobOptions, "cwd">, expected: string[]];
 
   const rows: Row[] = [
@@ -627,6 +687,453 @@ describe("maxDepth", () => {
     });
   });
 
+  // What the limiter asked path.relative() about during a walk.
+  type Asked = "no path" | "no path below cwd" | "a path below cwd";
+  type CountRow = [pattern: string | string[], maxDepth: number, expected: string[], asked?: Asked, cwd?: string];
+  const allThree = <T>(value: T) => ({ globSync: value, glob: value, "promises.glob": value });
+  const askedOf = ({ calls, below }: PathCalls): Asked =>
+    below > 0 ? "a path below cwd" : calls > 0 ? "no path below cwd" : "no path";
+
+  /** The matches of each row and what its walk asked path.relative() about, or the stderr of the child. */
+  async function walkRows(cwd: string, rows: CountRow[]) {
+    const report = await walkInAChild(
+      rows.map(([pattern, maxDepth, , , rowCwd]) => [pattern, { cwd: rowCwd ?? cwd, maxDepth }] as const),
+    );
+    return Array.isArray(report)
+      ? report.map(({ matches, relative }) => ({
+          matches,
+          asked: {
+            globSync: askedOf(relative.globSync),
+            glob: askedOf(relative.glob),
+            "promises.glob": askedOf(relative["promises.glob"]),
+          },
+        }))
+      : report;
+  }
+  const expectedOf = (rows: CountRow[]) =>
+    rows.map(([, , expected, asked = "no path"]) => ({ matches: allThree(expected), asked: allThree(asked) }));
+
+  // Only the DepthLimiter calls path.relative(), and it does so where the characters of a path do not settle its depth.
+  // POSIX settles every path of ASCII characters. Windows settles a path of names and a path below cwd as cwd is
+  // spelled. The two last rows take the route of Node.js's text on every platform: they show that the count sees the
+  // limiter.
+  it("asks path.relative() only about a path that its characters do not place", async () => {
+    using dir = tempDir("fs-glob-max-depth", {
+      "top.txt": "",
+      root: tree,
+      sibling: { "s.txt": "", "日本": { "f.txt": "" } },
+    });
+    const top = String(dir).replaceAll(sep, "/");
+    const root = `${top}/root`;
+    const outsideCwd: Asked = isWindows ? "no path below cwd" : "no path";
+    const throughParent: Asked = isWindows ? "a path below cwd" : "no path";
+    const rows: CountRow[] = [
+      ["**/*.txt", 2, ["d1/f.txt", "f.txt"]],
+      ["**", 2, [".", "d1", "d1/d2", "d1/f.txt", "f.txt"]],
+      ["d1/d2/f.txt", 2, []],
+      [["d1/**", "*"], 2, ["d1", "d1/d2", "d1/f.txt", "f.txt"]],
+      // An absolute pattern walks from the root of the volume: Windows asks about the directories above cwd.
+      [`${root}/**/*.txt`, 2, [`${root}/d1/f.txt`, `${root}/f.txt`], outsideCwd],
+      [`${root}/d1/*`, 2, [`${root}/d1/d2`, `${root}/d1/f.txt`], outsideCwd],
+      ["../root/**/*.txt", 2, ["../root/d1/f.txt", "../root/f.txt"], throughParent],
+      ["../root/*.txt", 2, ["../root/f.txt"], throughParent],
+      // The entries of the directory above cwd, a directory beside cwd, and a directory above cwd by its full path.
+      ["../*", 2, ["../root", "../sibling", "../top.txt"], outsideCwd],
+      ["../sibling/*.txt", 3, ["../sibling/s.txt"], outsideCwd],
+      ["../sibling/*.txt", 2, [], outsideCwd],
+      [`${top}/*.txt`, 2, [`${top}/top.txt`], outsideCwd],
+      // A path with ".." whose name needs a 16-bit string, beside cwd and below it.
+      ["../sibling/日本/*.txt", 4, ["../sibling/日本/f.txt"], "no path below cwd"],
+      ["../sibling/日本/*.txt", 2, ["../sibling/日本/f.txt"], "a path below cwd", join(String(dir), "sibling")],
+    ];
+    expect(await walkRows(join(String(dir), "root"), rows)).toEqual(expectedOf(rows));
+  });
+
+  // Each name here is like "." or "..", needs more than one byte for a character, or is one of many, and it is at the
+  // limit and one level past it. The lists are those of Node.js v26.12.1.
+  describe("the depth of a name below cwd", () => {
+    const names: DirectoryTree = {
+      "..a": { "f.txt": "" },
+      ".h": { "f.txt": "" },
+      "a b": { "f.txt": "" },
+      "ø": { "f.txt": "" },
+      "日本": { "f.txt": "", "語": { "f.txt": "" } },
+      a: { a: { a: { a: { a: { a: { a: { a: { a: { "f.txt": "" } } } } } } } } },
+      up: { "f.txt": "", in: { "f.txt": "" } },
+      // Windows has none of these names: it drops a last ".", ":" names a drive or a stream, and "\\" is a separator.
+      ...(isWindows ? {} : { "...": { "f.txt": "" }, "x:y": { "f.txt": "" }, "back\\slash": { "f.txt": "" } }),
+    };
+    // Windows resolves no path, so it takes a path with ".." the way of Node.js's text. A walk that the limit stops at
+    // ".." asks about that directory only.
+    const throughParent: Asked = isWindows ? "a path below cwd" : "no path";
+    const aboveCwd: Asked = isWindows ? "no path below cwd" : "no path";
+    const rows: CountRow[] = [
+      ["{..a,.h}/f.txt", 2, ["..a/f.txt", ".h/f.txt"]],
+      ["{..a,.h}/f.txt", 1, []],
+      ["{..a,.h}/**", 1, ["..a", ".h"]],
+      ["{ø,a b}/f.txt", 2, ["a b/f.txt", "ø/f.txt"]],
+      ["{ø,a b}/f.txt", 1, []],
+      ["日本/**", 2, ["日本", "日本/f.txt", "日本/語"]],
+      ["日本/*/f.txt", 3, ["日本/語/f.txt"]],
+      ["日本/*/f.txt", 2, []],
+      ["a/**/f.txt", 10, ["a/a/a/a/a/a/a/a/a/f.txt"]],
+      ["a/**/f.txt", 9, []],
+      ["a/a/../../ø/f.txt", 2, ["ø/f.txt"]],
+      ["a/a/../../ø/f.txt", 1, []],
+      // "**/.." gives cwd, which is "." at depth 0, and the directory above it, which is ".." at depth 1.
+      ["**/..", 1, [".", ".."], aboveCwd],
+      ["**/..", 0, []],
+      // Out of cwd and back into it: the depth is the one below cwd.
+      ["../names/up/f.txt", 2, ["../names/up/f.txt"], throughParent],
+      ["../names/up/f.txt", 1, [], aboveCwd],
+      ["../names/up/*/f.txt", 3, ["../names/up/in/f.txt"], throughParent],
+      ["../names/up/*/f.txt", 2, [], throughParent],
+      ...((isWindows
+        ? []
+        : [
+            [".../f.txt", 2, [".../f.txt"]],
+            [".../f.txt", 1, []],
+            [".../**", 1, ["..."]],
+            ["x*/f.txt", 2, ["x:y/f.txt"]],
+            ["x*/f.txt", 1, []],
+            ["x:y", 1, ["x:y"]],
+            ["x:y", 0, []],
+            ["back*/f.txt", 2, ["back\\slash/f.txt"]],
+            ["back*/f.txt", 1, []],
+          ]) as CountRow[]),
+    ];
+
+    let report: Awaited<ReturnType<typeof walkRows>>;
+    beforeAll(async () => {
+      using dir = tempDir("fs-glob-max-depth", { names });
+      report = await walkRows(join(String(dir), "names"), rows);
+    });
+
+    it.each(rows.map((row, index) => [row[0], row[1], index] as const))("%j at %d", (_pattern, _maxDepth, index) => {
+      // With no rows, the report is the stderr of the child.
+      expect(Array.isArray(report) ? report[index] : report).toEqual(expectedOf(rows)[index]);
+    });
+  });
+
+  // "ROOT" beside cwd "root". A volume that does not fold case has two directories, so no compare of the limiter may
+  // fold case: the file of "ROOT" is two levels deeper than the one of cwd. On a volume that folds case, "ROOT" is cwd.
+  // Only the file system says which it is, so Windows and macOS take the route of Node.js's text for such a path.
+  it("takes a name in another case for cwd only where the file system says that it is cwd", async () => {
+    using dir = tempDir("fs-glob-max-depth", { Top: { root: { "f.txt": "", d1: { "f.txt": "" } } } });
+    if (!volumeFoldsCase) {
+      fs.mkdirSync(join(String(dir), "Top", "ROOT"));
+      fs.writeFileSync(join(String(dir), "Top", "ROOT", "f.txt"), "");
+      fs.writeFileSync(join(String(dir), "Top", "ROOT", "other.txt"), "");
+    }
+    const top = `${String(dir).replaceAll(sep, "/")}/Top`;
+    const asked: Asked = isWindows || isMacOS ? "a path below cwd" : "no path";
+    // A wildcard with "ROOT" at the limit: the walk reads "ROOT", and asks about a file in it, only where it is cwd.
+    const askedAtTheLimit: Asked = volumeFoldsCase
+      ? "a path below cwd"
+      : isWindows || isMacOS
+        ? "no path below cwd"
+        : "no path";
+    const rows: CountRow[] = [
+      [`${top}/ROOT/f.txt`, 2, volumeFoldsCase ? [`${top}/ROOT/f.txt`] : [], asked],
+      [`${top}/ROOT/f.txt`, 3, [`${top}/ROOT/f.txt`], asked],
+      ["../ROOT/f.txt", 2, volumeFoldsCase ? ["../ROOT/f.txt"] : [], asked],
+      ["../ROOT/*.txt", 3, volumeFoldsCase ? ["../ROOT/f.txt"] : ["../ROOT/f.txt", "../ROOT/other.txt"], asked],
+      ["../ROOT/*.txt", 2, volumeFoldsCase ? ["../ROOT/f.txt"] : [], askedAtTheLimit],
+      [`${top}/ROOT/*.txt`, 2, volumeFoldsCase ? [`${top}/ROOT/f.txt`] : [], askedAtTheLimit],
+    ];
+    expect(await walkRows(join(String(dir), "Top", "root"), rows)).toEqual(expectedOf(rows));
+  });
+
+  // The two functions that the limiter takes a depth from, one for each platform, on every platform. An answer is the
+  // depth that path.resolve() and path.relative() give, or UNPLACED: then the limiter takes the route of Node.js's text.
+  describe("depthFromRoot()", () => {
+    const UNPLACED = -0x80000000;
+    const isAscii = (text: string) => !/[^\x00-\x7f]/.test(text);
+    // What pathDepth(relative(root, resolve(root, path))) of the limiter counts, and `~k` for a directory `k` levels above the root.
+    const depthOf = (platform: "posix" | "win32", root: string, path: string) => {
+      const { relative, resolve, isAbsolute, sep } = platform === "posix" ? posix : win32;
+      const fromRoot = relative(root, resolve(root, path));
+      if (fromRoot === "") return 0;
+      if (isAbsolute(fromRoot)) return Infinity;
+      const parts = fromRoot.split(sep);
+      return parts.every(part => part === "..") ? ~parts.length : parts.length;
+    };
+
+    it("gives the depth that path.resolve() and path.relative() give, or says that the characters do not settle it", () => {
+      const { posix: depthPosix, win32: depthWin32 } = depthFromRoot;
+      const mismatches: unknown[] = [];
+      let cases = 0;
+      const segments = ["a", "b", ".", "..", "", "...", "..a", ".h", "x:y", "C:", "ø", "日本"];
+      for (const platform of ["posix", "win32"] as const) {
+        const { dirname, basename, parse, relative, resolve, sep } = platform === "posix" ? posix : win32;
+        const seps = platform === "posix" ? ["/"] : ["\\", "/"];
+        const roots =
+          platform === "posix"
+            ? ["/", "/root", "/vol/Top/root"]
+            : ["C:\\", "C:\\root", "C:\\vol\\Top\\root", "\\\\server\\share\\dir"];
+        const relativePaths = new Set<string>();
+        for (const s of seps) {
+          for (const a of segments) {
+            for (const path of [a, s + a, a + s]) relativePaths.add(path);
+            for (const b of segments) {
+              relativePaths.add(a + s + b);
+              if (["a", ".", "..", "", "x:y"].includes(a)) {
+                relativePaths.add(a + s + b + s + "a").add(a + s + b + s + "..");
+              }
+            }
+          }
+        }
+        for (const root of roots) {
+          const rootAndSep = root.endsWith(sep) ? root : root + sep;
+          const paths = [
+            root,
+            rootAndSep,
+            `${root}x`,
+            `${root}x${sep}a`,
+            root.toUpperCase(),
+            rootAndSep.toUpperCase() + "a",
+          ];
+          // Each directory above the root, a name in it, and the way back down from it.
+          for (let above = root, back = "", ups = ""; dirname(above) !== above;) {
+            back = back === "" ? basename(above) : basename(above) + sep + back;
+            ups = ups === "" ? ".." : ups + sep + "..";
+            above = dirname(above);
+            paths.push(
+              above,
+              above.toUpperCase(),
+              `${above}${above.endsWith(sep) ? "" : sep}x`,
+              ups,
+              ups + sep,
+              ups + sep + "x",
+            );
+            paths.push(ups + sep + back, ups + sep + back + sep + "a", ups + sep + back.toUpperCase() + sep + "a");
+          }
+          paths.push(`..${sep}..${sep}..${sep}..${sep}..${sep}x`);
+          const long = Buffer.alloc(600, "n").toString();
+          paths.push(long, rootAndSep + long, `..${sep}${long}`, `.${sep}${long}`);
+          // A path that resolve() has to put together, around the longest one that the function puts together itself.
+          for (const extra of [-1, 0, 1, 200]) {
+            paths.push(`.${sep}${Buffer.alloc(512 - root.length - 3 + extra, "n")}`);
+          }
+          for (const path of relativePaths) paths.push(path, rootAndSep + path, `..${sep}${path}`);
+
+          for (const path of paths) {
+            const expected = depthOf(platform, root, path);
+            const ascii = isAscii(path) && isAscii(root);
+            if (platform === "win32") {
+              cases++;
+              const actual = depthWin32(path, root, false);
+              // Names alone, and the root as it is spelled and names: the count answers these.
+              const names = path.startsWith(rootAndSep) ? path.slice(rootAndSep.length) : path;
+              const isNames = !/^[\\/]|:|(^|[\\/])\.\.([\\/]|$)/.test(names);
+              if (actual === UNPLACED ? isNames : actual !== expected) {
+                mismatches.push({ platform, root, path, actual, expected });
+              }
+              continue;
+            }
+            const full = resolve(root, path);
+            const fromRoot = relative(root, full);
+            const isBesideRoot = fromRoot.startsWith("../") && expected > 0;
+            const [shorter, longer] = [root.toLowerCase(), full.toLowerCase()].sort((a, b) => a.length - b.length);
+            // In lower case the path is the root, above it or below it: on macOS the file system says which.
+            const isRootInAnotherCase =
+              isBesideRoot &&
+              longer.startsWith(shorter) &&
+              (shorter.length === longer.length || shorter === "/" || longer[shorter.length] === "/");
+            // The function puts a path together in 512 characters, and needs none for one that starts with "..".
+            const fits = (path.startsWith("/") ? path.length : root.length + 1 + path.length) <= 512;
+            for (const foldsCase of [false, true]) {
+              cases++;
+              const actual = depthPosix(path, root, foldsCase);
+              const mustAnswer = ascii && fits && !(foldsCase && isRootInAnotherCase);
+              const mustNotAnswer = ascii && foldsCase && isRootInAnotherCase;
+              if (actual === UNPLACED ? mustAnswer : mustNotAnswer || actual !== expected) {
+                mismatches.push({ platform, foldsCase, root, path, actual, expected });
+              }
+            }
+          }
+        }
+      }
+      expect({ mismatches: mismatches.slice(0, 20), cases: cases > 10_000 }).toEqual({ mismatches: [], cases: true });
+    });
+
+    // One row for each rule of the function.
+    it.each([
+      // A path of names, with parts that are no names.
+      ["posix", "a/b", "/vol/Top/root", false, 2],
+      ["posix", "a//b/./c/", "/vol/Top/root", false, 3],
+      ["posix", "", "/vol/Top/root", false, 0],
+      ["posix", ".", "/vol/Top/root", false, 0],
+      // At the root, below it, beside it and above it, by a full path and through "..".
+      ["posix", "/vol/Top/root", "/vol/Top/root", false, 0],
+      ["posix", "/vol/Top/root/a/b", "/vol/Top/root", false, 2],
+      ["posix", "/vol/Top/rootx/a", "/vol/Top/root", false, 3],
+      ["posix", "/vol/Top/other", "/vol/Top/root", false, 2],
+      ["posix", "/vol/Top", "/vol/Top/root", false, ~1],
+      ["posix", "/", "/vol/Top/root", false, ~3],
+      ["posix", "../root/a", "/vol/Top/root", false, 1],
+      ["posix", "../other/a", "/vol/Top/root", false, 3],
+      ["posix", "../", "/vol/Top/root", false, ~1],
+      ["posix", "../../../../x", "/vol/Top/root", false, 4],
+      ["posix", "a/../../root/b", "/vol/Top/root", false, 1],
+      ["posix", "/a", "/", false, 1],
+      ["posix", "../a", "/", false, 1],
+      // A path in another case than the root: another directory, or on macOS what the file system has to say.
+      ["posix", "/vol/Top/ROOT/a", "/vol/Top/root", false, 3],
+      ["posix", "/vol/Top/ROOT/a", "/vol/Top/root", true, UNPLACED],
+      ["posix", "/vol/Top/ROOT", "/vol/Top/root", true, UNPLACED],
+      ["posix", "/vol/TOP", "/vol/Top/root", true, UNPLACED],
+      ["posix", "../ROOT/a", "/vol/Top/root", true, UNPLACED],
+      ["posix", "/vol/TOP/x", "/vol/Top/root", true, 4],
+      ["posix", "/vol/Top/other", "/vol/Top/root", true, 2],
+      ["posix", "/vol/Top", "/vol/Top/root", true, ~1],
+      ["posix", "/vol/Top/root/a", "/vol/Top/root", true, 1],
+      // What the function does not resolve: a name that is not ASCII, and a root that resolve() would change.
+      ["posix", "ø/日本", "/vol/Top/root", false, 2],
+      ["posix", "/vol/Top/root/日本", "/vol/Top/root", false, 1],
+      ["posix", "../root/日本", "/vol/Top/root", false, UNPLACED],
+      ["posix", "../root/ø", "/vol/Top/root", false, UNPLACED],
+      ["posix", "../a", "/vol/Top/root/", false, UNPLACED],
+      ["posix", "../a", "vol/root", false, UNPLACED],
+      // Windows counts names. A ":" can name a drive, and no path is resolved.
+      ["win32", "a\\b/c", "C:\\vol\\Top\\root", false, 3],
+      ["win32", "C:\\vol\\Top\\root", "C:\\vol\\Top\\root", false, 0],
+      ["win32", "C:\\vol\\Top\\root\\a", "C:\\vol\\Top\\root", false, 1],
+      ["win32", "C:\\a", "C:\\", false, 1],
+      ["win32", "\\\\server\\share\\dir\\a", "\\\\server\\share\\dir", false, 1],
+      ["win32", "C:\\vol\\Top\\ROOT\\a", "C:\\vol\\Top\\root", false, UNPLACED],
+      ["win32", "C:\\vol\\Top\\rootx", "C:\\vol\\Top\\root", false, UNPLACED],
+      ["win32", "C:\\vol\\Top", "C:\\vol\\Top\\root", false, UNPLACED],
+      ["win32", "..\\root\\a", "C:\\vol\\Top\\root", false, UNPLACED],
+      ["win32", "a\\..\\b", "C:\\vol\\Top\\root", false, UNPLACED],
+      ["win32", "x:y", "C:\\vol\\Top\\root", false, UNPLACED],
+      ["win32", "a\\x:y", "C:\\vol\\Top\\root", false, UNPLACED],
+      ["win32", "C:\\vol\\Top\\root\\x:y", "C:\\vol\\Top\\root", false, UNPLACED],
+    ] as const)("%s: %j below %j, foldsCase %p", (platform, path, root, foldsCase, expected) => {
+      expect(depthFromRoot[platform](path, root, foldsCase)).toBe(expected);
+    });
+
+    // On POSIX the function puts a path that it resolves together in 512 characters. One that starts with ".." and one
+    // that resolve() leaves as it is need no room.
+    it("resolves a path of 512 characters, and a longer one that it does not have to put together", () => {
+      const { posix: depthPosix } = depthFromRoot;
+      const root = "/vol/Top/root";
+      const untidy = (length: number) => `./${Buffer.alloc(length - root.length - 3, "n")}`;
+      const untidyAbsolute = (length: number) => `${root}/./${Buffer.alloc(length - root.length - 3, "n")}`;
+      const long = Buffer.alloc(600, "n").toString();
+      expect({
+        "a path to resolve of 512 characters": depthPosix(untidy(512), root, false),
+        "one of 513": depthPosix(untidy(513), root, false),
+        "an absolute path to resolve of 512 characters": depthPosix(untidyAbsolute(512), root, false),
+        "an absolute one of 513": depthPosix(untidyAbsolute(513), root, false),
+        "names alone": depthPosix(`${long}/${long}`, root, false),
+        "below the root": depthPosix(`${root}/${long}`, root, false),
+        "through ..": depthPosix(`../root/${long}`, root, false),
+        "beside the root": depthPosix(`../${long}/${long}`, root, false),
+      }).toEqual({
+        "a path to resolve of 512 characters": 1,
+        "one of 513": UNPLACED,
+        "an absolute path to resolve of 512 characters": 1,
+        "an absolute one of 513": UNPLACED,
+        "names alone": 2,
+        "below the root": 1,
+        "through ..": 1,
+        "beside the root": 3,
+      });
+    });
+  });
+
+  // The limiter answers from the characters of a path when it can. Each answer has to be the one that path.resolve()
+  // and path.relative() give, which is the rule of Node.js, for each shape of path on each platform.
+  it("gives the depth that path.resolve() and path.relative() give", async () => {
+    const { DepthLimiter } = exposedInternals["internal/fs/glob-depth-limiter"];
+    using dir = tempDir("fs-glob-max-depth", { Top: { root: { a: {} } } });
+    // The spelling of the file system: Windows and macOS ask it whether a path in another spelling is the root.
+    const root = join(fs.realpathSync.native(String(dir)), "Top", "root");
+    const depthOf = (path: string) => {
+      const fromRoot = relative(root, resolve(root, path));
+      return fromRoot === "" ? 0 : isAbsolute(fromRoot) ? Infinity : fromRoot.split(sep).length;
+    };
+    const isAboveRoot = (path: string) => {
+      const rootFromPath = relative(resolve(root, path), root);
+      return (
+        rootFromPath !== "" &&
+        !isAbsolute(rootFromPath) &&
+        rootFromPath !== ".." &&
+        !rootFromPath.startsWith(`..${sep}`)
+      );
+    };
+
+    const segments = ["a", "b", ".", "..", "", "...", "..a", ".h", "x:y", "C:", "ø", "日本"];
+    const seps = isWindows ? ["\\", "/"] : ["/"];
+    const relativePaths = new Set<string>();
+    for (const s of seps) {
+      for (const a of segments) {
+        for (const path of [a, s + a, a + s]) relativePaths.add(path);
+        for (const b of segments) {
+          relativePaths.add(a + s + b);
+          if (["a", ".", "..", "", "x:y"].includes(a)) relativePaths.add(a + s + b + s + "a").add(a + s + b + s + "..");
+        }
+      }
+    }
+    const back = join("..", basename(root));
+    const paths = [root, root + sep, `${root}x`, `${root}x${sep}a`, "..", `..${sep}`, back];
+    // Each directory above the root, a name in it, and the path to it through "..".
+    for (let above = dirname(root), ups = ".."; ; above = dirname(above), ups += `${sep}..`) {
+      paths.push(above, join(above, "x"), ups, `${ups}${sep}x`);
+      if (dirname(above) === above) break;
+    }
+    // A path that resolve() has to put together, around the longest one that the limiter puts together itself.
+    for (const extra of [-1, 0, 1, 200]) {
+      paths.push(`.${sep}${Buffer.alloc(512 - root.length - 3 + extra, "n")}`);
+    }
+    if (isWindows) paths.push("\\\\server\\share\\x", "Z:\\x", "Z:x");
+    for (const path of relativePaths) {
+      // As it is, below the root as it is spelled, and below the root by way of the directory above it.
+      paths.push(path, root + sep + path, back + sep + path);
+    }
+
+    const mismatches: unknown[] = [];
+    let questions = 0;
+    const check = (question: string, path: string, maxDepth: number, actual: unknown, expected: boolean) => {
+      questions++;
+      if (actual !== expected) mismatches.push({ question, path, maxDepth, actual, expected });
+    };
+    // One limiter for each limit: no answer may come from what another question left behind.
+    const limiters = new Map<number, InstanceType<typeof DepthLimiter>>();
+    const limiter = (maxDepth: number) =>
+      limiters.get(maxDepth) ?? limiters.set(maxDepth, new DepthLimiter(root, maxDepth)).get(maxDepth)!;
+    const ask = async (path: string) => {
+      const depth = depthOf(path);
+      const isAbove = isAboveRoot(path);
+      // At the depth of the path, one level less and one level more: a match and a directory are then at the limit and past it.
+      for (const maxDepth of Number.isFinite(depth) ? [depth - 1, depth, depth + 1] : [3]) {
+        if (maxDepth < 0) continue;
+        const at = limiter(maxDepth);
+        check("includes", path, maxDepth, at.includes(path), depth <= maxDepth);
+        check("includesNow", path, maxDepth, at.includesNow(path) ?? (await at.includesAsync(path)), depth <= maxDepth);
+        check("includesAsync", path, maxDepth, await at.includesAsync(path), depth <= maxDepth);
+        check("canTraverse", path, maxDepth, at.canTraverse(path, false), depth < maxDepth);
+        check("canTraverse, absolute pattern", path, maxDepth, at.canTraverse(path, true), isAbove || depth < maxDepth);
+        check("canTraverseAsync", path, maxDepth, await at.canTraverseAsync(path, false), depth < maxDepth);
+        const absolute = await at.canTraverseAsync(path, true);
+        check("canTraverseAsync, absolute pattern", path, maxDepth, absolute, isAbove || depth < maxDepth);
+      }
+    };
+    for (const path of paths) {
+      await ask(path);
+      // What the walker asks after a directory: a name in it as join() writes it, and two names.
+      await ask(join(path, "a"));
+      await ask(path + sep + "a" + sep + "b");
+      // A character that is a separator or a drive on the other platform.
+      await ask(path + sep + (isWindows ? "a:b" : "a\\b"));
+    }
+    expect({ mismatches: mismatches.slice(0, 20), questions: questions > 40_000 }).toEqual({
+      mismatches: [],
+      questions: true,
+    });
+  });
+
   // The depth of a path through a link is the depth of the path, not the depth of the target of the link.
   describe("with followSymlinks", () => {
     it.each([
@@ -673,12 +1180,6 @@ describe("maxDepth", () => {
     const slashes = dir.replaceAll(sep, "/");
     return pattern.replace("<dir>", slashes).replace("<top>", `${slashes}/Top`).replace("<TOP>", `${slashes}/TOP`);
   };
-  // A volume that folds case reaches a directory by another spelling of its name. Node.js asks the file system about
-  // such a spelling of `cwd` on Windows and macOS only, where a volume folds case by default.
-  const volumeFoldsCase = (() => {
-    using dir = tempDir("fs-glob-max-depth", { probe: "" });
-    return (isWindows || isMacOS) && fs.existsSync(join(String(dir), "PROBE"));
-  })();
 
   describe("the Dirents of an absolute or '..' pattern", () => {
     type Row = [pattern: string, maxDepth: number, expected: string[]];

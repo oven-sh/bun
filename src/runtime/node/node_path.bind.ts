@@ -1,4 +1,4 @@
-// The native functions of `path.posix` and `path.win32`. src/js/node/path.ts puts them on the two objects.
+// The native functions of `path.posix` and `path.win32`. src/js/node/path.ts puts them on the two objects, all but depthFromRoot.
 import * as b from "../../codegen/bindgen-lib.ts";
 import * as table from "../../codegen/builtins/lib.ts";
 
@@ -59,6 +59,18 @@ const isAbsolute = () =>
     ...ofOperandsAlone,
   });
 
+// For the DepthLimiter of fs.glob: the depth of `path` below `root`, `~k` for a directory `k` levels above it, or the least i32 when the characters do not settle it.
+const depthFromRoot = () =>
+  b.fn({
+    name: "depthFromRoot",
+    length: 3,
+    args: { path: b.string.local, root: b.string.local, foldsCase: b.bool },
+    returns: b.i32,
+    capability: "heap",
+    throws: true,
+    ...ofOperandsAlone,
+  });
+
 const join = () =>
   b.fn({
     name: "join",
@@ -114,6 +126,7 @@ const format = () =>
   });
 
 export const basenamePosix = basename();
+export const depthFromRootPosix = depthFromRoot();
 export const dirnamePosix = ofPath("dirname", result);
 export const extnamePosix = ofPath("extname", result);
 export const formatPosix = format();
@@ -135,6 +148,7 @@ export const toNamespacedPathPosix = b.fn({
 });
 
 export const basenameWin32 = basename();
+export const depthFromRootWin32 = depthFromRoot();
 export const dirnameWin32 = ofPath("dirname", result);
 export const extnameWin32 = ofPath("extname", result);
 export const formatWin32 = format();

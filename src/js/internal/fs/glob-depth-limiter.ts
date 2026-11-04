@@ -34,6 +34,12 @@ function pathDepth(path: string) {
   return path.split(sep).length;
 }
 
+// Not in Node's v26.12.1 text. What DepthFromRoot() and IsAncestorOfRoot() of Node's native walker (src/glob/glob_walker.cc, nodejs/node#65392) answer: the depth, `~k` for a directory `k` levels above the root, or UNPLACED when the characters do not settle it.
+const depthFromRoot: (path: string, root: string, foldsCase: boolean) => number = isWindows
+  ? $bindgen("node_path.bind.ts", "depthFromRootWin32")
+  : $bindgen("node_path.bind.ts", "depthFromRootPosix");
+const UNPLACED = -0x80000000;
+
 function ancestorAtDepth(path: string, relativePath: string) {
   let ancestor = path;
   if (relativePath !== "") {
@@ -280,13 +286,21 @@ class DepthLimiter {
   }
 
   includes(path: string) {
-    return pathDepth(this.#relativeFromRoot(path)) <= this.#maxDepth;
+    const depth = depthFromRoot(path, this.#root, isMacOS);
+    if (depth === UNPLACED) {
+      return pathDepth(this.#relativeFromRoot(path)) <= this.#maxDepth;
+    }
+    return (depth < 0 ? ~depth : depth) <= this.#maxDepth;
   }
 
   // Not in Node's text. For the async walk, which cannot await where it adds a match: `undefined` when only the file system can say, and the lookup has then started.
   includesNow(path: string) {
-    const relativePath = this.#relativeFromRootAsync(path);
-    return typeof relativePath === "string" ? pathDepth(relativePath) <= this.#maxDepth : undefined;
+    const depth = depthFromRoot(path, this.#root, isMacOS);
+    if (depth === UNPLACED) {
+      const relativePath = this.#relativeFromRootAsync(path);
+      return typeof relativePath === "string" ? pathDepth(relativePath) <= this.#maxDepth : undefined;
+    }
+    return (depth < 0 ? ~depth : depth) <= this.#maxDepth;
   }
 
   async includesAsync(path: string) {
@@ -294,16 +308,24 @@ class DepthLimiter {
   }
 
   canTraverse(path: string, isAbsolutePattern: boolean) {
-    return (
-      (isAbsolutePattern && this.#isAncestorOfRoot(path)) || pathDepth(this.#relativeFromRoot(path)) < this.#maxDepth
-    );
+    const depth = depthFromRoot(path, this.#root, isMacOS);
+    if (depth === UNPLACED) {
+      return (
+        (isAbsolutePattern && this.#isAncestorOfRoot(path)) || pathDepth(this.#relativeFromRoot(path)) < this.#maxDepth
+      );
+    }
+    return depth >= 0 ? depth < this.#maxDepth : isAbsolutePattern || ~depth < this.#maxDepth;
   }
 
   async canTraverseAsync(path: string, isAbsolutePattern: boolean) {
-    return (
-      (isAbsolutePattern && (await this.#isAncestorOfRootAsync(path))) ||
-      pathDepth(await this.#relativeFromRootAsync(path)) < this.#maxDepth
-    );
+    const depth = depthFromRoot(path, this.#root, isMacOS);
+    if (depth === UNPLACED) {
+      return (
+        (isAbsolutePattern && (await this.#isAncestorOfRootAsync(path))) ||
+        pathDepth(await this.#relativeFromRootAsync(path)) < this.#maxDepth
+      );
+    }
+    return depth >= 0 ? depth < this.#maxDepth : isAbsolutePattern || ~depth < this.#maxDepth;
   }
 }
 

@@ -1,0 +1,11 @@
+status: 0
+oracle: none
+---
+cm_of_class ['function:1', 'function:1', 'function:1', 'function:1']
+cm_of_instance ['function:1', 'function:1', 'function:1', 'function:1']
+sm_of_class ['undefined:1', 'undefined:1', 'undefined:1', 'undefined:1']
+sm_of_instance ['undefined:1', 'undefined:1', 'undefined:1', 'undefined:1']
+cm_of_class ['function:1', 'function:1', 'function:1', 'function:1']
+cm_of_instance ['function:1', 'function:1', 'function:1', 'function:1']
+['python:D,1', 'python:D,1', 'python:D,1', 'python:D,1'] ['python:D,1', 'python:D,1', 'python:D,1', 'python:D,1']
+['function:1', 'function:1', 'function:1', 'function:1'] ['function:1', 'function:1', 'function:1', 'function:1']

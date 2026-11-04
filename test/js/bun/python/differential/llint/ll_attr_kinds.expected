@@ -1,0 +1,142 @@
+status: 0
+script: 70de75a131c442cf
+---
+x 0 -> [1, 1, 1]
+m() 0 -> [('A.m', 'NoneType', 'none'), ('A.m', 'NoneType', 'none'), ('A.m', 'NoneType', 'none')]
+m(1) 0 -> [('A.m', 'int', 'none'), ('A.m', 'int', 'none'), ('A.m', 'int', 'none')]
+m 0 -> [('A.m', 'int', 'none'), ('A.m', 'int', 'none'), ('A.m', 'int', 'none')]
+x 1 -> [1, 1, 1]
+m() 1 -> [('A.m', 'A', 'none'), ('A.m', 'A', 'none'), ('A.m', 'A', 'none')]
+m(1) 1 -> [('A.m', 'A', 1), ('A.m', 'A', 1), ('A.m', 'A', 1)]
+m 1 -> [('A.m', 'A', 2), ('A.m', 'A', 2), ('A.m', 'A', 2)]
+x 2 -> ['S.x', 'S.x', 'S.x']
+m() 2 -> [('S.m', 'none'), ('S.m', 'none'), ('S.m', 'none')]
+m(1) 2 -> [('S.m', 1), ('S.m', 1), ('S.m', 1)]
+m 2 -> [('S.m', 2), ('S.m', 2), ('S.m', 2)]
+x 3 -> ['S.x', 'S.x', 'S.x']
+m() 3 -> [('S.m', 'none'), ('S.m', 'none'), ('S.m', 'none')]
+m(1) 3 -> [('S.m', 1), ('S.m', 1), ('S.m', 1)]
+m 3 -> [('S.m', 2), ('S.m', 2), ('S.m', 2)]
+x 4 -> [('K.x', 'K'), ('K.x', 'K'), ('K.x', 'K')]
+m() 4 -> [('K.m', 'K', 'none'), ('K.m', 'K', 'none'), ('K.m', 'K', 'none')]
+m(1) 4 -> [('K.m', 'K', 1), ('K.m', 'K', 1), ('K.m', 'K', 1)]
+m 4 -> [('K.m', 'K', 2), ('K.m', 'K', 2), ('K.m', 'K', 2)]
+x 5 -> [('K.x', 'K'), ('K.x', 'K'), ('K.x', 'K')]
+m() 5 -> [('K.m', 'K', 'none'), ('K.m', 'K', 'none'), ('K.m', 'K', 'none')]
+m(1) 5 -> [('K.m', 'K', 1), ('K.m', 'K', 1), ('K.m', 'K', 1)]
+m 5 -> [('K.m', 'K', 2), ('K.m', 'K', 2), ('K.m', 'K', 2)]
+x 6 -> ['S.x', 'S.x', 'S.x']
+m() 6 -> [('S.m', 'none'), ('S.m', 'none'), ('S.m', 'none')]
+m(1) 6 -> [('S.m', 1), ('S.m', 1), ('S.m', 1)]
+m 6 -> [('S.m', 2), ('S.m', 2), ('S.m', 2)]
+x 7 -> ['S.x', 'S.x', 'S.x']
+m() 7 -> [('S.m', 'none'), ('S.m', 'none'), ('S.m', 'none')]
+m(1) 7 -> [('S.m', 1), ('S.m', 1), ('S.m', 1)]
+m 7 -> [('S.m', 2), ('S.m', 2), ('S.m', 2)]
+x 8 -> [('K.x', 'SubK'), ('K.x', 'SubK'), ('K.x', 'SubK')]
+m() 8 -> [('K.m', 'SubK', 'none'), ('K.m', 'SubK', 'none'), ('K.m', 'SubK', 'none')]
+m(1) 8 -> [('K.m', 'SubK', 1), ('K.m', 'SubK', 1), ('K.m', 'SubK', 1)]
+m 8 -> [('K.m', 'SubK', 2), ('K.m', 'SubK', 2), ('K.m', 'SubK', 2)]
+x 9 -> [('K.x', 'SubK'), ('K.x', 'SubK'), ('K.x', 'SubK')]
+m() 9 -> [('K.m', 'SubK', 'none'), ('K.m', 'SubK', 'none'), ('K.m', 'SubK', 'none')]
+m(1) 9 -> [('K.m', 'SubK', 1), ('K.m', 'SubK', 1), ('K.m', 'SubK', 1)]
+m 9 -> [('K.m', 'SubK', 2), ('K.m', 'SubK', 2), ('K.m', 'SubK', 2)]
+x 10 -> ['module.x', 'module.x', 'module.x']
+m() 10 -> [('module.m', 'none'), ('module.m', 'none'), ('module.m', 'none')]
+m(1) 10 -> [('module.m', 1), ('module.m', 1), ('module.m', 1)]
+m 10 -> [('module.m', 2), ('module.m', 2), ('module.m', 2)]
+mixed -> [(1, ('A.m', 'NoneType', 'none'), ('A.m', 'int', 'none'), ('A.m', 'int', 'none')), (1, ('A.m', 'A', 'none'), ('A.m', 'A', 1), ('A.m', 'A', 1)), ('S.x', ('S.m', 'none'), ('S.m', 2), ('S.m', 2)), ('S.x', ('S.m', 'none'), ('S.m', 3), ('S.m', 3)), (('K.x', 'K'), ('K.m', 'K', 'none'), ('K.m', 'K', 4), ('K.m', 'K', 4)), (('K.x', 'K'), ('K.m', 'K', 'none'), ('K.m', 'K', 5), ('K.m', 'K', 5)), ('S.x', ('S.m', 'none'), ('S.m', 6), ('S.m', 6)), ('S.x', ('S.m', 'none'), ('S.m', 7), ('S.m', 7)), (('K.x', 'SubK'), ('K.m', 'SubK', 'none'), ('K.m', 'SubK', 8), ('K.m', 'SubK', 8)), (('K.x', 'SubK'), ('K.m', 'SubK', 'none'), ('K.m', 'SubK', 9), ('K.m', 'SubK', 9)), ('module.x', ('module.m', 'none'), ('module.m', 10), ('module.m', 10)), (1, ('A.m', 'NoneType', 'none'), ('A.m', 'int', 'none'), ('A.m', 'int', 'none')), (1, ('A.m', 'A', 'none'), ('A.m', 'A', 1), ('A.m', 'A', 1)), ('S.x', ('S.m', 'none'), ('S.m', 2), ('S.m', 2)), ('S.x', ('S.m', 'none'), ('S.m', 3), ('S.m', 3)), (('K.x', 'K'), ('K.m', 'K', 'none'), ('K.m', 'K', 4), ('K.m', 'K', 4)), (('K.x', 'K'), ('K.m', 'K', 'none'), ('K.m', 'K', 5), ('K.m', 'K', 5)), ('S.x', ('S.m', 'none'), ('S.m', 6), ('S.m', 6)), ('S.x', ('S.m', 'none'), ('S.m', 7), ('S.m', 7)), (('K.x', 'SubK'), ('K.m', 'SubK', 'none'), ('K.m', 'SubK', 8), ('K.m', 'SubK', 8)), (('K.x', 'SubK'), ('K.m', 'SubK', 'none'), ('K.m', 'SubK', 9), ('K.m', 'SubK', 9)), ('module.x', ('module.m', 'none'), ('module.m', 10), ('module.m', 10)), (1, ('A.m', 'NoneType', 'none'), ('A.m', 'int', 'none'), ('A.m', 'int', 'none')), (1, ('A.m', 'A', 'none'), ('A.m', 'A', 1), ('A.m', 'A', 1)), ('S.x', ('S.m', 'none'), ('S.m', 2), ('S.m', 2)), ('S.x', ('S.m', 'none'), ('S.m', 3), ('S.m', 3)), (('K.x', 'K'), ('K.m', 'K', 'none'), ('K.m', 'K', 4), ('K.m', 'K', 4)), (('K.x', 'K'), ('K.m', 'K', 'none'), ('K.m', 'K', 5), ('K.m', 'K', 5)), ('S.x', ('S.m', 'none'), ('S.m', 6), ('S.m', 6)), ('S.x', ('S.m', 'none'), ('S.m', 7), ('S.m', 7)), (('K.x', 'SubK'), ('K.m', 'SubK', 'none'), ('K.m', 'SubK', 8), ('K.m', 'SubK', 8)), (('K.x', 'SubK'), ('K.m', 'SubK', 'none'), ('K.m', 'SubK', 9), ('K.m', 'SubK', 9)), ('module.x', ('module.m', 'none'), ('module.m', 10), ('module.m', 10))]
+identity -> (True, True, False, True, True, True, True, True)
+wrapped -> (['first', 'first', 'first'], ['first', 'first', 'first'], [('first', 'R'), ('first', 'R'), ('first', 'R')], [('first', 'R'), ('first', 'R'), ('first', 'R')], 'first', 'first')
+wrapped anew -> (['second', 'second', 'second'], ['second', 'second', 'second'], [('second', 'R'), ('second', 'R'), ('second', 'R')], [('second', 'R'), ('second', 'R'), ('second', 'R')], 'second', 'second')
+replaced -> (['third', 'third', 'third'], ['third', 'third', 'third'], ['third', 'third', 'third'], ['third', 'third', 'third'], 'third', 'third')
+other kinds -> ([('function', 1), ('function', 1), ('function', 1)], [('function', 0), ('function', 0), ('function', 0)], ('function', 1), ('function', 0))
+not callable -> TypeError:'int' object is not callable
+not callable, class -> TypeError:'int' object is not callable
+in the instance -> (['of the instance', 'of the instance', 'of the instance'], [('function', 0), ('function', 0), ('function', 0)])
+gone -> AttributeError:'R' object has no attribute 's'
+gone, class -> AttributeError:type object 'R' has no attribute 's'
+odd none type -> TypeError:'NoneType' object is not callable
+odd none Odd -> TypeError:'NoneType' object is not callable
+odd cnone type -> TypeError:'NoneType' object is not callable
+odd cnone Odd -> TypeError:'NoneType' object is not callable
+odd cls type -> 0
+odd cls Odd -> 0
+odd ccls type -> TypeError:'type' object is not iterable
+odd ccls Odd -> TypeError:'type' object is not iterable
+odd part type -> ['p', 'Odd']
+odd part Odd -> ['p', 'Odd']
+odd nested type -> 'nested'
+odd nested Odd -> 'nested'
+odd prop type -> TypeError:'property' object is not callable
+odd prop Odd -> TypeError:'property' object is not callable
+odd get -> ([None, None, None], [None, None, None])
+odd call -> TypeError:'NoneType' object is not callable
+odd call -> TypeError:'NoneType' object is not callable
+odd call -> TypeError:'NoneType' object is not callable
+derived -> [[('MyStatic', True, 'D'), ('MyStatic', True, 'D'), ('MyStatic', True, 'D')], [('MyStatic', False, 'D'), ('MyStatic', False, 'D'), ('MyStatic', False, 'D')], [('MyClass', True, 'D'), ('MyClass', True, 'D'), ('MyClass', True, 'D')], [('MyClass', False, 'D'), ('MyClass', False, 'D'), ('MyClass', False, 'D')], ['plain static', 'plain static', 'plain static'], ['plain static', 'plain static', 'plain static'], [('plain class', 'D'), ('plain class', 'D'), ('plain class', 'D')], [('plain class', 'D'), ('plain class', 'D'), ('plain class', 'D')]]
+derived, changed -> [['now it has a __get__', 'now it has a __get__', 'now it has a __get__'], ['now it has a __get__', 'now it has a __get__', 'now it has a __get__'], ['this one too', 'this one too', 'this one too'], ['this one too', 'this one too', 'this one too']]
+class -> (['Base.v', 'Base.v', 'Base.v'], ['Base.v', 'Base.v', 'Base.v'], True, ['Base.f', 'Base.f', 'Base.f'])
+base set -> ['Base.v 2', 'Base.v 2', 'Base.v 2']
+mid set -> (['Mid.v', 'Mid.v', 'Mid.v'], ['Mid.v', 'Mid.v', 'Mid.v'], ['Base.v 2', 'Base.v 2', 'Base.v 2'])
+mid deleted -> ['Base.v 2', 'Base.v 2', 'Base.v 2']
+leaf f -> (['Leaf.f', 'Leaf.f', 'Leaf.f'], ['Base.f', 'Base.f', 'Base.f'])
+bases -> (['Other.v', 'Other.v', 'Other.v'], 'Other')
+deleted -> AttributeError:type object 'Mid' has no attribute 'v'
+missing -> ['Other.v', 'Other.v']
+of type -> TypeError:unbound method type.mro() needs an argument
+name -> (['Leaf', 'Leaf', 'Leaf'], ['int', 'int', 'int'])
+renamed -> ['Renamed', 'Renamed', 'Renamed']
+built in -> [(3, 'A', {'a': None, 'b': None}, 'Base.f', 3, 1, 1, 7, 3, 8.0, 98, {97: 98}, ('a', 'b'), 'dict'), (3, 'A', {'a': None, 'b': None}, 'Base.f', 3, 1, 1, 7, 3, 8.0, 98, {97: 98}, ('a', 'b'), 'dict'), (3, 'A', {'a': None, 'b': None}, 'Base.f', 3, 1, 1, 7, 3, 8.0, 98, {97: 98}, ('a', 'b'), 'dict')]
+values -> [('inner', (1, 2), [3], {4: 5}, 'str', None, 1000000000000000000000000000000, 1.0, True, frozenset({6}), 'property', 'property', Ellipsis, (1, 2), 'inner'), ('inner', (1, 2), [3], {4: 5}, 'str', None, 1000000000000000000000000000000, 1.0, True, frozenset({6}), 'property', 'property', Ellipsis, (1, 2), 'inner'), ('inner', (1, 2), [3], {4: 5}, 'str', None, 1000000000000000000000000000000, 1.0, True, frozenset({6}), 'property', 'property', Ellipsis, (1, 2), 'inner')]
+meta -> (['WithMeta.both', 'WithMeta.both', 'WithMeta.both'], ['Meta.inMeta', 'Meta.inMeta', 'Meta.inMeta'], [('metaMethod', 'WithMeta'), ('metaMethod', 'WithMeta'), ('metaMethod', 'WithMeta')], [('metaProperty', 'WithMeta'), ('metaProperty', 'WithMeta'), ('metaProperty', 'WithMeta')], ['WithMeta.later', 'WithMeta.later', 'WithMeta.later'])
+meta, instance -> ('WithMeta.both', 'hidden by the property')
+meta, instance has none -> AttributeError:'WithMeta' object has no attribute 'inMeta'
+meta gets a property -> ['a property of Meta now', 'a property of Meta now', 'a property of Meta now']
+meta loses it -> ['WithMeta.later', 'WithMeta.later', 'WithMeta.later']
+meta gets a value -> ['WithMeta.later', 'WithMeta.later', 'WithMeta.later']
+meta __getattribute__ -> (['all the same', 'all the same', 'all the same'], ['WithMeta.both', 'WithMeta.both', 'WithMeta.both'])
+and without -> (['WithMeta.later', 'WithMeta.later', 'WithMeta.later'], ['WithMeta.both', 'WithMeta.both', 'WithMeta.both'])
+meta __getattr__ -> (['WithMeta.later', 'WithMeta.later', 'WithMeta.later'], ('fallback', 'nothing'), [('fallback', 'v'), ('fallback', 'v'), ('fallback', 'v')])
+before the class changes class -> ['WithMeta.both', 'WithMeta.both', 'WithMeta.both']
+after -> ['Meta2.both', 'Meta2.both', 'Meta2.both']
+and back -> ['WithMeta.both', 'WithMeta.both', 'WithMeta.both']
+methods of the metaclass -> [(('mc', 'MK'), 'ms', ('mc', 'MK'), 'ms'), (('mc', 'MK'), 'ms', ('mc', 'MK'), 'ms'), (('mc', 'MK'), 'ms', ('mc', 'MK'), 'ms')]
+enum -> ([<Color.RED: 1>, <Color.RED: 1>, <Color.RED: 1>], True, 'red', [<Color.RED: 1>, <Color.RED: 1>, <Color.RED: 1>], [2, 2, 2], 2, 'RED', <Flags.A|B: 3>, 1, <Color.RED: 1>, <Color.GREEN: 2>)
+of its own class -> ['me', 'me', 'me', 'me', 'me', 'me', 'me', 'me', 'me', 'me', 'me', 'me']
+the class gets a __get__ -> [('bound', True, 'Own'), ('bound', True, 'Own'), ('bound', True, 'Own'), ('bound', True, 'OwnSub'), ('bound', True, 'OwnSub'), ('bound', True, 'OwnSub'), ('bound', False, 'Own'), ('bound', False, 'Own'), ('bound', False, 'Own'), ('bound', False, 'OwnSub'), ('bound', False, 'OwnSub'), ('bound', False, 'OwnSub')]
+and loses it -> ['me', 'me', 'me', 'me', 'me', 'me', 'me', 'me', 'me', 'me', 'me', 'me']
+with a __set__ alone -> ['in the instance', 'in the instance', 'in the instance']
+without -> ['in the instance', 'in the instance', 'in the instance']
+before the value changes class -> ['me', 'me', 'me', 'me', 'me', 'me', 'me', 'me', 'me', 'me', 'me', 'me']
+after -> [('Getter', True, 'Own'), ('Getter', True, 'Own'), ('Getter', True, 'Own'), ('Getter', True, 'OwnSub'), ('Getter', True, 'OwnSub'), ('Getter', True, 'OwnSub'), ('Getter', False, 'Own'), ('Getter', False, 'Own'), ('Getter', False, 'Own'), ('Getter', False, 'OwnSub'), ('Getter', False, 'OwnSub'), ('Getter', False, 'OwnSub')]
+and back -> ['me', 'me', 'me', 'me', 'me', 'me', 'me', 'me', 'me', 'me', 'me', 'me']
+at home -> (['Home', 'Home', 'Home'], ['Home', 'Home', 'Home'])
+away -> (['Away', 'Away', 'Away'], ['Away', 'Away', 'Away'])
+away gets a __get__ -> [42, 42, 42]
+stores -> (None, None, None, {'x': 3})
+stores, away -> (None, None, {'x': 5})
+stores, away has a __set__ -> (None, None, {'x': 5}, [6, 7])
+of another class -> (['Stranger', 'Stranger', 'Stranger'], ['Stranger', 'Stranger', 'Stranger'])
+which gets a __get__ -> (['Stranger.__get__', 'Stranger.__get__', 'Stranger.__get__'], ['Stranger.__get__', 'Stranger.__get__', 'Stranger.__get__'])
+fields -> ([1, 1, 1], [3, 3, 3], [4, 4, 4], [6, 6, 6], [9, 9, 9], 15, 'extra', [3, 6, 9, 3, 6, 9, 3, 6, 9])
+short x -> [1, 1, 1]
+short z -> IndexError:tuple index out of range
+short z -> IndexError:tuple index out of range
+then whole -> [3, 3, 3]
+class -> ('_tuplegetter', 'Alias for field number 0', 1, 3)
+set -> AttributeError:can't set attribute
+delete -> AttributeError:can't delete attribute
+call a field -> 3
+call a field -> [3, 3, 3]
+not a tuple -> TypeError:descriptor for index '0' for tuple subclasses doesn't apply to 'list' object
+another getter -> [1, 1, 1]
+a property -> (['a property', 'a property', 'a property'], ['a property', 'a property', 'a property'])
+none -> AttributeError:'Point' object has no attribute 'z'
+in a class that is no tuple -> TypeError:descriptor for index '0' for tuple subclasses doesn't apply to 'NotTuple' object
+in a class that is no tuple -> TypeError:descriptor for index '0' for tuple subclasses doesn't apply to 'NotTuple' object
+big -> [(0, 255, 256, 299), (0, 255, 256, 299), (0, 255, 256, 299)]
+busy -> (15631250, [('own', 'm', 's', 's'), ('own', 1499, 's', 's'), ('own', 1999, 's', 's'), ('own', 499, 's', 's'), ('own', 999, 's', 's')], 2500)
+busy still -> (125275, [('own', 2499, 's', 's')], 2510)
+derived from it -> [('calm', 'calm', 'calm', 's'), ('calm', 'calm', 'calm', 's'), ('calm', 'calm', 'calm', 's')]
+138

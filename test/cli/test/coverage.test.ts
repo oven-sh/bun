@@ -118,6 +118,119 @@ test("sub", () => {
   );
 });
 
+// https://github.com/oven-sh/bun/issues/47168
+describe("json-summary coverage reporter", () => {
+  const files = {
+    "src.ts": `export function pick(flag: boolean) {
+  if (flag) {
+    return "yes";
+  }
+  return "no";
+}
+export function unused() {
+  return 1;
+}
+`,
+    "cov.test.ts": `import { test, expect } from "bun:test";
+import { pick } from "./src";
+test("one branch", () => expect(pick(true)).toBe("yes"));
+`,
+  };
+  const metric = (total: number, covered: number, pct: number) => ({ total, covered, skipped: 0, pct });
+  const empty = metric(0, 0, 100);
+
+  test.concurrent.each([
+    ["--coverage-reporter=json-summary", "coverage"],
+    ["--coverage-reporter=json-summary --coverage-dir=out", "out"],
+    ["--coverage-reporter=json-summary --parallel=2", "coverage"],
+  ])("bun test %s", async (flags, outDir) => {
+    using dir = tempDir("cov-json-summary", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...flags.split(" ")],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const summary = await Bun.file(path.join(String(dir), outDir, "coverage-summary.json")).json();
+    const lines = metric(6, 3, 50);
+    expect(summary[path.join(String(dir), "src.ts")]).toEqual({
+      lines,
+      statements: lines,
+      functions: metric(2, 1, 50),
+      branches: empty,
+    });
+    // Totals add counts, not percentages.
+    const entries = Object.entries(summary).filter(([k]) => k !== "total");
+    const sum = (key: string, field: "total" | "covered") =>
+      entries.reduce((n, [, v]: [string, any]) => n + v[key][field], 0);
+    for (const key of ["lines", "statements", "functions"]) {
+      const [total, covered] = [sum(key, "total"), sum(key, "covered")];
+      expect(summary.total[key]).toEqual(metric(total, covered, Math.floor((10000 * covered) / total) / 100));
+    }
+    expect(summary.total.branches).toEqual(empty);
+    expect(stderr).not.toContain("% Funcs");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("bunfig coverageReporter with text, lcov and json-summary", async () => {
+    using dir = tempDir("cov-json-summary-bunfig", {
+      ...files,
+      "bunfig.toml": `[test]\ncoverage = true\ncoverageReporter = ["text", "lcov", "json-summary"]\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const cov = path.join(String(dir), "coverage");
+    expect({
+      table: stderr.includes("% Funcs"),
+      lcov: await Bun.file(path.join(cov, "lcov.info")).exists(),
+      src: path.join(String(dir), "src.ts") in (await Bun.file(path.join(cov, "coverage-summary.json")).json()),
+    }).toEqual({ table: true, lcov: true, src: true });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a path with characters JSON escapes", async () => {
+    const name = isWindows ? `q'uo te.ts` : `q"uo'te.ts`;
+    using dir = tempDir("cov-json-summary-escape", {
+      [name]: `export const one = () => 1;\n`,
+      "a.test.ts": `import { test, expect } from "bun:test";
+import { one } from ${JSON.stringify("./" + name)};
+test("one", () => expect(one()).toBe(1));
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--coverage-reporter=json-summary"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const exitCode = await proc.exited;
+    const summary = await Bun.file(path.join(String(dir), "coverage", "coverage-summary.json")).json();
+    expect(Object.keys(summary)).toContain(path.join(String(dir), name));
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("unknown reporter lists json-summary", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--coverage-reporter=nope"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("'json-summary'");
+    expect(exitCode).toBe(1);
+  });
+});
+
 test("coverage excludes node_modules directory", () => {
   using dir = tempDir("cov", {
     "node_modules/pi/index.js": `
@@ -1918,6 +2031,6 @@ test("reports an error for a coverage directory longer than the path buffer", as
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
   expect(stderr).toContain("(pass) covered");
-  expect(stderr).toContain("ENAMETOOLONG: File name too long: Failed to write lcov.info");
+  expect(stderr).toContain("ENAMETOOLONG: File name too long: Failed to write coverage report");
   expect(exitCode).toBe(1);
 });

@@ -25,7 +25,7 @@ bun_output::declare_scope!(bun_test, hidden);
 
 mod coverage {
     pub(super) use bun_sourcemap_jsc::code_coverage::{
-        ByteRangeMapping, Fraction, Report as CodeCoverageReport, lcov, text,
+        ByteRangeMapping, Fraction, Report as CodeCoverageReport, json_summary, lcov, text,
     };
 
     /// Less-than predicate adapted to the `Ordering` shape `sort_by` wants.
@@ -1516,7 +1516,7 @@ impl CommandLineReporter {
         }
     }
 
-    /// Returns false if `lcov.info` could not be written.
+    /// Returns false if a coverage report file could not be written.
     pub(crate) fn generate_code_coverage(
         &mut self,
         vm: &mut VirtualMachine,
@@ -1532,17 +1532,17 @@ impl CommandLineReporter {
         let mut reports: Vec<CodeCoverageReport<'static>> = Vec::new();
         Self::for_each_coverage_report(vm, opts, |report| reports.push(report.into_owned()));
         if let Err(err) = print_coverage_reports(opts, &reports) {
-            Output::err(err, "Failed to write lcov.info", ());
+            Output::err(err, "Failed to write coverage report", ());
             return false;
         }
         true
     }
 }
 
-/// Write the `--coverage` text table to stderr and/or `lcov.info` for
+/// Write the `--coverage` text table to stderr and the report files for
 /// `reports` (sorted by path), and set `opts.fractions.failing`. The serial
 /// runner passes this process's reports; the `--parallel` coordinator passes
-/// reports merged from every worker. Errors only from writing `lcov.info`.
+/// reports merged from every worker. Errors only from writing a report file.
 pub(crate) fn print_coverage_reports(
     opts: &mut CodeCoverageOptions,
     reports: &[CodeCoverageReport<'_>],
@@ -1569,7 +1569,17 @@ fn print_coverage_reports_<const COLORS: bool>(
         print_coverage_table::<COLORS>(relative_dir, &thresholds, reports, &fractions, failing);
     }
     if opts.reporters.lcov {
-        write_lcov_report(opts, relative_dir, reports)?;
+        let mut contents: Vec<u8> = Vec::with_capacity(64 * 1024);
+        for report in reports {
+            // Writing into a Vec cannot fail.
+            let _ = coverage::lcov::write_format(report, relative_dir, &mut contents);
+        }
+        write_report_file(opts, relative_dir, b"lcov.info", &contents)?;
+    }
+    if opts.reporters.json_summary {
+        let mut contents: Vec<u8> = Vec::new();
+        coverage::json_summary::write(reports, &mut contents);
+        write_report_file(opts, relative_dir, b"coverage-summary.json", &contents)?;
     }
     Ok(())
 }
@@ -1667,25 +1677,21 @@ fn print_coverage_table<const COLORS: bool>(
     Output::flush();
 }
 
-/// Render to `<reports_directory>/.lcov.info.<hex>.tmp` and rename it over
-/// `lcov.info`, so an interrupted run never leaves a truncated report.
-fn write_lcov_report(
+/// Write `contents` to `<reports_directory>/.<name>.<hex>.tmp` and rename it over
+/// `<reports_directory>/<name>`, so an interrupted run never leaves a truncated report.
+fn write_report_file(
     opts: &CodeCoverageOptions,
     relative_dir: &[u8],
-    reports: &[CodeCoverageReport<'_>],
+    name: &[u8],
+    contents: &[u8],
 ) -> bun_sys::Result<()> {
-    let mut contents: Vec<u8> = Vec::with_capacity(64 * 1024);
-    for report in reports {
-        // Writing into a Vec cannot fail.
-        let _ = coverage::lcov::write_format(report, relative_dir, &mut contents);
-    }
-
     let mut rand = [0u8; 8];
     bun_boringssl_sys::rand_bytes(&mut rand);
     let mut tmpname: Vec<u8> = Vec::new();
     let _ = write!(
         &mut tmpname,
-        ".lcov.info.{}.tmp",
+        ".{}.{}.tmp",
+        bstr::BStr::new(name),
         bun_core::fmt::hex_lower(&rand)
     );
     let too_long = || {
@@ -1703,7 +1709,7 @@ fn write_lcov_report(
     let path = resolve_path::join_abs_string_buf_z_checked::<bun_path::platform::Auto>(
         relative_dir,
         &mut buf,
-        &[&opts.reports_directory, b"lcov.info"],
+        &[&opts.reports_directory, name],
     )
     .ok_or_else(too_long)?;
     if let Some(dir) = bun_path::dirname(path.as_bytes()) {
@@ -1722,7 +1728,7 @@ fn write_lcov_report(
         bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC,
         0o644,
     )?;
-    let written = file.write_all(&contents);
+    let written = file.write_all(contents);
     drop(file);
     let moved = match written {
         Ok(()) => bun_sys::move_file_z(Fd::cwd(), tmp_path, Fd::cwd(), path),

@@ -609,6 +609,106 @@ pub mod lcov {
     }
 }
 
+/// Istanbul `coverage-summary.json`. Statements are the lines, as in c8; branches are empty.
+pub mod json_summary {
+    use super::*;
+    use std::io::Write as _;
+
+    #[derive(Clone, Copy, Default)]
+    struct Totals {
+        lines: Metric,
+        functions: Metric,
+    }
+
+    #[derive(Clone, Copy, Default)]
+    struct Metric {
+        total: usize,
+        covered: usize,
+    }
+
+    impl Totals {
+        fn of(report: &Report) -> Self {
+            let mut lines = Metric::default();
+            let mut iter = report.executable_lines.iterator::<true, true>();
+            while let Some(line) = iter.next() {
+                lines.total += 1;
+                lines.covered += report.lines_which_have_executed.is_set(line) as usize;
+            }
+            Totals {
+                lines,
+                functions: Metric {
+                    total: report.functions.len(),
+                    covered: report.functions_which_have_executed.count(),
+                },
+            }
+        }
+
+        fn add(&mut self, other: &Self) {
+            self.lines.total += other.lines.total;
+            self.lines.covered += other.lines.covered;
+            self.functions.total += other.functions.total;
+            self.functions.covered += other.functions.covered;
+        }
+    }
+
+    /// Whole document. Files are keyed by `source_url`, which is absolute.
+    pub fn write(reports: &[Report<'_>], out: &mut Vec<u8>) {
+        let per_file: Vec<Totals> = reports.iter().map(Totals::of).collect();
+        let mut total = Totals::default();
+        for t in &per_file {
+            total.add(t);
+        }
+        out.reserve(256 * (reports.len() + 1));
+        out.extend_from_slice(b"{\"total\":");
+        write_entry(&total, out);
+        for (report, totals) in reports.iter().zip(&per_file) {
+            out.push(b',');
+            bun_core::printer::json_stringify(&report.source_url, out);
+            out.push(b':');
+            write_entry(totals, out);
+        }
+        out.extend_from_slice(b"}\n");
+    }
+
+    fn write_entry(t: &Totals, out: &mut Vec<u8>) {
+        out.extend_from_slice(b"{\"lines\":");
+        write_metric(t.lines, out);
+        out.extend_from_slice(b",\"statements\":");
+        write_metric(t.lines, out);
+        out.extend_from_slice(b",\"functions\":");
+        write_metric(t.functions, out);
+        out.extend_from_slice(b",\"branches\":");
+        write_metric(Metric::default(), out);
+        out.push(b'}');
+    }
+
+    fn write_metric(m: Metric, out: &mut Vec<u8>) {
+        // Writing into a Vec cannot fail.
+        let _ = write!(
+            out,
+            "{{\"total\":{},\"covered\":{},\"skipped\":0,\"pct\":",
+            m.total, m.covered
+        );
+        write_pct(m, out);
+        out.push(b'}');
+    }
+
+    /// Istanbul's `percent()`: floored to hundredths, 100 when there is nothing to cover.
+    fn write_pct(m: Metric, out: &mut Vec<u8>) {
+        if m.total == 0 {
+            out.extend_from_slice(b"100");
+            return;
+        }
+        let hundredths = (m.covered as u128 * 10_000 / m.total as u128) as u64;
+        let (int, frac) = (hundredths / 100, hundredths % 100);
+        let _ = match frac {
+            0 => write!(out, "{int}"),
+            f if f % 10 == 0 => write!(out, "{int}.{}", f / 10),
+            f => write!(out, "{int}.{f:02}"),
+        };
+    }
+}
+
 unsafe extern "C" {
     fn CodeCoverage__withBlocksAndFunctions(
         vm: *mut VM,

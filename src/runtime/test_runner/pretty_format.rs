@@ -982,7 +982,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
     extern "C" fn for_each(
         global_this: &JSGlobalObject,
         ctx_ptr: *mut c_void,
-        key_: *mut EncodedSlice,
+        key: &EncodedSlice,
         value: JSValue,
         is_symbol: bool,
         is_private_symbol: bool,
@@ -991,8 +991,6 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
             return;
         }
 
-        // SAFETY: key_ is non-null per JSC contract for property iteration.
-        let key = unsafe { *key_ };
         if key.eq_ascii(b"constructor") {
             return;
         }
@@ -1048,7 +1046,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
                 writer.print(format_args!(
                     concat!("{}", "\"{}\"", "{}", ":", "{}", " "),
                     pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                    key,
+                    *key,
                     pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                     pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                 ));
@@ -1085,7 +1083,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
                 "{}[{}Symbol({}){}]:{} ",
                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><d>"),
                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>"),
-                key,
+                *key,
                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><d>"),
                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
             ));

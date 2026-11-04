@@ -401,18 +401,17 @@ impl<C: JobContext> Job<C> {
     /// # Safety
     /// `this` is the job its `Completion` posted; called once, on `vm`'s thread.
     unsafe fn take(this: *mut Self, vm: &VirtualMachine) -> (C::OffThread, C::Js) {
-        if C::CANCELLABLE {
-            // SAFETY: fn contract.
-            vm.jobs
-                .with_mut(|j| j.unlink(unsafe { &raw mut (*this).header }));
-        }
         // SAFETY: fn contract.
+        let mut job = unsafe { Box::from_raw(this) };
+        if C::CANCELLABLE {
+            vm.jobs.with_mut(|j| j.unlink(&raw mut job.header));
+        }
         let Job {
             mut keep_alive,
             off,
             js,
             ..
-        } = unsafe { *Box::from_raw(this) };
+        } = *job;
         keep_alive.unref(bun_io::js_vm_ctx());
         (off, js)
     }

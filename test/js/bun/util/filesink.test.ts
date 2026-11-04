@@ -170,6 +170,7 @@ describe("FileSink", () => {
 import { spawn, type SpawnOptions } from "node:child_process";
 import { once } from "node:events";
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import type { Readable } from "node:stream";
 import util from "node:util";
@@ -599,6 +600,54 @@ it.skipIf(!isPosix)("does not leak native FileSink when a pending write fails (E
   // One straggler whose JS wrapper has not yet been finalized is acceptable;
   // more than that indicates a native leak.
   expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
+});
+
+// The same ref was given back only at the end of the file, so a sink that was never ended stayed for good.
+it("a sink that is dropped without end() is freed once what it wrote has left", async () => {
+  const fds: number[] = [];
+  const server = isWindows ? net.createServer(socket => socket.resume()) : undefined;
+  if (server) await once(server.listen(`\\\\.\\pipe\\filesink-dropped-${process.pid}`), "listening");
+
+  async function writeAndDrop() {
+    if (server) {
+      // A thread writes to a pipe that was not opened for overlapped I/O, so every write is pending at first.
+      const fd = fs.openSync(server.address() as string, "r+");
+      fds.push(fd);
+      const sink = Bun.file(fd).writer();
+      sink.write("hello");
+      await sink.flush();
+      return;
+    }
+    const [readFd, writeFd] = createSocketPair();
+    fds.push(readFd, writeFd);
+    const sink = Bun.file(writeFd).writer();
+    // More than the buffers of the socket take at once.
+    const size = 4 * 1024 * 1024;
+    const written = sink.write(Buffer.alloc(size, 0x61));
+    expect(written).toBeInstanceOf(Promise);
+    let received = 0;
+    for await (const part of Bun.file(readFd).stream()) {
+      if ((received += part.byteLength) === size) break;
+    }
+    expect(await written).toBe(size);
+  }
+
+  try {
+    const baseline = fileSinkInternals.liveCount();
+    for (let i = 0; i < 8; i++) {
+      await writeAndDrop();
+    }
+    for (let i = 0; i < 50; i++) {
+      Bun.gc(true);
+      if (fileSinkInternals.liveCount() <= baseline) break;
+      await Bun.sleep(10);
+    }
+    expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
+  } finally {
+    // Last: a sink may use its descriptor until it is freed.
+    for (const fd of fds) fs.closeSync(fd);
+    server?.close();
+  }
 });
 
 // close() takes the sink from the JS object, whose destructor then has none to
@@ -1321,7 +1370,7 @@ describe("FileSink on a pipe stays alive until end() has drained the buffer", ()
           }
         `,
       ],
-      env: bunEnv,
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
       stdout: "pipe",
       stderr: "pipe",
     });

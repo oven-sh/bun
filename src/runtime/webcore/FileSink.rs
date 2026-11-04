@@ -375,6 +375,13 @@ impl FileSink {
                 let mut src = *(*this).source.get();
                 src.close(None);
                 FileSink::clear_keep_alive_ref(this);
+            } else if !(*this).done.get()
+                && !(*this).writer.get().has_pending_data()
+                && matches!((*this).source.get(), streams::SourceHandle::None)
+                && (*this).pipe.get().cell().is_none()
+            {
+                // Nothing is in flight and nothing feeds it: from here on only its JS object needs it.
+                FileSink::clear_keep_alive_ref(this);
             }
         }
     }

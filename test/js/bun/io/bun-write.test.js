@@ -226,6 +226,40 @@ let i = 0;
     });
   });
 
+  // On Windows another handle has locked the file's bytes. On Linux the device is always full.
+  it.skipIf(isMacOS).each([3, 1024 * 1024])(
+    "Bun.write(path, data) names the file that does not take its %d bytes",
+    async length => {
+      using dir = tempDir("bun-write-fails", { "locked.txt": "0123456789" });
+      const file = isWindows ? path.join(String(dir), "locked.txt") : "/dev/full";
+      let unlock = () => {};
+      if (isWindows) {
+        const { symbols: kernel32 } = dlopen("kernel32.dll", {
+          CreateFileW: { args: ["ptr", "u32", "u32", "ptr", "u32", "u32", "ptr"], returns: "i64" },
+          LockFile: { args: ["i64", "u32", "u32", "u32", "u32"], returns: "i32" },
+          CloseHandle: { args: ["i64"], returns: "i32" },
+        });
+        const [GENERIC_READ_AND_WRITE, SHARE_ALL, OPEN_EXISTING] = [0xc0000000, 7, 3];
+        const name = Buffer.from(file + "\0", "utf16le");
+        const handle = kernel32.CreateFileW(ptr(name), GENERIC_READ_AND_WRITE, SHARE_ALL, null, OPEN_EXISTING, 0, null);
+        expect(kernel32.LockFile(handle, 0, 0, 0xffffffff, 0)).toBe(1);
+        unlock = () => kernel32.CloseHandle(handle);
+      }
+      try {
+        const { code, syscall, path: named, fd, message } = await Bun.write(file, Buffer.alloc(length)).catch(e => e);
+        expect({ code, syscall, named, fd, message: message.endsWith(`write '${file}'`) }).toEqual({
+          code: isWindows ? "EBUSY" : "ENOSPC",
+          syscall: "write",
+          named: file,
+          fd: undefined,
+          message: true,
+        });
+      } finally {
+        unlock();
+      }
+    },
+  );
+
   it("Bun.write(fd, Bun.file(directory)) rejects with EISDIR", async () => {
     using dir = tempDir("bun-write-directory-source", {});
     const fd = fs.openSync(devNull, "w");

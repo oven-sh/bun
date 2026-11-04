@@ -554,17 +554,17 @@ impl ReadFile {
                         }
                         _ => {
                             self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
-                            self.system_error = Some(err.to_system_error().into());
-                            if self.system_error.as_ref().unwrap().path.is_empty() {
-                                self.system_error.as_mut().unwrap().path =
-                                    if self.file_store.pathlike.is_path() {
-                                        BunString::clone_utf8(
-                                            self.file_store.pathlike.path().slice(),
-                                        )
-                                    } else {
-                                        BunString::EMPTY
-                                    };
+                            let mut system_error = err.to_system_error();
+                            if self.file_store.pathlike.is_path() {
+                                // The descriptor is this job's own.
+                                system_error.fd = None;
+                                if system_error.path.is_empty() {
+                                    system_error.path = BunString::clone_utf8(
+                                        self.file_store.pathlike.path().slice(),
+                                    );
+                                }
                             }
+                            self.system_error = Some(system_error.into());
                             return false;
                         }
                     }

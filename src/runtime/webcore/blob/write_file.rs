@@ -321,6 +321,10 @@ impl WriteFile {
                 Err(err) if err.get_errno() == io::RETRY => return WriteStep::WouldBlock,
                 Err(err) => {
                     self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+                    let err = match self.pathlike() {
+                        PathOrFileDescriptor::Path(path) => err.with_path(path.slice()),
+                        PathOrFileDescriptor::Fd(_) => err,
+                    };
                     self.system_error = Some(err.to_system_error().into());
                     return WriteStep::Failed;
                 }

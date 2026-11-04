@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Enforce iframe elements have a title attribute.
 pub struct IframeHasTitle;
 
-const IFRAME_HAS_TITLE: Message = Message::new("", "Missing `title` attribute for the `iframe` element.");
+const IFRAME_HAS_TITLE: &Message = &Message::new("", "Missing `title` attribute for the `iframe` element.");
 
 impl Rule for IframeHasTitle {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "iframe-has-title", Kind::Problem);
@@ -32,7 +32,7 @@ impl Rule for IframeHasTitle {
 fn is_title(value: AttributeValue) -> bool {
     match value {
         AttributeValue::StringLiteral(literal) => !literal.value.is_empty(),
-        // What is in parentheses, and an optional chain, is none of these for oxlint.
+        // In oxlint's AST a parenthesized expression or an optional chain is none of these.
         AttributeValue::ExpressionContainer(e) if !e.is_parenthesized() && !e.is_chain_root() => match e.kind() {
             ExprKind::String(value) => !value.bytes().is_empty(),
             ExprKind::Template(template) => !template.exprs().is_empty() || !template.raw(0).is_empty(),

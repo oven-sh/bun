@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Prevent manual inclusion of stylesheets using `<link>` tags in Next.js applications.
 pub struct NoCssTags;
 
-const NO_CSS_TAGS: Message = Message::new("", "Do not include stylesheets manually.");
+const NO_CSS_TAGS: &Message = &Message::new("", "Do not include stylesheets manually.");
 
 impl Rule for NoCssTags {
     const META: Meta = Meta::oxlint(Plugin::Nextjs, "no-css-tags", Kind::Problem);
@@ -30,7 +30,7 @@ impl Rule for NoCssTags {
         let Some(name) = jsx.tag().filter(|it| it.is_ident("link")) else {
             return;
         };
-        // The last of each counts.
+        // If an attribute is repeated, the last one counts.
         let value_of = |name: &[u8]| {
             let attribute = jsx.attrs().iter().rfind(|it| get_jsx_attribute_name(*it) == Some(name));
             attribute.and_then(get_string_literal_prop_value)

@@ -18,19 +18,21 @@ public:
     // Not `= default`: value-initialization would zero the buffer first.
     JSStringUTF8View() {}
 
-    // It is large, so it is filled in where it lives. Resolving a rope and converting can throw.
-    void initialize(JSC::JSGlobalObject& globalObject, JSC::JSString* string)
+    // It is large, so it is filled in where it lives. False if it threw, which resolving a rope and converting can.
+    bool initialize(JSC::JSGlobalObject& globalObject, JSC::JSString* string)
     {
         ASSERT(m_isNull);
         auto& vm = JSC::getVM(&globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         m_view = string->view(&globalObject);
-        RETURN_IF_EXCEPTION(scope, void());
+        RETURN_IF_EXCEPTION(scope, false);
         m_isNull = false;
         if (m_view->is8Bit() && WTF::charactersAreAllASCII(m_view->span8())) [[likely]]
-            return;
-        if (!convert()) [[unlikely]]
-            JSC::throwOutOfMemoryError(&globalObject, scope);
+            return true;
+        if (convert()) [[likely]]
+            return true;
+        JSC::throwOutOfMemoryError(&globalObject, scope);
+        return false;
     }
 
     void initialize(WTF::ASCIILiteral literal)

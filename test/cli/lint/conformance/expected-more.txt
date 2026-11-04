@@ -1,29 +1,14 @@
 FAIL more/reviews/eslint/no-func-assign#146 messages differ
 FAIL more/reviews/eslint/no-param-reassign#335 messages differ
 FAIL more/reviews/eslint/no-param-reassign#336 messages differ
-FAIL more/reviews/eslint/no-var#609 messages differ
-FAIL more/reviews/eslint/no-var#610 messages differ
-FAIL more/reviews/eslint/no-var#611 messages differ
-FAIL more/reviews/eslint/no-var#612 messages differ
-FAIL more/reviews/eslint/no-var#614 messages differ
-FAIL more/reviews/eslint/no-var#615 messages differ
-FAIL more/reviews/eslint/no-var#616 messages differ
-FAIL more/reviews/eslint/no-var#617 messages differ
-FAIL more/reviews/eslint/no-var#619 messages differ
-FAIL more/reviews/eslint/no-var#621 messages differ
-FAIL more/reviews/eslint/no-var#622 messages differ
-FAIL more/reviews/eslint/no-var#698 messages differ
 FAIL more/reviews/typescript-eslint/consistent-indexed-object-style#81 messages differ
 FAIL more/reviews/typescript-eslint/consistent-indexed-object-style#92 messages differ
 FAIL more/reviews/typescript-eslint/consistent-type-definitions#53 messages differ
 FAIL more/reviews/typescript-eslint/no-unused-vars#2174 messages differ
-FAIL more/oxlint-tsgolint/eslint/no-var#0 messages differ
-FAIL more/oxlint-tsgolint/eslint/no-var#1 messages differ
-FAIL more/oxlint-tsgolint/eslint/no-var#3 messages differ
 
 0 cases have their messages in another order
 
 19 cases have a fix that --fix holds back
 
-632 rules, 625 without failures, 0 not implemented
-76534 cases passed, 22 failed, 258 skipped
+632 rules, 627 without failures, 0 not implemented
+76549 cases passed, 7 failed, 258 skipped

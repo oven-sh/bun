@@ -1,14 +1,16 @@
-//! What a rule that is about several files sees of the others: which module imports which.
+//! The module graph, for rules that need to know about other files.
 //!
-//! A file is parsed, linted and freed before the next, so no rule can look into another file. What it can ask is in [`Modules`],
-//! which whoever lints the files provides: [`File::modules`]. It is made in two steps, so that no file is parsed twice for it:
-//! 1. While the files are linted, [`Modules::is_complete`] is false. The rule has nothing to report yet. It
-//!    [records](Modules::record) what the file imports, which is resolved there and then, on the thread that lints the file.
-//! 2. When all files are linted, the files that they import and that are not linted themselves are read, and the strongly
-//!    connected components are computed. Then the files that the rule may have something to say about, which are few, are linted
-//!    again with only such rules, and [`Modules::is_complete`] is true.
+//! Each file is parsed, linted and freed before the next one, so a rule can't look into another file. Everything it can
+//! query is in [`Modules`], which the driver provides through [`File::modules`]. The graph is built in two steps so
+//! that no file is parsed twice for it:
+//! 1. While the files are linted, [`Modules::is_complete`] is false. The rule can't report anything yet. It
+//!    [records](Modules::record) the file's imports, which are resolved immediately on the thread that lints the file.
+//! 2. Once all files are linted, the imported files that aren't linted themselves are read, and the strongly connected
+//!    components are computed. Then the few files that the rule may report something in are linted again with only such
+//!    rules, and [`Modules::is_complete`] is true.
 //!
-//! The model is `ExportMap.imports` of eslint-plugin-import, or the module records of oxlint: [`Flavor`].
+//! The graph is modeled on eslint-plugin-import's `ExportMap.imports` or on oxlint's module records, depending on the
+//! [`Flavor`].
 
 use crate::ast::{ExprKind, ExprTag, File, Name, StmtKind};
 use crate::language::LanguageOptions;
@@ -20,7 +22,7 @@ use smallvec::SmallVec;
 use std::any::Any;
 use std::borrow::Cow;
 
-/// Whose notion of what a module imports. All files of a run have the same.
+/// The tool whose definition of a module's imports is followed. It's the same for every file of a run.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Flavor {
     EslintPluginImport,
@@ -28,13 +30,13 @@ pub enum Flavor {
 }
 
 impl Flavor {
-    /// oxlint does not take `import("m")` for an import.
+    /// oxlint doesn't count `import("m")` as an import.
     pub fn ignores_dynamic_imports(self) -> bool {
         self == Flavor::Oxlint
     }
 
-    /// oxlint resolves as Node.js does, with the extensions of JavaScript before those of TypeScript. For `./a.js` it also finds
-    /// `./a.ts`, but not `./a.tsx`, and it finds no `./a.d.ts` for `./a`.
+    /// oxlint resolves like Node.js, and tries JavaScript extensions before TypeScript ones. For `./a.js` it also finds
+    /// `./a.ts` but not `./a.tsx`, and for `./a` it doesn't find `./a.d.ts`.
     pub fn resolves_as_node(self) -> bool {
         self == Flavor::Oxlint
     }
@@ -45,7 +47,7 @@ impl Flavor {
     }
 }
 
-/// A file, among those that the files which are linted import, directly or not.
+/// A file in the graph: a linted file, or one that a linted file imports directly or transitively.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub struct ModuleId(pub u32);
 
@@ -55,28 +57,28 @@ pub enum RequestKind {
     Static,
     /// `import("m")`
     Dynamic,
-    /// Anything else that a rule wants resolved and read, like `require("m")`. The module does not count as imported.
+    /// Anything else that a rule needs resolved and read, like `require("m")`. The module doesn't count as imported.
     Other,
 }
 
-/// A place where a file names a module.
+/// One module specifier in a file.
 #[derive(Copy, Clone, Debug)]
 pub struct Request<'a> {
     pub specifier: &'a [u8],
-    /// Where the specifier is.
+    /// The specifier's span.
     pub span: Span,
-    /// The line that the specifier starts in, from 1. Not with [`Flavor::Oxlint`].
+    /// The 1-based line the specifier starts on. Not set with [`Flavor::Oxlint`].
     pub line: u32,
     pub kind: RequestKind,
     /// `import type`, `import { type A, type B }`, `export type * from`. What else counts depends on the [`Flavor`].
     pub is_only_importing_types: bool,
-    /// With [`Flavor::Oxlint`]: a statement with this specifier exports names: `export { a } from "m"`,
-    /// `export * as a from "m"`, or `import { a } from "m"` beside `export { a }`. A module may do that with itself:
-    /// that is no import then.
-    pub may_be_itself: bool,
+    /// With [`Flavor::Oxlint`]: true if a statement with this specifier re-exports names, as in `export { a } from
+    /// "m"`, `export * as a from "m"`, or `import { a } from "m"` together with `export { a }`. If `"m"` is the module
+    /// itself, that doesn't count as a self-import.
+    pub may_reexport_itself: bool,
 }
 
-/// A [`Request`] of a module that is known.
+/// A [`Request`] whose module has been resolved.
 #[derive(Clone, Debug)]
 pub struct Declaration {
     pub specifier: Box<[u8]>,
@@ -85,7 +87,7 @@ pub struct Declaration {
     pub is_only_importing_types: bool,
 }
 
-/// All the places where a module imports another.
+/// All of a module's imports of one other module.
 #[derive(Clone, Debug)]
 pub struct Import {
     pub module: ModuleId,
@@ -95,21 +97,21 @@ pub struct Import {
 #[derive(Copy, Clone, Debug)]
 pub struct Resolved {
     pub module: ModuleId,
-    /// It was found in a `node_modules`, where it can be a symbolic link to somewhere else.
+    /// True if it was found in a `node_modules`, even if that entry is a symbolic link to somewhere else.
     pub is_external: bool,
 }
 
-/// What the rules of oxlint read of the module record of another file: what it imports and exports at its top level, without the
-/// places.
+/// The parts of another file's module record that oxlint's rules read: its top-level imports and exports, without
+/// spans.
 #[derive(Clone, Debug, Default)]
 pub struct Record {
-    /// It has an `import`, an `export` or an `import.meta`.
+    /// True if it has an `import`, an `export` or an `import.meta`.
     pub has_module_syntax: bool,
     pub has_export_default: bool,
-    /// The names that it exports itself. Sorted, each once.
+    /// The names of its own exports. Sorted, without duplicates.
     pub exported_bindings: Box<[Box<[u8]>]>,
     pub import_entries: Box<[ImportEntry]>,
-    /// `export { a } from "m"`, `export * as a from "m"`, and `export { a }` of what is imported.
+    /// `export { a } from "m"`, `export * as a from "m"`, and `export { a }` where `a` is imported.
     pub indirect_export_entries: Box<[IndirectExportEntry]>,
     /// The specifier of each `export * from "m"`.
     pub star_export_entries: Box<[Box<[u8]>]>,
@@ -132,22 +134,22 @@ pub enum ImportName {
 #[derive(Clone, Debug)]
 pub struct IndirectExportEntry {
     pub module_request: Box<[u8]>,
-    /// `None`: `export * as a from "m"`.
+    /// `None` for `export * as a from "m"`.
     pub import_name: Option<Box<[u8]>>,
     pub export_name: Box<[u8]>,
 }
 
-/// Makes the [`Record`] of a file.
+/// Builds a file's [`Record`].
 pub type MakeRecord = for<'a> fn(&'a File<'a>) -> Record;
 
-/// A resolver of eslint-plugin-import.
+/// One of eslint-plugin-import's resolvers.
 #[derive(Clone, Debug)]
 pub enum Lookup<'e> {
-    /// eslint-import-resolver-typescript, with its `project` as it is written.
+    /// eslint-import-resolver-typescript, with its `project` option verbatim.
     TypeScript(SmallVec<[&'e [u8]; 1]>),
     /// eslint-import-resolver-node, with its `extensions`.
     Node(SmallVec<[&'e [u8]; 4]>),
-    /// The same, with `paths`, which are as they are written, and `moduleDirectory`.
+    /// The same, with `paths` (verbatim) and `moduleDirectory`.
     NodeWith {
         extensions: SmallVec<[&'e [u8]; 4]>,
         paths: SmallVec<[&'e [u8]; 2]>,
@@ -155,7 +157,7 @@ pub enum Lookup<'e> {
     },
 }
 
-/// A file that [`Modules::list_files`] finds.
+/// A file found by [`Modules::list_files`].
 pub struct Listed {
     /// Absolute.
     pub path: Vec<u8>,
@@ -166,72 +168,76 @@ pub struct Listed {
 pub type ListFiles<'h> =
     Box<dyn Fn(&[&[u8]], &[&[u8]]) -> Result<Vec<Listed>, Vec<u8>> + Send + Sync + 'h>;
 
-/// The file that has the specifier, the specifier, whether it is in a `require`: the path.
+/// Takes the importing file's path, the specifier, and whether it's in a `require`. Returns the resolved path.
 pub type Resolve = Box<dyn Fn(&dyn Modules, &[u8], &[u8], bool) -> Option<Vec<u8>> + Send + Sync>;
 
 /// [`Modules::resolve_by`]
 pub struct ResolveBy {
     pub resolve: Resolve,
-    /// Whether anything is known of what the file at a path imports, which has this text.
+    /// Takes a path and that file's text. Returns false if the file's imports are unknown, in which case it's treated
+    /// as importing nothing.
     pub is_known: Box<dyn Fn(&[u8], &[u8]) -> bool + Send + Sync>,
 }
 
-/// How a plugin reads a file that is not the one that is linted.
+/// How a plugin reads a file other than the one being linted.
 #[derive(Copy, Clone)]
 pub struct Reader {
-    /// Whether a file with this text is parsed at all.
-    pub wants: fn(&[u8]) -> bool,
+    /// Returns true if a file with this text should be parsed at all.
+    pub should_parse: fn(&[u8]) -> bool,
     pub read: for<'a> fn(&'a File<'a>) -> Box<dyn Any + Send + Sync>,
 }
 
 pub trait Modules: Sync {
-    /// Everything is known. Until then only [`Modules::record`] does something.
+    /// True once the graph is complete. Until then only [`Modules::record`] has an effect.
     fn is_complete(&self) -> bool;
 
-    /// Takes note of what the file at `path` imports. The last time counts.
+    /// Records the imports of the file at `path`. A later call for the same path overwrites an earlier one.
     ///
-    /// `is_always_checked`: it is linted again whatever it imports. Otherwise only if it is in a cycle of modules that import
-    /// values from each other. Once is enough.
+    /// With `is_always_checked`, the file is linted again whatever it imports. Otherwise it's linted again only if it's
+    /// in a cycle of modules that import values from each other. Passing true in any one call is enough.
     fn record(&self, path: &[u8], requests: &[Request], is_always_checked: bool, flavor: Flavor);
 
-    /// With [`Flavor::EslintPluginImport`]: who says what a specifier means, in the files that are linted and in what
-    /// they import: the resolvers of the settings. Before [`Modules::record`]. `make` is called if nobody has said so.
+    /// With [`Flavor::EslintPluginImport`]: sets how specifiers are resolved, both in the linted files and in the files
+    /// they import, according to the resolvers in the settings. Call it before [`Modules::record`]. `make` is only
+    /// called if no resolver has been set yet.
     fn resolve_by(&self, make: &dyn Fn() -> ResolveBy);
 
-    /// Takes note of the [`Record`] of `file`, which is linted: `make(file)`, unless it is known. The records of the files that are
-    /// not linted are made by `make` too, also of those in a `node_modules`.
+    /// Stores `make(file)` as the [`Record`] of the linted file `file`, unless it's already stored. `make` also builds
+    /// the records of files that aren't linted, including those in a `node_modules`.
     fn record_exports<'a>(&self, file: &'a File<'a>, make: MakeRecord);
 
-    /// From now on what the files in a `node_modules` import is followed too, as in oxlint. Otherwise only what they export again.
+    /// From now on, also follow the imports of files in a `node_modules`, as oxlint does. Otherwise only their
+    /// re-exports are followed.
     fn follow_packages(&self);
 
-    /// `None` if it is not JavaScript or TypeScript, if it cannot be read or parsed, or if nothing has called
+    /// `None` if the module isn't JavaScript or TypeScript, if it can't be read or parsed, or if nothing has called
     /// [`Modules::record_exports`].
     fn record_of(&self, module: ModuleId) -> Option<&Record>;
 
-    /// The file at `path`.
+    /// Looks up the file at `path`.
     fn find(&self, path: &[u8]) -> Option<ModuleId>;
 
-    /// What `specifier` means in the file at `from`, as TypeScript resolves it, or else as the [`Flavor`] has it. `None` if there is
-    /// no such file.
+    /// Resolves `specifier` from the file at `from` the way TypeScript does, or else the way the [`Flavor`] does.
+    /// `None` if there's no such file.
     fn resolve(&self, from: &[u8], specifier: &[u8], is_require: bool) -> Option<Resolved>;
 
-    /// Absolute. With [`Flavor::Oxlint`] symbolic links are followed.
+    /// The module's absolute path. With [`Flavor::Oxlint`], symbolic links are resolved.
     fn path(&self, module: ModuleId) -> &[u8];
 
-    /// Whether `path`, as which a file is linted, is the path of `module`, and not the name of a link to it.
+    /// True if `path`, the path a file is linted under, is `module`'s real path and not a link to it.
     fn is_path_of(&self, module: ModuleId, path: &[u8]) -> bool;
 
-    /// What it imports, in the order of eslint-plugin-import: what is imported dynamically first. Nothing if it is not JavaScript or
-    /// TypeScript, if it is in a `node_modules`, or if it cannot be read.
+    /// The module's imports in eslint-plugin-import's order, which puts dynamic imports first. Empty if the module
+    /// isn't JavaScript or TypeScript, is in a `node_modules`, or can't be read.
     fn imports(&self, module: ModuleId) -> &[Import];
 
-    /// The same number for two modules of which each imports values from the other, directly or not.
+    /// The module's strongly connected component. Two modules get the same number if each imports values from the
+    /// other, directly or transitively.
     fn component(&self, module: ModuleId) -> u32;
 
-    /// The file that `specifier` means in the file at `from`: absolute, separated by `/`. It can be asked at any time.
-    /// Only what is found in one of the `paths` of [`Lookup::NodeWith`] that is relative is relative too, to the
-    /// working directory: so eslint-import-resolver-node answers.
+    /// Resolves `specifier` from the file at `from` to an absolute path with `/` separators. Can be called at any time.
+    /// As in eslint-import-resolver-node, a file found through a relative entry of [`Lookup::NodeWith`]'s `paths` is
+    /// returned relative to the working directory.
     fn resolve_file(
         &self,
         from: &[u8],
@@ -243,22 +249,22 @@ pub trait Modules: Sync {
     /// The working directory, in the same form.
     fn cwd(&self) -> &[u8];
 
-    /// Whether there is a file or a directory at `path`. It can be asked at any time.
+    /// True if there's a file or directory at `path`. Can be called at any time.
     fn exists(&self, path: &[u8]) -> bool;
 
-    /// The text of the file at `path`, decoded by its byte order mark: UTF-16 comes as UTF-8, and the mark itself is dropped.
-    /// It can be asked at any time.
+    /// The text of the file at `path`, decoded according to its byte order mark. UTF-16 is converted to UTF-8, and the
+    /// mark itself is dropped. Can be called at any time.
     fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>>;
 
-    /// `Array.from(new FileEnumerator({ extensions }).iterateFiles(patterns))` of ESLint 8 and 9, from the working
-    /// directory: by the configuration files of ESLint 8, whatever configures the run. `Err`: the message of what it
-    /// throws. It can be asked at any time.
+    /// `Array.from(new FileEnumerator({ extensions }).iterateFiles(patterns))` in ESLint 8 and 9, run from the working
+    /// directory. It always uses ESLint 8's config files, whatever config the run itself uses. Returns `Err` with the
+    /// message of the error it throws. Can be called at any time.
     fn list_files(&self, patterns: &[&[u8]], extensions: &[&[u8]]) -> Result<Vec<Listed>, Vec<u8>>;
 
-    /// What `reader` makes of the file at `path`, read like [`Modules::read`] and parsed as `language` says. It is made the first
-    /// time that it is asked for, and kept by the path and by what of `language` the parser looks at. All who ask have
-    /// the same `reader`. `None`: the file cannot be read, `reader.wants` says no, or the code is nested too deeply.
-    /// It can be asked at any time.
+    /// The result of `reader.read` on the file at `path`, which is read like [`Modules::read`] and parsed according to
+    /// `language`. It's computed on first use and cached by the path and the parts of `language` that affect parsing.
+    /// Every caller must pass the same `reader`. `None` if the file can't be read, `reader.should_parse` returns false,
+    /// or the code is nested too deeply. Can be called at any time.
     fn facts(
         &self,
         path: &[u8],
@@ -266,19 +272,20 @@ pub trait Modules: Sync {
         reader: &Reader,
     ) -> Option<&(dyn Any + Send + Sync)>;
 
-    /// `esModuleInterop`, as it is written, in the `tsconfig.json` that is closest to `directory`, or in one that it
-    /// extends. It can be asked at any time.
+    /// The literal `esModuleInterop` value in the `tsconfig.json` closest to `directory`, or in one that it extends.
+    /// Can be called at any time.
     fn es_module_interop(&self, directory: &[u8]) -> bool;
 
-    /// The `package.json` that is closest to the file at `path`, of those that are an object. It can be asked at any time.
+    /// The closest `package.json` to the file at `path` whose content is an object. Can be called at any time.
     fn package_json(&self, path: &[u8]) -> Option<&Json>;
 }
 
 impl<'a> File<'a> {
-    /// The other files. `None` where a file is linted alone: a rule that needs them has nothing to say.
+    /// The module graph. `None` if the file is linted on its own, in which case a rule that needs the graph reports
+    /// nothing.
     #[inline]
     pub fn modules(&self) -> Option<&'a dyn Modules> {
-        self.sink.asks_about_modules.set(true);
+        self.sink.has_requested_modules.set(true);
         self.modules.get()
     }
 
@@ -287,10 +294,10 @@ impl<'a> File<'a> {
     }
 }
 
-/// The imports of a module: every `import("m")`, then the `import`s and the `export .. from`s at the top level, which is the order
-/// of eslint-plugin-import.
+/// A module's imports: every `import("m")`, then the top-level `import`s and `export .. from`s. That's
+/// eslint-plugin-import's order.
 pub fn requests_of<'a>(file: &'a File<'a>, flavor: Flavor) -> Vec<Request<'a>> {
-    // With the offset in place of the line.
+    // `line` holds the offset until `set_lines` replaces it.
     let mut requests = Vec::new();
     let has_dynamic_imports =
         !flavor.ignores_dynamic_imports() && may_have_import_call(file.text());
@@ -309,7 +316,7 @@ pub fn requests_of<'a>(file: &'a File<'a>, flavor: Flavor) -> Vec<Request<'a>> {
                 line: source.span().start,
                 kind: RequestKind::Dynamic,
                 is_only_importing_types: false,
-                may_be_itself: false,
+                may_reexport_itself: false,
             });
         }
     }
@@ -319,14 +326,14 @@ pub fn requests_of<'a>(file: &'a File<'a>, flavor: Flavor) -> Vec<Request<'a>> {
             add_static_requests(file, &mut requests);
             set_lines(file.text(), &mut requests);
         }
-        // Nobody asks for the lines.
-        Flavor::Oxlint => add_static_requests_of_oxlint(file, &mut requests),
+        // Nothing reads the lines with this flavor.
+        Flavor::Oxlint => add_oxlint_static_requests(file, &mut requests),
     }
     requests
 }
 
-/// Whether an `import` in `text` is followed by something other than a name, a string, a `{` or a `*`. To look at the text costs far
-/// less than to look for the expressions of a kind, which few files have.
+/// True if some `import` in `text` is followed by something other than a name, a string, a `{` or a `*`. Scanning the
+/// text is far cheaper than building the index of expressions by kind, and few files have an `import()`.
 pub fn may_have_import_call(text: &[u8]) -> bool {
     let mut rest = text;
     while let Some(at) = strings::index_of(rest, b"import") {
@@ -348,7 +355,7 @@ fn add_static_requests<'a>(file: &'a File<'a>, requests: &mut Vec<Request<'a>>) 
                     !has_values && !named.is_empty() && named.iter().all(|it| it.is_type_only());
                 (Some(import.spec()), import.is_type_only() || are_all_types)
             }
-            // eslint-plugin-import does not look at `exportKind` here.
+            // eslint-plugin-import doesn't check `exportKind` here.
             StmtKind::ExportNamed(export) => (export.spec(), false),
             StmtKind::ExportStar {
                 spec, type_only, ..
@@ -362,18 +369,19 @@ fn add_static_requests<'a>(file: &'a File<'a>, requests: &mut Vec<Request<'a>>) 
                 line: span.start,
                 kind: RequestKind::Static,
                 is_only_importing_types,
-                may_be_itself: false,
+                may_reexport_itself: false,
             });
         }
     }
 }
 
-/// oxlint's `requested_modules`, in the order of the source. Whether only types are imported it decides for all the statements
-/// with the same specifier at once: there are names that are imported or exported again, and all of them are types. `import "m"`,
-/// `import {} from "m"` and `export * from "m"` have no names.
-fn add_static_requests_of_oxlint<'a>(file: &'a File<'a>, requests: &mut Vec<Request<'a>>) {
+/// oxlint's `requested_modules`, in source order. oxlint decides whether only types are imported for all statements
+/// with the same specifier together: they must import or re-export at least one name, and all of those names must be
+/// types. `import "m"`, `import {} from "m"` and `export * from "m"` have no names.
+fn add_oxlint_static_requests<'a>(file: &'a File<'a>, requests: &mut Vec<Request<'a>>) {
     let first = requests.len();
-    // For each request: the specifier, whether the statement has names, whether one of them is a value, and whether it exports them.
+    // For each request: the specifier, whether the statement has names, whether any of them is a value, and whether it
+    // exports them.
     let mut names: SmallVec<[(Name<'a>, bool, bool, bool); 32]> = SmallVec::new();
     let mut exported: Option<FxHashSet<Name<'a>>> = None;
     let mut is_exported = |local: Name<'a>| {
@@ -449,7 +457,7 @@ fn add_static_requests_of_oxlint<'a>(file: &'a File<'a>, requests: &mut Vec<Requ
                 line: span.start,
                 kind: RequestKind::Static,
                 is_only_importing_types: false,
-                may_be_itself: false,
+                may_reexport_itself: false,
             });
         }
     }
@@ -458,11 +466,11 @@ fn add_static_requests_of_oxlint<'a>(file: &'a File<'a>, requests: &mut Vec<Requ
             let mut same = names.iter().filter(|it| it.0 == specifier);
             request.is_only_importing_types =
                 same.clone().any(|it| it.1) && !same.clone().any(|it| it.2);
-            request.may_be_itself = same.any(|it| it.3);
+            request.may_reexport_itself = same.any(|it| it.3);
         }
         return;
     }
-    // The same for all the statements with a specifier.
+    // The same as above with a hash map, for a file with many requests.
     let mut by_specifier: FxHashMap<Name<'a>, (bool, bool, bool)> = FxHashMap::default();
     for &(specifier, has_names, has_values, exports_names) in &names {
         let all = by_specifier.entry(specifier).or_default();
@@ -472,12 +480,12 @@ fn add_static_requests_of_oxlint<'a>(file: &'a File<'a>, requests: &mut Vec<Requ
         let (has_names, has_values, exports_names) =
             by_specifier.get(specifier).copied().unwrap_or_default();
         request.is_only_importing_types = has_names && !has_values;
-        request.may_be_itself = exports_names;
+        request.may_reexport_itself = exports_names;
     }
 }
 
-/// Replaces the offset that is in [`Request::line`] by the line. It reads the text up to the last of them, which for most files is
-/// a small part.
+/// Replaces the offset stored in each [`Request::line`] with the line number. It only scans the text up to the last
+/// offset, which is a small part of most files.
 pub fn set_lines(text: &[u8], requests: &mut [Request]) {
     let mut order: SmallVec<[u32; 32]> = (0..requests.len() as u32).collect();
     crate::utils::sort::sort_indices_unstable(&mut order, &mut |a, b| {
@@ -486,7 +494,7 @@ pub fn set_lines(text: &[u8], requests: &mut [Request]) {
     let (mut line, mut line_end) = (1, 0);
     for at in order {
         let offset = requests[at as usize].line as usize;
-        // `line_end`: where the line break after `line` ends, once it is found.
+        // `line_end` is the end of the last line break found so far.
         while let Some((start, len)) = text
             .get(line_end..offset)
             .and_then(strings::find_js_line_break)

@@ -2537,14 +2537,14 @@ impl Copy<'_> {
         match self {
             Copy::Utf16(utf16) => {
                 let encoded = strings::copy_utf16_into_utf8_impl::<true>(parts.payload, utf16);
-                debug_assert_eq!(encoded.written as usize, content_byte_len);
-                debug_assert_eq!(encoded.read as usize, utf16.len());
+                debug_assert_eq!(encoded.written, content_byte_len);
+                debug_assert_eq!(encoded.read, utf16.len());
             }
             Copy::Latin1(latin1) => {
                 let encoded = strings::copy_latin1_into_utf8(parts.payload, latin1);
-                debug_assert_eq!(encoded.written as usize, content_byte_len);
+                debug_assert_eq!(encoded.written, content_byte_len);
                 // latin1 can contain non-ascii
-                debug_assert_eq!(encoded.read as usize, latin1.len());
+                debug_assert_eq!(encoded.read, latin1.len());
             }
             Copy::Bytes(bytes) => {
                 match parts.mask {

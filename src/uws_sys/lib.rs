@@ -501,6 +501,7 @@ pub mod fault_inject {
     pub const ACTION_ERRNO: c_int = 1;
     pub const ACTION_SHORT: c_int = 2;
     pub const ACTION_ZERO: c_int = 3;
+    pub const ACTION_EXCESS: c_int = 4;
 
     #[repr(C)]
     pub struct UsFaultRule {

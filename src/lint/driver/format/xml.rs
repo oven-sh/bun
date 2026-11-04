@@ -6,7 +6,7 @@ use crate::results::FileResult;
 use bun_core::strings::xml_escape_entity;
 use std::io::Write;
 
-/// What is printed of a problem.
+/// The parts of a problem that get printed.
 struct Problem<'a> {
     line: usize,
     column: usize,
@@ -16,7 +16,7 @@ struct Problem<'a> {
     is_error: bool,
 }
 
-/// The problems of a file, printed.
+/// A file's problems, already printed.
 #[derive(Default)]
 struct File {
     name: Vec<u8>,
@@ -25,10 +25,10 @@ struct File {
     errors: usize,
 }
 
-/// The files that have problems. `write_problem` prints one problem.
+/// Returns the files that have problems. `write_problem` prints one problem.
 ///
-/// Names, places and texts are those of oxlint's `Info`, so all that has no place is in one file without a name. The files are
-/// sorted by name, as its `junit` sorts them.
+/// Names, locations and texts come from oxlint's `Info`, so everything without a location ends up in one file without a
+/// name. The files are sorted by name, like in oxlint's `junit`.
 fn group(
     results: &[FileResult],
     meta: &Meta,
@@ -74,8 +74,8 @@ fn group(
     files
 }
 
-/// Every value that goes into the document goes through here. oxlint prints the names of files and rules as they are, so that
-/// a file called `a"><x y=".js` shapes its report.
+/// Every value in the document is escaped here. oxlint prints file and rule names unescaped, so a file named
+/// `a"><x y=".js` can change the structure of its report.
 fn write_xml_escaped(out: &mut Vec<u8>, text: &[u8]) {
     for &byte in text {
         match xml_escape_entity(byte) {

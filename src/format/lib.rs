@@ -2,16 +2,14 @@
 //!
 //! See `CLAUDE.md` in this directory.
 //!
-//! The intermediate representation and the printer (`ir/`) come from
-//! [Biome](https://github.com/biomejs/biome) by way of `oxc_formatter_core`, and the rules for
-//! JavaScript and TypeScript (`js/`) are a port of
-//! [`oxc_formatter`](https://github.com/oxc-project/oxc/tree/main/crates/oxc_formatter) to the
-//! syntax tree of `bun check`. Both are under the MIT license. What they implement is
-//! [Prettier](https://github.com/prettier/prettier), also under the MIT license, which is the
-//! specification wherever they differ from it.
+//! The intermediate representation and the printer (`ir/`) come from [Biome](https://github.com/biomejs/biome) by way
+//! of `oxc_formatter_core`, and the rules for JavaScript and TypeScript (`js/`) are a port of
+//! [`oxc_formatter`](https://github.com/oxc-project/oxc/tree/main/crates/oxc_formatter) to `bun check`'s syntax tree.
+//! Both are under the MIT license. Both implement [Prettier](https://github.com/prettier/prettier), also under the MIT
+//! license, which is the specification wherever they differ from it.
 
 #![forbid(unsafe_code)]
-// For what only `--debug-check` runs: `#[optimize(size)]` roughly halves it, and how fast it is doesn't matter.
+// For code that only `--debug-check` runs: `#[optimize(size)]` roughly halves its size, and its speed doesn't matter.
 #![feature(optimize_attribute)]
 
 pub mod css;
@@ -37,12 +35,14 @@ pub mod toml;
 pub mod verify;
 pub mod yaml;
 
-/// What a caller does for a file of Flow.
+/// Helpers for callers that handle Flow files.
 pub mod flow {
-    pub use crate::js::print::flow::{goes_to_babel, may_have_comment_types, uncommented};
+    pub use crate::js::print::flow::{
+        is_parsed_by_babel_flow, may_have_comment_types, uncommented,
+    };
 }
 
-/// Sorting imports.
+/// Import sorting.
 pub mod sort_imports {
     pub use crate::js::sort_imports::{Settings, SortImports, sorted_text};
 }
@@ -50,10 +50,10 @@ pub mod sort_imports {
 pub use ir::run::Scratch;
 pub use options::FormatOptions;
 
-// Not in the prelude: a glob import cannot shadow the macros of the same names in `std`.
+// Not in the prelude: a glob import can't shadow the `std` macros with the same names.
 pub(crate) use crate::ir::macros::{best_fitting, format_args, write};
 
-/// What nearly every file of this crate needs.
+/// Imports that nearly every file in this crate needs.
 pub(crate) mod prelude {
     pub(crate) use crate::ir::prelude::*;
     pub(crate) use crate::js::prelude::*;
@@ -64,22 +64,20 @@ pub(crate) mod prelude {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum FormatError {
-    /// The file has syntax errors. It is left as it is. What they are is for the caller to know: the parser of scripts
-    /// has told it.
+    /// The file has syntax errors and is left as is. The caller already has the errors from the script parser.
     SyntaxError,
-    /// The same, from a parser of this crate.
+    /// The same, from one of this crate's parsers.
     SyntaxErrorAt(syntax_error::SyntaxError),
-    /// The syntax is nested so deeply that formatting it would overflow the stack. The file is left
-    /// as it is.
+    /// The syntax is nested so deeply that formatting it would overflow the stack. The file is left as is.
     NestedTooDeeply,
-    /// The formatted text is [longer than a string can be](is_too_long). The file is left as it is.
+    /// The formatted text is [longer than a string can be](is_too_long). The file is left as is.
     TooLong,
     /// A bug in the formatter: the document it wrote is malformed.
     InvalidDocument,
 }
 
-/// Whether a text of `len` bytes is longer than a string of JavaScript can be, which is where Prettier ends with
-/// `RangeError: Invalid string length`. What is nested `n` deep is indented by `n * n` blanks.
+/// True if a text of `len` bytes is longer than a JavaScript string can be, which is where Prettier fails with
+/// `RangeError: Invalid string length`. Something nested `n` deep is indented by `n * n` spaces.
 #[inline]
 pub(crate) fn is_too_long(len: usize) -> bool {
     len as u64 > bun_lint::fix::MAX_STRING_LENGTH

@@ -1,4 +1,4 @@
-//! From a file to its formatted text.
+//! Formats a file: writes its document, then prints it.
 
 use super::element::Interned;
 use super::formatter::Formatter;
@@ -9,23 +9,24 @@ use crate::options::DebugComments;
 use crate::{FormatError, FormatOptions};
 use bun_lint::ast::File;
 
-/// Everything that is allocated to format a file. It is reused for the next file.
+/// All the allocations needed to format a file, reused for the next file.
 #[derive(Default)]
 pub struct Scratch {
     formatter: super::formatter::FormatterBuffers,
     printer: super::printer::PrinterBuffers,
-    /// A line for each comment of the last file that no printer has printed.
+    /// One line for each comment of the last file that wasn't printed.
     unprinted_comments: Vec<u8>,
     /// Their ids, for the second pass.
     unprinted_comment_ids: Vec<u32>,
 }
 
-/// Appends the formatted text of `file` to `out`: the document that `write` writes. Returns where the ends of `cursor` are
-/// in what is appended.
+/// Formats `file` by printing the document that `write` writes, and appends the text to `out`. Returns the offsets of
+/// both ends of `cursor` in the appended text.
 ///
-/// Every comment is owned by a node or a name, and whoever writes that has to write the comment. Prettier throws if a comment
-/// is left over. Here the file is formatted once more, and the statement or the class member that such a comment is in writes
-/// it after itself: the comment moves, and the file is formatted. `--debug-unprinted-comments` lists these comments.
+/// Every comment is owned by a node or a name, and the code that writes the owner has to write the comment. Prettier
+/// throws if a comment is left over. Here the file is formatted a second time, and the statement or class member that
+/// contains such a comment writes it after itself. The comment moves, but the file gets formatted.
+/// `--debug-unprinted-comments` lists these comments.
 pub(crate) fn format_with_marks<'a>(
     file: &'a File<'a>,
     options: &FormatOptions,
@@ -35,13 +36,13 @@ pub(crate) fn format_with_marks<'a>(
     write: impl Fn(&'a File<'a>, &mut Formatter<'a>),
 ) -> Result<[Option<u32>; 2], FormatError> {
     if options.debug_comments == DebugComments::Owners {
-        let has_tree_of_babel = crate::js::context::has_tree_of_babel(file, options);
+        let has_babel_tree = crate::js::context::has_babel_tree(file, options);
         let attach_options = crate::js::attach::Options {
-            has_tree_of_babel,
+            has_babel_tree,
             experimental_ternaries: options.experimental_ternaries,
             flavor: options.flavor,
         };
-        let cast_parens = comments::cast_parens(file, options.flavor, has_tree_of_babel);
+        let cast_parens = comments::cast_parens(file, options.flavor, has_babel_tree);
         crate::js::attach::list(file, &cast_parens, attach_options, out);
         return Ok([None; 2]);
     }
@@ -66,13 +67,13 @@ pub(crate) fn format_with_marks<'a>(
 }
 
 impl Scratch {
-    /// Where the marks around the cursor were in what has been printed last.
+    /// Returns the offsets of the cursor marks in the last printed text.
     pub(crate) fn marks(&self) -> [Option<u32>; 2] {
         self.printer.marks
     }
 }
 
-/// Appends the text of the document `root`, which [`write_with`] has returned, to `out`.
+/// Prints the document `root`, as returned by [`write_with`], and appends the text to `out`.
 pub(crate) fn print(
     root: Interned,
     source: &[u8],
@@ -103,15 +104,15 @@ fn write_document<'a>(
     if file.has_parse_errors() {
         return Err(FormatError::SyntaxError);
     }
-    let comments = comments::of_file(file, options);
+    let comments = comments::for_file(file, options);
     let mut context = JsFormatContext::new(file, options.clone(), comments);
     context.cursor = cursor;
     context.comments_without_printer = comments_without_printer;
     write_with(context, file.text(), scratch, |f| write(file, f))
 }
 
-/// Calls `write` to write a document whose source text is `source`. For a text that is not
-/// JavaScript, `context` is one [without a file](JsFormatContext::without_file).
+/// Calls `write` to write a document whose source text is `source`. For text that isn't JavaScript, `context` is one
+/// [without a file](JsFormatContext::without_file).
 pub(crate) fn write_with<'a>(
     context: JsFormatContext<'a>,
     source: &'a [u8],
@@ -124,7 +125,7 @@ pub(crate) fn write_with<'a>(
     finish(formatter, scratch)
 }
 
-/// Gives the vectors of `formatter` back to `scratch`. Returns where the document is.
+/// Hands `formatter`'s buffers back to `scratch` and returns the document's range.
 fn finish(formatter: Formatter<'_>, scratch: &mut Scratch) -> Result<Interned, FormatError> {
     let ran_out_of_stack = formatter.context().ran_out_of_stack;
     scratch.unprinted_comments.clear();
@@ -152,7 +153,7 @@ fn finish(formatter: Formatter<'_>, scratch: &mut Scratch) -> Result<Interned, F
     if ran_out_of_stack {
         return Err(FormatError::NestedTooDeeply);
     }
-    // Prettier's `ensureAllCommentsPrinted`: a file is left alone rather than written without one of its comments.
+    // Prettier's `ensureAllCommentsPrinted`. Better to leave a file unformatted than to drop one of its comments.
     if !scratch.unprinted_comment_ids.is_empty() {
         return Err(FormatError::InvalidDocument);
     }

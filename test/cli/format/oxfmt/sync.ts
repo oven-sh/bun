@@ -1,4 +1,4 @@
-// Collects the fixtures of oxc's formatter, its snapshots, and what Prettier prints for the same inputs, in `bundle.zst`.
+// Collects the oxc formatter's fixtures, its snapshots, and Prettier's output for the same inputs into `bundle.zst`.
 //
 //   bun test/cli/format/oxfmt/sync.ts <path to a checkout of oxc-project/oxc> <directory with node_modules/prettier>
 //   bun test/cli/format/oxfmt/sync.ts --extract <part of a path, or ""> <directory>
@@ -21,21 +21,22 @@ if (source === "--extract" && rest.length === 2) {
   for (const language of ["css", "graphql", "json", "markdown", "yaml"]) {
     const found = new Map<string, Uint8Array>();
     collect(join(source, `crates/oxc_formatter_${language}/tests`), "fixtures", found, name => name.endsWith(".rs"));
-    // `embedded`: style sheets with the placeholders that stand for the `${}` of a template.
+    // `embedded` has style sheets with placeholders that replace a template's `${}`.
     for (const [name, bytes] of found) if (!name.startsWith("fixtures/embedded/")) files.set(name.replace("fixtures", language), bytes);
   }
-  // One language in another. Of these there is no snapshot of oxfmt's.
+  // One language embedded in another. oxfmt has no snapshots for these.
   for (const kind of ["css-in-js", "gql-in-js", "md-in-js", "xxx-in-js-comment", "xxx-in-md"]) {
     collect(join(source, "apps/oxfmt/conformance/fixtures"), `edge-cases/${kind}`, files, () => false);
   }
-  // `tests/jsdoc/fixtures` has pairs, `a.ts` and `a.output.ts`, with options in snake case. They are written in the form of the others.
+  // `tests/jsdoc/fixtures` has pairs, `a.ts` and `a.output.ts`, with options in snake case. They're converted to the
+  // format of the others.
   const pairs = new Map<string, Uint8Array>();
   collect(join(source, "crates/oxc_formatter/tests"), "jsdoc/fixtures", pairs, () => false);
   const rowsOfPairs = new Map<string, Options[]>();
   for (const [name, bytes] of pairs) {
     const [, stem, extension] = /^(.*?)(\.[jt]sx?)$/.exec(name) ?? [];
     const output = pairs.get(`${stem}.output${extension}`);
-    // The one that oxc's own test leaves out: it needs a formatter for HTML.
+    // oxc's own test skips this one too, because it needs an HTML formatter.
     if (!stem || !output || name.endsWith("descriptions/032-jsx-tsx-css.ts")) continue;
     const given = pairs.get(`${stem}.options.json`) ?? pairs.get(`${dirname(name)}/options.json`);
     const options: Options = {};
@@ -43,7 +44,7 @@ if (source === "--extract" && rest.length === 2) {
       const camelCase = key.replace(/_(.)/g, (_, letter) => letter.toUpperCase());
       options[key === "single_quote" || key === "print_width" ? camelCase : `jsdoc.${camelCase}`] = value;
     }
-    // A property of `jsdoc` says that it is on.
+    // Setting any `jsdoc` property turns it on.
     if (!Object.keys(options).some(name => name.startsWith("jsdoc."))) options.jsdoc = true;
     files.set(name, bytes);
     files.set(`${name}.snap`, Buffer.from(render([[options, Buffer.from(output).toString()]])));
@@ -53,7 +54,7 @@ if (source === "--extract" && rest.length === 2) {
     if (!files.has(`${name}.snap`) && !name.startsWith("edge-cases/")) continue;
     const outputs: [Options, string][] = [];
     for (const options of rowsOfPairs.get(name) ?? rowsOf(name, files)) {
-      // Not options of Prettier.
+      // Prettier doesn't have the `jsdoc` options.
       const known = Object.fromEntries(Object.entries(options).flatMap(([name, value]) => (name.startsWith("jsdoc") ? [] : [[name === "variant" ? "parser" : name, value]])));
       const input = Buffer.from(bytes).toString();
       const output: string = await prettier.format(input, { ...known, filepath: name }).catch((error: Error) => `<${error.name}>`);

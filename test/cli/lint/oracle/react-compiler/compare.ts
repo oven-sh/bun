@@ -1,20 +1,21 @@
-// Two sets of diagnostics of the React Compiler's rules for the same files, one against the other.
+// Compares two sets of React Compiler rule diagnostics for the same files.
 //
 //   bun compare.ts <theirs> <ours> [--name=oxlint] [--ignore=help,note] [--rule=react/refs] [--examples=40] [--strip=<prefix>]
 //                  [--messages=react/todo,react/invariant]
 //
-// Each side is one of (told apart by what is in it):
-//   - the lines of oxlint.ts or repos.ts                         {"path", "parse", "diagnostics": [..]}
-//   - the lines of frames.ts                                     {"path", "errors": [..], "logged": [..]}
-//   - the compiler's findings as they are, a line for each file  {"path", "findings": [{"category", "reason", ..}]}
-//   - reports of `-f json`, one or more, with other text between {"diagnostics": [..], "number_of_files": ..}
+// Each side is one of these formats, detected from its contents:
+//   - the output of oxlint.ts or repos.ts                        {"path", "parse", "diagnostics": [..]}
+//   - the output of frames.ts                                    {"path", "errors": [..], "logged": [..]}
+//   - the compiler's raw findings, one line per file             {"path", "findings": [{"category", "reason", ..}]}
+//   - one or more `-f json` reports, with other text in between  {"diagnostics": [..], "number_of_files": ..}
 //
-// A diagnostic is the same if the rule, the message, all labels (start, end, text, order), the help and the note are the same,
-// and the severity where both sides have one. `--ignore` leaves fields out: severity, message, help, note, text (of labels),
-// order (of labels). `--messages`: also a table of the messages of these rules, with what is in `..` left out.
+// Two diagnostics match if the rule, the message, all labels (start, end, text, order), the help and the note are the
+// same, plus the severity if both sides have one. `--ignore` skips fields: severity, message, help, note, text (of
+// labels), order (of labels). `--messages` also prints a table of these rules' messages, with the text in `..` removed.
 //
-// Where theirs comes from frames.ts there are no rules, and the fixtures were compiled with other options than a linter has:
-// an error is a case only if ours has a diagnostic with the same message in the same file, and nothing is "only ours".
+// If theirs comes from frames.ts, it has no rules, and the fixtures were compiled with different options from a
+// linter's. An error then only counts if ours has a diagnostic with the same message in the same file, and nothing
+// counts as "only ours".
 
 import { readFileSync } from "node:fs";
 import type { Expected, ExpectedError } from "./frames.ts";
@@ -37,24 +38,23 @@ type Finding = {
   description?: string | null;
   note?: string | null;
   details?: (
-    | { kind: "error"; start?: number | null; end?: number | null; message?: string | null }
-    | { kind: "hint" }
+    { kind: "error"; start?: number | null; end?: number | null; message?: string | null } | { kind: "hint" }
   )[];
 };
-/** `null`: the file has syntax errors. */
+/** `findings` is `null` if the file has syntax errors. */
 type Findings = { path: string; findings: Finding[] | null };
-/** `maybeEmpty`: the end is `end` or `start`. */
+/** With `maybeEmpty`, the label ends at either `end` or `start`. */
 type AnyLabel = Label & { maybeEmpty?: true };
 type Side = {
   kind: "records" | "frames" | "findings" | "reports";
-  /** Only the files that have diagnostics are there: reports of `-f json`, and the lines of repos.ts. */
+  /** True if only files with diagnostics are listed, as in `-f json` reports and the output of repos.ts. */
   sparse: boolean;
-  /** Of the lines of repos.ts: the first part of the paths of the runs that gave a report. */
+  /** For the output of repos.ts: the first path segment of each run that produced a report. */
   repositories: Set<string>;
   files: Map<string, FileRecord>;
 };
 
-function ofExpected(error: ExpectedError): Diagnostic {
+function fromExpected(error: ExpectedError): Diagnostic {
   const labels: AnyLabel[] = [];
   for (const detail of error.details) {
     if (detail.kind !== "error") continue;
@@ -71,7 +71,7 @@ function ofExpected(error: ExpectedError): Diagnostic {
   };
 }
 
-function ofFinding(finding: Finding): Diagnostic {
+function fromFinding(finding: Finding): Diagnostic {
   const labels: Label[] = [];
   for (const detail of finding.details ?? []) {
     if (detail.kind !== "error" || detail.start == null || detail.end == null) continue;
@@ -106,11 +106,11 @@ function read(path: string, strip: string): Side {
       kind ??= "findings";
       const file = name(document.path!);
       const parse = document.findings === null ? "error" : "ok";
-      files.set(file, { path: file, parse, diagnostics: (document.findings ?? []).map(ofFinding) });
+      files.set(file, { path: file, parse, diagnostics: (document.findings ?? []).map(fromFinding) });
     } else if (document.errors !== undefined) {
       kind ??= "frames";
       const file = name(document.path!);
-      const diagnostics = [...document.errors, ...(document.logged ?? [])].map(ofExpected);
+      const diagnostics = [...document.errors, ...(document.logged ?? [])].map(fromExpected);
       files.set(file, { path: file, parse: "ok", diagnostics });
     } else if (document.diagnostics !== undefined) {
       kind ??= "records";
@@ -140,7 +140,7 @@ const sameSpan = (a: AnyLabel, b: AnyLabel) =>
   a.start === b.start && (a.end === b.end || (a.maybeEmpty === true && b.end === a.start));
 const bySpan = (a: Label, b: Label) => a.start - b.start || a.end - b.end;
 
-/** The fields in which two diagnostics of a rule differ. Nothing: they are the same. */
+/** Returns the fields in which two diagnostics from one rule differ. Empty if they match. */
 function differences(a: Diagnostic, b: Diagnostic): string[] {
   const fields: string[] = [];
   if (a.severity !== undefined && b.severity !== undefined && a.severity !== b.severity && !ignore.has("severity")) {
@@ -162,8 +162,8 @@ function differences(a: Diagnostic, b: Diagnostic): string[] {
   return fields;
 }
 
-/** How much two diagnostics that are not the same have in common. 0: they are not a pair. */
-function likeness(a: Diagnostic, b: Diagnostic): number {
+/** Scores how similar two different diagnostics are. 0 means they aren't a pair. */
+function similarity(a: Diagnostic, b: Diagnostic): number {
   if (a.rule !== b.rule && !byMessage) return 0;
   if (byMessage) return a.message === b.message ? 1 + (sameFirst(a, b) ? 1 : 0) : 0;
   let score = 0;
@@ -204,7 +204,7 @@ function compare(a: readonly Diagnostic[], b: readonly Diagnostic[]): Outcome {
     let best = -1;
     let score = 0;
     right.forEach((other, i) => {
-      const value = other === null ? 0 : likeness(diagnostic, other);
+      const value = other === null ? 0 : similarity(diagnostic, other);
       if (value > score) [best, score] = [i, value];
     });
     if (best < 0) {
@@ -220,7 +220,7 @@ function compare(a: readonly Diagnostic[], b: readonly Diagnostic[]): Outcome {
 
 const short = (text: string | null, length = 100) =>
   text === null ? "-" : JSON.stringify(text.length > length ? text.slice(0, length) + "…" : text);
-/** `text` from a little before the place where it stops being `other`. */
+/** Returns `text` starting a little before the first character that differs from `other`. */
 function from(text: string | null, other: string | null): string {
   if (text === null || other === null) return short(text, 160);
   let same = 0;
@@ -287,7 +287,7 @@ for (const path of [...paths].sort()) {
   if (ourFile === undefined && !ours.sparse) files.missing++;
   const outcome = compare((theirFile?.diagnostics ?? []).filter(wanted), (ourFile?.diagnostics ?? []).filter(wanted));
   if (byMessage) {
-    // Not a case: what ours does not have at all, and what only ours has.
+    // Diagnostics that only one side has don't count.
     outcome.onlyTheirs.length = 0;
     outcome.onlyOurs.length = 0;
   }

@@ -3,18 +3,21 @@ import type { Query as QueryType } from "./query";
 import type { ArrayType, DatabaseAdapter, SQLArrayParameter, TransactionCommands } from "./shared";
 
 type SQLResultArray<T> = import("./shared").SQLResultArray<T>;
+type AsyncContext = import("../../node/async_hooks").Frame | undefined;
 
 const {
   SQLQueryFlags,
   onQuerySettled,
   symbols: { _results },
 } = require("internal/sql/query");
-const { SQLDialect, SQLResultArray, isUnsafeTransactionStart } = require("internal/sql/shared");
+// The cast: the checker reports a class that extends a member of the generic `require` as its own base (TS2506).
+const { SQLDialect, SQLResultArray, isUnsafeTransactionStart } =
+  require("internal/sql/shared") as typeof import("./shared").default;
 const AsyncContextFrame = require("internal/async_context_frame");
 const { isStoppedModuleGraphRunning } = require("internal/shared");
-const monotonicNowMs = $bindgen("Timer.bind.ts", "monotonicNowMs");
+const monotonicNowMs: () => number = $bindgen("Timer.bind.ts", "monotonicNowMs");
 /// how many times `bun --hot` has reloaded the program, -1 without --hot
-const hotReloadGeneration = $bindgen("jsc_hooks.bind.ts", "hotReloadGeneration");
+const hotReloadGeneration: () => number = $bindgen("jsc_hooks.bind.ts", "hotReloadGeneration");
 
 const enum PooledConnectionState {
   connecting = 0,
@@ -30,16 +33,8 @@ const enum PooledConnectionFlags {
 }
 export type { PooledConnection };
 
-interface NativeConnection {
-  close(): void;
-  flush(): void;
-  hold(): void;
-  unhold(): void;
-  /// a boolean: the server's word after its last complete reply
-  readonly inTransaction: unknown;
-  /// PostgreSQL, a boolean: the server asked for SASL in the login that is under way or was refused
-  readonly sasl?: unknown;
-}
+/// What the native connections of both drivers have.
+type NativeConnection = $Bindgen.MySQLConnection;
 
 /// A driver ignores the trailing arguments it does not take.
 export type NativeCreateConnection<ConnectionHandle> = (
@@ -420,7 +415,7 @@ async function createPooledConnectionHandle<ConnectionHandle>(
   // waits for this connection waits.
   if (isStoppedModuleGraphRunning()) return null;
 
-  let password: Bun.MaybePromise<string> | string | undefined | (() => Bun.MaybePromise<string>) = options.password;
+  let password: Promise<string> | string | undefined | (() => Promise<string> | string) = options.password;
 
   if (typeof password === "function") {
     password = password();
@@ -464,7 +459,7 @@ async function createPooledConnectionHandle<ConnectionHandle>(
 
 /// A result of several: CALL <proc>() and a text of several statements.
 function addResult(query: QueryType<any, any>, result: SQLResultArray<unknown>) {
-  const results = query[_results];
+  const results: SQLResultArray<unknown> | SQLResultArray<unknown>[] | null | undefined = query[_results];
   if (!results) {
     query[_results] = result;
   } else if (SQLResultArray.isResult(results)) {
@@ -518,10 +513,10 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   /// AsyncLocalStorage context the SQL instance was created in. onconnect/onclose run
   /// inside it rather than in whatever context the native callback happens to fire in
   /// (none for a socket event, the close() caller's when the socket closes synchronously).
-  public readonly callbackAsyncContext: unknown;
+  public readonly callbackAsyncContext: AsyncContext;
   /// The Bun.ModuleGraph context frame the SQL instance was created inside of, if any:
   /// every connection of the pool is opened in it, so it belongs to that graph.
-  public readonly ownerGraphFrame: unknown;
+  public readonly ownerGraphFrame: AsyncContext;
 
   /// Calls `dial` as the SQL instance's owner, whoever is calling: a connection is its owner's,
   /// the Bun.ModuleGraph the instance was made in (a redial starts from a close event, which has
@@ -780,7 +775,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
         connection.queryCount++;
         this.totalQueries++;
         this.readyConnections.delete(connection);
-        connection.connection.hold();
+        (connection.connection as NativeConnection).hold();
         waiter.onConnected(null, connection);
         return true;
       }
@@ -800,7 +795,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     if (reserved) {
       connection.flags &= ~PooledConnectionFlags.reserved;
       // closes a connection whose maxLifetime ran out
-      connection.connection.unhold();
+      (connection.connection as NativeConnection).unhold();
     }
     if (this.#closeIfDrained() || connection.state !== PooledConnectionState.open) {
       return;
@@ -956,7 +951,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       this.closedAtOnce = true;
       this.#teardown();
     } else if (timeout !== undefined && !this.#tornDown) {
-      const timer = setTimeout(BaseSQLAdapter.#closeTimerFired, timeout, this);
+      const timer: NodeJS.Timeout = setTimeout(BaseSQLAdapter.#closeTimerFired, timeout, this);
       timer.unref(); // dont block the event loop
       this.#closeTimers.push(timer);
     }

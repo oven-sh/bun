@@ -17,8 +17,6 @@
 
 #[path = "shell_body.rs"]
 pub(crate) mod shell_body;
-// Codegen (`generated_js2native.rs`) addresses this as `crate::shell::shell::*`.
-pub(crate) use shell_body as shell;
 
 // ─── submodules ──────────────────────────────────────────────────────────────
 #[path = "EnvMap.rs"]
@@ -144,10 +142,10 @@ pub(crate) use bun_shell_parser::{escape_8bit, needs_escape_utf8_ascii_latin1};
 // lifetime-widening slice cast (`Script<'a>` → `Script<'static>`, identical
 // layout) at the arena/state-machine boundary.
 pub(crate) mod ast {
-    pub(crate) use bun_shell_parser::parse::SmolList;
     use bun_shell_parser::parse::ast as p;
     pub(crate) use p::{BinaryOp, CondExprOp, IoKind, RedirectFlags};
 
+    pub(crate) type SmolList<T, const N: usize> = bun_shell_parser::parse::SmolList<'static, T, N>;
     pub(crate) type Script = p::Script<'static>;
     pub(crate) type Stmt = p::Stmt<'static>;
     pub(crate) type Expr = p::Expr<'static>;
@@ -171,13 +169,3 @@ pub(crate) use shell_body::ShellErr;
 pub(crate) type Result<T, E = ShellErr> = core::result::Result<T, E>;
 
 pub(crate) use parsed_shell_script::ParsedShellScript;
-
-/// Re-export of the JS-exposed `Bun.spawn` Subprocess class. The
-/// `generate-classes.ts` resolver walks `lib.rs` in declaration order and
-/// `mod shell` precedes `mod api`, so `generated_classes.rs` currently routes
-/// the `Subprocess` codegen thunks through `crate::shell::Subprocess`. Point
-/// it at the real implementation (lifetime erased to `'static` for the C-ABI
-/// `*mut Subprocess` thunk signatures — the JS wrapper outlives any borrow).
-/// Distinct from [`ShellSubprocess`](subproc::ShellSubprocess), the shell
-/// interpreter's internal process node.
-pub(crate) type Subprocess = crate::api::bun::subprocess::Subprocess<'static>;

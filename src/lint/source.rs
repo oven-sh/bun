@@ -7,10 +7,10 @@ pub use bun_sema::hir::mention_bit;
 use rustc_hash::FxHashMap;
 use std::cell::{Cell, OnceCell};
 
-/// What a rule has found out about each name of a file, for a rule that asks the same of every identifier: a file has many times
-/// as many identifiers as names. Looking a name up is a load.
+/// Caches what a rule computed for each name in a file. It's for rules that ask the same question about every
+/// identifier, since a file has many times more identifiers than distinct names. A lookup is one load.
 pub struct ByName<T> {
-    /// By the number of the name. The names of a file that is linted on its own have small numbers.
+    /// Indexed by the name's atom number. When a file is linted on its own, its names have small numbers.
     small: Vec<Option<T>>,
     others: FxHashMap<u32, T>,
 }
@@ -25,12 +25,12 @@ impl<T> Default for ByName<T> {
 }
 
 impl<T: Copy> ByName<T> {
-    /// What is known about `name`. `find_out` is called the first time.
+    /// Returns the cached value for `name`, calling `compute` on the first lookup.
     #[inline]
-    pub fn get_or_insert_with(&mut self, name: Name<'_>, find_out: impl FnOnce() -> T) -> T {
+    pub fn get_or_insert_with(&mut self, name: Name<'_>, compute: impl FnOnce() -> T) -> T {
         match self.small.get(name.atom().0 as usize) {
             Some(Some(known)) => *known,
-            _ => self.insert(name.atom().0, find_out()),
+            _ => self.insert(name.atom().0, compute()),
         }
     }
 
@@ -45,34 +45,34 @@ impl<T: Copy> ByName<T> {
             self.small
                 .resize((at + 1).next_power_of_two().max(1024), None);
         }
-        if let Some(place) = self.small.get_mut(at) {
-            *place = Some(found);
+        if let Some(slot) = self.small.get_mut(at) {
+            *slot = Some(found);
         }
         found
     }
 }
 
-/// Where the lines of a file start.
+/// A file's line starts, plus what it takes to convert byte columns to UTF-16 columns.
 pub(crate) struct Lines {
     starts: LineStarts,
-    /// A bit for each line that has a byte that is not ASCII, from the first. In the others no column needs converting: a byte is
-    /// a UTF-16 code unit. Empty if there is no such line.
-    not_ascii: Vec<u64>,
-    /// For columns far into a line: how many UTF-16 code units the characters have that start before each multiple of
-    /// `BLOCK`, and at last all of them. `None` if the text is not valid UTF-8. Made when the first such column is asked for.
+    /// One bit per line, set if the line has a non-ASCII byte. Columns in the other lines need no conversion, since
+    /// there a byte is a UTF-16 code unit. Empty if every line is ASCII.
+    non_ascii_lines: Vec<u64>,
+    /// For columns far into a line: the number of UTF-16 code units in the characters that start before each multiple
+    /// of `BLOCK`, followed by the total. `None` if the text isn't valid UTF-8. Built the first time such a column is
+    /// requested.
     units: OnceCell<Option<Vec<u32>>>,
 }
 
 impl Lines {
     fn new(text: &[u8], starts: LineStarts) -> Lines {
-        let (mut not_ascii, mut at) = (Vec::new(), 0);
+        let (mut non_ascii_lines, mut at) = (Vec::new(), 0);
         while let Some(found) = text.get(at..).and_then(bun_core::strings::first_non_ascii) {
             let line = starts.line_at(at as u32 + found).0 as usize;
-            not_ascii.resize(starts.starts.len().div_ceil(64), 0u64);
-            if let Some(bits) = not_ascii.get_mut((line - 1) / 64) {
+            non_ascii_lines.resize(starts.starts.len().div_ceil(64), 0u64);
+            if let Some(bits) = non_ascii_lines.get_mut((line - 1) / 64) {
                 *bits |= 1 << ((line - 1) % 64);
             }
-            // On with the next line.
             match starts.starts.get(line) {
                 Some(next) => at = *next as usize,
                 None => break,
@@ -80,26 +80,26 @@ impl Lines {
         }
         Lines {
             starts,
-            not_ascii,
+            non_ascii_lines,
             units: OnceCell::new(),
         }
     }
 
-    /// The whole text.
+    /// True if the whole text is ASCII.
     #[inline]
     fn is_ascii(&self) -> bool {
-        self.not_ascii.is_empty()
+        self.non_ascii_lines.is_empty()
     }
 
-    /// The line `line`, counted from 1.
+    /// True if line `line` (1-based) is ASCII.
     #[inline]
     fn is_line_ascii(&self, line: u32) -> bool {
-        let bits = self.not_ascii.get((line as usize - 1) / 64);
+        let bits = self.non_ascii_lines.get((line as usize - 1) / 64);
         bits.is_none_or(|bits| (bits >> ((line - 1) % 64)) & 1 == 0)
     }
 }
 
-/// What counts as a line break. It depends on the language.
+/// Which sequences count as a line break. It depends on the language.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub enum LineBreaks {
     /// `\n`, `\r\n`, `\r`, U+2028 and U+2029.
@@ -124,7 +124,7 @@ impl LineBreaks {
             }
     }
 
-    /// The offset of the start of each line of `text`.
+    /// Returns the start offset of each line in `text`.
     fn starts(self, text: &[u8], is_plain: bool) -> Vec<u32> {
         let ends: &[u8] = match self {
             // `\n` is the only line break, as in nearly every file.
@@ -147,8 +147,8 @@ impl LineBreaks {
         LineStarts::at(self.starts(text, self.is_plain(text)))
     }
 
-    /// The line and column of `offset` in `text`. It scans the whole text, so it's only for things that are reported
-    /// once per file.
+    /// Returns the line and column of `offset` in `text`. It scans the whole text, so it's only for things that are
+    /// reported once per file.
     pub fn position(self, text: &[u8], offset: usize) -> Position {
         let offset = offset.min(text.len());
         let (line, start) = self.line_starts(text).line_at(offset as u32);
@@ -158,27 +158,27 @@ impl LineBreaks {
     }
 }
 
-/// Where the lines of a text start.
+/// A text's line starts.
 pub struct LineStarts {
     starts: Vec<u32>,
-    /// The line that was found last, counted from 0. The next one that is asked for is mostly near it.
+    /// The last line found (0-based). The next lookup is usually near it.
     last: Cell<u32>,
 }
 
 impl LineStarts {
-    /// `starts`: ascending, from 0.
+    /// `starts` must be ascending and begin with 0.
     pub fn at(starts: Vec<u32>) -> LineStarts {
         let last = Cell::new(0);
         LineStarts { starts, last }
     }
 
-    /// Where the line `line`, counted from 1, starts.
+    /// Returns the start of line `line` (1-based).
     #[inline]
     pub fn start_of(&self, line: u32) -> Option<u32> {
         self.starts.get((line as usize).checked_sub(1)?).copied()
     }
 
-    /// The line that `offset` is in, counted from 1, and where it starts.
+    /// Returns the 1-based line that contains `offset`, and that line's start.
     #[inline]
     pub fn line_at(&self, offset: u32) -> (u32, u32) {
         let found = self.line_from(self.last.get(), offset);
@@ -186,11 +186,11 @@ impl LineStarts {
         found
     }
 
-    /// The same, looked for from the line `from`, counted from 0.
+    /// Like `line_at`, but starts the search at line `from` (0-based).
     #[inline]
     fn line_from(&self, from: u32, offset: u32) -> (u32, u32) {
         let (starts, mut at) = (&self.starts[..], from as usize);
-        // That line and the next few, one by one.
+        // Try that line and the next few one by one.
         if let Some(mut start) = starts.get(at).copied().filter(|start| *start <= offset) {
             for _ in 0..4 {
                 match starts.get(at + 1) {
@@ -206,7 +206,7 @@ impl LineStarts {
     fn line_far_from(&self, from: usize, offset: u32) -> (u32, u32) {
         let starts = &self.starts[..];
         let starts_by = |at: usize| starts.get(at).is_some_and(|&start| start <= offset);
-        // The line is one from `low` to before `high`. The steps away from `from` double.
+        // The line is in `low..high`. Gallop away from `from`, doubling the step, then binary search.
         let (mut low, mut high) = (from, starts.len());
         let mut step = 1;
         if starts_by(low) {
@@ -231,26 +231,26 @@ impl LineStarts {
     }
 }
 
-/// A column is counted from the start of its line if that is no further away.
+/// Columns up to this many bytes into a line are counted from the line's start.
 const FAR: u32 = 512;
 const BLOCK: usize = 1024;
 
-/// For the line of an offset in a file of which few are asked for: then the lines in between are counted, and the starts of
-/// all the lines are not looked for.
+/// Finds an offset's line in a file where only a few offsets are looked up. It counts the line breaks between lookups
+/// instead of indexing every line start.
 #[derive(Default)]
 pub(crate) struct NearbyLine {
-    /// Only `\n` ends a line.
+    /// True if `\n` is the only line break.
     is_plain: OnceCell<bool>,
-    /// An offset, and how many lines end before it.
+    /// An offset and the number of line breaks before it.
     known: Cell<(u32, u32)>,
-    /// How many bytes have been looked at.
-    looked_at: Cell<usize>,
-    /// How many lines there are.
+    /// Bytes scanned so far.
+    bytes_scanned: Cell<usize>,
+    /// The file's line count.
     count: OnceCell<u32>,
 }
 
 impl<'a> File<'a> {
-    /// Whether only `\n` ends a line.
+    /// True if `\n` is the only line break in the file.
     fn is_plain(&self) -> bool {
         let nearby = &self.by_kind().nearby_line;
         *nearby
@@ -258,7 +258,8 @@ impl<'a> File<'a> {
             .get_or_init(|| self.line_breaks().is_plain(self.text()))
     }
 
-    /// The line that `offset` is in, counted from 1, and where it starts, if that takes less than to find all lines.
+    /// Returns the 1-based line that contains `offset` and that line's start, or `None` once indexing every line is
+    /// cheaper.
     fn nearby_line(&self, offset: u32) -> Option<(u32, u32)> {
         if self.lazy.lines.get().is_some() || !self.is_plain() {
             return None;
@@ -266,12 +267,12 @@ impl<'a> File<'a> {
         let (text, nearby) = (self.text(), &self.by_kind().nearby_line);
         let (known, lines_before) = nearby.known.get();
         let between = text.get(known.min(offset) as usize..known.max(offset) as usize)?;
-        // To count is many times faster than to note where each line starts.
-        let looked_at = nearby.looked_at.get() + between.len() + 256;
-        if looked_at > 4 * text.len() {
+        // Counting line breaks is many times faster than recording every line start.
+        let bytes_scanned = nearby.bytes_scanned.get() + between.len() + 256;
+        if bytes_scanned > 4 * text.len() {
             return None;
         }
-        nearby.looked_at.set(looked_at);
+        nearby.bytes_scanned.set(bytes_scanned);
         let breaks = bun_core::strings::count_char(between, b'\n') as u32;
         let lines_before = if offset >= known {
             lines_before + breaks
@@ -281,10 +282,11 @@ impl<'a> File<'a> {
         nearby.known.set((offset, lines_before));
         let start = bun_core::strings::last_index_of_char(&text[..offset as usize], b'\n')
             .map_or(0, |at| at as u32 + 1);
-        // The line has been looked at up to here, and is once more for the column. The 256 above stand for a line of ordinary length.
+        // The line was scanned back to its start, and it's scanned again for the column. The 256 added above covers a
+        // line of ordinary length.
         nearby
-            .looked_at
-            .set(looked_at + (2 * (offset - start) as usize).saturating_sub(256));
+            .bytes_scanned
+            .set(bytes_scanned + (2 * (offset - start) as usize).saturating_sub(256));
         Some((lines_before + 1, start))
     }
 
@@ -296,7 +298,8 @@ impl<'a> File<'a> {
         })
     }
 
-    /// How many UTF-16 code units are before `offset`, which is where a character starts. `None` if that is not kept.
+    /// Returns the number of UTF-16 code units before `offset`, which must be a character boundary. `None` if the text
+    /// isn't valid UTF-8.
     fn units_before(&self, offset: u32) -> Option<u32> {
         let text = self.text();
         let units = self.lines_index().units.get_or_init(|| {
@@ -321,9 +324,9 @@ impl<'a> File<'a> {
         )
     }
 
-    /// `text.length` in JavaScript of what is from `start` to `end`, both of which are where a character starts.
+    /// Returns the JavaScript `length` of the text from `start` to `end`. Both must be character boundaries.
     fn units_between(&self, start: u32, end: u32) -> u32 {
-        // While the lines are counted, so is what is looked at for a column.
+        // `nearby_line` already budgets for this scan, so the index isn't built just for a column.
         if end - start > FAR
             && self.lazy.lines.get().is_some()
             && let (Some(before_start), Some(before_end)) =
@@ -334,13 +337,13 @@ impl<'a> File<'a> {
         bun_core::strings::utf8_decoded_len_utf16(self.slice(Span::new(start, end)))
     }
 
-    /// Where ESLint's text starts: it has no byte order mark. So a line and a column do not count it either.
+    /// Where ESLint's text starts. ESLint strips the byte order mark, so lines and columns don't count it.
     #[inline]
     fn start_of_text(&self) -> u32 {
         if self.has_bom() { 3 } else { 0 }
     }
 
-    /// Where the lines start, if that has been looked for: what [`LineStarts::at`] takes.
+    /// Returns the line starts if they've been computed, in the form [`LineStarts::at`] takes.
     pub fn known_line_starts(&self) -> Option<&[u32]> {
         Some(&self.lazy.lines.get()?.starts.starts)
     }
@@ -354,7 +357,7 @@ impl<'a> File<'a> {
         *self.by_kind().nearby_line.count.get_or_init(count)
     }
 
-    /// The line that `offset` is in, counted from 1.
+    /// Returns the 1-based line that contains `offset`.
     pub fn line_of(&self, offset: u32) -> u32 {
         if let Some((line, _)) = self.nearby_line(offset.min(self.text().len() as u32)) {
             return line;
@@ -362,10 +365,10 @@ impl<'a> File<'a> {
         self.lines_index().starts.line_at(offset).0
     }
 
-    /// Where the line `line`, counted from 1, starts and where it ends, before its line break. The first starts after a byte
-    /// order mark.
+    /// Returns the span of line `line` (1-based), without its line break. The first line starts after a byte order
+    /// mark.
     pub fn line_span(&self, line: u32) -> Span {
-        // The last is found without the others.
+        // The last line can be found without indexing the others.
         let is_counted = self.lazy.lines.get().is_none() && self.is_plain();
         if line > 1 && is_counted && line == self.line_count() {
             let text = self.text();
@@ -397,7 +400,8 @@ impl<'a> File<'a> {
         self.slice(self.line_span(line))
     }
 
-    /// ESLint's `getLocFromIndex`. An offset inside a character of four bytes is the position between its two UTF-16 code units.
+    /// ESLint's `getLocFromIndex`. An offset inside a four-byte character maps to the position between its two UTF-16
+    /// code units.
     pub fn position(&self, offset: u32) -> Position {
         let offset = offset.min(self.text().len() as u32);
         match self.nearby_line(offset) {
@@ -410,15 +414,16 @@ impl<'a> File<'a> {
         }
     }
 
-    /// The positions of `count` spans are about to be asked for. If that is many for a text of this length, where the lines start
-    /// is found at once. It takes about as long as to find the lines of a dozen spans one by one in 25,000 bytes.
+    /// Call this before looking up the positions of `count` spans. If that's a lot for a text of this length, it
+    /// indexes the line starts up front. Indexing costs about as much as finding a dozen spans' lines one by one in
+    /// 25,000 bytes.
     pub(crate) fn expect_positions(&self, count: usize) {
         if count.saturating_mul(2048) >= self.text().len() {
             self.lines_index();
         }
     }
 
-    /// [`File::position`] of the start and of the end of `span`. Fast if the spans are asked for in the order of their starts.
+    /// [`File::position`] of `span`'s start and end. Fast if spans are looked up in order of their starts.
     pub fn positions(&self, span: Span) -> (Position, Position) {
         let Some(lines) = self.lazy.lines.get() else {
             return (self.position(span.start), self.position(span.end));
@@ -442,7 +447,8 @@ impl<'a> File<'a> {
         )
     }
 
-    /// The position of `offset`, which is in the line `line`, which starts at `start`. `is_ascii`: the line is known to be.
+    /// Returns the position of `offset`, which is in line `line`, which starts at `start`. Pass `is_ascii` if the line
+    /// is known to be ASCII.
     #[inline]
     fn position_in_line(&self, line: u32, start: u32, offset: u32, is_ascii: bool) -> Position {
         let text = self.text();
@@ -477,7 +483,7 @@ impl<'a> File<'a> {
         Position { line, column }
     }
 
-    /// ESLint's `getIndexFromLoc`. The position between the two UTF-16 code units of a character is its offset plus 2.
+    /// ESLint's `getIndexFromLoc`. The position between a character's two UTF-16 code units maps to its offset plus 2.
     pub fn offset(&self, position: Position) -> u32 {
         let line = self.line_span(position.line);
         if self.lines_index().is_ascii() {
@@ -485,7 +491,7 @@ impl<'a> File<'a> {
         }
         let (mut at, mut units) = (line.start, 0);
         let text = self.text();
-        // Far into a line, it starts at the last block that begins before the column.
+        // Far into a line, start counting at the last block that begins before the column.
         if position.column > FAR
             && let Some(before_line) = self.units_before(line.start)
             && let Some(Some([blocks @ .., _])) =
@@ -518,7 +524,7 @@ impl<'a> File<'a> {
         at
     }
 
-    /// Whether `a` and `b` start on the same line.
+    /// True if offsets `a` and `b` are on the same line.
     #[inline]
     pub fn is_on_same_line(&self, a: u32, b: u32) -> bool {
         self.line_of(a) == self.line_of(b)
@@ -526,19 +532,19 @@ impl<'a> File<'a> {
 }
 
 impl<'a> File<'a> {
-    /// Whether the file may mention `text`: as an identifier, the name of a property, a key, a name in a type, a string, a piece
-    /// of a template or text in JSX, however it is spelled. `false` is certain, `true` is not. Not for private names.
+    /// True if the file may mention `text` as an identifier, a property name, a key, a name in a type, a string, a
+    /// template chunk or JSX text, however it's spelled. `false` is certain, `true` isn't. Doesn't cover private names.
     ///
-    /// For [`Rule::register`](crate::rule::Rule::register): a rule that is about `eval` or `hasOwnProperty` has nothing to listen
-    /// for in a file that does not mention it. That costs next to nothing, unlike a listener that is called with every call or
-    /// every member access of the file.
+    /// For [`Rule::register`](crate::rule::Rule::register): a rule about `eval` or `hasOwnProperty` doesn't need
+    /// listeners in a file that never mentions it. This check costs next to nothing, unlike a listener that's called
+    /// for every call or member access in the file.
     #[inline]
     pub fn mentions(&self, text: &str) -> bool {
         self.mentions_bit(mention_bit_without_loop(text.as_bytes()))
     }
 
-    /// [`File::mentions`] for a text whose [`mention_bit`] is known: a rule that looks for hundreds of names, which are not constants
-    /// of the program, computes their bits once, in [`Rule::new`](crate::rule::Rule::new).
+    /// [`File::mentions`] for a text whose [`mention_bit`] is already known. A rule that looks for hundreds of names
+    /// that aren't compile-time constants computes their bits once, in [`Rule::new`](crate::rule::Rule::new).
     #[inline]
     pub fn mentions_bit(&self, bit: u32) -> bool {
         self.hir
@@ -547,37 +553,37 @@ impl<'a> File<'a> {
             .is_none_or(|word| word >> (bit % 64) & 1 != 0)
     }
 
-    /// Whether the file may [mention](File::mentions) `use`, or a text that starts with `use` and an ASCII capital or digit: what
-    /// React takes for the name of a hook.
+    /// True if the file may [mention](File::mentions) `use`, or a text that starts with `use` followed by an ASCII
+    /// capital or digit, which is what React treats as a hook name.
     #[inline]
-    pub fn mentions_name_of_hook(&self) -> bool {
-        self.mentions_bit(bun_sema::hir::MENTION_OF_A_HOOK)
+    pub fn mentions_hook_name(&self) -> bool {
+        self.mentions_bit(bun_sema::hir::HOOK_MENTION_BIT)
     }
 
-    /// `text` as a name of this file, to compare the names of many nodes with: `name == wanted` compares two numbers, where
-    /// `name.is("text")` looks the text of the name up and compares that. For [`Rule::register`](crate::rule::Rule::register),
-    /// which keeps it in the state of the rule.
+    /// Interns `text` as a name of this file, for comparing against many nodes' names. `name == wanted` compares two
+    /// numbers, while `name.is("text")` looks up the name's text and compares that. Call it in
+    /// [`Rule::register`](crate::rule::Rule::register) and store the result in the rule's state.
     pub fn name_of(&'a self, text: &str) -> Name<'a> {
         self.intern(text.as_bytes())
     }
 
-    /// [`File::name_of`], if the file [mentions](File::mentions) `text`. Where the file is linted on its own that is exact:
-    /// `None` unless `text` is one of the texts that `mentions` is about. For [`Rule::register`](crate::rule::Rule::register):
-    /// `let name = file.find_name("text")?;`
+    /// [`File::name_of`], if the file [mentions](File::mentions) `text`. When the file is linted on its own the answer
+    /// is exact: `None` unless `text` is one of the texts `mentions` covers. For
+    /// [`Rule::register`](crate::rule::Rule::register): `let name = file.find_name("text")?;`
     pub fn find_name(&'a self, text: &str) -> Option<Name<'a>> {
         if !self.mentions(text) {
             return None;
         }
         match self.hir.mentioned.is_empty() {
-            // The names are those of many files.
+            // The name table is shared by many files.
             true => Some(self.name_of(text)),
             false => self.atoms.find(text.as_bytes()).map(|it| self.name(it)),
         }
     }
 
-    /// Every text that [`File::mentions`] is about, once, in no particular order. Among them are names that every file knows,
-    /// whether this one has them or not. `None` where the names are those of many files. For a rule that looks for a
-    /// prefix or a pattern, or without regard to case: a file has a tenth as many texts as nodes.
+    /// Returns every text that [`File::mentions`] covers, once each, in no particular order. That includes names
+    /// predefined for every file, whether or not this one uses them. `None` if the name table is shared by many files.
+    /// For a rule that matches a prefix, a pattern or case-insensitively: a file has a tenth as many texts as nodes.
     pub fn own_names(&'a self) -> Option<impl Iterator<Item = Name<'a>> + 'a> {
         let texts = self.texts;
         let is_own = move |atom: &Atom| texts.span_of(*atom).is_some();
@@ -589,14 +595,15 @@ impl<'a> File<'a> {
         })
     }
 
-    /// Whether the file [mentions](File::mentions) one of `texts`.
+    /// True if the file [mentions](File::mentions) any of `texts`.
     #[inline]
     pub fn mentions_any(&self, texts: &[&str]) -> bool {
         texts.iter().any(|text| self.mentions(text))
     }
 }
 
-/// [`mention_bit`]. Of a literal this is a constant of the program, which a loop over its bytes is not always.
+/// [`mention_bit`] without a loop. For a literal this always folds to a compile-time constant. A loop over the bytes
+/// doesn't always.
 #[inline(always)]
 fn mention_bit_without_loop(text: &[u8]) -> u32 {
     let mut first = [0; 16];

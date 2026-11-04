@@ -1,10 +1,10 @@
-//! `cursorOffset`: Prettier's `main/get-cursor-node.js` on the tree of HTML, and the marks that `main/ast-to-doc.js` puts
-//! around what the nodes next to the cursor are printed as.
+//! `cursorOffset`: Prettier's `main/get-cursor-node.js` applied to the HTML tree, and the marks that
+//! `main/ast-to-doc.js` puts around the output of the nodes next to the cursor.
 
 use super::ast::{Id, Kind, Span, Tree};
 use crate::cursor::Region;
 
-/// A node to Prettier.
+/// A node in Prettier's sense.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Target {
     Node(Id),
@@ -14,14 +14,14 @@ pub(crate) enum Target {
     LetInitializer(Id),
 }
 
-/// Where the cursor is.
+/// The cursor's position.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Cursor {
-    /// There is none.
+    /// There's no cursor.
     Nowhere,
-    /// In a node that has nothing in it.
+    /// In a node without children.
     In(Target),
-    /// `None`: the start or the end of the text.
+    /// `None` means the start or the end of the text.
     Between {
         before: Option<Target>,
         after: Option<Target>,
@@ -60,9 +60,9 @@ fn for_each_child(tree: &Tree<'_>, target: Target, visit: &mut dyn FnMut(Target)
         .for_each(|parameters| visit(Target::Node(parameters)));
 }
 
-/// `getCursorLocation`. `tree`: as it has been parsed.
+/// `getCursorLocation`. `tree` must be as parsed, before preprocessing.
 pub(crate) fn locate(tree: &Tree<'_>, offset: u32) -> Cursor {
-    // Those that the cursor is in, each behind what it is in.
+    // The nodes that contain the cursor, each after its parent.
     let mut containing = vec![Target::Node(tree.root)];
     let mut index = 0;
     while let Some(&node) = containing.get(index) {
@@ -107,7 +107,8 @@ pub(crate) fn locate(tree: &Tree<'_>, offset: u32) -> Cursor {
 }
 
 impl Cursor {
-    /// The part of the text that the marks are around. `tree`: as it has been printed, since Prettier asks the nodes then.
+    /// Returns the part of the text that the marks enclose. `tree` must be as printed, because that's when Prettier
+    /// reads the nodes' spans.
     pub(crate) fn region(self, tree: &Tree<'_>) -> Option<Region> {
         let span = |target: Target| {
             let span = span_of(tree, target);

@@ -806,13 +806,13 @@ impl PosixBufferedReader {
                     // SAFETY: caller contract; the borrow ends before the dispatch.
                     let (filled, stop) = unsafe { (*this).fill_scratch(file_type, fd, scratch) };
                     // SAFETY: caller contract; borrow ends at `;`.
-                    unsafe { Self::close_if_final(this, stop.as_ref()) };
+                    unsafe { (*this).close_if_final(stop.as_ref()) };
                     let keep_going = if filled == 0 {
                         true
                     } else if streaming {
                         vtable.on_read_chunk(
                             Chunk::Scratch(&scratch[..filled]),
-                            Self::read_state(stop.as_ref(), received_hup),
+                            Self::read_state(stop.as_ref()),
                         )
                     } else {
                         // SAFETY: caller contract; borrow ends at `;`.
@@ -825,7 +825,7 @@ impl PosixBufferedReader {
                     // SAFETY: caller contract; the borrow ends before the dispatch.
                     let stop = unsafe { (*this).fill_buffer(file_type, fd, streaming) };
                     // SAFETY: caller contract; borrow ends at `;`.
-                    unsafe { Self::close_if_final(this, stop.as_ref()) };
+                    unsafe { (*this).close_if_final(stop.as_ref()) };
                     // SAFETY: caller contract; borrow ends at `;`.
                     let keep_going = if !streaming || unsafe { (*this)._buffer.is_empty() } {
                         true
@@ -833,7 +833,7 @@ impl PosixBufferedReader {
                         // Moved out so a re-entrant read cannot alias or reallocate it under the consumer.
                         // SAFETY: caller contract; borrow ends at `;`.
                         let mut buffer = unsafe { mem::take(&mut (*this)._buffer) };
-                        let state = Self::read_state(stop.as_ref(), received_hup);
+                        let state = Self::read_state(stop.as_ref());
                         if matches!(stop, Some(Stop::Eof | Stop::OverBudget | Stop::Error(_))) {
                             vtable.on_read_chunk(Chunk::Owned(buffer), state)
                         } else {
@@ -916,23 +916,17 @@ impl PosixBufferedReader {
     }
 
     /// Closes before the final chunk is delivered, so a consumer that pulls again from inside `on_read_chunk` finds the reader done instead of reading past EOF or the byte budget.
-    ///
-    /// # Safety
-    /// `this` is the live reader.
-    unsafe fn close_if_final(this: *mut Self, stop: Option<&Stop>) {
+    fn close_if_final(&mut self, stop: Option<&Stop>) {
         if matches!(stop, Some(Stop::Eof | Stop::OverBudget)) {
-            // SAFETY: caller contract; borrow ends at `;`.
-            unsafe { (*this).close_without_reporting() };
+            self.close_without_reporting();
         }
     }
 
-    fn read_state(stop: Option<&Stop>, received_hup: bool) -> ReadState {
+    fn read_state(stop: Option<&Stop>) -> ReadState {
         match stop {
             Some(Stop::Eof | Stop::OverBudget) => ReadState::Eof,
             Some(Stop::WouldBlock) => ReadState::Drained,
-            Some(Stop::Error(_)) => ReadState::Progress,
-            None if received_hup => ReadState::Eof,
-            None => ReadState::Progress,
+            Some(Stop::Error(_)) | None => ReadState::Progress,
         }
     }
 
@@ -1761,7 +1755,7 @@ impl WindowsBufferedReader {
                         // `iov`) whenever it completes; this reader may be
                         // dropped before then, so the buffer goes with the File.
                         if self.flags.contains(WindowsFlags::HAS_INFLIGHT_READ) {
-                            (*raw).orphaned_read_buf = core::mem::take(&mut self._buffer);
+                            (*raw).orphaned_buf = core::mem::take(&mut self._buffer);
                         }
                         if self.flags.contains(WindowsFlags::CLOSE_HANDLE) {
                             (*raw).detach();
@@ -1841,7 +1835,7 @@ impl WindowsBufferedReader {
                 // linked into the loop's handle queue → UAF. Restore the source
                 // so close_impl can do the proper take + hand-off to libuv
                 // (into_raw + uv_close). close_impl also parks `_buffer` on
-                // the File for an in-flight uv_fs_read (orphaned_read_buf),
+                // the File for an in-flight uv_fs_read (orphaned_buf),
                 // which is why `_buffer` is freed after this, not before.
                 self.source = Some(source);
                 self.close_impl::<false>();

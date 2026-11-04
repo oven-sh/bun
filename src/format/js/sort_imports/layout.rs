@@ -1,15 +1,14 @@
-//! Whether a file is as a plugin leaves it, as far as the formatter can tell.
+//! Checks if a file is already the way a plugin would leave it, as far as the formatter can tell.
 //!
-//! A plugin prints every import anew, on one line, and with other empty lines than there were.
-//! Most of the time the formatter undoes all of that: the imports were sorted before. Then the
-//! file does not have to be parsed again.
+//! A plugin reprints every import on one line, with different empty lines than before. Most of the time the formatter
+//! undoes all of that, because the imports were already sorted. In that case the file doesn't have to be parsed again.
 
 use super::babel::Model;
 use super::generator::{Piece, PieceKind};
 use bun_core::strings;
 
-/// How what is on both sides of the whitespace `text[from..to]` is laid out: on one line, on two
-/// lines, or with an empty line between. `None`: it is not whitespace.
+/// How the code on both sides of the whitespace `text[from..to]` is laid out: 0 for one line, 1 for two lines, 2 for an
+/// empty line between. Returns `None` if it isn't all whitespace.
 fn gap(text: &[u8], from: u32, to: u32) -> Option<u8> {
     let gap = text.get(from as usize..to as usize)?;
     if !gap
@@ -27,37 +26,37 @@ fn gap(text: &[u8], from: u32, to: u32) -> Option<u8> {
     Some(breaks.min(2) as u8)
 }
 
-/// Whether the imports `written` and `printed` have the same tokens, but for a `,` before a `}`
-/// and a `;` at the end. There are no comments in them.
-fn has_same_tokens(written: &[u8], printed: &[u8]) -> bool {
-    let (mut written, mut printed) = (written.trim_ascii_start(), printed.trim_ascii_start());
+/// True if the imports `source` and `printed` have the same tokens, apart from a `,` before a `}` and a `;` at the
+/// end. Neither contains comments.
+fn has_same_tokens(source: &[u8], printed: &[u8]) -> bool {
+    let (mut source, mut printed) = (source.trim_ascii_start(), printed.trim_ascii_start());
     loop {
-        match (written, printed) {
+        match (source, printed) {
             ([], []) | ([], [b';']) => return true,
             ([quote @ (b'"' | b'\''), ..], [other, ..]) if quote == other => {
-                let len = bun_lint::tokens::token_len(written);
-                if written.get(..len) != printed.get(..len) {
+                let len = bun_lint::tokens::token_len(source);
+                if source.get(..len) != printed.get(..len) {
                     return false;
                 }
-                (written, printed) = (&written[len..], &printed[len..]);
+                (source, printed) = (&source[len..], &printed[len..]);
             }
-            ([a, rest_written @ ..], [b, rest_printed @ ..]) if a == b => {
-                (written, printed) = (rest_written, rest_printed)
+            ([a, rest_source @ ..], [b, rest_printed @ ..]) if a == b => {
+                (source, printed) = (rest_source, rest_printed)
             }
             ([b',', rest @ ..], [b'}', ..]) if rest.trim_ascii_start().starts_with(b"}") => {
-                written = rest
+                source = rest
             }
             _ => return false,
         }
-        (written, printed) = (written.trim_ascii_start(), printed.trim_ascii_start());
+        (source, printed) = (source.trim_ascii_start(), printed.trim_ascii_start());
     }
 }
 
-/// Whether formatting `new_text` gives what formatting the file of `model` gives.
+/// True if formatting `new_text` gives the same output as formatting `model`'s file.
 ///
-/// - The two are the same up to `from`.
-/// - `pieces`: the statements and the comments of `new_text` from `new_from` to `new_rest_start`.
-/// - From `new_rest_start`, it is the text of the file from `model.rest_start`.
+/// - The two are identical up to `from`.
+/// - `pieces` are `new_text`'s statements and comments from `new_from` to `new_rest_start`.
+/// - From `new_rest_start` on, `new_text` is the file's text from `model.rest_start`.
 pub(super) fn is_unchanged(
     model: &Model,
     from: u32,
@@ -73,7 +72,7 @@ pub(super) fn is_unchanged(
     let is_ignore = |piece: &Piece| matches!(piece.kind, PieceKind::Comment(id) if model.comment_value(id).trim_ascii() == b"prettier-ignore");
     let is_exact = pieces.iter().any(is_ignore);
 
-    // The pieces of the file, in order.
+    // The file's pieces, in order.
     let interpreter = model
         .interpreter
         .iter()
@@ -103,7 +102,7 @@ pub(super) fn is_unchanged(
         let next_comment = comments.peek().map(|it| it.1.span.start);
         let (kind, span) = match statements.peek().copied() {
             Some(statement) if next_comment.is_none_or(|comment| statement.1.start < comment) => {
-                // A comment in a statement.
+                // A comment inside a statement.
                 if next_comment.is_some_and(|comment| comment < statement.1.end) {
                     return false;
                 }
@@ -126,7 +125,7 @@ pub(super) fn is_unchanged(
             return false;
         }
         is_first = false;
-        let (written, printed) = (
+        let (source, printed) = (
             model.file.slice(span),
             new_text
                 .get(piece.start as usize..piece.end as usize)
@@ -148,12 +147,12 @@ pub(super) fn is_unchanged(
                     )
                     .is_some()
                 });
-                written == printed || (!is_exact && !is_broken && has_same_tokens(written, printed))
+                source == printed || (!is_exact && !is_broken && has_same_tokens(source, printed))
             }
             PieceKind::Directive(_) => {
-                written == printed || (!is_exact && has_same_tokens(written, printed))
+                source == printed || (!is_exact && has_same_tokens(source, printed))
             }
-            PieceKind::Interpreter | PieceKind::Comment(_) => written == printed,
+            PieceKind::Interpreter | PieceKind::Comment(_) => source == printed,
         };
         if !is_same {
             return false;

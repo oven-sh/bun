@@ -1,0 +1,49 @@
+# function ask(name) { return process.getBuiltinModule(name) }  ask("node:dgram")()
+# Nothing imports node:dgram or node:readline. The build lists the first as a module that the host may be asked for by name, because the program writes its name: a load under a name
+# nobody knows runs it, and what it exports is in the answer. The second is in the image for imports alone, and nothing imports it: it stays unreached.
+# RUN: valueflow-solve calls
+# CHECK: f0 v3 -> ProcessGetBuiltinModule
+# CHECK: f0 v4 ->{{*}} f2
+# CHECK-NOT: f4
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+# UNREACHED: unreached f3
+# UNREACHED-NEXT: unreached f4
+# RUN(UNSEEN): valueflow-solve unseen
+# UNSEEN: unseen LoadsModuleByName ProcessGetBuiltinModule f0:v3
+# UNSEEN: unseen-code no
+# UNSEEN-NEXT: modules-by-name yes
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="node:dgram" displayPath="node:dgram" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeDgram body=f1
+module m2 path="node:readline" displayPath="node:readline" kind=RuntimeSource flags=[IsLoadedByImportOnly] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeReadline body=f3
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="name" [isFreeName]
+    v2 = Builtin builtin=ProcessGetBuiltinModule
+    v3 = Call v2, -, v1
+    v4 = Call v3
+    Return
+}
+function f1 name="dgram" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    Return v0
+}
+function f2 name="createSocket" module=m1 role=Library results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="readline" module=m2 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    Return v0
+}
+function f4 name="createInterface" module=m2 role=Library results=[{type=anything}] {
+  b0():
+    Return
+}

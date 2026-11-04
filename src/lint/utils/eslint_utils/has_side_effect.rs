@@ -11,15 +11,14 @@ use crate::utils::estree_compat::is_assignment_target;
 pub struct HasSideEffectOptions {
     /// Any member access may run a getter.
     pub consider_getters: bool,
-    /// An operator whose operands are not all literals may run `valueOf`, `toString` or
+    /// An operator whose operands aren't all literals may run `valueOf`, `toString` or
     /// `[Symbol.toPrimitive]`, and so may a computed key.
     pub consider_implicit_type_conversion: bool,
 }
 
-/// eslint-utils' `hasSideEffect`: whether evaluating `node` may have a side effect. An assignment,
-/// `await`, a call, `new`, `import()`, `delete`, `++`, `--` and `yield` have one. What is in a
-/// function expression or an arrow function is not evaluated.
-///
+/// eslint-utils' `hasSideEffect`: true if evaluating `node` may have a side effect. An assignment,
+/// `await`, a call, `new`, `import()`, `delete`, `++`, `--` and `yield` have one. The body of a
+/// function expression or an arrow function isn't evaluated.
 pub fn has_side_effect<'a>(node: impl Into<Node<'a>>, options: HasSideEffectOptions) -> bool {
     visit(node.into(), options)
 }
@@ -44,7 +43,7 @@ fn is_literal(e: Expr<'_>) -> bool {
     )
 }
 
-/// Whether `key` is computed and not a `Literal`.
+/// True if `key` is computed and not a `Literal`.
 fn converts_key<'a>(
     key: Option<Key<'a>>,
     file: &'a File<'a>,
@@ -74,7 +73,7 @@ fn converts_key<'a>(
 fn visit(node: Node<'_>, options: HasSideEffectOptions) -> bool {
     let converts = options.consider_implicit_type_conversion;
     match node {
-        // ESTree's `TSQualifiedName` is no member access.
+        // ESTree's `TSQualifiedName` isn't a member access.
         Node::Type(ty) if matches!(ty.kind(), TypeKind::Typeof { .. }) => {
             let mut found = false;
             node.for_each_child(|child| {
@@ -133,7 +132,7 @@ fn visit(node: Node<'_>, options: HasSideEffectOptions) -> bool {
             {
                 true
             }
-            // The name of the element is no member access.
+            // The element's name isn't a member access.
             ExprKind::Jsx(jsx) => {
                 let mut found = false;
                 node.for_each_child(|child| {

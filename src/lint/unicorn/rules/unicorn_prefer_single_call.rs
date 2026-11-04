@@ -1,4 +1,4 @@
-use crate::unicorn::{may_have_side_effects, statements_around};
+use crate::unicorn::{may_have_side_effects, enclosing_statement_list};
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -9,13 +9,13 @@ pub struct PreferSingleCall {
     ignore: Vec<String>,
 }
 
-const PREFER_SINGLE_CALL: Message = Message::new("", "Do not call `{{description}}` multiple times.");
+const PREFER_SINGLE_CALL: &Message = &Message::new("", "Do not call `{{description}}` multiple times.");
 
 impl Rule for PreferSingleCall {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-single-call", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On =
         On::new().method_calls(&["push", "unshift", "add", "remove"]).function_calls(&["importScripts"]);
-    /// What is called.
+    /// The names of the methods and the function.
     type State<'a> = [Name<'a>; 5];
 
     fn new(options: &Options) -> Self {
@@ -40,7 +40,7 @@ impl Rule for PreferSingleCall {
         let Some((curr_call, curr_info)) = self.classify_statement(curr_es) else {
             return;
         };
-        let Some(prev_es) = statements_around(curr_es).and_then(|it| it.before(curr_es.span().start)) else {
+        let Some(prev_es) = enclosing_statement_list(curr_es).and_then(|it| it.before(curr_es.span().start)) else {
             return;
         };
         let Some((prev_call, prev_info)) = self.classify_statement(prev_es) else {
@@ -70,7 +70,8 @@ impl Rule for PreferSingleCall {
             let (first, second) = (prev_es.span(), curr_es.span());
             let keep_second_call = curr_info.keep_second_call;
             let removal_span = if keep_second_call { Span::new(first.start, second.start) } else { Span::new(first.end, second.end) };
-            // The first call changes what an argument of the second reads. A comment would be lost.
+            // Give up if the first call changes something that an argument of the second reads, or if a comment would
+            // be lost.
             if curr_call.1.args().iter().any(|it| arg_references_receiver(text_of(it), prev_info.receiver_text))
                 || file.comments_in(removal_span).next().is_some()
             {
@@ -98,7 +99,7 @@ impl Rule for PreferSingleCall {
                 let end = target.0.span().end;
                 fix.push(fixer.replace(Span::new(end.saturating_sub(1), end), arguments));
             }
-            // The `;` of the second statement stays if the first has none.
+            // Keep the second statement's `;` if the first has none.
             let has_semi = |it: Stmt<'a>| strings::trim_js_whitespace_end(it.text()).ends_with(b";");
             let needs_semi = !keep_second_call && !has_semi(prev_es) && has_semi(curr_es);
             fix.push(fixer.replace(removal_span, if needs_semi { ";" } else { "" }));
@@ -144,12 +145,12 @@ fn is_stable_receiver(expr: Expr) -> bool {
 }
 
 impl PreferSingleCall {
-    /// The call that is all of `statement`, if it is one that the rule is about.
+    /// The call that makes up the whole `statement`, if the rule checks that kind of call.
     fn classify_statement<'a>(&self, statement: Stmt<'a>) -> Option<((Expr<'a>, Call<'a>), CallInfo<'a>)> {
         let StmtKind::Expr(e) = statement.kind() else {
             return None;
         };
-        // What is in parentheses, and an optional chain, is not a call for oxlint.
+        // oxlint doesn't treat a parenthesized call or an optional chain as a call.
         let call = e.as_call().filter(|it| it.chain() == Chain::No && !e.is_parenthesized())?;
         Some(((e, call), self.classify_call(call)?))
     }
@@ -202,7 +203,7 @@ impl PreferSingleCall {
     }
 }
 
-/// Whether the text `receiver` is in `arg_src`, not as a part of a longer name.
+/// True if `arg_src` contains the text `receiver`, other than as part of a longer name.
 fn arg_references_receiver(arg_src: &[u8], receiver: &[u8]) -> bool {
     if receiver.is_empty() {
         return false;

@@ -8,7 +8,7 @@ pub struct TextEncodingIdentifierCase {
     with_dash: bool,
 }
 
-const TEXT_ENCODING_IDENTIFIER_CASE: Message = Message::new("", "Prefer `{{good_encoding}}` over `{{bad_encoding}}`.");
+const TEXT_ENCODING_IDENTIFIER_CASE: &Message = &Message::new("", "Prefer `{{good_encoding}}` over `{{bad_encoding}}`.");
 
 impl Rule for TextEncodingIdentifierCase {
     const META: Meta =
@@ -43,7 +43,7 @@ impl Rule for TextEncodingIdentifierCase {
 }
 
 impl TextEncodingIdentifierCase {
-    /// `s`: as it is written, which is the value unless it has an escape.
+    /// `s` is the source text, which equals the value unless it has an escape.
     fn check<'a>(&self, s: &'a [u8], span: Span, node: Node<'a>, cx: &Cx<'a, Self>) {
         let replacement = if s.eq_ignore_ascii_case(b"utf8") || s.eq_ignore_ascii_case(b"utf-8") {
             if self.with_dash || should_enforce_dash(node) { "utf-8" } else { "utf8" }
@@ -53,7 +53,7 @@ impl TextEncodingIdentifierCase {
             return;
         };
         if replacement.as_bytes() != s {
-            // Without the first and the last character, of the text between tags as well.
+            // The fix skips the first and last character, even for JSX text, which has no quotes.
             cx.report(span, TEXT_ENCODING_IDENTIFIER_CASE)
                 .data("good_encoding", replacement)
                 .data("bad_encoding", s)

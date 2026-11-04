@@ -18,11 +18,11 @@ use std::sync::atomic::AtomicU32;
 
 /// `Relater::maybe_keys` is searched linearly up to this length. A longer list is mirrored in a hash set. 0 means the
 /// hash set is always used.
-pub(super) const MAYBE_KEYS_SEARCHED_AS_A_LIST: usize = 32;
+pub(super) const MAYBE_KEYS_LINEAR_LIMIT: usize = 32;
 
 /// Snapshot of the checker's counters. A computation that resolves nothing doesn't change them.
 #[derive(PartialEq, Eq, Debug)]
-pub(super) struct Traces {
+pub(super) struct CounterSnapshot {
     work: u64,
     first_new_type_id: NewTypes,
     non_cacheable_mark: (u64, u64),
@@ -38,6 +38,11 @@ pub(super) struct TypeNumbers {
 }
 
 impl TypeNumbers {
+    /// Resets every number to 0 and keeps the memory.
+    pub(super) fn clear(&mut self) {
+        self.dense.clear();
+    }
+
     #[inline]
     pub(super) fn get(&self, ty: TypeId) -> u32 {
         self.dense.get(ty)
@@ -58,6 +63,11 @@ impl<V> Default for TypeMap<V> {
 }
 
 impl<V: Packed<Cell = AtomicU32>> TypeMap<V> {
+    /// Removes every entry and keeps the memory.
+    pub(super) fn clear(&mut self) {
+        self.0.clear();
+    }
+
     #[inline]
     pub(super) fn get(&self, ty: TypeId) -> Option<V> {
         match self.0.get(ty) {
@@ -82,23 +92,20 @@ impl<V: Packed<Cell = AtomicU32>> TypeMap<V> {
 /// with `Types::add_facts`.
 pub(super) mod task_fact {
     /// `ObjectFlagsIsUnknownLikeUnionComputed`, `ObjectFlagsIsUnknownLikeUnion`
-    pub(in super::super) const KNOWS_UNKNOWN_LIKE_UNION: u32 = 1;
+    pub(in super::super) const UNKNOWN_LIKE_UNION_COMPUTED: u32 = 1;
     pub(in super::super) const IS_UNKNOWN_LIKE_UNION: u32 = 1 << 1;
     /// `ObjectFlagsIsGenericTypeComputed` and its two flags, for a union or an intersection that contains a mapped
     /// type. Other unions and intersections store them in `Types::generic_object_flags`.
-    pub(in super::super) const KNOWS_GENERIC_OBJECT_FLAGS: u32 = 1 << 2;
+    pub(in super::super) const GENERIC_OBJECT_FLAGS_COMPUTED: u32 = 1 << 2;
     pub(in super::super) const IS_GENERIC_OBJECT_TYPE: u32 = 1 << 3;
     pub(in super::super) const IS_GENERIC_INDEX_TYPE: u32 = 1 << 4;
-    /// Set on a conditional type's extends type. Two instantiations of one declaration that both have this extends type
-    /// have been related, so the inference between their extends types has already run.
-    pub(in super::super) const HAS_INFERRED_BETWEEN_SAME_EXTENDS: u32 = 1 << 5;
-    /// See `union_property`. Every member of the union has been visited for a property. Facts and summaries are stored
-    /// starting with the second walk. Storing them costs about as much as one walk, and many unions are only ever asked
-    /// for one property.
-    pub(in super::super) const IS_WALKED_UNION: u32 = 1 << 6;
+    /// See `union_property`. Every member of the union has been visited for a property. Facts are stored starting
+    /// with the second walk. Storing them costs about as much as one walk, and many unions only ever have one
+    /// property looked up.
+    pub(in super::super) const IS_WALKED_UNION: u32 = 1 << 5;
     /// See `union_property`. Set on an intersection that is stored as a `MemberFacts::apparent_type` or a
     /// `MemberFacts::reduced_apparent_type`.
-    pub(in super::super) const IS_IN_MEMBER_FACTS: u32 = 1 << 7;
+    pub(in super::super) const IS_IN_MEMBER_FACTS: u32 = 1 << 6;
 }
 
 /// A set of `task_fact` bits for each type.
@@ -106,6 +113,11 @@ pub(super) mod task_fact {
 pub(super) struct TaskFacts(TypeNumbers);
 
 impl TaskFacts {
+    /// Removes every fact and keeps the memory.
+    pub(super) fn clear(&mut self) {
+        self.0.clear();
+    }
+
     #[inline]
     pub(super) fn get(&self, ty: TypeId) -> u32 {
         self.0.get(ty)
@@ -134,8 +146,8 @@ impl TaskFacts {
 }
 
 impl<'p, 's> Checker<'p, 's> {
-    pub(super) fn traces(&self) -> Traces {
-        Traces {
+    pub(super) fn counter_snapshot(&self) -> CounterSnapshot {
+        CounterSnapshot {
             work: self.work,
             first_new_type_id: self.types().first_new_type_id(),
             non_cacheable_mark: self.non_cacheable_mark(),
@@ -153,7 +165,7 @@ impl<'p, 's> Checker<'p, 's> {
         flags & kind != 0
     }
 
-    /// `shape::is_plain_object`, read from a column instead of the type's record.
+    /// True for any object type but a mapped type, read from a column instead of the type's record.
     #[inline]
     pub(super) fn is_plain_object_type(&self, ty: TypeId) -> bool {
         self.types().is_plain_object(ty)
@@ -169,37 +181,38 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline]
     pub(super) fn is_every_type_of_kind(&self, ty: TypeId, kind: u32) -> bool {
         debug_assert!(kind & tf::INTERSECTION == 0);
-        let is_each = || self.every_type(ty, |c, member| c.flags(member) & kind != 0);
+        let every_member_matches = || self.every_type(ty, |c, member| c.flags(member) & kind != 0);
         // A type that is neither a union nor an intersection has exactly one flag, so every member matches `kind` if no
         // member has a flag outside `kind`. The exception is an enum member, which also has `ENUM_LITERAL`.
         let values = tf::STRING_LITERAL | tf::NUMBER_LITERAL;
         if kind & tf::ENUM_LITERAL != 0 && kind & values != values {
-            return is_each();
+            return every_member_matches();
         }
-        let beside = match kind & values {
+        let also_allowed = match kind & values {
             0 => 0,
             _ => tf::ENUM_LITERAL,
         };
         // An intersection never matches `kind`, but `member_flags` reports its constituents' flags instead of its own.
-        let others = self.types().member_flags(ty) & !(kind | beside);
+        let others = self.types().member_flags(ty) & !(kind | also_allowed);
 
         others == 0 && !self.may_be_reduced(ty)
     }
 
     /// Equivalent to `some_type(ty, |c, member| c.flags(member) & kind != 0)`.
-    #[inline]
+    #[inline(always)]
     pub(super) fn is_some_type_of_kind(&self, ty: TypeId, kind: u32) -> bool {
         debug_assert!(kind & tf::INTERSECTION == 0);
-        let is_one = || self.some_type(ty, |c, member| c.flags(member) & kind != 0);
+        let any_member_matches = || self.some_type(ty, |c, member| c.flags(member) & kind != 0);
 
         // `member_flags` also includes the flags of an intersection's constituents, which aren't members.
 
-        self.types().member_flags(ty) & kind != 0 && (!self.may_be_reduced(ty) || is_one())
+        self.types().member_flags(ty) & kind != 0
+            && (!self.may_be_reduced(ty) || any_member_matches())
     }
 
     /// True if `ty` is known not to be a fresh literal type and not to contain one.
     #[inline]
-    pub(super) fn is_without_fresh_literal(&self, ty: TypeId) -> bool {
+    pub(super) fn has_no_fresh_literal(&self, ty: TypeId) -> bool {
         let has_fresh_literal = self.types().has_fresh_literal(ty);
 
         !has_fresh_literal
@@ -221,7 +234,7 @@ mod tests {
     ];
 
     #[test]
-    fn a_value_for_each_type() {
+    fn type_map_stores_one_value_per_type() {
         let mut map: TypeMap<TypeId> = TypeMap::default();
         for ty in TYPES {
             assert_eq!(map.get(ty), None);
@@ -240,10 +253,17 @@ mod tests {
         assert_eq!(map.get(TYPES[2]), Some(TYPES[2]));
         assert_eq!(map.get(TypeId(1)), None);
         assert_eq!(map.get(TypeId(LOCAL | 499)), None);
+        map.clear();
+        for ty in TYPES {
+            assert_eq!(map.get(ty), None);
+        }
+        // A page added after `clear` starts empty.
+        map.insert(TYPES[1], TYPES[1]);
+        assert_eq!(map.get(TYPES[0]), None);
     }
 
     #[test]
-    fn bits_for_each_type() {
+    fn task_facts_stores_bits_per_type() {
         let mut facts = TaskFacts::default();
         for ty in TYPES {
             assert_eq!(facts.get(ty), 0);
@@ -255,5 +275,9 @@ mod tests {
             assert_eq!(facts.get(ty), 0b1011);
         }
         assert_eq!(facts.get(TypeId(129)), 0);
+        facts.clear();
+        for ty in TYPES {
+            assert_eq!(facts.get(ty), 0);
+        }
     }
 }

@@ -4,19 +4,19 @@ use crate::ast::{Member, Node};
 use crate::types::{SyntaxKind, TsNode, Type};
 use smallvec::SmallVec;
 
-/// What [`get_base_types_of_class_member`] yields.
+/// An item of [`get_base_types_of_class_member`]'s result.
 #[derive(Copy, Clone, Debug)]
 pub struct BaseTypeOfClassMember<'a> {
-    /// What the class extends or implements.
+    /// A type the class extends or implements.
     pub base_type: Type<'a>,
-    /// The type that the member has there.
+    /// The member's type in `base_type`.
     pub base_member_type: Type<'a>,
     /// `ExtendsKeyword` or `ImplementsKeyword`
     pub heritage_token: SyntaxKind,
 }
 
-/// `getBaseTypesOfClassMember(services, memberNode)`: for a member of a class, the member of that
-/// name in each of the types that the class extends or implements.
+/// `getBaseTypesOfClassMember(services, memberNode)`: for a class member, the member with the same name in each type
+/// the class extends or implements.
 pub fn get_base_types_of_class_member(
     member_node: Member<'_>,
 ) -> SmallVec<[BaseTypeOfClassMember<'_>; 2]> {
@@ -37,7 +37,7 @@ pub fn get_base_types_of_class_member(
     let Some(class_node) = member_ts_node.parent() else {
         return found;
     };
-    // They follow each other, before the members.
+    // The heritage clauses are consecutive and come before the members.
     let is_heritage_clause = |child: &TsNode| child.kind() == SyntaxKind::HeritageClause;
     let children = class_node
         .children()

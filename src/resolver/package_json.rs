@@ -1,6 +1,7 @@
 use bun_ast as js_ast;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::Output;
+use bun_core::StackCheck;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
 use bun_paths::{self as resolve_path, MAX_PATH_BYTES, PathBuffer, SEP_STR};
@@ -75,13 +76,12 @@ type DependencyHashMap =
 
 pub struct PackageJSON {
     pub name: Box<[u8]>,
-    pub source: bun_ast::Source,
+    pub source: bun_ast::Source<'static>,
     /// Owns the file bytes that `source.contents` (and the
     /// `&'static [u8]` map values below) borrow. Replaces the prior
     /// `mem::forget` leak — forbidden per docs/PORTING.md §Forbidden patterns.
     /// The `PackageJSON` itself is the owner so the bytes free if it ever drops.
-    /// (`bun_ast::Source::contents` is `&'static [u8]`, so this separate owner
-    /// field is what keeps that borrow — and the map values above — alive.)
+    /// (This owner field keeps that erased borrow, and the map values above, alive.)
     pub(crate) source_contents: Box<[u8]>,
     pub(crate) json_tape: Option<Box<js_ast::E::JsonTape>>,
     pub(crate) main_fields: MainFieldMap,
@@ -296,11 +296,14 @@ impl SideEffects {
 
 /// Thin extension trait that delegates to `bun_paths::resolve_path`.
 trait FileSystemPackageJsonExt {
-    fn join(&self, parts: &[&[u8]]) -> &'static [u8];
+    /// Returns a slice of `spill` if the result is too long for the thread-local join buffer.
+    fn join<'a>(&self, spill: &'a mut Vec<u8>, parts: &[&[u8]]) -> &'a [u8];
 }
 impl FileSystemPackageJsonExt for crate::fs::FileSystem {
-    fn join(&self, parts: &[&[u8]]) -> &'static [u8] {
-        resolve_path::resolve_path::join::<resolve_path::resolve_path::platform::Auto>(parts)
+    fn join<'a>(&self, spill: &'a mut Vec<u8>, parts: &[&[u8]]) -> &'a [u8] {
+        resolve_path::resolve_path::join_spill::<resolve_path::resolve_path::platform::Auto>(
+            spill, parts,
+        )
     }
 }
 
@@ -382,6 +385,7 @@ impl PackageJSON {
         macro_map
     }
 
+    #[inline(never)]
     pub fn parse<const INCLUDE_DEPENDENCIES: IncludeDependencies>(
         r: &mut resolver::Resolver<'_>,
         input_path: &[u8],
@@ -389,16 +393,17 @@ impl PackageJSON {
         package_id: Option<PackageID>,
         include_scripts_: IncludeScripts,
     ) -> Option<PackageJSON> {
+        bun_removable_features::removable_definition!(
+            PackageFiles,
+            Self::parse::<INCLUDE_DEPENDENCIES>
+        );
         let include_scripts = include_scripts_ == IncludeScripts::IncludeScripts;
 
-        // SAFETY: PORT (Stacked Borrows) — `r.fs()`/`r.log()` return RAW `*mut`
-        // (see `Resolver::fs()` note in lib.rs). `fs` and `log` are DISTINCT
-        // singletons so the two `&mut` projections below do not alias each other,
-        // and no other `&mut *r.fs` / `&mut *r.log` retag occurs while they are
-        // live in this function. Caller upholds the single-thread `Resolver`
-        // aliasing contract.
-        let r_fs: &mut fs::FileSystem = unsafe { &mut *r.fs() };
-        // SAFETY: see above — `r.log()` points to a distinct singleton from `r.fs()`.
+        let r_fs = fs::FileSystem::get();
+        // SAFETY: PORT (Stacked Borrows) — `r.log()` returns a RAW `*mut` (see
+        // the `Resolver::log()` note), and no other `&mut *r.log` retag occurs
+        // while this one is live in this function. Caller upholds the
+        // single-thread `Resolver` aliasing contract.
         let r_log: &mut bun_ast::Log = unsafe { &mut *r.log() };
 
         // TODO: remove this extra copy
@@ -424,7 +429,6 @@ impl PackageJSON {
         // (allocator dropped — global mimalloc)
 
         let mut entry = match r.caches.fs.read_file_with_allocator(
-            r_fs,
             package_json_path,
             dirname_fd,
             false,
@@ -473,7 +477,7 @@ impl PackageJSON {
         // `pretty`/`is_node_module`); `key_path` is only used for `text`, so init the
         // source directly from the interned path.
         //
-        // `bun_ast::Source::contents` is `&'static [u8]`, so `json_source`
+        // `PackageJSON.source` is a `Source<'static>`, so `json_source`
         // re-borrows `entry_contents` (lifetime-erased) instead of owning it.
         //
         // SAFETY: `entry_contents: Box<[u8]>` is the unique owner of these bytes.
@@ -723,6 +727,8 @@ impl PackageJSON {
                     }
                 }
 
+                let mut spill: Vec<u8> = Vec::new();
+
                 // If the array is empty, treat it as false (no side effects)
                 if !has_globs && !has_exact {
                     package_json.side_effects = SideEffects::False;
@@ -742,7 +748,7 @@ impl PackageJSON {
                             let joined: [&[u8]; 2] =
                                 [json_source.path.name().dir_with_trailing_slash(), name];
 
-                            let pattern = r_fs.join(&joined);
+                            let pattern = r_fs.join(&mut spill, &joined);
 
                             if strings::contains_char(name, b'*')
                                 || strings::contains_char(name, b'?')
@@ -779,7 +785,7 @@ impl PackageJSON {
                             let joined: [&[u8]; 2] =
                                 [json_source.path.name().dir_with_trailing_slash(), name];
 
-                            let pattern = r_fs.join(&joined);
+                            let pattern = r_fs.join(&mut spill, &joined);
                             // Normalize pattern to use forward slashes for cross-platform compatibility
                             let normalized_pattern = Self::normalize_path_for_glob(pattern)
                                 .unwrap_or_else(|_| pattern.to_vec());
@@ -796,8 +802,8 @@ impl PackageJSON {
                             let joined: [&[u8]; 2] =
                                 [json_source.path.name().dir_with_trailing_slash(), name];
 
-                            let _ =
-                                map.insert(StringHashMapUnownedKey::init(r_fs.join(&joined)), ());
+                            let pattern = r_fs.join(&mut spill, &joined);
+                            let _ = map.insert(StringHashMapUnownedKey::init(pattern), ());
                         }
                     }
                     package_json.side_effects = SideEffects::Map(map);
@@ -1060,12 +1066,63 @@ pub struct ExportsMap {
 }
 
 impl ExportsMap {
+    pub(crate) fn names_condition(&self, condition: &[u8]) -> bool {
+        self.root.names_condition(condition)
+    }
+
+    /// The keys that name one subpath each, without their dot: `/feature` for `"./feature"`. Neither `"."` nor a pattern.
+    pub fn written_subpaths(&self) -> Vec<&[u8]> {
+        let EntryData::Map(map) = &self.root.data else {
+            return Vec::new();
+        };
+        let keys = map.list.iter().map(|entry| &entry.key[..]);
+        keys.filter(|key| {
+            key.starts_with(b"./")
+                && key.len() > 2
+                && !bun_core::strings::contains_char(key, b'*')
+                && !key.ends_with(b"/")
+        })
+        .map(|key| &key[1..])
+        .collect()
+    }
+
+    /// The subpaths, without their dot, that a key with a `*` may give the file at `path_in_package` (`/lib/a.js`): for each text that the key can lead to, whatever its conditions, what the `*` has to stand for.
+    pub fn subpaths_by_pattern(&self, path_in_package: &[u8]) -> Vec<Vec<u8>> {
+        let EntryData::Map(map) = &self.root.data else {
+            return Vec::new();
+        };
+        let mut subpaths = Vec::new();
+        for entry in map.list.iter() {
+            let Some((key_start, key_end)) = split_at_star(&entry.key) else {
+                continue;
+            };
+            let Some(key_start) = key_start.strip_prefix(b".") else {
+                continue;
+            };
+            entry.value.for_each_text(&mut |target| {
+                let matched = split_at_star(target).and_then(|(start, end)| {
+                    path_in_package
+                        .strip_prefix(start.strip_prefix(b".")?)?
+                        .strip_suffix(end)
+                });
+                if let Some(matched) = matched.filter(|matched| !matched.is_empty()) {
+                    subpaths.push([key_start, matched, key_end].concat());
+                }
+            });
+        }
+        subpaths
+    }
+
     pub(crate) fn parse(
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
         json: js_ast::Expr,
     ) -> Option<ExportsMap> {
-        let mut visitor = Visitor { source, log };
+        let mut visitor = Visitor {
+            source,
+            log,
+            stack_check: StackCheck::init(),
+        };
 
         let root = visitor.visit(json);
 
@@ -1078,8 +1135,9 @@ impl ExportsMap {
 }
 
 pub(crate) struct Visitor<'a> {
-    pub(crate) source: &'a bun_ast::Source,
+    pub(crate) source: &'a bun_ast::Source<'a>,
     pub(crate) log: &'a mut bun_ast::Log,
+    stack_check: StackCheck,
 }
 
 impl<'a> Visitor<'a> {
@@ -1106,6 +1164,10 @@ impl<'a> Visitor<'a> {
         value: &js_ast::E::JsonValue,
         vloc: json_parser::ValueLocation<'_>,
     ) -> Entry {
+        if !self.stack_check.is_safe_to_recurse() {
+            let loc = vloc.resolve(&self.source.contents);
+            return self.too_deep(bun_ast::Range { loc, len: 1 });
+        }
         match value {
             js_ast::E::JsonValue::Null => Entry {
                 data: EntryData::Null,
@@ -1248,11 +1310,34 @@ impl<'a> Visitor<'a> {
             data: EntryData::Invalid,
         }
     }
+
+    #[cold]
+    fn too_deep(&mut self, first_token: bun_ast::Range) -> Entry {
+        self.log.add_range_warning(
+            Some(self.source),
+            first_token,
+            b"This value is nested too deeply",
+        );
+        Entry {
+            data: EntryData::Invalid,
+        }
+    }
 }
 
 #[derive(Clone)]
 pub struct Entry {
     pub(crate) data: EntryData,
+}
+
+impl Entry {
+    fn names_condition(&self, condition: &[u8]) -> bool {
+        match &self.data {
+            EntryData::Invalid | EntryData::Null | EntryData::String(_) => false,
+            EntryData::Array(items) => items.iter().any(|item| item.names_condition(condition)),
+            EntryData::Map(map) => (map.list.iter())
+                .any(|entry| &*entry.key == condition || entry.value.names_condition(condition)),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -1280,7 +1365,24 @@ pub struct MapEntry {
     pub(crate) value: Entry,
 }
 
+pub(crate) fn split_at_star(text: &[u8]) -> Option<(&[u8], &[u8])> {
+    let star = bun_core::strings::index_of_char_usize(text, b'*')?;
+    Some((&text[..star], &text[star + 1..]))
+}
+
 impl Entry {
+    fn for_each_text(&self, each: &mut dyn FnMut(&[u8])) {
+        match &self.data {
+            EntryData::Invalid | EntryData::Null => {}
+            EntryData::String(text) => each(text),
+            EntryData::Array(entries) => entries.iter().for_each(|entry| entry.for_each_text(each)),
+            EntryData::Map(map) => map
+                .list
+                .iter()
+                .for_each(|entry| entry.value.for_each_text(each)),
+        }
+    }
+
     pub(crate) fn keys_start_with_dot(&self) -> bool {
         matches!(&self.data, EntryData::Map(m) if !m.list.is_empty() && strings::starts_with_char(&m.list[0].key, b'.'))
     }
@@ -1306,6 +1408,8 @@ pub type ConditionsMap = StringArrayHashMap<()>;
 pub(crate) struct ESModule<'a> {
     pub(crate) debug_logs: Option<&'a mut resolver::DebugLogs>,
     pub(crate) conditions: &'a ConditionsMap,
+    /// `resolve_target` uses bigger stack frames than the JSON parser, so it can overflow on a target that parsed.
+    pub(crate) stack_check: StackCheck,
 }
 
 #[derive(Clone)]
@@ -1857,6 +1961,15 @@ impl<'a> ESModule<'a> {
         subpath: &[u8],
         internal: bool,
     ) -> Resolution {
+        if !self.stack_check.is_safe_to_recurse() {
+            if let Some(logs) = self.debug_logs.as_deref_mut() {
+                logs.add_note(b"The package target is nested too deeply".to_vec());
+            }
+            return Resolution {
+                status: Status::InvalidPackageConfiguration,
+                ..Default::default()
+            };
+        }
         match &target.data {
             EntryData::String(str) => {
                 let mb = module_bufs();

@@ -91,7 +91,6 @@ test/js/node/readline/readline_never_unrefs.test.ts
 test/js/third_party/@napi-rs/canvas/napi-rs-canvas.test.ts
 test/js/third_party/next-auth/next-auth.test.ts
 test/js/third_party/pnpm/pnpm.test.ts
-test/js/web/console/console-log.test.ts
 test/js/web/fetch/fetch-leak.test.ts
 test/js/web/fetch/fetch.tls.test.ts
 test/regression/issue/09559.test.ts

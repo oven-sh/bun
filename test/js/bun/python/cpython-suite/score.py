@@ -39,6 +39,8 @@ To measure another implementation of Python in the same way (see README.md, "Oth
     --no-shims            without the stand-ins of shims/
     --path DIR            put in front of the path of every module: for a stand-in without which the engine cannot even import
                           test.support (may be given more than once)
+    --slow-is-final       a module that runs into --timeout is not run again without the test it was in: what had passed by then counts.
+                          For an engine that takes seconds to start, where such a module is slow and not stuck.
 """
 
 import argparse
@@ -398,7 +400,7 @@ def run_once(name, python, limits, extra_env, ignored):
     return result, output
 
 
-def run_one(name, python, limits, extra_env, rounds, left_out=()):
+def run_one(name, python, limits, extra_env, rounds, left_out=(), slow_is_final=False):
     """Runs the module, again and again without the tests that kill the interpreter or hang."""
     incidents, outputs = [], []
     seconds = 0
@@ -409,7 +411,7 @@ def run_one(name, python, limits, extra_env, rounds, left_out=()):
         if result["status"] not in ("crashed", "timeout"):
             break
         incidents.append({"test": result["culprit"], "kind": "crash" if result["status"] == "crashed" else "hang", "reason": result["reason"]})
-        if not result["culprit"] or len(incidents) > rounds:
+        if not result["culprit"] or len(incidents) > rounds or slow_is_final and result["reason"] == "time limit":
             break
     result["seconds"] = round(seconds, 1)
     result["incidents"] = incidents
@@ -571,6 +573,7 @@ def main():
     parser.add_argument("--oracle-file", default="oracle.json")
     parser.add_argument("--no-shims", action="store_true")
     parser.add_argument("--path", action="append", default=[])
+    parser.add_argument("--slow-is-final", action="store_true")
     options = parser.parse_args()
     LIB = os.path.realpath(options.lib)
     if options.engine and not (options.python and options.tag):
@@ -620,7 +623,7 @@ def main():
         def left_out(name):
             return (IGNORED.get(name, []) if shim_path(name, for_oracle=options.oracle, offered=offered) or options.impl_detail and not options.oracle else []) + ([] if options.oracle else SPOILERS.get(name, []))
 
-        futures = {pool.submit(run_one, n, python, (options.timeout, options.idle), environment(n), options.rounds, left_out(n)): n for n in names}
+        futures = {pool.submit(run_one, n, python, (options.timeout, options.idle), environment(n), options.rounds, left_out(n), options.slow_is_final): n for n in names}
         for future in concurrent.futures.as_completed(futures):
             result, output = future.result()
             results[result["name"]] = result

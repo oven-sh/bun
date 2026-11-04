@@ -11,7 +11,7 @@ interpreter or hang, failures grouped by cause, what changed since the last run.
 a debug build takes seconds to start Python.
 
 - `score.md`, `score.json`: the last full run that somebody thought worth keeping.
-- `oracle.json`: what CPython itself passes in the same harness (`score.py --oracle`): the 100% of the scoreboard.
+- `oracle.json`: what CPython itself passes in the same harness (`score.py --oracle`): the 100% of the scoreboard. See "The percentage".
 - `deficit.py` prints where the tests are that CPython passes and Bun does not, by root cause; `deficit.md` is what it printed.
 - `TRIAGE.md`: written by hand. Every way found so far to kill the interpreter or to make it hang.
 - `logs/`: what each module printed that did not simply pass. Not kept in the repository.
@@ -62,3 +62,33 @@ They are no part of Bun. `score.py` puts a shim on `PYTHONPATH` for the test mod
 (`test.support` and many tests do something sensible when a helper is missing), and, `_ctypes_test` aside, never for CPython. By hand:
 
     PYTHONPATH=shims/_testmultiphase BUN_PYTHON_STDLIB=vendor/cpython/Lib python3 -m test -v test_import
+
+## The percentage
+
+Both files have, module by module, the names of the tests that passed. The percentage is the share of the tests that pass under CPython that also pass
+here. A test that passes here and that CPython skips or fails there does not count: it cannot make up for a failure elsewhere.
+
+So the CPython of `--oracle` has to be complete. One that was built without the headers of OpenSSL, gdbm, readline, ncurses or libuuid, or without `_decimal`, skips
+some 1,200 tests (`test_ssl`, the halves of `test_decimal`, `test_shelve`, `test_uuid`, `test_dbm`, the TLS tests of `test_asyncio`, `test_imaplib`, `test_poplib`, `test_ftplib`),
+and they are then asked of nobody. At the end of `make`, "The necessary bits to build these optional modules were not found" should name `_tkinter` at most.
+
+## Other implementations
+
+The harness measures any implementation of Python that can run `python -m test`:
+
+    score.py --oracle --lib cpython-3.11/Lib --oracle-python cpython-3.11/bin/python3 --oracle-file oracle-3.11.json
+    score.py --engine --python pypy3 --lib cpython-3.11/Lib --oracle-file oracle-3.11.json --tag pypy311
+
+- `--lib` is the `Lib` of the release of CPython that the engine says it implements (`sys.version`, to the micro version: its library is a copy of that release's). Only `Lib/test` is used,
+  unchanged, in the place of the engine's own copy, which every project edits: skips, expected failures, guards for details of the implementation.
+- The rest of the library is the engine's. `--engine` makes a directory of links to it, with CPython's `test` among them, and puts it at the front of `sys.path`: `test.support`
+  takes the directory above itself for the library, and finds the packages of tests from there that up to 3.11 are elsewhere in it (`ctypes.test`, `distutils.tests`, `lib2to3.tests`, `unittest.test`).
+  Those four are therefore the engine's copies.
+- The reference is that release of CPython, built on the same machine, complete, run by the same harness with the same limits.
+- An engine is given a stand-in of `shims/` only for a module that it cannot import itself; `--no-shims` gives none, to Bun either.
+- `--path DIR` is for what an engine needs to get the driver started at all. GraalPy cannot import the `test.support` of 3.13, which imports `_opcode` at the top, and `regrtest` asks for
+  `faulthandler.register`, `gc.garbage` and a list in every module's `__path__`: `--path shims/_other_engines/_opcode --path shims/_other_engines/driver`.
+- `--slow-is-final`, with a longer `--timeout` and `--idle`, is for an engine that takes seconds to start: a module of tests that start children is then slow, not stuck.
+
+What such a figure does not say: the versions differ, so the tests differ; unchanged tests punish an engine for having no module of the name of a C accelerator (without `_datetime` or `_json` none of
+`test_datetime` or `test_json` can even be loaded, though the Python halves would pass); tests marked `cpython_only` are skipped by everybody else and count for nobody; and a share of tests is not a share of programs.

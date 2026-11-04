@@ -168,6 +168,20 @@ impl Locked {
             self.watchers.swap_remove_at(i);
         }
     }
+
+    /// The root of `watcher` was removed or moved away, so a `watch()` of its path must
+    /// start a new watch. The watcher stays in the map, for the loops that notify every
+    /// watcher and for `unlink_watcher`, under a key that no path has.
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+    fn retire_watcher(&mut self, watcher: *mut PathWatcher) {
+        let Some(i) = self.watchers.values().iter().position(|&w| w == watcher) else {
+            return;
+        };
+        self.watchers.swap_remove_at(i);
+        let mut key = [0u8; 1 + size_of::<usize>()];
+        key[1..].copy_from_slice(&watcher.addr().to_ne_bytes());
+        handle_oom(self.watchers.put(&key, watcher));
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────────
@@ -1010,8 +1024,8 @@ impl Linux {
                 // Kernel retired this wd: `remove_watch` issued an explicit
                 // `inotify_rm_watch` (it deletes the `wd_map` entry first, so no
                 // owners remain to notify) or the watched inode is gone. A dead
-                // root also leaves the dedup map: a watch() of the path must start
-                // a new watch. libuv turns the retirement into one more "rename"
+                // root is retired: a watch() of the path must start a new watch.
+                // libuv turns the kernel's retirement into one more "rename"
                 // after IN_DELETE_SELF, so a deleted watch root reports two.
                 // Recursive sub-wds stay silent; their parent directory's
                 // IN_DELETE already reported it.
@@ -1022,7 +1036,7 @@ impl Linux {
                             // access only — `emit_unsuppressed` takes `&self`.
                             let w = unsafe { &*o.watcher };
                             if o.subpath.as_bytes().is_empty() {
-                                locked.unlink_watcher(o.watcher);
+                                locked.retire_watcher(o.watcher);
                                 if w.is_file || !w.recursive {
                                     w.emit_unsuppressed(
                                         WatchEventKind::Rename,
@@ -1215,12 +1229,10 @@ impl Linux {
                         }
                     }
 
-                    // The path no longer leads to this watch, so it leaves the dedup
-                    // map: a watch() of the path must start a new one. Not left to
-                    // IN_IGNORED (above), which may land a read() later and which a
-                    // move does not send.
+                    // Not left to IN_IGNORED (above), which may land a read() later
+                    // and which a move does not send.
                     if root_left_path {
-                        locked.unlink_watcher(owner_watcher);
+                        locked.retire_watcher(owner_watcher);
                     }
 
                     oi += 1;
@@ -1660,9 +1672,8 @@ impl Kqueue {
                 let _ = handle_oom(touched.get_or_put(entry.watcher));
             }
 
-            // A removed or moved root leaves the dedup map, as in the inotify backend.
             for w in left_path {
-                locked.unlink_watcher(w);
+                locked.retire_watcher(w);
             }
 
             for &w in touched.keys() {

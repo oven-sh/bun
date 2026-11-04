@@ -1,4 +1,5 @@
 {
+  "mod_decimal/locales": "formats numbers in the locales that the machine has",
   "mod_faulthandler/faulthandler_basic": "what the watchdog thread finds the main thread doing depends on timing, under CPython too",
   "mod_math/math_cbrt": "the last digit is the C library's: glibc's cbrt(2.0) is off by one unit in the last place, Bun's is not",
   "mod_posix/posix_pwd_grp": "prints the users and groups of the machine",

@@ -1,0 +1,1033 @@
+status: 0
+script: b47770e3a431da1a
+---
+0 a.compare(*['Fraction', 'str', 'bytes']) -> !TypeError: compare() takes at most 2 arguments (3 given) 
+1 a.compare_signal(*[]) -> !TypeError: compare_signal() missing required argument 'other' (pos 1) 
+2 c.__copy__(*['NoneType', 'bytes', 'dict']) -> !TypeError: __copy__() takes no arguments 
+3 a.adjusted(*['NoneType']) -> !TypeError: Decimal.adjusted() takes no arguments (1 given) 
+4 a.max_mag(**[('exp', 'Context')]) -> !TypeError: max_mag() missing required argument 'other' (pos 1) 
+5 a.min_mag(*['Fraction']) -> !TypeError: conversion from Fraction to Decimal is not supported 
+6 c.logb(*['tuple', 'Odd', 'tuple']) -> !TypeError: logb() takes at most 1 argument (3 given) 
+7 c.fma(**[('context', 'bytes')]) -> !TypeError: fma() takes exactly 3 positional arguments (0 given) 
+8 a.radix(*['int', 'list']) -> !TypeError: radix() takes no arguments 
+9 Context(*['NoneType'], **[('value', 'int')]) -> !TypeError: Context() got an unexpected keyword argument 'value' 
+10 a.quantize(*['bytes', 'dict', 'int']) -> !TypeError: optional argument must be a context 
+11 a.__bool__(*['complex', 'ellipsis', 'float']) -> !TypeError: expected 0 arguments, got 3 
+12 c.is_signed(**[('a', 'dict'), ('x', 'NoneType')]) -> !TypeError: is_signed() takes at most 1 keyword argument (2 given) 
+13 a.logical_and(*['Context', 'dict', 'Fraction']) -> !TypeError: logical_and() takes at most 2 arguments (3 given) 
+14 c.is_nan(*['Odd']) -> !TypeError: conversion from Odd to Decimal is not supported 
+15 a.is_zero(*['list']) -> !TypeError: Decimal.is_zero() takes no arguments (1 given) 
+16 c.same_quantum(*[]) -> !TypeError: same_quantum() takes exactly 2 positional arguments (0 given) 
+17 c.is_finite(**[('b', 'type'), ('x', 'Fraction'), ('z', 'list')]) -> !TypeError: is_finite() takes at most 1 keyword argument (3 given) 
+18 a.same_quantum(*['dict', 'ellipsis', 'Context', 'FloatLike']) -> !TypeError: same_quantum() takes at most 2 arguments (4 given) 
+19 c.to_integral(*['type', 'Decimal']) -> !TypeError: to_integral() takes at most 1 argument (2 given) 
+20 c.is_signed(*['Context', 'Context', 'FloatLike', 'bytes']) -> !TypeError: is_signed() takes at most 1 argument (4 given) 
+21 from_number(*['FloatLike', 'type', 'list'], **[]) -> !TypeError: from_number() takes at most 1 argument (3 given) 
+22 a.fma(*[]) -> !TypeError: fma() missing required argument 'other' (pos 1) 
+23 c.minus(*['dict', 'FloatLike', 'int']) -> !TypeError: minus() takes at most 1 argument (3 given) 
+24 c.copy_abs(*['str', 'str']) -> !TypeError: copy_abs() takes at most 1 argument (2 given) 
+25 a.logical_or(*['Odd']) -> !TypeError: conversion from Odd to Decimal is not supported 
+26 c.normalize(*[]) -> !TypeError: normalize() takes exactly 1 positional argument (0 given) 
+27 a.logb(*['Context', 'bytes', 'str']) -> !TypeError: logb() takes at most 1 argument (3 given) 
+28 a.same_quantum(*[]) -> !TypeError: same_quantum() missing required argument 'other' (pos 1) 
+29 a.min_mag(*['ellipsis', 'float']) -> !TypeError: optional argument must be a context 
+30 a.__complex__(*['str', 'tuple', 'bytes']) -> !TypeError: Decimal.__complex__() takes no arguments (3 given) 
+31 c.power(**[('a', 'FloatLike'), ('b', 'complex'), ('x', 'type')]) -> !TypeError: power() got an unexpected keyword argument 'x' 
+32 a.logical_and(**[('context', 'NoneType'), ('self', 'FloatLike'), ('x', 'str')]) -> !TypeError: logical_and() takes at most 2 keyword arguments (3 given) 
+33 a.compare_total(*[]) -> !TypeError: compare_total() missing required argument 'other' (pos 1) 
+34 a.copy_sign(*[]) -> !TypeError: copy_sign() missing required argument 'other' (pos 1) 
+35 getcontext(*['str', 'str', 'Context'], **[('prec', 'str')]) -> !TypeError: _decimal.getcontext() takes no keyword arguments 
+36 a.min_mag(*['str']) -> !TypeError: conversion from str to Decimal is not supported 
+37 IEEEContext(*['dict', 'Context', 'complex'], **[('value', 'list')]) -> !TypeError: _decimal.IEEEContext() takes no keyword arguments 
+38 a.quantize(*[]) -> !TypeError: quantize() missing required argument 'exp' (pos 1) 
+39 a.__ceil__(*['float']) -> !TypeError: __ceil__() takes no arguments 
+40 c.min(*[]) -> !TypeError: min() takes exactly 2 positional arguments (0 given) 
+41 NoneType + a -> !TypeError: unsupported operand type(s) for +: 'NoneType' and 'decimal.Decimal' 
+42 a.next_toward(*['Fraction', 'Context']) -> !TypeError: conversion from Fraction to Decimal is not supported 
+43 a.exp(**[('context', 'str'), ('other', 'Context'), ('third', 'type')]) -> !TypeError: exp() takes at most 1 keyword argument (3 given) 
+44 a.is_subnormal(*['FloatLike', 'dict']) -> !TypeError: is_subnormal() takes at most 1 argument (2 given) 
+45 a.rotate(*['ellipsis', 'tuple']) -> !TypeError: optional argument must be a context 
+46 a.compare_total(*['float', 'dict', 'dict', 'int']) -> !TypeError: compare_total() takes at most 2 arguments (4 given) 
+47 a.logical_xor(**[('context', 'list'), ('self', 'float'), ('x', 'IntLike')]) -> !TypeError: logical_xor() takes at most 2 keyword arguments (3 given) 
+48 a.fma(*[]) -> !TypeError: fma() missing required argument 'other' (pos 1) 
+49 a > Odd -> !TypeError: '>' not supported between instances of 'decimal.Decimal' and 'Odd' 
+50 a.fma(*['Odd', 'bytes']) -> !TypeError: conversion from Odd to Decimal is not supported 
+51 dict + a -> !TypeError: unsupported operand type(s) for +: 'dict' and 'decimal.Decimal' 
+52 c.is_infinite(**[('modulo', 'list')]) -> !TypeError: is_infinite() takes exactly 1 positional argument (0 given) 
+53 a.__repr__(*['int', 'dict', 'IntLike']) -> !TypeError: expected 0 arguments, got 3 
+54 a.ln(**[('self', 'type')]) -> !TypeError: ln() got an unexpected keyword argument 'self' 
+55 c.canonical(*['bytes', 'Decimal']) -> !TypeError: canonical() takes at most 1 argument (2 given) 
+56 a.compare_total(*['Context', 'type', 'int']) -> !TypeError: compare_total() takes at most 2 arguments (3 given) 
+57 a.__reduce__(*['list', 'int']) -> !TypeError: Decimal.__reduce__() takes no arguments (2 given) 
+58 a.same_quantum(*[]) -> !TypeError: same_quantum() missing required argument 'other' (pos 1) 
+59 a.shift(*['list', 'Context', 'tuple', 'Decimal']) -> !TypeError: shift() takes at most 2 arguments (4 given) 
+60 a.sqrt(**[('rounding', 'str')]) -> !TypeError: sqrt() got an unexpected keyword argument 'rounding' 
+61 a.min(*['Decimal', 'float', 'tuple', 'tuple']) -> !TypeError: min() takes at most 2 arguments (4 given) 
+62 a.rotate(*[]) -> !TypeError: rotate() missing required argument 'other' (pos 1) 
+63 c.number_class(*['Decimal', 'dict', 'IntLike']) -> !TypeError: number_class() takes at most 1 argument (3 given) 
+64 a.next_plus(**[('context', 'Fraction'), ('rounding', 'NoneType')]) -> !TypeError: next_plus() takes at most 1 keyword argument (2 given) 
+65 c.to_integral(*['ellipsis', 'float']) -> !TypeError: to_integral() takes at most 1 argument (2 given) 
+66 c.is_zero(**[('x', 'str')]) -> !TypeError: is_zero() takes exactly 1 positional argument (0 given) 
+67 a.max(*['float', 'IntLike', 'Context']) -> !TypeError: max() takes at most 2 arguments (3 given) 
+68 a.min(*['list', 'complex', 'NoneType']) -> !TypeError: min() takes at most 2 arguments (3 given) 
+69 c.create_decimal_from_float(*['complex', 'Decimal', 'Fraction', 'Context']) -> !TypeError: create_decimal_from_float() takes at most 1 argument (4 given) 
+70 a != dict -> bool:True 
+71 a.compare_signal(*['IntLike', 'Odd', 'str']) -> !TypeError: compare_signal() takes at most 2 arguments (3 given) 
+72 a.compare_total(*['dict']) -> !TypeError: conversion from dict to Decimal is not supported 
+73 c._apply(*['list', 'NoneType', 'bytes', 'float']) -> !TypeError: _apply() takes at most 1 argument (4 given) 
+74 c.sqrt(**[('modulo', 'dict'), ('x', 'IntLike'), ('y', 'int')]) -> !TypeError: sqrt() takes at most 1 keyword argument (3 given) 
+75 c.power(*[]) -> !TypeError: power() missing required argument 'a' (pos 1) 
+76 c.is_zero(*['IntLike', 'int', 'dict', 'complex']) -> !TypeError: is_zero() takes at most 1 argument (4 given) 
+77 a.max(*[]) -> !TypeError: max() missing required argument 'other' (pos 1) 
+78 c.rotate(**[('a', 'complex'), ('y', 'type')]) -> !TypeError: rotate() takes exactly 2 positional arguments (0 given) 
+79 a.copy_abs(*['str', 'bytes']) -> !TypeError: copy_abs() takes no arguments 
+80 a.__hash__(*['ellipsis']) -> !TypeError: expected 0 arguments, got 1 
+81 a.log10(*['float', 'ellipsis', 'bytes']) -> !TypeError: log10() takes at most 1 argument (3 given) 
+82 c.Etiny(*[]) -> int:-1000018 
+83 a.logical_xor(*['float']) -> !TypeError: conversion from float to Decimal is not supported 
+84 a.next_toward(*['int', 'ellipsis', 'type']) -> !TypeError: next_toward() takes at most 2 arguments (3 given) 
+85 c.compare_total_mag(**[('a', 'complex'), ('b', 'Fraction')]) -> !TypeError: compare_total_mag() takes exactly 2 positional arguments (0 given) 
+86 c.to_integral_exact(*['NoneType', 'NoneType', 'float']) -> !TypeError: to_integral_exact() takes at most 1 argument (3 given) 
+87 a.log10(**[('self', 'ellipsis')]) -> !TypeError: log10() got an unexpected keyword argument 'self' 
+88 a.max_mag(*[]) -> !TypeError: max_mag() missing required argument 'other' (pos 1) 
+89 a.logical_or(*['Context', 'complex']) -> !TypeError: optional argument must be a context 
+90 a.shift(*['complex']) -> !TypeError: conversion from complex to Decimal is not supported 
+91 c.Etiny(*['float', 'list', 'bytes', 'NoneType']) -> !TypeError: Context.Etiny() takes no arguments (4 given) 
+92 c.radix(*['complex', 'float', 'ellipsis', 'NoneType']) -> !TypeError: radix() takes no arguments 
+93 c.is_infinite(*['float', 'Decimal', 'dict']) -> !TypeError: is_infinite() takes at most 1 argument (3 given) 
+94 a.next_plus(*['IntLike']) -> !TypeError: optional argument must be a context 
+95 c.to_integral(*['Odd', 'IntLike', 'float']) -> !TypeError: to_integral() takes at most 1 argument (3 given) 
+96 c.next_toward(*['Fraction', 'NoneType']) -> !TypeError: conversion from Fraction to Decimal is not supported 
+97 c.min_mag(**[('context', 'ellipsis')]) -> !TypeError: min_mag() takes exactly 2 positional arguments (0 given) 
+98 c.fma(*['list']) -> !TypeError: fma() takes exactly 3 positional arguments (1 given) 
+99 a.max_mag(*[]) -> !TypeError: max_mag() missing required argument 'other' (pos 1) 
+100 a.is_canonical(*['FloatLike', 'bytes', 'str']) -> !TypeError: Decimal.is_canonical() takes no arguments (3 given) 
+101 c.to_integral_value(*['dict', 'str', 'Odd', 'list']) -> !TypeError: to_integral_value() takes at most 1 argument (4 given) 
+102 getcontext(*['int', 'Context'], **[('f', 'bytes')]) -> !TypeError: _decimal.getcontext() takes no keyword arguments 
+103 c.power(*['NoneType', 'float', 'str']) -> !TypeError: conversion from NoneType to Decimal is not supported 
+104 a.is_normal(*['complex', 'Fraction', 'dict']) -> !TypeError: is_normal() takes at most 1 argument (3 given) 
+105 a.normalize(*['list', 'Fraction']) -> !TypeError: normalize() takes at most 1 argument (2 given) 
+106 Context(*['ellipsis', 'str', 'int', 'Odd'], **[('foo', 'tuple')]) -> !TypeError: Context() got an unexpected keyword argument 'foo' 
+107 c.plus(**[('x', 'Context')]) -> !TypeError: plus() takes exactly 1 positional argument (0 given) 
+108 a.logical_xor(**[('exp', 'NoneType')]) -> !TypeError: logical_xor() missing required argument 'other' (pos 1) 
+109 a.ln(**[('third', 'Context')]) -> !TypeError: ln() got an unexpected keyword argument 'third' 
+110 a.compare_signal(*['ellipsis']) -> !TypeError: conversion from ellipsis to Decimal is not supported 
+111 c.logical_invert(**[('f', 'Fraction'), ('num', 'ellipsis'), ('x', 'list')]) -> !TypeError: logical_invert() takes at most 1 keyword argument (3 given) 
+112 a.scaleb(*['ellipsis', 'float', 'Decimal', 'tuple']) -> !TypeError: scaleb() takes at most 2 arguments (4 given) 
+113 c.logical_and(*['FloatLike', 'NoneType']) -> !TypeError: conversion from FloatLike to Decimal is not supported 
+114 a.is_normal(**[('other', 'int'), ('third', 'Odd')]) -> !TypeError: is_normal() takes at most 1 keyword argument (2 given) 
+115 IntLike / a -> !TypeError: unsupported operand type(s) for /: 'IntLike' and 'decimal.Decimal' 
+116 c.is_finite(*['float', 'Fraction']) -> !TypeError: is_finite() takes at most 1 argument (2 given) 
+117 a.compare_signal(*['list', 'complex', 'FloatLike']) -> !TypeError: compare_signal() takes at most 2 arguments (3 given) 
+118 c.copy_decimal(*['NoneType', 'list', 'complex', 'float']) -> !TypeError: copy_decimal() takes at most 1 argument (4 given) 
+119 c.is_normal(*['dict', 'int', 'complex']) -> !TypeError: is_normal() takes at most 1 argument (3 given) 
+120 c.compare_signal(*['tuple', 'int']) -> !TypeError: conversion from tuple to Decimal is not supported 
+121 a.max_mag(*['Decimal']) -> Decimal:Decimal('1.5') 
+122 a.is_canonical(*['Context']) -> !TypeError: Decimal.is_canonical() takes no arguments (1 given) 
+123 c.canonical(*['tuple', 'type', 'ellipsis']) -> !TypeError: canonical() takes at most 1 argument (3 given) 
+124 c.abs(**[('x', 'type')]) -> !TypeError: abs() takes exactly 1 positional argument (0 given) 
+125 a.shift(*[]) -> !TypeError: shift() missing required argument 'other' (pos 1) 
+126 a.next_toward(*['Decimal', 'type', 'tuple']) -> !TypeError: next_toward() takes at most 2 arguments (3 given) 
+127 a.compare_total(*['FloatLike', 'FloatLike']) -> !TypeError: optional argument must be a context 
+128 bytes / a -> !TypeError: unsupported operand type(s) for /: 'bytes' and 'decimal.Decimal' 
+129 a.logical_xor(**[('self', 'str')]) -> !TypeError: logical_xor() missing required argument 'other' (pos 1) 
+130 a.rotate(*[]) -> !TypeError: rotate() missing required argument 'other' (pos 1) 
+131 c.create_decimal(**[('f', 'bytes'), ('num', 'Fraction'), ('x', 'complex')]) -> !TypeError: Context.create_decimal() takes no keyword arguments 
+132 a.is_snan(*['NoneType']) -> !TypeError: Decimal.is_snan() takes no arguments (1 given) 
+133 a.logical_or(*[]) -> !TypeError: logical_or() missing required argument 'other' (pos 1) 
+134 a.copy_sign(*['Odd', 'type', 'Fraction']) -> !TypeError: copy_sign() takes at most 2 arguments (3 given) 
+135 c.ln(*['bytes', 'NoneType', 'Context', 'bytes']) -> !TypeError: ln() takes at most 1 argument (4 given) 
+136 c.quantize(*['complex', 'list']) -> !TypeError: conversion from complex to Decimal is not supported 
+137 getcontext(*['type'], **[('foo', 'float')]) -> !TypeError: _decimal.getcontext() takes no keyword arguments 
+138 a.__hash__(*['FloatLike', 'float']) -> !TypeError: expected 0 arguments, got 2 
+139 c.is_infinite(**[('a', 'list'), ('context', 'Odd'), ('f', 'ellipsis')]) -> !TypeError: is_infinite() takes at most 1 keyword argument (3 given) 
+140 a.compare_total_mag(*[]) -> !TypeError: compare_total_mag() missing required argument 'other' (pos 1) 
+141 getcontext(*['dict', 'list', 'dict'], **[]) -> !TypeError: _decimal.getcontext() takes no arguments (3 given) 
+142 a.logical_xor(*[]) -> !TypeError: logical_xor() missing required argument 'other' (pos 1) 
+143 a.remainder_near(*['bytes', 'Decimal', 'type', 'float']) -> !TypeError: remainder_near() takes at most 2 arguments (4 given) 
+144 a.conjugate(*['Decimal', 'Fraction']) -> !TypeError: Decimal.conjugate() takes no arguments (2 given) 
+145 a.scaleb(*['bytes', 'bytes', 'FloatLike']) -> !TypeError: scaleb() takes at most 2 arguments (3 given) 
+146 c.min_mag(*[]) -> !TypeError: min_mag() takes exactly 2 positional arguments (0 given) 
+147 c.remainder_near(**[('num', 'bytes'), ('x', 'IntLike'), ('z', 'Odd')]) -> !TypeError: remainder_near() takes at most 2 keyword arguments (3 given) 
+148 a.next_toward(*['complex']) -> !TypeError: conversion from complex to Decimal is not supported 
+149 a.__floor__(*['list', 'int', 'IntLike']) -> !TypeError: __floor__() takes no arguments 
+150 a.logical_or(**[('foo', 'IntLike')]) -> !TypeError: logical_or() missing required argument 'other' (pos 1) 
+151 a.logical_invert(**[('exp', 'bytes')]) -> !TypeError: logical_invert() got an unexpected keyword argument 'exp' 
+152 c.to_integral_value(*['dict', 'ellipsis', 'complex']) -> !TypeError: to_integral_value() takes at most 1 argument (3 given) 
+153 c.subtract(*['type', 'NoneType']) -> !TypeError: conversion from type to Decimal is not supported 
+154 c.plus(*['bytes']) -> !TypeError: conversion from bytes to Decimal is not supported 
+155 a.next_plus(*['tuple']) -> !TypeError: optional argument must be a context 
+156 a.compare_total_mag(*['type', 'tuple', 'Odd']) -> !TypeError: compare_total_mag() takes at most 2 arguments (3 given) 
+157 IEEEContext(*['float', 'FloatLike', 'FloatLike'], **[('prec', 'complex')]) -> !TypeError: _decimal.IEEEContext() takes no keyword arguments 
+158 c.copy_abs(*['type', 'bytes', 'dict']) -> !TypeError: copy_abs() takes at most 1 argument (3 given) 
+159 c.compare_signal(*['ellipsis', 'Context', 'Decimal', 'type']) -> !TypeError: compare_signal() takes at most 2 arguments (4 given) 
+160 a.min_mag(**[('context', 'int'), ('x', 'IntLike')]) -> !TypeError: min_mag() missing required argument 'other' (pos 1) 
+161 c.to_integral_value(*['list', 'str']) -> !TypeError: to_integral_value() takes at most 1 argument (2 given) 
+162 localcontext(*['list', 'list', 'str', 'Decimal'], **[('bits', 'type')]) -> !TypeError: localcontext() takes at most 1 positional argument (4 given) 
+163 a.compare_signal(*['list', 'Context', 'tuple', 'bytes']) -> !TypeError: compare_signal() takes at most 2 arguments (4 given) 
+164 a.remainder_near(*['Odd']) -> !TypeError: conversion from Odd to Decimal is not supported 
+165 from_float(*['complex', 'tuple'], **[('ctx', 'Decimal')]) -> !TypeError: from_float() takes at most 1 argument (3 given) 
+166 a.is_subnormal(**[('rounding', 'complex')]) -> !TypeError: is_subnormal() got an unexpected keyword argument 'rounding' 
+167 a.min(*['ellipsis']) -> !TypeError: conversion from ellipsis to Decimal is not supported 
+168 a.compare_total(**[('other', 'bytes'), ('rounding', 'Odd')]) -> !TypeError: compare_total() got an unexpected keyword argument 'rounding' 
+169 a.to_eng_string(*['type', 'str']) -> !TypeError: to_eng_string() takes at most 1 argument (2 given) 
+170 a.quantize(*[]) -> !TypeError: quantize() missing required argument 'exp' (pos 1) 
+171 a.is_normal(*['Context']) -> bool:True 
+172 a.compare_total(**[('rounding', 'str')]) -> !TypeError: compare_total() missing required argument 'other' (pos 1) 
+173 a.normalize(*['ellipsis', 'complex', 'FloatLike']) -> !TypeError: normalize() takes at most 1 argument (3 given) 
+174 a.logical_invert(*['type', 'dict']) -> !TypeError: logical_invert() takes at most 1 argument (2 given) 
+175 a.to_integral_exact(*['IntLike']) -> !TypeError: valid values for rounding are:
+  [ROUND_CEILING, ROUND_FLOOR, ROUND_UP, ROUND_DOWN,
+   ROUND_HALF_UP, ROUND_HALF_DOWN, ROUND_HALF_EVEN,
+   ROUND_05UP] 
+176 c.subtract(*['ellipsis', 'type']) -> !TypeError: conversion from ellipsis to Decimal is not supported 
+177 c.scaleb(**[('a', 'Context'), ('f', 'NoneType'), ('modulo', 'int')]) -> !TypeError: scaleb() takes at most 2 keyword arguments (3 given) 
+178 a.to_integral_value(*['IntLike', 'type', 'float']) -> !TypeError: to_integral_value() takes at most 2 arguments (3 given) 
+179 c.create_decimal(**[('y', 'ellipsis')]) -> !TypeError: Context.create_decimal() takes no keyword arguments 
+180 c.copy_decimal(*['dict', 'complex', 'complex']) -> !TypeError: copy_decimal() takes at most 1 argument (3 given) 
+181 c.is_finite(*[]) -> !TypeError: is_finite() takes exactly 1 positional argument (0 given) 
+182 c.quantize(**[('b', 'Decimal')]) -> !TypeError: quantize() takes exactly 2 positional arguments (0 given) 
+183 c.next_toward(*['float', 'Context', 'complex', 'FloatLike']) -> !TypeError: next_toward() takes at most 2 arguments (4 given) 
+184 c.logical_invert(*[]) -> !TypeError: logical_invert() takes exactly 1 positional argument (0 given) 
+185 a.next_plus(*['Fraction', 'tuple']) -> !TypeError: next_plus() takes at most 1 argument (2 given) 
+186 a.remainder_near(*['Odd']) -> !TypeError: conversion from Odd to Decimal is not supported 
+187 a.min_mag(*['int']) -> Decimal:Decimal('1') 
+188 a.compare(**[('context', 'IntLike')]) -> !TypeError: compare() missing required argument 'other' (pos 1) 
+189 a.normalize(**[('self', 'str'), ('x', 'str')]) -> !TypeError: normalize() takes at most 1 keyword argument (2 given) 
+190 c.subtract(**[('a', 'list'), ('num', 'list')]) -> !TypeError: subtract() takes exactly 2 positional arguments (0 given) 
+191 c.remainder_near(*['Context', 'IntLike', 'NoneType']) -> !TypeError: remainder_near() takes at most 2 arguments (3 given) 
+192 IEEEContext(*['Decimal', 'type', 'Fraction'], **[('prec', 'float')]) -> !TypeError: _decimal.IEEEContext() takes no keyword arguments 
+193 a > dict -> !TypeError: '>' not supported between instances of 'decimal.Decimal' and 'dict' 
+194 a.remainder_near(**[('exp', 'dict')]) -> !TypeError: remainder_near() missing required argument 'other' (pos 1) 
+195 str <= a -> !TypeError: '<=' not supported between instances of 'str' and 'decimal.Decimal' 
+196 a.to_integral_value(*['Decimal']) -> !TypeError: valid values for rounding are:
+  [ROUND_CEILING, ROUND_FLOOR, ROUND_UP, ROUND_DOWN,
+   ROUND_HALF_UP, ROUND_HALF_DOWN, ROUND_HALF_EVEN,
+   ROUND_05UP] 
+197 IEEEContext(*['Context', 'NoneType'], **[('bits', 'int'), ('ctx', 'tuple')]) -> !TypeError: _decimal.IEEEContext() takes no keyword arguments 
+198 a.logical_and(**[('other', 'Fraction')]) -> !TypeError: conversion from Fraction to Decimal is not supported 
+199 c.is_signed(*['tuple', 'type', 'complex', 'Decimal']) -> !TypeError: is_signed() takes at most 1 argument (4 given) 
+200 a.logical_invert(**[('exp', 'int'), ('third', 'Odd')]) -> !TypeError: logical_invert() takes at most 1 keyword argument (2 given) 
+201 a.min_mag(*['complex', 'Odd']) -> !TypeError: optional argument must be a context 
+202 a - tuple -> !TypeError: unsupported operand type(s) for -: 'decimal.Decimal' and 'tuple' 
+203 c.fma(*[]) -> !TypeError: fma() takes exactly 3 positional arguments (0 given) 
+204 a.shift(*['tuple', 'Context', 'str']) -> !TypeError: shift() takes at most 2 arguments (3 given) 
+205 c.Etop(*['Decimal']) -> !TypeError: Context.Etop() takes no arguments (1 given) 
+206 c.copy_negate(*['FloatLike', 'dict', 'FloatLike']) -> !TypeError: copy_negate() takes at most 1 argument (3 given) 
+207 a.min_mag(*['tuple', 'str', 'list', 'str']) -> !TypeError: min_mag() takes at most 2 arguments (4 given) 
+208 a.compare_total_mag(*['list', 'Odd', 'FloatLike', 'Context']) -> !TypeError: compare_total_mag() takes at most 2 arguments (4 given) 
+209 a < dict -> !TypeError: '<' not supported between instances of 'decimal.Decimal' and 'dict' 
+210 c.copy_decimal(**[('a', 'IntLike'), ('b', 'Context'), ('x', 'int')]) -> !TypeError: copy_decimal() takes at most 1 keyword argument (3 given) 
+211 a.next_minus(*['IntLike']) -> !TypeError: optional argument must be a context 
+212 from_number(*[], **[('context', 'Context')]) -> !TypeError: from_number() takes exactly 1 positional argument (0 given) 
+213 a.__bool__(*['dict', 'Decimal', 'int']) -> !TypeError: expected 0 arguments, got 3 
+214 a.log10(**[('foo', 'complex')]) -> !TypeError: log10() got an unexpected keyword argument 'foo' 
+215 c.to_integral_exact(*['type', 'ellipsis', 'Odd']) -> !TypeError: to_integral_exact() takes at most 1 argument (3 given) 
+216 a.scaleb(*['complex', 'Context']) -> !TypeError: conversion from complex to Decimal is not supported 
+217 c.to_sci_string(*['str']) -> !TypeError: conversion from str to Decimal is not supported 
+218 c.__copy__(*['Fraction']) -> !TypeError: __copy__() takes no arguments 
+219 c.power(*['Context', 'dict']) -> !TypeError: conversion from decimal.Context to Decimal is not supported 
+220 a.logical_or(*['list', 'IntLike', 'int']) -> !TypeError: logical_or() takes at most 2 arguments (3 given) 
+221 c.Etiny(*['Context']) -> !TypeError: Context.Etiny() takes no arguments (1 given) 
+222 c.copy_negate(**[('y', 'NoneType'), ('z', 'IntLike')]) -> !TypeError: copy_negate() takes at most 1 keyword argument (2 given) 
+223 a.quantize(*[]) -> !TypeError: quantize() missing required argument 'exp' (pos 1) 
+224 a.logical_or(*['Decimal']) -> Decimal:Decimal('NaN') 
+225 a.__float__(*['complex']) -> !TypeError: expected 0 arguments, got 1 
+226 c.minus(*['tuple', 'NoneType', 'NoneType', 'IntLike']) -> !TypeError: minus() takes at most 1 argument (4 given) 
+227 IEEEContext(*['float', 'Odd', 'IntLike'], **[('context', 'tuple'), ('foo', 'float')]) -> !TypeError: _decimal.IEEEContext() takes no keyword arguments 
+228 a.max(*['tuple', 'Odd']) -> !TypeError: optional argument must be a context 
+229 a.sqrt(*['Fraction', 'Odd']) -> !TypeError: sqrt() takes at most 1 argument (2 given) 
+230 a.logical_and(*['int', 'complex', 'Decimal', 'complex']) -> !TypeError: logical_and() takes at most 2 arguments (4 given) 
+231 a.logical_or(*['Context', 'type']) -> !TypeError: optional argument must be a context 
+232 c._apply(*['type', 'Decimal', 'IntLike']) -> !TypeError: _apply() takes at most 1 argument (3 given) 
+233 c.compare_total(**[('a', 'list'), ('z', 'type')]) -> !TypeError: compare_total() takes exactly 2 positional arguments (0 given) 
+234 c.exp(*[]) -> !TypeError: exp() takes exactly 1 positional argument (0 given) 
+235 a.copy_abs(*['list', 'NoneType', 'Fraction']) -> !TypeError: copy_abs() takes no arguments 
+236 a.next_plus(**[('third', 'complex')]) -> !TypeError: next_plus() got an unexpected keyword argument 'third' 
+237 c.divide_int(**[('context', 'IntLike'), ('y', 'float')]) -> !TypeError: divide_int() takes exactly 2 positional arguments (0 given) 
+238 a.copy_sign(*[]) -> !TypeError: copy_sign() missing required argument 'other' (pos 1) 
+239 a.fma(*[]) -> !TypeError: fma() missing required argument 'other' (pos 1) 
+240 a.copy_sign(*['complex', 'type']) -> !TypeError: optional argument must be a context 
+241 c.next_plus(*['Fraction', 'complex', 'bytes']) -> !TypeError: next_plus() takes at most 1 argument (3 given) 
+242 a.min_mag(*[]) -> !TypeError: min_mag() missing required argument 'other' (pos 1) 
+243 c.is_zero(*[]) -> !TypeError: is_zero() takes exactly 1 positional argument (0 given) 
+244 c.next_plus(*['Odd', 'complex']) -> !TypeError: next_plus() takes at most 1 argument (2 given) 
+245 a.compare(*['float', 'complex']) -> !TypeError: optional argument must be a context 
+246 c.compare_total_mag(*['tuple', 'float']) -> !TypeError: conversion from tuple to Decimal is not supported 
+247 getcontext(*['ellipsis', 'dict'], **[('context', 'list'), ('ctx', 'FloatLike')]) -> !TypeError: _decimal.getcontext() takes no keyword arguments 
+248 a.logical_or(*['dict', 'complex']) -> !TypeError: optional argument must be a context 
+249 c.is_qnan(*['float', 'ellipsis']) -> !TypeError: is_qnan() takes at most 1 argument (2 given) 
+250 a.copy_abs(*['int', 'dict', 'type']) -> !TypeError: copy_abs() takes no arguments 
+251 c.is_zero(*['ellipsis', 'FloatLike']) -> !TypeError: is_zero() takes at most 1 argument (2 given) 
+252 a.__complex__(*['Fraction', 'str']) -> !TypeError: Decimal.__complex__() takes no arguments (2 given) 
+253 a.max(*['tuple', 'ellipsis', 'dict', 'Context']) -> !TypeError: max() takes at most 2 arguments (4 given) 
+254 a.next_toward(*['type', 'NoneType', 'Fraction', 'list']) -> !TypeError: next_toward() takes at most 2 arguments (4 given) 
+255 a.as_tuple(*['complex', 'list', 'list']) -> !TypeError: as_tuple() takes no arguments 
+256 a.min(*['Context']) -> !TypeError: conversion from decimal.Context to Decimal is not supported 
+257 a.compare(*[]) -> !TypeError: compare() missing required argument 'other' (pos 1) 
+258 tuple // a -> !TypeError: unsupported operand type(s) for //: 'tuple' and 'decimal.Decimal' 
+259 from_number(*[], **[]) -> !TypeError: from_number() takes exactly 1 positional argument (0 given) 
+260 a.exp(*['int', 'Fraction', 'dict']) -> !TypeError: exp() takes at most 1 argument (3 given) 
+261 a.same_quantum(**[('other', 'bytes'), ('rounding', 'float')]) -> !TypeError: same_quantum() got an unexpected keyword argument 'rounding' 
+262 a.remainder_near(*['float', 'type']) -> !TypeError: optional argument must be a context 
+263 from_number(*['complex', 'IntLike', 'FloatLike'], **[('f', 'Fraction')]) -> !TypeError: from_number() takes at most 1 argument (4 given) 
+264 c.radix(*[]) -> Decimal:Decimal('10') 
+265 a.__int__(*['float', 'ellipsis']) -> !TypeError: expected 0 arguments, got 2 
+266 a.logical_or(*[]) -> !TypeError: logical_or() missing required argument 'other' (pos 1) 
+267 a.rotate(*['NoneType', 'bytes']) -> !TypeError: optional argument must be a context 
+268 c.is_subnormal(**[('a', 'NoneType')]) -> !TypeError: is_subnormal() takes exactly 1 positional argument (0 given) 
+269 a.log10(**[('other', 'type')]) -> !TypeError: log10() got an unexpected keyword argument 'other' 
+270 a.__reduce__(*['type']) -> !TypeError: Decimal.__reduce__() takes no arguments (1 given) 
+271 a.is_finite(*['list']) -> !TypeError: Decimal.is_finite() takes no arguments (1 given) 
+272 a.same_quantum(*['NoneType']) -> !TypeError: conversion from NoneType to Decimal is not supported 
+273 a % tuple -> !TypeError: unsupported operand type(s) for %: 'decimal.Decimal' and 'tuple' 
+274 a.compare_total_mag(*['str']) -> !TypeError: conversion from str to Decimal is not supported 
+275 a.is_normal(*['bytes']) -> !TypeError: optional argument must be a context 
+276 c.is_infinite(*[]) -> !TypeError: is_infinite() takes exactly 1 positional argument (0 given) 
+277 a.same_quantum(**[('rounding', 'float'), ('third', 'Odd')]) -> !TypeError: same_quantum() missing required argument 'other' (pos 1) 
+278 c.min_mag(*['bytes', 'Odd', 'list', 'dict']) -> !TypeError: min_mag() takes at most 2 arguments (4 given) 
+279 a.compare_signal(*[]) -> !TypeError: compare_signal() missing required argument 'other' (pos 1) 
+280 a.remainder_near(*['int']) -> Decimal:Decimal('-0.5') 
+281 getcontext(*[], **[('context', 'int')]) -> !TypeError: _decimal.getcontext() takes no keyword arguments 
+282 a.normalize(*['Fraction', 'Decimal']) -> !TypeError: normalize() takes at most 1 argument (2 given) 
+283 a.compare_total_mag(*['ellipsis', 'bytes', 'Decimal', 'NoneType']) -> !TypeError: compare_total_mag() takes at most 2 arguments (4 given) 
+284 a.fma(*['type']) -> !TypeError: fma() missing required argument 'third' (pos 2) 
+285 c.clear_flags(*['NoneType', 'list', 'int', 'str']) -> !TypeError: Context.clear_flags() takes no arguments (4 given) 
+286 Odd % a -> !TypeError: unsupported operand type(s) for %: 'Odd' and 'decimal.Decimal' 
+287 setcontext(*['type', 'Odd', 'dict'], **[]) -> !TypeError: _decimal.setcontext() takes exactly one argument (3 given) 
+288 a.scaleb(*['IntLike', 'dict']) -> !TypeError: optional argument must be a context 
+289 a.compare_total_mag(*[]) -> !TypeError: compare_total_mag() missing required argument 'other' (pos 1) 
+290 a.is_nan(*['str', 'type', 'float']) -> !TypeError: Decimal.is_nan() takes no arguments (3 given) 
+291 a.scaleb(*['Decimal', 'tuple']) -> !TypeError: optional argument must be a context 
+292 c.remainder_near(*['type', 'complex', 'bytes']) -> !TypeError: remainder_near() takes at most 2 arguments (3 given) 
+293 a.compare(*['float']) -> !TypeError: conversion from float to Decimal is not supported 
+294 a.next_toward(*['Decimal', 'type', 'NoneType']) -> !TypeError: next_toward() takes at most 2 arguments (3 given) 
+295 a.quantize(**[('foo', 'str'), ('other', 'float')]) -> !TypeError: quantize() missing required argument 'exp' (pos 1) 
+296 Context(*['IntLike'], **[('prec', 'type'), ('value', 'type')]) -> !TypeError: argument for Context() given by name ('prec') and position (1) 
+297 a.same_quantum(*['type', 'type', 'Odd', 'Odd']) -> !TypeError: same_quantum() takes at most 2 arguments (4 given) 
+298 c.is_canonical(*['IntLike']) -> !TypeError: argument must be a Decimal 
+299 a // IntLike -> !TypeError: unsupported operand type(s) for //: 'decimal.Decimal' and 'IntLike' 
+300 a.exp(*['Fraction', 'tuple', 'int']) -> !TypeError: exp() takes at most 1 argument (3 given) 
+301 a.__reduce__(*['FloatLike', 'complex', 'dict']) -> !TypeError: Decimal.__reduce__() takes no arguments (3 given) 
+302 a.to_integral(**[('context', 'str'), ('rounding', 'type')]) -> !TypeError: optional argument must be a context 
+303 ellipsis <= a -> !TypeError: '<=' not supported between instances of 'ellipsis' and 'decimal.Decimal' 
+304 a.adjusted(*['bytes', 'list']) -> !TypeError: Decimal.adjusted() takes no arguments (2 given) 
+305 a.rotate(*['int']) -> Decimal:Decimal('15.0') 
+306 c.min_mag(*['ellipsis', 'type', 'NoneType', 'complex']) -> !TypeError: min_mag() takes at most 2 arguments (4 given) 
+307 c.plus(*['dict']) -> !TypeError: conversion from dict to Decimal is not supported 
+308 a.logical_and(*['tuple', 'int']) -> !TypeError: optional argument must be a context 
+309 a.quantize(*['Fraction', 'float', 'Fraction', 'list']) -> !TypeError: quantize() takes at most 3 arguments (4 given) 
+310 c.copy_negate(*['FloatLike']) -> !TypeError: conversion from FloatLike to Decimal is not supported 
+311 c.shift(*['ellipsis']) -> !TypeError: shift() takes exactly 2 positional arguments (1 given) 
+312 c.to_integral_exact(*['tuple', 'complex']) -> !TypeError: to_integral_exact() takes at most 1 argument (2 given) 
+313 a.logical_xor(*['complex', 'bytes', 'ellipsis', 'IntLike']) -> !TypeError: logical_xor() takes at most 2 arguments (4 given) 
+314 a.copy_abs(*['Odd']) -> !TypeError: copy_abs() takes no arguments 
+315 a.min(*['Decimal']) -> Decimal:Decimal('1.5') 
+316 c.compare(*['type', 'type']) -> !TypeError: conversion from type to Decimal is not supported 
+317 a.quantize(*['float', 'Context']) -> !TypeError: valid values for rounding are:
+  [ROUND_CEILING, ROUND_FLOOR, ROUND_UP, ROUND_DOWN,
+   ROUND_HALF_UP, ROUND_HALF_DOWN, ROUND_HALF_EVEN,
+   ROUND_05UP] 
+318 a.normalize(**[('exp', 'complex')]) -> !TypeError: normalize() got an unexpected keyword argument 'exp' 
+319 c.compare_signal(*[]) -> !TypeError: compare_signal() takes exactly 2 positional arguments (0 given) 
+320 a.min(*['list', 'Odd', 'list']) -> !TypeError: min() takes at most 2 arguments (3 given) 
+321 a.logical_xor(*['NoneType', 'FloatLike', 'str']) -> !TypeError: logical_xor() takes at most 2 arguments (3 given) 
+322 a.logical_xor(*['type']) -> !TypeError: conversion from type to Decimal is not supported 
+323 a.remainder_near(*['Fraction', 'Decimal', 'Odd', 'Fraction']) -> !TypeError: remainder_near() takes at most 2 arguments (4 given) 
+324 a.logical_invert(**[('exp', 'str'), ('other', 'dict'), ('rounding', 'bytes')]) -> !TypeError: logical_invert() takes at most 1 keyword argument (3 given) 
+325 a.same_quantum(*['bytes']) -> !TypeError: conversion from bytes to Decimal is not supported 
+326 a.min_mag(*['Decimal', 'NoneType']) -> Decimal:Decimal('1.5') 
+327 c.min_mag(*['list', 'dict']) -> !TypeError: conversion from list to Decimal is not supported 
+328 a.logical_xor(*['str', 'bytes', 'int', 'Decimal']) -> !TypeError: logical_xor() takes at most 2 arguments (4 given) 
+329 c.quantize(*['NoneType', 'complex']) -> !TypeError: conversion from NoneType to Decimal is not supported 
+330 a.compare(*['int', 'bytes', 'dict', 'NoneType']) -> !TypeError: compare() takes at most 2 arguments (4 given) 
+331 a.compare(*['ellipsis', 'complex', 'int']) -> !TypeError: compare() takes at most 2 arguments (3 given) 
+332 c.min(*['FloatLike', 'FloatLike', 'FloatLike']) -> !TypeError: min() takes at most 2 arguments (3 given) 
+333 a.is_finite(*['Decimal']) -> !TypeError: Decimal.is_finite() takes no arguments (1 given) 
+334 c.create_decimal(*['dict', 'IntLike', 'Context', 'dict']) -> !TypeError: create_decimal expected at most 1 argument, got 4 
+335 c.__reduce__(*[]) -> (type:<class 'decimal.Context'>, (int:1, str:'ROUND_HALF_DOWN', int:-999999, int:999999, int:1, int:0, list:[], list:[<class 'decimal.Inexact'>, <class 'decimal.Rounded'>])) 
+336 c.minus(*['FloatLike', 'str', 'IntLike']) -> !TypeError: minus() takes at most 1 argument (3 given) 
+337 c.copy_abs(**[('b', 'Context')]) -> !TypeError: copy_abs() takes exactly 1 positional argument (0 given) 
+338 a.min_mag(*['ellipsis']) -> !TypeError: conversion from ellipsis to Decimal is not supported 
+339 a == str -> bool:False 
+340 a.compare_total_mag(**[('context', 'dict'), ('self', 'ellipsis'), ('third', 'FloatLike')]) -> !TypeError: compare_total_mag() takes at most 2 keyword arguments (3 given) 
+341 a.quantize(**[('rounding', 'ellipsis')]) -> !TypeError: quantize() missing required argument 'exp' (pos 1) 
+342 c.is_qnan(**[('modulo', 'Context')]) -> !TypeError: is_qnan() takes exactly 1 positional argument (0 given) 
+343 c.log10(**[('x', 'Fraction')]) -> !TypeError: log10() takes exactly 1 positional argument (0 given) 
+344 a.min_mag(**[('context', 'tuple'), ('rounding', 'type')]) -> !TypeError: min_mag() missing required argument 'other' (pos 1) 
+345 a.min(*['FloatLike', 'float', 'float']) -> !TypeError: min() takes at most 2 arguments (3 given) 
+346 a >= IntLike -> !TypeError: '>=' not supported between instances of 'decimal.Decimal' and 'IntLike' 
+347 a.is_zero(*['Odd', 'Fraction', 'dict']) -> !TypeError: Decimal.is_zero() takes no arguments (3 given) 
+348 a.compare_total_mag(*['Context', 'bytes', 'Context']) -> !TypeError: compare_total_mag() takes at most 2 arguments (3 given) 
+349 a.next_minus(*['tuple', 'float', 'type']) -> !TypeError: next_minus() takes at most 1 argument (3 given) 
+350 c.logical_or(*[]) -> !TypeError: logical_or() takes exactly 2 positional arguments (0 given) 
+351 a.next_toward(*['Odd', 'tuple', 'dict']) -> !TypeError: next_toward() takes at most 2 arguments (3 given) 
+352 a.__complex__(*['NoneType', 'dict', 'list']) -> !TypeError: Decimal.__complex__() takes no arguments (3 given) 
+353 c.divide(*[]) -> !TypeError: divide() takes exactly 2 positional arguments (0 given) 
+354 a.logical_xor(*['Odd', 'list', 'ellipsis', 'IntLike']) -> !TypeError: logical_xor() takes at most 2 arguments (4 given) 
+355 a > tuple -> !TypeError: '>' not supported between instances of 'decimal.Decimal' and 'tuple' 
+356 c.divmod(*['ellipsis']) -> !TypeError: divmod expected 2 arguments, got 1 
+357 c.log10(*['dict']) -> !TypeError: conversion from dict to Decimal is not supported 
+358 a.same_quantum(*['Context', 'str', 'Odd']) -> !TypeError: same_quantum() takes at most 2 arguments (3 given) 
+359 c.is_signed(*['int', 'dict']) -> !TypeError: is_signed() takes at most 1 argument (2 given) 
+360 a.copy_sign(*['Fraction', 'float']) -> !TypeError: optional argument must be a context 
+361 a.__ceil__(*['NoneType']) -> !TypeError: __ceil__() takes no arguments 
+362 c.logical_invert(*['bytes', 'dict', 'FloatLike']) -> !TypeError: logical_invert() takes at most 1 argument (3 given) 
+363 a.logical_xor(*['str', 'str', 'NoneType']) -> !TypeError: logical_xor() takes at most 2 arguments (3 given) 
+364 c.compare_total_mag(*['str']) -> !TypeError: compare_total_mag() takes exactly 2 positional arguments (1 given) 
+365 a.copy_sign(**[('context', 'Odd')]) -> !TypeError: copy_sign() missing required argument 'other' (pos 1) 
+366 Context(*['ellipsis', 'ellipsis', 'bytes'], **[('prec', 'IntLike')]) -> !TypeError: argument for Context() given by name ('prec') and position (1) 
+367 a.copy_negate(*['type', 'Decimal']) -> !TypeError: copy_negate() takes no arguments 
+368 c.logical_invert(*[]) -> !TypeError: logical_invert() takes exactly 1 positional argument (0 given) 
+369 c.scaleb(*[]) -> !TypeError: scaleb() takes exactly 2 positional arguments (0 given) 
+370 a.compare(*['tuple', 'Odd', 'Context', 'str']) -> !TypeError: compare() takes at most 2 arguments (4 given) 
+371 c.max(*['str']) -> !TypeError: max() takes exactly 2 positional arguments (1 given) 
+372 c.is_signed(*['ellipsis', 'FloatLike']) -> !TypeError: is_signed() takes at most 1 argument (2 given) 
+373 a.as_integer_ratio(*['complex', 'ellipsis']) -> !TypeError: as_integer_ratio() takes no arguments 
+374 a.__float__(*['ellipsis']) -> !TypeError: expected 0 arguments, got 1 
+375 IntLike % a -> !TypeError: unsupported operand type(s) for %: 'IntLike' and 'decimal.Decimal' 
+376 a.next_toward(*['str', 'Decimal', 'list']) -> !TypeError: next_toward() takes at most 2 arguments (3 given) 
+377 a.logical_xor(*['NoneType']) -> !TypeError: conversion from NoneType to Decimal is not supported 
+378 c.logical_xor(*['complex', 'bytes', 'tuple']) -> !TypeError: logical_xor() takes at most 2 arguments (3 given) 
+379 a.to_integral(**[('rounding', 'FloatLike')]) -> !TypeError: valid values for rounding are:
+  [ROUND_CEILING, ROUND_FLOOR, ROUND_UP, ROUND_DOWN,
+   ROUND_HALF_UP, ROUND_HALF_DOWN, ROUND_HALF_EVEN,
+   ROUND_05UP] 
+380 a.compare_signal(**[('other', 'Odd'), ('self', 'ellipsis')]) -> !TypeError: compare_signal() got an unexpected keyword argument 'self' 
+381 a.__int__(*['IntLike', 'NoneType', 'FloatLike']) -> !TypeError: expected 0 arguments, got 3 
+382 c.next_plus(**[('context', 'list'), ('num', 'dict')]) -> !TypeError: next_plus() takes at most 1 keyword argument (2 given) 
+383 getcontext(*[], **[]) -> str:'Context' 
+384 NoneType - a -> !TypeError: unsupported operand type(s) for -: 'NoneType' and 'decimal.Decimal' 
+385 a.remainder_near(*['Context', 'type', 'Decimal']) -> !TypeError: remainder_near() takes at most 2 arguments (3 given) 
+386 c.canonical(*['int']) -> !TypeError: argument must be a Decimal 
+387 IEEEContext(*[], **[('prec', 'float')]) -> !TypeError: _decimal.IEEEContext() takes no keyword arguments 
+388 a.__hash__(*['Odd', 'Fraction']) -> !TypeError: expected 0 arguments, got 2 
+389 c.clear_flags(*[]) -> NoneType:None 
+390 a.logical_or(**[('other', 'bytes')]) -> !TypeError: conversion from bytes to Decimal is not supported 
+391 a.compare(*['list']) -> !TypeError: conversion from list to Decimal is not supported 
+392 a.min_mag(**[('x', 'ellipsis')]) -> !TypeError: min_mag() missing required argument 'other' (pos 1) 
+393 a.is_nan(*['tuple']) -> !TypeError: Decimal.is_nan() takes no arguments (1 given) 
+394 c.logical_xor(*[]) -> !TypeError: logical_xor() takes exactly 2 positional arguments (0 given) 
+395 a.compare(*[]) -> !TypeError: compare() missing required argument 'other' (pos 1) 
+396 a.exp(**[('x', 'dict')]) -> !TypeError: exp() got an unexpected keyword argument 'x' 
+397 a.compare_total_mag(*['list', 'dict']) -> !TypeError: optional argument must be a context 
+398 a.logb(*['type']) -> !TypeError: optional argument must be a context 
+399 a.ln(**[('foo', 'bytes')]) -> !TypeError: ln() got an unexpected keyword argument 'foo' 
+400 c.ln(*['NoneType']) -> !TypeError: conversion from NoneType to Decimal is not supported 
+401 a.next_toward(*['NoneType']) -> !TypeError: conversion from NoneType to Decimal is not supported 
+402 a.copy_abs(*['IntLike', 'str', 'dict']) -> !TypeError: copy_abs() takes no arguments 
+403 c.is_nan(*['FloatLike', 'int', 'bytes']) -> !TypeError: is_nan() takes at most 1 argument (3 given) 
+404 c.sqrt(*['FloatLike']) -> !TypeError: conversion from FloatLike to Decimal is not supported 
+405 a.quantize(**[('other', 'Odd'), ('third', 'str')]) -> !TypeError: quantize() missing required argument 'exp' (pos 1) 
+406 a.ln(*['tuple', 'int']) -> !TypeError: ln() takes at most 1 argument (2 given) 
+407 a.shift(*['tuple']) -> !TypeError: conversion from tuple to Decimal is not supported 
+408 a.is_finite(*['list', 'bytes', 'ellipsis']) -> !TypeError: Decimal.is_finite() takes no arguments (3 given) 
+409 localcontext(*[], **[]) -> str:'ContextManager' 
+410 a.is_subnormal(*['ellipsis']) -> !TypeError: optional argument must be a context 
+411 a.quantize(*['int', 'int', 'Fraction', 'complex']) -> !TypeError: quantize() takes at most 3 arguments (4 given) 
+412 c.is_subnormal(*['Fraction', 'Odd', 'complex', 'Fraction']) -> !TypeError: is_subnormal() takes at most 1 argument (4 given) 
+413 a // FloatLike -> !TypeError: unsupported operand type(s) for //: 'decimal.Decimal' and 'FloatLike' 
+414 a.__floor__(*['FloatLike', 'Fraction']) -> !TypeError: __floor__() takes no arguments 
+415 c.remainder_near(*['Decimal', 'str']) -> !TypeError: conversion from str to Decimal is not supported 
+416 c.is_nan(*['Decimal']) -> bool:False 
+417 IEEEContext(*['Fraction', 'NoneType', 'NoneType'], **[]) -> !TypeError: _decimal.IEEEContext() takes exactly one argument (3 given) 
+418 c.copy_abs(**[('y', 'int'), ('z', 'bytes')]) -> !TypeError: copy_abs() takes at most 1 keyword argument (2 given) 
+419 c.power(*['IntLike']) -> !TypeError: power() missing required argument 'b' (pos 2) 
+420 c.plus(*['FloatLike', 'float', 'Decimal']) -> !TypeError: plus() takes at most 1 argument (3 given) 
+421 getcontext(*[], **[('bits', 'Decimal')]) -> !TypeError: _decimal.getcontext() takes no keyword arguments 
+422 a.min(*['float', 'type']) -> !TypeError: optional argument must be a context 
+423 a.remainder_near(*[]) -> !TypeError: remainder_near() missing required argument 'other' (pos 1) 
+424 a.__round__(*['Context']) -> !TypeError: optional arg must be an integer 
+425 Decimal(*['Context', 'Decimal'], **[('context', 'int'), ('ctx', 'Decimal')]) -> !TypeError: Decimal() takes at most 2 arguments (4 given) 
+426 c.compare_total(*['Odd', 'Fraction']) -> !TypeError: conversion from Odd to Decimal is not supported 
+427 c.is_infinite(*[]) -> !TypeError: is_infinite() takes exactly 1 positional argument (0 given) 
+428 a.logical_invert(*['float']) -> !TypeError: optional argument must be a context 
+429 a.remainder_near(*['str']) -> !TypeError: conversion from str to Decimal is not supported 
+430 a.min(*['NoneType', 'Fraction', 'float', 'Fraction']) -> !TypeError: min() takes at most 2 arguments (4 given) 
+431 a.__int__(*['complex']) -> !TypeError: expected 0 arguments, got 1 
+432 c.copy_sign(*['int', 'FloatLike', 'Decimal', 'float']) -> !TypeError: copy_sign() takes at most 2 arguments (4 given) 
+433 a.min_mag(*['list']) -> !TypeError: conversion from list to Decimal is not supported 
+434 a.logical_xor(*[]) -> !TypeError: logical_xor() missing required argument 'other' (pos 1) 
+435 c.is_normal(*['list']) -> !TypeError: conversion from list to Decimal is not supported 
+436 a.__abs__(*['Context', 'str', 'Decimal']) -> !TypeError: expected 0 arguments, got 3 
+437 a.__round__(*['list']) -> !TypeError: optional arg must be an integer 
+438 a / Odd -> !TypeError: unsupported operand type(s) for /: 'decimal.Decimal' and 'Odd' 
+439 a.__reduce__(*['FloatLike', 'ellipsis', 'int']) -> !TypeError: Decimal.__reduce__() takes no arguments (3 given) 
+440 a.compare_total(*['FloatLike', 'dict', 'bytes']) -> !TypeError: compare_total() takes at most 2 arguments (3 given) 
+441 a.canonical(*['bytes', 'FloatLike', 'complex']) -> !TypeError: Decimal.canonical() takes no arguments (3 given) 
+442 a.quantize(*['Context', 'list', 'FloatLike', 'float']) -> !TypeError: quantize() takes at most 3 arguments (4 given) 
+443 c.remainder_near(*[]) -> !TypeError: remainder_near() takes exactly 2 positional arguments (0 given) 
+444 a.ln(*['Decimal', 'dict']) -> !TypeError: ln() takes at most 1 argument (2 given) 
+445 c.number_class(*['str']) -> !TypeError: conversion from str to Decimal is not supported 
+446 a.max(*['Fraction', 'complex', 'ellipsis']) -> !TypeError: max() takes at most 2 arguments (3 given) 
+447 a.compare_signal(*['Odd', 'tuple', 'list']) -> !TypeError: compare_signal() takes at most 2 arguments (3 given) 
+448 a.logical_or(**[('exp', 'bytes'), ('rounding', 'float'), ('x', 'float')]) -> !TypeError: logical_or() takes at most 2 keyword arguments (3 given) 
+449 a.quantize(**[('foo', 'type')]) -> !TypeError: quantize() missing required argument 'exp' (pos 1) 
+450 c.sqrt(*['tuple', 'int', 'Decimal']) -> !TypeError: sqrt() takes at most 1 argument (3 given) 
+451 a.as_integer_ratio(*['dict']) -> !TypeError: as_integer_ratio() takes no arguments 
+452 c.power(*['list', 'type', 'FloatLike', 'str']) -> !TypeError: power() takes at most 3 arguments (4 given) 
+453 c.logical_or(**[('z', 'ellipsis')]) -> !TypeError: logical_or() takes exactly 2 positional arguments (0 given) 
+454 a.fma(**[('third', 'tuple')]) -> !TypeError: fma() missing required argument 'other' (pos 1) 
+455 c.same_quantum(**[('x', 'Fraction')]) -> !TypeError: same_quantum() takes exactly 2 positional arguments (0 given) 
+456 c.compare(*['float', 'ellipsis', 'IntLike', 'list']) -> !TypeError: compare() takes at most 2 arguments (4 given) 
+457 localcontext(*['Context', 'int', 'Context'], **[('f', 'str')]) -> !TypeError: localcontext() takes at most 1 positional argument (3 given) 
+458 a.to_eng_string(**[('other', 'tuple'), ('self', 'tuple')]) -> !TypeError: to_eng_string() takes at most 1 keyword argument (2 given) 
+459 a.remainder_near(*[]) -> !TypeError: remainder_near() missing required argument 'other' (pos 1) 
+460 a.is_zero(*['list', 'Context', 'complex']) -> !TypeError: Decimal.is_zero() takes no arguments (3 given) 
+461 c.divmod(*[]) -> !TypeError: divmod expected 2 arguments, got 0 
+462 c.is_finite(*['IntLike', 'Fraction', 'int']) -> !TypeError: is_finite() takes at most 1 argument (3 given) 
+463 a.compare_total(*['FloatLike']) -> !TypeError: conversion from FloatLike to Decimal is not supported 
+464 c.divide_int(**[('a', 'FloatLike')]) -> !TypeError: divide_int() takes exactly 2 positional arguments (0 given) 
+465 IEEEContext(*['complex', 'Odd'], **[]) -> !TypeError: _decimal.IEEEContext() takes exactly one argument (2 given) 
+466 a.logical_invert(*['list']) -> !TypeError: optional argument must be a context 
+467 a.same_quantum(*['NoneType', 'NoneType', 'IntLike']) -> !TypeError: same_quantum() takes at most 2 arguments (3 given) 
+468 a.next_toward(*[]) -> !TypeError: next_toward() missing required argument 'other' (pos 1) 
+469 c.minus(*['NoneType']) -> !TypeError: conversion from NoneType to Decimal is not supported 
+470 a.compare_signal(*['FloatLike', 'type']) -> !TypeError: optional argument must be a context 
+471 c.copy(*['str']) -> !TypeError: copy() takes no arguments 
+472 c.logical_xor(**[('context', 'NoneType')]) -> !TypeError: logical_xor() takes exactly 2 positional arguments (0 given) 
+473 a.quantize(**[('foo', 'Fraction'), ('x', 'str')]) -> !TypeError: quantize() missing required argument 'exp' (pos 1) 
+474 a.compare(*['str', 'FloatLike', 'FloatLike', 'Decimal']) -> !TypeError: compare() takes at most 2 arguments (4 given) 
+475 c.divide(*['Fraction', 'float', 'FloatLike']) -> !TypeError: divide() takes at most 2 arguments (3 given) 
+476 c.max_mag(*[]) -> !TypeError: max_mag() takes exactly 2 positional arguments (0 given) 
+477 a.rotate(*['list']) -> !TypeError: conversion from list to Decimal is not supported 
+478 a.same_quantum(*['Context', 'list', 'complex']) -> !TypeError: same_quantum() takes at most 2 arguments (3 given) 
+479 a.copy_sign(*['list', 'float']) -> !TypeError: optional argument must be a context 
+480 dict <= a -> !TypeError: '<=' not supported between instances of 'dict' and 'decimal.Decimal' 
+481 c.Etiny(*['complex', 'Context', 'list']) -> !TypeError: Context.Etiny() takes no arguments (3 given) 
+482 a.quantize(*['int']) -> !Inexact: [<class 'decimal.Inexact'>, <class 'decimal.Rounded'>] 
+483 localcontext(*['tuple'], **[('bits', 'int'), ('prec', 'NoneType')]) -> !TypeError: localcontext() got an unexpected keyword argument 'bits' 
+484 c.logical_or(**[('modulo', 'Decimal'), ('y', 'IntLike')]) -> !TypeError: logical_or() takes exactly 2 positional arguments (0 given) 
+485 a.next_toward(*['tuple']) -> !TypeError: conversion from tuple to Decimal is not supported 
+486 a.compare_total_mag(*[]) -> !TypeError: compare_total_mag() missing required argument 'other' (pos 1) 
+487 a.compare_total(*['dict', 'list', 'list', 'Odd']) -> !TypeError: compare_total() takes at most 2 arguments (4 given) 
+488 a.adjusted(*['IntLike', 'Fraction', 'FloatLike']) -> !TypeError: Decimal.adjusted() takes no arguments (3 given) 
+489 c.ln(*['IntLike', 'list', 'float', 'NoneType']) -> !TypeError: ln() takes at most 1 argument (4 given) 
+490 a.ln(**[('context', 'tuple'), ('third', 'Decimal')]) -> !TypeError: ln() takes at most 1 keyword argument (2 given) 
+491 a.remainder_near(*['str', 'bytes']) -> !TypeError: optional argument must be a context 
+492 c.power(*['int', 'NoneType']) -> !TypeError: conversion from NoneType to Decimal is not supported 
+493 a.quantize(*[]) -> !TypeError: quantize() missing required argument 'exp' (pos 1) 
+494 c._apply(**[('y', 'list')]) -> !TypeError: _apply() takes exactly 1 positional argument (0 given) 
+495 c.to_integral(*[]) -> !TypeError: to_integral() takes exactly 1 positional argument (0 given) 
+496 c.max(*['NoneType']) -> !TypeError: max() takes exactly 2 positional arguments (1 given) 
+497 c.multiply(**[('z', 'float')]) -> !TypeError: multiply() takes exactly 2 positional arguments (0 given) 
+498 c.next_toward(*['float']) -> !TypeError: next_toward() takes exactly 2 positional arguments (1 given) 
+499 bytes * a -> !TypeError: can't multiply sequence by non-int of type 'decimal.Decimal' 
+500 a.logical_xor(*['tuple']) -> !TypeError: conversion from tuple to Decimal is not supported 
+501 a.max_mag(*['int']) -> Decimal:Decimal('1.5') 
+502 IEEEContext(*[], **[]) -> !TypeError: _decimal.IEEEContext() takes exactly one argument (0 given) 
+503 c.power(*['NoneType', 'ellipsis']) -> !TypeError: conversion from NoneType to Decimal is not supported 
+504 a.max_mag(*['float']) -> !TypeError: conversion from float to Decimal is not supported 
+505 c.plus(*['ellipsis']) -> !TypeError: conversion from ellipsis to Decimal is not supported 
+506 a.scaleb(**[('exp', 'tuple'), ('x', 'FloatLike')]) -> !TypeError: scaleb() missing required argument 'other' (pos 1) 
+507 str < a -> !TypeError: '<' not supported between instances of 'str' and 'decimal.Decimal' 
+508 setcontext(*['bytes', 'bytes'], **[('context', 'ellipsis'), ('ctx', 'Context')]) -> !TypeError: _decimal.setcontext() takes no keyword arguments 
+509 c.logical_xor(*['list', 'dict', 'bytes', 'int']) -> !TypeError: logical_xor() takes at most 2 arguments (4 given) 
+510 a.compare(*['tuple']) -> !TypeError: conversion from tuple to Decimal is not supported 
+511 a.logical_xor(*['Context', 'Context', 'type', 'str']) -> !TypeError: logical_xor() takes at most 2 arguments (4 given) 
+512 IEEEContext(*[], **[]) -> !TypeError: _decimal.IEEEContext() takes exactly one argument (0 given) 
+513 c.max_mag(**[('context', 'int'), ('modulo', 'tuple')]) -> !TypeError: max_mag() takes exactly 2 positional arguments (0 given) 
+514 c.compare_signal(**[('modulo', 'complex')]) -> !TypeError: compare_signal() takes exactly 2 positional arguments (0 given) 
+515 c.logical_and(**[('context', 'str'), ('modulo', 'Context')]) -> !TypeError: logical_and() takes exactly 2 positional arguments (0 given) 
+516 a.exp(*['str', 'float', 'tuple']) -> !TypeError: exp() takes at most 1 argument (3 given) 
+517 a == Fraction -> bool:False 
+518 NoneType > a -> !TypeError: '>' not supported between instances of 'NoneType' and 'decimal.Decimal' 
+519 c.radix(*[]) -> Decimal:Decimal('10') 
+520 a > dict -> !TypeError: '>' not supported between instances of 'decimal.Decimal' and 'dict' 
+521 a.min_mag(*['float', 'int', 'Fraction']) -> !TypeError: min_mag() takes at most 2 arguments (3 given) 
+522 a.compare(*['bytes', 'str', 'Context', 'Decimal']) -> !TypeError: compare() takes at most 2 arguments (4 given) 
+523 c.log10(*['dict']) -> !TypeError: conversion from dict to Decimal is not supported 
+524 a.quantize(*['int']) -> Decimal:Decimal('1') 
+525 a.logical_xor(*[]) -> !TypeError: logical_xor() missing required argument 'other' (pos 1) 
+526 a.compare_total_mag(*['int', 'int', 'list', 'str']) -> !TypeError: compare_total_mag() takes at most 2 arguments (4 given) 
+527 c.create_decimal_from_float(*['Context']) -> !TypeError: argument must be int or float 
+528 c.scaleb(*['tuple', 'str']) -> !TypeError: conversion from tuple to Decimal is not supported 
+529 c.is_nan(**[('z', 'bytes')]) -> !TypeError: is_nan() takes exactly 1 positional argument (0 given) 
+530 a.fma(*['dict', 'complex']) -> !TypeError: conversion from dict to Decimal is not supported 
+531 a.is_normal(**[('self', 'bytes')]) -> !TypeError: is_normal() got an unexpected keyword argument 'self' 
+532 localcontext(*['dict', 'list'], **[('foo', 'float')]) -> !TypeError: localcontext() takes at most 1 positional argument (2 given) 
+533 c.next_minus(**[('b', 'ellipsis'), ('num', 'FloatLike'), ('z', 'int')]) -> !TypeError: next_minus() takes at most 1 keyword argument (3 given) 
+534 IntLike divmod a -> !TypeError: unsupported operand type(s) for divmod(): 'IntLike' and 'decimal.Decimal' 
+535 Decimal(*['complex', 'Decimal', 'Odd'], **[]) -> !TypeError: Decimal() takes at most 2 arguments (3 given) 
+536 a.quantize(**[('foo', 'Fraction'), ('x', 'dict')]) -> !TypeError: quantize() missing required argument 'exp' (pos 1) 
+537 a.logical_or(*['str', 'str', 'Odd', 'complex']) -> !TypeError: logical_or() takes at most 2 arguments (4 given) 
+538 a.next_toward(**[('exp', 'str'), ('third', 'complex')]) -> !TypeError: next_toward() missing required argument 'other' (pos 1) 
+539 a.ln(**[('context', 'FloatLike'), ('other', 'FloatLike'), ('third', 'FloatLike')]) -> !TypeError: ln() takes at most 1 keyword argument (3 given) 
+540 c.compare_total_mag(*['Decimal', 'dict', 'str', 'list']) -> !TypeError: compare_total_mag() takes at most 2 arguments (4 given) 
+541 c.compare(*[]) -> !TypeError: compare() takes exactly 2 positional arguments (0 given) 
+542 a.max_mag(*['Decimal', 'IntLike']) -> !TypeError: optional argument must be a context 
+543 from_number(*['type', 'FloatLike', 'Fraction'], **[('bits', 'bytes'), ('f', 'Fraction')]) -> !TypeError: from_number() takes at most 1 argument (5 given) 
+544 c.is_qnan(*['list']) -> !TypeError: conversion from list to Decimal is not supported 
+545 a.next_toward(*['float']) -> !TypeError: conversion from float to Decimal is not supported 
+546 a.max_mag(*['int', 'int', 'Fraction']) -> !TypeError: max_mag() takes at most 2 arguments (3 given) 
+547 a.is_qnan(*['str']) -> !TypeError: Decimal.is_qnan() takes no arguments (1 given) 
+548 a.logical_or(*['Decimal']) -> Decimal:Decimal('NaN') 
+549 a.__hash__(*['list', 'dict', 'Decimal']) -> !TypeError: expected 0 arguments, got 3 
+550 c.is_subnormal(*['NoneType', 'Decimal', 'str', 'Fraction']) -> !TypeError: is_subnormal() takes at most 1 argument (4 given) 
+551 c.normalize(*['type']) -> !TypeError: conversion from type to Decimal is not supported 
+552 a.copy_sign(*['Decimal', 'Odd', 'dict', 'list']) -> !TypeError: copy_sign() takes at most 2 arguments (4 given) 
+553 c.divide_int(*[]) -> !TypeError: divide_int() takes exactly 2 positional arguments (0 given) 
+554 a.same_quantum(*[]) -> !TypeError: same_quantum() missing required argument 'other' (pos 1) 
+555 Decimal(*['complex'], **[('foo', 'float')]) -> !TypeError: Decimal() got an unexpected keyword argument 'foo' 
+556 from_number(*['ellipsis', 'Odd', 'Context'], **[('prec', 'Context')]) -> !TypeError: from_number() takes at most 1 argument (4 given) 
+557 float >= a -> bool:True 
+558 c.min_mag(**[('a', 'bytes')]) -> !TypeError: min_mag() takes exactly 2 positional arguments (0 given) 
+559 from_number(*['str', 'dict', 'Context', 'int'], **[('value', 'type')]) -> !TypeError: from_number() takes at most 1 argument (5 given) 
+560 a.fma(*['tuple']) -> !TypeError: fma() missing required argument 'third' (pos 2) 
+561 a.compare_total_mag(*['complex', 'IntLike', 'tuple', 'str']) -> !TypeError: compare_total_mag() takes at most 2 arguments (4 given) 
+562 c.canonical(*['FloatLike']) -> !TypeError: argument must be a Decimal 
+563 a.to_integral(**[('foo', 'NoneType'), ('third', 'float')]) -> !TypeError: to_integral() got an unexpected keyword argument 'foo' 
+564 c.min_mag(*['str']) -> !TypeError: min_mag() takes exactly 2 positional arguments (1 given) 
+565 a.__float__(*['type', 'float', 'Context']) -> !TypeError: expected 0 arguments, got 3 
+566 a.compare(*['tuple', 'float', 'Fraction']) -> !TypeError: compare() takes at most 2 arguments (3 given) 
+567 c.max(*[]) -> !TypeError: max() takes exactly 2 positional arguments (0 given) 
+568 a.__reduce__(*['type', 'IntLike']) -> !TypeError: Decimal.__reduce__() takes no arguments (2 given) 
+569 a.compare_signal(*['tuple', 'str', 'ellipsis', 'dict']) -> !TypeError: compare_signal() takes at most 2 arguments (4 given) 
+570 a.as_tuple(*['dict', 'int', 'int']) -> !TypeError: as_tuple() takes no arguments 
+571 c.logb(*['type', 'list']) -> !TypeError: logb() takes at most 1 argument (2 given) 
+572 c.power(*[]) -> !TypeError: power() missing required argument 'a' (pos 1) 
+573 c.is_zero(*['dict', 'list']) -> !TypeError: is_zero() takes at most 1 argument (2 given) 
+574 a.__str__(*['dict', 'Context']) -> !TypeError: expected 0 arguments, got 2 
+575 c.remainder_near(*['bytes', 'NoneType', 'Decimal', 'list']) -> !TypeError: remainder_near() takes at most 2 arguments (4 given) 
+576 a.min_mag(*['NoneType']) -> !TypeError: conversion from NoneType to Decimal is not supported 
+577 a.quantize(*['dict', 'tuple', 'bytes', 'Decimal']) -> !TypeError: quantize() takes at most 3 arguments (4 given) 
+578 c.rotate(*[]) -> !TypeError: rotate() takes exactly 2 positional arguments (0 given) 
+579 a.max(*[]) -> !TypeError: max() missing required argument 'other' (pos 1) 
+580 c.abs(*[]) -> !TypeError: abs() takes exactly 1 positional argument (0 given) 
+581 c.compare(*['FloatLike', 'dict', 'int', 'FloatLike']) -> !TypeError: compare() takes at most 2 arguments (4 given) 
+582 c.copy_negate(*['bytes', 'FloatLike', 'Context', 'type']) -> !TypeError: copy_negate() takes at most 1 argument (4 given) 
+583 a.min_mag(**[('rounding', 'NoneType')]) -> !TypeError: min_mag() missing required argument 'other' (pos 1) 
+584 getcontext(*['IntLike', 'ellipsis', 'NoneType', 'tuple'], **[('value', 'dict')]) -> !TypeError: _decimal.getcontext() takes no keyword arguments 
+585 type >= a -> !TypeError: '>=' not supported between instances of 'type' and 'decimal.Decimal' 
+586 a.rotate(*['Decimal', 'FloatLike']) -> !TypeError: optional argument must be a context 
+587 c.power(*['Context', 'type']) -> !TypeError: conversion from decimal.Context to Decimal is not supported 
+588 a.logical_and(*['Context', 'FloatLike', 'list', 'Fraction']) -> !TypeError: logical_and() takes at most 2 arguments (4 given) 
+589 c.multiply(*['bytes', 'list']) -> !TypeError: conversion from bytes to Decimal is not supported 
+590 c.is_snan(*['FloatLike', 'tuple', 'Decimal']) -> !TypeError: is_snan() takes at most 1 argument (3 given) 
+591 a.logical_or(*[]) -> !TypeError: logical_or() missing required argument 'other' (pos 1) 
+592 c.divide_int(*[]) -> !TypeError: divide_int() takes exactly 2 positional arguments (0 given) 
+593 IEEEContext(*[], **[('value', 'float')]) -> !TypeError: _decimal.IEEEContext() takes no keyword arguments 
+594 a.next_plus(**[('context', 'str'), ('exp', 'complex'), ('self', 'bytes')]) -> !TypeError: next_plus() takes at most 1 keyword argument (3 given) 
+595 c.max(*['NoneType', 'Fraction', 'list']) -> !TypeError: max() takes at most 2 arguments (3 given) 
+596 a.quantize(*['str', 'Decimal', 'dict']) -> !TypeError: optional argument must be a context 
+597 Context(*['bytes'], **[('f', 'Decimal')]) -> !TypeError: Context() got an unexpected keyword argument 'f' 
+598 c.logical_invert(*[]) -> !TypeError: logical_invert() takes exactly 1 positional argument (0 given) 
+599 a.logical_or(*['bytes', 'type', 'str', 'Decimal']) -> !TypeError: logical_or() takes at most 2 arguments (4 given) 
+600 a ** IntLike -> !TypeError: unsupported operand type(s) for ** or pow(): 'decimal.Decimal' and 'IntLike' 
+601 a.next_toward(**[('exp', 'float'), ('foo', 'Fraction'), ('rounding', 'NoneType')]) -> !TypeError: next_toward() takes at most 2 keyword arguments (3 given) 
+602 c.max_mag(*['float', 'Decimal', 'IntLike']) -> !TypeError: max_mag() takes at most 2 arguments (3 given) 
+603 a.shift(*['IntLike', 'complex', 'bytes', 'float']) -> !TypeError: shift() takes at most 2 arguments (4 given) 
+604 a.shift(*['tuple', 'complex', 'bytes', 'FloatLike']) -> !TypeError: shift() takes at most 2 arguments (4 given) 
+605 a.to_integral(*['IntLike']) -> !TypeError: valid values for rounding are:
+  [ROUND_CEILING, ROUND_FLOOR, ROUND_UP, ROUND_DOWN,
+   ROUND_HALF_UP, ROUND_HALF_DOWN, ROUND_HALF_EVEN,
+   ROUND_05UP] 
+606 c.quantize(*['bytes', 'Context']) -> !TypeError: conversion from bytes to Decimal is not supported 
+607 a.logical_or(*['FloatLike']) -> !TypeError: conversion from FloatLike to Decimal is not supported 
+608 a.min(*['dict', 'float']) -> !TypeError: optional argument must be a context 
+609 c.is_subnormal(**[('f', 'bytes')]) -> !TypeError: is_subnormal() takes exactly 1 positional argument (0 given) 
+610 c.divmod(*['tuple', 'complex', 'IntLike', 'Odd']) -> !TypeError: divmod expected 2 arguments, got 4 
+611 a.is_subnormal(*['tuple', 'Odd', 'FloatLike']) -> !TypeError: is_subnormal() takes at most 1 argument (3 given) 
+612 a.compare_signal(*['tuple', 'list', 'ellipsis']) -> !TypeError: compare_signal() takes at most 2 arguments (3 given) 
+613 a.__round__(*['dict', 'list']) -> !TypeError: __round__() takes at most 1 argument (2 given) 
+614 a.copy_abs(*['FloatLike', 'type']) -> !TypeError: copy_abs() takes no arguments 
+615 a.is_infinite(*['list', 'int', 'list']) -> !TypeError: Decimal.is_infinite() takes no arguments (3 given) 
+616 a.rotate(*['Context']) -> !TypeError: conversion from decimal.Context to Decimal is not supported 
+617 c.divide(*['Fraction', 'type', 'tuple', 'Odd']) -> !TypeError: divide() takes at most 2 arguments (4 given) 
+618 c.exp(**[('x', 'Odd')]) -> !TypeError: exp() takes exactly 1 positional argument (0 given) 
+619 a.same_quantum(*['Context', 'ellipsis']) -> !TypeError: optional argument must be a context 
+620 Context(*[], **[('foo', 'list')]) -> !TypeError: Context() got an unexpected keyword argument 'foo' 
+621 c.number_class(*['bytes']) -> !TypeError: conversion from bytes to Decimal is not supported 
+622 c.is_finite(**[('b', 'complex'), ('f', 'NoneType'), ('y', 'Context')]) -> !TypeError: is_finite() takes at most 1 keyword argument (3 given) 
+623 a.is_nan(*['NoneType', 'NoneType', 'Context']) -> !TypeError: Decimal.is_nan() takes no arguments (3 given) 
+624 from_float(*[], **[]) -> !TypeError: from_float() takes exactly 1 positional argument (0 given) 
+625 a.ln(*['tuple']) -> !TypeError: optional argument must be a context 
+626 a.compare_total_mag(*['NoneType', 'NoneType', 'bytes', 'NoneType']) -> !TypeError: compare_total_mag() takes at most 2 arguments (4 given) 
+627 c.is_signed(**[('x', 'dict')]) -> !TypeError: is_signed() takes exactly 1 positional argument (0 given) 
+628 c.power(**[('num', 'list'), ('x', 'Odd'), ('z', 'Odd')]) -> !TypeError: power() missing required argument 'a' (pos 1) 
+629 a.same_quantum(*['Decimal', 'int', 'Decimal']) -> !TypeError: same_quantum() takes at most 2 arguments (3 given) 
+630 c.abs(*['IntLike', 'NoneType', 'bytes']) -> !TypeError: abs() takes at most 1 argument (3 given) 
+631 setcontext(*[], **[('bits', 'str'), ('f', 'ellipsis')]) -> !TypeError: _decimal.setcontext() takes no keyword arguments 
+632 from_float(*['Decimal', 'NoneType', 'str'], **[('bits', 'int'), ('ctx', 'bytes')]) -> !TypeError: from_float() takes at most 1 argument (5 given) 
+633 a.max_mag(*['FloatLike', 'complex', 'dict']) -> !TypeError: max_mag() takes at most 2 arguments (3 given) 
+634 getcontext(*[], **[('bits', 'NoneType'), ('context', 'Fraction')]) -> !TypeError: _decimal.getcontext() takes no keyword arguments 
+635 c.divmod(*['Context']) -> !TypeError: divmod expected 2 arguments, got 1 
+636 getcontext(*['int', 'complex', 'FloatLike', 'NoneType'], **[('ctx', 'FloatLike'), ('prec', 'Decimal')]) -> !TypeError: _decimal.getcontext() takes no keyword arguments 
+637 a.copy_sign(*[]) -> !TypeError: copy_sign() missing required argument 'other' (pos 1) 
+638 bytes ** a -> !TypeError: unsupported operand type(s) for ** or pow(): 'bytes' and 'decimal.Decimal' 
+639 a.is_normal(*['Context']) -> bool:True 
+640 a.copy_abs(*['Context']) -> !TypeError: copy_abs() takes no arguments 
+641 a.log10(**[('exp', 'float'), ('other', 'list'), ('x', 'type')]) -> !TypeError: log10() takes at most 1 keyword argument (3 given) 
+642 a.quantize(*['type']) -> !TypeError: conversion from type to Decimal is not supported 
+643 a.logical_or(*['type', 'ellipsis']) -> !TypeError: optional argument must be a context 
+644 from_number(*['Odd'], **[('context', 'FloatLike')]) -> !TypeError: from_number() takes at most 1 argument (2 given) 
+645 c.is_snan(*['list']) -> !TypeError: conversion from list to Decimal is not supported 
+646 a.sqrt(**[('exp', 'tuple')]) -> !TypeError: sqrt() got an unexpected keyword argument 'exp' 
+647 a.ln(*['bytes']) -> !TypeError: optional argument must be a context 
+648 a.shift(*['list', 'Odd', 'dict']) -> !TypeError: shift() takes at most 2 arguments (3 given) 
+649 c.quantize(*['Fraction', 'dict']) -> !TypeError: conversion from Fraction to Decimal is not supported 
+650 a.scaleb(*['dict', 'Decimal']) -> !TypeError: optional argument must be a context 
+651 a % ellipsis -> !TypeError: unsupported operand type(s) for %: 'decimal.Decimal' and 'ellipsis' 
+652 a.exp(**[('rounding', 'Context'), ('third', 'ellipsis')]) -> !TypeError: exp() takes at most 1 keyword argument (2 given) 
+653 c.clear_traps(*['type', 'Odd']) -> !TypeError: Context.clear_traps() takes no arguments (2 given) 
+654 c.next_plus(*['bytes', 'float', 'NoneType', 'FloatLike']) -> !TypeError: next_plus() takes at most 1 argument (4 given) 
+655 a.remainder_near(*['bytes', 'float', 'Decimal']) -> !TypeError: remainder_near() takes at most 2 arguments (3 given) 
+656 from_number(*['tuple', 'Context', 'float'], **[]) -> !TypeError: from_number() takes at most 1 argument (3 given) 
+657 a.shift(*[]) -> !TypeError: shift() missing required argument 'other' (pos 1) 
+658 c.power(*['list', 'Odd', 'IntLike']) -> !TypeError: conversion from list to Decimal is not supported 
+659 c.copy_decimal(*['Fraction']) -> !TypeError: conversion from Fraction to Decimal is not supported 
+660 a + Context -> !TypeError: unsupported operand type(s) for +: 'decimal.Decimal' and 'decimal.Context' 
+661 c.copy_abs(*['ellipsis', 'IntLike']) -> !TypeError: copy_abs() takes at most 1 argument (2 given) 
+662 a.logical_and(*['Decimal']) -> Decimal:Decimal('NaN') 
+663 c.same_quantum(**[('modulo', 'ellipsis')]) -> !TypeError: same_quantum() takes exactly 2 positional arguments (0 given) 
+664 a.rotate(**[('exp', 'type')]) -> !TypeError: rotate() missing required argument 'other' (pos 1) 
+665 c.is_infinite(*['IntLike']) -> !TypeError: conversion from IntLike to Decimal is not supported 
+666 c.to_integral_exact(*[]) -> !TypeError: to_integral_exact() takes exactly 1 positional argument (0 given) 
+667 a.logical_or(*[]) -> !TypeError: logical_or() missing required argument 'other' (pos 1) 
+668 a.next_toward(*['IntLike', 'int', 'NoneType', 'list']) -> !TypeError: next_toward() takes at most 2 arguments (4 given) 
+669 a.is_snan(*['dict', 'int']) -> !TypeError: Decimal.is_snan() takes no arguments (2 given) 
+670 a.compare(*['int']) -> Decimal:Decimal('1') 
+671 c.is_canonical(*['NoneType', 'list', 'NoneType']) -> !TypeError: is_canonical() takes at most 1 argument (3 given) 
+672 a.to_integral_value(*['FloatLike']) -> !TypeError: valid values for rounding are:
+  [ROUND_CEILING, ROUND_FLOOR, ROUND_UP, ROUND_DOWN,
+   ROUND_HALF_UP, ROUND_HALF_DOWN, ROUND_HALF_EVEN,
+   ROUND_05UP] 
+673 c.exp(*['FloatLike', 'complex']) -> !TypeError: exp() takes at most 1 argument (2 given) 
+674 a.log10(*['ellipsis', 'FloatLike']) -> !TypeError: log10() takes at most 1 argument (2 given) 
+675 a.sqrt(*['list']) -> !TypeError: optional argument must be a context 
+676 a.is_zero(*['str']) -> !TypeError: Decimal.is_zero() takes no arguments (1 given) 
+677 a.normalize(**[('exp', 'int'), ('third', 'str'), ('x', 'ellipsis')]) -> !TypeError: normalize() takes at most 1 keyword argument (3 given) 
+678 a.logical_xor(*['type']) -> !TypeError: conversion from type to Decimal is not supported 
+679 a.__neg__(*['str', 'Fraction']) -> !TypeError: expected 0 arguments, got 2 
+680 c.power(*['Fraction']) -> !TypeError: power() missing required argument 'b' (pos 2) 
+681 a.min_mag(*['list', 'IntLike', 'FloatLike']) -> !TypeError: min_mag() takes at most 2 arguments (3 given) 
+682 a.min(**[('exp', 'str'), ('rounding', 'Context')]) -> !TypeError: min() missing required argument 'other' (pos 1) 
+683 c.ln(*['Context', 'type', 'NoneType', 'list']) -> !TypeError: ln() takes at most 1 argument (4 given) 
+684 a.max(**[('context', 'FloatLike'), ('rounding', 'str'), ('x', 'str')]) -> !TypeError: max() takes at most 2 keyword arguments (3 given) 
+685 a.is_normal(**[('foo', 'tuple'), ('self', 'str')]) -> !TypeError: is_normal() takes at most 1 keyword argument (2 given) 
+686 a.compare_total_mag(**[('foo', 'dict')]) -> !TypeError: compare_total_mag() missing required argument 'other' (pos 1) 
+687 c.is_infinite(*['IntLike', 'float', 'int', 'type']) -> !TypeError: is_infinite() takes at most 1 argument (4 given) 
+688 a.min(*['Odd', 'FloatLike']) -> !TypeError: optional argument must be a context 
+689 a.to_eng_string(*['Fraction']) -> !TypeError: optional argument must be a context 
+690 c.next_toward(*['list', 'int', 'list', 'tuple']) -> !TypeError: next_toward() takes at most 2 arguments (4 given) 
+691 a.rotate(**[('context', 'NoneType'), ('third', 'int')]) -> !TypeError: rotate() missing required argument 'other' (pos 1) 
+692 a.is_finite(*['Context']) -> !TypeError: Decimal.is_finite() takes no arguments (1 given) 
+693 a.normalize(*['float', 'Fraction']) -> !TypeError: normalize() takes at most 1 argument (2 given) 
+694 c.abs(**[('modulo', 'complex'), ('num', 'ellipsis')]) -> !TypeError: abs() takes at most 1 keyword argument (2 given) 
+695 c.compare_total(**[('x', 'str')]) -> !TypeError: compare_total() takes exactly 2 positional arguments (0 given) 
+696 a.same_quantum(**[('foo', 'type'), ('other', 'Odd')]) -> !TypeError: same_quantum() got an unexpected keyword argument 'foo' 
+697 c.to_integral(*['list', 'IntLike', 'dict', 'Decimal']) -> !TypeError: to_integral() takes at most 1 argument (4 given) 
+698 c.copy_abs(**[('x', 'bytes')]) -> !TypeError: copy_abs() takes exactly 1 positional argument (0 given) 
+699 a.is_signed(*['FloatLike']) -> !TypeError: Decimal.is_signed() takes no arguments (1 given) 
+700 c.fma(**[('context', 'IntLike'), ('x', 'float')]) -> !TypeError: fma() takes exactly 3 positional arguments (0 given) 
+701 c.plus(**[('a', 'int'), ('num', 'float'), ('x', 'tuple')]) -> !TypeError: plus() takes at most 1 keyword argument (3 given) 
+702 a.copy_sign(*['str', 'Decimal', 'NoneType']) -> !TypeError: copy_sign() takes at most 2 arguments (3 given) 
+703 c.min_mag(*['NoneType', 'Context', 'type']) -> !TypeError: min_mag() takes at most 2 arguments (3 given) 
+704 ellipsis > a -> !TypeError: '>' not supported between instances of 'ellipsis' and 'decimal.Decimal' 
+705 c.next_minus(*['complex', 'NoneType', 'int', 'Decimal']) -> !TypeError: next_minus() takes at most 1 argument (4 given) 
+706 a.copy_sign(*['Context', 'type', 'Decimal']) -> !TypeError: copy_sign() takes at most 2 arguments (3 given) 
+707 a.__pos__(*['int', 'FloatLike']) -> !TypeError: expected 0 arguments, got 2 
+708 setcontext(*['int', 'complex', 'IntLike', 'Decimal'], **[('context', 'type'), ('prec', 'FloatLike')]) -> !TypeError: _decimal.setcontext() takes no keyword arguments 
+709 a.remainder_near(**[('other', 'complex')]) -> !TypeError: conversion from complex to Decimal is not supported 
+710 c.is_infinite(*[]) -> !TypeError: is_infinite() takes exactly 1 positional argument (0 given) 
+711 a.next_toward(*['Fraction', 'Decimal', 'Context', 'Decimal']) -> !TypeError: next_toward() takes at most 2 arguments (4 given) 
+712 from_number(*[], **[]) -> !TypeError: from_number() takes exactly 1 positional argument (0 given) 
+713 a.copy_abs(*['Context']) -> !TypeError: copy_abs() takes no arguments 
+714 c.compare_total_mag(*['IntLike', 'str', 'Context']) -> !TypeError: compare_total_mag() takes at most 2 arguments (3 given) 
+715 a.rotate(*['Context', 'Decimal']) -> !TypeError: optional argument must be a context 
+716 a.min(*['str', 'tuple', 'IntLike', 'FloatLike']) -> !TypeError: min() takes at most 2 arguments (4 given) 
+717 a.quantize(*['Decimal', 'complex']) -> !TypeError: valid values for rounding are:
+  [ROUND_CEILING, ROUND_FLOOR, ROUND_UP, ROUND_DOWN,
+   ROUND_HALF_UP, ROUND_HALF_DOWN, ROUND_HALF_EVEN,
+   ROUND_05UP] 
+718 a.fma(*['Context', 'dict', 'IntLike']) -> !TypeError: optional argument must be a context 
+719 a.next_minus(*['tuple']) -> !TypeError: optional argument must be a context 
+720 c.copy_negate(*['ellipsis', 'Context', 'int', 'Odd']) -> !TypeError: copy_negate() takes at most 1 argument (4 given) 
+721 a.radix(*['Decimal']) -> !TypeError: radix() takes no arguments 
+722 c.canonical(*['dict']) -> !TypeError: argument must be a Decimal 
+723 a * complex -> !TypeError: unsupported operand type(s) for *: 'decimal.Decimal' and 'complex' 
+724 c.shift(*[]) -> !TypeError: shift() takes exactly 2 positional arguments (0 given) 
+725 a.logical_or(**[('context', 'str')]) -> !TypeError: logical_or() missing required argument 'other' (pos 1) 
+726 c.to_integral(*[]) -> !TypeError: to_integral() takes exactly 1 positional argument (0 given) 
+727 a.min_mag(*[]) -> !TypeError: min_mag() missing required argument 'other' (pos 1) 
+728 a.copy_sign(*['complex', 'str', 'Context', 'Context']) -> !TypeError: copy_sign() takes at most 2 arguments (4 given) 
+729 c.shift(*[]) -> !TypeError: shift() takes exactly 2 positional arguments (0 given) 
+730 c.create_decimal_from_float(*['ellipsis', 'ellipsis', 'str']) -> !TypeError: create_decimal_from_float() takes at most 1 argument (3 given) 
+731 c.minus(*['list']) -> !TypeError: conversion from list to Decimal is not supported 
+732 c.to_eng_string(*['Fraction', 'FloatLike', 'Context']) -> !TypeError: to_eng_string() takes at most 1 argument (3 given) 
+733 c.next_minus(*['list', 'NoneType']) -> !TypeError: next_minus() takes at most 1 argument (2 given) 
+734 c.subtract(*[]) -> !TypeError: subtract() takes exactly 2 positional arguments (0 given) 
+735 c.__copy__(*['complex']) -> !TypeError: __copy__() takes no arguments 
+736 c.radix(*['ellipsis', 'bytes']) -> !TypeError: radix() takes no arguments 
+737 a.logical_or(*['type', 'str']) -> !TypeError: optional argument must be a context 
+738 c.scaleb(**[('modulo', 'complex'), ('x', 'int')]) -> !TypeError: scaleb() takes exactly 2 positional arguments (0 given) 
+739 c.copy_sign(**[('f', 'float')]) -> !TypeError: copy_sign() takes exactly 2 positional arguments (0 given) 
+740 c.copy(*['dict', 'type']) -> !TypeError: copy() takes no arguments 
+741 a.compare_signal(*[]) -> !TypeError: compare_signal() missing required argument 'other' (pos 1) 
+742 a.max_mag(*['Fraction']) -> !TypeError: conversion from Fraction to Decimal is not supported 
+743 a.exp(**[('self', 'NoneType'), ('third', 'FloatLike')]) -> !TypeError: exp() takes at most 1 keyword argument (2 given) 
+744 c.exp(**[('a', 'complex')]) -> !TypeError: exp() takes exactly 1 positional argument (0 given) 
+745 a.quantize(*['float', 'Odd', 'IntLike']) -> !TypeError: optional argument must be a context 
+746 a.max_mag(*['ellipsis']) -> !TypeError: conversion from ellipsis to Decimal is not supported 
+747 a.log10(**[('context', 'float'), ('third', 'bytes')]) -> !TypeError: log10() takes at most 1 keyword argument (2 given) 
+748 c.add(*['ellipsis', 'complex', 'tuple', 'Context']) -> !TypeError: add() takes at most 2 arguments (4 given) 
+749 c.to_integral_exact(*['Odd', 'Decimal', 'Decimal']) -> !TypeError: to_integral_exact() takes at most 1 argument (3 given) 
+750 c.create_decimal(*[]) -> Decimal:Decimal('0') 
+751 a.as_tuple(*['Decimal']) -> !TypeError: as_tuple() takes no arguments 
+752 c.copy_negate(*[]) -> !TypeError: copy_negate() takes exactly 1 positional argument (0 given) 
+753 c.create_decimal(**[('b', 'int'), ('context', 'ellipsis')]) -> !TypeError: Context.create_decimal() takes no keyword arguments 
+754 getcontext(*['Context', 'ellipsis'], **[]) -> !TypeError: _decimal.getcontext() takes no arguments (2 given) 
+755 c.canonical(**[('b', 'dict'), ('context', 'Context'), ('f', 'FloatLike')]) -> !TypeError: canonical() takes at most 1 keyword argument (3 given) 
+756 c.canonical(*['NoneType', 'type', 'type', 'Decimal']) -> !TypeError: canonical() takes at most 1 argument (4 given) 
+757 getcontext(*['ellipsis', 'dict', 'dict', 'Odd'], **[]) -> !TypeError: _decimal.getcontext() takes no arguments (4 given) 
+758 getcontext(*['dict', 'Decimal'], **[]) -> !TypeError: _decimal.getcontext() takes no arguments (2 given) 
+759 a.same_quantum(*[]) -> !TypeError: same_quantum() missing required argument 'other' (pos 1) 
+760 a.__complex__(*['float', 'int', 'int']) -> !TypeError: Decimal.__complex__() takes no arguments (3 given) 
+761 c.is_finite(*['NoneType']) -> !TypeError: conversion from NoneType to Decimal is not supported 
+762 a.min_mag(*['Odd', 'NoneType']) -> !TypeError: conversion from Odd to Decimal is not supported 
+763 a.__reduce__(*['Context', 'Odd', 'int']) -> !TypeError: Decimal.__reduce__() takes no arguments (3 given) 
+764 a.min_mag(*['float', 'FloatLike']) -> !TypeError: optional argument must be a context 
+765 a.rotate(*['list', 'NoneType']) -> !TypeError: conversion from list to Decimal is not supported 
+766 c.clear_flags(*['int', 'tuple']) -> !TypeError: Context.clear_flags() takes no arguments (2 given) 
+767 a.exp(*['float', 'dict']) -> !TypeError: exp() takes at most 1 argument (2 given) 
+768 c.plus(**[('b', 'int'), ('modulo', 'int')]) -> !TypeError: plus() takes at most 1 keyword argument (2 given) 
+769 a.next_minus(*['IntLike']) -> !TypeError: optional argument must be a context 
+770 a.compare(*[]) -> !TypeError: compare() missing required argument 'other' (pos 1) 
+771 a.scaleb(**[('exp', 'Fraction'), ('x', 'Decimal')]) -> !TypeError: scaleb() missing required argument 'other' (pos 1) 
+772 a.logical_xor(*['FloatLike', 'bytes', 'float', 'tuple']) -> !TypeError: logical_xor() takes at most 2 arguments (4 given) 
+773 a.compare(*['Context', 'tuple', 'dict', 'IntLike']) -> !TypeError: compare() takes at most 2 arguments (4 given) 
+774 c.divide_int(*['str', 'Odd', 'Fraction', 'ellipsis']) -> !TypeError: divide_int() takes at most 2 arguments (4 given) 
+775 a.adjusted(*['NoneType', 'tuple', 'IntLike']) -> !TypeError: Decimal.adjusted() takes no arguments (3 given) 
+776 a.same_quantum(*[]) -> !TypeError: same_quantum() missing required argument 'other' (pos 1) 
+777 list divmod a -> !TypeError: unsupported operand type(s) for divmod(): 'list' and 'decimal.Decimal' 
+778 a.logical_and(*['tuple', 'dict', 'complex', 'IntLike']) -> !TypeError: logical_and() takes at most 2 arguments (4 given) 
+779 a.min_mag(**[('x', 'Context')]) -> !TypeError: min_mag() missing required argument 'other' (pos 1) 
+780 a.compare_total_mag(*['NoneType', 'bytes', 'int']) -> !TypeError: compare_total_mag() takes at most 2 arguments (3 given) 
+781 c.copy_decimal(*[]) -> !TypeError: copy_decimal() takes exactly 1 positional argument (0 given) 
+782 a.__floor__(*['Decimal', 'Decimal', 'type']) -> !TypeError: __floor__() takes no arguments 
+783 c.is_canonical(*['Odd']) -> !TypeError: argument must be a Decimal 
+784 a.log10(*['complex', 'NoneType', 'tuple']) -> !TypeError: log10() takes at most 1 argument (3 given) 
+785 a.copy_sign(*['int']) -> Decimal:Decimal('1.5') 
+786 localcontext(*['FloatLike', 'complex', 'Context', 'Decimal'], **[('prec', 'NoneType')]) -> !TypeError: localcontext() takes at most 1 positional argument (4 given) 
+787 a.min(*[]) -> !TypeError: min() missing required argument 'other' (pos 1) 
+788 a.copy_sign(*['NoneType', 'FloatLike', 'str', 'IntLike']) -> !TypeError: copy_sign() takes at most 2 arguments (4 given) 
+789 c.__copy__(*['Fraction', 'list', 'list', 'Fraction']) -> !TypeError: __copy__() takes no arguments 
+790 IEEEContext(*[], **[('ctx', 'FloatLike'), ('value', 'list')]) -> !TypeError: _decimal.IEEEContext() takes no keyword arguments 
+791 a.quantize(*['list', 'FloatLike']) -> !TypeError: valid values for rounding are:
+  [ROUND_CEILING, ROUND_FLOOR, ROUND_UP, ROUND_DOWN,
+   ROUND_HALF_UP, ROUND_HALF_DOWN, ROUND_HALF_EVEN,
+   ROUND_05UP] 
+792 a.max_mag(*['Context']) -> !TypeError: conversion from decimal.Context to Decimal is not supported 
+793 a.quantize(*['str']) -> !TypeError: conversion from str to Decimal is not supported 
+794 a.is_snan(*['IntLike', 'Odd', 'Decimal']) -> !TypeError: Decimal.is_snan() takes no arguments (3 given) 
+795 a.copy_sign(*['Context', 'type', 'Context', 'complex']) -> !TypeError: copy_sign() takes at most 2 arguments (4 given) 
+796 from_float(*['ellipsis', 'float', 'IntLike', 'bytes'], **[('context', 'Odd')]) -> !TypeError: from_float() takes at most 1 argument (5 given) 
+797 c.is_qnan(**[('a', 'bytes'), ('context', 'list'), ('modulo', 'tuple')]) -> !TypeError: is_qnan() takes at most 1 keyword argument (3 given) 
+798 Decimal(*['Decimal', 'int', 'Context', 'NoneType'], **[('prec', 'Odd')]) -> !TypeError: Decimal() takes at most 2 arguments (5 given) 
+799 a.remainder_near(*['str', 'dict']) -> !TypeError: optional argument must be a context 
+800 a.copy_sign(*['Decimal', 'int']) -> !TypeError: optional argument must be a context 
+801 a.scaleb(*['IntLike', 'Odd']) -> !TypeError: optional argument must be a context 
+802 a.radix(*['dict', 'NoneType', 'float']) -> !TypeError: radix() takes no arguments 
+803 c.remainder(*['IntLike', 'type', 'FloatLike', 'ellipsis']) -> !TypeError: remainder() takes at most 2 arguments (4 given) 
+804 c.scaleb(*['dict']) -> !TypeError: scaleb() takes exactly 2 positional arguments (1 given) 
+805 c.logical_xor(*['IntLike', 'Context', 'dict', 'str']) -> !TypeError: logical_xor() takes at most 2 arguments (4 given) 
+806 a.quantize(**[('other', 'Decimal'), ('rounding', 'NoneType'), ('x', 'Fraction')]) -> !TypeError: quantize() missing required argument 'exp' (pos 1) 
+807 a.compare_total_mag(*['complex', 'int', 'tuple']) -> !TypeError: compare_total_mag() takes at most 2 arguments (3 given) 
+808 a.compare(*[]) -> !TypeError: compare() missing required argument 'other' (pos 1) 
+809 a.next_minus(**[('context', 'Decimal')]) -> !TypeError: optional argument must be a context 
+810 a.quantize(*['complex']) -> !TypeError: conversion from complex to Decimal is not supported 
+811 c.remainder(*['bytes', 'ellipsis', 'Context', 'bytes']) -> !TypeError: remainder() takes at most 2 arguments (4 given) 
+812 a.same_quantum(*['bytes']) -> !TypeError: conversion from bytes to Decimal is not supported 
+813 a % str -> !TypeError: unsupported operand type(s) for %: 'decimal.Decimal' and 'str' 
+814 c.copy_negate(**[('b', 'type')]) -> !TypeError: copy_negate() takes exactly 1 positional argument (0 given) 
+815 c.shift(*['Fraction']) -> !TypeError: shift() takes exactly 2 positional arguments (1 given) 
+816 a.next_toward(*['Context', 'list']) -> !TypeError: optional argument must be a context 
+817 a.next_minus(*['Odd', 'Context', 'FloatLike']) -> !TypeError: next_minus() takes at most 1 argument (3 given) 
+818 c.next_toward(*['Odd', 'int']) -> !TypeError: conversion from Odd to Decimal is not supported 
+819 a.same_quantum(*['Context', 'ellipsis', 'bytes']) -> !TypeError: same_quantum() takes at most 2 arguments (3 given) 
+820 a.logb(*['list', 'bytes', 'tuple']) -> !TypeError: logb() takes at most 1 argument (3 given) 
+821 float == a -> bool:True 
+822 a.__str__(*['Decimal', 'dict', 'FloatLike']) -> !TypeError: expected 0 arguments, got 3 
+823 c.is_canonical(*['Decimal', 'float', 'Context', 'dict']) -> !TypeError: is_canonical() takes at most 1 argument (4 given) 
+824 a.number_class(*['type', 'Odd']) -> !TypeError: number_class() takes at most 1 argument (2 given) 
+825 dict divmod a -> !TypeError: unsupported operand type(s) for divmod(): 'dict' and 'decimal.Decimal' 
+826 a.min_mag(**[('exp', 'ellipsis'), ('other', 'complex')]) -> !TypeError: min_mag() got an unexpected keyword argument 'exp' 
+827 c.is_subnormal(**[('a', 'complex'), ('f', 'bytes')]) -> !TypeError: is_subnormal() takes at most 1 keyword argument (2 given) 
+828 c.power(*['Context', 'Decimal', 'Decimal']) -> !TypeError: conversion from decimal.Context to Decimal is not supported 
+829 a.min(*['Context', 'Odd', 'Context']) -> !TypeError: min() takes at most 2 arguments (3 given) 
+830 Context(*['FloatLike', 'complex', 'Decimal'], **[('f', 'dict'), ('value', 'int')]) -> !TypeError: Context() got an unexpected keyword argument 'value' 
+831 a.is_canonical(*['bytes']) -> !TypeError: Decimal.is_canonical() takes no arguments (1 given) 
+832 a.same_quantum(*['float', 'str']) -> !TypeError: optional argument must be a context 
+833 c.normalize(**[('f', 'Fraction'), ('num', 'bytes'), ('z', 'bytes')]) -> !TypeError: normalize() takes at most 1 keyword argument (3 given) 
+834 c.radix(*['float']) -> !TypeError: radix() takes no arguments 
+835 a.next_toward(**[('third', 'tuple'), ('x', 'bytes')]) -> !TypeError: next_toward() missing required argument 'other' (pos 1) 
+836 c.compare_total_mag(*['NoneType', 'IntLike']) -> !TypeError: conversion from NoneType to Decimal is not supported 
+837 a.is_finite(*['FloatLike', 'list']) -> !TypeError: Decimal.is_finite() takes no arguments (2 given) 
+838 a.logical_and(*['ellipsis', 'IntLike']) -> !TypeError: optional argument must be a context 
+839 c.divide_int(*['complex', 'type', 'list']) -> !TypeError: divide_int() takes at most 2 arguments (3 given) 
+840 from_float(*[], **[]) -> !TypeError: from_float() takes exactly 1 positional argument (0 given) 
+841 a.logical_invert(**[('third', 'NoneType')]) -> !TypeError: logical_invert() got an unexpected keyword argument 'third' 
+842 a.fma(*['type', 'Odd']) -> !TypeError: conversion from type to Decimal is not supported 
+843 c.add(*['NoneType', 'FloatLike']) -> !TypeError: conversion from NoneType to Decimal is not supported 
+844 c.next_plus(*[]) -> !TypeError: next_plus() takes exactly 1 positional argument (0 given) 
+845 c.max_mag(*['bytes', 'Fraction', 'tuple', 'float']) -> !TypeError: max_mag() takes at most 2 arguments (4 given) 
+846 a.__complex__(*['str', 'Odd', 'NoneType']) -> !TypeError: Decimal.__complex__() takes no arguments (3 given) 
+847 a.scaleb(*['tuple', 'NoneType', 'complex']) -> !TypeError: scaleb() takes at most 2 arguments (3 given) 
+848 c.scaleb(*['bytes', 'IntLike', 'str']) -> !TypeError: scaleb() takes at most 2 arguments (3 given) 
+849 c.copy_decimal(**[('context', 'int')]) -> !TypeError: copy_decimal() takes exactly 1 positional argument (0 given) 
+850 a.scaleb(*[]) -> !TypeError: scaleb() missing required argument 'other' (pos 1) 
+851 c.max(*['int', 'int']) -> Decimal:Decimal('1') 
+852 c.to_integral_value(*['complex', 'NoneType', 'list']) -> !TypeError: to_integral_value() takes at most 1 argument (3 given) 
+853 a.same_quantum(*['FloatLike', 'FloatLike']) -> !TypeError: optional argument must be a context 
+854 a.logical_xor(**[('foo', 'bytes')]) -> !TypeError: logical_xor() missing required argument 'other' (pos 1) 
+855 a.is_snan(*['Decimal', 'bytes', 'bytes']) -> !TypeError: Decimal.is_snan() takes no arguments (3 given) 
+856 a.min(*['NoneType', 'IntLike', 'IntLike', 'str']) -> !TypeError: min() takes at most 2 arguments (4 given) 
+857 Context >= a -> !TypeError: '>=' not supported between instances of 'decimal.Context' and 'decimal.Decimal' 
+858 c.is_nan(*['int', 'list', 'type']) -> !TypeError: is_nan() takes at most 1 argument (3 given) 
+859 c.create_decimal(*['Fraction', 'tuple']) -> !TypeError: create_decimal expected at most 1 argument, got 2 
+860 c.subtract(**[('a', 'complex')]) -> !TypeError: subtract() takes exactly 2 positional arguments (0 given) 
+861 c.sqrt(**[('y', 'NoneType')]) -> !TypeError: sqrt() takes exactly 1 positional argument (0 given) 
+862 ellipsis < a -> !TypeError: '<' not supported between instances of 'ellipsis' and 'decimal.Decimal' 
+863 c.subtract(*['tuple', 'FloatLike']) -> !TypeError: conversion from tuple to Decimal is not supported 
+864 a.scaleb(*[]) -> !TypeError: scaleb() missing required argument 'other' (pos 1) 
+865 a.ln(**[('third', 'dict'), ('x', 'Fraction')]) -> !TypeError: ln() takes at most 1 keyword argument (2 given) 
+866 a.shift(**[('other', 'type'), ('self', 'complex')]) -> !TypeError: shift() got an unexpected keyword argument 'self' 
+867 a.quantize(*['Decimal', 'FloatLike', 'Decimal']) -> !TypeError: optional argument must be a context 
+868 a.is_zero(*['dict', 'tuple', 'type']) -> !TypeError: Decimal.is_zero() takes no arguments (3 given) 
+869 c.copy_decimal(*['float', 'tuple']) -> !TypeError: copy_decimal() takes at most 1 argument (2 given) 
+870 a.scaleb(*['float', 'bytes', 'ellipsis']) -> !TypeError: scaleb() takes at most 2 arguments (3 given) 
+871 a.next_minus(**[('rounding', 'Odd'), ('x', 'tuple')]) -> !TypeError: next_minus() takes at most 1 keyword argument (2 given) 
+872 from_number(*['complex'], **[]) -> !TypeError: conversion from complex to Decimal is not supported 
+873 a.same_quantum(*['IntLike', 'dict']) -> !TypeError: optional argument must be a context 
+874 c.shift(*['bytes', 'ellipsis', 'Fraction', 'type']) -> !TypeError: shift() takes at most 2 arguments (4 given) 
+875 c.logical_xor(*['list', 'NoneType']) -> !TypeError: conversion from list to Decimal is not supported 
+876 a.min_mag(*['Decimal', 'type', 'list']) -> !TypeError: min_mag() takes at most 2 arguments (3 given) 
+877 a.copy_sign(**[('rounding', 'tuple')]) -> !TypeError: copy_sign() missing required argument 'other' (pos 1) 
+878 Context * a -> !TypeError: unsupported operand type(s) for *: 'decimal.Context' and 'decimal.Decimal' 
+879 a.number_class(**[('third', 'int')]) -> !TypeError: number_class() got an unexpected keyword argument 'third' 
+880 a.logical_xor(*['tuple', 'type', 'Fraction', 'NoneType']) -> !TypeError: logical_xor() takes at most 2 arguments (4 given) 
+881 c.copy_decimal(*['list', 'dict']) -> !TypeError: copy_decimal() takes at most 1 argument (2 given) 
+882 a.logical_xor(*[]) -> !TypeError: logical_xor() missing required argument 'other' (pos 1) 
+883 a.next_plus(*['ellipsis', 'int', 'dict']) -> !TypeError: next_plus() takes at most 1 argument (3 given) 
+884 setcontext(*['dict', 'type'], **[]) -> !TypeError: _decimal.setcontext() takes exactly one argument (2 given) 
+885 c.logical_xor(**[('f', 'IntLike')]) -> !TypeError: logical_xor() takes exactly 2 positional arguments (0 given) 
+886 a.is_qnan(*['float', 'bytes', 'float']) -> !TypeError: Decimal.is_qnan() takes no arguments (3 given) 
+887 a.__bool__(*['Context']) -> !TypeError: expected 0 arguments, got 1 
+888 a.__str__(*['str']) -> !TypeError: expected 0 arguments, got 1 
+889 c.to_eng_string(*['dict', 'ellipsis', 'list']) -> !TypeError: to_eng_string() takes at most 1 argument (3 given) 
+890 a.ln(**[('rounding', 'Context'), ('self', 'Odd')]) -> !TypeError: ln() takes at most 1 keyword argument (2 given) 
+891 c.subtract(*['list', 'Fraction']) -> !TypeError: conversion from list to Decimal is not supported 
+892 c.is_zero(*['float', 'type']) -> !TypeError: is_zero() takes at most 1 argument (2 given) 
+893 a.__reduce__(*['NoneType', 'ellipsis']) -> !TypeError: Decimal.__reduce__() takes no arguments (2 given) 
+894 a.next_toward(*[]) -> !TypeError: next_toward() missing required argument 'other' (pos 1) 
+895 a.scaleb(*['tuple']) -> !TypeError: conversion from tuple to Decimal is not supported 
+896 a.logb(**[('self', 'type')]) -> !TypeError: logb() got an unexpected keyword argument 'self' 
+897 a.to_integral(**[('rounding', 'ellipsis'), ('self', 'float')]) -> !TypeError: to_integral() got an unexpected keyword argument 'self' 
+898 a.logical_and(*['int', 'tuple', 'str']) -> !TypeError: logical_and() takes at most 2 arguments (3 given) 
+899 c.min(*['list', 'Decimal']) -> !TypeError: conversion from list to Decimal is not supported 
+900 a.conjugate(*['ellipsis', 'Decimal', 'IntLike']) -> !TypeError: Decimal.conjugate() takes no arguments (3 given) 
+901 c.exp(**[('f', 'IntLike')]) -> !TypeError: exp() takes exactly 1 positional argument (0 given) 
+902 getcontext(*['list'], **[('prec', 'FloatLike')]) -> !TypeError: _decimal.getcontext() takes no keyword arguments 
+903 a.scaleb(**[('context', 'Context'), ('third', 'tuple')]) -> !TypeError: scaleb() missing required argument 'other' (pos 1) 
+904 c.copy_abs(*['Context', 'float', 'IntLike']) -> !TypeError: copy_abs() takes at most 1 argument (3 given) 
+905 a.next_minus(**[('context', 'Context'), ('foo', 'bytes'), ('x', 'tuple')]) -> !TypeError: next_minus() takes at most 1 keyword argument (3 given) 
+906 a.logical_or(*['complex', 'list', 'IntLike']) -> !TypeError: logical_or() takes at most 2 arguments (3 given) 
+907 c.divide_int(*['list', 'Fraction']) -> !TypeError: conversion from list to Decimal is not supported 
+908 a.max(*['Context', 'dict', 'Context', 'type']) -> !TypeError: max() takes at most 2 arguments (4 given) 
+909 c.to_sci_string(*['Decimal']) -> str:'1.5' 
+910 c.canonical(*[]) -> !TypeError: canonical() takes exactly 1 positional argument (0 given) 
+911 c.log10(*['dict']) -> !TypeError: conversion from dict to Decimal is not supported 
+912 c.next_plus(*['type', 'Decimal', 'complex']) -> !TypeError: next_plus() takes at most 1 argument (3 given) 
+913 c.is_finite(*['IntLike', 'IntLike', 'FloatLike']) -> !TypeError: is_finite() takes at most 1 argument (3 given) 
+914 a.to_integral(*['FloatLike', 'IntLike']) -> !TypeError: optional argument must be a context 
+915 a.__str__(*['type', 'complex', 'complex']) -> !TypeError: expected 0 arguments, got 3 
+916 c.remainder_near(*['list', 'bytes', 'Decimal', 'IntLike']) -> !TypeError: remainder_near() takes at most 2 arguments (4 given) 
+917 a.ln(*['NoneType']) -> Decimal:Decimal('0.405465108108164381978013115') 
+918 a.normalize(**[('context', 'bytes')]) -> !TypeError: optional argument must be a context 
+919 c.scaleb(**[('num', 'ellipsis'), ('z', 'tuple')]) -> !TypeError: scaleb() takes exactly 2 positional arguments (0 given) 
+920 a.is_snan(*['Odd', 'tuple', 'list']) -> !TypeError: Decimal.is_snan() takes no arguments (3 given) 
+921 c.clear_flags(*['FloatLike', 'float', 'Odd', 'NoneType']) -> !TypeError: Context.clear_flags() takes no arguments (4 given) 
+922 c.is_qnan(*['list', 'bytes']) -> !TypeError: is_qnan() takes at most 1 argument (2 given) 
+923 a.scaleb(*['int', 'FloatLike']) -> !TypeError: optional argument must be a context 
+924 c.Etiny(*['tuple', 'type']) -> !TypeError: Context.Etiny() takes no arguments (2 given) 
+925 a.compare(*['bytes', 'Context', 'Decimal']) -> !TypeError: compare() takes at most 2 arguments (3 given) 
+926 c.max_mag(*['tuple']) -> !TypeError: max_mag() takes exactly 2 positional arguments (1 given) 
+927 a.logical_or(**[('context', 'complex'), ('exp', 'float'), ('third', 'Context')]) -> !TypeError: logical_or() takes at most 2 keyword arguments (3 given) 
+928 a.rotate(*['FloatLike']) -> !TypeError: conversion from FloatLike to Decimal is not supported 
+929 a.fma(*['Context', 'Decimal', 'str', 'tuple']) -> !TypeError: fma() takes at most 3 arguments (4 given) 
+930 c.to_integral_exact(*['NoneType', 'int']) -> !TypeError: to_integral_exact() takes at most 1 argument (2 given) 
+931 a.logical_xor(*['type', 'float', 'FloatLike']) -> !TypeError: logical_xor() takes at most 2 arguments (3 given) 
+932 a // FloatLike -> !TypeError: unsupported operand type(s) for //: 'decimal.Decimal' and 'FloatLike' 
+933 c.plus(*['type', 'dict', 'NoneType', 'list']) -> !TypeError: plus() takes at most 1 argument (4 given) 
+934 c.copy(*['int', 'str']) -> !TypeError: copy() takes no arguments 
+935 a.is_signed(*['Fraction', 'str', 'Fraction']) -> !TypeError: Decimal.is_signed() takes no arguments (3 given) 
+936 a.next_plus(**[('context', 'type'), ('other', 'Fraction'), ('rounding', 'complex')]) -> !TypeError: next_plus() takes at most 1 keyword argument (3 given) 
+937 a.max(*['Fraction', 'type']) -> !TypeError: optional argument must be a context 
+938 a.max_mag(*['Context', 'Odd', 'Fraction']) -> !TypeError: max_mag() takes at most 2 arguments (3 given) 
+939 a.canonical(*['float', 'tuple', 'type']) -> !TypeError: Decimal.canonical() takes no arguments (3 given) 
+940 c.compare_total(*['tuple', 'Context', 'tuple', 'tuple']) -> !TypeError: compare_total() takes at most 2 arguments (4 given) 
+941 c.copy_negate(*['tuple', 'Context']) -> !TypeError: copy_negate() takes at most 1 argument (2 given) 
+942 a.logical_or(*['type', 'tuple', 'complex']) -> !TypeError: logical_or() takes at most 2 arguments (3 given) 
+943 a.same_quantum(*[]) -> !TypeError: same_quantum() missing required argument 'other' (pos 1) 
+944 a.quantize(*['int', 'ellipsis']) -> !TypeError: valid values for rounding are:
+  [ROUND_CEILING, ROUND_FLOOR, ROUND_UP, ROUND_DOWN,
+   ROUND_HALF_UP, ROUND_HALF_DOWN, ROUND_HALF_EVEN,
+   ROUND_05UP] 
+945 c.shift(*['IntLike', 'str', 'ellipsis']) -> !TypeError: shift() takes at most 2 arguments (3 given) 
+946 a == IntLike -> bool:False 
+947 a.is_finite(*['tuple', 'NoneType', 'Context']) -> !TypeError: Decimal.is_finite() takes no arguments (3 given) 
+948 c.__copy__(*['ellipsis', 'str']) -> !TypeError: __copy__() takes no arguments 
+949 a.next_plus(*['Odd', 'FloatLike']) -> !TypeError: next_plus() takes at most 1 argument (2 given) 
+950 a.sqrt(**[('exp', 'str'), ('x', 'type')]) -> !TypeError: sqrt() takes at most 1 keyword argument (2 given) 
+951 a.to_eng_string(*['dict']) -> !TypeError: optional argument must be a context 
+952 a.quantize(*[]) -> !TypeError: quantize() missing required argument 'exp' (pos 1) 
+953 a.next_toward(*[]) -> !TypeError: next_toward() missing required argument 'other' (pos 1) 
+954 a.quantize(*['Context', 'NoneType', 'int']) -> !TypeError: optional argument must be a context 
+955 a.logical_xor(*['NoneType']) -> !TypeError: conversion from NoneType to Decimal is not supported 
+956 localcontext(*['type', 'Fraction', 'Context'], **[('bits', 'Decimal')]) -> !TypeError: localcontext() takes at most 1 positional argument (3 given) 
+957 c.quantize(*['tuple']) -> !TypeError: quantize() takes exactly 2 positional arguments (1 given) 
+958 c.copy_sign(*['bytes', 'type']) -> !TypeError: conversion from bytes to Decimal is not supported 
+959 c.radix(*['Odd', 'Decimal', 'Decimal', 'Odd']) -> !TypeError: radix() takes no arguments 
+960 a.scaleb(*['FloatLike']) -> !TypeError: conversion from FloatLike to Decimal is not supported 
+961 c.plus(*['type', 'type']) -> !TypeError: plus() takes at most 1 argument (2 given) 
+962 a.__floor__(*['list', 'int']) -> !TypeError: __floor__() takes no arguments 
+963 a.copy_sign(*['ellipsis']) -> !TypeError: conversion from ellipsis to Decimal is not supported 
+964 c.min(**[('modulo', 'int'), ('y', 'Decimal')]) -> !TypeError: min() takes exactly 2 positional arguments (0 given) 
+965 a.scaleb(*['list', 'type']) -> !TypeError: optional argument must be a context 
+966 a.max_mag(*['str', 'NoneType', 'list']) -> !TypeError: max_mag() takes at most 2 arguments (3 given) 
+967 c.create_decimal(*['type', 'Odd', 'complex']) -> !TypeError: create_decimal expected at most 1 argument, got 3 
+968 c.divmod(*['Decimal', 'type', 'FloatLike', 'float']) -> !TypeError: divmod expected 2 arguments, got 4 
+969 a.copy_sign(*['complex']) -> !TypeError: conversion from complex to Decimal is not supported 
+970 c.copy_abs(**[('a', 'Decimal'), ('y', 'tuple')]) -> !TypeError: copy_abs() takes at most 1 keyword argument (2 given) 
+971 a.__pos__(*['dict', 'Context']) -> !TypeError: expected 0 arguments, got 2 
+972 a.next_minus(**[('x', 'Decimal')]) -> !TypeError: next_minus() got an unexpected keyword argument 'x' 
+973 c.max(*['Odd']) -> !TypeError: max() takes exactly 2 positional arguments (1 given) 
+974 a.next_toward(*['str', 'bytes', 'Fraction']) -> !TypeError: next_toward() takes at most 2 arguments (3 given) 
+975 from_number(*['FloatLike'], **[('prec', 'dict')]) -> !TypeError: from_number() takes at most 1 argument (2 given) 
+976 c.canonical(*['list', 'Decimal', 'type', 'str']) -> !TypeError: canonical() takes at most 1 argument (4 given) 
+977 a != Odd -> bool:True 
+978 a.min(**[('context', 'str'), ('foo', 'tuple')]) -> !TypeError: min() missing required argument 'other' (pos 1) 
+979 a.quantize(*['str', 'IntLike']) -> !TypeError: valid values for rounding are:
+  [ROUND_CEILING, ROUND_FLOOR, ROUND_UP, ROUND_DOWN,
+   ROUND_HALF_UP, ROUND_HALF_DOWN, ROUND_HALF_EVEN,
+   ROUND_05UP] 
+980 c.logical_invert(*[]) -> !TypeError: logical_invert() takes exactly 1 positional argument (0 given) 
+981 c.remainder_near(*['Odd', 'Fraction', 'int']) -> !TypeError: remainder_near() takes at most 2 arguments (3 given) 
+982 c.copy_negate(*['Context']) -> !TypeError: conversion from decimal.Context to Decimal is not supported 
+983 a.same_quantum(**[('context', 'Fraction'), ('exp', 'float'), ('x', 'IntLike')]) -> !TypeError: same_quantum() takes at most 2 keyword arguments (3 given) 
+984 c.create_decimal(**[('f', 'int'), ('num', 'Odd')]) -> !TypeError: Context.create_decimal() takes no keyword arguments 
+985 c.max(*['tuple', 'float', 'complex', 'type']) -> !TypeError: max() takes at most 2 arguments (4 given) 
+986 c.log10(**[('a', 'Odd')]) -> !TypeError: log10() takes exactly 1 positional argument (0 given) 
+987 a.__copy__(*['tuple']) -> !TypeError: Decimal.__copy__() takes no arguments (1 given) 
+988 c.to_eng_string(**[('f', 'int'), ('x', 'ellipsis'), ('y', 'float')]) -> !TypeError: to_eng_string() takes at most 1 keyword argument (3 given) 
+989 c.min(*['str', 'tuple', 'NoneType', 'type']) -> !TypeError: min() takes at most 2 arguments (4 given) 
+990 float <= a -> !FloatOperation: [<class 'decimal.FloatOperation'>] 
+991 c.remainder_near(*['float', 'FloatLike']) -> !TypeError: conversion from float to Decimal is not supported 
+992 a.exp(**[('other', 'NoneType'), ('x', 'type')]) -> !TypeError: exp() takes at most 1 keyword argument (2 given) 
+993 a.max_mag(*['Fraction', 'int', 'Odd', 'Context']) -> !TypeError: max_mag() takes at most 2 arguments (4 given) 
+994 c.same_quantum(**[('a', 'int'), ('b', 'Fraction'), ('f', 'type')]) -> !TypeError: same_quantum() takes at most 2 keyword arguments (3 given) 
+995 c.same_quantum(*['Context', 'Context']) -> !TypeError: conversion from decimal.Context to Decimal is not supported 
+996 c.divmod(*['str', 'complex', 'int', 'complex']) -> !TypeError: divmod expected 2 arguments, got 4 
+997 a.logical_invert(*['ellipsis', 'str']) -> !TypeError: logical_invert() takes at most 1 argument (2 given) 
+998 a.next_toward(*[]) -> !TypeError: next_toward() missing required argument 'other' (pos 1) 
+999 a.quantize(*['list', 'Decimal', 'float', 'Context']) -> !TypeError: quantize() takes at most 3 arguments (4 given) 

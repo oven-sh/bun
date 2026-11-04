@@ -1,0 +1,1003 @@
+status: 0
+script: 2f76c297a7687d2a
+---
+0 [p34 05UP -999999999999999999 999999999999999999 c0 C1 t] pickle 3 Decimal('-9.99999999E-11') -> (Decimal:Decimal('-9.99999999E-11'), str:'Decimal') 
+1 [p20 HALF_EVEN -88 40 c0 C1 t] round(Decimal('9.00900900999999000900909000090909E+35'), IntLike()) -> !TypeError: optional arg must be an integer 
+2 [p1 HALF_UP -999999999999999999 999999999999999999 c0 C0 t] str(Decimal('2.0760214624333030522674346667327199987e-23')) -> str:'2.0760214624333030522674346667327199987e-23' 
+3 [p14 05UP -7 27 c0 C1 tDiSuCl] sum/min/max/sorted Decimal('1.1472693708365749264376416867E-16') -> !Subnormal: [<class 'decimal.Subnormal'>] UnSuInRo
+4 [p44 HALF_EVEN -4736757266 1028546 c0 C1 t] pickle 3 Decimal('-670845150002371740325140978762679303.4033') -> (Decimal:Decimal('-670845150002371740325140978762679303.4033'), str:'Decimal') 
+5 [p28 HALF_UP -999999 999999 c0 C1 tSuCl] pickle 2 Decimal('8.95765743977157804376747446895555E+46') -> (Decimal:Decimal('8.95765743977157804376747446895555E+46'), str:'Decimal') 
+6 [p34 UP -999999 999999 c1 C0 t] repr(Decimal('9.9999999999999999999999999999999999999e+57')) -> str:"Decimal('9.9999999999999999999999999999999999999e+57')" 
+7 [p3 DOWN -3 0 c0 C0 t] pickle 1 Decimal('-9.00009099909e+30') -> (Decimal:Decimal('-9.00009099909e+30'), str:'Decimal') 
+8 [p28 UP -28 3 c0 C0 t] complex(Decimal('-1.28171038384614534289412868930661904e+60')) -> complex:(-1.2817103838461453e+60+0j) 
+9 hash(Decimal('695.6479376')) == hash(Fraction(434779961, 625000)) -> (bool:True, bool:True, int:566274460225921769) 
+10 [p2 HALF_EVEN -999999 999999 c0 C1 t] isnan(Decimal('0E+5')) -> bool:False 
+11 [p17 HALF_DOWN -999999 999999 c0 C1 t] floor(Decimal('-9.038917826161138445E-30')) -> int:-1 
+12 [p19 CEILING -7 1 c0 C1 t] sum/min/max/sorted Decimal('0E-7') -> (Decimal:Decimal('1.0000000'), Decimal:Decimal('0E-7'), int:1, list:[Decimal('-1.5'), Decimal('0E-7'), 0, Decimal('1')]) 
+13 hash(Decimal('19892919074921351534094094.2')) == hash(Fraction(99464595374606757670470471, 5)) -> (bool:True, bool:True, int:533210571938555026) 
+14 [p9 CEILING -58 77 c0 C1 tFl] Decimal('7.0000000000000E-20') real imag -> (Decimal:Decimal('7.0000000000000E-20'), Decimal:Decimal('0'), Decimal:Decimal('7.0000000000000E-20'), bool:True, bool:True, bool:True, bool:False) Ro
+15 [p1 CEILING -999999999999999999 999999999999999999 c0 C1 t] pickle 0 Decimal('9.999999999999E-20') -> (MyDecimal:Decimal('9.999999999999E-20'), str:'MyDecimal') 
+16 hash(Decimal('1168209160.8700985')) == hash(Fraction(2336418321740197, 2000000)) -> (bool:True, bool:True, int:2191073133362805316) 
+17 [p39 FLOOR -3 1 c1 C1 tInOvUnCl] pickle 1 Decimal('-1.800747440352840573139277049903594906513992E+59') -> (MyDecimal:Decimal('-1.800747440352840573139277049903594906513992E+59'), str:'MyDecimal') 
+18 [p41 HALF_DOWN -61 61 c0 C1 tFlOvUn] floor(Decimal('-99099000999909000090099900099090.0099009099090')) -> int:-99099000999909000090099900099091 
+19 [p1 05UP -999999 999999 c1 C1 t] abs(Decimal('2.0000E+10')) -> Decimal:Decimal('2E+10') Ro
+20 [p3 05UP -999999 999999 c0 C1 t] Decimal('6.63227628643686249E+41') real imag -> (Decimal:Decimal('6.63227628643686249E+41'), Decimal:Decimal('0'), Decimal:Decimal('6.63227628643686249E+41'), bool:True, bool:True, bool:True, bool:False) InRo
+21 [p23 CEILING -31 14 c0 C0 t] pickle 5 Decimal('9999999999999999999999.99999999999999') -> (MyDecimal:Decimal('9999999999999999999999.99999999999999'), str:'MyDecimal') 
+22 [p1 UP -999999 999999 c0 C0 tSuCl] int(Decimal('-8.01646245e-11')) -> int:0 
+23 [p9 HALF_UP -999999999999999999 999999999999999999 c0 C1 tInFlInCl] round(Decimal('-7.297568220545166574707225023E-20'), -9223372036854775808) -> !InvalidOperation: [<class 'decimal.InvalidOperation'>] In
+24 [p39 HALF_DOWN -999999 999999 c0 C1 t] ceil(Decimal('7.38573952204883858E+19')) -> int:73857395220488385800 
+25 [p9 FLOOR -999999 999999 c1 C1 t] sum/min/max/sorted Decimal('-0.000') -> (Decimal:Decimal('1.000'), Decimal:Decimal('-0.000'), int:1, list:[Decimal('-1.5'), Decimal('-0.000'), 0, Decimal('1')]) 
+26 [p43 HALF_UP -67 66 c0 C1 tInRo] floor(Decimal('-9.999999999999E-14')) -> int:-1 
+27 [p28 FLOOR -999999 999999 c0 C1 t] repr(Decimal('4.14715E-26')) -> str:"Decimal('4.14715E-26')" 
+28 [p1 DOWN -999999999999999999 999999999999999999 c0 C1 t] hash(Decimal('999999999999999999.99999')) -> int:620711883414439482 
+29 hash(Decimal(float:-6.964188046534289e-138)) -> (bool:True, bool:True) 
+30 hash(Decimal('-5897544727892368411.349232')) == hash(Fraction(-368596545493273025709327, 62500)) -> (bool:True, bool:True, int:-1094861121325791812) 
+31 [p35 HALF_UP -90682570295429 5472296986190 c0 C1 tUn] hash(Decimal('-0.000')) -> int:0 
+32 [p16 FLOOR -999999 999999 c0 C1 t] deepcopy(Decimal('197042044917643117094811540810344627662')) -> Decimal:Decimal('197042044917643117094811540810344627662') 
+33 [p34 HALF_EVEN -99 4 c0 C1 t] deepcopy(Decimal('-1E+13')) -> Decimal:Decimal('-1E+13') 
+34 [p44 HALF_DOWN -32 75 c0 C1 t] Fraction(Decimal('9.999999999999999999E-41')) -> Fraction:Fraction(9999999999999999999, 100000000000000000000000000000000000000000000000000000000000) 
+35 [p28 05UP -999999 999999 c0 C1 t] sum/min/max/sorted Decimal('2696382581313976534512875205940466.05') -> (Decimal:Decimal('5.392765162627953069025750411E+33'), int:1, Decimal:Decimal('2696382581313976534512875205940466.05'), list:[Decimal('-1.5'), 0, Decimal('1'), Decimal('2696382581313976534512875205940466.05')]) InRo
+36 [p28 05UP -2253571124 232354536316015 c0 C1 t] pickle 5 Decimal('-9.1859226340081005589328101266E+53') -> (Decimal:Decimal('-9.1859226340081005589328101266E+53'), str:'Decimal') 
+37 [p16 HALF_UP -999999999999999999 999999999999999999 c0 C1 tInCl] hash(Decimal('8.95602902E-27')) -> int:266071278547240824 
+38 [p39 HALF_UP -94 60 c0 C1 t] sum/min/max/sorted Decimal('5.50E-22') -> (Decimal:Decimal('1.000000000000000000001100'), Decimal:Decimal('5.50E-22'), int:1, list:[Decimal('-1.5'), 0, Decimal('5.50E-22'), Decimal('1')]) 
+39 [p16 UP -4 4 c0 C0 tInDiUnSu] Decimal('-90000000000000000000000.00000000000000000000') real imag -> (Decimal:Decimal('-90000000000000000000000.00000000000000000000'), Decimal:Decimal('0'), Decimal:Decimal('-90000000000000000000000.00000000000000000000'), bool:True, bool:True, bool:True, bool:False) OvInRo
+40 [p19 HALF_EVEN -999999 999999 c1 C1 tFlUnSuIn] hash(Decimal('-5008058256531822547918.434537468168489243')) -> int:-1711055074785771303 
+41 [p28 CEILING -37 52 c0 C1 t] pickle 1 Decimal('-6.7218119541907286634E+29') -> (MyDecimal:Decimal('-6.7218119541907286634E+29'), str:'MyDecimal') 
+42 [p2 HALF_DOWN -39 50 c1 C1 t] round(Decimal('90999999.09099'), '1') -> !TypeError: optional arg must be an integer 
+43 [p28 UP -6501 110462605826 c0 C1 t] hash(Decimal('9.99999999999999999999E-19')) -> int:672199910875228457 
+44 [p39 CEILING -53 67 c1 C1 t] pickle 0 Decimal('-500000.000000000000') -> (MyDecimal:Decimal('-500000.000000000000'), str:'MyDecimal') 
+45 [p28 FLOOR -999999 999999 c0 C0 t] Decimal('9.99999999999999999999999999999e+30') real imag -> (Decimal:Decimal('9.99999999999999999999999999999e+30'), Decimal:Decimal('0'), Decimal:Decimal('9.99999999999999999999999999999e+30'), bool:True, bool:True, bool:True, bool:False) InRo
+46 [p28 CEILING -2 0 c0 C1 tFlOvIn] pickle 0 Decimal('-7.5118251340065171268131E-18') -> (MyDecimal:Decimal('-7.5118251340065171268131E-18'), str:'MyDecimal') 
+47 [p39 DOWN -76 21 c1 C1 tOvSuRo] float(Decimal('-6.06099016990415577314861130285E-12')) -> float:-6.0609901699041556e-12 
+48 [p9 05UP -76649696834224 8858 c0 C0 tCl] round(Decimal('5.0055055e+18'), None) -> int:5005505500000000000 
+49 [p20 05UP -28 80 c0 C1 t] hash(Decimal('-9614665323247847272439574311115333.1638')) -> int:-1497007317106612835 
+50 [p16 CEILING -999999 999999 c1 C1 t] round(Decimal('5.50055500500550000E-27'), 9223372036854775807) -> Decimal:Decimal('NaN') In
+51 hash(Decimal('-1684.3356089375')) == hash(Fraction(-26949369743, 16000000)) -> (bool:True, bool:True, int:-1369469995015946224) 
+52 hash(Decimal('-11032705730266694208.34511474609375')) == hash(Fraction(-4518996267117237947738159, 409600)) -> (bool:True, bool:True, int:-114803668117961367) 
+53 [p2 HALF_UP -999999 999999 c1 C1 t] isnan(Decimal('-9.999E-39')) -> bool:False 
+54 [p28 DOWN -3 7 c0 C1 tInFlCl] round(Decimal('301228149122243077.994219284325'), 2) -> !InvalidOperation: [<class 'decimal.InvalidOperation'>] In
+55 [p2 05UP -3 1 c0 C1 t] round(Decimal('-76951756491144.85600432735609636685948'), 1000000000000000000000000000000) -> !OverflowError: Python int too large to convert to C ssize_t 
+56 [p9 HALF_UP -9 0 c0 C1 t] pickle 3 Decimal('3543345466119668040.7852348831128236383') -> (MyDecimal:Decimal('3543345466119668040.7852348831128236383'), str:'MyDecimal') 
+57 [p25 HALF_UP -999999 999999 c0 C1 t] ceil(Decimal('-4.756019730376326600032342E+34')) -> int:-47560197303763266000323420000000000 
+58 [p32 HALF_EVEN -83 69 c1 C1 t] abs(Decimal('-7.5E+20')) -> Decimal:Decimal('7.5E+20') 
+59 [p28 DOWN -58 26 c0 C1 t] sum/min/max/sorted Decimal('-9E-21') -> (Decimal:Decimal('0.999999999999999999982'), Decimal:Decimal('-9E-21'), int:1, list:[Decimal('-1.5'), Decimal('-9E-21'), 0, Decimal('1')]) 
+60 [p28 DOWN -6 0 c0 C0 t] sum/min/max/sorted Decimal('1.471715963231824150663540661e-33') -> (Decimal:Decimal('1.000000000000000000000000000'), Decimal:Decimal('1.471715963231824150663540661e-33'), int:1, list:[Decimal('-1.5'), 0, Decimal('1.471715963231824150663540661e-33'), Decimal('1')]) UnSuInRo
+61 [p39 CEILING -7 1 c0 C1 tFlOvInCl] hash(Decimal('-33638346732.301637912764244394')) -> int:-500490053616006527 
+62 hash(Decimal('-35368.423782')) == hash(Fraction(-17684211891, 500000)) -> (bool:True, bool:True, int:-438382261225724435) 
+63 hash(Decimal('1437173165745600036355680.527875')) == hash(Fraction(11497385325964800290845444223, 8000)) -> (bool:True, bool:True, int:1206626201924007498) 
+64 hash(Decimal(float:1.1124150695355227e+95)) -> (bool:True, bool:True) 
+65 [p39 05UP -8 1 c0 C1 t] hash(Decimal('-953390656.91931177950253205207949476566819')) -> int:-107321999623999108 
+66 [p34 UP -999999999999999999 999999999999999999 c0 C1 t] round(Decimal('9.009999099909099E-17'), -9223372036854775808) -> Decimal:Decimal('NaN') In
+67 [p19 UP -999999 999999 c0 C0 t] hash(Decimal('-5.000000000000000000000000000000000e-9')) -> int:-671189959739477720 
+68 [p28 HALF_UP -45 42 c0 C0 t] str(Decimal('2.66833e-35')) -> str:'2.66833e-35' 
+69 [p20 05UP -999999 999999 c0 C0 t] ceil(Decimal('-143.402625700423640264')) -> int:-143 
+70 hash(Decimal('-287968.3598203125')) == hash(Fraction(-36859950057, 128000)) -> (bool:True, bool:True, int:-2010280772868911008) 
+71 [p31 CEILING -999999 999999 c0 C1 tInFlDiRo] pickle 5 Decimal('-9.099009090900000990E-28') -> (MyDecimal:Decimal('-9.099009090900000990E-28'), str:'MyDecimal') 
+72 [p9 HALF_UP -29 29 c0 C1 t] round(Decimal('-64656.3528498875598'), 8) -> Decimal:Decimal('NaN') In
+73 hash(Decimal(float:4.848630011038244e+100)) -> (bool:True, bool:True) 
+74 [p16 UP -82 69 c0 C1 tOvIn] repr(Decimal('9.999999999999999E-15')) -> str:"Decimal('9.999999999999999E-15')" 
+75 [p2 FLOOR -999999 999999 c0 C1 tInCl] round(Decimal('8.00000000000000000000000000000000000000000000E+67'), 2) -> Decimal:Decimal('NaN') In
+76 [p19 HALF_UP -3 6 c1 C1 tCl] hash(Decimal('-5050.5')) -> int:-1152921504606852026 
+77 [p1 HALF_DOWN -999999 999999 c1 C0 t] hash(Decimal('5.0000055055055500500500e-14')) -> int:34157891219727684 
+78 [p38 HALF_EVEN -8 0 c0 C0 t] hash(Decimal('-2.7837390653561787914352201913772566088542e-20')) -> int:-1759086015107179225 
+79 hash(Decimal(float:-1.445236853142329e-270)) -> !FloatOperation: [<class 'decimal.FloatOperation'>] 
+80 [p24 HALF_UP -999999 999999 c0 C0 t] hash(Decimal('4.6079e+21')) -> int:825667591039485902 
+81 [p28 HALF_DOWN -2 0 c1 C1 tOvRo] complex(Decimal('-285382885022885.1')) -> complex:(-285382885022885.1+0j) 
+82 hash(Decimal('-20215036794498868.2')) == hash(Fraction(-101075183972494341, 5)) -> (bool:True, bool:True, int:-1864889444165454029) 
+83 hash(Decimal('897159571114101442143.08699238125')) == hash(Fraction(143545531378256230742893918781, 160000000)) -> (bool:True, bool:True, int:1400503577405896317) 
+84 [p9 CEILING -999999 999999 c1 C0 tInUnSuIn] hash(Decimal('-21137526812629158230666')) -> int:-2169790176439475800 
+85 [p28 05UP -10 1 c0 C1 t] Decimal('-99.015208805754211') real imag -> (Decimal:Decimal('-99.015208805754211'), Decimal:Decimal('0'), Decimal:Decimal('-99.015208805754211'), bool:True, bool:True, bool:True, bool:False) 
+86 [p19 CEILING -999999 999999 c0 C1 t] Decimal('9.0000000000000000000000000000000000000000E+57') real imag -> (Decimal:Decimal('9.0000000000000000000000000000000000000000E+57'), Decimal:Decimal('0'), Decimal:Decimal('9.0000000000000000000000000000000000000000E+57'), bool:True, bool:True, bool:True, bool:False) Ro
+87 [p24 DOWN -999999 999999 c1 C1 t] hash(Decimal('55518403.8801605396')) -> int:1764974973877187545 
+88 [p17 05UP -17 36 c1 C0 tInFlSu] floor(Decimal('NaN')) -> !ValueError: cannot convert NaN to integer 
+89 hash(Decimal(float:1.66906831285207e-310)) -> (bool:True, bool:True) 
+90 hash(Decimal(float:1.142965304885767e+190)) -> (bool:True, bool:True) 
+91 [p26 CEILING -999999999999999999 999999999999999999 c0 C1 t] sum/min/max/sorted Decimal('7.0000000000000000000000000E-31') -> (Decimal:Decimal('1.0000000000000000000000002'), Decimal:Decimal('7.0000000000000000000000000E-31'), int:1, list:[Decimal('-1.5'), 0, Decimal('7.0000000000000000000000000E-31'), Decimal('1')]) InRo
+92 [p34 05UP -999999 999999 c0 C1 t] hash(Decimal('3.864E-12')) -> int:2262974962753215754 
+93 hash(Decimal('-4352.460795305')) == hash(Fraction(-870492159061, 200000000)) -> (bool:True, bool:True, int:-860014752011088706) 
+94 hash(Decimal('-7658317613316.9636')) == hash(Fraction(-19145794033292409, 2500)) -> (bool:True, bool:True, int:-591225805880004446) 
+95 [p16 05UP -999999999999999999 999999999999999999 c0 C1 tInSuRo] pickle 0 Decimal('0.764080196220802852037536766068399') -> (Decimal:Decimal('0.764080196220802852037536766068399'), str:'Decimal') 
+96 [p38 CEILING -54 69 c0 C0 t] pickle 1 Decimal('-8.78785833995156680187827896477574308799391985e-12') -> (MyDecimal:Decimal('-8.78785833995156680187827896477574308799391985e-12'), str:'MyDecimal') 
+97 [p3 HALF_EVEN -8 58 c1 C1 t] hash(Decimal('-4.801E-36')) -> int:-234165183525409653 
+98 hash(Decimal(float:-6.602727665837883e+212)) -> !FloatOperation: [<class 'decimal.FloatOperation'>] 
+99 [p28 DOWN -58 92 c1 C1 t] Decimal('-9999999999999.99999999999999999999999999999') real imag -> (Decimal:Decimal('-9999999999999.99999999999999999999999999999'), Decimal:Decimal('0'), Decimal:Decimal('-9999999999999.99999999999999999999999999999'), bool:True, bool:True, bool:True, bool:False) InRo
+100 [p39 UP -45 36 c0 C1 t] trunc(Decimal('9.00990900909E+15')) -> int:9009909009090000 
+101 [p34 DOWN -999999 999999 c0 C1 tOvSu] sum/min/max/sorted Decimal('NaN') -> (Decimal:Decimal('NaN'), Decimal:Decimal('NaN'), Decimal:Decimal('NaN'), list:[Decimal('-1.5'), 0, Decimal('NaN'), Decimal('1')]) In
+102 [p26 05UP -1 3 c0 C1 t] round(Decimal('734744741.817'), IntLike()) -> !TypeError: optional arg must be an integer 
+103 [p34 HALF_EVEN -38 80 c0 C1 t] copy(Decimal('-3.51246241979339404277826523E-33')) -> Decimal:Decimal('-3.51246241979339404277826523E-33') 
+104 [p28 CEILING -999999 999999 c1 C1 tRoCl] isnan(Decimal('93478.7726239915293243625420')) -> bool:False 
+105 hash(Decimal('430.04458984375')) == hash(Fraction(22018283, 51200)) -> (bool:True, bool:True, int:840686942441250918) 
+106 hash(Decimal('37861339691243.4124992')) == hash(Fraction(5915834326756783203, 156250)) -> (bool:True, bool:True, int:1474257375524781705) 
+107 [p19 UP -295861757570338 4808 c1 C1 tUn] trunc(Decimal('0E-7')) -> int:0 
+108 hash(Decimal('-4918357863.561421875')) == hash(Fraction(-314774903267931, 64000)) -> (bool:True, bool:True, int:-2198441170218520226) 
+109 [p28 HALF_EVEN -999999 999999 c0 C1 t] round(Decimal('-0.00000500000000000000000'), '1') -> !TypeError: optional arg must be an integer 
+110 [p39 05UP -999999 999999 c1 C0 t] sqrt(Decimal('3.7176496897559000934710786253e+52')) -> float:1.9281207663826194e+26 
+111 [p28 05UP -7 10 c1 C0 tDiUnRo] round(Decimal('-6.663227542882372780476838199e-19'), IntLike()) -> !TypeError: optional arg must be an integer 
+112 [p38 HALF_DOWN -804 880314895852 c0 C0 t] complex(Decimal('7.09487051111615e+24')) -> complex:(7.09487051111615e+24+0j) 
+113 [p38 HALF_DOWN -5737808583483619 75072838 c0 C0 t] int(Decimal('181349939353289711.499')) -> int:181349939353289711 
+114 [p29 UP -999999 999999 c0 C1 t] Fraction(Decimal('-90999909900009.09000909000090009990090009')) -> Fraction:Fraction(-9099990990000909000909000090009990090009, 100000000000000000000000000) 
+115 [p28 05UP -57 27 c1 C1 tDiIn] Decimal('9.09990009999909999909E+29') real imag -> !Inexact: [<class 'decimal.Inexact'>] OvInRo
+116 [p1 CEILING -6 4 c0 C0 t] hash(Decimal('5.46323170518014347759923571666102876564e+61')) -> int:107187104799721119 
+117 [p16 FLOOR -999999 999999 c1 C1 t] sum/min/max/sorted Decimal('-4.307209E+18') -> (Decimal:Decimal('-8.614418000000000E+18'), Decimal:Decimal('-4.307209E+18'), int:1, list:[Decimal('-4.307209E+18'), Decimal('-1.5'), 0, Decimal('1')]) InRo
+118 [p34 HALF_UP -999999 999999 c0 C1 tUnRo] isnan(Decimal('5.5505E-47')) -> bool:False 
+119 [p28 FLOOR -3391003278 23759106 c0 C0 t] Decimal('5.50505505500500555e+39') real imag -> (Decimal:Decimal('5.50505505500500555e+39'), Decimal:Decimal('0'), Decimal:Decimal('5.50505505500500555e+39'), bool:True, bool:True, bool:True, bool:False) 
+120 [p19 FLOOR -999999 999999 c0 C0 tUnSu] hash(Decimal('-3000.00000000000000000000000000000')) -> int:-3000 
+121 [p1 CEILING -7 4 c0 C0 t] Decimal('0.00000255247750852870982898352681496086514004543005') real imag -> (Decimal:Decimal('0.00000255247750852870982898352681496086514004543005'), Decimal:Decimal('0'), Decimal:Decimal('0.00000255247750852870982898352681496086514004543005'), bool:True, bool:True, bool:True, bool:False) InRo
+122 [p2 HALF_DOWN -999999 999999 c0 C0 t] hash(Decimal('497978578920767768.53634638422567284')) -> int:1370452682420140627 
+123 hash(Decimal('-3225645.74005796875')) == hash(Fraction(-20644132736371, 6400000)) -> (bool:True, bool:True, int:-2293801824965211649) 
+124 [p19 UP -999999999999999999 999999999999999999 c0 C1 tSu] float(Decimal('-9.0009990999909E-25')) -> float:-9.0009990999909e-25 
+125 [p28 HALF_EVEN -47 96 c0 C1 t] Decimal('-9.7E-24') real imag -> (Decimal:Decimal('-9.7E-24'), Decimal:Decimal('0'), Decimal:Decimal('-9.7E-24'), bool:True, bool:True, bool:True, bool:False) 
+126 [p20 HALF_EVEN -999999 999999 c0 C1 tOvIn] sum/min/max/sorted Decimal('992425052657.130665320848363728395') -> !Inexact: [<class 'decimal.Inexact'>] InRo
+127 [p1 HALF_EVEN -985 10 c0 C1 tDi] complex(Decimal('201264475776.7589303218242144115749')) -> complex:(201264475776.75894+0j) 
+128 [p1 05UP -23 53 c0 C1 tSu] complex(Decimal('-0.000999')) -> complex:(-0.000999+0j) 
+129 [p20 DOWN -999999 999999 c1 C1 t] copy(Decimal('9.000000009099000999990009099009909009999E+64')) -> Decimal:Decimal('9.000000009099000999990009099009909009999E+64') 
+130 [p28 HALF_DOWN -999999 999999 c0 C1 t] pickle 4 Decimal('10.56147143858067207010233556359854') -> (MyDecimal:Decimal('10.56147143858067207010233556359854'), str:'MyDecimal') 
+131 [p28 HALF_DOWN -999999999999999999 999999999999999999 c0 C1 t] abs(Decimal('-10714772621.926289302085668114275982541784')) -> Decimal:Decimal('10714772621.92628930208566811') InRo
+132 hash(Decimal('-2906533411972258768.54712354296875')) == hash(Fraction(-744072553464898244748063627, 256000000)) -> (bool:True, bool:True, int:-798853497128076871) 
+133 [p26 DOWN -9 6 c0 C1 t] hash(Decimal('4.84646427083061E-32')) -> int:220336203706738732 
+134 [p16 HALF_UP -999999 999999 c0 C1 tFlOv] round(Decimal('988324486365385.333675856171380883482472818'), 2) -> Decimal:Decimal('NaN') In
+135 [p28 HALF_EVEN -999999 999999 c1 C0 t] Decimal('0e+5') real imag -> (Decimal:Decimal('0e+5'), Decimal:Decimal('0'), Decimal:Decimal('0e+5'), bool:True, bool:True, bool:True, bool:False) 
+136 [p34 CEILING -48 76 c1 C1 tUn] trunc(Decimal('7.00000000000E-21')) -> int:0 
+137 [p28 HALF_UP -57 82 c0 C0 tFl] hash(Decimal('1.20752654032943511577571519e-28')) -> int:393594908608634326 
+138 [p28 05UP -2 0 c0 C0 t] pickle 3 Decimal('-4.9850115854979561170920270531174333e+37') -> (Decimal:Decimal('-4.9850115854979561170920270531174333e+37'), str:'Decimal') 
+139 hash(Decimal(float:-6.2524006731980005e+165)) -> (bool:True, bool:True) 
+140 [p16 HALF_UP -999999 999999 c1 C1 tFlSu] sum/min/max/sorted Decimal('0.000099999999999999999999999999999999') -> (Decimal:Decimal('1.000200000000000'), Decimal:Decimal('0.000099999999999999999999999999999999'), int:1, list:[Decimal('-1.5'), 0, Decimal('0.000099999999999999999999999999999999'), Decimal('1')]) InRo
+141 [p40 HALF_UP -999999999999999999 999999999999999999 c1 C1 t] hash(Decimal('-0.50005000')) -> int:-743519078320955615 
+142 [p28 05UP -999999 999999 c1 C1 t] hash(Decimal('-2773888112553728360795379.072638315526050')) -> int:-1884365309877943420 
+143 hash(Decimal(float:32675.125)) -> (bool:True, bool:True) 
+144 [p19 HALF_EVEN -72 85 c1 C0 t] hash(Decimal('-2.8126013937692e-43')) -> int:-1460990413035708746 
+145 [p39 CEILING -8 9 c0 C0 t] Decimal('9.58235670171907060e+24') real imag -> (Decimal:Decimal('9.58235670171907060e+24'), Decimal:Decimal('0'), Decimal:Decimal('9.58235670171907060e+24'), bool:True, bool:True, bool:True, bool:False) OvInRo
+146 [p20 FLOOR -5 9 c0 C0 tSu] copy(Decimal('-0.000050005055005505055550555505')) -> Decimal:Decimal('-0.000050005055005505055550555505') 
+147 [p28 FLOOR -27 85 c1 C0 tCl] copy(Decimal('-0.00600000000000000000000000000000000')) -> Decimal:Decimal('-0.00600000000000000000000000000000000') 
+148 [p3 HALF_EVEN -5 1 c0 C1 t] sum/min/max/sorted Decimal('9.0999090099990900909009090999990') -> (Decimal:Decimal('19.2'), int:1, Decimal:Decimal('9.0999090099990900909009090999990'), list:[Decimal('-1.5'), 0, Decimal('1'), Decimal('9.0999090099990900909009090999990')]) InRo
+149 [p1 UP -62 78 c1 C0 tDiOv] Fraction(Decimal('-58563893341231396754842822983735.001482')) -> Fraction:Fraction(-29281946670615698377421411491867500741, 500000) 
+150 [p38 CEILING -999999 999999 c0 C1 tOvSu] isnan(Decimal('9.09909009E-31')) -> bool:False 
+151 hash(Decimal(float:1.5212799020586589e+149)) -> (bool:True, bool:True) 
+152 [p34 05UP -999999999999999999 999999999999999999 c0 C0 tInFlOv] sum/min/max/sorted Decimal('-1.27e-38') -> (Decimal:Decimal('0.9999999999999999999999999999999998'), Decimal:Decimal('-1.27e-38'), int:1, list:[Decimal('-1.5'), Decimal('-1.27e-38'), 0, Decimal('1')]) InRo
+153 [p45 HALF_DOWN -3 6 c0 C0 tDiOvInRo] pickle 0 Decimal('0.000700000000') -> (Decimal:Decimal('0.000700000000'), str:'Decimal') 
+154 [p28 HALF_EVEN -5 3 c1 C1 tFl] ceil(Decimal('4.3725489614764741576043E-28')) -> int:1 
+155 hash(Decimal(float:-3.4620274427960275e+40)) -> (bool:True, bool:True) 
+156 [p3 HALF_UP -999999 999999 c1 C1 tInRo] Decimal('-524258574080017.5625858410467154334948') real imag -> !Rounded: [<class 'decimal.Rounded'>] InRo
+157 [p20 UP -999999999999999999 999999999999999999 c1 C1 t] round(Decimal('-9E-9')) -> int:0 
+158 [p28 FLOOR -6 6 c1 C1 t] pickle 3 Decimal('-8.80570156782949287394420947E+46') -> (MyDecimal:Decimal('-8.80570156782949287394420947E+46'), str:'MyDecimal') 
+159 [p14 FLOOR -999999 999999 c0 C0 t] hash(Decimal('-6.1166391153482428815e-19')) -> int:-1725984102727754303 
+160 [p39 HALF_DOWN -999999 999999 c1 C0 t] pickle 3 Decimal('4.257135873329221e-21') -> (MyDecimal:Decimal('4.257135873329221e-21'), str:'MyDecimal') 
+161 [p34 HALF_UP -999999 999999 c0 C0 tUn] pickle 4 Decimal('-4.7672073085350979976891069062528963651432289e+61') -> (Decimal:Decimal('-4.7672073085350979976891069062528963651432289e+61'), str:'Decimal') 
+162 hash(Decimal(float:5.433868509552194e-75)) -> !FloatOperation: [<class 'decimal.FloatOperation'>] 
+163 [p19 DOWN -5534852309790 44835856941103 c0 C1 t] pickle 0 Decimal('1E+24') -> (Decimal:Decimal('1E+24'), str:'Decimal') 
+164 hash(Decimal(float:-1.3820235502616329e-294)) -> (bool:True, bool:True) 
+165 [p38 HALF_EVEN -4899049524462658 77673 c0 C0 t] repr(Decimal('3.043695e-15')) -> str:"Decimal('3.043695e-15')" 
+166 [p19 HALF_UP -999999 999999 c1 C1 tInUnCl] sum/min/max/sorted Decimal('-3.5605498757424167753397534403851E+54') -> (Decimal:Decimal('-7.121099751484833550E+54'), Decimal:Decimal('-3.5605498757424167753397534403851E+54'), int:1, list:[Decimal('-3.5605498757424167753397534403851E+54'), Decimal('-1.5'), 0, Decimal('1')]) InRo
+167 [p40 FLOOR -4 8 c0 C0 t] pickle 5 Decimal('-5.70204890713900915042676e-8') -> (MyDecimal:Decimal('-5.70204890713900915042676e-8'), str:'MyDecimal') 
+168 [p34 HALF_DOWN -1955851719 7206680464825 c0 C1 t] round(Decimal('-3E+16'), '1') -> !TypeError: optional arg must be an integer 
+169 [p2 CEILING -85 71 c0 C0 t] pickle 5 Decimal('7.9857897944296843502337e-20') -> (MyDecimal:Decimal('7.9857897944296843502337e-20'), str:'MyDecimal') 
+170 [p39 HALF_EVEN -999999 999999 c0 C0 t] repr(Decimal('-5792062.4414299254729015144216595997')) -> str:"Decimal('-5792062.4414299254729015144216595997')" 
+171 [p28 FLOOR -81200 6797239 c0 C1 t] isnan(Decimal('6.285285797847545862E+38')) -> bool:False 
+172 [p34 FLOOR -999999 999999 c1 C1 tDiRo] hash(Decimal('2749629620297190922791484.07')) -> int:445356704968482521 
+173 [p2 HALF_DOWN -999999 999999 c1 C0 t] Fraction(Decimal('4.4913378892214172842284557378007510114346e+60')) -> Fraction:Fraction(4491337889221417284228455737800751011434600000000000000000000, 1) 
+174 [p34 HALF_DOWN -9 3 c0 C1 t] int(Decimal('-0.9999999999999')) -> int:0 
+175 [p9 HALF_DOWN -52 22 c0 C1 t] int(Decimal('838540588473679.589771')) -> int:838540588473679 
+176 hash(Decimal('3562536848.6252734375')) == hash(Fraction(91200943324807, 25600)) -> (bool:True, bool:True, int:427211464214902099) 
+177 [p28 CEILING -999999 999999 c1 C1 t] Decimal('-9.65963E-46') real imag -> (Decimal:Decimal('-9.65963E-46'), Decimal:Decimal('0'), Decimal:Decimal('-9.65963E-46'), bool:True, bool:True, bool:True, bool:False) 
+178 [p38 FLOOR -999999 999999 c0 C1 tUnRo] hash(Decimal('3E-59')) -> int:2258182592160541967 
+179 [p1 HALF_EVEN -2 8094987 c0 C0 t] hash(Decimal('-4.17532701441122299320268527e-26')) -> int:-191235888830937706 
+180 [p39 UP -999999 999999 c0 C0 t] Fraction(Decimal('3.1596029739684537390e+33')) -> Fraction:Fraction(3159602973968453739000000000000000, 1) 
+181 [p16 FLOOR -999999999999999999 999999999999999999 c1 C1 t] round(Decimal('-656878550420912574.6972391382402122364333'), IntLike()) -> !TypeError: optional arg must be an integer 
+182 [p9 HALF_UP -317654 7529163 c1 C1 tIn] round(Decimal('-7.64E+21'), None) -> int:-7640000000000000000000 
+183 [p2 05UP -999999 999999 c0 C0 t] floor(Decimal('-1.819815102e+17')) -> int:-181981510200000000 
+184 [p3 FLOOR -98 61 c1 C1 tDiUnSu] str(Decimal('-9099999990990000909009090999.0000090009')) -> str:'-9099999990990000909009090999.0000090009' 
+185 [p16 FLOOR -999999 999999 c0 C1 tIn] hash(Decimal('-1.5831939135291483398281E-18')) -> int:-1653437325905040857 
+186 [p9 UP -53 5 c0 C1 t] copy(Decimal('9.9999999999999999E-35')) -> Decimal:Decimal('9.9999999999999999E-35') 
+187 [p19 FLOOR -33 30 c0 C1 t] round(Decimal('-0.09009909990000009090009009090000099909009'), None) -> int:0 
+188 hash(Decimal(float:-4.957862645231159e+48)) -> (bool:True, bool:True) 
+189 [p9 HALF_DOWN -999999 999999 c0 C1 tCl] Fraction(Decimal('1E-44')) -> Fraction:Fraction(1, 100000000000000000000000000000000000000000000) 
+190 hash(Decimal('-3323520863.88196')) == hash(Fraction(-83088021597049, 25000)) -> (bool:True, bool:True, int:-830195720360819234) 
+191 [p39 HALF_DOWN -999999 999999 c0 C0 t] Decimal('-6.27133831600158337216388e-10') real imag -> (Decimal:Decimal('-6.27133831600158337216388e-10'), Decimal:Decimal('0'), Decimal:Decimal('-6.27133831600158337216388e-10'), bool:True, bool:True, bool:True, bool:False) 
+192 [p9 05UP -74 23 c1 C0 t] sum/min/max/sorted Decimal('-9.999e-42') -> (Decimal:Decimal('0.999999998'), Decimal:Decimal('-9.999e-42'), int:1, list:[Decimal('-1.5'), Decimal('-9.999e-42'), 0, Decimal('1')]) InRo
+193 [p28 DOWN -10 1 c1 C1 tDiRo] hash(Decimal('-8.0716477E-26')) -> int:-714699672616222857 
+194 [p38 05UP -33 67 c0 C1 t] int(Decimal('-5.0505005005550550555550055E-11')) -> int:0 
+195 [p20 CEILING 0 2 c0 C1 t] Decimal('7.61325348E-38') real imag -> (Decimal:Decimal('7.61325348E-38'), Decimal:Decimal('0'), Decimal:Decimal('7.61325348E-38'), bool:True, bool:True, bool:True, bool:False) UnSuInRo
+196 [p28 HALF_DOWN -20 73 c0 C0 tDiSuCl] complex(Decimal('-5.0000000000000000000000000000000e+41')) -> complex:(-5e+41+0j) 
+197 [p16 HALF_DOWN -999999 999999 c1 C1 t] bool(Decimal('97678.281529759963177137540559')) -> bool:True 
+198 [p28 HALF_UP -999999 999999 c1 C1 tSu] sum/min/max/sorted Decimal('-2.7134699785191646445849747339E+47') -> (Decimal:Decimal('-5.426939957038329289169949468E+47'), Decimal:Decimal('-2.7134699785191646445849747339E+47'), int:1, list:[Decimal('-2.7134699785191646445849747339E+47'), Decimal('-1.5'), 0, Decimal('1')]) InRo
+199 [p16 HALF_DOWN -44 22 c0 C1 t] deepcopy(Decimal('7.44880593222807000262393327E-18')) -> Decimal:Decimal('7.44880593222807000262393327E-18') 
+200 [p38 HALF_EVEN -930179162293788 3580465 c1 C1 tFlDiRo] hash(Decimal('0.000006291585435690406')) -> int:2254603045361388507 
+201 [p20 FLOOR -999999 999999 c1 C1 t] hash(Decimal('4.47541967642658601681714592486344E-8')) -> int:2247691001295732893 
+202 [p39 05UP -5 10 c1 C1 t] deepcopy(Decimal('7.503124081994215166471789E+40')) -> Decimal:Decimal('7.503124081994215166471789E+40') 
+203 [p9 HALF_UP -79 52 c0 C1 t] round(Decimal('-0.0000462695645863493190385827282349'), None) -> int:0 
+204 [p34 05UP -999999 999999 c0 C1 t] abs(Decimal('-8.222522910E-49')) -> Decimal:Decimal('8.222522910E-49') 
+205 [p1 HALF_UP -10 1 c1 C1 t] abs(Decimal('-480325146453001980338195254484720457481.0')) -> Decimal:Decimal('Infinity') OvInRo
+206 [p19 FLOOR -98 67 c0 C1 t] hash(Decimal('-766980')) -> int:-766980 
+207 [p9 DOWN -999999999999999999 999999999999999999 c1 C0 t] sum/min/max/sorted Decimal('-620836894321674105.171664100338613623756') -> (Decimal:Decimal('-1.24167378e+18'), Decimal:Decimal('-620836894321674105.171664100338613623756'), int:1, list:[Decimal('-620836894321674105.171664100338613623756'), Decimal('-1.5'), 0, Decimal('1')]) InRo
+208 [p28 HALF_UP -31 44 c0 C1 t] complex(Decimal('9.9090990099999E+20')) -> complex:(9.9090990099999e+20+0j) 
+209 hash(Decimal(float:-318631.5)) -> !FloatOperation: [<class 'decimal.FloatOperation'>] 
+210 [p2 HALF_UP -999999 999999 c0 C1 t] pickle 0 Decimal('4.277246176E+15') -> (MyDecimal:Decimal('4.277246176E+15'), str:'MyDecimal') 
+211 hash(Decimal('12023677744193556169.125')) == hash(Fraction(96189421953548449353, 8)) -> (bool:True, bool:True, int:782693074276798158) 
+212 [p34 DOWN -85 5 c0 C0 t] float(Decimal('2.50221e+23')) -> float:2.50221e+23 
+213 [p33 CEILING -75 16 c1 C1 t] hash(Decimal('-9.9999999999999999999999999E+42')) -> int:-279992382973831498 
+214 [p20 05UP -6346730210 543828580029986 c0 C1 tDiUnSu] Fraction(Decimal('-6.8808878951238946604E+40')) -> Fraction:Fraction(-68808878951238946604000000000000000000000, 1) 
+215 hash(Decimal('-497433735.93510284423828125')) == hash(Fraction(-325998173182429, 655360)) -> (bool:True, bool:True, int:-311525949409161147) 
+216 [p28 HALF_DOWN -815004589324 242416215290985 c0 C1 tUnInRo] hash(Decimal('-468263635290333579434458818.26')) -> int:-25585254825550411 
+217 [p24 HALF_DOWN -999999 999999 c1 C1 tFlCl] Decimal('-2.000000000000000000000000E+34') real imag -> (Decimal:Decimal('-2.000000000000000000000000E+34'), Decimal:Decimal('0'), Decimal:Decimal('-2.000000000000000000000000E+34'), bool:True, bool:True, bool:True, bool:False) Ro
+218 [p39 DOWN -999999 999999 c0 C1 tRo] Decimal('-2000000000000000000.000000') real imag -> (Decimal:Decimal('-2000000000000000000.000000'), Decimal:Decimal('0'), Decimal:Decimal('-2000000000000000000.000000'), bool:True, bool:True, bool:True, bool:False) 
+219 [p43 DOWN -2 6 c0 C1 tFlDiSuRo] pickle 1 Decimal('7.246438089004191927E+19') -> (Decimal:Decimal('7.246438089004191927E+19'), str:'Decimal') 
+220 [p9 HALF_DOWN -59 43 c0 C1 t] Decimal('50505005.5055000550000005000500050505000') real imag -> (Decimal:Decimal('50505005.5055000550000005000500050505000'), Decimal:Decimal('0'), Decimal:Decimal('50505005.5055000550000005000500050505000'), bool:True, bool:True, bool:True, bool:False) InRo
+221 [p2 FLOOR -8 7 c0 C1 t] hash(Decimal('-5.7350637868472528592211604820015305634660E+43')) -> int:-1276655184927812867 
+222 [p39 DOWN -2 3 c0 C1 tFl] Decimal('-900000000000000000000.00000000000000000000') real imag -> (Decimal:Decimal('-900000000000000000000.00000000000000000000'), Decimal:Decimal('0'), Decimal:Decimal('-900000000000000000000.00000000000000000000'), bool:True, bool:True, bool:True, bool:False) OvInRo
+223 [p42 05UP -69 92 c0 C1 t] sum/min/max/sorted Decimal('-900000000000000.0000000000000000000') -> (Decimal:Decimal('-1799999999999999.0000000000000000000'), Decimal:Decimal('-900000000000000.0000000000000000000'), int:1, list:[Decimal('-900000000000000.0000000000000000000'), Decimal('-1.5'), 0, Decimal('1')]) 
+224 hash(Decimal(float:5e-324)) -> (bool:True, bool:True) 
+225 [p3 DOWN -32 98 c1 C1 t] pickle 3 Decimal('sNaN') -> (MyDecimal:Decimal('sNaN'), str:'MyDecimal') 
+226 [p28 CEILING -90 2 c1 C1 t] round(Decimal('4.00E-37'), 0) -> Decimal:Decimal('1.0000000000000000000000000') InRoCl
+227 [p9 DOWN -999999 999999 c0 C1 tUnSu] hash(Decimal('-0')) -> int:0 
+228 [p38 FLOOR -82548202629420412 62774610195 c1 C1 t] hash(Decimal('5.269603412992433986898521375E+29')) -> int:315971798924895760 
+229 [p15 FLOOR -999999 999999 c0 C1 t] sum/min/max/sorted Decimal('550050050500505.5000') -> (Decimal:Decimal('1.10010010100101E+15'), int:1, Decimal:Decimal('550050050500505.5000'), list:[Decimal('-1.5'), 0, Decimal('1'), Decimal('550050050500505.5000')]) InRo
+230 [p16 HALF_EVEN -82 80 c0 C1 tDiUn] Decimal('-5.55500055550505505050055055005505500050000') real imag -> (Decimal:Decimal('-5.55500055550505505050055055005505500050000'), Decimal:Decimal('0'), Decimal:Decimal('-5.55500055550505505050055055005505500050000'), bool:True, bool:True, bool:True, bool:False) InRo
+231 [p19 HALF_DOWN -19 41 c0 C1 t] hash(Decimal('-9.90090000000090E+33')) -> int:-1510119651802521018 
+232 hash(Decimal(float:-9346.625)) -> (bool:True, bool:True) 
+233 [p2 UP -999999 999999 c1 C1 tCl] pickle 0 Decimal('-sNaN45') -> (Decimal:Decimal('-sNaN45'), str:'Decimal') 
+234 [p1 DOWN -999999 999999 c0 C1 t] isnan(Decimal('-6E-53')) -> bool:False 
+235 [p3 HALF_DOWN -10 0 c1 C0 t] round(Decimal('-6.0000e+8'), 1.0) -> !TypeError: optional arg must be an integer 
+236 [p28 05UP -16 67 c0 C1 t] pickle 4 Decimal('5.0005055550055050050500555505E+51') -> (Decimal:Decimal('5.0005055550055050050500555505E+51'), str:'Decimal') 
+237 [p3 HALF_DOWN -92047020226 9772596418 c1 C1 t] round(Decimal('423958738693629470157130.8243893332'), -9223372036854775808) -> Decimal:Decimal('NaN') In
+238 [p38 05UP -999999 999999 c1 C1 t] round(Decimal('-1.84474786370718811830857371292E+35'), '1') -> !TypeError: optional arg must be an integer 
+239 [p19 UP -3 10 c0 C1 t] bool(Decimal('-0.000')) -> bool:False 
+240 [p34 FLOOR -8 4 c0 C1 tInDiSu] pickle 1 Decimal('-2.68169267464416328030817E-34') -> (MyDecimal:Decimal('-2.68169267464416328030817E-34'), str:'MyDecimal') 
+241 [p38 HALF_EVEN -39 42 c0 C1 tRo] Decimal('9.469679054909957783382277E+47') real imag -> !Rounded: [<class 'decimal.Rounded'>] OvInRo
+242 [p28 HALF_UP -999999 999999 c0 C1 t] Fraction(Decimal('-9.6684951430954E+25')) -> Fraction:Fraction(-96684951430954000000000000, 1) 
+243 [p28 DOWN -71 30 c0 C1 t] Fraction(Decimal('-9.9999999999999999E-25')) -> Fraction:Fraction(-99999999999999999, 100000000000000000000000000000000000000000) 
+244 [p38 CEILING -999999 999999 c0 C1 t] hash(Decimal('6.4E-37')) -> int:2243883453635440577 
+245 hash(Decimal('4696388494346306545741.9375052734375')) == hash(Fraction(24045509091053089514198720027, 5120000)) -> (bool:True, bool:True, int:396947728669323514) 
+246 hash(Decimal('1553575271302973750754.69791488')) == hash(Fraction(606865340352724121388553873, 390625)) -> (bool:True, bool:True, int:1784111040846448625) 
+247 [p28 CEILING -999999999999999999 999999999999999999 c1 C1 t] pickle 2 Decimal('412905400977.648892358446496202051284686') -> (MyDecimal:Decimal('412905400977.648892358446496202051284686'), str:'MyDecimal') 
+248 [p36 FLOOR -999999 999999 c1 C1 t] hash(Decimal('4.14271363598167504816301E+24')) -> int:1497983214290387145 
+249 [p28 UP -999999999999999999 999999999999999999 c1 C1 tFlDiSu] sum/min/max/sorted Decimal('-5.255335160435157E+20') -> (Decimal:Decimal('-1051067032087031399999'), Decimal:Decimal('-5.255335160435157E+20'), int:1, list:[Decimal('-5.255335160435157E+20'), Decimal('-1.5'), 0, Decimal('1')]) 
+250 [p20 HALF_EVEN -999999 999999 c1 C0 tDiUn] hash(Decimal('-8.95724045269e+28')) -> int:-290916251083371417 
+251 [p3 DOWN -999999 999999 c1 C1 t] hash(Decimal('-0')) -> int:0 
+252 [p2 HALF_DOWN -999999999999999999 999999999999999999 c0 C1 t] Decimal('-0.007139310425768040808059010') real imag -> (Decimal:Decimal('-0.007139310425768040808059010'), Decimal:Decimal('0'), Decimal:Decimal('-0.007139310425768040808059010'), bool:True, bool:True, bool:True, bool:False) InRo
+253 [p28 HALF_DOWN -10 53 c0 C1 tUnRo] repr(Decimal('-sNaN45')) -> str:"Decimal('-sNaN45')" 
+254 [p38 HALF_UP -2 7 c0 C1 tIn] int(Decimal('9.39625781340233126584633145E-27')) -> int:0 
+255 hash(Decimal('-1310750972099.211815032958984375')) == hash(Fraction(-8590137570749394551, 6553600)) -> (bool:True, bool:True, int:-2056386770011126282) 
+256 [p39 UP -999999 999999 c1 C1 tDiInRo] sum/min/max/sorted Decimal('-9.99999999999999999999E-30') -> !Inexact: [<class 'decimal.Inexact'>, <class 'decimal.Rounded'>] InRo
+257 [p29 FLOOR -35 10 c1 C1 tDiOv] Decimal('-5.05005005550555000550000055005E+42') real imag -> !Overflow: [<class 'decimal.Overflow'>] OvInRo
+258 [p20 FLOOR -5958593673 71 c0 C1 tDiSuInCl] Fraction(Decimal('-1.2667968515282365624E-32')) -> Fraction:Fraction(-1583496064410295703, 125000000000000000000000000000000000000000000000000) 
+259 [p20 FLOOR -999999 999999 c1 C1 t] hash(Decimal('-2.00000000000000000000000000000E-24')) -> int:-1790881832089522156 
+260 [p20 FLOOR -999999999999999999 999999999999999999 c0 C1 tFlRo] Decimal('-0.000607233995955459465187293576563390623') real imag -> !Rounded: [<class 'decimal.Rounded'>] InRo
+261 [p28 HALF_UP -999999 999999 c0 C1 tInRo] hash(Decimal('-6.86462266777947862599985493144938592786207919E+50')) -> int:-12009823273485228 
+262 [p38 UP -9 2 c1 C1 tRo] int(Decimal('-8.938138161875023700381305065619018E+42')) -> int:-8938138161875023700381305065619018000000000 
+263 [p35 05UP -82854161 2537972 c0 C1 t] sum/min/max/sorted Decimal('-5.5555505555005000055E-22') -> (Decimal:Decimal('0.99999999999999999999888888988889988'), Decimal:Decimal('-5.5555505555005000055E-22'), int:1, list:[Decimal('-1.5'), Decimal('-5.5555505555005000055E-22'), 0, Decimal('1')]) InRo
+264 [p16 HALF_DOWN -98 74 c0 C1 t] pickle 5 Decimal('9.900999900000009009009000990E-13') -> (MyDecimal:Decimal('9.900999900000009009009000990E-13'), str:'MyDecimal') 
+265 [p28 HALF_DOWN -187950858560 780813 c0 C1 t] hash(Decimal('-5.0555000E-14')) -> int:-386482400114403265 
+266 [p3 HALF_EVEN -16 37 c0 C1 tOv] pickle 0 Decimal('7.501393456300211846313546E-31') -> (MyDecimal:Decimal('7.501393456300211846313546E-31'), str:'MyDecimal') 
+267 [p20 HALF_DOWN -959432 51749068182281048 c0 C1 t] hash(Decimal('-476623493125940658.3475072470764776')) -> int:-240559949586678958 
+268 hash(Decimal(float:1.1017094814200927e+254)) -> (bool:True, bool:True) 
+269 [p1 HALF_UP -47 41 c0 C1 t] round(Decimal('-9.9999999999999999E-12'), -15) -> Decimal:Decimal('-0E+15') InRo
+270 hash(Decimal('-457216031148560525289531403.75')) == hash(Fraction(-1828864124594242101158125615, 4)) -> (bool:True, bool:True, int:-1052819682340684321) 
+271 [p2 HALF_EVEN -56 74 c0 C1 t] round(Decimal('-0.000611736983623064577277483322'), 2) -> Decimal:Decimal('-0.00') InRo
+272 [p34 05UP -999999999999999999 999999999999999999 c0 C0 t] sum/min/max/sorted Decimal('-9.9999999999999999999999999999999999999999e-17') -> (Decimal:Decimal('0.9999999999999998000000000000000001'), Decimal:Decimal('-9.9999999999999999999999999999999999999999e-17'), int:1, list:[Decimal('-1.5'), Decimal('-9.9999999999999999999999999999999999999999e-17'), 0, Decimal('1')]) InRo
+273 [p38 05UP -999999 999999 c1 C0 tOvCl] Decimal('6.1828263e+21') real imag -> (Decimal:Decimal('6.1828263e+21'), Decimal:Decimal('0'), Decimal:Decimal('6.1828263e+21'), bool:True, bool:True, bool:True, bool:False) 
+274 [p3 FLOOR -5 7 c1 C0 t] round(Decimal('-4.2697672248159040012323340985e-29'), -1000000000000000000000000000000) -> !OverflowError: Python int too large to convert to C ssize_t 
+275 [p16 CEILING -8024910834032038 56555768837 c0 C1 t] pickle 2 Decimal('44314913113709065123118908962349.9') -> (Decimal:Decimal('44314913113709065123118908962349.9'), str:'Decimal') 
+276 [p20 DOWN -78309821105572543 75399211457 c0 C1 tOvIn] complex(Decimal('-9.99999999999999999999999999999999999999E+52')) -> complex:(-1e+53+0j) 
+277 [p9 HALF_EVEN -90 3 c1 C1 t] sum/min/max/sorted Decimal('99999999999999.999999999') -> (Decimal:Decimal('Infinity'), int:1, Decimal:Decimal('99999999999999.999999999'), list:[Decimal('-1.5'), 0, Decimal('1'), Decimal('99999999999999.999999999')]) OvInRo
+278 [p21 FLOOR -85 60 c0 C1 tInDiRo] bool(Decimal('-5.33432501676693722054972520368E-11')) -> bool:True 
+279 [p1 05UP -41 54 c1 C1 t] hash(Decimal('-9.9999E-44')) -> int:-1665121100852684688 
+280 [p3 HALF_UP -3 8 c1 C1 t] abs(Decimal('-1.94871703567023707536E-35')) -> Decimal:Decimal('0.00000') UnSuInRoCl
+281 hash(Decimal(float:-42699.0)) -> (bool:True, bool:True) 
+282 [p34 UP -46 89 c0 C1 tFlOvInCl] pickle 4 Decimal('-7.945498267970801496832868592E+31') -> (MyDecimal:Decimal('-7.945498267970801496832868592E+31'), str:'MyDecimal') 
+283 [p38 UP -4 8 c0 C1 tInFl] pickle 4 Decimal('-6.82811655E-34') -> (Decimal:Decimal('-6.82811655E-34'), str:'Decimal') 
+284 [p16 05UP -1 0 c1 C1 tSuIn] hash(Decimal('-0.002116913935182')) -> int:-841026059218661221 
+285 hash(Decimal(float:-41295.6)) -> (bool:True, bool:True) 
+286 [p16 CEILING -999999 999999 c0 C1 tOv] sqrt(Decimal('9.4013347719598540536723E-21')) -> float:9.696048046477417e-11 
+287 [p20 HALF_UP -999999 999999 c0 C1 t] pickle 3 Decimal('-5500000505550555500050050555555.0505550') -> (Decimal:Decimal('-5500000505550555500050050555555.0505550'), str:'Decimal') 
+288 [p27 HALF_UP -999999999999999999 999999999999999999 c1 C1 t] pickle 4 Decimal('5.940849352852727E-20') -> (MyDecimal:Decimal('5.940849352852727E-20'), str:'MyDecimal') 
+289 hash(Decimal('639186359773806561119.673583984375')) == hash(Fraction(2618107329633511674346183, 4096)) -> (bool:True, bool:True, int:2021025143102736500) 
+290 [p28 DOWN -3 3 c0 C1 tUnRoCl] hash(Decimal('3.363020335764358E-12')) -> int:1775036596386511807 
+291 [p28 DOWN -999999 999999 c0 C0 tInRo] round(Decimal('9.54886187948309305102624627e-8'), 1.0) -> !TypeError: optional arg must be an integer 
+292 [p1 HALF_UP -27 86 c1 C1 tFlDiUnSuIn] hash(Decimal('9.999999E-43')) -> int:975586425487263981 
+293 [p3 05UP -999999 999999 c0 C0 tInSu] sum/min/max/sorted Decimal('-6314333481.47388421536226763') -> (Decimal:Decimal('-1.26e+10'), Decimal:Decimal('-6314333481.47388421536226763'), int:1, list:[Decimal('-6314333481.47388421536226763'), Decimal('-1.5'), 0, Decimal('1')]) InRo
+294 [p28 HALF_UP -34 86 c1 C1 tFlOvSu] round(Decimal('9.99999999999999999999999E-15'), 1.0) -> !TypeError: optional arg must be an integer 
+295 hash(Decimal(float:-3.5220320117616463e-209)) -> !FloatOperation: [<class 'decimal.FloatOperation'>] 
+296 [p19 HALF_EVEN -999999999999999999 999999999999999999 c0 C0 tIn] int(Decimal('-9.09090009e+29')) -> int:-909090009000000000000000000000 
+297 [p20 HALF_EVEN -8 9 c1 C0 t] hash(Decimal('5.54208515192e-16')) -> int:1165080187937624499 
+298 [p39 05UP -999999 999999 c1 C0 t] pickle 1 Decimal('6.2955301e+26') -> (MyDecimal:Decimal('6.2955301e+26'), str:'MyDecimal') 
+299 hash(Decimal(float:228084.48771154758)) -> (bool:True, bool:True) 
+300 [p45 FLOOR -999999 999999 c1 C1 t] hash(Decimal('9.09E+19')) -> int:972122640665935911 
+301 [p16 HALF_UP -2 12 c1 C1 t] copy(Decimal('-8.72215409315411269E+28')) -> Decimal:Decimal('-8.72215409315411269E+28') 
+302 [p3 HALF_UP 0 7 c0 C1 t] Decimal('-6.383926725363085E-7') real imag -> (Decimal:Decimal('-6.383926725363085E-7'), Decimal:Decimal('0'), Decimal:Decimal('-6.383926725363085E-7'), bool:True, bool:True, bool:True, bool:False) UnSuInRoCl
+303 [p26 05UP -8763575193 8347312870313155 c1 C1 t] Decimal('7.000000000000E-43') real imag -> (Decimal:Decimal('7.000000000000E-43'), Decimal:Decimal('0'), Decimal:Decimal('7.000000000000E-43'), bool:True, bool:True, bool:True, bool:False) 
+304 hash(Decimal('-2535045249483035844830.9326171875')) == hash(Fraction(-2595886335470628705106875, 1024)) -> (bool:True, bool:True, int:-768408170041910570) 
+305 hash(Decimal('250059676178255334.3220351875')) == hash(Fraction(4000954818852085349152563, 16000000)) -> (bool:True, bool:True, int:409852723219319339) 
+306 [p38 HALF_UP -999999 999999 c0 C1 t] isnan(Decimal('9.99999E+22')) -> bool:False 
+307 [p3 05UP -999999 999999 c0 C1 tDiCl] round(Decimal('-sNaN45'), True) -> Decimal:Decimal('-NaN45') In
+308 [p37 HALF_DOWN -999999 999999 c0 C1 tOv] round(Decimal('-648345132621670441627972865371075467817.4')) -> int:-648345132621670441627972865371075467817 
+309 [p2 HALF_UP -2 9 c0 C1 t] hash(Decimal('555050500505505555.05055050505055555505')) -> int:1225629199000327065 
+310 [p22 HALF_UP -999999 999999 c1 C1 tInCl] repr(Decimal('5.0000050055550050505505550055500E-29')) -> str:"Decimal('5.0000050055550050505505550055500E-29')" 
+311 hash(Decimal('381639115445.9925077326025390625')) == hash(Fraction(78159690843339265583637, 204800000000)) -> (bool:True, bool:True, int:1675999727167674802) 
+312 hash(Decimal('1891562.9357024')) == hash(Fraction(591113417407, 312500)) -> (bool:True, bool:True, int:112473487968113441) 
+313 [p38 HALF_DOWN -999999 999999 c0 C1 tSuRo] abs(Decimal('-193946224.965706')) -> Decimal:Decimal('193946224.965706') 
+314 [p16 UP -999999 999999 c1 C1 t] ceil(Decimal('-7.40835081E-40')) -> int:0 
+315 [p38 HALF_DOWN -60 38 c0 C0 t] round(Decimal('9.0999990990909e-33'), -5) -> Decimal:Decimal('0e+5') InRo
+316 [p2 HALF_DOWN -999999999999999999 999999999999999999 c0 C1 t] complex(Decimal('7.785066664306353927031310296235E-21')) -> complex:(7.785066664306354e-21+0j) 
+317 hash(Decimal('-2.84536248')) == hash(Fraction(-35567031, 12500000)) -> (bool:True, bool:True, int:-1622007264538581171) 
+318 [p39 HALF_UP -2 7 c0 C1 tInSuIn] round(Decimal('-1.7026868877897000151703956001128731309E+60'), -1000000000000000000000000000000) -> !OverflowError: Python int too large to convert to C ssize_t 
+319 [p39 HALF_UP -999999 999999 c0 C1 t] Fraction(Decimal('NaN123')) -> !ValueError: cannot convert NaN to integer ratio 
+320 [p39 DOWN -6 1 c0 C1 t] sqrt(Decimal('-sNaN45')) -> !ValueError: cannot convert signaling NaN to float 
+321 [p39 UP -999999 999999 c0 C1 tDiSuIn] ceil(Decimal('90900099090990909099990999090099.009')) -> int:90900099090990909099990999090100 
+322 [p39 HALF_DOWN -18 40 c0 C1 t] pickle 5 Decimal('-3.4986431619650505E-34') -> (MyDecimal:Decimal('-3.4986431619650505E-34'), str:'MyDecimal') 
+323 hash(Decimal('0.018491015625')) == hash(Fraction(47337, 2560000)) -> (bool:True, bool:True, int:618175794211905444) 
+324 [p38 CEILING -999999 999999 c1 C0 t] sum/min/max/sorted Decimal('-9.543848800721702e-19') -> (Decimal:Decimal('0.9999999999999999980912302398556596'), Decimal:Decimal('-9.543848800721702e-19'), int:1, list:[Decimal('-1.5'), Decimal('-9.543848800721702e-19'), 0, Decimal('1')]) 
+325 [p20 FLOOR -8 11 c0 C1 tCl] int(Decimal('-55500505550.5000005055005')) -> int:-55500505550 
+326 [p9 FLOOR -999999 999999 c0 C1 t] pickle 3 Decimal('6.76823903076439349036766419640E+45') -> (Decimal:Decimal('6.76823903076439349036766419640E+45'), str:'Decimal') 
+327 [p3 HALF_EVEN -999999 999999 c1 C1 tDiOvUn] isnan(Decimal('-7.0013E+13')) -> bool:False 
+328 [p28 HALF_UP -999999999999999999 999999999999999999 c0 C0 t] int(Decimal('99999999999.999999')) -> int:99999999999 
+329 hash(Decimal(float:-35078.7)) -> (bool:True, bool:True) 
+330 [p1 HALF_DOWN -999999999999999999 999999999999999999 c1 C1 t] abs(Decimal('-55555050050555500555.055005500550050050055550')) -> Decimal:Decimal('6E+19') InRo
+331 [p20 HALF_UP -4 80 c0 C0 t] hash(Decimal('4.48559e-34')) -> int:1415634065699812072 
+332 [p28 CEILING -5 9 c1 C0 t] hash(Decimal('-5.0e-47')) -> int:-1394936134852282091 
+333 [p20 DOWN -7 58 c0 C1 t] hash(Decimal('-4.7600269901404797719362619544052012E+59')) -> int:-2303420491721707185 
+334 [p20 HALF_DOWN -28000482401322881 2163 c0 C1 t] hash(Decimal('-4.0000000000000000000000000000000000000000000E-16')) -> int:-1939911311369899613 
+335 [p34 FLOOR -999999 999999 c1 C1 t] deepcopy(Decimal('4.9302006E+25')) -> Decimal:Decimal('4.9302006E+25') 
+336 [p28 05UP -50 29 c0 C1 t] pickle 1 Decimal('-9.99999999999999999999999999E+47') -> (MyDecimal:Decimal('-9.99999999999999999999999999E+47'), str:'MyDecimal') 
+337 [p2 05UP -999999 999999 c0 C1 t] sum/min/max/sorted Decimal('9.900506718670E-34') -> (Decimal:Decimal('1.1'), Decimal:Decimal('9.900506718670E-34'), int:1, list:[Decimal('-1.5'), 0, Decimal('9.900506718670E-34'), Decimal('1')]) InRo
+338 [p39 DOWN -999999999999999999 999999999999999999 c1 C0 t] float(Decimal('800906393861174.2389567635016')) -> float:800906393861174.2 
+339 [p19 FLOOR -999999999999999999 999999999999999999 c0 C0 t] sum/min/max/sorted Decimal('-5.687122551964985056983e-33') -> (Decimal:Decimal('0.9999999999999999998'), Decimal:Decimal('-5.687122551964985056983e-33'), int:1, list:[Decimal('-1.5'), Decimal('-5.687122551964985056983e-33'), 0, Decimal('1')]) InRo
+340 hash(Decimal('-92367553284963997.53956002115234375')) == hash(Fraction(-4729218728190156674025473083, 51200000000)) -> (bool:True, bool:True, int:-634481254766887213) 
+341 [p28 CEILING -999999 999999 c0 C1 tFl] pickle 1 Decimal('5036190222504285119340463233067.86830681810') -> (Decimal:Decimal('5036190222504285119340463233067.86830681810'), str:'Decimal') 
+342 [p9 HALF_DOWN -999999 999999 c0 C1 t] round(Decimal('Infinity')) -> !OverflowError: cannot convert Infinity to integer 
+343 hash(Decimal('700954.01495640625')) == hash(Fraction(4486105695721, 6400000)) -> (bool:True, bool:True, int:1986890517556642396) 
+344 [p16 CEILING -8499 58011688787679 c0 C1 t] repr(Decimal('0.000005050055005055050500055000050055000055005550')) -> str:"Decimal('0.000005050055005055050500055000050055000055005550')" 
+345 [p28 HALF_UP -76 96 c1 C1 t] round(Decimal('95231347560365593852339709.5893421206269'), 0) -> Decimal:Decimal('95231347560365593852339710') InRo
+346 [p39 UP -8 115524549 c0 C1 tInFlUn] floor(Decimal('5.0500E+21')) -> int:5050000000000000000000 
+347 [p20 HALF_EVEN -999999 999999 c1 C1 tInFlUn] floor(Decimal('-9.99999999999999999999999E+46')) -> int:-99999999999999999999999900000000000000000000000 
+348 [p39 FLOOR -4 4 c1 C0 tDi] round(Decimal('8000000000.000000000000000000'), 9) -> Decimal:Decimal('NaN') In
+349 hash(Decimal('183701.001025390625')) == hash(Fraction(3762196501, 20480)) -> (bool:True, bool:True, int:1385870195332769582) 
+350 hash(Decimal(float:2.3515066298489896e-275)) -> (bool:True, bool:True) 
+351 hash(Decimal('-2421818984404234.3834112')) == hash(Fraction(-189204608156580811204, 78125)) -> (bool:True, bool:True, int:-1318663416922246096) 
+352 [p9 05UP -6 6 c1 C0 t] round(Decimal('3.33161654133759345218340851119443531201e+41'), 9223372036854775807) -> Decimal:Decimal('NaN') In
+353 [p34 HALF_DOWN -999999 999999 c0 C1 tCl] round(Decimal('0.9999999999999999999999999999999'), 2) -> Decimal:Decimal('1.00') InRo
+354 [p1 CEILING -98 26 c1 C1 tDiSu] int(Decimal('-5.5550555505505000505500E-15')) -> int:0 
+355 [p20 HALF_EVEN -17 82 c1 C1 t] trunc(Decimal('1.1410375585679707407234757991485660887767757E+66')) -> int:1141037558567970740723475799148566088776775700000000000000000000000 
+356 hash(Decimal('10956957764.9778832')) == hash(Fraction(6848098603111177, 625000)) -> (bool:True, bool:True, int:1016315997000356027) 
+357 [p6 HALF_DOWN -999999999999999999 999999999999999999 c1 C0 t] Fraction(Decimal('9.00000000000e+22')) -> Fraction:Fraction(90000000000000000000000, 1) 
+358 hash(Decimal(float:1e+308)) -> (bool:True, bool:True) 
+359 [p1 HALF_DOWN -16 58 c1 C1 t] round(Decimal('-3.4402271190510187306653185584174855922345292E-17'), 5) -> Decimal:Decimal('-0.00000') InRo
+360 [p38 FLOOR -5 1 c1 C0 t] hash(Decimal('-4644989286047029867880439831136216386835.81947')) -> int:-470351356770086149 
+361 [p19 CEILING -1 8 c1 C0 tInFlUnCl] sum/min/max/sorted Decimal('1.8439906219352114254173628047470144045e+48') -> (Decimal:Decimal('Infinity'), int:1, Decimal:Decimal('1.8439906219352114254173628047470144045e+48'), list:[Decimal('-1.5'), 0, Decimal('1'), Decimal('1.8439906219352114254173628047470144045e+48')]) OvInRo
+362 [p38 HALF_DOWN -51 26 c0 C1 tUnCl] pickle 1 Decimal('63078168567897.6708793220549') -> (Decimal:Decimal('63078168567897.6708793220549'), str:'Decimal') 
+363 [p9 HALF_EVEN -999999999999999999 999999999999999999 c0 C1 t] sum/min/max/sorted Decimal('-3.47221651294221841522183078167140511024691E+44') -> (Decimal:Decimal('-6.94443302E+44'), Decimal:Decimal('-3.47221651294221841522183078167140511024691E+44'), int:1, list:[Decimal('-3.47221651294221841522183078167140511024691E+44'), Decimal('-1.5'), 0, Decimal('1')]) InRo
+364 [p38 UP -83101429312 3256861277363149 c0 C0 t] round(Decimal('0.000009999999999999'), IntLike()) -> !TypeError: optional arg must be an integer 
+365 [p3 CEILING -999999 999999 c0 C0 t] Fraction(Decimal('-4.524368074636121452938939e-30')) -> Fraction:Fraction(-4524368074636121452938939, 1000000000000000000000000000000000000000000000000000000) 
+366 [p28 HALF_DOWN -1 6 c0 C1 tFlDiUn] bool(Decimal('73534372752448.509723187321949420630543133')) -> bool:True 
+367 [p28 HALF_DOWN -999999 999999 c1 C1 t] round(Decimal('-5.00555005500500500500550050500500000055E-12'), 2) -> Decimal:Decimal('-0.00') InRo
+368 [p19 05UP -999999 999999 c0 C1 t] sum/min/max/sorted Decimal('6679.07029439755626879463006217404045348') -> (Decimal:Decimal('13359.14058879511253'), int:1, Decimal:Decimal('6679.07029439755626879463006217404045348'), list:[Decimal('-1.5'), 0, Decimal('1'), Decimal('6679.07029439755626879463006217404045348')]) InRo
+369 [p28 DOWN -3 1 c1 C1 t] str(Decimal('8.07886597023E-17')) -> str:'8.07886597023E-17' 
+370 [p20 DOWN -999999 999999 c0 C1 tRoCl] round(Decimal('434654403608.568181814135859054'), True) -> !Rounded: [<class 'decimal.Rounded'>] InRo
+371 [p38 HALF_EVEN -10 8 c0 C1 t] round(Decimal('4.07507648957625100476060E-32'), -9223372036854775808) -> Decimal:Decimal('NaN') In
+372 hash(Decimal('-74994743281995.22180872041015625')) == hash(Fraction(-767946171207631071321297, 10240000000)) -> (bool:True, bool:True, int:-1794627570269876118) 
+373 hash(Decimal(float:198005.0)) -> (bool:True, bool:True) 
+374 hash(Decimal(float:-2.28359592681023e-149)) -> (bool:True, bool:True) 
+375 [p10 CEILING -999999 999999 c1 C1 tInFlRo] repr(Decimal('0.00004325914')) -> str:"Decimal('0.00004325914')" 
+376 [p3 CEILING -999999 999999 c1 C0 t] hash(Decimal('-4.5395950773347009807594147275e+38')) -> int:-1272634485511775547 
+377 [p19 CEILING -999999 999999 c0 C1 tIn] isnan(Decimal('-7.09962035636012178949956431233006496226317E+61')) -> bool:False 
+378 [p5 CEILING -999999999999999999 999999999999999999 c0 C1 t] copy(Decimal('-9.173292E+28')) -> Decimal:Decimal('-9.173292E+28') 
+379 [p16 HALF_DOWN -999999999999999999 999999999999999999 c0 C1 tOv] floor(Decimal('6.19602224007413048671465E+31')) -> int:61960222400741304867146500000000 
+380 [p28 UP -3 8 c0 C1 tInRo] floor(Decimal('5.5500500000500555500055050055555505550050055E-17')) -> int:0 
+381 [p19 CEILING -999999999999999999 999999999999999999 c0 C0 t] round(Decimal('-9.0909000090999009009000e+37'), IntLike()) -> !TypeError: optional arg must be an integer 
+382 [p2 HALF_EVEN -5 2 c1 C0 t] sum/min/max/sorted Decimal('4.000000000000000000000000000e+36') -> (Decimal:Decimal('Infinity'), int:1, Decimal:Decimal('4.000000000000000000000000000e+36'), list:[Decimal('-1.5'), 0, Decimal('1'), Decimal('4.000000000000000000000000000e+36')]) OvInRo
+383 [p38 HALF_UP -52 58 c1 C1 t] sum/min/max/sorted Decimal('-33814848236070.0106347196600426098218555717277') -> (Decimal:Decimal('-67629696472139.021269439320085219643712'), Decimal:Decimal('-33814848236070.0106347196600426098218555717277'), int:1, list:[Decimal('-33814848236070.0106347196600426098218555717277'), Decimal('-1.5'), 0, Decimal('1')]) InRo
+384 [p39 UP -7927487995551 37 c1 C1 tFlUnInCl] pickle 4 Decimal('-5.8261372988E-42') -> (MyDecimal:Decimal('-5.8261372988E-42'), str:'MyDecimal') 
+385 [p1 UP -8 2 c0 C0 tOvIn] int(Decimal('3.74278711171407e-22')) -> int:0 
+386 [p28 DOWN -999999 999999 c0 C0 t] pickle 0 Decimal('NaN123') -> (Decimal:Decimal('NaN123'), str:'Decimal') 
+387 [p2 05UP -999999999999999999 999999999999999999 c1 C1 tFlInCl] pickle 3 Decimal('46848048172285180551926739133312078.5072795') -> (Decimal:Decimal('46848048172285180551926739133312078.5072795'), str:'Decimal') 
+388 hash(Decimal(float:-67926.75)) -> (bool:True, bool:True) 
+389 [p28 FLOOR -999999 999999 c0 C1 t] abs(Decimal('9.00990900909009999999990009909090990090990990E+66')) -> Decimal:Decimal('9.009909009090099999999900099E+66') InRo
+390 [p16 FLOOR -999999 999999 c1 C0 t] sum/min/max/sorted Decimal('-5.5050550e+23') -> (Decimal:Decimal('-1.101011000000000e+24'), Decimal:Decimal('-5.5050550e+23'), int:1, list:[Decimal('-5.5050550e+23'), Decimal('-1.5'), 0, Decimal('1')]) InRo
+391 [p19 DOWN -999999 999999 c0 C0 tFlOvSuIn] Decimal('-NaN') real imag -> (Decimal:Decimal('-NaN'), Decimal:Decimal('0'), Decimal:Decimal('-NaN'), bool:True, bool:True, bool:True, bool:False) 
+392 hash(Decimal(float:-352937.0)) -> (bool:True, bool:True) 
+393 hash(Decimal('61.4443379375')) == hash(Fraction(983109407, 16000000)) -> (bool:True, bool:True, int:2022763742229377585) 
+394 [p20 05UP -2 78263 c0 C0 t] round(Decimal('-0.0009999999999'), 0) -> Decimal:Decimal('-1') InRo
+395 [p34 HALF_DOWN -4 96 c0 C1 tDiSuRo] pickle 1 Decimal('8.5107073940474445769132709950929897E-22') -> (Decimal:Decimal('8.5107073940474445769132709950929897E-22'), str:'Decimal') 
+396 hash(Decimal('28342681068980.74498888')) == hash(Fraction(354283513362259312361, 12500000)) -> (bool:True, bool:True, int:318435562995521443) 
+397 hash(Decimal(float:2.2250738585072014e-308)) -> (bool:True, bool:True) 
+398 [p3 HALF_DOWN -4 9 c0 C0 tSu] bool(Decimal('-5.000005000050550505505e-20')) -> bool:True 
+399 [p9 HALF_EVEN -999999999999999999 999999999999999999 c0 C1 t] pickle 0 Decimal('0.000036023531208404556') -> (Decimal:Decimal('0.000036023531208404556'), str:'Decimal') 
+400 [p34 DOWN -999999 999999 c0 C1 t] Decimal('-491.18283135790827004159174237870786665052') real imag -> (Decimal:Decimal('-491.18283135790827004159174237870786665052'), Decimal:Decimal('0'), Decimal:Decimal('-491.18283135790827004159174237870786665052'), bool:True, bool:True, bool:True, bool:False) InRo
+401 [p3 DOWN -2467 888957055 c0 C0 t] trunc(Decimal('-0.000')) -> int:0 
+402 [p20 05UP -8 3 c1 C0 t] sum/min/max/sorted Decimal('9.0090099099999909990909e-37') -> (Decimal:Decimal('1.0000000000000000001'), Decimal:Decimal('9.0090099099999909990909e-37'), int:1, list:[Decimal('-1.5'), 0, Decimal('9.0090099099999909990909e-37'), Decimal('1')]) UnSuInRo
+403 [p38 05UP -999999 999999 c1 C1 tUn] pickle 5 Decimal('8.85E+4') -> (Decimal:Decimal('8.85E+4'), str:'Decimal') 
+404 [p19 HALF_EVEN -7 46 c0 C1 tUn] hash(Decimal('-7.7574812220961912670E+34')) -> int:-2290289052764600465 
+405 [p19 UP -999999 999999 c0 C0 t] deepcopy(Decimal('0e+13')) -> Decimal:Decimal('0e+13') 
+406 hash(Decimal(float:2.8720182097645595e-82)) -> (bool:True, bool:True) 
+407 hash(Decimal(float:-762.961)) -> (bool:True, bool:True) 
+408 [p9 HALF_UP -100 94 c0 C1 tRo] round(Decimal('-0'), '1') -> !TypeError: optional arg must be an integer 
+409 hash(Decimal('3676122356645894.371504901123046875')) == hash(Fraction(602295886912863333827363, 163840000)) -> (bool:True, bool:True, int:1491186748820714795) 
+410 hash(Decimal('474783728938333.5')) == hash(Fraction(949567457876667, 2)) -> (bool:True, bool:True, int:1153396288335785309) 
+411 hash(Decimal('2590189513086348506.40832977294921875')) == hash(Fraction(1697506599296269357159763, 655360)) -> (bool:True, bool:True, int:2148228059966903105) 
+412 [p2 UP -4 0 c1 C1 tSuInCl] pickle 0 Decimal('9.9E+22') -> (MyDecimal:Decimal('9.9E+22'), str:'MyDecimal') 
+413 [p14 FLOOR -999999 999999 c0 C0 tInDiUnInRo] round(Decimal('5.00000000000000000000000000000000e+46'), -1000000000000000000000000000000) -> !OverflowError: Python int too large to convert to C ssize_t 
+414 [p38 FLOOR -999999999999999999 999999999999999999 c0 C0 t] pickle 3 Decimal('-6.22677613387588728968947871111008e-8') -> (MyDecimal:Decimal('-6.22677613387588728968947871111008e-8'), str:'MyDecimal') 
+415 hash(Decimal('294395475414068676177.75790447265625')) == hash(Fraction(15073048341200316220301204709, 51200000)) -> (bool:True, bool:True, int:1159723921779544974) 
+416 [p5 CEILING -95 91 c1 C1 t] sum/min/max/sorted Decimal('-9.9909009999099090090099009099E-30') -> (Decimal:Decimal('1.0000'), Decimal:Decimal('-9.9909009999099090090099009099E-30'), int:1, list:[Decimal('-1.5'), Decimal('-9.9909009999099090090099009099E-30'), 0, Decimal('1')]) InRo
+417 [p20 DOWN -999999999999999999 999999999999999999 c1 C1 tRo] copy(Decimal('-9916098.112986304268238795256')) -> Decimal:Decimal('-9916098.112986304268238795256') 
+418 [p28 FLOOR -999999 999999 c1 C1 t] round(Decimal('-4.618416583759648E+34'), True) -> Decimal:Decimal('NaN') In
+419 hash(Decimal('-80.9951962')) == hash(Fraction(-404975981, 5000000)) -> (bool:True, bool:True, int:-1896080410249763492) 
+420 [p3 HALF_EVEN -9 2 c1 C1 t] float(Decimal('-5554936.075075845')) -> float:-5554936.075075845 
+421 [p20 FLOOR -67 14 c0 C1 tDiInRoCl] sum/min/max/sorted Decimal('-0.0000555000055050005050055550000055055005') -> !Inexact: [<class 'decimal.Inexact'>, <class 'decimal.Rounded'>] InRo
+422 [p33 HALF_EVEN -43 58 c0 C0 tInUnIn] round(Decimal('-7.470862405721975779457268266e-29'), IntLike()) -> !TypeError: optional arg must be an integer 
+423 [p10 CEILING -15631278803846674 991662988926 c1 C1 t] hash(Decimal('-5.005055050055550005055505005055000550000E+49')) -> int:-249183554796155191 
+424 hash(Decimal(float:1.3834910139444706e+205)) -> (bool:True, bool:True) 
+425 [p25 HALF_UP -30 84 c0 C1 t] hash(Decimal('-9.9999999999E-22')) -> int:-437820510305334342 
+426 [p39 DOWN -48 11 c1 C0 t] Decimal('3.00000000000000000000000e+24') real imag -> (Decimal:Decimal('3.00000000000000000000000e+24'), Decimal:Decimal('0'), Decimal:Decimal('3.00000000000000000000000e+24'), bool:True, bool:True, bool:True, bool:False) OvInRo
+427 [p1 HALF_EVEN -99 15 c1 C1 t] sqrt(Decimal('-9.999999999999999999999999999999999999E-21')) -> !ValueError: expected a nonnegative input, got -1e-20 
+428 [p9 CEILING -57120235696891951 3225 c1 C0 tSu] Decimal('5.5e-16') real imag -> (Decimal:Decimal('5.5e-16'), Decimal:Decimal('0'), Decimal:Decimal('5.5e-16'), bool:True, bool:True, bool:True, bool:False) 
+429 [p39 UP -58 21 c0 C1 tRo] hash(Decimal('-6.6317147954146099365E-10')) -> int:-2249503551887847887 
+430 [p39 UP -999999 999999 c1 C1 tDiRo] bool(Decimal('9.9999999999999999999999999999999999E+42')) -> bool:True 
+431 [p28 HALF_DOWN -10458404336862 20945941499 c0 C1 t] floor(Decimal('8.0000000000000000000000000000E+42')) -> int:8000000000000000000000000000000000000000000 
+432 [p26 DOWN -2 45 c1 C1 t] pickle 1 Decimal('-3.617041468049637191E-39') -> (Decimal:Decimal('-3.617041468049637191E-39'), str:'Decimal') 
+433 [p38 HALF_UP -61 24 c0 C0 t] bool(Decimal('-5.0000000000e-10')) -> bool:True 
+434 [p45 CEILING -8043 8518860738 c0 C1 tIn] pickle 4 Decimal('0.15556') -> (Decimal:Decimal('0.15556'), str:'Decimal') 
+435 hash(Decimal('-3.5549355')) == hash(Fraction(-7109871, 2000000)) -> (bool:True, bool:True, int:-539658344954868329) 
+436 [p28 05UP -24 98 c0 C0 t] round(Decimal('7.0000e+16')) -> int:70000000000000000 
+437 [p9 CEILING -999999 999999 c0 C1 t] pickle 4 Decimal('9.75396612810478E+16') -> (Decimal:Decimal('9.75396612810478E+16'), str:'Decimal') 
+438 [p19 CEILING -999999 999999 c0 C1 t] sum/min/max/sorted Decimal('9.99999999999999999999E-17') -> (Decimal:Decimal('1.000000000000000200'), Decimal:Decimal('9.99999999999999999999E-17'), int:1, list:[Decimal('-1.5'), 0, Decimal('9.99999999999999999999E-17'), Decimal('1')]) InRo
+439 [p19 UP -923494167440300 982508 c1 C1 t] Decimal('1.00000000000000000000000000000000E+41') real imag -> (Decimal:Decimal('1.00000000000000000000000000000000E+41'), Decimal:Decimal('0'), Decimal:Decimal('1.00000000000000000000000000000000E+41'), bool:True, bool:True, bool:True, bool:False) Ro
+440 [p28 DOWN -999999 999999 c1 C1 t] float(Decimal('9.0909900090900E-39')) -> float:9.09099000909e-39 
+441 [p34 HALF_EVEN -2 6 c0 C0 t] pickle 5 Decimal('-5e-30') -> (Decimal:Decimal('-5e-30'), str:'Decimal') 
+442 hash(Decimal('-0.0080898590087890625')) == hash(Fraction(-530177, 65536000)) -> (bool:True, bool:True, int:-1254585797779480641) 
+443 [p2 05UP -999999 999999 c0 C1 t] pickle 2 Decimal('-9.000009990990099999090E+40') -> (MyDecimal:Decimal('-9.000009990990099999090E+40'), str:'MyDecimal') 
+444 [p28 FLOOR -52 51 c0 C1 tOvSuRoCl] trunc(Decimal('-0.000')) -> int:0 
+445 [p20 HALF_UP -6 6 c0 C1 t] hash(Decimal('-0')) -> int:0 
+446 [p17 HALF_UP -999999 999999 c0 C1 tDiUnSuRo] hash(Decimal('-800000000000000000.000000000000')) -> int:-800000000000000000 
+447 [p16 05UP -999999 999999 c0 C1 t] str(Decimal('8614602721456378400.27939646513091915543731')) -> str:'8614602721456378400.27939646513091915543731' 
+448 [p38 HALF_EVEN -8 9 c0 C1 t] bool(Decimal('5.12921060342970216995644678325710587217653331E-9')) -> bool:True 
+449 [p38 UP -999999999999999999 999999999999999999 c1 C1 t] hash(Decimal('-9.9099990999090090999900000999990090900099E+59')) -> int:-1622780280197324408 
+450 hash(Decimal(float:-33227.25)) -> (bool:True, bool:True) 
+451 [p3 HALF_EVEN -5 10 c1 C1 t] round(Decimal('-99000990.0000999999090009'), None) -> int:-99000990 
+452 [p28 FLOOR -999999 999999 c0 C0 t] Decimal('9.999999999999999999999999999999e+32') real imag -> (Decimal:Decimal('9.999999999999999999999999999999e+32'), Decimal:Decimal('0'), Decimal:Decimal('9.999999999999999999999999999999e+32'), bool:True, bool:True, bool:True, bool:False) InRo
+453 [p9 CEILING -999999 999999 c1 C1 t] str(Decimal('-1.20007665587140872E-43')) -> str:'-1.20007665587140872E-43' 
+454 [p16 HALF_EVEN -9 8 c0 C1 t] round(Decimal('9.09909E-7'), -1000000000000000000000000000000) -> !OverflowError: Python int too large to convert to C ssize_t 
+455 hash(Decimal('750223369089390520054058.304078125')) == hash(Fraction(48014295621720993283459731461, 64000)) -> (bool:True, bool:True, int:412110799512822652) 
+456 [p9 UP -5 7 c1 C1 tUnCl] Decimal('5.42283434233416047238064E-13') real imag -> !Underflow: [<class 'decimal.Underflow'>] UnSuInRo
+457 [p28 CEILING -344761061123 470306794363 c0 C1 t] Decimal('-8.00000000000000000000000E-8') real imag -> (Decimal:Decimal('-8.00000000000000000000000E-8'), Decimal:Decimal('0'), Decimal:Decimal('-8.00000000000000000000000E-8'), bool:True, bool:True, bool:True, bool:False) 
+458 [p3 FLOOR -8 2 c0 C1 t] hash(Decimal('-4.6193E+19')) -> int:-76139815726120980 
+459 [p28 HALF_EVEN -999999 999999 c1 C1 tInOv] round(Decimal('4.7902299813597776136993554E+30'), 0) -> !InvalidOperation: [<class 'decimal.InvalidOperation'>] In
+460 [p28 HALF_DOWN -63 14 c0 C0 t] pickle 1 Decimal('-8.5e+23') -> (MyDecimal:Decimal('-8.5e+23'), str:'MyDecimal') 
+461 [p20 UP -999999 999999 c0 C1 t] Decimal('0E+5') real imag -> (Decimal:Decimal('0E+5'), Decimal:Decimal('0'), Decimal:Decimal('0E+5'), bool:True, bool:True, bool:True, bool:False) 
+462 [p16 UP -300022299484756 1491400947878415 c0 C1 t] hash(Decimal('6.00E-11')) -> int:838157762833803555 
+463 [p19 DOWN -999999 999999 c0 C1 t] Decimal('6.684250253303939590E-25') real imag -> (Decimal:Decimal('6.684250253303939590E-25'), Decimal:Decimal('0'), Decimal:Decimal('6.684250253303939590E-25'), bool:True, bool:True, bool:True, bool:False) 
+464 [p7 UP -999999 999999 c0 C0 t] Decimal('7.885353957289651940854088302131389189901316e+60') real imag -> (Decimal:Decimal('7.885353957289651940854088302131389189901316e+60'), Decimal:Decimal('0'), Decimal:Decimal('7.885353957289651940854088302131389189901316e+60'), bool:True, bool:True, bool:True, bool:False) InRo
+465 [p2 CEILING -999999999999999999 999999999999999999 c0 C1 tDiOvCl] Decimal('3.20E-17') real imag -> (Decimal:Decimal('3.20E-17'), Decimal:Decimal('0'), Decimal:Decimal('3.20E-17'), bool:True, bool:True, bool:True, bool:False) Ro
+466 [p20 DOWN -80 72 c1 C1 tOvRo] abs(Decimal('7E-36')) -> Decimal:Decimal('7E-36') 
+467 [p16 UP -999999 999999 c1 C1 tDiSu] complex(Decimal('5.07028060745794705584395216626523896353716628E+60')) -> complex:(5.070280607457947e+60+0j) 
+468 [p39 HALF_UP -6 0 c0 C1 tFlOvUnRo] hash(Decimal('-5.0555505E+15')) -> int:-5055550500000000 
+469 [p34 CEILING -87 13 c0 C1 t] hash(Decimal('9.99999999999999999999999999999E-14')) -> int:948567351604672250 
+470 [p9 FLOOR -999999999999999999 999999999999999999 c0 C0 tSuIn] round(Decimal('-4.0000000000000000e-34'), 2) -> !Inexact: [<class 'decimal.Inexact'>] InRo
+471 [p28 FLOOR -999999 999999 c1 C1 t] copy(Decimal('6439941611.173152352936036255067965677101843')) -> Decimal:Decimal('6439941611.173152352936036255067965677101843') 
+472 [p39 HALF_UP 0 4 c1 C1 t] str(Decimal('646575011.5376053629')) -> str:'646575011.5376053629' 
+473 [p28 HALF_UP -97922726 541909 c0 C1 t] sum/min/max/sorted Decimal('-1.085440625176947956348E+41') -> (Decimal:Decimal('-2.170881250353895912696000000E+41'), Decimal:Decimal('-1.085440625176947956348E+41'), int:1, list:[Decimal('-1.085440625176947956348E+41'), Decimal('-1.5'), 0, Decimal('1')]) InRo
+474 [p9 05UP -4 0 c0 C1 t] float(Decimal('5.550055000005050E+30')) -> float:5.55005500000505e+30 
+475 hash(Decimal('922941281883787219078.2742498720703125')) == hash(Fraction(945091872648998112336152831869, 1024000000)) -> (bool:True, bool:True, int:899544014838487401) 
+476 [p39 HALF_UP -51 76 c0 C0 t] pickle 2 Decimal('-8.0141246377634100119002926558603e+43') -> (MyDecimal:Decimal('-8.0141246377634100119002926558603e+43'), str:'MyDecimal') 
+477 [p28 UP -999999 999999 c0 C0 tInInRo] hash(Decimal('5e-14')) -> int:375397953799586770 
+478 [p34 HALF_UP -999999999999999999 999999999999999999 c0 C1 t] hash(Decimal('-0.0000170418127268678149')) -> int:-338365459619658221 
+479 [p44 FLOOR -92 5 c0 C1 t] pickle 4 Decimal('1.718007433575090439491472970445842623E+57') -> (MyDecimal:Decimal('1.718007433575090439491472970445842623E+57'), str:'MyDecimal') 
+480 [p34 05UP -4 21 c0 C0 t] sum/min/max/sorted Decimal('9999999999.99999999999999999999999999999') -> (Decimal:Decimal('20000000000.99999999999999999999998'), int:1, Decimal:Decimal('9999999999.99999999999999999999999999999'), list:[Decimal('-1.5'), 0, Decimal('1'), Decimal('9999999999.99999999999999999999999999999')]) InRo
+481 [p7 HALF_UP -100 69 c1 C1 t] round(Decimal('-8.484869311381328344140955744408821'), 1000000000000000000000000000000) -> !OverflowError: Python int too large to convert to C ssize_t 
+482 [p28 DOWN -999999 999999 c0 C0 t] hash(Decimal('-4.31115e+19')) -> int:-1606325834153508882 
+483 [p28 DOWN -999999 999999 c1 C0 t] Decimal('-134.2235') real imag -> (Decimal:Decimal('-134.2235'), Decimal:Decimal('0'), Decimal:Decimal('-134.2235'), bool:True, bool:True, bool:True, bool:False) 
+484 [p9 FLOOR -50 80 c0 C1 tInDiCl] hash(Decimal('-9.99999999999999999999999999999E+33')) -> int:-1701506003426350833 
+485 [p34 FLOOR -999999 999999 c1 C1 t] float(Decimal('-99999999999999999.9999999999')) -> float:-1e+17 
+486 [p19 HALF_UP -999999 999999 c0 C1 tDiRo] hash(Decimal('-5.269661259527308483E+40')) -> int:-1979714998074486488 
+487 [p1 HALF_DOWN -999999 999999 c0 C1 t] round(Decimal('-2.0000000000000000000000000E+42'), 0) -> Decimal:Decimal('NaN') In
+488 [p1 HALF_UP -77489490732 26965332 c0 C0 t] pickle 4 Decimal('-0.000999999999999999999999999999') -> (MyDecimal:Decimal('-0.000999999999999999999999999999'), str:'MyDecimal') 
+489 [p3 HALF_DOWN -999999 999999 c1 C1 t] Fraction(Decimal('-7.20322975018263888341786947681634631018278E+64')) -> Fraction:Fraction(-72032297501826388834178694768163463101827800000000000000000000000, 1) 
+490 [p2 HALF_EVEN -999999 999999 c0 C1 tFlUn] sqrt(Decimal('-7E-37')) -> !ValueError: expected a nonnegative input, got -7e-37 
+491 hash(Decimal(float:812493.0)) -> (bool:True, bool:True) 
+492 [p2 HALF_UP -86 32 c0 C1 tFlDiUnRo] hash(Decimal('-0')) -> int:0 
+493 [p42 HALF_DOWN -374159146532 599 c0 C1 tOvInRo] hash(Decimal('Infinity')) -> int:314159 
+494 [p41 DOWN -999999 999999 c1 C1 t] copy(Decimal('5.5500050500000055055505505E-35')) -> Decimal:Decimal('5.5500050500000055055505505E-35') 
+495 [p39 FLOOR -999999 999999 c0 C1 tFlDiCl] sum/min/max/sorted Decimal('9000909909990000099090099') -> (Decimal:Decimal('18001819819980000198180199'), int:1, Decimal:Decimal('9000909909990000099090099'), list:[Decimal('-1.5'), 0, Decimal('1'), Decimal('9000909909990000099090099')]) 
+496 [p16 FLOOR -999999 999999 c0 C1 tDiCl] Decimal('1.2587326538E-29') real imag -> (Decimal:Decimal('1.2587326538E-29'), Decimal:Decimal('0'), Decimal:Decimal('1.2587326538E-29'), bool:True, bool:True, bool:True, bool:False) 
+497 [p9 05UP -44 63 c0 C1 tInDiSu] str(Decimal('9.9999909E+16')) -> str:'9.9999909E+16' 
+498 [p3 UP -999999 999999 c0 C0 t] Fraction(Decimal('-6.71975645404906796534377472253730493161e-20')) -> Fraction:Fraction(-671975645404906796534377472253730493161, 10000000000000000000000000000000000000000000000000000000000) 
+499 [p39 05UP -999999 999999 c0 C1 t] bool(Decimal('-9.99999999999999999999999999999E-25')) -> bool:True 
+500 [p2 FLOOR -999999 999999 c0 C1 tFlUn] round(Decimal('1.37635600029E+31'), -9223372036854775808) -> Decimal:Decimal('NaN') In
+501 [p28 CEILING -8 9 c0 C1 t] hash(Decimal('-8.065115992355882114936636875392668051732894E+63')) -> int:-1441879584876956643 
+502 [p28 FLOOR -9958 35725372739 c1 C0 tDiUnRo] bool(Decimal('5.3459728856926266811e-33')) -> bool:True 
+503 [p6 HALF_EVEN -80 18 c0 C1 t] deepcopy(Decimal('5.00500050005550000500500555005550550000000555E+61')) -> Decimal:Decimal('5.00500050005550000500500555005550550000000555E+61') 
+504 [p19 FLOOR -999999999999999999 999999999999999999 c0 C1 t] int(Decimal('NaN')) -> !ValueError: cannot convert NaN to integer 
+505 [p28 HALF_EVEN -6 10 c0 C0 t] hash(Decimal('6.9e-14')) -> int:1440386379928907323 
+506 hash(Decimal('337843094816016014365.1936')) == hash(Fraction(211151934260010008978246, 625)) -> (bool:True, bool:True, int:97968221653092064) 
+507 [p1 HALF_DOWN -999999999999999999 999999999999999999 c0 C0 tInFlInCl] sum/min/max/sorted Decimal('-9990090909990900.9000000090099900999000') -> !Inexact: [<class 'decimal.Inexact'>] InRo
+508 [p39 05UP -999999 999999 c0 C1 t] hash(Decimal('8184779.2051')) -> int:1590801092064712236 
+509 [p38 HALF_DOWN -9 0 c0 C0 t] Decimal('-2.18388968557e-16') real imag -> (Decimal:Decimal('-2.18388968557e-16'), Decimal:Decimal('0'), Decimal:Decimal('-2.18388968557e-16'), bool:True, bool:True, bool:True, bool:False) Su
+510 [p3 CEILING -999999999999999999 999999999999999999 c0 C1 t] hash(Decimal('-0.006774430420867383384921425612207177')) -> int:-892919198395697618 
+511 [p6 HALF_DOWN -999999 999999 c0 C0 t] hash(Decimal('8000000000000000000000000000000000.0')) -> int:438867599055611086 
+512 [p39 CEILING -69 13 c0 C1 tInRo] copy(Decimal('5041235056437396476.2837791968190298148162715')) -> Decimal:Decimal('5041235056437396476.2837791968190298148162715') 
+513 [p4 UP -999999 999999 c0 C0 tFl] round(Decimal('-0.000730525109767842'), -9223372036854775808) -> Decimal:Decimal('NaN') In
+514 [p38 HALF_EVEN -999999 999999 c0 C1 tFlOvCl] round(Decimal('-7.73497824611081620844211807958185990859508E+54'), -9223372036854775808) -> Decimal:Decimal('NaN') In
+515 [p23 CEILING -999999 999999 c0 C1 t] hash(Decimal('-5.50550555050505550050E+44')) -> int:-155034604235915543 
+516 hash(Decimal('-10907723568.59070892333984375')) == hash(Fraction(-7148485717911607, 655360)) -> (bool:True, bool:True, int:-439744848585572554) 
+517 hash(Decimal(float:-110672.375)) -> (bool:True, bool:True) 
+518 [p38 CEILING -9 8 c1 C1 t] floor(Decimal('0.7519205103233374')) -> int:0 
+519 [p39 05UP -999999999999999999 999999999999999999 c1 C1 t] pickle 1 Decimal('0.99999999999999999999999999999') -> (Decimal:Decimal('0.99999999999999999999999999999'), str:'Decimal') 
+520 [p24 FLOOR -53 99 c0 C1 t] round(Decimal('9.00099000999090999999E+42'), 1.0) -> !TypeError: optional arg must be an integer 
+521 [p28 HALF_UP -27 95 c0 C1 t] round(Decimal('-5.184262E+18'), -1000000000000000000000000000000) -> !OverflowError: Python int too large to convert to C ssize_t 
+522 [p28 CEILING -64 47 c1 C0 t] deepcopy(Decimal('-5.83442820121e-8')) -> Decimal:Decimal('-5.83442820121e-8') 
+523 hash(Decimal(float:-89075.71428571429)) -> (bool:True, bool:True) 
+524 [p28 FLOOR -999999 999999 c0 C1 t] round(Decimal('136814654601312475868066273.6688061127504'), 9223372036854775807) -> Decimal:Decimal('NaN') In
+525 hash(Decimal('-244521436241.1719488')) == hash(Fraction(-38206474412683117, 156250)) -> (bool:True, bool:True, int:-1258555184391973593) 
+526 [p9 CEILING -50 44 c0 C1 tSuCl] pickle 0 Decimal('-1.88628459033718125735E-7') -> (Decimal:Decimal('-1.88628459033718125735E-7'), str:'Decimal') 
+527 hash(Decimal(nan)) -> (bool:True, bool:True) 
+528 [p9 CEILING -77 0 c0 C0 t] round(Decimal('-9.99999999999999999999999999999999e+42'), None) -> int:-9999999999999999999999999999999990000000000 
+529 hash(Decimal('-792972874.7494468994140625')) == hash(Fraction(-6496033789947469, 8192000)) -> (bool:True, bool:True, int:-2041701543836829733) 
+530 [p2 HALF_UP -4 1 c0 C0 t] Decimal('-5.479617625299060642e+41') real imag -> (Decimal:Decimal('-5.479617625299060642e+41'), Decimal:Decimal('0'), Decimal:Decimal('-5.479617625299060642e+41'), bool:True, bool:True, bool:True, bool:False) OvInRo
+531 [p30 DOWN -999999 999999 c1 C1 t] pickle 4 Decimal('674435586978657103502763003738161303.51483') -> (Decimal:Decimal('674435586978657103502763003738161303.51483'), str:'Decimal') 
+532 [p19 05UP -999999 999999 c0 C1 tUn] pickle 5 Decimal('-9.406304477E+22') -> (Decimal:Decimal('-9.406304477E+22'), str:'Decimal') 
+533 [p38 HALF_UP -999999 999999 c0 C0 tInDiUnCl] Decimal('-44976910203733090877724.2') real imag -> (Decimal:Decimal('-44976910203733090877724.2'), Decimal:Decimal('0'), Decimal:Decimal('-44976910203733090877724.2'), bool:True, bool:True, bool:True, bool:False) 
+534 hash(Decimal('-2734748177894511908644.463393125')) == hash(Fraction(-4375597084631219053831141429, 1600000)) -> (bool:True, bool:True, int:-545284358865707756) 
+535 [p16 HALF_EVEN -1 1 c0 C1 t] ceil(Decimal('-990000909990909999900.909990909099000000009')) -> int:-990000909990909999900 
+536 [p34 CEILING -999999 999999 c0 C1 t] hash(Decimal('-0.02')) -> int:-2259726149029420072 
+537 [p32 HALF_EVEN -13 45 c0 C1 t] sum/min/max/sorted Decimal('99090990990090999990990909099009.099009') -> (Decimal:Decimal('1.9818198198018199998198181819802E+32'), int:1, Decimal:Decimal('99090990990090999990990909099009.099009'), list:[Decimal('-1.5'), 0, Decimal('1'), Decimal('99090990990090999990990909099009.099009')]) InRo
+538 [p3 HALF_UP -999999 999999 c0 C1 tFlOvSu] hash(Decimal('11011.49302148768340370761323127081759486189')) -> int:750924987531481677 
+539 [p16 HALF_DOWN -85 64 c0 C1 tInSuIn] deepcopy(Decimal('5631934628659510125272642483180.80448211520')) -> Decimal:Decimal('5631934628659510125272642483180.80448211520') 
+540 [p9 FLOOR -999999 999999 c0 C1 tDiUnSu] sum/min/max/sorted Decimal('-9.457E-32') -> (Decimal:Decimal('0.999999998'), Decimal:Decimal('-9.457E-32'), int:1, list:[Decimal('-1.5'), Decimal('-9.457E-32'), 0, Decimal('1')]) InRo
+541 [p19 FLOOR -999999 999999 c1 C1 tDiOv] round(Decimal('-73552709892072965182.531476273661'), 7) -> Decimal:Decimal('NaN') In
+542 [p34 UP -6 1 c0 C1 t] sqrt(Decimal('-9.0950943599989885968543E+29')) -> !ValueError: expected a nonnegative input, got -9.095094359998989e+29 
+543 [p9 FLOOR -1 10 c1 C1 t] trunc(Decimal('9920.137243692935160309000')) -> int:9920 
+544 hash(Decimal('-24893656.778625')) == hash(Fraction(-199149254229, 8000)) -> (bool:True, bool:True, int:-1389558643452295974) 
+545 [p9 FLOOR -55686 821 c1 C0 t] hash(Decimal('816021643504948529561993955.79244116646714')) -> int:540207301625927758 
+546 [p19 HALF_EVEN -12 84 c1 C1 tFlInCl] pickle 4 Decimal('-8.770708891801E-33') -> (Decimal:Decimal('-8.770708891801E-33'), str:'Decimal') 
+547 [p28 05UP -21 21 c0 C1 t] round(Decimal('-9.99999999999E-20'), 1000000000000000000000000000000) -> !OverflowError: Python int too large to convert to C ssize_t 
+548 [p42 DOWN -5 4 c0 C1 tInDiUnRo] hash(Decimal('4.7E-31')) -> int:1957316043214897784 
+549 [p28 05UP -999999 999999 c1 C1 tIn] hash(Decimal('-9.99999999999999999999999999999999999999999E+60')) -> int:-417926479277341338 
+550 [p28 FLOOR -999999 999999 c1 C0 t] Fraction(Decimal('3.00e-58')) -> Fraction:Fraction(3, 10000000000000000000000000000000000000000000000000000000000) 
+551 [p19 UP -8 0 c1 C1 tOvUn] round(Decimal('-0.0716234531905161'), '1') -> !TypeError: optional arg must be an integer 
+552 [p9 HALF_EVEN -999999 999999 c0 C1 t] sum/min/max/sorted Decimal('9.000090099E-31') -> (Decimal:Decimal('1.00000000'), Decimal:Decimal('9.000090099E-31'), int:1, list:[Decimal('-1.5'), 0, Decimal('9.000090099E-31'), Decimal('1')]) InRo
+553 [p3 HALF_UP -5 1 c0 C1 tCl] pickle 5 Decimal('6132.52434224131952410090747390948820') -> (Decimal:Decimal('6132.52434224131952410090747390948820'), str:'Decimal') 
+554 [p34 HALF_EVEN -48 100 c0 C0 t] deepcopy(Decimal('-5.05050550555005e-14')) -> Decimal:Decimal('-5.05050550555005e-14') 
+555 [p3 05UP -999999 999999 c1 C0 t] round(Decimal('-6.0000e-47')) -> int:0 
+556 hash(Decimal(float:-99504.66666666667)) -> (bool:True, bool:True) 
+557 [p28 HALF_DOWN -1 0 c0 C0 t] sum/min/max/sorted Decimal('0.0978662709267312366646548961054') -> (Decimal:Decimal('1.195732541853462473329309792'), Decimal:Decimal('0.0978662709267312366646548961054'), int:1, list:[Decimal('-1.5'), 0, Decimal('0.0978662709267312366646548961054'), Decimal('1')]) UnSuInRo
+558 [p28 UP -999999 999999 c1 C1 tInRo] sum/min/max/sorted Decimal('4.287123614674E-38') -> !Inexact: [<class 'decimal.Inexact'>, <class 'decimal.Rounded'>] InRo
+559 [p1 05UP -999999999999999999 999999999999999999 c1 C1 t] hash(Decimal('-9.0009000000990000000990990009009090990000E+50')) -> int:-960547494768435631 
+560 [p34 05UP -999999 999999 c0 C1 tDiOvUnSuCl] round(Decimal('-0'), -1000000000000000000000000000000) -> !OverflowError: Python int too large to convert to C ssize_t 
+561 [p1 HALF_UP -7 5418880374 c1 C1 t] hash(Decimal('-7.959E-21')) -> int:-1759352329939111212 
+562 [p34 CEILING -999999999999999999 999999999999999999 c0 C1 t] copy(Decimal('5.55E-51')) -> Decimal:Decimal('5.55E-51') 
+563 [p28 UP -66997 6 c0 C1 t] trunc(Decimal('-5.500550000000050050E-32')) -> int:0 
+564 [p19 HALF_UP -61 9 c0 C0 t] sum/min/max/sorted Decimal('-9.999999999999999999999999999e+42') -> (Decimal:Decimal('-Infinity'), Decimal:Decimal('-9.999999999999999999999999999e+42'), int:1, list:[Decimal('-9.999999999999999999999999999e+42'), Decimal('-1.5'), 0, Decimal('1')]) OvInRo
+565 [p38 HALF_EVEN -901471189 1 c0 C1 t] round(Decimal('-3.0000000000000000000000000E+48'), True) -> Decimal:Decimal('NaN') In
+566 [p20 05UP -41 24 c0 C1 tCl] complex(Decimal('-9.999999999999999999999999E+27')) -> complex:(-1e+28+0j) 
+567 [p2 HALF_EVEN -999999999999999999 999999999999999999 c0 C1 t] Decimal('-96.087850256428909610') real imag -> (Decimal:Decimal('-96.087850256428909610'), Decimal:Decimal('0'), Decimal:Decimal('-96.087850256428909610'), bool:True, bool:True, bool:True, bool:False) InRo
+568 [p20 05UP -75 38 c0 C1 t] complex(Decimal('3.13279854E-29')) -> complex:(3.13279854e-29+0j) 
+569 hash(Decimal(float:1.9505061448630503e-269)) -> (bool:True, bool:True) 
+570 [p35 HALF_UP -4 83 c1 C1 tDiCl] round(Decimal('-9.99999E-9'), 2) -> Decimal:Decimal('-0.00') InRo
+571 [p18 HALF_EVEN -25 64 c0 C1 tFl] sum/min/max/sorted Decimal('-8.151794238174186019073103043761701275E+55') -> (Decimal:Decimal('-1.63035884763483720E+56'), Decimal:Decimal('-8.151794238174186019073103043761701275E+55'), int:1, list:[Decimal('-8.151794238174186019073103043761701275E+55'), Decimal('-1.5'), 0, Decimal('1')]) InRo
+572 [p9 UP -6 4 c1 C1 t] round(Decimal('-5329292015288875173346412176.3'), True) -> Decimal:Decimal('NaN') In
+573 [p14 CEILING -999999 999999 c0 C1 t] hash(Decimal('9.99999999999999999999999999999999E-7')) -> int:2106078572352678835 
+574 [p2 05UP -999999 999999 c0 C1 t] Decimal('0') real imag -> (Decimal:Decimal('0'), Decimal:Decimal('0'), Decimal:Decimal('0'), bool:True, bool:True, bool:True, bool:False) 
+575 hash(Decimal('-44789579087366731.05325')) == hash(Fraction(-179158316349466924213, 4000)) -> (bool:True, bool:True, int:-2141377335214917956) 
+576 [p28 HALF_UP -5 7 c1 C0 t] sum/min/max/sorted Decimal('-5.000000000000000000e+33') -> (Decimal:Decimal('-Infinity'), Decimal:Decimal('-5.000000000000000000e+33'), int:1, list:[Decimal('-5.000000000000000000e+33'), Decimal('-1.5'), 0, Decimal('1')]) OvInRo
+577 [p38 UP -999999999999999999 999999999999999999 c1 C1 tIn] round(Decimal('-4.0604096814830690E-25'), IntLike()) -> !TypeError: optional arg must be an integer 
+578 [p45 DOWN -65 4 c0 C1 t] abs(Decimal('7.0000000000000E+19')) -> Decimal:Decimal('99999.9999999999999999999999999999999999999999') OvInRo
+579 [p19 HALF_EVEN -999999 999999 c0 C1 t] sum/min/max/sorted Decimal('3.73719058388648892073E-8') -> (Decimal:Decimal('1.000000074743811678'), Decimal:Decimal('3.73719058388648892073E-8'), int:1, list:[Decimal('-1.5'), 0, Decimal('3.73719058388648892073E-8'), Decimal('1')]) InRo
+580 [p39 05UP -999999 999999 c1 C1 t] Fraction(Decimal('-9.99999999999E-7')) -> Fraction:Fraction(-999999999999, 1000000000000000000) 
+581 hash(Decimal(float:5e-324)) -> (bool:True, bool:True) 
+582 [p28 CEILING -21 1 c0 C1 tInRo] ceil(Decimal('-1.00000000000000000000000000E+50')) -> int:-100000000000000000000000000000000000000000000000000 
+583 [p39 FLOOR -3 4544432153316 c0 C1 tUnCl] bool(Decimal('-6.58E+17')) -> bool:True 
+584 hash(Decimal('-47257572423698.933142822265625')) == hash(Fraction(-193567016647470830153, 4096000)) -> (bool:True, bool:True, int:-915796257953011665) 
+585 [p19 HALF_EVEN -999999 999999 c0 C1 t] isnan(Decimal('-2.688874635829333015E+38')) -> bool:False 
+586 [p9 CEILING -7 10 c0 C1 t] hash(Decimal('1')) -> int:1 
+587 [p9 HALF_DOWN -999999999999999999 999999999999999999 c0 C1 t] bool(Decimal('5.107953856927182480211060E-25')) -> bool:True 
+588 [p9 CEILING -56 87 c1 C1 tDiOv] sum/min/max/sorted Decimal('-0.53239711130221053266791328') -> (Decimal:Decimal('-0.0647942223'), Decimal:Decimal('-0.53239711130221053266791328'), int:1, list:[Decimal('-1.5'), Decimal('-0.53239711130221053266791328'), 0, Decimal('1')]) InRo
+589 [p16 HALF_UP -6129026598 45 c0 C0 tOv] bool(Decimal('1.00000000000000000000000000000000e+50')) -> bool:True 
+590 hash(Decimal(float:6.449229328801605e+83)) -> (bool:True, bool:True) 
+591 [p19 HALF_UP -999999 999999 c0 C0 t] Decimal('-1.00000000000000000000000000000000000000000000e-8') real imag -> (Decimal:Decimal('-1.00000000000000000000000000000000000000000000e-8'), Decimal:Decimal('0'), Decimal:Decimal('-1.00000000000000000000000000000000000000000000e-8'), bool:True, bool:True, bool:True, bool:False) Ro
+592 [p19 FLOOR -999999999999999999 999999999999999999 c1 C1 t] Decimal('-6.627162474E-34') real imag -> (Decimal:Decimal('-6.627162474E-34'), Decimal:Decimal('0'), Decimal:Decimal('-6.627162474E-34'), bool:True, bool:True, bool:True, bool:False) 
+593 [p2 DOWN -90 9 c0 C0 t] Fraction(Decimal('68634131.65540394787679345622082587284735628')) -> Fraction:Fraction(1715853291385098696919836405520646821183907, 25000000000000000000000000000000000) 
+594 [p16 DOWN -6 4 c0 C1 tFlDiRo] pickle 5 Decimal('9.9E+8') -> (MyDecimal:Decimal('9.9E+8'), str:'MyDecimal') 
+595 [p28 HALF_EVEN -80 69 c0 C0 tIn] round(Decimal('-5500050505500500555005050550055505055000.0055')) -> int:-5500050505500500555005050550055505055000 
+596 [p20 CEILING -108887198299105 101589080563988 c0 C0 t] copy(Decimal('2.9334801367942115e+26')) -> Decimal:Decimal('2.9334801367942115e+26') 
+597 [p34 HALF_EVEN -7 5 c1 C1 tDiCl] hash(Decimal('0.000009999999999999999')) -> int:1911302655951429457 
+598 [p25 HALF_EVEN -1 3 c0 C1 t] ceil(Decimal('-1.668238958285942E-14')) -> int:0 
+599 [p28 HALF_UP -89 15 c1 C1 t] Decimal('8.00000000000E-11') real imag -> (Decimal:Decimal('8.00000000000E-11'), Decimal:Decimal('0'), Decimal:Decimal('8.00000000000E-11'), bool:True, bool:True, bool:True, bool:False) 
+600 [p16 DOWN -6 2 c0 C1 t] hash(Decimal('990990')) -> int:990990 
+601 [p9 UP -9 9 c0 C0 tInRoCl] sum/min/max/sorted Decimal('2.19343986591423125609848010402689611056637e+61') -> !Inexact: [<class 'decimal.Inexact'>, <class 'decimal.Rounded'>] OvInRo
+602 [p3 HALF_EVEN -8178916 53 c1 C1 t] pickle 5 Decimal('0E-23') -> (Decimal:Decimal('0E-23'), str:'Decimal') 
+603 [p38 HALF_EVEN -31 19 c0 C1 t] sqrt(Decimal('-8.10E-10')) -> !ValueError: expected a nonnegative input, got -8.1e-10 
+604 hash(Decimal('-866445156485967.134375')) == hash(Fraction(-277262450075509483, 320)) -> (bool:True, bool:True, int:-771882701362314882) 
+605 [p3 UP -8 3 c0 C0 t] trunc(Decimal('-5.5000050500550500e+34')) -> int:-55000050500550500000000000000000000 
+606 [p3 05UP -4 44 c1 C1 tOvSuRo] isnan(Decimal('9.00009000009000990000999909990990900099990E-8')) -> bool:False 
+607 [p28 HALF_DOWN -999999 999999 c0 C1 t] repr(Decimal('241212204010516.338357561433086941')) -> str:"Decimal('241212204010516.338357561433086941')" 
+608 hash(Decimal(float:6.94853042023e-312)) -> (bool:True, bool:True) 
+609 hash(Decimal('-443251797857.00413552')) == hash(Fraction(-2770323736606275847, 6250000)) -> (bool:True, bool:True, int:-666777561344747732) 
+610 [p20 DOWN -999999 999999 c0 C1 t] hash(Decimal('-550846652223305372543991454562.650048001')) -> int:-109967890282209051 
+611 [p18 FLOOR -14 22 c0 C1 tRo] pickle 3 Decimal('-7.45075388660896173138585565E-33') -> (MyDecimal:Decimal('-7.45075388660896173138585565E-33'), str:'MyDecimal') 
+612 [p19 05UP -1 3 c0 C0 tSu] pickle 0 Decimal('-5.800606355e+31') -> (MyDecimal:Decimal('-5.800606355e+31'), str:'MyDecimal') 
+613 [p28 05UP -999999 999999 c0 C1 t] pickle 0 Decimal('-9.090090009090999909000999009E-26') -> (MyDecimal:Decimal('-9.090090009090999909000999009E-26'), str:'MyDecimal') 
+614 [p38 DOWN -999999 999999 c1 C1 t] Decimal('6.779834E+10') real imag -> (Decimal:Decimal('6.779834E+10'), Decimal:Decimal('0'), Decimal:Decimal('6.779834E+10'), bool:True, bool:True, bool:True, bool:False) 
+615 [p3 HALF_UP -999999 999999 c0 C1 tInFl] hash(Decimal('-9.9999E-32')) -> int:-862818015650521902 
+616 hash(Decimal(float:-1.2949418415710656e+287)) -> (bool:True, bool:True) 
+617 [p3 DOWN -999999 999999 c0 C1 t] int(Decimal('-72719769.313375838125053921231')) -> int:-72719769 
+618 [p16 05UP -79 97 c1 C1 t] hash(Decimal('-0')) -> int:0 
+619 [p2 HALF_UP -97 10 c0 C1 t] round(Decimal('3.098319051094305339300880197016E+53'), 0) -> Decimal:Decimal('NaN') In
+620 [p28 CEILING -999999 999999 c1 C0 t] pickle 3 Decimal('6.152099656272e-35') -> (Decimal:Decimal('6.152099656272e-35'), str:'Decimal') 
+621 [p19 HALF_UP -1 4 c1 C1 t] int(Decimal('5.59696678232001E+18')) -> int:5596966782320010000 
+622 [p28 05UP -999999999999999999 999999999999999999 c1 C1 tFlOv] hash(Decimal('6.762393397079E-27')) -> int:1481591681631509574 
+623 [p38 DOWN -999999 999999 c0 C0 t] pickle 2 Decimal('785578.181423698300447254') -> (MyDecimal:Decimal('785578.181423698300447254'), str:'MyDecimal') 
+624 [p9 HALF_EVEN -6 97 c1 C0 t] str(Decimal('7.189311029374e-13')) -> str:'7.189311029374e-13' 
+625 [p38 HALF_DOWN -2 1872455605 c1 C1 t] repr(Decimal('-500000.500005555005550550050550505055005')) -> str:"Decimal('-500000.500005555005550550050550505055005')" 
+626 [p28 HALF_EVEN -8 2 c0 C1 t] complex(Decimal('0.0300000000000000000000000000000000000000000000')) -> complex:(0.03+0j) 
+627 [p28 CEILING -64 92 c0 C1 tSu] sqrt(Decimal('sNaN')) -> !ValueError: cannot convert signaling NaN to float 
+628 [p1 HALF_UP -999999 999999 c0 C1 t] copy(Decimal('1.3956273376637996E+39')) -> Decimal:Decimal('1.3956273376637996E+39') 
+629 [p28 UP -999999999999999999 999999999999999999 c0 C0 tFl] Decimal('-5000555505.050050005') real imag -> (Decimal:Decimal('-5000555505.050050005'), Decimal:Decimal('0'), Decimal:Decimal('-5000555505.050050005'), bool:True, bool:True, bool:True, bool:False) 
+630 [p3 DOWN -2 1 c0 C1 tUn] abs(Decimal('1.142060609842476979623787080261E-18')) -> !Underflow: [<class 'decimal.Underflow'>] UnSuInRoCl
+631 [p2 UP -999999 999999 c0 C1 t] Decimal('-7E+12') real imag -> (Decimal:Decimal('-7E+12'), Decimal:Decimal('0'), Decimal:Decimal('-7E+12'), bool:True, bool:True, bool:True, bool:False) 
+632 [p28 HALF_EVEN -6473523671 1059582 c1 C1 t] hash(Decimal('9.999999999999999999999999999999E+34')) -> int:874158969767740673 
+633 hash(Decimal(float:-8.927643893281826e+209)) -> (bool:True, bool:True) 
+634 [p39 05UP -44763109532152380 972119754947420 c1 C1 t] hash(Decimal('8120808409114235781184.89669370222072')) -> int:1585316719874682147 
+635 [p28 CEILING -7 5 c0 C1 t] sum/min/max/sorted Decimal('978613467.5475369393227718007544192') -> (Decimal:Decimal('Infinity'), int:1, Decimal:Decimal('978613467.5475369393227718007544192'), list:[Decimal('-1.5'), 0, Decimal('1'), Decimal('978613467.5475369393227718007544192')]) OvInRo
+636 hash(Decimal(float:-365507.0)) -> (bool:True, bool:True) 
+637 [p34 FLOOR -27 94 c0 C1 tInDiSuInCl] hash(Decimal('-9.9999999999999999999999999999E+40')) -> int:-49915784014012194 
+638 [p19 FLOOR -999999 999999 c1 C1 tDiSuRo] pickle 5 Decimal('-9.09990099000009099099909E-19') -> (Decimal:Decimal('-9.09990099000009099099909E-19'), str:'Decimal') 
+639 [p2 FLOOR -999999999999999999 999999999999999999 c0 C0 t] Decimal('7.40880e-13') real imag -> (Decimal:Decimal('7.40880e-13'), Decimal:Decimal('0'), Decimal:Decimal('7.40880e-13'), bool:True, bool:True, bool:True, bool:False) InRo
+640 [p1 05UP -999999 999999 c0 C1 tDiOvRo] round(Decimal('-0.090900099009990099009090090000909909009000999'), -1000000000000000000000000000000) -> !OverflowError: Python int too large to convert to C ssize_t 
+641 [p3 05UP -999999999999999999 999999999999999999 c0 C1 t] hash(Decimal('-9.073258504506622740735505550675E-30')) -> int:-1124034984027860632 
+642 [p34 DOWN 0 9 c0 C1 tRoCl] sqrt(Decimal('543811661298040697085291465721040087.5718295')) -> float:7.374358692781636e+17 
+643 [p28 FLOOR -999999 999999 c1 C0 t] hash(Decimal('9.9999e-20')) -> int:394586764685839739 
+644 [p28 05UP -999999999999999999 999999999999999999 c1 C1 t] trunc(Decimal('-6.4191896750047200113986457517138736876214E+52')) -> int:-64191896750047200113986457517138736876214000000000000 
+645 [p39 HALF_DOWN -999999 999999 c0 C1 t] abs(Decimal('-8.21822946836468307032038668569952E-27')) -> Decimal:Decimal('8.21822946836468307032038668569952E-27') 
+646 hash(Decimal(float:3.038732419639953e+153)) -> (bool:True, bool:True) 
+647 [p16 UP -999999 999999 c0 C1 t] repr(Decimal('7.443E-35')) -> str:"Decimal('7.443E-35')" 
+648 [p28 HALF_DOWN -999999999999999999 999999999999999999 c0 C1 tOv] round(Decimal('-92952.882'), True) -> Decimal:Decimal('-92952.9') InRo
+649 [p32 HALF_UP -90 52 c1 C0 t] Decimal('7.897747287374786960649493948764256e+40') real imag -> (Decimal:Decimal('7.897747287374786960649493948764256e+40'), Decimal:Decimal('0'), Decimal:Decimal('7.897747287374786960649493948764256e+40'), bool:True, bool:True, bool:True, bool:False) InRo
+650 [p20 CEILING -80 95 c0 C1 tDiOv] sum/min/max/sorted Decimal('-73.314439332071') -> (Decimal:Decimal('-145.628878664142'), Decimal:Decimal('-73.314439332071'), int:1, list:[Decimal('-73.314439332071'), Decimal('-1.5'), 0, Decimal('1')]) 
+651 [p1 FLOOR -8 8 c1 C0 t] copy(Decimal('-11232039573589908390167735117084087.151043')) -> Decimal:Decimal('-11232039573589908390167735117084087.151043') 
+652 hash(Decimal(float:7.467931451759594e+51)) -> (bool:True, bool:True) 
+653 [p39 05UP -999999 999999 c1 C1 tSu] Decimal('-3E-44') real imag -> (Decimal:Decimal('-3E-44'), Decimal:Decimal('0'), Decimal:Decimal('-3E-44'), bool:True, bool:True, bool:True, bool:False) 
+654 hash(Decimal(float:2.2250738585072014e-308)) -> (bool:True, bool:True) 
+655 hash(Decimal('47795734427642917.87924057')) == hash(Fraction(4779573442764291787924057, 100000000)) -> (bool:True, bool:True, int:1897395261057267884) 
+656 [p34 05UP -34 7 c1 C1 t] bool(Decimal('-1.5E-52')) -> bool:True 
+657 [p20 HALF_EVEN -97 13 c1 C1 t] str(Decimal('255759679312.352385198829')) -> str:'255759679312.352385198829' 
+658 [p19 05UP 0 5 c0 C1 tSuIn] hash(Decimal('-1.7229216220376802025E+20')) -> int:-1659779521954667876 
+659 [p34 HALF_UP -1 3 c1 C1 t] int(Decimal('-8.266722120E+26')) -> int:-826672212000000000000000000 
+660 hash(Decimal('-17953370.405287078857421875')) == hash(Fraction(-588296041440447, 32768000)) -> (bool:True, bool:True, int:-454913031609530364) 
+661 hash(Decimal('-841777118156489276434.334282')) == hash(Fraction(-420888559078244638217167141, 500000)) -> (bool:True, bool:True, int:-155068176507533158) 
+662 [p9 UP -999999 999999 c1 C0 tDiUnCl] round(Decimal('-9.99e+3'), 1.0) -> !TypeError: optional arg must be an integer 
+663 [p19 HALF_DOWN -79902 5776987157 c0 C1 tInOvSuRoCl] sum/min/max/sorted Decimal('-sNaN45') -> !InvalidOperation: [<class 'decimal.InvalidOperation'>] In
+664 [p29 DOWN -4 1 c1 C1 tInSu] copy(Decimal('9.999909900009999000900E-18')) -> Decimal:Decimal('9.999909900009999000900E-18') 
+665 [p28 DOWN -999999 999999 c0 C1 tInUnSu] pickle 5 Decimal('555555550555050.0000050550505055000505500') -> (Decimal:Decimal('555555550555050.0000050550505055000505500'), str:'Decimal') 
+666 [p3 CEILING -79 2167 c0 C1 tDiUn] pickle 0 Decimal('9.0900900900900900990090909909000E-22') -> (Decimal:Decimal('9.0900900900900900990090909909000E-22'), str:'Decimal') 
+667 [p39 HALF_UP -205756178390 19521 c0 C1 tDiRo] abs(Decimal('-79.83')) -> Decimal:Decimal('79.83') 
+668 [p28 FLOOR -4 8 c0 C1 tSuCl] hash(Decimal('-466022983147166957.9013628019528263874354518')) -> int:-2165369208887422552 
+669 [p1 FLOOR -3 7 c1 C1 tDiRo] Decimal('0E-7') real imag -> (Decimal:Decimal('0E-7'), Decimal:Decimal('0'), Decimal:Decimal('0E-7'), bool:True, bool:True, bool:True, bool:False) Cl
+670 [p2 05UP -72 299293 c0 C1 t] Fraction(Decimal('3.15195193894983305342764675723647892597706061E+65')) -> Fraction:Fraction(315195193894983305342764675723647892597706061000000000000000000000, 1) 
+671 [p3 HALF_DOWN -1 3 c0 C1 t] hash(Decimal('6963477072775663703.46285')) -> int:1013595063951108517 
+672 [p28 CEILING -999999 999999 c0 C1 t] pickle 5 Decimal('0.005428791') -> (Decimal:Decimal('0.005428791'), str:'Decimal') 
+673 [p28 05UP -999999 999999 c1 C0 t] hash(Decimal('-9.0000000000e-29')) -> int:-1111450803263260239 
+674 [p19 05UP -2 10 c0 C0 tFlCl] sum/min/max/sorted Decimal('-9.000000000e-46') -> (Decimal:Decimal('0.9999999999999999998'), Decimal:Decimal('-9.000000000e-46'), int:1, list:[Decimal('-1.5'), Decimal('-9.000000000e-46'), 0, Decimal('1')]) UnSuInRo
+675 hash(Decimal('772353438245.8332')) == hash(Fraction(1930883595614583, 2500)) -> (bool:True, bool:True, int:707433407580199550) 
+676 [p28 DOWN -43 35 c0 C0 t] isnan(Decimal('-990909099099099000000.909000090999909999')) -> bool:False 
+677 [p9 HALF_EVEN -999999 999999 c0 C1 t] complex(Decimal('4.34770043E-14')) -> complex:(4.34770043e-14+0j) 
+678 [p9 05UP -47600520170030 58348696578 c0 C1 t] pickle 0 Decimal('3.695998747485719117657180E-15') -> (Decimal:Decimal('3.695998747485719117657180E-15'), str:'Decimal') 
+679 hash(Decimal('19253437685664149100657.688534')) == hash(Fraction(9626718842832074550328844267, 500000)) -> (bool:True, bool:True, int:791717295110446003) 
+680 [p1 UP -999999 999999 c0 C1 t] round(Decimal('sNaN')) -> !ValueError: cannot convert NaN to integer 
+681 [p3 CEILING -55 32 c0 C1 t] sum/min/max/sorted Decimal('-1.73E+6') -> (Decimal:Decimal('-3.45E+6'), Decimal:Decimal('-1.73E+6'), int:1, list:[Decimal('-1.73E+6'), Decimal('-1.5'), 0, Decimal('1')]) InRo
+682 [p16 DOWN -999999 999999 c0 C1 t] sum/min/max/sorted Decimal('-8.49904873751966166976E+30') -> (Decimal:Decimal('-1.699809747503932E+31'), Decimal:Decimal('-8.49904873751966166976E+30'), int:1, list:[Decimal('-8.49904873751966166976E+30'), Decimal('-1.5'), 0, Decimal('1')]) InRo
+683 [p38 HALF_DOWN -6 8 c0 C1 t] pickle 5 Decimal('-0.0585') -> (Decimal:Decimal('-0.0585'), str:'Decimal') 
+684 [p9 FLOOR -999999 999999 c1 C1 t] sum/min/max/sorted Decimal('4.3009E-53') -> (Decimal:Decimal('1.00000000'), Decimal:Decimal('4.3009E-53'), int:1, list:[Decimal('-1.5'), 0, Decimal('4.3009E-53'), Decimal('1')]) InRo
+685 [p28 FLOOR -999999 999999 c0 C0 tDiIn] Decimal('-7.00000000000000000000000000e-9') real imag -> (Decimal:Decimal('-7.00000000000000000000000000e-9'), Decimal:Decimal('0'), Decimal:Decimal('-7.00000000000000000000000000e-9'), bool:True, bool:True, bool:True, bool:False) 
+686 [p19 HALF_EVEN -1 1 c0 C1 t] pickle 5 Decimal('-27865742991469382416840500264383348653.0784452') -> (MyDecimal:Decimal('-27865742991469382416840500264383348653.0784452'), str:'MyDecimal') 
+687 [p19 FLOOR -999999 999999 c0 C1 tDiOv] pickle 3 Decimal('-8.00000E-16') -> (Decimal:Decimal('-8.00000E-16'), str:'Decimal') 
+688 hash(Decimal('-11890603969113250550.25568688')) == hash(Fraction(-74316274806957815939098043, 6250000)) -> (bool:True, bool:True, int:-844437945903109433) 
+689 hash(Decimal('-0.00647578125')) == hash(Fraction(-8289, 1280000)) -> (bool:True, bool:True, int:-2280192307176042554) 
+690 [p3 CEILING -999999 999999 c0 C1 t] Decimal('65715423528395347853420455047144.3792') real imag -> (Decimal:Decimal('65715423528395347853420455047144.3792'), Decimal:Decimal('0'), Decimal:Decimal('65715423528395347853420455047144.3792'), bool:True, bool:True, bool:True, bool:False) InRo
+691 [p28 FLOOR -77 22 c0 C1 tInFlDiUnCl] float(Decimal('-5000000000000000.0000000000000000')) -> float:-5000000000000000.0 
+692 [p28 05UP -8 4 c1 C0 t] complex(Decimal('0.0021630771855132227563832886849')) -> complex:(0.0021630771855132226+0j) 
+693 [p30 HALF_EVEN -6 6 c0 C1 t] hash(Decimal('-5.77135794446719596139502196765108690E-21')) -> int:-1810315392406998037 
+694 hash(Decimal('121120587307.1093264')) == hash(Fraction(75700367066943329, 625000)) -> (bool:True, bool:True, int:1821509107283778013) 
+695 [p34 DOWN -999999 999999 c0 C1 tInIn] sum/min/max/sorted Decimal('0E+5') -> (Decimal:Decimal('1'), Decimal:Decimal('0E+5'), int:1, list:[Decimal('-1.5'), Decimal('0E+5'), 0, Decimal('1')]) 
+696 [p9 HALF_DOWN -999999 999999 c1 C0 t] hash(Decimal('-4.0000000000000e-26')) -> int:-2064959484749841120 
+697 [p9 DOWN -999999 999999 c0 C1 tFlDiOvUnSuRo] str(Decimal('9.373702706500358656191375281219E-29')) -> str:'9.373702706500358656191375281219E-29' 
+698 [p20 UP -66 29 c1 C1 tUn] hash(Decimal('0.000096413836689890082659014250736')) -> int:469112143135211179 
+699 [p38 HALF_EVEN -999999 999999 c0 C1 tIn] pickle 4 Decimal('-9.232E-57') -> (Decimal:Decimal('-9.232E-57'), str:'Decimal') 
+700 [p34 HALF_UP -999999 999999 c0 C1 t] pickle 5 Decimal('-31.7849830413977587205305297439') -> (Decimal:Decimal('-31.7849830413977587205305297439'), str:'Decimal') 
+701 [p38 UP -999999 999999 c0 C1 t] bool(Decimal('-999990900099090099000099900090009999999009.9')) -> bool:True 
+702 [p28 FLOOR -6 6 c1 C1 t] Decimal('-7000000000000000000000000000000000000000.0000') real imag -> (Decimal:Decimal('-7000000000000000000000000000000000000000.0000'), Decimal:Decimal('0'), Decimal:Decimal('-7000000000000000000000000000000000000000.0000'), bool:True, bool:True, bool:True, bool:False) OvInRo
+703 [p30 DOWN -999999 999999 c1 C1 t] trunc(Decimal('5.00055055000500005E+27')) -> int:5000550550005000050000000000 
+704 [p19 HALF_EVEN -2 3 c0 C0 t] hash(Decimal('-0.000')) -> int:0 
+705 [p3 CEILING -999999 999999 c0 C1 tFlDi] sum/min/max/sorted Decimal('9.9999999999999999999999999999999999999999E+65') -> (Decimal:Decimal('2.01E+66'), int:1, Decimal:Decimal('9.9999999999999999999999999999999999999999E+65'), list:[Decimal('-1.5'), 0, Decimal('1'), Decimal('9.9999999999999999999999999999999999999999E+65')]) InRo
+706 [p28 FLOOR -2 4 c0 C0 tOvUnSuRo] hash(Decimal('-5.05505055550505550500000000e-8')) -> int:-1884703740339507734 
+707 [p3 HALF_DOWN -3 5 c0 C0 t] round(Decimal('-0.000'), 8) -> Decimal:Decimal('NaN') In
+708 [p34 FLOOR -13 1 c0 C1 t] repr(Decimal('-1374848666095846202924488691032818384623.00')) -> str:"Decimal('-1374848666095846202924488691032818384623.00')" 
+709 hash(Decimal(float:-2.675465388121341e-45)) -> (bool:True, bool:True) 
+710 [p2 HALF_EVEN -999999 999999 c0 C1 t] copy(Decimal('-7.42069125021721257574781754776127445909E-16')) -> Decimal:Decimal('-7.42069125021721257574781754776127445909E-16') 
+711 [p28 05UP -25 48 c1 C1 tDiOvIn] sqrt(Decimal('3000000000000.000')) -> float:1732050.8075688772 
+712 hash(Decimal(float:1.209526840330371e-59)) -> (bool:True, bool:True) 
+713 [p28 05UP -999999999999999999 999999999999999999 c0 C1 tInUnRo] float(Decimal('-3.1163921946367E-19')) -> float:-3.1163921946367e-19 
+714 [p28 05UP -999999 999999 c0 C1 t] hash(Decimal('-6.819E+21')) -> int:-622221755106986893 
+715 hash(Decimal('34109.679480515625')) == hash(Fraction(2183019486753, 64000000)) -> (bool:True, bool:True, int:1808649105145336142) 
+716 hash(Decimal('1900710042119525504.836151123046875')) == hash(Fraction(62282466660172611742471, 32768)) -> (bool:True, bool:True, int:1522900254629647489) 
+717 hash(Decimal(float:1.4236036651498751e+240)) -> (bool:True, bool:True) 
+718 hash(Decimal('688255581913770.9157333984375')) == hash(Fraction(704773715879701417711, 1024000)) -> (bool:True, bool:True, int:433571999964952161) 
+719 [p19 FLOOR -999999 999999 c0 C0 t] floor(Decimal('5.520285118e-27')) -> int:0 
+720 [p38 HALF_EVEN -999999 999999 c0 C1 t] round(Decimal('-2.905164947141743E+18'), True) -> Decimal:Decimal('-2905164947141743000.0') 
+721 [p9 CEILING -999999 999999 c0 C1 tDiOvRo] Decimal('-4.43834E-51') real imag -> (Decimal:Decimal('-4.43834E-51'), Decimal:Decimal('0'), Decimal:Decimal('-4.43834E-51'), bool:True, bool:True, bool:True, bool:False) 
+722 [p19 UP -999999 999999 c0 C1 tInFlIn] bool(Decimal('-6.22729752180023517903282138E+41')) -> bool:True 
+723 hash(Decimal('-701277520371529063.86')) == hash(Fraction(-35063876018576453193, 50)) -> (bool:True, bool:True, int:-1024095541661446217) 
+724 hash(Decimal('54500655664006084571263.810613828125')) == hash(Fraction(697608392499277882512176775857, 12800000)) -> (bool:True, bool:True, int:1096296798037924644) 
+725 [p16 HALF_DOWN 0 10 c1 C1 t] ceil(Decimal('-54028170872082663235938822429535')) -> int:-54028170872082663235938822429535 
+726 [p18 CEILING -1 29 c1 C1 t] round(Decimal('-986767249.0770390168514539685554'), -25) -> Decimal:Decimal('-0E+12') InRoCl
+727 hash(Decimal(float:1.5319464426279227e-187)) -> (bool:True, bool:True) 
+728 hash(Decimal('-114.2')) == hash(Fraction(-571, 5)) -> (bool:True, bool:True, int:-1844674407370955275) 
+729 [p34 FLOOR -999999 999999 c0 C0 t] round(Decimal('3.917579408468881282425362279511562028569047e+55'), 0) -> Decimal:Decimal('NaN') In
+730 hash(Decimal('16435821988379906971539.8150875')) == hash(Fraction(1314865759070392557723185207, 80000)) -> (bool:True, bool:True, int:1788988424614406262) 
+731 [p28 05UP -579 55236827765666802 c1 C1 t] sum/min/max/sorted Decimal('-48929180376296976.59753186775') -> (Decimal:Decimal('-97858360752593952.19506373550'), Decimal:Decimal('-48929180376296976.59753186775'), int:1, list:[Decimal('-48929180376296976.59753186775'), Decimal('-1.5'), 0, Decimal('1')]) 
+732 [p19 UP -999999 999999 c1 C0 t] round(Decimal('-734.57746672280791166782288884125'), True) -> Decimal:Decimal('-734.6') InRo
+733 [p19 05UP -999999 999999 c0 C1 tFlDiUnIn] abs(Decimal('-6.73347091188878767086521759E+50')) -> !Inexact: [<class 'decimal.Inexact'>] InRo
+734 [p1 HALF_DOWN -999999 999999 c1 C1 t] sum/min/max/sorted Decimal('-3388219089759722753.36973599431112434796749144') -> (Decimal:Decimal('-6E+18'), Decimal:Decimal('-3388219089759722753.36973599431112434796749144'), int:1, list:[Decimal('-3388219089759722753.36973599431112434796749144'), Decimal('-1.5'), 0, Decimal('1')]) InRo
+735 hash(Decimal('11278640295.12546875')) == hash(Fraction(72183297888803, 6400)) -> (bool:True, bool:True, int:197077530972373200) 
+736 hash(Decimal(float:-0.035340409796454225)) -> (bool:True, bool:True) 
+737 [p16 HALF_DOWN -999999999999999999 999999999999999999 c0 C0 tUnSu] Decimal('-5.05000500500505500055055000000000500555000555e+61') real imag -> (Decimal:Decimal('-5.05000500500505500055055000000000500555000555e+61'), Decimal:Decimal('0'), Decimal:Decimal('-5.05000500500505500055055000000000500555000555e+61'), bool:True, bool:True, bool:True, bool:False) InRo
+738 hash(Decimal('220310604060.903726')) == hash(Fraction(110155302030451863, 500000)) -> (bool:True, bool:True, int:1358081800819230242) 
+739 [p3 05UP -302004425 7549 c0 C0 t] trunc(Decimal('9.9000990090090e-41')) -> int:0 
+740 [p16 HALF_EVEN -999999 999999 c1 C1 tDiUnSu] hash(Decimal('-9.990909999900000E-11')) -> int:-1923652642791308963 
+741 hash(Decimal(float:-1.9455663886029311e-53)) -> !FloatOperation: [<class 'decimal.FloatOperation'>] 
+742 [p28 HALF_DOWN -999999999999999999 999999999999999999 c1 C1 tInSu] round(Decimal('-9.99999999999E-7')) -> int:0 
+743 [p20 HALF_EVEN -999999 999999 c1 C1 tIn] isnan(Decimal('5.0E+3')) -> bool:False 
+744 [p2 05UP -999999 999999 c0 C1 t] round(Decimal('-2.071037574E-33')) -> int:0 
+745 [p1 DOWN -999999 999999 c1 C1 t] pickle 3 Decimal('-4.7177587E-45') -> (MyDecimal:Decimal('-4.7177587E-45'), str:'MyDecimal') 
+746 [p34 CEILING -2 3 c1 C0 t] pickle 5 Decimal('-9.9999e+9') -> (MyDecimal:Decimal('-9.9999e+9'), str:'MyDecimal') 
+747 [p16 HALF_UP -79 32 c0 C0 t] floor(Decimal('9.36739e-33')) -> int:0 
+748 [p28 HALF_UP -999999 999999 c1 C1 tFlInCl] copy(Decimal('3.10555911284E+20')) -> Decimal:Decimal('3.10555911284E+20') 
+749 [p10 FLOOR -75 86 c1 C1 t] hash(Decimal('-6.72878511558228172639264619334184E-11')) -> int:-2166140421310516528 
+750 hash(Decimal('305703417547483.515')) == hash(Fraction(61140683509496703, 200)) -> (bool:True, bool:True, int:542178810582765562) 
+751 [p2 HALF_DOWN -51 83 c1 C0 tFl] str(Decimal('-8.24092344038680806709402e-26')) -> str:'-8.24092344038680806709402e-26' 
+752 hash(Decimal(float:-72362.25)) -> (bool:True, bool:True) 
+753 hash(Decimal(float:inf)) -> (bool:True, bool:True) 
+754 [p28 CEILING -999999999999999999 999999999999999999 c0 C1 t] sum/min/max/sorted Decimal('-4.183873387795970611273508128407242E+54') -> (Decimal:Decimal('-8.367746775591941222547016255E+54'), Decimal:Decimal('-4.183873387795970611273508128407242E+54'), int:1, list:[Decimal('-4.183873387795970611273508128407242E+54'), Decimal('-1.5'), 0, Decimal('1')]) InRo
+755 [p22 CEILING -9 3 c1 C1 tInFlSu] Decimal('-0.00084579615255587541') real imag -> (Decimal:Decimal('-0.00084579615255587541'), Decimal:Decimal('0'), Decimal:Decimal('-0.00084579615255587541'), bool:True, bool:True, bool:True, bool:False) 
+756 hash(Decimal('289833.713571630859375')) == hash(Fraction(5935794453947, 20480000)) -> (bool:True, bool:True, int:1339168204967015724) 
+757 [p34 HALF_UP -48 73 c1 C1 t] round(Decimal('-9.999000999999990000909009009E-18'), 0) -> Decimal:Decimal('-0') InRo
+758 [p30 05UP -1457939789463652 701245008562194 c0 C1 t] sum/min/max/sorted Decimal('877728488722967578108042158813') -> (Decimal:Decimal('1.75545697744593515621608431762E+30'), int:1, Decimal:Decimal('877728488722967578108042158813'), list:[Decimal('-1.5'), 0, Decimal('1'), Decimal('877728488722967578108042158813')]) InRo
+759 [p28 FLOOR -87 65 c1 C0 t] sum/min/max/sorted Decimal('1.952275948e+22') -> (Decimal:Decimal('39045518960000000000001'), int:1, Decimal:Decimal('1.952275948e+22'), list:[Decimal('-1.5'), 0, Decimal('1'), Decimal('1.952275948e+22')]) 
+760 [p38 HALF_UP 0 9 c1 C0 tDiUnSu] sum/min/max/sorted Decimal('99999999999999999999999999999999999.99999999') -> (Decimal:Decimal('Infinity'), int:1, Decimal:Decimal('99999999999999999999999999999999999.99999999'), list:[Decimal('-1.5'), 0, Decimal('1'), Decimal('99999999999999999999999999999999999.99999999')]) OvInRo
+761 [p3 HALF_EVEN -999999 999999 c0 C0 tUnInCl] hash(Decimal('5.05505555055550050055005550e+42')) -> int:1423572075354282645 
+762 [p28 HALF_EVEN -51 30 c0 C0 tDiInCl] sqrt(Decimal('99.99909090000000909')) -> float:9.999954544896692 
+763 [p28 HALF_DOWN -66 18 c0 C1 tInInRo] pickle 5 Decimal('-9.99990900909999090909999090099990009990099E-12') -> (Decimal:Decimal('-9.99990900909999090909999090099990009990099E-12'), str:'Decimal') 
+764 [p20 HALF_DOWN -11 5 c0 C1 tOv] Fraction(Decimal('60000000.000000000000')) -> Fraction:Fraction(60000000, 1) 
+765 [p28 05UP -63 1 c1 C1 t] Fraction(Decimal('-9.9090909E-45')) -> Fraction:Fraction(-99090909, 10000000000000000000000000000000000000000000000000000) 
+766 [p19 HALF_UP -1 8 c0 C0 t] float(Decimal('-9.9999909099090990990990099000e+47')) -> float:-9.999990909909098e+47 
+767 [p3 HALF_EVEN -999999 999999 c0 C0 t] round(Decimal('-4.39501113212854135977606039302564e-22'), 1000000000000000000000000000000) -> !OverflowError: Python int too large to convert to C ssize_t 
+768 [p34 UP -2 10 c0 C1 t] round(Decimal('-4.57111E-55'), -5) -> Decimal:Decimal('-1E+5') InRo
+769 [p28 DOWN 0 8 c0 C1 t] complex(Decimal('56909.02391315440417906618')) -> complex:(56909.02391315441+0j) 
+770 [p34 HALF_DOWN -4556357034873 820 c1 C0 tDiOvSuRo] hash(Decimal('-7318730751890434043871730397646119.41')) -> int:-605218514917071694 
+771 [p32 05UP -85 86 c0 C1 t] complex(Decimal('-1.67411E+12')) -> complex:(-1674110000000+0j) 
+772 [p28 HALF_EVEN -999999 999999 c0 C1 t] round(Decimal('-7.5782069E-49')) -> int:0 
+773 [p9 HALF_UP -999999999999999999 999999999999999999 c0 C1 tIn] sum/min/max/sorted Decimal('999999999.9999999999999999999999999999') -> (Decimal:Decimal('2.00000000E+9'), int:1, Decimal:Decimal('999999999.9999999999999999999999999999'), list:[Decimal('-1.5'), 0, Decimal('1'), Decimal('999999999.9999999999999999999999999999')]) InRo
+774 [p19 HALF_DOWN -999999999999999999 999999999999999999 c0 C1 tInOv] str(Decimal('-9.999999999999999999999999999999999999E+55')) -> str:'-9.999999999999999999999999999999999999E+55' 
+775 [p28 HALF_EVEN -999999 999999 c0 C1 t] hash(Decimal('-9.0000999990099090090990900E-32')) -> int:-402722729216137596 
+776 [p37 UP -4867644594645 7513579486 c1 C1 tInRo] Decimal('-4.31599998119756780196420724E-21') real imag -> (Decimal:Decimal('-4.31599998119756780196420724E-21'), Decimal:Decimal('0'), Decimal:Decimal('-4.31599998119756780196420724E-21'), bool:True, bool:True, bool:True, bool:False) 
+777 [p34 HALF_DOWN -9 0 c0 C1 tOvUnSuRo] pickle 1 Decimal('-9.0099990099000099990990999000900900909009E+49') -> (Decimal:Decimal('-9.0099990099000099990990999000900900909009E+49'), str:'Decimal') 
+778 [p13 CEILING -999999 999999 c0 C1 tSu] sum/min/max/sorted Decimal('1.0000000000E-20') -> (Decimal:Decimal('1.000000000002'), Decimal:Decimal('1.0000000000E-20'), int:1, list:[Decimal('-1.5'), 0, Decimal('1.0000000000E-20'), Decimal('1')]) InRo
+779 [p28 HALF_DOWN -2 6 c0 C0 t] trunc(Decimal('5.5555000505055555000e-13')) -> int:0 
+780 [p19 HALF_UP -999999999999999999 999999999999999999 c0 C1 t] Fraction(Decimal('-806638.68323206110519496154')) -> Fraction:Fraction(-40331934161603055259748077, 50000000000000000000) 
+781 hash(Decimal('1122222844061.51863037109375')) == hash(Fraction(459662476927598031, 409600)) -> (bool:True, bool:True, int:1841517380355105662) 
+782 [p36 DOWN -999999 999999 c1 C0 t] round(Decimal('6.83051948351683472080091432192105893214911055e+53'), None) -> int:683051948351683472080091432192105893214911055000000000 
+783 [p13 DOWN -74 73 c0 C1 tInOvCl] repr(Decimal('6.76870181209945032699119702958336E-19')) -> str:"Decimal('6.76870181209945032699119702958336E-19')" 
+784 [p20 HALF_EVEN -1626296737819067 506971125941 c1 C1 t] sum/min/max/sorted Decimal('-5.5555555550005505055005000000E-23') -> (Decimal:Decimal('1.0000000000000000000'), Decimal:Decimal('-5.5555555550005505055005000000E-23'), int:1, list:[Decimal('-1.5'), Decimal('-5.5555555550005505055005000000E-23'), 0, Decimal('1')]) InRo
+785 hash(Decimal(float:-1.5963175776193832e-137)) -> (bool:True, bool:True) 
+786 [p33 DOWN -999999 999999 c1 C0 tDiUn] Decimal('sNaN') real imag -> (Decimal:Decimal('sNaN'), Decimal:Decimal('0'), Decimal:Decimal('sNaN'), bool:True, bool:True, bool:True, bool:False) In
+787 [p19 CEILING -999999 999999 c0 C0 tDiIn] pickle 2 Decimal('70947.541994775') -> (MyDecimal:Decimal('70947.541994775'), str:'MyDecimal') 
+788 [p38 HALF_DOWN -4 1 c0 C0 tDiIn] sum/min/max/sorted Decimal('-9.2734093441566747040120851861660e-12') -> !Inexact: [<class 'decimal.Inexact'>] UnSuInRo
+789 [p28 CEILING -21 48 c0 C1 t] hash(Decimal('9.99999999999999999999999999E-14')) -> int:219741120720203754 
+790 [p19 HALF_DOWN -999999 999999 c0 C1 t] Decimal('NaN') real imag -> (Decimal:Decimal('NaN'), Decimal:Decimal('0'), Decimal:Decimal('NaN'), bool:True, bool:True, bool:True, bool:False) 
+791 [p28 HALF_EVEN -3259543526673 477283898199421 c0 C0 tOvCl] sum/min/max/sorted Decimal('-2.000000000000000000000000000000000000e-13') -> (Decimal:Decimal('0.9999999999996000000000000000'), Decimal:Decimal('-2.000000000000000000000000000000000000e-13'), int:1, list:[Decimal('-1.5'), Decimal('-2.000000000000000000000000000000000000e-13'), 0, Decimal('1')]) Ro
+792 [p28 CEILING -6771240189589 6034575360 c0 C1 t] hash(Decimal('-7.64677679222192922273147869253780245404E+50')) -> int:-2223434367835837374 
+793 [p19 FLOOR -10 7 c1 C1 tFlRo] round(Decimal('-9.00909099099099090090909000990990000990E-18')) -> int:0 
+794 [p39 UP -78 45 c1 C0 t] Fraction(Decimal('-9.0000000000e+17')) -> Fraction:Fraction(-900000000000000000, 1) 
+795 [p38 UP -999999 999999 c0 C1 t] ceil(Decimal('0')) -> int:0 
+796 [p19 FLOOR -88 55 c0 C1 t] abs(Decimal('-555000055050555505555555000.0')) -> Decimal:Decimal('5.550000550505555055E+26') InRo
+797 [p1 DOWN -999999 999999 c0 C1 t] str(Decimal('2.9750013754442381667680988638433662255200570E-15')) -> str:'2.9750013754442381667680988638433662255200570E-15' 
+798 hash(Decimal('14786720436070.59482268')) == hash(Fraction(369668010901764870567, 25000000)) -> (bool:True, bool:True, int:494072365273352726) 
+799 [p1 UP -33 19 c0 C1 tFl] pickle 3 Decimal('NaN123') -> (MyDecimal:Decimal('NaN123'), str:'MyDecimal') 
+800 [p34 CEILING -38601069204201 7756657008381 c0 C0 t] pickle 0 Decimal('-0.00017381977955930341579717739') -> (MyDecimal:Decimal('-0.00017381977955930341579717739'), str:'MyDecimal') 
+801 [p16 FLOOR -45 62 c0 C1 tUnSuCl] Decimal('-9.9999999999999999999999999999999999E-22') real imag -> (Decimal:Decimal('-9.9999999999999999999999999999999999E-22'), Decimal:Decimal('0'), Decimal:Decimal('-9.9999999999999999999999999999999999E-22'), bool:True, bool:True, bool:True, bool:False) InRo
+802 [p28 UP -999999 999999 c0 C0 tOvUn] Decimal('-6.1406889496885957390580272475932982498134e-17') real imag -> (Decimal:Decimal('-6.1406889496885957390580272475932982498134e-17'), Decimal:Decimal('0'), Decimal:Decimal('-6.1406889496885957390580272475932982498134e-17'), bool:True, bool:True, bool:True, bool:False) InRo
+803 [p18 HALF_EVEN -2 2 c0 C1 tRoCl] int(Decimal('50005550005050050005050055050505055500500.000')) -> int:50005550005050050005050055050505055500500 
+804 [p20 HALF_DOWN -999999 999999 c1 C0 t] int(Decimal('-9.2541362158987115851582e+30')) -> int:-9254136215898711585158200000000 
+805 [p3 05UP -999999 999999 c0 C1 t] hash(Decimal('0E+5')) -> int:0 
+806 [p1 FLOOR -999999 999999 c0 C1 t] int(Decimal('9.9000909990000000E+30')) -> int:9900090999000000000000000000000 
+807 hash(Decimal(float:33309.71428571428)) -> (bool:True, bool:True) 
+808 [p9 UP -24 72 c0 C1 t] hash(Decimal('-5505505005500050.00055050500550')) -> int:-823104252886261704 
+809 [p34 HALF_EVEN -999999999999999999 999999999999999999 c0 C1 t] Decimal('200000000000000000000.0') real imag -> (Decimal:Decimal('200000000000000000000.0'), Decimal:Decimal('0'), Decimal:Decimal('200000000000000000000.0'), bool:True, bool:True, bool:True, bool:False) 
+810 [p16 CEILING -999999999999999999 999999999999999999 c0 C1 t] complex(Decimal('-8.237083958189980203440711134349253E-19')) -> complex:(-8.237083958189981e-19+0j) 
+811 [p16 UP -35 8 c1 C1 tInIn] Fraction(Decimal('-9.9999999999999999999999999999999999999999999E+56')) -> Fraction:Fraction(-999999999999999999999999999999999999999999990000000000000, 1) 
+812 [p34 05UP 0 0 c0 C0 t] sum/min/max/sorted Decimal('5.005e-52') -> (Decimal:Decimal('1.000000000000000000000000000000001'), Decimal:Decimal('5.005e-52'), int:1, list:[Decimal('-1.5'), 0, Decimal('5.005e-52'), Decimal('1')]) UnSuInRo
+813 [p28 FLOOR -4 0 c0 C1 t] floor(Decimal('-1.9983805995E+14')) -> int:-199838059950000 
+814 [p3 FLOOR -6307269 970789304352 c1 C1 tRo] hash(Decimal('0E-7')) -> int:0 
+815 [p39 UP -25 89 c0 C1 t] Decimal('-50005055050055000005555500500005055') real imag -> (Decimal:Decimal('-50005055050055000005555500500005055'), Decimal:Decimal('0'), Decimal:Decimal('-50005055050055000005555500500005055'), bool:True, bool:True, bool:True, bool:False) 
+816 [p1 05UP -55 2 c1 C1 t] trunc(Decimal('-7.59101E+6')) -> int:-7591010 
+817 hash(Decimal('-13209451636870093766930790.10703125')) == hash(Fraction(-16908098095193720021671411337, 1280)) -> (bool:True, bool:True, int:-1779755595644194375) 
+818 [p28 DOWN -11 34 c0 C1 t] sum/min/max/sorted Decimal('98287128830032495695488566') -> (Decimal:Decimal('196574257660064991390977133'), int:1, Decimal:Decimal('98287128830032495695488566'), list:[Decimal('-1.5'), 0, Decimal('1'), Decimal('98287128830032495695488566')]) 
+819 [p28 FLOOR -82 88 c0 C0 t] repr(Decimal('-sNaN45')) -> str:"Decimal('-sNaN45')" 
+820 [p4 UP -999999 999999 c0 C0 t] hash(Decimal('5.709784061623577017720448e-9')) -> int:2236596744863371414 
+821 [p16 HALF_EVEN -999999 999999 c1 C1 t] sqrt(Decimal('-3.855067681846610706423151485404E+35')) -> !ValueError: expected a nonnegative input, got -3.855067681846611e+35 
+822 [p34 05UP -1 3 c1 C1 t] pickle 5 Decimal('-5E-8') -> (Decimal:Decimal('-5E-8'), str:'Decimal') 
+823 [p26 DOWN -999999 999999 c1 C1 tFlInCl] hash(Decimal('9.0900090900999E+16')) -> int:90900090900999000 
+824 [p39 CEILING -7 1 c0 C1 t] floor(Decimal('-60369100023156101.8594777540971395779691')) -> int:-60369100023156102 
+825 hash(Decimal(float:8.041000196032941e+20)) -> (bool:True, bool:True) 
+826 [p19 CEILING -999999 999999 c1 C1 tDiSuIn] round(Decimal('2000.00000000000000000000000000000000'), None) -> int:2000 
+827 [p20 DOWN -2 4 c0 C1 tInUnSu] round(Decimal('2.440372534909111001265942E+46'), 9223372036854775807) -> !InvalidOperation: [<class 'decimal.InvalidOperation'>] In
+828 [p28 UP -1 1 c0 C1 t] hash(Decimal('-9.9999999999999999999999999999999E-18')) -> int:-523017413421777574 
+829 [p20 DOWN -97 33 c0 C1 tFlSu] trunc(Decimal('3.5672387581399413363496215E+49')) -> int:35672387581399413363496215000000000000000000000000 
+830 [p3 FLOOR -999999999999999999 999999999999999999 c1 C1 tOvRoCl] round(Decimal('-0.00099999999999999999999999999999999999')) -> int:0 
+831 [p39 HALF_EVEN -805 646682055 c1 C1 tUn] Decimal('990990.09000999009009000999') real imag -> (Decimal:Decimal('990990.09000999009009000999'), Decimal:Decimal('0'), Decimal:Decimal('990990.09000999009009000999'), bool:True, bool:True, bool:True, bool:False) 
+832 [p38 UP 0 2 c0 C0 tInOvCl] pickle 1 Decimal('0') -> (MyDecimal:Decimal('0'), str:'MyDecimal') 
+833 [p3 HALF_UP -999999 999999 c0 C0 tInDiOvSuRo] sum/min/max/sorted Decimal('6.8698645744591828387336779948612830579028600e-12') -> !Rounded: [<class 'decimal.Rounded'>] InRo
+834 [p37 HALF_EVEN -72 48 c0 C1 t] round(Decimal('5.0555555005000555555505050550555005005E-7'), 9223372036854775807) -> Decimal:Decimal('NaN') In
+835 [p3 05UP -6 10 c0 C1 t] floor(Decimal('90999999990009.99000')) -> int:90999999990009 
+836 [p9 FLOOR -999999999999999999 999999999999999999 c1 C1 t] sum/min/max/sorted Decimal('-8.8909142766703279740929525709324042529532305E-17') -> (Decimal:Decimal('0.999999998'), Decimal:Decimal('-8.8909142766703279740929525709324042529532305E-17'), int:1, list:[Decimal('-1.5'), Decimal('-8.8909142766703279740929525709324042529532305E-17'), 0, Decimal('1')]) InRo
+837 [p3 CEILING -10 5 c1 C0 t] float(Decimal('9.099900999e+32')) -> float:9.099900999e+32 
+838 [p1 HALF_UP -999999 999999 c0 C1 tInOvUn] Decimal('8.874857350733E+34') real imag -> (Decimal:Decimal('8.874857350733E+34'), Decimal:Decimal('0'), Decimal:Decimal('8.874857350733E+34'), bool:True, bool:True, bool:True, bool:False) InRo
+839 [p1 UP -999999 999999 c0 C1 t] pickle 3 Decimal('-8.584734196082261257393933154151106939111E-14') -> (Decimal:Decimal('-8.584734196082261257393933154151106939111E-14'), str:'Decimal') 
+840 [p38 CEILING -94694501903747 9278051988 c0 C1 tInOvCl] trunc(Decimal('-9.900099090000909099909E-7')) -> int:0 
+841 hash(Decimal('-57048.4086742401123046875')) == hash(Fraction(-29909796087, 524288)) -> (bool:True, bool:True, int:-942338639608733400) 
+842 [p20 05UP -999999999999999999 999999999999999999 c0 C0 t] Decimal('7.87365367581325828144e-9') real imag -> (Decimal:Decimal('7.87365367581325828144e-9'), Decimal:Decimal('0'), Decimal:Decimal('7.87365367581325828144e-9'), bool:True, bool:True, bool:True, bool:False) InRo
+843 hash(Decimal('0.06640625')) == hash(Fraction(17, 256)) -> (bool:True, bool:True, int:153122387330596864) 
+844 [p19 DOWN -999999 999999 c1 C0 t] complex(Decimal('-3.597542702237694384083783885861985620e-13')) -> complex:(-3.5975427022376943e-13+0j) 
+845 [p28 DOWN 0 64 c0 C1 t] hash(Decimal('9.099000099E-47')) -> int:965076415075321451 
+846 [p20 FLOOR -79 67 c1 C1 t] copy(Decimal('-9.000009900000009000E+36')) -> Decimal:Decimal('-9.000009900000009000E+36') 
+847 [p9 FLOOR -29 48 c1 C1 tUn] sum/min/max/sorted Decimal('-2.30664473412605410628162229850775434414143613E+51') -> (Decimal:Decimal('-Infinity'), Decimal:Decimal('-2.30664473412605410628162229850775434414143613E+51'), int:1, list:[Decimal('-2.30664473412605410628162229850775434414143613E+51'), Decimal('-1.5'), 0, Decimal('1')]) OvInRo
+848 [p16 UP -999999 999999 c0 C1 tFlUn] bool(Decimal('3.475524387304723287558798E-35')) -> bool:True 
+849 [p28 HALF_EVEN -999999 999999 c1 C1 t] pickle 4 Decimal('-500555.55005550005') -> (MyDecimal:Decimal('-500555.55005550005'), str:'MyDecimal') 
+850 [p39 HALF_UP -3 9 c1 C1 tOvInCl] hash(Decimal('20000000000000000.000000000000')) -> int:20000000000000000 
+851 [p39 HALF_UP -3 1 c0 C1 tDi] round(Decimal('2.5448008946954507981025E-23'), -11) -> Decimal:Decimal('NaN') In
+852 [p28 CEILING -461721840 5015231885174447 c0 C1 t] sum/min/max/sorted Decimal('5.500555055055500555500E+23') -> (Decimal:Decimal('1100111011011100111100001'), int:1, Decimal:Decimal('5.500555055055500555500E+23'), list:[Decimal('-1.5'), 0, Decimal('1'), Decimal('5.500555055055500555500E+23')]) 
+853 [p28 CEILING -999999 999999 c1 C1 tInDi] ceil(Decimal('4375005658.5')) -> int:4375005659 
+854 [p28 DOWN -54 41 c0 C0 t] Decimal('-Infinity') real imag -> (Decimal:Decimal('-Infinity'), Decimal:Decimal('0'), Decimal:Decimal('-Infinity'), bool:True, bool:True, bool:True, bool:False) 
+855 [p9 05UP -51 94 c0 C1 tSu] Decimal('-9.23354028102409868955146522098E-25') real imag -> (Decimal:Decimal('-9.23354028102409868955146522098E-25'), Decimal:Decimal('0'), Decimal:Decimal('-9.23354028102409868955146522098E-25'), bool:True, bool:True, bool:True, bool:False) InRo
+856 [p2 CEILING -94 63 c0 C0 tFlRo] sum/min/max/sorted Decimal('-3e-9') -> !Rounded: [<class 'decimal.Rounded'>] InRo
+857 hash(Decimal(float:-1.3330882212578366e+124)) -> !FloatOperation: [<class 'decimal.FloatOperation'>] 
+858 [p28 HALF_EVEN -31 37 c0 C0 t] round(Decimal('-7.07138575e-22'), -1000000000000000000000000000000) -> !OverflowError: Python int too large to convert to C ssize_t 
+859 hash(Decimal(float:6.394609265130832e+287)) -> !FloatOperation: [<class 'decimal.FloatOperation'>] 
+860 [p28 05UP -1 9 c0 C1 t] Decimal('979842849929927789951376721665.2240817') real imag -> (Decimal:Decimal('979842849929927789951376721665.2240817'), Decimal:Decimal('0'), Decimal:Decimal('979842849929927789951376721665.2240817'), bool:True, bool:True, bool:True, bool:False) OvInRo
+861 [p16 HALF_EVEN -999999 999999 c0 C1 t] pickle 2 Decimal('7.9993200342885401811876212567158E-15') -> (Decimal:Decimal('7.9993200342885401811876212567158E-15'), str:'Decimal') 
+862 [p1 05UP -57 8 c1 C1 t] floor(Decimal('3.887972958014E-31')) -> int:0 
+863 [p38 CEILING -13 93 c0 C1 t] hash(Decimal('22066671688604.4580934520')) -> int:197383661612470618 
+864 [p41 UP -34 4 c0 C1 t] hash(Decimal('3.4E-17')) -> int:499239697802427090 
+865 [p3 CEILING -999999 999999 c0 C1 tIn] round(Decimal('-30000000000000000000.00000000000000000'), None) -> int:-30000000000000000000 
+866 [p38 HALF_EVEN -70 87 c0 C1 t] round(Decimal('3.3265959673219392997E+23'), 21) -> Decimal:Decimal('NaN') In
+867 [p19 05UP -999999 999999 c0 C1 t] isnan(Decimal('-9.9999999999999999999999999E-30')) -> bool:False 
+868 [p16 05UP -999999 999999 c1 C1 t] Fraction(Decimal('4.5553768699560418370E+40')) -> Fraction:Fraction(45553768699560418370000000000000000000000, 1) 
+869 hash(Decimal('-23682724932580044468.1136953125')) == hash(Fraction(-3031388791370245691918553, 128000)) -> (bool:True, bool:True, int:-1458307448236592371) 
+870 hash(Decimal('-44812961448347611450795.6141')) == hash(Fraction(-448129614483476114507956141, 10000)) -> (bool:True, bool:True, int:-1971410740432018390) 
+871 [p45 HALF_DOWN -10 4 c0 C1 t] bool(Decimal('9.9999999999999999999999999999999999E-7')) -> bool:True 
+872 [p28 FLOOR -999999 999999 c0 C1 t] pickle 5 Decimal('6.00000000000000000000000000E-10') -> (MyDecimal:Decimal('6.00000000000000000000000000E-10'), str:'MyDecimal') 
+873 [p28 05UP -46 7 c1 C1 t] hash(Decimal('5.170895643143E-33')) -> int:283312282678232431 
+874 [p16 FLOOR -999999 999999 c1 C1 t] bool(Decimal('-0.0005505005500')) -> bool:True 
+875 [p28 05UP -999999 999999 c1 C0 t] hash(Decimal('9999999999999999999.99999999999999')) -> int:701548372385306842 
+876 [p28 05UP -9 9 c1 C0 t] copy(Decimal('8.581546863352684354436189631073149249e-23')) -> Decimal:Decimal('8.581546863352684354436189631073149249e-23') 
+877 [p2 DOWN -999999 999999 c0 C1 t] round(Decimal('7.367E+26'), '1') -> !TypeError: optional arg must be an integer 
+878 [p9 05UP -999999 999999 c0 C1 t] floor(Decimal('-NaN')) -> !ValueError: cannot convert NaN to integer 
+879 [p8 HALF_EVEN -5 7 c0 C0 t] sum/min/max/sorted Decimal('9.999999999999e+25') -> (Decimal:Decimal('Infinity'), int:1, Decimal:Decimal('9.999999999999e+25'), list:[Decimal('-1.5'), 0, Decimal('1'), Decimal('9.999999999999e+25')]) OvInRo
+880 [p20 UP -45 58 c0 C1 t] pickle 4 Decimal('7.79171024287E-38') -> (MyDecimal:Decimal('7.79171024287E-38'), str:'MyDecimal') 
+881 [p2 UP -999999 999999 c0 C0 tOv] hash(Decimal('5.500500050550055e-37')) -> int:1167985698522921396 
+882 [p20 HALF_DOWN -7 4 c0 C0 t] ceil(Decimal('-5.55505055555050055000050000050055550055e+44')) -> int:-555505055555050055000050000050055550055000000 
+883 [p28 DOWN -999999 999999 c0 C1 t] sqrt(Decimal('9.999999999E-13')) -> float:9.9999999995e-07 
+884 [p28 05UP -141944284954746 91718015054 c1 C1 t] hash(Decimal('-5050055.555550500555005555')) -> int:-1115041190797903443 
+885 hash(Decimal('1218926.868')) == hash(Fraction(304731717, 250)) -> (bool:True, bool:True, int:1687877082745642899) 
+886 [p19 HALF_DOWN -9 2 c0 C1 t] pickle 1 Decimal('9.000000099E-19') -> (MyDecimal:Decimal('9.000000099E-19'), str:'MyDecimal') 
+887 [p38 UP -999999 999999 c0 C0 tInUnRo] trunc(Decimal('3.00540265077326414721138556e-26')) -> int:0 
+888 [p28 CEILING -999999 999999 c0 C1 t] Fraction(Decimal('-9.09900909990000E-30')) -> Fraction:Fraction(-90990090999, 10000000000000000000000000000000000000000) 
+889 [p16 CEILING -3 9 c1 C0 tFlUn] ceil(Decimal('9.90538283e-49')) -> int:1 
+890 [p19 UP -999999 999999 c0 C1 t] hash(Decimal('1.83029004811531151203E-36')) -> int:2078802230167660244 
+891 [p39 DOWN -87 11 c1 C1 t] abs(Decimal('5.75203510487878329E+19')) -> Decimal:Decimal('999999999999.999999999999999999999999999') OvInRo
+892 [p9 HALF_UP -4 5 c1 C0 tInRo] pickle 0 Decimal('-9.99999909099099099000999e-33') -> (Decimal:Decimal('-9.99999909099099099000999e-33'), str:'Decimal') 
+893 [p1 DOWN -999999 999999 c0 C0 t] pickle 5 Decimal('-5.0e-53') -> (Decimal:Decimal('-5.0e-53'), str:'Decimal') 
+894 [p3 HALF_EVEN -9 4 c0 C1 t] hash(Decimal('9.9E+16')) -> int:99000000000000000 
+895 [p16 DOWN -999999999999999999 999999999999999999 c0 C1 t] hash(Decimal('2.800059744415205E+30')) -> int:1541736018999874457 
+896 hash(Decimal('-224415728180.93359375')) == hash(Fraction(-57450426414319, 256)) -> (bool:True, bool:True, int:-2152720846298825268) 
+897 [p2 HALF_DOWN -68 56 c0 C1 t] ceil(Decimal('9.90000999E-40')) -> int:1 
+898 [p28 05UP -9 7 c0 C1 t] float(Decimal('5.6471305E+30')) -> float:5.6471305e+30 
+899 hash(Decimal('68661205.33042144775390625')) == hash(Fraction(8999561505069, 131072)) -> (bool:True, bool:True, int:761899985466273749) 
+900 [p17 FLOOR -999999 999999 c0 C0 t] pickle 5 Decimal('9914253676235231.524864367095681244701256306') -> (MyDecimal:Decimal('9914253676235231.524864367095681244701256306'), str:'MyDecimal') 
+901 [p39 CEILING -999999 999999 c1 C1 tUn] round(Decimal('-9.99999E+26'), 0) -> Decimal:Decimal('-999999000000000000000000000') 
+902 [p20 05UP -8350 47414 c0 C1 tIn] sqrt(Decimal('929461244699959494318178359712.47578557406463')) -> float:964085704022188.8 
+903 [p28 CEILING -999999 999999 c0 C1 tSu] hash(Decimal('-4.999412E-40')) -> int:-1664758899047509075 
+904 [p19 HALF_DOWN -9 70 c1 C1 tDiSuIn] round(Decimal('-Infinity'), -15) -> Decimal:Decimal('NaN') In
+905 [p1 CEILING -999999 999999 c1 C1 tInFlUnRo] hash(Decimal('-909090000000999900.0990099909099090990900')) -> int:-1414618003139040322 
+906 hash(Decimal('-1388690681775379.1024')) == hash(Fraction(-867931676109611939, 625)) -> (bool:True, bool:True, int:-872075010960866215) 
+907 [p2 05UP -999999 999999 c0 C1 t] hash(Decimal('6.81196E-15')) -> int:31350560516202313 
+908 [p28 HALF_DOWN -22 37 c0 C1 t] Decimal('583786.2644565492286501963166708319287291957') real imag -> (Decimal:Decimal('583786.2644565492286501963166708319287291957'), Decimal:Decimal('0'), Decimal:Decimal('583786.2644565492286501963166708319287291957'), bool:True, bool:True, bool:True, bool:False) InRo
+909 [p27 HALF_UP -999999 999999 c0 C0 t] Decimal('41774678364090861606527.2228712258605768704360') real imag -> (Decimal:Decimal('41774678364090861606527.2228712258605768704360'), Decimal:Decimal('0'), Decimal:Decimal('41774678364090861606527.2228712258605768704360'), bool:True, bool:True, bool:True, bool:False) InRo
+910 [p28 HALF_EVEN -6 1000 c0 C0 t] hash(Decimal('-55067233799157604083489799705324.0025')) -> int:-1548208984343181958 
+911 [p19 DOWN -819960361 1048329867341 c0 C1 tSu] sum/min/max/sorted Decimal('-87209529858621413883024626.393403') -> (Decimal:Decimal('-1.744190597172428277E+26'), Decimal:Decimal('-87209529858621413883024626.393403'), int:1, list:[Decimal('-87209529858621413883024626.393403'), Decimal('-1.5'), 0, Decimal('1')]) InRo
+912 hash(Decimal('-3116750.5748314')) == hash(Fraction(-15583752874157, 5000000)) -> (bool:True, bool:True, int:-2033058553046617808) 
+913 [p34 UP -10 10 c0 C0 t] pickle 4 Decimal('-710002257218296900314846169.44783875380691119') -> (MyDecimal:Decimal('-710002257218296900314846169.44783875380691119'), str:'MyDecimal') 
+914 [p28 DOWN -999999999999999999 999999999999999999 c0 C0 t] hash(Decimal('651553360391912623415534868564773509668')) -> int:395991329387326544 
+915 [p1 FLOOR -3 9 c0 C1 t] complex(Decimal('-8.62072194667849382600551111555120458244E-16')) -> complex:(-8.6207219466784935e-16+0j) 
+916 [p34 DOWN -999999999999999999 999999999999999999 c0 C1 tSuIn] hash(Decimal('2.0000000E-12')) -> int:1180860096701307094 
+917 [p19 05UP -17 21 c1 C0 t] repr(Decimal('999999999.999999999999')) -> str:"Decimal('999999999.999999999999')" 
+918 [p9 HALF_DOWN -4 45 c1 C1 tDiSu] Decimal('9990009999') real imag -> (Decimal:Decimal('9990009999'), Decimal:Decimal('0'), Decimal:Decimal('9990009999'), bool:True, bool:True, bool:True, bool:False) InRo
+919 [p28 DOWN -7 1 c0 C0 tInFlDiUnSuCl] float(Decimal('-7.422910255456617382510359504945e-30')) -> float:-7.422910255456617e-30 
+920 [p4 HALF_UP -1 3 c0 C1 t] Fraction(Decimal('6.0420263423E-38')) -> Fraction:Fraction(60420263423, 1000000000000000000000000000000000000000000000000) 
+921 hash(Decimal(float:-0.19929801852623355)) -> (bool:True, bool:True) 
+922 [p20 05UP -32 70 c0 C0 tInFlSuRoCl] repr(Decimal('-8.876646806542e+21')) -> str:"Decimal('-8.876646806542e+21')" 
+923 [p3 05UP -999999999999999999 999999999999999999 c0 C0 t] int(Decimal('-67975013.6141688831')) -> int:-67975013 
+924 [p39 HALF_EVEN -999999999999999999 999999999999999999 c0 C1 t] pickle 3 Decimal('-9.00000E-17') -> (Decimal:Decimal('-9.00000E-17'), str:'Decimal') 
+925 [p9 05UP -9 9 c1 C1 t] hash(Decimal('5.1E-28')) -> int:1686535200064420119 
+926 [p9 DOWN -93 32 c0 C1 t] Decimal('9.99999999999999E+15') real imag -> (Decimal:Decimal('9.99999999999999E+15'), Decimal:Decimal('0'), Decimal:Decimal('9.99999999999999E+15'), bool:True, bool:True, bool:True, bool:False) InRo
+927 [p30 HALF_DOWN 0 9 c1 C1 tOvRo] deepcopy(Decimal('-0E-47')) -> Decimal:Decimal('-0E-47') 
+928 [p19 HALF_DOWN -999999 999999 c0 C1 tFlUn] pickle 4 Decimal('0E-7') -> (MyDecimal:Decimal('0E-7'), str:'MyDecimal') 
+929 [p19 HALF_DOWN -999999 999999 c0 C1 t] pickle 5 Decimal('-0.00999999999999') -> (Decimal:Decimal('-0.00999999999999'), str:'Decimal') 
+930 [p28 DOWN -999999 999999 c0 C1 t] round(Decimal('4.871653358536497002216243702E+35'), -9223372036854775808) -> Decimal:Decimal('NaN') In
+931 hash(Decimal('-73611793457113755.347088623046875')) == hash(Fraction(-12060556240013517676067, 163840)) -> (bool:True, bool:True, int:-1796280872172835073) 
+932 [p3 HALF_EVEN -6 4 c1 C1 tOvUnCl] complex(Decimal('9.48815179923279E+35')) -> complex:(9.48815179923279e+35+0j) 
+933 hash(Decimal(float:-7.951421377007174e-41)) -> (bool:True, bool:True) 
+934 [p9 HALF_UP -999999 999999 c0 C0 t] complex(Decimal('-9.99999999999999999999999999e-27')) -> complex:(-1e-26+0j) 
+935 hash(Decimal('65626464094659.560647')) == hash(Fraction(65626464094659560647, 1000000)) -> (bool:True, bool:True, int:1112641795938729632) 
+936 [p16 FLOOR -6 0 c0 C1 tInUnCl] round(Decimal('-5.0000000000000000000000E+43'), -9223372036854775808) -> !InvalidOperation: [<class 'decimal.InvalidOperation'>] In
+937 [p9 HALF_DOWN -6 0 c0 C0 t] pickle 3 Decimal('5.05005050000005050000000005500e-13') -> (MyDecimal:Decimal('5.05005050000005050000000005500e-13'), str:'MyDecimal') 
+938 [p39 HALF_DOWN -999999 999999 c1 C1 tInUnCl] hash(Decimal('9.9999999999999999999999999999999999999999999E-15')) -> int:1002561984008321951 
+939 hash(Decimal('-124971686732356082.890625')) == hash(Fraction(-7998187950870789305, 64)) -> (bool:True, bool:True, int:-2178613116813302258) 
+940 [p3 CEILING -87 8 c0 C0 t] int(Decimal('-3.8602792369411131227495e+29')) -> int:-386027923694111312274950000000 
+941 hash(Decimal('64792403070460008495659213.52656')) == hash(Fraction(404952519190375053097870084541, 6250)) -> (bool:True, bool:True, int:122808469343003484) 
+942 [p3 DOWN -999999 999999 c0 C1 tOvRo] Decimal('999999999999.999999999999999999999999999999') real imag -> !Rounded: [<class 'decimal.Rounded'>] InRo
+943 [p34 FLOOR -93 32 c1 C1 t] Decimal('1.5E-45') real imag -> (Decimal:Decimal('1.5E-45'), Decimal:Decimal('0'), Decimal:Decimal('1.5E-45'), bool:True, bool:True, bool:True, bool:False) 
+944 [p9 05UP -9 10 c0 C0 t] hash(Decimal('-6.00000000000000000000e+26')) -> int:-914315324063643529 
+945 [p3 DOWN -999999999999999999 999999999999999999 c1 C1 tInRo] deepcopy(Decimal('-1E-12')) -> Decimal:Decimal('-1E-12') 
+946 [p19 HALF_UP -80 19 c1 C1 t] pickle 4 Decimal('1.84658E-54') -> (MyDecimal:Decimal('1.84658E-54'), str:'MyDecimal') 
+947 [p2 HALF_DOWN -999999 999999 c0 C1 t] hash(Decimal('5.500550550555500005055550000555050E+41')) -> int:1443841635763421184 
+948 [p38 CEILING -999999 999999 c0 C1 tFl] int(Decimal('9.9990000990909909009000E+44')) -> int:999900009909099090090000000000000000000000000 
+949 [p28 HALF_EVEN -29 4 c0 C1 t] round(Decimal('-9.4246321016305239141531435784398019E+44'), -9223372036854775808) -> Decimal:Decimal('NaN') In
+950 [p38 CEILING -75 10 c0 C1 t] round(Decimal('-9.99999999999999999999999999999999999999E+57'), 26) -> Decimal:Decimal('NaN') In
+951 [p3 CEILING 0 3 c0 C1 t] ceil(Decimal('9.135096102508529847610500138E+49')) -> int:91350961025085298476105001380000000000000000000000 
+952 [p28 05UP -6 1 c0 C1 t] sum/min/max/sorted Decimal('-2.973377591943735733149E-24') -> (Decimal:Decimal('0.9999999999999999999999940532'), Decimal:Decimal('-2.973377591943735733149E-24'), int:1, list:[Decimal('-1.5'), Decimal('-2.973377591943735733149E-24'), 0, Decimal('1')]) UnSuInRo
+953 [p28 UP 0 10 c0 C1 tSu] pickle 2 Decimal('-5.08883783E-15') -> (MyDecimal:Decimal('-5.08883783E-15'), str:'MyDecimal') 
+954 hash(Decimal('-2390223418231.087642509765625')) == hash(Fraction(-244758878026863374593, 102400000)) -> (bool:True, bool:True, int:-1325867907646813424) 
+955 [p1 CEILING -999999 999999 c0 C0 tInDi] Decimal('-9.9999099090990990e-24') real imag -> (Decimal:Decimal('-9.9999099090990990e-24'), Decimal:Decimal('0'), Decimal:Decimal('-9.9999099090990990e-24'), bool:True, bool:True, bool:True, bool:False) InRo
+956 [p28 HALF_DOWN -4 1 c1 C1 tDiRo] pickle 4 Decimal('4.625641757390739134876005398386211284092E+41') -> (MyDecimal:Decimal('4.625641757390739134876005398386211284092E+41'), str:'MyDecimal') 
+957 [p28 FLOOR -999999 999999 c0 C1 t] Decimal('-3.5308600470769345059892357970250681424452091') real imag -> (Decimal:Decimal('-3.5308600470769345059892357970250681424452091'), Decimal:Decimal('0'), Decimal:Decimal('-3.5308600470769345059892357970250681424452091'), bool:True, bool:True, bool:True, bool:False) InRo
+958 [p16 05UP -999999 999999 c0 C1 t] round(Decimal('9009999990090999090099999990900.9099'), 1.0) -> !TypeError: optional arg must be an integer 
+959 [p20 UP -71 34 c1 C1 tOvIn] round(Decimal('-2.3631257174347995767641641224529094E+39'), 2) -> Decimal:Decimal('NaN') In
+960 [p38 05UP -10 1 c1 C0 tInDiOvRo] hash(Decimal('-9.999999999999999999999999999e+52')) -> int:-2081589740253709491 
+961 [p17 HALF_DOWN -69 66 c0 C0 tOvUnIn] sum/min/max/sorted Decimal('sNaN') -> (Decimal:Decimal('NaN'), Decimal:Decimal('sNaN'), Decimal:Decimal('sNaN'), list:[Decimal('-1.5'), 0, Decimal('sNaN'), Decimal('1')]) In
+962 [p1 HALF_DOWN -19 84 c1 C1 t] abs(Decimal('9.999900000009000909909909000009009090E+40')) -> Decimal:Decimal('1E+41') InRo
+963 [p2 HALF_UP -88 88 c1 C1 tFl] sqrt(Decimal('-9.99999999999999999E-27')) -> !ValueError: expected a nonnegative input, got -1e-26 
+964 hash(Decimal(float:-inf)) -> (bool:True, bool:True) 
+965 [p28 HALF_UP -999999999999999999 999999999999999999 c0 C1 t] abs(Decimal('-13092984302684368039008904966708002523666.5323')) -> Decimal:Decimal('1.309298430268436803900890497E+40') InRo
+966 [p28 HALF_DOWN -999999 999999 c0 C1 t] repr(Decimal('2.18565125456415860989048E+43')) -> str:"Decimal('2.18565125456415860989048E+43')" 
+967 [p33 DOWN -999999 999999 c0 C1 tOvSuRo] hash(Decimal('90090090.990900009990999009090099090990090')) -> int:1423278410246325408 
+968 [p34 CEILING -28 68 c1 C0 t] hash(Decimal('-9.9999999e+9')) -> int:-9999999900 
+969 [p1 CEILING -999999999999999999 999999999999999999 c0 C1 t] complex(Decimal('-0.0000500055550055055555550550000')) -> complex:(-5.0005555005505556e-05+0j) 
+970 [p20 HALF_EVEN -999999 999999 c0 C1 tOvSu] ceil(Decimal('-206353135347756299491413.50731856342')) -> int:-206353135347756299491413 
+971 hash(Decimal('578932475866633082.1212544')) == hash(Fraction(45229099677080709540723, 78125)) -> (bool:True, bool:True, int:1947739915716917682) 
+972 [p16 HALF_UP -999999 999999 c0 C1 tIn] Decimal('800000000000000000000000.00000000000000') real imag -> (Decimal:Decimal('800000000000000000000000.00000000000000'), Decimal:Decimal('0'), Decimal:Decimal('800000000000000000000000.00000000000000'), bool:True, bool:True, bool:True, bool:False) Ro
+973 [p28 FLOOR -999999999999999999 999999999999999999 c1 C1 tOvUn] round(Decimal('-8.075E-37'), 1000000000000000000000000000000) -> !OverflowError: Python int too large to convert to C ssize_t 
+974 [p1 UP -4 9 c0 C1 tOvUnCl] bool(Decimal('9.909009090009000090099990099900E+51')) -> bool:True 
+975 [p3 CEILING -10 2 c1 C1 t] pickle 0 Decimal('-9.0099900009000990099990000000099E+37') -> (Decimal:Decimal('-9.0099900009000990099990000000099E+37'), str:'Decimal') 
+976 hash(Decimal('-84908525813.4345344')) == hash(Fraction(-6633478579174573, 78125)) -> (bool:True, bool:True, int:-1697897439033788814) 
+977 [p1 HALF_UP -999999 999999 c0 C0 t] hash(Decimal('5.403146403721835563921562119976e-16')) -> int:140244074604132483 
+978 [p2 HALF_DOWN -999999 999999 c1 C1 t] pickle 1 Decimal('5.88083364247742089601E+21') -> (MyDecimal:Decimal('5.88083364247742089601E+21'), str:'MyDecimal') 
+979 [p28 CEILING -999999 999999 c0 C0 t] abs(Decimal('-9.99990090009e+33')) -> Decimal:Decimal('9.99990090009e+33') 
+980 [p20 HALF_UP -999999 999999 c1 C1 t] complex(Decimal('2.3557783493838313805E+29')) -> complex:(2.3557783493838315e+29+0j) 
+981 [p1 FLOOR -27 12 c0 C1 t] Decimal('-4.46867060832386855E-37') real imag -> (Decimal:Decimal('-4.46867060832386855E-37'), Decimal:Decimal('0'), Decimal:Decimal('-4.46867060832386855E-37'), bool:True, bool:True, bool:True, bool:False) UnSuInRo
+982 hash(Decimal(float:8049629796942.576)) -> (bool:True, bool:True) 
+983 [p38 05UP -53 58 c1 C1 t] pickle 2 Decimal('5.50550055055550E+25') -> (Decimal:Decimal('5.50550055055550E+25'), str:'Decimal') 
+984 hash(Decimal(nan)) -> (bool:True, bool:True) 
+985 hash(Decimal(float:14991.125)) -> !FloatOperation: [<class 'decimal.FloatOperation'>] 
+986 hash(Decimal('-24847359797199832849071.5')) == hash(Fraction(-49694719594399665698143, 2)) -> (bool:True, bool:True, int:-748451417673680071) 
+987 [p19 FLOOR -999999 999999 c1 C1 tFl] pickle 3 Decimal('-3.771517330398745120859E-21') -> (Decimal:Decimal('-3.771517330398745120859E-21'), str:'Decimal') 
+988 [p28 DOWN -34 43 c1 C1 t] isnan(Decimal('0.00000500555055550000005005')) -> bool:False 
+989 [p34 HALF_DOWN -24 41 c0 C1 t] round(Decimal('5.055050E-30'), 1.0) -> !TypeError: optional arg must be an integer 
+990 [p16 05UP -6 0 c0 C1 tDiSu] pickle 1 Decimal('-9.00000000000000E-12') -> (MyDecimal:Decimal('-9.00000000000000E-12'), str:'MyDecimal') 
+991 [p5 HALF_EVEN -65 3 c1 C1 t] pickle 4 Decimal('9.6543E+22') -> (MyDecimal:Decimal('9.6543E+22'), str:'MyDecimal') 
+992 hash(Decimal('1181673895.980110302734375')) == hash(Fraction(24200681389672659, 20480000)) -> (bool:True, bool:True, int:1333953938499830226) 
+993 hash(Decimal(float:1.6702179084680852e+78)) -> (bool:True, bool:True) 
+994 hash(Decimal('-703992863430943249837.0455272046875')) == hash(Fraction(-450555432595803679895709137411, 640000000)) -> (bool:True, bool:True, int:-2301321673354062088) 
+995 [p20 FLOOR -7 9 c0 C1 tDiUnInCl] sum/min/max/sorted Decimal('0.550050505000005555505050555005555') -> !Inexact: [<class 'decimal.Inexact'>] InRo
+996 [p39 CEILING -999999 999999 c1 C1 t] hash(Decimal('-5.0023513833745650411530164471982970E+42')) -> int:-804500333586407748 
+997 [p20 UP -999999 999999 c0 C1 t] bool(Decimal('0.00999099999000900')) -> bool:True 
+998 [p9 05UP -999999 999999 c0 C0 t] Decimal('-90000099999090990090090000900.09') real imag -> (Decimal:Decimal('-90000099999090990090090000900.09'), Decimal:Decimal('0'), Decimal:Decimal('-90000099999090990090090000900.09'), bool:True, bool:True, bool:True, bool:False) InRo
+999 hash(Decimal('89096659213526.17614125')) == hash(Fraction(71277327370820940913, 800000)) -> (bool:True, bool:True, int:224727204920573108) 

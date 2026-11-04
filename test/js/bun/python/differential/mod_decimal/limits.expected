@@ -1,0 +1,314 @@
+status: 0
+script: 703beaf4ed760685
+---
+format(1.23456789, '=9223372036854775807.1') -> ValueError: format specification exceeds internal limits of _decimal
+format(1.23456789, '9223372036854775807') -> ValueError: format specification exceeds internal limits of _decimal
+format(1.23456789, '.9223372036854775807') -> ValueError: format specification exceeds internal limits of _decimal
+format(1.23456789, '.9223372036854775807f') -> ValueError: format specification exceeds internal limits of _decimal
+format(1.23456789, '9223372036854775807.9223372036854775807f') -> ValueError: format specification exceeds internal limits of _decimal
+format(1.23456789, '1000000000000000000') -> ValueError: format specification exceeds internal limits of _decimal
+format(1.23456789, '999999999999999999') -> MemoryError: 
+format(1.23456789, '.1000000000000000000f') -> ValueError: format specification exceeds internal limits of _decimal
+format(1.23456789, '.999999999999999999f') -> MemoryError: 
+format(1.23456789, '.999999999999999999e') -> MemoryError: 
+format(1.23456789, '.999999999999999999g') -> '1.23456789'
+format(1.23456789, '.999999999999999999%') -> ValueError: format specification exceeds internal limits of _decimal
+format(1.23456789, '.99999999999999999999999') -> '1.23456789'
+format(1.23456789, 'f') -> '1.23456789'
+format(1.23456789, '%') -> '123.456789%'
+format(1.23456789, 'e') -> '1.23456789e+0'
+format(1.23456789, 'g') -> '1.23456789'
+format(1.23456789, ',f') -> '1.23456789'
+format(1.23456789, 'E') -> '1.23456789E+0'
+format(1.23456789, 'G') -> '1.23456789'
+format(1.23456789, 'n') -> '1.23456789'
+format(NaN, '=9223372036854775807.1') -> ValueError: format specification exceeds internal limits of _decimal
+format(NaN, '9223372036854775807') -> ValueError: format specification exceeds internal limits of _decimal
+format(NaN, '.9223372036854775807') -> 'NaN'
+format(NaN, '.9223372036854775807f') -> 'NaN'
+format(NaN, '9223372036854775807.9223372036854775807f') -> ValueError: format specification exceeds internal limits of _decimal
+format(NaN, '1000000000000000000') -> ValueError: format specification exceeds internal limits of _decimal
+format(NaN, '999999999999999999') -> MemoryError: 
+format(NaN, '.1000000000000000000f') -> 'NaN'
+format(NaN, '.999999999999999999f') -> 'NaN'
+format(NaN, '.999999999999999999e') -> 'NaN'
+format(NaN, '.999999999999999999g') -> 'NaN'
+format(NaN, '.999999999999999999%') -> 'NaN%'
+format(NaN, '.99999999999999999999999') -> 'NaN'
+format(NaN, 'f') -> 'NaN'
+format(NaN, '%') -> 'NaN%'
+format(NaN, 'e') -> 'NaN'
+format(NaN, 'g') -> 'NaN'
+format(NaN, ',f') -> 'NaN'
+format(NaN, 'E') -> 'NaN'
+format(NaN, 'G') -> 'NaN'
+format(NaN, 'n') -> 'NaN'
+format(Infinity, '=9223372036854775807.1') -> ValueError: format specification exceeds internal limits of _decimal
+format(Infinity, '9223372036854775807') -> ValueError: format specification exceeds internal limits of _decimal
+format(Infinity, '.9223372036854775807') -> 'Infinity'
+format(Infinity, '.9223372036854775807f') -> 'Infinity'
+format(Infinity, '9223372036854775807.9223372036854775807f') -> ValueError: format specification exceeds internal limits of _decimal
+format(Infinity, '1000000000000000000') -> ValueError: format specification exceeds internal limits of _decimal
+format(Infinity, '999999999999999999') -> MemoryError: 
+format(Infinity, '.1000000000000000000f') -> 'Infinity'
+format(Infinity, '.999999999999999999f') -> 'Infinity'
+format(Infinity, '.999999999999999999e') -> 'Infinity'
+format(Infinity, '.999999999999999999g') -> 'Infinity'
+format(Infinity, '.999999999999999999%') -> 'Infinity%'
+format(Infinity, '.99999999999999999999999') -> 'Infinity'
+format(Infinity, 'f') -> 'Infinity'
+format(Infinity, '%') -> 'Infinity%'
+format(Infinity, 'e') -> 'Infinity'
+format(Infinity, 'g') -> 'Infinity'
+format(Infinity, ',f') -> 'Infinity'
+format(Infinity, 'E') -> 'Infinity'
+format(Infinity, 'G') -> 'Infinity'
+format(Infinity, 'n') -> 'Infinity'
+format(0, '=9223372036854775807.1') -> ValueError: format specification exceeds internal limits of _decimal
+format(0, '9223372036854775807') -> ValueError: format specification exceeds internal limits of _decimal
+format(0, '.9223372036854775807') -> ValueError: format specification exceeds internal limits of _decimal
+format(0, '.9223372036854775807f') -> ValueError: format specification exceeds internal limits of _decimal
+format(0, '9223372036854775807.9223372036854775807f') -> ValueError: format specification exceeds internal limits of _decimal
+format(0, '1000000000000000000') -> ValueError: format specification exceeds internal limits of _decimal
+format(0, '999999999999999999') -> MemoryError: 
+format(0, '.1000000000000000000f') -> ValueError: format specification exceeds internal limits of _decimal
+format(0, '.999999999999999999f') -> MemoryError: 
+format(0, '.999999999999999999e') -> MemoryError: 
+format(0, '.999999999999999999g') -> '0'
+format(0, '.999999999999999999%') -> MemoryError: 
+format(0, '.99999999999999999999999') -> '0'
+format(0, 'f') -> '0'
+format(0, '%') -> '0%'
+format(0, 'e') -> '0e+0'
+format(0, 'g') -> '0'
+format(0, ',f') -> '0'
+format(0, 'E') -> '0E+0'
+format(0, 'G') -> '0'
+format(0, 'n') -> '0'
+format(1E+999999999999999999, '=9223372036854775807.1') -> ValueError: format specification exceeds internal limits of _decimal
+format(1E+999999999999999999, '9223372036854775807') -> ValueError: format specification exceeds internal limits of _decimal
+format(1E+999999999999999999, '.9223372036854775807') -> ValueError: format specification exceeds internal limits of _decimal
+format(1E+999999999999999999, '.9223372036854775807f') -> ValueError: format specification exceeds internal limits of _decimal
+format(1E+999999999999999999, '9223372036854775807.9223372036854775807f') -> ValueError: format specification exceeds internal limits of _decimal
+format(1E+999999999999999999, '1000000000000000000') -> ValueError: format specification exceeds internal limits of _decimal
+format(1E+999999999999999999, '999999999999999999') -> MemoryError: 
+format(1E+999999999999999999, '.1000000000000000000f') -> ValueError: format specification exceeds internal limits of _decimal
+format(1E+999999999999999999, '.999999999999999999f') -> ValueError: format specification exceeds internal limits of _decimal
+format(1E+999999999999999999, '.999999999999999999e') -> MemoryError: 
+format(1E+999999999999999999, '.999999999999999999g') -> '1e+999999999999999999'
+format(1E+999999999999999999, '.999999999999999999%') -> ValueError: format specification exceeds internal limits of _decimal
+format(1E+999999999999999999, '.99999999999999999999999') -> '1E+999999999999999999'
+format(1E+999999999999999999, 'f') -> MemoryError: 
+format(1E+999999999999999999, '%') -> MemoryError: 
+format(1E+999999999999999999, 'e') -> '1e+999999999999999999'
+format(1E+999999999999999999, 'g') -> '1e+999999999999999999'
+format(1E+999999999999999999, ',f') -> MemoryError: 
+format(1E+999999999999999999, 'E') -> '1E+999999999999999999'
+format(1E+999999999999999999, 'G') -> '1E+999999999999999999'
+format(1E+999999999999999999, 'n') -> '1e+999999999999999999'
+format(1E-999999999999999999, '=9223372036854775807.1') -> ValueError: format specification exceeds internal limits of _decimal
+format(1E-999999999999999999, '9223372036854775807') -> ValueError: format specification exceeds internal limits of _decimal
+format(1E-999999999999999999, '.9223372036854775807') -> ValueError: format specification exceeds internal limits of _decimal
+format(1E-999999999999999999, '.9223372036854775807f') -> ValueError: format specification exceeds internal limits of _decimal
+format(1E-999999999999999999, '9223372036854775807.9223372036854775807f') -> ValueError: format specification exceeds internal limits of _decimal
+format(1E-999999999999999999, '1000000000000000000') -> ValueError: format specification exceeds internal limits of _decimal
+format(1E-999999999999999999, '999999999999999999') -> MemoryError: 
+format(1E-999999999999999999, '.1000000000000000000f') -> ValueError: format specification exceeds internal limits of _decimal
+format(1E-999999999999999999, '.999999999999999999f') -> MemoryError: 
+format(1E-999999999999999999, '.999999999999999999e') -> MemoryError: 
+format(1E-999999999999999999, '.999999999999999999g') -> '1e-999999999999999999'
+format(1E-999999999999999999, '.999999999999999999%') -> MemoryError: 
+format(1E-999999999999999999, '.99999999999999999999999') -> '1E-999999999999999999'
+format(1E-999999999999999999, 'f') -> MemoryError: 
+format(1E-999999999999999999, '%') -> MemoryError: 
+format(1E-999999999999999999, 'e') -> '1e-999999999999999999'
+format(1E-999999999999999999, 'g') -> '1e-999999999999999999'
+format(1E-999999999999999999, ',f') -> MemoryError: 
+format(1E-999999999999999999, 'E') -> '1E-999999999999999999'
+format(1E-999999999999999999, 'G') -> '1E-999999999999999999'
+format(1E-999999999999999999, 'n') -> '1e-999999999999999999'
+999999999999999999 999999999999999999 -999999999999999999 -1999999999999999997
+Context(prec=1) -> 1
+c.prec = 1 -> 1
+Context(prec=999999999999999999) -> 999999999999999999
+c.prec = 999999999999999999 -> 999999999999999999
+Context(prec=0) -> ValueError: valid range for prec is [1, MAX_PREC]
+c.prec = 0 -> ValueError: valid range for prec is [1, MAX_PREC]
+Context(prec=-1) -> ValueError: valid range for prec is [1, MAX_PREC]
+c.prec = -1 -> ValueError: valid range for prec is [1, MAX_PREC]
+Context(prec=1000000000000000000) -> ValueError: valid range for prec is [1, MAX_PREC]
+c.prec = 1000000000000000000 -> ValueError: valid range for prec is [1, MAX_PREC]
+Context(prec=9223372036854775807) -> ValueError: valid range for prec is [1, MAX_PREC]
+c.prec = 9223372036854775807 -> ValueError: valid range for prec is [1, MAX_PREC]
+Context(prec=9223372036854775808) -> OverflowError: Python int too large to convert to C ssize_t
+c.prec = 9223372036854775808 -> OverflowError: Python int too large to convert to C ssize_t
+Context(prec=-9223372036854775809) -> OverflowError: Python int too large to convert to C ssize_t
+c.prec = -9223372036854775809 -> OverflowError: Python int too large to convert to C ssize_t
+Context(Emax=0) -> 0
+c.Emax = 0 -> 0
+Context(Emax=999999999999999999) -> 999999999999999999
+c.Emax = 999999999999999999 -> 999999999999999999
+Context(Emax=-1) -> ValueError: valid range for Emax is [0, MAX_EMAX]
+c.Emax = -1 -> ValueError: valid range for Emax is [0, MAX_EMAX]
+Context(Emax=1000000000000000000) -> ValueError: valid range for Emax is [0, MAX_EMAX]
+c.Emax = 1000000000000000000 -> ValueError: valid range for Emax is [0, MAX_EMAX]
+Context(Emax=9223372036854775807) -> ValueError: valid range for Emax is [0, MAX_EMAX]
+c.Emax = 9223372036854775807 -> ValueError: valid range for Emax is [0, MAX_EMAX]
+Context(Emax=9223372036854775808) -> OverflowError: Python int too large to convert to C ssize_t
+c.Emax = 9223372036854775808 -> OverflowError: Python int too large to convert to C ssize_t
+Context(Emin=0) -> 0
+c.Emin = 0 -> 0
+Context(Emin=-999999999999999999) -> -999999999999999999
+c.Emin = -999999999999999999 -> -999999999999999999
+Context(Emin=1) -> ValueError: valid range for Emin is [MIN_EMIN, 0]
+c.Emin = 1 -> ValueError: valid range for Emin is [MIN_EMIN, 0]
+Context(Emin=-1000000000000000000) -> ValueError: valid range for Emin is [MIN_EMIN, 0]
+c.Emin = -1000000000000000000 -> ValueError: valid range for Emin is [MIN_EMIN, 0]
+Context(Emin=-9223372036854775808) -> ValueError: valid range for Emin is [MIN_EMIN, 0]
+c.Emin = -9223372036854775808 -> ValueError: valid range for Emin is [MIN_EMIN, 0]
+Context(Emin=-9223372036854775809) -> OverflowError: Python int too large to convert to C ssize_t
+c.Emin = -9223372036854775809 -> OverflowError: Python int too large to convert to C ssize_t
+Context(clamp=0) -> 0
+c.clamp = 0 -> 0
+Context(clamp=1) -> 1
+c.clamp = 1 -> 1
+Context(clamp=2) -> ValueError: valid values for clamp are 0 or 1
+c.clamp = 2 -> ValueError: valid values for clamp are 0 or 1
+Context(clamp=-1) -> ValueError: valid values for clamp are 0 or 1
+c.clamp = -1 -> ValueError: valid values for clamp are 0 or 1
+Context(clamp=9223372036854775808) -> OverflowError: Python int too large to convert to C ssize_t
+c.clamp = 9223372036854775808 -> OverflowError: Python int too large to convert to C ssize_t
+Context(capitals=0) -> 0
+c.capitals = 0 -> 0
+Context(capitals=1) -> 1
+c.capitals = 1 -> 1
+Context(capitals=2) -> ValueError: valid values for capitals are 0 or 1
+c.capitals = 2 -> ValueError: valid values for capitals are 0 or 1
+Context(capitals=-1) -> ValueError: valid values for capitals are 0 or 1
+c.capitals = -1 -> ValueError: valid values for capitals are 0 or 1
+Context(capitals=9223372036854775808) -> OverflowError: Python int too large to convert to C ssize_t
+c.capitals = 9223372036854775808 -> OverflowError: Python int too large to convert to C ssize_t
+Etiny, Etop -> (-1999999999999999997, 1)
+Decimal('1E+999999999999999999') -> Decimal('1E+999999999999999999')
+create_decimal('1E+999999999999999999') -> (Decimal('1E+999999999999999999'), [])
+Decimal('1E+1000000000000000000') -> InvalidOperation: [<class 'decimal.InvalidOperation'>]
+create_decimal('1E+1000000000000000000') -> (Decimal('Infinity'), ['Overflow', 'Inexact', 'Rounded'])
+Decimal('9.9E+999999999999999999') -> Decimal('9.9E+999999999999999999')
+create_decimal('9.9E+999999999999999999') -> (Decimal('9.9E+999999999999999999'), [])
+Decimal('1E-999999999999999999') -> Decimal('1E-999999999999999999')
+create_decimal('1E-999999999999999999') -> (Decimal('1E-999999999999999999'), [])
+Decimal('1E-1999999999999999997') -> Decimal('1E-1999999999999999997')
+create_decimal('1E-1999999999999999997') -> (Decimal('1E-1999999999999999997'), ['Subnormal'])
+Decimal('1E-1999999999999999998') -> InvalidOperation: [<class 'decimal.InvalidOperation'>]
+create_decimal('1E-1999999999999999998') -> 96 characters
+Decimal('1E+9223372036854775807') -> InvalidOperation: [<class 'decimal.InvalidOperation'>]
+create_decimal('1E+9223372036854775807') -> (Decimal('Infinity'), ['Overflow', 'Inexact', 'Rounded'])
+Decimal('1E+9223372036854775808') -> InvalidOperation: [<class 'decimal.InvalidOperation'>]
+create_decimal('1E+9223372036854775808') -> (Decimal('Infinity'), ['Overflow', 'Inexact', 'Rounded'])
+Decimal('1E-9223372036854775808') -> InvalidOperation: [<class 'decimal.InvalidOperation'>]
+create_decimal('1E-9223372036854775808') -> 96 characters
+Decimal('1E-9223372036854775809') -> InvalidOperation: [<class 'decimal.InvalidOperation'>]
+create_decimal('1E-9223372036854775809') -> 96 characters
+Decimal('1E+99999999999999999999999999') -> InvalidOperation: [<class 'decimal.InvalidOperation'>]
+create_decimal('1E+99999999999999999999999999') -> (Decimal('Infinity'), ['Overflow', 'Inexact', 'Rounded'])
+Decimal('0E+99999999999999999999999999') -> InvalidOperation: [<class 'decimal.InvalidOperation'>]
+create_decimal('0E+99999999999999999999999999') -> (Decimal('0E+999999999999999999'), ['Clamped'])
+Decimal('0E-99999999999999999999999999') -> InvalidOperation: [<class 'decimal.InvalidOperation'>]
+create_decimal('0E-99999999999999999999999999') -> (Decimal('0E-1999999999999999997'), ['Clamped'])
+Decimal('-0E+9223372036854775807') -> InvalidOperation: [<class 'decimal.InvalidOperation'>]
+create_decimal('-0E+9223372036854775807') -> (Decimal('-0E+999999999999999999'), ['Clamped'])
+big + big -> (Decimal('Infinity'), ['Overflow', 'Inexact', 'Rounded'])
+big + big trapped -> Overflow: [<class 'decimal.Overflow'>]
+big * big -> (Decimal('Infinity'), ['Overflow', 'Inexact', 'Rounded'])
+big * big trapped -> Overflow: [<class 'decimal.Overflow'>]
+small * small -> 96 characters
+small * small trapped -> Underflow: [<class 'decimal.Underflow'>]
+small / big -> MemoryError: 
+small / big trapped -> MemoryError: 
+big / small -> MemoryError: 
+big / small trapped -> MemoryError: 
+1 / 3 -> MemoryError: 
+1 / 3 trapped -> MemoryError: 
+sqrt(2) -> MemoryError: 
+sqrt(2) trapped -> MemoryError: 
+exp(1) -> (Decimal('NaN'), ['InvalidOperation'])
+exp(1) trapped -> InvalidOperation: [<class 'decimal.InvalidOperation'>]
+big + 1 -> MemoryError: 
+big + 1 trapped -> MemoryError: 
+big - small -> MemoryError: 
+big - small trapped -> MemoryError: 
+big // 1 -> MemoryError: 
+big // 1 trapped -> MemoryError: 
+big % 7 -> MemoryError: 
+big % 7 trapped -> MemoryError: 
+quantize -> (Decimal('NaN'), ['InvalidOperation'])
+quantize trapped -> InvalidOperation: [<class 'decimal.InvalidOperation'>]
+to_integral -> (Decimal('9E+999999999999999999'), [])
+to_integral trapped -> (Decimal('9E+999999999999999999'), [])
+scaleb -> (Decimal('1E+999999999999999999'), [])
+scaleb trapped -> (Decimal('1E+999999999999999999'), [])
+scaleb more -> (Decimal('Infinity'), ['Overflow', 'Inexact', 'Rounded'])
+scaleb more trapped -> Overflow: [<class 'decimal.Overflow'>]
+shift -> (Decimal('10000000000'), [])
+shift trapped -> (Decimal('10000000000'), [])
+rotate -> (Decimal('10000000000'), [])
+rotate trapped -> (Decimal('10000000000'), [])
+next_plus -> MemoryError: 
+next_plus trapped -> MemoryError: 
+next_minus -> (Decimal('-1E-1999999999999999997'), [])
+next_minus trapped -> (Decimal('-1E-1999999999999999997'), [])
+logb -> (Decimal('999999999999999999'), [])
+logb trapped -> (Decimal('999999999999999999'), [])
+fma -> MemoryError: 
+fma trapped -> MemoryError: 
+normalize -> (Decimal('9E+999999999999999999'), [])
+normalize trapped -> (Decimal('9E+999999999999999999'), [])
+compare -> (Decimal('1'), [])
+compare trapped -> (Decimal('1'), [])
+max -> (Decimal('9E+999999999999999999'), [])
+max trapped -> (Decimal('9E+999999999999999999'), [])
+logical_invert -> MemoryError: 
+logical_invert trapped -> MemoryError: 
+int(big) -> MemoryError: 
+int(big) trapped -> MemoryError: 
+float(big) -> (inf, [])
+float(big) trapped -> (inf, [])
+float(small) -> (0.0, [])
+float(small) trapped -> (0.0, [])
+hash(big) -> (1715301283803211151, [])
+hash(big) trapped -> (1715301283803211151, [])
+hash(small) -> (1869640892252395107, [])
+hash(small) trapped -> (1869640892252395107, [])
+str(big) -> ('9E+999999999999999999', [])
+str(big) trapped -> ('9E+999999999999999999', [])
+as_tuple -> (DecimalTuple(sign=0, digits=(9,), exponent=999999999999999999), [])
+as_tuple trapped -> (DecimalTuple(sign=0, digits=(9,), exponent=999999999999999999), [])
+adjusted -> ((999999999999999999, -1999999999999999997), [])
+adjusted trapped -> ((999999999999999999, -1999999999999999997), [])
+round(big) -> MemoryError: 
+round(big) trapped -> MemoryError: 
+round(big, 2) -> InvalidOperation: [<class 'decimal.InvalidOperation'>]
+round(big, 2) trapped -> InvalidOperation: [<class 'decimal.InvalidOperation'>]
+big == small -> (False, [])
+big == small trapped -> (False, [])
+big > 10**30 -> (True, [])
+big > 10**30 trapped -> (True, [])
+big > 1e300 -> (True, [])
+big > 1e300 trapped -> (True, [])
+to_eng_string -> ('9E+999999999999999999', [])
+to_eng_string trapped -> ('9E+999999999999999999', [])
+IEEEContext(0) -> ValueError: argument must be a multiple of 32, with a maximum of 512
+IEEEContext(1) -> ValueError: argument must be a multiple of 32, with a maximum of 512
+IEEEContext(31) -> ValueError: argument must be a multiple of 32, with a maximum of 512
+IEEEContext(32) -> 101 characters
+IEEEContext(64) -> 104 characters
+IEEEContext(96) -> 106 characters
+IEEEContext(128) -> 106 characters
+IEEEContext(160) -> 108 characters
+IEEEContext(512) -> 123 characters
+IEEEContext(544) -> ValueError: argument must be a multiple of 32, with a maximum of 512
+IEEEContext(-32) -> ValueError: argument must be a multiple of 32, with a maximum of 512
+IEEEContext(33) -> ValueError: argument must be a multiple of 32, with a maximum of 512
+IEEEContext(9223372036854775807) -> ValueError: argument must be a multiple of 32, with a maximum of 512
+IEEEContext(9223372036854775808) -> OverflowError: Python int too large to convert to C ssize_t
+512

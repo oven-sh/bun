@@ -1,0 +1,1003 @@
+status: 0
+script: 4f96bf38bfd082bb
+---
+0 [p3 CEILING -999999 999999 c1 C1 tFlDiIn] float:5436757.836895007 <= Decimal('5436757.8368950063680527410549623885216998') -> !FloatOperation: [<class 'decimal.FloatOperation'>] Fl
+1 [p1 HALF_DOWN -999999 999999 c1 C1 t] Decimal('-7.1E+4') > float:-71000.0 -> bool:False Fl
+2 [p28 CEILING -999999 999999 c0 C1 t] Decimal:Decimal('7.210605141884616869E+652187') < Decimal('7.210605141884616869E+652187') -> bool:False 
+3 [p6 HALF_EVEN -133266489308048 9730447861269390 c1 C1 t] Decimal:Decimal('1.23431490834564385E+21') != Decimal('1.23431490834564385E+21') -> bool:False 
+4 [p22 HALF_DOWN -999999 999999 c0 C1 tInFl] Decimal('6.7467078998627370005207447886417358E-16') != Decimal:Decimal('9.9999000009009E-45') -> bool:True 
+5 [p3 CEILING -10 5 c0 C1 t] Decimal:Decimal('3640.353845403374834') != Decimal('3640.353845403374834') -> bool:False 
+6 [p29 UP -999999 999999 c0 C0 t] Decimal('418008912784159.468030932408') != Decimal:Decimal('418008912784159.468030932408') -> bool:False 
+7 [p20 HALF_DOWN -92 58 c0 C1 t] NotImplementedType:NotImplemented == Decimal('9090099999900999.00') -> bool:False 
+8 [p34 DOWN -546 12482447085 c0 C1 tSuInCl] Decimal('6.00E+12482447084') <= Decimal:Decimal('6.00E+12482447084') -> bool:True 
+9 [p1 CEILING -7 6 c0 C0 t] MyInt:5 <= Decimal('2169494117897390235021.1810215') -> bool:True 
+10 [p25 UP -999999 999999 c0 C1 t] Decimal('-4.16626117010233173600255990735650607E+49') <= float:84030.0 -> bool:True Fl
+11 [p28 HALF_DOWN -8 6 c0 C1 t] Decimal('-467216820342820587.724506176673728768204832') != Fraction:Fraction(-2582262061949739047, 193598123776899108) -> bool:True 
+12 [p15 DOWN -999999 999999 c0 C1 tFlUnSu] bool:True == Decimal('2.79014310481426489664E-457258839') -> bool:False 
+13 [p3 05UP -30 56 c0 C1 tUnIn] complex(float:-3.1768625100302335e+166, nan) == Decimal('-8.3101677336E-8') -> bool:False 
+14 [p10 HALF_EVEN -2 10 c1 C0 tOvSu] Decimal('900090009.0900900000') >= Decimal:Decimal('900090009.09009') -> bool:True 
+15 [p34 DOWN -44 78 c0 C1 tInFlUn] Decimal('6.0037111450463083199754863029E+38') != MyInt:5 -> bool:True 
+16 [p32 DOWN -999999 999999 c0 C1 t] Decimal('5000.00000000000000000000000') != Decimal:Decimal('5000.00000000000000000000000') -> bool:False 
+17 [p25 HALF_EVEN -41 12 c1 C0 t] Decimal('5185034711') == Decimal:Decimal('5185034711') -> bool:True 
+18 [p28 05UP -86 76 c0 C1 tSuInRoCl] Decimal('6.655510721756803939134613221386856821E-53') <= Fraction:Fraction(6655510721756803939134613221386856821, 100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000) -> bool:True 
+19 [p3 05UP -91 84 c0 C1 tInRo] Decimal('-9.0E-67') > Fraction:Fraction(-9, 10000000000000000000000000000000000000000000000000000000000000000000) -> bool:False 
+20 [p28 FLOOR -6717520 75558626460930 c0 C1 t] Decimal:Decimal('-4.00000000000000000000000000000000000E+56') <= Decimal('-2.6553E-56') -> bool:True 
+21 [p16 UP -999999 999999 c1 C0 t] Decimal('-9.9999999999999999999999e-19') == float:-1e-18 -> bool:False Fl
+22 [p28 HALF_EVEN -999999 999999 c0 C0 t] complex:(2.9958964888571393e+25+0j) < Decimal('-4.001551333655442110190e-8') -> !TypeError: '<' not supported between instances of 'complex' and 'decimal.Decimal' 
+23 [p28 HALF_EVEN -999999999999999999 999999999999999999 c1 C0 t] Decimal('-2.0167854632640288916e-9') == bytes:b'1' -> bool:False 
+24 [p28 FLOOR -95 43 c0 C0 tInFlDiCl] Decimal('50000055.0') <= float:50000055.0 -> !FloatOperation: [<class 'decimal.FloatOperation'>] Fl
+25 [p28 UP -11828159995539 4133310667066193 c1 C1 t] Decimal('4.5374911869187377866027208703E+53') == complex(float:-9.226414317695417e-62, nan) -> bool:False 
+26 [p3 05UP -999999999999999999 999999999999999999 c1 C1 t] Decimal('9.3606796280906517193863181856967900E+36') != Decimal:Decimal('9.36067962809065171938631818569679E+36') -> bool:False 
+27 [p38 CEILING -999999 999999 c1 C1 t] Decimal('4.65227095214416027247982382319851098099E+880007') > complex:(2.696808821117955e-69+1j) -> !TypeError: '>' not supported between instances of 'decimal.Decimal' and 'complex' 
+28 [p28 CEILING -5 0 c1 C1 t] int:99675235434160990188 <= Decimal('99675235434160990188.4636634') -> bool:True 
+29 [p34 CEILING -47 19 c1 C1 t] Decimal('9999999999999.99999999999999999999999') != ellipsis:Ellipsis -> bool:True 
+30 [p28 DOWN -325677938 4222 c0 C0 t] Decimal('9.909000900099999900099099099999090099000e-15') >= Decimal:Decimal('0.879865506305176794978745') -> bool:False 
+31 [p34 FLOOR -999999 999999 c0 C0 t] Decimal:Decimal('9999999999999.9999999999999999999999') >= Decimal('9999999999999.9999999999999999999999') -> bool:True 
+32 [p38 HALF_EVEN -67 77 c1 C0 t] Decimal('-9990.00999900000009000999000990') == Decimal:Decimal('-9990.00999900000009000999000990') -> bool:True 
+33 [p2 FLOOR -49 84 c0 C1 tFlDi] Decimal('-7.0397711564229585900736807015216832780E+60') >= complex:(-1.8784522733338584e+236+0j) -> !TypeError: '>=' not supported between instances of 'decimal.Decimal' and 'complex' 
+34 [p28 UP -999999999999999999 999999999999999999 c1 C1 t] Fraction:Fraction(-2513287050919, 2718645052396) < Decimal('99990.00090900990909009090900900999099') -> bool:True 
+35 [p1 FLOOR -999999 999999 c0 C0 t] Fraction:Fraction(1466757188177711945348139, 500000000000000000000000000000000000000) > Decimal('2.933514376355423890696278e-15') -> bool:False 
+36 [p43 05UP -999999 999999 c0 C0 t] Decimal('-8.95452814002902332458e+22') > Decimal:Decimal('-8.95452814002902332458e+22') -> bool:False 
+37 [p28 UP -3 6 c1 C1 t] Decimal('-3.14899701643539411167513E-37') >= float:-8.377725132293643e+246 -> bool:True Fl
+38 [p38 HALF_DOWN -5 1 c1 C0 tUn] Decimal('6.16148e-22') != Fraction:Fraction(154037, 250000000000000000000000000) -> bool:False 
+39 [p1 05UP -999999999999999999 999999999999999999 c0 C1 t] Fraction:Fraction(-40000000000000000000, 1) >= Decimal('-40000000000000000000.00') -> bool:True 
+40 [p42 05UP -999999 999999 c0 C0 t] Decimal('5.44132019220967e+19') <= FloatLike:FloatLike() -> !TypeError: '<=' not supported between instances of 'decimal.Decimal' and 'FloatLike' 
+41 [p28 UP -999999 999999 c0 C1 tIn] Fraction:Fraction(45259817235018162127, 773126338455284) < Decimal('-4.798204075459411570440164849674118E-14') -> bool:False 
+42 [p28 HALF_DOWN -54 3 c0 C1 t] Decimal('-493058.58985070139003') != Decimal:Decimal('-9.33452058146751124497160734189124629217291E+51') -> bool:True 
+43 [p20 05UP -999999999999999999 999999999999999999 c0 C1 t] Decimal('0.1823216246192') > Fraction:Fraction(113951015387, 625000000000) -> bool:False 
+44 [p20 05UP -62 48 c0 C1 t] Decimal('0E-31') >= MyInt:5 -> bool:False 
+45 [p2 HALF_UP -7 7 c1 C1 t] Decimal('5.0000000555005505E+30') != bool:False -> bool:True 
+46 [p20 DOWN -999999 999999 c1 C0 tInOvRo] int:-457065679278328579197117356829 >= Decimal('-7128.728610025521845975938172762619') -> bool:False 
+47 [p12 DOWN -29 71 c1 C1 t] float:5500055500500000.0 != Decimal('5.5000555005E+15') -> bool:False Fl
+48 [p9 05UP -8 3 c0 C1 t] Fraction:Fraction(63112167789017249641, 36560392320653945) > Decimal('17866756.9260002') -> bool:False 
+49 [p16 HALF_EVEN -95 3906126842244 c0 C1 t] Decimal('-0') == str:'1' -> bool:False 
+50 [p25 CEILING -15 12 c0 C0 tInRo] Decimal('-5.43e-13') != float:1.3471642818790375e-96 -> bool:True Fl
+51 [p34 05UP -999999 999999 c0 C1 tUnIn] Decimal('8E-26') < int:0 -> bool:False 
+52 [p9 HALF_EVEN -999999 999999 c0 C0 tIn] Decimal('500050550505050505') <= complex:(1.7131559875812765e-261-0j) -> !TypeError: '<=' not supported between instances of 'decimal.Decimal' and 'complex' 
+53 [p28 FLOOR -999999 999999 c1 C1 t] Decimal('6833.1705512392773896895393273446172500488983') <= NotImplementedType:NotImplemented -> !TypeError: '<=' not supported between instances of 'decimal.Decimal' and 'NotImplementedType' 
+54 [p2 HALF_EVEN -999999 999999 c0 C1 tFlOvCl] Decimal('-9.990990900090009900909090090990900E-14') <= Fraction:Fraction(-75834757108, 1) -> bool:False 
+55 [p38 CEILING -999999 999999 c1 C1 t] NoneType:None <= Decimal('-9.9999999999999999999999999999999999999999E+49') -> !TypeError: '<=' not supported between instances of 'NoneType' and 'decimal.Decimal' 
+56 [p3 FLOOR -3 0 c0 C0 t] Fraction:Fraction(96486452367103507, 1412672) == Decimal('-6000000000000000.000000000000000000000000') -> bool:False 
+57 [p28 05UP -8 3 c1 C1 tUnCl] MyInt:5 > Decimal('0E-7') -> bool:True 
+58 [p28 FLOOR -2 6 c0 C0 tUnSu] Decimal('-9.90000900099900000000090099099000990e+57') != float:-225698.0 -> bool:True Fl
+59 [p16 UP -42 5 c0 C1 tRo] Decimal('9.000000090090000990990E+50') <= complex(float:-4.533112696980117e-33, nan) -> !TypeError: '<=' not supported between instances of 'decimal.Decimal' and 'complex' 
+60 [p34 05UP -1 86 c0 C0 t] Decimal:Decimal('3960479288418834692.703802800537') >= Decimal('8.0000000000000000000000000000000000000e+56') -> bool:False 
+61 [p38 DOWN -98 40 c0 C1 t] Decimal('-3.55379536685303E-23') == complex:(41851.125+0j) -> bool:False Fl
+62 [p38 DOWN -54 69 c1 C1 t] Decimal('-6.000E-55') < float:49156.8 -> bool:True Fl
+63 [p12 HALF_DOWN -999999999999999999 999999999999999999 c1 C0 t] Decimal('99999999.990900090090090') <= float:8.504132615998193e-72 -> bool:False Fl
+64 [p34 FLOOR -999999 999999 c0 C1 t] Decimal:Decimal('-1.6498017519439225473E-24') > Decimal('1.6636529296023181541E+38247') -> bool:False 
+65 [p3 DOWN -4 1 c0 C1 t] Decimal('0.0000') > float:1.7976931348623157e+308 -> bool:False Fl
+66 [p27 HALF_UP -999999 999999 c1 C1 t] Decimal('-5.9993474018724372549083727584636573614791648E+58') <= Fraction:Fraction(-59993474018724372549083727584636573614791648000000000000000, 1) -> bool:True 
+67 [p1 DOWN -999999 999999 c0 C1 tRo] Decimal('-9.99000990090999090990090000009900009009E+48') > Decimal:Decimal('-9.99000990090999090990090000009900009009E+48') -> bool:False 
+68 [p16 DOWN -73 4 c1 C1 tInFlDiIn] Decimal('-8.3302468E+11') >= Fraction:Fraction(-4909972587931918449169, 83420514) -> bool:True 
+69 [p28 HALF_UP -1 7 c1 C1 t] Decimal('376854690742493.3544') >= float:3.706149071036845e+54 -> bool:False Fl
+70 [p4 CEILING -999999999999999999 999999999999999999 c0 C0 t] Decimal('1.15227532e+19') < complex:(83656.7+0j) -> !TypeError: '<' not supported between instances of 'decimal.Decimal' and 'complex' 
+71 [p28 HALF_DOWN -34 30 c1 C1 t] Decimal('5.05555550000505500055050500500E-23') < float:5.055555500005055e-23 -> bool:False Fl
+72 [p19 FLOOR -63 69 c1 C1 t] Decimal('9.1779463723622338397123570672E+33') <= Fraction:Fraction(9177946372362233839712357067200000, 1) -> bool:True 
+73 [p25 CEILING -999999 999999 c1 C0 t] Decimal('8.71875002773e-18') == int:930907213242459453085595838 -> bool:False 
+74 [p19 UP -1 5 c0 C1 t] Fraction:Fraction(-588250000000, 1) != Decimal('-5.8825E+11') -> bool:False 
+75 [p23 CEILING -4 4281907013256278 c0 C1 t] Decimal('2.7E+5') != float:-3.7961278219144365e-152 -> bool:True Fl
+76 [p2 HALF_UP -999999999999999999 999999999999999999 c0 C1 t] Decimal:Decimal('5.169505314023702068426402E-19') == Decimal('5.169505314023702068426402E-19') -> bool:True 
+77 [p21 FLOOR -34 51 c0 C1 t] Decimal('9.99999999999999999999E+60') <= int:0 -> bool:False 
+78 [p34 05UP -999999 999999 c1 C1 t] Decimal('NaN') <= Decimal:Decimal('-5.00000000000000000000000000000E-25') -> bool:False In
+79 [p39 HALF_DOWN -7 2 c0 C1 t] Fraction:Fraction(-13756523541, 28395187) >= Decimal('-9909009090009099009990009009999009') -> bool:True 
+80 [p34 05UP -999999 999999 c0 C0 t] Decimal('-0.000990') >= int:0 -> bool:False 
+81 [p28 05UP -999999 999999 c0 C1 t] Decimal('1.377990942282742357473622204220396E-21') < float:1.3779909422827423e-21 -> bool:False Fl
+82 [p16 UP -999999 999999 c0 C1 tFlOvSu] Decimal('5005050000000505050000000050550500505.500') != Decimal:Decimal('5005050000000505050000000050550500505.5') -> bool:False 
+83 [p3 CEILING -46 14 c0 C1 tDiSu] Decimal('-1.544614E+14') != Decimal:Decimal('-1.544614E+14') -> bool:False 
+84 [p28 FLOOR -51 100 c1 C0 tSu] Decimal('0.00000705525035413') >= Decimal:Decimal('-99999.99') -> bool:True 
+85 [p9 CEILING -92 15 c0 C1 tOvUn] Decimal('5.055005000000550055505550555555555050000E-13') >= float:5.05500500000055e-13 -> bool:False Fl
+86 [p3 HALF_EVEN -31 89 c0 C0 t] int:-4982167411694652046848392445 >= Decimal('-4982167411694652046848392445') -> bool:True 
+87 [p28 FLOOR -6 3 c1 C1 tInSuRo] Decimal('-9.90909E-54') < bytes:b'1' -> !TypeError: '<' not supported between instances of 'decimal.Decimal' and 'bytes' 
+88 [p16 HALF_EVEN -1 5 c1 C1 t] Decimal:Decimal('7.390E-11') > Decimal('7.390E-11') -> bool:False 
+89 [p16 05UP -999999 999999 c0 C1 t] float:799971.0 < Decimal('4.4357280558648912672105704136395E+32') -> bool:True Fl
+90 [p19 HALF_UP -75 38 c0 C1 tDiCl] float:-5.00000000550555e-59 != Decimal('-5.00000000550555E-59') -> bool:True Fl
+91 [p38 DOWN -999999 999999 c0 C1 t] Decimal('-0.6847') <= int:0 -> bool:True 
+92 [p3 HALF_EVEN -2 4 c0 C1 t] Decimal('-909999990000990.0990909') < int:-909999990000990 -> bool:True 
+93 [p17 DOWN -999999 999999 c0 C1 tInOv] Decimal('2.9408958131026063E-38') != complex:(551.019+0j) -> bool:True Fl
+94 [p1 05UP -2 1 c0 C1 t] bool:False > Decimal('-150.790443695462583129731678284219482311893323') -> bool:True 
+95 [p2 HALF_UP -85 573353399788208 c0 C1 t] Decimal('-9.9909909000909009000999909900E-18') == bool:True -> bool:False 
+96 [p39 CEILING -2 64 c0 C1 tUnIn] Decimal('6.3033768410835278192384264803889554E+43') != bytes:b'1' -> bool:True 
+97 [p28 FLOOR -999999 999999 c0 C1 t] Fraction:Fraction(-4941084152704556100153863280275465931, 100) != Decimal('-49410841527045561001538632802754659.310') -> bool:False 
+98 [p38 FLOOR -999999 999999 c1 C1 t] Decimal('sNaN') != Fraction:Fraction(-90894115206, 4573541) -> bool:True In
+99 [p19 05UP -999999 999999 c1 C1 tSuCl] Decimal('-1.57223705396688690672271476618591012236E+46') == float:-1.572237053966887e+46 -> bool:False Fl
+100 [p9 FLOOR -90 16 c0 C1 t] Decimal('-0E-35') != complex:(-7.6989627284069845e+62+0j) -> bool:True Fl
+101 [p28 HALF_DOWN -9 5 c1 C0 tCl] Decimal('70000000000000000.0000000000000000000000000000') >= Decimal:Decimal('-8.000000000000000e+25') -> bool:True 
+102 [p3 FLOOR -4 9 c1 C1 t] Decimal('5.3E+11') <= float:530000000000.0 -> bool:True Fl
+103 [p1 HALF_EVEN -999999 999999 c1 C1 tFlIn] complex:(-311946+0j) < Decimal('-5.50505550005555500505505055055550050005050E+54') -> !TypeError: '<' not supported between instances of 'complex' and 'decimal.Decimal' 
+104 [p19 FLOOR -999999 999999 c0 C1 t] Decimal('3.2639461825384760402587173E-18') != int:0 -> bool:True 
+105 [p28 HALF_DOWN -999999 999999 c0 C1 tInRo] Decimal('0.0009909909009009009990') <= Fraction:Fraction(9501656096428409, 24500512) -> bool:True 
+106 [p38 05UP -2 4 c1 C1 t] Fraction:Fraction(97542043325166421, 21931912369820523) == Decimal('-8.27946553863844569255674114159564606E+38') -> bool:False 
+107 [p38 HALF_EVEN -4 4 c0 C1 t] Decimal('550555505050505005.050505050500550050') > float:5.50555505050505e+17 -> bool:False Fl
+108 [p16 HALF_EVEN -3 2 c0 C1 t] complex:(2.7296954342190234e+56+1j) < Decimal('3.46575813086E-7') -> !TypeError: '<' not supported between instances of 'complex' and 'decimal.Decimal' 
+109 [p9 FLOOR -38 87 c0 C1 tInFlDiUn] Decimal('-1.8530320365508588E+31') < NoneType:None -> !TypeError: '<' not supported between instances of 'decimal.Decimal' and 'NoneType' 
+110 [p28 05UP -6 8 c0 C1 tInFlIn] Decimal('-71886928601486960978') <= float:-7.188692860148696e+19 -> !FloatOperation: [<class 'decimal.FloatOperation'>] Fl
+111 [p1 HALF_UP -62 5 c0 C1 t] () != Decimal('-999909909090999000009909999.900099090999') -> bool:True 
+112 [p28 DOWN -999999 999999 c0 C1 t] Decimal('1.8876253577323407428556107376E+1000001') <= Fraction:Fraction(7857204324580, 99) -> bool:False 
+113 [p34 HALF_EVEN -999999 999999 c0 C1 t] Decimal('5E-10') == float:-3.184625893810109e+96 -> bool:False Fl
+114 [p28 UP -999999 999999 c0 C1 tUnCl] Decimal('sNaN') == Fraction:Fraction(-2658155969078331439, 2) -> bool:False In
+115 [p1 HALF_UP -26602501267741720 913241 c0 C1 t] Decimal('-5.899E+15') != Decimal:Decimal('-5.899E+15') -> bool:False 
+116 [p3 05UP -999999 999999 c0 C1 t] complex(float:-119527.5, nan) == Decimal('5') -> bool:False 
+117 [p16 UP -69 84 c1 C1 tInDiRoCl] Decimal('2.6581400153064859933061287436302E+41') <= complex:(-4.8567866402160006e-297+0j) -> !TypeError: '<=' not supported between instances of 'decimal.Decimal' and 'complex' 
+118 [p2 HALF_EVEN -999999999999999999 999999999999999999 c0 C0 t] Odd:Odd() >= Decimal('-56399813661225406245537151422434878319') -> !TypeError: '>=' not supported between instances of 'Odd' and 'decimal.Decimal' 
+119 [p9 HALF_EVEN -5 10 c1 C1 t] Decimal('9.36561708816E+13') != MyInt:5 -> bool:True 
+120 [p1 UP -44 96 c0 C0 tDi] Decimal('-35331025850714908067968964733817663290') >= float:-3.533102585071491e+37 -> bool:True Fl
+121 [p42 FLOOR -999999 999999 c0 C1 tOvUnCl] Decimal('-9.99999999999E-12') == Decimal:Decimal('-9.99999999999E-12') -> bool:True 
+122 [p26 HALF_DOWN -3 4 c0 C0 t] Decimal('40054827525611.8948613133') == Decimal:Decimal('40054827525611.8948613133') -> bool:True 
+123 [p2 HALF_DOWN -999999 999999 c0 C0 t] Decimal('-5074277339800944801521351685024.82960721575') >= Decimal:Decimal('5074277339800944801521351685024.82960721575') -> bool:False 
+124 [p38 HALF_DOWN -999999 999999 c0 C0 tUn] Fraction:Fraction(276950496147439428166, 7941894873547) == Decimal('-99999999999999999999999999.99') -> bool:False 
+125 [p34 HALF_EVEN -999999 999999 c0 C0 t] Decimal('sNaN') == Decimal:Decimal('-sNaN') -> bool:False In
+126 [p34 HALF_EVEN -57 74 c0 C1 tFlOvInCl] list:[] > Decimal('0.000500005') -> !TypeError: '>' not supported between instances of 'list' and 'decimal.Decimal' 
+127 [p28 HALF_DOWN -87 15 c0 C1 tRo] Decimal('-9.90909900099E+34') != MyInt:5 -> bool:True 
+128 [p16 UP -47 52 c1 C1 tInUnRo] Decimal('0.99999999') <= int:0 -> bool:False 
+129 [p2 HALF_EVEN -999999 999999 c1 C1 t] Decimal('8.5555464572E-47') >= Decimal:Decimal('-8.5555464572E-47') -> bool:True 
+130 [p25 HALF_EVEN -999999999999999999 999999999999999999 c0 C1 t] Decimal('4.5651321415160926914107E-9') > Decimal:Decimal('-9.34987034015726752666813411584051142379511381E+48') -> bool:True 
+131 [p16 HALF_EVEN -999999 999999 c0 C1 tOvSuInRoCl] Decimal('9.9') == Decimal:Decimal('-9.9') -> bool:False 
+132 [p28 UP 0 9 c0 C0 tInIn] Decimal('0e-20') < Fraction:Fraction(0, 1) -> bool:False 
+133 [p42 HALF_DOWN -66 65 c0 C1 t] Decimal('3.73020229529E+13') > Fraction:Fraction(-16376887966718726429301, 9636952205106340) -> bool:True 
+134 [p28 FLOOR -999999 999999 c0 C1 t] Fraction:Fraction(-472, 579) == Decimal('-9.999999999999999999999999999999999999E+54') -> bool:False 
+135 [p15 HALF_UP -999999 999999 c0 C1 tInRo] Decimal('-1.327087024289837187744270085714936005E+48') <= NoneType:None -> !TypeError: '<=' not supported between instances of 'decimal.Decimal' and 'NoneType' 
+136 [p3 DOWN -999999 999999 c0 C1 t] ellipsis:Ellipsis < Decimal('-7.749129E+26') -> !TypeError: '<' not supported between instances of 'ellipsis' and 'decimal.Decimal' 
+137 [p16 HALF_DOWN -999999 999999 c0 C1 t] Decimal('-7.690638375937799811843954E-32') <= Decimal:Decimal('-7.690638375937799811843954E-32') -> bool:True 
+138 [p22 HALF_DOWN -999999 999999 c0 C1 tDiOvSuRo] Decimal('0.00001198155') < Fraction:Fraction(239631, 20000000000) -> bool:False 
+139 [p38 DOWN -4 6 c1 C1 t] Decimal('-999999.9999999999999999999999999') == Decimal:Decimal('999999.9999999999999999999999999') -> bool:False 
+140 [p3 HALF_UP -26 5 c0 C1 t] Decimal('0E+5') > IntLike:IntLike() -> !TypeError: '>' not supported between instances of 'decimal.Decimal' and 'IntLike' 
+141 [p28 HALF_DOWN -46 55 c1 C1 t] complex:(-2.1269696678282487e+20-0j) > Decimal('2.969192E-48') -> !TypeError: '>' not supported between instances of 'complex' and 'decimal.Decimal' 
+142 [p39 FLOOR -999999 999999 c0 C1 t] Decimal('-4.6328094615365338526E-55219') == Fraction:Fraction(-75938888508590528506621, 176323801) -> bool:False 
+143 [p38 DOWN -6 1 c0 C1 t] Decimal('-5.05000555505000E-44') <= Decimal:Decimal('-5.05000555505E-44') -> bool:True 
+144 [p1 05UP -999999 999999 c0 C1 t] Decimal('-30.00000000000000000000000000000000000000') >= float:418911.0 -> bool:False Fl
+145 [p34 HALF_DOWN -999999 999999 c1 C1 tRo] ellipsis:Ellipsis <= Decimal('5.50050000055055505000050550000505050505E+1000036') -> !TypeError: '<=' not supported between instances of 'ellipsis' and 'decimal.Decimal' 
+146 [p19 DOWN -999999 999999 c0 C1 t] Decimal('9.9900909000999000900909090909000990090099E-976174') > float:5e-324 -> bool:False Fl
+147 [p28 HALF_DOWN -8474915892476531 475341065323999 c0 C1 tInRo] Decimal('-17434395815327070255186980526643.29527410767') <= float:-inf -> bool:False Fl
+148 [p1 HALF_EVEN -999999 999999 c0 C0 t] Decimal('5005050000505005005.005055050505550550') != Fraction:Fraction(32310294186182675105, 54) -> bool:True 
+149 [p34 HALF_DOWN -999999999999999999 999999999999999999 c1 C0 t] Decimal('2e-885777591751518543') == Decimal:Decimal('9.09090900000099000990009909e+39') -> bool:False 
+150 [p38 DOWN -66 54 c0 C1 tInDiOvUn] Decimal('-6.5E-7') < complex:(-1.4376682889541523e-129+0j) -> !TypeError: '<' not supported between instances of 'decimal.Decimal' and 'complex' 
+151 [p28 CEILING -3 8 c1 C0 tOv] float:0.00076 == Decimal('0.00076') -> bool:False Fl
+152 [p28 FLOOR -34 72 c0 C1 t] Decimal:Decimal('-5.05555005000050E+15') <= Decimal('5.05555005000050E+15') -> bool:True 
+153 [p9 CEILING -2 3 c0 C0 tDiRo] Decimal:Decimal('0e+22') >= Decimal('0e+22') -> bool:True 
+154 [p22 DOWN -52 52 c0 C1 t] bool:True <= Decimal('9665828933919151951734572187254558') -> bool:True 
+155 [p39 CEILING -41 36 c0 C0 t] Decimal('-9.9999999e-8') < list:[] -> !TypeError: '<' not supported between instances of 'decimal.Decimal' and 'list' 
+156 [p28 DOWN -999999 999999 c0 C1 t] Decimal('-1.988077437855518102342394885097598E+46') <= bytes:b'1' -> !TypeError: '<=' not supported between instances of 'decimal.Decimal' and 'bytes' 
+157 [p16 HALF_EVEN -999999 999999 c1 C1 t] Decimal('-400000.000000000000000000000000000') != int:-400000 -> bool:False 
+158 [p28 FLOOR -999999999999999999 999999999999999999 c0 C1 t] Decimal('-7.9005454334483532579600681773199782010E+44') < Decimal:Decimal('-7.9005454334483532579600681773199782010E+44') -> bool:False 
+159 [p1 CEILING -10 38327 c1 C1 tDi] Decimal('9.00000000000000000000000000E-21') == int:0 -> bool:False 
+160 [p12 HALF_DOWN -999999999999999999 999999999999999999 c1 C1 t] Decimal('-4.0000000000000000E-38') != list:[] -> bool:True 
+161 [p1 HALF_EVEN -40 100 c1 C1 t] Decimal('7.41943117014530681125994777E-31') <= Decimal:Decimal('7.41943117014530681125994777E-31') -> bool:True 
+162 [p19 HALF_UP -1 8 c0 C1 t] Decimal('550000055555500.50505005550505555555055') > float:236144.33333333334 -> bool:True Fl
+163 [p28 FLOOR -55 66 c1 C1 t] Decimal('2.3E+2') == Decimal:Decimal('2.3E+2') -> bool:True 
+164 [p9 FLOOR -5 99 c0 C1 tFlDiSuRo] Decimal('75293979.241263604185') > Fraction:Fraction(154745654881, 8128678) -> bool:True 
+165 [p9 HALF_UP -30484917552 439 c1 C0 t] float:4.516071329830289e-118 < Decimal('-9339470618216911644665278371049.6') -> bool:False Fl
+166 [p28 CEILING -999999 999999 c0 C0 t] bool:False > Decimal('9.00000000000000000000000000000000000000e+406899') -> bool:False 
+167 [p42 CEILING -73 37 c0 C1 t] Decimal('-4.00000000000E-46') <= float:-2.6837291288437284e+216 -> bool:False Fl
+168 [p34 05UP -999999 999999 c1 C1 t] MyInt:5 <= Decimal('7.00000000000000000000000000000000000000E+456975') -> bool:True 
+169 [p16 HALF_DOWN -999999 999999 c0 C1 t] Decimal('9.71783146035403E-1000002') <= float:0.0 -> bool:False Fl
+170 [p28 HALF_UP -2 9 c1 C1 t] float:-4.6352905457047973e-256 == Decimal('-9.99909090990099000E-14') -> bool:False Fl
+171 [p38 FLOOR -999999 999999 c0 C1 t] Decimal('7.71371790437196E+33') < complex(float:8.728300439832635e-272, nan) -> !TypeError: '<' not supported between instances of 'decimal.Decimal' and 'complex' 
+172 [p28 HALF_UP -4 2 c0 C1 t] Decimal('5.5055050550050E-39') == () -> bool:False 
+173 [p34 HALF_EVEN -5 5 c0 C1 t] Decimal('4.65363957289369024435422670E+45') < int:4653639572893690244354226700000000000000000000 -> bool:False 
+174 [p28 HALF_UP -999999 999999 c1 C1 tInFlDiSuInRo] Decimal('5000000000000000000000000000000000.0000') <= Fraction:Fraction(1398864701375173304, 758679823) -> bool:False 
+175 [p3 HALF_EVEN -999999 999999 c0 C1 tUn] Decimal('-3.2878E+22') == int:-32878000000000000000000 -> bool:True 
+176 [p38 DOWN -999999 999999 c0 C0 t] Decimal('9.1762082027216684086952906001775274499') == str:'1' -> bool:False 
+177 [p28 HALF_EVEN -24 88 c1 C1 t] Fraction:Fraction(-99688548265702580278351, 10139766606747502) == Decimal('0.00993') -> bool:False 
+178 [p2 DOWN -999999 999999 c1 C1 t] Decimal('0.0010000000000000000000') >= int:0 -> bool:True 
+179 [p1 HALF_UP -999999 999999 c0 C1 t] Decimal('-1.8065282486326147253696722929416E-16') != Decimal:Decimal('883651276398227617877405308.540775715') -> bool:True 
+180 [p28 DOWN -999999999999999999 999999999999999999 c0 C1 t] Decimal('5.0000000000000000000000000000E-9') < Fraction:Fraction(-79519396711900072, 857210945741389) -> bool:False 
+181 [p20 05UP 0 4 c0 C1 tDiIn] Fraction:Fraction(573109, 6954450563593292316) != Decimal('-8.000000000000000000E-12') -> bool:True 
+182 [p1 HALF_EVEN -451219978 73295506620646145 c0 C0 t] Decimal('5e-451219976') < complex:0j -> !TypeError: '<' not supported between instances of 'decimal.Decimal' and 'complex' 
+183 [p3 FLOOR -2 6 c0 C1 t] IntLike:IntLike() > Decimal('0.000099') -> !TypeError: '>' not supported between instances of 'IntLike' and 'decimal.Decimal' 
+184 [p28 FLOOR -8 85 c1 C1 t] Decimal('sNaN') < Odd:Odd() -> !TypeError: '<' not supported between instances of 'decimal.Decimal' and 'Odd' 
+185 [p28 DOWN -85 80 c0 C1 t] float:8.820355535706139e+185 >= Decimal('5.0505000550050055005050505555E+59') -> bool:True Fl
+186 [p38 CEILING -499 441 c1 C1 tFlOvUnIn] Decimal('-7020967225521608693061753405762.51587121') != complex:(-7.1496597719113255e+140+0j) -> bool:True Fl
+187 [p19 CEILING -999999 999999 c0 C1 t] Decimal('990099900090090999000099009000.099090') >= Decimal:Decimal('-990099900090090999000099009000.099090') -> bool:True 
+188 [p28 CEILING -999999999999999999 999999999999999999 c0 C1 t] Decimal:Decimal('-9.999999999E+17') != Decimal('-9.999999999E+17') -> bool:False 
+189 [p28 HALF_UP -999999 999999 c1 C1 tFlRo] Decimal('9.99099000000900909909090909000000900990E-14') > Decimal:Decimal('9.99099000000900909909090909000000900990E-14') -> bool:False 
+190 [p28 HALF_EVEN -7 8 c1 C1 tRo] Decimal('-6479052415606.029744904') > Decimal:Decimal('-9.9999999999999999999999999999999999999999999E+53') -> bool:True 
+191 [p20 HALF_UP -10 3 c1 C1 t] Decimal('-0.000247674321692621') >= ellipsis:Ellipsis -> !TypeError: '>=' not supported between instances of 'decimal.Decimal' and 'ellipsis' 
+192 [p34 HALF_UP -9 10 c1 C1 tSuRo] IntLike:IntLike() < Decimal('122079.85605112316718654319698304044') -> !TypeError: '<' not supported between instances of 'IntLike' and 'decimal.Decimal' 
+193 [p9 HALF_UP -999999 999999 c0 C1 t] Decimal('-9.9999999999999999999999E-13') >= Fraction:Fraction(44054758, 247177993) -> bool:False 
+194 [p9 05UP -999999 999999 c1 C1 t] float:-6.661553632530013e+252 > Decimal('5.505E-17') -> bool:False Fl
+195 [p2 05UP -999999 999999 c1 C0 t] Decimal('5.2731e-224980') <= Fraction:Fraction(2934213300893246, 6683) -> bool:True 
+196 [p28 DOWN -999999 999999 c0 C1 tOvUnSuIn] Decimal('9.090909090099099909990009009E+43') >= complex:(-6.551487194937356e+128+0j) -> !TypeError: '>=' not supported between instances of 'decimal.Decimal' and 'complex' 
+197 [p9 CEILING -8 1 c1 C1 tInFlUnInCl] Fraction:Fraction(24140960240389954820160000000000000000000000, 1) < Decimal('2.414096024038995482016E+43') -> bool:False 
+198 [p28 05UP -9 2 c0 C1 t] Fraction:Fraction(-3562408456209022880306130, 94726430094877259263) == Decimal('1.3283285652747040E-28') -> bool:False 
+199 [p34 FLOOR -6 9 c0 C0 t] Fraction:Fraction(-84979116, 491) != Decimal('sNaN') -> bool:True In
+200 [p28 05UP -8 7 c1 C1 t] Decimal('-1E-38') >= complex:(4.9623329715674955e-256+0j) -> !TypeError: '>=' not supported between instances of 'decimal.Decimal' and 'complex' 
+201 [p9 HALF_DOWN -999999 999999 c0 C1 tFlIn] Decimal('9.999999999E+190312') == float:inf -> bool:False Fl
+202 [p1 FLOOR -999999 999999 c1 C1 t] Decimal('1.115867141190895912590E+26') >= int:111586714119089591259000000 -> bool:True 
+203 [p2 UP -79 6 c0 C0 tUnRoCl] Fraction:Fraction(28058667, 110) == Decimal('-NaN') -> bool:False 
+204 [p39 UP -90 68 c1 C1 t] Decimal('-0.0009043376') <= Decimal:Decimal('0.0009043376') -> bool:True 
+205 [p3 HALF_EVEN -999999 999999 c0 C1 t] Decimal('5.000505550050000000550E-34') > Decimal:Decimal('-5.000505550050000000550E-34') -> bool:True 
+206 [p38 HALF_DOWN -999999 999999 c0 C0 t] Fraction:Fraction(-1760096287344054072312484, 4467191250411) != Decimal('-NaN') -> bool:True 
+207 [p43 HALF_EVEN -999999 999999 c1 C1 t] Decimal('5.000E+10') <= Decimal:Decimal('5E+10') -> bool:True 
+208 [p34 UP -999999 999999 c0 C0 tDiOvUnSuInRo] Decimal('5.05055500500550500500000050e+40') <= Decimal:Decimal('-5.05055500500550500500000050e+40') -> bool:False 
+209 [p3 05UP -62 37 c0 C1 t] Decimal('-5.16E-28') < Decimal:Decimal('9.0099000000000E-9') -> bool:True 
+210 [p9 HALF_DOWN -999999 999999 c0 C1 t] complex(float:961.5, nan) <= Decimal('9.000000000000000000E+39') -> !TypeError: '<=' not supported between instances of 'complex' and 'decimal.Decimal' 
+211 [p20 DOWN -999999 999999 c0 C1 tDi] float:45829.857142857145 == Decimal('9.439274470254395438433E-12') -> bool:False Fl
+212 [p38 HALF_DOWN -16 45 c0 C0 t] Decimal('2.14882065251e-13') < Decimal:Decimal('2.14882065251e-13') -> bool:False 
+213 [p9 05UP -4 7 c0 C1 tDiOvRo] Decimal('-9999999.0990') >= float:-9999999.099 -> bool:False Fl
+214 [p28 UP -999999 999999 c0 C1 t] Decimal('9.999999999999999999999999999999E-26') != Fraction:Fraction(836769451576070689297882, 3222105537962921) -> bool:True 
+215 [p3 CEILING -23 70 c0 C1 t] Decimal('0.000089') > int:17720836282785992 -> bool:False 
+216 [p27 CEILING -9 3 c0 C0 tFlOv] Decimal('-3.40822e-46') < Fraction:Fraction(-171096290468434803, 8975) -> bool:False 
+217 [p28 FLOOR -4 1 c0 C0 t] FloatLike:FloatLike() != Decimal('3000000000') -> bool:True 
+218 [p9 HALF_EVEN -75 31 c0 C1 t] int:0 != Decimal('0.0009783027151489352082') -> bool:True 
+219 [p28 HALF_UP -467298588 70927187266702918 c1 C1 tUnSu] Decimal('-9.99999900909900000090090E-25') > ellipsis:Ellipsis -> !TypeError: '>' not supported between instances of 'decimal.Decimal' and 'ellipsis' 
+220 [p28 CEILING -999999 999999 c0 C1 tInDiRo] Decimal('-8.7348E+22') != bytes:b'1' -> bool:True 
+221 [p9 CEILING -999999 999999 c1 C1 tUn] Decimal:Decimal('-0') <= Decimal('0') -> bool:True 
+222 [p9 HALF_DOWN -999999999999999999 999999999999999999 c0 C1 tRo] Decimal('-4.047877099972E-10') == Decimal:Decimal('4.047877099972E-10') -> bool:False 
+223 [p28 HALF_EVEN -999999 999999 c0 C1 t] Decimal('5.50555E-50') > FloatLike:FloatLike() -> !TypeError: '>' not supported between instances of 'decimal.Decimal' and 'FloatLike' 
+224 [p9 UP -999999999999999999 999999999999999999 c0 C1 t] Decimal('4.361394361534175852835804557301794275E+43252760565212090') <= complex:(5e-324+0j) -> !TypeError: '<=' not supported between instances of 'decimal.Decimal' and 'complex' 
+225 [p1 HALF_EVEN -999999999999999999 999999999999999999 c1 C1 t] float:3.1938668001477234e-77 > Decimal('-18540850178490063306797.860725529360125645417') -> bool:True Fl
+226 [p30 HALF_DOWN -3 5 c1 C1 tFlOvSuInRo] Decimal('-0') >= float:-0.0 -> !FloatOperation: [<class 'decimal.FloatOperation'>] Fl
+227 [p2 FLOOR -999999999999999999 999999999999999999 c1 C1 t] Decimal('43920821340873670277378407') != float:4.392082134087367e+25 -> bool:True Fl
+228 [p34 DOWN -999999 999999 c0 C1 tIn] Decimal('9.36851228594118630898738671640263956636E+46') > complex:(-8.472971408861711e-109-0j) -> !TypeError: '>' not supported between instances of 'decimal.Decimal' and 'complex' 
+229 [p28 HALF_DOWN -999999999999999999 999999999999999999 c0 C0 tInUnSu] Fraction:Fraction(23607378356172470, 1331235062672617) > Decimal('-24010389372973045838810343.19250840445') -> bool:True 
+230 [p34 HALF_UP -2 0 c1 C1 t] Decimal('3.21647962272605804463232279595E-9') < Decimal:Decimal('3.21647962272605804463232279595E-9') -> bool:False 
+231 [p1 UP -269282880970 6014435 c0 C1 tDiOvInRoCl] complex(nan, float:-0.0) <= Decimal('-9.2245E+25') -> !TypeError: '<=' not supported between instances of 'complex' and 'decimal.Decimal' 
+232 [p38 UP -999999 999999 c0 C1 tFlOv] Decimal('-440887167531051315603245393') != complex:(4.298174563500171e+117+0j) -> bool:True Fl
+233 [p28 FLOOR -999999999999999999 999999999999999999 c0 C0 t] Decimal('-9.990099090090e+15') > complex(float:194534.0, nan) -> !TypeError: '>' not supported between instances of 'decimal.Decimal' and 'complex' 
+234 [p39 HALF_EVEN -70 0 c1 C1 tInSuRoCl] Decimal('0.3') != Decimal:Decimal('-0.3') -> bool:True 
+235 [p28 CEILING -79 20 c0 C1 tDiUn] Decimal('9.909009090009999900E+51') < int:-19779950328553227271184496 -> bool:False 
+236 [p15 05UP -999999 999999 c1 C0 t] bool:True > Decimal('-0.00536813343894588654441059844862575702394') -> bool:True 
+237 [p10 CEILING -999999999999999999 999999999999999999 c1 C0 tSu] Decimal('0e+5') != int:90505338932674206596796949 -> bool:True 
+238 [p40 CEILING -83063888644117263 79112426484 c0 C1 t] Fraction:Fraction(-800000000000, 1) > Decimal('-8.0000000E+11') -> bool:False 
+239 [p28 CEILING -34 51 c0 C0 tUnIn] Decimal('-8.46920e+17') >= int:0 -> bool:False 
+240 [p28 FLOOR -999999 999999 c0 C1 t] Decimal('0') != Decimal:Decimal('0') -> bool:False 
+241 [p19 HALF_UP -4 3 c0 C1 tDiOvUn] Decimal('1.6419161834653458860648103730E-31') != float:2.2334630960693597e-193 -> bool:True Fl
+242 [p34 UP -1 2 c0 C1 t] Decimal('99999999999.999999999999999999999999999') <= bool:True -> bool:False 
+243 [p19 HALF_DOWN -2 672560691754 c0 C1 tFlUn] Decimal('-9.00000000000000000000E-29') <= Decimal:Decimal('9.99999999999999999999999999999E-9') -> bool:True 
+244 [p19 CEILING -67 64 c0 C1 t] Decimal('4.82406139695533927E-50') > Fraction:Fraction(482406139695533927, 10000000000000000000000000000000000000000000000000000000000000000000) -> bool:False 
+245 [p3 CEILING 0 0 c0 C1 t] Decimal('3.42014363405487E+38') < () -> !TypeError: '<' not supported between instances of 'decimal.Decimal' and 'tuple' 
+246 [p38 HALF_UP -9 60 c0 C0 t] Decimal('372495712342480789321801131026.20554505') == () -> bool:False 
+247 [p34 UP -999999 999999 c0 C1 t] Decimal('-7.9E+30') < int:-7900000000000000000000000000000 -> bool:False 
+248 [p9 FLOOR -999999 999999 c0 C1 t] Decimal('Infinity') >= ellipsis:Ellipsis -> !TypeError: '>=' not supported between instances of 'decimal.Decimal' and 'ellipsis' 
+249 [p43 HALF_DOWN -999999 999999 c0 C1 t] complex:(2.182044613975423e-23+0j) > Decimal('-1.8647680769975367368549401217303801996E-183246') -> !TypeError: '>' not supported between instances of 'complex' and 'decimal.Decimal' 
+250 [p3 UP -999999 999999 c0 C1 tUn] Decimal('-2.6345251403161976014253890E-28') <= Decimal:Decimal('-2.634525140316197601425389E-28') -> bool:True 
+251 [p19 DOWN -6 5 c0 C1 tSu] Decimal('-9.9090000090E+24') >= Fraction:Fraction(-77889474646039695487, 475791540447495093) -> bool:False 
+252 [p2 UP -57 42 c1 C1 t] float:9000000000000.0 > Decimal('9.000E+12') -> bool:False Fl
+253 [p16 HALF_EVEN -6 2 c0 C0 t] float:-200951.33333333334 != Decimal('-7000.000000000000000000000000000000000000000') -> bool:True Fl
+254 [p19 HALF_EVEN -999999999999999999 999999999999999999 c0 C1 t] Decimal('sNaN') >= Decimal:Decimal('4.9709E-46') -> bool:False In
+255 [p28 FLOOR -82 58 c0 C1 t] Decimal('9.9') >= float:-8.248484207669634e+49 -> bool:True Fl
+256 [p9 HALF_UP -999999 999999 c0 C1 t] Decimal('9.9999999E+18') == Decimal:Decimal('-9.9999999E+18') -> bool:False 
+257 [p28 HALF_EVEN -999999 999999 c1 C1 tOvRo] float:79991.66666666667 <= Decimal('-9.99999999E-20') -> bool:False Fl
+258 [p28 DOWN -9 9 c0 C1 tSu] Decimal('73509890872478869618086952064910205') != list:[] -> bool:True 
+259 [p20 05UP -999999 999999 c1 C1 t] Decimal('0.0708288') != IntLike:IntLike() -> bool:True 
+260 [p16 UP -999999999999999999 999999999999999999 c1 C1 t] Decimal('9.9999999999999999999999999999999999999E+836822549449443530') < str:'1' -> !TypeError: '<' not supported between instances of 'decimal.Decimal' and 'str' 
+261 [p9 DOWN -999999 999999 c0 C1 tOvUn] Decimal('8.4896337181274832144314641695127804883E+57') <= float:4.080614434586232e+95 -> bool:True Fl
+262 [p28 HALF_UP -96 71 c0 C1 t] bool:False == Decimal('-0.000425497199905119981067102694828620473170019') -> bool:False 
+263 [p39 CEILING -1 8 c0 C1 tSuRoCl] complex(float:112923.66666666667, nan) <= Decimal('6.6807774164212341740E-11') -> !TypeError: '<=' not supported between instances of 'complex' and 'decimal.Decimal' 
+264 [p39 UP -10 7 c0 C1 t] Decimal('1.57457903440562575982620905063987236793E+59') >= complex:(5e-324+1j) -> !TypeError: '>=' not supported between instances of 'decimal.Decimal' and 'complex' 
+265 [p28 CEILING -999999999999999999 999999999999999999 c0 C1 t] Decimal('-9.0990009900990999009009990E-13') <= Fraction:Fraction(-463316098720267179517307, 220) -> bool:False 
+266 [p2 05UP -4817957758 149191671 c0 C0 t] Decimal('-9.99e+7') >= Fraction:Fraction(239102359915147174037, 2518903549) -> bool:False 
+267 [p3 FLOOR -2 7 c1 C1 t] Decimal('-8.33026030108663598241954025593642267299034E-13') > Decimal:Decimal('-8.33026030108663598241954025593642267299034E-13') -> bool:False 
+268 [p28 UP -999999 999999 c0 C1 tInOvInCl] Decimal('-9.9900900909000909009900999090990909909990E-10') != NotImplementedType:NotImplemented -> bool:True 
+269 [p28 HALF_EVEN -999999 999999 c0 C1 t] Decimal('-0.0000055550555550000050505555005005') > int:0 -> bool:False 
+270 [p28 05UP -63 67 c0 C1 t] Decimal('-722494054514956274520924700817209') != str:'1' -> bool:True 
+271 [p33 CEILING -999999 999999 c1 C1 tSuCl] Decimal('6.26488E-21') <= Fraction:Fraction(-10288538659, 98358479908635) -> bool:False 
+272 [p1 HALF_EVEN -999999999999999999 999999999999999999 c0 C1 t] Decimal:Decimal('-5.218308420074301797967604E+41') == Decimal('-5.218308420074301797967604E+41') -> bool:True 
+273 [p19 UP -5 4 c1 C1 tOv] Decimal('1.4048388700E-16') == Decimal:Decimal('1.40483887E-16') -> bool:True 
+274 [p28 HALF_EVEN -3 5 c0 C0 tInOvInRoCl] Decimal('2e+24') == Decimal:Decimal('-9009.9990090009090909900009000099900') -> bool:False 
+275 [p28 UP -5 3 c0 C0 t] Fraction:Fraction(999099009999009009009099990909900099900000000000000, 1) <= Decimal('9.990990099990090090090999909099000999e+50') -> bool:True 
+276 [p20 HALF_EVEN -24 59 c0 C1 t] Decimal('-999999999999999999999999999999999999.9') > int:0 -> bool:False 
+277 [p9 05UP -999999999999999999 999999999999999999 c0 C0 t] Decimal('-0.006') > bool:True -> bool:False 
+278 [p16 05UP -999999 999999 c0 C1 t] bool:False <= Decimal('486911836709705566743091778214251344') -> bool:True 
+279 [p28 HALF_DOWN -78 35 c0 C1 tSuRoCl] Decimal('8.191876741888024E+44') < Decimal:Decimal('-8.191876741888024E+44') -> bool:False 
+280 [p1 CEILING -999999 999999 c0 C1 t] Decimal('9.990000090009009009990090909090990090E+363226') == Decimal:Decimal('9.990000090009009009990090909090990090E+363226') -> bool:True 
+281 [p28 FLOOR -999999 999999 c0 C1 t] Decimal('3.000000E-22') == nan -> bool:False Fl
+282 [p2 HALF_UP -7 8 c0 C1 t] Decimal('9.000999099E+20') == () -> bool:False 
+283 [p16 HALF_DOWN -55 3 c0 C1 tOvSuCl] Fraction:Fraction(-2692469867420085937104979, 9121086744) < Decimal('9999999999999999999999.9999') -> bool:True 
+284 [p28 HALF_UP -999999 999999 c0 C1 t] Decimal('-0E+922807') > float:9.87074809901558e+71 -> bool:False Fl
+285 [p39 05UP -7 0 c0 C0 tIn] Fraction:Fraction(-125780279632065698454123, 6457276742381) >= Decimal('-1.9848900335e-27') -> bool:False 
+286 [p16 DOWN -19 73 c0 C1 t] float:-115578.0 != Decimal('900000000.0000000000') -> bool:True Fl
+287 [p19 DOWN -999999999999999999 999999999999999999 c1 C1 t] Decimal('-2.000000E-429265615417510616') <= list:[] -> !TypeError: '<=' not supported between instances of 'decimal.Decimal' and 'list' 
+288 [p21 HALF_DOWN -85 17 c1 C0 tUnSu] Decimal('-9.9999999999e-38') != complex:0j -> bool:True Fl
+289 [p34 UP -999999 999999 c0 C1 tInDiIn] Decimal('2.89303307169428515343E-32') >= float:4.134313613956283e+124 -> bool:False Fl
+290 [p16 05UP -3861434 910 c1 C1 tInOvCl] float:-89114920.96 >= Decimal('-89114920.96') -> bool:True Fl
+291 [p38 DOWN -999999 999999 c0 C1 t] Fraction:Fraction(-859069735531, 370084005718892) < Decimal('-0') -> bool:True 
+292 [p39 HALF_DOWN -999999 999999 c0 C1 t] Decimal('-40000000000000000.000000000000000') == float:-4e+16 -> bool:True Fl
+293 [p16 DOWN -27 75 c1 C0 tInOvCl] Decimal:Decimal('-7363001687913113055290927564656220732883.43') > Decimal('-7363001687913113055290927564656220732883.43') -> bool:False 
+294 [p1 UP -42 75 c1 C1 tFlUn] Decimal('6E+3') == Odd:Odd() -> bool:False 
+295 [p16 FLOOR -14410380 2733 c1 C1 t] Decimal('6.4943963982097188136772802906432614452351E+56') == complex:(-116226.66666666667-0j) -> bool:False Fl
+296 [p27 CEILING 0 7 c0 C1 t] Decimal('0') == complex(float:1.4722368027128889e-273, nan) -> bool:False 
+297 [p1 HALF_UP -721190795694870 97 c1 C1 tInIn] Decimal('8.38062E-30') <= float:-inf -> bool:False Fl
+298 [p20 05UP -999999999999999999 999999999999999999 c1 C1 tOvUnRo] Decimal('sNaN') != bytes:b'1' -> bool:True 
+299 [p9 HALF_DOWN -11 60 c0 C0 t] Decimal:Decimal('-999999999999999999.99999999999999999999') > Decimal('-999999999999999999.99999999999999999999') -> bool:False 
+300 [p38 CEILING -7192048345403690 38223170 c1 C1 t] float:9.999999999999e-18 <= Decimal('9.999999999999E-18') -> bool:True Fl
+301 [p36 HALF_UP -2 3 c1 C1 tInUnRoCl] Fraction:Fraction(-6137511212090835030, 816186915971) < Decimal('5.880164360382190169687E+31') -> bool:True 
+302 [p19 HALF_UP -62 13 c1 C0 t] int:54395466 == Decimal('54395466.95196606881845972678257') -> bool:False 
+303 [p34 UP -999999 999999 c0 C1 t] Decimal('3.0000000000000000000000000000000000E+46527') > Decimal:Decimal('3.0000000000000000000000000000000000E+46527') -> bool:False 
+304 [p38 05UP -999999 999999 c0 C1 tOvCl] Decimal:Decimal('0.86') > Decimal('-2.14714210574753971465001462367E-30') -> bool:True 
+305 [p19 HALF_DOWN 0 5 c0 C1 tUn] Decimal('0E+1') >= int:-48812547581805079 -> bool:True 
+306 [p28 UP -999999 999999 c0 C1 t] Decimal('9E-1000028') < Decimal:Decimal('-5.0550055050005505005005E+23') -> bool:False 
+307 [p34 CEILING -10 6 c0 C0 tInSuCl] Decimal('-311003758202769.48179769217011639963432547') == Fraction:Fraction(-31100375820276948179769217011639963432547, 100000000000000000000000000) -> bool:True 
+308 [p30 CEILING -999999 999999 c0 C1 t] Decimal('-14682020599910025241436515477721') <= Fraction:Fraction(-16949339069934340030003, 669693582263357079) -> bool:True 
+309 [p19 UP -999999 999999 c1 C1 tCl] Decimal('-4.385E-21') < Fraction:Fraction(-75821674777, 71871686985) -> bool:False 
+310 [p38 HALF_EVEN -999999 999999 c0 C1 t] Decimal('-0E-44') == MyInt:5 -> bool:False 
+311 [p2 UP -999999 999999 c0 C0 tInDiOvCl] Decimal('4.0000000000000000000000000000000000e+53') >= Decimal:Decimal('0.00007330015061') -> bool:True 
+312 [p2 HALF_EVEN -8 5 c1 C1 t] Decimal('-167898219544742166.5934067451062586827059') == int:-167898219544742166 -> bool:False 
+313 [p28 HALF_EVEN -999999 999999 c0 C1 t] Decimal('9.999999999999999999999E-32') > Decimal:Decimal('9.999999999999999999999E-32') -> bool:False 
+314 [p2 DOWN -999999 999999 c0 C1 t] Decimal('-0E+42440') < Decimal:Decimal('-0') -> bool:False 
+315 [p1 HALF_UP -999999 999999 c0 C1 t] Decimal('4.851117E+17') >= Decimal:Decimal('4.851117E+17') -> bool:True 
+316 [p9 FLOOR -97284 9956094430045 c0 C1 tDiOv] Decimal('-865034620769.1568') != Decimal:Decimal('865034620769.1568') -> bool:True 
+317 [p1 FLOOR -34 93 c0 C1 t] float:-2.5060297182853226e-278 != Decimal('-610302885508691391108603563261476904') -> bool:True Fl
+318 [p34 UP -875404 1854 c0 C1 tSuRoCl] list:[] <= Decimal('-127449756511118853269094074669465783') -> !TypeError: '<=' not supported between instances of 'list' and 'decimal.Decimal' 
+319 [p28 HALF_DOWN -999999999999999999 999999999999999999 c1 C1 t] Decimal('1.66893E+8') == complex:(-1.3059986093190165e-248+1j) -> bool:False 
+320 [p9 05UP -38 40 c0 C1 tInDiOvCl] Decimal('5.050500055005500050500055000055500000E+69') > Decimal:Decimal('5.050500055005500050500055000055500000E+69') -> bool:False 
+321 [p25 HALF_UP -4 8 c0 C1 t] Decimal('-922011930998345.201373664271978') < () -> !TypeError: '<' not supported between instances of 'decimal.Decimal' and 'tuple' 
+322 [p28 05UP -999999 999999 c0 C0 t] Decimal('-19.7') != float:-4.654941370927016e-89 -> bool:True Fl
+323 [p1 HALF_DOWN -999999 999999 c0 C1 tDiRo] Decimal('8.231389419724437E+30') == Decimal:Decimal('-8.231389419724437E+30') -> bool:False 
+324 [p28 UP -20315 32476852273555 c1 C1 t] Decimal('38163014.272869658756248') <= complex:(-315205-0j) -> !TypeError: '<=' not supported between instances of 'decimal.Decimal' and 'complex' 
+325 [p10 HALF_EVEN -999999 999999 c0 C1 t] Decimal('-5.49012639017801854832456480378214414799853410E+66') <= float:-5.4901263901780184e+66 -> bool:True Fl
+326 [p2 HALF_DOWN -1 0 c1 C1 tFlDi] Decimal:Decimal('4.93E-18') > Decimal('4.93E-18') -> bool:False 
+327 [p34 05UP -999999 999999 c0 C1 t] Decimal('9.099999009990000999090009000909E+38') <= float:9.099999009990002e+38 -> bool:True Fl
+328 [p3 HALF_DOWN -999999 999999 c1 C1 t] Decimal('9.876244211E+15') != float:-1.400481009359526e+100 -> bool:True Fl
+329 [p3 CEILING -999999 999999 c0 C1 tDiCl] Decimal('9.9E-17') > float:9.9e-17 -> bool:True Fl
+330 [p3 FLOOR -999999999999999999 999999999999999999 c0 C1 tInFlInRo] Fraction:Fraction(-6566143978100305489, 353655) >= Decimal('-4.71E-848072605542170443') -> bool:False 
+331 [p28 HALF_EVEN -999999 999999 c0 C0 t] Decimal('766063912314871035') > float:6.461047447242791e+98 -> bool:False Fl
+332 [p1 HALF_UP -7 3 c0 C1 t] Decimal('-8.000000000000000000000000000E-27') <= float:-8e-27 -> bool:False Fl
+333 [p1 HALF_UP -5 5 c1 C0 t] Decimal('-79816715083719330834996190999') == Fraction:Fraction(-79816715083719330834996190999, 1) -> bool:True 
+334 [p20 HALF_EVEN -419996142697335 219794737349 c0 C0 tFlDiInRo] Decimal('-2.303359463739277327048510970995e+49') < Decimal:Decimal('2.303359463739277327048510970995e+49') -> bool:True 
+335 [p40 HALF_DOWN -999999 999999 c0 C1 t] complex:(-4.736526695413752e-300+1j) != Decimal('-2.888838331789760648392877992274113E-23') -> bool:True 
+336 [p28 HALF_DOWN -86040 78980 c0 C1 tFlUn] Decimal('-4.6471122010615952E-26') <= Decimal:Decimal('4.6471122010615952E-26') -> bool:True 
+337 [p39 FLOOR -999999999999999999 999999999999999999 c0 C1 t] Decimal('-8.94128864698814672366354482942698E-12') == float:-508.734375 -> bool:False Fl
+338 [p19 CEILING -999999 999999 c0 C0 t] Decimal('33903197908783850472') <= Decimal:Decimal('5.50165260744547e+21') -> bool:True 
+339 [p2 DOWN -14 62 c1 C0 tOv] float:2.5339970985046747e-157 != Decimal('-9.47569e-33') -> bool:True Fl
+340 [p2 FLOOR -92915950416319184 85235 c1 C1 t] Decimal('-4917581924290.69240800') != IntLike:IntLike() -> bool:True 
+341 [p28 DOWN -4 4 c0 C1 t] Decimal('-9.999999000090999099099009000099990090909E+42') == Fraction:Fraction(-1560483962057060791109473, 33855694995516) -> bool:False 
+342 [p34 DOWN -999999 999999 c1 C1 t] Decimal('0E-7') >= Decimal:Decimal('0E-7') -> bool:True 
+343 [p3 05UP -10 10 c0 C0 tFlCl] Decimal('2.25e+8') < float:-52330.1 -> !FloatOperation: [<class 'decimal.FloatOperation'>] Fl
+344 [p3 DOWN -999999 999999 c0 C1 tUnInCl] Decimal('-0E+7') < ellipsis:Ellipsis -> !TypeError: '<' not supported between instances of 'decimal.Decimal' and 'ellipsis' 
+345 [p10 HALF_DOWN -999999999999999999 999999999999999999 c0 C1 t] Decimal('999.9999999999999999999') <= float:1000.0 -> bool:True Fl
+346 [p28 05UP -999999 999999 c1 C0 tRo] Decimal('274206894070334348') != bool:False -> bool:True 
+347 [p28 CEILING -999999 999999 c0 C0 t] Decimal('-99999999999999999999999999999999.99999') == int:-99999999999999999999999999999999 -> bool:False 
+348 [p39 05UP -999999 999999 c0 C1 t] complex:(-inf+0j) == Decimal('6.80277812305557252E-39') -> bool:False Fl
+349 [p21 HALF_UP -78 89 c1 C1 tFlRoCl] Decimal('-6378276313679053776271446641.98059432131') < float:-6.378276313679054e+27 -> !FloatOperation: [<class 'decimal.FloatOperation'>] Fl
+350 [p25 HALF_EVEN -999999999999999999 999999999999999999 c1 C1 t] complex(float:-1.8853552367250432e+201, nan) >= Decimal('4E+31') -> !TypeError: '>=' not supported between instances of 'complex' and 'decimal.Decimal' 
+351 [p39 CEILING -999999 999999 c0 C1 tOvIn] Decimal('0E+507507') == Decimal:Decimal('-Infinity') -> bool:False 
+352 [p34 DOWN -3 5 c0 C1 t] NotImplementedType:NotImplemented < Decimal('371125768627757787225005277670') -> !TypeError: '<' not supported between instances of 'NotImplementedType' and 'decimal.Decimal' 
+353 [p16 FLOOR -73 27 c0 C0 t] Decimal('5.64273315868e+38') < str:'1' -> !TypeError: '<' not supported between instances of 'decimal.Decimal' and 'str' 
+354 [p9 FLOOR 0 3 c0 C0 t] Decimal('7.00000e+14') > bool:False -> bool:True 
+355 [p2 HALF_UP -24 85 c0 C0 tFlUn] Decimal('-5.0500e-38') <= complex:(-6.480260545380893e-79+1j) -> !TypeError: '<=' not supported between instances of 'decimal.Decimal' and 'complex' 
+356 [p5 HALF_EVEN -999999 999999 c1 C1 tFlDiOvSuCl] Decimal('8.2655639050617419511463441827E-14') < float:392138.0 -> !FloatOperation: [<class 'decimal.FloatOperation'>] Fl
+357 [p9 05UP -42 4580846260587979 c1 C0 t] Decimal('-9.999e-22') < float:-204.197265625 -> bool:False Fl
+358 [p28 HALF_UP -999999 999999 c0 C1 t] float:0.0 >= Decimal('0E-7') -> bool:True Fl
+359 [p12 UP -560607255539 515536067919286 c0 C1 tOvRo] Decimal('9.9E+206312709201162') < NoneType:None -> !TypeError: '<' not supported between instances of 'decimal.Decimal' and 'NoneType' 
+360 [p28 FLOOR -1 90 c0 C1 tFlOvIn] Decimal('9.9999E-14') > Decimal:Decimal('5.00055505055500555550000505055550000005E+48') -> bool:False 
+361 [p20 05UP -72 62 c0 C1 t] float:8.733671745764458e-212 <= Decimal('-9.090909009999000000909900000990900009909E+55') -> bool:False Fl
+362 [p34 HALF_EVEN -999999 999999 c0 C1 tInDiOv] Decimal('0.0062063492858097828644119703939905020145') >= complex:(-8.397719058253425e+266+0j) -> !TypeError: '>=' not supported between instances of 'decimal.Decimal' and 'complex' 
+363 [p19 UP -2 100 c0 C1 t] Decimal('0E+3') > bool:False -> bool:False 
+364 [p16 HALF_EVEN -9 2 c0 C1 t] Fraction:Fraction(4312697739458463787992193143080000000000, 1) > Decimal('4.31269773945846378799219314308E+39') -> bool:False 
+365 [p16 CEILING -4 4 c0 C1 tDi] bytes:b'1' <= Decimal('9009000.909909909009') -> !TypeError: '<=' not supported between instances of 'bytes' and 'decimal.Decimal' 
+366 [p38 UP -73 51 c0 C1 t] Decimal('-3.3775E-14') <= int:-340253088151900720705487 -> bool:False 
+367 [p38 HALF_UP -999999 999999 c0 C0 t] Decimal('-1.9831658592451e+20') >= int:-198316585924510000000 -> bool:True 
+368 [p39 HALF_EVEN -999999 999999 c0 C1 t] float:0.0 >= Decimal('7E-684977') -> bool:False Fl
+369 [p3 FLOOR -999999999999999999 999999999999999999 c1 C1 t] Decimal('-3.00000000000000000000000000000000000000E-12') == Fraction:Fraction(-3, 1000000000000) -> bool:True 
+370 [p28 UP -86 85 c0 C1 tCl] Decimal('-Infinity') == Fraction:Fraction(17180908018359022506718, 869209) -> bool:False 
+371 [p30 DOWN -8038672642063 57294490177 c1 C1 t] complex:(3.974307122155393e+262+0j) <= Decimal('-9.99099E-8') -> !TypeError: '<=' not supported between instances of 'complex' and 'decimal.Decimal' 
+372 [p28 HALF_EVEN -999999 999999 c0 C1 tFlOvIn] Decimal('2.61739991037372699018244954E+37') != float:1.5065238808448023e-297 -> bool:True Fl
+373 [p20 UP -999999 999999 c0 C1 t] Fraction:Fraction(1159895082809117590, 1477207731686559) == Decimal('6294694455949992575148445.7622762292634') -> bool:False 
+374 [p2 05UP -81 18 c1 C1 t] Decimal('-9.009999990009090090999099900909900009900E+55') >= str:'1' -> !TypeError: '>=' not supported between instances of 'decimal.Decimal' and 'str' 
+375 [p34 05UP -19 28 c1 C1 t] Decimal('-7.78861744466691431253345714454367290158E+58') == complex:(49659.3+1j) -> bool:False 
+376 [p43 DOWN -5 8 c0 C1 t] Decimal:Decimal('4.2033005119753046820285E-27') == Decimal('500000000000000000000000000000.000000000') -> bool:False 
+377 [p16 05UP -999999 999999 c0 C1 tInSu] Decimal('1.1126656311E+36') > Decimal:Decimal('-19973459731165422831908.7407479170304063') -> bool:True 
+378 [p1 FLOOR -92 1 c0 C1 tInOvUnRo] Decimal('7.00000E+27') < float:-5.125399551420926e-54 -> bool:False Fl
+379 [p1 FLOOR -6 6 c1 C1 t] Decimal('-6.2613E-29') == Decimal:Decimal('-6.2613E-29') -> bool:True 
+380 [p38 HALF_EVEN -999999 999999 c0 C1 t] Decimal('-8E+1') == Decimal:Decimal('-8E+1') -> bool:True 
+381 [p28 HALF_UP -999999 999999 c0 C1 t] Decimal('-7.3E-34') >= Decimal:Decimal('7.3E-34') -> bool:False 
+382 [p31 05UP -999999999999999999 999999999999999999 c0 C1 t] Decimal('-71516.66191261537164711378') == float:-71516.66191261537 -> bool:False Fl
+383 [p28 DOWN -999999 999999 c1 C1 t] Decimal('-9.9009900909E-50') < Decimal:Decimal('0') -> bool:True 
+384 [p20 DOWN -708681 899688547330866 c0 C1 tSu] Decimal('783.982063823353950311909863204170556574507') != () -> bool:True 
+385 [p34 05UP -999999 999999 c0 C1 t] Decimal('-3.79539735957202856980E+44') < Decimal:Decimal('-3.7953973595720285698E+44') -> bool:False 
+386 [p38 HALF_EVEN -999999 999999 c1 C1 tInUnRoCl] Decimal('-667554586927229899967331276237') == Decimal:Decimal('-667554586927229899967331276237') -> bool:True 
+387 [p34 UP -4 4 c1 C1 t] bool:False != Decimal('NaN') -> bool:True 
+388 [p35 FLOOR -999999 999999 c0 C1 t] Decimal('-6.36192079211331035379096260E-32') > int:-930611226108076961050087 -> bool:True 
+389 [p20 DOWN -999999 999999 c0 C0 t] Decimal('5e-44') < Decimal:Decimal('-5e-44') -> bool:False 
+390 [p1 05UP -10 1 c1 C1 tIn] Decimal('-9000000000000.0') > MyInt:5 -> bool:False 
+391 [p9 HALF_UP -16 24 c0 C1 tIn] Decimal:Decimal('4.68799194131639E-25') == Decimal('4.68799194131639E-25') -> bool:True 
+392 [p20 CEILING -4141649 63 c0 C0 tInFlUn] Decimal('-0.000210452441785486723981719275820') >= Decimal:Decimal('-0.000210452441785486723981719275820') -> bool:True 
+393 [p26 FLOOR -4 2 c0 C1 t] Decimal('9.72E+7') != complex:(-169.163+0j) -> bool:True Fl
+394 [p3 CEILING -2 66 c1 C1 t] Fraction:Fraction(-15249905596924661241775, 13419891) > Decimal('1') -> bool:False 
+395 [p9 HALF_EVEN -999999 999999 c0 C1 t] float:6.884529521784251e-265 < Decimal('-sNaN45') -> bool:False InFl
+396 [p42 HALF_DOWN -91 19 c0 C0 t] Decimal('-0.0000909') == Decimal:Decimal('-10000000.0000000') -> bool:False 
+397 [p1 HALF_EVEN -999999 999999 c0 C1 tUnCl] Decimal('0') != complex:(7.45621302431811e-99+0j) -> bool:True Fl
+398 [p28 HALF_EVEN -27 53 c0 C1 t] Decimal('874270209.35083385424084645934678018991115') == Decimal:Decimal('4.2561942557909838404436270004038737E-16') -> bool:False 
+399 [p1 05UP -31 23 c1 C0 t] Decimal('6.7e+3') < Decimal:Decimal('6.7e+3') -> bool:False 
+400 [p20 05UP -999999 999999 c0 C1 tInRo] Decimal:Decimal('-6.63497343418569724570548336491772541E+40') != Decimal('-6.63497343418569724570548336491772541E+40') -> bool:False 
+401 [p28 05UP -9 80 c0 C1 t] Decimal('-1.0E+4') <= float:-7.35789985518463e-165 -> bool:True Fl
+402 [p28 FLOOR -999999 999999 c0 C0 t] Odd:Odd() >= Decimal('7.00000000000000000000000000000000000000e+55') -> !TypeError: '>=' not supported between instances of 'Odd' and 'decimal.Decimal' 
+403 [p9 HALF_UP -39 100 c1 C1 tInIn] Decimal('641616307.14056419330564418825') <= int:641616307 -> bool:False 
+404 [p28 DOWN -71 22 c0 C0 tInDiSu] Decimal('0.7350809927229512385849259') != int:0 -> bool:True 
+405 [p34 CEILING -3 3 c0 C1 t] Decimal('-736374753181413550872905039') < Fraction:Fraction(-736374753181413550872905039, 1) -> bool:False 
+406 [p2 05UP -999999 999999 c0 C1 tInDiUnInRo] Decimal('0.999999999999999999999999999999999999999') >= Decimal:Decimal('-0.999999999999999999999999999999999999999') -> bool:True 
+407 [p28 DOWN -16 95 c1 C1 tOvUnIn] Decimal('-9.000099999009999000099990909099E-29') <= float:18.20587261538094 -> bool:True Fl
+408 [p16 HALF_EVEN -999999 999999 c1 C0 tIn] Decimal('8.5192024555057132891677550009153e-12') != complex:(7.608672834280529e+28+1j) -> bool:True 
+409 [p28 HALF_DOWN -999999 999999 c1 C1 t] Decimal('-5.0550500505055500505500050500500050055E+59') == int:3903820 -> bool:False 
+410 [p39 05UP -7 54 c1 C1 tInFlOvInRo] Decimal('5.388352138060792963E+28') >= bytes:b'1' -> !TypeError: '>=' not supported between instances of 'decimal.Decimal' and 'bytes' 
+411 [p39 HALF_DOWN -886372 1821284537317 c0 C1 t] Decimal('3.460268395199597974258096816249568357090597799183921592911455382415877674285142E+111') != float:1.7976931348623157e+308 -> bool:True Fl
+412 [p28 CEILING -361685844275 7 c0 C1 t] Decimal('8790190229540') > Fraction:Fraction(8790190229540, 1) -> bool:False 
+413 [p16 HALF_UP -999999999999999999 999999999999999999 c0 C0 tUnSu] Decimal('109548067623594652140840922') >= Decimal:Decimal('109548067623594652140840922') -> bool:True 
+414 [p9 CEILING -80 27 c1 C0 t] Decimal('5.05000e-15') < float:-594.797 -> bool:False Fl
+415 [p28 DOWN -10 10 c0 C1 t] Decimal('3.0000000000000000000000000000000000000000E-9') != Fraction:Fraction(3, 1000000000) -> bool:False 
+416 [p9 HALF_UP -999999 999999 c0 C1 t] Decimal('-6.00000000000000000000000E-14') <= Decimal:Decimal('-803821655.514781787') -> bool:False 
+417 [p9 UP -8 0 c1 C1 tUn] Decimal('-2.00000000000000000000E+21') > float:-1.086372598800493e+189 -> bool:True Fl
+418 [p28 05UP -940563 8 c0 C1 t] Decimal('-86202949692.769547') < complex(float:1.8226463082613943e+301, nan) -> !TypeError: '<' not supported between instances of 'decimal.Decimal' and 'complex' 
+419 [p1 HALF_DOWN -85 37 c1 C1 t] Decimal('-905692.989056327845417905312599') < Decimal:Decimal('-905692.989056327845417905312599') -> bool:False 
+420 [p28 FLOOR -999999 999999 c0 C1 t] int:7365321496789246 > Decimal('-99.99999999999999999') -> bool:True 
+421 [p38 DOWN -911740 387454499962 c0 C1 t] Decimal('-9.000009999990000900990090909E-7') <= ellipsis:Ellipsis -> !TypeError: '<=' not supported between instances of 'decimal.Decimal' and 'ellipsis' 
+422 [p38 DOWN -999999 999999 c0 C0 tInFlRoCl] Decimal('-0e+26') <= int:275460819904405076068215819619 -> bool:True 
+423 [p1 HALF_EVEN -14 92 c1 C1 tInUnRo] Decimal('9.9999999999999999999999E-35') <= Fraction:Fraction(83617096847, 465) -> bool:True 
+424 [p3 DOWN -999999 999999 c0 C1 tFl] Decimal:Decimal('4.99262171634026994814774255574064747439759E+42') <= Decimal('4.99262171634026994814774255574064747439759E+42') -> bool:True 
+425 [p3 HALF_EVEN -999999 999999 c0 C1 t] Decimal('0E+5') != Fraction:Fraction(0, 1) -> bool:False 
+426 [p19 05UP -999999999999999999 999999999999999999 c0 C1 t] Decimal('4.94655005931561500748976578214') < Decimal:Decimal('4.94655005931561500748976578214') -> bool:False 
+427 [p19 HALF_UP -999999999999999999 999999999999999999 c0 C1 t] complex:(-89442+0j) >= Decimal('-9.95489442846008438239168964526605862159584E-7') -> !TypeError: '>=' not supported between instances of 'complex' and 'decimal.Decimal' 
+428 [p19 HALF_UP -8 3 c1 C1 t] Decimal:Decimal('-999999999.99999999999') == Decimal('999999999.99999999999') -> bool:False 
+429 [p28 FLOOR -999999 999999 c0 C1 tInFlDi] bool:True > Decimal('999999999999999999999999999999.99999') -> bool:False 
+430 [p19 HALF_UP -39 88 c0 C0 tFl] Decimal('-9.0e-31') <= float:6.0560539371088565e+258 -> !FloatOperation: [<class 'decimal.FloatOperation'>] Fl
+431 [p19 05UP -999999 999999 c1 C0 t] Decimal('0.000004475480609017618964770') > Decimal:Decimal('0.00000447548060901761896477') -> bool:False 
+432 [p28 05UP -58 34 c0 C0 t] Decimal('-8.31759266261665463527018270e-25') > Odd:Odd() -> !TypeError: '>' not supported between instances of 'decimal.Decimal' and 'Odd' 
+433 [p13 HALF_DOWN -22 42 c0 C1 t] int:0 > Decimal('-6.5642570765815594833E-11') -> bool:True 
+434 [p28 05UP -999999 999999 c0 C1 t] Decimal('7.84052749267174E+37') < float:6.569546614083489e-186 -> bool:False Fl
+435 [p16 UP -999999 999999 c0 C1 t] float:-6.768846662201357e+270 == Decimal('5.05550555550500505E+30') -> bool:False Fl
+436 [p20 DOWN -999999 999999 c0 C1 t] Decimal:Decimal('3E-39') <= Decimal('3.00000E-39') -> bool:True 
+437 [p28 HALF_UP -999999 999999 c0 C1 tSuRoCl] Decimal('-1.0811933288305372556290917746713344138E-999987') <= int:0 -> bool:True 
+438 [p9 FLOOR -999999 999999 c1 C1 t] Decimal('-48108558577335836017227.9989524762404593410') > float:73543.9 -> bool:False Fl
+439 [p16 05UP -65 80 c0 C1 tDiOvSu] Decimal('9.6003101535328699242538738571267841848293E+47') != complex:(1.7976931348623157e+308+0j) -> bool:True Fl
+440 [p28 HALF_DOWN -55 81 c0 C1 t] Decimal('0.51549406466873286904987134711424332543') > str:'1' -> !TypeError: '>' not supported between instances of 'decimal.Decimal' and 'str' 
+441 [p38 UP -61 97 c0 C1 tFlOv] Decimal('-1.98458012702E+16') > Fraction:Fraction(-19845801270200000, 1) -> bool:False 
+442 [p19 HALF_UP -53 13 c0 C1 tInIn] complex(float:9.721501537099466e+261, nan) >= Decimal('9.9999999999999999999999999999999999999E-69428100997130') -> !TypeError: '>=' not supported between instances of 'complex' and 'decimal.Decimal' 
+443 [p39 CEILING -64 33 c0 C0 t] Decimal('-1.65854059350968489093724957217482883323e+72') > complex(float:5.283114574016776e-119, nan) -> !TypeError: '>' not supported between instances of 'decimal.Decimal' and 'complex' 
+444 [p28 HALF_EVEN -999999999999999999 999999999999999999 c1 C0 t] Decimal('5430443621696721846') < Decimal:Decimal('-5430443621696721846') -> bool:False 
+445 [p38 UP -999999 999999 c1 C1 t] int:58306250385419000000 > Decimal('5.83062503854190E+19') -> bool:False 
+446 [p16 CEILING -999999 999999 c1 C1 t] bool:False >= Decimal('-2.1909086803765588622665752946642013134731E+46') -> bool:True 
+447 [p24 HALF_UP -59 71 c1 C0 t] Fraction:Fraction(-7089, 7190980576842718) >= Decimal('0.0000505005005050555055500500055055') -> bool:False 
+448 [p38 CEILING -77 33 c0 C1 tFlSuInCl] Decimal('1000000000000000000000.00000000000000000000000000000000000000000000000000000000') != float:-3.625108811812254e+285 -> bool:True Fl
+449 [p9 CEILING -999999 999999 c0 C0 tInCl] Fraction:Fraction(218327138436887, 4357668) == Decimal('60000000000000000.00') -> bool:False 
+450 [p34 CEILING -999999 999999 c1 C1 tFlDiInCl] Decimal('9.99E-45') == Decimal:Decimal('-7.088075714112786E-13') -> bool:False 
+451 [p16 DOWN -999999 999999 c0 C1 tInCl] float:-7.023545355964092e-74 <= Decimal('-5.5000500505555055505000055000005555050E+50') -> bool:False Fl
+452 [p19 UP -304510340448501 1384667114278818 c0 C1 tSuRo] Decimal:Decimal('-5957819645.9801656844091763267174504224') > Decimal('-5957819645.9801656844091763267174504224') -> bool:False 
+453 [p34 DOWN -5 7 c0 C1 t] Decimal('-3.000000000000000000000000E-28') < Decimal:Decimal('-3E-28') -> bool:False 
+454 [p11 DOWN -32 88 c1 C1 t] Decimal('9.99999999999E-20') >= float:-2.8836132314405965e+131 -> bool:True Fl
+455 [p34 FLOOR -672185260965325 358976 c1 C1 t] Decimal('-9.99E-32040674969469') == Fraction:Fraction(975127, 781575642758949) -> bool:False 
+456 [p28 DOWN -21 18 c1 C1 t] FloatLike:FloatLike() >= Decimal('-4.12354930039995333269180345E-18') -> !TypeError: '>=' not supported between instances of 'FloatLike' and 'decimal.Decimal' 
+457 [p34 HALF_DOWN -999999 999999 c0 C0 t] Decimal('1.8146443920172382631748512783838125e+698196') >= Decimal:Decimal('1.8146443920172382631748512783838125e+698196') -> bool:True 
+458 [p28 HALF_EVEN 0 0 c0 C1 t] Decimal('17310673446162783813627823') >= Decimal:Decimal('-9.793682535966927071158464957125E-13') -> bool:True 
+459 [p1 UP -7872647347318 3690538 c1 C1 t] NoneType:None == Decimal('5.4908268096808076344240962791920323E+58') -> bool:False 
+460 [p2 FLOOR -45 75500668331520223 c1 C1 tInDi] Decimal('-1468720318271711062914866275897.30521') > complex:(-6.113555492474414e-106+0j) -> !TypeError: '>' not supported between instances of 'decimal.Decimal' and 'complex' 
+461 [p18 CEILING -84 84 c1 C1 t] Decimal('-5.8385678404121290386565258712518124604857481E-13') > NoneType:None -> !TypeError: '>' not supported between instances of 'decimal.Decimal' and 'NoneType' 
+462 [p33 FLOOR -26 64 c0 C1 tInUn] Decimal('-133493590.691294831602285793982923573248') > float:-644.235 -> bool:False Fl
+463 [p28 DOWN -999999 999999 c1 C0 tOvUn] Decimal:Decimal('-1.291710482013693270626468081e+44') != Decimal('1.291710482013693270626468081e+44') -> bool:True 
+464 [p16 DOWN -81 24 c1 C1 tOvCl] Decimal('-9.486177269533314409322E-17') >= float:-9.486177269533314e-17 -> bool:False Fl
+465 [p28 05UP -999999999999999999 999999999999999999 c1 C1 tInOv] Decimal('-6911272.6789508') < Decimal:Decimal('-6911272.6789508') -> bool:False 
+466 [p31 UP -87 74 c0 C1 t] float:311528.0 > Decimal('7.571964886466253915506776720840E+65') -> bool:False Fl
+467 [p1 HALF_UP -71994690539201392 1781490507915448 c1 C1 t] int:234400000 >= Decimal('2.344E+8') -> bool:True 
+468 [p34 DOWN -8 3 c1 C1 tFl] Decimal('3797765049369300058478608577090.820337813676') > bool:True -> bool:True 
+469 [p28 CEILING -5 4 c1 C1 t] Decimal('-8E-31') >= Fraction:Fraction(-489408276078920761667, 6328573946238775) -> bool:True 
+470 [p28 CEILING -43 23 c0 C1 t] Decimal('5E+22') < Decimal:Decimal('5E+22') -> bool:False 
+471 [p9 HALF_UP -999999 999999 c0 C1 t] Decimal('484') <= Fraction:Fraction(-1855660267826771, 1080414949) -> bool:False 
+472 [p9 HALF_EVEN -999999999999999999 999999999999999999 c1 C1 t] float:317399.6666666667 <= Decimal('-NaN') -> bool:False InFl
+473 [p38 CEILING -999999 999999 c0 C1 t] complex:(1e+308+0j) > Decimal('-56950245722869816069613604') -> !TypeError: '>' not supported between instances of 'complex' and 'decimal.Decimal' 
+474 [p17 HALF_UP -71 0 c0 C1 tFlInCl] Decimal('-643629672294091051.37471862594') >= complex:(2.0686122151685602e+183+0j) -> !TypeError: '>=' not supported between instances of 'decimal.Decimal' and 'complex' 
+475 [p16 DOWN -2 2 c0 C0 t] Decimal('40000.00000000000') < Fraction:Fraction(-3452706814513666, 36786807) -> bool:False 
+476 [p28 FLOOR -601039246707618 358198282 c0 C0 tIn] Decimal('-9.9e-30') > MyInt:5 -> bool:False 
+477 [p9 HALF_DOWN -999999 999999 c0 C0 t] Decimal('800000000000.00000000000000000000000000') > Odd:Odd() -> !TypeError: '>' not supported between instances of 'decimal.Decimal' and 'Odd' 
+478 [p38 CEILING -999999 999999 c1 C1 t] Decimal('9.09099000009909000099E-16') < Decimal:Decimal('-9.09099000009909000099E-16') -> bool:False 
+479 [p3 HALF_EVEN -999999 999999 c0 C1 tFlUn] Decimal('-3467931.19527346164458475627448312') == Decimal:Decimal('3467931.19527346164458475627448312') -> bool:False 
+480 [p34 HALF_UP 0 3 c0 C1 tInUn] Decimal('-9.00000E-50') == float:64625.0 -> bool:False Fl
+481 [p19 HALF_DOWN -999999999999999999 999999999999999999 c1 C0 t] Decimal('-0.0000050055505050550') == bool:True -> bool:False 
+482 [p16 FLOOR -999999999999999999 999999999999999999 c0 C1 t] Decimal('-4.0000000000000000000000000000000000000000000E-9') == bool:False -> bool:False 
+483 [p39 CEILING -999999999999999999 999999999999999999 c0 C1 tFl] float:532.126 < Decimal('0') -> !FloatOperation: [<class 'decimal.FloatOperation'>] Fl
+484 [p28 05UP -999999 999999 c1 C1 tInCl] Decimal('4.79798396205077906729654111E+40') >= FloatLike:FloatLike() -> !TypeError: '>=' not supported between instances of 'decimal.Decimal' and 'FloatLike' 
+485 [p23 HALF_DOWN -516459 379635903334 c1 C1 t] Decimal('-5E+5') > Decimal:Decimal('-5E+5') -> bool:False 
+486 [p2 05UP -92 58 c1 C1 t] Decimal('-6375.898132293289763546092477') < Fraction:Fraction(-6375898132293289763546092477, 1000000000000000000000000) -> bool:False 
+487 [p34 DOWN -4 10 c0 C1 tOvSu] Decimal('5.00E+7') != Decimal:Decimal('5E+7') -> bool:False 
+488 [p2 HALF_DOWN -999999 999999 c0 C1 t] Decimal('-5.5500555005555550E-30') != float:121893.125 -> bool:True Fl
+489 [p28 DOWN -999999 999999 c1 C1 t] Decimal('8.0000000000000000000000000000000E-14') >= bool:False -> bool:True 
+490 [p34 HALF_DOWN -4647116239 71761773548053298 c0 C1 tCl] Decimal('5.5E-7') > Fraction:Fraction(14627135063545266100296, 4273784533) -> bool:False 
+491 [p39 CEILING -5 0 c0 C1 t] Decimal('0.0005532471470918930338') == int:20 -> bool:False 
+492 [p16 05UP -999999 999999 c0 C1 tInDiSuInRo] Decimal:Decimal('7.000000000000000000000000000E+46') != Decimal('7.000000000000000000000000000E+46') -> bool:False 
+493 [p39 HALF_EVEN -999999 999999 c1 C0 tUnCl] Decimal('3.867089789e+42') != Decimal:Decimal('3.867089789e+42') -> bool:False 
+494 [p5 DOWN -999999 999999 c1 C1 tInFlCl] Decimal:Decimal('-0.0000280982239657924') < Decimal('-0.0000280982239657924') -> bool:False 
+495 [p38 DOWN 0 9 c0 C1 t] Decimal('7.9448652086016E-6552002241128319') > Fraction:Fraction(665920790170011050, 797) -> bool:False 
+496 [p28 UP -999999 999999 c0 C0 t] Decimal('-5.0000555') < Decimal:Decimal('5.0000555') -> bool:True 
+497 [p16 FLOOR -211526 995011 c0 C1 tSuInCl] Decimal('0.050000000000000000000000000000000') <= IntLike:IntLike() -> !TypeError: '<=' not supported between instances of 'decimal.Decimal' and 'IntLike' 
+498 [p3 HALF_DOWN -85 56 c0 C1 t] float:8.14861313335353e+19 >= Decimal('81486131333535305662.54171') -> bool:False Fl
+499 [p38 05UP -46513837679 639 c0 C1 tFlOvSu] Decimal('-8765044867263.95395') <= Fraction:Fraction(13122867460387131776860, 173) -> bool:True 
+500 [p3 05UP 0 96 c0 C1 t] Decimal('100000000000.00000000000000000000000000000000') > bool:False -> bool:True 
+501 [p28 UP -49 37 c0 C1 tUnRo] Decimal:Decimal('-7.46810423980423531676649912060605E+34') <= Decimal('-7.46810423980423531676649912060605E+34') -> bool:True 
+502 [p28 CEILING -999999 999999 c0 C0 t] float:2.684920872150369e-51 <= Decimal('4.211733374087161418411167e+34') -> bool:True Fl
+503 [p38 UP -999999 999999 c0 C1 t] Decimal('-5055500005005055055000555055.50500055050050') < Decimal:Decimal('-4.99726071878697217583835E+46') -> bool:False 
+504 [p28 UP -999999 999999 c0 C0 t] float:1.7891895525783882e+288 <= Decimal('-0.000') -> bool:False Fl
+505 [p38 HALF_UP -8 4 c1 C1 t] Decimal('7.5705075391713418414104709E-24') != Decimal:Decimal('7.5705075391713418414104709E-24') -> bool:False 
+506 [p16 CEILING -999999 999999 c0 C1 t] Decimal('-9.900090009E-12') == Decimal:Decimal('-3.6776624E-28') -> bool:False 
+507 [p39 05UP -2 89 c0 C0 tInSu] Decimal('8.000000000000000000e+100') != Odd:Odd() -> bool:True 
+508 [p16 DOWN -999999 999999 c1 C1 tFlOvSuInCl] Decimal('0.009999999999999') != Fraction:Fraction(9999999999999, 1000000000000000) -> bool:False 
+509 [p39 DOWN -999999 999999 c0 C1 t] Decimal('5.505E+1000002') > Fraction:Fraction(546121991926960059, 11171747745198329353) -> bool:True 
+510 [p39 UP -999999 999999 c1 C1 t] Decimal('-8.9502195780162E-7') <= Decimal:Decimal('-8.9502195780162E-7') -> bool:True 
+511 [p20 DOWN -93 29 c1 C1 tInDiUnIn] Decimal('8.761843683666372678991903982E-33') <= Fraction:Fraction(-5109045999168348331, 6290180875231149686) -> bool:False 
+512 [p3 DOWN -5 1 c0 C0 tInSuRoCl] Decimal:Decimal('-553.061459490613875182599493552321546211604262') == Decimal('553.061459490613875182599493552321546211604262') -> bool:False 
+513 [p38 HALF_DOWN -999999 999999 c0 C0 t] Decimal('-9.9999090900090090999990090090e+33') < Decimal:Decimal('-1.4992049845886091645328000422536477919908e+53') -> bool:False 
+514 [p28 FLOOR -999999999999999999 999999999999999999 c0 C1 tOvSu] Decimal('5.702833303173399154E+19') != Odd:Odd() -> bool:True 
+515 [p1 HALF_UP -999999999999999999 999999999999999999 c0 C1 tSu] Decimal('-9.00000000000000000000000000000000000000E+78') == bool:False -> bool:False 
+516 [p19 05UP -69 24 c0 C1 tInRo] Decimal('0.0000') <= Decimal:Decimal('0.0000') -> bool:True 
+517 [p20 HALF_DOWN -999999999999999999 999999999999999999 c0 C1 t] Decimal('-0') <= complex:(3.9443216492525407e+59+1j) -> !TypeError: '<=' not supported between instances of 'decimal.Decimal' and 'complex' 
+518 [p1 HALF_UP -852201363280 41 c1 C1 t] Decimal('-0.000018723878809952928339954684143247') >= NotImplementedType:NotImplemented -> !TypeError: '>=' not supported between instances of 'decimal.Decimal' and 'NotImplementedType' 
+519 [p19 FLOOR -999999 999999 c0 C1 t] Decimal('8.000000000000000E-1000002') <= Fraction:Fraction(99477709, 753818153043351) -> bool:True 
+520 [p28 05UP -999999 999999 c1 C0 tOvUnInRo] Decimal('6.889287338822204911788788598069760e+43') < complex:(14628.666666666666+0j) -> !TypeError: '<' not supported between instances of 'decimal.Decimal' and 'complex' 
+521 [p28 HALF_EVEN -999999 999999 c1 C1 t] Odd:Odd() >= Decimal('-6.0792102645E+31') -> !TypeError: '>=' not supported between instances of 'Odd' and 'decimal.Decimal' 
+522 [p1 UP -52 93 c0 C1 tDiOvUn] int:0 > Decimal('-1.5305098389E-21') -> bool:True 
+523 [p39 05UP -999999 999999 c1 C1 t] Decimal('4.52E+25') > complex:(1.7081279516592968e+87+0j) -> !TypeError: '>' not supported between instances of 'decimal.Decimal' and 'complex' 
+524 [p34 CEILING -73 60 c0 C1 tFlIn] Decimal('-3.3748648483991414568501980612471371E+49') > Fraction:Fraction(-208268267735192898589, 4559758) -> bool:False 
+525 [p19 CEILING -36 2 c0 C1 t] Decimal('9.9999999999999999999999999999999999999999E-10') <= NoneType:None -> !TypeError: '<=' not supported between instances of 'decimal.Decimal' and 'NoneType' 
+526 [p31 UP -999999 999999 c1 C0 tOv] float:1.385430879020814e+42 > Decimal('-4.960749513e-8') -> bool:True Fl
+527 [p38 UP -3 2 c0 C1 t] Decimal('-9.999E-28') > Fraction:Fraction(-1262697861086239529096749, 3121750230122) -> bool:True 
+528 [p19 FLOOR -999999999999999999 999999999999999999 c0 C1 tSuRoCl] Decimal('-9344909838140232231402528.55480686081') == complex:(5.569657284538525e+286+0j) -> bool:False Fl
+529 [p1 DOWN 0 6 c1 C1 tDiRoCl] Decimal('-52133317.3873968091780910163') != Decimal:Decimal('-52133317.3873968091780910163') -> bool:False 
+530 [p38 FLOOR -999999 999999 c0 C1 tInIn] IntLike:IntLike() > Decimal('5.000050500550000500000E-34') -> !TypeError: '>' not supported between instances of 'IntLike' and 'decimal.Decimal' 
+531 [p28 FLOOR -999999999999999999 999999999999999999 c0 C1 t] float:2.3206866110637e-41 != Decimal('2.3206866110637E-41') -> bool:True Fl
+532 [p3 DOWN -19 75 c1 C1 tOvSuRo] int:677000 >= Decimal('6.77E+5') -> bool:True 
+533 [p3 05UP -999999 999999 c1 C1 tUnIn] Decimal('5.5111509749623489420E-156159') == int:69421719354152 -> bool:False 
+534 [p34 HALF_DOWN -999999999999999999 999999999999999999 c0 C1 tRo] Decimal:Decimal('9E+11') == Decimal('9E+11') -> bool:True 
+535 [p34 UP -12 5 c0 C1 t] complex:(-58.797-0j) >= Decimal('5.7E-31') -> !TypeError: '>=' not supported between instances of 'complex' and 'decimal.Decimal' 
+536 [p9 HALF_UP -69 46 c0 C1 t] Decimal('1.054127452E+16') != bool:False -> bool:True 
+537 [p9 HALF_UP -2 10 c0 C0 tInDiUn] Decimal('9.999e-35') != complex:(1.3179969846120008e-191-0j) -> bool:True Fl
+538 [p41 HALF_UP -999999 999999 c0 C1 t] Decimal('-9.00E-31552') < Decimal:Decimal('5.217064108E+31') -> bool:True 
+539 [p28 CEILING -27 22 c0 C1 t] float:-0.00048592818563754673 != Decimal('-0.00048592818563754670521') -> bool:True Fl
+540 [p3 UP -13 79 c0 C1 tDiOv] Decimal:Decimal('1407449.391840569588167803426852') < Decimal('-1407449.391840569588167803426852') -> bool:False 
+541 [p28 HALF_EVEN -8 4 c1 C1 t] Decimal('0.99999999999') > Fraction:Fraction(62987348766933416, 855326514465215) -> bool:False 
+542 [p28 FLOOR -4433378547 6408531485892 c0 C1 t] float:-4.120525292864702e+127 < Decimal('9.9999999999999999999999999999999E-16') -> bool:True Fl
+543 [p28 CEILING -999999 999999 c0 C0 t] Decimal('8.204091681654389679448014e+46') > Decimal:Decimal('-74701930039461239.86145387608549279887979019') -> bool:True 
+544 [p1 HALF_EVEN -37902 15872276025492369 c0 C0 t] Decimal('-9.9e-39') <= int:-31922224646 -> bool:False 
+545 [p39 HALF_UP -66 90 c0 C1 t] Decimal('-9.000000000000000000E+76') > complex:(222.144+1j) -> !TypeError: '>' not supported between instances of 'decimal.Decimal' and 'complex' 
+546 [p16 DOWN -41 27 c1 C1 tOvSuRo] Decimal('-371653496757.9030') < Decimal:Decimal('-371653496757.903') -> bool:False 
+547 [p10 CEILING -475921847 598407651 c1 C1 t] Fraction:Fraction(-278986453021853888737, 31) < Decimal('813833058913128071195853678') -> bool:True 
+548 [p20 UP -32 72 c0 C1 t] float:-131543.0 <= Decimal('909.090000090909000909099099') -> bool:True Fl
+549 [p1 05UP -59 41 c0 C1 tSu] Decimal('-4637399979425025849') < Decimal:Decimal('-4637399979425025849') -> bool:False 
+550 [p39 FLOOR -3 8597 c0 C1 t] Decimal('9.10324249679133103075E-14') == MyInt:5 -> bool:False 
+551 [p28 UP -999999 999999 c0 C1 t] Decimal('2.0587380474404346181E-20') < int:0 -> bool:False 
+552 [p3 CEILING -2 9 c1 C1 t] Decimal('1032777314611968481') < Decimal:Decimal('-5.050000E+25') -> bool:False 
+553 [p2 UP -95 27 c0 C1 t] Decimal('9.9990099E-39') < Fraction:Fraction(99990099, 10000000000000000000000000000000000000000000000) -> bool:False 
+554 [p1 HALF_EVEN -3 4 c0 C1 t] float:8e-28 < Decimal('8E-28') -> bool:True Fl
+555 [p28 05UP -28 52 c1 C1 t] Decimal('57086.06') < bool:True -> bool:False 
+556 [p2 HALF_EVEN -999999 999999 c0 C1 t] float:-6.276821909166763e+76 == Decimal('-527048056.69278925') -> bool:False Fl
+557 [p3 HALF_EVEN -25 26 c0 C1 t] Decimal('0') != Decimal:Decimal('0') -> bool:False 
+558 [p40 HALF_DOWN -999999 999999 c1 C1 t] Decimal('NaN123') >= float:-2.939482905491532e+43 -> bool:False InFl
+559 [p28 UP -999999 999999 c1 C0 t] Decimal('9.999999999e-35') != float:2.814976951421199e+192 -> bool:True Fl
+560 [p2 HALF_EVEN -999999 999999 c0 C1 t] Decimal('-8.0969112932345675096097524949068311975858535E-14') != complex:(2.64845840088663e-310+1j) -> bool:True 
+561 [p20 CEILING -999999 999999 c0 C1 t] int:-675684777522478285011996883 < Decimal('-4677040143106.4764261893') -> bool:True 
+562 [p34 CEILING -999999999999999999 999999999999999999 c0 C1 t] Fraction:Fraction(384446400793613034794, 95877589645255801) == Decimal('6E-1000000000000000000') -> bool:False 
+563 [p20 05UP -999999 999999 c0 C1 tDiSuRo] Decimal('-8.000000000000000000000000000000E-10') <= float:-8e-10 -> bool:False Fl
+564 [p38 FLOOR -999999 999999 c0 C1 t] complex:(-3.554149536160643e-309+0j) > Decimal('9899580658381085344.68912176636115286020721') -> !TypeError: '>' not supported between instances of 'complex' and 'decimal.Decimal' 
+565 [p3 FLOOR -85 47 c0 C1 t] Decimal('9.9E-64') >= float:9.9e-64 -> bool:True Fl
+566 [p28 HALF_EVEN -9 2 c1 C0 t] Decimal('5.189257e-44') > str:'1' -> !TypeError: '>' not supported between instances of 'decimal.Decimal' and 'str' 
+567 [p1 DOWN -69 94 c1 C1 tRo] Decimal('-2E+5') > IntLike:IntLike() -> !TypeError: '>' not supported between instances of 'decimal.Decimal' and 'IntLike' 
+568 [p38 05UP -999999 999999 c0 C0 t] Decimal('7.0000000000000000000000000000000000e-26') < Decimal:Decimal('-7.0000000000000000000000000000000000e-26') -> bool:False 
+569 [p28 CEILING -999999 999999 c0 C1 t] Decimal('3.88979837151187099346267656104E-20') <= Fraction:Fraction(-546227979417617269819, 113) -> bool:False 
+570 [p28 CEILING -66 44 c0 C1 t] Decimal('2.3E+2') >= bool:False -> bool:True 
+571 [p28 FLOOR -999999 999999 c0 C0 t] Decimal('86094555.0487952325345105675199') >= MyInt:5 -> bool:True 
+572 [p20 DOWN -2 5 c0 C0 t] float:-6.923300210376689e+125 == Decimal('-0.00003231152297956263337972475221313337732') -> bool:False Fl
+573 [p28 CEILING -55 81 c1 C1 t] bool:False < Decimal('-3438709460417927787851571.91311393882978') -> bool:False 
+574 [p1 HALF_UP -999999 999999 c0 C1 t] bool:True >= Decimal('5.5555550550500005E-15') -> bool:True 
+575 [p34 CEILING -999999 999999 c0 C0 t] Decimal('0.03707576827162954029') == Decimal:Decimal('6.00000000000e-23') -> bool:False 
+576 [p3 UP -999999 999999 c0 C0 t] Decimal('909999009909.99000999009090009') == Decimal:Decimal('909999009909.99000999009090009') -> bool:True 
+577 [p28 CEILING -999999 999999 c1 C1 tUnCl] Decimal('NaN') <= () -> !TypeError: '<=' not supported between instances of 'decimal.Decimal' and 'tuple' 
+578 [p19 HALF_EVEN -7 8 c0 C1 t] complex:(-144926+0j) < Decimal('-6.428055E+11') -> !TypeError: '<' not supported between instances of 'complex' and 'decimal.Decimal' 
+579 [p39 HALF_UP -2 6 c1 C1 t] Decimal('-9.0090009E-51') <= int:0 -> bool:True 
+580 [p16 UP -57 3 c0 C1 tInDiCl] float:-3488913920772645.5 >= Decimal('-3488913920772645.58580557215') -> bool:True Fl
+581 [p34 DOWN -4 10 c1 C1 t] Decimal('-9.31919495724818927645667032816824282299192E+66') < complex:(-10596.25+1j) -> !TypeError: '<' not supported between instances of 'decimal.Decimal' and 'complex' 
+582 [p28 05UP -999999 999999 c0 C1 t] Decimal('-5.000000E-33') == float:-5e-33 -> bool:False Fl
+583 [p19 CEILING -51 52 c0 C1 t] Decimal('-514295606912921550106') >= Decimal:Decimal('-514295606912921550106') -> bool:True 
+584 [p28 UP -999999 999999 c0 C1 t] Decimal('-97844966307578837119515577125566836') >= Decimal:Decimal('-97844966307578837119515577125566836') -> bool:True 
+585 [p39 FLOOR -77 69 c1 C0 t] Decimal('0') <= float:0.0 -> bool:True Fl
+586 [p28 CEILING -6 7 c0 C1 tOvUn] Decimal('94367990494118043422599235147') > int:-572866882998083742763350806543 -> bool:True 
+587 [p19 UP -999999999999999999 999999999999999999 c0 C1 tInSu] Decimal('-0.0016595162673321680768') < complex:(-2.406136326117241e-285+0j) -> !TypeError: '<' not supported between instances of 'decimal.Decimal' and 'complex' 
+588 [p9 05UP 0 3 c0 C1 t] Decimal('-7.31305482763642586200143292492144740644091E-17') > Decimal:Decimal('-7.31305482763642586200143292492144740644091E-17') -> bool:False 
+589 [p1 CEILING -5 7 c1 C1 t] NoneType:None == Decimal('0.00544955904932332801374') -> bool:False 
+590 [p4 HALF_UP -56 14 c0 C1 t] Decimal('-0') >= Decimal:Decimal('-0') -> bool:True 
+591 [p34 HALF_UP -3 1 c0 C1 tFl] Fraction:Fraction(-6982624973, 12931) == Decimal('-4493932527.141539826881') -> bool:False 
+592 [p28 UP -999999 999999 c1 C0 t] Decimal('4.07001864348920748970970012772969643973382773466887061695e-164935') < Decimal:Decimal('4.07001864348920748970970012772969643973382773466887061695e-164935') -> bool:False 
+593 [p28 DOWN -999999 999999 c1 C0 tInFlInCl] Decimal('505055550000005505555.0505000555505505') != Decimal:Decimal('8.9051503583384355961543026') -> bool:True 
+594 [p34 FLOOR -5 10 c1 C1 t] float:6.929565399781613e+49 == Decimal('9.9E+29') -> bool:False Fl
+595 [p28 HALF_UP -999999 999999 c1 C1 t] Decimal('999999999999999.9999999999999') <= Decimal:Decimal('999999999999999.9999999999999') -> bool:True 
+596 [p1 UP -30496268398640 11 c0 C1 t] Decimal('-7E-30496268398638') <= Decimal:Decimal('7E-30496268398638') -> bool:True 
+597 [p34 HALF_EVEN -999999 999999 c0 C1 t] Decimal('-36349603085332423523153.5592812616167') != bytes:b'1' -> bool:True 
+598 [p34 HALF_UP -92 47 c0 C0 t] Decimal('-9.99999999999999999999e+35') == float:40226.42857142857 -> bool:False Fl
+599 [p3 UP -1 3 c0 C1 tFlOvSuRo] Decimal:Decimal('-5.0000E+28') < Decimal('0E-7') -> bool:True 
+600 [p2 UP -5 0 c0 C1 t] list:[] < Decimal('9.1484154842205E-26') -> !TypeError: '<' not supported between instances of 'list' and 'decimal.Decimal' 
+601 [p28 UP -999999999999999999 999999999999999999 c0 C1 t] Decimal('4.13E-529159064062307756') <= Decimal:Decimal('-4.13E-529159064062307756') -> bool:False 
+602 [p16 05UP -999999 999999 c1 C1 t] Decimal:Decimal('0.00099999999999999') <= Decimal('-0.00099999999999999') -> bool:False 
+603 [p28 HALF_UP -7 2 c0 C1 tUn] Decimal('-553.44552425428275839') != Fraction:Fraction(102690679556127839459, 318333530) -> bool:True 
+604 [p38 05UP -56 26 c0 C1 t] float:139635.42857142858 == Decimal('1.52479143088975E-55') -> bool:False Fl
+605 [p28 05UP -999999 999999 c0 C1 tFlRo] float:-0.0 != Decimal('-0.000') -> bool:False Fl
+606 [p19 DOWN -4 10 c0 C1 t] Decimal('-5.55005505000505055055000050055050505E+42') == float:-5.5500550500050506e+42 -> bool:False Fl
+607 [p39 05UP -999999 999999 c0 C0 t] Decimal('69314749824950254262087.0901422929854') <= str:'1' -> !TypeError: '<=' not supported between instances of 'decimal.Decimal' and 'str' 
+608 [p20 HALF_DOWN -8 7 c1 C1 t] Decimal('6.26633732945686288108280023781013998614700501E-13') != float:790854.0 -> bool:True Fl
+609 [p13 UP -999999 999999 c0 C0 t] float:-2.4400713085696883e-151 != Decimal('-990099090099000909999999.909900990') -> bool:True Fl
+610 [p28 UP -999999 999999 c0 C1 tOv] Decimal('5.500005505050500E+191850') == complex:(0.8304134704385204+0j) -> bool:False Fl
+611 [p28 HALF_UP -6 1 c1 C1 t] bool:True > Decimal('0E+5') -> bool:True 
+612 [p20 05UP -999999 999999 c0 C1 t] Decimal('NaN123') > Decimal:Decimal('NaN123') -> bool:False In
+613 [p9 UP -999999 999999 c0 C1 t] complex:(1.1621247931576636e-72+0j) < Decimal('900999990009999909000909.09999909099990') -> !TypeError: '<' not supported between instances of 'complex' and 'decimal.Decimal' 
+614 [p1 HALF_DOWN -6 4 c0 C1 t] Decimal('-2.827388604546412183880E-12') == float:5.998742906952707e-142 -> bool:False Fl
+615 [p34 HALF_UP -999999999999999999 999999999999999999 c0 C1 tFlOv] float:0.0 == Decimal('2.7467660903647164456676384790413198187E-416939292455939861') -> bool:False Fl
+616 [p34 HALF_EVEN -999999 999999 c0 C1 t] Decimal('4.7205786466266027460411157901827036E+43') != IntLike:IntLike() -> bool:True 
+617 [p3 FLOOR -999999 999999 c1 C1 tUnSuRo] Decimal('9.5047E+27') < complex:(1.7976931348623157e+308+1j) -> !TypeError: '<' not supported between instances of 'decimal.Decimal' and 'complex' 
+618 [p2 HALF_UP -91 3 c1 C1 t] Decimal('9.9000909990900909909909009909099090099909E+43') > int:952420347410354594 -> bool:True 
+619 [p39 CEILING -41 63 c0 C0 t] Decimal('50000.0000000000000000000000000000000000') < int:50000 -> bool:False 
+620 [p1 HALF_DOWN -999999 999999 c0 C0 t] int:0 < Decimal('3.015138387125041345e-29') -> bool:True 
+621 [p28 05UP -66 28 c0 C1 t] Decimal('16454640900337374587306529.17812383123') != Decimal:Decimal('16454640900337374587306529.17812383123') -> bool:False 
+622 [p20 HALF_EVEN -38 78 c1 C1 t] Decimal('-3.29577132E+12') <= float:4.684992358692658e-82 -> bool:True Fl
+623 [p28 HALF_DOWN -27 16 c1 C1 tFlOvRo] NoneType:None >= Decimal('8.00000000E-19') -> !TypeError: '>=' not supported between instances of 'NoneType' and 'decimal.Decimal' 
+624 [p3 HALF_EVEN -51 85 c0 C1 t] Decimal:Decimal('7688919344891751200596925898803456495494.05451') >= Decimal('-7688919344891751200596925898803456495494.05451') -> bool:True 
+625 [p3 05UP -26441883274454254 7848 c0 C1 t] Decimal('-0.000009000000') < float:98830.0 -> bool:True Fl
+626 [p38 UP -4 10 c1 C0 t] int:-998232273 >= Decimal('-935197211573416160.4304520143614935641') -> bool:True 
+627 [p34 DOWN 0 1 c0 C0 t] Decimal:Decimal('-9.0220202802905221875120079e-16') <= Decimal('-9.0220202802905221875120079e-16') -> bool:True 
+628 [p34 HALF_EVEN -999999 999999 c0 C1 t] Decimal('0E-7') == int:0 -> bool:True 
+629 [p19 DOWN -72 88 c0 C1 t] Decimal('9.0099900900990909009009999090909000099E+89') <= complex:(4.1633565414248436e-172+0j) -> !TypeError: '<=' not supported between instances of 'decimal.Decimal' and 'complex' 
+630 [p29 CEILING -999999 999999 c1 C1 t] Fraction:Fraction(9395057156499600000000000, 1) <= Decimal('9.3950571564996E+24') -> bool:True 
+631 [p16 HALF_UP -17 66 c1 C1 tFlDiRo] Decimal('-9.999999999999E-19') != Fraction:Fraction(-531925473535303067, 56478) -> bool:True 
+632 [p3 HALF_UP -999999999999999999 999999999999999999 c0 C1 tDiCl] float:-1.4446384829768667e+203 < Decimal('-0.00500000000000') -> bool:True Fl
+633 [p1 HALF_DOWN -999999 999999 c0 C1 tCl] list:[] >= Decimal('3.638051348361295440362418295880E-18') -> !TypeError: '>=' not supported between instances of 'list' and 'decimal.Decimal' 
+634 [p34 CEILING 0 3 c0 C1 t] int:0 == Decimal('-0.0200000') -> bool:False 
+635 [p20 HALF_EVEN -3 3 c0 C1 t] float:-1.84e-23 == Decimal('-1.84E-23') -> bool:False Fl
+636 [p16 05UP -3 1 c1 C0 t] Decimal('9e-40') <= float:0.1 -> bool:True Fl
+637 [p1 DOWN -999999 999999 c1 C0 tRo] int:75909957200746124914332114 <= Decimal('0e+5') -> bool:False 
+638 [p9 HALF_DOWN -999999 999999 c1 C1 t] Decimal:Decimal('5.41') >= Decimal('-5.41') -> bool:True 
+639 [p20 UP -4160416976190577 97 c0 C1 t] Decimal('-5050050505005005505055500050.5555500055') == Fraction:Fraction(163921028419645900213777, 6901441) -> bool:False 
+640 [p19 HALF_UP -999999999999999999 999999999999999999 c0 C0 t] Fraction:Fraction(-869583323206, 2733756062228213) >= Decimal('-7.639333406418982657264692e+40') -> bool:True 
+641 [p1 FLOOR -10 82 c0 C1 t] Decimal('-0') == float:-3.9444713831538333e-296 -> bool:False Fl
+642 [p9 HALF_UP -31 90 c0 C1 t] () > Decimal('9E-31') -> !TypeError: '>' not supported between instances of 'tuple' and 'decimal.Decimal' 
+643 [p28 FLOOR -999999 999999 c0 C0 t] Decimal('3.4844782741877147051643437478e+45') < Decimal:Decimal('3.4844782741877147051643437478e+45') -> bool:False 
+644 [p2 05UP -187108117 67943323 c1 C1 t] float:2.3142086993602225e+89 != Decimal('-6.64378956473E-47') -> bool:True Fl
+645 [p19 HALF_DOWN -6 3 c0 C0 tInFlDiUnSuRoCl] Decimal('723754645566784532') <= Fraction:Fraction(723754645566784532, 1) -> bool:True 
+646 [p25 FLOOR -8050822388268 83652556751 c1 C1 tInDiUnIn] Decimal('960930693265014.4') > float:-91358.0 -> bool:True Fl
+647 [p39 UP -999999 999999 c1 C1 t] Decimal('8.6059089693569444085E+29') == complex:(1.3112336310492228e+199+0j) -> bool:False Fl
+648 [p34 05UP -6 9 c0 C1 t] ellipsis:Ellipsis > Decimal('0.0000') -> !TypeError: '>' not supported between instances of 'ellipsis' and 'decimal.Decimal' 
+649 [p38 HALF_UP -999999 999999 c0 C1 tOv] Decimal('-9.9999999999999999999999999999E+53') < Fraction:Fraction(-999999999999999999999999999990000000000000000000000000, 1) -> bool:False 
+650 [p19 DOWN -999999 999999 c1 C1 t] Decimal:Decimal('-0E-1029853') == Decimal('0E-1029853') -> bool:True 
+651 [p6 HALF_DOWN -999999 999999 c1 C0 t] Decimal('-7.00000000000000000000000e-15') <= Fraction:Fraction(4923, 1773093010537796) -> bool:True 
+652 [p1 HALF_EVEN -999999999999999999 999999999999999999 c1 C0 t] Decimal('-600000000000000000000000.00000000000') >= complex:(-4.780103471199325e-135-0j) -> !TypeError: '>=' not supported between instances of 'decimal.Decimal' and 'complex' 
+653 [p28 DOWN -999999 999999 c0 C1 t] Decimal('8.0384716E-30') == float:62608.42857142857 -> bool:False Fl
+654 [p2 HALF_UP -92 26 c0 C1 tOvSu] Decimal('-7.60652044627E+12') >= float:-1.9093313144216003e-255 -> bool:False Fl
+655 [p19 HALF_DOWN -2844436 75548687651 c0 C1 t] Decimal('-0.090000000000000000000000000000000') <= Fraction:Fraction(-48864519, 2) -> bool:False 
+656 [p39 HALF_EVEN -92 41 c0 C1 tDiOvRo] Decimal('99999999999.9') <= int:-2029211505296074305152961489 -> bool:False 
+657 [p3 FLOOR -1 2 c1 C1 t] Decimal('-100000.0000000000000000') <= float:-100000.0 -> bool:True Fl
+658 [p2 HALF_EVEN -999999 999999 c0 C1 t] float:-3.9341908691383825e+61 != Decimal('-8.07003663005696545714243958160775219E-18') -> bool:True Fl
+659 [p3 DOWN -999999 999999 c1 C1 tInFl] Decimal('-9.63579791981680219772850371169187220755557113E-12') > Decimal:Decimal('-9.63579791981680219772850371169187220755557113E-12') -> bool:False 
+660 [p16 CEILING -999999 999999 c0 C1 t] Decimal('sNaN') <= Fraction:Fraction(-3124810756139669, 22795574290) -> bool:False In
+661 [p39 CEILING -37 82 c0 C1 t] IntLike:IntLike() > Decimal('2106701851098065731038512343290341874.52') -> !TypeError: '>' not supported between instances of 'IntLike' and 'decimal.Decimal' 
+662 [p28 05UP -999999 999999 c1 C0 tDiSuInCl] float:-180303.0 != Decimal('-684641310532.6') -> bool:True Fl
+663 [p16 DOWN -61 42 c1 C1 t] Fraction:Fraction(-1826455798441401388235, 2169820034331) < Decimal('5.661469001269044753E-35') -> bool:True 
+664 [p3 HALF_EVEN -999999999999999999 999999999999999999 c1 C0 tInDi] str:'1' > Decimal('2.7') -> !TypeError: '>' not supported between instances of 'str' and 'decimal.Decimal' 
+665 [p19 UP -4 9 c0 C0 t] Decimal('101.5258379187408856663164596331314188') <= Decimal:Decimal('-0.086835139725420') -> bool:False 
+666 [p28 CEILING -395 99187019364624889 c0 C1 t] Decimal('-7.44234E-14') != float:974425.0 -> bool:True Fl
+667 [p1 HALF_EVEN -6 89 c0 C0 t] Decimal('-8.9115002e+14') > float:426989.0 -> bool:False Fl
+668 [p28 HALF_DOWN -999999999999999999 999999999999999999 c1 C0 t] Decimal:Decimal('9.0990099090000900909e+46') < Decimal('9.0990099090000900909e+46') -> bool:False 
+669 [p3 HALF_EVEN -37 7 c0 C1 tInCl] Decimal('NaN') != () -> bool:True 
+670 [p27 CEILING -999999 999999 c0 C1 tDiUnCl] Decimal('0.000009099009990999090909009009900900909090090') == Decimal:Decimal('0.00000909900999099909090900900990090090909009') -> bool:True 
+671 [p28 CEILING -5 56 c1 C1 t] Decimal('99009099099999999099.09099900999099') > float:9.90090991e+19 -> bool:True Fl
+672 [p34 HALF_EVEN -10 3 c0 C1 t] float:-0.0005000055055505005 == Decimal('-0.0005000055055505005000505') -> bool:False Fl
+673 [p20 FLOOR -8 2 c0 C0 t] Decimal:Decimal('-16909923349.828371766') > Decimal('16909923349.828371766') -> bool:False 
+674 [p28 HALF_EVEN -999999 999999 c1 C0 tSu] Fraction:Fraction(-1560657466979908129258961232577347169, 1) >= Decimal('-1560657466979908129258961232577347169') -> bool:True 
+675 [p20 HALF_EVEN -7 2 c0 C1 tInSuIn] Decimal('-8336572434713') == Fraction:Fraction(-8336572434713, 1) -> bool:True 
+676 [p34 CEILING -38 85 c0 C1 t] NotImplementedType:NotImplemented > Decimal('-6602587432612805243001369.2') -> !TypeError: '>' not supported between instances of 'NotImplementedType' and 'decimal.Decimal' 
+677 [p34 DOWN -999999 999999 c0 C1 tFlInRo] Decimal('5.055555005000005005500550505E+574459') == complex(float:1.0005461279575405e-281, nan) -> bool:False 
+678 [p2 HALF_EVEN -999999 999999 c0 C1 tRoCl] Fraction:Fraction(4253281932978370361566833, 6866722562521) == Decimal('-7261281022233869441282243150') -> bool:False 
+679 [p40 UP -20 69 c0 C1 t] Decimal('2.362272943292978240498752338780542800238807E+58') > int:23622729432929782404987523387805428002388070000000000000000 -> bool:False 
+680 [p20 HALF_EVEN -479614816707 368292 c0 C1 t] Decimal('3.22857944824E-20') > Decimal:Decimal('-5863851.27574352046') -> bool:True 
+681 [p28 05UP -999999999999999999 999999999999999999 c1 C1 t] Decimal('-9000000000000000000000.000') >= int:-9000000000000000000000 -> bool:True 
+682 [p28 UP -999999 999999 c1 C1 tInFlSuRo] Decimal('9999999999.99999999999999999999999') < Fraction:Fraction(1021083391507044031258817, 5320554686225520) -> bool:False 
+683 [p38 FLOOR -999999 999999 c0 C1 t] float:-703392.0 >= Decimal('500.50005500505500050005500500550505550') -> bool:False Fl
+684 [p11 CEILING -307859027 64959066697617078 c0 C1 t] Decimal('-9.0009999900E+34') == complex:(61590.625-0j) -> bool:False Fl
+685 [p28 UP -30 84 c1 C1 t] Decimal('9.999909900999000009990099009E+85') < Decimal:Decimal('-9.999909900999000009990099009E+85') -> bool:False 
+686 [p18 UP -25 91 c0 C1 t] Decimal('2.5E-49') != Decimal:Decimal('-1.33429022251E-39') -> bool:True 
+687 [p16 FLOOR -999999 999999 c0 C0 tInRo] Decimal('329939053678322.9432') != Fraction:Fraction(-7853440882750119153952, 3987386563637) -> bool:True 
+688 [p28 DOWN -13584741 91 c0 C1 tInSuRo] Decimal('-4.7790289845473199136E-28') != Decimal:Decimal('-4.7790289845473199136E-28') -> bool:False 
+689 [p16 HALF_EVEN -89 24 c0 C0 t] Decimal('-5495.09075834808603705693705') < Fraction:Fraction(-109901815166961720741138741, 20000000000000000000000) -> bool:False 
+690 [p38 UP -1682398805306271 82763707 c0 C1 tDiCl] Decimal('17849094559649670805762.9824670712172803') < Fraction:Fraction(2586273, 1079654) -> bool:False 
+691 [p20 HALF_EVEN -2 5 c0 C1 t] FloatLike:FloatLike() <= Decimal('-4.000000000000000000E-7') -> !TypeError: '<=' not supported between instances of 'FloatLike' and 'decimal.Decimal' 
+692 [p20 05UP -59 66 c1 C1 t] Decimal('-535974278.20113151775393961873') <= Fraction:Fraction(-202169929574093, 724) -> bool:False 
+693 [p34 FLOOR -59 70 c1 C1 t] Decimal('-4.6448E-55') >= Decimal:Decimal('9.9E-16') -> bool:False 
+694 [p39 FLOOR -999999 999999 c0 C0 tOvUnSuInRo] float:-0.0 != Decimal('-5.005505555550050500e-554651') -> bool:True Fl
+695 [p20 FLOOR -999999 999999 c1 C0 t] Decimal('-6.5e-12') <= bytes:b'1' -> !TypeError: '<=' not supported between instances of 'decimal.Decimal' and 'bytes' 
+696 [p39 HALF_UP -4 7 c1 C1 tCl] Decimal('-90909099000999099099000009099.0999900000') == Fraction:Fraction(-66847479491283337, 17225204968494) -> bool:False 
+697 [p28 UP -7479189546323379 85 c0 C0 t] Fraction:Fraction(-217861073304571307507031, 7670) < Decimal('2.249591662970086e+36') -> bool:True 
+698 [p16 CEILING -9 4 c1 C0 t] Decimal('-0e-32') != complex:(-226746+0j) -> bool:True Fl
+699 [p16 HALF_EVEN -6 10 c0 C0 tFlDiOvUn] Decimal('999999999.99999999999999999') > int:999999999 -> bool:True 
+700 [p1 HALF_UP -999999 999999 c0 C0 tOv] int:0 != Decimal('1.1014673772369880302647e-13') -> bool:True 
+701 [p22 HALF_EVEN -8 3 c0 C1 t] Decimal('-900900909000.9') <= Fraction:Fraction(506535055315741, 94) -> bool:True 
+702 [p28 FLOOR -5 11 c0 C0 t] Decimal('-1.000000000000000000000000000e+30') <= float:1.5342635107220652e-18 -> bool:True Fl
+703 [p19 FLOOR -999999 999999 c0 C1 t] Decimal('0') > int:0 -> bool:False 
+704 [p28 HALF_UP -999999 999999 c0 C0 t] bytes:b'1' <= Decimal('-3.362006089369465693526615563076043982e-9') -> !TypeError: '<=' not supported between instances of 'bytes' and 'decimal.Decimal' 
+705 [p28 HALF_UP -26 51 c0 C1 t] Decimal('-4856876619412100016424260935') <= int:-4856876619412100016424260935 -> bool:True 
+706 [p39 UP -999999 999999 c0 C0 t] Decimal('-9.757120255149948e+35') <= int:-975712025514994800000000000000000000 -> bool:True 
+707 [p28 05UP -37 18 c0 C1 tFl] Decimal('3481016756999484363583056') > Decimal:Decimal('3481016756999484363583056') -> bool:False 
+708 [p3 UP -999999999999999999 999999999999999999 c0 C1 t] Decimal('-9.999999999999999999999999E+49') != Fraction:Fraction(-89829896891777, 2094) -> bool:True 
+709 [p38 UP -85 47 c1 C1 tDiUn] int:7510962486701556215031400000000000000000000000 == Decimal('7.5109624867015562150314E+45') -> bool:True 
+710 [p1 05UP -5820357836979603 48165019926344410 c1 C0 tOvSuRo] int:-1961097575002585207481540 == Decimal('-NaN123') -> bool:False 
+711 [p3 HALF_UP -999999 999999 c0 C1 t] Decimal('-8.0912030467276252974629E-37') >= Fraction:Fraction(-80912030467276252974629, 100000000000000000000000000000000000000000000000000000000000) -> bool:True 
+712 [p16 HALF_DOWN -999999 999999 c0 C1 tSuCl] Decimal('-836388804.86915759750') <= bool:True -> bool:True 
+713 [p28 HALF_DOWN -19 7 c0 C1 t] float:-5.055500050555055e+35 >= Decimal('-5.0555000505550550050550550505E+35') -> bool:True Fl
+714 [p1 HALF_EVEN -599 5 c1 C1 tInFlDiUnRo] Decimal('-1128407752590') <= int:-1128407752590 -> bool:True 
+715 [p20 DOWN -999999 999999 c0 C0 t] Decimal('-9.212725808499267571467116635e-24') < Decimal:Decimal('-9.212725808499267571467116635e-24') -> bool:False 
+716 [p4 UP -999999 999999 c1 C1 tInIn] Decimal('2.8606080522990553113550889256E+45') <= float:2.8606080522990556e+45 -> bool:True Fl
+717 [p38 HALF_EVEN -999999 999999 c0 C0 tInOvCl] Decimal('Infinity') <= Fraction:Fraction(98240444872455034510344, 927073787) -> bool:False 
+718 [p28 UP -2 7 c0 C1 tDiOvRo] Decimal('-8634976309907478222706039567166594059') < Decimal:Decimal('-8634976309907478222706039567166594059') -> bool:False 
+719 [p20 DOWN -999999 999999 c0 C0 t] Decimal('-2.946522013584e-8') < float:-7522113.307366256 -> bool:False Fl
+720 [p1 FLOOR -5 5 c0 C0 tDiOv] Decimal('55000500.0505555005') == str:'1' -> bool:False 
+721 [p3 UP -999999 999999 c1 C1 t] Decimal('Infinity') != int:0 -> bool:True 
+722 [p28 DOWN -96 45 c1 C1 tInUnSu] Decimal:Decimal('-8.714258921318966289E-39') <= Decimal('-8.714258921318966289E-39') -> bool:True 
+723 [p34 HALF_DOWN -999999 999999 c0 C0 tOvCl] Fraction:Fraction(155177953528311020875, 13) < Decimal('-4.53694510996571e-38') -> bool:False 
+724 [p28 DOWN -73976332963 95342282744514639 c0 C1 tOvUnSuCl] Decimal:Decimal('5.00505050005050555555055050000005055500E+81050286131234224') >= Decimal('5.00505050005050555555055050000005055500E+81050286131234224') -> bool:True 
+725 [p38 CEILING -10 1 c0 C1 t] float:7.053169685500435e-19 < Decimal('7.05316968550043424096253703751647821996E-19') -> bool:False Fl
+726 [p39 HALF_EVEN -999999 999999 c0 C1 t] Decimal('-7.6044399985355203401E+28') == Fraction:Fraction(-76044399985355203401000000000, 1) -> bool:True 
+727 [p19 HALF_EVEN -74 30 c0 C0 t] Decimal('-4.856336422829240611115e+26') < complex:(-3.369792659515263e-176+0j) -> !TypeError: '<' not supported between instances of 'decimal.Decimal' and 'complex' 
+728 [p19 CEILING -2962616 440543698763 c1 C0 tFlDiIn] Decimal('-601922505731024947235327079140433907951') != complex:(-722995+0j) -> bool:True Fl
+729 [p28 DOWN -999999 999999 c1 C1 t] int:0 >= Decimal('-6.876222781462870E-15') -> bool:True 
+730 [p9 FLOOR 0 8 c1 C1 t] Fraction:Fraction(-1769927119344816233520891791, 100000000000000000000000000000000000000000000000000000000) < Decimal('-1.769927119344816233520891791E-29') -> bool:False 
+731 [p2 UP -10 88 c0 C1 t] Decimal('1819390521103577694626080569423.012665308120') < Decimal:Decimal('1819390521103577694626080569423.012665308120') -> bool:False 
+732 [p28 CEILING -64 95 c0 C1 t] Decimal('38670504464864672693332427590226') != bool:True -> bool:True 
+733 [p4 HALF_EVEN -999999 999999 c1 C1 t] int:0 <= Decimal('Infinity') -> bool:True 
+734 [p28 UP -999999 999999 c1 C1 tInDiInRo] Decimal('5.0000000000000000000000000000E+999999') > str:'1' -> !TypeError: '>' not supported between instances of 'decimal.Decimal' and 'str' 
+735 [p38 HALF_UP -51 89 c0 C1 tRo] Decimal('9.009009009990999990099E-26') < float:9.009009009991e-26 -> bool:True Fl
+736 [p19 CEILING -999999 999999 c0 C0 tInDi] Decimal:Decimal('-400000000000.00000000') < Decimal('400000000000.00000000') -> bool:True 
+737 [p28 FLOOR -999999999999999999 999999999999999999 c0 C0 t] Decimal:Decimal('-9.09909e+12') >= Decimal('-9.9075594840378605e+41') -> bool:True 
+738 [p2 CEILING -54 43 c1 C1 tUn] Fraction:Fraction(-26305460319741282682117178207005312285000000000000000000000000, 1) == Decimal('-2.6305460319741282682117178207005312285E+61') -> bool:True 
+739 [p23 FLOOR -5 7 c0 C0 t] Decimal:Decimal('9.90990999090900099999e+27') == Decimal('-57836147873262361080312130971811875820') -> bool:False 
+740 [p1 HALF_DOWN -999999 999999 c0 C0 tFlCl] Decimal('1.320064e+13') == Fraction:Fraction(13200640000000, 1) -> bool:True 
+741 [p19 CEILING -999999 999999 c0 C1 t] complex:(1.4584838326810218e+245-0j) <= Decimal('-5.00E-30') -> !TypeError: '<=' not supported between instances of 'complex' and 'decimal.Decimal' 
+742 [p38 HALF_EVEN -999999 999999 c0 C1 tIn] Decimal('0.0018') < Fraction:Fraction(7538034119351, 7131915) -> bool:True 
+743 [p2 FLOOR -1 5 c0 C0 tInDiOvUnInCl] int:450269984365418 != Decimal('-5.8590517046705033289105e-34') -> bool:True 
+744 [p22 HALF_EVEN -118023495 91007953763284200 c0 C1 tOv] Decimal('590623') < Fraction:Fraction(-3991938, 71051) -> bool:False 
+745 [p19 DOWN -999999 999999 c0 C1 tInFlDiUn] Decimal('9E-20') == Decimal:Decimal('-9E-20') -> bool:False 
+746 [p1 HALF_UP -56491 35457358 c1 C1 t] Decimal:Decimal('9.9E+31') != Decimal('9.9E+31') -> bool:False 
+747 [p1 HALF_UP -999999999999999999 999999999999999999 c0 C1 t] Decimal('9.900009999990909E-20') <= Decimal:Decimal('9.900009999990909E-20') -> bool:True 
+748 [p28 DOWN -999999 999999 c0 C1 t] Decimal('9.9999999999E-22') <= Decimal:Decimal('-9.9999999999E-22') -> bool:False 
+749 [p28 DOWN -20360 502 c1 C1 t] Decimal('-0') < float:4.623909902243867e+42 -> bool:True Fl
+750 [p28 HALF_DOWN -999999999999999999 999999999999999999 c1 C0 tInSu] Decimal('-3.6178783314326352773725826456e-834770344024136272') != Fraction:Fraction(-4017047324274006508531185, 5152159751) -> bool:True 
+751 [p19 05UP -999999 999999 c0 C1 tFlCl] Fraction:Fraction(-821004375402091, 507559475644947) != Decimal('5.000000000000000000000000E+36') -> bool:True 
+752 [p39 HALF_DOWN -21 96 c0 C1 t] Decimal('4.37805E+27') < complex:(-1.8688212373434085e-33-0j) -> !TypeError: '<' not supported between instances of 'decimal.Decimal' and 'complex' 
+753 [p28 DOWN -999999999999999999 999999999999999999 c0 C1 tUn] float:-8267.1 != Decimal('9.9999999999999999999999999999E+42') -> bool:True Fl
+754 [p20 HALF_UP -26 19 c0 C0 t] Decimal('33330703631799733690946851.693500952868') > float:-5.855565194666075e-131 -> bool:True Fl
+755 [p28 05UP -999999 999999 c0 C1 t] Decimal('28239522156839176827348') > float:2.8239522156839176e+22 -> bool:True Fl
+756 [p28 HALF_UP -999999999999999999 999999999999999999 c1 C1 t] int:-3662920528780588114691460 != Decimal('-33720730407737424957815.576124') -> bool:True 
+757 [p20 CEILING -37987682252 6077121855 c1 C1 tDi] Fraction:Fraction(5550, 1) == Decimal('5.55E+3') -> bool:True 
+758 [p34 FLOOR -88995543831 970663 c0 C1 t] int:-366661157224442261183814420070 <= Decimal('74645686346933156570') -> bool:True 
+759 [p18 HALF_UP -5 5 c0 C0 t] Decimal('9.999999999999999e+20') != float:0.0 -> bool:True Fl
+760 [p39 HALF_UP -999999 999999 c0 C0 tFlCl] Decimal('4.4838576604e-22') <= float:2.7242894007925488e-301 -> !FloatOperation: [<class 'decimal.FloatOperation'>] Fl
+761 [p2 HALF_EVEN -999999 999999 c0 C0 t] Decimal:Decimal('-2.76069928436769343326157155e+36') > Decimal('2.76069928436769343326157155e+36') -> bool:False 
+762 [p3 05UP -5 9 c1 C1 tUn] Fraction:Fraction(771, 25000000000000000000000000000) > Decimal('3.084E-26') -> bool:False 
+763 [p20 HALF_UP -999999 999999 c0 C1 t] Decimal('9.90999909099900990999090099090909990999E+999999') != Decimal:Decimal('-9.9999999999E-29') -> bool:True 
+764 [p9 FLOOR -999999 999999 c1 C1 tUnCl] Fraction:Fraction(-335627, 1321) >= Decimal('55550000050550005505050500000050005505.0050') -> bool:False 
+765 [p28 FLOOR -999999999999999999 999999999999999999 c0 C1 tUnRo] Decimal('8.0000000000000000000000000000000000000E+854395957310274226') != Fraction:Fraction(830218895451397909, 4362506483) -> bool:True 
+766 [p15 FLOOR -9 48 c0 C1 tInUn] Decimal('8.30463089526688055875628774236119160008E+60') >= Fraction:Fraction(343582544557, 2) -> bool:True 
+767 [p9 05UP -999999 999999 c0 C1 tInCl] float:0.0 < Decimal('5.1926598690301367059756642689017510853E-21554430248') -> bool:True Fl
+768 [p28 HALF_DOWN -999999 999999 c0 C1 t] Decimal('3.9300E-39') > float:-2.3007746620556942e+288 -> bool:True Fl
+769 [p45 CEILING -33 54 c0 C1 t] int:-357724658563639484255 <= Decimal('-357724658563639484255') -> bool:True 
+770 [p20 HALF_UP -20 69 c1 C0 t] Decimal('900009090009999900.90990009') != float:-2.051370402944163e+305 -> bool:True Fl
+771 [p38 HALF_UP -53 15 c1 C1 t] Fraction:Fraction(0, 1) >= Decimal('-0E+45') -> bool:True 
+772 [p19 CEILING -99 22 c0 C1 tDi] Decimal('42347663033527811.8021471920405691') != float:4.234766303352781e+16 -> bool:True Fl
+773 [p39 05UP -999999 999999 c1 C1 t] Decimal('-3.6722296354E-31') == FloatLike:FloatLike() -> bool:False 
+774 [p1 HALF_EVEN -999999 999999 c0 C1 t] float:52.83203125 > Decimal('-4.57284739137254057E-35') -> bool:True Fl
+775 [p38 05UP -73 8 c0 C0 t] Decimal('5.5e-34') >= Fraction:Fraction(59376866994955655707144, 90159906647) -> bool:False 
+776 [p38 HALF_UP -1546526263757631 7 c0 C1 tIn] Decimal('8.00E-179139153091228') <= Fraction:Fraction(1303270575333128, 1182369460161629) -> bool:True 
+777 [p38 CEILING -999999 999999 c0 C1 t] Decimal:Decimal('-9.9999999999999E-31') < Decimal('-9.9999999999999E-31') -> bool:False 
+778 [p20 HALF_EVEN -65 95 c0 C1 t] Decimal:Decimal('8.66642577294502425033218865382648817588383300E-8') == Decimal('8.66642577294502425033218865382648817588383300E-8') -> bool:True 
+779 [p19 05UP -13 78 c1 C1 t] Decimal('-32888942039407.098438537351234308461585') <= bool:False -> bool:True 
+780 [p28 DOWN -999999 999999 c1 C1 t] Decimal('5.0000000000E+20') >= float:23310.0 -> bool:True Fl
+781 [p16 HALF_DOWN -999999 999999 c0 C1 t] Decimal('5.054171961199393E+31') != Decimal:Decimal('-5.5550050505050E-18') -> bool:True 
+782 [p23 05UP -999999 999999 c1 C1 tRoCl] Decimal('-6.3521188648732E-17') < float:822.571 -> bool:True Fl
+783 [p16 DOWN -999999 999999 c0 C1 tFlUn] complex:(-1.2308421735735123e-243+1j) >= Decimal('0') -> !TypeError: '>=' not supported between instances of 'complex' and 'decimal.Decimal' 
+784 [p20 DOWN -47 71 c1 C1 t] Decimal('-2.4335559647860909808129946915894200718727097E+63') > Decimal:Decimal('-2.4335559647860909808129946915894200718727097E+63') -> bool:False 
+785 [p28 HALF_EVEN -392611781 76176540895 c0 C1 tInUn] Decimal('0') >= float:-inf -> bool:True Fl
+786 [p1 CEILING 0 6 c0 C1 tSu] Decimal:Decimal('5.0505505005000505050E+34') != Decimal('-5.0505505005000505050E+34') -> bool:True 
+787 [p28 HALF_EVEN -999999999999999999 999999999999999999 c1 C0 t] Odd:Odd() > Decimal('-0e+10') -> !TypeError: '>' not supported between instances of 'Odd' and 'decimal.Decimal' 
+788 [p19 05UP -2 5 c1 C1 t] Decimal('999999999.9999999999999999999') <= Fraction:Fraction(-93601097762311, 3163306775467600) -> bool:False 
+789 [p28 HALF_UP -3 3 c0 C1 t] float:-4.86e-52 >= Decimal('-4.860E-52') -> bool:True Fl
+790 [p38 UP -999999 999999 c1 C1 t] Decimal('-0.0122395093057955189797621530039670090') >= complex:(1.136394541640693e+176+0j) -> !TypeError: '>=' not supported between instances of 'decimal.Decimal' and 'complex' 
+791 [p38 DOWN -44 97 c0 C1 t] Decimal('5.5550550055555055000055E+33') == bool:True -> bool:False 
+792 [p34 UP -38 28 c0 C1 t] Decimal('-4.73E+23') == int:-473000000000000000000000 -> bool:True 
+793 [p28 FLOOR -26 66 c0 C1 tIn] Decimal('4.1819983E-30') >= complex:(-21359.285714285714+1j) -> !TypeError: '>=' not supported between instances of 'decimal.Decimal' and 'complex' 
+794 [p19 CEILING -6 4 c1 C1 tFlDiCl] Decimal:Decimal('3.7E+6') == Decimal('-3.7E+6') -> bool:False 
+795 [p28 UP -999999 999999 c1 C1 tFlRo] Decimal('0E+5') == float:75490.28571428571 -> bool:False Fl
+796 [p1 HALF_DOWN -58 33 c0 C1 t] Decimal('9.999999999999E-43') != Fraction:Fraction(9999999999999, 10000000000000000000000000000000000000000000000000000000) -> bool:False 
+797 [p33 HALF_EVEN -999999 999999 c0 C1 tFlSuIn] Decimal('828826906671.63786062125287599891') > Fraction:Fraction(82882690667163786062125287599891, 100000000000000000000) -> bool:False 
+798 [p2 CEILING -1 8 c0 C1 t] Decimal('-6.96230E-46') > complex:(-202.2783203125-0j) -> !TypeError: '>' not supported between instances of 'decimal.Decimal' and 'complex' 
+799 [p20 HALF_DOWN -57 38 c1 C0 t] Decimal('5e-19') > Fraction:Fraction(-26777878685, 677239503377344477) -> bool:True 
+800 [p20 HALF_EVEN -19898699292067160 549987540 c0 C1 tFl] Decimal('858295876266602876836') == MyInt:5 -> bool:False 
+801 [p28 HALF_DOWN -999999 999999 c0 C1 tDiRoCl] Decimal('-9.099009E-19') < float:-9.099009e-19 -> bool:True Fl
+802 [p7 DOWN -999999 999999 c0 C0 tInOvRo] Fraction:Fraction(1042015600313253, 110433715) > Decimal('-4362556877378202069990271.26083137304357884905') -> bool:True 
+803 [p12 UP -999999 999999 c0 C1 t] Decimal('1E-541527') >= NoneType:None -> !TypeError: '>=' not supported between instances of 'decimal.Decimal' and 'NoneType' 
+804 [p3 DOWN -999999 999999 c1 C0 tSuInCl] Decimal('9.9999e+24') <= float:1.9446723817860945e+112 -> bool:True Fl
+805 [p28 FLOOR -999999 999999 c0 C1 t] Decimal('-1.522526E-36') == Decimal:Decimal('-1.522526E-36') -> bool:True 
+806 [p28 FLOOR -1 46 c0 C0 t] Decimal('20738.7937503816201426971652679429398') < () -> !TypeError: '<' not supported between instances of 'decimal.Decimal' and 'tuple' 
+807 [p3 UP -999999 999999 c0 C1 t] Decimal('8.8E-1000001') == float:0.0 -> bool:False Fl
+808 [p20 HALF_EVEN -999999 999999 c1 C1 t] Decimal('-8.594270981554034179957583584E-16') < IntLike:IntLike() -> !TypeError: '<' not supported between instances of 'decimal.Decimal' and 'IntLike' 
+809 [p19 HALF_UP -63 73 c1 C0 t] Decimal('5.500050005055505000000505555500050') <= int:5 -> bool:False 
+810 [p28 UP -999999 999999 c1 C1 tOvUnInCl] MyInt:5 < Decimal('-5.5550055505500505E+40') -> bool:False 
+811 [p2 HALF_EVEN -6 0 c0 C1 t] bool:False == Decimal('-0E+5') -> bool:True 
+812 [p28 DOWN -59 59 c0 C1 t] MyInt:5 > Decimal('-913358829362.968339510660231222970342367') -> bool:True 
+813 [p20 HALF_EVEN -999999 999999 c1 C1 tDiIn] Decimal('9.99E-1088314180') > Decimal:Decimal('8.5E-46') -> bool:False 
+814 [p39 DOWN -64 33 c0 C0 tFlSuCl] Decimal('-7.92310576325450761963e-11') != Fraction:Fraction(-40755517787747, 2560822) -> bool:True 
+815 [p16 FLOOR -999999999999999999 999999999999999999 c1 C1 tOv] NotImplementedType:NotImplemented <= Decimal('-9.999999999999999999999999999999E-23') -> !TypeError: '<=' not supported between instances of 'NotImplementedType' and 'decimal.Decimal' 
+816 [p19 FLOOR -38 68 c0 C1 t] Decimal('-0E-53') == Odd:Odd() -> bool:False 
+817 [p13 HALF_DOWN -999999999999999999 999999999999999999 c1 C1 tCl] Decimal('-9.999999999999999999999999999999999999E+40') != FloatLike:FloatLike() -> bool:True 
+818 [p28 HALF_UP -83 4 c0 C0 t] Fraction:Fraction(-25064863119, 10000) != Decimal('-2506486.3119') -> bool:False 
+819 [p20 HALF_EVEN -999999999999999999 999999999999999999 c0 C0 tUn] Decimal('0') <= Decimal:Decimal('-0') -> bool:True 
+820 [p34 UP -9 6 c0 C1 t] () >= Decimal('7.58748090415384007571785488347E-19') -> !TypeError: '>=' not supported between instances of 'tuple' and 'decimal.Decimal' 
+821 [p16 DOWN -3 0 c0 C1 t] Decimal('7.932923339E-28') < float:-93117.5 -> bool:False Fl
+822 [p39 DOWN -9324 5930499 c0 C1 tFlSuRo] Decimal('3.502986644003622054E+879007622') > MyInt:5 -> bool:True 
+823 [p34 FLOOR -999999999999999999 999999999999999999 c0 C1 tCl] Decimal('999.99999999999999999999999999999999') <= complex(float:108263.33333333333, nan) -> !TypeError: '<=' not supported between instances of 'decimal.Decimal' and 'complex' 
+824 [p9 CEILING -999999 999999 c1 C1 t] Decimal('-99000099090099099999090900909.9900900') != Decimal:Decimal('-99000099090099099999090900909.9900900') -> bool:False 
+825 [p20 HALF_DOWN -7 433885863 c0 C1 t] FloatLike:FloatLike() >= Decimal('704554402764731327213380415139') -> !TypeError: '>=' not supported between instances of 'FloatLike' and 'decimal.Decimal' 
+826 [p38 05UP 0 3 c1 C1 t] Decimal('NaN') > float:-inf -> bool:False InFl
+827 [p16 HALF_UP -49 75 c0 C0 t] () <= Decimal('-799010443983513.6801') -> !TypeError: '<=' not supported between instances of 'tuple' and 'decimal.Decimal' 
+828 [p28 CEILING -4 8 c1 C1 t] Decimal('990099999.900999') > Fraction:Fraction(-75705652120953424869, 17360595104656352) -> bool:True 
+829 [p20 HALF_DOWN -2 9 c0 C1 t] Decimal('-9000099099000990090099090.099') < Odd:Odd() -> !TypeError: '<' not supported between instances of 'decimal.Decimal' and 'Odd' 
+830 [p39 CEILING -6 12 c0 C1 tInDi] Decimal('8.28849997377472247342506E+40') == complex:(-67844.71428571429+1j) -> bool:False 
+831 [p1 05UP -999999999999999999 999999999999999999 c1 C0 t] Decimal('-77374986056885714048168477555.1') < Fraction:Fraction(-31443642941556859700275, 3) -> bool:True 
+832 [p9 DOWN -8757934298239 800412373 c1 C1 tOvCl] Decimal('7.82E-38') != float:7.82e-38 -> bool:True Fl
+833 [p3 HALF_DOWN -999999 999999 c0 C1 t] int:0 >= Decimal('9.900E-26') -> bool:False 
+834 [p19 FLOOR -5 4 c0 C1 t] Decimal('-990090099909900900099099.9990000') <= Decimal:Decimal('990090099909900900099099.9990000') -> bool:True 
+835 [p16 HALF_UP -977223202187112 317449870 c0 C0 tOvSu] Decimal('4.62761364511135093991104591621878368e+50') >= float:534336.0 -> bool:True Fl
+836 [p28 05UP -2 6 c0 C1 tFl] Decimal('177.4650942954988385223') == Fraction:Fraction(1774650942954988385223, 10000000000000000000) -> bool:True 
+837 [p28 HALF_DOWN -100 56 c1 C1 tUnInCl] bytes:b'1' == Decimal('-8660169097005885774') -> bool:False 
+838 [p28 HALF_EVEN -6 6 c0 C1 tRo] Decimal('55553773761261.0793993152090447950') <= float:-5.191103966119256e+264 -> bool:False Fl
+839 [p16 CEILING -999999 999999 c0 C1 tIn] Decimal('4.863626742817028017226542966921372434208741E-7') < int:0 -> bool:False 
+840 [p19 HALF_EVEN -53509213 55524 c0 C0 tIn] Decimal('0') > float:-229809.0 -> bool:True Fl
+841 [p28 UP -5 5 c0 C1 t] Decimal('0.000005505550005000055505000050505505550') > Fraction:Fraction(110111000100001110100001010110111, 20000000000000000000000000000000000000) -> bool:False 
+842 [p28 HALF_UP -99 7 c0 C1 tInSuRoCl] Decimal('5.73879E+29') == int:-6230656602828746474091942646 -> bool:False 
+843 [p3 UP -11 18 c0 C0 t] Decimal('7.02758754423e-39') <= ellipsis:Ellipsis -> !TypeError: '<=' not supported between instances of 'decimal.Decimal' and 'ellipsis' 
+844 [p9 HALF_DOWN -4 2 c0 C1 tUnCl] Decimal('9.9999999999999999999E+29') >= complex:(172083-0j) -> !TypeError: '>=' not supported between instances of 'decimal.Decimal' and 'complex' 
+845 [p9 FLOOR -30 498 c1 C0 tUnSuInRoCl] NoneType:None < Decimal('40491621800.275311499188549647467597020848') -> !TypeError: '<' not supported between instances of 'NoneType' and 'decimal.Decimal' 
+846 [p19 FLOOR -21 49 c0 C1 tInDiInCl] Decimal('-0.00008040723917466362') != float:-8.040723917466363e-05 -> bool:True Fl
+847 [p19 HALF_EVEN -10 0 c1 C1 tDi] bool:False != Decimal('952508.472055933959384081474057473676859401') -> bool:True 
+848 [p39 HALF_DOWN -73 17 c0 C0 tCl] Decimal('8.54751503435965252155901e-20') <= () -> !TypeError: '<=' not supported between instances of 'decimal.Decimal' and 'tuple' 
+849 [p6 HALF_DOWN -999999 999999 c1 C1 t] Decimal('2.28619911244461E+45') > IntLike:IntLike() -> !TypeError: '>' not supported between instances of 'decimal.Decimal' and 'IntLike' 
+850 [p3 CEILING -2120666 7279999874679 c0 C1 tFlDi] Decimal('5.747321673528689E-44') != int:0 -> bool:True 
+851 [p28 HALF_DOWN -999999 999999 c0 C1 t] Decimal('-5342507008179269008488.55967') > int:-5342507008179269008488 -> bool:False 
+852 [p1 DOWN -999999999999999999 999999999999999999 c0 C1 t] Decimal('-3E+16') >= Fraction:Fraction(1828928474307, 9404339184816292) -> bool:False 
+853 [p20 HALF_EVEN -6 2 c1 C1 tDi] Decimal('-5.8') <= Fraction:Fraction(-29, 5) -> bool:True 
+854 [p28 UP -999999 999999 c1 C1 t] bool:False != Decimal('-3000000000000000000000000000000000.00000000') -> bool:True 
+855 [p41 UP -999999 999999 c0 C1 t] Decimal('-3.8476791972604033888200169558573707563438254E-7') > Decimal:Decimal('3.8476791972604033888200169558573707563438254E-7') -> bool:False 
+856 [p28 UP -4 6 c1 C0 t] Decimal('-800000.000000000000000000') < float:-800000.0 -> bool:False Fl
+857 [p38 HALF_EVEN -4 5 c0 C0 t] Decimal('99999009990999999.099999009') != NotImplementedType:NotImplemented -> bool:True 
+858 [p19 HALF_EVEN -92 89 c0 C1 tIn] Decimal('4.978269150386503530536668657E+36') < Decimal:Decimal('0E-7') -> bool:False 
+859 [p28 HALF_DOWN -8 94 c0 C1 t] Decimal('-3.3263054E-10') == Fraction:Fraction(-16631527, 50000000000000000) -> bool:True 
+860 [p39 CEILING -61 72 c0 C1 tFlSuCl] Decimal('9.337E-96') < Fraction:Fraction(9337, 1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000) -> bool:False 
+861 [p19 HALF_DOWN -1 2 c0 C0 t] Decimal('-335.632') < Fraction:Fraction(43234049792829, 394076679650766374) -> bool:True 
+862 [p16 HALF_UP -999999 999999 c0 C0 t] Decimal('-8037286585964892302692.4704054314728924') > complex:(6.200080805994282e-257+0j) -> !TypeError: '>' not supported between instances of 'decimal.Decimal' and 'complex' 
+863 [p20 CEILING -73 3 c1 C1 tInUnIn] Decimal('5.0000550055000505050505055005505050E+40') == Decimal:Decimal('5.0000550055000505050505055005505050E+40') -> bool:True 
+864 [p28 HALF_DOWN -999999 999999 c0 C1 tInFl] Decimal('4.41433001871E+23') <= Decimal:Decimal('4.41433001871E+23') -> bool:True 
+865 [p39 HALF_DOWN -999999999999999999 999999999999999999 c0 C1 tInOv] Decimal('9.62279E-10') >= float:9.62279e-10 -> bool:False Fl
+866 [p39 HALF_DOWN -93 20 c1 C1 t] Decimal('5.6692620730170783724300722706917379713228E+57') == float:-5.336363035287539e+83 -> bool:False Fl
+867 [p39 FLOOR -999999 999999 c0 C0 t] Decimal('-Infinity') < Fraction:Fraction(2107, 268566962790142) -> bool:True 
+868 [p28 HALF_EVEN -999999999999999999 999999999999999999 c0 C1 tInCl] list:[] != Decimal('-9.0000000000000000000E-999999999999999980') -> bool:True 
+869 [p28 DOWN -999999999999999999 999999999999999999 c1 C1 t] Decimal('-9.99999990999000990099909090009009099999E+59') == Fraction:Fraction(-568956474964941203, 72388493647978) -> bool:False 
+870 [p1 HALF_DOWN -39 71 c0 C1 t] Decimal('-9228950466812750830580880831035959745150.938') >= Decimal:Decimal('9228950466812750830580880831035959745150.938') -> bool:False 
+871 [p30 CEILING -6 6 c0 C1 tDiIn] Fraction:Fraction(152254051865823650069, 177573090994354) >= Decimal('9.23202995352907068881270330647640879610174E+50') -> bool:False 
+872 [p1 05UP -999999 999999 c0 C0 t] Decimal('9.999999999999e-15') < Fraction:Fraction(-66731849684162, 3) -> bool:False 
+873 [p16 DOWN -1 0 c1 C1 t] Fraction:Fraction(80817266038332574933628643649514782403, 10000) <= Decimal('8081726603833257493362864364951478.2403') -> bool:True 
+874 [p16 UP -999999 999999 c0 C1 t] Decimal('-50555055055505.55000') == Fraction:Fraction(627222847726105053, 56107736201) -> bool:False 
+875 [p28 05UP -999999 999999 c1 C1 t] Decimal('99999999999999999999.99999999') < Decimal:Decimal('-99999999999999999999.99999999') -> bool:False 
+876 [p9 UP -6 3 c1 C1 tRo] Decimal('-12174.48476121582') == float:-12174.48476121582 -> bool:False Fl
+877 [p28 HALF_UP -999999 999999 c1 C1 tFlDi] float:inf == Decimal('3.90276997773156360590312817402945483963E+877174') -> bool:False Fl
+878 [p19 05UP -999999 999999 c0 C1 tInOvUnSuRo] Decimal('0.0000457853174714019194686415739') >= Fraction:Fraction(839486790647510557190752, 6398753) -> bool:False 
+879 [p19 HALF_EVEN -10 5 c0 C1 t] Decimal:Decimal('-9.99999999E+22') > Decimal('9.99999999E+22') -> bool:False 
+880 [p16 DOWN -999999 999999 c0 C0 t] Decimal('5.550005055555000505055550505e+37') != Decimal:Decimal('5.550005055555000505055550505e+37') -> bool:False 
+881 [p34 DOWN -2 6 c0 C1 t] Decimal('-3.05024257212753828107930354332497656131784E+44') == int:5955497037204 -> bool:False 
+882 [p28 HALF_UP -999999 999999 c1 C1 t] Decimal('-0') < Decimal:Decimal('-4.6177982771077513E+24') -> bool:False 
+883 [p38 05UP -999999 999999 c1 C1 t] float:-8.93208e-49 != Decimal('-8.93208E-49') -> bool:True Fl
+884 [p38 UP -696 19373556578255 c0 C1 t] float:-1.3558494515888428e-250 > Decimal('0.000') -> bool:False Fl
+885 [p20 05UP -25 85 c0 C1 tInRo] Decimal('81313608039022223322247162106') < float:8.131360803902222e+28 -> bool:False Fl
+886 [p34 HALF_DOWN -84 39 c0 C1 tInFlSu] Decimal('2.40825E+29') == int:240825000000000000000000000000 -> bool:True 
+887 [p38 HALF_DOWN -71 52 c0 C1 t] Decimal('88586792460451794153041364.0103646978449') == Decimal:Decimal('-88586792460451794153041364.0103646978449') -> bool:False 
+888 [p28 UP -2 2 c0 C1 tUnInRo] Decimal('-7.4297156190137656314294743684132E-14') < float:5.370941360162278e-46 -> bool:True Fl
+889 [p31 HALF_UP -5 2 c1 C1 tDiIn] Decimal:Decimal('0') < Decimal('0.0') -> bool:False 
+890 [p28 HALF_EVEN 0 0 c1 C1 tInUn] complex:(-241.232421875+0j) <= Decimal('0.000080') -> !TypeError: '<=' not supported between instances of 'complex' and 'decimal.Decimal' 
+891 [p19 FLOOR -999999 999999 c1 C1 tFlOv] Decimal('-0.00009099900') >= Decimal:Decimal('-90000000000.00') -> bool:True 
+892 [p19 UP -999999 999999 c0 C0 t] float:514.9384765625 == Decimal('-3.7644985398612318657e-7') -> bool:False Fl
+893 [p29 HALF_DOWN -3 4 c1 C0 t] Decimal('5126132374.36605082502109293603668109148') == Fraction:Fraction(128153309359151270625527323400917027287, 25000000000000000000000000000) -> bool:True 
+894 [p28 FLOOR -24658 62765312020851 c0 C1 tFlOvSuRoCl] Decimal('9.99999999999999999999999999999999999E-14') >= Decimal:Decimal('-9.99999999999999999999999999999999999E-14') -> bool:True 
+895 [p9 05UP -50 90 c1 C1 t] Decimal('-4.2591676372427807478E-16') >= Fraction:Fraction(95986192251354468019577, 313732992) -> bool:False 
+896 [p19 HALF_DOWN -3 4 c1 C1 t] Decimal('0.99099090') < Decimal:Decimal('5.00555005505555500005005E-25') -> bool:False 
+897 [p28 CEILING -999999 999999 c1 C1 t] float:-9000099000000100.0 <= Decimal('-9000099000000099.9909009900099') -> bool:True Fl
+898 [p20 FLOOR -8 9 c0 C1 t] Decimal('0.050') == Decimal:Decimal('5.05550000555505505055E-19') -> bool:False 
+899 [p18 05UP -69 31 c1 C1 t] Decimal('4.2673321055605034002E-8') == float:12167.57142857143 -> bool:False Fl
+900 [p3 UP -999999 999999 c1 C1 t] Decimal('8.9236892569365193604527219550336594847E-516592') != Decimal:Decimal('8.9236892569365193604527219550336594847E-516592') -> bool:False 
+901 [p2 HALF_UP -6 10 c0 C0 tUn] Decimal('5e-13') >= float:-266204.0 -> bool:True Fl
+902 [p28 HALF_EVEN -999999 999999 c0 C1 t] Decimal('939577706720466') == int:939577706720466 -> bool:True 
+903 [p28 05UP -999999999999999999 999999999999999999 c1 C1 t] int:9 != Decimal('9.009990900090909990990999900909900999') -> bool:True 
+904 [p16 FLOOR -999999 999999 c0 C1 t] Decimal('9.999999999999E+18') > bool:False -> bool:True 
+905 [p28 05UP -21482876214657 87584644575 c1 C1 t] Decimal('-99999.99999999999999999999999999999') <= Decimal:Decimal('-99999.99999999999999999999999999999') -> bool:True 
+906 [p39 HALF_DOWN -6 0 c0 C1 t] Decimal('6.8723894189389882253926808E-12') == Decimal:Decimal('-6.8723894189389882253926808E-12') -> bool:False 
+907 [p16 UP -1 2 c1 C1 t] Decimal('-33005058403497356795657848284586.77052381') >= float:4.547581563167531e-78 -> bool:False Fl
+908 [p28 HALF_DOWN -8 67 c0 C1 tFlIn] Decimal('7.0000E+17') < Decimal:Decimal('7E+17') -> bool:False 
+909 [p3 FLOOR -81 84 c0 C1 t] Decimal('-5.4458622098896899318759564E-20') < Fraction:Fraction(-13614655524724224829689891, 250000000000000000000000000000000000000000000) -> bool:False 
+910 [p3 DOWN -999999 999999 c1 C1 tCl] Decimal('4.6E+6') == ellipsis:Ellipsis -> bool:False 
+911 [p39 05UP -9 1 c1 C1 t] Decimal('-9.999999999999999999999E+44') <= Fraction:Fraction(31548096808474374916519, 71163013902947808) -> bool:True 
+912 [p28 FLOOR -95 72 c1 C0 t] Decimal('-0') >= IntLike:IntLike() -> !TypeError: '>=' not supported between instances of 'decimal.Decimal' and 'IntLike' 
+913 [p9 CEILING -81044220855941 54127069611115 c1 C0 tFlUn] Decimal('1.267191201761484887e-24898809216245') >= Fraction:Fraction(3731243822221712, 3) -> bool:False 
+914 [p6 05UP -999999 999999 c1 C1 t] Decimal('0.624449595821943057282490131609') == Decimal:Decimal('0.624449595821943057282490131609') -> bool:True 
+915 [p20 FLOOR -999999 999999 c0 C1 tInSuRo] Decimal:Decimal('-305095511870582400969416895643.7410194697827') > Decimal('0') -> bool:False 
+916 [p3 DOWN -61 11 c0 C1 t] Decimal('8.00000000000000000000000000000000000E+58') != Fraction:Fraction(80000000000000000000000000000000000000000000000000000000000, 1) -> bool:False 
+917 [p28 05UP -999999999999999999 999999999999999999 c0 C0 t] Decimal('5.447851175093348287167924e+27') > Decimal:Decimal('5.447851175093348287167924e+27') -> bool:False 
+918 [p16 FLOOR -999999 999999 c0 C0 tDiOvUnSuRo] Decimal('0e+5') == int:0 -> bool:True 
+919 [p28 UP 0 8 c1 C1 t] Decimal('6.142268605067150808676088E+48') >= int:0 -> bool:True 
+920 [p28 FLOOR -999999 999999 c1 C1 t] Decimal:Decimal('-5.8745317493432672418E-844128') > Decimal('5.8745317493432672418E-844128') -> bool:False 
+921 [p1 DOWN -48 13 c0 C0 tInDiIn] complex:(353.736328125+1j) <= Decimal('sNaN') -> !TypeError: '<=' not supported between instances of 'complex' and 'decimal.Decimal' 
+922 [p16 05UP 0 1 c0 C1 t] Decimal:Decimal('-6.463578557343791478075769E-15') <= Decimal('-6.463578557343791478075769E-15') -> bool:True 
+923 [p1 FLOOR -999999999999999999 999999999999999999 c0 C1 t] Decimal('99999999999.999999999999999999999') <= Fraction:Fraction(99999999999999999999999999999999, 1000000000000000000000) -> bool:True 
+924 [p24 HALF_EVEN -26 65 c0 C1 t] Decimal('7926093836619.8262357') < Fraction:Fraction(-12347303377382674748968, 751346430867) -> bool:False 
+925 [p19 DOWN -99 20 c1 C1 tInUnSu] Decimal('-7598387326.51925827260193940935126947626762') < Decimal:Decimal('-7598387326.51925827260193940935126947626762') -> bool:False 
+926 [p28 CEILING -49029586471 4 c0 C1 t] Decimal('9.99E+26') < complex(nan, float:-0.0) -> !TypeError: '<' not supported between instances of 'decimal.Decimal' and 'complex' 
+927 [p19 HALF_DOWN -45 29 c1 C0 t] Decimal('9999999999999999999999999999.999999999') > Decimal:Decimal('9999999999999999999999999999.999999999') -> bool:False 
+928 [p28 FLOOR -999999 999999 c0 C1 t] float:-2.2706666757033373e+117 <= Decimal('939002559708.2527346063285556') -> bool:True Fl
+929 [p1 CEILING -999999 999999 c0 C1 tOvUnIn] Decimal('10000000.0000000000000000000000000000') != Decimal:Decimal('-10000000.0000000000000000000000000000') -> bool:True 
+930 [p2 UP -18 97 c0 C1 tDiSuCl] Decimal('0E+35') == int:0 -> bool:True 
+931 [p23 UP -999999 999999 c0 C1 tUnSu] Decimal('-6.0848279831646049112503666E+39') != complex(float:516403.0, nan) -> bool:True 
+932 [p38 UP -7 9 c0 C1 t] Decimal('-1.5524045E-33') > Fraction:Fraction(42751727023217, 3779) -> bool:False 
+933 [p38 CEILING -70 63 c1 C0 t] Fraction:Fraction(-167313889950724279209924563987439790192487, 6250000000) >= Decimal('-26770222392115884673587930237990.36643079792') -> bool:True 
+934 [p7 05UP -999999 999999 c0 C1 t] Decimal:Decimal('-7.6924301230E+25') == Decimal('-7.6924301230E+25') -> bool:True 
+935 [p38 HALF_DOWN -2 6 c0 C1 t] bool:False > Decimal('5.0E+26') -> bool:False 
+936 [p28 HALF_UP -85 59 c0 C1 t] Decimal('-9.5986844814962719298395985298563E+39') < Decimal:Decimal('9.5986844814962719298395985298563E+39') -> bool:True 
+937 [p2 UP -2212399681225466 5988 c0 C0 t] Decimal('-55000555000005505.050505005005550550555005') > int:-55000555000005505 -> bool:False 
+938 [p21 DOWN -3 0 c1 C0 t] Decimal:Decimal('-6.1404585e-44') < Decimal('-6.1404585e-44') -> bool:False 
+939 [p41 HALF_UP -46563090 94553498770 c0 C1 tInRo] Decimal('5.050055555055050055555505E-28') <= Fraction:Fraction(1010011111011010011111101, 2000000000000000000000000000000000000000000000000000) -> bool:True 
+940 [p29 FLOOR -999999 999999 c1 C0 t] Decimal('0.05') > Fraction:Fraction(-70738647050808045694813, 44766560523781828639) -> bool:True 
+941 [p38 CEILING -999999 999999 c0 C0 t] Decimal('3326717541606744584183667929444454286335') == Decimal:Decimal('3326717541606744584183667929444454286335') -> bool:True 
+942 [p39 HALF_EVEN -999999 999999 c0 C1 t] FloatLike:FloatLike() == Decimal('2.01739761176246597918248423874885397069E-12') -> bool:False 
+943 [p9 UP -7 8 c0 C0 t] Decimal('-600000000000.000000000000000000') >= complex(float:1.825411720447385e-32, nan) -> !TypeError: '>=' not supported between instances of 'decimal.Decimal' and 'complex' 
+944 [p34 HALF_DOWN -999999 999999 c0 C1 tFlDiUn] Decimal('-3.9874895039175896084137773629805087647E-85276') != Decimal:Decimal('-3.9874895039175896084137773629805087647E-85276') -> bool:False 
+945 [p9 DOWN -999999 999999 c0 C1 tDiSuInCl] Decimal('-2.000000000000000000000000000000E+41') < float:31567.0 -> bool:True Fl
+946 [p29 DOWN -999999999999999999 999999999999999999 c0 C1 t] Decimal('6.124155896752616487512503630E-17') == bool:False -> bool:False 
+947 [p16 05UP -3 7 c1 C1 t] bool:False > Decimal('-9.816511271426422048997528589697E-29') -> bool:True 
+948 [p38 FLOOR -8 10 c0 C1 tInDiSuRoCl] Decimal('-1.1762034023498897008748378E+33') != Decimal:Decimal('-50055505005555005.0') -> bool:True 
+949 [p28 FLOOR -999999 999999 c0 C1 t] list:[] >= Decimal('9.99999999999999999E-12') -> !TypeError: '>=' not supported between instances of 'list' and 'decimal.Decimal' 
+950 [p28 FLOOR -999999 999999 c0 C0 tUnSuRo] Decimal:Decimal('-5.000000000e-10') == Decimal('-5.000000000e-10') -> bool:True 
+951 [p39 HALF_DOWN -35 88 c1 C1 tSuRoCl] Decimal('11985259008354280235453947308487783.11395') > float:1.0061507110026049e+53 -> bool:False Fl
+952 [p3 DOWN -999999 999999 c0 C1 t] Decimal('-3.41438353855015784035736772814154894002E+40') >= bool:True -> bool:False 
+953 [p2 05UP -54 40 c0 C1 t] Decimal('-491599878.97093886') < float:-707.892578125 -> bool:True Fl
+954 [p28 HALF_UP 0 59288529808934 c0 C1 t] Decimal:Decimal('7593802573692887303') >= Decimal('7593802573692887303') -> bool:True 
+955 [p19 HALF_DOWN -5 10 c1 C1 t] float:-125202549610712.75 < Decimal('9.999999999999999E-37') -> bool:True Fl
+956 [p20 UP -23 22 c0 C1 t] Decimal('5.00505055550500555E-35') == Decimal:Decimal('-5.00505055550500555E-35') -> bool:False 
+957 [p34 HALF_EVEN 0 46 c0 C1 t] Decimal('-2296356676716013856978883684354693419787') > int:-277130133746177363553284 -> bool:False 
+958 [p37 UP -23 29 c1 C1 tUnInCl] Decimal:Decimal('9.99E+26') <= Decimal('9.99E+26') -> bool:True 
+959 [p28 UP -25178190489766 9860029421687 c0 C1 tSu] Decimal('-2000000000.000000000000000') == complex:(443294+1j) -> bool:False 
+960 [p21 05UP -2 10 c0 C1 t] Decimal('-7.0000000000000000000E+22') != complex:(5.726175506404484e-170-0j) -> bool:True Fl
+961 [p39 HALF_EVEN -26 60 c0 C0 t] float:-727.474609375 >= Decimal('NaN') -> bool:False InFl
+962 [p1 UP -47 72 c0 C1 t] Decimal('822180129235.997426') != float:822180129235.9974 -> bool:True Fl
+963 [p19 HALF_UP -51458192180624 36694390008962575 c1 C0 tUn] Decimal('9e-56') != complex(float:-1.1069077840802918e-84, nan) -> bool:True 
+964 [p16 DOWN -66 50 c1 C1 tUn] Decimal('-9.9999999999999999999E-32') <= complex(float:1.3316172240201048e-300, nan) -> !TypeError: '<=' not supported between instances of 'decimal.Decimal' and 'complex' 
+965 [p9 FLOOR -86 9 c0 C1 t] int:0 < Decimal('-6.5') -> bool:False 
+966 [p3 05UP -9 8 c1 C1 t] Decimal('-9.0009090000909E+33') >= Decimal:Decimal('-9.0009090000909E+33') -> bool:True 
+967 [p16 UP -50 69 c0 C0 t] Fraction:Fraction(-308635211270485, 4604898375276) >= Decimal('-2.000000000e-47') -> bool:False 
+968 [p28 DOWN -12 59 c0 C1 tInOvInRo] Decimal('5.6346279403081E+27') > Fraction:Fraction(1165802052712056399, 1872667) -> bool:True 
+969 [p39 CEILING -999999 999999 c1 C0 tInCl] Decimal('-6.431e-10') != Fraction:Fraction(-6431, 10000000000000) -> bool:False 
+970 [p16 HALF_DOWN -100 17 c1 C1 t] Decimal('-0.000008039577') < complex(float:-1.0594497720426124e-150, nan) -> !TypeError: '<' not supported between instances of 'decimal.Decimal' and 'complex' 
+971 [p28 FLOOR -48 9 c1 C1 tRo] Decimal('-7.326520866966088914E+23') > float:-7.32652086696609e+23 -> bool:True Fl
+972 [p12 HALF_DOWN 0 0 c0 C1 tFlOvIn] float:-2.460017490119044e-38 < Decimal('Infinity') -> !FloatOperation: [<class 'decimal.FloatOperation'>] Fl
+973 [p28 05UP -999999 999999 c0 C0 t] Fraction:Fraction(-1304888933392795856700, 1) > Decimal('Infinity') -> bool:False 
+974 [p28 UP -999999999999999999 999999999999999999 c1 C1 t] Decimal('-9.999999999999999999999999999999999E+36') >= NotImplementedType:NotImplemented -> !TypeError: '>=' not supported between instances of 'decimal.Decimal' and 'NotImplementedType' 
+975 [p20 CEILING -999999 999999 c1 C1 tSu] Fraction:Fraction(7107023991417775091, 433227937764198717) != Decimal('1') -> bool:True 
+976 [p2 HALF_UP -4299243 84937579159 c1 C1 t] Decimal('514549525661.4803065') != int:4300966 -> bool:True 
+977 [p34 CEILING -9 3 c0 C1 tOv] float:3.2737952857947975e-119 >= Decimal('0.000') -> bool:True Fl
+978 [p34 UP -55 77 c0 C1 t] Decimal:Decimal('-5050055505.005000550505005') <= Decimal('-5050055505.005000550505005') -> bool:True 
+979 [p34 HALF_UP -3 4 c1 C1 tInIn] Decimal('5.863307378422422596E-39') > Decimal:Decimal('5.863307378422422596E-39') -> bool:False 
+980 [p16 HALF_UP -6 6 c0 C1 tOv] Decimal('-1') < Fraction:Fraction(-62071489993228069222, 117321) -> bool:False 
+981 [p9 FLOOR -999999 999999 c0 C1 t] Decimal('0.0000090001715778223') < Decimal:Decimal('-0.0000090001715778223') -> bool:False 
+982 [p8 HALF_UP -2 3 c0 C1 t] Decimal('-210300770617854330191755.246932611081553762334') != float:-3.822699029451875e-177 -> bool:True Fl
+983 [p39 HALF_EVEN -14 75 c0 C1 tOv] Decimal:Decimal('2.9406895071016618799133551933789461170582E+42') <= Decimal('1.97788747506189564153223997E-17') -> bool:False 
+984 [p20 UP -14796269597535242 192242187 c1 C0 tUnCl] Decimal('3.000000000000000000e+31') == Fraction:Fraction(4311765404966321719127, 5) -> bool:False 
+985 [p9 HALF_DOWN -6 10 c0 C1 tFlUnInRo] Decimal('-9999.99') == float:-9999.99 -> bool:False Fl
+986 [p39 CEILING -7 8 c0 C0 tIn] Decimal('-5.82e+7') == Fraction:Fraction(-9625918, 37) -> bool:False 
+987 [p39 UP -999999 999999 c1 C1 t] Decimal('-5.0005500555E-22') >= Decimal:Decimal('-5.0005500555E-22') -> bool:True 
+988 [p2 HALF_DOWN -999999999999999999 999999999999999999 c1 C0 t] Decimal('349785171080122710654517612087703') <= Decimal:Decimal('349785171080122710654517612087703') -> bool:True 
+989 [p19 FLOOR -999999 999999 c1 C1 t] Decimal('-6000000000000.0000000') != complex:(-2.4753554709549645e-119+0j) -> bool:True Fl
+990 [p2 05UP -999999 999999 c1 C1 tFlDiCl] Decimal('6130951.041516619') >= int:6130951 -> bool:True 
+991 [p34 HALF_DOWN -96 19 c0 C1 t] Decimal('99999999999999999999999999999.999999999999999') >= complex:(-5.995461338202451e+63+0j) -> !TypeError: '>=' not supported between instances of 'decimal.Decimal' and 'complex' 
+992 [p28 05UP -14582145430 1674139926878 c0 C0 t] Decimal('2.2287166060922754239e+20') == Decimal:Decimal('-1546106157880227.973453967627051380707062260') -> bool:False 
+993 [p20 HALF_UP -10 95 c0 C0 tUnCl] Decimal('-0.9990090999099000000099990000') != int:0 -> bool:True 
+994 [p28 CEILING -999999999999999999 999999999999999999 c1 C0 t] Decimal('-0.000971002416378') <= complex:(-1.237735936156907e+152+0j) -> !TypeError: '<=' not supported between instances of 'decimal.Decimal' and 'complex' 
+995 [p28 HALF_EVEN -27 28 c0 C1 tInFlUn] float:9.410474685106338e-19 > Decimal('-0E-17') -> !FloatOperation: [<class 'decimal.FloatOperation'>] Fl
+996 [p1 05UP -6 4 c0 C1 t] Fraction:Fraction(-2303162609074429705, 2769944) <= Decimal('4.9E+6') -> bool:True 
+997 [p28 CEILING -95 31 c1 C1 tRo] Decimal('9.090000000909999909E+31') > Fraction:Fraction(90900000009099999090000000000000, 1) -> bool:False 
+998 [p19 HALF_EVEN -5 8 c0 C1 tInFlSu] complex:(-676.828125+0j) != Decimal('376157761301.9739973556') -> bool:True Fl
+999 [p34 05UP -8 2 c0 C1 tFl] Decimal('5.3E+8') >= Decimal:Decimal('-5.3E+8') -> bool:True 

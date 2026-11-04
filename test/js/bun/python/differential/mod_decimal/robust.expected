@@ -1,0 +1,272 @@
+status: 0
+script: 61fdfb186442cc70
+---
+Decimal.__new__(Decimal) -> Decimal('0')
+object.__new__(Decimal) -> TypeError object.__new__(decimal.Decimal) is not safe, use decimal.Decimal.__new__()
+Decimal.__new__(int) -> TypeError decimal.Decimal.__new__(int): int is not a subtype of decimal.Decimal
+Decimal.__new__(Context) -> TypeError decimal.Decimal.__new__(decimal.Context): decimal.Context is not a subtype of decimal.Decimal
+Decimal.__new__() -> TypeError decimal.Decimal.__new__(): not enough arguments
+Decimal.__new__(1) -> TypeError decimal.Decimal.__new__(X): X is not a type object (int)
+Context.__new__(Context) -> Context(prec=28, rounding=ROUND_HALF_EVEN, Emin=-999999, Emax=999999, capitals=1, clamp=0, flags=[], traps=[InvalidOperation, DivisionByZero, Overflow])
+object.__new__(Context) -> TypeError object.__new__(decimal.Context) is not safe, use decimal.Context.__new__()
+Context.__new__(Decimal) -> TypeError decimal.Context.__new__(decimal.Decimal): decimal.Decimal is not a subtype of decimal.Context
+Context.__new__(Context).add -> Decimal('3')
+Context.__new__(Context, 1, x=2) -> 28
+SignalDict() -> ValueError invalid signal dict
+SignalDict.__new__ -> ValueError invalid signal dict
+SignalDict iter -> ValueError invalid signal dict
+SignalDict copy -> ValueError invalid signal dict
+SignalDict eq -> ValueError invalid signal dict
+SignalDictMixin() -> ValueError invalid signal dict
+SignalDictMixin.__new__ -> ValueError invalid signal dict
+SignalDictMixin iter -> ValueError invalid signal dict
+SignalDictMixin copy -> ValueError invalid signal dict
+SignalDictMixin eq -> ValueError invalid signal dict
+flags.__init__() -> None
+flags after __init__ -> ValueError invalid signal dict
+context after that -> (True, Decimal('3'))
+repr(context) after that -> 'Context(prec=28, rounding=ROUND_HALF_EVEN, Emin=-999999, Emax=999999, capitals=1, clamp=0, flags=[], traps=[InvalidOperation, DivisionByZero, Overflow])'
+ContextManager() -> TypeError cannot create 'decimal.ContextManager' instances
+ContextManager.__new__ -> TypeError cannot create 'decimal.ContextManager' instances
+object.__new__(ContextManager) -> TypeError cannot create 'decimal.ContextManager' instances
+__enter__ of another -> TypeError descriptor '__enter__' for 'decimal.ContextManager' objects doesn't apply to a 'decimal.Context' object
+__exit__ of another -> TypeError descriptor '__exit__' for 'decimal.ContextManager' objects doesn't apply to a 'int' object
+Decimal.__add__ on int -> TypeError descriptor '__add__' requires a 'decimal.Decimal' object but received a 'int'
+Decimal.__add__ on NoneType -> TypeError descriptor '__add__' requires a 'decimal.Decimal' object but received a 'NoneType'
+Decimal.__add__ on Context -> TypeError descriptor '__add__' requires a 'decimal.Decimal' object but received a 'decimal.Context'
+Decimal.__add__ on str -> TypeError descriptor '__add__' requires a 'decimal.Decimal' object but received a 'str'
+Decimal.__add__ on float -> TypeError descriptor '__add__' requires a 'decimal.Decimal' object but received a 'float'
+Decimal.__str__ on int -> TypeError descriptor '__str__' requires a 'decimal.Decimal' object but received a 'int'
+Decimal.__str__ on NoneType -> TypeError descriptor '__str__' requires a 'decimal.Decimal' object but received a 'NoneType'
+Decimal.__str__ on Context -> TypeError descriptor '__str__' requires a 'decimal.Decimal' object but received a 'decimal.Context'
+Decimal.__str__ on str -> TypeError descriptor '__str__' requires a 'decimal.Decimal' object but received a 'str'
+Decimal.__str__ on float -> TypeError descriptor '__str__' requires a 'decimal.Decimal' object but received a 'float'
+Decimal.__hash__ on int -> TypeError descriptor '__hash__' requires a 'decimal.Decimal' object but received a 'int'
+Decimal.__hash__ on NoneType -> TypeError descriptor '__hash__' requires a 'decimal.Decimal' object but received a 'NoneType'
+Decimal.__hash__ on Context -> TypeError descriptor '__hash__' requires a 'decimal.Decimal' object but received a 'decimal.Context'
+Decimal.__hash__ on str -> TypeError descriptor '__hash__' requires a 'decimal.Decimal' object but received a 'str'
+Decimal.__hash__ on float -> TypeError descriptor '__hash__' requires a 'decimal.Decimal' object but received a 'float'
+Decimal.sqrt on int -> TypeError descriptor 'sqrt' for 'decimal.Decimal' objects doesn't apply to a 'int' object
+Decimal.sqrt on NoneType -> TypeError descriptor 'sqrt' for 'decimal.Decimal' objects doesn't apply to a 'NoneType' object
+Decimal.sqrt on Context -> TypeError descriptor 'sqrt' for 'decimal.Decimal' objects doesn't apply to a 'decimal.Context' object
+Decimal.sqrt on str -> TypeError descriptor 'sqrt' for 'decimal.Decimal' objects doesn't apply to a 'str' object
+Decimal.sqrt on float -> TypeError descriptor 'sqrt' for 'decimal.Decimal' objects doesn't apply to a 'float' object
+Decimal.quantize on int -> TypeError descriptor 'quantize' for 'decimal.Decimal' objects doesn't apply to a 'int' object
+Decimal.quantize on NoneType -> TypeError descriptor 'quantize' for 'decimal.Decimal' objects doesn't apply to a 'NoneType' object
+Decimal.quantize on Context -> TypeError descriptor 'quantize' for 'decimal.Decimal' objects doesn't apply to a 'decimal.Context' object
+Decimal.quantize on str -> TypeError descriptor 'quantize' for 'decimal.Decimal' objects doesn't apply to a 'str' object
+Decimal.quantize on float -> TypeError descriptor 'quantize' for 'decimal.Decimal' objects doesn't apply to a 'float' object
+Decimal.as_tuple on int -> TypeError descriptor 'as_tuple' for 'decimal.Decimal' objects doesn't apply to a 'int' object
+Decimal.as_tuple on NoneType -> TypeError descriptor 'as_tuple' for 'decimal.Decimal' objects doesn't apply to a 'NoneType' object
+Decimal.as_tuple on Context -> TypeError descriptor 'as_tuple' for 'decimal.Decimal' objects doesn't apply to a 'decimal.Context' object
+Decimal.as_tuple on str -> TypeError descriptor 'as_tuple' for 'decimal.Decimal' objects doesn't apply to a 'str' object
+Decimal.as_tuple on float -> TypeError descriptor 'as_tuple' for 'decimal.Decimal' objects doesn't apply to a 'float' object
+Decimal.__format__ on int -> TypeError descriptor '__format__' for 'decimal.Decimal' objects doesn't apply to a 'int' object
+Decimal.__format__ on NoneType -> TypeError descriptor '__format__' for 'decimal.Decimal' objects doesn't apply to a 'NoneType' object
+Decimal.__format__ on Context -> TypeError descriptor '__format__' for 'decimal.Decimal' objects doesn't apply to a 'decimal.Context' object
+Decimal.__format__ on str -> TypeError descriptor '__format__' for 'decimal.Decimal' objects doesn't apply to a 'str' object
+Decimal.__format__ on float -> TypeError descriptor '__format__' for 'decimal.Decimal' objects doesn't apply to a 'float' object
+Decimal.__round__ on int -> TypeError descriptor '__round__' for 'decimal.Decimal' objects doesn't apply to a 'int' object
+Decimal.__round__ on NoneType -> TypeError descriptor '__round__' for 'decimal.Decimal' objects doesn't apply to a 'NoneType' object
+Decimal.__round__ on Context -> TypeError descriptor '__round__' for 'decimal.Decimal' objects doesn't apply to a 'decimal.Context' object
+Decimal.__round__ on str -> TypeError descriptor '__round__' for 'decimal.Decimal' objects doesn't apply to a 'str' object
+Decimal.__round__ on float -> TypeError descriptor '__round__' for 'decimal.Decimal' objects doesn't apply to a 'float' object
+Decimal.__reduce__ on int -> TypeError descriptor '__reduce__' for 'decimal.Decimal' objects doesn't apply to a 'int' object
+Decimal.__reduce__ on NoneType -> TypeError descriptor '__reduce__' for 'decimal.Decimal' objects doesn't apply to a 'NoneType' object
+Decimal.__reduce__ on Context -> TypeError descriptor '__reduce__' for 'decimal.Decimal' objects doesn't apply to a 'decimal.Context' object
+Decimal.__reduce__ on str -> TypeError descriptor '__reduce__' for 'decimal.Decimal' objects doesn't apply to a 'str' object
+Decimal.__reduce__ on float -> TypeError descriptor '__reduce__' for 'decimal.Decimal' objects doesn't apply to a 'float' object
+Decimal.__bool__ on int -> TypeError descriptor '__bool__' requires a 'decimal.Decimal' object but received a 'int'
+Decimal.__bool__ on NoneType -> TypeError descriptor '__bool__' requires a 'decimal.Decimal' object but received a 'NoneType'
+Decimal.__bool__ on Context -> TypeError descriptor '__bool__' requires a 'decimal.Decimal' object but received a 'decimal.Context'
+Decimal.__bool__ on str -> TypeError descriptor '__bool__' requires a 'decimal.Decimal' object but received a 'str'
+Decimal.__bool__ on float -> TypeError descriptor '__bool__' requires a 'decimal.Decimal' object but received a 'float'
+Decimal.__int__ on int -> TypeError descriptor '__int__' requires a 'decimal.Decimal' object but received a 'int'
+Decimal.__int__ on NoneType -> TypeError descriptor '__int__' requires a 'decimal.Decimal' object but received a 'NoneType'
+Decimal.__int__ on Context -> TypeError descriptor '__int__' requires a 'decimal.Decimal' object but received a 'decimal.Context'
+Decimal.__int__ on str -> TypeError descriptor '__int__' requires a 'decimal.Decimal' object but received a 'str'
+Decimal.__int__ on float -> TypeError descriptor '__int__' requires a 'decimal.Decimal' object but received a 'float'
+Decimal.__float__ on int -> TypeError descriptor '__float__' requires a 'decimal.Decimal' object but received a 'int'
+Decimal.__float__ on NoneType -> TypeError descriptor '__float__' requires a 'decimal.Decimal' object but received a 'NoneType'
+Decimal.__float__ on Context -> TypeError descriptor '__float__' requires a 'decimal.Decimal' object but received a 'decimal.Context'
+Decimal.__float__ on str -> TypeError descriptor '__float__' requires a 'decimal.Decimal' object but received a 'str'
+Decimal.__float__ on float -> TypeError descriptor '__float__' requires a 'decimal.Decimal' object but received a 'float'
+Decimal.__eq__ on int -> TypeError descriptor '__eq__' requires a 'decimal.Decimal' object but received a 'int'
+Decimal.__eq__ on NoneType -> TypeError descriptor '__eq__' requires a 'decimal.Decimal' object but received a 'NoneType'
+Decimal.__eq__ on Context -> TypeError descriptor '__eq__' requires a 'decimal.Decimal' object but received a 'decimal.Context'
+Decimal.__eq__ on str -> TypeError descriptor '__eq__' requires a 'decimal.Decimal' object but received a 'str'
+Decimal.__eq__ on float -> TypeError descriptor '__eq__' requires a 'decimal.Decimal' object but received a 'float'
+Decimal.__pow__ on int -> TypeError descriptor '__pow__' requires a 'decimal.Decimal' object but received a 'int'
+Decimal.__pow__ on NoneType -> TypeError descriptor '__pow__' requires a 'decimal.Decimal' object but received a 'NoneType'
+Decimal.__pow__ on Context -> TypeError descriptor '__pow__' requires a 'decimal.Decimal' object but received a 'decimal.Context'
+Decimal.__pow__ on str -> TypeError descriptor '__pow__' requires a 'decimal.Decimal' object but received a 'str'
+Decimal.__pow__ on float -> TypeError descriptor '__pow__' requires a 'decimal.Decimal' object but received a 'float'
+Decimal.__radd__ on int -> TypeError descriptor '__radd__' requires a 'decimal.Decimal' object but received a 'int'
+Decimal.__radd__ on NoneType -> TypeError descriptor '__radd__' requires a 'decimal.Decimal' object but received a 'NoneType'
+Decimal.__radd__ on Context -> TypeError descriptor '__radd__' requires a 'decimal.Decimal' object but received a 'decimal.Context'
+Decimal.__radd__ on str -> TypeError descriptor '__radd__' requires a 'decimal.Decimal' object but received a 'str'
+Decimal.__radd__ on float -> TypeError descriptor '__radd__' requires a 'decimal.Decimal' object but received a 'float'
+Decimal.__sizeof__ on int -> TypeError descriptor '__sizeof__' for 'decimal.Decimal' objects doesn't apply to a 'int' object
+Decimal.__sizeof__ on NoneType -> TypeError descriptor '__sizeof__' for 'decimal.Decimal' objects doesn't apply to a 'NoneType' object
+Decimal.__sizeof__ on Context -> TypeError descriptor '__sizeof__' for 'decimal.Decimal' objects doesn't apply to a 'decimal.Context' object
+Decimal.__sizeof__ on str -> TypeError descriptor '__sizeof__' for 'decimal.Decimal' objects doesn't apply to a 'str' object
+Decimal.__sizeof__ on float -> TypeError descriptor '__sizeof__' for 'decimal.Decimal' objects doesn't apply to a 'float' object
+Decimal.real on int -> TypeError descriptor 'real' for 'decimal.Decimal' objects doesn't apply to a 'int' object
+Decimal.real on NoneType -> TypeError __get__(None, None) is invalid
+Decimal.real on Context -> TypeError descriptor 'real' for 'decimal.Decimal' objects doesn't apply to a 'decimal.Context' object
+Decimal.real on str -> TypeError descriptor 'real' for 'decimal.Decimal' objects doesn't apply to a 'str' object
+Decimal.real on float -> TypeError descriptor 'real' for 'decimal.Decimal' objects doesn't apply to a 'float' object
+Decimal.imag on int -> TypeError descriptor 'imag' for 'decimal.Decimal' objects doesn't apply to a 'int' object
+Decimal.imag on NoneType -> TypeError __get__(None, None) is invalid
+Decimal.imag on Context -> TypeError descriptor 'imag' for 'decimal.Decimal' objects doesn't apply to a 'decimal.Context' object
+Decimal.imag on str -> TypeError descriptor 'imag' for 'decimal.Decimal' objects doesn't apply to a 'str' object
+Decimal.imag on float -> TypeError descriptor 'imag' for 'decimal.Decimal' objects doesn't apply to a 'float' object
+Context.add on int -> TypeError descriptor 'add' for 'decimal.Context' objects doesn't apply to a 'int' object
+Context.add on NoneType -> TypeError descriptor 'add' for 'decimal.Context' objects doesn't apply to a 'NoneType' object
+Context.add on Decimal -> TypeError descriptor 'add' for 'decimal.Context' objects doesn't apply to a 'decimal.Decimal' object
+Context.add on str -> TypeError descriptor 'add' for 'decimal.Context' objects doesn't apply to a 'str' object
+Context.abs on int -> TypeError descriptor 'abs' for 'decimal.Context' objects doesn't apply to a 'int' object
+Context.abs on NoneType -> TypeError descriptor 'abs' for 'decimal.Context' objects doesn't apply to a 'NoneType' object
+Context.abs on Decimal -> TypeError descriptor 'abs' for 'decimal.Context' objects doesn't apply to a 'decimal.Decimal' object
+Context.abs on str -> TypeError descriptor 'abs' for 'decimal.Context' objects doesn't apply to a 'str' object
+Context.copy on int -> TypeError descriptor 'copy' for 'decimal.Context' objects doesn't apply to a 'int' object
+Context.copy on NoneType -> TypeError descriptor 'copy' for 'decimal.Context' objects doesn't apply to a 'NoneType' object
+Context.copy on Decimal -> TypeError descriptor 'copy' for 'decimal.Context' objects doesn't apply to a 'decimal.Decimal' object
+Context.copy on str -> TypeError descriptor 'copy' for 'decimal.Context' objects doesn't apply to a 'str' object
+Context.__repr__ on int -> TypeError descriptor '__repr__' requires a 'decimal.Context' object but received a 'int'
+Context.__repr__ on NoneType -> TypeError descriptor '__repr__' requires a 'decimal.Context' object but received a 'NoneType'
+Context.__repr__ on Decimal -> TypeError descriptor '__repr__' requires a 'decimal.Context' object but received a 'decimal.Decimal'
+Context.__repr__ on str -> TypeError descriptor '__repr__' requires a 'decimal.Context' object but received a 'str'
+Context.__reduce__ on int -> TypeError descriptor '__reduce__' for 'decimal.Context' objects doesn't apply to a 'int' object
+Context.__reduce__ on NoneType -> TypeError descriptor '__reduce__' for 'decimal.Context' objects doesn't apply to a 'NoneType' object
+Context.__reduce__ on Decimal -> TypeError descriptor '__reduce__' for 'decimal.Context' objects doesn't apply to a 'decimal.Decimal' object
+Context.__reduce__ on str -> TypeError descriptor '__reduce__' for 'decimal.Context' objects doesn't apply to a 'str' object
+Context.Etiny on int -> TypeError descriptor 'Etiny' for 'decimal.Context' objects doesn't apply to a 'int' object
+Context.Etiny on NoneType -> TypeError descriptor 'Etiny' for 'decimal.Context' objects doesn't apply to a 'NoneType' object
+Context.Etiny on Decimal -> TypeError descriptor 'Etiny' for 'decimal.Context' objects doesn't apply to a 'decimal.Decimal' object
+Context.Etiny on str -> TypeError descriptor 'Etiny' for 'decimal.Context' objects doesn't apply to a 'str' object
+Context.clear_flags on int -> TypeError descriptor 'clear_flags' for 'decimal.Context' objects doesn't apply to a 'int' object
+Context.clear_flags on NoneType -> TypeError descriptor 'clear_flags' for 'decimal.Context' objects doesn't apply to a 'NoneType' object
+Context.clear_flags on Decimal -> TypeError descriptor 'clear_flags' for 'decimal.Context' objects doesn't apply to a 'decimal.Decimal' object
+Context.clear_flags on str -> TypeError descriptor 'clear_flags' for 'decimal.Context' objects doesn't apply to a 'str' object
+Context.create_decimal on int -> TypeError descriptor 'create_decimal' for 'decimal.Context' objects doesn't apply to a 'int' object
+Context.create_decimal on NoneType -> TypeError descriptor 'create_decimal' for 'decimal.Context' objects doesn't apply to a 'NoneType' object
+Context.create_decimal on Decimal -> TypeError descriptor 'create_decimal' for 'decimal.Context' objects doesn't apply to a 'decimal.Decimal' object
+Context.create_decimal on str -> TypeError descriptor 'create_decimal' for 'decimal.Context' objects doesn't apply to a 'str' object
+Context.power on int -> TypeError descriptor 'power' for 'decimal.Context' objects doesn't apply to a 'int' object
+Context.power on NoneType -> TypeError descriptor 'power' for 'decimal.Context' objects doesn't apply to a 'NoneType' object
+Context.power on Decimal -> TypeError descriptor 'power' for 'decimal.Context' objects doesn't apply to a 'decimal.Decimal' object
+Context.power on str -> TypeError descriptor 'power' for 'decimal.Context' objects doesn't apply to a 'str' object
+Context.__init__ on int -> TypeError descriptor '__init__' requires a 'decimal.Context' object but received a 'int'
+Context.__init__ on NoneType -> TypeError descriptor '__init__' requires a 'decimal.Context' object but received a 'NoneType'
+Context.__init__ on Decimal -> TypeError descriptor '__init__' requires a 'decimal.Context' object but received a 'decimal.Decimal'
+Context.__init__ on str -> TypeError descriptor '__init__' requires a 'decimal.Context' object but received a 'str'
+Context.__getattribute__ on int -> TypeError descriptor '__getattribute__' requires a 'decimal.Context' object but received a 'int'
+Context.__getattribute__ on NoneType -> TypeError descriptor '__getattribute__' requires a 'decimal.Context' object but received a 'NoneType'
+Context.__getattribute__ on Decimal -> TypeError descriptor '__getattribute__' requires a 'decimal.Context' object but received a 'decimal.Decimal'
+Context.__getattribute__ on str -> TypeError descriptor '__getattribute__' requires a 'decimal.Context' object but received a 'str'
+Context.__setattr__ on int -> TypeError descriptor '__setattr__' requires a 'decimal.Context' object but received a 'int'
+Context.__setattr__ on NoneType -> TypeError descriptor '__setattr__' requires a 'decimal.Context' object but received a 'NoneType'
+Context.__setattr__ on Decimal -> TypeError descriptor '__setattr__' requires a 'decimal.Context' object but received a 'decimal.Decimal'
+Context.__setattr__ on str -> TypeError descriptor '__setattr__' requires a 'decimal.Context' object but received a 'str'
+Context.__delattr__ on int -> TypeError descriptor '__delattr__' requires a 'decimal.Context' object but received a 'int'
+Context.__delattr__ on NoneType -> TypeError descriptor '__delattr__' requires a 'decimal.Context' object but received a 'NoneType'
+Context.__delattr__ on Decimal -> TypeError descriptor '__delattr__' requires a 'decimal.Context' object but received a 'decimal.Decimal'
+Context.__delattr__ on str -> TypeError descriptor '__delattr__' requires a 'decimal.Context' object but received a 'str'
+Context.prec on int -> TypeError descriptor 'prec' for 'decimal.Context' objects doesn't apply to a 'int' object
+Context.prec = on int -> TypeError descriptor 'prec' for 'decimal.Context' objects doesn't apply to a 'int' object
+Context.prec on NoneType -> TypeError __get__(None, None) is invalid
+Context.prec = on NoneType -> TypeError descriptor 'prec' for 'decimal.Context' objects doesn't apply to a 'NoneType' object
+Context.prec on Decimal -> TypeError descriptor 'prec' for 'decimal.Context' objects doesn't apply to a 'decimal.Decimal' object
+Context.prec = on Decimal -> TypeError descriptor 'prec' for 'decimal.Context' objects doesn't apply to a 'decimal.Decimal' object
+Context.prec on str -> TypeError descriptor 'prec' for 'decimal.Context' objects doesn't apply to a 'str' object
+Context.prec = on str -> TypeError descriptor 'prec' for 'decimal.Context' objects doesn't apply to a 'str' object
+Context.rounding on int -> TypeError descriptor 'rounding' for 'decimal.Context' objects doesn't apply to a 'int' object
+Context.rounding = on int -> TypeError descriptor 'rounding' for 'decimal.Context' objects doesn't apply to a 'int' object
+Context.rounding on NoneType -> TypeError __get__(None, None) is invalid
+Context.rounding = on NoneType -> TypeError descriptor 'rounding' for 'decimal.Context' objects doesn't apply to a 'NoneType' object
+Context.rounding on Decimal -> TypeError descriptor 'rounding' for 'decimal.Context' objects doesn't apply to a 'decimal.Decimal' object
+Context.rounding = on Decimal -> TypeError descriptor 'rounding' for 'decimal.Context' objects doesn't apply to a 'decimal.Decimal' object
+Context.rounding on str -> TypeError descriptor 'rounding' for 'decimal.Context' objects doesn't apply to a 'str' object
+Context.rounding = on str -> TypeError descriptor 'rounding' for 'decimal.Context' objects doesn't apply to a 'str' object
+SignalDictMixin.__getitem__ on a dict -> TypeError descriptor '__getitem__' requires a 'decimal.SignalDictMixin' object but received a 'dict'
+SignalDictMixin.__getitem__ on a Context -> TypeError descriptor '__getitem__' requires a 'decimal.SignalDictMixin' object but received a 'decimal.Context'
+SignalDictMixin.__setitem__ on a dict -> TypeError descriptor '__setitem__' requires a 'decimal.SignalDictMixin' object but received a 'dict'
+SignalDictMixin.__setitem__ on a Context -> TypeError descriptor '__setitem__' requires a 'decimal.SignalDictMixin' object but received a 'decimal.Context'
+SignalDictMixin.__len__ on a dict -> TypeError descriptor '__len__' requires a 'decimal.SignalDictMixin' object but received a 'dict'
+SignalDictMixin.__len__ on a Context -> TypeError descriptor '__len__' requires a 'decimal.SignalDictMixin' object but received a 'decimal.Context'
+SignalDictMixin.__iter__ on a dict -> TypeError descriptor '__iter__' requires a 'decimal.SignalDictMixin' object but received a 'dict'
+SignalDictMixin.__iter__ on a Context -> TypeError descriptor '__iter__' requires a 'decimal.SignalDictMixin' object but received a 'decimal.Context'
+SignalDictMixin.__repr__ on a dict -> TypeError descriptor '__repr__' requires a 'decimal.SignalDictMixin' object but received a 'dict'
+SignalDictMixin.__repr__ on a Context -> TypeError descriptor '__repr__' requires a 'decimal.SignalDictMixin' object but received a 'decimal.Context'
+SignalDictMixin.copy on a dict -> TypeError descriptor 'copy' for 'decimal.SignalDictMixin' objects doesn't apply to a 'dict' object
+SignalDictMixin.copy on a Context -> TypeError descriptor 'copy' for 'decimal.SignalDictMixin' objects doesn't apply to a 'decimal.Context' object
+SignalDictMixin.__eq__ on a dict -> TypeError descriptor '__eq__' requires a 'decimal.SignalDictMixin' object but received a 'dict'
+SignalDictMixin.__eq__ on a Context -> TypeError descriptor '__eq__' requires a 'decimal.SignalDictMixin' object but received a 'decimal.Context'
+SignalDictMixin.__init__ on a dict -> TypeError descriptor '__init__' requires a 'decimal.SignalDictMixin' object but received a 'dict'
+SignalDictMixin.__init__ on a Context -> TypeError descriptor '__init__' requires a 'decimal.SignalDictMixin' object but received a 'decimal.Context'
+Decimal(EvilFloat) -> Decimal('1.5')
+from_float(EvilFloat) -> Decimal('1.5')
+Decimal(EvilInt) -> Decimal('15')
+Decimal + EvilInt -> Decimal('16')
+Decimal == EvilFloat -> True
+Decimal(EvilStr) -> Decimal('1.5')
+Decimal(EvilTuple) -> Decimal('1.2')
+Decimal((0, EvilTuple, 1)) -> Decimal('1.2')
+Decimal(EvilList) -> Decimal('1.2')
+round(Decimal, EvilIndex) -> TypeError optional arg must be an integer
+round(Decimal, EvilInt) -> Decimal('1.23')
+IEEEContext(EvilIndex) -> RuntimeError index
+Context(prec=EvilInt) -> 5
+Context(rounding=EvilStr) -> 'ROUND_UP'
+format(Decimal, EvilStr) -> '1.500'
+traps = a dict that changes meanwhile -> (None, True)
+traps = a dict of values that raise -> ZeroDivisionError division by zero
+flags == such a dict -> ZeroDivisionError division by zero
+flags[EvilKey] -> KeyError 'valid values for signals are:\n  [InvalidOperation, FloatOperation, DivisionByZero,\n   Overflow, Underflow, Subnormal, Inexact, Rounded,\n   Clamped]'
+flags[EqualToAll] -> KeyError 'valid values for signals are:\n  [InvalidOperation, FloatOperation, DivisionByZero,\n   Overflow, Underflow, Subnormal, Inexact, Rounded,\n   Clamped]'
+traps = dict with such keys -> KeyError 'invalid signal dict'
+Decimal('1.5') == Rat(1, 2) -> (False, False)
+Decimal('1.5') == Rat(3, 2) -> (True, False)
+Decimal('1.5') == Rat(1, 2) -> TypeError argument must be an integer
+Decimal('1.5') == Rat(1, 2) -> TypeError argument must be an integer
+Decimal('1.5') == Rat(1.5, 2) -> TypeError argument must be an integer
+Decimal('1.5') == Rat(1, None) -> TypeError argument must be an integer
+Decimal('1.5') == Rat(boom, 2) -> RuntimeError attribute
+Decimal('1.5') == Rat(1, boom) -> RuntimeError attribute
+Decimal('1.5') == Rat(big, big) -> (False, True)
+Decimal('1.5') == Rat(1, 0) -> (False, True)
+Decimal('1.5') == Rat(True, True) -> (False, False)
+NaN == Rat(1, boom) -> False
+Infinity > Rat(1, boom) -> True
+subclass -> ('added', Decimal('2.5'), Decimal('0.5'), Decimal('2.5'), 5, 'str', 'D(...)', 'eq', 'formatted', 'formatted', 'Decimal', 'Decimal', 'Decimal', 'Decimal')
+subclass copies -> (True, True, 'D', Decimal('1.5'), 'Decimal', 'D', False)
+subclass reduce -> (<class '__main__.D'>, ('1.5',))
+weakref to a Decimal -> TypeError cannot create weak reference to 'decimal.Decimal' object
+weakref to an instance of a subclass -> True
+attribute of a Decimal -> AttributeError 'decimal.Decimal' object has no attribute 'a' and no __dict__ for setting new attributes
+__dict__ of a Decimal -> AttributeError 'decimal.Decimal' object has no attribute '__dict__'
+__class__ of a Decimal -> TypeError __class__ assignment only supported for mutable types or ModuleType subclasses
+__class__ of a D -> TypeError __class__ assignment only supported for mutable types or ModuleType subclasses
+slots -> (True, Decimal('6'), False, False)
+from_float of a class whose __new__ returns something else -> 42
+from_number of it -> 42
+from_float of a class whose __new__ raises -> RuntimeError new
+class (Decimal, Context) -> TypeError multiple bases have instance lay-out conflict
+class (Decimal, int) -> TypeError multiple bases have instance lay-out conflict
+class (ContextManager) -> TypeError type 'decimal.ContextManager' is not an acceptable base type
+class (SignalDictMixin, dict) -> TypeError multiple bases have instance lay-out conflict
+context subclass -> (5, 1, 'added', 'C()', 'Context', 'Context', 'C', 'C')
+context subclass as the current one -> (True, Decimal('0.33333'), Decimal('3'))
+del k.extra -> AttributeError context attributes cannot be deleted
+context subclass without init -> Decimal('0.3333333333333333333333333333')
+type attributes -> TypeError cannot set 'x' attribute of immutable type 'decimal.Decimal'
+type attributes -> TypeError cannot set 'x' attribute of immutable type 'decimal.Context'
+type attributes -> TypeError cannot set 'sqrt' attribute of immutable type 'decimal.Decimal'
+1
+contextvars.Context().run -> (Decimal('0.333'), Decimal('0.3333333333333333333333333333'))
+copy_context().run -> (Decimal('0.333'), Decimal('0.333'))
+False
+False
+False
+285571.4285714285714285714286

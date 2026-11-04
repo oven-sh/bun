@@ -1,0 +1,53 @@
+status: 0
+script: a9d0350b40527b33
+---
+identity -> (True, True, False, True)
+type -> ('SignalDict', 'abc', 'SignalDict', ['SignalDict', 'SignalDictMixin', 'MutableMapping', 'Mapping', 'Collection', 'Sized', 'Iterable', 'Container', 'object'], 'ABCMeta')
+isinstance -> (False, True, True, False)
+dict() -> ['Inexact']
+keys -> ['InvalidOperation', 'FloatOperation', 'DivisionByZero', 'Overflow', 'Underflow', 'Subnormal', 'Inexact', 'Rounded', 'Clamped']
+values -> [False, False, False, False, False, False, True, False, False]
+items -> [('InvalidOperation', False), ('FloatOperation', False), ('DivisionByZero', False), ('Overflow', False), ('Underflow', False), ('Subnormal', False), ('Inexact', False), ('Rounded', True), ('Clamped', True)]
+len, bool -> (9, True)
+in -> (True, False, False, False)
+get -> (True, False, None, 'x')
+reversed -> TypeError 'SignalDict' object is not reversible
+iter twice -> [True, True, True, True, True, True, True, True, True]
+or -> TypeError unsupported operand type(s) for |: 'SignalDict' and 'dict'
+ior -> TypeError unsupported operand type(s) for |=: 'SignalDict' and 'dict'
+update -> (None, ['Inexact', 'Rounded'], 'Context(prec=28, rounding=ROUND_HALF_EVEN, Emin=-999999, Emax=999999, capitals=1, clamp=0, flags=[Inexact, Rounded], traps=[Clamped, Rounded])')
+update with a bad key -> KeyError 'valid values for signals are:\n  [InvalidOperation, FloatOperation, DivisionByZero,\n   Overflow, Underflow, Subnormal, Inexact, Rounded,\n   Clamped]'
+update by keyword -> KeyError 'valid values for signals are:\n  [InvalidOperation, FloatOperation, DivisionByZero,\n   Overflow, Underflow, Subnormal, Inexact, Rounded,\n   Clamped]'
+setdefault -> (True, False, ['Inexact', 'Rounded'])
+pop -> ValueError signal keys cannot be deleted
+pop missing -> KeyError 'valid values for signals are:\n  [InvalidOperation, FloatOperation, DivisionByZero,\n   Overflow, Underflow, Subnormal, Inexact, Rounded,\n   Clamped]'
+pop default -> 'x'
+popitem -> ValueError signal keys cannot be deleted
+clear -> ValueError signal keys cannot be deleted
+after all that -> (['Inexact', 'Rounded'], ['Rounded', 'Clamped'])
+eq -> (True, False, True, True, True, False, True)
+order -> TypeError '<' not supported between instances of 'SignalDict' and 'SignalDict'
+hash -> TypeError unhashable type: 'SignalDict'
+copy method -> ('dict', ['Inexact', 'Rounded'])
+copy.copy -> TypeError cannot pickle 'SignalDict' object
+copy.deepcopy -> TypeError cannot pickle 'SignalDict' object
+pickle -> TypeError cannot pickle 'SignalDict' object
+reduce_ex -> TypeError cannot pickle 'SignalDict' object
+weakref -> True
+attribute -> (None, 1, {'x': 1})
+class attribute -> (None, 2, None)
+str, format -> (True, True)
+values that are not bools -> (None, True, None, False, None, True)
+assigning one to the other -> (None, ['Rounded', 'Clamped'], True, None, True)
+assigning another context's -> (None, ['Inexact'], True, None, ['Inexact'])
+the context follows -> (None, Decimal('0.3333333333333333333333333333'), True, None)
+and traps -> Inexact [<class 'decimal.Inexact'>]
+InvalidOperation covers its conditions -> (None, None, Decimal('NaN'), ['InvalidOperation'], False, 'Context(prec=28, rounding=ROUND_HALF_EVEN, Emin=-999999, Emax=999999, capitals=1, clamp=0, flags=[InvalidOperation], traps=[])')
+set by hand it compares equal -> (None, None, True)
+subclass -> ValueError invalid signal dict
+abstract methods -> []
+match -> 'mapping'
+match statement -> ('matched', False)
+star-star -> TypeError keywords must be strings
+dict union from the left -> TypeError unsupported operand type(s) for |: 'dict' and 'SignalDict'
+sorted by name -> ['Clamped', 'DivisionByZero', 'FloatOperation', 'Inexact', 'InvalidOperation', 'Overflow', 'Rounded', 'Subnormal', 'Underflow']

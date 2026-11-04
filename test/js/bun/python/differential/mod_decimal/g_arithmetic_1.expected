@@ -1,0 +1,1003 @@
+status: 0
+script: 0b068a6b07314ebe
+---
+0 [p3 CEILING -999999 999999 c1 C1 tFlDiIn] Decimal('7.8E+11') // Decimal('80527410.54962388521') -> Decimal:Decimal('NaN') In
+1 [p5 DOWN -9 9 c0 C1 tOvUn] c.max(Decimal('-5.9E+5'), Decimal('-3.0602E+8')) -> Decimal:Decimal('-5.9E+5') 
+2 [p39 HALF_DOWN -33 69 c0 C0 tFlUnSuIn] Decimal('-3.69e+3') divmod Decimal('9909009909090009909000090.00') -> (Decimal:Decimal('-0'), Decimal:Decimal('-3690.00')) 
+3 [p39 UP -5 7 c1 C1 t] c.scaleb(Decimal('9.9E+3'), Decimal('29')) -> Decimal:Decimal('Infinity') OvInRo
+4 [p19 HALF_DOWN -999999 999999 c0 C0 t] Decimal('9.1336424123431490834e+23').copy_negate() -> Decimal:Decimal('-9.1336424123431490834e+23') 
+5 [p28 HALF_EVEN -7 8 c1 C0 t] Decimal('0').compare_total(Decimal('5.050505505505505500500550500E-7'), c) -> Decimal:Decimal('-1') 
+6 [p31 HALF_EVEN -5 3 c0 C1 tInSu] c.copy_negate(Decimal('3.6173691092253177468E+37')) -> Decimal:Decimal('-3.6173691092253177468E+37') 
+7 [p28 HALF_UP -3 5 c0 C1 t] Decimal('400000000000000000.000000000000000000000000000000000000000').__neg__() -> Decimal:Decimal('-Infinity') OvInRo
+8 [p3 UP -8 6 c0 C0 t] Decimal('6000000.0000000000000000000000000000000').next_toward(Decimal('-4.4e-10')) -> Decimal:Decimal('5.99e+6') 
+9 [p34 UP -999999999999999999 999999999999999999 c1 C1 tUnSu] Decimal('5.0E+5') * 819633585725910536624163514705228699644 -> Decimal:Decimal('4.098167928629552683120817573526144E+44') InRo
+10 [p34 HALF_UP -9 1 c0 C1 t] Decimal('99.099009000000990009900009909') ** Decimal('-38') -> Decimal:Decimal('0E-42') UnSuInRoCl
+11 [p38 HALF_EVEN -98 98 c0 C0 tFlDiOvIn] c.max(Decimal('5505005000005050'), Decimal('868820752246095494047840608826596283490499.11152675548859028051109539033103')) -> !Inexact: [<class 'decimal.Inexact'>] InRo
+12 [p38 FLOOR -5 5 c0 C1 t] Decimal('2.311E+28').shift(Decimal('35')) -> Decimal:Decimal('3.1100000000000000000000000000000000000E+62') 
+13 [p28 HALF_DOWN -999999 999999 c0 C1 t] c.quantize(Decimal('-500.550500555555000050500550555550055550'), Decimal('1E-26')) -> Decimal:Decimal('NaN') In
+14 [p34 05UP -999999 999999 c0 C1 t] Decimal('5032416881084166261170102331736.00255990') // Decimal('9.999999999999999999E-873970') -> Decimal:Decimal('NaN') In
+15 [p9 UP -999999999999999999 999999999999999999 c0 C1 tFlOvSu] c.is_normal(Decimal('9.351E+18')) -> bool:True 
+16 [p20 HALF_DOWN -40836532922 727089485539 c0 C1 tInDiSuIn] Decimal('9.0E+727089485521').fma(Decimal('3.10103205E-18'), Decimal('7.9278202958767602035E-20'), c) -> !Inexact: [<class 'decimal.Inexact'>] InRo
+17 [p3 05UP -6 7 c0 C1 t] -1312698457379640972166 * Decimal('-0.00909') -> Decimal:Decimal('9.99E+7') OvInRo
+18 [p9 FLOOR -38 97 c0 C1 t] Decimal('7.7E-31') * -27214208697872573358520 -> Decimal:Decimal('-2.09549407E-8') InRo
+19 [p28 CEILING -999999999999999999 999999999999999999 c0 C1 t] Decimal('5.260004701232802752E-20').__abs__() -> Decimal:Decimal('5.260004701232802752E-20') 
+20 [p16 UP -40 26 c0 C1 t] c.max(Decimal('-3.508975654882325302E+56'), Decimal('9.9999999999999999E-34')) -> Decimal:Decimal('1.000000000000000E-33') InRo
+21 [p28 DOWN -39 91 c1 C1 tInSuIn] Decimal('9E+4').is_qnan() -> bool:False 
+22 [p9 HALF_EVEN -999999 999999 c0 C1 t] Decimal('0E+40').__complex__() -> complex:0j 
+23 [p9 DOWN -999999 999999 c0 C1 t] Decimal('11110').logical_invert(c) -> Decimal:Decimal('111100001') 
+24 [p2 CEILING -82 89 c1 C1 t] Decimal('-3.2E+9') // Decimal('-0E+9') -> Decimal:Decimal('Infinity') Di
+25 [p20 DOWN -445689275103 960826093927 c1 C1 tOvRo] c.logical_invert(Decimal('-600000000000000.00000')) -> Decimal:Decimal('NaN') In
+26 [p16 HALF_EVEN -999999 999999 c0 C1 tFlUnSu] Decimal('5.55000005550055055E-9').next_toward(Decimal('-9.532222450225544074E+118498'), c) -> Decimal:Decimal('5.550000055500550E-9') 
+27 [p28 CEILING -3 2 c1 C1 t] Decimal('-5550550550.5550550') // Decimal('-0E-9') -> Decimal:Decimal('Infinity') Di
+28 [p9 UP -169 97866 c0 C1 t] Decimal('11010100').logical_or(Decimal('11011'), c) -> Decimal:Decimal('11011111') 
+29 [p16 HALF_UP -54 38 c0 C1 tFlCl] Decimal('9.839673756925114E+55').copy_negate() -> Decimal:Decimal('-9.839673756925114E+55') 
+30 [p28 HALF_UP -6 3 c1 C1 t] Decimal('-7896.275352') - Decimal('4.721827620029641532547E+29') -> Decimal:Decimal('-Infinity') OvInRo
+31 [p1 FLOOR -999999 999999 c1 C1 t] c.copy_abs(Decimal('9.0000900099000099909E+58')) -> Decimal:Decimal('9.0000900099000099909E+58') 
+32 [p19 HALF_DOWN -583422 5844366780750 c0 C1 tDiOvSu] Decimal('51').__int__() -> int:51 
+33 [p28 HALF_DOWN -999999 999999 c0 C0 tFlSuRo] Decimal('-NaN123').__neg__() -> Decimal:Decimal('-NaN123') 
+34 [p1 HALF_DOWN -3 6 c0 C1 t] c.is_infinite(Decimal('9.999999999999999999E+28')) -> bool:False 
+35 [p34 DOWN -10 8 c0 C1 t] c.copy_sign(315390422296655257697445893, Decimal('0E+43')) -> Decimal:Decimal('315390422296655257697445893') 
+36 [p39 UP -999999 999999 c1 C1 t] Decimal('7.60482531728955896100581907731828562373E+1000001').__neg__() -> Decimal:Decimal('-Infinity') OvInRo
+37 [p34 DOWN -999999 999999 c0 C1 t] Decimal('6833132336672587274167030467') + -24400431819167511 -> Decimal:Decimal('6833132336648186842347862956') 
+38 [p1 DOWN -1432603038 9 c1 C0 tInFl] c.is_subnormal(Decimal('-7.6E+59219123961636')) -> bool:False 
+39 [p9 UP -999999 999999 c1 C1 tInIn] Decimal('-1.291529902467954E-999992').min_mag(Decimal('9.999999999E-24'), c) -> !Inexact: [<class 'decimal.Inexact'>] InRo
+40 [p28 UP -89 64 c1 C1 t] Decimal('-9.500667879672473483E-103').max_mag(Decimal('9.7E-26'), c) -> Decimal:Decimal('9.7E-26') 
+41 [p38 05UP -36 76 c0 C1 t] c.subtract(Decimal('4.86130134882956183055190805E-39'), Decimal('4.1554537491186918737786602720870365234E+76')) -> Decimal:Decimal('-4.1554537491186918737786602720870365233E+76') InRo
+42 [p16 FLOOR -999999 999999 c0 C1 tIn] Decimal('5.1719386318185696E+47').normalize(c) -> Decimal:Decimal('5.171938631818569E+47') InRo
+43 [p1 HALF_DOWN -7 1 c0 C0 t] Decimal('0.9').next_minus(c) -> Decimal:Decimal('0.8') 
+44 [p1 HALF_UP -999999 999999 c0 C1 t] c.minus(Decimal('-0.08')) -> Decimal:Decimal('0.08') 
+45 [p28 HALF_EVEN -999999 999999 c1 C1 t] Decimal('-8485267923135735689.7434725814959569199') + Decimal('0E-16') -> Decimal:Decimal('-8485267923135735689.743472581') InRo
+46 [p39 HALF_EVEN -2 3 c1 C1 tFlOvUn] Decimal('0.9').same_quantum(Decimal('990.082379251460092616154385712943946522'), c) -> bool:False 
+47 [p1 UP -999999 999999 c0 C1 t] Decimal('-9.9909909009999990900900099009909990099E+1000037').to_eng_string(c) -> str:'-999.09909009999990900900099009909990099E+1000035' 
+48 [p2 CEILING -9 6 c1 C1 tInFlUn] Decimal('-873787321410755634710809019732636868').to_integral_exact(ROUND_HALF_UP, c) -> Decimal:Decimal('-873787321410755634710809019732636868') 
+49 [p2 HALF_EVEN -9 5 c1 C0 t] c.is_zero(Decimal('81419804401785695506304663825.3173263615')) -> bool:False 
+50 [p9 HALF_DOWN -999999 999999 c1 C0 tInDiSuCl] pow(863793574, Decimal('863793574'), 7442060191) -> !InvalidOperation: [<class 'decimal.InvalidOperation'>] In
+51 [p28 DOWN -325677938 4222 c0 C0 t] Decimal('9.9e-23').is_qnan() -> bool:False 
+52 [p12 UP -999999999999999999 999999999999999999 c0 C1 t] Decimal('-6.9977305485702085154E+28') ** Decimal('162') -> Decimal:Decimal('7.63957057208E+4672') InRo
+53 [p28 DOWN -999999 999999 c0 C0 t] c.is_infinite(Decimal('NaN')) -> bool:False 
+54 [p28 DOWN -42 39 c0 C0 tInFl] c.min(Decimal('-8745603187010968649044937.681'), Decimal('-5.5E+3')) -> Decimal:Decimal('-8745603187010968649044937.681') 
+55 [p28 FLOOR -30 61 c0 C1 tInFlOvSuIn] c.power(Decimal('612831204290442890706287408181'), Decimal('4902912518'), -193771839225482379146780) -> Decimal:Decimal('25991508311144977743081') 
+56 [p2 UP -999999999999999999 999999999999999999 c0 C0 tUnSu] Decimal('0.0099').is_finite() -> bool:True 
+57 [p1 HALF_DOWN -999999 999999 c0 C1 t] c.min(-1902242452961, Decimal('-0.0002')) -> Decimal:Decimal('-2E+12') InRo
+58 [p20 HALF_DOWN -5 16 c0 C1 t] Decimal('849642.448135010533460') / 790698690363050269218265103760 -> Decimal:Decimal('1E-24') UnSuInRo
+59 [p3 UP -59 34 c1 C1 t] c.divide(Decimal('-8E+4'), Decimal('0E+46')) -> Decimal:Decimal('-Infinity') Di
+60 [p2 DOWN -3439413268 9 c0 C0 t] c.multiply(6743054020306125441472963928, Decimal('-9E+38')) -> Decimal:Decimal('-9.9E+9') OvInRo
+61 [p28 CEILING -999999 999999 c1 C0 t] Decimal('-sNaN9').__reduce__() -> (type:<class 'decimal.Decimal'>, (str:'-sNaN9')) 
+62 [p1 05UP -999999 999999 c0 C1 t] 79793176359192284788495027 - Decimal('9E+5748220157') -> Decimal:Decimal('-9E+999999') OvInRo
+63 [p10 UP -58 75 c1 C1 t] c.is_canonical(Decimal('-0.045892310236714011266')) -> bool:True 
+64 [p1 HALF_UP -5 2 c0 C0 tCl] Decimal('3.0000000000000000000E+35').quantize(Decimal('0.0001'), ROUND_HALF_EVEN) -> Decimal:Decimal('NaN') In
+65 [p9 FLOOR -999999 999999 c0 C1 t] c.is_subnormal(Decimal('2.94908154E-428869')) -> bool:False 
+66 [p9 DOWN -14 1 c1 C0 tRoCl] Decimal('-4.293E-11').exp(c) -> !Rounded: [<class 'decimal.Rounded'>] InRo
+67 [p9 HALF_DOWN -2 10 c0 C1 t] Decimal('-9').fma(Decimal('0.000'), 75401789344405270156052089014451492447, c) -> Decimal:Decimal('Infinity') OvInRo
+68 [p3 FLOOR -73962057516 363049600696 c0 C1 tInDiRo] Decimal('185659.150085074741846683552632931496376') + -167022347548382386189681139744977 -> !Rounded: [<class 'decimal.Rounded'>] InRo
+69 [p19 DOWN -999999 999999 c1 C1 t] c.divide(Decimal('5.005E-20'), Decimal('9.9999999999E+95799')) -> Decimal:Decimal('5.005000000050050000E-95820') InRo
+70 [p39 CEILING -999999 999999 c0 C1 tFlSu] Decimal('0E-1343794').next_minus(c) -> Decimal:Decimal('-1E-1000037') 
+71 [p9 CEILING 0 7 c1 C1 tDiRo] c.abs(Decimal('0.090099099009090099900')) -> !Rounded: [<class 'decimal.Rounded'>] UnSuInRo
+72 [p2 DOWN -999999 999999 c0 C0 tFlRo] c.subtract(-2391517659598715039081679169421457823335, Decimal('6.4E-999997')) -> !Rounded: [<class 'decimal.Rounded'>] InRo
+73 [p3 DOWN -999999 999999 c1 C1 t] c.min(Decimal('7E+2'), Decimal('9.0E+2')) -> Decimal:Decimal('7E+2') 
+74 [p9 HALF_DOWN -999999999999999999 999999999999999999 c0 C1 tFl] Decimal('9.9999999999E+15') % Decimal('5.550500E+14') -> Decimal:Decimal('9.0999999E+12') 
+75 [p37 HALF_UP -6694271487336 3326 c0 C1 tOv] c.logical_xor(Decimal('10110001'), Decimal('10001010011110000010')) -> Decimal:Decimal('10001010011100110011') 
+76 [p3 05UP -999999 999999 c1 C1 t] 1 * Decimal('-1.80E-20') -> Decimal:Decimal('-1.80E-20') 
+77 [p38 HALF_EVEN -67 86 c0 C0 t] c.shift(Decimal('sNaN'), Decimal('-17')) -> Decimal:Decimal('NaN') In
+78 [p39 UP -5 10 c1 C1 t] Decimal('5.426085844E+12') // Decimal('-6.98E+6') -> Decimal:Decimal('-777376.0000000000000000000000000000') Cl
+79 [p28 DOWN -13 72 c0 C0 t] Decimal('1.3900329759814e+15') ** Decimal('9.9e+3') -> Decimal:Decimal('9.999999999999999999999999999e+72') OvInRo
+80 [p3 05UP -68 1 c0 C0 t] Decimal('3.3E-51').log10(c) -> Decimal:Decimal('-50.5') InRo
+81 [p19 HALF_DOWN -4 10 c1 C1 tOvIn] c.same_quantum(-5705774167725299427321612, Decimal('9.900990909990990009E+19')) -> bool:False 
+82 [p28 CEILING -999999999999999999 999999999999999999 c1 C1 tInUnCl] Decimal('1101000001100010').logical_xor(Decimal('1101111000000010101010110101'), c) -> Decimal:Decimal('1101111000001111101011010111') 
+83 [p28 HALF_DOWN -65 52 c0 C0 tInDiOvCl] c.copy_sign(Decimal('-426683556017272416315232.356566020207'), Decimal('7.4231536338971287286100255218459759381E+62')) -> Decimal:Decimal('426683556017272416315232.356566020207') 
+84 [p39 UP -999999 999999 c0 C1 t] c.number_class(Decimal('-4.22234616238641718216066625199350699419E+685555')) -> str:'-Normal' 
+85 [p28 FLOOR -999999999999999999 999999999999999999 c1 C1 tFlIn] Decimal('-3E+2').__float__() -> float:-300.0 
+86 [p2 HALF_DOWN -83 24 c0 C1 tInOvInCl] c.fma(1, Decimal('-2.52E+7'), Decimal('3.25E-37')) -> !Inexact: [<class 'decimal.Inexact'>] InRo
+87 [p19 UP -999999 999999 c0 C0 t] Decimal('9.999999999999999999E+999996').fma(Decimal('30126836072340907318909209578595.6544417'), Decimal('0.000009999999999999999999999999999'), c) -> Decimal:Decimal('Infinity') OvInRo
+88 [p28 CEILING -56 56 c1 C0 tInFlIn] pow(Decimal('846813331961912363545190832'), 651528, Decimal('846813331961912363545190832')) -> Decimal:Decimal('0') 
+89 [p28 HALF_DOWN -999999 999999 c1 C0 t] Decimal('-76423086471096805198').compare_total_mag(Decimal('8.8279871604608865352e+915335')) -> Decimal:Decimal('-1') 
+90 [p20 HALF_EVEN -3290959472 2828403 c1 C1 tDiInRo] c.fma(0, True, Decimal('6.579050170153367242E-19')) -> Decimal:Decimal('6.579050170153367242E-19') 
+91 [p28 HALF_DOWN -999999 999999 c0 C1 tRo] c.logical_and(Decimal('0.33'), Decimal('-0.000')) -> Decimal:Decimal('NaN') In
+92 [p38 HALF_EVEN -999999999999999999 999999999999999999 c1 C1 tIn] pow(Decimal('870364777521554991616170'), Decimal('870364777521554991616170'), Decimal('59239775800324935243915')) -> Decimal:Decimal('7861750492524667002015') 
+93 [p20 UP -40 36 c0 C1 tOvSuRo] Decimal('50005055.050').next_toward(Decimal('0.0083882538404')) -> Decimal:Decimal('50005055.049999999999') 
+94 [p28 FLOOR -54 11 c0 C0 tInDiCl] Decimal('5416119981085444.398176253221').to_eng_string(c) -> str:'5416119981085444.398176253221' 
+95 [p28 DOWN -999999 999999 c1 C1 t] Decimal('2.77389689539327344617250048898308671761E+41').to_integral_exact(ROUND_HALF_UP, c) -> Decimal:Decimal('2.77389689539327344617250048898308671761E+41') 
+96 [p19 DOWN -58 35 c0 C1 t] c.compare_total(Decimal('5.500000550050050050055505505000E+648692874748539'), Decimal('0.00999')) -> Decimal:Decimal('1') 
+97 [p16 HALF_DOWN -999999999999999999 999999999999999999 c0 C1 t] c.next_toward(Decimal('9.9999999999999999'), Decimal('7.9328574030820109638E-999999999999999980')) -> Decimal:Decimal('9.999999999999999') 
+98 [p34 HALF_EVEN -999999999999999999 999999999999999999 c0 C1 t] Decimal('7.39E-15') / Decimal('-1.1E+2') -> Decimal:Decimal('-6.718181818181818181818181818181818E-17') InRo
+99 [p31 HALF_DOWN -45 14 c1 C0 tIn] c.normalize(Decimal('0.000')) -> Decimal:Decimal('0') Cl
+100 [p44 HALF_DOWN -6 2 c0 C1 t] Decimal('-4.0445770484E+22').logical_and(Decimal('6E-22')) -> Decimal:Decimal('NaN') In
+101 [p3 DOWN -999999999999999999 999999999999999999 c0 C0 t] Decimal('-63025133235676143447552244406799').logb(c) -> Decimal:Decimal('31') 
+102 [p1 HALF_EVEN -85 45 c1 C1 t] Decimal('3E-36') / Decimal('-5550005505055555505050550505505055.0550') -> Decimal:Decimal('-5E-70') InRo
+103 [p19 05UP -999999 999999 c0 C1 tSuIn] 986056239621592 + Decimal('-9E+5') -> Decimal:Decimal('986056238721592') 
+104 [p39 DOWN -30 32 c0 C1 t] Decimal('0.00044') - Decimal('817508556203.1084618') -> Decimal:Decimal('-817508556203.1080218') 
+105 [p34 CEILING -999999999999999999 999999999999999999 c1 C0 t] Decimal('6.194415705342235444960631e+27') // Decimal('9.99999999999999999999999999e+29') -> Decimal:Decimal('0') 
+106 [p34 HALF_DOWN -999999 999999 c0 C1 t] Decimal('2760925943308964433360397355.29837058858').compare_total(Decimal('6'), c) -> Decimal:Decimal('1') 
+107 [p1 FLOOR -999999 999999 c0 C1 tSuRoCl] Decimal('5E+36') * Decimal('-1.000000000000000000E-19') -> !Rounded: [<class 'decimal.Rounded'>] Ro
+108 [p28 HALF_EVEN -999999 999999 c0 C1 tInOvUnIn] Decimal('8.418834692703802800537409973E-4066').next_minus(c) -> Decimal:Decimal('8.418834692703802800537409972E-4066') 
+109 [p28 05UP -59 36 c0 C1 t] c.plus(Decimal('9.3752923945130151E+19')) -> Decimal:Decimal('9.3752923945130151E+19') 
+110 [p1 HALF_DOWN -7 7 c0 C1 tFl] Decimal('3.0E+5').next_minus(c) -> Decimal:Decimal('2E+5') 
+111 [p28 FLOOR -999999999999999999 999999999999999999 c1 C1 t] Decimal('-5E-40').quantize(Decimal('1E-15'), ROUND_FLOOR) -> Decimal:Decimal('-1E-15') InRo
+112 [p12 HALF_DOWN -999999999999999999 999999999999999999 c1 C0 t] Decimal('8.76867E-101775086436386').to_integral_exact(ROUND_HALF_EVEN, c) -> Decimal:Decimal('0') InRo
+113 [p39 HALF_EVEN -6793951121 28023239228395848 c0 C1 tIn] c.max_mag(Decimal('-3.66558009071596147855735199102956480853E-6793951085'), Decimal('0E+21')) -> Decimal:Decimal('-3.66558009071596147855735199102956480853E-6793951085') 
+114 [p38 DOWN -999999999999999999 999999999999999999 c0 C1 t] Decimal('0.000').quantize(Decimal('1.649801751943922547E-1000000000000000017')) -> Decimal:Decimal('0E-1000000000000000035') 
+115 [p20 05UP -999999999999999999 999999999999999999 c0 C1 t] Decimal('5.50505555E+19').number_class(c) -> str:'+Normal' 
+116 [p3 05UP -20 72 c0 C0 t] Decimal('9.0E-12').compare_total(-1, c) -> Decimal:Decimal('1') 
+117 [p3 UP -76 89 c0 C0 t] c.compare(-58054072, Decimal('-6.9206693859993474018E+961648729')) -> Decimal:Decimal('1') 
+118 [p16 HALF_DOWN -999999 999999 c0 C1 tDiUnIn] c.compare_total(Decimal('1.6489727899035331724E+43'), Decimal('9.9999999999999999E+233723')) -> Decimal:Decimal('-1') 
+119 [p16 UP -46 44 c0 C0 t] c.compare_total(Decimal('-5.5321710665720507594E-25'), Decimal('-261740221267.447')) -> Decimal:Decimal('1') 
+120 [p36 DOWN -80 58 c0 C1 t] Decimal('2631952666490283372.656').canonical() -> Decimal:Decimal('2631952666490283372.656') 
+121 [p28 UP -999999 999999 c0 C0 tOvCl] c.max_mag(Decimal('-5.325191E-273886'), -57770766481588675935183015951909590489) -> Decimal:Decimal('-5.777076648158867593518301596E+37') InRo
+122 [p39 HALF_UP -999999 999999 c0 C1 t] c.logical_xor(Decimal('111101111'), Decimal('101010000011100100')) -> Decimal:Decimal('101010000100001011') 
+123 [p9 DOWN -999999999999999999 999999999999999999 c0 C0 t] Decimal('-364804691').compare_total_mag(Decimal('-9.9e+6')) -> Decimal:Decimal('1') 
+124 [p34 CEILING -999999 999999 c0 C1 t] Decimal('231.014850376854690742493354473870155398').__complex__() -> complex:(231.0148503768547+0j) 
+125 [p2 HALF_UP 0 10 c0 C1 t] Decimal('609165192395863460').shift(Decimal('1.0199011243905731394E+42'), c) -> Decimal:Decimal('NaN') In
+126 [p20 UP -2 71 c0 C1 t] c.copy_sign(Decimal('9.99E-7'), Decimal('9.99099999990090900990999E+26')) -> Decimal:Decimal('9.99E-7') 
+127 [p34 HALF_UP -999999 999999 c0 C1 t] 499815205524952242091924991316201994221 * Decimal('-94637236223383971235706721.105548311779770112738') -> Decimal:Decimal('-4.730112967330411471773741377431914E+64') InRo
+128 [p3 HALF_EVEN -8 7 c1 C1 t] c.copy_negate(-36946847453060985937746102690049) -> Decimal:Decimal('36946847453060985937746102690049') 
+129 [p19 CEILING -47 82 c0 C1 t] c.power(Decimal('-3.34E+41'), Decimal('-7E+1')) -> Decimal:Decimal('0E-65') UnSuInRoCl
+130 [p2 HALF_DOWN -9 36 c0 C1 t] c.logb(Decimal('8.88E+4')) -> Decimal:Decimal('4') 
+131 [p19 05UP -999999 999999 c0 C1 t] Decimal('9.999999999999999999E+171179').to_eng_string(c) -> str:'999.9999999999999999E+171177' 
+132 [p28 CEILING -999999999999999999 999999999999999999 c0 C1 t] Decimal('91160731.826825') divmod Decimal('-86920844467752603061527.0382523') -> (Decimal:Decimal('-0'), Decimal:Decimal('91160731.8268250')) 
+133 [p17 FLOOR -1 4 c0 C1 tIn] c.logical_or(Decimal('0'), Decimal('110100001011101')) -> Decimal:Decimal('110100001011101') 
+134 [p1 05UP -584502 1 c1 C1 tDiUnSu] Decimal('0E+1').max_mag(Decimal('-516163974501895394958860246057379075716')) -> Decimal:Decimal('-9E+1') OvInRo
+135 [p10 CEILING -999999 999999 c1 C1 tFlCl] Decimal('-9.2630747891E+20') // Decimal('-9.9999999999E+19') -> Decimal:Decimal('9') 
+136 [p34 HALF_DOWN -5 87 c0 C1 t] c.is_finite(Decimal('909009909900099909000099990999000009.909')) -> bool:True 
+137 [p20 HALF_UP -83 54 c1 C0 tUnInRoCl] c.next_toward(Decimal('5E+1'), Decimal('8.8760096870940354775E-13')) -> Decimal:Decimal('49.999999999999999999') 
+138 [p39 HALF_DOWN -4 0 c0 C1 t] c.power(96277817068447052325145161574, 5, -657807363060504062) -> Decimal:Decimal('540499561764700002') 
+139 [p1 FLOOR -999999 999999 c0 C1 t] c.scaleb(Decimal('9E+999998'), Decimal('-1')) -> Decimal:Decimal('9E+999997') 
+140 [p28 CEILING -69 35 c0 C1 t] Decimal('-9.9000090000990990E-44').exp(c) -> Decimal:Decimal('1.000000000000000000000000000') InRo
+141 [p28 CEILING -2 4 c1 C1 tOvUn] c.compare_total_mag(Decimal('217.612316053036884'), Decimal('5.591451978839106454392047461E-12')) -> Decimal:Decimal('1') 
+142 [p23 05UP -999999 999999 c0 C1 t] Decimal('-5.00000000E+10') % Decimal('5.00505E+8') -> Decimal:Decimal('-4.500050E+8') 
+143 [p28 UP -8 2 c1 C1 t] c.remainder_near(Decimal('2E+9'), Decimal('-8.25E+10')) -> Decimal:Decimal('Infinity') OvInRo
+144 [p1 DOWN -999999 999999 c1 C1 tOvUnSuInRo] Decimal('-382868769194195842.62271018067760836569').normalize(c) -> !Inexact: [<class 'decimal.Inexact'>, <class 'decimal.Rounded'>] InRo
+145 [p19 HALF_EVEN -5 1 c0 C1 tRo] Decimal('-131095.706').canonical() -> Decimal:Decimal('-131095.706') 
+146 [p28 HALF_UP -46512 725401174 c0 C1 t] c.divide_int(Decimal('-0.0000'), Decimal('5.055505050555505050E+22')) -> Decimal:Decimal('-0') 
+147 [p34 CEILING -57 53 c1 C1 tInInCl] c.compare(Decimal('-6.731744011691335410603210798034240E+58'), Decimal('-775411715733965040.0262500867414367')) -> Decimal:Decimal('-1') 
+148 [p28 FLOOR -35 14 c0 C0 t] c.logical_and(Decimal('1011'), Decimal('1110000')) -> Decimal:Decimal('0') 
+149 [p28 HALF_EVEN -1 3 c0 C1 tFlOvUnSuCl] Decimal('-2892623878850.277858').logical_or(Decimal('5.282700504691161997994041072'), c) -> Decimal:Decimal('NaN') In
+150 [p20 HALF_DOWN -999999 999999 c1 C1 tIn] c.copy_negate(-96738085661656556032542007158299236) -> Decimal:Decimal('96738085661656556032542007158299236') 
+151 [p38 FLOOR -999999 999999 c1 C1 tCl] -3071445679971233822904 ** Decimal('160') -> Decimal:Decimal('9.4374408331056805540191875355958818441E+3437') InRo
+152 [p13 HALF_DOWN -42 42 c0 C1 t] Decimal('10101101101').logical_invert(c) -> Decimal:Decimal('1101010010010') 
+153 [p2 HALF_EVEN -54 99 c1 C1 tCl] c.normalize(Decimal('5.0505500555000550000550050505500550555E+97')) -> Decimal:Decimal('5.1E+97') InRo
+154 [p38 05UP -999999 999999 c0 C1 tDi] Decimal('8.82000001949996E+17') // Decimal('1.000000000000000000000E+26') -> Decimal:Decimal('0') 
+155 [p9 DOWN -95 89 c0 C1 t] Decimal('79931291121723233187768919').min_mag(Decimal('5.50000555E+11'), c) -> Decimal:Decimal('5.50000555E+11') 
+156 [p16 UP -86486111360561378 4184603839 c0 C0 t] c.divmod(Decimal('9.9E-12'), Decimal('90090.0090009999')) -> (Decimal:Decimal('0'), Decimal:Decimal('9.9E-12')) 
+157 [p3 05UP -999999 999999 c0 C1 t] c.same_quantum(Decimal('3.1068438224905511114E-525741'), Decimal('-5.655E+586921')) -> bool:False 
+158 [p28 05UP -5 1 c0 C1 tCl] Decimal('2.68294089581310260E+55') / Decimal('8333332594732.4098453') -> Decimal:Decimal('99.99999999999999999999999999') OvInRo
+159 [p28 DOWN -60 76 c1 C1 t] Decimal('-7.8E+3') % Decimal('990009990999090090900909.0') -> Decimal:Decimal('-7800.0') 
+160 [p20 HALF_DOWN -6 3 c1 C1 t] Decimal('999999999999.9999') divmod Decimal('-58.667828') -> (Decimal:Decimal('-Infinity'), Decimal:Decimal('35.9740880000000000')) OvInRoCl
+161 [p3 UP -2 5 c0 C0 t] Decimal('30138487417556051676462089108850700').__floor__() -> int:30138487417556051676462089108850700 
+162 [p7 05UP -83 83 c1 C1 t] Decimal('3267620852053377766328272873641').scaleb(Decimal('430'), c) -> Decimal:Decimal('NaN') In
+163 [p20 HALF_DOWN -999999 999999 c0 C0 t] c.power(Decimal('-482937813935566'), 2933446, -57451437249919474) -> Decimal:Decimal('30501200430468522') 
+164 [p2 UP -999999 999999 c0 C1 tFlDiRo] Decimal('500050055.05055050000') divmod Decimal('sNaN') -> (Decimal:Decimal('NaN'), Decimal:Decimal('NaN')) In
+165 [p3 FLOOR -999999 999999 c0 C1 tInDiUn] Decimal('400888395066198200051').compare_total_mag(Decimal('-0.009'), c) -> Decimal:Decimal('1') 
+166 [p39 HALF_UP -6 10 c0 C1 tDiCl] c.create_decimal(Decimal('34661675744941084152704556100153863.280')) -> Decimal:Decimal('Infinity') OvInRo
+167 [p1 DOWN -8 5 c1 C1 t] Decimal('6.0E+2') % Decimal('9.9E+2') -> Decimal:Decimal('6E+2') Ro
+168 [p19 FLOOR -40 62 c1 C1 t] Decimal('sNaN9').is_canonical() -> bool:True 
+169 [p28 HALF_DOWN -999999 999999 c0 C1 t] c.minus(Decimal('5.56550098166011798E-1000010')) -> Decimal:Decimal('-5.5655009816601180E-1000010') UnSuInRo
+170 [p38 UP -999999999999999999 999999999999999999 c0 C1 tIn] Decimal('-1E+999999999999999964').max_mag(Decimal('-99.9'), c) -> Decimal:Decimal('-1E+999999999999999964') 
+171 [p39 CEILING -93 18 c0 C1 t] c.is_finite(False) -> bool:True 
+172 [p18 UP -630562012296 4374 c1 C1 t] c.is_signed(Decimal('-6.88690672271476618591012236466172874039E+50')) -> bool:True 
+173 [p38 DOWN -35 43 c0 C1 t] Decimal('-9.999999999999999999').is_normal(c) -> bool:True 
+174 [p9 CEILING -56 72 c0 C1 t] c.is_zero(Decimal('-9.98818296904776836E+72')) -> bool:False 
+175 [p28 HALF_EVEN -77 17 c1 C1 t] Decimal('0.087268827') ** Decimal('5.5') -> Decimal:Decimal('0.000001495289425536070427158410335') InRo
+176 [p20 HALF_UP -999999999999999999 999999999999999999 c0 C1 tInFlRo] Decimal('-327115263754598763558725598.8277515289').shift(Decimal('-334')) -> !InvalidOperation: [<class 'decimal.InvalidOperation'>] In
+177 [p28 FLOOR -4503 9926499 c1 C1 tFlSuRo] Decimal('9.0999999099990990009909000999E+9926525').number_class(c) -> str:'+Normal' 
+178 [p1 05UP -11 99 c0 C1 t] Decimal('-7.9367026689290779636615032639461825384E+115') / Decimal('3000000000000.0000000') -> Decimal:Decimal('-9E+99') OvInRo
+179 [p20 FLOOR -7221385669517047 635321954467 c0 C0 t] Decimal('7.0000000000000000000000000000000000000e+76').compare_signal(Decimal('9.9e+635321954468')) -> Decimal:Decimal('-1') 
+180 [p28 05UP -47368661238838 87102567562341 c0 C1 tInFlIn] c.to_integral(True) -> Decimal:Decimal('1') 
+181 [p28 HALF_UP -8211002256178 9 c0 C0 t] c.divmod(Decimal('-3.17665124769E+15'), Decimal('-7.82794655386E+12')) -> (Decimal:Decimal('405'), Decimal:Decimal('-Infinity')) OvInRo
+182 [p4 UP -4 1 c0 C1 t] Decimal('41053253335840341397710735315192').copy_negate() -> Decimal:Decimal('-41053253335840341397710735315192') 
+183 [p1 05UP -999999999999999999 999999999999999999 c0 C1 tInCl] Decimal('3.3E+6') + -46055210807027818330169899792 -> Decimal:Decimal('-4E+28') InRo
+184 [p34 HALF_UP -999999999999999999 999999999999999999 c0 C0 t] Decimal('6.545052658361292165025146962115013e+4166755') // Decimal('4.635485649230205362015046416697479e+69') -> Decimal:Decimal('NaN') In
+185 [p19 05UP -9 37 c0 C0 tOvSuRo] c.multiply(True, Decimal('0.7')) -> Decimal:Decimal('0.7') 
+186 [p3 UP -17 68 c0 C1 t] c.to_sci_string(Decimal('3E+2')) -> str:'3E+2' 
+187 [p34 05UP -3 6 c0 C1 t] c.is_infinite(Decimal('-5.55550555505555050E+4304907887821')) -> bool:False 
+188 [p34 CEILING -999999 999999 c0 C1 tInFlDiRo] Decimal('101000011100010110111').logical_invert(c) -> Decimal:Decimal('1111111111111010111100011101001000') 
+189 [p34 HALF_DOWN -999999 999999 c1 C1 t] c.divmod(Decimal('6.00000000000000000E+25'), Decimal('-7.000000000000000000000E+30')) -> (Decimal:Decimal('-0'), Decimal:Decimal('6.00000000000000000E+25')) 
+190 [p1 CEILING -3 5 c1 C1 t] c.divide(-707500918331991769, Decimal('7000000000000000000000000000000.00000000')) -> Decimal:Decimal('-0.000') UnSuInRoCl
+191 [p9 HALF_UP -44 66 c0 C0 t] Decimal('-9.999e+8') // Decimal('9.999909e+9') -> Decimal:Decimal('-0') 
+192 [p20 HALF_DOWN -999999 999999 c1 C1 tFl] Decimal('8.25E-1000000') / Decimal('-0.006000000') -> Decimal:Decimal('-1.375E-999997') 
+193 [p34 HALF_EVEN -999999 999999 c0 C0 t] pow(Decimal('30309389411889747075678715609272'), 2, Decimal('30309389411889747075678715609272')) -> Decimal:Decimal('0') 
+194 [p38 UP -7 0 c0 C0 tInFlUnSu] Decimal('0E-43').to_eng_string(c) -> str:'0.0e-42' 
+195 [p19 05UP -999999 999999 c0 C1 tOvSuCl] c.next_toward(Decimal('9.090909900990999900E+999999'), Decimal('3.000000000000000000000000E+28')) -> Decimal:Decimal('9.090909900990999899E+999999') 
+196 [p34 FLOOR -6 6 c0 C0 t] Decimal('-1.0000000000000000000000e+27') // Decimal('-9.45312237295762403664447e+27') -> Decimal:Decimal('0') 
+197 [p16 UP -999999 999999 c1 C0 t] Decimal('-99') / Decimal('3.0000000000000000000e+333307') -> Decimal:Decimal('-3.3e-333306') 
+198 [p28 CEILING -38 99 c0 C1 t] Decimal('99999999999999999999999.999') // Decimal('-3068207612.163') -> Decimal:Decimal('-32592318591342') 
+199 [p16 05UP -999999 999999 c1 C0 tInFlUnIn] Decimal('9.999999999e-300960') divmod Decimal('-0.000099999999999999') -> (Decimal:Decimal('-0'), Decimal:Decimal('9.999999999e-300960')) 
+200 [p17 CEILING -73 1 c1 C1 t] Decimal('-9.64565695876054027E-72') - Decimal('9990009909909999.9000') -> Decimal:Decimal('-99.999999999999999') OvInRo
+201 [p38 FLOOR -999999 999999 c0 C1 t] Decimal('8.8121409357563765661E-673653').radix() -> Decimal:Decimal('10') 
+202 [p1 DOWN -999999 999999 c0 C0 t] c.logical_xor(Decimal('10'), Decimal('0')) -> Decimal:Decimal('0') 
+203 [p38 HALF_DOWN -7 10 c0 C1 tDi] c.create_decimal(Decimal('-9.99999999999999999999999999999999999999E-7')) -> Decimal:Decimal('-0.0000010000000000000000000000000000000000000') InRo
+204 [p39 05UP -4 25 c1 C1 t] Decimal('-714.5306807820501168757').exp(c) -> Decimal:Decimal('0E-42') UnSuInRoCl
+205 [p2 05UP -89 6 c0 C1 t] c.exp(Decimal('-0.0000062')) -> Decimal:Decimal('1.0') InRo
+206 [p2 FLOOR -999999 999999 c0 C1 t] Decimal('0.07429') divmod Decimal('-0.00700') -> (Decimal:Decimal('-10'), Decimal:Decimal('0.0042')) InRo
+207 [p9 HALF_EVEN -5 10 c1 C1 t] Decimal('-9.0990909900E+13') // Decimal('4.0799E+7') -> Decimal:Decimal('-2230224') 
+208 [p39 UP -23 9 c0 C1 tInFlIn] c.rotate(98525706512069440349575654345, Decimal('3.862179988766614690E-3632491795')) -> !InvalidOperation: [<class 'decimal.InvalidOperation'>] In
+209 [p19 05UP -3 1 c1 C0 t] Decimal('505631647920.6708530').compare(Decimal('2.7E+40'), c) -> Decimal:Decimal('-1') 
+210 [p39 FLOOR -10 96 c0 C1 t] c.next_toward(66748636894, Decimal('-2E+5')) -> Decimal:Decimal('66748636893.9999999999999999999999999999') 
+211 [p38 FLOOR -999999 999999 c1 C1 tDiOv] Decimal('-4.3126583139232573253E+31') - Decimal('-0E+757157') -> Decimal:Decimal('-4.3126583139232573253E+31') 
+212 [p39 05UP -84 20 c0 C0 t] c.min(Decimal('5.0E-67'), Decimal('7.000000000000000000E+27')) -> Decimal:Decimal('5.0E-67') 
+213 [p38 UP -1 3 c0 C0 tInRo] Decimal('NaN123').__trunc__() -> !ValueError: cannot convert NaN to integer 
+214 [p19 HALF_DOWN -23 21 c0 C1 t] c.next_minus(Decimal('-81.0733')) -> Decimal:Decimal('-81.07330000000000001') 
+215 [p9 HALF_UP -21 15 c0 C1 t] c.to_integral_value(Decimal('0E+27')) -> Decimal:Decimal('0E+27') 
+216 [p20 HALF_UP -57 14 c0 C1 t] c.normalize(-80782953803664675633396044089) -> Decimal:Decimal('-Infinity') OvInRo
+217 [p2 HALF_DOWN -999999 999999 c0 C0 t] Decimal('0e-10') % Decimal('-0.00000200') -> Decimal:Decimal('0e-10') 
+218 [p2 DOWN -6 3 c1 C1 tInInCl] Decimal('-0.004700').exp(c) -> !Inexact: [<class 'decimal.Inexact'>] InRo
+219 [p16 HALF_DOWN -53 91 c0 C1 tInFlIn] Decimal('5.005000550550055E-8').__bool__() -> bool:True 
+220 [p3 HALF_EVEN -54 40 c0 C1 t] Decimal('9.09E+6').__trunc__() -> int:9090000 
+221 [p3 HALF_UP -44 39 c1 C1 tOvSuCl] c.logical_xor(Decimal('10'), Decimal('110')) -> Decimal:Decimal('100') 
+222 [p2 05UP -999999 999999 c1 C0 t] c.divmod(Decimal('3.857E+9'), Decimal('9.4E+8')) -> (Decimal:Decimal('4'), Decimal:Decimal('9.7E+7')) 
+223 [p20 05UP -999999 999999 c0 C1 tFlDi] c.compare_signal(Decimal('5.78337859996638051063103253172963340038E-61970716600'), Decimal('7.60102507492445836784972652050968138631E+1000020')) -> Decimal:Decimal('-1') 
+224 [p23 CEILING -999999 999999 c0 C1 t] Decimal('NaN123').__int__() -> !ValueError: cannot convert NaN to integer 
+225 [p38 HALF_DOWN -9 6 c0 C0 t] Decimal('1.573357680404585786837E-18').ln(c) -> Decimal:Decimal('-40.993319688249778822784090985653465355') InRo
+226 [p39 HALF_DOWN -999999 999999 c0 C1 tOvUn] c.canonical(Decimal('-8.000000000000000000000000000000000E-7')) -> Decimal:Decimal('-8.000000000000000000000000000000000E-7') 
+227 [p28 UP -999999 999999 c1 C1 tCl] c.abs(Decimal('5.54E+7')) -> Decimal:Decimal('5.54E+7') 
+228 [p34 HALF_UP -6 6 c0 C0 t] Decimal('9.00909099090009909909999099909000E+46').copy_sign(Decimal('-0.005555000550505550505550050055050'), c) -> Decimal:Decimal('-9.00909099090009909909999099909000E+46') 
+229 [p2 UP -999999999999999999 999999999999999999 c0 C1 t] c.power(Decimal('0E+28'), Decimal('8E+678191343430846278')) -> Decimal:Decimal('0') 
+230 [p2 UP -999999 999999 c1 C0 t] c.is_canonical(Decimal('0.5')) -> bool:True 
+231 [p29 UP -27 28 c1 C1 t] Decimal('420153298653571714777811788').min(False, c) -> Decimal:Decimal('0') 
+232 [p38 FLOOR -5584703123853 5176167871 c0 C1 t] c.number_class(Decimal('9.0000000000000000000E+22')) -> str:'+Normal' 
+233 [p3 DOWN -9 7 c0 C0 tInDiCl] c.ln(Decimal('9.9999999999')) -> Decimal:Decimal('2.30') InRo
+234 [p28 HALF_UP -97870766716838 5145 c1 C1 t] c.exp(Decimal('555182488318.1757229943520')) -> Decimal:Decimal('Infinity') OvInRo
+235 [p3 05UP 0 10 c0 C1 tOvUn] c.compare_signal(Decimal('-9588761.653'), Decimal('-99999')) -> Decimal:Decimal('-1') 
+236 [p28 DOWN -999999 999999 c1 C1 tUnSuRo] Decimal('83876202571763862646126266005433065533').min(Decimal('90658242.09759402869'), c) -> Decimal:Decimal('90658242.09759402869') 
+237 [p3 HALF_EVEN -10 44 c1 C0 t] 4716539859271974641705338418214874 ** Decimal('106') -> Decimal:Decimal('Infinity') OvInRo
+238 [p28 DOWN -999999 999999 c0 C1 tOvUn] Decimal('7.22364364637494757282441505760490283102436856980577978E+2611229045754').quantize(-4126902165175150836676, c) -> Decimal:Decimal('NaN') In
+239 [p39 HALF_UP -999999999999999999 999999999999999999 c0 C1 tDiRoCl] Decimal('-2.8E+999999999999999998').to_integral(ROUND_CEILING, c) -> Decimal:Decimal('-2.8E+999999999999999998') 
+240 [p28 DOWN -35 62 c0 C1 tUn] c.canonical(Decimal('2.000000000000000000E+53')) -> Decimal:Decimal('2.000000000000000000E+53') 
+241 [p9 HALF_EVEN -999999 999999 c1 C1 tInRoCl] Decimal('4048.33') ** Decimal('30') -> !Inexact: [<class 'decimal.Inexact'>, <class 'decimal.Rounded'>] InRo
+242 [p14 UP -5 5 c1 C1 tDiSu] c.shift(Decimal('8.1184395E-13'), Decimal('NaN891')) -> Decimal:Decimal('NaN891') 
+243 [p28 CEILING -38872283284715 6463 c0 C0 tInUn] Decimal('-959').fma(Decimal('-9.0099990900909990999E-8'), Decimal('9.99E-11'), c) -> Decimal:Decimal('0.000086405991173972681368041') 
+244 [p28 HALF_EVEN -999999 999999 c0 C0 tFlDiOvSuRoCl] c.min_mag(Decimal('-990009.999909090909'), Decimal('6.4E+3')) -> Decimal:Decimal('6.4E+3') 
+245 [p1 HALF_UP -86 76 c0 C1 tInDi] Decimal('2.760E+5') / Decimal('-8.25E+5') -> Decimal:Decimal('-0.3') InRo
+246 [p38 HALF_EVEN -999999999999999999 999999999999999999 c0 C1 t] Decimal('5.677000007265128064E+847094477885426599') * Decimal('-530844.8979696') -> Decimal:Decimal('-3.0136064896300753658701575788544E+847094477885426605') 
+247 [p38 FLOOR -84 23 c1 C1 tFlCl] c.max(68430144658424598456111417057043473, Decimal('546754584534.020528167113175884124060789')) -> Decimal:Decimal('999999999999999999999999.99999999999999') OvInRo
+248 [p16 05UP -9 8 c0 C1 tDiSu] c.to_eng_string(Decimal('5050.0055050000005')) -> str:'5050.0055050000005' 
+249 [p3 HALF_EVEN -999999 999999 c0 C1 t] Decimal('-0.06').is_zero() -> bool:False 
+250 [p34 CEILING -50 28 c1 C1 tInInRo] Decimal('50055505550500.0000550000505555').is_normal(c) -> bool:True 
+251 [p38 HALF_EVEN -999999 999999 c0 C1 t] pow(341136925953490249, Decimal('341136925953490249'), Decimal('296311688748')) -> Decimal:Decimal('131564773321') 
+252 [p16 HALF_UP -5 1 c0 C1 t] c.is_normal(Decimal('-61938430864767816240239910449380804.111')) -> bool:True 
+253 [p16 UP -999999999999999999 999999999999999999 c1 C1 tFlUn] Decimal('-0.005005005').remainder_near(Decimal('88967.589499175')) -> Decimal:Decimal('-0.005005005') 
+254 [p28 HALF_DOWN -999999 999999 c0 C1 t] c.canonical(Decimal('0.000633')) -> Decimal:Decimal('0.000633') 
+255 [p16 HALF_DOWN -999999 999999 c0 C1 t] c.max(Decimal('-1.23204421307895281037649295951393285226E-999999'), Decimal('-4.0885033288298E+29')) -> Decimal:Decimal('-1.232044213078953E-999999') InRo
+256 [p19 UP -35767 9862497445 c1 C1 t] c.logical_xor(Decimal('101001110'), Decimal('1010001110001001010')) -> Decimal:Decimal('1010001110100000100') 
+257 [p16 CEILING -999999 999999 c1 C1 tIn] Decimal('-586142310456278423824099745').__abs__() -> Decimal:Decimal('5.861423104562785E+26') InRo
+258 [p28 HALF_DOWN -8474915892476531 475341065323999 c0 C1 tInRo] Decimal('1100111111101101001010000111').logical_and(Decimal('10')) -> Decimal:Decimal('10') 
+259 [p1 05UP -8450264 642831194290 c0 C0 t] c.fma(Decimal('4E+4'), Decimal('9.99090090900009090090090090990909099909E+51'), Decimal('-0.005')) -> Decimal:Decimal('3E+56') InRo
+260 [p16 UP -999999999999999999 999999999999999999 c0 C1 t] c.min(992116098456042876, -784878464650435232878210807357659) -> Decimal:Decimal('-7.848784646504353E+32') InRo
+261 [p28 HALF_EVEN -999999 999999 c1 C1 t] Decimal('83555427080738364826').compare(Decimal('-0E-15'), c) -> Decimal:Decimal('1') 
+262 [p28 DOWN -4 10 c0 C1 t] Decimal('-2.39927793164437103495758060E+52').compare_total_mag(Decimal('7.8E+15'), c) -> Decimal:Decimal('1') 
+263 [p20 CEILING -10 6 c1 C1 t] -10946670426419596984738001499277788 % Decimal('9.9E-9') -> Decimal:Decimal('NaN') In
+264 [p1 CEILING -999999999999999999 999999999999999999 c0 C1 t] -68434269260589676208524177064 * Decimal('0.9') -> Decimal:Decimal('-6E+28') InRo
+265 [p2 DOWN -999999 999999 c0 C1 t] Decimal('0.00090') // Decimal('-0.0007310') -> Decimal:Decimal('-1') 
+266 [p34 UP -96 20 c1 C1 t] Decimal('55931652616584196549915470559').__reduce__() -> (type:<class 'decimal.Decimal'>, (str:'55931652616584196549915470559')) 
+267 [p1 HALF_DOWN -80 92 c1 C0 t] 606960904957048468 + Decimal('500551860945551595.39') -> Decimal:Decimal('1e+18') InRo
+268 [p2 FLOOR -58 34 c0 C1 tFl] Decimal('-4.4335265E+42').next_toward(Decimal('-0.0999'), c) -> Decimal:Decimal('-9.9E+34') 
+269 [p19 HALF_DOWN -999999 999999 c0 C1 t] c.multiply(Decimal('-1.0E-6248360779'), Decimal('0.0009999999')) -> Decimal:Decimal('-0E-1000017') UnSuInRoCl
+270 [p28 HALF_DOWN -999999 999999 c1 C1 tFlIn] Decimal('5.500005005505550055505555000055E-999969') - Decimal('7.00E+9') -> !Inexact: [<class 'decimal.Inexact'>] InRo
+271 [p19 UP -16591300 72880689407 c0 C1 t] Decimal('8.8333039931921593658327914437766175569E+38') divmod Decimal('-7E+3') -> (Decimal:Decimal('NaN'), Decimal:Decimal('NaN')) In
+272 [p2 HALF_EVEN -999999999999999999 999999999999999999 c1 C1 t] c.to_sci_string(Decimal('-6.65E-17')) -> str:'-6.65E-17' 
+273 [p4 FLOOR -79 64 c1 C1 t] c.power(362352, Decimal('186779'), 36415) -> Decimal:Decimal('NaN') In
+274 [p19 05UP -8483635658315 8699358006573156 c0 C1 tRoCl] Decimal('4699992757388097479531814184041162').next_plus(c) -> Decimal:Decimal('4.699992757388097480E+33') 
+275 [p34 HALF_EVEN -999999 999999 c0 C1 tIn] Decimal('0.83291487799542552429065733931').min(Decimal('-0.0055')) -> Decimal:Decimal('-0.0055') 
+276 [p45 05UP -5 9 c0 C1 tOvSuInCl] Decimal('5.0550000050505500555E-29').compare_total(Decimal('0.0005'), c) -> Decimal:Decimal('-1') 
+277 [p9 HALF_EVEN -502639383 2445542976814222 c0 C1 t] c.is_canonical(1563852195125326804431914471770) -> !TypeError: argument must be a Decimal 
+278 [p9 HALF_UP -611 5377410867396712 c1 C1 tUnRo] Decimal('0.65991') // Decimal('-990.99009999') -> Decimal:Decimal('-0') 
+279 [p16 05UP -10 8 c0 C1 t] Decimal('9.9E+10080379') * Decimal('0.00082') -> Decimal:Decimal('999999999.9999999') OvInRo
+280 [p1 CEILING -10 7 c1 C0 t] c.power(Decimal('-0.00014'), Decimal('0E+4')) -> Decimal:Decimal('1') 
+281 [p20 FLOOR -999999 999999 c0 C1 t] Decimal('NaN123') + Decimal('9.99999999999999999999999999999999999999E+258730') -> Decimal:Decimal('NaN123') 
+282 [p3 05UP -999999 999999 c0 C1 t] Decimal('0E+999999').is_subnormal(c) -> bool:False 
+283 [p32 UP -25 18 c0 C1 t] Decimal('60000000000000000000000000000.0') // Decimal('-0.0') -> Decimal:Decimal('-Infinity') Di
+284 [p39 FLOOR -999999 999999 c1 C1 t] Decimal('-0.00999') * Decimal('7.77754073112311809673335085917516856464E+470185') -> Decimal:Decimal('-7.76976319039199497863661750831599339608E+470183') InRo
+285 [p28 HALF_UP -90 4 c1 C1 tInIn] Decimal('1.580553448732318021701023352064635911784983874811905295E+61').compare_total(Decimal('-9.9E-28'), c) -> Decimal:Decimal('1') 
+286 [p23 HALF_DOWN -7 1 c0 C1 tDi] c.rotate(Decimal('6.00E+3'), Decimal('18')) -> Decimal:Decimal('6.00000000000000000000E+21') 
+287 [p40 FLOOR -9 5 c0 C0 tDiUnSu] c.scaleb(Decimal('0.00005055050550005055555505500555005550500'), -47879132144667865) -> Decimal:Decimal('NaN') In
+288 [p3 05UP -93 23 c0 C1 t] Decimal('-4.000E+27').__str__() -> str:'-4.000E+27' 
+289 [p28 HALF_UP -999999999999999999 999999999999999999 c1 C1 t] Decimal('3E+842217405435318996') - Decimal('4.185242117538897866174446897649339470E+48') -> Decimal:Decimal('3.000000000000000000000000000E+842217405435318996') InRo
+290 [p28 HALF_UP -999999999999999999 999999999999999999 c0 C1 t] c.next_plus(Decimal('0E-15')) -> Decimal:Decimal('1E-1000000000000000026') 
+291 [p39 HALF_EVEN -999999 999999 c0 C0 t] c.divide(Decimal('0.0021816375034114129262095268548584064766'), Decimal('4.94482010862991081368503856783207071367E+946282')) -> Decimal:Decimal('4.41196536068911014301218063768267269803E-946286') InRo
+292 [p28 HALF_UP -3890215177 92867681248884 c0 C1 t] Decimal('0.6000000000000000000000000000').fma(Decimal('-7.6291280E+22471189745354'), Decimal('NaN400000000000000000000000000'), c) -> Decimal:Decimal('NaN400000000000000000000000000') 
+293 [p16 HALF_UP -89694555 34003845258 c1 C1 tInOvUn] c.is_signed(Decimal('6.66226793863887612657480500110959360723E+43')) -> bool:False 
+294 [p1 05UP -21 32 c1 C1 t] Decimal('9.0E+6').to_integral(ROUND_HALF_EVEN, c) -> Decimal:Decimal('9.0E+6') 
+295 [p14 FLOOR -25 53 c0 C1 t] Decimal('5.0000050550005555500005550500550E-8') * Decimal('-999999.99') -> Decimal:Decimal('-0.050000050050006') InRo
+296 [p38 HALF_DOWN -999999 999999 c1 C1 t] Decimal('817495146556698021174507642.564624428913870763856').to_integral_exact(ROUND_HALF_DOWN, c) -> Decimal:Decimal('817495146556698021174507643') InRo
+297 [p28 HALF_DOWN -232676 2320287 c1 C1 t] Decimal('87749676317004764172575.121038').next_plus(c) -> Decimal:Decimal('87749676317004764172575.12104') 
+298 [p20 HALF_DOWN -30440705288984392 5585 c0 C1 t] c.divide(Decimal('80674903022.7414867136'), Decimal('2.43E-30440705288984408')) -> Decimal:Decimal('Infinity') OvInRo
+299 [p1 HALF_DOWN -9 3 c0 C1 t] Decimal('-0E-28').__reduce__() -> (type:<class 'decimal.Decimal'>, (str:'-0E-28')) 
+300 [p20 DOWN -999999999999999999 999999999999999999 c1 C0 t] c.power(Decimal('-516352874582617'), 4505238334, 329441593444) -> Decimal:Decimal('19316999125') 
+301 [p2 HALF_UP -7327 5138 c0 C1 t] Decimal('-7.4E+2') + 5454480504091098360116397877512867222355 -> Decimal:Decimal('5.5E+39') InRo
+302 [p3 CEILING -999999999999999999 999999999999999999 c1 C0 tInFlSuInCl] Decimal('-5.8E+3').exp(c) -> !Inexact: [<class 'decimal.Inexact'>] InRo
+303 [p28 HALF_EVEN -999999 999999 c0 C1 t] c.quantize(Decimal('-0E+26'), Decimal('9.9999999999999999999999999E+34')) -> Decimal:Decimal('-0E+9') 
+304 [p39 UP -9 89 c0 C0 t] c.is_snan(Decimal('5.00005500E+89')) -> bool:False 
+305 [p28 05UP -999999 999999 c1 C1 t] Decimal('42668200600325045864284752878161260494').compare_signal(Decimal('0.000'), c) -> Decimal:Decimal('1') 
+306 [p15 CEILING -7 89 c0 C0 t] Decimal('-9.28e-22') / Decimal('-5.50055500500555000550005000500000e+50') -> Decimal:Decimal('1e-21') UnSuInRo
+307 [p28 DOWN -3 8 c0 C1 t] c.same_quantum(Decimal('5.000000000000000000E-16'), -124323261354211240) -> bool:False 
+308 [p16 HALF_DOWN -2 4 c0 C1 t] c._apply(Decimal('-3287882.6')) -> Decimal:Decimal('-Infinity') OvInRo
+309 [p38 FLOOR -999999 999999 c1 C1 t] c.rotate(Decimal('6E+11'), Decimal('-40')) -> Decimal:Decimal('NaN') In
+310 [p34 UP -1 1 c0 C0 t] Decimal('-9.99999999e+32').next_toward(Decimal('957976316940641577205.99805889916594')) -> Decimal:Decimal('-99.99999999999999999999999999999999') 
+311 [p2 HALF_DOWN -999999 999999 c0 C1 tInRo] c.rotate(Decimal('5E+792473'), 2) -> Decimal:Decimal('5E+792473') 
+312 [p28 DOWN -5 3 c0 C1 tFlUnSuInCl] Decimal('-19889718224525870291944240456139').adjusted() -> int:31 
+313 [p9 05UP -999999 999999 c0 C1 tFlDiUn] Decimal('8341907007634175886') + -40575374563107290 -> Decimal:Decimal('8.30133163E+18') InRo
+314 [p3 DOWN -999999 999999 c0 C0 t] Decimal('9.99999999999999999999999999999999999999e+45').next_toward(Decimal('71.7')) -> Decimal:Decimal('9.99e+45') 
+315 [p28 FLOOR -999999 999999 c0 C1 t] c.to_eng_string(Decimal('2.00000000000000000000000000000000000000000000000000000000000E+88')) -> str:'20.0000000000000000000000000000000000000000000000000000000000E+87' 
+316 [p3 HALF_EVEN -84176631282610 42599 c0 C1 t] Decimal('13486990.181777801806528248632614725369') / Decimal('3.9E+42599') -> Decimal:Decimal('3.46E-42593') InRo
+317 [p28 CEILING -999999 999999 c0 C1 t] c.remainder(Decimal('5.555055055055055500055E+24'), Decimal('3.385100895E+13')) -> Decimal:Decimal('7.875946755E+12') 
+318 [p28 HALF_UP -999999 999999 c0 C0 tRo] c.compare_total_mag(Decimal('9.89541109372061970585117413785425508924'), Decimal('10204640900490667048375712.005820030244')) -> Decimal:Decimal('-1') 
+319 [p19 05UP -46 17 c0 C1 tFlDiInRo] Decimal('-2682016.6') divmod Decimal('-603052733829.02') -> (Decimal:Decimal('0'), Decimal:Decimal('-2682016.60')) 
+320 [p38 DOWN -8 4095175082159 c0 C1 t] Decimal('1E-10').copy_negate() -> Decimal:Decimal('-1E-10') 
+321 [p1 DOWN -24 51 c1 C0 t] Decimal('9343708589228859151') - Decimal('0.006') -> Decimal:Decimal('9e+18') InRo
+322 [p20 DOWN -999999 999999 c0 C1 t] Decimal('2.7785033065216669285576486252573945298') + Decimal('3.2E+8') -> Decimal:Decimal('320000002.77850330652') InRo
+323 [p9 FLOOR -6139285652383 9823456283848499 c1 C1 t] c.to_integral(-25418899989869064622037362860) -> Decimal:Decimal('-25418899989869064622037362860') 
+324 [p38 CEILING -499 441 c1 C1 tFlOvUnIn] -74041049024193398049996426 * Decimal('-95888317417.6178633906409') -> !Inexact: [<class 'decimal.Inexact'>] InRo
+325 [p28 HALF_DOWN -9 2 c0 C0 tFlDi] Decimal('86930617534.05762515') // Decimal('-0.80000000000000000000000000000000000000') -> Decimal:Decimal('-Infinity') OvInRo
+326 [p19 CEILING -999999 999999 c0 C1 t] Decimal('5.005550005005055500E+22').__abs__() -> Decimal:Decimal('5.005550005005055500E+22') 
+327 [p26 HALF_DOWN -999999999999999999 999999999999999999 c0 C0 tFlDiOvSuRoCl] c._apply(Decimal('NaN')) -> Decimal:Decimal('NaN') 
+328 [p12 HALF_DOWN -999999 999999 c0 C0 t] c.next_minus(Decimal('9.37109080192E-9')) -> Decimal:Decimal('9.37109080191E-9') 
+329 [p16 HALF_EVEN -999999 999999 c0 C1 t] Decimal('0.000').logical_xor(Decimal('-2.000000000000000E-808125'), c) -> Decimal:Decimal('NaN') In
+330 [p3 HALF_EVEN -999999 999999 c1 C1 t] c.is_infinite(Decimal('9009090009090999000099990090009.09990090')) -> bool:False 
+331 [p9 HALF_EVEN -23 42 c1 C0 t] Decimal('807332.9165') * Decimal('9.09e-10') -> Decimal:Decimal('0.000733865621') InRo
+332 [p2 DOWN -999999 999999 c0 C0 t] Decimal('3.7e+491723') ** 1 -> Decimal:Decimal('3.7e+491723') 
+333 [p38 DOWN -999999 999999 c0 C1 t] Decimal('-5144520847207542718887177').to_integral_exact(ROUND_FLOOR, c) -> Decimal:Decimal('-5144520847207542718887177') 
+334 [p22 HALF_DOWN -999999 999999 c0 C0 t] c.shift(Decimal('9.249334356686083E-9095277'), Decimal('21')) -> Decimal:Decimal('3.000000000000000000000E-9095271') 
+335 [p2 HALF_EVEN -999999999999999999 999999999999999999 c1 C1 t] c.divide(Decimal('5E-588350787499251466'), Decimal('-830')) -> Decimal:Decimal('-6.0E-588350787499251469') InRo
+336 [p2 FLOOR -8 4 c0 C1 t] Decimal('-1614.696129222073962') + Decimal('2') -> Decimal:Decimal('-1.7E+3') InRo
+337 [p34 HALF_EVEN -999999 999999 c1 C1 t] Decimal('9.900000990090090090E-881880').fma(Decimal('0E-999998'), 8849454592332664832, c) -> Decimal:Decimal('8849454592332664832.000000000000000') Ro
+338 [p28 DOWN -999999 999999 c0 C1 tInRoCl] c.shift(Decimal('0'), Decimal('-14')) -> Decimal:Decimal('0') 
+339 [p9 FLOOR -10 8 c0 C1 tInSu] Decimal('-4922.68') % Decimal('-77.59') -> Decimal:Decimal('-34.51') 
+340 [p19 HALF_UP -999999 999999 c1 C1 tFlRo] c.is_nan(513179102697947532072571801680) -> bool:False 
+341 [p28 HALF_DOWN -557 7620 c1 C0 tDiOvUn] Decimal('4.8e+3') / Decimal('-0.000') -> !DivisionByZero: [<class 'decimal.DivisionByZero'>] Di
+342 [p39 CEILING -999999 999999 c0 C0 tFlOv] c.compare_signal(Decimal('8000000000000000000000000.00000000000000'), Decimal('-1.0000000000000000000000000000000000000E+999997')) -> Decimal:Decimal('1') 
+343 [p20 HALF_UP -22 34 c0 C1 tFlOvUnSuRo] Decimal('-9663599128950107271').same_quantum(-385962707792366161576767002018655964206) -> bool:True 
+344 [p28 HALF_DOWN -999999 999999 c0 C0 tIn] c.compare_signal(Decimal('-0E-22978629833348'), Decimal('-NaN74685')) -> !InvalidOperation: [<class 'decimal.InvalidOperation'>] In
+345 [p3 HALF_UP -999999 999999 c1 C1 tFlRoCl] c.power(Decimal('5.5050055500555055005E-78768595857'), Decimal('3E+4')) -> !Rounded: [<class 'decimal.Rounded'>, <class 'decimal.Clamped'>] UnSuInRoCl
+346 [p20 DOWN -86 66 c0 C1 t] Decimal('-9.909099E+8').to_eng_string(c) -> str:'-990.9099E+6' 
+347 [p9 CEILING -447 638333 c0 C1 t] c.next_toward(Decimal('-5.5E+8'), Decimal('962')) -> Decimal:Decimal('-549999999') 
+348 [p1 05UP -999999999999999999 999999999999999999 c0 C1 tOvUn] Decimal('-1E-25') / Decimal('-380773551.850061516') -> Decimal:Decimal('2E-34') InRo
+349 [p39 CEILING -8 4225313396 c1 C1 tInFlUnInCl] c.next_plus(Decimal('2.414096024038995E-9276038302471075')) -> Decimal:Decimal('1E-46') 
+350 [p3 DOWN -72 33 c0 C1 tDi] Decimal('-5E+30') * Decimal('55005005050505000000.550005505505555') -> Decimal:Decimal('-9.99E+33') OvInRo
+351 [p20 CEILING -84 3371599007 c0 C0 tOv] Decimal('4270219016880902977748940314135114.95834').log10(c) -> Decimal:Decimal('33.630450150290483138') InRo
+352 [p9 HALF_EVEN -999999 999999 c0 C1 t] Decimal('-5.91E-149078503876035').is_normal(c) -> bool:False 
+353 [p34 05UP -30546758 68790 c1 C1 tSu] Decimal('9.9999999999999E+16') ** Decimal('-5.561E+4') -> Decimal:Decimal('1.000000000556100000154626385528663E-945370') InRo
+354 [p9 HALF_UP -19 30 c1 C1 t] c.min_mag(Decimal('-100000000.0000000000'), Decimal('2371.72908')) -> Decimal:Decimal('2371.72908') 
+355 [p2 HALF_EVEN 0 3 c0 C1 t] Decimal('3').to_integral_exact(ROUND_HALF_EVEN, c) -> Decimal:Decimal('3') 
+356 [p5 05UP -71 43 c1 C1 t] Decimal('8.096E+47').rotate(Decimal('-758'), c) -> Decimal:Decimal('NaN') In
+357 [p28 05UP -999999 999999 c0 C1 tCl] c.min(-8340114190376974, Decimal('665946980.99337301652006516266540266417')) -> Decimal:Decimal('-8340114190376974') 
+358 [p28 05UP -999999 999999 c0 C1 t] Decimal('-17473943598245680416201034290064017').is_normal(c) -> bool:True 
+359 [p16 05UP -63 100 c0 C0 t] Decimal('179358482.00579') % Decimal('36795.484') -> Decimal:Decimal('17292.98979') 
+360 [p3 CEILING -4 10 c1 C1 tDiRo] Decimal('-3E+7') % Decimal('-3.0E+7') -> Decimal:Decimal('-0E+6') 
+361 [p9 05UP -999999999999999999 999999999999999999 c0 C1 t] Decimal('sNaN9').to_eng_string(c) -> str:'sNaN9' 
+362 [p3 DOWN -999999999999999999 999999999999999999 c0 C1 t] Decimal('790').to_integral(ROUND_FLOOR, c) -> Decimal:Decimal('790') 
+363 [p28 05UP -76 25 c1 C0 tIn] Decimal('-9.11e+6') // Decimal('-8.7684481720036140202736667e+27') -> Decimal:Decimal('0.00') Cl
+364 [p3 HALF_DOWN -999999 999999 c0 C1 tInFlSuIn] c.plus(Decimal('-835763008819768488177534948429.52321698')) -> !Inexact: [<class 'decimal.Inexact'>] InRo
+365 [p38 UP -999999 999999 c0 C0 tOvUn] Decimal('0').logb(c) -> Decimal:Decimal('-Infinity') Di
+366 [p38 UP -502101661 34 c1 C0 t] c.fma(Decimal('999999999999999.99999'), Decimal('9.999999999999999999E-15'), Decimal('-642286840779194058855994385783070.2605')) -> Decimal:Decimal('-642286840779194058855994385783060.26051') InRo
+367 [p19 FLOOR -58 8 c0 C0 t] c.add(Decimal('-1.625981461402088361511599041282767841E+41'), Decimal('999900990.9990909090')) -> Decimal:Decimal('-Infinity') OvInRo
+368 [p17 05UP -999999 999999 c1 C1 t] Decimal('-8.3430529832002241223386400448626222889E+286264') * -40761448609157286711318854 -> Decimal:Decimal('3.4007492541819232E+286290') InRo
+369 [p39 05UP -71 41 c1 C1 tUn] c.min(Decimal('6.10254760831730631973842197153345700106'), Decimal('2E+70586142')) -> Decimal:Decimal('6.10254760831730631973842197153345700106') 
+370 [p39 HALF_EVEN -999999 999999 c1 C1 t] c.divmod(Decimal('9663659105416214882065251.6567'), Decimal('4841089399279351331911168947578492.0526078')) -> (Decimal:Decimal('0'), Decimal:Decimal('9663659105416214882065251.6567000')) 
+371 [p39 HALF_EVEN -999999 999999 c0 C1 tFlDiOvSuIn] c.normalize(Decimal('-sNaN')) -> Decimal:Decimal('-NaN') In
+372 [p9 UP -999999 999999 c1 C0 tOv] Decimal('1.87336500311246731492266995117161740594e+73').is_signed() -> bool:False 
+373 [p20 HALF_EVEN -999999 999999 c0 C1 t] c.minus(Decimal('7.54E-1663462')) -> Decimal:Decimal('-0E-1000018') UnSuInRoCl
+374 [p35 HALF_UP -999999 999999 c0 C0 t] c.min_mag(Decimal('708.5066731889329754282726330'), -446392765030428114181518) -> Decimal:Decimal('708.5066731889329754282726330') 
+375 [p28 DOWN -999999 999999 c1 C1 tFlOvUnSu] Decimal('1E-39').compare_total(Decimal('9.0949853E+9')) -> Decimal:Decimal('-1') 
+376 [p28 DOWN -63 95 c0 C1 t] c.max_mag(Decimal('9.990990000900099900E-8'), Decimal('-3.725285483131289746E+42')) -> Decimal:Decimal('-3.725285483131289746E+42') 
+377 [p3 HALF_DOWN -10 6 c0 C0 t] pow(-91306, 9, Decimal('-91306')) -> Decimal:Decimal('NaN') In
+378 [p2 CEILING -10 2 c0 C1 t] Decimal('86').compare_total_mag(1047012131950482519088807880755502895, c) -> Decimal:Decimal('-1') 
+379 [p16 HALF_UP -2 9015556474 c0 C0 tFlDi] Decimal('0.0505000').fma(Decimal('-0'), -71135831476808005059549855254439, c) -> Decimal:Decimal('-7.113583147680801E+31') InRo
+380 [p3 HALF_EVEN -30 72 c1 C1 tInFl] Decimal('5.0E+16').ln(c) -> Decimal:Decimal('38.5') InRo
+381 [p16 HALF_DOWN -55680528419 65 c1 C1 t] c.fma(Decimal('NaN123'), Decimal('-2.730425472454448044E+40'), Decimal('4.6E-25')) -> Decimal:Decimal('NaN123') 
+382 [p16 HALF_EVEN -24 83 c0 C1 t] c.next_plus(7051158892436840368468307572939) -> Decimal:Decimal('7.051158892436841E+30') 
+383 [p28 05UP -2 33 c1 C1 tFlDiUn] Decimal('-9009909909999909990.9099090000999009').same_quantum(Decimal('990000009009000000099099090099090090.00'), c) -> bool:False 
+384 [p16 HALF_DOWN -999999 999999 c0 C1 tInFlOv] c.next_plus(Decimal('9E-14968850322671')) -> Decimal:Decimal('1E-1000014') 
+385 [p28 FLOOR -2 75 c0 C1 t] Decimal('2.5917892636732568308E+36').min_mag(Decimal('8.0970215839547974114985682741876037994E-554244760'), c) -> Decimal:Decimal('0E-29') UnSuInRoCl
+386 [p1 HALF_DOWN -52476769 5237 c0 C1 t] Decimal('-1991051777926234042311').to_integral(ROUND_HALF_EVEN, c) -> Decimal:Decimal('-1991051777926234042311') 
+387 [p19 05UP -90 65 c0 C1 t] Decimal('-5.58E+6') // Decimal('-9.999999999999999999E+20') -> Decimal:Decimal('0') 
+388 [p38 05UP -999999 999999 c0 C1 tDi] Decimal('-770999724690042207.7').number_class(c) -> str:'-Normal' 
+389 [p19 FLOOR -999999 999999 c0 C1 t] Decimal('4.2410518777976186E-1000000').max_mag(702002127815044986394816012) -> Decimal:Decimal('7.020021278150449863E+26') InRo
+390 [p19 CEILING -15 18 c0 C0 t] c.scaleb(Decimal('99990909990099000000.0990900099990090990'), Decimal('5.196994423955776162E-13')) -> Decimal:Decimal('NaN') In
+391 [p34 HALF_EVEN -999999 999999 c0 C1 t] Decimal('-7.8897780436139436153417585283580455730E+76') + Decimal('9.9E-7') -> Decimal:Decimal('-7.889778043613943615341758528358046E+76') InRo
+392 [p20 HALF_EVEN -898584411771 46753113612 c1 C1 t] c.divide_int(Decimal('60642163903466726273.5'), Decimal('8.4900633067978607255E-400866906616')) -> Decimal:Decimal('NaN') In
+393 [p38 DOWN -999999 999999 c0 C0 tIn] Decimal('1110100111010111001').logical_and(Decimal('1100010000101110111'), c) -> Decimal:Decimal('1100000000000110001') 
+394 [p28 HALF_EVEN 0 8 c1 C0 t] Decimal('-1.00') ** Decimal('-9999999999999999999.9999') -> Decimal:Decimal('NaN') In
+395 [p25 HALF_EVEN -999999 999999 c0 C1 t] Decimal('6E+939920') / Decimal('4.514652918660854150E+21') -> Decimal:Decimal('1.329005819074067963399253E+939899') InRo
+396 [p45 HALF_UP -999999999999999999 999999999999999999 c0 C1 t] c.subtract(Decimal('0.000979829278919454289059497295901667151976929698'), Decimal('9.0999099990000990990000990000099900009090090E+51')) -> Decimal:Decimal('-9.09990999900009909900009900000999000090900900E+51') InRo
+397 [p28 HALF_UP -999999999999999999 999999999999999999 c1 C1 t] c.divide_int(Decimal('9.090999099900909E+22'), Decimal('9.99999999999E+20')) -> Decimal:Decimal('90') 
+398 [p28 DOWN -6 2 c0 C0 tDiOvRo] Decimal('101111').logical_invert(c) -> Decimal:Decimal('1111111111111111111111010000') 
+399 [p19 HALF_UP -75 18 c0 C1 tInDiInRo] c.compare_total_mag(Decimal('800000000000000000'), Decimal('-6E+3')) -> Decimal:Decimal('1') 
+400 [p39 HALF_UP -999999 999999 c1 C1 t] Decimal('6.1802E+11') divmod Decimal('5.000000000000000000000000000E+31') -> (Decimal:Decimal('0'), Decimal:Decimal('6.1802000E+11')) 
+401 [p20 05UP -7 2 c0 C1 t] c.copy_negate(Decimal('0E-21')) -> Decimal:Decimal('-0E-21') 
+402 [p28 FLOOR -999999 999999 c0 C1 t] Decimal('9.9999999999E-2000846561').fma(Decimal('3726441521098100475.9582313924866947489224551421442814001'), -330270493466778365698135139322890, c) -> Decimal:Decimal('-3.302704934667783656981351394E+32') InRo
+403 [p39 UP -2 2 c0 C1 t] c.shift(69268896503844956610920448465476766874, 6) -> Decimal:Decimal('896503844956610920448465476766874000000') 
+404 [p28 HALF_UP -56648924331164 7838011986646 c0 C1 t] Decimal('1010100010001011101111000').logical_invert(c) -> Decimal:Decimal('1110101011101110100010000111') 
+405 [p28 05UP -1 38 c0 C1 tDiRoCl] c.is_snan(Decimal('-6.40E-15')) -> bool:False 
+406 [p16 DOWN -4 0 c1 C0 t] Decimal('-7.566932697184594e+19').__copy__() -> Decimal:Decimal('-7.566932697184594e+19') 
+407 [p12 05UP 0 0 c0 C1 t] Decimal('9.9E+5').is_zero() -> bool:False 
+408 [p28 UP -61 100 c0 C1 t] c.is_finite(Decimal('-4.0E+2')) -> bool:True 
+409 [p34 CEILING -27 74 c1 C0 t] Decimal('-9.9999999999999999999999999999E-12').exp(c) -> Decimal:Decimal('0.9999999999900000000000499999999998') InRo
+410 [p28 HALF_EVEN -999999 999999 c1 C1 tInSuRoCl] c.min(Decimal('-0.044'), Decimal('-0')) -> Decimal:Decimal('-0.044') 
+411 [p38 HALF_UP -85 8 c1 C1 t] 1 // Decimal('5.07031263252624E-9') -> Decimal:Decimal('197226497.00000000000000000000000000000') Cl
+412 [p1 HALF_UP -999999 999999 c0 C1 tUnSuIn] Decimal('35.2').log10(c) -> !Inexact: [<class 'decimal.Inexact'>] InRo
+413 [p38 UP -99 31 c1 C1 t] Decimal('4.482630712540203525E-8859640830').number_class(c) -> str:'+Subnormal' 
+414 [p34 HALF_UP -68 17 c0 C1 t] c.exp(Decimal('9.9999999999999999999E+21')) -> Decimal:Decimal('Infinity') OvInRo
+415 [p28 05UP -55 24 c1 C0 t] Decimal('-858547334773262287328142807624760526991').to_integral_value(ROUND_DOWN, c) -> Decimal:Decimal('-858547334773262287328142807624760526991') 
+416 [p16 DOWN -999999999999999999 999999999999999999 c0 C1 t] Decimal('-4.48E-13').to_integral_exact(ROUND_FLOOR, c) -> Decimal:Decimal('-1') InRo
+417 [p3 05UP -49 91 c0 C1 t] Decimal('-5.0000E+8').max(Decimal('6.0000000000000000000000000000000000000E-52')) -> Decimal:Decimal('1E-51') UnSuInRo
+418 [p19 05UP -29 63 c0 C1 t] Decimal('6331658630') + Decimal('6000000000000000.00000000000000000000000') -> Decimal:Decimal('6000006331658630.000') Ro
+419 [p28 CEILING -31 82 c1 C0 tSu] Decimal('-2.4761864661536928593e+25') - Decimal('8865467340.275218405') -> Decimal:Decimal('-24761864661536937458467340.27') InRo
+420 [p20 UP -2954316809190722 4776 c0 C1 t] c.to_integral(Decimal('-sNaN9')) -> Decimal:Decimal('-NaN9') In
+421 [p38 CEILING -22664199414053 1124822677765 c1 C1 tUn] Decimal('1000001000101101111110000').logical_xor(Decimal('111001010111011100111010100110100000')) -> Decimal:Decimal('111001010110011101111111001001010000') 
+422 [p19 HALF_UP -999999 999999 c0 C1 tFlRo] Decimal('5.555000550500055005') - Decimal('-9.9999999999999999999E-999998') -> !Rounded: [<class 'decimal.Rounded'>] InRo
+423 [p28 05UP -13678467947 62 c1 C1 tUnSu] c.power(Decimal('0.5'), Decimal('-99.999')) -> Decimal:Decimal('1.266772236241674193431038657E+30') InRo
+424 [p3 CEILING -9 10 c1 C1 t] Decimal('-9.99E+7') + Decimal('5E-27') -> Decimal:Decimal('-9.98E+7') InRo
+425 [p14 HALF_UP -94446085053489 69872263958806 c0 C0 t] c.power(Decimal('4.22754824061E+69872263958805'), 122) -> Decimal:Decimal('Infinity') OvInRo
+426 [p38 FLOOR -999999 999999 c1 C1 t] c.subtract(Decimal('7.31087487271445601698342014363405487459E-211802'), -79263903789812309375503630890) -> Decimal:Decimal('79263903789812309375503630890.000000000') InRo
+427 [p38 UP -98 70 c0 C0 tRo] Decimal('-4.000000000000000000000000000000000e+38') // Decimal('9.99e+10') -> Decimal:Decimal('-4004004004004004004004004004') 
+428 [p16 FLOOR -18 14 c1 C0 t] Decimal('0').as_integer_ratio() -> (int:0, int:1) 
+429 [p28 FLOOR -999999 999999 c1 C1 t] c.remainder_near(Decimal('3820134178995255876788.2434'), Decimal('88675080674475574.395')) -> Decimal:Decimal('11703538848131851.6434') 
+430 [p2 HALF_DOWN -999999 999999 c0 C1 t] Decimal('9E+2').__int__() -> int:900 
+431 [p7 FLOOR -999999 999999 c0 C1 t] c._apply(Decimal('2E+16')) -> Decimal:Decimal('2E+16') 
+432 [p34 FLOOR -999999 999999 c0 C1 t] Decimal('9999999999999999999999.999999999999') divmod Decimal('50500505550500555050.55550055050050000500005') -> (Decimal:Decimal('198'), Decimal:Decimal('899901000890099990.0108910008999990')) InRo
+433 [p19 05UP -1 2 c0 C1 tSu] Decimal('9.909E+40').min_mag(Decimal('880313.1586647938526'), c) -> Decimal:Decimal('999.9999999999999999') OvInRo
+434 [p16 HALF_UP -999999 999999 c0 C0 t] Decimal('-10369019567802') - -1 -> Decimal:Decimal('-10369019567801') 
+435 [p3 UP -999999 999999 c0 C0 tInOv] Decimal('-4e+1000001') * Decimal('3e+5') -> !Overflow: [<class 'decimal.Overflow'>] OvInRo
+436 [p28 HALF_EVEN -999999 999999 c0 C0 tFlSuInCl] c.add(Decimal('-99909009909900.09090999090909999000009'), Decimal('8.952102076442658802E+736184')) -> !Inexact: [<class 'decimal.Inexact'>] InRo
+437 [p28 HALF_UP -9 3 c1 C1 t] c.logb(Decimal('2.766073125008844279158665889E+29')) -> Decimal:Decimal('29.000000000000000000000000') Cl
+438 [p2 05UP -2 5 c1 C1 t] c.subtract(Decimal('2.3E+2'), Decimal('999999999999999999999999999999999999.999')) -> Decimal:Decimal('-9.9E+5') OvInRo
+439 [p1 FLOOR -999999 999999 c1 C1 t] Decimal('9.3E+5') + Decimal('50754954.334877770912932000158454970986') -> Decimal:Decimal('5E+7') InRo
+440 [p24 HALF_UP -999999 999999 c1 C0 t] c.logical_or(Decimal('3.989287076330024292E-818963'), Decimal('0.000')) -> Decimal:Decimal('NaN') In
+441 [p9 HALF_EVEN -24 100 c1 C1 t] Decimal('0.9').logb(c) -> Decimal:Decimal('-1') 
+442 [p2 FLOOR -999999 999999 c1 C0 t] Decimal('924177635464.91973209928201734227627073').to_integral_value(None, c) -> Decimal:Decimal('924177635464') 
+443 [p34 UP -3 4 c0 C1 t] Decimal('-92.25806061027416288118991747586318') * Decimal('-37122944414300566892.9576384644') -> Decimal:Decimal('Infinity') OvInRo
+444 [p37 05UP -999999 999999 c0 C1 t] Decimal('0.783594048596405591900160300151794347054').copy_abs() -> Decimal:Decimal('0.783594048596405591900160300151794347054') 
+445 [p20 CEILING -5 20 c0 C1 tDi] c.next_plus(Decimal('3.4956539782943233714E-7')) -> Decimal:Decimal('3.49565397829432338E-7') 
+446 [p27 FLOOR -999999 999999 c0 C1 t] c.logb(Decimal('-1.8732891582747178145E+999997')) -> Decimal:Decimal('999997') 
+447 [p1 HALF_DOWN -86570704328365 45962749208945 c1 C1 t] c.quantize(Decimal('-4.32E+45962749208946'), Decimal('0.001')) -> Decimal:Decimal('NaN') In
+448 [p4 HALF_DOWN -999999999999999999 999999999999999999 c0 C1 t] c._apply(Decimal('0.0500')) -> Decimal:Decimal('0.0500') 
+449 [p20 DOWN -999999 999999 c0 C1 t] Decimal('1.00E-1000017').to_integral(None, c) -> Decimal:Decimal('0') 
+450 [p16 DOWN -96 79 c1 C0 t] Decimal('3.00E+48').fma(Decimal('0.000'), -4964309302444398, c) -> Decimal:Decimal('-4964309302444398') 
+451 [p1 DOWN -77 17 c0 C1 tOvCl] Decimal('1.0269482862047317001E-11387').to_integral_exact(ROUND_HALF_EVEN, c) -> Decimal:Decimal('0') InRo
+452 [p34 CEILING -999999 999999 c0 C1 t] Decimal('1110100001000010101100001010100000111').logical_invert(c) -> Decimal:Decimal('1011110111101010011110101011111000') 
+453 [p9 05UP -999999 999999 c0 C0 t] c.is_nan(5676825614035240) -> bool:False 
+454 [p3 CEILING -50 21 c0 C1 t] Decimal('-1').same_quantum(Decimal('0.020')) -> bool:False 
+455 [p28 HALF_DOWN -999999999999999999 999999999999999999 c0 C1 tSu] Decimal('NaN').quantize(Decimal('-12390.14729815745790')) -> Decimal:Decimal('NaN') 
+456 [p2 UP -999999 999999 c0 C0 tInUnIn] Decimal('-5005505550.0055500500') - Decimal('-1e-427884') -> !Inexact: [<class 'decimal.Inexact'>] InRo
+457 [p28 05UP -33 56 c0 C1 tFlCl] c.power(Decimal('-811428904742675528734462370'), 727448487, -5937656250339090756) -> Decimal:Decimal('-571694656505441948') 
+458 [p9 HALF_EVEN -999999 999999 c1 C1 tSu] Decimal('3.2E-22').is_normal(c) -> bool:True 
+459 [p9 CEILING -999999 999999 c0 C1 tSu] c.is_nan(-2434020683973) -> bool:False 
+460 [p19 HALF_UP -346169151307403 9995616309322798 c0 C0 t] c.create_decimal(Decimal('-0')) -> Decimal:Decimal('-0') 
+461 [p27 05UP -999999 999999 c1 C1 tInDiOv] 803783026513048 / Decimal('7.20893334850446736718879257E+1000024') -> Decimal:Decimal('1.114981908772671E-1000010') UnSuInRo
+462 [p28 HALF_EVEN -5 2 c0 C0 t] Decimal('-9E-38').number_class(c) -> str:'-Subnormal' 
+463 [p31 DOWN -999999999999999999 999999999999999999 c0 C1 t] Decimal('NaN123').ln(c) -> Decimal:Decimal('NaN123') 
+464 [p16 HALF_DOWN -999999 999999 c0 C1 t] Decimal('4E+78471').to_integral_exact(ROUND_FLOOR, c) -> Decimal:Decimal('4E+78471') 
+465 [p34 DOWN -13 41 c0 C1 tInFlOvCl] Decimal('5606425.7148579562019728140345404547').next_minus(c) -> Decimal:Decimal('5606425.714857956201972814034540454') 
+466 [p3 HALF_UP -999999 999999 c0 C1 tRoCl] Decimal('-0.0009999') % Decimal('0.00000') -> Decimal:Decimal('NaN') In
+467 [p16 HALF_EVEN -7 8 c0 C1 t] Decimal('130105301532.5914681').logb(c) -> Decimal:Decimal('11') 
+468 [p28 HALF_EVEN -61 44 c1 C1 tFlOvInRo] Decimal('100011010111110111110000').logical_and(Decimal('10101111001001000000100'), c) -> Decimal:Decimal('1010001000000000000') 
+469 [p28 05UP -63 67 c0 C1 t] Decimal('4.2E-91').is_subnormal(c) -> bool:True 
+470 [p28 CEILING -999999 999999 c0 C1 tRo] c._apply(Decimal('0.99999990900900000009990900090')) -> !Rounded: [<class 'decimal.Rounded'>] Ro
+471 [p28 DOWN -8 4 c0 C0 tFlInRoCl] c.scaleb(Decimal('50.05055505050050055'), Decimal('22')) -> !Inexact: [<class 'decimal.Inexact'>, <class 'decimal.Rounded'>] OvInRo
+472 [p9 FLOOR -7 8 c1 C1 t] c.max_mag(Decimal('4.30E+4'), Decimal('-1.49007325E+10')) -> Decimal:Decimal('-Infinity') OvInRo
+473 [p2 CEILING -999999 999999 c0 C1 t] c.to_eng_string(Decimal('9.9E+5')) -> str:'990E+3' 
+474 [p39 HALF_EVEN -485681835032813 802997211 c0 C1 t] c.plus(Decimal('4576.050018860414431')) -> Decimal:Decimal('4576.050018860414431') 
+475 [p9 05UP -5 0 c1 C1 tUnIn] Decimal('-1.98165391E-11') + Decimal('0E-10') -> !Underflow: [<class 'decimal.Underflow'>, <class 'decimal.Inexact'>] UnSuInRo
+476 [p3 05UP -7 6 c1 C0 t] c.copy_decimal(224113471936617121394983227) -> Decimal:Decimal('224113471936617121394983227') 
+477 [p1 HALF_EVEN -999999 999999 c0 C0 tFl] Decimal('-620828130019052194937').compare_total(Decimal('9.9E-4830802139'), c) -> Decimal:Decimal('-1') 
+478 [p1 FLOOR -999999 999999 c1 C1 tDiSuInRoCl] Decimal('-198812594497609032463189089610').__trunc__() -> int:-198812594497609032463189089610 
+479 [p28 UP -999999999999999999 999999999999999999 c0 C1 tDi] c.copy_negate(Decimal('909900009000.099900900000090990909009000')) -> Decimal:Decimal('-909900009000.099900900000090990909009000') 
+480 [p2 HALF_DOWN -9 9 c0 C1 t] c.is_nan(Decimal('NaN123')) -> bool:True 
+481 [p38 CEILING -999999 999999 c0 C1 t] Decimal('-64818357477033102423411612964469003').__trunc__() -> int:-64818357477033102423411612964469003 
+482 [p28 UP -92 23 c0 C1 t] Decimal('1.04978851499E+13') // Decimal('-1.745208E+11') -> Decimal:Decimal('-60') 
+483 [p34 HALF_DOWN -22 55 c0 C0 t] c.fma(129443851193188, Decimal('-7.0E+14'), Decimal('-6.0185260581555079272')) -> Decimal:Decimal('-90610695835231600000000000006.01853') InRo
+484 [p16 HALF_UP -4 10 c0 C1 t] Decimal('918546486843521338917831932695751084').log10(c) -> Decimal:Decimal('35.96310114046626') InRo
+485 [p28 HALF_UP -999999 999999 c0 C1 t] Decimal('-1.3351939945205176688528118629E-63482') % Decimal('-84830465556460457580800537652938161.390') -> Decimal:Decimal('-1.335193994520517668852811863E-63482') InRo
+486 [p28 DOWN -99 71 c0 C1 t] Decimal('-68.395931681566589').is_qnan() -> bool:False 
+487 [p19 HALF_EVEN -33 74 c0 C1 t] c.divide_int(Decimal('-6962001043044.3'), Decimal('9.79178025686285131E+18')) -> Decimal:Decimal('-0') 
+488 [p3 CEILING -999999999999999999 999999999999999999 c1 C0 t] c.max(Decimal('8.024E+14'), Decimal('0.006')) -> Decimal:Decimal('8.03E+14') InRo
+489 [p28 HALF_UP -42 77 c1 C1 tDiSuRo] Decimal('100000001110').logical_xor(Decimal('11100011100000100010010011100'), c) -> Decimal:Decimal('1100011100000100110010010010') 
+490 [p1 HALF_DOWN -10 0 c1 C1 t] c.compare_signal(Decimal('-sNaN9'), Decimal('-3230619080764536379596835347512513.06930')) -> Decimal:Decimal('-NaN') In
+491 [p20 FLOOR -78318645530 61329 c0 C1 t] c.canonical(Decimal('-9.630519052E+11')) -> Decimal:Decimal('-9.630519052E+11') 
+492 [p45 DOWN -999999 999999 c1 C0 t] pow(Decimal('2531288472849705'), Decimal('0'), Decimal('-313796388923629272356976599276582418676483750')) -> Decimal:Decimal('1') 
+493 [p28 HALF_EVEN -8 3 c0 C1 tOvSuCl] c.min_mag(Decimal('0.0503'), Decimal('9900090.0900000900009909099')) -> Decimal:Decimal('0.0503') 
+494 [p34 DOWN -636469 7093732 c0 C1 tInOvSu] c.is_qnan(Decimal('232901055942476766.78146114058008574')) -> bool:False 
+495 [p28 CEILING -999999 999999 c1 C0 t] pow(Decimal('80051131343862396993319202'), Decimal('51782826280'), Decimal('80051131343862396993319202')) -> Decimal:Decimal('0') 
+496 [p34 HALF_EVEN -28 79 c1 C1 tInDi] Decimal('-637020916231').max(Decimal('50055005555000.55500005500050'), c) -> Decimal:Decimal('50055005555000.55500005500050') 
+497 [p20 05UP -92 16 c0 C1 t] Decimal('7943238047612705.3036').to_integral_exact(ROUND_CEILING, c) -> Decimal:Decimal('7943238047612706') InRo
+498 [p1 HALF_EVEN -8 4 c0 C1 tOvSu] Decimal('-9E+2').radix() -> Decimal:Decimal('10') 
+499 [p28 FLOOR -87753026286 5190089 c0 C0 tDi] Decimal('NaN').adjusted() -> int:0 
+500 [p39 05UP -7 0 c0 C0 tIn] c.divide_int(Decimal('500000000000000000000000000000.0000000000'), Decimal('-5050055000.000505055')) -> !Inexact: [<class 'decimal.Inexact'>] OvInRo
+501 [p2 UP -999999 999999 c1 C0 t] c.divmod(Decimal('Infinity'), Decimal('0E-978839')) -> (Decimal:Decimal('Infinity'), Decimal:Decimal('NaN')) In
+502 [p28 FLOOR -97 50 c0 C1 t] c.to_integral(Decimal('7E-12')) -> Decimal:Decimal('0') 
+503 [p34 CEILING -6 6 c0 C1 tUn] c.remainder(Decimal('6.64940936131317528E+18'), Decimal('5055005.0')) -> Decimal:Decimal('2642975.0') 
+504 [p28 CEILING -9 0 c0 C1 t] Decimal('0').__reduce__() -> (type:<class 'decimal.Decimal'>, (str:'0')) 
+505 [p19 05UP -7 5 c0 C0 t] Decimal('-303299723955637572614').__repr__() -> str:"Decimal('-303299723955637572614')" 
+506 [p34 UP -999999 999999 c0 C1 tInDiIn] Decimal('9.303307169428515343804932336221357E+53').compare_total_mag(Decimal('-5E+25'), c) -> Decimal:Decimal('1') 
+507 [p38 HALF_DOWN -19 8 c0 C1 tInOv] Decimal('0.000') * Decimal('8.1703149139804874311277601781128149074E+77') -> Decimal:Decimal('0E+8') Cl
+508 [p38 HALF_UP -53 25 c0 C0 tDiUn] Decimal('193524455.161400843125009299899343962787') + Decimal('600.0000000000000000') -> Decimal:Decimal('193525055.16140084312500929989934396279') InRo
+509 [p40 HALF_DOWN -97 24 c0 C1 t] Decimal('0E-93') / Decimal('0E+4') -> Decimal:Decimal('NaN') In
+510 [p19 DOWN -6 10 c1 C1 t] c.quantize(Decimal('9.999999999999999999E+26'), Decimal('1E+20')) -> Decimal:Decimal('NaN') In
+511 [p40 05UP -999999 999999 c0 C1 t] Decimal('6E-11').is_signed() -> bool:False 
+512 [p1 HALF_UP -9 80 c1 C1 t] Decimal('7861771529612572281228980').copy_abs() -> Decimal:Decimal('7861771529612572281228980') 
+513 [p1 UP -26 2 c0 C1 t] c.power(Decimal('-35'), Decimal('64183288'), 67) -> Decimal:Decimal('NaN') In
+514 [p11 HALF_UP -2 1 c1 C0 tDi] Decimal('3876063267809148277.3') ** -80 -> Decimal:Decimal('0e-12') UnSuInRoCl
+515 [p41 CEILING -4 217947571 c0 C1 t] c.max_mag(-510384940500868429049758501946, Decimal('7.528444126775611228E-16')) -> Decimal:Decimal('-510384940500868429049758501946') 
+516 [p16 FLOOR -14410380 2733 c1 C1 t] Decimal('3385.9502').max(Decimal('9.43963982097188E+2731'), c) -> Decimal:Decimal('9.43963982097188E+2731') 
+517 [p28 HALF_EVEN -999999 999999 c1 C1 t] Decimal('0.999').to_integral(ROUND_05UP, c) -> Decimal:Decimal('1') 
+518 [p28 HALF_EVEN -93 18 c0 C1 tRoCl] Decimal('0.0000090900000090099090').ln(c) -> !Rounded: [<class 'decimal.Rounded'>] InRo
+519 [p28 05UP -999999999999999999 999999999999999999 c1 C1 tInSuInRoCl] c.compare(-9721934027396872383668403534767, Decimal('5.55505500055500000000505555E+57')) -> Decimal:Decimal('-1') 
+520 [p2 HALF_UP -96 69 c1 C1 t] Decimal('-9.90000099900009909E+22').compare_total_mag(Decimal('-9.735233809751121077E-84')) -> Decimal:Decimal('1') 
+521 [p3 UP -733 405660 c0 C0 t] c.max_mag(Decimal('8.00E+40'), Decimal('9.0E+405661')) -> Decimal:Decimal('Infinity') OvInRo
+522 [p1 CEILING -1 10 c1 C1 tDiCl] Decimal('0.00003') ** Decimal('10') -> !Clamped: [<class 'decimal.Clamped'>] UnSuInRoCl
+523 [p1 UP -999999 999999 c1 C1 tDiRo] Decimal('-8E+14') * Decimal('-9.5966812499065676314928976599014901837') -> !Rounded: [<class 'decimal.Rounded'>] InRo
+524 [p28 HALF_EVEN -999999 999999 c0 C1 tOvSuIn] Decimal('-8.161633691434180774666206322E+797058932770687').to_integral_exact(ROUND_HALF_EVEN, c) -> Decimal:Decimal('-8.161633691434180774666206322E+797058932770687') 
+525 [p28 HALF_DOWN -999999 999999 c0 C0 tUnSuRo] c.remainder(Decimal('-9.99999999999999999999999999E+27'), Decimal('2.0000000000000000000000E+23')) -> Decimal:Decimal('-1.9999999999999999999999E+23') 
+526 [p2 UP -999999 999999 c0 C0 t] c.power(Decimal('-2.0E+729476'), Decimal('8')) -> Decimal:Decimal('Infinity') OvInRo
+527 [p3 UP -4 0 c1 C1 t] Decimal('-1.9E+13').next_plus(c) -> Decimal:Decimal('-9.99') 
+528 [p19 05UP -3183919316628 934277521860846 c1 C1 t] c.max_mag(Decimal('NaN'), Decimal('5.50000005005555000E+22')) -> Decimal:Decimal('5.50000005005555000E+22') 
+529 [p28 HALF_UP -92 13 c1 C1 tSuCl] Decimal('-0.149190476607002978440') ** Decimal('5.5E-11') -> Decimal:Decimal('NaN') In
+530 [p20 HALF_EVEN -999999 999999 c0 C0 t] Decimal('6.27758409e+19') divmod Decimal('-2.00000000000000e+23') -> (Decimal:Decimal('-0'), Decimal:Decimal('6.2775840900e+19')) 
+531 [p34 HALF_EVEN 0 6 c1 C1 tRo] Decimal('-0.000000') % Decimal('-49468806492414.8660') -> Decimal:Decimal('-0E-27') Cl
+532 [p3 HALF_UP -3 0 c0 C1 t] c.logical_xor(Decimal('101'), Decimal('0')) -> Decimal:Decimal('101') 
+533 [p16 05UP -999999 999999 c1 C1 tFlSu] Decimal('-5.3617627079028372236E+54').quantize(Decimal('0.70')) -> Decimal:Decimal('NaN') In
+534 [p38 HALF_EVEN -999999 999999 c0 C1 tOvSu] c.min_mag(Decimal('348814757036502686440008179235471.84994'), Decimal('9.99E+16')) -> Decimal:Decimal('9.99E+16') 
+535 [p1 HALF_EVEN -999999 999999 c0 C0 tRo] c.is_finite(Decimal('5E+4')) -> bool:True 
+536 [p38 HALF_EVEN -999999 999999 c0 C1 t] Decimal('9.76921701163996343254708019857713558587E+49').adjusted() -> int:49 
+537 [p3 UP -999999999999999999 999999999999999999 c0 C1 tCl] c.to_integral(5409523764319) -> Decimal:Decimal('5409523764319') 
+538 [p34 UP -93 20 c0 C1 t] c.to_eng_string(Decimal('-8E+30')) -> str:'-8E+30' 
+539 [p1 HALF_DOWN -999999 999999 c0 C1 t] pow(Decimal('sNaN'), Decimal('NaN'), Decimal('sNaN')) -> Decimal:Decimal('NaN') In
+540 [p2 05UP -36 46 c0 C1 tDiUnRoCl] Decimal('9.9999E+24').__float__() -> float:9.9999e+24 
+541 [p28 FLOOR -2 2 c0 C1 tInDiOvSu] c.compare_signal(Decimal('40'), Decimal('851627872090220210550346422178845.42521')) -> Decimal:Decimal('-1') 
+542 [p3 HALF_UP -94 94 c0 C1 t] Decimal('0E-21').sqrt(c) -> Decimal:Decimal('0E-11') 
+543 [p19 HALF_EVEN -97 74 c1 C1 tInRo] pow(Decimal('NaN'), Decimal('NaN'), -45413887544283080) -> Decimal:Decimal('NaN') 
+544 [p20 DOWN -56 17 c0 C1 t] Decimal('-35973.0563449733') % Decimal('0.00061085') -> Decimal:Decimal('-0.0002764233') 
+545 [p34 HALF_EVEN -999999999999999999 999999999999999999 c0 C1 t] c.to_integral_value(Decimal('0.0099')) -> Decimal:Decimal('0') 
+546 [p38 UP -84 46 c1 C1 t] Decimal('6.7E+7395').to_integral_value(ROUND_HALF_DOWN, c) -> Decimal:Decimal('6.7E+7395') 
+547 [p34 HALF_EVEN -999999 999999 c0 C1 tInDi] Decimal('-2.00E-16') + Decimal('0E-636278') -> Decimal:Decimal('-2.000000000000000000000000000000000E-16') Ro
+548 [p39 HALF_DOWN -534628157815840 594043 c0 C0 tDiSu] Decimal('5.0000000000000000e+20') / Decimal('472260962462776121890.86928429792062370') -> Decimal:Decimal('1.05873667260695993870293293515828357013') InRo
+549 [p38 05UP -8820845196 75020222539081981 c0 C1 t] c.logical_or(Decimal('11101001001100000101111101000'), Decimal('10001010001000010000011111')) -> Decimal:Decimal('11111001011101000111111111111') 
+550 [p16 HALF_UP -5 5 c0 C1 t] c.is_qnan(Decimal('1.8783E-17')) -> bool:False 
+551 [p20 CEILING -8 4 c0 C1 t] Decimal('1209.4038530343812878') / Decimal('-9.8E+9') -> Decimal:Decimal('-1.2340855643207972324E-7') InRo
+552 [p30 05UP -999999 999999 c1 C0 t] Decimal('0.000').logb(c) -> Decimal:Decimal('-Infinity') Di
+553 [p20 DOWN -999999 999999 c1 C0 tInCl] Decimal('500.00000000000000000').adjusted() -> int:2 
+554 [p3 CEILING -999999 999999 c0 C0 t] c.next_minus(Decimal('-2.3E+4')) -> Decimal:Decimal('-2.31E+4') 
+555 [p2 HALF_EVEN -10 9 c0 C1 t] c.fma(Decimal('-6.865034620769156883E-10'), Decimal('-1E-686940185'), Decimal('-9.9E+3')) -> Decimal:Decimal('-9.9E+3') InRo
+556 [p28 HALF_DOWN -999999 999999 c1 C1 tOvSuRo] Decimal('-sNaN').min(Decimal('-9.9999999999999999999E+3152529950')) -> Decimal:Decimal('-NaN') In
+557 [p45 UP -999999 999999 c0 C1 tSuRoCl] c.sqrt(Decimal('5.5319255634370943786')) -> !Rounded: [<class 'decimal.Rounded'>] InRo
+558 [p16 HALF_UP -99236 51421061047 c0 C0 tDiOvSuInCl] c.fma(Decimal('506188469137855.16689335001979781854094'), Decimal('Infinity'), Decimal('44130673029785.141417867')) -> Decimal:Decimal('Infinity') 
+559 [p28 HALF_DOWN -999999 999999 c1 C1 tFlDi] pow(Decimal('-2939941512683149729527898146'), Decimal('8'), Decimal('1E+3')) -> Decimal:Decimal('736') 
+560 [p34 UP -8 3 c0 C0 t] Decimal('-500000000.0000000') // Decimal('0.311293652') -> Decimal:Decimal('-Infinity') OvInRo
+561 [p39 HALF_DOWN -999999 999999 c0 C1 tInFlDiRo] Decimal('0.000') - Decimal('92') -> Decimal:Decimal('-92.000') 
+562 [p38 05UP -79 71 c0 C1 t] Decimal('0.271978151447570166255036379519225965149968419354378225646992650').__str__() -> str:'0.271978151447570166255036379519225965149968419354378225646992650' 
+563 [p1 CEILING -999999 999999 c0 C1 t] c.power(Decimal('-611'), Decimal('531295630'), Decimal('6')) -> Decimal:Decimal('1') 
+564 [p20 UP -9773858383 8922063107795 c0 C1 t] Decimal('sNaN') * Decimal('-400000000000000000000') -> Decimal:Decimal('NaN') In
+565 [p3 DOWN -40224187790 3455776257676 c0 C1 t] Decimal('-0.555055005550505550005555500555000055050') / 1727705737264781911050512435 -> Decimal:Decimal('-3.21E-28') InRo
+566 [p39 FLOOR -999999 999999 c0 C1 t] Decimal('-0.07').scaleb(21, c) -> Decimal:Decimal('-7E+19') 
+567 [p28 05UP -79 15 c0 C1 tSuCl] Decimal('-2E+91857104437634995').max(Decimal('0E+3473257705'), c) -> !Clamped: [<class 'decimal.Clamped'>] Cl
+568 [p9 HALF_EVEN -999999999999999999 999999999999999999 c0 C1 t] Decimal('4.60712690776433152552520561975490126390E+48').logb(c) -> Decimal:Decimal('48') 
+569 [p28 HALF_EVEN -999999 999999 c0 C0 tOvUnIn] Decimal('-0.008534102040244882495').min_mag(-66169225) -> Decimal:Decimal('-0.008534102040244882495') 
+570 [p9 HALF_UP -999999 999999 c0 C1 tCl] c.divmod(Decimal('7.1925E+10'), Decimal('-9.9999E+12')) -> (Decimal:Decimal('-0'), Decimal:Decimal('7.1925E+10')) 
+571 [p9 UP -158114 2169046503207 c0 C1 tFlDiRo] Decimal('0.55') / Decimal('900000000000000000.00') -> !Rounded: [<class 'decimal.Rounded'>] InRo
+572 [p28 HALF_DOWN -999999 999999 c1 C0 t] Decimal('5.05050555500550555e+56') + Decimal('9.90900900900099099090000900e-230502') -> Decimal:Decimal('5.050505555005505550000000000e+56') InRo
+573 [p1 HALF_DOWN -4 2 c1 C1 t] Decimal('-9.0E+13') // Decimal('-6E+10') -> Decimal:Decimal('NaN') In
+574 [p14 HALF_UP -50 72 c0 C1 t] Decimal('-4.85666282288E+18') divmod Decimal('2.0E+7') -> (Decimal:Decimal('-242833141144'), Decimal:Decimal('-0E+6')) 
+575 [p38 HALF_EVEN -999999999999999999 999999999999999999 c0 C1 t] c.copy_decimal(Decimal('16780101258194311377.8652419953917187209')) -> Decimal:Decimal('16780101258194311377.8652419953917187209') 
+576 [p28 DOWN -18 97 c1 C1 tInRo] pow(Decimal('1164232665085943783352238'), 752002035, Decimal('-1829240882044961710')) -> Decimal:Decimal('175613946843837182') 
+577 [p28 HALF_EVEN -999999 999999 c0 C0 t] c.is_zero(Decimal('80000000000000.0000000000000000000000000')) -> bool:False 
+578 [p28 DOWN -405 8282388673096189 c0 C0 t] Decimal('-9.0000000909000909900e+543655909954979') * Decimal('-2418.5469400748') -> Decimal:Decimal('2.176692268051933691638539740e+543655909954983') InRo
+579 [p20 HALF_UP -999999999999999999 999999999999999999 c0 C1 t] Decimal('-7474820272753836015.01').scaleb(Decimal('-14')) -> Decimal:Decimal('-74748.202727538360150') InRo
+580 [p9 HALF_UP -8 8 c0 C1 t] Decimal('9E+10').next_toward(Decimal('9.9322553392728556911014712258772021068E+47'), c) -> Decimal:Decimal('Infinity') OvInRo
+581 [p28 05UP -71 84 c0 C1 t] c.power(Decimal('1316232278970714200584688025'), 21775980468, Decimal('-502991828396470785430')) -> Decimal:Decimal('450800989110659242405') 
+582 [p28 05UP -8 3 c0 C1 t] 7552225147916047431820509 * Decimal('70840051883734374112694963104118703.3648') -> Decimal:Decimal('9999.999999999999999999999999') OvInRo
+583 [p3 HALF_DOWN -38 67 c0 C1 tCl] Decimal('9E+18').min(Decimal('2.773270E+15')) -> Decimal:Decimal('2.77E+15') InRo
+584 [p2 FLOOR -999999999999999999 999999999999999999 c0 C1 t] Decimal('-8.7E-36').compare_signal(Decimal('9.9E+6')) -> Decimal:Decimal('-1') 
+585 [p38 DOWN -51 9 c0 C1 tDi] Decimal('9.9999999999999999999E+44').min_mag(Decimal('-3.949E+6'), c) -> Decimal:Decimal('-3.949E+6') 
+586 [p28 HALF_DOWN -999999 999999 c0 C0 tIn] Decimal('1111010000010101101101001101').logical_and(Decimal('110100100011110000011'), c) -> Decimal:Decimal('100001100000001') 
+587 [p28 HALF_DOWN -999999999999999999 999999999999999999 c1 C1 t] c.fma(Decimal('0.09999009000999099090'), Decimal('-84171367563624941534146746.094'), Decimal('9.9999999999999999999999999999999999999E+46')) -> Decimal:Decimal('9.999999999999999999999158370E+46') InRo
+588 [p3 UP -84 4 c1 C1 t] Decimal('9.009009090099000090009009900900999E+36').__str__() -> str:'9.009009090099000090009009900900999E+36' 
+589 [p1 CEILING -4 2 c0 C1 t] Decimal('-9.9E+4') % Decimal('1.62E+7') -> Decimal:Decimal('-9E+2') OvInRo
+590 [p28 05UP -2 7 c1 C1 t] Decimal('8.0000000000000000000E+44') / Decimal('-98884752231.349174263') -> Decimal:Decimal('-99999999.99999999999999999999') OvInRo
+591 [p25 HALF_UP -999999999999999999 999999999999999999 c0 C0 t] c.to_eng_string(Decimal('9.07E-999999999999999999')) -> str:'9.07e-999999999999999999' 
+592 [p28 HALF_DOWN -5 8 c0 C0 tOvUn] Decimal('0e+4').quantize(Decimal('-5.0165260744547707542644584047e+66')) -> Decimal:Decimal('NaN') In
+593 [p9 HALF_UP -23 53 c1 C1 t] c.next_minus(Decimal('4.24E+46')) -> Decimal:Decimal('4.23999999E+46') 
+594 [p28 DOWN -999999 999999 c0 C1 tCl] Decimal('5.5E+2').to_integral_value(ROUND_UP, c) -> Decimal:Decimal('5.5E+2') 
+595 [p4 HALF_UP -34 94 c1 C1 t] Decimal('-2.40E+4') - Decimal('9E+2') -> Decimal:Decimal('-2.49E+4') 
+596 [p34 HALF_EVEN -82 44 c0 C1 t] c.remainder(Decimal('2.154E+5'), Decimal('-9.9990090909999000E+19')) -> Decimal:Decimal('2.154E+5') 
+597 [p16 CEILING -9 6 c0 C1 t] c.rotate(Decimal('4.9E-22'), Decimal('6')) -> Decimal:Decimal('4.9000000E-16') 
+598 [p28 05UP -999999 999999 c0 C0 t] c.power(Decimal('-4377'), Decimal('5'), Decimal('152102834265385143982504')) -> Decimal:Decimal('-1606507409978865657') 
+599 [p28 CEILING -717608951 9 c0 C0 tInFlOvSuRo] Decimal('0.000013432370391725928212').exp(c) -> !Rounded: [<class 'decimal.Rounded'>] InRo
+600 [p11 05UP -2 0 c0 C1 t] Decimal('-9.99E+3').number_class(c) -> str:'-Normal' 
+601 [p28 HALF_EVEN -91 87 c1 C1 tOvSuRoCl] Decimal('6E+5') + Decimal('-sNaN') -> Decimal:Decimal('-NaN') In
+602 [p18 UP -48 92 c0 C0 t] c.is_nan(11772161423595649140510015194473910310) -> bool:False 
+603 [p3 FLOOR -999999 999999 c1 C1 t] Decimal('-343620501580952197946420642875691.51424') // Decimal('8.1E+5') -> Decimal:Decimal('NaN') In
+604 [p1 CEILING -3 5 c0 C0 t] Decimal('-90909909900909900900990999990.909900009').radix() -> Decimal:Decimal('10') 
+605 [p28 FLOOR -999999 999999 c0 C1 tOvSuRo] Decimal('-0.02') // Decimal('338333039743162434.721') -> Decimal:Decimal('-0') 
+606 [p38 UP -999999 999999 c0 C1 t] Decimal('0.000').__float__() -> float:0.0 
+607 [p34 05UP -6 4 c1 C0 tSuCl] c.abs(Decimal('-5.5550500050500505505050E-11')) -> !Subnormal: [<class 'decimal.Subnormal'>] Su
+608 [p19 HALF_DOWN -10 8 c0 C1 tIn] c.rotate(Decimal('9.0099990009009009009E-2378788453'), Decimal('16')) -> Decimal:Decimal('9.0099990009009009E-2378788456') 
+609 [p9 CEILING -89523923463 36640 c0 C1 t] Decimal('-6000000.0000') // Decimal('6.6') -> Decimal:Decimal('-909090') 
+610 [p19 DOWN -999999 999999 c0 C0 tSu] Decimal('-4.66e+7') / Decimal('9.9999009909909090990e-13387') -> Decimal:Decimal('-4.660046138655050611e+13393') InRo
+611 [p27 05UP -2 39 c0 C1 tFlDiUnIn] -5385625952344262914362 + Decimal('0.0099999999999999999999999999999999999999999999') -> !Inexact: [<class 'decimal.Inexact'>] InRo
+612 [p28 CEILING -26 59 c0 C1 t] -2976302218289807772 / Decimal('2E+5') -> Decimal:Decimal('-14881511091449.03886') 
+613 [p38 05UP -59 0 c0 C0 tInFl] Decimal('0.0999999').logical_or(Decimal('-1.64092910310542696528E-66'), c) -> !InvalidOperation: [<class 'decimal.InvalidOperation'>] In
+614 [p9 HALF_DOWN -999999999999999999 999999999999999999 c0 C1 t] Decimal('443582584549228588735630146961498831229').__trunc__() -> int:443582584549228588735630146961498831229 
+615 [p34 UP -10 5 c1 C1 t] Decimal('268131044371125768627757787225005277.670').next_plus(c) -> Decimal:Decimal('Infinity') 
+616 [p9 UP -999999 999999 c0 C1 tSuRo] c.log10(Decimal('9.900009900E-9')) -> !Rounded: [<class 'decimal.Rounded'>] InRo
+617 [p20 HALF_DOWN -12036 790663400407 c0 C1 tInFlDiOvCl] Decimal('-0.5').is_subnormal(c) -> bool:False 
+618 [p2 CEILING -6 1 c0 C1 t] c.abs(Decimal('-NaN')) -> Decimal:Decimal('-NaN') 
+619 [p28 FLOOR -999999 999999 c1 C1 tInRo] Decimal('3690315.53').__floor__() -> int:3690315 
+620 [p38 05UP -999999 999999 c0 C1 t] Decimal('6E+29').compare_total(Decimal('-5.005555050550000050555550505E+48'), c) -> Decimal:Decimal('1') 
+621 [p12 CEILING -999999 999999 c0 C1 t] Decimal('5.05E+334701') % Decimal('0.005000000000000') -> Decimal:Decimal('NaN') In
+622 [p3 05UP -999999 999999 c1 C1 t] c.to_integral(Decimal('-5.0')) -> Decimal:Decimal('-5') 
+623 [p9 UP -1920211 50537084 c0 C1 t] c.min(Decimal('7.48E+39055475'), Decimal('0')) -> Decimal:Decimal('0') 
+624 [p3 HALF_DOWN -999999999999999999 999999999999999999 c1 C1 t] Decimal('5.0E+2') + Decimal('0E+19') -> Decimal:Decimal('5.0E+2') 
+625 [p20 HALF_EVEN -5 5 c1 C0 tInUnSuIn] c.fma(Decimal('9.9E-20'), Decimal('3.18E+39484171840925'), Decimal('-1707367.79157605480160')) -> !Inexact: [<class 'decimal.Inexact'>] OvInRo
+626 [p1 FLOOR -4 10 c0 C1 t] Decimal('5E+12').quantize(Decimal('0.0001'), ROUND_FLOOR) -> Decimal:Decimal('NaN') In
+627 [p2 HALF_UP -41 37 c0 C1 t] Decimal('0.55055555000555505050').copy_abs() -> Decimal:Decimal('0.55055555000555505050') 
+628 [p19 HALF_UP -31 1 c0 C1 t] Decimal('9.9999999999999999999E-85685641273') divmod Decimal('-39.8495900650884807') -> (Decimal:Decimal('-0'), Decimal:Decimal('0E-49')) UnSuInRoCl
+629 [p38 FLOOR -999999 999999 c0 C1 tOv] Decimal('0.000009999999999999999999').max_mag(2989038004072859739117669863376020468) -> Decimal:Decimal('2989038004072859739117669863376020468') 
+630 [p34 05UP -999999999999999999 999999999999999999 c0 C0 tDi] Decimal('436235907498').is_qnan() -> bool:False 
+631 [p28 HALF_UP -48 54 c1 C1 t] Decimal('7180038860054224710221646.9').remainder_near(Decimal('-50005055555005.0505')) -> Decimal:Decimal('23698782840385.5820') 
+632 [p38 UP -999999 999999 c0 C0 tFlDiSuInRoCl] Decimal('9.09099990000009000099909009999099990E-623148').next_plus(c) -> Decimal:Decimal('9.0909999000000900009990900999909999001E-623148') 
+633 [p22 CEILING -90 80 c1 C1 t] Decimal('-9314604169702926482572').__round__() -> int:-9314604169702926482572 
+634 [p3 UP -76 92 c1 C1 tFlUnSuInCl] pow(Decimal('98296'), Decimal('83906'), Decimal('98296')) -> Decimal:Decimal('NaN') In
+635 [p34 HALF_UP -999999 999999 c1 C1 t] Decimal('-0E+301736').is_finite() -> bool:True 
+636 [p3 HALF_EVEN -999999 999999 c0 C1 t] -4020939338432576978553342506791953 ** Decimal('-81') -> Decimal:Decimal('-1.12E-2722') InRo
+637 [p16 HALF_DOWN -11 63 c0 C1 t] c.logical_and(Decimal('-2.8746804268076861888E+55'), Decimal('0.0099')) -> Decimal:Decimal('NaN') In
+638 [p38 DOWN -97 7 c1 C1 tSuCl] Decimal('-79922596840867584.66192378') divmod Decimal('7.0E-7') -> !Clamped: [<class 'decimal.Clamped'>] OvInRoCl
+639 [p2 HALF_EVEN -1 10 c0 C0 tOvIn] c.divmod(Decimal('5.005000055505000E+38'), Decimal('0.0050')) -> (Decimal:Decimal('NaN'), Decimal:Decimal('NaN')) In
+640 [p2 HALF_DOWN -999999 999999 c0 C1 t] Decimal('0').is_nan() -> bool:False 
+641 [p3 CEILING -2 7 c0 C1 t] c.compare(Decimal('3086408264405084.0793'), Decimal('7.75E+6')) -> Decimal:Decimal('1') 
+642 [p31 05UP -56 22 c0 C1 tFlOvRo] Decimal('-0.000005505005055505') ** Decimal('-195') -> !Overflow: [<class 'decimal.Overflow'>, <class 'decimal.Rounded'>] OvInRo
+643 [p34 DOWN -63309541931917 44980450 c1 C1 t] Decimal('900009.99900909000090090900').next_minus(c) -> Decimal:Decimal('900009.9990090900009009089999999999') 
+644 [p34 DOWN -390697212707 17870203544 c1 C1 t] Decimal('3.1658592451384447978E-7120434576') % Decimal('2.7E+5') -> Decimal:Decimal('3.1658592451384447978E-7120434576') 
+645 [p39 HALF_EVEN -999999 999999 c0 C1 t] c.subtract(Decimal('-8.799906335052224776E+22'), Decimal('9.9900090900000099900E+688977')) -> Decimal:Decimal('-9.99000909000000999000000000000000000000E+688977') InRo
+646 [p34 HALF_EVEN -999999 999999 c0 C1 tRoCl] c.logical_or(Decimal('5.8343914472604208935773908514019558E+620545'), Decimal('Infinity')) -> Decimal:Decimal('NaN') In
+647 [p34 FLOOR -999999 999999 c0 C1 t] pow(-7581383999496754, Decimal('3'), Decimal('-7581383999496754')) -> Decimal:Decimal('-0') 
+648 [p19 FLOOR -999999 999999 c0 C1 t] c.normalize(Decimal('-9.9909909909099000909009990999099999990E+1000020')) -> Decimal:Decimal('-Infinity') OvInRo
+649 [p20 DOWN -10 0 c0 C1 t] Decimal('5.5E-20').quantize(Decimal('1E+8'), c) -> Decimal:Decimal('NaN') In
+650 [p19 DOWN -6 5 c0 C1 tDiInRoCl] Decimal('9018.24495472931936738678956347127') % Decimal('900099.99999900090') -> !Inexact: [<class 'decimal.Inexact'>, <class 'decimal.Rounded'>] InRo
+651 [p3 FLOOR -3 9 c1 C1 t] -569283192403881430833817637028436737668 / Decimal('0E+11') -> Decimal:Decimal('-Infinity') Di
+652 [p1 05UP -6 25 c0 C1 t] Decimal('-7E+22').__pos__() -> Decimal:Decimal('-7E+22') 
+653 [p21 FLOOR -10 6 c0 C1 t] c.logical_invert(Decimal('1111000011000100010')) -> Decimal:Decimal('110000111100111011101') 
+654 [p9 HALF_EVEN -999999999999999999 999999999999999999 c1 C0 t] Decimal('4.7237470779015961626656e+55').compare_total(Decimal('5.25423273787574452958206932806399991839e+77')) -> Decimal:Decimal('-1') 
+655 [p3 UP -999999 999999 c1 C0 tFlSu] pow(9648, Decimal('9648'), 447) -> Decimal:Decimal('96') 
+656 [p39 HALF_UP -6 9 c1 C0 t] Decimal('4.39103967E+46').copy_sign(19863674414848548607389563886, c) -> Decimal:Decimal('4.39103967E+46') 
+657 [p40 HALF_DOWN -999999 999999 c0 C1 tInCl] Decimal('9.9999999999999999999999999999999999999999').__floor__() -> int:9 
+658 [p28 05UP -999999999999999999 999999999999999999 c0 C1 t] c.scaleb(Decimal('2.814916966E-462351665171807413'), 29) -> Decimal:Decimal('2.814916966E-462351665171807384') 
+659 [p2 DOWN -22 79 c0 C1 tOv] c.compare_total_mag(Decimal('-5.50E-26'), Decimal('3.0E+76')) -> Decimal:Decimal('-1') 
+660 [p19 CEILING -999999 999999 c0 C1 t] c.fma(89737244005906230464730807557, Decimal('8.0E+3'), Decimal('0.000')) -> Decimal:Decimal('7.178979520472498438E+32') InRo
+661 [p15 DOWN -999999 999999 c0 C1 t] c.remainder_near(Decimal('-39.719322'), Decimal('5555.5055500')) -> Decimal:Decimal('-39.7193220') 
+662 [p39 HALF_EVEN -999999 999999 c1 C1 t] Decimal('3.000000000000000000000000000000000000000E+41').logb(c) -> Decimal:Decimal('41') 
+663 [p38 DOWN -999999999999999999 999999999999999999 c0 C1 t] c.canonical(Decimal('-5.5555505000055500500505555050000500000E+68')) -> Decimal:Decimal('-5.5555505000055500500505555050000500000E+68') 
+664 [p9 CEILING -6 5 c0 C1 tDiOvIn] Decimal('9.999990099909E+15') ** Decimal('154') -> !Overflow: [<class 'decimal.Overflow'>, <class 'decimal.Inexact'>] OvInRo
+665 [p9 DOWN -3 6 c0 C1 t] Decimal('9.9999999999999999999999999999999999999E+61').max(Decimal('0.500'), c) -> Decimal:Decimal('9999999.99') OvInRo
+666 [p20 CEILING -999999 999999 c0 C1 tOvUn] c.to_integral(Decimal('4.00000000000000000000000000000000000000E+77')) -> Decimal:Decimal('4.00000000000000000000000000000000000000E+77') 
+667 [p9 DOWN -2 3 c1 C1 tInOvSuRo] Decimal('692561.9021849264335') ** -3253695292 -> !Subnormal: [<class 'decimal.Subnormal'>, <class 'decimal.Rounded'>] UnSuInRoCl
+668 [p20 CEILING -6 3 c1 C1 tOv] c.copy_sign(Decimal('504211003912982623.8'), Decimal('-3.12E-24646275')) -> Decimal:Decimal('-504211003912982623.8') 
+669 [p19 HALF_UP -4 2 c0 C0 t] c.remainder_near(Decimal('-5462911230264589729.6'), Decimal('99999999999999999999')) -> Decimal:Decimal('-Infinity') OvInRo
+670 [p16 UP -999999 999999 c0 C1 tFl] Decimal('8.0000000000000000E+733373') divmod Decimal('0.0776750') -> (Decimal:Decimal('NaN'), Decimal:Decimal('NaN')) In
+671 [p28 HALF_DOWN -76 84 c0 C1 tDiUn] Decimal('0.0007000000000000000000000000000').logb(c) -> Decimal:Decimal('-4') 
+672 [p34 CEILING -17 100 c0 C1 t] Decimal('-6331765127708275543354.4236179151268836').next_plus(c) -> Decimal:Decimal('-6331765127708275543354.423617915126') 
+673 [p34 CEILING -999999 999999 c0 C1 t] Decimal('9.099000090099999909999090090E+32').next_toward(Decimal('-4.5E+26')) -> Decimal:Decimal('909900009009999990999909008999999.9') 
+674 [p38 HALF_DOWN -1 7 c0 C0 tFlUnIn] Decimal('95720885323079655.369529892402861710515').__pos__() -> !Inexact: [<class 'decimal.Inexact'>] OvInRo
+675 [p2 DOWN -999999 999999 c0 C1 t] c.copy_abs(Decimal('0E-32')) -> Decimal:Decimal('0E-32') 
+676 [p38 DOWN -22 20 c1 C0 t] Decimal('9.999999099000900909e+40') ** Decimal('9e+2') -> Decimal:Decimal('999999999999999999999.99999999999999999') OvInRo
+677 [p19 HALF_UP -9 7 c0 C1 t] Decimal('2.7078637E+18').shift(Decimal('sNaN'), c) -> Decimal:Decimal('NaN') In
+678 [p1 05UP -999999 999999 c0 C0 t] c.min(Decimal('4E-18'), Decimal('3.88499282453913051070218237939060240142E+404573')) -> Decimal:Decimal('4E-18') 
+679 [p34 05UP -999999 999999 c0 C1 t] Decimal('-6.229217414652038574330676966619913E+62') divmod Decimal('72563387739494679228.915684465572947') -> (Decimal:Decimal('NaN'), Decimal:Decimal('NaN')) In
+680 [p16 HALF_DOWN -999999 999999 c1 C1 t] c.to_eng_string(Decimal('3.98946883009170658974977989434187725159E-22129')) -> str:'398.946883009170658974977989434187725159E-22131' 
+681 [p16 UP -999999 999999 c0 C1 t] Decimal('-3.790962604210558E-999998').conjugate() -> Decimal:Decimal('-3.790962604210558E-999998') 
+682 [p2 FLOOR -999999 999999 c1 C1 t] c.power(Decimal('0.1'), Decimal('9.0990909090900990900990009900099090900E+1000038')) -> Decimal:Decimal('0E-1000000') UnSuInRoCl
+683 [p3 CEILING 0 5 c0 C1 tDiSuCl] Decimal('-5.0E+6').__int__() -> int:-5000000 
+684 [p23 HALF_UP -73 32 c0 C1 tDi] Decimal('97310929683413476486854621346745060187').__reduce__() -> (type:<class 'decimal.Decimal'>, (str:'97310929683413476486854621346745060187')) 
+685 [p3 DOWN -1 9 c1 C1 tInInRo] c.fma(-4928315152713367, Decimal('-3200826112969213315885965472745904.6879'), Decimal('7.61E+10')) -> !Inexact: [<class 'decimal.Inexact'>, <class 'decimal.Rounded'>] OvInRo
+686 [p1 UP -999999 999999 c0 C0 tFlUnRo] Decimal('2e+2').__str__() -> str:'2e+2' 
+687 [p28 HALF_EVEN -64 15 c0 C1 tFlOvUn] Decimal('9493935026730228827765345743767829').__float__() -> float:9.493935026730229e+33 
+688 [p20 HALF_DOWN -999999 999999 c0 C0 t] c._apply(Decimal('-4.8E-35')) -> Decimal:Decimal('-4.8E-35') 
+689 [p28 05UP -98 19 c0 C1 t] Decimal('-45828195920600316.55218251359').logb(c) -> Decimal:Decimal('16') 
+690 [p26 FLOOR -4 2 c0 C1 t] pow(Decimal('-18251502821937523'), 278048462, Decimal('-700483370452')) -> Decimal:Decimal('425894927861') 
+691 [p16 HALF_EVEN -66 61 c1 C1 tSu] Decimal('4.81E-55') ** Decimal('-184') -> Decimal:Decimal('Infinity') OvInRo
+692 [p34 FLOOR -52 77 c0 C1 t] Decimal('500055.000550005550505555555055555550').to_integral_exact(ROUND_HALF_EVEN, c) -> Decimal:Decimal('500055') InRo
+693 [p2 UP 0 2 c1 C1 tOvSuIn] Decimal('9090099009000909900990909090.9999900909').compare_total(Decimal('0.80'), c) -> Decimal:Decimal('1') 
+694 [p17 HALF_DOWN -71 59 c1 C1 tFlDiOvInRo] c.logical_and(Decimal('10'), Decimal('11101001010')) -> Decimal:Decimal('10') 
+695 [p19 HALF_EVEN -3 5 c0 C0 t] c.compare(Decimal('5.88750083649965497707570512627991864882E+62'), Decimal('2.32E+41')) -> Decimal:Decimal('1') 
+696 [p9 HALF_EVEN -20 86 c0 C0 tDiCl] Decimal('-62733088303').logical_invert(c) -> Decimal:Decimal('NaN') In
+697 [p6 HALF_EVEN -3 0 c1 C1 t] Decimal('0.011').compare_total(Decimal('-2E+1')) -> Decimal:Decimal('1') 
+698 [p3 HALF_DOWN -999999 999999 c0 C0 tFlCl] Decimal('9E+898234').compare_signal(Decimal('4.37E+4'), c) -> Decimal:Decimal('1') 
+699 [p2 HALF_UP -999999 999999 c0 C1 t] Decimal('6.299E+14') // Decimal('1.942E+13') -> Decimal:Decimal('32') 
+700 [p3 HALF_UP -9 8900 c1 C0 tDiRo] Decimal('4.48e+4').scaleb(4) -> Decimal:Decimal('4.48e+8') 
+701 [p28 UP -999999 999999 c0 C1 t] c.is_normal(Decimal('-NaN')) -> bool:False 
+702 [p28 UP -999999999999999999 999999999999999999 c0 C0 t] Decimal('5.3999086399622021163655492812e+31') // Decimal('4.0277259878331070e+17') -> Decimal:Decimal('134068421145682') 
+703 [p20 DOWN -999999 999999 c1 C1 t] c.is_nan(Decimal('-5.5500055500005055505050505E-1000001')) -> bool:False 
+704 [p28 DOWN -7 9 c1 C1 tDi] c.fma(Decimal('0.99'), Decimal('-9.9999E+22'), Decimal('-40000000000000000000000000000.000000000')) -> Decimal:Decimal('-9999999999.999999999999999999') OvInRo
+705 [p28 HALF_EVEN -99 19 c0 C1 t] c.compare_total_mag(Decimal('9.4831402797151852491579E+48'), Decimal('9.9E+3')) -> Decimal:Decimal('1') 
+706 [p20 HALF_EVEN -92 90 c0 C1 t] c.is_snan(False) -> bool:False 
+707 [p39 UP -999999 999999 c0 C1 tFlDiOv] c.fma(791177332787547674811885540284, Decimal('-3369103636739038641616307.1405641933056'), -7256546616017172110784686) -> Decimal:Decimal('-2.66555842920001950803299140475908992936E+54') InRo
+708 [p28 05UP -999999999999999999 999999999999999999 c1 C0 t] -5524708634096948589814948461584216706694 ** Decimal('-8') -> Decimal:Decimal('1.152192301973263965889111642e-318') InRo
+709 [p34 DOWN -2 7 c0 C0 tInFlOvIn] Decimal('999999999.9999999999999999999999999').normalize(c) -> !Overflow: [<class 'decimal.Overflow'>, <class 'decimal.Inexact'>] OvInRo
+710 [p3 HALF_DOWN -91 100 c1 C1 t] c.compare(Decimal('-0E+20'), Decimal('-8.163E+101')) -> Decimal:Decimal('1') 
+711 [p1 UP -999999 999999 c0 C1 tOvUn] c.quantize(Decimal('9999999999999999999999999999.99999999999'), Decimal('1E+2')) -> Decimal:Decimal('NaN') In
+712 [p39 UP -999999 999999 c1 C0 tInOvUnSuRo] Decimal('-5.887927316037249411715329601066830e+41') divmod Decimal('7.0400468642060728518403934344307757704058e+48') -> (Decimal:Decimal('-0'), Decimal:Decimal('-5.887927316037249411715329601066830e+41')) 
+713 [p6 HALF_DOWN -89 33 c0 C1 t] Decimal('-3E+32').is_subnormal(c) -> bool:False 
+714 [p2 HALF_EVEN -8 1 c0 C1 t] c.divide_int(Decimal('9E-28'), Decimal('-0.00000662')) -> Decimal:Decimal('-0') 
+715 [p45 DOWN -999999999999999999 999999999999999999 c0 C1 tFlDiUnSuIn] c.plus(-4301709819692181817849390813175397463) -> Decimal:Decimal('-4301709819692181817849390813175397463') 
+716 [p1 HALF_UP -6 2 c0 C1 t] Decimal('-999900000909999099.9900900090900990099') / 1 -> Decimal:Decimal('-Infinity') OvInRo
+717 [p32 HALF_EVEN -3202490105 70778 c1 C1 t] c.is_nan(Decimal('75500091539.228823472')) -> bool:False 
+718 [p28 FLOOR -999999 999999 c0 C1 t] Decimal('-9.099099090E+38') // -6036148400153392807910959084361817683701 -> Decimal:Decimal('0') 
+719 [p37 HALF_UP -8 3 c1 C0 tOvUn] c.compare_total(-302084701059289339346450, Decimal('-5.000000000000000000E-51249616')) -> Decimal:Decimal('-1') 
+720 [p38 05UP -10 3 c1 C0 t] Decimal('5.0550550050050505550005505000e+36') divmod Decimal('-2.91140272018357352737e+25') -> (Decimal:Decimal('-9999.9999999999999999999999999999999999'), Decimal:Decimal('9999.9999999999999999999999999999999999')) OvInRo
+721 [p28 UP -999999999999999999 999999999999999999 c1 C1 tInOvUnRo] c.copy_negate(Decimal('3600727.809088595388')) -> Decimal:Decimal('-3600727.809088595388') 
+722 [p3 UP -27 10 c1 C1 tInRo] c.remainder(Decimal('-0.00059797'), Decimal('0E-8')) -> !InvalidOperation: [<class 'decimal.InvalidOperation'>] In
+723 [p9 CEILING -169565450724 53195858391294 c1 C1 t] Decimal('0.1') ** Decimal('-8E-26') -> Decimal:Decimal('1.00000001') InRo
+724 [p39 05UP -1 1 c0 C1 t] c.shift(Decimal('1.328670907432094403E-13'), Decimal('9.6705904767081930270E-25')) -> Decimal:Decimal('NaN') In
+725 [p3 05UP -5462364461323 10 c0 C1 t] Decimal('-94652140840922.834572001378552811511287') % Decimal('2.00000000000000000000000000000000000000E-53520828680') -> Decimal:Decimal('NaN') In
+726 [p20 05UP -999999 999999 c1 C1 t] c.compare_total(Decimal('-3.5929633506836480396E+29576'), Decimal('-6.876191632982951532E-197784')) -> Decimal:Decimal('-1') 
+727 [p28 HALF_UP -999999 999999 c1 C1 t] Decimal('2.491349696947847297E+37').fma(Decimal('8.061892982686020513658E-999978'), Decimal('8E-28'), c) -> Decimal:Decimal('8.000000000000000000000000000E-28') InRo
+728 [p20 HALF_UP -67 98 c1 C1 t] Decimal('1').is_canonical() -> bool:True 
+729 [p27 FLOOR -999999 999999 c0 C1 t] Decimal('-0E+13').same_quantum(Decimal('9.999999999999E-891963'), c) -> bool:False 
+730 [p31 UP -999999 999999 c0 C1 tUnRo] c.same_quantum(Decimal('-9.1561233323765240608E+34'), Decimal('-0.00')) -> bool:False 
+731 [p1 UP -999999 999999 c0 C1 t] Decimal('0').number_class(c) -> str:'+Zero' 
+732 [p15 UP -999999 999999 c0 C0 t] c.normalize(Decimal('-81787.329462')) -> Decimal:Decimal('-81787.329462') 
+733 [p9 DOWN -3 2 c0 C0 t] Decimal('NaN1').as_tuple() -> DecimalTuple:DecimalTuple(sign=0, digits=(1,), exponent='n') 
+734 [p38 HALF_DOWN -999999 999999 c0 C1 t] Decimal('8.53E-36') ** Decimal('-0.000') -> Decimal:Decimal('1') 
+735 [p28 UP -10 9 c1 C1 tOvSuRoCl] c.max_mag(Decimal('-0.00999999'), Decimal('952170372302109825272599.8629')) -> !Overflow: [<class 'decimal.Overflow'>, <class 'decimal.Rounded'>] OvInRo
+736 [p38 UP -2 2 c1 C1 tUnRoCl] c.compare_total_mag(Decimal('9.0990900909909909E+17'), Decimal('-90569.298905632784541790531259908523628')) -> Decimal:Decimal('1') 
+737 [p1 CEILING -51 0 c0 C0 tInDiUn] Decimal('-999999999999999999.99').quantize(Decimal('1')) -> !InvalidOperation: [<class 'decimal.InvalidOperation'>] In
+738 [p28 FLOOR -999999 999999 c0 C1 t] c.create_decimal(Decimal('428202234354720632222.6395008')) -> Decimal:Decimal('428202234354720632222.6395008') 
+739 [p10 UP -16 84 c0 C1 t] c.scaleb(Decimal('7E+38'), Decimal('-256')) -> Decimal:Decimal('NaN') In
+740 [p1 05UP -999999 999999 c0 C0 t] Decimal('-830168626531330221').as_tuple() -> DecimalTuple:DecimalTuple(sign=1, digits=(8, 3, 0, 1, 6, 8, 6, 2, 6, 5, 3, 1, 3, 3, 0, 2, 2, 1), exponent=0) 
+741 [p20 DOWN -999999 999999 c0 C1 t] Decimal('7.3E+21').next_minus(c) -> Decimal:Decimal('7.2999999999999999999E+21') 
+742 [p38 HALF_EVEN -999999 999999 c0 C1 t] c.fma(Decimal('20.000000000000000000'), Decimal('-4.53392643134028719918418259685377836984E+7368413583944'), True) -> Decimal:Decimal('-Infinity') OvInRo
+743 [p3 HALF_DOWN -999999 999999 c0 C1 t] c.shift(Decimal('-3.8E-1000001'), Decimal('0')) -> Decimal:Decimal('-3.8E-1000001') 
+744 [p2 FLOOR -999999999999999999 999999999999999999 c1 C1 t] Decimal('5055505550555555505500550550.0500555050').__ceil__() -> int:5055505550555555505500550551 
+745 [p34 HALF_EVEN -999999 999999 c0 C1 t] Decimal('9.9999999999999999999999999999999999E+1000001') * Decimal('4.32E-29') -> Decimal:Decimal('4.320000000000000000000000000000000E+999973') InRo
+746 [p34 DOWN -3 0 c0 C1 t] Decimal('810828513841849926217163.40') + Decimal('2.55574064747439759941720870415686542532') -> Decimal:Decimal('9.999999999999999999999999999999999') OvInRo
+747 [p20 FLOOR -999999 999999 c0 C0 t] Decimal('9.9090009e+14') % Decimal('1.000000000000e+20') -> Decimal:Decimal('9.9090009e+14') 
+748 [p3 05UP -999999 999999 c0 C1 tUnInRo] Decimal('5.0E+9') % Decimal('-5.50E+8') -> Decimal:Decimal('5.0E+7') 
+749 [p30 HALF_EVEN -999999999999999999 999999999999999999 c0 C0 t] Decimal('-0.000978') * 4857199773740031690824683955067 -> Decimal:Decimal('-4750341378717750993626540908.06') InRo
+750 [p20 DOWN -70 50 c0 C1 t] Decimal('0.657').ln(c) -> Decimal:Decimal('-0.42007126049752654017') InRo
+751 [p32 05UP -49 79 c0 C0 t] c.rotate(Decimal('-sNaN9'), Decimal('465')) -> Decimal:Decimal('-NaN9') In
+752 [p28 CEILING -7 7 c0 C0 tDiOvUnInCl] Decimal('9938296487380512650708198565096657').fma(Decimal('9.9999999999999999999999999999E+64'), Decimal('4.6E-21'), c) -> !Overflow: [<class 'decimal.Overflow'>, <class 'decimal.Inexact'>] OvInRo
+753 [p28 CEILING -28 40 c0 C1 t] Decimal('-3.0E+24').next_plus(c) -> Decimal:Decimal('-2999999999999999999999999.999') 
+754 [p28 05UP -13 39 c1 C1 tDiUn] Decimal('0E+16').copy_sign(901194288286171975) -> Decimal:Decimal('0E+16') 
+755 [p4 FLOOR -999999 999999 c0 C1 tFl] Decimal('0.050') + Decimal('9.9999E-7') -> Decimal:Decimal('0.05000') InRo
+756 [p28 HALF_DOWN -3 42 c1 C0 tFlDiCl] c.compare_signal(Decimal('0.0000'), Decimal('-2.20E+6')) -> Decimal:Decimal('1') 
+757 [p1 HALF_UP -999999 999999 c1 C0 t] c.is_infinite(Decimal('-0E+833709')) -> bool:False 
+758 [p28 DOWN -9 32 c0 C1 tFlSu] c.fma(Decimal('-0'), Decimal('9.00000990090009099099999900909090999990E+74'), Decimal('-2.66544754806090176189647701201945095128E+41')) -> Decimal:Decimal('-9.999999999999999999999999999E+32') OvInRo
+759 [p17 05UP -999999 999999 c0 C1 t] Decimal('-0.009') divmod Decimal('-550555.505') -> (Decimal:Decimal('0'), Decimal:Decimal('-0.009')) 
+760 [p39 FLOOR -1 4 c1 C1 t] c.to_integral(Decimal('sNaN9')) -> Decimal:Decimal('NaN9') In
+761 [p34 HALF_DOWN -999999 999999 c0 C1 t] Decimal('-9.09990090099090009099900900999900E+37') % Decimal('1.6E+9') -> Decimal:Decimal('-7.900E+8') 
+762 [p19 HALF_EVEN -999999 999999 c0 C1 t] c.add(Decimal('3.92448051171712322776883051385193190247E+59'), Decimal('9.2991E+999984')) -> Decimal:Decimal('9.299100000000000000E+999984') InRo
+763 [p1 05UP -67191532 7995 c1 C1 tSu] Decimal('-NaN123').is_canonical() -> bool:True 
+764 [p34 HALF_EVEN -18 21 c0 C1 tInDiInCl] c.is_subnormal(Decimal('2')) -> bool:False 
+765 [p2 HALF_EVEN -82 99 c0 C1 tDiOv] Decimal('-8.3E+2') % Decimal('5E+3') -> Decimal:Decimal('-8.3E+2') 
+766 [p28 05UP -99 28 c1 C1 t] c.remainder_near(Decimal('833852391499.35501003419'), Decimal('5.550055005050055550055000550550000005E+38')) -> Decimal:Decimal('833852391499.35501003419') 
+767 [p28 CEILING -999999 999999 c1 C1 t] Decimal('-0E+17') - Decimal('-15') -> Decimal:Decimal('15') 
+768 [p2 CEILING -999999 999999 c0 C0 t] c.min(Decimal('4.8585013160042698609519757782961808830E+1000034'), 8948222219886387872783285792) -> Decimal:Decimal('9.0E+27') InRo
+769 [p28 HALF_UP -999999 999999 c0 C0 tInFlRo] Decimal('0') * Decimal('99.9') -> Decimal:Decimal('0.0') 
+770 [p9 05UP -999999 999999 c0 C1 tFlOv] Decimal('3.1541053541968445108119332883053725562E-1000000').rotate(Decimal('-2.83E+7'), c) -> Decimal:Decimal('NaN') In
+771 [p9 FLOOR -999999 999999 c1 C1 t] Decimal('4.0000000000000000000E-552902').log10(c) -> Decimal:Decimal('-552901.398') InRo
+772 [p9 HALF_EVEN 0 0 c1 C1 tInSu] Decimal('-0.009341') + Decimal('-8.116457895E+48') -> Decimal:Decimal('-Infinity') OvInRo
+773 [p19 HALF_EVEN -46 44 c0 C1 tFl] Decimal('550005505505550050.050') + Decimal('-29517.80015727983167') -> Decimal:Decimal('550005505505520532.2') InRo
+774 [p28 FLOOR -59 62 c0 C1 tInFlUnRo] c.is_zero(107812778983233416667692861144918420) -> bool:False 
+775 [p9 CEILING -2 1 c0 C1 t] Decimal('6E+20').same_quantum(Decimal('-sNaN9'), c) -> bool:False 
+776 [p28 HALF_UP -999999999999999999 999999999999999999 c0 C1 tFlDiIn] Decimal('7.1142433254309602195').next_plus(c) -> Decimal:Decimal('7.114243325430960219500000001') 
+777 [p28 HALF_EVEN -1 0 c1 C1 t] Decimal('9.99E+4').logb(c) -> Decimal:Decimal('4.000000000000000000000000000') Cl
+778 [p2 HALF_EVEN -999999999999999999 999999999999999999 c0 C1 t] Decimal('-9.5E-9') % Decimal('-9E-9') -> Decimal:Decimal('-5E-10') 
+779 [p28 UP -68 58 c0 C0 tFlDiCl] Decimal('10010011000000101').logical_xor(Decimal('1110010001'), c) -> Decimal:Decimal('10010010110010100') 
+780 [p16 HALF_UP -999999 999999 c0 C1 tInDiOv] Decimal('111').logical_or(Decimal('1110110000011010')) -> Decimal:Decimal('1110110000011111') 
+781 [p28 05UP -999999999999999999 999999999999999999 c0 C1 t] c.to_sci_string(Decimal('-9.99999999999999999999999999999999999999E+8681647840825798')) -> str:'-9.99999999999999999999999999999999999999E+8681647840825798' 
+782 [p34 UP -34 82 c0 C0 tFlUn] Decimal('-9.0090099909990090000900999900909090009e+87').__reduce__() -> (type:<class 'decimal.Decimal'>, (str:'-9.0090099909990090000900999900909090009e+87')) 
+783 [p7 DOWN -999999 999999 c0 C1 t] c.is_subnormal(Decimal('-5.90762E-675023')) -> bool:False 
+784 [p3 HALF_EVEN -16 62 c1 C1 t] c.same_quantum(Decimal('379827296219717373079602114354931628856'), Decimal('9.99E-24')) -> bool:False 
+785 [p34 05UP -999999 999999 c0 C1 t] c.plus(Decimal('9.000000000000000000000000000000000000000000000000000E-784608')) -> Decimal:Decimal('9.000000000000000000000000000000000E-784608') Ro
+786 [p28 CEILING -80 54 c1 C1 tInFl] Decimal('75294664201313473168190103.4') // Decimal('-9.99999999999999999999999999E+28') -> Decimal:Decimal('-0') 
+787 [p30 DOWN -96 72 c0 C1 tFlUnRoCl] c.remainder_near(Decimal('3.0309430E+13'), Decimal('-9.99999999999999999999999999E+29')) -> Decimal:Decimal('3.0309430000E+13') 
+788 [p16 05UP -71 12 c0 C1 t] c.abs(Decimal('5.0E-28')) -> Decimal:Decimal('5.0E-28') 
+789 [p28 DOWN -999999 999999 c0 C1 t] c.to_eng_string(Decimal('83825703694.1644558255733288545719503543209929933014')) -> str:'83825703694.1644558255733288545719503543209929933014' 
+790 [p3 HALF_EVEN -10 3 c0 C1 t] Decimal('-0.099999999').__reduce__() -> (type:<class 'decimal.Decimal'>, (str:'-0.099999999')) 
+791 [p16 05UP -999999 999999 c0 C1 tDiCl] c.divide(Decimal('sNaN'), Decimal('-9999999999')) -> Decimal:Decimal('NaN') In
+792 [p3 FLOOR -999999 999999 c0 C1 tIn] c.is_qnan(Decimal('-1.603268641791342659E-614869')) -> bool:False 
+793 [p38 CEILING -50 97 c1 C1 tFlDiInCl] c.scaleb(Decimal('9.99000990900909999999000099990990900000E+40'), Decimal('-33')) -> Decimal:Decimal('99900099.090090999999900009999099090000') Ro
+794 [p39 FLOOR -999999999999999999 999999999999999999 c0 C0 t] Decimal('70000000000000000.000') + 393048985686274021129763094431886 -> Decimal:Decimal('393048985686274091129763094431886.000') 
+795 [p20 UP -999999999999999999 999999999999999999 c0 C1 tInFl] Decimal('-4.42424E+398639125076389').to_eng_string(c) -> str:'-44.2424E+398639125076388' 
+796 [p20 HALF_UP 0 30 c1 C1 t] Decimal('0E+20').shift(-10) -> Decimal:Decimal('0E+20') 
+797 [p20 HALF_UP -4644923502 8852356 c1 C1 t] Decimal('-47999237484052314910294051220743') ** -5776358336 -> Decimal:Decimal('0E-4644923521') UnSuInRoCl
+798 [p39 DOWN -999999999999999999 999999999999999999 c1 C1 t] c.logical_or(Decimal('0.781964598016568440917632671745042244435'), Decimal('2.6E+418986840852427069')) -> Decimal:Decimal('NaN') In
+799 [p39 HALF_EVEN -5 6 c0 C1 t] -720624518192783608887366187391682141 % Decimal('0.54') -> Decimal:Decimal('-0.24') 
+800 [p9 DOWN -81 81 c1 C1 t] c.min_mag(Decimal('-6.9E-36'), Decimal('-9416615125387091.7967')) -> Decimal:Decimal('-6.9E-36') 
+801 [p38 UP -80388968149961 2522165596263849 c1 C0 t] Decimal('746995730206321431.660615') divmod Decimal('-5.0500555') -> (Decimal:Decimal('-147918320938516701'), Decimal:Decimal('3.9337095')) 
+802 [p1 HALF_UP -999999 999999 c0 C1 t] c.quantize(Decimal('9E-339317'), Decimal('1')) -> Decimal:Decimal('0') InRo
+803 [p28 FLOOR -6 9 c1 C1 tInInCl] Decimal('9584192376663048.9172').compare(Decimal('9E-19')) -> Decimal:Decimal('1') 
+804 [p39 FLOOR -86 52 c0 C1 tInOvUnIn] Decimal('5696552864.0960684737404906041555413534').log10(c) -> !Inexact: [<class 'decimal.Inexact'>] InRo
+805 [p28 CEILING -999999999999999999 999999999999999999 c1 C1 tDi] Decimal('9.180345841494245990555819263E+51') * Decimal('-96.49007018130279217153769594066618233277181721566547725980628') -> Decimal:Decimal('-8.858122145344110343892219632E+53') InRo
+806 [p38 HALF_EVEN -87 70 c1 C1 t] Decimal('100000.00000000000000000000000000000000') - Decimal('50000000000000.000000') -> Decimal:Decimal('-49999999900000.000000000000000000000000') Ro
+807 [p18 HALF_DOWN -10 10 c0 C1 t] Decimal('0.000').__repr__() -> str:"Decimal('0.000')" 
+808 [p28 HALF_UP -999999999999999999 999999999999999999 c1 C1 tInOvCl] Decimal('110').logical_and(Decimal('1101110001101110')) -> Decimal:Decimal('110') 
+809 [p16 HALF_EVEN -999999 999999 c0 C1 t] Decimal('9.2E+13').__round__() -> int:92000000000000 
+810 [p28 HALF_DOWN -999999 999999 c0 C1 t] Decimal('9.90999E-12') * Decimal('549082680968080763442409627919203236.35') -> Decimal:Decimal('5441403877566870684906644.989') InRo
+811 [p9 HALF_UP -999999999999999999 999999999999999999 c1 C1 t] c.is_normal(Decimal('0')) -> bool:False 
+812 [p16 HALF_UP -52 94 c1 C0 t] c.shift(Decimal('0.4'), Decimal('6')) -> Decimal:Decimal('400000.0') 
+813 [p28 05UP 0 1 c0 C0 t] c.to_integral_exact(Decimal('5.5716295561949870614E+39')) -> Decimal:Decimal('5.5716295561949870614E+39') 
+814 [p39 FLOOR -432365 465 c0 C1 t] c.logical_or(Decimal('11100110011111111110000'), Decimal('10100010110001111110110111010001100')) -> Decimal:Decimal('10100010110011111110111111111111100') 
+815 [p16 DOWN -6 4 c0 C1 tInOvSuIn] c.number_class(Decimal('5E-8')) -> str:'+Subnormal' 
+816 [p18 CEILING -84 84 c1 C1 t] c.compare(Decimal('-40412129038656525.8712518124604857481600'), -69961456316583156721082743443508271) -> Decimal:Decimal('1') 
+817 [p2 05UP -34 69 c1 C1 t] Decimal('48409140944817572406468643889704788957').__trunc__() -> int:48409140944817572406468643889704788957 
+818 [p38 DOWN -999999 999999 c0 C1 t] Decimal('-0E-89354') * Decimal('5.00000000000000000000000000000000000000E+54') -> Decimal:Decimal('-0E-89338') 
+819 [p28 HALF_UP -40108719318 400622439402 c0 C1 t] c.scaleb(-71969662570621000533063370615411, -39931280377146547478337218575) -> Decimal:Decimal('NaN') In
+820 [p9 HALF_UP -1 65 c1 C1 t] Decimal('0.4').to_integral_exact(ROUND_CEILING, c) -> Decimal:Decimal('1') InRo
+821 [p19 FLOOR -80932823809 3331230034 c1 C1 tOv] Decimal('99999009099990.00009900000090009990900').number_class(c) -> str:'+Normal' 
+822 [p20 HALF_UP -999999 999999 c1 C0 tFlDiSuIn] Decimal('0') + Decimal('0.0001') -> Decimal:Decimal('0.0001') 
+823 [p28 05UP 0 7 c1 C1 t] Decimal('5.0550555000E+49').max(Decimal('7.162247695272612150E-15'), c) -> Decimal:Decimal('99999999.99999999999999999999') OvInRo
+824 [p28 UP -999999 999999 c1 C1 t] Decimal('5.555505555000500055055005050505500505500505055500555500E+999991').compare(Decimal('948.617'), c) -> Decimal:Decimal('1') 
+825 [p28 FLOOR -999999 999999 c1 C1 t] c.minus(Decimal('9.999999999999999999999999999E+53528356938320')) -> Decimal:Decimal('-Infinity') OvInRo
+826 [p20 CEILING -9 4 c0 C1 tInUnSu] Decimal('320519318412013269690758').next_toward(Decimal('9.9999999999999999999999999999999999999E+40')) -> Decimal:Decimal('Infinity') OvInRo
+827 [p13 HALF_EVEN -4 2 c1 C1 t] Decimal('-2.2693691042007E+16').max(Decimal('NaN')) -> Decimal:Decimal('-Infinity') OvInRo
+828 [p32 UP -999999 999999 c1 C1 tDiSuCl] Decimal('9').max(237484042748165508377861794124793963) -> Decimal:Decimal('2.3748404274816550837786179412480E+35') InRo
+829 [p9 DOWN -55 36 c0 C1 t] c.power(3775274620, Decimal('803730023703'), Decimal('1E+3')) -> Decimal:Decimal('0') 
+830 [p28 HALF_DOWN -999999 999999 c0 C0 t] Decimal('0.009999999999999999999') * Decimal('9.9099099990990009990099990090e+33') -> Decimal:Decimal('9.909909999099000998019008009e+31') InRo
+831 [p28 UP -5 4 c1 C0 tFlDiOvIn] Decimal('-0.0000067208407348030472065891065163746') * Decimal('0.5') -> !Inexact: [<class 'decimal.Inexact'>] UnSuInRo
+832 [p3 HALF_DOWN -32 15 c1 C1 t] c.log10(Decimal('0.077')) -> Decimal:Decimal('-1.11') InRo
+833 [p2 CEILING -999999 999999 c1 C0 t] Decimal('9e-902').is_infinite() -> bool:False 
+834 [p34 DOWN -8 3 c1 C1 tFl] Decimal('-NaN').__str__() -> str:'-NaN' 
+835 [p2 UP -1 6 c0 C0 t] Decimal('2.16e+10') // Decimal('3.1e+8') -> Decimal:Decimal('69') 
+836 [p34 CEILING -9 1 c0 C0 t] Decimal('80.00000000000000000') ** Decimal('100') -> Decimal:Decimal('Infinity') OvInRo
+837 [p1 HALF_EVEN -999999 999999 c0 C1 t] c.to_integral_exact(-851403247494097858034950) -> Decimal:Decimal('-851403247494097858034950') 
+838 [p2 FLOOR -999999 999999 c0 C1 t] Decimal('0.0000') / Decimal('6.8E+4') -> Decimal:Decimal('0E-7') 
+839 [p28 CEILING -83 91 c0 C0 t] c.sqrt(Decimal('0.0500500550000005500555005500')) -> Decimal:Decimal('0.2237186961342313698214173601') InRo
+840 [p3 HALF_UP -999999 999999 c0 C0 t] Decimal('5').compare_total_mag(Decimal('1.4542262067530031271350977294831394892e+63')) -> Decimal:Decimal('-1') 
+841 [p9 UP -21 0 c0 C1 t] c.logical_invert(Decimal('0')) -> Decimal:Decimal('111111111') 
+842 [p39 HALF_EVEN -999999 999999 c1 C1 tFlDiOv] c.next_minus(Decimal('-2.000000000000000000E-179948')) -> Decimal:Decimal('-2.00000000000000000000000000000000000001E-179948') 
+843 [p28 CEILING -5 1 c0 C1 tOv] c._apply(Decimal('50')) -> Decimal:Decimal('50') 
+844 [p2 CEILING -42 85 c1 C1 t] c.max(Decimal('3E-42'), Decimal('2.86E+28')) -> Decimal:Decimal('2.9E+28') InRo
+845 [p19 FLOOR -999999 999999 c1 C1 tSuIn] Decimal('-5.5505055555505050505050000550055555050E+996586').logical_or(Decimal('8.118064472456983509E-999981')) -> Decimal:Decimal('NaN') In
+846 [p38 05UP -43 19 c0 C0 t] Decimal('-934650.6832565999419196749518011').__bool__() -> bool:True 
+847 [p28 DOWN -19 85 c0 C1 tSu] Decimal('5.5505055055505500E-25').exp(c) -> Decimal:Decimal('1.000000000000000000000000555') InRo
+848 [p16 HALF_DOWN -999999 999999 c0 C1 t] Decimal('99999.99').is_finite() -> bool:True 
+849 [p20 HALF_UP -54 76 c0 C0 t] c.is_subnormal(Decimal('-6095981285672.3455041886467092726018186')) -> bool:False 
+850 [p44 05UP -48 77 c1 C1 t] c.plus(Decimal('-9999999999999.9999999999999999999999999')) -> Decimal:Decimal('-9999999999999.9999999999999999999999999') 
+851 [p28 CEILING -999999 999999 c0 C0 tInCl] c.compare_signal(Decimal('-9.6E-458838'), Decimal('-6.97957425017434679311952E+24')) -> Decimal:Decimal('1') 
+852 [p28 CEILING -5 0 c0 C0 t] Decimal('-9.09909990909099000000099009E+29').normalize(c) -> Decimal:Decimal('-9.999999999999999999999999999') OvInRo
+853 [p3 CEILING 0 5 c1 C1 t] Decimal('0.00000999').remainder_near(Decimal('0.000500'), c) -> Decimal:Decimal('0.01') UnSuInRo
+854 [p23 HALF_DOWN -999999 999999 c1 C0 t] Decimal('6.546102890453853300e+19') + Decimal('41458046835559725302851') -> Decimal:Decimal('41523507864464263835851') 
+855 [p19 HALF_EVEN -757896361 81173492453 c1 C1 t] Decimal('-0E+64032592311').__copy__() -> Decimal:Decimal('-0E+64032592311') 
+856 [p3 UP -999999 999999 c1 C1 tFl] c.next_minus(Decimal('-3.4E+2')) -> Decimal:Decimal('-341') 
+857 [p28 DOWN -999999 999999 c0 C1 tSu] Decimal('110000101111').logical_invert(c) -> Decimal:Decimal('1111111111111111001111010000') 
+858 [p19 UP -25 28 c0 C1 t] Decimal('0.98088798483710162665') ** Decimal('-8.1552004804528510040E+29') -> Decimal:Decimal('Infinity') OvInRo
+859 [p28 HALF_EVEN -999999 999999 c0 C1 t] Decimal('0.027').max(Decimal('7.4344759705383929621397577933182597336E+42')) -> Decimal:Decimal('7.434475970538392962139757793E+42') InRo
+860 [p19 FLOOR -999999 999999 c1 C1 t] Decimal('8.00000000000000000000000000000000000000E-145427').rotate(Decimal('957'), c) -> Decimal:Decimal('NaN') In
+861 [p19 HALF_EVEN -999999 999999 c0 C1 t] c.exp(Decimal('29654111434.2649077941')) -> Decimal:Decimal('Infinity') OvInRo
+862 [p44 05UP -5 5 c0 C0 t] c.compare_total(Decimal('5.550555500550550055000555500555000050505550505050505E+18605414'), 61103632) -> Decimal:Decimal('1') 
+863 [p28 HALF_DOWN -999999 999999 c1 C0 tDiOvUnSu] Decimal('7.48053e+9') + Decimal('-0') -> Decimal:Decimal('7480530000') 
+864 [p38 CEILING -999999 999999 c1 C1 t] Decimal('7.75963492729923008E-999984') * Decimal('-0.022678805350303049726199629954396930523') -> Decimal:Decimal('-1.7597925010563219542931204516242853267E-999985') InRo
+865 [p28 FLOOR -999999999999999999 999999999999999999 c0 C0 t] c.power(Decimal('77677584715768624562915'), Decimal('26366584'), -74287440400375481621) -> Decimal:Decimal('69490731683205717678') 
+866 [p2 FLOOR -8 7 c0 C0 tRoCl] c.is_signed(19217855415335063200881015636290335) -> bool:False 
+867 [p3 DOWN -9 7 c1 C1 tInFlDiUnIn] Decimal('-4E-12').copy_sign(Decimal('3492136827061012560527003011.1177316218'), c) -> Decimal:Decimal('4E-12') 
+868 [p34 HALF_EVEN -54 63 c0 C1 t] Decimal('-90.90099') / Decimal('9.99E+52') -> Decimal:Decimal('-9.099198198198198198198198198198198E-52') InRo
+869 [p39 HALF_DOWN -999999 999999 c1 C1 t] Decimal('5.305213194573386877E-664154') - Decimal('9.54449629697233094779432304616283856260E+43') -> Decimal:Decimal('-9.54449629697233094779432304616283856260E+43') InRo
+870 [p28 FLOOR -999999 999999 c0 C0 t] Decimal('4E+354877').ln(c) -> Decimal:Decimal('817135.8763408090700978715879') InRo
+871 [p1 FLOOR -82 26 c1 C1 tFlUnSu] Decimal('7E-63339589701213') + 649887624016082076838129448975 -> Decimal:Decimal('9E+26') OvInRo
+872 [p39 05UP -999999 999999 c0 C1 t] c.logical_and(Decimal('1.7422042963517747958E+182665'), Decimal('0.000')) -> Decimal:Decimal('NaN') In
+873 [p38 HALF_EVEN -99 38 c0 C1 t] Decimal('3.038087084951065919573762182881E-108').to_eng_string(c) -> str:'3.038087084951065919573762182881E-108' 
+874 [p28 UP -578258783584786 6299 c0 C1 t] Decimal('7.692914917864490764E-263460752190820').max(Decimal('0E+1'), c) -> Decimal:Decimal('7.692914917864490764E-263460752190820') 
+875 [p16 CEILING -8 1 c0 C1 t] c.exp(Decimal('-40000.000')) -> Decimal:Decimal('0E-23') UnSuInRoCl
+876 [p1 DOWN -999999 999999 c0 C1 t] c.is_zero(Decimal('5.60E+999997')) -> bool:False 
+877 [p19 DOWN -69 29 c1 C1 t] c.power(Decimal('0.0000096928787'), Decimal('-5.0')) -> Decimal:Decimal('1.168788986779685079E+25') InRo
+878 [p3 UP -2 6 c0 C1 tIn] c.copy_abs(Decimal('-6.6E+3')) -> Decimal:Decimal('6.6E+3') 
+879 [p9 CEILING 0 6 c0 C1 t] Decimal('0.044865208601685826368').__complex__() -> complex:(0.04486520860168583+0j) 
+880 [p34 DOWN -9 8 c0 C1 t] Decimal('4646084352186504302.29545518632096') ** Decimal('0.0537') -> Decimal:Decimal('10.05593776186019835997155796735155') InRo
+881 [p3 CEILING -48 41 c0 C1 tFlDiIn] pow(Decimal('-2719'), Decimal('330042'), Decimal('-2719')) -> Decimal:Decimal('NaN') In
+882 [p9 CEILING -999999 999999 c0 C0 t] c.divide(Decimal('-42.68362612559843358'), Decimal('9.999999999E-233232')) -> Decimal:Decimal('-4.26836261E+233232') InRo
+883 [p1 CEILING -999999 999999 c0 C1 t] Decimal('0.00008') // Decimal('0.0000131') -> Decimal:Decimal('6') 
+884 [p39 CEILING -29 69 c0 C1 t] pow(Decimal('-0'), Decimal('-0'), -8324884408998979440189) -> Decimal:Decimal('NaN') In
+885 [p3 UP -894081082170504 6052908 c1 C1 t] c.is_subnormal(Decimal('-5E+5')) -> bool:False 
+886 [p16 05UP -999999 999999 c0 C1 tFlSuRo] c.to_integral_exact(Decimal('-NaN')) -> Decimal:Decimal('-NaN') 
+887 [p16 HALF_UP -7 2 c0 C1 t] c.power(Decimal('-68184187133145'), Decimal('167745311'), -74338364192) -> Decimal:Decimal('-52386958697') 
+888 [p28 FLOOR -75 93 c1 C1 tFlIn] c.to_integral_value(Decimal('-9.6231382807109200037579662101E+68')) -> Decimal:Decimal('-9.6231382807109200037579662101E+68') 
+889 [p28 HALF_DOWN -999999 999999 c0 C1 tInOvUn] c.is_zero(Decimal('-3.3019697675146433975817222614511811968E-66118')) -> bool:False 
+890 [p40 HALF_DOWN -999999 999999 c0 C1 tFlSuInRo] c.divide_int(Decimal('9.9120606052367940E+25'), Decimal('8.0000000000000000000000000000000E+40')) -> Decimal:Decimal('0') 
+891 [p19 HALF_DOWN -999999999999999999 999999999999999999 c0 C1 t] c.scaleb(Decimal('9.9E+2'), Decimal('-18')) -> Decimal:Decimal('9.9E-16') 
+892 [p16 FLOOR -8 0 c1 C0 t] Decimal('-1.61E-10').rotate(Decimal('832'), c) -> Decimal:Decimal('NaN') In
+893 [p7 HALF_UP -999999 999999 c0 C1 tInDiUnCl] Decimal('sNaN9') - 63722304726093992079458782990674 -> !InvalidOperation: [<class 'decimal.InvalidOperation'>] In
+894 [p16 HALF_UP -8 45 c1 C1 t] Decimal('9.0999909909099009E+49').is_infinite() -> bool:False 
+895 [p34 FLOOR -86 56 c0 C1 t] Decimal('5.555505055500005005055055000555055E+40').scaleb(32) -> Decimal:Decimal('9.999999999999999999999999999999999E+56') OvInRo
+896 [p20 UP -4 9004318671461 c0 C1 t] Decimal('-7.0') % Decimal('9090999.000') -> Decimal:Decimal('-7.000') 
+897 [p28 HALF_UP -88 62 c0 C1 tOv] c.logical_and(Decimal('1010111000001011'), Decimal('1000101010')) -> Decimal:Decimal('1000001010') 
+898 [p9 HALF_EVEN -2 0 c1 C1 tSu] c.power(429, 355, Decimal('1.5')) -> Decimal:Decimal('NaN') In
+899 [p14 HALF_DOWN -999999999999999999 999999999999999999 c0 C0 t] c.multiply(Decimal('9090090909.00909900'), Decimal('-9.14374342752001E+15')) -> Decimal:Decimal('-8.3117459004811E+25') InRo
+900 [p28 UP -97081 224 c1 C1 t] c.compare(Decimal('7.7E+4'), Decimal('0E-68')) -> Decimal:Decimal('1') 
+901 [p38 HALF_EVEN -95 7 c0 C1 t] c.create_decimal(Decimal('5500267.810181794402933583277003236910')) -> Decimal:Decimal('5500267.810181794402933583277003236910') 
+902 [p39 CEILING -16 76 c0 C1 t] Decimal('Infinity').__float__() -> float:inf 
+903 [p3 HALF_UP -63346328014532 5651380761567 c0 C1 tDiOvSuRo] Decimal('96983.114992509669937843064723960667615') - -991456954963792750449454298892131324 -> !Rounded: [<class 'decimal.Rounded'>] InRo
+904 [p20 DOWN -3 49 c0 C1 tInUnSuInRo] Decimal('9.10E-25').min_mag(Decimal('-9E+3')) -> !Underflow: [<class 'decimal.Underflow'>, <class 'decimal.Subnormal'>, <class 'decimal.Inexact'>, <class 'decimal.Rounded'>] UnSuInRoCl
+905 [p27 UP -999999999999999999 999999999999999999 c0 C1 tDiUnIn] Decimal('0').compare_signal(Decimal('Infinity'), c) -> Decimal:Decimal('-1') 
+906 [p9 HALF_EVEN -2 0 c0 C1 t] c.ln(Decimal('0E+34')) -> Decimal:Decimal('-Infinity') 
+907 [p28 05UP -999999 999999 c0 C1 tUn] Decimal('0.009999999999999999999999999') / -4950618182148494089 -> Decimal:Decimal('-2.019949758205782269481726936E-21') InRo
+908 [p3 DOWN -76 17 c0 C1 t] c.logical_invert(Decimal('1')) -> Decimal:Decimal('110') 
+909 [p38 DOWN -9 10 c0 C0 t] Decimal('6.80248e+10') divmod Decimal('-5.517544289274235379907421536711e+32') -> (Decimal:Decimal('-0'), Decimal:Decimal('6.80248000e+10')) 
+910 [p20 HALF_UP -6 6 c0 C1 t] c.multiply(Decimal('1925110698943949162.2509555306145949061'), Decimal('-4E+5')) -> Decimal:Decimal('-Infinity') OvInRo
+911 [p1 UP -91 2 c1 C1 tDiInCl] Decimal('-99090999009099990090009000009009090999.9').is_signed() -> bool:True 
+912 [p3 UP -999999 999999 c0 C1 tOvUnSu] Decimal('9.999999999999999999E+56').to_eng_string(c) -> str:'999.9999999999999999E+54' 
+913 [p6 HALF_DOWN -999999 999999 c0 C1 tSu] Decimal('0.0070') + Decimal('-8.0000000000000000000000000000000000000E+39') -> Decimal:Decimal('-8.00000E+39') InRo
+914 [p16 FLOOR -1 1 c0 C1 tDiSu] c.power(861141183572692, Decimal('21'), -7128729870274) -> Decimal:Decimal('4757187212322') 
+915 [p19 FLOOR -999999 999999 c0 C1 tFlDiCl] Decimal('-3.0000000000000000000000000000000000000E+67') + Decimal('-9.900999999009009099E-138013') -> Decimal:Decimal('-3.000000000000000001E+67') InRo
+916 [p28 HALF_EVEN -999999 999999 c0 C1 t] c.logical_invert(Decimal('11101111111110')) -> Decimal:Decimal('1111111111111100010000000001') 
+917 [p3 DOWN -7 6 c0 C1 tDiCl] Decimal('6.3E-9').fma(Decimal('0.8044'), -144, c) -> Decimal:Decimal('-143') InRo
+918 [p20 HALF_UP -1 6 c1 C1 tUn] Decimal('-7.52769729345111664E+851939') + 5399275680764076992785808930005352 -> Decimal:Decimal('-Infinity') OvInRo
+919 [p3 FLOOR -213 1904704209296 c0 C0 t] Decimal('-6').compare_total_mag(Decimal('-NaN66'), c) -> Decimal:Decimal('-1') 
+920 [p19 HALF_UP -999999 999999 c0 C1 t] Decimal('0E-43').canonical() -> Decimal:Decimal('0E-43') 
+921 [p19 UP -35407081255550933 360060107689988 c0 C1 tSu] c.multiply(Decimal('0.000'), 58677408856320) -> Decimal:Decimal('0.000') 
+922 [p2 CEILING -94451337555 4244 c0 C1 tInDiRoCl] c.next_plus(Decimal('-2E+4241')) -> Decimal:Decimal('-1.9E+4241') 
+923 [p38 HALF_UP -999999999999999999 999999999999999999 c0 C0 t] c.scaleb(Decimal('1.5511403756147774682056864908317230046E+65'), Decimal('-640')) -> Decimal:Decimal('1.5511403756147774682056864908317230046E-575') 
+924 [p6 DOWN -7 0 c0 C1 t] Decimal('0E+27').is_nan() -> bool:False 
+925 [p28 UP -999999 999999 c0 C0 t] -6547645470839072084 ** Decimal('14') -> Decimal:Decimal('2.661902748247357795515027350e+263') InRo
+926 [p28 CEILING -88 2 c1 C1 t] c.copy_negate(Decimal('764252200039023.8495821455')) -> Decimal:Decimal('-764252200039023.8495821455') 
+927 [p3 HALF_EVEN -63 37 c0 C1 t] Decimal('-9.54E-31').radix() -> Decimal:Decimal('10') 
+928 [p2 HALF_EVEN -20604725590165 573501679036699 c0 C1 t] c.quantize(-4156141198515718073732096841020883870, Decimal('0.0001')) -> Decimal:Decimal('NaN') In
+929 [p9 UP -999999999999999999 999999999999999999 c0 C1 tFlUnCl] Decimal('5.00555E+13') divmod Decimal('-9.0E+6') -> (Decimal:Decimal('-5561722'), Decimal:Decimal('2.0E+6')) 
+930 [p1 UP -999999999999999999 999999999999999999 c0 C1 tUn] Decimal('1E+40') - Decimal('6E+45773734252359') -> Decimal:Decimal('-6E+45773734252359') InRo
+931 [p9 FLOOR -999999 999999 c1 C1 t] Decimal('4.76E+3').__hash__() -> int:4760 
+932 [p9 CEILING -999999 999999 c0 C1 t] Decimal('8.462655467E+999998').is_snan() -> bool:False 
+933 [p28 CEILING -3 7 c0 C1 t] 308 * Decimal('-7702054399435181186132.7259752492464606') -> Decimal:Decimal('-99999999.99999999999999999999') OvInRo
+934 [p19 DOWN -33 6116 c1 C0 t] Decimal('-9999.999999') % Decimal('3899485.3908699') -> Decimal:Decimal('-9999.9999990') 
+935 [p41 FLOOR -999999 999999 c0 C0 t] Decimal('-8634286486.4831413').is_subnormal(c) -> bool:False 
+936 [p28 05UP -1 5 c0 C1 t] Decimal('7.2852827E-13').__bool__() -> bool:True 
+937 [p19 05UP -544231066047830 5413698652 c1 C1 tCl] c.logical_invert(Decimal('1111010100')) -> Decimal:Decimal('1111111110000101011') 
+938 [p38 HALF_EVEN -63 92 c0 C0 t] c.to_eng_string(Decimal('2.25E-37')) -> str:'225e-39' 
+939 [p34 HALF_DOWN -999999 999999 c1 C1 tUnCl] Decimal('-50.005055055500550500').min_mag(4306013147338580114100051822220523) -> Decimal:Decimal('-50.005055055500550500') 
+940 [p5 CEILING -6 5 c0 C1 t] c.fma(Decimal('-4.0E+29'), -3057687740208326591351792288, Decimal('-9.9E+32')) -> Decimal:Decimal('Infinity') OvInRo
+941 [p23 HALF_UP -29 49 c0 C1 t] Decimal('9.8582E-15') ** Decimal('-0.000050') -> Decimal:Decimal('1.0016138244552863328102') InRo
+942 [p20 05UP -999999 999999 c0 C1 t] Decimal('7E+999978').ln(c) -> Decimal:Decimal('2302536.3820321488703') InRo
+943 [p39 HALF_EVEN -999999 999999 c0 C1 t] Decimal('-49496074951393.40199912540') * Decimal('-9.9999999999999999999999999999E+47') -> Decimal:Decimal('4.94960749513934019991253999995050392505E+61') InRo
+944 [p2 HALF_DOWN -999999 999999 c0 C0 t] Decimal('-5e-1000001').is_canonical() -> bool:True 
+945 [p28 HALF_DOWN -48 23 c0 C0 t] c.exp(Decimal('-5.050050550005500005E-31')) -> Decimal:Decimal('1.000000000000000000000000000') InRo
+946 [p28 05UP -999999 999999 c1 C1 tOvSuInCl] c.shift(Decimal('0E-14'), Decimal('-137')) -> Decimal:Decimal('NaN') In
+947 [p28 UP -5 0 c0 C1 t] c.scaleb(Decimal('-0E-34'), Decimal('-773')) -> Decimal:Decimal('NaN') In
+948 [p1 CEILING -10 5 c0 C1 tOvUnRo] Decimal('0.0') ** Decimal('-0.910') -> Decimal:Decimal('Infinity') 
+949 [p28 DOWN -3 3 c0 C0 t] c.quantize(Decimal('9.999999999999999999E+44'), Decimal('1E-12')) -> Decimal:Decimal('NaN') In
+950 [p34 HALF_DOWN -2 6 c0 C1 tDiCl] Decimal('-0.0009').as_tuple() -> DecimalTuple:DecimalTuple(sign=1, digits=(9,), exponent=-4) 
+951 [p16 CEILING -1701910418 48 c0 C1 tInUn] c.add(Decimal('9E-11'), Decimal('375064473623832298.9')) -> Decimal:Decimal('3.750644736238323E+17') InRo
+952 [p28 UP -7 7 c1 C1 tUnInCl] c.number_class(Decimal('-5055555555000000005550555500000505005.5')) -> str:'-Normal' 
+953 [p39 FLOOR -999999999999999999 999999999999999999 c1 C1 t] Decimal('7.5648715475236863578E+27') ** Decimal('-133') -> Decimal:Decimal('1.31641487134081221948610209752082976735E-3708') InRo
+954 [p20 05UP -20 53 c1 C1 tInCl] c.copy_sign(Decimal('0.55500500555505055055'), Decimal('9.9999999999999999999E-17')) -> Decimal:Decimal('0.55500500555505055055') 
+955 [p39 UP -48 37 c1 C1 t] c.power(Decimal('-549960'), Decimal('94'), 8834219664761654631498533871) -> Decimal:Decimal('1401383730912657075746836812') 
+956 [p34 DOWN -999999 999999 c0 C0 tUnRo] Decimal('-5593822.761603998058389516415106542').copy_negate() -> Decimal:Decimal('5593822.761603998058389516415106542') 
+957 [p16 DOWN -50 0 c0 C0 tSuCl] Decimal('5.0578735076823372481e+55').max(Decimal('5000000000000000000000000000000000000.00')) -> Decimal:Decimal('9.999999999999999') OvInRo
+958 [p28 HALF_UP -999999999999999999 999999999999999999 c0 C0 t] Decimal('-2.9E-39').sqrt(c) -> Decimal:Decimal('NaN') In
+959 [p28 HALF_EVEN -1 9 c0 C1 t] Decimal('513762987.96467190653993141957') % Decimal('8.53520577646105412745275329218555604139E+43') -> Decimal:Decimal('513762987.9646719065399314196') InRo
+960 [p28 UP -999999999999999999 999999999999999999 c0 C0 t] Decimal('55000050005005.05500055') // Decimal('-90000000000000000000.00000000') -> Decimal:Decimal('-0') 
+961 [p20 05UP -999999 999999 c0 C0 t] Decimal('NaN123').next_minus(c) -> Decimal:Decimal('NaN123') 
+962 [p3 CEILING -999999 999999 c0 C1 t] Decimal('8E-72963') / Decimal('9.419E-1000001') -> Decimal:Decimal('8.50E+927037') InRo
+963 [p28 HALF_DOWN -3 2 c1 C0 t] -323957626122182727 / Decimal('-256821057288.15') -> Decimal:Decimal('Infinity') OvInRo
+964 [p28 HALF_UP -999999 999999 c1 C1 tDiOvRo] c.logb(-579197555672435840340228516) -> Decimal:Decimal('26') 
+965 [p17 05UP -5 6 c1 C0 t] c.copy_decimal(Decimal('-9.8E-26')) -> Decimal:Decimal('-9.8E-26') 
+966 [p34 05UP -999999 999999 c0 C1 t] Decimal('NaN123').radix() -> Decimal:Decimal('10') 
+967 [p2 FLOOR -18 22 c0 C1 tRoCl] Decimal('8.0E+3').__bool__() -> bool:True 
+968 [p28 HALF_EVEN -999999 999999 c0 C1 t] c.is_qnan(-3721430912901134947940902435) -> bool:False 
+969 [p15 UP -1 2 c1 C1 t] c.power(Decimal('7.00E+23'), Decimal('-169')) -> Decimal:Decimal('1E-15') UnSuInRo
+970 [p10 05UP -999999 999999 c0 C1 t] Decimal('9.9999999999E+14').max(Decimal('Infinity'), c) -> Decimal:Decimal('Infinity') 
+971 [p39 CEILING -33 19 c0 C1 t] -1 * Decimal('-100000000000000.0000000000000000000') -> Decimal:Decimal('100000000000000.0000000000000000000') 
+972 [p19 HALF_DOWN -95 74 c1 C1 t] c.plus(-84135383682256319906004715686631) -> Decimal:Decimal('-8.413538368225631991E+31') InRo
+973 [p38 FLOOR -7 2 c0 C1 tInSuIn] Decimal('-2.7759161891139660229195684735482416445E+67').to_integral(ROUND_HALF_UP, c) -> Decimal:Decimal('-2.7759161891139660229195684735482416445E+67') 
+974 [p37 DOWN -80 44 c0 C1 t] Decimal('-9.741E+8') + Decimal('-100000000000000000.0000000000') -> Decimal:Decimal('-100000000974100000.0000000000') 
+975 [p3 UP -4 6 c0 C1 tOvUnInRo] c.power(Decimal('-38819'), 273956, Decimal('-990')) -> Decimal:Decimal('121') 
+976 [p13 FLOOR -18495309581397 75 c1 C1 t] c.log10(Decimal('125.0693357169784655')) -> Decimal:Decimal('2.097150843176') InRo
+977 [p34 HALF_EVEN -2 8 c0 C0 t] c.divmod(Decimal('36824.124321729582040916816543896794'), Decimal('-5.500550055055050050050050505050E+39')) -> (Decimal:Decimal('-0'), Decimal:Decimal('36824.12432172958204091681654389679')) InRo
+978 [p16 DOWN -999999999999999999 999999999999999999 c0 C1 t] c.logb(Decimal('4.0E-39')) -> Decimal:Decimal('-39') 
+979 [p34 DOWN -999999 999999 c1 C1 t] c.is_zero(Decimal('Infinity')) -> bool:False 
+980 [p19 CEILING -75 86 c0 C1 t] c.fma(-992105022681434108392754577682114, Decimal('-2.54948514030101343'), 35072742050178425765221444357367028391) -> Decimal:Decimal('3.507527140719137009E+37') InRo
+981 [p28 HALF_UP -1258543861928 9896 c1 C0 tOvInCl] Decimal('-9e-389240149488404').quantize(Decimal('1e-11')) -> !Inexact: [<class 'decimal.Inexact'>] InRo
+982 [p43 05UP -34 40 c1 C1 t] Decimal('9304721775610106.0731').fma(-81045304148342249, Decimal('-900.00090990990099009099009990090909999009099'), c) -> Decimal:Decimal('-754104006320024186679912204413112.4028099099') InRo
+983 [p27 05UP -999999 999999 c0 C0 t] Decimal('1.653496757903000652114109099e-13') divmod Decimal('814813833058913.1280711958536') -> (Decimal:Decimal('0'), Decimal:Decimal('1.65349675790300065211410909e-13')) InRo
+984 [p20 UP -40 47 c0 C1 tInSuInCl] Decimal('9.9000900009009090000E-9') ** Decimal('-108') -> !Inexact: [<class 'decimal.Inexact'>] OvInRo
+985 [p38 CEILING 0 5 c0 C0 t] Decimal('0.000').log10(c) -> Decimal:Decimal('-Infinity') 
+986 [p28 DOWN -999999 999999 c0 C1 tFlSuIn] -893892834698698456153266727518796 - Decimal('6.3E-12') -> !Inexact: [<class 'decimal.Inexact'>] InRo
+987 [p9 HALF_DOWN -999999999999999999 999999999999999999 c0 C0 tInSu] Decimal('7.6E+9').fma(Decimal('0E+23'), Decimal('-6.9E-796096277886574420'), c) -> Decimal:Decimal('-6.9E-796096277886574420') 
+988 [p39 CEILING -41 8 c0 C1 t] Decimal('sNaN').is_normal(c) -> bool:False 
+989 [p28 HALF_DOWN -999999999999999999 999999999999999999 c0 C0 t] -556470637586 + Decimal('0.099') -> Decimal:Decimal('-556470637585.901') 
+990 [p39 05UP -999999 999999 c1 C0 tFlDiUnCl] Decimal('3859469967164272915097069').__str__() -> str:'3859469967164272915097069' 
+991 [p28 05UP -999999 999999 c1 C1 t] c.next_plus(Decimal('7.196358069620587380474E+23')) -> Decimal:Decimal('719635806962058738047400.0001') 
+992 [p11 HALF_UP -5 4 c0 C1 tOvUn] c.is_subnormal(Decimal('-26458203.77861645718')) -> bool:False 
+993 [p20 UP -999999999999999999 999999999999999999 c0 C1 tFl] Decimal('4.450730872987706451E+4246521603872745') % Decimal('-7.00000000000000000000000000000000000000E-999999999999999981') -> Decimal:Decimal('NaN') In
+994 [p28 DOWN -999999 999999 c0 C1 t] c.to_integral(Decimal('0.00000555555550000000055550055000555550055')) -> Decimal:Decimal('0') 
+995 [p9 DOWN -999999999999999999 999999999999999999 c0 C1 t] Decimal('-5.00500E-8').remainder_near(Decimal('-0.0000999999')) -> Decimal:Decimal('-5.00500E-8') 
+996 [p28 DOWN -95 34 c0 C1 tDiUnRo] pow(Decimal('83905567738314980782259416'), Decimal('79'), 66869358846155554794856098561) -> Decimal:Decimal('NaN') In
+997 [p39 HALF_DOWN -100 10 c0 C1 tRo] c.power(-2695931119404961794806161334895518070625, 947, Decimal('-69174378902316147990808150144516')) -> Decimal:Decimal('-52814637689086591253396285874077') 
+998 [p1 UP -52 49 c0 C0 t] c.copy_sign(Decimal('-6E-23'), Decimal('0.009999999')) -> Decimal:Decimal('6E-23') 
+999 [p19 HALF_EVEN -999999 999999 c1 C0 t] Decimal('0').logical_invert(c) -> Decimal:Decimal('1111111111111111111') 

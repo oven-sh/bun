@@ -1,0 +1,1003 @@
+status: 0
+script: 0f90ffb24258ba93
+---
+0 [p34 05UP -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('-9.99999999E-11'), '<37,E') -> str:"'-9.99999999E-11                      '" 
+1 [p3 CEILING -999999 999999 c0 C1 tInUnSuIn] format(Decimal('-4623809474'), ' .30g') -> str:"'-4623809474'" 
+2 [p1 HALF_UP -999999999999999999 999999999999999999 c0 C0 t] format(Decimal('2.0760214624333030522674346667327199987e-23'), '-36,N') -> !ValueError: invalid format string 
+3 [p28 HALF_UP -999999999999999999 999999999999999999 c0 C1 tCl] format(Decimal('-8.365749264376E+20'), '\u20ac>12') -> str:"'-8.365749264376E+20'" 
+4 [p19 FLOOR -50 4122505 c0 C0 tInDiSuInRo] f-string Decimal('0.005150') '0^_F' -> str:"'0.005150'" 
+5 [p9 FLOOR -999999 999999 c0 C1 tDiUnRo] format(Decimal('-5914352.614170287142589576574'), '+.7%') -> str:"'-591435261.4170288%'" 
+6 [p28 HALF_DOWN 0 10 c1 C1 tFlDi] format(Decimal('6.7670E+24'), '9.4F') -> str:"'6767000000000000000000000.0000'" 
+7 [p28 CEILING -8 0 c1 C0 t] format(Decimal('-9e+19'), '+25_g') -> str:"'                   -9e+19'" 
+8 [p19 05UP -59 61 c0 C1 t] Decimal('-505500050500005.5000550050000505').__format__(b'f') -> !TypeError: __format__() argument 1 must be str, not bytes 
+9 [p1 FLOOR -999999 999999 c0 C1 t] format(Decimal('-2.0000000E-30'), ' #6,.29%') -> str:"'-0.00000000000000000000000000020%'" 
+10 [p28 CEILING -999999 999999 c1 C1 tOvUn] format(Decimal('-5000.555500000050555'), ' 021.2f') -> str:"'-00000000000005000.55'" 
+11 [p28 HALF_EVEN -999999 999999 c1 C0 t] format(Decimal('-2.90468467908e-21'), '.< .12g') -> str:"'-2.90468467908e-21'" 
+12 [p28 FLOOR -4 5 c0 C1 tInUn] format(Decimal('541707752552263381149553539018007474403.5284'), '0>-N') -> str:"'541707752552263381149553539018007474403.5284'" 
+13 [p34 FLOOR -999999 999999 c0 C0 t] format(Decimal('-9.2519958361654930459391141142e-15'), '<>26N') -> str:"'-9.2519958361654930459391141142E-15'" 
+14 [p34 HALF_UP -92319726807 97099876577 c0 C0 t] format(Decimal('-8287948.945'), '0.3f') -> str:"'-8287948.945'" 
+15 [p16 HALF_EVEN -8 0 c1 C1 t] format(Decimal('-9.99E-13'), 'x=E') -> str:"'-9.99E-13'" 
+16 [p12 DOWN -75 73 c1 C1 tUn] format(Decimal('8.61957022477385034270078580164624577E-21'), '0=z39.22n') -> str:"'0000000000008.619570224773850342700e-21'" 
+17 [p3 HALF_UP -8 10 c0 C1 t] format(Decimal('909900990909.00900'), '+<-19.0n') -> str:"'9e+11++++++++++++++'" 
+18 [p3 HALF_UP -999999 999999 c0 C1 tOvUnSu] format(Decimal('-5.9788881785533241390931096238893957023644331E+68'), '-0%') -> str:"'-59788881785533241390931096238893957023644331000000000000000000000000000%'" 
+19 [p1 CEILING -999999 999999 c1 C0 t] format(Decimal('-3.00000000000000000000000000000000e+34'), '.=16.28E') -> str:"'-3.0000000000000000000000000000E+34'" 
+20 [p38 HALF_EVEN -7 0 c0 C1 t] format(Decimal('-5.50505050500555500500E-26'), '*<+#') -> str:"'-5.50505050500555500500E-26'" 
+21 [p9 HALF_EVEN -6 82 c1 C1 t] format(Decimal('-9.99999999999999999999999999999999E-11'), '18.8g') -> str:"'    -1.0000000e-10'" 
+22 [p34 05UP -8 4 c1 C1 t] format(Decimal('-737941487765923819704204491.76'), '*^#0.10') -> !ValueError: invalid format string 
+23 [p28 DOWN -999999 999999 c0 C1 tInOvSuRo] format(Decimal('-0.00009999999999'), '\xe9^21f') -> str:"'\\xe9\\xe9-0.00009999999999\\xe9\\xe9'" 
+24 [p3 HALF_DOWN -999999 999999 c1 C0 t] f-string Decimal('40000000000000.000000000000000000') '-.27n' -> str:"'40000000000000.0000000000000'" 
+25 [p2 HALF_EVEN -999999 999999 c0 C1 t] Decimal('-5.5055055005500550000005000005555E-27').__format__(1.0) -> !TypeError: __format__() argument 1 must be str, not float 
+26 [p34 CEILING -999999 999999 c0 C1 t] format(Decimal('Infinity'), 'x=z.22e') -> str:"'Infinity'" 
+27 [p16 HALF_UP -999999999999999999 999999999999999999 c0 C1 tInCl] Decimal('8.95602902E-27').__format__('F', {}) -> !ValueError: invalid override dict 
+28 [p3 05UP -999999 999999 c1 C1 tSu] format(Decimal('9.0090900990909000999000099999090000E+35'), '39,.28%') -> str:"'90,090,900,990,909,000,999,000,099,999,090,000,000.0000000000000000000000000000%'" 
+29 [p28 HALF_UP -999999 999999 c0 C1 tDi] format(Decimal('-sNaN45'), 'x<+.18%') -> str:"'-sNaN45%'" 
+30 [p20 DOWN -999999 999999 c1 C1 tFlSuInCl] format(Decimal('3.42659951415E-18'), '0< _%') -> str:"' 0.000000000000000342659951415%'" 
+31 [p28 05UP 0 7 c0 C1 t] format(Decimal('-2'), '-#') -> str:"'-2.'" 
+32 [p1 DOWN -100 81 c1 C1 t] format(Decimal('-Infinity'), '0,') -> str:"'-Infinity'" 
+33 [p28 FLOOR -999999 999999 c0 C0 t] format(Decimal('9.99999999999999999999999999999e+30'), ' _.26N') -> !ValueError: invalid format string 
+34 [p2 FLOOR -999999 999999 c0 C0 tDiIn] format(Decimal('-6.517126e-28'), '0,.15%') -> str:"'-0.000000000000001%'" 
+35 [p27 UP -66302902 654686058628 c0 C0 t] format(Decimal('-200000000000000000000000000000000.000'), ' 28,.24G') -> str:"'-2.00000000000000000000000E+32'" 
+36 [p34 CEILING -999999 999999 c0 C0 tDi] f-string Decimal('86205370') ' z,.17' -> str:"' 86,205,370'" 
+37 [p19 FLOOR -8 45 c1 C1 tInCl] format(Decimal('-8.0000000000000000E-20'), '-#28.2E') -> str:"'                   -8.00E-20'" 
+38 [p9 HALF_DOWN -6 4 c1 C1 t] Decimal('-5.550500005005055500555005550050E-30').__format__('_.3f', 'x') -> str:"'-0.000'" 
+39 [p1 HALF_DOWN -8 3 c0 C1 t] format(Decimal('0'), '\ud800<5') -> !UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed 
+40 [p1 05UP -999999999999999999 999999999999999999 c0 C0 t] format(Decimal('-0.000005050050050050500005055505000'), ' 0.21G') -> str:"'-0.00000505005005005050000506'" 
+41 [p34 HALF_UP -5 7 c0 C1 tFlOvCl] Decimal('-99.000').__format__(None) -> !TypeError: __format__() argument 1 must be str, not None 
+42 [p28 DOWN -15 43 c0 C1 t] format(Decimal('-9.26076951E+11'), ' 0,G') -> str:"'-9.26076951E+11'" 
+43 [p9 05UP -999999999999999999 999999999999999999 c1 C0 t] Decimal('-5.5005000005000550555000550550e+53').__format__('.9F', {}) -> !ValueError: invalid override dict 
+44 [p34 DOWN -999999 999999 c0 C1 tDi] format(Decimal('-4.44403774447560197303763266E-12'), '0=-30F') -> str:"'-0.00000000000444403774447560197303763266'" 
+45 [p1 HALF_DOWN -999999 999999 c0 C1 tDiOv] format(Decimal('-897993502399239.031'), '.29e') -> str:"'-8.97993502399239031000000000000e+14'" 
+46 [p28 CEILING -428236199369 272 c0 C1 tDiUnRoCl] format(Decimal('-6.42980945816603769683883363834673230E+52'), '<^,.12N') -> !ValueError: invalid format string 
+47 [p20 UP -7 23 c1 C1 tInDiSuCl] format(Decimal('996024786.601255230512691735410640830699286'), '*<-#21F') -> str:"'996024786.601255230512691735410640830699286'" 
+48 [p34 05UP -83 80 c1 C1 t] format(Decimal('3.365708953390656919E-25'), '<> 04.28E') -> !ValueError: invalid format string 
+49 [p40 HALF_UP -10 10 c0 C1 tInIn] format(Decimal('8.87202144991903E-29'), '4f') -> str:"'0.0000000000000000000000000000887202144991903'" 
+50 [p20 DOWN -7 2 c0 C1 tIn] format(Decimal('-9999999.999999999999999999'), '<+34,.21n') -> !ValueError: invalid format string 
+51 [p23 HALF_UP -999999 999999 c0 C0 t] format(Decimal('-5.500005000e-37'), '+>011.8F') -> !ValueError: invalid format string 
+52 [p1 UP -85 46 c1 C1 tFlRoCl] format(Decimal('-6.323628796651290549360186235652'), 'x^.30') -> str:"'-6.32362879665129054936018623566'" 
+53 [p4 HALF_DOWN -999999999999999999 999999999999999999 c1 C1 t] Decimal('2.923046029726633118985523119E+32').__format__('z', {'decimal_point': '\ud800', 'thousands_sep': ' ', 'grouping': ''}) -> str:"'2.923046029726633118985523119E+32'" 
+54 [p28 HALF_DOWN -999999 999999 c1 C1 t] format(Decimal('-9.000000000000E-42'), '17.23N') -> str:"'-9.000000000000E-42'" 
+55 [p38 05UP -999999 999999 c1 C1 t] format(Decimal('-9.99999999999999999999999999999999E+57'), '0,E') -> str:"'-9.99999999999999999999999999999999E+57'" 
+56 [p9 DOWN -76 43 c0 C1 t] Decimal('5E-7').__format__('-32_.5f', {'decimal_point': 1, 'grouping': '\x03\x02'}) -> str:"'                         0.00000'" 
+57 [p28 CEILING -75 58 c1 C1 t] format(Decimal('99999999999999999999999999999.99999999999'), ' 0.29g') -> str:"' 1.0000000000000000000000000000e+29'" 
+58 [p28 05UP -74 13 c0 C0 t] format(Decimal('Infinity'), '*>-.22F') -> str:"'Infinity'" 
+59 [p28 DOWN -12 83071728561762560 c1 C1 t] format(Decimal('-990009099990099909909990990009.9'), '+zn') -> str:"'-990009099990099909909990990009.9'" 
+60 [p20 FLOOR -2 89 c0 C1 tFlOvRo] format(Decimal('9.0000E-13'), '.<1e') -> str:"'9.0000e-13'" 
+61 [p39 CEILING -735443 39864310 c1 C0 tSuRo] format(Decimal('-5.0000500505550050005e+32'), '^ 24e') -> str:"'-5.0000500505550050005e+32'" 
+62 [p28 DOWN -999999 999999 c0 C1 t] Decimal('-8.754285382885022885171636053E-18').__format__('-0.10n', {'decimal_point': 'ab', 'thousands_sep': 'abcde', 'grouping': '\x03\x00'}) -> !ValueError: invalid override dict 
+63 [p2 05UP -9 69 c0 C1 t] format(Decimal('4618.10297774395532801'), '+>.0n') -> str:"'4e+3'" 
+64 [p2 HALF_UP -70 3 c0 C1 t] Decimal('9.999999999999999999E-11').__format__('\xe9= 20.22G', {'thousands_sep': '', 'grouping': '\x03\x00'}) -> !ValueError: invalid override dict 
+65 [p19 HALF_EVEN -999999 999999 c1 C0 tFlDiOvUnCl] format(Decimal('412921137.5268126291582306'), ' =+.13f') -> str:"'+412921137.5268126291582'" 
+66 [p16 05UP -6 2 c0 C1 t] format(Decimal('754211748858429216016540899.0332'), ' ^0.11n') -> !ValueError: invalid format string 
+67 [p34 FLOOR -999999 999999 c1 C1 t] format(Decimal('9.9567278947725964E+40'), 'x^13n') -> str:"'9.9567278947725964e+40'" 
+68 [p28 DOWN -5 8 c1 C1 t] format(Decimal('2E+10'), '-n') -> str:"'2e+10'" 
+69 [p20 HALF_EVEN -999999 999999 c1 C1 t] format(Decimal('77321451.15032528368058562120976128109339'), '.= 0.26n') -> !ValueError: invalid format string 
+70 [p28 HALF_DOWN -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('-5.50050555500050005550E+40'), '-,.30%') -> str:"'-5,500,505,555,000,500,055,500,000,000,000,000,000,000,000.000000000000000000000000000000%'" 
+71 [p28 DOWN -5 10 c1 C1 tOvUn] format(Decimal('-5.055005055050E+22'), '\xe9<.22n') -> str:"'-5.055005055050e+22'" 
+72 [p34 CEILING -2 8 c0 C1 t] format(Decimal('0E-55'), '.') -> !ValueError: invalid format string 
+73 [p9 HALF_UP -8 5 c0 C0 tOvCl] format(Decimal('-4.0000000000000000000000000000000000e+58'), '\xe9> g') -> str:"'-4.0000000000000000000000000000000000e+58'" 
+74 [p16 05UP -999999 999999 c0 C0 t] f-string Decimal('3.00000e+20') '+08%' -> str:"'+30000000000000000000000%'" 
+75 [p9 UP -4 9 c0 C1 tDiCl] format(Decimal('-6.0649884801983E-21'), '+34,.14N') -> !ValueError: invalid format string 
+76 [p28 05UP -93 3 c0 C0 tUn] format(Decimal('3.1079432e+11'), 'x< z23,.10F') -> str:"' 310,794,320,000.0000000000'" 
+77 [p3 HALF_DOWN -999999 999999 c1 C1 tFlOvUnIn] format(Decimal('-3.2E+14'), '-#F') -> str:"'-320000000000000.'" 
+78 [p9 HALF_DOWN -999999 999999 c0 C0 t] format(Decimal('-5.005050555050555005550e-8'), '#') -> str:"'-5.005050555050555005550e-8'" 
+79 [p9 FLOOR -999999 999999 c1 C1 tInRo] Decimal('9.9000909999999990099E-40').__format__('+z12N', {'decimal_point': '\u066b', 'thousands_sep': 1, 'grouping': '\u0100'}) -> !ValueError: invalid format string 
+80 [p37 UP 0 2 c0 C0 tInUn] format(Decimal('-0.000'), '+zF') -> str:"'+0.000'" 
+81 [p28 HALF_UP -9 1 c1 C1 tSu] format(Decimal('5.5574712927376627533445E+47'), '+<z16%') -> str:"'55574712927376627533445000000000000000000000000000%'" 
+82 [p13 HALF_DOWN -1 9 c0 C1 t] format(Decimal('8.49457686081325694986724E+47'), '+') -> str:"'+8.49457686081325694986724E+47'" 
+83 [p39 UP -6873730 168953634963958 c0 C0 tSu] format(Decimal('-7.0641629799710139e-30'), ' #,.21n') -> !ValueError: invalid format string 
+84 [p20 UP -999999 999999 c0 C0 tFl] Decimal('-1.07862538523194547760536741524217966632275428e+46').__format__('+,n', ()) -> !ValueError: invalid format string 
+85 [p34 DOWN -69 16 c1 C1 tDiInCl] format(Decimal('-705.111161580805'), '%') -> str:"'-70511.1161580805%'" 
+86 [p2 05UP -999999 999999 c0 C1 t] format(Decimal('-5500555505555055000055050050555.5055'), '21n') -> str:"'-5500555505555055000055050050555.5055'" 
+87 [p2 CEILING -999999999999999999 999999999999999999 c1 C1 tInCl] format(Decimal('9.07310187061892597368724034111408177E+42'), ' .26G') -> str:"' 9.0731018706189259736872404E+42'" 
+88 [p11 05UP -50 688 c1 C0 t] format(Decimal('0.0000012868'), '8.11n') -> str:"'0.0000012868'" 
+89 [p28 CEILING -41 5 c0 C0 tFlDiUnCl] format(Decimal('5.6472349555073119430720e-11'), '-033e') -> str:"'000005.6472349555073119430720e-11'" 
+90 [p22 DOWN -7 40 c0 C1 tSuIn] format(Decimal('7.890161645883497678590132270617983589E+46'), ' 3%') -> str:"' 7890161645883497678590132270617983589000000000000%'" 
+91 [p1 05UP -41 100 c0 C1 t] Decimal('-9.900999009009090009099000909000099000090E-16').__format__('.2f') -> str:'-0.01' 
+92 [p28 05UP -999999 999999 c1 C1 tInSu] f-string Decimal('3.63463842256728492448023') '+16F' -> str:"'+3.63463842256728492448023'" 
+93 [p19 DOWN -999999 999999 c0 C0 tFlRo] format(Decimal('924582659903375856.2943797174129168971294619'), '-0f') -> str:"'924582659903375856.2943797174129168971294619'" 
+94 [p3 05UP -57 97 c1 C1 tIn] format(Decimal('5.055005555555005500050000555005E+54'), '0<+,g') -> str:"'+5.055005555555005500050000555005e+54'" 
+95 [p28 DOWN -999999999999999999 999999999999999999 c0 C0 t] format(Decimal('24.214411574928029'), '.17N') -> str:"'24.214411574928029'" 
+96 [p34 05UP -999999 999999 c0 C1 tDiCl] format(Decimal('-9.9999999999999999999999999999999999999999E+58'), ' 21.26E') -> str:"'-9.99999999999999999999999999E+58'" 
+97 [p44 FLOOR -999999999999999999 999999999999999999 c0 C1 tUnRo] format(Decimal('-0.000'), 'N') -> str:"'-0.000'" 
+98 [p2 HALF_UP -999999 999999 c0 C0 tCl] format(Decimal('9.00e-15'), '-') -> str:"'9.00e-15'" 
+99 [p28 05UP -4 1 c0 C1 t] format(Decimal('-8.83354037735307107147726219262893020856681142E+67'), '-.3E') -> str:"'-8.833E+67'" 
+100 [p28 CEILING -999999 999999 c0 C1 t] Decimal('5.050E-30').__format__(Odd()) -> !TypeError: __format__() argument 1 must be str, not Odd 
+101 [p34 HALF_UP -1 79 c0 C1 t] Decimal('4.27083061426341857429152586642E+45').__format__('-035f', {'thousands_sep': 1, 'grouping': '\x03\x03\x00'}) -> !TypeError: bad argument type for built-in operation 
+102 [p3 FLOOR -999999 999999 c1 C1 t] format(Decimal('-8.834824728183E-12'), '<>-8,.13f') -> str:"'-0.0000000000089'" 
+103 [p9 CEILING -999999999999999999 999999999999999999 c1 C1 tUn] format(Decimal('7.00000000000E-21'), '\xe9= 8,.3E') -> str:"' 7.000E-21'" 
+104 [p20 HALF_UP -999999 999999 c1 C1 t] Decimal('-9.999999999999999999999999999999999999999999E+47').__format__(1) -> !TypeError: __format__() argument 1 must be str, not int 
+105 [p39 FLOOR -999999 999999 c0 C0 t] format(Decimal('990.9990990009090999090'), '1,.25%') -> str:"'99,099.9099000909099909000000000%'" 
+106 [p2 HALF_UP -2 0 c0 C0 tInDiUnInCl] format(Decimal('5.944783e-36'), '.<+.11N') -> str:"'+5.944783E-36'" 
+107 [p3 HALF_UP -28 79 c1 C1 tCl] Decimal('5.0914350E-39').__format__('+0n', {'decimal_point': ',', 'thousands_sep': '\xa0', 'grouping': 3}) -> !TypeError: bad argument type for built-in operation 
+108 [p1 FLOOR -3 9 c1 C1 t] Decimal('8.29224612198274735482773888112553E-21').__format__('0=0', {'decimal_point': ''}) -> !ValueError: invalid format string 
+109 [p34 UP -69491165 8 c1 C0 tFlInRoCl] format(Decimal('4.9261807186359052732266009356e+40'), '\xe9=+z.5f') -> str:"'+49261807186359052732266009356000000000000.00000'" 
+110 [p2 CEILING -999999 999999 c0 C0 tDi] format(Decimal('9.58235670171907060e+24'), '0,.30f') -> str:"'9,582,356,701,719,070,600,000,000.000000000000000000000000000000'" 
+111 [p19 FLOOR -4438959366733 5036358420429 c0 C1 t] format(Decimal('857867761895914535923077722806899.46292227'), '12%') -> str:"'85786776189591453592307772280689946.292227%'" 
+112 [p20 HALF_DOWN -949275970 4429760668 c1 C1 t] f-string Decimal('99.99999999999999999') '%' -> str:"'9999.999999999999999%'" 
+113 [p3 05UP -999999 999999 c0 C0 t] format(Decimal('9.99990909909009990999000e+39'), '+029.16n') -> str:"'+00000009.999909099090099e+39'" 
+114 [p28 CEILING -999999 999999 c0 C1 tRoCl] format(Decimal('3.7350014826810814101E-38'), '25F') -> str:"'0.000000000000000000000000000000000000037350014826810814101'" 
+115 [p1 DOWN -999999 999999 c1 C0 t] format(Decimal('800.0000000000000000000000000'), '#F') -> str:"'800.0000000000000000000000000'" 
+116 [p19 DOWN -999999 999999 c0 C1 t] format(Decimal('2462604585887.65'), '.=-0.1n') -> !ValueError: invalid format string 
+117 [p11 FLOOR -999999 999999 c1 C1 t] format(Decimal('-555500055055.55055555050555555050'), '#') -> str:"'-555500055055.55055555050555555050'" 
+118 [p28 UP -999999999999999999 999999999999999999 c0 C0 tInFlInRo] format(Decimal('8.5775e-29'), ' 39,G') -> str:"'                             8.5775E-29'" 
+119 [p3 FLOOR -999999 999999 c1 C1 tFl] format(Decimal('-Infinity'), ' >+.21%') -> str:"'-Infinity%'" 
+120 [p7 DOWN -999999 999999 c1 C0 tInSuInRo] format(Decimal('9.99e-45'), ' 0,.3%') -> str:"' 0.000%'" 
+121 [p3 05UP -999999 999999 c0 C1 t] format(Decimal('5.84104671543349480831E+37'), ' 7.9g') -> str:"' 5.84104671e+37'" 
+122 [p19 HALF_EVEN -93 2 c1 C1 tUnCl] format(Decimal('6.7829492873944209E-18'), '15,.7n') -> !ValueError: invalid format string 
+123 [p2 CEILING -999999 999999 c0 C1 tInRo] Decimal('NaN').__format__('28.28g', {'decimal_point': None, 'thousands_sep': '\u066c', 'grouping': '\x03\x03\x00'}) -> !TypeError: bad argument type for built-in operation 
+124 [p38 HALF_DOWN -81 43 c0 C1 t] format(Decimal('4.00000000000000000E-12'), '-25g') -> str:"'  4.00000000000000000e-12'" 
+125 [p20 DOWN -7365090515798 46 c0 C0 t] format(Decimal('990099909999900990090009009090990.900090000'), '0,') -> str:"'990,099,909,999,900,990,090,009,009,090,990.900090000'" 
+126 [p43 DOWN -999999 999999 c1 C1 t] format(Decimal('-9.9090E+29'), '.> 12n') -> str:"'.-9.9090e+29'" 
+127 [p1 CEILING -999999999999999999 999999999999999999 c1 C1 t] format(Decimal('-8.0827954763946094342912640959691E+50'), 'E') -> str:"'-8.0827954763946094342912640959691E+50'" 
+128 [p30 DOWN -999999 999999 c0 C0 t] f-string Decimal('41395872178090668.802444049063426') ' .15F' -> str:"' 41395872178090668.802444049063426'" 
+129 [p2 05UP -99 98 c0 C1 tFl] Decimal('2.42111924E-44').__format__(None) -> !TypeError: __format__() argument 1 must be str, not None 
+130 [p16 UP -63940427923 3417456041 c0 C0 tDiOvInCl] format(Decimal('-9.537352594013e-47'), '<8N') -> str:"'-9.537352594013E-47'" 
+131 [p38 UP -5 8 c0 C0 t] format(Decimal('-35700660169.635938621122698760622036'), '-8,.23N') -> !ValueError: invalid format string 
+132 [p28 CEILING -999999 999999 c0 C1 t] format(Decimal('550055000550.5'), 'x=15.26E') -> str:"'5.50055000550500000000000000E+11'" 
+133 [p28 05UP -2 7 c0 C0 t] f-string Decimal('-9.59976957346675925352688628528579784754586e+53') '<=-0.2G' -> !ValueError: invalid format string 
+134 [p20 HALF_EVEN -70 71 c0 C0 t] Decimal('-629620297190.92279148').__format__(' 0,%', {'thousands_sep': ',', 'grouping': '\xff'}) -> !ValueError: invalid override dict 
+135 [p28 FLOOR -9 1 c1 C0 t] format(Decimal('-0'), '+.11g') -> str:"'-0'" 
+136 [p9 HALF_DOWN -999999 999999 c0 C1 t] format(Decimal('-3.46887555040E-37'), '*<-17,G') -> str:"'-3.46887555040E-37'" 
+137 [p3 HALF_EVEN -819860 7480186629 c0 C1 tSuRo] format(Decimal('-8.977163208197069565927563818699176180096E+62'), '0>+,.24f') -> str:"'-897,716,320,819,706,956,592,756,381,869,917,618,009,600,000,000,000,000,000,000,000.000000000000000000000000'" 
+138 [p1 DOWN -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('-26062958421043478.4519533402258714548579041753'), '*< 23_E') -> str:"'-2.60629584210434784519533402258714548579041753E+16'" 
+139 [p38 FLOOR -999999 999999 c0 C1 t] format(Decimal('6.014764931596E+18'), '+0,%') -> str:"'+601,476,493,159,600,000,000%'" 
+140 [p2 HALF_DOWN -39 6 c0 C1 tOvUnSuRo] format(Decimal('8.55042091257469723913824021223643330794E-13'), '-27n') -> str:"'8.55042091257469723913824021223643330794e-13'" 
+141 [p38 CEILING -999999 999999 c1 C1 t] format(Decimal('-6.7645364346107174694418198151020480129E+51'), '\xe9<f') -> str:"'-6764536434610717469441819815102048012900000000000000'" 
+142 [p28 CEILING -999999 999999 c0 C1 tIn] format(Decimal('9.090090909990000090009090900990000990E+52'), '+,n') -> !ValueError: invalid format string 
+143 [p28 FLOOR -999999 999999 c1 C0 t] format(Decimal('-3.3982814568871692359e-15'), '.^-14.20%') -> str:"'-0.00000000000033982815%'" 
+144 [p28 HALF_EVEN -6 7 c0 C1 tInOv] format(Decimal('9.9999E+14'), '+z.1e') -> str:"'+1.0e+15'" 
+145 [p28 HALF_EVEN -10 1 c1 C1 t] format(Decimal('-657396351433.32786942'), '.30') -> str:"'-657396351433.32786942'" 
+146 [p28 DOWN -999999 999999 c0 C1 tInFlUnSuCl] format(Decimal('-5.28819568161993063015010058612650E-15'), '-F') -> str:"'-0.00000000000000528819568161993063015010058612650'" 
+147 [p28 HALF_EVEN 0 1 c0 C1 t] format(Decimal('-2.713383160015833721638899E-35'), 'e') -> str:"'-2.713383160015833721638899e-35'" 
+148 [p1 FLOOR -312147 14 c0 C0 t] format(Decimal('6.535588697680716477306e+34'), ' .8G') -> str:"' 6.5355886E+34'" 
+149 [p28 05UP -999999 999999 c1 C0 t] Decimal('4.00000000000000000000e+21').__format__('.3G', {'decimal_point': 'abcde', 'thousands_sep': '\xa0', 'grouping': '\x03\x00'}) -> !ValueError: invalid override dict 
+150 [p28 HALF_DOWN -999999999999999999 999999999999999999 c0 C1 tInIn] format(Decimal('0.99090999090999990990999900909'), '>26.30%') -> str:"'99.090999090999990990999900909000%'" 
+151 [p38 05UP -100 45 c0 C1 tDiSuCl] format(Decimal('9.86545980795855945829E+22'), '<<+#0_.26g') -> !ValueError: invalid format string 
+152 [p2 05UP -999999 999999 c0 C1 tOvUn] Decimal('-9.816156764240744880593222807000E+46').__format__('-,.20', {'grouping': '\x01'}) -> str:"'-9.8161567642407448806E+46'" 
+153 [p2 UP -999999 999999 c0 C1 tUnIn] format(Decimal('1.585435690406E-9'), '+37,.17G') -> str:"'                   +1.585435690406E-9'" 
+154 [p28 DOWN -38 30 c1 C1 t] format(Decimal('5.860168171459'), '#0.12%') -> str:"'586.016817145900%'" 
+155 [p38 UP -65 825041067595808 c0 C1 tSuIn] format(Decimal('7.0000000E+26'), ' 30.20') -> str:"'                 7.0000000E+26'" 
+156 [p19 FLOOR -10 10 c0 C1 tDi] format(Decimal('-3.49319038E-31'), '+5G') -> str:"'-3.49319038E-31'" 
+157 [p9 05UP -77 74 c0 C1 t] format(Decimal('-8.222522910E-49'), '<^0.8e') -> !ValueError: invalid format string 
+158 [p34 DOWN -999999 999999 c1 C1 tFlCl] format(Decimal('-9999.99999999999999999999999999999999999'), '0,.7%') -> str:"'-999,999.9999999%'" 
+159 [p19 HALF_EVEN -29 74 c0 C1 t] Decimal('-0.0000999').__format__(' ^ 36,.12n', {'decimal_point': 'ab', 'thousands_sep': ' ', 'grouping': '\x03\x02'}) -> !ValueError: invalid format string 
+160 [p28 HALF_DOWN -999999 999999 c0 C0 t] format(Decimal('505050.50505555000'), '-.4f') -> str:"'505050.5051'" 
+161 [p16 HALF_UP -45108334509528 63851 c0 C0 tUnSu] format(Decimal('-4.37207995170063e-37'), '\u4e2d=-z19G') -> str:"'-4.37207995170063E-37'" 
+162 [p3 CEILING -999999 999999 c0 C1 t] format(Decimal('-8.1357996000322009042772461762307872'), '-#e') -> str:"'-8.1357996000322009042772461762307872e+0'" 
+163 [p9 UP -1 9 c0 C1 t] format(Decimal('9.25022169742952642395900376E-34'), '-28.29f') -> str:"'0.00000000000000000000000000001'" 
+164 [p34 HALF_DOWN -52 52 c0 C1 t] format(Decimal('9.99999999E-38'), '-,.6G') -> str:"'1.00000E-37'" 
+165 [p2 HALF_UP 0 43 c0 C0 t] Decimal('-2.4e-12').__format__('14.30g', {'decimal_point': '\u20ac\u20ac', 'thousands_sep': ''}) -> !ValueError: invalid override dict 
+166 [p45 HALF_UP -987843317762 2706 c0 C0 t] format(Decimal('-6.000000000000e-31'), '+>+38.30N') -> str:"'+++++++++++++++++++-6.000000000000E-31'" 
+167 [p28 CEILING -999999 999999 c0 C1 t] format(Decimal('-5.050555555050050050000505550505000500E+53'), '0> .24%') -> str:"'-50505555550500500500005055505050005000000000000000000000.000000000000000000000000%'" 
+168 [p2 DOWN -999999999999999999 999999999999999999 c1 C1 t] format(Decimal('-1.5414262383473790323584126688472464380890041E-12'), 'F') -> str:"'-0.0000000000015414262383473790323584126688472464380890041'" 
+169 [p3 UP -56 76 c1 C0 t] format(Decimal('5844327012.5049145'), ' 37E') -> str:"'                5.8443270125049145E+9'" 
+170 [p28 05UP -10 1 c0 C1 tOvUnIn] format(Decimal('2.14E-37'), '0G') -> str:"'2.14E-37'" 
+171 [p38 05UP -999999 999999 c1 C1 tInSuCl] format(Decimal('999090.90000900009990099990090999'), '#.22E') -> str:"'9.9909090000900009990099E+5'" 
+172 [p19 HALF_DOWN -999999 999999 c1 C1 t] Decimal('-5.5055050555555505050055500500000050050055E+49').__format__([]) -> !TypeError: __format__() argument 1 must be str, not list 
+173 [p2 HALF_UP -32 90 c1 C1 t] format(Decimal('300188210336275733454349824.73741'), '-g') -> str:"'300188210336275733454349824.73741'" 
+174 [p28 HALF_UP -999999 999999 c0 C1 tCl] format(Decimal('0E+5'), '.= ,n') -> !ValueError: invalid format string 
+175 [p23 HALF_UP -2 10 c0 C1 t] format(Decimal('5.05505500500505005055000005E+50'), '\xe9>+013%') -> !ValueError: invalid format string 
+176 [p19 05UP -999999 999999 c0 C1 t] format(Decimal('-9.4807355496514983289583E-17'), '-z7.21F') -> str:"'-0.000000000000000094807'" 
+177 [p9 HALF_EVEN -999999999999999999 999999999999999999 c0 C0 t] f-string Decimal('-955425986746284846169080.351945339') ' 29.28F' -> str:"'-955425986746284846169080.3519453390000000000000000000'" 
+178 [p9 05UP -62338301 3027609069492 c0 C1 t] format(Decimal('-9990999999990.9099990009'), ' z#11.19G') -> str:"'-9990999999990.909999'" 
+179 [p28 FLOOR -999999 999999 c0 C1 t] format(Decimal('5.505505E+26'), '*<-021_.18f') -> !ValueError: invalid format string 
+180 [p34 05UP -999999 999999 c0 C1 t] format(Decimal('5.0005055550055050050500555505E+51'), '+.1N') -> str:"'+6E+51'" 
+181 [p17 HALF_DOWN -999999 999999 c0 C0 tSuIn] format(Decimal('-9.0909999900009099e+39'), 'x=2f') -> str:"'-9090999990000909900000000000000000000000'" 
+182 [p16 UP -75 73 c1 C1 tIn] format(Decimal('70000000000000000000000000000000.00000'), '33,.9G') -> str:"'                   7.00000000E+31'" 
+183 [p28 HALF_DOWN -999999999999999999 999999999999999999 c0 C1 t] Decimal('5.0550005050550000E-14').__format__('.2f') -> str:'0.00' 
+184 [p28 FLOOR -815885 8158581 c0 C1 tOvRo] f-string Decimal('-7.00000000000E-26') ' 12_.20f' -> str:"'-0.00000000000000000001'" 
+185 [p19 CEILING -27 76 c0 C1 t] format(Decimal('-9.957783382277589280946173859668495E-8'), '32.13n') -> str:"'              -9.957783382277e-8'" 
+186 [p2 HALF_DOWN -94 100 c0 C1 t] format(Decimal('-9.6328078415648830464773285'), '\u4e2d^E') -> str:"'-9.6328078415648830464773285E+0'" 
+187 [p2 DOWN -35 43 c0 C1 tInOvSu] format(Decimal('-7.00E-38'), '#.21') -> str:"'-7.00E-38'" 
+188 [p9 CEILING -334 297241 c0 C1 t] format(Decimal('-9.9999999999999999999999999999E-30'), '<-6%') -> str:"'-0.00000000000000000000000000099999999999999999999999999999%'" 
+189 [p38 UP -25 57 c0 C1 t] format(Decimal('-5.400977648892358446496202051284686972E+53'), '.<+1_.12F') -> str:"'-540_097_764_889_235_844_649_620_205_128_468_697_200_000_000_000_000_000.000000000000'" 
+190 [p9 CEILING 0 6 c0 C1 t] format(Decimal('-8.16301304776734545676E+38'), '0,.5f') -> str:"'-816,301,304,776,734,545,676,000,000,000,000,000,000.00000'" 
+191 [p2 DOWN -36021306592 1306884038 c0 C1 t] format(Decimal('-7.847844695632711889572404526932197887E-15'), ' <,.1e') -> str:"'-7.8e-15'" 
+192 [p38 UP -999999 999999 c0 C0 t] format(Decimal('9.9999999999999999999999999999e-21'), '17,n') -> !ValueError: invalid format string 
+193 [p39 05UP -999999 999999 c0 C0 tDiSuRo] Decimal('-5.555055e-22').__format__(' 30_.22E', {'decimal_point': '\ud800', 'thousands_sep': ' ', 'grouping': '\x01'}) -> str:"' -5.5550550000000000000000E-22'" 
+194 [p2 DOWN -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('-1.000000000000000000000000000000000E+48'), 'x>+,.7E') -> str:"'-1.0000000E+48'" 
+195 [p9 FLOOR 0 2 c1 C1 t] format(Decimal('-6.523250E-44'), 'f') -> str:"'-0.00000000000000000000000000000000000000000006523250'" 
+196 [p19 HALF_DOWN -26 47 c0 C1 tInRoCl] Decimal('7.60322E+24').__format__('+g', {'grouping': '\x7f'}) -> !ValueError: invalid override dict 
+197 [p39 DOWN -7 10 c1 C0 t] format(Decimal('0.980726602643203399126679'), '*>+.30F') -> str:"'+0.980726602643203399126679000000'" 
+198 [p28 FLOOR -3 4 c1 C1 t] format(Decimal('-2.00000000000000000000000000000E-24'), '\u4e2d<+0E') -> !ValueError: invalid format string 
+199 [p2 FLOOR 0 2 c0 C1 t] format(Decimal('-5.55555505500550505E-30'), 'e') -> str:"'-5.55555505500550505e-30'" 
+200 [p28 CEILING -7 6 c0 C1 t] format(Decimal('-9.909990090999909000000E+33'), '+,.24g') -> str:"'-9.909990090999909000000e+33'" 
+201 [p28 FLOOR -3 3 c1 C1 t] format(Decimal('-9.2786207919209E+37'), 'g') -> str:"'-9.2786207919209e+37'" 
+202 [p39 05UP -999999 999999 c1 C1 t] format(Decimal('3813816187502370.03813050656190187989936'), ' 0.15f') -> str:"' 3813816187502370.038130506561901'" 
+203 [p24 HALF_EVEN -1 74 c0 C1 t] format(Decimal('-1.24061354E-8'), '.=+E') -> str:"'-1.24061354E-8'" 
+204 [p16 HALF_EVEN -999999 999999 c0 C0 tUnSu] format(Decimal('0'), 'F') -> str:"'0'" 
+205 [p28 HALF_UP -999999 999999 c0 C1 tUn] f-string Decimal('sNaN') '-g' -> str:"'sNaN'" 
+206 [p1 HALF_UP -999999 999999 c0 C1 t] format(Decimal('6.3580050957501393E-42'), '0<05e') -> !ValueError: invalid format string 
+207 [p20 HALF_UP -999999 999999 c0 C1 t] format(Decimal('0.0069862229882293034739476623493'), '.<25_%') -> str:"'0.69862229882293034739476623493%'" 
+208 [p34 CEILING -96 21 c1 C0 tFlDiRo] Decimal('1000000000000000.0000000000000000000000000000').__format__('036.11F', 'x') -> !TypeError: optional argument must be a dict 
+209 [p39 UP -999999 999999 c1 C1 t] format(Decimal('0.0000037557865107411540'), ' z#23.6E') -> str:"'            3.755787E-6'" 
+210 [p28 DOWN -9 7 c0 C1 t] format(Decimal('5.41928E-41'), ' .18n') -> str:"' 5.41928e-41'" 
+211 [p21 UP -999999 999999 c0 C0 t] format(Decimal('6.0000000000000000000000000000000e-26'), '-.26g') -> str:"'6.0000000000000000000000000e-26'" 
+212 [p39 05UP -11 17 c0 C1 tFlDiUn] format(Decimal('-5.1007E-55'), '26,n') -> !ValueError: invalid format string 
+213 [p20 HALF_EVEN -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('-9.099999009900990E+37'), ',.10e') -> str:"'-9.0999990099e+37'" 
+214 [p21 HALF_DOWN -4 2 c0 C1 t] format(Decimal('85924328.94302347'), '=+,e') -> str:"'+8.592432894302347e+7'" 
+215 [p9 CEILING -48 83 c1 C1 tFlOvCl] format(Decimal('991324.99690497761226815354227'), '=18g') -> str:"'991324.99690497761226815354227'" 
+216 [p28 UP -999999 999999 c0 C1 t] format(Decimal('5.0500000550555555505050505005550005055050E+50'), '-,.12e') -> str:"'5.050000055056e+50'" 
+217 [p2 CEILING -999999 999999 c1 C0 t] Decimal('-5.0550055505505005505550500500050005505505055e+54').__format__(' 0_.23N', []) -> !ValueError: invalid format string 
+218 [p19 05UP -999999 999999 c0 C1 tDiOvUnIn] format(Decimal('-6.13E+23'), ' ^0.6') -> !ValueError: invalid format string 
+219 [p39 DOWN -6 1 c1 C1 tDiUn] format(Decimal('-0.000498267970801496832868592684772146351704660558'), '033_.21g') -> str:"'-000_000.000498267970801496832868'" 
+220 [p44 DOWN -999999 999999 c1 C1 tSu] format(Decimal('-0'), '-07.19G') -> str:"'-000000'" 
+221 [p29 UP -3 0 c0 C1 t] format(Decimal('6E+9'), '\xe9>F') -> str:"'6000000000'" 
+222 [p7 HALF_EVEN -999999 999999 c1 C1 t] format(Decimal('-9.0909009909000999090099E+47'), '\xe9>35.0f') -> str:"'-909090099090009990900990000000000000000000000000'" 
+223 [p2 HALF_DOWN -47 12 c0 C1 tIn] format(Decimal('1.455992375068201453543E+34'), 'x<+17,.9%') -> str:"'+1,455,992,375,068,201,453,543,000,000,000,000,000.000000000%'" 
+224 [p28 HALF_DOWN -999999 999999 c0 C0 tUnCl] format(Decimal('-5.75e+25'), '\n^8') -> str:"'-5.75e+25'" 
+225 [p25 DOWN -999999 999999 c1 C1 tFlDi] format(Decimal('4.599E-37'), '*< .8f') -> str:"' 0.00000000'" 
+226 [p2 HALF_EVEN -70 63 c0 C1 t] Decimal('3700933630203357643589416229881.16146890068').__format__('0.21N', {'decimal_point': '\u20ac\u20ac', 'thousands_sep': '--'}) -> !ValueError: invalid override dict 
+227 [p34 HALF_DOWN -9875 70252422 c1 C1 t] Decimal('-9099090.090090990000000990000').__format__('+9g', {'thousands_sep': '.', 'grouping': '3'}) -> !ValueError: invalid override dict 
+228 [p28 05UP -7 0 c1 C1 t] format(Decimal('2153622.67637468276783614'), '-25.8') -> str:"'                2153622.6'" 
+229 [p16 DOWN -999999 999999 c1 C0 tOvInRo] format(Decimal('-5.93090509e-12'), '+0F') -> str:"'-0.00000000000593090509'" 
+230 [p20 05UP -999999 999999 c1 C0 t] format(Decimal('9.9009090900099'), '*^.15') -> str:"'9.9009090900099'" 
+231 [p34 UP -999999 999999 c0 C1 t] format(Decimal('-2.90402119803677629553015599E+46'), '>#35%') -> str:"'-2904021198036776295530155990000000000000000000000.%'" 
+232 [p28 DOWN -999999 999999 c0 C1 tFlSu] format(Decimal('-4.5101919946868963276E-19'), '-,.13g') -> str:"'-4.510191994686e-19'" 
+233 [p3 DOWN -27 56 c0 C1 t] format(Decimal('-90.8645'), '+5_e') -> str:"'-9.08645e+1'" 
+234 [p38 HALF_UP -5 5 c0 C1 tIn] format(Decimal('-6.383926725363085E-7'), '>+.18N') -> str:"'-6.383926725363085E-7'" 
+235 [p2 CEILING -42 89 c1 C0 t] format(Decimal('6.2057280215215235588780247746656646438748845e+67'), ' =+_.19n') -> !ValueError: invalid format string 
+236 [p38 HALF_EVEN -3763789363528 48827 c1 C1 t] format(Decimal('-5.24E+15'), '37,G') -> str:"'                            -5.24E+15'" 
+237 [p19 HALF_EVEN -999999 999999 c1 C0 t] format(Decimal('-9.99999999999999999999999999999999999999999e-7'), '.=+13.30f') -> str:"'-0.000001000000000000000000000000'" 
+238 [p20 HALF_DOWN -8 37 c0 C1 tOv] format(Decimal('-648345132621670441627972865371075467817.4'), '') -> str:"'-648345132621670441627972865371075467817.4'" 
+239 [p20 05UP -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('-6876530357947033890983691.5159'), '*^ 2N') -> str:"'-6876530357947033890983691.5159'" 
+240 [p3 CEILING -999999 999999 c0 C1 t] Decimal('-62821041.175243836170999881974441984').__format__(',n', {'decimal_point': 'abcde', 'grouping': '\x01'}) -> !ValueError: invalid format string 
+241 [p39 05UP -999999999999999999 999999999999999999 c0 C1 tIn] format(Decimal('-7.6643845E+16'), ' =+,.15G') -> str:"'-7.6643845E+16'" 
+242 [p39 HALF_EVEN -999999999999999999 999999999999999999 c1 C1 tOvSuIn] Decimal('9.99999999999999E-31').__format__('40.0G', {'decimal_point': 'ab', 'thousands_sep': 'abcde', 'grouping': 3}) -> !TypeError: bad argument type for built-in operation 
+243 [p9 DOWN -4 4 c0 C0 t] format(Decimal('-5.00055e-25'), ',.3g') -> str:"'-5.00e-25'" 
+244 [p20 CEILING -999999 999999 c0 C1 t] format(Decimal('-7.361389094616849602713420977850666643063E+44'), '+024.0N') -> str:"'-0000000000000000007E+44'" 
+245 [p19 HALF_DOWN -999999 999999 c0 C1 tInOvIn] format(Decimal('-2.1278747910838E+28'), '.11g') -> str:"'-2.1278747911e+28'" 
+246 [p9 UP -999999 999999 c0 C0 t] format(Decimal('5.78658581076149631898501702'), '-40,.23e') -> str:"'            5.78658581076149631898502e+0'" 
+247 [p1 FLOOR -999999 999999 c0 C1 t] Decimal('-9.99909E+28').__format__('+024F', {'decimal_point': '.', 'thousands_sep': '\u066c'}) -> str:"'-99990900000000000000000000000'" 
+248 [p20 FLOOR 0 3 c0 C1 t] format(Decimal('7.53683702290208266200185666916529345452777E+64'), '-21.12G') -> str:"'    7.53683702290E+64'" 
+249 [p28 DOWN -3 6 c1 C0 t] format(Decimal('-5550.50500055'), '^+010,.2f') -> !ValueError: invalid format string 
+250 [p1 CEILING -999999 999999 c0 C1 t] format(Decimal('-5.00000000000000000E+22'), '-0.11f') -> str:"'-50000000000000000000000.00000000000'" 
+251 [p34 DOWN -7 5 c1 C1 t] f-string Decimal('-955954384880072170.265076766616') '\u4e2d>zN' -> !ValueError: invalid format string 
+252 [p34 FLOOR -62829362 253276359 c1 C1 t] format(Decimal('8.812778019181835315374E-8'), '+.29') -> str:"'+8.812778019181835315374E-8'" 
+253 [p9 CEILING -1 7 c1 C1 tInFl] format(Decimal('0E+5'), 'z017.23') -> str:"'00000000000000E+5'" 
+254 [p1 FLOOR -8 0 c0 C1 t] format(Decimal('7.000000000000000E+24'), ' .19f') -> str:"' 7000000000000000000000000.0000000000000000000'" 
+255 [p9 CEILING -999999 999999 c1 C0 t] format(Decimal('-69643110782367.87008721513'), '31,.9g') -> str:"'                -6.96431107e+13'" 
+256 [p3 UP -33 84 c0 C1 t] format(Decimal('7.000000000000000E+22'), '\u4e2d>-6,.16n') -> !ValueError: invalid format string 
+257 [p19 HALF_DOWN -13 62 c0 C1 t] format(Decimal('-2.1E-26'), '+g') -> str:"'-2.1e-26'" 
+258 [p39 DOWN -999999 999999 c0 C0 tDiUn] format(Decimal('9.0000099999009009e+34'), '+') -> str:"'+9.0000099999009009e+34'" 
+259 [p2 HALF_UP -27 23 c1 C1 tSuIn] format(Decimal('0'), '+.28') -> str:"'+0'" 
+260 [p16 HALF_DOWN -999999 999999 c0 C1 t] format(Decimal('-9E+11'), ' 32.28g') -> str:"'                          -9e+11'" 
+261 [p9 HALF_DOWN -7621164845843425 28000482401322881 c0 C0 t] Decimal('-90990000000099009099909990.99999999999').__format__('-,.24G', {'decimal_point': '', 'thousands_sep': "'"}) -> !ValueError: invalid override dict 
+262 [p28 HALF_UP -9 6 c0 C1 t] format(Decimal('-9063938.6117423895676350163070'), '-22,G') -> str:"'-9,063,938.6117423895676350163070'" 
+263 [p3 HALF_DOWN -77 18 c0 C0 t] format(Decimal('9.99999999999999999999999999999999999'), '+^ .25N') -> str:"' 10.00000000000000000000000'" 
+264 [p16 HALF_UP -999999 999999 c0 C1 t] format(Decimal('60000000000.000000000000'), '-04e') -> str:"'6.0000000000000000000000e+10'" 
+265 [p2 HALF_EVEN -8 3 c0 C1 t] format(Decimal('99999999999999999999999999999999.9999'), 'r') -> !ValueError: invalid format string 
+266 [p28 FLOOR -999999 999999 c0 C1 t] format(Decimal('5.0066503619022250428511934046323E+34'), '+11.4n') -> str:"' +5.006e+34'" 
+267 [p32 HALF_UP -23 4 c0 C0 t] format(Decimal('1000000000000000.00000000000000000000'), '\u4e2d>+26,G') -> str:"'+1,000,000,000,000,000.00000000000000000000'" 
+268 [p28 HALF_EVEN -999999999999999999 999999999999999999 c1 C1 t] format(Decimal('-9.000909990909009099000990900990090E-8'), '_.12F') -> str:"'-0.000000090009'" 
+269 [p19 HALF_DOWN -999999 999999 c0 C1 t] format(Decimal('5550005550.050000550055505550550050555505'), '.>,.9E') -> str:"'5.550005550E+9'" 
+270 [p38 HALF_UP -999999 999999 c0 C1 tInIn] format(Decimal('2.1898520752439E+15'), '\u20ac>12') -> str:"'2.1898520752439E+15'" 
+271 [p16 FLOOR -999999 999999 c0 C1 t] Decimal('NaN').__format__('*^15_', {'decimal_point': 1, 'grouping': ''}) -> str:"'******NaN******'" 
+272 [p2 FLOOR -28 59 c0 C1 t] format(Decimal('9.09990900090999099000900E-25'), '11N') -> str:"'9.09990900090999099000900E-25'" 
+273 [p16 FLOOR -5629 934 c0 C0 t] format(Decimal('4.17160890452678015906829e-37'), '+031,N') -> !ValueError: invalid format string 
+274 [p39 DOWN -83 26 c0 C1 t] format(Decimal('-990990.999999909909999000'), '+=+#,.8') -> str:"'-990,990.99'" 
+275 [p25 FLOOR -9 9 c0 C1 t] format(Decimal('0.06090753022389865273790952356823533'), '04.16N') -> str:"'0.06090753022389865'" 
+276 [p39 HALF_UP -999999 999999 c0 C1 tFlSuIn] format(Decimal('-9.990999009090099999090000009900E-7'), '031.25G') -> str:"'-09.990999009090099999090000E-7'" 
+277 [p15 DOWN -3 10 c0 C1 t] format(Decimal('-2.3397819636605295629507E+34'), ' F') -> str:"'-23397819636605295629507000000000000'" 
+278 [p2 CEILING -27 100 c1 C0 tUnIn] format(Decimal('0'), ' 20,.2G') -> str:"'                   0'" 
+279 [p28 CEILING -999999 999999 c0 C1 t] format(Decimal('-0E-38'), 'x<-33,.16') -> str:"'-0E-38xxxxxxxxxxxxxxxxxxxxxxxxxxx'" 
+280 [p39 CEILING -999999 999999 c0 C1 tInDiOv] format(Decimal('-0.00005000000000'), '*=_N') -> !ValueError: invalid format string 
+281 [p39 HALF_UP -999999 999999 c0 C1 tFl] format(Decimal('-9034402.271190510187306653185'), 'E') -> str:"'-9.034402271190510187306653185E+6'" 
+282 [p1 DOWN -999999999999999999 999999999999999999 c0 C0 tInDiSuCl] format(Decimal('-9.900000090900000900900e-12'), '24.7G') -> str:"'           -9.900000E-12'" 
+283 [p9 HALF_EVEN -999999999999999999 999999999999999999 c1 C1 t] Decimal('-0.00071451066690651172604').__format__('5.24', {'decimal_point': 1, 'thousands_sep': ' '}) -> !TypeError: bad argument type for built-in operation 
+284 [p28 HALF_DOWN -999999999999999999 999999999999999999 c1 C1 t] format(Decimal('-0.00455220159'), '>-,%') -> str:"'-0.455220159%'" 
+285 [p28 DOWN -16 1 c1 C1 tInFlOvRo] format(Decimal('322054990905636804783153472216.512'), '+z016e') -> str:"'+3.22054990905636804783153472216512e+29'" 
+286 [p28 UP -655779270019909 559052172535438 c0 C1 t] format(Decimal('6.9152321E+24'), ' 33,') -> str:"'                    6.9152321E+24'" 
+287 [p1 HALF_EVEN -999999 999999 c0 C0 t] format(Decimal('2.9e+25'), '39.19G') -> str:"'                                2.9E+25'" 
+288 [p3 05UP -999999 999999 c0 C1 t] format(Decimal('50555555500000.55050555050'), '-.4g') -> str:"'5.056e+13'" 
+289 [p9 DOWN -63 828875630 c1 C1 t] format(Decimal('4.9E-37'), 'G') -> str:"'4.9E-37'" 
+290 [p34 DOWN -94 38 c1 C0 t] Decimal('4.35609983e-21').__format__('-', {'decimal_point': 'ab', 'thousands_sep': ',', 'grouping': ''}) -> str:"'4ab35609983e-21'" 
+291 [p15 05UP -999999 999999 c0 C1 tFlDi] format(Decimal('8.6804130508985549796109606679070294397'), 'x<-0.11G') -> !ValueError: invalid format string 
+292 [p16 CEILING -999999999999999999 999999999999999999 c1 C1 t] f-string Decimal('5.05005055550000050005550050005055E+34') '.>+018.12n' -> !ValueError: invalid format string 
+293 [p16 05UP -999999 999999 c0 C0 tOvUn] format(Decimal('1.413585905466523486221e-15'), 'x=28%') -> str:"'0.0000000000001413585905466523486221%'" 
+294 [p16 FLOOR -8 1 c0 C0 t] format(Decimal('6.03083894588384994210434151e+51'), '-0.23F') -> str:"'6030838945883849942104341510000000000000000000000000.00000000000000000000000'" 
+295 [p9 UP -999999 999999 c1 C1 tDiCl] Decimal('-4.73333261214278034605014517437317646470514E+49').__format__('-28.10e', {'decimal_point': 'abcde', 'thousands_sep': '\u066c', 'grouping': '\x03'}) -> !ValueError: invalid override dict 
+296 [p38 HALF_DOWN -999999 999999 c0 C1 t] format(Decimal('2.079463430425183641786543E-34'), '_G') -> str:"'2.079463430425183641786543E-34'" 
+297 [p3 05UP -999999999999999999 999999999999999999 c1 C1 t] format(Decimal('-950773347009807594147275817952410023.193169771'), '^ 0.15G') -> !ValueError: invalid format string 
+298 [p2 05UP -7 3 c1 C0 tDiUnInRo] format(Decimal('2.263176939491526745669173e+36'), '+=0,G') -> !ValueError: invalid format string 
+299 [p16 HALF_UP -39 19 c0 C1 tUnCl] format(Decimal('9.99999999999999999999999999999999999E-14'), '-28.15g') -> str:"'        1.00000000000000e-13'" 
+300 [p9 HALF_UP -58 62 c0 C1 t] format(Decimal('-1.191243269367198076288638857E+36'), 'x<+31.14e') -> str:"'-1.19124326936720e+36xxxxxxxxxx'" 
+301 [p39 05UP -87 68 c0 C0 tFlIn] format(Decimal('1.7721636786069013742928e+41'), ' 0e') -> str:"' 1.7721636786069013742928e+41'" 
+302 [p1 UP -999999 999999 c0 C1 t] format(Decimal('-6632522181.493661160467996'), '23.2%') -> str:"'      -663252218149.37%'" 
+303 [p34 CEILING -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('0.99999999999999999999999999999999'), '0,g') -> str:"'0.99999999999999999999999999999999'" 
+304 [p28 05UP -999999 999999 c0 C0 t] format(Decimal('-6.650310763066024183055826137298889453906639e+46'), ' 17_.23n') -> !ValueError: invalid format string 
+305 [p28 HALF_EVEN -999999 999999 c0 C0 tFlUn] format(Decimal('9.99999999999999999999999e-22'), '<<5') -> str:"'9.99999999999999999999999e-22'" 
+306 [p28 UP -999999 999999 c0 C1 t] format(Decimal('-5.0050505555550550000E+41'), '-19.17') -> str:"'-5.0050505555550550E+41'" 
+307 [p16 DOWN -6603213104 16914524986 c0 C1 t] Decimal('8.507279533301078334374901763603E-30').__format__(1.0) -> !TypeError: __format__() argument 1 must be str, not float 
+308 [p28 FLOOR -999999 999999 c0 C1 tFlDiUnSu] format(Decimal('-9.9090909900909909900900009E-32'), '.18F') -> str:"'-0.000000000000000001'" 
+309 [p9 HALF_UP -4 0 c1 C1 tDiSuRo] f-string Decimal('-9.0E-36') '+20%' -> str:"'-0.00000000000000000000000000000000090%'" 
+310 [p28 HALF_UP -999999999999999999 999999999999999999 c1 C1 tUnRoCl] format(Decimal('-0.0000071598627190984868112849524470'), '+<+.24E') -> str:"'-7.159862719098486811284952E-6'" 
+311 [p19 UP -41 54 c0 C1 t] format(Decimal('0.000009099090909909'), ' ^+n') -> str:"'+0.000009099090909909'" 
+312 [p9 DOWN -6 7 c0 C0 t] format(Decimal('5.50055050005005550000055555050000e-18'), '*=+z36.28') -> str:"'+**5.500550500050055500000555550e-18'" 
+313 [p30 FLOOR -999999 999999 c0 C1 t] format(Decimal('-9132709950929897601856681406355469045659722'), '+') -> str:"'-9132709950929897601856681406355469045659722'" 
+314 [p19 HALF_EVEN -24 53 c0 C1 t] format(Decimal('-9.0000E-17'), '\xe9<#0.28e') -> !ValueError: invalid format string 
+315 [p1 DOWN -999999 999999 c0 C1 t] format(Decimal('-9.99909909099009090E+22'), '07g') -> str:"'-9.99909909099009090e+22'" 
+316 [p28 UP -8216 237 c1 C1 tFlOvCl] Decimal('-8688215267360235312084045565968425723.45376').__format__(None) -> !TypeError: __format__() argument 1 must be str, not None 
+317 [p3 FLOOR -73 23 c1 C1 tDiOvSu] format(Decimal('505249982961463500.11729961888982'), 'x^0n') -> !ValueError: invalid format string 
+318 [p16 05UP -656453940 6378012 c0 C0 tUn] format(Decimal('5.3427293e+17'), '+<10e') -> str:"'5.3427293e+17'" 
+319 [p28 DOWN -5 1 c1 C1 t] Decimal('-8.122209619126E-15').__format__(' <25', {'decimal_point': '\u066b', 'thousands_sep': '\xa0', 'grouping': '\x03'}) -> str:"'-8\\u066b122209619126E-15      '" 
+320 [p9 HALF_UP -999999 999999 c0 C0 tOv] format(Decimal('9.0000000000000000e-36'), ' 16.26N') -> str:"' 9.0000000000000000E-36'" 
+321 [p27 05UP -999999 999999 c0 C1 tInUnRo] format(Decimal('-0.9999999999999999999999'), ' .18N') -> str:"'-0.999999999999999999'" 
+322 [p28 CEILING -95 4 c0 C0 tFlUn] Decimal('-7.21054167229').__format__('\x00=+12.3f', {'decimal_point': '\ud800', 'thousands_sep': '.', 'grouping': '\u0100'}) -> !UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed 
+323 [p12 HALF_UP -1 25272065380484915 c0 C1 tSu] format(Decimal('3.93554038775861102E+31'), 'f') -> str:"'39355403877586110200000000000000'" 
+324 [p2 CEILING -999999999999999999 999999999999999999 c1 C1 t] Decimal('sNaN').__format__(' E', {'decimal_point': '\ud800', 'thousands_sep': 1, 'grouping': '\x03\x03\x00'}) -> !UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed 
+325 [p8 DOWN -1698307784289 2243020 c0 C1 t] format(Decimal('8.63236405683287337735352177381E+30'), ' .9N') -> str:"' 8.63236405E+30'" 
+326 [p34 DOWN -1 3 c1 C1 t] format(Decimal('7E-50'), '+^.19g') -> str:"'7e-50'" 
+327 [p2 DOWN -999999 999999 c0 C1 tFlDiSu] format(Decimal('-1.90670150517E-11'), '+.30n') -> str:"'-1.90670150517e-11'" 
+328 [p9 05UP -7 61 c1 C1 t] format(Decimal('5167123148254910239266450894812764.6847840'), '+0.29f') -> str:"'+5167123148254910239266450894812764.68478400000000000000000000000'" 
+329 [p2 FLOOR -10 3 c1 C1 t] format(Decimal('9.99999999999999999999999999999E-29'), ' <+33.20') -> str:"'+9.9999999999999999999E-29       '" 
+330 [p39 HALF_EVEN -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('-5.555555005055050050E+24'), '+<-0G') -> !ValueError: invalid format string 
+331 [p2 FLOOR -5193575339934367 31413658537624 c1 C1 t] format(Decimal('184165837596.485811476419323795'), '-.12E') -> str:"'1.841658375964E+11'" 
+332 [p19 HALF_UP -999999999999999999 999999999999999999 c0 C1 tDiIn] Decimal('0E-7').__format__(' 0f', {'decimal_point': 'ab', 'thousands_sep': '\u066c', 'grouping': '\x7f'}) -> str:"' 0ab0000000'" 
+333 [p9 HALF_UP 0 5 c0 C1 t] format(Decimal('-563680555493.60750758457893'), ',.21N') -> !ValueError: invalid format string 
+334 [p34 05UP -64 79 c1 C1 t] format(Decimal('-9.90900090900999900000E+43'), '-11%') -> str:"'-9909000909009999000000000000000000000000000000%'" 
+335 [p28 05UP -999999 999999 c1 C1 tOvSu] Decimal('-4.70862405721975E-9').__format__(' 29G', {'decimal_point': '\u20ac\u20ac', 'grouping': 3}) -> !TypeError: bad argument type for built-in operation 
+336 [p20 05UP -999999 999999 c0 C1 t] format(Decimal('2.3285391268389358E-41'), '\xe9=32.27G') -> str:"'\\xe9\\xe9\\xe9\\xe9\\xe9\\xe9\\xe9\\xe9\\xe9\\xe92.3285391268389358E-41'" 
+337 [p28 05UP -999999 999999 c0 C1 t] Decimal('-8.000E-45').__format__('011_.17g', ()) -> str:"'-08.000e-45'" 
+338 [p3 HALF_DOWN -999999999999999999 999999999999999999 c0 C1 t] Decimal('5.000505E-33').__format__('\xe9>25,.27n', {'decimal_point': 1, 'thousands_sep': '', 'grouping': '\x01\x02\x03'}) -> !ValueError: invalid format string 
+339 [p36 HALF_DOWN -999999 999999 c0 C0 t] Decimal('-9999999999999.999999').__format__('24.10G', {'thousands_sep': '.', 'grouping': '\x01'}) -> !ValueError: invalid override dict 
+340 [p39 HALF_DOWN -90 8 c0 C1 t] f-string Decimal('-5E+12') '40n' -> str:"'                                  -5e+12'" 
+341 [p1 DOWN 0 13 c1 C1 tUn] format(Decimal('6.6948663171479541460993657156798E-25'), '\u4e2d>#.24E') -> str:"'6.694866317147954146099365E-25'" 
+342 [p28 HALF_EVEN -1047525292650003 1020577126349 c0 C1 tDi] Decimal('0.00000593346337058436170414680496371913996').__format__('+.9g', {'grouping': ''}) -> !ValueError: invalid override dict 
+343 [p45 CEILING -8043 8518860738 c0 C1 tIn] format(Decimal('0.15556'), '^+24n') -> str:"'        +0.15556        '" 
+344 [p18 05UP -999999 999999 c0 C1 t] format(Decimal('7.79179423650E+12'), '.= 012.1G') -> !ValueError: invalid format string 
+345 [p3 HALF_UP -999999 999999 c1 C1 tSu] format(Decimal('-0.078074899028446740070390198945894287115872'), '39,.5E') -> str:"'                            -7.80749E-2'" 
+346 [p34 CEILING -8 0 c0 C0 t] format(Decimal('-5.46498781e+25'), '\xe9<F') -> str:"'-54649878100000000000000000'" 
+347 [p1 FLOOR -5 1 c1 C1 t] format(Decimal('-7.15811220479104427244937E+25'), ' <+27.16') -> str:"'-7.158112204791045E+25     '" 
+348 [p28 CEILING -999999 999999 c0 C0 tUnRo] format(Decimal('1.62348048759419825393949254239079054557e+55'), '\u4e2d<-40,.21G') -> str:"'1.62348048759419825394E+55\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d'" 
+349 [p9 CEILING -4 5 c0 C0 tIn] format(Decimal('-8.99099156238412594121986146027214e+57'), '+N') -> str:"'-8.99099156238412594121986146027214E+57'" 
+350 [p16 HALF_UP -999999999999999999 999999999999999999 c1 C1 tFlOvUnIn] f-string Decimal('-Infinity') '<-.2F' -> str:"'-Infinity'" 
+351 [p28 HALF_UP -999999999999999999 999999999999999999 c0 C0 t] Decimal('9.99999999999999999999999999999999999999999e+56').__format__(1.0) -> !TypeError: __format__() argument 1 must be str, not float 
+352 [p1 HALF_UP -61 40 c1 C1 t] format(Decimal('-NaN'), '0>-#,.25g') -> str:"'-NaN'" 
+353 [p38 HALF_UP -999999 999999 c1 C1 t] format(Decimal('1.000000000000000E-8'), '010_') -> str:"'1.000000000000000E-8'" 
+354 [p28 05UP -4 2 c0 C1 t] format(Decimal('-sNaN45'), 'E') -> str:"'-sNaN45'" 
+355 [p1 FLOOR -7 2 c0 C1 t] format(Decimal('-9.00909099099990009990909990090099999000E+47'), '.>8f') -> str:"'-900909099099990009990909990090099999000000000000'" 
+356 [p20 FLOOR -96 51 c0 C0 t] f-string Decimal('-Infinity') '-0.1N' -> str:"'-Infinity'" 
+357 [p1 DOWN -999999 999999 c1 C0 t] format(Decimal('5.55000000055005000055e+30'), '7.15%') -> str:"'555000000055005000055000000000000.000000000000000%'" 
+358 [p9 HALF_DOWN -999999 999999 c1 C1 tOvRo] format(Decimal('-2.54914723329267423750287085875774660750E+62'), '_.7g') -> str:"'-2.549147e+62'" 
+359 [p9 FLOOR -999999 999999 c1 C1 t] format(Decimal('-5207328.95422834342'), '*=,F') -> str:"'-5,207,328.95422834342'" 
+360 [p39 UP -6963812200128 1208381 c0 C1 t] f-string Decimal('1.5349522E+14') ' 036,G' -> str:"' 000,000,000,000,000,001.5349522E+14'" 
+361 [p3 HALF_UP -24 61 c1 C1 tFlDiSu] format(Decimal('-4.479022E-19'), 'G') -> str:"'-4.479022E-19'" 
+362 [p27 DOWN -999999999999999999 999999999999999999 c0 C0 t] format(Decimal('0e+5'), '-_f') -> str:"'0'" 
+363 [p3 UP -30 35 c0 C1 tInOv] format(Decimal('0E+5'), '+0.14') -> str:"'+0E+5'" 
+364 [p3 HALF_EVEN -999999 999999 c0 C0 t] Decimal('-6.00000000000000000000000000000000000e+56').__format__('.=-g', {'decimal_point': '.', 'thousands_sep': ' ', 'grouping': '\x7f'}) -> str:"'-6.00000000000000000000000000000000000e+56'" 
+365 [p1 FLOOR -4 7 c1 C0 t] format(Decimal('6.62777885353957289651940854e+28'), '0=+.26n') -> str:"'+6.6277788535395728965194085e+28'" 
+366 [p20 UP -999999999999999999 999999999999999999 c1 C1 t] Decimal('-3.6E-11').__format__('+> _%', ()) -> str:"'-0.0000000036%'" 
+367 [p34 DOWN -999999 999999 c1 C1 tOvRo] format(Decimal('7E-36'), '\xe9^ ,.30N') -> !ValueError: invalid format string 
+368 [p9 HALF_UP -3 3 c0 C1 tSuIn] format(Decimal('NaN123'), '+_.20E') -> str:"'+NaN123'" 
+369 [p39 HALF_DOWN -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('6.47884266712999340E-22'), ' 37.22%') -> str:"'            0.0000000000000000000648%'" 
+370 [p16 HALF_EVEN -31 2 c0 C1 t] f-string Decimal('-2.40171037654990292354861617E-24') ' ,.11G' -> str:"'-2.4017103765E-24'" 
+371 [p39 FLOOR -4 10 c0 C1 tUnSuInRo] Decimal('-3.6036255067965677101843E-11').__format__(None) -> !TypeError: __format__() argument 1 must be str, not None 
+372 [p34 DOWN -5 4 c0 C0 t] Decimal('-5e-32').__format__(Odd()) -> !TypeError: __format__() argument 1 must be str, not Odd 
+373 [p3 HALF_DOWN -29 16 c0 C1 t] Decimal('-5.44062517694795634828E+35').__format__('\xe9>+.18f', {'decimal_point': 'x', 'thousands_sep': "'", 'grouping': '\x03\x03\x00'}) -> str:'"-544\'062\'517\'694\'795\'634\'828\'000\'000\'000\'000\'000x000000000000000000"' 
+374 [p16 05UP -14 48645 c1 C1 t] Decimal('-9090990.09090900900').__format__('*>.19n', {'decimal_point': 'abcde', 'thousands_sep': 1, 'grouping': '\x02\x7f'}) -> !TypeError: bad argument type for built-in operation 
+375 [p20 05UP -9 45 c1 C0 t] format(Decimal('5.00000000000000000e-29'), ' .1G') -> str:"' 5E-29'" 
+376 [p1 CEILING -4 5 c0 C1 tOvSuCl] format(Decimal('5.5005500000000E+29'), '-13.6F') -> str:"'550055000000000000000000000000.000000'" 
+377 [p3 HALF_EVEN -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('2.17E-54'), '.9G') -> str:"'2.17E-54'" 
+378 [p22 CEILING -13377731049 40256306397 c0 C1 t] format(Decimal('5.055500050555550500550550505500050000055E+55'), '15,.3N') -> !ValueError: invalid format string 
+379 [p39 CEILING -999999 999999 c0 C1 tOv] format(Decimal('6.719358484869311381328344E-25'), '.^n') -> str:"'6.719358484869311381328344e-25'" 
+380 [p28 05UP -40 96 c0 C1 t] format(Decimal('-1.6804311156119810580E-26'), '+>-z,N') -> !ValueError: invalid format string 
+381 [p34 FLOOR -999999999999999999 999999999999999999 c0 C1 tInDiCl] f-string Decimal('-9.99999999999999999999999999999E+33') '+.13f' -> str:"'-9999999999999999999999999999990000.0000000000000'" 
+382 [p39 HALF_UP -32 4769 c0 C1 tDiRo] format(Decimal('-5.269661259527308483E+40'), '0^ 23.18e') -> str:"'-5.269661259527308483e+40'" 
+383 [p19 CEILING -999999 999999 c1 C0 tUnSuCl] format(Decimal('-4.49477604983522783174728072e-18'), 'x^+13n') -> str:"'-4.49477604983522783174728072e-18'" 
+384 [p28 05UP 0 3 c1 C1 t] Decimal('346310182787').__format__(Odd()) -> !TypeError: __format__() argument 1 must be str, not Odd 
+385 [p16 CEILING -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('-9999999999999999999999999999999999999.999999'), '.24F') -> str:"'-9999999999999999999999999999999999999.999999000000000000000000'" 
+386 [p2 HALF_DOWN 0 8 c0 C1 tDiInCl] format(Decimal('8.8E-56'), '0=10') -> str:"'0008.8E-56'" 
+387 [p42 HALF_DOWN -374159146532 599 c0 C1 tOvInRo] format(Decimal('Infinity'), '\xe9<+015.28F') -> !ValueError: invalid format string 
+388 [p2 05UP -10 9 c1 C1 tDiSuRo] Decimal('-0.000003830232399').__format__('<^+20_E', {'decimal_point': 'x', 'thousands_sep': ',', 'grouping': '\x03'}) -> str:"'<<-3.830232399E-6<<<'" 
+389 [p20 HALF_EVEN -82 36 c0 C1 tIn] format(Decimal('-9.0900900990999E-33'), '0.26G') -> str:"'-9.0900900990999E-33'" 
+390 [p1 05UP -999999999999999999 999999999999999999 c1 C0 t] format(Decimal('-2.05799263286002428351557e-21'), '0<zE') -> str:"'-2.05799263286002428351557E-21'" 
+391 [p38 UP -999999 999999 c1 C1 tSuInCl] format(Decimal('-5.34377472253730493161697777677E-28'), '+40G') -> str:"'    -5.34377472253730493161697777677E-28'" 
+392 [p1 HALF_DOWN -51 87 c0 C1 t] format(Decimal('6000292971634.74847888152580651159923558'), '*= z.6g') -> str:"' 6.00029e+12'" 
+393 [p20 FLOOR -999999999999999999 999999999999999999 c1 C1 tOvSuCl] format(Decimal('36467400739037049.89653459728856926266'), '\u4e2d<-.22G') -> str:"'36467400739037049.89653'" 
+394 [p39 HALF_UP -85 7 c1 C1 t] format(Decimal('6.27E+9'), '31E') -> str:"'                        6.27E+9'" 
+395 [p20 CEILING -999999 999999 c1 C0 tFlOvUnSu] format(Decimal('-2.8955741065232302629049e+42'), '*=.17N') -> str:"'-2.8955741065232302E+42'" 
+396 [p28 05UP -8 10440058635 c0 C1 tInFlDiInRoCl] format(Decimal('99909000009999900990900.9900009990090'), '0>-27E') -> str:"'9.99090000099999009909009900009990090E+22'" 
+397 [p9 HALF_DOWN -2 9 c0 C0 t] format(Decimal('-4.67323741203268081847792051049e-22'), '33.18F') -> str:"'            -0.000000000000000000'" 
+398 [p22 DOWN -999999 999999 c0 C0 tFlOvSu] Decimal('2.00000000000000000000000000e+27').__format__([]) -> !TypeError: __format__() argument 1 must be str, not list 
+399 [p43 DOWN -999999 999999 c1 C0 tIn] format(Decimal('-787104485367891754757.461964'), ' #38_.6N') -> !ValueError: invalid format string 
+400 [p38 05UP -999999 999999 c0 C1 t] format(Decimal('3.964762837791968190E-26'), '*=-_.26f') -> str:"'0.00000000000000000000000003'" 
+401 [p16 UP -999999 999999 c0 C0 t] format(Decimal('-5.00505550505505505000055050000550055555e+61'), '\u4e2d^+34%') -> str:"'-5005055505055055050000550500005500555550000000000000000000000000%'" 
+402 [p38 DOWN -43 6 c0 C1 tInFlDiRo] format(Decimal('-1.85990E-39'), 'z26,.15f') -> str:"'         0.000000000000000'" 
+403 [p19 05UP -2 4 c0 C1 t] format(Decimal('-7.3E-54'), '+^-31.18F') -> str:"'+++++-0.000000000000000001+++++'" 
+404 [p2 CEILING -999999 999999 c0 C0 tDiInRoCl] format(Decimal('5.808e-52'), '\u4e2d<31.27G') -> str:"'5.808E-52\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d'" 
+405 [p39 05UP -999999999999999999 999999999999999999 c1 C1 tDiOv] format(Decimal('3.10924219017894860775192051032333742088773E+66'), '32.17g') -> str:"'          3.1092421901789486e+66'" 
+406 [p3 FLOOR -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('9.00099000999090999999E+42'), 'z') -> str:"'9.00099000999090999999E+42'" 
+407 [p38 FLOOR -999999 999999 c1 C0 t] format(Decimal('-3.1951842628e+24'), ' z37_.24n') -> !ValueError: invalid format string 
+408 [p3 CEILING -8 8 c0 C1 t] format(Decimal('9.990099000909000990909099090900990099E+54'), '1.2.3') -> !ValueError: invalid format string 
+409 [p28 HALF_EVEN -39 60 c0 C1 t] Decimal('6.546013124758680662736688061127504707E-15').__format__(' 6', {'thousands_sep': '\u066c', 'grouping': '\x01\x02\x03'}) -> !ValueError: invalid override dict 
+410 [p3 HALF_EVEN -999999 999999 c1 C1 t] format(Decimal('-722696401'), '-2.15') -> str:"'-722696401'" 
+411 [p20 CEILING -999999 999999 c1 C0 tSuRoCl] format(Decimal('0'), '-03.0g') -> str:"'000'" 
+412 [p20 DOWN -14 5 c0 C0 t] format(Decimal('9.99e+10'), '') -> str:"'9.99e+10'" 
+413 [p1 HALF_EVEN -82 6 c0 C1 tDiRo] format(Decimal('-99.9009909909009999090990'), '*=1.3G') -> str:"'-99.9'" 
+414 [p28 UP -999999999999999999 999999999999999999 c1 C1 t] Decimal('5000555555000055.0').__format__(1.0) -> !TypeError: __format__() argument 1 must be str, not float 
+415 [p2 HALF_EVEN -999999 999999 c1 C1 t] format(Decimal('-0E+18'), '\u4e2d>-21_G') -> str:"'\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d\\u4e2d-0E+18'" 
+416 [p28 UP -999999 999999 c0 C1 tSuCl] format(Decimal('0E-7'), ' >38F') -> str:"'                             0.0000000'" 
+417 [p34 HALF_DOWN -999999 999999 c1 C0 t] format(Decimal('-4.0000000000000000000000000000000000000e+46'), '+31.18n') -> str:"'       -4.00000000000000000e+46'" 
+418 [p28 HALF_DOWN -999999 999999 c0 C0 t] format(Decimal('-9.99999999999999999999999e-23'), '\xe9^-.28%') -> str:"'-0.0000000000000000000100000000%'" 
+419 [p42 CEILING -7087 57886492143038 c0 C1 t] format(Decimal('-0'), '<^-#13.5F') -> str:"'<<-0.00000<<<'" 
+420 [p38 05UP -83 6 c0 C0 tInRo] Decimal('-0e-45').__format__('0< 18.12N', {'thousands_sep': "'", 'grouping': 3}) -> !TypeError: bad argument type for built-in operation 
+421 [p3 HALF_UP -1 7 c0 C1 tOv] format(Decimal('-8.133852E-48'), '.8G') -> str:"'-8.133852E-48'" 
+422 [p20 HALF_EVEN -999999 999999 c0 C1 t] Decimal('-5.5555055000050555050555550E-25').__format__('0>+.29', {'decimal_point': 'abcde', 'thousands_sep': ''}) -> !ValueError: invalid override dict 
+423 [p28 CEILING -5 9 c0 C1 tIn] format(Decimal('1.000E+8'), '*=-33n') -> str:"'*************************1.000e+8'" 
+424 [p28 UP -999999 999999 c0 C1 t] format(Decimal('-3.03922727515305329298932830716E-21'), '\u4e2d> 04.0%') -> !ValueError: invalid format string 
+425 [p31 UP -999999 999999 c0 C0 t] format(Decimal('-0.00000999999999999999999999999999999999999999999'), ' 15G') -> str:"'-0.00000999999999999999999999999999999999999999999'" 
+426 [p19 CEILING -7 4 c1 C1 t] format(Decimal('-9.0E+19'), '\xe9> 030_.7F') -> !ValueError: invalid format string 
+427 [p4 HALF_DOWN -999999 999999 c0 C0 t] format(Decimal('-0.7571'), '34.16n') -> str:"'                           -0.7571'" 
+428 [p34 05UP -999999 999999 c0 C1 t] format(Decimal('-424831808044821152038243310852392461.7020185'), '+,.7e') -> str:"'-4.2483181e+35'" 
+429 [p9 05UP -999999 999999 c1 C0 t] format(Decimal('-0.00800'), '_.26%') -> str:"'-0.80000000000000000000000000%'" 
+430 [p19 HALF_DOWN -999999 999999 c0 C0 tInDiOvIn] format(Decimal('0.000002328013674'), '0>-.22f') -> str:"'0.0000023280136740000000'" 
+431 [p16 FLOOR -87 32 c1 C1 t] Decimal('-5.500555555505500555005550E+38').__format__(' ', {'decimal_point': 'x', 'thousands_sep': ',', 'grouping': '\xff'}) -> !ValueError: invalid override dict 
+432 [p9 HALF_EVEN -43 88 c0 C1 tInCl] format(Decimal('-6.000000000000E-17'), '*<+6,.0e') -> str:"'-6e-17'" 
+433 [p20 HALF_EVEN -6 4 c0 C1 tFlRo] Decimal('-5.7924E+24').__format__(Odd()) -> !TypeError: __format__() argument 1 must be str, not Odd 
+434 [p39 HALF_EVEN -999999999999999999 999999999999999999 c1 C1 tDiUnCl] format(Decimal('5505505500550500055005500055555.55555550055500'), '028_.20E') -> str:"'005.50550550055050005501E+30'" 
+435 [p16 DOWN -999999999999999999 999999999999999999 c0 C1 tInFlUn] format(Decimal('9.7970991696097912439646275300877585E-13'), '+29f') -> str:"'+0.00000000000097970991696097912439646275300877585'" 
+436 [p28 HALF_UP -999999999999999999 999999999999999999 c1 C1 t] format(Decimal('555505505050055.505055500055'), '<=.28G') -> str:"'555505505050055.505055500055'" 
+437 [p2 HALF_DOWN -86096445448622 99124007408 c0 C1 t] format(Decimal('-9.909090E+12'), '*>+z15F') -> str:"'*-9909090000000'" 
+438 [p28 HALF_UP -999999 999999 c0 C0 t] format(Decimal('-4.73909488200292575391e+22'), '-26_.25E') -> str:"'-4.7390948820029257539100000E+22'" 
+439 [p9 FLOOR -61 45 c0 C1 t] f-string Decimal('-7.233001910991871501E+36') '+0,n' -> !ValueError: invalid format string 
+440 [p28 05UP -4601455 790855 c0 C1 tInDiUnRo] format(Decimal('5.05000005005050505050505555050500E+50'), '.<-19,.29G') -> str:"'5.0500000500505050505050555506E+50'" 
+441 [p28 HALF_UP -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('7.000000000000000000000000000000000000000E+44'), '21G') -> str:"'7.000000000000000000000000000000000000000E+44'" 
+442 [p28 CEILING -999999999999999999 999999999999999999 c1 C1 tFlDiRo] format(Decimal('9.000000000000000000000000000000000000000E-17'), '39.14') -> str:"'                    9.0000000000000E-17'" 
+443 [p45 HALF_UP -999999 999999 c0 C1 tFlDiOvUnRo] format(Decimal('82205989.062699586795980620'), '-24.19N') -> str:"'    82205989.06269958680'" 
+444 [p3 DOWN -64 62 c0 C0 t] format(Decimal('57.58371021322200888928922168657148212992035'), '> 28%') -> str:"' 5758.371021322200888928922168657148212992035%'" 
+445 [p39 05UP -999999 999999 c1 C1 t] Decimal('0.00225418823595196590374771154301945960878').__format__('10.23e', {'decimal_point': 1, 'thousands_sep': 'abcde', 'grouping': 3}) -> !TypeError: bad argument type for built-in operation 
+446 [p3 UP -999999 999999 c1 C0 t] format(Decimal('-5.50505005050500000000e+32'), '.25E') -> str:"'-5.5050500505050000000000000E+32'" 
+447 [p3 DOWN -2 3 c0 C1 tInOvSu] format(Decimal('-3.10150506E-46'), '.6N') -> str:"'-3.10150E-46'" 
+448 [p9 05UP -999999 999999 c1 C1 t] format(Decimal('-0.55500050050505050500505000050550055555005055'), ',.27f') -> str:"'-0.555000500505050505005050001'" 
+449 [p28 FLOOR -3 8 c0 C1 t] format(Decimal('-Infinity'), '.<+.30f') -> str:"'-Infinity'" 
+450 [p9 HALF_EVEN -999999999999999999 999999999999999999 c0 C1 tDiUn] format(Decimal('-5.055055550550055000505050505055E+55'), '\xe9^-0e') -> !ValueError: invalid format string 
+451 [p19 DOWN -9 6 c1 C1 tInDiIn] format(Decimal('7.2976740576631596545168406040968E-24'), '-2,.23G') -> str:"'7.2976740576631596545168E-24'" 
+452 [p39 DOWN -999999 999999 c0 C1 t] Decimal('7.0000000000000E+19').__format__(1.0) -> !TypeError: __format__() argument 1 must be str, not float 
+453 [p21 FLOOR -999999999999999999 999999999999999999 c1 C1 t] format(Decimal('-5005505500555005550005.500550'), 'x=_.26F') -> str:"'-5_005_505_500_555_005_550_005.50055000000000000000000000'" 
+454 [p2 DOWN -999999 999999 c0 C1 tFlInCl] format(Decimal('-5000.05500500055050500005505005050'), ' =-G') -> str:"'-5000.05500500055050500005505005050'" 
+455 [p2 DOWN -999999 999999 c0 C1 t] format(Decimal('-9.909900099009090909000099999000999E-25'), ',.9G') -> str:"'-9.90990009E-25'" 
+456 [p16 HALF_DOWN -999999999999999999 999999999999999999 c1 C1 tIn] format(Decimal('90148123935251506683947.5604256385'), '-n') -> str:"'90148123935251506683947.5604256385'" 
+457 [p40 UP -42 39 c0 C1 tFlUn] Decimal('-9.9099999099099099990909099E-7').__format__([]) -> !TypeError: __format__() argument 1 must be str, not list 
+458 [p3 HALF_DOWN -999999 999999 c0 C1 t] format(Decimal('-122879.585323971113022105326679132881679426'), '<<9E') -> str:"'-1.22879585323971113022105326679132881679426E+5'" 
+459 [p3 HALF_EVEN -999999999999999999 999999999999999999 c1 C1 t] Decimal('-2.59788E-26').__format__(b'f') -> !TypeError: __format__() argument 1 must be str, not bytes 
+460 [p2 05UP -9 50 c0 C1 t] format(Decimal('7.33677E-26'), '0.2E') -> str:"'7.33E-26'" 
+461 [p2 05UP 0 6 c0 C1 t] format(Decimal('2.999192E-9'), '\xe9=-36.16G') -> str:"'\\xe9\\xe9\\xe9\\xe9\\xe9\\xe9\\xe9\\xe9\\xe9\\xe9\\xe9\\xe9\\xe9\\xe9\\xe9\\xe9\\xe9\\xe9\\xe9\\xe9\\xe9\\xe9\\xe9\\xe9\\xe92.999192E-9'" 
+462 [p38 DOWN -999999 999999 c0 C1 tSu] format(Decimal('7.968634131655403947E-26'), '<^-n') -> str:"'7.968634131655403947e-26'" 
+463 [p39 FLOOR -8 0 c0 C0 t] format(Decimal('95540780.259002314999786012794439976433827889'), ' ^ 17N') -> str:"' 95540780.259002314999786012794439976433827889'" 
+464 [p3 DOWN -999999 999999 c0 C1 tSu] format(Decimal('-3330.3491842205106564625014562234642933'), '*>32,n') -> !ValueError: invalid format string 
+465 [p34 HALF_EVEN -7 5 c1 C1 tDiCl] format(Decimal('0.000009999999999999999'), ' E') -> str:"' 9.999999999999999E-6'" 
+466 [p2 HALF_EVEN -999999 999999 c0 C0 tDiOvUn] format(Decimal('-909090.999000900'), '\U0001f600^9.2f') -> str:"'-909091.00'" 
+467 [p9 UP -25 63 c1 C1 t] Decimal('2.0000000000000000000000000000000E-9').__format__(1) -> !TypeError: __format__() argument 1 must be str, not int 
+468 [p3 HALF_DOWN 0 6 c0 C1 t] format(Decimal('5.550550055500550500500005000E-19'), ' 36.6%') -> str:"'                           0.000000%'" 
+469 [p28 HALF_EVEN -2 1 c0 C0 tOvUn] format(Decimal('-22310490266012981022015059146258.3101'), 'z_.15N') -> !ValueError: invalid format string 
+470 [p28 HALF_EVEN -999999 999999 c1 C1 tFlInCl] format(Decimal('-5.96188232E-24'), '0^+z,.9E') -> str:"'-5.961882320E-24'" 
+471 [p39 CEILING -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('9999.999999999999999999999999999999'), '14_.28%') -> str:"'999_999.9999999999999999999999999999%'" 
+472 [p31 DOWN -343438203582676 3738652077486551 c0 C1 tInRo] format(Decimal('-2.87724121220401051633835756143308E+36'), '032,g') -> str:"'-2.87724121220401051633835756143308e+36'" 
+473 [p39 CEILING -999999999999999999 999999999999999999 c1 C1 tUn] f-string Decimal('0.00000588766881078264') '\xe9=+29e' -> str:"'+\\xe9\\xe9\\xe9\\xe9\\xe9\\xe9\\xe9\\xe9\\xe95.88766881078264e-6'" 
+474 [p33 05UP -999999 999999 c0 C0 t] format(Decimal('-9.9999999999999999999999999999999999e+36'), 'x<-.0G') -> str:"'-9E+36'" 
+475 [p16 CEILING -92 21 c0 C1 t] format(Decimal('0E-7'), 'z0.26') -> str:"'0E-7'" 
+476 [p20 05UP -22 2 c1 C0 t] f-string Decimal('-99999999999999999999999999999999.9999') ',.16E' -> str:"'-9.9999999999999999E+31'" 
+477 [p28 CEILING -999999 999999 c0 C1 tSu] Decimal('5.00E-30').__format__(Odd()) -> !TypeError: __format__() argument 1 must be str, not Odd 
+478 [p38 FLOOR -81 99 c0 C1 t] format(Decimal('-7.45075388660896173138585565E-33'), '\xe9^,N') -> !ValueError: invalid format string 
+479 [p39 HALF_UP -7 7 c0 C1 t] format(Decimal('6.0635505811072E-25'), '+,.24G') -> str:"'+6.0635505811072E-25'" 
+480 [p19 CEILING -6 5 c0 C1 tDiOvUn] format(Decimal('8.000000000000000000000000000000000000000000E+66'), '-0.13f') -> str:"'8000000000000000000000000000000000000000000000000000000000000000000.0000000000000'" 
+481 [p20 05UP -999999999999999999 999999999999999999 c0 C1 tInFlDiOvUn] format(Decimal('-0.000'), ' ,.22F') -> str:"'-0.0000000000000000000000'" 
+482 [p28 HALF_DOWN -999999 999999 c1 C1 t] format(Decimal('-5500500505505505.555050550'), '+14.0n') -> str:"'        -6e+15'" 
+483 [p39 DOWN -999999 999999 c0 C1 t] format(Decimal('-5.55E-8'), ' G') -> str:"'-5.55E-8'" 
+484 [p9 HALF_UP -999999999999999999 999999999999999999 c1 C1 t] format(Decimal('1059.30983190510943053393008801970'), '-30.21') -> str:"'        1059.30983190510943053'" 
+485 [p20 HALF_EVEN -3700829245498 513516 c1 C1 t] format(Decimal('-909.09099909990909'), ',.14E') -> str:"'-9.09090999099909E+2'" 
+486 [p1 HALF_UP -26 14 c0 C0 t] format(Decimal('342.58435428225676239'), '<<+13,N') -> !ValueError: invalid format string 
+487 [p28 DOWN -999999 999999 c0 C1 t] format(Decimal('-6.000000000000000000000000000000000E+58'), '\n^8') -> str:"'-6.000000000000000000000000000000000E+58'" 
+488 [p17 CEILING -999999 999999 c0 C0 tUn] f-string Decimal('6.000000000000000e+28') '38N' -> str:"'                 6.000000000000000E+28'" 
+489 [p1 HALF_EVEN -999999 999999 c0 C1 tDi] format(Decimal('0E-43'), '\u4e2d^+4,.5%') -> str:"'+0.00000%'" 
+490 [p16 UP -2 89 c1 C1 tSuRo] Decimal('0.000550550005050050005505').__format__([]) -> !TypeError: __format__() argument 1 must be str, not list 
+491 [p3 FLOOR -999999 999999 c0 C1 tInFlCl] format(Decimal('8.13956273376637996581007048558585430E+42'), ' ,%') -> str:"' 813,956,273,376,637,996,581,007,048,558,585,430,000,000,000%'" 
+492 [p28 UP -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('sNaN'), '+.23E') -> str:"'+sNaN'" 
+493 [p1 UP -999999 999999 c1 C1 t] format(Decimal('55.0000'), '.< 10.21E') -> str:"' 5.500000000000000000000E+1'" 
+494 [p3 UP -999999999999999999 999999999999999999 c1 C1 t] format(Decimal('999999999999999999999.9999999999999999999'), '19.0%') -> str:"'100000000000000000000000%'" 
+495 [p28 UP -999999 999999 c1 C1 t] format(Decimal('-9.000E-21'), '3.19E') -> str:"'-9.0000000000000000000E-21'" 
+496 [p3 CEILING -33 57 c0 C1 t] format(Decimal('-9.03934309352966E+24'), '-z,n') -> !ValueError: invalid format string 
+497 [p28 UP -625684550075491 688725923 c1 C1 t] format(Decimal('-9.990990009E-17'), '0>,.16') -> str:"'-9.990990009E-17'" 
+498 [p9 DOWN -6 5 c1 C0 tUnIn] format(Decimal('-7.5369393227718007544192315e-7'), ' 11,.2G') -> str:"'    -7.5E-7'" 
+499 [p9 HALF_DOWN -999999 999999 c0 C0 t] format(Decimal('9.9999999999999999999999999999999999999999999e+45'), 'x>-35,g') -> str:"'9.9999999999999999999999999999999999999999999e+45'" 
+500 [p20 FLOOR -5 8 c0 C0 tOvUnIn] format(Decimal('0'), '#.8') -> str:"'0.'" 
+501 [p34 UP -999999 999999 c0 C1 t] Decimal('-7.8142212119823E-10').__format__('z.2f', {'decimal_point': ','}) -> str:"'-0.01'" 
+502 [p19 HALF_UP -999999 999999 c1 C1 t] format(Decimal('-2000000000000000000000.000000'), '-0.4F') -> str:"'-2000000000000000000000.0000'" 
+503 [p1 HALF_UP -4 5 c0 C1 tSuIn] format(Decimal('99999999999999999999999999999.9'), '+3.17E') -> str:"'+1.00000000000000000E+29'" 
+504 [p3 05UP -999999999999999999 999999999999999999 c1 C0 t] Decimal('8.120683e+16').__format__(' 039N', {'decimal_point': None, 'thousands_sep': "'", 'grouping': '\x03\x03\x00'}) -> !TypeError: bad argument type for built-in operation 
+505 [p3 05UP 0 2 c1 C1 tFlDiRo] format(Decimal('9999999999.99999999999999999999999999'), 'x> z,.2g') -> str:"' 9.9e+9'" 
+506 [p34 HALF_DOWN -3 10 c0 C1 tUn] format(Decimal('-9009990909900909000009.90090990'), '+z,.3%') -> str:"'-900,999,090,990,090,900,000,990.091%'" 
+507 [p28 FLOOR -999999999999999999 999999999999999999 c1 C0 t] format(Decimal('5609490654199.65098714'), '#.21') -> str:"'5609490654199.65098714'" 
+508 [p28 DOWN -89 5 c0 C0 t] f-string Decimal('5e-17') '-9,e' -> str:"'    5e-17'" 
+509 [p19 UP -78 11 c0 C0 tFl] format(Decimal('6.83646830703203866856995257263e-24'), '\u4e2d<-,.12G') -> str:"'6.83646830704E-24'" 
+510 [p25 05UP -8 6 c0 C1 t] f-string Decimal('-9.009990090E-17') 'x>+,.18E' -> str:"'-9.009990090000000000E-17'" 
+511 [p39 HALF_DOWN -7453866927 4285920 c0 C0 t] Decimal('0.07973614680764210480789774728').__format__(' .14F', {'decimal_point': '', 'thousands_sep': '--'}) -> !ValueError: invalid override dict 
+512 [p16 HALF_EVEN -999999 999999 c0 C1 t] format(Decimal('-1.4E+7'), '*^-F') -> str:"'-14000000'" 
+513 [p35 HALF_EVEN -93 39 c0 C1 t] format(Decimal('-145480366011232039573589.908390167735117084'), '0n') -> str:"'-145480366011232039573589.908390167735117084'" 
+514 [p3 05UP -7 4 c0 C1 tInSu] format(Decimal('-999.99999999999'), '33e') -> str:"'              -9.9999999999999e+2'" 
+515 [p36 UP -999999 999999 c0 C1 t] Decimal('6.3644750224288879491973415133E-8').__format__([]) -> !TypeError: __format__() argument 1 must be str, not list 
+516 [p22 FLOOR -1 10 c0 C1 t] format(Decimal('-80.0000000000000000000000000000000000000000000'), '+17_G') -> str:"'-80.0000000000000000000000000000000000000000000'" 
+517 [p28 CEILING -999999 999999 c0 C0 tDi] format(Decimal('2.0000000e-41'), ' .11') -> str:"' 2.0000000e-41'" 
+518 [p39 05UP -100 63 c1 C1 t] format(Decimal('-7.68157811168527040288525575967931E-16'), '+010E') -> str:"'-7.68157811168527040288525575967931E-16'" 
+519 [p28 FLOOR -999999999999999999 999999999999999999 c1 C0 tOvUn] format(Decimal('-5.5055500505000055000000550055500000505550000e+48'), 'E') -> str:"'-5.5055500505000055000000550055500000505550000E+48'" 
+520 [p28 HALF_DOWN -999999 999999 c1 C1 t] format(Decimal('50505.005500050'), '*^15.26e') -> str:"'5.05050055000500000000000000e+4'" 
+521 [p1 UP -999999 999999 c1 C0 t] format(Decimal('8.41951838257e-23'), 'n') -> str:"'8.41951838257e-23'" 
+522 [p3 FLOOR -999999 999999 c0 C0 t] format(Decimal('-0.0000500346415'), '+=-z_.5E') -> str:"'-5.00347E-5'" 
+523 [p3 DOWN -999999 999999 c1 C1 t] format(Decimal('9.999909900009999000900E-18'), '31.29G') -> str:"'    9.999909900009999000900E-18'" 
+524 [p1 UP -8 3 c1 C1 t] format(Decimal('-60000.0000000000000000000000000'), '+10n') -> str:"'-60000.0000000000000000000000000'" 
+525 [p3 HALF_DOWN -6 2 c0 C1 t] format(Decimal('-2.85097481734182293675E-18'), '.^-27.17F') -> str:"'...-0.00000000000000000....'" 
+526 [p16 UP -9181700 38 c0 C1 t] format(Decimal('7.64376092309325440E-36'), '=G') -> str:"'7.64376092309325440E-36'" 
+527 [p28 DOWN -6 43 c1 C1 t] format(Decimal('591119269771654392432846602298314716.6'), ' 3.3N') -> str:"' 5.91E+35'" 
+528 [p28 UP -82 19 c0 C1 t] format(Decimal('-3.7145526606980968E+40'), '-z.25G') -> str:"'-3.7145526606980968E+40'" 
+529 [p9 HALF_EVEN -4 3 c0 C0 t] Decimal('-8.00000000000000000000000000000000000e+46').__format__('0= 024f', {'decimal_point': None, 'grouping': '\x01'}) -> !ValueError: invalid format string 
+530 [p39 CEILING -999999 999999 c0 C0 tInFlDiOvIn] format(Decimal('-91976.709313728869634770727756637034628536979'), '+35.27n') -> str:"'      -91976.7093137288696347707277'" 
+531 [p38 DOWN -3 5 c0 C1 tInDiCl] Decimal('-5.24014189886851E-24').__format__(' .3N', 'x') -> !TypeError: optional argument must be a dict 
+532 [p21 DOWN -879128974 45478 c0 C0 tCl] format(Decimal('-9.6595682777299329982356165691237877'), 'z') -> str:"'-9.6595682777299329982356165691237877'" 
+533 [p39 HALF_DOWN -5 10 c0 C1 tFl] Decimal('8.824E-11').__format__('+0.28%', {'decimal_point': 'x', 'thousands_sep': ',', 'grouping': '\x01'}) -> str:"'+0x0000000088240000000000000000%'" 
+534 [p38 05UP -1 7 c0 C1 t] format(Decimal('8.369E-50'), '-#09e') -> str:"'8.369e-50'" 
+535 [p28 HALF_EVEN -4 10 c0 C1 tUn] f-string Decimal('-8.2712325744818652165728619879382245452E+46') '-10_.21n' -> !ValueError: invalid format string 
+536 [p19 HALF_EVEN -4 6 c0 C0 tRo] format(Decimal('-196.6166976093619171194132558505187435610920'), '-038_g') -> str:"'-196.6166976093619171194132558505187435610920'" 
+537 [p29 HALF_DOWN -59 39 c1 C1 tDi] format(Decimal('-500555550050055005.55'), '-37') -> str:"'               -500555550050055005.55'" 
+538 [p39 HALF_UP -999999 999999 c0 C1 tFl] format(Decimal('9.099990990090990E-24'), ',.30f') -> str:"'0.000000000000000000000009099991'" 
+539 [p3 DOWN -10 10 c0 C1 t] format(Decimal('3.7050E-44'), '+19G') -> str:"'        +3.7050E-44'" 
+540 [p39 05UP -999999 999999 c1 C0 tFlUnRo] Decimal('0e-50').__format__(Odd()) -> !TypeError: __format__() argument 1 must be str, not Odd 
+541 [p20 DOWN -999999 999999 c0 C1 tInRo] format(Decimal('0.003000000000000000000000'), ' _.18E') -> str:"' 3.000000000000000000E-3'" 
+542 [p9 HALF_UP -999999999999999999 999999999999999999 c1 C1 tDiOv] format(Decimal('1.443792058E-41'), '-01.11G') -> str:"'1.443792058E-41'" 
+543 [p2 DOWN 0 81 c0 C0 t] format(Decimal('-7720911664.8521630771855132227563832886849'), ' 39.1%') -> str:"'                       -772091166485.2%'" 
+544 [p16 HALF_DOWN -999999 999999 c0 C1 t] format(Decimal('-44671.959613950219676'), '-.25g') -> str:"'-44671.959613950219676'" 
+545 [p19 FLOOR -7318312516645 606326216 c0 C1 t] Decimal('9.314086667963E+32').__format__(' > 38,.2E', {'thousands_sep': ' '}) -> str:"'                              9.31E+32'" 
+546 [p39 UP -25 69 c0 C0 tRoCl] format(Decimal('0e+5'), ' 0.1g') -> str:"' 0e+5'" 
+547 [p9 UP -48 57 c0 C1 t] format(Decimal('8.656E+6'), '-12.28e') -> str:"'8.6560000000000000000000000000e+6'" 
+548 [p9 DOWN -7 0 c0 C1 tInSu] format(Decimal('-5.9641383668E-27'), '<-0_.30g') -> !ValueError: invalid format string 
+549 [p20 HALF_UP -695177709701 648538849620 c0 C0 tRo] format(Decimal('-5.5050050005050e+29'), '32.7N') -> str:"'                   -5.505005E+29'" 
+550 [p16 DOWN -999999 999999 c0 C1 t] format(Decimal('-392930136296898932237757.6504'), '.20F') -> str:"'-392930136296898932237757.65040000000000000000'" 
+551 [p16 CEILING -6 1 c0 C1 t] format(Decimal('-5.552471795257133831359810667440214E+44'), '') -> str:"'-5.552471795257133831359810667440214E+44'" 
+552 [p28 CEILING -3 7 c0 C1 t] format(Decimal('-sNaN45'), '-.21n') -> str:"'-sNaN45'" 
+553 [p2 HALF_UP 0 7 c0 C0 t] Decimal('-900.00000000000000').__format__('.2f') -> str:'-900.00' 
+554 [p16 UP -7851260602773 26450634289160 c1 C1 t] format(Decimal('-14472309473016715561.019743620808408149'), '+2.19e') -> str:"'-1.4472309473016715562e+19'" 
+555 [p34 FLOOR -13 1 c0 C1 t] format(Decimal('-1374848666095846202924488691032818384623.00'), '0<+11,.9G') -> str:"'-1.37484867E+39'" 
+556 [p19 FLOOR -999999999999999999 999999999999999999 c1 C1 t] format(Decimal('-90009009090.900009999000999999090000999999'), '#31%') -> str:"'-9000900909090.0009999000999999090000999999%'" 
+557 [p1 HALF_DOWN -999999 999999 c1 C1 t] format(Decimal('-4.7761274459094950090270557599202595620E-12'), '.=z#.20F') -> str:"'-0.00000000000477612745'" 
+558 [p34 05UP -8928530668 7605751476832633 c0 C1 tInDiRoCl] Decimal('7.07365538E-41').__format__('0,.5e', {'decimal_point': '', 'thousands_sep': '--', 'grouping': '\x01\x02\x03'}) -> !ValueError: invalid override dict 
+559 [p9 05UP -999999999999999999 999999999999999999 c0 C1 tDiCl] format(Decimal('-5.0550050505505055E-25'), '0>-040.25E') -> !ValueError: invalid format string 
+560 [p34 UP -57 2 c0 C1 t] format(Decimal('-9.9E-41'), '_g') -> str:"'-9.9e-41'" 
+561 [p34 FLOOR -51 44 c0 C1 tSuRo] format(Decimal('-2.19E-28'), '<^-,.1') -> str:"'-3E-28'" 
+562 [p28 UP -8 3 c0 C1 t] format(Decimal('-2327683755423.99743726511'), '+>-20,E') -> str:"'-2.32768375542399743726511E+12'" 
+563 [p34 CEILING -2 867864069571 c0 C0 tFlUnRo] format(Decimal('-4.36408445520285118220e-38'), '9,.22N') -> !ValueError: invalid format string 
+564 [p38 CEILING -6 0 c0 C0 tInRo] format(Decimal('9009099990099990000909000009990900.9'), ' z#010.2f') -> str:"' 9009099990099990000909000009990900.90'" 
+565 [p9 UP -979 0 c0 C0 tOvIn] format(Decimal('-9.03282138705944547916982716e+44'), ' >-33N') -> str:"'-9.03282138705944547916982716E+44'" 
+566 [p28 05UP -999999 999999 c1 C1 t] Decimal('5.050050005000505').__format__('E', {'decimal_point': ',', 'thousands_sep': '--', 'grouping': ''}) -> str:"'5,050050005000505E+0'" 
+567 [p28 FLOOR -999999 999999 c1 C0 t] format(Decimal('5.400984393399134749386648975715916995e+53'), ' 18.10E') -> str:"'  5.4009843933E+53'" 
+568 [p38 DOWN -2 10 c1 C1 t] format(Decimal('9.99909900999000090990900909009099099E-23'), '.') -> !ValueError: invalid format string 
+569 [p16 HALF_DOWN -999999 999999 c1 C1 tInSuInCl] format(Decimal('-1.00000000000000000000000000000000E+39'), ',.12g') -> str:"'-1.00000000000e+39'" 
+570 [p34 HALF_DOWN -4 10 c0 C0 tInDiRo] f-string Decimal('5.00050055505550050055050555555555000000005e+59') ' 3.7g' -> str:"' 5.000501e+59'" 
+571 [p20 05UP -7 6 c0 C1 t] format(Decimal('5.3E-34'), '-,.28f') -> str:"'0.0000000000000000000000000001'" 
+572 [p28 05UP -36 55 c0 C0 tInOvUnSuRo] format(Decimal('4.30592469057e+32'), '35.17%') -> str:"'43059246905700000000000000000000000.00000000000000000%'" 
+573 [p17 HALF_DOWN -999999 999999 c1 C1 t] Decimal('-9.291803762969765975318677E-21').__format__(' z.4f', {'thousands_sep': "'", 'grouping': 3}) -> str:"' 0.0000'" 
+574 [p16 UP -627624630943093 21293 c0 C1 t] format(Decimal('-7.8E+23'), 'G') -> str:"'-7.8E+23'" 
+575 [p28 DOWN -4 11 c0 C1 t] Decimal('-9.9999999999999999999999999999999999999999E-20').__format__('+0,e', {'decimal_point': '.', 'thousands_sep': '.', 'grouping': '3'}) -> str:"'-9.9999999999999999999999999999999999999999e-20'" 
+576 [p14 HALF_UP -7 4 c0 C0 tInFlDiOvRo] format(Decimal('5.981013091151259733882190897597227533e-10'), '0^ E') -> str:"' 5.981013091151259733882190897597227533E-10'" 
+577 [p28 05UP -999999 999999 c0 C0 tDi] format(Decimal('9.99999e-24'), ',.29F') -> str:"'0.00000000000000000000000999999'" 
+578 [p3 HALF_EVEN -999999 999999 c1 C0 tFlOvRo] format(Decimal('9982545.2'), '-3%') -> str:"'998254520%'" 
+579 [p28 FLOOR -999999 999999 c0 C1 t] format(Decimal('-9.0099099099090000'), '+z0.0G') -> str:"'-1E+1'" 
+580 [p19 CEILING -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('9.99999999999999999999E-34'), '\ud800<5') -> !UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed 
+581 [p3 CEILING -999999 999999 c1 C1 t] format(Decimal('6.644060223809334803775341930157879E-12'), '\u4e2d>+,.20f') -> str:"'+0.00000000000664406023'" 
+582 [p19 DOWN -2 0 c1 C0 t] format(Decimal('1.0000e-20'), '#%') -> str:"'0.0000000000000000010000%'" 
+583 [p28 DOWN -999999 999999 c0 C0 t] format(Decimal('9e-12'), '-31f') -> str:"'                 0.000000000009'" 
+584 [p28 CEILING -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('-6.3680539837227815275727E+42'), '0>.15E') -> str:"'-6.368053983722781E+42'" 
+585 [p28 HALF_UP -3 9 c0 C0 tDi] format(Decimal('8000000000000000000.000000000000000000000000'), 'g') -> str:"'8000000000000000000.000000000000000000000000'" 
+586 [p38 UP -5 8 c0 C0 tOvCl] format(Decimal('4.889404722736082983188370410259005966e+39'), '-022,.10g') -> str:"'0,000,004.889404723e+39'" 
+587 [p3 CEILING -999999 999999 c0 C1 t] format(Decimal('-7.464717522301592847177587855E+46'), '\xe9>33,.24f') -> str:"'-74,647,175,223,015,928,471,775,878,550,000,000,000,000,000,000.000000000000000000000000'" 
+588 [p38 CEILING -999999 999999 c0 C1 t] format(Decimal('9.9999999999999999E-29'), ' >-.26') -> str:"'9.9999999999999999E-29'" 
+589 [p16 05UP -999999999999999999 999999999999999999 c1 C0 tUnIn] Decimal('9.00000000e-31').__format__(' 25,.2g', {'decimal_point': 'ab', 'thousands_sep': ','}) -> str:"'                  9ab0e-31'" 
+590 [p2 HALF_EVEN -999999 999999 c0 C0 t] format(Decimal('-1.155822817263926461933418491257102e-16'), '\u4e2d=#,.5N') -> !ValueError: invalid format string 
+591 [p39 HALF_EVEN -38 35 c1 C1 t] Decimal('-5.00000000000000000E-7').__format__('#33,.21', {'decimal_point': ',', 'thousands_sep': ''}) -> str:"'          -5.00000000000000000E-7'" 
+592 [p20 CEILING -999999 999999 c0 C1 t] format(Decimal('-3.868E-51'), '1e') -> str:"'-3.868e-51'" 
+593 [p28 HALF_DOWN -9 8 c1 C1 t] format(Decimal('-40.000000'), 'x<z.10n') -> str:"'-40.000000'" 
+594 [p20 UP -999999 999999 c0 C0 tUn] format(Decimal('0.00090009099009'), '<^-.8') -> str:"'0.00090009100'" 
+595 [p3 CEILING -36 52 c0 C1 tFlIn] format(Decimal('-9.0000099000099909909990990909090099E+47'), '+') -> str:"'-9.0000099000099909909990990909090099E+47'" 
+596 [p2 CEILING -43 13 c0 C1 t] format(Decimal('99999.9999999999999999999999999999999999999'), '.12n') -> str:"'100000.000000'" 
+597 [p9 HALF_DOWN -999999999999999999 999999999999999999 c0 C1 t] Decimal('999999990000.90900900990999900009999').__format__(1.0) -> !TypeError: __format__() argument 1 must be str, not float 
+598 [p28 HALF_DOWN -999999 999999 c0 C1 tRo] format(Decimal('-9.90009990000099990E+25'), '.=-%') -> str:"'-9900099900000999900000000000%'" 
+599 [p3 HALF_UP -999999 999999 c1 C0 tInFlSu] format(Decimal('2.677160e-12'), '0<.18n') -> str:"'2.677160e-12'" 
+600 [p28 DOWN -10 8 c1 C1 t] Decimal('-9999999999999999999999999.99999999999999999999').__format__('e', {'decimal_point': 'ab', 'thousands_sep': '', 'grouping': ''}) -> str:"'-9ab99999999999999999999999999999999999999999999e+24'" 
+601 [p28 05UP -186732 10 c0 C1 tFl] format(Decimal('-8.00000000E+15'), '10.5g') -> str:"'-8.0000e+15'" 
+602 [p28 HALF_DOWN -66 18 c0 C1 tInInRo] Decimal('-9.99990900909999090909999090099990009990099E-12').__format__(',.15g', {'decimal_point': '\ud800', 'thousands_sep': '.', 'grouping': '3'}) -> !UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed 
+603 [p28 05UP -2 9 c1 C1 tFlSu] format(Decimal('2.048295276103869185342664873422557E-16'), '\u4e2d^ 37F') -> str:"' 0.0000000000000002048295276103869185342664873422557'" 
+604 [p1 HALF_DOWN -470364337 607134768265699 c0 C1 t] Decimal('9.09990999909009099999900009990E-11').__format__(' #06.13%', {'decimal_point': '.', 'thousands_sep': '', 'grouping': '\x03\x03\x00'}) -> str:"' 0.0000000090999%'" 
+605 [p28 DOWN -38 92 c0 C0 t] format(Decimal('-9.7142750690955690e-37'), '0^.20e') -> str:"'-9.71427506909556900000e-37'" 
+606 [p20 HALF_UP -8 3 c1 C0 tOvUn] format(Decimal('55000550555.0'), 'n') -> str:"'55000550555.0'" 
+607 [p26 HALF_EVEN -999999999999999999 999999999999999999 c0 C0 t] format(Decimal('7.1730397646119e-15'), ' ') -> str:"' 7.1730397646119e-15'" 
+608 [p32 05UP -85 86 c0 C1 t] format(Decimal('-1.67411E+12'), '< 23E') -> str:"'-1.67411E+12           '" 
+609 [p28 DOWN -84 15 c1 C0 tSuInCl] format(Decimal('-7.18821210658e-25'), '010_') -> str:"'-7.18821210658e-25'" 
+610 [p28 HALF_DOWN -999999 999999 c0 C1 t] format(Decimal('-5E-26'), '0<0N') -> !ValueError: invalid format string 
+611 [p3 CEILING -4 5 c0 C1 t] format(Decimal('-9.99999999999999E+16'), '-19.24N') -> str:"'-9.99999999999999E+16'" 
+612 [p9 HALF_UP -999999 999999 c0 C1 tDiOvIn] format(Decimal('-50500055555550555550500550.00'), ' 01.25f') -> str:"'-50500055555550555550500550.0000000000000000000000000'" 
+613 [p28 HALF_EVEN -999999 999999 c0 C0 tFlSu] Decimal('-5.285560445379233615904252412032782371e-7').__format__('<>+.19N', {'decimal_point': '\u066b', 'thousands_sep': '\u066c', 'grouping': '\u0100'}) -> !ValueError: invalid override dict 
+614 [p1 05UP -6 74336676284 c0 C1 tInOvSuCl] format(Decimal('-6.349239715202E-20'), '\xe9<,.23N') -> !ValueError: invalid format string 
+615 [p38 DOWN 0 9 c1 C1 tOv] format(Decimal('-8.00000000000000000000000000E-14'), '.<-_.3E') -> str:"'-8.000E-14'" 
+616 [p2 FLOOR -999999 999999 c1 C1 t] Decimal('-15665795153.53138913527546').__format__('+^+21.25F', {'decimal_point': '.', 'thousands_sep': 'abcde', 'grouping': '3'}) -> !ValueError: invalid override dict 
+617 [p34 UP 0 1 c0 C1 tDiOvSuIn] format(Decimal('8.00000000000000E-21'), ' #f') -> str:"' 0.00000000000000000000800000000000000'" 
+618 [p16 CEILING -999999 999999 c0 C1 tUnSuCl] format(Decimal('-9.6E+5'), '-E') -> str:"'-9.6E+5'" 
+619 [p39 05UP -999999 999999 c0 C1 t] format(Decimal('-9.9999999E-36'), '\xe9=-22%') -> str:"'-0.00000000000000000000000000000000099999999%'" 
+620 [p19 FLOOR -427830 27 c0 C1 tSuIn] Decimal('9999999999999999999999999999999.999999999').__format__([]) -> !TypeError: __format__() argument 1 must be str, not list 
+621 [p38 CEILING 0 2 c0 C1 t] f-string Decimal('9E+15') '31.29' -> str:"'                          9E+15'" 
+622 [p38 UP -999999 999999 c0 C1 t] format(Decimal('-3.36790457893686253852954516E-31'), '*>+26F') -> str:"'-0.000000000000000000000000000000336790457893686253852954516'" 
+623 [p34 FLOOR -999999 999999 c0 C1 tFlDiInRoCl] format(Decimal('-5.55005500555500550505E-12'), ' 35.23G') -> str:"'        -5.55005500555500550505E-12'" 
+624 [p1 CEILING -999999 999999 c0 C0 tFlOvSu] format(Decimal('-7.52546290210048106459604517333e-22'), ' =+f') -> str:"'-0.000000000000000000000752546290210048106459604517333'" 
+625 [p3 FLOOR -54 97 c1 C1 t] Decimal('9.6812105534764677E-44').__format__([]) -> !TypeError: __format__() argument 1 must be str, not list 
+626 [p3 HALF_DOWN -2 100 c1 C1 t] format(Decimal('0.540440490960595075'), '+^-G') -> str:"'0.540440490960595075'" 
+627 [p26 HALF_DOWN -999999 999999 c0 C1 t] format(Decimal('9.0436763482136354020330679942925E-10'), '+<+14e') -> str:"'+9.0436763482136354020330679942925e-10'" 
+628 [p28 05UP -6 6 c0 C1 t] format(Decimal('-3.13E+4'), '022,G') -> str:"'-000,000,000,003.13E+4'" 
+629 [p3 05UP -999999999999999999 999999999999999999 c0 C1 tDiUn] format(Decimal('1.0875084151E+13'), '.= %') -> str:"' 1087508415100000%'" 
+630 [p28 CEILING -1 5 c1 C1 t] format(Decimal('8E-58'), '-17,g') -> str:"'            8e-58'" 
+631 [p1 CEILING -999999 999999 c0 C0 tDiRoCl] Decimal('0.0772772010348122480152').__format__(None) -> !TypeError: __format__() argument 1 must be str, not None 
+632 [p18 HALF_EVEN -4 6684845 c0 C1 t] format(Decimal('-9.999999099999999909E-34'), '+38f') -> str:"'-0.0000000000000000000000000000000009999999099999999909'" 
+633 [p19 HALF_DOWN -68 71 c1 C1 t] format(Decimal('8.18E+17'), '0n') -> str:"'8.18e+17'" 
+634 [p38 HALF_EVEN -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('5.005550500000505000555555050E-27'), '+,.25E') -> str:"'+5.0055505000005050005555550E-27'" 
+635 [p2 CEILING -10 9 c0 C0 t] format(Decimal('-9.999999999999999999999999999e+42'), '40,F') -> str:"'-9,999,999,999,999,999,999,999,999,999,000,000,000,000,000'" 
+636 [p20 HALF_EVEN -41 98 c0 C1 tFlIn] format(Decimal('8182932.50369497188566080306836461000526925413'), '22,.27e') -> str:"'8.182932503694971885660803068e+6'" 
+637 [p20 HALF_DOWN -999999 999999 c0 C1 tInOvRoCl] Decimal('1.890422459260981E-10').__format__('F', {'decimal_point': '\ud800', 'thousands_sep': '', 'grouping': '\x7f'}) -> !UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed 
+638 [p38 05UP -999999 999999 c0 C1 t] format(Decimal('3.3067645350576536500033295387501E+46'), '15.2G') -> str:"'        3.3E+46'" 
+639 [p19 CEILING -999999999999999999 999999999999999999 c0 C1 t] Decimal('-6.23300961244112933448E+35').__format__(' 29.10', {'decimal_point': '', 'thousands_sep': 1}) -> !TypeError: bad argument type for built-in operation 
+640 [p28 HALF_UP -999999 999999 c1 C1 t] format(Decimal('3.0000000E-18'), '-,.17N') -> !ValueError: invalid format string 
+641 [p3 CEILING -23 72 c1 C1 t] format(Decimal('4.4513801218206377792609385447E-27'), ' z7,n') -> !ValueError: invalid format string 
+642 [p20 HALF_UP -3 9 c0 C1 tOvInRo] format(Decimal('4.77623562E-23'), '#E') -> str:"'4.77623562E-23'" 
+643 [p29 HALF_DOWN -87 78 c0 C1 t] format(Decimal('3.0316562E-18'), '+20%') -> str:"'+0.00000000000000030316562%'" 
+644 [p9 UP -999999 999999 c1 C1 t] f-string Decimal('-8.30631') '0^ .25e' -> str:"'-8.3063100000000000000000000e+0'" 
+645 [p2 CEILING -4 4 c0 C1 t] Decimal('9.999999999E+27').__format__('-.29e', None) -> !TypeError: optional argument must be a dict 
+646 [p34 HALF_EVEN -1 10 c0 C1 t] Decimal('-2000000000000000000000000.000000000000000').__format__('+09N', {'thousands_sep': 'abcde', 'grouping': '\x03\x03\x00'}) -> !ValueError: invalid override dict 
+647 [p2 HALF_UP -52 26 c0 C0 t] format(Decimal('5.000000000000e-30'), '30.1g') -> str:"'                         5e-30'" 
+648 [p19 CEILING -7 10 c0 C1 t] format(Decimal('-12422857344945412.4957097840'), '+%') -> str:"'-1242285734494541249.57097840%'" 
+649 [p16 DOWN -999999 999999 c0 C1 t] format(Decimal('9.00990900E+27'), '0< %') -> str:"' 900990900000000000000000000000%'" 
+650 [p9 DOWN -20 43 c0 C1 tFlUn] format(Decimal('97631.00593795310'), '-.7E') -> str:"'9.7631005E+4'" 
+651 [p39 HALF_DOWN -9 5 c1 C1 tRo] format(Decimal('-5000000000000000000000000.00000000000000000000'), '0^-.19n') -> str:"'-5.000000000000000000e+24'" 
+652 [p16 CEILING -999999 999999 c0 C1 t] format(Decimal('-999999.999999999999999999999999999999999999'), '-#31.15N') -> !ValueError: invalid format string 
+653 [p3 05UP -6 6 c0 C1 tFlSuCl] format(Decimal('2.68106682E+29'), '*>') -> str:"'2.68106682E+29'" 
+654 [p28 UP -999999 999999 c0 C1 tInFlOvSu] f-string Decimal('-9.24175E+9') 'z9E' -> str:"'-9.24175E+9'" 
+655 [p16 FLOOR -8 410397394256 c1 C1 tDiUnCl] Decimal('-7.2741709E-27').__format__(' _.2', {'decimal_point': 'ab', 'thousands_sep': ',', 'grouping': '\x01\x02\x03'}) -> str:"'-7.3E-27'" 
+656 [p28 HALF_UP -999999 999999 c0 C1 t] Decimal('75594428776054331.318361837957156530073567').__format__('+30e', {'decimal_point': 'x', 'grouping': '\x03'}) -> str:"'+7x5594428776054331318361837957156530073567e+16'" 
+657 [p34 FLOOR -999999 999999 c1 C1 tDi] f-string Decimal('-4.000000E-19') ' <+038N' -> !ValueError: invalid format string 
+658 [p3 HALF_DOWN -999999999999999999 999999999999999999 c0 C1 tFlCl] f-string Decimal('-9.7085808159209067260E-26') '1.2.3' -> !ValueError: invalid format string 
+659 [p19 FLOOR -62 63 c1 C0 tInFlUn] format(Decimal('2.0000000000000000000000000000000000000e+38'), '+0_E') -> str:"'+2.0000000000000000000000000000000000000E+38'" 
+660 [p39 05UP -999999 999999 c0 C1 t] Decimal('9.86457445918283873367799E+29').__format__('*=-#E', {'thousands_sep': ',', 'grouping': 3}) -> str:"'9.86457445918283873367799E+29'" 
+661 [p13 DOWN -88 72 c0 C1 tDiRo] format(Decimal('-9.99999999999999999999999E+30'), '8.26%') -> str:"'-999999999999999999999999000000000.00000000000000000000000000%'" 
+662 [p13 HALF_UP -85 27 c0 C1 tInDiSuRoCl] Decimal('0.00072').__format__(None) -> !TypeError: __format__() argument 1 must be str, not None 
+663 [p16 CEILING -2 403442544879297 c1 C1 tSuRo] format(Decimal('3.358890914E+11'), '#.5F') -> str:"'335889091400.00000'" 
+664 [p28 UP -999999 999999 c0 C0 tOvCl] format(Decimal('-9.090e-19'), '+_e') -> str:"'-9.090e-19'" 
+665 [p34 05UP -58 80 c0 C1 t] format(Decimal('-9.30703818273E-11'), ' 35,n') -> !ValueError: invalid format string 
+666 [p34 HALF_DOWN -23168011 818933 c1 C0 tCl] format(Decimal('5.84734196082261257393933e+34'), ',N') -> !ValueError: invalid format string 
+667 [p32 HALF_UP -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('1050464335.23661818244958427'), '-19.5g') -> str:"'          1.0505e+9'" 
+668 [p38 HALF_DOWN -999999 999999 c0 C1 t] Decimal('2975071.07942161017927007787365367581325').__format__('N', {'grouping': 3}) -> !TypeError: bad argument type for built-in operation 
+669 [p28 CEILING -999999 999999 c0 C0 t] format(Decimal('-4.12824551202078005739421318359754270223e+63'), ' 9n') -> str:"'-4.12824551202078005739421318359754270223e+63'" 
+670 [p34 DOWN -999999999999999999 999999999999999999 c1 C1 t] format(Decimal('9.999999999999999999999999999E-22'), ' <+.15') -> str:"'+9.99999999999999E-22'" 
+671 [p9 HALF_DOWN -999999 999999 c1 C1 tDiIn] format(Decimal('0.22853'), '027.6') -> str:"'000000000000000000000.22853'" 
+672 [p16 HALF_EVEN -999999 999999 c0 C1 t] format(Decimal('6152086.8992339184495498544230664473412605'), '\u4e2d<-23.28') -> str:"'6152086.899233918449549854423'" 
+673 [p28 HALF_EVEN -532692001241152 801 c0 C1 t] f-string Decimal('-9.291291560488E-7') '4.30g' -> str:"'-9.291291560488e-7'" 
+674 [p20 HALF_DOWN -999999 999999 c0 C1 tUnRo] f-string Decimal('505.50500505550500555550055') 'f' -> str:"'505.50500505550500555550055'" 
+675 [p3 CEILING -999999 999999 c1 C0 t] Decimal('-6.0000000e-27').__format__('.2f') -> str:'-0.00' 
+676 [p3 UP -15 42 c1 C0 t] format(Decimal('7.82725448008946954507981025724e-20'), '+018_.30n') -> !ValueError: invalid format string 
+677 [p9 HALF_DOWN -9 8 c1 C1 t] format(Decimal('-79.522353584401443903'), '.17F') -> str:"'-79.52235358440144390'" 
+678 [p9 DOWN -1 70 c0 C1 t] format(Decimal('-9.999999999999999999999999999999999E-24'), '-24E') -> str:"'-9.999999999999999999999999999999999E-24'" 
+679 [p16 HALF_DOWN -999999 999999 c0 C1 t] format(Decimal('-5.55505550005055555550505550000500005000E+61'), ',n') -> !ValueError: invalid format string 
+680 [p20 CEILING -63 77 c1 C0 t] format(Decimal('3.476367557373310882963360801593228e-10'), '^32F') -> str:"'0.0000000003476367557373310882963360801593228'" 
+681 [p20 HALF_UP -999999999999999999 999999999999999999 c0 C1 t] Decimal('9.99999999999999999999E-24').__format__('-2.8%', {'decimal_point': 1, 'grouping': '\x03\x03\x00'}) -> !TypeError: bad argument type for built-in operation 
+682 [p1 HALF_UP -999999 999999 c0 C1 t] Decimal('9.143515363784429539E+42').__format__('-1%', {'decimal_point': 'x', 'grouping': '\x03\x02'}) -> str:"'914351536378442953900000000000000000000000000%'" 
+683 [p34 CEILING -303 2754169 c0 C1 tInDiIn] Decimal('-9.9513767E+11').__format__('z1.6f', {'decimal_point': 'ab', 'thousands_sep': ' '}) -> str:"'-995137670000.000000'" 
+684 [p19 DOWN -10 0 c0 C1 t] format(Decimal('9.9999999999E-49'), '+<.3%') -> str:"'0.000%'" 
+685 [p39 05UP -999999999999999999 999999999999999999 c1 C1 tDi] format(Decimal('5005005550550050550505555005500500'), 'ff') -> !ValueError: invalid format string 
+686 [p38 DOWN -999999999999999999 999999999999999999 c0 C1 tDiSu] format(Decimal('5.7351044170464344676E+23'), '\u4e2d>+33.29E') -> str:"'+5.73510441704643446760000000000E+23'" 
+687 [p20 FLOOR -3316748250351 9 c0 C0 tSuCl] format(Decimal('-5.5e-16'), '+E') -> str:"'-5.5E-16'" 
+688 [p34 CEILING -999999 999999 c1 C0 t] format(Decimal('-8.0e+5'), '-.11F') -> str:"'-800000.00000000000'" 
+689 [p20 HALF_EVEN -999999 999999 c0 C1 tOv] format(Decimal('-NaN'), '=') -> str:"'-NaN'" 
+690 [p28 CEILING -999999 999999 c0 C1 tIn] format(Decimal('-5.55050550055E+12'), '+.1G') -> str:"'-5E+12'" 
+691 [p2 HALF_UP -97 10 c1 C1 t] Decimal('963188853040970347785432043701352461531726').__format__('-33N', {'decimal_point': '\u20ac\u20ac', 'thousands_sep': ',', 'grouping': '\x03\x02'}) -> !ValueError: invalid override dict 
+692 [p28 FLOOR -999999 999999 c0 C1 t] format(Decimal('6.00000000000000000000000000E-10'), '+#.16g') -> str:"'+6.000000000000000e-10'" 
+693 [p39 05UP -999999 999999 c0 C1 tOvCl] format(Decimal('-5.90097735430244837458437E+31'), '\xe9^0.23N') -> !ValueError: invalid format string 
+694 [p16 HALF_UP -16 61 c0 C1 t] format(Decimal('-5.219858E+23'), '.9n') -> str:"'-5.219858e+23'" 
+695 [p31 CEILING -999999 999999 c0 C0 t] format(Decimal('4.000000000000000000000000000000000e-24'), ' >+20.28e') -> str:"'+4.0000000000000000000000000000e-24'" 
+696 [p2 HALF_DOWN -999999 999999 c0 C1 t] format(Decimal('7.0476630E+18'), '+z014,e') -> str:"'+7.0476630e+18'" 
+697 [p3 UP -999999 999999 c1 C0 t] format(Decimal('-0.00112300950865779171024287928149105061615178'), '0=z23n') -> str:"'-0.00112300950865779171024287928149105061615178'" 
+698 [p2 CEILING -4437379893945312 2447331 c1 C1 t] format(Decimal('7.00000000000000000000000000000000000000000E+59'), ' 40.1G') -> str:"'                                   7E+59'" 
+699 [p3 05UP -60 28 c0 C1 tInDi] format(Decimal('555500550055050550500000000.0'), '-,.10e') -> str:"'5.5550055006e+26'" 
+700 [p28 FLOOR 0 5 c0 C1 t] format(Decimal('-9.00000000E-17'), '_.29n') -> !ValueError: invalid format string 
+701 [p3 HALF_EVEN -999999 999999 c0 C1 t] Decimal('2939.44911').__format__(' e', {'decimal_point': '\u066b', 'thousands_sep': 'abcde', 'grouping': '3'}) -> !ValueError: invalid override dict 
+702 [p28 HALF_UP -999999 999999 c0 C0 t] format(Decimal('9.54e-30'), '+4.6') -> str:"'+9.54e-30'" 
+703 [p40 CEILING -683229250946568 700123 c1 C0 t] format(Decimal('-99999999999999999999999999999999999999999.9999'), '>+%') -> str:"'-9999999999999999999999999999999999999999999.99%'" 
+704 [p9 HALF_EVEN -41 21 c1 C1 t] format(Decimal('-2.807990269E+13'), '+<-.6') -> str:"'-2.80799E+13'" 
+705 [p38 05UP -999999999999999999 999999999999999999 c0 C1 tSuCl] format(Decimal('0.09999999999999999999999999999999999999'), '34.2f') -> str:"'                              0.09'" 
+706 [p28 HALF_DOWN -999999 999999 c0 C1 tInOvUn] format(Decimal('999999999.9999999999999999'), '0e') -> str:"'9.999999999999999999999999e+8'" 
+707 [p28 DOWN -65 25 c1 C1 tDiSuInRo] format(Decimal('-9.9999999999999999999999999999999999999E+44'), '10.') -> !ValueError: invalid format string 
+708 [p28 HALF_EVEN -999999 999999 c0 C1 t] format(Decimal('9.90999090900999000090099999990909E-17'), '.<-34E') -> str:"'9.90999090900999000090099999990909E-17'" 
+709 [p34 DOWN -76 98 c0 C0 t] format(Decimal('-5.0e-53'), '+9.28E') -> str:"'-5.0000000000000000000000000000E-53'" 
+710 [p2 UP -87 77 c0 C0 tSu] f-string Decimal('9.99999e-36') ' ,.25e' -> str:"' 9.9999900000000000000000000e-36'" 
+711 [p16 CEILING -999999 999999 c0 C1 t] f-string Decimal('-5.0000055555500050E-14') '<=#16.18%' -> str:"'-0.000000000005000005%'" 
+712 [p3 CEILING -999999 999999 c0 C0 tInCl] format(Decimal('-99099900909009009900009.99099'), '+3G') -> str:"'-99099900909009009900009.99099'" 
+713 [p2 05UP -999999 999999 c0 C1 t] format(Decimal('-5.0050E-28'), ' 26%') -> str:"'-0.000000000000000000000000050050%'" 
+714 [p20 FLOOR -51 84 c0 C1 tUnIn] format(Decimal('-9.0E-45'), 'x< 035.24F') -> !ValueError: invalid format string 
+715 [p28 UP -45 75 c1 C1 tIn] format(Decimal('643670956.81244701256'), '.^30,.13F') -> str:"'..643,670,956.8124470125600...'" 
+716 [p19 HALF_UP 0 3 c1 C1 tInSuIn] format(Decimal('7.6617369357357228692946124469995949431E+47'), '+^_%') -> str:"'76_617_369_357_357_228_692_946_124_469_995_949_431_000_000_000_000%'" 
+717 [p28 UP -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('3.6490817411530896911E+38'), '.^ 0_.21f') -> !ValueError: invalid format string 
+718 [p23 DOWN -999999 999999 c0 C0 tFlDiRoCl] Decimal('0e-19').__format__(b'f') -> !TypeError: __format__() argument 1 must be str, not bytes 
+719 [p20 HALF_DOWN -999999 999999 c1 C1 tOv] format(Decimal('9.900999090990909909000990990099E+51'), '+022,.21F') -> str:"'+9,900,999,090,990,909,909,000,990,990,099,000,000,000,000,000,000,000.000000000000000000000'" 
+720 [p28 FLOOR -72035884413841 3022043 c1 C1 t] format(Decimal('0E+5'), '.4%') -> str:"'0.0000%'" 
+721 [p38 CEILING -8 10 c0 C0 t] format(Decimal('3.786264456549228e+27'), '*^18,.1N') -> !ValueError: invalid format string 
+722 [p28 05UP -999999 999999 c0 C1 t] format(Decimal('406458104.941774678364090861606527'), '+^g') -> str:"'406458104.941774678364090861606527'" 
+723 [p28 DOWN -20 27 c1 C1 tUn] format(Decimal('9.9999999999999999999999999E-27'), '0^-31g') -> str:"'9.9999999999999999999999999e-27'" 
+724 [p39 DOWN 0 1 c0 C1 t] format(Decimal('8.3489E-11'), '+5.26g') -> str:"'+8.3489e-11'" 
+725 [p28 DOWN -91 14 c0 C1 tFlDiCl] format(Decimal('-9.999E-28'), '+>+20,G') -> str:"'++++++++++-9.999E-28'" 
+726 [p38 CEILING -306718448497 86388576 c0 C1 t] Decimal('-5.05005505005000050E+37').__format__('+.16e', {'decimal_point': 1, 'thousands_sep': '.', 'grouping': '\x03\x02'}) -> !TypeError: bad argument type for built-in operation 
+727 [p16 UP -999999 999999 c1 C1 t] format(Decimal('-9.999999E+18'), ' ') -> str:"'-9.999999E+18'" 
+728 [p28 CEILING -41 0 c1 C1 t] format(Decimal('-8.46169447838E-18'), '+=_E') -> str:"'-8.46169447838E-18'" 
+729 [p28 DOWN -999999999999999999 999999999999999999 c0 C0 t] format(Decimal('651553360391912623415534868564773509668'), '0<34.5f') -> str:"'651553360391912623415534868564773509668.00000'" 
+730 [p39 05UP -999999 999999 c0 C0 tIn] Decimal('9e-25').__format__('6,.14g', {'thousands_sep': '\xa0', 'grouping': '\x02\x7f'}) -> str:"' 9e-25'" 
+731 [p34 DOWN -999999999999999999 999999999999999999 c0 C1 tSuIn] format(Decimal('2.0000000E-12'), '+,G') -> str:"'+2.0000000E-12'" 
+732 [p38 UP -5196903403269828 83623766 c0 C1 tOvSuInCl] f-string Decimal('9.990099909000999000999900999900E-13') '*>-2.27N' -> str:"'9.99009990900099900099990100E-13'" 
+733 [p16 UP -999999 999999 c0 C1 tOv] format(Decimal('1.035950494568538970180915817E+37'), ' 14,.28N') -> !ValueError: invalid format string 
+734 [p19 HALF_DOWN -29 78 c0 C1 t] format(Decimal('-3.76790018329E-11'), '-n') -> str:"'-3.76790018329e-11'" 
+735 [p2 05UP -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('-0.069788876646'), '\xe9<+9N') -> str:"'-0.069788876646'" 
+736 [p35 FLOOR -999999 999999 c1 C0 t] format(Decimal('-1.3614168883124059e-17'), '36.12e') -> str:"'                 -1.361416888313e-17'" 
+737 [p39 FLOOR -9 6 c1 C1 t] f-string Decimal('4.5E+8') ' 5,E' -> str:"' 4.5E+8'" 
+738 [p34 DOWN -999999 999999 c0 C1 t] Decimal('9.99999999999999E+15').__format__(' <-36_e', {'decimal_point': 'abcde', 'thousands_sep': '', 'grouping': '\x03'}) -> str:"'9.99999999999999e+15                '" 
+739 [p19 05UP -860767295518243 18772982557554 c1 C1 tFlUnRo] format(Decimal('-2.079750434861602974884289631829'), '016.23G') -> str:"'-2.0797504348616029748842'" 
+740 [p19 UP -999999 999999 c0 C1 tInRo] format(Decimal('-555005555000005.0'), '+z26,F') -> str:"'    -555,005,555,000,005.0'" 
+741 [p38 HALF_DOWN -9 0 c1 C0 tOv] format(Decimal('1.517992327995040724885170963847992e+57'), '9_') -> str:"'1.517992327995040724885170963847992e+57'" 
+742 [p38 DOWN -416 586724970249 c0 C1 t] format(Decimal('-9.45020100223025E-36'), '+<,') -> str:"'-9.45020100223025E-36'" 
+743 [p9 UP -257 75 c0 C1 t] format(Decimal('99999990909999909'), '38_.5f') -> str:"'          99_999_990_909_999_909.00000'" 
+744 [p9 UP -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('9.09000000000990009999009090999900E+41'), '.=-31_.0%') -> str:"'90_900_000_000_099_000_999_900_909_099_990_000_000_000_000%'" 
+745 [p28 CEILING -999999 999999 c0 C1 t] format(Decimal('-6000000000.000000000000000'), '\u4e2d^-_.14E') -> str:"'-6.00000000000000E+9'" 
+746 [p38 HALF_UP -42 7 c0 C1 t] f-string Decimal('-4.111312274959547809035E+26') 'x> 2' -> str:"'-4.111312274959547809035E+26'" 
+747 [p40 HALF_UP -999999 999999 c0 C0 t] format(Decimal('-0.000'), ' <,g') -> str:"'-0.000'" 
+748 [p38 HALF_EVEN -15 50 c0 C0 t] format(Decimal('-1.0000e+23'), '\u4e2d<#.9F') -> str:"'-100000000000000000000000.000000000'" 
+749 [p12 DOWN 0 6 c0 C1 t] f-string Decimal('-1.61430891251039154168601E+36') '-.13n' -> str:"'-1.614308912510e+36'" 
+750 [p2 DOWN -999999999999999999 999999999999999999 c1 C1 t] Decimal('-5.47294283936457499653192220987931E-10').__format__('.1E', {'decimal_point': '\ud800', 'thousands_sep': "'"}) -> !UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed 
+751 [p28 CEILING -999999 999999 c1 C1 t] format(Decimal('-7.2119586047147037018278E-26'), '+<-n') -> str:"'-7.2119586047147037018278e-26'" 
+752 [p19 CEILING -91752326 9184967 c1 C1 t] format(Decimal('0.00305239141531'), '_') -> str:"'0.00305239141531'" 
+753 [p9 05UP -999999 999999 c0 C1 tDiOvUnIn] format(Decimal('-3.709E-15'), '+^20,G') -> str:"'+++++-3.709E-15+++++'" 
+754 [p28 05UP -7 10 c1 C1 t] format(Decimal('9.999999E-28'), '-5,.1g') -> str:"'9e-28'" 
+755 [p36 05UP -999999 999999 c0 C1 t] format(Decimal('9.9999999999999999999999999999999E+50'), '9%') -> str:"'99999999999999999999999999999999000000000000000000000%'" 
+756 [p39 HALF_DOWN -999999 999999 c0 C0 tInSuInRoCl] format(Decimal('-2.00000000000000000000000e-14'), '.>+_.0n') -> !ValueError: invalid format string 
+757 [p3 HALF_DOWN -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('8.39287517748544917202731598674414418421E-16'), 'r') -> !ValueError: invalid format string 
+758 [p42 CEILING -8 6 c0 C0 tInDi] f-string Decimal('-9.9999099090990990e-24') '-0,n' -> !ValueError: invalid format string 
+759 [p20 HALF_DOWN -999999 999999 c1 C1 t] Decimal('4.625641757390739134876005398386211284092E+41').__format__('.2f') -> str:'462564175739073913487600539838621128409200.00' 
+760 [p1 HALF_UP -7 7 c0 C1 tRo] format(Decimal('-0.0002357'), '+,F') -> str:"'-0.0002357'" 
+761 [p34 FLOOR -999999 999999 c1 C1 t] Decimal('1.95809270653557700E+42').__format__('*> _.21f', {'decimal_point': 1, 'thousands_sep': '\xa0', 'grouping': '\u0100'}) -> str:"' 1_958_092_706_535_577_000_000_000_000_000_000_000_000_000.000000000000000000000'" 
+762 [p3 HALF_UP -7 1 c1 C1 tSu] format(Decimal('0E-7'), '+07_.8e') -> str:"'+0.00000000e+1'" 
+763 [p2 HALF_EVEN -8587533706249 3005797 c0 C1 tInCl] format(Decimal('9.0909099909E-27'), '#1') -> str:"'9.0909099909E-27'" 
+764 [p9 UP -9 7 c0 C1 t] Decimal('-3.35595520297308520590532338672E+43').__format__('-n', {'decimal_point': None, 'thousands_sep': '--'}) -> !TypeError: bad argument type for built-in operation 
+765 [p16 HALF_DOWN -30 78 c1 C1 t] format(Decimal('-0'), '\u4e2d^+N') -> str:"'-0'" 
+766 [p2 HALF_UP -88 88 c1 C1 tFl] format(Decimal('-9.99999999999999999E-27'), ' 9,f') -> str:"'-0.00000000000000000000000000999999999999999999'" 
+767 [p1 CEILING -58 81 c1 C1 tInDiSuRoCl] format(Decimal('9.3514660055199130929843026843680390089E-9'), '.11g') -> str:"'9.3514660056e-9'" 
+768 [p2 HALF_EVEN -999999 999999 c0 C1 tDi] format(Decimal('-8.821856512545641586E-24'), ' z36_.30e') -> str:"'-8.821856512545641586000000000000e-24'" 
+769 [p28 DOWN -999999 999999 c0 C1 t] format(Decimal('-9.009009099090000999099900909E+37'), '+#30f') -> str:"'-90090090990900009990999009090000000000.'" 
+770 [p34 CEILING -999999999999999999 999999999999999999 c0 C1 tRo] format(Decimal('958242543248380255530219877735514774.608372'), '-,.18f') -> str:"'958,242,543,248,380,255,530,219,877,735,514,774.608372000000000000'" 
+771 [p38 HALF_DOWN -6949779946803343 50843721 c1 C1 tUnIn] format(Decimal('49141350731856342525832484651198946119851.8339'), '-z17.15N') -> !ValueError: invalid format string 
+772 [p9 HALF_EVEN -999999 999999 c1 C1 tRo] Decimal('9.00009009990999009E+32').__format__(' >-016.11G', {'thousands_sep': '\u066c', 'grouping': 3}) -> !ValueError: invalid format string 
+773 [p39 HALF_DOWN -8808644351 651 c0 C0 t] format(Decimal('55050050500050000500.555'), 'd') -> !ValueError: invalid format string 
+774 [p28 HALF_EVEN -60 8 c0 C1 t] Decimal('0.593024402704371804').__format__('.2f') -> str:'0.59' 
+775 [p2 DOWN -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('-9.00000000000000E+37'), '<> 3.8G') -> str:"'-9.0000000E+37'" 
+776 [p28 HALF_EVEN -91 55 c0 C1 t] Decimal('9.99999999999999999999999999999999999999999999E+55').__format__('17.16e', {'decimal_point': '\u066b', 'thousands_sep': '.', 'grouping': '\u0100'}) -> !ValueError: invalid override dict 
+777 [p38 DOWN -999999 999999 c0 C0 tFlUnCl] format(Decimal('5.000055000050055055e-30'), ' =,.28g') -> str:"'5.000055000050055055e-30'" 
+778 [p38 CEILING -999999 999999 c0 C1 t] format(Decimal('3.6232658448235577834938383138052164155904E+47'), ' ,G') -> str:"' 3.6232658448235577834938383138052164155904E+47'" 
+779 [p34 UP -999999 999999 c0 C0 t] format(Decimal('2.366622098037907e+17'), ' ,.11') -> str:"' 2.3666220981e+17'" 
+780 [p38 HALF_UP -999999 999999 c0 C1 t] format(Decimal('373493754578859437172340.27116273023320774'), '%') -> str:"'37349375457885943717234027.116273023320774%'" 
+781 [p28 HALF_DOWN -15 86 c0 C0 t] format(Decimal('28975100896864881567091660.360'), '\u4e2d<,.13%') -> str:"'2,897,510,089,686,488,156,709,166,036.0000000000000%'" 
+782 [p19 FLOOR -999999 999999 c1 C1 tFl] format(Decimal('-3.771517330398745120859E-21'), '-.24g') -> str:"'-3.771517330398745120859e-21'" 
+783 [p2 HALF_DOWN -999999999999999999 999999999999999999 c0 C0 t] format(Decimal('-9.9999999999999999999999999e-8'), '-N') -> str:"'-9.9999999999999999999999999E-8'" 
+784 [p28 HALF_DOWN -999999 999999 c1 C1 t] format(Decimal('334961.3'), '5.1f') -> str:"'334961.3'" 
+785 [p28 05UP -999999 999999 c0 C1 tDiSu] Decimal('-9.00000000000000E-12').__format__('\xe9<.2E', {'thousands_sep': "'"}) -> !ValueError: invalid override dict 
+786 [p28 UP -16 36 c1 C1 tFlUn] format(Decimal('4799931361910.788228103'), '\u4e2d<34,.18N') -> !ValueError: invalid format string 
+787 [p20 HALF_DOWN -49 30 c0 C1 t] format(Decimal('-8.13E-35'), '22.22n') -> str:"'             -8.13e-35'" 
+788 [p39 UP -9 5 c1 C1 t] format(Decimal('-741.6057995941416936070351497251588735742701'), '\n^8') -> str:"'-741.6057995941416936070351497251588735742701'" 
+789 [p7 05UP -66 98 c0 C1 t] format(Decimal('-5.94899159E-12'), '+31N') -> str:"'                -5.94899159E-12'" 
+790 [p1 HALF_UP -999999999999999999 999999999999999999 c0 C0 tFlUnInRoCl] format(Decimal('-3.016447198297003511866e-18'), '.26e') -> str:"'-3.01644719829700351186600000e-18'" 
+791 [p28 HALF_EVEN -7 1 c0 C1 t] format(Decimal('-5.382018282236604053393E-23'), '0^,.16n') -> !ValueError: invalid format string 
+792 [p25 FLOOR -6201 86274 c1 C1 tDiUnSuCl] Decimal('-5.0555055505550005055505050500500E-12').__format__('<^+.12', {'decimal_point': 'abcde', 'thousands_sep': 1}) -> !TypeError: bad argument type for built-in operation 
+793 [p19 CEILING -999999 999999 c0 C1 tIn] format(Decimal('-5000005000000550.050005005005505055550'), '.>0') -> !ValueError: invalid format string 
+794 [p1 DOWN -74 406728 c0 C1 t] f-string Decimal('9.071676402747E+20') '-035.26g' -> str:"'000000000000000009.071676402747e+20'" 
+795 [p16 HALF_UP -999999999999999999 999999999999999999 c1 C1 tFlInCl] Decimal('-9999.9999999999999999999999999999999999').__format__([]) -> !TypeError: __format__() argument 1 must be str, not list 
+796 [p3 HALF_EVEN -999999 999999 c1 C0 tInUnSu] format(Decimal('9.90009999090090090900009099909e+52'), ',n') -> !ValueError: invalid format string 
+797 [p2 UP -3 1 c0 C1 tFlUn] format(Decimal('-83340959974258412492968.59364917'), '-33F') -> str:"'-83340959974258412492968.59364917'" 
+798 [p16 HALF_EVEN 0 3 c0 C1 t] format(Decimal('-999999999999999999999999.999'), ' .25%') -> str:"'-99999999999999999999999999.9000000000000000000000000%'" 
+799 [p18 HALF_EVEN -10 2 c0 C1 t] format(Decimal('1.801423479226379E-10'), '*=.18E') -> str:"'1.801423479226379000E-10'" 
+800 [p1 DOWN -2 7 c0 C1 t] format(Decimal('-9.909090999909909990909909009999E-29'), ',.22e') -> str:"'-9.9090909999099099909099e-29'" 
+801 [p19 FLOOR -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('-9.99999999999999999999999E+25'), '34,.0') -> str:"'                            -1E+26'" 
+802 [p34 DOWN -999999 999999 c0 C0 tInSu] format(Decimal('-2.503324144874e-48'), '.7g') -> str:"'-2.503324e-48'" 
+803 [p39 HALF_DOWN -6 9 c1 C1 tFlSu] format(Decimal('-1.000000000000000000000000000000000000E+39'), '-.16N') -> str:"'-1.000000000000000E+39'" 
+804 [p9 HALF_DOWN -999999 999999 c0 C0 t] format(Decimal('3.0683292887390339e+40'), '+0%') -> str:"'+3068329288739033900000000000000000000000000%'" 
+805 [p19 HALF_DOWN -9 8 c0 C1 tDi] format(Decimal('9999999999999.99999999'), '*= 36.16g') -> str:"' ******************10000000000000.00'" 
+806 [p16 DOWN -999999999999999999 999999999999999999 c1 C1 t] format(Decimal('9.89172179900720913784032967966172213238425E+44'), ' = #29,N') -> !ValueError: invalid format string 
+807 [p16 HALF_EVEN -999999 999999 c0 C1 tInFlOvRo] format(Decimal('25802020329054800697351.3728596498158608'), '+.19e') -> str:"'+2.5802020329054800697e+22'" 
+808 [p19 HALF_DOWN -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('-2.38403160607355756466288340178026640770E-20'), '+=0.17e') -> !ValueError: invalid format string 
+809 [p18 CEILING -56 41 c0 C0 t] format(Decimal('-0.00623476'), '\t>8') -> str:"'-0.00623476'" 
+810 [p9 HALF_DOWN -84 0 c1 C1 t] format(Decimal('7.218439811905E+17'), '+,g') -> str:"'+7.218439811905e+17'" 
+811 [p1 05UP -10 9 c1 C1 t] format(Decimal('0.844680039041243564'), '.>13_.4N') -> !ValueError: invalid format string 
+812 [p39 HALF_DOWN -999999 999999 c0 C1 tCl] f-string Decimal('-0.0900000909009000000900099999000999') '.20' -> str:"'-0.090000090900900000090'" 
+813 [p3 UP -999999 999999 c0 C1 tFlInRoCl] Decimal('9.990000099E-20').__format__('<=-.16%', {'decimal_point': '\ud800', 'thousands_sep': "'", 'grouping': '3'}) -> !UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed 
+814 [p19 05UP -999999 999999 c0 C0 t] Decimal('-555050505050505055055550005005.00050000500').__format__('-.15n', {'decimal_point': 'x', 'thousands_sep': '\xa0', 'grouping': '\xff'}) -> !ValueError: invalid override dict 
+815 [p28 HALF_DOWN -34 89 c0 C1 tOvRoCl] format(Decimal('-76385679488803'), '-04.17') -> str:"'-76385679488803'" 
+816 [p28 FLOOR -9 8 c0 C1 t] format(Decimal('-6.42521177099372296510210734543310037329E+63'), ' 034G') -> str:"'-6.42521177099372296510210734543310037329E+63'" 
+817 [p38 UP -999999 999999 c0 C1 t] format(Decimal('999.99'), ' ^+%') -> str:"'+99999%'" 
+818 [p28 HALF_UP -999999 999999 c0 C0 tFlOvSuInCl] format(Decimal('9.92563057304e-43'), '+=-0F') -> !ValueError: invalid format string 
+819 [p28 UP -999999 999999 c1 C0 t] format(Decimal('1.026744113520071e-16'), '.>37.14N') -> str:"'..................1.0267441135201E-16'" 
+820 [p28 DOWN -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('-9.090909000999999E-15'), 'b') -> !ValueError: invalid format string 
+821 [p39 HALF_UP -7 22 c0 C1 tFlRo] format(Decimal('4E+11'), '0=-0n') -> !ValueError: invalid format string 
+822 [p28 CEILING -92 14 c1 C1 tDi] format(Decimal('-5.5505E+29'), '+e') -> str:"'-5.5505e+29'" 
+823 [p3 HALF_DOWN -62 98 c0 C1 t] format(Decimal('-7.0000E+13'), '+3G') -> str:"'-7.0000E+13'" 
+824 [p38 DOWN -76 8 c0 C1 tOv] format(Decimal('-9.9999999999999999999999999999E+29'), ' 17,.16n') -> !ValueError: invalid format string 
+825 [p1 CEILING 0 7 c1 C1 t] Decimal('-9E-59').__format__(' 18_.15f', {'grouping': '\x03\x03\x00'}) -> str:"'-0.000000000000000'" 
+826 [p19 05UP -999999 999999 c1 C1 t] format(Decimal('1E+3'), '-.7N') -> str:"'1E+3'" 
+827 [p2 FLOOR -94941839998981186 0 c0 C1 t] format(Decimal('-2.000000000000000000000000000000000000000000E-12'), '-.21%') -> str:"'-0.000000000200000000000%'" 
+828 [p20 HALF_EVEN -25 15068630926917 c1 C0 t] format(Decimal('56827.6138'), '+28,.27F') -> str:"'+56,827.613800000000000000000000000'" 
+829 [p20 UP -8 10 c0 C1 tCl] format(Decimal('3000000000000000.0000000000'), 'x=F') -> str:"'3000000000000000.0000000000'" 
+830 [p20 CEILING -999999 999999 c0 C0 t] format(Decimal('-5.00000000000000000000000000000000e+40'), '-014_.8f') -> str:"'-50_000_000_000_000_000_000_000_000_000_000_000_000_000.00000000'" 
+831 [p28 HALF_UP -42 10 c1 C1 t] format(Decimal('500050050.5'), '37n') -> str:"'                          500050050.5'" 
+832 [p20 FLOOR -8 8 c0 C1 t] f-string Decimal('-9.999999999999999999999999999999999E-24') '.' -> !ValueError: invalid format string 
+833 [p23 CEILING -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('-5555050055555550505555.5055'), 'x< z02E') -> !ValueError: invalid format string 
+834 [p9 CEILING -201 1137321768 c1 C1 t] format(Decimal('9000099009909900.9'), '.28F') -> str:"'9000099009909900.9000000000000000000000000000'" 
+835 [p19 UP -3 10 c0 C1 t] format(Decimal('9.99990099909009099990E+38'), '.^ ,.14n') -> !ValueError: invalid format string 
+836 [p44 UP -9 2 c0 C1 t] Decimal('sNaN').__format__('\xe9< z,.22', {'decimal_point': '.'}) -> str:"' sNaN'" 
+837 [p28 DOWN -4 0 c1 C1 t] format(Decimal('0.00099999999999999999'), '\xe9>+.21N') -> str:"'+0.00099999999999999999'" 
+838 [p2 05UP -9081244375406 2171968976033825 c0 C1 t] format(Decimal('-5005.05000055005005'), '_') -> str:"'-5_005.05000055005005'" 
+839 [p20 HALF_DOWN -999999 999999 c0 C1 t] format(Decimal('2.0018737034387E-20'), '-f') -> str:"'0.000000000000000000020018737034387'" 
+840 [p28 FLOOR 0 0 c1 C1 tFlSuRo] Decimal('NaN').__format__(' _N', {'decimal_point': None, 'thousands_sep': '\u066c', 'grouping': '\u0100'}) -> !ValueError: invalid format string 
+841 [p1 HALF_DOWN -999999 999999 c1 C1 t] Decimal('8.162715721615679083499619509577E-17').__format__(1) -> !TypeError: __format__() argument 1 must be str, not int 
+842 [p28 DOWN -999999999999999999 999999999999999999 c1 C0 t] format(Decimal('-0.90090999090990990'), '.4%') -> str:"'-90.0909%'" 
+843 [p9 05UP -3 2 c0 C1 t] f-string Decimal('-50500555555.5505050505') ' N' -> str:"'-50500555555.5505050505'" 
+844 [p20 05UP -999999 999999 c0 C1 t] format(Decimal('-4.000000000000000000000E+40'), '+13.18F') -> str:"'-40000000000000000000000000000000000000000.000000000000000000'" 
+845 [p28 HALF_UP -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('1.2964744639794276757705814427982E+52'), '\xe9=z0_') -> !ValueError: invalid format string 
+846 [p19 05UP -7 10 c0 C1 tUn] format(Decimal('-9.9999999999999999999999999999999999999E+45'), '+10') -> str:"'-9.9999999999999999999999999999999999999E+45'" 
+847 [p20 UP -2 8 c0 C1 t] Decimal('-5.00505005055055050555500550E+49').__format__('.9N', {'thousands_sep': '', 'grouping': 3}) -> !TypeError: bad argument type for built-in operation 
+848 [p3 UP -10 4 c0 C1 t] Decimal('5000005050.5005550505500550550').__format__(' ,.22f', {'decimal_point': '', 'thousands_sep': 1, 'grouping': '\x01\x02\x03'}) -> !TypeError: bad argument type for built-in operation 
+849 [p16 HALF_EVEN -38 32 c0 C0 t] format(Decimal('-9.6533149280e-46'), 'x=+010.30') -> !ValueError: invalid format string 
+850 [p8 HALF_EVEN -85 46 c0 C1 t] format(Decimal('-6135013.060603327'), '-f') -> str:"'-6135013.060603327'" 
+851 [p19 UP -18 77 c0 C1 t] format(Decimal('9999999.9999999999999999999999999999999'), '< ') -> str:"' 9999999.9999999999999999999999999999999'" 
+852 [p2 05UP -21 59 c0 C1 tInDiOvIn] format(Decimal('9.99099990999909999009000999990909E-8'), '#g') -> str:"'9.99099990999909999009000999990909e-8'" 
+853 [p19 UP -3 8 c0 C0 t] Decimal('213929805354997400860').__format__('19,N', {'decimal_point': '.', 'thousands_sep': 'abcde', 'grouping': '\u0100'}) -> !ValueError: invalid format string 
+854 [p19 DOWN -97 52 c1 C1 t] format(Decimal('1.402267411120424630735290902586E-11'), 'z.2f') -> str:"'0.00'" 
+855 [p9 UP -999999 999999 c0 C1 t] format(Decimal('1.13416813378145969E+23'), ' ,g') -> str:"' 1.13416813378145969e+23'" 
+856 [p28 HALF_EVEN -4 5 c0 C1 tInCl] format(Decimal('-5.055505500555000505500555555050550550555050E+67'), '<< 21N') -> str:"'-5.055505500555000505500555555050550550555050E+67'" 
+857 [p16 HALF_DOWN -3 0 c0 C0 t] format(Decimal('-2.93605402514e-45'), ' ,.0%') -> str:"'-0%'" 
+858 [p19 FLOOR -999999999999999999 999999999999999999 c1 C1 tOvUnRo] format(Decimal('-55555555000005500555555.055005505'), ' 010,.21e') -> str:"'-5.555555500000550055556e+22'" 
+859 [p28 FLOOR -999999999999999999 999999999999999999 c1 C0 tRo] Decimal('6.90891250e+11').__format__(None) -> !TypeError: __format__() argument 1 must be str, not None 
+860 [p34 DOWN -999999 999999 c0 C1 tOvInCl] format(Decimal('-9.09900090090000000990009990009090009E-19'), '00') -> str:"'-9.09900090090000000990009990009090009E-19'" 
+861 [p3 UP -999999999999999999 999999999999999999 c1 C1 tFlOv] format(Decimal('-52800.37091626343408299210918968378874'), '= 11,n') -> !ValueError: invalid format string 
+862 [p16 CEILING -54 36 c0 C0 t] Decimal('60613222009048221294.2335').__format__(None) -> !TypeError: __format__() argument 1 must be str, not None 
+863 [p28 HALF_UP -12 92 c0 C1 t] format(Decimal('9.086950097837440820953746495602142140369421E+62'), '36_.20E') -> str:"'          9.08695009783744082095E+62'" 
+864 [p7 CEILING -97 31 c0 C0 t] format(Decimal('-3.00000000000e-28'), 'b') -> !ValueError: invalid format string 
+865 [p28 HALF_UP -10 75 c0 C0 tCl] format(Decimal('-9392.4483683012704254812'), ',.21n') -> !ValueError: invalid format string 
+866 [p38 FLOOR -10 98 c0 C1 t] format(Decimal('1.8091125829134837456212745834766262315480E+57'), '.13n') -> str:"'1.809112582913e+57'" 
+867 [p1 HALF_DOWN -999999 999999 c0 C0 tFl] format(Decimal('85172826440720027060659566617.09612031688669'), '29G') -> str:"'85172826440720027060659566617.09612031688669'" 
+868 [p3 HALF_EVEN -53 335 c0 C1 tFlDiCl] format(Decimal('-5.005005555055505000555005555005550005050E-13'), '=z28f') -> str:"'-0.0000000000005005005555055505000555005555005550005050'" 
+869 [p35 FLOOR -4 9 c1 C0 t] Decimal('-1.09655316007331475568847542031621e+52').__format__(b'f') -> !TypeError: __format__() argument 1 must be str, not bytes 
+870 [p19 05UP -4 10 c0 C1 tUn] format(Decimal('9.999999999E-50'), '.999999999999999999999') -> str:"'9.999999999E-50'" 
+871 [p16 UP -5 6 c1 C1 tDiOvUnSuIn] format(Decimal('-9999999.99999999999999999999999999'), ' .22G') -> str:"'-10000000.00000000000000'" 
+872 [p16 HALF_EVEN -32 13 c0 C1 t] format(Decimal('99999999.999999999999999999999999999999999999'), '0> .2f') -> str:"' 100000000.00'" 
+873 [p28 05UP -999999 999999 c0 C0 t] format(Decimal('-8.605332313434446801654e-36'), 'g') -> str:"'-8.605332313434446801654e-36'" 
+874 [p20 HALF_DOWN -2 4 c0 C0 tSuIn] format(Decimal('-436057194692412.740614361'), '10,N') -> !ValueError: invalid format string 
+875 [p15 HALF_UP -999999 999999 c0 C1 t] Decimal('3743664292137132847.86618104909631').__format__('<^25,.15%', {'decimal_point': 1, 'thousands_sep': '\u066c', 'grouping': '\xff'}) -> !TypeError: bad argument type for built-in operation 
+876 [p20 HALF_UP -999999 999999 c1 C1 tIn] format(Decimal('-9.90909909009000099090090999E-23'), '+=39,g') -> str:"'-++++++9.90909909009000099090090999e-23'" 
+877 [p28 UP -62656391 6227 c0 C1 t] format(Decimal('-5.06834703046076650402310094116507423E-14'), '+^ 21.9G') -> str:"'+++-5.06834704E-14+++'" 
+878 [p20 HALF_EVEN -999999 999999 c1 C1 tUnSu] format(Decimal('-2.5987086350399326416764E+35'), 'z1_.28e') -> str:"'-2.5987086350399326416764000000e+35'" 
+879 [p2 HALF_DOWN -999999 999999 c1 C1 t] f-string Decimal('-0.0099999999999999999999') '-' -> str:"'-0.0099999999999999999999'" 
+880 [p28 HALF_DOWN -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('-8596.22395209235629'), 'N') -> str:"'-8596.22395209235629'" 
+881 [p3 05UP -7 3 c0 C1 t] Decimal('-8.6107947822E+23').__format__(' < 26.2G', {'decimal_point': '\u066b', 'thousands_sep': 'abcde', 'grouping': '\x01'}) -> !ValueError: invalid override dict 
+882 [p27 CEILING -999999 999999 c0 C1 t] format(Decimal('-60000000000000000000000000.000000000000000000'), '10.30N') -> str:"'-60000000000000000000000000.0000'" 
+883 [p34 UP -999999 999999 c1 C1 t] format(Decimal('9.990900909090909099900090090909909900999E-9'), '-07.14%') -> str:"'0.00000099909010%'" 
+884 [p39 FLOOR -999999 999999 c0 C1 tInDi] f-string Decimal('3.8181314414608690138848434E+43') ' > 028.9G' -> !ValueError: invalid format string 
+885 [p28 CEILING -62 41 c0 C1 t] format(Decimal('-6.0582775907E+17'), ' =-N') -> str:"'-6.0582775907E+17'" 
+886 [p28 HALF_DOWN -999999 999999 c0 C1 t] format(Decimal('9.09990090990990090909E+43'), '+.15%') -> str:"'+9099900909909900909090000000000000000000000000.000000000000000%'" 
+887 [p10 DOWN -36 48 c0 C1 tFlOvInRoCl] format(Decimal('Infinity'), '13,f') -> str:"'     Infinity'" 
+888 [p28 FLOOR -40 90 c1 C1 t] format(Decimal('-9.0000000000000000000000000000E+38'), '+28.2N') -> str:"'                    -9.0E+38'" 
+889 [p28 DOWN -26 82 c1 C1 tOv] format(Decimal('-7E-45'), '.^35,G') -> str:"'..............-7E-45...............'" 
+890 [p20 HALF_DOWN -785890969119934 33262 c0 C1 t] format(Decimal('-8.987E-39'), '39.0E') -> str:"'                                 -9E-39'" 
+891 [p2 HALF_DOWN -999999 999999 c0 C0 t] format(Decimal('50505005000500.5505055005500550'), '.20f') -> str:"'50505005000500.55050550055005500000'" 
+892 [p1 CEILING -54 16 c0 C0 t] format(Decimal('-2.18368083905003410e-37'), ' = g') -> str:"'-2.18368083905003410e-37'" 
+893 [p38 CEILING -999999999999999999 999999999999999999 c1 C1 t] Decimal('-7.0E-20').__format__('<< N', {'decimal_point': 1, 'thousands_sep': ' ', 'grouping': '3'}) -> !TypeError: bad argument type for built-in operation 
+894 [p36 HALF_DOWN -3 3 c0 C1 t] Decimal('2.00000000000000000000000E-8').__format__(' 4.10%', {'decimal_point': '\ud800', 'thousands_sep': '\xa0', 'grouping': '\x7f'}) -> !UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed 
+895 [p19 HALF_EVEN -999999 999999 c1 C0 t] Decimal('200000000000000000000000000000000000.000000').__format__('\x00<10', {'decimal_point': 'x', 'grouping': ''}) -> str:"'200000000000000000000000000000000000x000000'" 
+896 [p38 UP -10 6 c0 C1 t] format(Decimal('2621.111914430631708590869449'), '0_.20F') -> str:"'2_621.11191443063170859087'" 
+897 [p2 HALF_EVEN -999999 999999 c0 C1 t] format(Decimal('290335.63938514'), '*= 032e') -> !ValueError: invalid format string 
+898 [p28 CEILING -999999 999999 c0 C1 t] format(Decimal('-5.3802572844818E-45'), '6_.9G') -> str:"'-5.38025728E-45'" 
+899 [p9 HALF_UP -52 14 c0 C0 tFlDiSu] format(Decimal('-7.80444063400268133668058132640908e+37'), '32n') -> str:"'-7.80444063400268133668058132640908e+37'" 
+900 [p20 FLOOR -53 69 c0 C1 tUnSuInRo] format(Decimal('-4.274854676623E+27'), ' .5') -> str:"'-4.2749E+27'" 
+901 [p16 HALF_DOWN -2 10 c0 C1 tInOvUnInCl] format(Decimal('9.5801647E+30'), '*=+,.18f') -> str:"'+9,580,164,700,000,000,000,000,000,000,000.000000000000000000'" 
+902 [p1 HALF_DOWN -393852925 4604 c0 C1 t] format(Decimal('9.900999900000909909009009909909000909099009E-12'), '^+N') -> str:"'+9.900999900000909909009009909909000909099009E-12'" 
+903 [p12 HALF_EVEN -6 4578 c0 C1 t] format(Decimal('-4.6424E+9'), '\xe9>+,.24g') -> str:"'-4.6424e+9'" 
+904 [p1 HALF_EVEN -27 2 c1 C1 tDiRo] format(Decimal('-2.00E-55'), 'x^0.12F') -> !ValueError: invalid format string 
+905 [p1 CEILING -999999 999999 c1 C1 tUnSuCl] format(Decimal('-10000000000000000000000000000000000000000'), '-.23E') -> str:"'-1.00000000000000000000000E+40'" 
+906 [p39 05UP -19942643056 59969 c0 C1 tUnSu] format(Decimal('9.9999999999999999E+29'), '#01,%') -> str:"'99,999,999,999,999,999,000,000,000,000,000.%'" 
+907 [p2 DOWN -9 4 c0 C1 tUn] format(Decimal('-5.55000055005555555E-9'), '-8,%') -> str:"'-0.000000555000055005555555%'" 
+908 [p28 HALF_UP -999999 999999 c0 C0 tInIn] format(Decimal('3.628395725278211752338775283696857013160e+49'), '32e') -> str:"'3.628395725278211752338775283696857013160e+49'" 
+909 [p39 HALF_EVEN -999999 999999 c0 C0 tFlDiIn] Decimal('-3.10567106709744670473217195205401577737252158e+69').__format__('\u4e2d>+.14g', {'decimal_point': 'abcde', 'thousands_sep': '\u066c', 'grouping': '\x03\x00'}) -> !ValueError: invalid override dict 
+910 [p18 FLOOR -999999 999999 c0 C0 t] format(Decimal('9.0000000000000000000000000e-28'), '1.11%') -> str:"'0.00000000000%'" 
+911 [p38 HALF_UP -999999 999999 c0 C0 tInFlUnSu] format(Decimal('3.3113761495490933183377362249695e-11'), '+.2e') -> str:"'+3.31e-11'" 
+912 [p1 CEILING -2 5 c0 C1 t] format(Decimal('0.099999999999999999999999999999999'), '-,e') -> str:"'9.9999999999999999999999999999999e-2'" 
+913 [p28 UP -33 27 c1 C1 tInFlSuInRo] format(Decimal('-9.99999999999999999E-15'), '0<-07.9E') -> !ValueError: invalid format string 
+914 [p1 HALF_EVEN -49047115544971577 294053 c0 C1 t] format(Decimal('9.820695497919516E-39'), '.>30,.6') -> str:"'...................9.82070E-39'" 
+915 [p1 05UP -96 10 c0 C1 t] Decimal('3983412.6320').__format__('031,E', {'decimal_point': 1, 'thousands_sep': '--'}) -> !TypeError: bad argument type for built-in operation 
+916 [p28 CEILING -3 5 c1 C0 t] format(Decimal('253446761.8'), '*> 16.4%') -> str:"' 25344676180.0000%'" 
+917 [p21 05UP -49 59 c0 C1 t] Decimal('9.999999999999E-36').__format__(' 11.13F', 1) -> !TypeError: optional argument must be a dict 
+918 [p38 DOWN -62 49 c0 C0 t] format(Decimal('-1.33064199267972269851364606352555210273e+49'), '.= ,.18') -> str:"'-1.33064199267972269e+49'" 
+919 [p16 HALF_EVEN -4 5 c0 C1 t] Decimal('9.090999999990900099999E-11').__format__('.^-.15G', {'decimal_point': '\u066b', 'thousands_sep': '.', 'grouping': '\u0100'}) -> !ValueError: invalid override dict 
+920 [p28 HALF_EVEN -1 5 c0 C0 tOv] format(Decimal('-5.45018e-42'), '0>-0N') -> !ValueError: invalid format string 
+921 [p34 UP -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('-68517141543.17989277529054553180'), '+z#018n') -> str:"'-68517141543.17989277529054553180'" 
+922 [p19 05UP -3 7 c0 C1 t] Decimal('9.9990990990099099900099E+36').__format__('.2f') -> str:'9999099099009909990009900000000000000.00' 
+923 [p28 HALF_DOWN -999999 999999 c1 C1 tInFlUnRoCl] format(Decimal('-89661875624.601780384941748921'), '0.16') -> str:"'-89661875624.60178'" 
+924 [p16 HALF_DOWN -2353 592463 c0 C1 tInFlSuRo] format(Decimal('NaN123'), '\u4e2d^ 8e') -> str:"' NaN123\\u4e2d'" 
+925 [p39 HALF_UP -999999 999999 c0 C1 tRo] format(Decimal('0E-7'), '-.11F') -> str:"'0.00000000000'" 
+926 [p38 FLOOR -39 71 c1 C1 tOvIn] format(Decimal('27593587182611.64575115405256717956'), '+4.21n') -> str:"'+27593587182611.6457511'" 
+927 [p31 05UP -10 0 c1 C0 tDiIn] format(Decimal('-3.02806181344336082568924824555537134864540674e-13'), '-34.26%') -> str:"'    -0.00000000003028061813443361%'" 
+928 [p19 HALF_DOWN -91 64 c0 C0 tIn] format(Decimal('-9.9909990000990099099000000090000090000009e+49'), '\xe9<+0,.1%') -> !ValueError: invalid format string 
+929 [p38 UP -999999999999999999 999999999999999999 c0 C0 tRo] format(Decimal('-4.5784693629541052836669e-7'), '-_n') -> !ValueError: invalid format string 
+930 [p39 UP -999999999999999999 999999999999999999 c0 C1 tFlOvSuCl] format(Decimal('4.79551906253674420430932531757898300E+43'), ' 8n') -> str:"' 4.79551906253674420430932531757898300e+43'" 
+931 [p28 FLOOR -4 4 c1 C1 t] format(Decimal('35732950.530827349104890074'), '-29.21n') -> str:"'       35732950.5308273491048'" 
+932 [p9 HALF_EVEN -999999 999999 c1 C0 t] format(Decimal('7.0829584882076113834150808e+41'), '-032_.3f') -> str:"'708_295_848_820_761_138_341_508_080_000_000_000_000_000.000'" 
+933 [p39 UP -999999 999999 c1 C0 t] format(Decimal('-3.5e-28'), 'x< .20g') -> str:"'-3.5e-28'" 
+934 [p28 HALF_DOWN -89 4 c0 C1 tIn] format(Decimal('-30000000.00000000000000000000000000000000000'), '-25N') -> str:"'-30000000.00000000000000000000000000000000000'" 
+935 [p28 CEILING -8 34 c1 C1 t] format(Decimal('6.32560E-11'), '.<12.20e') -> str:"'6.32560000000000000000e-11'" 
+936 [p39 DOWN -42 67 c1 C1 tInCl] format(Decimal('7586990533610.062028488251'), ' f') -> str:"' 7586990533610.062028488251'" 
+937 [p19 FLOOR -5069 2631826812 c0 C0 t] format(Decimal('-800.00000'), '0E') -> str:"'-8.0000000E+2'" 
+938 [p9 HALF_DOWN -999999 999999 c0 C1 t] format(Decimal('4.076035228E-9'), '>25e') -> str:"'           4.076035228e-9'" 
+939 [p19 HALF_UP -999999 999999 c0 C1 tRoCl] format(Decimal('-0.26181541037532766186735581353624834'), '16.27e') -> str:"'-2.618154103753276618673558135e-1'" 
+940 [p28 HALF_DOWN -999999 999999 c0 C1 t] format(Decimal('-4.138327851648E-30'), '*>-.30e') -> str:"'-4.138327851648000000000000000000e-30'" 
+941 [p9 HALF_DOWN -999999 999999 c0 C1 tFlUnSuCl] f-string Decimal('-6.7488830124530076181109536848236639622513821E-14') '0.29n' -> str:"'-6.7488830124530076181109536848e-14'" 
+942 [p34 UP -88 95 c0 C0 tSu] format(Decimal('-1.000000000000000e-39'), ' 1%') -> str:"'-0.0000000000000000000000000000000000001000000000000000%'" 
+943 [p28 CEILING -922018337130469 9945198264649984 c0 C1 t] format(Decimal('9.11251016587078797705043842282E-23'), '\u4e2d^ 6.19G') -> str:"' 9.112510165870787978E-23'" 
+944 [p38 HALF_DOWN -999999 999999 c0 C0 tSu] format(Decimal('-9.771605434664e-9'), '.17g') -> str:"'-9.771605434664e-9'" 
+945 [p20 05UP -5259207292 6 c1 C1 tInDiUnRo] format(Decimal('-1.91743842422324758196717342E+42'), '{}') -> !ValueError: invalid format string 
+946 [p16 HALF_UP -999999999999999999 999999999999999999 c0 C1 t] Decimal('-8.4260945018563E+18').__format__(',.30G', {'decimal_point': 'abcde', 'thousands_sep': '.'}) -> !ValueError: invalid override dict 
+947 [p39 FLOOR -15203508927037 9 c0 C0 t] format(Decimal('-6.7253073e-37'), '15,.22g') -> str:"' -6.7253073e-37'" 
+948 [p19 FLOOR -999999 999999 c0 C0 t] format(Decimal('-0'), ',F') -> str:"'-0'" 
+949 [p34 CEILING -3 0 c0 C1 t] format(Decimal('-0.00000509918'), '<^-,.12') -> str:"'-0.00000509918'" 
+950 [p19 05UP -75376866 47795 c0 C0 tCl] format(Decimal('sNaN'), ' 10.8%') -> str:"'     sNaN%'" 
+951 [p34 DOWN -999999999999999999 999999999999999999 c0 C1 t] Decimal('6415765281718298490848.4163597073401898730532').__format__('*>-,', {'thousands_sep': 'abcde'}) -> !ValueError: invalid override dict 
+952 [p39 HALF_EVEN -12776936 4439210300168 c0 C1 t] format(Decimal('-98411956422835362304949957.632637735231366374'), '+.11') -> str:"'-9.8411956423E+25'" 
+953 [p9 UP -62 47 c0 C1 t] format(Decimal('-8.48240083927301324846810660E-25'), '+N') -> str:"'-8.48240083927301324846810660E-25'" 
+954 [p28 05UP -999999999999999999 999999999999999999 c0 C1 tFlUn] format(Decimal('8.62639588945069540881227765E+32'), '^+010,.2f') -> !ValueError: invalid format string 
+955 [p28 HALF_EVEN -39 57 c0 C1 t] format(Decimal('-0.001601322886155115118797757008373492019'), '0=+0,') -> !ValueError: invalid format string 
+956 [p38 HALF_DOWN -999999 999999 c0 C1 tFl] format(Decimal('-9E+14'), ' ,.15e') -> str:"'-9.000000000000000e+14'" 
+957 [p20 05UP -2 6 c0 C1 t] Decimal('9.9900900999090900909E-7').__format__('-.10F', {'decimal_point': None, 'thousands_sep': 1, 'grouping': '\x03'}) -> !TypeError: bad argument type for built-in operation 
+958 [p38 CEILING -2 9 c1 C0 t] Decimal('-99999999999999999999999999999999999999999.9999').__format__('#13.0%', {'decimal_point': None, 'thousands_sep': "'"}) -> str:"'-9999999999999999999999999999999999999999999.%'" 
+959 [p38 05UP -67 8 c0 C0 t] f-string Decimal('-99999999999999999999999999999999999.9999') '0^+_.5' -> str:"'-9.9999e+34'" 
+960 [p20 HALF_EVEN -45 28 c1 C0 t] format(Decimal('9.009990000009990e-44'), '+^ z037.9') -> !ValueError: invalid format string 
+961 [p28 HALF_DOWN -651 9596548685 c0 C1 t] format(Decimal('-NaN'), '-031,.27%') -> str:"'                          -NaN%'" 
+962 [p9 HALF_UP -999999 999999 c0 C1 t] format(Decimal('0E-7'), '.^ %') -> str:"' 0.00000%'" 
+963 [p16 CEILING -45 3 c0 C1 t] Decimal('5.740040394384772111532531364182293766177497E-16').__format__('+0.30N', {'decimal_point': '\u20ac\u20ac', 'thousands_sep': 'abcde', 'grouping': '\x03\x02'}) -> !ValueError: invalid override dict 
+964 [p9 CEILING -999999999999999999 999999999999999999 c1 C1 t] format(Decimal('0.0009999999999999999999999999999999999999'), '.15E') -> str:"'1.000000000000000E-3'" 
+965 [p2 05UP -999999 999999 c1 C1 tDiIn] Decimal('-6.7761660199538604357548558850471469E+43').__format__('.<-024,.12N', {'thousands_sep': ' ', 'grouping': '\x03\x03\x00'}) -> !ValueError: invalid format string 
+966 [p9 CEILING -65830 9122709840595 c1 C1 tInOvRo] format(Decimal('-9.00000000000000000000E-13'), ' 0%') -> str:"'-0.0000000000900000000000000000000%'" 
+967 [p3 HALF_EVEN -49 53 c0 C1 tFlUnRo] Decimal('-0.700000000000').__format__('.>#026.12%', {'decimal_point': 'x', 'thousands_sep': ',', 'grouping': '\x01'}) -> !ValueError: invalid format string 
+968 [p28 CEILING -5 2 c0 C1 tFlOv] format(Decimal('1.167136288419853446E-21'), '-39,.14G') -> str:"'                    1.1671362884199E-21'" 
+969 [p28 CEILING -4 5 c0 C1 tSu] Decimal('-8E-31').__format__(b'f') -> !TypeError: __format__() argument 1 must be str, not bytes 
+970 [p9 HALF_DOWN -10 9 c1 C0 t] format(Decimal('-4.65e-14'), ' >-16_.28%') -> str:"'-0.0000000000046500000000000000%'" 
+971 [p19 HALF_UP -66833627 9396652135894883 c0 C1 tRo] format(Decimal('-9.24446815100930219018E+35'), '22.5G') -> str:"'           -9.2445E+35'" 
+972 [p1 HALF_DOWN -2 6 c1 C1 tDi] format(Decimal('-667804675929778.735725423354308570'), '2.26n') -> str:"'-667804675929778.73572542335'" 
+973 [p39 CEILING -2 1 c0 C1 t] format(Decimal('0.09009990090090009'), ',,') -> !ValueError: invalid format string 
+974 [p16 FLOOR -999999 999999 c0 C0 t] f-string Decimal('212259.19705650257165721946111977') '+0,.30e' -> str:"'+2.122591970565025716572194611197e+5'" 
+975 [p34 FLOOR -999999 999999 c0 C1 tOvUn] format(Decimal('9.4218786417579234378162941719686558375630E-20'), '<^-33.5N') -> str:"'<<<<<<<<<<<9.4218E-20<<<<<<<<<<<<'" 
+976 [p1 HALF_DOWN -74 30 c1 C1 t] Decimal('9.009090000900000900999999E+34').__format__([]) -> !TypeError: __format__() argument 1 must be str, not list 
+977 [p39 HALF_UP -999999 999999 c1 C0 t] format(Decimal('9.999099099000900090009909009009009999e+38'), '02F') -> str:"'999909909900090009000990900900900999900'" 
+978 [p3 CEILING -1 8 c0 C1 t] format(Decimal('5.05500500E-45'), '+,g') -> str:"'+5.05500500e-45'" 
+979 [p20 HALF_EVEN -999999 999999 c1 C1 tRo] Decimal('-2000000000000000000000.0000').__format__('+', {'decimal_point': ',', 'thousands_sep': '--', 'grouping': '\x01'}) -> str:"'-2--0--0--0--0--0--0--0--0--0--0--0--0--0--0--0--0--0--0--0--0--0,0000'" 
+980 [p9 CEILING -62093437 4130556134 c1 C1 tFlOvIn] format(Decimal('-5.005055550E+20'), '+31.17') -> str:"'               -5.005055550E+20'" 
+981 [p28 HALF_EVEN -999999 999999 c1 C1 tOvSu] format(Decimal('1.325612E-16'), ' z038F') -> str:"' 00000000000000.0000000000000001325612'" 
+982 [p16 HALF_EVEN -999999 999999 c1 C0 t] format(Decimal('-0.000995553669461072827212423675'), '+19.26f') -> str:"'-0.00099555366946107282721242'" 
+983 [p28 UP -999999 999999 c0 C1 t] format(Decimal('-98612782607829378557169856358.9762'), '-15.25n') -> str:"'-9.861278260782937855716986e+28'" 
+984 [p10 HALF_DOWN -999999 999999 c0 C1 t] format(Decimal('-9.000000000E+18'), ',%') -> str:"'-900,000,000,000,000,000,000%'" 
+985 [p19 HALF_DOWN -3 8 c0 C1 t] f-string Decimal('0.00000990900909990999900099900099909990') '19F' -> str:"'0.00000990900909990999900099900099909990'" 
+986 [p39 UP -15 96 c0 C1 tCl] format(Decimal('3.619717989731156448953E+26'), ' 22G') -> str:"' 3.619717989731156448953E+26'" 
+987 [p9 HALF_DOWN -999999999999999999 999999999999999999 c0 C1 t] Decimal('-0.000').__format__('26.3G', {'decimal_point': '', 'thousands_sep': ' '}) -> !ValueError: invalid override dict 
+988 [p28 HALF_EVEN -5 5 c1 C0 t] format(Decimal('7.11393170573126828039484528360222745070852e-18'), ' 0_.16') -> str:"' 7.113931705731268e-18'" 
+989 [p3 HALF_UP 0 3 c0 C0 t] format(Decimal('-6.7035156107817373810029535737392994726659e-13'), '-33.18N') -> str:"'         -6.70351561078173738E-13'" 
+990 [p28 FLOOR -3712160 28038672 c0 C1 tUn] format(Decimal('-0.000099999999999999999999999999999999999999999999'), '+F') -> str:"'-0.000099999999999999999999999999999999999999999999'" 
+991 [p24 CEILING -999999999999999999 999999999999999999 c0 C1 t] format(Decimal('-800000000000000000000000000.0'), '+.21F') -> str:"'-800000000000000000000000000.000000000000000000000'" 
+992 [p34 FLOOR -8 9 c0 C1 tUnInCl] format(Decimal('900000.0909000000090000099900909000999'), '-03.22%') -> str:"'90000009.0900000009000009990090%'" 
+993 [p19 HALF_DOWN -3 3 c0 C1 t] format(Decimal('5E-45'), '+=20f') -> str:"'0.000000000000000000000000000000000000000000005'" 
+994 [p28 HALF_UP -2 9 c0 C1 t] format(Decimal('-505505005.0'), '-40e') -> str:"'                         -5.055050050e+8'" 
+995 [p28 HALF_DOWN -8 8 c1 C1 t] format(Decimal('9.9999999999999999999999999999999999999999999E+56'), '+<-.24E') -> str:"'1.000000000000000000000000E+57'" 
+996 [p20 UP -999999 999999 c0 C1 t] format(Decimal('8030343613137370001.860109079120746909661'), ' #12,e') -> str:"' 8.030343613137370001860109079120746909661e+18'" 
+997 [p38 UP -999999 999999 c0 C1 t] format(Decimal('0.005500'), '+_.19G') -> str:"'+0.005500'" 
+998 [p28 05UP -63 95 c0 C1 t] format(Decimal('-2.86884409336808515368E-34'), '-33e') -> str:"'      -2.86884409336808515368e-34'" 
+999 [p39 HALF_DOWN -999999 999999 c1 C1 t] format(Decimal('9.999999999999E-48'), '04_e') -> str:"'9.999999999999e-48'" 

@@ -1,0 +1,33 @@
+status: 0
+script: 9aaf9c830d90a1ba
+---
+ps_AF.UTF-8 True unavailable unsupported locale setting
+ps_AF.UTF-8 False unavailable unsupported locale setting
+de_DE.UTF-8 True unavailable unsupported locale setting
+de_DE.UTF-8 False unavailable unsupported locale setting
+fr_FR.UTF-8 True unavailable unsupported locale setting
+fr_FR.UTF-8 False unavailable unsupported locale setting
+en_IN.UTF-8 True unavailable unsupported locale setting
+en_IN.UTF-8 False unavailable unsupported locale setting
+cs_CZ.UTF-8 True unavailable unsupported locale setting
+cs_CZ.UTF-8 False unavailable unsupported locale setting
+hi_IN.UTF-8 True unavailable unsupported locale setting
+hi_IN.UTF-8 False unavailable unsupported locale setting
+ru_RU.UTF-8 True unavailable unsupported locale setting
+ru_RU.UTF-8 False unavailable unsupported locale setting
+en_US.UTF-8 True unavailable unsupported locale setting
+en_US.UTF-8 False unavailable unsupported locale setting
+de_CH.UTF-8 True unavailable unsupported locale setting
+de_CH.UTF-8 False unavailable unsupported locale setting
+pt_BR.UTF-8 True unavailable unsupported locale setting
+pt_BR.UTF-8 False unavailable unsupported locale setting
+ar_SA.UTF-8 True unavailable unsupported locale setting
+ar_SA.UTF-8 False unavailable unsupported locale setting
+fa_IR.UTF-8 True unavailable unsupported locale setting
+fa_IR.UTF-8 False unavailable unsupported locale setting
+de_DE.ISO-8859-1 True unavailable unsupported locale setting
+de_DE.ISO-8859-1 False unavailable unsupported locale setting
+fr_FR.ISO-8859-1 True unavailable unsupported locale setting
+fr_FR.ISO-8859-1 False unavailable unsupported locale setting
+ru_RU.KOI8-R True unavailable unsupported locale setting
+ru_RU.KOI8-R False unavailable unsupported locale setting

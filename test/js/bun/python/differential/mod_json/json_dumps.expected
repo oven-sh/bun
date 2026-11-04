@@ -1508,10 +1508,10 @@ TypeError keys must be str, int, float, bool or None, not type None
 '{}'
 '{}'
 TypeError keys must be str, int, float, bool or None, not type None
-TypeError keys must be str, int, float, bool or None, not Decimal None
+TypeError keys must be str, int, float, bool or None, not decimal.Decimal None
 '{}'
 '{}'
-TypeError keys must be str, int, float, bool or None, not Decimal None
+TypeError keys must be str, int, float, bool or None, not decimal.Decimal None
 TypeError keys must be str, int, float, bool or None, not tuple ["when serializing dict item 'a'"]
 '{"a": {}}'
 '{\n "a": {}\n}'

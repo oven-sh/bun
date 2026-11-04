@@ -1,0 +1,313 @@
+status: 0
+script: 60d0fd68ca125f2c
+---
+== decimal Decimal type ['Decimal', 'object'] 1280 False False (value='0', context=None) (258, 'Construct a new Decimal object.')
+   __abs__ wrapper_descriptor '($self, /)' (9, 'abs(self)')
+   __add__ wrapper_descriptor '($self, value, /)' (18, 'Return self+value.')
+   __bool__ wrapper_descriptor '($self, /)' (23, 'True if self else False')
+   __ceil__ method_descriptor '($self, /)' (34, 'Return the ceiling as an Integral.')
+   __complex__ method_descriptor '($self, /)' (41, 'Convert this value to exact type complex.')
+   __copy__ method_descriptor '($self, /)' None
+   __deepcopy__ method_descriptor '($self, memo, /)' None
+   __divmod__ wrapper_descriptor '($self, value, /)' (27, 'Return divmod(self, value).')
+   __doc__ str None 
+   __eq__ wrapper_descriptor '($self, value, /)' (19, 'Return self==value.')
+   __float__ wrapper_descriptor '($self, /)' (11, 'float(self)')
+   __floor__ method_descriptor '($self, /)' (32, 'Return the floor as an Integral.')
+   __floordiv__ wrapper_descriptor '($self, value, /)' (19, 'Return self//value.')
+   __format__ method_descriptor '($self, format_spec, override=<unrepresentable>, /)' (45, 'Formats the Decimal according to format_spec.')
+   __ge__ wrapper_descriptor '($self, value, /)' (19, 'Return self>=value.')
+   __getattribute__ wrapper_descriptor '($self, name, /)' (27, 'Return getattr(self, name).')
+   __gt__ wrapper_descriptor '($self, value, /)' (18, 'Return self>value.')
+   __hash__ wrapper_descriptor '($self, /)' (18, 'Return hash(self).')
+   __int__ wrapper_descriptor '($self, /)' (9, 'int(self)')
+   __le__ wrapper_descriptor '($self, value, /)' (19, 'Return self<=value.')
+   __lt__ wrapper_descriptor '($self, value, /)' (18, 'Return self<value.')
+   __mod__ wrapper_descriptor '($self, value, /)' (18, 'Return self%value.')
+   __module__ str None decimal
+   __mul__ wrapper_descriptor '($self, value, /)' (18, 'Return self*value.')
+   __ne__ wrapper_descriptor '($self, value, /)' (19, 'Return self!=value.')
+   __neg__ wrapper_descriptor '($self, /)' (5, '-self')
+   __new__ builtin_function_or_method '($type, *args, **kwargs)' (71, 'Create and return a new object.  See help(type) for accurate')
+   __pos__ wrapper_descriptor '($self, /)' (5, '+self')
+   __pow__ wrapper_descriptor '($self, value, mod=None, /)' (29, 'Return pow(self, value, mod).')
+   __radd__ wrapper_descriptor '($self, value, /)' (18, 'Return value+self.')
+   __rdivmod__ wrapper_descriptor '($self, value, /)' (27, 'Return divmod(value, self).')
+   __reduce__ method_descriptor '($self, /)' (38, 'Return state information for pickling.')
+   __repr__ wrapper_descriptor '($self, /)' (18, 'Return repr(self).')
+   __rfloordiv__ wrapper_descriptor '($self, value, /)' (19, 'Return value//self.')
+   __rmod__ wrapper_descriptor '($self, value, /)' (18, 'Return value%self.')
+   __rmul__ wrapper_descriptor '($self, value, /)' (18, 'Return value*self.')
+   __round__ method_descriptor '($self, ndigits=<unrepresentable>, /)' (63, 'Return the Integral closest to self, rounding half toward ev')
+   __rpow__ wrapper_descriptor '($self, value, mod=None, /)' (29, 'Return pow(value, self, mod).')
+   __rsub__ wrapper_descriptor '($self, value, /)' (18, 'Return value-self.')
+   __rtruediv__ wrapper_descriptor '($self, value, /)' (18, 'Return value/self.')
+   __sizeof__ method_descriptor '($self, /)' (32, 'Returns size in memory, in bytes')
+   __str__ wrapper_descriptor '($self, /)' (17, 'Return str(self).')
+   __sub__ wrapper_descriptor '($self, value, /)' (18, 'Return self-value.')
+   __truediv__ wrapper_descriptor '($self, value, /)' (18, 'Return self/value.')
+   __trunc__ method_descriptor '($self, /)' (49, 'Return the Integral closest to x between 0 and x.')
+   adjusted method_descriptor '($self, /)' (62, 'Return the adjusted exponent (exp + digits - 1) of the numbe')
+   as_integer_ratio method_descriptor '($self, /)' (194, 'Return a pair of integers whose ratio is exactly equal to th')
+   as_tuple method_descriptor '($self, /)' (44, 'Return a tuple representation of the number.')
+   canonical method_descriptor '($self, /)' (164, 'Return the canonical encoding of the argument.')
+   compare method_descriptor '($self, /, other, context=None)' (199, 'Compare self to other.')
+   compare_signal method_descriptor '($self, /, other, context=None)' (50, 'Identical to compare, except that all NaNs signal.')
+   compare_total method_descriptor '($self, /, other, context=None)' (939, 'Compare two operands using their abstract representation.')
+   compare_total_mag method_descriptor '($self, /, other, context=None)' (355, 'As compare_total(), but ignores the sign of each operand.')
+   conjugate method_descriptor '($self, /)' (12, 'Return self.')
+   copy_abs method_descriptor '($self, /)' (148, 'Return the absolute value of the argument.')
+   copy_negate method_descriptor '($self, /)' (142, 'Return the negation of the argument.')
+   copy_sign method_descriptor '($self, /, other, context=None)' (349, 'Return a copy of *self* with the sign of *other*.')
+   exp method_descriptor '($self, /, context=None)' (148, 'Return the value of the (natural) exponential function e**x.')
+   fma method_descriptor '($self, /, other, third, context=None)' (149, 'Fused multiply-add.')
+   from_float classmethod_descriptor '($type, f, /)' (487, 'Class method that converts a float to a decimal number, exac')
+   from_number classmethod_descriptor '($type, number, /)' (362, 'Class method that converts a real number to a decimal number')
+   imag getset_descriptor None None
+   is_canonical method_descriptor '($self, /)' (152, 'Return True if the argument is canonical and False otherwise')
+   is_finite method_descriptor '($self, /)' (68, 'Return True if the argument is a finite number, and False ot')
+   is_infinite method_descriptor '($self, /)' (61, 'Return True if the argument is infinite, and False otherwise')
+   is_nan method_descriptor '($self, /)' (70, 'Return True if the argument is a (quiet or signaling) NaN, e')
+   is_normal method_descriptor '($self, /, context=None)' (134, 'Return True if the argument is a normal number and False oth')
+   is_qnan method_descriptor '($self, /)' (64, 'Return True if the argument is a quiet NaN, and False otherw')
+   is_signed method_descriptor '($self, /)' (116, 'Return True if the argument has a negative sign and False ot')
+   is_snan method_descriptor '($self, /)' (67, 'Return True if the argument is a signaling NaN and False oth')
+   is_subnormal method_descriptor '($self, /, context=None)' (157, 'Return True if the argument is subnormal, and False otherwis')
+   is_zero method_descriptor '($self, /)' (58, 'Return True if the argument is a zero and False otherwise.')
+   ln method_descriptor '($self, /, context=None)' (141, 'Return the natural (base e) logarithm of the operand.')
+   log10 method_descriptor '($self, /, context=None)' (133, 'Return the base ten logarithm of the operand.')
+   logb method_descriptor '($self, /, context=None)' (244, 'Return the adjusted exponent of the operand as a Decimal ins')
+   logical_and method_descriptor '($self, /, other, context=None)' (105, "Applies an 'and' operation between self and other's digits.")
+   logical_invert method_descriptor '($self, /, context=None)' (56, 'Invert all its digits.')
+   logical_or method_descriptor '($self, /, other, context=None)' (104, "Applies an 'or' operation between self and other's digits.")
+   logical_xor method_descriptor '($self, /, other, context=None)' (105, "Applies an 'xor' operation between self and other's digits.")
+   max method_descriptor '($self, /, other, context=None)' (116, 'Maximum of self and other.')
+   max_mag method_descriptor '($self, /, other, context=None)' (70, 'As the max() method, but compares the absolute values of the')
+   min method_descriptor '($self, /, other, context=None)' (116, 'Minimum of self and other.')
+   min_mag method_descriptor '($self, /, other, context=None)' (70, 'As the min() method, but compares the absolute values of the')
+   next_minus method_descriptor '($self, /, context=None)' (61, 'Returns the largest representable number smaller than itself')
+   next_plus method_descriptor '($self, /, context=None)' (61, 'Returns the smallest representable number larger than itself')
+   next_toward method_descriptor '($self, /, other, context=None)' (332, 'Returns the number closest to self, in the direction towards')
+   normalize method_descriptor '($self, /, context=None)' (280, 'Normalize the number by stripping trailing 0s')
+   number_class method_descriptor '($self, /, context=None)' (836, 'Return a string describing the class of the operand.')
+   quantize method_descriptor '($self, /, exp, rounding=None, context=None)' (930, 'Quantize *self* so its exponent is the same as that of *exp*')
+   radix method_descriptor '($self, /)' (148, 'Return Decimal(10).')
+   real getset_descriptor None None
+   remainder_near method_descriptor '($self, /, other, context=None)' (412, 'Return the remainder from dividing self by other.')
+   rotate method_descriptor '($self, /, other, context=None)' (488, "Returns a rotated copy of self's digits, value-of-other time")
+   same_quantum method_descriptor '($self, /, other, context=None)' (282, 'Test whether self and other have the same exponent or both a')
+   scaleb method_descriptor '($self, /, other, context=None)' (167, 'Return the first operand with the exponent adjusted the seco')
+   shift method_descriptor '($self, /, other, context=None)' (433, "Returns a shifted copy of self's digits, value-of-other time")
+   sqrt method_descriptor '($self, /, context=None)' (131, 'Return the square root of the argument to full precision.')
+   to_eng_string method_descriptor '($self, /, context=None)' (372, 'Convert to an engineering-type string.')
+   to_integral method_descriptor '($self, /, rounding=None, context=None)' (121, 'Identical to the to_integral_value() method.')
+   to_integral_exact method_descriptor '($self, /, rounding=None, context=None)' (295, 'Round to the nearest integer.')
+   to_integral_value method_descriptor '($self, /, rounding=None, context=None)' (256, 'Round to the nearest integer without signaling Inexact or Ro')
+== decimal Context type ['Context', 'object'] 1280 False False (prec=None, rounding=None, Emin=None, Emax=None, capitals=None,
+        clamp=None, flags=None, traps=None) (420, 'Create context.')
+   Emax getset_descriptor None None
+   Emin getset_descriptor None None
+   Etiny method_descriptor '($self, /)' (153, 'Return a value equal to Emin - prec + 1.')
+   Etop method_descriptor '($self, /)' (166, 'Return a value equal to Emax - prec + 1.')
+   __copy__ method_descriptor '($self, /)' None
+   __delattr__ wrapper_descriptor '($self, name, /)' (30, 'Implement delattr(self, name).')
+   __doc__ str None 
+   __getattribute__ wrapper_descriptor '($self, name, /)' (27, 'Return getattr(self, name).')
+   __init__ wrapper_descriptor '($self, /, *args, **kwargs)' (62, 'Initialize self.  See help(type(self)) for accurate signatur')
+   __module__ str None decimal
+   __new__ builtin_function_or_method '($type, *args, **kwargs)' (71, 'Create and return a new object.  See help(type) for accurate')
+   __reduce__ method_descriptor '($self, /)' None
+   __repr__ wrapper_descriptor '($self, /)' (18, 'Return repr(self).')
+   __setattr__ wrapper_descriptor '($self, name, value, /)' (37, 'Implement setattr(self, name, value).')
+   _apply method_descriptor '($self, x, /)' (24, 'Apply self to Decimal x.')
+   abs method_descriptor '($self, x, /)' (31, 'Return the absolute value of x.')
+   add method_descriptor '($self, x, y, /)' (26, 'Return the sum of x and y.')
+   canonical method_descriptor '($self, x, /)' (27, 'Return a new instance of x.')
+   capitals getset_descriptor None None
+   clamp getset_descriptor None None
+   clear_flags method_descriptor '($self, /)' (25, 'Reset all flags to False.')
+   clear_traps method_descriptor '($self, /)' (23, 'Set all traps to False.')
+   compare method_descriptor '($self, x, y, /)' (28, 'Compare x and y numerically.')
+   compare_signal method_descriptor '($self, x, y, /)' (46, 'Compare x and y numerically.  All NaNs signal.')
+   compare_total method_descriptor '($self, x, y, /)' (52, 'Compare x and y using their abstract representation.')
+   compare_total_mag method_descriptor '($self, x, y, /)' (67, 'Compare x and y using their abstract representation, ignorin')
+   copy method_descriptor '($self, /)' (34, 'Return a duplicate of the context.')
+   copy_abs method_descriptor '($self, x, /)' (42, 'Return a copy of x with the sign set to 0.')
+   copy_decimal method_descriptor '($self, x, /)' (27, 'Return a copy of Decimal x.')
+   copy_negate method_descriptor '($self, x, /)' (42, 'Return a copy of x with the sign inverted.')
+   copy_sign method_descriptor '($self, x, y, /)' (26, 'Copy the sign from y to x.')
+   create_decimal method_descriptor "($self, num='0', /)" (142, 'Create a new Decimal instance from num, using self as the co')
+   create_decimal_from_float method_descriptor '($self, f, /)' (133, 'Create a new Decimal instance from float f.')
+   divide method_descriptor '($self, x, y, /)' (22, 'Return x divided by y.')
+   divide_int method_descriptor '($self, x, y, /)' (47, 'Return x divided by y, truncated to an integer.')
+   divmod method_descriptor '($self, x, y, /)' (52, 'Return quotient and remainder of the division x / y.')
+   exp method_descriptor '($self, x, /)' (14, 'Return e ** x.')
+   fma method_descriptor '($self, x, y, z, /)' (33, 'Return x multiplied by y, plus z.')
+   is_canonical method_descriptor '($self, x, /)' (47, 'Return True if x is canonical, False otherwise.')
+   is_finite method_descriptor '($self, x, /)' (44, 'Return True if x is finite, False otherwise.')
+   is_infinite method_descriptor '($self, x, /)' (46, 'Return True if x is infinite, False otherwise.')
+   is_nan method_descriptor '($self, x, /)' (52, 'Return True if x is a qNaN or sNaN, False otherwise.')
+   is_normal method_descriptor '($self, x, /)' (53, 'Return True if x is a normal number, False otherwise.')
+   is_qnan method_descriptor '($self, x, /)' (49, 'Return True if x is a quiet NaN, False otherwise.')
+   is_signed method_descriptor '($self, x, /)' (46, 'Return True if x is negative, False otherwise.')
+   is_snan method_descriptor '($self, x, /)' (53, 'Return True if x is a signaling NaN, False otherwise.')
+   is_subnormal method_descriptor '($self, x, /)' (47, 'Return True if x is subnormal, False otherwise.')
+   is_zero method_descriptor '($self, x, /)' (44, 'Return True if x is a zero, False otherwise.')
+   ln method_descriptor '($self, x, /)' (43, 'Return the natural (base e) logarithm of x.')
+   log10 method_descriptor '($self, x, /)' (34, 'Return the base 10 logarithm of x.')
+   logb method_descriptor '($self, x, /)' (58, "Return the exponent of the magnitude of the operand's MSD.")
+   logical_and method_descriptor '($self, x, y, /)' (827, "Applies the logical operation 'and' between each operand's d")
+   logical_invert method_descriptor '($self, x, /)' (466, 'Invert all the digits in the operand.')
+   logical_or method_descriptor '($self, x, y, /)' (822, "Applies the logical operation 'or' between each operand's di")
+   logical_xor method_descriptor '($self, x, y, /)' (831, "Applies the logical operation 'xor' between each operand's d")
+   max method_descriptor '($self, x, y, /)' (54, 'Compare the values numerically and return the maximum.')
+   max_mag method_descriptor '($self, x, y, /)' (55, 'Compare the values numerically with their sign ignored.')
+   min method_descriptor '($self, x, y, /)' (54, 'Compare the values numerically and return the minimum.')
+   min_mag method_descriptor '($self, x, y, /)' (55, 'Compare the values numerically with their sign ignored.')
+   minus method_descriptor '($self, x, /)' (101, 'Minus corresponds to unary prefix minus in Python.')
+   multiply method_descriptor '($self, x, y, /)' (30, 'Return the product of x and y.')
+   next_minus method_descriptor '($self, x, /)' (55, 'Return the largest representable number smaller than x.')
+   next_plus method_descriptor '($self, x, /)' (55, 'Return the smallest representable number larger than x.')
+   next_toward method_descriptor '($self, x, y, /)' (59, 'Return the number closest to x, in the direction towards y.')
+   normalize method_descriptor '($self, x, /)' (51, 'Reduce x to its simplest form. Alias for reduce(x).')
+   number_class method_descriptor '($self, x, /)' (39, 'Return an indication of the class of x.')
+   plus method_descriptor '($self, x, /)' (112, 'Plus corresponds to the unary prefix plus operator in Python')
+   power method_descriptor '($self, /, a, b, modulo=None)' (593, 'Compute a**b.')
+   prec getset_descriptor None None
+   quantize method_descriptor '($self, x, y, /)' (62, 'Return a value equal to x (rounded), having the exponent of ')
+   radix method_descriptor '($self, /)' (10, 'Return 10.')
+   remainder method_descriptor '($self, x, y, /)' (127, 'Return the remainder from integer division.')
+   remainder_near method_descriptor '($self, x, y, /)' (131, 'Return x - y * n.')
+   rotate method_descriptor '($self, x, y, /)' (40, 'Return a copy of x, rotated by y places.')
+   rounding getset_descriptor None None
+   same_quantum method_descriptor '($self, x, y, /)' (55, 'Return True if the two operands have the same exponent.')
+   scaleb method_descriptor '($self, x, y, /)' (66, 'Return the first operand after adding the second value to it')
+   shift method_descriptor '($self, x, y, /)' (40, 'Return a copy of x, shifted by y places.')
+   sqrt method_descriptor '($self, x, /)' (58, 'Square root of a non-negative number to context precision.')
+   subtract method_descriptor '($self, x, y, /)' (38, 'Return the difference between x and y.')
+   to_eng_string method_descriptor '($self, x, /)' (57, 'Convert a number to a string, using engineering notation.')
+   to_integral method_descriptor '($self, x, /)' (34, 'Identical to to_integral_value(x).')
+   to_integral_exact method_descriptor '($self, x, /)' (64, 'Round to an integer. Signal if the result is rounded or inex')
+   to_integral_value method_descriptor '($self, x, /)' (20, 'Round to an integer.')
+   to_sci_string method_descriptor '($self, x, /)' (55, 'Convert a number to a string using scientific notation.')
+== abc SignalDict ABCMeta ['SignalDict', 'SignalDictMixin', 'MutableMapping', 'Mapping', 'Collection', 'Sized', 'Iterable', 'Container', 'object'] 1024 True True None None
+   __abstractmethods__ frozenset None frozenset()
+   __dict__ getset_descriptor None (33, 'dictionary for instance variables')
+   __doc__ NoneType None 
+   __module__ str None abc
+   __weakref__ getset_descriptor None (37, 'list of weak references to the object')
+   _abc_impl _abc_data None (37, 'Internal state held by ABC machinery.')
+== decimal SignalDictMixin type ['SignalDictMixin', 'object'] 1280 False False None None
+   __delitem__ wrapper_descriptor '($self, key, /)' (17, 'Delete self[key].')
+   __doc__ NoneType None 
+   __eq__ wrapper_descriptor '($self, value, /)' (19, 'Return self==value.')
+   __ge__ wrapper_descriptor '($self, value, /)' (19, 'Return self>=value.')
+   __getattribute__ wrapper_descriptor '($self, name, /)' (27, 'Return getattr(self, name).')
+   __getitem__ wrapper_descriptor '($self, key, /)' (17, 'Return self[key].')
+   __gt__ wrapper_descriptor '($self, value, /)' (18, 'Return self>value.')
+   __hash__ NoneType None None
+   __init__ wrapper_descriptor '($self, /, *args, **kwargs)' (62, 'Initialize self.  See help(type(self)) for accurate signatur')
+   __iter__ wrapper_descriptor '($self, /)' (21, 'Implement iter(self).')
+   __le__ wrapper_descriptor '($self, value, /)' (19, 'Return self<=value.')
+   __len__ wrapper_descriptor '($self, /)' (17, 'Return len(self).')
+   __lt__ wrapper_descriptor '($self, value, /)' (18, 'Return self<value.')
+   __module__ str None decimal
+   __ne__ wrapper_descriptor '($self, value, /)' (19, 'Return self!=value.')
+   __repr__ wrapper_descriptor '($self, /)' (18, 'Return repr(self).')
+   __setitem__ wrapper_descriptor '($self, key, value, /)' (23, 'Set self[key] to value.')
+   copy method_descriptor '($self, /)' None
+== decimal ContextManager type ['ContextManager', 'object'] 384 False False None None
+   __doc__ NoneType None 
+   __enter__ method_descriptor '($self, /)' None
+   __exit__ method_descriptor None None
+   __getattribute__ wrapper_descriptor '($self, name, /)' (27, 'Return getattr(self, name).')
+   __module__ str None decimal
+== module _decimal C decimal arithmetic module _decimal
+   BasicContext Context None  decimal 
+   Clamped type None  decimal 
+   Context type '(prec=None, rounding=None, Emin=None, Emax=None, capitals=None,\n        clamp=None, flags=None, traps=None)'  decimal 
+   ConversionSyntax type None  decimal 
+   Decimal type "(value='0', context=None)"  decimal 
+   DecimalException type None  decimal 
+   DecimalTuple type None  decimal 
+   DefaultContext Context None  decimal 
+   DivisionByZero type None  decimal 
+   DivisionImpossible type None  decimal 
+   DivisionUndefined type None  decimal 
+   ExtendedContext Context None  decimal 
+   FloatOperation type None  decimal 
+   HAVE_CONTEXTVAR bool None True None 
+   HAVE_THREADS bool None True None 
+   IEEEContext builtin_function_or_method '($module, bits, /)'  _decimal (145, 'Return a context, initialized as one of the IEEE interchange')
+   IEEE_CONTEXT_MAX_BITS int None 512 None 
+   Inexact type None  decimal 
+   InvalidContext type None  decimal 
+   InvalidOperation type None  decimal 
+   MAX_EMAX int None 999999999999999999 None 
+   MAX_PREC int None 999999999999999999 None 
+   MIN_EMIN int None -999999999999999999 None 
+   MIN_ETINY int None -1999999999999999997 None 
+   Overflow type None  decimal 
+   ROUND_05UP str None ROUND_05UP None 
+   ROUND_CEILING str None ROUND_CEILING None 
+   ROUND_DOWN str None ROUND_DOWN None 
+   ROUND_FLOOR str None ROUND_FLOOR None 
+   ROUND_HALF_DOWN str None ROUND_HALF_DOWN None 
+   ROUND_HALF_EVEN str None ROUND_HALF_EVEN None 
+   ROUND_HALF_UP str None ROUND_HALF_UP None 
+   ROUND_UP str None ROUND_UP None 
+   Rounded type None  decimal 
+   SPEC_VERSION str None 1.70 None 
+   Subnormal type None  decimal 
+   Underflow type None  decimal 
+   __doc__ str None C decimal arithmetic module None 
+   __getattr__ builtin_function_or_method None  _decimal (18, 'Module __getattr__')
+   __libmpdec_version__ str None 2.5.1 None 
+   __name__ str None _decimal None 
+   getcontext builtin_function_or_method '($module, /)'  _decimal (32, 'Get the current default context.')
+   localcontext builtin_function_or_method '($module, /, ctx=None, **kwargs)'  _decimal (292, 'Return a context manager for a copy of the supplied context.')
+   setcontext builtin_function_or_method '($module, context, /)'  _decimal (26, 'Set a new default context.')
+<class 'decimal.DecimalException'> ['ArithmeticError'] decimal DecimalException None ['__doc__', '__module__', '__weakref__'] ['DecimalException', 'ArithmeticError', 'Exception', 'BaseException', 'object']
+<class 'decimal.Clamped'> ['DecimalException'] decimal Clamped None ['__doc__', '__module__'] ['Clamped', 'DecimalException', 'ArithmeticError', 'Exception', 'BaseException', 'object']
+<class 'decimal.InvalidOperation'> ['DecimalException'] decimal InvalidOperation None ['__doc__', '__module__'] ['InvalidOperation', 'DecimalException', 'ArithmeticError', 'Exception', 'BaseException', 'object']
+<class 'decimal.ConversionSyntax'> ['InvalidOperation'] decimal ConversionSyntax None ['__doc__', '__module__'] ['ConversionSyntax', 'InvalidOperation', 'DecimalException', 'ArithmeticError', 'Exception', 'BaseException', 'object']
+<class 'decimal.DivisionByZero'> ['DecimalException', 'ZeroDivisionError'] decimal DivisionByZero None ['__doc__', '__module__'] ['DivisionByZero', 'DecimalException', 'ZeroDivisionError', 'ArithmeticError', 'Exception', 'BaseException', 'object']
+<class 'decimal.DivisionImpossible'> ['InvalidOperation'] decimal DivisionImpossible None ['__doc__', '__module__'] ['DivisionImpossible', 'InvalidOperation', 'DecimalException', 'ArithmeticError', 'Exception', 'BaseException', 'object']
+<class 'decimal.DivisionUndefined'> ['InvalidOperation', 'ZeroDivisionError'] decimal DivisionUndefined None ['__doc__', '__module__'] ['DivisionUndefined', 'InvalidOperation', 'DecimalException', 'ZeroDivisionError', 'ArithmeticError', 'Exception', 'BaseException', 'object']
+<class 'decimal.Inexact'> ['DecimalException'] decimal Inexact None ['__doc__', '__module__'] ['Inexact', 'DecimalException', 'ArithmeticError', 'Exception', 'BaseException', 'object']
+<class 'decimal.InvalidContext'> ['InvalidOperation'] decimal InvalidContext None ['__doc__', '__module__'] ['InvalidContext', 'InvalidOperation', 'DecimalException', 'ArithmeticError', 'Exception', 'BaseException', 'object']
+<class 'decimal.Rounded'> ['DecimalException'] decimal Rounded None ['__doc__', '__module__'] ['Rounded', 'DecimalException', 'ArithmeticError', 'Exception', 'BaseException', 'object']
+<class 'decimal.Subnormal'> ['DecimalException'] decimal Subnormal None ['__doc__', '__module__'] ['Subnormal', 'DecimalException', 'ArithmeticError', 'Exception', 'BaseException', 'object']
+<class 'decimal.Overflow'> ['Inexact', 'Rounded'] decimal Overflow None ['__doc__', '__module__'] ['Overflow', 'Inexact', 'Rounded', 'DecimalException', 'ArithmeticError', 'Exception', 'BaseException', 'object']
+<class 'decimal.Underflow'> ['Inexact', 'Rounded', 'Subnormal'] decimal Underflow None ['__doc__', '__module__'] ['Underflow', 'Inexact', 'Rounded', 'Subnormal', 'DecimalException', 'ArithmeticError', 'Exception', 'BaseException', 'object']
+<class 'decimal.FloatOperation'> ['DecimalException', 'TypeError'] decimal FloatOperation None ['__doc__', '__module__'] ['FloatOperation', 'DecimalException', 'ArithmeticError', 'TypeError', 'Exception', 'BaseException', 'object']
+<class 'decimal.DecimalTuple'> decimal ('sign', 'digits', 'exponent') (<class 'decimal.DecimalTuple'>, <class 'tuple'>, <class 'object'>)
+['__builtins__'] []
+True True decimal 1.70 2.5.1 1.70
+True False True True
+Decimal (value='0', context=None)
+Context (prec=None, rounding=None, Emin=None, Emax=None, capitals=None, clamp=None, flags=None, traps=None)
+Decimal.quantize (self, /, exp, rounding=None, context=None)
+Decimal.__format__ ValueError <method '__format__' of 'decimal.Decimal' objects> builtin has invalid signature
+Decimal.__round__ ValueError <method '__round__' of 'decimal.Decimal' objects> builtin has invalid signature
+Context.power (self, /, a, b, modulo=None)
+Context.create_decimal (self, num='0', /)
+localcontext (ctx=None, **kwargs)
+getcontext ()
+setcontext (context, /)
+IEEEContext (bits, /)
+Decimal.from_float (f, /)
+Decimal.fma (other, third, context=None)
+Context.fma (x, y, z, /)
+<built-in method sqrt of decimal.Decimal object sqrt Decimal.sqrt None None
+<built-in method sqrt of decimal.Context object sqrt Context.sqrt None None
+<method 'sqrt' of 'decimal.Decimal' objects> sqrt Decimal.sqrt None Decimal
+<slot wrapper '__add__' of 'decimal.Decimal' objects> __add__ Decimal.__add__ None Decimal
+<method-wrapper '__add__' of decimal.Decimal object __add__ Decimal.__add__ None Decimal
+<built-in method from_float of type object from_float Decimal.from_float None None
+<built-in function getcontext> getcontext getcontext _decimal None
+<attribute 'real' of 'decimal.Decimal' objects> real Decimal.real None Decimal
+<attribute 'prec' of 'decimal.Context' objects> prec Context.prec None Context
+Context(prec=28, rounding=ROUND_HALF_EVEN, Emin=-999999, Emax=999999, capitals=1, clamp=0, flags=[], traps=[InvalidOperation, DivisionByZero, Overflow])
+Context(prec=9, rounding=ROUND_HALF_UP, Emin=-999999, Emax=999999, capitals=1, clamp=0, flags=[], traps=[Clamped, InvalidOperation, DivisionByZero, Overflow, Underflow])
+Context(prec=9, rounding=ROUND_HALF_EVEN, Emin=-999999, Emax=999999, capitals=1, clamp=0, flags=[], traps=[])

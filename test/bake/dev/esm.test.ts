@@ -619,6 +619,16 @@ devTest("browser console forwarding returns for a value that logs while it print
       },
     };
     probe("custom inspect function that logs its object", hooked);
+
+    // A custom inspect function gets the options of the formatter. It cannot add to the list.
+    const added = { added: 1 };
+    probe("custom inspect function that adds to the list", {
+      [custom](depth, options) {
+        options.seen.push(added);
+        return "text of the function";
+      },
+    });
+    probe("value that the function added", added);
     console.log("done");
   `),
   htmlFiles: [],
@@ -632,6 +642,8 @@ devTest("browser console forwarding returns for a value that logs while it print
         "getters that log their object": "returned",
         "trap that logs its Proxy of a function": "returned",
         "custom inspect function that logs its object": "returned",
+        "custom inspect function that adds to the list": "returned",
+        "value that the function added": "returned",
       },
       calls: { trap: 9, getter: 2, functionTrap: 2, hook: 2 },
     });
@@ -651,11 +663,13 @@ devTest("browser console forwarding returns for a value that logs while it print
       "hook [logged while printing] null 2",
       "hook text of the function null 2",
       "custom inspect function that logs its object text of the function",
+      "custom inspect function that adds to the list text of the function",
+      "value that the function added { added: 1 }",
       "done",
     ]);
     // The console of the test client got every one of these calls, each before its line was sent.
     const names =
-      /^(function trap|getter [ab]|hook|trap( that logs its Proxy( of a function)?)?|getters that log their object|custom inspect function that logs its object|done)/;
+      /^(function trap|getter [ab]|hook|trap( that logs its Proxy( of a function)?)?|getters that log their object|custom inspect function that (logs its object|adds to the list)|value that the function added|done)/;
     await c.expectMessageInAnyOrder(...lines.map(line => names.exec(line)![0]));
   },
 });

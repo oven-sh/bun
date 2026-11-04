@@ -104,7 +104,8 @@ function formatValue(ctx: InspectContext, value: any, recurseTimes: number) {
       typeof value[inspectSymbol] === "function" &&
       value[inspectSymbol] !== inspect
     ) {
-      return String(value[inspectSymbol](recurseTimes, { ...ctx }));
+      // A copy of `seen`: every call shares the list, and this function is page code.
+      return String(value[inspectSymbol](recurseTimes, { ...ctx, seen: ctx.seen.slice() }));
     }
 
     // Check for circular references

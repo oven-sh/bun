@@ -331,6 +331,8 @@ const response = await fetch("s3://my-bucket/path/to/object", {
 
 Only PUT and POST methods support request bodies when using S3. For uploads, Bun automatically uses multipart upload for streaming bodies.
 
+Bun sends the request `headers` with the signed request. It rejects the headers that it cannot send: `Host`, `Authorization`, `Content-MD5`, `x-amz-*` headers, and with a streaming body the headers that S3 acts on, such as `If-None-Match` and `Cache-Control`.
+
 See the [S3](/runtime/s3) documentation.
 
 #### File URLs - `file://`

@@ -2,9 +2,10 @@ import type { S3File, S3Options } from "bun";
 import { S3Client, s3 as defaultS3, file, randomUUIDv7 } from "bun";
 import { afterAll, describe, expect, it } from "bun:test";
 import { createHash, createHmac, randomUUID } from "crypto";
-import { bunEnv, bunExe, getSecret, isCI, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, getSecret, isASAN, isCI, isDebug, tempDir, tempDirWithFiles } from "harness";
+import { totalmem } from "os";
 import path from "path";
-import { spawnServer } from "s3-server";
+import { serve, spawnServer } from "s3-server";
 const s3 = (...args: Parameters<typeof defaultS3.file>) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
 
@@ -273,6 +274,48 @@ for (let credentials of allCredentials) {
                 const response = await fetch(tmpfile.name, { s3: options });
                 expect(response.headers.get("content-type")).toStartWith("text/plain");
               }
+            });
+
+            it("should send conditional headers", async () => {
+              await using tmpfile = await tmp();
+              // The key has an object, so the condition of this write does not hold.
+              const write = await fetch(tmpfile.name, {
+                method: "PUT",
+                body: "replaced",
+                headers: { "If-None-Match": "*" },
+                s3: options,
+              });
+              expect(write.status).toBe(412);
+
+              const read = await fetch(tmpfile.name, { s3: options });
+              expect(await read.text()).toBe("Hello Bun!");
+              const notModified = await fetch(tmpfile.name, {
+                headers: { "If-None-Match": read.headers.get("etag")! },
+                s3: options,
+              });
+              expect(notModified.status).toBe(304);
+            });
+
+            it("should store the headers of an upload", async () => {
+              await using tmpfile = await tmp();
+              const result = await fetch(tmpfile.name, {
+                method: "PUT",
+                body: "Hello Bun!",
+                headers: {
+                  "Cache-Control": "max-age=60",
+                  "Content-Disposition": 'attachment; filename="bun.txt"',
+                },
+                s3: options,
+              });
+              expect(result.status).toBe(200);
+              const response = await fetch(tmpfile.name, { s3: options });
+              expect({
+                cacheControl: response.headers.get("cache-control"),
+                contentDisposition: response.headers.get("content-disposition"),
+              }).toEqual({
+                cacheControl: "max-age=60",
+                contentDisposition: 'attachment; filename="bun.txt"',
+              });
             });
 
             it("should be able to upload large files", async () => {
@@ -1445,6 +1488,506 @@ for (let credentials of allCredentials) {
     });
   });
 }
+
+// What fetch() does with the `headers` of a request to an s3:// URL. This server is in
+// the process of the test, so that the tests can read its record of the requests.
+describe.concurrent("fetch() request headers", () => {
+  const server = serve({ buckets: ["headers"] });
+  afterAll(() => server.stop());
+  const options = server.clientOptions("headers");
+  const client = new S3Client(options);
+
+  /** An object with the text "previous". */
+  async function existing(s3: S3Client = client, log = server) {
+    const key = randomUUIDv7();
+    await s3.write(key, "previous");
+    /**
+     * Reads the object back, then gives what the server got for the key between the write above
+     * and that read. The read is a round trip, so a request that was on its way has arrived.
+     */
+    const after = async () => {
+      const text = await s3.file(key).text();
+      const requests = log.requests
+        .filter(request => request.key === key)
+        .slice(1, -1)
+        .map(request => ({
+          operation: request.operation,
+          signed: (/SignedHeaders=([^,]*)/.exec(request.headers.get("authorization") ?? "")?.[1] ?? "").split(";"),
+          headers: request.headers,
+        }));
+      return { text, requests };
+    };
+    return { key, url: `s3://${key}`, after };
+  }
+
+  const outcome = (request: Promise<Response>) =>
+    request.then(
+      response => ({ status: response.status }),
+      error => ({ name: error.name, code: error.code, message: error.message }),
+    );
+  /** The rejection for a header that fetch() cannot send. The message has the header's name. */
+  const refuses = (name: string) => ({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_VALUE",
+    message: expect.stringContaining(`the "${name}" header`),
+  });
+
+  it("sends the headers that need no signature", async () => {
+    const { url, after } = await existing();
+    const response = await fetch(url, {
+      method: "PUT",
+      body: "next",
+      headers: {
+        "Cache-Control": "max-age=60",
+        "Content-Disposition": "attachment",
+        "Content-Encoding": "identity",
+        "Content-Type": "text/x-test",
+        "Upgrade": "custom",
+        "X-Custom": "1",
+      },
+      s3: options,
+    });
+    expect(response.status).toBe(200);
+    const { text, requests } = await after();
+    expect(
+      requests.map(put => ({
+        operation: put.operation,
+        cacheControl: put.headers.get("cache-control"),
+        contentDisposition: put.headers.get("content-disposition"),
+        contentEncoding: put.headers.get("content-encoding"),
+        contentType: put.headers.get("content-type"),
+        upgrade: put.headers.get("upgrade"),
+        custom: put.headers.get("x-custom"),
+        // The signature does not cover the headers of the caller that are not `Content-*`.
+        signed: put.signed.filter(name => ["cache-control", "upgrade", "x-custom"].includes(name)),
+      })),
+    ).toEqual([
+      {
+        operation: "PutObject",
+        cacheControl: "max-age=60",
+        contentDisposition: "attachment",
+        contentEncoding: "identity",
+        contentType: "text/x-test",
+        upgrade: "custom",
+        custom: "1",
+        signed: [],
+      },
+    ]);
+    expect(text).toBe("next");
+  });
+
+  it("sends range together with content-type", async () => {
+    const { url, after } = await existing();
+    const response = await fetch(url, {
+      headers: { "Range": "bytes=0-3", "Content-Type": "text/x-test" },
+      s3: options,
+    });
+    expect(response.status).toBe(206);
+    expect(await response.text()).toBe("prev");
+    const { requests } = await after();
+    expect(requests.map(get => [get.headers.get("range"), get.headers.get("content-type")])).toEqual([
+      ["bytes=0-3", "text/x-test"],
+    ]);
+  });
+
+  // Without the header, GET and HEAD answer 200, DELETE removes the object, and PUT and POST replace it.
+  it.each(["GET", "HEAD", "DELETE", "PUT", "POST"])("a stale If-Match fails a %s", async method => {
+    const { url, after } = await existing();
+    const body = method === "PUT" || method === "POST" ? "next" : undefined;
+    const response = await fetch(url, { method, body, headers: { "If-Match": '"stale"' }, s3: options });
+    expect(response.status).toBe(412);
+    const { text, requests } = await after();
+    expect(requests.map(request => request.headers.get("if-match"))).toEqual(['"stale"']);
+    expect(text).toBe("previous");
+  });
+
+  it.each([
+    ["an object", (headers: Record<string, string>) => headers],
+    ["a Headers", (headers: Record<string, string>) => new Headers(headers)],
+    ["an array of pairs", (headers: Record<string, string>) => Object.entries(headers)],
+  ])("reads the headers from %s", async (_, make) => {
+    const { url, after } = await existing();
+    const init = (headers: Record<string, string>) => ({
+      method: "PUT",
+      body: "next",
+      headers: make(headers),
+      s3: options,
+    });
+    expect(await outcome(fetch(url, init({ "If-None-Match": "*" })))).toEqual({ status: 412 });
+    expect(await outcome(fetch(url, init({ "x-amz-meta-a": "1" })))).toEqual(refuses("x-amz-meta-a"));
+    expect((await after()).text).toBe("previous");
+  });
+
+  it.each([
+    ["fetch(url, init)", (url: string, init: RequestInit) => fetch(url, { ...init, s3: options })],
+    ["Bun.fetch(url, init)", (url: string, init: RequestInit) => Bun.fetch(url, { ...init, s3: options })],
+    [
+      "session.fetch(url, init)",
+      (url: string, init: RequestInit) => new Bun.FetchSession().fetch(url, { ...init, s3: options }),
+    ],
+    ["fetch(request, { s3 })", (url: string, init: RequestInit) => fetch(new Request(url, init), { s3: options })],
+    [
+      "fetch(request, { headers, s3 })",
+      (url: string, { headers, ...init }: RequestInit) => fetch(new Request(url, init), { headers, s3: options }),
+    ],
+    // @ts-expect-error The types do not have an object with a `url` as the first argument.
+    ["fetch({ url, ...init }, { s3 })", (url: string, init: RequestInit) => fetch({ url, ...init }, { s3: options })],
+  ] as [string, (url: string, init: RequestInit) => Promise<Response>][])("%s", async (_, call) => {
+    const { url, after } = await existing();
+    const init = (headers: Record<string, string>) => ({ method: "PUT", body: "next", headers });
+    expect(await outcome(call(url, init({ "If-None-Match": "*" })))).toEqual({ status: 412 });
+    expect(await outcome(call(url, init({ "x-amz-meta-a": "1" })))).toEqual(refuses("x-amz-meta-a"));
+    expect((await after()).text).toBe("previous");
+  });
+
+  it("says why it does not send a header", async () => {
+    const { url, after } = await existing();
+    const message = (init: RequestInit) =>
+      fetch(url, { method: "PUT", ...init, s3: options }).then(
+        response => `resolved with ${response.status}`,
+        error => error.message,
+      );
+    expect({
+      generated: await message({ headers: { "Host": "example.com" } }),
+      notSigned: await message({ headers: { "x-amz-copy-source": "/headers/other" } }),
+      notInStreamUpload: await message({ headers: { "If-None-Match": "*" }, body: new Blob(["next"]).stream() }),
+    }).toEqual({
+      generated: 'fetch() to an s3:// URL: the "Host" header is generated by request signing; remove it from headers',
+      notSigned:
+        'fetch() to an s3:// URL: the "x-amz-copy-source" header needs a signature, and fetch() does not sign request headers',
+      notInStreamUpload:
+        'fetch() to an s3:// URL: the "If-None-Match" header cannot be sent with a stream body, which is uploaded in parts; pass the body as bytes',
+    });
+    expect(await after()).toEqual({ text: "previous", requests: [] });
+  });
+
+  // The signer writes the first six. The others need a signature, and fetch() signs a fixed set of headers.
+  it.each([
+    ["host", "Host"],
+    ["HOST", "Host"],
+    ["authorization", "Authorization"],
+    ["x-amz-date", "x-amz-date"],
+    ["x-amz-content-sha256", "x-amz-content-sha256"],
+    ["X-Amz-Security-Token", "X-Amz-Security-Token"],
+    ["x-amz-copy-source", "x-amz-copy-source"],
+    ["x-amz-meta-name", "x-amz-meta-name"],
+    ["X-Amz-Meta-Name", "X-Amz-Meta-Name"],
+    ["x-amz-acl", "x-amz-acl"],
+    ["Content-MD5", "Content-MD5"],
+  ])("rejects the %s header and sends nothing", async (name, sent) => {
+    const { url, after } = await existing();
+    // With `x-amz-copy-source` this request would be a copy. Without it, it stores an empty object.
+    const request = fetch(url, {
+      method: "PUT",
+      headers: { "Cache-Control": "max-age=60", [name]: "value" },
+      s3: options,
+    });
+    expect(await outcome(request)).toEqual(refuses(sent));
+    expect(await after()).toEqual({ text: "previous", requests: [] });
+  });
+
+  it.each([
+    ["a typed Blob that is sliced", { body: new Blob(["hello world"], { type: "text/x-test" }).slice(0, 5) }],
+    ["an empty Content-Type header", { body: "hello", headers: { "Content-Type": "" } }],
+  ])("sends no empty Content-Type for %s", async (_, init) => {
+    const { url, after } = await existing();
+    const response = await fetch(url, { method: "PUT", ...init, s3: options });
+    expect(response.status).toBe(200);
+    const { text, requests } = await after();
+    expect(requests.map(put => put.headers.has("content-type"))).toEqual([false]);
+    expect(text).toBe("hello");
+  });
+
+  it("sends the headers with a session token, for each kind of buffered body", async () => {
+    using dir = tempDir("s3-fetch-headers", { "body.txt": "next" });
+    await using withToken = serve({
+      buckets: ["headers"],
+      credentials: { accessKeyId: "AKIAIOSFODNN7EXAMPLE", secretAccessKey: "secret", sessionToken: "token" },
+    });
+    const s3 = withToken.clientOptions("headers");
+    const bodies: [string, BodyInit, string | null][] = [
+      ["a string", "next", null],
+      ["a Uint8Array", new TextEncoder().encode("next"), null],
+      ["a Blob with a type", new Blob(["next"], { type: "text/x-blob" }), "text/x-blob"],
+      ["a file", file(path.join(String(dir), "body.txt")), "text/plain;charset=utf-8"],
+      ["URLSearchParams", new URLSearchParams({ next: "" }), "application/x-www-form-urlencoded;charset=UTF-8"],
+    ];
+    for (const [kind, body, contentType] of bodies) {
+      const { url, after } = await existing(new S3Client(s3), withToken);
+      const response = await fetch(url, { method: "PUT", body, headers: { "Cache-Control": "max-age=60" }, s3 });
+      const { requests } = await after();
+      expect({
+        kind,
+        status: response.status,
+        requests: requests.map(put => ({
+          cacheControl: put.headers.get("cache-control"),
+          contentType: put.headers.get("content-type"),
+          token: put.headers.get("x-amz-security-token"),
+          tokenIsSigned: put.signed.includes("x-amz-security-token"),
+        })),
+      }).toEqual({
+        kind,
+        status: 200,
+        requests: [{ cacheControl: "max-age=60", contentType, token: "token", tokenIsSigned: true }],
+      });
+    }
+  });
+
+  it("sends the headers through a proxy", async () => {
+    await using proxy = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: request => fetch(request.url, { method: request.method, headers: request.headers, body: request.body }),
+    });
+    const { url, after } = await existing();
+    const response = await fetch(url, {
+      method: "PUT",
+      body: "next",
+      headers: { "If-None-Match": "*" },
+      proxy: proxy.url.href,
+      s3: options,
+    });
+    expect(response.status).toBe(412);
+    expect(await after()).toMatchObject({ text: "previous", requests: [{ operation: "PutObject" }] });
+  });
+
+  describe("with a stream body", () => {
+    const chunk = () => new TextEncoder().encode("next");
+    const stream = () =>
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(chunk());
+          controller.close();
+        },
+      });
+    /** The body of a response whose last bytes have not arrived. */
+    async function arriving() {
+      const { promise: end, resolve: finish } = Promise.withResolvers<void>();
+      const origin = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: () =>
+          new Response(
+            new ReadableStream({
+              async start(controller) {
+                controller.enqueue(chunk());
+                await end;
+                controller.close();
+              },
+            }),
+          ),
+      });
+      const response = await fetch(origin.url);
+      return {
+        body: response.body!,
+        async [Symbol.asyncDispose]() {
+          finish();
+          await origin.stop(true);
+        },
+      };
+    }
+
+    // A stream whose bytes have all arrived is sent as one request. The rule is the same for it.
+    it.each([
+      ["a ReadableStream", stream],
+      [
+        "an async generator",
+        () =>
+          async function* () {
+            yield "next";
+          },
+      ],
+      ["the stream of a Blob", () => new Blob(["next"]).stream()],
+      ["the body of a Response", () => new Response("next").body!],
+    ] as [string, () => Bun.BodyInit][])("%s: rejects a header that S3 acts on", async (_, body) => {
+      const { url, after } = await existing();
+      for (const [name, sent] of [
+        ["If-None-Match", "If-None-Match"],
+        ["if-unmodified-since", "If-Unmodified-Since"],
+        ["Cache-Control", "Cache-Control"],
+        ["Content-Language", "Content-Language"],
+        ["Expires", "Expires"],
+      ]) {
+        const request = fetch(url, { method: "PUT", body: body(), headers: { [name]: "*" }, s3: options });
+        expect(await outcome(request)).toEqual(refuses(sent));
+      }
+      expect(await after()).toEqual({ text: "previous", requests: [] });
+    });
+
+    it("a response body that is still arriving: rejects a header that S3 acts on", async () => {
+      await using held = await arriving();
+      const { url, after } = await existing();
+      const request = fetch(url, { method: "PUT", body: held.body, headers: { "If-None-Match": "*" }, s3: options });
+      expect(await outcome(request)).toEqual(refuses("If-None-Match"));
+      expect(await after()).toEqual({ text: "previous", requests: [] });
+    });
+
+    it("an S3 object: rejects before it reads the object", async () => {
+      const source = await existing();
+      const { url, after } = await existing();
+      const request = fetch(url, {
+        method: "PUT",
+        body: client.file(source.key),
+        headers: { "If-None-Match": "*" },
+        s3: options,
+      });
+      expect(await outcome(request)).toEqual(refuses("If-None-Match"));
+      expect(await after()).toEqual({ text: "previous", requests: [] });
+      expect((await source.after()).requests).toEqual([]);
+    });
+
+    it("cancels the stream with the error", async () => {
+      const { url } = await existing();
+      const { promise: cancelled, resolve: cancel } = Promise.withResolvers();
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(chunk());
+          controller.close();
+        },
+        cancel,
+      });
+      const error = await fetch(url, { method: "PUT", body, headers: { "If-None-Match": "*" }, s3: options }).then(
+        () => undefined,
+        error => error,
+      );
+      expect({ name: error?.name, code: error?.code, message: error?.message }).toEqual(refuses("If-None-Match"));
+      expect(await cancelled).toBe(error);
+    });
+
+    // A fetch() that a tracing library wraps has headers that the program did not write.
+    it.each([
+      ["a ReadableStream", stream],
+      ["the stream of a Blob", () => new Blob(["next"]).stream()],
+    ] as [string, () => Bun.BodyInit][])("%s: uploads with headers that S3 does not act on", async (_, body) => {
+      const { url, after } = await existing();
+      const response = await fetch(url, {
+        method: "PUT",
+        body: body(),
+        headers: {
+          "Accept": "*/*",
+          "Baggage": "sentry-environment=production",
+          "Content-Length": "4",
+          "Content-Type": "text/x-test",
+          "Sentry-Trace": "12345678901234567890123456789012-1234567890123456-1",
+          "Traceparent": "00-12345678901234567890123456789012-1234567890123456-01",
+        },
+        s3: options,
+      });
+      expect(response.status).toBe(200);
+      const { text, requests } = await after();
+      expect(requests.map(put => [put.operation, put.headers.get("content-type")])).toEqual([
+        ["PutObject", "text/x-test"],
+      ]);
+      expect(text).toBe("next");
+    });
+
+    it("uploads with the three headers that the upload carries, and signs two of them", async () => {
+      const { url, after } = await existing();
+      const response = await fetch(url, {
+        method: "PUT",
+        body: stream(),
+        headers: {
+          "Content-Type": "text/x-test",
+          "Content-Disposition": "attachment",
+          "Content-Encoding": "identity",
+        },
+        s3: options,
+      });
+      expect(response.status).toBe(200);
+      const { text, requests } = await after();
+      expect(
+        requests.map(put => ({
+          contentType: put.headers.get("content-type"),
+          contentDisposition: put.headers.get("content-disposition"),
+          contentEncoding: put.headers.get("content-encoding"),
+          signed: put.signed.filter(name => name.startsWith("content-")),
+        })),
+      ).toEqual([
+        {
+          contentType: "text/x-test",
+          contentDisposition: "attachment",
+          contentEncoding: "identity",
+          signed: ["content-disposition", "content-encoding"],
+        },
+      ]);
+      expect(text).toBe("next");
+    });
+
+    it("a GET keeps the error for its body", async () => {
+      const { url, after } = await existing();
+      const request = fetch(url, { method: "GET", body: stream(), headers: { "If-None-Match": "*" }, s3: options });
+      expect(await outcome(request)).toEqual({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_VALUE",
+        message: "fetch() request with GET/HEAD method cannot have body.",
+      });
+      expect(await after()).toEqual({ text: "previous", requests: [] });
+    });
+  });
+
+  it("rejects for the header before it opens a file body", async () => {
+    using dir = tempDir("s3-fetch-headers", {});
+    const { url, after } = await existing();
+    const request = fetch(url, {
+      method: "PUT",
+      body: file(path.join(String(dir), "does-not-exist")),
+      headers: { "x-amz-meta-name": "value" },
+      s3: options,
+    });
+    expect(await outcome(request)).toEqual(refuses("x-amz-meta-name"));
+    expect(await after()).toEqual({ text: "previous", requests: [] });
+  });
+
+  // The child holds the copy of these headers that fetch() makes, which is 4 GiB.
+  it.skipIf(isDebug || isASAN || totalmem() < 12 * 1024 ** 3)(
+    "rejects headers that do not fit beside the headers of the signature",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          /* js */ `
+            // The 16 values share one 256 MiB string. Names and values total 2 ** 32 - 1 bytes,
+            // which is the most that the headers of a request can have.
+            const value = Buffer.alloc(2 ** 28, "a").toString("latin1");
+            const headers = new Headers();
+            for (let i = 0; i < 15; i++) headers.append("set-cookie", value);
+            headers.append("set-cookie", value.slice(0, 2 ** 28 - 161));
+
+            let requests = 0;
+            using server = Bun.serve({ port: 0, fetch: () => (requests++, new Response("ok")) });
+            const s3 = { accessKeyId: "a", secretAccessKey: "b", bucket: "bucket", endpoint: server.url.href };
+            const outcome = await fetch("s3://key", { headers, s3 }).then(
+              response => "resolved with " + response.status,
+              error => error.name + ": " + error.message,
+            );
+            console.log(outcome);
+            console.log(requests);
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("RangeError: Headers exceed the maximum total size of 4294967295 bytes\n0\n");
+      expect(exitCode).toBe(0);
+    },
+    60_000,
+  );
+
+  it("rejects for the header before it reads an aborted signal", async () => {
+    const { url, after } = await existing();
+    const request = fetch(url, {
+      headers: { "x-amz-meta-name": "value" },
+      signal: AbortSignal.abort(),
+      s3: options,
+    });
+    expect(await outcome(request)).toEqual(refuses("x-amz-meta-name"));
+    expect(await after()).toEqual({ text: "previous", requests: [] });
+  });
+});
+
 describe("s3-server", () => {
   const testDir = tempDirWithFiles("s3-credential-test", {
     "index.mjs": `

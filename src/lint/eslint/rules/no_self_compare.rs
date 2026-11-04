@@ -4,8 +4,8 @@ use bun_lint::prelude::*;
 /// Disallow comparisons where both sides are exactly the same.
 pub struct NoSelfCompare;
 
-const COMPARING_TO_SELF: Message =
-    Message::new("comparingToSelf", "Comparing to itself is potentially pointless.");
+const COMPARING_TO_SELF: &Message =
+    &Message::new("comparingToSelf", "Comparing to itself is potentially pointless.");
 
 /// True if `text` ends with an escape that's valid in an identifier: `\u0061`, `\u{61}`.
 fn ends_with_escape(text: &[u8]) -> bool {

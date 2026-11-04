@@ -1,0 +1,99 @@
+# const rows = JSON.parse('[{"n":"x"},{"n":1},{"n":"a"}]');
+# function increment(row) {
+#   const o = {};
+#   o.n = row.n + 1;
+#   return "n" in o ? o.n : "lost";
+# }
+# for (const row of rows) globalThis.answer = increment(row);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(NOWHERE): lower-to-b3 optimized f1
+# REQUIRES(NOWHERE): unsanitized-code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 position=96 fields=[{key="n" declared={type=anything}}] ownFieldCount=1
+data d0 root=Object{layout=L0} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=JSON
+    v3 = PropGet v2 key="parse"
+    v4 = Convert v3 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v5 = String string="[{\"n\":\"x\"},{\"n\":1},{\"n\":\"a\"}]"
+    v6 = Call v4, v2, v5 calleeKey="parse" calleeName="JSON.parse"
+    v7 = Convert v6 declared={type=undefined|null|Array<undefined|null|number|string|symbol|bigint|L0> flags=[IsExpected]}
+    v8 = IteratorOpen v7
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v10 = IteratorResume v8
+    v11 = ResultAt v10
+    v12 = ResultAt v10 index=1
+    Branch v11 -> taken b3(), notTaken b4()
+  b3():
+    v13 = Undefined
+    Return v13
+  b4():
+    Jump -> next b5()
+  b5() handler=b6():
+    v14 = Convert v12 declared={type=undefined|null|number|string|symbol|bigint|L0 flags=[IsExpected]}
+    v15 = Builtin builtin=GlobalThis
+    v16 = PropGet v15 key="globalThis" [isFreeName]
+    v17 = Convert v16 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v18 = Call v1, -, v14 calleeName="increment"
+    v19 = Convert v18 declared={type=undefined|null|string flags=[IsExpected]}
+    PropSet v17, v19 key="answer"
+    Jump -> next b2()
+  b6() role=IterationCleanup subject=v8:
+    v21 = CatchException
+    IteratorClose v8 completion=Throw
+    Rethrow v21
+}
+function f1 name="increment" module=m0 position=58 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L0 flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L0):
+    Jump -> next b1()
+  b1():
+    v1 = Data data=d0
+    v2 = Convert v1 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v3 = PropGet v0 key="n"
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    v5 = Integer integer=1
+    v6 = Add v4, v5
+    PropSet v2, v6 key="n"
+    v8 = PropHas v2 key="n"
+    v9 = ToBoolean v8
+    Branch v9 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v10):
+    Jump -> next b3()
+  b3():
+    v11 = PropGet v2 key="n"
+    Jump -> next b6(v11)
+  b4(v12):
+    Jump -> next b5()
+  b5():
+    v13 = String string="lost"
+    Jump -> next b6(v13)
+  b6(v14):
+    v15 = Convert v14 declared={type=undefined|null|string flags=[IsExpected]}
+    Return v15
+}
+
+# What the sum is on the path where its operand is no number goes on as the result: the object is never made, and nothing asks whether the property is there.
+# CHECK-LABEL: name="increment" role=Source
+# CHECK: Return(b@[[result]], Terminal)
+# CHECK: Int64 b@[[sum]] = Patchpoint({{*}}ExitsSideways{{*}}:Add)
+# CHECK-NEXT: Upsilon(b@[[sum]], ^[[result]], WritesLocalState)
+# CHECK-LABEL: end of function
+
+# NOWHERE-LABEL: name="increment" role=Source
+# NOWHERE-NOT: :NewObject)
+# NOWHERE-NOT: :IsSlotFilled)
+# NOWHERE-NOT: :PropSet)
+# NOWHERE-NOT: :PropHas)
+# NOWHERE-LABEL: end of function

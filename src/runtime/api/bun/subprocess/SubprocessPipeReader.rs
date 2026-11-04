@@ -379,7 +379,7 @@ impl PipeReader {
             .expect("event_loop.virtual_machine");
         let uws = vm.uws_loop();
         // SAFETY: uws loop pointer is live for the VM lifetime.
-        unsafe { (*uws).uv_loop }
+        unsafe { (*uws).uv_loop() }
     }
 }
 
@@ -396,6 +396,7 @@ impl Drop for PipeReader {
 // with `self`), so `&mut *this` autoref is OK.
 bun_io::impl_buffered_reader_parent! {
     SubprocessPipeReader for PipeReader;
+    feature = Spawn;
     has_on_read_chunk = false;
     on_reader_done  = |this| (*this).on_reader_done();
     on_reader_error = |this, err| (*this).on_reader_error(err);

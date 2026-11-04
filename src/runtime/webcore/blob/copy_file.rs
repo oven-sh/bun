@@ -339,6 +339,18 @@ impl CopyFile {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn do_copy_file_range<const USE: TryWith>(&mut self) -> Result<(), crate::Error> {
+        let mut total_written = 0;
+        let result = self.copy_file_range_loop::<USE>(&mut total_written);
+        self.read_len = total_written;
+        result
+    }
+
+    /// Adds what it copies to `total_written`, also when it fails.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn copy_file_range_loop<const USE: TryWith>(
+        &mut self,
+        total_written: &mut SizeType,
+    ) -> Result<(), crate::Error> {
         use bun_sys::linux;
 
         let mut remain: usize = self.max_length as usize;
@@ -351,50 +363,23 @@ impl CopyFile {
             remain = 64 * 1024;
         }
 
-        let mut total_written: u64 = 0;
         let src_fd = self.source_fd;
         let dest_fd = self.destination_fd;
-
-        let read_len_slot: *mut SizeType = &raw mut self.read_len;
-        let total_written_slot: *const u64 = core::ptr::addr_of!(total_written);
-        scopeguard::defer! {
-            // SAFETY: both raw ptrs point into the enclosing stack frame which
-            // outlives this guard (dropped before fn return); disjoint fields.
-            unsafe { *read_len_slot = *total_written_slot as SizeType };
-        }
 
         // If they can't use copy_file_range, they probably also can't
         // use sendfile() or splice()
         if !bun_sys::copy_file::can_use_copy_file_range_syscall() {
-            return self.fallback_read_write(remain, unknown_size, &mut total_written);
+            return self.fallback_read_write(remain, unknown_size, total_written);
         }
 
         loop {
             // TODO: this should use non-blocking I/O.
             let written: isize = match USE {
                 TryWith::CopyFileRange => {
-                    // SAFETY: raw copy_file_range(2); both fds owned by caller, null offsets.
-                    unsafe {
-                        linux::copy_file_range(
-                            src_fd.native(),
-                            core::ptr::null_mut(),
-                            dest_fd.native(),
-                            core::ptr::null_mut(),
-                            remain,
-                            0,
-                        )
-                    }
+                    linux::copy_file_range(src_fd.native(), None, dest_fd.native(), None, remain, 0)
                 }
                 TryWith::Sendfile => {
-                    // SAFETY: raw sendfile(2); both fds owned by caller, null offset.
-                    unsafe {
-                        linux::sendfile(
-                            dest_fd.native(),
-                            src_fd.native(),
-                            core::ptr::null_mut(),
-                            remain,
-                        )
-                    }
+                    linux::sendfile(dest_fd.native(), src_fd.native(), None, remain)
                 }
                 TryWith::Splice => {
                     // SAFETY: raw splice(2); both fds owned by caller, null offsets.
@@ -419,16 +404,16 @@ impl CopyFile {
                 // OPNOTSUPP: filesystem doesn't support this operation
                 bun_sys::E::ENOSYS | bun_sys::E::EXDEV | bun_sys::E::ENOTSUP => {
                     // TODO: this should use non-blocking I/O.
-                    return self.fallback_read_write(remain, unknown_size, &mut total_written);
+                    return self.fallback_read_write(remain, unknown_size, total_written);
                 }
 
                 // EBADF: copy_file_range rejects an O_APPEND destination (`>> log`, an "a" fd).
                 bun_sys::E::EBADF
                     if matches!(USE, TryWith::CopyFileRange)
-                        && total_written == 0
+                        && *total_written == 0
                         && is_writable_append(dest_fd) =>
                 {
-                    return self.fallback_read_write(remain, unknown_size, &mut total_written);
+                    return self.fallback_read_write(remain, unknown_size, total_written);
                 }
 
                 // EINVAL: eCryptfs and other filesystems may not support copy_file_range.
@@ -438,9 +423,9 @@ impl CopyFile {
                     // copy_file_range or the file descriptor is
                     // incompatible with the chosen syscall, fall back
                     // to a read/write loop
-                    if total_written == 0 {
+                    if *total_written == 0 {
                         // TODO: this should use non-blocking I/O.
-                        return self.fallback_read_write(remain, unknown_size, &mut total_written);
+                        return self.fallback_read_write(remain, unknown_size, total_written);
                     }
 
                     self.system_error = Some(
@@ -469,7 +454,7 @@ impl CopyFile {
             }
 
             // wrote zero bytes means EOF
-            total_written += u64::try_from(written).expect("int cast");
+            *total_written += u64::try_from(written).expect("int cast");
             if written == 0 {
                 break;
             }
@@ -1339,7 +1324,8 @@ impl<'a> CopyFileWindows<'a> {
     ) -> JSValue {
         // destination_file_store.ref() / source_file_store.ref() — Arc clone
         let global = event_loop.global_ref();
-        let result = bun_core::heap::into_raw(CopyFileWindows::new(CopyFileWindows {
+        // `destroy` frees it.
+        let result = bun_core::heap::release(CopyFileWindows::new(CopyFileWindows {
             destination_file_store,
             source_file_store,
             promise: jsc::JSPromiseStrong::init(global),
@@ -1354,13 +1340,11 @@ impl<'a> CopyFileWindows<'a> {
             err: None,
             read_write_loop: ReadWriteLoop::default(),
         }));
-        // SAFETY: result was just allocated above
-        let result_ref = unsafe { &mut *result };
-        let promise = result_ref.promise.value();
+        let promise = result.promise.value();
 
         // On error, this function might free the CopyFileWindows struct.
         // So we can no longer reference it beyond this point.
-        result_ref.copyfile();
+        result.copyfile();
 
         promise
     }

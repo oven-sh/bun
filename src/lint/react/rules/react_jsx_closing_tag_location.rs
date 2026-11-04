@@ -8,11 +8,11 @@ pub struct JsxClosingTagLocation {
     is_line_aligned: bool,
 }
 
-const ON_OWN_LINE: Message =
-    Message::new("onOwnLine", "Closing tag of a multiline JSX expression must be on its own line.");
-const MATCH_INDENT: Message = Message::new("matchIndent", "Expected closing tag to match indentation of opening.");
-const ALIGN_WITH_OPENING: Message =
-    Message::new("alignWithOpening", "Expected closing tag to be aligned with the line containing the opening tag");
+const ON_OWN_LINE: &Message =
+    &Message::new("onOwnLine", "Closing tag of a multiline JSX expression must be on its own line.");
+const MATCH_INDENT: &Message = &Message::new("matchIndent", "Expected closing tag to match indentation of opening.");
+const ALIGN_WITH_OPENING: &Message =
+    &Message::new("alignWithOpening", "Expected closing tag to be aligned with the line containing the opening tag");
 
 impl Rule for JsxClosingTagLocation {
     const META: Meta =

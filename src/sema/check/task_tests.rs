@@ -594,6 +594,29 @@ fn threads_fill_and_read_a_windowed_map() {
     }
 }
 
+/// Only Miri can fail this test.
+#[test]
+fn a_frozen_table_is_read_while_another_thread_allocates_its_cells() {
+    let table = ById::<TypeId, TypeId>::default();
+    // Relaxed, so that it orders nothing. It only makes the reader come second.
+    let inserted = AtomicU32::new(0);
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            table.insert(TypeId(1), TypeId(7));
+            inserted.store(1, Ordering::Relaxed);
+        });
+        scope.spawn(|| {
+            while inserted.load(Ordering::Relaxed) == 0 {
+                std::thread::yield_now();
+            }
+            for _ in 0..64 {
+                assert_eq!(table.get(&TypeId(0)), None);
+            }
+        });
+    });
+    assert_eq!(table.get(&TypeId(1)), Some(TypeId(7)));
+}
+
 #[test]
 fn local_is_bit_30() {
     assert_eq!(LOCAL, 1 << 30);
@@ -736,9 +759,14 @@ fn is_like_new(task: &mut Task) -> bool {
         is_first_in_order,
         is_first_in_component,
         cycle_members,
+        members_in_progress,
+        cycle_members_added,
+        closed_cycles,
         cycle_since_idle,
+        cycle_ends_below,
         logged_at_cycles,
         logged_when_idle,
+        most_logged_between_idle_moments,
         immediate_tables,
         immediate_tables_after_commit,
         diagnostics_logged_before_stop,
@@ -760,9 +788,14 @@ fn is_like_new(task: &mut Task) -> bool {
         && !is_first_in_order.get()
         && !is_first_in_component.get()
         && cycle_members.get_mut().is_empty()
+        && members_in_progress.get_mut().is_like_new()
+        && cycle_members_added.get() == 0
+        && closed_cycles.get() == 0
         && cycle_since_idle.get().is_none()
+        && cycle_ends_below.get() == 0
         && logged_at_cycles.borrow().is_empty()
         && logged_when_idle.get() == [0; 2]
+        && most_logged_between_idle_moments.get() == 0
         && immediate_tables.get() == 0
         && *immediate_tables_after_commit == 0
         && diagnostics_logged_before_stop.get() == usize::MAX
@@ -825,9 +858,12 @@ fn ended_task_is_like_new() {
     check(&|task| task.set_first_in_order(true, false));
     check(&|task| task.set_first_in_order(false, true));
     check(&|task| task.cycle_members.get_mut().push(1));
+    check(&|task| (task.members_in_progress.get_mut()).add(0..1, 0, 1, |_| {}));
+    check(&|task| task.cycle_members_added.set(1));
     check(&|task| task.cycle_since_idle.set(Some([0; 2])));
     check(&|task| task.logged_at_cycles.borrow_mut().push([[0; 2]; 2]));
     check(&|task| task.logged_when_idle.set([0, 1]));
+    check(&|task| task.most_logged_between_idle_moments.set(1));
     check(&|task| task.immediate_tables.set(1));
     check(&|task| task.immediate_tables_after_commit = 1);
     check(&|task| task.diagnostics_logged_before_stop.set(0));
@@ -1236,6 +1272,103 @@ fn commit_lists_log_ranges_from_each_cycle_to_next_idle_moment() {
     resolve_a_cycle(&task);
     task.begin(0, 1);
     assert!(!task.has_resolved_a_cycle());
+}
+
+#[test]
+fn log_range_of_a_cycle_ends_when_the_query_below_its_lowest_member_has_left() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let task = begin_committing(&session, &tables, &commits, 0);
+    task.set_first_in_order(true, true);
+    let stack: Vec<Query> = (0..5).map(|_| Query::Shape(NUMBER)).collect();
+    let frames: Vec<QueryFrame> = (1..=5).map(QueryFrame::for_test).collect();
+    let close_cycle =
+        |task: &Task, from| task.close_cycle_in_progress(|| false, &stack, &frames, from);
+    // A cycle of the queries at 3 and 4. The one at 3 stores its result while the one at 2 is in progress.
+    close_cycle(&task, 3);
+    tables.by_id.insert(&task, NUMBER, NUMBER, stored());
+    task.leaves_the_cycles_below(3);
+    tables.by_id.insert(&task, STRING, NUMBER, stored());
+    task.leaves_the_cycles_below(2);
+    // What the task stores from here on is not in the range.
+    tables.by_node.insert(&task, (A, 1), STRING, stored());
+    // A cycle that reaches lower extends the range of one that's still open.
+    close_cycle(&task, 3);
+    close_cycle(&task, 1);
+    tables.by_node.insert(&task, (A, 2), STRING, stored());
+    task.leaves_the_cycles_below(1);
+    tables.by_node.insert(&task, (A, 3), STRING, stored());
+    task.leaves_the_cycles_below(0);
+    tables.by_node.insert(&task, (A, 4), STRING, stored());
+    // A cycle of unknown extent ends at the idle moment.
+    task.close_cycle(|| false, std::iter::once(1));
+    tables.by_node.insert(&task, (A, 5), STRING, stored());
+    task.leaves_the_cycles_below(0);
+    tables.by_node.insert(&task, (A, 6), STRING, stored());
+    task.note_idle();
+    tables.by_node.insert(&task, (A, 7), STRING, stored());
+    assert_eq!(
+        task.take_logged_at_cycles(),
+        [[[0, 0], [2, 0]], [[2, 1], [2, 3]], [[2, 4], [2, 6]]]
+    );
+}
+
+#[test]
+fn query_is_added_to_cycle_members_once_while_it_is_in_progress() {
+    let mut seed = 7;
+    let mut next = |below: usize| {
+        seed = seed * 48_271 % 2_147_483_647;
+        seed % below
+    };
+    // The serial numbers of the queries in progress.
+    let (mut stack, mut pushed) = (Vec::new(), 0);
+    let mut in_progress = MembersInProgress::default();
+    let (mut added, mut members) = (Vec::new(), Vec::new());
+    for _ in 0..50_000 {
+        match next(5) {
+            0..=2 => {
+                pushed += 1;
+                stack.push(pushed);
+            }
+            3 => stack.truncate(stack.len().saturating_sub(next(8))),
+            _ => {
+                let from = next(stack.len() + 1);
+                members.extend_from_slice(&stack[from..]);
+                let kept = stack.partition_point(|&serial| serial <= in_progress.innermost);
+                let innermost = stack.last().copied().unwrap_or(0);
+                in_progress.add(from..stack.len(), kept, innermost, |new| {
+                    added.extend_from_slice(&stack[new]);
+                });
+            }
+        }
+    }
+    members.sort_unstable();
+    members.dedup();
+    assert!(members.len() > 10_000);
+    added.sort_unstable();
+    assert_eq!(added, members);
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn cycle_members_taken_are_added_again_by_the_next_cycle() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let task = begin_committing(&session, &tables, &commits, 0);
+    task.set_first_in_order(true, true);
+    let stack = [STRING, NUMBER, TypeId::ANY].map(Query::Shape);
+    let frames = [1, 2, 3].map(QueryFrame::for_test);
+    let mut hashes = stack.map(|q| crate::util::fx_hash(&q));
+    hashes.sort_unstable();
+    let close_cycle = |from| task.close_cycle_in_progress(|| false, &stack, &frames, from);
+    close_cycle(1);
+    close_cycle(0);
+    close_cycle(2);
+    assert_eq!(task.cycle_members_added(), 3);
+    assert_eq!(task.take_cycle_members(), hashes);
+    close_cycle(0);
+    assert_eq!(task.cycle_members_added(), 6);
+    assert_eq!(task.take_cycle_members(), hashes);
 }
 
 #[test]

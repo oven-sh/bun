@@ -5,7 +5,6 @@ pub(crate) fn parse_lockfile(cx: &mut JsScope<'_>, cwd: &[u8]) -> bun_jsc::JsRes
     use core::ptr::NonNull;
 
     use bstr::BStr;
-    use bun_core::String as BunString;
     use bun_install::lockfile::lockfile_json_stringify_for_debugging::{
         WriteStream, WriteStreamOptions, json_stringify,
     };
@@ -49,8 +48,7 @@ pub(crate) fn parse_lockfile(cx: &mut JsScope<'_>, cwd: &[u8]) -> bun_jsc::JsRes
     // as long as we aren't migration from `package-lock.json`, leaving this undefined is okay
     let manager = vm.package_manager();
 
-    let load_result: LoadResult<'_> =
-        lockfile_.load_from_dir::<true>(*dir, Some(manager), &mut log);
+    let load_result: LoadResult = lockfile_.load_from_dir::<true>(*dir, Some(manager), &mut log);
 
     match load_result {
         LoadResult::Err(err) => {
@@ -81,5 +79,5 @@ pub(crate) fn parse_lockfile(cx: &mut JsScope<'_>, cwd: &[u8]) -> bun_jsc::JsRes
     json_stringify(&lockfile_, &mut w).expect("Vec<u8> JSON writer is infallible");
     let stringified = w.into_bytes();
 
-    BunString::borrow_utf8(&stringified).to_js_by_parse_json(global)
+    bun_core::StringView::borrow_utf8(&stringified).to_js_by_parse_json(global)
 }

@@ -517,9 +517,8 @@ impl Context {
         }
     }
 
-    pub(crate) fn update_write_result(&self, avail_in: &mut u32, avail_out: &mut u32) {
-        *avail_in = self.state.avail_in();
-        *avail_out = self.state.avail_out();
+    pub(crate) fn write_result(&self) -> [u32; 2] {
+        [self.state.avail_out(), self.state.avail_in()]
     }
 
     pub(crate) fn get_error_info(&self) -> Error {

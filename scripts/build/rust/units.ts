@@ -534,6 +534,13 @@ function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManif
   // The plan's rustflags (rust.ts's list): appended to every *target* unit, and handed to build scripts as
   // CARGO_ENCODED_RUSTFLAGS.
   if (!isHost) args.push(...plan.plannedWith.rustflags);
+  if (!isHost && cfg.fuzzilli && /^bun_(aot|sema)(_|$)/.test(unit.crateName)) {
+    args.push(
+      "-Cpasses=sancov-module",
+      "-Cllvm-args=-sanitizer-coverage-level=3",
+      "-Cllvm-args=-sanitizer-coverage-trace-pc-guard",
+    );
+  }
   // The depfile must name what rustc read: `-Zbinary-dep-depinfo` adds every rlib/rmeta/dylib it loaded
   // (transitive crates found through -L, the sysroot std for host units, proc-macro dylibs).
   args.push("-Z", "binary-dep-depinfo");

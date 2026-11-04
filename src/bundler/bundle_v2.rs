@@ -103,6 +103,8 @@ pub struct BundleV2<'a> {
     /// Populated from `transpiler.options.dev_server` + the runtime-registered vtable at
     /// construction. All ~15 DevServer call sites go through this.
     pub dev_server: Option<dispatch::DevServerHandle>,
+    /// Dev server: the sources whose file was not there to read.
+    pub(crate) missing_sources: Vec<crate::missing_sources::MissingSource>,
     /// In-memory files that can be used as entrypoints or imported.
     /// This is a pointer to the FileMap in the completion config.
     pub file_map: Option<&'a FileMap>,
@@ -1457,6 +1459,7 @@ pub mod bv2_impl {
     use crate::PathToSourceIndexMap::PathToSourceIndexMap;
     use crate::ServerComponentParseTask::ServerComponentParseTask;
     use crate::barrel_imports;
+    use crate::missing_sources;
 
     use crate::chunk::{self, Chunk};
     use crate::options::{self, Loader, Target};
@@ -3256,6 +3259,7 @@ pub mod bv2_impl {
                 js_poster: event_loop.and_then(|l| unsafe { l.as_ref() }.js_poster()),
                 plugin_context: bun_event_loop::ContextId::NONE,
                 dev_server: None,
+                missing_sources: Vec::new(),
                 file_map: None,
                 source_code_length: 0,
                 thread_lock: bun_core::ThreadLock::init_locked(),
@@ -3474,6 +3478,9 @@ pub mod bv2_impl {
                 let dev = self
                     .dev_server
                     .unwrap_or_else(|| panic!("No dev server attached in asynchronous bundle job"));
+                if !self.missing_sources.is_empty() {
+                    missing_sources::report(self, dev);
+                }
                 self.finish_from_bake_dev_server(&dev).expect("oom");
             }
         }
@@ -7927,7 +7934,7 @@ pub mod bv2_impl {
                                 [err.source_index.get() as usize]
                                 .path
                                 .text;
-                            dev_server
+                            let file_is_missing = dev_server
                                 .handle_parse_task_failure(
                                     err.err,
                                     err.target.bake_graph(),
@@ -7936,6 +7943,9 @@ pub mod bv2_impl {
                                     std::ptr::from_mut(this),
                                 )
                                 .expect("oom");
+                            if file_is_missing {
+                                missing_sources::note(this, err.source_index.get(), err.target);
+                            }
                         } else if !err.log.msgs.is_empty() {
                             // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
                             err.log.append_to(this.transpiler.log_mut());

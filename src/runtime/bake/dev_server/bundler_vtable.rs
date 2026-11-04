@@ -41,6 +41,12 @@ bun_bundler::link_impl_DevServerHandle! {
                 .track_resolution_failure(import_source, specifier, renderer, loader)
                 .map_err(Into::into)
         },
+        track_missing_file(import_source, file, renderer) => {
+            (*this)
+                .directory_watchers
+                .track_missing_file(import_source, file, renderer)
+                .map_err(Into::into)
+        },
         is_file_cached(abs_path, side) => {
             (*this).is_file_cached(abs_path, side).map(|e| {
                 use bun_bundler::bake_types::CacheKind;

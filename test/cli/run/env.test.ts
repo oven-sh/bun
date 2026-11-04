@@ -1527,8 +1527,7 @@ describe("fork() from the node shim (argv0=node) keeps the child in node mode", 
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: expect.any(String), stderr: "", exitCode: 0 });
     return JSON.parse(stdout);
   }
 

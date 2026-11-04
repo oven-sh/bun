@@ -78,8 +78,8 @@ void resetDateCachesAfterTimeZoneChange(JSC::VM&);
 
 #if !OS(WINDOWS)
 // Python has the variables in os.environ, which is kept the same as process.env. (Python::HostEnvironment, BunPython.cpp)
-// All that process.env has. True on the main thread, whose process.env stands for the environment of the process.
-bool readProcessEnvForPython(JSC::JSGlobalObject*, WTF::Vector<std::pair<WTF::String, WTF::String>>&);
+// All that process.env has.
+void readProcessEnvForPython(JSC::JSGlobalObject*, WTF::Vector<std::pair<WTF::String, WTF::String>>&);
 // A null value: the variable is gone. It runs no code of the program and throws nothing.
 void writeProcessEnvFromPython(JSC::JSGlobalObject*, const WTF::String& name, const WTF::String& value);
 #endif

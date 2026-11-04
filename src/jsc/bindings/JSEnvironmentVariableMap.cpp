@@ -147,18 +147,14 @@ static void applyTZFromString(JSGlobalObject*, const String&);
 static void applyTLSRejectFromString(JSGlobalObject*, const String&);
 static void applyVerboseFetchFromString(JSGlobalObject*, const String&);
 static void applyTZDeleted(JSGlobalObject*);
-#if !OS(WINDOWS)
-static bool isEnvOfMainThread(JSGlobalObject*);
-#endif
 
 // The program has written to process.env, or deleted from it (a null value): os.environ of Python follows, if Python has started.
-// On the main thread so does the environment of the process, which the children of Python inherit.
 static void tellPython(JSGlobalObject* lexicalGlobalObject, const String& name, const String& value)
 {
 #if !OS(WINDOWS)
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     if (globalObject->pythonRuntime()) [[unlikely]]
-        Python::hostDidChangeEnvironment(globalObject, name, value, isEnvOfMainThread(globalObject));
+        Python::hostDidChangeEnvironment(globalObject, name, value);
 #else
     UNUSED_PARAM(lexicalGlobalObject);
     UNUSED_PARAM(name);
@@ -778,14 +774,6 @@ static bool shouldApplyTZSideEffect(JSGlobalObject* globalObject)
     return !context || context->isMainThread();
 }
 
-#if !OS(WINDOWS)
-static bool isEnvOfMainThread(JSGlobalObject* globalObject)
-{
-    auto* context = defaultGlobalObject(globalObject)->scriptExecutionContext();
-    return context && context->isMainThread();
-}
-#endif
-
 // The parse-and-apply bodies for the three side-effecting env vars, shared by
 // process.env's put()/CustomSetters and applySharedEnvSideEffects so a new
 // side-effecting var need only be added in one place.
@@ -1034,26 +1022,25 @@ JSValue createSharedEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 }
 
 #if !OS(WINDOWS)
-bool readProcessEnvForPython(JSGlobalObject* lexicalGlobalObject, Vector<std::pair<String, String>>& variables)
+void readProcessEnvForPython(JSGlobalObject* lexicalGlobalObject, Vector<std::pair<String, String>>& variables)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* envObject = globalObject->processEnvObject();
-    RETURN_IF_EXCEPTION(scope, false);
+    RETURN_IF_EXCEPTION(scope, void());
     JSC::PropertyNameArrayBuilder names(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
     envObject->methodTable()->getOwnPropertyNames(envObject, globalObject, names, JSC::DontEnumPropertiesMode::Exclude);
-    RETURN_IF_EXCEPTION(scope, false);
+    RETURN_IF_EXCEPTION(scope, void());
     for (const auto& name : names) {
         JSValue value = envObject->get(globalObject, name);
-        RETURN_IF_EXCEPTION(scope, false);
+        RETURN_IF_EXCEPTION(scope, void());
         if (!value.isString())
             continue;
         String string = asString(value)->value(globalObject);
-        RETURN_IF_EXCEPTION(scope, false);
+        RETURN_IF_EXCEPTION(scope, void());
         variables.append({ name.string(), WTF::move(string) });
     }
-    return isEnvOfMainThread(globalObject);
 }
 
 void writeProcessEnvFromPython(JSGlobalObject* lexicalGlobalObject, const String& name, const String& value)

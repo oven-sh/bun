@@ -353,12 +353,59 @@ def child_of_python(name):
     return subprocess.run(["/bin/sh", "-c", show.format(name)], capture_output=True, text=True).stdout
 `;
 
+// Every way in which Python starts a program without saying what its environment is.
+const allChildren = `
+import ctypes, os, threading
+from multiprocessing import util
+def _written(start):
+    def child(name):
+        start(show.format(name) + " > written")
+        with open("written") as file:
+            return file.read()
+    return child
+def _wait(pid):
+    os.waitpid(pid, 0)
+def _passfds(command):
+    r, w = os.pipe()
+    try:
+        _wait(util.spawnv_passfds(b"/bin/sh", ["sh", "-c", command], [r]))
+    finally:
+        os.close(r)
+        os.close(w)
+starters = {
+    "run": child_of_python,
+    "shell": lambda name: subprocess.run(show.format(name), shell=True, capture_output=True, text=True).stdout,
+    "popen": lambda name: os.popen(show.format(name)).read(),
+    "system": _written(os.system),
+    "spawnv": _written(lambda command: os.spawnv(os.P_WAIT, "/bin/sh", ["sh", "-c", command])),
+    "spawnlp": _written(lambda command: os.spawnlp(os.P_WAIT, "sh", "sh", "-c", command)),
+    "nowait": _written(lambda command: _wait(os.spawnv(os.P_NOWAIT, "/bin/sh", ["sh", "-c", command]))),
+    "posix_spawn": _written(lambda command: _wait(os.posix_spawn("/bin/sh", ["sh", "-c", command], None))),
+    "posix_spawnp": _written(lambda command: _wait(os.posix_spawnp("sh", ["sh", "-c", command], None))),
+    "multiprocessing": _written(_passfds),
+}
+def children_of_python(name):
+    seen = {how: child(name) for how, child in starters.items()}
+    return seen.popitem()[1] if len(set(seen.values())) == 1 else seen
+def in_a_thread(function, *arguments):
+    result = []
+    thread = threading.Thread(target=lambda: result.append(function(*arguments)))
+    thread.start()
+    thread.join()
+    return result[0]
+_getenv = ctypes.CDLL(None).getenv
+_getenv.restype = ctypes.c_char_p
+def in_c(name):
+    return _getenv(name.encode())
+`;
+
 group(
   "os.environ and process.env are one environment",
   {
     setup: `
 import js, os, threading, time
 ${children}
+${allChildren}
 names = lambda: list(js.Object.keys(js.process.env))
 in_js = lambda name: getattr(js.process.env, name, None)
 `,
@@ -381,9 +428,35 @@ in_js = lambda name: getattr(js.process.env, name, None)
       "('3', '3', b'3', '3')",
     ],
     ["js.process.env.FROM_JS = 4\nos.environ['FROM_JS'], child_of_python('FROM_JS')", "('4', '4')"],
+    // As without Python, what JavaScript writes does not change the environment of the process, which is not safe to change while
+    // other threads read it. The programs that Python starts are given it all the same, whichever way and on whichever thread.
+    ["in_c('FROM_JS'), children_of_python('FROM_JS'), in_a_thread(children_of_python, 'FROM_JS')", "(None, '4', '4')"],
     [
-      "del js.process.env.FROM_JS\nos.environ.get('FROM_JS'), os.getenv('FROM_JS'), child_of_python('FROM_JS')",
-      "(None, None, 'unset')",
+      "os.environ['FROM_JS'] = '5'\nin_c('FROM_JS'), js.process.env.FROM_JS, children_of_python('FROM_JS'), child_of_js('FROM_JS')",
+      "(b'5', '5', '5', '5')",
+    ],
+    [
+      "js.process.env.FROM_JS = '6'\nin_c('FROM_JS'), os.environ['FROM_JS'], children_of_python('FROM_JS')",
+      "(b'5', '6', '6')",
+    ],
+    [
+      "del js.process.env.FROM_JS\nos.environ.get('FROM_JS'), os.getenv('FROM_JS'), in_c('FROM_JS'), children_of_python('FROM_JS'), in_a_thread(children_of_python, 'FROM_JS')",
+      "(None, None, b'5', 'unset', 'unset')",
+    ],
+    ["os.unsetenv('FROM_JS')\nin_c('FROM_JS'), children_of_python('FROM_JS')", "(None, 'unset')"],
+    // An environment that is given is the environment.
+    [
+      "js.process.env.FROM_JS = '7'\nr = subprocess.run(['/bin/sh', '-c', show.format('FROM_JS')], env={}, capture_output=True, text=True).stdout, os.spawnve(os.P_WAIT, '/bin/sh', ['sh', '-c', 'test -z \"$FROM_JS\"'], {})\ndel js.process.env.FROM_JS\nr",
+      "('unset', 0)",
+    ],
+    // Where a program is looked for.
+    [
+      "os.mkdir('tools')\nwith open('tools/a-tool', 'w') as f:\n    f.write('#!/bin/sh\\nexit 7\\n')\nos.chmod('tools/a-tool', 0o755)\nsaved = js.process.env.PATH\njs.process.env.PATH = os.path.abspath('tools') + ':' + saved\nr = os.spawnvp(os.P_WAIT, 'a-tool', ['a-tool']), subprocess.run(['a-tool']).returncode, os.waitstatus_to_exitcode(os.system('a-tool'))\njs.process.env.PATH = saved\nr, os.spawnvp(os.P_WAIT, 'a-tool', ['a-tool'])",
+      "((7, 7, 7), 127)",
+    ],
+    [
+      "js.process.env.FROM_JS = '8'\nos.putenv('PUT', '9')\nos.reload_environ()\nr = os.environ['FROM_JS'], os.environ['PUT']\ndel js.process.env.FROM_JS\nos.unsetenv('PUT')\nos.reload_environ()\nr, os.environ.get('FROM_JS'), os.environ.get('PUT')",
+      "(('8', '9'), None, None)",
     ],
     [
       "js.Object.assign(js.process.env, {'ASSIGNED': 'a'})\njs.Object.defineProperty(js.process.env, 'DEFINED', value='d', writable=True, enumerable=True, configurable=True)\njs.Bun.env.OF_BUN = 'b'\nos.environ['ASSIGNED'], os.environ['DEFINED'], os.environ['OF_BUN']",
@@ -412,9 +485,10 @@ in_js = lambda name: getattr(js.process.env, name, None)
       "'t'",
     ],
     ["os.environ['TZ'] = 'Asia/Tokyo'\ntime.tzset()\njs.Date(0).getHours(), time.localtime(0).tm_hour", "(9, 9)"],
+    // tzset() of the C library reads the environment of the process.
     [
-      "js.process.env.TZ = 'America/New_York'\ntime.tzset()\njs.Date(0).getHours(), time.localtime(0).tm_hour",
-      "(19, 19)",
+      "js.process.env.TZ = 'America/New_York'\ntime.tzset()\njs.Date(0).getHours(), time.localtime(0).tm_hour, os.environ['TZ']",
+      "(19, 9, 'America/New_York')",
     ],
     [
       "saved = dict(os.environ)\nos.environ.clear()\nleft = names()\nos.environ.update(saved)\nleft, js.process.env.PATH == os.environ['PATH'], sorted(names()) == sorted(os.environ)",
@@ -449,7 +523,84 @@ console.log(JSON.stringify(Object.keys(process.env).sort()) === JSON.stringify([
   ["main.js"],
 );
 
-// The process.env of a worker is a copy, or what it was given. Only Python's writes reach the environment of the process from there.
+// While the two environments are the same it is system() of the C library.
+script(
+  "os.system() deals with signals as system() does, whichever it is",
+  {
+    "main.py": `
+import js, os, signal
+def behaviour():
+    seen = []
+    # The terminal sends these to the shell and to whoever waits for it, who is not meant.
+    seen.append(os.waitstatus_to_exitcode(os.system("kill -INT $PPID; kill -QUIT $PPID; exit 3")))
+    # The shell does not ignore them for that.
+    seen.append(os.waitstatus_to_exitcode(os.system("kill -INT $$; exit 3")))
+    try:
+        os.kill(os.getpid(), signal.SIGINT)
+        seen.append("not restored")
+    except KeyboardInterrupt:
+        seen.append("restored")
+    # What was ignored before stays ignored in the shell.
+    before = signal.signal(signal.SIGINT, signal.SIG_IGN)
+    seen.append(os.waitstatus_to_exitcode(os.system("kill -INT $$; exit 4")))
+    signal.signal(signal.SIGINT, before)
+    seen.append(os.waitstatus_to_exitcode(os.system("exit 5")))
+    seen.append(os.waitstatus_to_exitcode(os.system("-not-an-option 2>/dev/null")))
+    seen.append(signal.pthread_sigmask(signal.SIG_BLOCK, []))
+    return seen
+print(behaviour())
+js.process.env.FROM_JS = "1"
+print(behaviour(), os.waitstatus_to_exitcode(os.system('test "$FROM_JS" = 1')))
+`,
+  },
+  ({ stdout, stderr, exitCode }) => {
+    expect(stderr).toBe("");
+    expect(stdout).toBe(lines("[3, -2, 'restored', 4, 5, 127, set()]", "[3, -2, 'restored', 4, 5, 127, set()] 0"));
+    expect(exitCode).toBe(0);
+  },
+);
+
+script(
+  "a program that takes the place of this one has the environment of both",
+  {
+    "main.js": `
+const os = require("python:os");
+process.env.FROM_JS = "js";
+os.environ.__setitem__("FROM_PYTHON", "python");
+delete process.env.WANTS_LOUD;
+os.execv("/bin/sh", ["sh", "-c", 'echo "$FROM_JS $FROM_PYTHON \${WANTS_LOUD-unset}"']);
+`,
+  },
+  ({ stdout, stderr, exitCode }) => {
+    expect(stderr).toBe("");
+    expect(stdout).toBe(lines("js python unset"));
+    expect(exitCode).toBe(0);
+  },
+  undefined,
+  ["main.js"],
+);
+
+script(
+  "and is looked for where both say",
+  {
+    "main.py": `
+import js, os
+js.process.env.FROM_JS = "js"
+js.process.env.PATH = os.path.abspath("tools")
+os.chmod("tools/a-tool", 0o755)
+os.execlp("a-tool", "a-tool")
+`,
+    "tools/a-tool": '#!/bin/sh\necho "$FROM_JS"\n',
+  },
+  ({ stdout, stderr, exitCode }) => {
+    expect(stderr).toBe("");
+    expect(stdout).toBe(lines("js"));
+    expect(exitCode).toBe(0);
+  },
+);
+
+// The process.env of a worker is a copy, or what it was given, and so is what the programs get that Python starts there. Only Python's
+// writes reach the environment of the process.
 script(
   "in a worker, os.environ is the process.env of the worker",
   {
@@ -480,9 +631,9 @@ postMessage(
     expect(stderr).toBe("");
     expect(stdout).toBe(
       lines(
-        "OF_MAIN main main main, GIVEN   unset, JS_OF_WORKER js js unset, PYTHON_OF_WORKER python python python",
+        "OF_MAIN main main main, GIVEN   unset, JS_OF_WORKER js js js, PYTHON_OF_WORKER python python python",
         "undefined undefined undefined undefined",
-        "OF_MAIN   main, GIVEN given given unset, JS_OF_WORKER js js unset, PYTHON_OF_WORKER python python python",
+        "OF_MAIN   unset, GIVEN given given given, JS_OF_WORKER js js js, PYTHON_OF_WORKER python python python",
         "undefined undefined undefined undefined",
       ),
     );

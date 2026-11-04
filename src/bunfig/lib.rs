@@ -12,6 +12,7 @@ pub mod bunfig;
 pub mod error;
 
 pub use arguments::{
-    ToolReader, load_config, load_config_for_tool, load_config_path, load_config_with_cmd_args,
+    Above, ToolReader, load_config, load_config_above_for_tool, load_config_for_tool,
+    load_config_path, load_config_with_cmd_args,
 };
 pub use error::{Error, Result};

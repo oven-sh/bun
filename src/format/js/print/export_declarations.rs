@@ -1,89 +1,52 @@
 use super::decorators::FormatDecorators;
 use super::import_declaration::{
-    FormatCommentsInSpecifier, FormatSpecifiers, format_import_and_export_source_with_clause,
-    module_export_name, only_specifier_has_comments,
+    FormatSpecifiers, format_import_and_export_source_with_clause, module_export_name,
 };
-use super::semicolon::{OptionalSemicolon, start_of_comments_in_dropped_parentheses};
-use crate::cursor::{enter_node, extend_node};
-use crate::js::format::{FormatDeclaration, write_trailing_comments_of};
+use super::semicolon::OptionalSemicolon;
+use crate::js::ast_nodes::inner_of_stmt;
+use crate::js::format::{FormatDeclaration, format_ignorable_name, format_node, write_declaration};
+use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::prelude::*;
 use crate::write;
 
-/// `export` or `export default`, and the decorators of the class after it. They can be before the
-/// `export` or after it, and stay where they are. `keyword` is empty if it is not written.
-fn format_export_keyword_with_class_decorators<'a>(
-    node: AstNodes<'a>,
-    keyword: &'static str,
-    class: Option<Class<'a>>,
-    f: &mut Formatter<'a>,
-) {
-    let span = node.span();
-    let keyword_and_space = format_with(|f| {
-        if !keyword.is_empty() {
-            write!(f, [keyword, space()]);
-        }
-    });
-    let format_leading_comments = format_with(|f| {
-        let comments = f.comments().comments_before(span.start);
-        FormatLeadingComments::Comments(comments).fmt(f);
-    });
-
-    if let Some(class) = class
-        && let Some(first_decorator) = class.decorators().next()
-    {
-        let decorators = FormatDecorators::new(class.decorators(), node);
-        if first_decorator.span().end < span.start {
-            enter_node(span, f);
-            write!(
-                f,
-                [
-                    decorators,
-                    hard_line_break(),
-                    format_leading_comments,
-                    keyword_and_space
-                ]
-            );
-        } else if ignored_class_stays_behind_export(f)
-            && f.comments().is_suppressed(first_decorator.span().start)
-        {
-            // The class is written as it is, with its decorators.
-            write!(f, format_leading_comments);
-            enter_node(span, f);
-            write!(f, keyword_and_space);
-        } else {
-            write!(f, format_leading_comments);
-            enter_node(span, f);
-            write!(
-                f,
-                [keyword, hard_line_break(), decorators, hard_line_break()]
-            );
-        }
-    } else {
-        write!(f, format_leading_comments);
-        enter_node(span, f);
-        write!(f, keyword_and_space);
-    }
+/// `export // comment⏎@a class B {}`: Prettier prints the comment after `export `. oxfmt starts a new line after
+/// `export`, as it always does before decorators.
+fn comments_of_decorated_class_start_a_line(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
-/// Prettier writes a class that is not formatted behind `export `, with the comment in between. For
-/// oxfmt the decorators start a line as they always do after `export`.
-fn ignored_class_stays_behind_export(f: &Formatter<'_>) -> bool {
-    !f.options().flavor.is_oxfmt()
+/// `export /* prettier-ignore */ const a = 1 ;` stays as it is for oxfmt. Prettier prints `const a = 1;`.
+fn ignored_variable_declaration_is_copied_with_its_semicolon(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
-/// `export` or `export default` and the declaration `statement`.
+/// `export /* prettier-ignore */ type A = 1 ;`: the `;` is part of a type alias, an `import a = b`, a function without
+/// a body and a module without a body, so it's copied with them, regardless of the options.
+///
+/// Both tools do that after `export`. When the whole statement is ignored, oxfmt prints the `;` according to the
+/// options. See
+/// [`ignored_node_terminator_follows_semi`](crate::js::format::ignored_node_terminator_follows_semi).
+fn is_ignored_with_its_semicolon<'a>(statement: Stmt<'a>, f: &Formatter<'a>) -> bool {
+    let ends_with_its_semicolon = match statement.kind() {
+        StmtKind::TypeAlias(_) | StmtKind::ImportEquals(_) => true,
+        StmtKind::Fn(func) => !func.has_body(),
+        StmtKind::Module(module) => !module.innermost().has_body(),
+        StmtKind::Var(_) => ignored_variable_declaration_is_copied_with_its_semicolon(f),
+        _ => false,
+    };
+    ends_with_its_semicolon && !f.is_quiet() && f.comments().is_ignored(inner_of_stmt(statement))
+}
+
+/// Writes `export` or `export default` followed by the declaration `statement`.
+#[inline(never)]
 pub(crate) fn write_exported_declaration<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
     let node = statement.as_ast_nodes();
-    let class = match statement.kind() {
-        StmtKind::Class(class) => Some(class),
-        _ => None,
-    };
     let first_modifier = statement
         .modifiers()
         .iter()
         .find(|it| it.decorator().is_none());
     let keyword = match statement.tag() {
-        // Errors, where the `export` is not in typescript-estree's tree: `export import a from "b"`,
+        // Errors, where the `export` isn't in typescript-estree's tree: `export import a from "b"`,
         // `export export = a`, `declare export const a`.
         StmtTag::Import | StmtTag::ExportAssign => "",
         _ if f.file().is_flow() && super::flow::is_declare_export(statement, f) => {
@@ -96,56 +59,115 @@ pub(crate) fn write_exported_declaration<'a>(statement: Stmt<'a>, f: &mut Format
         _ if statement.is_default_export() => "export default",
         _ => "export",
     };
-    format_export_keyword_with_class_decorators(node, keyword, class, f);
-    write!(f, FormatDeclaration(statement));
-    if matches!(statement.kind(), StmtKind::Var(_)) {
+    let keyword_and_space = format_with(|f| {
+        if !keyword.is_empty() {
+            write!(f, [keyword, space()]);
+        }
+    });
+
+    // A class's decorators can come before or after the `export`, and they stay where they are.
+    let decorated_class = match statement.kind() {
+        StmtKind::Class(class) => Some(class).zip(class.decorators().next()),
+        _ => None,
+    };
+    match decorated_class {
+        None if is_ignored_with_its_semicolon(statement, f) => {
+            let declaration = inner_of_stmt(statement);
+            write!(
+                f,
+                [
+                    keyword_and_space,
+                    leading_comments(declaration),
+                    FormatSuppressedNode(statement.span_without_export()),
+                    trailing_comments(declaration)
+                ]
+            );
+        }
+        None => write!(f, [keyword_and_space, FormatDeclaration(statement)]),
+        // Prettier's `printDecoratorsBeforeExport`
+        Some((class, first_decorator)) if first_decorator.span().end < node.span().start => {
+            write!(
+                f,
+                [
+                    FormatDecorators::new(class.decorators(), node),
+                    hard_line_break(),
+                    keyword_and_space
+                ]
+            );
+            // `@a export /* prettier-ignore */ class B {}`: the span of the class starts at its decorators, which have
+            // already been written. Only oxfmt attaches the comment to the class.
+            let class_node = AstNodes::Class(class);
+            match !f.is_quiet() && f.comments().is_ignored(class_node) {
+                true => write!(
+                    f,
+                    [
+                        leading_comments(class_node),
+                        FormatSuppressedNode(statement.span_without_export()),
+                        trailing_comments(class_node)
+                    ]
+                ),
+                false => write!(f, FormatDeclaration(statement)),
+            }
+        }
+        // They're part of the class, so its leading comments are written before them.
+        Some((class, _)) => {
+            let starts_a_line = comments_of_decorated_class_start_a_line(f);
+            match starts_a_line {
+                true => write!(f, [keyword, hard_line_break()]),
+                false => write!(f, keyword_and_space),
+            }
+            // Prettier's `printDecorators` starts with a line break, even right after the one that ends a comment.
+            let class_node = AstNodes::Class(class);
+            let follows_line_break = !f.is_quiet()
+                && !starts_a_line
+                && (f.comments().of_node(class_node).leading.last())
+                    .is_some_and(|last| last.is_line() || last.has_newline_after());
+            format_node(class_node, f, |f| {
+                write!(
+                    f,
+                    [
+                        follows_line_break.then_some(empty_line()),
+                        FormatDecorators::new(
+                            class.decorators(),
+                            match starts_a_line {
+                                true => class_node,
+                                false => node,
+                            }
+                        ),
+                        hard_line_break()
+                    ]
+                );
+                write_declaration(statement, f);
+            });
+        }
+    }
+    // An ignored declaration is written with its `;`.
+    if matches!(statement.kind(), StmtKind::Var(_))
+        && !f
+            .comments()
+            .is_ignored(AstNodes::VariableDeclaration(statement))
+    {
         write!(f, OptionalSemicolon);
     }
-    extend_node(node.span(), f);
-    write_trailing_comments_of(node, f);
-}
-
-/// `export default a /* comment */;` is `export default a; /* comment */` for oxfmt, as after any other
-/// statement. Prettier leaves it.
-fn comments_before_semicolon_of_default_export_go_behind_it(f: &Formatter<'_>) -> bool {
-    f.options().flavor.is_oxfmt()
 }
 
 /// `export default e`
+#[inline(never)]
 pub(crate) fn write_export_default_expression<'a>(
-    statement: Stmt<'a>,
+    _statement: Stmt<'a>,
     expression: Expr<'a>,
     f: &mut Formatter<'a>,
 ) {
-    let node = AstNodes::ExportDefaultDeclaration(statement);
-    format_export_keyword_with_class_decorators(node, "export default", None, f);
-    match comments_before_semicolon_of_default_export_go_behind_it(f) && !f.is_quiet() {
-        true => {
-            let hidden_from = start_of_comments_in_dropped_parentheses(expression, Some(false), f)
-                .unwrap_or_else(|| expression.outer_span().end);
-            let previous = f.comments_mut().hide_comments_from(hidden_from);
-            write!(f, [expression, OptionalSemicolon]);
-            f.comments_mut().restore_hidden_comments(previous);
-            // One on a line of its own leads the next statement.
-            let comments = f.comments().comments_before(statement.span().end);
-            let count = (comments.iter())
-                .take_while(|comment| !comment.preceded_by_newline())
-                .count();
-            let comments = comments.get(..count).unwrap_or_default();
-            write!(f, FormatTrailingComments::Comments(comments));
-        }
-        false => write!(f, [expression, OptionalSemicolon]),
-    }
-    extend_node(node.span(), f);
-    write_trailing_comments_of(node, f);
+    write!(f, ["export default ", expression, OptionalSemicolon]);
 }
 
-/// Flow's `declare export { a }`. Not `export export { a }`, of which TypeScript's parser makes `export { a }`.
+/// Flow's `declare export { a }`. Not `export export { a }`, which TypeScript's parser turns into `export { a }`.
 fn is_declared(statement: Stmt<'_>) -> bool {
     (statement.modifiers().iter()).any(|it| it.flag() == Flags::AMBIENT)
 }
 
 /// `export * from "a"`, `export * as a from "a"`
+#[inline(never)]
 pub(crate) fn write_export_all_declaration<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
     let StmtKind::ExportStar {
         alias, type_only, ..
@@ -167,132 +189,85 @@ pub(crate) fn write_export_all_declaration<'a>(statement: Stmt<'a>, f: &mut Form
         format_import_and_export_source_with_clause(statement, f);
         return write!(f, OptionalSemicolon);
     };
-    let format_name = module_export_name(name, AstNodes::ExportAllDeclaration(statement));
-    if f.is_quiet() {
-        write!(f, ["*", space(), "as", space(), format_name, space()]);
-    } else {
-        // To Babel `* as a` is a specifier, which the comments before it lead. To TypeScript there
-        // is only the name.
-        if f.file().is_javascript() {
-            let comments = f
-                .comments()
-                .comments_before_character(statement.span().start, b'*');
-            write!(f, FormatLeadingComments::Comments(comments));
-        }
-        write!(f, ["*", space(), "as", space()]);
-        let previous_limit = f.comments_mut().limit_comments_up_to(name.span().end);
-        write!(f, format_name);
-        f.comments_mut().restore_view_limit(previous_limit);
-        let source_start = statement
-            .module_specifier_span()
-            .map_or(0, |source| source.start);
-        write!(
-            f,
-            [
-                format_trailing_comments(statement.span(), name.span(), source_start),
-                space()
-            ]
-        );
-    }
-    write!(f, ["from", space()]);
+    // For Babel `* as a` is an `ExportNamespaceSpecifier`, which can own comments.
+    let star = statement.export_star_offset().unwrap_or_default();
+    format_ignorable_name(Span::new(star, name.span().end), f, |f| {
+        write!(f, ["*", space(), "as", space(), module_export_name(name)]);
+    });
+    write!(f, [space(), "from", space()]);
     format_import_and_export_source_with_clause(statement, f);
     write!(f, OptionalSemicolon);
 }
 
 /// `export { a, b as c }`, `export { a } from "a"`
+#[inline(never)]
 pub(crate) fn write_export_named_declaration<'a>(
     statement: Stmt<'a>,
     export: Export<'a>,
     f: &mut Formatter<'a>,
 ) {
-    let span = statement.span();
-    let specifiers = export.items();
-    let export_kind = export.is_type_only().then_some("type ");
-
-    format_leading_comments(span).fmt(f);
-    write!(
-        f,
-        [
-            is_declared(statement).then_some("declare "),
-            "export",
-            space()
-        ]
-    );
-
-    let needs_space = f.options().bracket_spacing.value();
-    let Some(first) = specifiers.first() else {
-        // The comments in an export of nothing go after the keyword.
-        if !export.has_from() && !f.is_quiet() {
-            let comments = f.comments().comments_before_character(span.start, b'}');
-            if let Some(last) = comments.last() {
-                write!(
-                    f,
-                    [
-                        FormatDanglingComments::Comments {
-                            comments,
-                            indent: DanglingIndentMode::None
-                        },
-                        last.is_line().then_some(hard_line_break()),
-                        " "
-                    ]
-                );
-            }
-        }
-        write!(f, [export_kind, "{}"]);
-        return write_export_source(statement, export, f);
-    };
-    if specifiers.len() == 1 && !only_specifier_has_comments(statement, first.span(), f) {
+    write!(f, [is_declared(statement).then_some("declare "), "export"]);
+    // `export { /* comment */ };`
+    let node = AstNodes::ExportNamedDeclaration(statement);
+    if !f.is_quiet()
+        && let Some(last) = f.comments().of_node(node).dangling.last()
+    {
         write!(
             f,
             [
-                export_kind,
-                "{",
-                maybe_space(needs_space),
-                first,
-                maybe_space(needs_space),
-                "}"
-            ]
-        );
-    } else {
-        write!(
-            f,
-            [
-                export_kind,
-                "{",
-                FormatSpecifiers(statement, specifiers),
-                "}"
+                space(),
+                dangling_comments(node),
+                last.is_line().then_some(hard_line_break())
             ]
         );
     }
-    write_export_source(statement, export, f);
-}
+    write!(f, [" ", export.is_type_only().then_some("type ")]);
 
-/// What is after the `}` of `export {}`.
-fn write_export_source<'a>(statement: Stmt<'a>, export: Export<'a>, f: &mut Formatter<'a>) {
+    let specifiers = export.items();
+    let needs_space = f.options().bracket_spacing.value();
+    match specifiers.first() {
+        None => write!(f, "{}"),
+        Some(only)
+            if specifiers.len() == 1
+                && (f.is_quiet()
+                    || !f.comments().has_comments(AstNodes::ExportSpecifier(only))) =>
+        {
+            write!(
+                f,
+                [
+                    "{",
+                    maybe_space(needs_space),
+                    only,
+                    maybe_space(needs_space),
+                    "}"
+                ]
+            );
+        }
+        Some(_) => write!(
+            f,
+            [
+                "{",
+                FormatSpecifiers(specifiers, AstNodes::ExportSpecifier),
+                "}"
+            ]
+        ),
+    }
     if export.has_from() {
         write!(f, [space(), "from", space()]);
         format_import_and_export_source_with_clause(statement, f);
     }
     write!(f, OptionalSemicolon);
-    write_trailing_comments_of(AstNodes::ExportNamedDeclaration(statement), f);
 }
 
 /// `a`, `a as b`, `type a`
 pub(crate) fn write_export_specifier<'a>(specifier: ExportSpec<'a>, f: &mut Formatter<'a>) {
-    let node = AstNodes::ExportSpecifier(specifier);
-    write!(
-        f,
-        [
-            FormatCommentsInSpecifier(specifier.span()),
-            specifier.is_type_only().then_some("type ")
-        ]
-    );
-    let exported = module_export_name(specifier.exported(), node);
+    write!(f, specifier.is_type_only().then_some("type "));
+    let exported = module_export_name(specifier.exported());
     match specifier.is_renamed() {
         true => write!(
             f,
             [
-                module_export_name(specifier.local(), node),
+                module_export_name(specifier.local()),
                 space(),
                 "as",
                 space(),

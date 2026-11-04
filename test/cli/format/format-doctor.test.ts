@@ -40,42 +40,42 @@ const ugly = "const a = {b:1}\n";
 
 const prettier = {
   ...installed("prettier"),
-  ...installed("prettier-plugin-svelte"),
+  ...installed("prettier-plugin-astro"),
   ...installed("@ianvs/prettier-plugin-sort-imports"),
   "package.json": dependencies(
     "prettier",
-    "prettier-plugin-svelte",
     "prettier-plugin-astro",
+    "prettier-plugin-svelte",
     "@ianvs/prettier-plugin-sort-imports",
     "eslint-config-prettier",
     "typescript",
   ),
   ".prettierrc": JSON.stringify({
     semi: false,
-    plugins: ["@ianvs/prettier-plugin-sort-imports", "prettier-plugin-svelte"],
+    plugins: ["@ianvs/prettier-plugin-sort-imports", "prettier-plugin-astro"],
   }),
   ".editorconfig": "root = true\n[*]\nindent_size = 2\n",
   "src/a.js": ugly,
   "src/b.ts": ugly,
-  "src/c.svelte": "<p>c</p>\n",
-  "src/d.svelte": "<p>d</p>\n",
+  "src/c.astro": "<p>c</p>\n",
+  "src/d.astro": "<p>d</p>\n",
 };
 
 describe.concurrent("bun fmt --doctor", () => {
-  test("with a .prettierrc", async () => {
+  test("reports a project with a .prettierrc", async () => {
     const { stdout, stderr, exitCode, isUntouched } = await doctor(prettier);
     expect(stderr).toBe("");
     expect(stdout).toBe(`Using .prettierrc (Prettier config)
 Also .editorconfig
 
     4 files are formatted natively
-    2 files go to your installed Prettier: 2 *.svelte
+    2 files go to your installed Prettier: 2 *.astro
 
 Built-in plugins: @ianvs/prettier-plugin-sort-imports
-Plugins that use your installed Prettier: prettier-plugin-svelte
+Plugins that use your installed Prettier: prettier-plugin-astro
 
-You can remove: prettier-plugin-astro
-Still needed:   @ianvs/prettier-plugin-sort-imports, prettier, prettier-plugin-svelte (some files go to them)
+You can remove: prettier-plugin-svelte
+Still needed:   @ianvs/prettier-plugin-sort-imports, prettier, prettier-plugin-astro (some files go to them)
 Not checked:    other tools' configs, CI files, Git hooks
 `);
     expect(isUntouched).toBe(true);
@@ -85,21 +85,21 @@ Not checked:    other tools' configs, CI files, Git hooks
   test("-f json prints the same report as JSON", async () => {
     const { stdout, exitCode } = await doctor(prettier, ["-f", "json"]);
     expect(JSON.parse(stdout)).toEqual({
-      config: { path: ".prettierrc", kind: "prettier", nested: [], editorconfig: true },
-      files: { formatted: 4, by_prettier: { "*.svelte": 2 }, not_formatted: {}, left_for_plugins: 0 },
+      config: { path: ".prettierrc", kind: "prettier", nested: [], editorconfig: true, bunfig: null },
+      files: { formatted: 4, by_prettier: { "*.astro": 2 }, not_formatted: {}, left_for_plugins: 0 },
       plugins: {
         built_in: ["@ianvs/prettier-plugin-sort-imports"],
-        by_prettier: ["prettier-plugin-svelte"],
+        by_prettier: ["prettier-plugin-astro"],
         not_supported: [],
         not_installed: [],
       },
       options_not_supported: [],
       packages: {
-        removable: ["prettier-plugin-astro"],
+        removable: ["prettier-plugin-svelte"],
         needed: [
           { name: "@ianvs/prettier-plugin-sort-imports", reason: "files", by: null },
           { name: "prettier", reason: "files", by: null },
-          { name: "prettier-plugin-svelte", reason: "files", by: null },
+          { name: "prettier-plugin-astro", reason: "files", by: null },
         ],
         not_checked: ["other tools' configs", "CI files", "Git hooks"],
       },
@@ -126,8 +126,9 @@ Not checked:    other tools' configs, CI files, Git hooks
     expect(exitCode).toBe(0);
   });
 
-  test("the plugin that sorts classes is built in", async () => {
+  test("lists prettier-plugin-tailwindcss as built in", async () => {
     const { stdout, exitCode } = await doctor({
+      ...installed("tailwindcss"),
       "package.json": dependencies("prettier", "prettier-plugin-tailwindcss", "tailwindcss"),
       ".prettierrc.json": JSON.stringify({ plugins: ["prettier-plugin-tailwindcss"], tailwindFunctions: ["cn"] }),
       "a.js": ugly,
@@ -140,6 +141,179 @@ Built-in plugins: prettier-plugin-tailwindcss
 
 You can remove: prettier, prettier-plugin-tailwindcss
 Not checked:    other tools' configs, CI files, Git hooks
+`);
+    expect(exitCode).toBe(0);
+  });
+
+  test("notes that classes aren't sorted when sortTailwindcss is on but tailwindcss isn't installed", async () => {
+    const inWeb = Object.entries(installed("tailwindcss")).map(([name, text]) => [`web/${name}`, text]);
+    const files = { ".oxfmtrc.json": '{ "sortTailwindcss": {} }\n', "web/a.js": ugly, "api/a.js": ugly };
+    const renamed = JSON.stringify({ plugins: ["prettier-plugin-tailwindcss"], tailwindPackageName: "@acme/tw" });
+    const notes = async (files: Record<string, string>) =>
+      (await doctor(files)).stdout.split("\n").filter(line => line.startsWith("note: "));
+    expect(
+      await Promise.all([
+        notes(files),
+        notes({ ...files, ...Object.fromEntries(inWeb) }),
+        notes({ ...files, ...installed("tailwindcss") }),
+        notes({ ...files, ".oxfmtrc.json": "{}\n" }),
+        notes({ ".prettierrc": renamed, "a.js": ugly }),
+      ]),
+    ).toEqual([
+      ["note: Tailwind CSS classes are not sorted (tailwindcss is not installed)"],
+      ["note: Tailwind CSS classes are not sorted in some directories (tailwindcss is not installed there)"],
+      [],
+      [],
+      ["note: Tailwind CSS classes are not sorted (@acme/tw is not installed)"],
+    ]);
+  });
+
+  describe("prettier-plugin-svelte", () => {
+    const project = (version?: string) => ({
+      ...installed("prettier"),
+      ...(version && {
+        "node_modules/prettier-plugin-svelte/package.json": JSON.stringify({ name: "prettier-plugin-svelte", version }),
+      }),
+      "package.json": dependencies("prettier", "prettier-plugin-svelte"),
+      ".prettierrc.json": JSON.stringify({ plugins: ["prettier-plugin-svelte"] }),
+      "a.svelte": "<p>a</p>\n",
+    });
+
+    test.each([undefined, "4.1.1", "4.1.0", "3.4.0", "5.0.0"])("is built in: %s installed", async version => {
+      const { stdout, exitCode } = await doctor(project(version));
+      expect(stdout).toBe(`Using .prettierrc.json (Prettier config)
+
+    3 files are formatted natively
+
+Built-in plugins: prettier-plugin-svelte
+
+You can remove: prettier, prettier-plugin-svelte
+Not checked:    other tools' configs, CI files, Git hooks
+`);
+      expect(exitCode).toBe(0);
+    });
+
+    test.each(["--range-start=1", "--range-end=2", "--cursor-offset=1"])("is built in with %s", async flag => {
+      const { stdout, exitCode } = await doctor(project("4.1.1"), [flag]);
+      expect(stdout).toContain("    3 files are formatted natively\n\nBuilt-in plugins: prettier-plugin-svelte\n");
+      expect(stdout).toContain("You can remove: prettier, prettier-plugin-svelte\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.each([
+      ["svelte = false in [fmt]", { "bunfig.toml": "[fmt]\nsvelte = false\n" }, []],
+      ["--no-svelte", {}, ["--no-svelte"]],
+    ])("notes that Svelte files aren't formatted: %s", async (_, files, args) => {
+      const { stdout, exitCode } = await doctor({ ...project("3.4.0"), ...files }, args);
+      expect(stdout).toBe(`Using .prettierrc.json (Prettier config)
+${"bunfig.toml" in files ? "Using bunfig.toml ([fmt])\n" : ""}
+    2 files are formatted natively
+
+You can remove: prettier, prettier-plugin-svelte
+Not checked:    other tools' configs, CI files, Git hooks
+
+note: Svelte files are not formatted (svelte = false)
+`);
+      expect(exitCode).toBe(0);
+    });
+
+    test.each(["file-override", "prefer-file"])(
+      "still formats Svelte files with --config-precedence=%s",
+      async precedence => {
+        const files = { ...project("4.1.1"), "bunfig.toml": "[fmt]\nsvelte = false\n" };
+        const { stdout, exitCode } = await doctor(files, [`--config-precedence=${precedence}`]);
+        expect(stdout).toBe(`Using .prettierrc.json (Prettier config)
+Using bunfig.toml ([fmt])
+
+    3 files are formatted natively
+
+Built-in plugins: prettier-plugin-svelte
+
+You can remove: prettier, prettier-plugin-svelte
+Not checked:    other tools' configs, CI files, Git hooks
+`);
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    test("notes that some Svelte files aren't formatted if only an override turns it off", async () => {
+      const { stdout, exitCode } = await doctor({
+        ...project("4.1.1"),
+        "old/b.svelte": "<p>b</p>\n",
+        "bunfig.toml": '[[fmt.overrides]]\nfiles = "old/**"\noptions = { svelte = false }\n',
+      });
+      expect(stdout).toBe(`Using .prettierrc.json (Prettier config)
+Using bunfig.toml ([fmt])
+
+    3 files are formatted natively
+
+Built-in plugins: prettier-plugin-svelte
+
+You can remove: prettier, prettier-plugin-svelte
+Not checked:    other tools' configs, CI files, Git hooks
+
+note: Some Svelte files are not formatted (svelte = false in an override)
+`);
+      expect(exitCode).toBe(0);
+    });
+
+    test("prints the override note with every --config-precedence unless a config file wins", async () => {
+      const note = "note: Some Svelte files are not formatted (svelte = false in an override)\n";
+      const files = {
+        "a.svelte": "<p>a</p>\n",
+        "old/b.svelte": "<p>b</p>\n",
+        "bunfig.toml": '[[fmt.overrides]]\nfiles = "old/**"\noptions = { svelte = false }\n',
+      };
+      const inFile = { ...files, ".oxfmtrc.json": '{ "svelte": true }\n' };
+      const printsNote = async (project: Record<string, string>, precedence: string) =>
+        (await doctor(project, [`--config-precedence=${precedence}`])).stdout.endsWith(note);
+      const precedences = ["cli-override", "file-override", "prefer-file"];
+      expect(await Promise.all(precedences.map(it => printsNote(files, it)))).toEqual([true, true, true]);
+      expect(await Promise.all(precedences.map(it => printsNote(inFile, it)))).toEqual([true, false, false]);
+    });
+  });
+
+  test.each([[{ ...installed("prettier"), ...installed("prettier-plugin-packagejson") }], [{}]])(
+    "prettier-plugin-packagejson is built in, installed or not",
+    async packages => {
+      const { stdout, exitCode } = await doctor({
+        ...packages,
+        "package.json": dependencies("prettier", "prettier-plugin-packagejson"),
+        ".prettierrc.json": JSON.stringify({ plugins: ["prettier-plugin-packagejson"], packageSortOrder: ["version"] }),
+        "packages/a/package.json": "{}\n",
+        "a.js": ugly,
+      });
+      expect(stdout).toBe(`Using .prettierrc.json (Prettier config)
+
+    4 files are formatted natively
+
+Built-in plugins: prettier-plugin-packagejson
+
+You can remove: prettier, prettier-plugin-packagejson
+Not checked:    other tools' configs, CI files, Git hooks
+`);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test("built-in plugins are still needed if the installed Prettier formats another language", async () => {
+    const plugins = ["prettier-plugin-astro", "prettier-plugin-packagejson", "prettier-plugin-svelte"];
+    const { stdout, exitCode } = await doctor({
+      ...Object.assign({}, ...["prettier", ...plugins].map(installed)),
+      "package.json": dependencies("prettier", ...plugins),
+      ".prettierrc.json": JSON.stringify({ plugins }),
+      "a.astro": "<p>a</p>\n",
+      "b.svelte": "<p>b</p>\n",
+    });
+    expect(stdout).toBe(`Using .prettierrc.json (Prettier config)
+
+    3 files are formatted natively
+    1 file goes to your installed Prettier: 1 *.astro
+
+Built-in plugins: prettier-plugin-packagejson, prettier-plugin-svelte
+Plugins that use your installed Prettier: prettier-plugin-astro
+
+Still needed:   prettier, prettier-plugin-astro, prettier-plugin-packagejson, prettier-plugin-svelte (some files go to them)
 `);
     expect(exitCode).toBe(0);
   });
@@ -190,7 +364,7 @@ Still needed:   prettier, prettier-plugin-astro (some files go to them)
     expect(exitCode).toBe(0);
   });
 
-  test("Prettier is not removable while files are skipped because of a plugin", async () => {
+  test("Prettier isn't removable while files are skipped because of a plugin", async () => {
     const { stdout, exitCode } = await doctor({
       "package.json": dependencies("prettier", "prettier-plugin-css-order", "prettier-plugin-other"),
       ".prettierrc": JSON.stringify({ plugins: ["prettier-plugin-css-order"] }),
@@ -292,7 +466,36 @@ Not checked:    other tools' configs, CI files, Git hooks
     );
   });
 
-  test("with an .oxfmtrc.json", async () => {
+  test("an optional peer dependency of a shared config can be removed", async () => {
+    const project = (isOptional: boolean) => ({
+      "package.json": dependencies("shared-config", "oxfmt"),
+      "node_modules/shared-config/package.json": JSON.stringify({
+        name: "shared-config",
+        version: "1.0.0",
+        type: "module",
+        exports: { "./oxfmt": "./oxfmt.js" },
+        peerDependencies: { oxfmt: ">=0.59.0" },
+        peerDependenciesMeta: { oxfmt: { optional: isOptional } },
+      }),
+      "node_modules/shared-config/oxfmt.js": `import { defineConfig } from "oxfmt";
+        export const base = defineConfig({ semi: false });`,
+      "oxfmt.config.mts": `import { base } from "shared-config/oxfmt";
+        import { defineConfig } from "oxfmt";
+        export default defineConfig({ ...base });`,
+    });
+    const [optional, required] = await Promise.all([doctor(project(true)), doctor(project(false))]);
+    expect(optional.stdout).toEndWith(`
+You can remove: oxfmt
+Still needed:   shared-config (oxfmt.config.mts loads it)
+Not checked:    other tools' configs, CI files, Git hooks
+`);
+    expect(required.stdout).toEndWith(`
+Still needed:   oxfmt (shared-config needs it)
+                shared-config (oxfmt.config.mts loads it)
+`);
+  });
+
+  test("reports a project with an .oxfmtrc.json", async () => {
     const { stdout, exitCode, isUntouched } = await doctor({
       "package.json": dependencies("oxfmt"),
       ".oxfmtrc.json": JSON.stringify({ semi: false }),
@@ -309,7 +512,16 @@ Not checked:    other tools' configs, CI files, Git hooks
     expect(exitCode).toBe(0);
   });
 
-  test("without a config file", async () => {
+  test("with only [fmt] in bunfig.toml, reports it and doesn't suggest --init", async () => {
+    const { stdout, stderr, exitCode } = await doctor({ "a.js": ugly, "bunfig.toml": "[fmt]\nsemi = false\n" });
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "Using bunfig.toml ([fmt], on top of Prettier's defaults)\n\n    2 files are formatted natively\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("without a config file, suggests --init", async () => {
     const { stdout, stderr, exitCode, isUntouched } = await doctor({ "a.js": ugly });
     expect(stderr).toBe("");
     expect(stdout).toBe(`No Prettier or oxfmt config found. Bun formats like Prettier by default.

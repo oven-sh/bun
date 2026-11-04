@@ -1,9 +1,9 @@
-//! The program, and what it is told when it starts.
+//! The program and its startup data.
 
 use bun_core::printer::json_stringify;
 use bun_core::strings;
 
-/// The part of the program that the script for config files needs too.
+/// The part of the program that the config file script also needs.
 pub fn eslint_patch() -> &'static [u8] {
     bun_zstd::embed_compressed!(
         "src/lint/js_plugin/worker/eslint_patch.js",
@@ -36,7 +36,7 @@ pub fn program() -> impl Iterator<Item = &'static [u8]> {
     core::iter::once(eslint_patch()).chain(strings::split(rest, b"\0"))
 }
 
-/// `{ cwd, measures }`. `measures`: whether the program is to say what it loads.
+/// Writes `{ cwd, measures }`. `measures` tells the program to report what it loads.
 pub(super) fn write_start(cwd: &[u8], measures: bool, out: &mut Vec<u8>) {
     out.extend_from_slice(b"{\"cwd\":");
     json_stringify(cwd, out);

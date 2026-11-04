@@ -210,8 +210,14 @@ impl Pattern {
 
     /// One element of oxc's `GlobSet::new`. A leading `./` is dropped, and a pattern without `/` matches in any directory.
     /// oxc puts the `**/` in front of a leading `!` too, which makes the `!` a literal, so `!a.js` matches no `a.js` there.
-    pub fn of_oxc_glob_set(written: &[u8]) -> Pattern {
+    pub fn of_oxfmt(written: &[u8]) -> Pattern {
         Pattern::new(&in_any_directory(&of_fast_glob(written)))
+    }
+
+    /// The same for an oxlint config, where `@(a|b)` is a group. See [`fast_glob_match_with_groups`]. The `!` of `!(a).js` isn't
+    /// at the start once the `**/` is in front, so it starts a group.
+    pub fn of_oxlint(written: &[u8]) -> Pattern {
+        Pattern::new(&from_fast_glob(&in_any_directory(written), true))
     }
 
     /// A pattern from `overrides` in bunfig.toml. It has all of `Bun.Glob`'s syntax. A leading `./` is dropped, and a pattern
@@ -326,11 +332,62 @@ pub fn fast_glob_match(pattern: &[u8], text: &[u8]) -> bool {
         && matcher::match_on::<false>(&of_fast_glob(pattern), text).matches()
 }
 
+/// [`fast_glob_match`], except that `?(a)`, `*(a)`, `+(a)`, `@(a|b)` and `!(a)` are groups, as they are for ESLint. oxlint takes
+/// the parentheses literally, so the patterns of a config that was migrated from ESLint match nothing there.
+pub fn fast_glob_match_with_groups(pattern: &[u8], text: &[u8]) -> bool {
+    unclosed(pattern).is_none()
+        && matcher::match_on::<false>(&from_fast_glob(pattern, true), text).matches()
+}
+
 /// Converts a pattern for the `fast-glob` crate, which oxlint and oxfmt use. It has no `@(a|b)` groups and no `{1..3}` sequences.
 pub fn of_fast_glob(written: &[u8]) -> Cow<'_, [u8]> {
+    from_fast_glob(written, false)
+}
+
+/// Marks the `(` of every group like `@(a|b)` that is closed, and closed before the braces around it are.
+fn group_starts(written: &[u8]) -> Vec<bool> {
+    let mut is_start = vec![false; written.len()];
+    // Where the `{` and the `(` are that are open.
+    let mut open: Vec<usize> = Vec::new();
+    let mut braces = 0_usize;
+    // Every `!` at the start negates, for the crate and for ESLint, also the one of `!(a)`.
+    let mut at = written.iter().take_while(|it| **it == b'!').count();
+    while let Some(&byte) = written.get(at) {
+        match byte {
+            b'\\' => at += 1,
+            b'[' => at = matcher::class_end(written, at).map_or(at, |end| end - 1),
+            b'{' => {
+                open.push(at);
+                braces += 1;
+            }
+            b'}' if braces > 0 => {
+                while open.pop().is_some_and(|it| written[it] == b'(') {}
+                braces -= 1;
+            }
+            b'?' | b'*' | b'+' | b'@' | b'!' if written.get(at + 1) == Some(&b'(') => {
+                at += 1;
+                open.push(at);
+            }
+            b')' => {
+                if let Some(start) = open.pop_if(|it| written[*it] == b'(') {
+                    is_start[start] = true;
+                }
+            }
+            _ => {}
+        }
+        at += 1;
+    }
+    is_start
+}
+
+fn from_fast_glob(written: &[u8], has_groups: bool) -> Cow<'_, [u8]> {
     if strings::index_of_char_usize(written, b'(').is_none() && !strings::contains(written, b"..") {
         return Cow::Borrowed(written);
     }
+    let is_group_start = match has_groups {
+        true => group_starts(written),
+        false => Vec::new(),
+    };
     let mut pattern = Vec::with_capacity(written.len() + 2);
     let mut at = 0;
     while let Some(&byte) = written.get(at) {
@@ -340,7 +397,9 @@ pub fn of_fast_glob(written: &[u8]) -> Cow<'_, [u8]> {
             _ => 1,
         };
         // An escaped `.` still matches `.`, and `{1\..3}` no longer parses as a sequence.
-        if byte == b'(' || byte == b'.' && written.get(at + 1) == Some(&b'.') {
+        if byte == b'(' && is_group_start.get(at) != Some(&true)
+            || byte == b'.' && written.get(at + 1) == Some(&b'.')
+        {
             pattern.push(b'\\');
         }
         pattern.extend_from_slice(&written[at..(at + len).min(written.len())]);

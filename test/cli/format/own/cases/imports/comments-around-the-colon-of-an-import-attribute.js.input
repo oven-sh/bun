@@ -1,0 +1,7 @@
+import a from "a" with { type: /* comment */ // comment
+"json" };
+import b from "b" with { type: // comment
+"json" };
+import c from "c" with { type /* comment */ : /* comment */ "json" };
+export * from "f" with { type: "json", g: // comment
+"h" };

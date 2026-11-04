@@ -1,21 +1,21 @@
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::types::IdMap;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
-use rustc_hash::FxHashMap;
 
 /// Disallows the use of `this` in exported functions.
 pub struct NoThisInExportedFunction;
 
-const NO_THIS_IN_EXPORTED_FUNCTION: Message = Message::new("", "`this` should not be used in exported functions");
+const NO_THIS_IN_EXPORTED_FUNCTION: &Message = &Message::new("", "`this` should not be used in exported functions");
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// The function in whose body something is, if a `this` there is that of the function.
+    /// Caches the function whose body a node is in, if a `this` there belongs to that function.
     functions: AncestorMemo<'a, Option<Func<'a>>>,
-    /// How often a function is exported.
-    exports: FxHashMap<Func<'a>, usize>,
-    /// Where the function declarations and the function expressions are, without those in another, in order. No other function
-    /// is exported.
+    /// How many times each function is exported.
+    exports: IdMap<Func<'a>, usize>,
+    /// The sorted spans of the function declarations and function expressions that aren't nested in another one. Only
+    /// these can be exported.
     candidates: Vec<Span>,
 }
 
@@ -37,9 +37,9 @@ impl Rule for NoThisInExportedFunction {
         utils::sort::sort_unstable_by_key(&mut candidates, |it| it.start);
         let mut end = 0;
         candidates.retain(|it| {
-            let is_in_no_other = it.start >= end;
+            let is_outermost = it.start >= end;
             end = end.max(it.end);
-            is_in_no_other
+            is_outermost
         });
         (!candidates.is_empty()).then(|| State { candidates, ..State::default() })
     }
@@ -53,15 +53,16 @@ impl Rule for NoThisInExportedFunction {
         let Some(Some(func)) = cx.state.functions.find(Node::Expr(this), function_of_this) else {
             return;
         };
-        // It is reported for each export.
-        for _ in 0..*cx.state.exports.entry(func).or_insert_with(|| export_count(func)) {
+        // oxlint reports it once per export.
+        let count = *cx.state.exports.get_or_insert_with(func, || export_count(func));
+        for _ in 0..count {
             cx.report(this, NO_THIS_IN_EXPORTED_FUNCTION);
         }
     }
 }
 
-/// `ThisExpressionFinder`, from the inside: not in another function that is not an arrow function, nor in its parameters, not in a
-/// static block, not in the value or a decorator of a property of a class.
+/// `ThisExpressionFinder`, from the inside out. It doesn't enter another non-arrow function or its parameters, a static
+/// block, or a class property's value or decorators.
 fn function_of_this<'a>(child: Node<'a>, parent: Node<'a>) -> Option<Option<Func<'a>>> {
     match parent {
         Node::Func(func) => match func.kind() {
@@ -103,7 +104,7 @@ fn export_count<'a>(func: Func<'a>) -> usize {
     }
 }
 
-/// How many `export { a }` there are for it, without `type`.
+/// Returns how many `export { a }` specifiers it has, not counting `type` exports.
 fn export_specifier_count(symbol: Symbol) -> usize {
     let is_export = |it: &Reference| matches!(it.node(), Node::ExportSpec(spec) if !spec.is_type_only() && !spec.export().is_type_only());
     symbol.references().filter(is_export).count()

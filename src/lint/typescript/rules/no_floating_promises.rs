@@ -5,10 +5,9 @@ use bun_lint::types::utils::{
     parse_then_call, parse_type_or_value_specifiers, type_matches_some_specifier,
     value_matches_some_specifier,
 };
-use bun_lint::types::{Signature, TsSymbol, Type};
+use bun_lint::types::{IdMap, Signature, TsSymbol, Type};
 use bun_lint::utils::eslint_utils::is_parenthesized;
 use bun_lint::utils::ts_utils::{OperatorPrecedence, get_operator_precedence_for_node};
-use rustc_hash::FxHashMap;
 
 /// Require Promise-like statements to be handled appropriately.
 pub struct NoFloatingPromises {
@@ -19,42 +18,42 @@ pub struct NoFloatingPromises {
     ignore_void: bool,
 }
 
-const FLOATING: Message = Message::new(
+const FLOATING: &Message = &Message::new(
     "floating",
     "Promises must be awaited, end with a call to .catch, or end with a call to .then with a rejection handler.",
 );
-const FLOATING_FIX_AWAIT: Message = Message::new("floatingFixAwait", "Add await operator.");
-const FLOATING_FIX_VOID: Message = Message::new("floatingFixVoid", "Add void operator to ignore.");
-const FLOATING_PROMISE_ARRAY: Message = Message::new(
+const FLOATING_FIX_AWAIT: &Message = &Message::new("floatingFixAwait", "Add await operator.");
+const FLOATING_FIX_VOID: &Message = &Message::new("floatingFixVoid", "Add void operator to ignore.");
+const FLOATING_PROMISE_ARRAY: &Message = &Message::new(
     "floatingPromiseArray",
     "An array of Promises may be unintentional. Consider handling the promises' fulfillment or rejection with Promise.all or similar.",
 );
-const FLOATING_PROMISE_ARRAY_VOID: Message = Message::new(
+const FLOATING_PROMISE_ARRAY_VOID: &Message = &Message::new(
     "floatingPromiseArrayVoid",
     "An array of Promises may be unintentional. Consider handling the promises' fulfillment or rejection with Promise.all or similar, or explicitly marking the expression as ignored with the `void` operator.",
 );
-const FLOATING_USELESS_REJECTION_HANDLER: Message = Message::new(
+const FLOATING_USELESS_REJECTION_HANDLER: &Message = &Message::new(
     "floatingUselessRejectionHandler",
     "Promises must be awaited, end with a call to .catch, or end with a call to .then with a rejection handler. A rejection handler that is not a function will be ignored.",
 );
-const FLOATING_USELESS_REJECTION_HANDLER_VOID: Message = Message::new(
+const FLOATING_USELESS_REJECTION_HANDLER_VOID: &Message = &Message::new(
     "floatingUselessRejectionHandlerVoid",
     "Promises must be awaited, end with a call to .catch, end with a call to .then with a rejection handler or be explicitly marked as ignored with the `void` operator. A rejection handler that is not a function will be ignored.",
 );
-const FLOATING_VOID: Message = Message::new(
+const FLOATING_VOID: &Message = &Message::new(
     "floatingVoid",
     "Promises must be awaited, end with a call to .catch, end with a call to .then with a rejection handler or be explicitly marked as ignored with the `void` operator.",
 );
 
-/// What has been found out about types, unless with `checkThenables` it depends on the place too. Each constituent of a
-/// union is looked at, and many statements have the same type.
+/// Per-type results. They aren't cached with `checkThenables`, where the result also depends on the location. Each
+/// constituent of a union is examined, and many statements have the same type.
 #[derive(Default)]
 pub struct State<'a> {
-    promise_arrays: FxHashMap<Type<'a>, bool>,
-    promise_likes: FxHashMap<Type<'a>, bool>,
+    promise_arrays: IdMap<Type<'a>, bool>,
+    promise_likes: IdMap<Type<'a>, bool>,
 }
 
-/// In which way a promise is not handled.
+/// How a promise is left unhandled.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Unhandled {
     Promise,
@@ -63,9 +62,13 @@ enum Unhandled {
 }
 
 fn is_async_iife(expression: Expr) -> bool {
-    // ESLint has a `ChainExpression` around `(() => {})?.()`.
-    !expression.is_chain_root()
-        && expression.as_call().is_some_and(|call| call.callee().as_fn().is_some())
+    // ESLint has a `ChainExpression` around `(() => {})?.()`, tsgolint a `ParenthesizedExpression`
+    // around `(function () {}())`.
+    let is_call_expression = match expression.file().language().is_oxlint {
+        true => !expression.is_parenthesized(),
+        false => !expression.is_chain_root(),
+    };
+    is_call_expression && expression.as_call().is_some_and(|call| call.callee().as_fn().is_some())
 }
 
 fn is_valid_rejection_handler(rejection_handler: Expr) -> bool {
@@ -81,8 +84,8 @@ fn is_function_param<'a>(param: TsSymbol<'a>, node: Expr<'a>) -> bool {
     union_constituents(ty).iter().any(|t| !t.get_call_signatures().is_empty())
 }
 
-/// `keyword expression`, with parentheses around the expression if it needs them. `node` is what
-/// the keyword is put in front of.
+/// Produces `keyword expression`, with parentheses around the expression if it needs them. The keyword is inserted
+/// before `node`.
 fn add_operator(fixer: Fixer, keyword: &str, node: Span, expression: Expr) -> Vec<Fix> {
     if is_parenthesized(expression)
         || get_operator_precedence_for_node(expression) > OperatorPrecedence::Unary
@@ -103,7 +106,7 @@ fn add_await(fixer: Fixer, node: Span, expression: Expr) -> Vec<Fix> {
     add_operator(fixer, "await", node, expression)
 }
 
-/// The rejection handler of `promise`, or of what its `.finally()` is called on.
+/// Returns the rejection handler of `promise`, or of the promise its `.finally()` is called on.
 fn rejection_handler_of(mut promise: Expr<'_>) -> Option<Expr<'_>> {
     loop {
         if let Some(call) = parse_catch_call(promise) {
@@ -117,9 +120,9 @@ fn rejection_handler_of(mut promise: Expr<'_>) -> Option<Expr<'_>> {
 }
 
 impl NoFloatingPromises {
-    /// `node`: the range of the statement, or of the expression if it is the body of an arrow
-    /// function.
+    /// `node` is the range of the statement, or of the expression if it's an arrow function's body.
     fn check_node<'a>(&self, node: Span, expression: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let expression = expression.with_jsdoc_cast();
         if self.is_known_safe_promise_call(expression) {
             return;
         }
@@ -134,8 +137,13 @@ impl NoFloatingPromises {
             (Unhandled::Promise, true) => FLOATING_VOID,
             (Unhandled::Promise, false) => FLOATING,
         };
-        // oxlint points at the promise.
-        let mut report = cx.report(if cx.language().is_oxlint { promise.span() } else { node }, message);
+        // oxlint points at the promise, including its parentheses unless they belong to the statement's expression.
+        let at = match cx.language().is_oxlint {
+            true if promise == expression => promise.span(),
+            true => promise.outer_span(),
+            false => node,
+        };
+        let mut report = cx.report(at, message);
         report = report.labels_with(|labels| {
             let what = match unhandled {
                 Unhandled::PromiseArray => "This array contains Promises and",
@@ -149,17 +157,17 @@ impl NoFloatingPromises {
                 let ty = bstr::BStr::new(&ty);
                 labels.push(at, format!("This rejection handler has type `{ty}`, which is not callable."));
             }
-            labels.push(promise, "");
+            labels.push(at, "");
         });
         if unhandled == Unhandled::PromiseArray {
             return;
         }
         if self.ignore_void {
-            report = report.suggest_change_of_behavior(FLOATING_FIX_VOID, &[], |fixer| {
+            report = report.suggest_behavior_change(FLOATING_FIX_VOID, &[], |fixer| {
                 add_operator(fixer, "void", node, expression)
             });
         }
-        report.suggest_change_of_behavior(FLOATING_FIX_AWAIT, &[], |fixer| add_await(fixer, node, expression));
+        report.suggest_behavior_change(FLOATING_FIX_AWAIT, &[], |fixer| add_await(fixer, node, expression));
     }
 
     fn is_known_safe_promise_call(&self, node: Expr) -> bool {
@@ -172,22 +180,28 @@ impl NoFloatingPromises {
         };
         let callee = call.callee();
         let ty = callee.ty();
-        value_matches_some_specifier(callee, specifiers, ty)
+        // tsgolint has no name for a parenthesized callee.
+        let is_parenthesized_expression = callee.is_parenthesized() && callee.file().language().is_oxlint;
+        (!is_parenthesized_expression && value_matches_some_specifier(callee, specifiers, ty))
             || type_matches_some_specifier(ty, specifiers)
     }
 
-    /// `is_chain_element`: where ESLint has a `ChainExpression` and in it the call, `node` stands
-    /// for the call.
+    /// `is_statement_expression` means `node` is the statement's expression or the arrow function's body, not a part of
+    /// it. Where ESLint has a `ChainExpression` with the call inside, `node` is the call.
     fn is_unhandled_promise<'a>(
         &self,
         node: Expr<'a>,
-        is_chain_element: bool,
+        is_statement_expression: bool,
         known: &mut State<'a>,
     ) -> Option<(Unhandled, Expr<'a>)> {
+        let (node, is_oxlint) = (node.with_jsdoc_cast(), node.file().language().is_oxlint);
+        // tsgolint only skips the parentheses of the statement's expression. Any other `ParenthesizedExpression` isn't
+        // one of the kinds it looks into.
+        let is_parenthesized_expression = is_oxlint && !is_statement_expression && node.is_parenthesized();
         match node.kind() {
+            _ if is_parenthesized_expression => {}
             ExprKind::Assign { .. } => return None,
-            // Any operand of a comma expression can be an unhandled promise, whatever the type of
-            // the last is.
+            // Any operand of a comma expression can be an unhandled promise, whatever the last one's type is.
             ExprKind::Binary { op: BinOp::Comma, .. } => {
                 let mut items = node.sequence().into_iter();
                 return items.find_map(|item| self.is_unhandled_promise(item, false, known));
@@ -195,7 +209,7 @@ impl NoFloatingPromises {
             ExprKind::Unary { op: UnOp::Void, operand } if !self.ignore_void => {
                 return self.is_unhandled_promise(operand, false, known);
             }
-            // The value of every other unary operator is a primitive.
+            // Every other unary operator produces a primitive.
             ExprKind::Unary { .. } => return None,
             _ => {}
         }
@@ -204,17 +218,46 @@ impl NoFloatingPromises {
         if self.is_promise_array(node, ty, known) {
             return Some((Unhandled::PromiseArray, node));
         }
-        // `await` handles a promise, but not an array of promises. The type does not tell: that of
-        // `await (promise as Promise<number> & number)` is `Promise<number> & number`.
-        if let ExprKind::Await(_) = node.kind() {
+        // `await` handles a promise, but not an array of promises. The type can't tell us:
+        // `await (promise as Promise<number> & number)` has the type `Promise<number> & number`.
+        if !is_parenthesized_expression && let ExprKind::Await(_) = node.kind() {
             return None;
         }
         if !self.is_promise_like(node, ty, known) {
             return None;
         }
+        if is_parenthesized_expression {
+            return Some((Unhandled::Promise, node));
+        }
 
         match node.kind() {
-            ExprKind::Call(_) if is_chain_element || !node.is_chain_root() => {
+            // tsgolint has no `ChainExpression`, and identifies the method by the checker's name for it.
+            ExprKind::Call(call) if is_oxlint => {
+                let callee = call.callee();
+                // A parenthesized callee isn't an access expression.
+                let method_name = match callee.is_parenthesized() {
+                    true => None,
+                    false => callee.file().type_checker().get_accessed_property_name(callee),
+                };
+                let arguments = call.args();
+                let mut known_arguments =
+                    arguments.iter().take_while(|argument| !matches!(argument.kind(), ExprKind::Spread(_)));
+                let on_rejected = match method_name {
+                    Some(b"catch") if !arguments.is_empty() => known_arguments.next(),
+                    Some(b"then") if arguments.len() >= 2 => known_arguments.nth(1),
+                    Some(b"finally") => {
+                        let object = callee.object()?;
+                        return self.is_unhandled_promise(object, false, known).map(|(it, _)| (it, node));
+                    }
+                    _ => None,
+                };
+                match on_rejected {
+                    Some(handler) if is_valid_rejection_handler(handler) => None,
+                    Some(_) => Some((Unhandled::NonFunctionHandler, node)),
+                    None => Some((Unhandled::Promise, node)),
+                }
+            }
+            ExprKind::Call(_) if is_statement_expression || !node.is_chain_root() => {
                 let promise_handling_method_call = match parse_catch_call(node) {
                     Some(call) => Some(call.on_rejected),
                     None => parse_then_call(node).map(|call| call.on_rejected),
@@ -243,7 +286,7 @@ impl NoFloatingPromises {
     }
 
     fn is_promise_array<'a>(&self, node: Expr<'a>, ty: Type<'a>, known: &mut State<'a>) -> bool {
-        if let Some(&is_promise_array) = known.promise_arrays.get(&ty) {
+        if let Some(&is_promise_array) = known.promise_arrays.get(ty) {
             return is_promise_array;
         }
         let is_promise_array = union_constituents(ty).iter().map(|t| t.get_apparent_type()).any(|ty| {
@@ -264,7 +307,7 @@ impl NoFloatingPromises {
         if self.check_thenables {
             return self.is_promise_like_at(node, ty);
         }
-        *known.promise_likes.entry(ty).or_insert_with(|| self.is_promise_like_at(node, ty))
+        *known.promise_likes.get_or_insert_with(ty, || self.is_promise_like_at(node, ty))
     }
 
     fn is_promise_like_at<'a>(&self, node: Expr<'a>, ty: Type<'a>) -> bool {
@@ -319,12 +362,12 @@ impl Rule for NoFloatingPromises {
         }
     }
 
-    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let mut on = On::new().stmts(&[StmtTag::Expr]);
 
-        // The body of an arrow function that is a unary expression. Only what `void` is applied to
-        // can be a promise, and only if `void` is not a way to ignore one.
-        if !self.ignore_void {
+        // An arrow function body that's a unary expression. Only the operand of `void` can be a promise, and only if
+        // `void` isn't accepted as a way to ignore one. tsgolint only looks at statements.
+        if !self.ignore_void && !file.language().is_oxlint {
             on = on.exprs(&[ExprTag::Unary]);
         }
         on

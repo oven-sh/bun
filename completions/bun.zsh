@@ -23,12 +23,11 @@ _bun_add_completion() {
         '--no-progress[Disable the progress bar]' \
         '--no-summary[Don'"'"'t print a summary]' \
         '--no-verify[Skip verifying integrity of newly downloaded packages]' \
-        '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
+        '--ignore-scripts[Skip lifecycle scripts for all packages, including the project'"'"'s package.json and trusted dependencies]' \
         '--global[Add a package globally]' \
         '-g[Add a package globally]' \
         '--cwd[Set a specific cwd]:cwd' \
         '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
-        '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' \
         '--help[Print this help menu]' \
         '--dev[Add dependence to "devDependencies]' \
         '-d[Add dependence to "devDependencies]' \
@@ -36,6 +35,7 @@ _bun_add_completion() {
         '--development[]' \
         '--optional[Add dependency to "optionalDependencies]' \
         '--peer[Add dependency to "peerDependencies]' \
+        '--save-prod[Add dependency to "dependencies", also when another group lists it]' \
         '--exact[Add the exact version instead of the ^range]' \
         '--catalog=-[Add the resolved version to the root package.json catalog and depend on it as "catalog:"]:catalog' \
         '*--filter[Add the package(s) to the matching workspaces instead of the current package]:workspace pattern' \
@@ -77,12 +77,11 @@ _bun_unlink_completion() {
         '--no-progress[Disable the progress bar]' \
         '--no-summary[Don'"'"'t print a summary]' \
         '--no-verify[Skip verifying integrity of newly downloaded packages]' \
-        '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
+        '--ignore-scripts[Skip lifecycle scripts for all packages, including the project'"'"'s package.json and trusted dependencies]' \
         '--global[Add a package globally]' \
         '-g[Add a package globally]' \
         '--cwd[Set a specific cwd]:cwd' \
         '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
-        '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' \
         '--help[Print this help menu]' &&
         ret=0
 
@@ -121,12 +120,11 @@ _bun_link_completion() {
         '--no-progress[Disable the progress bar]' \
         '--no-summary[Don'"'"'t print a summary]' \
         '--no-verify[Skip verifying integrity of newly downloaded packages]' \
-        '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
+        '--ignore-scripts[Skip lifecycle scripts for all packages, including the project'"'"'s package.json and trusted dependencies]' \
         '--global[Add a package globally]' \
         '-g[Add a package globally]' \
         '--cwd[Set a specific cwd]:cwd' \
         '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
-        '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' \
         '--help[Print this help menu]' &&
         ret=0
 
@@ -259,7 +257,7 @@ _bun_pm_completion() {
     cmd2)
         sub_commands=(
             'bin\:"print the path to bin folder" '
-            'ls\:"list the dependency tree according to the current lockfile" '
+            'ls\:"list the tree of installed dependencies" '
             'licenses\:"list installed packages grouped by license" '
             'hash\:"generate & print the hash of the current lockfile" '
             'hash-string\:"print the string used to hash the lockfile" '
@@ -274,10 +272,16 @@ _bun_pm_completion() {
     args)
         case $line[2] in
         cache)
+            pmargs=(
+                "--max-age[remove cache entries older than this many days (prune, default 30)]:days"
+                "--dry-run[print what would be removed without deleting anything (rm, prune)]"
+            )
+
             _arguments -s -C \
                 '1: :->cmd' \
                 '2: :->cmd2' \
-                ':::(rm)' &&
+                ':::(rm prune pack unpack)' \
+                $pmargs &&
                 ret=0
 
             ;;
@@ -295,8 +299,9 @@ _bun_pm_completion() {
             ;;
         ls)
             pmargs=(
-                "--all[list the entire dependency tree according to the current lockfile]"
+                "--all[list the entire tree of installed dependencies]"
                 "--trusted[list only trusted dependencies]"
+                "-g[list the tree of globally installed dependencies]"
             )
 
             _arguments -s -C \
@@ -387,12 +392,11 @@ _bun_install_completion() {
         '--no-progress[Disable the progress bar]' \
         '--no-summary[Don'"'"'t print a summary]' \
         '--no-verify[Skip verifying integrity of newly downloaded packages]' \
-        '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
+        '--ignore-scripts[Skip lifecycle scripts for all packages, including the project'"'"'s package.json and trusted dependencies]' \
         '--global[Add a package globally]' \
         '-g[Add a package globally]' \
         '--cwd[Set a specific cwd]:cwd' \
         '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
-        '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' \
         '--help[Print this help menu]' \
         '--dev[Add dependence to "devDependencies]' \
         '-d[Add dependence to "devDependencies]' \
@@ -400,6 +404,7 @@ _bun_install_completion() {
         '-D[]' \
         '--optional[Add dependency to "optionalDependencies]' \
         '--peer[Add dependency to "peerDependencies]' \
+        '--save-prod[Add dependency to "dependencies", also when another group lists it]' \
         '--exact[Add the exact version instead of the ^range]' \
         '--catalog=-[Add the resolved version to the root package.json catalog and depend on it as "catalog:"]:catalog' \
         '*--filter[Install packages for the matching workspaces]:workspace pattern' \
@@ -437,12 +442,11 @@ _bun_remove_completion() {
         '--no-progress[Disable the progress bar]' \
         '--no-summary[Don'"'"'t print a summary]' \
         '--no-verify[Skip verifying integrity of newly downloaded packages]' \
-        '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
+        '--ignore-scripts[Skip lifecycle scripts for all packages, including the project'"'"'s package.json and trusted dependencies]' \
         '--global[Add a package globally]' \
         '-g[Add a package globally]' \
         '--cwd[Set a specific cwd]:cwd' \
         '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
-        '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' \
         '--help[Print this help menu]' \
         '*--filter[Remove the package(s) from the matching workspaces instead of the current package]:workspace pattern' \
         '*-F[Remove the package(s) from the matching workspaces instead of the current package]:workspace pattern' &&
@@ -592,6 +596,7 @@ _bun_build_completion() {
         '--target[The intended execution environment for the bundle. "browser", "bun" or "node"]: :->target' \
         '--splitting[Whether to enable code splitting (requires --outdir)]' \
         '--compile[generating a standalone binary from a TypeScript or JavaScript file]' \
+        '--dts[Write declaration files (.d.ts), and each output file with its types kept (.aot.ts), to --outdir]' \
         '--format[Specifies the module format to be used in the generated bundles]: :->format' &&
         ret=0
 
@@ -654,12 +659,11 @@ _bun_update_completion() {
         '--no-progress[Disable the progress bar]' \
         '--no-summary[Don'"'"'t print a summary]' \
         '--no-verify[Skip verifying integrity of newly downloaded packages]' \
-        '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
+        '--ignore-scripts[Skip lifecycle scripts for all packages, including the project'"'"'s package.json and trusted dependencies]' \
         '-g[Add a package globally]' \
         '--global[Add a package globally]' \
         '--cwd[Set a specific cwd]:cwd' \
         '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
-        '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' \
         '--help[Print this help menu]' &&
         ret=0
 
@@ -676,6 +680,39 @@ _bun_outdated_completion() {
         '--cwd[Set a specific cwd]:cwd' \
         '--verbose[Excessively verbose logging]' \
         '--no-progress[Disable the progress bar]' \
+        '--help[Print this help menu]' &&
+        ret=0
+
+    case $state in
+    config)
+        _bun_list_bunfig_toml
+
+        ;;
+    esac
+}
+
+_bun_publish_completion() {
+    _arguments -s -C \
+        '1: :->cmd1' \
+        '2:tarball:_files -g "*.tgz"' \
+        '-r[Publish every workspace package whose version is not on the registry]' \
+        '--recursive[Publish every workspace package whose version is not on the registry]' \
+        '*-F[Publish each matching workspace package]:workspace pattern' \
+        '*--filter[Publish each matching workspace package]:workspace pattern' \
+        '--access[Set access level for scoped packages]:access:(public restricted)' \
+        '--tag[Tag the release. Default is "latest"]:tag' \
+        '--otp[Provide a one-time password for authentication]:otp' \
+        '--auth-type[Specify the type of one-time password authentication]:auth-type:(web legacy)' \
+        '--gzip-level[Specify a custom compression level for gzip. Default is 9.]:level' \
+        '--tolerate-republish[Don'"'"'t exit with code 1 when republishing over an existing version number]' \
+        '--dry-run[Perform a dry run without making changes]' \
+        '--ignore-scripts[Skip lifecycle scripts]' \
+        '--registry[Use a specific registry by default]:registry' \
+        '-c[Load config(bunfig.toml)]: :->config' \
+        '--config[Load config(bunfig.toml)]: :->config' \
+        '--silent[Don'"'"'t log anything]' \
+        '--verbose[Excessively verbose logging]' \
+        '--cwd[Set a specific cwd]:cwd' \
         '--help[Print this help menu]' &&
         ret=0
 
@@ -711,7 +748,7 @@ _bun_dedupe_completion() {
         '--no-progress[Disable the progress bar]' \
         '--no-summary[Don'"'"'t print a summary]' \
         '--no-verify[Skip verifying integrity of newly downloaded packages]' \
-        '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
+        '--ignore-scripts[Skip lifecycle scripts for all packages, including the project'"'"'s package.json and trusted dependencies]' \
         '--cwd[Set a specific cwd]:cwd' \
         '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
         '--linker[Linker strategy]:linker:(isolated hoisted)' \
@@ -735,8 +772,10 @@ _bun_prune_completion() {
         '--prod[Also remove packages that are only needed by devDependencies]' \
         '*--omit[Also remove packages that are only needed by the given dependency types]:type:(dev optional peer)' \
         '--dry-run[Print what would be removed without deleting anything]' \
+        '--check[Exit with code 1 if node_modules has packages that can be removed, without deleting anything]' \
         '*--os[Prune for a different operating system than the current one]:os' \
         '*--cpu[Prune for a different CPU architecture than the current one]:cpu' \
+        '*--libc[Prune for a different libc than the current one]:libc:(glibc musl)' \
         '--linker[Linker to assume when node_modules mixes isolated and hoisted installs]:linker:(isolated hoisted)' \
         '*--filter[Only prune the node_modules folders of the matching workspaces]:workspace pattern' \
         '*-F[Only prune the node_modules folders of the matching workspaces]:workspace pattern' \
@@ -747,6 +786,41 @@ _bun_prune_completion() {
         ret=0
 }
 
+_bun_compile_completion() {
+    _arguments -s -C \
+        '1: :->cmd1' \
+        '*: :_files' \
+        '--outfile[Write the executable to this path]:outfile:_files' \
+        '--target[The platform to build for, such as bun-linux-x64]:target' \
+        '--define[Substitute K\:V while parsing]:define' \
+        '--env[Inline environment variables\: inline, disable or a prefix*]:env' \
+        '--asset[Embed a file or directory into the executable]:asset:_files' \
+        '--external[Exclude a module from the executable]:external' \
+        '--minify[Enable all minification flags]' \
+        '--sourcemap[Build with sourcemaps]:sourcemap' \
+        '--tsconfig-override[Use this tsconfig.json]:tsconfig-override:_files' \
+        '--compile-exec-argv[Prepend arguments to the executable'"'"'s execArgv]:compile-exec-argv' \
+        '--disallow-code-generation-from-strings[In the executable, eval() and new Function() throw]' \
+        '--explain[List the code that compiled to a slow path]' \
+        '--aot-log-type-mismatches[Log every value that does not match its declared type]' \
+        '--aot-huge-heap[Remove the 32 GB heap limit per thread]' \
+        '--aot-allow-code-from-disk[Let import() and require() load code from disk at run time]' \
+        '--obfuscate[Strip function names and source locations from the executable and write them to a source map]' \
+        '--compile-inspector[Let a debugger attach to the executable]' \
+        '--compile-in-place[Keep modules at their paths on disk. The executable only runs on the machine that built it]' \
+        '--no-compile-function-source[Don'"'"'t embed function source code. fn.toString() returns \[native code\]]' \
+        '--no-aot[Bundle the JavaScript into the executable instead of compiling it to machine code]' \
+        '--trim[Remove the Bun and Node.js APIs your code never calls from the executable]' \
+        '--trim-locales[Keep only these locales, such as en,de-AT. Implies --trim]:trim-locales' \
+        '--library[Build a package to publish instead of an executable]' \
+        '--outdir[With --library\: the folder the package is written to]:outdir:_files -/' \
+        '--no-script[Run this command even if the project has a compile script]' \
+        '--cwd[Set the working directory]:cwd:_files -/' \
+        '--help[Print this help menu]' \
+        '-h[Print this help menu]' &&
+        ret=0
+}
+
 _bun_check_completion() {
     _arguments -s -C \
         '1: :->cmd1' \
@@ -754,11 +828,17 @@ _bun_check_completion() {
         '--project[Path to a tsconfig.json or its directory]:project:_files' \
         '-p[Path to a tsconfig.json or its directory]:project:_files' \
         '--pretty[Show source code around each error]' \
+        '--build[Check the projects in references too, like tsc -b]' \
+        '-b[Check the projects in references too, like tsc -b]' \
         '--no-pretty[One line per error]' \
         '--all[Show every error]' \
         '--threads[Number of threads]:threads' \
         '--timing[Print load and check times]' \
         '--cwd[Set the working directory]:cwd:_files -/' \
+        '--no-script[Run the type checker even if the project has a check script]' \
+        '--aot[Also report the errors bun compile would report for these entry points]' \
+        '--explain[With --aot\: print a report. guards lists every type guard that can fail at run time]:report' \
+        '--define[With --aot\: substitute k with v while parsing, like bun compile --define]:define' \
         '--help[Print this help menu]' \
         '-h[Print this help menu]' &&
         ret=0
@@ -771,7 +851,7 @@ _bun_lint_completion() {
         '--config[Use this config file instead of looking for one]:config:_files' \
         '-c[Use this config file instead of looking for one]:config:_files' \
         '--no-config-lookup[Do not look for a config file]' \
-        '--rule[Set a rule\: --rule '"'"'eqeqeq\: \[error, smart\]'"'"']:rule' \
+        '--rule[Set a rule, or turn off a plugin\: --rule '"'"'eqeqeq\: \[error, smart\]'"'"', --rule '"'"'unicorn/*\: off'"'"']:rule' \
         '--rules[List the built-in rules]' \
         '--explain[Print the documentation of a rule]:explain' \
         '--init[Add a \[lint\] section to bunfig.toml]' \
@@ -809,11 +889,12 @@ _bun_lint_completion() {
         '--fix-dangerously[Apply every fix and suggestion, even those that can change behavior]' \
         '--type-aware[Also run the rules that need types]' \
         '--no-type-aware[Skip the rules that need types]' \
-        '--tsconfig[Use this tsconfig.json for the rules that need types]:tsconfig:_files' \
+        '--tsconfig[Use this tsconfig.json instead of the nearest one]:tsconfig:_files' \
         '--type-check[With --type-aware, report type errors too]' \
         '--infer-globals[Also treat what the project'"'"'s types declare as globals]' \
         '--no-infer-globals[Do not take globals from the project'"'"'s types]' \
         '--threads[Number of threads (default\: one per CPU core)]:threads' \
+        '--no-script[Run the linter even if the project has a lint script]' \
         '--version[Print the version of Bun]' \
         '-v[Print the version of Bun]' \
         '--help[Print the common flags. With --all, every flag]' \
@@ -825,7 +906,7 @@ _bun_lint_completion() {
         '--parser-options[Set parser options\: --parser-options projectService\:true]:parser-options' \
         '--parser[Parse files with this package]:parser' \
         '--plugin[Load these plugins]:plugin' \
-        '--native-plugin-rules[Use the built-in rules for these plugins only\: import,react-hooks (default\: all)]:native-plugin-rules' \
+        '--native-plugin-rules[Of the ESLint plugins a config loads, run only these natively\: import,react-hooks (default\: all)]:native-plugin-rules' \
         '--no-native-plugin-rules[Run plugin rules from the installed packages, in JavaScript]' \
         '--report-unused-disable-directives-severity[Report unused eslint-disable comments as off, warn or error]:report-unused-disable-directives-severity' \
         '--report-unused-inline-configs[Report config comments that change nothing]:report-unused-inline-configs' \
@@ -901,10 +982,12 @@ _bun_fmt_completion() {
         '--sort-tailwindcss[Sort Tailwind CSS classes]' \
         '--sort-package-json[Sort the keys of package.json]' \
         '--jsdoc[Format JSDoc comments]' \
+        '--svelte[Format Svelte components (default without a Prettier or oxfmt config)]' \
+        '--no-svelte[Do not format Svelte components]' \
         '--staged[Only format files that are staged in git, and stage them again]' \
         '--changed[Only format files that differ from a branch or commit (default\: the default branch)]' \
         '--stdin-filepath[Format standard input as this file and print the result]:stdin-filepath:_files' \
-        '--ignore-path[Read ignore patterns from these files (default\: .gitignore and .prettierignore)]:ignore-path:_files' \
+        '--ignore-path[Read ignore patterns from these files (default\: .gitignore, .prettierignore, .git/info/exclude)]:ignore-path:_files' \
         '--ignore-pattern[Skip files that match this pattern]:ignore-pattern' \
         '--with-node-modules[Format files in node_modules too]' \
         '--no-error-on-unmatched-pattern[Do not fail when an argument matches no file]' \
@@ -925,6 +1008,7 @@ _bun_fmt_completion() {
         '--timing[Print how long each phase took]' \
         '--threads[Number of threads (default\: one per CPU core)]:threads' \
         '--debug-check[Do not write. Fail if formatting a file would change what it means]' \
+        '--no-script[Run the formatter even if the project has a fmt script]' \
         '--version[Print the version of Bun]' \
         '-v[Print the version of Bun]' \
         '--help[Print the common flags. With --all, every flag]' \
@@ -1091,10 +1175,12 @@ _bun() {
             'dedupe\:"Remove duplicate versions from the lockfile" '
             'prune\:"Remove packages that are not in the lockfile from node_modules" '
             'outdated\:"Display the latest versions of outdated dependencies" '
+            'publish\:"Publish a package to the npm registry" '
             'link\:"Link an npm package globally" '
             'unlink\:"Globally unlink an npm package" '
             'pm\:"More commands for managing packages" '
             'build\:"Bundle TypeScript & JavaScript into a single file" '
+            'compile\:"Compile TypeScript & JavaScript into a standalone executable" '
             'upgrade\:"Get the latest version of bun" '
             'help\:"Show all supported flags and commands" '
         )
@@ -1132,8 +1218,22 @@ _bun() {
             _arguments -s -C \
                 '1: :->cmd' \
                 '2: :->cmd2' \
-                '*: :->args' &&
+                '*: :->args' \
+                '--bun[Force the command to run with Bun instead of Node.js]' \
+                '-p[Package to install when the binary name differs from the package name]:package' \
+                '--package[Package to install when the binary name differs from the package name]:package' \
+                '--no-install[Skip installation if the package is not already installed]' \
+                '--cwd[Set the working directory]:cwd:_files -/' \
+                '*--env-file[Load environment variables from the specified file(s)]:env-file:_files' \
+                '--minimum-release-age[Only install packages published at least N seconds ago]:seconds' \
+                '--trust[Run the lifecycle scripts of the package and of ALL of its dependencies]' \
+                '--verbose[Enable verbose output during installation]' \
+                '--silent[Suppress output during installation]' &&
                 ret=0
+            ;;
+        publish)
+            _bun_publish_completion
+
             ;;
         pm)
             _bun_pm_completion
@@ -1161,6 +1261,10 @@ _bun() {
             ;;
         build)
             _bun_build_completion
+
+            ;;
+        compile)
+            _bun_compile_completion
 
             ;;
         update)
@@ -1272,6 +1376,10 @@ _bun() {
                     ;;
                 build)
                     _bun_build_completion
+
+                    ;;
+                compile)
+                    _bun_compile_completion
 
                     ;;
                 update)

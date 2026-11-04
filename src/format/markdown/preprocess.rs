@@ -1,7 +1,7 @@
-//! What Prettier does to the tree before it prints it: `print/preprocess.js`.
+//! Prettier's tree transforms before printing: `print/preprocess.js`.
 //!
-//! Texts are split into words and white space, and lists get to know whether their content is aligned to
-//! the tab width. What else that file notes on nodes is found out when it is asked for.
+//! Splits texts into words and whitespace, and records on each list if its content is aligned to the tab width. The
+//! other things that file records on nodes are computed on demand here.
 
 use super::ast::{Kind, NodeId, Str, Tree};
 use super::strings::is_in;
@@ -10,7 +10,7 @@ use crate::text::{first_char, last_char};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum TokenKind {
-    /// `""`, between two words that nothing is between in the text.
+    /// `""`, between two words with nothing between them in the text.
     NoSpace,
     Space,
     Newline,
@@ -20,7 +20,7 @@ pub(crate) enum TokenKind {
     CjkPunctuation,
 }
 
-/// A word, or the white space between two.
+/// A word, or the whitespace between two words.
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct Token {
     pub(crate) kind: TokenKind,
@@ -63,17 +63,17 @@ pub(crate) fn is_punctuation(c: char) -> bool {
     }
 }
 
-/// The same for one UTF-16 code unit: half of a character is not punctuation.
+/// The same for one UTF-16 code unit: half of a surrogate pair isn't punctuation.
 pub(crate) fn is_punctuation_unit(c: Option<char>) -> bool {
     c.is_some_and(|c| c as u32 <= 0xFFFF && is_punctuation(c))
 }
 
 struct Splitter<'x, F> {
     text: &'x [u8],
-    /// Makes the string for a part of `text`.
+    /// Builds the string for a part of `text`.
     at: F,
     tokens: &'x mut Vec<Token>,
-    /// The last token, if it is a word: its kind and whether it has a full-width space.
+    /// The last token, if it's a word: its kind, and true if it has a full-width space.
     last_word: Option<(TokenKind, bool)>,
 }
 
@@ -82,8 +82,8 @@ impl<F: Fn(usize, usize) -> Str> Splitter<'_, F> {
     fn word(&mut self, kind: TokenKind, start: usize, end: usize, has_punctuation: (bool, bool)) {
         let has_wide_space =
             bun_core::strings::contains(&self.text[start..end], "\u{3000}".as_bytes());
-        // Two words next to each other have an empty space between them, but for punctuation of Chinese and
-        // Japanese next to other text, and a full-width space.
+        // Two adjacent words get an empty separator between them, except for Chinese or Japanese punctuation next to
+        // other text, and next to a full-width space.
         if let Some((last_kind, last_has_wide_space)) = self.last_word {
             let is_between = matches!(
                 (last_kind, kind),
@@ -115,7 +115,7 @@ impl<F: Fn(usize, usize) -> Str> Splitter<'_, F> {
     }
 }
 
-/// Prettier's `splitText`. `at`: makes the string for a part of `text`, given by its offsets.
+/// Prettier's `splitText`. `at` builds the string for a part of `text`, given its offsets.
 pub(crate) fn split_text(text: &[u8], at: impl Fn(usize, usize) -> Str, tokens: &mut Vec<Token>) {
     let is_white = |byte: u8| matches!(byte, b'\t' | b'\n' | b' ');
     let mut splitter = Splitter {
@@ -151,7 +151,7 @@ pub(crate) fn split_text(text: &[u8], at: impl Fn(usize, usize) -> Str, tokens: 
             index = word_end;
             continue;
         }
-        // Every character of Chinese, Japanese and Korean is a word.
+        // Every Chinese, Japanese or Korean character is its own word.
         let mut run_start = index;
         while index < word_end {
             let Some((c, len)) = first_char(&text[index..word_end]) else {
@@ -181,11 +181,11 @@ pub(crate) fn split_text(text: &[u8], at: impl Fn(usize, usize) -> Str, tokens: 
     }
 }
 
-/// The length of a `>` at the start of `line`, however it is written, with the blanks around it.
+/// The length of a `>` at the start of `line`, however it's written, with the spaces and tabs around it.
 fn blockquote_marker_len(line: &[u8]) -> Option<usize> {
-    let is_blank = |byte: &&u8| matches!(byte, b' ' | b'\t');
-    let blanks = line.iter().take_while(is_blank).count();
-    let rest = &line[blanks..];
+    let is_space_or_tab = |byte: &&u8| matches!(byte, b' ' | b'\t');
+    let leading_whitespace = line.iter().take_while(is_space_or_tab).count();
+    let rest = &line[leading_whitespace..];
     let reference = |rest: &[u8]| -> Option<usize> {
         let number = rest.strip_prefix(b"&#")?;
         let (digits, wanted, prefix): (&[u8], &[u8], usize) = match number.first()? {
@@ -206,10 +206,10 @@ fn blockquote_marker_len(line: &[u8]) -> Option<usize> {
     } else {
         reference(rest)?
     };
-    Some(blanks + len + rest[len..].iter().take_while(is_blank).count())
+    Some(leading_whitespace + len + rest[len..].iter().take_while(is_space_or_tab).count())
 }
 
-/// How many references to a line break are in `line`: `&NewLine;`, `&#10;`, `&#xA;`, not escaped.
+/// How many unescaped references to a line break are in `line`: `&NewLine;`, `&#10;`, `&#xA;`.
 fn count_newline_references(line: &[u8]) -> usize {
     let mut count = 0;
     let mut index = 0;
@@ -241,8 +241,8 @@ fn count_newline_references(line: &[u8]) -> usize {
     count
 }
 
-/// Prettier's `getBlockquoteRawText`: `raw` without the markers of the block quotes at the start of its
-/// lines. `value`: what the text stands for, which tells how many `>` are its own.
+/// Prettier's `getBlockquoteRawText`: `raw` without the block quote markers at the start of its lines. `value` is the
+/// decoded text, which shows how many `>` belong to the text itself.
 fn blockquote_raw_text(raw: &[u8], value: &[u8], out: &mut Vec<u8>) {
     let mut value_lines = bun_core::strings::split(value, b"\n");
     for (index, raw_line) in bun_core::strings::split(raw, b"\n").enumerate() {
@@ -263,7 +263,7 @@ fn blockquote_raw_text(raw: &[u8], value: &[u8], out: &mut Vec<u8>) {
                 _ => break,
             }
         }
-        // Where each marker starts, and where the last ends.
+        // The start of each marker, and the end of the last one.
         let mut starts: smallvec::SmallVec<[usize; 8]> = smallvec::SmallVec::new();
         let mut position = 0;
         while let Some(len) = blockquote_marker_len(&raw_line[position..]) {
@@ -283,8 +283,8 @@ fn blockquote_raw_text(raw: &[u8], value: &[u8], out: &mut Vec<u8>) {
     }
 }
 
-/// `{ numberText, leadingSpaces }` of Prettier's `getOrderedListItemInfo`: the number of an item of an
-/// ordered list, and how much white space is behind its marker.
+/// `{ numberText, leadingSpaces }` of Prettier's `getOrderedListItemInfo`: an ordered list item's number, and how much
+/// whitespace follows its marker.
 pub(crate) fn ordered_item_info(text: &[u8], tree: &Tree, item: NodeId) -> (u64, usize) {
     let Some(node) = tree.get(item) else {
         return (0, 0);
@@ -307,12 +307,12 @@ pub(crate) fn ordered_item_info(text: &[u8], tree: &Tree, item: NodeId) -> (u64,
     )
 }
 
-/// Whether `code` is indented code, by the looks of it.
+/// True if `code` looks like indented code.
 pub(crate) fn is_indented_code(text: &[u8], tree: &Tree, code: NodeId) -> bool {
     let Some(node) = tree.get(code).filter(|node| node.kind == Kind::Code) else {
         return false;
     };
-    // oxfmt knows.
+    // For oxfmt the parser has recorded it.
     if node.number == 1 {
         return true;
     }
@@ -323,8 +323,8 @@ pub(crate) fn is_indented_code(text: &[u8], tree: &Tree, code: NodeId) -> bool {
     source.starts_with(b"    ") || source.starts_with(b"\t")
 }
 
-/// `Node::number` of a sentence that has not been split into words. Its text is its `value`. `is_aligned` says
-/// that it is in emphasis.
+/// `Node::number` of a sentence that hasn't been split into words. Its text is its `value`. `is_aligned` means it's in
+/// emphasis.
 pub(crate) const PLAIN: u32 = u32::MAX;
 
 pub(crate) struct Preprocessor<'x> {
@@ -341,12 +341,12 @@ pub(crate) struct Preprocessor<'x> {
     pub(crate) is_nested_too_deeply: bool,
 }
 
-/// What the nodes around a node say about it.
+/// Facts about a node derived from its ancestors.
 #[derive(Copy, Clone)]
-struct Around {
-    /// All lists around it are aligned.
+struct Ancestry {
+    /// All the lists around it are aligned.
     is_in_aligned_lists: bool,
-    /// The paragraph or heading that it is in, and whether that is in a block quote.
+    /// The paragraph or heading that contains it, and true if that's in a block quote.
     paragraph: Option<(NodeId, bool)>,
     is_in_blockquote: bool,
     is_in_emphasis: bool,
@@ -357,23 +357,23 @@ impl Preprocessor<'_> {
         if !self.is_mdx {
             self.mark_risky_paragraphs(root);
         }
-        let around = Around {
+        let ancestry = Ancestry {
             is_in_aligned_lists: true,
             paragraph: None,
             is_in_blockquote: false,
             is_in_emphasis: false,
         };
-        self.visit(root, around);
+        self.visit(root, ancestry);
     }
 
-    /// A paragraph in which wrapping could make `[[` and `]]` a wiki link keeps its texts as they are. Such a
-    /// paragraph has `spread` set.
+    /// A paragraph where wrapping could turn `[[` and `]]` into a wiki link keeps its texts as is. Such a paragraph has
+    /// `spread` set.
     fn mark_risky_paragraphs(&mut self, root: NodeId) {
         if !bun_core::strings::contains(self.text, b"[[") {
             return;
         }
-        // In the order of the text. The paragraphs around the current node are on `open`, each with whether
-        // `[[` has been seen in it.
+        // In source order. The paragraphs around the current node are on `open`, each with a flag for whether `[[` has
+        // been seen in it.
         let mut open: Vec<(NodeId, bool)> = Vec::new();
         let mut stack = vec![(root, false)];
         while let Some((id, is_exit)) = stack.pop() {
@@ -414,7 +414,7 @@ impl Preprocessor<'_> {
         }
     }
 
-    fn visit(&mut self, id: NodeId, mut around: Around) {
+    fn visit(&mut self, id: NodeId, mut ancestry: Ancestry) {
         if !self.stack_check.is_safe_to_recurse() {
             self.is_nested_too_deeply = true;
             return;
@@ -423,12 +423,12 @@ impl Preprocessor<'_> {
             return;
         };
         match node.kind {
-            Kind::Text => return self.split_into_sentence(id, around),
+            Kind::Text => return self.split_into_sentence(id, ancestry),
             Kind::List if node.first_child != super::ast::NONE => {
-                let is_aligned = around.is_in_aligned_lists
+                let is_aligned = ancestry.is_in_aligned_lists
                     && (self.is_mdx || !is_indented_code(self.original, self.tree, node.next))
                     && self.is_aligned(id);
-                around.is_in_aligned_lists = is_aligned;
+                ancestry.is_in_aligned_lists = is_aligned;
                 // Prettier's `getNthListSiblingIndex`
                 let nth = match self.tree.get(node.previous) {
                     Some(previous)
@@ -442,11 +442,11 @@ impl Preprocessor<'_> {
                     (node.is_aligned, node.first_align) = (is_aligned, nth);
                 }
             }
-            Kind::Paragraph | Kind::Heading if around.paragraph.is_none() => {
-                around.paragraph = Some((id, around.is_in_blockquote));
+            Kind::Paragraph | Kind::Heading if ancestry.paragraph.is_none() => {
+                ancestry.paragraph = Some((id, ancestry.is_in_blockquote));
             }
-            Kind::Blockquote => around.is_in_blockquote = true,
-            Kind::Emphasis | Kind::Strong => around.is_in_emphasis = true,
+            Kind::Blockquote => ancestry.is_in_blockquote = true,
+            Kind::Emphasis | Kind::Strong => ancestry.is_in_emphasis = true,
             // Prettier's `htmlToJsx`
             Kind::Html
                 if self.is_mdx
@@ -477,7 +477,7 @@ impl Preprocessor<'_> {
         }
         let mut child = node.first_child;
         while let Some(next) = self.tree.get(child).map(|child| child.next) {
-            self.visit(child, around);
+            self.visit(child, ancestry);
             child = next;
         }
     }
@@ -495,7 +495,7 @@ impl Preprocessor<'_> {
             .tree
             .get(first)
             .map_or(super::ast::NONE, |item| item.next);
-        // oxfmt: blanks behind the marker of an item that starts with indented code would be code.
+        // oxfmt: extra spaces after the marker of an item that starts with indented code would become part of the code.
         if self.is_for_oxfmt {
             let mut item = first;
             while let Some(node) = self.tree.get(item) {
@@ -508,12 +508,12 @@ impl Preprocessor<'_> {
         if ordered_item_info(self.original, self.tree, first).1 > 1 {
             return true;
         }
-        // The column that the content of an item starts in.
+        // The column where an item's content starts.
         let item_start = |item: NodeId| {
             let item = self.tree.get(item)?;
             let child = self.tree.get(item.first_child)?;
-            // mdast-util-gfm-task-list-item passes the character behind `[x]` by adding one to the column, also if it
-            // is a line break.
+            // mdast-util-gfm-task-list-item skips the character after `[x]` by adding one to the column, even if it's a
+            // line break.
             let start = match child.start.checked_sub(1) {
                 Some(before)
                     if item.checked != 0
@@ -540,14 +540,14 @@ impl Preprocessor<'_> {
     }
 
     /// Prettier's `splitTextIntoSentences`, for one text.
-    fn split_into_sentence(&mut self, id: NodeId, around: Around) {
+    fn split_into_sentence(&mut self, id: NodeId, ancestry: Ancestry) {
         let Some(&node) = self.tree.get(id) else {
             return;
         };
         let raw = &self.original[node.start as usize..node.end as usize];
         let mut without_markers = Vec::new();
         let mut text = raw;
-        if let Some((_, true)) = around.paragraph
+        if let Some((_, true)) = ancestry.paragraph
             && bun_core::strings::contains_char(raw, b'\n')
         {
             blockquote_raw_text(
@@ -557,7 +557,7 @@ impl Preprocessor<'_> {
             );
             text = &without_markers;
         }
-        if around.paragraph.is_some() && self.tree.kind(node.parent) == Some(Kind::Paragraph) {
+        if ancestry.paragraph.is_some() && self.tree.kind(node.parent) == Some(Kind::Paragraph) {
             if node.previous == super::ast::NONE {
                 text = text.trim_ascii_start();
             }
@@ -566,8 +566,8 @@ impl Preprocessor<'_> {
             }
         }
 
-        // remark-parse 8 gives the characters that are meant, and Prettier's `restoreUnescapedCharacter` puts back
-        // how they are written, except for `*` and `_`, which are escaped anew where they are written.
+        // remark-parse 8 returns the decoded characters, and Prettier's `restoreUnescapedCharacter` restores their
+        // source form, except for `*` and `_`, which are escaped again when they're printed.
         let mut unescaped = Vec::new();
         if self.is_mdx
             && (bun_core::strings::contains(text, b"\\*")
@@ -593,7 +593,7 @@ impl Preprocessor<'_> {
             text = &unescaped;
         }
 
-        // The strings are parts of the file, or of a copy if something has been taken out.
+        // The strings are slices of the file, or of a copy if something was removed.
         let is_copy = !without_markers.is_empty() || !unescaped.is_empty();
         let base = match is_copy {
             true => self.tree.owned(|out| out.extend_from_slice(text)),
@@ -602,7 +602,7 @@ impl Preprocessor<'_> {
                 Str::source(start, start + text.len() as u32)
             }
         };
-        let is_risky = around.paragraph.is_some_and(|(paragraph, _)| {
+        let is_risky = ancestry.paragraph.is_some_and(|(paragraph, _)| {
             self.tree
                 .get(paragraph)
                 .is_some_and(|it| it.kind == Kind::Paragraph && it.spread)
@@ -613,16 +613,15 @@ impl Preprocessor<'_> {
             }
             return;
         }
-        // Without wrapping, words only matter where there is more to them than ASCII, and where they can get
-        // escapes.
+        // Without wrapping, words only matter if they aren't plain ASCII, or if they may need escapes.
         if !self.wraps_lines
             && text.is_ascii()
-            && !((around.is_in_emphasis || self.is_mdx)
+            && !((ancestry.is_in_emphasis || self.is_mdx)
                 && bun_core::strings::index_of_any(text, b"*_").is_some())
         {
             if let Some(node) = self.tree.get_mut(id) {
                 (node.kind, node.value, node.number, node.is_aligned) =
-                    (Kind::Sentence, base, PLAIN, around.is_in_emphasis);
+                    (Kind::Sentence, base, PLAIN, ancestry.is_in_emphasis);
             }
             return;
         }

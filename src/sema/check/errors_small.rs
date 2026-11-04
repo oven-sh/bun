@@ -1,28 +1,25 @@
-//! Small independent checks: 2698, 2358 2359, 2491, 2414 2427 2431 2457, 2432 2473, 1344.
+//! Small independent checks: 2481, 2774 2801 2845, 2698, 2432 2473.
 //!
-//! Follows `isValidSpreadType`, `checkInstanceOfExpression` with `resolveInstanceofExpression`,
-//! `checkForInStatement`, `checkTypeNameIsReserved` and `checkEnumDeclaration` of TypeScript
-//! 7.0.2's checker.go, and `checkStrictModeLabeledStatement` of its binder.go.
+//! Mirrors `checkVarDeclaredNamesNotShadowed`, `checkTestingKnownTruthyCallableOrAwaitableOrEnumMemberType`,
+//! `getSymbolAtLocation`, `isValidSpreadType` and the end of `checkEnumDeclaration` in TypeScript 7.0.2's checker.go.
 
 use super::*;
 use crate::bind::{
     Decl, Parent, PatParent, ScopeKind, SymbolId, is_module_exports_inside_parentheses,
 };
 
-/// What `getSymbolAtLocation` returns.
+/// The result of `getSymbolAtLocation`.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(super) enum SymbolAtLocation<'p> {
-    /// `getMergedSymbol` of a symbol of the binder.
+    /// `getMergedSymbol` of a binder symbol.
     Symbol(Sym),
-    /// What `instantiateSymbol` made of that member for the table of that type.
+    /// The symbol `instantiateSymbol` created from that member for that type's table.
     Instantiated(Sym, TypeId),
-    /// A property that has no symbol of the binder. The properties of a mapped type have one
-    /// source.
+    /// A property without a binder symbol. All properties of a mapped type share one source.
     Property(&'p PropSource<'p>, Atom),
-    /// `IndexInfo.indexSymbol` of the index signature of that type.
+    /// `IndexInfo.indexSymbol` of that type's index signature.
     Index(TypeId, (FileId, MemberId)),
-    /// `findApplicableIndexInfo` makes another `IndexInfo` every time that several apply, so this
-    /// one is the same as no other.
+    /// `findApplicableIndexInfo` creates a new `IndexInfo` every time several apply, so this one never equals another.
     IndexOfSeveral,
     /// `signature.thisParameter` of that function.
     ThisParameter(FileId, FnId),
@@ -31,8 +28,8 @@ pub(super) enum SymbolAtLocation<'p> {
 }
 
 impl SymbolAtLocation<'_> {
-    /// The symbol, if the binder or the merge of the files made it.
-    pub(super) fn of_binder(&self) -> Option<Sym> {
+    /// The symbol, if the binder or the file merge created it.
+    pub(super) fn as_binder_symbol(&self) -> Option<Sym> {
         if let SymbolAtLocation::Symbol(symbol) = *self {
             Some(symbol)
         } else {
@@ -47,8 +44,7 @@ fn is_same_symbol<'p>(a: &Option<SymbolAtLocation<'p>>, b: &Option<SymbolAtLocat
 }
 
 impl<'p> Checker<'p, '_> {
-    /// `checkVarDeclaredNamesNotShadowed`: 2481, a `var` cannot be hoisted past a `let` or a
-    /// `const` of the same name.
+    /// `checkVarDeclaredNamesNotShadowed`: 2481. A `var` can't be hoisted past a `let` or a `const` of the same name.
     fn check_vars_not_shadowed(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for &(pat, written_in) in &bound.hoisted_vars {
@@ -60,25 +56,25 @@ impl<'p> Checker<'p, '_> {
             // `namesShareScope`: in the body of a function, a module or a file.
             while scope.is_some()
                 && match bound.scopes[scope.idx()].kind {
-                    ScopeKind::Block => true,
-                    // A `ClassStaticBlockDeclaration` is not function-like.
+                    ScopeKind::Block | ScopeKind::With(_) => true,
+                    // A `ClassStaticBlockDeclaration` isn't function-like.
                     ScopeKind::Fn(f) => hir[f].kind == FnKind::StaticBlock,
                     _ => false,
                 }
             {
                 let found = bound
                     .lookup(bound.scopes[scope.idx()].locals, name)
-                    .filter(|&s| bound.symbols[s.idx()].flags.intersects(SymFlags::VARIABLE));
+                    .filter(|&s| bound.symbol(s).flags.intersects(SymFlags::VARIABLE));
                 if let Some(found) = found {
                     let is_lexical = found != own
-                        && bound.symbols[found.idx()].decls.iter().any(|&d| {
+                        && bound.symbol(found).decls.iter().any(|&d| {
                             let Decl::Var(mut root) = d else { return false };
                             loop {
                                 match bound.pat_parent[root.idx()] {
                                     PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => {
                                         root = outer
                                     }
-                                    // A `catch` binding does not count.
+                                    // A `catch` binding doesn't count.
                                     PatParent::Var(d) => {
                                         let stmt = bound.var_stmt[d.idx()];
                                         return hir[d].kind != VarKind::Var
@@ -91,7 +87,7 @@ impl<'p> Checker<'p, '_> {
                         });
                     if is_lexical {
                         let name = Arg::Atom(name);
-                        self.error_at((file, hir[pat].pos, 0), 2481, &[name, name]);
+                        self.early_error_at((file, hir[pat].pos, 0), 2481, &[name, name]);
                     }
                     break;
                 }
@@ -111,7 +107,7 @@ impl<'p> Checker<'p, '_> {
         cond_expr: ExprId,
         body: Parent,
     ) {
-        if self.p.files.options.strict_null_checks {
+        if self.reports_null_checks(file) {
             let body = match body {
                 Parent::Expr(e) => self.hir(file).child(e),
                 body => self.hir(file).node(body),
@@ -120,8 +116,7 @@ impl<'p> Checker<'p, '_> {
         }
     }
 
-    /// From `checkBinaryLikeExpression`, for `e`, which is `left && ..`, `left || ..` or `left ??
-    /// ..`.
+    /// From `checkBinaryLikeExpression`, for `e`, which is `left && ..`, `left || ..` or `left ?? ..`.
     pub(super) fn check_testing_known_truthy_left_operand(
         &mut self,
         file: FileId,
@@ -129,12 +124,17 @@ impl<'p> Checker<'p, '_> {
         is_and: bool,
         left: ExprId,
     ) {
-        if !self.p.files.options.strict_null_checks {
+        if !self.reports_null_checks(file) {
             return;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // Walks up out of the chain it is part of.
-        let mut parent = bound.expr_parent[e.idx()];
+        // Walks up out of the chain it's part of. FOR SPEED, as in `parent_of_whole_expression`: a
+        // long walk notes where it ends for every `LONG`th node it passes. Without this, the n
+        // operands of a chain take n * n steps.
+        const LONG: u32 = 32;
+        let mut parent = bound.parent_of_expr(e);
+        let mut steps = 0;
+        let mut passed = smallvec::SmallVec::<[ExprId; 4]>::new();
         while let Parent::Expr(p) = parent
             && matches!(
                 hir[p].kind,
@@ -144,7 +144,21 @@ impl<'p> Checker<'p, '_> {
                 }
             )
         {
-            parent = bound.expr_parent[p.idx()];
+            steps += 1;
+            if steps >= LONG {
+                let known = &self.flow_memo.parents_of_logical_chains;
+                if let Some(&above) = known.get(&(file, p)) {
+                    parent = above;
+                    break;
+                }
+                if steps % LONG == 0 {
+                    passed.push(p);
+                }
+            }
+            parent = bound.parent_of_expr(p);
+        }
+        for below in passed {
+            (self.flow_memo.parents_of_logical_chains).insert((file, below), parent);
         }
         let body = match parent {
             Parent::Stmt(s) if s.is_some() => match hir[s].kind {
@@ -158,8 +172,8 @@ impl<'p> Checker<'p, '_> {
         }
     }
 
-    /// `checkTestingKnownTruthyTypes`. `whole`: the condition the check was first called with,
-    /// whose type is `condType`.
+    /// `checkTestingKnownTruthyTypes`. `whole` is the condition the check was first called with, whose type is
+    /// `condType`.
     fn check_known_truthy_types(&mut self, file: FileId, test: ExprId, whole: ExprId, body: Node) {
         let hir = self.hir(file);
         let mut test = test;
@@ -201,14 +215,23 @@ impl<'p> Checker<'p, '_> {
         if is_logical(location) {
             return self.check_known_truthy_types(file, location, whole, body);
         }
-        // Only a right operand is tested by its own type. Anything else uses the type of the whole
-        // condition.
-        let judged_by = if location == test { whole } else { location };
-        let ty = self.type_of_expr(file, judged_by);
+        // Only a right operand is tested by its own type: `c.checkExpression(location)`, in `CheckModeNormal` whatever
+        // mode `test` is checked under, so a comparison in it is reported with the types that a loop has collected so
+        // far. Anything else uses the type of the whole condition.
+        let ty = if location == test {
+            self.type_of_expr(file, whole)
+        } else if self.is_rechecking() {
+            self.check_expression_ex(file, location, CheckMode::empty())
+        } else {
+            let outside = self.type_only_node.take();
+            let ty = self.type_of_expr(file, location);
+            self.type_only_node = outside;
+            ty
+        };
         let start = self.start_inside_parentheses(file, location);
         // An enum member has a constant value.
         if let (TypeData::EnumLit { value, .. }, ExprKind::Dot { obj, .. }) =
-            (self.data(ty), hir[location].kind)
+            (self.data(ty), hir.checked_kind(location))
             && self.is_resolved_to_an_enum(file, obj)
         {
             // `evaluator.IsTruthy`
@@ -228,7 +251,7 @@ impl<'p> Checker<'p, '_> {
             return;
         }
         // `isPropertyExpressionCast`
-        if matches!(hir[location].kind, ExprKind::Dot { obj, .. } if matches!(hir[obj].kind, ExprKind::As { .. } | ExprKind::AsConst(_)))
+        if matches!(hir.checked_kind(location), ExprKind::Dot { obj, .. } if matches!(hir[obj].kind, ExprKind::As { .. } | ExprKind::AsConst(_)))
             || !self.can_be_truthy(ty)
         {
             return;
@@ -258,8 +281,7 @@ impl<'p> Checker<'p, '_> {
         if !is_used {
             let at = (file, start, self.end_inside_parentheses(file, location));
             if is_promise {
-                // `getTypeNameForErrorDisplay`: two types that print identically are both printed
-                // with qualified names.
+                // `getTypeNameForErrorDisplay`: two types that print identically are both printed with qualified names.
                 let name = self.type_names_for_error_display(ty, ty).0;
                 // `errorAndMaybeSuggestAwait`
                 self.error_at(at, 2801, &[Arg::Bytes(&name)])
@@ -270,20 +292,20 @@ impl<'p> Checker<'p, '_> {
         }
     }
 
-    /// `getResolvedSymbolOrNil(e).Flags&SymbolFlagsEnum`: whether the name `e`, or the name after
-    /// its dot, resolved to an enum. An imported name resolved to the import alias.
+    /// `getResolvedSymbolOrNil(e).Flags&SymbolFlagsEnum`: true if the name `e`, or the name after its dot, resolved to
+    /// an enum. An imported name resolves to the import alias, not to the enum.
     fn is_resolved_to_an_enum(&mut self, file: FileId, e: ExprId) -> bool {
         if is_parenthesized(self.hir(file), e) {
             return false;
         }
-        match self.hir(file)[e].kind {
+        match self.hir(file).checked_kind(e) {
             ExprKind::Ident(name) => {
-                // `declareModuleMember`: where an exported declaration is in scope its name
-                // resolves to a local symbol, which has `SymbolFlagsExportValue` and no other flag.
-                // `expr_symbol` has its `ExportSymbol`. A name found among the exports of an enclosing
-                // namespace, declared in another block of it, resolves to that symbol itself.
+                // `declareModuleMember`: where an exported declaration is in scope, its name resolves to a local
+                // symbol, which has `SymbolFlagsExportValue` and no other flag. `expr_symbol` has its `ExportSymbol`. A
+                // name found among the exports of an enclosing namespace, declared in another block of it, resolves to
+                // that symbol itself.
                 let bound = self.bound(file);
-                let recorded = bound.expr_symbol[e.idx()];
+                let recorded = bound.symbol_of_expr(e);
                 if recorded.is_some() {
                     let mut scope = self.enclosing_scope_of_expr(file, e);
                     while scope.is_some() {
@@ -328,8 +350,8 @@ impl<'p> Checker<'p, '_> {
         false
     }
 
-    /// `node.ForEachChild(visit)`, for the `visit` of `isSymbolUsedInBinaryExpressionChain`, and
-    /// with `target`, which is `expr` and `testedNode`, for that of `isSymbolUsedInConditionBody`.
+    /// `node.ForEachChild(visit)`. Without `target` it's the `visit` of `isSymbolUsedInBinaryExpressionChain`. With
+    /// `target`, which is `expr` and `testedNode`, it's the `visit` of `isSymbolUsedInConditionBody`.
     fn is_symbol_used_below(
         &mut self,
         file: FileId,
@@ -351,8 +373,7 @@ impl<'p> Checker<'p, '_> {
             })
     }
 
-    /// The rest of the `visit` of `isSymbolUsedInConditionBody`, for a `childNode` that has the
-    /// tested symbol.
+    /// The rest of the `visit` of `isSymbolUsedInConditionBody`, for a `childNode` that has the tested symbol.
     fn is_called_on_same_target(
         &mut self,
         file: FileId,
@@ -395,9 +416,9 @@ impl<'p> Checker<'p, '_> {
         is_same_symbol(&a, &self.get_symbol_at_location(file, b))
     }
 
-    /// `getSymbolAtLocation` for an identifier or a `this`. The name of a member, of a property of
-    /// an object literal, of a label or of a declared type, and the right side of a qualified name
-    /// in a type reference, have a symbol that no tested expression has: `None`.
+    /// `getSymbolAtLocation` for an identifier or a `this`. Returns `None` for the name of a member, an object literal
+    /// property, a label or a declared type, and for the right side of a qualified name in a type reference, because no
+    /// tested expression has their symbols.
     pub(super) fn get_symbol_at_location(
         &mut self,
         file: FileId,
@@ -451,14 +472,13 @@ impl<'p> Checker<'p, '_> {
             },
             NodeData::Part(Part::Name, named) => match hir.data(named) {
                 NodeData::Expr(e) => match hir[e].kind {
-                    // `checkNewTargetMetaProperty(parent).symbol`. The `meta` of `import.meta` is a
-                    // symbol of its own, and no other meta property has one.
+                    // `checkNewTargetMetaProperty(parent).symbol`. The `meta` of `import.meta` has its own symbol, and
+                    // no other meta property has one.
                     ExprKind::NewTarget(name) if self.atoms().bytes(name) == b"target" => {
                         let ty = self.type_of_expr(file, e);
                         self.symbol_of_type(ty)
                     }
-                    // `IsRightSideOfQualifiedNameOrPropertyAccess`: `links.resolvedSymbol` of the
-                    // access.
+                    // `IsRightSideOfQualifiedNameOrPropertyAccess`: `links.resolvedSymbol` of the access.
                     _ => self.symbol_at_name(file, e),
                 },
                 // `name.Parent.Kind == KindTypePredicate`
@@ -474,7 +494,7 @@ impl<'p> Checker<'p, '_> {
                 }
                 _ => None,
             },
-            // `{ name: local }`: the property of the type of the pattern.
+            // `{ name: local }`: the property of the pattern's type.
             NodeData::Part(Part::PropertyName, element) => {
                 let NodeData::PatProp(p) = hir.data(element) else {
                     return None;
@@ -578,10 +598,10 @@ impl<'p> Checker<'p, '_> {
         })
     }
 
-    /// `instantiateSymbolTable`: the instantiation of the class, the interface or the type literal
-    /// that declares `member` whose table has an instantiated symbol for it, where `mapper` is
-    /// what a property with that symbol is read with. `None`: the table has `member` itself. The
-    /// type of `member` counts as resolved by then.
+    /// `instantiateSymbolTable`: returns the instantiation of the class, interface or type literal that declares
+    /// `member` whose table has an instantiated symbol for it. `mapper` is the mapper that a property with that symbol
+    /// is read with. Returns `None` if the table has `member` itself. The type of `member` is assumed to be resolved at
+    /// that point.
     pub(super) fn instantiation_of_member(
         &mut self,
         member: Sym,
@@ -606,14 +626,14 @@ impl<'p> Checker<'p, '_> {
         if instantiation == declared || self.is_thisless_for_this_mapper(member) {
             return None;
         }
-        // `instantiateSymbol`: nothing has asked for `links.writeType` of a setter.
+        // `instantiateSymbol`: nothing has requested a setter's `links.writeType`.
         let is_setter = (self.flags_of_property(member)).contains(SymFlags::SET_ACCESSOR);
         let ty = self.type_of_symbol(member);
         (is_setter || self.could_contain_type_variables(ty)).then_some(instantiation)
     }
 
-    /// `getIntrinsicTagSymbol` of `node`, whose tag has the name `prop_name`. `None`:
-    /// `unknownSymbol`. `check_jsx` reports.
+    /// `getIntrinsicTagSymbol` of `node`, whose tag has the name `prop_name`. `None` is `unknownSymbol`. `check_jsx`
+    /// reports the error.
     fn get_intrinsic_tag_symbol(
         &mut self,
         file: FileId,
@@ -637,7 +657,7 @@ impl<'p> Checker<'p, '_> {
     /// `links.resolvedSymbol` of the property access or the qualified name `e`, as
     /// `getSymbolOfNameOrPropertyAccessExpression` leaves it.
     fn symbol_at_name(&mut self, file: FileId, e: ExprId) -> Option<SymbolAtLocation<'p>> {
-        let ExprKind::Dot { obj, name, .. } = self.hir(file)[e].kind else {
+        let ExprKind::Dot { obj, name, .. } = self.hir(file).checked_kind(e) else {
             return None;
         };
         let receiver = self.type_of_expr(file, obj);
@@ -648,8 +668,7 @@ impl<'p> Checker<'p, '_> {
         self.get_applicable_index_symbol(receiver, name)
     }
 
-    /// `getApplicableIndexSymbol(ty, getStringLiteralType(name))`: there is one only if an index
-    /// signature is declared.
+    /// `getApplicableIndexSymbol(ty, getStringLiteralType(name))`. There's only one if an index signature is declared.
     fn get_applicable_index_symbol(
         &mut self,
         ty: TypeId,
@@ -672,13 +691,13 @@ impl<'p> Checker<'p, '_> {
     /// `isValidSpreadType`
     pub(super) fn is_valid_spread_type(&mut self, ty: TypeId) -> bool {
         let ty = self.map_type(ty, |c, m| c.base_constraint_or_type(m));
-        // `removeDefinitelyFalsyTypes`: a definitely falsy value spreads no properties.
+        // `removeDefinitelyFalsyTypes`: a definitely falsy value doesn't spread any properties.
         let ty = self.remove_definitely_falsy(ty);
         match self.data(ty) {
             TypeData::Union(parts) | TypeData::Intersection(parts) => {
                 parts.iter().all(|&p| self.is_valid_spread_type(p))
             }
-            // `TypeFlagsInstantiableNonPrimitive` has no `keyof T`.
+            // `TypeFlagsInstantiableNonPrimitive` doesn't include `keyof T`.
             TypeData::Keyof(_) => false,
             _ => {
                 self.is_any(ty)
@@ -689,8 +708,8 @@ impl<'p> Checker<'p, '_> {
         }
     }
 
-    /// `checkObjectLiteral`, `createJsxAttributesTypeFromAttributesProperty`: 2698 for the spread
-    /// `p` in `owner`. For an assignment target `type_of_object_literal` reports it.
+    /// `checkObjectLiteral`, `createJsxAttributesTypeFromAttributesProperty`: 2698 for the spread `p` in `owner`. For
+    /// an assignment target, `type_of_object_literal` reports it.
     pub(super) fn check_spread(&mut self, file: FileId, owner: ExprId, p: PropId) {
         let hir = self.hir(file);
         let prop = &hir[p];
@@ -702,12 +721,12 @@ impl<'p> Checker<'p, '_> {
         if self.is_valid_spread_type(ty) {
             return;
         }
-        let at = self.place_of_spread(file, owner, p);
+        let at = self.span_of_spread(file, owner, p);
         self.error_at(at, 2698, &[]);
     }
 
     /// JSX reports on the spread expression, an object literal on the whole `SpreadAssignment`.
-    fn place_of_spread(&self, file: FileId, owner: ExprId, p: PropId) -> (FileId, u32, u32) {
+    fn span_of_spread(&self, file: FileId, owner: ExprId, p: PropId) -> (FileId, u32, u32) {
         let hir = self.hir(file);
         if matches!(hir[owner].kind, ExprKind::Jsx(_)) {
             return self.span_of_parenthesized_expr(file, hir[p].value);
@@ -716,11 +735,11 @@ impl<'p> Checker<'p, '_> {
         (file, start, end)
     }
 
-    /// 2698 for the spread `p` in `owner`, whose type is not valid in `CheckModeInferential`. The
-    /// argument is checked again without it, so what its frames report is dropped. The call infers
-    /// once.
+    /// 2698 for the spread `p` in `owner`, whose type isn't valid in `CheckModeInferential`. The argument is checked
+    /// again without that mode, so what its frames report is dropped. The call only infers once, so the error is
+    /// attached to the call.
     pub(super) fn report_spread_in_inference(&mut self, file: FileId, owner: ExprId, p: PropId) {
-        let at = self.place_of_spread(file, owner, p);
+        let at = self.span_of_spread(file, owner, p);
         let diagnostic = self.new_diagnostic(at, 2698, &[]);
         let is_call = |q: &&Query| matches!(q, Query::Call(..));
         let call = self.stack.iter().rev().find(is_call).copied();
@@ -755,7 +774,7 @@ impl<'p> Checker<'p, '_> {
         }
         let files = self.files();
         let enum_symbol = files.sym(file, symbol);
-        let declarations = files.decls(enum_symbol);
+        let declarations = files.decls_of(enum_symbol);
         let enums = declarations.into_iter().filter_map(|(f, d)| match d {
             Decl::Enum(e) => Some((f, e)),
             _ => None,
@@ -764,9 +783,9 @@ impl<'p> Checker<'p, '_> {
         if enums.len() < 2 {
             return;
         }
-        // "Only perform this check once per symbol": at the first declaration that
-        // `checkSourceElement` reaches and `getSymbolOfDeclaration` answers it for. The local
-        // symbol of an exported declaration lists that declaration too.
+        // "Only perform this check once per symbol": at the first declaration that `checkSourceElement` reaches and for
+        // which `getSymbolOfDeclaration` returns the symbol. An exported declaration's local symbol lists that
+        // declaration too.
         let name_pos = self.hir(file)[e].name_pos;
         let is_checked_before = |&(f, other): &(FileId, EnumId)| {
             files.sym(f, self.bound(f).enum_symbol[other.idx()]) == enum_symbol

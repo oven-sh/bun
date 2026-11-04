@@ -325,10 +325,14 @@ async function loadPlugin([location, position, firstRule]) {
     // A plugin can load a rule when it is asked for it.
     if (position !== null) rules[firstRule + i] = { plugin, name: ruleName };
     else {
-      const meta = plugin.rules[ruleName].meta;
+      const rule = plugin.rules[ruleName];
+      if (rule === null || (typeof rule !== "object" && typeof rule !== "function")) {
+        throw new TypeError(`The rule ${JSON.stringify(ruleName)} must be an object: ${rule}`);
+      }
+      const meta = rule.meta;
       described.push({
         name: ruleName,
-        at: exported.get(plugin.rules[ruleName]),
+        at: exported.get(rule),
         type: meta?.type,
         fixable: Boolean(meta?.fixable),
         hasSuggestions: meta?.hasSuggestions === true,
@@ -1077,7 +1081,11 @@ function describeLoadError(error) {
   const lines = messageOf(error, it => it?.stack ?? it).split("\n");
   const stack = lines.indexOf("Require stack:");
   if (stack !== -1) lines.length = stack;
-  return lines.filter(it => !/^\s+at .*\bbun-lint-plugins\.js:\d+/.test(it)).join("\n");
+  // What it is made of says more than that there are several.
+  try {
+    if (error instanceof AggregateError) for (const it of error.errors) lines.push(`  ${messageOf(it, String)}`);
+  } catch {}
+  return lines.filter(it => !/^\s+at .*(?:\bbun-lint-plugins\.js|\(native):\d+/.test(it)).join("\n");
 }
 
 // What the other side calls, with what the message is. Returns the result, or a promise of it.

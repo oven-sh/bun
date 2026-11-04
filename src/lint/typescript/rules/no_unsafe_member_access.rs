@@ -10,27 +10,27 @@ pub struct NoUnsafeMemberAccess {
     allow_optional_chaining: bool,
 }
 
-const ERROR_COMPUTED_MEMBER_ACCESS: Message = Message::new(
+const ERROR_COMPUTED_MEMBER_ACCESS: &Message = &Message::new(
     "errorComputedMemberAccess",
     "The type of computed name {{property}} cannot be resolved.",
 );
-const ERROR_MEMBER_EXPRESSION: Message = Message::new(
+const ERROR_MEMBER_EXPRESSION: &Message = &Message::new(
     "errorMemberExpression",
     "Unsafe member access {{property}} on a type that cannot be resolved.",
 );
-const ERROR_THIS_MEMBER_EXPRESSION: Message = Message::new(
+const ERROR_THIS_MEMBER_EXPRESSION: &Message = &Message::new(
     "errorThisMemberExpression",
     "Unsafe member access {{property}}. The type of `this` cannot be resolved.\nYou can try to fix this by turning on the `noImplicitThis` compiler option, or adding a `this` parameter to the function.",
 );
-const UNSAFE_COMPUTED_MEMBER_ACCESS: Message = Message::new(
+const UNSAFE_COMPUTED_MEMBER_ACCESS: &Message = &Message::new(
     "unsafeComputedMemberAccess",
     "Computed name {{property}} resolves to an `any` value.",
 );
-const UNSAFE_MEMBER_EXPRESSION: Message = Message::new(
+const UNSAFE_MEMBER_EXPRESSION: &Message = &Message::new(
     "unsafeMemberExpression",
     "Unsafe member access {{property}} on an `any` value.",
 );
-const UNSAFE_THIS_MEMBER_EXPRESSION: Message = Message::new(
+const UNSAFE_THIS_MEMBER_EXPRESSION: &Message = &Message::new(
     "unsafeThisMemberExpression",
     "Unsafe member access {{property}} on an `any` value. `this` is typed as `any`.\nYou can try to fix this by turning on the `noImplicitThis` compiler option, or adding a `this` parameter to the function.",
 );
@@ -43,8 +43,7 @@ fn object_of(node: Expr<'_>) -> Option<Expr<'_>> {
     }
 }
 
-/// `TSClassImplements MemberExpression, TSInterfaceHeritage MemberExpression`: it is in a type
-/// argument there.
+/// `TSClassImplements MemberExpression, TSInterfaceHeritage MemberExpression`: true if it's in a type argument there.
 fn is_in_implements_or_interface_heritage(node: Expr) -> bool {
     Node::Expr(node).ancestors().any(|ancestor| {
         let Node::Type(ty) = ancestor else {
@@ -60,9 +59,33 @@ fn is_in_implements_or_interface_heritage(node: Expr) -> bool {
     })
 }
 
+/// tsgolint looks for a `HeritageClause` ancestor, which includes a class's `extends` and everything written in it.
+fn is_in_class_extends(node: Expr) -> bool {
+    let mut child = Node::Expr(node);
+    loop {
+        let parent = child.parent();
+        match (parent, child) {
+            (Node::File(_), _) => return false,
+            (Node::Class(class), Node::Expr(child)) if class.extends() == Some(child) => {
+                return true;
+            }
+            _ => child = parent,
+        }
+    }
+}
+
+/// True if the accesses inside `object` aren't checked. ESLint has a `ChainExpression` there, and tsgolint has a
+/// `ParenthesizedExpression`, which isn't an access expression.
+fn ends_member_chain(object: Expr, is_oxlint: bool) -> bool {
+    match is_oxlint {
+        true => object.is_parenthesized(),
+        false => object.is_chain_root(),
+    }
+}
+
 impl NoUnsafeMemberAccess {
-    /// Whether the member expression `node`, or one that it starts with, reads from an `any`.
-    fn is_unsafe(&self, mut node: Expr) -> bool {
+    /// True if the member expression `node`, or one nested in its object, reads from an `any`.
+    fn is_unsafe(&self, mut node: Expr, is_oxlint: bool) -> bool {
         loop {
             let Some(object) = object_of(node) else {
                 return false;
@@ -73,8 +96,7 @@ impl NoUnsafeMemberAccess {
             if is_type_any_type(object.ty()) {
                 return true;
             }
-            // In parentheses, a chain is a `ChainExpression`.
-            if object.is_chain_root() {
+            if ends_member_chain(object, is_oxlint) {
                 return false;
             }
             node = object;
@@ -82,15 +104,18 @@ impl NoUnsafeMemberAccess {
     }
 
     fn check_member_expression<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let is_oxlint = cx.language().is_oxlint;
         let (object, property, computed) = match node.kind() {
             ExprKind::Dot { obj, name, .. } => (obj, name.span(), false),
+            // tsgolint reports the `ArgumentExpression`, which includes its parentheses.
+            ExprKind::Index { obj, index, .. } if is_oxlint => (obj, index.outer_span(), true),
             ExprKind::Index { obj, index, .. } => (obj, index.span(), true),
             _ => return,
         };
         if self.allow_optional_chaining && node.is_optional() {
             return;
         }
-        // For tsgolint the `a.b` of `<a.b>` and of `</a.b>` is a member expression like any other.
+        // For tsgolint the `a.b` in `<a.b>` and `</a.b>` is a member expression like any other.
         if !computed && (node.is_in_type_query() || node.is_jsx_tag_name() && !cx.language().is_oxlint) {
             return;
         }
@@ -98,11 +123,11 @@ impl NoUnsafeMemberAccess {
         if !is_type_any_type(ty) {
             return;
         }
-        // It is reported where the first of them is.
-        if !object.is_chain_root() && self.is_unsafe(object) {
+        // Only the innermost unsafe access is reported.
+        if !ends_member_chain(object, is_oxlint) && self.is_unsafe(object, is_oxlint) {
             return;
         }
-        if is_in_implements_or_interface_heritage(node) {
+        if is_in_implements_or_interface_heritage(node) || is_oxlint && is_in_class_extends(node) {
             return;
         }
 
@@ -156,7 +181,16 @@ impl NoUnsafeMemberAccess {
             true => ERROR_COMPUTED_MEMBER_ACCESS,
             false => UNSAFE_COMPUTED_MEMBER_ACCESS,
         };
-        cx.report(node, message).data("property", [&b"["[..], node.text(), b"]"].concat());
+        // tsgolint reports the `ArgumentExpression`, which includes its parentheses.
+        match cx.language().is_oxlint && node.is_parenthesized() {
+            true => {
+                let span = node.outer_span();
+                cx.report(span, message).data("property", [&b"["[..], cx.slice(span), b"]"].concat());
+            }
+            false => {
+                cx.report(node, message).data("property", [&b"["[..], node.text(), b"]"].concat());
+            }
+        }
     }
 }
 

@@ -124,6 +124,7 @@ size_t JSFetchHeaders::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSFetchHeadersDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Headers, JSFetchHeadersDOMConstructor::construct);
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = uncheckedDowncast<JSFetchHeadersDOMConstructor>(callFrame->jsCallee());
@@ -508,11 +509,44 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_set, (JSGlobalObject * 
 
 struct FetchHeadersIteratorTraits {
     static constexpr JSDOMIteratorType type = JSDOMIteratorType::Map;
-    using KeyType = IDLDOMString;
-    using ValueType = IDLDOMString;
 };
 
 using FetchHeadersIteratorBase = JSDOMIteratorBase<JSFetchHeaders, FetchHeadersIteratorTraits>;
+
+static inline JSC::JSString* headerNameToJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const FetchHeaders::Iterator::Entry& entry)
+{
+    if (entry.name)
+        return WebCore::clientData(vm)->httpHeaderIdentifiers().stringFor(globalObject, *entry.name);
+    return JSC::jsStringWithCache(vm, *entry.key);
+}
+
+template<>
+JSC::JSValue FetchHeadersIteratorBase::next(JSC::JSGlobalObject& lexicalGlobalObject)
+{
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (m_iterator) {
+        if (auto* entry = m_iterator->nextEntry()) {
+            JSC::JSValue result;
+            switch (m_kind) {
+            case IterationKind::Keys:
+                result = headerNameToJS(vm, globalObject(), *entry);
+                break;
+            case IterationKind::Values:
+                result = JSC::jsStringWithCache(vm, *entry->value);
+                break;
+            case IterationKind::Entries:
+                result = JSC::constructArrayPair(globalObject(), headerNameToJS(vm, globalObject(), *entry), JSC::jsStringWithCache(vm, *entry->value));
+                RETURN_IF_EXCEPTION(scope, {});
+                break;
+            }
+            return createIteratorResultObject(&lexicalGlobalObject, result, false);
+        }
+        m_iterator = std::nullopt;
+    }
+    return createIteratorResultObject(&lexicalGlobalObject, JSC::jsUndefined(), true);
+}
+
 class FetchHeadersIterator final : public FetchHeadersIteratorBase {
 public:
     using Base = FetchHeadersIteratorBase;
@@ -557,6 +591,11 @@ const JSC::ClassInfo FetchHeadersIterator::s_info = { "Headers Iterator"_s, &Bas
 template<>
 const JSC::ClassInfo FetchHeadersIteratorPrototype::s_info = { "Headers Iterator"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(FetchHeadersIteratorPrototype) };
 
+JSC::JSObject* fetchHeadersIteratorPrototype(JSDOMGlobalObject& globalObject)
+{
+    return getDOMPrototype<FetchHeadersIterator>(globalObject.vm(), globalObject);
+}
+
 static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_entriesCaller(JSGlobalObject*, CallFrame*, JSFetchHeaders* thisObject)
 {
     return JSValue::encode(iteratorCreate<FetchHeadersIterator>(*thisObject, IterationKind::Entries));
@@ -589,7 +628,26 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_values, (JSC::JSGlobalO
 
 static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_forEachCaller(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, JSFetchHeaders* thisObject)
 {
-    return JSValue::encode(iteratorForEach<FetchHeadersIterator>(*lexicalGlobalObject, *callFrame, *thisObject));
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSValue callback = callFrame->argument(0);
+    JSC::JSValue thisValue = callFrame->argument(1);
+
+    auto callData = JSC::getCallData(callback);
+    if (callData.type == JSC::CallData::Type::None)
+        return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "Cannot call callback on a non-function"_s);
+
+    auto iterator = thisObject->wrapped().createIterator();
+    while (auto* entry = iterator.nextEntry()) {
+        JSC::MarkedArgumentBuffer arguments;
+        arguments.append(JSC::jsStringWithCache(vm, *entry->value));
+        arguments.append(headerNameToJS(vm, thisObject->globalObject(), *entry));
+        arguments.append(thisObject);
+        ASSERT(!arguments.hasOverflowed());
+        JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, callback, callData, thisValue, arguments);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    return JSValue::encode(JSC::jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_forEach, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))

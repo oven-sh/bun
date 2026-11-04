@@ -58,17 +58,12 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* except
     (void)scope.tryClearException();
     vm.clearLastException();
 
-    auto* globalObject = uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject);
-    // if (auto* window = dynamicDowncast<JSDOMWindow>( globalObject)) {
-    //     if (!window->wrapped().isCurrentlyDisplayedInFrame())
-    //         return;
-    // }
-
     int lineNumber = 0;
     int columnNumber = 0;
     String exceptionSourceURL;
 
-    Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+    // The listener's realm can be a node:vm context, which isn't a Zig::GlobalObject.
+    Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(lexicalGlobalObject, exception);
     RETURN_IF_EXCEPTION(scope, );
 
     if (exceptionDetails) {
@@ -109,6 +104,20 @@ String retrieveErrorMessage(JSGlobalObject& lexicalGlobalObject, VM& vm, JSValue
     (void)topExceptionScope.tryClearException();
     vm.clearLastException();
     return errorMessage;
+}
+
+JSValue createDOMExceptionObject(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec, const String& message)
+{
+    // FIXME: All callers to createDOMException need to pass in the correct global object.
+    // For now, we're going to assume the lexicalGlobalObject. Which is wrong in cases like this:
+    // frames[0].document.createElement(null, null); // throws an exception which should have the subframe's prototypes.
+    // https://bugs.webkit.org/show_bug.cgi?id=222229
+    JSDOMGlobalObject* globalObject = deprecatedGlobalObjectForPrototype(lexicalGlobalObject);
+    JSValue errorObject = toJS(lexicalGlobalObject, globalObject, DOMException::create(ec, message));
+
+    ASSERT(errorObject);
+    addErrorInfo(lexicalGlobalObject, asObject(errorObject), true);
+    return errorObject;
 }
 
 JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec, const String& message, const String& extra)
@@ -158,10 +167,10 @@ JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec
         // null String means the one-arg constructor was used.
         auto& vm = JSC::getVM(lexicalGlobalObject);
         auto* error = JSC::createTypeError(lexicalGlobalObject, "Invalid URL"_s);
-        error->putDirect(vm, JSC::Identifier::fromString(vm, "code"_s), JSC::jsString(vm, WTF::String("ERR_INVALID_URL"_s)), 0);
+        Bun::putDirectNamed(vm, error, "code"_s, JSC::jsString(vm, WTF::String("ERR_INVALID_URL"_s)));
         error->putDirect(vm, vm.propertyNames->input, JSC::jsString(vm, message));
         if (!extra.isNull())
-            error->putDirect(vm, JSC::Identifier::fromString(vm, "base"_s), JSC::jsString(vm, extra));
+            Bun::putDirectNamed(vm, error, "base"_s, JSC::jsString(vm, extra));
         return error;
     }
 
@@ -173,18 +182,8 @@ JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec
     case ExceptionCode::WORKER_INVALID_EXEC_ARGV:
         return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_WORKER_INVALID_EXEC_ARGV, message);
 
-    default: {
-        // FIXME: All callers to createDOMException need to pass in the correct global object.
-        // For now, we're going to assume the lexicalGlobalObject. Which is wrong in cases like this:
-        // frames[0].document.createElement(null, null); // throws an exception which should have the subframe's prototypes.
-        // https://bugs.webkit.org/show_bug.cgi?id=222229
-        JSDOMGlobalObject* globalObject = deprecatedGlobalObjectForPrototype(lexicalGlobalObject);
-        JSValue errorObject = toJS(lexicalGlobalObject, globalObject, DOMException::create(ec, message));
-
-        ASSERT(errorObject);
-        addErrorInfo(lexicalGlobalObject, asObject(errorObject), true);
-        return errorObject;
-    }
+    default:
+        return createDOMExceptionObject(lexicalGlobalObject, ec, message);
     }
     return {};
 }

@@ -8,45 +8,45 @@ use bun_lint::types::utils::{
     is_higher_precedence_than_await, is_promise_like, is_type_flag_set,
     parse_type_or_value_specifiers, type_matches_some_specifier,
 };
-use bun_lint::types::{ObjectFlags, SyntaxKind, Type, TypeFlags};
+use bun_lint::types::{IdMap, ObjectFlags, SyntaxKind, Type, TypeFlags};
+use bun_lint::utils::oxlint::is_visited_as_pattern;
 use bun_lint::utils::ts_utils::{WrappingFixerParams, get_wrapping_fixer};
-use rustc_hash::FxHashMap;
 
 /// Disallow using the spread operator when it might cause unexpected behavior.
 pub struct NoMisusedSpread {
     allow: Vec<TypeOrValueSpecifier>,
 }
 
-const ADD_AWAIT: Message = Message::new("addAwait", "Add await operator.");
-const NO_ARRAY_SPREAD_IN_OBJECT: Message = Message::new(
+const ADD_AWAIT: &Message = &Message::new("addAwait", "Add await operator.");
+const NO_ARRAY_SPREAD_IN_OBJECT: &Message = &Message::new(
     "noArraySpreadInObject",
     "Using the spread operator on an array in an object will result in a list of indices.",
 );
-const NO_CLASS_DECLARATION_SPREAD_IN_OBJECT: Message = Message::new(
+const NO_CLASS_DECLARATION_SPREAD_IN_OBJECT: &Message = &Message::new(
     "noClassDeclarationSpreadInObject",
     "Using the spread operator on class declarations will spread only their static properties, and will lose their class prototype.",
 );
-const NO_CLASS_INSTANCE_SPREAD_IN_OBJECT: Message = Message::new(
+const NO_CLASS_INSTANCE_SPREAD_IN_OBJECT: &Message = &Message::new(
     "noClassInstanceSpreadInObject",
     "Using the spread operator on class instances will lose their class prototype.",
 );
-const NO_FUNCTION_SPREAD_IN_OBJECT: Message = Message::new(
+const NO_FUNCTION_SPREAD_IN_OBJECT: &Message = &Message::new(
     "noFunctionSpreadInObject",
     "Using the spread operator on a function without additional properties can cause unexpected behavior. Did you forget to call the function?",
 );
-const NO_ITERABLE_SPREAD_IN_OBJECT: Message = Message::new(
+const NO_ITERABLE_SPREAD_IN_OBJECT: &Message = &Message::new(
     "noIterableSpreadInObject",
     "Using the spread operator on an Iterable in an object can cause unexpected behavior.",
 );
-const NO_MAP_SPREAD_IN_OBJECT: Message = Message::new(
+const NO_MAP_SPREAD_IN_OBJECT: &Message = &Message::new(
     "noMapSpreadInObject",
     "Using the spread operator on a Map in an object will result in an empty object. Did you mean to use `Object.fromEntries(map)` instead?",
 );
-const NO_PROMISE_SPREAD_IN_OBJECT: Message = Message::new(
+const NO_PROMISE_SPREAD_IN_OBJECT: &Message = &Message::new(
     "noPromiseSpreadInObject",
     "Using the spread operator on Promise in an object can cause unexpected behavior. Did you forget to await the promise?",
 );
-const NO_STRING_SPREAD: Message = Message::new(
+const NO_STRING_SPREAD: &Message = &Message::new(
     "noStringSpread",
     "Using the spread operator on a string can mishandle special characters, as can `.split(\"\")`.\n\
      - `...` produces Unicode code points, which will decompose complex emojis into individual emojis\n\
@@ -54,17 +54,17 @@ const NO_STRING_SPREAD: Message = Message::new(
      Consider using `Intl.Segmenter` for locale-aware string decomposition.\n\
      Otherwise, if you don't need to preserve emojis or other non-Ascii characters, disable this lint rule on this line or configure the 'allow' rule option.",
 );
-const REPLACE_MAP_SPREAD_IN_OBJECT: Message = Message::new(
+const REPLACE_MAP_SPREAD_IN_OBJECT: &Message = &Message::new(
     "replaceMapSpreadInObject",
     "Replace map spread in object with `Object.fromEntries()`",
 );
 
-/// What is wrong with a spread of a type in an object.
+/// What's wrong with spreading a type into an object.
 #[derive(Copy, Clone)]
 enum Misuse {
     Promise,
     Function,
-    /// Whether every constituent is a `Map` or a `ReadonlyMap`.
+    /// True if every constituent is a `Map` or a `ReadonlyMap`.
     Map(bool),
     Array,
     Iterable,
@@ -72,13 +72,12 @@ enum Misuse {
     ClassDeclaration,
 }
 
-/// What has been found out about types: each constituent of a union is looked at, several times, and many spreads have
-/// the same type.
+/// Per-type results. Each constituent of a union is examined several times, and many spreads have the same type.
 #[derive(Default)]
 pub struct State<'a> {
-    in_objects: FxHashMap<Type<'a>, Option<Misuse>>,
-    /// Whether a spread in an array or a call is to be reported.
-    in_lists: FxHashMap<Type<'a>, bool>,
+    in_objects: IdMap<Type<'a>, Option<Misuse>>,
+    /// True if a spread in an array or a call should be reported.
+    in_lists: IdMap<Type<'a>, bool>,
 }
 
 fn is_type_recurser<'a>(ty: Type<'a>, predicate: &impl Fn(Type<'a>) -> bool) -> bool {
@@ -110,7 +109,7 @@ fn is_promise(ty: Type) -> bool {
 
 fn is_class_instance(ty: Type) -> bool {
     is_type_recurser(ty, &|t| {
-        // A type that has a construct signature itself is a class, or like one.
+        // A type that has a construct signature itself is a class, or class-like.
         if !t.get_construct_signatures().is_empty() {
             return false;
         }
@@ -141,6 +140,49 @@ fn is_iterable_map(ty: Type) -> bool {
     is_type_recurser(ty, &|t| is_builtin_symbol_like(t, &["Map", "ReadonlyMap"]))
 }
 
+/// True if the array or object literal is a pattern upstream: ESLint's `ArrayPattern` or `ObjectPattern`, or something
+/// tsgolint's `patternVisitor` visits.
+fn is_pattern(literal: Expr) -> bool {
+    match literal.file().language().is_oxlint {
+        true => is_visited_as_pattern(literal),
+        false => literal.is_assignment_target(),
+    }
+}
+
+/// tsgolint's `patternVisitor` visits a `PropertyAssignment`'s initializer but nothing in its computed name.
+fn is_in_unvisited_computed_name(node: Node) -> bool {
+    let mut child = node;
+    for parent in node.ancestors() {
+        if let (Node::Expr(key), Node::Prop(prop)) = (child, parent)
+            && prop.kind() == PropKind::Init
+            && prop.computed_key() == Some(key)
+            && matches!(prop.parent(), Node::Expr(object) if is_visited_as_pattern(object))
+        {
+            return true;
+        }
+        child = parent;
+    }
+    false
+}
+
+/// True if an `await` at `node` is a syntax error: the innermost enclosing function isn't `async`, or it's in the
+/// initializer of a class or enum member, in a parameter, or in a namespace.
+fn is_outside_await_context(node: Node) -> bool {
+    let mut below = node;
+    for above in node.ancestors() {
+        match above {
+            Node::Param(_) => return true,
+            Node::Func(func) => return !func.is_async(),
+            Node::Member(member) if member.init().map(Node::Expr) == Some(below) => return true,
+            Node::EnumMember(_) => return true,
+            Node::Stmt(stmt) if stmt.as_module().is_some() => return true,
+            _ => {}
+        }
+        below = above;
+    }
+    false
+}
+
 impl NoMisusedSpread {
     fn check_array_or_call_spread<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Spread(argument) = node.kind() else {
@@ -151,13 +193,18 @@ impl NoMisusedSpread {
         };
         match parent.kind() {
             ExprKind::Call(_) => {}
-            // In an `ArrayPattern` it is a `RestElement`.
-            ExprKind::Array(_) if !parent.is_assignment_target() => {}
+            // In an `ArrayPattern` it's a `RestElement`.
+            ExprKind::Array(_) if !is_pattern(parent) => {}
             _ => return,
         }
         let ty = get_constrained_type_at_location(argument);
-        let is_misused = || is_string(ty) && !type_matches_some_specifier(ty, &self.allow);
-        if *cx.state.in_lists.entry(ty).or_insert_with(is_misused) {
+        let is_misused = *cx
+            .state
+            .in_lists
+            .get_or_insert_with(ty, || is_string(ty) && !type_matches_some_specifier(ty, &self.allow));
+        if is_misused
+            && !(node.file().language().is_oxlint && is_in_unvisited_computed_name(Node::Expr(node)))
+        {
             cx.report(node, NO_STRING_SPREAD);
         }
     }
@@ -174,7 +221,7 @@ impl NoMisusedSpread {
         } else if is_array(ty) {
             Some(Misuse::Array)
         } else if is_iterable(ty) && !is_string(ty) {
-            // TypeScript flags a string already.
+            // TypeScript already flags a string.
             Some(Misuse::Iterable)
         } else if is_class_instance(ty) {
             Some(Misuse::ClassInstance)
@@ -192,14 +239,18 @@ impl NoMisusedSpread {
         let (Some(argument), Node::Expr(parent)) = (node.value(), node.parent()) else {
             return;
         };
-        // In an `ObjectPattern` it is a `RestElement`.
-        if !node.is_jsx_attribute() && parent.is_assignment_target() {
+        // In an `ObjectPattern` it's a `RestElement`.
+        if !node.is_jsx_attribute() && is_pattern(parent) {
             return;
         }
         let ty = get_constrained_type_at_location(argument);
-        let Some(misuse) = *cx.state.in_objects.entry(ty).or_insert_with(|| self.misuse_in_object(ty)) else {
+        let misuse = *cx.state.in_objects.get_or_insert_with(ty, || self.misuse_in_object(ty));
+        let Some(misuse) = misuse else {
             return;
         };
+        if node.file().language().is_oxlint && is_in_unvisited_computed_name(Node::Prop(node)) {
+            return;
+        }
         let report = cx.report(
             node,
             match misuse {
@@ -213,6 +264,8 @@ impl NoMisusedSpread {
             },
         );
         match misuse {
+            // tsgolint adds the `await` there too, which doesn't parse.
+            Misuse::Promise if node.file().language().is_oxlint && is_outside_await_context(Node::Prop(node)) => {}
             Misuse::Promise => {
                 report.suggest(ADD_AWAIT, |fixer| match is_higher_precedence_than_await(argument) {
                     true => vec![fixer.insert_before(argument, "await ")],
@@ -223,7 +276,7 @@ impl NoMisusedSpread {
                 report.suggest(REPLACE_MAP_SPREAD_IN_OBJECT, |fixer| {
                     let inner = [argument];
                     let is_only_property = matches!(parent.kind(), ExprKind::Object(properties) if properties.len() == 1);
-                    // tsgolint takes the braces and a `,` away and leaves all else where it is.
+                    // tsgolint removes the braces and a `,` and leaves everything else in place.
                     let file = fixer.file();
                     if is_only_property && file.language().is_oxlint {
                         let (whole, dots, spread) = (parent.span(), node.span().start, argument.outer_span());

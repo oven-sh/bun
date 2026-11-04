@@ -1,24 +1,24 @@
-//! A tree of names in few bytes, and without pointers: what `generate-table.cjs` writes.
+//! A compact, pointer-free tree of names. `generate-table.cjs` writes the data.
 //!
-//! The names are parts of one text. The members of all maps are in one array, those of a map after each other, and a
-//! member says where its own members are in it. So a map can be among its own members, as that of `globalThis` is.
+//! The names are slices of one string. The members of all maps are in one array, with each map's members contiguous,
+//! and each member stores the range of its own members. So a map can be one of its own members, like `globalThis`.
 
 use bun_lint::utils::eslint_utils::{ReferenceKind, Trace};
 use std::marker::PhantomData;
 use std::ops::Range;
 
-/// Where the parts of a table are.
+/// Gives access to a table's arrays.
 pub(crate) trait Table: Sized + 'static {
     fn names() -> &'static str;
     fn members() -> &'static [Member<Self>];
-    /// What a member has at `[READ]`, `[CALL]` and `[CONSTRUCT]`, each [`NONE`] or a number that means something to the
-    /// user of the table. A member has the position of its three.
+    /// A member's values for `[READ]`, `[CALL]` and `[CONSTRUCT]`. Each is [`NONE`] or a number whose meaning is up to
+    /// the table's user. A member stores the index of its triple.
     fn kinds() -> &'static [[u16; 3]];
 }
 
 pub(crate) const NONE: u16 = u16::MAX;
 
-/// What follows each other in one of the parts of a table: some bytes of the names, or some elements of an array.
+/// A contiguous range in one of a table's arrays: some bytes of the names, or some elements of an array.
 #[derive(Copy, Clone)]
 pub(crate) struct Part {
     first: u16,
@@ -37,18 +37,18 @@ impl Part {
         first..first + usize::from(self.count)
     }
 
-    /// Of [`Table::names`].
+    /// This range of [`Table::names`].
     pub(crate) fn text<T: Table>(self) -> &'static str {
         T::names().get(self.range()).unwrap_or_default()
     }
 
-    /// Of [`Table::members`].
+    /// This range of [`Table::members`].
     pub(crate) fn members<T: Table>(self) -> &'static [Member<T>] {
         T::members().get(self.range()).unwrap_or_default()
     }
 }
 
-/// A name in the table `T`, with what the name stands for.
+/// A name in the table `T`, with its values and members.
 pub(crate) struct Member<T> {
     name: u16,
     first: u16,
@@ -108,7 +108,7 @@ impl<'m, T: Table> Trace<'m> for Member<T> {
     }
 }
 
-/// A map with some members of a table as its members.
+/// A map whose members are a selection of a table's members.
 pub(crate) struct Roots<T: Table>(pub(crate) Vec<&'static Member<T>>);
 
 impl<'m, T: Table> Trace<'m> for Roots<T> {

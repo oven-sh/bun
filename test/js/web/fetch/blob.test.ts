@@ -1,5 +1,6 @@
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, gcTick, isASAN, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, gcTick, isASAN, isLinux, isWindows, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
 import type { BlobPropertyBag } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
@@ -107,6 +108,36 @@ test("new Blob", () => {
   expect(blob.type).toBe("");
 });
 
+test.each(["text/plain", "text/html", "text/css", "application/json", "application/javascript", "image/png"])(
+  "type is the %s that the script gave",
+  type => {
+    expect(new Blob(["x"], { type }).type).toBe(type);
+    expect(new Blob(["x"], { type: type.toUpperCase() }).type).toBe(type);
+    expect(new File(["x"], "name", { type }).type).toBe(type);
+    expect(new Blob(["x"]).slice(0, 1, type).type).toBe(type);
+    expect(structuredClone(new Blob(["x"], { type })).type).toBe(type);
+    expect(Bun.inspect(new Blob(["x"], { type }))).toContain(`type: "${type}"`);
+  },
+);
+
+test.each(["Application/X-THING; A=B", "TEXT/PLAIN", "Text/Plain; Charset=UTF-8", "text/plain"])(
+  "a clone has the type of its Blob, which got %j from a header",
+  async type => {
+    const request = new Request("http://localhost/", { method: "POST", body: "x", headers: { "content-type": type } });
+    const blob = await request.blob();
+    expect(structuredClone(blob).type).toBe(blob.type);
+  },
+);
+
+test("a Content-Type header made from a Blob still names the charset of text", async () => {
+  const blob = new Blob(["x"], { type: "text/plain" });
+  expect(new Response(blob).headers.get("content-type")).toBe("text/plain;charset=utf-8");
+  expect(new Response(structuredClone(blob)).headers.get("content-type")).toBe("text/plain;charset=utf-8");
+  expect(new Request("http://localhost/", { method: "POST", body: blob }).headers.get("content-type")).toBe(
+    "text/plain;charset=utf-8",
+  );
+});
+
 test("new Blob stringifies non-Blob object parts in order", async () => {
   const url = new URL("https://example.com/path");
   // @ts-expect-error
@@ -198,6 +229,25 @@ test("blob: can reliable get type from fetch #10072", async () => {
 test("new Blob(new Uint8Array()) is supported", async () => {
   const blob = new Blob(Buffer.from("1234") as any);
   expect(await blob.text()).toBe("1234");
+});
+
+test("estimateShallowMemoryUsageOf(new File()) is at least that of a Blob", () => {
+  expect(estimateShallowMemoryUsageOf(new File(["1234"], "file.txt"))).toBeGreaterThanOrEqual(
+    estimateShallowMemoryUsageOf(new Blob(["1234"])),
+  );
+});
+
+test("new File reads new.target.prototype before it looks for the realm of new.target", () => {
+  const { proxy, revoke } = Proxy.revocable(function () {}, {});
+  revoke();
+  const keys: PropertyKey[] = [];
+  const newTarget = new Proxy(proxy, {
+    get(target, key) {
+      keys.push(key);
+    },
+  });
+  expect(() => Reflect.construct(File, [[], "file.txt"], newTarget)).toThrow(TypeError);
+  expect(keys).toEqual(["prototype"]);
 });
 
 // https://github.com/oven-sh/bun/issues/13049
@@ -427,6 +477,34 @@ test("Bun.file(path, {type}).text() does not leak the duped content_type", async
   expect(exitCode).toBe(0);
 });
 
+test("Bun.file(path, {type}).formData() frees the bytes it read", async () => {
+  // The parser skips what precedes the first boundary, so the read buffer is the only large allocation.
+  using dir = tempDir("blob-form-data-read", {
+    "body.txt": Buffer.concat([
+      Buffer.alloc(4 * 1024 * 1024, "a"),
+      Buffer.from('\r\n--bun\r\nContent-Disposition: form-data; name="key"\r\n\r\nvalue\r\n--bun--\r\n'),
+    ]),
+  });
+  const code = /* js */ `
+    const file = Bun.file(${JSON.stringify(path.join(String(dir), "body.txt"))}, {
+      type: "multipart/form-data; boundary=bun",
+    });
+    async function run(calls) {
+      for (let i = 0; i < calls; i++) {
+        const form = await file.formData();
+        if (form.get("key") !== "value") throw new Error("wrong entries");
+      }
+      Bun.gc(true);
+      return process.memoryUsage.rss();
+    }
+    const before = await run(8);
+    const after = await run(32);
+    console.log(JSON.stringify({ deltaMiB: (after - before) / 1024 / 1024 }));
+  `;
+  // Unfixed: 128 MiB, the 32 reads of 4 MiB.
+  await expectRssDeltaBelow(["--smol", "-e", code], { release: 32, debug: 64 });
+});
+
 test("reading a file-backed Blob does not free the source's content type", async () => {
   using dir = tempDir("blob-text-keeps-type", {
     "data.txt": "hello",
@@ -647,6 +725,9 @@ describe("consuming a slice's stream after the Blobs were collected", () => {
       return blob;
     });
     while (collected < tracked) await gcTick();
+    // Bun: `bun run` keeps every local variable of a function that waits alive. Compiled ahead of time, a registry that
+    // nothing names behind the loop is collected while the loop waits, and its callback never runs. So it is named here.
+    registry.unregister(registry);
     return result;
   }
 
@@ -961,7 +1042,7 @@ test.each([
   ["text/plain;charset=utf-8", "text/plain;charset=utf-8"],
   ["image/tiff", "image/tiff"],
   ["application/vnd.api+json", "application/vnd.api+json"],
-  ["application/x-www-form-urlencoded", "application/x-www-form-urlencoded;charset=UTF-8"],
+  ["application/x-www-form-urlencoded", "application/x-www-form-urlencoded"],
   ["application/x-not-a-registered-type", ""],
 ])("new Blob([], { type: %j }).slice().type", (type, expected) => {
   const blob = new Blob(["abc"], { type });

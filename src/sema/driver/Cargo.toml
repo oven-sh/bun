@@ -17,5 +17,8 @@ bstr.workspace = true
 bun_threading.workspace = true
 bun_sys.workspace = true
 
+[dev-dependencies]
+bun_sema_standalone = { path = "../standalone", features = ["test_support"] }
+
 [lints]
 workspace = true

@@ -1,12 +1,12 @@
 use bun_lint::prelude::*;
 use bun_lint::types::utils::is_type_reference_type;
-use bun_lint::types::{SyntaxKind, TsNode, TsSymbol, Type};
+use bun_lint::types::{IdSet, SyntaxKind, TsNode, TsSymbol, Type};
 use smallvec::SmallVec;
 
 /// Disallow type arguments that are equal to the default.
 pub struct NoUnnecessaryTypeArguments;
 
-const UNNECESSARY_TYPE_PARAMETER: Message = Message::new(
+const UNNECESSARY_TYPE_PARAMETER: &Message = &Message::new(
     "unnecessaryTypeParameter",
     "This is the default value for this type parameter, so it can be omitted.",
 );
@@ -16,7 +16,7 @@ type TypeParameters<'a> = SmallVec<[TsNode<'a>; 4]>;
 
 /// `declaration.typeParameters`. `None` if it has none.
 fn type_parameters_of(declaration: TsNode<'_>) -> Option<TypeParameters<'_>> {
-    // They follow each other, before the members.
+    // The type parameters are consecutive and come before the members.
     let is_type_parameter = |child: &TsNode| child.kind() == SyntaxKind::TypeParameter;
     let children = declaration.children().skip_while(|child| !is_type_parameter(child));
     let type_parameters: TypeParameters = children.take_while(is_type_parameter).collect();
@@ -27,7 +27,7 @@ fn is_type_context_declaration(decl: TsNode) -> bool {
     matches!(decl.kind(), SyntaxKind::TypeAliasDeclaration | SyntaxKind::InterfaceDeclaration)
 }
 
-/// `checker.getSymbolAtLocation(expression)`, which has nothing for a `ParenthesizedExpression`.
+/// `checker.getSymbolAtLocation(expression)`, which returns nothing for a `ParenthesizedExpression`.
 fn get_symbol_at_location(expression: Expr<'_>) -> Option<TsSymbol<'_>> {
     if expression.is_parenthesized() {
         return None;
@@ -39,16 +39,32 @@ fn get_construct_signature_declaration(symbol: TsSymbol<'_>) -> Option<TsNode<'_
     symbol.get_type().get_construct_signatures().first()?.declaration()
 }
 
-/// `sym_at_location`: the symbol of the name that the type arguments follow.
-/// `is_in_type_context`: it is the name of a type, not the class that a class extends or that
-/// `new` is applied to.
+/// `sym_at_location` is the symbol of the name the type arguments follow. `is_in_type_context` means it's a type name,
+/// not the class that a class extends or that `new` is applied to.
 fn get_type_parameters_from_type(
     sym_at_location: Option<TsSymbol<'_>>,
     is_in_type_context: bool,
+    is_oxlint: bool,
 ) -> Option<TypeParameters<'_>> {
     let sym_at_location = sym_at_location?;
-    let mut declarations: SmallVec<[TsNode; 4]> =
-        sym_at_location.skip_alias().declarations().collect();
+    let symbol = sym_at_location.skip_alias();
+    let mut declarations: SmallVec<[TsNode; 4]> = symbol.declarations().collect();
+    if is_oxlint {
+        // tsgolint keeps the relative order of the type declarations and of the others. The first declaration that can
+        // have type parameters decides, even if it has none.
+        utils::sort::sort_by_key(&mut declarations, |&decl| {
+            is_type_context_declaration(decl) != is_in_type_context
+        });
+        let declaration = declarations.into_iter().find_map(|decl| match decl.kind() {
+            SyntaxKind::TypeAliasDeclaration
+            | SyntaxKind::InterfaceDeclaration
+            | SyntaxKind::ClassDeclaration
+            | SyntaxKind::ClassExpression => Some(decl),
+            SyntaxKind::VariableDeclaration => get_construct_signature_declaration(symbol),
+            _ => None,
+        })?;
+        return type_parameters_of(declaration);
+    }
     utils::sort::sort_by_key(&mut declarations, |&decl| !is_type_context_declaration(decl));
     if !is_in_type_context {
         declarations.reverse();
@@ -65,16 +81,16 @@ fn get_type_parameters_from_type(
     })
 }
 
-/// tsgolint's `constructorArgumentsCanInferTypeParameters`: the type of a parameter of `constructor` names one of
-/// `type_parameters`, so without type arguments they would be inferred from the arguments of `new`.
+/// tsgolint's `constructorArgumentsCanInferTypeParameters`: true if a parameter type of `constructor` mentions one of
+/// `type_parameters`, so that without type arguments they'd be inferred from the arguments of `new`.
 fn tsgolint_arguments_can_infer<'a>(constructor: TsNode<'a>, type_parameters: &[TsNode<'a>]) -> bool {
     let names = type_parameters.iter().filter_map(|it| it.name());
-    let symbols: SmallVec<[TsSymbol; 4]> = names.filter_map(|it| it.get_symbol_at_location()).collect();
+    let symbols: IdSet<TsSymbol> = names.filter_map(|it| it.get_symbol_at_location()).collect();
     let parameters = constructor.children().filter(|it| it.kind() == SyntaxKind::Parameter);
-    let mut pending: Vec<TsNode> = parameters.filter_map(TsNode::type_node).collect();
+    let mut pending: SmallVec<[TsNode; 8]> = parameters.filter_map(TsNode::type_node).collect();
     while let Some(node) = pending.pop() {
         if node.kind() == SyntaxKind::Identifier
-            && node.get_symbol_at_location().is_some_and(|it| symbols.contains(&it))
+            && node.get_symbol_at_location().is_some_and(|it| symbols.contains(it))
         {
             return true;
         }
@@ -83,14 +99,11 @@ fn tsgolint_arguments_can_infer<'a>(constructor: TsNode<'a>, type_parameters: &[
     false
 }
 
-/// Whether two types that are not one are references to the same generic type with the same type
-/// arguments.
+/// True if two distinct types are references to the same generic type with the same type arguments.
 fn is_same_type_reference<'a>(a: Type<'a>, b: Type<'a>) -> bool {
     match (is_type_reference_type(a), is_type_reference_type(b)) {
         (true, true) => {
-            a.target().is_some()
-                && a.target() == b.target()
-                && a.get_type_arguments().iter().eq(b.get_type_arguments())
+            a.has_same_target_as(b) && a.get_type_arguments().iter().eq(b.get_type_arguments())
         }
         (true, false) => a.target() == Some(b) && a.get_type_arguments().is_empty(),
         (false, true) => b.target() == Some(a) && b.get_type_arguments().is_empty(),
@@ -103,7 +116,7 @@ fn check_ts_args_and_parameters<'a>(
     type_parameters: &[TsNode<'a>],
     cx: &Cx<'a, NoUnnecessaryTypeArguments>,
 ) {
-    // Only the last one: the ones before it have to be there if it is.
+    // Only the last one. The ones before it have to stay as long as it's there.
     let Some(i) = es_parameters.len().checked_sub(1) else {
         return;
     };
@@ -141,7 +154,16 @@ impl NoUnnecessaryTypeArguments {
         // `typeName` of a `TypeReference`, `expression` of an `ExpressionWithTypeArguments`
         let name = node.ts_node().children().next();
         let symbol = name.and_then(|name| name.get_symbol_at_location());
-        if let Some(type_parameters) = get_type_parameters_from_type(symbol, true) {
+        let is_oxlint = cx.language().is_oxlint;
+        // For tsgolint an interface's `extends` entry isn't in a type context.
+        let is_interface_heritage = matches!(
+            node.parent(),
+            Node::Stmt(statement) if matches!(statement.tag(), StmtTag::Interface)
+        );
+        let is_in_type_context = !(is_oxlint && is_interface_heritage);
+        if let Some(type_parameters) =
+            get_type_parameters_from_type(symbol, is_in_type_context, is_oxlint)
+        {
             check_ts_args_and_parameters(args, &type_parameters, cx);
         }
     }
@@ -152,7 +174,8 @@ impl NoUnnecessaryTypeArguments {
             return;
         }
         let symbol = class.extends().and_then(get_symbol_at_location);
-        if let Some(type_parameters) = get_type_parameters_from_type(symbol, false) {
+        let is_oxlint = cx.language().is_oxlint;
+        if let Some(type_parameters) = get_type_parameters_from_type(symbol, false, is_oxlint) {
             check_ts_args_and_parameters(args, &type_parameters, cx);
         }
     }
@@ -168,12 +191,13 @@ impl NoUnnecessaryTypeArguments {
             return;
         }
         let is_oxlint = cx.language().is_oxlint;
-        let of_class = || get_type_parameters_from_type(get_symbol_at_location(class?.callee()), false);
+        let class_type_parameters =
+            || get_type_parameters_from_type(get_symbol_at_location(class?.callee()), false, is_oxlint);
         let sig_decl = node.resolved_signature().and_then(|sig| sig.declaration());
         let type_parameters = match sig_decl {
-            // A constructor has none. tsgolint goes on to those of the class.
-            Some(sig_decl) => type_parameters_of(sig_decl).or_else(|| of_class().filter(|_| is_oxlint)),
-            None => of_class(),
+            // A constructor has none. tsgolint falls back to the class's.
+            Some(sig_decl) => type_parameters_of(sig_decl).or_else(|| class_type_parameters().filter(|_| is_oxlint)),
+            None => class_type_parameters(),
         };
         let Some(type_parameters) = type_parameters else {
             return;
@@ -188,10 +212,12 @@ impl NoUnnecessaryTypeArguments {
         check_ts_args_and_parameters(args, &type_parameters, cx);
     }
 
-    /// `A<B>` that is not called, which tsgolint looks at as at the class that a class extends.
+    /// An `A<B>` that isn't called. tsgolint treats it like the class that a class extends.
     fn check_instantiation<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let is_oxlint = cx.language().is_oxlint;
         if let ExprKind::Instantiation { expr, type_args } = node.kind()
-            && let Some(type_parameters) = get_type_parameters_from_type(get_symbol_at_location(expr), false)
+            && let Some(type_parameters) =
+                get_type_parameters_from_type(get_symbol_at_location(expr), false, is_oxlint)
         {
             check_ts_args_and_parameters(type_args, &type_parameters, cx);
         }
@@ -221,8 +247,8 @@ impl Rule for NoUnnecessaryTypeArguments {
         NoUnnecessaryTypeArguments
     }
 
-    // The type arguments of a `TSInstantiationExpression`, where defaults do not apply, of a
-    // `TSTypeQuery` and of a `TSImportType` are not checked.
+    // Not checked: the type arguments of a `TSInstantiationExpression`, where defaults don't apply, of a `TSTypeQuery`
+    // and of a `TSImportType`.
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let mut on = On::new();
         if file.language().is_oxlint {

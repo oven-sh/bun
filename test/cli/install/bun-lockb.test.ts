@@ -1,9 +1,10 @@
 import { file, spawn, write } from "bun";
-import { afterAll, beforeAll, expect, it } from "bun:test";
-import { copyFile, exists, open, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, isWindows, runBunInstall } from "harness";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { chmodSync, readFileSync, statSync } from "fs";
+import { copyFile, exists, open, rm, symlink, writeFile } from "fs/promises";
+import { bunExe, bunEnv as env, isLinux, isRoot, isWindows, runBunInstall, tempDir, textLockfile } from "harness";
 import { join } from "path";
-import { TestRegistry } from "registry";
+import { installEnv, TestRegistry, toml } from "registry";
 
 const registry = new TestRegistry();
 
@@ -33,9 +34,9 @@ it("should not print anything to stderr when running bun.lockb", async () => {
     }),
   );
 
-  // Run 'bun install' to generate the lockfile
+  // Run 'bun install' to generate the lockfile. Its mode is 0o777 less the umask.
   const installResult = spawn({
-    cmd: [bunExe(), "install"],
+    cmd: isWindows ? [bunExe(), "install"] : ["sh", "-c", `umask 022 && exec "$0" install`, bunExe()],
     cwd: packageDir,
     env,
   });
@@ -48,7 +49,7 @@ it("should not print anything to stderr when running bun.lockb", async () => {
   await using file = await open(join(packageDir, "bun.lockb"), "r");
   const stat = await file.stat();
 
-  // in unix, 0o755 == 33261
+  // in unix, 0o755 == 33261 (at umask 022)
   let mode = 33261;
   // ..but windows is different
   if (isWindows) {
@@ -81,6 +82,166 @@ it("should not print anything to stderr when running bun.lockb", async () => {
   expect(stderrOutput).toBe("");
 
   expect(await exited).toBe(0);
+
+  const hashed = { stdout: stdoutOutput.match(/ --hash: (\S+)/)![1], stderr: "", exitCode: 0 };
+  expect(
+    await Promise.all([
+      run(packageDir, "bun.lockb", "--hash"),
+      run(packageDir, "--no-env-file", "bun.lockb", "--hash"),
+    ]),
+  ).toEqual([hashed, hashed]);
+});
+
+it.skipIf(isWindows)("bun.lockb honors umask", async () => {
+  const { packageDir } = await registry.createTestDir({
+    bunfigOpts: { saveTextLockfile: false },
+    files: {
+      "package.json": JSON.stringify({
+        name: "lockb-umask",
+        workspaces: ["pkg1"],
+        dependencies: { pkg1: "workspace:*" },
+      }),
+      "pkg1/package.json": JSON.stringify({ name: "pkg1", version: "1.0.0" }),
+    },
+  });
+  await using proc = spawn({
+    cmd: ["sh", "-c", `umask 077 && exec "$0" install`, bunExe()],
+    cwd: packageDir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(err).toContain("Saved lockfile");
+  expect(exitCode).toBe(0);
+  expect((statSync(join(packageDir, "bun.lockb")).mode & 0o777).toString(8)).toBe("700");
+});
+
+// A `.env` that cannot be opened: a symlink to itself fails with ELOOP.
+async function writeUnopenableEnv(dir: string) {
+  await symlink(".env", join(dir, ".env"));
+  expect(() => readFileSync(join(dir, ".env"))).toThrow("ELOOP");
+}
+
+it("bun.lockb and bun.lockb --hash read only the lockfile", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
+  await write(
+    packageJson,
+    JSON.stringify({ name: "lockb-only", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }),
+  );
+  await runBunInstall(env, packageDir);
+
+  const printed = await run(packageDir, "bun.lockb");
+  expect(printed).toEqual({
+    stdout: expect.stringMatching(/^# bun \.\/bun\.lockb --hash: \S+\n\n\nno-deps@1\.0\.0:$/m),
+    stderr: "",
+    exitCode: 0,
+  });
+  const hashed = { stdout: printed.stdout.match(/ --hash: (\S+)/)![1], stderr: "", exitCode: 0 };
+  const parseError = {
+    stdout: "",
+    stderr: "error: failed to parse lockfile: Lockfile is missing data\n",
+    exitCode: 1,
+  };
+
+  // No package.json and no `.env` that can be opened.
+  const lockb = await file(join(packageDir, "bun.lockb")).bytes();
+  const truncated = lockb.subarray(0, lockb.length >> 1);
+  using dir = tempDir("lockb-only", { "custom.env": "FOO=bar" });
+  const cwd = String(dir);
+  await Promise.all([
+    write(join(cwd, "bun.lockb"), lockb),
+    write(join(cwd, "truncated.lockb"), truncated),
+    write(join(packageDir, "truncated.lockb"), truncated),
+    writeUnopenableEnv(cwd),
+  ]);
+
+  expect(
+    await Promise.all([
+      run(cwd, "bun.lockb"),
+      run(cwd, "--no-env-file", "bun.lockb"),
+      run(cwd, "--env-file=custom.env", "bun.lockb"),
+      run(cwd, "bun.lockb", "--hash"),
+      run(cwd, "truncated.lockb", "--hash"),
+      // `--hash` reads no `bun pm` flag: `--silent` does not hide the error.
+      run(packageDir, "truncated.lockb", "--hash", "--silent"),
+    ]),
+  ).toEqual([printed, printed, printed, hashed, parseError, parseError]);
+});
+
+// `git diff` with `textconv = bun` hands over a copy of the blob as `<tmp>/<random>_bun.lockb`.
+it("prints the file it's given, regardless of its name and of the files next to it", async () => {
+  const [v2, other] = await Promise.all(
+    ["bun.lockb.v2", "unnamed-folder-dependency.lockb"].map(name =>
+      file(join(import.meta.dir, "fixtures", name)).bytes(),
+    ),
+  );
+  using dir = tempDir("lockb-named", {
+    "project/bun.lockb": v2,
+    "alone/Ab12Cd_bun.lockb": v2,
+    "beside/Ab12Cd_bun.lockb": v2,
+  });
+  await write(join(String(dir), "beside", "bun.lockb"), other);
+  const printed = await run(join(String(dir), "project"), "bun.lockb");
+  expect(printed).toEqual({ stdout: expect.stringContaining("# yarn lockfile v1"), stderr: "", exitCode: 0 });
+  expect(
+    await Promise.all([
+      run(String(dir), join(String(dir), "alone", "Ab12Cd_bun.lockb")),
+      run(String(dir), join("beside", "Ab12Cd_bun.lockb")),
+    ]),
+  ).toEqual([printed, printed]);
+});
+
+const textBunLock = textLockfile(1, {
+  workspaces: { "": { name: "lockb-text", dependencies: { "no-deps": "1.0.0" } } },
+  packages: {
+    "no-deps": [
+      "no-deps@1.0.0",
+      "",
+      {},
+      "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==",
+    ],
+  },
+});
+const printedTextBunLock = {
+  stdout: expect.stringMatching(/^# bun \.\/bun\.lockb --hash: \S+\n\n\nno-deps@1\.0\.0:\n  version "1\.0\.0"$/m),
+  stderr: "",
+  exitCode: 0,
+};
+
+it("bun.lockb prints a text bun.lock without opening .env", async () => {
+  using dir = tempDir("lockb-text", { "bun.lock": textBunLock });
+  const cwd = String(dir);
+  await writeUnopenableEnv(cwd);
+
+  expect(await Promise.all([run(cwd, "bun.lockb"), run(cwd, "--no-env-file", "bun.lockb")])).toEqual([
+    printedTextBunLock,
+    printedTextBunLock,
+  ]);
+});
+
+// Root can list any directory, so the command runs as "nobody".
+const canRunAsNobody =
+  isLinux && isRoot && !!Bun.which("runuser") && /^nobody:/m.test(readFileSync("/etc/passwd", "utf8"));
+
+it.skipIf(!canRunAsNobody)("bun.lockb prints a lockfile in a directory that cannot be listed", async () => {
+  using dir = tempDir("lockb-unlistable", { "project/bun.lock": textBunLock });
+  const project = join(String(dir), "project");
+  chmodSync(String(dir), 0o755);
+  chmodSync(join(project, "bun.lock"), 0o644);
+  chmodSync(project, 0o111);
+  try {
+    await using proc = spawn({
+      cmd: ["runuser", "-m", "-u", "nobody", "--", "/bin/sh", "-c", `cd '${project}' && exec '${bunExe()}' bun.lockb`],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual(printedTextBunLock);
+  } finally {
+    chmodSync(project, 0o755);
+  }
 });
 
 it("should continue using a binary lockfile if it exists", async () => {
@@ -116,6 +277,26 @@ it("should continue using a binary lockfile if it exists", async () => {
   expect(thirdLockfile).not.toBe(secondLockfile);
 });
 
+it("--dry-run does not convert bun.lockb to bun.lock", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
+  await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }));
+  await runBunInstall(env, packageDir);
+  const lockb = await file(join(packageDir, "bun.lockb")).bytes();
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install", "--dry-run", "--save-text-lockfile"],
+    cwd: packageDir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("Saved lockfile");
+  expect(await exists(join(packageDir, "bun.lock"))).toBe(false);
+  expect(await file(join(packageDir, "bun.lockb")).bytes()).toEqual(lockb);
+  expect(exitCode).toBe(0);
+});
+
 it("migrating bun.lockb keeps a peer required when it is satisfied only by the dependent's own nested copy", async () => {
   // a `file:` override never hoists, so the only no-deps entry is `peer-deps/no-deps`
   const files = {
@@ -143,7 +324,7 @@ it("migrating bun.lockb keeps a peer required when it is satisfied only by the d
   const { packages } = Bun.JSONC.parse(migrated) as { packages: Record<string, unknown[]> };
   expect(Object.keys(packages).sort()).toStrictEqual(["peer-deps", "peer-deps/no-deps"]);
   expect(packages["peer-deps"][2]).toStrictEqual({ peerDependencies: { "no-deps": "*" } });
-  expect(packages["peer-deps/no-deps"][0]).toBe("no-deps@file:./vendor/no-deps");
+  expect(packages["peer-deps/no-deps"][0]).toBe("no-deps@file:vendor/no-deps");
   expect(migrated).not.toContain("optionalPeers");
 
   await runBunInstall(env, fresh);
@@ -151,6 +332,40 @@ it("migrating bun.lockb keeps a peer required when it is satisfied only by the d
 
   await runBunInstall(env, fromLockb, { frozenLockfile: true });
   expect(await file(join(fromLockb, "bun.lock")).text()).toBe(migrated);
+});
+
+it("migrating bun.lockb keeps an unresolved peer of the root or a workspace required", async () => {
+  // no published version is in either range
+  const { packageDir } = await registry.createTestDir({
+    bunfigOpts: { saveTextLockfile: false },
+    files: {
+      "package.json": JSON.stringify({
+        name: "lockb-unresolved-peer",
+        workspaces: ["packages/*"],
+        dependencies: { "a-dep": "1.0.1" },
+        peerDependencies: { "no-deps": "^9.0.0" },
+      }),
+      "packages/ui/package.json": JSON.stringify({ name: "ui", peerDependencies: { "what-bin": "^9.0.0" } }),
+    },
+  });
+
+  await runBunInstall(env, packageDir, { allowWarnings: true });
+  expect(await exists(join(packageDir, "bun.lockb"))).toBe(true);
+
+  await runBunInstall(env, packageDir, { saveTextLockfile: true, allowWarnings: true });
+  const migrated = await file(join(packageDir, "bun.lock")).text();
+  expect((Bun.JSONC.parse(migrated) as { workspaces: object }).workspaces).toEqual({
+    "": {
+      name: "lockb-unresolved-peer",
+      dependencies: { "a-dep": "1.0.1" },
+      peerDependencies: { "no-deps": "^9.0.0" },
+    },
+    "packages/ui": { name: "ui", peerDependencies: { "what-bin": "^9.0.0" } },
+  });
+
+  await runBunInstall(env, packageDir, { frozenLockfile: true, allowWarnings: true });
+  await runBunInstall(env, packageDir, { savesLockfile: false, allowWarnings: true });
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(migrated);
 });
 
 it("recovers from a corrupted binary lockfile instead of panicking", async () => {
@@ -412,6 +627,533 @@ it("rejects a binary lockfile whose package scripts flag byte is out of range", 
   expect(code).toBe(0);
   expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBe(true);
 });
+
+// A 42-byte header, the format (u32), a 32-byte hash and the size (u64). Then the package table, stored as columns:
+// the count is at 86, the position of the first column at 110. Then six arrays, each a `(start, end)` pair of
+// positions, a type name and the elements; the next pair sits at `end`.
+function layout(lockb: Buffer) {
+  const count = Number(lockb.readBigUInt64LE(86));
+  let at = Number(lockb.readBigUInt64LE(110));
+  const column: Record<string, number> = {};
+  for (const [name, size] of [
+    ["name", 8],
+    ["nameHash", 8],
+    // the tag is the first byte: 1 = root, 2 = npm
+    ["resolution", lockb.readUInt32LE(42) === 2 ? 64 : 72],
+    // `(off, len)` into the `dependencies` array, and the same window of the `resolutions` array
+    ["dependencies", 8],
+    ["resolutions", 8],
+    // `id` is at +8
+    ["meta", 88],
+    // the tag is the first byte: 4 = map, an `(off, len)` into `externStrings` at +4
+    ["bin", 20],
+    ["scripts", 49],
+  ] as const) {
+    // Bun v0.6.7 and older have no scripts.
+    if (at + size * count > Number(lockb.readBigUInt64LE(118))) break;
+    column[name] = at;
+    at += size * count;
+  }
+  const array: Record<string, { pair: number; start: number; end: number }> = {};
+  for (const name of [
+    // 20 bytes each: id, dependency id, parent, and `(off, len)` into `hoisted`
+    "trees",
+    // dependency ids
+    "hoisted",
+    // a package id for each dependency
+    "resolutions",
+    // 26 bytes each
+    "dependencies",
+    "externStrings",
+    "stringBytes",
+  ]) {
+    array[name] = { pair: at, start: Number(lockb.readBigUInt64LE(at)), end: Number(lockb.readBigUInt64LE(at + 8)) };
+    at = array[name].end;
+  }
+  return { count, column, array };
+}
+type Layout = ReturnType<typeof layout>;
+
+async function run(cwd: string, ...args: string[]) {
+  await using proc = spawn({ cmd: [bunExe(), ...args], cwd, stdout: "pipe", stderr: "pipe", env });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+describe.concurrent("a binary lockfile is refused when", () => {
+  // root -> depa, depb; depa -> depb
+  const packageWith = (lockb: Buffer, { count, column }: Layout, dependencies: number) =>
+    Array.from({ length: count }, (_, id) => lockb.readUInt32LE(column.dependencies + id * 8 + 4)).indexOf(
+      dependencies,
+    );
+
+  it.each([
+    [
+      "a package's dependencies start past the end of the buffer",
+      (lockb, l) => lockb.writeUInt32LE(0xfffffff0, l.column.dependencies + packageWith(lockb, l, 1) * 8),
+    ],
+    [
+      "a package's resolutions start past the end of the buffer",
+      (lockb, l) => lockb.writeUInt32LE(0xfffffff0, l.column.resolutions + packageWith(lockb, l, 1) * 8),
+    ],
+    [
+      "a package's resolutions are another window than its dependencies",
+      (lockb, l) => lockb.writeUInt32LE(0, l.column.resolutions + packageWith(lockb, l, 1) * 8),
+    ],
+    [
+      "a package has fewer resolutions than dependencies",
+      (lockb, l) => lockb.writeUInt32LE(0, l.column.resolutions + packageWith(lockb, l, 1) * 8 + 4),
+    ],
+    [
+      "a package without dependencies has its resolutions past the end of the buffer",
+      (lockb, l) => lockb.writeUInt32LE(0xfffffff0, l.column.resolutions + packageWith(lockb, l, 0) * 8),
+    ],
+    [
+      "a dependency resolves to a package past the last one",
+      (lockb, l) => lockb.writeUInt32LE(l.count, l.array.resolutions.start),
+    ],
+    [
+      "a hoisted dependency id is the unresolved sentinel",
+      (lockb, l) => lockb.writeUInt32LE(0xffffffff, l.array.hoisted.start),
+    ],
+    [
+      "a hoisted dependency id is past the last dependency",
+      (lockb, l) => lockb.writeUInt32LE(3, l.array.hoisted.start),
+    ],
+    ["the root tree is its own parent", (lockb, l) => lockb.writeUInt32LE(0, l.array.trees.start + 8)],
+    ["a tree's id is not its position", (lockb, l) => lockb.writeUInt32LE(1, l.array.trees.start)],
+    [
+      "a tree's dependencies end past the end of the buffer",
+      (lockb, l) => lockb.writeUInt32LE(3, l.array.trees.start + 16),
+    ],
+    [
+      "two packages have each other's id",
+      (lockb, l) => {
+        lockb.writeUInt32LE(2, l.column.meta + 1 * 88 + 8);
+        lockb.writeUInt32LE(1, l.column.meta + 2 * 88 + 8);
+      },
+    ],
+    ["the first package is not the root", (lockb, l) => (lockb[l.column.resolution] = 2)],
+    [
+      "it has no packages",
+      (lockb, l) => {
+        lockb.writeBigUInt64LE(0n, 86);
+        lockb.writeBigUInt64LE(BigInt(l.array.trees.pair), 110);
+        lockb.writeBigUInt64LE(BigInt(l.array.trees.pair), 118);
+        for (const { pair, end } of Object.values(l.array)) lockb.writeBigUInt64LE(BigInt(end), pair);
+      },
+    ],
+  ] as [string, (lockb: Buffer, l: Layout) => void][])("%s", async (_, corrupt) => {
+    // Migrating a package-lock.json with `--lockfile-only` writes bun.lockb without a request.
+    const resolved = (name: string) => `${registry.registryUrl()}${name}/-/${name}-1.0.0.tgz`;
+    const root = { name: "corrupt-lockb", version: "1.0.0", dependencies: { depa: "1.0.0", depb: "1.0.0" } };
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { saveTextLockfile: false },
+      files: {
+        "package.json": JSON.stringify(root),
+        "package-lock.json": JSON.stringify({
+          ...root,
+          lockfileVersion: 3,
+          requires: true,
+          packages: {
+            "": root,
+            "node_modules/depa": { version: "1.0.0", resolved: resolved("depa"), dependencies: { depb: "1.0.0" } },
+            "node_modules/depb": { version: "1.0.0", resolved: resolved("depb") },
+          },
+        }),
+      },
+    });
+    expect(await run(packageDir, "install", "--lockfile-only")).toMatchObject({
+      stderr: expect.stringContaining("Saved lockfile"),
+      exitCode: 0,
+    });
+
+    const lockbPath = join(packageDir, "bun.lockb");
+    const lockb = Buffer.from(await file(lockbPath).arrayBuffer());
+    const l = layout(lockb);
+    expect({
+      packages: l.count,
+      trees: (l.array.trees.end - l.array.trees.start) / 20,
+      hoisted: (l.array.hoisted.end - l.array.hoisted.start) / 4,
+      resolutions: (l.array.resolutions.end - l.array.resolutions.start) / 4,
+      dependencies: (l.array.dependencies.end - l.array.dependencies.start) / 26,
+    }).toEqual({ packages: 3, trees: 1, hoisted: 2, resolutions: 3, dependencies: 3 });
+    corrupt(lockb, l);
+
+    // A command that resolves again rewrites the file.
+    const results = [];
+    for (const args of [["bun.lockb"], ["why", "depb"], ["install"], ["install", "--frozen-lockfile"]]) {
+      await write(lockbPath, lockb);
+      results.push(await run(packageDir, ...args));
+    }
+    // These packages exist in the lockfile only, so the installs that ignore it fail.
+    const ignored = { stderr: expect.stringContaining("Ignoring lockfile"), exitCode: 1 };
+    expect(results).toMatchObject([
+      { stdout: "", stderr: expect.stringContaining("error parsing lockfile: InvalidLockfile"), exitCode: 1 },
+      { stdout: "", stderr: expect.stringContaining("failed to parse lockfile: InvalidLockfile"), exitCode: 1 },
+      ignored,
+      ignored,
+    ]);
+  });
+
+  it.each([
+    ["ends past the end of the buffer", (lockb: Buffer, bin: number) => lockb.writeUInt32LE(0xfffffff0, bin + 4)],
+    ["has a name without a target", (lockb: Buffer, bin: number) => lockb.writeUInt32LE(3, bin + 8)],
+  ])("a package's map of bins %s", async (_, corrupt) => {
+    const lockb = Buffer.from(await file(join(import.meta.dir, "bun.lockb.bin-linking")).arrayBuffer());
+    const { count, column } = layout(lockb);
+    const bin = Array.from({ length: count }, (_, id) => column.bin + id * 20).find(bin => lockb[bin] === 4)!;
+    expect(lockb.readUInt32LE(bin + 8)).toBeGreaterThan(3);
+    using dir = tempDir("lockb-bin-map", { "bun.lockb": lockb });
+    expect(await run(String(dir), "bun.lockb")).toMatchObject({ stderr: "", exitCode: 0 });
+
+    corrupt(lockb, bin);
+    await write(join(String(dir), "bun.lockb"), lockb);
+    expect(await run(String(dir), "bun.lockb")).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining("error parsing lockfile: InvalidLockfile"),
+      exitCode: 1,
+    });
+  });
+
+  // 0 is the state before a package is resolved, 100 a placeholder: no writer saves them, nothing installs them.
+  describe.each([0, 100])("a package has the resolution tag %d", tag => {
+    it.each(["bun.lockb.v2", "unnamed-folder-dependency.lockb"])("%s", async fixture => {
+      const lockb = Buffer.from(await file(join(import.meta.dir, "fixtures", fixture)).arrayBuffer());
+      using dir = tempDir("lockb-resolution-tag", { "bun.lockb": lockb });
+      expect(await run(String(dir), "bun.lockb")).toMatchObject({ stderr: "", exitCode: 0 });
+
+      const { column } = layout(lockb);
+      lockb[column.resolution + (lockb.readUInt32LE(42) === 2 ? 64 : 72)] = tag;
+      await write(join(String(dir), "bun.lockb"), lockb);
+      expect(await run(String(dir), "bun.lockb")).toEqual({
+        stdout: "",
+        stderr: expect.stringContaining("invalid resolution tag"),
+        exitCode: 1,
+      });
+    });
+  });
+});
+
+// A dependency row is a name, its hash, the group, the kind of its version (9 = catalog) and the literal.
+it("loads a binary lockfile in which a catalog dependency's literal is not a catalog reference", async () => {
+  const lockb = Buffer.from(await file(join(import.meta.dir, "fixtures", "bun.lockb.v2-most-features")).arrayBuffer());
+  const { start, end } = layout(lockb).array.dependencies;
+  const row = Array.from({ length: (end - start) / 26 }, (_, i) => start + i * 26).find(row => lockb[row + 17] === 9)!;
+  expect(lockb.toString("latin1", row + 18, row + 26)).toBe("catalog:");
+  lockb.fill(0, row + 21, row + 26);
+
+  using dir = tempDir("lockb-catalog-literal", { "bun.lockb": lockb });
+  expect(await run(String(dir), "bun.lockb")).toEqual({
+    stdout: expect.stringContaining("# yarn lockfile v1"),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// examples/react-file-system-router/bun.lockb of Bun v0.5.2. Writers of that time left unused slots in the list of
+// trees, stored package ids in it, and left the resolution of a peer they did not resolve uninitialized.
+it("loads a lockfile that Bun v0.5 wrote", async () => {
+  const lockb = Buffer.from(await file(join(import.meta.dir, "fixtures", "bun.lockb.v0.5.2")).arrayBuffer());
+  const { count, array } = layout(lockb);
+  const u32s = ({ start, end }: { start: number; end: number }, step: number, at = 0) =>
+    Array.from({ length: (end - start) / step }, (_, i) => lockb.readUInt32LE(start + i * step + at));
+  expect(u32s(array.trees, 20).filter(id => id === 0xffffffff).length).toBeGreaterThan(0);
+  expect(u32s(array.resolutions, 4).filter(id => id >= count)).toContain(0xaaaaaaaa);
+
+  using dir = tempDir("lockb-v0.5", {
+    "bun.lockb": lockb,
+    "package.json": JSON.stringify({
+      name: "react-routes",
+      devDependencies: { "@types/react": "^18.0.27", "@types/react-dom": "^18.0.10", "bun-types": "^0.4.0" },
+      dependencies: { "react": "^18.2.0", "react-dom": "^18.2.0" },
+    }),
+  });
+  expect(await run(String(dir), "why", "react")).toEqual({
+    stdout: `react@18.2.0
+  ├─ react-routes (requires ^18.2.0)
+  └─ peer react-dom@18.2.0 (requires ^18.2.0)
+     └─ react-routes (requires ^18.2.0)
+
+`,
+    stderr: "",
+    exitCode: 0,
+  });
+  expect(await run(String(dir), "install", "--frozen-lockfile", "--lockfile-only")).toEqual({
+    stdout: expect.stringContaining("bun install"),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// bun.lockb stores a hash of the packages and of the project's lifecycle scripts. Only an install knows the scripts.
+describe.concurrent("--frozen-lockfile after a migration, with a root postinstall", () => {
+  const integrity = "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==";
+  const app = {
+    name: "app",
+    version: "1.0.0",
+    scripts: { postinstall: "exit 0" },
+    dependencies: { "no-deps": "1.0.0" },
+  };
+  const foreign: Record<string, (tarball: string) => string> = {
+    "package-lock.json": tarball =>
+      JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        lockfileVersion: 3,
+        requires: true,
+        packages: { "": app, "node_modules/no-deps": { version: "1.0.0", resolved: tarball, integrity } },
+      }),
+    "yarn.lock": tarball =>
+      `# yarn lockfile v1\n\n\nno-deps@1.0.0:\n  version "1.0.0"\n  resolved "${tarball}"\n  integrity ${integrity}\n`,
+    "pnpm-lock.yaml": () =>
+      [
+        "lockfileVersion: '9.0'",
+        "importers:",
+        "  .:",
+        "    dependencies:",
+        "      no-deps:",
+        "        specifier: 1.0.0",
+        "        version: 1.0.0",
+        "packages:",
+        "  no-deps@1.0.0:",
+        `    resolution: {integrity: ${integrity}}`,
+        "snapshots:",
+        "  no-deps@1.0.0: {}",
+        "",
+      ].join("\n"),
+  };
+
+  describe.each(Object.keys(foreign))("%s", name => {
+    it("bun pm migrate records the same things as an install that migrates", async () => {
+      const results = [];
+      for (const args of [
+        ["pm", "migrate"],
+        ["install", "--lockfile-only"],
+      ]) {
+        const { packageDir } = await registry.createTestDir({
+          files: {
+            "package.json": JSON.stringify({
+              ...app,
+              trustedDependencies: ["no-deps"],
+              patchedDependencies: { "no-deps@1.0.0": "no-deps.patch" },
+            }),
+            "no-deps.patch": "diff --git a/index.js b/index.js\n",
+            [name]: foreign[name](`${registry.registryUrl()}no-deps/-/no-deps-1.0.0.tgz`),
+          },
+        });
+        expect(await run(packageDir, ...args)).toMatchObject({ exitCode: 0 });
+        results.push(await file(join(packageDir, "bun.lock")).text());
+      }
+      expect(results[0]).toContain(`"no-deps@1.0.0": "no-deps.patch"`);
+      expect(results[0]).toBe(results[1]);
+    });
+
+    describe.each([true, false])("saveTextLockfile = %p", saveTextLockfile => {
+      it.each([[[]], [["pm", "migrate"]], [["install"]]])("first %p", async first => {
+        const { packageDir, packageJson } = await registry.createTestDir({
+          bunfigOpts: { saveTextLockfile },
+          files: {
+            "package.json": JSON.stringify(app),
+            [name]: foreign[name](`${registry.registryUrl()}no-deps/-/no-deps-1.0.0.tgz`),
+          },
+        });
+        if (first.length) expect(await run(packageDir, ...first)).toMatchObject({ exitCode: 0 });
+        expect(await exists(join(packageDir, saveTextLockfile ? "bun.lock" : "bun.lockb"))).toBe(first.length > 0);
+
+        expect(await run(packageDir, "install", "--frozen-lockfile")).toMatchObject({
+          stderr: expect.not.stringContaining("error:"),
+          exitCode: 0,
+        });
+
+        await write(packageJson, JSON.stringify({ ...app, dependencies: { "no-deps": "1.0.1" } }));
+        expect(await run(packageDir, "install", "--frozen-lockfile")).toMatchObject({
+          stderr: expect.stringContaining("error: lockfile had changes, but lockfile is frozen"),
+          exitCode: 1,
+        });
+      });
+    });
+  });
+});
+
+describe.concurrent.each(["isolated", "hoisted"] as const)(
+  "bun.lockb drops a version that only a peer held once the peer moves (%s)",
+  linker => {
+    it.each([
+      // one-dep's no-deps@1.0.1 is placed at the top of the tree, and it's in the peer's range.
+      ["down to the version at the top of the tree", {}, { "one-dep": "1.0.0" }, "no-deps@1.1.0"],
+      ["up to the highest version in its range", { "no-deps": "1.0.1" }, { top: "npm:no-deps@1.1.0" }, "no-deps@1.0.1"],
+    ])("%s", async (_, before, after, dropped) => {
+      const app = (others: object) =>
+        JSON.stringify({ name: "app", dependencies: { "peer-deps-fixed": "1.0.0", ...others } });
+      const { packageDir, packageJson } = await registry.createTestDir({
+        bunfigOpts: { saveTextLockfile: false, linker },
+        files: { "package.json": app(before) },
+      });
+      expect(await run(packageDir, "install")).toMatchObject({ exitCode: 0 });
+      expect((await run(packageDir, "pm", "hash-string")).stdout).toContain(dropped);
+
+      await write(packageJson, app(after));
+      expect(await run(packageDir, "install")).toMatchObject({ exitCode: 0 });
+      const lockb = await file(join(packageDir, "bun.lockb")).bytes();
+
+      expect(await run(packageDir, "install", "--frozen-lockfile")).toMatchObject({
+        stderr: expect.not.stringContaining("error:"),
+        exitCode: 0,
+      });
+      expect(await run(packageDir, "install")).toMatchObject({ exitCode: 0 });
+      expect(await file(join(packageDir, "bun.lockb")).bytes()).toEqual(lockb);
+      expect((await run(packageDir, "pm", "hash-string")).stdout).not.toContain(dropped);
+    });
+  },
+);
+
+describe.concurrent("no command sees the version that a peer moved away from", () => {
+  beforeAll(() => void registry.advisories.add("no-deps", { vulnerable_versions: "1.1.0" }));
+
+  it.each(["isolated", "hoisted"] as const)("%s", async linker => {
+    const app = (others: object) =>
+      JSON.stringify({ name: "app", dependencies: { "peer-deps-fixed": "1.0.0", ...others } });
+    const { packageDir, packageJson } = await registry.createTestDir({
+      bunfigOpts: { saveTextLockfile: false, linker },
+      files: { "package.json": app({}) },
+    });
+    expect(await run(packageDir, "install")).toMatchObject({ exitCode: 0 });
+    // The peer has no-deps@1.1.0 for now, so the advisory is found.
+    expect(await run(packageDir, "audit")).toMatchObject({
+      stdout: expect.stringContaining("1 vulnerability"),
+      exitCode: 1,
+    });
+
+    await write(packageJson, app({ "one-dep": "1.0.0" }));
+    expect(await run(packageDir, "install", "--yarn")).toMatchObject({ exitCode: 0 });
+    const hash = (await run(packageDir, "pm", "hash")).stdout;
+
+    expect(await run(packageDir, "why", "no-deps")).toMatchObject({
+      stdout: expect.not.stringContaining("no-deps@1.1.0"),
+      exitCode: 0,
+    });
+    expect(await run(packageDir, "audit")).toMatchObject({
+      stdout: expect.stringContaining("No vulnerabilities found"),
+      exitCode: 0,
+    });
+    expect(await file(join(packageDir, "yarn.lock")).text()).not.toContain(`version "1.1.0"`);
+    expect((await run(packageDir, "bun.lockb")).stdout).not.toContain(`version "1.1.0"`);
+
+    expect(await run(packageDir, "install")).toMatchObject({ exitCode: 0 });
+    expect((await run(packageDir, "pm", "hash")).stdout).toBe(hash);
+  });
+});
+
+// Bun v1.4.2 wrote fixtures/bun.lockb.v1.4.2-peers: `bun install` with zz-10, zz-11 and pf, then `bun add od@1.0.0`.
+// zz-10's peer accepts zz-9@1.0.1 and zz-9@1.0.2. The file has both, and stores the peer on 1.0.1. pf's peer is stored
+// on nd@1.1.0, which is in no tree: od's nd@1.0.1 is at the top. The registry of the file was `http://localhost:1/`,
+// so the tarballs have to be in the cache, which an install in `fill` puts there.
+describe.concurrent("a bun.lockb that Bun 1.4 wrote", () => {
+  const graph: Record<string, Record<string, object>> = {
+    "zz-10": { "2.1.0": { peerDependencies: { "zz-9": "~1.0.1" } } },
+    "zz-11": { "3.1.0": { peerDependencies: { "zz-3": "^1.5.0" }, scripts: { postinstall: "exit 0" } } },
+    "zz-3": { "1.5.0": { dependencies: { "zz-9": "^1.0.2" } } },
+    "zz-9": { "1.0.1": {}, "1.0.2": {} },
+    pf: { "1.0.0": { peerDependencies: { nd: "^1.0.0" } } },
+    od: { "1.0.0": { dependencies: { nd: "1.0.1" } } },
+    nd: { "1.0.1": {}, "1.1.0": {} },
+  };
+  const lockb = readFileSync(join(import.meta.dir, "fixtures", "bun.lockb.v1.4.2-peers"));
+  const app = (dependencies: object) => JSON.stringify({ name: "app", version: "1.0.0", dependencies });
+  const everyVersion = Object.fromEntries(
+    Object.entries(graph).flatMap(([name, versions]) =>
+      Object.keys(versions).map(version => [`${name}-${version}`, `npm:${name}@${version}`]),
+    ),
+  );
+
+  async function serve() {
+    const tarballs = new Map<string, Uint8Array>();
+    for (const [name, versions] of Object.entries(graph)) {
+      for (const [version, manifest] of Object.entries(versions)) {
+        const files = { "package/package.json": JSON.stringify({ name, version, ...manifest }) };
+        tarballs.set(`/${name}/-/${name}-${version}.tgz`, await new Bun.Archive(files, { compress: "gzip" }).bytes());
+      }
+    }
+    return Bun.serve({
+      port: 0,
+      fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        const tarball = tarballs.get(pathname);
+        if (tarball) return new Response(tarball);
+        const name = pathname.slice(1);
+        if (!(name in graph)) return new Response("{}", { status: 404 });
+        const versions: Record<string, object> = {};
+        for (const [version, manifest] of Object.entries(graph[name])) {
+          const dist = { tarball: `${origin}/${name}/-/${name}-${version}.tgz` };
+          versions[version] = { name, version, ...manifest, hasInstallScript: "scripts" in manifest, dist };
+        }
+        return Response.json({ name, versions, "dist-tags": { latest: Object.keys(versions).at(-1) } });
+      },
+    });
+  }
+
+  // The tests run at the same time, so each project has a cache of its own, in `project`.
+  async function bun(cwd: string, args: string[], project = cwd) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: installEnv(project),
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ args, stderr, exitCode }).toEqual({ args, stderr: expect.not.stringContaining("error:"), exitCode: 0 });
+    return stdout + stderr;
+  }
+
+  function project(server: { url: URL }) {
+    const bunfig = toml({ install: { registry: server.url.href, linker: "hoisted" } });
+    return tempDir("lockb-from-bun-1.4", {
+      "bun.lockb": lockb,
+      "package.json": app({ od: "1.0.0", pf: "1.0.0", "zz-10": ">=0.0.2", "zz-11": "^3.1.0" }),
+      "bunfig.toml": bunfig,
+      fill: { "package.json": app(everyVersion), "bunfig.toml": bunfig },
+    });
+  }
+
+  // What the file stores for each range, as `bun bun.lockb` prints it.
+  const stored = async (cwd: string) =>
+    Object.fromEntries(
+      [...(await bun(cwd, ["bun.lockb"])).matchAll(/^"?(\S+@[^:"]+)"?:\n  version "([^"]+)"/gm)].flatMap(match =>
+        match[1].split(", ").map(range => [range, match[2]]),
+      ),
+    );
+
+  // `bun pm trust` lays out the install tree of the lockfile it loaded, and that can change what a peer resolves
+  // to. It then saved the lockfile with the change, and with the package that only the peer held still in it.
+  it("bun pm trust saves every dependency on the package that the file stores for it", async () => {
+    using server = await serve();
+    using dir = project(server);
+    const cwd = String(dir);
+
+    await bun(join(cwd, "fill"), ["install"], cwd);
+    await bun(cwd, ["install", "--frozen-lockfile"]);
+    expect(await bun(cwd, ["pm", "trust", "zz-11"])).toContain("1 script ran across 1 package");
+    expect(await file(join(cwd, "bun.lockb")).bytes()).not.toEqual(lockb);
+    // As in the fixture.
+    expect(await stored(cwd)).toEqual({
+      "nd@1.0.1": "1.0.1",
+      "nd@^1.0.0": "1.1.0",
+      "od@1.0.0": "1.0.0",
+      "pf@1.0.0": "1.0.0",
+      "zz-10@>=0.0.2": "2.1.0",
+      "zz-11@^3.1.0": "3.1.0",
+      "zz-3@^1.5.0": "1.5.0",
+      "zz-9@^1.0.2": "1.0.2",
+      "zz-9@~1.0.1": "1.0.1",
+    });
+
+    await rm(join(cwd, "node_modules"), { recursive: true, force: true });
+    await bun(cwd, ["install", "--frozen-lockfile"]);
+  });
+});
+
 it("rejects a binary lockfile whose git resolved tag contains path separators", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
 
@@ -521,4 +1263,149 @@ it("rejects a binary lockfile whose git resolved tag contains path separators", 
   // unreachable, so the fallback resolve cannot fetch it either).
   expect(await exists(join(packageDir, "node_modules", "dep"))).toBe(false);
   expect(code).not.toBe(0);
+});
+
+// The file starts with a header, then the package list as one column per
+// field (`PackageField::ALL`). A bin is a tag, 3 bytes of padding, then a
+// 16-byte value.
+// Header: magic, format (u32), meta_hash (32 bytes), end offset (u64).
+const packageCountAt = "#!/usr/bin/env bun\nbun-lockfile-format-v0\n".length + 4 + 32 + 8;
+// Package list: count, alignment, field count (u64 each), then the begin offset.
+const packageColumnsBeginAt = packageCountAt + 8 + 8 + 8;
+// name (8), name_hash (8), resolution (72), dependencies (8), resolutions (8), meta (88).
+const columnsBeforeBin = 8 + 8 + 72 + 8 + 8 + 88;
+const binSize = 4 + 16;
+function packageBins(lockb: Buffer): string[] {
+  const count = Number(lockb.readBigUInt64LE(packageCountAt));
+  const binsStart = Number(lockb.readBigUInt64LE(packageColumnsBeginAt)) + count * columnsBeforeBin;
+  return Array.from({ length: count }, (_, i) => {
+    const at = binsStart + i * binSize;
+    return [
+      lockb.toString("hex", at, at + 4),
+      lockb.toString("hex", at + 4, at + 12),
+      lockb.toString("hex", at + 12, at + binSize),
+    ].join(" ");
+  });
+}
+
+// One workspace member per shape of "bin". Every string is 8 bytes or shorter,
+// so the bin stores it inline and its bytes are the same on every run.
+const binShapes = {
+  "no-bin": {},
+  "file": { bin: "./cli.js" },
+  "named": { bin: { nm: "./n.js" } },
+  "map": { bin: { a: "./a.js", b: "./b.js" } },
+  "dir": { directories: { bin: "./bin" } },
+};
+const binShapeFiles = {
+  "pnpm-workspace.yaml": "packages:\n  - 'packages/*'\n",
+  ...Object.fromEntries(
+    Object.entries(binShapes).map(([name, fields]) => [
+      `packages/${name}/package.json`,
+      JSON.stringify({ name, version: "1.0.0", ...fields }),
+    ]),
+  ),
+};
+const binShapeImporters = Object.keys(binShapes)
+  .map(name => `  packages/${name}: {}\n`)
+  .join("\n");
+// The bin of the root and of each member, sorted. A value shorter than 16
+// bytes ends in zeroes.
+const noBin = "00000000 0000000000000000 0000000000000000";
+const binShapeRows = [
+  noBin, // the root
+  noBin, // "no-bin"
+  "01000000 2e2f636c692e6a73 0000000000000000", // "file": "./cli.js"
+  "02000000 6e6d000000000000 2e2f6e2e6a730000", // "named": "nm", then "./n.js"
+  "03000000 2e2f62696e000000 0000000000000000", // "dir": "./bin"
+  "04000000 0000000004000000 0000000000000000", // "map": 4 strings at offset 0
+];
+
+it("bun pm migrate stores every byte of each bin in bun.lockb", async () => {
+  // Nothing is fetched, because no package has a dependency.
+  const files = {
+    "package.json": JSON.stringify({ name: "root", version: "1.0.0" }),
+    "pnpm-lock.yaml": `lockfileVersion: '9.0'\n\nimporters:\n\n  .: {}\n\n${binShapeImporters}`,
+    ...binShapeFiles,
+  };
+  const migrate = async () => {
+    const { packageDir } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false }, files });
+    await using proc = spawn({
+      cmd: [bunExe(), "pm", "migrate"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { packageDir, out, err, code };
+  };
+  const [first, second] = await Promise.all([migrate(), migrate()]);
+
+  expect(first.err).toContain("migrated lockfile from pnpm-lock.yaml");
+  expect(second.err).toContain("migrated lockfile from pnpm-lock.yaml");
+  expect([first.out, second.out]).toEqual(["", ""]);
+  const lockb = Buffer.from(await file(join(first.packageDir, "bun.lockb")).arrayBuffer());
+  expect(packageBins(lockb).sort()).toEqual(binShapeRows);
+  // The same project gives the same file.
+  expect(Buffer.from(await file(join(second.packageDir, "bun.lockb")).arrayBuffer()).equals(lockb)).toBe(true);
+  expect([first.code, second.code]).toEqual([0, 0]);
+});
+
+it("bun pm trust stores every byte of each bin when it migrates into bun.lockb", async () => {
+  // `bun pm trust` with no bun lockfile migrates pnpm-lock.yaml in memory,
+  // runs the script of the package on disk, then saves the lockfile.
+  const integrity = "sha512-+frsFSxvy+pkm5fjAsAHptt2NiMMMnU07dan43rZO1yCqxy8vU0X8wNTOYlgkViD7HCHT/bIpPhoki935Nc2pg==";
+  const { packageDir } = await registry.createTestDir({
+    bunfigOpts: { saveTextLockfile: false },
+    files: {
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        dependencies: { "lifecycle-postinstall": "1.0.0" },
+      }),
+      "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      lifecycle-postinstall:
+        specifier: 1.0.0
+        version: 1.0.0
+
+${binShapeImporters}
+packages:
+
+  lifecycle-postinstall@1.0.0:
+    resolution: {integrity: ${integrity}}
+
+snapshots:
+
+  lifecycle-postinstall@1.0.0: {}
+`,
+      "node_modules/lifecycle-postinstall/package.json": JSON.stringify({
+        name: "lifecycle-postinstall",
+        version: "1.0.0",
+        scripts: { postinstall: "exit 0" },
+      }),
+      ...binShapeFiles,
+    },
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "pm", "trust", "lifecycle-postinstall"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(err).toContain("migrated lockfile from pnpm-lock.yaml");
+  expect(out).toContain("1 script ran across 1 package");
+  const lockb = Buffer.from(await file(join(packageDir, "bun.lockb")).arrayBuffer());
+  // The registry package has no "bin".
+  expect(packageBins(lockb).sort()).toEqual([noBin, ...binShapeRows]);
+  expect(code).toBe(0);
 });

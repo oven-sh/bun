@@ -1,0 +1,26 @@
+# import Module from "node:module"; view = new Proxy(Module, {}); view.createRequire("/app/main.js")(globalThis.name)
+# A name read on a proxy without a get trap is read on its target.
+# The call of what createRequire returns loads code by name, and no other call does.
+# RUN: valueflow-solve unseen
+# CHECK: unseen LoadsCodeByName ModuleRequire f0:v10
+# CHECK-NOT: unseen LoadsCodeByName
+# CHECK: unseen-code yes
+
+module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0 requests=[{target=m1 completes=true}]
+module m1 path="node:module" displayPath="node:module" kind=Runtime exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeModule
+entry module=m0
+layout L0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="name" [isFreeName]
+    v2 = Builtin builtin=NodeModule
+    v3 = NewObject layout=L0
+    v4 = FinishObject v3
+    v5 = Builtin builtin=Proxy
+    v6 = Construct v5, -, v2, v4
+    v7 = PropGet v6 key="createRequire"
+    v8 = String string="/app/main.js"
+    v9 = Call v7, v6, v8
+    v10 = Call v9, -, v1
+    Return v10
+}

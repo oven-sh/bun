@@ -178,6 +178,9 @@ void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
             visitor.appendUnbarriered(clientData->m_strongRootBlockHead);
             visitor.appendUnbarriered(clientData->m_strongRootBlockFree);
             visitor.appendUnbarriered(clientData->m_strongRootBlockStructure);
+            // A weak v8::Global has no root, and a Local that an addon read from it keeps its value alive.
+            if (auto* registry = clientData->v8GlobalHandleRegistry.get()) [[unlikely]]
+                registry->visitWeakHandlesOfOpenScopes(visitor);
         })),
         JSC::ConstraintVolatility::GreyedByExecution));
 
@@ -283,9 +286,23 @@ DOMClientIsoSubspaces::~DOMClientIsoSubspaces()
     deleteSubspaceTable<JSC::GCClient::IsoSubspace>(this);
 }
 
-void JSVMClientData::reconcileWeakReferencesAtGCEnd(JSC::VM& vm, JSC::CollectionScope)
+void JSVMClientData::reconcileWeakReferencesAtGCEnd(JSC::VM& vm, JSC::CollectionScope scope)
 {
     Bun::JSCTaskScheduler::cancelWorkOfDeadRealms(this, vm);
+    if (auto* registry = v8GlobalHandleRegistry.get()) [[unlikely]]
+        registry->didFinishMarking(scope);
+}
+
+void JSVMClientData::didFinishRequestedCollection()
+{
+    if (auto* registry = v8GlobalHandleRegistry.get()) [[unlikely]]
+        registry->runSecondPasses();
+}
+
+void JSVMClientData::willRunCleanupHooks()
+{
+    if (auto* registry = v8GlobalHandleRegistry.get()) [[unlikely]]
+        registry->runSecondPasses(v8::shim::GlobalHandleRegistry::SecondPassTime::BeforeCleanupHooks);
 }
 
 void JSVMClientData::setDecoderStringTable(std::span<const uint8_t> bytes)

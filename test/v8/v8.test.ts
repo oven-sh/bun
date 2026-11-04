@@ -592,6 +592,16 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
       ]);
     });
 
+    it("keeps its wrapper class id apart from its value, and starts with the id 0", async () => {
+      const output = await checkSameOutput("test_v8_global_wrapper_class_id");
+      expect(output.split(/\r?\n/)).toEqual([
+        "WrapperClassId() of a new Global = 0",
+        'after SetWrapperClassId(65535) = 65535, value = "text"',
+        'after SetWeak = 65535, after ClearWeak = 65535, value = "text"',
+        'WrapperClassId() of the next Global = 0, value = "next"',
+      ]);
+    });
+
     it("gives its handle back once when a copy of it is reset too", async () => {
       const expected = "handles of the next 8 Globals: 8\nvalues that those Globals held: 8";
       expect(await runOnBun("test_v8_global_reset_twice")).toEqual([expected, expected]);
@@ -795,6 +805,465 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
       const outputs = await runOnBun("test_v8_global_reset_by_destructor", "[false]", env);
       expect(linesOf(outputs)).toEqual([expected, expected]);
     });
+  });
+
+  describe("weak Global", () => {
+    // A compilation that waits in the list of the concurrent JIT is a root of the values that it saw: a heap snapshot
+    // names that root "JITWorkList". These tests count the values that a collection frees, so their children compile
+    // on the JS thread.
+    const countEnv = { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" };
+    const countAsanEnv = { ...asanEnv, BUN_JSC_useConcurrentJIT: "0" };
+    const checkSameCounts = (testName: string, args?: string, env = countEnv) =>
+      checkSameOutput(testName, args, undefined, env);
+
+    it("destroys the instances of a node::ObjectWrap class whose objects are collected", async () => {
+      const output = await checkSameCounts("test_v8_weak_object_wrap");
+      // Node and Bun agree by now. This rules out that neither of them destroyed the instances.
+      expect(output.split(/\r?\n/)).toEqual([
+        "instances of a node::ObjectWrap class whose objects are garbage: 1001 of 1001 destroyed",
+        "instances destroyed while JS refers to their objects: 0",
+        "the Persistent of each of those is weak: true",
+        "handle() of each of those is its object: true",
+      ]);
+    });
+
+    it("keeps an instance of a node::ObjectWrap class between Ref() and Unref()", async () => {
+      const output = await checkSameCounts("test_v8_weak_object_wrap_ref");
+      expect(output.split(/\r?\n/)).toEqual([
+        "the Persistent is weak before Ref(): true and after it: false",
+        "instances destroyed after Ref(): 0",
+        "instances destroyed after Unref(): 1",
+      ]);
+    });
+
+    it("says so in IsWeak(), and is strong again after ClearWeak()", async () => {
+      const output = await checkSameOutput("test_v8_weak_is_weak");
+      const states =
+        "IsWeak() = false, after SetWeak = true, after ClearWeak = false, ClearWeak returned the parameter = true, after a second SetWeak = true";
+      expect(output.split(/\r?\n/)).toEqual([
+        `Global of an object: ${states}, value = [object Object]`,
+        `Global of a string: ${states}, value = "text"`,
+        `Global of a small integer: ${states}, value = 7.000000`,
+        `Global of a double: ${states}, value = 1.500000`,
+        `Global of undefined: ${states}, value = undefined`,
+        `Global of true: ${states}, value = true`,
+        "empty Global: IsWeak() = false",
+      ]);
+    });
+
+    it("runs the first-pass callback, then the second-pass callback that it set", async () => {
+      const output = await checkSameCounts("test_v8_weak_callbacks");
+      expect(output.split(/\r?\n/)).toEqual([
+        "first pass of a Global that was made weak twice",
+        "first pass of a Global with one pass",
+        "first pass of a Global with two passes",
+        "first pass of the first Global of an object",
+        "first pass of the second Global of that object",
+        "second pass of a Global with two passes",
+        "second pass of the second Global of that object",
+        "each second pass ran after its first pass: true",
+      ]);
+    });
+
+    it("lets go of the values of the Globals that a weak callback destroys", async () => {
+      const output = await checkSameCounts("test_v8_weak_callback_destroys_globals");
+      expect(output.split(/\r?\n/)).toEqual([
+        "first pass of a Global whose callback destroys other Globals",
+        "values of the Globals that a weak callback destroyed: 100 of 100 collected",
+      ]);
+    });
+
+    it("gives both passes of a kInternalFields callback the first two aligned pointers of the object", async () => {
+      const output = await checkSameCounts("test_v8_weak_internal_fields");
+      expect(output.split(/\r?\n/)).toEqual([
+        "internal fields in the second pass of an object with two pointers and a second pass: its pointer its pointer",
+        "internal fields of an object whose first pointer a value replaced: null its pointer",
+        "internal fields of an object whose second pointer a value replaced: its pointer null",
+        "internal fields of an object with one field: its pointer null",
+        "internal fields of an object with one pointer and one unset field: its pointer null",
+        "internal fields of an object with three pointers: its pointer its pointer",
+        "internal fields of an object with two pointers and a second pass: its pointer its pointer",
+        "internal fields of an object with two pointers: its pointer its pointer",
+        "internal fields of an object without internal fields: null null",
+      ]);
+    });
+
+    it("keeps its value while a Local that was read from it is in scope, also once it is reset", async () => {
+      const output = await checkSameCounts("test_v8_weak_local_keeps_value");
+      expect(output.split(/\r?\n/)).toEqual([
+        "Locals of weak Globals that still are their objects after the collections: 100 of 100",
+        "weak callbacks that ran while the Locals kept the objects: 0",
+        "weak callbacks of those Globals once the call had returned: 100 of 100 ran",
+        "Locals of weak Globals that were then reset that still are their objects after the collections: 100 of 100",
+        "weak callbacks that ran while the Locals kept the objects: 0",
+        "weak callbacks of the Globals that were reset: 0",
+      ]);
+    });
+
+    it("keeps its value while it is the return value of a native call, also once it is reset", async () => {
+      const output = await checkSameCounts("test_v8_weak_return_value");
+      expect(output.split(/\r?\n/)).toEqual([
+        "the return value is the object of a weak Global, after 0 weak callbacks",
+        "the return value is the object of a weak Global that was then reset, after 0 weak callbacks",
+        "weak callbacks once nothing refers to the objects: 1",
+      ]);
+    });
+
+    // What ~ObjectWrap does when an addon's own weak callback only deletes the instance.
+    it("lets a first-pass callback call ClearWeak() or SetWeak() on its Global before it resets it", async () => {
+      const output = await checkSameCounts("test_v8_weak_first_pass_that_does_not_reset_first");
+      expect(output.split(/\r?\n/)).toEqual([
+        "first pass of a Global whose callback calls ClearWeak(): ClearWeak() returned the parameter",
+        "first pass of a Global whose callback calls SetWeak(): the Global is empty after the move = true",
+        "instances that a weak callback of the addon deleted: 1",
+      ]);
+    });
+
+    it("keeps its value once ClearWeak() made it strong again, and runs no callback once it is reset", async () => {
+      const output = await checkSameCounts("test_v8_weak_made_strong_or_reset");
+      expect(output.split(/\r?\n/)).toEqual([
+        "ClearWeak() returned the parameter of SetWeak",
+        "the value of a Global that was weak and is strong again: alive",
+        'the Global holds {"name":"held by a Global that was weak"}',
+        "the value of a weak Global that was reset: collected",
+        "weak callbacks that ran: 0",
+      ]);
+    });
+
+    // Bun only: V8 does not give the handle of a weak Global to the next one.
+    it("gives its handle to the next Global once its callback has reset it", async () => {
+      const expected = [
+        "first pass of a Global whose callback gives its handle back",
+        "the next Global took the handle of the weak one: true",
+        "ClearWeak() of the next Global returned null",
+        'the next Global holds {"name":"held by the next Global"}',
+      ].join("\n");
+      expect(await runOnBun("test_v8_weak_handle_reuse", "[]", countEnv)).toEqual([expected, expected]);
+    });
+
+    // Bun only: node::ObjectWrap of Node 26.12.1 removes a cleanup hook in its destructor, which Node 26.3.0 refuses
+    // inside a collection that an allocation started.
+    it(
+      "keeps the object of a node::ObjectWrap instance for handle() while the collector runs all the time",
+      async () => {
+        // A debug or ASAN build needs 20 times as long for a round as a release build.
+        const rounds = isDebug || isASAN ? 2_000 : 20_000;
+        const env = { ...countEnv, BUN_JSC_collectContinuously: "1" };
+        const expected = [
+          `instances whose handle() was their object after a call into JS: ${rounds} of ${rounds} intact`,
+          `instances whose objects are garbage: ${rounds} of ${rounds} destroyed`,
+        ].join("\n");
+        expect(await runOnBun("test_v8_weak_object_wrap_churn", `[${rounds}]`, env)).toEqual([expected, expected]);
+      },
+      isDebug || isASAN ? 60_000 : 30_000,
+    );
+
+    it("runs the callbacks before a native call that collects returns, also while that call has a Local of another weak Global", async () => {
+      const output = await checkSameCounts("test_v8_weak_collect_inside_call");
+      expect(output.split(/\r?\n/)).toEqual([
+        "first passes before the collection returned: 200 of 200",
+        "each of them had its second pass by then: true",
+        "first passes for the Global whose Local is in scope: 0, its Local is an object: true",
+        "first passes for that Global once the call had returned: 1",
+      ]);
+    });
+
+    it(
+      "runs the first-pass callbacks in a loop that does not return to the event loop",
+      async () => {
+        const output = await checkSameCounts("test_v8_weak_deaths_in_a_loop", "[100000]");
+        expect(output.split(/\r?\n/)).toEqual([
+          "first passes before the loop ended: many",
+          "their second passes ran in a later turn of the event loop: true",
+        ]);
+      },
+      isDebug || isASAN ? 60_000 : 30_000,
+    );
+
+    it("runs the second-pass callbacks before a collection that was asked for returns", async () => {
+      const output = await checkSameCounts("test_v8_weak_second_passes_of_forced_collection");
+      expect(output.split(/\r?\n/)).toEqual([
+        "first passes before the collection returned: 100 of 100 ran",
+        "each of them had its second pass by then: true",
+      ]);
+    });
+
+    it("leaves a pending exception to the caller of a native call that collects while second-pass callbacks are due", async () => {
+      const output = await checkSameCounts("test_v8_weak_collection_with_exception_pending");
+      expect(output.split(/\r?\n/)).toEqual([
+        "caught: thrown before the collection",
+        'passes in the end: {"first":100,"second":100}',
+      ]);
+    });
+
+    // A port of TEST(TwoPassPhantomCallbacksNestedGc) of V8.
+    it("does not start a second-pass callback inside another one that collects", async () => {
+      const output = await checkSameCounts("test_v8_weak_second_pass_collects");
+      expect(output.split(/\r?\n/)).toEqual([
+        "weak Globals whose second pass has not run: 0",
+        "second passes that started inside another second pass: 0",
+        "checks that failed: 0",
+        "first passes: 23 second passes: 23",
+      ]);
+    });
+
+    // Bun only: V8 does not allow JavaScript in a second pass.
+    it("reports what a second-pass callback throws as an uncaught exception, and runs the other callbacks", async () => {
+      const expected = [
+        "uncaught exception: thrown in a second pass",
+        "second pass of another Global whose function returns: the function returned",
+        "second pass of the Global whose function returns: the function returned",
+        "second pass of the Global whose function throws: the function threw",
+      ].join("\n");
+      expect(await runOnBun("test_v8_weak_second_pass_throws", "[]", countEnv)).toEqual([expected, expected]);
+    });
+
+    it("runs the callback of a weak Global that the callback of another one reset in the same collection", async () => {
+      const output = await checkSameCounts("test_v8_weak_callback_resets_another");
+      expect(output.split(/\r?\n/)).toEqual([
+        "first pass of the Global that also resets the first",
+        "first pass of the Global that also resets the second",
+      ]);
+    });
+
+    // Bun only: V8 ends the process when the Global takes its own handle again inside the callback.
+    it("lets a first-pass callback give its Global another value once it has reset it", async () => {
+      const expected = [
+        "first pass that gave its Global another value",
+        "the Global then holds the other value: true",
+      ].join("\n");
+      expect(await runOnBun("test_v8_weak_callback_makes_a_global", "[]", countEnv)).toEqual([expected, expected]);
+    });
+
+    // Bun only: V8 does not allow JavaScript in a second pass.
+    it("stops the script of a Worker after a collection whose second-pass callback called process.exit()", async () => {
+      const expected = [
+        "second pass of the Global whose function calls process.exit(): the function threw",
+        "the script of the Worker ran on after the collection: false",
+        "second passes that were due when a cleanup hook of the Worker ran: 0",
+      ].join("\n");
+      expect(await runOnBun("test_v8_weak_second_pass_exits_worker", "[]", countAsanEnv)).toEqual([expected, expected]);
+    });
+
+    it("has emptied a Global that was made weak without a callback when the callbacks of other Globals of its value run", async () => {
+      const output = await checkSameCounts("test_v8_weak_without_callback_is_empty_for_callbacks");
+      expect(output.split(/\r?\n/)).toEqual([
+        "first pass of a Global that was made weak first: the Global without a callback is empty",
+        "first pass of a Global that was made weak last: the Global without a callback is empty",
+      ]);
+    });
+
+    it("runs no callback for a weak Global that another thread reset, and writes nothing where one was before another thread moved it", async () => {
+      const output = await checkSameCounts("test_v8_weak_other_thread");
+      expect(output.split(/\r?\n/)).toEqual([
+        "values of the weak Globals that another thread reset or moved: 2 of 2 collected",
+        "weak callbacks of the Global that another thread reset: 0",
+        "the bytes where the Global was before another thread moved it are intact: true",
+      ]);
+    });
+
+    it("keeps each weak Persistent of a node::ObjectWrap class apart through Ref() and Unref() of others", async () => {
+      const output = await checkSameCounts("test_v8_weak_object_wrap_ref_unref_many");
+      expect(output.split(/\r?\n/)).toEqual([
+        "instances destroyed while JS refers to their objects: 0 intact: true",
+        "instances whose objects are garbage: 40 of 40 destroyed",
+        "instances destroyed while JS refers to their objects: 0 intact: true",
+        "instances whose objects are garbage: 80 of 80 destroyed",
+      ]);
+    });
+
+    // Bun only: a collection of only the young objects.
+    it("destroys the young instances of a node::ObjectWrap class in a collection of the young objects", async () => {
+      const expected = [
+        "young instances whose objects are garbage, after a collection of the young objects: 50 of 50 destroyed",
+        "intact: true",
+        "all instances, after collections of all objects: 250 of 250 destroyed",
+      ].join("\n");
+      expect(await runOnBun("test_v8_weak_object_wrap_generations", "[]", countEnv)).toEqual([expected, expected]);
+    });
+
+    // Bun only. The JS thread parks without heap access during an idle collection, so the collection ends on the
+    // collector's thread, and the callbacks run when the JS thread takes the heap again.
+    it.skipIf(isWindows)(
+      "destroys the instances of a node::ObjectWrap class that an idle collection of a quiet process finds dead",
+      async () => {
+        const expected = [
+          "instances that an idle collection found dead: 1000 of 1000 destroyed",
+          "instances destroyed on another thread than the one that made them: 0",
+        ].join("\n");
+        const env = {
+          ...countEnv,
+          BUN_IDLE_GC_SECONDS: "1",
+          BUN_GC_TIMER_DISABLE: undefined,
+          BUN_GC_TIMER_INTERVAL: undefined,
+          BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS: "0",
+        } as any;
+        expect(await runOnBun("test_v8_weak_idle_collection", "[]", env)).toEqual([expected, expected]);
+      },
+      60_000,
+    );
+
+    it("empties a Global that was made weak without a callback when its value dies, also after a move", async () => {
+      const output = await checkSameCounts("test_v8_weak_without_callback");
+      expect(output.split(/\r?\n/)).toEqual([
+        "the Global is weak, the Global that it moved to is empty",
+        "the Global is empty, the Global that it moved to is weak",
+        "while JS refers to the value: the Global is empty, the Global that it moved to is weak",
+        "once the value is garbage: the Global is empty, the Global that it moved to is empty",
+      ]);
+    });
+
+    // Bun runs no weak callback once a VM is shutting down, so none for a value that is alive when a Worker ends.
+    it.each(["the end of its script", "process.exit()"])(
+      "runs the weak callbacks for the garbage of a Worker, and none for the values that are alive when it ends with %s",
+      async end => {
+        const output = await checkSameCounts("test_v8_weak_worker_exit", JSON.stringify([end]), countAsanEnv);
+        expect(output.split(/\r?\n/)).toEqual([
+          "weak callbacks for the garbage of the Worker ran before it exited: true",
+          "each of them had its second pass: true",
+          "instances of a node::ObjectWrap class were destroyed before it exited: true",
+          "weak callbacks for the values that JS referred to when the Worker exited: 0",
+          "weak callbacks after a cleanup hook of the Worker: 0",
+        ]);
+      },
+    );
+
+    it("runs the second-pass callbacks that are due before the cleanup hooks of a Worker that calls process.exit()", async () => {
+      const output = await checkSameCounts("test_v8_weak_second_passes_before_exit", "[]", countAsanEnv);
+      expect(output.split(/\r?\n/)).toEqual([
+        "second passes were due when the Worker called process.exit(): true",
+        "second passes that were due when a cleanup hook of the Worker ran: 0",
+      ]);
+    });
+
+    // Runs `bun test` on files that each load the addon first. Returns what the files and the addon printed.
+    async function runTestFiles(sources: string[], args: string[], env: Record<string, string>) {
+      const addon = JSON.stringify(join(directories.bunRelease, "build", "Release", "v8tests.node"));
+      const names = sources.map((_, i) => `file-${i + 1}.test.js`);
+      using dir = tempDir(
+        "v8-weak-test-files",
+        Object.fromEntries(sources.map((source, i) => [names[i], `const addon = require(${addon});\n${source}`])),
+      );
+      await using proc = spawn({
+        cmd: [bunExe(), "test", ...args, ...names.map(name => `./${name}`)],
+        env: { ...bunEnv, ...env },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const lines = stdout
+        .replaceAll(/^\[\w+\].+$/gm, "")
+        .split(/\r?\n/)
+        .filter(line => line && !line.startsWith("bun test v"));
+      return { lines, stderr, exitCode };
+    }
+
+    // Bun only: each file of `bun test --isolate` runs in a realm of its own, which has a v8::Isolate of its own here.
+    // A weak callback gets the isolate of the realm that is current, so a Global of an earlier file gets none. The
+    // first file only loads the addon, because a debug build never collects its realm (see the Global tests).
+    it("runs the weak callbacks of each file of bun test --isolate in that file, and none for the Globals of an earlier file", async () => {
+      const makers = [2, 3, 4, 5, 6, 7];
+      const { lines, stderr, exitCode } = await runTestFiles(
+        [
+          `import { test } from "bun:test";
+          test("loads the addon", () => {});`,
+          ...makers.map(
+            () => `import { test } from "bun:test";
+          test("makes weak Globals of values that are garbage, and of values that its realm keeps", () => {
+            globalThis.kept = Array.from({ length: 50 }, (_, i) => ({ i }));
+            for (const value of globalThis.kept) addon.weak_hold(value, "a Global whose value its file kept", true);
+            // Returns before the collection, so that only the weak Globals refer to the values.
+            (() => {
+              for (let i = 0; i < 50; i++) addon.weak_hold({ i }, "a Global whose value was garbage in its file", true);
+            })();
+            Bun.gc(true);
+            Bun.gc(true);
+          });`,
+          ),
+          `import { heapStats } from "bun:jsc";
+          import { test } from "bun:test";
+          test("counts what the weak callbacks did", () => {
+            Bun.gc(true);
+            Bun.gc(true);
+            // The first file and this one still have theirs. The values that the other files kept are garbage with their realms.
+            console.log("realms of the six files that are not collected: at most 3 =", heapStats().objectTypeCounts.GlobalInternals - 2 <= 3);
+            const counts = {};
+            for (const event of addon.weak_take_events()) counts[event] = (counts[event] ?? 0) + 1;
+            for (const event of Object.keys(counts).sort()) console.log(event + ":", counts[event]);
+          });`,
+        ],
+        ["--isolate"],
+        { BUN_JSC_useConcurrentJIT: "0" },
+      );
+      expect(lines, stderr).toEqual([
+        "realms of the six files that are not collected: at most 3 = true",
+        "first pass of a Global whose value was garbage in its file: 300",
+        "second pass of a Global whose value was garbage in its file: 300",
+      ]);
+      expect(exitCode, stderr).toBe(0);
+    });
+
+    // Bun only. At this level the test runner collects in the guard of each matcher, where the error of a failing
+    // matcher is pending. A second-pass callback may use the V8 API, so none runs in a collection that Bun starts.
+    it("runs no second-pass callback in the collections of the matchers of bun test, and leaves the error of a failing matcher to its caller", async () => {
+      const { lines, stderr, exitCode } = await runTestFiles(
+        [
+          `import { expect, test } from "bun:test";
+          const passes = () => {
+            const [first, , , second] = addon.weak_counted_callbacks();
+            return { first, second };
+          };
+          expect.extend({
+            toFailWithGarbage() {
+              // Only the weak Globals refer to these values.
+              for (let i = 0; i < 100; i++) addon.weak_hold_counted({ i }, false, true);
+              return { pass: false, message: () => "the matcher failed" };
+            },
+          });
+          test("a failing matcher throws to its caller", async () => {
+            let caught;
+            try {
+              expect(1).toFailWithGarbage();
+            } catch (error) {
+              caught = error;
+            }
+            console.log("caught:", String(caught?.message).split("\\n")[0]);
+            // No exception is pending in the collection of this matcher.
+            expect(1).toBe(1);
+            const inTheMatchers = passes();
+            console.log("first passes ran in the collections of the matchers:", inTheMatchers.first > 0, "second passes:", inTheMatchers.second);
+            for (let turn = 0; turn < 10 && passes().second < 100; turn++) {
+              await new Promise(resolve => setImmediate(resolve));
+              Bun.gc(true);
+            }
+            console.log("passes in the end:", JSON.stringify(passes()));
+          });`,
+        ],
+        [],
+        { BUN_GARBAGE_COLLECTOR_LEVEL: "2", BUN_JSC_useConcurrentJIT: "0" },
+      );
+      expect(lines, stderr).toEqual([
+        "caught: the matcher failed",
+        "first passes ran in the collections of the matchers: true second passes: 0",
+        'passes in the end: {"first":100,"second":100}',
+      ]);
+      expect(exitCode, stderr).toBe(0);
+    });
+
+    it(
+      "frees the instances of a node::ObjectWrap class that Workers leave as garbage",
+      async () => {
+        // A debug or ASAN build needs 20 times as long for an instance as a release build.
+        const [workers, instances] = isDebug || isASAN ? [4, 25_000] : [30, 100_000];
+        const main = join(directories.bunRelease, "main.js");
+        await expectRssDeltaBelow([main, "test_v8_weak_object_wrap_leak", `[${workers}, ${instances}]`, "null"], {
+          release: 60,
+          debug: 8,
+        });
+      },
+      isDebug || isASAN ? 60_000 : 30_000,
+    );
   });
 
   describe("HandleScope", () => {

@@ -93,6 +93,14 @@ public:
         }
     }
 
+    // Calls `function` with the word of each slot that createRawHandleSlot() granted. Takes no lock: only for the collector while the world is stopped.
+    template<typename Function> void forEachRawSlot(const Function& function) const
+    {
+        for (auto& grant : m_rawGrants) {
+            function(*grant.first);
+        }
+    }
+
 private:
     Bun::HandleScopeImpl* m_owner;
     Isolate* m_isolate;

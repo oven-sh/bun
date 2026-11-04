@@ -15,12 +15,6 @@ Handle::Handle(const Map* map, JSC::JSCell* cell, JSC::VM& vm, const JSC::JSCell
 {
 }
 
-Handle::Handle(const Map* map, JSC::JSCell* cell)
-    : m_toV8Object(&this->m_object)
-    , m_object(map, cell)
-{
-}
-
 Handle::Handle(double number)
     : m_toV8Object(&this->m_object)
     , m_object(number)

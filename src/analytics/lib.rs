@@ -301,6 +301,9 @@ pub mod features {
         59 => (cross_compiled_bytecode, "cross_compiled_bytecode"),
         /// A program whose functions were compiled to machine code ahead of time (`--aot`).
         60 => (aot, "aot"),
+        /// Collections after which a weak callback of a `v8::Global` ran: code of a V8 addon, in the epilogue of the collection.
+        #[unsafe(export_name = "Bun__Feature__v8_weak_callback")]
+        61 => (v8_weak_callback, "v8_weak_callback"),
     }
 
     // C++ declares these as `extern "C" size_t Bun__...;` and

@@ -1,6 +1,7 @@
 #include "V8Isolate.h"
 #include "V8HandleScope.h"
 #include "V8String.h"
+#include "shim/GlobalHandleRegistry.h"
 #include "shim/GlobalInternals.h"
 #include "ZigGlobalObject.h"
 #include "real_v8.h"
@@ -62,6 +63,7 @@ void Isolate::LowMemoryNotification()
 {
     JSC::JSLockHolder lock(vm());
     vm().heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+    WebCore::clientData(vm())->didFinishRequestedCollection();
 }
 
 void Isolate::AutomaticallyRestoreInitialHeapLimit(double)

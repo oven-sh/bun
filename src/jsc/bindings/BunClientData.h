@@ -320,6 +320,10 @@ public:
     std::unique_ptr<v8::shim::GlobalHandleRegistry> v8GlobalHandleRegistry;
 
     void reconcileWeakReferencesAtGCEnd(JSC::VM&, JSC::CollectionScope) final;
+    // After a synchronous collection that the program asked for. Runs the second-pass callbacks of weak v8::Globals, as V8 does before such a collection returns (https://github.com/nodejs/node/blob/v26.12.1/deps/v8/src/handles/global-handles.cc#L879-L888). It leaves no exception pending.
+    void didFinishRequestedCollection();
+    // On exit, before the cleanup hooks of the environment. Runs the second-pass callbacks that are due.
+    void willRunCleanupHooks();
 
     JSC::DecoderStringTable* decoderStringTable() final { return m_decoderStringTable.get(); }
     void setDecoderStringTable(std::span<const uint8_t>);

@@ -124,12 +124,15 @@ MaybeLocal<Value> Object::Get(Local<Context> context, uint32_t index)
 
 void Object::SetInternalField(int index, Local<Data> data)
 {
-    auto* fields = getInternalFieldsContainer(this);
-    RELEASE_ASSERT(fields, "object has no internal fields");
+    auto* ifo = getInternalFieldObject(this);
+    RELEASE_ASSERT(ifo, "object has no internal fields");
+    auto* fields = ifo->internalFields();
     RELEASE_ASSERT(index >= 0 && index < fields->size(), "internal field index is out of bounds");
     JSObject* js_object = localToObjectPointer<JSObject>();
     auto* globalObject = dynamicDowncast<Zig::GlobalObject>(js_object->globalObject());
     fields->at(index).set(globalObject->vm(), localToCell(), data->localToJSValue());
+    // In V8 the value replaces the aligned pointer of the field, which a kInternalFields weak callback reads.
+    ifo->alignedPointerAt(index) = nullptr;
 }
 
 Local<Data> Object::GetInternalField(int index)

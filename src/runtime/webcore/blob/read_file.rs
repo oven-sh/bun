@@ -342,17 +342,14 @@ impl ReadFile {
 
     // Not for Windows; Windows callers use ReadFileUV.
     #[cfg(not(windows))]
-    pub(crate) fn create(
-        store: RefPtr<Store>,
-        off: SizeType,
-        max_len: SizeType,
-    ) -> Result<ReadFile, Error> {
+    pub(crate) fn create(blob: &Blob) -> ReadFile {
+        let store = blob.store().expect("infallible: store present").clone();
         let file_store = store.data.as_file().clone();
-        let read_file = ReadFile {
+        ReadFile {
             file_store,
             store: Some(store),
-            offset: off,
-            max_length: max_len,
+            offset: blob.offset.get(),
+            max_length: blob.size.get(),
             total_size: MAX_SIZE,
             opened_fd: Fd::INVALID,
             read_off: 0,
@@ -376,8 +373,7 @@ impl ReadFile {
             could_block: false,
             close_after_io: false,
             state: AtomicU8::new(ClosingState::Running as u8),
-        };
-        Ok(read_file)
+        }
     }
 
     #[cfg(not(windows))]

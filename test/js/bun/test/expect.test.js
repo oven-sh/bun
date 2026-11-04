@@ -3876,6 +3876,8 @@ describe("expect()", () => {
           enumerable: true,
           configurable: true,
         });
+      // what toMatchObject() throws when it fails, in Jest and Bun, and in Vitest
+      const mismatch = /toMatchObject|match object/;
 
       test("a hole matches undefined", async () => {
         expect([, 1]).toMatchObject([undefined, 1]);
@@ -3897,8 +3899,8 @@ describe("expect()", () => {
         expect(withGetter([0, 1], 0, undefined)).toMatchObject([, 1]);
         expect([, 1]).toMatchObject(withGetter([0, 1], 0, undefined));
         await expect(Promise.resolve([, 1])).resolves.toMatchObject([undefined, 1]);
-        expect(() => expect([, 1]).not.toMatchObject([undefined, 1])).toThrow();
-        expect(() => expect({ a: [undefined, 1] }).not.toMatchObject({ a: [, 1] })).toThrow();
+        expect(() => expect([, 1]).not.toMatchObject([undefined, 1])).toThrow(mismatch);
+        expect(() => expect({ a: [undefined, 1] }).not.toMatchObject({ a: [, 1] })).toThrow(mismatch);
       });
 
       test("a hole matches nothing else", () => {
@@ -3916,7 +3918,7 @@ describe("expect()", () => {
         expect([, 1]).not.toMatchObject([expect.anything(), 1]);
         expect([, 1]).not.toMatchObject([expect.any(Number), 1]);
         expect([, 1]).not.toMatchObject([expect.stringContaining("a"), 1]);
-        expect(() => expect([, 1]).toMatchObject([null, 1])).toThrow();
+        expect(() => expect([, 1]).toMatchObject([null, 1])).toThrow(mismatch);
       });
 
       test("a key that only one array has is compared", () => {
@@ -4100,7 +4102,7 @@ describe("expect()", () => {
           expect([, 1]).not.toEqual(expect.objectContaining([undefined, 1]));
           expect([undefined, , 1]).not.toEqual(expect.objectContaining([, undefined, 1]));
           expect([1, 2]).toEqual(expect.objectContaining([1, 2]));
-          // Vitest 4.1.12 passes these two, where the array has each key of the sample and one more.
+          // Vitest 4.1.12 and 5.0.3 pass these two, where the array has each key of the sample and one more. Jest 30.5.2 fails them: its ObjectContaining matches no array.
           expect([undefined, 1]).not.toEqual(expect.objectContaining([, 1]));
           expect(withKey([1], "x", undefined)).not.toEqual(expect.objectContaining([1]));
           // an array inside is compared as toEqual() compares it

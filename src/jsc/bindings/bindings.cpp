@@ -268,6 +268,7 @@ template bool Bun__deepMatch<true>(JSValue objValue, JSValue subsetValue, JSGlob
 template bool Bun__deepMatch<false>(JSValue objValue, JSValue subsetValue, JSGlobalObject* globalObject, ThrowScope& throwScope, Bun::DeepMatchState& state, bool isMatchingObjectContaining);
 
 extern "C" bool Expect_readFlagsAndProcessPromise(JSC::EncodedJSValue instanceValue, JSC::JSGlobalObject* globalObject, ExpectFlags* flags, JSC::EncodedJSValue* value, AsymmetricMatcherConstructorType* constructorType);
+extern "C" bool Expect_isAsymmetricMatcher(JSC::EncodedJSValue value);
 
 extern "C" int8_t AsymmetricMatcherConstructorType__fromJS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
 {
@@ -623,25 +624,6 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSV
     return result;
 }
 
-// The values that matchAsymmetricMatcherAndGetFlags() handles. A URL or a Blob has the type tag of one and is none.
-static bool isAsymmetricMatcher(JSValue value)
-{
-    using namespace Bun::Bindgen::Generated;
-    if (value.isEmpty() || !value.isCell())
-        return false;
-    JSCell* cell = value.asCell();
-    if (cell->type() != JSC::JSType(JSDOMWrapperType))
-        return false;
-    return cell->inherits<JSExpectAnything>()
-        || cell->inherits<JSExpectAny>()
-        || cell->inherits<JSExpectStringContaining>()
-        || cell->inherits<JSExpectStringMatching>()
-        || cell->inherits<JSExpectArrayContaining>()
-        || cell->inherits<JSExpectObjectContaining>()
-        || cell->inherits<JSExpectCloseTo>()
-        || cell->inherits<JSExpectCustomAsymmetricMatcher>();
-}
-
 template<typename PromiseType, bool isInternal>
 static void handlePromise(PromiseType* promise, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue ctx, Zig::FFIFunction resolverFunction, Zig::FFIFunction rejecterFunction)
 {
@@ -780,7 +762,7 @@ static NEVER_INLINE bool reconcileArrayKeys(JSGlobalObject* globalObject, ThrowS
                 continue;
             JSValue value = holder->get(globalObject, from[i]);
             RETURN_IF_EXCEPTION(scope, false);
-            bool canBeAbsent = value.isUndefined() || (withMatchers && (isAsymmetricMatcher(value) || asymmetricMatchMethod(globalObject, value)));
+            bool canBeAbsent = value.isUndefined() || (withMatchers && (Expect_isAsymmetricMatcher(JSValue::encode(value)) || asymmetricMatchMethod(globalObject, value)));
             bool otherOwnsIt = false;
             if (canBeAbsent || !ofSubset) {
                 otherOwnsIt = other->hasOwnProperty(globalObject, from[i]);

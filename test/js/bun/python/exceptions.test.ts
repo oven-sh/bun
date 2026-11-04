@@ -566,6 +566,34 @@ describe("where the frame of the catch is gone", () => {
     }
     expect(tail()).toBeUndefined();
   });
+
+  test("a call in tail position further down leaves the catch alone, in every tier", () => {
+    function asks() {
+      const result = handled();
+      return result;
+    }
+    function calls() {
+      "use strict";
+      return asks();
+    }
+    function* generator() {
+      for (;;) yield handled();
+    }
+    // An optimizing compiler makes all of these part of the loop, and next() calls the body of the generator in tail position.
+    function many(count: number) {
+      const asking = generator();
+      for (let i = 0; i < count; i++) {
+        try {
+          py.fail(i);
+        } catch (error) {
+          if (calls() !== error) throw new Error(`${i}: ${calls()}`);
+          if (asking.next().value !== error) throw new Error(`${i}, in a generator`);
+          if (handled() !== error) throw new Error(`${i}, afterwards: ${handled()}`);
+        }
+      }
+    }
+    many(isDebug ? 3_000 : 200_000);
+  });
 });
 
 test("in every tier, with the function made part of its caller or not", () => {

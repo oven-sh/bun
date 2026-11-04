@@ -965,9 +965,8 @@ JSValue KeyObject::toCryptoKey(JSGlobalObject* lexicalGlobalObject, ThrowScope& 
     auto algorithm = WebCore::convert<WebCore::IDLUnion<WebCore::IDLObject, WebCore::IDLDOMString>>(*lexicalGlobalObject, algorithmValue);
     RETURN_IF_EXCEPTION(scope, {});
     bool extractable = extractableValue.toBoolean(lexicalGlobalObject);
-    auto keyUsages = WebCore::convertKeyUsages(*lexicalGlobalObject, keyUsagesValue, "Value"_s);
+    auto usagesBitmap = WebCore::convertKeyUsages(*lexicalGlobalObject, keyUsagesValue, "Value"_s);
     RETURN_IF_EXCEPTION(scope, {});
-    auto usagesBitmap = WebCore::SubtleCrypto::toCryptoKeyUsageBitmap(keyUsages);
 
     auto throwDOMException = [&](WebCore::ExceptionCode code, const String& message) -> JSValue {
         // createDOMException() turns this code into JavaScript's own SyntaxError.

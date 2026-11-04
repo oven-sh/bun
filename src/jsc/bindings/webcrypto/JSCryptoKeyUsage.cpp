@@ -94,16 +94,17 @@ template<> std::optional<CryptoKeyUsage> parseEnumerationFromString<CryptoKeyUsa
 }
 
 // Node's createSequenceConverter() of createEnumConverter(): https://github.com/nodejs/node/blob/v26.12.1/lib/internal/webidl.js#L817-L876 and #L643-L660
-Vector<CryptoKeyUsage> convertKeyUsages(JSGlobalObject& lexicalGlobalObject, JSValue value, ASCIILiteral context)
+CryptoKeyUsageBitmap convertKeyUsages(JSGlobalObject& lexicalGlobalObject, JSValue value, ASCIILiteral context)
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    Vector<CryptoKeyUsage> usages;
+    CryptoKeyUsageBitmap usages = 0;
+    size_t index = 0;
     auto convertEntry = [&](VM& vm, JSGlobalObject* globalObject, JSValue entry) {
         auto scope = DECLARE_THROW_SCOPE(vm);
         if (entry.isSymbol()) [[unlikely]] {
-            Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, makeString(context, '[', usages.size(), "] is a Symbol and cannot be converted to a string."_s));
+            Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, makeString(context, '[', index, "] is a Symbol and cannot be converted to a string."_s));
             return;
         }
         auto string = entry.toWTFString(globalObject);
@@ -111,16 +112,16 @@ Vector<CryptoKeyUsage> convertKeyUsages(JSGlobalObject& lexicalGlobalObject, JSV
         auto usage = parseEnumerationFromString<CryptoKeyUsage>(string);
         if (!usage) [[unlikely]] {
             Bun::MessageBuilder message;
-            message.append(context, '[', usages.size(), "] '"_s, string, "' is not a valid enum value of type KeyUsage."_s);
+            message.append(context, '[', index, "] '"_s, string, "' is not a valid enum value of type KeyUsage."_s);
             Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_VALUE, message);
             return;
         }
-        if (!usages.tryAppend(*usage)) [[unlikely]]
-            throwOutOfMemoryError(globalObject, scope);
+        usages |= toCryptoKeyUsageBitmap(*usage);
+        ++index;
     };
     auto notSequence = [&] {
         Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, makeString(context, " cannot be converted to sequence."_s));
-        return Vector<CryptoKeyUsage> {};
+        return 0;
     };
 
     auto* object = value.getObject();
@@ -134,31 +135,31 @@ Vector<CryptoKeyUsage> convertKeyUsages(JSGlobalObject& lexicalGlobalObject, JSV
         forEachInIterable(&lexicalGlobalObject, set, convertEntry);
     else {
         JSValue method = object->get(&lexicalGlobalObject, vm.propertyNames->iteratorSymbol);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, 0);
         if (!method.isCallable())
             return notSequence();
         JSValue iterator = JSC::call(&lexicalGlobalObject, method, object, ArgList(), "keyUsages[Symbol.iterator]"_s);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, 0);
         if (!iterator.isObject())
             return notSequence();
         JSValue next = iterator.get(&lexicalGlobalObject, vm.propertyNames->next);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, 0);
         if (!next.isCallable())
             return notSequence();
         while (true) {
             JSValue step = JSC::call(&lexicalGlobalObject, next, iterator, ArgList(), "keyUsages iterator next"_s);
-            RETURN_IF_EXCEPTION(scope, {});
+            RETURN_IF_EXCEPTION(scope, 0);
             if (!step.isObject())
                 return notSequence();
             auto [done, entry] = Bun::getIteratorResult(&lexicalGlobalObject, asObject(step), Bun::IteratorDoneValue::Skip);
-            RETURN_IF_EXCEPTION(scope, {});
+            RETURN_IF_EXCEPTION(scope, 0);
             if (done.toBoolean(&lexicalGlobalObject))
                 break;
             convertEntry(vm, &lexicalGlobalObject, entry);
-            RETURN_IF_EXCEPTION(scope, {});
+            RETURN_IF_EXCEPTION(scope, 0);
         }
     }
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, 0);
     return usages;
 }
 

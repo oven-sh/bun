@@ -1,21 +1,22 @@
-// fs.globSync and fs.promises.glob with `maxDepth`, for each spelling of a pattern: below cwd, absolute, and through
-// "..". Each spelling has a walk with no limit, a walk with `maxDepth: 100`, which cuts nothing, and such a walk with no
-// match. The last walk of a group is one that the limit cuts.
+// fs.globSync and fs.promises.glob with `maxDepth`, for each way that a pattern names its paths: below cwd, by an
+// absolute path, through "..", and in a directory beside cwd by an absolute path and through "..". Each way has a walk
+// with no limit, a walk with `maxDepth: 100`, which cuts nothing, such a walk with no match, such a walk whose last part
+// has no wildcard, and a walk that the limit cuts.
 //
-//   bun bench/snippets/fs-glob-max-depth.mjs
-//   node bench/snippets/fs-glob-max-depth.mjs    (Node.js v26.9.0 or later has `maxDepth`)
+//   bun bench/snippets/fs-glob-max-depth.mjs [tree ...]     (the trees: short, long, longest, 16-bit)
+//   node bench/snippets/fs-glob-max-depth.mjs               (Node.js v26.9.0 or later has `maxDepth`)
 import { globSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { glob } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join, sep } from "node:path";
+import { join, sep } from "node:path";
 import { bench, group, run } from "../runner.mjs";
 
-const long = "-with-a-long-name-for-the-benchmark";
-// Names of 2, 11 and 37 characters, and names that need a 16-bit string.
+const pad = length => "-".padEnd(length, "a-long-name-");
+// Names of 2, 49 and 200 characters, and names that need a 16-bit string. A path of the longest names is over 512 bytes.
 const trees = {
   short: { dir: i => `d${i}`, file: i => `f${i}.txt` },
-  medium: { dir: i => `directory-${i}`, file: i => `file-${i}.txt` },
-  long: { dir: i => `d${i}${long}`, file: i => `f${i}${long}.txt` },
+  long: { dir: i => `d${i}${pad(47)}`, file: i => `f${i}${pad(43)}.txt` },
+  longest: { dir: i => `d${i}${pad(198)}`, file: i => `f${i}${pad(194)}.txt` },
   "16-bit": { dir: i => `目录${i}`, file: i => `文件${i}.txt` },
 };
 
@@ -44,26 +45,40 @@ const walks = {
   "fs.promises.glob": (pattern, options) => count(glob(pattern, options)),
 };
 
+const only = process.argv.slice(2);
 for (const [name, names] of Object.entries(trees)) {
-  const cwd = join(tmp, name, "root");
+  if (only.length > 0 && !only.includes(name)) continue;
+  const top = join(tmp, name);
+  const cwd = join(top, "root");
   makeTree(cwd, names);
-  const spellings = {
-    "below cwd": "**/",
-    "absolute": `${cwd.replaceAll(sep, "/")}/**/`,
-    "through ..": `../${basename(cwd)}/**/`,
+  makeTree(join(top, "other"), names);
+  const slashes = top.replaceAll(sep, "/");
+  // The start of the pattern, and the depth of the directory that it names.
+  const ways = {
+    "below cwd": ["", 0],
+    "absolute": [`${slashes}/root/`, 0],
+    "through ..": ["../root/", 0],
+    "beside cwd, absolute": [`${slashes}/other/`, 2],
+    "beside cwd, through ..": ["../other/", 2],
   };
+  const lastFile = names.file(0);
 
   for (const [api, walk] of Object.entries(walks)) {
     group(`${api}, ${name} names`, () => {
-      for (const [spelling, prefix] of Object.entries(spellings)) {
-        bench(`${spelling}, no maxDepth`, () => walk(`${prefix}*.txt`, { cwd }));
-        bench(`${spelling}, maxDepth: 100`, () => walk(`${prefix}*.txt`, { cwd, maxDepth: 100 }));
-        bench(`${spelling}, no match`, () => walk(`${prefix}*.none`, { cwd, maxDepth: 100 }));
+      for (const [way, [start, depth]] of Object.entries(ways)) {
+        bench(`${way}, no maxDepth`, () => walk(`${start}**/*.txt`, { cwd }));
+        bench(`${way}, maxDepth: 100`, () => walk(`${start}**/*.txt`, { cwd, maxDepth: 100 }));
+        bench(`${way}, no match`, () => walk(`${start}**/*.none`, { cwd, maxDepth: 100 }));
+        bench(`${way}, no wildcard in the last part`, () =>
+          walk(`${start}*/*/*/*/${lastFile}`, { cwd, maxDepth: 100 }),
+        );
+        // 4 of the 121 directories are read.
+        bench(`${way}, a limit that cuts`, () => walk(`${start}**/*.txt`, { cwd, maxDepth: depth + 2 }));
       }
+      bench("below cwd, two patterns", () => walk(["**/*.txt", "*/*/*"], { cwd, maxDepth: 100 }));
       // The matches of `maxDepth: 100` from a function for `exclude`, with no `maxDepth`.
       bench("below cwd, exclude function", () => walk("**/*.txt", { cwd, exclude: tooDeep }));
-      // 4 of the 121 directories are read.
-      bench("below cwd, maxDepth: 2", () => walk("**/*.txt", { cwd, maxDepth: 2 }));
+      bench("the entries of the directory above cwd", () => walk("../*", { cwd, maxDepth: 100 }));
     });
   }
 }

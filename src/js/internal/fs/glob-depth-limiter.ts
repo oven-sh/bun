@@ -34,7 +34,7 @@ function pathDepth(path: string) {
   return path.split(sep).length;
 }
 
-// Not in Node's v26.12.1 text: DepthFromRoot() of Node's native walker (https://github.com/nodejs/node/blob/95f3cf072e83d94ac90616c86a370b250f44a8d7/src/glob/glob_walker.cc#L1075-L1163). The depth of `path` below `root`, which is what resolve() answered: what pathDepth(relative(root, resolve(root, path))) counts. `~k` for a directory `k` levels above `root`, and UNPLACED when the characters of the two do not settle it.
+// Not in Node's v26.12.1 text. What DepthFromRoot() and IsAncestorOfRoot() of Node's native walker (src/glob/glob_walker.cc, nodejs/node#65392) answer: the depth, `~k` for a directory `k` levels above the root, or UNPLACED when the characters do not settle it.
 const depthFromRoot: (path: string, root: string, foldsCase: boolean) => number = isWindows
   ? $bindgen("node_path.bind.ts", "depthFromRootWin32")
   : $bindgen("node_path.bind.ts", "depthFromRootPosix");

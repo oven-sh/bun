@@ -763,8 +763,10 @@ describe("maxDepth", () => {
       // Windows has none of these names: it drops a last ".", ":" names a drive or a stream, and "\\" is a separator.
       ...(isWindows ? {} : { "...": { "f.txt": "" }, "x:y": { "f.txt": "" }, "back\\slash": { "f.txt": "" } }),
     };
-    // Windows resolves no path, so it takes a path with ".." the way of Node.js's text.
+    // Windows resolves no path, so it takes a path with ".." the way of Node.js's text. A walk that the limit stops at
+    // ".." asks about that directory only.
     const throughParent: Asked = isWindows ? "a path below cwd" : "no path";
+    const aboveCwd: Asked = isWindows ? "no path below cwd" : "no path";
     const rows: CountRow[] = [
       ["{..a,.h}/f.txt", 2, ["..a/f.txt", ".h/f.txt"]],
       ["{..a,.h}/f.txt", 1, []],
@@ -779,11 +781,11 @@ describe("maxDepth", () => {
       ["a/a/../../ø/f.txt", 2, ["ø/f.txt"]],
       ["a/a/../../ø/f.txt", 1, []],
       // "**/.." gives cwd, which is "." at depth 0, and the directory above it, which is ".." at depth 1.
-      ["**/..", 1, [".", ".."], isWindows ? "no path below cwd" : "no path"],
+      ["**/..", 1, [".", ".."], aboveCwd],
       ["**/..", 0, []],
       // Out of cwd and back into it: the depth is the one below cwd.
       ["../names/up/f.txt", 2, ["../names/up/f.txt"], throughParent],
-      ["../names/up/f.txt", 1, [], throughParent],
+      ["../names/up/f.txt", 1, [], aboveCwd],
       ["../names/up/*/f.txt", 3, ["../names/up/in/f.txt"], throughParent],
       ["../names/up/*/f.txt", 2, [], throughParent],
       ...((isWindows

@@ -21,6 +21,7 @@ use bun_node_path::{
     to_namespaced_path_buf_len, to_namespaced_path_windows_t,
 };
 use bun_paths::MAX_PATH_BYTES;
+use core::ops::ControlFlow;
 
 type Text<'a> = JsLocal<'a, JSString>;
 type TextResult<'a> = bindgen::Result<'a, Text<'a>>;
@@ -1005,34 +1006,17 @@ fn format_with_separator<'a>(
 /// What [`depth_from_root`] answers when the characters of the two paths do not settle the depth.
 const UNPLACED: i32 = i32::MIN;
 
-/// Where a path starts, by its first characters.
-enum Start {
-    /// With a name, or the path is empty.
-    Name,
-    /// With a root: a separator, or on Windows a drive.
-    Root,
-    /// With a `..` segment.
-    Parent,
-}
-
+/// Whether `path` starts with a separator, or on Windows with a drive.
 #[inline(always)]
-fn start_of<const WINDOWS: bool, P: PathByte>(path: &[P]) -> Start {
+fn is_rooted<const WINDOWS: bool, P: PathByte>(path: &[P]) -> bool {
     let is = |index: usize, character: u8| {
         path.get(index)
             .is_some_and(|&at| at == P::from_u8(character))
     };
-    let is_separator =
-        |index: usize| is(index, CHAR_FORWARD_SLASH) || (WINDOWS && is(index, CHAR_BACKWARD_SLASH));
-    if is_separator(0) || (WINDOWS && is(1, b':')) {
-        Start::Root
-    } else if is(0, b'.') && is(1, b'.') && (path.len() == 2 || is_separator(2)) {
-        Start::Parent
-    } else {
-        Start::Name
-    }
+    is(0, CHAR_FORWARD_SLASH) || (WINDOWS && (is(0, CHAR_BACKWARD_SLASH) || is(1, b':')))
 }
 
-/// The count of the names, without empty segments and `.`. [`UNPLACED`] for `..`, a leading separator, or a Windows `:`.
+/// The count of the names, without empty segments and `.`. [`UNPLACED`] for a `..` segment, or a Windows `:`.
 #[inline(always)]
 fn count_names<const WINDOWS: bool, P: PathByte>(names: &[P]) -> i32 {
     let slash = P::from_u8(CHAR_FORWARD_SLASH);
@@ -1040,12 +1024,6 @@ fn count_names<const WINDOWS: bool, P: PathByte>(names: &[P]) -> i32 {
     let colon = P::from_u8(b':');
     let dot = P::from_u8(b'.');
     let mut rest = names;
-    if rest
-        .first()
-        .is_some_and(|&first| first == slash || (WINDOWS && first == backslash))
-    {
-        return UNPLACED;
-    }
     let mut count = 0;
     loop {
         let end = if WINDOWS {
@@ -1072,50 +1050,55 @@ fn count_names<const WINDOWS: bool, P: PathByte>(names: &[P]) -> i32 {
 
 /// The depth that names alone give: of a path that starts with a name, or with `root` in exactly this spelling.
 #[inline(always)]
-fn depth_by_names<const WINDOWS: bool, P: PathByte + Into<u16>, R: PathByte + Into<u16>>(
+fn depth_by_names<const WINDOWS: bool, P: PathByte + Into<u16>>(
     path: &[P],
-    root: &[R],
+    root: CodeUnits<'_>,
 ) -> i32 {
     let is_separator = |code: u16| {
         code == u16::from(CHAR_FORWARD_SLASH) || (WINDOWS && code == u16::from(CHAR_BACKWARD_SLASH))
     };
-    match start_of::<WINDOWS, P>(path) {
-        Start::Name => count_names::<WINDOWS, P>(path),
-        Start::Parent => UNPLACED,
-        Start::Root => {
-            let (Some((start, mut rest)), Some(&last)) =
-                (path.split_at_checked(root.len()), root.last())
-            else {
-                return UNPLACED;
-            };
-            let is_same = match (P::units(start), R::units(root)) {
-                (CodeUnits::U8(start), CodeUnits::U8(root)) => start == root,
-                (CodeUnits::U16(start), CodeUnits::U16(root)) => start == root,
-                _ => start.iter().zip(root).all(|(&a, &b)| a.into() == b.into()),
-            };
-            if !is_same {
-                return UNPLACED;
+    let names = if !is_rooted::<WINDOWS, P>(path) {
+        path
+    } else {
+        let (length, last) = match root {
+            CodeUnits::U8(root) => (root.len(), root.last().copied().map(u16::from)),
+            CodeUnits::U16(root) => (root.len(), root.last().copied()),
+        };
+        let (Some((start, rest)), Some(last)) = (path.split_at_checked(length), last) else {
+            return UNPLACED;
+        };
+        let is_same = match (P::units(start), root) {
+            (CodeUnits::U8(start), CodeUnits::U8(root)) => start == root,
+            (CodeUnits::U16(start), CodeUnits::U16(root)) => start == root,
+            (CodeUnits::U8(start), CodeUnits::U16(root)) => {
+                start.iter().zip(root).all(|(&a, &b)| u16::from(a) == b)
             }
-            if !is_separator(last.into()) {
-                match rest.split_first() {
-                    None => return 0,
-                    Some((&first, names)) if is_separator(first.into()) => rest = names,
-                    Some(_) => return UNPLACED,
-                }
+            (CodeUnits::U16(start), CodeUnits::U8(root)) => {
+                start.iter().zip(root).all(|(&a, &b)| a == u16::from(b))
             }
-            count_names::<WINDOWS, P>(rest)
+        };
+        if !is_same {
+            return UNPLACED;
         }
-    }
+        if is_separator(last) {
+            rest
+        } else {
+            match rest.split_first() {
+                None => return 0,
+                Some((&first, names)) if is_separator(first.into()) => names,
+                Some(_) => return UNPLACED,
+            }
+        }
+    };
+    count_names::<WINDOWS, P>(names)
 }
 
-/// Whether two resolved ASCII paths are, in lower case, one path or a directory and a path below it.
+/// Whether two resolved ASCII paths, neither of them "/", are in lower case one path or a directory and a path below it.
 #[inline(always)]
 fn is_same_or_above_in_lower_case(a: &[u8], b: &[u8]) -> bool {
     let (shorter, longer) = if a.len() <= b.len() { (a, b) } else { (b, a) };
     longer[..shorter.len()].eq_ignore_ascii_case(shorter)
-        && (shorter.len() == longer.len()
-            || shorter.len() == 1
-            || longer[shorter.len()] == CHAR_FORWARD_SLASH)
+        && (shorter.len() == longer.len() || longer[shorter.len()] == CHAR_FORWARD_SLASH)
 }
 
 /// [`depth_from_root`] of two resolved ASCII paths. With `folds_case`, a case variant of `root` or of a path above or below it is [`UNPLACED`].
@@ -1166,7 +1149,7 @@ fn resolved_after_parents<'p>(root: &[u8], path: &'p [u8]) -> Option<(usize, &'p
     is_resolved_ascii_posix(rest).then_some((kept, rest))
 }
 
-/// [`depth_from_root`] of 8-bit strings on POSIX: `resolve` and `relative` with no string made for ASCII, else [`depth_by_names`].
+/// [`depth_from_root`] of 8-bit strings on POSIX, with no string made: the spellings that `join` writes are answered here.
 #[inline(always)]
 fn depth_from_root_posix_latin1(root: &[u8], path: &[u8], folds_case: bool) -> i32 {
     if path.is_empty() {
@@ -1178,30 +1161,34 @@ fn depth_from_root_posix_latin1(root: &[u8], path: &[u8], folds_case: bool) -> i
         let ends_with_name = path[path.len() - 1] != CHAR_FORWARD_SLASH;
         return (bun_highway::count_slashes(path) + usize::from(ends_with_name)) as i32;
     }
-    if !is_resolved_ascii_posix(root) {
-        return depth_by_names::<false, u8, u8>(path, root);
+    let resolved = if !is_resolved_ascii_posix(root) {
+        None
+    } else if is_absolute && is_resolved_ascii_posix(path) {
+        Some((root, path))
+    } else {
+        // What the ".." leave of `root` is in front of both.
+        resolved_after_parents(root, path).map(|(kept, rest)| (&root[kept..], rest))
+    };
+    match resolved {
+        Some((from, full)) => depth_of_resolved_posix(from, full, folds_case),
+        None => depth_of_untidy_posix(root, path, folds_case),
+    }
+}
+
+/// [`depth_from_root_posix_latin1`] of a path that `resolve` has to put together. Characters outside ASCII and a `root` that `resolve` would change get [`depth_by_names`].
+#[inline(never)]
+fn depth_of_untidy_posix(root: &[u8], path: &[u8], folds_case: bool) -> i32 {
+    if !is_ascii(path) || !is_resolved_ascii_posix(root) {
+        return depth_by_names::<false, u8>(path, CodeUnits::U8(root));
     }
     let mut buffer = JoinedBuffer::uninit();
+    let mut joined = Joined::new(&mut buffer);
+    if !joined.prepend(path) || (!is_absolute_posix_t(path) && !joined.prepend(root)) {
+        return UNPLACED;
+    }
     let mut normalized = normalized_buffer();
-    let (from, full) = if is_absolute && is_resolved_ascii_posix(path) {
-        (root, path)
-    } else if let Some((kept, rest)) = resolved_after_parents(root, path) {
-        // What the ".." leave of `root` is in front of both.
-        (&root[kept..], rest)
-    } else {
-        if !is_ascii(path) {
-            return depth_by_names::<false, u8, u8>(path, root);
-        }
-        let mut joined = Joined::new(&mut buffer);
-        if !joined.prepend(path) || (!is_absolute && !joined.prepend(root)) {
-            return UNPLACED;
-        }
-        (
-            root,
-            resolve_absolute_posix_latin1(joined.characters(), &mut normalized),
-        )
-    };
-    depth_of_resolved_posix(from, full, folds_case)
+    let full = resolve_absolute_posix_latin1(joined.characters(), &mut normalized);
+    depth_of_resolved_posix(root, full, folds_case)
 }
 
 /// What `pathDepth(relative(root, resolve(root, path)))` counts in fs.glob's DepthLimiter, `!ups` for a directory above `root`, or [`UNPLACED`].
@@ -1212,37 +1199,43 @@ fn depth_from_root<'a, const WINDOWS: bool>(
     root: Text<'a>,
     folds_case: bool,
 ) -> bindgen::Result<'a, i32> {
-    if let (Some(path), Some(root)) = (path.latin1(), root.latin1()) {
-        let (path, root) = (path.characters(), root.characters());
-        return Ok(if WINDOWS {
-            depth_by_names::<WINDOWS, u8, u8>(path, root)
-        } else {
-            depth_from_root_posix_latin1(root, path, folds_case)
-        });
-    }
-    depth_from_root_of_other::<WINDOWS>(heap, path, root, folds_case)
+    let (path, root) = match (path.latin1(), root.latin1()) {
+        (Some(path), Some(root)) => (path, root),
+        _ => match depth_of_other_strings::<WINDOWS>(heap, path, root)? {
+            ControlFlow::Continue(both) => both,
+            ControlFlow::Break(depth) => return Ok(depth),
+        },
+    };
+    let (path, root) = (path.characters(), root.characters());
+    Ok(if WINDOWS {
+        depth_by_names::<WINDOWS, u8>(path, CodeUnits::U8(root))
+    } else {
+        depth_from_root_posix_latin1(root, path, folds_case)
+    })
 }
 
-/// [`depth_from_root`] of a rope or of a 16-bit string.
+/// Resolves a rope. Two strings of 8-bit characters go back to [`depth_from_root`], and a 16-bit one gets [`depth_by_names`].
 #[cold]
 #[inline(never)]
-fn depth_from_root_of_other<'a, const WINDOWS: bool>(
+fn depth_of_other_strings<'a, const WINDOWS: bool>(
     heap: &JsHeap<'a>,
     path: Text<'a>,
     root: Text<'a>,
-    folds_case: bool,
-) -> bindgen::Result<'a, i32> {
-    let path = path.view(heap)?;
-    let root = root.view(heap)?;
-    Ok(match (path.is_8bit(), root.is_8bit()) {
-        (true, true) if !WINDOWS => {
-            depth_from_root_posix_latin1(root.latin1(), path.latin1(), folds_case)
-        }
-        (true, true) => depth_by_names::<WINDOWS, u8, u8>(path.latin1(), root.latin1()),
-        (true, false) => depth_by_names::<WINDOWS, u8, u16>(path.latin1(), root.utf16()),
-        (false, true) => depth_by_names::<WINDOWS, u16, u8>(path.utf16(), root.latin1()),
-        (false, false) => depth_by_names::<WINDOWS, u16, u16>(path.utf16(), root.utf16()),
-    })
+) -> bindgen::Result<'a, ControlFlow<i32, (JsLatin1<'a>, JsLatin1<'a>)>> {
+    if let (Some(path), Some(root)) = (path.resolved_latin1(heap)?, root.resolved_latin1(heap)?) {
+        return Ok(ControlFlow::Continue((path, root)));
+    }
+    let (path, root) = (path.view(heap)?, root.view(heap)?);
+    let root = if root.is_8bit() {
+        CodeUnits::U8(root.latin1())
+    } else {
+        CodeUnits::U16(root.utf16())
+    };
+    Ok(ControlFlow::Break(if path.is_8bit() {
+        depth_by_names::<WINDOWS, u8>(path.latin1(), root)
+    } else {
+        depth_by_names::<WINDOWS, u16>(path.utf16(), root)
+    }))
 }
 
 // ───────────────────────────── what node_path.bind.ts names ─────────────────────────────

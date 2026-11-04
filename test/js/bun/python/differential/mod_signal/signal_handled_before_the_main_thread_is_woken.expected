@@ -1,0 +1,10 @@
+status: 0
+script: 5c7271ec1e801bfd
+---
+written while the thread waited: True
+none has arrived: [] []
+handled: True
+pending: True
+taken: True
+blocked: True
+the thread was told: True

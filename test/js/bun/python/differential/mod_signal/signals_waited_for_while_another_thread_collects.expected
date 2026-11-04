@@ -1,0 +1,10 @@
+status: 0
+script: 304c02b4b6f4eea9
+---
+sigwait on another thread: True
+sigwait on the main thread: True
+sigwaitinfo on another thread: True
+sigwaitinfo on the main thread: True
+sigtimedwait on another thread: True
+sigtimedwait on the main thread: True
+done

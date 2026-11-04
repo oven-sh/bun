@@ -1,0 +1,28 @@
+status: 0
+script: 8176b10a723baaff
+---
+nothing done about signals: written while the thread waited: True
+asleep: written while the thread waited: True
+waiting for signals: written while the thread waited: True
+waiting for a signal: written while the thread waited: True
+all blocked for a while: written while the thread waited: True
+all blocked: written while the thread waited: True
+all blocked, asleep: written while the thread waited: True
+all ignored: written while the thread waited: True
+all with their default effect: written while the thread waited: True
+blocked for a while again: written while the thread waited: True
+watched for a while: written while the thread waited: True
+real-time signals handled: written while the thread waited: True
+all but one at most: True
+calls restarted after them: written while the thread waited: True
+none has arrived: True
+all have arrived: True
+blocked: True
+pending: True
+taken: True
+written: True
+nothing is left: True
+what the signals do: True True
+ended, all blocked: 1 True True
+ended, real-time signals ignored: 1 True True
+done

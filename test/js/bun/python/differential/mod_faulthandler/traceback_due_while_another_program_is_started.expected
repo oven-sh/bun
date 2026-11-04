@@ -1,0 +1,9 @@
+status: 0
+script: 583ce8fdf5a982c9
+---
+replaced: {(b'the new program\n', 0)}
+written: True
+again: False
+in the file of the next one: b''
+ended: 1 True
+ended: 1 True True

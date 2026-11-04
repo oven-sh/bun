@@ -50,6 +50,12 @@ public:
     static bool putByIndex(JSC::JSCell*, JSC::JSGlobalObject*, unsigned, JSC::JSValue, bool shouldThrow);
     static bool defineOwnProperty(JSC::JSObject*, JSC::JSGlobalObject*, JSC::PropertyName, const JSC::PropertyDescriptor&, bool shouldThrow);
     static bool deleteProperty(JSC::JSCell*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::DeletePropertySlot&);
+    static bool deletePropertyByIndex(JSC::JSCell*, JSC::JSGlobalObject*, unsigned);
+
+    // What put() and deleteProperty() do once the value is a string, Python not being told. Without `mayRunCode`, no setter on
+    // Object.prototype is asked.
+    bool putString(JSC::JSGlobalObject*, JSC::PropertyName, JSC::JSString*, bool isStrictMode, bool mayRunCode);
+    bool deleteVariable(JSC::JSGlobalObject*, JSC::PropertyName, JSC::DeletePropertySlot&);
 
 private:
     JSEnvironmentVariableMap(JSC::VM& vm, JSC::Structure* structure)
@@ -69,6 +75,14 @@ void invalidateLiveDateInstanceCaches(JSC::VM&);
 // The shared DateCache reset and invalidateLiveDateInstanceCaches() must travel
 // together; every caller that changes the time zone override uses this instead.
 void resetDateCachesAfterTimeZoneChange(JSC::VM&);
+
+#if !OS(WINDOWS)
+// Python has the variables in os.environ, which is kept the same as process.env. (Python::HostEnvironment, BunPython.cpp)
+// All that process.env has. True on the main thread, whose process.env stands for the environment of the process.
+bool readProcessEnvForPython(JSC::JSGlobalObject*, WTF::Vector<std::pair<WTF::String, WTF::String>>&);
+// A null value: the variable is gone. It runs no code of the program and throws nothing.
+void writeProcessEnvFromPython(JSC::JSGlobalObject*, const WTF::String& name, const WTF::String& value);
+#endif
 
 // worker_threads SHARE_ENV: a `process.env` whose reads/writes/enumeration go
 // through the SharedEnvStore of the tree its global belongs to.

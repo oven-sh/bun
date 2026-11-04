@@ -5,6 +5,7 @@
 #include "BunPython.h"
 #include "python/BunPythonModule.h"
 #include "BunString.h"
+#include "JSEnvironmentVariableMap.h"
 #include "ZigGlobalObject.h"
 #include "headers.h"
 #include <JavaScriptCore/JSArray.h>
@@ -111,6 +112,7 @@ static void preparePython()
     static std::once_flag once;
     std::call_once(once, [] {
         Python::setDidChangeDirectoryFunction(didChangeDirectory);
+        Python::setHostEnvironment({ readProcessEnvForPython, writeProcessEnvFromPython });
         auto& configuration = Python::configuration();
         if (!s_isPythonCommand) {
             for (size_t i = 0; const char* argument = Bun__Python__originalArgument(i); ++i)

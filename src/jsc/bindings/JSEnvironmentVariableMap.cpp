@@ -27,6 +27,9 @@
 #include <JavaScriptCore/StructureInlines.h>
 #include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/PropertyDescriptor.h>
+#if !OS(WINDOWS)
+#include <JavaScriptCore/PyExec.h>
+#endif
 #include "BunProcess.h"
 #include "ScriptExecutionContext.h"
 #include "SharedEnvStore.h"
@@ -144,6 +147,39 @@ static void applyTZFromString(JSGlobalObject*, const String&);
 static void applyTLSRejectFromString(JSGlobalObject*, const String&);
 static void applyVerboseFetchFromString(JSGlobalObject*, const String&);
 static void applyTZDeleted(JSGlobalObject*);
+#if !OS(WINDOWS)
+static bool isEnvOfMainThread(JSGlobalObject*);
+#endif
+
+// The program has written to process.env, or deleted from it (a null value): os.environ of Python follows, if Python has started.
+// On the main thread so does the environment of the process, which the children of Python inherit.
+static void tellPython(JSGlobalObject* lexicalGlobalObject, const String& name, const String& value)
+{
+#if !OS(WINDOWS)
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    if (globalObject->pythonRuntime()) [[unlikely]]
+        Python::hostDidChangeEnvironment(globalObject, name, value, isEnvOfMainThread(globalObject));
+#else
+    UNUSED_PARAM(lexicalGlobalObject);
+    UNUSED_PARAM(name);
+    UNUSED_PARAM(value);
+#endif
+}
+
+static void tellPython(JSGlobalObject* globalObject, StringImpl* name, JSC::JSString* value)
+{
+#if !OS(WINDOWS)
+    if (!defaultGlobalObject(globalObject)->pythonRuntime()) [[likely]]
+        return;
+    auto view = value->view(globalObject);
+    if (!view->isNull())
+        tellPython(globalObject, String(name), view->toString());
+#else
+    UNUSED_PARAM(globalObject);
+    UNUSED_PARAM(name);
+    UNUSED_PARAM(value);
+#endif
+}
 
 // TZ side effect for put() and jsProcessEnvCoerceForWrite, so delete-then-set
 // (which drops the CustomAccessor) still updates the process timezone like
@@ -201,41 +237,63 @@ bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, P
     JSString* string = coerceEnvValue(globalObject, scope, value);
     RETURN_IF_EXCEPTION(scope, false);
 
+    bool didPut = static_cast<JSEnvironmentVariableMap*>(cell)->putString(globalObject, propertyName, string, slot.isStrictMode(), true);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (didPut && uid) {
+        tellPython(globalObject, uid, string);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    return didPut;
+}
+
+bool JSEnvironmentVariableMap::putString(JSGlobalObject* globalObject, PropertyName propertyName, JSString* string, bool isStrictMode, bool mayRunCode)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* uid = propertyName.uid();
+
     // PutById: a dictionary after 512 properties, not 128.
-    PutPropertySlot ownSlot(cell, slot.isStrictMode(), PutPropertySlot::PutById);
-    auto* thisObject = static_cast<JSEnvironmentVariableMap*>(cell);
+    PutPropertySlot ownSlot(this, isStrictMode, PutPropertySlot::PutById);
 
     // Node's RealEnvStore::Set name-matches TZ on every write, so delete-then-set still
     // updates Date caches. putDirect bypasses the accessor so the side effect fires once.
     if (uid && WTF::equal(uid, "TZ"_s)) [[unlikely]] {
         applyTimeZoneEnvValue(globalObject, string);
         RETURN_IF_EXCEPTION(scope, false);
-        thisObject->putDirect(vm, propertyName, string, 0, ownSlot);
+        putDirect(vm, propertyName, string, 0, ownSlot);
         return true;
     }
     if (uid && WTF::equal(uid, "NODE_TLS_REJECT_UNAUTHORIZED"_s)) [[unlikely]] {
         applyTLSRejectEnvValue(globalObject, string);
         RETURN_IF_EXCEPTION(scope, false);
-        thisObject->putDirect(vm, propertyName, string, 0, ownSlot);
+        putDirect(vm, propertyName, string, 0, ownSlot);
         return true;
     }
     // fetch() reads the proxy variables from the native env map.
     if (isProxyEnvVarName(vm, uid)) [[unlikely]] {
         setNativeEnvValue(globalObject, String(uid), string);
         RETURN_IF_EXCEPTION(scope, false);
-        thisObject->putDirect(vm, propertyName, string, 0, ownSlot);
+        putDirect(vm, propertyName, string, 0, ownSlot);
         return true;
     }
     // No write is cached, so skip the prototype chain walk when the variable is already a plain property.
-    Structure* structure = cell->structure();
+    Structure* structure = this->structure();
     unsigned attributes = 0;
     PropertyOffset offset = structure->get(vm, propertyName, attributes);
     if (isValidOffset(offset) && !attributes) [[likely]] {
         structure->didReplaceProperty(offset);
-        thisObject->putDirectOffset(vm, offset, string);
+        putDirectOffset(vm, offset, string);
         return true;
     }
-    RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, string, ownSlot));
+    if (!mayRunCode && !isValidOffset(offset)) {
+        if (parseIndex(propertyName)) {
+            PropertyDescriptor descriptor(string, 0);
+            RELEASE_AND_RETURN(scope, JSObject::defineOwnProperty(this, globalObject, propertyName, descriptor, false));
+        }
+        putDirect(vm, propertyName, string, 0, ownSlot);
+        return true;
+    }
+    RELEASE_AND_RETURN(scope, Base::put(this, globalObject, propertyName, string, ownSlot));
 }
 
 void JSEnvironmentVariableMap::putInitialValue(JSGlobalObject* globalObject, const Identifier& name, JSValue value)
@@ -258,7 +316,13 @@ bool JSEnvironmentVariableMap::putByIndex(JSCell* cell, JSGlobalObject* globalOb
     // and coercion rules apply.
     JSString* string = coerceEnvValue(globalObject, scope, value);
     RETURN_IF_EXCEPTION(scope, false);
-    RELEASE_AND_RETURN(scope, Base::putByIndex(cell, globalObject, index, string, shouldThrow));
+    bool didPut = Base::putByIndex(cell, globalObject, index, string, shouldThrow);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (didPut) {
+        tellPython(globalObject, String::number(index).impl(), string);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    return didPut;
 }
 
 bool JSEnvironmentVariableMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
@@ -339,6 +403,32 @@ bool JSEnvironmentVariableMap::deleteProperty(JSCell* cell, JSGlobalObject* glob
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    bool didDelete = static_cast<JSEnvironmentVariableMap*>(cell)->deleteVariable(globalObject, propertyName, slot);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (auto* name = propertyName.publicName(); didDelete && name) {
+        tellPython(globalObject, String(name), String());
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    return didDelete;
+}
+
+bool JSEnvironmentVariableMap::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool didDelete = Base::deletePropertyByIndex(cell, globalObject, index);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (didDelete) {
+        tellPython(globalObject, String::number(index), String());
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    return didDelete;
+}
+
+bool JSEnvironmentVariableMap::deleteVariable(JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Node's RealEnvStore::Delete resets Date caches for TZ; without this, delete drops
     // the CustomAccessor and existing Dates keep the old offset. put() handles re-set.
@@ -347,7 +437,7 @@ bool JSEnvironmentVariableMap::deleteProperty(JSCell* cell, JSGlobalObject* glob
         applyTZDeleted(globalObject);
         auto* clientData = WebCore::clientData(vm);
         DeletePropertySlot dataSlot;
-        Base::deleteProperty(cell, globalObject, clientData->builtinNames().dataPrivateName(), dataSlot);
+        Base::deleteProperty(this, globalObject, clientData->builtinNames().dataPrivateName(), dataSlot);
         RETURN_IF_EXCEPTION(scope, false);
     } else if (uid && WTF::equal(uid, "NODE_TLS_REJECT_UNAUTHORIZED"_s)) {
         applyTLSRejectFromString(globalObject, String());
@@ -355,7 +445,7 @@ bool JSEnvironmentVariableMap::deleteProperty(JSCell* cell, JSGlobalObject* glob
         removeNativeEnvValue(globalObject, String(uid));
     }
 
-    RELEASE_AND_RETURN(scope, Base::deleteProperty(cell, globalObject, propertyName, slot));
+    RELEASE_AND_RETURN(scope, Base::deleteProperty(this, globalObject, propertyName, slot));
 }
 
 extern "C" int Bun__getTLSRejectUnauthorizedValue();
@@ -688,6 +778,14 @@ static bool shouldApplyTZSideEffect(JSGlobalObject* globalObject)
     return !context || context->isMainThread();
 }
 
+#if !OS(WINDOWS)
+static bool isEnvOfMainThread(JSGlobalObject* globalObject)
+{
+    auto* context = defaultGlobalObject(globalObject)->scriptExecutionContext();
+    return context && context->isMainThread();
+}
+#endif
+
 // The parse-and-apply bodies for the three side-effecting env vars, shared by
 // process.env's put()/CustomSetters and applySharedEnvSideEffects so a new
 // side-effecting var need only be added in one place.
@@ -787,26 +885,16 @@ bool JSSharedEnvMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyNam
     applySharedEnvSideEffects(globalObject, keyStr, stringValue);
     syncWindowsEnv(store, keyStr, &stringValue);
     store->set(keyStr, stringValue);
+    tellPython(globalObject, keyStr, stringValue);
+    RETURN_IF_EXCEPTION(scope, false);
     return true;
 }
 
-bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
+// Mirror JSEnvironmentVariableMap::deleteProperty: put() applies the TZ
+// side effect via applySharedEnvSideEffects, so delete has to undo it or
+// existing Date instances keep the deleted zone's offset.
+static void applySharedEnvSideEffectsOfDelete(JSGlobalObject* globalObject, const String& key)
 {
-    auto* uid = propertyName.uid();
-    if (propertyName.isSymbol() || !uid) {
-        return Base::deleteProperty(cell, globalObject, propertyName, slot);
-    }
-
-    auto* store = sharedEnvStoreFor(asObject(cell));
-    if (!store) [[unlikely]] {
-        ASSERT_NOT_REACHED();
-        return Base::deleteProperty(cell, globalObject, propertyName, slot);
-    }
-
-    // Mirror JSEnvironmentVariableMap::deleteProperty: put() applies the TZ
-    // side effect via applySharedEnvSideEffects, so delete has to undo it or
-    // existing Date instances keep the deleted zone's offset.
-    String key(uid);
     String normalizedKey = SharedEnvStore::normalizeKey(key);
     if (normalizedKey == "TZ"_s) {
         applyTZDeleted(globalObject);
@@ -815,11 +903,31 @@ bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, 
     } else if (isProxyEnvVarName(JSC::getVM(globalObject), normalizedKey)) {
         removeNativeEnvValue(globalObject, normalizedKey);
     }
+}
 
+bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* uid = propertyName.uid();
+    if (propertyName.isSymbol() || !uid) {
+        RELEASE_AND_RETURN(scope, Base::deleteProperty(cell, globalObject, propertyName, slot));
+    }
+
+    auto* store = sharedEnvStoreFor(asObject(cell));
+    if (!store) [[unlikely]] {
+        ASSERT_NOT_REACHED();
+        RELEASE_AND_RETURN(scope, Base::deleteProperty(cell, globalObject, propertyName, slot));
+    }
+
+    String key(uid);
+    applySharedEnvSideEffectsOfDelete(globalObject, key);
     syncWindowsEnv(store, key, nullptr);
     store->remove(key);
+    tellPython(globalObject, key, String());
+    RETURN_IF_EXCEPTION(scope, false);
     // Also drop any own property the Base fallback installed (accessor descriptors).
-    return Base::deleteProperty(cell, globalObject, propertyName, slot);
+    RELEASE_AND_RETURN(scope, Base::deleteProperty(cell, globalObject, propertyName, slot));
 }
 
 void JSSharedEnvMap::getOwnPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
@@ -880,6 +988,8 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
     applySharedEnvSideEffects(globalObject, keyStr, stringValue);
     syncWindowsEnv(store, keyStr, &stringValue);
     store->set(keyStr, stringValue);
+    tellPython(globalObject, keyStr, stringValue);
+    RETURN_IF_EXCEPTION(scope, false);
     return true;
 }
 
@@ -900,16 +1010,20 @@ bool JSSharedEnvMap::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalO
 {
     // Delegate to Base::deletePropertyByIndex, not deleteProperty: JSObject's named
     // form re-dispatches index-like names back here, which would recurse forever.
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* store = sharedEnvStoreFor(asObject(cell));
     if (!store) [[unlikely]] {
         ASSERT_NOT_REACHED();
-        return Base::deletePropertyByIndex(cell, globalObject, index);
+        RELEASE_AND_RETURN(scope, Base::deletePropertyByIndex(cell, globalObject, index));
     }
 
     String keyStr = String::number(index);
     syncWindowsEnv(store, keyStr, nullptr);
     store->remove(keyStr);
-    return Base::deletePropertyByIndex(cell, globalObject, index);
+    tellPython(globalObject, keyStr, String());
+    RETURN_IF_EXCEPTION(scope, false);
+    RELEASE_AND_RETURN(scope, Base::deletePropertyByIndex(cell, globalObject, index));
 }
 
 JSValue createSharedEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
@@ -918,6 +1032,63 @@ JSValue createSharedEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     auto* structure = JSSharedEnvMap::createStructure(vm, globalObject, globalObject->objectPrototype());
     return JSSharedEnvMap::create(vm, structure);
 }
+
+#if !OS(WINDOWS)
+bool readProcessEnvForPython(JSGlobalObject* lexicalGlobalObject, Vector<std::pair<String, String>>& variables)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* envObject = globalObject->processEnvObject();
+    RETURN_IF_EXCEPTION(scope, false);
+    JSC::PropertyNameArrayBuilder names(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+    envObject->methodTable()->getOwnPropertyNames(envObject, globalObject, names, JSC::DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, false);
+    for (const auto& name : names) {
+        JSValue value = envObject->get(globalObject, name);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!value.isString())
+            continue;
+        String string = asString(value)->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        variables.append({ name.string(), WTF::move(string) });
+    }
+    return isEnvOfMainThread(globalObject);
+}
+
+void writeProcessEnvFromPython(JSGlobalObject* lexicalGlobalObject, const String& name, const String& value)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (name.isEmpty())
+        return;
+    if (auto* store = sharedEnvStoreFor(globalObject)) {
+        if (value.isNull()) {
+            applySharedEnvSideEffectsOfDelete(globalObject, name);
+            store->remove(name);
+        } else {
+            applySharedEnvSideEffects(globalObject, name, value);
+            store->set(name, value);
+        }
+        return;
+    }
+    auto* map = dynamicDowncast<JSEnvironmentVariableMap>(globalObject->processEnvObject());
+    if (!map) [[unlikely]]
+        return;
+    auto identifier = Identifier::fromString(vm, name);
+    if (!value.isNull())
+        map->putString(globalObject, identifier, jsString(vm, value), false, false);
+    else if (auto index = parseIndex(identifier))
+        JSObject::deletePropertyByIndex(map, globalObject, *index);
+    else {
+        DeletePropertySlot slot;
+        map->deleteVariable(globalObject, identifier, slot);
+    }
+    // Only for want of memory.
+    scope.clearExceptionExceptTermination();
+}
+#endif
 
 bool isProcessEnvClassInfo(const JSC::ClassInfo* classInfo)
 {

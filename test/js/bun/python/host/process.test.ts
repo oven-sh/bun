@@ -260,7 +260,8 @@ print(shared, f(1))
   ({ stdout, stderr, exitCode }) => {
     const refused = "JavaScript can only be used from the main thread";
     expect(stderr).toBe("");
-    expect(stdout).toBe(lines(refused, refused, refused, refused, refused, "1", "None", "True", "[1, 2, 3] 2"));
+    // To read a property that is a value runs no code.
+    expect(stdout).toBe(lines(refused, "1", refused, refused, refused, "1", "None", "True", "[1, 2, 3] 2"));
     expect(exitCode).toBe(0);
   },
 );
@@ -340,4 +341,193 @@ js.setTimeout(callback, 1)
   ({ stdout }) => {
     expect(stdout).toBe(lines("excepthook ValueError in a timer"));
   },
+);
+
+const children = `
+import subprocess
+from node import child_process
+show = 'printf %s "\${{{}-unset}}"'
+def child_of_js(name):
+    return child_process.execFileSync("/bin/sh", ["-c", show.format(name)], encoding="utf8")
+def child_of_python(name):
+    return subprocess.run(["/bin/sh", "-c", show.format(name)], capture_output=True, text=True).stdout
+`;
+
+group(
+  "os.environ and process.env are one environment",
+  {
+    setup: `
+import js, os, threading, time
+${children}
+names = lambda: list(js.Object.keys(js.process.env))
+in_js = lambda name: getattr(js.process.env, name, None)
+`,
+    teardown: "os.environ['TZ'] = 'Etc/UTC'\ntime.tzset()\n",
+  },
+  [
+    [
+      "os.environ['FROM_PYTHON'] = '1'\njs.process.env.FROM_PYTHON, js.Bun.env.FROM_PYTHON, 'FROM_PYTHON' in names(), child_of_js('FROM_PYTHON')",
+      "('1', '1', True, '1')",
+    ],
+    [
+      "del os.environ['FROM_PYTHON']\nin_js('FROM_PYTHON'), 'FROM_PYTHON' in names(), child_of_js('FROM_PYTHON')",
+      "(None, False, 'unset')",
+    ],
+    // As in CPython, os.environ does not hear of these.
+    ["os.putenv('PUT', '2')\njs.process.env.PUT, child_of_js('PUT'), os.environ.get('PUT')", "('2', '2', None)"],
+    ["os.unsetenv('PUT')\nin_js('PUT'), child_of_js('PUT')", "(None, 'unset')"],
+    [
+      "js.process.env.FROM_JS = '3'\nos.environ['FROM_JS'], os.getenv('FROM_JS'), os.environb[b'FROM_JS'], child_of_python('FROM_JS')",
+      "('3', '3', b'3', '3')",
+    ],
+    ["js.process.env.FROM_JS = 4\nos.environ['FROM_JS'], child_of_python('FROM_JS')", "('4', '4')"],
+    [
+      "del js.process.env.FROM_JS\nos.environ.get('FROM_JS'), os.getenv('FROM_JS'), child_of_python('FROM_JS')",
+      "(None, None, 'unset')",
+    ],
+    [
+      "js.Object.assign(js.process.env, {'ASSIGNED': 'a'})\njs.Object.defineProperty(js.process.env, 'DEFINED', value='d', writable=True, enumerable=True, configurable=True)\njs.Bun.env.OF_BUN = 'b'\nos.environ['ASSIGNED'], os.environ['DEFINED'], os.environ['OF_BUN']",
+      "('a', 'd', 'b')",
+    ],
+    ["js.process.env['5'] = 'five'\nos.environ['6'] = 'six'\nos.environ['5'], js.process.env['6']", "('five', 'six')"],
+    [
+      "del js.process.env['5']\ndel os.environ['6']\nos.environ.get('5'), '5' in names(), '6' in names()",
+      "(None, False, False)",
+    ],
+    [
+      "os.environ['TEXT'] = 'é€😀'\njs.process.env.TEXTE = 'é€😀'\njs.process.env.TEXT, os.environ['TEXTE'], child_of_python('TEXTE')",
+      "('é€😀', 'é€😀', 'é€😀')",
+    ],
+    // What is not UTF-8 is not lost for having been to JavaScript and back.
+    [
+      "os.environb[b'RAW'] = b'\\xff'\nseen = js.process.env.RAW\njs.process.env.RAW = seen\nseen, os.environb[b'RAW']",
+      "('\ufffd', b'\\xff')",
+    ],
+    [
+      "js.process.env['A=B'] = '1'\nfound = 'A=B' in os.environ, 'A' in os.environ\ndel js.process.env['A=B']\nfound",
+      "(False, False)",
+    ],
+    [
+      "thread = threading.Thread(target=os.environ.__setitem__, args=('FROM_A_THREAD', 't'))\nthread.start()\nthread.join()\njs.process.env.FROM_A_THREAD",
+      "'t'",
+    ],
+    ["os.environ['TZ'] = 'Asia/Tokyo'\ntime.tzset()\njs.Date(0).getHours(), time.localtime(0).tm_hour", "(9, 9)"],
+    [
+      "js.process.env.TZ = 'America/New_York'\ntime.tzset()\njs.Date(0).getHours(), time.localtime(0).tm_hour",
+      "(19, 19)",
+    ],
+    [
+      "saved = dict(os.environ)\nos.environ.clear()\nleft = names()\nos.environ.update(saved)\nleft, js.process.env.PATH == os.environ['PATH'], sorted(names()) == sorted(os.environ)",
+      "([], True, True)",
+    ],
+  ],
+);
+
+script(
+  "os.environ begins as process.env is",
+  {
+    ".env": "FROM_DOTENV=dot\n",
+    "main.js": `
+process.env.EARLY = "early";
+delete process.env.WANTS_LOUD;
+const os = require("python:os");
+const { child_of_python } = require("./children.py");
+for (const name of ["EARLY", "WANTS_LOUD", "FROM_DOTENV"])
+  console.log(name, os.environ.get(name), os.getenv(name), child_of_python(name));
+console.log(JSON.stringify(Object.keys(process.env).sort()) === JSON.stringify([...os.environ].sort()));
+`,
+    "children.py": children,
+  },
+  ({ stdout, stderr, exitCode }) => {
+    expect(stderr).toBe("");
+    expect(stdout).toBe(
+      lines("EARLY early early early", "WANTS_LOUD undefined undefined unset", "FROM_DOTENV dot dot dot", "true"),
+    );
+    expect(exitCode).toBe(0);
+  },
+  undefined,
+  ["main.js"],
+);
+
+// The process.env of a worker is a copy, or what it was given. Only Python's writes reach the environment of the process from there.
+script(
+  "in a worker, os.environ is the process.env of the worker",
+  {
+    "main.js": `
+const os = require("python:os");
+process.env.OF_MAIN = "main";
+for (const env of [undefined, { GIVEN: "given" }]) {
+  const worker = new Worker("./worker.js", { env });
+  console.log(await new Promise(resolve => (worker.onmessage = event => resolve(event.data))));
+  await worker.terminate();
+  console.log(process.env.JS_OF_WORKER, os.environ.get("JS_OF_WORKER"), process.env.PYTHON_OF_WORKER, os.environ.get("PYTHON_OF_WORKER"));
+}
+`,
+    "worker.js": `
+const os = require("python:os");
+const { child_of_python } = require("./children.py");
+process.env.JS_OF_WORKER = "js";
+os.environ.__setitem__("PYTHON_OF_WORKER", "python");
+postMessage(
+  ["OF_MAIN", "GIVEN", "JS_OF_WORKER", "PYTHON_OF_WORKER"]
+    .map(name => [name, process.env[name], os.environ.get(name), child_of_python(name)].join(" "))
+    .join(", "),
+);
+`,
+    "children.py": children,
+  },
+  ({ stdout, stderr, exitCode }) => {
+    expect(stderr).toBe("");
+    expect(stdout).toBe(
+      lines(
+        "OF_MAIN main main main, GIVEN   unset, JS_OF_WORKER js js unset, PYTHON_OF_WORKER python python python",
+        "undefined undefined undefined undefined",
+        "OF_MAIN   main, GIVEN given given unset, JS_OF_WORKER js js unset, PYTHON_OF_WORKER python python python",
+        "undefined undefined undefined undefined",
+      ),
+    );
+    expect(exitCode).toBe(0);
+  },
+  undefined,
+  ["main.js"],
+);
+
+// One process.env for several threads. Each os.environ hears of what its own thread writes.
+script(
+  "with SHARE_ENV",
+  {
+    "main.js": `
+const { Worker, SHARE_ENV } = require("node:worker_threads");
+const os = require("python:os");
+const worker = new Worker("./worker.js", { env: SHARE_ENV });
+os.environ.__setitem__("PYTHON_OF_MAIN", "1");
+process.env.JS_OF_MAIN = "2";
+console.log(process.env.PYTHON_OF_MAIN, os.environ.get("JS_OF_MAIN"), Object.keys(process.env).includes("PYTHON_OF_MAIN"));
+worker.postMessage("go");
+console.log(await new Promise(resolve => worker.on("message", resolve)));
+console.log(process.env.JS_OF_WORKER, process.env.PYTHON_OF_WORKER, os.environ.get("JS_OF_WORKER"), os.environ.get("PYTHON_OF_WORKER"));
+os.environ.__delitem__("PYTHON_OF_MAIN");
+delete process.env.JS_OF_MAIN;
+console.log(process.env.PYTHON_OF_MAIN, os.environ.get("JS_OF_MAIN"));
+await worker.terminate();
+`,
+    "worker.js": `
+const { parentPort } = require("node:worker_threads");
+parentPort.once("message", () => {
+  const os = require("python:os");
+  process.env.JS_OF_WORKER = "3";
+  os.environ.__setitem__("PYTHON_OF_WORKER", "4");
+  parentPort.postMessage(
+    ["PYTHON_OF_MAIN", "JS_OF_MAIN", "JS_OF_WORKER", "PYTHON_OF_WORKER"].map(name => process.env[name] + os.environ.get(name)).join(" "),
+  );
+});
+`,
+  },
+  ({ stdout, stderr, exitCode }) => {
+    expect(stderr).toBe("");
+    expect(stdout).toBe(lines("1 2 true", "11 22 33 44", "3 4 undefined undefined", "undefined undefined"));
+    expect(exitCode).toBe(0);
+  },
+  undefined,
+  ["main.js"],
 );

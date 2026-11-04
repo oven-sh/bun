@@ -381,6 +381,8 @@ const startedWorkers: readonly b.CallingEntrySpec[] = [
   "native:Cpp:Worker.cpp:createNodeWorkerConstructor",
 ];
 
+const startedPython = ["native:Cpp:BunPython.cpp:Bun::createPythonNamespace"];
+
 const messagePortSources = ["MessageChannel", "MessagePort", "native:Cpp:Worker.cpp:createNodeWorkerThreadsBinding"];
 
 // An instance of a class counts as a use of the class and of those above it, whoever hands it out.
@@ -747,6 +749,18 @@ const nativeCalls = [
         caller: "ensureSharedEnvStoreForWorker",
         onBehalfOf: startedWorkers,
         calls: environmentObjectMade(listedWithValues),
+      },
+      // os.environ of Python is kept the same as the object.
+      {
+        file: inBindings("JSEnvironmentVariableMap.cpp"),
+        caller: "readProcessEnvForPython",
+        onBehalfOf: startedPython,
+        calls: environmentObjectMade(listedWithValues),
+      },
+      {
+        file: inBindings("JSEnvironmentVariableMap.cpp"),
+        caller: "writeProcessEnvFromPython",
+        onBehalfOf: startedPython,
       },
       // It copies the object that the thread has. It makes none.
       {

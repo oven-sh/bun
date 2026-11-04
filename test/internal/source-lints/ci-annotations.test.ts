@@ -1,12 +1,12 @@
 /**
- * parseAnnotations() (scripts/utils.mjs) turns compiler output captured from a
+ * parseAnnotations() (scripts/build/annotations.ts) turns compiler output captured from a
  * failed CI build into Buildkite annotations (scripts/build/ci.ts). Each
  * matcher reads the lines following the one it matched into the annotation
  * body with readUntil(); these pin what ends up in the body.
  */
 import { describe, expect, test } from "bun:test";
 
-import { parseAnnotation, parseAnnotations, type Annotation } from "../../../scripts/utils.mjs";
+import { parseAnnotation, parseAnnotations, type Annotation } from "../../../scripts/build/annotations.ts";
 
 // rustc's human-readable format (`cargo build` output): a header line, the
 // `-->` location, the rendered span with `|` gutters, optional `=` notes, and
@@ -180,6 +180,26 @@ describe("other sources", () => {
         content: message.join("\n"),
         metadata: {},
       },
+    ]);
+  });
+
+  test("a workflow command without a title is an annotation too, and does not lose the others", () => {
+    const output = [
+      "::warning file=b.ts,line=9,title=With a title::and a message",
+      "::error file=src/a.ts,line=3::no title",
+      "::error::nothing but a message",
+    ].join("\n");
+    expect(
+      parseAnnotations(output).annotations.map(({ level, filename, line, content }) => ({
+        level,
+        filename,
+        line,
+        content,
+      })),
+    ).toEqual([
+      { level: "warning", filename: "b.ts", line: 9, content: "With a titleand a message" },
+      { level: "error", filename: "src/a.ts", line: 3, content: "no title" },
+      { level: "error", filename: undefined, line: undefined, content: "nothing but a message" },
     ]);
   });
 

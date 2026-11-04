@@ -139,7 +139,13 @@ inline JSC::JSValue jsPair(JSC::JSGlobalObject&, JSDOMGlobalObject& globalObject
 template<typename FirstType, typename SecondType, typename T, typename U>
 inline JSC::JSValue jsPair(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const T& value1, const U& value2)
 {
-    return jsPair(lexicalGlobalObject, globalObject, toJS<FirstType>(lexicalGlobalObject, globalObject, value1), toJS<SecondType>(lexicalGlobalObject, globalObject, value2));
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto first = toJS<FirstType>(lexicalGlobalObject, globalObject, value1);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto second = toJS<SecondType>(lexicalGlobalObject, globalObject, value2);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, jsPair(lexicalGlobalObject, globalObject, first, second));
 }
 
 template<typename JSIterator> JSC::JSValue iteratorCreate(typename JSIterator::Wrapper&, IterationKind);
@@ -222,6 +228,7 @@ template<typename JSIterator> JSC::JSValue iteratorForEach(JSC::JSGlobalObject& 
     while (auto value = iterator.next()) {
         JSC::MarkedArgumentBuffer arguments;
         appendForEachArguments<JSIterator>(lexicalGlobalObject, *thisObject.globalObject(), arguments, value);
+        RETURN_IF_EXCEPTION(scope, {});
         arguments.append(&thisObject);
         if (arguments.hasOverflowed()) [[unlikely]] {
             throwOutOfMemoryError(&lexicalGlobalObject, scope);

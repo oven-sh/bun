@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# `git fetch` may leave `git gc --auto` packing the repository in the background
+# ("Auto packing the repository in background for optimum performance"). The
+# darwin agents copy the checkout, .git included, into a guest next, and rsync
+# exits 23 when .git/gc.pid or .git/gc.log.lock goes away under the copy: the
+# job ends with status 1 before a test has run, and nothing retries it. So the
+# packing is waited for here, five minutes at most. Never exits non-zero.
+
+git_directory="${BUILDKITE_BUILD_CHECKOUT_PATH:-.}/.git"
+for _ in $(seq 1 300); do
+  [ -e "$git_directory/gc.pid" ] || [ -e "$git_directory/gc.log.lock" ] || break
+  sleep 1
+done
+exit 0

@@ -1,6 +1,7 @@
 import { S3Client } from "bun";
 import { heapStats } from "bun:jsc";
 import { expect, test } from "bun:test";
+import { expectRssDeltaBelow } from "harness";
 
 // Test that ReadableStream objects from cancelled S3 download streams are properly GC'd.
 //
@@ -86,4 +87,23 @@ test("ReadableStream from S3 stream() should be GC'd after reader.cancel()", asy
   // With the bug: leaked ≈ N (each cancelled stream's Strong ref prevents GC)
   // When fixed: leaked should be near 0 (Strong ref released on cancel)
   expect(leaked).toBeLessThanOrEqual(5);
+});
+
+test.concurrent("S3 error code/message are not leaked", async () => {
+  const code = /* js */ `
+    const big = Buffer.alloc(256 * 1024, "m").toString();
+    let n = 0;
+    const server = Bun.serve({ port: 0, fetch() { return new Response("<?xml version=\\"1.0\\"?><Error><Code>NoSuchKey" + (n++) + "</Code><Message>" + big + (n++) + "</Message></Error>", { status: 404, headers: { "content-type": "application/xml" } }); } });
+    const client = new Bun.S3Client({ endpoint: server.url.href, accessKeyId: "a", secretAccessKey: "b", bucket: "b" });
+    for (let i = 0; i < 10; i++) await client.file("k").text().catch(e => e);
+    Bun.gc(true);
+    const before = process.memoryUsage.rss();
+    for (let i = 0; i < 300; i++) await client.file("k").text().catch(e => e);
+    Bun.gc(true);
+    console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+    server.stop(true);
+  `;
+
+  // Unfixed: ~90 MiB. Fixed: allocator slack only.
+  await expectRssDeltaBelow(["--smol", "-e", code], { release: 40, debug: 55 });
 });

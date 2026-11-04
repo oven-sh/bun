@@ -1,9 +1,11 @@
 import { SQL, randomUUIDv7 } from "bun";
 import { beforeAll, describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, describeWithContainer, isDockerEnabled, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, describeWithContainer, isWindows, tempDirWithFiles } from "harness";
 import path from "path";
+import { UnixDomainSocketProxy } from "../../unix-domain-socket-proxy.ts";
 import {
   listeningServer,
+  mysqlAckSessionSetup,
   mysqlColumnDefinition,
   mysqlHandshakeV10,
   mysqlLenencInt,
@@ -11,7 +13,6 @@ import {
   mysqlOkPacket,
   mysqlRawPacket,
   mysqlReadPackets,
-  mysqlStmtPrepareOk,
 } from "./wire-frames";
 const dir = tempDirWithFiles("sql-test", {
   "select-param.sql": `select ? as x`,
@@ -65,1238 +66,1314 @@ async function assertComputedDecimalsAreStrings(sql: SQL) {
   const [rawRow] = await sql`SELECT SUM(balance) AS total FROM ${sql(t)}`.raw();
   expect(rawRow[0]).toEqual(new Uint8Array(Buffer.from("350.75")));
 }
-if (isDockerEnabled()) {
-  // Ordered so the suites whose containers become healthy quickly (mysql_plain,
-  // mysql:9) run first; the slow-to-start mysql_tls container warms up in the
-  // background instead of stalling the whole file up front.
-  const images = [
+// Ordered so the suites whose containers become healthy quickly (mysql_plain,
+// mysql:9) run first; the slow-to-start mysql_tls container warms up in the
+// background instead of stalling the whole file up front.
+const images = [
+  {
+    name: "MySQL",
+    image: "mysql_plain",
+  },
+  // This image only works on x64.
+  process.arch === "x64" && {
+    name: "MySQL 9",
+    image: "mysql:9",
+    env: {
+      MYSQL_ROOT_PASSWORD: "bun",
+    },
+  },
+  {
+    name: "MariaDB",
+    image: "mariadb_plain",
+  },
+  {
+    name: "MySQL with TLS",
+    image: "mysql_tls",
+  },
+].filter(Boolean) as { name: string; image: string; env?: Record<string, string> }[];
+
+for (const image of images) {
+  describeWithContainer(
+    image.name,
     {
-      name: "MySQL",
-      image: "mysql_plain",
+      image: image.image,
+      env: image.env,
+      concurrent: true,
     },
-    // This image only works on x64.
-    process.arch === "x64" && {
-      name: "MySQL 9",
-      image: "mysql:9",
-      env: {
-        MYSQL_ROOT_PASSWORD: "bun",
-      },
-    },
-    {
-      name: "MySQL with TLS",
-      image: "mysql_tls",
-    },
-  ].filter(Boolean);
+    container => {
+      test("sends a bind parameter that spans more than one wire packet intact", async () => {
+        await using db = new SQL({ ...getOptions(), max: 1 });
+        // The server refuses a command above max_allowed_packet: 64 MiB by default on MySQL, 16 MiB on MariaDB.
+        const fits = (n: number) => !isMariaDB || n < 16 * 1024 * 1024;
 
-  for (const image of images) {
-    describeWithContainer(
-      image.name,
-      {
-        image: image.image,
-        env: image.env,
-        concurrent: true,
-      },
-      container => {
-        test("rejects a bind parameter that cannot be framed in a single wire packet", async () => {
-          await using db = new SQL({ ...getOptions(), max: 1 });
+        for (const n of [1024 * 1024, 0xffffff + 64, 2 * 0xffffff + 10].filter(fits)) {
+          const blob = Buffer.alloc(n, 0x41);
+          blob.write("head");
+          blob.write("tail", n - 4);
+          await db`set @b = ${blob}`;
+          const [row] = await db`select length(@b) as n, left(@b, 5) as head, right(@b, 5) as tail`;
+          expect({ n: row.n, head: row.head.toString(), tail: row.tail.toString() }).toEqual({
+            n,
+            head: "headA",
+            tail: "Atail",
+          });
+        }
+      });
 
-          // A large but representable payload round-trips normally.
-          const ok = Buffer.alloc(1024 * 1024, 0x42);
-          expect((await db`select length(${ok}) as n`)[0].n).toBe(ok.length);
+      test("returns column values that span more than one wire packet intact", async () => {
+        await using db = new SQL({ ...getOptions(), max: 1 });
+        // repeat() is NULL above max_allowed_packet: 64 MiB by default on MySQL, 16 MiB on MariaDB.
+        const fits = (n: number) => !isMariaDB || n <= 16 * 1024 * 1024;
 
-          // The MySQL packet header stores the payload length in 24 bits. A
-          // payload of >= 0xFFFFFF cannot be framed as a single packet; the
-          // client must refuse to send it instead of emitting a truncated
-          // length that the server would reparse as additional, independently
-          // framed client packets.
-          const oversized = Buffer.alloc(0xffffff + 64, 0x41);
-          const err = await db`select length(${oversized}) as n`.then(
-            () => ({ code: "UNEXPECTED_SUCCESS" }),
-            e => ({ code: (e as any)?.code ?? String(e) }),
-          );
-          expect(err).toEqual({ code: "ERR_MYSQL_OVERFLOW" });
-        });
+        for (const n of [0xffffff - 6, 2 * 0xffffff + 10].filter(fits)) {
+          const [row] = await db`select repeat('a', ${n}) as s`;
+          expect(typeof row.s).toBe("string");
+          expect(row.s.length).toBe(n);
+          expect(row.s === Buffer.alloc(n, "a").toString()).toBe(true);
+        }
 
-        test("returns column values that span more than one wire packet intact", async () => {
-          await using db = new SQL({ ...getOptions(), max: 1 });
+        for (const n of [0xffffff - 4, 0xffffff + 85].filter(fits)) {
+          const [row] = await db.unsafe("select repeat('a', " + n + ") as s");
+          expect(typeof row.s).toBe("string");
+          expect(row.s.length).toBe(n);
+          expect(row.s === Buffer.alloc(n, "a").toString()).toBe(true);
+        }
 
-          for (const n of [0xffffff - 6, 2 * 0xffffff + 10]) {
-            const [row] = await db`select repeat('a', ${n}) as s`;
-            expect(typeof row.s).toBe("string");
-            expect(row.s.length).toBe(n);
-            expect(row.s === Buffer.alloc(n, "a").toString()).toBe(true);
-          }
+        expect(await db`select 1 as x`).toEqual([{ x: 1 }]);
+      }, 60_000);
 
-          for (const n of [0xffffff - 4, 0xffffff + 85]) {
-            const [row] = await db.unsafe("select repeat('a', " + n + ") as s");
-            expect(typeof row.s).toBe("string");
-            expect(row.s.length).toBe(n);
-            expect(row.s === Buffer.alloc(n, "a").toString()).toBe(true);
-          }
+      let sql: SQL;
+      const isMariaDB = image.image === "mariadb_plain";
+      const password = image.image === "mysql_plain" || isMariaDB ? "" : "bun";
+      const getOptions = (): Bun.SQL.PostgresOrMySQLOptions => ({
+        url: `mysql://root:${password}@${container.host}:${container.port}/bun_sql_test`,
+        max: 1,
+        allowPublicKeyRetrieval: true,
+        tls:
+          image.name === "MySQL with TLS"
+            ? Bun.file(path.join(import.meta.dir, "mysql-tls", "ssl", "ca.pem"))
+            : undefined,
+      });
 
-          expect(await db`select 1 as x`).toEqual([{ x: 1 }]);
-        }, 60_000);
+      beforeAll(async () => {
+        await container.ready;
+        sql = new SQL(getOptions());
+      });
 
-        let sql: SQL;
-        const password = image.image === "mysql_plain" ? "" : "bun";
-        const getOptions = (): Bun.SQL.Options => ({
-          url: `mysql://root:${password}@${container.host}:${container.port}/bun_sql_test`,
-          max: 1,
-          allowPublicKeyRetrieval: true,
-          tls:
-            image.name === "MySQL with TLS"
-              ? Bun.file(path.join(import.meta.dir, "mysql-tls", "ssl", "ca.pem"))
-              : undefined,
-        });
-
-        beforeAll(async () => {
+      test.skipIf(image.image !== "mysql_tls")(
+        "a BunFile tls option is the CA that the server certificate is verified against",
+        async () => {
           await container.ready;
-          sql = new SQL(getOptions());
-        });
-
-        test("process should exit when idle", async () => {
-          expect(
-            await bunRun(path.join(import.meta.dir, "sql-idle-exit-fixture.ts"), {
-              ...bunEnv,
-              MYSQL_URL: getOptions().url,
-              CA_PATH: image.name === "MySQL with TLS" ? path.join(import.meta.dir, "mysql-tls", "ssl", "ca.pem") : "",
-            }),
-          ).toSpawn();
-        });
-        test("should return lastInsertRowid and affectedRows", async () => {
-          await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
-          using sql = await db.reserve();
-          const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
-
-          await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, name text)`;
-
-          const { lastInsertRowid } = await sql`INSERT INTO ${sql(random_name)} (name) VALUES (${"test"})`;
-          expect(lastInsertRowid).toBe(1);
-          const { affectedRows } =
-            await sql`UPDATE ${sql(random_name)} SET name = "test2" WHERE id = ${lastInsertRowid}`;
-          expect(affectedRows).toBe(1);
-        });
-        test("MEDIUMINT not in the last column reads following columns correctly", async () => {
-          // MySQL's binary protocol sends MYSQL_TYPE_INT24 as a fixed 4-byte
-          // field. Reading only 3 left the cursor 1 byte behind, silently
-          // corrupting every following column (and hanging forever if a
-          // length-prefixed column like VARCHAR followed).
-          await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
-          using sql = await db.reserve();
-          const t = "mi_" + randomUUIDv7("hex").replaceAll("-", "");
-          await sql`CREATE TEMPORARY TABLE ${sql(t)} (id INT PRIMARY KEY, uviews MEDIUMINT UNSIGNED, sviews MEDIUMINT, balance BIGINT, ratio DOUBLE, name VARCHAR(64))`;
-          await sql`INSERT INTO ${sql(t)} VALUES (1, 100, -50, 5000, 3.5, ${"alice"})`;
-          const [row] = await sql`SELECT id, uviews, sviews, balance, ratio, name FROM ${sql(t)} WHERE id = ${1}`;
-          expect(row).toEqual({ id: 1, uviews: 100, sviews: -50, balance: 5000, ratio: 3.5, name: "alice" });
-          // `.raw()` takes a separate branch that must also consume 4 bytes.
-          const [rawRow] =
-            await sql`SELECT id, uviews, sviews, balance, ratio, name FROM ${sql(t)} WHERE id = ${1}`.raw();
-          expect(rawRow).toHaveLength(6);
-          expect(rawRow[2]).toEqual(new Uint8Array([0xce, 0xff, 0xff])); // -50 as i24 LE
-          expect(Buffer.from(rawRow[5]).toString("utf-8")).toBe("alice");
-        });
-        test("YEAR not in the last column reads following columns correctly", async () => {
-          // MySQL's binary protocol sends MYSQL_TYPE_YEAR as a fixed 2-byte
-          // field, but the column definition reports column_length = 4 (display
-          // width). Reading column_length bytes left the cursor 2 bytes ahead,
-          // returning YEAR as a Buffer and corrupting every following column.
-          await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
-          using sql = await db.reserve();
-          const t = "yr_" + randomUUIDv7("hex").replaceAll("-", "");
-          await sql`CREATE TEMPORARY TABLE ${sql(t)} (id INT PRIMARY KEY, yr YEAR, followup INT, control SMALLINT, yr_last YEAR)`;
-          await sql`INSERT INTO ${sql(t)} VALUES (1, 2024, 12345, 42, 2001)`;
-          const [row] = await sql`SELECT id, yr, followup, control, yr_last FROM ${sql(t)} WHERE id = ${1}`;
-          expect(row).toEqual({ id: 1, yr: 2024, followup: 12345, control: 42, yr_last: 2001 });
-          // `.raw()` takes a separate branch that must also consume 2 bytes.
-          const [rawRow] = await sql`SELECT id, yr, followup, control, yr_last FROM ${sql(t)} WHERE id = ${1}`.raw();
-          expect(rawRow).toHaveLength(5);
-          expect(rawRow[1]).toEqual(new Uint8Array([0xe8, 0x07])); // 2024 as u16 LE
-          expect(rawRow[2]).toEqual(new Uint8Array([0x39, 0x30, 0x00, 0x00])); // 12345 as u32 LE
-          expect(rawRow[4]).toEqual(new Uint8Array([0xd1, 0x07])); // 2001 as u16 LE
-          // The text protocol (`.simple()`) must decode YEAR as the same number.
-          const [simpleRow] = await sql`SELECT id, yr, followup, control, yr_last FROM ${sql(t)} WHERE id = 1`.simple();
-          expect(simpleRow).toEqual({ id: 1, yr: 2024, followup: 12345, control: 42, yr_last: 2001 });
-        });
-        test("computed DECIMAL columns return strings, not Buffers", async () => {
-          await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
-          using sql = await db.reserve();
-          await assertComputedDecimalsAreStrings(sql);
-        });
-        describe("should work with more than the max inline capacity", () => {
-          for (let size of [50, 60, 62, 64, 70, 100]) {
-            for (let duplicated of [true, false]) {
-              test(`${size} ${duplicated ? "+ duplicated" : "unique"} fields`, async () => {
-                const longQuery = `select ${Array.from({ length: size }, (_, i) => {
-                  if (duplicated) {
-                    return i % 2 === 0 ? `${i + 1} as f${i}, ${i} as f${i}` : `${i} as f${i}`;
-                  }
-                  return `${i} as f${i}`;
-                }).join(",\n")}`;
-                await using sql = new SQL({ ...getOptions(), max: 1 });
-
-                const result = await sql.unsafe(longQuery);
-                let value = 0;
-                for (const column of Object.values(result[0])) {
-                  expect(column?.toString()).toEqual(value.toString());
-                  value++;
-                }
-              });
-            }
-          }
-        });
-
-        test("Connection timeout works", async () => {
-          const onclose = mock();
-          const onconnect = mock();
-          await using sql = new SQL({
-            ...getOptions(),
-            hostname: "example.com",
-            connection_timeout: 4,
-            onconnect,
-            onclose,
-            max: 1,
-          });
-          let error: any;
-          try {
-            await sql`select SLEEP(8)`;
-          } catch (e) {
-            error = e;
-          }
-          expect(error.code).toBe(`ERR_MYSQL_CONNECTION_TIMEOUT`);
-          expect(error.message).toContain("Connection timeout after 4s");
-          expect(onconnect).not.toHaveBeenCalled();
-          expect(onclose).toHaveBeenCalledTimes(1);
-        });
-
-        test("Idle timeout works at start", async () => {
-          const onClosePromise = Promise.withResolvers();
-          const onclose = mock(err => {
-            onClosePromise.resolve(err);
-          });
-          const onconnect = mock();
-          await using sql = new SQL({
-            ...getOptions(),
-            idle_timeout: 1,
-            onconnect,
-            onclose,
-            max: 1,
-          });
-          await sql.connect();
-          const err = await onClosePromise.promise;
-          expect(err).toBeInstanceOf(SQL.SQLError);
-          expect(err).toBeInstanceOf(SQL.MySQLError);
-          expect((err as SQL.MySQLError).code).toBe(`ERR_MYSQL_IDLE_TIMEOUT`);
-          expect(onconnect).toHaveBeenCalled();
-          expect(onclose).toHaveBeenCalledTimes(1);
-        });
-
-        test("Idle timeout is reset when a query is run", async () => {
-          const onClosePromise = Promise.withResolvers();
-          const onclose = mock(err => {
-            onClosePromise.resolve(err);
-          });
-          const onconnect = mock();
-          await using sql = new SQL({
-            ...getOptions(),
-            idle_timeout: 1,
-            connection_timeout: 5,
-            onconnect,
-            onclose,
-            max: 1,
-          });
-          expect<[{ x: number }]>(await sql`select 123 as x`).toEqual([{ x: 123 }]);
-          expect(onconnect).toHaveBeenCalledTimes(1);
-          expect(onclose).not.toHaveBeenCalled();
-          const err = await onClosePromise.promise;
-          expect(err).toBeInstanceOf(SQL.SQLError);
-          expect(err).toBeInstanceOf(SQL.MySQLError);
-          expect((err as SQL.MySQLError).code).toBe(`ERR_MYSQL_IDLE_TIMEOUT`);
-        });
-
-        test("Max lifetime works", async () => {
-          const onClosePromise = Promise.withResolvers();
-          const onclose = mock(err => {
-            onClosePromise.resolve(err);
-          });
-          const onconnect = mock();
-          await using sql = new SQL({
-            ...getOptions(),
-            max_lifetime: 1,
-            onconnect,
-            onclose,
-            max: 1,
-          });
-          let error: unknown;
-
-          try {
-            expect<[{ x: number }]>(await sql`select 1 as x`).toEqual([{ x: 1 }]);
-
-            while (true) {
-              for (let i = 0; i < 100; i++) {
-                await sql`select SLEEP(1)`;
-              }
-            }
-          } catch (e) {
-            error = e;
-          }
-
-          expect(onclose).toHaveBeenCalledTimes(1);
-          expect(onconnect).toHaveBeenCalledTimes(1);
-
-          expect(error).toBeInstanceOf(SQL.SQLError);
-          expect(error).toBeInstanceOf(SQL.MySQLError);
-          expect((error as SQL.MySQLError).code).toBe(`ERR_MYSQL_LIFETIME_TIMEOUT`);
-        });
-
-        // Last one wins.
-        test("Handles duplicate string column names", async () => {
-          const result = await sql`select 1 as x, 2 as x, 3 as x`;
-          expect(result).toEqual([{ x: 3 }]);
-        });
-
-        test("should not timeout in long results", async () => {
-          await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
-          using sql = await db.reserve();
-          const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
-
-          await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text)`;
-          const promises: Promise<any>[] = [];
-          for (let i = 0; i < 10_000; i++) {
-            promises.push(sql`INSERT INTO ${sql(random_name)} VALUES (${i}, ${"test" + i})`);
-            if (i % 50 === 0 && i > 0) {
-              await Promise.all(promises);
-              promises.length = 0;
-            }
-          }
-          await Promise.all(promises);
-          await sql`SELECT * FROM ${sql(random_name)}`;
-          await sql`SELECT * FROM ${sql(random_name)}`;
-          await sql`SELECT * FROM ${sql(random_name)}`;
-
-          expect().pass();
-        }, 10_000);
-
-        test("rebuilds row object shape when a reused statement's result columns change", async () => {
-          // Result-set column metadata is re-read from the wire on every execution
-          // of a cached prepared statement. When the column count stays the same
-          // but the names change (e.g. ALTER TABLE between executions of the same
-          // query text), the cached row-object structure must be rebuilt so values
-          // are written under the current column names and never past the end of
-          // the previously-shaped object.
-          await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
-          using sql = await db.reserve();
-
-          // Same column count, different names across two executions of the same query text.
-          const t = "rs_" + randomUUIDv7("hex").replaceAll("-", "");
-          await sql`CREATE TEMPORARY TABLE ${sql(t)} (a INT, b INT)`;
-          await sql`INSERT INTO ${sql(t)} VALUES (1, 2)`;
-          const first = await sql`SELECT * FROM ${sql(t)}`;
-          expect(first[0]).toEqual({ a: 1, b: 2 });
-          await sql`ALTER TABLE ${sql(t)} CHANGE a c INT, CHANGE b d INT`;
-          const second = await sql`SELECT * FROM ${sql(t)}`;
-          expect(second[0]).toEqual({ c: 1, d: 2 });
-
-          // Duplicate column names collapse into a single property on the first
-          // execution; once a rename makes them distinct, the same cached
-          // statement must produce every property of the new column list.
-          const ta = "rsa_" + randomUUIDv7("hex").replaceAll("-", "");
-          const tb = "rsb_" + randomUUIDv7("hex").replaceAll("-", "");
-          await sql`CREATE TEMPORARY TABLE ${sql(ta)} (x INT, y INT)`;
-          await sql`CREATE TEMPORARY TABLE ${sql(tb)} (x INT, y INT)`;
-          await sql`INSERT INTO ${sql(ta)} VALUES (1, 2)`;
-          await sql`INSERT INTO ${sql(tb)} VALUES (3, 4)`;
-          const dupFirst = await sql`SELECT * FROM ${sql(ta)} CROSS JOIN ${sql(tb)}`;
-          // Last one wins for duplicate names, so only x and y exist.
-          expect(Object.keys(dupFirst[0]).sort()).toEqual(["x", "y"]);
-          await sql`ALTER TABLE ${sql(tb)} CHANGE x z INT, CHANGE y w INT`;
-          const dupSecond = await sql`SELECT * FROM ${sql(ta)} CROSS JOIN ${sql(tb)}`;
-          expect(dupSecond[0]).toEqual({ x: 1, y: 2, z: 3, w: 4 });
-        });
-
-        test("Handles numeric column names", async () => {
-          // deliberately out of order
-          const result = await sql`select 1 as "1", 2 as "2", 3 as "3", 0 as "0"`;
-          expect(result).toEqual([{ "1": 1, "2": 2, "3": 3, "0": 0 }]);
-
-          expect(Object.keys(result[0])).toEqual(["0", "1", "2", "3"]);
-          // Sanity check: ensure iterating through the properties doesn't crash.
-          Bun.inspect(result);
-        });
-
-        // Last one wins.
-        test("Handles duplicate numeric column names", async () => {
-          const result = await sql`select 1 as "1", 2 as "1", 3 as "1"`;
-          expect(result).toEqual([{ "1": 3 }]);
-          // Sanity check: ensure iterating through the properties doesn't crash.
-          Bun.inspect(result);
-        });
-
-        test("Handles mixed column names", async () => {
-          const result = await sql`select 1 as "1", 2 as "2", 3 as "3", 4 as x`;
-          expect(result).toEqual([{ "1": 1, "2": 2, "3": 3, x: 4 }]);
-          // Sanity check: ensure iterating through the properties doesn't crash.
-          Bun.inspect(result);
-        });
-
-        test("Handles mixed column names with duplicates", async () => {
-          const result = await sql`select 1 as "1", 2 as "2", 3 as "3", 4 as "1", 1 as x, 2 as x`;
-          expect(result).toEqual([{ "1": 4, "2": 2, "3": 3, x: 2 }]);
-          // Sanity check: ensure iterating through the properties doesn't crash.
-          Bun.inspect(result);
-
-          // Named columns are inserted first, but they appear from JS as last.
-          expect(Object.keys(result[0])).toEqual(["1", "2", "3", "x"]);
-        });
-
-        test("Handles mixed column names with duplicates at the end", async () => {
-          const result = await sql`select 1 as "1", 2 as "2", 3 as "3", 4 as "1", 1 as x, 2 as x, 3 as x, 4 as "y"`;
-          expect(result).toEqual([{ "1": 4, "2": 2, "3": 3, x: 3, y: 4 }]);
-
-          // Sanity check: ensure iterating through the properties doesn't crash.
-          Bun.inspect(result);
-        });
-
-        test("Handles mixed column names with duplicates at the start", async () => {
-          const result = await sql`select 1 as "1", 2 as "1", 3 as "2", 4 as "3", 1 as x, 2 as x, 3 as x`;
-          expect(result).toEqual([{ "1": 2, "2": 3, "3": 4, x: 3 }]);
-          // Sanity check: ensure iterating through the properties doesn't crash.
-          Bun.inspect(result);
-        });
-
-        test("Uses default database without slash", async () => {
-          const sql = new SQL("mysql://localhost");
-          expect("mysql").toBe(sql.options.database);
-        });
-
-        test("Uses default database with slash", async () => {
-          const sql = new SQL("mysql://localhost/");
-          expect("mysql").toBe(sql.options.database);
-        });
-
-        test("Result is array", async () => {
-          expect(await sql`select 1`).toBeArray();
-        });
-
-        test("Create table", async () => {
-          await using sql = new SQL({ ...getOptions(), max: 1 });
-          await sql`create table test_my_table(id int)`;
-          await sql`drop table test_my_table`;
-        });
-
-        test("Drop table", async () => {
-          await using sql = new SQL({ ...getOptions(), max: 1 });
-          await sql`create table drop_table_test(id int)`;
-          await sql`drop table drop_table_test`;
-          // Verify that table is dropped
-          const result = await sql`select * from information_schema.tables where table_name = 'drop_table_test'`;
-          expect(result).toBeArrayOfSize(0);
-        });
-
-        test("null", async () => {
-          expect((await sql`select ${null} as x`)[0].x).toBeNull();
-        });
-
-        test("Unsigned Integer", async () => {
-          expect((await sql`select ${0x7fffffff + 2} as x`)[0].x).toBe(2147483649);
-        });
-
-        test("Signed Integer", async () => {
-          expect((await sql`select ${-1} as x`)[0].x).toBe(-1);
-          expect((await sql`select ${1} as x`)[0].x).toBe(1);
-        });
-
-        test("Double", async () => {
-          expect((await sql`select ${1.123456789} as x`)[0].x).toBe(1.123456789);
-        });
-
-        test("String", async () => {
-          expect((await sql`select ${"hello"} as x`)[0].x).toBe("hello");
-        });
-
-        test("MediumInt/Int24", async () => {
-          await using sql = new SQL({ ...getOptions(), max: 1 });
-          let random_name = ("t_" + Bun.randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
-          await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a mediumint unsigned)`;
-          await sql`INSERT INTO ${sql(random_name)} VALUES (${1})`;
-          const result = await sql`select * from ${sql(random_name)}`;
-          expect(result[0].a).toBe(1);
-          const result2 = await sql`select * from ${sql(random_name)}`.simple();
-          expect(result2[0].a).toBe(1);
-        });
-
-        test("Boolean/TinyInt/BIT", async () => {
-          await using sql = new SQL({ ...getOptions(), max: 1 });
-          // Protocol will always return 0 or 1 for TRUE and FALSE when not using a table.
-          expect((await sql`select ${false} as x`)[0].x).toBe(0);
-          expect((await sql`select ${true} as x`)[0].x).toBe(1);
-          let random_name = ("t_" + Bun.randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
-          await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a bool)`;
-          const values = [{ a: true }, { a: false }, { a: 8 }, { a: -1 }];
-          await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
-          const [[a], [b], [c], [d]] = await sql`select * from ${sql(random_name)}`.values();
-          expect(a).toBe(1);
-          expect(b).toBe(0);
-          expect(c).toBe(8);
-          expect(d).toBe(-1);
+          // getOptions() passes the issuing CA as `tls: Bun.file(ca.pem)`: the
+          // chain and the hostname are verified (verify-full) and the query runs.
           {
-            random_name += "2";
-            await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a tinyint(1) unsigned)`;
-            try {
-              const values = [{ a: -1 }];
-              await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
-              expect.unreachable();
-            } catch (e: any) {
-              expect(e.code).toBe("ERR_MYSQL_SERVER_ERROR");
-              expect(e.message).toContain("Out of range value for column 'a'");
-            }
+            await using db = new SQL({ ...getOptions(), max: 1 });
+            expect(db.options.sslMode).toBe(4); // SSLMode.verify_full
+            expect(await db`select 1 as x`).toEqual([{ x: 1 }]);
+          }
+          // The server certificate does not chain to this unrelated CA, so the
+          // connection must be refused instead of proceeding over unverified TLS.
+          {
+            await using db = new SQL({
+              ...getOptions(),
+              max: 1,
+              tls: Bun.file(path.join(import.meta.dir, "docker-tls", "server.crt")),
+            });
+            const error = await db`select 1 as x`.then(
+              () => null,
+              e => e,
+            );
+            // Which code depends on whether the server sends its CA in the chain.
+            expect([
+              "SELF_SIGNED_CERT_IN_CHAIN",
+              "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+              "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+            ]).toContain(error?.code);
+          }
+        },
+      );
 
-            const values = [{ a: 255 }];
-            await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
-            const [[a]] = await sql`select * from ${sql(random_name)}`.values();
-            expect(a).toBe(255);
-          }
-
-          {
-            random_name += "3";
-            await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a bit(1), b bit(2))`;
-            const values = [
-              { a: true, b: 1 },
-              { a: false, b: 2 },
-            ];
-            await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
-            const results = await sql`select * from ${sql(random_name)}`;
-            // return true or false for BIT(1) and buffer for BIT(n)
-            expect(results[0].a).toBe(true);
-            expect(results[0].b).toEqual(Buffer.from([1]));
-            expect(results[1].a).toBe(false);
-            expect(results[1].b).toEqual(Buffer.from([2]));
-            // text protocol should behave the same
-            const results2 = await sql`select * from ${sql(random_name)}`.simple();
-            expect(results2[0].a).toBe(true);
-            expect(results2[0].b).toEqual(Buffer.from([1]));
-            expect(results2[1].a).toBe(false);
-            expect(results2[1].b).toEqual(Buffer.from([2]));
-          }
-        });
-
-        test("Date", async () => {
-          await using sql = new SQL({ ...getOptions(), max: 1 });
-          const now = new Date();
-          const then = (await sql`select ${now}  as x`)[0].x;
-          expect(then).toEqual(now);
-        });
-
-        test("Timestamp", async () => {
-          {
-            const result = (await sql`select DATE_ADD(FROM_UNIXTIME(0), INTERVAL -25 SECOND) as x`)[0].x;
-            expect(result.getTime()).toBe(-25000);
-          }
-          {
-            const result = (await sql`select DATE_ADD(FROM_UNIXTIME(0), INTERVAL 25 SECOND) as x`)[0].x;
-            expect(result.getSeconds()).toBe(25);
-          }
-          {
-            const result = (await sql`select DATE_ADD(FROM_UNIXTIME(0), INTERVAL 251000 MICROSECOND) as x`)[0].x;
-            expect(result.getMilliseconds()).toBe(251);
-          }
-          {
-            const result = (await sql`select DATE_ADD(FROM_UNIXTIME(0), INTERVAL -251000 MICROSECOND) as x`)[0].x;
-            expect(result.getTime()).toBe(-251);
-          }
-        });
-        test("time", async () => {
-          await using sql = new SQL({ ...getOptions(), max: 1 });
-          const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
-          await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a TIME)`;
-          const times = [
-            { a: "00:00:00" },
-            { a: "01:01:01" },
-            { a: "10:10:10" },
-            { a: "12:12:59" },
-            { a: "-838:59:59" },
-            { a: "838:59:59" },
-            { a: null },
+      test.skipIf(image.image !== "mysql_tls")(
+        "NODE_TLS_REJECT_UNAUTHORIZED=0 turns verification off, except next to rejectUnauthorized: true",
+        async () => {
+          await container.ready;
+          const rows = [
+            ["?sslmode=require", {}],
+            ["?sslmode=verify-ca", {}],
+            ["?sslmode=verify-full", {}],
+            ["", { tls: { caFile: path.join(import.meta.dir, "docker-tls", "server.crt") } }],
+            ["?sslmode=verify-full", { tls: { rejectUnauthorized: false } }],
+            ["?sslmode=verify-full", { tls: { rejectUnauthorized: true } }],
           ];
-          await sql`INSERT INTO ${sql(random_name)} ${sql(times)}`;
-          const result = await sql`SELECT * FROM ${sql(random_name)}`;
-          expect(result).toEqual(times);
-          const result2 = await sql`SELECT * FROM ${sql(random_name)}`.simple();
-          expect(result2).toEqual(times);
-        });
-
-        test("date", async () => {
-          await using sql = new SQL({ ...getOptions(), max: 1 });
-          const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
-          await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a DATE)`;
-          const dates = [{ a: "2024-01-01" }, { a: "2024-01-02" }, { a: "2024-01-03" }, { a: null }];
-          await sql`INSERT INTO ${sql(random_name)} ${sql(dates)}`;
-          const result = await sql`SELECT * FROM ${sql(random_name)}`;
-          expect(result).toEqual([
-            { a: new Date("2024-01-01") },
-            { a: new Date("2024-01-02") },
-            { a: new Date("2024-01-03") },
-            { a: null },
+          await using proc = Bun.spawn({
+            cmd: [
+              bunExe(),
+              "-e",
+              `const outcomes = [];
+for (const [query, options] of JSON.parse(process.env.SQL_ROWS)) {
+  const sql = new Bun.SQL(process.env.SQL_URL + query, { max: 1, ...options });
+  outcomes.push(await sql\`select 1\`.then(() => "connected", () => "refused"));
+  await sql.close({ timeout: 0 });
+}
+console.log(JSON.stringify(outcomes));`,
+            ],
+            env: {
+              ...bunEnv,
+              NODE_TLS_REJECT_UNAUTHORIZED: "0",
+              SQL_URL: getOptions().url as string,
+              SQL_ROWS: JSON.stringify(rows),
+            },
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(JSON.parse(stdout)).toEqual([
+            "connected",
+            "connected",
+            "connected",
+            "connected",
+            "connected",
+            "refused",
           ]);
-          const result2 = await sql`SELECT * FROM ${sql(random_name)}`.simple();
-          expect(result2).toEqual([
-            { a: new Date("2024-01-01") },
-            { a: new Date("2024-01-02") },
-            { a: new Date("2024-01-03") },
-            { a: null },
-          ]);
-        });
+          expect(exitCode).toBe(0);
+        },
+      );
 
-        test("JSON", async () => {
-          await using sql = new SQL({ ...getOptions(), max: 1 });
+      // In a child: an indexed accessor on Array.prototype affects every array in the process.
+      test.skipIf(image.image === "mysql_tls")(
+        "a setter on Array.prototype that closes the client while a row is added",
+        async () => {
+          await container.ready;
+          await using proc = Bun.spawn({
+            cmd: [
+              bunExe(),
+              "-e",
+              `const sql = new Bun.SQL(process.env.SQL_URL, { max: 1 });
+await sql\`select 1\`;
+let closed = 0;
+Object.defineProperty(Array.prototype, 1, {
+  configurable: true,
+  set(value) {
+    if (value?.x == 2) {
+      closed++;
+      delete Array.prototype[1];
+      sql.close({ timeout: 0 });
+    }
+    Object.defineProperty(this, 1, { value, writable: true, enumerable: true, configurable: true });
+  },
+});
+const outcome = await sql.unsafe("select 1 as x union all select 2 union all select 3").simple().then(() => "resolved", error => error.code);
+console.log(JSON.stringify({ outcome, closed }));`,
+            ],
+            env: { ...bunEnv, SQL_URL: getOptions().url as string },
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(JSON.parse(stdout)).toEqual({ outcome: "ERR_MYSQL_CONNECTION_CLOSED", closed: 1 });
+          expect(exitCode).toBe(0);
+        },
+      );
+
+      test.skipIf(isWindows || image.image === "mysql_tls")(
+        "connects through the unix socket that `path`, `socket` or the URL names",
+        async () => {
+          await container.ready;
+          const proxy = await UnixDomainSocketProxy.create(`MySQL_${container.port}`, container.host, container.port);
+          try {
+            // Nothing listens on the TCP port.
+            const tcp = { ...getOptions(), url: `mysql://root:${password}@127.0.0.1:1/bun_sql_test` };
+            for (const target of [
+              { ...tcp, path: proxy.path },
+              { ...tcp, socket: proxy.path },
+              { ...tcp, url: `${tcp.url}?socket=${proxy.path}` },
+              { ...tcp, url: `mysql://root:${password}@/bun_sql_test?socket=${proxy.path}` },
+            ]) {
+              await using db = new SQL(target);
+              expect(await db`select database() as db`).toEqual([{ db: "bun_sql_test" }]);
+            }
+          } finally {
+            proxy.stop();
+          }
+        },
+      );
+
+      test("process should exit when idle", async () => {
+        expect(
+          await bunRun(path.join(import.meta.dir, "sql-idle-exit-fixture.ts"), {
+            ...bunEnv,
+            MYSQL_URL: getOptions().url as string,
+            CA_PATH: image.name === "MySQL with TLS" ? path.join(import.meta.dir, "mysql-tls", "ssl", "ca.pem") : "",
+          }),
+        ).toSpawn();
+      });
+      test("should return lastInsertRowid and affectedRows", async () => {
+        await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
+        using sql = await db.reserve();
+        const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+
+        await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, name text)`;
+
+        const { lastInsertRowid } = await sql`INSERT INTO ${sql(random_name)} (name) VALUES (${"test"})`;
+        expect(lastInsertRowid).toBe(1);
+        const { affectedRows } = await sql`UPDATE ${sql(random_name)} SET name = "test2" WHERE id = ${lastInsertRowid}`;
+        expect(affectedRows).toBe(1);
+      });
+      test("MEDIUMINT not in the last column reads following columns correctly", async () => {
+        // MySQL's binary protocol sends MYSQL_TYPE_INT24 as a fixed 4-byte
+        // field. Reading only 3 left the cursor 1 byte behind, silently
+        // corrupting every following column (and hanging forever if a
+        // length-prefixed column like VARCHAR followed).
+        await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
+        using sql = await db.reserve();
+        const t = "mi_" + randomUUIDv7("hex").replaceAll("-", "");
+        await sql`CREATE TEMPORARY TABLE ${sql(t)} (id INT PRIMARY KEY, uviews MEDIUMINT UNSIGNED, sviews MEDIUMINT, balance BIGINT, ratio DOUBLE, name VARCHAR(64))`;
+        await sql`INSERT INTO ${sql(t)} VALUES (1, 100, -50, 5000, 3.5, ${"alice"})`;
+        const [row] = await sql`SELECT id, uviews, sviews, balance, ratio, name FROM ${sql(t)} WHERE id = ${1}`;
+        expect(row).toEqual({ id: 1, uviews: 100, sviews: -50, balance: 5000, ratio: 3.5, name: "alice" });
+        // `.raw()` takes a separate branch that must also consume 4 bytes.
+        const [rawRow] =
+          await sql`SELECT id, uviews, sviews, balance, ratio, name FROM ${sql(t)} WHERE id = ${1}`.raw();
+        expect(rawRow).toHaveLength(6);
+        expect(rawRow[2]).toEqual(new Uint8Array([0xce, 0xff, 0xff])); // -50 as i24 LE
+        expect(Buffer.from(rawRow[5]).toString("utf-8")).toBe("alice");
+      });
+      test("YEAR not in the last column reads following columns correctly", async () => {
+        // MySQL's binary protocol sends MYSQL_TYPE_YEAR as a fixed 2-byte
+        // field, but the column definition reports column_length = 4 (display
+        // width). Reading column_length bytes left the cursor 2 bytes ahead,
+        // returning YEAR as a Buffer and corrupting every following column.
+        await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
+        using sql = await db.reserve();
+        const t = "yr_" + randomUUIDv7("hex").replaceAll("-", "");
+        await sql`CREATE TEMPORARY TABLE ${sql(t)} (id INT PRIMARY KEY, yr YEAR, followup INT, control SMALLINT, yr_last YEAR)`;
+        await sql`INSERT INTO ${sql(t)} VALUES (1, 2024, 12345, 42, 2001)`;
+        const [row] = await sql`SELECT id, yr, followup, control, yr_last FROM ${sql(t)} WHERE id = ${1}`;
+        expect(row).toEqual({ id: 1, yr: 2024, followup: 12345, control: 42, yr_last: 2001 });
+        // `.raw()` takes a separate branch that must also consume 2 bytes.
+        const [rawRow] = await sql`SELECT id, yr, followup, control, yr_last FROM ${sql(t)} WHERE id = ${1}`.raw();
+        expect(rawRow).toHaveLength(5);
+        expect(rawRow[1]).toEqual(new Uint8Array([0xe8, 0x07])); // 2024 as u16 LE
+        expect(rawRow[2]).toEqual(new Uint8Array([0x39, 0x30, 0x00, 0x00])); // 12345 as u32 LE
+        expect(rawRow[4]).toEqual(new Uint8Array([0xd1, 0x07])); // 2001 as u16 LE
+        // The text protocol (`.simple()`) must decode YEAR as the same number.
+        const [simpleRow] = await sql`SELECT id, yr, followup, control, yr_last FROM ${sql(t)} WHERE id = 1`.simple();
+        expect(simpleRow).toEqual({ id: 1, yr: 2024, followup: 12345, control: 42, yr_last: 2001 });
+      });
+      test("computed DECIMAL columns return strings, not Buffers", async () => {
+        await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
+        using sql = await db.reserve();
+        await assertComputedDecimalsAreStrings(sql);
+      });
+      describe("should work with more than the max inline capacity", () => {
+        for (let size of [50, 60, 62, 64, 70, 100]) {
+          for (let duplicated of [true, false]) {
+            test(`${size} ${duplicated ? "+ duplicated" : "unique"} fields`, async () => {
+              const longQuery = `select ${Array.from({ length: size }, (_, i) => {
+                if (duplicated) {
+                  return i % 2 === 0 ? `${i + 1} as f${i}, ${i} as f${i}` : `${i} as f${i}`;
+                }
+                return `${i} as f${i}`;
+              }).join(",\n")}`;
+              await using sql = new SQL({ ...getOptions(), max: 1 });
+
+              const result = await sql.unsafe(longQuery);
+              let value = 0;
+              for (const column of Object.values(result[0])) {
+                expect(column?.toString()).toEqual(value.toString());
+                value++;
+              }
+            });
+          }
+        }
+      });
+
+      test("Connection timeout works", async () => {
+        const onclose = mock();
+        const onconnect = mock();
+        await using sql = new SQL({
+          ...getOptions(),
+          hostname: "example.com",
+          connection_timeout: 4,
+          onconnect,
+          onclose,
+          max: 1,
+        });
+        let error: any;
+        try {
+          await sql`select SLEEP(8)`;
+        } catch (e) {
+          error = e;
+        }
+        expect(error.code).toBe(`ERR_MYSQL_CONNECTION_TIMEOUT`);
+        expect(error.message).toContain("Connection timeout after 4s");
+        expect(onconnect).not.toHaveBeenCalled();
+        expect(onclose).toHaveBeenCalledTimes(1);
+      });
+
+      test("Idle timeout works at start", async () => {
+        const onClosePromise = Promise.withResolvers();
+        const onclose = mock(err => {
+          onClosePromise.resolve(err);
+        });
+        const onconnect = mock();
+        await using sql = new SQL({
+          ...getOptions(),
+          idle_timeout: 1,
+          onconnect,
+          onclose,
+          max: 1,
+        });
+        await sql.connect();
+        const err = await onClosePromise.promise;
+        expect(err).toBeInstanceOf(SQL.SQLError);
+        expect(err).toBeInstanceOf(SQL.MySQLError);
+        expect((err as SQL.MySQLError).code).toBe(`ERR_MYSQL_IDLE_TIMEOUT`);
+        expect(onconnect).toHaveBeenCalled();
+        expect(onclose).toHaveBeenCalledTimes(1);
+      });
+
+      test("Idle timeout is reset when a query is run", async () => {
+        const onClosePromise = Promise.withResolvers();
+        const onclose = mock(err => {
+          onClosePromise.resolve(err);
+        });
+        const onconnect = mock();
+        await using sql = new SQL({
+          ...getOptions(),
+          idle_timeout: 1,
+          connection_timeout: 5,
+          onconnect,
+          onclose,
+          max: 1,
+        });
+        expect<[{ x: number }]>(await sql`select 123 as x`).toEqual([{ x: 123 }]);
+        expect(onconnect).toHaveBeenCalledTimes(1);
+        expect(onclose).not.toHaveBeenCalled();
+        const err = await onClosePromise.promise;
+        expect(err).toBeInstanceOf(SQL.SQLError);
+        expect(err).toBeInstanceOf(SQL.MySQLError);
+        expect((err as SQL.MySQLError).code).toBe(`ERR_MYSQL_IDLE_TIMEOUT`);
+      });
+
+      test("Max lifetime closes an idle connection and the pool reconnects", async () => {
+        const onClosePromise = Promise.withResolvers();
+        const onclose = mock(err => {
+          onClosePromise.resolve(err);
+        });
+        const onconnect = mock();
+        await using sql = new SQL({
+          ...getOptions(),
+          max_lifetime: 1,
+          onconnect,
+          onclose,
+          max: 1,
+        });
+        const [{ id: before }] = await sql`select CONNECTION_ID() as id`;
+
+        const error = await onClosePromise.promise;
+        expect(onclose).toHaveBeenCalledTimes(1);
+        expect(onconnect).toHaveBeenCalledTimes(1);
+
+        expect(error).toBeInstanceOf(SQL.SQLError);
+        expect(error).toBeInstanceOf(SQL.MySQLError);
+        expect((error as SQL.MySQLError).code).toBe(`ERR_MYSQL_LIFETIME_TIMEOUT`);
+
+        const [{ id: after }] = await sql`select CONNECTION_ID() as id`;
+        expect(after).not.toBe(before);
+      });
+
+      // Last one wins.
+      test("Handles duplicate string column names", async () => {
+        const result = await sql`select 1 as x, 2 as x, 3 as x`;
+        expect(result).toEqual([{ x: 3 }]);
+      });
+
+      test("should not timeout in long results", async () => {
+        await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
+        using sql = await db.reserve();
+        const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+
+        await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text)`;
+        const rows = Array.from({ length: 10_000 }, (_, id) => ({ id, name: "test" + id }));
+        await sql`INSERT INTO ${sql(random_name)} ${sql(rows)}`;
+        for (let i = 0; i < 3; i++) {
+          expect(await sql`SELECT * FROM ${sql(random_name)} ORDER BY id`).toEqual(rows);
+        }
+      }, 10_000);
+
+      test("rebuilds row object shape when a reused statement's result columns change", async () => {
+        // Result-set column metadata is re-read from the wire on every execution
+        // of a cached prepared statement. When the column count stays the same
+        // but the names change (e.g. ALTER TABLE between executions of the same
+        // query text), the cached row-object structure must be rebuilt so values
+        // are written under the current column names and never past the end of
+        // the previously-shaped object.
+        await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
+        using sql = await db.reserve();
+
+        // Same column count, different names across two executions of the same query text.
+        const t = "rs_" + randomUUIDv7("hex").replaceAll("-", "");
+        await sql`CREATE TEMPORARY TABLE ${sql(t)} (a INT, b INT)`;
+        await sql`INSERT INTO ${sql(t)} VALUES (1, 2)`;
+        const first = await sql`SELECT * FROM ${sql(t)}`;
+        expect(first[0]).toEqual({ a: 1, b: 2 });
+        await sql`ALTER TABLE ${sql(t)} CHANGE a c INT, CHANGE b d INT`;
+        const second = await sql`SELECT * FROM ${sql(t)}`;
+        expect(second[0]).toEqual({ c: 1, d: 2 });
+
+        // Duplicate column names collapse into a single property on the first
+        // execution; once a rename makes them distinct, the same cached
+        // statement must produce every property of the new column list.
+        const ta = "rsa_" + randomUUIDv7("hex").replaceAll("-", "");
+        const tb = "rsb_" + randomUUIDv7("hex").replaceAll("-", "");
+        await sql`CREATE TEMPORARY TABLE ${sql(ta)} (x INT, y INT)`;
+        await sql`CREATE TEMPORARY TABLE ${sql(tb)} (x INT, y INT)`;
+        await sql`INSERT INTO ${sql(ta)} VALUES (1, 2)`;
+        await sql`INSERT INTO ${sql(tb)} VALUES (3, 4)`;
+        const dupFirst = await sql`SELECT * FROM ${sql(ta)} CROSS JOIN ${sql(tb)}`;
+        // Last one wins for duplicate names, so only x and y exist.
+        expect(Object.keys(dupFirst[0]).sort()).toEqual(["x", "y"]);
+        await sql`ALTER TABLE ${sql(tb)} CHANGE x z INT, CHANGE y w INT`;
+        const dupSecond = await sql`SELECT * FROM ${sql(ta)} CROSS JOIN ${sql(tb)}`;
+        expect(dupSecond[0]).toEqual({ x: 1, y: 2, z: 3, w: 4 });
+      });
+
+      test("returns every column of a wide prepared-statement result", async () => {
+        // The other wide-row tests use sql.unsafe(), the text protocol. A binary row of 501 columns has a 63-byte NULL bitmap.
+        await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
+        using sql = await db.reserve();
+
+        const columns = Array.from({ length: 500 }, (_, i) => `col_${i}_`.padEnd(64, "x"));
+        const filled = columns.filter((_, i) => i % 7 === 0);
+        const t = "wide_" + randomUUIDv7("hex").replaceAll("-", "");
+        await sql.unsafe(
+          `CREATE TEMPORARY TABLE ${t} (id INT PRIMARY KEY, ${columns.map(name => `${name} TINYINT`).join(", ")})`,
+        );
+        await sql.unsafe(
+          `INSERT INTO ${t} (id, ${filled.join(", ")}) VALUES (1, ${filled.map((_, i) => i).join(", ")})`,
+        );
+
+        const expected: Record<string, number | null> = Object.fromEntries(columns.map(name => [name, null]));
+        filled.forEach((name, i) => (expected[name] = i));
+        expect(await sql`SELECT * FROM ${sql(t)} WHERE id = ${1}`).toEqual([{ id: 1, ...expected }]);
+        expect(await sql`SELECT * FROM ${sql(t)} WHERE id = ${1}`.values()).toEqual([
+          [1, ...columns.map(name => expected[name])],
+        ]);
+      });
+
+      test("Handles numeric column names", async () => {
+        // deliberately out of order
+        const result = await sql`select 1 as "1", 2 as "2", 3 as "3", 0 as "0"`;
+        expect(result).toEqual([{ "1": 1, "2": 2, "3": 3, "0": 0 }]);
+
+        expect(Object.keys(result[0])).toEqual(["0", "1", "2", "3"]);
+        // Sanity check: ensure iterating through the properties doesn't crash.
+        Bun.inspect(result);
+      });
+
+      // Last one wins.
+      test("Handles duplicate numeric column names", async () => {
+        const result = await sql`select 1 as "1", 2 as "1", 3 as "1"`;
+        expect(result).toEqual([{ "1": 3 }]);
+        // Sanity check: ensure iterating through the properties doesn't crash.
+        Bun.inspect(result);
+      });
+
+      test("Handles mixed column names", async () => {
+        const result = await sql`select 1 as "1", 2 as "2", 3 as "3", 4 as x`;
+        expect(result).toEqual([{ "1": 1, "2": 2, "3": 3, x: 4 }]);
+        // Sanity check: ensure iterating through the properties doesn't crash.
+        Bun.inspect(result);
+      });
+
+      test("Handles mixed column names with duplicates", async () => {
+        const result = await sql`select 1 as "1", 2 as "2", 3 as "3", 4 as "1", 1 as x, 2 as x`;
+        expect(result).toEqual([{ "1": 4, "2": 2, "3": 3, x: 2 }]);
+        // Sanity check: ensure iterating through the properties doesn't crash.
+        Bun.inspect(result);
+
+        // Named columns are inserted first, but they appear from JS as last.
+        expect(Object.keys(result[0])).toEqual(["1", "2", "3", "x"]);
+      });
+
+      test("Handles mixed column names with duplicates at the end", async () => {
+        const result = await sql`select 1 as "1", 2 as "2", 3 as "3", 4 as "1", 1 as x, 2 as x, 3 as x, 4 as "y"`;
+        expect(result).toEqual([{ "1": 4, "2": 2, "3": 3, x: 3, y: 4 }]);
+
+        // Sanity check: ensure iterating through the properties doesn't crash.
+        Bun.inspect(result);
+      });
+
+      test("Handles mixed column names with duplicates at the start", async () => {
+        const result = await sql`select 1 as "1", 2 as "1", 3 as "2", 4 as "3", 1 as x, 2 as x, 3 as x`;
+        expect(result).toEqual([{ "1": 2, "2": 3, "3": 4, x: 3 }]);
+        // Sanity check: ensure iterating through the properties doesn't crash.
+        Bun.inspect(result);
+      });
+
+      test.each([
+        ["mysql", "mysql"],
+        ["mariadb", null],
+      ])("%s:// without a database name selects %p", async (scheme, selected) => {
+        const url = `${scheme}://root:${password}@${container.host}:${container.port}`;
+        for (const suffix of ["", "/"]) {
+          await using db = new SQL({ ...getOptions(), url: url + suffix });
+          expect(await db`select database() as db`).toEqual([{ db: selected }]);
+        }
+      });
+
+      test("Result is array", async () => {
+        expect(await sql`select 1`).toBeArray();
+      });
+
+      test("Create table", async () => {
+        await using sql = new SQL({ ...getOptions(), max: 1 });
+        await sql`create table test_my_table(id int)`;
+        await sql`drop table test_my_table`;
+      });
+
+      test("Drop table", async () => {
+        await using sql = new SQL({ ...getOptions(), max: 1 });
+        await sql`create table drop_table_test(id int)`;
+        await sql`drop table drop_table_test`;
+        // Verify that table is dropped
+        const result = await sql`select * from information_schema.tables where table_name = 'drop_table_test'`;
+        expect(result).toBeArrayOfSize(0);
+      });
+
+      test("null", async () => {
+        expect((await sql`select ${null} as x`)[0].x).toBeNull();
+      });
+
+      test("Unsigned Integer", async () => {
+        expect((await sql`select ${0x7fffffff + 2} as x`)[0].x).toBe(2147483649);
+      });
+
+      test("Signed Integer", async () => {
+        expect((await sql`select ${-1} as x`)[0].x).toBe(-1);
+        expect((await sql`select ${1} as x`)[0].x).toBe(1);
+      });
+
+      test("Double", async () => {
+        expect((await sql`select ${1.123456789} as x`)[0].x).toBe(1.123456789);
+      });
+
+      test("String", async () => {
+        expect((await sql`select ${"hello"} as x`)[0].x).toBe("hello");
+      });
+
+      test("MediumInt/Int24", async () => {
+        await using sql = new SQL({ ...getOptions(), max: 1 });
+        let random_name = ("t_" + Bun.randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
+        await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a mediumint unsigned)`;
+        await sql`INSERT INTO ${sql(random_name)} VALUES (${1})`;
+        const result = await sql`select * from ${sql(random_name)}`;
+        expect(result[0].a).toBe(1);
+        const result2 = await sql`select * from ${sql(random_name)}`.simple();
+        expect(result2[0].a).toBe(1);
+      });
+
+      test("Boolean/TinyInt/BIT", async () => {
+        await using sql = new SQL({ ...getOptions(), max: 1 });
+        // Protocol will always return 0 or 1 for TRUE and FALSE when not using a table.
+        expect((await sql`select ${false} as x`)[0].x).toBe(0);
+        expect((await sql`select ${true} as x`)[0].x).toBe(1);
+        let random_name = ("t_" + Bun.randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
+        await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a bool)`;
+        const values = [{ a: true }, { a: false }, { a: 8 }, { a: -1 }];
+        await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
+        const [[a], [b], [c], [d]] = await sql`select * from ${sql(random_name)}`.values();
+        expect(a).toBe(1);
+        expect(b).toBe(0);
+        expect(c).toBe(8);
+        expect(d).toBe(-1);
+        {
+          random_name += "2";
+          await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a tinyint(1) unsigned)`;
+          try {
+            const values = [{ a: -1 }];
+            await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
+            expect.unreachable();
+          } catch (e: any) {
+            expect(e.code).toBe("ERR_MYSQL_SERVER_ERROR");
+            expect(e.message).toContain("Out of range value for column 'a'");
+          }
+
+          const values = [{ a: 255 }];
+          await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
+          const [[a]] = await sql`select * from ${sql(random_name)}`.values();
+          expect(a).toBe(255);
+        }
+
+        {
+          random_name += "3";
+          await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a bit(1), b bit(2))`;
+          const values = [
+            { a: true, b: 1 },
+            { a: false, b: 2 },
+          ];
+          await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
+          const results = await sql`select * from ${sql(random_name)}`;
+          // return true or false for BIT(1) and buffer for BIT(n)
+          expect(results[0].a).toBe(true);
+          expect(results[0].b).toEqual(Buffer.from([1]));
+          expect(results[1].a).toBe(false);
+          expect(results[1].b).toEqual(Buffer.from([2]));
+          // text protocol should behave the same
+          const results2 = await sql`select * from ${sql(random_name)}`.simple();
+          expect(results2[0].a).toBe(true);
+          expect(results2[0].b).toEqual(Buffer.from([1]));
+          expect(results2[1].a).toBe(false);
+          expect(results2[1].b).toEqual(Buffer.from([2]));
+        }
+      });
+
+      test("Date", async () => {
+        await using sql = new SQL({ ...getOptions(), max: 1 });
+        const now = new Date();
+        const then = (await sql`select ${now}  as x`)[0].x;
+        expect(then).toEqual(now);
+      });
+
+      test("Timestamp", async () => {
+        // FROM_UNIXTIME(0) is NULL on MariaDB.
+        const epoch = isMariaDB ? sql`TIMESTAMP('1970-01-01 00:00:00')` : sql`FROM_UNIXTIME(0)`;
+        {
+          const result = (await sql`select DATE_ADD(${epoch}, INTERVAL -25 SECOND) as x`)[0].x;
+          expect(result.getTime()).toBe(-25000);
+        }
+        {
+          const result = (await sql`select DATE_ADD(${epoch}, INTERVAL 25 SECOND) as x`)[0].x;
+          expect(result.getSeconds()).toBe(25);
+        }
+        {
+          const result = (await sql`select DATE_ADD(${epoch}, INTERVAL 251000 MICROSECOND) as x`)[0].x;
+          expect(result.getMilliseconds()).toBe(251);
+        }
+        {
+          const result = (await sql`select DATE_ADD(${epoch}, INTERVAL -251000 MICROSECOND) as x`)[0].x;
+          expect(result.getTime()).toBe(-251);
+        }
+      });
+      test("time", async () => {
+        await using sql = new SQL({ ...getOptions(), max: 1 });
+        const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+        await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a TIME)`;
+        const times = [
+          { a: "00:00:00" },
+          { a: "01:01:01" },
+          { a: "10:10:10" },
+          { a: "12:12:59" },
+          { a: "-838:59:59" },
+          { a: "838:59:59" },
+          { a: null },
+        ];
+        await sql`INSERT INTO ${sql(random_name)} ${sql(times)}`;
+        const result = await sql`SELECT * FROM ${sql(random_name)}`;
+        expect(result).toEqual(times);
+        const result2 = await sql`SELECT * FROM ${sql(random_name)}`.simple();
+        expect(result2).toEqual(times);
+      });
+
+      test("date", async () => {
+        await using sql = new SQL({ ...getOptions(), max: 1 });
+        const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+        await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a DATE)`;
+        const dates = [{ a: "2024-01-01" }, { a: "2024-01-02" }, { a: "2024-01-03" }, { a: null }];
+        await sql`INSERT INTO ${sql(random_name)} ${sql(dates)}`;
+        const result = await sql`SELECT * FROM ${sql(random_name)}`;
+        expect(result).toEqual([
+          { a: new Date("2024-01-01") },
+          { a: new Date("2024-01-02") },
+          { a: new Date("2024-01-03") },
+          { a: null },
+        ]);
+        const result2 = await sql`SELECT * FROM ${sql(random_name)}`.simple();
+        expect(result2).toEqual([
+          { a: new Date("2024-01-01") },
+          { a: new Date("2024-01-02") },
+          { a: new Date("2024-01-03") },
+          { a: null },
+        ]);
+      });
+
+      test("JSON", async () => {
+        await using sql = new SQL({ ...getOptions(), max: 1 });
+        // MariaDB has no CAST(... AS JSON).
+        if (!isMariaDB) {
           const x = (await sql`select CAST(${{ a: "hello", b: 42 }} AS JSON) as x`)[0].x;
           expect(x).toEqual({ a: "hello", b: 42 });
 
           const y = (await sql`select CAST('{"key": "value", "number": 123}' AS JSON) as x`)[0].x;
           expect(y).toEqual({ key: "value", number: 123 });
+        }
 
-          const random_name = ("t_" + Bun.randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
-          await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a json)`;
-          const values = [{ a: { b: 1 } }, { a: { b: 2 } }];
-          await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
-          const [[a], [b]] = await sql`select * from ${sql(random_name)}`.values();
-          expect(a).toEqual({ b: 1 });
-          expect(b).toEqual({ b: 2 });
-        });
+        const random_name = ("t_" + Bun.randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
+        await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a json)`;
+        const values = [{ a: { b: 1 } }, { a: { b: 2 } }];
+        await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
+        const [[a], [b]] = await sql`select * from ${sql(random_name)}`.values();
+        expect(a).toEqual({ b: 1 });
+        expect(b).toEqual({ b: 2 });
+      });
 
-        test("Binary", async () => {
-          const random_name = ("t_" + Bun.randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
-          await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a binary(1), b varbinary(1), c blob)`;
-          const values = [{ a: Buffer.from([1]), b: Buffer.from([2]), c: Buffer.from([3]) }];
-          await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
-          const results = await sql`select * from ${sql(random_name)}`;
-          // return buffers
-          expect(results[0].a).toEqual(Buffer.from([1]));
-          expect(results[0].b).toEqual(Buffer.from([2]));
-          expect(results[0].c).toEqual(Buffer.from([3]));
-          // text protocol should behave the same
-          const results2 = await sql`select * from ${sql(random_name)}`.simple();
-          expect(results2[0].a).toEqual(Buffer.from([1]));
-          expect(results2[0].b).toEqual(Buffer.from([2]));
-          expect(results2[0].c).toEqual(Buffer.from([3]));
-        });
+      test("Binary", async () => {
+        const random_name = ("t_" + Bun.randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
+        await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a binary(1), b varbinary(1), c blob)`;
+        const values = [{ a: Buffer.from([1]), b: Buffer.from([2]), c: Buffer.from([3]) }];
+        await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
+        const results = await sql`select * from ${sql(random_name)}`;
+        // return buffers
+        expect(results[0].a).toEqual(Buffer.from([1]));
+        expect(results[0].b).toEqual(Buffer.from([2]));
+        expect(results[0].c).toEqual(Buffer.from([3]));
+        // text protocol should behave the same
+        const results2 = await sql`select * from ${sql(random_name)}`.simple();
+        expect(results2[0].a).toEqual(Buffer.from([1]));
+        expect(results2[0].b).toEqual(Buffer.from([2]));
+        expect(results2[0].c).toEqual(Buffer.from([3]));
+      });
 
-        test("bulk insert nested sql()", async () => {
-          await using sql = new SQL({ ...getOptions(), max: 1 });
-          await sql`create temporary table test_users (name text, age int)`;
-          const users = [
+      test("bulk insert nested sql()", async () => {
+        await using sql = new SQL({ ...getOptions(), max: 1 });
+        await sql`create temporary table test_users (name text, age int)`;
+        const users = [
+          { name: "Alice", age: 25 },
+          { name: "Bob", age: 30 },
+        ];
+        try {
+          await sql`insert into test_users ${sql(users)}`;
+          const result = await sql`select * from test_users`;
+          expect(result).toEqual([
             { name: "Alice", age: 25 },
             { name: "Bob", age: 30 },
-          ];
-          try {
-            await sql`insert into test_users ${sql(users)}`;
-            const result = await sql`select * from test_users`;
-            expect(result).toEqual([
-              { name: "Alice", age: 25 },
-              { name: "Bob", age: 30 },
-            ]);
-          } finally {
-            await sql`drop table test_users`;
-          }
-        });
+          ]);
+        } finally {
+          await sql`drop table test_users`;
+        }
+      });
 
-        test("Escapes", async () => {
-          expect(Object.keys((await sql`select 1 as ${sql('hej"hej')}`)[0])[0]).toBe('hej"hej');
-        });
+      test("Escapes", async () => {
+        expect(Object.keys((await sql`select 1 as ${sql('hej"hej')}`)[0])[0]).toBe('hej"hej');
+      });
 
-        test("null for int", async () => {
-          await using sql = new SQL({ ...getOptions(), max: 1 });
-          const result = await sql`create temporary table test_null_for_int (x int)`;
-          expect(result.count).toBe(0);
-          try {
-            await sql`insert into test_null_for_int values(${null})`;
-            const result2 = await sql`select * from test_null_for_int`;
-            expect(result2).toEqual([{ x: null }]);
-          } finally {
-            await sql`drop table test_null_for_int`;
-          }
-        });
+      test("null for int", async () => {
+        await using sql = new SQL({ ...getOptions(), max: 1 });
+        const result = await sql`create temporary table test_null_for_int (x int)`;
+        expect(result.count).toBe(0);
+        try {
+          await sql`insert into test_null_for_int values(${null})`;
+          const result2 = await sql`select * from test_null_for_int`;
+          expect(result2).toEqual([{ x: null }]);
+        } finally {
+          await sql`drop table test_null_for_int`;
+        }
+      });
 
-        test("should be able to execute different queries in the same connection #16774", async () => {
-          const sql = new SQL({ ...getOptions(), max: 1 });
-          const random_table_name = `test_user_${Math.random().toString(36).substring(2, 15)}`;
-          await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${sql(random_table_name)}  (id int, name text)`;
+      test("should be able to execute different queries in the same connection #16774", async () => {
+        const sql = new SQL({ ...getOptions(), max: 1 });
+        const random_table_name = `test_user_${Math.random().toString(36).substring(2, 15)}`;
+        await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${sql(random_table_name)}  (id int, name text)`;
 
-          const promises: Array<Promise<any>> = [];
-          // POPULATE TABLE
+        const promises: Array<Promise<any>> = [];
+        // POPULATE TABLE
+        for (let i = 0; i < 1_000; i++) {
+          promises.push(sql`insert into ${sql(random_table_name)} values (${i}, ${`test${i}`})`.execute());
+        }
+        await Promise.all(promises);
+
+        // QUERY TABLE using execute() to force executing the query immediately
+        {
           for (let i = 0; i < 1_000; i++) {
-            promises.push(sql`insert into ${sql(random_table_name)} values (${i}, ${`test${i}`})`.execute());
+            // mix different parameters
+            switch (i % 3) {
+              case 0:
+                promises.push(sql`select id, name from ${sql(random_table_name)} where id = ${i}`.execute());
+                break;
+              case 1:
+                promises.push(sql`select id from ${sql(random_table_name)} where id = ${i}`.execute());
+                break;
+              case 2:
+                promises.push(sql`select 1, id, name from ${sql(random_table_name)} where id = ${i}`.execute());
+                break;
+            }
           }
           await Promise.all(promises);
+        }
+      });
 
-          // QUERY TABLE using execute() to force executing the query immediately
-          {
-            for (let i = 0; i < 1_000; i++) {
-              // mix different parameters
-              switch (i % 3) {
-                case 0:
-                  promises.push(sql`select id, name from ${sql(random_table_name)} where id = ${i}`.execute());
-                  break;
-                case 1:
-                  promises.push(sql`select id from ${sql(random_table_name)} where id = ${i}`.execute());
-                  break;
-                case 2:
-                  promises.push(sql`select 1, id, name from ${sql(random_table_name)} where id = ${i}`.execute());
-                  break;
-              }
-            }
-            await Promise.all(promises);
-          }
-        });
+      test("Prepared transaction", async () => {
+        await using sql = new SQL({ ...getOptions(), max: 1 });
+        await sql`create table test_prepared_transaction (a int)`;
 
-        test("Prepared transaction", async () => {
-          await using sql = new SQL({ ...getOptions(), max: 1 });
-          await sql`create table test_prepared_transaction (a int)`;
-
-          try {
-            await sql.beginDistributed("tx1", async sql => {
-              await sql`insert into test_prepared_transaction values(1)`;
-            });
-            await sql.commitDistributed("tx1");
-            expect((await sql`select count(*) from test_prepared_transaction`).count).toBe(1);
-          } finally {
-            await sql`drop table test_prepared_transaction`;
-          }
-        });
-
-        test("Idle timeout retry works", async () => {
-          await using sql = new SQL({ ...getOptions(), idleTimeout: 1 });
-          await sql`select 1`;
-          await Bun.sleep(1100); // 1.1 seconds so it should retry
-          await sql`select 1`;
-          expect().pass();
-        });
-
-        test("Fragments in transactions", async () => {
-          const sql = new SQL({ ...getOptions(), debug: true, idle_timeout: 1, fetch_types: false });
-          expect((await sql.begin(sql => sql`select 1 as x where ${sql`1=1`}`))[0].x).toBe(1);
-        });
-
-        test("Helpers in Transaction", async () => {
-          const result = await sql.begin(async sql => await sql`select ${sql.unsafe("1 as x")}`);
-          expect(result[0].x).toBe(1);
-        });
-
-        test("Undefined values throws", async () => {
-          const result = await sql`select ${undefined} as x`;
-          expect(result[0].x).toBeNull();
-        });
-
-        test("Null sets to null", async () => {
-          expect((await sql`select ${null} as x`)[0].x).toBeNull();
-        });
-
-        // Add code property.
-        test("Throw syntax error", async () => {
-          await using sql = new SQL({ ...getOptions(), max: 1 });
-          const err = await sql`wat 1`.catch(x => x);
-          expect(err.code).toBe("ERR_MYSQL_SYNTAX_ERROR");
-        });
-
-        // Regression: the error_message stored on a cached failed prepared statement
-        // was a .temporary slice into the socket read buffer. Re-running the same
-        // failing query after other queries overwrote the buffer would read garbage
-        // (or crash under ASAN) when constructing the error from the cached statement.
-        test("Cached failed prepared statement returns stable error message", async () => {
-          await using sql = new SQL({ ...getOptions(), max: 1 });
-          // Need a parameter so it goes through the prepared-statement cache path.
-          const err1 = await sql`wat ${1}`.catch(x => x);
-          expect(err1.code).toBe("ERR_MYSQL_SYNTAX_ERROR");
-          expect(typeof err1.message).toBe("string");
-          expect(err1.message.length).toBeGreaterThan(0);
-
-          // Run several successful queries on the same connection to overwrite the
-          // socket read buffer that the dangling error_message slice pointed into.
-          const filler = Buffer.alloc(1024, "Z").toString();
-          for (let i = 0; i < 8; i++) {
-            const rows = await sql`select ${filler} as x`;
-            expect(rows[0].x).toBe(filler);
-          }
-
-          // Hitting the cached .failed statement must reproduce the same error.
-          const err2 = await sql`wat ${1}`.catch(x => x);
-          expect({
-            code: err2.code,
-            errno: err2.errno,
-            sqlState: err2.sqlState,
-            message: err2.message,
-          }).toEqual({
-            code: err1.code,
-            errno: err1.errno,
-            sqlState: err1.sqlState,
-            message: err1.message,
+        try {
+          await sql.beginDistributed("tx1", async sql => {
+            await sql`insert into test_prepared_transaction values(1)`;
           });
-        });
+          await sql.commitDistributed("tx1");
+          expect((await sql`select count(*) from test_prepared_transaction`).count).toBe(1);
+        } finally {
+          await sql`drop table test_prepared_transaction`;
+        }
+      });
 
-        // Regression test for: panic: A JavaScript exception was thrown, but it was cleared before it could be read.
-        // This happened when FieldType.fromJS returned error.JSError without throwing an exception first.
-        test("should throw error for NumberObject parameter", async () => {
-          await using sql = new SQL({ ...getOptions(), max: 1 });
-          // new Number(42) creates a NumberObject (not a primitive number)
-          // This used to cause a panic because FieldType.fromJS returned error.JSError without throwing
-          const numberObject = new Number(42);
-          const err = await sql`SELECT ${numberObject} as value`.catch(x => x);
-          expect(err).toBeInstanceOf(Error);
-          expect(err.message).toContain("Cannot bind NumberObject to query parameter");
-        });
+      test("Idle timeout retry works", async () => {
+        await using sql = new SQL({ ...getOptions(), idleTimeout: 1 });
+        await sql`select 1`;
+        await Bun.sleep(1100); // 1.1 seconds so it should retry
+        await sql`select 1`;
+        expect().pass();
+      });
 
-        test("should throw error for BooleanObject parameter", async () => {
-          await using sql = new SQL({ ...getOptions(), max: 1 });
-          // new Boolean(true) creates a BooleanObject (not a primitive boolean)
-          const booleanObject = new Boolean(true);
-          const err = await sql`SELECT ${booleanObject} as value`.catch(x => x);
-          expect(err).toBeInstanceOf(Error);
-          expect(err.message).toContain("Cannot bind BooleanObject to query parameter");
-        });
+      test("Fragments in transactions", async () => {
+        const sql = new SQL({ ...getOptions(), debug: true, idle_timeout: 1, fetch_types: false } as Bun.SQL.Options);
+        expect((await sql.begin(sql => sql`select 1 as x where ${sql`1=1`}`))[0].x).toBe(1);
+      });
 
-        test("should work with fragments", async () => {
-          await using sql = new SQL({ ...getOptions(), max: 1 });
-          const random_name = sql("test_" + randomUUIDv7("hex").replaceAll("-", ""));
-          await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${random_name} (id int, hotel_id int, created_at timestamp)`;
-          await sql`INSERT INTO ${random_name} VALUES (1, 1, '2024-01-01 10:00:00')`;
-          // single escaped identifier
-          {
-            const results = await sql`SELECT * FROM ${random_name}`;
-            expect(results).toEqual([{ id: 1, hotel_id: 1, created_at: new Date("2024-01-01T10:00:00.000Z") }]);
-          }
-          // multiple escaped identifiers
-          {
-            const results = await sql`SELECT ${random_name}.* FROM ${random_name}`;
-            expect(results).toEqual([{ id: 1, hotel_id: 1, created_at: new Date("2024-01-01T10:00:00.000Z") }]);
-          }
-          // even more complex fragment
-          {
-            const results =
-              await sql`SELECT ${random_name}.* FROM ${random_name} WHERE ${random_name}.hotel_id = ${1} ORDER BY ${random_name}.created_at DESC`;
-            expect(results).toEqual([{ id: 1, hotel_id: 1, created_at: new Date("2024-01-01T10:00:00.000Z") }]);
-          }
-        });
-        test("should handle nested fragments", async () => {
-          await using sql = new SQL({ ...getOptions(), max: 1 });
-          const random_name = sql("test_" + randomUUIDv7("hex").replaceAll("-", ""));
+      test("Helpers in Transaction", async () => {
+        const result = await sql.begin(async sql => await sql`select ${sql.unsafe("1 as x")}`);
+        expect(result[0].x).toBe(1);
+      });
 
-          await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${random_name} (id int, hotel_id int, created_at timestamp)`;
-          await sql`INSERT INTO ${random_name} VALUES (1, 1, '2024-01-01 10:00:00')`;
-          await sql`INSERT INTO ${random_name} VALUES (2, 1, '2024-01-02 10:00:00')`;
-          await sql`INSERT INTO ${random_name} VALUES (3, 2, '2024-01-03 10:00:00')`;
+      test("Undefined values throws", async () => {
+        const result = await sql`select ${undefined} as x`;
+        expect(result[0].x).toBeNull();
+      });
 
-          // fragment containing another scape fragment for the field name
-          const orderBy = (field_name: string) => sql`ORDER BY ${sql(field_name)} DESC`;
+      test("Null sets to null", async () => {
+        expect((await sql`select ${null} as x`)[0].x).toBeNull();
+      });
 
-          // dynamic information
-          const sortBy = { should_sort: true, field: "created_at" };
-          const user = { hotel_id: 1 };
+      // Add code property.
+      test("Throw syntax error", async () => {
+        await using sql = new SQL({ ...getOptions(), max: 1 });
+        const err = await sql`wat 1`.catch(x => x);
+        expect(err.code).toBe("ERR_MYSQL_SYNTAX_ERROR");
+      });
 
-          // query containing the fragments
-          const results = await sql`
+      // Regression test for: panic: A JavaScript exception was thrown, but it was cleared before it could be read.
+      // This happened when FieldType.fromJS returned error.JSError without throwing an exception first.
+      test("should throw error for NumberObject parameter", async () => {
+        await using sql = new SQL({ ...getOptions(), max: 1 });
+        // new Number(42) creates a NumberObject (not a primitive number)
+        // This used to cause a panic because FieldType.fromJS returned error.JSError without throwing
+        const numberObject = new Number(42);
+        const err = await sql`SELECT ${numberObject} as value`.catch(x => x);
+        expect(err).toBeInstanceOf(Error);
+        expect(err.message).toContain("Cannot bind NumberObject to query parameter");
+      });
+
+      test("should throw error for BooleanObject parameter", async () => {
+        await using sql = new SQL({ ...getOptions(), max: 1 });
+        // new Boolean(true) creates a BooleanObject (not a primitive boolean)
+        const booleanObject = new Boolean(true);
+        const err = await sql`SELECT ${booleanObject} as value`.catch(x => x);
+        expect(err).toBeInstanceOf(Error);
+        expect(err.message).toContain("Cannot bind BooleanObject to query parameter");
+      });
+
+      test("should work with fragments", async () => {
+        await using sql = new SQL({ ...getOptions(), max: 1 });
+        const random_name = sql("test_" + randomUUIDv7("hex").replaceAll("-", ""));
+        await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${random_name} (id int, hotel_id int, created_at timestamp)`;
+        await sql`INSERT INTO ${random_name} VALUES (1, 1, '2024-01-01 10:00:00')`;
+        // single escaped identifier
+        {
+          const results = await sql`SELECT * FROM ${random_name}`;
+          expect(results).toEqual([{ id: 1, hotel_id: 1, created_at: new Date("2024-01-01T10:00:00.000Z") }]);
+        }
+        // multiple escaped identifiers
+        {
+          const results = await sql`SELECT ${random_name}.* FROM ${random_name}`;
+          expect(results).toEqual([{ id: 1, hotel_id: 1, created_at: new Date("2024-01-01T10:00:00.000Z") }]);
+        }
+        // even more complex fragment
+        {
+          const results =
+            await sql`SELECT ${random_name}.* FROM ${random_name} WHERE ${random_name}.hotel_id = ${1} ORDER BY ${random_name}.created_at DESC`;
+          expect(results).toEqual([{ id: 1, hotel_id: 1, created_at: new Date("2024-01-01T10:00:00.000Z") }]);
+        }
+      });
+      test("should handle nested fragments", async () => {
+        await using sql = new SQL({ ...getOptions(), max: 1 });
+        const random_name = sql("test_" + randomUUIDv7("hex").replaceAll("-", ""));
+
+        await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${random_name} (id int, hotel_id int, created_at timestamp)`;
+        await sql`INSERT INTO ${random_name} VALUES (1, 1, '2024-01-01 10:00:00')`;
+        await sql`INSERT INTO ${random_name} VALUES (2, 1, '2024-01-02 10:00:00')`;
+        await sql`INSERT INTO ${random_name} VALUES (3, 2, '2024-01-03 10:00:00')`;
+
+        // fragment containing another scape fragment for the field name
+        const orderBy = (field_name: string) => sql`ORDER BY ${sql(field_name)} DESC`;
+
+        // dynamic information
+        const sortBy = { should_sort: true, field: "created_at" };
+        const user = { hotel_id: 1 };
+
+        // query containing the fragments
+        const results = await sql`
     SELECT ${random_name}.*
     FROM ${random_name}
     WHERE ${random_name}.hotel_id = ${user.hotel_id} 
     ${sortBy.should_sort ? orderBy(sortBy.field) : sql``}`;
-          expect(results).toEqual([
-            { id: 2, hotel_id: 1, created_at: new Date("2024-01-02T10:00:00.000Z") },
-            { id: 1, hotel_id: 1, created_at: new Date("2024-01-01T10:00:00.000Z") },
-          ]);
+        expect(results).toEqual([
+          { id: 2, hotel_id: 1, created_at: new Date("2024-01-02T10:00:00.000Z") },
+          { id: 1, hotel_id: 1, created_at: new Date("2024-01-01T10:00:00.000Z") },
+        ]);
+      });
+
+      test("Support dynamic password function", async () => {
+        await using sql = new SQL({ ...getOptions(), password: () => password, max: 1 });
+        return expect((await sql`select 1 as x`)[0].x).toBe(1);
+      });
+
+      test("Support dynamic async resolved password function", async () => {
+        await using sql = new SQL({
+          ...getOptions(),
+          password: () => Promise.resolve(password),
+          max: 1,
         });
+        return expect((await sql`select 1 as x`)[0].x).toBe(1);
+      });
 
-        test("Support dynamic password function", async () => {
-          await using sql = new SQL({ ...getOptions(), password: () => password, max: 1 });
-          return expect((await sql`select 1 as x`)[0].x).toBe(1);
+      test("Support dynamic async password function", async () => {
+        await using sql = new SQL({
+          ...getOptions(),
+          max: 1,
+          password: async () => {
+            await Bun.sleep(10);
+            return password;
+          },
         });
-
-        test("Support dynamic async resolved password function", async () => {
-          await using sql = new SQL({
-            ...getOptions(),
-            password: () => Promise.resolve(password),
-            max: 1,
-          });
-          return expect((await sql`select 1 as x`)[0].x).toBe(1);
+        return expect((await sql`select 1 as x`)[0].x).toBe(1);
+      });
+      test("Support dynamic async rejected password function", async () => {
+        await using sql = new SQL({
+          ...getOptions(),
+          password: () => Promise.reject(new Error("password error")),
+          max: 1,
         });
-
-        test("Support dynamic async password function", async () => {
-          await using sql = new SQL({
-            ...getOptions(),
-            max: 1,
-            password: async () => {
-              await Bun.sleep(10);
-              return password;
-            },
-          });
-          return expect((await sql`select 1 as x`)[0].x).toBe(1);
-        });
-        test("Support dynamic async rejected password function", async () => {
-          await using sql = new SQL({
-            ...getOptions(),
-            password: () => Promise.reject(new Error("password error")),
-            max: 1,
-          });
-          try {
-            await sql`select true as x`;
-            expect.unreachable();
-          } catch (e: any) {
-            expect(e.message).toBe("password error");
-          }
-        });
-
-        test("Support dynamic async password function that throws", async () => {
-          await using sql = new SQL({
-            ...getOptions(),
-            max: 1,
-            password: async () => {
-              await Bun.sleep(10);
-              throw new Error("password error");
-            },
-          });
-          try {
-            await sql`select true as x`;
-            expect.unreachable();
-          } catch (e: any) {
-            expect(e).toBeInstanceOf(Error);
-            expect(e.message).toBe("password error");
-          }
-        });
-
-        test("sql file", async () => {
-          expect((await sql.file(rel("select.sql")))[0].x).toBe(1);
-        });
-
-        test("sql file throws", async () => {
-          expect(await sql.file(rel("selectomondo.sql")).catch(x => x.code)).toBe("ENOENT");
-        });
-        test("Parameters in file", async () => {
-          const result = await sql.file(rel("select-param.sql"), ["hello"]);
-          return expect(result[0].x).toBe("hello");
-        });
-
-        test("Connection ended promise", async () => {
-          const sql = new SQL(getOptions());
-
-          await sql.end();
-
-          expect(await sql.end()).toBeUndefined();
-        });
-
-        test("Connection ended timeout", async () => {
-          const sql = new SQL(getOptions());
-
-          await sql.end({ timeout: 10 });
-
-          expect(await sql.end()).toBeUndefined();
-        });
-
-        test("Connection ended error", async () => {
-          const sql = new SQL(getOptions());
-          await sql.end();
-          return expect(await sql``.catch(x => x.code)).toBe("ERR_MYSQL_CONNECTION_CLOSED");
-        });
-
-        test("Connection end does not cancel query", async () => {
-          const sql = new SQL(getOptions());
-
-          const promise = sql`select SLEEP(1) as x`.execute();
-          await sql.end();
-          return expect(await promise).toEqual([{ x: 0 }]);
-        });
-
-        test("Connection destroyed", async () => {
-          const sql = new SQL(getOptions());
-          process.nextTick(() => sql.end({ timeout: 0 }));
-          expect(await sql``.catch(x => x.code)).toBe("ERR_MYSQL_CONNECTION_CLOSED");
-        });
-
-        test("Connection destroyed with query before", async () => {
-          const sql = new SQL(getOptions());
-          const error = sql`select SLEEP(0.2)`.catch(err => err.code);
-
-          sql.end({ timeout: 0 });
-          return expect(await error).toBe("ERR_MYSQL_CONNECTION_CLOSED");
-        });
-
-        test("unsafe", async () => {
-          await using sql = new SQL({ ...getOptions(), max: 1 });
-          await sql`create temporary table test_unsafe (x int)`;
-          try {
-            await sql.unsafe("insert into test_unsafe values (?)", [1]);
-            const [{ x }] = await sql`select * from test_unsafe`;
-            expect(x).toBe(1);
-          } finally {
-            await sql`drop table test_unsafe`;
-          }
-        });
-
-        test("unsafe simple", async () => {
-          await using sql = new SQL({ ...getOptions(), max: 1 });
-          expect(await sql.unsafe("select 1 as x")).toEqual([{ x: 1 }]);
-        });
-
-        test("simple query with multiple statements", async () => {
-          await using sql = new SQL({ ...getOptions(), max: 1 });
-          const result = await sql`select 1 as x;select 2 as x`.simple();
-          expect(result).toBeDefined();
-          expect(result.length).toEqual(2);
-          expect(result[0][0].x).toEqual(1);
-          expect(result[1][0].x).toEqual(2);
-        });
-
-        test("simple query using unsafe with multiple statements", async () => {
-          await using sql = new SQL({ ...getOptions(), max: 1 });
-          const result = await sql.unsafe("select 1 as x;select 2 as x");
-          expect(result).toBeDefined();
-          expect(result.length).toEqual(2);
-          expect(result[0][0].x).toEqual(1);
-          expect(result[1][0].x).toEqual(2);
-        });
-
-        test("only allows one statement", async () => {
-          expect(await sql`select 1; select 2`.catch(e => e.message)).toBe(
-            "You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'select 2' at line 1",
-          );
-        });
-
-        test("await sql() throws not tagged error", async () => {
-          try {
-            await sql("select 1");
-            expect.unreachable();
-          } catch (e: any) {
-            expect(e.code).toBe("ERR_MYSQL_NOT_TAGGED_CALL");
-          }
-        });
-
-        test("sql().then throws not tagged error", async () => {
-          try {
-            await sql("select 1").then(() => {
-              /* noop */
-            });
-            expect.unreachable();
-          } catch (e: any) {
-            expect(e.code).toBe("ERR_MYSQL_NOT_TAGGED_CALL");
-          }
-        });
-
-        test("sql().catch throws not tagged error", async () => {
-          try {
-            sql("select 1").catch(() => {
-              /* noop */
-            });
-            expect.unreachable();
-          } catch (e: any) {
-            expect(e.code).toBe("ERR_MYSQL_NOT_TAGGED_CALL");
-          }
-        });
-
-        test("sql().finally throws not tagged error", async () => {
-          try {
-            sql("select 1").finally(() => {
-              /* noop */
-            });
-            expect.unreachable();
-          } catch (e: any) {
-            expect(e.code).toBe("ERR_MYSQL_NOT_TAGGED_CALL");
-          }
-        });
-
-        test("little bobby tables", async () => {
-          await using sql = new SQL({ ...getOptions(), max: 1 });
-          const name = "Robert'); DROP TABLE students;--";
-
-          try {
-            await sql`create table students (name text, age int)`;
-            await sql`insert into students (name) values (${name})`;
-
-            expect((await sql`select name from students`)[0].name).toBe(name);
-          } finally {
-            await sql`drop table students`;
-          }
-        });
-
-        test("Connection errors are caught using begin()", async () => {
-          let error;
-          try {
-            const sql = new SQL({ host: "localhost", port: 1, adapter: "mysql" });
-
-            await sql.begin(async sql => {
-              await sql`insert into test_connection_errors (label, value) values (${1}, ${2})`;
-            });
-          } catch (err) {
-            error = err;
-          }
-          expect(error.code).toBe("ERR_MYSQL_CONNECTION_REFUSED");
-        });
-
-        test("dynamic table name", async () => {
-          await using sql = new SQL({ ...getOptions(), max: 1 });
-          await sql`create table test_dynamic_table_name(a int)`;
-          try {
-            return expect((await sql`select * from ${sql("test_dynamic_table_name")}`).length).toBe(0);
-          } finally {
-            await sql`drop table test_dynamic_table_name`;
-          }
-        });
-
-        test("dynamic column name", async () => {
-          await using sql = new SQL({ ...getOptions(), max: 1 });
-          const result = await sql`select 1 as ${sql("!not_valid")}`;
-          expect(Object.keys(result[0])[0]).toBe("!not_valid");
-        });
-
-        test("dynamic insert", async () => {
-          await using sql = new SQL({ ...getOptions(), max: 1 });
-          await sql`create table test_dynamic_insert (a int, b text)`;
-          try {
-            const x = { a: 42, b: "the answer" };
-            await sql`insert into test_dynamic_insert ${sql(x)}`;
-            const [{ b }] = await sql`select * from test_dynamic_insert`;
-            expect(b).toBe("the answer");
-          } finally {
-            await sql`drop table test_dynamic_insert`;
-          }
-        });
-
-        test("dynamic insert pluck", async () => {
-          await using sql = new SQL({ ...getOptions(), max: 1 });
-          try {
-            await sql`create table test_dynamic_insert_pluck (a int, b text)`;
-            const x = { a: 42, b: "the answer" };
-            await sql`insert into test_dynamic_insert_pluck ${sql(x, "a")}`;
-            const [{ b, a }] = await sql`select * from test_dynamic_insert_pluck`;
-            expect(b).toBeNull();
-            expect(a).toBe(42);
-          } finally {
-            await sql`drop table test_dynamic_insert_pluck`;
-          }
-        });
-
-        test("bigint is returned as String", async () => {
-          expect(typeof (await sql`select 9223372036854777 as x`)[0].x).toBe("string");
-        });
-
-        test("bigint is returned as BigInt", async () => {
-          await using sql = new SQL({
-            ...getOptions(),
-            bigint: true,
-          });
-          expect((await sql`select 9223372036854777 as x`)[0].x).toBe(9223372036854777n);
-        });
-
-        test("int is returned as Number", async () => {
-          expect((await sql`select CAST(123 AS SIGNED) as x`)[0].x).toBe(123);
-        });
-
-        test("flush should work", async () => {
-          await sql`select 1`;
-          sql.flush();
-        });
-
-        // Fault-injection test: requires a server that refuses / drops / sends malformed
-        // frames, which a healthy container will not do on demand. DO NOT COPY THIS
-        // PATTERN — anything a real server can produce belongs in describeWithContainer.
-        // All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
-        // Buffer.alloc frame construction here.
-        describe("timeouts", () => {
-          test.each(["connect_timeout", "connectTimeout", "connectionTimeout", "connection_timeout"] as const)(
-            "connection timeout key %p throws",
-            async key => {
-              const { server, port } = await listeningServer(() => {});
-
-              const sql = new SQL({ adapter: "mysql", port, host: "127.0.0.1", max: 1, [key]: 0.2 });
-
-              try {
-                await sql`select 1`;
-                throw new Error("should not reach");
-              } catch (e) {
-                expect(e).toBeInstanceOf(Error);
-                expect(e.code).toBe("ERR_MYSQL_CONNECTION_TIMEOUT" as any);
-                expect(e.message).toMatch(/Connection time(d out|out) after 200ms/);
-              } finally {
-                sql.close();
-                server.close();
-              }
-            },
-            {
-              timeout: 1000,
-            },
-          );
-        });
-        test("Array returns rows as arrays of columns", async () => {
-          return [(await sql`select CAST(1 AS SIGNED) as x`.values())[0][0], 1];
-        });
-      },
-    );
-  }
-}
-
-test("MySQL: binary TIME with a very large days field formats without integer wraparound", async () => {
-  const COM_STMT_PREPARE = 0x16;
-  const COM_STMT_EXECUTE = 0x17;
-  const MYSQL_TYPE_TIME = 0x0b;
-
-  const timeRow = mysqlRawPacket(
-    3,
-    Buffer.concat([Buffer.from([0x00, 0x00]), Buffer.from([0x08, 0x00, 0xff, 0xff, 0xff, 0xff, 0x00, 0x3b, 0x3a])]),
-  );
-
-  const { server, port } = await listeningServer(socket => {
-    let buffered = Buffer.alloc(0);
-    let authed = false;
-    socket.write(mysqlHandshakeV10());
-    socket.on("data", chunk => {
-      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
-        if (!authed) {
-          authed = true;
-          socket.write(mysqlOkPacket(seq + 1));
-          return;
-        }
-        if (payload[0] === COM_STMT_PREPARE) {
-          socket.write(mysqlStmtPrepareOk(1, 1, 0, 0));
-        } else if (payload[0] === COM_STMT_EXECUTE) {
-          socket.write(
-            Buffer.concat([
-              mysqlRawPacket(1, mysqlLenencInt(1)),
-              mysqlColumnDefinition(2, { name: "t", type: MYSQL_TYPE_TIME }),
-              timeRow,
-              mysqlOkPacket(4, 0xfe),
-            ]),
-          );
-        } else {
-          socket.end();
+        try {
+          await sql`select true as x`;
+          expect.unreachable();
+        } catch (e: any) {
+          expect(e.message).toBe("password error");
         }
       });
-    });
-    socket.on("error", () => {});
-  });
 
-  try {
-    const fixture = /* js */ `
-      const { SQL } = require("bun");
-      const sql = new SQL({ url: "mysql://root@127.0.0.1:${port}/db", max: 1 });
-      const rows = await sql\`SELECT t\`;
-      console.log(JSON.stringify([...rows]));
-      await sql.close().catch(() => {});
-      process.exit(0);
-    `;
+      test("Support dynamic async password function that throws", async () => {
+        await using sql = new SQL({
+          ...getOptions(),
+          max: 1,
+          password: async () => {
+            await Bun.sleep(10);
+            throw new Error("password error");
+          },
+        });
+        try {
+          await sql`select true as x`;
+          expect.unreachable();
+        } catch (e: any) {
+          expect(e).toBeInstanceOf(Error);
+          expect(e.message).toBe("password error");
+        }
+      });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: 60_000,
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      test("sql file", async () => {
+        expect((await sql.file(rel("select.sql")))[0].x).toBe(1);
+      });
 
-    expect({ stderr, stdout: stdout.trim() }).toEqual({
-      stderr: expect.any(String),
-      stdout: JSON.stringify([{ t: "4294967295:59:58" }]),
-    });
-    expect(exitCode).toBe(0);
-  } finally {
-    await new Promise<void>(r => server.close(() => r()));
-  }
-});
+      test("sql file throws", async () => {
+        expect(await sql.file(rel("selectomondo.sql")).catch(x => x.code)).toBe("ENOENT");
+      });
+      test("Parameters in file", async () => {
+        const result = await sql.file(rel("select-param.sql"), ["hello"]);
+        return expect(result[0].x).toBe("hello");
+      });
+
+      test("Connection ended promise", async () => {
+        const sql = new SQL(getOptions());
+
+        await sql.end();
+
+        expect(await sql.end()).toBeUndefined();
+      });
+
+      test("Connection ended timeout", async () => {
+        const sql = new SQL(getOptions());
+
+        await sql.end({ timeout: 10 });
+
+        expect(await sql.end()).toBeUndefined();
+      });
+
+      test("Connection ended error", async () => {
+        const sql = new SQL(getOptions());
+        await sql.end();
+        return expect(await sql``.catch(x => x.code)).toBe("ERR_MYSQL_CONNECTION_CLOSED");
+      });
+
+      test("Connection end does not cancel query", async () => {
+        const sql = new SQL(getOptions());
+
+        const promise = sql`select SLEEP(1) as x`.execute();
+        await sql.end();
+        return expect(await promise).toEqual([{ x: 0 }]);
+      });
+
+      test("Connection destroyed", async () => {
+        const sql = new SQL(getOptions());
+        process.nextTick(() => sql.end({ timeout: 0 }));
+        expect(await sql``.catch(x => x.code)).toBe("ERR_MYSQL_CONNECTION_CLOSED");
+      });
+
+      test("Connection destroyed with query before", async () => {
+        const sql = new SQL(getOptions());
+        const error = sql`select SLEEP(0.2)`.catch(err => err.code);
+
+        sql.end({ timeout: 0 });
+        return expect(await error).toBe("ERR_MYSQL_CONNECTION_CLOSED");
+      });
+
+      test("unsafe", async () => {
+        await using sql = new SQL({ ...getOptions(), max: 1 });
+        await sql`create temporary table test_unsafe (x int)`;
+        try {
+          await sql.unsafe("insert into test_unsafe values (?)", [1]);
+          const [{ x }] = await sql`select * from test_unsafe`;
+          expect(x).toBe(1);
+        } finally {
+          await sql`drop table test_unsafe`;
+        }
+      });
+
+      test("unsafe simple", async () => {
+        await using sql = new SQL({ ...getOptions(), max: 1 });
+        expect(await sql.unsafe("select 1 as x")).toEqual([{ x: 1 }]);
+      });
+
+      test("simple query with multiple statements", async () => {
+        await using sql = new SQL({ ...getOptions(), max: 1 });
+        const result = await sql`select 1 as x;select 2 as x`.simple();
+        expect(result).toBeDefined();
+        expect(result.length).toEqual(2);
+        expect(result[0][0].x).toEqual(1);
+        expect(result[1][0].x).toEqual(2);
+      });
+
+      test("simple query using unsafe with multiple statements", async () => {
+        await using sql = new SQL({ ...getOptions(), max: 1 });
+        const result = await sql.unsafe("select 1 as x;select 2 as x");
+        expect(result).toBeDefined();
+        expect(result.length).toEqual(2);
+        expect(result[0][0].x).toEqual(1);
+        expect(result[1][0].x).toEqual(2);
+      });
+
+      test("only allows one statement", async () => {
+        expect(await sql`select 1; select 2`.catch(e => e.message)).toBe(
+          `You have an error in your SQL syntax; check the manual that corresponds to your ${isMariaDB ? "MariaDB" : "MySQL"} server version for the right syntax to use near 'select 2' at line 1`,
+        );
+      });
+
+      test("await sql() throws not tagged error", async () => {
+        try {
+          await sql("select 1");
+          expect.unreachable();
+        } catch (e: any) {
+          expect(e.code).toBe("ERR_MYSQL_NOT_TAGGED_CALL");
+        }
+      });
+
+      test("sql().then throws not tagged error", async () => {
+        try {
+          await sql("select 1").then(() => {
+            /* noop */
+          });
+          expect.unreachable();
+        } catch (e: any) {
+          expect(e.code).toBe("ERR_MYSQL_NOT_TAGGED_CALL");
+        }
+      });
+
+      test("sql().catch throws not tagged error", async () => {
+        try {
+          sql("select 1").catch(() => {
+            /* noop */
+          });
+          expect.unreachable();
+        } catch (e: any) {
+          expect(e.code).toBe("ERR_MYSQL_NOT_TAGGED_CALL");
+        }
+      });
+
+      test("sql().finally throws not tagged error", async () => {
+        try {
+          sql("select 1").finally(() => {
+            /* noop */
+          });
+          expect.unreachable();
+        } catch (e: any) {
+          expect(e.code).toBe("ERR_MYSQL_NOT_TAGGED_CALL");
+        }
+      });
+
+      test("little bobby tables", async () => {
+        await using sql = new SQL({ ...getOptions(), max: 1 });
+        const name = "Robert'); DROP TABLE students;--";
+
+        try {
+          await sql`create table students (name text, age int)`;
+          await sql`insert into students (name) values (${name})`;
+
+          expect((await sql`select name from students`)[0].name).toBe(name);
+        } finally {
+          await sql`drop table students`;
+        }
+      });
+
+      test("Connection errors are caught using begin()", async () => {
+        let error;
+        try {
+          const sql = new SQL({ host: "localhost", port: 1, adapter: "mysql" });
+
+          await sql.begin(async sql => {
+            await sql`insert into test_connection_errors (label, value) values (${1}, ${2})`;
+          });
+        } catch (err) {
+          error = err;
+        }
+        expect(error.code).toBe("ERR_MYSQL_CONNECTION_REFUSED");
+      });
+
+      test("dynamic table name", async () => {
+        await using sql = new SQL({ ...getOptions(), max: 1 });
+        await sql`create table test_dynamic_table_name(a int)`;
+        try {
+          return expect((await sql`select * from ${sql("test_dynamic_table_name")}`).length).toBe(0);
+        } finally {
+          await sql`drop table test_dynamic_table_name`;
+        }
+      });
+
+      test("dynamic column name", async () => {
+        await using sql = new SQL({ ...getOptions(), max: 1 });
+        const result = await sql`select 1 as ${sql("!not_valid")}`;
+        expect(Object.keys(result[0])[0]).toBe("!not_valid");
+      });
+
+      test("dynamic insert", async () => {
+        await using sql = new SQL({ ...getOptions(), max: 1 });
+        await sql`create table test_dynamic_insert (a int, b text)`;
+        try {
+          const x = { a: 42, b: "the answer" };
+          await sql`insert into test_dynamic_insert ${sql(x)}`;
+          const [{ b }] = await sql`select * from test_dynamic_insert`;
+          expect(b).toBe("the answer");
+        } finally {
+          await sql`drop table test_dynamic_insert`;
+        }
+      });
+
+      test("dynamic insert pluck", async () => {
+        await using sql = new SQL({ ...getOptions(), max: 1 });
+        try {
+          await sql`create table test_dynamic_insert_pluck (a int, b text)`;
+          const x = { a: 42, b: "the answer" };
+          await sql`insert into test_dynamic_insert_pluck ${sql(x, "a")}`;
+          const [{ b, a }] = await sql`select * from test_dynamic_insert_pluck`;
+          expect(b).toBeNull();
+          expect(a).toBe(42);
+        } finally {
+          await sql`drop table test_dynamic_insert_pluck`;
+        }
+      });
+
+      test("bigint is returned as String", async () => {
+        expect(typeof (await sql`select 9223372036854777 as x`)[0].x).toBe("string");
+      });
+
+      test("bigint is returned as BigInt", async () => {
+        await using sql = new SQL({
+          ...getOptions(),
+          bigint: true,
+        });
+        expect((await sql`select 9223372036854777 as x`)[0].x).toBe(9223372036854777n);
+      });
+
+      test("int is returned as Number", async () => {
+        expect((await sql`select CAST(123 AS SIGNED) as x`)[0].x).toBe(123);
+      });
+
+      test("flush should work", async () => {
+        await sql`select 1`;
+        sql.flush();
+      });
+
+      test("reserve connection", async () => {
+        await using sql = new SQL({ ...getOptions(), max: 1 });
+
+        const resolved: number[] = [];
+        const track = (query: Promise<{ x: number }[]>) =>
+          query.then(([{ x }]) => {
+            resolved.push(x);
+          });
+
+        let pooled: Promise<void>;
+        {
+          await using reserved = await sql.reserve();
+
+          const first = track(reserved`select 1 as x`);
+          pooled = track(sql`select 2 as x`);
+          const third = track(reserved`select 3 as x`);
+          await Promise.all([first, third]);
+
+          // One more round trip: had the pool got the connection back when 1 or 3 finished, 2 would be here before 4.
+          await track(reserved`select 4 as x`);
+          expect(resolved).toEqual([1, 3, 4]);
+        }
+
+        await pooled;
+        expect(resolved).toEqual([1, 3, 4, 2]);
+      });
+
+      // Fault-injection test: requires a server that refuses / drops / sends malformed
+      // frames, which a healthy container will not do on demand. DO NOT COPY THIS
+      // PATTERN — anything a real server can produce belongs in describeWithContainer.
+      // All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
+      // Buffer.alloc frame construction here.
+      describe("timeouts", () => {
+        test.each(["connect_timeout", "connectTimeout", "connectionTimeout", "connection_timeout"] as const)(
+          "connection timeout key %p throws",
+          async key => {
+            const { server, port } = await listeningServer(() => {});
+
+            const sql = new SQL({ adapter: "mysql", port, host: "127.0.0.1", max: 1, [key]: 0.2 });
+
+            try {
+              await sql`select 1`;
+              throw new Error("should not reach");
+            } catch (e: any) {
+              expect(e).toBeInstanceOf(Error);
+              expect(e.code).toBe("ERR_MYSQL_CONNECTION_TIMEOUT" as any);
+              expect(e.message).toMatch(/Connection time(d out|out) after 200ms/);
+            } finally {
+              sql.close();
+              server.close();
+            }
+          },
+          {
+            timeout: 1000,
+          },
+        );
+      });
+      test("Array returns rows as arrays of columns", async () => {
+        return [(await sql`select CAST(1 AS SIGNED) as x`.values())[0][0], 1];
+      });
+    },
+  );
+}
 
 test("MySQL: a row split across several maximum-size wire packets is reassembled into one value", async () => {
   const COM_QUERY = 0x03;
@@ -1325,13 +1402,14 @@ test("MySQL: a row split across several maximum-size wire packets is reassembled
     let authed = false;
     let queryIndex = 0;
     socket.write(mysqlHandshakeV10());
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
         if (!authed) {
           authed = true;
           socket.write(mysqlOkPacket(seq + 1));
           return;
         }
+        if (mysqlAckSessionSetup(socket, payload)) return;
         if (payload[0] !== COM_QUERY || queryIndex >= lengths.length) {
           socket.end();
           return;

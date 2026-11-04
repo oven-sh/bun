@@ -25,7 +25,7 @@ use bun_core::{Environment, Output, env_var, fmt, identifier};
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, ProtectedJSValue};
-use bun_paths::{self as path, PathBuffer};
+use bun_paths as path;
 use bun_sys::{self as sys, Fd};
 
 // ============================================================================
@@ -198,11 +198,14 @@ impl History {
             return Ok(());
         }
 
-        let mut path_buf = PathBuffer::uninit();
-        let path = path::resolve_path::join_z_buf::<path::platform::Auto>(
-            &mut path_buf,
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        // Skip the history file if `$HOME` is too long.
+        let Some(path) = path::resolve_path::join_z_buf_checked::<path::platform::Auto>(
+            &mut path_buf[..],
             &[home_path, HISTORY_FILENAME],
-        );
+        ) else {
+            return Ok(());
+        };
         self.file_path = Some(Box::<[u8]>::from(path.as_bytes()));
 
         let content: Box<[u8]> = match sys::File::read_from(Fd::cwd(), path) {
@@ -730,9 +733,7 @@ fn cmd_load(repl: &mut Repl, args: &[u8]) -> ReplResult {
         return ReplResult::SkipEval;
     }
 
-    let mut path_buf = PathBuffer::uninit();
-    let path_z = path::resolve_path::z(filename, &mut path_buf);
-    let content: Box<[u8]> = match sys::File::read_from(Fd::cwd(), path_z) {
+    let content: Box<[u8]> = match sys::File::read_from(Fd::cwd(), filename) {
         sys::Result::Ok(bytes) => bytes.into(),
         sys::Result::Err(err) => {
             repl.print_error(format_args!("{}\n", err));
@@ -1540,7 +1541,7 @@ impl<'a> Repl<'a> {
                 if !item.is_string() {
                     continue;
                 }
-                let slice = match item.to_slice(global) {
+                let slice = match item.to_utf8(global) {
                     Ok(s) => s,
                     Err(_) => {
                         global.clear_exception();
@@ -2031,7 +2032,7 @@ impl<'a> Repl<'a> {
 
         // For strings, copy the raw string value (not quoted/JSON-ified)
         if value.is_string() {
-            let slice = value.to_slice(global)?;
+            let slice = value.to_utf8(global)?;
             return Ok(Some(Box::<[u8]>::from(slice.slice())));
         }
 
@@ -2775,7 +2776,7 @@ impl<'a> Repl<'a> {
                 }
             };
             if item.is_string() {
-                let slice = match item.to_slice(global) {
+                let slice = match item.to_utf8(global) {
                     Ok(s) => s,
                     Err(_) => {
                         global.clear_exception();
@@ -2804,7 +2805,7 @@ impl<'a> Repl<'a> {
                     }
                 };
                 if item.is_string() {
-                    match item.to_slice(global) {
+                    match item.to_utf8(global) {
                         Ok(slice) => {
                             self.print(format_args!(
                                 "  {}{}{}\n",

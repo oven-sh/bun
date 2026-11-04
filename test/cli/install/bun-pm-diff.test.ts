@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, normalizeBunSnapshot, tempDir } from "harness";
-import { chmodSync, readdirSync, symlinkSync } from "node:fs";
+import { bunEnv, bunExe, isDebug, isRoot, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { chmodSync, existsSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // Two versions of one small package, packed with `bun pm pack` and served from a
@@ -61,8 +61,12 @@ beforeAll(async () => {
       const url = new URL(req.url);
       if (url.pathname === "/diffme") {
         const versions: any = {};
-        for (const v of ["1.0.0", "2.0.0"]) {
-          versions[v] = { name: "diffme", version: v, dist: { tarball: `${registry}/diffme/-/diffme-${v}.tgz` } };
+        for (const [v, files] of Object.entries({ "1.0.0": v1, "2.0.0": v2 })) {
+          // Like in a real registry, each entry repeats the package.json that it was published with.
+          versions[v] = {
+            ...JSON.parse(files["package.json"]),
+            dist: { tarball: `${registry}/diffme/-/diffme-${v}.tgz` },
+          };
         }
         return Response.json({
           name: "diffme",
@@ -72,6 +76,19 @@ beforeAll(async () => {
       }
       const m = url.pathname.match(/^\/diffme\/-\/diffme-(.+)\.tgz$/);
       if (m && tarballs[m[1]]) return new Response(Bun.file(tarballs[m[1]]));
+      // The dependencies of diffme@2.0.0, for the tests that install it.
+      const leftPad = { name: "left-pad", version: "1.3.0" };
+      if (url.pathname === "/left-pad") {
+        const dist = { tarball: `${registry}/left-pad/-/left-pad-1.3.0.tgz` };
+        return Response.json({
+          name: "left-pad",
+          "dist-tags": { latest: "1.3.0" },
+          versions: { "1.3.0": { ...leftPad, dist } },
+        });
+      }
+      if (url.pathname === "/left-pad/-/left-pad-1.3.0.tgz") {
+        return new Response(await new Bun.Archive({ "package/package.json": JSON.stringify(leftPad) }).bytes("gzip"));
+      }
       return new Response("Not Found", { status: 404 });
     },
   });
@@ -103,7 +120,7 @@ describe("bun pm diff", () => {
     expect(normalizeBunSnapshot(stdout, root)).toMatchInlineSnapshot(`
 "diffme@1.0.0 → diffme@2.0.0
 
-diff --bun a/README.md b/README.md
+diff --git a/README.md b/README.md
 --- a/README.md
 +++ b/README.md
 @@ -3,7 +3,7 @@
@@ -115,13 +132,13 @@ diff --bun a/README.md b/README.md
  line e
  line f
  line g
-diff --bun a/gone.txt b/gone.txt
-deleted file
+diff --git a/gone.txt b/gone.txt
+deleted file mode 100644
 --- a/gone.txt
 +++ /dev/null
 @@ -1,1 +0,0 @@
 -only in v1
-diff --bun a/index.js b/index.js
+diff --git a/index.js b/index.js
 --- a/index.js
 +++ b/index.js
 @@ -1,3 +1,3 @@
@@ -131,8 +148,8 @@ diff --bun a/index.js b/index.js
  };
 diff --bun a/logo.bin b/logo.bin
 new file
-Binary files differ (0 → 6 bytes)
-diff --bun a/package.json b/package.json
+Binary files differ (0 → 6 bytes, sha256 none → f186acff22c6)
+diff --git a/package.json b/package.json
 --- a/package.json
 +++ b/package.json
 @@ -1,8 +1,12 @@
@@ -152,8 +169,8 @@ diff --bun a/package.json b/package.json
    }
  }
 / No newline at end of file
-diff --bun a/setup.js b/setup.js
-new file
+diff --git a/setup.js b/setup.js
+new file mode 100644
 --- /dev/null
 +++ b/setup.js
 @@ -0,0 +1,1 @@
@@ -177,6 +194,27 @@ diffme@1.0.0 → diffme@2.0.0
     expect(b.stdout).toBe(a.stdout);
     expect(c.stdout).toBe(a.stdout);
     expect(d.stdout).toBe(a.stdout);
+  });
+
+  test.each(["2", "^2", "~2.0", ">=2", "2.x", "1 || 2", "v2.0.0", "=2.0.0"])(
+    "a bare second range (%s) reuses the first name",
+    async range => {
+      const named = await diff(["diffme@1.0.0", "diffme@2.0.0", "--name-only"]);
+      expect(await diff(["diffme@1.0.0", range, "--name-only"])).toEqual(named);
+      // After a folder it takes the folder's own name.
+      const local = await diff(["./v1", "diffme@2.0.0", "--name-only"]);
+      expect(await diff(["./v1", range, "--name-only"])).toEqual(local);
+      expect(local.exitCode).toBe(0);
+    },
+  );
+
+  test("a second argument that isn't a version is a package name", async () => {
+    const { stdout, stderr, exitCode } = await diff(["diffme@1.0.0", "nosuchpackage"]);
+    expect({ stdout, stderr: stderr.includes("nosuchpackage"), exitCode }).toEqual({
+      stdout: "",
+      stderr: true,
+      exitCode: 1,
+    });
   });
 
   test("--name-only and --stat", async () => {
@@ -239,6 +277,106 @@ diffme@1.0.0 → diffme@2.0.0
     expect(exitCode).toBe(0);
   });
 
+  async function install(cwd: string) {
+    await using p = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd,
+      env: { ...bunEnv, NPM_CONFIG_REGISTRY: registry, BUN_CONFIG_REGISTRY: registry },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  }
+  // The first line of the output: `left → right`, or the error.
+  async function sides(cwd: string, ...args: string[]) {
+    const { stdout, stderr } = await diff([...args, "--name-only"], cwd);
+    return stdout.split("\n")[0] || stderr.trim();
+  }
+  const lockfiles = [
+    ["bun.lock", '[install]\nlinker = "hoisted"\n'],
+    ["bun.lockb", '[install]\nlinker = "hoisted"\nsaveTextLockfile = false\n'],
+  ];
+
+  test.each(lockfiles)(
+    "one name in a workspace package: the version that package depends on (%s)",
+    async (lockfile, bunfig) => {
+      const member = (name: string, version?: string) =>
+        JSON.stringify({ name, dependencies: version ? { diffme: version } : {} });
+      using dir = tempDir("pm-diff-member", {
+        "bunfig.toml": bunfig,
+        "package.json": JSON.stringify({
+          name: "root",
+          workspaces: {
+            packages: ["packages/*"],
+            catalog: { diffme: "1.0.0" },
+            catalogs: { two: { diffme: "2.0.0" } },
+          },
+        }),
+        "packages/one/package.json": member("one", "1.0.0"),
+        "packages/two/package.json": member("two", "2.0.0"),
+        "packages/catalog-one/package.json": member("catalog-one", "catalog:"),
+        "packages/catalog-two/package.json": member("catalog-two", "catalog:two"),
+        "packages/none/package.json": member("none"),
+      });
+      await install(String(dir));
+      expect(existsSync(join(String(dir), lockfile))).toBe(true);
+      // A package that does not depend on it, and the root, load the copy in the root node_modules.
+      const hoisted = JSON.parse(readFileSync(join(String(dir), "node_modules/diffme/package.json"), "utf8")).version;
+      expect({
+        one: await sides(join(String(dir), "packages/one"), "diffme"),
+        two: await sides(join(String(dir), "packages/two"), "diffme"),
+        "catalog-one": await sides(join(String(dir), "packages/catalog-one"), "diffme"),
+        "catalog-two": await sides(join(String(dir), "packages/catalog-two"), "diffme"),
+        none: await sides(join(String(dir), "packages/none"), "diffme"),
+        root: await sides(String(dir), "diffme"),
+      }).toEqual({
+        one: "diffme@1.0.0 → diffme@2.0.0",
+        two: "diffme@2.0.0 → diffme@2.0.0",
+        "catalog-one": "diffme@1.0.0 → diffme@2.0.0",
+        "catalog-two": "diffme@2.0.0 → diffme@2.0.0",
+        none: `diffme@${hoisted} → diffme@2.0.0`,
+        root: `diffme@${hoisted} → diffme@2.0.0`,
+      });
+    },
+  );
+
+  test.each(lockfiles)(
+    "a bare name on the left means what the project installs under that name (%s)",
+    async (lockfile, bunfig) => {
+      using dir = tempDir("pm-diff-alias", {
+        "bunfig.toml": bunfig,
+        // The alias sorts before the name.
+        "package.json": JSON.stringify({ name: "app", dependencies: { diffme: "2.0.0", aaa: "npm:diffme@1.0.0" } }),
+      });
+      const cwd = String(dir);
+      await install(cwd);
+      expect(existsSync(join(cwd, lockfile))).toBe(true);
+      expect({
+        "diffme": await sides(cwd, "diffme"),
+        "aaa": await sides(cwd, "aaa"),
+        "aaa@2.0.0": await sides(cwd, "aaa@2.0.0"),
+        "diffme 1.0.0": await sides(cwd, "diffme", "1.0.0"),
+        "aaa 2.0.0": await sides(cwd, "aaa", "2.0.0"),
+        "aaa diffme": await sides(cwd, "aaa", "diffme"),
+      }).toEqual({
+        "diffme": "diffme@2.0.0 → diffme@2.0.0",
+        "aaa": "diffme@1.0.0 → diffme@2.0.0",
+        "aaa@2.0.0": "diffme@1.0.0 → diffme@2.0.0",
+        "diffme 1.0.0": "diffme@2.0.0 → diffme@1.0.0",
+        "aaa 2.0.0": "diffme@1.0.0 → diffme@2.0.0",
+        "aaa diffme": "diffme@1.0.0 → diffme@2.0.0",
+      });
+    },
+  );
+
+  test("a bare name on the left that isn't in any lockfile means latest; a bare `latest` on the right is the tag", async () => {
+    expect(await sides(String(root), "diffme", "1.0.0")).toBe("diffme@2.0.0 → diffme@1.0.0");
+    expect(await sides(String(root), "diffme@1.0.0", "latest")).toBe("diffme@1.0.0 → diffme@2.0.0");
+    expect(await sides(String(root), "./v1", "latest")).toBe("./v1 → diffme@2.0.0");
+  });
+
   test("one folder: the registry side is named by that folder's package.json, not the project's", async () => {
     // From proj/ (name "proj") pointing at ../v1 (name "diffme"): must look up diffme@latest.
     const { stdout, exitCode } = await diff(["../v1", "--name-only"], join(String(root), "proj"));
@@ -268,6 +406,108 @@ diffme@1.0.0 → diffme@2.0.0
       "D setup.js",
     ]);
     expect(exitCode).toBe(0);
+  });
+
+  test("a workspace package's workspace: and catalog: versions are compared as `bun pm pack` publishes them", async () => {
+    const manifest = (pkg: object) => JSON.stringify(pkg, null, 2) + "\n";
+    const a = manifest({
+      name: "ws-a",
+      version: "1.0.0",
+      dependencies: { "ws-b": "workspace:^", diffme: "catalog:" },
+      devDependencies: { "ws-c": "workspace:2.x", "core": "workspace:ws-b@~" },
+      peerDependencies: { "ws-b": "workspace:*", diffme: "catalog:legacy" },
+      optionalDependencies: { "ws-d": "workspace:~", "ws-c": "workspace:../c" },
+    });
+    using dir = tempDir("pm-diff-workspace", {
+      "package.json": manifest({
+        name: "ws-root",
+        version: "9.0.0",
+        workspaces: {
+          packages: ["packages/*"],
+          catalog: { diffme: "^1.0.0" },
+          catalogs: { legacy: { diffme: "1.0.0" } },
+        },
+        dependencies: { diffme: "catalog:", "ws-b": "workspace:^" },
+      }),
+      "packages/a/package.json": a,
+      "packages/a/index.js": "module.exports = 1;\n",
+      "packages/b/package.json": manifest({ name: "ws-b", version: "1.0.1" }),
+      "packages/c/package.json": manifest({ name: "ws-c", version: "2.3.4" }),
+      "packages/d/package.json": manifest({ name: "ws-d", version: "3.0.0" }),
+      // The same files outside the `workspaces` globs: not a package of this project.
+      "vendor/a/package.json": a,
+      "vendor/a/index.js": "module.exports = 1;\n",
+      "out/.keep": "",
+      "out-root/.keep": "",
+    });
+    const member = join(String(dir), "packages", "a");
+    const tgz = await pack(member, join(String(dir), "out"));
+
+    // The versions pack just wrote are the ones this folder shows, from inside the package and from the root.
+    expect(await diff([tgz, "."], member)).toEqual({
+      stdout: `${tgz} → .\nNo differences (2 files)\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(await diff([tgz, "./packages/a/"], String(dir))).toEqual({
+      stdout: `${tgz} → ./packages/a/\nNo differences (2 files)\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+    // An absolute path is used as typed.
+    const roundabout = `${String(dir)}/packages/b/../a`;
+    expect(await diff([tgz, roundabout], String(dir))).toEqual({
+      stdout: `${tgz} → ${roundabout}\nNo differences (2 files)\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+    // The root package itself. The filter is a base name: its own package.json and the five it packs along, which
+    // are files like any other and stay as written on both sides.
+    const rootTgz = await pack(String(dir), join(String(dir), "out-root"));
+    expect((await diff([rootTgz, ".", "package.json"], String(dir))).stdout).toBe(
+      `${rootTgz} → .\nNo differences (6 files)\n`,
+    );
+
+    // A folder that isn't one of the project's packages is compared as written. Nothing is taken from a workspace with
+    // the same name.
+    const vendored = await diff([tgz, "./vendor/a", "--json"], String(dir));
+    expect(vendored.stderr).toBe("");
+    const { files, notes } = JSON.parse(vendored.stdout);
+    expect(files).toMatchObject([{ path: "package.json", linesAdded: 8, linesRemoved: 8 }]);
+    expect(notes.sort()).toEqual([
+      "dependencies diffme: ^1.0.0 → catalog:",
+      "dependencies ws-b: ^1.0.1 → workspace:^",
+      "optionalDependencies ws-c: 2.3.4 → workspace:../c",
+      "optionalDependencies ws-d: ~3.0.0 → workspace:~",
+      "peerDependencies diffme: 1.0.0 → catalog:legacy",
+      "peerDependencies ws-b: 1.0.1 → workspace:*",
+    ]);
+    expect(vendored.exitCode).toBe(0);
+
+    // Two folders compare as written, so the patch between them applies to the files on disk.
+    expect(await diff(["./vendor/a", "./packages/a"], String(dir))).toEqual({
+      stdout: "./vendor/a → ./packages/a\nNo differences (2 files)\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("a workspace: version that doesn't resolve, or a folder outside of any project, is left as written", async () => {
+    const pkg = JSON.stringify({ name: "lonely", version: "1.0.0", dependencies: { gone: "workspace:^" } });
+    using dir = tempDir("pm-diff-unresolved", {
+      "project/package.json": pkg,
+      "copy/package.json": pkg,
+      "nowhere/sub/package.json": pkg,
+    });
+    for (const [cwd, folder] of [
+      ["project", "."],
+      ["nowhere", "./sub"],
+    ]) {
+      const { stdout, stderr, exitCode } = await diff([tarballs["1.0.0"], folder, "--json"], join(String(dir), cwd));
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout).notes).toContain("dependencies added: gone@workspace:^");
+      expect(exitCode).toBe(0);
+    }
   });
 
   test("patch output marks a side that ends without a newline", async () => {
@@ -312,7 +552,7 @@ diffme@1.0.0 → diffme@2.0.0
     expect(text).toContain("6 files  +10 -6  ·  2 new  ·  1 deleted\n");
     expect(text).toMatch(/\nREADME\.md ─+ \+1 -1\n/);
     expect(text).toMatch(/\ngone\.txt ─+ deleted -1\n/);
-    expect(text).toMatch(/\nlogo\.bin ─+ binary 0 → 6 bytes\n/);
+    expect(text).toMatch(/\nlogo\.bin ─+ binary 0 → 6 bytes, sha256 none → f186acff22c6\n/);
     expect(text).toContain("    5 │  line c\n    6 │- line d\n    6 │+ line d changed\n    7 │  line e\n");
     expect(text).not.toContain("@@");
     expect(text).not.toContain("+++");
@@ -349,6 +589,75 @@ diffme@1.0.0 → diffme@2.0.0
       "new binary file logo.bin (6 bytes)",
     ]);
     expect(j.totals).toEqual({ files: 6, added: 2, deleted: 1, linesAdded: 10, linesRemoved: 6, formattingOnly: 0 });
+    expect(exitCode).toBe(0);
+  });
+
+  test("a dist.tarball on another https host carries that host's own .npmrc line", async () => {
+    // The same rule as `bun install`: the tarball's own `.npmrc` line, not the registry's token.
+    const seen = { registry: [] as (string | null)[], cdn: [] as (string | null)[] };
+    using cdn = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls,
+      fetch(req) {
+        seen.cdn.push(req.headers.get("authorization"));
+        return new Response(Bun.file(tarballs["2.0.0"]));
+      },
+    });
+    using authed = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        seen.registry.push(req.headers.get("authorization"));
+        if (req.headers.get("authorization") !== "Bearer sekrit") return new Response("no", { status: 401 });
+        const url = new URL(req.url);
+        if (url.pathname === "/diffme") {
+          return Response.json({
+            name: "diffme",
+            "dist-tags": { latest: "2.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "diffme",
+                version: "1.0.0",
+                dist: { tarball: `${authed.url.origin}/diffme/-/diffme-1.0.0.tgz` },
+              },
+              "2.0.0": {
+                name: "diffme",
+                version: "2.0.0",
+                dist: { tarball: `${cdn.url.origin}/npm/diffme-2.0.0.tgz` },
+              },
+            },
+          });
+        }
+        return new Response(Bun.file(tarballs["1.0.0"]));
+      },
+    });
+    using dir = tempDir("pm-diff-cdn-line", {
+      "ca.pem": tls.cert,
+      "bunfig.toml": `[install]\nregistry = { url = "${authed.url.origin}/", token = "sekrit" }\ncafile = "ca.pem"\n`,
+      ".npmrc": `//${cdn.url.host}/:_authToken=cdn-line\n`,
+      "home/.gitkeep": "",
+    });
+    const home = join(String(dir), "home");
+    await using p = Bun.spawn({
+      cmd: [bunExe(), "pm", "diff", "diffme@1.0.0", "2.0.0", "--name-only"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        NO_COLOR: "1",
+        HOME: home,
+        USERPROFILE: home,
+        XDG_CONFIG_HOME: home,
+        NPM_CONFIG_USERCONFIG: undefined,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(seen.cdn).toEqual(["Bearer cdn-line"]);
+    expect(seen.registry.every(a => a === "Bearer sekrit")).toBe(true);
+    expect(stderr).toBe("");
+    expect(stdout.split("\n")[0]).toBe("diffme@1.0.0 → diffme@2.0.0");
     expect(exitCode).toBe(0);
   });
 
@@ -468,6 +777,12 @@ diffme@1.0.0 → diffme@2.0.0
     expect(hits.some(h => h.endsWith(" /@priv/diffme"))).toBe(true);
   });
 
+  test("treats a name longer than the path buffer as a registry package", async () => {
+    const { stderr, exitCode } = await diff([Buffer.alloc(5000, "x") + "@1.0.0", "2.0.0"]);
+    expect(stderr).toContain("404");
+    expect(exitCode).toBe(1);
+  });
+
   test("errors: unknown package, no matching version; a third argument is a file filter", async () => {
     const unknown = await diff(["nope-nope@1.0.0", "2.0.0"]);
     expect(unknown.exitCode).toBe(1);
@@ -478,6 +793,11 @@ diffme@1.0.0 → diffme@2.0.0
     // …and what exists instead, newest first, plus the tags.
     expect(nover.stderr).toContain("recent versions: 2.0.0, 1.0.0");
     expect(nover.stderr).toMatch(/tags: .*latest: 2\.0\.0/);
+    // An unknown dist-tag is looked up only in `dist-tags`; it never falls back to `latest`.
+    const notag = await diff(["diffme@nosuchtag", "2.0.0", "--name-only"]);
+    expect(notag.stdout).toBe("");
+    expect(notag.stderr).toContain("no version of diffme matches nosuchtag");
+    expect(notag.exitCode).toBe(1);
     const many = await diff(["diffme@1", "diffme@2", "diffme@3"]);
     expect(many.stderr).toContain("no file in either side matches diffme@3");
     expect(many.exitCode).toBe(1);
@@ -677,6 +997,92 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
   const LRI = "\u2066";
   const PDI = "\u2069";
 
+  test("a tarball is requested and verified the way bun install does it", async () => {
+    const versions = ["1.0.0", "2.0.0"];
+    const balls = async (body: string) =>
+      Object.fromEntries(
+        await Promise.all(
+          versions.map(async version => {
+            const manifest = JSON.stringify({ name: "p", version });
+            const files = { "package/package.json": manifest, "package/index.js": `${body} ${version}\n` };
+            return [version, await new Bun.Archive(files).bytes("gzip")] as const;
+          }),
+        ),
+      );
+    const [published, other] = [await balls("published"), await balls("other")];
+    let [listed, served] = [published, published];
+    const asked: Record<string, string>[] = [];
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const version = new URL(req.url).pathname.match(/p-(.+)\.tgz$/)?.[1];
+        if (version) {
+          asked.push(req.headers.toJSON());
+          return new Response(served[version]);
+        }
+        const entry = (version: string) => ({
+          name: "p",
+          version,
+          dist: {
+            tarball: `${server.url.origin}/p/-/p-${version}.tgz`,
+            integrity: "sha512-" + new Bun.CryptoHasher("sha512").update(listed[version]).digest("base64"),
+          },
+        });
+        return Response.json({
+          name: "p",
+          "dist-tags": { latest: "2.0.0" },
+          versions: Object.fromEntries(versions.map(version => [version, entry(version)])),
+        });
+      },
+    });
+    using dir = tempDir("pm-diff-checked", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { p: "1.0.0" } }),
+    });
+    const run = async (...cmd: string[]) => {
+      await using p = Bun.spawn({
+        cmd: [bunExe(), ...cmd],
+        cwd: String(dir),
+        env: {
+          ...bunEnv,
+          NPM_CONFIG_REGISTRY: server.url.origin,
+          BUN_CONFIG_REGISTRY: server.url.origin,
+          BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"),
+          NO_COLOR: "1",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+      return { stdout, stderr, exitCode };
+    };
+
+    expect(await run("install")).toMatchObject({ exitCode: 0 });
+    const [byInstall] = asked.splice(0);
+    expect(await run("pm", "diff", "p")).toMatchObject({
+      stdout: expect.stringContaining("+published 2.0.0"),
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(asked).toEqual([byInstall, byInstall]);
+
+    // not the bytes the registry lists
+    served = other;
+    expect(await run("pm", "diff", "p@1.0.0", "2.0.0")).toEqual({
+      stdout: "",
+      stderr: expect.stringMatching(/^error: Integrity check failed for tarball: p@[12]\.0\.0\n$/),
+      exitCode: 1,
+    });
+
+    // not the bytes bun.lock has
+    listed = other;
+    expect(await run("pm", "diff", "p@1.0.0", "2.0.0")).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(await run("pm", "diff", "p")).toEqual({
+      stdout: "",
+      stderr: "error: Integrity check failed for tarball: p@1.0.0\n",
+      exitCode: 1,
+    });
+  });
+
   test("package bytes never drive the terminal: ESC/CR/C1 and bidi controls are drawn, and called out", async () => {
     const evil = `exports.ok = true;\nexports.motd = "${ESC}[2K${ESC}[1A hidden \r";\nconst s = "${CSI_C1}31m"; // C1 CSI\n`;
     const trojan = `const isAdmin = false; /*${RLO} } ${LRI}if (isAdmin)${PDI} ${LRI} begin admins only */\n`;
@@ -696,6 +1102,269 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
     expect(text).toContain("▲ terminal escape sequences in index.js (shown as ␛)\n");
     expect(text).toContain("▲ bidirectional text controls in auth.js (Trojan Source; shown as ‹U+202E›)\n");
     expect(exitCode).toBe(0);
+  });
+
+  // ConPTY rewrites the process's output.
+  test.skipIf(isWindows)("NO_COLOR on a terminal: the plain patch, with control characters drawn", async () => {
+    const added = `exports.b = 2; //${ESC}[2K${ESC}[1A ${CSI_C1}31m ${RLO}\x7f\b `;
+    using dir = tempDir("pm-diff-plain-tty", {
+      "a/index.js": "exports.a = 1;\n",
+      "b/index.js": `exports.a = 1;\n${added}\n`,
+      [`b/${RLO}name${CSI_C1}.js`]: "exports.c = 3;\n",
+    });
+    const decoder = new TextDecoder();
+    let terminal = "";
+    const closed = Promise.withResolvers<void>();
+    await using p = Bun.spawn({
+      cmd: [bunExe(), "pm", "diff", "./a", "./b"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1", FORCE_COLOR: undefined },
+      terminal: {
+        cols: 120,
+        rows: 50,
+        data(_, chunk) {
+          terminal += decoder.decode(chunk, { stream: true });
+        },
+        // The terminal is closed once the process has exited and the rest of its output was delivered.
+        exit() {
+          closed.resolve();
+        },
+      },
+    });
+    const [exitCode] = await Promise.all([p.exited, closed.promise]);
+    expect(terminal.replaceAll("\r\n", "\n")).toContain(
+      "--- a/index.js\n+++ b/index.js\n@@ -1,1 +1,2 @@\n exports.a = 1;\n+exports.b = 2; //␛[2K␛[1A ‹U+009B›31m ‹U+202E›^?^H‹U+2028›\n",
+    );
+    expect(terminal).toContain("+++ b/‹U+202E›name‹U+009B›.js");
+    for (const raw of [ESC, CSI_C1, RLO, "\x7f", "\b", " "]) expect(terminal).not.toContain(raw);
+    expect(exitCode).toBe(0);
+
+    // Into a pipe the same patch has the bytes of the files.
+    const piped = await diff(["./a", "./b"], String(dir));
+    expect(piped.stdout).toContain(` exports.a = 1;\n+${added}\n`);
+    expect(piped.stdout).toContain(`+++ b/${RLO}name${CSI_C1}.js\n`);
+  });
+
+  test("a NUL byte doesn't turn a file that's read as text into a binary file", async () => {
+    const line = "exports.a = 1;\n";
+    const more = `exports.b = require("child_process");\n`;
+    const text: Record<string, [string, string]> = {
+      "first.js": [line, "/* \0 */\n" + line + more],
+      "both.js": ["// \0\n" + line, "// \0\n" + line + more],
+      "types.d.ts": ["// \0\n", "// \0\nexport {};\n"],
+      "data.json": [`{ "a": "\0" }\n`, `{ "a": "\0", "b": 1 }\n`],
+      "setup.sh": ["# \0\n", "# \0\necho more\n"],
+      "bin/run": ["#!/bin/sh\n# \0\n", "#!/bin/sh\n# \0\necho more\n"],
+      // JavaScript, whatever the name says.
+      "data.bin": ["/* \0 */ " + line, "/* \0 */ " + line + more],
+      "notes.map": [`{"version";${line.trim()}}\n`, `{"version";${line.trim()}${more.trim()}}\n`],
+    };
+    const binary: Record<string, [string, string]> = {
+      "real.bin": ["\0\x01one", "\0\x01three"],
+      "real.wasm": ["\0asm1", "\0asm2"],
+      "turned.dat": ["one\n", "\0\x01"],
+    };
+    const sides = Object.entries({ ...text, ...binary }).flatMap(([path, [a, b]]) => [
+      ["a/" + path, a],
+      ["b/" + path, b],
+    ]);
+    using dir = tempDir("pm-diff-nul", Object.fromEntries(sides));
+    const sha = (bytes: string) => new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+
+    const json = JSON.parse((await diff(["./a", "./b", "--json"], String(dir))).stdout);
+    const last = (patch: string) => patch.trimEnd().split("\n").at(-1);
+    expect(Object.fromEntries(json.files.map((f: any) => [f.path, f.binary || f.sourceMap || last(f.patch)]))).toEqual({
+      "first.js": "+" + more.trim(),
+      "both.js": "+" + more.trim(),
+      "types.d.ts": "+export {};",
+      "data.json": `+{ "a": "\0", "b": 1 }`,
+      "setup.sh": "+echo more",
+      "bin/run": "+echo more",
+      "data.bin": "+" + more.trim(),
+      "notes.map": `+{"version";${line.trim()}${more.trim()}}`,
+      "real.bin": true,
+      "real.wasm": true,
+      "turned.dat": true,
+    });
+    expect(json.files.find((f: any) => f.path === "real.bin")).toMatchObject({
+      sha256Before: sha(binary["real.bin"][0]),
+      sha256After: sha(binary["real.bin"][1]),
+    });
+    expect(json.notes).toEqual(["now imports child_process (both.js)", "turned.dat was text and is now binary"]);
+
+    const piped = await diff(["./a", "./b"], String(dir));
+    expect(piped.stdout).toContain(`@@ -1,1 +1,3 @@\n+/* \0 */\n ${line}+${more}`);
+    expect(piped.stdout).toContain(
+      `Binary files differ (5 → 7 bytes, sha256 ${sha("\0\x01one").slice(0, 12)} → ${sha("\0\x01three").slice(0, 12)})\n`,
+    );
+
+    const shown = await pretty(Object.fromEntries(sides));
+    expect(shown.text).toContain("/* ^@ */\n");
+    expect(shown.text).toContain(more);
+    expect(shown.raw).not.toContain("\0");
+    expect(shown.text).toMatch(
+      new RegExp(`\nreal\\.bin ─+ binary 5 → 7 bytes, sha256 ${sha("\0\x01one").slice(0, 12)} → [0-9a-f]{12}\n`),
+    );
+    expect(shown.exitCode).toBe(0);
+  });
+
+  test("the summary of a published version comes from the registry's metadata", async () => {
+    // What version 2.0.0 adds, as [to the package.json in its tarball, to its entry in the registry's document].
+    const cases: Record<string, [object, object]> = {
+      "same": [{ dependencies: { dep: "1.0.0" } }, { dependencies: { dep: "1.0.0" } }],
+      // A registry writes some fields its own way.
+      "respelled": [
+        {
+          bin: "./cli.js",
+          dependencies: {},
+          optionalDependencies: { opt: "1.0.0" },
+          peerDependencies: {},
+          os: "linux",
+          libc: ["glibc"],
+        },
+        {
+          bin: { respelled: "cli.js" },
+          dependencies: { opt: "1.0.0" },
+          optionalDependencies: { opt: "1.0.0" },
+          os: ["linux"],
+        },
+      ],
+      "dependency": [{}, { dependencies: { extra: "1.0.0" } }],
+      "optional": [{}, { optionalDependencies: { extra: "1.0.0" } }],
+      "peer": [{}, { peerDependencies: { extra: "1.0.0" } }],
+      "command": [{}, { bin: { tool: "./cli.js" } }],
+      "folder": [{}, { directories: { bin: "./scripts" } }],
+      "absent": [{ dependencies: { dep: "1.0.0" } }, {}],
+      "unlisted": [{ bin: { tool: "./cli.js" } }, {}],
+    };
+    const added = (name: string, version: string, where: 0 | 1) => (version === "2.0.0" ? cases[name][where] : {});
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const path = new URL(req.url).pathname;
+        const [, name, version] = path.match(/^\/([a-z]+)\/-\/[a-z]+-(.+)\.tgz$/) ?? [, path.slice(1)];
+        if (!cases[name!]) return new Response("Not Found", { status: 404 });
+        if (version) {
+          const manifest = JSON.stringify({ name, version, ...added(name!, version, 0) });
+          return new Response(
+            await new Bun.Archive({ "package/package.json": manifest, "package/cli.js": "" }).bytes("gzip"),
+          );
+        }
+        const versions = ["1.0.0", "2.0.0"].map(version => [
+          version,
+          {
+            name,
+            version,
+            ...added(name!, version, 1),
+            dist: { tarball: `${server.url.origin}/${name}/-/${name}-${version}.tgz` },
+          },
+        ]);
+        return Response.json({ name, "dist-tags": { latest: "2.0.0" }, versions: Object.fromEntries(versions) });
+      },
+    });
+    using dir = tempDir("pm-diff-entry", { "package.json": JSON.stringify({ name: "app" }) });
+    const notes: Record<string, string[]> = {};
+    for (const name of Object.keys(cases)) {
+      await using p = Bun.spawn({
+        cmd: [bunExe(), "pm", "diff", `${name}@1.0.0`, "2.0.0", "--json"],
+        cwd: String(dir),
+        env: { ...bunEnv, NPM_CONFIG_REGISTRY: server.url.origin, BUN_CONFIG_REGISTRY: server.url.origin },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+      expect(stderr).toBe("");
+      notes[name] = JSON.parse(stdout).notes;
+    }
+    const disagree = (name: string, field: string, registry: string, file: string) =>
+      `registry and package.json of ${name}@2.0.0 disagree on ${field}: ${registry} vs ${file} (bun install uses the registry's)`;
+    expect(notes.respelled.filter(note => note.includes("disagree"))).toEqual([]);
+    delete notes.respelled;
+    expect(notes).toEqual({
+      "same": ["dependencies added: dep@1.0.0"],
+      "dependency": [
+        disagree("dependency", "dependencies", '{ "extra": "1.0.0" }', "nothing"),
+        "dependencies added: extra@1.0.0",
+      ],
+      "optional": [
+        disagree("optional", "optionalDependencies", '{ "extra": "1.0.0" }', "nothing"),
+        "optionalDependencies added: extra@1.0.0",
+      ],
+      "peer": [
+        disagree("peer", "peerDependencies", '{ "extra": "1.0.0" }', "nothing"),
+        "peerDependencies added: extra@1.0.0",
+      ],
+      "command": [disagree("command", "bin", '{ "tool": "./cli.js" }', "nothing"), 'bin added: { "tool": "./cli.js" }'],
+      "folder": [
+        disagree("folder", "directories", '{ "bin": "./scripts" }', "nothing"),
+        'directories added: { "bin": "./scripts" }',
+      ],
+      "absent": [disagree("absent", "dependencies", "nothing", '{ "dep": "1.0.0" }')],
+      // Other tools read the file.
+      "unlisted": [
+        disagree("unlisted", "bin", "nothing", '{ "tool": "./cli.js" }'),
+        'bin added: { "tool": "./cli.js" }',
+      ],
+    });
+  });
+
+  test("package.json callouts compare whole values, however long", async () => {
+    const notes = async (a: object | string, b: object | string) => {
+      const manifest = (more: object | string) =>
+        typeof more === "string" ? more : JSON.stringify({ name: "p", version: "1.0.0", ...more });
+      const { raw } = await pretty({ "a/package.json": manifest(a), "b/package.json": manifest(b) }, ["--json"]);
+      return JSON.parse(raw).notes as string[];
+    };
+    const entry = (name: string, required = `./dist/${name}.cjs`) => ({
+      types: `./dist/${name}.d.ts`,
+      import: `./dist/${name}.mjs`,
+      require: required,
+    });
+    const exports = { ".": entry("index"), "./utils": entry("utils") };
+    const bin = {
+      "p-build-the-documentation": "./bin/build-the-documentation.js",
+      "p-check-the-configuration": "./bin/check-the-configuration.js",
+    };
+    expect(await notes({ exports, bin }, { bin, exports })).toEqual([]);
+
+    const tail = await notes({ exports }, { exports: { ...exports, "./utils": entry("utils", "./other.cjs") } });
+    expect(tail).toEqual([
+      expect.stringMatching(
+        /^exports changed: \.\.\..* "require": "\.\/dist\/utils\.cjs" \} \} → \.\.\..* "require": "\.\/other\.cjs" \} \}$/,
+      ),
+    ]);
+    expect(tail[0].length).toBeLessThan(300);
+    expect(await notes({ exports }, { exports: { ...exports, "./more": "./more.cjs" } })).toEqual([
+      expect.stringMatching(/^exports changed: .* → .*, "\.\/more": "\.\/more\.cjs" \}$/),
+    ]);
+    expect(await notes({ bin }, { bin: { ...bin, more: "./more.js" } })).toEqual([
+      expect.stringMatching(/^bin changed: .* → .*, "more": "\.\/more\.js" \}$/),
+    ]);
+    expect(await notes({ exports: { ".": "./a  b.js" } }, { exports: { ".": "./a b.js" } })).toHaveLength(1);
+    expect(await notes({ type: "commonjs" }, { type: "module" })).toEqual(["type changed: commonjs → module"]);
+
+    // Many ranges that move are one fact. A range that turns into something else is another.
+    const ranges = (range: string) => Object.fromEntries([..."abcdefg"].map(name => [name, range]));
+    expect(
+      await notes(
+        { dependencies: ranges("^1.0.0") },
+        { dependencies: { ...ranges("^1.0.1"), f: "https://example.com/f.tgz", g: "npm:other@^1.0.1" } },
+      ),
+    ).toEqual([
+      "dependencies f: ^1.0.0 → https://example.com/f.tgz",
+      "dependencies g: ^1.0.0 → npm:other@^1.0.1",
+      "dependencies a: ^1.0.0 → ^1.0.1",
+      "dependencies b: ^1.0.0 → ^1.0.1",
+      "dependencies c: ^1.0.0 → ^1.0.1",
+      "… and 2 more dependencies version changes",
+    ]);
+
+    expect(
+      await notes(
+        `{"name":"p","version":"1.0.0","main":"./a.js"}`,
+        `{"name":"p","version":"1.0.0","main":"./a.js","main":"./b.js"}`,
+      ),
+    ).toEqual(["main listed more than once in package.json"]);
   });
 
   test("a comment-only change is not 'formatting only', and neither is a TypeScript type change", async () => {
@@ -850,11 +1519,97 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
       expect(tty.exitCode).toBe(0);
       // Patch mode spells it the way git does.
       const plain = await run({ NO_COLOR: "1" });
-      expect(plain.stdout).toContain("diff --bun a/run.sh b/run.sh\nold mode 100644\nnew mode 100755\n");
-      expect(plain.stdout).toContain("diff --bun a/install.js b/install.js\nnew file mode 100755\n");
+      expect(plain.stdout).toContain("diff --git a/run.sh b/run.sh\nold mode 100644\nnew mode 100755\n");
+      expect(plain.stdout).toContain("diff --git a/install.js b/install.js\nnew file mode 100755\n");
       expect(plain.exitCode).toBe(0);
     },
   );
+
+  test("the piped patch applies with git: empty files, permission changes, file names that need quotes", async () => {
+    const names = ["plain.txt", "with space.txt", "dir with space/x.txt", "é.txt"];
+    // This isn't valid in a Windows file name.
+    if (!isWindows) names.push("t\tab.txt", 'q"uote.txt', "back\\slash.txt", "new\nline.txt");
+    const a: Record<string, string> = {
+      "grow.txt": "",
+      "shrink.txt": "one\n",
+      "run.sh": "#!/bin/sh\n",
+      "old-tool.sh": "",
+      "logo.bin": "\0a",
+      "marked.js": "exports.a = 1;\n",
+    };
+    const b: Record<string, string> = {
+      "grow.txt": "one\n",
+      "shrink.txt": "",
+      "run.sh": "#!/bin/sh\n",
+      "new-tool.sh": "",
+      "logo.bin": "\0b",
+      "tool.bin": "\0",
+      // Text, so it is in the patch, byte for byte.
+      "marked.js": "/* \0 \x1b \x7f */\nexports.a = 1;\nexports.b = 2;\n",
+    };
+    for (const name of names) {
+      a["changed-" + name] = "1\n";
+      b["changed-" + name] = "2\n";
+      b["added-" + name] = "";
+      a["removed-" + name] = "";
+    }
+    using dir = tempDir("pm-diff-apply", { a, b });
+    for (const executable of ["a/old-tool.sh", "b/run.sh", "b/new-tool.sh", "b/tool.bin"]) {
+      chmodSync(join(String(dir), executable), 0o755);
+    }
+    const files = (side: string) =>
+      Object.fromEntries(
+        readdirSync(join(String(dir), side), { recursive: true })
+          .map(path => [String(path), statSync(join(String(dir), side, String(path)))] as const)
+          .filter(([, stat]) => stat.isFile())
+          .map(([path, stat]) => [
+            path,
+            { text: readFileSync(join(String(dir), side, path), "latin1"), executable: (stat.mode & 0o100) !== 0 },
+          ]),
+      );
+    // The patch names a binary file, it does not carry one.
+    const want = { ...files("b"), "logo.bin": files("a")["logo.bin"] };
+    delete want["tool.bin"];
+
+    const { stdout, exitCode } = await diff(["./a", "./b"], String(dir));
+    const json = JSON.parse((await diff(["./a", "./b", "--json"], String(dir))).stdout);
+    expect(exitCode).toBe(0);
+
+    writeFileSync(join(String(dir), "changes.patch"), stdout);
+    await using git = Bun.spawn({
+      cmd: ["git", "-c", "core.autocrlf=false", "apply", "../changes.patch"],
+      cwd: join(String(dir), "a"),
+      // The folder is no part of a repository the temporary directory may be in.
+      env: { ...bunEnv, GIT_CEILING_DIRECTORIES: String(dir) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [applyErr, applyExit] = await Promise.all([git.stderr.text(), git.exited]);
+    expect(applyErr).toBe("");
+    expect(files("a")).toEqual(want);
+    expect(applyExit).toBe(0);
+
+    expect(stdout).toContain(
+      "diff --git a/added-plain.txt b/added-plain.txt\nnew file mode 100644\nindex 0000000..e69de29\ndiff --",
+    );
+    expect(stdout).toContain(
+      "diff --git a/removed-plain.txt b/removed-plain.txt\ndeleted file mode 100644\nindex e69de29..0000000\ndiff --",
+    );
+    expect(stdout).toContain(
+      'diff --git "a/changed-with space.txt" "b/changed-with space.txt"\n--- "a/changed-with space.txt"\n+++ "b/changed-with space.txt"\n@@',
+    );
+    // No mode line is printed under a header that git skips, because GNU patch would apply it to the file above.
+    expect(stdout).toContain(
+      "diff --bun a/tool.bin b/tool.bin\nnew file\nBinary files differ (0 → 1 bytes, sha256 none → 6e340b9cffb3)\n",
+    );
+    expect(json.files.filter((f: any) => f.path.endsWith("ed-plain.txt")).map((f: any) => [f.status, f.patch])).toEqual(
+      [
+        ["added", ""],
+        ["modified", "@@ -1,1 +1,1 @@\n-1\n+2\n"],
+        ["deleted", ""],
+      ],
+    );
+  });
 
   test.skipIf(process.platform === "win32")(
     "folders: symlinked files are read through, symlinked folders skipped, unreadable files are an error",
@@ -886,7 +1641,7 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
       try {
         const denied = await run(["./a", "./c"]);
         // root reads anything; everyone else must get a loud failure, not a diff with a hole in it.
-        if (process.getuid?.() !== 0) {
+        if (!isRoot) {
           expect(denied.stderr).toContain("secret.js");
           expect(denied.exitCode).toBe(1);
         }
@@ -946,6 +1701,42 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
     expect(mixed.stderr).toBe("");
     expect(mixed.stdout.split("\n")[0]).toBe("./one.tar → diffme@2.0.0");
     expect(mixed.exitCode).toBe(0);
+  });
+
+  test("a tarball entry larger than 64 MiB is read whole", async () => {
+    // The tarball reader used to reject any entry over 64 MiB as "invalid archive entry size". blob.bin is the same
+    // bytes on both sides, so a tarball read that is short, skips the entry, or scrambles it shows up as a blob.bin line.
+    using dir = tempDir("pm-diff-big", {});
+    await using mk = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const size = 64 * 1024 * 1024 + 1;
+        // Each 64 KiB chunk has its own byte value, so a chunk read out of order or twice changes the bytes.
+        const blob = Buffer.alloc(size);
+        for (let i = 0; i < size; i += 65536) blob.fill((i / 65536) & 0xff, i, Math.min(i + 65536, size));
+        const pkg = JSON.stringify({ name: "diffme", version: "1.0.0" });
+        const files = { "package/package.json": pkg, "package/index.js": "module.exports = 1;\\n", "package/blob.bin": blob };
+        await Bun.write("big.tgz", await new Bun.Archive(files, { compress: "gzip" }).bytes());
+        await Bun.write("pkg/package.json", pkg);
+        await Bun.write("pkg/index.js", "module.exports = 2;\\n");
+        await Bun.write("pkg/blob.bin", blob);
+        `,
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, mkErr, mkExit] = await Promise.all([mk.stdout.text(), mk.stderr.text(), mk.exited]);
+    expect(mkErr).toBe("");
+    expect(mkExit).toBe(0);
+    const { stdout, stderr, exitCode } = await diff(["./big.tgz", "./pkg", "--name-only"], String(dir));
+    expect(stderr).toBe("");
+    expect(stdout.split("\n")[0]).toBe("./big.tgz → ./pkg");
+    expect(stdout.split("\n").filter(l => /^[AMD] /.test(l))).toEqual(["M index.js"]);
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -1045,17 +1836,304 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     // 2100 × 2100 candidate cells > the 4M-cell table cap.
     const n = 2100;
     const mk = (prefix: string) =>
-      Array.from({ length: n }, (_, i) => `function ${prefix}${i}(x) { return x + ${i}; }`).join("\n") +
+      Array.from({ length: n }, (_, i) => `function ${prefix}${i}(x) {\n  x++;\n  return x + ${i};\n}`).join("\n") +
       `\nmodule.exports = [${Array.from({ length: n }, (_, i) => `${prefix}${i}`).join(", ")}];\n`;
     const same = await pretty({ "a/big.js": mk("f"), "b/big.js": mk("g") });
     expect(same.text).toMatch(/\nbig\.js ─+ formatting only\n/);
     // …and one edit in the middle of it is found.
     const b = mk("g").replace("return x + 1000;", "return x * 1000;");
     const edited = await pretty({ "a/big.js": mk("f"), "b/big.js": b });
-    expect(changed(edited.text)).toStrictEqual([
-      "- function f1000(x) { return x + 1000; }",
-      "+ function g1000(x) { return x * 1000; }",
+    expect(changed(edited.text)).toStrictEqual(["-   return x + 1000;", "+   return x * 1000;"]);
+  });
+
+  // The `-` / `+` lines of each file in the terminal view, or "formatting only".
+  const byFile = (text: string) => {
+    const files: Record<string, string[]> = {};
+    let file = "";
+    for (const line of text.split("\n")) {
+      const header = /^(\S+) ─+ ?(.*)$/.exec(line);
+      if (header) files[(file = header[1])] = header[2].includes("formatting only") ? ["formatting only"] : [];
+      else if (/^ +[\d:]+ │[-+] /.test(line)) files[file].push(line.replace(/^ +[\d:]+ │/, ""));
+    }
+    return files;
+  };
+  const sides = (pairs: Record<string, string[]>) =>
+    Object.fromEntries(
+      Object.entries(pairs).flatMap(([name, [a, b]]) => [["a/" + name, a] as const, ["b/" + name, b] as const]),
+    );
+
+  test("lines are folded only while the file still prints the same with them folded", async () => {
+    const use = (which: string) =>
+      `function first(x) {\n  return check(x);\n}\nfunction second(x) {\n  return true;\n}\nexports.run = function (v) {\n  if (!${which}(v.k)) throw new Error("no");\n  return v;\n};\n`;
+    const template = (line: string) => "exports.text = `\nset -e\n" + line + "\necho done\n`;\n";
+    const block = (head: string, semi: string) => `${head}\n${semi}{\n  check();\n}\n`;
+    const nine = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+    const list = (more: string) =>
+      `exports.list = [\n${nine.map(i => `  /* @__PURE__ */ item(${i}),\n`).join("")}${more}];\n`;
+    const children = (fifth: string) =>
+      `export const a = () => (\n  <ul>\n${nine.map(i => `    <li>{${i === 4 ? fifth : `item(${i})`}}</li>\n`).join("")}  </ul>\n);\n`;
+    const body = (middle: string) =>
+      `const x = Number("1");\nconst y = x + 1;\n${middle}exports.a = y;\nexports.b = x;\n`;
+    // Each pair is two different programs: the view has to show what `--raw` shows.
+    const pairs: Record<string, string[]> = {
+      "use.js": [use("first"), use("second")],
+      "use.ts": [use("first").replaceAll("(x)", "(x: string)"), use("second").replaceAll("(x)", "(x: string)")],
+      "use-const.js": [
+        `const A = "one";\nconst B = "two";\nexports.at = A;\n`,
+        `const A = "one";\nconst B = "two";\nexports.at = B;\n`,
+      ],
+      "use-param.js": [
+        `exports.pick = function (a, b) {\n  return run(a);\n};\n`,
+        `exports.pick = function (a, b) {\n  return run(b);\n};\n`,
+      ],
+      "use-import.mjs": [
+        `import { first, second } from "./x.js";\nexport function run(v) {\n  return first(v);\n}\n`,
+        `import { first, second } from "./x.js";\nexport function run(v) {\n  return second(v);\n}\n`,
+      ],
+      "use-and-more.js": [use("first"), use("second").replaceAll("(x)", "(x, y)")],
+      "use-and-more-short.js": [
+        use("first").replaceAll("first", "a").replaceAll("second", "b"),
+        use("second").replaceAll("(x)", "(x, y)").replaceAll("first", "a").replaceAll("second", "b"),
+      ],
+      "use-added.js": [use("first").replace(/function second[^]*?\n}\n/, ""), use("second")],
+      "use-global-and-more.js": [
+        `const utils = { a() {} };\nexports.f = function (x) {\n  return utils.a(x);\n};\nexports.g = function (x) {\n  return utils.a(x) + 1;\n};\n`,
+        `const utils$1 = { a() {} };\nexports.f = function (x) {\n  return utils.a(x);\n};\nexports.g = function (x) {\n  return utils$1.a(x) + 2;\n};\n`,
+      ],
+      "use-global.js": [
+        `function first(x) {\n  return check(x);\n}\nexports.run = function (v) {\n  return first(v);\n};\n`,
+        `function other(x) {\n  return check(x);\n}\nexports.run = function (v) {\n  return first(v);\n};\n`,
+      ],
+      "export-function.mjs": [
+        `export function first() {\n  return 1;\n}\n`,
+        `export function second() {\n  return 1;\n}\n`,
+      ],
+      "export-const.mjs": [`export const first = 1;\n`, `export const second = 1;\n`],
+      "export-class.mjs": [`export class First {}\n`, `export class Second {}\n`],
+      "semi-if.js": [block("if (ok())", ""), block("if (ok())", ";\n")],
+      "semi-if-and-more.js": [block("if (ok())", ""), block("if (ok(1))", ";\n").replace("check()", "check(1)")],
+      "semi-for.js": [block("for (const f of files)", ""), block("for (const f of files)", ";\n")],
+      "semi-while.js": [block("while (next())", ""), block("while (next())", ";\n")],
+      "semi-else.js": [block("if (a) b();\nelse", ""), block("if (a) b();\nelse", ";\n")],
+      "brace.js": [
+        `if (debug) {\n  log(p);\n}\ncheck(p);\nopen(p);\n`,
+        `if (debug) {\n  log(p);\ncheck(p);\n}\nopen(p);\n`,
+      ],
+      "hole.js": [`exports.order = [\n  "a",\n  "b",\n];\n`, `exports.order = [\n  "a",\n  ,\n  "b",\n];\n`],
+      "template-space.js": [template("rm -rf $P/cache"), template("rm -rf $P /cache")],
+      "template-quote.js": [template(`echo "$T" > out`), template(`echo '$T' > out`)],
+      "template-semi.js": [template("a b"), template("a; b")],
+      "template-indent.js": [template("    run()"), template("run()")],
+      "template-tagged.js": [template("a b").replace("= `", "= tag`"), template("a  b").replace("= `", "= tag`")],
+      "string-continued.js": [`exports.s = "a \\\nb c";\n`, `exports.s = "a \\\nb  c";\n`],
+      "jsx-text.jsx": [
+        `export const a = (\n  <p>\n    x/y z\n  </p>\n);\n`,
+        `export const a = (\n  <p>\n    x /y z\n  </p>\n);\n`,
+      ],
+      "directive-space.js": [`"use strict";\nf();\n`, `"use  strict";\nf();\n`],
+      "directive-semi.js": [`"use strict";\nf();\n`, `;"use strict";\nf();\n`],
+      "directive-paren.js": [`"use strict";\nf();\n`, `("use strict");\nf();\n`],
+      "directive-escape.js": [`"use strict";\nf();\n`, `"use\\x20strict";\nf();\n`],
+      "hashbang.js": [`#!/usr/bin/env node\nf();\n`, `#!/usr/bin/envnode\nf();\n`],
+      "hashbang-space.js": [`#!/usr/bin/env node\nf();\n`, `#!/usr/bin/env  node\nf();\n`],
+      "pure.js": [`/* @__PURE__ */ run("a b");\nf();\n`, `/* @__PURE__ */ run("a  b");\nf();\n`],
+      "pure-added.js": [`f();\n`, `f();\n/* @__PURE__ */ String() || run("a");\n`],
+      "pure-added-inside.js": [
+        `exports.a = function (x) {\n  return x;\n};\n`,
+        `exports.a = function (x) {\n  /*#__PURE__*/ String() || run("a");\n  return x;\n};\n`,
+      ],
+      "pure-changed.js": [`/* @__PURE__ */ String() || first();\n`, `/* @__PURE__ */ String() || second();\n`],
+      "pure-removed.js": [`f();\n/* @__PURE__ */ String() || first();\n`, `f();\n`],
+      "pure-element.js": [list(""), list(`  /* @__PURE__ */ run("a"),\n`)],
+      "children.jsx": [children("item(4)"), children(`run("a")`)],
+      "directive-inside.js": [
+        `exports.f = function () {\n  "use strict";\n  return this;\n};\n`,
+        `exports.f = function () {\n  ;"use strict";\n  return this;\n};\n`,
+      ],
+      "directive-inside-removed.js": [
+        `exports.f = function () {\n  "use strict";\n  return this;\n};\n`,
+        `exports.f = function () {\n  return this;\n};\n`,
+      ],
+      "export-swap.mjs": [
+        `export function first() {\n  return true;\n}\nexport function second() {\n  return false;\n}\n`,
+        `export function second() {\n  return true;\n}\nexport function first() {\n  return false;\n}\n`,
+      ],
+      "export-swap-const.mjs": [
+        `export const A = "one";\nexport const B = "two";\n`,
+        `export const B = "one";\nexport const A = "two";\n`,
+      ],
+      "export-swap-pattern.mjs": [`export const [a, b] = [true, false];\n`, `export const [b, a] = [true, false];\n`],
+      "export-swap-enum.ts": [
+        `export enum A {\n  X = 1,\n}\nexport enum B {\n  X = 2,\n}\n`,
+        `export enum B {\n  X = 1,\n}\nexport enum A {\n  X = 2,\n}\n`,
+      ],
+      "export-swap-namespace.ts": [
+        `export namespace A {\n  export const x = 1;\n}\nexport namespace B {\n  export const x = 2;\n}\n`,
+        `export namespace B {\n  export const x = 1;\n}\nexport namespace A {\n  export const x = 2;\n}\n`,
+      ],
+      "export-equals.ts": [
+        `function a() {\n  return 1;\n}\nfunction b() {\n  return 2;\n}\nexport = a;\n`,
+        `function a() {\n  return 1;\n}\nfunction b() {\n  return 2;\n}\nexport = b;\n`,
+      ],
+      // The same statements in another order, or once more.
+      "order.js": [
+        `open({ host: "h", port: 1, tls: true, retry: 0 });\ncheck();\n`,
+        `check();\nopen({ host: "h", port: 1, tls: true, retry: 0 });\n`,
+      ],
+      "order-assign.js": [
+        `let t;\nt = { a: 1, b: 2, c: 3, d: 4 };\nt = null;\nexports.t = t;\n`,
+        `let t;\nt = null;\nt = { a: 1, b: 2, c: 3, d: 4 };\nexports.t = t;\n`,
+      ],
+      "order-return.js": [
+        `exports.f = function (a, b) {\n  if (a) return 1;\n  if (b) return 2;\n};\n`,
+        `exports.f = function (a, b) {\n  if (b) return 2;\n  if (a) return 1;\n};\n`,
+      ],
+      "twice.js": [`start();\npay(card);\nend();\n`, `start();\npay( card );\npay(card);\nend();\n`],
+      // Line ends that only JavaScript counts.
+      "separator-comment.js": [`/* a   b */\n` + body(""), `/* a   b */\n` + body(`run("a");\n`)],
+      "separator-string.js": [`const s = " ";\n` + body(""), `const s = " ";\n` + body(`run("a");\n`)],
+      "separator-paragraph.js": [`/* a   b */\n` + body(""), `/* a   b */\n` + body(`run("a");\n`)],
+      "separator-cr.js": [`/* a \r b */\n` + body(""), `/* a \r b */\n` + body(`run("a");\n`)],
+      "separator-removed.js": [`/* a   b */\n` + body(`run("a");\n`), `/* a   b */\n` + body("")],
+      "separator-added.js": [`/* a 1 */\n` + body(""), `/* a 2  */\n` + body(`run("a");\n`)],
+      // A line break that ends a statement, or no longer does.
+      "break-return.js": [`function f(v) {\n  return v;\n}\nf();\n`, `function f(v) {\n  return\n  v;\n}\nf();\n`],
+      "break-break.js": [
+        `a: for (;;) {\n  for (;;) {\n    break a;\n  }\n}\n`,
+        `a: for (;;) {\n  for (;;) {\n    break\n    a;\n  }\n}\n`,
+      ],
+      "break-continue.js": [
+        `a: for (; x(); ) {\n  for (; y(); ) {\n    continue a;\n  }\n}\n`,
+        `a: for (; x(); ) {\n  for (; y(); ) {\n    continue\n    a;\n  }\n}\n`,
+      ],
+      "break-yield.js": [`function* g(v) {\n  yield v;\n}\ng();\n`, `function* g(v) {\n  yield\n  v;\n}\ng();\n`],
+      "break-async.js": [`var async;\nasync function f() {}\nf();\n`, `var async;\nasync\nfunction f() {}\nf();\n`],
+      "break-postfix.js": [`let a = 1, b = 2;\na++\nb\nuse(a, b);\n`, `let a = 1, b = 2;\na\n++b\nuse(a, b);\n`],
+      "break-paren.js": [`const a = f;\n(g)();\nuse(a);\n`, `const a = f\n(g)();\nuse(a);\n`],
+      "break-bracket.js": [`const a = f;\n[1].forEach(g);\nuse(a);\n`, `const a = f\n[1].forEach(g);\nuse(a);\n`],
+      "break-template.js": ["const a = f;\n`x`.length;\nuse(a);\n", "const a = f\n`x`.length;\nuse(a);\n"],
+      "break-regex.js": [`let a = b;\n/x/g.exec(c);\nuse(a);\n`, `let a = b\n/x/g.exec(c);\nuse(a);\n`],
+    };
+    const [view, raw] = await Promise.all([pretty(sides(pairs)), pretty(sides(pairs), ["--raw"])]);
+    expect(Object.values(byFile(raw.text)).filter(lines => lines.length > 0).length).toBe(Object.keys(pairs).length);
+    expect(byFile(view.text)).toEqual(byFile(raw.text));
+    expect(view.exitCode).toBe(0);
+
+    // Each of these is the same program twice, except for the edit mentioned. The rest stays folded.
+    const same: Record<string, string[]> = {
+      "layout.js": [`exports.a = function (x) { return x + 1 }\n`, `exports.a = function (x) {\n  return x + 1;\n};\n`],
+      "names.js": [
+        `module.exports = function (xs) {\n  let t = 0;\n  for (const x of xs) t += x;\n  return t;\n};\n`,
+        `module.exports = function (a) {\n  let n = 0;\n  for (const v of a) n += v;\n  return n;\n};\n`,
+      ],
+      "hashbang.js": [`#!/usr/bin/env node\nf('a')\n`, `#!/usr/bin/env node\nf("a");\n`],
+      "directive.js": [
+        `'use strict'\nexports.f = function () { 'use strict'; return this }\n`,
+        `"use strict";\nexports.f = function () {\n  "use strict";\n  return this;\n};\n`,
+      ],
+      "await.mjs": [
+        `await ready;\nexport function f(a){return a+1}\n`,
+        `await ready;\nexport function f(a) {\n  return a + 1;\n}\n`,
+      ],
+      "separator.js": [
+        `/* a   b */\nexports.a = function (x) { return x + 1 }\n`,
+        `/* a   b */\nexports.a = function (x) {\n  return x + 1;\n};\n`,
+      ],
+      "export.mjs": [
+        `const t = 1;\nexport function first(a) { return a + t }\n`,
+        `const u = 1;\nexport function first(b) {\n  return b + u;\n}\n`,
+      ],
+      "layout-and-edit.js": [
+        `const s = 'a';\nexports.f = function (x) { return x + s }\nexports.g = 1;\n`,
+        `const s = "a";\nexports.f = function (x) {\n  return x + s;\n};\nexports.g = 2;\n`,
+      ],
+      "names-and-edit.js": [
+        `const utils = { a() {} };\nexports.f = function (x) {\n  return utils.a(x);\n};\nexports.g = 1;\n`,
+        `const utils$1 = { a() {} };\nexports.f = function (x) {\n  return utils$1.a(x);\n};\nexports.g = 2;\n`,
+      ],
+      "names-and-edit-of-a-use.js": [
+        `const utils = { a() {} };\nexports.f = function (x) {\n  return utils.a(x);\n};\nexports.g = function (x) {\n  return utils.a(x) + 1;\n};\n`,
+        `const utils$1 = { a() {} };\nexports.f = function (x) {\n  return utils$1.a(x);\n};\nexports.g = function (x) {\n  return utils$1.a(x) + 2;\n};\n`,
+      ],
+    };
+    expect(byFile((await pretty(sides(same))).text)).toEqual({
+      "layout.js": ["formatting only"],
+      "names.js": ["formatting only"],
+      "hashbang.js": ["formatting only"],
+      "directive.js": ["formatting only"],
+      "await.mjs": ["formatting only"],
+      "separator.js": ["formatting only"],
+      "export.mjs": ["formatting only"],
+      "layout-and-edit.js": ["- exports.g = 1;", "+ exports.g = 2;"],
+      "names-and-edit.js": ["- exports.g = 1;", "+ exports.g = 2;"],
+      "names-and-edit-of-a-use.js": ["-   return utils.a(x) + 1;", "+   return utils$1.a(x) + 2;"],
+    });
+  });
+
+  test("minified: the hashbang and exported names are compared too", async () => {
+    const long = "function(n,t){" + Array.from({ length: 40 }, (_, i) => `n.p${i}=t+${i};`).join("") + "return n}\n";
+    const files = byFile(
+      (
+        await pretty(
+          sides({
+            "bin.min.js": ["#!/usr/bin/env node\nmodule.exports=" + long, "#!/bin/sh\nmodule.exports=" + long],
+            "export.min.mjs": ["export function a" + long.slice(8), "export function b" + long.slice(8)],
+          }),
+        )
+      ).text,
+    );
+    expect(files["bin.min.js"]).toEqual(["- #!/usr/bin/env node", "+ #!/bin/sh"]);
+    expect(files["export.min.mjs"].map(line => line.replace(/\(.*/, ""))).toEqual([
+      "- export function a",
+      "+ export function b",
     ]);
+  });
+
+  test("minified: the re-print on screen starts where the file starts", async () => {
+    const long =
+      "module.exports=function(n,t){" +
+      Array.from({ length: 40 }, (_, i) => `n.p${i}=t+${i};`).join("") +
+      "return n};\n";
+    const banner = "/*! lib 1.0 | MIT */\n";
+    const files = byFile(
+      (
+        await pretty({
+          "a/keep.txt": "x\n",
+          "b/keep.txt": "x\n",
+          "a/strict.min.js": `"use strict";` + long,
+          "b/strict.min.js": long,
+          "a/strict-inside.min.js": long.replace("{", `{"use strict";`),
+          "b/strict-inside.min.js": long,
+          "a/strict-paren.min.js": `"use strict";` + long,
+          "b/strict-paren.min.js": `("use strict");` + long,
+          "b/new-bin.min.js": "#!/bin/sh\n" + long,
+          "b/new-strict.min.js": `"use strict";` + long,
+          "b/new-pure.min.js": banner + `/* @__PURE__ */ String()||run("a");` + long,
+          "b/new-pure-two.min.js": banner + `/*#__PURE__*/String()||run("a"),/*#__PURE__*/String()||run("b");` + long,
+        })
+      ).text,
+    );
+    expect(files["strict.min.js"]).toEqual([`- "use strict";`]);
+    expect(files["strict-inside.min.js"]).toEqual([`-   "use strict";`]);
+    expect(files["strict-paren.min.js"].map(line => line.slice(0, 2))).toEqual(["- ", "+ "]);
+    expect(files["new-bin.min.js"][0]).toBe("+ #!/bin/sh");
+    expect(files["new-strict.min.js"][0]).toBe(`+ "use strict";`);
+    expect(files["new-pure.min.js"].slice(0, 2)).toEqual(["+ /*! lib 1.0 | MIT */", `+ String() || run("a");`]);
+    expect(files["new-pure-two.min.js"].slice(0, 3)).toEqual([
+      "+ /*! lib 1.0 | MIT */",
+      `+ String() || run("a");`,
+      `+ String() || run("b");`,
+    ]);
+  });
+
+  test("a file that awaits at the top level is parsed like any other", async () => {
+    const { text, exitCode } = await pretty({
+      "a/t.mjs": `export const v = 1;\n`,
+      "b/t.mjs": `const cp = await import("node:child_process");\nexport const v = 1;\n`,
+    });
+    expect(text).not.toContain("not parsed");
+    expect(text).toContain("now imports node:child_process");
+    expect(exitCode).toBe(0);
   });
 
   test("minified: banner, renamed locals and spelling all compose onto the un-minified display", async () => {
@@ -1100,6 +2178,22 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     expect(text).not.toMatch(/│[-+].*"b"/);
     expect(text).toMatch(/\nbad\.css ─+ not parsed \+2 -1\n/);
     expect(text).toMatch(/\nbad\.json ─+ not parsed \+1 -1\n/);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a style sheet with url() is compared by its canonical print too", async () => {
+    const { text, exitCode } = await pretty({
+      "a/same.css": `.a{background:url(a.png)}@font-face{font-family:x;src:url("x.woff2")}`,
+      "b/same.css": `.a {\n  background: url(a.png);\n}\n@font-face {\n  font-family: x;\n  src: url("x.woff2");\n}\n`,
+      "a/moved.css": `.a{margin:0}.b{background:url(a.png)}`,
+      "b/moved.css": `.a { margin: 0 }\n.b { background: url(https://example.com/b.png) }\n`,
+    });
+    expect(text).toMatch(/\nsame\.css ─+ formatting only\n/);
+    expect(text).toMatch(/\nmoved\.css ─+ normalized \+1 -1\n/);
+    expect(changed(text)).toEqual([
+      '-   background: url("a.png");',
+      '+   background: url("https://example.com/b.png");',
+    ]);
     expect(exitCode).toBe(0);
   });
 

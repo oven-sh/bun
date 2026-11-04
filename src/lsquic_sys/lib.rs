@@ -1,5 +1,4 @@
-#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
-#![allow(clippy::missing_safety_doc)]
+#![allow(non_camel_case_types)]
 
 use core::ffi::{c_char, c_int, c_uint, c_ulong, c_void};
 
@@ -154,11 +153,9 @@ unsafe extern "C" {
     pub fn lsquic_conn_set_ctx(c: *mut lsquic_conn, ctx: *mut c_void);
     pub fn lsquic_conn_close(c: *mut lsquic_conn);
     fn lsquic_conn_going_away(c: *mut lsquic_conn);
-    pub fn lsquic_conn_abort(c: *mut lsquic_conn);
     pub fn lsquic_conn_status(c: *mut lsquic_conn, errbuf: *mut c_char, bufsz: usize) -> c_int;
     pub fn lsquic_conn_make_stream(c: *mut lsquic_conn);
     pub fn lsquic_conn_make_uni_stream(c: *mut lsquic_conn);
-    pub fn lsquic_conn_n_pending_streams(c: *const lsquic_conn) -> c_uint;
     pub fn lsquic_conn_get_sockaddr(
         c: *mut lsquic_conn,
         local: *mut *const sockaddr,
@@ -167,7 +164,6 @@ unsafe extern "C" {
     fn lsquic_conn_get_sni(c: *mut lsquic_conn) -> *const c_char;
     fn lsquic_conn_want_datagram_write(c: *mut lsquic_conn, is_want: c_int) -> c_int;
     fn lsquic_conn_crypto_cipher(c: *const lsquic_conn) -> *const c_char;
-    fn lsquic_conn_get_server_cert_chain(c: *mut lsquic_conn) -> *mut c_void;
     pub fn lsquic_conn_get_ssl(c: *const lsquic_conn) -> *mut c_void;
     pub fn lsquic_ssl_to_conn(ssl: *const c_void) -> *mut lsquic_conn;
     pub fn lsquic_conn_abort_error(
@@ -182,7 +178,7 @@ unsafe extern "C" {
         peer: c_int,
         out: *mut NqTransportParams,
     ) -> c_int;
-    pub fn us_nq_tp_size() -> usize;
+    pub safe fn us_nq_tp_size() -> usize;
 
     fn lsquic_stream_id(s: *const lsquic_stream) -> u64;
     pub fn lsquic_stream_conn(s: *const lsquic_stream) -> *mut lsquic_conn;
@@ -195,8 +191,8 @@ unsafe extern "C" {
     pub fn lsquic_stream_wantwrite(s: *mut lsquic_stream, is_want: c_int) -> c_int;
 
     pub fn us_nq_enable_logging(level: *const c_char);
-    pub fn us_nq_vtable_size() -> usize;
-    pub fn us_nq_settings_size() -> usize;
+    pub safe fn us_nq_vtable_size() -> usize;
+    pub safe fn us_nq_settings_size() -> usize;
     pub fn us_nq_settings_init(s: *mut lsquic_engine_settings, is_server: c_int, is_http: c_int);
     pub fn us_nq_engine_new(
         is_server: c_int,
@@ -209,7 +205,7 @@ unsafe extern "C" {
     pub fn us_nq_spec_local(s: *const lsquic_out_spec) -> *const sockaddr;
     pub fn us_nq_spec_peer_ctx(s: *const lsquic_out_spec) -> *mut c_void;
     pub fn us_nq_spec_iov(s: *const lsquic_out_spec, n: *mut usize) -> *const iovec;
-    pub fn us_nq_spec_stride() -> usize;
+    pub safe fn us_nq_spec_stride() -> usize;
     pub fn us_nq_stream_reset(s: *mut lsquic_stream, code: u64);
     pub fn us_nq_hset_pairs(hset: *mut c_void, len: *mut usize) -> *const c_char;
     pub fn us_nq_hset_free(hset: *mut c_void);
@@ -288,8 +284,7 @@ impl Settings {
     }
 
     pub fn new(is_server: bool, is_http: bool) -> Self {
-        // SAFETY: pure size query.
-        let size = unsafe { us_nq_settings_size() };
+        let size = us_nq_settings_size();
         let mut bytes = vec![0u8; size];
         // SAFETY: `bytes` is a fresh zeroed allocation of the right size.
         unsafe {
@@ -398,10 +393,6 @@ impl Conn {
         // SAFETY: as above.
         unsafe { lsquic_conn_going_away(self.0) }
     }
-    pub fn abort(&self) {
-        // SAFETY: as above.
-        unsafe { lsquic_conn_abort(self.0) }
-    }
     pub fn abort_silent(&self) {
         unsafe extern "C" {
             fn lsquic_conn_abort_silent(c: *mut lsquic_conn);
@@ -480,10 +471,6 @@ impl Conn {
         let p = unsafe { lsquic_conn_crypto_cipher(self.0) };
         // SAFETY: as above.
         (!p.is_null()).then(|| unsafe { core::ffi::CStr::from_ptr(p) })
-    }
-    pub fn server_cert_chain(&self) -> *mut c_void {
-        // SAFETY: as above.
-        unsafe { lsquic_conn_get_server_cert_chain(self.0) }
     }
     pub fn ssl(&self) -> *mut c_void {
         // SAFETY: as above.
@@ -756,11 +743,11 @@ impl NqTransportParams {
     }
 }
 
+bun_core::impl_zeroable!(NqTransportParams);
+
 impl Default for NqTransportParams {
     fn default() -> Self {
-        // SAFETY: `#[repr(C)]` POD (u64 / c_int / byte arrays); all-zero is a valid
-        // bit pattern for every field.
-        unsafe { core::mem::MaybeUninit::zeroed().assume_init() }
+        bun_core::ffi::zeroed()
     }
 }
 
@@ -778,14 +765,12 @@ impl Conn {
 
 pub fn debug_assert_layout() {
     debug_assert_eq!(
-        // SAFETY: pure size query.
-        unsafe { us_nq_vtable_size() },
+        us_nq_vtable_size(),
         core::mem::size_of::<NqVtable>(),
         "us_nq_vtable layout mismatch between node_quic_shim.c and lsquic_sys"
     );
     debug_assert_eq!(
-        // SAFETY: pure size query.
-        unsafe { us_nq_tp_size() },
+        us_nq_tp_size(),
         core::mem::size_of::<NqTransportParams>(),
         "us_nq_tp layout mismatch: peer_transport_params passes a stack \
          NqTransportParams that C fills with sizeof(struct us_nq_tp) bytes"

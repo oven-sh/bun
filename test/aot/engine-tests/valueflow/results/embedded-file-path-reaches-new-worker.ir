@@ -1,0 +1,47 @@
+# Two files are imported `with { type: "file" }`. Flow lists the paths that may be passed to `new Worker()`.
+# It follows the first path there, through an async function and beside an unknown string. The second path is printed, so it escapes, and the Worker may get an unknown value: a guess.
+# FORM: AsRead
+# RUN: valueflow-results
+# CHECK: worker-entry "/$bunfs/root/worker-1a2b3c4d.js"
+# CHECK-NEXT: worker-entry "/$bunfs/root/page-5e6f7a8b.js" guess
+
+variable g0 name="default" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g1 name="default" module=m1 declared={type=anything|absent} flags=[IsImmutable]
+module m0 path="/$bunfs/root/worker.js" displayPath="worker.js" kind=Data requireResult=DefaultExport body=f0 exports=[{name="default" variable=g0}]
+module m1 path="/$bunfs/root/page.js" displayPath="page.js" kind=Data requireResult=DefaultExport body=f1 exports=[{name="default" variable=g1}]
+module m2 path="/$bunfs/root/main.js" displayPath="main.js" flags=[HasTopLevelAwait] body=f2
+entry module=m2
+function f0 module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = String string="/$bunfs/root/worker-1a2b3c4d.js"
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f1 module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = String string="/$bunfs/root/page-5e6f7a8b.js"
+    PutModuleVariable v0 variable=g1
+    Return
+}
+function f2 name="main" module=m2 kind=Module flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Call v0
+    v2 = Await v1
+    v3 = Builtin builtin=Worker
+    v4 = Construct v3, -, v2
+    v5 = ImportModule module=m1 referrer=m2
+    v6 = Await v5
+    v7 = PropGet v6 key="default"
+    v8 = Builtin builtin=Console
+    v9 = PropGet v8 key="log"
+    v10 = Call v9, v8, v7
+    Return
+}
+function f3 name="find" module=m2 flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = ImportModule module=m0 referrer=m2
+    v1 = Await v0
+    v2 = PropGet v1 key="default"
+    Return v2
+}

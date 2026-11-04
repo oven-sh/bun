@@ -487,7 +487,6 @@ unsafe impl Allocator for AstAlloc {
         // `old.align()` alignment, and `new.size() <= old.size()` per the
         // `Allocator::shrink` contract. No `mi_realloc`: see `grow` note.
         debug_assert!(new.align() <= old.align());
-        let _ = old;
         Ok(NonNull::slice_from_raw_parts(ptr, new.size()))
     }
 }

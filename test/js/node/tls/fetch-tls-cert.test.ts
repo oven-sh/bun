@@ -4,16 +4,17 @@ import { once } from "node:events";
 import tls from "node:tls";
 import { join } from "path";
 
+type Certs = { key: string; cert: string; ca: string; single: string; subca: string };
 const client = {
   key: readFileSync(join(import.meta.dir, "fixtures", "ec10-key.pem"), "utf8"),
   cert: readFileSync(join(import.meta.dir, "fixtures", "ec10-cert.pem"), "utf8"),
   ca: readFileSync(join(import.meta.dir, "fixtures", "ca5-cert.pem"), "utf8"),
-};
+} as Certs;
 const server = {
   key: readFileSync(join(import.meta.dir, "fixtures", "agent10-key.pem"), "utf8"),
   cert: readFileSync(join(import.meta.dir, "fixtures", "agent10-cert.pem"), "utf8"),
   ca: readFileSync(join(import.meta.dir, "fixtures", "ca2-cert.pem"), "utf8"),
-};
+} as Certs;
 
 function split(file: any, into: any) {
   const certs = /([^]*END CERTIFICATE-----\r?\n)(-----BEGIN[^]*)/.exec(file) as RegExpExecArray;
@@ -26,7 +27,7 @@ split(client.cert, client);
 split(server.cert, server);
 
 // The certificates aren't for "localhost", so override the identity check.
-function checkServerIdentity(hostname: string, cert: any) {
+function checkServerIdentity(hostname: string, cert: any): undefined {
   expect(hostname).toBe("localhost");
   expect(cert.subject.CN).toBe("agent10.example.com");
 }
@@ -97,10 +98,7 @@ it("rejects a client cert the server's CA cannot verify, every time", async () =
   expect(served).toBe(0);
 });
 
-// Known gap: `ca` on a Bun.serve TLS server sets SSL_VERIFY_PEER|FAIL_IF_NO_PEER_CERT even
-// without `requestCert`, so the server demands a client cert and aborts (ECONNRESET).
-// Node only requests one when `requestCert: true`.
-it.todo("complete cert chains sent to peer, but without requesting client's cert.", async () => {
+it("complete cert chains sent to peer, but without requesting client's cert.", async () => {
   await connect({
     client: {
       ca: server.ca,
@@ -357,7 +355,7 @@ it("reports an invalid `tls.crl` with its own error code", async () => {
     fetch: () => new Response("ok"),
   });
   const error: any = await fetch(`https://localhost:${bunServer.port}/`, {
-    tls: { ca: server.ca, crl: "this is not a CRL", rejectUnauthorized: false },
+    tls: { ca: server.ca, crl: "this is not a CRL", rejectUnauthorized: false } as BunFetchRequestInitTLS,
   }).then(
     () => null,
     e => e,
@@ -380,7 +378,7 @@ it("fetch applies tls.sigalgs even when it is the only TLS option", async () => 
     // The fetch promise joins the race so an early client-side failure fails
     // the test immediately instead of timing out.
     const request = fetch(`https://127.0.0.1:${port}/`, {
-      tls: { rejectUnauthorized: false, sigalgs: "ecdsa_secp256r1_sha256" },
+      tls: { rejectUnauthorized: false, sigalgs: "ecdsa_secp256r1_sha256" } as BunFetchRequestInitTLS,
     }).then(
       () => "fetch-resolved",
       (error: Error & { code?: string }) => `fetch-rejected:${error.code ?? error.name}`,

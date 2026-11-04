@@ -26,8 +26,8 @@ struct CpuProfileNodeImpl {
     unsigned id { 0 };
     // UTF-8 copies kept for the profile's lifetime so GetFunctionNameStr()/
     // GetScriptResourceNameStr() can return stable `const char*`.
-    WTF::CString functionName;
-    WTF::CString scriptResourceName;
+    WTF::UTF8CString functionName;
+    WTF::UTF8CString scriptResourceName;
     int scriptId { 0 };
     // 1-based; 0 == kNoLineNumberInfo / kNoColumnNumberInfo.
     int lineNumber { 0 };

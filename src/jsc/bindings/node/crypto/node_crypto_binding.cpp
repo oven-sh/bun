@@ -48,6 +48,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCurves, (JSC::JSGlobalObject * lexicalGlobalObject
     const size_t numCurves = EC_get_builtin_curves(nullptr, 0);
     Vector<EC_builtin_curve> curves(numCurves);
     EC_get_builtin_curves(curves.begin(), numCurves);
+    std::ranges::sort(curves, [](const auto& a, const auto& b) { return strcmp(OBJ_nid2sn(a.nid), OBJ_nid2sn(b.nid)) < 0; });
 
     JSArray* result = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, numCurves);
     RETURN_IF_EXCEPTION(scope, {});
@@ -61,6 +62,29 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCurves, (JSC::JSGlobalObject * lexicalGlobalObject
     }
 
     return JSValue::encode(result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsGetHashes, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto names = ncrypto::getDigestNames();
+    JSArray* result = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, names.size());
+    RETURN_IF_EXCEPTION(scope, {});
+
+    for (size_t i = 0; i < names.size(); i++) {
+        result->putDirectIndex(lexicalGlobalObject, i, JSC::jsNontrivialString(vm, names[i].name));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    return JSValue::encode(result);
+}
+
+// For pbkdf2(), which is in Rust.
+extern "C" const EVP_MD* Bun__getDigestByName(const Latin1Character* name, size_t length)
+{
+    return ncrypto::getDigestByName(WTF::StringView(std::span { name, length }));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsGetCiphers, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -118,6 +142,12 @@ JSC_DEFINE_HOST_FUNCTION(jsCertVerifySpkac, (JSC::JSGlobalObject * lexicalGlobal
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "spkac"_s, 0, std::numeric_limits<int32_t>().max(), jsNumber(buffer.size()));
     }
 
+    // Not `false`: https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_spkac.cc#L26
+    if (buffer.empty()) {
+        return JSValue::encode(jsEmptyString(vm));
+    }
+
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     bool result = ncrypto::VerifySpkac(reinterpret_cast<const char*>(buffer.data()), buffer.size());
     return JSValue::encode(JSC::jsBoolean(result));
 }
@@ -137,6 +167,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCertExportPublicKey, (JSC::JSGlobalObject * lexicalGl
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "spkac"_s, 0, std::numeric_limits<int32_t>().max(), jsNumber(buffer.size()));
     }
 
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     auto bio = ncrypto::ExportPublicKey(reinterpret_cast<const char*>(buffer.data()), buffer.size());
     if (!bio) {
         return JSValue::encode(jsEmptyString(vm));
@@ -148,7 +179,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCertExportPublicKey, (JSC::JSGlobalObject * lexicalGl
         return JSValue::encode(jsEmptyString(vm));
     }
 
-    return JSValue::encode(jsString(vm, String::fromUTF8({ data, static_cast<size_t>(len) })));
+    RELEASE_AND_RETURN(scope, JSValue::encode(WebCore::createBuffer(lexicalGlobalObject, reinterpret_cast<const uint8_t*>(data), static_cast<size_t>(len))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsCertExportChallenge, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -166,20 +197,14 @@ JSC_DEFINE_HOST_FUNCTION(jsCertExportChallenge, (JSC::JSGlobalObject * lexicalGl
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "spkac"_s, 0, std::numeric_limits<int32_t>().max(), jsNumber(buffer.size()));
     }
 
-    auto cert = ncrypto::ExportChallenge(reinterpret_cast<const char*>(buffer.data()), buffer.size());
-    if (!cert.data || cert.len == 0) {
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
+    auto exported = ncrypto::ExportChallenge(reinterpret_cast<const char*>(buffer.data()), buffer.size());
+    ncrypto::DataPointer challenge(exported.data, exported.len);
+    if (!challenge) {
         return JSValue::encode(jsEmptyString(vm));
     }
 
-    auto result = JSC::ArrayBuffer::tryCreate({ reinterpret_cast<const uint8_t*>(cert.data), cert.len });
-    if (!result) {
-        return JSValue::encode(jsEmptyString(vm));
-    }
-
-    auto* bufferResult = JSC::JSUint8Array::create(lexicalGlobalObject, static_cast<Zig::GlobalObject*>(lexicalGlobalObject)->JSBufferSubclassStructure(), WTF::move(result), 0, cert.len);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    return JSValue::encode(bufferResult);
+    RELEASE_AND_RETURN(scope, JSValue::encode(WebCore::createBuffer(lexicalGlobalObject, challenge.span())));
 }
 
 // From node.js
@@ -190,8 +215,11 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue nameOrNid = callFrame->argument(0);
+    // Read through the validator: asInt32() is not valid for an integral number the
+    // JSValue holds as a double.
+    int32_t nid = 0;
     if (nameOrNid.isNumber()) {
-        Bun::V::validateInt32(scope, lexicalGlobalObject, nameOrNid, "nameOrNid"_s, jsUndefined(), jsUndefined());
+        Bun::V::validateInt32(scope, lexicalGlobalObject, nameOrNid, "nameOrNid"_s, jsUndefined(), jsUndefined(), &nid);
         RETURN_IF_EXCEPTION(scope, {});
     } else if (!nameOrNid.isString()) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "nameOrNid"_s, "string or number"_s, nameOrNid);
@@ -199,8 +227,8 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
 
     JSValue options = callFrame->argument(1);
 
-    std::optional<int32_t> keyLengthOpt = std::nullopt;
-    std::optional<int32_t> ivLengthOpt = std::nullopt;
+    std::optional<uint32_t> keyLengthOpt = std::nullopt;
+    std::optional<uint32_t> ivLengthOpt = std::nullopt;
     if (!options.isUndefined()) {
         V::validateObject(scope, lexicalGlobalObject, options, "options"_s);
         RETURN_IF_EXCEPTION(scope, {});
@@ -211,14 +239,14 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
         JSValue ivLengthValue = optionsObj->get(lexicalGlobalObject, Identifier::fromString(vm, "ivLength"_s));
         RETURN_IF_EXCEPTION(scope, {});
         if (!keyLengthValue.isUndefined()) {
-            int32_t length = 0;
-            V::validateInt32(scope, lexicalGlobalObject, keyLengthValue, "keyLength"_s, jsUndefined(), jsUndefined(), &length);
+            uint32_t length = 0;
+            V::validateUint32(scope, lexicalGlobalObject, keyLengthValue, "options.keyLength"_s, jsUndefined(), &length);
             RETURN_IF_EXCEPTION(scope, {});
             keyLengthOpt = length;
         }
         if (!ivLengthValue.isUndefined()) {
-            int32_t length = 0;
-            V::validateInt32(scope, lexicalGlobalObject, ivLengthValue, "ivLength"_s, jsUndefined(), jsUndefined(), &length);
+            uint32_t length = 0;
+            V::validateUint32(scope, lexicalGlobalObject, ivLengthValue, "options.ivLength"_s, jsUndefined(), &length);
             RETURN_IF_EXCEPTION(scope, {});
             ivLengthOpt = length;
         }
@@ -226,7 +254,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
 
     const ncrypto::Cipher cipher = [&] {
         if (nameOrNid.isNumber()) {
-            return ncrypto::Cipher::FromNid(nameOrNid.asInt32());
+            return ncrypto::Cipher::FromNid(nid);
         }
 
         String name = nameOrNid.toWTFString(lexicalGlobalObject);
@@ -240,13 +268,14 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
         return JSValue::encode(jsUndefined());
     }
 
-    int32_t keyLength = cipher.getKeyLength();
-    int32_t ivLength = cipher.getIvLength();
+    uint32_t keyLength = cipher.getKeyLength();
+    uint32_t ivLength = cipher.getIvLength();
     int32_t blockSize = cipher.getBlockSize();
     ASCIILiteral modeLabel = cipher.getModeLabel();
     String name = cipher.getName();
 
     if (keyLengthOpt.has_value() || ivLengthOpt.has_value()) {
+        ncrypto::ClearErrorOnReturn clearErrorOnReturn;
         auto ctx = ncrypto::CipherCtxPointer::New();
         if (!ctx.init(cipher, true)) {
             return JSValue::encode(jsUndefined());
@@ -260,7 +289,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
         }
 
         if (ivLengthOpt.has_value()) {
-            int32_t length = ivLengthOpt.value();
+            uint32_t length = ivLengthOpt.value();
             if (cipher.isCcmMode()) {
                 if (length < 7 || length > 13) {
                     return JSValue::encode(jsUndefined());
@@ -279,24 +308,16 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
         }
     }
 
-    JSObject* result = JSC::constructEmptyObject(lexicalGlobalObject);
-
-    if (!modeLabel.isEmpty()) {
-        Bun::putDirectNamed(vm, result, "mode"_s, jsString(vm, String::fromUTF8(modeLabel)));
-    }
-
+    // Like Node's, it has no prototype and always has all six properties.
+    JSObject* result = JSC::constructEmptyObject(vm, lexicalGlobalObject->nullPrototypeObjectStructure());
+    Bun::putDirectNamed(vm, result, "mode"_s, modeLabel.isEmpty() ? jsUndefined() : jsString(vm, String::fromUTF8(modeLabel)));
     Bun::putDirectNamed(vm, result, "name"_s, jsString(vm, name.convertToASCIILowercase()));
     Bun::putDirectNamed(vm, result, "nid"_s, jsNumber(cipher.getNid()));
-
-    if (!cipher.isStreamMode()) {
-        Bun::putDirectNamed(vm, result, "blockSize"_s, jsNumber(blockSize));
-    }
-
-    if (ivLength != 0) {
-        Bun::putDirectNamed(vm, result, "ivLength"_s, jsNumber(ivLength));
-    }
-
     Bun::putDirectNamed(vm, result, "keyLength"_s, jsNumber(keyLength));
+    // Stream ciphers do not have a meaningful block size
+    Bun::putDirectNamed(vm, result, "blockSize"_s, cipher.isStreamMode() ? jsUndefined() : jsNumber(blockSize));
+    // Ciphers that do not use an IV shouldn't report a length
+    Bun::putDirectNamed(vm, result, "ivLength"_s, ivLength == 0 ? jsUndefined() : jsNumber(ivLength));
 
     return JSValue::encode(result);
 }
@@ -315,6 +336,10 @@ __attribute__((minsize)) JSValue createNodeCryptoBinding(Zig::GlobalObject* glob
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "getCurves"_s)),
         JSFunction::create(vm, globalObject, 0, "getCurves"_s, jsGetCurves, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "oneShotDigest"_s)),
+        JSFunction::create(vm, globalObject, 5, "oneShotDigest"_s, jsOneShotDigest, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "getHashes"_s)),
+        JSFunction::create(vm, globalObject, 0, "getHashes"_s, jsGetHashes, ImplementationVisibility::Public, NoIntrinsic), 0);
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "getCiphers"_s)),
         JSFunction::create(vm, globalObject, 0, "getCiphers"_s, jsGetCiphers, ImplementationVisibility::Public, NoIntrinsic), 0);
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "getCipherInfo"_s)),
@@ -364,12 +389,6 @@ __attribute__((minsize)) JSValue createNodeCryptoBinding(Zig::GlobalObject* glob
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "KeyObject"_s)),
         globalObject->m_JSKeyObjectClassStructure.constructor(globalObject));
-    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "SecretKeyObject"_s)),
-        globalObject->m_JSSecretKeyObjectClassStructure.constructor(globalObject));
-    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "PublicKeyObject"_s)),
-        globalObject->m_JSPublicKeyObjectClassStructure.constructor(globalObject));
-    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "PrivateKeyObject"_s)),
-        globalObject->m_JSPrivateKeyObjectClassStructure.constructor(globalObject));
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "publicEncrypt"_s)),
         JSFunction::create(vm, globalObject, 2, "publicEncrypt"_s, jsPublicEncrypt, ImplementationVisibility::Public, NoIntrinsic), 0);

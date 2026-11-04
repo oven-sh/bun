@@ -1,6 +1,7 @@
 import { test } from "bun:test";
 import { once } from "node:events";
 import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 test("abort the request on the other side if the stream is canceled", async () => {
   const { promise: abort, resolve: resolveAbort } = Promise.withResolvers();
   await using server = createServer((req, res) => {
@@ -11,17 +12,17 @@ test("abort the request on the other side if the stream is canceled", async () =
   }).listen(0);
   await once(server, "listening");
 
-  const url = new URL(`http://127.0.0.1:${server.address().port}`);
+  const url = new URL(`http://127.0.0.1:${(server.address() as AddressInfo).port}`);
 
   const response = await fetch(url);
 
-  const reader = response.body.getReader();
+  const reader = response.body!.getReader();
 
   try {
     await reader.read();
   } finally {
     reader.releaseLock();
-    await response.body.cancel();
+    await response.body!.cancel();
   }
 
   await abort;

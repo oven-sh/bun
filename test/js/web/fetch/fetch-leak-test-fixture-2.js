@@ -1,9 +1,6 @@
 import { heapStats } from "bun:jsc";
 
-const rss =
-  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? Bun.unsafe.memoryFootprint
-    : process.memoryUsage.rss;
+const rss = process.memoryUsage.rss;
 
 const { SERVER } = process.env;
 

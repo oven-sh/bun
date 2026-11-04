@@ -1,0 +1,6 @@
+# sabotage=RememberedReadsOutlastWrites: the program answers something else
+# FORM: AsRead
+# RUN: run-in-shell
+# OPTIONS: sabotage=RememberedReadsOutlastWrites
+# CHECK-NOT: one 1,1,21,21,21,21,21,21,23,23,23,23,23/24
+# PROGRAM-OF: remembered-reads-outlast-writes-left-alone.ir

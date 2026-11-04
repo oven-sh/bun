@@ -290,7 +290,7 @@ const final_contents = `// GENERATED CODE - DO NOT MODIFY BY HAND
 #include "uv-posix-polyfills.h"
 
 
-#if OS(LINUX) || OS(DARWIN)
+#if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
 ${parts.map(([stub, _]) => stub).join("\n\n")}
 #endif
 
@@ -390,9 +390,3 @@ await Bun.write(plugin_path_, test_plugin_contents);
 if (Bun.which("clang-format")) {
   await Bun.$`clang-format -i ${plugin_path_}`.quiet();
 }
-
-// for (const symbol of symbols) {
-// await generate("uv_if_indextoiid");
-// }
-
-// console.log("DONE");

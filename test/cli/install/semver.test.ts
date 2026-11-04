@@ -709,6 +709,12 @@ describe("Bun.semver.satisfies()", () => {
       testSatisfies(`>=1.x.${big}-2`, "0.9.0", false);
       testSatisfies(`1.x.${big}+2`, "1.5.0", true);
       testSatisfies(`1.x.${big}+2`, "2.5.0", false);
+      // Ignoring that number does not excuse what makes the token invalid otherwise: a fourth
+      // part or a wildcard attached to a number, which npm refuses after a small number too.
+      for (const range of [`1.x.${big}.4`, `1.x.${big}x`, `1.0.0 - 1.x.${big}.4`, `>=1.x.${big}.4`]) {
+        testSatisfies(range, "1.5.0", false);
+        testSatisfies(range, "4.0.0", false);
+      }
     }
 
     // u64::MAX itself still fits: the same shapes keep their meaning.
@@ -1592,7 +1598,15 @@ describe("Bun.semver.satisfies()", () => {
       ["1.2.3", "1.0.0\n-\n2.0.0", true],
       ["1.2.3", "  1.2.3  ||  4.5.6  ", true],
       ["4.5.6", "1.2.3\n||\n4.5.6", true],
+      ["1.2.3", "1.2.3\x0B||\x0C4.5.6", true],
+      ["1.2.3", "\x0C^1.0.0\x0B", true],
       ["1.2.3", "^1.0.0\tfoo", false],
+      // A prerelease tag is a slice of the collapsed range, not of the range as given.
+      ["1.2.3-alpha.beta.1", "  >=1.2.3-alpha.beta.2", false],
+      ["1.2.3-alpha.beta.3", "  >=1.2.3-alpha.beta.2", true],
+      ["1.2.3-alpha.beta.2", ">=1.2.3-alpha.beta.1\r\n<1.2.3-alpha.beta.9", true],
+      ["1.2.3-alpha.beta.9", ">=1.2.3-alpha.beta.1\r\n<1.2.3-alpha.beta.9", false],
+      ["1.2.3-alpha.beta.0", ">=1.2.3-alpha.beta.1\r\n<1.2.3-alpha.beta.9", false],
     ]);
   });
 
@@ -1731,7 +1745,7 @@ test("a range with a number above u64::MAX gives the same answers as node-semver
 
   const small = ["0", "1", "2", "10"];
   const wildcard = ["x", "X", "*"];
-  const suffix = ["", "", "", "-2", "-0", "-beta.1", "+2"];
+  const suffix = ["", "", "", "-2", "-0", "-beta.1", "+2", ".4", "x"];
   const comparing = [">=", ">", "<", "<=", "^", "~"];
   const operator = ["", "", "=", "v", "~>", ...comparing];
 

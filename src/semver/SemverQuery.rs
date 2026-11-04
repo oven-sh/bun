@@ -755,14 +755,18 @@ pub fn parse_including_prerelease(input: &[u8], sliced: SlicedString) -> Result<
 /// What node-semver's `new Range(text)` reads.
 pub struct NpmRange<'a> {
     /// `text` trimmed, with each run of whitespace collapsed to one space. The prerelease tags of
-    /// `group` are slices of it.
+    /// `group` are offsets into it, so `group.satisfies` takes `raw`, never `text`.
     pub raw: Cow<'a, [u8]>,
     pub group: Group,
 }
 
-/// `None` where node-semver's `new Range(text)` throws: a part of `text` is not a comparator
-/// (`latest`, `>=1 && <2`, `1.2.3.4`). `parse` reads such a part as `*` instead, for the ranges
-/// that published packages have.
+/// `None` where `parse` skipped text it cannot read as a comparator (`latest`, `>=1 && <2`,
+/// `1.2.3.4`, `2x`). node-semver's `new Range(text)` throws for each of those, and `parse` reads
+/// them as `*`, for the ranges that published packages have.
+///
+/// It is not the same test as node-semver's. node also throws for `01.2.3`, `1.0.0rc1`,
+/// `^16 | ^18` and a hyphen range beside another comparator (`1.2.3 - 2.3.4 4.5.6`), which this
+/// reads, and it accepts `*1.0.0`, which this refuses.
 pub fn parse_npm(text: &[u8]) -> Result<Option<NpmRange<'_>>, AllocError> {
     let raw = collapse_whitespace(text);
     let group = parse(&raw, SlicedString::init(&raw, &raw))?;
@@ -772,21 +776,14 @@ pub fn parse_npm(text: &[u8]) -> Result<Option<NpmRange<'_>>, AllocError> {
 /// node-semver's `Range.raw`. `parse` only reads `b' '` between comparators, so `>=1\t<2` must
 /// become `>=1 <2` before it. Borrows `text` when it already has that shape.
 fn collapse_whitespace(text: &[u8]) -> Cow<'_, [u8]> {
-    const WHITESPACE: &[u8] = b" \t\n\r\x0B\x0C";
-    let mut prev = b' ';
-    let collapsed = text.iter().all(|&c| {
-        let single = match c {
-            b' ' => prev != b' ',
-            b'\t' | b'\n' | b'\r' | b'\x0B' | b'\x0C' => false,
-            _ => true,
-        };
-        prev = c;
-        single
-    }) && !text.ends_with(b" ");
+    let collapsed = strings::index_of_any(text, b"\t\n\r\x0B\x0C").is_none()
+        && !strings::contains(text, b"  ")
+        && !text.starts_with(b" ")
+        && !text.ends_with(b" ");
     if collapsed {
         return Cow::Borrowed(text);
     }
-    let words = strings::split_any(text, WHITESPACE).filter(|it| !it.is_empty());
+    let words = strings::split_any(text, &strings::WHITESPACE_CHARS).filter(|it| !it.is_empty());
     Cow::Owned(words.collect::<Vec<_>>().join(&b" "[..]))
 }
 
@@ -908,7 +905,7 @@ fn parse_with(input: &[u8], sliced: SlicedString, floor: Tag) -> Result<Group, A
             if parse_result.overflow {
                 return Ok(Group::null_set());
             }
-            if !parse_result.valid && !parse_result.overflow_after_wildcard {
+            if !parse_result.valid_for_range {
                 list.flags.set(Flags::SKIPPED);
             }
             let version = parse_result.version.min();
@@ -972,7 +969,7 @@ fn parse_with(input: &[u8], sliced: SlicedString, floor: Tag) -> Result<Group, A
                 if second_parsed.overflow {
                     return Ok(Group::null_set());
                 }
-                if !second_parsed.valid && !second_parsed.overflow_after_wildcard {
+                if !second_parsed.valid_for_range {
                     list.flags.set(Flags::SKIPPED);
                 }
                 let second_version = second_parsed.version.min();

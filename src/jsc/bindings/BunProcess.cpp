@@ -18,6 +18,7 @@
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/ProxyObject.h>
+#include <JavaScriptCore/PyExec.h>
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSMicrotask.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -2327,6 +2328,9 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionExecve, __attribute__((
     }
 
     int savedErrno;
+    // A signal from Python's faulthandler.dump_traceback_later() that is still on
+    // its way would kill the replacement process.
+    std::optional<JSC::Python::WithoutWakeSignal> withoutWakeSignal { std::in_place };
 
 #if OS(DARWIN)
     // macOS lacks SOCK_CLOEXEC/close_range, so use posix_spawn with the Apple
@@ -2393,6 +2397,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionExecve, __attribute__((
     // execve(2) failed; put back the signal mask we cleared above.
     pthread_sigmask(SIG_SETMASK, &previousMask, nullptr);
 #endif
+    withoutWakeSignal.reset();
 
     // execve(2) failed and the original image is still running. Restore the
     // FD_CLOEXEC flags we cleared on stdio, then throw back to JS so the

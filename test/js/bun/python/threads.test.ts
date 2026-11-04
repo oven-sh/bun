@@ -679,3 +679,40 @@ threading._register_atexit(lambda: print("shutting down", flush=True))
   expect(stderr.trimEnd()).toEndWith("KeyboardInterrupt");
   expect(exitCode).toBe(0);
 });
+
+it("process.execve() while tracebacks of faulthandler fall due", async () => {
+  // The thread of dump_traceback_later() gets the main thread's attention with a signal, which the new program does not expect.
+  using dir = tempDir("python-threads", {
+    "later.py": `
+import faulthandler, os, tempfile
+
+log = tempfile.TemporaryFile()
+
+def later(seconds):
+    faulthandler.dump_traceback_later(seconds, repeat=True, file=log)
+
+def written():
+    return os.fstat(log.fileno()).st_size
+`,
+    "main.js": `
+import later from "./later.py";
+later.later(0.000005);
+while (later.written() < 20000);
+process.execve("/bin/echo", ["echo", "the new program"], {});
+`,
+  });
+  const results = await Promise.all(
+    Array.from({ length: 8 }, async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "ignore",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      return { stdout, exitCode, signalCode: proc.signalCode };
+    }),
+  );
+  expect(results).toEqual(Array(8).fill({ stdout: "the new program\n", exitCode: 0, signalCode: null }));
+});

@@ -69,9 +69,14 @@ const tracked: Set<string> | null = (() => {
   return new Set(r.stdout.toString().split("\0").filter(Boolean));
 })();
 
+// An optional turbofish. Its arguments may nest: `::<Vec<Option<u8>>>`.
+const TURBOFISH = String.raw`(?:::<(?:[^<>]|<(?:[^<>]|<[^<>]*>)*>)*>)?`;
+// An optional path in front of a name: `core::ptr::`, `NonNull::<u8>::`.
+const PATH = String.raw`(?:::)?(?:\w+${TURBOFISH}::)*`;
+
 // Everything that turns a raw pointer back into an owning `Box` (and so frees
 // it on drop), optionally path-qualified and turbofished.
-const RECLAIM = String.raw`(?:heap::(?:take|destroy)|Box(?:::<[^>]*>)?::from_(?:raw|non_null))(?:::<[^>]*>)?\s*\(\s*`;
+const RECLAIM = String.raw`(?:heap::(?:take|destroy)|Box${TURBOFISH}::from_(?:raw|non_null))${TURBOFISH}\s*\(\s*`;
 
 // The ways of spelling "`self`, as a raw pointer" as the first argument.
 // `(?!\s*\.)` after a bare `self` keeps `&raw mut *self.field` (a field's
@@ -80,11 +85,11 @@ const RECLAIM = String.raw`(?:heap::(?:take|destroy)|Box(?:::<[^>]*>)?::from_(?:
 const SELF_AS_POINTER = [
   // `heap::take(self)`: `&mut T` coerces to `*mut T` at the call.
   String.raw`self\s*,?\s*\)`,
-  String.raw`(?:[\w:]+::)?from_(?:mut|ref)(?:::<[^>]*>)?\(\s*self\s*\)`,
-  String.raw`(?:[\w:]+::)?NonNull::from\(\s*self\s*\)`,
+  String.raw`${PATH}from_(?:mut|ref)${TURBOFISH}\(\s*self\s*\)`,
+  String.raw`${PATH}NonNull${TURBOFISH}::from\(\s*self\s*\)`,
   String.raw`self\s+as\s+\*(?:mut|const)\b`,
   String.raw`&\s*(?:raw\s+(?:mut|const)|mut)\s+\*\s*self\b(?!\s*\.)`,
-  String.raw`(?:[\w:]+::)?addr_of(?:_mut)?!\s*\(\s*\*\s*self\s*\)`,
+  String.raw`${PATH}addr_of(?:_mut)?!\s*\(\s*\*\s*self\s*\)`,
 ].join("|");
 
 // The ways of spelling "a pointer that is not known to be the owner's" as the
@@ -93,11 +98,11 @@ const SELF_AS_POINTER = [
 // not among them.
 const SHARED_AS_POINTER = [
   // `ptr::from_ref(x)`, `NonNull::from_ref(x)`.
-  String.raw`(?:[\w:]+::)?from_ref(?:::<[^>]*>)?\(`,
-  String.raw`(?:[\w:]+::)?NonNull::from\(\s*&(?!\s*(?:mut|raw\s+mut)\b)`,
+  String.raw`${PATH}from_ref${TURBOFISH}\(`,
+  String.raw`${PATH}NonNull${TURBOFISH}::from\(\s*&(?!\s*(?:mut|raw\s+mut)\b)`,
   // `&x as *const _ as *mut _`, `&raw const x`.
   String.raw`&(?!\s*(?:mut|raw\s+mut)\b)`,
-  String.raw`(?:[\w:]+::)?addr_of!\s*\(`,
+  String.raw`${PATH}addr_of!\s*\(`,
 ].join("|");
 
 // `(?:\(\s*)*`: the pointer expression may be parenthesized before its cast.
@@ -184,6 +189,13 @@ test("the pattern recognizes the spellings it claims to", () => {
     "unsafe { heap::destroy((&raw const *list).cast_mut()) }",
     "unsafe { heap::take(core::ptr::addr_of!(*text).cast_mut()) }",
     "unsafe { heap::destroy(&raw const (*this).header as *mut Header) }",
+    // A turbofish with nested arguments, on the call or on its path.
+    "unsafe { heap::destroy(ptr::from_ref::<Vec<u8>>(list).cast_mut()) }",
+    "unsafe { Box::from_non_null(NonNull::<u8>::from(&*p)) }",
+    "unsafe { Box::from_non_null(core::ptr::NonNull::<Vec<u8>>::from_ref(list)) }",
+    "drop(unsafe { Box::<Vec<Option<u8>>>::from_raw(self) });",
+    "unsafe { heap::take(ptr::from_mut::<Vec<u8>>(self)) }",
+    "unsafe { Box::from_non_null(NonNull::<Self>::from(self)) }",
   ];
   const allowed = [
     // Freeing something the receiver owns is fine.
@@ -212,6 +224,10 @@ test("the pattern recognizes the spellings it claims to", () => {
     "drop(unsafe { Box::from_raw(&mut *other) });",
     "drop(unsafe { Box::from_raw(&raw mut *other) });",
     "unsafe { heap::destroy(core::ptr::addr_of_mut!((*this).inner)) }",
+    // The same turbofish on a pointer that may free.
+    "unsafe { heap::take(ptr::from_mut::<Vec<u8>>(other)) }",
+    "unsafe { Box::from_non_null(NonNull::<Vec<u8>>::from(&mut *slot)) }",
+    "drop(unsafe { Box::<Vec<Option<u8>>>::from_raw(self.list) });",
   ];
   expect(banned.filter(s => !matches(s))).toEqual([]);
   expect(allowed.filter(matches)).toEqual([]);

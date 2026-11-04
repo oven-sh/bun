@@ -166,6 +166,9 @@ async function orders() {
     "SubtleCrypto with an algorithm and a usage that are not known": await run(() =>
       subtle.generateKey({ name: "bogus" }, true, [logged("bogus")]),
     ),
+    "KeyObject.toCryptoKey with an algorithm and a usage that are not known": await run(() =>
+      createSecretKey(new Uint8Array(32)).toCryptoKey({ name: "bogus" }, true, [logged("bogus")]),
+    ),
   };
 }
 

@@ -1993,6 +1993,11 @@ describe("keyUsages", () => {
     "an array that an entry appends to": { log: ["toString sign", "toString verify"], answer: ["sign", "verify"] },
     // Every argument is converted before the algorithm is normalized.
     "SubtleCrypto with an algorithm and a usage that are not known": { log: ["toString bogus"], answer: bogus },
+    // The algorithm is normalized before keyUsages is converted.
+    "KeyObject.toCryptoKey with an algorithm and a usage that are not known": {
+      log: [],
+      answer: { name: "NotSupportedError", code: 9, message: "Unrecognized algorithm name" },
+    },
   };
 
   let bun: Awaited<ReturnType<typeof report>>;

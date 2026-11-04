@@ -64,21 +64,21 @@ for (const [name, names] of Object.entries(trees)) {
   const lastFile = names.file(0);
 
   for (const [api, walk] of Object.entries(walks)) {
-    group(`${api}, ${name} names`, () => {
-      for (const [way, [start, depth]] of Object.entries(ways)) {
-        bench(`${way}, no maxDepth`, () => walk(`${start}**/*.txt`, { cwd }));
-        bench(`${way}, maxDepth: 100`, () => walk(`${start}**/*.txt`, { cwd, maxDepth: 100 }));
-        bench(`${way}, no match`, () => walk(`${start}**/*.none`, { cwd, maxDepth: 100 }));
-        bench(`${way}, no wildcard in the last part`, () =>
-          walk(`${start}*/*/*/*/${lastFile}`, { cwd, maxDepth: 100 }),
-        );
+    for (const [way, [start, depth]] of Object.entries(ways)) {
+      group(`${api}, ${name} names, ${way}`, () => {
+        bench("no maxDepth", () => walk(`${start}**/*.txt`, { cwd }));
+        bench("maxDepth: 100", () => walk(`${start}**/*.txt`, { cwd, maxDepth: 100 }));
+        bench("no match", () => walk(`${start}**/*.none`, { cwd, maxDepth: 100 }));
+        bench("no wildcard in the last part", () => walk(`${start}*/*/*/*/${lastFile}`, { cwd, maxDepth: 100 }));
         // 4 of the 121 directories are read.
-        bench(`${way}, a limit that cuts`, () => walk(`${start}**/*.txt`, { cwd, maxDepth: depth + 2 }));
-      }
-      bench("below cwd, two patterns", () => walk(["**/*.txt", "*/*/*"], { cwd, maxDepth: 100 }));
+        bench("a limit that cuts", () => walk(`${start}**/*.txt`, { cwd, maxDepth: depth + 2 }));
+      });
+    }
+    group(`${api}, ${name} names`, () => {
+      bench("two patterns", () => walk(["**/*.txt", "*/*/*"], { cwd, maxDepth: 100 }));
       // The matches of `maxDepth: 100` from a function for `exclude`, with no `maxDepth`.
-      bench("below cwd, exclude function", () => walk("**/*.txt", { cwd, exclude: tooDeep }));
-      bench("the entries of the directory above cwd", () => walk("../*", { cwd, maxDepth: 100 }));
+      bench("exclude function", () => walk("**/*.txt", { cwd, exclude: tooDeep }));
+      bench("the directory above cwd", () => walk("../*", { cwd, maxDepth: 100 }));
     });
   }
 }

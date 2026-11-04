@@ -827,11 +827,19 @@ describe("maxDepth", () => {
     }
     const top = `${String(dir).replaceAll(sep, "/")}/Top`;
     const asked: Asked = isWindows || isMacOS ? "a path below cwd" : "no path";
+    // A wildcard with "ROOT" at the limit: the walk reads "ROOT", and asks about a file in it, only where it is cwd.
+    const askedAtTheLimit: Asked = volumeFoldsCase
+      ? "a path below cwd"
+      : isWindows || isMacOS
+        ? "no path below cwd"
+        : "no path";
     const rows: CountRow[] = [
       [`${top}/ROOT/f.txt`, 2, volumeFoldsCase ? [`${top}/ROOT/f.txt`] : [], asked],
       [`${top}/ROOT/f.txt`, 3, [`${top}/ROOT/f.txt`], asked],
       ["../ROOT/f.txt", 2, volumeFoldsCase ? ["../ROOT/f.txt"] : [], asked],
       ["../ROOT/*.txt", 3, volumeFoldsCase ? ["../ROOT/f.txt"] : ["../ROOT/f.txt", "../ROOT/other.txt"], asked],
+      ["../ROOT/*.txt", 2, volumeFoldsCase ? ["../ROOT/f.txt"] : [], askedAtTheLimit],
+      [`${top}/ROOT/*.txt`, 2, volumeFoldsCase ? [`${top}/ROOT/f.txt`] : [], askedAtTheLimit],
     ];
     expect(await walkRows(join(String(dir), "Top", "root"), rows)).toEqual(expectedOf(rows));
   });
@@ -1011,10 +1019,13 @@ describe("maxDepth", () => {
       const { posix: depthPosix } = depthFromRoot;
       const root = "/vol/Top/root";
       const untidy = (length: number) => `./${Buffer.alloc(length - root.length - 3, "n")}`;
+      const untidyAbsolute = (length: number) => `${root}/./${Buffer.alloc(length - root.length - 3, "n")}`;
       const long = Buffer.alloc(600, "n").toString();
       expect({
         "a path to resolve of 512 characters": depthPosix(untidy(512), root, false),
         "one of 513": depthPosix(untidy(513), root, false),
+        "an absolute path to resolve of 512 characters": depthPosix(untidyAbsolute(512), root, false),
+        "an absolute one of 513": depthPosix(untidyAbsolute(513), root, false),
         "names alone": depthPosix(`${long}/${long}`, root, false),
         "below the root": depthPosix(`${root}/${long}`, root, false),
         "through ..": depthPosix(`../root/${long}`, root, false),
@@ -1022,6 +1033,8 @@ describe("maxDepth", () => {
       }).toEqual({
         "a path to resolve of 512 characters": 1,
         "one of 513": UNPLACED,
+        "an absolute path to resolve of 512 characters": 1,
+        "an absolute one of 513": UNPLACED,
         "names alone": 2,
         "below the root": 1,
         "through ..": 1,

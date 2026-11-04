@@ -304,11 +304,7 @@ class DepthLimiter {
   }
 
   async includesAsync(path: string) {
-    const depth = depthFromRoot(path, this.#root, isMacOS);
-    if (depth === UNPLACED) {
-      return pathDepth(await this.#relativeFromRootAsync(path)) <= this.#maxDepth;
-    }
-    return (depth < 0 ? ~depth : depth) <= this.#maxDepth;
+    return pathDepth(await this.#relativeFromRootAsync(path)) <= this.#maxDepth;
   }
 
   canTraverse(path: string, isAbsolutePattern: boolean) {

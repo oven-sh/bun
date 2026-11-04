@@ -212,6 +212,34 @@ describe.concurrent("bun version check", () => {
     expect(exitCode).toBe(0);
   });
 
+  // `--watch` starts the process again on every change, with the environment of the first start.
+  test.skipIf(isWindows)("bun run --watch warns on the first start only", async () => {
+    using dir = project({ packageManager: "bun@0.0.1" }, { "watched.ts": "console.log('v1')" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--watch", "--no-clear-screen", "watched.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stderr = proc.stderr.text();
+    const reader = proc.stdout.getReader();
+    let stdout = "";
+    const waitFor = async (text: string) => {
+      while (!stdout.includes(text)) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error(`exited before ${JSON.stringify(text)}: ${stdout}`);
+        stdout += new TextDecoder().decode(value);
+      }
+    };
+    await waitFor("v1\n");
+    writeFileSync(join(String(dir), "watched.ts"), "console.log('v2')");
+    await waitFor("v2\n");
+    proc.kill();
+    await proc.exited;
+    expect(count(await stderr)).toBe(1);
+  });
+
   // A dependency's lifecycle script runs in `node_modules/<dep>`. Its pin is not the project's.
   test("a package in node_modules is not checked", async () => {
     using dir = project(

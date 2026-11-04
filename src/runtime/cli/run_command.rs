@@ -774,8 +774,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             }
         }
 
-        // `--watch` starts the process again on every change. The first start checked.
-        if opts.check_bun_version && ctx.debug.hot_reload != cli::command::HotReload::Watch {
+        if opts.check_bun_version {
             Self::check_bun_version(root_dir_info, ctx.debug.silent, env_loader)?;
         }
 
@@ -802,6 +801,19 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     silent,
                 ) {
                     env.map.put(b"BUN_INTERNAL_BUN_VERSION_CHECKED", checked)?;
+                    // `--watch` starts this process again with its environment, on POSIX.
+                    #[cfg(not(windows))]
+                    {
+                        let value = bun_core::ZBox::from_bytes(checked);
+                        // SAFETY: both strings are NUL-terminated; setenv copies them.
+                        unsafe {
+                            libc::setenv(
+                                c"BUN_INTERNAL_BUN_VERSION_CHECKED".as_ptr(),
+                                value.as_ptr().cast(),
+                                1,
+                            )
+                        };
+                    }
                 }
                 return Ok(());
             }

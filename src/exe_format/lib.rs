@@ -4,6 +4,8 @@ pub mod builtins;
 mod cut_choice;
 pub mod cut_model;
 pub mod elf;
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+pub mod elf_imports;
 pub mod elf_payload;
 pub mod elf_program_headers;
 pub mod elf_ranges;

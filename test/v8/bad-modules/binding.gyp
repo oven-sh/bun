@@ -7,6 +7,25 @@
     {
       "target_name": "no_entrypoint",
       "sources": ["no_entrypoint.cpp"],
+    },
+    {
+      "target_name": "initializer_only",
+      "sources": ["initializer_only.cpp"],
+    },
+    {
+      "target_name": "registered_other_version",
+      "sources": ["registered_other_version.cpp"],
     }
+  ],
+  "conditions": [
+    # Its sockets are those of Linux: accept4() and MSG_NOSIGNAL.
+    ["OS=='linux'", {
+      "targets": [
+        {
+          "target_name": "uws_shaped",
+          "sources": ["uws_shaped.cpp"],
+        }
+      ],
+    }],
   ]
 }

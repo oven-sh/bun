@@ -134,6 +134,10 @@ v8::MaybeLocal<v8::Value> MakeCallback(v8::Isolate* isolate,
     return isolate->currentHandleScope()->createLocal<Value>(vm, result);
 }
 
+// Calls entryPoint(exports, module, context): module is `object`, and exports is its `exports` property as an object.
+template<typename EntryPoint>
+static void callEntryPoint(Zig::GlobalObject*, JSObject* object, const EntryPoint&);
+
 void node_module_register(void* opaque_mod)
 {
     // TODO unify this with napi_module_register
@@ -162,6 +166,25 @@ void executePendingV8Module(Zig::GlobalObject* globalObject, node_module* mod, J
         return;
     }
 
+    callEntryPoint(globalObject, object, [&](Local<Object> exports, Local<Value> module, Local<Context> context) {
+        if (mod->nm_context_register_func) {
+            mod->nm_context_register_func(exports, module, context, mod->nm_priv);
+        } else if (mod->nm_register_func) {
+            mod->nm_register_func(exports, module, mod->nm_priv);
+        } else {
+            auto* error = JSC::createError(globalObject, WTF::makeString("The module '"_s, keyStr, "' has no declared entry point."_s));
+            JSC::throwException(globalObject, scope, error);
+        }
+    });
+    RETURN_IF_EXCEPTION(scope, void());
+}
+
+template<typename EntryPoint>
+static void callEntryPoint(Zig::GlobalObject* globalObject, JSObject* object, const EntryPoint& entryPoint)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     JSValue exportsValue = object->get(globalObject, WebCore::builtinNames(vm).exportsPublicName());
     RETURN_IF_EXCEPTION(scope, void());
 
@@ -179,17 +202,13 @@ void executePendingV8Module(Zig::GlobalObject* globalObject, node_module* mod, J
     Local<Object> exports = hs.createLocal<Object>(vm, *strongExportsObject);
     Local<Value> module = hs.createLocal<Value>(vm, object);
     Local<Context> context = isolate->GetCurrentContext();
-    if (mod->nm_context_register_func) {
-        mod->nm_context_register_func(exports, module, context, mod->nm_priv);
-    } else if (mod->nm_register_func) {
-        mod->nm_register_func(exports, module, mod->nm_priv);
-    } else {
-        auto* error = JSC::createError(globalObject, WTF::makeString("The module '"_s, keyStr, "' has no declared entry point."_s));
-        JSC::throwException(globalObject, scope, error);
-        return;
-    }
-
+    entryPoint(exports, module, context);
     RETURN_IF_EXCEPTION(scope, void());
+}
+
+void executeV8Initializer(Zig::GlobalObject* globalObject, addon_initializer_func initializer, JSObject* moduleObject)
+{
+    callEntryPoint(globalObject, moduleObject, initializer);
 }
 
 } // namespace node

@@ -465,6 +465,7 @@ extern "C" void* CrashHandler__beginDlOpenAction(const char* path);
 extern "C" void CrashHandler__endDlOpenAction(void* guard);
 extern "C" bool Bun__VM__allowAddons(void* vm);
 extern "C" int32_t Bun__addonNeedsGlibcOnMusl(const char* path, size_t len, char* soname_out, size_t soname_cap);
+extern "C" int32_t Bun__addonUnresolvedImport(const void* initializer, void* handle, char* name_out, size_t name_cap);
 
 // Drops only this load's reference. A library that registered modules on an earlier load is still referenced by that load.
 static void closeDLHandle(Bun::DLHandleMap::DLHandle handle)
@@ -476,6 +477,37 @@ static void closeDLHandle(Bun::DLHandleMap::DLHandle handle)
     dlclose(handle);
 #endif
 }
+
+#if OS(LINUX) || OS(FREEBSD)
+// macOS's loader binds every lazy import inside dlopen() and stores 0 or an abort function for a missing one, and Bun has no Mach-O reader for those slots. On Windows Bun already checks the load-time node.exe imports of every addon (NodeExeImportsWindows.cpp), and this entry is not ported there.
+static std::optional<JSC::EncodedJSValue> loadThroughInitializerSymbol(Zig::GlobalObject* globalObject, JSC::ThrowScope& scope, void* handle, const WTF::String& filename, JSC::JSObject* moduleObject, const node::node_module* registered)
+{
+    // Node calls node_register_module_v<ABI> for an addon that registered no module, and for one that registered a module with another module version: https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/src/node_binding.cc#L533-L540
+    if (registered && registered->nm_version == REPORTED_NODEJS_ABI_VERSION)
+        return std::nullopt;
+    // The V8 API has one isolate for a thread, that of its default realm (v8::Isolate::GetCurrent()). An initializer that runs for another realm, such as a ShadowRealm, creates its handles outside every open handle scope.
+    if (!globalObject->isThreadLocalDefaultGlobalObject)
+        return std::nullopt;
+    auto initializer = reinterpret_cast<node::addon_initializer_func>(dlsym(handle, "node_register_module_v" STRINGIZE_VALUE_OF(REPORTED_NODEJS_ABI_VERSION)));
+    if (!initializer)
+        return std::nullopt;
+#if !OS(ANDROID)
+    // The addon is opened with RTLD_LAZY, so a call of an import that nothing defines would end the process. bionic binds every import in dlopen().
+    char symbol[512] = { 0 };
+    if (int32_t result = Bun__addonUnresolvedImport(reinterpret_cast<void*>(initializer), handle, symbol, sizeof(symbol))) {
+        // The registration of a module is saved for this handle and points into the library, which therefore stays open.
+        if (!registered)
+            closeDLHandle(handle);
+        if (result < 0)
+            return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, makeString("Cannot load native addon "_s, filename, ": Bun cannot read its import tables"_s));
+        return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, makeString("Cannot load native addon "_s, filename, ": it imports '"_s, WTF::String::fromUTF8ReplacingInvalidSequences(byteCast<uint8_t>(unsafeSpan(symbol))), "', and Bun found no definition of it"_s));
+    }
+#endif
+    node::executeV8Initializer(globalObject, initializer, moduleObject);
+    RETURN_IF_EXCEPTION(scope, JSC::EncodedJSValue {});
+    return JSValue::encode(jsUndefined());
+}
+#endif
 
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
@@ -699,6 +731,10 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 
         // Run V8 init functions here instead of in node_module_register(). See https://github.com/oven-sh/bun/issues/20454
         for (auto* mod : pendingV8Modules) {
+#if OS(LINUX) || OS(FREEBSD)
+            if (auto result = loadThroughInitializerSymbol(globalObject, scope, handle, filename, strongModule.get(), mod))
+                return *result;
+#endif
             node::executePendingV8Module(globalObject, mod, strongModule.get());
             RETURN_IF_EXCEPTION(scope, {});
         }
@@ -731,6 +767,10 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         // m_pendingNapiModules; a V8 one runs its nm_register_func right here.
         for (auto& registration : *cachedModules) {
             if (auto* v8Module = std::get_if<Bun::V8ModuleRegistration>(&registration)) {
+#if OS(LINUX) || OS(FREEBSD)
+                if (auto result = loadThroughInitializerSymbol(globalObject, scope, handle, filename, strongModule.get(), v8Module->module))
+                    return *result;
+#endif
                 node::executePendingV8Module(globalObject, v8Module->module, strongModule.get());
                 RETURN_IF_EXCEPTION(scope, {});
             } else {
@@ -756,24 +796,28 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 #define dlsym GetProcAddress
 #endif
 
-    // TODO(@190n) look for node_register_module_vXYZ according to BuildOptions.reported_nodejs_version
-    // and the table at https://github.com/nodejs/node/blob/main/doc/abi_version_registry.json
     auto napi_register_module_v1 = reinterpret_cast<napi_value (*)(napi_env, napi_value)>(dlsym(handle, "napi_register_module_v1"));
+
+    // Node prefers node_register_module_v<ABI> to napi_register_module_v1: https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/src/node_binding.cc#L509-L513. Here an addon with both keeps using Node-API.
+    if (!napi_register_module_v1) {
+#if OS(LINUX) || OS(FREEBSD)
+        if (auto result = loadThroughInitializerSymbol(globalObject, scope, handle, filename, strongModule.get(), nullptr))
+            return *result;
+#endif
+
+        closeDLHandle(handle);
+
+        if (!scope.exception()) [[likely]] {
+            throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, makeString("Module did not self-register: '"_s, filename, "'."_s));
+        }
+        return {};
+    }
 
     auto node_api_module_get_api_version_v1 = reinterpret_cast<int32_t (*)()>(dlsym(handle, "node_api_module_get_api_version_v1"));
 
 #if OS(WINDOWS)
 #undef dlsym
 #endif
-
-    if (!napi_register_module_v1) {
-        closeDLHandle(handle);
-
-        if (!scope.exception()) [[likely]] {
-            JSC::throwTypeError(globalObject, scope, "symbol 'napi_register_module_v1' not found in native module. Is this a Node API (napi) module?"_s);
-        }
-        return {};
-    }
 
     // TODO(@heimskr): get the API version without node_api_module_get_api_version_v1 a different way
     int module_version = 8;

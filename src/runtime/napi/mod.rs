@@ -11,6 +11,8 @@ pub(crate) use napi_body::{
     NapiFinalizerTask, ThreadSafeFunction, fix_dead_code_elimination, napi_async_work,
 };
 
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+pub(crate) mod import_check;
 pub(crate) mod libc_check;
 #[cfg(unix)]
 pub(crate) mod uv_posix;

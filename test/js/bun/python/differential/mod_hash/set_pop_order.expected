@@ -1,0 +1,21 @@
+status: 0
+script: e78b03ec01e87a06
+---
+intersection_update [1, 2, 3]
+clear [1, 2, 3]
+&= [1, 2, 3]
+__init__ [1, 2, 3]
+copy [1, 2, 1, 3]
+grown [1, 2, 3]
+^= [1, 2, 3]
+-= [1, 2, 3]
+difference_update [1, 2, 3]
+|= [1, 2, 3]
+discard and add [1, 2, 3]
+new sets [1, 2, 1, 1, 1, 1, 1]
+emptied by pop [1, 2, 3, 4, 5, 6, 7, 3]
+large [34, 35]
+large, cleared [34, 3, 4]
+large, smaller table [34, 36, 37]
+four [1, 2]
+never popped [5]

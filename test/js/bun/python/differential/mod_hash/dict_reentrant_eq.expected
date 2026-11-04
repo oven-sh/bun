@@ -1,0 +1,33 @@
+status: 0
+script: b6df6c2f41bc9316
+---
+dict put_back_last 324 cases 0d5ec8c659f07776 0
+dict put_back_two 72 cases ebad3f89454c1dfd 0
+dict put_back_two_swapped 324 cases e7cdecd72af6bd04 0
+dict take_out_and_put_back 468 cases 41e2b00861e542f1 0
+dict delete_first 468 cases 439b77ffa87ea8c0 0
+dict delete_it 468 cases 5e5a2ff4ae5a4f07 0
+dict add_one 468 cases 1901dde816fa944c 0
+dict add_many 288 cases a0f17cbb3c914a94 0
+dict add_strs 288 cases c30ab8927a3d89ad 0
+dict empty_and_refill 468 cases 397b8546d5564476 0
+dict empty 288 cases 2124333d641b49b1 0
+dict ask_other_kind 468 cases 397b8546d5564476 0
+dict put_back_and_ask 324 cases 0d5ec8c659f07776 0
+dict ask_and_put_back 324 cases 0d5ec8c659f07776 0
+dict pop_all_and_put_back 72 cases 3546119d9cddc910 0
+OrderedDict put_back_last 324 cases 464c12b17da2fb69 0
+OrderedDict put_back_two 72 cases 9a93854522d1649a 0
+OrderedDict put_back_two_swapped 324 cases 2310033f29212e9d 0
+OrderedDict take_out_and_put_back 468 cases c54261b251df6062 0
+OrderedDict delete_first 468 cases e11f70caa3252760 0
+OrderedDict delete_it 468 cases c519bafa3a9ccdb4 0
+OrderedDict add_one 468 cases 9e67454e54c58779 0
+OrderedDict add_many 288 cases a0f17cbb3c914a94 0
+OrderedDict add_strs 288 cases c30ab8927a3d89ad 0
+OrderedDict empty_and_refill 468 cases 5ca568d7519ea3b0 0
+OrderedDict empty 288 cases 2124333d641b49b1 0
+OrderedDict ask_other_kind 468 cases 5ca568d7519ea3b0 0
+OrderedDict put_back_and_ask 324 cases 464c12b17da2fb69 0
+OrderedDict ask_and_put_back 324 cases 464c12b17da2fb69 0
+OrderedDict pop_all_and_put_back 72 cases 048130b513c36c70 0

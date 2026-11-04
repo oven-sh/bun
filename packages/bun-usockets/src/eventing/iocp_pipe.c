@@ -1552,7 +1552,23 @@ void us_internal_pipe_ready(struct us_internal_poll_req_t *req) {
         req->hangup_was_reported = 1;
         eof = LIBUS_POLL_HANGUP;
     }
+    /* Counted as an operation, the block outlives the handler. */
+    us_internal_iocp_op_started(req);
     us_internal_iocp_dispatch(req->loop, req->owner, error, eof, events);
+    us_internal_iocp_op_finished(req);
+    if (!req->owner) {
+        us_internal_iocp_req_free_if_unused(req);
+        return;
+    }
+    /* A pipe finds that its peer is gone when it asks for more. epoll reports that together with the last of the data, so
+     * nothing comes between the two: the end of what a child wrote is seen before its exit. To ask takes nothing from a
+     * pipe of ours, and the update has it to do anyway. */
+    if (req->kind == LIBUS_POLL_KIND_PIPE && !eof && (events & us_poll_events(req->owner) & LIBUS_SOCKET_READABLE)) {
+        us_internal_pipe_arm_read(pipe);
+        if (us_internal_pipe_is_hung_up(pipe)) {
+            us_internal_pipe_ready(req);
+        }
+    }
 }
 
 /* Takes back what is in flight. The caller of a queued write has not been told that it is written, and the peer has

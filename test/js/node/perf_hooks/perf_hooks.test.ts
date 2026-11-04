@@ -721,11 +721,10 @@ describe("gc entries", () => {
           allOfTheName: list.getEntriesByName("gc").length === entries.length,
         });
       }).observe({ entryTypes: ["gc"] });
-      // Bun.gc(false) only asks for a collection, which then is under way when the next call forces one.
+      // Bun.gc(false) only asks for a collection. It then runs inside the call that forces the next one.
       for (let i = 0; i < 3; i++) {
         allocate();
         Bun.gc(false);
-        allocate();
         Bun.gc(true);
       }
       gc();

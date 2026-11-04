@@ -147,8 +147,8 @@ function updateGCTracking() {
   setGCEntryListener!(wanted ? emitGCEntry : undefined);
 }
 
-// What a NodeEntryObserver that observes 'gc' is. The count of those observers changes in these two only, also
-// when the registry disconnects the observer of a disposed Bun.ModuleGraph by itself.
+// A registration that observes 'gc'. The count of 'gc' observers changes in these two methods only: the registry
+// itself calls disconnect() for the observer of a disposed Bun.ModuleGraph.
 class GCEntryObserver extends NodeEntryObserver {
   observe(types: Iterable<string>) {
     super.observe(types);

@@ -33,10 +33,8 @@ import { describe, test } from "./supported";
 
 // A debug build takes a minute to build a long program and half a minute to run the one in one line, on a machine that does
 // nothing else.
-const limits: { test: number; build?: number; run?: number } = isDebug
-  ? { test: 480_000, build: 400_000, run: 200_000 }
-  : { test: 120_000 };
-raiseDefaultTimeout(limits.test);
+const limitOfABuild = isDebug ? 400_000 : undefined;
+raiseDefaultTimeout(isDebug ? 480_000 : 120_000);
 
 const measuredPlaces = 40;
 const surroundings = ["statements", "one statement", "one function"] as const;
@@ -144,10 +142,16 @@ const programs = {
 type Program = keyof typeof programs;
 const names = Object.keys(programs) as Program[];
 
-// What the forty first errors of a long file may take over three times those of the short one, in milliseconds. A long statement
-// or function is kept in parts, and a place is found by following the text of its part character by character. The short file
-// has no part of that length: the forty places take 1 ms for it in a release build and 80 ms in a debug build.
-const slack = isDebug ? 250 : 25;
+// What the forty first errors of a long file may take over three times those of the short one, in milliseconds.
+const slackOf = {
+  // Nothing about a statement of its own grows with its file. A search that goes by the functions and statements in front of a
+  // place costs every surrounding alike, so this is the bound that holds it: a release build has 9 ns for each of the 12,000.
+  "statements": 4,
+  // A long statement or function is kept in parts, and a place is found by following the text of its part character by character.
+  // The short file has no part of that length: the forty places take 1 ms for it in a release build and 80 ms in a debug build.
+  "one statement": isDebug ? 250 : 25,
+  "one function": isDebug ? 250 : 25,
+};
 
 const dir = tempDir(
   "aot-first-error-at-a-place",
@@ -157,11 +161,22 @@ afterAll(() => dir[Symbol.dispose]());
 const folder = String(dir);
 const pathOf = (name: Program) => join(folder, isWindows ? `${name}.exe` : name);
 
-/** What a command printed, when it ended with 0 and with nothing on stderr. */
-function printed(ran: { stdout: string; stderr: string; exitCode: number }) {
-  expect({ stderr: ran.stderr, exitCode: ran.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-  const { messages, last, milliseconds } = JSON.parse(ran.stdout);
-  return { said: { messages, last } as ReturnType<typeof written>, milliseconds: milliseconds as Milliseconds };
+/** Holds a run of a program to what the program has to print, to an empty stderr and to the exit code 0. Answers its times. */
+function held(name: Program, ran: { stdout: string; stderr: string; exitCode: number }) {
+  // What is no JSON shows as the text that it is.
+  let said: unknown = ran.stdout;
+  let milliseconds: Milliseconds | undefined;
+  try {
+    const printed = JSON.parse(ran.stdout);
+    said = { messages: printed.messages, last: printed.last };
+    milliseconds = printed.milliseconds;
+  } catch {}
+  expect({ said, stderr: ran.stderr, exitCode: ran.exitCode }).toEqual({
+    said: written(programs[name].fillers),
+    stderr: "",
+    exitCode: 0,
+  });
+  return milliseconds!;
 }
 
 const whenBuilt: Partial<Record<Program, Promise<void>>> = {};
@@ -170,7 +185,7 @@ const build = (name: Program) =>
     [bunExe(), "build", "--compile", "--aot", `./${name}.ts`, "--outfile", pathOf(name)],
     folder,
     bunEnv,
-    limits.build,
+    limitOfABuild,
   ).then(built));
 
 // The runs of an executable, which all its tests share. The next one starts when a test asks for it.
@@ -178,10 +193,8 @@ const whenRun: Partial<Record<Program, Promise<Milliseconds>[]>> = {};
 const run = (name: Program, index: number) =>
   ((whenRun[name] ??= [])[index] ??= (async () => {
     await build(name);
-    const { said, milliseconds } = printed(await spawned([pathOf(name)], folder, bunEnv, limits.run));
     // A run that quotes something else has measured another search, or none.
-    expect(said).toEqual(written(programs[name].fillers));
-    return milliseconds;
+    return held(name, await spawned([pathOf(name)], folder, bunEnv));
   })());
 
 const runsAtMost = 4;
@@ -198,8 +211,7 @@ async function leastOfAllRuns(name: Program) {
 describe.concurrent("the first error at a place costs in a long file what it costs in a short one", () => {
   for (const name of names) {
     test(`${name}: every message is what bun run says`, async () => {
-      const plain = printed(await spawned([bunExe(), `./${name}.ts`], folder, bunEnv, limits.run));
-      expect(plain.said).toEqual(written(programs[name].fillers));
+      held(name, await spawned([bunExe(), `./${name}.ts`], folder, bunEnv));
       // run() holds the executable to the same.
       await run(name, 0);
     });
@@ -215,7 +227,7 @@ describe.concurrent("the first error at a place costs in a long file what it cos
         const key = keyOf[surrounding];
         const [inSmall, inGrown] = await Promise.all([leastOfAllRuns(small), run(grown, 0)]);
         const few = inSmall[key];
-        const bound = 3 * few + slack;
+        const bound = 3 * few + slackOf[surrounding];
         // Code that costs more does so in every run: the long file runs again only while its least time is over the bound.
         let many = inGrown[key];
         for (let index = 1; index < runsAtMost && !(many < bound); index++)

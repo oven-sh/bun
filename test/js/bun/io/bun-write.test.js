@@ -11,6 +11,7 @@ import {
   isWindows,
   tempDir,
   withoutAggressiveGC,
+  withoutAsanQuarantine,
 } from "harness";
 import { once } from "node:events";
 import http from "node:http";
@@ -605,7 +606,8 @@ const IS_UV_FS_COPYFILE_DISABLED =
     },
   );
 
-  it("Bun.file(0) survives GC", async () => {
+  // Not concurrent: every gcTick() waits for the event loop, and 10 of them in the concurrent batch take over 5 s on a debug build.
+  it.serial("Bun.file(0) survives GC", async () => {
     for (let i = 0; i < 10; i++) {
       let f = Bun.file(0);
       await gcTick();
@@ -1690,6 +1692,112 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     Bun.gc(true);
 
     expect(f.name).toBe(filePath);
+  });
+
+  describe("a string source", () => {
+    const fixturePath = join(import.meta.dir, "bun-write-string-fixture.js");
+    // The fixture reads its own RSS.
+    const env = withoutAsanQuarantine(bunEnv);
+
+    async function fixture(...args) {
+      using dir = tempDir("bun-write-string-source", {});
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), fixturePath, ...args],
+        env,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: exitCode === 0 ? JSON.parse(stdout) : stdout, stderr, exitCode };
+    }
+
+    it("is not copied inside the call", async () => {
+      const size = 16 * 1024 * 1024;
+      const inPlace = { copied: false, written: size, same: true };
+      expect(await fixture("copies", String(size))).toEqual({
+        stdout: {
+          results: {
+            "Bun.write(path, string)": inPlace,
+            "Bun.write(Bun.file(path), string)": inPlace,
+            "Bun.write(fd, string)": inPlace,
+            "Bun.file(path).write(string)": inPlace,
+            "Bun.write(path, [string])": inPlace,
+            "Bun.write(path, new String(string))": inPlace,
+            "Bun.write(path, new Response(string))": inPlace,
+            "Bun.write(path, new Request(url, { body: string }))": inPlace,
+            // An atom belongs to its thread, so the write takes a copy of it.
+            "Bun.write(path, atom)": { copied: true, written: size, same: true },
+          },
+          keep: [size, size],
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it("each kind of string is written as its UTF-8 bytes", async () => {
+      const row = (written, end) => ({ written, same: true, end });
+      const rows = {
+        "ASCII": row(300_000, "616161"),
+        "a rope": row(300_000, "727272"),
+        "an atom": row(300_000, "6b6b6b"),
+        "a substring": row(300_000, "737373"),
+        "Latin-1": row(600_000, "a9c3a9"),
+        "one character above 0x7f": row(300_002, "61c3a9"),
+        "UTF-16": row(900_000, "e4b8ad"),
+        "a lone surrogate": row(300_003, "efbfbd"),
+        "a short string": row(6, "6c6c6f"),
+        "an empty string": { status: "fulfilled", content: "", written: 0 },
+      };
+      expect(await fixture("strings")).toEqual({
+        stdout: {
+          "a string": rows,
+          "a one-element array": rows,
+          "a String object": rows,
+          "a Response body": rows,
+          "a Request body": rows,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // These are not one string: the write joins them into a blob.
+    it.each([
+      ["an array of parts", () => ["a\u00e9", new Uint8Array([98]), new Blob(["c"]), ["d"]], "a\u00e9bcd"],
+      ["an empty array", () => [], ""],
+    ])("writes %s", async (_, make, expected) => {
+      using dir = tempDir("bun-write-other-sources", { "out.txt": "previous" });
+      const out = join(String(dir), "out.txt");
+      expect(await Bun.write(out, make())).toBe(Buffer.byteLength(expected));
+      expect(fs.readFileSync(out, "utf8")).toBe(expected);
+    });
+
+    // In the next two tests the write is the only holder of the string when it lets go of it,
+    // and the string is an atom by then. Only the thread that made it an atom can release it: on
+    // any other thread the release stops the process. Windows has no mkfifo.
+    it.skipIf(isWindows)("a write that waits for a full pipe writes the whole string", async () => {
+      expect(await fixture("parked")).toEqual({
+        stdout: { written: 1024 * 1024, whole: true },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it.skipIf(isWindows)("a worker that is terminated while its write is pending exits", async () => {
+      expect(await fixture("parked-in-worker")).toEqual({ stdout: { exitCode: 1 }, stderr: "", exitCode: 0 });
+    });
+
+    // A slice of a string refers to the buffer of that string. The write copies the slice, so
+    // that a pending write does not keep the whole string alive.
+    it.skipIf(isWindows)("a write of a substring does not keep the base string alive", async () => {
+      expect(await fixture("substring")).toEqual({
+        stdout: { freed: true, written: 2 * 1024 * 1024, whole: true },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
   });
 });
 

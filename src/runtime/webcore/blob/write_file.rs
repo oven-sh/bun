@@ -13,7 +13,8 @@ use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, SystemError};
 use bun_sys::{self as sys, Fd};
 use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
-use crate::webcore::blob::{self, Blob, FileOpener, SizeType};
+use crate::node::{StringOrBuffer, ThreadIsolated};
+use crate::webcore::blob::{self, Blob, BlobExt as _, FileOpener, SizeType};
 #[cfg(not(windows))]
 use crate::webcore::blob::{ClosingState, FileCloser, MkdirpTarget, Retry, mkdir_if_not_exists};
 use crate::webcore::body;
@@ -89,10 +90,85 @@ impl WriteFile {
     }
 }
 
+/// A JS string that a write reads in place. JS can make it an atom of its thread, so only that thread drops it.
+pub(crate) struct LentString {
+    bytes: bun_ptr::RawSlice<u8>,
+    /// Owns `bytes`.
+    _string: ThreadIsolated<StringOrBuffer<'static>>,
+    /// Debug builds: locked by the thread that lent the string.
+    lender: bun_core::ThreadLock,
+}
+
+impl Drop for LentString {
+    fn drop(&mut self) {
+        self.lender.assert_locked();
+    }
+}
+
+pub(crate) enum WriteSource {
+    Blob(Blob),
+    String(LentString),
+}
+
+impl WriteSource {
+    /// `Err` has the UTF-8 bytes of a string that the write cannot read where it is.
+    pub(crate) fn string(string: bun_core::String) -> Result<Self, Vec<u8>> {
+        let string = StringOrBuffer::lend_string(string)?;
+        Ok(Self::String(LentString {
+            bytes: bun_ptr::RawSlice::new(string.slice()),
+            _string: string,
+            lender: bun_core::ThreadLock::init_locked(),
+        }))
+    }
+
+    /// A buffered body, spent as [`body::Value::use_`] spends it.
+    pub(crate) fn from_body(value: &mut body::Value, global: &JSGlobalObject) -> Self {
+        match value.use_as_string().map(Self::string) {
+            Some(Ok(source)) => source,
+            Some(Err(bytes)) => Self::Blob(Blob::init(bytes, global)),
+            None => Self::Blob(value.use_()),
+        }
+    }
+
+    /// A blob backed by bytes, or a string.
+    pub(crate) fn is_in_memory(&self) -> bool {
+        match self {
+            Self::Blob(blob) => blob
+                .store()
+                .is_some_and(|store| matches!(store.data, blob::store::Data::Bytes(_))),
+            Self::String(_) => true,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn slice(&self) -> &[u8] {
+        match self {
+            Self::Blob(blob) => blob.shared_view(),
+            Self::String(lent) => lent.bytes.slice(),
+        }
+    }
+
+    /// For a destination that is not a file.
+    pub(crate) fn into_blob(self, global: &JSGlobalObject) -> Blob {
+        match self {
+            Self::Blob(blob) => blob,
+            // All ASCII, or the write could not read the string where it is.
+            Self::String(lent) => Blob::init_with_all_ascii(lent.bytes.to_vec(), global, true),
+        }
+    }
+}
+
+impl From<Blob> for WriteSource {
+    #[inline]
+    fn from(blob: Blob) -> Self {
+        Self::Blob(blob)
+    }
+}
+
 pub(crate) struct WriteFile {
     pub(crate) file_blob: Blob,
     #[cfg(not(windows))]
-    pub(crate) bytes_blob: Blob,
+    pub(crate) source: WriteSource,
 
     pub(crate) opened_fd: Fd,
     pub(crate) system_error: Option<SystemError>,
@@ -291,12 +367,12 @@ impl WriteFile {
     #[cfg(not(windows))]
     pub(crate) fn create(
         file_blob: Blob,
-        bytes_blob: Blob,
+        source: WriteSource,
         mkdirp_if_not_exists: bool,
     ) -> Result<WriteFile, Error> {
         let write_file = WriteFile {
             file_blob,
-            bytes_blob,
+            source,
             opened_fd: Fd::INVALID,
             system_error: None,
             errno: None,
@@ -330,7 +406,7 @@ impl WriteFile {
         // On macOS, it is an error to use pwrite() on a
         // non-seekable file.
         loop {
-            match sys::write(fd, &self.bytes_blob.shared_view()[off..off + len]) {
+            match sys::write(fd, &self.source.slice()[off..off + len]) {
                 Ok(wrote) => {
                     self.total_written += wrote;
                     return WriteStep::Wrote(wrote);
@@ -461,11 +537,11 @@ impl WriteFile {
             // We only do this on Linux because the equivalent on macOS
             // seemed to have zero performance impact in
             // microbenchmarks.
-            if !self.could_block && self.bytes_blob.shared_view().len() > 1024 {
+            if !self.could_block && self.source.slice().len() > 1024 {
                 let _ = sys::preallocate_file(
                     fd.native(),
                     0,
-                    i64::try_from(self.bytes_blob.shared_view().len()).expect("int cast"),
+                    i64::try_from(self.source.slice().len()).expect("int cast"),
                 ); // we don't care if it fails.
             }
         }
@@ -502,7 +578,7 @@ impl WriteFile {
     #[cfg(not(windows))]
     fn do_write_loop_posix(&mut self) {
         while self.state.load(Ordering::Relaxed) == ClosingState::Running as u8 {
-            let remain_full = self.bytes_blob.shared_view();
+            let remain_full = self.source.slice();
             // reshaped for borrowck — capture len/offset before mut borrow
             let off = self.total_written.min(remain_full.len());
             let remain_len = remain_full.len() - off;
@@ -566,7 +642,7 @@ mod windows_impl {
     pub(crate) struct WriteFileWindows {
         pub(crate) io_request: uv::fs_t,
         pub(crate) file_blob: Blob,
-        pub(crate) bytes_blob: Blob,
+        pub(crate) source: WriteSource,
         pub(crate) on_complete_callback: WriteFileOnWriteFileCallback,
         pub(crate) on_complete_ctx: *mut c_void,
         /// The context of the script that asked for the write.
@@ -628,7 +704,7 @@ mod windows_impl {
     impl WriteFileWindows {
         pub(crate) fn create_with_ctx(
             file_blob: Blob,
-            bytes_blob: Blob,
+            source: WriteSource,
             event_loop: *mut EventLoop,
             script_context: &bun_jsc::ScriptExecutionContext,
             on_write_file_context: *mut c_void,
@@ -647,7 +723,7 @@ mod windows_impl {
                     .is_path();
             let write_file = Self::new(WriteFileWindows {
                 file_blob,
-                bytes_blob,
+                source,
                 on_complete_ctx: on_write_file_context,
                 on_complete_callback,
                 context: script_context.id(),
@@ -1099,7 +1175,7 @@ mod windows_impl {
             uv_loop: *mut uv::Loop,
         ) -> Result<(), WriteFileWindowsError> {
             // SAFETY: caller contract — `this` is live.
-            let remain_full = unsafe { (*this).bytes_blob.shared_view() };
+            let remain_full = unsafe { (*this).source.slice() };
             // SAFETY: caller contract — `this` is live.
             let off = unsafe { (*this).total_written }.min(remain_full.len());
             let remain = &remain_full[off..];
@@ -1186,7 +1262,7 @@ mod windows_impl {
             event_loop: *mut EventLoop,
             script_context: &bun_jsc::ScriptExecutionContext,
             file_blob: Blob,
-            bytes_blob: Blob,
+            source: WriteSource,
             context: *mut C,
             callback: WriteFileOnWriteFileCallback,
             mkdirp_if_not_exists: bool,
@@ -1195,7 +1271,7 @@ mod windows_impl {
             // `*mut c_void` callback directly; `context` is just `.cast()`ed.
             WriteFileWindows::create_with_ctx(
                 file_blob,
-                bytes_blob,
+                source,
                 event_loop,
                 script_context,
                 context.cast::<c_void>(),
@@ -1316,11 +1392,11 @@ impl WriteFileWaitFromLockedValueTask {
             | body::Value::Null
             | body::Value::Empty
             | body::Value::Blob(_) => {
-                let mut blob = value.use_();
+                let source = WriteSource::from_body(value, global_this);
                 // TODO: this should be one promise not two!
                 let new_promise = match blob::write_file_with_source_destination(
                     &global_this.js_thread(context),
-                    &mut blob,
+                    source,
                     &mut file_blob,
                     &blob::WriteFileOptions {
                         mkdirp_if_not_exists: Some(this.mkdirp_if_not_exists),

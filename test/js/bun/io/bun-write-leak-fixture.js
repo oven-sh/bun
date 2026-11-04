@@ -28,3 +28,22 @@ await run(new Buffer(1024 * 1024 * 1).fill("😃").toString("utf-8"));
 
 // 30 MB, ArrayBufferView
 await run(new Uint8Array(1024 * 1024 * 1).fill("B".charCodeAt(0)));
+
+// A new 2 MB string for each write. The write holds the string itself, not a copy. A write
+// that did not let go of it would keep 100 MB.
+async function runFresh(make) {
+  const before = rss();
+  for (let i = 0; i < 50; i++) {
+    await Bun.write(dest, make());
+    Bun.gc(true);
+  }
+  const grewMB = ((rss() - before) / 1024 / 1024) | 0;
+  console.log("Memory growth:", grewMB, "MB");
+  if (grewMB > (isASAN ? 64 : 50)) {
+    throw new Error("Memory usage grew too much");
+  }
+}
+
+const bytes = new Buffer(1024 * 1024 * 2).fill("A".charCodeAt(0));
+await runFresh(() => bytes.toString("latin1"));
+await runFresh(() => new Response(bytes.toString("latin1")));

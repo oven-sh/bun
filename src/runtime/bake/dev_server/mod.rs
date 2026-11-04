@@ -373,11 +373,11 @@ pub(crate) enum Magic {
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub(crate) enum PluginState {
-    /// Should ask server for plugins. Once plugins are loaded, the plugin
-    /// pointer is written into `server_transpiler.options.plugin`
+    /// The first request asks the server for its plugins (bunfig.toml, `bake.config.ts`).
     Unknown,
-    // These two states mean that `server.getOrLoadPlugins()` was called.
+    /// A load is in flight: the server's plugins, or the `setup()` calls of `app.plugins`.
     Pending,
+    /// The only state in which a bundle starts.
     Loaded,
     /// Currently, this represents a degraded state where no bundle can
     /// be correctly executed because the plugins did not load successfully.

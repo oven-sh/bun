@@ -903,6 +903,7 @@ pub(crate) struct ServerInitContext<'a> {
 // ─── ServePlugins ────────────────────────────────────────────────────────────
 /// State machine to handle loading plugins asynchronously. This structure is not thread-safe.
 #[derive(bun_ptr::CellRefCounted)]
+#[repr(align(16))] // `NativePromiseContext` packs its tag into the low bits of the pointer.
 pub(crate) struct ServePlugins {
     state: ServePluginsState,
     ref_count: core::cell::Cell<u32>,
@@ -919,6 +920,10 @@ pub(crate) enum ServePluginsState {
         html_bundle_routes: Vec<RefPtr<html_bundle::Route>>,
         /// Server whose DevServer is waiting for the plugins to load.
         dev_server: Option<super::AnyServer>,
+    },
+    /// `Bun.serve({ app })` left a plugin `setup()` pending. The dev server of `server` owns the plugin and waits.
+    AppSetup {
+        server: Option<super::AnyServer>,
     },
     Loaded(Box<JSBundler::Plugin>),
     /// Error information is not stored as it is already reported.
@@ -945,6 +950,35 @@ impl ServePlugins {
             ref_count: core::cell::Cell::new(1),
             state: ServePluginsState::Unqueued(plugins),
         })
+    }
+
+    /// Tells the dev server of `server` when the last `setup()` of `app.plugins` has settled.
+    pub(crate) fn adopt_pending_app_setup(
+        global: &JSGlobalObject,
+        server: super::AnyServer,
+    ) -> Option<RefPtr<ServePlugins>> {
+        let dev = server.dev_server_mut()?;
+        let setup = dev.bundler_options.pending_plugin_setup.take()?;
+        Some(Self::for_app_setup(global, setup.get(), Some(server)))
+    }
+
+    /// These options of `Bun.serve({ app })` make no dev server. The error of their pending `setup()` is still reported.
+    pub(crate) fn report_dropped_app_setup(global: &JSGlobalObject, setup: JSValue) {
+        drop(Self::for_app_setup(global, setup, None));
+    }
+
+    fn for_app_setup(
+        global: &JSGlobalObject,
+        setup: JSValue,
+        server: Option<super::AnyServer>,
+    ) -> RefPtr<ServePlugins> {
+        let this = RefPtr::new(ServePlugins {
+            ref_count: core::cell::Cell::new(1),
+            state: ServePluginsState::AppSetup { server },
+        });
+        // SAFETY: the intrusive refcount permits mutation through any owner, and `this` is the only one so far.
+        unsafe { &mut *this.as_ptr() }.settle_or_wait_for(global, setup);
+        this
     }
 
     pub(crate) fn get_or_start_load(
@@ -977,6 +1011,8 @@ impl ServePlugins {
                     }
                     return Ok(GetOrStartLoadResult::Pending);
                 }
+                // `app.plugins` are the plugins of this server: it loads none from bunfig.toml.
+                ServePluginsState::AppSetup { .. } => return Ok(GetOrStartLoadResult::Ready(None)),
                 ServePluginsState::Loaded(_) => break,
                 ServePluginsState::Err => return Ok(GetOrStartLoadResult::Err),
             }
@@ -1052,53 +1088,80 @@ impl ServePlugins {
         }
 
         if !result.is_empty_or_undefined_or_null() {
-            // handle the case where js returns a promise
-            if let Some(promise) = result.as_any_promise() {
-                match promise.status() {
-                    // promise not fulfilled yet
-                    jsc::js_promise::Status::Pending => {
-                        // The reaction's ref, adopted by `on_resolve_plugins`/`on_reject_plugins`.
-                        self.ref_();
-                        let promise_value = promise.as_value();
-                        if let ServePluginsState::Pending {
-                            promise: pending_promise,
-                            ..
-                        } = &mut self.state
-                        {
-                            pending_promise.set(global, promise_value);
-                        }
-                        promise_value.then(
-                            global,
-                            std::ptr::from_mut::<Self>(self),
-                            BunServe__onResolvePlugins,
-                            BunServe__onRejectPlugins,
-                        );
-                        return Ok(());
-                    }
-                    jsc::js_promise::Status::Fulfilled => {
-                        self.handle_on_resolve();
-                        return Ok(());
-                    }
-                    jsc::js_promise::Status::Rejected => {
-                        let value = promise.result(global.vm());
-                        self.handle_on_reject(global, value);
-                        return Ok(());
-                    }
-                }
-            }
-
-            if let Some(e) = result.to_error() {
-                self.handle_on_reject(global, e);
-            } else {
-                self.handle_on_resolve();
-            }
+            self.settle_or_wait_for(global, result);
         }
         Ok(())
+    }
+
+    /// `result` is what a plugin load returned. `self.state` is `Pending` or `AppSetup`.
+    fn settle_or_wait_for(&mut self, global: &JSGlobalObject, result: JSValue) {
+        // handle the case where js returns a promise
+        if let Some(promise) = result.as_any_promise() {
+            match promise.status() {
+                // promise not fulfilled yet
+                jsc::js_promise::Status::Pending => {
+                    // The claim of the reactions' cell. A reaction adopts it, or `load_reaction_collected` does.
+                    self.ref_();
+                    let cell = crate::api::native_promise_context::create(
+                        global,
+                        std::ptr::from_mut::<Self>(self),
+                        JSValue::ZERO,
+                    );
+                    let promise_value = promise.as_value();
+                    if let ServePluginsState::Pending {
+                        promise: pending_promise,
+                        ..
+                    } = &mut self.state
+                    {
+                        pending_promise.set(global, promise_value);
+                    }
+                    promise_value.then_with_value(
+                        global,
+                        cell,
+                        BunServe__onResolvePlugins,
+                        BunServe__onRejectPlugins,
+                    );
+                }
+                jsc::js_promise::Status::Fulfilled => self.handle_on_resolve(),
+                jsc::js_promise::Status::Rejected => {
+                    let value = promise.result(global.vm());
+                    self.handle_on_reject(global, value);
+                }
+            }
+            return;
+        }
+
+        if let Some(e) = result.to_error() {
+            self.handle_on_reject(global, e);
+        } else {
+            self.handle_on_resolve();
+        }
+    }
+
+    /// The reactions can no longer run: their cell was destroyed with its claim, the ref that `this` carries.
+    pub(crate) unsafe fn load_reaction_collected(this: NonNull<Self>) {
+        // SAFETY: the claim keeps `this` alive.
+        let is_app_setup = matches!(
+            unsafe { this.as_ref() }.state,
+            ServePluginsState::AppSetup { .. }
+        );
+        // Nothing waits on an `AppSetup` through this object. The ref of any other state stays, as before the cell.
+        if is_app_setup {
+            <Self as bun_ptr::CellRefCounted>::deref_nn(this);
+        }
     }
 
     #[inline(never)]
     pub(crate) fn handle_on_resolve(&mut self) {
         bun_removable_features::removable_definition!(Bundler, Self::handle_on_resolve);
+        if let ServePluginsState::AppSetup { server } = &mut self.state {
+            if let Some(server) = server.take()
+                && let Some(dev) = server.dev_server_mut()
+            {
+                bun_core::handle_oom(dev.on_plugins_resolved(None));
+            }
+            return;
+        }
         debug_assert!(matches!(self.state, ServePluginsState::Pending { .. }));
         let ServePluginsState::Pending {
             plugin,
@@ -1135,6 +1198,16 @@ impl ServePlugins {
     #[inline(never)]
     pub(crate) fn handle_on_reject(&mut self, global: &JSGlobalObject, err: JSValue) {
         bun_removable_features::removable_definition!(Bundler, Self::handle_on_reject);
+        if let ServePluginsState::AppSetup { server } = &mut self.state {
+            if let Some(server) = server.take()
+                && let Some(dev) = server.dev_server_mut()
+            {
+                bun_core::handle_oom(dev.on_plugins_rejected());
+            }
+            // Reported with no dev server too: the server stopped, or the options made none.
+            Self::report_load_error(global, err);
+            return;
+        }
         debug_assert!(matches!(self.state, ServePluginsState::Pending { .. }));
         let ServePluginsState::Pending {
             plugin,
@@ -1157,13 +1230,19 @@ impl ServePlugins {
             }
         }
 
+        Self::report_load_error(global, err);
+    }
+
+    fn report_load_error(global: &JSGlobalObject, err: JSValue) {
         Output::err_generic("Failed to load plugins for Bun.serve:", ());
         global.bun_vm().as_mut().run_error_handler(err, None);
     }
 
     /// Clears the pending `server` before it's freed, so a load that settles later can't call into it.
     pub(crate) fn forget_server(&mut self, server: super::AnyServer) {
-        if let ServePluginsState::Pending { dev_server, .. } = &mut self.state {
+        if let ServePluginsState::Pending { dev_server, .. }
+        | ServePluginsState::AppSetup { server: dev_server } = &mut self.state
+        {
             if *dev_server == Some(server) {
                 *dev_server = None;
             }
@@ -1176,7 +1255,8 @@ impl Drop for ServePlugins {
         match &self.state {
             ServePluginsState::Unqueued(_) => {}
             ServePluginsState::Pending { .. } => debug_assert!(false), // should have one ref while pending!
-            ServePluginsState::Loaded(_) => {}                         // Box<Plugin> drops
+            ServePluginsState::AppSetup { .. } => {}
+            ServePluginsState::Loaded(_) => {} // The `Box` is only a handle: the cell stays protected.
             ServePluginsState::Err => {}
         }
     }
@@ -1185,29 +1265,37 @@ impl Drop for ServePlugins {
 pub(crate) fn on_resolve_plugins(
     _: &mut JsScope<'_>,
     plugins_result: JsLocal<'_>,
-    context: *mut ServePlugins,
+    context: Option<NonNull<ServePlugins>>,
 ) {
     ctx_log!("onResolve");
 
+    // The cell hands back the ref that `settle_or_wait_for` took. Nothing else takes it from the cell.
+    let Some(context) = context else {
+        return;
+    };
     // SAFETY: `context` was heap-allocated and ref()'d before .then(); this adopts that ref.
-    let _guard = unsafe { RefPtr::from_raw(context) };
+    let _guard = unsafe { RefPtr::from_raw(context.as_ptr()) };
     plugins_result.to_js().ensure_still_alive();
 
     // SAFETY: pointer was passed via .then() above
-    unsafe { &mut *context }.handle_on_resolve();
+    unsafe { &mut *context.as_ptr() }.handle_on_resolve();
 }
 
 pub(crate) fn on_reject_plugins(
     cx: &mut JsScope<'_>,
     error_js: JsLocal<'_>,
-    context: *mut ServePlugins,
+    context: Option<NonNull<ServePlugins>>,
 ) {
     ctx_log!("onReject");
 
+    // As `on_resolve_plugins`.
+    let Some(context) = context else {
+        return;
+    };
     // SAFETY: `context` was heap-allocated and ref()'d before .then(); this adopts that ref.
-    let _guard = unsafe { RefPtr::from_raw(context) };
+    let _guard = unsafe { RefPtr::from_raw(context.as_ptr()) };
     // SAFETY: pointer was passed via .then() above
-    unsafe { &mut *context }.handle_on_reject(cx.global(), error_js.to_js());
+    unsafe { &mut *context.as_ptr() }.handle_on_reject(cx.global(), error_js.to_js());
 }
 
 /// The `options` argument of `server.upgrade(request, options)`. Each property is read once.
@@ -1827,6 +1915,15 @@ where
         global: &JSGlobalObject,
     ) {
         httplog!("onReload");
+
+        // A reload makes no dev server from `app`. The error of a plugin `setup()` that it left pending is still reported.
+        if let Some(setup) = new_config
+            .bake
+            .as_mut()
+            .and_then(|bake| bake.bundler_options.pending_plugin_setup.take())
+        {
+            ServePlugins::report_dropped_app_setup(global, setup.get());
+        }
 
         // SAFETY: `reload` is only reachable while the server is running
         // (`self.app` set in `listen()`).

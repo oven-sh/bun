@@ -26,6 +26,7 @@ use bun_core::{Global, Output};
 use bun_core::{String as BunString, StringView};
 use bun_dotenv as dotenv;
 use bun_jsc::bun_string_jsc;
+use bun_jsc::event_loop::TopLevelWaitError;
 use bun_jsc::js_promise::{UnwrapMode, Unwrapped};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -407,6 +408,29 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         }
     };
 
+    // A plugin `setup()` has not finished. No script is below this frame, so the build waits here.
+    if let Some(setup) = options.bundler_options.pending_plugin_setup.take()
+        && let Some(promise) = setup.get().as_any_promise()
+    {
+        let waited = vm
+            .event_loop_mut()
+            .wait_at_top_level(|| promise.status() != jsc::js_promise::Status::Pending);
+        match waited {
+            Ok(()) => {}
+            Err(TopLevelWaitError::Stopped) => {
+                return Err(js_err(jsc::Stopped.throw(global)));
+            }
+            Err(nothing_left @ TopLevelWaitError::NothingLeft) => {
+                return Err(js_err(global.throw(format_args!(
+                    "A plugin setup() never finished\nnote: {nothing_left}"
+                ))));
+            }
+        }
+        if let Unwrapped::Rejected(err) = promise.unwrap(global.vm(), UnwrapMode::MarkHandled) {
+            return Err(js_err(global.throw_value(err)));
+        }
+    }
+
     let framework = &mut options.framework;
 
     let separate_ssr_graph = framework
@@ -629,7 +653,11 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 framework: bundler_framework,
                 client_transpiler: NonNull::from(client_transpiler),
                 ssr_transpiler,
-                plugins: options.bundler_options.plugin,
+                plugins: options
+                    .bundler_options
+                    .plugin
+                    .as_ref()
+                    .map(bake::PluginCell::ptr),
             },
             &options.arena,
             Some(NonNull::from(&mut any_loop)),

@@ -277,8 +277,9 @@ function callbackify(original: (this: unknown, ...args: unknown[]) => Promise<un
   Object.defineProperties(callbackified, descriptors);
   return callbackified;
 }
+const StringPrototypeToWellFormed = String.prototype.toWellFormed;
 var toUSVString = input => {
-  return `${input}`.toWellFormed();
+  return StringPrototypeToWellFormed.$call(`${input}`);
 };
 
 const kEscape = "\u001b[";

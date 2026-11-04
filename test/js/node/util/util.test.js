@@ -91,6 +91,14 @@ describe("util", () => {
     expect(hints).toEqual(["string"]);
 
     expect(() => util.toUSVString(Symbol("s"))).toThrow(TypeError);
+
+    const original = String.prototype.toWellFormed;
+    String.prototype.toWellFormed = () => "tampered";
+    try {
+      expect(util.toUSVString("ab\uD800")).toBe("ab\uFFFD");
+    } finally {
+      String.prototype.toWellFormed = original;
+    }
   });
   it("inherits", () => {
     function Bar() {}

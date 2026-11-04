@@ -84,6 +84,15 @@ impl ArrayBufferSink {
         Ok(())
     }
 
+    /// # Safety
+    /// `this` is the allocation `JSSink::constructor` made for the JS wrapper, whose
+    /// `finalize` (the sole caller) frees it exactly once, here.
+    pub(crate) unsafe fn destroy(this: *mut Self) {
+        // SAFETY: reclaiming ownership drops `bytes` (Vec<u8> impls Drop) and
+        // frees the box.
+        drop(unsafe { bun_core::heap::take(this) });
+    }
+
     pub(crate) fn end_from_js(
         &mut self,
         _cx: &bun_jsc::JsThread<'_>,
@@ -124,7 +133,7 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
     unsafe fn finalize(this: *mut Self) {
         // SAFETY: trait contract — `this` is the wrapper's live sink, which
         // `JSSink::constructor` allocated for it alone; nothing uses it afterwards.
-        drop(unsafe { bun_core::heap::take(this) });
+        unsafe { Self::destroy(this) };
     }
     fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
         match Self::end_from_js(self, cx) {

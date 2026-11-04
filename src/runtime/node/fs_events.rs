@@ -730,10 +730,7 @@ impl FSEventsLoop {
         unsafe { (cf.run_loop_stop)(self.loop_.load(Ordering::Relaxed)) };
     }
 
-    fn shutdown(&'static self, thread: Option<std::thread::JoinHandle<()>>) {
-        let Some(thread) = thread else {
-            return; // already shut down
-        };
+    fn shutdown(&'static self, thread: std::thread::JoinHandle<()>) {
         // signal close and wait
         self.enqueue_task_concurrent(Task::new(self, FSEventsLoop::stop));
         let _ = thread.join();
@@ -855,6 +852,9 @@ extern "C" fn close_and_wait_on_exit() {
 fn close_and_wait() {
     if let Some(&loop_) = FSEVENTS_DEFAULT_LOOP.get() {
         let mut thread = FSEVENTS_DEFAULT_LOOP_MUTEX.lock();
-        loop_.shutdown(thread.take());
+        // `None`: already shut down.
+        if let Some(thread) = thread.take() {
+            loop_.shutdown(thread);
+        }
     }
 }

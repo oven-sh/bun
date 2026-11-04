@@ -1912,7 +1912,7 @@ mod _async_tasks {
         pub(crate) poster: core::cell::Cell<Option<bun_jsc::ConcurrentPoster>>,
         pub task: WorkPoolTask,
         /// Written from any workpool thread (first `finish_concurrently` caller wins via
-        /// `has_result` CAS); read on the JS thread in `run_from_js_thread`. Wrapped in
+        /// `has_result` CAS); read in `run_from_js_thread` or `finish_shell`. Wrapped in
         /// `Cell` so concurrent subtasks can hold `&Self` and `.set()` without aliased
         /// `&mut`. Cross-thread soundness is provided by the `has_result` CAS (single
         /// writer) + `subtask_count` AcqRel fence (happens-before for the JS-thread

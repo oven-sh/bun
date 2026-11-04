@@ -115,8 +115,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // SAFETY: `name` is a slice of the source or the lexer's string table.
             let gpe = unsafe {
                 self.module_scope_mut()
-                    .members
-                    .get_or_put_hashed(hash, name)
+                    .get_or_put_member_with_hash(name, hash)
             };
 
             // I don't think this happens?
@@ -136,8 +135,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // SAFETY: as above.
             *unsafe {
                 self.module_scope_mut()
-                    .members
-                    .get_or_put_hashed(hash, name)
+                    .get_or_put_member_with_hash(name, hash)
             }
             .value_ptr = js_ast::scope::Member { ref_: new_ref, loc };
 

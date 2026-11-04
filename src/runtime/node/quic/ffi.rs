@@ -14,14 +14,15 @@ use super::{QuicEndpoint, QuicSession, QuicStream};
 ///   back via `*(us_nq_vtable**)ctx`. Those structs are `#[repr(C)]` precisely
 ///   so that first-field read stays valid, and the shim never invents or
 ///   offsets a context pointer.
-/// * The only other value is NULL, which the shim passes on only as `owner` — teardown clears the
-///   conn/stream ctx (and lsquic passes NULL for crypto/mini-conn streams that
-///   never got one), so a null check is the whole liveness test. A non-null
-///   ctx is a live `T`: `teardown` and `Drop` null it (`detach_for_finalize` for `owner`) before the engine that
-///   could call us is destroyed.
-/// * lsquic calls us only from inside a call we make, always on the JS thread, so the `&T` cannot race, and every
-///   mutable field of these types is `Cell`-based (shared-ref interior
-///   mutability), so `&T` is the right reference to hand the callback body.
+/// * The only other value is NULL, which the shim passes on only as `owner`.
+///   The ctx of a conn or stream is NULL until its `on_new_*` has returned,
+///   where that returned null, and once teardown has cleared it, and the shim
+///   tests it before every call. A non-null ctx is a live `T`: `teardown` and
+///   `Drop` null it (`detach_for_finalize` for `owner`) before `T` is freed.
+/// * lsquic calls us only from inside a call we make, always on the JS thread,
+///   so the `&T` cannot race, and every mutable field of these types is
+///   `Cell`-based (shared-ref interior mutability), so `&T` is the right
+///   reference to hand the callback body.
 ///
 /// Layout must match `struct us_nq_vtable` in node_quic_shim.c exactly.
 #[repr(C)]

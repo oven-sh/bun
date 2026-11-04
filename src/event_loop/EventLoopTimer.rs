@@ -282,7 +282,10 @@ impl Tag {
 /// a field of a field (`timers.timer`).
 ///
 /// ```ignore
-/// bun_event_loop::impl_timer_owner!(CronJob; from_timer_ptr => event_loop_timer);
+/// bun_event_loop::impl_timer_owner!(PostgresSQLConnection;
+///     from_timer_ptr => timers.timer,
+///     from_max_lifetime_timer_ptr => timers.max_lifetime_timer,
+/// );
 /// ```
 #[macro_export]
 macro_rules! impl_timer_owner {

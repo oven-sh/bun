@@ -284,7 +284,7 @@ impl Response {
         &self,
         global: &JSGlobalObject,
     ) -> JsResult<Option<HeadersRef>> {
-        match self.init_mut().headers.as_ref() {
+        match self.get_init_headers() {
             Some(headers) => headers.clone_this(global).map(Some),
             None => Ok(None),
         }

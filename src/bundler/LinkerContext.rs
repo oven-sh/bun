@@ -197,8 +197,7 @@ impl<'a> LinkerContext<'a> {
 
     /// container_of: `*LinkerContext` → `*BundleV2` via the embedded `.linker`
     /// field. Returns raw; caller
-    /// decides `&*` vs `&mut *` per local aliasing rules (several callers run
-    /// on worker-pool threads and MUST NOT materialize `&mut BundleV2`).
+    /// decides `&*` vs `&mut *` per local aliasing rules.
     ///
     /// SAFETY: `linker` must point to the `.linker` field of a live `BundleV2`
     /// and carry provenance over the full `BundleV2` allocation.

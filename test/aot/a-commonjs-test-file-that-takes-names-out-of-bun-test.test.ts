@@ -9,9 +9,9 @@ import { test } from "./supported";
 
 raiseDefaultTimeout(120_000);
 
-// A test file names itself in the lines that it prints: a run may hold several of them.
-const body = (file: string) => `("a package patches fetch through a helper", () => {
-  const { activate } = require("patches");
+// A test file names itself in the lines that it prints: a run may hold several of them. `load`: what the file loads the package with.
+const body = (file: string, load = "require") => `("a package patches fetch through a helper", () => {
+  const { activate } = ${load}("patches");
   const real = fetch;
   const undo = activate();
   console.log("SEEN ${file}", typeof fetch, fetch === real);
@@ -39,16 +39,18 @@ const files = {
   "names.test.cjs": `const { test } = require("bun:test");\ntest${body("names.test.cjs")}`,
   "member.test.cjs": `require("bun:test").test${body("member.test.cjs")}`,
   "several.test.cjs": `const { test, expect, describe } = require("bun:test");\ndescribe("d", () => { test${body("several.test.cjs")} });`,
-  "meta.test.mjs": `const { test } = import.meta.require("bun:test");\nconst require = import.meta.require;\ntest${body("meta.test.mjs")}`,
+  "meta.test.mjs": `const { test } = import.meta.require("bun:test");\ntest${body("meta.test.mjs", "import.meta.require")}`,
+  "variable.test.mjs": `const { test } = import.meta.require("bun:test");\nconst require = import.meta.require;\ntest${body("variable.test.mjs")}`,
 };
-const commonJs = ["names.test.cjs", "member.test.cjs", "several.test.cjs"];
-const testFiles = [...commonJs, "meta.test.mjs"];
+const overLayers = ["names.test.cjs", "member.test.cjs", "several.test.cjs", "meta.test.mjs"];
+const testFiles = [...overLayers, "variable.test.mjs"];
 
 const noLayers = "this Bun loads one program a realm";
 // A build is what costs, so the test files of a form share a run. What the scan finds in one file opens the whole run, so each test also reads what the scan
-// says of its own file. `runs`: the test files of each run. Over layers meta.test.mjs has a run to itself: it holds its loader in a variable, which makes the
-// lowest layer of its run keep more of Bun's own code, and the programs above that layer differ with it. The three CommonJS files stand on the same layers,
-// and `TestRunPartFiles:1` keeps each a program of its own above them. `form`: what a run of so many test files says of its build.
+// says of its own file. `runs`: the test files of each run. variable.test.mjs holds its loader in a variable. Over layers that makes the lowest layer keep
+// more of Bun's own code, and the programs above that layer differ with it. So that file runs as one program only, where it changes nothing for the others.
+// a-test-file-names-a-node-builtin-with-the-bun-prefix.test.ts tests a loader under another name over layers. The four other files stand on the same
+// layers, and `TestRunPartFiles:1` keeps each a program of its own above them. `form`: what a run of so many test files says of its build.
 const forms = {
   "one program": {
     words: "TestRunLayers:0",
@@ -57,7 +59,7 @@ const forms = {
   },
   "two layers": {
     words: "TestRunLayers:2,TestRunPartFiles:1",
-    runs: [commonJs, ["meta.test.mjs"]],
+    runs: [overLayers],
     form: (count: number) =>
       new RegExp(`^(layers 2|programs without layers: ${noLayers}) \\| test files ${count} \\| to a program 1( \\||$)`),
   },
@@ -132,7 +134,7 @@ function saidOf({ stdout, report, outOfSight }: Ran, file: string) {
   };
 }
 
-test("plain bun test runs the four test files, and each patches fetch and puts it back", async () => {
+test("plain bun test runs the five test files, and each patches fetch and puts it back", async () => {
   const { stdout, stderr, exitCode } = await ran(testFiles);
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
     "bun test <version> (<revision>)
@@ -143,7 +145,9 @@ test("plain bun test runs the four test files, and each patches fetch and puts i
     SEEN several.test.cjs function false
     SEEN several.test.cjs true
     SEEN meta.test.mjs function false
-    SEEN meta.test.mjs true"
+    SEEN meta.test.mjs true
+    SEEN variable.test.mjs function false
+    SEEN variable.test.mjs true"
   `);
   expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
     "names.test.cjs:
@@ -158,9 +162,12 @@ test("plain bun test runs the four test files, and each patches fetch and puts i
     meta.test.mjs:
     (pass) a package patches fetch through a helper
 
-     4 pass
+    variable.test.mjs:
+    (pass) a package patches fetch through a helper
+
+     5 pass
      0 fail
-    Ran 4 tests across 4 files."
+    Ran 5 tests across 5 files."
   `);
   expect(exitCode).toBe(0);
 });

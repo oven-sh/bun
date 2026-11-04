@@ -656,7 +656,7 @@ fn transfer(
         let again = direction == Direction::Write
             && transferred == 0
             && error.is_none()
-            && buf.len != 0
+            && buf.iov_len != 0
             && super::pipe::make_writes_wait(handle);
         if !again {
             return (transferred, error);
@@ -664,7 +664,7 @@ fn transfer(
     }
 }
 
-/// One `NtReadFile` or `NtWriteFile` (`None`: at the file position), over when this returns, and unseen by a completion port.
+/// One `NtReadFile` or `NtWriteFile` of what a `DWORD` can count (`None`: at the file position), over when this returns, and unseen by a completion port.
 fn transfer_once(
     handle: HANDLE,
     direction: Direction,
@@ -675,7 +675,7 @@ fn transfer_once(
     let io = cell.get();
     let status = with_transfer_event(|event| {
         let offset = offset.as_ref().map_or(null(), from_ref);
-        let (base, len) = (buf.base.cast::<c_void>(), buf.len);
+        let (base, len) = (buf.iov_base, buf.iov_len as u32);
         // SAFETY: an iovec names memory of its length, writable if it is read into. That, `io` and `offset`
         // outlive the operation, which is over when this function returns.
         let status = unsafe {
@@ -732,7 +732,7 @@ fn transfer_once(
     (transferred, error)
 }
 
-/// One transfer per buffer until one fails. Positional I/O leaves the file position as it was.
+/// One transfer per buffer, or per `DWORD`'s worth of it, until one fails. Positional I/O leaves the file position as it was.
 fn for_each_buffer(
     handle: HANDLE,
     direction: Direction,
@@ -747,13 +747,24 @@ fn for_each_buffer(
 
     let mut bytes: usize = 0;
     let mut error = None;
-    for &buf in bufs {
-        let offset = positional.then(|| position.wrapping_add(bytes as i64));
-        let (transferred, failure) = transfer(handle, direction, buf, offset);
-        bytes += transferred;
-        if failure.is_some() {
-            error = failure;
-            break;
+    'buffers: for buf in bufs {
+        let mut done = 0;
+        loop {
+            let part = PlatformIoVec {
+                iov_base: buf.iov_base.wrapping_byte_add(done),
+                iov_len: (buf.iov_len - done).min(u32::MAX as usize),
+            };
+            let offset = positional.then(|| position.wrapping_add(bytes as i64));
+            let (transferred, failure) = transfer(handle, direction, part, offset);
+            bytes += transferred;
+            done += transferred;
+            if failure.is_some() {
+                error = failure;
+                break 'buffers;
+            }
+            if transferred < part.iov_len || done == buf.iov_len {
+                break;
+            }
         }
     }
 
@@ -829,41 +840,12 @@ pub fn writev(fd: Fd, bufs: &[PlatformIoVec]) -> Maybe<usize> {
     write_buffers(fd, bufs, -1)
 }
 
-/// Splits `len` bytes into transfers a `DWORD` can count, and stops at the first short one.
-fn in_dword_chunks(
-    len: usize,
-    position: i64,
-    mut transfer: impl FnMut(core::ops::Range<usize>, i64) -> Maybe<usize>,
-) -> Maybe<usize> {
-    let mut total = 0;
-    loop {
-        let chunk = (len - total).min(u32::MAX as usize);
-        let at = if position >= 0 {
-            position + total as i64
-        } else {
-            position
-        };
-        let transferred = match transfer(total..total + chunk, at) {
-            Err(_) if total > 0 => return Ok(total),
-            result => result?,
-        };
-        total += transferred;
-        if transferred < chunk || total == len {
-            return Ok(total);
-        }
-    }
-}
-
 pub fn pread(fd: Fd, buf: &mut [u8], position: i64) -> Maybe<usize> {
-    in_dword_chunks(buf.len(), position, |range, at| {
-        preadv(fd, &[crate::platform_iovec_create(&mut buf[range])], at)
-    })
+    preadv(fd, &[crate::platform_iovec_create(buf)], position)
 }
 
 pub fn pwrite(fd: Fd, buf: &[u8], position: i64) -> Maybe<usize> {
-    in_dword_chunks(buf.len(), position, |range, at| {
-        pwritev(fd, &[crate::platform_iovec_const_create(&buf[range])], at)
-    })
+    pwritev(fd, &[crate::platform_iovec_const_create(buf)], position)
 }
 
 pub fn read(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {

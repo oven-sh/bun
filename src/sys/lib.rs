@@ -4236,11 +4236,10 @@ fn read_fill_vec(
 // ──────────────────────────────────────────────────────────────────────────
 // `bun.PlatformIOVecConst` / `bun.platformIOVecConstCreate` — POSIX
 // `iovec_const` (= `struct iovec` with the writev contract that `base` is
-// not written through). The Windows definition is further down.
+// not written through).
 // Layout matches `libc::iovec` (`{ *void, usize }`) so a `&[PlatformIoVecConst]`
 // can be passed straight to `pwritev(2)`.
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(unix)]
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct PlatformIoVecConst {
@@ -4248,15 +4247,12 @@ pub struct PlatformIoVecConst {
     pub len: usize,
 }
 // SAFETY: `{ *const u8, usize }` — `(null, 0)` is a valid empty iovec (S021).
-#[cfg(unix)]
 unsafe impl bun_core::ffi::Zeroable for PlatformIoVecConst {}
-#[cfg(unix)]
 const _: () = assert!(
-    core::mem::size_of::<PlatformIoVecConst>() == core::mem::size_of::<libc::iovec>()
-        && core::mem::align_of::<PlatformIoVecConst>() == core::mem::align_of::<libc::iovec>()
+    core::mem::size_of::<PlatformIoVecConst>() == core::mem::size_of::<PlatformIoVec>()
+        && core::mem::align_of::<PlatformIoVecConst>() == core::mem::align_of::<PlatformIoVec>()
 );
 
-#[cfg(unix)]
 #[inline]
 pub fn platform_iovec_const_create(buf: &[u8]) -> PlatformIoVecConst {
     PlatformIoVecConst {
@@ -4331,7 +4327,7 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
 
 // ──────────────────────────────────────────────────────────────────────────
 // `bun.PlatformIOVec` — mutable iovec (`{ *void, usize }` on POSIX,
-// `WSABUF` on Windows). Layout-compatible with `libc::iovec` so a
+// the same on Windows). Layout-compatible with `libc::iovec` so a
 // `&[PlatformIoVec]` can be passed straight to `readv(2)`/`writev(2)`.
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(unix)]
@@ -4340,67 +4336,24 @@ pub type PlatformIoVec = libc::iovec;
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct PlatformIoVec {
-    pub len: u32,
-    pub base: *mut u8,
+    pub iov_base: *mut core::ffi::c_void,
+    pub iov_len: usize,
 }
-// SAFETY: `(0, null)` is a valid empty buffer.
+// SAFETY: `(null, 0)` is a valid empty buffer.
 #[cfg(windows)]
 unsafe impl bun_core::ffi::Zeroable for PlatformIoVec {}
 
 #[inline]
 pub fn platform_iovec_create(buf: &mut [u8]) -> PlatformIoVec {
-    #[cfg(unix)]
-    {
-        PlatformIoVec {
-            iov_base: buf.as_mut_ptr().cast(),
-            iov_len: buf.len(),
-        }
-    }
-    #[cfg(windows)]
-    {
-        PlatformIoVec {
-            len: buf.len() as u32,
-            base: buf.as_mut_ptr(),
-        }
+    PlatformIoVec {
+        iov_base: buf.as_mut_ptr().cast(),
+        iov_len: buf.len(),
     }
 }
 
 #[inline]
 pub const fn platform_iovec_len(iov: &PlatformIoVec) -> usize {
-    #[cfg(unix)]
-    {
-        iov.iov_len
-    }
-    #[cfg(windows)]
-    {
-        iov.len as usize
-    }
-}
-
-/// [`PlatformIoVec`] with `base` typed `*const u8` so callers can build it
-/// from `&[u8]` without casts.
-#[cfg(windows)]
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct PlatformIoVecConst {
-    pub len: u32,
-    pub(crate) base: *const u8,
-}
-// SAFETY: `(0, null)` is a valid empty buffer.
-#[cfg(windows)]
-unsafe impl bun_core::ffi::Zeroable for PlatformIoVecConst {}
-#[cfg(windows)]
-const _: () = assert!(
-    core::mem::size_of::<PlatformIoVecConst>() == core::mem::size_of::<PlatformIoVec>()
-        && core::mem::align_of::<PlatformIoVecConst>() == core::mem::align_of::<PlatformIoVec>()
-);
-#[cfg(windows)]
-#[inline]
-pub fn platform_iovec_const_create(buf: &[u8]) -> PlatformIoVecConst {
-    PlatformIoVecConst {
-        len: buf.len() as u32,
-        base: buf.as_ptr(),
-    }
+    iov.iov_len
 }
 
 /// `bun.sys.writev` — gather-write. Retries on EINTR

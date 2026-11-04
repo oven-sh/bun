@@ -1557,6 +1557,13 @@ mod safe_libc {
             off: libc::off_t,
             len: libc::off_t,
         ) -> c_int;
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+        pub safe fn posix_fadvise(
+            fd: c_int,
+            offset: libc::off_t,
+            len: libc::off_t,
+            advice: c_int,
+        ) -> c_int;
         // BSD/Linux event-queue / notification syscalls — all by-value scalars;
         // bad args → errno (`EINVAL`/`EMFILE`/…), never UB.
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
@@ -4705,6 +4712,8 @@ macro_rules! syslog {
 pub mod c {
     #[cfg(unix)]
     pub use super::safe_libc::fchmod;
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+    pub use super::safe_libc::posix_fadvise;
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     use core::ffi::c_int;
     #[cfg(unix)]

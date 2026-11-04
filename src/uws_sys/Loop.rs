@@ -123,7 +123,7 @@ impl Loop {
 
     pub fn update_date(&self) {
         // SAFETY: needs uWS's `LoopData` behind the loop. Every loop has it but spawnSync's, which
-        // `create` makes without one and which does not leave `SpawnSyncEventLoop.rs`.
+        // `create` makes without one and which no safe `pub fn` hands out as a reference.
         unsafe { c::uws_loop_date_header_timer_update(self) };
     }
 
@@ -283,7 +283,7 @@ impl Loop {
     /// Runs the uWS pre handler, which flushes queued `publish()` batches and leftover corks.
     pub fn flush_pending_writes(&self) {
         // SAFETY: needs uWS's `LoopData` behind the loop. Every loop has it but spawnSync's, which
-        // `create` makes without one and which does not leave `SpawnSyncEventLoop.rs`.
+        // `create` makes without one and which no safe `pub fn` hands out as a reference.
         unsafe { c::uws_loop_flush_pending_writes(self) };
     }
 

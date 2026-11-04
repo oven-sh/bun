@@ -129,7 +129,7 @@ impl Taskable for FSWatchTask {
     /// same as the refused-post path in `enqueue`.
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract.
-        unsafe { Self::deinit(this) };
+        unsafe { bun_core::heap::take(this) }.deinit();
     }
     /// The watcher closes with the context that started it (`abort_handle`); a batch that arrives
     /// afterwards finds it closed.
@@ -230,7 +230,7 @@ impl FSWatchTask {
                 ));
                 if let bun_jsc::vm_handle::Posted::Refused(_) = self.ctx().post(node) {
                     // VM torn down: nobody will emit these events.
-                    Self::deinit(that);
+                    bun_core::heap::take(that).deinit();
                 }
             }
             return;
@@ -255,26 +255,15 @@ impl FSWatchTask {
 
 impl FSWatchTask {
     /// `FSWatchTask.deinit`. **Not** `impl Drop`:
-    /// this is only ever called on heap clones produced by `enqueue()` (via the
-    /// task dispatcher), never on the embedded `FSWatcher.current_task` field —
-    /// the assert below enforces that. A `Drop` impl would also fire on
-    /// `*self = Self{..}` in `append()` and on `heap::take` in `finalize`,
-    /// where `self` *is* `current_task`, which would always trip the assert.
-    ///
-    /// # Safety
-    /// `this` must be the unique `heap::alloc` pointer produced by
-    /// `enqueue()`.
-    pub(crate) unsafe fn deinit(this: *mut Self) {
-        // SAFETY: caller contract — `this` is the unique live heap clone from
-        // `enqueue()`; reclaim ownership (paired with its `heap::alloc`).
-        let mut task = unsafe { bun_core::heap::take(this) };
-        task.clean_entries();
-        #[cfg(debug_assertions)]
-        {
-            debug_assert!(!core::ptr::eq(task.ctx().current_task.as_ptr(), this));
-        }
-        // SAFETY: the ref `enqueue()` took.
-        unsafe { FSWatcher::unref_task(task.ctx.expect("FSWatchTask.ctx unset").as_mut_ptr()) };
+    /// this is only ever called on heap clones produced by `enqueue()`, never on the embedded
+    /// `current_task`. A `Drop` impl would also fire on `*self = Self{..}` in `append()` and when
+    /// the `FSWatcher` is dropped, where `self` *is* `current_task`.
+    #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
+    pub(crate) fn deinit(mut self: Box<Self>) {
+        self.clean_entries();
+        // SAFETY: `ctx` is private and only `enqueue()` boxes a task with it set, after
+        // `ref_task()`.
+        unsafe { FSWatcher::unref_task(self.ctx.expect("FSWatchTask.ctx unset").as_mut_ptr()) };
     }
 }
 
@@ -508,19 +497,12 @@ impl<'a> Arguments<'a> {
         })
     }
 
-    pub(crate) fn create_fs_watcher(&self) -> bun_sys::Result<*mut FSWatcher> {
+    pub(crate) fn create_fs_watcher(&self) -> bun_sys::Result<JSValue> {
         FSWatcher::init(self)
     }
 }
 
 impl FSWatcher {
-    /// Read access to the JS wrapper value. Exposed for `NodeFS::watch`.
-    /// Returns `UNDEFINED` if the wrapper reference has been cleared.
-    #[inline]
-    pub(crate) fn js_this(&self) -> JSValue {
-        self.js_this.get_or_undefined()
-    }
-
     /// # Safety
     /// `this` must be the unique `heap::alloc` pointer produced by `init`;
     /// JS-thread only.
@@ -825,7 +807,8 @@ impl FSWatcher {
         self.close();
     }
 
-    pub(crate) fn init(args: &Arguments<'_>) -> bun_sys::Result<*mut FSWatcher> {
+    /// Returns the JS wrapper (`undefined` once `detach()` has cleared it).
+    pub(crate) fn init(args: &Arguments<'_>) -> bun_sys::Result<JSValue> {
         let mut joined_buf = bun_paths::path_buffer_pool::get();
         let slice = {
             let mut s = args.path.slice();
@@ -922,7 +905,7 @@ impl FSWatcher {
         };
         // SAFETY: `ctx` is heap-allocated; `detach()` disarms it before it is finalized.
         unsafe { bun_jsc::AbortHandle::arm_owner(ctx, args.context) };
-        Ok(ctx)
+        Ok(ctx_ref.js_this.get_or_undefined())
     }
 }
 

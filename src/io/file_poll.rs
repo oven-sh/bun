@@ -315,11 +315,6 @@ impl FilePoll {
         FileType::Pipe
     }
 
-    // Note: these handlers take no loop parameter: holding a
-    // protected `&mut Loop` across `on_update` would alias the fresh `&mut Loop`
-    // that downstream `__bun_run_file_poll` handlers conjure via
-    // `EventLoopCtx::platform_event_loop()` when they re-enter the loop
-    // (`register_with_fd`/`unregister`/`deinit`).
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub(crate) fn on_kqueue_event(&mut self, kqueue_event: &KQueueEvent) {
         self.update_flags(Flags::from_kqueue_event(kqueue_event));
@@ -370,10 +365,7 @@ impl FilePoll {
     }
 
     fn deinit_possibly_defer(&mut self, vm: EventLoopCtx, force_unregister: bool) {
-        // `loop_mut()` is the crate-private nonnull-asref accessor (single
-        // deref in `EventLoopCtx`); the `&mut Loop` is consumed by `unregister`
-        // and dropped before any `&mut Store` is materialised.
-        let _ = self.unregister(vm.loop_mut(), force_unregister);
+        let _ = self.unregister(vm.platform_event_loop(), force_unregister);
         #[cfg(windows)]
         self.release_native();
 
@@ -453,7 +445,7 @@ impl FilePoll {
     }
 
     /// Only intended to be used from EventLoop.Pollable
-    fn deactivate(&mut self, loop_: &mut Loop) {
+    fn deactivate(&mut self, loop_: &Loop) {
         if self.flags.contains(Flags::HasIncrementedPollCount) {
             loop_.dec();
         }
@@ -465,7 +457,7 @@ impl FilePoll {
     }
 
     /// Only intended to be used from EventLoop.Pollable
-    fn activate(&mut self, loop_: &mut Loop) {
+    fn activate(&mut self, loop_: &Loop) {
         if !self.flags.contains(Flags::HasIncrementedPollCount) {
             loop_.inc();
         }
@@ -523,7 +515,7 @@ impl FilePoll {
         poll
     }
 
-    pub fn register(&mut self, loop_: &mut Loop, flag: Flags, one_shot: bool) -> sys::Result<()> {
+    pub fn register(&mut self, loop_: &Loop, flag: Flags, one_shot: bool) -> sys::Result<()> {
         self.register_with_fd(
             loop_,
             flag,
@@ -538,7 +530,7 @@ impl FilePoll {
 
     pub fn register_with_fd(
         &mut self,
-        loop_: &mut Loop,
+        loop_: &Loop,
         flag: Flags,
         one_shot: OneShotFlag,
         fd: Fd,
@@ -837,13 +829,13 @@ impl FilePoll {
         sys::Result::Ok(())
     }
 
-    pub fn unregister(&mut self, loop_: &mut Loop, force_unregister: bool) -> sys::Result<()> {
+    pub fn unregister(&mut self, loop_: &Loop, force_unregister: bool) -> sys::Result<()> {
         self.unregister_with_fd(loop_, self.fd, force_unregister)
     }
 
     pub(crate) fn unregister_with_fd(
         &mut self,
-        loop_: &mut Loop,
+        loop_: &Loop,
         fd: Fd,
         force_unregister: bool,
     ) -> sys::Result<()> {
@@ -856,7 +848,7 @@ impl FilePoll {
 
     fn unregister_with_fd_impl(
         &mut self,
-        loop_: &mut Loop,
+        loop_: &Loop,
         fd: Fd,
         force_unregister: bool,
     ) -> sys::Result<()> {
@@ -1171,10 +1163,10 @@ impl FilePoll {
 
     /// The mode of the console changed while this poll was waiting for input.
     pub(crate) fn restart_console(&mut self) {
-        let loop_ = get_vm_ctx(self.allocator_type).loop_mut();
+        let vm = get_vm_ctx(self.allocator_type);
         // What can fail here is making the object that waits.
         if self
-            .set_native_events(loop_, Flags::Readable, READABLE)
+            .set_native_events(vm.platform_event_loop(), Flags::Readable, READABLE)
             .is_err()
         {
             bun_core::out_of_memory();
@@ -1220,9 +1212,9 @@ impl FilePoll {
                 ),
             },
             NativeKind::Pipe | NativeKind::ForeignPipe => {
-                let loop_ = get_vm_ctx(self.allocator_type).loop_mut();
+                let vm = get_vm_ctx(self.allocator_type);
                 self.native
-                    .read(loop_, buf)
+                    .read(vm.platform_event_loop(), buf)
                     .map_err(|code| sys::Error::from_win32(code, sys::Tag::read).with_fd(fd))
             }
         }
@@ -1236,9 +1228,9 @@ impl FilePoll {
                 sys::Result::Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::write).with_fd(fd))
             }
             NativeKind::Pipe | NativeKind::ForeignPipe => {
-                let loop_ = get_vm_ctx(self.allocator_type).loop_mut();
+                let vm = get_vm_ctx(self.allocator_type);
                 self.native
-                    .write(loop_, buf)
+                    .write(vm.platform_event_loop(), buf)
                     .map_err(|code| sys::Error::from_win32(code, sys::Tag::write).with_fd(fd))
             }
         }
@@ -1583,10 +1575,7 @@ impl Pollable {
 /// # Safety
 /// uWS C callback: `loop_` is the live per-thread `us_loop_t`; `tagged_pointer`
 /// was registered via `Pollable::init` in `register_with_fd`.
-unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
-    loop_: *mut Loop,
-    tagged_pointer: *mut c_void,
-) {
+unsafe extern "C" fn Bun__internal_dispatch_ready_poll(loop_: &Loop, tagged_pointer: *mut c_void) {
     let tag = Pollable::from(tagged_pointer);
 
     if tag.tag() != Pollable::FILE_POLL_TAG {
@@ -1599,14 +1588,7 @@ unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
         return;
     }
 
-    // SAFETY: `loop_` is the live uws loop. Do *not* materialize `&mut *loop_`
-    // here — `on_update` (via `__bun_run_file_poll`) re-enters the loop and conjures
-    // a fresh `&mut Loop` through `EventLoopCtx::platform_event_loop()`; a
-    // protected `&mut Loop` spanning that call would be SB-UB. Take a short-lived
-    // `&*loop_` only to copy the POD event onto the stack (the `BackRef`-style
-    // accessor returns by value), then drop the borrow before dispatching so the
-    // handler is free to form its own `&mut Loop`.
-    let ev = unsafe { &*loop_ }.current_ready_event();
+    let ev = loop_.current_ready_event();
 
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     file_poll.on_kqueue_event(&ev);

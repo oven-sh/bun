@@ -116,23 +116,15 @@ mod handler {
 }
 
 impl SpawnSyncEventLoop {
-    // In-place init: `self.event_loop` is captured by `setParentEventLoop`
-    // below, so `Self` MUST NOT move after `init` returns (no-move invariant
-    // upheld by the caller). The caller provides uninitialized storage, hence
-    // `MaybeUninit<Self>` (out-param ctor exception). `false` leaves it uninitialized.
-    pub fn init(
-        this: &mut core::mem::MaybeUninit<Self>,
-        vm: *mut (), /* SAFETY: erased *mut VirtualMachine */
-    ) -> bool {
+    /// `None` if the isolated loop cannot be created. Boxed: the Windows timeout timer keeps the address.
+    pub fn init(vm: *mut () /* SAFETY: erased *mut VirtualMachine */) -> Option<Box<Self>> {
         // `uws::Loop::create` takes a `LoopHandler` impl with associated-const fn ptrs.
-        let Some(loop_) = uws::Loop::create::<handler::Handler>() else {
-            return false;
-        };
+        let loop_ = uws::Loop::create::<handler::Handler>()?;
 
         // A fresh `jsc::EventLoop` whose `uws_loop` is the isolated loop.
         let event_loop = __bun_spawn_sync_create_event_loop(vm, loop_.as_ptr());
 
-        let this = this.write(Self {
+        let this = Box::new(Self {
             uws_loop: loop_,
             event_loop,
             vm: Cell::new(vm),
@@ -148,7 +140,7 @@ impl SpawnSyncEventLoop {
         let loop_data = &this.uws_loop().internal_loop_data;
         loop_data.set_parent_raw(tag, ptr);
         loop_data.jsc_vm.set(core::ptr::null());
-        true
+        Some(this)
     }
 
     /// Erased `*mut bun_jsc::event_loop::EventLoop` (heap-owned via

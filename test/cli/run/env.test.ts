@@ -1470,6 +1470,180 @@ describe("node shim (argv0=node) does not auto-load .env files", () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/47916
+// Bun runs as `node` when argv[0] ends in `node`. A child started with
+// child_process.fork() runs process.execPath, which is the bun binary. The
+// parent names the child `node` so it runs in the same mode: no default .env
+// files, and node-only flags such as `--loader tsx` are ignored.
+describe("fork() from the node shim (argv0=node) keeps the child in node mode", () => {
+  const files = {
+    ".env": "FOO=from-dotenv\n",
+    ".env.production": "FOO=from-production\n",
+    "parent.mjs": `
+      import { fork, spawnSync } from "node:child_process";
+      const [mode, execPath] = process.argv.slice(2);
+      const options = {};
+      if (mode === "smol") options.execArgv = ["--smol"];
+      if (mode === "env-file") options.execArgv = ["--env-file=.env.production"];
+      if (mode === "loader") options.execArgv = ["--loader", "tsx"];
+      if (mode === "exec-path") options.execPath = execPath;
+      if (mode === "argv0") options.argv0 = "custom-argv0";
+      if (mode === "spawn-version") {
+        const { stdout } = spawnSync(process.execPath, ["--version"], { encoding: "utf8" });
+        console.log(JSON.stringify({ version: stdout.trim() }));
+      } else {
+        fork("./child.mjs", [mode === "grandchild" ? "fork" : "print"], options);
+      }
+    `,
+    "child.mjs": `
+      import { fork } from "node:child_process";
+      if (process.argv[2] === "fork") {
+        // A worker pool pattern: an explicit execArgv and NODE_OPTIONS copied from it.
+        fork("./child.mjs", ["print"], { execArgv: [], env: { ...process.env, NODE_OPTIONS: process.execArgv.join(" ") } });
+      } else {
+        console.log(JSON.stringify({
+          FOO: process.env.FOO ?? null,
+          argv0: process.argv0,
+          argv0IsExecPath: process.argv[0] === process.execPath,
+          execArgv: process.execArgv,
+        }));
+      }
+    `,
+    "cluster.mjs": `
+      import cluster from "node:cluster";
+      cluster.setupPrimary({ exec: "./child.mjs", args: ["print"] });
+      cluster.fork();
+    `,
+  };
+  const testEnv = { ...bunEnv, NODE_ENV: undefined, FOO: undefined, NODE_OPTIONS: undefined };
+
+  async function run(dir: string, script: string, args: string[], argv0?: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), script, ...args],
+      argv0,
+      cwd: dir,
+      env: testEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  test.concurrent("the fork child runs as node and keeps the parent's execArgv", async () => {
+    using dir = tempDir("dotenv-fork-as-node", files);
+    expect(await run(String(dir), "parent.mjs", ["default"], "node")).toEqual({
+      FOO: null,
+      argv0: "node",
+      argv0IsExecPath: true,
+      execArgv: [],
+    });
+  });
+
+  test.concurrent("an explicit execArgv is passed through unchanged", async () => {
+    using dir = tempDir("dotenv-fork-as-node-smol", files);
+    expect(await run(String(dir), "parent.mjs", ["smol"], "node")).toEqual({
+      FOO: null,
+      argv0: "node",
+      argv0IsExecPath: true,
+      execArgv: ["--smol"],
+    });
+  });
+
+  test.concurrent("an explicit --env-file in execArgv still applies", async () => {
+    using dir = tempDir("dotenv-fork-as-node-env-file", files);
+    expect(await run(String(dir), "parent.mjs", ["env-file"], "node")).toEqual({
+      FOO: "from-production",
+      argv0: "node",
+      argv0IsExecPath: true,
+      execArgv: ["--env-file=.env.production"],
+    });
+  });
+
+  test.concurrent("a node-only --loader in execArgv is ignored like in the parent", async () => {
+    using dir = tempDir("dotenv-fork-as-node-loader", files);
+    expect(await run(String(dir), "parent.mjs", ["loader"], "node")).toEqual({
+      FOO: null,
+      argv0: "node",
+      argv0IsExecPath: true,
+      execArgv: ["--loader", "tsx"],
+    });
+  });
+
+  test.concurrent("a grandchild forked with an explicit execArgv stays in node mode", async () => {
+    using dir = tempDir("dotenv-fork-as-node-grandchild", files);
+    expect(await run(String(dir), "parent.mjs", ["grandchild"], "node")).toEqual({
+      FOO: null,
+      argv0: "node",
+      argv0IsExecPath: true,
+      execArgv: [],
+    });
+  });
+
+  test.concurrent("a cluster worker runs as node", async () => {
+    using dir = tempDir("dotenv-cluster-as-node", files);
+    expect(await run(String(dir), "cluster.mjs", [], "node")).toEqual({
+      FOO: null,
+      argv0: "node",
+      argv0IsExecPath: true,
+      execArgv: [],
+    });
+  });
+
+  test.concurrent("an explicit options.argv0 wins", async () => {
+    using dir = tempDir("dotenv-fork-as-node-argv0", files);
+    expect(await run(String(dir), "parent.mjs", ["argv0"], "node")).toEqual({
+      FOO: "from-dotenv",
+      argv0: "custom-argv0",
+      argv0IsExecPath: true,
+      execArgv: [],
+    });
+  });
+
+  test.concurrent("a fork child of plain `bun parent.mjs` still auto-loads .env", async () => {
+    using dir = tempDir("dotenv-fork-as-bun", files);
+    expect(await run(String(dir), "parent.mjs", ["default"])).toEqual({
+      FOO: "from-dotenv",
+      argv0: process.execPath,
+      argv0IsExecPath: true,
+      execArgv: [],
+    });
+  });
+
+  test.concurrent.skipIf(isWindows)("a parent named by a path ending in node passes that path on", async () => {
+    using dir = tempDir("dotenv-fork-as-node-path", files);
+    const nodeLink = path.join(String(dir), "node");
+    fs.symlinkSync(bunExe(), nodeLink);
+    expect(await run(String(dir), "parent.mjs", ["default"], nodeLink)).toEqual({
+      FOO: null,
+      argv0: nodeLink,
+      argv0IsExecPath: true,
+      execArgv: [],
+    });
+  });
+
+  test.concurrent("spawn(process.execPath, [\"--version\"]) still runs the subcommand", async () => {
+    using dir = tempDir("dotenv-spawn-version-as-node", files);
+    expect(await run(String(dir), "parent.mjs", ["spawn-version"], "node")).toEqual({
+      version: Bun.version,
+    });
+  });
+
+  test.concurrent.skipIf(isWindows)("a fork with another execPath is not renamed", async () => {
+    using dir = tempDir("dotenv-fork-as-node-exec-path", files);
+    const otherExe = path.join(String(dir), "other-runtime");
+    fs.symlinkSync(bunExe(), otherExe);
+    expect(await run(String(dir), "parent.mjs", ["exec-path", otherExe], "node")).toEqual({
+      FOO: "from-dotenv",
+      argv0: otherExe,
+      argv0IsExecPath: true,
+      execArgv: [],
+    });
+  });
+});
+
 // JSC options come from BUN_JSC_<option>; JSC's own JSC_<option> environment
 // pass is disabled (JSC::Config::disableEnvironmentOptions in JSCInitialize).
 describe("JSC option environment variables", () => {

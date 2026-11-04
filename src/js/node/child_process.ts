@@ -685,6 +685,7 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 }
 const etimedoutErrorCode: () => number = $bindgen("node_util_binding.bind.ts", "etimedoutErrorCode");
 const enobufsErrorCode: () => number = $bindgen("node_util_binding.bind.ts", "enobufsErrorCode");
+const isRunningAsNode: boolean = $bindgen("node_util_binding.bind.ts", "isRunningAsNode");
 
 /**
  * Spawns a file as a shell synchronously.
@@ -838,6 +839,15 @@ function fork(modulePath, args: string[] | Record<string, unknown> | null = [], 
   }
 
   args = [...execArgv, modulePath, ...(args as string[])];
+
+  // Bun runs as `node` when argv[0] ends in `node`: no default `.env` files,
+  // node-only flags ignored. process.execPath is the real binary, so a child
+  // started from it would run as plain bun. Give it the parent's argv0 to keep
+  // the mode. Only fork() does this: its first positional is always a script,
+  // while spawn(process.execPath, ["install"]) must still run the subcommand.
+  if (isRunningAsNode && options.execPath === process.execPath && options.argv0 == null) {
+    options.argv0 = process.argv0;
+  }
 
   if (typeof options.stdio === "string") {
     options.stdio = stdioStringToArray(options.stdio, "ipc");

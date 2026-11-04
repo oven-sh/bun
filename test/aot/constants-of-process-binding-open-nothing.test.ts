@@ -4,7 +4,11 @@
 // does what node:zlib does with the constants as it loads, nor a read beside the modules that also read them (node:util).
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { test } from "./supported";
+
+// One check of a program takes longer than the five seconds of bun:test, also beside another file of this folder.
+raiseDefaultTimeout(120_000);
 
 const programs = {
   "importing node:zlib": `import "node:zlib"; console.log(1);`,

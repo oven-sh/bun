@@ -610,6 +610,396 @@ describe("bundler", () => {
   });
 
   // ============================================================================
+  // The runtime's `__require` in iife output. A `require` that is not bundled
+  // prints as `__require`: a call with a non-literal argument, require.resolve,
+  // an uncalled `require`, require.main, an external package. The output has
+  // to define it, for each target. Each entry point here is an ES module.
+  // ============================================================================
+
+  const dynamicRequireFiles = {
+    "/entry.js": /* js */ `
+      import value from "./dyn.cjs";
+      console.log(value);
+    `,
+    "/dyn.cjs": /* js */ `
+      var ext = ".cjs";
+      module.exports = require("./dep-runtime" + ext).value;
+    `,
+  };
+  const dynamicRequireRuntimeFiles = {
+    "/dep-runtime.cjs": /* js */ `module.exports = { value: "required at runtime" };`,
+  };
+  const requiredAtRuntime = [
+    { runtime: "node" as const, stdout: "required at runtime" },
+    { stdout: "required at runtime" },
+  ];
+  // The scope of a `<script>`: no `require` and no `module`.
+  const scriptHostRunner = {
+    "/script.cjs": /* js */ `
+      const code = require("node:fs").readFileSync(__dirname + "/out.js", "utf8");
+      require("node:vm").runInNewContext(code, { console });
+    `,
+  };
+
+  for (const backend of ["cli", "api"] as const) {
+    // An iife has no `import` statement and no `import.meta.url`, so node gets
+    // the definition that reads the `require` of the host.
+    itBundled(`cjs/__require_iife_dynamic_require_target_node_${backend}`, {
+      backend,
+      files: dynamicRequireFiles,
+      runtimeFiles: dynamicRequireRuntimeFiles,
+      target: "node",
+      format: "iife",
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toMatch(/var __require = /);
+        api.expectFile("/out.js").not.toContain("createRequire");
+        api.expectFile("/out.js").not.toContain("import.meta");
+      },
+      run: requiredAtRuntime,
+    });
+
+    // Bun loads the `// @bun` output as an ES module: import.meta.require is
+    // the `require` there.
+    itBundled(`cjs/__require_iife_dynamic_require_target_bun_${backend}`, {
+      backend,
+      files: dynamicRequireFiles,
+      runtimeFiles: dynamicRequireRuntimeFiles,
+      target: "bun",
+      format: "iife",
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toContain("var __require = import.meta.require;");
+      },
+      run: {
+        stdout: "required at runtime",
+      },
+    });
+
+    itBundled(`cjs/__require_iife_dynamic_require_target_browser_${backend}`, {
+      backend,
+      files: dynamicRequireFiles,
+      runtimeFiles: dynamicRequireRuntimeFiles,
+      target: "browser",
+      format: "iife",
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toMatch(/var __require = /);
+      },
+      run: requiredAtRuntime,
+    });
+  }
+
+  // In an executable the module graph loads the iife, not the `// @bun` pragma.
+  itBundled("cjs/__require_iife_dynamic_require_compile", {
+    files: dynamicRequireFiles,
+    runtimeFiles: dynamicRequireRuntimeFiles,
+    format: "iife",
+    compile: true,
+    run: {
+      stdout: "required at runtime",
+      setCwd: true,
+    },
+  });
+
+  // The renamer also runs on the part of the runtime that defines `__require`.
+  itBundled("cjs/__require_iife_dynamic_require_minified", {
+    files: dynamicRequireFiles,
+    runtimeFiles: dynamicRequireRuntimeFiles,
+    target: "browser",
+    format: "iife",
+    minifyIdentifiers: true,
+    minifySyntax: true,
+    minifyWhitespace: true,
+    run: requiredAtRuntime,
+  });
+
+  // With no `require` in the host, the call throws the error of esbuild.
+  // `new Function` runs the iife in the global scope, where the `require` of
+  // the module is not visible.
+  itBundled("cjs/__require_iife_dynamic_require_without_host_require", {
+    files: {
+      ...dynamicRequireFiles,
+      "/test.js": /* js */ `
+        import { readFileSync } from "node:fs";
+        const code = readFileSync(new URL("./out.js", import.meta.url), "utf8");
+        try {
+          new Function(code)();
+        } catch (e) {
+          console.log(e.message);
+        }
+      `,
+    },
+    runtimeFiles: dynamicRequireRuntimeFiles,
+    target: "browser",
+    format: "iife",
+    run: {
+      file: "/test.js",
+      stdout: 'Dynamic require of "./dep-runtime.cjs" is not supported',
+    },
+  });
+
+  // Each form of `require` that the parser does not bundle. For bun it is
+  // import.meta.require, which has no `main`.
+  for (const target of ["node", "browser", "bun"] as const) {
+    const stdout = `true true true true true ${target === "bun" ? "undefined" : "object"} function`;
+    itBundled(`cjs/__require_iife_require_reference_forms_target_${target}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import value from "./forms.cjs";
+          console.log(value.join(" "));
+        `,
+        "/forms.cjs": /* js */ `
+          var ext = ".cjs";
+          var indirect = require;
+          module.exports = [
+            require("./dep-runtime" + ext).value === "required at runtime",
+            require("./dep-runtime" + ext, "second argument").value === "required at runtime",
+            module.require("./dep-runtime" + ext).value === "required at runtime",
+            indirect("./dep-runtime" + ext).value === "required at runtime",
+            require.resolve("./dep-runtime" + ext).endsWith("dep-runtime.cjs"),
+            typeof require.main,
+            typeof require,
+          ];
+        `,
+      },
+      runtimeFiles: dynamicRequireRuntimeFiles,
+      target,
+      format: "iife",
+      run: target === "bun" ? { stdout } : [{ runtime: "node", stdout }, { stdout }],
+    });
+  }
+
+  // A `require(expr)` in a `try` block threw a ReferenceError that the block
+  // caught. It calls the `require` of the host now, as in esm output.
+  itBundled("cjs/__require_iife_dynamic_require_in_try", {
+    files: {
+      "/entry.js": /* js */ `
+        import load from "./optional.cjs";
+        console.log(load("f" + "s") ? "loaded with the require of the host" : "not loaded");
+      `,
+      "/optional.cjs": /* js */ `
+        module.exports = function (name) {
+          try {
+            return require(name);
+          } catch {
+            return null;
+          }
+        };
+      `,
+    },
+    runtimeFiles: scriptHostRunner,
+    format: "iife",
+    run: [
+      { runtime: "node", stdout: "loaded with the require of the host" },
+      { stdout: "loaded with the require of the host" },
+      { file: "/script.cjs", runtime: "node", stdout: "not loaded" },
+      { file: "/script.cjs", stdout: "not loaded" },
+    ],
+  });
+
+  // The prelude of a browserify bundle reads an uncalled `require` when it loads.
+  itBundled("cjs/__require_iife_browserify_prelude", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from "./umd.js";
+        console.log(lib);
+      `,
+      "/umd.js": /* js */ `
+        (function (f) {
+          if (typeof exports === "object" && typeof module !== "undefined") {
+            module.exports = f();
+          } else {
+            globalThis.lib = f();
+          }
+        })(function () {
+          return (function e(t, n, r) {
+            function s(o, u) {
+              if (!n[o]) {
+                if (!t[o]) {
+                  var a = typeof require == "function" && require;
+                  if (!u && a) return a(o, !0);
+                  if (i) return i(o, !0);
+                  var f = new Error("Cannot find module '" + o + "'");
+                  throw ((f.code = "MODULE_NOT_FOUND"), f);
+                }
+                var l = (n[o] = { exports: {} });
+                t[o][0].call(l.exports, function (e) { var n = t[o][1][e]; return s(n ? n : e); }, l, l.exports, e, t, n, r);
+              }
+              return n[o].exports;
+            }
+            var i = typeof require == "function" && require;
+            for (var o = 0; o < r.length; o++) s(r[o]);
+            return s;
+          })({ 1: [function (_dereq_, module, exports) { module.exports = "loaded the browserify bundle"; }, {}] }, {}, [1])(1);
+        });
+      `,
+      "/test.js": /* js */ `
+        import { readFileSync } from "node:fs";
+        new Function("console", readFileSync(new URL("./out.js", import.meta.url), "utf8"))(console);
+      `,
+    },
+    format: "iife",
+    run: [
+      { runtime: "node", stdout: "loaded the browserify bundle" },
+      { stdout: "loaded the browserify bundle" },
+      { file: "/test.js", stdout: "loaded the browserify bundle" },
+    ],
+  });
+
+  // A `require()` of an external package imported `__require` already. For node
+  // the definition was an import of node:module, which an iife prints as
+  // `__require("node:module")`: `__require` defined through itself.
+  itBundled("cjs/__require_iife_external_require_target_node", {
+    files: {
+      "/entry.js": /* js */ `
+        import value from "./dep.cjs";
+        console.log(value);
+      `,
+      "/dep.cjs": /* js */ `
+        module.exports = require("ext").value;
+      `,
+    },
+    runtimeFiles: {
+      "/node_modules/ext/index.js": /* js */ `module.exports = { value: "external package" };`,
+    },
+    external: ["ext"],
+    target: "node",
+    format: "iife",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('__require("ext")');
+      api.expectFile("/out.js").not.toContain('__require("node:module")');
+      api.expectFile("/out.js").not.toContain("import.meta");
+    },
+    run: [{ runtime: "node", stdout: "external package" }, { stdout: "external package" }],
+  });
+
+  // An import of a node builtin is a `__require()` call in an iife for node.
+  itBundled("cjs/__require_iife_builtin_import_target_node", {
+    files: {
+      "/entry.js": /* js */ `
+        import { join } from "node:path";
+        console.log(typeof join);
+      `,
+    },
+    target: "node",
+    format: "iife",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('__require("node:path")');
+      api.expectFile("/out.js").not.toContain('__require("node:module")');
+    },
+    run: [{ runtime: "node", stdout: "function" }, { stdout: "function" }],
+  });
+
+  // With no `require` in the host, the definition reads the global `Proxy`
+  // when the bundle loads. A binding of the bundle with that name gets another
+  // name.
+  itBundled("cjs/__require_iife_target_node_user_binding_named_Proxy", {
+    files: {
+      "/entry.js": /* js */ `
+        import load from "./lazy.cjs";
+        class Proxy {
+          static own = "the class of the bundle";
+        }
+        console.log(typeof load, Proxy.own);
+      `,
+      "/lazy.cjs": /* js */ `
+        module.exports = name => require(name);
+      `,
+    },
+    runtimeFiles: scriptHostRunner,
+    target: "node",
+    format: "iife",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("class Proxy2 {");
+    },
+    run: [
+      { runtime: "node", stdout: "function the class of the bundle" },
+      { stdout: "function the class of the bundle" },
+      { file: "/script.cjs", runtime: "node", stdout: "function the class of the bundle" },
+      { file: "/script.cjs", stdout: "function the class of the bundle" },
+    ],
+  });
+
+  // Without the definition in the output, a `__require()` call reached a
+  // binding of the bundle that has this name.
+  itBundled("cjs/__require_iife_user_binding_named___require", {
+    files: {
+      "/entry.js": /* js */ `
+        import value from "./dyn.cjs";
+        function __require() {
+          return { value: "the function of the bundle" };
+        }
+        console.log(value, __require().value);
+      `,
+      "/dyn.cjs": dynamicRequireFiles["/dyn.cjs"],
+    },
+    runtimeFiles: dynamicRequireRuntimeFiles,
+    format: "iife",
+    run: [
+      { runtime: "node", stdout: "required at runtime the function of the bundle" },
+      { stdout: "required at runtime the function of the bundle" },
+    ],
+  });
+
+  // A dependency that esbuild bundled declares its own `__require`. Its text
+  // reads `require`, which prints as the runtime's `__require`: without the
+  // definition, the helper of the dependency returned itself.
+  for (const minify of [false, true]) {
+    itBundled(`cjs/__require_iife_dependency_with_own_helper${minify ? "_minified" : ""}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { loadPath } from "./prebundled.js";
+          console.log(typeof loadPath().join);
+        `,
+        "/prebundled.js": /* js */ `
+          var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
+            get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
+          }) : x)(function(x) {
+            if (typeof require !== "undefined") return require.apply(this, arguments);
+            throw Error('Dynamic require of "' + x + '" is not supported');
+          });
+          export const loadPath = () => __require("node:path");
+        `,
+      },
+      format: "iife",
+      minifyIdentifiers: minify,
+      minifySyntax: minify,
+      minifyWhitespace: minify,
+      run: [{ runtime: "node", stdout: "function" }, { stdout: "function" }],
+    });
+  }
+
+  // A file whose only use of `require` folds away is an ES module, as in esm
+  // output. It was CommonJS in iife output.
+  itBundled("cjs/__require_iife_typeof_require_only_is_esm", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(typeof require);
+      `,
+    },
+    format: "iife",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__commonJS");
+    },
+    run: [{ runtime: "node", stdout: "function" }, { stdout: "function" }],
+  });
+
+  // esm output for node keeps the createRequire() definition.
+  itBundled("cjs/__require_esm_dynamic_require_target_node", {
+    files: dynamicRequireFiles,
+    runtimeFiles: dynamicRequireRuntimeFiles,
+    target: "node",
+    format: "esm",
+    outfile: "/out.mjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.mjs").toContain('import { createRequire } from "node:module";');
+      api.expectFile("/out.mjs").toContain("createRequire(import.meta.url)");
+    },
+    run: {
+      runtime: "node",
+      stdout: "required at runtime",
+    },
+  });
+
+  // ============================================================================
   // isNodeMode follows the importer's module type: the file extension first,
   // then the nearest package.json "type". One test per importer kind.
   //

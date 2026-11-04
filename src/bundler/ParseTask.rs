@@ -310,8 +310,11 @@ impl<'a> ParseTask<'a> {
     /// Re-export of `parse_worker::get_runtime_source` as an associated fn so
     /// callers can spell it `ParseTask::get_runtime_source`.
     #[inline]
-    pub(crate) fn get_runtime_source(target: options::Target) -> RuntimeSource {
-        parse_worker::get_runtime_source(target)
+    pub(crate) fn get_runtime_source(
+        target: options::Target,
+        output_format: options::Format,
+    ) -> RuntimeSource {
+        parse_worker::get_runtime_source(target, output_format)
     }
 }
 
@@ -564,7 +567,10 @@ export var __callDispose = (stack, error, hasError) => {
 pub mod parse_worker {
     use super::*;
 
-    fn get_runtime_source_comptime(target: options::Target) -> RuntimeSource {
+    fn get_runtime_source_comptime(
+        target: options::Target,
+        output_format: options::Format,
+    ) -> RuntimeSource {
         // The runtime module is the shared `runtime.js` body plus a per-target
         // `__require`/`__using` tail. Concatenating at compile time would embed
         // four copies of the 13 KB body, so each variant is assembled once on
@@ -576,11 +582,16 @@ pub mod parse_worker {
             Node,
             Other,
         }
-        let variant = match target {
-            options::Target::Bun => Variant::Bun,
-            options::Target::BunMacro => Variant::BunMacro,
-            options::Target::Node => Variant::Node,
-            _ => Variant::Other,
+        let variant = match (target, output_format) {
+            (options::Target::Bun, _) => Variant::Bun,
+            (options::Target::BunMacro, _) => Variant::BunMacro,
+            // An iife has no `import` statement: read the host's `require`.
+            (options::Target::Node, options::Format::Iife) => Variant::Other,
+            (
+                options::Target::Node,
+                options::Format::Esm | options::Format::Cjs | options::Format::InternalBakeDev,
+            ) => Variant::Node,
+            (options::Target::Browser | options::Target::ServerComponentsSsr, _) => Variant::Other,
         };
         static SOURCES: [bun_core::Once<Box<[u8]>>; 4] = [
             bun_core::Once::new(),
@@ -655,8 +666,11 @@ pub mod parse_worker {
         RuntimeSource { parse_task, source }
     }
 
-    pub(crate) fn get_runtime_source(target: options::Target) -> RuntimeSource {
-        get_runtime_source_comptime(target)
+    pub(crate) fn get_runtime_source(
+        target: options::Target,
+        output_format: options::Format,
+    ) -> RuntimeSource {
+        get_runtime_source_comptime(target, output_format)
     }
 
     // ───────────────────────────────────────────────────────────────────────────
@@ -2499,8 +2513,7 @@ pub mod parse_worker {
         opts.features.ascii_only = target.is_bun();
         opts.features.hot_module_reloading =
             output_format == options::Format::InternalBakeDev && !task.source_index.is_runtime();
-        opts.features.auto_polyfill_require =
-            output_format == options::Format::Esm && !opts.features.hot_module_reloading;
+        opts.features.auto_polyfill_require = options::should_call_runtime_require(output_format);
         opts.features.react_fast_refresh =
             topts.react_fast_refresh && loader.is_jsx() && !source.path.is_node_module();
         opts.features.react_compiler = if topts.react_compiler.is_enabled()
@@ -2619,8 +2632,8 @@ pub mod parse_worker {
         // in which we inline `true`.
         if topts.inline_entrypoint_import_meta_main || !task.is_entry_point {
             opts.import_meta_main_value = Some(task.is_entry_point && !topts.has_dev_server());
-        } else if target == options::Target::Node {
-            opts.lower_import_meta_main_for_node_js = true;
+        } else {
+            opts.lower_import_meta_main = !output_format.keeps_import_meta_main(target);
         }
 
         opts.tree_shaking = if task.source_index.is_runtime() {

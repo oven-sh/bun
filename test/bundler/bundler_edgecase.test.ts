@@ -2444,6 +2444,284 @@ describe("bundler", () => {
       api.expectFile("/out.js").toMatch(/[^\.:]module/); // `.module` and `node:module` are not ok.
     },
   });
+  // The entry point has four forms of the check. `other` is not an entry
+  // point: its two fold to `false`. A bundle runs as the main module, then
+  // required from runner.cjs, which flips each value of the entry point.
+  const importMetaMainFiles = {
+    "/entry.ts": /* js */ `
+      import {other} from './other';
+      console.log(
+        capture(import.meta.main),
+        capture(require.main === module),
+        capture(!import.meta.main),
+        capture(require.main !== module),
+        ...other,
+      );
+    `,
+    "/other.ts": /* js */ `
+      globalThis['ca' + 'pture'] = x => x;
+
+      export const other = [capture(require.main === module), capture(import.meta.main)];
+    `,
+  };
+  const importMetaMainRunner = {
+    "/runner.cjs": /* js */ `require("./out.js");`,
+  };
+  const importMetaMainAsMain = "true true false false false false";
+  const importMetaMainWhenRequired = "false false true true false false";
+  const importMetaMainKept = [
+    "false",
+    "false",
+    "import.meta.main",
+    "import.meta.main",
+    "!import.meta.main",
+    "!import.meta.main",
+  ];
+  // Bun loads a file that starts with `// @bun` as an ES module, unless the
+  // pragma also says `@bun-cjs` (cjs output). An iife for bun has
+  // import.meta.main and has no `require` or `module`.
+  itBundled("edgecase/ImportMetaMainIIFETargetBun", {
+    files: importMetaMainFiles,
+    runtimeFiles: importMetaMainRunner,
+    target: "bun",
+    format: "iife",
+    capture: importMetaMainKept,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toStartWith("// @bun\n");
+      api.expectFile("/out.js").not.toContain("require");
+      api.expectFile("/out.js").not.toContain("module");
+    },
+    run: [{ stdout: importMetaMainAsMain }, { file: "/runner.cjs", stdout: importMetaMainWhenRequired }],
+  });
+  itBundled("edgecase/ImportMetaMainCJSTargetBun", {
+    files: importMetaMainFiles,
+    runtimeFiles: importMetaMainRunner,
+    target: "bun",
+    format: "cjs",
+    capture: [
+      "false",
+      "false",
+      "require.main == module",
+      "require.main == module",
+      "!(require.main == module)",
+      "require.main != module",
+    ],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toStartWith("// @bun @bun-cjs\n");
+    },
+    run: [{ stdout: importMetaMainAsMain }, { file: "/runner.cjs", stdout: importMetaMainWhenRequired }],
+  });
+  // A build with no target builds an entry point that starts with
+  // `#!/usr/bin/env bun` for bun: its output has the `// @bun` pragma. itBundled
+  // always gives a target, so these two build directly.
+  for (const backend of ["cli", "api"] as const) {
+    test.concurrent(`edgecase/ImportMetaMainBunHashbangNoTargetIIFE-${backend}`, async () => {
+      using dir = tempDir("import-meta-main-bun-hashbang", {
+        "entry.ts": "#!/usr/bin/env bun\n" + importMetaMainFiles["/entry.ts"],
+        "other.ts": importMetaMainFiles["/other.ts"],
+        "runner.cjs": importMetaMainRunner["/runner.cjs"],
+        "build.ts": /* js */ `
+          const { success, logs } = await Bun.build({
+            entrypoints: ["./entry.ts"],
+            format: "iife",
+            outdir: ".",
+            naming: "out.js",
+          });
+          if (!success) throw new AggregateError(logs);
+        `,
+      });
+      const spawn = async (...args: string[]) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), ...args],
+          cwd: String(dir),
+          env: bunEnv,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      };
+      const build = await spawn(
+        ...(backend === "cli" ? ["build", "entry.ts", "--format=iife", "--outfile=out.js"] : ["build.ts"]),
+      );
+      expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const out = await Bun.file(join(String(dir), "out.js")).text();
+      expect(out).toStartWith("#!/usr/bin/env bun\n// @bun\n");
+      expect(out).not.toContain("__require");
+      expect(await spawn("out.js")).toEqual({ stdout: importMetaMainAsMain + "\n", stderr: "", exitCode: 0 });
+      expect(await spawn("runner.cjs")).toEqual({
+        stdout: importMetaMainWhenRequired + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  }
+  // `bun build --no-bundle --target=bun` prints for the format of the command line.
+  itBundled("edgecase/ImportMetaMainNoBundleIIFETargetBun", {
+    files: {
+      "/entry.ts": /* js */ `
+        console.log(import.meta.main, require.main === module, !import.meta.main);
+      `,
+    },
+    bundling: false,
+    target: "bun",
+    format: "iife",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toBe("console.log(import.meta.main, import.meta.main, !import.meta.main);\n");
+    },
+    run: { stdout: "true true false" },
+  });
+  // An iife for the browser or for node has no import.meta.main. The check
+  // becomes `require.main === module` with the `module` of the host. A
+  // CommonJS host has one. A `<script>` has none: the check is false there.
+  const importMetaMainIIFECapture = [
+    "false",
+    "false",
+    '(typeof module != "undefined" && __require.main === module)',
+    '(typeof module != "undefined" && __require.main === module)',
+    '!(typeof module != "undefined" && __require.main === module)',
+    '(typeof module == "undefined" || __require.main !== module)',
+  ];
+  const importMetaMainIIFERunners = {
+    ...importMetaMainRunner,
+    // The scope of a `<script>`: no `require` and no `module`.
+    "/script.cjs": /* js */ `
+      const code = require("node:fs").readFileSync(__dirname + "/out.js", "utf8");
+      require("node:vm").runInNewContext(code, { console });
+    `,
+    // A host whose `module` is not a CommonJS module.
+    "/null-module.cjs": /* js */ `
+      const code = require("node:fs").readFileSync(__dirname + "/out.js", "utf8");
+      require("node:vm").runInNewContext(code, { console, module: null });
+    `,
+  };
+  const importMetaMainIIFERuns = [
+    { stdout: importMetaMainAsMain },
+    { runtime: "node" as const, stdout: importMetaMainAsMain },
+    { file: "/runner.cjs", stdout: importMetaMainWhenRequired },
+    { file: "/runner.cjs", runtime: "node" as const, stdout: importMetaMainWhenRequired },
+    { file: "/script.cjs", stdout: importMetaMainWhenRequired },
+    { file: "/script.cjs", runtime: "node" as const, stdout: importMetaMainWhenRequired },
+    { file: "/null-module.cjs", stdout: importMetaMainWhenRequired },
+    { file: "/null-module.cjs", runtime: "node" as const, stdout: importMetaMainWhenRequired },
+    // Node loads `.mjs` as an ES module: it has no `require` and no `module`.
+    { file: "/out.mjs", runtime: "node" as const, stdout: importMetaMainWhenRequired },
+  ];
+  for (const target of ["browser", "node"] as const) {
+    itBundled(`edgecase/ImportMetaMainIIFETarget${target === "node" ? "Node" : "Browser"}`, {
+      files: importMetaMainFiles,
+      runtimeFiles: importMetaMainIIFERunners,
+      target,
+      format: "iife",
+      capture: importMetaMainIIFECapture,
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toMatch(/var __require = /);
+        api.expectFile("/out.js").not.toContain("createRequire");
+        api.writeFile("/out.mjs", api.readFile("/out.js"));
+      },
+      run: importMetaMainIIFERuns,
+    });
+  }
+  itBundled("edgecase/ImportMetaMainIIFEMinified", {
+    files: importMetaMainFiles,
+    runtimeFiles: importMetaMainIIFERunners,
+    format: "iife",
+    minifyIdentifiers: true,
+    minifySyntax: true,
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('(typeof module!="undefined"&&');
+      api.expectFile("/out.js").toContain('(typeof module=="undefined"||');
+      api.expectFile("/out.js").toContain(".main===module)");
+      api.expectFile("/out.js").toContain(".main!==module)");
+      api.writeFile("/out.mjs", api.readFile("/out.js"));
+    },
+    run: importMetaMainIIFERuns,
+  });
+  // The check is one operand in any position: of a member access, of `**`
+  // and of `??`, which takes no `&&` or `||` operand without parentheses.
+  itBundled("edgecase/ImportMetaMainIIFEOperandPositions", {
+    files: {
+      "/entry.ts": /* js */ `
+        globalThis['ca' + 'pture'] = x => x;
+        console.log(
+          capture((require.main === module).toString()),
+          capture((require.main !== module).toString()),
+          capture(globalThis.nothing ?? import.meta.main),
+          capture(import.meta.main ?? globalThis.nothing),
+          capture((require.main !== module) ** 2),
+        );
+      `,
+    },
+    format: "iife",
+    capture: [
+      '(typeof module != "undefined" && __require.main === module).toString()',
+      '(typeof module == "undefined" || __require.main !== module).toString()',
+      'globalThis.nothing ?? (typeof module != "undefined" && __require.main === module)',
+      '(typeof module != "undefined" && __require.main === module) ?? globalThis.nothing',
+      '(typeof module == "undefined" || __require.main !== module) ** 2',
+    ],
+    run: [{ stdout: "true false true true 0" }, { runtime: "node", stdout: "true false true true 0" }],
+  });
+  // The `module` of the check is the one of the host. A binding of the bundle
+  // with that name gets another name, as in cjs output.
+  itBundled("edgecase/ImportMetaMainIIFEShadowedModuleBinding", {
+    files: {
+      "/entry.ts": /* js */ `
+        import {sibling} from './sibling';
+        const module = { name: "entry" };
+        console.log(import.meta.main, module.name, sibling);
+      `,
+      "/sibling.ts": /* js */ `
+        let module = { name: "sibling" };
+        export const sibling = module.name;
+      `,
+    },
+    format: "iife",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('(typeof module != "undefined" && __require.main === module)');
+      api.expectFile("/out.js").toMatch(/var module2 = \{/);
+      api.expectFile("/out.js").toMatch(/var module3 = \{/);
+    },
+    run: [{ stdout: "true entry sibling" }, { runtime: "node", stdout: "true entry sibling" }],
+  });
+  // The same for the `module` parameter of a CommonJS wrapper. `b.js` is an
+  // entry point, so its check is not a constant in the output of `a.js`.
+  itBundled("edgecase/ImportMetaMainIIFECommonJSWrappedEntry", {
+    files: {
+      "/a.js": /* js */ `
+        import b from "./b.js";
+        console.log(b);
+      `,
+      "/b.js": /* js */ `
+        module.exports = [require.main === module, typeof module.exports].join(" ");
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    outdir: "/out",
+    format: "iife",
+    onAfterBundle(api) {
+      api.expectFile("/out/a.js").toContain("function(exports, module2)");
+      api.expectFile("/out/a.js").toContain('(typeof module != "undefined" && __require.main === module)');
+    },
+  });
+  // An entry point whose only use of `require` is this check is an ES module
+  // in iife output, as in esm output. It was CommonJS, and a CommonJS entry
+  // point does not run in iife output.
+  for (const target of ["browser", "node", "bun"] as const) {
+    itBundled(`edgecase/ImportMetaMainIIFERequireMainOnlyEntryTarget${target[0].toUpperCase()}${target.slice(1)}`, {
+      files: {
+        "/entry.js": /* js */ `
+          console.log(require.main === module);
+        `,
+      },
+      target,
+      format: "iife",
+      onAfterBundle(api) {
+        api.expectFile("/out.js").not.toContain("__commonJS");
+      },
+      run: target === "bun" ? { stdout: "true" } : [{ stdout: "true" }, { runtime: "node", stdout: "true" }],
+    });
+  }
   itBundled("edgecase/IdentifierInEnum#13081", {
     files: {
       "/entry.ts": `

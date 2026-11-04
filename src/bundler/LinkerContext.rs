@@ -2416,17 +2416,15 @@ impl<'a> LinkerContext<'a> {
             } else {
                 Ref::NONE
             },
-            require_ref: match self.options.output_format {
-                Format::Cjs => None, // use unbounded global
-                _ => runtime_require_ref,
-            },
+            require_ref: runtime_require_ref,
             require_or_import_meta_for_source_callback: Some(
                 js_printer::RequireOrImportMetaCallback::init(self),
             ),
             line_offset_tables: Some(
                 &self.graph.files.items_line_offset_table()[source_index.get() as usize],
             ),
-            target: self.options.target,
+            // A `#!/usr/bin/env bun` entry point can be parsed for a target other than the bundle's.
+            target: ast.target,
 
             hmr_ref: if self.options.output_format == Format::InternalBakeDev {
                 ast.wrapper_ref

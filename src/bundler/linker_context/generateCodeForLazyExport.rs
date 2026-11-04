@@ -172,7 +172,7 @@ pub(crate) fn generate_code_for_lazy_export(
     // output, so the part that holds the call must import it.
     let calls_runtime_require = matches!(expr.data, ExprData::ECall(ref c)
         if matches!(c.target.data, ExprData::ERequireCallTarget))
-        && this.options.output_format != crate::options::OutputFormat::Cjs;
+        && crate::options::should_call_runtime_require(this.options.output_format);
 
     match exports_kind {
         bun_ast::ExportsKind::Cjs => {

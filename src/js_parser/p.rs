@@ -6031,9 +6031,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// This is only allowed to be called if allow_runtime is true
-    /// If --target=bun, this does nothing.
+    /// It does nothing unless the output calls the runtime's `__require`.
     pub(crate) fn record_usage_of_runtime_require(&mut self) {
-        // target bun does not have __require
         if self.options.features.auto_polyfill_require {
             debug_assert!(self.options.features.allow_runtime);
             self.ensure_require_symbol();
@@ -6084,12 +6083,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         //
         // The printer can handle this for us, but we need to reference
         // a handle to the `__require` function.
-        if self.options.lower_import_meta_main_for_node_js {
+        if self.options.lower_import_meta_main {
             self.record_usage_of_runtime_require();
+            if self.options.output_format == options::Format::Iife {
+                self.reserve_host_module_name();
+            }
         }
         Expr {
             loc,
             data: js_ast::ExprData::EImportMetaMain(E::ImportMetaMain { inverted }),
+        }
+    }
+
+    /// The iife lowering of `import.meta.main` prints `module`: keep bundle bindings off the name.
+    fn reserve_host_module_name(&mut self) {
+        let reserved = self.module_scope().generated.slice().iter().any(|ref_| {
+            let symbol = &self.symbols[ref_.inner_index() as usize];
+            symbol.kind == js_ast::symbol::Kind::Unbound
+                && symbol.original_name.slice() == b"module"
+        });
+        if !reserved {
+            self.declare_generated_symbol(js_ast::symbol::Kind::Unbound, b"module");
         }
     }
 

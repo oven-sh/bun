@@ -3286,11 +3286,11 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 ExprData::EImportMetaMain(data) => {
-                    if self.options.module_type == bundle_opts::Format::Esm
-                        && self.options.target != bun_ast::Target::Node
+                    if self
+                        .options
+                        .module_type
+                        .keeps_import_meta_main(self.options.target)
                     {
-                        // Node.js doesn't support import.meta.main
-                        // Most of the time, leave it in there
                         let wrap = data.inverted && level.gte(Level::Prefix);
                         if wrap {
                             self.print(b"(");
@@ -3314,12 +3314,24 @@ pub(crate) mod __gated_printer {
                             self.options.module_type != bundle_opts::Format::InternalBakeDev
                         );
 
-                        let wrap = level.gte(Level::Equals);
+                        // A `<script>` has no `module`. `??` takes no bare `&&` or `||` operand.
+                        let guard_host_module =
+                            self.options.module_type == bundle_opts::Format::Iife;
+                        let wrap = guard_host_module || level.gte(Level::Equals);
                         if wrap {
                             self.print(b"(");
                         }
                         self.print_space_before_identifier();
                         self.add_source_mapping(expr.loc);
+
+                        if guard_host_module {
+                            self.print(b"typeof module");
+                            if data.inverted {
+                                self.print_whitespacer(ws!(b" == \"undefined\" || "));
+                            } else {
+                                self.print_whitespacer(ws!(b" != \"undefined\" && "));
+                            }
+                        }
 
                         if let Some(require) = self.options.require_ref {
                             self.print_symbol(require);
@@ -3327,13 +3339,17 @@ pub(crate) mod __gated_printer {
                             self.print(b"require");
                         }
 
-                        if data.inverted {
-                            self.print_whitespacer(ws!(b".main != "));
-                        } else {
-                            self.print_whitespacer(ws!(b".main == "));
-                        }
+                        // Strict: an undefined `.main` must not equal a host `module` of null.
+                        self.print_whitespacer(match (guard_host_module, data.inverted) {
+                            (true, false) => ws!(b".main === "),
+                            (true, true) => ws!(b".main !== "),
+                            (false, false) => ws!(b".main == "),
+                            (false, true) => ws!(b".main != "),
+                        });
 
-                        if self.options.target == bun_ast::Target::Node {
+                        if guard_host_module {
+                            self.print(b"module");
+                        } else if self.options.target == bun_ast::Target::Node {
                             // "__require.module"
                             if let Some(require) = self.options.require_ref {
                                 self.print_symbol(require);

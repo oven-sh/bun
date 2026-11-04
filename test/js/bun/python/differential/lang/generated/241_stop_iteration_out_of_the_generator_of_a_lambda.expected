@@ -1,0 +1,76 @@
+status: 0
+script: cb35aad08a718298
+source: 3d4ae6cd31cf36c6
+---
+--- name [name='lambda', gen=function] => lambda
+list [1]
+for StopIteration (5,) NoneType NoneType
+next with default (1, 'default')
+next StopIteration (5,) NoneType NoneType
+afterwards (None, False, False, 'finished')
+yield from RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+throw StopIteration (9,) NoneType NoneType
+throw at the start StopIteration (9,) NoneType NoneType
+throw through yield from ('result', 9)
+unpack [1]
+tuple (1,)
+sum 1
+in False
+zip [(1, 'a')]
+map ['1']
+a, b = (1, ())
+unpacking ValueError ('not enough values to unpack (expected 2, got 1)',) NoneType NoneType
+any RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+dict {1: None}
+join RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+close None
+--- name [name='def', gen=function] => def
+list RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+for RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+next with default RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+next RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+afterwards (None, False, False, 'finished')
+yield from RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+throw RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+throw at the start StopIteration (9,) NoneType NoneType
+throw through yield from RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+unpack RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+tuple RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+sum RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+in RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+zip RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+map RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+a, b = RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+unpacking RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+any RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+dict RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+join RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+close None
+--- name [name='genexpr', gen=function] => genexpr
+list RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+for RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+next with default RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+next RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+afterwards (None, False, False, 'finished')
+yield from RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+throw RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+throw at the start StopIteration (9,) NoneType NoneType
+throw through yield from RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+unpack RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+tuple RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+sum RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+in RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+zip RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+map RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+a, b = RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+unpacking RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+any RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+dict RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+join RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+close None
+--- a subclass, and in a handler
+subclass [1]
+[('call', None), ('line', None), ('return', 1), ('call', None), ('exception', 'StopIteration'), ('return', None)]
+renamed [1]
+a def named <lambda> RuntimeError ('generator raised StopIteration',) StopIteration StopIteration
+marshalled [1]

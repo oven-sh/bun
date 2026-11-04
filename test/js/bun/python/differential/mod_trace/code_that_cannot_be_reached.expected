@@ -1,0 +1,91 @@
+status: 0
+script: b489626170ec5734
+---
+0 'return 1\nx = "dead"'
+    f [1, 2] []
+1 'raise E\nx = "dead"\ndef g(): pass'
+    f [1, 2] ['dead']
+2 'for i in y:\n    break\n    x = "dead"\nx = "live"'
+    f [1, 2, 3, 5] ['dead', 'live']
+3 'for i in y:\n    continue\n    x = "dead"\nx = "live"'
+    f [1, 2, 3, 5] ['dead', 'live']
+4 'for i in y:\n    return\nelse:\n    raise E\nx = "dead"'
+    f [1, 2, 3, 5] []
+5 'for i in y:\n    break\nelse:\n    raise E\nx = "live"'
+    f [1, 2, 3, 5, 6] ['live']
+6 'while c:\n    x = 1\nelse:\n    return\nx = "dead"'
+    f [1, 2, 3, 5] []
+7 'while c:\n    break\nelse:\n    return\nx = "live"'
+    f [1, 2, 3, 5, 6] ['live']
+8 'while True:\n    x = 1\nx = "dead"'
+    f [1, 2, 3] []
+9 'while True:\n    break\nx = "live"'
+    f [1, 2, 3, 4] ['live']
+10 'while 1:\n    if c:\n        break\nx = "live"'
+    f [1, 2, 3, 4, 5] ['live']
+11 'while True:\n    return\n    break\nx = "dead"'
+    f [1, 2, 3] []
+12 'while True:\n    for i in y:\n        break\nx = "dead"'
+    f [1, 2, 3, 4] []
+13 'while False:\n    x = "dead"\nelse:\n    x = "live"'
+    f [1, 2, 5] ['live']
+14 'if c:\n    return\nelse:\n    raise E\nx = "dead"'
+    f [1, 2, 3, 5] []
+15 'if c:\n    return\nelif d:\n    return\nelse:\n    return\nx = "dead"'
+    f [1, 2, 3, 4, 5, 7] []
+16 'if c:\n    return\nelif d:\n    return\nx = "live"'
+    f [1, 2, 3, 4, 5, 6] ['live']
+17 'if True:\n    return\nx = "dead"'
+    f [1, 2, 3] []
+18 'if False:\n    x = "dead"\nx = "live"'
+    f [1, 2, 4] ['live']
+19 'if True:\n    x = "live"\nelse:\n    x = "dead"'
+    f [1, 2, 3] ['live']
+20 'if 0:\n    return\nx = "live"'
+    f [1, 2, 4] ['live']
+21 'try:\n    return 1\n    x = "dead"\nexcept E:\n    return 2\nx = "dead too"'
+    f [1, 2, 3, 5, 6] []
+22 'try:\n    return 1\nexcept E:\n    pass\nx = "live"'
+    f [1, 2, 3, 4, 5, 6] ['live']
+23 'try:\n    x = 1\nexcept E:\n    return 2\nelse:\n    return 3\nx = "dead"'
+    f [1, 2, 3, 4, 5, 7] []
+24 'try:\n    raise E\nexcept E:\n    return 2\nelse:\n    x = "dead"\nx = "dead too"'
+    f [1, 2, 3, 4, 5] ['dead']
+25 'try:\n    raise E\nfinally:\n    x = "live"\nx = "dead"'
+    f [1, 2, 3, 5] ['live']
+26 'try:\n    x = 1\nfinally:\n    return 1\nx = "dead"'
+    f [1, 2, 3, 5] []
+27 'try:\n    return 1\nfinally:\n    x = "live"\nx = "dead"\ndef g(): pass'
+    f [1, 2, 3, 5] ['live']
+28 'try:\n    try:\n        return 1\n    finally:\n        x = "live"\n    x = "dead"\nfinally:\n    x = "live too"\nx = "dead too"'
+    f [1, 2, 3, 4, 6, 9] ['live', 'live too']
+29 'for i in y:\n    try:\n        break\n    finally:\n        x = "live"\n    x = "dead"\nx = "live too"'
+    f [1, 2, 3, 4, 6, 8] ['live', 'live too']
+30 'try:\n    raise E\nexcept* E:\n    x = 1\nelse:\n    x = "dead"\nx = "live"'
+    f [1, 2, 3, 4, 5, 8] ['live']
+31 'with c:\n    return 1\nx = "live"'
+    f [1, 2, 3, 4] ['live']
+32 'with c:\n    return 1\n    x = "dead"'
+    f [1, 2, 3] []
+33 'match c:\n    case 1:\n        return\n    case _:\n        return\nx = "dead"'
+    f [1, 2, 3, 4, 5, 6] []
+34 'match c:\n    case 1:\n        return\n    case 2:\n        return\nx = "live"'
+    f [1, 2, 3, 4, 5, 6, 7] ['live']
+35 'return\nclass K:\n    x = "dead"'
+    f [1, 2] []
+36 'return\nx = lambda: "dead"\ny = [i for i in "dead too"]\nz = (i for i in "dead as well")'
+    f [1, 2] []
+37 'class K:\n    raise E\n    x = "dead"\nx = "live"'
+    f [1, 2, 5] ['K', 'live']
+    K [2, 3] ['f.<locals>.K']
+38 'def g():\n    return 1\n    x = "dead"\n    def h(): pass\nx = "live"'
+    f [1, 2, 6] ['live']
+    g [2, 3] []
+39 'x = "both"\nreturn\nx = "both"'
+    f [1, 2, 3] ['both']
+40 'return "first"\nx = "dead"'
+    f [1, 2] ['first']
+41 'assert False\nx = "live"'
+    f [1, 2] []
+42 'yield 1\nreturn\nyield "dead"'
+    f [1, 2, 3] []

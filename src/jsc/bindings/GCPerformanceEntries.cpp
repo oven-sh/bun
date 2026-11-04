@@ -106,10 +106,10 @@ void GCPerformanceEntries::doWork(VM& vm)
         return;
     }
 
-    Vector<Record> records;
+    Records records;
     {
         Locker locker { m_lock };
-        records = std::exchange(m_records, {});
+        records.swap(m_records);
     }
     if (records.isEmpty())
         return;

@@ -61,7 +61,9 @@ private:
     // Set in the begin phase of a collection and taken in its end phase.
     std::optional<WTF::MonotonicTime> m_collectionStart;
     WTF::Lock m_lock;
-    WTF::Vector<Record> m_records WTF_GUARDED_BY_LOCK(m_lock);
+    // The hand-off takes them at the next tick. With room for the few of one turn, the observer allocates nothing.
+    using Records = WTF::Vector<Record, 4>;
+    Records m_records WTF_GUARDED_BY_LOCK(m_lock);
     uint64_t m_recordedCount WTF_GUARDED_BY_LOCK(m_lock) { 0 };
 };
 

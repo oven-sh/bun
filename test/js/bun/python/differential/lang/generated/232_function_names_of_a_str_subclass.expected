@@ -1,0 +1,15 @@
+status: 0
+script: 9ea3b825be4fcd62
+source: c4c705817cddd844
+---
+read = ('name', 'qual', 'StrSub', 'StrSub')
+call ! TypeError qual() missing 1 required positional argument: 'a'
+keyword ! TypeError qual() got an unexpected keyword argument 'z'
+too many ! TypeError qual() takes 1 positional argument but 2 were given
+twice ! TypeError qual() got multiple values for argument 'a'
+repr = <function qual
+code ! ValueError name() requires a code object with 0 free vars, not 1
+bound = <bound method qual
+call ! TypeError odd() missing 1 required positional argument: 'a'
+repr = <function odd
+generator = ('<generator object gen', 'StrSub')

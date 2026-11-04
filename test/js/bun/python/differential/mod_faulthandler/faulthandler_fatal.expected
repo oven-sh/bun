@@ -1,5 +1,5 @@
 status: 0
-script: 889eef8399e9745c
+script: fa9594dd1c896c0d
 ---
 == segv | killed by a signal: True | stdout: ''
 Fatal Python error: Segmentation fault
@@ -83,23 +83,19 @@ Current thread 0x (most recent call first):
 Fatal Python error: Segmentation fault
 
 Thread 0x (most recent call first):
-  File "threading.py", line 363 in wait
-  File "threading.py", line 665 in wait
-  File "<string>", line 7 in wait
+  File "<string>", line 5 in wait
   File "threading.py", line 1161 in run
   File "threading.py", line 1219 in _bootstrap_inner
   File "threading.py", line 1181 in _bootstrap
 
 Current thread 0x (most recent call first):
-  File "<string>", line 10 in <module>
+  File "<string>", line 12 in <module>
 
 == more threads than are shown | killed by a signal: True | stdout: ''
 Fatal Python error: Segmentation fault
 
 Thread 0x (most recent call first):
-  File "threading.py", line 363 in wait
-  File "threading.py", line 665 in wait
-  File "<string>", line 7 in wait
+  File "<string>", line 5 in wait
   File "threading.py", line 1161 in run
   File "threading.py", line 1219 in _bootstrap_inner
   File "threading.py", line 1181 in _bootstrap

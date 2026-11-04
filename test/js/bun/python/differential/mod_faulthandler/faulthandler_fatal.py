@@ -62,28 +62,21 @@ def f(n):
         faulthandler._sigsegv()
 f(150)
 """)
-show("threads", """
-import faulthandler, threading
-faulthandler.enable(c_stack=False)
-ready = threading.Event(); never = threading.Event()
+# The other thread is on the line it stays on by the time the signal comes.
+other_thread = """
+lock = threading.Lock(); lock.acquire()
 def wait():
-    ready.set()
-    never.wait()
-threading.Thread(target=wait, daemon=True).start()
-ready.wait()
+    lock.acquire()
+thread = threading.Thread(target=wait, daemon=True); thread.start()
+while True:
+    frame = sys._current_frames().get(thread.ident)
+    if frame and frame.f_code is wait.__code__ and frame.f_lineno == wait.__code__.co_firstlineno + 1:
+        break
+del frame
 faulthandler._sigsegv()
-""")
-show("more threads than are shown", """
-import faulthandler, threading
-faulthandler.enable(c_stack=False, max_threads=1)
-ready = threading.Event(); never = threading.Event()
-def wait():
-    ready.set()
-    never.wait()
-threading.Thread(target=wait, daemon=True).start()
-ready.wait()
-faulthandler._sigsegv()
-""")
+"""
+show("threads", "import faulthandler, sys, threading\nfaulthandler.enable(c_stack=False)" + other_thread)
+show("more threads than are shown", "import faulthandler, sys, threading\nfaulthandler.enable(c_stack=False, max_threads=1)" + other_thread)
 
 # Disabled again: nothing of Python's is written.
 p = run("import faulthandler\nfaulthandler.enable()\nprint(faulthandler.disable(), faulthandler.is_enabled(), faulthandler.disable(), flush=True)\nfaulthandler._sigsegv()")

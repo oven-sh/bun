@@ -18,7 +18,8 @@ def run(source):
     status = os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1])
     s = err.decode(); s = re.sub(r'0x[0-9a-f]{16}', '0xT', s); s = re.sub(r' \[[^\]]*\]', ' [name]', s); s = re.sub(r'File ".*?([^/"]*)"', r'File "\1"', s)
     print(status, out.decode().split()); print(s)
-run('import faulthandler, time\nfaulthandler.dump_traceback_later(0.1, exit=True)\ndef f():\n    time.sleep(10)\nf()\nprint("no")')
+# Collected first: what the import system leaves behind has callbacks, which would run in a collection while the thread waits.
+run('import faulthandler, gc, time\ngc.collect()\nfaulthandler.dump_traceback_later(0.1, exit=True)\ndef f():\n    time.sleep(10)\nf()\nprint("no")')
 run('import faulthandler, time\nfaulthandler.dump_traceback_later(0.1, exit=True)\ndef f():\n    while True: pass\nf()\nprint("no")')
 run('import faulthandler, time\nfaulthandler.dump_traceback_later(1.5)\nprint("done")')
 run('import faulthandler, signal, os\nfaulthandler.register(signal.SIGUSR1, chain=True)\ndef f():\n    os.kill(os.getpid(), signal.SIGUSR1)\nf()\nprint("no")')

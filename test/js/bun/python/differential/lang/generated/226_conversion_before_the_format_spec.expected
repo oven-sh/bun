@@ -1,0 +1,25 @@
+status: 0
+script: ad89b5d8fc57c0f5
+source: dbf80fbf6b6744c9
+---
+repr(f()) [f=function] => 'R    '
+LOG [f=function] => ['repr', ('format', '')]
+repr(f()) [f=function] => '    S'
+LOG [f=function] => ['str', ('format', '')]
+repr(f()) [f=function] => 'R    '
+LOG [f=function] => ['repr', ('format', ''), ('format', '')]
+repr(f()) [f=function] => 'F'
+LOG [f=function] => ['repr', ('format of the result', '')]
+repr(f()) [f=function] => 'F'
+LOG [f=function] => ['repr', ('format of the result', '>4')]
+repr(f()) [f=function] => 'F'
+LOG [f=function] => ['repr', ('format', ''), ('format of the result', '5')]
+repr(f()) [f=function] => 'F'
+LOG [f=function] => ['repr', ('format of the result', 'x')]
+repr(f()) [f=function] => '5'
+LOG [f=function] => [('format', ''), ('format', '5')]
+repr(f()) [f=function] => 'fm=R    '
+LOG [f=function] => ['repr', ('format', '')]
+repr(e) [f=function] => ValueError('repr')
+repr(e) [f=function] => KeyError('format')
+repr(e) [f=function] => KeyError('format')

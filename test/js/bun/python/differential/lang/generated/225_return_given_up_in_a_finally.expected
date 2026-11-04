@@ -1,0 +1,28 @@
+status: 0
+script: 13f260d93dd49070
+source: d7bfcd2478be9573
+---
+f.__name__ [f=function] => f1
+f() [f=function] => None
+f.__name__ [f=function] => f2
+f() [f=function] => None
+f.__name__ [f=function] => f3
+f() [f=function] => end
+f.__name__ [f=function] => f4
+f() [f=function] => end
+f.__name__ [f=function] => f5
+f() [f=function] => end
+f.__name__ [f=function] => f6
+f() [f=function] => end
+f.__name__ [f=function] => f7
+f() [f=function] => end
+f.__name__ [f=function] => f8
+f() [f=function] => end
+f() [f=function] => outer
+f() [f=function] => outer
+f() [f=function] => None
+f() [f=function] => None
+f() [f=function] => None
+None
+1
+None

@@ -1,0 +1,38 @@
+status: 0
+script: b2ecaa8bb222a5f6
+source: 3a0462eb0bc509f0
+---
+[('calls', 2, 2, True, 2, (15, 14)), ('raises', 2, 2, True, 2, (15, 21))]
+[('calls', 2, 2, True, 2, (15, 14)), ('raises', 2, 2, True, 2, (15, 21))]
+--- the function has other code by then
+[('calls', 2, 2, True, 2, (15, 14)), ('raises', 2, 2, True, 2, (15, 21))]
+other
+--- many, kept, and looked at after collections
+{(('calls', 2, 2, True, 2, (15, 14)), ('raises', 2, 2, True, 2, (15, 21)))}
+--- code that nothing else keeps
+[('f', 3, 3, True, 3, (11, 16))]
+--- a frame that returned
+frame.f_lineno - frame.f_code.co_firstlineno => 2
+frame.f_lasti >= 0 => True
+frame.f_lineno - frame.f_code.co_firstlineno => 2
+frame.f_lineno - frame.f_code.co_firstlineno [p=0] => 6
+frame.f_lineno - frame.f_code.co_firstlineno [p=1] => 4
+--- a generator that ended
+lines => [3, 4]
+frame.f_lineno - frame.f_code.co_firstlineno => 5
+entries(e)[1:] => [('gen', 5, 5, True, 5, (8, 24))]
+--- left through a with, a finally, an except
+f.__name__ [f=function] => through_with
+entries(catch(f))[1:] [f=function] => [('through_with', 3, 3, True, 3, (12, 28))]
+f.__name__ [f=function] => through_finally
+entries(catch(f))[1:] [f=function] => [('through_finally', 2, 5, False, 2, (12, 28))]
+f.__name__ [f=function] => through_except
+entries(catch(f))[1:] [f=function] => [('through_except', 2, 5, False, 2, (12, 28))]
+f.__name__ [f=function] => raised_again
+entries(catch(f))[1:] [f=function] => [('raised_again', 2, 5, False, 2, (12, 28))]
+f.__name__ [f=function] => raised_again_by_name
+entries(catch(f))[1:] [f=function] => [('raised_again_by_name', 5, 5, True, 5, (12, 19)), ('raised_again_by_name', 2, 5, False, 2, (12, 28))]
+--- made by the program
+tb.tb_lineno => 77
+tb.tb_lasti => 4
+tb.tb_next => None

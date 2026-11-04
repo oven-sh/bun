@@ -1,0 +1,25 @@
+status: 0
+script: cbaae433389fbb88
+source: e0281aecc0bbb9c4
+---
+g_tuple StopIteration(5) = ('after', 5)
+g_tuple StopIteration = ('after', None)
+g_tuple ValueError ! ValueError v | context NoneType | cause NoneType
+g_iter StopIteration(5) = ('after', 5)
+g_iter StopIteration = ('after', None)
+g_iter ValueError ! ValueError v | context NoneType | cause NoneType
+g_gen StopIteration(5) ! RuntimeError generator raised StopIteration | context StopIteration | cause StopIteration
+g_gen StopIteration ! RuntimeError generator raised StopIteration | context StopIteration | cause StopIteration
+g_gen ValueError ! ValueError v | context NoneType | cause NoneType
+g_it StopIteration(5) = ('after', 5)
+g_it StopIteration = ('after', None)
+g_it ValueError ! ValueError v | context NoneType | cause NoneType
+g_itthrow StopIteration(5) = ('after', 5)
+g_itthrow StopIteration = ('after', None)
+g_itthrow ValueError ! ValueError v | context NoneType | cause NoneType
+g_plain StopIteration(5) ! RuntimeError generator raised StopIteration | context StopIteration | cause StopIteration
+g_plain StopIteration ! RuntimeError generator raised StopIteration | context StopIteration | cause StopIteration
+g_plain ValueError ! ValueError v | context NoneType | cause NoneType
+c_aw StopIteration(5) ! StopIteration ('after', 5) | context NoneType | cause NoneType
+c_aw StopIteration ! StopIteration ('after', None) | context NoneType | cause NoneType
+c_aw ValueError ! ValueError v | context NoneType | cause NoneType

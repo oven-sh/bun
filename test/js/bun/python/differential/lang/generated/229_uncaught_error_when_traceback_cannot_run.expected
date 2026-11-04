@@ -1,0 +1,6 @@
+status: 1
+stderr: AttributeError: 'function' object has no attribute 'meth'
+script: c2a0adb6dc135c6e
+source: c2a0adb6dc135c6e
+---
+before

@@ -1,11 +1,11 @@
 status: 0
-script: 2f47435aebf7f61e
+script: bb90616f5f0c84b4
 ---
 1 []
 Timeout (0:00:00.100000)!
 Thread 0xT [name] (most recent call first):
-  File "child.py", line 4 in f
-  File "child.py", line 5 in <module>
+  File "child.py", line 5 in f
+  File "child.py", line 6 in <module>
 
 1 []
 Timeout (0:00:00.100000)!

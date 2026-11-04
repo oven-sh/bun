@@ -1,0 +1,101 @@
+status: 0
+script: 764babba7683f737
+---
+settrace finally_ends_in_if [('call', 0), ('line', 1), ('line', 2), ('line', 4), ('line', 5), ('exception', 5), ('line', 7), ('line', 8), ('return', 8)]
+    5 8
+settrace finally_ends_in_if_not_taken [('call', 0), ('line', 1), ('line', 2), ('exception', 2), ('line', 4), ('return', 4)]
+    2 4
+settrace finally_ends_in_if_else [('call', 0), ('line', 1), ('line', 2), ('exception', 2), ('line', 4), ('line', 7), ('return', 7)]
+    2 7
+settrace finally_ends_in_test_over_lines [('call', 0), ('line', 1), ('line', 2), ('exception', 2), ('line', 4), ('line', 5), ('return', 5)]
+    2 5
+settrace finally_ends_in_loop [('call', 0), ('line', 1), ('line', 2), ('exception', 2), ('line', 4), ('line', 5), ('line', 4), ('line', 5), ('line', 4), ('return', 4)]
+    2 4
+settrace finally_ends_in_loop_with_break [('call', 0), ('line', 1), ('line', 2), ('exception', 2), ('line', 4), ('line', 5), ('line', 4), ('line', 5), ('line', 6), ('return', 6)]
+    2 6
+settrace finally_ends_in_while [('call', 0), ('line', 1), ('line', 2), ('exception', 2), ('line', 4), ('line', 5), ('line', 4), ('line', 5), ('line', 4), ('return', 4)]
+    2 4
+settrace finally_ends_in_try [('call', 0), ('line', 1), ('line', 2), ('exception', 2), ('line', 4), ('line', 5), ('return', 5)]
+    2 5
+settrace finally_ends_in_try_that_catches [('call', 0), ('line', 1), ('line', 2), ('exception', 2), ('line', 4), ('line', 5), ('exception', 5), ('line', 6), ('line', 7), ('return', 7)]
+    2 7
+settrace finally_ends_in_finally [('call', 0), ('line', 1), ('line', 2), ('exception', 2), ('line', 4), ('line', 5), ('line', 7), ('line', 8), ('return', 8)]
+    2 8
+settrace finally_ends_in_with [('call', 0), ('line', 1), ('line', 2), ('exception', 2), ('line', 4), ('line', 5), ('line', 4), ('return', 4)]
+    2 4
+settrace finally_ends_in_match [('call', 0), ('line', 1), ('line', 2), ('exception', 2), ('line', 4), ('line', 5), ('line', 7), ('line', 8), ('return', 8)]
+    2 8
+settrace finally_in_loop_gives_up_exception [('call', 0), ('line', 1), ('line', 2), ('line', 3), ('exception', 3), ('line', 5), ('line', 8), ('line', 1), ('line', 2), ('line', 3), ('exception', 3), ('line', 5), ('line', 6), ('return', 6)]
+settrace finally_returns [('call', 0), ('line', 1), ('line', 2), ('exception', 2), ('line', 4), ('line', 5), ('return', 5)]
+settrace break_out_of_inner_finally_in_last_loop [('call', 0), ('line', 1), ('line', 2), ('exception', 2), ('line', 4), ('line', 5), ('line', 6), ('exception', 6), ('line', 8), ('return', 8)]
+    2 8
+settrace comprehension_of_what_is_not_iterable [('call', 0), ('line', 1), ('line', 2), ('exception', 2), ('line', 2), ('line', 1), ('return', 2)]
+    2 2
+settrace comprehension_that_raises [('call', 0), ('line', 1), ('exception', 1), ('line', 1), ('return', 1)]
+    1 1
+settrace comprehension_over_lines [('call', 0), ('line', 3), ('line', 1), ('line', 3), ('line', 2), ('line', 3), ('line', 2), ('exception', 2), ('line', 1), ('return', 1)]
+    2 1
+settrace comprehension_in_try [('call', 0), ('line', 1), ('line', 2), ('line', 2), ('exception', 2), ('line', 2), ('line', 3), ('line', 4), ('return', 4)]
+settrace nested_comprehensions [('call', 0), ('line', 1), ('line', 1), ('line', 1), ('exception', 1), ('line', 1), ('line', 1), ('return', 1)]
+    1 1
+settrace except_star_does_not_match [('call', 0), ('line', 1), ('line', 2), ('exception', 2), ('line', 3), ('return', None)]
+    2 None
+settrace except_star_matches_a_part [('call', 0), ('line', 1), ('line', 2), ('exception', 2), ('line', 3), ('line', 4), ('return', None)]
+    2 None
+settrace except_star_raises [('call', 0), ('line', 1), ('line', 2), ('exception', 2), ('line', 3), ('line', 4), ('exception', 4), ('return', None)]
+settrace with_two_managers_after_for_else [('call', 0), ('line', 1), ('line', 4), ('line', 5), ('line', 4), ('return', 4)]
+settrace except_does_not_match [('call', 0), ('line', 1), ('line', 2), ('exception', 2), ('line', 3), ('line', 5), ('return', 5)]
+    2 5
+settrace raises_in_named_handler [('call', 0), ('line', 1), ('line', 2), ('exception', 2), ('line', 3), ('line', 4), ('exception', 4), ('return', 4)]
+    4 4
+settrace with_on_one_line [('call', 0), ('line', 1), ('exception', 1), ('return', 1)]
+    1 1
+untraced finally_ends_in_if 5 8
+untraced finally_ends_in_if_not_taken 2 4
+untraced finally_ends_in_if_else 2 7
+untraced finally_ends_in_test_over_lines 2 5
+untraced finally_ends_in_loop 2 4
+untraced finally_ends_in_loop_with_break 2 6
+untraced finally_ends_in_while 2 4
+untraced finally_ends_in_try 2 5
+untraced finally_ends_in_try_that_catches 2 7
+untraced finally_ends_in_finally 2 8
+untraced finally_ends_in_with 2 4
+untraced finally_ends_in_match 2 8
+untraced break_out_of_inner_finally_in_last_loop 2 8
+untraced comprehension_of_what_is_not_iterable 2 2
+untraced comprehension_that_raises 1 1
+untraced comprehension_over_lines 2 1
+untraced nested_comprehensions 1 1
+untraced except_star_does_not_match 2 None
+untraced except_star_matches_a_part 2 None
+untraced except_does_not_match 2 5
+untraced raises_in_named_handler 4 4
+untraced with_on_one_line 1 1
+monitoring finally_ends_in_if ['PY_START', ('LINE', 1), ('LINE', 2), ('LINE', 4), ('LINE', 5), 'RAISE', 'EXCEPTION_HANDLED', ('LINE', 7), ('LINE', 8), 'RERAISE', 'EXCEPTION_HANDLED', 'RERAISE', 'PY_UNWIND']
+monitoring finally_ends_in_if_not_taken ['PY_START', ('LINE', 1), ('LINE', 2), 'RAISE', 'EXCEPTION_HANDLED', ('LINE', 4), 'RERAISE', 'EXCEPTION_HANDLED', 'RERAISE', 'PY_UNWIND']
+monitoring finally_ends_in_if_else ['PY_START', ('LINE', 1), ('LINE', 2), 'RAISE', 'EXCEPTION_HANDLED', ('LINE', 4), ('LINE', 7), 'RERAISE', 'EXCEPTION_HANDLED', 'RERAISE', 'PY_UNWIND']
+monitoring finally_ends_in_test_over_lines ['PY_START', ('LINE', 1), ('LINE', 2), 'RAISE', 'EXCEPTION_HANDLED', ('LINE', 4), ('LINE', 5), 'RERAISE', 'EXCEPTION_HANDLED', 'RERAISE', 'PY_UNWIND']
+monitoring finally_ends_in_loop ['PY_START', ('LINE', 1), ('LINE', 2), 'RAISE', 'EXCEPTION_HANDLED', ('LINE', 4), ('LINE', 5), ('LINE', 4), ('LINE', 5), ('LINE', 4), 'RERAISE', 'EXCEPTION_HANDLED', 'RERAISE', 'PY_UNWIND']
+monitoring finally_ends_in_loop_with_break ['PY_START', ('LINE', 1), ('LINE', 2), 'RAISE', 'EXCEPTION_HANDLED', ('LINE', 4), ('LINE', 5), ('LINE', 4), ('LINE', 5), ('LINE', 6), 'RERAISE', 'EXCEPTION_HANDLED', 'RERAISE', 'PY_UNWIND']
+monitoring finally_ends_in_while ['PY_START', ('LINE', 1), ('LINE', 2), 'RAISE', 'EXCEPTION_HANDLED', ('LINE', 4), ('LINE', 5), ('LINE', 4), ('LINE', 5), ('LINE', 4), 'RERAISE', 'EXCEPTION_HANDLED', 'RERAISE', 'PY_UNWIND']
+monitoring finally_ends_in_try ['PY_START', ('LINE', 1), ('LINE', 2), 'RAISE', 'EXCEPTION_HANDLED', ('LINE', 4), ('LINE', 5), 'RERAISE', 'EXCEPTION_HANDLED', 'RERAISE', 'PY_UNWIND']
+monitoring finally_ends_in_try_that_catches ['PY_START', ('LINE', 1), ('LINE', 2), 'RAISE', 'EXCEPTION_HANDLED', ('LINE', 4), ('LINE', 5), 'RAISE', 'EXCEPTION_HANDLED', ('LINE', 6), ('LINE', 7), 'RERAISE', 'EXCEPTION_HANDLED', 'RERAISE', 'PY_UNWIND']
+monitoring finally_ends_in_finally ['PY_START', ('LINE', 1), ('LINE', 2), 'RAISE', 'EXCEPTION_HANDLED', ('LINE', 4), ('LINE', 5), ('LINE', 7), ('LINE', 8), 'RERAISE', 'EXCEPTION_HANDLED', 'RERAISE', 'PY_UNWIND']
+monitoring finally_ends_in_with ['PY_START', ('LINE', 1), ('LINE', 2), 'RAISE', 'EXCEPTION_HANDLED', ('LINE', 4), ('LINE', 5), ('LINE', 4), 'RERAISE', 'EXCEPTION_HANDLED', 'RERAISE', 'PY_UNWIND']
+monitoring finally_ends_in_match ['PY_START', ('LINE', 1), ('LINE', 2), 'RAISE', 'EXCEPTION_HANDLED', ('LINE', 4), ('LINE', 5), ('LINE', 7), ('LINE', 8), 'RERAISE', 'EXCEPTION_HANDLED', 'RERAISE', 'PY_UNWIND']
+monitoring finally_in_loop_gives_up_exception ['PY_START', ('LINE', 1), ('LINE', 2), ('LINE', 3), 'RAISE', 'EXCEPTION_HANDLED', ('LINE', 5), ('LINE', 8), ('LINE', 1), ('LINE', 2), ('LINE', 3), 'RAISE', 'EXCEPTION_HANDLED', ('LINE', 5), ('LINE', 6), 'PY_RETURN']
+monitoring finally_returns ['PY_START', ('LINE', 1), ('LINE', 2), 'RAISE', 'EXCEPTION_HANDLED', ('LINE', 4), ('LINE', 5), 'PY_RETURN']
+monitoring break_out_of_inner_finally_in_last_loop ['PY_START', ('LINE', 1), ('LINE', 2), 'RAISE', 'EXCEPTION_HANDLED', ('LINE', 4), ('LINE', 5), ('LINE', 6), 'RAISE', 'EXCEPTION_HANDLED', ('LINE', 8), 'RERAISE', 'EXCEPTION_HANDLED', 'RERAISE', 'PY_UNWIND']
+monitoring comprehension_of_what_is_not_iterable ['PY_START', ('LINE', 1), ('LINE', 2), 'RAISE', 'EXCEPTION_HANDLED', ('LINE', 2), 'RERAISE', 'EXCEPTION_HANDLED', ('LINE', 1), 'RERAISE', 'EXCEPTION_HANDLED', 'RERAISE', 'PY_UNWIND']
+monitoring comprehension_that_raises ['PY_START', ('LINE', 1), 'RAISE', 'EXCEPTION_HANDLED', ('LINE', 1), 'RERAISE', 'PY_UNWIND']
+monitoring comprehension_over_lines ['PY_START', ('LINE', 3), ('LINE', 1), ('LINE', 3), ('LINE', 2), ('LINE', 3), ('LINE', 2), 'RAISE', 'EXCEPTION_HANDLED', ('LINE', 1), 'RERAISE', 'PY_UNWIND']
+monitoring comprehension_in_try ['PY_START', ('LINE', 1), ('LINE', 2), 'RAISE', 'EXCEPTION_HANDLED', ('LINE', 2), 'RERAISE', 'EXCEPTION_HANDLED', ('LINE', 3), ('LINE', 4), 'PY_RETURN']
+monitoring nested_comprehensions ['PY_START', ('LINE', 1), 'RAISE', 'EXCEPTION_HANDLED', ('LINE', 1), 'RERAISE', 'EXCEPTION_HANDLED', ('LINE', 1), 'RERAISE', 'PY_UNWIND']
+monitoring except_star_does_not_match ['PY_START', ('LINE', 1), ('LINE', 2), 'RAISE', 'EXCEPTION_HANDLED', ('LINE', 3), 'RERAISE', 'PY_UNWIND']
+monitoring except_star_matches_a_part ['PY_START', ('LINE', 1), ('LINE', 2), 'RAISE', 'EXCEPTION_HANDLED', ('LINE', 3), ('LINE', 4), 'RERAISE', 'PY_UNWIND']
+monitoring except_star_raises ['PY_START', ('LINE', 1), ('LINE', 2), 'RAISE', 'EXCEPTION_HANDLED', ('LINE', 3), ('LINE', 4), 'RAISE', 'EXCEPTION_HANDLED', 'RERAISE', 'PY_UNWIND']
+monitoring with_two_managers_after_for_else ['PY_START', ('LINE', 1), ('LINE', 4), ('LINE', 5), ('LINE', 4), 'PY_RETURN']
+monitoring except_does_not_match ['PY_START', ('LINE', 1), ('LINE', 2), 'RAISE', 'EXCEPTION_HANDLED', ('LINE', 3), ('LINE', 5), 'RERAISE', 'EXCEPTION_HANDLED', 'RERAISE', 'PY_UNWIND']
+monitoring raises_in_named_handler ['PY_START', ('LINE', 1), ('LINE', 2), 'RAISE', 'EXCEPTION_HANDLED', ('LINE', 3), ('LINE', 4), 'RAISE', 'EXCEPTION_HANDLED', 'RERAISE', 'EXCEPTION_HANDLED', 'RERAISE', 'PY_UNWIND']
+monitoring with_on_one_line ['PY_START', ('LINE', 1), 'RAISE', 'EXCEPTION_HANDLED', 'RERAISE', 'EXCEPTION_HANDLED', 'RERAISE', 'PY_UNWIND']

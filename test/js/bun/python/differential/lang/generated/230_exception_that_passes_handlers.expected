@@ -1,0 +1,350 @@
+status: 0
+script: 7b1d8095e819c313
+source: 09f3e277db790778
+---
+--- what is being handled afterwards
+f.__name__ [f=function] => through_finally
+  finally sees ValueError('inner')
+  caught repr(e) [f=function] => ValueError('inner')
+repr(e.__context__) [f=function] => None
+repr(sys.exception()) [f=function] => ValueError('inner')
+  after repr(sys.exception()) [f=function] => None
+  finally sees ValueError('inner')
+  caught repr(e) [f=function] => ValueError('inner')
+repr(e.__context__) [f=function] => KeyError('outer')
+repr(e.__context__ and e.__context__.__context__) [f=function] => None
+repr(sys.exception()) [f=function] => ValueError('inner')
+  in the outer handler repr(sys.exception()) [f=function] => KeyError('outer')
+f.__name__ [f=function] => through_with
+  exit sees ValueError('inner')
+  caught repr(e) [f=function] => ValueError('inner')
+repr(e.__context__) [f=function] => None
+repr(sys.exception()) [f=function] => ValueError('inner')
+  after repr(sys.exception()) [f=function] => None
+  exit sees ValueError('inner')
+  caught repr(e) [f=function] => ValueError('inner')
+repr(e.__context__) [f=function] => KeyError('outer')
+repr(e.__context__ and e.__context__.__context__) [f=function] => None
+repr(sys.exception()) [f=function] => ValueError('inner')
+  in the outer handler repr(sys.exception()) [f=function] => KeyError('outer')
+f.__name__ [f=function] => through_except
+  caught repr(e) [f=function] => ValueError('inner')
+repr(e.__context__) [f=function] => None
+repr(sys.exception()) [f=function] => ValueError('inner')
+  after repr(sys.exception()) [f=function] => None
+  caught repr(e) [f=function] => ValueError('inner')
+repr(e.__context__) [f=function] => KeyError('outer')
+repr(e.__context__ and e.__context__.__context__) [f=function] => None
+repr(sys.exception()) [f=function] => ValueError('inner')
+  in the outer handler repr(sys.exception()) [f=function] => KeyError('outer')
+f.__name__ [f=function] => through_named_handler
+  caught repr(e) [f=function] => ValueError('inner')
+repr(e.__context__) [f=function] => ValueError('first')
+repr(sys.exception()) [f=function] => ValueError('inner')
+  after repr(sys.exception()) [f=function] => None
+  caught repr(e) [f=function] => ValueError('inner')
+repr(e.__context__) [f=function] => ValueError('first')
+repr(e.__context__ and e.__context__.__context__) [f=function] => KeyError('outer')
+repr(sys.exception()) [f=function] => ValueError('inner')
+  in the outer handler repr(sys.exception()) [f=function] => KeyError('outer')
+f.__name__ [f=function] => through_all
+  finally sees ValueError('inner')
+  exit sees ValueError('inner')
+  outer finally sees ValueError('inner')
+  caught repr(e) [f=function] => ValueError('inner')
+repr(e.__context__) [f=function] => None
+repr(sys.exception()) [f=function] => ValueError('inner')
+  after repr(sys.exception()) [f=function] => None
+  finally sees ValueError('inner')
+  exit sees ValueError('inner')
+  outer finally sees ValueError('inner')
+  caught repr(e) [f=function] => ValueError('inner')
+repr(e.__context__) [f=function] => KeyError('outer')
+repr(e.__context__ and e.__context__.__context__) [f=function] => None
+repr(sys.exception()) [f=function] => ValueError('inner')
+  in the outer handler repr(sys.exception()) [f=function] => KeyError('outer')
+f.__name__ [f=function] => through_async_for
+  caught repr(e) [f=function] => ValueError('inner')
+repr(e.__context__) [f=function] => None
+repr(sys.exception()) [f=function] => ValueError('inner')
+  after repr(sys.exception()) [f=function] => None
+  caught repr(e) [f=function] => ValueError('inner')
+repr(e.__context__) [f=function] => KeyError('outer')
+repr(e.__context__ and e.__context__.__context__) [f=function] => None
+repr(sys.exception()) [f=function] => ValueError('inner')
+  in the outer handler repr(sys.exception()) [f=function] => KeyError('outer')
+--- a generator suspended in the clause
+  in gen ValueError('inner')
+  repr(sys.exception()) => None
+  in gen again ValueError('inner')
+  caught repr(e) => ValueError('inner')
+repr(e.__context__) => None
+repr(sys.exception()) => ValueError('inner')
+  repr(sys.exception()) => KeyError('outer')
+--- the traceback has each frame once
+  finally sees ValueError('inner')
+f.__name__ [f=function] => through_finally
+entries [f=function] => [('<module>', 160), ('through_finally', 2)]
+  exit sees ValueError('inner')
+f.__name__ [f=function] => through_with
+entries [f=function] => [('<module>', 160), ('through_with', 2)]
+f.__name__ [f=function] => through_except
+entries [f=function] => [('<module>', 160), ('through_except', 2)]
+f.__name__ [f=function] => through_named_handler
+entries [f=function] => [('<module>', 160), ('through_named_handler', 4)]
+  finally sees ValueError('inner')
+  exit sees ValueError('inner')
+  outer finally sees ValueError('inner')
+f.__name__ [f=function] => through_all
+entries [f=function] => [('<module>', 160), ('through_all', 5)]
+f.__name__ [f=function] => through_async_for
+entries [f=function] => [('<module>', 160), ('through_async_for', 3), ('through_async_for_body', 1), ('agen', 2)]
+--- tools
+f.__name__ [f=function, raise_at=None] => through_finally
+raise_at [f=function, raise_at=None] => None
+repr(e) [f=function, raise_at=None] => ValueError('inner')
+repr(e.__context__) [f=function, raise_at=None] => KeyError('outer')
+handled [f=function, raise_at=None] => ValueError('inner')
+frames [f=function, raise_at=None] => ['<module>', 'through_finally']
+    RAISE ValueError KeyError('outer')
+    EXCEPTION_HANDLED ValueError KeyError('outer')
+    RERAISE ValueError ValueError('inner')
+    EXCEPTION_HANDLED ValueError ValueError('inner')
+    RERAISE ValueError KeyError('outer')
+    PY_UNWIND ValueError KeyError('outer')
+f.__name__ [f=function, raise_at=1] => through_finally
+raise_at [f=function, raise_at=1] => 1
+repr(e) [f=function, raise_at=1] => RuntimeError('from the tool, at RAISE')
+repr(e.__context__) [f=function, raise_at=1] => KeyError('outer')
+handled [f=function, raise_at=1] => RuntimeError('from the tool, at RAISE')
+frames [f=function, raise_at=1] => ['<module>', 'callback']
+    RAISE ValueError KeyError('outer')
+    EXCEPTION_HANDLED RuntimeError KeyError('outer')
+    RERAISE RuntimeError RuntimeError('from the tool, at RAISE')
+    EXCEPTION_HANDLED RuntimeError RuntimeError('from the tool, at RAISE')
+    RERAISE RuntimeError KeyError('outer')
+    PY_UNWIND RuntimeError KeyError('outer')
+f.__name__ [f=function, raise_at=2] => through_finally
+raise_at [f=function, raise_at=2] => 2
+repr(e) [f=function, raise_at=2] => RuntimeError('from the tool, at RERAISE')
+repr(e.__context__) [f=function, raise_at=2] => ValueError('inner')
+handled [f=function, raise_at=2] => RuntimeError('from the tool, at RERAISE')
+frames [f=function, raise_at=2] => ['<module>', 'callback']
+    RAISE ValueError KeyError('outer')
+    EXCEPTION_HANDLED ValueError KeyError('outer')
+    RERAISE ValueError ValueError('inner')
+    EXCEPTION_HANDLED RuntimeError ValueError('inner')
+    RERAISE RuntimeError KeyError('outer')
+    PY_UNWIND RuntimeError KeyError('outer')
+f.__name__ [f=function, raise_at=3] => through_finally
+raise_at [f=function, raise_at=3] => 3
+repr(e) [f=function, raise_at=3] => RuntimeError('from the tool, at RERAISE')
+repr(e.__context__) [f=function, raise_at=3] => KeyError('outer')
+handled [f=function, raise_at=3] => RuntimeError('from the tool, at RERAISE')
+frames [f=function, raise_at=3] => ['<module>', 'callback']
+    RAISE ValueError KeyError('outer')
+    EXCEPTION_HANDLED ValueError KeyError('outer')
+    RERAISE ValueError ValueError('inner')
+    EXCEPTION_HANDLED ValueError ValueError('inner')
+    RERAISE ValueError KeyError('outer')
+    PY_UNWIND RuntimeError KeyError('outer')
+f.__name__ [f=function, raise_at=4] => through_finally
+raise_at [f=function, raise_at=4] => 4
+repr(e) [f=function, raise_at=4] => RuntimeError('from the tool, at PY_UNWIND')
+repr(e.__context__) [f=function, raise_at=4] => KeyError('outer')
+handled [f=function, raise_at=4] => RuntimeError('from the tool, at PY_UNWIND')
+frames [f=function, raise_at=4] => ['<module>', 'callback']
+    RAISE ValueError KeyError('outer')
+    EXCEPTION_HANDLED ValueError KeyError('outer')
+    RERAISE ValueError ValueError('inner')
+    EXCEPTION_HANDLED ValueError ValueError('inner')
+    RERAISE ValueError KeyError('outer')
+    PY_UNWIND ValueError KeyError('outer')
+f.__name__ [f=function, raise_at=None] => through_except
+raise_at [f=function, raise_at=None] => None
+repr(e) [f=function, raise_at=None] => ValueError('inner')
+repr(e.__context__) [f=function, raise_at=None] => KeyError('outer')
+handled [f=function, raise_at=None] => ValueError('inner')
+frames [f=function, raise_at=None] => ['<module>', 'through_except']
+    RAISE ValueError KeyError('outer')
+    EXCEPTION_HANDLED ValueError KeyError('outer')
+    RERAISE ValueError ValueError('inner')
+    EXCEPTION_HANDLED ValueError ValueError('inner')
+    RERAISE ValueError KeyError('outer')
+    PY_UNWIND ValueError KeyError('outer')
+f.__name__ [f=function, raise_at=1] => through_except
+raise_at [f=function, raise_at=1] => 1
+repr(e) [f=function, raise_at=1] => RuntimeError('from the tool, at RAISE')
+repr(e.__context__) [f=function, raise_at=1] => KeyError('outer')
+handled [f=function, raise_at=1] => RuntimeError('from the tool, at RAISE')
+frames [f=function, raise_at=1] => ['<module>', 'callback']
+    RAISE ValueError KeyError('outer')
+    EXCEPTION_HANDLED RuntimeError KeyError('outer')
+    RERAISE RuntimeError RuntimeError('from the tool, at RAISE')
+    EXCEPTION_HANDLED RuntimeError RuntimeError('from the tool, at RAISE')
+    RERAISE RuntimeError KeyError('outer')
+    PY_UNWIND RuntimeError KeyError('outer')
+f.__name__ [f=function, raise_at=2] => through_except
+raise_at [f=function, raise_at=2] => 2
+repr(e) [f=function, raise_at=2] => RuntimeError('from the tool, at RERAISE')
+repr(e.__context__) [f=function, raise_at=2] => ValueError('inner')
+handled [f=function, raise_at=2] => RuntimeError('from the tool, at RERAISE')
+frames [f=function, raise_at=2] => ['<module>', 'callback']
+    RAISE ValueError KeyError('outer')
+    EXCEPTION_HANDLED ValueError KeyError('outer')
+    RERAISE ValueError ValueError('inner')
+    EXCEPTION_HANDLED RuntimeError ValueError('inner')
+    RERAISE RuntimeError KeyError('outer')
+    PY_UNWIND RuntimeError KeyError('outer')
+f.__name__ [f=function, raise_at=3] => through_except
+raise_at [f=function, raise_at=3] => 3
+repr(e) [f=function, raise_at=3] => RuntimeError('from the tool, at RERAISE')
+repr(e.__context__) [f=function, raise_at=3] => KeyError('outer')
+handled [f=function, raise_at=3] => RuntimeError('from the tool, at RERAISE')
+frames [f=function, raise_at=3] => ['<module>', 'callback']
+    RAISE ValueError KeyError('outer')
+    EXCEPTION_HANDLED ValueError KeyError('outer')
+    RERAISE ValueError ValueError('inner')
+    EXCEPTION_HANDLED ValueError ValueError('inner')
+    RERAISE ValueError KeyError('outer')
+    PY_UNWIND RuntimeError KeyError('outer')
+f.__name__ [f=function, raise_at=4] => through_except
+raise_at [f=function, raise_at=4] => 4
+repr(e) [f=function, raise_at=4] => RuntimeError('from the tool, at PY_UNWIND')
+repr(e.__context__) [f=function, raise_at=4] => KeyError('outer')
+handled [f=function, raise_at=4] => RuntimeError('from the tool, at PY_UNWIND')
+frames [f=function, raise_at=4] => ['<module>', 'callback']
+    RAISE ValueError KeyError('outer')
+    EXCEPTION_HANDLED ValueError KeyError('outer')
+    RERAISE ValueError ValueError('inner')
+    EXCEPTION_HANDLED ValueError ValueError('inner')
+    RERAISE ValueError KeyError('outer')
+    PY_UNWIND ValueError KeyError('outer')
+f.__name__ [f=function, raise_at=None] => through_with
+raise_at [f=function, raise_at=None] => None
+repr(e) [f=function, raise_at=None] => ValueError('inner')
+repr(e.__context__) [f=function, raise_at=None] => KeyError('outer')
+handled [f=function, raise_at=None] => ValueError('inner')
+frames [f=function, raise_at=None] => ['<module>', 'through_with']
+    RAISE ValueError KeyError('outer')
+    EXCEPTION_HANDLED ValueError KeyError('outer')
+    RERAISE ValueError ValueError('inner')
+    EXCEPTION_HANDLED ValueError ValueError('inner')
+    RERAISE ValueError KeyError('outer')
+    PY_UNWIND ValueError KeyError('outer')
+f.__name__ [f=function, raise_at=1] => through_with
+raise_at [f=function, raise_at=1] => 1
+repr(e) [f=function, raise_at=1] => RuntimeError('from the tool, at RAISE')
+repr(e.__context__) [f=function, raise_at=1] => KeyError('outer')
+handled [f=function, raise_at=1] => RuntimeError('from the tool, at RAISE')
+frames [f=function, raise_at=1] => ['<module>', 'callback']
+    RAISE ValueError KeyError('outer')
+    EXCEPTION_HANDLED RuntimeError KeyError('outer')
+    RERAISE RuntimeError RuntimeError('from the tool, at RAISE')
+    EXCEPTION_HANDLED RuntimeError RuntimeError('from the tool, at RAISE')
+    RERAISE RuntimeError KeyError('outer')
+    PY_UNWIND RuntimeError KeyError('outer')
+f.__name__ [f=function, raise_at=2] => through_with
+raise_at [f=function, raise_at=2] => 2
+repr(e) [f=function, raise_at=2] => RuntimeError('from the tool, at RERAISE')
+repr(e.__context__) [f=function, raise_at=2] => ValueError('inner')
+handled [f=function, raise_at=2] => RuntimeError('from the tool, at RERAISE')
+frames [f=function, raise_at=2] => ['<module>', 'callback']
+    RAISE ValueError KeyError('outer')
+    EXCEPTION_HANDLED ValueError KeyError('outer')
+    RERAISE ValueError ValueError('inner')
+    EXCEPTION_HANDLED RuntimeError ValueError('inner')
+    RERAISE RuntimeError KeyError('outer')
+    PY_UNWIND RuntimeError KeyError('outer')
+f.__name__ [f=function, raise_at=3] => through_with
+raise_at [f=function, raise_at=3] => 3
+repr(e) [f=function, raise_at=3] => RuntimeError('from the tool, at RERAISE')
+repr(e.__context__) [f=function, raise_at=3] => KeyError('outer')
+handled [f=function, raise_at=3] => RuntimeError('from the tool, at RERAISE')
+frames [f=function, raise_at=3] => ['<module>', 'callback']
+    RAISE ValueError KeyError('outer')
+    EXCEPTION_HANDLED ValueError KeyError('outer')
+    RERAISE ValueError ValueError('inner')
+    EXCEPTION_HANDLED ValueError ValueError('inner')
+    RERAISE ValueError KeyError('outer')
+    PY_UNWIND RuntimeError KeyError('outer')
+f.__name__ [f=function, raise_at=4] => through_with
+raise_at [f=function, raise_at=4] => 4
+repr(e) [f=function, raise_at=4] => RuntimeError('from the tool, at PY_UNWIND')
+repr(e.__context__) [f=function, raise_at=4] => KeyError('outer')
+handled [f=function, raise_at=4] => RuntimeError('from the tool, at PY_UNWIND')
+frames [f=function, raise_at=4] => ['<module>', 'callback']
+    RAISE ValueError KeyError('outer')
+    EXCEPTION_HANDLED ValueError KeyError('outer')
+    RERAISE ValueError ValueError('inner')
+    EXCEPTION_HANDLED ValueError ValueError('inner')
+    RERAISE ValueError KeyError('outer')
+    PY_UNWIND ValueError KeyError('outer')
+f.__name__ [f=function, raise_at=None] => through_named_handler
+raise_at [f=function, raise_at=None] => None
+repr(e) [f=function, raise_at=None] => ValueError('inner')
+repr(e.__context__) [f=function, raise_at=None] => ValueError('first')
+handled [f=function, raise_at=None] => ValueError('inner')
+frames [f=function, raise_at=None] => ['<module>', 'through_named_handler']
+    RAISE ValueError KeyError('outer')
+    EXCEPTION_HANDLED ValueError KeyError('outer')
+    RAISE ValueError ValueError('first')
+    EXCEPTION_HANDLED ValueError ValueError('first')
+    RERAISE ValueError ValueError('first')
+    EXCEPTION_HANDLED ValueError ValueError('first')
+    RERAISE ValueError KeyError('outer')
+    PY_UNWIND ValueError KeyError('outer')
+f.__name__ [f=function, raise_at=1] => through_named_handler
+raise_at [f=function, raise_at=1] => 1
+repr(e) [f=function, raise_at=1] => RuntimeError('from the tool, at RAISE')
+repr(e.__context__) [f=function, raise_at=1] => KeyError('outer')
+handled [f=function, raise_at=1] => RuntimeError('from the tool, at RAISE')
+frames [f=function, raise_at=1] => ['<module>', 'callback']
+    RAISE ValueError KeyError('outer')
+    EXCEPTION_HANDLED RuntimeError KeyError('outer')
+    RERAISE RuntimeError RuntimeError('from the tool, at RAISE')
+    EXCEPTION_HANDLED RuntimeError RuntimeError('from the tool, at RAISE')
+    RERAISE RuntimeError KeyError('outer')
+    PY_UNWIND RuntimeError KeyError('outer')
+f.__name__ [f=function, raise_at=2] => through_named_handler
+raise_at [f=function, raise_at=2] => 2
+repr(e) [f=function, raise_at=2] => RuntimeError('from the tool, at RAISE')
+repr(e.__context__) [f=function, raise_at=2] => ValueError('first')
+handled [f=function, raise_at=2] => RuntimeError('from the tool, at RAISE')
+frames [f=function, raise_at=2] => ['<module>', 'callback']
+    RAISE ValueError KeyError('outer')
+    EXCEPTION_HANDLED ValueError KeyError('outer')
+    RAISE ValueError ValueError('first')
+    EXCEPTION_HANDLED RuntimeError ValueError('first')
+    RERAISE RuntimeError ValueError('first')
+    EXCEPTION_HANDLED RuntimeError ValueError('first')
+    RERAISE RuntimeError KeyError('outer')
+    PY_UNWIND RuntimeError KeyError('outer')
+f.__name__ [f=function, raise_at=3] => through_named_handler
+raise_at [f=function, raise_at=3] => 3
+repr(e) [f=function, raise_at=3] => RuntimeError('from the tool, at RERAISE')
+repr(e.__context__) [f=function, raise_at=3] => ValueError('first')
+handled [f=function, raise_at=3] => RuntimeError('from the tool, at RERAISE')
+frames [f=function, raise_at=3] => ['<module>', 'callback']
+    RAISE ValueError KeyError('outer')
+    EXCEPTION_HANDLED ValueError KeyError('outer')
+    RAISE ValueError ValueError('first')
+    EXCEPTION_HANDLED ValueError ValueError('first')
+    RERAISE ValueError ValueError('first')
+    EXCEPTION_HANDLED RuntimeError ValueError('first')
+    RERAISE RuntimeError KeyError('outer')
+    PY_UNWIND RuntimeError KeyError('outer')
+f.__name__ [f=function, raise_at=4] => through_named_handler
+raise_at [f=function, raise_at=4] => 4
+repr(e) [f=function, raise_at=4] => RuntimeError('from the tool, at RERAISE')
+repr(e.__context__) [f=function, raise_at=4] => KeyError('outer')
+handled [f=function, raise_at=4] => RuntimeError('from the tool, at RERAISE')
+frames [f=function, raise_at=4] => ['<module>', 'callback']
+    RAISE ValueError KeyError('outer')
+    EXCEPTION_HANDLED ValueError KeyError('outer')
+    RAISE ValueError ValueError('first')
+    EXCEPTION_HANDLED ValueError ValueError('first')
+    RERAISE ValueError ValueError('first')
+    EXCEPTION_HANDLED ValueError ValueError('first')
+    RERAISE ValueError KeyError('outer')
+    PY_UNWIND RuntimeError KeyError('outer')

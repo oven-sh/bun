@@ -1,0 +1,30 @@
+status: 0
+script: 0b3723b071566cf1
+source: 6e4d136925d5780f
+---
+next, return 1 ctx(lambda: next(g1())) => (1, 'NoneType')
+next, return None ctx(lambda: next(g2())) => (None, 'LookupError')
+send ctx(lambda: g1().send(None)) => (1, 'NoneType')
+__next__ ctx(lambda: g1().__next__()) => (1, 'NoneType')
+second next ctx(second) => ('done', 'NoneType')
+coroutine send ctx(lambda: c1().send(None)) => (5, 'NoneType')
+next(iter(())) ctx(lambda: next(iter(()))) => (None, 'LookupError')
+throw ctx(lambda: g1().throw(StopIteration(7))) => (7, 'NoneType')
+asend None ctx2(lambda: a.asend(None).send(None)) => ('StopIteration', None, (None,), 'NoneType')
+anext 1 ctx2(lambda: a.__anext__().send(None)) => ('StopIteration', 1, (1,), 'NoneType')
+anext tuple ctx2(lambda: a.__anext__().send(None)) => ('StopIteration', (1, 2), ((1, 2),), 'NoneType')
+anext end ctx2(lambda: a.__anext__().send(None)) => ('StopAsyncIteration', '-', (), 'LookupError')
+coro None ctx2(lambda: c_none().send(None)) => ('StopIteration', None, (), 'LookupError')
+coro tuple ctx2(lambda: c_tuple().send(None)) => ('StopIteration', (1, 2), ((1, 2),), 'NoneType')
+coro await ctx2(lambda: c_tuple().__await__().send(None)) => ('StopIteration', (1, 2), ((1, 2),), 'NoneType')
+coro await next ctx2(lambda: next(c_tuple().__await__())) => ('StopIteration', (1, 2), ((1, 2),), 'NoneType')
+future ctx2(lambda: next(iter(f))) => ('StopIteration', 3, (3,), 'NoneType')
+future None ctx2(lambda: next(iter(f))) => ('StopIteration', None, (None,), 'NoneType')
+future send ctx2(lambda: f.__await__().send(None)) => ('StopIteration', 4, (4,), 'NoneType')
+anext default ctx2(lambda: anext(ag2(), 'dflt').send(None)) => ('StopIteration', 'dflt', ('dflt',), 'NoneType')
+anext default next ctx2(lambda: next(anext(ag2(), 'dflt').__await__())) => ('StopIteration', 'dflt', ('dflt',), 'NoneType')
+yield from ctx2(lambda: next(g())) => ('StopIteration', 9, (9,), 'NoneType')
+throw returns ctx2(thrown) => ('StopIteration', 8, (8,), 'NoneType')
+None
+types.coroutine ctx2(lambda: tc().send(None)) => ('StopIteration', 6, (6,), 'NoneType')
+aclose ctx2(lambda: ag().aclose().send(None)) => ('StopIteration', None, (), 'LookupError')

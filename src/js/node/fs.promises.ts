@@ -436,7 +436,7 @@ const exports = {
         }
         retries++;
         // A timer fires after 1 ms when its delay does not fit in an int32, so a long wait is split.
-        for (let wait = retries * (options.retryDelay ?? 100); wait > 0; ) {
+        for (let wait = retries * (options.retryDelay ?? 100); wait > 0;) {
           const step = Math.min(wait, 2147483647);
           wait -= step;
           const { promise, resolve } = Promise.withResolvers<void>();

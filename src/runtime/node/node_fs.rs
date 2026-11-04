@@ -10329,7 +10329,9 @@ pub(crate) fn zig_delete_tree(
                                 }
                                 // `e.path` is `entry_name` and what the callee entered below it.
                                 let mut path = dt_entry_path(sub_path, stack, Some(&entry_name));
-                                path.extend_from_slice(e.path.get(entry_name.len()..).unwrap_or(&[]));
+                                path.extend_from_slice(
+                                    e.path.get(entry_name.len()..).unwrap_or(&[]),
+                                );
                                 return Err(e.with_path(&path));
                             }
                         }

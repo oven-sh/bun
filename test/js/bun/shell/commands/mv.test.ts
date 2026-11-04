@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isPosix, isRoot, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isPosix, isRoot, isWindows, makeTreeSync, tempDir } from "harness";
 import {
   accessSync,
   chmodSync,
@@ -9,6 +9,7 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   readlinkSync,
   rmSync,
   statSync,
@@ -96,6 +97,99 @@ describe("mv", async () => {
     // The last of -n and -f wins.
     expect(await mv("-n -f a dst")).toEqual(silent);
     expect(read("dst")).toBe("new a");
+  });
+
+  const numbered = (prefix: string, count: number) => Array.from({ length: count }, (_, i) => `${prefix}${i}`);
+  const silent = { stdout: "", stderr: "", exitCode: 0 };
+
+  // 13 pairs of sources that have one name: `a0/x0` then `b0/x0`, `a1/x1` then `b1/x1`, and so on.
+  const pairs = numbered("", 13);
+  const sameName = pairs.flatMap(k => [`a${k}/x${k}`, `b${k}/x${k}`]);
+  const sameNameFiles = Object.fromEntries(sameName.map(path => [path, path]));
+  const mvSameName = async (src: string, dst: string, ...flags: string[]) => {
+    const { stdout, stderr, exitCode } = await $`mv ${[...flags, ...sameName]} ${dst}`.cwd(src).quiet();
+    return {
+      stdout: stdout.toString(),
+      stderr: stderr.toString(),
+      exitCode,
+      moved: Object.fromEntries(readdirSync(dst).map(name => [name, readFileSync(join(dst, name), "utf8")])),
+      left: sameName.filter(path => existsSync(join(src, path))),
+    };
+  };
+  // As in POSIX: a source replaces the file that an earlier source put at its destination.
+  const laterOfEachPair = {
+    ...silent,
+    moved: Object.fromEntries(pairs.map(k => [`x${k}`, `b${k}/x${k}`])),
+    left: [],
+  };
+  const earlierOfEachPair = {
+    ...silent,
+    moved: Object.fromEntries(pairs.map(k => [`x${k}`, `a${k}/x${k}`])),
+    left: pairs.map(k => `b${k}/x${k}`),
+  };
+
+  // Long lists, so that a `mv` that moves its sources on more than one thread fails in every run.
+  describe("moves the sources in the order of the operands", () => {
+    // `n0/n1/.../n25`, then `n0/n1/.../n24`, down to `n0`: each source is the directory that held the one before it.
+    const nested = numbered("n", 26);
+    const innermostFirst = nested.map((_, depth) => nested.slice(0, depth + 1).join("/")).reverse();
+    const nestedFiles = { out: {}, [innermostFirst[0]]: {} };
+    const tree = (dir: string) =>
+      (readdirSync(dir, { recursive: true }) as string[]).map(path => path.replaceAll("\\", "/")).sort();
+    const flattened = ["out", ...nested.map(name => `out/${name}`)].sort();
+
+    test("a source can be the directory that held the source before it", async () => {
+      using dir = tempDir("mv-order-nested", nestedFiles);
+      const { stdout, stderr, exitCode } = await $`mv ${innermostFirst} out`.cwd(String(dir)).quiet();
+      expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode, tree: tree(String(dir)) }).toEqual({
+        ...silent,
+        tree: flattened,
+      });
+    });
+
+    test("a source can be the directory that held the source before it, in `bun exec`", async () => {
+      using dir = tempDir("mv-order-nested-exec", nestedFiles);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "exec", `mv ${innermostFirst.join(" ")} out`],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode, tree: tree(String(dir)) }).toEqual({ ...silent, tree: flattened });
+    });
+
+    test("the later source of one name replaces the earlier one", async () => {
+      using dir = tempDir("mv-order-replace", { out: {}, ...sameNameFiles });
+      expect(await mvSameName(String(dir), join(String(dir), "out"))).toEqual(laterOfEachPair);
+    });
+
+    test("-n keeps the earlier source of one name and leaves the later one in place", async () => {
+      using dir = tempDir("mv-order-keep", { out: {}, ...sameNameFiles });
+      expect(await mvSameName(String(dir), join(String(dir), "out"), "-n")).toEqual(earlierOfEachPair);
+    });
+  });
+
+  test("stops at the first source that fails", async () => {
+    const sources = numbered("s", 8);
+    using dir = tempDir("mv-stop", { dest: {}, ...Object.fromEntries(sources.map(name => [name, name])) });
+    const { exitCode, stdout, stderr } = await $`mv ${sources.slice(0, 3)} missing ${sources.slice(3)} dest`
+      .cwd(String(dir))
+      .quiet();
+    expect({
+      exitCode,
+      stdout: stdout.toString(),
+      stderr: stderr.toString(),
+      moved: readdirSync(join(String(dir), "dest")).sort(),
+      left: readdirSync(String(dir)).sort(),
+    }).toEqual({
+      exitCode: 2 /* ENOENT */,
+      stdout: "",
+      stderr: `mv: ${join("dest", "missing")}: No such file or directory\n`,
+      moved: sources.slice(0, 3),
+      left: ["dest", ...sources.slice(3)],
+    });
   });
 
   test("fails when a source name is longer than the path buffers", async () => {
@@ -303,6 +397,29 @@ describe("mv", async () => {
         expect(r.exitCode).not.toBe(0);
         expect(lstatSync(fifo).isFIFO()).toBe(true);
         expect(lstatSync(join(dst, "pipe"), { throwIfNoEntry: false })).toBeUndefined();
+      } finally {
+        rmSync(src, { recursive: true, force: true });
+        rmSync(dst, { recursive: true, force: true });
+      }
+    });
+
+    // Two copies onto one destination at the same time can leave a file that is neither source.
+    test.skipIf(skip)("the later source of one name replaces the earlier one across devices", async () => {
+      const [src, dst] = crossDevicePair("same-name");
+      try {
+        makeTreeSync(src, sameNameFiles);
+        expect(await mvSameName(src, dst)).toEqual(laterOfEachPair);
+      } finally {
+        rmSync(src, { recursive: true, force: true });
+        rmSync(dst, { recursive: true, force: true });
+      }
+    });
+
+    test.skipIf(skip)("-n keeps the earlier source of one name across devices", async () => {
+      const [src, dst] = crossDevicePair("same-name-n");
+      try {
+        makeTreeSync(src, sameNameFiles);
+        expect(await mvSameName(src, dst, "-n")).toEqual(earlierOfEachPair);
       } finally {
         rmSync(src, { recursive: true, force: true });
         rmSync(dst, { recursive: true, force: true });

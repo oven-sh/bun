@@ -70,6 +70,16 @@ describe("util", () => {
     expect(util.toUSVString(input)).toBe("hello\uFFFD");
     expect(calls).toEqual(["toString"]);
 
+    const fallback = {
+      toString() {
+        return {};
+      },
+      valueOf() {
+        return "fallback";
+      },
+    };
+    expect(util.toUSVString(fallback)).toBe("fallback");
+
     const hints = [];
     const prim = {
       [Symbol.toPrimitive](hint) {

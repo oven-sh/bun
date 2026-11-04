@@ -102,4 +102,6 @@ the system offers and what its C library computes are in them.
 - What relies on reference counts (an object gone at the last `del`) calls `gc.collect()` first.
 
 Other tools: `tools/verify.py` (checks the tests of `lang/` themselves against CPython), `tools/keep_generators.py` (shows whether a test
-relies on reference counting), `tools/cold_warm.py` (runs each test of `lang/` as a module twice: compiled, and from its `.pyc` file).
+relies on reference counting), `tools/cold_warm.py` (runs each test of `lang/` as a module twice: compiled, and from its `.pyc` file),
+`tools/in_a_thread.py` (runs each test in a thread that is not the main one, under CPython and under Bun: crashes and hangs count, the
+rest is for a person to read; that is how `os.chdir()` in a thread was found to crash).

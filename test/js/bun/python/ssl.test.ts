@@ -81,6 +81,28 @@ for refused in (lambda: context.set_ciphersuites("TLS_AES_128_GCM_SHA256"), lamb
   );
 });
 
+test.skipIf(isWindows).concurrent("the flags for what the library always does can be set and seen", async () => {
+  expect(
+    await run(`
+import ssl
+context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+print(context.verify_flags.name, int(ssl.VERIFY_X509_STRICT), int(ssl.VERIFY_X509_TRUSTED_FIRST))
+context.verify_flags |= ssl.VERIFY_X509_STRICT | ssl.VERIFY_X509_PARTIAL_CHAIN
+print(sorted(flag.name for flag in context.verify_flags))
+context.verify_flags &= ~ssl.VERIFY_X509_STRICT
+print(sorted(flag.name for flag in context.verify_flags))
+print(sorted(flag.name for flag in ssl.create_default_context().verify_flags))
+`),
+  ).toEqual(
+    printed(
+      "VERIFY_X509_TRUSTED_FIRST 32 32768",
+      "['VERIFY_X509_PARTIAL_CHAIN', 'VERIFY_X509_STRICT', 'VERIFY_X509_TRUSTED_FIRST']",
+      "['VERIFY_X509_PARTIAL_CHAIN', 'VERIFY_X509_TRUSTED_FIRST']",
+      "['VERIFY_X509_PARTIAL_CHAIN', 'VERIFY_X509_STRICT', 'VERIFY_X509_TRUSTED_FIRST']",
+    ),
+  );
+});
+
 test.skipIf(isWindows).concurrent("a client and a server in two threads", async () => {
   expect(
     await run(`

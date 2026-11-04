@@ -151,6 +151,9 @@ class JSFinder:
                 continue
             if not verbatim and not resolved.startswith("/"):
                 continue
+            # The path of a file says nothing about what is in it: only its suffix does.
+            if specifier.startswith("/") and not resolved.endswith(tuple(_SUFFIXES)):
+                continue
             return _bootstrap.ModuleSpec(fullname, JSLoader(resolved, importer), origin=resolved)
         return None
 

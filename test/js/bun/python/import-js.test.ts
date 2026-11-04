@@ -140,6 +140,40 @@ for name in "nothing_like_this", "readline", "_curses", "node.nothing", "fs":
   });
 });
 
+test.concurrent("the path of a file is a module of JavaScript only if its suffix says so", async () => {
+  const result = await run({
+    "script.js": `exports.kind = "a script";`,
+    "typed.ts": `export const kind: string = "typed";`,
+    "plain": `exports.kind = "no suffix";`,
+    "notes.txt": `some text`,
+    "module.py": `kind = "python"`,
+    "directory/index.js": `exports.kind = "the index of a directory";`,
+    "main.py": `
+import importlib, os
+here = os.path.dirname(os.path.abspath(__file__))
+for name in "script", "typed", "directory", "plain", "notes.txt", "module.py", "module", "missing":
+    try:
+        print(name, importlib.import_module(here + "/" + name).kind)
+    except ModuleNotFoundError as e:
+        print(name, str(e).replace(here, "<here>"))
+`,
+  });
+  expect(result).toEqual({
+    stdout: lines(
+      "script a script",
+      "typed typed",
+      "directory the index of a directory",
+      "plain No module named '<here>/plain'",
+      "notes.txt No module named '<here>/notes'",
+      "module.py No module named '<here>/module'",
+      "module No module named '<here>/module'",
+      "missing No module named '<here>/missing'",
+    ),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 test.concurrent("a name that Python code tries to import is never looked up in the registry", async () => {
   const requests: string[] = [];
   using registry = Bun.serve({
@@ -183,7 +217,14 @@ for attempt in (
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode, requests }).toEqual({
-    stdout: lines("ModuleNotFoundError", "ModuleNotFoundError", "JSError", "ModuleNotFoundError", "ModuleNotFoundError", "JSError"),
+    stdout: lines(
+      "ModuleNotFoundError",
+      "ModuleNotFoundError",
+      "JSError",
+      "ModuleNotFoundError",
+      "ModuleNotFoundError",
+      "JSError",
+    ),
     stderr: "",
     exitCode: 0,
     requests: [],

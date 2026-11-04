@@ -71,6 +71,12 @@ enum { EncodingPEM = 1,
 static constexpr int protoMinimumSupported = -2;
 static constexpr int protoMaximumSupported = -1;
 
+// BoringSSL always does what these two ask for, and has 0 for them. A program sets them and looks whether they are set, so they have the
+// values that OpenSSL gives them, which mean nothing to BoringSSL: it keeps them with the other flags.
+static constexpr unsigned long verifyFlagStrict = 0x20;
+static constexpr unsigned long verifyFlagTrustedFirst = 0x8000;
+static_assert(!X509_V_FLAG_X509_STRICT && !X509_V_FLAG_TRUSTED_FIRST);
+
 // CPython's, without "@SECLEVEL=2", which this library does not know. What else it does not know (DHE, CCM) it passes over.
 #define DEFAULT_CIPHERS "ECDH+AESGCM:ECDH+CHACHA20:ECDH+AES:DHE+AES:!aNULL:!eNULL:!aDSS:!SHA1:!AESCCM"
 
@@ -2291,7 +2297,7 @@ static JSValue contextNew(JSGlobalObject* globalObject, JSValue type, JSValue pr
     SSL_CTX_set_mode(ctx, SSL_MODE_RELEASE_BUFFERS);
 
     X509_VERIFY_PARAM* parameters = SSL_CTX_get0_param(ctx);
-    X509_VERIFY_PARAM_set_flags(parameters, X509_V_FLAG_TRUSTED_FIRST);
+    X509_VERIFY_PARAM_set_flags(parameters, verifyFlagTrustedFirst);
     state->hostFlags = X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS;
     X509_VERIFY_PARAM_set_hostflags(parameters, state->hostFlags);
 
@@ -3451,9 +3457,9 @@ static constexpr Constant constants[] = {
     { "VERIFY_DEFAULT"_s, 0 },
     { "VERIFY_CRL_CHECK_LEAF"_s, X509_V_FLAG_CRL_CHECK },
     { "VERIFY_CRL_CHECK_CHAIN"_s, X509_V_FLAG_CRL_CHECK | X509_V_FLAG_CRL_CHECK_ALL },
-    { "VERIFY_X509_STRICT"_s, X509_V_FLAG_X509_STRICT },
+    { "VERIFY_X509_STRICT"_s, verifyFlagStrict },
     { "VERIFY_ALLOW_PROXY_CERTS"_s, X509_V_FLAG_ALLOW_PROXY_CERTS },
-    { "VERIFY_X509_TRUSTED_FIRST"_s, X509_V_FLAG_TRUSTED_FIRST },
+    { "VERIFY_X509_TRUSTED_FIRST"_s, verifyFlagTrustedFirst },
     { "VERIFY_X509_PARTIAL_CHAIN"_s, X509_V_FLAG_PARTIAL_CHAIN },
 
 #define ALERT(name) { "ALERT_DESCRIPTION_" #name ""_s, SSL_AD_##name }

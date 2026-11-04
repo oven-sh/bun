@@ -3685,7 +3685,6 @@ impl<'a> Resolver<'a> {
             }
         };
 
-        // `expect`, as before: this fill does not report a failed allocation.
         let dir_entries_option: *mut Fs::file_system::real_fs::EntriesOption = rfs!()
             .fill_listing_locked(
                 self.generation,

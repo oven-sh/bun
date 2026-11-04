@@ -1184,7 +1184,7 @@ pub mod fs {
             Ok(unsafe { &*out })
         }
 
-        /// The listing that a `DirInfo` fill uses for the key of `result`: the cached one if it is of `generation`, else the names of `open_dir`, which the caller opened. With `store_fd` the listing keeps that handle. A read that fails keeps the names before it. Caller holds `entries_mutex`.
+        /// The listing that a `DirInfo` fill uses for the key of `result`: the cached one if it is of `generation`, else the names of `open_dir`, which the caller opened. With `store_fd` the listing keeps that handle. Caller holds `entries_mutex`.
         pub(crate) fn fill_listing_locked(
             &mut self,
             generation: Generation,

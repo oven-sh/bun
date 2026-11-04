@@ -122,6 +122,9 @@ describe("json-summary coverage reporter", () => {
 export function unused() {
   return 1;
 }
+export function unused2() {
+  return 2;
+}
 `,
     "cov.test.ts": `import { test, expect } from "bun:test";
 import { pick } from "./src";
@@ -146,11 +149,11 @@ test("one branch", () => expect(pick(true)).toBe("yes"));
     });
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const summary = await Bun.file(path.join(String(dir), outDir, "coverage-summary.json")).json();
-    const lines = metric(6, 3, 50);
+    const lines = metric(8, 3, 37.5);
     expect(summary[path.join(String(dir), "src.ts")]).toEqual({
       lines,
       statements: lines,
-      functions: metric(2, 1, 50),
+      functions: metric(3, 1, 33.33),
       branches: empty,
     });
     // Totals add counts, not percentages.
@@ -185,6 +188,23 @@ test("one branch", () => expect(pick(true)).toBe("yes"));
       lcov: await Bun.file(path.join(cov, "lcov.info")).exists(),
       src: path.join(String(dir), "src.ts") in (await Bun.file(path.join(cov, "coverage-summary.json")).json()),
     }).toEqual({ table: true, lcov: true, src: true });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("--coverage-reporter wins over bunfig coverageReporter", async () => {
+    using dir = tempDir("cov-json-summary-precedence", {
+      ...files,
+      "bunfig.toml": `[test]\ncoverageReporter = ["lcov"]\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--coverage-reporter=json-summary"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const exitCode = await proc.exited;
+    expect(readdirSync(path.join(String(dir), "coverage"))).toEqual(["coverage-summary.json"]);
     expect(exitCode).toBe(0);
   });
 

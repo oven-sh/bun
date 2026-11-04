@@ -2180,6 +2180,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     if !args.options(b"--coverage-reporter").is_empty() {
         ctx.test_options.coverage.enabled = true;
         ctx.test_options.coverage.reporters = CoverageReporters::NONE;
+        ctx.test_options.coverage.reporters_from_cli = true;
         for reporter in args.options(b"--coverage-reporter") {
             if *reporter == b"text" {
                 ctx.test_options.coverage.reporters.text = true;

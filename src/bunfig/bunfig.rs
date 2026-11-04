@@ -614,7 +614,9 @@ impl<'a> Parser<'a, '_> {
                     }
                 }
 
-                if let Some(expr) = test.get(b"coverageReporter") {
+                if let Some(expr) = test.get(b"coverageReporter")
+                    && !self.ctx.test_options.coverage.reporters_from_cli
+                {
                     'brk: {
                         self.ctx.test_options.coverage.reporters = CoverageReporters::NONE;
                         if let ExprData::EString(_) = &expr.data {

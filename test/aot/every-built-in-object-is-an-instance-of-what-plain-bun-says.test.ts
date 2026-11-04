@@ -34,7 +34,7 @@ function walk(text, value, depth, seen) {
   }
 }
 walk("globalThis", globalThis, 3, new Set());
-const left = /^(_|bun:(main|wrap|internal|test|ffi|jsc)|(node:)?(test|repl|inspector|wasi|trace_events|sqlite)(\\/|$))/;
+const left = /^(_|bun:(main|wrap|internal|test|ffi|jsc|python)|(node:)?(test|repl|inspector|wasi|trace_events|sqlite)(\\/|$))/;
 for (const name of require("node:module").builtinModules.filter(name => !left.test(name)).sort()) {
   let value;
   try { value = require(name); } catch { continue; }

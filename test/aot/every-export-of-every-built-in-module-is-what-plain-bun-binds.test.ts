@@ -5,9 +5,10 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { builtinModules } from "node:module";
 import { join } from "node:path";
 
-// `bun:test` answers outside a test run with functions that throw. The others start something when they are loaded, or print a warning.
+// `bun:test` answers outside a test run with functions that throw, and no compiled program gets `bun:python`. The others start something when they are loaded, or print a warning.
 const leftOut = new Set([
   "bun:test",
+  "bun:python",
   "bun:main",
   "bun:wrap",
   "bun:internal-for-testing",

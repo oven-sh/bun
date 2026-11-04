@@ -1,0 +1,6 @@
+status: 0
+script: c2d8ff8676a9dcaf
+---
+reader 0 'bye\n' ''
+text 0 'bye\n' ''
+raw 0 'bye\n' ''

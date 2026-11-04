@@ -1,5 +1,5 @@
 status: 0
-script: 90a35bdbca76f634
+script: 6b57a835d3a0c500
 ---
 --- closed at once
 break ['closed break']
@@ -65,3 +65,16 @@ None
 trace function 0 ['closed return event']
 profile function 0 ['closed profile']
 sys.monitoring 0 ['closed monitored']
+--- the loop holds its iterator even where no instruction will read it again
+only the way of the exception is left ['collected', 'closed a collection before the raise']
+in a generator ['resumed', 'closed a yield before the raise']
+in a generator, twice ['resumed', 'closed two yields']
+a generator that is closed there ['closed a yield before the raise']
+or thrown into ['closed a yield before the raise']
+the handler comes first ['handler', 'closed raise in a handler']
+--- a generator with nothing of its own to clean up, and what it holds
+yield from ['closed delegated to']
+yield from, twice ['closed delegated to, twice']
+a loop ['closed looped over']
+a loop in a loop ['closed looped over, twice']
+an exception ['closed left by an exception']

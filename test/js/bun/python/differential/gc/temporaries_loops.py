@@ -449,3 +449,134 @@ for v in gen('monitored'):
 monitoring.set_events(3, 0)
 monitoring.free_tool_id(3)
 show('sys.monitoring', len(returned))
+
+print('--- the loop holds its iterator even where no instruction will read it again')
+
+
+def collects_then_raises():
+    for v in gen('a collection before the raise'):
+        gc.collect()
+        log.append('collected')
+        raise ValueError
+
+
+try:
+    collects_then_raises()
+except ValueError:
+    show('only the way of the exception is left')
+
+
+def yields_then_raises():
+    for v in gen('a yield before the raise'):
+        yield v
+        log.append('resumed')
+        raise ValueError
+
+
+g = yields_then_raises()
+next(g)
+[[i] for i in range(1000)]
+gc.collect()
+try:
+    next(g)
+except ValueError:
+    show('in a generator')
+
+
+def yields_twice_then_raises():
+    for v in gen('two yields'):
+        yield v
+        gc.collect()
+        yield v
+        log.append('resumed')
+        raise ValueError
+
+
+g = yields_twice_then_raises()
+next(g)
+next(g)
+gc.collect()
+try:
+    next(g)
+except ValueError:
+    show('in a generator, twice')
+
+g = yields_then_raises()
+next(g)
+gc.collect()
+g.close()
+show('a generator that is closed there')
+
+g = yields_then_raises()
+next(g)
+try:
+    g.throw(KeyError)
+except KeyError:
+    show('or thrown into')
+
+
+def raises_in_handler():
+    for v in gen('raise in a handler'):
+        try:
+            raise KeyError
+        except KeyError:
+            gc.collect()
+            log.append('handler')
+            raise ValueError
+
+
+try:
+    raises_in_handler()
+except ValueError:
+    show('the handler comes first')
+
+print('--- a generator with nothing of its own to clean up, and what it holds')
+
+
+def delegates(name):
+    yield from gen(name)
+
+
+for v in delegates('delegated to'):
+    break
+show('yield from')
+
+
+def delegates_twice(name):
+    yield from delegates(name)
+
+
+for v in delegates_twice('delegated to, twice'):
+    break
+show('yield from, twice')
+
+
+def loops(name):
+    for v in gen(name):
+        yield v
+
+
+for v in loops('looped over'):
+    break
+show('a loop')
+
+
+def loops_twice(name):
+    for v in loops(name):
+        yield v
+
+
+for v in loops_twice('looped over, twice'):
+    break
+show('a loop in a loop')
+
+
+def leave_by_exception():
+    for v in loops_twice('left by an exception'):
+        raise KeyError
+
+
+try:
+    leave_by_exception()
+except KeyError:
+    show('an exception')

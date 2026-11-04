@@ -85,7 +85,10 @@ bun_core::declare_scope!(cache, visible);
 /// Version 50: The body of a class with lowered class decorators names the class by the
 /// binding that holds what the decorators return.
 /// Version 51: A `bun:` specifier that names no builtin is printed as it is written.
-const EXPECTED_VERSION: u32 = 51;
+/// Version 52: In the body of a `with` statement, an unused `typeof name` and an unused read of
+/// a `var` that the body declares are kept, and a call is not moved into the declaration of
+/// such a `var`.
+const EXPECTED_VERSION: u32 = 52;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

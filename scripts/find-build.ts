@@ -54,6 +54,11 @@ Options:
   [flaky]              it passed on a retry. It is not compared.
 A build of main is compared only with the builds of main before it.
 
+--errors, --status and --watch count a failure only for the latest attempt of a job. When Buildkite ran a
+job again, what the attempt that it replaced reported is left out, and a line says how much:
+  [replaced attempt]   only such an attempt reported on the file. It is not compared.
+[flaky] files stay. The builds of main in the comparison count every attempt.
+
 For anything else, compose with \`bk\` directly (.bk.yaml sets the pipeline):
   bk build view $(bun run ci:find)
   bk job log <uuid> -b $(bun run ci:find)
@@ -116,23 +121,39 @@ if (target == null) {
   branch = target;
 }
 
-/** A target given as a build number has no `branch` and no `created_at`: nothing is asked about it up front. */
-type Build = { number: number; state: string; web_url: string; commit?: string; branch?: string; created_at?: string };
+/**
+ * A target given as a build number has no `branch`, no `created_at` and no `jobs`: nothing is asked about it
+ * up front. `jobs`: every attempt of each job, when `--errors` asked for the build of a branch.
+ */
+type Build = {
+  number: number;
+  state: string;
+  web_url: string;
+  commit?: string;
+  branch?: string;
+  created_at?: string;
+  jobs?: Job[];
+};
 let builds: Build[];
 
 try {
+  const errors = opts.errors && !opts.status && !opts.watch && !opts.logs;
   if (buildNumber != null) {
     builds = [{ number: buildNumber, state: "", web_url: `https://buildkite.com/bun/bun/builds/${buildNumber}` }];
+  } else if (errors) {
+    // One build, with every attempt of its jobs. For `--limit 1`, `bk build list` reads a page of 100 builds.
+    const newest = `branch=${encodeURIComponent(branch!)}&per_page=1&include_retried_jobs=true`;
+    builds = await bk("api", `/pipelines/bun/builds?${newest}`);
   } else {
     // `bk build view -b <branch>` silently filters by creator; use `list` instead.
     builds = await bk("build", "list", "--branch", branch!, "--limit", opts.limit!, "--json");
-    if (builds.length === 0) die(`no builds found for branch '${branch}'`);
   }
+  if (builds.length === 0) die(`no builds found for branch '${branch}'`);
 
   if (opts.status) await printStatus(builds[0].number);
   else if (opts.watch) await watchStatus(builds[0].number);
   else if (opts.logs) await saveLogs(builds[0].number);
-  else if (opts.errors) await printErrors(builds[0], { all: !!opts.all, compare: !opts["no-compare"] });
+  else if (errors) await printErrors(builds[0], { all: !!opts.all, compare: !opts["no-compare"] });
   else
     for (const b of builds) {
       process.stdout.write(b.number + "\n");
@@ -152,21 +173,63 @@ type Annotation = AnnotationSummary & { body_html: string };
  * `more`: the build can have an annotation that `list` does not hold. The read ended at its limit, or the build
  * got an annotation while it was read.
  */
-type Annotations<T> = { list: T[]; more: boolean };
-type Job = { id: string; type: string; name: string; state: string; soft_failed?: boolean; web_url: string };
+type Pages<T> = { list: T[]; more: boolean };
+type Job = {
+  id: string;
+  type: string;
+  name: string;
+  state: string;
+  soft_failed?: boolean;
+  web_url: string;
+  command?: string | null;
+  exit_status?: number | null;
+  started_at?: string | null;
+  /** Buildkite ran the job again: the job `retried_in_job_id` replaced this attempt. */
+  retried?: boolean;
+  retried_in_job_id?: string | null;
+};
+/** A build as the REST API gives it when it is asked for every attempt of each job. */
+type EveryAttempt = Build & { started_at: string | null; finished_at: string | null; jobs: Job[] };
+/**
+ * How `annotations` gets every attempt of the jobs of the build. `request`: `jobs()` makes a request that
+ * nothing else needs, so it is not called when no section names a job.
+ */
+type Attempts = { jobs: () => Promise<Job[]>; request: boolean };
+/** A job attempt that Buildkite replaced after it started, and the latest attempt of its job. */
+type Replaced = { attempt: Job; latest: Job | undefined };
+type LeftOut = {
+  sections: number;
+  /** The replaced attempts that wrote those sections. */
+  attempts: Map<string, Replaced>;
+  /** The annotations that only replaced attempts wrote to. */
+  annotations: AnnotationSummary[];
+  /** Why nothing is left out. */
+  unchecked?: string;
+};
+/** `read`: how many annotations the pages held. `list` holds fewer of them when some are left out. */
+type Annotations<T> = Pages<T> & { read: number; leftOut: LeftOut };
 
 function isFailedJob(j: Job) {
   return j.type === "script" && ["failed", "broken", "timed_out"].includes(j.state) && !j.soft_failed;
 }
 
+// "flaky-new": the same, of a file that test/flaky-tests.txt does not list.
+function isFlaky(a: AnnotationSummary) {
+  return a.context === "flaky" || a.context === "flaky-new";
+}
+
+// The job list of a build holds the latest attempt of each job, unless it is asked for the others too.
+function everyAttempt(build: number) {
+  return bk<EveryAttempt>("api", `/pipelines/bun/builds/${build}?include_retried_jobs=true`);
+}
+
 // `bk api` returns one page, of at most 100: https://buildkite.com/docs/apis/rest-api#pagination
 // A build can have thousands of annotations and 100 bodies can be megabytes, hence `maxPages`.
-function annotations(build: number, read: { bodies: true; maxPages?: number }): Promise<Annotations<Annotation>>;
-function annotations(
+async function annotationPages(
   build: number,
-  read: { bodies: false; maxPages?: number },
-): Promise<Annotations<AnnotationSummary>>;
-async function annotations(build: number, { bodies, maxPages = 2 }: { bodies: boolean; maxPages?: number }) {
+  bodies: boolean,
+  maxPages: number,
+): Promise<Pages<AnnotationSummary & { body_html?: string }>> {
   const perPage = 100;
   const endpoint = `/pipelines/bun/builds/${build}/annotations`;
   const list: AnnotationSummary[] = [];
@@ -197,6 +260,135 @@ async function annotations(build: number, { bodies, maxPages = 2 }: { bodies: bo
   return { list, more: moved || next == null || next.length > 0 };
 }
 
+// body_html is a sequence of <details><summary>…</summary><pre>…</pre></details>: one section for each time a
+// job reported on the context. The summary links that job: getBuildUrl() in scripts/buildkite.ts. It also links
+// the test file, and that link can end in `#L<line>`, so only a link to a build names a job.
+// `job`: the id of the job, or an empty string when the section names none.
+function sectionsOf(bodyHtml: string) {
+  const jobLink = /href="https:\/\/buildkite\.com\/[^"#]+\/builds\/\d+#([0-9a-f-]{36})"/;
+  const sections = bodyHtml.matchAll(/<details><summary>(.*?)<\/summary>(.*?)<\/details>/gs);
+  return Array.from(sections, ([html, summary = "", body = ""]) => ({
+    html,
+    summary,
+    body,
+    job: summary.match(jobLink)?.[1] ?? "",
+  }));
+}
+
+// An attempt that did not start wrote nothing. A section that names it is the note of another writer, on a job
+// that got no agent, and it stays.
+function replacedAttempts(jobs: Job[]) {
+  const byId = new Map(jobs.map(job => [job.id, job]));
+  const replaced = new Map<string, Replaced>();
+  for (const attempt of jobs) {
+    if (!attempt.retried || attempt.started_at == null) continue;
+    let latest: Job | undefined = attempt;
+    while (latest?.retried) latest = byId.get(latest.retried_in_job_id ?? "");
+    replaced.set(attempt.id, { attempt, latest });
+  }
+  return replaced;
+}
+
+// An annotation is a log. A job attempt appends a section when a test file fails in it, and the section stays
+// when Buildkite replaces the attempt (an automatic retry after the agent is lost, or a manual one). Buildkite
+// counts only the latest attempt of a job, for the state of the build and in its job list. So this leaves out
+// each section of a replaced attempt and each annotation that holds nothing else, and says so in `leftOut`.
+// When a request fails, everything stays and `leftOut.unchecked` says why.
+// `attempts: "counted"`: nothing is left out.
+type Read = { maxPages?: number; attempts?: Attempts | "counted" };
+function annotations(build: number, read: Read & { bodies: true }): Promise<Annotations<Annotation>>;
+function annotations(build: number, read: Read & { bodies: false }): Promise<Annotations<AnnotationSummary>>;
+async function annotations(
+  build: number,
+  {
+    bodies,
+    maxPages = 2,
+    attempts = { jobs: () => everyAttempt(build).then(b => b.jobs), request: true },
+  }: Read & { bodies: boolean },
+) {
+  let { list, more } = await annotationPages(build, bodies, maxPages);
+  const leftOut: LeftOut = { sections: 0, attempts: new Map(), annotations: [] };
+  const uncut = () => ({ list, more, read: list.length, leftOut });
+  if (attempts === "counted") return uncut();
+  const unchecked = (e: Error) => {
+    leftOut.unchecked = e.message;
+    return null;
+  };
+
+  const parse = () => list.map(annotation => ({ annotation, sections: sectionsOf(annotation.body_html ?? "") }));
+  let parsed = parse();
+  // With bodies and no job in any section, there is nothing to leave out: no request for the attempts, and no
+  // note when they are not known.
+  const nothingNamed = bodies && !parsed.some(({ sections }) => sections.some(section => section.job));
+  if (nothingNamed && attempts.request) return uncut();
+  const jobs = await attempts.jobs().catch(nothingNamed ? () => null : unchecked);
+  const replaced = replacedAttempts(jobs ?? []);
+  if (replaced.size === 0) return uncut();
+  if (!bodies) {
+    // Without bodies nothing names a job.
+    const withBodies = await annotationPages(build, true, maxPages).catch(unchecked);
+    if (!withBodies) return uncut();
+    ({ list, more } = withBodies);
+    parsed = parse();
+  }
+  // Every writer of a failure links its job. When no failure has a link, the link has a form that
+  // `sectionsOf` does not know, and nothing can be left out.
+  const failures = parsed.flatMap(({ annotation, sections }) => (annotation.style === "error" ? sections : []));
+  if (failures.length > 0 && failures.every(section => !section.job)) {
+    leftOut.unchecked = "no section of a failure links its job";
+    return uncut();
+  }
+
+  const live: typeof list = [];
+  for (const { annotation, sections } of parsed) {
+    // `[flaky]` lists a test file that failed and then passed in one job. A replaced attempt saw that too.
+    const gone = isFlaky(annotation) ? [] : sections.filter(section => replaced.has(section.job));
+    leftOut.sections += gone.length;
+    for (const { job } of gone) {
+      const attempt = replaced.get(job);
+      if (attempt) leftOut.attempts.set(job, attempt);
+    }
+    if (gone.length === 0) live.push(annotation);
+    else if (gone.length === sections.length) leftOut.annotations.push(annotation);
+    else {
+      const stay = sections.filter(section => !gone.includes(section));
+      live.push({ ...annotation, body_html: stay.map(section => section.html).join("\n") });
+    }
+  }
+  return { list: live, more, read: list.length, leftOut };
+}
+
+// The test runner exits with 0 or 2 when it ended by itself (getExitCode in scripts/runner.node.ts). Any other
+// job ended by itself when it passed or failed and kept its agent: exit -1 is an agent that was lost.
+function endedByItself(job: Job) {
+  if (job.command?.includes("runner.node.")) return job.exit_status === 0 || job.exit_status === 2;
+  return (job.state === "passed" || job.state === "failed") && job.exit_status !== -1;
+}
+
+// Not "retry": `[flaky]` uses that word for a test file that passed when the runner ran it again in the same job.
+function leftOutNotes(leftOut: LeftOut): string[] {
+  if (leftOut.unchecked) return [`(replaced job attempts are not left out: ${leftOut.unchecked})`];
+  if (leftOut.sections === 0) return [];
+  const count = (n: number, what: string) => `${n} ${what}${n === 1 ? "" : "s"}`;
+  const { sections, attempts } = leftOut;
+  const notes = [`(${count(sections, "section")} of ${count(attempts.size, "replaced job attempt")} left out)`];
+  // After a latest attempt that did not end by itself, what it replaced can be the only report on a test file.
+  const unfinished = new Map<string, { name: string; latest: Job | undefined; replaced: string[] }>();
+  for (const { attempt, latest } of attempts.values()) {
+    if (latest && endedByItself(latest)) continue;
+    const id = latest?.id ?? attempt.id;
+    const job = unfinished.get(id) ?? { name: attempt.name, latest, replaced: [] };
+    job.replaced.push(attempt.web_url);
+    unfinished.set(id, job);
+  }
+  for (const { name, latest, replaced } of unfinished.values()) {
+    const exit = latest?.exit_status == null ? "" : `, exit ${latest.exit_status}`;
+    const now = latest ? `(${latest.state}${exit}) ${latest.web_url}` : "(not in the list of jobs)";
+    notes.push(`  The latest attempt did not finish: ${name} ${now}, replaced ${replaced.join(" ")}`);
+  }
+  return notes;
+}
+
 function renderTermHTML(html: string): string {
   const entities: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'", nbsp: " " };
   return (
@@ -220,14 +412,13 @@ function renderTermHTML(html: string): string {
 function renderAnnotation(a: Annotation, tag: string) {
   const color = a.style === "error" ? c.red : c.yellow;
   console.log(`\n${color}${c.bold}== ${a.context} ==${c.reset}${tag}`);
-  // body_html is a sequence of <details><summary>…</summary><pre>…</pre></details>, one per platform.
-  const sections = [...a.body_html.matchAll(/<details><summary>(.*?)<\/summary>(.*?)<\/details>/gs)];
+  const sections = sectionsOf(a.body_html);
   if (sections.length === 0) {
     console.log(renderTermHTML(a.body_html));
     return;
   }
   const seen = new Set<string>();
-  for (const [, summary, body] of sections) {
+  for (const { summary, body } of sections) {
     const header = renderTermHTML(summary).trim();
     const text = renderTermHTML(body).replace(/^\s*\n+|\n\s*$/g, "");
     const key = normalizeForDedup(text);
@@ -246,9 +437,9 @@ function renderAnnotation(a: Annotation, tag: string) {
 // renders the same way an error does (own `== path ==` heading, per-platform dedup).
 function splitFlaky(a: Annotation): Annotation[] {
   const byTest = new Map<string, string>();
-  for (const [block, summary] of a.body_html.matchAll(/<details><summary>(.*?)<\/summary>.*?<\/details>/gs)) {
+  for (const { html, summary } of sectionsOf(a.body_html)) {
     const test = summary.match(/<code>(.*?)<\/code>/)?.[1] ?? renderTermHTML(summary).split(" - ")[0].trim();
-    byTest.set(test, (byTest.get(test) ?? "") + block);
+    byTest.set(test, (byTest.get(test) ?? "") + html);
   }
   return [...byTest].map(([context, body_html]) => ({ context, style: "flaky", body_html }));
 }
@@ -265,12 +456,21 @@ async function printErrors(target: Build, { all, compare }: { all: boolean; comp
   const build = target.number;
   console.log(`${c.bold}build #${build}${c.reset}  https://buildkite.com/bun/bun/builds/${build}\n`);
 
+  // A target given as a number: the comparison asks for its branch and the annotations for its job attempts.
+  // One request answers both. Without the comparison, only the annotations ask.
+  let asked: Promise<EveryAttempt> | undefined;
+  const withEveryAttempt = () => (asked ??= everyAttempt(build));
+  const { jobs } = target;
+  const attempts: Attempts = jobs
+    ? { jobs: async () => jobs, request: false }
+    : { jobs: () => withEveryAttempt().then(b => b.jobs), request: !compare };
+
   // The comparison only adds tags. When it fails, the list is printed without them.
   let notCompared = "";
-  const [{ list: anns, more }, main] = await Promise.all([
-    annotations(build, { bodies: true }),
+  const [{ list: anns, more, read, leftOut }, main] = await Promise.all([
+    annotations(build, { bodies: true, attempts }),
     compare
-      ? mainBaseline(target).catch((e: Error) => {
+      ? mainBaseline(target, withEveryAttempt).catch((e: Error) => {
           notCompared = `${c.yellow}not compared with main: ${e.message}${c.reset}`;
           return null;
         })
@@ -281,22 +481,23 @@ async function printErrors(target: Build, { all, compare }: { all: boolean; comp
     const newer = main.newer == null ? [] : [`newer ${failing(main.newer)}`];
     console.log(`${c.dim}compared with main ${[...main.below.map(failing), ...newer].join(", ")}${c.reset}`);
   }
-  // These two are printed above the annotations and below them: megabytes of output can lie between.
+  // These three are printed above the annotations and below them: megabytes of output can lie between.
   if (notCompared) console.log(notCompared);
-  const cut = more && `${c.yellow}(only the first ${anns.length} annotations of this build are read)${c.reset}`;
+  const cut = more && `${c.yellow}(only the first ${read} annotations of this build are read)${c.reset}`;
   if (cut) console.log(cut);
+  const left = leftOutNotes(leftOut).map(note => `${c.yellow}${note}${c.reset}`);
+  for (const note of left) console.log(note);
 
-  // "flaky-new": the same, of a file that test/flaky-tests.txt does not list.
-  const isFlaky = (a: Annotation) => a.context === "flaky" || a.context === "flaky-new";
   const flaky = anns.filter(isFlaky).flatMap(splitFlaky);
   const rest = anns.filter(a => !isFlaky(a));
   const shown = rest.filter(a => all || a.style === "error");
+  const replacedOnly = leftOut.annotations.filter(a => all || a.style === "error");
 
   if (shown.length === 0 && flaky.length === 0) {
     const other = rest.length;
-    const scope = more ? ` in the first ${anns.length}` : "";
+    const scope = more ? ` in the first ${read}` : "";
     console.log(`no error annotations${scope}${other ? ` (${other} warning/info; pass --all to show)` : ""}`);
-    return;
+    if (replacedOnly.length === 0) return;
   }
 
   const compared = (a: Annotation): { order: number; tag: string } => {
@@ -312,8 +513,11 @@ async function printErrors(target: Build, { all, compare }: { all: boolean; comp
   shown.sort((a, b) => compared(a).order - compared(b).order);
   for (const a of shown) renderAnnotation(a, compared(a).tag);
   for (const a of flaky) renderAnnotation(a, ` ${c.yellow}[flaky]${c.reset}`);
+  if (replacedOnly.length) console.log();
+  for (const a of replacedOnly) console.log(`${c.dim}== ${a.context} == [replaced attempt]${c.reset}`);
 
   if (cut) console.log(`\n${cut}`);
+  if (left.length) console.log(`\n${left.join("\n")}`);
   if (notCompared) console.log(`\n${notCompared}`);
 }
 
@@ -326,18 +530,21 @@ function ago(iso: string | null | undefined): string {
 }
 
 async function fetchStatus(build: number) {
-  type Full = { state: string; started_at: string | null; finished_at: string | null; web_url: string; jobs: Job[] };
   let unread: string | undefined;
+  // Not `bk build view`: it lists only the latest attempt of each job, and it reads 30 annotation bodies too.
+  const asked = everyAttempt(build);
   const [b, anns] = await Promise.all([
-    bk<Full>("build", "view", String(build), "--json"),
-    annotations(build, { bodies: false }).catch((e: Error) => {
-      unread = e.message;
-      return { list: [], more: false };
-    }),
+    asked,
+    annotations(build, { bodies: false, attempts: { jobs: () => asked.then(b => b.jobs), request: false } }).catch(
+      (e: Error): Annotations<AnnotationSummary> => {
+        unread = e.message;
+        return { list: [], more: false, read: 0, leftOut: { sections: 0, attempts: new Map(), annotations: [] } };
+      },
+    ),
   ]);
 
   const out: string[] = [];
-  const jobs = b.jobs.filter(j => j.type === "script");
+  const jobs = b.jobs.filter(j => j.type === "script" && !j.retried);
   const counts: Record<string, number> = {};
   for (const j of jobs) counts[j.state] = (counts[j.state] ?? 0) + 1;
   const failed = jobs.filter(isFailedJob);
@@ -370,10 +577,12 @@ async function fetchStatus(build: number) {
     out.push(`${c.dim}  (+${err.length - maxNames} more: bun run ci:errors ${build})${c.reset}`);
   }
   if (other) out.push(`${c.dim}  (+${other} warning/flaky)${c.reset}`);
-  if (anns.more) out.push(`${c.dim}  (only the first ${anns.list.length} annotations are counted)${c.reset}`);
+  if (anns.more) out.push(`${c.dim}  (only the first ${anns.read} annotations are counted)${c.reset}`);
+  for (const note of leftOutNotes(anns.leftOut)) out.push(`${c.dim}  ${note}${c.reset}`);
   if (unread) out.push("", `${c.dim}(could not read the annotations: ${unread})${c.reset}`);
 
-  if (!failed.length && !err.length && !anns.more && !unread && b.finished_at) {
+  // A canceled or blocked build has ended too, and it can have no failed job.
+  if (b.state === "passed" && !failed.length && !err.length && !anns.more && !unread) {
     out.push("", `${c.dim}no failures${c.reset}`);
   }
   return { state: b.state, lines: out };
@@ -458,7 +667,8 @@ type Baseline = { below: number[]; newer?: number; errors: Map<number, number>; 
 // Only a passed or failed build counts, because a canceled build holds a part of its annotations. Of those,
 // only a build that ran its tests: see `ranTests`.
 // Throws when a request fails, because a build that is left out would turn its failures into `[new]`.
-async function mainBaseline(target: Build): Promise<Baseline> {
+// `withEveryAttempt`: asks for the target, for the branch of one that is given as a number.
+async function mainBaseline(target: Build, withEveryAttempt: () => Promise<Build>): Promise<Baseline> {
   type MainBuild = { number: number; meta_data?: Record<string, string> };
   const perPage = 10;
   const complete = `/pipelines/bun/builds?branch=main&state[]=passed&state[]=failed&exclude_jobs=true&exclude_pipeline=true&per_page=${perPage}`;
@@ -474,7 +684,7 @@ async function mainBaseline(target: Build): Promise<Baseline> {
 
   const [page, { branch, created_at }] = await Promise.all([
     bk<MainBuild[]>("api", complete),
-    target.created_at ? target : bk<Build>("api", `/pipelines/bun/builds/${target.number}?exclude_jobs=true`),
+    target.created_at ? target : withEveryAttempt(),
   ]);
   const newest = ranTests(page);
   // Newest first. Which build is the first above the target is known only when the page reaches below the target.
@@ -490,7 +700,11 @@ async function mainBaseline(target: Build): Promise<Baseline> {
   if (below.length === 0) throw new Error("no passed or failed build of main ran its tests before this build");
   const numbers = newer == null ? below : [...below, newer];
 
-  const lists = await Promise.all(numbers.map(n => annotations(n, { bodies: false, maxPages: Infinity })));
+  // Every attempt of a build of main counts. A test file that failed in an attempt there can fail without the
+  // target's branch, and that is what `[pre-existing]` says, also when the job passed once it ran again.
+  const lists = await Promise.all(
+    numbers.map(n => annotations(n, { bodies: false, maxPages: Infinity, attempts: "counted" })),
+  );
   const errors = new Map<number, number>();
   const failing = new Map<string, number[]>();
   for (const [i, { list }] of lists.entries()) {

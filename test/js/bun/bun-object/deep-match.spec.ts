@@ -305,6 +305,35 @@ describe("Bun.deepMatch", () => {
       expect(() => Bun.deepMatch(new Set([1]), new Proxy(new Set([1]), {}))).toThrow(TypeError);
       expect(() => Bun.deepMatch(new Proxy(new Map(), {}), new Map())).toThrow(TypeError);
     });
+
+    it("looks for each member of the subset in the value too if neither Proxy serves a size", () => {
+      const unsized = <T extends object>(target: T): T =>
+        new Proxy(target, {
+          get(target, key) {
+            if (key === "size") return undefined;
+            const value = Reflect.get(target, key, target);
+            return typeof value === "function" && key !== "constructor" ? value.bind(target) : value;
+          },
+        });
+      expect(Bun.deepMatch(unsized(new Set([1])), unsized(new Set([1])))).toBe(true);
+      expect(Bun.deepMatch(unsized(new Set([{ a: 1 }])), unsized(new Set([{ a: 1, b: 2 }])))).toBe(true);
+      expect(Bun.deepMatch(unsized(new Set([1, 2])), unsized(new Set([1])))).toBe(false);
+      expect(Bun.deepMatch(unsized(new Set([1])), unsized(new Set([1, 2])))).toBe(false);
+      expect(
+        Bun.deepMatch(
+          unsized(
+            new Map([
+              ["k", 1],
+              ["j", 2],
+            ]),
+          ),
+          unsized(new Map([["k", 1]])),
+        ),
+      ).toBe(false);
+      expect(
+        Bun.deepMatch({ s: unsized(new Set([{ a: 1 }, { c: 1 }])) }, { s: unsized(new Set([{ a: 1, b: 2 }])) }),
+      ).toBe(false);
+    });
   });
 
   it("does not work on functions", () => {

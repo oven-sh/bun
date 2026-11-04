@@ -2,7 +2,7 @@
 // In the browser, this uses a WebSocket to communicate with the bundler.
 import { editCssArray, editCssContent } from "./client/css-reloader";
 import { DataViewReader } from "./client/data-view";
-import { inspect } from "./client/inspect";
+import { inspect, installInspect } from "./client/inspect";
 import { hasFatalError, onRuntimeError, onServerErrorPayload } from "./client/overlay";
 import {
   addMapping,
@@ -316,24 +316,30 @@ if (config.console) {
   // Ensure it only runs once, and avoid the extra noise in the HTML.
   const originalLog = console.log;
 
+  installInspect();
+
   function websocketInspect(logLevel: "l" | "e", values: any[]) {
-    let str = "l" + logLevel;
-    let first = true;
-    for (const value of values) {
-      if (first) {
-        first = false;
-      } else {
-        str += " ";
+    // This runs inside the page's console.log and console.error. The browser's own console
+    // does not throw, so nothing that fails here can reach the page.
+    try {
+      let str = "l" + logLevel;
+      let first = true;
+      for (const value of values) {
+        if (first) {
+          first = false;
+        } else {
+          str += " ";
+        }
+
+        if (typeof value === "string") {
+          str += value;
+        } else {
+          str += inspect(value);
+        }
       }
 
-      if (typeof value === "string") {
-        str += value;
-      } else {
-        str += inspect(value);
-      }
-    }
-
-    ws.sendBuffered(str);
+      ws.sendBuffered(str);
+    } catch {}
   }
 
   if (typeof originalLog === "function") {

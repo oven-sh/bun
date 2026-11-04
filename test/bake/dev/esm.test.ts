@@ -1,7 +1,7 @@
 // ESM tests are about various esm features in development mode.
 import { expect } from "bun:test";
 import { isWindows } from "harness";
-import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
+import { Dev, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 const liveBindingTest = devTest("live bindings with `var`", {
   framework: minimalFramework,
@@ -463,6 +463,419 @@ devTest("browser field is used", {
   async test(dev) {
     await using c = await dev.client();
     await c.expectMessage("PASS");
+  },
+});
+
+// With `development.console`, console.log and console.error of the page also format their
+// arguments and send the text to the dev server. The tests below hold that the page cannot
+// observe this: the call does not throw and it runs no code of the page.
+const consoleForwardingFiles = (script: string) => ({
+  "index.html": emptyHtmlFile({
+    scripts: ["index.ts"],
+  }),
+  "bun.app.ts": `
+    import html from "./index.html";
+    export default {
+      static: {
+        "/": html,
+      },
+      development: {
+        console: true,
+      },
+      fetch(req) {
+        return new Response("Not Found", { status: 404 });
+      },
+    };
+  `,
+  "index.ts": `
+    const custom = Symbol.for("nodejs.util.inspect.custom");
+    // Counts the calls that reach code of the page.
+    let calls = 0;
+    const hit = () => {
+      calls++;
+    };
+    // The test client sends the arguments of console.log to the test as JSON, which reads
+    // getters too. JSON reads nothing of a value that has this method.
+    const hidden = value => Object.defineProperty(value, "toJSON", { value: () => null });
+    globalThis.results = {};
+    globalThis.probe = function probe(name, value, method = "log") {
+      const before = calls;
+      let outcome = "returned";
+      try {
+        console[method](name, value);
+      } catch (e) {
+        outcome = "threw " + e;
+      }
+      globalThis.results[name] = outcome + ", " + (calls - before) + " calls";
+    };
+    ${script}
+  `,
+});
+
+// The text of every line that the page forwarded to the terminal. A value that prints on more
+// than one line gives only its first line.
+function forwardedLines(dev: Dev) {
+  return dev.output.lines
+    .filter(line => line.includes("[browser]"))
+    .map(line => Bun.stripANSI(line).slice("[browser] ".length));
+}
+
+devTest("browser console forwarding runs no getter, hook or overridden method of the page", {
+  files: consoleForwardingFiles(`
+    probe("array accessors", hidden(Object.defineProperties([1, 2, 3], {
+      0: { get() { hit(); return 1; }, enumerable: true, configurable: true },
+      1: { get() { hit(); return 2; }, set() {}, enumerable: true, configurable: true },
+      2: { set() {}, enumerable: true, configurable: true },
+      named: { get() { hit(); return 4; }, enumerable: true },
+    })));
+    probe("object accessor", hidden({ get own() { hit(); return 1; } }));
+    probe("class getter", new (class Foo { get bar() { hit(); return 1; } })());
+    probe("inspect hook", { a: 1, [custom]() { hit(); return "text of the hook"; } });
+    probe("Map subclass", new (class extends Map {
+      get size() { hit(); return 7; }
+      entries() { hit(); return super.entries(); }
+      [Symbol.iterator]() { hit(); return super[Symbol.iterator](); }
+    })([["k", 1]]));
+    probe("Set subclass", new (class extends Set {
+      get size() { hit(); return 7; }
+      values() { hit(); return super.values(); }
+      [Symbol.iterator]() { hit(); return super[Symbol.iterator](); }
+    })([1]));
+    probe("Date subclass", hidden(new (class extends Date {
+      getTime() { hit(); return 0; }
+      toISOString() { hit(); return "text of the override"; }
+    })(86400000)));
+    probe("RegExp subclass", new (class extends RegExp {
+      get source() { hit(); return "override"; }
+      get flags() { hit(); return "y"; }
+      get global() { hit(); return false; }
+      toString() { hit(); return "text of the override"; }
+    })("a+", "gi"));
+    probe("typed array subclass", new (class Bytes extends Uint8Array {
+      get length() { hit(); return 1; }
+    })([1, 2]));
+    probe("typed array constructor getter", Object.defineProperty(new Uint8Array([1]), "constructor", {
+      get() { hit(); return Uint8Array; },
+    }));
+    probe("error stack getter", Object.defineProperty(new RangeError("bad"), "stack", {
+      get() { hit(); return "text of the getter"; },
+    }));
+    probe("error name getter", Object.defineProperty(new (class extends Error {
+      get name() { hit(); return "text of the getter"; }
+      get message() { hit(); return "text of the getter"; }
+    })(), "stack", {
+      get() { hit(); return undefined; },
+    }));
+    probe("function name getter", Object.defineProperty(function () {}, "name", {
+      get() { hit(); return "text of the getter"; },
+    }));
+    class Headers { x = 1; }
+    Object.defineProperty(Headers.prototype, "constructor", { get() { hit(); return Headers; } });
+    probe("constructor getter", new Headers());
+    probe("RegExp look-alike", Object.create(RegExp.prototype, { global: { get() { hit(); return true; } } }));
+    probe("ArrayBuffer", new Uint8Array([1, 255]).buffer);
+    probe("ArrayBuffer look-alike", Object.create(ArrayBuffer.prototype, {
+      [Symbol.iterator]: { get() { hit(); return undefined; } },
+      length: { get() { hit(); return 0; } },
+    }));
+    // Getters that the engine implements are still read: these are not code of the page.
+    probe("engine getter", Object(Symbol("tag")));
+    probe("engine getter that throws", Object.create(Symbol.prototype));
+    class Shadowed {}
+    Shadowed.prototype.kind = "prototype";
+    probe("own property that is not enumerable", Object.defineProperty(new Shadowed(), "kind", { value: "own" }));
+    console.log("done");
+  `),
+  htmlFiles: [],
+  async test(dev) {
+    await using c = await dev.client("/");
+    const results = {
+      "array accessors": "returned, 0 calls",
+      "object accessor": "returned, 0 calls",
+      "class getter": "returned, 0 calls",
+      "inspect hook": "returned, 0 calls",
+      "Map subclass": "returned, 0 calls",
+      "Set subclass": "returned, 0 calls",
+      "Date subclass": "returned, 0 calls",
+      "RegExp subclass": "returned, 0 calls",
+      "typed array subclass": "returned, 0 calls",
+      "typed array constructor getter": "returned, 0 calls",
+      "error stack getter": "returned, 0 calls",
+      "error name getter": "returned, 0 calls",
+      "function name getter": "returned, 0 calls",
+      "constructor getter": "returned, 0 calls",
+      "RegExp look-alike": "returned, 0 calls",
+      "ArrayBuffer": "returned, 0 calls",
+      "ArrayBuffer look-alike": "returned, 0 calls",
+      "engine getter": "returned, 0 calls",
+      "engine getter that throws": "returned, 0 calls",
+      "own property that is not enumerable": "returned, 0 calls",
+    };
+    // Every call reached the console of the test client.
+    await c.expectMessage(...Object.keys(results), "done");
+    expect(await c.js`results`).toEqual(results);
+
+    await dev.output.waitForLine(/\[browser\].* done/);
+    expect(forwardedLines(dev)).toEqual([
+      "array accessors [ [Getter], [Getter/Setter], [Setter], named: [Getter] ]",
+      "object accessor { own: [Getter] }",
+      "class getter Foo {}",
+      "inspect hook { a: 1 }",
+      "Map subclass Map { 'k' => 1 }",
+      "Set subclass Set { 1 }",
+      "Date subclass 1970-01-02T00:00:00.000Z [Date]",
+      "RegExp subclass /a+/gi",
+      "typed array subclass Bytes [ 1, 2 ]",
+      // The name of the class is behind the getter.
+      "typed array constructor getter Object [ 1 ]",
+      "error stack getter RangeError: bad",
+      "error name getter Error",
+      "function name getter [Function: <anonymous>]",
+      "constructor getter { x: 1 }",
+      "RegExp look-alike RegExp {}",
+      "ArrayBuffer ArrayBuffer { 01 ff }",
+      "ArrayBuffer look-alike ArrayBuffer {}",
+      "engine getter Symbol { description: 'tag' }",
+      "engine getter that throws Symbol { description: undefined }",
+      "own property that is not enumerable Shadowed { kind: 'own' }",
+      "done",
+    ]);
+  },
+});
+
+devTest("browser console forwarding does not throw into the page", {
+  files: consoleForwardingFiles(`
+    probe("hook that throws", { [custom]() { throw new Error("thrown by the hook"); } });
+    probe("accessor that throws", hidden(Object.defineProperty([], 0, {
+      get() { throw new Error("thrown by the getter"); },
+      enumerable: true,
+    })));
+    const revoked = Proxy.revocable({}, {});
+    revoked.revoke();
+    // JSON does not read the elements of a Set.
+    probe("revoked Proxy", new Set([revoked.proxy]));
+    probe("Proxy of a Map", new Proxy(new Map([["k", 1]]), {}));
+    probe("look-alikes", [
+      Object.create(Map.prototype),
+      Object.create(Set.prototype),
+      hidden(Object.create(Date.prototype)),
+    ]);
+    const throws = new Proxy({}, { getPrototypeOf() { throw new Error("thrown by the trap"); } });
+    probe("value that throws twice", { a: throws, b: throws, c: [7] });
+    const endless = { getPrototypeOf() { return new Proxy({}, endless); } };
+    probe("endless prototype chain", new Proxy({}, endless));
+    probe("stack that is a symbol", Object.defineProperty(new Error("e"), "stack", { value: Symbol("s") }));
+    probe("error", new TypeError("with a stack"));
+    console.log("done");
+  `),
+  htmlFiles: [],
+  async test(dev) {
+    await using c = await dev.client("/");
+    const results = {
+      "hook that throws": "returned, 0 calls",
+      "accessor that throws": "returned, 0 calls",
+      "revoked Proxy": "returned, 0 calls",
+      "Proxy of a Map": "returned, 0 calls",
+      "look-alikes": "returned, 0 calls",
+      "value that throws twice": "returned, 0 calls",
+      "endless prototype chain": "returned, 0 calls",
+      "stack that is a symbol": "returned, 0 calls",
+      "error": "returned, 0 calls",
+    };
+    await c.expectMessage(...Object.keys(results), "done");
+    expect(await c.js`results`).toEqual(results);
+
+    await dev.output.waitForLine(/\[browser\].* done/);
+    expect(forwardedLines(dev)).toEqual([
+      "hook that throws {}",
+      "accessor that throws [ [Getter] ]",
+      // One value that cannot print does not take the line, or the values beside it.
+      "revoked Proxy Set { [threw while printing] }",
+      "Proxy of a Map Map { [entries not read] }",
+      "look-alikes [ Map { [entries not read] }, Set { [entries not read] }, Date {} ]",
+      "value that throws twice { a: [threw while printing], b: [threw while printing], c: [ 7 ] }",
+      "endless prototype chain {}",
+      "stack that is a symbol Error: e",
+      "error TypeError: with a stack",
+      "done",
+    ]);
+    // The stack of an error is still read.
+    expect(Bun.stripANSI(dev.output.lines.join("\n"))).toMatch(/\[browser\] error TypeError: with a stack\n\s+at /);
+
+    // The page has loaded, so the socket of the forwarder is open and the next line goes to send().
+    const sent = await c.js`
+      const send = WebSocket.prototype.send;
+      WebSocket.prototype.send = () => {
+        throw new Error("thrown by send");
+      };
+      probe("socket that throws", 1);
+      WebSocket.prototype.send = send;
+      return results["socket that throws"];
+    `;
+    expect(sent).toBe("returned, 0 calls");
+    await c.expectMessage("socket that throws");
+  },
+});
+
+devTest("browser console forwarding reads a Proxy with reflective traps only", {
+  files: consoleForwardingFiles(`
+    function recorded(target, traps) {
+      const handler = new Proxy({}, {
+        get(_, trap) {
+          return (...args) => {
+            traps.push(trap === "get" ? "get " + String(args[1]) : trap);
+            return Reflect[trap](...args);
+          };
+        },
+      });
+      return new Proxy(target, handler);
+    }
+    const objectTraps = [];
+    const arrayTraps = [];
+    const longArrayTraps = [];
+    // JSON does not read the elements of a Set.
+    probe("object", new Set([recorded({ a: 1 }, objectTraps)]));
+    probe("array", new Set([recorded([1, 2], arrayTraps)]));
+    probe("long array", new Set([recorded([1, 2, 3, 4, 5], longArrayTraps)]));
+    const lengthReads = traps => traps.filter(trap => trap === "get length").length;
+    globalThis.traps = {
+      object: [...new Set(objectTraps)].sort(),
+      array: [...new Set(arrayTraps)].sort(),
+      lengthReadsDependOnLength: lengthReads(arrayTraps) !== lengthReads(longArrayTraps),
+    };
+
+    // A trap runs while its Proxy prints. A console.log in the trap must not print the Proxy again.
+    const logs = new Proxy({ a: 1 }, {
+      getPrototypeOf(target) {
+        console.log("trap", logs, [1], () => {}, 2, "text");
+        return Reflect.getPrototypeOf(target);
+      },
+    });
+    probe("trap that logs", logs);
+    console.log("done");
+  `),
+  htmlFiles: [],
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("object", "array", "long array", "trap that logs", "trap", "trap", "done");
+    expect(await c.js`({ results, traps })`).toEqual({
+      results: {
+        "object": "returned, 0 calls",
+        "array": "returned, 0 calls",
+        "long array": "returned, 0 calls",
+        "trap that logs": "returned, 0 calls",
+      },
+      traps: {
+        object: ["getOwnPropertyDescriptor", "getPrototypeOf", "ownKeys"],
+        array: ["get length", "getOwnPropertyDescriptor", "ownKeys"],
+        lengthReadsDependOnLength: false,
+      },
+    });
+
+    await dev.output.waitForLine(/\[browser\].* done/);
+    expect(forwardedLines(dev)).toEqual([
+      "object Set { { a: 1 } }",
+      "array Set { [ 1, 2 ] }",
+      "long array Set { [ 1, 2, 3, 4, 5 ] }",
+      "trap [Object] [Object] [Function] 2 text",
+      "trap [Object] [Object] [Function] 2 text",
+      "trap that logs { a: 1 }",
+      "done",
+    ]);
+  },
+});
+
+devTest("browser console forwarding does not change console.error of the page", {
+  files: consoleForwardingFiles(`
+    probe("accessor", Object.defineProperty([], 0, { get() { hit(); return 1; }, enumerable: true }), "error");
+    probe("class getter", new (class Foo { get bar() { hit(); return 1; } })(), "error");
+    const revoked = Proxy.revocable({}, {});
+    revoked.revoke();
+    probe("revoked Proxy", new Set([revoked.proxy]), "error");
+    console.error("done");
+  `),
+  htmlFiles: [],
+  async test(dev) {
+    // `errors` lets the page call console.error.
+    await using c = await dev.client("/", { errors: [] });
+    await dev.output.waitForLine(/\[browser\].* done/);
+    expect(await c.js`results`).toEqual({
+      "accessor": "returned, 0 calls",
+      "class getter": "returned, 0 calls",
+      "revoked Proxy": "returned, 0 calls",
+    });
+    expect(forwardedLines(dev)).toEqual([
+      "accessor [ [Getter] ]",
+      "class getter Foo {}",
+      "revoked Proxy Set { [threw while printing] }",
+      "done",
+    ]);
+  },
+});
+
+// The test client above is not a browser. In a browser, an object of the platform (a DOMRect)
+// keeps its fields in getters that the engine implements, and a window of another origin throws
+// on most reads. This needs a Chrome that Bun.WebView finds on its own.
+const chromeInstalled =
+  !isWindows &&
+  (!!process.env.BUN_CHROME_PATH ||
+    [
+      "google-chrome-stable",
+      "google-chrome",
+      "chromium-browser",
+      "chromium",
+      "brave-browser",
+      "microsoft-edge",
+      "chrome",
+    ].some(name => Bun.which(name)));
+
+devTest("browser console forwarding prints the objects of a real browser", {
+  skip: chromeInstalled ? [] : [process.platform as "linux" | "darwin" | "win32"],
+  files: consoleForwardingFiles(`
+    probe("platform object", new DOMRect(1, 2, 3, 4));
+    probe("error", new RangeError("with a stack"));
+    probe("DOMException", new DOMException("message", "AbortError"));
+    probe("class getter", new (class Foo { get bar() { hit(); return 1; } })());
+    probe("Proxy of a Map", new Proxy(new Map([["k", 1]]), {}));
+    // A sandboxed frame has an origin of its own.
+    const frame = document.createElement("iframe");
+    frame.sandbox = "";
+    frame.srcdoc = "<p>frame</p>";
+    await new Promise(resolve => {
+      frame.onload = resolve;
+      document.body.append(frame);
+    });
+    probe("window of another origin", frame.contentWindow);
+    console.log("done");
+  `),
+  htmlFiles: [],
+  async test(dev) {
+    // --no-sandbox: Chrome does not start as root without it, and containers run tests as root.
+    await using view = new Bun.WebView({
+      backend: { type: "chrome", url: false, argv: ["--no-sandbox"] },
+      width: 400,
+      height: 300,
+    });
+    await view.navigate(dev.baseUrl + "/");
+    await dev.output.waitForLine(/\[browser\].* done/);
+    expect(await view.evaluate("results")).toEqual({
+      "platform object": "returned, 0 calls",
+      "error": "returned, 0 calls",
+      "DOMException": "returned, 0 calls",
+      "class getter": "returned, 0 calls",
+      "Proxy of a Map": "returned, 0 calls",
+      "window of another origin": "returned, 0 calls",
+    });
+    expect(forwardedLines(dev)).toEqual([
+      "platform object DOMRect { x: 1, y: 2, width: 3, height: 4 }",
+      "error RangeError: with a stack",
+      "DOMException AbortError: message",
+      "class getter Foo {}",
+      "Proxy of a Map Map { [entries not read] }",
+      "window of another origin [threw while printing]",
+      "done",
+    ]);
+    expect(Bun.stripANSI(dev.output.lines.join("\n"))).toMatch(/\[browser\] error RangeError: with a stack\n\s+at /);
   },
 });
 

@@ -1,0 +1,9 @@
+status: 0
+script: 2309e82cc8309598
+---
+os.write | collections meanwhile: 5 | written: True | read: True
+os.writev | collections meanwhile: 5 | written: True | read: True
+FileIO.write | collections meanwhile: 5 | written: True | read: True
+send | collections meanwhile: 5 | written: True | read: True
+sendmsg | collections meanwhile: 5 | written: True | read: True
+recv(MSG_WAITALL) | collections meanwhile: 3 | received: b'0123456789'

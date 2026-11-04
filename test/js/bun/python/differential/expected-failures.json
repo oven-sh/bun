@@ -6,5 +6,6 @@
   "mod_hash/hash_invariants": "hash(str) and hash(bytes) have 24 bits and no seed so far, and sys.hash_info says so",
   "mod_hash/hash_seeds": "the same: PYTHONHASHSEED and -R change nothing, and no hash of a str or bytes is CPython's",
   "mod_misc/native_docstrings": "some 40 names that native modules and types have or lack: no fork; a __new__ of their own in the types of _io; no __vectorcalloffset__; what _asyncio.Task only inherits here",
+  "mod_threads/finalizers_leave_system_calls_whole": "the signal with which the collector stops a thread to look at its stack reaches threads that are in a system call too, and write, send and recv(MSG_WAITALL) return the part they have done",
   "once_crashed/lazy_import_long_dotted_name": "10 000 dots in a thread with a stack of 256 KiB: they are gone through in a loop, so there is no RecursionError"
 }

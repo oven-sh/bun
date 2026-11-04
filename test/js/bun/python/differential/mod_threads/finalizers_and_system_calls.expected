@@ -1,0 +1,21 @@
+status: 0
+script: 709dfd51e5057eae
+---
+recv | finalized by its maker while that waited: True | then the call returned b'x'
+recv_into | finalized by its maker while that waited: True | then the call returned 2
+recvfrom | finalized by its maker while that waited: True | then the call returned b'x'
+recvmsg | finalized by its maker while that waited: True | then the call returned b'x'
+accept | finalized by its maker while that waited: True | then the call returned socket
+os.read | finalized by its maker while that waited: True | then the call returned b'x'
+os.readv | finalized by its maker while that waited: True | then the call returned 3
+FileIO.read | finalized by its maker while that waited: True | then the call returned b'x'
+select | finalized by its maker while that waited: True | then the call returned True
+poll | finalized by its maker while that waited: True | then the call returned True
+sleep | finalized by its maker while that waited: True | then the call returned None
+os.write | collections meanwhile: 5 | signals to get it out: 0 | afterwards finalized by its maker: True
+os.writev | collections meanwhile: 5 | signals to get it out: 0 | afterwards finalized by its maker: True
+FileIO.write | collections meanwhile: 5 | signals to get it out: 0 | afterwards finalized by its maker: True
+send | collections meanwhile: 5 | signals to get it out: 0 | afterwards finalized by its maker: True
+sendmsg | collections meanwhile: 5 | signals to get it out: 0 | afterwards finalized by its maker: True
+recv(MSG_WAITALL) | collections meanwhile: 5 | signals to get it out: 0 | afterwards finalized by its maker: True
+[('FileIO.read', 'FileIO.read'), ('FileIO.write', 'FileIO.write'), ('accept', 'accept'), ('os.read', 'os.read'), ('os.readv', 'os.readv'), ('os.write', 'os.write'), ('os.writev', 'os.writev'), ('poll', 'poll'), ('recv', 'recv'), ('recv(MSG_WAITALL)', 'recv(MSG_WAITALL)'), ('recv_into', 'recv_into'), ('recvfrom', 'recvfrom'), ('recvmsg', 'recvmsg'), ('select', 'select'), ('send', 'send'), ('sendmsg', 'sendmsg'), ('sleep', 'sleep')]

@@ -1,0 +1,9 @@
+status: 0
+script: e5427fc3597a40af
+---
+ended: [('made by a thread that has ended', 'MainThread')]
+asked for: [('callback of a weak reference made by a thread that waits', 'MainThread'), ('generator suspended by a thread that waits', 'MainThread'), ('made by a thread that waits', 'MainThread')]
+moved: [('generator begun by the main thread', 'taker')]
+tree: [('parent, made by the main thread', 'MainThread'), ('child, made by another thread', 'MainThread')]
+chain: [('link 7', 'MainThread'), ('link 6', 'MainThread'), ('link 5', 'MainThread'), ('link 4', 'MainThread'), ('link 3', 'MainThread'), ('link 2', 'MainThread'), ('link 1', 'MainThread'), ('link 0', 'MainThread')]
+mixed cycle: [('hangs off the cycle', 'MainThread'), ('x of the cycle, made by the main thread', 'MainThread'), ('y of the cycle, made by another thread', 'MainThread')]

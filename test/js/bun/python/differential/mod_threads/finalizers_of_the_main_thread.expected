@@ -1,0 +1,7 @@
+status: 0
+script: de7030be3f8f7a6e
+---
+idle [(('coroutine', 'MainThread'), 2000), (('cycle', 'MainThread'), 2000), (('finalize', 'MainThread'), 2000), (('generator', 'MainThread'), 2000), (('plain', 'MainThread'), 2000), (('weakref', 'MainThread'), 2000)]
+asleep [(('coroutine', 'MainThread'), 2000), (('cycle', 'MainThread'), 2000), (('finalize', 'MainThread'), 2000), (('generator', 'MainThread'), 2000), (('plain', 'MainThread'), 2000), (('weakref', 'MainThread'), 2000)]
+busy [(('coroutine', 'MainThread'), 2000), (('cycle', 'MainThread'), 2000), (('finalize', 'MainThread'), 2000), (('generator', 'MainThread'), 2000), (('plain', 'MainThread'), 2000), (('weakref', 'MainThread'), 2000)]
+allocating [(('coroutine', 'MainThread'), 2000), (('cycle', 'MainThread'), 2000), (('finalize', 'MainThread'), 2000), (('generator', 'MainThread'), 2000), (('plain', 'MainThread'), 2000), (('weakref', 'MainThread'), 2000)]

@@ -1,0 +1,8 @@
+status: 0
+script: 106c610643f0f951
+---
+[(('generator', 'its maker'), 300), (('plain', 'its maker'), 300), (('weakref', 'its maker'), 300)]
+[(('child', 'its maker'), 30), (('grandchild', 'its maker'), 30), (('parent', 'its maker'), 30)]
+[True, True, True]
+True
+[(("child of another thread's", 'maker of parents'), 10), (('parent', 'its maker'), 10)]

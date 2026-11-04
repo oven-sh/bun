@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, MAX_PATH_BYTES, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, MAX_PATH_BYTES, normalizeBunSnapshot, tempDir } from "harness";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "path";
 
@@ -140,7 +140,6 @@ test("one branch", () => expect(pick(true)).toBe("yes"));
 `,
   };
   const metric = (total: number, covered: number, pct: number) => ({ total, covered, skipped: 0, pct });
-  const empty = metric(0, 0, 100);
 
   test.concurrent.each([
     ["--coverage-reporter=json-summary", "coverage"],
@@ -162,17 +161,17 @@ test("one branch", () => expect(pick(true)).toBe("yes"));
       lines,
       statements: lines,
       functions: metric(3, 1, 33.33),
-      branches: empty,
+      branches: metric(2, 1, 50),
     });
     // Totals add counts, not percentages.
     const entries = Object.entries(summary).filter(([k]) => k !== "total");
     const sum = (key: string, field: "total" | "covered") =>
       entries.reduce((n, [, v]: [string, any]) => n + v[key][field], 0);
-    for (const key of ["lines", "statements", "functions"]) {
+    for (const key of ["lines", "statements", "functions", "branches"]) {
       const [total, covered] = [sum(key, "total"), sum(key, "covered")];
-      expect(summary.total[key]).toEqual(metric(total, covered, Math.floor((10000 * covered) / total) / 100));
+      const pct = total ? Math.floor((10000 * covered) / total) / 100 : 100;
+      expect(summary.total[key]).toEqual(metric(total, covered, pct));
     }
-    expect(summary.total.branches).toEqual(empty);
     expect(stderr).not.toContain("% Funcs");
     expect(exitCode).toBe(0);
   });
@@ -247,6 +246,257 @@ test("one", () => expect(one()).toBe(1));
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("'json-summary'");
+    expect(exitCode).toBe(1);
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/47168
+describe("json coverage reporter", () => {
+  // Types and an enum first, so the original positions differ from the transpiled ones.
+  const src = `type T = { a: number };
+enum E { A, B }
+export function pick(flag: boolean) {
+  if (flag) {
+    return "yes";
+  }
+  return "no";
+}
+export function unused() {
+  return 1;
+}
+export const tern = (x: number) => (x > 0 ? "pos" : "neg");
+export function multi(
+  a: string | null,
+  b: boolean,
+) {
+  const v = a ?? "d";
+  return b && v.length;
+}
+`;
+  const testFile = (flag: boolean) => `import { test } from "bun:test";
+import { pick, tern, multi } from "./src";
+test("x", () => { pick(${flag}); pick(${flag}); tern(1); multi(null, true); });
+`;
+  const loc = (l1: number, c1: number, l2: number, c2: number) => ({
+    start: { line: l1, column: c1 },
+    end: { line: l2, column: c2 },
+  });
+  const fn = (i: number, l: ReturnType<typeof loc>) => ({
+    name: `(anonymous_${i})`,
+    decl: l,
+    loc: l,
+    line: l.start.line,
+  });
+  const branch = (l: ReturnType<typeof loc>) => ({ loc: l, type: "branch", locations: [l, l], line: l.start.line });
+  const keyed = <T>(values: T[]) => Object.fromEntries(values.map((v, i) => [String(i), v]));
+  const statementMap = keyed([
+    loc(2, 0, 2, 13),
+    loc(3, 7, 3, 37),
+    loc(4, 2, 4, 13),
+    loc(5, 4, 5, 12),
+    loc(7, 2, 7, 10),
+    loc(9, 7, 9, 26),
+    loc(10, 2, 10, 10),
+    loc(12, 7, 12, 53),
+    loc(13, 7, 13, 22),
+    loc(14, 2, 14, 3),
+    loc(15, 2, 15, 3),
+    loc(17, 2, 17, 18),
+    loc(18, 2, 18, 17),
+  ]);
+  const fnMap = keyed([
+    fn(0, loc(2, 0, 2, 13)),
+    fn(1, loc(3, 7, 7, 10)),
+    fn(2, loc(9, 7, 10, 10)),
+    fn(3, loc(12, 20, 12, 53)),
+    fn(4, loc(13, 7, 18, 17)),
+  ]);
+  const branchMap = keyed([
+    branch(loc(4, 6, 6, 3)),
+    branch(loc(12, 36, 12, 53)),
+    branch(loc(17, 17, 17, 18)),
+    branch(loc(18, 14, 18, 17)),
+  ]);
+
+  /** istanbul-lib-coverage's invariants. */
+  function expectWellFormed(json: Record<string, any>) {
+    for (const [file, cov] of Object.entries(json)) {
+      expect(cov.path).toBe(file);
+      for (const [map, counts] of [
+        ["statementMap", "s"],
+        ["fnMap", "f"],
+        ["branchMap", "b"],
+      ]) {
+        expect(Object.keys(cov[counts])).toEqual(Object.keys(cov[map]));
+      }
+      for (const [k, b] of Object.entries(cov.branchMap) as [string, any][]) {
+        expect(cov.b[k].length).toBe(b.locations.length);
+      }
+      const locs = [
+        ...Object.values(cov.statementMap),
+        ...Object.values(cov.fnMap).map((f: any) => f.loc),
+        ...Object.values(cov.branchMap).flatMap((b: any) => [b.loc, ...b.locations]),
+      ] as ReturnType<typeof loc>[];
+      for (const { start, end } of locs) {
+        expect(start.line).toBeGreaterThanOrEqual(1);
+        expect(start.column).toBeGreaterThanOrEqual(0);
+        expect(end.line > start.line || end.column >= start.column).toBe(true);
+      }
+    }
+  }
+
+  async function run(files: Record<string, string>, ...args: string[]) {
+    const dir = tempDir("cov-json", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const cov = path.join(String(dir), "coverage");
+    const json = await Bun.file(path.join(cov, "coverage-final.json")).json();
+    expectWellFormed(json);
+    return { dir: String(dir), cov, json, stderr, exitCode, [Symbol.dispose]: () => dir[Symbol.dispose]() };
+  }
+
+  test.concurrent.each([[[]], [["--parallel=2"]]])("original positions and counts %p", async flags => {
+    using r = await run(
+      { "src.ts": src, "a.test.ts": testFile(true) },
+      "--coverage-reporter=json",
+      ...(flags as string[]),
+    );
+    const { dir, json, exitCode } = r;
+    const file = path.join(dir, "src.ts");
+    expect(json[file]).toEqual({
+      path: file,
+      statementMap,
+      fnMap,
+      branchMap,
+      s: keyed([1, 2, 2, 2, 0, 0, 0, 1, 1, 1, 1, 1, 1]),
+      f: keyed([1, 2, 0, 1, 1]),
+      b: keyed([
+        [2, 0],
+        [1, 0],
+        [1, 0],
+        [1, 0],
+      ]),
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("--parallel adds up what each worker ran", async () => {
+    using r = await run(
+      { "src.ts": src, "a.test.ts": testFile(true), "b.test.ts": testFile(false) },
+      "--coverage-reporter=json",
+      "--parallel=2",
+    );
+    const { dir, json, exitCode } = r;
+    const file = json[path.join(dir, "src.ts")];
+    expect({ fnMap: file.fnMap, f: file.f, b: file.b["0"], s: file.s["4"] }).toEqual({
+      fnMap,
+      f: keyed([2, 4, 0, 2, 2]),
+      b: [2, 2],
+      s: 2,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("agrees with lcov and json-summary", async () => {
+    using r = await run(
+      { "src.ts": src, "a.test.ts": testFile(true) },
+      "--coverage-reporter=json",
+      "--coverage-reporter=json-summary",
+      "--coverage-reporter=lcov",
+      "--coverage-reporter=text",
+    );
+    const { dir, cov, json, stderr, exitCode } = r;
+    const file = json[path.join(dir, "src.ts")];
+    const summary = (await Bun.file(path.join(cov, "coverage-summary.json")).json())[path.join(dir, "src.ts")];
+    const lcov = recordOf(dir, "src.ts");
+    const field = (name: string) => Number(new RegExp(`^${name}:(\\d+)$`, "m").exec(lcov)![1]);
+    const s = Object.values(file.s) as number[];
+    const f = Object.values(file.f) as number[];
+    const b = (Object.values(file.b) as number[][]).flat();
+    expect({
+      lines: [s.length, s.filter(n => n > 0).length],
+      functions: [f.length, f.filter(n => n > 0).length],
+      branches: [b.length, b.filter(n => n > 0).length],
+    }).toEqual({
+      lines: [field("LF"), field("LH")],
+      functions: [field("FNF"), field("FNH")],
+      branches: [summary.branches.total, summary.branches.covered],
+    });
+    expect([field("BRF"), field("BRH")]).toEqual([summary.branches.total, summary.branches.covered]);
+    expect(stderr).toContain("% Funcs");
+    expect(exitCode).toBe(0);
+  });
+
+  const generated = `export function first() {\n  return 1;\n}\nexport const second = (x) => (x ? 1 : 2);\n`;
+  test.concurrent.each([
+    ["// @bun", { "lib.js": "// @bun\n" + generated }, 1],
+    [
+      "coverageIgnoreSourcemaps",
+      { "lib.js": generated, "bunfig.toml": "[test]\ncoverageIgnoreSourcemaps = true\n" },
+      0,
+    ],
+  ])("positions in the text JSC compiled: %s", async (_, files, shift) => {
+    using r = await run(
+      {
+        ...(files as Record<string, string>),
+        "lib.test.js": `import { test } from "bun:test";\nimport { second } from "./lib.js";\ntest("lib", () => second(1));\n`,
+      },
+      "--coverage-reporter=json",
+    );
+    const { dir, json, exitCode } = r;
+    const file = json[path.join(dir, "lib.js")];
+    expect(Object.values(file.fnMap).map((f: any) => f.loc.start)).toContainEqual({
+      line: 4 + (shift as number),
+      column: 22,
+    });
+    expect(Object.values(file.branchMap).map((b: any) => b.line)).toEqual([4 + (shift as number)]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a path with characters JSON escapes", async () => {
+    const name = isWindows ? `q'uo te.ts` : `q"uo'te.ts`;
+    using r = await run(
+      {
+        [name]: `export const one = () => 1;\n`,
+        "a.test.ts": `import { test, expect } from "bun:test";
+import { one } from ${JSON.stringify("./" + name)};
+test("one", () => expect(one()).toBe(1));
+`,
+      },
+      "--coverage-reporter=json",
+    );
+    const { dir, json, exitCode } = r;
+    expect(json[path.join(dir, name)].path).toBe(path.join(dir, name));
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("bunfig coverageReporter", async () => {
+    using r = await run({
+      "src.ts": src,
+      "a.test.ts": testFile(true),
+      "bunfig.toml": `[test]\ncoverage = true\ncoverageReporter = ["json"]\n`,
+    });
+    const { dir, cov, json, exitCode } = r;
+    expect(readdirSync(cov)).toEqual(["coverage-final.json"]);
+    expect(json[path.join(dir, "src.ts")].fnMap).toEqual(fnMap);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("unknown reporter lists json", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--coverage-reporter=nope"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("'json' (Istanbul coverage-final.json)");
     expect(exitCode).toBe(1);
   });
 });

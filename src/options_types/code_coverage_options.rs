@@ -68,6 +68,8 @@ pub struct Reporters {
     pub lcov: bool,
     /// Istanbul `coverage-summary.json`.
     pub json_summary: bool,
+    /// Istanbul `coverage-final.json`.
+    pub json: bool,
 }
 
 impl Reporters {
@@ -75,5 +77,6 @@ impl Reporters {
         text: false,
         lcov: false,
         json_summary: false,
+        json: false,
     };
 }

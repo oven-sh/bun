@@ -89,6 +89,7 @@ coverageDir = "path/to/somewhere"    # default "coverage"
 | `text`         | Prints a text summary of the coverage to the console |
 | `lcov`         | Save coverage in lcov format                         |
 | `json-summary` | Save an Istanbul `coverage-summary.json`             |
+| `json`         | Save an Istanbul `coverage-final.json`               |
 
 ### LCOV Coverage Reporter
 
@@ -139,7 +140,21 @@ The `json-summary` reporter writes `coverage-summary.json` to the coverage direc
 bun test --coverage-reporter=json-summary
 ```
 
-`statements` has the same counts as `lines`. `branches` is not measured yet, and is always `{ "total": 0, "covered": 0, "skipped": 0, "pct": 100 }`.
+`statements` has the same counts as `lines`.
+
+### JSON Coverage Reporter
+
+The `json` reporter writes `coverage-final.json` to the coverage directory, in the format of Istanbul's reporter of the same name. Tools such as `nyc report`, `istanbul-merge` and Codecov can read it. It has one entry per file, keyed by absolute path, with the `statementMap`, `fnMap` and `branchMap` locations and the `s`, `f` and `b` hit counts.
+
+```bash terminal icon="terminal"
+bun test --coverage-reporter=json
+```
+
+Locations are in the original source file, mapped through the source map. Some details differ from Istanbul's own instrumentation:
+
+- Each statement is an executable line, as in c8.
+- Functions have no names. They are called `(anonymous_0)`, `(anonymous_1)` and so on.
+- Each branch's location is the span of its decision, such as an `if` or a `&&`, and its `type` is always `"branch"`.
 
 ## Excluding Files from Coverage
 

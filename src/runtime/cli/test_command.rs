@@ -25,7 +25,8 @@ bun_output::declare_scope!(bun_test, hidden);
 
 mod coverage {
     pub(super) use bun_sourcemap_jsc::code_coverage::{
-        ByteRangeMapping, Fraction, Report as CodeCoverageReport, json_summary, lcov, text,
+        ByteRangeMapping, Fraction, Report as CodeCoverageReport, istanbul_json, json_summary,
+        lcov, text,
     };
 
     /// Less-than predicate adapted to the `Ordering` shape `sort_by` wants.
@@ -1508,9 +1509,12 @@ impl CommandLineReporter {
         index_sort::sort_slice_by(&mut byte_ranges, coverage::is_less_than_cmp);
 
         for entry in byte_ranges {
-            if let Some(report) =
-                CodeCoverageReport::generate(vm.global(), entry, opts.ignore_sourcemap)
-            {
+            if let Some(report) = CodeCoverageReport::generate(
+                vm.global(),
+                entry,
+                opts.ignore_sourcemap,
+                opts.reporters.json,
+            ) {
                 each(report);
             }
         }
@@ -1580,6 +1584,11 @@ fn print_coverage_reports_<const COLORS: bool>(
         let mut contents: Vec<u8> = Vec::new();
         coverage::json_summary::write(reports, &mut contents);
         write_report_file(opts, relative_dir, b"coverage-summary.json", &contents)?;
+    }
+    if opts.reporters.json {
+        let mut contents: Vec<u8> = Vec::new();
+        coverage::istanbul_json::write(reports, &mut contents);
+        write_report_file(opts, relative_dir, b"coverage-final.json", &contents)?;
     }
     Ok(())
 }

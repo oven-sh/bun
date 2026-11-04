@@ -217,6 +217,8 @@ impl<'a> Parser<'a, '_> {
             self.ctx.test_options.coverage.reporters.lcov = true;
         } else if item_str == b"json-summary" {
             self.ctx.test_options.coverage.reporters.json_summary = true;
+        } else if item_str == b"json" {
+            self.ctx.test_options.coverage.reporters.json = true;
         } else {
             self.add_error_format(
                 item.loc,

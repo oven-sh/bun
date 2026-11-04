@@ -28,6 +28,29 @@ pub struct Report<'a> {
     /// Indexed in step with `stmts_which_have_executed`.
     pub(crate) stmts: Vec<ByteRange>,
     pub(crate) stmts_which_have_executed: Bitset,
+    /// Only for `coverage-final.json`.
+    pub(crate) positions: Option<Positions>,
+}
+
+/// Zero-based `(line, column)` span in the original file. `end` is exclusive.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Loc {
+    pub(crate) start: (u32, u32),
+    pub(crate) end: (u32, u32),
+}
+
+/// Original positions and call counts, which only `coverage-final.json` needs.
+#[derive(Default)]
+pub(crate) struct Positions {
+    /// In step with `Report::functions`.
+    pub(crate) functions: Vec<Loc>,
+    /// Calls, in step with `Report::functions`.
+    pub(crate) function_counts: Vec<u32>,
+    /// Indexed by `Branch::decision - 1`.
+    pub(crate) decisions: Vec<Loc>,
+    /// First and last column of code on each line, in step with `Report::line_hits`.
+    /// `u32::MAX` first: none.
+    pub(crate) line_columns: Vec<(u32, u32)>,
 }
 
 /// One of the ways control goes from a decision, such as an `if` or an `&&`.
@@ -120,6 +143,7 @@ impl<'a> Report<'a> {
         global_this: &JSGlobalObject,
         byte_range_mapping: &'a ByteRangeMapping,
         ignore_sourcemap_: bool,
+        want_positions: bool,
     ) -> Option<Report<'a>> {
         bun_jsc::mark_binding();
         // Use the raw `*mut VM` accessor instead of narrowing through `&VM` and
@@ -159,6 +183,7 @@ impl<'a> Report<'a> {
                 &generator.function_blocks,
                 &generator.branches,
                 ignore_sourcemap_,
+                want_positions,
             ),
         ))
     }
@@ -175,6 +200,10 @@ impl<'a> Report<'a> {
 ///   u32  n_functions, then n × {u32 start, u32 end}, executed words
 ///   u32  n_stmts, same shape
 ///   u32  n_branches, then n × {u32 decision, u32 index, u32 line, u32 hits}
+///   u8   whether positions follow; if 1:
+///        n_functions × {loc, u32 calls}, u32 n_decisions then n × loc,
+///        line_count × {u32 first column, u32 last column}
+///        where loc is {u32 start line, start column, end line, end column}
 pub mod wire {
     use super::*;
 
@@ -218,6 +247,32 @@ pub mod wire {
             put_u32(out, branch.index);
             put_u32(out, branch.line);
             put_u32(out, hits);
+        }
+        let Some(p) = &report.positions else {
+            out.push(0);
+            return;
+        };
+        debug_assert_eq!(p.functions.len(), report.functions.len());
+        debug_assert_eq!(p.line_columns.len(), line_count);
+        out.push(1);
+        out.reserve(20 * p.functions.len() + 16 * p.decisions.len() + 8 * line_count + 4);
+        for (loc, &calls) in p.functions.iter().zip(&p.function_counts) {
+            put_loc(out, loc);
+            put_u32(out, calls);
+        }
+        put_u32(out, u32::try_from(p.decisions.len()).expect("int cast"));
+        for loc in &p.decisions {
+            put_loc(out, loc);
+        }
+        for &(first, last) in &p.line_columns {
+            put_u32(out, first);
+            put_u32(out, last);
+        }
+    }
+
+    fn put_loc(out: &mut Vec<u8>, loc: &Loc) {
+        for v in [loc.start.0, loc.start.1, loc.end.0, loc.end.1] {
+            put_u32(out, v);
         }
     }
 
@@ -266,6 +321,48 @@ pub mod wire {
             }
             Some(branches)
         }
+        fn loc(&mut self) -> Option<Loc> {
+            Some(Loc {
+                start: (self.u32()?, self.u32()?),
+                end: (self.u32()?, self.u32()?),
+            })
+        }
+        fn positions(
+            &mut self,
+            n_functions: usize,
+            line_count: usize,
+        ) -> Option<Option<Positions>> {
+            match self.bytes(1)?[0] {
+                0 => return Some(None),
+                1 => {}
+                _ => return None,
+            }
+            if n_functions.checked_mul(20)? > self.0.len() {
+                return None;
+            }
+            let mut p = Positions {
+                functions: Vec::with_capacity(n_functions),
+                function_counts: Vec::with_capacity(n_functions),
+                ..Default::default()
+            };
+            for _ in 0..n_functions {
+                p.functions.push(self.loc()?);
+                p.function_counts.push(self.u32()?);
+            }
+            let n = self.len()?;
+            p.decisions.reserve(n.min(self.0.len() / 16));
+            for _ in 0..n {
+                p.decisions.push(self.loc()?);
+            }
+            if line_count.checked_mul(8)? != self.0.len() {
+                return None;
+            }
+            p.line_columns.reserve_exact(line_count);
+            for _ in 0..line_count {
+                p.line_columns.push((self.u32()?, self.u32()?));
+            }
+            Some(Some(p))
+        }
     }
 
     pub fn decode(bytes: &[u8]) -> Option<Report<'static>> {
@@ -286,6 +383,7 @@ pub mod wire {
         let (functions, functions_which_have_executed) = r.ranges()?;
         let (stmts, stmts_which_have_executed) = r.ranges()?;
         let branches = r.branches(line_count)?;
+        let positions = r.positions(functions.len(), line_count)?;
         if !r.0.is_empty() {
             return None;
         }
@@ -299,6 +397,7 @@ pub mod wire {
             branches,
             stmts,
             stmts_which_have_executed,
+            positions,
         })
     }
 }
@@ -318,6 +417,8 @@ pub struct MergedReport {
     stmts: Vec<(ByteRange, bool)>,
     /// Every report's branches with their hits; summed in `finish`.
     branches: Vec<(Branch, u32)>,
+    /// `Some` if the reports have positions. Functions are in step with `functions`.
+    positions: Option<Positions>,
 }
 
 impl MergedReport {
@@ -348,6 +449,20 @@ impl MergedReport {
                 .push((r, report.stmts_which_have_executed.is_set(i)));
         }
         self.branches.extend_from_slice(&report.branches);
+        if let Some(p) = &report.positions {
+            let merged = self.positions.get_or_insert_default();
+            merged.functions.extend_from_slice(&p.functions);
+            merged.function_counts.extend_from_slice(&p.function_counts);
+            if merged.decisions.len() < p.decisions.len() {
+                merged
+                    .decisions
+                    .extend_from_slice(&p.decisions[merged.decisions.len()..]);
+            }
+            merged.line_columns.resize(len, (u32::MAX, 0));
+            for (m, &(first, last)) in merged.line_columns.iter_mut().zip(&p.line_columns) {
+                *m = (m.0.min(first), m.1.max(last));
+            }
+        }
         Ok(())
     }
 
@@ -366,7 +481,22 @@ impl MergedReport {
         Ok((ranges, executed))
     }
 
-    pub fn finish(self) -> Result<Report<'static>, bun_alloc::AllocError> {
+    pub fn finish(mut self) -> Result<Report<'static>, bun_alloc::AllocError> {
+        if let Some(p) = &mut self.positions {
+            let mut all: Vec<_> = self
+                .functions
+                .iter()
+                .zip(p.functions.iter().zip(&p.function_counts))
+                .map(|(&(r, _), (&loc, &calls))| (r, loc, calls))
+                .collect();
+            merge_by_key(
+                &mut all,
+                |e| e.0,
+                |kept, next| kept.2 = kept.2.saturating_add(next.2),
+            );
+            p.functions = all.iter().map(|e| e.1).collect();
+            p.function_counts = all.iter().map(|e| e.2).collect();
+        }
         let (functions, functions_which_have_executed) = Self::dedupe(self.functions)?;
         let (stmts, stmts_which_have_executed) = Self::dedupe(self.stmts)?;
         let mut branches = self.branches;
@@ -385,6 +515,7 @@ impl MergedReport {
             branches,
             stmts,
             stmts_which_have_executed,
+            positions: self.positions,
         })
     }
 }
@@ -609,7 +740,7 @@ pub mod lcov {
     }
 }
 
-/// Istanbul `coverage-summary.json`. Statements are the lines, as in c8; branches are empty.
+/// Istanbul `coverage-summary.json`. Statements are the lines, as in c8.
 pub mod json_summary {
     use super::*;
     use std::io::Write as _;
@@ -618,6 +749,7 @@ pub mod json_summary {
     struct Totals {
         lines: Metric,
         functions: Metric,
+        branches: Metric,
     }
 
     #[derive(Clone, Copy, Default)]
@@ -640,6 +772,10 @@ pub mod json_summary {
                     total: report.functions.len(),
                     covered: report.functions_which_have_executed.count(),
                 },
+                branches: Metric {
+                    total: report.branches_found(),
+                    covered: report.branches_hit(),
+                },
             }
         }
 
@@ -648,6 +784,8 @@ pub mod json_summary {
             self.lines.covered += other.lines.covered;
             self.functions.total += other.functions.total;
             self.functions.covered += other.functions.covered;
+            self.branches.total += other.branches.total;
+            self.branches.covered += other.branches.covered;
         }
     }
 
@@ -678,7 +816,7 @@ pub mod json_summary {
         out.extend_from_slice(b",\"functions\":");
         write_metric(t.functions, out);
         out.extend_from_slice(b",\"branches\":");
-        write_metric(Metric::default(), out);
+        write_metric(t.branches, out);
         out.push(b'}');
     }
 
@@ -706,6 +844,152 @@ pub mod json_summary {
             f if f % 10 == 0 => write!(out, "{int}.{}", f / 10),
             f => write!(out, "{int}.{f:02}"),
         };
+    }
+}
+
+/// Istanbul `coverage-final.json`. Statements are the lines, as in c8. Functions have no names,
+/// and each branch's location is that of its decision, as in v8-to-istanbul.
+pub mod istanbul_json {
+    use super::*;
+    use std::io::Write as _;
+
+    /// Whole document. Files are keyed by `source_url`, which is absolute.
+    pub fn write(reports: &[Report<'_>], out: &mut Vec<u8>) {
+        let items: usize = reports
+            .iter()
+            .map(|r| r.line_hits.len() + r.functions.len() + r.branches.len())
+            .sum();
+        out.reserve(64 * items + 128 * reports.len() + 2);
+        out.push(b'{');
+        for (i, report) in reports.iter().enumerate() {
+            if i > 0 {
+                out.push(b',');
+            }
+            bun_core::printer::json_stringify(&report.source_url, out);
+            out.push(b':');
+            write_file(report, out);
+        }
+        out.extend_from_slice(b"}\n");
+    }
+
+    fn write_file(report: &Report<'_>, out: &mut Vec<u8>) {
+        let empty = Positions::default();
+        let p = report.positions.as_ref().unwrap_or(&empty);
+
+        out.extend_from_slice(b"{\"path\":");
+        bun_core::printer::json_stringify(&report.source_url, out);
+
+        out.extend_from_slice(b",\"statementMap\":{");
+        let mut lines = report.executable_lines.iterator::<true, true>();
+        let mut i = 0;
+        while let Some(line) = lines.next() {
+            let (first, last) = p.line_columns.get(line).copied().unwrap_or((0, 0));
+            let first = if first == u32::MAX { 0 } else { first };
+            let line = line as u32;
+            key(i, out);
+            write_loc(
+                &Loc {
+                    start: (line, first),
+                    end: (line, last.max(first)),
+                },
+                out,
+            );
+            i += 1;
+        }
+
+        out.extend_from_slice(b"},\"fnMap\":{");
+        for i in 0..report.functions.len() {
+            let loc = p.functions.get(i).copied().unwrap_or_default();
+            key(i, out);
+            let _ = write!(out, "{{\"name\":\"(anonymous_{i})\",\"decl\":");
+            write_loc(&loc, out);
+            out.extend_from_slice(b",\"loc\":");
+            write_loc(&loc, out);
+            let _ = write!(out, ",\"line\":{}}}", loc.start.0 + 1);
+        }
+
+        let decisions = || {
+            report
+                .branches
+                .chunk_by(|a, b| a.0.decision == b.0.decision)
+        };
+        out.extend_from_slice(b"},\"branchMap\":{");
+        for (i, branches) in decisions().enumerate() {
+            let branch = branches[0].0;
+            let loc = p
+                .decisions
+                .get(branch.decision.wrapping_sub(1) as usize)
+                .copied()
+                .unwrap_or(Loc {
+                    start: (branch.line, 0),
+                    end: (branch.line, 0),
+                });
+            key(i, out);
+            out.extend_from_slice(b"{\"loc\":");
+            write_loc(&loc, out);
+            out.extend_from_slice(b",\"type\":\"branch\",\"locations\":[");
+            for j in 0..branches.len() {
+                if j > 0 {
+                    out.push(b',');
+                }
+                write_loc(&loc, out);
+            }
+            let _ = write!(out, "],\"line\":{}}}", loc.start.0 + 1);
+        }
+
+        out.extend_from_slice(b"},\"s\":{");
+        let mut lines = report.executable_lines.iterator::<true, true>();
+        let mut i = 0;
+        while let Some(line) = lines.next() {
+            key(i, out);
+            let _ = write!(out, "{}", report.line_hits[line]);
+            i += 1;
+        }
+
+        out.extend_from_slice(b"},\"f\":{");
+        for i in 0..report.functions.len() {
+            let calls = p
+                .function_counts
+                .get(i)
+                .copied()
+                .unwrap_or_else(|| report.functions_which_have_executed.is_set(i) as u32);
+            key(i, out);
+            let _ = write!(out, "{calls}");
+        }
+
+        out.extend_from_slice(b"},\"b\":{");
+        for (i, branches) in decisions().enumerate() {
+            key(i, out);
+            out.push(b'[');
+            for (j, &(_, hits)) in branches.iter().enumerate() {
+                if j > 0 {
+                    out.push(b',');
+                }
+                let _ = write!(out, "{hits}");
+            }
+            out.push(b']');
+        }
+        out.extend_from_slice(b"}}");
+    }
+
+    fn key(i: usize, out: &mut Vec<u8>) {
+        if i > 0 {
+            out.push(b',');
+        }
+        // Writing into a Vec cannot fail.
+        let _ = write!(out, "\"{i}\":");
+    }
+
+    /// Istanbul's lines are one-based, its columns zero-based.
+    fn write_loc(loc: &Loc, out: &mut Vec<u8>) {
+        let _ = write!(
+            out,
+            "{{\"start\":{{\"line\":{},\"column\":{}}},\"end\":{{\"line\":{},\"column\":{}}}}}",
+            loc.start.0 + 1,
+            loc.start.1,
+            loc.end.0 + 1,
+            loc.end.1
+        );
     }
 }
 
@@ -911,6 +1195,7 @@ impl ByteRangeMapping {
         function_blocks: &[BasicBlockRange],
         branches: &[BranchRange],
         ignore_sourcemap: bool,
+        want_positions: bool,
     ) -> Result<Report<'_>, bun_alloc::AllocError> {
         let source_url = self.source_url.slice();
         let source_map: Option<std::sync::Arc<ParsedSourceMap>> = if ignore_sourcemap {
@@ -948,6 +1233,14 @@ impl ByteRangeMapping {
         let counts = ExecutionCounts::new(&blocks, &functions);
         let mut lines = LineCounts::default();
         let mut mappings = Vec::new();
+        let mut line_columns: Vec<(u32, u32)> = Vec::new();
+        let mut see_column = |line: usize, column: u32| {
+            if line >= line_columns.len() {
+                line_columns.resize(line + 1, (u32::MAX, 0));
+            }
+            let c = &mut line_columns[line];
+            *c = (c.0.min(column), c.1.max(column + 1));
+        };
 
         if let Some(source_map) = source_map.as_deref() {
             let mut previous_original = None;
@@ -968,6 +1261,9 @@ impl ByteRangeMapping {
                 };
                 mappings.push((offset, original));
                 self.count_line(&counts, offset, line, &mut lines);
+                if want_positions {
+                    see_column(line, u32::try_from(original.1).unwrap_or(0));
+                }
             });
         } else {
             for (line, &start) in self.line_starts.iter().enumerate() {
@@ -978,6 +1274,9 @@ impl ByteRangeMapping {
                     .unwrap_or(source_len);
                 for offset in start..end {
                     self.count_line(&counts, offset, line, &mut lines);
+                    if want_positions && self.executable_units.is_set(offset as usize) {
+                        see_column(line, offset - start);
+                    }
                 }
             }
         }
@@ -991,7 +1290,22 @@ impl ByteRangeMapping {
             });
         }
 
-        let branches = self.count_branches(branches, source_map.is_some().then_some(&mappings));
+        let mappings = source_map.is_some().then_some(&mappings);
+        let mut decisions = Vec::new();
+        let branches =
+            self.count_branches(branches, mappings, want_positions.then_some(&mut decisions));
+        let positions = want_positions.then(|| {
+            line_columns.resize(lines.0.len(), (u32::MAX, 0));
+            Positions {
+                functions: functions
+                    .iter()
+                    .map(|f| self.loc_of(f.range, mappings))
+                    .collect(),
+                function_counts: functions.iter().map(|f| f.count).collect(),
+                decisions,
+                line_columns,
+            }
+        });
 
         let (executable_lines, lines_which_have_executed) = lines.bitsets()?;
         let (functions, functions_which_have_executed) = split_executed(&functions)?;
@@ -1007,7 +1321,44 @@ impl ByteRangeMapping {
             stmts,
             functions_which_have_executed,
             stmts_which_have_executed,
+            positions,
         })
+    }
+
+    /// The original span of `range`: from its first code to past the start of its last.
+    fn loc_of(&self, range: ByteRange, mappings: Option<&Vec<(u32, OriginalPosition)>>) -> Loc {
+        let to_u32 = |(line, column): OriginalPosition| {
+            (
+                u32::try_from(line).unwrap_or(0),
+                u32::try_from(column).unwrap_or(0),
+            )
+        };
+        let last = range.end.saturating_sub(1).max(range.start);
+        let Some(mappings) = mappings else {
+            let at = |offset| {
+                let (line, column) = self.line_and_column_of(offset);
+                to_u32((line.zero_based(), column.zero_based()))
+            };
+            let end = at(last);
+            return Loc {
+                start: at(range.start),
+                end: (end.0, end.1 + 1),
+            };
+        };
+        let first = mappings.partition_point(|&(offset, _)| offset < range.start);
+        let start = match mappings.get(first) {
+            Some(&(offset, original)) if offset < range.end => original,
+            _ => mappings.get(first.wrapping_sub(1)).map_or((0, 0), |m| m.1),
+        };
+        let end = mappings
+            .partition_point(|&(offset, _)| offset <= last)
+            .checked_sub(1)
+            .map_or(start, |i| mappings[i].1);
+        let (start, end) = (to_u32(start), to_u32(end.max(start)));
+        Loc {
+            start,
+            end: (end.0, end.1 + 1),
+        }
     }
 
     /// `branches` is sorted by decision, and `mappings` by offset in the text JSC compiled.
@@ -1015,6 +1366,7 @@ impl ByteRangeMapping {
         &self,
         branches: &[BranchRange],
         mappings: Option<&Vec<(u32, OriginalPosition)>>,
+        mut decision_locs: Option<&mut Vec<Loc>>,
     ) -> Vec<(Branch, u32)> {
         // The source map of a bundle has lines of several files.
         if self.already_bundled && mappings.is_some() {
@@ -1023,9 +1375,13 @@ impl ByteRangeMapping {
         let mut counted = Vec::with_capacity(branches.len());
         let mut decision = 0;
         for branches in branches.chunk_by(|a, b| a.decision() == b.decision()) {
-            let Some(line) = self.line_of_decision(branches[0].decision(), mappings) else {
+            let Some(loc) = self.loc_of_decision(branches[0].decision(), mappings) else {
                 continue;
             };
+            let line = loc.start.0;
+            if let Some(locs) = decision_locs.as_deref_mut() {
+                locs.push(loc);
+            }
             decision += 1;
             counted.extend(branches.iter().map(|branch| {
                 let hits = u32::try_from(branch.execution_count).unwrap_or(u32::MAX);
@@ -1040,16 +1396,27 @@ impl ByteRangeMapping {
         counted
     }
 
-    /// The line in the file of the first code in the decision. `None` for one the transpiler added.
-    fn line_of_decision(
+    /// The span in the file from the first code in the decision. `None` for one the transpiler
+    /// added.
+    fn loc_of_decision(
         &self,
         (start, end): (c_int, c_int),
         mappings: Option<&Vec<(u32, OriginalPosition)>>,
-    ) -> Option<u32> {
+    ) -> Option<Loc> {
         let (start, end) = (u32::try_from(start).ok()?, u32::try_from(end).ok()?);
         let Some(mappings) = mappings else {
             let first = (start..=end).find(|&at| self.executable_units.is_set(at as usize))?;
-            return u32::try_from(self.line_and_column_of(first).0.zero_based()).ok();
+            let last = (first..=end)
+                .rev()
+                .find(|&at| self.executable_units.is_set(at as usize))
+                .unwrap_or(first);
+            return Some(self.loc_of(
+                ByteRange {
+                    start: first,
+                    end: last + 1,
+                },
+                None,
+            ));
         };
         let first = mappings.partition_point(|&(offset, _)| offset < start);
         let last = mappings
@@ -1070,7 +1437,15 @@ impl ByteRangeMapping {
         if is_added {
             return None;
         }
-        u32::try_from(mappings[first].1.0).ok()
+        let to_u32 = |(line, column): OriginalPosition| {
+            Some((u32::try_from(line).ok()?, u32::try_from(column).ok()?))
+        };
+        let start = to_u32(mappings[first].1)?;
+        let end = to_u32(mappings[last].1.max(mappings[first].1))?;
+        Some(Loc {
+            start,
+            end: (end.0, end.1 + 1),
+        })
     }
 
     /// `line` ran as often as the code at `offset`, if it is code. A block's brace is not: after a
@@ -1409,7 +1784,7 @@ extern "C" fn ByteRangeMapping__findExecutedLines(
     // SAFETY: pointer into the thread-local map, valid for this call.
     let this = unsafe { &*this_ptr.as_ptr() };
 
-    let Some(report) = Report::generate(global_this, this, ignore_sourcemap) else {
+    let Some(report) = Report::generate(global_this, this, ignore_sourcemap, false) else {
         return JSValue::UNDEFINED;
     };
 

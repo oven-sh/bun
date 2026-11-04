@@ -424,6 +424,10 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     }
     if opts.coverage.enabled {
         argv.push(lit(b"--coverage\0"));
+        if opts.coverage.reporters.json {
+            // Workers then record the positions `coverage-final.json` needs.
+            argv.push(lit(b"--coverage-reporter=json\0"));
+        }
     }
 
     argv.push(core::ptr::null());

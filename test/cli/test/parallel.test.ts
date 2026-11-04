@@ -716,7 +716,8 @@ test.skipIf(isWindows)(
         const url = Buffer.from(join(import.meta.dir, name));
         const firstLine = Buffer.from(new BigUint64Array([1n]).buffer);
         const branches = u32(1, /* decision */ 1, /* index */ 0, lineOfBranch, /* hits */ 0);
-        const report = Buffer.concat([u32(url.length), url, u32(1), firstLine, firstLine, u32(1), u32(0), u32(0), branches]);
+        const noPositions = Buffer.from([0]);
+        const report = Buffer.concat([u32(url.length), url, u32(1), firstLine, firstLine, u32(1), u32(0), u32(0), branches, noPositions]);
         return Buffer.concat([u32(4 + report.length), Buffer.from([7]), u32(report.length), report]);
       }
       test("a", () => {

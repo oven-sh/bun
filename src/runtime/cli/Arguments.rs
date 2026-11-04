@@ -604,7 +604,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     parse_param!("--seed <INT>                     Set the random seed for test randomization"),
     parse_param!("--coverage                       Generate a coverage profile"),
     parse_param!(
-        "--coverage-reporter <STR>...     Report coverage in 'text', 'lcov' and/or 'json-summary'. Defaults to 'text'. Implies --coverage."
+        "--coverage-reporter <STR>...     Report coverage in 'text', 'lcov', 'json-summary' and/or 'json'. Defaults to 'text'. Implies --coverage."
     ),
     parse_param!(
         "--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'."
@@ -1771,9 +1771,11 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
                 ctx.test_options.coverage.reporters.lcov = true;
             } else if *reporter == b"json-summary" {
                 ctx.test_options.coverage.reporters.json_summary = true;
+            } else if *reporter == b"json" {
+                ctx.test_options.coverage.reporters.json = true;
             } else {
                 bun_core::pretty_errorln!(
-                    "<r><red>error<r>: invalid coverage reporter '{}'. Available options: 'text' (console output), 'lcov' (code coverage file), 'json-summary' (Istanbul coverage-summary.json)",
+                    "<r><red>error<r>: invalid coverage reporter '{}'. Available options: 'text' (console output), 'lcov' (code coverage file), 'json-summary' (Istanbul coverage-summary.json), 'json' (Istanbul coverage-final.json)",
                     BStr::new(reporter)
                 );
                 Global::exit(1);

@@ -31,7 +31,7 @@ pub(crate) enum MvState {
     #[default]
     Idle,
     CheckTarget(Box<ShellMvCheckTargetTask>),
-    Executing(Box<ShellMvBatchedTask>),
+    Executing(Box<ShellMvTask>),
     Done,
     WaitingWriteErr {
         exit_code: ExitCode,
@@ -217,7 +217,7 @@ impl Mv {
                 };
                 let builtin = Builtin::of(interp, cmd);
                 // One task: a later source can be the directory an earlier one was in, or have its name.
-                let mut task = Box::new(ShellMvBatchedTask {
+                let mut task = Box::new(ShellMvTask {
                     cmd,
                     sources: (sources_start..target_idx)
                         .map(|i| ZBox::from_bytes(builtin.arg_bytes(i)))
@@ -235,12 +235,12 @@ impl Mv {
                     unreachable!()
                 };
                 // SAFETY: the task is in `MvState::Executing` before the pool sees it, and stays
-                // there, not moved, until `batched_move_task_done` runs on this thread.
+                // there, not moved, until `move_task_done` runs on this thread.
                 unsafe { ShellTask::schedule(&raw mut **task) };
                 Yield::suspended()
             }
             Tag::Executing => {
-                // Shouldn't happen — driven by batchedMoveTaskDone.
+                // Shouldn't happen — driven by `move_task_done`.
                 Yield::suspended()
             }
             Tag::WaitingWriteErr => Yield::suspended(),
@@ -274,7 +274,7 @@ impl Mv {
         Self::next(interp, cmd).run(interp);
     }
 
-    fn batched_move_task_done(interp: &Interpreter, cmd: NodeId) {
+    fn move_task_done(interp: &Interpreter, cmd: NodeId) {
         let errs = match &mut Self::state_mut(interp, cmd).state {
             MvState::Executing(task) => core::mem::take(&mut task.errs),
             _ => unreachable!(),
@@ -383,7 +383,7 @@ impl ShellMvCheckTargetTask {
 }
 
 /// renameat() each source into the target, in the order of the operands.
-pub(crate) struct ShellMvBatchedTask {
+pub(crate) struct ShellMvTask {
     pub(crate) cmd: NodeId,
     pub(crate) sources: Vec<ZBox>,
     pub(crate) target: ZBox,
@@ -395,8 +395,8 @@ pub(crate) struct ShellMvBatchedTask {
     pub task: ShellTask,
 }
 
-impl ShellMvBatchedTask {
-    fn run_from_thread_pool(this: &mut ShellMvBatchedTask) {
+impl ShellMvTask {
+    fn run_from_thread_pool(this: &mut ShellMvTask) {
         // Moving multiple entries into a directory.
         if this.sources.len() > 1 {
             return this.move_multiple_into_dir();
@@ -748,8 +748,8 @@ impl bun_event_loop::Taskable for ShellMvCheckTargetTask {
         bun_event_loop::ContextId::NONE
     }
 }
-impl bun_event_loop::Taskable for ShellMvBatchedTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMvBatchedTask;
+impl bun_event_loop::Taskable for ShellMvTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMvTask;
     /// Owned by `MvState::Executing`; as `ShellMvCheckTargetTask`.
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: as above.
@@ -776,15 +776,15 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellMvCheckTargetTask {
     }
 }
 
-impl crate::shell::interpreter::ShellTaskCtx for ShellMvBatchedTask {
+impl crate::shell::interpreter::ShellTaskCtx for ShellMvTask {
     const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
     fn run_from_thread_pool(this: &mut Self) {
         Self::run_from_thread_pool(this)
     }
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         // SAFETY: `ShellTask::run_from_main_thread` dispatch contract — `this`
-        // is a live `ShellMvBatchedTask` held in `MvState::Executing`.
+        // is a live `ShellMvTask` held in `MvState::Executing`.
         let this = unsafe { this.as_ref() }.unwrap();
-        Mv::batched_move_task_done(interp, this.cmd);
+        Mv::move_task_done(interp, this.cmd);
     }
 }

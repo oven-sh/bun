@@ -127,7 +127,7 @@ pub mod task_tag {
         ShellGlobTask,
         ShellLsTask,
         ShellMkdirTask,
-        ShellMvBatchedTask,
+        ShellMvTask,
         ShellMvCheckTargetTask,
         ShellRmDirTask,
         ShellRmTask,

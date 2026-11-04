@@ -2,8 +2,6 @@
 
 #include "BunClientData.h"
 #include "Handle.h"
-#include <JavaScriptCore/Weak.h>
-#include <thread>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
@@ -19,7 +17,6 @@ class Isolate;
 namespace shim {
 
 class GlobalHandleRegistry;
-class GlobalInternals;
 
 // The handles of some v8::Globals of one VM. Its address is a multiple of its size, so the block of a handle is the address of the handle with the low bits cleared.
 struct GlobalHandleBlock {
@@ -40,15 +37,15 @@ struct GlobalHandleBlock {
         void* weakParameter;
     };
 
-    explicit GlobalHandleBlock(GlobalHandleRegistry&);
+    GlobalHandleBlock(GlobalHandleRegistry&, void* bunVM);
 
     static GlobalHandleBlock* of(const Handle* handle) { return reinterpret_cast<GlobalHandleBlock*>(reinterpret_cast<uintptr_t>(handle) & ~(size - 1)); }
     size_t indexOf(const Handle* handle) const { return handle - handles; }
     bool hasLiveHandle() const { return std::ranges::find(states, State::Live) != std::end(states); }
 
-    // Never changes, so any thread may read it.
-    const std::thread::id ownerThread;
-    // Null once the registry of the VM is destroyed. Only the owner thread reads and writes it.
+    // The Bun VM of the registry, whichever thread allocates the block. Never changes, so any thread may read it.
+    void* const ownerBunVM;
+    // Null once the registry of the VM is destroyed. Only the thread of `ownerBunVM` reads and writes it.
     GlobalHandleRegistry* registry;
     // One for each handle. Freed with the registry.
     Extra* extras;
@@ -70,25 +67,33 @@ public:
     static GlobalHandleRegistry* ifExists(JSC::VM& vm) { return WebCore::clientData(vm)->v8GlobalHandleRegistry.get(); }
     static GlobalHandleRegistry& ensure(JSC::VM&);
 
-    // An open scope of any realm of the VM can have a Local that points into the handle of a v8::Global.
-    void addRealm(GlobalInternals*);
+    // A HandleScopeBuffer is an open scope with V8 handles of a realm of the VM. A Local of it can point into the handle of a v8::Global.
+    void didOpenScope() { m_openScopes++; }
+    void didCloseScope()
+    {
+        if (!--m_openScopes) [[unlikely]] {
+            releaseDisposedHandles();
+        }
+    }
 
-    // `address` is the word of a Local: a Smi, or a pointer to the layout of a handle or to a root of `isolate`.
+    // `address` is the word of a Local: a Smi, or a pointer to the layout of a handle or to an Oddball.
     TaggedPointer* create(Isolate*, TaggedPointer address);
 
-    // These three find the VM from the address of the handle. They do nothing on a thread other than the VM's, once the VM is destroyed, and for a handle that is not live.
+    // These three find the block from the address of the handle. They do nothing unless the Bun VM of the calling thread owns the block and is not destroyed, and for a handle that is not live.
     static void dispose(Handle*);
     static void setWeakParameter(Handle*, void* parameter);
     static void* takeWeakParameter(Handle*);
 
-    // Called by HandleScopeBuffer::close() in a realm that hasDisposedGlobalHandles().
-    static void didCloseScope(JSC::VM&);
+    // `bun test --isolate` has replaced the global object of a finished file: each live handle of an object lets go of it and holds undefined, until the addon resets it.
+    void retireHandlesOfObjects();
 
 private:
+    // In m_openScopes while no disposed handle waits, so that zero says "the last scope closed and handles wait" and didCloseScope() has one test.
+    static constexpr size_t noDisposedHandleWaits = static_cast<size_t>(1) << (sizeof(size_t) * 8 - 1);
+
     Handle* takeHandle();
-    // Makes the disposed handles free, unless a Local can still point into one.
+    // Makes the disposed handles free. No scope with V8 handles is open, so no Local points into one.
     void releaseDisposedHandles();
-    bool hasOpenScopeWithV8Handles() const;
 
     void* const m_bunVM;
     WTF::Vector<GlobalHandleBlock*> m_blocks;
@@ -97,9 +102,8 @@ private:
     WTF::Vector<Handle*> m_free;
     // The disposed handles that wait for the open scopes with V8 handles to close.
     WTF::Vector<Handle*> m_disposed;
-    WTF::Vector<JSC::Weak<GlobalInternals>> m_realms;
-    // What GlobalInternals::hasDisposedGlobalHandles() of each realm says.
-    bool m_realmsHaveDisposedHandles { false };
+    // How many HandleScopeBuffers the realms of the VM have, plus noDisposedHandleWaits.
+    size_t m_openScopes { noDisposedHandleWaits };
 };
 
 } // namespace shim

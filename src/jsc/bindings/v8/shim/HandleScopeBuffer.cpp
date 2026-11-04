@@ -16,6 +16,7 @@ HandleScopeBuffer::HandleScopeBuffer(Bun::HandleScopeImpl* owner, Isolate* isola
     auto* data = getHandleScopeData(isolate);
     m_savedNext = data->next;
     m_savedLimit = data->limit;
+    isolate->globalHandleRegistry().didOpenScope();
 }
 
 HandleScopeBuffer::~HandleScopeBuffer() = default;
@@ -132,9 +133,7 @@ TaggedPointer HandleScopeBuffer::appendRescuedLayout(const ObjectLayout& layout)
     if (layout.map() == &Map::heap_number_map()) {
         handle = Handle(layout.asDouble());
     } else {
-        // Besides heap numbers, scope buffers only ever own string_map/object_map
-        // cells (oddballs live in the isolate's roots and globals in their own
-        // buffer), so everything else is a cell.
+        // Besides heap numbers, a scope buffer only owns string_map and object_map cells: an Oddball belongs to the process, and the handle of a v8::Global to a GlobalHandleBlock.
         handle = Handle(layout.map(), layout.asCell(), vm(), m_owner);
     }
     return *handle.slot();
@@ -220,9 +219,7 @@ void HandleScopeBuffer::close(Bun::HandleScopeImpl* parent)
     if (parent && !internals->activeReturnValueSlots().isEmpty()) {
         evacuateActiveReturnValues(parent);
     }
-    if (internals->hasDisposedGlobalHandles()) [[unlikely]] {
-        GlobalHandleRegistry::didCloseScope(vm());
-    }
+    m_isolate->globalHandleRegistry().didCloseScope();
     // The owner detaches this buffer and then frees it, along with every handle.
 }
 

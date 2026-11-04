@@ -16,3 +16,31 @@ static_assert(offsetof(v8::shim::Oddball, m_map) == real_v8::internal::Internals
     "Oddball map field is at wrong offset");
 
 static_assert(offsetof(v8::shim::Oddball, m_kind) == real_v8::internal::Internals::kOddballKindOffset);
+
+namespace v8 {
+namespace shim {
+
+// Prevent static initialization on startup
+const Oddball& Oddball::undefined_value()
+{
+    static const Oddball oddball = Oddball(Kind::kUndefined);
+    return oddball;
+}
+const Oddball& Oddball::null_value()
+{
+    static const Oddball oddball = Oddball(Kind::kNull);
+    return oddball;
+}
+const Oddball& Oddball::true_value()
+{
+    static const Oddball oddball = Oddball(Kind::kTrue);
+    return oddball;
+}
+const Oddball& Oddball::false_value()
+{
+    static const Oddball oddball = Oddball(Kind::kFalse);
+    return oddball;
+}
+
+} // namespace shim
+} // namespace v8

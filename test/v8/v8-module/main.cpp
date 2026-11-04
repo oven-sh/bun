@@ -830,6 +830,107 @@ void global_count_holders_destroyed(const FunctionCallbackInfo<Value> &info) {
       Integer::New(info.GetIsolate(), global_holders_destroyed));
 }
 
+static const char *true_or_false(bool value) {
+  return value ? "true" : "false";
+}
+
+// What an addon reads from a Global that it has not reset.
+void global_print_stored(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Value> value = stored_global.Get(isolate);
+  std::cout << "the stored Global: IsEmpty() = "
+            << true_or_false(stored_global.IsEmpty())
+            << ", IsUndefined() = " << true_or_false(value->IsUndefined())
+            << ", == Undefined(isolate) = "
+            << true_or_false(value == Undefined(isolate)) << std::endl;
+}
+
+// The first four held Globals are of undefined, null, true and false. Another
+// isolate than this one can have made them.
+void global_print_held_oddballs(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Value> held[4];
+  for (int i = 0; i < 4; i++) {
+    held[i] = held_globals[i].Get(isolate);
+  }
+  std::cout << "held == Undefined(isolate) = "
+            << true_or_false(held[0] == Undefined(isolate))
+            << ", IsUndefined() = " << true_or_false(held[0]->IsUndefined())
+            << std::endl;
+  std::cout << "held == Null(isolate) = "
+            << true_or_false(held[1] == Null(isolate))
+            << ", IsNull() = " << true_or_false(held[1]->IsNull()) << std::endl;
+  std::cout << "held == True(isolate) = "
+            << true_or_false(held[2] == True(isolate))
+            << ", IsTrue() = " << true_or_false(held[2]->IsTrue()) << std::endl;
+  std::cout << "held == False(isolate) = "
+            << true_or_false(held[3] == False(isolate))
+            << ", IsFalse() = " << true_or_false(held[3]->IsFalse())
+            << std::endl;
+}
+
+// A copy of the bits of the Global that the other thread reset.
+static Global<Value> reset_on_another_thread;
+
+// The other thread has no isolate, and this one waits for it. In V8 it would
+// need a Locker to use the isolate of this one.
+void global_hold_copies_made_on_another_thread(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  // A Global of a number has no object, so Bun copies it without its engine.
+  Global<Value> number(isolate, info[0]);
+  size_t count = static_cast<size_t>(info[1].As<Number>()->Value());
+  // The other thread must not move the Globals that this thread made.
+  held_globals.reserve(held_globals.size() + count);
+  std::thread thread([&] {
+    for (size_t i = 0; i < count; i++) {
+      held_globals.emplace_back(isolate, number);
+    }
+    // The last one is in a block of handles that this thread allocated.
+    memcpy(static_cast<void *>(&reset_on_another_thread), &held_globals.back(),
+           sizeof reset_on_another_thread);
+    held_globals.back().Reset();
+    held_globals.pop_back();
+  });
+  thread.join();
+}
+
+// Returns the value of that Global, and resets it on the thread of its
+// isolate.
+void global_take_reset_on_another_thread(
+    const FunctionCallbackInfo<Value> &info) {
+  info.GetReturnValue().Set(reset_on_another_thread);
+  reset_on_another_thread.Reset();
+}
+
+static std::atomic<int> isolate_askers_destroyed{0};
+
+// Destroyed when its thread exits, which is after the isolate of the thread
+// is gone.
+struct IsolateAsker {
+  bool armed = false;
+  ~IsolateAsker() {
+    if (!armed) {
+      return;
+    }
+    std::cout << "Isolate::TryGetCurrent() once the isolate of the thread is "
+                 "gone = "
+              << (Isolate::TryGetCurrent() ? "an isolate" : "null")
+              << std::endl;
+    isolate_askers_destroyed++;
+  }
+};
+static thread_local IsolateAsker isolate_asker_of_thread;
+
+void isolate_ask_when_thread_exits(const FunctionCallbackInfo<Value> &info) {
+  isolate_asker_of_thread.armed = true;
+}
+
+void isolate_count_askers_destroyed(const FunctionCallbackInfo<Value> &info) {
+  info.GetReturnValue().Set(
+      Integer::New(info.GetIsolate(), isolate_askers_destroyed));
+}
+
 // Native data property whose getter returns the holder it was invoked on and
 // whose setter stores it where global_get() can read it, so JS can check what
 // receiver the accessor callbacks see for different ways of reaching them.
@@ -2930,6 +3031,17 @@ void initialize(Local<Object> exports, Local<Value> module,
                   global_hold_until_destructor);
   NODE_SET_METHOD(exports, "global_count_holders_destroyed",
                   global_count_holders_destroyed);
+  NODE_SET_METHOD(exports, "global_print_stored", global_print_stored);
+  NODE_SET_METHOD(exports, "global_print_held_oddballs",
+                  global_print_held_oddballs);
+  NODE_SET_METHOD(exports, "global_hold_copies_made_on_another_thread",
+                  global_hold_copies_made_on_another_thread);
+  NODE_SET_METHOD(exports, "global_take_reset_on_another_thread",
+                  global_take_reset_on_another_thread);
+  NODE_SET_METHOD(exports, "isolate_ask_when_thread_exits",
+                  isolate_ask_when_thread_exits);
+  NODE_SET_METHOD(exports, "isolate_count_askers_destroyed",
+                  isolate_count_askers_destroyed);
   NODE_SET_METHOD(exports, "test_many_v8_locals", test_many_v8_locals);
   NODE_SET_METHOD(exports, "test_handle_scope_gc", test_handle_scope_gc);
   NODE_SET_METHOD(exports, "test_v8_escapable_handle_scope",

@@ -528,6 +528,7 @@ unsafe extern "C" {
     safe fn Bun__Process__resetArgv(global: &JSGlobalObject);
     safe fn Bun__TestFile__leaveModuleGraph(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__retireDerivedRealmsForTestIsolation(global: &JSGlobalObject);
+    safe fn V8GlobalHandleRegistry__retireHandlesOfObjects(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
     safe fn WebWorker__teardownJSCVM(global: &JSGlobalObject);
 }
@@ -2778,6 +2779,8 @@ impl VirtualMachine {
             Teardown::Worker => WebWorker__teardownJSCVM(vm.global()),
             Teardown::MainThreadExit => Zig__GlobalObject__destructOnExit(vm.global()),
         }
+        // This thread's default global object is destroyed. Null rather than `None`, which would cache the freed `global` again.
+        VMHolder::set_cached_global_object(Some(core::ptr::null_mut()));
         // Finalizers just closed the sockets only they owned; `us_socket_close`
         // queues onto `loop->data.closed_head`, normally freed on the next tick.
         vm.uws_loop_mut().drain_closed_sockets();
@@ -6588,6 +6591,8 @@ impl VirtualMachine {
             // The cleanup of an addon does not run when its file is retired, and an isolate that its hooks use goes with the realm.
             rare.environment_cleanup_hooks.clear_and_free();
         }
+        // No cleanup of the finished file ran, so its addons did not reset their `v8::Global`s. Those of objects let go here, so that none keeps the realm of the file alive.
+        V8GlobalHandleRegistry__retireHandlesOfObjects(self.global());
 
         self.undo_process_env_side_effects();
         self.undo_synthetic_allocation_limit();

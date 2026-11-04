@@ -31,7 +31,7 @@ void FromJustIsNothing()
 uintptr_t* GlobalizeReference(internal::Isolate* i_isolate, uintptr_t address)
 {
     auto* isolate = reinterpret_cast<Isolate*>(i_isolate);
-    TaggedPointer* newSlot = shim::GlobalHandleRegistry::ensure(isolate->vm()).create(isolate, TaggedPointer::fromRaw(address));
+    TaggedPointer* newSlot = isolate->globalHandleRegistry().create(isolate, TaggedPointer::fromRaw(address));
     return newSlot->asRawPtrLocation();
 }
 
@@ -61,7 +61,7 @@ void* ClearWeak(uintptr_t* location)
 void MoveGlobalReference(uintptr_t** from, uintptr_t** to)
 {
     // The inline caller already copied *from into *to. Our weak state is keyed by the
-    // global-handle storage slot (which did not move), so nothing to update here.
+    // handle, which did not move: its GlobalHandleBlock has the parameter, so there is nothing to update here.
     (void)from;
     (void)to;
 }

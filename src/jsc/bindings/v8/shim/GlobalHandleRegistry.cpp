@@ -1,10 +1,12 @@
 #include "GlobalHandleRegistry.h"
-#include "GlobalInternals.h"
-#include "HandleScopeBuffer.h"
+#include "../V8Isolate.h"
+#include "Oddball.h"
 #include "StrongRef.h"
 #include "ZigGlobalObject.h"
-#include "napi_handle_scope.h"
 #include <wtf/TZoneMallocInlines.h>
+
+extern "C" bool Bun__thisThreadHasVM();
+extern "C" void* Bun__getVM();
 
 namespace v8 {
 namespace shim {
@@ -13,8 +15,8 @@ using State = GlobalHandleBlock::State;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(GlobalHandleRegistry);
 
-GlobalHandleBlock::GlobalHandleBlock(GlobalHandleRegistry& registry)
-    : ownerThread(std::this_thread::get_id())
+GlobalHandleBlock::GlobalHandleBlock(GlobalHandleRegistry& registry, void* bunVM)
+    : ownerBunVM(bunVM)
     , registry(&registry)
     , extras(static_cast<Extra*>(WTF::fastZeroedMalloc(sizeof(Extra) * handleCount)))
 {
@@ -49,15 +51,6 @@ GlobalHandleRegistry& GlobalHandleRegistry::ensure(JSC::VM& vm)
     return *registry;
 }
 
-void GlobalHandleRegistry::addRealm(GlobalInternals* internals)
-{
-    m_realms.removeAllMatching([](auto& realm) {
-        return !realm;
-    });
-    m_realms.append(JSC::Weak<GlobalInternals>(internals));
-    internals->setHasDisposedGlobalHandles(m_realmsHaveDisposedHandles);
-}
-
 Handle* GlobalHandleRegistry::takeHandle()
 {
     Handle* handle;
@@ -65,7 +58,7 @@ Handle* GlobalHandleRegistry::takeHandle()
         handle = m_free.takeLast();
     } else {
         if (m_takenFromLastBlock == GlobalHandleBlock::handleCount) {
-            m_blocks.append(new (NotNull, WTF::fastAlignedMalloc(GlobalHandleBlock::size, GlobalHandleBlock::size)) GlobalHandleBlock(*this));
+            m_blocks.append(new (NotNull, WTF::fastAlignedMalloc(GlobalHandleBlock::size, GlobalHandleBlock::size)) GlobalHandleBlock(*this, m_bunVM));
             m_takenFromLastBlock = 0;
         }
         handle = &m_blocks.last()->handles[m_takenFromLastBlock++];
@@ -88,7 +81,7 @@ TaggedPointer* GlobalHandleRegistry::create(Isolate* isolate, TaggedPointer addr
     switch (map->m_instanceType) {
     case InstanceType::Oddball: {
         Handle* handle = takeHandle();
-        // undefined, null, true or false: the handle holds the word that points at the root of the isolate, because an Oddball does not fit in a handle.
+        // undefined, null, true or false: the handle holds the word that points at the Oddball of the process, because an Oddball does not fit in a handle.
         *handle->slot() = address;
         return handle->slot();
     }
@@ -110,12 +103,12 @@ TaggedPointer* GlobalHandleRegistry::create(Isolate* isolate, TaggedPointer addr
     }
 }
 
-// The block of a live handle of a VM of this thread that is not destroyed, and the place of the handle in it. Else null.
+// The block of a live handle, and the place of the handle in it, if the Bun VM of this thread owns the block and is not destroyed. Else null.
 static GlobalHandleBlock* liveBlockOf(Handle* handle, size_t& index)
 {
     auto* block = GlobalHandleBlock::of(handle);
-    // The id is enough to tell the thread of the VM: an id is used again only after its thread has ended, and the VM of that thread has set `registry` to null before.
-    if (block->ownerThread != std::this_thread::get_id() || !block->registry) {
+    // A thread has one Bun VM, and the address of a VM is used again only after its registry has set `registry` to null.
+    if (block->ownerBunVM != (Bun__thisThreadHasVM() ? Bun__getVM() : nullptr) || !block->registry) {
         return nullptr;
     }
     index = block->indexOf(handle);
@@ -136,8 +129,9 @@ void GlobalHandleRegistry::dispose(Handle* handle)
         return;
     }
     registry.m_disposed.append(handle);
-    // Else earlier handles wait too, and the scope that releases them releases this one.
-    if (!registry.m_realmsHaveDisposedHandles) {
+    registry.m_openScopes &= ~noDisposedHandleWaits;
+    // Else a Local of an open scope can point into the handle, and the last scope to close releases it.
+    if (!registry.m_openScopes) {
         registry.releaseDisposedHandles();
     }
 }
@@ -157,57 +151,55 @@ void* GlobalHandleRegistry::takeWeakParameter(Handle* handle)
     return block ? std::exchange(block->extras[index].weakParameter, nullptr) : nullptr;
 }
 
-NEVER_INLINE void GlobalHandleRegistry::didCloseScope(JSC::VM& vm)
+NEVER_INLINE void GlobalHandleRegistry::releaseDisposedHandles()
 {
-    ifExists(vm)->releaseDisposedHandles();
+    ASSERT(!m_openScopes);
+    for (Handle* handle : m_disposed) {
+        auto* block = GlobalHandleBlock::of(handle);
+        size_t index = block->indexOf(handle);
+        auto& extra = block->extras[index];
+        if (auto* root = std::exchange(extra.root, nullptr)) {
+            Bun__StrongRef__delete(root);
+        }
+        extra.weakParameter = nullptr;
+        *handle = Handle();
+        block->states[index] = State::Free;
+    }
+    m_free.appendVector(m_disposed);
+    m_disposed.shrink(0);
+    m_openScopes = noDisposedHandleWaits;
 }
 
-void GlobalHandleRegistry::releaseDisposedHandles()
+void GlobalHandleRegistry::retireHandlesOfObjects()
 {
-    if (!m_disposed.isEmpty() && !hasOpenScopeWithV8Handles()) {
-        for (Handle* handle : m_disposed) {
-            auto* block = GlobalHandleBlock::of(handle);
-            size_t index = block->indexOf(handle);
-            auto& extra = block->extras[index];
-            if (auto* root = std::exchange(extra.root, nullptr)) {
-                Bun__StrongRef__delete(root);
-            }
-            extra.weakParameter = nullptr;
-            *handle = Handle();
-            block->states[index] = State::Free;
-        }
-        m_free.appendVector(m_disposed);
-        m_disposed.shrink(0);
-    }
-    // Each realm has a copy, so that HandleScopeBuffer::close() reads one byte of its own realm.
-    bool hasDisposedHandles = !m_disposed.isEmpty();
-    if (hasDisposedHandles == m_realmsHaveDisposedHandles) {
+    // Else a Local can point into a handle. The test runner replaces the global object under no native call.
+    ASSERT(m_openScopes == noDisposedHandleWaits);
+    if (m_openScopes != noDisposedHandleWaits) {
         return;
     }
-    m_realmsHaveDisposedHandles = hasDisposedHandles;
-    for (auto& realm : m_realms) {
-        if (auto* internals = realm.get()) {
-            internals->setHasDisposedGlobalHandles(hasDisposedHandles);
-        }
-    }
-}
-
-// Whether a realm of the VM has an open scope with V8 handles. A Local of it can point into a disposed handle.
-bool GlobalHandleRegistry::hasOpenScopeWithV8Handles() const
-{
-    for (auto& realm : m_realms) {
-        auto* internals = realm.get();
-        if (!internals) {
-            continue;
-        }
-        for (auto* scope = internals->isolate()->globalObject()->m_currentHandleScopeImpl.get(); scope; scope = scope->parent()) {
-            if (scope->v8Handles()) {
-                return true;
+    const TaggedPointer undefined(const_cast<Oddball*>(&Oddball::undefined_value()));
+    for (GlobalHandleBlock* block : m_blocks) {
+        for (size_t index = 0; index < GlobalHandleBlock::handleCount; index++) {
+            auto& root = block->extras[index].root;
+            Handle& handle = block->handles[index];
+            // A string, a symbol and a BigInt belong to no realm, so the handle of one keeps it.
+            if (block->states[index] != State::Live || !root || !handle.m_object.asCell()->isObject()) {
+                continue;
             }
+            Bun__StrongRef__delete(std::exchange(root, nullptr));
+            handle = Handle();
+            *handle.slot() = undefined;
         }
     }
-    return false;
 }
 
 } // namespace shim
 } // namespace v8
+
+// VirtualMachine::swap_global_for_test_isolation calls this once it has replaced the global object of a finished file.
+extern "C" void V8GlobalHandleRegistry__retireHandlesOfObjects(JSC::JSGlobalObject* globalObject)
+{
+    if (auto* registry = v8::shim::GlobalHandleRegistry::ifExists(JSC::getVM(globalObject))) {
+        registry->retireHandlesOfObjects();
+    }
+}

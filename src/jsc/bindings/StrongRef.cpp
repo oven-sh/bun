@@ -62,7 +62,7 @@ extern "C" void Bun__StrongRef__set(StrongRefImpl* _Nonnull ref, JSC::JSGlobalOb
     decodeStrongRefBlock(ref)->write(JSC::getVM(globalObject), decodeStrongRefIndex(ref), JSC::JSValue::decode(encodedValue));
 }
 
-// The Rust caller (Strong.rs Impl::destroy) skips this call once
+// Both callers (Strong.rs Impl::destroy, and GlobalHandleRegistry::dispose for the handle of a v8::Global) skip this call once
 // VirtualMachine.is_shutting_down is true, so the block cell is guaranteed
 // live here: destructOnExit / WebWorker__teardownJSCVM set that flag before
 // their final collectNow, which is the only point the block can go dead while

@@ -2,7 +2,6 @@
 
 #include "../V8ObjectTemplate.h"
 #include "InternalFieldObject.h"
-#include "GlobalHandleRegistry.h"
 #include "HandleScopeBuffer.h"
 #include "../V8FunctionTemplate.h"
 #include "../V8Function.h"
@@ -45,7 +44,6 @@ void GlobalInternals::finishCreation(VM& vm)
     m_v8FunctionStructure.initLater([](LazyClassStructure::Initializer& init) {
         init.setStructure(Function::createStructure(init.vm, init.global));
     });
-    GlobalHandleRegistry::ensure(vm).addRealm(this);
 }
 
 template<typename Visitor>

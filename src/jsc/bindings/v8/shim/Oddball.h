@@ -26,6 +26,12 @@ struct Oddball {
     {
     }
 
+    // One of each for the process, like the Maps: the roots of every Isolate point at these, and so does the handle of a v8::Global.
+    static const Oddball& undefined_value();
+    static const Oddball& null_value();
+    static const Oddball& true_value();
+    static const Oddball& false_value();
+
     Kind kind() const
     {
         return (Kind)m_kind.getSmiUnchecked();

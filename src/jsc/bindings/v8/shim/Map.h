@@ -17,7 +17,7 @@ enum class InstanceType : uint16_t {
     // SlowGetInternalField
     Object = 0x80,
     // a number that doesn't fit in int32_t and is stored on the heap (for us, in the
-    // HandleScopeBuffer)
+    // Handle)
     HeapNumber = 0x82,
 };
 

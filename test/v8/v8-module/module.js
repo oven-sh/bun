@@ -461,6 +461,33 @@ module.exports = debugMode => {
       })();
     },
 
+    // The destructor of a thread_local object of the addon asks for the isolate of its thread, once the Worker of that thread has ended.
+    test_v8_isolate_after_worker_exit() {
+      (async () => {
+        await runInWorker("isolate_ask_when_thread_exits");
+        // The Worker's exit event does not wait for the thread to exit.
+        while (nativeModule.isolate_count_askers_destroyed() === 0) await nextTurn();
+        console.log("the thread of the Worker has exited");
+      })();
+    },
+
+    // Bun only: in V8 a thread needs a Locker to use an isolate. The Globals are of a number, which Bun copies without its engine.
+    test_v8_global_made_on_another_thread() {
+      nativeModule.global_hold_copies_made_on_another_thread(0.5, 60);
+      const handles = nativeModule.global_held_addresses();
+      const values = nativeModule.global_held();
+      nativeModule.global_reset_held();
+      // Globals of other numbers take the handles that the reset gave back.
+      nativeModule.global_hold(...handles.map((_, i) => i + 0.25));
+      const taken = new Set(nativeModule.global_held_addresses());
+      nativeModule.global_reset_held();
+      console.log("Globals that the other thread made:", handles.length, "of the value", [...new Set(values)].join());
+      const givenBack = handles.filter(handle => taken.has(handle)).length;
+      console.log("handles that the thread of the isolate gave back when it reset them:", givenBack);
+      const kept = nativeModule.global_take_reset_on_another_thread();
+      console.log("the value of the Global that the other thread reset:", kept);
+    },
+
     test_v8_global_weak_parameter_after_reuse() {
       // The Globals are weak for a while, so these keep the objects alive.
       const first = { name: "first" };

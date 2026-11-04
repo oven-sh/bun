@@ -1,0 +1,21 @@
+status: 0
+script: 1c305f7aede71435
+---
+f1 KeyError [('RAISE', 'f1', 'KeyError'), ('HANDLED', 'f1', 'KeyError'), ('RERAISE', 'f1', 'KeyError'), ('HANDLED', 'f1', 'KeyError'), ('RERAISE', 'f1', 'KeyError'), ('UNWIND', 'f1', 'KeyError')]
+f2 caught [('RAISE', 'f2', 'KeyError'), ('HANDLED', 'f2', 'KeyError'), ('RERAISE', 'f2', 'KeyError'), ('HANDLED', 'f2', 'KeyError')]
+f3 done [('RAISE', 'f3', 'StopAsyncIteration'), ('HANDLED', 'f3', 'StopAsyncIteration')]
+f4 KeyError [('RAISE', 'f4', 'KeyError'), ('HANDLED', 'f4', 'KeyError'), ('RERAISE', 'f4', 'KeyError'), ('HANDLED', 'f4', 'KeyError'), ('RERAISE', 'f4', 'KeyError'), ('HANDLED', 'f4', 'KeyError'), ('RERAISE', 'f4', 'KeyError'), ('UNWIND', 'f4', 'KeyError')]
+f5 KeyError [('RAISE', 'f5', 'KeyError'), ('HANDLED', 'f5', 'KeyError'), ('RERAISE', 'f5', 'KeyError'), ('HANDLED', 'f5', 'KeyError'), ('RERAISE', 'f5', 'KeyError'), ('HANDLED', 'f5', 'KeyError'), ('RERAISE', 'f5', 'KeyError'), ('HANDLED', 'f5', 'KeyError'), ('RERAISE', 'f5', 'KeyError'), ('UNWIND', 'f5', 'KeyError')]
+f6 KeyError [('RAISE', 'f6', 'KeyError'), ('HANDLED', 'f6', 'KeyError'), ('RERAISE', 'f6', 'KeyError'), ('UNWIND', 'f6', 'KeyError')]
+f7 caught [('RAISE', 'f7', 'KeyError'), ('HANDLED', 'f7', 'KeyError')]
+f8 KeyError [('RAISE', 'f8', 'KeyError'), ('HANDLED', 'f8', 'KeyError'), ('RERAISE', 'f8', 'KeyError'), ('HANDLED', 'f8', 'KeyError'), ('RERAISE', 'f8', 'KeyError'), ('UNWIND', 'f8', 'KeyError')]
+f9 KeyError [('RAISE', 'f9', 'KeyError'), ('HANDLED', 'f9', 'KeyError'), ('RERAISE', 'f9', 'KeyError'), ('HANDLED', 'f9', 'KeyError'), ('RERAISE', 'f9', 'KeyError'), ('HANDLED', 'f9', 'KeyError'), ('RERAISE', 'f9', 'KeyError'), ('UNWIND', 'f9', 'KeyError')]
+f1 KeyError [('call', 0), ('line', 1), ('exception', 1), ('return', 1)]
+f2 caught [('call', 0), ('line', 1), ('line', 2), ('exception', 2), ('line', 4), ('line', 5), ('return', 5)]
+f3 done [('call', 0), ('line', 1), ('exception', 1), ('line', 2), ('line', 1), ('exception', 1), ('line', 3), ('return', 3)]
+f4 KeyError [('call', 0), ('line', 1), ('exception', 1), ('line', 1), ('return', 1)]
+f5 KeyError [('call', 0), ('line', 1), ('exception', 1), ('line', 2), ('exception', 2), ('line', 1), ('exception', 1), ('return', 2)]
+f6 KeyError [('call', 0), ('line', 1), ('exception', 1), ('line', 2), ('exception', 2), ('return', 2)]
+f7 caught [('call', 0), ('line', 1), ('line', 2), ('exception', 2), ('line', 3), ('exception', 3), ('line', 4), ('line', 5), ('return', 5)]
+f8 KeyError [('call', 0), ('line', 1), ('exception', 1), ('line', 2), ('exception', 2), ('return', 2)]
+f9 KeyError [('call', 0), ('line', 1), ('exception', 1), ('exception', 1), ('line', 1), ('return', 1)]

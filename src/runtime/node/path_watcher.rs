@@ -1755,7 +1755,6 @@ impl Kqueue {
         };
         let kq = manager.kq_fd();
 
-        // SAFETY: all-zero is a valid kevent (#[repr(C)] POD).
         let mut kev: libc::kevent = bun_core::ffi::zeroed();
         kev.ident = fd.native() as usize;
         kev.filter = EVFILT::VNODE;
@@ -1807,7 +1806,6 @@ impl Kqueue {
         Output::Source::configure_named_thread(zstr!("fs.watch"));
         let kq = manager.kq_fd();
         let running: &AtomicBool = &manager.running;
-        // SAFETY: kevent is POD; uninitialized array filled by kernel before read.
         let mut events: [libc::kevent; 128] = bun_core::ffi::zeroed();
         while running.load(Ordering::Acquire) {
             // SAFETY: an empty changelist registers nothing.

@@ -272,7 +272,7 @@ JSValue createPythonNamespace(Zig::GlobalObject* globalObject)
     // src/python/_bun_python.py
     JSValue own = Python::importModuleFromJS(globalObject, "_bun_python"_s);
     RETURN_IF_EXCEPTION(scope, {});
-    for (auto [name, nameInPython] : { std::pair { "with"_s, "with_"_s }, std::pair { "asyncWith"_s, "async_with"_s } }) {
+    for (auto [name, nameInPython] : { std::pair { "with"_s, "with_"_s }, std::pair { "asyncWith"_s, "async_with"_s }, std::pair { "enter"_s, "enter"_s }, std::pair { "enterAsync"_s, "enter_async"_s } }) {
         JSValue function = own.get(globalObject, Identifier::fromString(vm, nameInPython));
         RETURN_IF_EXCEPTION(scope, {});
         asObject(python)->putDirect(vm, Identifier::fromString(vm, name), function);

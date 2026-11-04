@@ -2,7 +2,7 @@ status: 0
 oracle: none
 mask: addresses
 ---
-kwargs,float,import,method,with,asyncWith function
+kwargs,float,import,method,with,asyncWith,enter,enterAsync function
 (1, 2, (), 3, []) (1, 5, (), 3, []) (1, 2, (), 9, [('y', 2), ('z', 1)]) (1, 2, (3, 4), 0, []) ('A', 2, (), 3, []) (1, 2, (), 3, [])
 (2, 1) 2 11 none
 TypeError: f() got multiple values for argument 'a'

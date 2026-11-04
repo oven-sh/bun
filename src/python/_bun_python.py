@@ -66,6 +66,26 @@ def with_(*arguments):
     return result.then(fulfilled, rejected)
 
 
+def enter(manager):
+    """What `with manager as value:` does first. The value, and the __exit__ to call at the end."""
+    exit = _js.special_method(manager, "__exit__")
+    enter = _js.special_method(manager, "__enter__")
+    if enter is None or exit is None:
+        with manager:
+            pass
+    return enter(), exit
+
+
+async def enter_async(manager):
+    """The same for `async with manager as value:`."""
+    exit = _js.special_method(manager, "__aexit__")
+    enter = _js.special_method(manager, "__aenter__")
+    if enter is None or exit is None:
+        async with manager:
+            pass
+    return await enter(), exit
+
+
 async def _inside(managers, values, body):
     if len(values) == len(managers):
         result = body(*values)

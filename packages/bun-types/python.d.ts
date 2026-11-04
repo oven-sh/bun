@@ -99,10 +99,60 @@ declare module "bun:python" {
     ...managersAndBody: [...managers: unknown[], body: (...values: any[]) => T | PromiseLike<T>]
   ): Promise<T | undefined>;
 
+  /**
+   * What {@link enter} returns: what `__enter__()` gave, and the way out.
+   */
+  interface Entered<T = any> extends Disposable {
+    readonly value: T;
+  }
+
+  /**
+   * What {@link enterAsync} gives: what `__aenter__()` gave, and the way out.
+   */
+  interface EnteredAsync<T = any> extends AsyncDisposable {
+    readonly value: T;
+  }
+
+  /**
+   * A context manager of Python's for `using`. `enter(manager)` calls `__enter__()`, and the end of the block calls
+   * `__exit__(None, None, None)`.
+   *
+   * JavaScript does not tell what it disposes of how the block ended, so the manager never hears of an exception: one that
+   * swallows exceptions, or rolls back on them, needs {@link withStatement | with()}.
+   *
+   * @example
+   * ```ts
+   * import { enter } from "bun:python";
+   * import { open } from "python:builtins";
+   *
+   * using file = enter(open("notes.txt"));
+   * file.value.read();
+   * ```
+   */
+  function enter<T = any>(manager: unknown): Entered<T>;
+
+  /**
+   * An asynchronous context manager of Python's for `await using`. `await enterAsync(manager)` awaits `__aenter__()`, and the
+   * end of the block awaits `__aexit__(None, None, None)`.
+   *
+   * As with {@link enter}, the manager never hears of an exception. The two calls are tasks of their own: a manager that goes by
+   * the task it is used in (`asyncio.timeout()`, `asyncio.TaskGroup()`) needs {@link asyncWith}.
+   *
+   * @example
+   * ```ts
+   * import { enterAsync } from "bun:python";
+   *
+   * await using lock = await enterAsync(asyncioLock);
+   * ```
+   */
+  function enterAsync<T = any>(manager: unknown): Promise<EnteredAsync<T>>;
+
   function importModule(name: string): any;
 
   export {
     asyncWith,
+    enter,
+    enterAsync,
     float,
     /**
      * The module of that name, as `import` in Python finds it: `python.import("os.path")`.
@@ -113,11 +163,15 @@ declare module "bun:python" {
     kwargs,
     method,
     withStatement as with,
+    type Entered,
+    type EnteredAsync,
     type KeywordArguments,
   };
 
   const python: {
     asyncWith: typeof asyncWith;
+    enter: typeof enter;
+    enterAsync: typeof enterAsync;
     float: typeof float;
     import: typeof importModule;
     kwargs: typeof kwargs;

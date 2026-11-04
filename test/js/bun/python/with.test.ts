@@ -1,9 +1,10 @@
-// `with` and `async with`, from JavaScript: with(), asyncWith() of bun:python. Tasks made of promises.
-import python, { asyncWith, kwargs, with as with_ } from "bun:python";
+// `with` and `async with`, from JavaScript: with(), asyncWith(), enter() and enterAsync() of bun:python. Tasks made of promises.
+import python, { asyncWith, enter, enterAsync, kwargs, with as with_ } from "bun:python";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { isASAN, isDebug } from "harness";
+import { isASAN, isDebug, tempDir } from "harness";
+import path from "node:path";
 import asyncio from "python:asyncio";
-import { TypeError as PyTypeError, TimeoutError, ValueError, dict, exec } from "python:builtins";
+import { KeyError, TypeError as PyTypeError, TimeoutError, ValueError, dict, exec, open } from "python:builtins";
 import contextlib from "python:contextlib";
 import decimal from "python:decimal";
 import threading from "python:threading";
@@ -220,6 +221,127 @@ describe("asyncWith()", () => {
     expect(asyncWith(asyncio.timeout(0.001), () => asyncio.sleep(3600))).rejects.toBeInstanceOf(TimeoutError);
     const lock = asyncio.Lock();
     expect(await asyncWith(lock, () => lock.locked())).toBe(true);
+    expect(lock.locked()).toBe(false);
+  });
+});
+
+describe("enter()", () => {
+  test("is what `using` leaves", () => {
+    take();
+    {
+      using a = enter(Manager("a"));
+      using b = enter(Manager("b"));
+      expect([a.value, b.value]).toEqual(["a", "b"]);
+      expect(take()).toEqual(["enter a", "enter b"]);
+    }
+    expect(take()).toEqual(["exit b None True", "exit a None True"]);
+    expect(python.enter).toBe(enter);
+  });
+
+  test("is left once", () => {
+    const entered = enter(Manager("a"));
+    expect(entered[Symbol.dispose]()).toBeUndefined();
+    entered[Symbol.dispose]();
+    expect(take()).toEqual(["enter a", "exit a None True"]);
+    expect(entered.value).toBe("a");
+  });
+
+  test("does not tell __exit__ what the block threw", () => {
+    const error = new ValueError("x");
+    const block = () => {
+      using _ = enter(generator("g"));
+      throw error;
+    };
+    expect(block).toThrow(error);
+    expect(take()).toEqual(["before g", "after g"]);
+    expect(with_(generator("g"), () => { throw error; })).toBeUndefined(); // prettier-ignore
+    expect(take()).toEqual(["before g", "caught x", "after g"]);
+  });
+
+  test("a manager that fails", () => {
+    expect(() => enter(Manager("a", false, "enter"))).toThrow(KeyError);
+    expect(take()).toEqual([]);
+    expect(() => {
+      using _ = enter(Manager("a", false, "exit"));
+    }).toThrow(KeyError);
+    const error = new RangeError("of the block");
+    let thrown: any;
+    try {
+      using _ = enter(Manager("a", false, "exit"));
+      throw error;
+    } catch (both) {
+      thrown = both;
+    }
+    expect(thrown).toBeInstanceOf(SuppressedError);
+    expect(thrown.error).toBeInstanceOf(KeyError);
+    expect(thrown.suppressed).toBe(error);
+    take();
+  });
+
+  test("what is no manager", () => {
+    expect(() => enter(5)).toThrow("'int' object does not support the context manager protocol");
+    expect(() => enter(AsyncManager("x"))).toThrow("Did you mean to use 'async with'?");
+    expect(() => enter(AsyncManager("x"))).toThrow(PyTypeError);
+  });
+
+  test("the managers of the standard library", () => {
+    using dir = tempDir("python-enter", { "file.txt": "text" });
+    let file;
+    {
+      using opened = enter(open(path.join(String(dir), "file.txt")));
+      file = opened.value;
+      expect(file.read()).toBe("text");
+      expect(file.closed).toBe(false);
+    }
+    expect(file.closed).toBe(true);
+    const lock = threading.Lock();
+    {
+      using _ = enter(lock);
+      expect(lock.locked()).toBe(true);
+    }
+    expect(lock.locked()).toBe(false);
+  });
+});
+
+describe("enterAsync()", () => {
+  test("is what `await using` leaves", async () => {
+    take();
+    {
+      await using x = await enterAsync(AsyncManager("x"));
+      await using y = await enterAsync(AsyncManager("y"));
+      expect([x.value, y.value]).toEqual(["x", "y"]);
+      expect(take()).toEqual(["enter x", "enter y"]);
+    }
+    expect(take()).toEqual(["exit y None", "exit x None"]);
+    expect(python.enterAsync).toBe(enterAsync);
+  });
+
+  test("is left once, and hears of no exception", async () => {
+    const entered = await enterAsync(AsyncManager("x"));
+    expect(await entered[Symbol.asyncDispose]()).toBeUndefined();
+    await entered[Symbol.asyncDispose]();
+    expect(take()).toEqual(["enter x", "exit x None"]);
+
+    const error = new ValueError("x");
+    const block = async () => {
+      await using _ = await enterAsync(AsyncManager("y", true));
+      throw error;
+    };
+    await expect(block()).rejects.toBe(error);
+    expect(take()).toEqual(["enter y", "exit y None"]);
+  });
+
+  test("what is no manager", async () => {
+    await expect(enterAsync(Manager("a"))).rejects.toThrow("Did you mean to use 'with'?");
+    await expect(enterAsync(5)).rejects.toBeInstanceOf(PyTypeError);
+  });
+
+  test("a lock of asyncio", async () => {
+    const lock = asyncio.Lock();
+    {
+      await using _ = await enterAsync(lock);
+      expect(lock.locked()).toBe(true);
+    }
     expect(lock.locked()).toBe(false);
   });
 });

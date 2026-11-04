@@ -28,6 +28,17 @@ kept from the last run.
     --impl-detail   run the tests marked @cpython_only as well (shims/_impl_detail); implies --tag impl-detail. Not the scoreboard:
                     a way to see which of them pass.
     --list          print the names and exit
+
+To measure another implementation of Python in the same way (see README.md, "Other implementations"):
+
+    --engine              --python is another implementation, with a standard library of its own: of --lib, which is the Lib of the
+                          CPython whose version it implements, only the package `test` is used, in the place of its own. It is given a
+                          stand-in of shims/ only for a module that it cannot import itself.
+    --oracle-python CMD   the CPython that --oracle runs: one of that version, installed with its tests
+    --oracle-file NAME    what --oracle writes and a run is compared with (default oracle.json)
+    --no-shims            without the stand-ins of shims/
+    --path DIR            put in front of the path of every module: for a stand-in without which the engine cannot even import
+                          test.support (may be given more than once)
 """
 
 import argparse
@@ -130,9 +141,33 @@ TOGETHER = {
 SHIMS_FOR_ORACLE = {"_ctypes_test"}
 
 
-def shim_path(name, for_oracle=False):
+def shim_path(name, for_oracle=False, offered=None):
     return os.pathsep.join(os.path.join(HERE, "shims", shim) for shim, users in SHIMS.items()
-                           if (not for_oracle or shim in SHIMS_FOR_ORACLE) and any(name == user or name.startswith(user + ".") for user in users))
+                           if (not for_oracle or shim in SHIMS_FOR_ORACLE) and (offered is None or shim in offered)
+                           and any(name == user or name.startswith(user + ".") for user in users))
+
+
+def modules_missing(python, names):
+    """Those of the modules named that the interpreter cannot import."""
+    script = "import importlib\nfor n in %r:\n    try:\n        importlib.import_module(n)\n    except BaseException:\n        print(n)\n" % (sorted(names),)
+    return set(subprocess.run(python + ["-c", script], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=600).stdout.split()) & set(names)
+
+
+def library_with_tests(python):
+    """A directory for the front of sys.path: the engine's own standard library, by links, with the package `test` of LIB in the place of
+    whatever it has of that name. So the tests are where they are in CPython, in the library: test.support takes the directory above
+    itself for the library, and packages of tests that are elsewhere in it (ctypes.test, distutils.tests in 3.11) are found from there."""
+    own = subprocess.run(python + ["-c", "import os; print(os.path.dirname(os.path.abspath(os.__file__)))"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=600).stdout.strip().splitlines()[-1]
+    directory = os.path.join(tempfile.gettempdir(), "score-library-%d" % os.getuid(), hashlib.sha256((LIB + os.pathsep + own).encode()).hexdigest()[:12])
+    if not os.path.isdir(directory):
+        os.makedirs(directory + ".new", exist_ok=True)
+        for entry in os.listdir(own):
+            if entry not in ("test", "__pycache__", "site-packages") and not os.path.lexists(os.path.join(directory + ".new", entry)):
+                os.symlink(os.path.join(own, entry), os.path.join(directory + ".new", entry))
+        if not os.path.lexists(os.path.join(directory + ".new", "test")):
+            os.symlink(os.path.join(LIB, "test"), os.path.join(directory + ".new", "test"))
+        os.rename(directory + ".new", directory)
+    return directory
 
 
 def find_tests():
@@ -233,6 +268,22 @@ def communicate(process, timeout, idle):
                 last = time.monotonic()
 
 
+def short_id(case, module):
+    """The id of a test without the name of its module: Class.test_x."""
+    match = re.match(r"\w+ \(([\w.<>]+)\)$", case)  # as a run prints it: test_x (test.test_m.Class.test_x)
+    if match:
+        case = match.group(1)
+    prefix = "test." + module + "."
+    return case[len(prefix):] if case.startswith(prefix) else case
+
+
+def matched(result, reference):
+    """How many of the tests that pass in the reference pass in the result: by name, if both runs kept the names."""
+    if "passed_tests" in result and "passed_tests" in reference:
+        return sum((collections.Counter(result["passed_tests"]) & collections.Counter(reference["passed_tests"])).values())
+    return min(result.get("passed", 0), reference.get("passed", 0))
+
+
 def run_once(name, python, limits, extra_env, ignored):
     timeout, idle = limits
     work = tempfile.mkdtemp(prefix="score-")
@@ -307,6 +358,7 @@ def run_once(name, python, limits, extra_env, ignored):
     counts = collections.Counter(outcome for _, outcome, _ in cases)
     result.update(ran=len(cases), passed=counts["passed"], failed=counts["failed"], errors=counts["error"], skipped=counts["skipped"])
     result["problems"] = [[case, outcome, detail] for case, outcome, detail in cases if outcome in ("failed", "error")]
+    result["passed_tests"] = sorted(short_id(case, name) for case, outcome, _ in cases if outcome == "passed")
 
     died = process.returncode < 0 or process.returncode in (132, 133, 134, 139)
     crash = None
@@ -346,12 +398,12 @@ def run_once(name, python, limits, extra_env, ignored):
     return result, output
 
 
-def run_one(name, python, limits, extra_env, rounds):
+def run_one(name, python, limits, extra_env, rounds, left_out=()):
     """Runs the module, again and again without the tests that kill the interpreter or hang."""
     incidents, outputs = [], []
     seconds = 0
     while True:
-        result, output = run_once(name, python, limits, extra_env, [i["test"] for i in incidents] + (IGNORED.get(name, []) if "PYTHONPATH" in extra_env else []) + (SPOILERS.get(name, []) if "BUN_PYTHON_STDLIB" in extra_env else []))
+        result, output = run_once(name, python, limits, extra_env, [i["test"] for i in incidents] + list(left_out))
         seconds += result["seconds"]
         outputs.append(output)
         if result["status"] not in ("crashed", "timeout"):
@@ -399,7 +451,7 @@ def cause_of(detail):
     return detail.split(":")[0][:40] or "?"
 
 
-def write_reports(results, previous, oracle, directory, title, filename="score.md"):
+def write_reports(results, previous, oracle, directory, title, filename="score.md", subject="Bun"):
     order = sorted(results)
     totals = collections.Counter()
     statuses = collections.Counter()
@@ -409,7 +461,7 @@ def write_reports(results, previous, oracle, directory, title, filename="score.m
         for key in ("ran", "passed", "failed", "errors", "skipped"):
             totals[key] += r.get(key, 0)
 
-    lines = ["# CPython's test suite under Bun", "", title, ""]
+    lines = ["# CPython's test suite under " + subject, "", title, ""]
     lines += ["## Totals", "",
               "| modules | " + " | ".join(sorted(statuses)) + " |", "|---|" + "---|" * len(statuses),
               "| %d | " % len(order) + " | ".join(str(statuses[s]) for s in sorted(statuses)) + " |", "",
@@ -417,7 +469,9 @@ def write_reports(results, previous, oracle, directory, title, filename="score.m
               "| %(ran)d | %(passed)d | %(failed)d | %(errors)d | %(skipped)d |" % totals, ""]
     if oracle:
         expected = sum(o.get("passed", 0) for n, o in oracle.items() if n in results)
-        lines += ["CPython itself, on this machine, in the same harness, passes %d tests in these modules: **%.1f%%** of them pass here." % (expected, 100.0 * totals["passed"] / max(expected, 1)), ""]
+        both = sum(matched(results[n], o) for n, o in oracle.items() if n in results)
+        lines += ["CPython itself, on this machine, in the same harness, passes %d tests in these modules: %d of them pass here, **%.1f%%**." % (expected, both, 100.0 * both / max(expected, 1))
+                  + (" Another %d pass here that CPython fails or skips there: they do not count." % (totals["passed"] - both) if totals["passed"] > both else ""), ""]
 
     def section(kind, heading):
         rows = [(results[n], i) for n in order for i in results[n].get("incidents", []) if i["kind"] == kind]
@@ -470,13 +524,13 @@ def write_reports(results, previous, oracle, directory, title, filename="score.m
         if changed:
             lines += ["| module | before | now |", "|---|---|---|"] + changed[:200] + [""]
 
-    lines += ["## All modules", "", "| module | status | ran | passed | failed | errors | skipped | CPython passes | seconds | reason |", "|---|---|---|---|---|---|---|---|---|---|"]
+    lines += ["## All modules", "", "| module | status | ran | passed | failed | errors | skipped | CPython passes | of which here | seconds | reason |", "|---|---|---|---|---|---|---|---|---|---|---|"]
     for name in order:
         r = results[name]
         o = oracle.get(name, {}) if oracle else {}
-        lines.append("| %s | %s | %d | %d | %d | %d | %d | %s | %s | %s |" % (
+        lines.append("| %s | %s | %d | %d | %d | %d | %d | %s | %s | %s | %s |" % (
             name, r["status"], r.get("ran", 0), r.get("passed", 0), r.get("failed", 0), r.get("errors", 0), r.get("skipped", 0),
-            o.get("passed", ""), r.get("seconds", ""), (r.get("reason") or "").replace("|", "\\|")[:140]))
+            o.get("passed", ""), matched(r, o) if o else "", r.get("seconds", ""), (r.get("reason") or "").replace("|", "\\|")[:140]))
     lines.append("")
     excluded = sorted({n.split(".")[0] for n in find_tests() if excluded_reason(n)})
     lines += ["## Not run", "", "| package | why |", "|---|---|"] + ["| %s | %s |" % (n, EXCLUDED[n]) for n in excluded] + [""]
@@ -512,8 +566,15 @@ def main():
     parser.add_argument("--list", action="store_true")
     parser.add_argument("--tag")
     parser.add_argument("--impl-detail", action="store_true")
+    parser.add_argument("--engine", action="store_true")
+    parser.add_argument("--oracle-python", default=os.environ.get("PYTHON_ORACLE", "python3.15"))
+    parser.add_argument("--oracle-file", default="oracle.json")
+    parser.add_argument("--no-shims", action="store_true")
+    parser.add_argument("--path", action="append", default=[])
     options = parser.parse_args()
     LIB = os.path.realpath(options.lib)
+    if options.engine and not (options.python and options.tag):
+        parser.error("--engine needs --python and --tag")
 
     names = [n for n in find_tests() if not excluded_reason(n)]
     all_names = set(names)
@@ -525,13 +586,16 @@ def main():
 
     extra_env = {}
     if options.oracle:
-        python, target = [os.environ.get("PYTHON_ORACLE", "python3.15")], "oracle.json"
+        python, target = options.oracle_python.split(), options.oracle_file
     else:
         python = options.python.split() if options.python else [python_link(os.path.realpath(options.bun))]
-        extra_env["BUN_PYTHON_STDLIB"] = LIB
+        if not options.engine:
+            extra_env["BUN_PYTHON_STDLIB"] = LIB
         if options.impl_detail:
             options.tag = options.tag or "impl-detail"
         target = "score-%s.json" % options.tag if options.tag else "score.json"
+    library = library_with_tests(python) if options.engine else None
+    offered = set() if options.no_shims else modules_missing(python, SHIMS) if options.engine or options.oracle_file != "oracle.json" and options.oracle else None
 
     path = os.path.join(HERE, target)
     previous = {}
@@ -540,18 +604,23 @@ def main():
             previous = json.load(f)["modules"]
     results = {n: r for n, r in previous.items() if n in all_names} if options.names else {}
 
-    logs = os.path.join(HERE, "oracle-logs" if options.oracle else "logs-" + options.tag if options.tag else "logs")
+    logs = os.path.join(HERE, ("oracle-logs" if options.oracle_file == "oracle.json" else os.path.splitext(options.oracle_file)[0] + "-logs") if options.oracle else "logs-" + options.tag if options.tag else "logs")
     os.makedirs(logs, exist_ok=True)
     started = time.time()
     done = 0
     with concurrent.futures.ThreadPoolExecutor(options.j) as pool:
         def environment(name):
-            path = shim_path(name, for_oracle=options.oracle)
+            path = shim_path(name, for_oracle=options.oracle, offered=offered)
             if options.impl_detail and not options.oracle:
                 path = os.pathsep.join(filter(None, [os.path.join(HERE, "shims", "_impl_detail"), path]))
+            if options.engine:
+                path = os.pathsep.join(filter(None, options.path + [path, library]))
             return dict(extra_env, PYTHONPATH=path) if path else extra_env
 
-        futures = {pool.submit(run_one, n, python, (options.timeout, options.idle), environment(n), options.rounds): n for n in names}
+        def left_out(name):
+            return (IGNORED.get(name, []) if shim_path(name, for_oracle=options.oracle, offered=offered) or options.impl_detail and not options.oracle else []) + ([] if options.oracle else SPOILERS.get(name, []))
+
+        futures = {pool.submit(run_one, n, python, (options.timeout, options.idle), environment(n), options.rounds, left_out(n)): n for n in names}
         for future in concurrent.futures.as_completed(futures):
             result, output = future.result()
             results[result["name"]] = result
@@ -573,13 +642,17 @@ def main():
         print("oracle: %d modules, %d tests passed" % (len(results), passed))
         return
     oracle = {}
-    if os.path.exists(os.path.join(HERE, "oracle.json")):
-        with open(os.path.join(HERE, "oracle.json")) as f:
+    if os.path.exists(os.path.join(HERE, options.oracle_file)):
+        with open(os.path.join(HERE, options.oracle_file)) as f:
             oracle = json.load(f)["modules"]
     title = "Run of %s with `%s`, %d at a time, %d s a module; took %d s." % (time.strftime("%Y-%m-%d %H:%M"), " ".join([os.path.basename(python[0])] + python[1:]), options.j, options.timeout, time.time() - started)
-    totals, statuses = write_reports(results, previous, oracle, HERE, title, "score-%s.md" % options.tag if options.tag else "score.md")
+    totals, statuses = write_reports(results, previous, oracle, HERE, title, "score-%s.md" % options.tag if options.tag else "score.md", options.tag if options.engine else "Bun")
     print(dict(statuses))
     print(dict(totals))
+    if oracle:
+        expected = sum(o.get("passed", 0) for n, o in oracle.items() if n in results)
+        both = sum(matched(results[n], o) for n, o in oracle.items() if n in results)
+        print("%d of the %d tests that CPython passes: %.1f%%" % (both, expected, 100.0 * both / max(expected, 1)))
 
 
 if __name__ == "__main__":

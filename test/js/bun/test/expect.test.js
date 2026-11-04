@@ -5984,6 +5984,16 @@ describe("expect()", () => {
         expect(serving(new Set([1]), { size: undefined })).not.toMatchObject(
           serving(new Set([2]), { size: undefined }),
         );
+        // Two sizes that are the same are trusted: each received member is looked for in the expected value, and not the other way.
+        const unsized = (/** @type {unknown[]} */ ...members) => serving(new Set(members), { size: undefined });
+        expect(unsized(1, 2)).not.toMatchObject(unsized(1));
+        expect(unsized({ a: 1, b: 2 })).toMatchObject(unsized({ a: 1 }));
+        const unsizedMap = (/** @type {[string, unknown][]} */ ...entries) =>
+          serving(new Map(entries), { size: undefined });
+        expect(unsizedMap(["k", 1], ["j", 2])).not.toMatchObject(unsizedMap(["k", 1]));
+        expect(unsizedMap(["k", { a: 1, b: 2 }])).toMatchObject(unsizedMap(["k", { a: 1 }]));
+        expect(serving(new Set([1]), { size: "1" })).toMatchObject(serving(new Set([1, 2]), { size: "1" }));
+        expect(serving(new Set([1, 2]), { size: "1" })).not.toMatchObject(serving(new Set([1]), { size: "1" }));
         // `has` that says yes to each value, and no to each
         expect(new Set([1])).toMatchObject(serving(new Set([2]), { has: () => "yes" }));
         expect(new Set([1])).toMatchObject(serving(new Set([1]), { has: () => 0 }));
@@ -6464,7 +6474,7 @@ describe("expect()", () => {
               },
             },
           );
-        const unsized = (/** @type {number[]} */ members) => serving(new Set(members), { size: undefined });
+        const unsized = (/** @type {unknown[]} */ members) => serving(new Set(members), { size: undefined });
         // Each row: an assertion, what it does here, and what it does in the references (Jest 30.5.2 and Vitest 4.1.12).
         /** @type {[() => void, "pass" | "fail", "pass" | "fail"][]} */
         const rows = [
@@ -6473,10 +6483,18 @@ describe("expect()", () => {
           [() => expect(reactive(new Tags([1]))).toMatchObject(new Set([1])), "pass", "fail"],
           [() => expect(new Set([1])).toMatchObject(reactive(new Tags([1]))), "pass", "fail"],
           [() => expect(serving(new Set([1]), { constructor: undefined })).toMatchObject(new Set([1])), "pass", "fail"],
-          // The references compare the members in order if the received value serves no `size`.
+          // The references walk the two values in step if the received value serves no `size`.
           [() => expect(unsized([1])).toMatchObject(new Set([1])), "fail", "pass"],
           [() => expect(unsized([1, 2])).toMatchObject(unsized([2, 1])), "pass", "fail"],
+          // Here two sizes that are undefined are the same size. A member that only the expected value has is not seen.
           [() => expect(unsized([1])).toMatchObject(unsized([1, 2])), "pass", "fail"],
+          [() => expect(unsized([{ a: 1, b: 2 }])).toMatchObject(unsized([{ a: 1 }, { c: 1 }])), "pass", "fail"],
+          // The references do not ask such an expected value for `has`.
+          [
+            () => expect(unsized([1])).toMatchObject(serving(new Set([1]), { size: undefined, has: undefined })),
+            "fail",
+            "pass",
+          ],
           // So they do if the received value does not say that it is a Set.
           [
             () => expect(serving(new Set([1, 2]), { [Symbol.toStringTag]: undefined })).toMatchObject(new Set([2, 1])),

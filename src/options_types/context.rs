@@ -653,6 +653,7 @@ impl Default for TestOptions {
             changed: None,
             shard: None,
             timings_files: Vec::new(),
+            aot_memory_limit: None,
             update_timings: false,
             environment: None,
             globals: None,

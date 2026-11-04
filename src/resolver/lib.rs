@@ -118,10 +118,7 @@ pub mod fs {
                     args: core::fmt::Arguments<'_>,
                 ) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
                     // SAFETY: see `append_slice`.
-                    let s = unsafe { bun_alloc::BSSStringList::print($backing(), args)? };
-                    // SAFETY: storage owned by the process-lifetime `BSSStringList`
-                    // singleton (never freed); `Interned` is the canonical proof type.
-                    Ok(unsafe { bun_ptr::Interned::assume(s) }.as_bytes())
+                    unsafe { bun_alloc::BSSStringList::print($backing(), args) }
                 }
                 #[inline]
                 pub fn exists(&self, value: &[u8]) -> bool {
@@ -274,12 +271,8 @@ pub mod fs {
         pub(crate) fn init_with_force<const FORCE: bool>(
             top_level_dir: Option<&[u8]>,
         ) -> crate::CrateResult<*mut FileSystem> {
-            // SAFETY: single-threaded startup; called from
-            // `Transpiler::init` before any worker spawn.
-            unsafe {
-                if INSTANCE_LOADED.load(Ordering::Acquire) && !FORCE {
-                    return Ok((*INSTANCE.get()).as_mut_ptr());
-                }
+            if INSTANCE_LOADED.load(Ordering::Acquire) && !FORCE {
+                return Ok(INSTANCE.get().cast::<FileSystem>());
             }
             let cwd: &'static [u8] = match top_level_dir {
                 // intern into the process-lifetime `DirnameStore` so
@@ -302,7 +295,8 @@ pub mod fs {
             // guaranteed UTF-8, and the lower tier stores/serves bytes.
             bun_paths::fs::FileSystem::init(cwd);
             bun_core::set_top_level_dir(cwd);
-            // SAFETY: see above.
+            // SAFETY: single-threaded startup; called from
+            // `Transpiler::init` before any worker spawn.
             unsafe {
                 (*INSTANCE.get()).write(FileSystem {
                     fs: Implementation::init(cwd),
@@ -458,11 +452,8 @@ pub mod fs {
             dir: &[u8],
             generation: Generation,
             store_fd: bool,
-        ) -> crate::CrateResult<&'static mut EntriesOption> {
-            let r = self.fs.read_directory(dir, None, generation, store_fd)?;
-            // SAFETY: `r` borrows the BSSMap singleton (process-lifetime); re-erase
-            // to `'static` so `&mut self` is dropped before the caller binds the slot.
-            Ok(unsafe { &mut *std::ptr::from_mut::<EntriesOption>(r) })
+        ) -> crate::CrateResult<&'static EntriesOption> {
+            self.fs.read_directory(dir, None, generation, store_fd)
         }
     }
 
@@ -888,15 +879,15 @@ pub mod fs {
             const { core::cell::RefCell::new(core::mem::MaybeUninit::uninit()) };
     }
 
-    fn temp_entries_option_write(value: EntriesOption) -> &'static mut EntriesOption {
+    fn temp_entries_option_write(value: EntriesOption) -> &'static EntriesOption {
         TEMP_ENTRIES_OPTION.with_borrow_mut(|slot| {
             slot.write(value);
             // SAFETY: just wrote; threadlocal storage outlives the caller.
             // Re-erase to 'static for the BSSMap-shaped
-            // unbounded `&mut EntriesOption` return type — the `RefMut` guard
+            // unbounded `&EntriesOption` return type — the `RefMut` guard
             // drops immediately on return, so no live `RefCell` borrow aliases
             // the escaped reference.
-            unsafe { &mut *slot.as_mut_ptr() }
+            unsafe { &*slot.as_ptr() }
         })
     }
 
@@ -912,6 +903,14 @@ pub mod fs {
     impl EntriesOption {
         // Payload is `&'static mut DirEntry`; auto-deref coerces to `&DirEntry` / `&mut DirEntry`.
         bun_core::enum_unwrap!(pub EntriesOption, Entries => fn entries / entries_mut -> DirEntry);
+
+        /// The listing, or the error that reading the directory gave.
+        pub fn try_entries(&self) -> crate::CrateResult<&DirEntry> {
+            match self {
+                EntriesOption::Entries(entries) => Ok(&**entries),
+                EntriesOption::Err(err) => Err(err.canonical_error),
+            }
+        }
 
         pub(crate) fn as_entries(&self) -> Option<&DirEntry> {
             match self {
@@ -933,14 +932,7 @@ pub mod fs {
         ) -> (Option<crate::fs_full::EntryLookup<'static>>, Fd) {
             let _lock = FileSystem::get().fs.entries_mutex.shared_guard();
             match self {
-                EntriesOption::Entries(entries) => {
-                    // SAFETY: ARENA — the `DirEntry` is a process-lifetime
-                    // BSSMap slot (see the enum doc), so widening the local
-                    // reborrow to `'static` is sound.
-                    let entries: &'static DirEntry =
-                        unsafe { &*core::ptr::from_ref::<DirEntry>(&**entries) };
-                    (entries.get(query), entries.fd)
-                }
+                EntriesOption::Entries(entries) => (entries.get(query), entries.fd),
                 EntriesOption::Err(_) => (None, Fd::INVALID),
             }
         }
@@ -1222,9 +1214,10 @@ pub mod fs {
                 }),
             )?;
             // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
-            Ok(unsafe { &mut *opt })
+            Ok(unsafe { &*opt })
         }
 
+        /// A missing directory's `Err` is this thread's scratch slot; read it before the next call.
         pub fn read_directory(
             &mut self,
             dir_: &[u8],
@@ -1372,7 +1365,7 @@ pub mod fs {
 
             let out = self.entries.put(&mut cache_result, result)?;
             // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
-            Ok(unsafe { &mut *out })
+            Ok(unsafe { &*out })
         }
 
         /// Evicts `file_path` from the directory-entry cache; returns whether
@@ -1552,13 +1545,12 @@ pub mod fs {
                     // BOTH success and error paths — use scopeguard so close-or-store happens even if
                     // fstat()/get_fd_path() return early with `?`.
                     let need_to_close_files = self.need_to_close_files();
-                    let cache_ptr: *mut EntryCache = &raw mut cache;
+                    let cache_fd = &mut cache.fd;
                     let _guard = scopeguard::guard(file, move |file| {
                         if (!store_fd || need_to_close_files) && !existing_fd.is_valid() {
                             let _ = bun_sys::close(file);
                         } else if bun_core::feature_flags::STORE_FILE_DESCRIPTORS {
-                            // SAFETY: `cache_ptr` points into a stack local that outlives this guard.
-                            unsafe { (*cache_ptr).fd = file };
+                            *cache_fd = file;
                         }
                     });
 
@@ -1669,7 +1661,7 @@ pub mod fs {
             &mut self,
             index: bun_alloc::IndexType,
             generation: Generation,
-        ) -> Option<&mut EntriesOption> {
+        ) -> Option<&EntriesOption> {
             debug_assert!(
                 self.entries_mutex.is_held_by_current_thread(),
                 "entries_at_locked: caller must hold entries_mutex",
@@ -1720,7 +1712,7 @@ pub mod fs {
                 }
             }
             // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
-            Some(unsafe { &mut *result_ptr })
+            Some(unsafe { &*result_ptr })
         }
 
         fn platform_temp_dir_compute() -> &'static [u8] {
@@ -2109,13 +2101,9 @@ pub mod dir_entry_accessor {
                 .read_directory(path.as_bytes(), None, 0, false)
                 .map_err(crate::Error::into_core)?;
             match res {
-                EntriesOption::Entries(entry) => {
-                    let p: *const DirEntry = &raw const **entry;
-                    // SAFETY: ARENA — `entry` (unbounded `&mut DirEntry`) borrows the BSSMap
-                    // singleton; reborrow as shared 'static for the Copy handle.
-                    let value = unsafe { &*p };
-                    Ok(Ok(DirEntryHandle { value: Some(value) }))
-                }
+                EntriesOption::Entries(entry) => Ok(Ok(DirEntryHandle {
+                    value: Some(&**entry),
+                })),
                 EntriesOption::Err(err) => Err(err.original_err.into_core()),
             }
         }

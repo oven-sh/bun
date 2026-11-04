@@ -406,6 +406,39 @@ function testOnlySymbols(cfg: Config): string[] | undefined {
  * binary, and it runs on every `bun run` of one. It is freestanding: no CRT, no allocator, no formatting machinery,
  * raw NT calls. Everything here is that property stated as a check.
  */
+/**
+ * The AoT compiler's IR as text: Bun hands the engine the program as bytes, so the engine's lexer and parser and the
+ * printers of both sides serve tests alone (sources of testaot in WebKit, the feature `ir_text` of bun_aot).
+ */
+function symbolsOfIRText(cfg: Config): string[] | undefined {
+  if (cfg.assertions) return undefined;
+  return [
+    "*3JSC3AOT5Typed5Lexer*",
+    "*3JSC3AOT5Typed10TextParser*",
+    "*3JSC3AOT5Typed12parseProgram*",
+    "*3JSC3AOT5Typed11parseFields*",
+    "*3JSC3AOT5Typed12parseVariant*",
+    "*3JSC3AOT5Typed18WireProgramBuilder*",
+    "*3JSC3AOT5Typed9IRPrinter*",
+    "*3JSC3AOT5Typed*14SolvesCompared*",
+    "*3JSC3AOT5Typed11printFields*",
+    "*3JSC3AOT5Typed12printVariant*",
+    "*3JSC3AOT5Typed12printProgram*",
+    "*3JSC3AOT5Typed13printFunction*",
+    "*3JSC3AOT5Typed10printValue*",
+    "*3JSC3AOT5Typed9printType*",
+    "*3JSC3AOT5Typed11printString*",
+    "*3JSC3AOT5Typed16printPropertyKey*",
+    "*builtinTableRuntimeFunctionTokens*",
+    "*7bun_aot2ir5print*",
+    "*7bun_aot2ir10print_body*",
+    "*7bun_aot2ir11print_names*",
+    "*7bun_aot2ir9generated10entry_text*",
+    "*7bun_aot2ir9generated11record_text*",
+    "*RUNTIME_FUNCTION_TOKENS*",
+  ];
+}
+
 export function shimExpectations(): BinaryExpectations {
   return {
     format: "pe",

@@ -677,6 +677,10 @@ pub trait CustomAtRuleParser {
     fn take_layer_names(_this: &mut Self) -> Vec<LayerName> {
         Vec::new()
     }
+
+    fn take_layers_pre_import(_this: &mut Self) -> Vec<LayerName> {
+        Vec::new()
+    }
 }
 
 /// At rules are rules that have the `@` symbol.
@@ -725,6 +729,8 @@ pub struct BundlerAtRuleParser<'a> {
     /// soundly under Stacked Borrows.
     pub(crate) import_records: *mut Vec<ImportRecord<'static>>,
     pub(crate) layer_names: Vec<LayerName>,
+    /// `layer_names` as it was at the first `@import`. `None` until then.
+    pub(crate) layers_pre_import: Option<Vec<LayerName>>,
     /// Having _named_ layers nested inside of an _anonymous_ layer has no
     /// effect. See: https://drafts.csswg.org/css-cascade-5/#example-787042b6
     pub(crate) anon_layer_count: u32,
@@ -773,6 +779,9 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
     ) {
         if !this.track_layers_and_imports {
             return;
+        }
+        if this.layers_pre_import.is_none() {
+            this.layers_pre_import = Some(core::mem::take(&mut this.layer_names));
         }
         // SAFETY: `import_records` shares raw-pointer provenance with
         // `Parser.import_records` (see field doc / `parse_bundler`). This hook
@@ -840,6 +849,10 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
 
     fn take_layer_names(this: &mut Self) -> Vec<LayerName> {
         core::mem::take(&mut this.layer_names)
+    }
+
+    fn take_layers_pre_import(this: &mut Self) -> Vec<LayerName> {
+        this.layers_pre_import.take().unwrap_or_default()
     }
 
     fn reset_enclosing_layer(this: &mut Self, len: u32) {
@@ -2341,6 +2354,8 @@ pub struct StyleSheet<AtRule> {
     /// [`ParserOptions::flags`] of the parse.
     pub flags: ParserFlags,
     pub layer_names: Vec<LayerName>,
+    /// The `@layer` statements ahead of the first `@import`. These names are not in `layer_names`.
+    pub layers_pre_import: Vec<LayerName>,
 
     /// Used when css modules is enabled. Maps `local name string` -> `Ref`.
     pub local_scope: LocalScope,
@@ -2362,6 +2377,7 @@ impl<AtRule> StyleSheet<AtRule> {
             css_modules: None,
             flags: ParserFlags::default(),
             layer_names: Vec::new(),
+            layers_pre_import: Vec::new(),
             local_scope: LocalScope::default(),
             local_properties: LocalPropertyUsage::default(),
             composes: ComposesMap::default(),
@@ -2584,6 +2600,7 @@ mod stylesheet_impl {
                 track_layers_and_imports: false,
                 import_records: core::ptr::null_mut(),
                 layer_names: Vec::new(),
+                layers_pre_import: None,
                 anon_layer_count: 0,
                 enclosing_layer: LayerName::default(),
             };
@@ -2684,6 +2701,7 @@ mod stylesheet_impl {
             // (default = empty; `BundlerAtRuleParser` overrides to move its list
             // out) so the accumulated layer ordering isn't silently dropped.
             let layer_names = P::take_layer_names(at_rule_parser);
+            let layers_pre_import = P::take_layers_pre_import(at_rule_parser);
             let may_revert_rule = parser.input.may_revert_rule;
 
             Ok((
@@ -2696,6 +2714,7 @@ mod stylesheet_impl {
                     css_modules: options.css_modules,
                     flags: options.flags,
                     layer_names,
+                    layers_pre_import,
                     local_scope: parser_extra.local_scope,
                     local_properties,
                     composes,
@@ -2799,6 +2818,7 @@ mod stylesheet_impl {
                 track_layers_and_imports: true,
                 import_records: import_records_ptr.as_ptr(),
                 layer_names: Vec::new(),
+                layers_pre_import: None,
                 anon_layer_count: 0,
                 enclosing_layer: LayerName::default(),
             };

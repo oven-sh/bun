@@ -2164,10 +2164,11 @@ pub type ForEachCallback =
 
 /// Callback signature for [`JSValue::for_each_property`] /
 /// [`JSValue::for_each_property_non_indexed`].
+/// C++ passes the address of a stack `EncodedSlice` as `key`.
 pub(crate) type ForEachPropertyCallback = extern "C" fn(
     global: &JSGlobalObject,
     ctx: *mut c_void,
-    key: *mut bun_core::EncodedSlice,
+    key: &bun_core::EncodedSlice,
     value: JSValue,
     is_symbol: bool,
     is_private_symbol: bool,
@@ -2481,13 +2482,53 @@ impl JSValue {
                 callback: ForEachPropertyCallback,
             );
         }
-        let mut scope_storage = core::mem::MaybeUninit::uninit();
-        let scope = crate::TopExceptionScope::init(&mut scope_storage, global);
+        crate::top_scope!(scope, global);
         JSC__JSValue__forEachPropertyOrdered(self, global, ctx, callback);
-        let result = scope.return_if_exception();
-        // SAFETY: `scope` was init'd above and is destroyed exactly once.
-        unsafe { crate::TopExceptionScope::destroy(scope) };
-        result
+        scope.return_if_exception()
+    }
+    /// Like `for_each_property_ordered`, but passes what a getter returns, or the accessor itself if the getter throws.
+    /// Returns true if `for_each_property_ordered_with_non_enumerable` is sure to visit the same properties.
+    #[inline(always)]
+    pub fn for_each_property_ordered_calling_getters(
+        self,
+        global: &JSGlobalObject,
+        ctx: *mut c_void,
+        callback: ForEachPropertyCallback,
+    ) -> JsResult<bool> {
+        unsafe extern "C" {
+            // safe: same contract as `JSC__JSValue__forEachProperty` above.
+            safe fn JSC__JSValue__forEachPropertyOrderedCallingGetters(
+                this: JSValue,
+                global: &JSGlobalObject,
+                ctx: *mut c_void,
+                callback: ForEachPropertyCallback,
+            ) -> bool;
+        }
+        crate::top_scope!(scope, global);
+        let is_same =
+            JSC__JSValue__forEachPropertyOrderedCallingGetters(self, global, ctx, callback);
+        scope.return_if_exception().map(|()| is_same)
+    }
+    /// Also visits own non-enumerable properties, to reproduce what older versions of `bun:test` printed.
+    #[inline(always)]
+    pub fn for_each_property_ordered_with_non_enumerable(
+        self,
+        global: &JSGlobalObject,
+        ctx: *mut c_void,
+        callback: ForEachPropertyCallback,
+    ) -> JsResult<()> {
+        unsafe extern "C" {
+            // safe: same contract as `JSC__JSValue__forEachProperty` above.
+            safe fn JSC__JSValue__forEachPropertyOrderedWithNonEnumerable(
+                this: JSValue,
+                global: &JSGlobalObject,
+                ctx: *mut c_void,
+                callback: ForEachPropertyCallback,
+            );
+        }
+        crate::top_scope!(scope, global);
+        JSC__JSValue__forEachPropertyOrderedWithNonEnumerable(self, global, ctx, callback);
+        scope.return_if_exception()
     }
     /// Like `for_each_property_ordered`, but passes what a getter returns, or the accessor itself if the getter throws.
     /// Returns true if `for_each_property_ordered_with_non_enumerable` is sure to visit the same properties.

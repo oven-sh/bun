@@ -9,8 +9,8 @@ use crate::bun_string_jsc::{ErrorKind, error_instance};
 use crate::error_code::ErrorBuilder;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
-    CommonStrings, DOMExceptionCode, ErrorableString, Exception, JSValue, JsError, JsResult,
-    MAX_SAFE_INTEGER, MIN_SAFE_INTEGER, VM,
+    CommonStrings, DOMExceptionCode, ErrorableString, JSValue, JsError, JsResult, MAX_SAFE_INTEGER,
+    MIN_SAFE_INTEGER, VM,
 };
 use bun_core::EncodedSlice;
 
@@ -1117,6 +1117,12 @@ impl JSGlobalObject {
         crate::call_zero_is_throw(self, || ZigGlobalObject__readableStreamToJSON(self, value))
     }
 
+    pub fn readable_stream_to_json_source(&self, value: JSValue) -> JsResult<JSValue> {
+        crate::call_zero_is_throw(self, || {
+            ZigGlobalObject__readableStreamToJSONSource(self, value)
+        })
+    }
+
     pub fn readable_stream_to_blob(&self, value: JSValue) -> JsResult<JSValue> {
         crate::call_zero_is_throw(self, || ZigGlobalObject__readableStreamToBlob(self, value))
     }
@@ -1408,13 +1414,57 @@ extern "C" fn Bun__resolveWithOnResolve(
 }
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Zig__GlobalObject__reportUncaughtException(
-    global: *const JSGlobalObject,
-    exception: *mut Exception,
-) -> JSValue {
+extern "C" fn Bun__importMetaResolve(
+    res: &mut ErrorableString,
+    global: &JSGlobalObject,
+    specifier: &BunString,
+    source: &BunString,
+    query: &mut BunString,
+) {
+    bun_core::scoped_log!(
+        importMetaResolve,
+        "source: {}, specifier: {}",
+        source,
+        specifier
+    );
+    Zig__GlobalObject__resolve(res, global, specifier, source, query)
+}
+
+/// `import.meta.resolve()` skips the resolver for a path or `file:` URL, so it runs `onResolve` plugins through this.
+/// Returns false when no plugin claims `specifier` or the plugin returns it unchanged.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__resolveWithOnResolve(
+    res: &mut ErrorableString,
+    global: &JSGlobalObject,
+    specifier: &BunString,
+    source: &BunString,
+    query: &mut BunString,
+) -> bool {
     crate::mark_binding();
-    // SAFETY: C++ passes valid non-null pointers.
-    unsafe { VirtualMachine::report_uncaught_exception(&*global, &*exception) }
+    // Skip plugins when an `onResolve` callback is the caller, or a catch-all filter would recurse forever.
+    if global.bun_vm().is_in_on_resolve.get() {
+        return false;
+    }
+    let path_of_url = |string: &BunString| {
+        string
+            .starts_with_ascii(b"file://")
+            .then(|| bun_url::path_from_file_url(string))
+    };
+    let (specifier_path, source_path) = (path_of_url(specifier), path_of_url(source));
+    match VirtualMachine::resolve_with_on_resolve::<true>(
+        global,
+        specifier_path.as_ref().unwrap_or(specifier),
+        source_path.as_ref().unwrap_or(source),
+        Some(query),
+        crate::virtual_machine::ResolveMode::Esm,
+        true,
+    ) {
+        Ok(None) => return false,
+        Ok(Some(Ok(path))) => *res = ErrorableString::ok(path),
+        Ok(Some(Err(value))) => *res = ErrorableString::err(value),
+        Err(_) => debug_assert!(global.has_exception()),
+    }
+    true
 }
 
 #[unsafe(no_mangle)]
@@ -1521,6 +1571,10 @@ unsafe extern "C" {
     -> JSValue;
     safe fn ZigGlobalObject__readableStreamToJSON(this: &JSGlobalObject, value: JSValue)
     -> JSValue;
+    safe fn ZigGlobalObject__readableStreamToJSONSource(
+        this: &JSGlobalObject,
+        value: JSValue,
+    ) -> JSValue;
     safe fn ZigGlobalObject__readableStreamToFormData(
         this: &JSGlobalObject,
         value: JSValue,

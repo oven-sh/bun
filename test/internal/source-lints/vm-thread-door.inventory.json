@@ -30,14 +30,6 @@
   "src/jsc/RuntimeTranspilerStore.rs": {
     "WorkPool::schedule*": 1
   },
-  "src/jsc/TopExceptionScope.rs": {
-    "unsafe impl Send": [
-      "SourceLocation"
-    ],
-    "unsafe impl Sync": [
-      "SourceLocation"
-    ]
-  },
   "src/jsc/VirtualMachine.rs": {
     "unsafe impl Send": [
       "Shared"
@@ -148,8 +140,7 @@
   "src/runtime/node/fs_events.rs": {
     "thread spawn": 1,
     "unsafe impl Send": [
-      "CoreFoundation",
-      "FSEventsLoop"
+      "CoreFoundation"
     ],
     "unsafe impl Sync": [
       "CoreFoundation",
@@ -191,9 +182,6 @@
   },
   "src/runtime/node/path_watcher.rs": {
     "thread spawn": 2,
-    "unsafe impl Send": [
-      "PathWatcherManager"
-    ],
     "unsafe impl Sync": [
       "PathWatcherManager"
     ]
@@ -216,9 +204,7 @@
   },
   "src/runtime/webcore/CompressionStreamCoder.rs": {
     "unsafe impl Send": [
-      "AsyncInput",
-      "CompressionAsyncCtx",
-      "CompressionStreamCoder"
+      "CompressionAsyncCtx"
     ]
   },
   "src/runtime/webcore/blob/copy_file.rs": {

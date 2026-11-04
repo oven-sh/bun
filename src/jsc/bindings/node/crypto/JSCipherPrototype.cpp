@@ -53,13 +53,29 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
     JSValue dataValue = callFrame->argument(0);
     JSValue encodingValue = callFrame->argument(1);
 
-    JSArrayBufferView* dataView = getArrayBufferOrView(lexicalGlobalObject, scope, dataValue, "data"_s, encodingValue);
+    // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/cipher.js#L185-L191
+    // An encoding that is not known is UTF-8, as in the other update() methods.
+    auto encoding = BufferEncodingType::utf8;
+    if (dataValue.isString()) {
+        encoding = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encodingValue).value_or(BufferEncodingType::utf8);
+        RETURN_IF_EXCEPTION(scope, {});
+        unsigned length = asString(dataValue)->length();
+        if (encoding == BufferEncodingType::hex && length % 2 != 0) {
+            return Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "encoding"_s, encodingValue, makeString("is invalid for data of length "_s, length));
+        }
+    } else if (!dataValue.inherits<JSArrayBufferView>()) {
+        return ERR::INVALID_ARG_TYPE_INSTANCE(scope, lexicalGlobalObject, "data"_s, "string"_s, "Buffer, TypedArray, or DataView"_s, dataValue);
+    }
+
+    JSArrayBufferView* dataView = getArrayBufferOrView(lexicalGlobalObject, scope, dataValue, "data"_s, encoding);
     RETURN_IF_EXCEPTION(scope, {});
 
     ClearErrorOnReturn clearErrorOnReturn;
 
-    if (dataView->byteLength() > INT_MAX) {
-        return ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "data is too big"_s, 0, INT_MAX, jsNumber(dataView->byteLength()));
+    ClearErrorOnReturn clearErrorOnReturn;
+
+    if (data.size() > INT_MAX) {
+        return ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "data is too big"_s, 0, INT_MAX, jsNumber(data.size()));
     }
 
     if (!cipher->m_ctx) {
@@ -67,7 +83,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
         return {};
     }
 
-    if (cipher->m_ctx.isCcmMode() && !cipher->checkCCMMessageLength(dataView->byteLength())) {
+    if (cipher->m_ctx.isCcmMode() && !cipher->checkCCMMessageLength(data.size())) {
         // return undefined
         // https://github.com/nodejs/node/blob/6b4255434226491449b7d925038008439e5586b2/src/crypto/crypto_cipher.cc#L742
         return JSValue::encode(jsUndefined());
@@ -127,7 +143,6 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherFinal, (JSC::JSGlobalObject * lexicalGlobalObje
 {
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
     ClearErrorOnReturn clearErrorOnReturn;
 
@@ -169,7 +184,6 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherFinal, (JSC::JSGlobalObject * lexicalGlobalObje
     bool ok;
     if (cipher->m_kind == CipherKind::Decipher && cipher->m_ctx.isCcmMode()) {
         ok = !cipher->m_pendingAuthFailed;
-        outLen = 0;
     } else {
         ok = cipher->m_ctx.update({}, static_cast<unsigned char*>(outBuf->data()) + heldBack, &outLen, true);
         ASSERT(heldBack + outLen <= outBuf->byteLength());

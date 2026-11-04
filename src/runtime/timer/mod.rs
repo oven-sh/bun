@@ -353,10 +353,10 @@ impl DateHeaderTimer {
     /// reschedule for 1s later iff there are active connections.
     pub(crate) fn run(&mut self, vm: &mut bun_jsc::virtual_machine::VirtualMachine) {
         self.event_loop_timer.state = EventLoopTimerState::FIRED;
-        // `uws_loop_mut` is the audited safe accessor (loop owned by the VM,
+        // `uws_loop_ref` is the audited safe accessor (loop owned by the VM,
         // separate allocation from `RuntimeState.timer` so no aliasing with
         // `&mut self`).
-        let loop_ = vm.uws_loop_mut();
+        let loop_ = vm.uws_loop_ref();
         let now = Timespec::now(TimespecMockMode::ForceRealTime);
 
         // Record when we last ran it.
@@ -1104,12 +1104,8 @@ impl All {
         }
     }
 
-    /// # Safety
-    /// `uws_loop` must point to the calling VM's live uws loop.
-    // `uws_loop` is an FFI handle held as `*mut` by every caller; contract is
-    // documented in `# Safety` above. Cannot be `&mut` without breaking the
-    // out-of-file call sites that hold raw pointers.
-    pub(crate) fn increment_immediate_ref(&mut self, delta: i32, uws_loop: *mut bun_uws_sys::Loop) {
+    /// `uws_loop` is the calling VM's uws loop.
+    pub(crate) fn increment_immediate_ref(&mut self, delta: i32, uws_loop: &bun_uws_sys::Loop) {
         let old = self.immediate_ref_count;
         let new = old + delta;
         self.immediate_ref_count = new;
@@ -1153,12 +1149,8 @@ impl All {
         // prevent libuv from polling forever
     }
 
-    /// # Safety
-    /// `uws_loop` must point to the calling VM's live uws loop.
-    // `uws_loop` is an FFI handle held as `*mut` by every caller; contract is
-    // documented in `# Safety` above. Cannot be `&mut` without breaking the
-    // out-of-file call sites that hold raw pointers.
-    pub(crate) fn increment_timer_ref(&mut self, delta: i32, uws_loop: *mut bun_uws_sys::Loop) {
+    /// `uws_loop` is the calling VM's uws loop.
+    pub(crate) fn increment_timer_ref(&mut self, delta: i32, uws_loop: &bun_uws_sys::Loop) {
         let old = self.active_timer_count;
         let new = old + delta;
         debug_assert!(new >= 0);

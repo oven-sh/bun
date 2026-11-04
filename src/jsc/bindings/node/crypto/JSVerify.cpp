@@ -318,12 +318,6 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
         return {};
     }
 
-    // Check if the context is initialized
-    if (!thisObject->m_mdCtx) {
-        throwTypeError(globalObject, scope, "Verify.prototype.verify cannot be called before Verify.prototype.init"_s);
-        return {};
-    }
-
     // This function receives two arguments: options and signature
     JSValue options = callFrame->argument(0);
     JSValue signatureValue = callFrame->argument(1);
@@ -364,6 +358,28 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
     DSASigEnc dsaSigEnc = getDSASigEnc(globalObject, scope, options);
     RETURN_IF_EXCEPTION(scope, {});
 
+    // https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_sig.cc#L530-L607
+    if (keyPtr.isOneShotVariant()) {
+        return ERR::CRYPTO_UNSUPPORTED_OPERATION(scope, globalObject);
+    }
+
+    ncrypto::Buffer<const unsigned char> sigBuf {
+        .data = static_cast<const unsigned char*>(signatureBuffer->vector()),
+        .len = signatureBuffer->byteLength(),
+    };
+
+    WTF::Vector<uint8_t> derBuffer;
+    if (dsaSigEnc == DSASigEnc::P1363 && keyPtr.isSigVariant()) {
+        if (!convertP1363ToDER(sigBuf, keyPtr, derBuffer)) {
+            return ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Malformed signature"_s);
+        }
+        sigBuf = { .data = derBuffer.begin(), .len = derBuffer.size() };
+    }
+
+    if (!thisObject->m_mdCtx) {
+        return ERR::CRYPTO_INVALID_STATE(scope, globalObject, "Not initialised"_s);
+    }
+
     // Move mdCtx out of JSVerify object to finalize it
     ncrypto::EVPMDCtxPointer mdCtx = WTF::move(thisObject->m_mdCtx);
     thisObject->m_sizeForGC = 0;
@@ -381,14 +397,20 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
         return {};
     }
 
-    // Create verification context
+    // Create verification context. A key that cannot verify is -2 from OpenSSL, which Node throws for, and 0 from BoringSSL.
     auto pkctx = keyPtr.newCtx();
     if (!pkctx || pkctx.initForVerify() <= 0) {
         throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to initialize verification context"_s);
         return {};
     }
 
-    // Set RSA padding mode and salt length if applicable
+    // For PSS padding without explicit salt length for verification,
+    // we don't need to calculate - use RSA_PSS_SALTLEN_AUTO (-2) to auto-detect
+    // This matches Node.js behavior for verification
+    if (padding == RSA_PKCS1_PSS_PADDING && !saltLen.has_value()) {
+        saltLen = RSA_PSS_SALTLEN_AUTO;
+    }
+
     if (keyPtr.isRsaVariant()) {
         std::optional<int> effective_salt_len = saltLen;
 
@@ -411,34 +433,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
         return {};
     }
 
-    // Handle P1363 format conversion for EC keys if needed
-    ncrypto::Buffer<const unsigned char> sigBuf {
-        .data = static_cast<const unsigned char*>(signatureBuffer->vector()),
-        .len = signatureBuffer->byteLength(),
-    };
-
-    if (dsaSigEnc == DSASigEnc::P1363 && keyPtr.isSigVariant()) {
-        WTF::Vector<uint8_t> derBuffer;
-
-        // If the signature cannot be converted to DER (e.g. its length is not
-        // 2 * bytesOfRS), fail verification instead of reinterpreting the raw
-        // bytes as a DER signature, matching Node.js.
-        if (!convertP1363ToDER(sigBuf, keyPtr, derBuffer)) {
-            return JSValue::encode(jsBoolean(false));
-        }
-
-        ncrypto::Buffer<const uint8_t> derSigBuf {
-            .data = derBuffer.begin(),
-            .len = derBuffer.size(),
-        };
-
-        bool result = pkctx.verify(derSigBuf, data);
-        return JSValue::encode(jsBoolean(result));
-    }
-
-    // Perform verification with the original signature
-    bool result = pkctx.verify(sigBuf, data);
-    return JSValue::encode(jsBoolean(result));
+    return JSValue::encode(jsBoolean(pkctx.verify(sigBuf, data)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(callVerify, (JSGlobalObject * globalObject, CallFrame* callFrame))

@@ -32,6 +32,7 @@
 #include "CryptoKeyPair.h"
 #include "CryptoKeyRSAComponents.h"
 #include "OpenSSLUtilities.h"
+#include "ncrypto.h"
 #include <JavaScriptCore/TypedArrayInlines.h>
 #include <openssl/x509.h>
 #include <openssl/evp.h>
@@ -117,6 +118,9 @@ RefPtr<CryptoKeyRSA> CryptoKeyRSA::create(CryptoAlgorithmIdentifier identifier, 
         // Ownership transferred to OpenSSL
         p.release();
         q.release();
+
+        if (!ncrypto::Rsa(rsa.get()).checkPrimeProduct())
+            return nullptr;
 
         // We set dmp1, dmpq1, and iqmp member of the RSA struct if the keyData has corresponding data.
 

@@ -182,7 +182,7 @@ impl bun_jsc::JsClass for Response {
         js::from_js_direct(value).map(|p| p.as_ptr())
     }
     fn to_js(self, global: &JSGlobalObject) -> JSValue {
-        Response::make_maybe_pooled(global, bun_core::heap::into_raw(Box::new(self)))
+        Response::to_js(RefPtr::new(self), global)
     }
 }
 
@@ -442,16 +442,15 @@ impl Response {
         <Self as BodyMixin>::check_body_stream_ref(self, global_object)
     }
 
-    /// # Safety
-    /// `this` is a live heap allocation and the caller owns a ref on it, which the wrapper adopts.
-    pub(crate) unsafe fn to_js(this: *mut Self, global_object: &JSGlobalObject) -> JSValue {
-        // SAFETY: fn contract.
-        let response = unsafe { &*this };
-        response.calculate_estimated_byte_size();
-        let js_value = js::to_js(this, global_object);
-        response.js_ref.set(JsRef::init_weak(js_value));
+    /// The wrapper adopts the ref.
+    pub(crate) fn to_js(this: RefPtr<Self>, global_object: &JSGlobalObject) -> JSValue {
+        this.calculate_estimated_byte_size();
+        let js_value = js::to_js(this.as_ptr(), global_object);
+        this.js_ref.set(JsRef::init_weak(js_value));
 
-        response.check_body_stream_ref(global_object);
+        this.check_body_stream_ref(global_object);
+        // The wrapper has held this ref since `js::to_js`.
+        let _ = this.into_raw();
         js_value
     }
 
@@ -734,9 +733,8 @@ impl Response {
             writer.write_str("\n")?;
 
             formatter.reset_line();
-            // SAFETY: R-2 `JsCell` escape hatch — `Body::write_format` takes
-            // `&mut self`; single-JS-thread invariant.
-            unsafe { self.body.get_mut() }
+            self.body
+                .get()
                 .write_format::<F, W, ENABLE_ANSI_COLORS>(&mut *formatter, writer)?;
         }
         writer.write_str("\n")?;
@@ -756,19 +754,9 @@ impl Response {
         self.throw_if_body_unusable(global_this)?;
         let cloned = self.clone(&cx)?;
 
-        // SAFETY: `cloned` is a freshly-boxed Response from `clone()`.
-        let js_wrapper = Response::make_maybe_pooled(global_this, cloned);
+        let js_wrapper = Response::to_js(cloned, global_this);
         self.sync_cloned_body_stream_caches(this_value.to_js(), js_wrapper, global_this);
         Ok(js_wrapper)
-    }
-
-    /// # Safety
-    /// `ptr` must point to a live `Response` allocation (e.g. freshly boxed via
-    /// [`Response::clone`]); ownership of the +1 ref transfers to the returned
-    /// JS wrapper.
-    pub(crate) fn make_maybe_pooled(global_object: &JSGlobalObject, ptr: *mut Response) -> JSValue {
-        // SAFETY: caller contract — `ptr` is live and uniquely owned.
-        unsafe { Response::to_js(ptr, global_object) }
     }
 
     pub(crate) fn clone_value(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<Response> {
@@ -786,8 +774,8 @@ impl Response {
         })
     }
 
-    pub(crate) fn clone(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<*mut Response> {
-        Ok(bun_core::heap::into_raw(Box::new(self.clone_value(cx)?)))
+    pub(crate) fn clone(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<RefPtr<Response>> {
+        Ok(RefPtr::new(self.clone_value(cx)?))
     }
 
     fn destroy(this: *mut Response) {
@@ -885,9 +873,40 @@ impl Response {
         )?;
         // Disarm the body-reset guard: all fallible ops have succeeded.
         let response = scopeguard::ScopeGuard::into_inner(response);
-        let ptr = bun_core::heap::into_raw(Box::new(response));
-        // SAFETY: `ptr` is freshly boxed; the wrapper adopts its ref.
-        Ok(unsafe { Response::to_js(ptr, global_this) })
+        Ok(Response::to_js(RefPtr::new(response), global_this))
+    }
+
+    fn json_text_of(
+        global_this: &JSGlobalObject,
+        json_value: JSValue,
+        argument: JsonArgument,
+    ) -> JsResult<BunString> {
+        if argument == JsonArgument::Text && json_value.is_string_literal() {
+            return json_value.to_bun_string(global_this);
+        }
+
+        // Validate top-level values that are not JSON serializable (Node.js compatibility)
+        if json_value.is_undefined()
+            || json_value.is_symbol()
+            || json_value.js_type() == bun_jsc::JSType::JSFunction
+            || json_value.js_type() == bun_jsc::JSType::CompiledClosure
+            || json_value.js_type() == bun_jsc::JSType::SlimClosure
+            || json_value.js_type() == bun_jsc::JSType::SlimClosureWithProperties
+        {
+            let err = global_this
+                .create_type_error_instance(format_args!("Value is not JSON serializable"));
+            return Err(global_this.throw_value(err));
+        }
+
+        // BigInt has a different error message to match Node.js exactly
+        if json_value.is_big_int() {
+            let err = global_this
+                .create_type_error_instance(format_args!("Do not know how to serialize a BigInt"));
+            return Err(global_this.throw_value(err));
+        }
+
+        // Use jsonStringifyFast which passes undefined for the space parameter, triggering JSC's FastStringifier optimization.
+        json_value.json_stringify_fast(global_this)
     }
 
     fn json_text_of(global_this: &JSGlobalObject, json_value: JSValue) -> JsResult<BunString> {
@@ -976,24 +995,21 @@ impl Response {
         // The JS string's own WTF string (no re-encode), same as `Headers.prototype.set`.
         let location = if href.is_empty() { &url_string } else { &href };
         headers.put(HTTPHeaderName::Location, location, global_this)?;
-        let ptr = bun_core::heap::into_raw(Box::new(response));
-        // SAFETY: `ptr` is freshly boxed; the wrapper adopts its ref.
-        Ok(unsafe { Response::to_js(ptr, global_this) })
+        Ok(Response::to_js(RefPtr::new(response), global_this))
     }
 
     pub(crate) fn error(cx: &mut JsScope<'_>) -> JSValue {
         let global_this = cx.global();
-        let response = bun_core::heap::into_raw(Box::new(Response {
+        let response = RefPtr::new(Response {
             init: JsCell::new(Init {
                 status_code: 0,
                 ..Default::default()
             }),
             body: JsCell::new(Body::new(BodyValue::Null)),
             ..Default::default()
-        }));
+        });
 
-        // SAFETY: `response` is freshly boxed; the wrapper adopts its ref.
-        unsafe { Response::to_js(response, global_this) }
+        Response::to_js(response, global_this)
     }
 
     pub(crate) fn constructor<'a>(

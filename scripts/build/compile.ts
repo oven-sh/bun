@@ -586,6 +586,7 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
 
   const lazy = opts.lazyObjects ?? [];
   const lazyInputs: string[] = [];
+  const embedsLibrary = opts.embedsCompiledLibrary === true && cfg.compiledLibrary;
   const vars = { ldflags: opts.flags.join(" "), lazy: "" };
   let inputs = [...objects, ...lazy, ...opts.libs];
   if (lazy.length > 0 && linksWithLld(cfg)) {

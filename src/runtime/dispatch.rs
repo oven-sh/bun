@@ -1019,8 +1019,7 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
             })
         }
         poll_tag::MEMORY_PRESSURE => {
-            // SAFETY: `poll` is live per `__bun_run_file_poll`'s contract.
-            crate::node::memory_pressure::on_poll(unsafe { &mut *poll }, size_or_offset);
+            crate::node::memory_pressure::on_poll(poll_ref, size_or_offset);
         }
         poll_tag::PARENT_DEATH_WATCHDOG => {
             let wd = owner_as!(bun_io::parent_death_watchdog::ParentDeathWatchdog);
@@ -1263,7 +1262,7 @@ unsafe fn __bun_run_wtf_timer(timer: *mut (), vm: *mut bun_jsc::virtual_machine:
 #[unsafe(no_mangle)]
 pub(crate) unsafe fn __bun_fire_timer(
     t: *mut EventLoopTimer,
-    now: *const ElTimespec,
+    now: &ElTimespec,
     vm: *mut (),
 ) -> bun_event_loop::JsResult<()> {
     use crate::timer::{ImmediateObject, TimeoutObject, TimerObjectInternals, WTFTimer};
@@ -1324,7 +1323,7 @@ pub(crate) unsafe fn __bun_fire_timer(
             // SAFETY: per fn contract — `now` is the live snapshot; `vm` is the
             // per-thread VM. `fire` may free the container; `t` is dead after.
             // `fire` takes `*mut Self` (noalias re-entrancy — see its doc).
-            unsafe { TimerObjectInternals::fire(internals, &*now, vm) };
+            unsafe { TimerObjectInternals::fire(internals, now, vm) };
             Ok(())
         }
         EventLoopTimerTag::ImmediateObject => {
@@ -1332,12 +1331,12 @@ pub(crate) unsafe fn __bun_fire_timer(
             // SAFETY: see TimeoutObject arm.
             let internals = unsafe { core::ptr::addr_of_mut!((*container).internals) };
             // SAFETY: see TimeoutObject arm.
-            unsafe { TimerObjectInternals::fire(internals, &*now, vm) };
+            unsafe { TimerObjectInternals::fire(internals, now, vm) };
             Ok(())
         }
         EventLoopTimerTag::WTFTimer => {
             timer_arm!(WTFTimer, event_loop_timer, |c, now, vm| WTFTimer::fire(
-                c, &*now, vm
+                c, now, vm
             ))
         }
         EventLoopTimerTag::AbortSignalTimeout => {

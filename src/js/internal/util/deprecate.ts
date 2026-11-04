@@ -9,8 +9,8 @@ function getDeprecationWarningEmitter(
   shouldEmitWarning = () => true,
 ) {
   let warned = false;
-  return function () {
-    if (!warned && shouldEmitWarning()) {
+  return function (arg: Arg) {
+    if (!warned && shouldEmitWarning(arg)) {
       warned = true;
       if (code !== undefined) {
         if (!codesWarned.has(code)) {
@@ -68,4 +68,5 @@ function deprecate(fn: (this: unknown, ...args: unknown[]) => unknown, msg: stri
 
 export default {
   deprecate,
+  getDeprecationWarningEmitter,
 };

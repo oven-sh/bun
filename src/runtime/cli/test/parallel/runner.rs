@@ -16,9 +16,11 @@ use bun_sys::Fd;
 
 use super::aggregate;
 use super::channel::{Channel, ChannelOwner};
-use super::coordinator::{Coordinator, abort_handler};
+use super::coordinator::{Coordinator, StopReason, abort_handler};
 use super::file_range::FileRange;
 use super::frame::{self, Frame};
+use super::parts::Parts;
+use super::reservation::Reservation;
 use super::worker::{Worker, WorkerPipe};
 use crate::Command;
 use crate::test_command::{self, CommandLineReporter, TestCommand};
@@ -57,12 +59,18 @@ pub(crate) fn run_as_coordinator(
     files: &[Interned],
     ctx: Command::Context,
     coverage_opts: &mut CodeCoverageOptions,
+    splits_files: bool,
+    left_by_workers: &mut LeftByWorkers,
 ) -> crate::Result<bool> {
     // SAFETY: env loader is initialized before the test runner runs.
     let env = unsafe { &mut *vm.transpiler.env };
     let n: u32 = u32::try_from(files.len()).unwrap();
-    let k: u32 = ctx.test_options.parallel.min(n);
-    if k <= 1 {
+    let k: u32 = ctx
+        .test_options
+        .parallel
+        .max(u32::from(splits_files))
+        .min(n);
+    if k <= 1 && !splits_files {
         // Jest sets JEST_WORKER_ID=1 even with --maxWorkers=1; match that so
         // tests can rely on the var whenever --parallel is passed.
         for name in WORKER_ID_VARIABLES {
@@ -90,14 +98,15 @@ pub(crate) fn run_as_coordinator(
         }
         envps.push(env.map.create_null_delimited_env_map()?);
     }
-    let argv = build_worker_argv(ctx)?;
+    let (argv, image_flag_slot) = build_worker_argv(ctx, splits_files)?;
 
     // Sort lexicographically so adjacent indices share parent directories.
     // Each worker owns a contiguous chunk; co-located files share imports, so
     // this keeps each worker's isolation SourceProvider cache hot. --randomize
     // explicitly opts out of locality (the caller already shuffled).
+    let ends_as_in_one_process = ctx.test_options.parallel.min(n) <= 1;
     let mut sorted: Vec<Interned> = files.to_vec();
-    if !ctx.test_options.randomize {
+    if !ctx.test_options.randomize && !ends_as_in_one_process {
         index_sort::sort_slice_by(&mut sorted, |a, b| {
             bun_core::order(a.as_bytes(), b.as_bytes())
         });
@@ -110,7 +119,46 @@ pub(crate) fn run_as_coordinator(
     // of file count, and each chunk is dispatched slowest-first (cache hits
     // depend on which worker runs a file, not the order within the worker).
     let mut costs: Option<Vec<u64>> = None;
+    // Empty: they are cut by number.
+    let mut ranges_of_parts: Vec<FileRange> = Vec::new();
+    // What the first of them took, each of which is one heavy file.
+    let mut heavy_growths: Vec<u32> = Vec::new();
     let ranges: Vec<FileRange> = match reporter.timings.as_ref() {
+        _ if splits_files => {
+            // A program above the layers holds test files alone, so it gains nothing from neighbours.
+            if let Some(timings) = reporter.timings.as_ref()
+                && !timings.is_empty()
+                && !ctx.test_options.randomize
+                && ctx.test_options.parallel > 0
+                && crate::cli::run_compiled::test_run_layers(ctx) > 0
+            {
+                timings.sort_slowest_first(&mut sorted);
+                // A worker runs a part from its first file to its last. A heavy file has to wait for another to end, so each is a
+                // part of its own, which waits without a worker.
+                let heavy_parts = timings.move_heavy_first(&mut sorted) as u32;
+                let growth_of = |file: &Interned| timings.growth_of(file.as_bytes()).unwrap_or(0);
+                heavy_growths = sorted[..heavy_parts as usize]
+                    .iter()
+                    .map(growth_of)
+                    .collect();
+                let light = &mut sorted[heavy_parts as usize..];
+                let costs = timings.costs_where_unknown_is_slow(light);
+                let files = crate::cli::run_compiled::test_part_files(ctx).unwrap_or(n);
+                let count = (light.len() as u32).div_ceil(files);
+                ranges_of_parts = (0..heavy_parts)
+                    .map(|file| FileRange {
+                        lo: file,
+                        hi: file + 1,
+                    })
+                    .collect();
+                let of_light = super::parts::cut_by_time(light, &costs, count);
+                ranges_of_parts.extend(of_light.into_iter().map(|range| FileRange {
+                    lo: range.lo + heavy_parts,
+                    hi: range.hi + heavy_parts,
+                }));
+            }
+            vec![FileRange { lo: 0, hi: 0 }; k as usize]
+        }
         Some(t) if !t.is_empty() && !ctx.test_options.randomize => {
             let ranges = if crate::cli::run_compiled::runs_compiled_code() {
                 let mut ranges = vec![FileRange { lo: 0, hi: 0 }; k as usize];
@@ -178,6 +226,8 @@ pub(crate) fn run_as_coordinator(
         files: sorted,
         costs,
         cwd: FileSystem::get().top_level_dir(),
+        cwd_of_builds: (ctx.original_cwd.as_deref())
+            .unwrap_or_else(|| FileSystem::get().top_level_dir()),
         argv,
         envps,
         // Coordinator borrows the workers slice while each Worker holds a raw
@@ -216,7 +266,19 @@ pub(crate) fn run_as_coordinator(
         header_printed_by_worker: None,
         frame: Frame::default(),
         files_done: 0,
-        spawned_count: 0,
+        spawned_count: if splits_files { k } else { 0 },
+        parts: splits_files.then(|| {
+            Box::new(Parts::new(
+                sorted_for_parts,
+                crate::cli::run_compiled::test_part_files(ctx).unwrap_or(sorted_for_parts),
+                ranges_of_parts,
+                &heavy_growths,
+                image_flag_slot,
+                crate::cli::run_compiled::test_run_layers(ctx),
+                crate::cli::run_compiled::stands_on_library_of_this_bun(ctx),
+                crate::cli::run_compiled::test_run_has_layer_of_computed_imports(ctx),
+            ))
+        }),
         live_workers: 0,
         aborted: None,
         ends_as_in_one_process: false,
@@ -262,11 +324,17 @@ pub(crate) fn run_as_coordinator(
         aggregate::write_coverage_report(&mut coord, coverage_opts);
     }
     if let Some(code) = coord.aborted {
+        coord.parts = None;
         coord.reporter.write_junit_report_if_needed();
         coord.reporter.write_timings_if_needed();
         Output::flush();
         Global::exit(code);
     }
+    *left_by_workers = LeftByWorkers {
+        exit_code: coord.exit_code_left_by_tests,
+        failed_to_write_inline_snapshots: coord.failed_to_write_inline_snapshots,
+        bailed_out: coord.ends_as_in_one_process && coord.stop_reason == Some(StopReason::Bail),
+    };
     Ok(true)
 }
 
@@ -279,7 +347,10 @@ pub(crate) fn run_as_coordinator(
 /// (`--path-ignore-patterns`, `--changed`), `--reporter-outfile`,
 /// `--pass-with-no-tests`, `--parallel` itself — are intentionally not
 /// forwarded.
-fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn::CStrPtr]>> {
+fn build_worker_argv(
+    ctx: &Command::ContextData,
+    splits_files: bool,
+) -> crate::Result<(Box<[bun_spawn::CStrPtr]>, usize)> {
     // Null-sentinel slice of C-string pointers. String storage routes through
     // the process-lifetime CLI arena (bulk-freed on exit).
     let mut argv: Vec<bun_spawn::CStrPtr> = Vec::new();
@@ -527,7 +598,7 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
 
     argv.push(core::ptr::null());
     // Callers index by .len(), so keep the trailing null in the boxed slice.
-    Ok(argv.into_boxed_slice())
+    Ok((argv.into_boxed_slice(), image_flag_slot))
 }
 
 /// Local shim for `@tagName(loader)` — `bun_options_types::schema::api::Loader`
@@ -607,6 +678,36 @@ pub(crate) struct WorkerCommands {
     /// EOF, error, `.shutdown`, or a corrupt frame.
     pub(crate) done: bool,
 }
+
+struct RunningFile {
+    idx: u32,
+    before: crate::test_runner::jest::Summary,
+    before_unhandled: u32,
+    exit_code_before: u8,
+    started_ns: u64,
+    resident_at_start: Option<ResidentAtStart>,
+}
+
+pub(crate) struct WorkerCommands {
+    pub(crate) channel: Channel<WorkerCommands>,
+    /// Reused across all worker → coordinator emits.
+    frame: Frame,
+    /// Coordinator dispatches one `.run` and waits for `.file_done` before
+    /// the next, so a single slot is sufficient. Owned path storage.
+    pub(crate) pending_file: Option<PendingFile>,
+    pub(crate) pending_path: Vec<u8>,
+    /// `first_loads` of the process that ran in this one's place before it.
+    pub(crate) pending_first_loads: Vec<u8>,
+    running: Option<RunningFile>,
+    /// EOF, error, `.shutdown`, or a corrupt frame.
+    pub(crate) done: bool,
+    /// `worker_flush_aggregates`. Whatever lets a timer fire reaches `bail_out`, `Bun.spawnSync` in an executable too, and the flush reaches the
+    /// transpiler and the bundler. Held here, only `run_as_worker` names it, and an executable that never runs tests need not hold what it reaches.
+    flush_aggregates: FlushAggregates,
+}
+
+type FlushAggregates =
+    fn(&mut CommandLineReporter, &mut VirtualMachine, &CodeCoverageOptions, &mut WorkerCommands);
 
 impl WorkerCommands {
     /// Sends one frame of `kind`; `fill` writes its payload.
@@ -926,6 +1027,7 @@ pub(crate) fn run_as_worker(
             pending_first_loads: Vec::new(),
             running: None,
             done: false,
+            flush_aggregates: worker_flush_aggregates,
         },
         files_run: 0,
     };

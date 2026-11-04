@@ -255,10 +255,8 @@ unsafe extern "C" {
 /// have done (that task can no longer run: this context refuses new tasks).
 /// Children created by a child are handled by that child's own `shutdown()`
 /// before it can be joined, so this is transitively complete.
-pub fn join_child_workers(parent: &mut VirtualMachine) {
-    // `child_workers` is only touched on this (the parent) thread: `create()`
-    // pushes, `release_parent_poll_ref()` removes, and this takes the rest.
-    let children = core::mem::take(&mut parent.child_workers);
+/// `children` is what was left in the VM's `child_workers`: each release re-enters and reads that field.
+pub(crate) fn join_child_workers(children: Vec<*mut WebWorker>) {
     for child in children {
         // SAFETY: registered children are live until the parent releases them
         // (the proxy's ref); this is that release.
@@ -400,6 +398,7 @@ impl WebWorker {
         log!("[{}] create", this_context_id);
 
         let spec_slice = specifier_str.to_utf8();
+        // The transpiler holds its address: it is neither moved nor named until the guard below has run.
         let mut temp_log = bun_ast::Log::default();
         // SAFETY: `parent` is the calling thread's live VM (BACKREF); borrows
         // are scoped to each statement.
@@ -408,13 +407,11 @@ impl WebWorker {
             (*parent).transpiler.set_log(&raw mut temp_log);
             prev
         };
-        // RAII: log pointer restored and temp log dropped on every return path.
-        let mut restore = scopeguard::guard(temp_log, move |log| {
+        // RAII: log pointer restored on every return path, before `temp_log` drops.
+        scopeguard::defer! {
             // SAFETY: `parent` outlives the guard (this call's frame).
             unsafe { (*parent).transpiler.set_log(prev_log) };
-            drop(log);
-        });
-        let temp_log = &mut *restore;
+        }
 
         // SAFETY: caller passed valid (ptr,len) (or `(null,0)`); slice borrowed from C++.
         let preload_modules: &[BunString] =
@@ -432,22 +429,36 @@ impl WebWorker {
             let dot_slash = OnceCell::new();
             // SAFETY: `parent` is the live VM on the calling (parent) thread;
             // `resolve_entry_point_specifier` takes the raw pointer.
-            if let Some(preload) = unsafe {
-                resolve_entry_point_specifier(
-                    parent,
-                    utf8_slice.slice(),
-                    &dot_slash,
-                    error_message,
-                    temp_log,
-                )
+            let unresolved = match unsafe {
+                resolve_entry_point_specifier(parent, utf8_slice.slice(), &dot_slash)
             } {
-                preloads.push(preload.to_vec().into_boxed_slice());
-            }
-
-            if !error_message.is_empty() {
-                // preloads dropped by RAII.
-                return core::ptr::null_mut();
-            }
+                Ok(preload) => {
+                    preloads.push(preload.to_vec().into_boxed_slice());
+                    continue;
+                }
+                Err(unresolved) => unresolved,
+            };
+            *error_message = match unresolved {
+                Unresolved::Because(text) => BunString::static_(text),
+                Unresolved::Logged => {
+                    // SAFETY: as above; the resolver has written its error to the log and is done with it.
+                    let (global, log) = unsafe { ((*parent).global(), (*parent).transpiler.log()) };
+                    let out: jsc::JsResult<BunString> = (|| {
+                        let out =
+                            log.to_js(global, format_args!("Error resolving Worker entry point"))?;
+                        out.to_bun_string(global)
+                    })();
+                    match out {
+                        Ok(out) => out,
+                        Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
+                        Err(JsError::Thrown | JsError::Terminated) => {
+                            BunString::static_("unexpected exception")
+                        }
+                    }
+                }
+            };
+            // preloads dropped by RAII.
+            return core::ptr::null_mut();
         }
 
         // The VM of the Worker is created for a program. The Worker resolves the specifier again and reports what is wrong with it.
@@ -875,8 +886,7 @@ impl WebWorker {
     /// worker.ref()/.unref(). Parent thread; the proxy holds a ref on `this`
     /// and gates out calls once the keep-alive has been released.
     #[unsafe(export_name = "WebWorker__setRef")]
-    pub(crate) extern "C" fn set_ref(this: *mut WebWorker, value: bool) {
-        let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
+    pub(crate) extern "C" fn set_ref(this: &WebWorker, value: bool) {
         this.with_parent_poll_ref(|poll| {
             if value {
                 poll.ref_(bun_io::js_vm_ctx());
@@ -890,8 +900,7 @@ impl WebWorker {
     /// TerminationException in its VM at the next safepoint, wake its loop.
     /// Parent thread.
     #[unsafe(export_name = "WebWorker__requestTermination")]
-    pub(crate) extern "C" fn request_termination(this: *mut WebWorker) {
-        let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
+    pub(crate) extern "C" fn request_termination(this: &WebWorker) {
         // The handle's lock is taken *before* the flag is published: a worker
         // that breaks out of its loop because it saw the flag then blocks in
         // shutdown() (unpublish) until `terminated_by_parent` and the stop are
@@ -920,11 +929,10 @@ impl WebWorker {
     /// The parent is releasing this thread: drop the keep-alive on the parent's
     /// loop and forget it as a child. Parent thread.
     #[unsafe(export_name = "WebWorker__releaseParentPollRef")]
-    pub(crate) extern "C" fn release_parent_poll_ref(this: *mut WebWorker) {
-        let this_ref = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
-        this_ref.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
+    pub(crate) extern "C" fn release_parent_poll_ref(this: &WebWorker) {
+        this.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
         // SAFETY: parent thread; `parent` outlives its children (it joins them).
-        let children = unsafe { &mut (*this_ref.parent).child_workers };
+        let children = unsafe { &mut (*this.parent).child_workers };
         if let Some(i) = children.iter().position(|&c| core::ptr::eq(c, this)) {
             children.swap_remove(i);
         }
@@ -1167,28 +1175,19 @@ impl WebWorker {
         // the raw specifier). The returned slice is BORROWED — every exit from
         // spin() goes through shutdown() which is noreturn, so a `defer free`
         // here would never run anyway.
-        let mut resolve_error = BunString::EMPTY;
-        let vm_log = vm.log_mut().unwrap();
         let dot_slash = OnceCell::new();
         // SAFETY: `vm_ptr` is the live worker-thread VM.
         let path = match unsafe {
-            resolve_entry_point_specifier(
-                vm_ptr,
-                &self.unresolved_specifier,
-                &dot_slash,
-                &mut resolve_error,
-                vm_log,
-            )
+            resolve_entry_point_specifier(vm_ptr, &self.unresolved_specifier, &dot_slash)
         } {
-            Some(p) => p,
-            None => {
+            Ok(p) => p,
+            Err(unresolved) => {
                 vm.as_mut().exit_handler.exit_code = 1;
-                if vm_log.errors == 0 && !resolve_error.is_empty() {
-                    let err = resolve_error.to_utf8();
-                    // `Log::add_error` takes `impl IntoText`; pass an owned
-                    // `Vec<u8>` so the `Msg` owns its bytes (no lifetime tie
-                    // to `err`, which is dropped immediately after).
-                    vm_log.add_error(None, bun_ast::Loc::EMPTY, err.slice().to_vec());
+                let vm_log = vm.log_mut().unwrap();
+                if vm_log.errors == 0
+                    && let Unresolved::Because(text) = unresolved
+                {
+                    vm_log.add_error(None, bun_ast::Loc::EMPTY, text);
                 }
                 self.flush_logs(vm);
                 return self.shutdown();
@@ -1647,9 +1646,9 @@ unsafe fn resolve_entry_point_specifier_quietly<'s>(
 ///
 /// # Safety
 /// `parent` must point at this thread's live `VirtualMachine`. Passed as a raw
-/// pointer (not `&mut`) because callers hold other borrows into the VM (its
-/// log) across the call; per-use `(*parent)` derefs keep any autoref scoped to
-/// the single expression.
+/// pointer (not `&mut`) because `spin()` holds a `&VirtualMachine` across the
+/// call; per-use `(*parent)` derefs keep any autoref scoped to the single
+/// expression.
 unsafe fn resolve_entry_point_specifier<'s>(
     parent: *mut VirtualMachine,
     str: &'s [u8],
@@ -1685,7 +1684,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
     if let Some(graph) = unsafe { (*parent).standalone_module_graph }
         && let Some(name) = graph.resolve(graph.base_public_path_with_default_suffix(), str)
     {
-        return Some(name);
+        return Ok(name);
     }
     // The file of the first entry point has the name of the executable, and its module the name of its source.
     if let Some(module) = resolver.resolve_embedded_entry_point(str)
@@ -1714,8 +1713,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
                 None => str,
             });
         } else {
-            *error_message = BunString::static_("Blob URL is missing");
-            return None;
+            return Err(Unresolved::Because("Blob URL is missing"));
         }
     }
 

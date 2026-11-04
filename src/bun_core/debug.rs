@@ -77,10 +77,8 @@ impl MemoryAccessor {
             match self.mem {
                 -2 => break,
                 -1 => {
-                    // SAFETY: getpid has no preconditions. Don't cache across
-                    // calls — it's served from the vDSO and a stale cache after
-                    // fork() would target the wrong process.
-                    let pid = unsafe { libc::getpid() };
+                    // Not cached: after fork() a stale pid would target the wrong process.
+                    let pid = crate::output::getpid();
                     let local = libc::iovec {
                         iov_base: buf.as_mut_ptr().cast(),
                         iov_len: buf.len(),
@@ -531,7 +529,8 @@ impl StackIterator {
         if new_fp != 0 && new_fp <= self.fp {
             return None;
         }
-        let new_pc = self.ma.load_usize(fp.checked_add(Self::PC_OFFSET)?)?;
+        let new_pc =
+            strip_return_address_signature(self.ma.load_usize(fp.checked_add(Self::PC_OFFSET)?)?);
 
         self.returned_to = Some((
             new_pc,
@@ -543,7 +542,15 @@ impl StackIterator {
     }
 }
 
-pub(crate) const PC_OFFSET: usize = StackIterator::PC_OFFSET;
+/// The return address in the frame record at `fp`, as `StackIterator` gives it.
+///
+/// # Safety
+/// `fp` is the address of a frame record.
+pub unsafe fn return_address_of_frame(fp: usize) -> usize {
+    // SAFETY: the caller's.
+    let saved = unsafe { *((fp + StackIterator::PC_OFFSET) as *const usize) };
+    strip_return_address_signature(saved)
+}
 
 /// Capture the current thread's call stack.
 ///
@@ -559,7 +566,7 @@ pub(crate) fn capture_current(first_address: Option<usize>, out: &mut [usize]) -
     // Miri can neither execute `frame_address`'s inline asm nor follow the
     // frame-pointer chain it returns. An empty trace keeps the debug-only
     // `StoredTrace` captures on the refcount paths interpretable. `cfg!` rather
-    // than `#[cfg]` so the walk below stays compiled (and `PC_OFFSET` live).
+    // than `#[cfg]` so the walk below stays compiled.
     if cfg!(miri) {
         return 0;
     }

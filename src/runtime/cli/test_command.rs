@@ -2229,7 +2229,14 @@ impl CommandLineReporter {
             )
         });
         if let Some(idx) = this.worker_ipc_file_idx {
-            ParallelRunner::worker_emit_test_done(idx, formatted_line, report.as_ref());
+            let line_for_coordinator = match this.worker_stands_for_one_process {
+                true => {
+                    let _ = Output::error_writer().write_all(formatted_line);
+                    &[][..]
+                }
+                false => formatted_line,
+            };
+            ParallelRunner::worker_emit_test_done(idx, line_for_coordinator, report.as_ref());
         } else {
             let _ = Output::error_writer().write_all(formatted_line);
             if let (Some(junit), Some(report)) = (this.reporters.junit.as_mut(), &report) {
@@ -2302,17 +2309,22 @@ impl CommandLineReporter {
     /// Prints that `--bail` hit its failure count, then exits with code 1. Tears down the VM the same way `exec` does.
     /// A `--parallel` worker never gets here: its `jest.bail` is 0, and the coordinator counts the failures.
     pub(crate) fn bail_out(&mut self, vm: &mut VirtualMachine) -> ! {
-        self.print_summary();
-        pretty_error!(
-            "\nBailed out after {} failure{}<r>\n",
-            self.jest.bail,
-            if self.jest.bail == 1 { "" } else { "s" }
-        );
-        Output::flush();
-        self.write_junit_report_if_needed();
-        self.write_timings_if_needed();
+        let is_worker = self.worker_ipc_file_idx.is_some();
+        if is_worker {
+            ParallelRunner::worker_ends_at_bail(self, vm);
+        } else {
+            self.print_summary();
+            pretty_error!(
+                "\nBailed out after {} failure{}<r>\n",
+                self.jest.bail,
+                if self.jest.bail == 1 { "" } else { "s" }
+            );
+            Output::flush();
+            self.write_junit_report_if_needed();
+            self.write_timings_if_needed();
+        }
 
-        vm.exit_handler.exit_code = 1;
+        vm.exit_handler.exit_code = u8::from(!is_worker);
         vm.exit_handler.skip_exit_listeners = skip_exit_listeners(self);
         vm.exit_handler.requested = true;
         vm.run_with_api_lock_mut(VirtualMachine::on_exit);
@@ -2953,6 +2965,153 @@ impl TestCommand {
             crate::run_command::start_profilers(vm, ctx);
             ParallelRunner::run_as_worker(&mut reporter, vm, ctx);
         }
+        if run_compiled::builds_test_part() {
+            run_compiled::log_step_of_build("the process is set up");
+            // What is asked of the resolver ahead of the build is a guess at what the files import, and prose reads as an import.
+            // The build itself says what is wrong with a file.
+            let mut unread_log = bun_ast::Log::init();
+            // SAFETY: the resolver and `unread_log` outlive the guard.
+            let log_scope = unsafe {
+                bun_resolver::Resolver::scoped_log(
+                    &raw mut vm.transpiler.resolver,
+                    core::ptr::NonNull::from(&mut unread_log),
+                )
+            };
+            let mut entry_points = run_compiled::read_test_part();
+            let test_files_and_preloads: Vec<Box<[u8]>> =
+                (entry_points.iter().chain(&ctx.preloads).cloned()).collect();
+            // What the test files share is a program of its own, which is built once. The build does not see the test files.
+            let builds_what_is_shared = run_compiled::builds_what_test_parts_share();
+            if let Some(aot) = (ctx.bundler_options.aot.as_mut()).filter(|_| builds_what_is_shared)
+            {
+                aot.main_modules_beside_entry_points =
+                    entry_points.iter().map(|path| path.to_vec()).collect();
+            }
+            let is_above_what_is_shared = run_compiled::is_above_program_of_run();
+            let builds_packages_alone = run_compiled::builds_packages_alone();
+            // For every run of this Bun: there are no test files, and nobody knows what those of a run will do.
+            let builds_library_alone = run_compiled::builds_library_alone();
+            let holds_library =
+                !is_above_what_is_shared && !run_compiled::is_above_library_of_this_bun();
+            // The files that the build does not see and that run beside it.
+            let mut files_above = None;
+            if builds_packages_alone {
+                entry_points.extend(ctx.preloads.iter().cloned());
+                let (of_packages, others) = find_files_of_packages_reached_from(vm, entry_points);
+                let only_imported = find_entry_points_only_imported(&of_packages);
+                if let Some(aot) = ctx.bundler_options.aot.as_mut() {
+                    aot.entry_points_only_imported_from_above = only_imported;
+                }
+                (entry_points, files_above) = (of_packages, Some(others));
+                run_compiled::log_step_of_build("the files of packages are found");
+            }
+            if builds_library_alone {
+                if let Some(aot) = ctx.bundler_options.aot.as_mut() {
+                    aot.replaced_by_tests = bun_aot::builtins::everything_that_tests_replace();
+                    let is_reference = run_compiled::builds_reference_library();
+                    if is_reference {
+                        aot.replaced_by_tests.builtins = Default::default();
+                    }
+                    aot.holds_library_alone = !is_reference;
+                    aot.reference_library_image = run_compiled::reference_library_image();
+                }
+            } else if builds_what_is_shared && !is_above_what_is_shared {
+                // The build is told what they replace. The builds above it take over what it ends with.
+                let files_above = files_above.as_ref().unwrap_or(&entry_points);
+                let replaced_by_tests = find_what_tests_replace(vm, files_above, &ctx.preloads);
+                if let Some(aot) = ctx.bundler_options.aot.as_mut() {
+                    aot.replaced_by_tests = replaced_by_tests;
+                }
+                run_compiled::log_step_of_build("what tests replace is found");
+            }
+            // The test files alone use the layer that they stand on, so it is told what they name.
+            let mut stand_in = None;
+            let percent_that_goes_lowest = run_compiled::percent_of_files_that_go_lowest();
+            let builds_what_computed_imports_reach =
+                run_compiled::builds_what_computed_imports_reach();
+            let names_what_is_used = env_var::BUN_AOT_TESTS_NAME_WHAT_THEY_USE.get() == Some(true);
+            if run_compiled::begins_beside_build_below() {
+                begin_beside_build_of_what_computed_imports_reach(vm, ctx, &entry_points);
+            }
+            if builds_library_alone {
+            } else if builds_packages_alone {
+                // The files above use the packages, so the layer of the packages is told what they name. A trial behind a word of its own: the preloads
+                // and the layer of computed imports use the packages too, and nothing here reads them yet.
+                let names_what_is_used =
+                    names_what_is_used && run_compiled::packages_are_told_what_is_used();
+                if let Some(above) = files_above.as_ref().filter(|_| names_what_is_used) {
+                    let above = keep_paths_for_the_build(above.clone());
+                    stand_in = Some(make_stand_in_that_names_what_tests_name(
+                        vm,
+                        &above,
+                        StandsIn::ForAllAboveThePackages,
+                        &mut entry_points,
+                    ));
+                    run_compiled::log_step_of_build("what the files above name is found");
+                }
+            } else if builds_what_computed_imports_reach {
+                // Each of them is an entry point: the loader answers a name with an entry point and with no other file of a program.
+                entry_points.extend(ctx.preloads.iter().cloned());
+                entry_points =
+                    find_files_of_packages_that_computed_imports_reach(vm, entry_points).0;
+                if entry_points.is_empty() {
+                    run_compiled::exit_without_program();
+                }
+            } else if let Some(percent) = percent_that_goes_lowest {
+                // Each of them is an entry point: the programs above import them by name.
+                entry_points.extend(ctx.preloads.iter().cloned());
+                entry_points = find_lowest_files_reached_from(vm, entry_points, percent);
+            } else if builds_what_is_shared {
+                let test_files = keep_paths_for_the_build(entry_points);
+                entry_points = find_files_imported_by(vm, &test_files);
+                let only_imported = find_entry_points_only_imported(&entry_points);
+                if let Some(aot) = ctx.bundler_options.aot.as_mut() {
+                    aot.entry_points_only_imported_from_above = only_imported;
+                }
+                if names_what_is_used {
+                    stand_in = Some(make_stand_in_that_names_what_tests_name(
+                        vm,
+                        &test_files,
+                        StandsIn::ForTestFiles,
+                        &mut entry_points,
+                    ));
+                }
+                entry_points.retain(|path| !run_compiled::is_module_below_test_part(path));
+                run_compiled::log_step_of_build("what the test files import is found");
+            }
+            let file_count = entry_points.len();
+            // The preloads may import any file that the test files share, so they go with the highest of those.
+            if match builds_what_is_shared {
+                true => {
+                    !builds_packages_alone
+                        && !builds_library_alone
+                        && !builds_what_computed_imports_reach
+                        && percent_that_goes_lowest.is_none()
+                }
+                false => !is_above_what_is_shared,
+            } {
+                entry_points.extend(ctx.preloads.iter().cloned());
+            }
+            if builds_what_is_shared {
+                let spelled = match stand_in.is_none() && holds_library && !builds_library_alone {
+                    true => find_library_modules_spelled_from(vm, test_files_and_preloads),
+                    false => None,
+                };
+                if let Some(aot) = ctx.bundler_options.aot.as_mut() {
+                    aot.loads_code_from_disk |= stand_in.is_some();
+                    aot.host_runs_files_from_disk = stand_in.is_some();
+                    // That stand-in asks for every module of Bun's own code that the resolver of this run answers, and the lowest layer holds them.
+                    aot.library_runs_compiled_alone = (stand_in.is_none() || builds_packages_alone)
+                        && !is_above_what_is_shared
+                        && spelled.is_none();
+                }
+                entry_points.push(stand_in.unwrap_or_else(|| {
+                    make_stand_in_for_files_from_disk(holds_library, spelled.as_ref())
+                }));
+            }
+            drop(log_scope);
+            run_compiled::start(ctx, entry_points, file_count);
+        }
 
         // Start the debugger before we scan for files
         // But, don't block the main thread waiting if they used --inspect-wait.
@@ -3287,6 +3446,7 @@ impl TestCommand {
 
         let mut coverage_options: CodeCoverageOptions = ctx.test_options.coverage.clone();
         let mut ran_parallel = false;
+        let mut left_by_workers = ParallelRunner::LeftByWorkers::default();
 
         if !test_files.is_empty() {
             // Randomize the order of test files if --randomize flag is set
@@ -3315,7 +3475,15 @@ impl TestCommand {
                     test_files,
                     &mut *ctx,
                     &mut coverage_options,
+                    splits_files,
+                    &mut left_by_workers,
                 )?;
+                if let Some(code) = left_by_workers.exit_code {
+                    vm.exit_handler.exit_code = code;
+                }
+                if left_by_workers.bailed_out {
+                    reporter.bail_out(vm);
+                }
             } else {
                 // SAFETY: `vm.transpiler.env` is the process-lifetime DotEnv loader pointer.
                 ParallelRunner::set_ids_without_workers(unsafe { &mut *vm.transpiler.env });
@@ -4182,7 +4350,10 @@ impl TestCommand {
             // Must run after the cleanup above, so rejections from JS it runs are reported in this file.
             let _ = vm.global().handle_rejected_promises();
 
-            if Output::is_github_action() && reporter.worker_ipc_file_idx.is_none() {
+            if Output::is_github_action()
+                && (reporter.worker_ipc_file_idx.is_none()
+                    || reporter.worker_stands_for_one_process)
+            {
                 pretty_errorln!("<r>\n::endgroup::\n");
                 Output::flush();
             }

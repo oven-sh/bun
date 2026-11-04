@@ -260,36 +260,7 @@ describe("createHash", () => {
     },
   };
 
-  const unsupported = [
-    "id-rsassa-pkcs1-v1_5-with-sha3-224",
-    "id-rsassa-pkcs1-v1_5-with-sha3-256",
-    "id-rsassa-pkcs1-v1_5-with-sha3-384",
-    "id-rsassa-pkcs1-v1_5-with-sha3-512",
-    "md5withrsaencryption",
-    "ripemd",
-    "ripemd160withrsa",
-    "rsa-md5",
-    "rsa-ripemd160",
-    "rsa-sha1-2",
-    "rsa-sha3-224",
-    "rsa-sha3-256",
-    "rsa-sha3-384",
-    "rsa-sha3-512",
-    "rsa-sha512/224",
-    "rsa-sha512/256",
-    "rsa-sm3",
-    "sha1withrsaencryption",
-    "sha224withrsaencryption",
-    "sha256withrsaencryption",
-    "sha384withrsaencryption",
-    "sha512withrsaencryption",
-    "sha512-224withrsaencryption",
-    "sha512-256withrsaencryption",
-    "sm3",
-    "sm3withrsaencryption",
-    "ssl3-md5",
-    "ssl3-sha1",
-  ];
+  const unsupported = ["rsa-sm3", "sm3", "sm3withrsaencryption"];
 
   for (const name_ in nodeValues) {
     const name = name_.toLowerCase();
@@ -552,7 +523,7 @@ describe("createHash", () => {
       }
       console.log(JSON.stringify(out));
     `;
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "--no-deprecation", "-e", script], env: bunEnv, stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
       stdout: Object.fromEntries(
@@ -703,6 +674,21 @@ describe("Decipheriv", () => {
     expect(decipher._transform.name).toBe("_transform");
     expect(decipher._flush.name).toBe("_flush");
   });
+});
+
+it.each([
+  ["Cipheriv", ["aes-128-ctr", Buffer.alloc(16), Buffer.alloc(16)], object => object.update("a")],
+  ["Decipheriv", ["aes-128-ctr", Buffer.alloc(16), Buffer.alloc(16)], object => object.update("a")],
+  ["Hmac", ["sha256", "key"], object => object.update("a").digest()],
+  ["Certificate", [], object => typeof object.verifySpkac],
+])("%s.call(this) initializes an instance of a function that inherits from it", (name, args, use) => {
+  const Base = crypto[name];
+  function Derived() {
+    Base.call(this, ...args);
+  }
+  util.inherits(Derived, Base);
+  expect(use(new Derived())).toEqual(use(new Base(...args)));
+  expect(Base.call({}, ...args)).toBeInstanceOf(Base);
 });
 
 describe("DiffieHellman", () => {
@@ -908,6 +894,21 @@ describe("integer arguments whose JSValue is a double", () => {
   });
 });
 
+it("getCipherInfo() takes keyLength and ivLength as unsigned 32-bit integers", () => {
+  for (const option of ["keyLength", "ivLength"]) {
+    for (const length of [-1, 2 ** 32]) {
+      expect(() => crypto.getCipherInfo("aes-128-gcm", { [option]: length })).toThrow(
+        expect.objectContaining({
+          code: "ERR_OUT_OF_RANGE",
+          message: `The value of "options.${option}" is out of range. It must be >= 0 && <= 4294967295. Received ${length}`,
+        }),
+      );
+    }
+  }
+  expect(crypto.getCipherInfo("aes-128-gcm", { ivLength: 2 ** 32 - 1 }).ivLength).toBe(2 ** 32 - 1);
+  expect(crypto.getCipherInfo("aes-128-gcm", { keyLength: 2 ** 32 - 1 })).toBeUndefined();
+});
+
 describe("ECDH", () => {
   it("should have correct method names", () => {
     const ecdh = crypto.createECDH("prime256v1");
@@ -989,12 +990,14 @@ it("Cipheriv.update throws expected error for invalid data", () => {
   );
 });
 
-it("verifyOneShot should not accept strings for signatures", () => {
+it("verifyOneShot takes a string for the signature, like Node", () => {
   const data = Buffer.alloc(1);
+  const { publicKey } = crypto.generateKeyPairSync("ed25519");
+  expect(crypto.verify(null, data, publicKey, "oops")).toBe(false);
   expect(() => {
-    crypto.verify(null, data, "test", "oops");
+    crypto.verify(null, data, publicKey, 5);
   }).toThrow(
-    "The \"signature\" argument must be an instance of Buffer, TypedArray, or DataView. Received type string ('oops')",
+    'The "signature" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView. Received type number (5)',
   );
 });
 
@@ -1364,8 +1367,13 @@ describe("KeyObject raw-public / raw-private / raw-seed formats", () => {
       expect(pub2.export({ format: "raw-public" })).toEqual(rawPub);
       expect(priv2.export({ format: "raw-private" })).toEqual(rawPriv);
 
-      // A private key's raw-public export should match the public key's.
-      expect(privateKey.export({ format: "raw-public" })).toEqual(rawPub);
+      // Like Node, a private key has no raw-public format.
+      expect(() => privateKey.export({ format: "raw-public" })).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_VALUE",
+          message: "The property 'options.format' is invalid. Received 'raw-public'",
+        }),
+      );
     });
 
     if (keyType === "ec") {
@@ -1400,11 +1408,14 @@ describe("KeyObject raw-public / raw-private / raw-seed formats", () => {
 
   it("raw key formats reject unsupported combinations", () => {
     const { publicKey: rsaPub, privateKey: rsaPriv } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
-    for (const fmt of ["raw-public", "raw-private", "raw-seed"]) {
+    for (const fmt of ["raw-private", "raw-seed"]) {
       expect(() => rsaPriv.export({ format: fmt })).toThrow(
         expect.objectContaining({ code: "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS" }),
       );
     }
+    expect(() => rsaPriv.export({ format: "raw-public" })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
     expect(() => rsaPub.export({ format: "raw-public" })).toThrow(
       expect.objectContaining({ code: "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS" }),
     );
@@ -1421,9 +1432,6 @@ describe("KeyObject raw-public / raw-private / raw-seed formats", () => {
     expect(() =>
       crypto.createPrivateKey({ key: Buffer.alloc(32), format: "raw-private", asymmetricKeyType: "rsa" }),
     ).toThrow(expect.objectContaining({ code: "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS" }));
-    expect(() =>
-      crypto.createPrivateKey({ key: Buffer.alloc(32), format: "raw-private", asymmetricKeyType: "banana" }),
-    ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
     expect(() =>
       crypto.createPublicKey({ key: Buffer.alloc(32), format: "raw-public", asymmetricKeyType: "ec" }),
     ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
@@ -1466,6 +1474,43 @@ describe("KeyObject raw-public / raw-private / raw-seed formats", () => {
         privateKeyEncoding: { format: "raw-private", passphrase: "secret" },
       }),
     ).toThrow(expect.objectContaining({ code: "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS" }));
+  });
+
+  it.each(["Ed25519", "ED25519", "X25519", "EC", "ML-DSA-44", "Ml-Dsa-65", "ML-KEM-768", "banana"])(
+    "asymmetricKeyType %j is not how a key type is spelled",
+    asymmetricKeyType => {
+      const invalid = expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_VALUE",
+        message: `Invalid asymmetricKeyType: ${asymmetricKeyType}`,
+      });
+      const key = Buffer.alloc(32);
+      expect(() => crypto.createPublicKey({ key, format: "raw-public", asymmetricKeyType })).toThrow(invalid);
+      expect(() => crypto.createPrivateKey({ key, format: "raw-private", asymmetricKeyType })).toThrow(invalid);
+      expect(() => crypto.createPrivateKey({ key, format: "raw-seed", asymmetricKeyType })).toThrow(invalid);
+    },
+  );
+
+  it.each([
+    ["an array", name => [name]],
+    ["an object with toString()", name => ({ toString: () => name })],
+    ["a String object", name => new String(name)],
+    ["a symbol", name => Symbol(name)],
+  ])("%s is not a format to import, nor a type of raw-public to export", (_, wrap) => {
+    const typeError = (code, message) =>
+      expect.objectContaining({ name: "TypeError", code, message: expect.stringContaining(message) });
+    const ed = crypto.generateKeyPairSync("ed25519").publicKey;
+    expect(() => crypto.createPublicKey({ key: ed.export({ format: "jwk" }), format: wrap("jwk") })).toThrow(
+      typeError("ERR_INVALID_ARG_TYPE", 'The "key.key" property must be of type string or an instance of'),
+    );
+    const raw = { key: ed.export({ format: "raw-public" }), asymmetricKeyType: "ed25519" };
+    expect(() => crypto.createPublicKey({ ...raw, format: wrap("raw-public") })).toThrow(
+      typeError("ERR_INVALID_ARG_VALUE", "format' is invalid. Received "),
+    );
+    const ec = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" }).publicKey;
+    expect(() => ec.export({ format: "raw-public", type: wrap("compressed") })).toThrow(
+      typeError("ERR_INVALID_ARG_VALUE", "'options.type' must be one of: 'compressed', 'uncompressed'. Received "),
+    );
   });
 
   it("publicEncrypt is not confused by a buffer detached from an oaepLabel getter", () => {

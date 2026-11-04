@@ -1,9 +1,10 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, nodeExeMatchingAbi, tempDirWithFiles } from "harness";
 import { existsSync, readFileSync } from "node:fs";
 import { constants } from "node:os";
 import path from "node:path";
 import { symbols, test_skipped } from "../../src/jsc/bindings/libuv/generate_uv_posix_stubs_constants";
+import finalizerSource from "./uv-stub-stuff/uv_close_in_finalizer.c";
 import source from "./uv-stub-stuff/uv_impl.c";
 
 const symbols_to_test = symbols.filter(s => !test_skipped.includes(s));
@@ -14,11 +15,35 @@ describe.if(!isWindows)("uv stubs", () => {
   let tempdir: string = "";
   let outdir: string = "";
   let addonPath: string = "";
+  let finalizerAddonPath: string = "";
   let nativeModule: any;
 
   beforeAll(async () => {
     const files = {
       "uv_impl.c": await Bun.file(source).text(),
+      "uv_close_in_finalizer.c": await Bun.file(finalizerSource).text(),
+      // Two async macros (see runNestedInMacro). wait() returns after three immediates, each of which is one loop
+      // iteration of the nested run that waits for it. waitFor() returns when the script settles its promise.
+      "nested-wait.ts": `
+        export async function wait() {
+          for (let turn = 0; turn < 3; turn++) {
+            await new Promise(resolve => setImmediate(resolve));
+            globalThis.nestedTurns++;
+          }
+          return 0;
+        }
+        export async function waitFor() {
+          await globalThis.nestedWait.promise;
+          return 0;
+        }
+      `,
+      // For the --hot test: the marker check handle is started, the target is closed, and the script throws.
+      "close-then-throw.js": `
+        const t = require("./build/Release/uv_test.node").closeOrder;
+        t.open(undefined, true, false);
+        t.close();
+        throw new Error("thrown after uv_close");
+      `,
       "package.json": JSON.stringify({
         "name": "fake-plugin",
         "module": "index.ts",
@@ -45,6 +70,14 @@ describe.if(!isWindows)("uv stubs", () => {
             "cflags": ["-fPIC"],
             "ldflags": ["-Wl,--export-dynamic"]
           },
+          {
+            "target_name": "uv_close_in_finalizer",
+            "sources": [ "uv_close_in_finalizer.c" ],
+            "include_dirs": [ ".", "./libuv" ],
+            "defines": [ "NAPI_EXPERIMENTAL" ],
+            "cflags": ["-fPIC"],
+            "ldflags": ["-Wl,--export-dynamic"]
+          },
         ]
       }`,
     };
@@ -61,8 +94,12 @@ describe.if(!isWindows)("uv stubs", () => {
     await Bun.$`${bunExe()} i --ignore-scripts && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
 
     addonPath = path.join(tempdir, "./build/Release/uv_test.node");
+    finalizerAddonPath = path.join(tempdir, "./build/Release/uv_close_in_finalizer.node");
     nativeModule = require(addonPath);
-  });
+    // The close-order tests run the addon on Node too. Find that Node (or download it) here, under the timeout of
+    // this hook, which also covers an install and a build that take longer than the default 5 s.
+    await nodeExeMatchingAbi();
+  }, 300_000);
 
   afterEach(() => {
     process.chdir(cwd);
@@ -204,10 +241,11 @@ describe.if(!isWindows)("uv stubs", () => {
   // a child process. The child's exit is part of the test: a ref'd handle or a
   // queued request must keep it alive, and an unref'd handle must not. `script`
   // can use `addon` and `report`, which prints one line per event from the addon.
-  async function runInChild(script: string) {
+  // `cmd` is the executable and its options: real Node runs the same addon.
+  async function runInChild(script: string, cmd: string[] = [bunExe()], env: typeof bunEnv = bunEnv) {
     await using proc = Bun.spawn({
       cmd: [
-        bunExe(),
+        ...cmd,
         "-e",
         `
           const addon = require(${JSON.stringify(addonPath)});
@@ -215,7 +253,7 @@ describe.if(!isWindows)("uv stubs", () => {
           ${script}
         `,
       ],
-      env: bunEnv,
+      env,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -459,9 +497,10 @@ describe.if(!isWindows)("uv stubs", () => {
     "prepare 2 1",
     "check 2 1",
     "closing 1 0",
-    "close idle 1 0",
-    "close prepare 1 0",
+    // libuv runs the close callback of the handle that was closed last first.
     "close check 1 0",
+    "close prepare 1 0",
+    "close idle 1 0",
     "",
   ].join("\n");
 
@@ -535,8 +574,8 @@ describe.if(!isWindows)("uv stubs", () => {
       "io",
       `check ${iteration} 1`,
       "closing 1 0",
-      "close prepare 1 0",
       "close check 1 0",
+      "close prepare 1 0",
       "",
     );
     expect(lines).toEqual(expected);
@@ -966,6 +1005,49 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The two ways in which a script runs the event loop inside a call, which libuv never does. Each `runNested()`
+  // logs "nested run ended" only if the loop made three iterations inside the call.
+
+  // Bun.build() runs the loop until the promise that a plugin's setup() returned settles. The rejection reaches the
+  // `catch` only if Bun.build() waited for it inside the call. The build itself fails for want of an entry point.
+  const runNestedInBuild = `
+    const runNested = () => {
+      const wait = Promise.withResolvers();
+      let turns = 0;
+      const turn = () => (++turns < 3 ? setImmediate(turn) : wait.reject(new Error("nested run ended")));
+      setImmediate(turn);
+      try {
+        Bun.build({ entrypoints: [], plugins: [{ name: "wait", setup: () => wait.promise }] });
+      } catch (error) {
+        log(error.message);
+      }
+    };
+  `;
+
+  // `Bun.Transpiler#transformSync` of code that calls an async macro runs the loop, under the script that called it,
+  // until the promise of the macro settles. This is that code for a macro of nested-wait.ts.
+  const callMacro = (name: string) =>
+    JSON.stringify(
+      `import { ${name} } from ${JSON.stringify(path.join(tempdir, "nested-wait.ts"))} with { type: "macro" };\n` +
+        `export default ${name}();`,
+    );
+
+  // The macro counts its immediates, each of which is one loop iteration of the nested run.
+  const runNestedInMacro = () => `
+    const runNested = () => {
+      globalThis.nestedTurns = 0;
+      new Bun.Transpiler({ loader: "ts" }).transformSync(${callMacro("wait")});
+      log(globalThis.nestedTurns === 3 ? "nested run ended" : "the macro made " + globalThis.nestedTurns + " turns");
+    };
+  `;
+
+  // A debug build prints "[macro] call wait" to stdout.
+  const withoutMacroLog = (stdout: string) =>
+    stdout
+      .split(/\r?\n/)
+      .filter(line => !line.startsWith("[macro] "))
+      .join("\n");
+
   test.concurrent("an exception thrown by JS called from poll_cb is reported as uncaught", async () => {
     const { stdout, stderr, exitCode } = await runInChild(`
       addon.testPollFromThread(() => { throw new Error("thrown from inside poll_cb"); });
@@ -973,6 +1055,625 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(stdout).toBe("");
     expect(stderr).toContain("thrown from inside poll_cb");
     expect(exitCode).toBe(1);
+  });
+
+  // Runs `script` in a child with `t` (the "uv_close order" functions of uv_impl.c), `log(line)`, `spin()` and
+  // `worker(source)`. Returns the lines that the child printed, joined with ", ".
+  async function closeOrder(script: string, cmd?: string[], env?: typeof bunEnv) {
+    const { stdout, stderr, exitCode } = await runInChild(
+      `
+        const t = addon.closeOrder;
+        const log = t.log;
+        // A 0 ms timer that was armed before this call is due after it.
+        const spin = () => { const end = performance.now() + 3; while (performance.now() < end); };
+        const worker = source => new (require("node:worker_threads").Worker)(
+          "const t = require(" + JSON.stringify(${JSON.stringify(addonPath)}) + ").closeOrder; " + source,
+          { eval: true },
+        );
+        ${script}
+      `,
+      cmd,
+      env,
+    );
+    return { events: withoutMacroLog(stdout).trimEnd().split(/\r?\n/).join(", "), stderr, exitCode };
+  }
+
+  // t.open(on, startCheck, unref) makes the marker check handle and the target that t.close() closes.
+  const open = `t.open(undefined, true, false);`;
+  const openUnref = `t.open(undefined, true, true);`;
+  const openNoCheck = `t.open(undefined, false, false);`;
+
+  const immediates = "Bun runs immediates before the poll, Node after the check handles of the addon.";
+  const tasksBeforePoll = "Bun calls async_cb and after_work_cb from tasks, before its poll, libuv in its poll phase.";
+  const sendIsATask = "Bun delivers a send from a task, which the next loop iteration runs, libuv in its poll phase.";
+  const firstTimers = "libuv runs the due timers before its first poll, Bun after it.";
+  const checkOrder = "Bun runs check handles in start order, libuv the one started last first.";
+
+  // What the hook of a row calls next, by the name of the row.
+  const nextCallbacks = {
+    "timer": "a uv_timer_t callback",
+    "js timer": "a JS timer",
+    "async": "an async_cb",
+    "idle": "an idle callback",
+    "prepare": "a prepare callback",
+    "poll": "a poll_cb",
+  };
+
+  // libuv runs the close callbacks after the check handles and before the timers of the same loop iteration, the
+  // handle that was closed last first. Each row runs on Node and on Bun. Without `bunOutput` both must print the
+  // same. With it Bun must print `bunOutput` and Node something else, so a difference that goes away fails too.
+  type CloseOrderRow = [name: string, script: string, bunOutput?: string, reason?: string];
+  const closeOrderRows: CloseOrderRow[] = [
+    // The call site of uv_close, with the marker started before it.
+    ["the main script", `${open} t.close();`],
+    ["a microtask", `${open} Promise.resolve().then(() => t.close());`],
+    ["process.nextTick", `${open} process.nextTick(() => t.close());`],
+    ["a JS timer", `${open} setTimeout(() => t.close(), 1);`],
+    ["setImmediate", `${open} setImmediate(() => t.close());`, "closing, check, close", immediates],
+    ["a uv_timer_t callback", `${open} t.hook("timer", () => t.close());`],
+    ["an async_cb", `${open} t.hook("async", () => t.close());`],
+    ["an idle callback", `${open} t.hook("idle", () => t.close());`],
+    ["a prepare callback", `${open} t.hook("prepare", () => t.close());`],
+    [
+      "a check callback started after the marker",
+      `${open} t.hook("check", () => t.close()); setImmediate(() => {});`,
+      "closing, close",
+      checkOrder,
+    ],
+    [
+      "a check callback started before the marker",
+      `t.hook("check", () => t.close()); ${open} setImmediate(() => {});`,
+      "closing, check, close",
+      checkOrder,
+    ],
+    [
+      "a check callback, no other check handle",
+      `${openNoCheck} t.hook("check", () => t.close()); setImmediate(() => {});`,
+    ],
+    ["a poll_cb", `${open} t.hook("poll", () => t.close());`],
+    ["an after_work_cb", `${open} t.hook("work", () => t.close());`],
+    ["the close_cb of another handle", `${open} t.hook("close", () => t.close());`],
+    ["an fs callback", `${open} require("fs").stat(".", () => t.close());`],
+    ["an fs.promises continuation", `${open} require("fs").promises.stat(".").then(() => t.close());`],
+    [
+      "a net connection callback",
+      `${open}
+       const net = require("net");
+       const server = net.createServer(connection => { t.close(); connection.destroy(); server.close(); });
+       server.listen(0, "127.0.0.1", () => net.connect(server.address().port, "127.0.0.1").on("error", () => {}));`,
+    ],
+    ["a dns.lookup callback", `${open} require("dns").lookup("127.0.0.1", () => t.close());`],
+    ["a zlib callback", `${open} require("zlib").gzip("x", () => t.close());`],
+    [
+      "a child exit callback",
+      `${open} require("child_process").execFile(process.execPath, ["-e", "0"], () => t.close());`,
+    ],
+    [
+      "a MessageChannel message",
+      `${open}
+       const channel = new MessageChannel();
+       channel.port1.onmessage = () => { t.close(); channel.port1.close(); };
+       channel.port2.postMessage(1);`,
+    ],
+    ["beforeExit", `${openUnref} process.once("beforeExit", () => t.close());`],
+    [
+      "an N-API finalizer",
+      `${open}
+       (() => { for (let i = 0; i < 16; i++) t.closeWhenCollected(); })();
+       const collect = globalThis.gc ?? (() => Bun.gc(true));
+       const poll = () => { collect(); if (!t.isClosing()) setTimeout(poll, 1); };
+       setTimeout(poll, 1);`,
+      "closing, check, close",
+      "Bun runs the finalizer as a task before the poll, Node with its immediates.",
+    ],
+
+    // What else runs between uv_close and close_cb.
+    [
+      "the main script, then an immediate",
+      `${open} t.close(); setImmediate(() => log("immediate"));`,
+      "closing, immediate, check, close",
+      immediates,
+    ],
+    [
+      "the main script, then a due JS timer",
+      `${open} t.close(); setTimeout(() => log("js-timer"), 0); spin();`,
+      "closing, check, close, js-timer",
+      firstTimers,
+    ],
+    [
+      "a timer that the check callback arms",
+      `t.open(event => { if (event === "check") { setTimeout(() => log("js-timer"), 0); spin(); } }, true, false);
+       t.close();`,
+    ],
+    [
+      "a timer that the check callback arms, which exits",
+      `t.open(event => { if (event === "check") { setTimeout(() => process.exit(0), 0); spin(); } }, true, false);
+       t.close();`,
+    ],
+    [
+      "an fs callback, then process.exit() from a due timer",
+      `${open} require("fs").stat(".", () => { t.close(); setTimeout(() => process.exit(0), 0); spin(); });`,
+    ],
+    [
+      "a JS timer, then process.exit() from a due timer",
+      `${open} setTimeout(() => { t.close(); setTimeout(() => process.exit(0), 0); spin(); }, 1);`,
+    ],
+    [
+      "two closes in one call, the one closed last first",
+      `${open} t.hook("close", () => log("other close")); t.close();`,
+    ],
+    [
+      "a close in a close_cb, which waits for the next loop iteration",
+      `${open} t.hook("close", () => { log("first close"); t.close(); });`,
+    ],
+
+    // The marker is not started when uv_close is called.
+    ["no check handle, then an immediate", `${openNoCheck} t.close(); setImmediate(() => log("immediate"));`],
+    [
+      "no check handle, then a due JS timer",
+      `${openNoCheck} t.close(); setTimeout(() => log("js-timer"), 0); spin();`,
+      "closing, close, js-timer",
+      firstTimers,
+    ],
+    [
+      "no check handle: a prepare callback, then an immediate",
+      `${openNoCheck} t.hook("prepare", () => { t.close(); setImmediate(() => log("immediate")); });`,
+      "closing, close, immediate",
+      immediates,
+    ],
+    ["a check handle started after the close, in the same call", `${openNoCheck} t.close(); t.startCheck();`],
+    [
+      "a check handle started after the close, from a microtask",
+      `${openNoCheck} t.close(); Promise.resolve().then(() => t.startCheck());`,
+    ],
+    [
+      "a check handle started after the close, from a due JS timer",
+      `${openNoCheck} t.close(); setTimeout(() => t.startCheck(), 0); spin();`,
+      "closing, close",
+      firstTimers,
+    ],
+    [
+      "a check handle started after the close, from a prepare callback",
+      `${openNoCheck} t.close(); t.hook("prepare", () => t.startCheck());`,
+    ],
+
+    // uv_close(handle, NULL): libuv has finished the close when the next timer callback runs, which frees the handle
+    // or initializes it again. See close_then_free_in_timer and close_order_reinit_stop in uv_impl.c.
+    [
+      "a handle freed in the next timer: an fs callback",
+      `${openUnref} require("fs").stat(".", () => t.closeThenFreeInTimer());`,
+    ],
+    ["a handle freed in the next timer: a JS timer", `${openUnref} setTimeout(() => t.closeThenFreeInTimer(), 1);`],
+    [
+      "a handle freed in the next timer: a uv_timer_t callback",
+      `${openUnref} t.hook("timer", () => t.closeThenFreeInTimer());`,
+    ],
+    ["a handle freed in the next timer: an async_cb", `${openUnref} t.hook("async", () => t.closeThenFreeInTimer());`],
+    [
+      "a handle initialized again in the next timer",
+      `${openUnref}
+       t.reinitStart();
+       require("fs").stat(".", () => {
+         t.reinitStop();
+         setTimeout(() => {
+           t.reinitStart(() => {
+             // A close that finishes only now marks the new handle closed: the guard in reinitStop() then skips
+             // uv_close, and the timer repeats for ever.
+             const closed = t.reinitStop();
+             log("the second stop closed it: " + closed);
+             if (!closed) process.exit(1);
+           });
+         }, 0);
+         spin();
+       });`,
+    ],
+
+    // uSockets frees a closed socket only if the check callback of its loop ran before close_cb.
+    ["the uSockets shape", `t.usSocket("ref"); t.usClose();`],
+    // Only the close that waits keeps the process alive.
+    ["the uSockets shape with its check handle unref'd", `t.usSocket("unref"); t.usClose();`],
+    ["the uSockets shape without a check handle", `t.usSocket("none"); t.usClose();`],
+
+    // uv_close(handle, NULL) still keeps the loop alive until its next closing phase: only that lets the unref'd
+    // marker run once.
+    ["a close without a callback, which keeps the loop alive for one iteration", `${openUnref} t.closeNoCallback();`],
+
+    // libuv calls async_cb and after_work_cb in its poll phase, so a close that one of them makes is finished before
+    // whatever the next loop iteration calls. Bun calls the two before its poll: there only a timer still comes
+    // after the close callback.
+    ...(["async", "work"] as const).flatMap(origin =>
+      Object.entries(nextCallbacks).map(([next, name]): CloseOrderRow => [
+        `a close in ${origin === "async" ? "an async_cb" : "an after_work_cb"}, then ${name}`,
+        `t.hook("${origin}", () => {
+           ${open} t.close();
+           ${next === "js timer" ? `setTimeout(() => log("js timer"), 0);` : `t.hook("${next}", () => log("${next}"));`}
+           spin();
+         });`,
+        next.endsWith("timer") ? undefined : `closing, ${next}, check, close`,
+        next.endsWith("timer") ? undefined : tasksBeforePoll,
+      ]),
+    ),
+
+    // libuv delivers a send in the poll phase of the first loop iteration whose poll returns after it.
+    [
+      "a send in an idle callback, which libuv delivers in the same iteration",
+      `${open} t.hook("idle", () => { t.close(); t.hook("async", () => log("async")); });`,
+      "closing, check, close, async",
+      sendIsATask,
+    ],
+    [
+      "a send in a prepare callback, which libuv delivers in the same iteration",
+      `${open} t.hook("prepare", () => { t.close(); t.hook("async", () => log("async")); });`,
+      "closing, check, close, async",
+      sendIsATask,
+    ],
+    [
+      "a send in a poll_cb, which the next iteration delivers",
+      `${open} t.hook("poll", () => { t.close(); t.hook("async", () => log("async")); });`,
+    ],
+    [
+      "a send in an async_cb to its own handle, which libuv delivers in the next iteration",
+      `${open} t.sendAgain(() => t.close());`,
+      "closing, second async_cb, check, close",
+      tasksBeforePoll,
+    ],
+    // Node runs its immediates after its poll phase, and Bun the task of a send before its immediates.
+    ["a pending send, then an immediate", `t.hook("async", () => log("async")); setImmediate(() => log("immediate"));`],
+
+    // t.chain(2) closes a handle whose close callback closes a second one.
+    ["a Worker: its main script", `worker('t.open(undefined, true, false); t.close(); t.chain(2);');`],
+    ["a Worker: a JS timer", `worker('t.open(undefined, true, false); setTimeout(() => t.close(), 1);');`],
+    [
+      "a Worker: its main script, then process.exit()",
+      `worker('t.open(undefined, true, false); t.close(); t.chain(2); process.exit(0);');`,
+      "closing, chain 1, close, chain 2",
+      "A Worker that stops runs close_cb at its teardown, without the check handles.",
+    ],
+  ];
+
+  // These rows end with a close that waits at the exit of the main thread, where neither Node nor Bun runs its
+  // callback. The sanitizer lanes set BUN_DESTRUCT_VM_ON_EXIT for every child, which tears the VM down instead (the
+  // test after these), so these children opt out of it and of the leak check that goes with it.
+  const closeOrderRowsAtExit: typeof closeOrderRows = [
+    ["the main script, then process.exit()", `${open} t.close(); process.exit(0);`],
+    [
+      "the main script, then process.exit() from an immediate",
+      `${open} t.close(); setImmediate(() => process.exit(0));`,
+      "closing",
+      immediates,
+    ],
+    [
+      "an exit listener",
+      `${openUnref} process.on("exit", () => t.close());`,
+      "closing",
+      "Bun does not run the loop again after the exit listeners of the main thread.",
+    ],
+  ];
+  const noDestruct = {
+    ...bunEnv,
+    BUN_DESTRUCT_VM_ON_EXIT: "0",
+    ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+  };
+
+  // Every row gets all its values, or the test function would get a `done` callback in place of a missing one.
+  test.concurrent.each([
+    ...closeOrderRows.map(([name, script, bunOutput, reason]) => [name, script, bunOutput, reason, bunEnv] as const),
+    ...closeOrderRowsAtExit.map(
+      ([name, script, bunOutput, reason]) => [name, script, bunOutput, reason, noDestruct] as const,
+    ),
+  ])("uv_close order on Node and on Bun: %s", async (_, script, bunOutput, reason, env) => {
+    const [onBun, onNode] = await Promise.all([
+      closeOrder(script, [bunExe()], env),
+      closeOrder(script, [await nodeExeMatchingAbi(), "--expose-gc"], env),
+    ]);
+    expect(onNode.stderr).toBe("");
+    expect(onNode.exitCode).toBe(0);
+    if (bunOutput === undefined) {
+      expect(onBun).toEqual(onNode);
+    } else {
+      expect(reason).toBeString();
+      expect(onBun).toEqual({ events: bunOutput, stderr: "", exitCode: 0 });
+      expect(onNode.events).not.toBe(bunOutput);
+    }
+  });
+
+  test.concurrent.each([
+    ["a natural exit", "", "closing, check, chain 1, close, chain 2"],
+    // The close callback of the target closes the marker, and the one of the chain its second handle.
+    ["process.exit()", "process.exit(0);", "closing, chain 1, close, chain 2"],
+    // The teardown finds the closing phase half done: first the rest of its closes, then the one that its callback made.
+    [
+      "process.exit() in a close_cb that closed another handle",
+      `t.hook("close", () => { t.chain(1, "inner"); process.exit(0); });`,
+      "closing, check, chain 1, close, chain 2, inner 1",
+    ],
+  ])("every close_cb runs when the VM of the main thread is torn down: %s", async (_, exit, events) => {
+    // BUN_DESTRUCT_VM_ON_EXIT=1 tears the VM down at exit, as the exit of a Worker does.
+    const result = await closeOrder(`${open} t.close(); t.chain(2); ${exit}`, undefined, {
+      ...bunEnv,
+      BUN_DESTRUCT_VM_ON_EXIT: "1",
+    });
+    expect(result).toEqual({ events, stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("an exception thrown by JS called from close_cb is reported as uncaught", async () => {
+    const { events, stderr, exitCode } = await closeOrder(`
+      t.hook("close", () => { throw new Error("thrown from inside close_cb"); });
+    `);
+    expect(events).toBe("");
+    expect(stderr).toContain("thrown from inside close_cb");
+    expect(exitCode).toBe(1);
+  });
+
+  // Without the idle GC timer only a timer of the startup wakes the loop of these children, so one hangs if its poll
+  // blocks while a close waits for the next loop iteration.
+  const noGcTimer = { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" };
+
+  test.concurrent("a closing handle keeps the poll of the event loop from blocking", async () => {
+    // Each close callback of t.chain() closes the next handle.
+    const result = await closeOrder(`${open} t.close(); t.chain(3);`, undefined, noGcTimer);
+    expect(result).toEqual({ events: "closing, check, chain 1, close, chain 2, chain 3", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("a uv_close that a finalizer makes when the event loop is about to sleep wakes it", async () => {
+    // The addon of uv_close_in_finalizer.c is built with NAPI_EXPERIMENTAL, so the collector calls its finalizers
+    // inside the collection. Bun.gc(false) asks for a collection, and the loop runs it when it is about to block in
+    // its poll, after it has looked for closes that wait: the close is made there. Without the concurrent collector
+    // that collection is finished there, too. The child has a timer of its own in its first 100 ms, which would end
+    // that poll, so the collection comes after it. Then only the close itself can wake the poll, and the child
+    // never exits if it doesn't.
+    const { stdout, stderr, exitCode } = await runInChild(
+      `
+        const finalizers = require(${JSON.stringify(finalizerAddonPath)});
+        finalizers.open(() => console.log("close_cb"));
+        setTimeout(() => {
+          // The buffers are garbage when this call returns. The finalizer of the first one that the collector frees
+          // closes the handle.
+          (() => { for (let i = 0; i < 256; i++) finalizers.closeWhenCollected(); })();
+          Bun.gc(false);
+        }, 300);
+      `,
+      undefined,
+      { ...noGcTimer, BUN_JSC_useConcurrentGC: "0" },
+    );
+    expect(stderr).toBe("");
+    expect(stdout.split(/\r?\n/)).toEqual(["close_cb", ""]);
+    expect(exitCode).toBe(0);
+  });
+
+  // Bun keeps a close on a queue of the loop, so it doesn't use the handle after uv_close() has returned. libuv keeps
+  // the handle on a list that goes through the handle, so these two are not allowed there. See close_then_overwrite
+  // and close_twice in uv_impl.c.
+  test.concurrent.each([
+    ["with a close callback", "true", "closing, check, close_cb got the handle, untouched: true"],
+    ["without a close callback", "false", "closing, check, untouched: true"],
+  ])("uv_close %s leaves a handle that is overwritten after it alone", async (_, withCallback, events) => {
+    const result = await closeOrder(`
+      t.closeThenOverwrite(${withCallback});
+      process.on("exit", () => log("untouched: " + t.overwritten()));
+    `);
+    expect(result).toEqual({ events, stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("a handle that is initialized and closed again before its close_cb gets both callbacks", async () => {
+    const result = await closeOrder(`t.closeTwice();`);
+    expect(result).toEqual({ events: "second close_cb, first close_cb", stderr: "", exitCode: 0 });
+  });
+
+  // t.guard(type, withCallback) gives the handle a page of its own that nothing can read or write from the return of
+  // uv_close() until close_cb starts, or ever again without a close_cb. The child dies if the loop uses the handle
+  // there. A new handle type adds itself to this list.
+  const guardedTypes = ["timer", "async", "idle", "prepare", "check", "poll"];
+  const guardAll = (withCallback: boolean) =>
+    `for (const type of ${JSON.stringify(guardedTypes)}) t.guard(type, ${withCallback});`;
+  const allClosing = guardedTypes.map(type => `closing ${type}`).join(", ");
+  // The close callbacks run with the handle that was closed last first.
+  const allClosed = guardedTypes
+    .toReversed()
+    .map(type => `close ${type}`)
+    .join(", ");
+
+  test.concurrent.each([
+    ...guardedTypes.flatMap(type => [
+      [`a uv_${type}_t with a close callback`, `t.guard("${type}", true);`, `closing ${type}, close ${type}, exit`],
+      [`a uv_${type}_t without a close callback`, `t.guard("${type}", false);`, `closing ${type}, exit`],
+    ]),
+    // Bun.build() runs the closing phase inside the call.
+    [
+      "every handle type with a close callback, and then an event loop run nested in Bun.build",
+      `${runNestedInBuild} setTimeout(() => { ${guardAll(true)} runNested(); }, 1);`,
+      `${allClosing}, ${allClosed}, nested run ended, exit`,
+    ],
+    [
+      "every handle type without a close callback, and then an event loop run nested in Bun.build",
+      `${runNestedInBuild} setTimeout(() => { ${guardAll(false)} runNested(); }, 1);`,
+      `${allClosing}, nested run ended, exit`,
+    ],
+    // The Worker stops with its closes queued, and its teardown runs the close callbacks.
+    [
+      "every handle type with a close callback in a Worker that exits",
+      `worker(${JSON.stringify(`${guardAll(true)} process.exit(0);`)});`,
+      `${allClosing}, ${allClosed}, exit`,
+    ],
+    [
+      "every handle type without a close callback in a Worker that exits",
+      `worker(${JSON.stringify(`${guardAll(false)} process.exit(0);`)});`,
+      `${allClosing}, exit`,
+    ],
+  ])("the loop doesn't read or write a closed handle before its close_cb: %s", async (_, script, events) => {
+    const result = await closeOrder(`${script} process.on("exit", () => log("exit"));`);
+    expect(result).toEqual({ events, stderr: "", exitCode: 0 });
+  });
+
+  // See close_then_free_in_timer in uv_impl.c. libuv has finished a close when the next timer callback runs, so an
+  // addon may free the handle there. These are the call sites at which the close used to be finished later.
+  test.concurrent.each([
+    ["setImmediate", `setImmediate(() => t.closeThenFreeInTimer());`],
+    ["an idle callback", `t.hook("idle", () => t.closeThenFreeInTimer());`],
+    ["a prepare callback", `t.hook("prepare", () => t.closeThenFreeInTimer());`],
+    ["a check callback", `t.hook("check", () => t.closeThenFreeInTimer());`],
+  ])("a handle closed without a callback in %s can be freed in the next uv_timer_t callback", async (_, script) => {
+    const result = await closeOrder(`${openUnref} ${script}`);
+    expect(result).toEqual({ events: "freed, done", stderr: "", exitCode: 0 });
+  });
+
+  // A loop run under a script frame calls every libuv callback, as it did before close_cb had a phase of its own: a
+  // wait that only one of these callbacks ends returns. A wait that returns without running the loop fails the row,
+  // and one that never returns times out. An async macro waits on the loop of the macro, which runs no task of the
+  // loop of the script, and async_cb and after_work_cb are such tasks: those two waits never returned.
+  const kindsThatEndABuildWait = ["timer", "async", "work", "idle", "prepare", "check", "close"];
+  const kindsThatEndAMacroWait = ["timer", "idle", "prepare", "check"];
+
+  test.concurrent.each([
+    ...kindsThatEndABuildWait.map(kind => ["a setup() of Bun.build", kind] as const),
+    ...kindsThatEndAMacroWait.map(kind => ["an async macro", kind] as const),
+  ])("%s that waits for a libuv callback returns: %s", async (wait, kind) => {
+    const result = await closeOrder(
+      wait === "an async macro"
+        ? `
+          globalThis.nestedWait = Promise.withResolvers();
+          t.hook("${kind}", () => { log("${kind} callback"); globalThis.nestedWait.resolve(); });
+          new Bun.Transpiler({ loader: "ts" }).transformSync(${callMacro("waitFor")});
+          log("the wait returned");
+        `
+        : `
+          const wait = Promise.withResolvers();
+          t.hook("${kind}", () => wait.reject(new Error("${kind} callback")));
+          try {
+            Bun.build({ entrypoints: [], plugins: [{ name: "wait", setup: () => wait.promise }] });
+          } catch (error) {
+            log(error.message);
+          }
+          log("the wait returned");
+        `,
+    );
+    expect(result).toEqual({ events: `${kind} callback, the wait returned`, stderr: "", exitCode: 0 });
+  });
+
+  // An addon may free a handle, or initialize it again, in the first timer after uv_close(): libuv has finished the
+  // close by then. A wait under the callback that made the close runs whole loop iterations, so there too the close
+  // is finished before the next timer. `t.hook("timer")` and closeThenFreeInTimer() use a uv_timer_t, and the third
+  // script a JS timer and then a uv_timer_t.
+  const closeThenWait: [name: string, script: string, events: string][] = [
+    [
+      "the close callback comes before the next uv_timer_t callback",
+      `${open} t.close(); t.hook("timer", () => log("uv_timer_t callback")); spin(); runNested();`,
+      "closing, check, close, uv_timer_t callback, nested run ended",
+    ],
+    [
+      "the next uv_timer_t callback frees the handle",
+      `${openUnref} t.closeThenFreeInTimer(); spin(); runNested();`,
+      "freed, done, nested run ended",
+    ],
+    [
+      "the next timers initialize the handle again and close it again",
+      `${openUnref}
+       t.reinitStart();
+       t.reinitStop();
+       setTimeout(() => {
+         t.reinitStart(() => {
+           const closed = t.reinitStop();
+           log("the second stop closed it: " + closed);
+           if (!closed) process.exit(1);
+         });
+       }, 0);
+       spin();
+       runNested();`,
+      "the second stop closed it: true, nested run ended",
+    ],
+  ];
+
+  test.concurrent.each(
+    closeThenWait.flatMap(([name, script, events]) =>
+      (
+        [
+          ["a JS timer", `setTimeout(() => { ${script} }, 1);`],
+          ["an fs callback", `require("fs").stat(".", () => { ${script} });`],
+        ] as const
+      ).flatMap(([site, scriptAtSite]) =>
+        (["an async macro", "Bun.build"] as const).map(wait => [wait, site, name, scriptAtSite, events] as const),
+      ),
+    ),
+  )("uv_close and then a wait in %s, both in %s: %s", async (wait, _site, _name, script, events) => {
+    const result = await closeOrder(`${wait === "Bun.build" ? runNestedInBuild : runNestedInMacro()} ${script}`);
+    expect(result).toEqual({ events, stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("a Worker's uv_close of a handle on uv_default_loop() runs close_cb on the main thread", async () => {
+    // uv_default_loop() is the main thread's loop, in a Worker too. Only the interval keeps the main thread alive
+    // once the close is finished. It is cleared when the Worker has exited and the close callback has run.
+    const result = await closeOrder(`
+      let exited = false;
+      const interval = setInterval(() => {
+        if (!exited || t.defaultLoopCloses() === 0) return;
+        clearInterval(interval);
+        log("interval cleared");
+      }, 1);
+      worker("t.closeOnDefaultLoop();").on("exit", code => {
+        exited = true;
+        log("worker exited " + code);
+      });
+      process.on("exit", () => log("close_cb calls on the main thread: " + t.defaultLoopCloses()));
+    `);
+    expect(result).toEqual({
+      events: "worker exited 0, interval cleared, close_cb calls on the main thread: 1",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("close_cb runs after an uncaught error under --hot", async () => {
+    // After an uncaught error, --hot and --watch wait for a file to change in a loop of their own, which runs no
+    // phase of a loop iteration. The close callback still runs there. The check handle of the script doesn't, so the
+    // script prints no `check`. See close-then-throw.js above.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--hot", "close-then-throw.js"],
+      cwd: tempdir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // The child never exits, so read until it has printed the error and the close callback has run.
+    const readUntil = async (stream: ReadableStream<Uint8Array>, done: (text: string) => boolean) => {
+      const decoder = new TextDecoder();
+      let text = "";
+      for await (const chunk of stream) {
+        text += decoder.decode(chunk, { stream: true });
+        if (done(text)) break;
+      }
+      return text;
+    };
+    const [stdout, stderr] = await Promise.all([
+      readUntil(proc.stdout, text => text.split(/\r?\n/).includes("close")),
+      readUntil(proc.stderr, text => text.includes("thrown after uv_close")),
+    ]);
+    proc.kill();
+    expect(stdout.split(/\r?\n/)).toEqual(["closing", "close", ""]);
+    expect(stderr).toContain("thrown after uv_close");
+  });
+
+  test.concurrent("close_cb runs after a line of bun repl that isn't awaited", async () => {
+    // The REPL runs loop iterations only while it waits for the promise of a line. After any other line it ticks
+    // the event loop and then runs the closing phase.
+    const home = tempDirWithFiles("uv-repl-home", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "repl"],
+      stdin: Buffer.from(
+        [
+          `const t = require(${JSON.stringify(addonPath)}).closeOrder;`,
+          `t.open(undefined, false, false); t.close(); t.log("first line");`,
+          `t.log("second line");`,
+          "",
+        ].join("\n"),
+      ),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...bunEnv, TERM: "dumb", NO_COLOR: "1", HOME: home, USERPROFILE: home },
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const printed = ["closing", "first line", "close", "second line"];
+    expect(stdout.split(/\r?\n/).filter(line => printed.includes(line))).toEqual(printed);
+    expect(exitCode).toBe(0);
   });
 
   test.concurrent("uv_now advances", async () => {

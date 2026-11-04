@@ -1517,6 +1517,12 @@ impl EventLoop {
             )
         };
 
+        // An addon's `close_cb` runs in the closing phase of a loop pass, and this wait has no other phase of one.
+        if let Some(hooks) = crate::virtual_machine::runtime_hooks() {
+            // SAFETY: this loop's VM is the thread's VM, and this is its JS thread.
+            unsafe { (hooks.run_uv_closing_phase)(self.vm_ref().as_mut()) };
+        }
+
         self.vm_ref().as_mut().on_after_event_loop();
         self.tick_concurrent();
         self.tick();

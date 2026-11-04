@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -1756,6 +1757,806 @@ static napi_value test_poll_errors(napi_env env, napi_callback_info info) {
   return make_int32_array(env, results, count);
 }
 
+// --- uv_close order ----------------------------------------------------------
+//
+// libuv runs the close callbacks once in each loop iteration: after the check
+// handles and before the timers, the handle that was closed last first.
+// uv.test.ts runs the scripts that use this section on Node too and compares
+// what they print. The functions are the properties of `addon.closeOrder`.
+
+// Prints one line with write(2), not through napi: a close callback can run
+// while the JS environment of its thread goes away. For the same reason no
+// close callback of this section uses napi, except where a test says so.
+static void print_line(const char *text) {
+  char line[96];
+  size_t length = strlen(text);
+  if (length > sizeof(line) - 1)
+    length = sizeof(line) - 1;
+  memcpy(line, text, length);
+  line[length] = '\n';
+  (void)!write(1, line, length + 1);
+}
+
+struct close_order_test {
+  uv_check_t check;
+  uv_async_t target;
+  // The script's callback for each event, if it gave one to open().
+  struct reporter on;
+  bool has_on;
+  bool closing;
+  bool check_ran;
+};
+
+static struct close_order_test *close_order;
+
+// Prints the event, then tells the script if it asked.
+static void close_order_event(struct close_order_test *test,
+                              const char *event) {
+  print_line(event);
+  if (test->has_on)
+    report(&test->on, event, 0, 0);
+}
+
+static void close_order_check_close_cb(uv_handle_t *handle) {
+  if (close_order == handle->data)
+    close_order = NULL;
+  free(handle->data);
+}
+
+// Only a test whose close callback runs while the loop runs gives open() a
+// callback, so napi works here.
+static void close_order_target_close_cb(uv_handle_t *handle) {
+  struct close_order_test *test = handle->data;
+  close_order_event(test, "close");
+  if (test->has_on) {
+    test->has_on = false;
+    reporter_destroy(&test->on);
+  }
+  uv_close((uv_handle_t *)&test->check, close_order_check_close_cb);
+}
+
+static void close_order_check_cb(uv_check_t *handle) {
+  struct close_order_test *test = handle->data;
+  if (!test->closing || test->check_ran)
+    return;
+  test->check_ran = true;
+  close_order_event(test, "check");
+}
+
+// open(on, startCheck, unref) makes a check handle, the marker, and an async
+// handle, the target that close() closes. It starts the marker if startCheck
+// is true and unrefs both handles if unref is true. Each event is printed and
+// then passed to `on`, if that is a function:
+//   closing   right after uv_close(target)
+//   check     the first callback of the marker after that uv_close
+//   close     the close callback of the target, which then closes the marker
+static napi_value close_order_open(napi_env env, napi_callback_info info) {
+  napi_value args[3];
+  get_args(env, info, args, 3);
+  struct close_order_test *test = calloc(1, sizeof(*test));
+  uv_loop_t *loop = get_loop(env, false);
+  if (uv_check_init(loop, &test->check) != 0 ||
+      uv_async_init(loop, &test->target, unused_async_cb) != 0) {
+    free(test);
+    napi_throw_error(env, NULL, "init failed");
+    return NULL;
+  }
+  uv_handle_set_data((uv_handle_t *)&test->check, test);
+  uv_handle_set_data((uv_handle_t *)&test->target, test);
+  napi_valuetype type = napi_undefined;
+  napi_typeof(env, args[0], &type);
+  if (type == napi_function) {
+    reporter_init(&test->on, env, args[0]);
+    test->has_on = true;
+  }
+  if (as_bool(env, args[1]))
+    uv_check_start(&test->check, close_order_check_cb);
+  if (as_bool(env, args[2])) {
+    uv_unref((uv_handle_t *)&test->check);
+    uv_unref((uv_handle_t *)&test->target);
+  }
+  close_order = test;
+  return NULL;
+}
+
+// startCheck() starts the marker after the fact.
+static napi_value close_order_start_check(napi_env env,
+                                          napi_callback_info info) {
+  if (close_order != NULL)
+    uv_check_start(&close_order->check, close_order_check_cb);
+  return NULL;
+}
+
+static void close_order_close_target(struct close_order_test *test) {
+  test->closing = true;
+  uv_close((uv_handle_t *)&test->target, close_order_target_close_cb);
+  close_order_event(test, "closing");
+}
+
+// close() closes the target.
+static napi_value close_order_close(napi_env env, napi_callback_info info) {
+  if (close_order != NULL && !close_order->closing)
+    close_order_close_target(close_order);
+  return NULL;
+}
+
+// closeNoCallback() closes the target with uv_close(target, NULL). The marker
+// stays open.
+static napi_value close_order_close_no_callback(napi_env env,
+                                                napi_callback_info info) {
+  if (close_order != NULL && !close_order->closing) {
+    close_order->closing = true;
+    uv_close((uv_handle_t *)&close_order->target, NULL);
+    close_order_event(close_order, "closing");
+  }
+  return NULL;
+}
+
+// isClosing() returns whether the target is closed or closing.
+static napi_value close_order_is_closing(napi_env env,
+                                         napi_callback_info info) {
+  napi_value result;
+  napi_get_boolean(env, close_order == NULL || close_order->closing, &result);
+  return result;
+}
+
+// log(text) prints a line of the script through the same write as the events.
+static napi_value close_order_log(napi_env env, napi_callback_info info) {
+  napi_value args[1];
+  get_args(env, info, args, 1);
+  char text[80] = "";
+  size_t length = 0;
+  napi_get_value_string_utf8(env, args[0], text, sizeof(text), &length);
+  print_line(text);
+  return NULL;
+}
+
+static void close_order_finalize(napi_env env, void *data, void *hint) {
+  if (close_order != NULL && !close_order->closing)
+    close_order_close_target(close_order);
+}
+
+// closeWhenCollected() returns an object whose N-API finalizer closes the
+// target, like the destructor of an ObjectWrap that owns a handle.
+static napi_value close_order_close_when_collected(napi_env env,
+                                                   napi_callback_info info) {
+  napi_value object;
+  napi_create_object(env, &object);
+  napi_wrap(env, object, &close_order, close_order_finalize, NULL, NULL);
+  return object;
+}
+
+struct close_hook {
+  union {
+    uv_handle_t handle;
+    uv_idle_t idle;
+    uv_prepare_t prepare;
+    uv_check_t check;
+    uv_timer_t timer;
+    uv_async_t async;
+    uv_poll_t poll;
+  } u;
+  uv_work_t work;
+  struct reporter fn;
+  // The sockets of a "poll" hook, or -1.
+  int fds[2];
+};
+
+static void close_hook_call(struct close_hook *hook) {
+  report(&hook->fn, "hook", 0, 0);
+  reporter_destroy(&hook->fn);
+}
+
+static void close_hook_close_cb(uv_handle_t *handle) {
+  struct close_hook *hook = handle->data;
+  close_fd(&hook->fds[0]);
+  close_fd(&hook->fds[1]);
+  free(hook);
+}
+
+static void close_hook_fire(struct close_hook *hook) {
+  close_hook_call(hook);
+  uv_close(&hook->u.handle, close_hook_close_cb);
+}
+
+static void close_hook_idle_cb(uv_idle_t *handle) {
+  close_hook_fire(handle->data);
+}
+
+static void close_hook_prepare_cb(uv_prepare_t *handle) {
+  close_hook_fire(handle->data);
+}
+
+static void close_hook_check_cb(uv_check_t *handle) {
+  close_hook_fire(handle->data);
+}
+
+static void close_hook_timer_cb(uv_timer_t *handle) {
+  close_hook_fire(handle->data);
+}
+
+static void close_hook_async_cb(uv_async_t *handle) {
+  close_hook_fire(handle->data);
+}
+
+static void close_hook_poll_cb(uv_poll_t *handle, int status, int events) {
+  uv_poll_stop(handle);
+  close_hook_fire(handle->data);
+}
+
+static void close_hook_work_cb(uv_work_t *req) { (void)req; }
+
+static void close_hook_after_work_cb(uv_work_t *req, int status) {
+  struct close_hook *hook = req->data;
+  close_hook_call(hook);
+  free(hook);
+}
+
+// The close callback of a "close" hook is where the script's function runs.
+static void close_hook_call_close_cb(uv_handle_t *handle) {
+  struct close_hook *hook = handle->data;
+  close_hook_call(hook);
+  free(hook);
+}
+
+// hook(kind, fn) calls fn() once from a libuv callback of a handle or request
+// of its own: "idle", "prepare", "check", "timer" (after 1 ms), "async",
+// "poll" (of a readable socket), "work" (the after_work_cb) or "close" (the
+// close callback of a handle that hook() closes at once).
+static napi_value close_order_hook(napi_env env, napi_callback_info info) {
+  napi_value args[2];
+  get_args(env, info, args, 2);
+  char kind[16] = "";
+  size_t length = 0;
+  napi_get_value_string_utf8(env, args[0], kind, sizeof(kind), &length);
+  struct close_hook *hook = calloc(1, sizeof(*hook));
+  hook->fds[0] = hook->fds[1] = -1;
+  reporter_init(&hook->fn, env, args[1]);
+  uv_loop_t *loop = get_loop(env, false);
+  int rc;
+  if (strcmp(kind, "work") == 0) {
+    hook->work.data = hook;
+    rc = uv_queue_work(loop, &hook->work, close_hook_work_cb,
+                       close_hook_after_work_cb);
+  } else if (strcmp(kind, "idle") == 0) {
+    rc = uv_idle_init(loop, &hook->u.idle);
+    if (rc == 0)
+      rc = uv_idle_start(&hook->u.idle, close_hook_idle_cb);
+  } else if (strcmp(kind, "prepare") == 0) {
+    rc = uv_prepare_init(loop, &hook->u.prepare);
+    if (rc == 0)
+      rc = uv_prepare_start(&hook->u.prepare, close_hook_prepare_cb);
+  } else if (strcmp(kind, "check") == 0) {
+    rc = uv_check_init(loop, &hook->u.check);
+    if (rc == 0)
+      rc = uv_check_start(&hook->u.check, close_hook_check_cb);
+  } else if (strcmp(kind, "timer") == 0) {
+    rc = uv_timer_init(loop, &hook->u.timer);
+    if (rc == 0)
+      rc = uv_timer_start(&hook->u.timer, close_hook_timer_cb, 1, 0);
+  } else if (strcmp(kind, "poll") == 0) {
+    rc = socketpair(AF_UNIX, SOCK_STREAM, 0, hook->fds);
+    if (rc == 0 && write(hook->fds[1], "x", 1) != 1)
+      rc = -1;
+    if (rc == 0)
+      rc = uv_poll_init(loop, &hook->u.poll, hook->fds[0]);
+    if (rc == 0)
+      rc = uv_poll_start(&hook->u.poll, UV_READABLE, close_hook_poll_cb);
+  } else {
+    // "async", and "close" with the handle that it closes.
+    rc = uv_async_init(loop, &hook->u.async, close_hook_async_cb);
+  }
+  if (rc != 0) {
+    napi_throw_error(env, NULL, "hook failed");
+    return NULL;
+  }
+  uv_handle_set_data(&hook->u.handle, hook);
+  if (strcmp(kind, "async") == 0)
+    uv_async_send(&hook->u.async);
+  else if (strcmp(kind, "close") == 0)
+    uv_close(&hook->u.handle, close_hook_call_close_cb);
+  return NULL;
+}
+
+struct close_chain {
+  int length;
+  int closed;
+  // What each close callback prints before its number.
+  char name[16];
+  uv_timer_t timers[];
+};
+
+static void close_chain_cb(uv_handle_t *handle) {
+  struct close_chain *chain = handle->data;
+  uv_loop_t *loop = uv_handle_get_loop(handle);
+  char line[40];
+  snprintf(line, sizeof(line), "%s %d", chain->name, ++chain->closed);
+  print_line(line);
+  if (chain->closed == chain->length) {
+    free(chain);
+    return;
+  }
+  uv_timer_t *next = &chain->timers[chain->closed];
+  if (uv_timer_init(loop, next) != 0)
+    abort();
+  uv_handle_set_data((uv_handle_t *)next, chain);
+  uv_close((uv_handle_t *)next, close_chain_cb);
+}
+
+// chain(n, name) closes a timer handle whose close callback prints `chain 1`
+// and closes the next handle, and so on up to `chain n`. libuv runs one of
+// them in each loop iteration. They print `name` in place of `chain` if it is
+// a string.
+static napi_value close_order_chain(napi_env env, napi_callback_info info) {
+  napi_value args[2];
+  get_args(env, info, args, 2);
+  int32_t length = 0;
+  napi_get_value_int32(env, args[0], &length);
+  if (length < 1)
+    length = 1;
+  struct close_chain *chain =
+      calloc(1, sizeof(*chain) + (size_t)length * sizeof(chain->timers[0]));
+  chain->length = length;
+  size_t name_length = 0;
+  if (napi_get_value_string_utf8(env, args[1], chain->name, sizeof(chain->name),
+                                 &name_length) != napi_ok)
+    strcpy(chain->name, "chain");
+  if (uv_timer_init(get_loop(env, false), &chain->timers[0]) != 0) {
+    free(chain);
+    napi_throw_error(env, NULL, "uv_timer_init failed");
+    return NULL;
+  }
+  uv_handle_set_data((uv_handle_t *)&chain->timers[0], chain);
+  uv_close((uv_handle_t *)&chain->timers[0], close_chain_cb);
+  return NULL;
+}
+
+struct free_in_timer_test {
+  uv_timer_t timer;
+  uv_timer_t *closed;
+};
+
+static void free_in_timer_close_cb(uv_handle_t *handle) {
+  print_line("done");
+  // The timer is the first member of its test.
+  free(handle);
+}
+
+static void free_in_timer_cb(uv_timer_t *timer) {
+  struct free_in_timer_test *test = (struct free_in_timer_test *)timer;
+  // These bytes make a loop that still uses the handle fail every time. The
+  // pointer is volatile, or the compiler drops the stores before free().
+  volatile unsigned char *bytes = (volatile unsigned char *)test->closed;
+  for (size_t i = 0; i < sizeof(*test->closed); i++)
+    bytes[i] = 0xdb;
+  free(test->closed);
+  print_line("freed");
+  uv_close((uv_handle_t *)timer, free_in_timer_close_cb);
+}
+
+// closeThenFreeInTimer() closes a timer handle without a close callback and
+// frees it in the callback of a 0 ms uv_timer_t that it starts in the same
+// call. libuv runs the close callbacks before the timers, so the close is
+// finished when a timer callback runs. Prints `freed`, then `done`.
+static napi_value close_then_free_in_timer(napi_env env,
+                                           napi_callback_info info) {
+  uv_loop_t *loop = get_loop(env, false);
+  struct free_in_timer_test *test = calloc(1, sizeof(*test));
+  test->closed = malloc(sizeof(*test->closed));
+  if (uv_timer_init(loop, test->closed) != 0 ||
+      uv_timer_init(loop, &test->timer) != 0 ||
+      uv_timer_start(&test->timer, free_in_timer_cb, 0, 0) != 0) {
+    napi_throw_error(env, NULL, "timer failed");
+    return NULL;
+  }
+  uv_close((uv_handle_t *)test->closed, NULL);
+  return NULL;
+}
+
+static uv_timer_t reinit_timer;
+static struct reporter reinit_on;
+static bool reinit_has_on;
+
+static void reinit_timer_cb(uv_timer_t *timer) {
+  if (!reinit_has_on)
+    return;
+  reinit_has_on = false;
+  report(&reinit_on, "fired", 0, 0);
+  reporter_destroy(&reinit_on);
+}
+
+// reinitStart(on) initializes a static timer handle and starts it with a 1 ms
+// repeat. The first callback calls on(), if that is a function.
+static napi_value close_order_reinit_start(napi_env env,
+                                           napi_callback_info info) {
+  napi_value args[1];
+  get_args(env, info, args, 1);
+  if (uv_timer_init(get_loop(env, false), &reinit_timer) != 0 ||
+      uv_timer_start(&reinit_timer, reinit_timer_cb, 1, 1) != 0) {
+    napi_throw_error(env, NULL, "timer failed");
+    return NULL;
+  }
+  napi_valuetype type = napi_undefined;
+  napi_typeof(env, args[0], &type);
+  if (type == napi_function) {
+    reporter_init(&reinit_on, env, args[0]);
+    reinit_has_on = true;
+  }
+  return NULL;
+}
+
+// reinitStop() closes that handle without a close callback, behind the guard
+// that every addon writes because libuv aborts on a second uv_close. Returns
+// whether it called uv_close.
+static napi_value close_order_reinit_stop(napi_env env,
+                                          napi_callback_info info) {
+  bool closed = !uv_is_closing((uv_handle_t *)&reinit_timer);
+  if (closed)
+    uv_close((uv_handle_t *)&reinit_timer, NULL);
+  napi_value result;
+  napi_get_boolean(env, closed, &result);
+  return result;
+}
+
+// The handle of closeThenOverwrite(). It stays allocated, so that
+// overwritten() can read it at any time.
+static uv_timer_t *overwritten_handle;
+static uv_check_t overwrite_check;
+
+static void overwrite_check_cb(uv_check_t *check) {
+  print_line("check");
+  uv_check_stop(check);
+}
+
+// The handle holds 0xAA bytes, so this only compares its address.
+static void overwrite_close_cb(uv_handle_t *handle) {
+  print_line(handle == (uv_handle_t *)overwritten_handle
+                 ? "close_cb got the handle"
+                 : "close_cb got another address");
+}
+
+// closeThenOverwrite(withCallback) closes a timer handle, with a close
+// callback or with NULL, and overwrites the whole handle with 0xAA bytes as
+// soon as uv_close() has returned. libuv doesn't allow that: it keeps a
+// closing handle on a list that goes through the handle. Bun keeps the
+// address and the callback on a queue of its own and doesn't use the handle
+// again. Prints `closing`, then `check` from an unref'd check handle, which
+// only runs if the close keeps the loop alive for one more iteration, then
+// what the close callback got.
+static napi_value close_then_overwrite(napi_env env, napi_callback_info info) {
+  napi_value args[1];
+  get_args(env, info, args, 1);
+  uv_loop_t *loop = get_loop(env, false);
+  overwritten_handle = malloc(sizeof(*overwritten_handle));
+  if (uv_timer_init(loop, overwritten_handle) != 0 ||
+      uv_check_init(loop, &overwrite_check) != 0 ||
+      uv_check_start(&overwrite_check, overwrite_check_cb) != 0) {
+    napi_throw_error(env, NULL, "closeThenOverwrite failed");
+    return NULL;
+  }
+  uv_unref((uv_handle_t *)&overwrite_check);
+  uv_close((uv_handle_t *)overwritten_handle,
+           as_bool(env, args[0]) ? overwrite_close_cb : NULL);
+  memset(overwritten_handle, 0xAA, sizeof(*overwritten_handle));
+  print_line("closing");
+  return NULL;
+}
+
+// overwritten() returns whether every byte of that handle is still 0xAA.
+static napi_value close_order_overwritten(napi_env env,
+                                          napi_callback_info info) {
+  const unsigned char *bytes = (const unsigned char *)overwritten_handle;
+  bool untouched = bytes != NULL;
+  for (size_t i = 0; untouched && i < sizeof(*overwritten_handle); i++)
+    untouched = bytes[i] == 0xAA;
+  napi_value result;
+  napi_get_boolean(env, untouched, &result);
+  return result;
+}
+
+static uv_timer_t twice_handle;
+
+static void twice_first_close_cb(uv_handle_t *handle) {
+  print_line(handle == (uv_handle_t *)&twice_handle ? "first close_cb"
+                                                    : "first close_cb: wrong");
+}
+
+static void twice_second_close_cb(uv_handle_t *handle) {
+  print_line(handle == (uv_handle_t *)&twice_handle ? "second close_cb"
+                                                    : "second close_cb: wrong");
+}
+
+// closeTwice() closes a static timer handle, initializes it again and closes
+// it again, with another close callback, before the first close is finished.
+// libuv doesn't allow that either. Bun runs both callbacks, the one of the
+// last close first.
+static napi_value close_twice(napi_env env, napi_callback_info info) {
+  uv_loop_t *loop = get_loop(env, false);
+  if (uv_timer_init(loop, &twice_handle) != 0) {
+    napi_throw_error(env, NULL, "uv_timer_init failed");
+    return NULL;
+  }
+  uv_close((uv_handle_t *)&twice_handle, twice_first_close_cb);
+  if (uv_timer_init(loop, &twice_handle) != 0) {
+    napi_throw_error(env, NULL, "the second uv_timer_init failed");
+    return NULL;
+  }
+  uv_close((uv_handle_t *)&twice_handle, twice_second_close_cb);
+  return NULL;
+}
+
+struct send_again_test {
+  uv_async_t handle;
+  struct reporter fn;
+  bool sent_again;
+};
+
+static void send_again_async_cb(uv_async_t *handle) {
+  struct send_again_test *test = handle->data;
+  if (test->sent_again) {
+    print_line("second async_cb");
+    uv_close((uv_handle_t *)handle, free_handle_close_cb);
+    return;
+  }
+  test->sent_again = true;
+  report(&test->fn, "hook", 0, 0);
+  reporter_destroy(&test->fn);
+  uv_async_send(handle);
+}
+
+// sendAgain(fn) sends to an async handle. Its first callback calls fn() and
+// sends to the handle again, and its second callback prints
+// `second async_cb`. libuv runs that one in its next iteration.
+static napi_value close_order_send_again(napi_env env,
+                                         napi_callback_info info) {
+  napi_value args[1];
+  get_args(env, info, args, 1);
+  // The handle is the first member, and its close callback frees the test.
+  struct send_again_test *test = calloc(1, sizeof(*test));
+  if (!init_async(env, get_loop(env, false), &test->handle,
+                  send_again_async_cb)) {
+    free(test);
+    return NULL;
+  }
+  reporter_init(&test->fn, env, args[0]);
+  uv_handle_set_data((uv_handle_t *)&test->handle, test);
+  uv_async_send(&test->handle);
+  return NULL;
+}
+
+// uSockets closes a socket in two steps. us_poll_stop() clears handle->data
+// and calls uv_close(). The check callback of its loop then stores the socket
+// in handle->data of every closed handle that is still closing, and the close
+// callback frees the handle and the socket only if it finds that. So both
+// blocks leak if close_cb runs before the check callback.
+struct us_socket {
+  // A uv_poll_t, in a block of its own.
+  uv_poll_t *handle;
+  struct us_socket *next_closed;
+  int fds[2];
+};
+
+static struct {
+  // NULL without a check handle.
+  uv_check_t *check;
+  struct us_socket *socket;
+  struct us_socket *closed_head;
+  // The blocks of the socket and of its handle that are not freed.
+  int blocks;
+} us;
+
+static void us_check_close_cb(uv_handle_t *handle) { free(handle); }
+
+// uSockets' close_cb_free_poll.
+static void us_close_cb(uv_handle_t *handle) {
+  struct us_socket *socket = handle->data;
+  bool marked = socket != NULL;
+  if (marked) {
+    us.blocks -= 2;
+  } else {
+    // uSockets leaks both blocks here. This frees them after the report.
+    socket = us.socket;
+    us.closed_head = NULL;
+  }
+  char line[64];
+  snprintf(line, sizeof(line), "close_cb freed=%d left=%d", marked, us.blocks);
+  print_line(line);
+  close_fd(&socket->fds[0]);
+  close_fd(&socket->fds[1]);
+  free(socket);
+  free(handle);
+  us.socket = NULL;
+  if (us.check != NULL)
+    uv_close((uv_handle_t *)us.check, us_check_close_cb);
+  us.check = NULL;
+}
+
+// uSockets' us_internal_free_closed_sockets, from the check callback of its
+// loop.
+static void us_check_cb(uv_check_t *check) {
+  int marked = 0;
+  for (struct us_socket *socket = us.closed_head; socket != NULL;
+       socket = socket->next_closed) {
+    socket->handle->data = socket;
+    marked++;
+  }
+  us.closed_head = NULL;
+  if (marked == 0)
+    return;
+  char line[32];
+  snprintf(line, sizeof(line), "check marked=%d", marked);
+  print_line(line);
+}
+
+// usSocket(check) makes a socket of that shape, whose poll handle watches a
+// socket that never becomes readable, and the check handle of its loop, which
+// is started and ref'd ("ref"), started and unref'd as in uSockets ("unref"),
+// or missing ("none"). The events:
+//   check marked=<sockets>
+//   close_cb freed=<0 or 1> left=<blocks, 0 or 2>
+static napi_value us_make_socket(napi_env env, napi_callback_info info) {
+  napi_value args[1];
+  get_args(env, info, args, 1);
+  char check[8] = "";
+  size_t length = 0;
+  napi_get_value_string_utf8(env, args[0], check, sizeof(check), &length);
+  uv_loop_t *loop = get_loop(env, false);
+  struct us_socket *socket = calloc(1, sizeof(*socket));
+  socket->handle = malloc(sizeof(*socket->handle));
+  int rc = socketpair(AF_UNIX, SOCK_STREAM, 0, socket->fds);
+  if (rc == 0)
+    rc = uv_poll_init(loop, socket->handle, socket->fds[0]);
+  if (rc == 0)
+    rc = uv_poll_start(socket->handle, UV_READABLE, unused_poll_cb);
+  if (rc == 0 && strcmp(check, "none") != 0) {
+    us.check = malloc(sizeof(*us.check));
+    rc = uv_check_init(loop, us.check);
+    if (rc == 0)
+      rc = uv_check_start(us.check, us_check_cb);
+    if (strcmp(check, "unref") == 0)
+      uv_unref((uv_handle_t *)us.check);
+  }
+  if (rc != 0) {
+    napi_throw_error(env, NULL, "usSocket failed");
+    return NULL;
+  }
+  socket->handle->data = socket;
+  us.socket = socket;
+  us.blocks = 2;
+  return NULL;
+}
+
+// usClose() is uSockets' us_socket_close.
+static napi_value us_close(napi_env env, napi_callback_info info) {
+  struct us_socket *socket = us.socket;
+  if (socket == NULL)
+    return NULL;
+  uv_poll_stop(socket->handle);
+  socket->handle->data = NULL;
+  uv_close((uv_handle_t *)socket->handle, us_close_cb);
+  socket->next_closed = us.closed_head;
+  us.closed_head = socket;
+  return NULL;
+}
+
+static void guard_prepare_cb(uv_prepare_t *handle) { (void)handle; }
+
+// Its first act gives the page back. Until here nothing could read it.
+static void guard_close_cb(uv_handle_t *handle) {
+  size_t size = (size_t)sysconf(_SC_PAGESIZE);
+  mprotect(handle, size, PROT_READ | PROT_WRITE);
+  char line[32];
+  snprintf(line, sizeof(line), "close %s",
+           uv_handle_type_name(uv_handle_get_type(handle)));
+  print_line(line);
+  munmap(handle, size);
+}
+
+// guard(type, withCallback) gives a handle of `type` ("timer", "async",
+// "idle", "prepare", "check" or "poll") a page of its own, starts it so that
+// its callback is due, closes it, with a close callback or with NULL, and
+// takes every access to the page away as soon as uv_close() has returned. The
+// close callback gives the access back as its first act. So the process dies
+// if the loop reads or writes the handle in between, or at any time after a
+// close without a callback. libuv does both: its closing list goes through the
+// handle. Prints `closing <type>`, and the close callback `close <type>`.
+static napi_value close_order_guard(napi_env env, napi_callback_info info) {
+  napi_value args[2];
+  get_args(env, info, args, 2);
+  char type[16] = "";
+  size_t length = 0;
+  napi_get_value_string_utf8(env, args[0], type, sizeof(type), &length);
+  uv_loop_t *loop = get_loop(env, false);
+  size_t size = (size_t)sysconf(_SC_PAGESIZE);
+  void *page = mmap(NULL, size, PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  int fds[2] = {-1, -1};
+  int rc = -1;
+  if (page == MAP_FAILED) {
+    // Reported below.
+  } else if (strcmp(type, "timer") == 0) {
+    rc = uv_timer_init(loop, page);
+    if (rc == 0)
+      rc = uv_timer_start(page, unused_timer_cb, 0, 1);
+  } else if (strcmp(type, "async") == 0) {
+    rc = uv_async_init(loop, page, unused_async_cb);
+    if (rc == 0)
+      rc = uv_async_send(page);
+  } else if (strcmp(type, "idle") == 0) {
+    rc = uv_idle_init(loop, page);
+    if (rc == 0)
+      rc = uv_idle_start(page, unused_idle_cb);
+  } else if (strcmp(type, "prepare") == 0) {
+    rc = uv_prepare_init(loop, page);
+    if (rc == 0)
+      rc = uv_prepare_start(page, guard_prepare_cb);
+  } else if (strcmp(type, "check") == 0) {
+    rc = uv_check_init(loop, page);
+    if (rc == 0)
+      rc = uv_check_start(page, unused_check_cb);
+  } else if (strcmp(type, "poll") == 0) {
+    rc = socketpair(AF_UNIX, SOCK_STREAM, 0, fds);
+    if (rc == 0 && write(fds[1], "x", 1) != 1)
+      rc = -1;
+    if (rc == 0)
+      rc = uv_poll_init(loop, page, fds[0]);
+    if (rc == 0)
+      rc = uv_poll_start(page, UV_READABLE, unused_poll_cb);
+  }
+  if (rc != 0) {
+    napi_throw_error(env, NULL, "guard failed");
+    return NULL;
+  }
+  uv_close(page, as_bool(env, args[1]) ? guard_close_cb : NULL);
+  mprotect(page, size, PROT_NONE);
+  close_fd(&fds[0]);
+  close_fd(&fds[1]);
+  char line[32];
+  snprintf(line, sizeof(line), "closing %s", type);
+  print_line(line);
+  return NULL;
+}
+
+// The thread that loaded the addon first, which is the main thread.
+static pthread_t main_thread;
+// The close callbacks of closeOnDefaultLoop() that have run, and those of
+// them that ran on another thread than the main thread.
+static atomic_int default_loop_close_cbs;
+static atomic_int default_loop_close_cbs_elsewhere;
+
+static void default_loop_close_cb(uv_handle_t *handle) {
+  atomic_fetch_add(&default_loop_close_cbs, 1);
+  if (!pthread_equal(pthread_self(), main_thread))
+    atomic_fetch_add(&default_loop_close_cbs_elsewhere, 1);
+  free(handle);
+}
+
+// closeOnDefaultLoop() initializes a timer handle on uv_default_loop() and
+// closes it. That loop is the main thread's on every thread, so in a Worker
+// this is a uv_close() on another thread than the loop's. The close callback
+// belongs to the loop, so it runs on the main thread.
+static napi_value close_on_default_loop(napi_env env, napi_callback_info info) {
+  uv_timer_t *timer = malloc(sizeof(*timer));
+  if (uv_timer_init(uv_default_loop(), timer) != 0) {
+    free(timer);
+    napi_throw_error(env, NULL, "uv_timer_init failed");
+    return NULL;
+  }
+  uv_close((uv_handle_t *)timer, default_loop_close_cb);
+  return NULL;
+}
+
+// defaultLoopCloses() returns how many of those close callbacks have run, or
+// -1 if one of them ran on another thread than the main thread.
+static napi_value default_loop_closes(napi_env env, napi_callback_info info) {
+  int32_t count = atomic_load(&default_loop_close_cbs_elsewhere) != 0
+                      ? -1
+                      : atomic_load(&default_loop_close_cbs);
+  napi_value result;
+  napi_create_int32(env, count, &result);
+  return result;
+}
+
 // testNow() checks that uv_now advances while the process spins for 5ms of
 // uv_hrtime. Returns { nowIsPositive, advancedMs }.
 static napi_value test_now(napi_env env, napi_callback_info info) {
@@ -1851,6 +2652,50 @@ napi_value Init(napi_env env, napi_value exports) {
 
   napi_create_function(env, NULL, 0, test_poll_errors, NULL, &fn);
   napi_set_named_property(env, exports, "testPollErrors", fn);
+
+  static const struct {
+    const char *name;
+    napi_callback callback;
+  } close_order_functions[] = {
+      {"open", close_order_open},
+      {"startCheck", close_order_start_check},
+      {"close", close_order_close},
+      {"closeNoCallback", close_order_close_no_callback},
+      {"isClosing", close_order_is_closing},
+      {"log", close_order_log},
+      {"closeWhenCollected", close_order_close_when_collected},
+      {"hook", close_order_hook},
+      {"chain", close_order_chain},
+      {"closeThenFreeInTimer", close_then_free_in_timer},
+      {"reinitStart", close_order_reinit_start},
+      {"reinitStop", close_order_reinit_stop},
+      {"closeThenOverwrite", close_then_overwrite},
+      {"overwritten", close_order_overwritten},
+      {"closeTwice", close_twice},
+      {"sendAgain", close_order_send_again},
+      {"usSocket", us_make_socket},
+      {"usClose", us_close},
+      {"guard", close_order_guard},
+      {"closeOnDefaultLoop", close_on_default_loop},
+      {"defaultLoopCloses", default_loop_closes},
+  };
+  napi_value close_order_exports;
+  napi_create_object(env, &close_order_exports);
+  for (size_t i = 0;
+       i < sizeof(close_order_functions) / sizeof(close_order_functions[0]);
+       i++) {
+    napi_create_function(env, NULL, 0, close_order_functions[i].callback, NULL,
+                         &fn);
+    napi_set_named_property(env, close_order_exports,
+                            close_order_functions[i].name, fn);
+  }
+  napi_set_named_property(env, exports, "closeOrder", close_order_exports);
+  // The first environment that loads the addon is the one of the main thread.
+  static bool loaded;
+  if (!loaded) {
+    loaded = true;
+    main_thread = pthread_self();
+  }
 
   napi_create_function(env, NULL, 0, test_now, NULL, &fn);
   napi_set_named_property(env, exports, "testNow", fn);

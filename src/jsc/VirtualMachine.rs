@@ -2844,6 +2844,11 @@ impl VirtualMachine {
         self.regular_event_loop.release_queued_tasks();
         self.macro_event_loop.release_queued_tasks();
         self.transpiler_store.release_queued_jobs_for_teardown();
+        // The `uv_handle_t`s that an addon closed wait for their `close_cb` like queued tasks, and the loop won't run it.
+        if let Some(hooks) = runtime_hooks() {
+            // SAFETY: this is the thread's VM on its JS thread, and the JSC heap is alive.
+            unsafe { (hooks.release_uv_closing_handles)(self) };
+        }
     }
 }
 
@@ -3199,6 +3204,10 @@ pub struct RuntimeHooks {
     pub stop_active_handles_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine) -> SweepResult,
     /// Teardown only (never on a live VM): unlink every remaining EventLoopTimer.
     pub disarm_all_timers_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine),
+    /// Runs the `close_cb` of each `uv_handle_t` that an addon closed and the loop won't finish (POSIX). `vm` is the thread's VM on its JS thread, with the JSC heap alive.
+    pub release_uv_closing_handles: unsafe fn(vm: *mut VirtualMachine),
+    /// Runs one closing phase for the `uv_handle_t`s that an addon closed (POSIX), for a driver that polls without `auto_tick`. `vm` is the thread's VM on its JS thread.
+    pub run_uv_closing_phase: unsafe fn(vm: *mut VirtualMachine),
     /// Teardown-only, after ~VM (JSC's RunLoop timers use the heap until then):
     /// close the loop handles the timer heap embeds (Windows uv_timer/uv_idle)
     /// so the loop close unlinks them before the runtime state is freed.

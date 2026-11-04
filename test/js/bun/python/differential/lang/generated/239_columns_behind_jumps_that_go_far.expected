@@ -1,0 +1,1000 @@
+status: 0
+script: 47c62a5764a22a37
+source: ba12f36fbfee8009
+---
+name [name='while', size=1] => while
+size [name='while', size=1] => 1
+len(found) [name='while', size=1] => 8
+len(raised) [name='while', size=1] => 3
+without columns: [x for x in raised if None in x[3]][:5] [name='while', size=1] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='while', size=1] => 4339317a2a
+    x [name='while', size=1, x=tuple] => ('ZeroDivisionError', 'f', 8, (8, 8, 11, 23))
+    x [name='while', size=1, x=tuple] => ('IndexError', 'f', 6, (6, 6, 8, 18))
+    x [name='while', size=1, x=tuple] => ('KeyError', 'f', 7, (7, 7, 8, 16))
+    x [name='while', size=1, x=tuple] => ('IndexError', 'f', 6, (6, 6, 8, 18))
+    x [name='while', size=1, x=tuple] => ('KeyError', 'f', 7, (7, 7, 8, 16))
+name [name='while', size=5] => while
+size [name='while', size=5] => 5
+len(found) [name='while', size=5] => 20
+len(raised) [name='while', size=5] => 7
+without columns: [x for x in raised if None in x[3]][:5] [name='while', size=5] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='while', size=5] => 188952bb7a
+name [name='while', size=6] => while
+size [name='while', size=6] => 6
+len(found) [name='while', size=6] => 23
+len(raised) [name='while', size=6] => 8
+without columns: [x for x in raised if None in x[3]][:5] [name='while', size=6] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='while', size=6] => 0cadffe73c
+name [name='while', size=7] => while
+size [name='while', size=7] => 7
+len(found) [name='while', size=7] => 26
+len(raised) [name='while', size=7] => 9
+without columns: [x for x in raised if None in x[3]][:5] [name='while', size=7] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='while', size=7] => 882d10854b
+    x [name='while', size=7, x=tuple] => ('ZeroDivisionError', 'f', 14, (14, 14, 11, 23))
+    x [name='while', size=7, x=tuple] => ('IndexError', 'f', 6, (6, 6, 8, 18))
+    x [name='while', size=7, x=tuple] => ('KeyError', 'f', 7, (7, 7, 8, 16))
+    x [name='while', size=7, x=tuple] => ('KeyError', 'f', 8, (8, 8, 8, 16))
+    x [name='while', size=7, x=tuple] => ('KeyError', 'f', 9, (9, 9, 8, 16))
+    x [name='while', size=7, x=tuple] => ('KeyError', 'f', 10, (10, 10, 8, 16))
+    x [name='while', size=7, x=tuple] => ('KeyError', 'f', 12, (12, 12, 8, 16))
+    x [name='while', size=7, x=tuple] => ('KeyError', 'f', 13, (13, 13, 8, 16))
+name [name='while', size=12] => while
+size [name='while', size=12] => 12
+len(found) [name='while', size=12] => 41
+len(raised) [name='while', size=12] => 14
+without columns: [x for x in raised if None in x[3]][:5] [name='while', size=12] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='while', size=12] => 4ff9787c5f
+name [name='while', size=30] => while
+size [name='while', size=30] => 30
+len(found) [name='while', size=30] => 95
+len(raised) [name='while', size=30] => 32
+without columns: [x for x in raised if None in x[3]][:5] [name='while', size=30] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='while', size=30] => 3ed72db747
+name [name='while', size=45] => while
+size [name='while', size=45] => 45
+len(found) [name='while', size=45] => 140
+len(raised) [name='while', size=45] => 47
+without columns: [x for x in raised if None in x[3]][:5] [name='while', size=45] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='while', size=45] => 6b60fabfad
+name [name='while', size=90] => while
+size [name='while', size=90] => 90
+len(found) [name='while', size=90] => 11
+len(raised) [name='while', size=90] => 5
+without columns: [x for x in raised if None in x[3]][:5] [name='while', size=90] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='while', size=90] => 72277ac868
+name [name='while', size=400] => while
+size [name='while', size=400] => 400
+len(found) [name='while', size=400] => 11
+len(raised) [name='while', size=400] => 5
+without columns: [x for x in raised if None in x[3]][:5] [name='while', size=400] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='while', size=400] => 558ea620f6
+name [name='while', size=1200] => while
+size [name='while', size=1200] => 1200
+len(found) [name='while', size=1200] => 11
+len(raised) [name='while', size=1200] => 5
+without columns: [x for x in raised if None in x[3]][:5] [name='while', size=1200] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='while', size=1200] => 76e70aafe9
+    x [name='while', size=1200, x=tuple] => ('ZeroDivisionError', 'f', 1207, (1207, 1207, 11, 23))
+    x [name='while', size=1200, x=tuple] => ('IndexError', 'f', 6, (6, 6, 8, 18))
+    x [name='while', size=1200, x=tuple] => ('KeyError', 'f', 7, (7, 7, 8, 16))
+    x [name='while', size=1200, x=tuple] => ('KeyError', 'f', 8, (8, 8, 8, 16))
+    x [name='while', size=1200, x=tuple] => ('KeyError', 'f', 1206, (1206, 1206, 8, 19))
+    x [name='while', size=1200, x=tuple] => ('KeyError', 'f', 8, (8, 8, 8, 16))
+    x [name='while', size=1200, x=tuple] => ('KeyError', 'f', 1206, (1206, 1206, 8, 19))
+name [name='if else', size=1] => if else
+size [name='if else', size=1] => 1
+len(found) [name='if else', size=1] => 8
+len(raised) [name='if else', size=1] => 1
+without columns: [x for x in raised if None in x[3]][:5] [name='if else', size=1] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='if else', size=1] => abd8338af4
+    x [name='if else', size=1, x=tuple] => ('ZeroDivisionError', 'f', 8, (8, 8, 11, 23))
+    x [name='if else', size=1, x=tuple] => ('ZeroDivisionError', 'f', 8, (8, 8, 11, 23))
+name [name='if else', size=5] => if else
+size [name='if else', size=5] => 5
+len(found) [name='if else', size=5] => 20
+len(raised) [name='if else', size=5] => 5
+without columns: [x for x in raised if None in x[3]][:5] [name='if else', size=5] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='if else', size=5] => 6f6d40546b
+name [name='if else', size=6] => if else
+size [name='if else', size=6] => 6
+len(found) [name='if else', size=6] => 23
+len(raised) [name='if else', size=6] => 7
+without columns: [x for x in raised if None in x[3]][:5] [name='if else', size=6] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='if else', size=6] => 0a62c256b9
+name [name='if else', size=7] => if else
+size [name='if else', size=7] => 7
+len(found) [name='if else', size=7] => 26
+len(raised) [name='if else', size=7] => 7
+without columns: [x for x in raised if None in x[3]][:5] [name='if else', size=7] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='if else', size=7] => b5957138df
+    x [name='if else', size=7, x=tuple] => ('ZeroDivisionError', 'f', 20, (20, 20, 11, 23))
+    x [name='if else', size=7, x=tuple] => ('KeyError', 'f', 6, (6, 6, 8, 16))
+    x [name='if else', size=7, x=tuple] => ('KeyError', 'f', 8, (8, 8, 8, 16))
+    x [name='if else', size=7, x=tuple] => ('KeyError', 'f', 10, (10, 10, 8, 16))
+    x [name='if else', size=7, x=tuple] => ('KeyError', 'f', 14, (14, 14, 8, 16))
+    x [name='if else', size=7, x=tuple] => ('KeyError', 'f', 16, (16, 16, 8, 17))
+    x [name='if else', size=7, x=tuple] => ('KeyError', 'f', 16, (16, 16, 8, 17))
+    x [name='if else', size=7, x=tuple] => ('KeyError', 'f', 18, (18, 18, 8, 17))
+name [name='if else', size=12] => if else
+size [name='if else', size=12] => 12
+len(found) [name='if else', size=12] => 41
+len(raised) [name='if else', size=12] => 13
+without columns: [x for x in raised if None in x[3]][:5] [name='if else', size=12] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='if else', size=12] => 9b53ca13dd
+name [name='if else', size=30] => if else
+size [name='if else', size=30] => 30
+len(found) [name='if else', size=30] => 95
+len(raised) [name='if else', size=30] => 31
+without columns: [x for x in raised if None in x[3]][:5] [name='if else', size=30] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='if else', size=30] => c306ea00cf
+name [name='if else', size=45] => if else
+size [name='if else', size=45] => 45
+len(found) [name='if else', size=45] => 140
+len(raised) [name='if else', size=45] => 45
+without columns: [x for x in raised if None in x[3]][:5] [name='if else', size=45] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='if else', size=45] => 7ea7cd09b4
+name [name='if else', size=90] => if else
+size [name='if else', size=90] => 90
+len(found) [name='if else', size=90] => 11
+len(raised) [name='if else', size=90] => 4
+without columns: [x for x in raised if None in x[3]][:5] [name='if else', size=90] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='if else', size=90] => 0a65f260d0
+name [name='if else', size=400] => if else
+size [name='if else', size=400] => 400
+len(found) [name='if else', size=400] => 11
+len(raised) [name='if else', size=400] => 4
+without columns: [x for x in raised if None in x[3]][:5] [name='if else', size=400] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='if else', size=400] => e59de2bbb8
+name [name='for else', size=1] => for else
+size [name='for else', size=1] => 1
+len(found) [name='for else', size=1] => 8
+len(raised) [name='for else', size=1] => 4
+without columns: [x for x in raised if None in x[3]][:5] [name='for else', size=1] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='for else', size=1] => 9f95e809f2
+    x [name='for else', size=1, x=tuple] => ('ZeroDivisionError', 'f', 8, (8, 8, 11, 23))
+    x [name='for else', size=1, x=tuple] => ('IndexError', 'f', 4, (4, 4, 19, 29))
+    x [name='for else', size=1, x=tuple] => ('KeyError', 'f', 5, (5, 5, 8, 16))
+    x [name='for else', size=1, x=tuple] => ('KeyError', 'f', 7, (7, 7, 8, 16))
+    x [name='for else', size=1, x=tuple] => ('KeyError', 'f', 5, (5, 5, 8, 16))
+    x [name='for else', size=1, x=tuple] => ('KeyError', 'f', 7, (7, 7, 8, 16))
+name [name='for else', size=5] => for else
+size [name='for else', size=5] => 5
+len(found) [name='for else', size=5] => 20
+len(raised) [name='for else', size=5] => 12
+without columns: [x for x in raised if None in x[3]][:5] [name='for else', size=5] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='for else', size=5] => 26f31db36c
+name [name='for else', size=6] => for else
+size [name='for else', size=6] => 6
+len(found) [name='for else', size=6] => 23
+len(raised) [name='for else', size=6] => 14
+without columns: [x for x in raised if None in x[3]][:5] [name='for else', size=6] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='for else', size=6] => 963dde48af
+name [name='for else', size=7] => for else
+size [name='for else', size=7] => 7
+len(found) [name='for else', size=7] => 26
+len(raised) [name='for else', size=7] => 16
+without columns: [x for x in raised if None in x[3]][:5] [name='for else', size=7] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='for else', size=7] => 84dd09a101
+    x [name='for else', size=7, x=tuple] => ('ZeroDivisionError', 'f', 20, (20, 20, 11, 23))
+    x [name='for else', size=7, x=tuple] => ('IndexError', 'f', 4, (4, 4, 19, 29))
+    x [name='for else', size=7, x=tuple] => ('KeyError', 'f', 5, (5, 5, 8, 16))
+    x [name='for else', size=7, x=tuple] => ('KeyError', 'f', 6, (6, 6, 8, 16))
+    x [name='for else', size=7, x=tuple] => ('KeyError', 'f', 7, (7, 7, 8, 16))
+    x [name='for else', size=7, x=tuple] => ('KeyError', 'f', 8, (8, 8, 8, 16))
+    x [name='for else', size=7, x=tuple] => ('KeyError', 'f', 18, (18, 18, 8, 17))
+    x [name='for else', size=7, x=tuple] => ('KeyError', 'f', 19, (19, 19, 8, 17))
+name [name='for else', size=12] => for else
+size [name='for else', size=12] => 12
+len(found) [name='for else', size=12] => 41
+len(raised) [name='for else', size=12] => 26
+without columns: [x for x in raised if None in x[3]][:5] [name='for else', size=12] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='for else', size=12] => 487fefcad1
+name [name='for else', size=30] => for else
+size [name='for else', size=30] => 30
+len(found) [name='for else', size=30] => 95
+len(raised) [name='for else', size=30] => 62
+without columns: [x for x in raised if None in x[3]][:5] [name='for else', size=30] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='for else', size=30] => fae36acd65
+name [name='for else', size=45] => for else
+size [name='for else', size=45] => 45
+len(found) [name='for else', size=45] => 140
+len(raised) [name='for else', size=45] => 92
+without columns: [x for x in raised if None in x[3]][:5] [name='for else', size=45] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='for else', size=45] => e845e762cd
+name [name='for else', size=90] => for else
+size [name='for else', size=90] => 90
+len(found) [name='for else', size=90] => 11
+len(raised) [name='for else', size=90] => 7
+without columns: [x for x in raised if None in x[3]][:5] [name='for else', size=90] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='for else', size=90] => ed5f670c5b
+name [name='for else', size=400] => for else
+size [name='for else', size=400] => 400
+len(found) [name='for else', size=400] => 11
+len(raised) [name='for else', size=400] => 7
+without columns: [x for x in raised if None in x[3]][:5] [name='for else', size=400] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='for else', size=400] => db165e85e9
+name [name='and or not', size=1] => and or not
+size [name='and or not', size=1] => 1
+len(found) [name='and or not', size=1] => 8
+len(raised) [name='and or not', size=1] => 3
+without columns: [x for x in raised if None in x[3]][:5] [name='and or not', size=1] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='and or not', size=1] => 24fbf008df
+    x [name='and or not', size=1, x=tuple] => ('ZeroDivisionError', 'f', 6, (6, 6, 11, 23))
+    x [name='and or not', size=1, x=tuple] => ('IndexError', 'f', 4, (4, 4, 41, 51))
+    x [name='and or not', size=1, x=tuple] => ('KeyError', 'f', 5, (5, 5, 8, 16))
+    x [name='and or not', size=1, x=tuple] => ('IndexError', 'f', 4, (4, 4, 41, 51))
+    x [name='and or not', size=1, x=tuple] => ('KeyError', 'f', 5, (5, 5, 8, 16))
+name [name='and or not', size=5] => and or not
+size [name='and or not', size=5] => 5
+len(found) [name='and or not', size=5] => 20
+len(raised) [name='and or not', size=5] => 7
+without columns: [x for x in raised if None in x[3]][:5] [name='and or not', size=5] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='and or not', size=5] => b0f519c313
+name [name='and or not', size=6] => and or not
+size [name='and or not', size=6] => 6
+len(found) [name='and or not', size=6] => 23
+len(raised) [name='and or not', size=6] => 8
+without columns: [x for x in raised if None in x[3]][:5] [name='and or not', size=6] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='and or not', size=6] => ab40d50c53
+name [name='and or not', size=7] => and or not
+size [name='and or not', size=7] => 7
+len(found) [name='and or not', size=7] => 26
+len(raised) [name='and or not', size=7] => 9
+without columns: [x for x in raised if None in x[3]][:5] [name='and or not', size=7] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='and or not', size=7] => 4ac072da88
+    x [name='and or not', size=7, x=tuple] => ('ZeroDivisionError', 'f', 12, (12, 12, 11, 23))
+    x [name='and or not', size=7, x=tuple] => ('IndexError', 'f', 4, (4, 4, 41, 51))
+    x [name='and or not', size=7, x=tuple] => ('KeyError', 'f', 5, (5, 5, 8, 16))
+    x [name='and or not', size=7, x=tuple] => ('KeyError', 'f', 6, (6, 6, 8, 16))
+    x [name='and or not', size=7, x=tuple] => ('KeyError', 'f', 7, (7, 7, 8, 16))
+    x [name='and or not', size=7, x=tuple] => ('KeyError', 'f', 8, (8, 8, 8, 16))
+    x [name='and or not', size=7, x=tuple] => ('KeyError', 'f', 10, (10, 10, 8, 16))
+    x [name='and or not', size=7, x=tuple] => ('KeyError', 'f', 11, (11, 11, 8, 16))
+name [name='and or not', size=12] => and or not
+size [name='and or not', size=12] => 12
+len(found) [name='and or not', size=12] => 41
+len(raised) [name='and or not', size=12] => 14
+without columns: [x for x in raised if None in x[3]][:5] [name='and or not', size=12] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='and or not', size=12] => 589d573320
+name [name='and or not', size=30] => and or not
+size [name='and or not', size=30] => 30
+len(found) [name='and or not', size=30] => 95
+len(raised) [name='and or not', size=30] => 32
+without columns: [x for x in raised if None in x[3]][:5] [name='and or not', size=30] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='and or not', size=30] => 8add9b6873
+name [name='and or not', size=45] => and or not
+size [name='and or not', size=45] => 45
+len(found) [name='and or not', size=45] => 140
+len(raised) [name='and or not', size=45] => 47
+without columns: [x for x in raised if None in x[3]][:5] [name='and or not', size=45] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='and or not', size=45] => 1563ae09dc
+name [name='and or not', size=90] => and or not
+size [name='and or not', size=90] => 90
+len(found) [name='and or not', size=90] => 11
+len(raised) [name='and or not', size=90] => 5
+without columns: [x for x in raised if None in x[3]][:5] [name='and or not', size=90] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='and or not', size=90] => 4d16b7eac8
+name [name='and or not', size=400] => and or not
+size [name='and or not', size=400] => 400
+len(found) [name='and or not', size=400] => 11
+len(raised) [name='and or not', size=400] => 5
+without columns: [x for x in raised if None in x[3]][:5] [name='and or not', size=400] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='and or not', size=400] => a33e80b922
+name [name='try except finally', size=1] => try except finally
+size [name='try except finally', size=1] => 1
+len(found) [name='try except finally', size=1] => 8
+len(raised) [name='try except finally', size=1] => 4
+without columns: [x for x in raised if None in x[3]][:5] [name='try except finally', size=1] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='try except finally', size=1] => 01261d5e67
+    x [name='try except finally', size=1, x=tuple] => ('ZeroDivisionError', 'f', 12, (12, 12, 11, 23))
+    x [name='try except finally', size=1, x=tuple] => ('IndexError', 'f', 9, (9, 9, 13, 17))
+    x [name='try except finally', size=1, x=tuple] => ('KeyError', 'f', 5, (5, 5, 8, 16))
+    x [name='try except finally', size=1, x=tuple] => ('KeyError', 'f', 11, (11, 11, 8, 16))
+    x [name='try except finally', size=1, x=tuple] => ('KeyError', 'f', 5, (5, 5, 8, 16))
+    x [name='try except finally', size=1, x=tuple] => ('KeyError', 'f', 11, (11, 11, 8, 16))
+name [name='try except finally', size=5] => try except finally
+size [name='try except finally', size=5] => 5
+len(found) [name='try except finally', size=5] => 20
+len(raised) [name='try except finally', size=5] => 12
+without columns: [x for x in raised if None in x[3]][:5] [name='try except finally', size=5] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='try except finally', size=5] => 1667cab7e4
+name [name='try except finally', size=6] => try except finally
+size [name='try except finally', size=6] => 6
+len(found) [name='try except finally', size=6] => 23
+len(raised) [name='try except finally', size=6] => 14
+without columns: [x for x in raised if None in x[3]][:5] [name='try except finally', size=6] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='try except finally', size=6] => 16031128c1
+name [name='try except finally', size=7] => try except finally
+size [name='try except finally', size=7] => 7
+len(found) [name='try except finally', size=7] => 26
+len(raised) [name='try except finally', size=7] => 16
+without columns: [x for x in raised if None in x[3]][:5] [name='try except finally', size=7] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='try except finally', size=7] => 7dc6f5c9a7
+    x [name='try except finally', size=7, x=tuple] => ('ZeroDivisionError', 'f', 30, (30, 30, 11, 23))
+    x [name='try except finally', size=7, x=tuple] => ('IndexError', 'f', 21, (21, 21, 13, 17))
+    x [name='try except finally', size=7, x=tuple] => ('KeyError', 'f', 5, (5, 5, 8, 16))
+    x [name='try except finally', size=7, x=tuple] => ('KeyError', 'f', 6, (6, 6, 8, 16))
+    x [name='try except finally', size=7, x=tuple] => ('KeyError', 'f', 7, (7, 7, 8, 16))
+    x [name='try except finally', size=7, x=tuple] => ('KeyError', 'f', 8, (8, 8, 8, 16))
+    x [name='try except finally', size=7, x=tuple] => ('KeyError', 'f', 28, (28, 28, 8, 17))
+    x [name='try except finally', size=7, x=tuple] => ('KeyError', 'f', 29, (29, 29, 8, 17))
+name [name='try except finally', size=12] => try except finally
+size [name='try except finally', size=12] => 12
+len(found) [name='try except finally', size=12] => 41
+len(raised) [name='try except finally', size=12] => 26
+without columns: [x for x in raised if None in x[3]][:5] [name='try except finally', size=12] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='try except finally', size=12] => 8301ecd0f8
+name [name='try except finally', size=30] => try except finally
+size [name='try except finally', size=30] => 30
+len(found) [name='try except finally', size=30] => 95
+len(raised) [name='try except finally', size=30] => 62
+without columns: [x for x in raised if None in x[3]][:5] [name='try except finally', size=30] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='try except finally', size=30] => ec50313094
+name [name='try except finally', size=45] => try except finally
+size [name='try except finally', size=45] => 45
+len(found) [name='try except finally', size=45] => 140
+len(raised) [name='try except finally', size=45] => 92
+without columns: [x for x in raised if None in x[3]][:5] [name='try except finally', size=45] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='try except finally', size=45] => b57a90df53
+name [name='try except finally', size=90] => try except finally
+size [name='try except finally', size=90] => 90
+len(found) [name='try except finally', size=90] => 11
+len(raised) [name='try except finally', size=90] => 7
+without columns: [x for x in raised if None in x[3]][:5] [name='try except finally', size=90] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='try except finally', size=90] => 525de39830
+name [name='try except finally', size=400] => try except finally
+size [name='try except finally', size=400] => 400
+len(found) [name='try except finally', size=400] => 11
+len(raised) [name='try except finally', size=400] => 7
+without columns: [x for x in raised if None in x[3]][:5] [name='try except finally', size=400] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='try except finally', size=400] => 989649540d
+name [name='try except finally', size=1200] => try except finally
+size [name='try except finally', size=1200] => 1200
+len(found) [name='try except finally', size=1200] => 11
+len(raised) [name='try except finally', size=1200] => 7
+without columns: [x for x in raised if None in x[3]][:5] [name='try except finally', size=1200] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='try except finally', size=1200] => f6f7d42fb7
+    x [name='try except finally', size=1200, x=tuple] => ('ZeroDivisionError', 'f', 3609, (3609, 3609, 11, 23))
+    x [name='try except finally', size=1200, x=tuple] => ('IndexError', 'f', 2407, (2407, 2407, 13, 17))
+    x [name='try except finally', size=1200, x=tuple] => ('KeyError', 'f', 5, (5, 5, 8, 16))
+    x [name='try except finally', size=1200, x=tuple] => ('KeyError', 'f', 6, (6, 6, 8, 16))
+    x [name='try except finally', size=1200, x=tuple] => ('KeyError', 'f', 1204, (1204, 1204, 8, 19))
+    x [name='try except finally', size=1200, x=tuple] => ('KeyError', 'f', 2409, (2409, 2409, 8, 19))
+    x [name='try except finally', size=1200, x=tuple] => ('KeyError', 'f', 2409, (2409, 2409, 8, 19))
+    x [name='try except finally', size=1200, x=tuple] => ('KeyError', 'f', 3608, (3608, 3608, 8, 19))
+name [name='with', size=1] => with
+size [name='with', size=1] => 1
+len(found) [name='with', size=1] => 8
+len(raised) [name='with', size=1] => 4
+without columns: [x for x in raised if None in x[3]][:5] [name='with', size=1] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='with', size=1] => a8abb00752
+    x [name='with', size=1, x=tuple] => ('ZeroDivisionError', 'f', 11, (11, 11, 11, 23))
+    x [name='with', size=1, x=tuple] => ('IndexError', 'f', 9, (9, 9, 8, 18))
+    x [name='with', size=1, x=tuple] => ('KeyError', 'f', 8, (8, 8, 8, 16))
+    x [name='with', size=1, x=tuple] => ('KeyError', 'f', 10, (10, 10, 4, 12))
+    x [name='with', size=1, x=tuple] => ('KeyError', 'f', 8, (8, 8, 8, 16))
+    x [name='with', size=1, x=tuple] => ('KeyError', 'f', 10, (10, 10, 4, 12))
+name [name='with', size=5] => with
+size [name='with', size=5] => 5
+len(found) [name='with', size=5] => 20
+len(raised) [name='with', size=5] => 12
+without columns: [x for x in raised if None in x[3]][:5] [name='with', size=5] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='with', size=5] => a3bc888966
+name [name='with', size=6] => with
+size [name='with', size=6] => 6
+len(found) [name='with', size=6] => 23
+len(raised) [name='with', size=6] => 14
+without columns: [x for x in raised if None in x[3]][:5] [name='with', size=6] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='with', size=6] => 4a7b5be998
+name [name='with', size=7] => with
+size [name='with', size=7] => 7
+len(found) [name='with', size=7] => 26
+len(raised) [name='with', size=7] => 16
+without columns: [x for x in raised if None in x[3]][:5] [name='with', size=7] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='with', size=7] => cd1ee4cea2
+    x [name='with', size=7, x=tuple] => ('ZeroDivisionError', 'f', 23, (23, 23, 11, 23))
+    x [name='with', size=7, x=tuple] => ('IndexError', 'f', 15, (15, 15, 8, 18))
+    x [name='with', size=7, x=tuple] => ('KeyError', 'f', 8, (8, 8, 8, 16))
+    x [name='with', size=7, x=tuple] => ('KeyError', 'f', 9, (9, 9, 8, 16))
+    x [name='with', size=7, x=tuple] => ('KeyError', 'f', 10, (10, 10, 8, 16))
+    x [name='with', size=7, x=tuple] => ('KeyError', 'f', 11, (11, 11, 8, 16))
+    x [name='with', size=7, x=tuple] => ('KeyError', 'f', 21, (21, 21, 4, 13))
+    x [name='with', size=7, x=tuple] => ('KeyError', 'f', 22, (22, 22, 4, 13))
+name [name='with', size=12] => with
+size [name='with', size=12] => 12
+len(found) [name='with', size=12] => 41
+len(raised) [name='with', size=12] => 26
+without columns: [x for x in raised if None in x[3]][:5] [name='with', size=12] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='with', size=12] => d262855bb9
+name [name='with', size=30] => with
+size [name='with', size=30] => 30
+len(found) [name='with', size=30] => 95
+len(raised) [name='with', size=30] => 62
+without columns: [x for x in raised if None in x[3]][:5] [name='with', size=30] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='with', size=30] => db616b3418
+name [name='with', size=45] => with
+size [name='with', size=45] => 45
+len(found) [name='with', size=45] => 140
+len(raised) [name='with', size=45] => 92
+without columns: [x for x in raised if None in x[3]][:5] [name='with', size=45] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='with', size=45] => a947c63a00
+name [name='with', size=90] => with
+size [name='with', size=90] => 90
+len(found) [name='with', size=90] => 11
+len(raised) [name='with', size=90] => 7
+without columns: [x for x in raised if None in x[3]][:5] [name='with', size=90] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='with', size=90] => dd628a8afd
+name [name='with', size=400] => with
+size [name='with', size=400] => 400
+len(found) [name='with', size=400] => 11
+len(raised) [name='with', size=400] => 7
+without columns: [x for x in raised if None in x[3]][:5] [name='with', size=400] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='with', size=400] => 218d5a165d
+name [name='match', size=1] => match
+size [name='match', size=1] => 1
+len(found) [name='match', size=1] => 8
+len(raised) [name='match', size=1] => 4
+without columns: [x for x in raised if None in x[3]][:5] [name='match', size=1] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='match', size=1] => a95e646bd9
+    x [name='match', size=1, x=tuple] => ('ZeroDivisionError', 'f', 11, (11, 11, 11, 23))
+    x [name='match', size=1, x=tuple] => ('KeyError', 'f', 6, (6, 6, 12, 20))
+    x [name='match', size=1, x=tuple] => ('KeyError', 'f', 8, (8, 8, 12, 20))
+    x [name='match', size=1, x=tuple] => ('KeyError', 'f', 10, (10, 10, 12, 20))
+    x [name='match', size=1, x=tuple] => ('KeyError', 'f', 8, (8, 8, 12, 20))
+    x [name='match', size=1, x=tuple] => ('KeyError', 'f', 10, (10, 10, 12, 20))
+name [name='match', size=5] => match
+size [name='match', size=5] => 5
+len(found) [name='match', size=5] => 20
+len(raised) [name='match', size=5] => 6
+without columns: [x for x in raised if None in x[3]][:5] [name='match', size=5] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='match', size=5] => 21c66d8a5e
+name [name='match', size=6] => match
+size [name='match', size=6] => 6
+len(found) [name='match', size=6] => 23
+len(raised) [name='match', size=6] => 7
+without columns: [x for x in raised if None in x[3]][:5] [name='match', size=6] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='match', size=6] => 317375f539
+name [name='match', size=7] => match
+size [name='match', size=7] => 7
+len(found) [name='match', size=7] => 26
+len(raised) [name='match', size=7] => 10
+without columns: [x for x in raised if None in x[3]][:5] [name='match', size=7] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='match', size=7] => a65e3a6d35
+    x [name='match', size=7, x=tuple] => ('ZeroDivisionError', 'f', 29, (29, 29, 11, 23))
+    x [name='match', size=7, x=tuple] => ('KeyError', 'f', 6, (6, 6, 12, 20))
+    x [name='match', size=7, x=tuple] => ('KeyError', 'f', 9, (9, 9, 12, 20))
+    x [name='match', size=7, x=tuple] => ('KeyError', 'f', 12, (12, 12, 12, 20))
+    x [name='match', size=7, x=tuple] => ('KeyError', 'f', 14, (14, 14, 12, 20))
+    x [name='match', size=7, x=tuple] => ('KeyError', 'f', 17, (17, 17, 12, 21))
+    x [name='match', size=7, x=tuple] => ('KeyError', 'f', 25, (25, 25, 12, 21))
+    x [name='match', size=7, x=tuple] => ('KeyError', 'f', 28, (28, 28, 12, 21))
+name [name='match', size=12] => match
+size [name='match', size=12] => 12
+len(found) [name='match', size=12] => 41
+len(raised) [name='match', size=12] => 13
+without columns: [x for x in raised if None in x[3]][:5] [name='match', size=12] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='match', size=12] => 2886ee10dc
+name [name='match', size=30] => match
+size [name='match', size=30] => 30
+len(found) [name='match', size=30] => 95
+len(raised) [name='match', size=30] => 31
+without columns: [x for x in raised if None in x[3]][:5] [name='match', size=30] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='match', size=30] => a94bddfc62
+name [name='match', size=45] => match
+size [name='match', size=45] => 45
+len(found) [name='match', size=45] => 140
+len(raised) [name='match', size=45] => 46
+without columns: [x for x in raised if None in x[3]][:5] [name='match', size=45] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='match', size=45] => cd3c4f36b2
+name [name='match', size=90] => match
+size [name='match', size=90] => 90
+len(found) [name='match', size=90] => 11
+len(raised) [name='match', size=90] => 4
+without columns: [x for x in raised if None in x[3]][:5] [name='match', size=90] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='match', size=90] => be85d84967
+name [name='match', size=400] => match
+size [name='match', size=400] => 400
+len(found) [name='match', size=400] => 11
+len(raised) [name='match', size=400] => 6
+without columns: [x for x in raised if None in x[3]][:5] [name='match', size=400] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='match', size=400] => 8b244ee991
+name [name='match', size=1200] => match
+size [name='match', size=1200] => 1200
+len(found) [name='match', size=1200] => 11
+len(raised) [name='match', size=1200] => 4
+without columns: [x for x in raised if None in x[3]][:5] [name='match', size=1200] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='match', size=1200] => 4c4cd3f059
+    x [name='match', size=1200, x=tuple] => ('ZeroDivisionError', 'f', 3608, (3608, 3608, 11, 23))
+    x [name='match', size=1200, x=tuple] => ('KeyError', 'f', 6, (6, 6, 12, 20))
+    x [name='match', size=1200, x=tuple] => ('KeyError', 'f', 1208, (1208, 1208, 12, 23))
+    x [name='match', size=1200, x=tuple] => ('KeyError', 'f', 3607, (3607, 3607, 12, 23))
+    x [name='match', size=1200, x=tuple] => ('KeyError', 'f', 1208, (1208, 1208, 12, 23))
+    x [name='match', size=1200, x=tuple] => ('KeyError', 'f', 3607, (3607, 3607, 12, 23))
+name [name='loops in loops', size=1] => loops in loops
+size [name='loops in loops', size=1] => 1
+len(found) [name='loops in loops', size=1] => 8
+len(raised) [name='loops in loops', size=1] => 3
+without columns: [x for x in raised if None in x[3]][:5] [name='loops in loops', size=1] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='loops in loops', size=1] => d5d648bf80
+    x [name='loops in loops', size=1, x=tuple] => ('ZeroDivisionError', 'f', 13, (13, 13, 11, 23))
+    x [name='loops in loops', size=1, x=tuple] => ('KeyError', 'f', 8, (8, 8, 12, 20))
+    x [name='loops in loops', size=1, x=tuple] => ('KeyError', 'f', 12, (12, 12, 8, 16))
+    x [name='loops in loops', size=1, x=tuple] => ('KeyError', 'f', 8, (8, 8, 12, 20))
+    x [name='loops in loops', size=1, x=tuple] => ('KeyError', 'f', 12, (12, 12, 8, 16))
+name [name='loops in loops', size=5] => loops in loops
+size [name='loops in loops', size=5] => 5
+len(found) [name='loops in loops', size=5] => 20
+len(raised) [name='loops in loops', size=5] => 11
+without columns: [x for x in raised if None in x[3]][:5] [name='loops in loops', size=5] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='loops in loops', size=5] => e041947e4f
+name [name='loops in loops', size=6] => loops in loops
+size [name='loops in loops', size=6] => 6
+len(found) [name='loops in loops', size=6] => 23
+len(raised) [name='loops in loops', size=6] => 13
+without columns: [x for x in raised if None in x[3]][:5] [name='loops in loops', size=6] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='loops in loops', size=6] => 44d315569c
+name [name='loops in loops', size=7] => loops in loops
+size [name='loops in loops', size=7] => 7
+len(found) [name='loops in loops', size=7] => 26
+len(raised) [name='loops in loops', size=7] => 15
+without columns: [x for x in raised if None in x[3]][:5] [name='loops in loops', size=7] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='loops in loops', size=7] => 6bcb05f4f9
+    x [name='loops in loops', size=7, x=tuple] => ('ZeroDivisionError', 'f', 31, (31, 31, 11, 23))
+    x [name='loops in loops', size=7, x=tuple] => ('KeyError', 'f', 8, (8, 8, 12, 20))
+    x [name='loops in loops', size=7, x=tuple] => ('KeyError', 'f', 9, (9, 9, 12, 20))
+    x [name='loops in loops', size=7, x=tuple] => ('KeyError', 'f', 10, (10, 10, 12, 20))
+    x [name='loops in loops', size=7, x=tuple] => ('KeyError', 'f', 11, (11, 11, 12, 20))
+    x [name='loops in loops', size=7, x=tuple] => ('KeyError', 'f', 12, (12, 12, 12, 20))
+    x [name='loops in loops', size=7, x=tuple] => ('KeyError', 'f', 29, (29, 29, 8, 17))
+    x [name='loops in loops', size=7, x=tuple] => ('KeyError', 'f', 30, (30, 30, 8, 17))
+name [name='loops in loops', size=12] => loops in loops
+size [name='loops in loops', size=12] => 12
+len(found) [name='loops in loops', size=12] => 41
+len(raised) [name='loops in loops', size=12] => 25
+without columns: [x for x in raised if None in x[3]][:5] [name='loops in loops', size=12] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='loops in loops', size=12] => 3bcd1d5095
+name [name='loops in loops', size=30] => loops in loops
+size [name='loops in loops', size=30] => 30
+len(found) [name='loops in loops', size=30] => 95
+len(raised) [name='loops in loops', size=30] => 61
+without columns: [x for x in raised if None in x[3]][:5] [name='loops in loops', size=30] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='loops in loops', size=30] => 2b3b00c5fb
+name [name='loops in loops', size=45] => loops in loops
+size [name='loops in loops', size=45] => 45
+len(found) [name='loops in loops', size=45] => 140
+len(raised) [name='loops in loops', size=45] => 91
+without columns: [x for x in raised if None in x[3]][:5] [name='loops in loops', size=45] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='loops in loops', size=45] => edb9b011a0
+name [name='loops in loops', size=90] => loops in loops
+size [name='loops in loops', size=90] => 90
+len(found) [name='loops in loops', size=90] => 11
+len(raised) [name='loops in loops', size=90] => 6
+without columns: [x for x in raised if None in x[3]][:5] [name='loops in loops', size=90] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='loops in loops', size=90] => abc7268c19
+name [name='loops in loops', size=400] => loops in loops
+size [name='loops in loops', size=400] => 400
+len(found) [name='loops in loops', size=400] => 11
+len(raised) [name='loops in loops', size=400] => 6
+without columns: [x for x in raised if None in x[3]][:5] [name='loops in loops', size=400] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='loops in loops', size=400] => 8299ac4c71
+name [name='conditional expressions', size=1] => conditional expressions
+size [name='conditional expressions', size=1] => 1
+len(found) [name='conditional expressions', size=1] => 8
+len(raised) [name='conditional expressions', size=1] => 3
+without columns: [x for x in raised if None in x[3]][:5] [name='conditional expressions', size=1] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='conditional expressions', size=1] => 5815731b79
+    x [name='conditional expressions', size=1, x=tuple] => ('ZeroDivisionError', 'f', 5, (5, 5, 52, 67))
+    x [name='conditional expressions', size=1, x=tuple] => ('ZeroDivisionError', 'f', 7, (7, 7, 11, 23))
+    x [name='conditional expressions', size=1, x=tuple] => ('KeyError', 'f', 6, (6, 6, 8, 16))
+    x [name='conditional expressions', size=1, x=tuple] => ('ZeroDivisionError', 'f', 7, (7, 7, 11, 23))
+    x [name='conditional expressions', size=1, x=tuple] => ('KeyError', 'f', 6, (6, 6, 8, 16))
+name [name='conditional expressions', size=5] => conditional expressions
+size [name='conditional expressions', size=5] => 5
+len(found) [name='conditional expressions', size=5] => 20
+len(raised) [name='conditional expressions', size=5] => 7
+without columns: [x for x in raised if None in x[3]][:5] [name='conditional expressions', size=5] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='conditional expressions', size=5] => 1097986d6c
+name [name='conditional expressions', size=6] => conditional expressions
+size [name='conditional expressions', size=6] => 6
+len(found) [name='conditional expressions', size=6] => 23
+len(raised) [name='conditional expressions', size=6] => 8
+without columns: [x for x in raised if None in x[3]][:5] [name='conditional expressions', size=6] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='conditional expressions', size=6] => c3d649b2c7
+name [name='conditional expressions', size=7] => conditional expressions
+size [name='conditional expressions', size=7] => 7
+len(found) [name='conditional expressions', size=7] => 26
+len(raised) [name='conditional expressions', size=7] => 9
+without columns: [x for x in raised if None in x[3]][:5] [name='conditional expressions', size=7] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='conditional expressions', size=7] => 90fd347fbf
+    x [name='conditional expressions', size=7, x=tuple] => ('ZeroDivisionError', 'f', 5, (5, 5, 52, 67))
+    x [name='conditional expressions', size=7, x=tuple] => ('ZeroDivisionError', 'f', 13, (13, 13, 11, 23))
+    x [name='conditional expressions', size=7, x=tuple] => ('KeyError', 'f', 6, (6, 6, 8, 16))
+    x [name='conditional expressions', size=7, x=tuple] => ('KeyError', 'f', 7, (7, 7, 8, 16))
+    x [name='conditional expressions', size=7, x=tuple] => ('KeyError', 'f', 8, (8, 8, 8, 16))
+    x [name='conditional expressions', size=7, x=tuple] => ('KeyError', 'f', 9, (9, 9, 8, 16))
+    x [name='conditional expressions', size=7, x=tuple] => ('KeyError', 'f', 11, (11, 11, 8, 16))
+    x [name='conditional expressions', size=7, x=tuple] => ('KeyError', 'f', 12, (12, 12, 8, 16))
+name [name='conditional expressions', size=12] => conditional expressions
+size [name='conditional expressions', size=12] => 12
+len(found) [name='conditional expressions', size=12] => 41
+len(raised) [name='conditional expressions', size=12] => 14
+without columns: [x for x in raised if None in x[3]][:5] [name='conditional expressions', size=12] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='conditional expressions', size=12] => bad800be67
+name [name='conditional expressions', size=30] => conditional expressions
+size [name='conditional expressions', size=30] => 30
+len(found) [name='conditional expressions', size=30] => 95
+len(raised) [name='conditional expressions', size=30] => 32
+without columns: [x for x in raised if None in x[3]][:5] [name='conditional expressions', size=30] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='conditional expressions', size=30] => 7adf941642
+name [name='conditional expressions', size=45] => conditional expressions
+size [name='conditional expressions', size=45] => 45
+len(found) [name='conditional expressions', size=45] => 140
+len(raised) [name='conditional expressions', size=45] => 47
+without columns: [x for x in raised if None in x[3]][:5] [name='conditional expressions', size=45] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='conditional expressions', size=45] => f6d48f3c54
+name [name='conditional expressions', size=90] => conditional expressions
+size [name='conditional expressions', size=90] => 90
+len(found) [name='conditional expressions', size=90] => 11
+len(raised) [name='conditional expressions', size=90] => 5
+without columns: [x for x in raised if None in x[3]][:5] [name='conditional expressions', size=90] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='conditional expressions', size=90] => 6f03066422
+name [name='conditional expressions', size=400] => conditional expressions
+size [name='conditional expressions', size=400] => 400
+len(found) [name='conditional expressions', size=400] => 11
+len(raised) [name='conditional expressions', size=400] => 5
+without columns: [x for x in raised if None in x[3]][:5] [name='conditional expressions', size=400] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='conditional expressions', size=400] => 8ba54efe98
+name [name='generator', size=1] => generator
+size [name='generator', size=1] => 1
+len(found) [name='generator', size=1] => 8
+len(raised) [name='generator', size=1] => 8
+without columns: [x for x in raised if None in x[3]][:5] [name='generator', size=1] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='generator', size=1] => 0f07342856
+    x [name='generator', size=1, x=tuple] => ('TypeError', 'g', 6, (6, 6, 8, 29))
+    x [name='generator', size=1, x=tuple] => ('TypeError', 'g', 6, (6, 6, 8, 29))
+    x [name='generator', size=1, x=tuple] => ('TypeError', 'g', 6, (6, 6, 8, 29))
+    x [name='generator', size=1, x=tuple] => ('IndexError', 'g', 6, (6, 6, 19, 29))
+    x [name='generator', size=1, x=tuple] => ('KeyError', 'g', 5, (5, 5, 8, 16))
+    x [name='generator', size=1, x=tuple] => ('TypeError', 'g', 6, (6, 6, 8, 29))
+    x [name='generator', size=1, x=tuple] => ('TypeError', 'g', 6, (6, 6, 8, 29))
+    x [name='generator', size=1, x=tuple] => ('TypeError', 'g', 6, (6, 6, 8, 29))
+name [name='generator', size=5] => generator
+size [name='generator', size=5] => 5
+len(found) [name='generator', size=5] => 20
+len(raised) [name='generator', size=5] => 20
+without columns: [x for x in raised if None in x[3]][:5] [name='generator', size=5] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='generator', size=5] => 365fc3b128
+name [name='generator', size=6] => generator
+size [name='generator', size=6] => 6
+len(found) [name='generator', size=6] => 23
+len(raised) [name='generator', size=6] => 23
+without columns: [x for x in raised if None in x[3]][:5] [name='generator', size=6] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='generator', size=6] => cc88f15134
+name [name='generator', size=7] => generator
+size [name='generator', size=7] => 7
+len(found) [name='generator', size=7] => 26
+len(raised) [name='generator', size=7] => 26
+without columns: [x for x in raised if None in x[3]][:5] [name='generator', size=7] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='generator', size=7] => 6b5e82e61a
+    x [name='generator', size=7, x=tuple] => ('TypeError', 'g', 12, (12, 12, 8, 29))
+    x [name='generator', size=7, x=tuple] => ('TypeError', 'g', 12, (12, 12, 8, 29))
+    x [name='generator', size=7, x=tuple] => ('TypeError', 'g', 12, (12, 12, 8, 29))
+    x [name='generator', size=7, x=tuple] => ('IndexError', 'g', 12, (12, 12, 19, 29))
+    x [name='generator', size=7, x=tuple] => ('KeyError', 'g', 5, (5, 5, 8, 16))
+    x [name='generator', size=7, x=tuple] => ('KeyError', 'g', 6, (6, 6, 8, 16))
+    x [name='generator', size=7, x=tuple] => ('TypeError', 'g', 12, (12, 12, 8, 29))
+    x [name='generator', size=7, x=tuple] => ('TypeError', 'g', 12, (12, 12, 8, 29))
+name [name='generator', size=12] => generator
+size [name='generator', size=12] => 12
+len(found) [name='generator', size=12] => 41
+len(raised) [name='generator', size=12] => 41
+without columns: [x for x in raised if None in x[3]][:5] [name='generator', size=12] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='generator', size=12] => dfd55078d0
+name [name='generator', size=30] => generator
+size [name='generator', size=30] => 30
+len(found) [name='generator', size=30] => 95
+len(raised) [name='generator', size=30] => 95
+without columns: [x for x in raised if None in x[3]][:5] [name='generator', size=30] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='generator', size=30] => ff5f0afab6
+name [name='generator', size=45] => generator
+size [name='generator', size=45] => 45
+len(found) [name='generator', size=45] => 140
+len(raised) [name='generator', size=45] => 140
+without columns: [x for x in raised if None in x[3]][:5] [name='generator', size=45] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='generator', size=45] => 1e7b2b8706
+name [name='generator', size=90] => generator
+size [name='generator', size=90] => 90
+len(found) [name='generator', size=90] => 11
+len(raised) [name='generator', size=90] => 11
+without columns: [x for x in raised if None in x[3]][:5] [name='generator', size=90] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='generator', size=90] => bcf00b71bd
+name [name='generator', size=400] => generator
+size [name='generator', size=400] => 400
+len(found) [name='generator', size=400] => 11
+len(raised) [name='generator', size=400] => 11
+without columns: [x for x in raised if None in x[3]][:5] [name='generator', size=400] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='generator', size=400] => 5adb61e043
+name [name='generator', size=1200] => generator
+size [name='generator', size=1200] => 1200
+len(found) [name='generator', size=1200] => 11
+len(raised) [name='generator', size=1200] => 11
+without columns: [x for x in raised if None in x[3]][:5] [name='generator', size=1200] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='generator', size=1200] => d8a1217561
+    x [name='generator', size=1200, x=tuple] => ('TypeError', 'g', 1205, (1205, 1205, 8, 29))
+    x [name='generator', size=1200, x=tuple] => ('TypeError', 'g', 1205, (1205, 1205, 8, 29))
+    x [name='generator', size=1200, x=tuple] => ('TypeError', 'g', 1205, (1205, 1205, 8, 29))
+    x [name='generator', size=1200, x=tuple] => ('IndexError', 'g', 1205, (1205, 1205, 19, 29))
+    x [name='generator', size=1200, x=tuple] => ('KeyError', 'g', 5, (5, 5, 8, 16))
+    x [name='generator', size=1200, x=tuple] => ('KeyError', 'g', 6, (6, 6, 8, 16))
+    x [name='generator', size=1200, x=tuple] => ('TypeError', 'g', 1205, (1205, 1205, 8, 29))
+    x [name='generator', size=1200, x=tuple] => ('TypeError', 'g', 1205, (1205, 1205, 8, 29))
+name [name='coroutine', size=1] => coroutine
+size [name='coroutine', size=1] => 1
+len(found) [name='coroutine', size=1] => 7
+len(raised) [name='coroutine', size=1] => 4
+without columns: [x for x in raised if None in x[3]][:5] [name='coroutine', size=1] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='coroutine', size=1] => 7ff0136f0d
+    x [name='coroutine', size=1, x=tuple] => ('ZeroDivisionError', 'f', 20, (20, 20, 11, 31))
+    x [name='coroutine', size=1, x=tuple] => ('IndexError', 'f', 20, (20, 20, 11, 31))
+    x [name='coroutine', size=1, x=tuple] => ('KeyError', 'f', 20, (20, 20, 11, 31))
+    x [name='coroutine', size=1, x=tuple] => ('KeyError', 'f', 20, (20, 20, 11, 31))
+    x [name='coroutine', size=1, x=tuple] => ('KeyError', 'f', 20, (20, 20, 11, 31))
+    x [name='coroutine', size=1, x=tuple] => ('KeyError', 'f', 20, (20, 20, 11, 31))
+name [name='coroutine', size=5] => coroutine
+size [name='coroutine', size=5] => 5
+len(found) [name='coroutine', size=5] => 11
+len(raised) [name='coroutine', size=5] => 7
+without columns: [x for x in raised if None in x[3]][:5] [name='coroutine', size=5] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='coroutine', size=5] => b512a37b35
+name [name='coroutine', size=6] => coroutine
+size [name='coroutine', size=6] => 6
+len(found) [name='coroutine', size=6] => 11
+len(raised) [name='coroutine', size=6] => 7
+without columns: [x for x in raised if None in x[3]][:5] [name='coroutine', size=6] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='coroutine', size=6] => a415a82c79
+name [name='coroutine', size=7] => coroutine
+size [name='coroutine', size=7] => 7
+len(found) [name='coroutine', size=7] => 11
+len(raised) [name='coroutine', size=7] => 7
+without columns: [x for x in raised if None in x[3]][:5] [name='coroutine', size=7] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='coroutine', size=7] => 6af884ef83
+    x [name='coroutine', size=7, x=tuple] => ('ZeroDivisionError', 'f', 32, (32, 32, 11, 31))
+    x [name='coroutine', size=7, x=tuple] => ('IndexError', 'f', 32, (32, 32, 11, 31))
+    x [name='coroutine', size=7, x=tuple] => ('KeyError', 'f', 32, (32, 32, 11, 31))
+    x [name='coroutine', size=7, x=tuple] => ('KeyError', 'f', 32, (32, 32, 11, 31))
+    x [name='coroutine', size=7, x=tuple] => ('KeyError', 'f', 32, (32, 32, 11, 31))
+    x [name='coroutine', size=7, x=tuple] => ('KeyError', 'f', 32, (32, 32, 11, 31))
+    x [name='coroutine', size=7, x=tuple] => ('KeyError', 'f', 32, (32, 32, 11, 31))
+    x [name='coroutine', size=7, x=tuple] => ('KeyError', 'f', 32, (32, 32, 11, 31))
+name [name='coroutine', size=12] => coroutine
+size [name='coroutine', size=12] => 12
+len(found) [name='coroutine', size=12] => 11
+len(raised) [name='coroutine', size=12] => 7
+without columns: [x for x in raised if None in x[3]][:5] [name='coroutine', size=12] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='coroutine', size=12] => c7f2392856
+name [name='coroutine', size=30] => coroutine
+size [name='coroutine', size=30] => 30
+len(found) [name='coroutine', size=30] => 11
+len(raised) [name='coroutine', size=30] => 7
+without columns: [x for x in raised if None in x[3]][:5] [name='coroutine', size=30] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='coroutine', size=30] => 7dbc36b6f5
+name [name='coroutine', size=45] => coroutine
+size [name='coroutine', size=45] => 45
+len(found) [name='coroutine', size=45] => 11
+len(raised) [name='coroutine', size=45] => 7
+without columns: [x for x in raised if None in x[3]][:5] [name='coroutine', size=45] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='coroutine', size=45] => 183f4e8e5b
+name [name='coroutine', size=90] => coroutine
+size [name='coroutine', size=90] => 90
+len(found) [name='coroutine', size=90] => 11
+len(raised) [name='coroutine', size=90] => 7
+without columns: [x for x in raised if None in x[3]][:5] [name='coroutine', size=90] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='coroutine', size=90] => ce4eed560a
+name [name='coroutine', size=400] => coroutine
+size [name='coroutine', size=400] => 400
+len(found) [name='coroutine', size=400] => 11
+len(raised) [name='coroutine', size=400] => 7
+without columns: [x for x in raised if None in x[3]][:5] [name='coroutine', size=400] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='coroutine', size=400] => 90310168c3
+name [name='coroutine', size=1200] => coroutine
+size [name='coroutine', size=1200] => 1200
+len(found) [name='coroutine', size=1200] => 11
+len(raised) [name='coroutine', size=1200] => 7
+without columns: [x for x in raised if None in x[3]][:5] [name='coroutine', size=1200] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='coroutine', size=1200] => 0673da105e
+    x [name='coroutine', size=1200, x=tuple] => ('ZeroDivisionError', 'f', 2418, (2418, 2418, 11, 31))
+    x [name='coroutine', size=1200, x=tuple] => ('IndexError', 'f', 2418, (2418, 2418, 11, 31))
+    x [name='coroutine', size=1200, x=tuple] => ('KeyError', 'f', 2418, (2418, 2418, 11, 31))
+    x [name='coroutine', size=1200, x=tuple] => ('KeyError', 'f', 2418, (2418, 2418, 11, 31))
+    x [name='coroutine', size=1200, x=tuple] => ('KeyError', 'f', 2418, (2418, 2418, 11, 31))
+    x [name='coroutine', size=1200, x=tuple] => ('KeyError', 'f', 2418, (2418, 2418, 11, 31))
+    x [name='coroutine', size=1200, x=tuple] => ('KeyError', 'f', 2418, (2418, 2418, 11, 31))
+    x [name='coroutine', size=1200, x=tuple] => ('KeyError', 'f', 2418, (2418, 2418, 11, 31))
+name [name='class', size=1] => class
+size [name='class', size=1] => 1
+len(found) [name='class', size=1] => 8
+len(raised) [name='class', size=1] => 3
+without columns: [x for x in raised if None in x[3]][:5] [name='class', size=1] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='class', size=1] => 283f741b65
+    x [name='class', size=1, x=tuple] => ('ZeroDivisionError', 'f', 12, (12, 12, 11, 25))
+    x [name='class', size=1, x=tuple] => ('KeyError', 'C', 7, (7, 7, 12, 20))
+    x [name='class', size=1, x=tuple] => ('KeyError', 'C', 9, (9, 9, 12, 20))
+    x [name='class', size=1, x=tuple] => ('KeyError', 'C', 7, (7, 7, 12, 20))
+    x [name='class', size=1, x=tuple] => ('KeyError', 'C', 9, (9, 9, 12, 20))
+name [name='class', size=5] => class
+size [name='class', size=5] => 5
+len(found) [name='class', size=5] => 20
+len(raised) [name='class', size=5] => 11
+without columns: [x for x in raised if None in x[3]][:5] [name='class', size=5] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='class', size=5] => a4bc08a543
+name [name='class', size=6] => class
+size [name='class', size=6] => 6
+len(found) [name='class', size=6] => 23
+len(raised) [name='class', size=6] => 13
+without columns: [x for x in raised if None in x[3]][:5] [name='class', size=6] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='class', size=6] => 8878de197d
+name [name='class', size=7] => class
+size [name='class', size=7] => 7
+len(found) [name='class', size=7] => 26
+len(raised) [name='class', size=7] => 15
+without columns: [x for x in raised if None in x[3]][:5] [name='class', size=7] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='class', size=7] => 4634eb1e0f
+    x [name='class', size=7, x=tuple] => ('ZeroDivisionError', 'f', 24, (24, 24, 11, 25))
+    x [name='class', size=7, x=tuple] => ('KeyError', 'C', 7, (7, 7, 12, 20))
+    x [name='class', size=7, x=tuple] => ('KeyError', 'C', 8, (8, 8, 12, 20))
+    x [name='class', size=7, x=tuple] => ('KeyError', 'C', 9, (9, 9, 12, 20))
+    x [name='class', size=7, x=tuple] => ('KeyError', 'C', 10, (10, 10, 12, 20))
+    x [name='class', size=7, x=tuple] => ('KeyError', 'C', 11, (11, 11, 12, 20))
+    x [name='class', size=7, x=tuple] => ('KeyError', 'C', 20, (20, 20, 12, 21))
+    x [name='class', size=7, x=tuple] => ('KeyError', 'C', 21, (21, 21, 12, 21))
+name [name='class', size=12] => class
+size [name='class', size=12] => 12
+len(found) [name='class', size=12] => 41
+len(raised) [name='class', size=12] => 25
+without columns: [x for x in raised if None in x[3]][:5] [name='class', size=12] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='class', size=12] => 067a98b0e3
+name [name='class', size=30] => class
+size [name='class', size=30] => 30
+len(found) [name='class', size=30] => 95
+len(raised) [name='class', size=30] => 61
+without columns: [x for x in raised if None in x[3]][:5] [name='class', size=30] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='class', size=30] => 1bd6df0414
+name [name='class', size=45] => class
+size [name='class', size=45] => 45
+len(found) [name='class', size=45] => 140
+len(raised) [name='class', size=45] => 91
+without columns: [x for x in raised if None in x[3]][:5] [name='class', size=45] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='class', size=45] => f951d5f8c0
+name [name='class', size=90] => class
+size [name='class', size=90] => 90
+len(found) [name='class', size=90] => 11
+len(raised) [name='class', size=90] => 6
+without columns: [x for x in raised if None in x[3]][:5] [name='class', size=90] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='class', size=90] => 51279858d7
+name [name='class', size=400] => class
+size [name='class', size=400] => 400
+len(found) [name='class', size=400] => 11
+len(raised) [name='class', size=400] => 6
+without columns: [x for x in raised if None in x[3]][:5] [name='class', size=400] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='class', size=400] => 96e9d41a68
+name [name='comprehension', size=1] => comprehension
+size [name='comprehension', size=1] => 1
+len(found) [name='comprehension', size=1] => 8
+len(raised) [name='comprehension', size=1] => 4
+without columns: [x for x in raised if None in x[3]][:5] [name='comprehension', size=1] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='comprehension', size=1] => 76133463d0
+    x [name='comprehension', size=1, x=tuple] => ('ZeroDivisionError', 'f', 8, (8, 8, 11, 23))
+    x [name='comprehension', size=1, x=tuple] => ('ZeroDivisionError', 'f', 6, (6, 6, 18, 30))
+    x [name='comprehension', size=1, x=tuple] => ('KeyError', 'f', 5, (5, 5, 8, 16))
+    x [name='comprehension', size=1, x=tuple] => ('KeyError', 'f', 7, (7, 7, 8, 16))
+    x [name='comprehension', size=1, x=tuple] => ('KeyError', 'f', 5, (5, 5, 8, 16))
+    x [name='comprehension', size=1, x=tuple] => ('KeyError', 'f', 7, (7, 7, 8, 16))
+name [name='comprehension', size=5] => comprehension
+size [name='comprehension', size=5] => 5
+len(found) [name='comprehension', size=5] => 20
+len(raised) [name='comprehension', size=5] => 12
+without columns: [x for x in raised if None in x[3]][:5] [name='comprehension', size=5] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='comprehension', size=5] => 9b3bec7aa2
+name [name='comprehension', size=6] => comprehension
+size [name='comprehension', size=6] => 6
+len(found) [name='comprehension', size=6] => 23
+len(raised) [name='comprehension', size=6] => 14
+without columns: [x for x in raised if None in x[3]][:5] [name='comprehension', size=6] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='comprehension', size=6] => 80148c2dfb
+name [name='comprehension', size=7] => comprehension
+size [name='comprehension', size=7] => 7
+len(found) [name='comprehension', size=7] => 26
+len(raised) [name='comprehension', size=7] => 16
+without columns: [x for x in raised if None in x[3]][:5] [name='comprehension', size=7] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='comprehension', size=7] => 1f4d98b543
+    x [name='comprehension', size=7, x=tuple] => ('ZeroDivisionError', 'f', 20, (20, 20, 11, 23))
+    x [name='comprehension', size=7, x=tuple] => ('ZeroDivisionError', 'f', 12, (12, 12, 18, 30))
+    x [name='comprehension', size=7, x=tuple] => ('KeyError', 'f', 5, (5, 5, 8, 16))
+    x [name='comprehension', size=7, x=tuple] => ('KeyError', 'f', 6, (6, 6, 8, 16))
+    x [name='comprehension', size=7, x=tuple] => ('KeyError', 'f', 7, (7, 7, 8, 16))
+    x [name='comprehension', size=7, x=tuple] => ('KeyError', 'f', 8, (8, 8, 8, 16))
+    x [name='comprehension', size=7, x=tuple] => ('KeyError', 'f', 18, (18, 18, 8, 17))
+    x [name='comprehension', size=7, x=tuple] => ('KeyError', 'f', 19, (19, 19, 8, 17))
+name [name='comprehension', size=12] => comprehension
+size [name='comprehension', size=12] => 12
+len(found) [name='comprehension', size=12] => 41
+len(raised) [name='comprehension', size=12] => 26
+without columns: [x for x in raised if None in x[3]][:5] [name='comprehension', size=12] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='comprehension', size=12] => 576ce4a8ea
+name [name='comprehension', size=30] => comprehension
+size [name='comprehension', size=30] => 30
+len(found) [name='comprehension', size=30] => 95
+len(raised) [name='comprehension', size=30] => 62
+without columns: [x for x in raised if None in x[3]][:5] [name='comprehension', size=30] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='comprehension', size=30] => 166297758d
+name [name='comprehension', size=45] => comprehension
+size [name='comprehension', size=45] => 45
+len(found) [name='comprehension', size=45] => 140
+len(raised) [name='comprehension', size=45] => 92
+without columns: [x for x in raised if None in x[3]][:5] [name='comprehension', size=45] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='comprehension', size=45] => d09a8745f6
+name [name='comprehension', size=90] => comprehension
+size [name='comprehension', size=90] => 90
+len(found) [name='comprehension', size=90] => 11
+len(raised) [name='comprehension', size=90] => 7
+without columns: [x for x in raised if None in x[3]][:5] [name='comprehension', size=90] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='comprehension', size=90] => 216a1016d0
+name [name='comprehension', size=400] => comprehension
+size [name='comprehension', size=400] => 400
+len(found) [name='comprehension', size=400] => 11
+len(raised) [name='comprehension', size=400] => 7
+without columns: [x for x in raised if None in x[3]][:5] [name='comprehension', size=400] => []
+hashlib.sha1(repr(found).encode()).hexdigest()[:10] [name='comprehension', size=400] => f101e39ffe
+module size [size=1] => 1
+found [size=1] => [('ZeroDivisionError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29)), None]
+module size [size=5] => 5
+found [size=5] => [('ZeroDivisionError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29))]
+module size [size=6] => 6
+found [size=6] => [('ZeroDivisionError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29))]
+module size [size=7] => 7
+found [size=7] => [('ZeroDivisionError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29))]
+module size [size=12] => 12
+found [size=12] => [('ZeroDivisionError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29))]
+module size [size=30] => 30
+found [size=30] => [('ZeroDivisionError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29))]
+module size [size=45] => 45
+found [size=45] => [('ZeroDivisionError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29))]
+module size [size=90] => 90
+found [size=90] => [('ZeroDivisionError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29))]
+module size [size=400] => 400
+found [size=400] => [('ZeroDivisionError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29))]
+module size [size=1200] => 1200
+found [size=1200] => [('ZeroDivisionError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29)), ('KeyError', 'where', 168, (168, 168, 12, 29))]
+one after another far [far=12] => 12
+len(results) [far=12] => 380
+without columns: [x for result in results for x in result if x and None in x[3]][:5] [far=12] => []
+hashlib.sha1(repr(results).encode()).hexdigest()[:10] [far=12] => e68438fd23
+    results[0] [far=12] => [('KeyError', 'f', 24, (24, 24, 11, 19)), ('KeyError', 'f', 10, (10, 10, 16, 24)), ('KeyError', 'f', 11, (11, 11, 12, 20)), ('KeyError', 'f', 7, (7, 7, 16, 24)), ('KeyError', 'f', 12, (12, 12, 8, 16)), ('KeyError', 'f', 13, (13, 13, 8, 16)), ('KeyError', 'f', 23, (23, 23, 8, 17)), None]
+    results[-1] [far=12] => [('KeyError', 'f', 51, (51, 51, 11, 19)), ('KeyError', 'f', 31, (31, 31, 16, 24)), ('KeyError', 'f', 34, (34, 34, 12, 20)), ('KeyError', 'f', 26, (26, 26, 16, 24)), ('KeyError', 'f', 37, (37, 37, 8, 16)), ('KeyError', 'f', 38, (38, 38, 8, 16)), ('KeyError', 'f', 48, (48, 48, 8, 17)), None]
+one after another far [far=60] => 60
+len(results) [far=60] => 140
+without columns: [x for result in results for x in result if x and None in x[3]][:5] [far=60] => []
+hashlib.sha1(repr(results).encode()).hexdigest()[:10] [far=60] => c21be213e3
+    results[0] [far=60] => [('KeyError', 'f', 72, (72, 72, 11, 19)), ('KeyError', 'f', 10, (10, 10, 16, 24)), ('KeyError', 'f', 11, (11, 11, 12, 20)), ('KeyError', 'f', 7, (7, 7, 16, 24)), ('KeyError', 'f', 12, (12, 12, 8, 16)), ('KeyError', 'f', 13, (13, 13, 8, 16)), ('KeyError', 'f', 71, (71, 71, 8, 17)), None]
+    results[-1] [far=60] => [('KeyError', 'f', 99, (99, 99, 11, 19)), ('KeyError', 'f', 31, (31, 31, 16, 24)), ('KeyError', 'f', 34, (34, 34, 12, 20)), ('KeyError', 'f', 26, (26, 26, 16, 24)), ('KeyError', 'f', 37, (37, 37, 8, 16)), ('KeyError', 'f', 38, (38, 38, 8, 16)), ('KeyError', 'f', 96, (96, 96, 8, 17)), None]
+very far away short [short=0] => 0
+cascade(12, short, lambda indent: indent + '# ' + '-' * (1 << 23 if l... [short=0] => [('KeyError', 'f', 28, (28, 28, 11, 19)), ('KeyError', 'f', 11, (11, 11, 16, 24)), ('KeyError', 'f', 13, (13, 13, 12, 20)), ('KeyError', 'f', 7, (7, 7, 16, 24)), ('KeyError', 'f', 15, (15, 15, 8, 16)), ('KeyError', 'f', 16, (16, 16, 8, 16)), ('KeyError', 'f', 26, (26, 26, 8, 17)), None]
+very far away short [short=2] => 2
+cascade(12, short, lambda indent: indent + '# ' + '-' * (1 << 23 if l... [short=2] => [('KeyError', 'f', 30, (30, 30, 11, 19)), ('KeyError', 'f', 13, (13, 13, 16, 24)), ('KeyError', 'f', 15, (15, 15, 12, 20)), ('KeyError', 'f', 9, (9, 9, 16, 24)), ('KeyError', 'f', 17, (17, 17, 8, 16)), ('KeyError', 'f', 18, (18, 18, 8, 16)), ('KeyError', 'f', 28, (28, 28, 8, 17)), None]
+very far away short [short=4] => 4
+cascade(12, short, lambda indent: indent + '# ' + '-' * (1 << 23 if l... [short=4] => [('KeyError', 'f', 32, (32, 32, 11, 19)), ('KeyError', 'f', 15, (15, 15, 16, 24)), ('KeyError', 'f', 17, (17, 17, 12, 20)), ('KeyError', 'f', 11, (11, 11, 16, 24)), ('KeyError', 'f', 19, (19, 19, 8, 16)), ('KeyError', 'f', 20, (20, 20, 8, 16)), ('KeyError', 'f', 30, (30, 30, 8, 17)), None]
+very far away short [short=6] => 6
+cascade(12, short, lambda indent: indent + '# ' + '-' * (1 << 23 if l... [short=6] => [('KeyError', 'f', 34, (34, 34, 11, 19)), ('KeyError', 'f', 17, (17, 17, 16, 24)), ('KeyError', 'f', 19, (19, 19, 12, 20)), ('KeyError', 'f', 13, (13, 13, 16, 24)), ('KeyError', 'f', 21, (21, 21, 8, 16)), ('KeyError', 'f', 22, (22, 22, 8, 16)), ('KeyError', 'f', 32, (32, 32, 8, 17)), None]
+very far away short [short=8] => 8
+cascade(12, short, lambda indent: indent + '# ' + '-' * (1 << 23 if l... [short=8] => [('KeyError', 'f', 36, (36, 36, 11, 19)), ('KeyError', 'f', 19, (19, 19, 16, 24)), ('KeyError', 'f', 21, (21, 21, 12, 20)), ('KeyError', 'f', 15, (15, 15, 16, 24)), ('KeyError', 'f', 23, (23, 23, 8, 16)), ('KeyError', 'f', 24, (24, 24, 8, 16)), ('KeyError', 'f', 34, (34, 34, 8, 17)), None]
+very far away short [short=10] => 10
+cascade(12, short, lambda indent: indent + '# ' + '-' * (1 << 23 if l... [short=10] => [('KeyError', 'f', 38, (38, 38, 11, 19)), ('KeyError', 'f', 21, (21, 21, 16, 24)), ('KeyError', 'f', 23, (23, 23, 12, 20)), ('KeyError', 'f', 17, (17, 17, 16, 24)), ('KeyError', 'f', 25, (25, 25, 8, 16)), ('KeyError', 'f', 26, (26, 26, 8, 16)), ('KeyError', 'f', 36, (36, 36, 8, 17)), None]
+very far away short [short=12] => 12
+cascade(12, short, lambda indent: indent + '# ' + '-' * (1 << 23 if l... [short=12] => [('KeyError', 'f', 40, (40, 40, 11, 19)), ('KeyError', 'f', 23, (23, 23, 16, 24)), ('KeyError', 'f', 25, (25, 25, 12, 20)), ('KeyError', 'f', 19, (19, 19, 16, 24)), ('KeyError', 'f', 27, (27, 27, 8, 16)), ('KeyError', 'f', 28, (28, 28, 8, 16)), ('KeyError', 'f', 38, (38, 38, 8, 17)), None]
+very far away short [short=14] => 14
+cascade(12, short, lambda indent: indent + '# ' + '-' * (1 << 23 if l... [short=14] => [('KeyError', 'f', 42, (42, 42, 11, 19)), ('KeyError', 'f', 25, (25, 25, 16, 24)), ('KeyError', 'f', 27, (27, 27, 12, 20)), ('KeyError', 'f', 21, (21, 21, 16, 24)), ('KeyError', 'f', 29, (29, 29, 8, 16)), ('KeyError', 'f', 30, (30, 30, 8, 16)), ('KeyError', 'f', 40, (40, 40, 8, 17)), None]
+very far away short [short=16] => 16
+cascade(12, short, lambda indent: indent + '# ' + '-' * (1 << 23 if l... [short=16] => [('KeyError', 'f', 44, (44, 44, 11, 19)), ('KeyError', 'f', 27, (27, 27, 16, 24)), ('KeyError', 'f', 29, (29, 29, 12, 20)), ('KeyError', 'f', 23, (23, 23, 16, 24)), ('KeyError', 'f', 31, (31, 31, 8, 16)), ('KeyError', 'f', 32, (32, 32, 8, 16)), ('KeyError', 'f', 42, (42, 42, 8, 17)), None]
+very far away short [short=18] => 18
+cascade(12, short, lambda indent: indent + '# ' + '-' * (1 << 23 if l... [short=18] => [('KeyError', 'f', 46, (46, 46, 11, 19)), ('KeyError', 'f', 29, (29, 29, 16, 24)), ('KeyError', 'f', 31, (31, 31, 12, 20)), ('KeyError', 'f', 25, (25, 25, 16, 24)), ('KeyError', 'f', 33, (33, 33, 8, 16)), ('KeyError', 'f', 34, (34, 34, 8, 16)), ('KeyError', 'f', 44, (44, 44, 8, 17)), None]

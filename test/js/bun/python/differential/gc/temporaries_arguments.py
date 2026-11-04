@@ -263,6 +263,31 @@ for use, make in ((keep, made), (next, lambda: kept[0]), (next, lambda: kept[0])
     show('with another argument', result)
 kept.pop().close()
 log.clear()
+# The call that has made a generator for a function that keeps it returns the same generator the next time, to a function that keeps nothing.
+def plain():
+    try:
+        yield 1
+        yield 2
+        yield 3
+    finally:
+        log.append('closed plain')
+
+
+for use, make in ((keep, plain), (next, lambda: kept[0]), (any, lambda: kept[0]), (next, lambda: kept[0])):
+    result = apply(use, make)
+    show('made by the call itself, in a function', result)
+kept.pop().close()
+log.clear()
+for use, make in ((keep, plain), (next, lambda: kept[0]), (any, lambda: kept[0]), (next, lambda: kept[0])):
+    result = use(make())
+    show('made by the call itself, in a loop', result)
+kept.pop().close()
+log.clear()
+for use, make in ((kept.append, plain), (next, lambda: kept[0]), (next, lambda: kept[0])):
+    result = use(make())
+    show('kept by a method of a list', result)
+kept.pop().close()
+log.clear()
 # What next() returns when there is nothing left is its second argument.
 for first, make in ((lambda: iter(()), made), (lambda: kept[0], int), (lambda: kept[0], int)):
     result = apply_to_second(next, first, make)

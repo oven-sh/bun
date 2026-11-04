@@ -1,5 +1,5 @@
 status: 0
-script: 0177847dcc60df08
+script: 4424cb4b8080c194
 ---
 --- closed at once
 any True ['closed any']
@@ -63,6 +63,17 @@ in a loop 2 []
 with another argument kept []
 with another argument 0 []
 with another argument 1 []
+made by the call itself, in a function kept []
+made by the call itself, in a function 1 []
+made by the call itself, in a function True []
+made by the call itself, in a function 3 []
+made by the call itself, in a loop kept []
+made by the call itself, in a loop 1 []
+made by the call itself, in a loop True []
+made by the call itself, in a loop 3 []
+kept by a method of a list None []
+kept by a method of a list 1 []
+kept by a method of a list 2 []
 the default the generator []
 the default 0 []
 the default 1 []

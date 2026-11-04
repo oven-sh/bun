@@ -381,3 +381,111 @@ outer()
     exitCode: 1,
   });
 });
+
+test.concurrent("where an exception has been, through calls of both languages", async () => {
+  const result = await run({
+    "helper.js": `
+export let finallies = 0;
+export function thrower(kind) {
+  if (kind === "error") throw new RangeError("r");
+  if (kind === "number") throw 42;
+  if (kind === "object") throw { a: 1 };
+  if (kind === "kept") throw kept;
+  return kind;
+}
+export function throws(value) { throw value; }
+export const kept = new TypeError("kept");
+export function plain(f, ...args) { return f(...args); }
+export function withFinally(f, ...args) { try { return plain(f, ...args); } finally { finallies++; } }
+export function rethrows(f, ...args) { try { return withFinally(f, ...args); } catch (e) { throw e; } }
+export function swallows(f, ...args) { try { return rethrows(f, ...args); } catch (e) { return "swallowed " + String(e).split("\\n")[0]; } }
+export function finallyCallsPython(f, g, ...args) { try { return plain(f, ...args); } finally { g(); } }
+`,
+    "main.py": `
+import js
+import traceback
+from helper import thrower, throws, plain, withFinally, rethrows, swallows, finallyCallsPython, kept
+
+
+def names(e):
+    return [f.name for f in traceback.extract_tb(e.__traceback__)]
+
+
+def raises(*args):
+    raise ValueError("v")
+
+
+def py(f, *args):
+    return f(*args)
+
+
+def attempt(label, f, *args):
+    try:
+        print(label, "returned", f(*args))
+    except BaseException as e:
+        print(label, type(e).__name__, names(e))
+
+
+for round in range(2):
+    attempt("python through js", rethrows, raises)
+    for kind in ("error", "number", "object"):
+        attempt("js only, " + kind, rethrows, thrower, kind)
+        attempt("js, python, js, " + kind, rethrows, py, rethrows, thrower, kind)
+        attempt("js, python, js, python, js, " + kind, withFinally, py, plain, py, withFinally, thrower, kind)
+        attempt("swallowed, " + kind, swallows, py, rethrows, thrower, kind)
+    attempt("swallowed python", swallows, raises)
+    # After something of Python's has been caught by a finally of JS and another thing is thrown from there.
+    attempt("finally throws another", finallyCallsPython, raises, lambda: thrower("number"))
+    attempt("then the first again", finallyCallsPython, raises, lambda: None)
+# An error that is thrown again and again has been in more and more places, as an exception that is raised again has.
+attempt("js only, kept", rethrows, thrower, "kept")
+attempt("js, python, js, kept", rethrows, py, rethrows, thrower, "kept")
+attempt("js only, kept", rethrows, thrower, "kept")
+# It gets its traceback while a finally of JS, which it has passed without one, is under way.
+fresh = js.Error("fresh")
+attempt("finally meets the same error", finallyCallsPython, throws, lambda: swallows(py, throws, fresh), fresh)
+`,
+  });
+  expect(result).toEqual({
+    stdout: lines(
+      "python through js ValueError ['attempt', 'rethrows', 'rethrows', 'withFinally', 'raises']",
+      "js only, error JSError ['attempt', 'rethrows', 'withFinally', 'thrower']",
+      "js, python, js, error JSError ['attempt', 'rethrows', 'rethrows', 'withFinally', 'py', 'rethrows', 'withFinally', 'thrower']",
+      "js, python, js, python, js, error JSError ['attempt', 'withFinally', 'py', 'py', 'withFinally', 'thrower']",
+      "swallowed, error returned swallowed RangeError: r",
+      "js only, number JSError []",
+      "js, python, js, number JSError []",
+      "js, python, js, python, js, number JSError []",
+      "swallowed, number returned swallowed 42",
+      "js only, object JSError ['attempt']",
+      "js, python, js, object JSError ['attempt', 'rethrows', 'rethrows', 'withFinally', 'py']",
+      "js, python, js, python, js, object JSError ['attempt', 'withFinally', 'py', 'py']",
+      "swallowed, object returned swallowed [object Object]",
+      "swallowed python returned swallowed ValueError: v",
+      "finally throws another JSError []",
+      "then the first again ValueError ['attempt', 'finallyCallsPython', 'raises']",
+      "python through js ValueError ['attempt', 'rethrows', 'rethrows', 'withFinally', 'raises']",
+      "js only, error JSError ['attempt', 'rethrows', 'withFinally', 'thrower']",
+      "js, python, js, error JSError ['attempt', 'rethrows', 'rethrows', 'withFinally', 'py', 'rethrows', 'withFinally', 'thrower']",
+      "js, python, js, python, js, error JSError ['attempt', 'withFinally', 'py', 'py', 'withFinally', 'thrower']",
+      "swallowed, error returned swallowed RangeError: r",
+      "js only, number JSError []",
+      "js, python, js, number JSError []",
+      "js, python, js, python, js, number JSError []",
+      "swallowed, number returned swallowed 42",
+      "js only, object JSError ['attempt']",
+      "js, python, js, object JSError ['attempt', 'rethrows', 'rethrows', 'withFinally', 'py']",
+      "js, python, js, python, js, object JSError ['attempt', 'withFinally', 'py', 'py']",
+      "swallowed, object returned swallowed [object Object]",
+      "swallowed python returned swallowed ValueError: v",
+      "finally throws another JSError []",
+      "then the first again ValueError ['attempt', 'finallyCallsPython', 'raises']",
+      "js only, kept JSTypeError ['attempt']",
+      "js, python, js, kept JSTypeError ['attempt', 'rethrows', 'rethrows', 'withFinally', 'py', 'rethrows', 'rethrows', 'withFinally', 'thrower', 'attempt']",
+      "js only, kept JSTypeError ['attempt', 'rethrows', 'rethrows', 'withFinally', 'thrower', 'attempt', 'rethrows', 'rethrows', 'withFinally', 'py', 'rethrows', 'rethrows', 'withFinally', 'thrower', 'attempt']",
+      "finally meets the same error JSError ['attempt', 'finallyCallsPython', 'swallows', 'rethrows', 'rethrows', 'withFinally', 'py']",
+    ),
+    stderr: "",
+    exitCode: 0,
+  });
+});

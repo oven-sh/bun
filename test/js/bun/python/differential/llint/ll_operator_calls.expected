@@ -1,5 +1,5 @@
 status: 0
-script: 8fac62b61d60ec01
+script: a189f6a25b30e0ce
 ---
 + other A(0, 0, 0) B(0, 0) -> "TypeError:unsupported operand type(s) for +: 'A' and 'B'" []
 += other A(0, 0, 0) B(0, 0) -> "TypeError:unsupported operand type(s) for +=: 'A' and 'B'" []
@@ -5147,3 +5147,187 @@ the variables change, other callables -> [('Called', 'b'), ('B.__radd__', 'b', '
 after an exception -> [('ValueError', [False, False]), ('ValueError', [False, False]), ('ValueError', [False]), ('TypeError', [False, False]), ('ValueError', [False, False]), ('ValueError', [False, False]), ('ValueError', [False]), ('TypeError', [False, False]), ('ValueError', [False, False]), ('ValueError', [False, False]), ('ValueError', [False]), ('TypeError', [False, False]), ('here', [False, False]), ('here', [False, False]), ('here', [False, False])]
 the result while methods run -> [[True], (False, [False]), (False, [False]), [True], (False, [False]), (False, [False]), [True], (False, [False]), (False, [False])]
 5145
+--- which of two classes has its own idea of the reflected method
+object fresh [('reflected', 3), ('reflected', 3), ('reflected', 3), ('reflected', 3), ('direct', 0)]
+object same [('direct', 2), ('direct', 2), ('direct', 2), ('direct', 2), ('direct', 0)]
+object equal [('direct', 1), ('direct', 1), ('direct', 1), ('direct', 1), ('direct', 0)]
+object classmethod [('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('direct', 0)]
+object staticmethod [('direct', 0), ('direct', 0), ('direct', 0), ('direct', 0), ('direct', 0)]
+object partialmethod [('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('direct', 0)]
+object function [('direct', 0), ('direct', 0), ('direct', 0), ('direct', 0), ('direct', 0)]
+object attribute error [('direct', 0), ('direct', 0), ('direct', 0), ('direct', 0), ('direct', 0)]
+object value error [('ValueError', 0), ('ValueError', 0), ('ValueError', 0), ('ValueError', 0), ('direct', 0)]
+object != raises [('RuntimeError', 0), ('RuntimeError', 0), ('RuntimeError', 0), ('RuntimeError', 0), ('direct', 0)]
+object builtin [('direct', 0), ('direct', 0), ('direct', 0), ('direct', 0), ('direct', 0)]
+object callable [('direct', 0), ('direct', 0), ('direct', 0), ('direct', 0), ('direct', 0)]
+object None [('direct', 0), ('direct', 0), ('direct', 0), ('direct', 0), ('direct', 0)]
+int fresh [('reflected', 3), ('reflected', 3), ('reflected', 3), ('reflected', 3), ('int', 0)]
+int same [('int', 2), ('reflected', 3), ('int', 2), ('int', 2), ('int', 0)]
+int equal [('int', 1), ('reflected', 1), ('int', 1), ('int', 1), ('int', 0)]
+int classmethod [('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('int', 0)]
+int staticmethod [('int', 0), ('reflected', 0), ('int', 0), ('int', 0), ('int', 0)]
+int partialmethod [('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('int', 0)]
+int function [('int', 0), ('reflected', 0), ('int', 0), ('int', 0), ('int', 0)]
+int attribute error [('int', 0), ('reflected', 0), ('int', 0), ('int', 0), ('int', 0)]
+int value error [('ValueError', 0), ('ValueError', 0), ('ValueError', 0), ('ValueError', 0), ('int', 0)]
+int != raises [('RuntimeError', 0), ('RuntimeError', 0), ('RuntimeError', 0), ('RuntimeError', 0), ('int', 0)]
+int builtin [('int', 0), ('int', 0), ('int', 0), ('int', 0), ('int', 0)]
+int callable [('int', 0), ('reflected', 0), ('int', 0), ('int', 0), ('int', 0)]
+int None [('int', 0), ('TypeError', 0), ('int', 0), ('int', 0), ('int', 0)]
+str fresh [('reflected', 3), ('reflected', 3), ('reflected', 3), ('reflected', 3), ('str', 0)]
+str same [('str', 2), ('reflected', 3), ('reflected', 3), ('reflected', 3), ('str', 0)]
+str equal [('str', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('str', 0)]
+str classmethod [('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('str', 0)]
+str staticmethod [('str', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('str', 0)]
+str partialmethod [('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('str', 0)]
+str function [('str', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('str', 0)]
+str attribute error [('str', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('str', 0)]
+str value error [('ValueError', 0), ('ValueError', 0), ('ValueError', 0), ('ValueError', 0), ('str', 0)]
+str != raises [('RuntimeError', 0), ('RuntimeError', 0), ('RuntimeError', 0), ('RuntimeError', 0), ('str', 0)]
+str builtin [('str', 0), ('TypeError', 0), ('TypeError', 0), ('TypeError', 0), ('str', 0)]
+str callable [('str', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('str', 0)]
+str None [('str', 0), ('TypeError', 0), ('TypeError', 0), ('TypeError', 0), ('str', 0)]
+list fresh [('reflected', 3), ('reflected', 3), ('reflected', 3), ('reflected', 3), ('list', 0)]
+list same [('list', 2), ('reflected', 3), ('reflected', 3), ('reflected', 3), ('list', 0)]
+list equal [('list', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('list', 0)]
+list classmethod [('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('list', 0)]
+list staticmethod [('list', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('list', 0)]
+list partialmethod [('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('list', 0)]
+list function [('list', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('list', 0)]
+list attribute error [('list', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('list', 0)]
+list value error [('ValueError', 0), ('ValueError', 0), ('ValueError', 0), ('ValueError', 0), ('list', 0)]
+list != raises [('RuntimeError', 0), ('RuntimeError', 0), ('RuntimeError', 0), ('RuntimeError', 0), ('list', 0)]
+list builtin [('list', 0), ('TypeError', 0), ('TypeError', 0), ('TypeError', 0), ('list', 0)]
+list callable [('list', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('list', 0)]
+list None [('list', 0), ('TypeError', 0), ('TypeError', 0), ('TypeError', 0), ('list', 0)]
+float fresh [('reflected', 3), ('reflected', 3), ('reflected', 3), ('reflected', 3), ('float', 0)]
+float same [('float', 2), ('reflected', 3), ('float', 2), ('TypeError', 2), ('float', 0)]
+float equal [('float', 1), ('reflected', 1), ('float', 1), ('TypeError', 1), ('float', 0)]
+float classmethod [('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('float', 0)]
+float staticmethod [('float', 0), ('reflected', 0), ('float', 0), ('TypeError', 0), ('float', 0)]
+float partialmethod [('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('float', 0)]
+float function [('float', 0), ('reflected', 0), ('float', 0), ('TypeError', 0), ('float', 0)]
+float attribute error [('float', 0), ('reflected', 0), ('float', 0), ('TypeError', 0), ('float', 0)]
+float value error [('ValueError', 0), ('ValueError', 0), ('ValueError', 0), ('ValueError', 0), ('float', 0)]
+float != raises [('RuntimeError', 0), ('RuntimeError', 0), ('RuntimeError', 0), ('RuntimeError', 0), ('float', 0)]
+float builtin [('float', 0), ('TypeError', 0), ('float', 0), ('TypeError', 0), ('float', 0)]
+float callable [('float', 0), ('reflected', 0), ('float', 0), ('TypeError', 0), ('float', 0)]
+float None [('float', 0), ('TypeError', 0), ('float', 0), ('TypeError', 0), ('float', 0)]
+tuple fresh [('reflected', 3), ('reflected', 3), ('reflected', 3), ('reflected', 3), ('tuple', 0)]
+tuple same [('tuple', 2), ('reflected', 3), ('reflected', 3), ('reflected', 3), ('tuple', 0)]
+tuple equal [('tuple', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('tuple', 0)]
+tuple classmethod [('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('tuple', 0)]
+tuple staticmethod [('tuple', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('tuple', 0)]
+tuple partialmethod [('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('tuple', 0)]
+tuple function [('tuple', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('tuple', 0)]
+tuple attribute error [('tuple', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('tuple', 0)]
+tuple value error [('ValueError', 0), ('ValueError', 0), ('ValueError', 0), ('ValueError', 0), ('tuple', 0)]
+tuple != raises [('RuntimeError', 0), ('RuntimeError', 0), ('RuntimeError', 0), ('RuntimeError', 0), ('tuple', 0)]
+tuple builtin [('tuple', 0), ('TypeError', 0), ('TypeError', 0), ('TypeError', 0), ('tuple', 0)]
+tuple callable [('tuple', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('tuple', 0)]
+tuple None [('tuple', 0), ('TypeError', 0), ('TypeError', 0), ('TypeError', 0), ('tuple', 0)]
+reflected direct direct ['OfMetaDerived', 'OfMeta']
+reflected direct
+reflected direct direct ['OfMetaDerived', 'OfMeta']
+reflected direct
+reflected direct direct ['OfMetaDerived', 'OfMeta']
+reflected direct
+--- the class of the left operand has the operator from a built-in type, or not at all: nothing is compared
+fresh [('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1)]
+same [('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1), ('reflected', 1)]
+equal [('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0)]
+classmethod [('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0)]
+staticmethod [('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0)]
+partialmethod [('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0)]
+function [('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0)]
+attribute error [('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0)]
+value error [('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0)]
+!= raises [('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0)]
+builtin [('int', 0), ('int', 0), ('int', 0), ('int', 0), ('TypeError: expected 1 argument, got 2', 0), ('int', 0), ('TypeError: expected 1 argument, got 2', 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Derived'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Derived'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Derived'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Derived'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Derived'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Below'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Below'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Derived'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Derived'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Derived'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Derived'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Derived'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Below'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Below'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Derived'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Derived'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Derived'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Derived'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Derived'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Below'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Below'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Derived'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Derived'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Derived'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Derived'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Derived'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Below'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Below'", 0)]
+callable [('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0)]
+None [("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0), ("TypeError: 'NoneType' object is not callable", 0)]
+never different [('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0), ('reflected', 0)]
+static builtin [('TypeError: expected 1 argument, got 0', 0), ('TypeError: expected 1 argument, got 0', 0), ('TypeError: expected 1 argument, got 0', 0), ('TypeError: expected 1 argument, got 0', 0), ('int', 0), ('TypeError: expected 1 argument, got 0', 0), ('int', 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'float'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'float'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'float'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'float'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'float'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Between'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Between'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'str'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'str'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'str'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'str'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'str'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Between'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Between'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'list'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'list'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'list'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'list'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'list'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Between'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Between'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'object'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'object'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'object'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'object'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'object'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Between'", 0), ("TypeError: descriptor '__radd__' requires a 'int' object but received a 'Between'", 0)]
+--- code of the program runs while the question is asked
+None ('Lower.__radd__ of Lower', [('Lower', '__radd__')])
+None ('Lower.__rpow__ of Lower', [('Lower', '__rpow__')])
+None ('Lower.__rpow__ of Lower', [('Lower', '__rpow__')])
+replaces ('new __radd__', [('Lower', '__radd__')])
+replaces ('new __rpow__', [('Lower', '__rpow__')])
+replaces ('new __rpow__', [('Lower', '__rpow__')])
+deletes ('Upper.__add__', [('Lower', '__radd__')])
+deletes ('Upper.__pow__', [('Lower', '__rpow__')])
+deletes ('Upper.__pow__', [('Lower', '__rpow__')])
+changes_class ('Sibling.__radd__ of Sibling', [('Lower', '__radd__')])
+changes_class ('Sibling.__rpow__ of Sibling', [('Lower', '__rpow__')])
+changes_class ('Sibling.__rpow__ of Sibling', [('Lower', '__rpow__')])
+changes_left ('Lower.__radd__ of Lower', [('Lower', '__radd__'), ('Sibling', '__radd__')])
+changes_left ('Lower.__rpow__ of Lower', [('Lower', '__rpow__'), ('Sibling', '__rpow__')])
+changes_left ('Lower.__rpow__ of Lower', [('Lower', '__rpow__'), ('Sibling', '__rpow__')])
+raises ('RuntimeError: from the hook', [('Lower', '__radd__')])
+raises ('RuntimeError: from the hook', [('Lower', '__rpow__')])
+raises ('RuntimeError: from the hook', [('Lower', '__rpow__')])
+raises_attribute_error ('Upper.__add__', [('Lower', '__radd__')])
+raises_attribute_error ('Upper.__pow__', [('Lower', '__rpow__')])
+raises_attribute_error ('Upper.__pow__', [('Lower', '__rpow__')])
+('Upper.__add__', []) ('Upper.__pow__', []) ('Upper.__add__', []) ('Upper.__add__', [])
+('Upper.__add__', [('missing', 'Lower', '__radd__')]) ('Upper.__pow__', [('missing', 'Lower', '__rpow__')]) ('Sibling.__radd__ of Sibling', [('missing', 'Upper', '__radd__')])
+('Upper.__add__', [('missing', 'Lower', '__radd__'), ('missing', 'Upper', '__radd__')]) ('Upper.__pow__', [('missing', 'Lower', '__rpow__'), ('missing', 'Upper', '__rpow__')]) ('Sibling.__radd__ of Sibling', [('missing', 'Upper', '__radd__')])
+--- the operands are of one class, or of unrelated ones, once the question has been asked
+right becomes Upper False ('Upper.__radd__ of Upper', [('Lower', '__radd__'), ('Upper', '__radd__')])
+right becomes Upper False ('Upper.__rpow__ of Upper', [('Lower', '__rpow__'), ('Upper', '__rpow__')])
+right becomes Upper False ('Upper.__rpow__ of Upper', [('Lower', '__rpow__'), ('Upper', '__rpow__')])
+right becomes Upper True ('Upper.__radd__ of Upper', [('Lower', '__radd__'), ('Upper', '__radd__')])
+right becomes Upper True ('Upper.__rpow__ of Upper', [('Lower', '__rpow__'), ('Upper', '__rpow__')])
+right becomes Upper True ('Upper.__rpow__ of Upper', [('Lower', '__rpow__'), ('Upper', '__rpow__')])
+left becomes Lower False ('Upper.__add__ of Lower', [('Lower', '__radd__'), ('Lower', '__radd__')])
+left becomes Lower False ('Upper.__pow__ of Lower', [('Lower', '__rpow__'), ('Lower', '__rpow__')])
+left becomes Lower False ('Upper.__pow__ of Lower', [('Lower', '__rpow__'), ('Lower', '__rpow__')])
+left becomes Lower True ('Lower.__radd__ of Lower', [('Lower', '__radd__'), ('Upper', '__radd__')])
+left becomes Lower True ('Lower.__rpow__ of Lower', [('Lower', '__rpow__'), ('Upper', '__rpow__')])
+left becomes Lower True ('Lower.__rpow__ of Lower', [('Lower', '__rpow__'), ('Upper', '__rpow__')])
+right becomes Unrelated False ('Unrelated.__radd__ of Unrelated', [('Lower', '__radd__'), ('Upper', '__radd__')])
+right becomes Unrelated False ('Unrelated.__rpow__ of Unrelated', [('Lower', '__rpow__'), ('Upper', '__rpow__')])
+right becomes Unrelated False ('Unrelated.__rpow__ of Unrelated', [('Lower', '__rpow__'), ('Upper', '__rpow__')])
+right becomes Unrelated True ('Unrelated.__radd__ of Unrelated', [('Lower', '__radd__'), ('Upper', '__radd__')])
+right becomes Unrelated True ('Unrelated.__rpow__ of Unrelated', [('Lower', '__rpow__'), ('Upper', '__rpow__')])
+right becomes Unrelated True ('Unrelated.__rpow__ of Unrelated', [('Lower', '__rpow__'), ('Upper', '__rpow__')])
+left becomes Unrelated False ('Lower.__radd__ of Lower', [('Lower', '__radd__'), ('Unrelated', '__radd__')])
+left becomes Unrelated False ('Lower.__rpow__ of Lower', [('Lower', '__rpow__'), ('Unrelated', '__rpow__')])
+left becomes Unrelated False ('Lower.__rpow__ of Lower', [('Lower', '__rpow__'), ('Unrelated', '__rpow__')])
+left becomes Unrelated True ('Lower.__radd__ of Lower', [('Lower', '__radd__'), ('Upper', '__radd__')])
+left becomes Unrelated True ('Lower.__rpow__ of Lower', [('Lower', '__rpow__'), ('Upper', '__rpow__')])
+left becomes Unrelated True ('Lower.__rpow__ of Lower', [('Lower', '__rpow__'), ('Upper', '__rpow__')])
+right becomes Bare False ('Upper.__add__ of Upper', [('Lower', '__radd__'), ('Upper', '__radd__')])
+right becomes Bare False ('Upper.__pow__ of Upper', [('Lower', '__rpow__'), ('Upper', '__rpow__')])
+right becomes Bare False ('Upper.__pow__ of Upper', [('Lower', '__rpow__'), ('Upper', '__rpow__')])
+right becomes Bare True ('Upper.__add__ of Upper', [('Lower', '__radd__'), ('Upper', '__radd__')])
+right becomes Bare True ('Upper.__pow__ of Upper', [('Lower', '__rpow__'), ('Upper', '__rpow__')])
+right becomes Bare True ('Upper.__pow__ of Upper', [('Lower', '__rpow__'), ('Upper', '__rpow__')])
+left becomes Bare False ('Lower.__radd__ of Lower', [('Lower', '__radd__')])
+left becomes Bare False ('Lower.__rpow__ of Lower', [('Lower', '__rpow__')])
+left becomes Bare False ('Lower.__rpow__ of Lower', [('Lower', '__rpow__')])
+left becomes Bare True ('Lower.__radd__ of Lower', [('Lower', '__radd__'), ('Upper', '__radd__')])
+left becomes Bare True ('Lower.__rpow__ of Lower', [('Lower', '__rpow__'), ('Upper', '__rpow__')])
+left becomes Bare True ('Lower.__rpow__ of Lower', [('Lower', '__rpow__'), ('Upper', '__rpow__')])
+Upper loses its methods False ('Lower.__radd__ of Lower', [('Lower', '__radd__'), ('Upper', '__radd__')])
+Upper loses its methods False ('Lower.__rpow__ of Lower', [('Lower', '__rpow__'), ('Upper', '__rpow__')])
+Upper loses its methods False ('Lower.__rpow__ of Lower', [('Lower', '__rpow__'), ('Upper', '__rpow__')])
+Upper loses its methods True ('Lower.__radd__ of Lower', [('Lower', '__radd__'), ('Upper', '__radd__')])
+Upper loses its methods True ('Lower.__rpow__ of Lower', [('Lower', '__rpow__'), ('Upper', '__rpow__')])
+Upper loses its methods True ('Lower.__rpow__ of Lower', [('Lower', '__rpow__'), ('Upper', '__rpow__')])
+Lower says NotImplemented False ('Upper.__add__ of Upper', [('Lower', '__radd__'), ('Upper', '__radd__')])
+Lower says NotImplemented False ('Upper.__pow__ of Upper', [('Lower', '__rpow__'), ('Upper', '__rpow__')])
+Lower says NotImplemented False ('Upper.__pow__ of Upper', [('Lower', '__rpow__'), ('Upper', '__rpow__')])
+Lower says NotImplemented True ('Upper.__add__ of Upper', [('Lower', '__radd__'), ('Upper', '__radd__')])
+Lower says NotImplemented True ('Upper.__pow__ of Upper', [('Lower', '__rpow__'), ('Upper', '__rpow__')])
+Lower says NotImplemented True ('Upper.__pow__ of Upper', [('Lower', '__rpow__'), ('Upper', '__rpow__')])
+--- what was known of the classes is forgotten while the question is asked
+Lower.__radd__ Lower.__rpow__ Lower.__rpow__ Lower.__radd__
+--- only one of the two classes has the operator from Python code
+('WithPython.__add__', []) ('WithPython.__pow__', []) ('WithPython.__pow__', [])
+('ValueError: asked of the class BelowFunctionsOfC', []) ('ValueError: the metaclass of BelowLenAsAdd', [])
+direct its own direct
+('WithPython.__add__', []) ('WithPython.__pow__', []) ('WithPython.__pow__', [])
+('ValueError: asked of the class BelowFunctionsOfC', []) ('ValueError: the metaclass of BelowLenAsAdd', [])
+direct its own direct

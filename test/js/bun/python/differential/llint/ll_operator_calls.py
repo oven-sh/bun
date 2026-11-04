@@ -490,3 +490,420 @@ rec("the result while methods run", result_while_methods_run)
 
 print("\n".join(out))
 print(len(out))
+
+print('--- which of two classes has its own idea of the reflected method')
+import functools
+
+
+class FreshEachTime:
+    def __get__(self, obj, cls=None):
+        gets.append(('fresh', obj is None, cls.__name__))
+        return lambda *args: 'reflected'
+
+
+class SameEachTime:
+    def __init__(self):
+        self.function = lambda *args: 'reflected'
+
+    def __get__(self, obj, cls=None):
+        gets.append(('same', obj is None, cls.__name__))
+        return self.function
+
+
+class EqualEachTime:
+    class Result:
+        def __call__(self, *args):
+            return 'reflected'
+
+        def __eq__(self, other):
+            gets.append('==')
+            return True
+
+        def __ne__(self, other):
+            gets.append('!=')
+            return False
+
+        __hash__ = None
+
+    def __get__(self, obj, cls=None):
+        return self.Result()
+
+
+class RaisesForClass:
+    def __init__(self, error):
+        self.error = error
+
+    def __get__(self, obj, cls=None):
+        if obj is None:
+            raise self.error('no %s for the class' % cls.__name__)
+        return lambda *args: 'reflected'
+
+
+class NeRaises:
+    class Result:
+        def __call__(self, *args):
+            return 'reflected'
+
+        def __ne__(self, other):
+            raise RuntimeError('not to be compared')
+
+    def __get__(self, obj, cls=None):
+        return self.Result()
+
+
+def reflected_function(*args):
+    return 'reflected'
+
+
+DESCRIPTORS = [
+    ('fresh', FreshEachTime), ('same', SameEachTime), ('equal', EqualEachTime), ('classmethod', lambda: classmethod(reflected_function)),
+    ('staticmethod', lambda: staticmethod(reflected_function)), ('partialmethod', lambda: functools.partialmethod(reflected_function)),
+    ('function', lambda: reflected_function), ('attribute error', lambda: RaisesForClass(AttributeError)), ('value error', lambda: RaisesForClass(ValueError)),
+    ('!= raises', NeRaises), ('builtin', lambda: int.__radd__), ('callable', lambda: functools.partial(reflected_function)), ('None', lambda: None),
+]
+for base in (object, int, str, list, float, tuple):
+    for name, make in DESCRIPTORS:
+        descriptor = make()
+        namespace = {'__radd__': descriptor, '__rpow__': descriptor, '__rmatmul__': descriptor}
+        if base is object:
+            namespace.update(__add__=lambda self, other: 'direct', __pow__=lambda self, other, modulus=None: 'direct', __matmul__=lambda self, other: 'direct')
+        Left = type('Left', (base,), namespace)
+        Right = type('Right', (Left,), {})
+        row = []
+        for operation in (lambda: Left() + Right(), lambda: Left() @ Right(), lambda: Left() ** Right(), lambda: pow(Left(), Right(), 5), lambda: Right() + Left()):
+            for _ in range(2):
+                gets = []
+                try:
+                    result = operation()
+                except Exception as e:
+                    result = type(e).__name__
+            row.append((result if isinstance(result, str) and result else type(result).__name__, len(gets)))
+        print(base.__name__, name, row)
+
+
+class Meta(type):
+    def __getattribute__(cls, name):
+        if name == '__radd__':
+            asked.append(cls.__name__)
+            if cls.__name__ == 'OfMetaDerived':
+                return 'something else'
+        return type.__getattribute__(cls, name)
+
+
+class OfMeta(metaclass=Meta):
+    def __add__(self, other):
+        return 'direct'
+
+    def __radd__(self, other):
+        return 'reflected'
+
+
+class OfMetaDerived(OfMeta):
+    pass
+
+
+class MetaWithAttribute(type):
+    __radd__ = property(lambda cls: cls.__name__)
+
+
+class OfMetaWithAttribute(metaclass=MetaWithAttribute):
+    def __add__(self, other):
+        return 'direct'
+
+    def __radd__(self, other):
+        return 'reflected'
+
+
+class OfMetaWithAttributeDerived(OfMetaWithAttribute):
+    pass
+
+
+for _ in range(3):
+    asked = []
+    print(OfMeta() + OfMetaDerived(), OfMetaDerived() + OfMeta(), OfMeta() + OfMeta(), asked)
+    print(OfMetaWithAttribute() + OfMetaWithAttributeDerived(), OfMetaWithAttributeDerived() + OfMetaWithAttribute())
+
+print('--- the class of the left operand has the operator from a built-in type, or not at all: nothing is compared')
+
+
+def attempt(operation):
+    del gets[:]
+    try:
+        result = operation()
+    except Exception as e:
+        result = '%s: %s' % (type(e).__name__, e)
+    return result, list(gets)
+
+
+class NeverDifferent:
+    def __call__(self, *args):
+        return 'reflected'
+
+    def __ne__(self, other):
+        gets.append('!=')
+        return False
+
+    __hash__ = None
+
+
+for name, make in DESCRIPTORS + [('never different', NeverDifferent), ('static builtin', lambda: staticmethod(int.__radd__))]:
+    row = []
+    for base, left in ((int, 1), (float, 2.0), (str, 'a'), (list, [1]), (object, object())):
+        descriptor = make()
+        Derived = type('Derived', (base,), {'__radd__': descriptor, '__rpow__': descriptor, '__rmod__': descriptor, '__rmul__': descriptor})
+        Between = type('Between', (base,), {})
+        Below = type('Below', (Between,), {'__radd__': descriptor, '__rpow__': descriptor})
+        for operation in (lambda: left + Derived(), lambda: left % Derived(), lambda: left * Derived(), lambda: left ** Derived(), lambda: pow(left, Derived(), 5),
+                          lambda: Between() + Below(), lambda: pow(Between(), Below(), 5)):
+            result, got = attempt(operation)
+            row.append((result if isinstance(result, str) and len(result) > 1 else type(result).__name__, len(got)))
+    print(name, row)
+
+print('--- code of the program runs while the question is asked')
+
+
+class Hook(type):
+    def __getattribute__(cls, name):
+        value = type.__getattribute__(cls, name)
+        if name in ('__radd__', '__rpow__'):
+            gets.append((cls.__name__, name))
+            if hook:
+                hook.pop()(cls)
+        return value
+
+
+class HookForMissing(type):
+    def __getattr__(cls, name):
+        gets.append(('missing', cls.__name__, name))
+        if supplies:
+            return cls.__name__
+        raise AttributeError(name)
+
+
+def classes(metaclass, with_reflected=True):
+    class Upper(metaclass=metaclass):
+        def __add__(self, other):
+            return 'Upper.__add__'
+
+        def __pow__(self, other, modulus=None):
+            return 'Upper.__pow__'
+
+    class Lower(Upper):
+        if with_reflected:
+            def __radd__(self, other):
+                return 'Lower.__radd__ of ' + type(self).__name__
+
+            def __rpow__(self, other, modulus=None):
+                return 'Lower.__rpow__ of ' + type(self).__name__
+
+    class Sibling(Upper):
+        def __radd__(self, other):
+            return 'Sibling.__radd__ of ' + type(self).__name__
+
+        def __rpow__(self, other, modulus=None):
+            return 'Sibling.__rpow__ of ' + type(self).__name__
+
+    return Upper, Lower, Sibling
+
+
+def replaces(cls):
+    type.__setattr__(Lower, '__radd__', lambda self, other: 'new __radd__')
+    type.__setattr__(Lower, '__rpow__', lambda self, other, modulus=None: 'new __rpow__')
+
+
+def deletes(cls):
+    type.__delattr__(Lower, '__radd__')
+    type.__delattr__(Lower, '__rpow__')
+
+
+def changes_class(cls):
+    right.__class__ = Sibling
+
+
+def changes_left(cls):
+    left_operand.__class__ = Sibling
+
+
+def raises(cls):
+    raise RuntimeError('from the hook')
+
+
+def raises_attribute_error(cls):
+    raise AttributeError('from the hook')
+
+
+for action in (None, replaces, deletes, changes_class, changes_left, raises, raises_attribute_error):
+    for operation in (lambda: left_operand + right, lambda: pow(left_operand, right, 5), lambda: left_operand ** right):
+        Upper, Lower, Sibling = classes(Hook)
+        left_operand, right = Upper(), Lower()
+        hook = [action] if action else []
+        print(action and action.__name__, attempt(operation))
+hook = []
+Upper, Lower, Sibling = classes(Hook, with_reflected=False)
+print(attempt(lambda: Upper() + Lower()), attempt(lambda: pow(Upper(), Lower(), 5)), attempt(lambda: Upper() + Upper()), attempt(lambda: Lower() + Upper()))
+for supplies in (False, True):
+    Upper, Lower, Sibling = classes(HookForMissing, with_reflected=False)
+    print(attempt(lambda: Upper() + Lower()), attempt(lambda: pow(Upper(), Lower(), 5)), attempt(lambda: Upper() + Sibling()))
+
+print('--- the operands are of one class, or of unrelated ones, once the question has been asked')
+
+
+def classes_with_both(metaclass):
+    class Upper(metaclass=metaclass):
+        def __add__(self, other):
+            return 'Upper.__add__ of ' + type(self).__name__
+
+        def __radd__(self, other):
+            return 'Upper.__radd__ of ' + type(self).__name__
+
+        def __pow__(self, other, modulus=None):
+            return 'Upper.__pow__ of ' + type(self).__name__
+
+        def __rpow__(self, other, modulus=None):
+            return 'Upper.__rpow__ of ' + type(self).__name__
+
+    class Lower(Upper):
+        def __radd__(self, other):
+            return 'Lower.__radd__ of ' + type(self).__name__
+
+        def __rpow__(self, other, modulus=None):
+            return 'Lower.__rpow__ of ' + type(self).__name__
+
+    class Unrelated(metaclass=metaclass):
+        def __add__(self, other):
+            return 'Unrelated.__add__ of ' + type(self).__name__
+
+        def __radd__(self, other):
+            return 'Unrelated.__radd__ of ' + type(self).__name__
+
+        def __pow__(self, other, modulus=None):
+            return 'Unrelated.__pow__ of ' + type(self).__name__
+
+        def __rpow__(self, other, modulus=None):
+            return 'Unrelated.__rpow__ of ' + type(self).__name__
+
+    class Bare(metaclass=metaclass):
+        pass
+
+    return Upper, Lower, Unrelated, Bare
+
+
+ACTIONS = [
+    ('right becomes Upper', lambda: setattr(right, '__class__', Upper)), ('left becomes Lower', lambda: setattr(left_operand, '__class__', Lower)),
+    ('right becomes Unrelated', lambda: setattr(right, '__class__', Unrelated)), ('left becomes Unrelated', lambda: setattr(left_operand, '__class__', Unrelated)),
+    ('right becomes Bare', lambda: setattr(right, '__class__', Bare)), ('left becomes Bare', lambda: setattr(left_operand, '__class__', Bare)),
+    ('Upper loses its methods', lambda: (type.__delattr__(Upper, '__add__'), type.__delattr__(Upper, '__pow__'))),
+    ('Lower says NotImplemented', lambda: (type.__setattr__(Lower, '__radd__', lambda self, other: NotImplemented), type.__setattr__(Lower, '__rpow__', lambda self, other, modulus=None: NotImplemented))),
+]
+for name, action in ACTIONS:
+    for at_the_second_question in (False, True):
+        for operation in (lambda: left_operand + right, lambda: pow(left_operand, right, 5), lambda: left_operand ** right):
+            Upper, Lower, Unrelated, Bare = classes_with_both(Hook)
+            left_operand, right = Upper(), Lower()
+            hook = [lambda cls, action=action: action()]
+            if at_the_second_question:
+                hook.append(lambda cls: None)
+            print(name, at_the_second_question, attempt(operation))
+hook = []
+
+print('--- what was known of the classes is forgotten while the question is asked')
+
+
+class Forgetful(type):
+    def __getattribute__(cls, name):
+        if name in ('__radd__', '__rpow__'):
+            type.__setattr__(cls, 'touched', 1)
+        return type.__getattribute__(cls, name)
+
+
+class OddKey:
+    def __hash__(self):
+        return hash('__add__')
+
+    def __eq__(self, other):
+        return False
+
+
+Upper = Forgetful('Upper', (), {OddKey(): 1, 5: 6, '__add__': lambda self, other: 'Upper.__add__', '__pow__': lambda self, other, modulus=None: 'Upper.__pow__'})
+Lower = Forgetful('Lower', (Upper,), {7: 8, '__radd__': lambda self, other: 'Lower.__radd__', '__rpow__': lambda self, other, modulus=None: 'Lower.__rpow__'})
+x = Upper()
+x += Lower()
+print(Upper() + Lower(), Upper() ** Lower(), pow(Upper(), Lower(), 3), x)
+
+print('--- only one of the two classes has the operator from Python code')
+
+
+class RaisesWhenTheClassIsAsked:
+    def __get__(self, obj, cls=None):
+        if obj is None:
+            raise ValueError('asked of the class ' + cls.__name__)
+        return lambda *args: 'reflected'
+
+
+import operator
+
+
+class WithPython:
+    def __add__(self, other):
+        return 'WithPython.__add__'
+
+    def __pow__(self, other, modulus=None):
+        return 'WithPython.__pow__'
+
+    __radd__ = __rpow__ = RaisesWhenTheClassIsAsked()
+
+
+class IntFirst(int, WithPython):
+    pass
+
+
+class FunctionsOfC:
+    __add__ = operator.concat
+    __radd__ = int.__radd__
+
+
+class BelowFunctionsOfC(FunctionsOfC):
+    __radd__ = RaisesWhenTheClassIsAsked()
+
+
+class RaisingMeta(type):
+    def __getattribute__(cls, name):
+        if name == '__radd__':
+            raise ValueError('the metaclass of ' + cls.__name__)
+        return type.__getattribute__(cls, name)
+
+
+class LenAsAdd(metaclass=RaisingMeta):
+    __add__ = len
+
+
+class BelowLenAsAdd(LenAsAdd):
+    def __radd__(self, other):
+        return 'BelowLenAsAdd.__radd__'
+
+
+class QuietMeta(type):
+    pass
+
+
+class OfQuietMeta(metaclass=QuietMeta):
+    def __add__(self, other):
+        return 'direct'
+
+    def __radd__(self, other):
+        return 'reflected'
+
+
+class OfQuietMetaInherits(OfQuietMeta):
+    pass
+
+
+class OfQuietMetaOverrides(OfQuietMeta):
+    def __radd__(self, other):
+        return 'its own'
+
+
+for _ in range(2):
+    print(attempt(lambda: WithPython() + IntFirst()), attempt(lambda: WithPython() ** IntFirst()), attempt(lambda: pow(WithPython(), IntFirst(), 3)))
+    print(attempt(lambda: FunctionsOfC() + BelowFunctionsOfC()), attempt(lambda: LenAsAdd() + BelowLenAsAdd()))
+    print(OfQuietMeta() + OfQuietMetaInherits(), OfQuietMeta() + OfQuietMetaOverrides(), OfQuietMetaInherits() + OfQuietMeta())

@@ -1,5 +1,5 @@
 status: 0
-script: c18ec1a678386879
+script: 1a00d6c79c6d5725
 ---
 tuple + R = R.__radd__
 tuple * R = R.__rmul__
@@ -2763,3 +2763,30 @@ A // B ! TypeError unsupported operand type(s) for //: 'A' and 'A'
 C / D = E.__truediv__
 A // B ! TypeError unsupported operand type(s) for //: 'A' and 'A'
 C / D = E.__truediv__
+--- a list is extended by itself
+list += [1, 2, 1, 2] True [1, 2, 1, 2]
+list extend [1, 2, 1, 2] False None
+list list.extend [1, 2, 1, 2] False None
+list slice [1, 2, 1, 2] False None
+list *= [1, 2, 1, 2] True [1, 2, 1, 2]
+list + [1, 2] False [1, 2, 1, 2]
+list another [1, 2, 1, 2] False None
+list [1, 2, 1, 2]
+PlainList += [1, 2, 1, 2] True [1, 2, 1, 2]
+PlainList extend [1, 2, 1, 2] False None
+PlainList list.extend [1, 2, 1, 2] False None
+PlainList slice [1, 2, 1, 2] False None
+PlainList *= [1, 2, 1, 2] True [1, 2, 1, 2]
+PlainList + [1, 2] False [1, 2, 1, 2]
+PlainList another [1, 2, 1, 2] False None
+PlainList [1, 2, 1, 2]
+ListWithIter += [1, 2, 1, 2] True [1, 2, 1, 2]
+ListWithIter extend [1, 2, 1, 2] False None
+ListWithIter list.extend [1, 2, 1, 2] False None
+ListWithIter slice [1, 2, 1, 2] False None
+ListWithIter *= [1, 2, 1, 2] True [1, 2, 1, 2]
+ListWithIter + [1, 2] False [1, 2, 1, 2]
+__iter__ is asked
+__iter__ is asked
+ListWithIter another [1, 2, 'from', '__iter__'] False None
+ListWithIter [1, 2, 1, 2]

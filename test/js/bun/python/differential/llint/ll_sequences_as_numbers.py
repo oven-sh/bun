@@ -133,3 +133,26 @@ class E:
 for _ in range(3):
     show('A // B', lambda: A() // B())
     show('C / D', lambda: C() / D())
+
+print('--- a list is extended by itself')
+
+
+class ListWithIter(list):
+    def __iter__(self):
+        print('__iter__ is asked')
+        return iter(('from', '__iter__'))
+
+
+class PlainList(list):
+    pass
+
+
+for cls in (list, PlainList, ListWithIter):
+    for name, action in (('+=', lambda a: a.__iadd__(a)), ('extend', lambda a: a.extend(a)), ('list.extend', lambda a: list.extend(a, a)), ('slice', lambda a: a.__setitem__(slice(len(a), None), a)),
+                         ('*=', lambda a: a.__imul__(2)), ('+', lambda a: a + a), ('another', lambda a: a.extend(cls(a)))):
+        a = cls([1, 2])
+        result = action(a)
+        print(cls.__name__, name, list.__repr__(a), result is a, None if result is None else list.__repr__(result))
+    a = cls([1, 2])
+    a += a
+    print(cls.__name__, list.__repr__(a))

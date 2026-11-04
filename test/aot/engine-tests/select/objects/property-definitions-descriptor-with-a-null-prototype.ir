@@ -1,0 +1,32 @@
+# `Object.defineProperty(object, key, { __proto__: null, value, writable: false })`: nothing is looked for above such a literal, so its own members are all that the built-in reads:
+# the literal is not made, and the call becomes one operation as with a literal that has the usual prototype. Any other prototype object may hold members of a descriptor.
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: DescriptorLiteralGroups = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 fields=[{key="value" declared={type=anything}}, {key="writable" declared={type=anything}}]
+function f0 name="null-prototype" parameters=[{type=object}, {type=string}, {type=number}] results=[{type=anything}] {
+    v3 = Boolean boolean=false
+    v4 = Null
+    v5 = NewObject -, v2, v3 layout=L0 fields=[0, 1]
+    SetLiteralPrototype v5, v4
+    v7 = FinishObject v5
+    v8 = CallBuiltin -, v0, v1, v7 overload=ObjectDefineProperty/0
+    Return v8
+# CHECK-NOT: NewObject
+# CHECK-NOT: SetLiteralPrototype
+# CHECK-NOT: overload=
+# CHECK: = DefineOwnProperty v0, v1, v2 descriptorFlags=[HasValue, HasWritable]
+}
+function f1 name="another-prototype" parameters=[{type=object}, {type=string}, {type=number}, {type=object}] results=[{type=anything}] {
+    v4 = Boolean boolean=false
+    v5 = NewObject -, v2, v4 layout=L0 fields=[0, 1]
+    SetLiteralPrototype v5, v3
+    v7 = FinishObject v5
+    v8 = CallBuiltin -, v0, v1, v7 overload=ObjectDefineProperty/0
+    Return v8
+# CHECK: = NewObject
+# CHECK: SetLiteralPrototype
+# CHECK: overload=ObjectDefineProperty/0
+}

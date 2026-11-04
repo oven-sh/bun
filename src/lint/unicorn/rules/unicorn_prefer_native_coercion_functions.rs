@@ -6,9 +6,9 @@ use bun_lint::rule::Plugin;
 /// Prefers built-in functions over custom ones with the same functionality.
 pub struct PreferNativeCoercionFunctions;
 
-const FUNCTION: Message =
-    Message::new("", "The function is equivalent to `{{called_fn}}`. Call `{{called_fn}}` directly.");
-const ARRAY_CALLBACK: Message = Message::new(
+const FUNCTION: &Message =
+    &Message::new("", "The function is equivalent to `{{called_fn}}`. Call `{{called_fn}}` directly.");
+const ARRAY_CALLBACK: &Message = &Message::new(
     "",
     "The arrow function in the callback of the array is equivalent to `Boolean`. Replace the callback with `Boolean`.",
 );

@@ -387,12 +387,7 @@ fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
             if str.is_dead() {
                 return str;
             }
-            // chars is a freshly-allocated [u16] buffer; reinterpret as bytes.
-            let output_bytes: &mut [u8] = bytemuck::cast_slice_mut(chars);
-            let out_len = output_bytes.len();
-            output_bytes[out_len - 1] = 0;
-
-            output_bytes.copy_from_slice(&input[..out_len]);
+            bun_core::slice_as_bytes_mut(chars).copy_from_slice(&input[..chars_len * 2]);
             str
         }
 
@@ -520,12 +515,9 @@ pub(crate) fn write_u8<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
         Encoding::Ucs2 | Encoding::Utf16le => {
             let buf = input;
             let out_units = to.len() / 2;
-            // For the aligned fast path, `bytemuck` gives a safe `&mut [u8] → &mut [u16]`
-            // view (it re-checks alignment + even length, both proven here).
-            let mut written = if out_units == 0 {
-                0
-            } else if (to.as_ptr() as usize).is_multiple_of(core::mem::align_of::<u16>()) {
-                let output: &mut [u16] = bytemuck::cast_slice_mut(&mut to[..out_units * 2]);
+            let mut written = if let Some(output) =
+                bun_core::try_cast_slice_mut::<u8, u16>(&mut to[..out_units * 2])
+            {
                 strings::copy_latin1_into_utf16(output, buf).written * 2
             } else {
                 // Rust `&mut [u16]` requires natural alignment, so inline the
@@ -751,7 +743,7 @@ fn construct_from_u16<const ENCODING: u8>(input: &[u16]) -> Vec<u8> {
             // `input: &[u16]` is the source bytes verbatim; copy them
             // out into a fresh u8 Vec (a `Vec<u16>` header reinterpret would be
             // allocator-layout-dependent).
-            bytemuck::cast_slice::<u16, u8>(input).to_vec()
+            bun_core::slice_as_bytes(input).to_vec()
         }
 
         Encoding::Hex => construct_from_hex(input),

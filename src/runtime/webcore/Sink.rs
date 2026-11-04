@@ -18,6 +18,7 @@ use bun_jsc::{
     ErrorCode, JSGlobalObject, JSValue, JsClass, JsError, JsResult, JsThread, SysErrorJsc as _,
 };
 use bun_ptr::{BackRef, RawSlice};
+use bun_removable_features::removable_body;
 use bun_sys::{self as sys, Error as SysError};
 
 pub(crate) use crate::webcore::array_buffer_sink::ArrayBufferSink;
@@ -62,11 +63,8 @@ macro_rules! impl_js_sink_forwarders {
         ) -> $crate::webcore::streams::result::Writable {
             Self::write(self, data)
         }
-        fn write_utf16(
-            &mut self,
-            data: &$crate::webcore::streams::Result,
-        ) -> $crate::webcore::streams::result::Writable {
-            Self::write_utf16(self, data)
+        fn write_utf16(&mut self, text: &[u16]) -> $crate::webcore::streams::result::Writable {
+            Self::write_utf16(self, text)
         }
         fn write_latin1(
             &mut self,
@@ -101,7 +99,7 @@ pub(crate) trait JsSinkType: Sized + 'static {
     /// `this` is the object's live sink and must not be used after the call.
     unsafe fn finalize(this: *mut Self);
     fn write_bytes(&mut self, data: &streams::Result) -> streams::result::Writable;
-    fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable;
+    fn write_utf16(&mut self, text: &[u16]) -> streams::result::Writable;
     fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn end(&mut self, err: Option<SysError>) -> sys::Result<()>;
     fn end_from_js(&mut self, cx: &JsThread<'_>) -> sys::Result<JSValue>;
@@ -212,9 +210,7 @@ fn write_chunk<'a, T: JsSinkType>(
             sink.write_bytes(&Temporary(RawSlice::new(bytes)))
         }),
         SinkChunk::Text(text) if text.is_empty() => return Ok(JSValue::js_number(0.0)),
-        SinkChunk::Text(text) if text.is_utf16() => sink.write_utf16(&Temporary(RawSlice::new(
-            bytemuck::cast_slice(text.utf16()),
-        ))),
+        SinkChunk::Text(text) if text.is_utf16() => sink.write_utf16(text.utf16()),
         SinkChunk::Text(text) => sink.write_latin1(&Temporary(RawSlice::new(text.latin1()))),
         SinkChunk::Other(value) => return Err(throw_invalid_chunk(cx.global(), value.to_js())),
     };
@@ -326,8 +322,10 @@ impl<T: JsSinkType> JSSink<T> {
 
     fn notify_subprocess(&self) {
         if let Some(subprocess) = self.subprocess.take() {
-            // SAFETY: the `Subprocess` clears this with `forget_subprocess` before it is freed.
-            unsafe { subprocess.as_ref() }.on_stdin_destroyed();
+            removable_body!(Spawn, Abort, {
+                // SAFETY: the `Subprocess` clears this with `forget_subprocess` before it is freed.
+                unsafe { subprocess.as_ref() }.on_stdin_destroyed();
+            });
         }
     }
 
@@ -615,11 +613,21 @@ impl ReadableSinkController {
         match self.sink() {
             None => 0,
             Some(AnyControlledSink::FileSink(sink)) => sink_memory_cost(sink),
-            Some(AnyControlledSink::RewriterPipe(sink)) => sink_memory_cost(sink),
-            Some(AnyControlledSink::HTTPResponseSink(sink)) => sink_memory_cost(sink),
-            Some(AnyControlledSink::HTTPSResponseSink(sink)) => sink_memory_cost(sink),
-            Some(AnyControlledSink::NetworkSink(sink)) => sink_memory_cost(sink),
-            Some(AnyControlledSink::FetchRequestBodySink(sink)) => sink_memory_cost(sink),
+            Some(AnyControlledSink::RewriterPipe(sink)) => {
+                removable_body!(HtmlRewriter, Abort, { sink_memory_cost(sink) })
+            }
+            Some(AnyControlledSink::HTTPResponseSink(sink)) => {
+                removable_body!(Serve, Abort, { sink_memory_cost(sink) })
+            }
+            Some(AnyControlledSink::HTTPSResponseSink(sink)) => {
+                removable_body!(Serve, Abort, { sink_memory_cost(sink) })
+            }
+            Some(AnyControlledSink::NetworkSink(sink)) => {
+                removable_body!(S3Client, Abort, { sink_memory_cost(sink) })
+            }
+            Some(AnyControlledSink::FetchRequestBodySink(sink)) => {
+                removable_body!(Fetch, Abort, { sink_memory_cost(sink) })
+            }
         }
     }
 
@@ -648,11 +656,23 @@ impl ReadableSinkController {
         let controller = self.this_value();
         match sink {
             AnyControlledSink::FileSink(sink) => controller_detached(sink, controller),
-            AnyControlledSink::RewriterPipe(sink) => controller_detached(sink, controller),
-            AnyControlledSink::HTTPResponseSink(sink) => controller_detached(sink, controller),
-            AnyControlledSink::HTTPSResponseSink(sink) => controller_detached(sink, controller),
-            AnyControlledSink::NetworkSink(sink) => controller_detached(sink, controller),
-            AnyControlledSink::FetchRequestBodySink(sink) => controller_detached(sink, controller),
+            AnyControlledSink::RewriterPipe(sink) => {
+                removable_body!(HtmlRewriter, Abort, {
+                    controller_detached(sink, controller)
+                })
+            }
+            AnyControlledSink::HTTPResponseSink(sink) => {
+                removable_body!(Serve, Abort, { controller_detached(sink, controller) })
+            }
+            AnyControlledSink::HTTPSResponseSink(sink) => {
+                removable_body!(Serve, Abort, { controller_detached(sink, controller) })
+            }
+            AnyControlledSink::NetworkSink(sink) => {
+                removable_body!(S3Client, Abort, { controller_detached(sink, controller) })
+            }
+            AnyControlledSink::FetchRequestBodySink(sink) => {
+                removable_body!(Fetch, Abort, { controller_detached(sink, controller) })
+            }
         }
         Some(sink)
     }
@@ -712,11 +732,21 @@ impl ReadableSinkController {
         let reason = error.map(JsLocal::to_js);
         let result = match sink {
             AnyControlledSink::FileSink(sink) => close_sink(sink, global, reason),
-            AnyControlledSink::RewriterPipe(sink) => close_sink(sink, global, reason),
-            AnyControlledSink::HTTPResponseSink(sink) => close_sink(sink, global, reason),
-            AnyControlledSink::HTTPSResponseSink(sink) => close_sink(sink, global, reason),
-            AnyControlledSink::NetworkSink(sink) => close_sink(sink, global, reason),
-            AnyControlledSink::FetchRequestBodySink(sink) => close_sink(sink, global, reason),
+            AnyControlledSink::RewriterPipe(sink) => {
+                removable_body!(HtmlRewriter, Abort, { close_sink(sink, global, reason) })
+            }
+            AnyControlledSink::HTTPResponseSink(sink) => {
+                removable_body!(Serve, Abort, { close_sink(sink, global, reason) })
+            }
+            AnyControlledSink::HTTPSResponseSink(sink) => {
+                removable_body!(Serve, Abort, { close_sink(sink, global, reason) })
+            }
+            AnyControlledSink::NetworkSink(sink) => {
+                removable_body!(S3Client, Abort, { close_sink(sink, global, reason) })
+            }
+            AnyControlledSink::FetchRequestBodySink(sink) => {
+                removable_body!(Fetch, Abort, { close_sink(sink, global, reason) })
+            }
         };
         self.detach_and_return(global, reason, result)
     }
@@ -736,11 +766,21 @@ impl ReadableSinkController {
         let cx = &cx.js_thread();
         match sink {
             AnyControlledSink::FileSink(sink) => flush_sink(sink, cx, wait),
-            AnyControlledSink::RewriterPipe(sink) => flush_sink(sink, cx, wait),
-            AnyControlledSink::HTTPResponseSink(sink) => flush_sink(sink, cx, wait),
-            AnyControlledSink::HTTPSResponseSink(sink) => flush_sink(sink, cx, wait),
-            AnyControlledSink::NetworkSink(sink) => flush_sink(sink, cx, wait),
-            AnyControlledSink::FetchRequestBodySink(sink) => flush_sink(sink, cx, wait),
+            AnyControlledSink::RewriterPipe(sink) => {
+                removable_body!(HtmlRewriter, Abort, { flush_sink(sink, cx, wait) })
+            }
+            AnyControlledSink::HTTPResponseSink(sink) => {
+                removable_body!(Serve, Abort, { flush_sink(sink, cx, wait) })
+            }
+            AnyControlledSink::HTTPSResponseSink(sink) => {
+                removable_body!(Serve, Abort, { flush_sink(sink, cx, wait) })
+            }
+            AnyControlledSink::NetworkSink(sink) => {
+                removable_body!(S3Client, Abort, { flush_sink(sink, cx, wait) })
+            }
+            AnyControlledSink::FetchRequestBodySink(sink) => {
+                removable_body!(Fetch, Abort, { flush_sink(sink, cx, wait) })
+            }
         }
     }
 
@@ -751,11 +791,21 @@ impl ReadableSinkController {
         let cx = &cx.js_thread();
         let result = match sink {
             AnyControlledSink::FileSink(sink) => end_sink(sink, cx),
-            AnyControlledSink::RewriterPipe(sink) => end_sink(sink, cx),
-            AnyControlledSink::HTTPResponseSink(sink) => end_sink(sink, cx),
-            AnyControlledSink::HTTPSResponseSink(sink) => end_sink(sink, cx),
-            AnyControlledSink::NetworkSink(sink) => end_sink(sink, cx),
-            AnyControlledSink::FetchRequestBodySink(sink) => end_sink(sink, cx),
+            AnyControlledSink::RewriterPipe(sink) => {
+                removable_body!(HtmlRewriter, Abort, { end_sink(sink, cx) })
+            }
+            AnyControlledSink::HTTPResponseSink(sink) => {
+                removable_body!(Serve, Abort, { end_sink(sink, cx) })
+            }
+            AnyControlledSink::HTTPSResponseSink(sink) => {
+                removable_body!(Serve, Abort, { end_sink(sink, cx) })
+            }
+            AnyControlledSink::NetworkSink(sink) => {
+                removable_body!(S3Client, Abort, { end_sink(sink, cx) })
+            }
+            AnyControlledSink::FetchRequestBodySink(sink) => {
+                removable_body!(Fetch, Abort, { end_sink(sink, cx) })
+            }
         };
         self.detach_and_return(cx.global(), None, result)
     }
@@ -775,11 +825,21 @@ impl ReadableSinkController {
                 let config = streams::Start::file_sink(&options.path, options.fd);
                 start_sink(sink, cx, config)
             }
-            AnyControlledSink::RewriterPipe(sink) => start_sink(sink, cx, chunk_size),
-            AnyControlledSink::HTTPResponseSink(sink) => start_sink(sink, cx, chunk_size),
-            AnyControlledSink::HTTPSResponseSink(sink) => start_sink(sink, cx, chunk_size),
-            AnyControlledSink::NetworkSink(sink) => start_sink(sink, cx, chunk_size),
-            AnyControlledSink::FetchRequestBodySink(sink) => start_sink(sink, cx, chunk_size),
+            AnyControlledSink::RewriterPipe(sink) => {
+                removable_body!(HtmlRewriter, Abort, { start_sink(sink, cx, chunk_size) })
+            }
+            AnyControlledSink::HTTPResponseSink(sink) => {
+                removable_body!(Serve, Abort, { start_sink(sink, cx, chunk_size) })
+            }
+            AnyControlledSink::HTTPSResponseSink(sink) => {
+                removable_body!(Serve, Abort, { start_sink(sink, cx, chunk_size) })
+            }
+            AnyControlledSink::NetworkSink(sink) => {
+                removable_body!(S3Client, Abort, { start_sink(sink, cx, chunk_size) })
+            }
+            AnyControlledSink::FetchRequestBodySink(sink) => {
+                removable_body!(Fetch, Abort, { start_sink(sink, cx, chunk_size) })
+            }
         }
     }
 
@@ -801,11 +861,21 @@ impl ReadableSinkController {
         };
         match sink {
             AnyControlledSink::FileSink(sink) => write_chunk(sink, cx, data),
-            AnyControlledSink::RewriterPipe(sink) => write_chunk(sink, cx, data),
-            AnyControlledSink::HTTPResponseSink(sink) => write_chunk(sink, cx, data),
-            AnyControlledSink::HTTPSResponseSink(sink) => write_chunk(sink, cx, data),
-            AnyControlledSink::NetworkSink(sink) => write_chunk(sink, cx, data),
-            AnyControlledSink::FetchRequestBodySink(sink) => write_chunk(sink, cx, data),
+            AnyControlledSink::RewriterPipe(sink) => {
+                removable_body!(HtmlRewriter, Abort, { write_chunk(sink, cx, data) })
+            }
+            AnyControlledSink::HTTPResponseSink(sink) => {
+                removable_body!(Serve, Abort, { write_chunk(sink, cx, data) })
+            }
+            AnyControlledSink::HTTPSResponseSink(sink) => {
+                removable_body!(Serve, Abort, { write_chunk(sink, cx, data) })
+            }
+            AnyControlledSink::NetworkSink(sink) => {
+                removable_body!(S3Client, Abort, { write_chunk(sink, cx, data) })
+            }
+            AnyControlledSink::FetchRequestBodySink(sink) => {
+                removable_body!(Fetch, Abort, { write_chunk(sink, cx, data) })
+            }
         }
     }
 
@@ -858,10 +928,18 @@ impl Drop for ReadableSinkController {
             match sink {
                 AnyControlledSink::FileSink(sink) => controller_finalize(sink),
                 AnyControlledSink::RewriterPipe(sink) => controller_finalize(sink),
-                AnyControlledSink::HTTPResponseSink(sink) => controller_finalize(sink),
-                AnyControlledSink::HTTPSResponseSink(sink) => controller_finalize(sink),
-                AnyControlledSink::NetworkSink(sink) => controller_finalize(sink),
-                AnyControlledSink::FetchRequestBodySink(sink) => controller_finalize(sink),
+                AnyControlledSink::HTTPResponseSink(sink) => {
+                    removable_body!(Serve, Abort, { controller_finalize(sink) })
+                }
+                AnyControlledSink::HTTPSResponseSink(sink) => {
+                    removable_body!(Serve, Abort, { controller_finalize(sink) })
+                }
+                AnyControlledSink::NetworkSink(sink) => {
+                    removable_body!(S3Client, Abort, { controller_finalize(sink) })
+                }
+                AnyControlledSink::FetchRequestBodySink(sink) => {
+                    removable_body!(Fetch, Abort, { controller_finalize(sink) })
+                }
             }
         }
     }

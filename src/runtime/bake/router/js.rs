@@ -50,7 +50,6 @@ impl JSFrameworkRouter {
         let abs_root: Box<[u8]> = strings::without_trailing_slash(paths::resolve_path::join_abs::<
             paths::platform::Auto,
         >(
-            // SAFETY: FileSystem::instance() returns the process-global singleton; live for the program.
             bun_resolver::fs::FileSystem::get().top_level_dir(),
             root.slice(),
         ))
@@ -133,7 +132,7 @@ impl JSFrameworkRouter {
                         // A file named `[0].tsx` produces a param name that's an array index.
                         params_obj.put_may_be_index(
                             global,
-                            &bun_core::String::borrow_utf8(param.key.slice()),
+                            &bun_core::StringView::borrow_utf8(param.key.slice()),
                             bun_string_jsc::create_utf8_for_js(global, param.value.slice())?,
                         )?;
                     }

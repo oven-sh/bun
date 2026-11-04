@@ -227,8 +227,8 @@ impl Binding {
         };
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         // /$bunfs/ is in-memory; readdir_inner handles it (recursive included).
-        let is_bunfs = bun_standalone_graph::Graph::get_ref().is_some()
-            && bun_standalone_graph::is_bun_standalone_file_path(rd_args.path.slice());
+        let is_bunfs = bun_standalone_graph::Graph::get_ref()
+            .is_some_and(|graph| graph.owns_directory(rd_args.path.slice()));
         if rd_args.recursive && !is_bunfs {
             return Ok(AsyncReaddirRecursiveTask::create(
                 &cx, rd_args, vm, callback,
@@ -399,6 +399,45 @@ pub(crate) fn rm_options_for_testing(
         recursive: parsed.recursive,
         force: parsed.force,
     })
+}
+
+/// Wraps a raw Win32 `HANDLE` in a CRT fd that takes ownership of it. On error
+/// the caller still owns the `HANDLE`.
+/// https://github.com/nodejs/node/blob/98dbf6070e8439e530f1678b11962a0f3719e1f6/src/node_file.cc#L5691
+pub(crate) fn windows_handle_to_fd(cx: &mut JsScope<'_>, handle: JsLocal<'_>) -> JsResult<i32> {
+    let global = cx.global();
+
+    #[cfg(not(windows))]
+    {
+        let _ = handle;
+        return Err(global.throw(format_args!(
+            "windowsHandle is not implemented on this platform"
+        )));
+    }
+
+    #[cfg(windows)]
+    {
+        // `streams.ts` has already checked `typeof handle === "bigint"`.
+        let value = handle.to_js();
+        if !value.is_big_int_in_int64_range(i64::MIN, i64::MAX) {
+            return Err(global
+                .err(
+                    bun_jsc::ErrorCode::ERR_OUT_OF_RANGE,
+                    format_args!("windowsHandle does not fit into 64 bits"),
+                )
+                .throw());
+        }
+        let handle =
+            bun_jsc::JSBigInt::from_js(value).expect("windowsHandle is validated as a bigint");
+        let fd =
+            bun_core::fd::uv_open_osfhandle(handle.to_int64() as isize as *mut core::ffi::c_void);
+        if fd == -1 {
+            let err =
+                bun_sys::Error::from_code_int(bun_sys::last_errno(), bun_sys::Tag::_open_osfhandle);
+            return Err(global.throw_value(err.to_js(global)));
+        }
+        Ok(fd)
+    }
 }
 
 /// Test-only (`bun:internal-for-testing`): run a flags value through the same

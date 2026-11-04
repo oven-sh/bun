@@ -11,6 +11,8 @@ fn variable(name: &bun_core::ZStr) -> Option<String> {
 static ALLOC: bun_alloc::Mimalloc = bun_alloc::Mimalloc;
 
 fn main() {
+    bun_core::output::stdio::init();
+    let _flush = bun_core::output::flush_guard();
     // The main thread parses tsconfig.json. Its stack is 8 MB on macOS and Linux.
     bun_sema_standalone::native::set_stack_size(7 << 20);
     let args: Vec<String> = std::env::args().skip(1).collect();

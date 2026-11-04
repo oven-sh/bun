@@ -46,7 +46,7 @@ pub(crate) mod proxy_testing;
 use crate::webcore::jsc::{
     self as jsc, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
 };
-use bun_core::{String as BunString, Tag as BunStringTag};
+use bun_core::{String as BunString, StringView, Tag as BunStringTag};
 use bun_http::http_request_body::StreamFraming;
 use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_jsc::method_jsc;
@@ -128,6 +128,18 @@ pub(crate) fn s3_credentials_from_env(
         env.bucket.clone(),
         env.session_token.clone(),
         env.insecure_http,
+    )
+}
+
+#[inline(never)]
+fn s3_credentials_for_fetch(global_this: &JSGlobalObject) -> bun_s3_signing::S3Credentials {
+    s3_credentials_from_env(
+        global_this
+            .bun_vm()
+            .as_mut()
+            .transpiler
+            .env_mut()
+            .get_s3_credentials(),
     )
 }
 
@@ -1378,7 +1390,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             };
 
-            url_string = bun_url::file_url_from_string(&BunString::borrow_utf8(temp_file_path));
+            url_string = bun_url::file_url_from_string(&StringView::borrow_utf8(temp_file_path));
 
             // `find_or_create_file_from_path` is typed against the
             // `crate::webcore::node_types` stub (until it's swapped to a
@@ -1672,13 +1684,17 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     if url.is_s3() {
         // get ENV config — `Transpiler::env_mut` is the safe accessor for the
         // process-singleton dotenv loader (set during init).
-        let env_creds = s3_credentials_from_env(
+        let env_creds = bun_removable_features::call_removable_or!(
+            S3Client,
+            Throw,
+            {
+                return Err(crate::removed_feature::throw_for_removed_feature(
+                    global_this,
+                    bun_removable_features::Feature::S3Client,
+                ));
+            },
+            s3_credentials_for_fetch,
             global_this
-                .bun_vm()
-                .as_mut()
-                .transpiler
-                .env_mut()
-                .get_s3_credentials(),
         );
         let mut credentials_with_options = s3::S3CredentialsWithOptions {
             credentials: env_creds,

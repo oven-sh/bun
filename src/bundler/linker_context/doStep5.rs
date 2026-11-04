@@ -565,10 +565,7 @@ impl LinkerContext<'_> {
                 key: Some(Expr::allocate(
                     arena,
                     // TODO: test emoji work as expected (relevant for WASM exports)
-                    // SAFETY: `alias` borrows the worker arena which outlives the
-                    // link pass; `E::String::data: &'static [u8]` is the arena
-                    // erasure used throughout the AST.
-                    E::String::init(unsafe { bun_ptr::detach_lifetime(alias) }),
+                    E::String::init(alias),
                     loc,
                 )),
                 value: Some(Expr::allocate(
@@ -613,12 +610,7 @@ impl LinkerContext<'_> {
                     ..Default::default()
                 });
                 setter_properties.push(G::Property {
-                    key: Some(Expr::allocate(
-                        arena,
-                        // SAFETY: as for the getter key above.
-                        E::String::init(unsafe { bun_ptr::detach_lifetime(alias) }),
-                        loc,
-                    )),
+                    key: Some(Expr::allocate(arena, E::String::init(alias), loc)),
                     value: Some(Expr::allocate(
                         arena,
                         E::Arrow {

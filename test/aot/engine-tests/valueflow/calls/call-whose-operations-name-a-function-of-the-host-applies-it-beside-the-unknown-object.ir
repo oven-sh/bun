@@ -1,0 +1,44 @@
+# globalThis[someName] = handedIn; publish(Bun.listen); publish(Bun.serve); publish(later)        function later() { Bun.listen({}); Bun.serve(...[{}]) }
+# A store under a key nobody knows may have replaced any global, so the read of `Bun` may answer a value nobody knows, and so may the read of a member from it. The two functions have escaped,
+# and the unknown object covers what has escaped: the callees of the calls in `later`, which is reached behind all that, show the unknown object and nothing else.
+# Of what the unknown object covers nobody applies a function of the host. The operations of a call lead to the entry by themselves, so the call names it and applies it: it counts as run.
+# So does a call that passes a list.
+# RUN: valueflow-solve calls
+# CHECK: f1 v4 -> unknown
+# CHECK: f1 v7 -> unknown
+# RUN(LISTEN): valueflow-solve used
+# LISTEN: run BunListen
+# RUN(SERVE): valueflow-solve used
+# SERVE: run BunServe
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Options"
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="someName" [isFreeName]
+    v2 = PropGet v0 key="handedIn" [isFreeName]
+    ElemSet v0, v1, v2
+    v4 = PropGet v0 key="publish" [isFreeName]
+    v5 = PropGet v0 key="Bun" [isFreeName]
+    v6 = PropGet v5 key="listen"
+    v7 = Call v4, -, v6
+    v8 = PropGet v5 key="serve"
+    v9 = Call v4, -, v8
+    v10 = NewClosure function=f1
+    v11 = Call v4, -, v10
+    Return
+}
+function f1 name="later" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Bun" [isFreeName]
+    v2 = PropGet v1 key="listen"
+    v3 = NewObject layout=L0 fields=[]
+    v4 = Call v2, v1, v3 calleeKey="listen"
+    v5 = PropGet v1 key="serve"
+    v6 = NewArray v3 contents=anything
+    v7 = CallList v5, v1, v6 calleeKey="serve"
+    Return
+}

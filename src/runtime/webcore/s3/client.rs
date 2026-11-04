@@ -174,6 +174,7 @@ pub(crate) fn delete(
     )
 }
 
+#[inline(never)]
 pub(crate) fn list_objects(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
@@ -181,6 +182,7 @@ pub(crate) fn list_objects(
     callback: fn(S3ListObjectsResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
 ) -> JsResult<()> {
+    bun_removable_features::removable_definition!(S3Client, list_objects);
     let mut search_params: Vec<u8> = Vec::<u8>::default();
 
     let _ = search_params.append_slice(b"?"); // OOM/capacity: fire-and-forget
@@ -310,26 +312,18 @@ pub(crate) fn list_objects(
         abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
         context: Default::default(),
     }));
-    // SAFETY: just allocated, non-null
-    let task = unsafe { &mut *task_ptr };
+    // SAFETY: just allocated, non-null, and `task` is not used once `task_ptr` is dereferenced.
+    // `'static`: `url`, `headers_buf` and `http_proxy` borrow heap buffers that `*task` owns and
+    // never writes again. They are stored in `task.http`, an `AsyncHTTP<'static>` that the HTTP
+    // thread reads, and remain valid until `task` is dropped in `on_response`.
+    let task: &'static mut S3HttpSimpleTask = unsafe { &mut *task_ptr };
 
     task.poll_ref.ref_(bun_io::js_vm_ctx());
 
-    // SAFETY: lifetime extension — `url`, `headers_buf`, and `proxy_url` borrow from
-    // heap-allocated fields of `*task` which the task outlives. AsyncHTTP::init wants
-    // `'static` borrows because the HTTP thread reads them concurrently; they remain valid
-    // until `task` is dropped in `on_response`.
-    let url = bun_url::URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
-    // SAFETY: same lifetime-extension invariant as `url` above — `task.headers.buf` is
-    // heap-owned by `*task` and outlives the AsyncHTTP request.
-    let headers_buf: &'static [u8] =
-        unsafe { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
+    let url = bun_url::URL::parse(&task.sign_result.url);
+    let headers_buf: &'static [u8] = task.headers.buf.as_slice();
     let http_proxy = if !task.proxy_url.is_empty() {
-        // SAFETY: same lifetime-extension invariant as `url` above — `task.proxy_url` is
-        // heap-owned by `*task` and outlives the AsyncHTTP request.
-        Some(bun_url::URL::parse(unsafe {
-            bun_ptr::detach_lifetime_ref(&*task.proxy_url)
-        }))
+        Some(bun_url::URL::parse(&task.proxy_url))
     } else {
         None
     };
@@ -1088,6 +1082,7 @@ pub(crate) fn upload_stream(
 }
 
 /// download a file from s3 chunk by chunk aka streaming (used on readableStream)
+#[inline(never)]
 fn download_stream(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
@@ -1103,6 +1098,7 @@ fn download_stream(
     ),
     callback_context: *mut c_void,
 ) -> *mut S3HttpDownloadStreamingTask {
+    bun_removable_features::removable_definition!(S3Client, download_stream);
     if s3_simple_request::nothing_new_leaves(context) {
         callback(
             &MutableString::default(),
@@ -1207,24 +1203,17 @@ fn download_stream(
             abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpDownloadStreamingTask>(),
         },
     ));
-    // SAFETY: just allocated via heap::alloc, non-null; lifetime owned by HTTP callback
-    // (freed via heap::take in S3HttpDownloadStreamingTask::http_callback).
-    let task = unsafe { &mut *task_ptr };
+    // SAFETY: just allocated, non-null, and `task` is not used once `task_ptr` is dereferenced.
+    // `'static`: `url`, `headers_buf` and `http_proxy` borrow heap buffers that `*task` owns and
+    // never writes again, for the HTTP thread. They remain valid until `task` is dropped in
+    // `S3HttpDownloadStreamingTask::on_response`. See `execute_simple_s3_request`.
+    let task: &'static mut S3HttpDownloadStreamingTask = unsafe { &mut *task_ptr };
     task.poll_ref.ref_(bun_io::js_vm_ctx());
 
-    // SAFETY: lifetime extension — `url` / `headers_buf` / `proxy_url` borrow from heap-allocated
-    // fields of `*task` which the task outlives. See `execute_simple_s3_request`.
-    let url = bun_url::URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
-    // SAFETY: same lifetime-extension invariant as `url` above — `task.headers.buf` is
-    // heap-owned by `*task` and outlives the AsyncHTTP request.
-    let headers_buf: &'static [u8] =
-        unsafe { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
+    let url = bun_url::URL::parse(&task.sign_result.url);
+    let headers_buf: &'static [u8] = task.headers.buf.as_slice();
     let http_proxy = if !task.proxy_url.is_empty() {
-        // SAFETY: same lifetime-extension invariant as `url` above — `task.proxy_url` is
-        // heap-owned by `*task` and outlives the AsyncHTTP request.
-        Some(bun_url::URL::parse(unsafe {
-            bun_ptr::detach_lifetime_ref(&*task.proxy_url)
-        }))
+        Some(bun_url::URL::parse(&task.proxy_url))
     } else {
         None
     };

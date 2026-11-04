@@ -1,13 +1,12 @@
 //! for the collection phase of test execution where we discover all the test() calls
 
 use core::ptr::NonNull;
-use crate::test_runner::expect::make_formatter;
 
 use bun_jsc::{DeprecatedStrong, JSGlobalObject, JSValue, JsResult};
 use bun_core::Timespec;
 
 use crate::test_runner::bun_test::{
-    self, BunTest, BunTestPtr, BunTestRoot, DescribeScope, HandleUncaughtExceptionResult,
+    self, BunTest, BunTestPtr, DescribeScope, HandleUncaughtExceptionResult,
     RefDataValue, StepResult,
 };
 use crate::test_runner::bun_test::debug::group;
@@ -45,14 +44,9 @@ pub(crate) struct QueuedDescribe {
 // `Strong: Drop` covers cleanup — no explicit Drop needed.
 
 impl Collection {
-    /// # Safety
-    /// `bun_test_root` must be a valid, exclusive pointer to a live `BunTestRoot` for the
-    /// duration of this call. The caller (`BunTest::init`) passes a pointer to its own
-    /// `bun_test_root` field.
-    pub(crate) fn init(bun_test_root: *mut BunTestRoot) -> Collection {
+    /// `hook_scope` (`BunTestRoot::hook_scope`) becomes the parent of the file's root scope.
+    pub(crate) fn init(hook_scope: *mut DescribeScope) -> Collection {
         let _g = group::begin();
-        // SAFETY: see fn-level Safety doc.
-        let bun_test_root = unsafe { &mut *bun_test_root };
 
         let only = if let Some(runner) = Jest::runner() {
             if runner.only { bun_test::Only::Contains } else { bun_test::Only::No }
@@ -61,7 +55,7 @@ impl Collection {
         };
 
         let mut root_scope = DescribeScope::create(bun_test::BaseScope {
-            parent: Some(&raw mut *bun_test_root.hook_scope),
+            parent: Some(hook_scope),
             name: None,
             concurrent: false,
             mode: bun_test::ScopeMode::Normal,
@@ -146,13 +140,11 @@ impl Collection {
 
     pub(crate) fn run_one_completed(
         &mut self,
-        global_this: &JSGlobalObject,
+        _: &JSGlobalObject,
         _: Option<JSValue>,
         data: &RefDataValue,
     ) -> JsResult<()> {
         let _g = group::begin();
-
-        let _formatter = make_formatter(global_this);
 
         let prev_scope: NonNull<DescribeScope> = match data {
             RefDataValue::Collection { active_scope } => *active_scope,
@@ -186,8 +178,6 @@ impl Collection {
         if !matches!(data, RefDataValue::Start) {
             this.run_one_completed(global_this, None, data)?;
         }
-
-        let _formatter = make_formatter(global_this);
 
         // append queued callbacks, in reverse order because items will be pop()ed from the end
         // drain(..).rev() moves each item out exactly once and leaves capacity intact.
@@ -234,6 +224,7 @@ impl Collection {
                 buntest_strong,
                 global_this,
                 callback.get(),
+                &[],
                 false,
                 RefDataValue::Collection { active_scope: previous_scope },
                 &Timespec::EPOCH,
@@ -250,10 +241,16 @@ impl Collection {
 
     pub(crate) fn handle_uncaught_exception(
         &mut self,
-        _: &RefDataValue,
+        data: &RefDataValue,
     ) -> HandleUncaughtExceptionResult {
         let _g = group::begin();
 
+        // The error didn't come from a describe() callback, so don't fail whichever scope happens to be active.
+        if !matches!(data, RefDataValue::Collection { .. })
+            || core::ptr::eq(self.active_scope.as_ptr(), &raw const *self.root_scope)
+        {
+            return HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests;
+        }
         self.active_scope_mut().failed = true;
 
         HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe // unhandled because it needs to exit with code 1

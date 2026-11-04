@@ -1,0 +1,36 @@
+# A function of the library that nothing reaches loses its body like any other, so what it reads, stores and calls happens nowhere:
+# a declaration of its module that reached code only calls is only called, and a variable that reached code stores once has all its writers known
+# RUN: valueflow-apply
+# CHECK: variable g0 name="helper" {{*}}flow={writers=AllKnown stores=Never {{*}}reads=OnlyCalled
+# CHECK: variable g1 name="state" {{*}}flow={writers=AllKnown stores=AtMostOnce
+# RUN(RESULTS): valueflow-results
+# RESULTS-NOT: function f2 reachability
+# RESULTS: function f3 reachability=Unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="node:readline" displayPath="node:readline" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeReadline body=f1
+entry module=m0
+variable g0 name="helper" module=m1 declared={type=anything} initialization=Function function=f2
+variable g1 name="state" module=m1 declared={type=anything} initialization=Undefined
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="readline" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Call v0
+    PutModuleVariable v1 variable=g1
+    Return
+}
+function f2 name="helper" module=m1 role=Library results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f3 name="unreached" module=m1 role=Library results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    PutModuleVariable v0 variable=g1
+    Return v0
+}

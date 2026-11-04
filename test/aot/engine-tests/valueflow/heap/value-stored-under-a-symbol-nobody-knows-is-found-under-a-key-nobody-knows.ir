@@ -1,0 +1,39 @@
+# globalThis[Symbol.for(text)] = { run }; globalThis[key].run(); globalThis[Symbol.for("known")].run()
+# What lies under a symbol nobody knows is in unknown hands, which is what a read under a key nobody knows finds; a read under a symbol that the program names finds the object itself, and what a store that nobody can place may have put on the global object under that symbol
+# RUN: valueflow-solve unreached
+# CHECK-NOT: f1
+# RUN(VALUES): valueflow-why values=f0:v10 values=f0:v15
+# VALUES: values=f0:v10
+# VALUES: operand 0 {{*}} unknown GlobalThis
+# VALUES: values=f0:v15
+# VALUES: operand 0 {{*}} members: primitive0 {{*}}unknown object{{*}}@f0
+# VALUES: result {{*}} f1
+
+layout L0 fields=[{key="run" declared={type=anything}}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = Builtin builtin=SymbolFor
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="text" [isFreeName]
+    v4 = Call v1, v0, v3
+    v5 = NewClosure function=f1
+    v6 = NewObject -, v5 layout=L0 fields=[0]
+    ElemSet v2, v4, v6
+    v8 = PropGet v2 key="key" [isFreeName]
+    v9 = ElemGet v2, v8
+    v10 = PropGet v9 key="run"
+    v11 = Call v10, v9
+    v12 = String string="known"
+    v13 = Call v1, v0, v12
+    v14 = ElemGet v2, v13
+    v15 = PropGet v14 key="run"
+    v16 = Call v15, v14
+    Return
+}
+function f1 name="run" results=[{type=anything}] {
+  b0():
+    Return
+}

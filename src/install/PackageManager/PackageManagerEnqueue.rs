@@ -1,5 +1,4 @@
 use crate::lockfile::package::PackageColumns as _;
-use bun_ptr::detach_lifetime;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
@@ -564,27 +563,20 @@ pub unsafe fn enqueue_parse_npm_package(
     name: StringOrTinyString,
     network_task: *mut NetworkTask,
 ) -> *mut ThreadPool::Task {
-    // SAFETY: `this` is a live `&mut PackageManager`; `network_task` is a
-    // freshly-vended pool slot whose `'static` reborrow matches the
-    // `Task<'static>` slot lifetime.
-    let task_value = unsafe {
-        Task::Task {
-            package_manager: Some(bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<
-                PackageManager,
-            >(this))),
-            log: bun_ast::Log::init(),
-            tag: crate::package_manager_task::Tag::PackageManifest,
-            request: crate::package_manager_task::Request {
-                package_manifest: ManuallyDrop::new(
-                    crate::package_manager_task::PackageManifestRequest {
-                        network: &mut *network_task,
-                        name,
-                    },
-                ),
-            },
-            id: task_id,
-            ..Task::uninit()
-        }
+    // SAFETY: `network_task` is a live pool slot, and it is not returned to the pool
+    // before this task is done, which is what the `'static` stands for.
+    let network = unsafe { &mut *network_task };
+    let task_value = Task::Task {
+        package_manager: Some(bun_ptr::ParentRef::from_ref_mut(&mut *this)),
+        log: bun_ast::Log::init(),
+        tag: crate::package_manager_task::Tag::PackageManifest,
+        request: crate::package_manager_task::Request {
+            package_manifest: ManuallyDrop::new(
+                crate::package_manager_task::PackageManifestRequest { network, name },
+            ),
+        },
+        id: task_id,
+        ..Task::uninit()
     };
     let task = this.preallocated_resolve_tasks.get_init(task_value);
     // SAFETY: `task` points to a freshly initialized pool slot.
@@ -2051,9 +2043,7 @@ pub(crate) fn bind_row(
                         return Ok(Row::Done);
                     }
 
-                    // Before `this_ptr`: a `&mut *this_ptr` later would invalidate `scope`.
                     let cache_ctx = this.manifest_disk_cache_ctx();
-                    let this_ptr: *mut PackageManager = this;
                     // Owned: resolving can reallocate `string_bytes`, and this is read afterwards.
                     let name_str: Vec<u8> = this.lockfile.str(&name).to_vec();
                     let task_id = Task::Id::for_manifest(&name_str);
@@ -2076,22 +2066,15 @@ pub(crate) fn bind_row(
                     let needs_extended_manifest = this.options.minimum_release_age_ms.is_some();
                     if this.options.enable.manifest_cache() {
                         let mut expired = false;
-                        // SAFETY: `this_ptr` is the live exclusive borrow's address; `options` is
-                        // disjoint from `manifests`.
-                        let scope: *const crate::npm::registry::Scope =
-                            unsafe { &(*this_ptr).options }.scope_for_package_name(&name_str);
-                        // SAFETY: `manifests` projected from `this_ptr`; `cache_ctx` was snapshotted
-                        // before `this_ptr` so the lookup holds only this disjoint field borrow.
-                        if let Some(manifest) = unsafe {
-                            (*this_ptr).manifests.by_name_hash_allow_expired(
-                                cache_ctx,
-                                &*scope,
-                                &name_str,
-                                name_hash,
-                                Some(&mut expired),
-                                needs_extended_manifest,
-                            )
-                        } {
+                        let scope = this.options.scope_for_package_name(&name_str);
+                        if let Some(manifest) = this.manifests.by_name_hash_allow_expired(
+                            cache_ctx,
+                            scope,
+                            &name_str,
+                            name_hash,
+                            Some(&mut expired),
+                            needs_extended_manifest,
+                        ) {
                             let manifest: &Npm::PackageManifest =
                                 loaded_manifest.insert(manifest.clone());
                             let excludes = this.options.minimum_release_age_excludes;
@@ -2102,7 +2085,7 @@ pub(crate) fn bind_row(
                             .then(|| version.npm().version.head.head.range.left.version);
                             if let Some(exact) = exact
                                 && (!needs_extended_manifest
-                                    || manifest.pkg.has_extended_manifest
+                                    || manifest.pkg.has_extended_manifest()
                                     || manifest.should_exclude_from_age_filter(excludes))
                                 && !picks_latest_tag(
                                     this,
@@ -2134,8 +2117,7 @@ pub(crate) fn bind_row(
                                 }
                                 if let Some(new_resolve_result) =
                                     get_or_put_resolved_package_with_find_result(
-                                        // SAFETY: see `this_ptr` note above.
-                                        unsafe { &mut *this_ptr },
+                                        this,
                                         name_hash,
                                         name,
                                         dependency,
@@ -2830,28 +2812,25 @@ pub(crate) fn create_extract_task_for_streaming(
     tarball: &ExtractTarball,
     network_task: *mut NetworkTask,
 ) -> *mut Task::Task<'static> {
-    // SAFETY: `this` is a live `&mut PackageManager`; `network_task` is a
-    // freshly-vended pool slot whose `'static` reborrow matches the
-    // `Task<'static>` slot lifetime.
-    let task_value = unsafe {
-        Task::Task {
-            package_manager: Some(bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<
-                PackageManager,
-            >(this))),
-            log: bun_ast::Log::init(),
-            tag: crate::package_manager_task::Tag::Extract,
-            request: crate::package_manager_task::Request {
-                extract: ManuallyDrop::new(crate::package_manager_task::ExtractRequest {
-                    network: &mut *network_task,
-                    tarball: ExtractTarball {
-                        skip_verify: this.skips_verify(tarball.resolution.tag),
-                        ..*tarball
-                    },
-                }),
-            },
-            id: (*network_task).task_id,
-            ..Task::uninit()
-        }
+    // SAFETY: `network_task` is a live pool slot, and it is not returned to the pool
+    // before this task is done, which is what the `'static` stands for.
+    let network = unsafe { &mut *network_task };
+    let id = network.task_id;
+    let task_value = Task::Task {
+        package_manager: Some(bun_ptr::ParentRef::from_ref_mut(&mut *this)),
+        log: bun_ast::Log::init(),
+        tag: crate::package_manager_task::Tag::Extract,
+        request: crate::package_manager_task::Request {
+            extract: ManuallyDrop::new(crate::package_manager_task::ExtractRequest {
+                network,
+                tarball: ExtractTarball {
+                    skip_verify: this.skips_verify(tarball.resolution.tag),
+                    ..*tarball
+                },
+            }),
+        },
+        id,
+        ..Task::uninit()
     };
     this.preallocated_resolve_tasks
         .get_init(task_value)
@@ -2943,34 +2922,29 @@ pub fn enqueue_git_checkout(
                 .patchfile_hash()?,
         ))
     });
-    // SAFETY: `this` is a live `&mut PackageManager`.
-    let task_value = unsafe {
-        Task::Task {
-            package_manager: Some(bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<
-                PackageManager,
-            >(this))),
-            log: bun_ast::Log::init(),
-            tag: crate::package_manager_task::Tag::GitCheckout,
-            request: crate::package_manager_task::Request {
-                git_checkout: ManuallyDrop::new(crate::package_manager_task::GitCheckoutRequest {
-                    repo_dir: dir,
-                    resolution: *resolution,
-                    dependency_id,
-                    name: stored_string(name),
-                    url: stored_string(this.lockfile.str(&resolution.git().repo)),
-                    resolved: stored_string(resolved),
-                }),
-            },
-            apply_patch_task: if let Some((pkg_id, h, patch_hash)) = patch {
-                let mut pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
-                pt.callback.apply_mut().task_id = Some(task_id);
-                Some(pt)
-            } else {
-                None
-            },
-            id: task_id,
-            ..Task::uninit()
-        }
+    let task_value = Task::Task {
+        package_manager: Some(bun_ptr::ParentRef::from_ref_mut(&mut *this)),
+        log: bun_ast::Log::init(),
+        tag: crate::package_manager_task::Tag::GitCheckout,
+        request: crate::package_manager_task::Request {
+            git_checkout: ManuallyDrop::new(crate::package_manager_task::GitCheckoutRequest {
+                repo_dir: dir,
+                resolution: *resolution,
+                dependency_id,
+                name: stored_string(name),
+                url: stored_string(this.lockfile.str(&resolution.git().repo)),
+                resolved: stored_string(resolved),
+            }),
+        },
+        apply_patch_task: if let Some((pkg_id, h, patch_hash)) = patch {
+            let mut pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
+            pt.callback.apply_mut().task_id = Some(task_id);
+            Some(pt)
+        } else {
+            None
+        },
+        id: task_id,
+        ..Task::uninit()
     };
     this.preallocated_resolve_tasks.get_init(task_value)
 }
@@ -2996,7 +2970,7 @@ fn enqueue_local_tarball(
             None => (stored_string(path), true),
             Some(base_dir) => (
                 stored_string(Path::resolve_path::join_abs_string::<Path::platform::Auto>(
-                    FileSystem::instance().top_level_dir(),
+                    FileSystem::get().top_level_dir(),
                     &[base_dir, path],
                 )),
                 false,
@@ -3621,32 +3595,19 @@ fn get_or_put_resolved_package(
     match version.tag {
         dependency::version::Tag::Npm | dependency::version::Tag::DistTag => {
             // Resolve the version from the loaded NPM manifest
-            // Snapshot the disk-fallback scalars *before* establishing
-            // `this_ptr`: `manifest_disk_cache_ctx` takes `&mut self`, and
-            // materializing `&mut *this_ptr` after `name_str`/`scope` are
-            // derived from it would pop their borrow-stack tags under SB.
             let cache_ctx = this.manifest_disk_cache_ctx();
             let needs_ext = this.options.minimum_release_age_ms.is_some();
             let this_ptr: *mut PackageManager = this;
             // `string_bytes` is not resized between here and the `find_result` lookup.
             let name_str = this.lockfile.str_detached(&name);
 
-            let scope = bun_ptr::BackRef::new(
-                // SAFETY: `this_ptr` is the live exclusive `this` borrow; `options`
-                // is read-only here and disjoint from the `manifests` mutation below.
-                unsafe { &(*this_ptr).options }.scope_for_package_name(name_str),
-            );
+            let scope = this.options.scope_for_package_name(name_str);
             // SAFETY: `manifests` projected from `this_ptr`; the lookup holds
             // only that disjoint field borrow alongside the shared `options`
-            // / `lockfile` projections above. `scope` points into
-            // `(*this_ptr).options`, disjoint from `manifests`.
-            let Some(manifest) = (unsafe { &mut (*this_ptr).manifests }).by_name_hash(
-                cache_ctx,
-                scope.get(),
-                name_str,
-                name_hash,
-                needs_ext,
-            ) else {
+            // / `lockfile` borrows above.
+            let Some(manifest) = (unsafe { &mut (*this_ptr).manifests })
+                .by_name_hash(cache_ctx, scope, name_str, name_hash, needs_ext)
+            else {
                 // The registry doesn't have the name. `run_tasks` sent the dependency back here
                 // after the 404.
                 if version.tag == dependency::version::Tag::DistTag
@@ -3846,10 +3807,9 @@ fn get_or_put_resolved_package(
                 }
             }
 
-            // The callee doesn't touch `this.manifests`, which `manifest` and `find_result` point
-            // into.
             get_or_put_resolved_package_with_find_result(
-                // SAFETY: see `this_ptr` note above.
+                // SAFETY: the callee doesn't touch `this.manifests`, which `manifest` and
+                // `find_result` point into.
                 unsafe { &mut *this_ptr },
                 name_hash,
                 name,
@@ -3962,7 +3922,7 @@ fn get_or_put_resolved_package(
                 let mut buf2 = bun_paths::path_buffer_pool::get();
                 let res =
                     match Path::resolve_path::join_abs_string_buf_checked::<Path::platform::Auto>(
-                        FileSystem::instance().top_level_dir(),
+                        FileSystem::get().top_level_dir(),
                         &mut buf2[..],
                         &[symlink_path],
                     ) {
@@ -3982,9 +3942,7 @@ fn get_or_put_resolved_package(
                 this.exit_or_log(&why);
                 return Err(crate::Error::MissingPackageJSON);
             }
-            // SAFETY: a slice into `PackageManager.global_link_dir_path`, set once and never freed.
-            let link_dir =
-                unsafe { detach_lifetime(package_manager_real::global_link_dir_path(this)) };
+            let link_dir = package_manager_real::global_link_dir_path(this);
             let res = FolderResolution::get_or_put(
                 GlobalOrRelative::Global(link_dir),
                 version,
@@ -4041,7 +3999,7 @@ fn project_path<'a>(path: &'a [u8], buf: &'a mut [u8]) -> Option<&'a [u8]> {
         return (path.len() < buf.len()).then_some(path);
     }
     Path::resolve_path::join_abs_string_buf_checked::<Path::platform::Auto>(
-        FileSystem::instance().top_level_dir(),
+        FileSystem::get().top_level_dir(),
         buf,
         &[path],
     )

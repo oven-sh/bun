@@ -389,7 +389,8 @@ impl PendingValue {
                 | Action::GetJSON
                 | Action::GetBlob
                 | Action::GetArrayBuffer
-                | Action::GetBytes => {
+                | Action::GetBytes
+                | Action::GetJSONSource => {
                     let promise = match &mut self.action {
                         Action::GetJSON => global_this.readable_stream_to_json(readable.value),
                         Action::GetArrayBuffer => {
@@ -397,6 +398,9 @@ impl PendingValue {
                         }
                         Action::GetBytes => global_this.readable_stream_to_bytes(readable.value),
                         Action::GetText => global_this.readable_stream_to_text(readable.value),
+                        Action::GetJSONSource => {
+                            global_this.readable_stream_to_json_source(readable.value)
+                        }
                         Action::GetBlob => global_this.readable_stream_to_blob(readable.value),
                         Action::GetFormData(form_data) => 'brk: {
                             let fd = form_data.take().unwrap();
@@ -449,6 +453,8 @@ pub(crate) enum Action {
     GetJSON,
     GetArrayBuffer,
     GetBytes,
+    /// [`AnyBlob::to_json_source`].
+    GetJSONSource,
     GetBlob,
     GetFormData(Option<Box<bun_core::form_data::AsyncFormData>>),
 }
@@ -1117,6 +1123,13 @@ impl Value {
                         let mut blob = new.use_as_any_blob_allow_non_utf8_string();
                         let result =
                             promise.wrap(cx.global(), |_| blob.to_uint8_array_transfer(cx));
+                        blob.detach();
+                        result?;
+                    }
+                    Action::GetJSONSource => {
+                        let mut blob = new.use_as_any_blob_allow_non_utf8_string();
+                        let result = promise
+                            .wrap(cx.global(), |_| blob.to_json_source(cx, Lifetime::Transfer));
                         blob.detach();
                         result?;
                     }
@@ -1969,7 +1982,23 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     }
 
     fn bytes(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let cx = cx.js_thread();
+        self.bytes_or_json_source(this_value.to_js(), &cx.js_thread(), false)
+    }
+
+    /// `bytes()`, or a promise for [`AnyBlob::to_json_source`].
+    fn bytes_or_json_source(
+        &self,
+        this_value: JSValue,
+        cx: &bun_jsc::JsThread<'_>,
+        is_for_json: bool,
+    ) -> JsResult<JSValue> {
+        let action = || {
+            if is_for_json {
+                Action::GetJSONSource
+            } else {
+                Action::GetBytes
+            }
+        };
         let global_object = cx.global();
         let value = self.get_body_value();
 
@@ -1988,20 +2017,20 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
                 if let Value::Locked(locked) = value {
-                    return locked.set_promise(global_object, Action::GetBytes, Some(readable));
+                    return locked.set_promise(global_object, action(), Some(readable));
                 }
             }
             let value = self.get_body_value();
             if let Value::Locked(locked) = value {
                 if !locked.action.is_none()
-                    || locked.is_disturbed::<Self>(global_object, this_value.to_js())
+                    || locked.is_disturbed::<Self>(global_object, this_value)
                 {
                     return Ok(handle_body_already_used(global_object));
                 }
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
                 if let Value::Locked(locked) = value {
-                    return locked.set_promise(global_object, Action::GetBytes, None);
+                    return locked.set_promise(global_object, action(), None);
                 }
             }
         }
@@ -2010,7 +2039,11 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         let value = self.get_body_value();
         let mut blob: AnyBlob = value.use_as_any_blob_allow_non_utf8_string();
         let result = JSPromise::wrap(global_object, |_| {
-            blob.to_uint8_array(&cx, Lifetime::Transfer)
+            if is_for_json {
+                blob.to_json_source(cx, Lifetime::Transfer)
+            } else {
+                blob.to_uint8_array(cx, Lifetime::Transfer)
+            }
         });
         blob.detach();
         result
@@ -2222,6 +2255,29 @@ fn handle_body_stream_unusable(
         );
     }
     None
+}
+
+/// A promise for what `body.json()` parses, where compiled code parses it by a type (`bodyBytesForm` of the table of built-ins).
+#[unsafe(no_mangle)]
+#[bun_jsc::host_call]
+fn Body__jsonSource(global_this: *mut JSGlobalObject, body: JSValue) -> JSValue {
+    // SAFETY: compiled code passes its live realm.
+    let global_this = unsafe { &*global_this };
+    bun_jsc::to_js_host_call(global_this, || {
+        let cx = global_this.js_thread_of_caller();
+        if let Some(request) = body.as_class_ref::<webcore::Request>() {
+            return request.bytes_or_json_source(body, &cx, true);
+        }
+        if let Some(response) = body.as_class_ref::<webcore::Response>() {
+            return response.bytes_or_json_source(body, &cx, true);
+        }
+        match body.as_class_ref::<Blob>() {
+            Some(blob) => blob.json_source(&cx),
+            None => Err(global_this.throw_invalid_arguments(format_args!(
+                "Expected a Request, a Response or a Blob",
+            ))),
+        }
+    })
 }
 
 /// If the body already failed, reject the read with that error. Every body

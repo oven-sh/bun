@@ -294,7 +294,7 @@ pub fn uws_to_native(uws: *mut bun_uws_sys::Loop) -> *mut Loop {
     // `uv_loop` is initialised in C before any Rust caller can observe the
     // handle and is never mutated.
     {
-        unsafe { (*uws).uv_loop }
+        unsafe { (*uws).uv_loop() }
     }
 }
 
@@ -331,43 +331,15 @@ bun_dispatch::link_interface! {
 }
 
 impl EventLoopCtx {
-    /// SAFETY: caller must not hold another live `&mut` to the same loop
-    /// across this borrow (resolver-style accessor; the loop is per-thread).
+    /// Private: spawnSync's loop has no uWS `LoopData`, which `update_date` and `flush_pending_writes` need.
     #[inline]
-    pub unsafe fn platform_event_loop(&self) -> &'static mut bun_uws_sys::Loop {
-        // Route through the single nonnull-asref accessor below; the `unsafe`
-        // on this fn's signature is the caller-side aliasing contract — the
-        // body itself needs no extra `unsafe`.
-        self.loop_mut()
+    fn platform_event_loop(&self) -> &bun_uws_sys::Loop {
+        // SAFETY: the loop the owner runs on, which stays live while anything counts or polls on it.
+        // Its fields are `Cell`s, so C and the callbacks it dispatches may write them meanwhile.
+        unsafe { &*self.platform_event_loop_ptr() }
     }
-
-    // ── safe leaf wrappers (nonnull-asref) ──────────────────────────────
-    // The platform loop / poll store are per-thread, set-once back-pointers
-    // (`BackRef`-shaped). [`platform_event_loop`] cannot be a safe fn because
-    // handing out `&mut Loop` from `&self` would let a caller alias two
-    // copies; these wrappers instead perform one counter adjustment and drop
-    // the borrow before returning, so no `&mut` escapes. Collapses N
-    // identical `ctx.platform_event_loop().op()` call sites into the single
-    // deref inside [`loop_mut`].
-    //
-    // `loop_mut` is the single nonnull-asref accessor: `pub(crate)`,
-    // `&self → &mut` (so it must NOT be called twice with overlapping live
-    // results). Every in-crate caller is a leaf op — counter bump,
-    // `FilePoll::activate`/`deactivate`, `unregister` — that consumes the
-    // borrow before returning and never re-enters `EventLoopCtx`, so no two
-    // `&mut Loop` ever coexist. Widened from impl-private to crate-private so
-    // `posix_event_loop`/`windows_event_loop` route their N identical
-    // `ctx.platform_event_loop()` derefs through this single accessor.
-    #[inline]
-    fn loop_mut(&self) -> &'static mut bun_uws_sys::Loop {
-        // SAFETY: per-thread set-once pointer (the uws loop singleton); the
-        // event loop is single-threaded so no concurrent `&mut` exists, and
-        // every crate-internal caller is a leaf op that drops the borrow
-        // before returning — see block comment above.
-        unsafe { &mut *self.platform_event_loop_ptr() }
-    }
-    /// Single backref-deref accessor for the per-thread `Store`. Same contract
-    /// as [`loop_mut`]: `pub(crate)`, `&self → &mut`, must NOT be called while
+    /// Single backref-deref accessor for the per-thread `Store`:
+    /// `pub(crate)`, `&self → &mut`, must NOT be called while
     /// another `&mut Store` (or a `&mut FilePoll` that lives inside the inline
     /// hive buffer) is live. Every in-crate caller is a leaf op that decays
     /// any conflicting `&mut FilePoll` to a raw slot pointer first
@@ -378,7 +350,7 @@ impl EventLoopCtx {
         // SAFETY: per-thread set-once pointer (`BackRef`-shaped); the event
         // loop is single-threaded so no concurrent `&mut Store` exists, and
         // every crate-internal caller upholds the leaf-op / decayed-slot
-        // discipline above — see block comment.
+        // discipline above.
         unsafe { &mut *self.file_polls_ptr() }
     }
     /// Claims the per-loop pipe-read scratch; `None` while a read further up the stack holds it.
@@ -389,25 +361,25 @@ impl EventLoopCtx {
     }
     #[inline]
     pub(crate) fn loop_ref(&self) {
-        self.loop_mut().ref_();
+        self.platform_event_loop().ref_();
     }
     #[inline]
     #[cfg(not(windows))]
     pub(crate) fn loop_unref(&self) {
-        self.loop_mut().unref();
+        self.platform_event_loop().unref();
     }
     #[inline]
     #[cfg(windows)]
     pub(crate) fn loop_dec(&self) {
-        self.loop_mut().dec();
+        self.platform_event_loop().dec();
     }
     #[inline]
     pub(crate) fn loop_add_active(&self, n: u32) {
-        self.loop_mut().add_active(n);
+        self.platform_event_loop().add_active(n);
     }
     #[inline]
     pub(crate) fn loop_sub_active(&self, n: u32) {
-        self.loop_mut().sub_active(n);
+        self.platform_event_loop().sub_active(n);
     }
     #[cfg(not(windows))]
     #[inline]
@@ -542,25 +514,52 @@ bun_dispatch::link_interface! {
 /// aliasing contract on [`pipe_reader::BufferedReaderParent`]). `Self` resolves
 /// to `$T` inside every body. Autoref via `(*this).method()` covers the common
 /// case where the inherent takes `&self`/`&mut self`; sites whose inherent must
-/// stay raw-pointer (e.g. `Arc::from_raw` keepalive in shell `PipeReader`)
+/// stay raw-pointer (e.g. `Rc::from_raw` keepalive in shell `PipeReader`)
 /// forward as `<Self>::method(this)` instead.
 #[macro_export]
 macro_rules! impl_buffered_reader_parent {
     // Single-lifetime generic: trait impl over `<'lt>`, link registered at `'static`.
     (
         $variant:ident for $T:ident<$lt:lifetime>;
+        feature = $feature:ident;
         $($rest:tt)*
     ) => {
         $crate::buffered_reader_parent_link!($variant for $T<'static>);
-        $crate::__impl_buffered_reader_parent_body! { [$lt] [$T<$lt>] $variant; $($rest)* }
+        $crate::__impl_buffered_reader_parent_body! { [$lt] [$T<$lt>] $variant; [$feature] $($rest)* }
+    };
+    (
+        $variant:ident for $T:ident<$lt:lifetime>;
+        $($rest:tt)*
+    ) => {
+        $crate::buffered_reader_parent_link!($variant for $T<'static>);
+        $crate::__impl_buffered_reader_parent_body! { [$lt] [$T<$lt>] $variant; [] $($rest)* }
     };
     // Non-generic.
+    (
+        $variant:ident for $T:ty;
+        feature = $feature:ident;
+        $($rest:tt)*
+    ) => {
+        $crate::buffered_reader_parent_link!($variant for $T);
+        $crate::__impl_buffered_reader_parent_body! { [] [$T] $variant; [$feature] $($rest)* }
+    };
     (
         $variant:ident for $T:ty;
         $($rest:tt)*
     ) => {
         $crate::buffered_reader_parent_link!($variant for $T);
-        $crate::__impl_buffered_reader_parent_body! { [] [$T] $variant; $($rest)* }
+        $crate::__impl_buffered_reader_parent_body! { [] [$T] $variant; [] $($rest)* }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __buffered_reader_callback {
+    ([] $body:expr) => {
+        $body
+    };
+    ([$feature:ident] $body:expr) => {
+        ::bun_removable_features::removable_body!($feature, Abort, { $body })
     };
 }
 
@@ -569,6 +568,7 @@ macro_rules! impl_buffered_reader_parent {
 macro_rules! __impl_buffered_reader_parent_body {
     (
         [$($lt:lifetime)?] [$T:ty] $variant:ident;
+        $feature:tt
         has_on_read_chunk = $has:expr;
         $( on_read_chunk = |$rc_this:ident, $rc_chunk:ident, $rc_more:ident| $rc:expr; )?
         on_reader_done = |$rd_this:ident| $rd:expr;
@@ -592,16 +592,16 @@ macro_rules! __impl_buffered_reader_parent_body {
                     $rc_chunk: $crate::Chunk<'_>,
                     $rc_more: $crate::ReadState,
                 ) -> bool {
-                    unsafe { $rc }
+                    unsafe { $crate::__buffered_reader_callback!($feature $rc) }
                 }
             )?
             #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
             unsafe fn on_reader_done($rd_this: *mut Self) {
-                unsafe { $rd }
+                unsafe { $crate::__buffered_reader_callback!($feature $rd) }
             }
             #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
             unsafe fn on_reader_error($re_this: *mut Self, $re_err: $crate::__bun_sys::Error) {
-                unsafe { $re }
+                unsafe { $crate::__buffered_reader_callback!($feature $re) }
             }
             #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
             unsafe fn loop_($l_this: *mut Self) -> *mut $crate::pipe_reader::Loop {
@@ -1884,24 +1884,19 @@ impl FilePollRef {
     pub(crate) fn deinit_force_unregister(self) {
         self.inner().deinit_force_unregister();
     }
-    /// Single nonnull-asref accessor for the process-global uWS loop pointer.
-    ///
     /// Type invariant (encapsulated `unsafe`): every caller of
     /// [`unregister`](Self::unregister) / [`register_with_fd`](Self::register_with_fd)
-    /// passes `Loop::get()` (the per-thread uWS loop singleton), which is
-    /// non-null after init and lives for the program. The event loop is
-    /// single-threaded so the returned `&mut` is the sole live borrow at the
-    /// point of use. Collapses the two identical `&mut *loop_` deref blocks in
-    /// those wrappers into one.
+    /// passes the loop the poll's owner runs on, live while the poll is. Collapses
+    /// the two identical `&*loop_` deref blocks in those wrappers into one.
     #[inline(always)]
-    fn uws_loop_mut<'a>(loop_: *mut bun_uws_sys::Loop) -> &'a mut bun_uws_sys::Loop {
+    fn uws_loop<'a>(loop_: *mut bun_uws_sys::Loop) -> &'a bun_uws_sys::Loop {
         debug_assert!(!loop_.is_null());
         // SAFETY: type invariant — see doc comment above.
-        unsafe { &mut *loop_ }
+        unsafe { &*loop_ }
     }
     #[inline]
     pub(crate) fn unregister(self, loop_: *mut bun_uws_sys::Loop, force: bool) -> sys::Result<()> {
-        let loop_ = Self::uws_loop_mut(loop_);
+        let loop_ = Self::uws_loop(loop_);
         #[cfg(not(windows))]
         {
             self.inner().unregister(loop_, force)
@@ -1928,12 +1923,8 @@ impl FilePollRef {
         };
         #[cfg(not(windows))]
         {
-            self.inner().register_with_fd(
-                Self::uws_loop_mut(loop_),
-                flag,
-                OneShotFlag::Dispatch,
-                fd,
-            )
+            self.inner()
+                .register_with_fd(Self::uws_loop(loop_), flag, OneShotFlag::Dispatch, fd)
         }
         #[cfg(windows)]
         {
@@ -2209,29 +2200,15 @@ pub mod waker {
         }
 
         pub fn wait(&self) {
-            // Do NOT route through `WindowsLoop::wait(&mut self)`: that would
-            // materialize a `&mut WindowsLoop` over the process-global
-            // singleton for the entire duration of `us_loop_run`/`uv_run`,
-            // and a concurrent `wake()` from a worker thread (BundleThread,
-            // HTTPThread) would alias it — two live `&mut T` to one
-            // allocation is UB under Stacked/Tree Borrows. Call the C entry
-            // point with the raw pointer directly so no Rust reference is
-            // ever formed.
-            // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton,
-            // non-null after `init()`.
-            unsafe { bun_uws_sys::loop_::us_loop_run(self.loop_ref().as_const_ptr().cast_mut()) };
+            self.loop_ref().run();
         }
 
         pub fn wake(&self) {
-            // See `wait()` — this is the cross-thread wake path; forming a
-            // `&mut WindowsLoop` here would alias the event-loop thread's
-            // borrow held across `us_loop_run`. Pass the raw pointer to the
-            // thread-safe C wake (`uv_async_send`) instead.
+            // The cross-thread wake path: `WindowsLoop` is `!Sync`, so pass the raw
+            // pointer to the thread-safe C wake (`uv_async_send`).
             // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton;
             // `us_wakeup_loop` → `uv_async_send` is documented thread-safe.
-            unsafe {
-                bun_uws_sys::loop_::us_wakeup_loop(self.loop_ref().as_const_ptr().cast_mut())
-            };
+            unsafe { bun_uws_sys::loop_::us_wakeup_loop(self.loop_ref().as_const_ptr()) };
         }
 
         /// Raw libuv `uv_loop_t*` underlying this waker's `WindowsLoop`.
@@ -2242,9 +2219,8 @@ pub mod waker {
         /// block at the call site.
         #[inline]
         pub fn uv_loop(&self) -> *mut bun_sys::windows::libuv::Loop {
-            // `BackRef` deref is safe (process-lifetime singleton); `uv_loop`
-            // is a `Copy` field set once by C `us_create_loop`.
-            self.loop_ref().uv_loop
+            // `BackRef` deref is safe (process-lifetime singleton).
+            self.loop_ref().uv_loop()
         }
     }
 }

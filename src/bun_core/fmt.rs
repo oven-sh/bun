@@ -2,7 +2,6 @@
 
 use core::cell::Cell;
 use core::fmt::{self, Display, Formatter, Write as _};
-use core::ptr::NonNull;
 
 use crate::output as Output;
 // `strings` is the canonical `crate::strings` (lib.rs); `js_printer`/`js_lexer`
@@ -505,70 +504,19 @@ pub fn substitute_named(template: &[u8], args: &[(&[u8], &[u8])]) -> Vec<u8> {
 
 type SharedTempBuffer = [u8; 32 * 1024];
 
-struct SharedTempBufferSlot(Cell<Option<NonNull<SharedTempBuffer>>>);
-impl Drop for SharedTempBufferSlot {
-    fn drop(&mut self) {
-        if let Some(p) = self.0.take() {
-            // SAFETY: produced by `heap::alloc_nn` in `SharedTempBufferBorrow::
-            // new` and parked here on borrow drop; the thread is exiting so no
-            // outstanding borrow holds it.
-            unsafe { crate::heap::destroy(p.as_ptr()) };
-        }
-    }
-}
-impl core::ops::Deref for SharedTempBufferSlot {
-    type Target = Cell<Option<NonNull<SharedTempBuffer>>>;
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
 thread_local! {
-    static SHARED_TEMP_BUFFER_PTR: SharedTempBufferSlot =
-        const { SharedTempBufferSlot(Cell::new(None)) };
+    static SHARED_TEMP_BUFFER: Cell<Option<Box<SharedTempBuffer>>> = const { Cell::new(None) };
 }
 
-/// RAII borrow of the thread-local shared temp buffer.
-///
-/// On construction: takes (or allocates) the buffer and nulls the thread-local
-/// cell so any recursive borrow allocates a fresh one instead of aliasing this
-/// one. On drop: restores the buffer to the cell, or frees it if recursion has
-/// already restored a different buffer.
-struct SharedTempBufferBorrow {
-    ptr: NonNull<SharedTempBuffer>,
-}
-
-impl SharedTempBufferBorrow {
-    fn new() -> Self {
-        let ptr = SHARED_TEMP_BUFFER_PTR.with(|cell| {
-            cell.take()
-                .unwrap_or_else(|| crate::heap::alloc_nn([0u8; 32 * 1024]))
-        });
-        Self { ptr }
-    }
-
-    #[inline]
-    fn chunk(&mut self) -> &mut SharedTempBuffer {
-        // SAFETY: this borrow uniquely owns the buffer for its lifetime; the
-        // thread-local cell was nulled on construction so recursion cannot alias it.
-        unsafe { self.ptr.as_mut() }
-    }
-}
-
-impl Drop for SharedTempBufferBorrow {
-    fn drop(&mut self) {
-        SHARED_TEMP_BUFFER_PTR.with(|c| {
-            if let Some(existing) = c.get() {
-                if existing != self.ptr {
-                    // Recursion restored a different buffer; free ours.
-                    // SAFETY: ptr was allocated via heap::alloc_nn and is uniquely owned by self.
-                    unsafe { crate::heap::destroy(self.ptr.as_ptr()) };
-                }
-            } else {
-                c.set(Some(self.ptr));
-            }
-        });
-    }
+/// Lends `f` the thread's temp buffer. The cell is empty meanwhile, so a recursive call allocates its own.
+fn with_shared_temp_buffer(f: impl FnOnce(&mut SharedTempBuffer) -> fmt::Result) -> fmt::Result {
+    let mut buffer = SHARED_TEMP_BUFFER
+        .with(|cell| cell.take())
+        .unwrap_or_else(crate::boxed_zeroed);
+    let result = f(&mut buffer);
+    // Frees the buffer that a recursive call has put back.
+    SHARED_TEMP_BUFFER.with(|cell| cell.set(Some(buffer)));
+    result
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -576,20 +524,19 @@ impl Drop for SharedTempBufferBorrow {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub fn format_utf16_type(slice_: &[u16], writer: &mut impl fmt::Write) -> fmt::Result {
-    let mut borrow = SharedTempBufferBorrow::new();
-    let chunk = borrow.chunk();
+    with_shared_temp_buffer(|chunk| {
+        let mut slice = slice_;
 
-    let mut slice = slice_;
-
-    while !slice.is_empty() {
-        let result = strings::copy_utf16_into_utf8(chunk, slice);
-        if result.read == 0 || result.written == 0 {
-            break;
+        while !slice.is_empty() {
+            let result = strings::copy_utf16_into_utf8(chunk, slice);
+            if result.read == 0 || result.written == 0 {
+                break;
+            }
+            write_bytes(writer, &chunk[..result.written])?;
+            slice = &slice[result.read..];
         }
-        write_bytes(writer, &chunk[..result.written])?;
-        slice = &slice[result.read..];
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 pub(crate) fn format_utf16_type_with_path_options(
@@ -597,37 +544,36 @@ pub(crate) fn format_utf16_type_with_path_options(
     writer: &mut impl fmt::Write,
     opts: PathFormatOptions,
 ) -> fmt::Result {
-    let mut borrow = SharedTempBufferBorrow::new();
-    let chunk = borrow.chunk();
+    with_shared_temp_buffer(|chunk| {
+        let mut slice = slice_;
 
-    let mut slice = slice_;
-
-    while !slice.is_empty() {
-        let result = strings::copy_utf16_into_utf8(chunk, slice);
-        if result.read == 0 || result.written == 0 {
-            break;
-        }
-
-        let to_write = &chunk[..result.written];
-        if !opts.escape_backslashes && opts.path_sep == PathSep::Any {
-            write_bytes(writer, to_write)?;
-        } else {
-            let mut ptr = to_write;
-            while let Some(i) = crate::strings::index_of_any(ptr, b"\\/") {
-                let sep = opts.path_sep.apply(ptr[i]);
-                write_bytes(writer, &ptr[..i])?;
-                writer.write_char(sep as char)?;
-                if opts.escape_backslashes && sep == b'\\' {
-                    writer.write_char(sep as char)?;
-                }
-
-                ptr = &ptr[i + 1..];
+        while !slice.is_empty() {
+            let result = strings::copy_utf16_into_utf8(chunk, slice);
+            if result.read == 0 || result.written == 0 {
+                break;
             }
-            write_bytes(writer, ptr)?;
+
+            let to_write = &chunk[..result.written];
+            if !opts.escape_backslashes && opts.path_sep == PathSep::Any {
+                write_bytes(writer, to_write)?;
+            } else {
+                let mut ptr = to_write;
+                while let Some(i) = crate::strings::index_of_any(ptr, b"\\/") {
+                    let sep = opts.path_sep.apply(ptr[i]);
+                    write_bytes(writer, &ptr[..i])?;
+                    writer.write_char(sep as char)?;
+                    if opts.escape_backslashes && sep == b'\\' {
+                        writer.write_char(sep as char)?;
+                    }
+
+                    ptr = &ptr[i + 1..];
+                }
+                write_bytes(writer, ptr)?;
+            }
+            slice = &slice[result.read..];
         }
-        slice = &slice[result.read..];
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 #[inline]
@@ -1138,7 +1084,7 @@ impl RadixInteger {
 
 /// The integer whose digits, of `bits` bits each, are `digits`, as the nearest `f64`. `None` if there
 /// is no digit, or a byte that is none in that radix.
-fn parse_digits_of_bits(digits: &[u8], bits: u32) -> Option<f64> {
+pub fn parse_digits_of_bits(digits: &[u8], bits: u32) -> Option<f64> {
     let mut integer = RadixInteger::default();
     for &c in digits {
         integer.push_digit(bits, char::from(c).to_digit(1 << bits)?);
@@ -1253,28 +1199,28 @@ pub fn parse_ascii<T: core::str::FromStr>(s: &[u8]) -> Option<T> {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub fn format_latin1(slice_: &[u8], writer: &mut impl fmt::Write) -> fmt::Result {
-    let mut borrow = SharedTempBufferBorrow::new();
-    let chunk = borrow.chunk();
-    let mut slice = slice_;
+    with_shared_temp_buffer(|chunk| {
+        let mut slice = slice_;
 
-    while let Some(i) = crate::strings::first_non_ascii_usize(slice) {
-        if i > 0 {
-            write_bytes(writer, &slice[..i])?;
-            slice = &slice[i..];
+        while let Some(i) = crate::strings::first_non_ascii_usize(slice) {
+            if i > 0 {
+                write_bytes(writer, &slice[..i])?;
+                slice = &slice[i..];
+            }
+            let take = chunk.len().min(slice.len());
+            let result = strings::copy_latin1_into_utf8(chunk, &slice[..take]);
+            if result.read == 0 || result.written == 0 {
+                break;
+            }
+            write_bytes(writer, &chunk[..result.written])?;
+            slice = &slice[result.read..];
         }
-        let take = chunk.len().min(slice.len());
-        let result = strings::copy_latin1_into_utf8(chunk, &slice[..take]);
-        if result.read == 0 || result.written == 0 {
-            break;
-        }
-        write_bytes(writer, &chunk[..result.written])?;
-        slice = &slice[result.read..];
-    }
 
-    if !slice.is_empty() {
-        write_bytes(writer, slice)?; // write the remaining bytes
-    }
-    Ok(())
+        if !slice.is_empty() {
+            write_bytes(writer, slice)?; // write the remaining bytes
+        }
+        Ok(())
+    })
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2990,26 +2936,18 @@ pub fn parse_hex_prefix(input: &[u8], max_digits: usize) -> (u32, usize) {
     (value, n)
 }
 
-/// Decode a `2 * size_of::<T>()`-char ASCII hex slice into `T` via native-endian
-/// byte reinterpretation — i.e. pairwise hex-decode then `from_ne_bytes`,
-/// **not** a big-endian numeric accumulator.
-/// `"0100000000000000"` → `1u64` on little-endian.
-///
-/// Returns `None` if `slice.len() != 2 * size_of::<T>()` or any byte is not
-/// `[0-9a-fA-F]`. `T` is capped at 16 bytes (u128) since stable Rust can't size
-/// a stack array by a generic without `generic_const_exprs`.
+/// Pairwise hex-decode of exactly 16 chars, then `from_ne_bytes`: `"0100000000000000"` is 1 on little-endian.
 #[inline]
-pub fn parse_hex_to_int<T: bytemuck::Pod>(slice: &[u8]) -> Option<T> {
-    let n = core::mem::size_of::<T>();
-    debug_assert!(n <= 16);
-    if slice.len() != n * 2 {
+pub fn parse_hex_to_u64(slice: &[u8]) -> Option<u64> {
+    let (pairs, []) = slice.as_chunks::<2>() else {
         return None;
+    };
+    let pairs: &[[u8; 2]; 8] = pairs.try_into().ok()?;
+    let mut bytes = [0u8; 8];
+    for (byte, &[hi, lo]) in bytes.iter_mut().zip(pairs) {
+        *byte = hex_pair_value(hi, lo)?;
     }
-    let mut buf = [0u8; 16];
-    for i in 0..n {
-        buf[i] = hex_pair_value(slice[i * 2], slice[i * 2 + 1])?;
-    }
-    Some(bytemuck::pod_read_unaligned(&buf[..n]))
+    Some(u64::from_ne_bytes(bytes))
 }
 
 /// Map the low 4 bits of `n` to a lowercase ASCII hex digit (`0-9`, `a-f`).
@@ -3162,9 +3100,11 @@ pub struct TrimmedPrecisionFormatter<const PRECISION: usize> {
 
 impl<const PRECISION: usize> Display for TrimmedPrecisionFormatter<PRECISION> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let whole = self.num.trunc();
+        let scale = 10f64.powi(PRECISION as i32);
+        let num = (self.num * scale).round() / scale;
+        let whole = num.trunc();
         write!(f, "{}", whole)?;
-        let rem = self.num - whole;
+        let rem = num - whole;
         if rem != 0.0 {
             // buf size = "0." + PRECISION digits
             // Const-generic array length arithmetic is unstable, so use a small
@@ -3693,6 +3633,38 @@ pub trait OutOfRangeValue {
 impl OutOfRangeValue for f64 {
     fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, " Received {}", double(*self))
+    }
+    fn type_name() -> &'static str {
+        "f64"
+    }
+}
+/// A number as Node's `ERR_OUT_OF_RANGE` prints it: `-0`, and an integer beyond 2 ** 32 with `addNumericalSeparator`.
+pub struct NodeNumber(pub f64);
+impl Display for NodeNumber {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let Self(number) = *self;
+        if number == 0.0 && number.is_sign_negative() {
+            return f.write_str("-0");
+        }
+        let digits = double(number).to_string();
+        let sign = usize::from(number < 0.0);
+        let is_large = number.is_finite() && number.fract() == 0.0 && number.abs() > 4294967296.0;
+        let ungrouped = if is_large {
+            sign + (digits.len() - sign - 1) % 3 + 1
+        } else {
+            digits.len()
+        };
+        f.write_str(&digits[..ungrouped])?;
+        for group in digits.as_bytes()[ungrouped..].chunks(3) {
+            f.write_char('_')?;
+            write_bytes(f, group)?;
+        }
+        Ok(())
+    }
+}
+impl OutOfRangeValue for NodeNumber {
+    fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, " Received {self}")
     }
     fn type_name() -> &'static str {
         "f64"

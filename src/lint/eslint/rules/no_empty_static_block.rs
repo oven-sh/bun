@@ -4,9 +4,9 @@ use bun_lint::prelude::*;
 /// Disallow empty static blocks.
 pub struct NoEmptyStaticBlock;
 
-const UNEXPECTED: Message = Message::new("unexpected", "Unexpected empty static block.");
-const SUGGEST_COMMENT: Message =
-    Message::new("suggestComment", "Add comment inside empty static block.");
+const UNEXPECTED: &Message = &Message::new("unexpected", "Unexpected empty static block.");
+const SUGGEST_COMMENT: &Message =
+    &Message::new("suggestComment", "Add comment inside empty static block.");
 
 impl Rule for NoEmptyStaticBlock {
     const META: Meta = Meta::eslint("no-empty-static-block", Kind::Suggestion)

@@ -32,7 +32,7 @@ export const CronOptions = b.dictionary(
   { allowArray: true, reportedAs: "Bun.cron: options" },
 );
 
-const signature = { export: "Bun__Cron__cron", capability: "js", throws: true } as const;
+const signature = { export: "Bun__Cron__cron", feature: "Cron", capability: "js", throws: true } as const;
 
 export const cron = b.overloads(
   /** An OS-level job. */
@@ -62,6 +62,7 @@ export const cron = b.overloads(
 
 export const remove = b.fn({
   export: "Bun__Cron__remove",
+  feature: "Cron",
   args: { title: b.string.utf8 },
   expected: { title: "Bun.cron.remove() expects a string title" },
   returns: b.any,
@@ -71,6 +72,7 @@ export const remove = b.fn({
 
 export const parse = b.fn({
   export: "Bun__Cron__parse",
+  feature: "Cron",
   args: { expression: b.string.utf8, relativeDate: b.f64.allowDate.nullable, options: CronOptions.nullable },
   expected: {
     expression: "Bun.cron.parse() expects a string cron expression as the first argument",

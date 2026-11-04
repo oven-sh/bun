@@ -1,0 +1,21 @@
+# import * as namespace from "node:module"; namespace.isBuiltin("node:os")
+# The host makes the namespace object of one of its modules by reading every export, `_cache` too. That names no way to the module objects of the program: in an image whose code
+# does not name the cache the host captures undefined for it (getModuleCacheObject in Bun's NodeModuleModule.cpp), so the exports of the program stay in the program.
+# The program closed-world/namespace-import-of-node-module.mjs of Bun's tests runs it. module-cache-read-by-name-is-a-use-of-it.ir has the read that names it
+# RUN: valueflow-why used-builtin=NodeModule_cache used-builtin=NodeModuleIsBuiltin
+# CHECK: used-builtin=NodeModule_cache
+# CHECK-NEXT: not held
+# CHECK: used-builtin=NodeModuleIsBuiltin
+# CHECK-NOT: not held
+
+module m0 path="/app/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="node:module" displayPath="node:module" kind=Runtime exportRule=RuntimeModule runtimeModule=NodeModule
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = PropGet v0 key="isBuiltin"
+    v2 = String string="node:os"
+    v3 = Call v1, v0, v2
+    Return
+}

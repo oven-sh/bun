@@ -6,7 +6,7 @@ use rustc_hash::FxHashMap;
 /// Disallow duplicate case labels.
 pub struct NoDuplicateCase;
 
-const UNEXPECTED: Message = Message::new("unexpected", "Duplicate case label.");
+const UNEXPECTED: &Message = &Message::new("unexpected", "Duplicate case label.");
 
 /// True if `e` is a single token, so two of them are equal only if their text is.
 fn is_single_token(e: Expr) -> bool {
@@ -52,7 +52,7 @@ fn equal<'a>(file: &'a File<'a>, a: Expr<'a>, b: Expr<'a>, is_text_enough: bool)
 /// oxlint reports at the first test that's the same.
 fn report<'a>(case: Case<'a>, first: Span, cx: &Cx<'a, NoDuplicateCase>) {
     let report = cx.report(if cx.language().is_oxlint { first } else { case.span() }, UNEXPECTED).hint_with(|| {
-        Some(format!("Only the first case with this label runs. It is on line {}.", cx.line_of(first.start)))
+        Some(format!("Only the first one runs, on line {}.", cx.line_of(first.start)))
     });
     report.labels_with(|labels| {
         labels.push(case.test().map(Expr::span).unwrap_or_default(), "is duplicated here");

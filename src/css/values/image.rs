@@ -109,7 +109,7 @@ impl Image {
     pub fn eql(&self, other: &Image) -> bool {
         match (self, other) {
             (Image::None, Image::None) => true,
-            (Image::Url(a), Image::Url(b)) => a.import_record_idx == b.import_record_idx,
+            (Image::Url(a), Image::Url(b)) => a.eql(b),
             (Image::Gradient(a), Image::Gradient(b)) => a == b,
             (Image::ImageSet(a), Image::ImageSet(b)) => a.eql(b),
             _ => false,
@@ -119,10 +119,7 @@ impl Image {
     pub(crate) fn deep_clone(&self, arena: &Arena) -> Self {
         match self {
             Image::None => Image::None,
-            Image::Url(u) => Image::Url(Url {
-                import_record_idx: u.import_record_idx,
-                loc: u.loc,
-            }),
+            Image::Url(u) => Image::Url(u.deep_clone(arena)),
             Image::Gradient(g) => Image::Gradient(g.deep_clone(arena)),
             Image::ImageSet(s) => Image::ImageSet(s.deep_clone(arena)),
         }
@@ -291,9 +288,7 @@ pub struct ImageSet {
 impl ImageSet {
     fn parse(input: &mut css::Parser) -> Result<ImageSet> {
         let location = input.current_source_location();
-        // SAFETY: borrow detached (`'static` placeholder, see
-        // `css_parser::src_str`) so `input` is reusable below.
-        let f: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(input.expect_function()?) };
+        let f = input.expect_function()?;
         let vendor_prefix = crate::match_ignore_ascii_case! { f, {
             b"image-set" => VendorPrefix::NONE,
             b"-webkit-image-set" => VendorPrefix::WEBKIT,
@@ -381,22 +376,15 @@ impl ImageSetOption {
     fn parse(input: &mut css::Parser) -> Result<ImageSetOption> {
         let start_position = input.input.tokenizer.get_position();
         let loc = input.current_source_location();
-        // `expect_url_or_string` returns a borrow of the parser, so
-        // it can't be used as a `try_parse` callback directly (the result type
-        // `R` may not borrow the closure arg). Erase the borrow via `*const`
-        // — token slices are arena-static (see `css_parser::src_str`).
-        let image = if let Ok(url) =
-            input.try_parse(|p| p.expect_url_or_string().map(std::ptr::from_ref::<[u8]>))
-        {
-            // SAFETY: see above — `url` borrows the parser's source/arena.
-            let url: &[u8] = unsafe { crate::arena_str(url) };
+        let image = if let Ok(url) = input.try_parse(|p| p.expect_url_or_string()) {
             let end_position = input.input.tokenizer.get_position();
             let record_idx =
                 input.add_import_record(url, start_position, end_position, ImportKind::Url)?;
-            Image::Url(Url {
-                import_record_idx: record_idx,
-                loc: css::dependencies::Location::from_source_location(loc),
-            })
+            Image::Url(Url::new(
+                url,
+                record_idx,
+                css::dependencies::Location::from_source_location(loc),
+            ))
         } else {
             Image::parse(input)?
         };
@@ -452,10 +440,7 @@ impl ImageSetOption {
                     dependencies.push(css::Dependency::Url(dep));
                 }
             } else {
-                let record_url = dest.get_import_record_url(url.import_record_idx)?;
-                // SAFETY: `record_url` borrows arena-backed `import_info` data
-                // valid for the printer's `'a`; detach so `dest` is reusable.
-                let record_url: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(record_url) };
+                let (record_url, _) = dest.get_import_record_url(url.import_record_idx)?;
                 dest.serialize_string(record_url)?;
             }
         } else {

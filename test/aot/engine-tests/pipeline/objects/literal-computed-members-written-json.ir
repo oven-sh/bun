@@ -1,0 +1,376 @@
+# -- source: literal-computed-members-written-json.js
+# // Literals whose members are computed, beside constant literals of the same names. What the literals hold is asked in several ways.
+# function writeBoth(given) {
+#   return JSON.stringify({ a: given.x, b: [given.x, 1] });
+# }
+# console.log(writeBoth({ y: 1 }));
+# console.log(JSON.stringify({ a: undefined, b: 2 }));
+#
+# function listKeys(given) {
+#   return Object.keys({ c: given.x, d: [given.x, 1] });
+# }
+# console.log(listKeys({ y: 1 }));
+# console.log(Object.keys({ c: undefined, d: 2 }));
+#
+# function writeBehindSpread(given) {
+#   return JSON.stringify({ ...given, e: given.x, f: [given.x, 1] });
+# }
+# console.log(writeBehindSpread({ y: 1 }));
+# console.log(JSON.stringify({ y: 1, e: undefined, f: 2 }));
+#
+# function listEntriesOfThree(given) {
+#   return Object.entries({ g: given.x, h: [given.x, 1], i: String(given.y) });
+# }
+# console.log(listEntriesOfThree({ y: 1 }));
+# console.log(Object.entries({ g: undefined, h: 2, i: "" }));
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="literal-computed-members-written-json.js" displayPath="literal-computed-members-written-json.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+layout L0 fields=[{key="x" declared={type=anything} flags=[IsNeverWritten]}, {key="y" declared={type=anything}}] flags=[IsNeverAllocated] ownFieldCount=2 flow={allocation=NeverAllocated}
+layout L1 module=m0 position=243 fields=[{key="y" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L0] ownFieldCount=1
+layout L2 module=m0 position=282 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=undefined|null|number|Array flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L3 module=m0 position=450 fields=[{key="c" declared={type=anything} flags=[IsRequired]}, {key="d" declared={type=undefined|null|number|Array flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L4 module=m0 position=652 fields=[{key="e" declared={type=undefined flags=[IsExpected]} flags=[IsRequired]}, {key="f" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="y" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[2, 0, 1] ownFieldCount=3
+layout L5 module=m0 position=872 fields=[{key="g" declared={type=anything} flags=[IsRequired]}, {key="h" declared={type=undefined|null|number|Array flags=[IsExpected]} flags=[IsRequired]}, {key="i" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=3
+data d0 root=Object{layout=L1 members=[{key="y" value=Number{value=1}}]} module=m0
+data d1 root=Object{layout=L2 members=[{key="a"}, {key="b" value=Number{value=2}}]} module=m0
+data d2 root=Object{layout=L1 members=[{key="y" value=Number{value=1}}]} module=m0
+data d3 root=Object{layout=L3 members=[{key="c"}, {key="d" value=Number{value=2}}]} module=m0
+data d4 root=Object{layout=L1 members=[{key="y" value=Number{value=1}}]} module=m0
+data d5 root=Object{layout=L4 members=[{key="y" value=Number{value=1}}, {key="e"}, {key="f" value=Number{value=2}}]} module=m0
+data d6 root=Object{layout=L1 members=[{key="y" value=Number{value=1}}]} module=m0
+data d7 root=Object{layout=L5 members=[{key="g"}, {key="h" value=Number{value=2}}, {key="i" value=String{value=""}}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v8 = Builtin builtin=GlobalThis @221
+    v9 = PropGet v8 key="console" [isFreeName] @221
+    v10 = Convert v9 declared={type=builtin(Console) flags=[IsExpected]} @221
+    v11 = PropGet v10 key="log" @221
+    v12 = Convert v11 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @221
+    v13 = Data data=d0 @243
+    v14 = Call v1, -, v13 calleeName="writeBoth" @233
+    v15 = Convert v14 declared={type=undefined|null|string flags=[IsExpected]} @233
+    v16 = Call v12, v10, v15 calleeKey="log" calleeName="console.log" @229
+    v17 = Builtin builtin=GlobalThis @255
+    v18 = PropGet v17 key="console" [isFreeName] @255
+    v19 = Convert v18 declared={type=builtin(Console) flags=[IsExpected]} @255
+    v20 = PropGet v19 key="log" @255
+    v21 = Convert v20 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @255
+    v22 = Builtin builtin=JSON @267
+    v23 = PropGet v22 key="stringify" @267
+    v24 = Convert v23 declared={type=builtin(JSONStringify) flags=[IsExpected]} @267
+    v25 = Data data=d1 @282
+    v26 = Call v24, v22, v25 calleeKey="stringify" calleeName="JSON.stringify" @272
+    v27 = Convert v26 declared={type=undefined|null|string flags=[IsExpected]} @267
+    v28 = Call v21, v19, v27 calleeKey="log" calleeName="console.log" @263
+    v29 = Builtin builtin=GlobalThis @393
+    v30 = PropGet v29 key="console" [isFreeName] @393
+    v31 = Convert v30 declared={type=builtin(Console) flags=[IsExpected]} @393
+    v32 = PropGet v31 key="log" @393
+    v33 = Convert v32 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @393
+    v34 = Data data=d2 @414
+    v35 = Call v3, -, v34 calleeName="listKeys" @405
+    v36 = Convert v35 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @405
+    v37 = Call v33, v31, v36 calleeKey="log" calleeName="console.log" @401
+    v38 = Builtin builtin=GlobalThis @426
+    v39 = PropGet v38 key="console" [isFreeName] @426
+    v40 = Convert v39 declared={type=builtin(Console) flags=[IsExpected]} @426
+    v41 = PropGet v40 key="log" @426
+    v42 = Convert v41 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @426
+    v43 = Builtin builtin=Object @438
+    v44 = Builtin builtin=ObjectKeys @438
+    v45 = Data data=d3 @450
+    v46 = Call v44, v43, v45 calleeName="Object.keys" @445
+    v47 = Convert v46 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @438
+    v48 = Call v42, v40, v47 calleeKey="log" calleeName="console.log" @434
+    v49 = Builtin builtin=GlobalThis @583
+    v50 = PropGet v49 key="console" [isFreeName] @583
+    v51 = Convert v50 declared={type=builtin(Console) flags=[IsExpected]} @583
+    v52 = PropGet v51 key="log" @583
+    v53 = Convert v52 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @583
+    v54 = Data data=d4 @613
+    v55 = Call v5, -, v54 calleeName="writeBehindSpread" @595
+    v56 = Convert v55 declared={type=undefined|null|string flags=[IsExpected]} @595
+    v57 = Call v53, v51, v56 calleeKey="log" calleeName="console.log" @591
+    v58 = Builtin builtin=GlobalThis @625
+    v59 = PropGet v58 key="console" [isFreeName] @625
+    v60 = Convert v59 declared={type=builtin(Console) flags=[IsExpected]} @625
+    v61 = PropGet v60 key="log" @625
+    v62 = Convert v61 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @625
+    v63 = Builtin builtin=JSON @637
+    v64 = PropGet v63 key="stringify" @637
+    v65 = Convert v64 declared={type=builtin(JSONStringify) flags=[IsExpected]} @637
+    v66 = Data data=d5 @652
+    v67 = Call v65, v63, v66 calleeKey="stringify" calleeName="JSON.stringify" @642
+    v68 = Convert v67 declared={type=undefined|null|string flags=[IsExpected]} @637
+    v69 = Call v62, v60, v68 calleeKey="log" calleeName="console.log" @633
+    v70 = Builtin builtin=GlobalThis @802
+    v71 = PropGet v70 key="console" [isFreeName] @802
+    v72 = Convert v71 declared={type=builtin(Console) flags=[IsExpected]} @802
+    v73 = PropGet v72 key="log" @802
+    v74 = Convert v73 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @802
+    v75 = Data data=d6 @833
+    v76 = Call v7, -, v75 calleeName="listEntriesOfThree" @814
+    v77 = Convert v76 declared={type=undefined|null|Array<undefined|null|Array> flags=[IsExpected]} @814
+    v78 = Call v74, v72, v77 calleeKey="log" calleeName="console.log" @810
+    v79 = Builtin builtin=GlobalThis @845
+    v80 = PropGet v79 key="console" [isFreeName] @845
+    v81 = Convert v80 declared={type=builtin(Console) flags=[IsExpected]} @845
+    v82 = PropGet v81 key="log" @845
+    v83 = Convert v82 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @845
+    v84 = Builtin builtin=Object @857
+    v85 = Builtin builtin=ObjectEntries @857
+    v86 = Data data=d7 @872
+    v87 = Call v85, v84, v86 calleeName="Object.entries" @864
+    v88 = Convert v87 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|number|string>> flags=[IsExpected]} @857
+    v89 = Call v83, v81, v88 calleeKey="log" calleeName="console.log" @853
+    v90 = Undefined @845
+    Return v90 @845
+}
+function f1 name="writeBoth" module=m0 position=133 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|object):
+    Jump -> next b1() @133
+  b1():
+    v1 = Builtin builtin=JSON @170
+    v2 = PropGet v1 key="stringify" @170
+    v3 = Convert v2 declared={type=builtin(JSONStringify) flags=[IsExpected]} @170
+    v4 = PropGet v0 key="x" @190
+    v5 = NewObject layout=L2 @187
+    PropDefine v5, v4 key="a" @187
+    v7 = PropGet v0 key="x" @203
+    v8 = Integer integer=1 @212
+    v9 = NewArray v7, v8 contents=anything @202
+    v10 = Convert v9 declared={type=undefined|null|Array flags=[IsExpected]} @202
+    v11 = Convert v10 declared={type=undefined|null|number|Array flags=[IsExpected]} @202
+    PropDefine v5, v11 key="b" @199
+    v13 = FinishObject v5 @185
+    v14 = Call v3, v1, v13 calleeKey="stringify" calleeName="JSON.stringify" @175
+    ReturnCall v14 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}] @175
+}
+function f2 name="listKeys" module=m0 position=309 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}] results=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|object):
+    Jump -> next b1() @309
+  b1():
+    v1 = Builtin builtin=Object @345
+    v2 = Builtin builtin=ObjectKeys @345
+    v3 = PropGet v0 key="x" @362
+    v4 = NewObject layout=L3 @359
+    PropDefine v4, v3 key="c" @359
+    v6 = PropGet v0 key="x" @375
+    v7 = Integer integer=1 @384
+    v8 = NewArray v6, v7 contents=anything @374
+    v9 = Convert v8 declared={type=undefined|null|Array flags=[IsExpected]} @374
+    v10 = Convert v9 declared={type=undefined|null|number|Array flags=[IsExpected]} @374
+    PropDefine v4, v10 key="d" @371
+    v12 = FinishObject v4 @357
+    v13 = Call v2, v1, v12 calleeName="Object.keys" @352
+    ReturnCall v13 casts=[{declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}}] @352
+}
+function f3 name="writeBehindSpread" module=m0 position=477 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object):
+    Jump -> next b1() @477
+  b1():
+    v1 = Builtin builtin=JSON @522
+    v2 = PropGet v1 key="stringify" @522
+    v3 = Convert v2 declared={type=builtin(JSONStringify) flags=[IsExpected]} @522
+    v4 = CopyObject v0 @537
+    v5 = PropGet v0 key="x" @552
+    PropDefine v4, v5 key="e" @549
+    v7 = PropGet v0 key="x" @565
+    v8 = Integer integer=1 @574
+    v9 = NewArray v7, v8 contents=anything @564
+    v10 = Convert v9 declared={type=undefined|null|Array flags=[IsExpected]} @564
+    PropDefine v4, v10 key="f" @561
+    v12 = Call v3, v1, v4 calleeKey="stringify" calleeName="JSON.stringify" @527
+    ReturnCall v12 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}] @527
+}
+function f4 name="listEntriesOfThree" module=m0 position=685 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L1|L4 flags=[IsExpected]}] results=[{type=undefined|null|Array<undefined|null|Array> flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L1|L4):
+    Jump -> next b1() @685
+  b1():
+    v1 = Builtin builtin=Object @731
+    v2 = Builtin builtin=ObjectEntries @731
+    v3 = PropGet v0 key="x" @751
+    v4 = NewObject layout=L5 @748
+    PropDefine v4, v3 key="g" @748
+    v6 = PropGet v0 key="x" @764
+    v7 = Integer integer=1 @773
+    v8 = NewArray v6, v7 contents=anything @763
+    v9 = Convert v8 declared={type=undefined|null|Array flags=[IsExpected]} @763
+    v10 = Convert v9 declared={type=undefined|null|number|Array flags=[IsExpected]} @763
+    PropDefine v4, v10 key="h" @760
+    v12 = Builtin builtin=String @780
+    v13 = PropGet v0 key="y" @787
+    v14 = Call v12, -, v13 calleeName="String" @780
+    v15 = Convert v14 declared={type=undefined|null|string flags=[IsExpected]} @780
+    PropDefine v4, v15 key="i" @777
+    v17 = FinishObject v4 @746
+    v18 = Call v2, v1, v17 calleeName="Object.entries" @738
+    ReturnCall v18 casts=[{declared={type=undefined|null|Array<undefined|null|Array> flags=[IsExpected]}}] @738
+}
+function f5 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @25
+  b1():
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @78
+  b2(v3):
+    Jump -> next b3() @78
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b4(v10):
+    Jump -> next b5() @78
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private
+# -- generated: f0 writeBehindSpread writeBoth listKeys listEntriesOfThree
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f4 callPosition=814 module=m0}, {callee=f9 callPosition=685 parent=1 module=m0}, {callee=f2 callPosition=405 module=m0}, {callee=f13 callPosition=309 parent=3 module=m0}, {callee=f1 callPosition=233 module=m0}, {callee=f12 callPosition=133 parent=5 module=m0}, {callee=f9 callPosition=751 parent=1 isTailCall=true module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: undefined = Undefined
+# CHECK-NEXT: v1: L2 = NewObject -, v0 layout=L2 fields=[0] allocationSite=12 allocationClass=1
+# CHECK-NEXT: v2: undefined|string = CallDirect v1 function=f12 @190:5 tail
+# CHECK-NEXT: v3: undefined = CallBuiltin -, v2 overload=ConsoleLog/0 accessSite=3
+# CHECK-NEXT: v4: undefined = Undefined
+# CHECK-NEXT: v5: 2 = Integer integer=2
+# CHECK-NEXT: v6: L2 = NewObject -, v4, v5 layout=L2 fields=[0, 1] allocationSite=5 allocationClass=1
+# CHECK-NEXT: v7: undefined = Undefined
+# CHECK-NEXT: v8: undefined|string = CallBuiltin -, v6, v7 overload=JSONStringify/0 accessSite=7
+# CHECK-NEXT: v9: undefined = CallBuiltin -, v8 overload=ConsoleLog/0 accessSite=8
+# CHECK-NEXT: v10: undefined = Undefined
+# CHECK-NEXT: v11: L3 = NewObject -, v10 layout=L3 fields=[0] allocationSite=14 allocationClass=2
+# CHECK-NEXT: v12: Array<"c"|"d", proven, pristine[Storage, Names, Dense]> = CallDirect v11 function=f13 @362:3 tail
+# CHECK-NEXT: v13: undefined = CallBuiltin -, v12 overload=ConsoleLog/1 accessSite=12
+# CHECK-NEXT: v14: undefined = Undefined
+# CHECK-NEXT: v15: 2 = Integer integer=2
+# CHECK-NEXT: v16: L3 = NewObject -, v14, v15 layout=L3 fields=[0, 1] allocationSite=7 allocationClass=2
+# CHECK-NEXT: v17: Array<string> = CallBuiltin -, v16 overload=ObjectKeys/0 accessSite=15
+# CHECK-NEXT: v18: Array<"c"|"d", proven, pristine[Storage, Names, Dense]> = AssumeType v17 provenType=Array<"c"|"d", proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v19: undefined = CallBuiltin -, v18 overload=ConsoleLog/1 accessSite=16
+# CHECK-NEXT: v20: 1 = Integer integer=1
+# CHECK-NEXT: v21: L1 = NewObject -, v20 layout=L1 fields=[0] allocationSite=8 allocationClass=0
+# CHECK-NEXT: v22: undefined|string = CallDirect v21 function=f3 accessSite=19
+# CHECK-NEXT: v23: undefined = CallBuiltin -, v22 overload=ConsoleLog/0 accessSite=20
+# CHECK-NEXT: v24: 1 = Integer integer=1
+# CHECK-NEXT: v25: undefined = Undefined
+# CHECK-NEXT: v26: 2 = Integer integer=2
+# CHECK-NEXT: v27: L4 = NewObject -, v24, v25, v26 layout=L4 fields=[2, 0, 1] allocationSite=9 allocationClass=3
+# CHECK-NEXT: v28: undefined = Undefined
+# CHECK-NEXT: v29: undefined|string = CallBuiltin -, v27, v28 overload=JSONStringify/0 accessSite=24
+# CHECK-NEXT: v30: undefined = CallBuiltin -, v29 overload=ConsoleLog/0 accessSite=25
+# CHECK-NEXT: v31: undefined = Undefined
+# CHECK-NEXT: v32: undefined = Undefined
+# CHECK-NEXT: v33: 1 = Integer integer=1
+# CHECK-NEXT: v34: Array<undefined|1> = NewArray v32, v33 contents=undefined|1 allocationSite=18 [contentsAreProven]
+# CHECK-NEXT: v35: Array<undefined|1, proven, pristine[Storage, Names, Dense]> = AssumeType v34 provenType=Array<undefined|1, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v36: 1 = Integer integer=1
+# CHECK-NEXT: v37: string = CallBuiltin -, v36 overload=String/0 accessSite=56
+# CHECK-NEXT: v38: L5 = NewObject -, v31, v35, v37 layout=L5 fields=[0, 1, 2] allocationSite=17 allocationClass=4
+# CHECK-NEXT: v39: Array<Array> = CallBuiltin -, v38 overload=ObjectEntries/0 accessSite=58 @738:7 tail
+# CHECK-NEXT: v40: Array<Array<undefined|string|Array<undefined|1, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = AssumeType v39 provenType=Array<Array<undefined|string|Array<undefined|1, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v41: undefined = CallBuiltin -, v40 overload=ConsoleLog/1 accessSite=29
+# CHECK-NEXT: v42: undefined = Undefined
+# CHECK-NEXT: v43: 2 = Integer integer=2
+# CHECK-NEXT: v44: "" = String string=""
+# CHECK-NEXT: v45: L5 = NewObject -, v42, v43, v44 layout=L5 fields=[0, 1, 2] allocationSite=11 allocationClass=4
+# CHECK-NEXT: v46: Array<Array> = CallBuiltin -, v45 overload=ObjectEntries/0 accessSite=32
+# CHECK-NEXT: v47: Array<Array<undefined|int|string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = AssumeType v46 provenType=Array<Array<undefined|int|string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v48: undefined = CallBuiltin -, v47 overload=ConsoleLog/1 accessSite=33
+# CHECK-NEXT: v49: undefined = Undefined
+# CHECK-NEXT: Return v49
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="writeBoth"
+# CHECK: module=m0 position=133 role=ParameterWrapper flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L1}] results=[{type=undefined|string}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ParameterWrapper{body=f7}
+# CHECK-LABEL: function {{*}}name="listKeys"
+# CHECK: module=m0 position=309 role=ParameterWrapper flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L1}] results=[{type=Array<"c"|"d", proven, pristine[Storage, Names, Dense]>}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ParameterWrapper{body=f8}
+# CHECK-LABEL: function {{*}}name="writeBehindSpread"
+# CHECK: module=m0 position=477 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L1}] results=[{type=undefined|string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: L1):
+# CHECK-NEXT: v1: object = CopyObject v0
+# CHECK-NEXT: v2: L1|Object = AssumeType v1 provenType=L1|Object
+# CHECK-NEXT: v3: undefined = Undefined
+# CHECK-NEXT: v4: boolean = TypeTest v2 testedType=L1
+# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2(| 0)
+# CHECK-NEXT: b1(v5: L1):
+# CHECK-NEXT: PutSlotOrAdd v5, -, v3 key="e" receivers=[L1] level=Proven accessSite=47
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b2(v7: Object) frequency=Unlikely:
+# CHECK-NEXT: PropDefine v7, v3 key="e" accessSite=47 receivers=[L1, ..]
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v9: undefined = Undefined
+# CHECK-NEXT: v10: 1 = Integer integer=1
+# CHECK-NEXT: v11: Array<undefined|1> = NewArray v9, v10 contents=undefined|1 allocationSite=16 [contentsAreProven]
+# CHECK-NEXT: v12: Array<undefined|1, proven, pristine[Storage, Names, Dense]> = AssumeType v11 provenType=Array<undefined|1, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v13: boolean = TypeTest v2 testedType=L1
+# CHECK-NEXT: Branch v13 -> taken b4(| 0), notTaken b5(| 0)
+# CHECK-NEXT: b4(v14: L1):
+# CHECK-NEXT: PutSlotOrAdd v14, -, v12 key="f" receivers=[L1] level=Proven accessSite=49
+# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: b5(v16: Object) frequency=Unlikely:
+# CHECK-NEXT: PropDefine v16, v12 key="f" accessSite=49 receivers=[L1, ..]
+# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v18: undefined = Undefined @527 tail
+# CHECK-NEXT: v19: undefined|string = CallBuiltin -, v2, v18 overload=JSONStringify/0 accessSite=50 @527 tail
+# CHECK-NEXT: Return v19
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="listEntriesOfThree"
+# CHECK: module=m0 position=685 role=ParameterWrapper flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L1}] results=[{type=Array<Array<undefined|string|Array<undefined|1, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ParameterWrapper{body=f9}
+# CHECK-LABEL: function {{*}}name="writeBoth"
+# CHECK: module=m0 position=133 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L2}, {type=undefined}] results=[{type=undefined|string}] capabilities=[MayBeCloned, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1 parameterMap=[{}, {}]}
+# CHECK-LABEL: function {{*}}name="listKeys"
+# CHECK: module=m0 position=309 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L3}, {type=undefined}] results=[{type=Array<"c"|"d", proven, pristine[Storage, Names, Dense]>}] capabilities=[MayBeCloned, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2 parameterMap=[{}, {}]}
+# CHECK-LABEL: function {{*}}name="listEntriesOfThree"
+# CHECK: module=m0 position=685 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L5}, {type=int[-2147483643, 2147483647]}] results=[{type=Array<Array<undefined|string|Array<undefined|1, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{}, {}]}
+# CHECK-LABEL: function {{*}}name="writeBoth"
+# CHECK: module=m0 position=133 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L2}] results=[{type=undefined|string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{}]} {
+# CHECK-NEXT: b0(v0: L2):
+# CHECK-NEXT: v1: undefined = Undefined
+# CHECK-NEXT: v2: 1 = Integer integer=1
+# CHECK-NEXT: v3: Array<undefined|1> = NewArray v1, v2 contents=undefined|1 allocationSite=13 [contentsAreProven]
+# CHECK-NEXT: v4: Array<undefined|1, proven, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<undefined|1, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: PutSlotOrAdd v0, -, v4 key="b" receivers=[L2] level=Proven accessSite=38
+# CHECK-NEXT: v6: L2 = FinishObject v0
+# CHECK-NEXT: v7: undefined = Undefined @175 tail
+# CHECK-NEXT: v8: undefined|string = CallBuiltin -, v6, v7 overload=JSONStringify/0 accessSite=39 @175 tail
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="listKeys"
+# CHECK: module=m0 position=309 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L3}] results=[{type=Array<"c"|"d", proven, pristine[Storage, Names, Dense]>}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{}]} {
+# CHECK-NEXT: b0(v0: L3):
+# CHECK-NEXT: v1: undefined = Undefined
+# CHECK-NEXT: v2: 1 = Integer integer=1
+# CHECK-NEXT: v3: Array<undefined|1> = NewArray v1, v2 contents=undefined|1 allocationSite=15 [contentsAreProven]
+# CHECK-NEXT: v4: Array<undefined|1, proven, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<undefined|1, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: PutSlotOrAdd v0, -, v4 key="d" receivers=[L3] level=Proven accessSite=43
+# CHECK-NEXT: v6: L3 = FinishObject v0
+# CHECK-NEXT: v7: Array<string> = CallBuiltin -, v6 overload=ObjectKeys/0 accessSite=44 @352 tail
+# CHECK-NEXT: v8: Array<"c"|"d", proven, pristine[Storage, Names, Dense]> = AssumeType v7 provenType=Array<"c"|"d", proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: }

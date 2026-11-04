@@ -3,7 +3,7 @@ use bun_lint::prelude::*;
 /// Disallow use of the `Buffer()` constructor.
 pub struct NoBufferConstructor;
 
-const DEPRECATED: Message = Message::new(
+const DEPRECATED: &Message = &Message::new(
     "deprecated",
     "{{expr}} is deprecated. Use Buffer.from(), Buffer.alloc(), or Buffer.allocUnsafe() instead.",
 );

@@ -234,9 +234,7 @@ impl BunSocketContextOptions {
             hp.update(&[(!s.is_null()) as u8]);
             if !s.is_null() {
                 // SAFETY: NUL-terminated C string.
-                let bytes = unsafe { bun_core::ffi::cstr(s) }.to_bytes();
-                // SAFETY: `s[bytes.len()] == 0` (CStr invariant) and `s[..len]` is readable.
-                let path = unsafe { bun_core::ZStr::from_raw(s.cast::<u8>(), bytes.len()) };
+                let path = bun_core::ZStr::from_cstr(unsafe { bun_core::ffi::cstr(s) });
                 hp.update(path.as_bytes());
                 let mut meta: [i64; 3] = [0; 3];
                 if !path.as_bytes().is_empty() {

@@ -16,19 +16,21 @@ class A:
 
 def churn(until):
     # With reference counts there is nothing to wait for; a collector comes when enough has been allocated.
-    deadline = time.monotonic() + 20
+    deadline = time.monotonic() + 60
     while not until() and time.monotonic() < deadline:
-        [[i] for i in range(1000)]
+        bytearray(1 << 20)
     return until()
 
 
 def waits(name, begin, block, end):
     state = begin()
-    is_about_to_block = threading.Event()
+    is_about_to_block = []
     came = []
 
     def target():
-        is_about_to_block.wait()
+        # Not a wait: a thread that waits collects, and an object that has been through a collection is found dead much later.
+        while not is_about_to_block:
+            pass
         box.clear()
         came.append(churn(lambda: name in said))
         end(state)
@@ -36,7 +38,7 @@ def waits(name, begin, block, end):
     thread = threading.Thread(target=target)
     thread.start()
     box = [A(name)]
-    is_about_to_block.set()
+    is_about_to_block.append(True)
     result = block(state)
     thread.join()
     said.clear()
@@ -57,7 +59,8 @@ def lock():
 
 def all_of_them(how):
     print(how)
-    waits("flock", lock, lambda files: fcntl.flock(files[1], fcntl.LOCK_EX), lambda files: files[0].close())
+    # (It closes what it has locked: a file that is only dropped keeps its lock until a collector comes, and the next round would wait for that.)
+    waits("flock", lock, lambda files: (fcntl.flock(files[1], fcntl.LOCK_EX), files[1].close())[0], lambda files: files[0].close())
     waits("open", lambda: None, lambda _: os.close(os.open(fifo, os.O_RDONLY)), lambda _: os.close(os.open(fifo, os.O_WRONLY)))
     waits("sleep", lambda: None, lambda _: time.sleep(0.5), lambda _: None)
 

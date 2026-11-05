@@ -2,7 +2,7 @@
 
 use crate::arena::SUB_SHIFT;
 use crate::ast::{
-    F_AWAIT, MK_MODULE, MOD_DECLARE, V_AWAIT_USING, V_CONST, V_LET, V_MASK, V_USING, k,
+    F_AWAIT, F_EXTRA, MK_MODULE, MOD_DECLARE, V_AWAIT_USING, V_CONST, V_LET, V_MASK, V_USING, k,
 };
 use crate::lexer::tk;
 use crate::mode::SINGLE_JSX_IN_MARKDOWN;
@@ -286,6 +286,11 @@ impl Quick {
                     if (self.n.at(n) & 0xff) == k::ReadyWrap {
                         // it ends with a block
                         return false;
+                    }
+                    if (self.n.at(n) & 0xff) == k::Ready {
+                        // it ends with `break` or `continue`, or with a statement of the first kind
+                        return (self.n.at(n) & F_EXTRA) != 0
+                            || self.full_end(n) != self.n.at(n + 2);
                     }
                     n = if self.n.at(n + 6) != 0 {
                         self.n.at(n + 6)

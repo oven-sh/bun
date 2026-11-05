@@ -4638,3 +4638,95 @@ describe("JavaScript and Flow that the long way rejects", () => {
     "await /a/;\n",
   ]);
 });
+
+describe("an `if` with a statement that is no block on its line", () => {
+  const clauses = [
+    "return",
+    "return;",
+    "return a && b;",
+    "return 'a';",
+    "return a, b;",
+    "return { a: 1 };",
+    "return () => {};",
+    "return (\n    a\n  );",
+    "return\n  a;",
+    "throw new Error('x');",
+    "throw",
+    "break",
+    "break;",
+    "break a;",
+    "continue;",
+    "a();",
+    "a()",
+    "a.b.c(d,e);",
+    "a = b",
+    "a=b;",
+    "a++;",
+    "++a;",
+    "a = b = c;",
+    "a = {\n    b: 1,\n  };",
+    "a = () => {};",
+    "this.a = b;",
+    "super.a();",
+    "new A();",
+    "await a();",
+    "yield a;",
+    "delete a.b;",
+    "let a;",
+    "let = 1;",
+    "const a = 1;",
+    "function g() {}",
+    "async();",
+    "type = 1;",
+    "type A = 1;",
+    "declare = 1;",
+    "module.exports = a;",
+    "a: b;",
+    ";",
+    "if (b) c();",
+    "if (b) c(); else d();",
+    "a(() => {\n    b();\n  });",
+    "a(\n    b,\n  );",
+    "a\n    .b();",
+    "a(); // c",
+    "a(); /* c */",
+    "/* c */ a();",
+    "return // c",
+    "a.b(x => x).c(y => y).d();",
+    "it('x', () => {});",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa();",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa();",
+    "return aaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbb(cccccccc, ddd);",
+  ];
+  const followers = [
+    "",
+    " else b();",
+    "\n  else b();",
+    "\n  // c\n  else b();",
+    "\n  (b)",
+    "\n  .b",
+    "\n\n  b();",
+    "\n  elsewhere();",
+  ];
+  const around: [string, string][] = [
+    ["async function* f() {\n  ", "\n}\n"],
+    ["a: for (;;) {\n  ", "\n}\n"],
+    ["class A extends B {\n  m() {\n  ", "\n  }\n}\n"],
+    ["function f() {\n  // prettier-ignore\n  ", "\n}\n"],
+  ];
+  const texts = around.flatMap(([before, after]) =>
+    clauses.flatMap(clause => followers.map(follower => `${before}if (!a) ${clause}${follower}${after}`)),
+  );
+  const heads = [
+    "if(a) b();\n",
+    "if (a)b();\n",
+    "if  ( a )  b();\n",
+    "if (a)\n  b();\n",
+    "if (a) /* c */ b();\n",
+    "if (a) // c\n  b();\n",
+  ];
+  const options = [[], ["--print-width=30"], ["--no-semi", "--single-quote"], ["--use-tabs", "--end-of-line=crlf"]];
+  describe("TypeScript", () => expectSame("a.ts", [...texts, ...heads], options));
+  describe("JavaScript", () => expectSame("a.js", [...texts, ...heads], options));
+  describe("Flow", () => expectSame("a.js.flow", [...texts, ...heads], [[]]));
+});

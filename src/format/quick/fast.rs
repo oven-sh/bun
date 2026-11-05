@@ -4390,8 +4390,95 @@ _ => {}
         return Ok(self.no(refusal::Export));
     }
 
-    /// `(a) {` of `if` and `while`; p is behind the keyword.
-    pub(crate) fn condition_and_block(&mut self, p: i32) -> R<i32> {
+    /// What stands behind `if (a)` on its line, at p, if it is no block but a simple statement and no `else` follows: `return b;`, `throw c;`, `break;`, `continue;`, a call, an
+    /// assignment. The condition, a line and the statement are one group, so all of it is printed flat if it fits. Returns what terminate() returns.
+    fn plain_clause(&mut self, p: i32) -> R<i32> {
+        let first = self.t.at(p);
+        if (CC.at(first) & ID_START) == 0 {
+            return Ok(self.no(refusal::Block));
+        }
+        let end = self.name_end(p + 1);
+        if (CC.at(self.t.at(end)) & BEYOND) != 0 {
+            return Ok(self.no(refusal::NotAscii));
+        }
+        let word = if (KW_LENGTHS.at(first).wrapping_shr((end - p) as u32) & 1) != 0 {
+            self.keyword_at(p, end - p)
+        } else {
+            0
+        };
+        // nothing in here opens a block, and no list in here stands on lines of its own
+        self.fast.no_block += 1;
+        let mut q: i32;
+        match if word == 0 { tk::Name } else { word & 255 } {
+            tk::Return | tk::Throw => {
+                let r = self.blanks(end);
+                let c = self.t.at(r);
+                if c == 59 || c == 10 || c == 0 || (c == 47 && self.t.at(r + 1) == 47) {
+                    q = if (word & 255) == tk::Throw {
+                        self.no(refusal::Block)
+                    } else {
+                        end
+                    };
+                } else if r == end {
+                    q = self.no(refusal::Block);
+                } else {
+                    let argument = self.spaced(end);
+                    q = self.open_expression(argument)?;
+                }
+            }
+            tk::Break | tk::Continue => {
+                // (a label is for the parser)
+                q = if (CC.at(self.t.at(self.blanks(end))) & ID_START) != 0
+                    || !self.can_jump((word & 255) == tk::Continue, 0)
+                {
+                    self.no(refusal::Block)
+                } else {
+                    // see should_ignored_node_print_semicolon()
+                    self.fast.ready_flags |= F_EXTRA;
+                    end
+                };
+            }
+            tk::Name | tk::This | tk::Super | tk::New => {
+                if ((word & 255) == tk::Name && (word >> 8) != kw::Await)
+                    || (self.fast.ts && self.is_declaration_word(p, end - p))
+                    || (self.fast.flow && self.is_flow_declaration_word(p, end - p))
+                {
+                    q = self.no(refusal::Block);
+                } else {
+                    q = self.open_expression(p)?;
+                    if q >= 0 && self.fast.shape == SH_ARROW {
+                        q = self.no(refusal::Block);
+                    }
+                    if q >= 0 && self.t.at(q) != 59 {
+                        let r = self.blanks(q);
+                        let length = self.assignment_operator(r);
+                        if length != 0 {
+                            q = if self.fast.assignable {
+                                self.initializer(q, r, length, false)?
+                            } else {
+                                self.no(refusal::Target)
+                            };
+                        }
+                    }
+                }
+            }
+            _ => {
+                q = self.no(refusal::Block);
+            }
+        }
+        self.fast.no_block -= 1;
+        if q < 0 {
+            return Ok(-1);
+        }
+        q = self.terminate(q, false);
+        if q >= 0 && self.word_is(self.next_char_index(self.fast.ready_next), b"else") {
+            return Ok(self.no(refusal::Block));
+        }
+        return Ok(q);
+    }
+
+    /// `(a) {` of `if` and `while`; p is behind the keyword. With `may_be_plain`, a simple statement can stand in the place of the block.
+    pub(crate) fn condition_and_block(&mut self, p: i32, may_be_plain: bool) -> R<i32> {
         let mut q = self.spaced(p);
         if self.t.at(q) != 40 {
             return Ok(self.no(refusal::Start));
@@ -4407,6 +4494,9 @@ _ => {}
         }
         q = self.spaced(q + 1);
         if self.t.at(q) != 123 {
+            if may_be_plain {
+                return self.plain_clause(q);
+            }
             return Ok(self.no(refusal::Block));
         }
         return Ok(self.open_block(q, 0));
@@ -5607,12 +5697,12 @@ impl Quick {
             tk::If => {
                 self.fast.ready_kind = k::IfStatement;
                 self.fast.tail = TAIL_IF;
-                p = self.condition_and_block(end)?;
+                p = self.condition_and_block(end, true)?;
             }
             tk::While => {
                 self.fast.ready_kind = k::WhileStatement;
                 self.fast.tail = TAIL_NONE;
-                p = self.condition_and_block(end)?;
+                p = self.condition_and_block(end, false)?;
             }
             tk::For => {
                 self.fast.tail = TAIL_NONE;
@@ -6047,7 +6137,7 @@ impl Quick {
                     self.fast.tail = TAIL_NONE;
                     q = self.open_block(q, 0);
                 } else if self.word_is(q, b"if") {
-                    q = self.condition_and_block(q + 2)?;
+                    q = self.condition_and_block(q + 2, false)?;
                 } else {
                     return Ok(AFTER_REFUSED);
                 }

@@ -1,7 +1,7 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
 import assert from "node:assert";
-import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
+import { devTest, emptyHtmlFile, imageFixtures, minimalFramework } from "../bake-harness";
 
 devTest("css module imported by its names, and a name added", {
   files: {
@@ -33,6 +33,47 @@ devTest("css module imported by its names, and a name added", {
   },
 });
 
+devTest("css module edited without a change of names updates in place", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["a.ts"],
+    }),
+    "a.ts": `
+      import styles from "./a.module.css";
+      document.body.className = styles.mark;
+      console.log("ran");
+    `,
+    "a.module.css": `
+      .mark { color: red; }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("ran");
+    // a.ts accepts nothing: sent again, it would reload the page.
+    await dev.patch("a.module.css", { find: "red", replace: "blue" });
+    await c.style("body").color.expect.toBe("blue");
+  },
+});
+devTest("css module's names reach a server render when one is added", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import styles from "../a.module.css";
+      export default function () {
+        return new Response(Object.keys(styles).join(","));
+      }
+    `,
+    "a.module.css": `
+      .mark { color: red; }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("mark");
+    await dev.patch("a.module.css", { find: ".mark", replace: ".extra { color: blue; }\n.mark" });
+    await dev.fetch("/").equals("extra,mark");
+  },
+});
 devTest("css file with syntax error does not kill old styles", {
   files: {
     "styles.css": `

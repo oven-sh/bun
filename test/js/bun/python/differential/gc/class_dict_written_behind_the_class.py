@@ -70,3 +70,57 @@ print(swap())
 dict_of(str)["swapcase"] = lambda self: "replaced"
 forget("")
 print(swap() in ("Ab", "replaced"))
+
+
+# What a class remembers of a name that was looked up in it, while no other name takes the place of that one. A collection of what is
+# new alone frees what was made since the last collection, and nothing else.
+def collect(generation):
+    junk = None
+    for i in range(100000):
+        junk = [junk and None, (i,), {i: i}, lambda: i]
+    gc.collect(generation)
+
+
+def remembered(generation):
+    class Base:
+        pass
+
+    class Derived(Base):
+        pass
+
+    derived = Derived()
+
+    def by_name(allowed):
+        results = []
+        for of in (derived, Derived, Base):
+            found = getattr(of, "method", None)
+            results.append(AttributeError if found is None else found(None) if isinstance(of, type) else found())
+        print("getattr() gives one of", allowed, ":", [result in allowed for result in results])
+
+    by_name((AttributeError,))
+    dict_of(Base)["method"] = make("first")
+    collect(generation)
+    by_name((AttributeError, "first"))
+    Base.method = make("old")
+    by_name(("old",))
+    for turn in range(5):
+        dict_of(Base)["method"] = make(turn)
+        collect(generation)
+        by_name(("old",) + tuple(range(turn + 1)))
+    del dict_of(Base)["method"]
+    collect(generation)
+    by_name(("old", 0, 1, 2, 3, 4, AttributeError))
+
+    # What is remembered has been through a collection before it is let go of.
+    Base.method = make("kept")
+    by_name(("kept",))
+    collect(generation)
+    by_name(("kept",))
+    del dict_of(Base)["method"]
+    for again in (generation, generation, 2):
+        collect(again)
+        by_name(("kept", AttributeError))
+
+
+for generation in (2, 0, 1):
+    remembered(generation)

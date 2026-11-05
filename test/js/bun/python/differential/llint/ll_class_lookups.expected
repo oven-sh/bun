@@ -1,0 +1,87 @@
+status: 0
+script: c49b13d9dab3a84e
+---
+--- more classes and names than anything remembers
+120000 4253 0
+--- what is not there, and then is
+["'C' object has no attribute 'late'", "'C' object has no attribute 'late'", "'C' object has no attribute 'late'"]
+['A', 'A', 'A'] ['A', 'A', 'A']
+["'C' object has no attribute 'late'", "'C' object has no attribute 'late'", "'C' object has no attribute 'late'"]
+['B', 'B', 'B'] ["type object 'A' has no attribute 'late'", 'B', 'B']
+["'C' object has no attribute 'late'", "'C' object has no attribute 'late'", "'C' object has no attribute 'late'"]
+['C', 'C', 'C'] ["type object 'A' has no attribute 'late'", "type object 'B' has no attribute 'late'", 'C']
+["'C' object has no attribute 'late'", "'C' object has no attribute 'late'", "'C' object has no attribute 'late'"]
+['B', 'B', 'B'] ["type object 'A' has no attribute 'late'", 'B', 'B']
+["'C' object has no attribute 'late'", "'C' object has no attribute 'late'", "'C' object has no attribute 'late'"]
+['A', 'A', 'A'] ['A', 'A', 'A']
+["'C' object has no attribute 'late'", "'C' object has no attribute 'late'", "'C' object has no attribute 'late'"]
+C A A
+A
+--- other bases
+X X 1 None
+Y Y None 2 ['E', 'D', 'Y', 'object']
+Y Y None 2
+X X 1 2 ['E', 'D', 'X', 'Y', 'object']
+X X 1 2
+Y Y 1 2 ['E', 'D', 'Y', 'X', 'object']
+Y Y 1 2
+X X 1 None ['E', 'D', 'X', 'object']
+--- another class for the object
+Y None 2
+X 1 None
+--- the metaclass
+meta method of meta on Derived not for instances
+of the class of the class
+changed
+gone
+--- special methods come and go
+len(s) TypeError; s[1] TypeError; s + 1 TypeError; bool(s) True; repr(s)[:3] <__; hash(s) == 7 False; s() TypeError; list(s) TypeError; 1 in s TypeError; 
+len(s) 3; s[1] 2; s + 1 added; bool(s) True; repr(s)[:3] rep; hash(s) == 7 True; s() called; list(s) [0, 2, 4]; 1 in s True; 
+len(s) TypeError; s[1] TypeError; s + 1 TypeError; bool(s) True; repr(s)[:3] <__; hash(s) == 7 False; s() TypeError; list(s) TypeError; 1 in s TypeError; 
+--- classes that come and go: a new one has nothing of an old one
+7
+--- values that come and go
+200 gone
+--- what the setters of a class put into its dict
+{'a': <class 'int'>} {'a': <class 'int'>}
+{'b': <class 'str'>} {'b': <class 'str'>} {'b': <class 'str'>}
+gone gone False
+__annotate__
+gone False
+__doc__ the doc -> other doc
+__doc__ other doc -> None
+__module__ __main__ -> elsewhere
+__module__ elsewhere -> here
+__abstractmethods__ nothing -> frozenset()
+__abstractmethods__ frozenset() -> {'m'}
+__type_params__ nothing -> ()
+__type_params__ () -> ()
+__annotate__ nothing -> nothing
+__annotate__ nothing -> nothing
+--- keys that are no strs, and act when they are asked
+by key by key by key by key True
+by key by key True 1 1
+5 5
+absent absent
+3 absent
+[1, 2, 3]
+1 gone
+gone
+--- threads
+[]
+--- names of all lengths, made anew each time
+1 [1, 1, 1] [1, 1, 1] nothing
+[-1, -1]
+gone gone
+99 [99, 99, 99] [99, 99, 99] nothing
+[-99, -99]
+gone gone
+100 [100, 100, 100] [100, 100, 100] nothing
+[-100, -100]
+gone gone
+101 [101, 101, 101] [101, 101, 101] nothing
+[-101, -101]
+gone gone
+5000 [5000, 5000, 5000] [5000, 5000, 5000] nothing
+[-5000, -5000]
+gone gone

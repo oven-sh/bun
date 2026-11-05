@@ -1163,6 +1163,7 @@ pub(crate) fn worker_ends_at_bail(reporter: &mut CommandLineReporter, vm: &mut V
 
 /// Set in `run_as_worker` so `worker_emit_test_done` (called from
 /// `CommandLineReporter.handleTestCompleted`) can reach the channel.
+/// Both run on the worker's one JS thread, so `Relaxed` is enough.
 static WORKER_CMDS: AtomicPtr<WorkerCommands> = AtomicPtr::new(core::ptr::null_mut());
 // Lifetime note: stores an 'a-bound pointer as 'static; sound because the
 // pointee outlives all callers (process exits before it's dropped).

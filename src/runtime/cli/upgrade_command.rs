@@ -1324,7 +1324,7 @@ pub(crate) mod upgrade_js_bindings {
 
     // Process-global, not threadlocal: if open/close are invoked from different
     // threads (main vs worker VM) a `thread_local!` would make the close see
-    // null and leak the HANDLE.
+    // null and leak the HANDLE. `Relaxed` is enough: no memory is published through it.
     #[cfg(windows)]
     static TEMPDIR_HANDLE: AtomicPtr<core::ffi::c_void> = AtomicPtr::new(core::ptr::null_mut());
 

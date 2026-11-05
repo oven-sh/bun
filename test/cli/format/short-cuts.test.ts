@@ -4826,6 +4826,25 @@ it.each\`
     expect(different).toEqual([]);
     expect(said).toEqual(expected);
   });
+
+  // The comment before `class` is refused, and what takes over pays for its own short cuts and for the long way.
+  test("a class with many decorators takes linear time where it is refused", async () => {
+    using dir = tempDir("format-short-cuts", { "a.js": "@a // c\n".repeat(isDebug ? 2_000 : 40_000) + "class A {}\n" });
+    const cpu = async (own: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fmt", "--check", "--no-config", "--no-editorconfig", "--log-level=silent", ...own, "a.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      expect(await proc.exited).toBe(0);
+      // (Windows counts in ticks of 1/64 s)
+      return Math.max(Number(proc.resourceUsage()?.cpuTime.total ?? 0) / 1e6, 1 / 64);
+    };
+    // 1.4 in a release build, and 17 when each decorator walked all of them.
+    expect((await cpu([])) / (await cpu(["--no-short-cuts"]))).toBeLessThan(6);
+  });
 });
 
 describe("JavaScript and Flow that the long way rejects", () => {

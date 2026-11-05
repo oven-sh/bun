@@ -501,6 +501,8 @@ impl<'a> Line<'_, 'a> {
         }
         let tag = statement.tag();
         let mut rank = 0;
+        // Looked for once: the search walks all the modifiers.
+        let mut export = None;
         for modifier in modifiers {
             // The decorators of a class are each on a line.
             if let Some(decorator) = modifier.decorator() {
@@ -508,7 +510,9 @@ impl<'a> Line<'_, 'a> {
                     return Err(Refused);
                 }
                 // One that the `export` follows without a blank is printed after it.
-                if (statement.export_span()).is_some_and(|it| it.start <= decorator.span().end) {
+                if (*export.get_or_insert_with(|| statement.export_span()))
+                    .is_some_and(|it| it.start <= decorator.span().end)
+                {
                     return Err(Refused);
                 }
                 let breaks = std::mem::replace(&mut self.breaks, false);

@@ -1867,16 +1867,18 @@ function installOperator(key: string, length: number, call: (this: $Node.Readabl
   });
 }
 
-for (const name in streamOperatorLengths) {
-  const key = name as keyof typeof streamOperatorLengths;
+const streamOperatorKeys = ObjectKeys(streamOperatorLengths) as (keyof typeof streamOperatorLengths)[];
+for (let i = 0; i < streamOperatorKeys.length; i++) {
+  const key = streamOperatorKeys[i];
   let op: ((this: $Node.Readable, ...args: any[]) => AsyncIterable<unknown>) | undefined;
   installOperator(key, streamOperatorLengths[key], function (args) {
     op ??= (operators ??= require("internal/streams/operators")).streamReturningOperators[key];
     return Stream.Readable.from(op.$apply(this, args));
   });
 }
-for (const name in promiseOperatorLengths) {
-  const key = name as keyof typeof promiseOperatorLengths;
+const promiseOperatorKeys = ObjectKeys(promiseOperatorLengths) as (keyof typeof promiseOperatorLengths)[];
+for (let i = 0; i < promiseOperatorKeys.length; i++) {
+  const key = promiseOperatorKeys[i];
   let op: ((this: $Node.Readable, ...args: any[]) => Promise<unknown>) | undefined;
   installOperator(key, promiseOperatorLengths[key], function (args) {
     op ??= (operators ??= require("internal/streams/operators")).promiseReturningOperators[key];

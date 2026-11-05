@@ -19,7 +19,16 @@ impl TimeoutObject {
         arguments: JSValue,
         clock: Clock,
     ) -> JSValue {
-        Self::init_with(cx, id, async_hooks_id, kind, interval, callback, arguments, clock)
+        Self::init_with(
+            cx,
+            id,
+            async_hooks_id,
+            kind,
+            interval,
+            callback,
+            arguments,
+            clock,
+        )
     }
 
     pub(crate) fn refresh(

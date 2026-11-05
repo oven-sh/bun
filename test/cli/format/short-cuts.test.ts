@@ -5345,6 +5345,21 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
       'switch(a){case(()=>f):{import""with{t:""}}//prettier-ignore\n;case c:}\n',
     ],
     ["a.jsx", "--print-width=10 --tab-width=5 --no-semi", "{/*\nd*/;e2|n}\n"],
+    // A member that does not fit, behind a line comment: the line break of the comment and its own.
+    ["a.js", "--print-width=2", "a()//\n.b\n"],
+    ["a.js", "--print-width=11", "a()//\n.bbbbbbbbbb\n"],
+    ["a.ts", "--print-width=3", "const{a=x,b,c}=//\nx.#a\n"],
+    ["a.ts", "--print-width=1", "const a:b<X,Y extends c?d:e>=//\nt.e.n\n"],
+    ["a.ts", "--print-width=3", "(`${a()//\n.b}`)\n"],
+    ["a.js", "--print-width=7", "e()//\n.t/**/\n"],
+    // Comments: behind a `=` before what starts with a function whose first parameter is `this`, before the body of an arrow function, at the start of what is yielded.
+    ["a.ts", "", "const a=//\nfunction(this:X){}satisfies Y\n"],
+    ["a.ts", "--print-width=6", '(c)=>//\n{""}\n'],
+    ["a.ts", "", "<X>()=>//\n{''}\n"],
+    ["a.ts", "", "function*a(){b=yield(\n/**/\nx)|b}\n"],
+    ["a.ts", "", "function*a(){yield a()\n/**/\n.b}\n"],
+    ["a.ts", "", "function*a(){yield(/**/\nx?a:b)?c:d}\n"],
+    ["a.ts", "", "function*a(){yield(\n/**/\nx as Y)()}\n"],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

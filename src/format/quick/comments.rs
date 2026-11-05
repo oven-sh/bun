@@ -226,6 +226,29 @@ impl Quick {
             && (self.n.at(n) & F_CHAIN) != 0
     }
 
+    /// Is `n` what a `yield` yields, or what that starts with?
+    fn starts_what_is_yielded(&self, mut n: i32) -> bool {
+        loop {
+            let parent = self.n.at(n + 3);
+            if self.n.at(parent + 4) != n {
+                return false;
+            }
+            match self.n.at(parent) & 0xff {
+                k::YieldExpression => return true,
+                k::MemberExpression
+                | k::CallExpression
+                | k::NonNullExpression
+                | k::AsExpression
+                | k::SatisfiesExpression
+                | k::BinaryExpression
+                | k::LogicalExpression
+                | k::ConditionalExpression
+                | k::TaggedTemplateExpression => n = parent,
+                _ => return false,
+            }
+        }
+    }
+
     /// Is `n` the left side of an assignment or the key of a property, or what that starts with?
     fn starts_target(&self, mut n: i32) -> bool {
         loop {
@@ -339,6 +362,12 @@ impl Quick {
         {
             return false;
         }
+        // at the start of what is yielded, which the long way gives parentheses then as if it were returned
+        if (inside == k::MemberExpression || self.n.at(c.h_enclosing + 4) == c.h_following)
+            && self.starts_what_is_yielded(c.h_enclosing)
+        {
+            return false;
+        }
         // between the decorators and what they decorate, on the line of that
         if c.h_is_block
             && c.h_preceding_kind == k::Decorator
@@ -435,9 +464,10 @@ impl Quick {
             && behind == 40
             && self.t.at(c.h_start + 2) == 42
             && ((form == MID_BLOCK
-                && (self.parse.typed == TYPED_FLOW || inside == k::ConditionalExpression))
-                // (at the start of a statement Prettier writes a `;` before it)
-                || !self.options.semi
+                && (self.parse.typed == TYPED_FLOW
+                    || inside == k::ConditionalExpression
+                    // (at the start of a statement Prettier writes a `;` before it)
+                    || !self.options.semi))
                 // (an object at the start of a statement has parentheses of its own on the long way)
                 || self.next_significant_char(self.next_char_index(c.h_end) + 1) == 123)
         {
@@ -491,7 +521,18 @@ impl Quick {
                 !is_part_of_word(before)
                     && !(form == END_LINE && {
                         let mut function = c.h_following;
-                        while (self.n.at(function) & 0xff) == k::UnaryExpression {
+                        while matches!(
+                            self.n.at(function) & 0xff,
+                            k::UnaryExpression
+                                | k::AsExpression
+                                | k::SatisfiesExpression
+                                | k::NonNullExpression
+                                | k::MemberExpression
+                                | k::CallExpression
+                                | k::BinaryExpression
+                                | k::LogicalExpression
+                                | k::ConditionalExpression
+                        ) {
                             function = self.n.at(function + 4);
                         }
                         let first = self.n.at(self.n.at(function + 6) + 1);
@@ -501,6 +542,8 @@ impl Quick {
             }
             // behind the `(`
             k::TypeCastExpression => before != 40,
+            // before a body, which may start with a directive
+            k::ArrowFunctionExpression => behind != 123,
             // (a DeclareTypeAlias is no TypeAlias)
             k::TypeAlias => {
                 !is_part_of_word(before)

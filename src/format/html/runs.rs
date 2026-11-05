@@ -1606,11 +1606,10 @@ impl<'a> Scanner<'_, 'a> {
             return Item::No;
         };
         let name_end = start + 1 + name.len();
-        let Some((at, width)) = self.read_tag(name, name_end, name_end - start, false) else {
+        let Some((at, width)) = self.read_tag(name, name_end, name_end - start, true) else {
             return Item::No;
         };
-        // The attributes of a block are laid out in another way where they do not fit.
-        if self.at(at) != b'>' || width + 1 > self.settings.line_width {
+        if self.at(at) != b'>' {
             return Item::No;
         }
         // Some attributes with a value are code, some say where the code is.
@@ -1639,12 +1638,11 @@ impl<'a> Scanner<'_, 'a> {
             _ => return Item::No,
         };
         let item = match self.end_tag(at + 1, name, data::key_of_name(name)) {
-            // The end tag is on the line of the start tag.
-            Some(end)
-                if self.ends_line(end)
-                    && width + 1 + name.len() + 3 <= self.settings.line_width =>
-            {
-                self.put_whole_tag(start, name_end, false);
+            Some(end) if self.ends_line(end) => {
+                // The end tag is on the line of `>`.
+                let is_broken = !self.attributes.is_empty()
+                    && width + 1 + name.len() + 3 > self.settings.line_width;
+                self.put_whole_tag(start, name_end, is_broken);
                 self.put_end_tag_at(name, at + 1, end);
                 self.ends_in_text = false;
                 Item::Ends(end)
@@ -1990,7 +1988,14 @@ impl<'a> Scanner<'_, 'a> {
             return Some(Item::Ends(end));
         }
         if self.has_odd_pieces {
-            return Some(Item::No);
+            let item = match self.text.get(first..first + 2) {
+                Some(b"{{") => {
+                    let (tag, content) = ((width, open_end), (first, ends, end));
+                    self.element_with_interpolation(start, element, tag, content, mark)
+                }
+                _ => None,
+            };
+            return Some(item.unwrap_or(Item::No));
         }
         // The start tag once more: its attributes have made room for those of the elements.
         self.out.reset(mark);
@@ -2515,7 +2520,7 @@ impl<'a> Scanner<'_, 'a> {
                         let part = self.text.get(from..at)?;
                         excess += part.len() - width_of_word(part).min(part.len());
                     }
-                    at = self.interpolation(at)?;
+                    at = self.interpolation(at, None)?;
                     from = at;
                     continue;
                 }
@@ -2547,12 +2552,31 @@ impl<'a> Scanner<'_, 'a> {
         self.settings.parser == Parser::Vue
     }
 
-    /// `{{`, an expression that is printed as it is written, and `}}`, from `start` on: writes it on one line. Returns
-    /// where it ends.
+    /// What is printed for `{{`, or for `}}`, and the white space between it and the expression. See `interpolation`.
+    fn put_braces(&mut self, is_opening: bool, broken_at: Option<usize>) {
+        match (is_opening, broken_at) {
+            (true, None) => self.out.put(b"{{ "),
+            (false, None) => self.out.put(b" }}"),
+            (true, Some(level)) => {
+                self.out.put(b"{{");
+                self.put_line(level + 1);
+            }
+            (false, Some(level)) => {
+                self.put_line(level);
+                self.out.put(b"}}");
+            }
+        }
+    }
+
+    /// `{{`, an expression that is printed on one line, and `}}`, from `start` on: writes it on one line, or, with
+    /// `broken_at`, the expression on a line of its own between braces at that level. Returns where it ends.
     #[inline(never)]
-    fn interpolation(&mut self, start: usize) -> Option<usize> {
+    fn interpolation(&mut self, start: usize, broken_at: Option<usize>) -> Option<usize> {
         (self.has_odd_pieces, self.has_interpolation) = (true, true);
         if !self.settings.formats_embedded {
+            if broken_at.is_some() {
+                return None;
+            }
             // It is printed as it is written, whatever it is. Only on one line, so no more is looked at: a text can have
             // many `{{` and no `}}`.
             let rest = self.text.get(start + 3..)?;
@@ -2567,59 +2591,116 @@ impl<'a> Scanner<'_, 'a> {
                 end
             });
         }
-        let mut from = start + 2;
-        while self.at(from) == b' ' {
-            from += 1;
-        }
+        let from = self.skip_space(start + 2).0;
         let closing_braces_behind = |to: usize| {
-            let mut close = to;
-            while self.at(close) == b' ' {
-                close += 1;
-            }
+            let close = self.skip_space(to).0;
             (self.text.get(close..close + 2) == Some(b"}}")).then_some(close)
+        };
+        // What is known to be printed as it is written is known to be if it fits on its line.
+        let has_room = |to: usize| {
+            broken_at.is_none_or(|level| {
+                (level + 1) * self.settings.indent_width + (to - from) <= self.settings.line_width
+            })
         };
         let spelling = self.settings.spelling;
         let as_written = canonical::expression_end(self.text, from, spelling)
             .and_then(|to| Some((to, closing_braces_behind(to)?)));
         if let Some((to, close)) = as_written {
-            self.out.put(b"{{ ");
+            if !has_room(to) {
+                return None;
+            }
+            self.put_braces(true, broken_at);
             self.out.source(from, to);
-            self.out.put(b" }}");
+            self.put_braces(false, broken_at);
             return Some(close + 2);
         }
         let in_other_quotes = canonical::expression_end_in_other_quotes(self.text, from, spelling)
             .and_then(|(to, quote)| Some((to, quote, closing_braces_behind(to)?)));
         let Some((to, quote, close)) = in_other_quotes else {
-            return self.interpolation_with_code(start);
+            return self.interpolation_with_code(start, broken_at);
         };
-        self.out.put(b"{{ ");
+        if !has_room(to) {
+            return None;
+        }
+        self.put_braces(true, broken_at);
         for &byte in self.text.get(from..to)? {
             self.out.push(match byte {
                 b'"' | b'\'' => quote,
                 _ => byte,
             });
         }
-        self.out.put(b" }}");
+        self.put_braces(false, broken_at);
         Some(close + 2)
     }
 
-    /// The same on a line of its own, if it fits.
+    /// The same at `level`, where a line starts and a line break follows: on one line if it fits.
+    fn interpolation_at(&mut self, start: usize, level: usize) -> Option<usize> {
+        let (mark, written_from) = (self.out.mark(), self.out.len());
+        let end = self.interpolation(start, None)?;
+        let width = level * self.settings.indent_width + (self.out.len() - written_from);
+        if width <= self.settings.line_width {
+            return Some(end);
+        }
+        self.out.reset(mark);
+        self.interpolation(start, Some(level))
+            .filter(|it| *it == end)
+    }
+
+    /// The same as a child on lines of its own.
     #[inline(never)]
     fn interpolation_on_line(&mut self, start: usize) -> Item {
         // The group around a child is what keeps it on one line.
         if self.siblings.are_in_no_groups {
             return Item::No;
         }
-        let written_from = self.out.len();
-        let Some(end) = self.interpolation(start).filter(|end| self.ends_line(*end)) else {
+        let Some(end) =
+            (self.interpolation_at(start, self.siblings.level)).filter(|end| self.ends_line(*end))
+        else {
             return Item::No;
         };
-        let indentation = self.siblings.level * self.settings.indent_width;
-        if indentation + (self.out.len() - written_from) > self.settings.line_width {
-            return Item::No;
-        }
         self.ends_in_text = true;
         Item::Ends(end)
+    }
+
+    /// An element with nothing but `{{ }}` in it, from `first` to `ends.end`, that does not fit on one line. What has
+    /// been written since `mark` is taken back. See `element_with_pieces`.
+    #[cold]
+    #[inline(never)]
+    fn element_with_interpolation(
+        &mut self,
+        start: usize,
+        element: Element<'_>,
+        (width, open_end): (usize, usize),
+        (first, ends, end): (usize, PiecesEnd, usize),
+        mark: Mark,
+    ) -> Option<Item> {
+        let Element { name, name_end, .. } = element;
+        let level = self.siblings.level;
+        let room = (self.settings.line_width).saturating_sub(level * self.settings.indent_width);
+        let (has_space_in_front, has_space_behind) = (first > open_end, ends.next > ends.end);
+        let is_inline = element.display == Display::Inline;
+        // With white space on one side alone, the tag on the other side is broken.
+        if self.pieces.len() != 1 || (is_inline && has_space_in_front != has_space_behind) {
+            return None;
+        }
+        self.out.reset(mark);
+        let has_attributes = !self.attributes.is_empty();
+        if is_inline && !has_space_in_front {
+            // `shouldHugContent`: the braces stay with the tags. The start tag has to fit together with them, with or
+            // without attributes: what follows depends on whether its group is broken.
+            if width + 3 > room {
+                return None;
+            }
+            self.put_whole_tag(start, name_end, false);
+            (self.interpolation(first, Some(level))).filter(|it| *it == ends.end)?;
+        } else {
+            self.put_whole_tag(start, name_end, has_attributes && width + 1 > room);
+            self.put_line(level + 1);
+            (self.interpolation_at(first, level + 1)).filter(|it| *it == ends.end)?;
+            self.put_line(level);
+        }
+        self.put_end_tag_at(name, ends.next, end);
+        Some(Item::Ends(end))
     }
 
     /// The element that starts at `start`, in a line with its siblings in `parent`, if it has nothing or words in it, all
@@ -2927,7 +3008,7 @@ impl<'a> Scanner<'_, 'a> {
             [b':' | b'.', ..] => true,
             [b'@', ..] => false,
             [b'v', b'-', rest @ ..] => match rest {
-                b"for" | b"slot" | [b's', b'l', b'o', b't', b':', ..] => return None,
+                b"slot" | [b's', b'l', b'o', b't', b':', ..] => return None,
                 _ => rest.starts_with(b"bind:"),
             },
             _ => return None,
@@ -2949,17 +3030,55 @@ impl<'a> Scanner<'_, 'a> {
         }
         let is_typescript = self.assumes_typescript();
         let Guests { options, scripts } = self.guests.as_mut()?;
+        let super::Scripts {
+            quick,
+            formatted: printed,
+            name: before,
+        } = &mut **scripts;
+        before.clear();
+        before.extend_from_slice(rest.get(..len + 2)?);
+        // The left side of `v-for`, if it is nothing but names, is written in front of the right side.
+        let (mut code, mut names) = (value, 0);
+        if name == b"v-for" {
+            let v_for = super::vue::parse_vue_v_for_directive(value)?;
+            let left = (v_for.left.split(|it| it.is_empty()).next()).filter(|it| !it.is_empty())?;
+            // The same name twice is an error.
+            let is_new =
+                |(index, it): (usize, &&[u8])| !left.iter().take(index).any(|name| name == it);
+            if !left.iter().all(|it| canonical::is_name(it)) || !left.iter().enumerate().all(is_new)
+            {
+                return None;
+            }
+            (code, names) = (v_for.right, left.len());
+            before.extend_from_slice(if names > 1 { b"(" } else { b"" });
+            for (index, it) in left.iter().enumerate() {
+                before.extend_from_slice(if index > 0 { b", " } else { b"" });
+                before.extend_from_slice(it);
+            }
+            before.extend_from_slice(if names > 1 { b") " } else { b" " });
+            before.extend_from_slice(v_for.operator);
+            before.push(b' ');
+        }
         let expression = crate::js::quick::Expression {
-            text: value,
+            text: code,
             is_typescript,
             has_filters,
-            attribute: rest.get(..len + 2),
-            hugs: false,
+            attribute: Some(before),
+            hugs: names > 0,
             indentation: self.siblings.level as u32 + 1,
         };
-        let printed = &mut scripts.formatted;
-        crate::js::quick::format_expression(expression, options, &mut scripts.quick, printed)
-            .ok()?;
+        crate::js::quick::format_expression(expression, options, quick, printed).ok()?;
+        // The parentheses around the names are broken if there is no room for what follows them up to the first place
+        // where the right side can be broken.
+        if names > 1 {
+            let first_line = bun_core::strings::index_of_char_usize(printed, b'\n');
+            if (self.siblings.level + 1) * self.settings.indent_width
+                + first_line.unwrap_or(printed.len())
+                > self.settings.line_width
+            {
+                return None;
+            }
+        }
         let mut kinds = 0;
         for &byte in printed.iter() {
             kinds |= match byte {
@@ -3060,7 +3179,7 @@ impl<'a> Scanner<'_, 'a> {
     /// `interpolation` for an expression that is not known to be printed as it is written.
     #[cold]
     #[inline(never)]
-    fn interpolation_with_code(&mut self, start: usize) -> Option<usize> {
+    fn interpolation_with_code(&mut self, start: usize, broken_at: Option<usize>) -> Option<usize> {
         self.guests.as_ref()?;
         // Where the lexer ends it, and where `extractInterpolation` does.
         let end = self.interpolation_end(start)?;
@@ -3076,7 +3195,7 @@ impl<'a> Scanner<'_, 'a> {
             has_filters: true,
             attribute: None,
             hugs: false,
-            indentation: self.siblings.level as u32 + 1,
+            indentation: broken_at.unwrap_or(self.siblings.level) as u32 + 1,
         };
         let printed = &mut scripts.formatted;
         crate::js::quick::format_expression(expression, options, &mut scripts.quick, printed)
@@ -3085,9 +3204,13 @@ impl<'a> Scanner<'_, 'a> {
         if printed.is_empty() || !printed.iter().all(|byte| matches!(byte, b' '..=b'~')) {
             return None;
         }
-        self.out.put(b"{{ ");
-        self.out.put(printed);
-        self.out.put(b" }}");
+        let (from, to) = (self.formatted.len(), self.formatted.len() + printed.len());
+        self.formatted.extend_from_slice(printed);
+        self.put_braces(true, broken_at);
+        self.out
+            .put(self.formatted.get(from..to).unwrap_or_default());
+        self.put_braces(false, broken_at);
+        self.formatted.truncate(from);
         Some(end)
     }
 

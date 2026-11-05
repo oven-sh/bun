@@ -396,6 +396,42 @@ impl Bytes for Vec<u8> {
     }
 }
 
+const ONES: u64 = 0x0101_0101_0101_0101;
+const TOP_BITS: u64 = 0x8080_8080_8080_8080;
+
+/// Eight bytes at a time: the top bit of the first byte of `v` that is `byte` is set, none below it; what is set above it says nothing.
+#[inline(always)]
+pub(crate) fn where_byte_is(v: u64, byte: u8) -> u64 {
+    let x = v ^ ONES.wrapping_mul(byte as u64);
+    x.wrapping_sub(ONES) & !x & TOP_BITS
+}
+
+/// The same for the first byte that is not printable ASCII: below a blank, 127, or beyond.
+#[inline(always)]
+pub(crate) fn where_not_printable(v: u64) -> u64 {
+    (v | v.wrapping_sub(ONES.wrapping_mul(32)) | v.wrapping_add(ONES)) & TOP_BITS
+}
+
+/// The same for the first byte that is no letter of ASCII, no digit, no `_` and no `$`.
+/// (x + (0x80 - low)) & !(x + (0x7f - high)) has the top bit set for low <= x <= high, for x below 0x80, without carries.
+#[inline(always)]
+pub(crate) fn where_name_ends(v: u64) -> u64 {
+    let x = v & !TOP_BITS;
+    let lower = x | ONES.wrapping_mul(0x20);
+    let is_part = (lower.wrapping_add(ONES.wrapping_mul(0x1f))
+        & !lower.wrapping_add(ONES.wrapping_mul(0x05)))
+        | (x.wrapping_add(ONES.wrapping_mul(0x50)) & !x.wrapping_add(ONES.wrapping_mul(0x46)))
+        | !(x ^ ONES.wrapping_mul(b'_' as u64)).wrapping_add(ONES.wrapping_mul(0x7f))
+        | !(x ^ ONES.wrapping_mul(b'$' as u64)).wrapping_add(ONES.wrapping_mul(0x7f));
+    !(is_part & !v) & TOP_BITS
+}
+
+/// How many bytes stand before the first one that is marked.
+#[inline(always)]
+pub(crate) fn bytes_before(marks: u64) -> i32 {
+    (marks.trailing_zeros() >> 3) as i32
+}
+
 pub(crate) fn zeros<T: Default + Clone>(length: i32) -> Vec<T> {
     vec![T::default(); length.max(0) as usize]
 }
@@ -523,6 +559,18 @@ impl Quick {
     pub(crate) fn stop(&self, why: i32) -> Stop {
         self.why.set(why);
         Stop
+    }
+
+    /// Where the letters of ASCII, digits, `_` and `$` from `p` on end.
+    #[inline(always)]
+    pub(crate) fn name_end(&self, mut p: i32) -> i32 {
+        loop {
+            let ends = where_name_ends(self.t.u64_at(p));
+            if ends != 0 {
+                return p + bytes_before(ends);
+            }
+            p += 8;
+        }
     }
 
     /// Nothing of what a stage has left behind is read if part of it is lost.

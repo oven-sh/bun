@@ -1650,6 +1650,15 @@ impl RemoveFileVTable<'_> {
                 Ok(())
             }
             OnDir::Recurse { need_to_wait_out } => {
+                // Only an operand gets here, and its own unlink just called it a
+                // directory. POSIX: rm does nothing with an operand whose last
+                // component is `.` or `..`, so the walk must not start.
+                if self.task.opts.recursive
+                    && matches!(bun_paths::basename(path.as_bytes()), b"." | b"..")
+                {
+                    return Err(bun_sys::Error::from_code(E::EINVAL, bun_sys::Tag::rmdir)
+                        .with_path(path.as_bytes()));
+                }
                 self.task
                     .remove_entry_dir(parent, is_absolute, buf, need_to_wait_out)
             }

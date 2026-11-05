@@ -742,8 +742,10 @@ const processDeclarations = b.declarations(
 );
 
 // These programmatically installed slots expose data descriptors but retain live native get/set callbacks.
-export default processDeclarations.map((declaration): b.Declaration =>
-  declaration.declares === "Member" && (declaration.path === "process.ppid" || declaration.path === "process.title")
-    ? { ...declaration, kind: "DataProperty" }
-    : declaration,
+export default b.declarations(
+  processDeclarations.declarations.map((declaration): b.Declaration =>
+    declaration.declares === "Member" && (declaration.path === "process.ppid" || declaration.path === "process.title")
+      ? { ...declaration, kind: "DataProperty" }
+      : declaration,
+  ),
 );

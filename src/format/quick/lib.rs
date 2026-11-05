@@ -400,6 +400,24 @@ impl Bytes for Vec<u8> {
     }
 }
 
+/// Copies `COUNT` bytes from `from[s..]` to `to[o..]`, if both have as many. Whoever calls this has room for all of them, and wants some.
+#[inline(always)]
+pub(crate) fn copy_block<const COUNT: usize>(to: &mut [u8], o: i32, from: &[u8], s: i32) -> bool {
+    let (o, s) = (o as u32 as usize, s as u32 as usize);
+    match (
+        to.get_mut(o..o + COUNT)
+            .and_then(|block| block.first_chunk_mut::<COUNT>()),
+        from.get(s..s + COUNT)
+            .and_then(|block| block.first_chunk::<COUNT>()),
+    ) {
+        (Some(to), Some(from)) => {
+            *to = *from;
+            true
+        }
+        _ => false,
+    }
+}
+
 const ONES: u64 = 0x0101_0101_0101_0101;
 const TOP_BITS: u64 = 0x8080_8080_8080_8080;
 

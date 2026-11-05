@@ -50,10 +50,11 @@ impl Quick {
     /// Appends the document of T[start, end), read as `language`, without a line break at its end.
     /// Returns false, and leaves the document as it was, if that text has a syntax error or the language is not there.
     pub(crate) fn embed(&mut self, _language: i32, _start: i32, _end: i32) -> R<bool> {
-        Ok(false)
+        // No other language is here: the long way prints the file.
+        Err(self.stop(crate::why::RARE))
     }
 
     pub(crate) fn is_registered(&self, _language: i32) -> bool {
-        false
+        true
     }
 }

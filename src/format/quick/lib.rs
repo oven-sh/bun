@@ -1,5 +1,8 @@
 //! The quick way for JavaScript and TypeScript.
 
+// Until what the long way keeps for itself has been taken out.
+#![allow(dead_code, unused_mut, unused_variables, unused_assignments)]
+
 mod arena;
 mod ast;
 mod comments;

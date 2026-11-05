@@ -683,6 +683,7 @@ dependencies = [
  "bun_ast",
  "bun_collections",
  "bun_core",
+ "bun_format_quick",
  "bun_glob",
  "bun_highway",
  "bun_lint",
@@ -704,6 +705,10 @@ dependencies = [
  "bun_format",
  "bun_sys",
 ]
+
+[[package]]
+name = "bun_format_quick"
+version = "0.0.0"
 
 [[package]]
 name = "bun_glob"

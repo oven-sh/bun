@@ -329,6 +329,15 @@ impl Quick {
         Ok(())
     }
 
+    /// Why the last text was refused: one of `why`.
+    pub fn why(&self) -> i32 {
+        self.why
+    }
+
+    pub fn failed_at(&self) -> i32 {
+        self.failed_at
+    }
+
     /// How many files were formatted twice.
     pub fn redone(&self) -> i32 {
         self.redone
@@ -389,11 +398,5 @@ impl Quick {
     }
     pub fn kept(&self) -> &[Vec<i32>] {
         &self.kept
-    }
-    pub fn why(&self) -> i32 {
-        self.why
-    }
-    pub fn failed_at(&self) -> i32 {
-        self.failed_at
     }
 }

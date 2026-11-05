@@ -464,6 +464,7 @@ fn syntax_error_at(text: &[u8], SyntaxError(message, offset): SyntaxError) -> Pr
 #[derive(Default)]
 struct Scratches {
     js: Scratch,
+    quick: bun_format::quick::Scratch,
     json: bun_format::json::Scratch,
     css: bun_format::css::Scratch,
     graphql: bun_format::graphql::Scratch,
@@ -489,6 +490,21 @@ impl Scratches {
         if let Some(blocks) = &mut self.blocks {
             blocks.forget_other_files();
         }
+    }
+
+    /// Starts to count, from zero, which scripts go the quick way.
+    fn count_quick_way(&mut self) {
+        self.quick.counts = Some(Default::default());
+        self.blocks.get_or_insert_default().quick.counts = Some(Default::default());
+    }
+
+    /// What has been counted since.
+    fn quick_way_counts(&self) -> impl Iterator<Item = &bun_format::quick::Counts> {
+        let blocks = self.blocks.as_deref();
+        [Some(&self.quick), blocks.map(|it| &it.quick)]
+            .into_iter()
+            .flatten()
+            .filter_map(|it| it.counts.as_deref())
     }
 
     /// An empty buffer for what a text of `len` bytes is formatted to.
@@ -903,6 +919,23 @@ fn format_script(
     let has_comment_types = is_flow
         && bun_format::flow::is_parsed_by_babel_flow(options, path)
         && bun_format::flow::may_have_comment_types(&text);
+    if !verifies && !has_comment_types {
+        let code = bun_format::quick::Code {
+            path,
+            text: &text,
+            is_flow,
+        };
+        let mut out = scratch.buffer_for(text.len());
+        match bun_format::quick::format(code, options, &mut scratch.quick, &mut out) {
+            Ok(()) => {
+                if resolved.omits_final_newline {
+                    without_final_newline(&mut out);
+                }
+                return Ok((out, None));
+            }
+            Err(bun_format::quick::Refused) => scratch.spare = out,
+        }
+    }
     let text = match has_comment_types {
         true => {
             let how = How {
@@ -2018,9 +2051,10 @@ impl Run<'_> {
             for round in 0..options.bench {
                 // A round stands for a run.
                 for worker in &workers {
-                    if let Some(worker) = &mut *worker.lock() {
-                        worker.scratch.forget_other_files();
-                    }
+                    let mut worker = worker.lock();
+                    let worker = worker.get_or_insert_default();
+                    worker.scratch.forget_other_files();
+                    worker.scratch.count_quick_way();
                 }
                 let began = Instant::now();
                 let format_loaded = |worker: &mut Worker, at: usize| {
@@ -2040,6 +2074,31 @@ impl Run<'_> {
                 let _ = writeln!(self.out.stderr, "round {round}: {took:.2} ms");
             }
             let _ = writeln!(self.out.stderr, "best round {best:.2} ms");
+            let mut counts = bun_format::quick::Counts::default();
+            for worker in &workers {
+                let worker = worker.lock();
+                let scratch = worker.as_deref().map(|it| &it.scratch);
+                for it in scratch.into_iter().flat_map(Scratches::quick_way_counts) {
+                    counts.printed.merge(it.printed);
+                    for (sum, count) in counts.refused.iter_mut().zip(it.refused) {
+                        sum.merge(count);
+                    }
+                }
+            }
+            let _ = writeln!(
+                self.out.stderr,
+                "the quick way: {} scripts, {} bytes",
+                counts.printed.texts, counts.printed.bytes
+            );
+            for (reason, count) in bun_format::quick::Reason::ALL.iter().zip(counts.refused) {
+                if count.texts > 0 {
+                    let _ = writeln!(
+                        self.out.stderr,
+                        "  refused, {reason:?}: {} scripts, {} bytes",
+                        count.texts, count.bytes
+                    );
+                }
+            }
             return self.out;
         }
         // Keyed by the file's index in `expanded`.

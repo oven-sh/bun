@@ -22,7 +22,7 @@
 //! All that's measured is printable ASCII, so a width is a number of bytes.
 
 use super::parser::is_directive_location;
-use super::tokens::{NOT_ON_LINES, end_of_block_string, end_of_number};
+use super::tokens::{end_of_block_string, end_of_number};
 use crate::FormatOptions;
 use bun_core::strings;
 use bun_highway::ScannerStops;
@@ -356,7 +356,7 @@ impl<'t, 'o> Lines<'t, 'o> {
         let end = match self.starts_with(at, b"\"\"\"") {
             true => {
                 let (end, on_lines) = end_of_block_string(self.text, self.stops, at)?;
-                (on_lines != NOT_ON_LINES && on_lines as usize == indentation).then_some(end)?
+                (on_lines == Some(indentation)).then_some(end)?
             }
             false => self.string(at)?,
         };

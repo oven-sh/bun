@@ -20,7 +20,7 @@
 use super::lines::Lines;
 use super::parser::{self, Tree};
 use super::printer::{Builder, write_string_with_escapes};
-use super::tokens::{Kind, NOT_ON_LINES, Token, end_of_comment, scan};
+use super::tokens::{Kind, Token, end_of_comment, scan};
 use super::{Scratch, comments};
 use crate::FormatOptions;
 use crate::css::doc::{self, Elements, Group, IndentCommand, Line};
@@ -327,7 +327,19 @@ impl<'t> Direct<'t, '_> {
             return Err(Refusal::Definition);
         }
         let (start, end) = (self.token.start as usize, self.token.end as usize);
-        if self.starts_its_line() {
+        // What `put_on_new_line` finds out, from what's known about the token.
+        if self.gap == Gap::Lines
+            && !self.is_document
+            && self.has_only_spaces
+            && self.run_end == self.last_end as usize
+            && u32::from(self.token.ignored_before) == self.gap_lines
+            && start - self.run_end
+                == self.gap_lines as usize + self.indentation_len(self.gap_level)
+            && (self
+                .text
+                .get(self.run_end..self.run_end + self.gap_lines as usize))
+            .is_some_and(|it| it.iter().all(|byte| *byte == b'\n'))
+        {
             self.gap = Gap::Nothing;
             self.line_indent = self.gap_level as usize * self.tab_width;
             self.run_end = end;
@@ -337,119 +349,6 @@ impl<'t> Direct<'t, '_> {
         }
         self.read_token();
         Ok(())
-    }
-
-    /// True if a line break is due and the next token goes on the run with it. It's what `put_on_new_line` finds out,
-    /// from what's known about the token.
-    #[inline]
-    fn starts_its_line(&self) -> bool {
-        self.gap == Gap::Lines
-            && !self.is_document
-            && self.has_only_spaces
-            && self.run_end == self.last_end as usize
-            && u32::from(self.token.ignored_before) == self.gap_lines
-            && self.token.start as usize - self.run_end
-                == self.gap_lines as usize + self.indentation_len(self.gap_level)
-            && (self
-                .text
-                .get(self.run_end..self.run_end + self.gap_lines as usize))
-            .is_some_and(|it| it.iter().all(|byte| *byte == b'\n'))
-    }
-
-    // ───────────────────────────── whole lines ─────────────────────────────
-    //
-    // Most lines are of a few kinds and written as they're printed. For those, this is what `take`, `space` and the
-    // grammar below come to, found out from the tokens of the line at once.
-
-    /// Takes the tokens from the next one, which `starts_its_line`, up to the one at `index`. They're written as they're
-    /// printed, on one line, and the last of them ends at `end`.
-    #[inline]
-    fn take_line(&mut self, index: usize, end: u32) {
-        self.gap = Gap::Nothing;
-        self.line_indent = self.gap_level as usize * self.tab_width;
-        self.line_start = self.printer.out.len() + (self.token.start as usize - self.run_start);
-        self.run_end = end as usize;
-        self.last_end = end;
-        self.index = index;
-        self.load_token();
-    }
-
-    /// True if one blank is between `end` and `token`, where `has_only_spaces`.
-    #[inline]
-    fn follows_blank(token: &Token, end: u32) -> bool {
-        token.start.checked_sub(end) == Some(1) && token.ignored_before == 0
-    }
-
-    /// `name: [Type!]!` and nothing else on its line. False, with nothing taken, for anything else.
-    #[inline]
-    fn plain_field(&mut self) -> bool {
-        let tokens = self.tokens;
-        let kind_at = |index: usize| tokens.get(index).map_or(Kind::End, |it| it.kind);
-        // The token at `index` is of `kind` and right behind `end`.
-        let touches = |index: usize, kind: Kind, end: u32| {
-            (tokens.get(index)).is_some_and(|it| it.kind == kind && it.start == end)
-        };
-        let mut end = self.token.end;
-        let mut index = self.index + 1;
-        if !self.is(Kind::Name)
-            || self.comment != NO_COMMENT
-            || !touches(index, Kind::Colon, end)
-            || !(tokens.get(index + 1)).is_some_and(|it| Self::follows_blank(it, end + 1))
-            || !self.starts_its_line()
-        {
-            return false;
-        }
-        (index, end) = (index + 1, end + 2);
-        let mut lists = 0;
-        while touches(index, Kind::BracketL, end) {
-            (index, end, lists) = (index + 1, end + 1, lists + 1);
-        }
-        match tokens.get(index) {
-            Some(name) if name.kind == Kind::Name && name.start == end && lists <= 8 => {
-                (index, end) = (index + 1, name.end);
-            }
-            _ => return false,
-        }
-        loop {
-            if touches(index, Kind::Bang, end) {
-                (index, end) = (index + 1, end + 1);
-            }
-            if lists == 0 {
-                break;
-            }
-            if !touches(index, Kind::BracketR, end) {
-                return false;
-            }
-            (index, end, lists) = (index + 1, end + 1, lists - 1);
-        }
-        // What can go on with the item, in one place or another.
-        if matches!(kind_at(index), Kind::Bang | Kind::Equals | Kind::At) {
-            return false;
-        }
-        self.take_line(index, end);
-        true
-    }
-
-    /// `name` or `name {` and nothing else on its line. Returns whether there's a `{`, or `None`, with nothing taken, for
-    /// anything else.
-    #[inline]
-    fn plain_selection(&mut self) -> Option<bool> {
-        let end = self.token.end;
-        let next = self.tokens.get(self.index + 1)?;
-        if !self.is(Kind::Name) || self.comment != NO_COMMENT || !self.starts_its_line() {
-            return None;
-        }
-        match next.kind {
-            Kind::Colon | Kind::ParenL | Kind::At => None,
-            Kind::BraceL => Self::follows_blank(next, end).then(|| {
-                self.take_line(self.index + 2, end + 2);
-                true
-            }),
-            _ => {
-                self.take_line(self.index + 1, end);
-                Some(false)
-            }
-        }
     }
 
     /// Leaves the next token out.
@@ -1127,24 +1026,20 @@ impl<'t> Direct<'t, '_> {
                 Block::Selections => self.selection()?,
                 Block::Fields => {
                     self.description(false)?;
-                    if !self.plain_field() {
-                        self.expect(Kind::Name)?;
-                        if self.is(Kind::ParenL) {
-                            self.unit(|this| {
-                                this.parenthesized(Item::InputValueDefinition, true)?;
-                                this.type_and_default_value(false)
-                            })?;
-                        } else {
-                            self.type_and_default_value(false)?;
-                        }
+                    self.expect(Kind::Name)?;
+                    if self.is(Kind::ParenL) {
+                        self.unit(|this| {
+                            this.parenthesized(Item::InputValueDefinition, true)?;
+                            this.type_and_default_value(false)
+                        })?;
+                    } else {
+                        self.type_and_default_value(false)?;
                     }
                 }
                 Block::InputFields => {
                     self.description(true)?;
-                    if !self.plain_field() {
-                        self.expect(Kind::Name)?;
-                        self.type_and_default_value(true)?;
-                    }
+                    self.expect(Kind::Name)?;
+                    self.type_and_default_value(true)?;
                 }
                 Block::EnumValues => {
                     self.description(false)?;
@@ -1177,9 +1072,7 @@ impl<'t> Direct<'t, '_> {
     }
 
     fn selection(&mut self) -> Result {
-        let has_block = if let Some(has_block) = self.plain_selection() {
-            has_block
-        } else if self.is(Kind::Spread) {
+        let has_block = if self.is(Kind::Spread) {
             self.take()?;
             let has_type_condition = self.is_keyword(b"on");
             let is_spread = self.is(Kind::Name) && !has_type_condition;
@@ -1334,7 +1227,7 @@ impl<'t> Direct<'t, '_> {
         let (mut width, mut depth) = (0, 0u32);
         for token in self.tokens.get(self.index..).unwrap_or_default() {
             width += match token.kind {
-                Kind::Comment | Kind::BlockString => return true,
+                Kind::Comment | Kind::BlockString | Kind::BlockStringOnLines => return true,
                 Kind::End | Kind::Invalid => return false,
                 // They can be printed narrower than they're written.
                 Kind::StringToMeasure | Kind::StringWithEscapes => 2,
@@ -1433,9 +1326,6 @@ impl<'t> Direct<'t, '_> {
             }
             Item::InputValueDefinition => {
                 self.description(true)?;
-                if self.plain_field() {
-                    return Ok(());
-                }
                 self.expect(Kind::Name)?;
                 self.type_and_default_value(true)
             }
@@ -1446,7 +1336,7 @@ impl<'t> Direct<'t, '_> {
         match self.token.kind {
             Kind::Name | Kind::Number => self.take(),
             Kind::String | Kind::StringToMeasure | Kind::StringWithEscapes => self.string(),
-            Kind::BlockString => self.block_string(),
+            Kind::BlockString | Kind::BlockStringOnLines => self.block_string(),
             Kind::Dollar if !is_const => {
                 self.take()?;
                 self.expect(Kind::Name)
@@ -1559,7 +1449,7 @@ impl<'t> Direct<'t, '_> {
                     false => self.hard_lines(1)?,
                 }
             }
-            Kind::BlockString => {
+            Kind::BlockString | Kind::BlockStringOnLines => {
                 self.block_string()?;
                 self.hard_lines(1)?;
             }
@@ -1609,8 +1499,10 @@ impl<'t> Direct<'t, '_> {
         if !self.is_document
             && self.groups == 0
             && self.has_only_spaces
-            && self.token.indentation != NOT_ON_LINES
-            && self.token.indentation as usize == self.indentation_len(self.level)
+            && self.is(Kind::BlockStringOnLines)
+            && (content_end.checked_sub(1 + self.indentation_len(self.level)))
+                .and_then(|line_break| text.get(line_break..content_end)?.split_first())
+                .is_some_and(|(first, rest)| *first == b'\n' && rest.iter().all(|it| *it == b' '))
         {
             self.put(start, end);
             self.line_start = self.printer.out.len() + (content_end - self.run_start);

@@ -497,7 +497,7 @@ const lookedUpByNativeCode = [
 // It asks whether _fatalException can be called, and whether each of the other two is true.
 const onlyInspectedByNativeCode = ["_fatalException", "noDeprecation", "throwDeprecation"];
 
-export default b.declarations(
+const processDeclarations = b.declarations(
   b.namespace(
     "process",
     {
@@ -574,9 +574,10 @@ export default b.declarations(
       }),
       title: nativeState(b.string, {
         value: b.any,
-        capability: "heap",
+        capability: "js",
         throws: true,
-        uses: { value: b.inspected },
+        runsOnlyOperandCode: true,
+        uses: { value: [b.runs("ToPrimitive")] },
         writes: externalState,
       }),
 
@@ -733,4 +734,11 @@ export default b.declarations(
   computedOnce.flatMap(name => b.extend(`process.${name}`, { mutability: "ConstantUnlessWritten" })),
   runtimeIdentity.flatMap(name => b.extend(`process.${name}`, { mutability: "AlwaysLocked" })),
   b.extend("process", { mutability: "AlwaysLocked" }),
+);
+
+// These programmatically installed slots expose data descriptors but retain live native get/set callbacks.
+export default processDeclarations.map((declaration): b.Declaration =>
+  declaration.declares === "Member" && (declaration.path === "process.ppid" || declaration.path === "process.title")
+    ? { ...declaration, kind: "DataProperty" }
+    : declaration,
 );

@@ -857,6 +857,13 @@ export const describeRejectedValuesWithoutScript: () => void = $newCppFunction(
   0,
 );
 
+/** What `node:perf_hooks` sets while it has an observer of `gc` entries: the function that native code calls for each collection. */
+export const setGCPerformanceEntryListener: (listener: unknown) => void = $newCppFunction(
+  "GCPerformanceEntries.cpp",
+  "jsFunctionSetGCPerformanceEntryListener",
+  1,
+);
+
 /** Where the compiler's table of built-ins and this realm disagree, one message each. Empty: they agree, or this Bun has no compiler. */
 export const aotBuiltinMismatches: () => string[] = $newCppFunction(
   "InternalForTesting.cpp",

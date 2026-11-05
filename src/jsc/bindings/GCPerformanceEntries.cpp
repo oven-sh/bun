@@ -7,13 +7,12 @@
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/CallData.h>
-#include <JavaScriptCore/GlobalObjectMethodTable.h>
 #include <JavaScriptCore/Heap.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/WeakInlines.h>
 
 extern "C" uint64_t Bun__readOriginTimer(void* bunVM);
-extern "C" bool Bun__VM__isEventLoopKeptAlive(void* bunVM);
+extern "C" bool Bun__VM__isEventLoopKeptAliveBesideQueuedTasks(void* bunVM);
 extern "C" void Bun__VM__queueTask(void* bunVM, WebCore::EventLoopTask*);
 
 namespace Bun {
@@ -104,6 +103,8 @@ void GCPerformanceEntries::setListener(JSGlobalObject* realm, JSObject* listener
 void GCPerformanceEntries::discardRecords()
 {
     cancelTimer();
+    // A collection that is under way now gets no record either.
+    m_collectionStart = std::nullopt;
     Locker locker { m_lock };
     m_records.clear();
     m_synchronousRecordEnd = 0;
@@ -122,13 +123,12 @@ void GCPerformanceEntries::doWork(VM& vm)
     cancelTimer();
     auto* bunVM = WebCore::clientData(vm)->bunVM;
     // An entry reaches its observers from a ref'd immediate, and a collection must not keep the loop alive: wait for a turn that something else asks for.
-    if (!Bun__VM__isEventLoopKeptAlive(bunVM)) {
+    if (!Bun__VM__isEventLoopKeptAliveBesideQueuedTasks(bunVM)) {
         setTimeUntilFire(0_s);
         return;
     }
-    Bun__VM__queueTask(bunVM, new WebCore::EventLoopTask([&vm](WebCore::ScriptExecutionContext&) {
-        if (RefPtr entries = WebCore::clientData(vm)->gcPerformanceEntries)
-            entries->callListeners();
+    Bun__VM__queueTask(bunVM, new WebCore::EventLoopTask([protectedThis = Ref { *this }](WebCore::ScriptExecutionContext&) {
+        protectedThis->callListeners();
     }));
 }
 
@@ -155,18 +155,19 @@ void GCPerformanceEntries::callListeners()
     }
 
     // performance.now() and the clock of the records, read together, put each start on the timeline of the first.
-    double performanceNow = static_cast<double>(Bun__readOriginTimer(WebCore::clientData(m_vm)->bunVM)) / 1000000.0;
+    auto* clientData = WebCore::clientData(m_vm);
+    double performanceNow = static_cast<double>(Bun__readOriginTimer(clientData->bunVM)) / 1000000.0;
     auto now = MonotonicTime::now();
 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
     for (unsigned i = 0; i < listeners.size(); ++i) {
         auto* listener = asObject(listeners.at(i));
         auto* realm = listener->globalObject();
-        // Stopped once the VM's stop was requested.
-        if (realm->globalObjectMethodTable()->scriptExecutionStatus(realm, listener) != ScriptExecutionStatus::Running)
-            continue;
         auto callData = JSC::getCallData(listener);
         for (auto& record : records) {
+            // A listener of 'uncaughtException' can ask for the stop too, in the report below.
+            if (clientData->isStoppingOrStopped(m_vm)) [[unlikely]]
+                return;
             MarkedArgumentBuffer arguments;
             arguments.append(jsNumber(std::max(0.0, performanceNow - (now - record.start).milliseconds())));
             arguments.append(jsNumber(record.duration.milliseconds()));
@@ -174,11 +175,13 @@ void GCPerformanceEntries::callListeners()
             arguments.append(jsBoolean(record.forced));
             JSC::profiledCall(realm, ProfilingReason::API, listener, callData, jsUndefined(), arguments);
             if (auto* exception = scope.exception()) [[unlikely]] {
-                // The tick that runs this task takes a termination.
+                // The tick that runs this task takes a termination, and the report of an error can end with one.
                 if (m_vm.hasPendingTerminationException())
                     return;
                 scope.clearException();
                 Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(realm, exception);
+                if (scope.exception()) [[unlikely]]
+                    return;
             }
         }
     }

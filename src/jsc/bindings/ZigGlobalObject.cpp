@@ -5334,6 +5334,19 @@ static void stopActiveDOMObjectsOfDerivedRealms(Zig::GlobalObject* globalObject)
     }
 }
 
+static void retireDerivedRealms(Zig::GlobalObject* globalObject)
+{
+    auto* gcPerformanceEntries = WebCore::clientData(globalObject->vm())->gcPerformanceEntries.get();
+    for (auto& derived : std::exchange(globalObject->m_derivedRealms, {})) {
+        if (!derived)
+            continue;
+        derived->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
+        // Nothing disconnects the 'gc' observers of a retired realm.
+        if (gcPerformanceEntries)
+            gcPerformanceEntries->setListener(derived.get(), nullptr);
+    }
+}
+
 // `bun test --isolate`: the file that just finished is being retired on a live VM. Its contexts'
 // workers, ports, channels and sockets are stopped before anything else of the file is swept.
 extern "C" void Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(Zig::GlobalObject* globalObject)
@@ -5352,13 +5365,12 @@ extern "C" void Zig__GlobalObject__retireForTestIsolation(Zig::GlobalObject* glo
     globalObject->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
     // Again, to catch realms that close handlers created since the first pass.
     stopActiveDOMObjectsOfDerivedRealms(globalObject);
-    for (auto& derived : std::exchange(globalObject->m_derivedRealms, {})) {
-        if (derived)
-            derived->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
+    retireDerivedRealms(globalObject);
+    // As for a derived realm. What the finished file collected is also not for the observers of the next file.
+    if (auto* gcPerformanceEntries = WebCore::clientData(globalObject->vm())->gcPerformanceEntries.get()) {
+        gcPerformanceEntries->setListener(globalObject, nullptr);
+        gcPerformanceEntries->discardRecords();
     }
-    // Every 'gc' observer is the finished file's, and nothing disconnects them.
-    if (auto* gcPerformanceEntries = WebCore::clientData(globalObject->vm())->gcPerformanceEntries.get())
-        gcPerformanceEntries->stop();
 }
 
 // `bun test --isolate=modules`: the global object is kept, but realms the finished file created from it are retired.
@@ -5366,17 +5378,7 @@ extern "C" void Zig__GlobalObject__retireDerivedRealmsForTestIsolation(Zig::Glob
 {
     Bun::retireWebViewsForTestIsolation(globalObject);
     stopActiveDOMObjectsOfDerivedRealms(globalObject);
-    auto* gcPerformanceEntries = WebCore::clientData(globalObject->vm())->gcPerformanceEntries.get();
-    for (auto& derived : std::exchange(globalObject->m_derivedRealms, {})) {
-        if (!derived)
-            continue;
-        derived->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
-        if (gcPerformanceEntries)
-            gcPerformanceEntries->setListener(derived.get(), nullptr);
-    }
-    // The collections of the finished file are not the next one's.
-    if (gcPerformanceEntries)
-        gcPerformanceEntries->discardRecords();
+    retireDerivedRealms(globalObject);
 }
 
 extern "C" bool Bun__JSValue__isFromRetiredTestIsolationRealm(JSC::EncodedJSValue encodedValue)

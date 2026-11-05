@@ -255,7 +255,7 @@ export default b.declarations(
     reads: externalState,
     implementation: b.hostCall,
   }),
-  // It keeps the function, or lets go of the realm's one when it gets undefined. On a later tick the function is called once for each collection: with the start, the duration, and whether it was full and forced.
+  // It holds the function weakly (the module that sets it keeps it alive), or lets go of the realm's one when it gets undefined. On a later tick the function is called once for each collection: with the start, the duration, and whether it was full and forced.
   b.static(cpp("GCPerformanceEntries.cpp", "jsFunctionSetGCPerformanceEntryListener"), {
     args: { listener: b.union(b.callable, b.undefined) },
     returns: b.undefined,

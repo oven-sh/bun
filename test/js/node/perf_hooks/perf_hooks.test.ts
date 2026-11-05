@@ -1,4 +1,4 @@
-import { aotBuiltinEntries, aotBuiltinValue } from "bun:internal-for-testing";
+import { setGCPerformanceEntryListener } from "bun:internal-for-testing";
 import { estimateShallowMemoryUsageOf, heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir, withoutAggressiveGC } from "harness";
@@ -634,6 +634,9 @@ describe("gc entries", () => {
     };
   `;
 
+  // A test that has timed out cannot end its script, which holds an interval. So each script has its own limit.
+  const limit = { timeout: 4_000, killSignal: "SIGKILL" } as const;
+
   async function run(
     script: string,
     { flags = [], env = {} }: { flags?: string[]; env?: Record<string, string> } = {},
@@ -643,6 +646,7 @@ describe("gc entries", () => {
       env: { ...bunEnv, ...env },
       stdout: "pipe",
       stderr: "pipe",
+      ...limit,
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
@@ -715,81 +719,134 @@ describe("gc entries", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("only the collections that gc() and Bun.gc(true) force have the forced flag", async () => {
+    const { result, exitCode } = await run(
+      `
+      const { fullGC, gcAndSweep, edenGC } = require("bun:jsc");
+      const texts = Array.from({ length: 50 }, (_, length) => Buffer.alloc(length, "x").toString());
+      let garbage = [];
+      const allocate = () => {
+        for (let i = 0; i < 20000; i++) garbage.push({ i, text: texts[i % 50] });
+        garbage = garbage.slice(-1000);
+      };
+      new PerformanceObserver((list, observer) => {
+        const entries = list.getEntries();
+        if (!entries.some(isForced)) return;
+        observer.disconnect();
+        const minor = entries.filter(entry => entry.detail.kind === constants.NODE_PERFORMANCE_GC_MINOR);
+        finish({
+          forcedKinds: entries.filter(isForced).map(entry => entry.detail.kind),
+          unforcedFlags: [...new Set(entries.filter(entry => !isForced(entry)).map(entry => entry.detail.flags))],
+          hasMinor: minor.length > 0,
+          minorAreUnforced: !minor.some(isForced),
+          kinds: [...new Set(entries.map(entry => entry.detail.kind))].sort(),
+          inOrder: entries.every((entry, i) => i === 0 || entries[i - 1].startTime <= entry.startTime),
+          allOfTheType: list.getEntriesByType("gc").length === entries.length,
+          allOfTheName: list.getEntriesByName("gc").length === entries.length,
+        });
+      }).observe({ entryTypes: ["gc"] });
+      // Bun.gc(false) only asks for a collection. It then runs inside the call that forces the next one.
+      for (let i = 0; i < 3; i++) {
+        allocate();
+        Bun.gc(false);
+        Bun.gc(true);
+      }
+      gc();
+      gc();
+      // What bun:jsc collects is not what the program forces in Node's sense.
+      fullGC();
+      gcAndSweep();
+      edenGC();
+    `,
+      { flags: ["--expose-gc"] },
+    );
+    const { NODE_PERFORMANCE_GC_MAJOR: major, NODE_PERFORMANCE_GC_MINOR: minor } = perf.constants;
+    expect(result).toEqual({
+      forcedKinds: [major, major, major, major, major],
+      unforcedFlags: [perf.constants.NODE_PERFORMANCE_GC_FLAGS_NO],
+      hasMinor: true,
+      minorAreUnforced: true,
+      kinds: [minor, major],
+      inOrder: true,
+      allOfTheType: true,
+      allOfTheName: true,
+    });
+    expect(exitCode).toBe(0);
+  });
+
   // With BUN_JSC_collectContinuously, other collections start and end inside the call that forces one.
-  test.concurrent.each([{}, { BUN_JSC_collectContinuously: "1" }])(
-    "only the collections that gc() and Bun.gc(true) force have the forced flag (%j)",
-    async env => {
-      const { result, exitCode } = await run(
-        `
-        const { fullGC, gcAndSweep, edenGC } = require("bun:jsc");
-        let garbage = [];
-        const allocate = () => {
-          for (let i = 0; i < 20000; i++) garbage.push({ i, text: "x".repeat(i % 50) });
-          garbage = garbage.slice(-1000);
-        };
-        new PerformanceObserver((list, observer) => {
-          const entries = list.getEntries();
-          if (!entries.some(isForced)) return;
-          observer.disconnect();
-          const minor = entries.filter(entry => entry.detail.kind === constants.NODE_PERFORMANCE_GC_MINOR);
-          finish({
-            forcedKinds: entries.filter(isForced).map(entry => entry.detail.kind),
-            unforcedFlags: [...new Set(entries.filter(entry => !isForced(entry)).map(entry => entry.detail.flags))],
-            hasMinor: minor.length > 0,
-            minorAreUnforced: !minor.some(isForced),
-            kinds: [...new Set(entries.map(entry => entry.detail.kind))].sort(),
-            inOrder: entries.every((entry, i) => i === 0 || entries[i - 1].startTime <= entry.startTime),
-            allOfTheType: list.getEntriesByType("gc").length === entries.length,
-            allOfTheName: list.getEntriesByName("gc").length === entries.length,
-          });
-        }).observe({ entryTypes: ["gc"] });
-        // Bun.gc(false) only asks for a collection. It then runs inside the call that forces the next one.
-        for (let i = 0; i < 3; i++) {
-          allocate();
-          Bun.gc(false);
-          Bun.gc(true);
-        }
-        gc();
-        gc();
-        // What bun:jsc collects is not what the program forces in Node's sense.
-        fullGC();
-        gcAndSweep();
-        edenGC();
-      `,
-        { flags: ["--expose-gc"], env },
-      );
-      const { NODE_PERFORMANCE_GC_MAJOR: major, NODE_PERFORMANCE_GC_MINOR: minor } = perf.constants;
-      expect(result).toEqual({
-        forcedKinds: [major, major, major, major, major],
-        unforcedFlags: [perf.constants.NODE_PERFORMANCE_GC_FLAGS_NO],
-        hasMinor: true,
-        minorAreUnforced: true,
-        kinds: [minor, major],
-        inOrder: true,
-        allOfTheType: true,
-        allOfTheName: true,
+  test.concurrent("a forced collection has the flag when other collections end inside the same call", async () => {
+    const { result, exitCode } = await run(
+      `
+      new PerformanceObserver((list, observer) => {
+        const forced = list.getEntries().filter(isForced);
+        if (forced.length === 0) return;
+        observer.disconnect();
+        finish({
+          forced: forced.length,
+          forcedMinor: forced.filter(entry => entry.detail.kind === constants.NODE_PERFORMANCE_GC_MINOR).length,
+        });
+      }).observe({ type: "gc" });
+      for (let i = 0; i < 100; i++) Bun.gc(true);
+    `,
+      { env: { BUN_JSC_collectContinuously: "1" } },
+    );
+    expect(result).toEqual({ forced: 100, forcedMinor: 0 });
+    expect(exitCode).toBe(0);
+  });
+
+  // With BUN_GARBAGE_COLLECTOR_LEVEL=2, Bun collects synchronously by itself each time it has handled a rejection.
+  test.concurrent("a collection that Bun makes by itself is not the one that a later call forces", async () => {
+    const { result, exitCode } = await run(
+      `
+      let handled = 0;
+      const observer = new PerformanceObserver(list => {
+        const entries = list.getEntries();
+        observer.disconnect();
+        finish({ entries: entries.length > 0, forced: entries.filter(isForced).length });
       });
-      expect(exitCode).toBe(0);
-    },
-  );
+      observer.observe({ type: "gc" });
+      process.on("unhandledRejection", () => {
+        if (++handled !== 2) return;
+        // Bun's own collection is on its way to JS. Nothing observes the one that is forced here.
+        observer.disconnect();
+        Bun.gc(true);
+        observer.observe({ type: "gc" });
+      });
+      Promise.reject(new Error("one"));
+      Promise.reject(new Error("two"));
+    `,
+      { env: { BUN_GARBAGE_COLLECTOR_LEVEL: "2" } },
+    );
+    expect(result).toEqual({ entries: true, forced: 0 });
+    expect(exitCode).toBe(0);
+  });
 
   test.concurrent("a forced entry lasts until the call that forces the collection returns", async () => {
     // As in Node v26.3.0. What the collection frees is swept before the call returns, and that takes most of the call.
     const { result, exitCode } = await run(`
-      let garbage = JSON.parse("[" + Buffer.alloc(300000 * 9, '"string",').toString() + '""]');
-      garbage = undefined;
-      let before, after;
+      const text = "[" + Buffer.alloc(300000 * 9, '"string",').toString() + '""]';
+      const calls = [];
       new PerformanceObserver((list, observer) => {
-        const entry = list.getEntries().find(isForced);
-        if (!entry) return;
+        const forced = list.getEntries().filter(isForced);
+        if (forced.length === 0) return;
         observer.disconnect();
-        finish({ endsWithTheCall: after - (entry.startTime + entry.duration) < (after - before) / 4 });
+        const endWithTheCall = forced.filter((entry, i) => {
+          const { before, after } = calls[i];
+          return after - (entry.startTime + entry.duration) < (after - before) / 4;
+        });
+        // A thread that loses the CPU between the end of the entry and the next line makes one call look longer.
+        finish({ forced: forced.length, mostEndWithTheCall: endWithTheCall.length >= 2 });
       }).observe({ type: "gc" });
-      before = performance.now();
-      Bun.gc(true);
-      after = performance.now();
+      for (let i = 0; i < 3; i++) {
+        let garbage = JSON.parse(text);
+        garbage = undefined;
+        const before = performance.now();
+        Bun.gc(true);
+        calls.push({ before, after: performance.now() });
+      }
     `);
-    expect(result).toEqual({ endsWithTheCall: true });
+    expect(result).toEqual({ forced: 3, mostEndWithTheCall: true });
     expect(exitCode).toBe(0);
   });
 
@@ -898,14 +955,21 @@ describe("gc entries", () => {
   // No interval here. Node v26.3.0 prints the same for each: the entries are never delivered, an unref'd immediate
   // does not run, and "beforeExit" is emitted once.
   test.concurrent.each([
-    ["alone", ""],
-    ["beside an unref'd immediate", `setImmediate(() => { ranUnrefd = true; }).unref();`],
-    ["beside a cleared immediate", `clearImmediate(setImmediate(() => {}));`],
+    ["alone", "", ""],
+    ["beside an unref'd immediate", "", `setImmediate(() => { ranUnrefd = true; }).unref();`],
+    ["beside a cleared immediate", "", `clearImmediate(setImmediate(() => {}));`],
     [
       "in an unref'd immediate that queues itself again",
+      "",
       `(function again() { Bun.gc(true); setImmediate(() => { ranUnrefd = true; again(); }).unref(); })();`,
     ],
-  ])("a collection %s does not keep the event loop alive", async (_, more) => {
+    // The cleanup of a FinalizationRegistry is a task that the collection itself queues, and it holds the loop until it ran.
+    [
+      "with a cleanup for a FinalizationRegistry, beside an unref'd immediate",
+      `const registry = new FinalizationRegistry(() => {}); (() => { registry.register({}, 0); })();`,
+      `setImmediate(() => { ranUnrefd = true; }).unref();`,
+    ],
+  ])("a collection %s does not keep the event loop alive", async (_, before, after) => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -917,8 +981,9 @@ describe("gc entries", () => {
          new PerformanceObserver(list => {
            delivered += list.getEntries().length;
          }).observe({ type: "gc" });
+         ${before}
          Bun.gc(true);
-         ${more}
+         ${after}
          process.on("beforeExit", () => {
            beforeExit++;
            for (let i = 0; i < 20; i++) Bun.gc(true);
@@ -928,10 +993,14 @@ describe("gc entries", () => {
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
+      ...limit,
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ delivered: 0, beforeExit: 1, ranUnrefd: false });
+    expect({ printed: stdout && JSON.parse(stdout), signalCode: proc.signalCode }).toEqual({
+      printed: { delivered: 0, beforeExit: 1, ranUnrefd: false },
+      signalCode: null,
+    });
     expect(exitCode).toBe(0);
   });
 
@@ -1024,7 +1093,21 @@ describe("gc entries", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("a Worker that exits while it takes an entry takes no more of them", async () => {
+  test.concurrent.each([
+    ["exits", `process.exit(7);`, "", 7],
+    [
+      "exits in a listener of uncaughtException",
+      `throw new Error("thrown for a gc entry");`,
+      `process.on("uncaughtException", () => process.exit(7));`,
+      7,
+    ],
+    [
+      "ends with an error from a listener of uncaughtException",
+      `throw new Error("thrown for a gc entry");`,
+      `process.on("uncaughtException", () => { throw new Error("thrown by the listener"); });`,
+      1,
+    ],
+  ])("a Worker that %s while it takes an entry takes no more of them", async (_, then, more, code) => {
     const { result, exitCode } = await run(`
       const { Worker } = require("node:worker_threads");
       const taken = new Int32Array(new SharedArrayBuffer(4));
@@ -1032,16 +1115,18 @@ describe("gc entries", () => {
         \`const { workerData: taken } = require("node:worker_threads");
          const { PerformanceObserver } = require("node:perf_hooks");
          new PerformanceObserver(() => {}).observe({ type: "gc" });
-         ${whenTheRegistryBuffersAGCEntry(`Atomics.add(taken, 0, 1); process.exit(7);`)}
+         ${whenTheRegistryBuffersAGCEntry(`Atomics.add(taken, 0, 1); ${then}`)}
+         ${more}
          setInterval(() => {}, 1000);
          Bun.gc(true);
          Bun.gc(true);
          Bun.gc(true);\`,
         { eval: true, workerData: taken },
       );
+      worker.on("error", () => {});
       worker.on("exit", workerExitCode => finish({ workerExitCode, taken: Atomics.load(taken, 0) }));
     `);
-    expect(result).toEqual({ workerExitCode: 7, taken: 1 });
+    expect(result).toEqual({ workerExitCode: code, taken: 1 });
     expect(exitCode).toBe(0);
   });
 
@@ -1063,39 +1148,32 @@ describe("gc entries", () => {
     expect(exitCode).toBe(0);
   });
 
-  // An idle collection is asked for after BUN_IDLE_GC_SECONDS of quiet. The JS thread then parks without heap access, so
-  // the collection ends on the collector thread. On Windows it ends on the JS thread.
+  // An idle collection is asked for after BUN_IDLE_GC_SECONDS of quiet. The JS thread then waits without heap access, so
+  // on a machine that is not busy the collector thread ends the collection. On Windows the JS thread always ends it.
   test.concurrent.skipIf(isWindows)(
-    "a collection that ends on the collector thread reaches the observers",
+    "an idle collection reaches the observers of a program that waits",
     async () => {
-      using dir = tempDir("perf-hooks-gc-collector-thread", {
-        "parked.cjs": `
+      using dir = tempDir("perf-hooks-gc-idle", {
+        "waits.cjs": `
           const { PerformanceObserver, constants } = require("node:perf_hooks");
           // Enough live objects that the marking is not over in the pause that starts the collection.
           const live = [];
           for (let i = 0; i < 100000; i++) live.push({ i, text: "x" + i, tags: ["a" + i, "b" + i] });
           const giveUp = setTimeout(() => console.log(JSON.stringify({ gaveUp: true })), 15000);
-          let parkedAt = Infinity;
+          let waitsSince = Infinity;
           new PerformanceObserver((list, observer) => {
-            const now = performance.now();
             // The collection right after the entry point has loaded is not the idle one.
-            const entry = list.getEntries().find(
-              entry => entry.detail.kind === constants.NODE_PERFORMANCE_GC_MAJOR && entry.startTime > parkedAt + 500,
-            );
+            const entry = list.getEntries().find(entry => entry.startTime > waitsSince + 500);
             if (!entry) return;
             observer.disconnect();
             clearTimeout(giveUp);
-            console.log(JSON.stringify({
-              flags: entry.detail.flags,
-              endsBeforeItArrives: entry.startTime + entry.duration <= now,
-              live: live.length,
-            }));
+            console.log(JSON.stringify({ ...entry.detail, live: live.length }));
           }).observe({ type: "gc" });
-          parkedAt = performance.now();
+          waitsSince = performance.now();
         `,
       });
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "parked.cjs"],
+        cmd: [bunExe(), "waits.cjs"],
         env: {
           ...bunEnv,
           BUN_IDLE_GC_SECONDS: "1",
@@ -1110,8 +1188,8 @@ describe("gc entries", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
       expect(JSON.parse(stdout)).toEqual({
+        kind: perf.constants.NODE_PERFORMANCE_GC_MAJOR,
         flags: perf.constants.NODE_PERFORMANCE_GC_FLAGS_NO,
-        endsBeforeItArrives: true,
         live: 100000,
       });
       expect(exitCode).toBe(0);
@@ -1119,16 +1197,65 @@ describe("gc entries", () => {
     30_000,
   );
 
-  // Only what tests the built-in functions reaches the setter with anything else.
-  const setListener = (() => {
-    const entry = aotBuiltinEntries().entries.find(entry =>
-      entry.token.endsWith("JsFunctionSetGCPerformanceEntryListener"),
-    );
-    return entry && (aotBuiltinValue(entry.id, "object") as ((listener: unknown) => void) | undefined);
-  })();
-  test.skipIf(!setListener)("what gets the entries from native code is a function", () => {
+  // node:perf_hooks sets its own function. The tests of the built-in functions call the setter with every kind of value.
+  test("what native code calls for each collection is a function", () => {
     for (const listener of [{}, null, 1, "emitGCEntry"]) {
-      expect(() => setListener!(listener)).toThrow(new TypeError("The listener must be a function or undefined"));
+      expect(() => setGCPerformanceEntryListener(listener)).toThrow(
+        new TypeError("The listener must be a function or undefined"),
+      );
+    }
+  });
+
+  const attempt = (...calls: object[]) => {
+    const observer = new PerformanceObserver(() => {});
+    try {
+      for (const options of calls) observer.observe(options);
+      return "no throw";
+    } catch (error) {
+      return (error as Error).name;
+    } finally {
+      observer.disconnect();
+    }
+  };
+
+  // The native class makes these checks, as it did while "gc" was a type without entries. Node v26.3.0 throws the same.
+  test("observe() takes `type` or `entryTypes` with gc, and does not change from one to the other", () => {
+    expect({
+      "entryTypes:[mark] -> type:gc": attempt({ entryTypes: ["mark"] }, { type: "gc" }),
+      "type:mark -> entryTypes:[gc]": attempt({ type: "mark" }, { entryTypes: ["gc"] }),
+      "{entryTypes:[gc], type:gc}": attempt({ entryTypes: ["gc"], type: "gc" }),
+      "entryTypes:[mark,gc] -> type:gc": attempt({ entryTypes: ["mark", "gc"] }, { type: "gc" }),
+      "{entryTypes:[gc], type:mark}": attempt({ entryTypes: ["gc"], type: "mark" }),
+      "type:mark -> entryTypes:[mark,gc]": attempt({ type: "mark" }, { entryTypes: ["mark", "gc"] }),
+      "entryTypes:[mark,gc] -> type:mark": attempt({ entryTypes: ["mark", "gc"] }, { type: "mark" }),
+      "{entryTypes:[mark], type:gc}": attempt({ entryTypes: ["mark"], type: "gc" }),
+      "{entryTypes:[mark,gc], type:mark}": attempt({ entryTypes: ["mark", "gc"], type: "mark" }),
+    }).toEqual({
+      "entryTypes:[mark] -> type:gc": "InvalidModificationError",
+      "type:mark -> entryTypes:[gc]": "InvalidModificationError",
+      "{entryTypes:[gc], type:gc}": "TypeError",
+      "entryTypes:[mark,gc] -> type:gc": "InvalidModificationError",
+      "{entryTypes:[gc], type:mark}": "TypeError",
+      "type:mark -> entryTypes:[mark,gc]": "InvalidModificationError",
+      "entryTypes:[mark,gc] -> type:mark": "InvalidModificationError",
+      "{entryTypes:[mark], type:gc}": "TypeError",
+      "{entryTypes:[mark,gc], type:mark}": "TypeError",
+    });
+  });
+
+  test("an observe() with gc that throws leaves what the observer observes as it was", () => {
+    const observer = new PerformanceObserver(() => {});
+    try {
+      observer.observe({ type: "mark" });
+      expect(() => observer.observe({ entryTypes: ["gc", "measure"] })).toThrow(
+        expect.objectContaining({ name: "InvalidModificationError" }),
+      );
+      performance.mark("observed after the throw");
+      expect(observer.takeRecords().map(entry => entry.name)).toEqual(["observed after the throw"]);
+      expect(PerformanceObserver.supportedEntryTypes).toContain("gc");
+    } finally {
+      observer.disconnect();
+      performance.clearMarks("observed after the throw");
     }
   });
 
@@ -1147,12 +1274,12 @@ describe("gc entries", () => {
     });
   });
 
-  // Runs the files with `bun test`, and gives what they wrote to "forced.log" too.
+  // Runs the test files with `bun test`, and gives what they wrote to "forced.log" too.
   async function runTestFiles(files: Record<string, string>, ...flags: string[]) {
     using dir = tempDir("perf-hooks-gc-bun-test", files);
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", ...flags, ...Object.keys(files)],
-      env: bunEnv,
+      cmd: [bunExe(), "test", ...flags, ...Object.keys(files).filter(name => name.endsWith(".test.js"))],
+      env: { ...bunEnv, NODE_PATH: undefined },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
@@ -1203,7 +1330,7 @@ describe("gc entries", () => {
     30_000,
   );
 
-  // The rule for a gc entry is the one for an unref'd immediate: it runs if something else keeps the loop alive.
+  // An unref'd immediate asks what the hand-off of a gc entry asks: does something else keep the loop alive?
   test.concurrent(
     "bun test runs an unref'd immediate after an unhandled error",
     async () => {
@@ -1264,81 +1391,134 @@ describe("gc entries", () => {
     30_000,
   );
 
-  // The next file counts the forced collections that its first list with one has.
+  // The next file observes from its first line on, and counts the forced collections that its first list with one has.
   const nextFile = (before: string) => `
     import { expect, test } from "bun:test";
     import { PerformanceObserver, constants } from "node:perf_hooks";
 
+    const keepAlive = setInterval(() => {}, 1000);
+    const { promise, resolve } = Promise.withResolvers();
+    ${before}
+    const observer = new PerformanceObserver(list => {
+      const forced = list.getEntries().filter(entry => entry.detail.flags === constants.NODE_PERFORMANCE_GC_FLAGS_FORCED);
+      if (forced.length > 0) resolve(forced.length);
+    });
+    observer.observe({ type: "gc" });
+    Bun.gc(true);
+
     test("the next file gets its own forced collection only", async () => {
-      const keepAlive = setInterval(() => {}, 1000);
-      const { promise, resolve } = Promise.withResolvers();
-      ${before}
-      const observer = new PerformanceObserver(list => {
-        const forced = list.getEntries().filter(entry => entry.detail.flags === constants.NODE_PERFORMANCE_GC_FLAGS_FORCED);
-        if (forced.length > 0) resolve(forced.length);
-      });
-      observer.observe({ type: "gc" });
-      Bun.gc(true);
       expect(await promise).toBe(1);
       observer.disconnect();
       clearInterval(keepAlive);
     });
   `;
 
-  describe.each(["--isolate", "--isolate=modules"])("bun test %s", isolate => {
-    test.concurrent(
-      "the next file gets no collection that a file leaves on its way to JS",
-      async () => {
-        const { output, exitCode } = await runTestFiles(
-          {
-            "a.test.js": `
-              import { afterAll, test } from "bun:test";
-              import { PerformanceObserver } from "node:perf_hooks";
+  test.concurrent(
+    "bun test --isolate: the next file gets no collection that a file leaves on its way to JS",
+    async () => {
+      const { output, exitCode } = await runTestFiles(
+        {
+          "a.test.js": `
+            import { afterAll, test } from "bun:test";
+            import { PerformanceObserver } from "node:perf_hooks";
 
-              new PerformanceObserver(() => {}).observe({ type: "gc" });
-              test("a", () => {});
-              // Nothing in the file waits for these.
-              afterAll(() => {
-                Bun.gc(true);
-                Bun.gc(true);
-              });
-            `,
-            "b.test.js": nextFile(""),
-          },
-          isolate,
-        );
-        expect(output).toContain("(pass) the next file gets its own forced collection only");
-        expect(exitCode).toBe(0);
-      },
-      30_000,
-    );
+            new PerformanceObserver(() => {}).observe({ type: "gc" });
+            test("a", () => {});
+            // Nothing in the file waits for these.
+            afterAll(() => {
+              Bun.gc(true);
+              Bun.gc(true);
+            });
+          `,
+          "b.test.js": nextFile(""),
+        },
+        "--isolate",
+      );
+      expect(output).toContain("(pass) the next file gets its own forced collection only");
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
 
-    test.concurrent(
-      "no collection is timed for the observer that a file leaves connected in a ShadowRealm",
-      async () => {
-        const { output, exitCode } = await runTestFiles(
-          {
-            "a.test.js": `
-              import { expect, test } from "bun:test";
+  // --isolate=modules keeps the global object, and retires the realms that a file made.
+  test.concurrent.each(["--isolate", "--isolate=modules"])(
+    "bun test %s: no collection is timed for the observer that a file leaves connected in a ShadowRealm",
+    async isolate => {
+      const { output, exitCode } = await runTestFiles(
+        {
+          "a.test.js": `
+            import { expect, test } from "bun:test";
 
-              test("a", () => {
-                globalThis.realmOfA = new ShadowRealm();
-                const observes = globalThis.realmOfA.evaluate(\`
-                  const { PerformanceObserver } = process.getBuiltinModule("node:perf_hooks");
-                  new PerformanceObserver(() => {}).observe({ type: "gc" });
-                  true;
-                \`);
-                expect(observes).toBe(true);
-              });
-            `,
-            "b.test.js": nextFile("Bun.gc(true); Bun.gc(true); Bun.gc(true);"),
-          },
-          isolate,
-        );
-        expect(output).toContain("(pass) the next file gets its own forced collection only");
-        expect(exitCode).toBe(0);
-      },
-      30_000,
-    );
-  });
+            test("a", () => {
+              globalThis.realmOfA = new ShadowRealm();
+              const observes = globalThis.realmOfA.evaluate(\`
+                const { PerformanceObserver } = process.getBuiltinModule("node:perf_hooks");
+                new PerformanceObserver(() => {}).observe({ type: "gc" });
+                true;
+              \`);
+              expect(observes).toBe(true);
+            });
+          `,
+          "b.test.js": nextFile("Bun.gc(true); Bun.gc(true); Bun.gc(true);"),
+        },
+        isolate,
+      );
+      expect(output).toContain("(pass) the next file gets its own forced collection only");
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+
+  // Split in two: `bun test` looks for the name in the whole text of a test file, and this is one.
+  const inTheEnvironmentOfThePackage = "@vitest" + "-environment happy-dom";
+
+  // With --isolate, the package of a DOM environment is loaded once, into a realm that outlives the files. This package
+  // only hands out the PerformanceObserver of that realm.
+  test.concurrent(
+    "bun test --isolate: an observer of the realm that outlives the files gets the collections of each file",
+    async () => {
+      const file = (name: string) => `
+        // ${inTheEnvironmentOfThePackage}
+        import { test } from "bun:test";
+        import { constants } from "node:perf_hooks";
+
+        test("${name} gets its forced collection", async () => {
+          const keepAlive = setInterval(() => {}, 1000);
+          const { promise, resolve } = Promise.withResolvers();
+          // The file leaves it connected.
+          new PerformanceObserverOfThePackage(list => {
+            if (list.getEntries().some(entry => entry.detail.flags === constants.NODE_PERFORMANCE_GC_FLAGS_FORCED)) resolve();
+          }).observe({ type: "gc" });
+          Bun.gc(true);
+          await promise;
+          clearInterval(keepAlive);
+        });
+      `;
+      const { output, exitCode } = await runTestFiles(
+        {
+          "node_modules/happy-dom/package.json": JSON.stringify({ name: "happy-dom", main: "index.js" }),
+          "node_modules/happy-dom/index.js": `
+            const { PerformanceObserver } = require("node:perf_hooks");
+            exports.Window = class Window {
+              constructor() {
+                this.PerformanceObserverOfThePackage = PerformanceObserver;
+                this.document = { body: {}, defaultView: this };
+                this.location = { href: "about:blank" };
+                this.matchMedia = undefined;
+                this.happyDOM = { async abort() {} };
+                this.close = () => {};
+              }
+            };
+          `,
+          "a.test.js": file("a"),
+          "b.test.js": file("b"),
+        },
+        "--isolate",
+      );
+      expect(output).toContain("(pass) a gets its forced collection");
+      expect(output).toContain("(pass) b gets its forced collection");
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
 });

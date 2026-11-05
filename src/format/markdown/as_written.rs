@@ -369,9 +369,16 @@ pub(crate) struct Memory {
     found: Vec<Lines>,
     rewritten: Vec<u8>,
     cells: Vec<Cell>,
+    /// For the question whether code is formatted already.
+    quick: crate::js::quick::Scratch,
 }
 
 impl Memory {
+    /// Forgets what is known from the texts that have been read, as at the start of a run.
+    pub(crate) fn forget_other_files(&mut self) {
+        self.quick.forget_other_files();
+    }
+
     /// Hands over what was rewritten, and gets memory for the next text.
     pub(crate) fn swap_rewritten(&mut self, other: &mut Vec<u8>) {
         std::mem::swap(&mut self.rewritten, other);
@@ -1256,6 +1263,7 @@ impl<'t> Reader<'t> {
             prose_wrap: _,
             flavor: _,
             is_in_markdown: _,
+            is_at_margin: _,
             no_short_cuts: _,
             // For the whole text. JavaScript gets its own.
             line_ending: _,
@@ -2405,7 +2413,15 @@ impl<'t> Reader<'t> {
         {
             return None;
         }
-        if !super::is_formatted(&info[..language_len], self.options) {
+        let language = &info[..language_len];
+        if !super::is_formatted(language, self.options) {
+            return Some(Block::Known(end, Kind::Code));
+        }
+        // Most code in a text has been formatted before.
+        if let Some(path) = super::path_of_script(language, self.options)
+            && let Some(code) = text.get(code_start..fence - 1)
+            && crate::js::quick::block_stands(path, code, self.options, &mut self.memory.quick)
+        {
             return Some(Block::Known(end, Kind::Code));
         }
         Some(Block::Other(Lines {

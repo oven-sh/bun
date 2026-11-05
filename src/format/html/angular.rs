@@ -173,10 +173,8 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             // `shouldHugJsExpression` never hugs this.
             Code::Printed(printed) => {
                 self.write_hugged(hug.should_hug_non_expression(), |printer| {
-                    printer.out.foreign(|f| {
-                        js::write_string(ignored.unwrap_or(printed), f);
-                        write_rest(f);
-                    });
+                    printer.out.string(ignored.unwrap_or(printed));
+                    printer.out.foreign(|f| write_rest(f));
                     true
                 })
             }
@@ -520,7 +518,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             return self
                 .print_attribute_with(attr, |printer| printer.print_angular_i18n(element, value));
         }
-        if split_at_interpolations(raw_value).len() > 1 {
+        if strings::contains(raw_value, b"{{") && split_at_interpolations(raw_value).len() > 1 {
             return self
                 .print_attribute_with(attr, |printer| printer.print_angular_interpolation(value));
         }

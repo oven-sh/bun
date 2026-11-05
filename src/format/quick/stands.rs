@@ -16,6 +16,7 @@ use crate::holes::FILTER_END_OF_LINE;
 use crate::lang::lang;
 use crate::lexer::tk;
 use crate::options::{QUOTE_PROPS_CONSISTENT, TRAILING_COMMA_NONE};
+use crate::parse::core::SCOPE_FUNCTION;
 use crate::{Quick, R, Words};
 
 pub(crate) struct Stands {
@@ -127,6 +128,13 @@ impl Quick {
             if self.fast.ready_block != end || self.t.at(end + 1) != 10 || (flags & BLOCK_JSX) != 0
             {
                 return Ok(-1);
+            }
+            // "use strict" in a function whose parameters are more than names
+            if (flags & BLOCK_FUNCTION) != 0 {
+                let c = self.t.at(self.blanks(end + 2));
+                if (c == 34 || c == 39) && self.has_odd_parameters(end) {
+                    return Ok(-1);
+                }
             }
             let inner = if (flags & BLOCK_FUNCTION) != 0 {
                 (flags & BLOCK_ASYNC) != 0
@@ -350,7 +358,7 @@ impl Quick {
                     }
                     q += 1;
                 }
-                if self.t.at(q - 1) <= 32 {
+                if self.ends_in_space(q) {
                     return Ok(-1);
                 }
             } else {
@@ -415,7 +423,6 @@ impl Quick {
     }
 
     /// Is T[start, end), which is the window, printed as it stands at column 0?
-    #[expect(dead_code, reason = "for code in other languages")]
     pub(crate) fn program_stands(&mut self, language: i32, start: i32, end: i32) -> R<bool> {
         if !self.options.short_cuts
             || !self.options.guessing
@@ -434,6 +441,17 @@ impl Quick {
         self.stands.last = end;
         self.forget_source_unit();
         self.stands.up_to = 0;
+        // Nobody keeps the place here: fast.rs finds itself outside of every loop, function and class, and leaves what depends on the place to the parser. Two things the parser
+        // looks for in the text of a whole item or file: `arguments` in the value of a field, and a comment that names a file.
+        self.forget_place();
+        // (at the top level `super` is let through)
+        self.parse.place.scope = SCOPE_FUNCTION;
+        let text = self.t.get(start as usize..end as usize).unwrap_or(&[]);
+        if bun_core::strings::contains(text, b"arguments")
+            || bun_core::strings::contains(text, b"///")
+        {
+            return Ok(false);
+        }
         let stands = self.items(start, 0, STATEMENTS, true)? == end;
         // what was read is not lost: the parser starts behind it
         self.set_verified(start, if stands { 0 } else { self.stands.up_to });

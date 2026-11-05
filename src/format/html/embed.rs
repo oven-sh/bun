@@ -185,23 +185,34 @@ fn parse_srcset(input: &[u8]) -> Option<Vec<Candidate<'_>>> {
     }
 }
 
+/// Returns the options for a formatter whose output gets the indentation of the place where it is printed, which is
+/// `indentation` columns wide, in a text with the options `format`.
+pub(crate) fn options_for_printed_text(
+    format: &FormatOptions,
+    indentation: usize,
+) -> FormatOptions {
+    let width = (format.line_width.value() as usize).saturating_sub(indentation);
+    FormatOptions {
+        line_width: LineWidth(width.clamp(1, u32::MAX as usize) as u32),
+        line_ending: LineEnding::Lf,
+        is_in_markdown: true,
+        // For code blocks in Markdown.
+        sort_imports: format.sort_imports.clone(),
+        jsdoc: format.jsdoc,
+        ..js::options_in_html(format, InHtml::default())
+    }
+}
+
 impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
     // ───────────────────────────── `textToDoc` ─────────────────────────────
 
     /// Returns the options for a formatter whose output is written with `Writer::printed_text`, or `None` if the
     /// current indentation isn't known.
     fn options_for_printed_text(&self) -> Option<FormatOptions> {
-        let width = (self.options.format.line_width.value() as usize)
-            .saturating_sub(self.out.indentation_width()?);
-        Some(FormatOptions {
-            line_width: LineWidth(width.clamp(1, u32::MAX as usize) as u32),
-            line_ending: LineEnding::Lf,
-            is_in_markdown: true,
-            // For code blocks in Markdown.
-            sort_imports: self.options.format.sort_imports.clone(),
-            jsdoc: self.options.format.jsdoc,
-            ..js::options_in_html(self.options.format, InHtml::default())
-        })
+        Some(options_for_printed_text(
+            self.options.format,
+            self.out.indentation_width()?,
+        ))
     }
 
     /// Writes the output that `format` appends to its vector, without trailing line breaks.
@@ -244,6 +255,9 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             ..InHtml::default()
         };
         let program = |syntax: Syntax, printer: &mut Self| {
+            if printer.write_script_quickly(code, syntax, source_type) {
+                return true;
+            }
             let flavor = printer.options.script_flavor;
             let level = printer.out.indent_level();
             printer.out.foreign(|f| {
@@ -316,6 +330,52 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             }),
             _ => false,
         }
+    }
+
+    /// Writes a script as the quick way for JavaScript formats it, which is a text. What is printed for a script depends
+    /// on nothing around it but the indentation if it starts a line and ends one. Returns false, with nothing written, if
+    /// it has to go the long way.
+    fn write_script_quickly(
+        &mut self,
+        code: &[u8],
+        syntax: Syntax,
+        source_type: SourceType,
+    ) -> bool {
+        let is_typescript = match syntax {
+            Syntax::Babel => false,
+            Syntax::TypeScript => true,
+            Syntax::BabelTs | Syntax::Ts | Syntax::Tsx => return false,
+        };
+        let Some(indentation) = self.out.indent_level() else {
+            return false;
+        };
+        if self.out.f.context().short_cuts.mode == crate::js::flat::Mode::Off
+            || self.options.has_parent_parser
+            || self.options.script_flavor.is_oxfmt()
+            // What only a script can have is an error there.
+            || source_type == SourceType::Module
+            || !self.out.is_at_start_of_line()
+        {
+            return false;
+        }
+        let script = crate::js::quick::Script {
+            text: code,
+            is_typescript,
+            is_no_module: source_type == SourceType::Script,
+            indentation,
+        };
+        let mut formatted = std::mem::take(&mut self.scripts.formatted);
+        let quick = &mut self.scripts.quick;
+        let is_formatted =
+            crate::js::quick::format_script(script, self.options.format, quick, &mut formatted)
+                .is_ok();
+        let lines = formatted.strip_suffix(b"\n").unwrap_or(&formatted);
+        let is_written = is_formatted && !lines.is_empty();
+        if is_written {
+            self.out.lines(lines);
+        }
+        self.scripts.formatted = formatted;
+        is_written
     }
 
     /// HTML in HTML.

@@ -106,6 +106,27 @@ pub struct Scratch {
     document: crate::Scratch,
     /// What has read the last text that was one run, and what it has written.
     runs: Option<(runs::Runs, Vec<u8>)>,
+    scripts: Scripts,
+    style_sheets: crate::css::Scratch,
+}
+
+impl Scratch {
+    /// What the scripts that go the quick way keep from one to the next.
+    pub fn quick_way(&self) -> &crate::js::quick::Scratch {
+        &self.scripts.quick
+    }
+
+    pub fn quick_way_mut(&mut self) -> &mut crate::js::quick::Scratch {
+        &mut self.scripts.quick
+    }
+}
+
+/// For the scripts that go the quick way.
+#[derive(Default)]
+pub(crate) struct Scripts {
+    pub(crate) quick: crate::js::quick::Scratch,
+    /// The last one, formatted.
+    pub(crate) formatted: Vec<u8>,
 }
 
 /// The `options` that Prettier's functions receive.
@@ -356,6 +377,7 @@ pub(crate) fn write_document(
         None,
         Flavor::Prettier,
         None,
+        &mut Scripts::default(),
         f,
         None,
     )
@@ -384,6 +406,7 @@ pub(crate) fn write_document_to_quick<'w, 'f>(
         None,
         Flavor::Prettier,
         None,
+        &mut Scripts::default(),
         f,
         Some(quick),
     )
@@ -403,11 +426,14 @@ fn write_document_with_cursor<'w, 'f>(
     cursor_offset: Option<u32>,
     script_flavor: Flavor,
     found: Option<(runs::Runs, Vec<u8>)>,
+    scripts: &mut Scripts,
     f: &'w mut Formatter<'f>,
     quick: Option<writer::ToQuick<'w, 'f>>,
 ) -> Result<DocumentSummary, FormatError> {
     let (content, front_matter_len) = without_front_matter(text);
     let mut tree = ast::Tree::default();
+    // A node for some twenty bytes: the list doesn't move while a small text is read.
+    tree.nodes.reserve(text.len() / 24 + 8);
     if let Some((runs, printed)) = found {
         (tree.runs, tree.printed) = (Some(runs), printed);
     }
@@ -455,10 +481,12 @@ fn write_document_with_cursor<'w, 'f>(
         has_tsx_script: None,
         cursor,
         css_scratch: Default::default(),
+        scripts: std::mem::take(scripts),
     };
     printer.print_root(!is_embedded);
     let is_nested_too_deeply = printer.is_nested_too_deeply;
     let has_wrong_short_cut = printer.has_wrong_short_cut;
+    *scripts = std::mem::take(&mut printer.scripts);
     let unwritten = printer.out.unwritten();
     printer.out.finish();
     match is_nested_too_deeply {
@@ -470,6 +498,81 @@ fn write_document_with_cursor<'w, 'f>(
             unwritten,
         }),
     }
+}
+
+/// Appends what is printed for `text`, a Vue file with `options` that is one run, for which `lines` is printed: lines,
+/// and between them code, which its formatter prints as a text. Returns false if it takes a document.
+fn write_lines_and_code(
+    mut lines: &[u8],
+    text: &[u8],
+    options: &FormatOptions,
+    scratch: &mut Scratch,
+    out: &mut Vec<u8>,
+) -> bool {
+    use runs::Language;
+    let formatted = &mut scratch.scripts.formatted;
+    while let Some((before, code, after)) = runs::Code::split(lines) {
+        out.extend_from_slice(before);
+        out.push(b'\n');
+        let source = code.span.of(text);
+        let style_sheet = match code.language {
+            Language::Script => return false,
+            Language::JavaScript | Language::TypeScript => None,
+            Language::Css => Some(crate::css::Parser::Css),
+            Language::Scss => Some(crate::css::Parser::Scss),
+            Language::Less => Some(crate::css::Parser::Less),
+        };
+        let is_formatted = match style_sheet {
+            None => {
+                let script = crate::js::quick::Script {
+                    text: source,
+                    is_typescript: code.language == Language::TypeScript,
+                    is_no_module: false,
+                    indentation: u32::from(code.level),
+                };
+                let quick = &mut scratch.scripts.quick;
+                crate::js::quick::format_script(script, options, quick, formatted).is_ok()
+            }
+            // Its lines would have to be indented.
+            Some(_) if code.level != 0 => false,
+            Some(parser) => {
+                let options = FormatOptions {
+                    in_html: InHtml {
+                        root: HtmlRoot::Program,
+                        ..InHtml::default()
+                    },
+                    ..embed::options_for_printed_text(options, 0)
+                };
+                formatted.clear();
+                let style_sheets = &mut scratch.style_sheets;
+                crate::css::format(source, parser, &options, style_sheets, formatted).is_ok()
+                    // A line break in a text.
+                    && !strings::contains_char(formatted, b'\r')
+            }
+        };
+        let printed = formatted.trim_ascii_end();
+        // The tags are at the left margin. White space at the end of the code is another matter.
+        if !is_formatted
+            || code.tag_level != 0
+            || printed.is_empty()
+            || formatted.get(printed.len()..) != Some(b"\n")
+        {
+            return false;
+        }
+        match options.indent_style.is_tab() {
+            true => out.extend(std::iter::repeat_n(b'\t', usize::from(code.level))),
+            false => out.extend(std::iter::repeat_n(
+                b' ',
+                usize::from(code.level) * options.indent_width.value() as usize,
+            )),
+        }
+        out.extend_from_slice(printed);
+        out.push(b'\n');
+        lines = after;
+    }
+    out.extend_from_slice(lines);
+    out.push(b'\n');
+    !crate::is_too_long(out.len())
 }
 
 /// Formats `text`, an Angular expression, and appends it to `out` without a final line break.
@@ -523,6 +626,7 @@ fn format_angular_expression(
             has_tsx_script: None,
             cursor: Cursor::Nowhere,
             css_scratch: Default::default(),
+            scripts: Default::default(),
         };
         let in_html = InHtml {
             root,
@@ -664,7 +768,13 @@ fn format_once(
     // A text that is one run from its start to its end needs no tree and no document. Behind front matter it needs no
     // tree.
     let mut found = None;
-    if parser == Parser::Html
+    let can_be_one_run = match parser {
+        Parser::Html => true,
+        // Vue compiles nothing under `v-pre`.
+        Parser::Vue => !script_flavor.is_oxfmt() && !strings::contains(&text, b"v-pre"),
+        _ => false,
+    };
+    if can_be_one_run
         && !is_range
         && cursor_offset.is_none()
         && let front_matter_len = front_matter::parse(&text).map_or(0, |it| it.end)
@@ -690,6 +800,14 @@ fn format_once(
                 return Ok(None);
             }
             let options = options_of_text();
+            if front_matter_len == 0 && parser == Parser::Vue {
+                let written = out.len();
+                if write_lines_and_code(whole, &text, &options, scratch, out) {
+                    scratch.runs = Some((runs, printed));
+                    return Ok(None);
+                }
+                out.truncate(written);
+            }
             let mut context =
                 JsFormatContext::without_file(options.clone(), &crate::js::comments::NO_COMMENTS);
             context.parse_javascript = parse_javascript;
@@ -715,9 +833,11 @@ fn format_once(
                     has_tsx_script: None,
                     cursor: Cursor::Nowhere,
                     css_scratch: Default::default(),
+                    scripts: std::mem::take(&mut scratch.scripts),
                 };
                 printer.print_front_matter_and_run(&text[..front_matter_len], whole);
                 has_wrong_short_cut = printer.has_wrong_short_cut || printer.is_nested_too_deeply;
+                scratch.scripts = std::mem::take(&mut printer.scripts);
                 printer.out.finish();
             });
             return root
@@ -753,6 +873,7 @@ fn format_once(
                 cursor_offset,
                 script_flavor,
                 found.take(),
+                &mut scratch.scripts,
                 f,
                 None,
             )

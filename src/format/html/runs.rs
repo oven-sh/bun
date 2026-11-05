@@ -13,6 +13,7 @@
 //! - words
 //! - words and elements with nothing but words in them that share lines, between two line breaks that are forced
 //! - a `<script>` and a `<style>`, whose code is left for its formatter
+//! - the blocks of a Vue file
 //!
 //! Everything else ends the run: the child goes the long way, through the lexer and the parser. So does every element
 //! that is open at that place. The children in front of it, on each level, are runs of their own.
@@ -40,6 +41,8 @@ pub(crate) struct Settings {
     spelling: Spelling,
     /// `<!DOCTYPE html>` is printed in small letters.
     lowers_doctype: bool,
+    /// `vueIndentScriptAndStyle`
+    indents_blocks: bool,
     /// How long the front matter of the text is, which the lexer sees as white space.
     front_matter_len: usize,
 }
@@ -71,6 +74,7 @@ impl Settings {
             spelling: Spelling::new(options),
             lowers_doctype: path
                 .is_some_and(|path| path.ends_with(b".html") || path.ends_with(b".htm")),
+            indents_blocks: options.vue_indent_script_and_style,
             front_matter_len,
         })
     }
@@ -340,14 +344,38 @@ struct Small {
     is_simple: bool,
 }
 
+/// What code in a run is written in.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum Language {
+    /// JavaScript that is no module.
+    Script,
+    JavaScript,
+    TypeScript,
+    Css,
+    Scss,
+    Less,
+}
+
+impl Language {
+    const ALL: [Language; 6] = [
+        Language::Script,
+        Language::JavaScript,
+        Language::TypeScript,
+        Language::Css,
+        Language::Scss,
+        Language::Less,
+    ];
+}
+
 /// Code in what is printed for a run, which another formatter prints: between two forced line breaks that are not
-/// written down. In the text it is a NUL and ten bytes. Nothing else in there has a NUL.
+/// written down. In the text it is a NUL and eleven bytes. Nothing else in there has a NUL.
 #[derive(Copy, Clone)]
 pub(crate) struct Code {
-    /// It is a style sheet. Else it is a script.
-    pub(crate) is_style: bool,
+    pub(crate) language: Language,
     /// The number of `indent`s around it.
     pub(crate) level: u8,
+    /// The number of `indent`s around the tags that it is between.
+    pub(crate) tag_level: u8,
     /// Where it is in the source.
     pub(crate) span: Span,
 }
@@ -357,17 +385,18 @@ impl Code {
     pub(crate) fn split(printed: &[u8]) -> Option<(&[u8], Code, &[u8])> {
         let (before, rest) =
             printed.split_at_checked(bun_core::strings::index_of_char_usize(printed, 0)?)?;
-        let (&[_, is_style, level, a, b, c, d, e, f, g, h], after) = rest.split_first_chunk()?;
+        let (&[_, language, level, tag_level, a, b, c, d, e, f, g, h], after) =
+            rest.split_first_chunk()?;
         let span = Span::new(
             u32::from_le_bytes([a, b, c, d]),
             u32::from_le_bytes([e, f, g, h]),
         );
-        let is_style = is_style != 0;
         Some((
             before,
             Code {
-                is_style,
+                language: *Language::ALL.get(language as usize)?,
                 level,
+                tag_level,
                 span,
             },
             after,
@@ -414,7 +443,7 @@ impl Sink<'_, '_> {
     fn code(&mut self, code: Code) {
         self.flush();
         self.out
-            .extend_from_slice(&[0, u8::from(code.is_style), code.level]);
+            .extend_from_slice(&[0, code.language as u8, code.level, code.tag_level]);
         self.out.extend_from_slice(&code.span.start.to_le_bytes());
         self.out.extend_from_slice(&code.span.end.to_le_bytes());
     }
@@ -626,6 +655,18 @@ fn is_all_plain_in_value(value: &[u8]) -> bool {
     blocks.iter().all(|block| is_plain(block)) && is_plain(rest)
 }
 
+/// True if `code` has a control character other than a tab and a line feed: some of them are white space to some and not
+/// to others. Without a way out of the inner loop, so that the compiler looks at many bytes at a time.
+fn has_control_character(code: &[u8]) -> bool {
+    let has_one = |bytes: &[u8]| {
+        bytes.iter().fold(false, |found, &byte| {
+            found | ((byte < b' ') & (byte != b'\t') & (byte != b'\n')) | (byte == 0x7F)
+        })
+    };
+    let (blocks, rest) = code.as_chunks::<64>();
+    blocks.iter().any(|block| has_one(block)) || has_one(rest)
+}
+
 /// True if the first child of the root can be the first of a run: white space in front of it would be a text.
 pub(crate) fn starts_at_start_of_line(text: &[u8]) -> bool {
     !matches!(text.first(), None | Some(b' ' | b'\t' | b'\n'))
@@ -647,6 +688,8 @@ pub(crate) struct Runs {
     pieces: Vec<Piece>,
     /// Of the text, once something has been looked at.
     marks: HtmlMarksBuffer,
+    /// A block that has been read is a `<script>` whose `lang` is `ts` or `typescript`.
+    pub(crate) has_typescript_script: bool,
 }
 
 impl Runs {
@@ -661,6 +704,7 @@ impl Runs {
             attributes: Vec::new(),
             pieces: Vec::new(),
             marks: HtmlMarksBuffer::default(),
+            has_typescript_script: false,
         }
     }
 
@@ -669,6 +713,7 @@ impl Runs {
         self.settings = settings;
         self.found.clear();
         (self.next, self.scanned_to, self.is_new) = (0, 0, true);
+        self.has_typescript_script = false;
     }
 
     /// True if the text has been looked at from `at` on.
@@ -776,12 +821,14 @@ impl Runs {
             ends_in_text: false,
             measured: None,
             is_indented_too_far: false,
+            has_typescript_script: false,
         };
         scanner.siblings.are_in_no_groups = (parent.element).is_some_and(|(name, _)| {
             let display = data::css_display_of_tag(name).unwrap_or(Display::Inline);
             breaks_its_content(name, display)
         });
         self.scanned_to = scanner.run(start, &parent);
+        self.has_typescript_script |= scanner.has_typescript_script;
         if scanner.is_indented_too_far {
             self.scanned_to = usize::MAX;
             return;
@@ -879,6 +926,8 @@ struct Scanner<'s, 'a> {
     /// What has been written is of no use. Something nested `n` deep is indented by `n * n` blanks, which the printer
     /// knows how to deal with. And it says when something is nested too deeply for it.
     is_indented_too_far: bool,
+    /// See `Runs::has_typescript_script`.
+    has_typescript_script: bool,
 }
 
 impl<'a> Scanner<'_, 'a> {
@@ -1133,9 +1182,12 @@ impl<'a> Scanner<'_, 'a> {
                 return at;
             }
             let mark = self.out.mark();
+            let is_block = self.siblings.level == 0 && self.settings.parser == Parser::Vue;
             let (mut item, mut is_text) = match (self.at(at), self.at(at + 1)) {
+                // With a doctype, the text is no Vue file.
+                (b'<', b'!') if !is_block || self.at(at + 2) == b'-' => (self.comment(at), false),
+                _ if is_block => (self.block(at), false),
                 (b'<', b'a'..=b'z' | b'A'..=b'Z') => (self.element(at), false),
-                (b'<', b'!') => (self.comment(at), false),
                 (b'<', _) => (Item::No, false),
                 (b'{', b'{') if self.reads_interpolations() => {
                     (self.interpolation_on_line(at), false)
@@ -1143,7 +1195,7 @@ impl<'a> Scanner<'_, 'a> {
                 _ => (self.text_on_lines(at), true),
             };
             // It may share its lines with its neighbors.
-            if matches!(item, Item::No) {
+            if matches!(item, Item::No) && !is_block {
                 self.out.reset(mark);
                 (item, is_text) = (self.pieces_on_lines(at), true);
             }
@@ -1342,7 +1394,7 @@ impl<'a> Scanner<'_, 'a> {
         }
         if must_be_empty {
             if definition.content_type == ContentType::RawText {
-                return self.element_with_code(start, element, width, open_end);
+                return self.element_with_code(start, (name, to), width, open_end, None);
             }
             // Plain words in it, all on one line with the tags.
             let len = match name {
@@ -1450,19 +1502,102 @@ impl<'a> Scanner<'_, 'a> {
         }
     }
 
+    /// A block of a Vue file, which starts at `start` on a line of its own: a `<template>` of HTML with children on lines
+    /// of their own, a `<script>`, a `<style>`.
+    #[inline(never)]
+    fn block(&mut self, start: usize) -> Item {
+        let rest = self.text.get(start..).unwrap_or_default();
+        if rest.starts_with(b"<template>") {
+            let (name_end, open_end) = (start + 9, start + 10);
+            let (first, line_breaks) = self.skip_space(open_end);
+            // With nothing but a text in it, it is only broken if it does not fit on a line.
+            let starts_with_tag = self.at(first) == b'<'
+                && matches!(self.at(first + 1), b'a'..=b'z' | b'A'..=b'Z' | b'!');
+            if line_breaks == 0 || !starts_with_tag {
+                return Item::No;
+            }
+            let key = data::key_of_name(b"template");
+            let (printed_from, mark) = (self.out.len(), self.out.mark());
+            self.out.source(start, open_end);
+            self.levels.push(Level {
+                start,
+                name_end,
+                key,
+                open_end,
+                printed: (printed_from, self.out.len()),
+                mark,
+                siblings: self.siblings,
+            });
+            self.put_gap((open_end, first), line_breaks, 1, false);
+            let inner = (data::facts(key).definition, false);
+            self.siblings = Siblings::new(1, inner, (first, self.out.len()), 0);
+            return Item::Open(first);
+        }
+        let Some(name) = [&b"script"[..], b"style"].into_iter().find(|name| {
+            (rest
+                .strip_prefix(b"<")
+                .and_then(|rest| rest.strip_prefix(*name)))
+            .is_some_and(|rest| matches!(rest, [b' ' | b'>', ..]))
+        }) else {
+            return Item::No;
+        };
+        let name_end = start + 1 + name.len();
+        let Some((at, width)) = self.read_tag(name, name_end, name_end - start, false) else {
+            return Item::No;
+        };
+        // The attributes of a block are laid out in another way where they do not fit.
+        if self.at(at) != b'>' || width + 1 > self.settings.line_width {
+            return Item::No;
+        }
+        // Some attributes with a value are code, some say where the code is.
+        let (text, mut lang) = (self.text, None);
+        for it in self.attributes.iter() {
+            match text.get(it.start..it.end).unwrap_or_default() {
+                [b'l', b'a', b'n', b'g', b'=', b'"', value @ .., b'"'] if lang.is_none() => {
+                    lang = Some(value)
+                }
+                b"lang" | b"src" | b"type" => return Item::No,
+                name if name.iter().all(u8::is_ascii_lowercase) => {}
+                _ => return Item::No,
+            }
+        }
+        let parser = match lang {
+            Some(lang) => crate::markdown::infer_parser(lang),
+            None if name == b"script" => Some(&b"babel"[..]),
+            None => Some(&b"css"[..]),
+        };
+        let language = match (name, parser) {
+            (b"script", Some(b"babel")) => Language::JavaScript,
+            (b"script", Some(b"typescript")) => Language::TypeScript,
+            (b"style", Some(b"css")) => Language::Css,
+            (b"style", Some(b"scss")) => Language::Scss,
+            (b"style", Some(b"less")) => Language::Less,
+            _ => return Item::No,
+        };
+        let item = self.element_with_code(start, (name, name_end), width, at + 1, Some(language));
+        if matches!(item, Item::Ends(_)) && name == b"script" {
+            self.has_typescript_script |= matches!(lang, Some(b"ts" | b"typescript"));
+        }
+        item
+    }
+
     /// A `<script>` or a `<style>`. Code that is left alone gets the indentation of the element. For code that is
-    /// formatted a [`Code`] is written. See `element_with_words`.
+    /// formatted a [`Code`] is written. `language` is that of a block of a Vue file. See `element_with_words`.
     #[cold]
     #[inline(never)]
     fn element_with_code(
         &mut self,
         start: usize,
-        element: Element<'_>,
+        (name, name_end): (&[u8], usize),
         width: usize,
         open_end: usize,
+        language: Option<Language>,
     ) -> Item {
-        let Element { name, name_end, .. } = element;
         let level = self.siblings.level;
+        let code_level = match language {
+            Some(_) => usize::from(self.settings.indents_blocks),
+            None => level + 1,
+        };
         let room = (self.settings.line_width).saturating_sub(level * self.settings.indent_width);
         let Some(close) = self.end_of_raw_text(open_end, name) else {
             return Item::No;
@@ -1471,9 +1606,7 @@ impl<'a> Scanner<'_, 'a> {
         let text = self.text;
         let all = text.get(open_end..close).unwrap_or_default();
         let code = super::utilities::html_trim_preserve_indentation(all);
-        // What else is white space to some and not to others.
-        let is_odd = |byte: &u8| matches!(byte, 0..=8 | 11..=31 | 127);
-        if code.is_empty() || !self.ends_line(end) || all.iter().any(is_odd) {
+        if code.is_empty() || !self.ends_line(end) || has_control_character(all) {
             return Item::No;
         }
         if self.settings.formats_embedded {
@@ -1485,7 +1618,7 @@ impl<'a> Scanner<'_, 'a> {
                         .is_some_and(|rest| matches!(rest, [] | [b'=', ..]))
                 })
             });
-            if names_language || self.only_children > 0 || level >= 128 {
+            if (names_language && language.is_none()) || self.only_children > 0 || level >= 128 {
                 return Item::No;
             }
             self.put_whole_tag(
@@ -1494,8 +1627,12 @@ impl<'a> Scanner<'_, 'a> {
                 !self.attributes.is_empty() && width + 1 > room,
             );
             self.out.code(Code {
-                is_style: name == b"style",
-                level: level as u8 + 1,
+                language: language.unwrap_or(match name {
+                    b"style" => Language::Css,
+                    _ => Language::Script,
+                }),
+                level: code_level as u8,
+                tag_level: level as u8,
                 span: Span::new(open_end as u32, close as u32),
             });
             self.put_end_tag(name);
@@ -1519,7 +1656,7 @@ impl<'a> Scanner<'_, 'a> {
             match kept_len {
                 0 => self.out.push(b'\n'),
                 _ => {
-                    self.put_line(level + 1);
+                    self.put_line(code_level);
                     self.out.source(at + dedent, at + dedent + kept_len);
                 }
             }
@@ -1922,6 +2059,9 @@ impl<'a> Scanner<'_, 'a> {
             };
             self.siblings = level.siblings;
             self.out.reset(level.mark);
+            if self.siblings.level == 0 && self.settings.parser == Parser::Vue {
+                return Item::No;
+            }
             return self.element_of_pieces(&level).unwrap_or(Item::No);
         }
         self.ends_in_text = self.pieces.last().is_some_and(|it| it.ends_in_text);

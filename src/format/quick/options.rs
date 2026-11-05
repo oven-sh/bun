@@ -20,6 +20,11 @@ pub(crate) struct Options {
     pub(crate) operator_position_start: bool,
     pub(crate) html_whitespace_sensitivity: i32,
     pub(crate) embedded_language_formatting_auto: bool,
+    pub(crate) is_in_markdown: bool,
+    /// See `Options::marks_line_breaks_in_texts` of root.rs.
+    pub(crate) marks_line_breaks_in_texts: bool,
+    /// See `Options::indentation` of root.rs.
+    pub(crate) indentation: i32,
     /// The name of the file ends in ".ts".
     pub(crate) name_ends_in_ts: bool,
     /// The name of the file ends in ".js.flow".
@@ -63,6 +68,9 @@ impl Options {
             operator_position_start: false,
             html_whitespace_sensitivity: 0,
             embedded_language_formatting_auto: true,
+            is_in_markdown: false,
+            marks_line_breaks_in_texts: false,
+            indentation: 0,
             name_ends_in_ts: false,
             name_ends_in_js_flow: false,
             in_js_template: false,

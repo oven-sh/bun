@@ -23,6 +23,8 @@ pub(crate) struct Embedded<'x> {
     pub(crate) code: &'x [u8],
     /// How many columns of the line are left.
     pub(crate) width: usize,
+    /// See `FormatOptions::is_at_margin`.
+    pub(crate) is_at_margin: bool,
 }
 
 pub(crate) struct Printer<'a, 'e> {
@@ -2128,6 +2130,7 @@ impl<'a> Printer<'a, '_> {
                 },
                 code,
                 width: (self.options.line_width.value() as usize).saturating_sub(self.indentation),
+                is_at_margin: self.is_one_text(node),
             };
             if !(self.embed)(&embedded, &mut formatted) {
                 return None;
@@ -2167,11 +2170,6 @@ impl<'a> Printer<'a, '_> {
                 ]);
             }
         }
-        let embedded = Embedded {
-            language,
-            code,
-            width,
-        };
         let unit = self.fence_unit(node);
         // The fence that the code needs as it's written, and what follows it on its line, are written in front of the
         // code.
@@ -2181,6 +2179,12 @@ impl<'a> Printer<'a, '_> {
         let is_one_text = self.is_one_text(node)
             && !is_oxfmt
             && !matches!(meta.last().or_else(|| language.last()), Some(b' ' | b'\t'));
+        let embedded = Embedded {
+            language,
+            code,
+            width,
+            is_at_margin: is_one_text,
+        };
         if is_one_text {
             let around = 2 * (fence + 1) + language.len() + meta.len();
             formatted.reserve(code.len() + code.len() / 8 + around + 16);
@@ -2258,6 +2262,7 @@ impl<'a> Printer<'a, '_> {
                     language: b"",
                     code: b"",
                     width: 0,
+                    is_at_margin: is_one_text,
                 },
                 &mut formatted,
             ),
@@ -2267,6 +2272,7 @@ impl<'a> Printer<'a, '_> {
                     language: b"yaml",
                     code: value,
                     width: self.options.line_width.value() as usize,
+                    is_at_margin: is_one_text,
                 },
                 &mut formatted,
             ),

@@ -8,6 +8,7 @@ use crate::js::print::class::dangling_comments_with_marker;
 use crate::js::print::flow::is_match_expression_case;
 use crate::js::utils::jsx::WrapState;
 use crate::js::utils::suppressed::FormatSuppressedNode;
+use crate::js::utils::typecast::is_cast_target_that_hides_its_kind;
 use crate::prelude::*;
 use crate::{best_fitting, format_args, write};
 
@@ -58,6 +59,17 @@ impl<'a> AnyJsxTagWithChildren<'a> {
     /// Prettier's `maybeWrapJsxElementInParens`.
     fn fmt_in_parentheses(&self, element: &impl Format<'a>, f: &mut Formatter<'a>) {
         let parent = self.parent();
+        // `/** @type {A} */ (<a>..</a>)`: the parent is the `ParenthesizedExpression`, which is no reason not to wrap.
+        if is_cast_target_that_hides_its_kind(self.expr, f) {
+            return write!(
+                f,
+                group(&format_args!(
+                    if_group_breaks(&"("),
+                    soft_block_indent(element),
+                    if_group_breaks(&")")
+                ))
+            );
+        }
         match self.get_wrap_state(parent) {
             WrapState::NoWrap => write!(f, element),
             WrapState::WrapOnBreak => {

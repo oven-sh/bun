@@ -84,6 +84,11 @@ casts/conditional-in-a-branch-of-a-conditional.js
 291 312 L ParenthesizedExpression 313 474 -
 362 387 L MemberExpression 388 399 -
 412 453 L MemberExpression 454 466 -
+casts/element-that-breaks-in-a-cast.js
+4 20 L ParenthesizedExpression 21 136 -
+138 154 L ExpressionStatement 155 274 -
+278 294 L ParenthesizedExpression 295 412 -
+419 435 L ParenthesizedExpression 436 452 -
 casts/in-a-chain-of-operators.js
 9 25 L ParenthesizedExpression 26 34 -
 40 56 L BinaryExpression 57 68 -

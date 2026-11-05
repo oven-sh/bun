@@ -1,0 +1,4 @@
+a = /** @type {A} */ (<div>{bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}{cccccccccccccccccccccccccccccccccccccccccccccccccc}</div>);
+/** @type {A} */ (<div>{bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}{cccccccccccccccccccccccccccccccccccccccccccccccccc}</div>);
+f(/** @type {A} */ (<div>{bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}{cccccccccccccccccccccccccccccccccccccccccccccccccc}</div>));
+g = /** @type {A} */ (<div>{b}</div>);

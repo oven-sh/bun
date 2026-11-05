@@ -2106,8 +2106,11 @@ impl H2FrameParser {
         let identifier = stream.get_identifier();
         identifier.ensure_still_alive();
         stream.free_resources::<false>(self);
-        // Written before the dispatch: JS may submit a request that waited for this slot.
-        let _ = self.write(&buffer);
+        // Written before the dispatch: JS may submit a request that waited for this slot. An
+        // idle stream sent no HEADERS, and a reset of it is a connection error for the peer.
+        if old_state != StreamState::IDLE {
+            let _ = self.write(&buffer);
+        }
         self.dispatch_with_2_extra(
             js::on_aborted_get_cached,
             identifier,

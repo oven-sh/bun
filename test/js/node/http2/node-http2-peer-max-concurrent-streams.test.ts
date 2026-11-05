@@ -175,6 +175,8 @@ test("a slot is freed when the stream closes on the wire, not when the response 
 for (const [how, cancel] of [
   ["close(NGHTTP2_CANCEL)", (req: http2.ClientHttp2Stream) => req.close(http2.constants.NGHTTP2_CANCEL)],
   ["an AbortSignal", (req: http2.ClientHttp2Stream, controller: AbortController) => controller.abort()],
+  ["destroy()", (req: http2.ClientHttp2Stream) => req.destroy()],
+  ["destroy(err)", (req: http2.ClientHttp2Stream) => req.destroy(new Error("gone"))],
 ] as const) {
   test(`a request queued behind a slot goes out after the RST_STREAM of ${how}`, async () => {
     const server = http2.createServer({ settings: { maxConcurrentStreams: 1 } });

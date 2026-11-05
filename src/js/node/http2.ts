@@ -2779,6 +2779,7 @@ class Http2Stream extends (Duplex as $Node.DuplexConstructor) {
       // the deferred rstStream would be a guaranteed no-op host call per request.
       (rstCode !== 0 || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0)
     ) {
+      this[bunHTTP2StreamStatus] |= StreamState.ResetScheduled;
       setImmediate(rstNextTick.bind(session, this.#id, rstCode));
     }
 
@@ -6564,7 +6565,10 @@ class ClientHttp2Session extends Http2Session {
   #trackActiveRequest(req: ClientHttp2Stream) {
     this.#activeRequestCount++;
     req[bunHTTP2StreamStatus] |= StreamState.HoldsRequestSlot;
-    req.once("close", () => this.#releaseRequestSlot(req));
+    req.once("close", () => {
+      // A scheduled RST_STREAM frees the slot when the engine writes it, not one tick before.
+      if ((req[bunHTTP2StreamStatus] & StreamState.ResetScheduled) === 0) this.#releaseRequestSlot(req);
+    });
   }
 
   // Called at the native close report (the peer frees the slot then), and from 'close' as a backstop.

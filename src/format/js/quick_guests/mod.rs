@@ -14,7 +14,7 @@ pub(crate) mod from_ir;
 
 use self::from_doc::{FromDoc, Unwritten};
 use self::from_ir::{FromIr, Last};
-use crate::FormatOptions;
+use crate::{FormatError, FormatOptions};
 use crate::html::writer::{QuickBuffers, ToQuick};
 use crate::js::context::JsFormatContext;
 use bun_core::strings;
@@ -107,10 +107,16 @@ impl QuickGuests {
             text,
             &self.options,
             &mut self.markdown,
-            |document, _| FromDoc::new(sink).write(document),
+            // Around a text that may be on one line with its backticks, the long way breaks lines that Prettier doesn't.
+            |document, _| match from_doc::forces_break(document) {
+                true => FromDoc::for_markdown(sink).write(document),
+                false => Err(Unwritten::Unknown),
+            },
         );
         match written {
-            None => Answer::NotRead,
+            // There's no syntax error in Markdown. The long way has no words for the document, and lays out what is
+            // around the template as if it had.
+            None => Answer::Refused,
             Some(Ok(())) => Answer::Written,
             Some(Err(unwritten)) => unwritten.into(),
         }
@@ -158,7 +164,10 @@ impl QuickGuests {
                 sink.set_top_level_count(i32::try_from(top_level_count).unwrap_or(i32::MAX));
                 Answer::Written
             }
-            (_, Some(Err(crate::FormatError::SyntaxError | crate::FormatError::SyntaxErrorAt(_)))) => {
+            // What is around a template that's left alone for another reason is laid out as if it weren't.
+            (_, Some(Err(FormatError::SyntaxError | FormatError::SyntaxErrorAt(_))))
+                if !crate::html::can_be_parsed(text, parser) =>
+            {
                 Answer::NotRead
             }
             _ => Answer::Refused,

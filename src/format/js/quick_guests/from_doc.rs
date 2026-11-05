@@ -1,6 +1,10 @@
 //! Writes a document of `css/doc.rs` to the document of the quick way. Both are Prettier's, part for part.
+//!
+//! The long way translates such a document to `ir/` (`css/embed.rs`, `markdown/embed.rs`), which has no word for some of
+//! it. What is printed differently there isn't written here either: [`Unwritten::Unknown`].
 
 use crate::css::doc::{Alignment, Doc, Line};
+use bun_core::strings;
 use bun_format_quick::{GroupId, Sink};
 use smallvec::SmallVec;
 
@@ -12,10 +16,48 @@ pub(crate) enum Unwritten {
     NestedTooDeeply,
 }
 
+/// True if `doc` breaks the groups around it.
+pub(crate) fn forces_break(doc: &Doc<'_>) -> bool {
+    let mut rest = vec![doc];
+    while let Some(doc) = rest.pop() {
+        match doc {
+            Doc::BreakParent => return true,
+            Doc::Array(parts) | Doc::Fill(parts) => rest.extend(parts),
+            Doc::Group {
+                should_break: true, ..
+            } => return true,
+            Doc::Group {
+                is_conditional: true,
+                ..
+            } => {}
+            Doc::Indent(contents)
+            | Doc::Align(_, contents)
+            | Doc::Dedent(contents)
+            | Doc::DedentToRoot(contents)
+            | Doc::MarkAsRoot(contents)
+            | Doc::Group { contents, .. } => rest.push(contents),
+            Doc::IfBreak {
+                break_contents,
+                flat_contents,
+                ..
+            } => rest.extend([&**break_contents, &**flat_contents]),
+            Doc::Text(_)
+            | Doc::LineSuffix(_)
+            | Doc::LineSuffixBoundary
+            | Doc::Line(_)
+            | Doc::KeepTrailingWhitespace => {}
+        }
+    }
+    false
+}
+
 pub(crate) struct FromDoc<'s, 'q> {
     sink: &'s mut Sink<'q>,
     /// The ids of the document's groups, and what they're called in the other one.
     groups: SmallVec<[(u32, GroupId); 4]>,
+    /// How many groups and fills are around what is written. There the long way measures a line break in a string
+    /// differently. For Markdown it's 1 from the start: the long way makes a `literalline` of every one.
+    measured: u32,
     stack_check: bun_core::StackCheck,
 }
 
@@ -24,7 +66,16 @@ impl<'s, 'q> FromDoc<'s, 'q> {
         FromDoc {
             sink,
             groups: SmallVec::new(),
+            measured: 0,
             stack_check: bun_core::StackCheck::init(),
+        }
+    }
+
+    /// The same for a document of Markdown.
+    pub(crate) fn for_markdown(sink: &'s mut Sink<'q>) -> Self {
+        FromDoc {
+            measured: 1,
+            ..FromDoc::new(sink)
         }
     }
 
@@ -51,10 +102,24 @@ impl<'s, 'q> FromDoc<'s, 'q> {
             return Err(Unwritten::NestedTooDeeply);
         }
         match doc {
+            Doc::Text(text) if self.measured > 0 && strings::contains_char(text, b'\n') => {
+                return Err(Unwritten::Unknown);
+            }
             Doc::Text(text) => self.sink.text(text),
             Doc::Array(parts) => {
-                for part in parts {
-                    self.write(part)?;
+                let mut parts = parts.iter().peekable();
+                while let Some(part) = parts.next() {
+                    // In `ir/`, a forced line break always breaks the groups around it.
+                    if matches!(part, Doc::Line(Line::Hard | Line::Literal))
+                        && !matches!(parts.peek(), Some(Doc::BreakParent))
+                    {
+                        return Err(Unwritten::Unknown);
+                    }
+                    match part {
+                        Doc::Line(Line::Hard) => self.sink.hardline_without_break(),
+                        Doc::Line(Line::Literal) => self.sink.literalline_without_break(),
+                        _ => self.write(part)?,
+                    }
                 }
             }
             Doc::Indent(contents) => {
@@ -94,7 +159,9 @@ impl<'s, 'q> FromDoc<'s, 'q> {
             } => {
                 let id = self.group_id(*id);
                 let group = self.sink.group_open();
+                self.measured += 1;
                 let result = self.write(contents);
+                self.measured -= 1;
                 self.sink.group_close(group, *should_break, id);
                 result?;
             }
@@ -114,6 +181,7 @@ impl<'s, 'q> FromDoc<'s, 'q> {
             Doc::Group { .. } => return Err(Unwritten::Unknown),
             Doc::Fill(parts) => {
                 self.sink.fill_open();
+                self.measured += 1;
                 let mut result = Ok(());
                 for (index, part) in parts.iter().enumerate() {
                     match index % 2 {
@@ -125,6 +193,7 @@ impl<'s, 'q> FromDoc<'s, 'q> {
                         break;
                     }
                 }
+                self.measured -= 1;
                 self.sink.fill_close();
                 result?;
             }
@@ -151,8 +220,7 @@ impl<'s, 'q> FromDoc<'s, 'q> {
             Doc::BreakParent => self.sink.break_parent(),
             Doc::Line(Line::Space) => self.sink.line(),
             Doc::Line(Line::Soft) => self.sink.softline(),
-            Doc::Line(Line::Hard) => self.sink.hardline_without_break(),
-            Doc::Line(Line::Literal) => self.sink.literalline_without_break(),
+            Doc::Line(Line::Hard | Line::Literal) => return Err(Unwritten::Unknown),
         }
         Ok(())
     }

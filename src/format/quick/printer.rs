@@ -14,7 +14,7 @@ use crate::doc::{
 };
 use crate::options::{EOL_CR, EOL_CRLF, EOL_LF};
 use crate::text::much_larger;
-use crate::{Bytes, Quick, R, Stop, Words, rare, why, zeros};
+use crate::{Bytes, Quick, R, Stop, Words, copy_block, rare, why, zeros};
 
 pub(crate) struct Printer {
     pub(crate) out: Vec<u8>,
@@ -93,9 +93,10 @@ impl Printer {
     }
 }
 
+/// So many bytes at the end of the output stay free: texts are copied in blocks, and what follows overwrites what was copied too much.
+const OUT_MARGIN: i32 = 128;
 pub(crate) const FLAT: i32 = 1;
 pub(crate) const BREAK: i32 = 2;
-pub(crate) const SPACES_AT: i32 = 65; // staticText(" ")
 // ---- indentation: records of IT_STRIDE words
 pub(crate) const IT_STRIDE: i32 = 16;
 pub(crate) const IT_WIDTH: i32 = 0;
@@ -293,9 +294,10 @@ impl Quick {
 
     pub(crate) fn grow_out(&mut self, need: i32) -> R<()> {
         // (a tab width of 5000 and a file of 200 KB on one line give 420 MB)
-        if need < 0 || need >= HUGE {
+        if need < 0 || need >= HUGE - 2 * OUT_MARGIN {
             return Err(self.stop(why::TOO_LARGE));
         }
+        let need = need + 2 * OUT_MARGIN;
         let mut cap = self.printer.out_cap;
         while cap < need {
             cap = much_larger(cap);
@@ -684,9 +686,9 @@ impl Quick {
         self.printer.sx_start = 0;
         self.printer.cursor_count = 0;
         self.printer.x_stub = stub;
-        let eight_spaces = self.t.u64_at(SPACES_AT);
+        let sixteen_spaces = u128::from_le_bytes([32; 16]);
         let mut st_limit = self.printer.st.len() as i32 - 16;
-        let mut cap = self.printer.out_cap - 32;
+        let mut cap = self.printer.out_cap - OUT_MARGIN;
         let mut sp: i32 = 0;
         let mut pc = start;
         let mut o: i32 = 0;
@@ -841,10 +843,12 @@ impl Quick {
                                     i += 1;
                                 }
                                 o += tabs;
-                                let mut k: i32 = 0;
+                                self.printer.out.put_u128(o, sixteen_spaces);
+                                self.printer.out.put_u128(o + 16, sixteen_spaces);
+                                let mut k: i32 = 32;
                                 while k < spaces {
-                                    self.printer.out.put_u64(o + k, eight_spaces);
-                                    k += 8;
+                                    self.printer.out.put_u128(o + k, sixteen_spaces);
+                                    k += 16;
                                 }
                                 o += spaces;
                                 pos = self.printer.it.at(ind + IT_WIDTH);
@@ -890,10 +894,12 @@ impl Quick {
                                 i += 1;
                             }
                             o += tabs;
-                            let mut k: i32 = 0;
+                            self.printer.out.put_u128(o, sixteen_spaces);
+                            self.printer.out.put_u128(o + 16, sixteen_spaces);
+                            let mut k: i32 = 32;
                             while k < spaces {
-                                self.printer.out.put_u64(o + k, eight_spaces);
-                                k += 8;
+                                self.printer.out.put_u128(o + k, sixteen_spaces);
+                                k += 16;
                             }
                             o += spaces;
                             pos = self.printer.it.at(ind + IT_WIDTH);
@@ -1222,7 +1228,7 @@ impl Quick {
                                         self.slow_step()?;
                                         self.printer.x_all_flat = false;
                                         st_limit = self.printer.st.len() as i32 - 16;
-                                        cap = self.printer.out_cap - 32;
+                                        cap = self.printer.out_cap - OUT_MARGIN;
                                         extra = extra + (self.printer.x_o - o) - self.printer.x_pos;
                                         o = self.printer.x_o;
                                         pc = self.printer.x_pc;
@@ -1348,10 +1354,13 @@ impl Quick {
                                 break 's2;
                             }
                             let s = self.d.at(pc + 1);
-                            let mut k: i32 = 0;
-                            while k < len {
-                                self.printer.out.put_u128(o + k, self.t.u128_at(s + k));
-                                k += 16;
+                            // (a statement on its line)
+                            if len > 96 || !copy_block::<96>(&mut self.printer.out, o, &self.t, s) {
+                                let mut k: i32 = 0;
+                                while k < len {
+                                    self.printer.out.put_u128(o + k, self.t.u128_at(s + k));
+                                    k += 16;
+                                }
                             }
                             o += len;
                             pos += len;
@@ -1448,7 +1457,7 @@ impl Quick {
             remeasure = self.printer.x_remeasure;
             waiting = self.printer.x_waiting;
             st_limit = self.printer.st.len() as i32 - 16;
-            cap = self.printer.out_cap - 32;
+            cap = self.printer.out_cap - OUT_MARGIN;
         }
     }
 
@@ -1475,7 +1484,7 @@ impl Quick {
         }
         // at worst every word stands on a line of its own
         let need = o + length + ((length + 1) >> 1).wrapping_mul(tabs + spaces + 1) + 64;
-        if need > self.printer.out_cap - 32 {
+        if need > self.printer.out_cap - OUT_MARGIN {
             self.grow_out_to(need)?;
         }
         if !self.printer.x_all_flat {
@@ -1554,7 +1563,7 @@ impl Quick {
             }
         }
         let need = o + length + lines.wrapping_mul(if delta > 0 { delta } else { 0 }) + 64;
-        if need > self.printer.out_cap - 32 {
+        if need > self.printer.out_cap - OUT_MARGIN {
             self.grow_out_to(need)?;
         }
         let width = self.options.print_width;
@@ -1656,7 +1665,7 @@ impl Quick {
                         pc += 3;
                         break 's0;
                     }
-                    if o + len * 2 > self.printer.out_cap - 32 {
+                    if o + len * 2 > self.printer.out_cap - OUT_MARGIN {
                         self.grow_out_to(o + len * 2 + 64)?;
                     }
                     if eol == 0 {
@@ -1665,8 +1674,11 @@ impl Quick {
                         } else {
                             let mut k: i32 = 0;
                             while k < len {
-                                self.printer.out.put_u64(o + k, self.t.u64_at(s + k));
-                                k += 8;
+                                if !copy_block::<64>(&mut self.printer.out, o + k, &self.t, s + k) {
+                                    self.printer.out.set_all(self.t.sub(s + k, s + len), o + k);
+                                    break;
+                                }
+                                k += 64;
                             }
                         }
                         o += len;
@@ -1745,7 +1757,7 @@ impl Quick {
                     let tabs = self.printer.it.at(r + IT_TABS);
                     let spaces = self.printer.it.at(r + IT_REAL_SPACES);
                     let prefix_length = self.printer.it.at(r + IT_PREFIX_LEN);
-                    if o + prefix_length + tabs + spaces + 3 > self.printer.out_cap - 32 {
+                    if o + prefix_length + tabs + spaces + 3 > self.printer.out_cap - OUT_MARGIN {
                         self.grow_out_to(o + prefix_length + tabs + spaces + 64)?;
                     }
                     if kind == LINE_LITERAL && self.options.marks_line_breaks_in_texts {

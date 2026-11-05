@@ -342,9 +342,7 @@ impl Quick {
                     return Ok(-1);
                 }
                 let mut v = q + 2;
-                while self.t.at(v) == 32 {
-                    v += 1;
-                }
+                v = self.blanks_end(v);
                 // prettier-ignore
                 if self.t.at(v) == 112 {
                     return Ok(-1);

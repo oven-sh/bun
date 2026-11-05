@@ -814,9 +814,7 @@ impl Quick {
     /// Where the `}` stands, if nothing but blanks and ends of lines comes before it behind p; else 0.
     pub(crate) fn closing_brace_behind(&self, p: i32) -> i32 {
         let mut q = p;
-        while self.t.at(q) == 10 || self.t.at(q) == 32 {
-            q += 1;
-        }
+        q = self.blank_lines_end(q);
         return if self.t.at(q) == 125 { q } else { 0 };
     }
 

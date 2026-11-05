@@ -2395,9 +2395,8 @@ impl Quick {
                 if kind == k::ForInStatement && (await_flag != 0 || var_kind >= V_USING) {
                     return Err(self.text_refuse());
                 }
-                // (a type cast gets more parentheses there)
+                // `for (var a = b in c)` (a type cast, of Flow or of JSDoc, gets more parentheses there)
                 if kind == k::ForInStatement
-                    && self.parse.typed == TYPED_FLOW
                     && var_kind >= 0
                     && self.n.at(self.n.at(self.n.at(init + 4) + 1) + 5) != 0
                 {

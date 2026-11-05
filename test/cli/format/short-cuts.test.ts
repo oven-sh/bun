@@ -5879,6 +5879,13 @@ describe.skipIf(!hasFlag)("scripts that are printed unlike Prettier prints them,
     // A comparison, a `?` and a `-`: no type arguments, and nothing to refuse.
     ["a.ts", "", "numbers.push((distance < 0 ? -distance * 2 - 1 : distance * 2) + 1);\n"],
     ["a.ts", "", "x=d<a?(-d):d\n"],
+    // A conditional expression as the body of an arrow function gets no parentheses if it starts with an object, also through `as`, `satisfies` and `!`.
+    ["a.ts", "", '()=>({e:""}as x?e:f)\n'],
+    ["a.ts", "", '()=>({e:""}satisfies x?e:f)\n'],
+    ["a.ts", "", '()=>({e:""}!?e:f)\n'],
+    ["a.ts", "--print-width=58", '()=>({\u00e9:""}as{readonly[\u00e9 in \u6587]:\u00f1}?\u00e9:\u6587)\n'],
+    // A value in the head of a `for` with `in`.
+    ["a.jsx", "--print-width=87", 'for(var a=/**@type*/((b))in b)("")\n'],
   ];
   const groups = Map.groupBy(rows, ([name, flags]) => `${name} ${flags}`.trim());
   test.concurrent.each([...groups])("%s", async (_, group) => {

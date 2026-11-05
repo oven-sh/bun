@@ -26,7 +26,10 @@ impl Quick {
                 | k::LogicalExpression
                 | k::AssignmentExpression
                 | k::MemberExpression
-                | k::ConditionalExpression => {
+                | k::ConditionalExpression
+                | k::NonNullExpression
+                | k::AsExpression
+                | k::SatisfiesExpression => {
                     cur = self.n.at(cur + 4);
                     continue;
                 }

@@ -2191,7 +2191,12 @@ impl<'a> Scanner<'_, 'a> {
         // Without white space, an inline element and its child print parts of each other's tags.
         let is_inline = element.display == Display::Inline;
         let child = self.skip_space(open_end).0;
-        if self.only_children >= 8 || (is_inline && child == open_end) {
+        if is_inline && child == open_end {
+            let item = self.element_around_icon(start, element, width, open_end, mark);
+            self.siblings.level = level;
+            return item.unwrap_or(Item::No);
+        }
+        if self.only_children >= 8 {
             return Item::No;
         }
         self.out.reset(mark);
@@ -2229,6 +2234,91 @@ impl<'a> Scanner<'_, 'a> {
         self.put_line(level);
         self.put_end_tag_at(name, next, end);
         Item::Ends(end)
+    }
+
+    /// An inline element with nothing in it but an `<svg>`, without white space next to it, with nothing in that but an
+    /// element that ends with `/>`. See `element_with_only_child`. The caller puts `siblings.level` back.
+    ///
+    /// ```html
+    /// <a href="#"
+    ///   ><svg class="b">
+    ///     <use href="#c" /></svg
+    /// ></a>
+    /// ```
+    fn element_around_icon(
+        &mut self,
+        start: usize,
+        element: Element<'_>,
+        width: usize,
+        open_end: usize,
+        mark: Mark,
+    ) -> Option<Item> {
+        let Element {
+            name,
+            name_end,
+            key,
+            ..
+        } = element;
+        let (line_width, indent_width) = (self.settings.line_width, self.settings.indent_width);
+        let level = self.siblings.level;
+        let svg = (self.element_at(open_end, (element.definition, element.is_in_svg)))
+            .filter(|it| it.name == b"svg" && !element.is_in_svg)?;
+        // A tag is read and written for the level of the siblings.
+        self.siblings.level = level + 1;
+        let svg_tag = self.read_tag(svg.name, svg.name_end, svg.name_end - open_end, true)?;
+        let (svg_open_end, svg_width) = (svg_tag.0 + 1, svg_tag.1);
+        let has_svg_attributes = !self.attributes.is_empty();
+        let (icon_start, line_breaks) = self.skip_space(svg_open_end);
+        if self.at(svg_tag.0) != b'>'
+            || self.at(icon_start) != b'<'
+            || !self.at(icon_start + 1).is_ascii_alphabetic()
+        {
+            return None;
+        }
+        let icon = self.element_at(icon_start, (svg.definition, true))?;
+        self.siblings.level = level + 2;
+        let icon_tag = self.read_tag(icon.name, icon.name_end, icon.name_end - icon_start, true)?;
+        if self.at(icon_tag.0) != b'/' || svg_width >= TOO_WIDE || icon_tag.1 >= TOO_WIDE {
+            return None;
+        }
+        let svg_end = self.end_tag(self.skip_space(icon_tag.0 + 2).0, svg.name, svg.key)?;
+        let end = (self.end_tag(svg_end, name, key)).filter(|end| self.ends_line(*end))?;
+
+        // ` />` and `</svg`.
+        let icon_width = icon_tag.1 + 3 + 2 + svg.name.len();
+        let inner_room = line_width.saturating_sub((level + 1) * indent_width);
+        // `forceBreakContent`: an only child with a line break in front of it.
+        let is_svg_broken = line_breaks > 0 || 1 + svg_width + 1 + icon_width > inner_room;
+        if is_svg_broken && (level + 2) * indent_width + icon_width > line_width {
+            return None;
+        }
+
+        self.out.reset(mark);
+        self.siblings.level = level;
+        if self.read_tag(name, name_end, name_end - start, true) != Some((open_end - 1, width)) {
+            return None;
+        }
+        let room = line_width.saturating_sub(level * indent_width);
+        self.put_tag(start, name_end, !self.attributes.is_empty() && width > room);
+        self.put_line(level + 1);
+        self.out.push(b'>');
+        self.siblings.level = level + 1;
+        self.read_tag(svg.name, svg.name_end, svg.name_end - open_end, true)?;
+        let is_tag_broken = is_svg_broken && has_svg_attributes && 1 + svg_width + 1 > inner_room;
+        self.put_whole_tag(open_end, svg.name_end, is_tag_broken);
+        if is_svg_broken {
+            self.put_line(level + 2);
+        }
+        self.siblings.level = level + 2;
+        self.read_tag(icon.name, icon.name_end, icon.name_end - icon_start, true)?;
+        self.put_tag(icon_start, icon.name_end, false);
+        self.out.put(b" /></");
+        self.out.put(svg.name);
+        self.put_line(level);
+        self.out.push(b'>');
+        self.put_end_tag_at(name, svg_end, end);
+        self.ends_in_text = false;
+        Some(Item::Ends(end))
     }
 
     /// Texts and small elements from `start` on, which starts a line, up to the end of a line, with a line break that is

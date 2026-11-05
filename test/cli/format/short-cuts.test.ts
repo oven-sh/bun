@@ -2520,6 +2520,39 @@ describe.skipIf(!hasFlag)("HTML", () => {
         `<p>\n  a <br class="${href}" />b <br />${href}${href} <wbr class="${href}">c\n</p>\n`,
       ];
     }),
+    // An inline element around an `<svg>` around one element: each prints a part of the tags of the other.
+    ...[1, 20, 24, 26, 28, 30, 32, 34, 60, 80].flatMap(length => {
+      const c = "c".repeat(length);
+      return [
+        ...["a", "span", "button", "x-y", "div"].flatMap(outer =>
+          [
+            ["", ""],
+            [" ", ""],
+            ["", " "],
+            ["\n      ", ""],
+            ["\n      ", "\n    "],
+          ].flatMap(([before, after]) =>
+            [
+              ["", ""],
+              [" ", ""],
+              ["", " "],
+              ["\n    ", "\n  "],
+            ].map(
+              ([first, last]) =>
+                `<li>\n  <${outer} class="x" href="#">${first}<svg class="${c}" width="24">${before}<use xlink:href="#t" />${after}</svg>${last}</${outer}>\n</li>\n`,
+            ),
+          ),
+        ),
+        `<li>\n  <a class="${c}" href="#" title="${c}"><svg class="bi" width="24" height="24"><use xlink:href="#${c}"/></svg></a>\n</li>\n`,
+        `<li>\n  <a href="#"><svg><use xlink:href="#${c}"></use></svg></a>\n  <a href="#"><svg><path d="${c}" /><path d="M0" /></svg></a>\n  <a href="#"><svg><title>${c}</title></svg></a>\n</li>\n`,
+        `<li>\n  <a href="#"><svg class="${c}"><use xlink:href="#t" /></svg></a> b\n  <a href="#"><svg class="${c}"><use xlink:href="#t" /></svg>b</a>\n  <a href="#"><img class="${c}" /></a>\n</li>\n`,
+        `<a href="#"><svg class="${c}"><use xlink:href="#t" /></svg></a>\n`,
+        `<p>a</p>\n<a href="#"\n  ><svg class="${c}">\n    <use xlink:href="#t" /></svg\n></a>\n<p>b</p>\n`,
+        `<svg>\n  <a href="#"><svg class="${c}"><use xlink:href="#t" /></svg></a>\n</svg>\n`,
+        `<li>\n  <a href="#"><svg class="${c}"><--- use xlink:href="#t" /></svg></a>\n  <a href="#"><svg class="${c}"><-a /></svg></a>\n  <a href="#"><svg class="${c}"><1 /></svg></a>\n</li>\n`,
+        `<li>\n  <a href="#"><svg class="${c}\n"><use xlink:href="#t\n" /></svg></a>\n</li>\n`,
+      ];
+    }),
     // Lines in an element in which white space counts.
     ...["pre", "textarea", "listing", "plaintext", "title", "xmp"].flatMap(name =>
       [

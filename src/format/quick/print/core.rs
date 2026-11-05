@@ -131,6 +131,8 @@ impl Quick {
             if NEEDS_CARE.at(k) == 0 {
                 self.dispatch(n, k, args)?;
                 self.set_label(0);
+                // (for what the nodes around this one write behind it: none of them asks again)
+                self.reserve();
                 return Ok(());
             }
             let ignored =
@@ -139,6 +141,7 @@ impl Quick {
                 self.mark_comments_printed(self.n.at(n + 1), self.n.at(n + 2));
             }
             self.print_with_parens(n, k, args, ignored)?;
+            self.reserve();
             return Ok(());
         }
         let ignored = self.has_ignore_comment(n)
@@ -148,6 +151,7 @@ impl Quick {
         }
         if self.will_print_own_comments(n, k)? {
             self.print_with_parens(n, k, args, ignored)?;
+            self.reserve();
             return Ok(());
         }
         if n == self.print_binaryish.skip_leading_comments_of {
@@ -157,6 +161,7 @@ impl Quick {
         }
         self.print_with_parens(n, k, args, ignored)?;
         self.print_trailing_comments(n);
+        self.reserve();
         Ok(())
     }
 

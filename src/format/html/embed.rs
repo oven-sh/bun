@@ -3,7 +3,6 @@
 use super::ast::{Attribute, Flags, Id, Kind};
 use super::canonical::{self, Spelling};
 use super::js::{self, Hug, SourceType, Syntax};
-use super::map_strings::ends_with_line_suffix;
 use super::printer::Printer;
 use super::utilities::{
     dedent_string, html_split, html_trim_preserve_indentation, is_pre_like, is_script_like_tag,
@@ -279,8 +278,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             let options = js::options_in_html(self.options.format, in_html);
             return match crate::css::document(code, parser, &options) {
                 Ok(document) if !document.is_empty_text() => {
-                    self.out
-                        .foreign(|f| crate::css::embed::write_document(&document, f));
+                    self.out.style_sheet(&document);
                     true
                 }
                 _ => false,
@@ -322,7 +320,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
 
     /// HTML in HTML.
     fn print_embedded_html(&mut self, code: &[u8], parser: Parser) -> bool {
-        if strings::trim_js_whitespace(code).is_empty() {
+        if strings::trim_js_whitespace(code).is_empty() || self.out.gives_up_quick_way() {
             return false;
         }
         let (format, filepath) = (self.options.format, self.options.filepath);
@@ -594,7 +592,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         attr: &Attribute<'_>,
         write_value: impl FnOnce(&mut Self) -> bool,
     ) -> bool {
-        let attempt = self.out.start_attempt_after_text();
+        let attempt = self.out.start_attribute_value();
         // The quotes in the value are written as entities afterwards, so nothing in it is as wide as it's written.
         let short_cuts = std::mem::take(&mut self.out.f.context_mut().short_cuts.mode);
         let is_written = write_value(self);
@@ -609,19 +607,18 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         attempt: Attempt,
         is_written: bool,
     ) -> bool {
-        let Some(value) = self.out.end_attempt_as_content(attempt, is_written) else {
+        let Some(value) = self.out.end_attribute_value(attempt, is_written) else {
             return false;
         };
         // The comment would be printed after the closing quote, as Prettier does with `v-for="a in b // c"`. Leave the
         // value as is.
-        if ends_with_line_suffix(value, self.out.f) {
+        if self.out.ends_with_line_suffix(value) {
             return false;
         }
         self.write_raw_name(attr.raw_name());
         self.out.token("=\"");
         self.out.start_group();
-        self.out
-            .foreign(|f| js::write_with_quote_entities(value, f));
+        self.out.attribute_value(value);
         self.out.end_group();
         self.out.token("\"");
         true
@@ -807,9 +804,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             return false;
         };
         self.print_expand(true, |printer| {
-            printer
-                .out
-                .foreign(|f| crate::css::embed::write_document(&document, f));
+            printer.out.style_sheet(&document);
             true
         })
     }

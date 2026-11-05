@@ -9,11 +9,11 @@ use crate::options::{
     WHITESPACE_CSS, WHITESPACE_IGNORE,
 };
 use crate::text::SRC_BASE;
-use crate::{Bytes, Quick, R, Stop, Words, why};
+use crate::{Bytes, Quick, R, Stop, Words, rare, why};
 
 impl Quick {
     /// Turns "\r\n" and "\r" into "\n" in place. Returns the new length.
-    pub(crate) fn normalize_end_of_line(&mut self, length: i32) -> i32 {
+    pub(crate) fn normalize_end_of_line(&mut self, length: i32) -> R<i32> {
         let end = SRC_BASE + length;
         // The buffer is as large as the largest file so far: a "\r" behind the text keeps the search from running through all of it.
         self.t.put(end, 13);
@@ -22,7 +22,7 @@ impl Quick {
             if self.options.end_of_line == EOL_AUTO {
                 self.set_end_of_line(EOL_LF);
             }
-            return length;
+            return Ok(length);
         }
         if self.options.end_of_line == EOL_AUTO {
             // the first line ending decides
@@ -50,9 +50,10 @@ impl Quick {
                     },
                     10,
                 );
-                if self.t.at(r + 1) == 10 {
-                    r += 1;
+                if self.t.at(r + 1) != 10 {
+                    return Err(self.rare(rare::ODD_BYTES));
                 }
+                r += 1;
             } else {
                 self.t.put(
                     {
@@ -65,7 +66,7 @@ impl Quick {
             }
             r += 1;
         }
-        return w - SRC_BASE;
+        return Ok(w - SRC_BASE);
     }
 }
 
@@ -458,6 +459,7 @@ impl Quick {
     fn format_buffer(&mut self, text: &[u8], dialect: Dialect, options: &Options) -> R<()> {
         let mut length = text.len() as i32;
         self.why.set(why::NONE);
+        self.which_rare.set(rare::OTHER);
         crate::forget_losses();
         self.stack_check = bun_core::StackCheck::init();
         self.set_options(options, dialect);
@@ -475,7 +477,7 @@ impl Quick {
                 .move_within(SRC_BASE, SRC_BASE + 3, SRC_BASE + length);
             length -= 3;
         }
-        length = self.normalize_end_of_line(length);
+        length = self.normalize_end_of_line(length)?;
         if options.no_short_cuts {
             return self.format_normalized(length, language);
         }
@@ -554,6 +556,11 @@ impl Quick {
     /// Where the syntax error is, from the start of the text (without the byte order mark, and with "\n" at the ends of the lines).
     pub fn failed_at(&self) -> i32 {
         self.failed_at.get()
+    }
+
+    /// Which rare thing the last file was refused for, for those who count; 0 if it has no number.
+    pub fn which_rare(&self) -> i32 {
+        self.which_rare.get()
     }
 
     /// How many files were formatted twice.

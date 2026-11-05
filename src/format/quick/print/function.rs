@@ -430,6 +430,9 @@ impl Quick {
 
     /// The parameters and the return type. The parameters are in a group of their own if there is one of them and the return type is
     /// an object type or breaks (shouldGroupFunctionParameters): then the return type breaks first.
+    ///
+    /// An object type that breaks because it does not fit is broken in what is printed, so the next time the answer is another one
+    /// (prettier#19968). The long way prints at once what is printed from then on. Here the objects in question are marked.
     pub(crate) fn print_parameters_and_return_type(
         &mut self,
         fn_: i32,
@@ -457,12 +460,17 @@ impl Quick {
             if self.is_object_type(type_) {
                 should_group = true;
             } else {
+                self.doc.depends_on_what_breaks += 1;
                 let h = self.detach_open();
                 self.print_return_type(fn_)?;
                 printed_return_type = self.detach_close(h);
                 should_group = self.doc_will_break(printed_return_type);
+                if should_group {
+                    self.doc.depends_on_what_breaks -= 1;
+                }
             }
         }
+        let depends_on_what_breaks = printed_return_type != 0 && !should_group;
         let g = if should_break || should_group {
             self.group_open()
         } else {
@@ -473,6 +481,9 @@ impl Quick {
             should_expand_parameters,
             should_print_type_parameters,
         )?;
+        if depends_on_what_breaks {
+            self.doc.depends_on_what_breaks -= 1;
+        }
         if self.print.bailout {
             return Ok(());
         }

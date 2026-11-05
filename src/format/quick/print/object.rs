@@ -322,6 +322,7 @@ impl Quick {
         self.text(RBRACE);
         if with_group {
             self.group_close_with(g, should_break, 0);
+            self.stays_expanded(g);
         }
         Ok(())
     }
@@ -479,6 +480,7 @@ impl Quick {
         self.print_binding_suffix(n, self.n.at(n) & 0xff)?;
         if with_group {
             self.group_close_with(g, should_break, 0);
+            self.stays_expanded(g);
         }
         Ok(())
     }

@@ -58,8 +58,6 @@ pub(crate) struct FromDoc<'s, 'q> {
     is_markdown: bool,
     /// How many groups and fills are around what is written.
     measured: u32,
-    /// The template has substitutions.
-    has_holes: bool,
     /// Nothing has been printed since the last line break, if that one is printed. The printer of `ir/` skips the next
     /// one then.
     is_after_line: bool,
@@ -70,7 +68,6 @@ impl<'s, 'q> FromDoc<'s, 'q> {
     /// For the document of a style sheet.
     pub(crate) fn new(sink: &'s mut Sink<'q>) -> Self {
         FromDoc {
-            has_holes: sink.hole_count() > 0,
             sink,
             groups: SmallVec::new(),
             is_markdown: false,
@@ -123,11 +120,6 @@ impl<'s, 'q> FromDoc<'s, 'q> {
         }
         // In `ir/`, a forced line break always breaks the groups around it.
         if is_forced && !is_followed_by_break_parent {
-            return Err(Unwritten::Unknown);
-        }
-        // After a forced line break in what is printed on one line, a substitution is measured again, which breaks one
-        // that Prettier has printed to a string.
-        if is_forced && self.measured > 0 && self.has_holes {
             return Err(Unwritten::Unknown);
         }
         match line {
